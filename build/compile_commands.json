@@ -1,0 +1,26 @@
+[
+{
+  "directory": "C:/Users/Tugbars/Desktop/highSpeedFFT/build/src",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe  @CMakeFiles/highspeedFFT.dir/includes_C.rsp -g -std=gnu11 -o CMakeFiles\\highspeedFFT.dir\\highSpeedFFT.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\src\\highSpeedFFT.c",
+  "file": "C:/Users/Tugbars/Desktop/highSpeedFFT/src/highSpeedFFT.c",
+  "output": "src/CMakeFiles/highspeedFFT.dir/highSpeedFFT.c.obj"
+},
+{
+  "directory": "C:/Users/Tugbars/Desktop/highSpeedFFT/build/src",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe  @CMakeFiles/highspeedFFT.dir/includes_C.rsp -g -std=gnu11 -o CMakeFiles\\highspeedFFT.dir\\convolve.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\src\\convolve.c",
+  "file": "C:/Users/Tugbars/Desktop/highSpeedFFT/src/convolve.c",
+  "output": "src/CMakeFiles/highspeedFFT.dir/convolve.c.obj"
+},
+{
+  "directory": "C:/Users/Tugbars/Desktop/highSpeedFFT/build/src",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe  @CMakeFiles/highspeedFFT.dir/includes_C.rsp -g -std=gnu11 -o CMakeFiles\\highspeedFFT.dir\\real.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\src\\real.c",
+  "file": "C:/Users/Tugbars/Desktop/highSpeedFFT/src/real.c",
+  "output": "src/CMakeFiles/highspeedFFT.dir/real.c.obj"
+},
+{
+  "directory": "C:/Users/Tugbars/Desktop/highSpeedFFT/build/test",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe  @CMakeFiles/test_mixedRadixFFT.dir/includes_C.rsp -g -std=gnu11 -o CMakeFiles\\test_mixedRadixFFT.dir\\main.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\test\\main.c",
+  "file": "C:/Users/Tugbars/Desktop/highSpeedFFT/test/main.c",
+  "output": "test/CMakeFiles/test_mixedRadixFFT.dir/main.c.obj"
+}
+]

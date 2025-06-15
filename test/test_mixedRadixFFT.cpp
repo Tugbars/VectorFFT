@@ -5,7 +5,7 @@
 #include "highspeedFFT.h"
 
 // Define necessary types if not already defined in highspeedFFT.h
-#ifndef fft_type
+/*#ifndef fft_type
 #define fft_type double
 #endif
 
@@ -1759,3 +1759,4 @@ int main(int argc, char **argv)
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
+*/

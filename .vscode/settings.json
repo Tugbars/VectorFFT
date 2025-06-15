@@ -1,3 +1,7 @@
 {
-    "astyle.astylerc": ""
+    "astyle.astylerc": "",
+    "files.associations": {
+        ".fantomasignore": "ignore",
+        "highspeedfft.h": "c"
+    }
 }

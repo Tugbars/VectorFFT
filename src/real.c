@@ -192,79 +192,7 @@ void fft_c2r_exec(fft_real_object real_obj, fft_data *input_data, fft_type *outp
     free(complex_output);
 }
 
-#define M_PI 3.14159265358979323846
 
-// Utility functions from highSpeedFFT.c
-void generate_signal(fft_data *signal, int length, double freq, double amplitude)
-{
-    for (int i = 0; i < length; i++)
-    {
-        signal[i].re = amplitude * sin(2.0 * M_PI * freq * i / length);
-        signal[i].im = 0.0; // Real-valued input
-    }
-}
-
-double compute_mse(fft_data *original, fft_data *reconstructed, int length)
-{
-    double mse = 0.0;
-    for (int i = 0; i < length; i++)
-    {
-        double diff_re = original[i].re - reconstructed[i].re;
-        double diff_im = original[i].im - reconstructed[i].im;
-        mse += diff_re * diff_re + diff_im * diff_im;
-    }
-    return mse / length;
-}
-
-void print_complex(fft_data *data, int length, const char *label)
-{
-    printf("%s:\n", label);
-    for (int i = 0; i < length; i++)
-    {
-        printf("  [%d] %.6f + %.6fi\n", i, data[i].re, data[i].im);
-    }
-    printf("\n");
-}
-
-// Utility functions from real.c
-void generate_real_signal(fft_type *signal, int length, double freq, double amplitude)
-{
-    for (int i = 0; i < length; i++)
-    {
-        signal[i] = amplitude * sin(2.0 * M_PI * freq * i / length);
-    }
-}
-
-double compute_mse_real(fft_type *original, fft_type *reconstructed, int length)
-{
-    double mse = 0.0;
-    for (int i = 0; i < length; i++)
-    {
-        double diff = original[i] - reconstructed[i];
-        mse += diff * diff;
-    }
-    return mse / length;
-}
-
-void print_real(fft_type *data, int length, const char *label)
-{
-    printf("%s:\n", label);
-    for (int i = 0; i < length; i++)
-    {
-        printf("  [%d] %.6f\n", i, data[i]);
-    }
-    printf("\n");
-}
-
-void free_real_fft(fft_real_object real_obj)
-{
-    // Code to free the real FFT object, e.g., freeing memory allocated for real_obj
-    if (real_obj != NULL)
-    {
-        free(real_obj->cobj); // Example: freeing the underlying complex FFT object
-        free(real_obj);       // Freeing the real FFT object itself
-    }
-}
 
 /*
 int main()
