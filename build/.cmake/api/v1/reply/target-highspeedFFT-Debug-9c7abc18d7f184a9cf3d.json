@@ -12,6 +12,7 @@
 		"commands" : 
 		[
 			"add_library",
+			"target_compile_options",
 			"target_include_directories"
 		],
 		"files" : 
@@ -26,13 +27,19 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 30,
+				"line" : 28,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 33,
+				"line" : 38,
+				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+				"line" : 31,
 				"parent" : 0
 			}
 		]
@@ -44,12 +51,24 @@
 			[
 				{
 					"fragment" : "-g -std=gnu11"
+				},
+				{
+					"backtrace" : 2,
+					"fragment" : "-O3"
+				},
+				{
+					"backtrace" : 2,
+					"fragment" : "-mavx"
+				},
+				{
+					"backtrace" : 2,
+					"fragment" : "-mfma"
 				}
 			],
 			"includes" : 
 			[
 				{
-					"backtrace" : 2,
+					"backtrace" : 3,
 					"path" : "C:/Users/Tugbars/Desktop/highSpeedFFT/src"
 				}
 			],

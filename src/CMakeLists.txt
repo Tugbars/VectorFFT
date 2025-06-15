@@ -1,5 +1,3 @@
-# src/CMakeLists.txt
-
 # Set the minimum required version of CMake
 cmake_minimum_required(VERSION 3.10)
 
@@ -32,8 +30,12 @@ add_library(highspeedFFT STATIC ${SOURCES} ${HEADERS})
 # Add the src directory to the include path so headers can be found
 target_include_directories(highspeedFFT PUBLIC ${SRC_DIR})
 
-# Link math library and ensure C library linkage
+# Link math library
 target_link_libraries(highspeedFFT PRIVATE m)
 
-# (Optional) Add compiler flags if needed
-# Example: target_compile_options(highspeedFFT PRIVATE -Wall -Wextra)
+# Enable AVX and FMA SIMD optimizations
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(highspeedFFT PRIVATE -O3 -mavx -mfma)
+elseif(MSVC)
+    target_compile_options(highspeedFFT PRIVATE /O2 /arch:AVX2)
+endif()

@@ -1,5 +1,7 @@
 #include "highspeedFFT.h"
 #include "time.h"
+#include <immintrin.h>
+
 
 /**
  * @brief Build configuration option for twiddle factor computation.
@@ -721,30 +723,68 @@ static void mixed_radix_dit_rec(fft_data *output_buffer, fft_data *input_buffer,
          * where \(X(k) = X_e(k) + W_N^k \cdot X_o(k)\), with \(W_N = e^{-2\pi i / N}\) and
          * \(X_e(k)\), \(X_o(k)\) being even/odd indexed sub-FFTs, adjusted by transform_sign.
          */
-        int sub_length = data_length / 2, index, target_index;
-        fft_type twiddle_real, twiddle_imag, tau1r, tau1i, tau2r, tau2i;
+        // Step 1: compute subproblem size and new stride
+        int sub_length = data_length / 2;
         new_stride = 2 * stride;
 
-        mixed_radix_dit_rec(output_buffer, input_buffer, fft_obj, transform_sign, sub_length, new_stride, factor_index + 1);
-        mixed_radix_dit_rec(output_buffer + sub_length, input_buffer + stride, fft_obj, transform_sign, sub_length, new_stride, factor_index + 1);
+        // Step 2: recurse on even- and odd-indexed halves
+        mixed_radix_dit_rec(output_buffer,
+                            input_buffer,
+                            fft_obj,
+                            transform_sign,
+                            sub_length,
+                            new_stride,
+                            factor_index + 1);
 
-        for (int k = 0; k < sub_length; k++)
-        {
-            index = sub_length - 1 + k;                    // Index into twiddle factors for current frequency
-            twiddle_real = (fft_obj->twiddle + index)->re; // Real part of twiddle factor
-            twiddle_imag = (fft_obj->twiddle + index)->im; // Imaginary part of twiddle factor
+        mixed_radix_dit_rec(output_buffer + sub_length,
+                            input_buffer + stride,
+                            fft_obj,
+                            transform_sign,
+                            sub_length,
+                            new_stride,
+                            factor_index + 1);
 
-            target_index = k + sub_length; // Target index for odd-indexed sub-FFT result
-            tau1r = output_buffer[k].re;   // Save even-indexed real part
-            tau1i = output_buffer[k].im;   // Save even-indexed imaginary part
+        // Step 3: point at your real and imag arrays and twiddles
+        double *out_re = &output_buffer[0].re;
+        double *out_im = &output_buffer[0].im;
+        double *tw_re  = &fft_obj->twiddle[sub_length - 1].re;
+        double *tw_im  = &fft_obj->twiddle[sub_length - 1].im;
 
-            tau2r = output_buffer[target_index].re * twiddle_real - output_buffer[target_index].im * twiddle_imag; // Apply twiddle factor (real)
-            tau2i = output_buffer[target_index].im * twiddle_real + output_buffer[target_index].re * twiddle_imag; // Apply twiddle factor (imag)
+        // Step 4: do the AVX2‑accelerated butterfly
+        int k = 0, M = sub_length;
 
-            output_buffer[k].re = tau1r + tau2r;            // Combine even and odd results (real)
-            output_buffer[k].im = tau1i + tau2i;            // Combine even and odd results (imag)
-            output_buffer[target_index].re = tau1r - tau2r; // Compute difference for odd result (real)
-            output_buffer[target_index].im = tau1i - tau2i; // Compute difference for odd result (imag)
+        // Vectorized loop (4 lanes at a time)
+        for (; k + 3 < M; k += 4) {
+            __m256d er  = _mm256_load_pd(out_re + k);
+            __m256d ei  = _mm256_load_pd(out_im + k);
+            __m256d br  = _mm256_load_pd(out_re + k + M);
+            __m256d bi  = _mm256_load_pd(out_im + k + M);
+            __m256d wre = _mm256_load_pd(tw_re  + k);
+            __m256d wim = _mm256_load_pd(tw_im  + k);
+
+            // tr = br*wre - bi*wim
+            __m256d tr = _mm256_fmsub_pd(br, wre,
+                            _mm256_mul_pd(bi, wim));
+            // ti = bi*wre + br*wim
+            __m256d ti = _mm256_fmadd_pd(bi, wre,
+                            _mm256_mul_pd(br, wim));
+
+            _mm256_store_pd(out_re   + k,     _mm256_add_pd(er, tr));
+            _mm256_store_pd(out_im   + k,     _mm256_add_pd(ei, ti));
+            _mm256_store_pd(out_re   + k + M, _mm256_sub_pd(er, tr));
+            _mm256_store_pd(out_im   + k + M, _mm256_sub_pd(ei, ti));
+        }
+
+        // Scalar tail for k not divisible by 4
+        for (; k < M; ++k) {
+            double ar = out_re[k],  ai = out_im[k];
+            double br_ = out_re[k+M], bi_ = out_im[k+M];
+            double tr  =  br_ * tw_re[k] - bi_ * tw_im[k];
+            double ti  =  bi_ * tw_re[k] + br_ * tw_im[k];
+            out_re[k]   = ar + tr;
+            out_im[k]   = ai + ti;
+            out_re[k+M] = ar - tr;
+            out_im[k+M] = ai - ti;
         }
     }
     else if (radix == 3)
@@ -757,48 +797,79 @@ static void mixed_radix_dit_rec(fft_data *output_buffer, fft_data *input_buffer,
          * where \(X(k) = X_0(k) + W_N^k \cdot X_1(k) + W_N^{2k} \cdot X_2(k)\), with \(W_N = e^{-2\pi i / N}\)
          * and \(X_0(k)\), \(X_1(k)\), \(X_2(k)\) being the three sub-FFTs, adjusted by transform_sign.
          */
-        int sub_length = data_length / 3, index, target1, target2;
-        fft_type twiddle_real, twiddle_imag, twiddle2_real, twiddle2_imag, tau0r, tau0i, tau1r, tau1i, tau2r, tau2i;
-        fft_type a_real, a_imag, b_real, b_imag, c_real, c_imag;
-        const fft_type sqrt3_by_2 = 0.86602540378; // sqrt(3)/2, used for 120° rotation
+          // 1) compute subproblem size and new stride
+        int sub_length = data_length / 3;
         new_stride = 3 * stride;
 
-        mixed_radix_dit_rec(output_buffer, input_buffer, fft_obj, transform_sign, sub_length, new_stride, factor_index + 1);
-        mixed_radix_dit_rec(output_buffer + sub_length, input_buffer + stride, fft_obj, transform_sign, sub_length, new_stride, factor_index + 1);
-        mixed_radix_dit_rec(output_buffer + 2 * sub_length, input_buffer + 2 * stride, fft_obj, transform_sign, sub_length, new_stride, factor_index + 1);
+        // 2) recurse on the three decimated sub‑FFTs
+        mixed_radix_dit_rec(output_buffer,
+                            input_buffer,
+                            fft_obj,
+                            transform_sign,
+                            sub_length,
+                            new_stride,
+                            factor_index + 1);
 
-        for (int k = 0; k < sub_length; k++)
-        {
-            index = sub_length - 1 + 2 * k;                // Index into twiddle factors for first rotation
-            twiddle_real = (fft_obj->twiddle + index)->re; // Real part of first twiddle factor
-            twiddle_imag = (fft_obj->twiddle + index)->im; // Imaginary part of first twiddle factor
-            index++;
-            twiddle2_real = (fft_obj->twiddle + index)->re; // Real part of second twiddle factor
-            twiddle2_imag = (fft_obj->twiddle + index)->im; // Imaginary part of second twiddle factor
+        mixed_radix_dit_rec(output_buffer + sub_length,
+                            input_buffer + stride,
+                            fft_obj,
+                            transform_sign,
+                            sub_length,
+                            new_stride,
+                            factor_index + 1);
 
-            target1 = k + sub_length;       // Target for first sub-FFT result
-            target2 = target1 + sub_length; // Target for second sub-FFT result
+        mixed_radix_dit_rec(output_buffer + 2*sub_length,
+                            input_buffer + 2*stride,
+                            fft_obj,
+                            transform_sign,
+                            sub_length,
+                            new_stride,
+                            factor_index + 1);
 
-            a_real = output_buffer[k].re;                                                                   // Save first sub-FFT real part
-            a_imag = output_buffer[k].im;                                                                   // Save first sub-FFT imaginary part
-            b_real = output_buffer[target1].re * twiddle_real - output_buffer[target1].im * twiddle_imag;   // Apply first twiddle (real)
-            b_imag = output_buffer[target1].im * twiddle_real + output_buffer[target1].re * twiddle_imag;   // Apply first twiddle (imag)
-            c_real = output_buffer[target2].re * twiddle2_real - output_buffer[target2].im * twiddle2_imag; // Apply second twiddle (real)
-            c_imag = output_buffer[target2].im * twiddle2_real + output_buffer[target2].re * twiddle2_imag; // Apply second twiddle (imag)
+        // 3) do the radix-3 butterflies
+        const fft_type sqrt3by2 = (fft_type)0.8660254037844386;  // √3/2
+        for (int k = 0; k < sub_length; k++) {
+            // fetch twiddles W(N)^{k} and W(N)^{2k}
+            int idx1 = sub_length - 1 + 2*k;
+            fft_type w1r = fft_obj->twiddle[idx1 + 0].re;
+            fft_type w1i = fft_obj->twiddle[idx1 + 0].im;
+            fft_type w2r = fft_obj->twiddle[idx1 + 1].re;
+            fft_type w2i = fft_obj->twiddle[idx1 + 1].im;
 
-            tau0r = b_real + c_real;                                 // Sum of rotated second and third sub-FFTs (real)
-            tau0i = b_imag + c_imag;                                 // Sum of rotated second and third sub-FFTs (imag)
-            tau1r = transform_sign * sqrt3_by_2 * (b_real - c_real); // Rotated difference (real, 120°)
-            tau1i = transform_sign * sqrt3_by_2 * (b_imag - c_imag); // Rotated difference (imag, 120°)
-            tau2r = a_real - tau0r * 0.5;                            // Center adjustment (real)
-            tau2i = a_imag - tau0i * 0.5;                            // Center adjustment (imag)
+            // load the three partial FFT results
+            fft_data *X0 = &output_buffer[k];
+            fft_data *X1 = &output_buffer[k + sub_length];
+            fft_data *X2 = &output_buffer[k + 2*sub_length];
 
-            output_buffer[k].re = a_real + tau0r;      // Combine with first sub-FFT (real)
-            output_buffer[k].im = a_imag + tau0i;      // Combine with first sub-FFT (imag)
-            output_buffer[target1].re = tau2r + tau1i; // Apply rotation for second output (real)
-            output_buffer[target1].im = tau2i - tau1r; // Apply rotation for second output (imag)
-            output_buffer[target2].re = tau2r - tau1i; // Apply rotation for third output (real)
-            output_buffer[target2].im = tau2i + tau1r; // Apply rotation for third output (imag)
+            fft_type a_re = X0->re, a_im = X0->im;
+            // apply twiddle to the odd branches
+            fft_type b_re =  X1->re * w1r - X1->im * w1i;
+            fft_type b_im =  X1->im * w1r + X1->re * w1i;
+            fft_type c_re =  X2->re * w2r - X2->im * w2i;
+            fft_type c_im =  X2->im * w2r + X2->re * w2i;
+
+            // compute the three-way butterfly
+            fft_type sum_re = b_re + c_re;
+            fft_type sum_im = b_im + c_im;
+            fft_type diff_re = b_re - c_re;
+            fft_type diff_im = b_im - c_im;
+
+            // X0 ← a + (b+c)
+            X0->re = a_re + sum_re;
+            X0->im = a_im + sum_im;
+
+            // X1 ← a − ½(b+c)  +  i·(sign·(√3/2)·(b−c))
+            fft_type t_re = a_re - (sum_re * (fft_type)0.5);
+            fft_type t_im = a_im - (sum_im * (fft_type)0.5);
+            fft_type rot_re =  diff_im * (transform_sign * sqrt3by2);
+            fft_type rot_im = -diff_re * (transform_sign * sqrt3by2);
+
+            X1->re = t_re + rot_re;
+            X1->im = t_im + rot_im;
+
+            // X2 ← a − ½(b+c)  −  i·(sign·(√3/2)·(b−c))
+            X2->re = t_re - rot_re;
+            X2->im = t_im - rot_im;
         }
     }
     else if (radix == 4)
@@ -812,90 +883,118 @@ static void mixed_radix_dit_rec(fft_data *output_buffer, fft_data *input_buffer,
          * with \(W_N = e^{-2\pi i / N}\) and \(X_0(k)\), \(X_1(k)\), \(X_2(k)\), \(X_3(k)\) being the four sub-FFTs,
          * adjusted by transform_sign.
          */
-        int sub_length = data_length / 4, index, target1, target2, target3;
-        fft_type twiddle_real, twiddle_imag, twiddle2_real, twiddle2_imag, twiddle3_real, twiddle3_imag;
-        fft_type tau0r, tau0i, tau1r, tau1i, tau2r, tau2i, tau3r, tau3i;
-        fft_type a_real, a_imag, b_real, b_imag, c_real, c_imag, d_real, d_imag;
-        new_stride = 4 * stride;
+        // 1) compute subproblem size and new stride
+        int sub_length = data_length / 4;
+        new_stride      = 4 * stride;
 
-        mixed_radix_dit_rec(output_buffer, input_buffer, fft_obj, transform_sign, sub_length, new_stride, factor_index + 1);
-        mixed_radix_dit_rec(output_buffer + sub_length, input_buffer + stride, fft_obj, transform_sign, sub_length, new_stride, factor_index + 1);
-        mixed_radix_dit_rec(output_buffer + 2 * sub_length, input_buffer + 2 * stride, fft_obj, transform_sign, sub_length, new_stride, factor_index + 1);
-        mixed_radix_dit_rec(output_buffer + 3 * sub_length, input_buffer + 3 * stride, fft_obj, transform_sign, sub_length, new_stride, factor_index + 1);
+        // 2) recurse on the four decimated sub‑FFTs
+        mixed_radix_dit_rec(output_buffer,
+                            input_buffer,
+                            fft_obj,
+                            transform_sign,
+                            sub_length,
+                            new_stride,
+                            factor_index + 1);
 
-        target1 = sub_length;
-        target2 = target1 + sub_length;
-        target3 = target2 + sub_length;
+        mixed_radix_dit_rec(output_buffer +     sub_length,
+                            input_buffer  +     stride,
+                            fft_obj,
+                            transform_sign,
+                            sub_length,
+                            new_stride,
+                            factor_index + 1);
 
-        a_real = output_buffer[0].re;       // Save first sub-FFT real part
-        a_imag = output_buffer[0].im;       // Save first sub-FFT imaginary part
-        b_real = output_buffer[target1].re; // Save second sub-FFT real part
-        b_imag = output_buffer[target1].im; // Save second sub-FFT imaginary part
-        c_real = output_buffer[target2].re; // Save third sub-FFT real part
-        c_imag = output_buffer[target2].im; // Save third sub-FFT imaginary part
-        d_real = output_buffer[target3].re; // Save fourth sub-FFT real part
-        d_imag = output_buffer[target3].im; // Save fourth sub-FFT imaginary part
+        mixed_radix_dit_rec(output_buffer + 2 * sub_length,
+                            input_buffer  + 2 * stride,
+                            fft_obj,
+                            transform_sign,
+                            sub_length,
+                            new_stride,
+                            factor_index + 1);
 
-        tau0r = a_real + c_real;                    // Sum of first and third sub-FFTs (real)
-        tau0i = a_imag + c_imag;                    // Sum of first and third sub-FFTs (imag)
-        tau1r = a_real - c_real;                    // Difference of first and third sub-FFTs (real)
-        tau1i = a_imag - c_imag;                    // Difference of first and third sub-FFTs (imag)
-        tau2r = b_real + d_real;                    // Sum of second and fourth sub-FFTs (real)
-        tau2i = b_imag + d_imag;                    // Sum of second and fourth sub-FFTs (imag)
-        tau3r = transform_sign * (b_real - d_real); // Rotated difference (real)
-        tau3i = transform_sign * (b_imag - d_imag); // Rotated difference (imag)
+        mixed_radix_dit_rec(output_buffer + 3 * sub_length,
+                            input_buffer  + 3 * stride,
+                            fft_obj,
+                            transform_sign,
+                            sub_length,
+                            new_stride,
+                            factor_index + 1);
 
-        output_buffer[0].re = tau0r + tau2r;       // Combine sums for first output (real)
-        output_buffer[0].im = tau0i + tau2i;       // Combine sums for first output (imag)
-        output_buffer[target1].re = tau1r + tau3i; // Apply rotation for second output (real)
-        output_buffer[target1].im = tau1i - tau3r; // Apply rotation for second output (imag)
-        output_buffer[target2].re = tau0r - tau2r; // Combine differences for third output (real)
-        output_buffer[target2].im = tau0i - tau2i; // Combine differences for third output (imag)
-        output_buffer[target3].re = tau1r - tau3i; // Apply rotation for fourth output (real)
-        output_buffer[target3].im = tau1i + tau3r; // Apply rotation for fourth output (imag)
+        // 3) handle k=0 separately (no twiddles needed)
+        {
+            fft_data *X0 = &output_buffer[0];
+            fft_data *X1 = &output_buffer[    sub_length];
+            fft_data *X2 = &output_buffer[2 * sub_length];
+            fft_data *X3 = &output_buffer[3 * sub_length];
 
+            // simple radix‑4 butterfly
+            fft_type a_re = X0->re + X2->re;
+            fft_type a_im = X0->im + X2->im;
+            fft_type b_re = X0->re - X2->re;
+            fft_type b_im = X0->im - X2->im;
+            fft_type c_re = X1->re + X3->re;
+            fft_type c_im = X1->im + X3->im;
+            fft_type d_re = transform_sign * (X1->re - X3->re);
+            fft_type d_im = transform_sign * (X1->im - X3->im);
+
+            X0->re = a_re + c_re;
+            X0->im = a_im + c_im;
+            X2->re = a_re - c_re;
+            X2->im = a_im - c_im;
+
+            X1->re = b_re + d_im;
+            X1->im = b_im - d_re;
+            X3->re = b_re - d_im;
+            X3->im = b_im + d_re;
+        }
+
+        // 4) k = 1 .. sub_length-1, with twiddles W_N^{k}, W_N^{2k}, W_N^{3k}
         for (int k = 1; k < sub_length; k++)
         {
-            index = sub_length - 1 + 3 * k;                // Index into twiddle factors for current frequency
-            twiddle_real = (fft_obj->twiddle + index)->re; // Real part of first twiddle factor
-            twiddle_imag = (fft_obj->twiddle + index)->im; // Imaginary part of first twiddle factor
-            index++;
-            twiddle2_real = (fft_obj->twiddle + index)->re; // Real part of second twiddle factor
-            twiddle2_imag = (fft_obj->twiddle + index)->im; // Imaginary part of second twiddle factor
-            index++;
-            twiddle3_real = (fft_obj->twiddle + index)->re; // Real part of third twiddle factor
-            twiddle3_imag = (fft_obj->twiddle + index)->im; // Imaginary part of third twiddle factor
+            int idx = (sub_length - 1) + 3*k;
+            fft_type w1r = fft_obj->twiddle[idx + 0].re;
+            fft_type w1i = fft_obj->twiddle[idx + 0].im;
+            fft_type w2r = fft_obj->twiddle[idx + 1].re;
+            fft_type w2i = fft_obj->twiddle[idx + 1].im;
+            fft_type w3r = fft_obj->twiddle[idx + 2].re;
+            fft_type w3i = fft_obj->twiddle[idx + 2].im;
 
-            target1 = k + sub_length;       // Target for second sub-FFT result
-            target2 = target1 + sub_length; // Target for third sub-FFT result
-            target3 = target2 + sub_length; // Target for fourth sub-FFT result
+            // load the four branches
+            fft_data *X0 = &output_buffer[k];
+            fft_data *X1 = &output_buffer[k +     sub_length];
+            fft_data *X2 = &output_buffer[k + 2 * sub_length];
+            fft_data *X3 = &output_buffer[k + 3 * sub_length];
 
-            a_real = output_buffer[k].re;                                                                   // Save current sub-FFT real part
-            a_imag = output_buffer[k].im;                                                                   // Save current sub-FFT imaginary part
-            b_real = output_buffer[target1].re * twiddle_real - output_buffer[target1].im * twiddle_imag;   // Apply first twiddle (real)
-            b_imag = output_buffer[target1].im * twiddle_real + output_buffer[target1].re * twiddle_imag;   // Apply first twiddle (imag)
-            c_real = output_buffer[target2].re * twiddle2_real - output_buffer[target2].im * twiddle2_imag; // Apply second twiddle (real)
-            c_imag = output_buffer[target2].im * twiddle2_real + output_buffer[target2].re * twiddle2_imag; // Apply second twiddle (imag)
-            d_real = output_buffer[target3].re * twiddle3_real - output_buffer[target3].im * twiddle3_imag; // Apply third twiddle (real)
-            d_imag = output_buffer[target3].im * twiddle3_real + output_buffer[target3].re * twiddle3_imag; // Apply third twiddle (imag)
+            // apply twiddles to the “odd” branches
+            fft_type b_re =  X1->re * w1r - X1->im * w1i;
+            fft_type b_im =  X1->im * w1r + X1->re * w1i;
+            fft_type c_re =  X2->re * w2r - X2->im * w2i;
+            fft_type c_im =  X2->im * w2r + X2->re * w2i;
+            fft_type d_re =  X3->re * w3r - X3->im * w3i;
+            fft_type d_im =  X3->im * w3r + X3->re * w3i;
 
-            tau0r = a_real + c_real;                    // Sum of current and third sub-FFTs (real)
-            tau0i = a_imag + c_imag;                    // Sum of current and third sub-FFTs (imag)
-            tau1r = a_real - c_real;                    // Difference of current and third sub-FFTs (real)
-            tau1i = a_imag - c_imag;                    // Difference of current and third sub-FFTs (imag)
-            tau2r = b_real + d_real;                    // Sum of second and fourth sub-FFTs (real)
-            tau2i = b_imag + d_imag;                    // Sum of second and fourth sub-FFTs (imag)
-            tau3r = transform_sign * (b_real - d_real); // Rotated difference (real)
-            tau3i = transform_sign * (b_imag - d_imag); // Rotated difference (imag)
+            // radix‑4 butterfly on (X0, b, c, d)
+            fft_type a_re = X0->re + c_re;
+            fft_type a_im = X0->im + c_im;
+            fft_type e_re = X0->re - c_re;
+            fft_type e_im = X0->im - c_im;
+            fft_type f_re =       b_re + d_re;
+            fft_type f_im =       b_im + d_im;
+            fft_type g_re = transform_sign * (b_re - d_re);
+            fft_type g_im = transform_sign * (b_im - d_im);
 
-            output_buffer[k].re = tau0r + tau2r;       // Combine sums for current output (real)
-            output_buffer[k].im = tau0i + tau2i;       // Combine sums for current output (imag)
-            output_buffer[target1].re = tau1r + tau3i; // Apply rotation for second output (real)
-            output_buffer[target1].im = tau1i - tau3r; // Apply rotation for second output (imag)
-            output_buffer[target2].re = tau0r - tau2r; // Combine differences for third output (real)
-            output_buffer[target2].im = tau0i - tau2i; // Combine differences for third output (imag)
-            output_buffer[target3].re = tau1r - tau3i; // Apply rotation for fourth output (real)
-            output_buffer[target3].im = tau1i + tau3r; // Apply rotation for fourth output (imag)
+            // store back
+            X0->re = a_re + f_re;
+            X0->im = a_im + f_im;
+
+            X2->re = a_re - f_re;
+            X2->im = a_im - f_im;
+
+            X1->re = e_re + g_im;
+            X1->im = e_im - g_re;
+
+            X3->re = e_re - g_im;
+            X3->im = e_im + g_re;
         }
     }
     else if (radix == 5)
