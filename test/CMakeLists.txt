@@ -1,5 +1,3 @@
-# test/CMakeLists.txt
-
 # Define the test executable
 add_executable(test_mixedRadixFFT
     test_mixedRadixFFT.cpp
@@ -7,9 +5,9 @@ add_executable(test_mixedRadixFFT
 
 # Include directories
 target_include_directories(test_mixedRadixFFT PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${fff_SOURCE_DIR}
-    ${SRC_DIR}/src  # Include src directory for headers
+    ${CMAKE_CURRENT_SOURCE_DIR}      # For local headers in test/
+    ${fff_SOURCE_DIR}                # For fff.h from FFF library
+    ${CMAKE_SOURCE_DIR}/src          # Include src directory for headers like highspeedFFT.h
 )
 
 # Link libraries

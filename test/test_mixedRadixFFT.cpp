@@ -1,6 +1,6 @@
 // test_fft_init.cpp
 #include <gtest/gtest.h>
-#include <fff/fff.h>
+#include <fff.h>
 #include <cmath>
 #include "highspeedFFT.h"
 
