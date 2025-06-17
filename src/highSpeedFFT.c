@@ -2,6 +2,13 @@
 #include "time.h"
 #include <immintrin.h>
 
+// Inlining macro for MSVC and GCC/Clang
+#ifdef _MSC_VER
+  #define ALWAYS_INLINE __forceinline
+#else
+  #define ALWAYS_INLINE __attribute__((always_inline))
+#endif
+
 // SIMD constant macro for butterfly operations
 #define AVX_ONE _mm256_set1_pd(1.0)
 
@@ -10,11 +17,6 @@
   #define FMADD(a,b,c) _mm256_fmadd_pd((a),(b),(c))
   #define FMSUB(a,b,c) _mm256_fmsub_pd((a),(b),(c))
 #else
-  #ifdef _MSC_VER
-    #define ALWAYS_INLINE __forceinline
-  #else
-    #define ALWAYS_INLINE __attribute__((always_inline))
-  #endif
   static inline ALWAYS_INLINE __m256d fmadd_fallback(__m256d a, __m256d b, __m256d c) {
       // a*b + c
       return _mm256_add_pd(_mm256_mul_pd(a,b), c);
@@ -27,13 +29,40 @@
   #define FMSUB(a,b,c) fmsub_fallback((a),(b),(c))
 #endif
 
-// SIMD load/store macros for aligned/unaligned access
+// SSE2 FMA fallbacks for radix-4 (128-bit vectors)
+static inline ALWAYS_INLINE __m128d fmadd_sse2_fallback(__m128d a, __m128d b, __m128d c) {
+    // a*b + c
+    return _mm_add_pd(_mm_mul_pd(a,b), c);
+}
+static inline ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c) {
+    // a*b - c
+    return _mm_sub_pd(_mm_mul_pd(a,b), c);
+}
+#if defined(__FMA__) || defined(USE_FMA)
+  #define FMADD_SSE2(a,b,c) _mm_fmadd_pd((a),(b),(c))
+  #define FMSUB_SSE2(a,b,c) _mm_fmsub_pd((a),(b),(c))
+#else
+  #define FMADD_SSE2(a,b,c) fmadd_sse2_fallback((a),(b),(c))
+  #define FMSUB_SSE2(a,b,c) fmsub_sse2_fallback((a),(b),(c))
+#endif
+
+// SIMD load/store macros
+// AVX2 for radix-2, 7, 8 (256-bit vectors)
 #ifdef USE_ALIGNED_SIMD
   #define LOADU_PD _mm256_load_pd
   #define STOREU_PD _mm256_store_pd
 #else
   #define LOADU_PD _mm256_loadu_pd
   #define STOREU_PD _mm256_storeu_pd
+#endif
+
+// SSE2 for radix-4 (128-bit vectors)
+#ifdef USE_ALIGNED_SIMD
+  #define LOADU_SSE2 _mm_load_pd
+  #define STOREU_SSE2 _mm_store_pd
+#else
+  #define LOADU_SSE2 _mm_loadu_pd
+  #define STOREU_SSE2 _mm_storeu_pd
 #endif
 
 // File-scope scalar constants for radix-7

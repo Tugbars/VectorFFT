@@ -1,5 +1,0 @@
-if(EXISTS "C:/Users/Tugbars/Desktop/highSpeedFFT/build/test/test_mixedRadixFFT[1]_tests.cmake")
-  include("C:/Users/Tugbars/Desktop/highSpeedFFT/build/test/test_mixedRadixFFT[1]_tests.cmake")
-else()
-  add_test(test_mixedRadixFFT_NOT_BUILT test_mixedRadixFFT_NOT_BUILT)
-endif()
