@@ -6,21 +6,23 @@ A high-performance mixed-radix FFT library in C with full support for complex an
 
 ## Features
 
-* **Mixed-Radix DIT** for lengths factorable into small primes (2, 3, 4, 5, 7, 8, 11, 13, etc.)
-* **Bluestein’s Algorithm** for arbitrary (prime) lengths via chirp z-transform
-* **AVX2 SIMD acceleration**:
-
-  * Flattened real/imag arrays for contiguous loads/stores
-  * Unaligned `_mm256_loadu_pd` / `_mm256_storeu_pd` for robustness
-  * Vectorized butterfly loops processing four complex samples at a time
-* **Precomputed tables**:
-
-  * Twiddle lookup tables for common radices (2, 3, 4, 5, 7, 8, 11, 13)
-  * Bluestein chirp sequences up to N = 64
-* **Real ↔ Complex FFTs** optimized via half-complex storage
-* **Minimal memory footprint**: stack & heap buffers, no large lookup tables (>1 KiB)
-* **CMake** build with optional GoogleTest harness
-* **Comprehensive tests**: unit tests (GoogleTest) or standalone `main.c` for correctness and MSE checks
+- **Mixed‑Radix DIT** for lengths factorable into small primes (2, 3, 4, 5, 7, 8, 11, 13, etc.)  
+- **Bluestein’s Algorithm** for arbitrary (prime) lengths via chirp z‑transform  
+- **AVX2 + FMA SIMD acceleration**  
+  - Flattened real/imag arrays for contiguous loads/stores  
+  - Unaligned `_mm256_loadu_pd` / `_mm256_storeu_pd` for robustness  
+  - Vectorized butterfly loops processing **4 complex samples** at a time  
+  - FMA (`_mm256_fmadd_pd` / `_mm256_fmsub_pd`) for fused multiply‑add speed and accuracy  
+- **SSE2‑accelerated radices** (3, 4, 5, via 128‑bit `_mm_loadu_pd` / `_mm_storeu_pd`)  
+  - Fallbacks if no FMA: inlined multiply‑add/sub routines  
+  - Radix‑3,4,5 butterflies in SSE2 for compatibility on older CPUs  
+- **Precomputed tables**  
+  - Twiddle lookup for radices 2, 3, 4, 5, 7, 8, 11, 13  
+  - Bluestein chirp sequences for N ≤ 64  
+- **Real ↔ Complex FFTs** optimized via half‑complex storage  
+- **Minimal footprint** (≈25 KiB code, no tables >1 KiB)  
+- **CMake** build system, optional GoogleTest harness  
+- **Comprehensive tests**: unit tests or standalone `main.c` for correctness & MSE checks  
 
 ---
 
