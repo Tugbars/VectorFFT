@@ -68,6 +68,15 @@ static inline ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __
 // File-scope scalar constants for radix-7
 static const double C1 = 0.62348980185, C2 = -0.22252093395, C3 = -0.9009688679; // cos(51.43°), cos(102.86°), cos(154.29°)
 static const double S1 = 0.78183148246, S2 = 0.97492791218, S3 = 0.43388373911; // sin(51.43°), sin(102.86°), sin(154.29°)
+
+static const double C3_SQRT3BY2 = 0.8660254037844386; // √3/2 for 120° rotation
+
+// File-scope constants for radix-5
+static const double C5_1 = 0.30901699437;  // cos(72°)
+static const double C5_2 = -0.80901699437; // cos(144°)
+static const double S5_1 = 0.95105651629;  // sin(72°)
+static const double S5_2 = 0.58778525229;  // sin(144°)
+
 static const double C8_1 = 0.7071067811865476; // √2/2 for 45° rotation
 
 /**
@@ -929,351 +938,678 @@ static void mixed_radix_dit_rec(fft_data *output_buffer, fft_data *input_buffer,
     }
     else if (radix == 3)
     {
-        /**
-         * @brief Radix-3 decomposition for three-point sub-FFTs.
-         *
-         * Intention: Compute the FFT for data lengths divisible by 3 by splitting into three sub-FFTs,
-         * corresponding to indices n mod 3 = 0, 1, 2, and combining results with twiddle factors.
-         * This extends the DIT strategy for N=3^r or mixed-radix cases.
-         *
-         * Mathematically: The FFT is computed as:
-         *   \( X(k) = X_0(k) + W_N^k \cdot X_1(k) + W_N^{2k} \cdot X_2(k) \),
-         * where \( X_0, X_1, X_2 \) are sub-FFTs of size N/3, and \( W_N^k = e^{-2\pi i k / N} \).
-         * The butterfly operation uses the 120° and 240° roots of unity, with √3/2 for rotations.
-         *
-         * Process:
-         * 1. Divide data into three subproblems of size N/3, adjusting stride.
-         * 2. Recursively compute FFTs for each subproblem.
-         * 3. Combine results using a radix-3 butterfly, applying twiddle factors W_N^k and W_N^{2k}.
-         * 4. For each k, compute sums and differences, apply 120° rotations using √3/2, and store results.
-         *
-         * Optimization:
-         * - Precomputed √3/2 ≈ 0.8660254037844386 avoids runtime trigonometric calculations.
-         * - Twiddle factors are fetched from fft_obj->twiddle, precomputed during initialization.
-         * - Symmetry in outputs (e.g., X_1 and X_2 share computations) reduces operations.
-         *
-         * Transform sign: Affects the rotation direction (forward: negative phase, inverse: positive phase),
-         * applied via transform_sign * √3/2 in the butterfly.
-         */
-        // Step 1: Compute subproblem size and new stride
-        int sub_length = data_length / 3; // Size of each sub-FFT (N/3)
-        new_stride = 3 * stride;          // Stride triples to access every third element
+    /**
+     * @brief Radix-3 decomposition for three-point sub-FFTs with SSE2 vectorization and FMA support.
+     *
+     * Intention: Compute the FFT for data lengths divisible by 3 by splitting into three sub-FFTs,
+     * corresponding to indices n mod 3 = 0, 1, 2, and combining results with twiddle factors.
+     * This extends the DIT strategy for N=3^r or mixed-radix cases, using SSE2 for broader compatibility.
+     *
+     * Mathematically: The FFT is computed as:
+     *   \( X(k) = X_0(k) + W_N^k \cdot X_1(k) + W_N^{2k} \cdot X_2(k) \),
+     * where \( X_0, X_1, X_2 \) are sub-FFTs of size N/3, and \( W_N^k = e^{-2\pi i k / N} \).
+     * The butterfly operation uses the 120° and 240° roots of unity, with √3/2 for rotation.
+     *
+     */
+    // Step 1: Compute subproblem size and new stride
+    int sub_length = data_length / 3; // Size of each sub-FFT (N/3)
+    int new_stride = 3 * stride;      // Stride triples to access every third element
+    int M = sub_length;               // Sub-FFT size for indexing
 
-        // Step 2: Recurse on the three decimated sub-FFTs
-        mixed_radix_dit_rec(output_buffer, input_buffer, fft_obj, transform_sign, sub_length,
-                            new_stride, factor_index + 1); // n mod 3 = 0
-        mixed_radix_dit_rec(output_buffer + sub_length, input_buffer + stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1); // n mod 3 = 1
-        mixed_radix_dit_rec(output_buffer + 2 * sub_length, input_buffer + 2 * stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1); // n mod 3 = 2
+    // Step 2: Recurse on the three decimated sub-FFTs
+    for (int i = 0; i < 3; i++)
+    {
+        mixed_radix_dit_rec(output_buffer + i * sub_length, input_buffer + i * stride, fft_obj,
+                            transform_sign, sub_length, new_stride, factor_index + 1);
+    }
 
-        // Step 3: Perform radix-3 butterfly operations
-        const fft_type sqrt3by2 = (fft_type)0.8660254037844386; // √3/2 for 120° rotation
-        for (int k = 0; k < sub_length; k++)
+    // Step 3: Flatten twiddle factors into contiguous arrays for SSE2
+    double *tw_re_contig = malloc(2 * M * sizeof(double)); // Contiguous real twiddles
+    double *tw_im_contig = malloc(2 * M * sizeof(double)); // Contiguous imag twiddles
+    if (!tw_re_contig || !tw_im_contig)
+    {
+        fprintf(stderr, "Error: Memory allocation failed for twiddle arrays\n");
+        free(tw_re_contig);
+        free(tw_im_contig);
+        exit(EXIT_FAILURE);
+    }
+    if (fft_obj->N - 1 < sub_length - 1 + 2 * (sub_length - 1))
+    {
+        fprintf(stderr, "Error: Twiddle array too small (need %d elements, have %d)\n",
+                sub_length - 1 + 2 * (sub_length - 1), fft_obj->N - 1);
+        free(tw_re_contig);
+        free(tw_im_contig);
+        exit(EXIT_FAILURE);
+    }
+    for (int k = 0; k < M; k++)
+    {
+        int idx = sub_length - 1 + 2 * k; // twiddle[sub_length-1 + n*k] = W_N^{n*k}
+        tw_re_contig[2 * k + 0] = fft_obj->twiddle[idx + 0].re; // W_N^k real
+        tw_im_contig[2 * k + 0] = fft_obj->twiddle[idx + 0].im; // W_N^k imag
+        tw_re_contig[2 * k + 1] = fft_obj->twiddle[idx + 1].re; // W_N^{2k} real
+        tw_im_contig[2 * k + 1] = fft_obj->twiddle[idx + 1].im; // W_N^{2k} imag
+    }
+
+    // Step 4: Flatten output_buffer into contiguous arrays for SSE2
+    double *out_re = malloc(3 * M * sizeof(double)); // Contiguous real outputs
+    double *out_im = malloc(3 * M * sizeof(double)); // Contiguous imag outputs
+    if (!out_re || !out_im)
+    {
+        fprintf(stderr, "Error: Memory allocation failed for output arrays\n");
+        free(tw_re_contig);
+        free(tw_im_contig);
+        free(out_re);
+        free(out_im);
+        exit(EXIT_FAILURE);
+    }
+    for (int lane = 0; lane < 3; lane++)
+    {
+        fft_data *base = output_buffer + lane * M;
+        for (int k = 0; k < M; k++)
         {
-            // Fetch twiddle factors W_N^k and W_N^{2k}
-            int idx1 = sub_length - 1 + 2 * k;            // Index into twiddle array
-            fft_type w1r = fft_obj->twiddle[idx1 + 0].re; // W_N^k real
-            fft_type w1i = fft_obj->twiddle[idx1 + 0].im; // W_N^k imag
-            fft_type w2r = fft_obj->twiddle[idx1 + 1].re; // W_N^{2k} real
-            fft_type w2i = fft_obj->twiddle[idx1 + 1].im; // W_N^{2k} imag
-
-            // Load the three partial FFT results
-            fft_data *X0 = &output_buffer[k];                  // First sub-FFT point
-            fft_data *X1 = &output_buffer[k + sub_length];     // Second sub-FFT point
-            fft_data *X2 = &output_buffer[k + 2 * sub_length]; // Third sub-FFT point
-
-            fft_type a_re = X0->re, a_im = X0->im; // Store first point
-            // Apply twiddle factors to second and third points
-            fft_type b_re = X1->re * w1r - X1->im * w1i; // W_N^k * X_1 real
-            fft_type b_im = X1->im * w1r + X1->re * w1i; // W_N^k * X_1 imag
-            fft_type c_re = X2->re * w2r - X2->im * w2i; // W_N^{2k} * X_2 real
-            fft_type c_im = X2->im * w2r + X2->re * w2i; // W_N^{2k} * X_2 imag
-
-            // Compute the radix-3 butterfly
-            fft_type sum_re = b_re + c_re;  // Sum of twiddled points (real)
-            fft_type sum_im = b_im + c_im;  // Sum of twiddled points (imag)
-            fft_type diff_re = b_re - c_re; // Difference (real)
-            fft_type diff_im = b_im - c_im; // Difference (imag)
-
-            // X_0 = a + (b + c)
-            X0->re = a_re + sum_re; // First output real
-            X0->im = a_im + sum_im; // First output imag
-
-            // X_1 = a - ½(b + c) + i * (sign * (√3/2) * (b - c))
-            fft_type t_re = a_re - (sum_re * (fft_type)0.5);          // Center term real
-            fft_type t_im = a_im - (sum_im * (fft_type)0.5);          // Center term imag
-            fft_type rot_re = diff_im * (transform_sign * sqrt3by2);  // Rotation real
-            fft_type rot_im = -diff_re * (transform_sign * sqrt3by2); // Rotation imag
-            X1->re = t_re + rot_re;                                   // Second output real
-            X1->im = t_im + rot_im;                                   // Second output imag
-
-            // X_2 = a - ½(b + c) - i * (sign * (√3/2) * (b - c))
-            X2->re = t_re - rot_re; // Third output real
-            X2->im = t_im - rot_im; // Third output imag
+            out_re[lane * M + k] = base[k].re;
+            out_im[lane * M + k] = base[k].im;
         }
+    }
+
+    // Step 5: SSE2 vectorized loop for k=0 to sub_length-1
+    __m128d vsign = _mm_set1_pd((double)transform_sign); // Vectorized transform sign
+    __m128d vhalf = _mm_set1_pd(0.5); // Constant for -½(b + c)
+    __m128d vsqrt3by2 = _mm_set1_pd(C3_SQRT3BY2); // √3/2 for rotation
+    int k = 0;
+    for (; k + 1 < M; k += 2)
+    {
+        // Load three sub-FFT points for two k values
+        __m128d a_r = LOADU_SSE2(out_re + k);               // X0[k:k+1] real
+        __m128d a_i = LOADU_SSE2(out_im + k);               // X0[k:k+1] imag
+        __m128d b_r = LOADU_SSE2(out_re + k + M);           // X1[k:k+1] real
+        __m128d b_i = LOADU_SSE2(out_im + k + M);           // X1[k:k+1] imag
+        __m128d c_r = LOADU_SSE2(out_re + k + 2 * M);       // X2[k:k+1] real
+        __m128d c_i = LOADU_SSE2(out_im + k + 2 * M);       // X2[k:k+1] imag
+
+        // Load twiddle factors for two k values
+        int idx = 2 * k; // Base index for W_N^k, W_N^{2k}
+        __m128d w1r = LOADU_SSE2(tw_re_contig + idx + 0); // W_N^k real
+        __m128d w1i = LOADU_SSE2(tw_im_contig + idx + 0); // W_N^k imag
+        __m128d w2r = LOADU_SSE2(tw_re_contig + idx + 1); // W_N^{2k} real
+        __m128d w2i = LOADU_SSE2(tw_im_contig + idx + 1); // W_N^{2k} imag
+
+        // Apply twiddle factors
+        __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i)); // W_N^k * X1 real
+        __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i)); // W_N^k * X1 imag
+        __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i)); // W_N^{2k} * X2 real
+        __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i)); // W_N^{2k} * X2 imag
+
+        // Compute sums and differences
+        __m128d sum_r = _mm_add_pd(b2r, c2r); // b + c real
+        __m128d sum_i = _mm_add_pd(b2i, c2i); // b + c imag
+        __m128d diff_r = _mm_sub_pd(b2r, c2r); // b - c real
+        __m128d diff_i = _mm_sub_pd(b2i, c2i); // b - c imag
+
+        // X_0 = a + (b + c)
+        __m128d x0r = _mm_add_pd(a_r, sum_r); // X(k) real
+        __m128d x0i = _mm_add_pd(a_i, sum_i); // X(k) imag
+        STOREU_SSE2(out_re + k, x0r);
+        STOREU_SSE2(out_im + k, x0i);
+
+        // X_1 = a - ½(b + c) + i * (sign * (√3/2) * (b - c))
+        __m128d t_r = _mm_sub_pd(a_r, _mm_mul_pd(sum_r, vhalf)); // a - ½(b + c) real
+        __m128d t_i = _mm_sub_pd(a_i, _mm_mul_pd(sum_i, vhalf)); // a - ½(b + c) imag
+        __m128d rot_r = _mm_mul_pd(diff_i, _mm_mul_pd(vsign, vsqrt3by2)); // sign * (√3/2) * (b - c) real
+        __m128d rot_i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), diff_r), _mm_mul_pd(vsign, vsqrt3by2)); // -sign * (√3/2) * (b - c) imag
+        __m128d x1r = _mm_add_pd(t_r, rot_r); // X(k + N/3) real
+        __m128d x1i = _mm_add_pd(t_i, rot_i); // X(k + N/3) imag
+        STOREU_SSE2(out_re + k + M, x1r);
+        STOREU_SSE2(out_im + k + M, x1i);
+
+        // X_2 = a - ½(b + c) - i * (sign * (√3/2) * (b - c))
+        __m128d x2r = _mm_sub_pd(t_r, rot_r); // X(k + 2N/3) real
+        __m128d x2i = _mm_sub_pd(t_i, rot_i); // X(k + 2N/3) imag
+        STOREU_SSE2(out_re + k + 2 * M, x2r);
+        STOREU_SSE2(out_im + k + 2 * M, x2i);
+    }
+
+    // Step 6: Scalar tail for remaining k
+    for (; k < sub_length; k++)
+    {
+        int idx = sub_length - 1 + 2 * k;            // Index into twiddle array
+        fft_type w1r = fft_obj->twiddle[idx + 0].re; // W_N^k real
+        fft_type w1i = fft_obj->twiddle[idx + 0].im; // W_N^k imag
+        fft_type w2r = fft_obj->twiddle[idx + 1].re; // W_N^{2k} real
+        fft_type w2i = fft_obj->twiddle[idx + 1].im; // W_N^{2k} imag
+
+        fft_type a_re = out_re[k], a_im = out_im[k];                     // First point
+        fft_type b_re = out_re[k + M] * w1r - out_im[k + M] * w1i;       // W_N^k * X_1 real
+        fft_type b_im = out_im[k + M] * w1r + out_re[k + M] * w1i;       // W_N^k * X_1 imag
+        fft_type c_re = out_re[k + 2 * M] * w2r - out_im[k + 2 * M] * w2i; // W_N^{2k} * X_2 real
+        fft_type c_im = out_im[k + 2 * M] * w2r + out_re[k + 2 * M] * w2i; // W_N^{2k} * X_2 imag
+
+        fft_type sum_re = b_re + c_re;  // Sum of twiddled points (real)
+        fft_type sum_im = b_im + c_im;  // Sum of twiddled points (imag)
+        fft_type diff_re = b_re - c_re; // Difference (real)
+        fft_type diff_im = b_im - c_im; // Difference (imag)
+
+        out_re[k] = a_re + sum_re; // X(k) real
+        out_im[k] = a_im + sum_im; // X(k) imag
+
+        fft_type t_re = a_re - (sum_re * 0.5);          // a - ½(b + c) real
+        fft_type t_im = a_im - (sum_im * 0.5);          // a - ½(b + c) imag
+        fft_type rot_re = diff_im * (transform_sign * C3_SQRT3BY2);  // sign * (√3/2) * (b - c) real
+        fft_type rot_im = -diff_re * (transform_sign * C3_SQRT3BY2); // -sign * (√3/2) * (b - c) imag
+        out_re[k + M] = t_re + rot_re;                      // X(k + N/3) real
+        out_im[k + M] = t_im + rot_im;                      // X(k + N/3) imag
+        out_re[k + 2 * M] = t_re - rot_re;                  // X(k + 2N/3) real
+        out_im[k + 2 * M] = t_im - rot_im;                  // X(k + 2N/3) imag
+    }
+
+    // Step 7: Copy flattened results back to output_buffer
+    for (int lane = 0; lane < 3; lane++)
+    {
+        fft_data *base = output_buffer + lane * M;
+        for (int k = 0; k < M; k++)
+        {
+            base[k].re = out_re[lane * M + k];
+            base[k].im = out_im[lane * M + k];
+        }
+    }
+
+    // Step 8: Clean up allocated memory
+    free(tw_re_contig);
+    free(tw_im_contig);
+    free(out_re);
+    free(out_im);
     }
     else if (radix == 4)
     {
-        /**
-         * @brief Radix-4 decomposition for four-point sub-FFTs.
-         *
-         * Intention: Optimize FFT computation for data lengths divisible by 4 by splitting into
-         * four sub-FFTs, corresponding to indices n mod 4 = 0, 1, 2, 3, and combining results
-         * with twiddle factors. This is highly efficient for N=4^r or mixed-radix cases.
-         *
-         * Mathematically: The FFT is computed as:
-         *   \( X(k) = X_0(k) + W_N^k \cdot X_1(k) + W_N^{2k} \cdot X_2(k) + W_N^{3k} \cdot X_3(k) \),
-         * where \( X_0, X_1, X_2, X_3 \) are sub-FFTs of size N/4, and \( W_N^k = e^{-2\pi i k / N} \).
-         * The radix-4 butterfly uses 90°, 180°, and 270° rotations.
-         *
-         * Process:
-         * 1. Divide data into four subproblems of size N/4, adjusting stride.
-         * 2. Recursively compute FFTs for each subproblem.
-         * 3. For k=0, perform a butterfly without twiddles (simplified operations).
-         * 4. For k>0, apply twiddle factors W_N^k, W_N^{2k}, W_N^{3k}, and compute the butterfly.
-         *
-         * Optimization:
-         * - Handles k=0 separately to avoid unnecessary twiddle multiplications.
-         * - Uses precomputed twiddle factors to minimize trigonometric calculations.
-         * - Exploits symmetry in the butterfly (e.g., 180° rotation is negation).
-         * - Reduces memory accesses by operating in-place.
-         *
-         * Transform sign: Affects the phase of rotations for odd branches (forward: negative,
-         * inverse: positive), applied via transform_sign in the butterfly.
-         */
-        // Step 1: Compute subproblem size and new stride
-        int sub_length = data_length / 4; // Size of each sub-FFT (N/4)
-        new_stride = 4 * stride;          // Stride quadruples to access every fourth element
+    /**
+     * @brief Radix-4 decomposition for four-point sub-FFTs with SSE2 vectorization and FMA support.
+     *
+     * Intention: Optimize FFT computation for data lengths divisible by 4 by splitting into
+     * four sub-FFTs, corresponding to indices n mod 4 = 0, 1, 2, 3, and combining results
+     * with twiddle factors. This is efficient for N=4^r or mixed-radix cases, using SSE2 for
+     * broader compatibility compared to AVX2.
+     *
+     * Mathematically: The FFT is computed as:
+     *   \( X(k) = X_0(k) + W_N^k \cdot X_1(k) + W_N^{2k} \cdot X_2(k) + W_N^{3k} \cdot X_3(k) \),
+     * where \( X_0, X_1, X_2, X_3 \) are sub-FFTs of size N/4, and \( W_N^k = e^{-2\pi i k / N} \).
+     * The radix-4 butterfly uses 90°, 180°, and 270° rotations.
+     *
+     */
+    // Step 1: Compute subproblem size and new stride
+    int sub_length = data_length / 4; // Size of each sub-FFT (N/4)
+    int new_stride = 4 * stride;      // Stride quadruples to access every fourth element
 
-        // Step 2: Recurse on the four decimated sub-FFTs
-        mixed_radix_dit_rec(output_buffer, input_buffer, fft_obj, transform_sign, sub_length,
-                            new_stride, factor_index + 1); // n mod 4 = 0
-        mixed_radix_dit_rec(output_buffer + sub_length, input_buffer + stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1); // n mod 4 = 1
-        mixed_radix_dit_rec(output_buffer + 2 * sub_length, input_buffer + 2 * stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1); // n mod 4 = 2
-        mixed_radix_dit_rec(output_buffer + 3 * sub_length, input_buffer + 3 * stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1); // n mod 4 = 3
+    // Step 2: Recurse on the four decimated sub-FFTs
+    mixed_radix_dit_rec(output_buffer, input_buffer, fft_obj, transform_sign, sub_length,
+                        new_stride, factor_index + 1); // n mod 4 = 0
+    mixed_radix_dit_rec(output_buffer + sub_length, input_buffer + stride, fft_obj,
+                        transform_sign, sub_length, new_stride, factor_index + 1); // n mod 4 = 1
+    mixed_radix_dit_rec(output_buffer + 2 * sub_length, input_buffer + 2 * stride, fft_obj,
+                        transform_sign, sub_length, new_stride, factor_index + 1); // n mod 4 = 2
+    mixed_radix_dit_rec(output_buffer + 3 * sub_length, input_buffer + 3 * stride, fft_obj,
+                        transform_sign, sub_length, new_stride, factor_index + 1); // n mod 4 = 3
 
-        // Step 3: Handle k=0 separately (no twiddles needed)
+    // Step 3: Flatten twiddle factors into contiguous arrays for SSE2
+    double *tw_re_contig = malloc(3 * sub_length * sizeof(double)); // Contiguous real twiddles
+    double *tw_im_contig = malloc(3 * sub_length * sizeof(double)); // Contiguous imag twiddles
+    if (!tw_re_contig || !tw_im_contig)
+    {
+        fprintf(stderr, "Error: Memory allocation failed for twiddle arrays\n");
+        free(tw_re_contig);
+        free(tw_im_contig);
+        exit(EXIT_FAILURE);
+    }
+    if (fft_obj->N - 1 < sub_length - 1 + 3 * (sub_length - 1))
+    {
+        fprintf(stderr, "Error: Twiddle array too small (need %d elements, have %d)\n",
+                sub_length - 1 + 3 * (sub_length - 1), fft_obj->N - 1);
+        free(tw_re_contig);
+        free(tw_im_contig);
+        exit(EXIT_FAILURE);
+    }
+    for (int k = 0; k < sub_length; k++)
+    {
+        int idx = (sub_length - 1) + 3 * k; // Base index for W_N^k, W_N^{2k}, W_N^{3k}
+        tw_re_contig[3 * k + 0] = fft_obj->twiddle[idx + 0].re; // W_N^k real
+        tw_im_contig[3 * k + 0] = fft_obj->twiddle[idx + 0].im; // W_N^k imag
+        tw_re_contig[3 * k + 1] = fft_obj->twiddle[idx + 1].re; // W_N^{2k} real
+        tw_im_contig[3 * k + 1] = fft_obj->twiddle[idx + 1].im; // W_N^{2k} imag
+        tw_re_contig[3 * k + 2] = fft_obj->twiddle[idx + 2].re; // W_N^{3k} real
+        tw_im_contig[3 * k + 2] = fft_obj->twiddle[idx + 2].im; // W_N^{3k} imag
+    }
+
+    // Step 4: Flatten output_buffer into contiguous arrays for SSE2
+    double *out_re = malloc(4 * sub_length * sizeof(double)); // Contiguous real outputs
+    double *out_im = malloc(4 * sub_length * sizeof(double)); // Contiguous imag outputs
+    if (!out_re || !out_im)
+    {
+        fprintf(stderr, "Error: Memory allocation failed for output arrays\n");
+        free(tw_re_contig);
+        free(tw_im_contig);
+        free(out_re);
+        free(out_im);
+        exit(EXIT_FAILURE);
+    }
+    for (int lane = 0; lane < 4; lane++)
+    {
+        fft_data *base = output_buffer + lane * sub_length;
+        for (int k = 0; k < sub_length; k++)
         {
-            fft_data *X0 = &output_buffer[0];              // First sub-FFT point
-            fft_data *X1 = &output_buffer[sub_length];     // Second sub-FFT point
-            fft_data *X2 = &output_buffer[2 * sub_length]; // Third sub-FFT point
-            fft_data *X3 = &output_buffer[3 * sub_length]; // Fourth sub-FFT point
-
-            // Simple radix-4 butterfly without twiddles
-            fft_type a_re = X0->re + X2->re;                    // Sum of first and third (real)
-            fft_type a_im = X0->im + X2->im;                    // Sum of first and third (imag)
-            fft_type b_re = X0->re - X2->re;                    // Difference of first and third (real)
-            fft_type b_im = X0->im - X2->im;                    // Difference of first and third (imag)
-            fft_type c_re = X1->re + X3->re;                    // Sum of second and fourth (real)
-            fft_type c_im = X1->im + X3->im;                    // Sum of second and fourth (imag)
-            fft_type d_re = transform_sign * (X1->re - X3->re); // Rotated difference (real, 90°)
-            fft_type d_im = transform_sign * (X1->im - X3->im); // Rotated difference (imag, 90°)
-
-            X0->re = a_re + c_re; // X(0) real
-            X0->im = a_im + c_im; // X(0) imag
-            X2->re = a_re - c_re; // X(2) real
-            X2->im = a_im - c_im; // X(2) imag
-            X1->re = b_re + d_im; // X(1) real
-            X1->im = b_im - d_re; // X(1) imag
-            X3->re = b_re - d_im; // X(3) real
-            X3->im = b_im + d_re; // X(3) imag
+            out_re[lane * sub_length + k] = base[k].re;
+            out_im[lane * sub_length + k] = base[k].im;
         }
+    }
 
-        // Step 4: Handle k = 1 to sub_length-1 with twiddle factors
-        for (int k = 1; k < sub_length; k++)
+    // Step 5: Handle k=0 separately (no twiddles needed)
+    {
+        fft_data *X0 = &output_buffer[0];              // First sub-FFT point
+        fft_data *X1 = &output_buffer[sub_length];     // Second sub-FFT point
+        fft_data *X2 = &output_buffer[2 * sub_length]; // Third sub-FFT point
+        fft_data *X3 = &output_buffer[3 * sub_length]; // Fourth sub-FFT point
+
+        fft_type a_re = X0->re + X2->re;                    // Sum of first and third (real)
+        fft_type a_im = X0->im + X2->im;                    // Sum of first and third (imag)
+        fft_type b_re = X0->re - X2->re;                    // Difference of first and third (real)
+        fft_type b_im = X0->im - X2->im;                    // Difference of first and third (imag)
+        fft_type c_re = X1->re + X3->re;                    // Sum of second and fourth (real)
+        fft_type c_im = X1->im + X3->im;                    // Sum of second and fourth (imag)
+        fft_type d_re = transform_sign * (X1->re - X3->re); // Rotated difference (real, 90°)
+        fft_type d_im = transform_sign * (X1->im - X3->im); // Rotated difference (imag, 90°)
+
+        X0->re = a_re + c_re; // X(0) real
+        X0->im = a_im + c_im; // X(0) imag
+        X2->re = a_re - c_re; // X(2) real
+        X2->im = a_im - c_im; // X(2) imag
+        X1->re = b_re + d_im; // X(1) real
+        X1->im = b_im - d_re; // X(1) imag
+        X3->re = b_re - d_im; // X(3) real
+        X3->im = b_im + d_re; // X(3) imag
+    }
+
+    // Step 6: SSE2 vectorized loop for k=1 to sub_length-1 with twiddle factors
+    __m128d vsign = _mm_set1_pd((double)transform_sign); // Vectorized transform sign
+    int k = 1;
+    for (; k + 1 < sub_length; k += 2)
+    {
+        // Load four sub-FFT points for two k values
+        __m128d a_r = LOADU_SSE2(out_re + k);               // X0[k:k+1] real
+        __m128d a_i = LOADU_SSE2(out_im + k);               // X0[k:k+1] imag
+        __m128d b_r = LOADU_SSE2(out_re + k + sub_length);  // X1[k:k+1] real
+        __m128d b_i = LOADU_SSE2(out_im + k + sub_length);  // X1[k:k+1] imag
+        __m128d c_r = LOADU_SSE2(out_re + k + 2 * sub_length); // X2[k:k+1] real
+        __m128d c_i = LOADU_SSE2(out_im + k + 2 * sub_length); // X2[k:k+1] imag
+        __m128d d_r = LOADU_SSE2(out_re + k + 3 * sub_length); // X3[k:k+1] real
+        __m128d d_i = LOADU_SSE2(out_im + k + 3 * sub_length); // X3[k:k+1] imag
+
+        // Load twiddle factors for two k values
+        int idx = 3 * k; // Base index for W_N^k, W_N^{2k}, W_N^{3k}
+        __m128d w1r = LOADU_SSE2(tw_re_contig + idx + 0); // W_N^k real
+        __m128d w1i = LOADU_SSE2(tw_im_contig + idx + 0); // W_N^k imag
+        __m128d w2r = LOADU_SSE2(tw_re_contig + idx + 1); // W_N^{2k} real
+        __m128d w2i = LOADU_SSE2(tw_im_contig + idx + 1); // W_N^{2k} imag
+        __m128d w3r = LOADU_SSE2(tw_re_contig + idx + 2); // W_N^{3k} real
+        __m128d w3i = LOADU_SSE2(tw_im_contig + idx + 2); // W_N^{3k} imag
+
+        // Apply twiddle factors to X1, X2, X3
+        __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i)); // W_N^k * X1 real
+        __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i)); // W_N^k * X1 imag
+        __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i)); // W_N^{2k} * X2 real
+        __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i)); // W_N^{2k} * X2 imag
+        __m128d d2r = FMSUB_SSE2(d_r, w3r, _mm_mul_pd(d_i, w3i)); // W_N^{3k} * X3 real
+        __m128d d2i = FMADD_SSE2(d_i, w3r, _mm_mul_pd(d_r, w3i)); // W_N^{3k} * X3 imag
+
+        // Radix-4 butterfly
+        __m128d a2r = _mm_add_pd(a_r, c2r); // X0 + W_N^{2k} * X2 real
+        __m128d a2i = _mm_add_pd(a_i, c2i); // X0 + W_N^{2k} * X2 imag
+        __m128d e_r = _mm_sub_pd(a_r, c2r); // X0 - W_N^{2k} * X2 real
+        __m128d e_i = _mm_sub_pd(a_i, c2i); // X0 - W_N^{2k} * X2 imag
+        __m128d f_r = _mm_add_pd(b2r, d2r); // W_N^k * X1 + W_N^{3k} * X3 real
+        __m128d f_i = _mm_add_pd(b2i, d2i); // W_N^k * X1 + W_N^{3k} * X3 imag
+        __m128d g_r = _mm_mul_pd(_mm_sub_pd(b2r, d2r), vsign); // (W_N^k * X1 - W_N^{3k} * X3) * sign real
+        __m128d g_i = _mm_mul_pd(_mm_sub_pd(b2i, d2i), vsign); // (W_N^k * X1 - W_N^{3k} * X3) * sign imag
+
+        // Compute outputs
+        STOREU_SSE2(out_re + k, _mm_add_pd(a2r, f_r)); // X(k) real
+        STOREU_SSE2(out_im + k, _mm_add_pd(a2i, f_i)); // X(k) imag
+        STOREU_SSE2(out_re + k + 2 * sub_length, _mm_sub_pd(a2r, f_r)); // X(k + N/4) real
+        STOREU_SSE2(out_im + k + 2 * sub_length, _mm_sub_pd(a2i, f_i)); // X(k + N/4) imag
+        STOREU_SSE2(out_re + k + sub_length, _mm_add_pd(e_r, g_i)); // X(k + N/2) real
+        STOREU_SSE2(out_im + k + sub_length, _mm_sub_pd(e_i, g_r)); // X(k + N/2) imag
+        STOREU_SSE2(out_re + k + 3 * sub_length, _mm_sub_pd(e_r, g_i)); // X(k + 3N/4) real
+        STOREU_SSE2(out_im + k + 3 * sub_length, _mm_add_pd(e_i, g_r)); // X(k + 3N/4) imag
+    }
+
+    // Step 7: Scalar tail for remaining k
+    for (; k < sub_length; k++)
+    {
+        int idx = (sub_length - 1) + 3 * k;          // Index into twiddle array
+        fft_type w1r = fft_obj->twiddle[idx + 0].re; // W_N^k real
+        fft_type w1i = fft_obj->twiddle[idx + 0].im; // W_N^k imag
+        fft_type w2r = fft_obj->twiddle[idx + 1].re; // W_N^{2k} real
+        fft_type w2i = fft_obj->twiddle[idx + 1].im; // W_N^{2k} imag
+        fft_type w3r = fft_obj->twiddle[idx + 2].re; // W_N^{3k} real
+        fft_type w3i = fft_obj->twiddle[idx + 2].im; // W_N^{3k} imag
+
+        // Load the four sub-FFT points
+        fft_data *X0 = &output_buffer[k];                  // First point
+        fft_data *X1 = &output_buffer[k + sub_length];     // Second point
+        fft_data *X2 = &output_buffer[k + 2 * sub_length]; // Third point
+        fft_data *X3 = &output_buffer[k + 3 * sub_length]; // Fourth point
+
+        // Apply twiddle factors to the "odd" branches
+        fft_type b_re = X1->re * w1r - X1->im * w1i; // W_N^k * X_1 real
+        fft_type b_im = X1->im * w1r + X1->re * w1i; // W_N^k * X_1 imag
+        fft_type c_re = X2->re * w2r - X2->im * w2i; // W_N^{2k} * X_2 real
+        fft_type c_im = X2->im * w2r + X2->re * w2i; // W_N^{2k} * X_2 imag
+        fft_type d_re = X3->re * w3r - X3->im * w3i; // W_N^{3k} * X_3 real
+        fft_type d_im = X3->im * w3r + X3->re * w3i; // W_N^{3k} * X_3 imag
+
+        // Radix-4 butterfly on (X0, b, c, d)
+        fft_type a_re = X0->re + c_re;                  // Sum with third point (real)
+        fft_type a_im = X0->im + c_im;                  // Sum with third point (imag)
+        fft_type e_re = X0->re - c_re;                  // Difference with third point (real)
+        fft_type e_im = X0->im - c_im;                  // Difference with third point (imag)
+        fft_type f_re = b_re + d_re;                    // Sum of twiddled second and fourth (real)
+        fft_type f_im = b_im + d_im;                    // Sum of twiddled second and fourth (imag)
+        fft_type g_re = transform_sign * (b_re - d_re); // Rotated difference (real)
+        fft_type g_im = transform_sign * (b_im - d_im); // Rotated difference (imag)
+
+        // Store results
+        X0->re = a_re + f_re; // X(k) real
+        X0->im = a_im + f_im; // X(k) imag
+        X2->re = a_re - f_re; // X(k + N/4) real
+        X2->im = a_im - f_im; // X(k + N/4) imag
+        X1->re = e_re + g_im; // X(k + N/2) real
+        X1->im = e_im - g_re; // X(k + N/2) imag
+        X3->re = e_re - g_im; // X(k + 3N/4) real
+        X3->im = e_im + g_re; // X(k + 3N/4) imag
+    }
+
+    // Step 8: Copy flattened results back to output_buffer
+    for (int lane = 0; lane < 4; lane++)
+    {
+        fft_data *base = output_buffer + lane * sub_length;
+        for (int k = 0; k < sub_length; k++)
         {
-            int idx = (sub_length - 1) + 3 * k;          // Index into twiddle array
-            fft_type w1r = fft_obj->twiddle[idx + 0].re; // W_N^k real
-            fft_type w1i = fft_obj->twiddle[idx + 0].im; // W_N^k imag
-            fft_type w2r = fft_obj->twiddle[idx + 1].re; // W_N^{2k} real
-            fft_type w2i = fft_obj->twiddle[idx + 1].im; // W_N^{2k} imag
-            fft_type w3r = fft_obj->twiddle[idx + 2].re; // W_N^{3k} real
-            fft_type w3i = fft_obj->twiddle[idx + 2].im; // W_N^{3k} imag
-
-            // Load the four sub-FFT points
-            fft_data *X0 = &output_buffer[k];                  // First point
-            fft_data *X1 = &output_buffer[k + sub_length];     // Second point
-            fft_data *X2 = &output_buffer[k + 2 * sub_length]; // Third point
-            fft_data *X3 = &output_buffer[k + 3 * sub_length]; // Fourth point
-
-            // Apply twiddle factors to the "odd" branches
-            fft_type b_re = X1->re * w1r - X1->im * w1i; // W_N^k * X_1 real
-            fft_type b_im = X1->im * w1r + X1->re * w1i; // W_N^k * X_1 imag
-            fft_type c_re = X2->re * w2r - X2->im * w2i; // W_N^{2k} * X_2 real
-            fft_type c_im = X2->im * w2r + X2->re * w2i; // W_N^{2k} * X_2 imag
-            fft_type d_re = X3->re * w3r - X3->im * w3i; // W_N^{3k} * X_3 real
-            fft_type d_im = X3->im * w3r + X3->re * w3i; // W_N^{3k} * X_3 imag
-
-            // Radix-4 butterfly on (X0, b, c, d)
-            fft_type a_re = X0->re + c_re;                  // Sum with third point (real)
-            fft_type a_im = X0->im + c_im;                  // Sum with third point (imag)
-            fft_type e_re = X0->re - c_re;                  // Difference with third point (real)
-            fft_type e_im = X0->im - c_im;                  // Difference with third point (imag)
-            fft_type f_re = b_re + d_re;                    // Sum of twiddled second and fourth (real)
-            fft_type f_im = b_im + d_im;                    // Sum of twiddled second and fourth (imag)
-            fft_type g_re = transform_sign * (b_re - d_re); // Rotated difference (real)
-            fft_type g_im = transform_sign * (b_im - d_im); // Rotated difference (imag)
-
-            // Store results
-            X0->re = a_re + f_re; // X(k) real
-            X0->im = a_im + f_im; // X(k) imag
-            X2->re = a_re - f_re; // X(k + N/4) real
-            X2->im = a_im - f_im; // X(k + N/4) imag
-            X1->re = e_re + g_im; // X(k + N/2) real
-            X1->im = e_im - g_re; // X(k + N/2) imag
-            X3->re = e_re - g_im; // X(k + 3N/4) real
-            X3->im = e_im + g_re; // X(k + 3N/4) imag
+            base[k].re = out_re[lane * sub_length + k];
+            base[k].im = out_im[lane * sub_length + k];
         }
+    }
+
+    // Step 9: Clean up allocated memory
+    free(tw_re_contig);
+    free(tw_im_contig);
+    free(out_re);
+    free(out_im);
     }
     else if (radix == 5)
     {
-        /**
-         * @brief Radix-5 decomposition for five-point sub-FFTs.
-         *
-         * Intention: Compute the FFT for data lengths divisible by 5 by splitting into five sub-FFTs,
-         * corresponding to indices n mod 5 = 0, 1, 2, 3, 4, and combining results with twiddle factors.
-         * This supports N=5^r or mixed-radix cases.
-         *
-         * Mathematically: The FFT is computed as:
-         *   \( X(k) = X_0(k) + W_N^k \cdot X_1(k) + W_N^{2k} \cdot X_2(k) + W_N^{3k} \cdot X_3(k) + W_N^{4k} \cdot X_4(k) \),
-         * where \( X_0, ..., X_4 \) are sub-FFTs of size N/5, and \( W_N^k = e^{-2\pi i k / N} \).
-         * The radix-5 butterfly uses rotations at 72°, 144°, 216°, and 288°.
-         *
-         * Process:
-         * 1. Divide data into five subproblems of size N/5, adjusting stride.
-         * 2. Recursively compute FFTs for each subproblem.
-         * 3. For k=0, perform a butterfly without twiddles using precomputed cos/sin constants.
-         * 4. For k>0, apply twiddle factors W_N^k to W_N^{4k}, and compute the butterfly.
-         *
-         * Optimization:
-         * - Precomputed constants for cos/sin(72°, 144°) avoid runtime trigonometric calls.
-         * - Symmetry in outputs (e.g., X_1/X_4, X_2/X_3 are conjugates) reduces computations.
-         * - Separate k=0 case avoids unnecessary twiddle multiplications.
-         *
-         * Transform sign: Adjusts the rotation signs for forward/inverse transforms, applied in the
-         * butterfly computations.
-         */
-        int sub_length = data_length / 5; // Size of each sub-FFT (N/5)
-        new_stride = 5 * stride;          // Stride increases fivefold
+    /**
+     * @brief Radix-5 decomposition for five-point sub-FFTs with SSE2 vectorization and FMA support.
+     *
+     * Intention: Compute the FFT for data lengths divisible by 5 by splitting into five sub-FFTs,
+     * corresponding to indices n mod 5 = 0, 1, 2, 3, 4, and combining results with twiddle factors.
+     * This supports N=5^r or mixed-radix cases, using SSE2 for broader compatibility.
+     *
+     * Mathematically: The FFT is computed as:
+     *   \( X(k) = X_0(k) + W_N^k \cdot X_1(k) + W_N^{2k} \cdot X_2(k) + W_N^{3k} \cdot X_3(k) + W_N^{4k} \cdot X_4(k) \),
+     * where \( X_0, ..., X_4 \) are sub-FFTs of size N/5, and \( W_N^k = e^{-2\pi i k / N} \).
+     * The radix-5 butterfly uses rotations at 72°, 144°, 216°, and 288°.
+     *
+     */
+    int sub_length = data_length / 5; // Size of each sub-FFT (N/5)
+    int new_stride = 5 * stride;      // Stride increases fivefold
+    int M = sub_length;               // Sub-FFT size for indexing
 
-        // Step 1: Recurse into each of the 5 decimated sub-FFTs
-        mixed_radix_dit_rec(output_buffer, input_buffer, fft_obj, transform_sign, sub_length,
-                            new_stride, factor_index + 1); // n mod 5 = 0
-        mixed_radix_dit_rec(output_buffer + sub_length, input_buffer + stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1); // n mod 5 = 1
-        mixed_radix_dit_rec(output_buffer + 2 * sub_length, input_buffer + 2 * stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1); // n mod 5 = 2
-        mixed_radix_dit_rec(output_buffer + 3 * sub_length, input_buffer + 3 * stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1); // n mod 5 = 3
-        mixed_radix_dit_rec(output_buffer + 4 * sub_length, input_buffer + 4 * stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1); // n mod 5 = 4
+    // Step 1: Recurse into each of the 5 decimated sub-FFTs
+    for (int i = 0; i < 5; i++)
+    {
+        mixed_radix_dit_rec(output_buffer + i * sub_length, input_buffer + i * stride, fft_obj,
+                            transform_sign, sub_length, new_stride, factor_index + 1);
+    }
 
-        // Constants for radix-5
-        const fft_type c1 = 0.30901699437;  // cos(72°)
-        const fft_type c2 = -0.80901699437; // cos(144°)
-        const fft_type s1 = 0.95105651629;  // sin(72°)
-        const fft_type s2 = 0.58778525229;  // sin(144°)
-
-        // Step 2: k = 0 (no twiddle multiplications)
+    // Step 2: Flatten twiddle factors into contiguous arrays for SSE2
+    double *tw_re_contig = malloc(4 * M * sizeof(double)); // Contiguous real twiddles
+    double *tw_im_contig = malloc(4 * M * sizeof(double)); // Contiguous imag twiddles
+    if (!tw_re_contig || !tw_im_contig)
+    {
+        fprintf(stderr, "Error: Memory allocation failed for twiddle arrays\n");
+        free(tw_re_contig);
+        free(tw_im_contig);
+        exit(EXIT_FAILURE);
+    }
+    if (fft_obj->N - 1 < sub_length - 1 + 4 * (sub_length - 1))
+    {
+        fprintf(stderr, "Error: Twiddle array too small (need %d elements, have %d)\n",
+                sub_length - 1 + 4 * (sub_length - 1), fft_obj->N - 1);
+        free(tw_re_contig);
+        free(tw_im_contig);
+        exit(EXIT_FAILURE);
+    }
+    for (int k = 0; k < M; k++)
+    {
+        int idx = (sub_length - 1) + 4 * k; // twiddle[sub_length-1 + n*k] = W_N^{n*k}
+        for (int n = 0; n < 4; n++)
         {
-            fft_data *X0 = &output_buffer[0];              // First sub-FFT point
-            fft_data *X1 = &output_buffer[sub_length];     // Second sub-FFT point
-            fft_data *X2 = &output_buffer[2 * sub_length]; // Third sub-FFT point
-            fft_data *X3 = &output_buffer[3 * sub_length]; // Fourth sub-FFT point
-            fft_data *X4 = &output_buffer[4 * sub_length]; // Fifth sub-FFT point
-
-            fft_type a_re = X0->re, a_im = X0->im; // First point
-            fft_type b_re = X1->re, b_im = X1->im; // Second point
-            fft_type c_re = X2->re, c_im = X2->im; // Third point
-            fft_type d_re = X3->re, d_im = X3->im; // Fourth point
-            fft_type e_re = X4->re, e_im = X4->im; // Fifth point
-
-            // X0 = a + b + c + d + e
-            X0->re = a_re + b_re + c_re + d_re + e_re; // Sum all points (real)
-            X0->im = a_im + b_im + c_im + d_im + e_im; // Sum all points (imag)
-
-            // X1 = a + c1*(b+e) + c2*(c+d) + i*transform_sign*( s1*(b-e) + s2*(c-d) )
-            X1->re = a_re + c1 * (b_re + e_re) + c2 * (c_re + d_re) +
-                     transform_sign * (s1 * (b_im - e_im) + s2 * (c_im - d_im)); // X1 real
-            X1->im = a_im + c1 * (b_im + e_im) + c2 * (c_im + d_im) -
-                     transform_sign * (s1 * (b_re - e_re) + s2 * (c_re - d_re)); // X1 imag
-
-            // X4 = a + c1*(b+e) + c2*(c+d) - i*transform_sign*( s1*(b-e) + s2*(c-d) )
-            X4->re = a_re + c1 * (b_re + e_re) + c2 * (c_re + d_re) -
-                     transform_sign * (s1 * (b_im - e_im) + s2 * (c_im - d_im)); // X4 real
-            X4->im = a_im + c1 * (b_im + e_im) + c2 * (c_im + d_im) +
-                     transform_sign * (s1 * (b_re - e_re) + s2 * (c_re - d_re)); // X4 imag
-
-            // X2 = a + c2*(b+e) + c1*(c+d) + i*transform_sign*( s2*(b-e) - s1*(c-d) )
-            X2->re = a_re + c2 * (b_re + e_re) + c1 * (c_re + d_re) +
-                     transform_sign * (s2 * (b_im - e_im) - s1 * (c_im - d_im)); // X2 real
-            X2->im = a_im + c2 * (b_im + e_im) + c1 * (c_im + d_im) -
-                     transform_sign * (s2 * (b_re - e_re) - s1 * (c_re - d_re)); // X2 imag
-
-            // X3 = a + c2*(b+e) + c1*(c+d) - i*transform_sign*( s2*(b-e) - s1*(c-d) )
-            X3->re = a_re + c2 * (b_re + e_re) + c1 * (c_re + d_re) -
-                     transform_sign * (s2 * (b_im - e_im) - s1 * (c_im - d_im)); // X3 real
-            X3->im = a_im + c2 * (b_im + e_im) + c1 * (c_im + d_im) +
-                     transform_sign * (s2 * (b_re - e_re) - s1 * (c_re - d_re)); // X3 imag
-        }
-
-        // Step 3: k = 1 to sub_length-1: Apply twiddles and perform butterfly
-        for (int k = 1; k < sub_length; k++)
-        {
-            int idx = (sub_length - 1) + 4 * k;          // Index into twiddle array
-            fft_type w1r = fft_obj->twiddle[idx + 0].re; // W_N^k real
-            fft_type w1i = fft_obj->twiddle[idx + 0].im; // W_N^k imag
-            fft_type w2r = fft_obj->twiddle[idx + 1].re; // W_N^{2k} real
-            fft_type w2i = fft_obj->twiddle[idx + 1].im; // W_N^{2k} imag
-            fft_type w3r = fft_obj->twiddle[idx + 2].re; // W_N^{3k} real
-            fft_type w3i = fft_obj->twiddle[idx + 2].im; // W_N^{3k} imag
-            fft_type w4r = fft_obj->twiddle[idx + 3].re; // W_N^{4k} real
-            fft_type w4i = fft_obj->twiddle[idx + 3].im; // W_N^{4k} imag
-
-            fft_data *X0 = &output_buffer[k];                  // First point
-            fft_data *X1 = &output_buffer[k + sub_length];     // Second point
-            fft_data *X2 = &output_buffer[k + 2 * sub_length]; // Third point
-            fft_data *X3 = &output_buffer[k + 3 * sub_length]; // Fourth point
-            fft_data *X4 = &output_buffer[k + 4 * sub_length]; // Fifth point
-
-            // Apply twiddle factors
-            fft_type a_re = X0->re, a_im = X0->im;       // First point
-            fft_type b_re = X1->re * w1r - X1->im * w1i; // W_N^k * X_1 real
-            fft_type b_im = X1->im * w1r + X1->re * w1i; // W_N^k * X_1 imag
-            fft_type c_re = X2->re * w2r - X2->im * w2i; // W_N^{2k} * X_2 real
-            fft_type c_im = X2->im * w2r + X2->re * w2i; // W_N^{2k} * X_2 imag
-            fft_type d_re = X3->re * w3r - X3->im * w3i; // W_N^{3k} * X_3 real
-            fft_type d_im = X3->im * w3r + X3->re * w3i; // W_N^{3k} * X_3 imag
-            fft_type e_re = X4->re * w4r - X4->im * w4i; // W_N^{4k} * X_4 real
-            fft_type e_im = X4->im * w4r + X4->re * w4i; // W_N^{4k} * X_4 imag
-
-            // Perform the same five-way butterfly as k=0
-            X0->re = a_re + b_re + c_re + d_re + e_re; // X(k) real
-            X0->im = a_im + b_im + c_im + d_im + e_im; // X(k) imag
-            X1->re = a_re + c1 * (b_re + e_re) + c2 * (c_re + d_re) +
-                     transform_sign * (s1 * (b_im - e_im) + s2 * (c_im - d_im)); // X(k + N/5) real
-            X1->im = a_im + c1 * (b_im + e_im) + c2 * (c_im + d_im) -
-                     transform_sign * (s1 * (b_re - e_re) + s2 * (c_re - d_re)); // X(k + N/5) imag
-            X4->re = a_re + c1 * (b_re + e_re) + c2 * (c_re + d_re) -
-                     transform_sign * (s1 * (b_im - e_im) + s2 * (c_im - d_im)); // X(k + 4N/5) real
-            X4->im = a_im + c1 * (b_im + e_im) + c2 * (c_im + d_im) +
-                     transform_sign * (s1 * (b_re - e_re) + s2 * (c_re - d_re)); // X(k + 4N/5) imag
-            X2->re = a_re + c2 * (b_re + e_re) + c1 * (c_re + d_re) +
-                     transform_sign * (s2 * (b_im - e_im) - s1 * (c_im - d_im)); // X(k + 2N/5) real
-            X2->im = a_im + c2 * (b_im + e_im) + c1 * (c_im + d_im) -
-                     transform_sign * (s2 * (b_re - e_re) - s1 * (c_re - d_re)); // X(k + 2N/5) imag
-            X3->re = a_re + c2 * (b_re + e_re) + c1 * (c_re + d_re) -
-                     transform_sign * (s2 * (b_im - e_im) - s1 * (c_im - d_im)); // X(k + 3N/5) real
-            X3->im = a_im + c2 * (b_im + e_im) + c1 * (c_im + d_im) +
-                     transform_sign * (s2 * (b_re - e_re) - s1 * (c_re - d_re)); // X(k + 3N/5) imag
+            tw_re_contig[4 * k + n] = fft_obj->twiddle[idx + n].re; // W_N^{n*k} real
+            tw_im_contig[4 * k + n] = fft_obj->twiddle[idx + n].im; // W_N^{n*k} imag
         }
     }
+
+    // Step 3: Flatten output_buffer into contiguous arrays for SSE2
+    double *out_re = malloc(5 * M * sizeof(double)); // Contiguous real outputs
+    double *out_im = malloc(5 * M * sizeof(double)); // Contiguous imag outputs
+    if (!out_re || !out_im)
+    {
+        fprintf(stderr, "Error: Memory allocation failed for output arrays\n");
+        free(tw_re_contig);
+        free(tw_im_contig);
+        free(out_re);
+        free(out_im);
+        exit(EXIT_FAILURE);
+    }
+    for (int lane = 0; lane < 5; lane++)
+    {
+        fft_data *base = output_buffer + lane * M;
+        for (int k = 0; k < M; k++)
+        {
+            out_re[lane * M + k] = base[k].re;
+            out_im[lane * M + k] = base[k].im;
+        }
+    }
+
+    // Step 4: k=0 (no twiddle multiplications)
+    {
+        fft_data *X0 = &output_buffer[0];              // First sub-FFT point
+        fft_data *X1 = &output_buffer[sub_length];     // Second sub-FFT point
+        fft_data *X2 = &output_buffer[2 * sub_length]; // Third sub-FFT point
+        fft_data *X3 = &output_buffer[3 * sub_length]; // Fourth sub-FFT point
+        fft_data *X4 = &output_buffer[4 * sub_length]; // Fifth sub-FFT point
+
+        fft_type a_re = X0->re, a_im = X0->im; // First point
+        fft_type b_re = X1->re, b_im = X1->im; // Second point
+        fft_type c_re = X2->re, c_im = X2->im; // Third point
+        fft_type d_re = X3->re, d_im = X3->im; // Fourth point
+        fft_type e_re = X4->re, e_im = X4->im; // Fifth point
+
+        // X0 = a + b + c + d + e
+        X0->re = a_re + b_re + c_re + d_re + e_re; // Sum all points (real)
+        X0->im = a_im + b_im + c_im + d_im + e_im; // Sum all points (imag)
+
+        // X1 = a + c1*(b+e) + c2*(c+d) + i*transform_sign*( s1*(b-e) + s2*(c-d) )
+        X1->re = a_re + C5_1 * (b_re + e_re) + C5_2 * (c_re + d_re) +
+                 transform_sign * (S5_1 * (b_im - e_im) + S5_2 * (c_im - d_im)); // X1 real
+        X1->im = a_im + C5_1 * (b_im + e_im) + C5_2 * (c_im + d_im) -
+                 transform_sign * (S5_1 * (b_re - e_re) + S5_2 * (c_re - d_re)); // X1 imag
+
+        // X4 = a + c1*(b+e) + c2*(c+d) - i*transform_sign*( s1*(b-e) + s2*(c-d) )
+        X4->re = a_re + C5_1 * (b_re + e_re) + C5_2 * (c_re + d_re) -
+                 transform_sign * (S5_1 * (b_im - e_im) + S5_2 * (c_im - d_im)); // X4 real
+        X4->im = a_im + C5_1 * (b_im + e_im) + C5_2 * (c_im + d_im) +
+                 transform_sign * (S5_1 * (b_re - e_re) + S5_2 * (c_re - d_re)); // X4 imag
+
+        // X2 = a + c2*(b+e) + c1*(c+d) + i*transform_sign*( s2*(b-e) - s1*(c-d) )
+        X2->re = a_re + C5_2 * (b_re + e_re) + C5_1 * (c_re + d_re) +
+                 transform_sign * (S5_2 * (b_im - e_im) - S5_1 * (c_im - d_im)); // X2 real
+        X2->im = a_im + C5_2 * (b_im + e_im) + C5_1 * (c_im + d_im) -
+                 transform_sign * (S5_2 * (b_re - e_re) - S5_1 * (c_re - d_re)); // X2 imag
+
+        // X3 = a + c2*(b+e) + c1*(c+d) - i*transform_sign*( s2*(b-e) - s1*(c-d) )
+        X3->re = a_re + C5_2 * (b_re + e_re) + C5_1 * (c_re + d_re) -
+                 transform_sign * (S5_2 * (b_im - e_im) - S5_1 * (c_im - d_im)); // X3 real
+        X3->im = a_im + C5_2 * (b_im + e_im) + C5_1 * (c_im + d_im) +
+                 transform_sign * (S5_2 * (b_re - e_re) - S5_1 * (c_re - d_re)); // X3 imag
+    }
+
+    // Step 5: SSE2 vectorized loop for k=1 to sub_length-1
+    __m128d vsign = _mm_set1_pd((double)transform_sign); // Vectorized transform sign
+    int k = 1;
+    for (; k + 1 < M; k += 2)
+    {
+        // Load five sub-FFT points for two k values
+        __m128d a_r = LOADU_SSE2(out_re + k);               // X0[k:k+1] real
+        __m128d a_i = LOADU_SSE2(out_im + k);               // X0[k:k+1] imag
+        __m128d b_r = LOADU_SSE2(out_re + k + M);           // X1[k:k+1] real
+        __m128d b_i = LOADU_SSE2(out_im + k + M);           // X1[k:k+1] imag
+        __m128d c_r = LOADU_SSE2(out_re + k + 2 * M);       // X2[k:k+1] real
+        __m128d c_i = LOADU_SSE2(out_im + k + 2 * M);       // X2[k:k+1] imag
+        __m128d d_r = LOADU_SSE2(out_re + k + 3 * M);       // X3[k:k+1] real
+        __m128d d_i = LOADU_SSE2(out_im + k + 3 * M);       // X3[k:k+1] imag
+        __m128d e_r = LOADU_SSE2(out_re + k + 4 * M);       // X4[k:k+1] real
+        __m128d e_i = LOADU_SSE2(out_im + k + 4 * M);       // X4[k:k+1] imag
+
+        // Load twiddle factors for two k values
+        int idx = 4 * k; // Base index for W_N^k, ..., W_N^{4k}
+        __m128d w1r = LOADU_SSE2(tw_re_contig + idx + 0); // W_N^k real
+        __m128d w1i = LOADU_SSE2(tw_im_contig + idx + 0); // W_N^k imag
+        __m128d w2r = LOADU_SSE2(tw_re_contig + idx + 1); // W_N^{2k} real
+        __m128d w2i = LOADU_SSE2(tw_im_contig + idx + 1); // W_N^{2k} imag
+        __m128d w3r = LOADU_SSE2(tw_re_contig + idx + 2); // W_N^{3k} real
+        __m128d w3i = LOADU_SSE2(tw_im_contig + idx + 2); // W_N^{3k} imag
+        __m128d w4r = LOADU_SSE2(tw_re_contig + idx + 3); // W_N^{4k} real
+        __m128d w4i = LOADU_SSE2(tw_im_contig + idx + 3); // W_N^{4k} imag
+
+        // Apply twiddle factors
+        __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i)); // W_N^k * X1 real
+        __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i)); // W_N^k * X1 imag
+        __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i)); // W_N^{2k} * X2 real
+        __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i)); // W_N^{2k} * X2 imag
+        __m128d d2r = FMSUB_SSE2(d_r, w3r, _mm_mul_pd(d_i, w3i)); // W_N^{3k} * X3 real
+        __m128d d2i = FMADD_SSE2(d_i, w3r, _mm_mul_pd(d_r, w3i)); // W_N^{3k} * X3 imag
+        __m128d e2r = FMSUB_SSE2(e_r, w4r, _mm_mul_pd(e_i, w4i)); // W_N^{4k} * X4 real
+        __m128d e2i = FMADD_SSE2(e_i, w4r, _mm_mul_pd(e_r, w4i)); // W_N^{4k} * X4 imag
+
+        // Compute pairwise sums and differences
+        __m128d t0r = _mm_add_pd(b2r, e2r); // b + e real
+        __m128d t0i = _mm_add_pd(b2i, e2i); // b + e imag
+        __m128d t1r = _mm_add_pd(c2r, d2r); // c + d real
+        __m128d t1i = _mm_add_pd(c2i, d2i); // c + d imag
+        __m128d t2r = _mm_sub_pd(b2r, e2r); // b - e real
+        __m128d t2i = _mm_sub_pd(b2i, e2i); // b - e imag
+        __m128d t3r = _mm_sub_pd(c2r, d2r); // c - d real
+        __m128d t3i = _mm_sub_pd(c2i, d2i); // c - d imag
+
+        // X0 = a + (b+e) + (c+d)
+        __m128d x0r = _mm_add_pd(a_r, _mm_add_pd(t0r, t1r)); // X(k) real
+        __m128d x0i = _mm_add_pd(a_i, _mm_add_pd(t0i, t1i)); // X(k) imag
+        STOREU_SSE2(out_re + k, x0r);
+        STOREU_SSE2(out_im + k, x0i);
+
+        // Compute X1 and X4
+        __m128d tmp1r = _mm_add_pd(_mm_mul_pd(_mm_set1_pd(C5_1), t0r), _mm_mul_pd(_mm_set1_pd(C5_2), t1r)); // c1*(b+e) + c2*(c+d) real
+        __m128d tmp1i = _mm_add_pd(_mm_mul_pd(_mm_set1_pd(C5_1), t0i), _mm_mul_pd(_mm_set1_pd(C5_2), t1i)); // c1*(b+e) + c2*(c+d) imag
+        __m128d rot1r = _mm_add_pd(_mm_mul_pd(_mm_set1_pd(S5_1), t2i), _mm_mul_pd(_mm_set1_pd(S5_2), t3i)); // s1*(b-e) + s2*(c-d) real
+        __m128d rot1i = _mm_sub_pd(_mm_mul_pd(_mm_set1_pd(S5_2), t3r), _mm_mul_pd(_mm_set1_pd(S5_1), t2r)); // s2*(c-d) - s1*(b-e) imag
+        rot1r = _mm_mul_pd(rot1r, vsign); // Apply transform_sign
+        rot1i = _mm_mul_pd(rot1i, vsign);
+        __m128d x1r = _mm_add_pd(_mm_add_pd(a_r, tmp1r), rot1r); // X(k + N/5) real
+        __m128d x1i = _mm_sub_pd(_mm_add_pd(a_i, tmp1i), rot1i); // X(k + N/5) imag
+        __m128d x4r = _mm_sub_pd(_mm_add_pd(a_r, tmp1r), rot1r); // X(k + 4N/5) real
+        __m128d x4i = _mm_add_pd(_mm_add_pd(a_i, tmp1i), rot1i); // X(k + 4N/5) imag
+        STOREU_SSE2(out_re + k + M, x1r);
+        STOREU_SSE2(out_im + k + M, x1i);
+        STOREU_SSE2(out_re + k + 4 * M, x4r);
+        STOREU_SSE2(out_im + k + 4 * M, x4i);
+
+        // Compute X2 and X3
+        __m128d tmp2r = _mm_add_pd(_mm_mul_pd(_mm_set1_pd(C5_2), t0r), _mm_mul_pd(_mm_set1_pd(C5_1), t1r)); // c2*(b+e) + c1*(c+d) real
+        __m128d tmp2i = _mm_add_pd(_mm_mul_pd(_mm_set1_pd(C5_2), t0i), _mm_mul_pd(_mm_set1_pd(C5_1), t1i)); // c2*(b+e) + c1*(c+d) imag
+        __m128d rot2r = _mm_sub_pd(_mm_mul_pd(_mm_set1_pd(S5_2), t2i), _mm_mul_pd(_mm_set1_pd(S5_1), t3i)); // s2*(b-e) - s1*(c-d) real
+        __m128d rot2i = _mm_add_pd(_mm_mul_pd(_mm_set1_pd(S5_1), t2r), _mm_mul_pd(_mm_set1_pd(S5_2), t3r)); // s1*(b-e) + s2*(c-d) imag
+        rot2r = _mm_mul_pd(rot2r, vsign); // Apply transform_sign
+        rot2i = _mm_mul_pd(rot2i, vsign);
+        __m128d x2r = _mm_add_pd(_mm_add_pd(a_r, tmp2r), rot2r); // X(k + 2N/5) real
+        __m128d x2i = _mm_sub_pd(_mm_add_pd(a_i, tmp2i), rot2i); // X(k + 2N/5) imag
+        __m128d x3r = _mm_sub_pd(_mm_add_pd(a_r, tmp2r), rot2r); // X(k + 3N/5) real
+        __m128d x3i = _mm_add_pd(_mm_add_pd(a_i, tmp2i), rot2i); // X(k + 3N/5) imag
+        STOREU_SSE2(out_re + k + 2 * M, x2r);
+        STOREU_SSE2(out_im + k + 2 * M, x2i);
+        STOREU_SSE2(out_re + k + 3 * M, x3r);
+        STOREU_SSE2(out_im + k + 3 * M, x3i);
+    }
+
+    // Step 6: Scalar tail for remaining k
+    for (; k < M; k++)
+    {
+        int idx = (sub_length - 1) + 4 * k;          // Index into twiddle array
+        fft_type w1r = fft_obj->twiddle[idx + 0].re; // W_N^k real
+        fft_type w1i = fft_obj->twiddle[idx + 0].im; // W_N^k imag
+        fft_type w2r = fft_obj->twiddle[idx + 1].re; // W_N^{2k} real
+        fft_type w2i = fft_obj->twiddle[idx + 1].im; // W_N^{2k} imag
+        fft_type w3r = fft_obj->twiddle[idx + 2].re; // W_N^{3k} real
+        fft_type w3i = fft_obj->twiddle[idx + 2].im; // W_N^{3k} imag
+        fft_type w4r = fft_obj->twiddle[idx + 3].re; // W_N^{4k} real
+        fft_type w4i = fft_obj->twiddle[idx + 3].im; // W_N^{4k} imag
+
+        fft_type a_re = out_re[k], a_im = out_im[k];                     // First point
+        fft_type b_re = out_re[k + M] * w1r - out_im[k + M] * w1i;       // W_N^k * X_1 real
+        fft_type b_im = out_im[k + M] * w1r + out_re[k + M] * w1i;       // W_N^k * X_1 imag
+        fft_type c_re = out_re[k + 2 * M] * w2r - out_im[k + 2 * M] * w2i; // W_N^{2k} * X_2 real
+        fft_type c_im = out_im[k + 2 * M] * w2r + out_re[k + 2 * M] * w2i; // W_N^{2k} * X_2 imag
+        fft_type d_re = out_re[k + 3 * M] * w3r - out_im[k + 3 * M] * w3i; // W_N^{3k} * X_3 real
+        fft_type d_im = out_im[k + 3 * M] * w3r + out_re[k + 3 * M] * w3i; // W_N^{3k} * X_3 imag
+        fft_type e_re = out_re[k + 4 * M] * w4r - out_im[k + 4 * M] * w4i; // W_N^{4k} * X_4 real
+        fft_type e_im = out_im[k + 4 * M] * w4r + out_re[k + 4 * M] * w4i; // W_N^{4k} * X_4 imag
+
+        out_re[k] = a_re + b_re + c_re + d_re + e_re; // X(k) real
+        out_im[k] = a_im + b_im + c_im + d_im + e_im; // X(k) imag
+        out_re[k + M] = a_re + C5_1 * (b_re + e_re) + C5_2 * (c_re + d_re) +
+                        transform_sign * (S5_1 * (b_im - e_im) + S5_2 * (c_im - d_im)); // X(k + N/5) real
+        out_im[k + M] = a_im + C5_1 * (b_im + e_im) + C5_2 * (c_im + d_im) -
+                        transform_sign * (S5_1 * (b_re - e_re) + S5_2 * (c_re - d_re)); // X(k + N/5) imag
+        out_re[k + 4 * M] = a_re + C5_1 * (b_re + e_re) + C5_2 * (c_re + d_re) -
+                            transform_sign * (S5_1 * (b_im - e_im) + S5_2 * (c_im - d_im)); // X(k + 4N/5) real
+        out_im[k + 4 * M] = a_im + C5_1 * (b_im + e_im) + C5_2 * (c_im + d_im) +
+                            transform_sign * (S5_1 * (b_re - e_re) + S5_2 * (c_re - d_re)); // X(k + 4N/5) imag
+        out_re[k + 2 * M] = a_re + C5_2 * (b_re + e_re) + C5_1 * (c_re + d_re) +
+                            transform_sign * (S5_2 * (b_im - e_im) - S5_1 * (c_im - d_im)); // X(k + 2N/5) real
+        out_im[k + 2 * M] = a_im + C5_2 * (b_im + e_im) + C5_1 * (c_im + d_im) -
+                            transform_sign * (S5_2 * (b_re - e_re) - S5_1 * (c_re - d_re)); // X(k + 2N/5) imag
+        out_re[k + 3 * M] = a_re + C5_2 * (b_re + e_re) + C5_1 * (c_re + d_re) -
+                            transform_sign * (S5_2 * (b_im - e_im) - S5_1 * (c_im - d_im)); // X(k + 3N/5) real
+        out_im[k + 3 * M] = a_im + C5_2 * (b_im + e_im) + C5_1 * (c_im + d_im) +
+                            transform_sign * (S5_2 * (b_re - e_re) - S5_1 * (c_re - d_re)); // X(k + 3N/5) imag
+    }
+
+    // Step 7: Copy flattened results back to output_buffer
+    for (int lane = 0; lane < 5; lane++)
+    {
+        fft_data *base = output_buffer + lane * M;
+        for (int k = 0; k < M; k++)
+        {
+            base[k].re = out_re[lane * M + k];
+            base[k].im = out_im[lane * M + k];
+        }
+    }
+
+    // Step 8: Clean up allocated memory
+    free(tw_re_contig);
+    free(tw_im_contig);
+    free(out_re);
+    free(out_im);
+    }
     else if (radix == 7)
-{
+    {
     /**
      * @brief Radix-7 decomposition for seven-point sub-FFTs with AVX2 vectorization and FMA support.
      *
@@ -1310,19 +1646,6 @@ static void mixed_radix_dit_rec(fft_data *output_buffer, fft_data *input_buffer,
      * - Contiguous twiddle and output arrays ensure efficient SIMD loads/stores.
      * - Symmetry in outputs (e.g., X_1/X_6, X_2/X_5, X_3/X_4 are conjugates) reduces computations.
      *
-     * Transform sign: Adjusts rotation signs for forward/inverse transforms using a branch-free
-     * SIGN_MASK multiplication.
-     *
-     * Note: Uses unaligned AVX2 loads/stores (LOADU_PD/STOREU_PD) as malloc doesn’t guarantee
-     * 32-byte alignment. Twiddle and output arrays are allocated per call; pre-allocation in fft_obj
-     * is planned to avoid malloc/free overhead. Scalar tail uses standard operations, as FMA emulation
-     * offers minimal benefit. Twiddle index idx = sub_length - 1 + n*k assumes twiddle[sub_length-1 + n*k] = W_N^{n*k};
-     * validate against fft_init to ensure correct phases. Runtime FMA detection (e.g., _cpuid for MSVC)
-     * could be added but is omitted for performance. Micro-unrolling (e.g., #pragma unroll) not used,
-     * as MSVC relies on /O2 auto-unrolling.
-     *
-     * @warning Assumes fft_obj->twiddle has at least 7M-1 elements, where M = data_length/7,
-     * to support indices up to sub_length-1 + 6*(M-1). If undersized, undefined behavior may occur.
      */
     int sub_length = data_length / 7; // Size of each sub-FFT (N/7)
     int new_stride = 7 * stride;      // Stride increases sevenfold
@@ -1670,41 +1993,6 @@ static void mixed_radix_dit_rec(fft_data *output_buffer, fft_data *input_buffer,
      * where \( X_0, ..., X_7 \) are sub-FFTs of size N/8, and \( W_N^k = e^{-2\pi i k / N} \).
      * The radix-8 butterfly uses rotations at multiples of 360°/8 = 45°, with √2/2 for 45° rotations.
      *
-     * Process:
-     * 1. Divide data into eight subproblems of size N/8, adjusting stride.
-     * 2. Flatten twiddle factors into contiguous arrays for efficient AVX2 access.
-     * 3. Recursively compute FFTs for each subproblem.
-     * 4. Flatten interleaved fft_data outputs into contiguous real/imag arrays to avoid struct stride issues.
-     * 5. Perform vectorized radix-8 butterfly operations using AVX2 with FMA (via FMADD/FMSUB) for k divisible by 4.
-     * 6. Handle remaining k with scalar operations, mirroring the vectorized logic.
-     * 7. Copy results back to the output buffer and clean up allocated memory.
-     *
-     * Optimization:
-     * - AVX2 vectorization processes four complex points simultaneously.
-     * - FMA instructions (FMADD/FMSUB) reduce instruction count and improve numerical accuracy
-     *   when compiled with /fp:fast or -mfma and USE_FMA defined (requires Intel Haswell+ or AMD Zen+).
-     * - Without FMA, inlined fallback functions (ALWAYS_INLINE) avoid call overhead.
-     * - AVX_ONE macro inlines _mm256_set1_pd(1.0) for constant vectors.
-     * - File-scope scalar constant C8_1 avoids per-call overhead and naming conflicts with radix-7; SIMD vectors
-     *   inlined to avoid MSVC initializer errors.
-     * - Contiguous twiddle and output arrays ensure efficient SIMD loads/stores.
-     * - Symmetry in outputs (e.g., X_1/X_7, X_2/X_6, X_3/X_5 are conjugates) reduces computations.
-     *
-     * Transform sign: Adjusts rotation directions for forward/inverse transforms, applied via
-     * vsign in the butterfly computations.
-     *
-     * Note: Uses unaligned AVX2 loads/stores (LOADU_PD/STOREU_PD) as malloc doesn’t guarantee
-     * 32-byte alignment. Twiddle and output arrays are allocated per call; pre-allocation in fft_obj
-     * is planned to avoid malloc/free overhead. Scalar tail uses standard operations, as FMA emulation
-     * offers minimal benefit. Twiddle index idx = (M - 1) + 7*k assumes twiddle[M-1 + n*k] = W_N^{n*k};
-     * validate against fft_init to ensure correct phases. Runtime FMA detection (e.g., _cpuid for MSVC)
-     * could be added but is omitted for performance.
-     *
-     * Requirements: Compile with /arch:AVX2 (MSVC) or -mavx2 (GCC) for AVX2 support. Use /fp:fast or
-     * -mfma for FMA optimization. Assumes FMADD, FMSUB, AVX_ONE, LOADU_PD, STOREU_PD macros are defined.
-     *
-     * @warning Assumes fft_obj->twiddle has at least N-1 elements, where N = data_length,
-     * to support indices up to M-1 + 7*(M-1). If undersized, undefined behavior may occur.
      */
     int sub_length = data_length / 8; // Size of each sub-FFT (N/8)
     int M = sub_length;               // Sub-FFT size for indexing
@@ -2269,7 +2557,7 @@ static void bluestein_exp(fft_data *hl, fft_data *hlt, int input_length, int pad
  *       Assumes input_signal, output_signal, and fft_config are valid pointers.
  *       Caller must ensure memory buffers are aligned for SIMD operations to maximize performance.
  */
-void bluestein_fft_simd(
+void bluestein_fft(
     const fft_data *input_signal,
     fft_data *output_signal,
     fft_object fft_config,
