@@ -1614,6 +1614,42 @@
 			"value" : "FALSE"
 		},
 		{
+			"name" : "COMPILER_SUPPORTS_AVX2",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Test COMPILER_SUPPORTS_AVX2"
+				}
+			],
+			"type" : "INTERNAL",
+			"value" : "1"
+		},
+		{
+			"name" : "COMPILER_SUPPORTS_FMA",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Test COMPILER_SUPPORTS_FMA"
+				}
+			],
+			"type" : "INTERNAL",
+			"value" : "1"
+		},
+		{
+			"name" : "COMPILER_SUPPORTS_SSE2",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Test COMPILER_SUPPORTS_SSE2"
+				}
+			],
+			"type" : "INTERNAL",
+			"value" : "1"
+		},
+		{
 			"name" : "ENABLE_GTEST",
 			"properties" : 
 			[
@@ -1784,6 +1820,18 @@
 			],
 			"type" : "BOOL",
 			"value" : "ON"
+		},
+		{
+			"name" : "MATH_LIBRARY",
+			"properties" : 
+			[
+				{
+					"name" : "HELPSTRING",
+					"value" : "Path to a library."
+				}
+			],
+			"type" : "FILEPATH",
+			"value" : "MATH_LIBRARY-NOTFOUND"
 		},
 		{
 			"name" : "MixedRadixFFT_Tests_BINARY_DIR",
@@ -2240,18 +2288,6 @@
 			],
 			"type" : "STATIC",
 			"value" : "OFF"
-		},
-		{
-			"name" : "highspeedFFT_LIB_DEPENDS",
-			"properties" : 
-			[
-				{
-					"name" : "HELPSTRING",
-					"value" : "Dependencies for the target"
-				}
-			],
-			"type" : "STATIC",
-			"value" : "general;m;"
 		},
 		{
 			"name" : "highspeedFFT_SOURCE_DIR",

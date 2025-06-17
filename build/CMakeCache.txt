@@ -350,6 +350,9 @@ GIT_EXECUTABLE:FILEPATH=C:/Program Files/Git/cmd/git.exe
 // may want to turn this OFF.)
 INSTALL_GTEST:BOOL=ON
 
+//Path to a library.
+MATH_LIBRARY:FILEPATH=MATH_LIBRARY-NOTFOUND
+
 //Value Computed by CMake
 MixedRadixFFT_Tests_BINARY_DIR:STATIC=C:/Users/Tugbars/Desktop/highSpeedFFT/build/test
 
@@ -428,9 +431,6 @@ highspeedFFT_BINARY_DIR:STATIC=C:/Users/Tugbars/Desktop/highSpeedFFT/build/src
 
 //Value Computed by CMake
 highspeedFFT_IS_TOP_LEVEL:STATIC=OFF
-
-//Dependencies for the target
-highspeedFFT_LIB_DEPENDS:STATIC=general;m;
 
 //Value Computed by CMake
 highspeedFFT_SOURCE_DIR:STATIC=C:/Users/Tugbars/Desktop/highSpeedFFT/src
@@ -639,6 +639,12 @@ CMAKE_STRIP-ADVANCED:INTERNAL=1
 CMAKE_TAPI-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_VERBOSE_MAKEFILE
 CMAKE_VERBOSE_MAKEFILE-ADVANCED:INTERNAL=1
+//Test COMPILER_SUPPORTS_AVX2
+COMPILER_SUPPORTS_AVX2:INTERNAL=1
+//Test COMPILER_SUPPORTS_FMA
+COMPILER_SUPPORTS_FMA:INTERNAL=1
+//Test COMPILER_SUPPORTS_SSE2
+COMPILER_SUPPORTS_SSE2:INTERNAL=1
 //Details about finding Python
 FIND_PACKAGE_MESSAGE_DETAILS_Python:INTERNAL=[C:/Python313/python.exe][cfound components: Interpreter ][v3.13.1()]
 //ADVANCED property for variable: GIT_EXECUTABLE

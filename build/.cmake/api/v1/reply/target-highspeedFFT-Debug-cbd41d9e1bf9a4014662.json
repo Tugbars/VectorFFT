@@ -13,6 +13,7 @@
 		[
 			"add_library",
 			"target_compile_options",
+			"target_compile_definitions",
 			"target_include_directories"
 		],
 		"files" : 
@@ -27,19 +28,37 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 28,
+				"line" : 21,
 				"parent" : 0
 			},
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 38,
+				"line" : 36,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 51,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 69,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 31,
+				"line" : 70,
+				"parent" : 0
+			},
+			{
+				"command" : 3,
+				"file" : 0,
+				"line" : 23,
 				"parent" : 0
 			}
 		]
@@ -54,21 +73,32 @@
 				},
 				{
 					"backtrace" : 2,
+					"fragment" : "-msse2"
+				},
+				{
+					"backtrace" : 3,
 					"fragment" : "-O3"
 				},
 				{
-					"backtrace" : 2,
-					"fragment" : "-mavx"
+					"backtrace" : 3,
+					"fragment" : "-mavx2"
 				},
 				{
-					"backtrace" : 2,
+					"backtrace" : 4,
 					"fragment" : "-mfma"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 5,
+					"define" : "USE_FMA"
 				}
 			],
 			"includes" : 
 			[
 				{
-					"backtrace" : 3,
+					"backtrace" : 6,
 					"path" : "C:/Users/Tugbars/Desktop/highSpeedFFT/src"
 				}
 			],

@@ -598,3 +598,116 @@ events:
       
       
 ...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.28/Modules/Internal/CheckSourceCompiles.cmake:101 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.28/Modules/Internal/CheckCompilerFlag.cmake:18 (cmake_check_source_compiles)"
+      - "C:/Program Files/CMake/share/cmake-3.28/Modules/CheckCCompilerFlag.cmake:51 (cmake_check_compiler_flag)"
+      - "src/CMakeLists.txt:34 (check_c_compiler_flag)"
+    checks:
+      - "Performing Test COMPILER_SUPPORTS_AVX2"
+    directories:
+      source: "C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-fy5ptc"
+      binary: "C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-fy5ptc"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "COMPILER_SUPPORTS_AVX2"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-fy5ptc'
+        
+        Run Build Command(s): "C:/Program Files/CMake/bin/cmake.exe" -E env VERBOSE=1 C:/ProgramData/mingw64/mingw64/bin/mingw32-make.exe -f Makefile cmTC_79835/fast
+        C:/ProgramData/mingw64/mingw64/bin/mingw32-make.exe  -f CMakeFiles\\cmTC_79835.dir\\build.make CMakeFiles/cmTC_79835.dir/build
+        mingw32-make[1]: Entering directory 'C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-fy5ptc'
+        Building C object CMakeFiles/cmTC_79835.dir/src.c.obj
+        C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -DCOMPILER_SUPPORTS_AVX2  -std=gnu11   -mavx2 -o CMakeFiles\\cmTC_79835.dir\\src.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\build\\CMakeFiles\\CMakeScratch\\TryCompile-fy5ptc\\src.c
+        Linking C executable cmTC_79835.exe
+        "C:\\Program Files\\CMake\\bin\\cmake.exe" -E cmake_link_script CMakeFiles\\cmTC_79835.dir\\link.txt --verbose=1
+        "C:\\Program Files\\CMake\\bin\\cmake.exe" -E rm -f CMakeFiles\\cmTC_79835.dir/objects.a
+        C:\\ProgramData\\mingw64\\mingw64\\bin\\ar.exe qc CMakeFiles\\cmTC_79835.dir/objects.a @CMakeFiles\\cmTC_79835.dir\\objects1.rsp
+        C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -Wl,--whole-archive CMakeFiles\\cmTC_79835.dir/objects.a -Wl,--no-whole-archive -o cmTC_79835.exe -Wl,--out-implib,libcmTC_79835.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\\cmTC_79835.dir\\linkLibs.rsp
+        mingw32-make[1]: Leaving directory 'C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-fy5ptc'
+        
+      exitCode: 0
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.28/Modules/Internal/CheckSourceCompiles.cmake:101 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.28/Modules/Internal/CheckCompilerFlag.cmake:18 (cmake_check_source_compiles)"
+      - "C:/Program Files/CMake/share/cmake-3.28/Modules/CheckCCompilerFlag.cmake:51 (cmake_check_compiler_flag)"
+      - "src/CMakeLists.txt:49 (check_c_compiler_flag)"
+    checks:
+      - "Performing Test COMPILER_SUPPORTS_FMA"
+    directories:
+      source: "C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-wqy668"
+      binary: "C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-wqy668"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "COMPILER_SUPPORTS_FMA"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-wqy668'
+        
+        Run Build Command(s): "C:/Program Files/CMake/bin/cmake.exe" -E env VERBOSE=1 C:/ProgramData/mingw64/mingw64/bin/mingw32-make.exe -f Makefile cmTC_1adf4/fast
+        C:/ProgramData/mingw64/mingw64/bin/mingw32-make.exe  -f CMakeFiles\\cmTC_1adf4.dir\\build.make CMakeFiles/cmTC_1adf4.dir/build
+        mingw32-make[1]: Entering directory 'C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-wqy668'
+        Building C object CMakeFiles/cmTC_1adf4.dir/src.c.obj
+        C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -DCOMPILER_SUPPORTS_FMA  -std=gnu11   -mfma -o CMakeFiles\\cmTC_1adf4.dir\\src.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\build\\CMakeFiles\\CMakeScratch\\TryCompile-wqy668\\src.c
+        Linking C executable cmTC_1adf4.exe
+        "C:\\Program Files\\CMake\\bin\\cmake.exe" -E cmake_link_script CMakeFiles\\cmTC_1adf4.dir\\link.txt --verbose=1
+        "C:\\Program Files\\CMake\\bin\\cmake.exe" -E rm -f CMakeFiles\\cmTC_1adf4.dir/objects.a
+        C:\\ProgramData\\mingw64\\mingw64\\bin\\ar.exe qc CMakeFiles\\cmTC_1adf4.dir/objects.a @CMakeFiles\\cmTC_1adf4.dir\\objects1.rsp
+        C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -Wl,--whole-archive CMakeFiles\\cmTC_1adf4.dir/objects.a -Wl,--no-whole-archive -o cmTC_1adf4.exe -Wl,--out-implib,libcmTC_1adf4.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\\cmTC_1adf4.dir\\linkLibs.rsp
+        mingw32-make[1]: Leaving directory 'C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-wqy668'
+        
+      exitCode: 0
+...
+
+---
+events:
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.28/Modules/Internal/CheckSourceCompiles.cmake:101 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.28/Modules/Internal/CheckCompilerFlag.cmake:18 (cmake_check_source_compiles)"
+      - "C:/Program Files/CMake/share/cmake-3.28/Modules/CheckCCompilerFlag.cmake:51 (cmake_check_compiler_flag)"
+      - "src/CMakeLists.txt:34 (check_c_compiler_flag)"
+    checks:
+      - "Performing Test COMPILER_SUPPORTS_SSE2"
+    directories:
+      source: "C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-srke54"
+      binary: "C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-srke54"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "COMPILER_SUPPORTS_SSE2"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-srke54'
+        
+        Run Build Command(s): "C:/Program Files/CMake/bin/cmake.exe" -E env VERBOSE=1 C:/ProgramData/mingw64/mingw64/bin/mingw32-make.exe -f Makefile cmTC_1bc38/fast
+        C:/ProgramData/mingw64/mingw64/bin/mingw32-make.exe  -f CMakeFiles\\cmTC_1bc38.dir\\build.make CMakeFiles/cmTC_1bc38.dir/build
+        mingw32-make[1]: Entering directory 'C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-srke54'
+        Building C object CMakeFiles/cmTC_1bc38.dir/src.c.obj
+        C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -DCOMPILER_SUPPORTS_SSE2  -std=gnu11   -msse2 -o CMakeFiles\\cmTC_1bc38.dir\\src.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\build\\CMakeFiles\\CMakeScratch\\TryCompile-srke54\\src.c
+        Linking C executable cmTC_1bc38.exe
+        "C:\\Program Files\\CMake\\bin\\cmake.exe" -E cmake_link_script CMakeFiles\\cmTC_1bc38.dir\\link.txt --verbose=1
+        "C:\\Program Files\\CMake\\bin\\cmake.exe" -E rm -f CMakeFiles\\cmTC_1bc38.dir/objects.a
+        C:\\ProgramData\\mingw64\\mingw64\\bin\\ar.exe qc CMakeFiles\\cmTC_1bc38.dir/objects.a @CMakeFiles\\cmTC_1bc38.dir\\objects1.rsp
+        C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -Wl,--whole-archive CMakeFiles\\cmTC_1bc38.dir/objects.a -Wl,--no-whole-archive -o cmTC_1bc38.exe -Wl,--out-implib,libcmTC_1bc38.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\\cmTC_1bc38.dir\\linkLibs.rsp
+        mingw32-make[1]: Leaving directory 'C:/Users/Tugbars/Desktop/highSpeedFFT/build/CMakeFiles/CMakeScratch/TryCompile-srke54'
+        
+      exitCode: 0
+...
