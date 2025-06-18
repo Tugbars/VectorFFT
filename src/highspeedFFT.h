@@ -131,6 +131,185 @@ Activity Diagram: mixed_radix_dit_rec (Radix-3 Block)
                                  [End]
 =========================================================	
 
+Activity Diagram: mixed_radix_dit_rec for N=360, Factors=[3,3,4,5]
+=========================================================
+(*) --> [Start: mixed_radix_dit_rec]
+        |  # Initial call: data_length=360, stride=1, factor_index=0
+        v
+[Check data_length]
+        |  # data_length=360 > 8, proceed to radix cases
+        v
+[Get Radix]
+        |  # radix = factors[factor_index]
+        v
+[Radix = 3?]
+        | yes  # Level 1: radix=3, factor_index=0
+        v
+[Compute sub_length=360/3=120]
+[Compute new_stride=3*1=3]
+        |
+        v
+[Loop i=0 to 2]
+        |  # Three sub-FFTs for radix-3
+        +--> [Recursive Call i]
+        |      # Call mixed_radix_dit_rec(data_length=120, stride=3, factor_index=1)
+        |      v
+        |     [Check data_length]
+        |      |  # data_length=120 > 8
+        |      v
+        |     [Get Radix]
+        |      |  # radix = factors[1]
+        |      v
+        |     [Radix = 3?]
+        |      | yes  # Level 2: radix=3
+        |      v
+        |     [Compute sub_length=120/3=40]
+        |     [Compute new_stride=3*3=9]
+        |      |
+        |      v
+        |     [Loop i=0 to 2]
+        |      |  # Three sub-FFTs
+        |      +--> [Recursive Call i]
+        |      |      # data_length=40, stride=9, factor_index=2
+        |      |      v
+        |      |     [Check data_length]
+        |      |      |  # data_length=40 > 8
+        |      |      v
+        |      |     [Get Radix]
+        |      |      |  # radix = factors[2]
+        |      |      v
+        |      |     [Radix = 4?]
+        |      |      | yes  # Level 3: radix=4
+        |      |      v
+        |      |     [Compute sub_length=40/4=10]
+        |      |     [Compute new_stride=4*9=36]
+        |      |      |
+        |      |      v
+        |      |     [Loop i=0 to 3]
+        |      |      |  # Four sub-FFTs
+        |      |      +--> [Recursive Call i]
+        |      |      |      # data_length=10, stride=36, factor_index=3
+        |      |      |      v
+        |      |      |     [Check data_length]
+        |      |      |      |  # data_length=10 > 8
+        |      |      |      v
+        |      |      |     [Get Radix]
+        |      |      |      |  # radix = factors[3]
+        |      |      |      v
+        |      |      |     [Radix = 5?]
+        |      |      |      | yes  # Level 4: radix=5
+        |      |      |      v
+        |      |      |     [Compute sub_length=10/5=2]
+        |      |      |     [Compute new_stride=5*36=180]
+        |      |      |      |
+        |      |      |      v
+        |      |      |     [Loop i=0 to 4]
+        |      |      |      |  # Five sub-FFTs
+        |      |      |      +--> [Recursive Call i]
+        |      |      |      |      # data_length=2, stride=180, factor_index=4
+        |      |      |      |      v
+        |      |      |      |     [Check data_length]
+        |      |      |      |      |  # data_length=2
+        |      |      |      |      v
+        |      |      |      |     [Radix-2 Butterfly]
+        |      |      |      |      # Non-recursive, scalar butterfly
+        |      |      |      |      # Compute X(0)=x(0)+x(1), X(1)=x(0)-x(1)
+        |      |      |      |      v
+        |      |      |      |     [Return]
+        |      |      |      |
+        |      |      |      v
+        |      |      |     [Allocate twiddle/output arrays]
+        |      |      |      # tw_re_contig, out_re for radix-5
+        |      |      |      v
+        |      |      |     [Flatten twiddle factors]
+        |      |      |      # Copy W_N^k, W_N^{2k}, ..., W_N^{4k}
+        |      |      |      v
+        |      |      |     [Flatten output_buffer]
+        |      |      |      # Copy sub-FFT results
+        |      |      |      v
+        |      |      |     [SSE2 Vectorized Loop k=0 to sub_length-1]
+        |      |      |      # Radix-5 Butterfly: compute X(k), X(k+N/5), ...
+        |      |      |      # Use twiddle factors, constants C5_1, S5_1
+        |      |      |      v
+        |      |      |     [Scalar Tail for remaining k]
+        |      |      |      v
+        |      |      |     [Copy results to output_buffer]
+        |      |      |      v
+        |      |      |     [Free allocated memory]
+        |      |      |      v
+        |      |      |     [Return]
+        |      |      |
+        |      |      v
+        |      |     [Allocate twiddle/output arrays]
+        |      |      # tw_re_contig, out_re for radix-4
+        |      |      v
+        |      |     [Flatten twiddle factors]
+        |      |      # Copy W_N^k, W_N^{2k}, W_N^{3k}
+        |      |      v
+        |      |     [Flatten output_buffer]
+        |      |      v
+        |      |     [SSE2 Vectorized Loop k=1 to sub_length-1]
+        |      |      # Radix-4 Butterfly: compute X(k), X(k+N/4), ...
+        |      |      # Handle k=0 separately, use twiddle factors
+        |      |      v
+        |      |     [Scalar Tail for remaining k]
+        |      |      v
+        |      |     [Copy results to output_buffer]
+        |      |      v
+        |      |     [Free allocated memory]
+        |      |      v
+        |      |     [Return]
+        |      |
+        |      v
+        |     [Allocate twiddle/output arrays]
+        |      # tw_re_contig, out_re for radix-3
+        |      v
+        |     [Flatten twiddle factors]
+        |      # Copy W_N^k, W_N^{2k}
+        |      v
+        |     [Flatten output_buffer]
+        |      v
+        |     [SSE2 Vectorized Loop k=0 to sub_length-1]
+        |      # Radix-3 Butterfly: compute X(k), X(k+N/3), X(k+2N/3)
+        |      # Use twiddle factors, sqrt(3)/2
+        |      v
+        |     [Scalar Tail for remaining k]
+        |      v
+        |     [Copy results to output_buffer]
+        |      v
+        |     [Free allocated memory]
+        |      v
+        |     [Return]
+        |
+        v
+[Allocate twiddle/output arrays]
+        # tw_re_contig, out_re for top-level radix-3
+        v
+[Flatten twiddle factors]
+        # Copy W_N^k, W_N^{2k}
+        v
+[Flatten output_buffer]
+        v
+[SSE2 Vectorized Loop k=0 to sub_length-1]
+        # Radix-3 Butterfly: compute X(k), X(k+120), X(k+240)
+        # Use twiddle factors, sqrt(3)/2
+        v
+[Scalar Tail for remaining k]
+        v
+[Copy results to output_buffer]
+        v
+[Free allocated memory]
+        v
+[End] --> (*)
+
+Notes:
+- Diagram traces one path of recursive calls (i=0) for brevity; other sub-FFTs follow similar flow.
+- Each recursion level reduces data_length by radix: 360 -> 120 -> 40 -> 10 -> 2.
+- Radix-3, 4, 5 use SSE2 vectorization; radix-2 is scalar.
+- Twiddle factors from fft_obj->twiddle, constants like C3_SQRT3BY2, C5_1 used in butterflies.
+- Memory allocation/free occurs per radix block for temporary arrays.
+=========================================================
+
 */
 
 #ifdef __cplusplus
