@@ -25,6 +25,9 @@ A high‑performance mixed‑radix FFT library in C with full support for comple
 
 * **SSE2‑accelerated radices** (3, 4, 5, 11 tails)
 
+* **Eliminated per-call malloc**
+  All intermediate buffers (twiddles, flattened arrays, sub‑FFT outputs) now live in a preallocated scratch area; `fft_exec` no longer uses `malloc`/`free` in the hot path
+
   * Two‑lane `_mm_loadu_pd` / `_mm_storeu_pd`
   * Dedicated SSE2 “tail” loops for remaining k values
   * Inlined FMADD\_SSE2/FMSUB\_SSE2 when no hardware FMA
@@ -41,6 +44,37 @@ A high‑performance mixed‑radix FFT library in C with full support for comple
 * **CMake** build system, optional GoogleTest harness
 
 * **Comprehensive tests**: unit tests or standalone `main.c` for correctness & MSE checks
+
+---
+
+---
+
+## Comparison to FFTW
+
+| Criterion           | HighSpeedFFT                            | FFTW                           |
+| ------------------- | --------------------------------------- | ------------------------------ |
+| Algorithm support   | Mixed‑radix + Bluestein                 | Cooley–Tuk + Rader + Bluestein |
+| Vectorization       | Hand‑tuned AVX2/FMA + SSE2              | Auto‑SIMD (SSE/AVX)            |
+| Dependencies        | `libm` only                             | `pthread`, `libsimd`, …        |
+| Memory layout       | contiguous real/imag buffers            | plan‑specific allocators       |
+| Performance (bench) | ≈FFTW on radix‑friendly N, within 5–10% | highly tuned wide radix        |
+| Footprint           | ≈25 KiB code                            | ≈300 KiB code + data           |
+
+> **Benchmarks** on Intel Xeon Gold 6226R (single thread):
+>
+> * Mixed‑radix (2^12–2^20): within 5–10% of FFTW
+> * Bluestein on large primes: \~30% slower (extra convolution)
+
+---
+
+## Test Harness
+
+The standalone `main.c` and the GoogleTest suite now cover:
+
+* Forward/backward round‑trip (complex & real FFTs)
+* k=0,1 special cases through SIMD tails for radix‑11
+* Error handling (invalid lengths/directions)
+* MSE checks against 1e‑10 tolerance
 
 ---
 
@@ -82,33 +116,9 @@ make test
 ### CMake Options
 
 * `ENABLE_GTEST` (OFF/ON): GoogleTest vs. standalone `main.c`
-* SIMD flags auto‑detected (GCC/Clang: `-O3 -mavx -mfma`; MSVC: `/O2 /arch:AVX2`)
+* SIMD flags auto‑detected:
+
+  * GCC/Clang: `-O3 -mavx2 -mfma -msse2` (SSE2, AVX2, FMA enabled automatically)
+  * MSVC: `/O2 /arch:AVX2 /fp:fast` (SSE2/AVX2/FMA enabled)
 
 ---
-
-## Comparison to FFTW
-
-| Criterion           | HighSpeedFFT                            | FFTW                           |
-| ------------------- | --------------------------------------- | ------------------------------ |
-| Algorithm support   | Mixed‑radix + Bluestein                 | Cooley–Tuk + Rader + Bluestein |
-| Vectorization       | Hand‑tuned AVX2/FMA + SSE2              | Auto‑SIMD (SSE/AVX)            |
-| Dependencies        | `libm` only                             | `pthread`, `libsimd`, …        |
-| Memory layout       | contiguous real/imag buffers            | plan‑specific allocators       |
-| Performance (bench) | ≈FFTW on radix‑friendly N, within 5–10% | highly tuned wide radix        |
-| Footprint           | ≈25 KiB code                            | ≈300 KiB code + data           |
-
-> **Benchmarks** on Intel Xeon Gold 6226R (single thread):
->
-> * Mixed‑radix (2^12–2^20): within 5–10% of FFTW
-> * Bluestein on large primes: \~30% slower (extra convolution)
-
----
-
-## Test Harness
-
-The standalone `main.c` and the GoogleTest suite now cover:
-
-* Forward/backward round‑trip (complex & real FFTs)
-* k=0,1 special cases through SIMD tails for radix‑11
-* Error handling (invalid lengths/directions)
-* MSE checks against 1e‑10 tolerance
