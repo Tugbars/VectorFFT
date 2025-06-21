@@ -2,6 +2,8 @@
     "astyle.astylerc": "",
     "files.associations": {
         ".fantomasignore": "ignore",
-        "highspeedfft.h": "c"
+        "highspeedfft.h": "c",
+        "limits": "c",
+        "functional": "c"
     }
 }

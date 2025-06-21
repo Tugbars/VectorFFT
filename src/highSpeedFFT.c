@@ -11,6 +11,7 @@
 
 // SIMD constant macro for butterfly operations
 #define AVX_ONE _mm256_set1_pd(1.0)
+#define SSE2_ONE _mm_set1_pd(1.0)   // SSE2: 128-bit vector of 1.0
 
 // FMA macro definitions for portable AVX2/FMA support
 #if defined(__FMA__) || defined(USE_FMA)
@@ -221,146 +222,304 @@ static int num_precomputed = 0;
 static int chirp_initialized = 0;
 
 /**
- * @brief Initializes precomputed chirp sequences at program startup.
+ * @brief Precomputes Bluestein chirp sequences for small signal lengths at program startup.
  *
- * Computes chirp sequences h(n) = e^(πi n^2 / N) for a select set of N values using high-precision math.
- * Runs automatically before main() due to the constructor attribute.
+ * This function runs once when the program starts, thanks to the `__attribute__((constructor))`
+ * magic, and sets up a table of precomputed chirp sequences for Bluestein’s algorithm. These
+ * sequences are used for signal lengths like 1, 2, 3, 4, 5, 7, 15, 20, 31, and 64, which are
+ * common enough to be worth precomputing. Instead of a bunch of separate allocations, we stuff
+ * all the chirps into one big, contiguous `all_chirps` array to save memory and keep things cache-friendly.
+ *
+ * **What’s a chirp sequence?** For Bluestein’s FFT, we need sequences like \( h(n) = e^{\pi i n^2 / N} \)
+ * to turn the DFT into a convolution. Precomputing these for small N saves us from pricey sin/cos
+ * calls during `bluestein_fft`. The sequences are stored globally, read-only, for all FFT objects to share.
+ *
+ *
+ * @note Runs automatically at program startup. Exits with an error if memory allocation fails.
+ * @warning The caller must ensure `cleanup_bluestein_chirp` is called at program exit (via
+ *          `__attribute__((destructor))`) to free memory.
  */
-__attribute__((constructor)) static void init_bluestein_chirp(void)
-{
-    if (chirp_initialized)
-        return; // Prevent re-initialization
+__attribute__((constructor)) static void init_bluestein_chirp(void) {
+    if (chirp_initialized) return;
 
-    int sizes[] = {1, 2, 3, 4, 5, 7, 15, 20, 31, 64}; // Precompute sizes including 64 for test case
-    num_precomputed = sizeof(sizes) / sizeof(sizes[0]);
+    // Figure out how much space we need for all chirp sequences
+    // We’re using pre_sizes[] = {1, 2, 3, 4, 5, 7, 15, 20, 31, 64}
+    int total_chirp = 0;
+    for (int i = 0; i < num_pre; i++) {
+        total_chirp += ((pre_sizes[i] + 3) & ~3); // Round up to next multiple of 4
+    }
 
-    bluestein_chirp = malloc(num_precomputed * sizeof(fft_data *));
-    chirp_sizes = malloc(num_precomputed * sizeof(int));
-    if (!bluestein_chirp || !chirp_sizes)
-    {
+    // Allocate our three arrays:
+    // - bluestein_chirp: array of pointers to each chirp sequence
+    // - chirp_sizes: stores the length of each chirp (matches pre_sizes)
+    // - all_chirps: one big block for all chirp data
+    bluestein_chirp = (fft_data **)malloc(num_pre * sizeof(fft_data *));
+    chirp_sizes = (int *)malloc(num_pre * sizeof(int));
+    all_chirps = (fft_data *)_mm_malloc(total_chirp * sizeof(fft_data), 32);
+    if (!bluestein_chirp || !chirp_sizes || !all_chirps) {
+        // If any allocation fails, clean up what we got and bail
+        // Trade-off: Exiting is harsh, but it’s a startup error, so recovery is tricky
         fprintf(stderr, "Error: Memory allocation failed for Bluestein chirp table\n");
+        _mm_free(all_chirps);
+        free(bluestein_chirp);
+        free(chirp_sizes);
         exit(EXIT_FAILURE);
     }
 
-    for (int idx = 0; idx < num_precomputed; idx++)
-    {
-        int n = sizes[idx];
-        chirp_sizes[idx] = n;
-        bluestein_chirp[idx] = malloc(n * sizeof(fft_data));
-        if (!bluestein_chirp[idx])
-        {
-            fprintf(stderr, "Error: Memory allocation failed for chirp size %d\n", n);
-            exit(EXIT_FAILURE);
-        }
-        fft_type theta = M_PI / n; // Base angle step: π/N
-        int l2 = 0, len2 = 2 * n;  // Quadratic index and wrap-around limit
-        for (int i = 0; i < n; i++)
-        {
-            fft_type angle = theta * l2;             // Angle: π * n^2 / N
-            bluestein_chirp[idx][i].re = cos(angle); // Real part
-            bluestein_chirp[idx][i].im = sin(angle); // Imaginary part
-            l2 += 2 * i + 1;                         // Quadratic term: n^2 mod 2N
-            while (l2 > len2)
-                l2 -= len2; // Wrap around modulo 2N
+    // Set up the pointers and fill the chirp sequences
+    // We walk through each size, point bluestein_chirp[i] to the right spot in all_chirps,
+    // and compute the chirp values (e^{\pi i n^2 / N})
+    int offset = 0;
+    for (int idx = 0; idx < num_pre; idx++) {
+        int n = pre_sizes[idx];
+        chirp_sizes[idx] = n; // Store the size for lookup in bluestein_exp
+        bluestein_chirp[idx] = all_chirps + offset; // Point to the current chunk
+        offset += ((n + 3) & ~3); // Move offset to next aligned boundary
+
+        // Compute the chirp sequence for this length
+        // The angle is π n^2 / N, with a quadratic index (l2) to avoid floating-point drift
+        // Why l2? It’s a clever trick to compute n^2 mod 2N without big numbers
+        fft_type theta = M_PI / n;
+        int l2 = 0, len2 = 2 * n;
+        for (int i = 0; i < n; i++) {
+            fft_type angle = theta * l2;
+            bluestein_chirp[idx][i].re = cos(angle);
+            bluestein_chirp[idx][i].im = sin(angle);
+            l2 += 2 * i + 1; // Quadratic term: n^2 = (2i+1) mod 2N
+            while (l2 > len2) l2 -= len2; // Wrap around to keep indices in bounds
         }
     }
+
     chirp_initialized = 1;
 }
 
+__attribute__((destructor)) static void cleanup_bluestein_chirp(void) {
+    _mm_free(all_chirps);
+    free(bluestein_chirp);
+    free(chirp_sizes);
+    all_chirps = NULL;
+    bluestein_chirp = NULL;
+    chirp_sizes = NULL;
+    chirp_initialized = 0;
+}
+
 /**
- * @brief Initializes an FFT object for computing the Fast Fourier Transform (FFT).
+ * @brief Checks if n is an exact power of prime p (n = p^k for some k ≥ 0).
  *
- * Allocates and configures an FFT object based on the signal length and transform direction.
- * Chooses between a mixed-radix FFT for signal lengths divisible by small primes or Bluestein’s
- * algorithm for arbitrary lengths, precomputing twiddle factors accordingly.
+ * Returns true if n is divisible only by p, false otherwise. Used to detect
+ * pure-power transforms (e.g., N = 3^k, 5^k).
  *
- * @param[in] signal_length Length of the input signal (must be positive, \(N > 0\)).
- * @param[in] transform_direction Direction of the transform (\(+1\) for forward FFT, \(-1\) for inverse FFT).
- * @return fft_object Pointer to the initialized FFT object, or NULL if allocation fails or inputs are invalid.
- * @warning No explicit validation of inputs; assumes \(N > 0\) and \(sgn = \pm 1\). Invalid inputs may lead to undefined behavior.
- * @note The function allocates memory for the FFT object and twiddle factors using `malloc`. The caller is responsible
- *       for freeing this memory with `free_fft`. Twiddle factors are adjusted for inverse transforms by negating their
- *       imaginary components.
+ * @param[in] n Number to check (n > 0).
+ * @param[in] p Prime divisor (p > 1).
+ * @return bool True if n = p^k, false otherwise.
  */
-fft_object fft_init(int signal_length, int transform_direction)
-{
-    fft_object fft_config = NULL; // Pointer to the FFT configuration object
-    int twiddle_count;            // Number of twiddle factors to compute
-    int is_factorable;            // Flag indicating if signal_length is factorable by supported primes
+static bool is_exact_power(int n, int p) {
+    if (n <= 0 || p <= 1) return false;
+    while (n % p == 0) n /= p;
+    return n == 1;
+}
 
-    // Check if the signal length can be factored into supported primes (mixed-radix case)
-    is_factorable = dividebyN(signal_length);
-
-    if (is_factorable)
-    {
-        // Mixed-radix FFT: Signal length is a product of supported primes (e.g., 2, 3, 4, 5, 7, 8)
-        // Allocate memory for the fft_set structure plus (N-1) twiddle factors
-        fft_config = (fft_object)malloc(sizeof(struct fft_set) + sizeof(fft_data) * (signal_length - 1));
-        if (fft_config == NULL)
-        {
-            return NULL; // Memory allocation failed
-        }
-
-        // Factor the signal length into primes and store in factors array
-        fft_config->lf = factors(signal_length, fft_config->factors);
-
-        // Compute twiddle factors for mixed-radix decomposition
-        longvectorN(fft_config->twiddle, signal_length, fft_config->factors, fft_config->lf);
-
-        // Set twiddle count and algorithm type
-        twiddle_count = signal_length;
-        fft_config->lt = 0; // 0 indicates mixed-radix algorithm
-    }
-    else
-    {
-        // Bluestein’s algorithm: Signal length is not factorable, requires padding to a power of 2
-        int next_power_of_2; // Smallest power of 2 >= N for initial estimation
-        int padded_length;   // Final padded length for Bluestein’s convolution
-
-        // Estimate the next power of 2 using log10 for simplicity (log2 would be more precise)
-        next_power_of_2 = (int)pow(2.0, ceil(log10(signal_length) / log10(2.0)));
-
-        // Ensure padded length is sufficient for Bluestein’s convolution (at least 2N-1)
-        if (next_power_of_2 < 2 * signal_length - 2)
-        {
-            padded_length = next_power_of_2 * 2; // Double to ensure enough space
-        }
-        else
-        {
-            padded_length = next_power_of_2; // Already sufficient
-        }
-
-        // Allocate memory for the fft_set structure plus (M-1) twiddle factors
-        fft_config = (fft_object)malloc(sizeof(struct fft_set) + sizeof(fft_data) * (padded_length - 1));
-        if (fft_config == NULL)
-        {
-            return NULL; // Memory allocation failed
-        }
-
-        // Factor the padded length into primes (typically powers of 2)
-        fft_config->lf = factors(padded_length, fft_config->factors);
-
-        // Compute twiddle factors for the padded length
-        longvectorN(fft_config->twiddle, padded_length, fft_config->factors, fft_config->lf);
-
-        // Set twiddle count and algorithm type
-        twiddle_count = padded_length;
-        fft_config->lt = 1; // 1 indicates Bluestein’s algorithm
+/**
+ * @brief Sets up an FFT object for computing Fast Fourier Transforms.
+ *
+ * This function lays the groundwork for FFT computations, supporting both mixed-radix transforms
+ * for lengths that factor into small primes (2, 3, 5, 7, 11, 13, etc.) and Bluestein’s algorithm
+ * for arbitrary lengths. It allocates memory, selects the appropriate algorithm, and precomputes
+ * twiddle factors to keep `fft_exec` fast. Following FFTW’s lead, we use a two-buffer strategy:
+ * one buffer for twiddle factors and a single large scratch buffer for all temporary data.
+ * The global `all_chirps` array (initialized elsewhere) handles precomputed Bluestein chirp
+ * sequences, so we focus on FFT setup here.
+ *
+ * **How it works**: It validates the input signal length and transform direction, chooses
+ * mixed-radix or Bluestein based on factorization, allocates 32-byte aligned buffers for SIMD
+ * performance, and configures the FFT object with lengths, factors, and buffers. For inverse
+ * FFTs, it flips twiddle imaginary parts. For power-of-2, 3, 5, 7, 11, or 13 FFTs, it
+ * precomputes twiddle factors and stage offsets to optimize `mixed_radix_dit_rec`.
+ *
+ * @param[in] signal_length The length of the input signal (N > 0). Number of complex samples.
+ * @param[in] transform_direction +1 for forward FFT (e^{-2πi k n / N}), -1 for inverse
+ *                               (e^{+2πi k n / N}).
+ * @return fft_object A pointer to the initialized FFT object, or NULL if allocation fails.
+ *
+ * @warning Exits with an error if signal_length <= 0 or transform_direction isn’t ±1. Returns
+ *          NULL if memory allocation fails.
+ * @note Caller must free the object with `free_fft`. Buffers are 32-byte aligned for AVX2/SSE2.
+ *       Scratch buffer is sized for worst-case mixed-radix or Bluestein needs.
+ */
+fft_object fft_init(int signal_length, int transform_direction) {
+    // Step 1: Validate inputs
+    // Ensure signal length is positive and direction is +1 or -1
+    // Invalid inputs are a user error, so we exit with a clear message
+    if (signal_length <= 0 || (transform_direction != 1 && transform_direction != -1)) {
+        fprintf(stderr, "Error: Signal length (%d) or direction (%d) is invalid\n",
+                signal_length, transform_direction);
+        return NULL;
     }
 
-    // Store the original signal length and transform direction
-    fft_config->N = signal_length;
+    // Step 2: Allocate fft_set structure
+    // Allocate early to safely write stage_twiddle_offset in Step 5
+    fft_object fft_config = (fft_object)malloc(sizeof(struct fft_set));
+    if (!fft_config) {
+        fprintf(stderr, "Error: Failed to allocate fft_set structure\n");
+        return NULL;
+    }
+    fft_config->num_precomputed_stages = 0; // Initialize stage count
+
+    // Step 3: Initialize algorithm flags
+    // Check if length factors into small primes and if it’s a power of 2, 3, 5, 7, 11, or 13
+    int is_factorable = dividebyN(signal_length);
+    int is_power_of_2 = 0, is_power_of_3 = 0, is_power_of_5 = 0, is_power_of_7 = 0;
+    int is_power_of_11 = 0, is_power_of_13 = 0;
+    int twiddle_count, max_scratch_size, max_padded_length;
+
+    // Step 4: Set up buffer sizes and check power-of-radix
+    // Mixed-radix uses N directly; Bluestein pads to next power of 2 ≥ 2N-1
+    if (is_factorable) {
+        max_padded_length = signal_length; // No padding for mixed-radix
+        twiddle_count = signal_length;    // N twiddles for all stages
+        // Check for pure powers using is_exact_power
+        is_power_of_2 = (signal_length & (signal_length - 1)) == 0; // Fast power-of-2 check
+        is_power_of_3 = is_exact_power(signal_length, 3);
+        is_power_of_5 = is_exact_power(signal_length, 5);
+        is_power_of_7 = is_exact_power(signal_length, 7);
+        is_power_of_11 = is_exact_power(signal_length, 11);
+        is_power_of_13 = is_exact_power(signal_length, 13);
+    } else {
+        // Bluestein needs M ≥ 2N-1, rounded up to power of 2
+        max_padded_length = (int)pow(2.0, ceil(log2((double)(2 * signal_length - 1))));
+        twiddle_count = max_padded_length; // M twiddles for Bluestein
+    }
+
+    // Step 5: Compute memory requirements
+    // Estimate scratch and twiddle_factors sizes based on factorization
+    int temp_factors[64];
+    int num_factors = factors(is_factorable ? signal_length : max_padded_length, temp_factors);
+    int twiddle_factors_size = 0; // Size for precomputed twiddles
+    int scratch_needed = 0;       // Scratch for recursion or Bluestein
+    if (is_factorable) {
+        int temp_N = signal_length;
+        if (is_power_of_2 || is_power_of_3 || is_power_of_5 || is_power_of_7 ||
+            is_power_of_11 || is_power_of_13) {
+            // For pure-power FFTs, sum needs per recursion level
+            // Radix-r needs (r-1)*(N/r) twiddles, r*(N/r) scratch
+            int radix = is_power_of_2 ? 2 : is_power_of_3 ? 3 : is_power_of_5 ? 5 :
+                        is_power_of_7 ? 7 : is_power_of_11 ? 11 : 13;
+            int stage = 0;
+            for (int n = signal_length; n >= radix; n /= radix) {
+                int sub_fft_size = n / radix;
+                // Store stage offset for twiddle_factors
+                if (stage < MAX_STAGES) {
+                    fft_config->stage_twiddle_offset[stage++] = twiddle_factors_size;
+                } else {
+                    fprintf(stderr, "Error: Exceeded MAX_STAGES (%d) for N=%d, radix=%d\n",
+                            MAX_STAGES, signal_length, radix);
+                    free_fft(fft_config);
+                    return NULL;
+                }
+                twiddle_factors_size += (radix - 1) * sub_fft_size; // W_n^{j*k}, j=1..r-1
+                scratch_needed += radix * sub_fft_size;              // Outputs
+            }
+            fft_config->num_precomputed_stages = stage; // Record number of stages
+        } else {
+            // Mixed-radix: r*(N/r) outputs, (r-1)*(N/r) twiddles for radices ≤ 13
+            for (int i = 0; i < num_factors; i++) {
+                int radix = temp_factors[i];
+                scratch_needed += radix * (temp_N / radix); // Outputs
+                if (radix <= 13) {
+                    scratch_needed += (radix - 1) * (temp_N / radix); // Twiddles
+                }
+                temp_N /= radix;
+            }
+        }
+        // Ensure scratch size covers worst-case, fallback to 4*N
+        // Note: Mixed-radix may need more scratch for twiddles in radix-11/13
+        max_scratch_size = scratch_needed;
+        if (max_scratch_size < 4 * signal_length) {
+            max_scratch_size = 4 * signal_length;
+        }
+    } else {
+        // Bluestein: 4*M for chirped_signal, temp_chirp, ifft_result, chirp_sequence
+        max_scratch_size = 4 * max_padded_length;
+    }
+
+    // Step 6: Allocate twiddle and scratch buffers
+    // 32-byte aligned for AVX2/SSE2 SIMD performance
+    fft_config->twiddles = (fft_data *)_mm_malloc(twiddle_count * sizeof(fft_data), 32);
+    fft_config->scratch = (fft_data *)_mm_malloc(max_scratch_size * sizeof(fft_data), 32);
+    fft_config->twiddle_factors = NULL;
+
+    // Check allocation failures and clean up
+    if (!fft_config->twiddles || !fft_config->scratch) {
+        fprintf(stderr, "Error: Failed to allocate twiddle or scratch buffers\n");
+        free_fft(fft_config);
+        return NULL;
+    }
+
+    // Step 7: Allocate twiddle_factors for pure-power FFTs
+    // Precompute twiddles to skip copying in mixed_radix_dit_rec
+    if (is_factorable && (is_power_of_2 || is_power_of_3 || is_power_of_5 || is_power_of_7 ||
+                          is_power_of_11 || is_power_of_13)) {
+        fft_config->twiddle_factors = (fft_data *)_mm_malloc(twiddle_factors_size * sizeof(fft_data), 32);
+        if (!fft_config->twiddle_factors) {
+            fprintf(stderr, "Error: Failed to allocate twiddle_factors buffer\n");
+            _mm_free(fft_config->twiddles);
+            _mm_free(fft_config->scratch);
+            free(fft_config);
+            return NULL;
+        }
+    }
+
+    // Step 8: Fill FFT config
+    // Set lengths, direction, algorithm type
+    fft_config->n_input = signal_length;
+    fft_config->n_fft = is_factorable ? signal_length : max_padded_length;
     fft_config->sgn = transform_direction;
+    fft_config->max_scratch_size = max_scratch_size;
+    fft_config->lt = is_factorable ? 0 : 1; // 0 = mixed-radix, 1 = Bluestein
 
-    // Adjust twiddle factors for inverse FFT by negating imaginary parts
-    if (transform_direction == -1)
-    {
-        for (int i = 0; i < twiddle_count; i++)
-        {
-            fft_config->twiddle[i].im = -fft_config->twiddle[i].im;
+    // Step 9: Factorize n_fft
+    // Store prime factors for recursion in mixed_radix_dit_rec
+    fft_config->lf = factors(fft_config->n_fft, fft_config->factors);
+
+    // Step 10: Compute twiddle factors
+    // Populate twiddles with e^{-2πi k / N} (or e^{-2πi k / M})
+    longvectorN(fft_config->twiddles, fft_config->n_fft, fft_config->factors, fft_config->lf);
+
+    // Step 11: Populate twiddle_factors for pure-power FFTs
+    // Store W_n^{j*k} (j=1..radix-1) for each level
+    // Note: Future extension could support mixed-radix special cases by storing offsets per factor
+    if (fft_config->twiddle_factors) {
+        int offset = 0;
+        int radix = is_power_of_2 ? 2 : is_power_of_3 ? 3 : is_power_of_5 ? 5 :
+                    is_power_of_7 ? 7 : is_power_of_11 ? 11 : 13;
+        for (int n = signal_length; n >= radix; n /= radix) {
+            int sub_fft_size = n / radix;
+            for (int j = 1; j < radix; j++) {
+                for (int k = 0; k < sub_fft_size; k++) {
+                    int idx = sub_fft_size - 1 + j * k; // W_n^{j*k}
+                    fft_config->twiddle_factors[offset + (j-1) * sub_fft_size + k].re = fft_config->twiddles[idx].re;
+                    fft_config->twiddle_factors[offset + (j-1) * sub_fft_size + k].im = fft_config->twiddles[idx].im;
+                }
+            }
+            offset += (radix - 1) * sub_fft_size;
         }
     }
 
+    // Step 12: Adjust twiddles for inverse FFT
+    // Flip imaginary parts for e^{+2πi k / N}
+    if (transform_direction == -1) {
+        for (int i = 0; i < twiddle_count; i++) {
+            fft_config->twiddles[i].im = -fft_config->twiddles[i].im;
+        }
+        if (fft_config->twiddle_factors) {
+            for (int i = 0; i < twiddle_factors_size; i++) {
+                fft_config->twiddle_factors[i].im = -fft_config->twiddle_factors[i].im;
+            }
+        }
+    }
+
+    // Step 13: Return configured FFT object
+    // Ready for fft_exec with all buffers and factors set
     return fft_config;
 }
 
@@ -394,7 +553,15 @@ fft_object fft_init(int signal_length, int transform_direction)
  *       Mathematically, the FFT computes \(X(k) = \sum_{n=0}^{N-1} x(n) \cdot e^{-2\pi i k n / N}\) for forward transforms,
  *       leveraging the divide-and-conquer strategy to reduce complexity from O(N^2) to O(N log N).
  */
-static void mixed_radix_dit_rec(fft_data *output_buffer, fft_data *input_buffer, const fft_object fft_obj, int transform_sign, int data_length, int stride, int factor_index)
+static void mixed_radix_dit_rec(
+    fft_data *output_buffer, 
+    fft_data *input_buffer, 
+    const fft_object fft_obj,
+    int transform_sign, 
+    int data_length, 
+    int stride, 
+    int factor_index, 
+    int scratch_offset)
 {
     if (data_length <= 0 || stride <= 0 || factor_index < 0)
     {
@@ -791,254 +958,303 @@ static void mixed_radix_dit_rec(fft_data *output_buffer, fft_data *input_buffer,
         output_buffer[5].im = tau8i - tau9r; // Sixth rotated output (imag)
     }
     else if (radix == 2) {
-        /**
-         * @brief Radix-2 decomposition for two-point sub-FFTs with AVX2 vectorization and optional FMA support.
-         *
-         * Intention: Efficiently compute the FFT for data lengths divisible by 2 by splitting the problem
-         * into two smaller sub-FFTs (even and odd indices), applying the FFT recursively, and combining
-         * results with twiddle factors. This is the core of the decimation-in-time (DIT) strategy for
-         * powers of 2 (N=2^r). Optimized with FMA instructions when available.
-         *
-         * Process:
-         * 1. Divide the data into two subproblems of size N/2, adjusting stride for indexing.
-         * 2. Recursively compute FFTs for even and odd indices.
-         * 3. Pre-build contiguous twiddle arrays for efficient SIMD access.
-         * 4. Flatten output_buffer into contiguous real/imag arrays to avoid interleaved memory issues.
-         * 5. Perform butterfly operations using AVX2 with FMA (via FMADD/FMSUB macros) for k divisible by 4,
-         *    with a scalar tail for remaining k.
-         * 6. Copy results back to output_buffer.
-         * 7. Clean up allocated memory.
-         *
-         * Optimization:
-         * - AVX2 vectorization processes four complex numbers simultaneously.
-         * - FMA instructions (FMADD/FMSUB) reduce instruction count and improve numerical accuracy
-         *   when compiled with -mfma or USE_FMA defined (requires Intel Haswell+ or AMD Zen+).
-         * - Without FMA, inlined fallback functions (ALWAYS_INLINE) avoid call overhead.
-         * - AVX_ONE macro inlines _mm256_set1_pd(1.0), avoiding storage and initializer issues; relies on
-         *   compiler optimization (CSE) to avoid redundant vector creation.
-         * - Precomputed twiddle factors avoid runtime trigonometric calls.
-         * - Contiguous twiddle and output arrays ensure efficient SIMD loads/stores.
-         * - Butterfly operations exploit symmetry to minimize computations.
-         *
-         * Transform sign: Determines the twiddle factor phase (forward: negative exponent, inverse:
-         * positive exponent), handled via precomputed twiddle factors adjusted during fft_init.
-         *
-         * Note: Uses unaligned AVX2 loads/stores (LOADU_PD/STOREU_PD) as malloc doesn’t guarantee
-         * 32-byte alignment. Future optimization may use posix_memalign with USE_ALIGNED_SIMD to enable
-         * _mm256_load_pd/_mm256_store_pd. Twiddle and output arrays are allocated per call; pre-allocation
-         * in fft_obj is planned to avoid malloc/free overhead. Runtime FMA detection (e.g.,
-         * __builtin_cpu_supports or _cpuid) could be added for dynamic dispatch but is omitted for performance.
-         *
-         *
-         * @warning Assumes fft_obj->twiddle has at least N-1 elements, where N = data_length,
-         * to support indices up to sub_length-1 + (M-1). If undersized, undefined behavior may occur.
-         */
-        // Step 1: Compute subproblem size and new stride
-        int sub_length = data_length / 2; // Size of each sub-FFT (N/2)
-        int new_stride = 2 * stride;      // Stride doubles to access every other element
-        int M = sub_length;               // Sub-FFT size for indexing
+    /**
+     * @brief Radix-2 decomposition for two-point sub-FFTs with AVX2 vectorization and FMA support.
+     *
+     * Intention: Efficiently compute the FFT for data lengths divisible by 2 by splitting into
+     * two sub-FFTs (even and odd indices), applying recursive FFTs, and combining results with
+     * twiddle factors. Optimized for power-of-2 (N=2^r) and mixed-radix FFTs using pre-allocated
+     * scratch and stage-specific twiddle offsets. Follows FFTW’s two-buffer strategy for thread
+     * safety and performance.
+     *
+     * Mathematically: Computes:
+     *   X(k) = X_even(k) + W_N^k * X_odd(k),
+     *   X(k+N/2) = X_even(k) - W_N^k * X_odd(k),
+     * where X_even, X_odd are sub-FFTs of size N/2, W_N^k = e^{-2πi k / N}.
+     *
+     * Process:
+     * 1. Divide data into two sub-FFTs of size N/2, doubling stride.
+     * 2. Validate scratch size: 2*(N/2) for outputs (power-of-2), 3*(N/2) for outputs + twiddles (mixed-radix).
+     * 3. Assign scratch slices for sub-FFT outputs and twiddles (mixed-radix only).
+     * 4. Compute child scratch offsets to prevent overlap, using parent’s allocated scratch.
+     * 5. Recursively compute even and odd sub-FFTs.
+     * 6. Load twiddle factors from stage_twiddle_offset[factor_index] (power-of-2) or copy to scratch (mixed-radix).
+     * 7. Perform butterfly operations with AVX2 for k divisible by 4, scalar tail.
+     * 8. Copy results to output_buffer.
+     *
+     * Optimization:
+     * - AVX2 processes 4 complex points per iteration, using aligned loads/stores when USE_ALIGNED_SIMD is defined.
+     * - FMA (FMADD/FMSUB) computes (a*b ± c) for accuracy and speed, enabled by __FMA__ or USE_FMA.
+     * - Pre-allocated scratch eliminates malloc/free overhead.
+     * - stage_twiddle_offset skips ad-hoc indexing for power-of-2 FFTs.
+     * - Scratch and twiddle_factors are 32-byte aligned, supporting aligned SIMD.
+     *
+     * @warning Assumes fft_obj->twiddles has n_fft ≥ N elements, scratch is 32-byte aligned,
+     *          and factor_index is valid for twiddle_factors.
+     */
+    // Step 1: Compute subproblem size and stride
+    int sub_fft_length = data_length / 2; // Size of each sub-FFT (N/2)
+    int next_stride = 2 * stride;         // Double stride for next level
+    int sub_fft_size = sub_fft_length;    // Sub-FFT size for indexing
 
-        // Step 2: Recurse on even- and odd-indexed halves
-        mixed_radix_dit_rec(output_buffer, input_buffer,
-                            fft_obj, transform_sign, sub_length,
-                            new_stride, factor_index + 1); // Even indices
-        mixed_radix_dit_rec(output_buffer + sub_length, input_buffer + stride,
-                            fft_obj, transform_sign, sub_length,
-                            new_stride, factor_index + 1); // Odd indices
-
-        // Step 3: Pre-build contiguous twiddle arrays
-        double *tw_re_contig = malloc(M * sizeof(double)); // Contiguous real twiddles
-        double *tw_im_contig = malloc(M * sizeof(double)); // Contiguous imag twiddles
-        if (!tw_re_contig || !tw_im_contig) {
-            fprintf(stderr, "Error: Memory allocation failed for twiddle arrays\n");
-            free(tw_re_contig);
-            free(tw_im_contig);
-            exit(EXIT_FAILURE);
-        }
-        if (fft_obj->N - 1 < 2 * M - 1) {
-            fprintf(stderr, "Error: Twiddle array too small (need %d elements, have %d)\n", 2 * M - 1, fft_obj->N - 1);
-            free(tw_re_contig);
-            free(tw_im_contig);
-            exit(EXIT_FAILURE);
-        }
-        for (int k = 0; k < M; k++) {
-            int idx = sub_length - 1 + k; // fft_obj->twiddle[idx] = W_N^k
-            tw_re_contig[k] = fft_obj->twiddle[idx].re;
-            tw_im_contig[k] = fft_obj->twiddle[idx].im;
-        }
-
-        // Step 4: Flatten output_buffer into contiguous real/imag arrays
-        double *out_re = malloc(2 * M * sizeof(double)); // Contiguous real outputs
-        double *out_im = malloc(2 * M * sizeof(double)); // Contiguous imag outputs
-        if (!out_re || !out_im) {
-            fprintf(stderr, "Error: Memory allocation failed for output arrays\n");
-            free(tw_re_contig);
-            free(tw_im_contig);
-            free(out_re);
-            free(out_im);
-            exit(EXIT_FAILURE);
-        }
-        for (int lane = 0; lane < 2; lane++) {
-            fft_data *base = output_buffer + lane * M;
-            for (int k = 0; k < M; k++) {
-                out_re[lane * M + k] = base[k].re;
-                out_im[lane * M + k] = base[k].im;
-            }
-        }
-
-        // Step 5: Perform AVX2-accelerated butterfly operations with FMA
-        int k = 0;
-
-        // Vectorized loop: Process 4 complex numbers at a time using AVX2
-        for (; k + 3 < M; k += 4) {
-            __m256d er = LOADU_PD(out_re + k);     // Load even sub-FFT real parts
-            __m256d ei = LOADU_PD(out_im + k);     // Load even sub-FFT imag parts
-            __m256d br = LOADU_PD(out_re + k + M); // Load odd sub-FFT real parts
-            __m256d bi = LOADU_PD(out_im + k + M); // Load odd sub-FFT real parts
-            __m256d wre = LOADU_PD(tw_re_contig + k); // Load twiddle real parts
-            __m256d wim = LOADU_PD(tw_im_contig + k); // Load twiddle imag parts
-
-            // Twiddle multiply
-            __m256d tr = FMSUB(br, wre, _mm256_mul_pd(bi, wim)); // tr = br*wre - bi*wim
-            __m256d ti = FMADD(bi, wre, _mm256_mul_pd(br, wim)); // ti = bi*wre + br*wim
-
-            // Butterfly: X(k) = even + twiddled_odd, X(k+N/2) = even - twiddled_odd
-            STOREU_PD(out_re + k, FMADD(tr, AVX_ONE, er)); // X(k) real = er + tr
-            STOREU_PD(out_im + k, FMADD(ti, AVX_ONE, ei)); // X(k) imag = ei + ti
-            STOREU_PD(out_re + k + M, FMSUB(er, AVX_ONE, tr)); // X(k+N/2) real = er - tr
-            STOREU_PD(out_im + k + M, FMSUB(ei, AVX_ONE, ti)); // X(k+N/2) imag = ei - ti
-        }
-
-        // Scalar tail: Handle remaining elements not divisible by 4
-        for (; k < M; ++k) {
-            double ar = out_re[k], ai = out_im[k];           // Even sub-FFT point
-            double br_ = out_re[k + M], bi_ = out_im[k + M]; // Odd sub-FFT point
-            double tr = br_ * tw_re_contig[k] - bi_ * tw_im_contig[k]; // Twiddle mult real
-            double ti = bi_ * tw_re_contig[k] + br_ * tw_im_contig[k]; // Twiddle mult imag
-            out_re[k] = ar + tr;                             // X(k) real
-            out_im[k] = ai + ti;                             // X(k) imag
-            out_re[k + M] = ar - tr;                         // X(k+N/2) real
-            out_im[k + M] = ai - ti;                         // X(k+N/2) imag
-        }
-
-        // Step 6: Copy results back to output_buffer
-        for (int lane = 0; lane < 2; lane++) {
-            fft_data *base = output_buffer + lane * M;
-            for (int k = 0; k < M; k++) {
-                base[k].re = out_re[lane * M + k];
-                base[k].im = out_im[lane * M + k];
-            }
-        }
-
-        // Step 7: Clean up allocated memory
-        free(tw_re_contig);
-        free(tw_im_contig);
-        free(out_re);
-        free(out_im);
+    // Step 2: Validate scratch buffer
+    // Power-of-2: 2*(N/2) for outputs; mixed-radix: (2+1)*(N/2) = 3*(N/2) for outputs + twiddles
+    int required_size = fft_obj->twiddle_factors != NULL ? 2 * sub_fft_size : 3 * sub_fft_size;
+    if (scratch_offset + required_size > fft_obj->max_scratch_size) {
+        fprintf(stderr, "Error: Scratch buffer too small for radix-2 at offset %d (need %d, have %d)\n",
+                scratch_offset, required_size, fft_obj->max_scratch_size - scratch_offset);
+        exit(EXIT_FAILURE);
     }
-    else if (radix == 3)
-    {
+
+    // Step 3: Assign scratch slices
+    // sub_fft_outputs: even/odd sub-FFT results (2*sub_fft_size fft_data)
+    // twiddle_factors: W_N^k (sub_fft_size fft_data, mixed-radix only)
+    fft_data *sub_fft_outputs = fft_obj->scratch + scratch_offset;
+    fft_data *twiddle_factors;
+    if (fft_obj->twiddle_factors != NULL) {
+        // Validate factor_index for power-of-2 FFTs
+        if (factor_index >= fft_obj->num_precomputed_stages) {
+            fprintf(stderr, "Error: Invalid factor_index (%d) exceeds num_precomputed_stages (%d) for radix-2\n",
+                    factor_index, fft_obj->num_precomputed_stages);
+            exit(EXIT_FAILURE);
+        }
+        twiddle_factors = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
+    } else {
+        twiddle_factors = fft_obj->scratch + scratch_offset + 2 * sub_fft_size;
+    }
+
+    // Step 4: Compute offsets for child recursions
+    // Each child needs 2*(N/4) (power-of-2) or 3*(N/4) (mixed-radix)
+    // Use parent’s required_size to ensure non-overlapping regions
+    int child_scratch_per_branch = fft_obj->twiddle_factors != NULL ? 2 * (sub_fft_size / 2) : 3 * (sub_fft_size / 2);
+    if (child_scratch_per_branch * 2 > required_size) {
+        fprintf(stderr, "Error: Child scratch size (%d) exceeds parent allocation (%d) for radix-2\n",
+                child_scratch_per_branch * 2, required_size);
+        exit(EXIT_FAILURE);
+    }
+    int child_offset1 = scratch_offset;                    // First child starts at parent offset
+    int child_offset2 = scratch_offset + required_size / 2; // Second child uses second half
+
+    // Step 5: Recurse on even and odd indices
+    // Use distinct scratch offsets to prevent overlap
+    mixed_radix_dit_rec(sub_fft_outputs, input_buffer, fft_obj, transform_sign, sub_fft_length,
+                        next_stride, factor_index + 1, child_offset1); // Even indices
+    mixed_radix_dit_rec(sub_fft_outputs + sub_fft_size, input_buffer + stride, fft_obj, transform_sign,
+                        sub_fft_length, next_stride, factor_index + 1, child_offset2); // Odd indices
+
+    // Step 6: Prepare twiddle factors (mixed-radix only)
+    // For power-of-2 FFTs, twiddle_factors points to precomputed W_N^k via stage_twiddle_offset
+    if (fft_obj->twiddle_factors == NULL) {
+        if (fft_obj->n_fft < 2 * sub_fft_size) {
+            fprintf(stderr, "Error: Twiddle array too small (need at least %d elements, have %d)\n",
+                    2 * sub_fft_size, fft_obj->n_fft);
+            exit(EXIT_FAILURE);
+        }
+        for (int k = 0; k < sub_fft_size; k++) {
+            int idx = sub_fft_length - 1 + k; // Index for W_N^k
+            twiddle_factors[k].re = fft_obj->twiddles[idx].re;
+            twiddle_factors[k].im = fft_obj->twiddles[idx].im;
+        }
+    }
+
+    // Step 7: Run AVX2 butterfly operations
+    // Combine: X(k) = even + W_N^k * odd, X(k+N/2) = even - W_N^k * odd
+    // Scratch and twiddle_factors are 32-byte aligned (via _mm_malloc), enabling aligned loads/stores with USE_ALIGNED_SIMD
+    int k = 0;
+    for (; k + 3 < sub_fft_size; k += 4) {
+        // Load even/odd sub-FFT points (32-byte aligned with USE_ALIGNED_SIMD)
+        __m256d even_re = LOADU_PD(&sub_fft_outputs[k].re);     // Even real parts
+        __m256d even_im = LOADU_PD(&sub_fft_outputs[k].im);     // Even imag parts
+        __m256d odd_re = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].re); // Odd real
+        __m256d odd_im = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].im); // Odd imag
+        // Load twiddle factors (aligned for power-of-2, scratch for mixed-radix)
+        __m256d twiddle_re = LOADU_PD(&twiddle_factors[k].re);   // W_N^k real
+        __m256d twiddle_im = LOADU_PD(&twiddle_factors[k].im);   // W_N^k imag
+
+        // Twiddle multiply: (odd_re + i*odd_im) * (twiddle_re + i*twiddle_im)
+        // FMSUB(a, b, c) computes a*b - c, FMADD(a, b, c) computes a*b + c
+        __m256d twiddled_re = FMSUB(odd_re, twiddle_re, _mm256_mul_pd(odd_im, twiddle_im)); // odd_re * twiddle_re - odd_im * twiddle_im
+        __m256d twiddled_im = FMADD(odd_im, twiddle_re, _mm256_mul_pd(odd_re, twiddle_im)); // odd_im * twiddle_re + odd_re * twiddle_im
+
+        // Butterfly operations
+        STOREU_PD(&sub_fft_outputs[k].re, FMADD(twiddled_re, AVX_ONE, even_re)); // X(k) real
+        STOREU_PD(&sub_fft_outputs[k].im, FMADD(twiddled_im, AVX_ONE, even_im)); // X(k) imag
+        STOREU_PD(&sub_fft_outputs[k + sub_fft_size].re, FMSUB(even_re, AVX_ONE, twiddled_re)); // X(k+N/2) real
+        STOREU_PD(&sub_fft_outputs[k + sub_fft_size].im, FMSUB(even_im, AVX_ONE, twiddled_im)); // X(k+N/2) imag
+    }
+
+    // Scalar tail: Handle remaining points
+    for (; k < sub_fft_size; ++k) {
+        double even_re = sub_fft_outputs[k].re, even_im = sub_fft_outputs[k].im;           // Even point
+        double odd_re = sub_fft_outputs[k + sub_fft_size].re, odd_im = sub_fft_outputs[k + sub_fft_size].im; // Odd point
+        // Twiddle multiply
+        double twiddled_re = odd_re * twiddle_factors[k].re - odd_im * twiddle_factors[k].im;   // Real part
+        double twiddled_im = odd_im * twiddle_factors[k].re + odd_re * twiddle_factors[k].im;   // Imag part
+        // Butterfly
+        sub_fft_outputs[k].re = even_re + twiddled_re;                                 // X(k) real
+        sub_fft_outputs[k].im = even_im + twiddled_im;                                 // X(k) imag
+        sub_fft_outputs[k + sub_fft_size].re = even_re - twiddled_re;                  // X(k+N/2) real
+        sub_fft_outputs[k + sub_fft_size].im = even_im - twiddled_im;                  // X(k+N/2) imag
+    }
+
+    // Step 8: Copy results to output_buffer
+    // Move X(k) and X(k+N/2) to final positions
+    for (int lane = 0; lane < 2; lane++) {
+        fft_data *base = output_buffer + lane * sub_fft_size;
+        for (int k = 0; k < sub_fft_size; k++) {
+            base[k].re = sub_fft_outputs[lane * sub_fft_size + k].re;
+            base[k].im = sub_fft_outputs[lane * sub_fft_size + k].im;
+        }
+    }
+    }
+    else if (radix == 3) {
     /**
      * @brief Radix-3 decomposition for three-point sub-FFTs with SSE2 vectorization and FMA support.
      *
-     * Intention: Compute the FFT for data lengths divisible by 3 by splitting into three sub-FFTs,
-     * corresponding to indices n mod 3 = 0, 1, 2, and combining results with twiddle factors.
-     * This extends the DIT strategy for N=3^r or mixed-radix cases, using SSE2 for broader compatibility.
+     * Intention: Efficiently compute the FFT for data lengths divisible by 3 by splitting into
+     * three sub-FFTs (indices n mod 3 = 0, 1, 2), applying recursive FFTs, and combining results
+     * with twiddle factors. Optimized for power-of-3 (N=3^r) and mixed-radix FFTs using
+     * pre-allocated scratch and stage-specific twiddle offsets. Follows FFTW’s two-buffer strategy
+     * for thread safety and performance.
      *
-     * Mathematically: The FFT is computed as:
-     *   \( X(k) = X_0(k) + W_N^k \cdot X_1(k) + W_N^{2k} \cdot X_2(k) \),
-     * where \( X_0, X_1, X_2 \) are sub-FFTs of size N/3, and \( W_N^k = e^{-2\pi i k / N} \).
-     * The butterfly operation uses the 120° and 240° roots of unity, with √3/2 for rotation.
+     * Mathematically: Computes:
+     *   X(k) = X_0(k) + W_N^k * X_1(k) + W_N^{2k} * X_2(k),
+     * where X_0, X_1, X_2 are sub-FFTs of size N/3, W_N^k = e^{-2πi k / N}.
+     * The butterfly uses 120° and 240° roots of unity (√3/2 for rotation).
      *
+     * Process:
+     * 1. Divide data into three sub-FFTs of size N/3, tripling stride.
+     * 2. Validate scratch size: 3*(N/3) for outputs (power-of-3), 5*(N/3) for outputs + twiddles (mixed-radix).
+     * 3. Assign scratch slices for sub-FFT outputs and twiddles (mixed-radix only).
+     * 4. Compute child scratch offsets to prevent overlap, using parent’s allocated scratch.
+     * 5. Recursively compute sub-FFTs for indices n mod 3 = 0, 1, 2.
+     * 6. Load twiddle factors from stage_twiddle_offset[factor_index] (power-of-3) or copy to scratch (mixed-radix).
+     * 7. Flatten sub-FFT outputs into contiguous real/imag arrays.
+     * 8. Perform butterfly operations with SSE2 for k divisible by 2, scalar tail.
+     * 9. Copy results to output_buffer.
+     *
+     * Optimization:
+     * - SSE2 processes 2 complex points per iteration, using aligned loads/stores when USE_ALIGNED_SIMD is defined.
+     * - FMA (FMADD_SSE2/FMSUB_SSE2) computes (a*b ± c) for accuracy and speed, enabled by __FMA__ or USE_FMA.
+     * - Pre-allocated scratch eliminates malloc/free overhead.
+     * - stage_twiddle_offset skips ad-hoc indexing for power-of-3 FFTs.
+     * - Scratch and twiddle_factors are 32-byte aligned, supporting aligned SIMD.
+     *
+     * @warning Assumes fft_obj->twiddles has n_fft ≥ N elements, scratch is 32-byte aligned,
+     *          and factor_index is valid for twiddle_factors.
      */
-    // Step 1: Compute subproblem size and new stride
-    int sub_length = data_length / 3; // Size of each sub-FFT (N/3)
-    int new_stride = 3 * stride;      // Stride triples to access every third element
-    int M = sub_length;               // Sub-FFT size for indexing
+    // Step 1: Compute subproblem size and stride
+    int sub_fft_length = data_length / 3; // Size of each sub-FFT (N/3)
+    int next_stride = 3 * stride;         // Triple stride for next level
+    int sub_fft_size = sub_fft_length;    // Sub-FFT size for indexing
 
-    // Step 2: Recurse on the three decimated sub-FFTs
-    for (int i = 0; i < 3; i++)
-    {
-        mixed_radix_dit_rec(output_buffer + i * sub_length, input_buffer + i * stride, fft_obj,
-                            transform_sign, sub_length, new_stride, factor_index + 1);
-    }
-
-    // Step 3: Flatten twiddle factors into contiguous arrays for SSE2
-    double *tw_re_contig = malloc(2 * M * sizeof(double)); // Contiguous real twiddles
-    double *tw_im_contig = malloc(2 * M * sizeof(double)); // Contiguous imag twiddles
-    if (!tw_re_contig || !tw_im_contig)
-    {
-        fprintf(stderr, "Error: Memory allocation failed for twiddle arrays\n");
-        free(tw_re_contig);
-        free(tw_im_contig);
+    // Step 2: Validate scratch buffer
+    // Power-of-3: 3*(N/3) for outputs; mixed-radix: (3+2)*(N/3) = 5*(N/3) for outputs + twiddles
+    int required_size = fft_obj->twiddle_factors != NULL ? 3 * sub_fft_size : 5 * sub_fft_size;
+    if (scratch_offset + required_size > fft_obj->max_scratch_size) {
+        fprintf(stderr, "Error: Scratch buffer too small for radix-3 at offset %d (need %d, have %d)\n",
+                scratch_offset, required_size, fft_obj->max_scratch_size - scratch_offset);
         exit(EXIT_FAILURE);
     }
-    if (fft_obj->N - 1 < sub_length - 1 + 2 * (sub_length - 1))
-    {
-        fprintf(stderr, "Error: Twiddle array too small (need %d elements, have %d)\n",
-                sub_length - 1 + 2 * (sub_length - 1), fft_obj->N - 1);
-        free(tw_re_contig);
-        free(tw_im_contig);
-        exit(EXIT_FAILURE);
-    }
-    for (int k = 0; k < M; k++)
-    {
-        int idx = sub_length - 1 + 2 * k; // twiddle[sub_length-1 + n*k] = W_N^{n*k}
-        tw_re_contig[2 * k + 0] = fft_obj->twiddle[idx + 0].re; // W_N^k real
-        tw_im_contig[2 * k + 0] = fft_obj->twiddle[idx + 0].im; // W_N^k imag
-        tw_re_contig[2 * k + 1] = fft_obj->twiddle[idx + 1].re; // W_N^{2k} real
-        tw_im_contig[2 * k + 1] = fft_obj->twiddle[idx + 1].im; // W_N^{2k} imag
+
+    // Step 3: Assign scratch slices
+    // sub_fft_outputs: X_0, X_1, X_2 (3*sub_fft_size fft_data)
+    // twiddle_factors: W_N^k, W_N^{2k} (2*sub_fft_size fft_data, mixed-radix only)
+    fft_data *sub_fft_outputs = fft_obj->scratch + scratch_offset;
+    fft_data *twiddle_factors;
+    if (fft_obj->twiddle_factors != NULL) {
+        // Validate factor_index for power-of-3 FFTs
+        if (factor_index >= fft_obj->num_precomputed_stages) {
+            fprintf(stderr, "Error: Invalid factor_index (%d) exceeds num_precomputed_stages (%d) for radix-3\n",
+                    factor_index, fft_obj->num_precomputed_stages);
+            exit(EXIT_FAILURE);
+        }
+        twiddle_factors = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
+    } else {
+        twiddle_factors = fft_obj->scratch + scratch_offset + 3 * sub_fft_size;
     }
 
-    // Step 4: Flatten output_buffer into contiguous arrays for SSE2
-    double *out_re = malloc(3 * M * sizeof(double)); // Contiguous real outputs
-    double *out_im = malloc(3 * M * sizeof(double)); // Contiguous imag outputs
-    if (!out_re || !out_im)
-    {
-        fprintf(stderr, "Error: Memory allocation failed for output arrays\n");
-        free(tw_re_contig);
-        free(tw_im_contig);
-        free(out_re);
-        free(out_im);
+    // Step 4: Compute child scratch offsets
+    // Each child needs 3*(N/9) (power-of-3) or 5*(N/9) (mixed-radix), tiled within parent block
+    // Use parent’s required_size to ensure non-overlapping regions
+    int child_scratch_per_branch = fft_obj->twiddle_factors != NULL ? 3 * (sub_fft_size / 3) : 5 * (sub_fft_size / 3);
+    if (child_scratch_per_branch * 3 > required_size) {
+        fprintf(stderr, "Error: Child scratch size (%d) exceeds parent allocation (%d) for radix-3\n",
+                child_scratch_per_branch * 3, required_size);
         exit(EXIT_FAILURE);
     }
-    for (int lane = 0; lane < 3; lane++)
-    {
-        fft_data *base = output_buffer + lane * M;
-        for (int k = 0; k < M; k++)
-        {
-            out_re[lane * M + k] = base[k].re;
-            out_im[lane * M + k] = base[k].im;
+    int child_offset1 = scratch_offset;                    // First child starts at parent offset
+    int child_offset2 = scratch_offset + required_size / 3; // Second child uses second third
+    int child_offset3 = scratch_offset + 2 * required_size / 3; // Third child uses final third
+
+    // Step 5: Recurse on three sub-FFTs
+    // Use distinct scratch offsets to prevent overlap
+    for (int i = 0; i < 3; i++) {
+        mixed_radix_dit_rec(sub_fft_outputs + i * sub_fft_size, input_buffer + i * stride, fft_obj,
+                            transform_sign, sub_fft_length, next_stride, factor_index + 1,
+                            scratch_offset + i * required_size / 3);
+    }
+
+    // Step 6: Prepare twiddle factors (mixed-radix only)
+    // For power-of-3 FFTs, twiddle_factors points to precomputed W_N^k, W_N^{2k} via stage_twiddle_offset
+    if (fft_obj->twiddle_factors == NULL) {
+        if (fft_obj->n_fft < 3 * sub_fft_size) {
+            fprintf(stderr, "Error: Twiddle array too small (need at least %d elements, have %d)\n",
+                    3 * sub_fft_size, fft_obj->n_fft);
+            exit(EXIT_FAILURE);
+        }
+        for (int k = 0; k < sub_fft_size; k++) {
+            int idx = sub_fft_length - 1 + 2 * k; // Index for W_N^k, W_N^{2k}
+            twiddle_factors[2 * k + 0].re = fft_obj->twiddles[idx + 0].re; // W_N^k real
+            twiddle_factors[2 * k + 0].im = fft_obj->twiddles[idx + 0].im; // W_N^k imag
+            twiddle_factors[2 * k + 1].re = fft_obj->twiddles[idx + 1].re; // W_N^{2k} real
+            twiddle_factors[2 * k + 1].im = fft_obj->twiddles[idx + 1].im; // W_N^{2k} imag
         }
     }
 
-    // Step 5: SSE2 vectorized loop for k=0 to sub_length-1
-    __m128d vsign = _mm_set1_pd((double)transform_sign); // Vectorized transform sign
-    __m128d vhalf = _mm_set1_pd(0.5); // Constant for -½(b + c)
-    __m128d vsqrt3by2 = _mm_set1_pd(C3_SQRT3BY2); // √3/2 for rotation
+    // Step 7: Flatten outputs into contiguous arrays in scratch
+    // Use sub_fft_outputs for 3*sub_fft_size fft_data (6*sub_fft_size doubles)
+    // out_re: first 3*sub_fft_size doubles; out_im: next 3*sub_fft_size doubles
+    // Scratch is 32-byte aligned, ensuring safe aligned loads/stores with USE_ALIGNED_SIMD
+    double *out_re = (double *)sub_fft_outputs;
+    double *out_im = (double *)sub_fft_outputs + 3 * sub_fft_size;
+    for (int lane = 0; lane < 3; lane++) {
+        fft_data *base = sub_fft_outputs + lane * sub_fft_size;
+        for (int k = 0; k < sub_fft_size; k++) {
+            out_re[lane * sub_fft_size + k] = base[k].re;
+            out_im[lane * sub_fft_size + k] = base[k].im;
+        }
+    }
+
+    // Step 8: SSE2 vectorized butterfly for k=0 to sub_fft_size-1
+    // Combine: X(k), X(k+N/3), X(k+2N/3) with 120°/240° rotations
+    // Use aligned loads/stores with USE_ALIGNED_SIMD since scratch and twiddle_factors are 32-byte aligned
+    __m128d v_sign_factor = _mm_set1_pd((double)transform_sign); // ±1 for transform direction
+    __m128d vhalf = _mm_set1_pd(0.5);                           // Constant for -½(b + c)
+    __m128d vsqrt3by2 = _mm_set1_pd(C3_SQRT3BY2);               // √3/2 for 120° rotation
     int k = 0;
-    for (; k + 1 < M; k += 2)
-    {
-        // Load three sub-FFT points for two k values
-        __m128d a_r = LOADU_SSE2(out_re + k);               // X0[k:k+1] real
-        __m128d a_i = LOADU_SSE2(out_im + k);               // X0[k:k+1] imag
-        __m128d b_r = LOADU_SSE2(out_re + k + M);           // X1[k:k+1] real
-        __m128d b_i = LOADU_SSE2(out_im + k + M);           // X1[k:k+1] imag
-        __m128d c_r = LOADU_SSE2(out_re + k + 2 * M);       // X2[k:k+1] real
-        __m128d c_i = LOADU_SSE2(out_im + k + 2 * M);       // X2[k:k+1] imag
+    for (; k + 1 < sub_fft_size; k += 2) {
+        // Load three sub-FFT points for two k values (32-byte aligned with USE_ALIGNED_SIMD)
+        __m128d a_r = LOADU_SSE2(out_re + k);                     // X_0[k:k+1] real
+        __m128d a_i = LOADU_SSE2(out_im + k);                     // X_0[k:k+1] imag
+        __m128d b_r = LOADU_SSE2(out_re + k + sub_fft_size);      // X_1[k:k+1] real
+        __m128d b_i = LOADU_SSE2(out_im + k + sub_fft_size);      // X_1[k:k+1] imag
+        __m128d c_r = LOADU_SSE2(out_re + k + 2 * sub_fft_size);  // X_2[k:k+1] real
+        __m128d c_i = LOADU_SSE2(out_im + k + 2 * sub_fft_size);  // X_2[k:k+1] imag
 
-        // Load twiddle factors for two k values
+        // Load twiddle factors (aligned for power-of-3, scratch for mixed-radix)
         int idx = 2 * k; // Base index for W_N^k, W_N^{2k}
-        __m128d w1r = LOADU_SSE2(tw_re_contig + idx + 0); // W_N^k real
-        __m128d w1i = LOADU_SSE2(tw_im_contig + idx + 0); // W_N^k imag
-        __m128d w2r = LOADU_SSE2(tw_re_contig + idx + 1); // W_N^{2k} real
-        __m128d w2i = LOADU_SSE2(tw_im_contig + idx + 1); // W_N^{2k} imag
+        __m128d w1r = LOADU_SSE2(&twiddle_factors[idx + 0].re);   // W_N^k real
+        __m128d w1i = LOADU_SSE2(&twiddle_factors[idx + 0].im);   // W_N^k imag
+        __m128d w2r = LOADU_SSE2(&twiddle_factors[idx + 1].re);   // W_N^{2k} real
+        __m128d w2i = LOADU_SSE2(&twiddle_factors[idx + 1].im);   // W_N^{2k} imag
 
-        // Apply twiddle factors
-        __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i)); // W_N^k * X1 real
-        __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i)); // W_N^k * X1 imag
-        __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i)); // W_N^{2k} * X2 real
-        __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i)); // W_N^{2k} * X2 imag
+        // Apply twiddle factors: (b/c) * W_N^k
+        // FMSUB_SSE2(a, b, c) computes a*b - c, FMADD_SSE2(a, b, c) computes a*b + c
+        __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i)); // b_r * w1r - b_i * w1i
+        __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i)); // b_i * w1r + b_r * w1i
+        __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i)); // c_r * w2r - c_i * w2i
+        __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i)); // c_i * w2r + c_r * w2i
 
         // Compute sums and differences
         __m128d sum_r = _mm_add_pd(b2r, c2r); // b + c real
@@ -1055,70 +1271,73 @@ static void mixed_radix_dit_rec(fft_data *output_buffer, fft_data *input_buffer,
         // X_1 = a - ½(b + c) + i * (sign * (√3/2) * (b - c))
         __m128d t_r = _mm_sub_pd(a_r, _mm_mul_pd(sum_r, vhalf)); // a - ½(b + c) real
         __m128d t_i = _mm_sub_pd(a_i, _mm_mul_pd(sum_i, vhalf)); // a - ½(b + c) imag
-        __m128d rot_r = _mm_mul_pd(diff_i, _mm_mul_pd(vsign, vsqrt3by2)); // sign * (√3/2) * (b - c) real
-        __m128d rot_i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), diff_r), _mm_mul_pd(vsign, vsqrt3by2)); // -sign * (√3/2) * (b - c) imag
+        __m128d rot_r = _mm_mul_pd(diff_i, _mm_mul_pd(v_sign_factor, vsqrt3by2)); // sign * (√3/2) * (b - c) real
+        __m128d rot_i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), diff_r), _mm_mul_pd(v_sign_factor, vsqrt3by2)); // -sign * (√3/2) * (b - c) imag
         __m128d x1r = _mm_add_pd(t_r, rot_r); // X(k + N/3) real
         __m128d x1i = _mm_add_pd(t_i, rot_i); // X(k + N/3) imag
-        STOREU_SSE2(out_re + k + M, x1r);
-        STOREU_SSE2(out_im + k + M, x1i);
+        STOREU_SSE2(out_re + k + sub_fft_size, x1r);
+        STOREU_SSE2(out_im + k + sub_fft_size, x1i);
 
         // X_2 = a - ½(b + c) - i * (sign * (√3/2) * (b - c))
         __m128d x2r = _mm_sub_pd(t_r, rot_r); // X(k + 2N/3) real
         __m128d x2i = _mm_sub_pd(t_i, rot_i); // X(k + 2N/3) imag
-        STOREU_SSE2(out_re + k + 2 * M, x2r);
-        STOREU_SSE2(out_im + k + 2 * M, x2i);
+        STOREU_SSE2(out_re + k + 2 * sub_fft_size, x2r);
+        STOREU_SSE2(out_im + k + 2 * sub_fft_size, x2i);
     }
 
-    // Step 6: Scalar tail for remaining k
-    for (; k < sub_length; k++)
-    {
-        int idx = sub_length - 1 + 2 * k;            // Index into twiddle array
-        fft_type w1r = fft_obj->twiddle[idx + 0].re; // W_N^k real
-        fft_type w1i = fft_obj->twiddle[idx + 0].im; // W_N^k imag
-        fft_type w2r = fft_obj->twiddle[idx + 1].re; // W_N^{2k} real
-        fft_type w2i = fft_obj->twiddle[idx + 1].im; // W_N^{2k} imag
+    // Step 9: Scalar tail for remaining k
+    // Handle any k not covered by SSE2 loop (e.g., sub_fft_size odd)
+    for (; k < sub_fft_size; k++) {
+        // Load twiddle factors
+        fft_type w1r = twiddle_factors[2 * k + 0].re; // W_N^k real
+        fft_type w1i = twiddle_factors[2 * k + 0].im; // W_N^k imag
+        fft_type w2r = twiddle_factors[2 * k + 1].re; // W_N^{2k} real
+        fft_type w2i = twiddle_factors[2 * k + 1].im; // W_N^{2k} imag
 
-        fft_type a_re = out_re[k], a_im = out_im[k];                     // First point
-        fft_type b_re = out_re[k + M] * w1r - out_im[k + M] * w1i;       // W_N^k * X_1 real
-        fft_type b_im = out_im[k + M] * w1r + out_re[k + M] * w1i;       // W_N^k * X_1 imag
-        fft_type c_re = out_re[k + 2 * M] * w2r - out_im[k + 2 * M] * w2i; // W_N^{2k} * X_2 real
-        fft_type c_im = out_im[k + 2 * M] * w2r + out_re[k + 2 * M] * w2i; // W_N^{2k} * X_2 imag
+        // Load sub-FFT points
+        fft_type a_re = out_re[k], a_im = out_im[k];                     // X_0
+        fft_type b_re = out_re[k + sub_fft_size], b_im = out_im[k + sub_fft_size]; // X_1
+        fft_type c_re = out_re[k + 2 * sub_fft_size], c_im = out_im[k + 2 * sub_fft_size]; // X_2
 
-        fft_type sum_re = b_re + c_re;  // Sum of twiddled points (real)
-        fft_type sum_im = b_im + c_im;  // Sum of twiddled points (imag)
-        fft_type diff_re = b_re - c_re; // Difference (real)
-        fft_type diff_im = b_im - c_im; // Difference (imag)
+        // Apply twiddle factors
+        fft_type b2_re = b_re * w1r - b_im * w1i; // W_N^k * X_1 real
+        fft_type b2_im = b_im * w1r + b_re * w1i; // W_N^k * X_1 imag
+        fft_type c2_re = c_re * w2r - c_im * w2i; // W_N^{2k} * X_2 real
+        fft_type c2_im = c_im * w2r + c_re * w2i; // W_N^{2k} * X_2 imag
 
+        // Compute sums and differences
+        fft_type sum_re = b2_re + c2_re; // b + c real
+        fft_type sum_im = b2_im + c2_im; // b + c imag
+        fft_type diff_re = b2_re - c2_re; // b - c real
+        fft_type diff_im = b2_im - c2_im; // b - c imag
+
+        // X_0 = a + (b + c)
         out_re[k] = a_re + sum_re; // X(k) real
         out_im[k] = a_im + sum_im; // X(k) imag
 
-        fft_type t_re = a_re - (sum_re * 0.5);          // a - ½(b + c) real
-        fft_type t_im = a_im - (sum_im * 0.5);          // a - ½(b + c) imag
-        fft_type rot_re = diff_im * (transform_sign * C3_SQRT3BY2);  // sign * (√3/2) * (b - c) real
+        // X_1 = a - ½(b + c) + i * (sign * (√3/2) * (b - c))
+        fft_type t_re = a_re - (sum_re * 0.5); // a - ½(b + c) real
+        fft_type t_im = a_im - (sum_im * 0.5); // a - ½(b + c) imag
+        fft_type rot_re = diff_im * (transform_sign * C3_SQRT3BY2); // sign * (√3/2) * (b - c) real
         fft_type rot_im = -diff_re * (transform_sign * C3_SQRT3BY2); // -sign * (√3/2) * (b - c) imag
-        out_re[k + M] = t_re + rot_re;                      // X(k + N/3) real
-        out_im[k + M] = t_im + rot_im;                      // X(k + N/3) imag
-        out_re[k + 2 * M] = t_re - rot_re;                  // X(k + 2N/3) real
-        out_im[k + 2 * M] = t_im - rot_im;                  // X(k + 2N/3) imag
+        out_re[k + sub_fft_size] = t_re + rot_re; // X(k + N/3) real
+        out_im[k + sub_fft_size] = t_im + rot_im; // X(k + N/3) imag
+
+        // X_2 = a - ½(b + c) - i * (sign * (√3/2) * (b - c))
+        out_re[k + 2 * sub_fft_size] = t_re - rot_re; // X(k + 2N/3) real
+        out_im[k + 2 * sub_fft_size] = t_im - rot_im; // X(k + 2N/3) imag
     }
 
-    // Step 7: Copy flattened results back to output_buffer
-    for (int lane = 0; lane < 3; lane++)
-    {
-        fft_data *base = output_buffer + lane * M;
-        for (int k = 0; k < M; k++)
-        {
-            base[k].re = out_re[lane * M + k];
-            base[k].im = out_im[lane * M + k];
+    // Step 10: Copy results back to output_buffer
+    // Move X(k), X(k+N/3), X(k+2N/3) to final positions
+    for (int lane = 0; lane < 3; lane++) {
+        fft_data *base = output_buffer + lane * sub_fft_size;
+        for (int k = 0; k < sub_fft_size; k++) {
+            base[k].re = out_re[lane * sub_fft_size + k];
+            base[k].im = out_im[lane * sub_fft_size + k];
         }
     }
-
-    // Step 8: Clean up allocated memory
-    free(tw_re_contig);
-    free(tw_im_contig);
-    free(out_re);
-    free(out_im);
-    }
+}
     else if (radix == 4)
     {
     /**
@@ -2498,274 +2717,228 @@ static void bluestein_exp(fft_data *hl, fft_data *hlt, int input_length, int pad
     }
 }
 
+
 /**
- * @brief Performs Bluestein’s FFT algorithm for arbitrary-length signals using SIMD vectorization.
+ * @brief Runs Bluestein's FFT for signals of any length, with AVX2 speed-ups.
  *
- * Intention: Compute the Fast Fourier Transform (FFT) for non-power-of-2 signal lengths using
- * Bluestein’s chirp z-transform, optimized with AVX2 SIMD instructions. This algorithm transforms
- * the DFT of length N into a convolution with a chirp sequence, padded to a power-of-2 length
- * for efficient computation using a standard FFT. It supports both forward and inverse transforms.
+ * This function handles FFTs for signal lengths that don’t nicely factor into small primes, using
+ * Bluestein’s chirp z-transform trick. It turns the DFT into a convolution with a chirp sequence,
+ * padded to a power-of-2 length so we can use fast FFTs. We’re leaning hard into AVX2 for speed and
+ * using a memory setup inspired by FFTW—two big buffers (twiddles and scratch)—plus a single global
+ * `all_chirps` array for precomputed chirp sequences.
  *
- * Mathematically: Bluestein’s algorithm computes the DFT:
- *   \( X(k) = \sum_{n=0}^{N-1} x(n) \cdot e^{-2\pi i k n / N} \)
- * by rewriting it as a convolution using the identity:
- *   \( k n = \frac{1}{2} [k^2 + n^2 - (k-n)^2] \).
- * This yields:
- *   \( X(k) = e^{-\pi i k^2 / N} \cdot \sum_{n=0}^{N-1} [x(n) \cdot e^{-\pi i n^2 / N}] \cdot e^{\pi i (k-n)^2 / N} \),
- * which is computed as a circular convolution of length M >= 2N-1 (padded to a power of 2) between
- * the chirped input \( x(n) \cdot e^{-\pi i n^2 / N} \) and the chirp sequence \( e^{\pi i n^2 / N} \).
- * The convolution is performed efficiently in the frequency domain using FFTs.
+ * **What’s the math?** Basically, Bluestein rewrites the DFT \( X(k) = \sum_{n=0}^{N-1} x(n) \cdot e^{-2\pi i k n / N} \)
+ * using the identity \( k n = \frac{1}{2} [k^2 + n^2 - (k-n)^2] \). This gives us a convolution we
+ * can compute efficiently in the frequency domain with FFTs of size M >= 2N-1 (rounded up to a power of 2).
  *
- * Process:
- * 1. Validate the signal length and compute the padded length (smallest power of 2 >= 2N-1).
- * 2. Allocate temporary buffers for computations.
- * 3. Generate and scale the chirp sequence h(n) = e^{\pi i n^2 / N}, using precomputed values if available.
- * 4. Compute the FFT of the scaled chirp sequence.
- * 5. Multiply the input signal by the chirp (or its conjugate for inverse FFT) using SIMD.
- * 6. Zero-pad the chirped signal to the padded length.
- * 7. Compute the FFT of the padded chirped signal.
- * 8. Perform pointwise multiplication with the chirp FFT (or its conjugate for inverse) using SIMD.
- * 9. Compute the inverse FFT of the result, adjusting the FFT object for the inverse transform.
- * 10. Multiply the result by the chirp again to extract the final DFT, using SIMD.
- * 11. Restore the FFT object state and free temporary buffers.
+ * @param[in] input_signal The input data (length N), real and imaginary parts.
+ * @param[out] output_signal Where we store the FFT results (length N).
+ * @param[in,out] fft_config Our FFT setup, with signal length, direction, twiddles, and scratch space.
+ * @param[in] transform_direction +1 for forward FFT, -1 for inverse (affects chirp phase).
+ * @param[in] signal_length The input length (N > 0).
  *
- * Optimization:
- * - AVX2 SIMD vectorization processes four complex numbers simultaneously in key multiplication steps.
- * - Precomputed chirp sequences (via bluestein_exp) reduce runtime trigonometric calculations.
- * - Padded length is a power of 2, enabling efficient mixed-radix FFTs.
- * - Chirp FFT is precomputed and reused, avoiding redundant calculations.
- * - Memory alignment is assumed for SIMD efficiency (caller must ensure aligned allocations).
- *
- * Transform Direction:
- * - Forward FFT (transform_direction == 1): Uses chirp h(n) = e^{\pi i n^2 / N} and its FFT.
- * - Inverse FFT (transform_direction == -1): Uses conjugate chirp h^*(n) and conjugate FFT.
- *
- * @param[in] input_signal Input signal data (length N).
- *                        Real and imaginary components of the input to be transformed.
- * @param[out] output_signal Output FFT results (length N).
- *                          Stores the transformed complex values after Bluestein’s FFT.
- * @param[in,out] fft_config FFT configuration object.
- *                       Contains signal length, transform direction, factors, and twiddle factors,
- *                       temporarily modified for padded length computations.
- * @param[in] transform_direction Direction of transform (+1 for forward, -1 for inverse).
- *                               Determines forward FFT (e^{-2\pi i k n / N}) or inverse FFT (e^{+2\pi i k n / N}).
- * @param[in] signal_length Length of the input signal (N > 0).
- *                         Size of input and output buffers, must be positive.
- *
- * @warning If memory allocation fails or signal_length is invalid (<= 0), the function exits with an error.
- * @note Temporarily modifies fft_config (N, lt, sgn, twiddle factors) and restores it afterward.
- *       Assumes input_signal, output_signal, and fft_config are valid pointers.
- *       Caller must ensure memory buffers are aligned for SIMD operations to maximize performance.
+ * @warning Crashes with an error if signal_length <= 0, scratch space is too small, or we can’t
+ *          create a temporary FFT object.
+ * @note Assumes input_signal, output_signal, and fft_config are valid. Scratch buffer must be
+ *       pre-allocated in fft_init to hold at least 4 * padded_length elements.
  */
 void bluestein_fft(
-    const fft_data *input_signal,
-    fft_data *output_signal,
+    const fft_data *input_signal, 
+    fft_data *output_signal, 
     fft_object fft_config,
-    int transform_direction,
-    int signal_length)
-{
-    // Step 1: Validate signal length
+    int transform_direction, 
+    int signal_length) 
+    {
+    // Quick check to make sure we’re not working with nonsense
     if (signal_length <= 0) {
-        fprintf(stderr, "Error: Signal length (%d) must be positive for Bluestein’s FFT\n", signal_length);
+        fprintf(stderr, "Error: Signal length (%d) is invalid\n", signal_length);
         exit(EXIT_FAILURE);
     }
 
-    // Step 2: Calculate padded length for convolution
-    // Ensure M >= 2N-1 to avoid aliasing in circular convolution, rounded to the next power of 2
-    int min_padded_length = 2 * signal_length - 1;
-    int padded_length = (int)pow(2.0, ceil(log2((double)min_padded_length)));
-    int original_N = fft_config->N;          // Save original FFT length
-    int original_lt = fft_config->lt;        // Save original algorithm type
-    int original_sgn = fft_config->sgn;      // Save original transform direction
+    // Figure out the padded length (M), which is the next power of 2 >= 2N-1
+    // We pull this from max_scratch_size / 4, set up in fft_init to ensure we have enough room
+    int padded_length = fft_config->max_scratch_size / 4;
 
-    // Step 3: Temporarily reconfigure FFT object for padded length
-    fft_config->N = padded_length;           // Set to padded length for FFT computations
-    fft_config->lt = 0;                      // Use mixed-radix algorithm
+    // Grab our scratch buffer—our one-stop shop for all temporary data
+    // Why? FFTW’s approach of one big workspace cuts down on mallocs and keeps data cozy in cache
+    fft_data *S = fft_config->scratch;
 
-    // Step 4: Allocate temporary buffers
-    fft_data *chirped_signal = malloc(sizeof(fft_data) * padded_length); // Padded chirped input
-    fft_data *chirp_fft = malloc(sizeof(fft_data) * padded_length);      // FFT of chirp sequence
-    fft_data *temp_chirp = malloc(sizeof(fft_data) * padded_length);     // Temporary chirp storage
-    fft_data *ifft_result = malloc(sizeof(fft_data) * padded_length);    // Inverse FFT output
-    fft_data *chirp_sequence = malloc(sizeof(fft_data) * signal_length); // Chirp sequence h(n)
-    if (!chirped_signal || !chirp_fft || !temp_chirp || !ifft_result || !chirp_sequence) {
-        fprintf(stderr, "Error: Memory allocation failed for Bluestein’s FFT arrays\n");
-        free(chirped_signal); free(chirp_fft); free(temp_chirp); free(ifft_result); free(chirp_sequence);
+    // Split the scratch into chunks for our needs
+    // - chirped_signal: holds the FFT of the chirp and later the padded signal (M elements)
+    // - temp_chirp: temp storage for chirp and FFT inputs (M elements)
+    // - ifft_result: stores IFFT output (M elements)
+    // - chirp_sequence: the chirp sequence itself (N <= M elements)
+    // Choice: Sequential layout keeps memory access tight; 4*M covers everything we need
+    fft_data *chirped_signal = S;
+    fft_data *temp_chirp = S + padded_length;
+    fft_data *ifft_result = S + 2 * padded_length;
+    fft_data *chirp_sequence = S + 3 * padded_length;
+
+    // Double-check we’ve got enough scratch space
+    // If not, bail out with a clear error—better than segfaulting later
+    if (4 * padded_length > fft_config->max_scratch_size) {
+        fprintf(stderr, "Error: Scratch buffer too small for Bluestein (need %d, have %d)\n",
+                4 * padded_length, fft_config->max_scratch_size);
         exit(EXIT_FAILURE);
     }
 
-    // Step 5: Generate and scale chirp sequence
-    // Compute h(n) = e^{\pi i n^2 / N} using bluestein_exp, scale by 1/M for normalization
+    // Set up a temporary FFT object for the padded length (M)
+    // Why not reuse fft_config? Modifying it could mess things up in multi-threaded code,
+    // so we play it safe with a fresh object, even if it’s a bit of extra work
+    fft_object temp_config = fft_init(padded_length, transform_direction);
+    if (!temp_config) {
+        fprintf(stderr, "Error: Couldn’t create temporary FFT object\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Generate the chirp sequence (h(n) = e^{πi n^2 / N}) and store it
+    // We use bluestein_exp to pull from our global `all_chirps` array for small N,
+    // or compute it dynamically for larger N. Output goes into temp_chirp and chirp_sequence
+    // Why global all_chirps? One big allocation for all chirps saves us from multiple mallocs
+    // and keeps data close for better cache hits
     bluestein_exp(temp_chirp, chirp_sequence, signal_length, padded_length);
+
+    // Scale the chirp by 1/M for normalization
+    // Choice: Do this upfront to avoid scaling later, keeping the FFT steps clean
     fft_type scale = 1.0 / padded_length;
     for (int i = 0; i < padded_length; ++i) {
-        temp_chirp[i].re *= scale;           // Scale real part
-        temp_chirp[i].im *= scale;           // Scale imaginary part
+        temp_chirp[i].re *= scale;
+        temp_chirp[i].im *= scale;
     }
 
-    // Step 6: Compute FFT of the scaled chirp sequence
-    fft_exec(fft_config, temp_chirp, chirp_fft);
+    // Compute the FFT of the scaled chirp sequence
+    // We store it in chirped_signal, which we’ll reuse later for the padded signal
+    // Why reuse? Saves scratch space and simplifies buffer management
+    fft_exec(temp_config, temp_chirp, chirped_signal);
 
-    // Step 7: Multiply input by chirp sequence using AVX2
-    // For forward FFT: x(n) * h(n); for inverse FFT: x(n) * h^*(n)
+    // Multiply the input signal by the chirp sequence (x(n) * h(n) for forward, x(n) * h^*(n) for inverse)
+    // We’re going full AVX2 here to crunch 4 complex numbers at once
+    // Note: chirp_sequence is aligned (from scratch), so we use aligned loads for speed
     int n = 0;
     for (; n + 3 < signal_length; n += 4) {
-        // Load four input signal points
-        __m256d input_re = _mm256_set_pd(
-            input_signal[n + 3].re, input_signal[n + 2].re,
-            input_signal[n + 1].re, input_signal[n + 0].re);
-        __m256d input_im = _mm256_set_pd(
-            input_signal[n + 3].im, input_signal[n + 2].im,
-            input_signal[n + 1].im, input_signal[n + 0].im);
-        // Load four chirp sequence points
-        __m256d chirp_re = _mm256_set_pd(
-            chirp_sequence[n + 3].re, chirp_sequence[n + 2].re,
-            chirp_sequence[n + 1].re, chirp_sequence[n + 0].re);
-        __m256d chirp_im = _mm256_set_pd(
-            chirp_sequence[n + 3].im, chirp_sequence[n + 2].im,
-            chirp_sequence[n + 1].im, chirp_sequence[n + 0].im);
+        // Load 4 input points (reversed order for _mm256_set_pd)
+        __m256d input_re = _mm256_set_pd(input_signal[n + 3].re, input_signal[n + 2].re,
+                                         input_signal[n + 1].re, input_signal[n + 0].re);
+        __m256d input_im = _mm256_set_pd(input_signal[n + 3].im, input_signal[n + 2].im,
+                                         input_signal[n + 1].im, input_signal[n + 0].im);
+        // Load 4 chirp points (aligned, thanks to scratch allocation)
+        __m256d chirp_re = _mm256_load_pd(&chirp_sequence[n].re);
+        __m256d chirp_im = _mm256_load_pd(&chirp_sequence[n].im);
 
-        // Adjust for inverse FFT: conjugate chirp (negate imaginary part)
+        // For inverse FFT, conjugate the chirp (negate imaginary part)
+        // Why here? It’s cheaper than storing separate conjugated chirps
         if (transform_direction == -1) {
             chirp_im = _mm256_sub_pd(_mm256_setzero_pd(), chirp_im);
         }
 
-        // Complex multiplication: (a + bi) * (c + di) = (ac - bd) + i(ad + bc)
+        // Complex multiply: (a + bi)(c + di) = (ac - bd) + i(ad + bc)
+        // Using FMA for better precision and speed on modern CPUs
         __m256d result_re = _mm256_fmsub_pd(input_re, chirp_re, _mm256_mul_pd(input_im, chirp_im));
         __m256d result_im = _mm256_fmadd_pd(input_im, chirp_re, _mm256_mul_pd(input_re, chirp_im));
 
-        // Store results
-        _mm256_storeu_pd(&chirped_signal[n].re, result_re);
-        _mm256_storeu_pd(&chirped_signal[n].im, result_im);
+        // Store results in temp_chirp (unaligned, as we can’t guarantee alignment)
+        _mm256_storeu_pd(&temp_chirp[n].re, result_re);
+        _mm256_storeu_pd(&temp_chirp[n].im, result_im);
     }
-    // Scalar tail for remaining points
+    // Handle any leftover points with scalar code
+    // Choice: SIMD for the bulk, scalar for the tail—keeps it simple and robust
     for (; n < signal_length; ++n) {
         double input_re = input_signal[n].re, input_im = input_signal[n].im;
         double chirp_re = chirp_sequence[n].re, chirp_im = chirp_sequence[n].im;
-        if (transform_direction == -1) {
-            chirp_im = -chirp_im;            // Conjugate for inverse FFT
-        }
-        chirped_signal[n].re = input_re * chirp_re - input_im * chirp_im;
-        chirped_signal[n].im = input_im * chirp_re + input_re * chirp_im;
+        if (transform_direction == -1) chirp_im = -chirp_im;
+        temp_chirp[n].re = input_re * chirp_re - input_im * chirp_im;
+        temp_chirp[n].im = input_im * chirp_re + input_re * chirp_im;
     }
 
-    // Step 8: Zero-pad the chirped signal
+    // Zero-pad the chirped signal to length M
+    // This sets up the convolution by ensuring no aliasing in the frequency domain
+    // Choice: Explicit loop is clear and fast enough; could’ve used memset but this is more readable
     for (int i = signal_length; i < padded_length; ++i) {
-        chirped_signal[i].re = 0.0;
-        chirped_signal[i].im = 0.0;
+        temp_chirp[i].re = 0.0;
+        temp_chirp[i].im = 0.0;
     }
 
-    // Step 9: Compute FFT of the padded chirped signal
-    fft_exec(fft_config, chirped_signal, temp_chirp); // Reuse temp_chirp for FFT result
+    // Run FFT on the padded chirped signal
+    // We’re storing the result in ifft_result to keep things organized
+    fft_exec(temp_config, temp_chirp, ifft_result);
 
-    // Step 10: Pointwise multiplication in frequency domain using AVX2
-    // Forward: y(n) * h_k(n); Inverse: y(n) * h_k^*(n)
+    // Pointwise multiplication in the frequency domain (y(n) * h_k(n) for forward, y(n) * h_k^*(n) for inverse)
+    // Again, AVX2 for speed, processing 4 complex points at a time
     n = 0;
     for (; n + 3 < padded_length; n += 4) {
-        // Load four points from FFT result
-        __m256d fft_re = _mm256_set_pd(
-            temp_chirp[n + 3].re, temp_chirp[n + 2].re,
-            temp_chirp[n + 1].re, temp_chirp[n + 0].re);
-        __m256d fft_im = _mm256_set_pd(
-            temp_chirp[n + 3].im, temp_chirp[n + 2].im,
-            temp_chirp[n + 1].im, temp_chirp[n + 0].im);
-        // Load four points from chirp FFT
-        __m256d chirp_fft_re = _mm256_set_pd(
-            chirp_fft[n + 3].re, chirp_fft[n + 2].re,
-            chirp_fft[n + 1].re, chirp_fft[n + 0].re);
-        __m256d chirp_fft_im = _mm256_set_pd(
-            chirp_fft[n + 3].im, chirp_fft[n + 2].im,
-            chirp_fft[n + 1].im, chirp_fft[n + 0].im);
+        // Load FFT results and chirp FFT
+        // Using aligned loads since ifft_result and chirped_signal are in our aligned scratch buffer
+        __m256d fft_re = _mm256_load_pd(&ifft_result[n].re);
+        __m256d fft_im = _mm256_load_pd(&ifft_result[n].im);
+        __m256d chirp_fft_re = _mm256_load_pd(&chirped_signal[n].re);
+        __m256d chirp_fft_im = _mm256_load_pd(&chirped_signal[n].im);
 
-        // Adjust for inverse FFT: conjugate chirp FFT
+        // Conjugate chirp FFT for inverse transform
+        // Doing it on-the-fly saves memory and keeps things flexible
         if (transform_direction == -1) {
             chirp_fft_im = _mm256_sub_pd(_mm256_setzero_pd(), chirp_fft_im);
         }
 
-        // Complex multiplication
+        // Complex multiply with FMA for efficiency
         __m256d result_re = _mm256_fmsub_pd(fft_re, chirp_fft_re, _mm256_mul_pd(fft_im, chirp_fft_im));
         __m256d result_im = _mm256_fmadd_pd(fft_im, chirp_fft_re, _mm256_mul_pd(fft_re, chirp_fft_im));
 
-        // Store results
+        // Store back in temp_chirp (unaligned store for safety)
         _mm256_storeu_pd(&temp_chirp[n].re, result_re);
         _mm256_storeu_pd(&temp_chirp[n].im, result_im);
     }
-    // Scalar tail
+    // Scalar tail for any remaining points
+    // Keeps the code robust for non-multiples of 4
     for (; n < padded_length; ++n) {
-        double fft_re = temp_chirp[n].re, fft_im = temp_chirp[n].im;
-        double chirp_fft_re = chirp_fft[n].re, chirp_fft_im = chirp_fft[n].im;
-        if (transform_direction == -1) {
-            chirp_fft_im = -chirp_fft_im;    // Conjugate for inverse FFT
-        }
+        double fft_re = ifft_result[n].re, fft_im = ifft_result[n].im;
+        double chirp_fft_re = chirped_signal[n].re, chirp_fft_im = chirped_signal[n].im;
+        if (transform_direction == -1) chirp_fft_im = -chirp_fft_im;
         temp_chirp[n].re = fft_re * chirp_fft_re - fft_im * chirp_fft_im;
         temp_chirp[n].im = fft_im * chirp_fft_re + fft_re * chirp_fft_im;
     }
 
-    // Step 11: Compute inverse FFT
-    // Adjust twiddle factors and sign for inverse transform
+    // Flip the twiddle factors for the inverse FFT
+    // We’re modifying temp_config’s twiddles to avoid messing with the original fft_config
     for (int i = 0; i < padded_length; ++i) {
-        fft_config->twiddle[i].im = -fft_config->twiddle[i].im;
+        temp_config->twiddles[i].im = -temp_config->twiddles[i].im;
     }
-    fft_config->sgn = -transform_direction;
-    fft_exec(fft_config, temp_chirp, ifft_result);
+    temp_config->sgn = -transform_direction;
 
-    // Step 12: Apply chirp sequence again to extract final results using AVX2
-    // Forward: y(n) * h(n); Inverse: y(n) * h^*(n)
+    // Run the inverse FFT to get the convolution result
+    fft_exec(temp_config, temp_chirp, ifft_result);
+
+    // Final step: multiply by the chirp sequence again to extract the DFT
+    // Same AVX2 approach as before, with aligned loads for chirp_sequence
     n = 0;
     for (; n + 3 < signal_length; n += 4) {
-        // Load four IFFT result points
-        __m256d ifft_re = _mm256_set_pd(
-            ifft_result[n + 3].re, ifft_result[n + 2].re,
-            ifft_result[n + 1].re, ifft_result[n + 0].re);
-        __m256d ifft_im = _mm256_set_pd(
-            ifft_result[n + 3].im, ifft_result[n + 2].im,
-            ifft_result[n + 1].im, ifft_result[n + 0].im);
-        // Load four chirp sequence points
-        __m256d chirp_re = _mm256_set_pd(
-            chirp_sequence[n + 3].re, chirp_sequence[n + 2].re,
-            chirp_sequence[n + 1].re, chirp_sequence[n + 0].re);
-        __m256d chirp_im = _mm256_set_pd(
-            chirp_sequence[n + 3].im, chirp_sequence[n + 2].im,
-            chirp_sequence[n + 1].im, chirp_sequence[n + 0].im);
+        __m256d ifft_re = _mm256_load_pd(&ifft_result[n].re);
+        __m256d ifft_im = _mm256_load_pd(&ifft_result[n].im);
+        __m256d chirp_re = _mm256_load_pd(&chirp_sequence[n].re);
+        __m256d chirp_im = _mm256_load_pd(&chirp_sequence[n].im);
 
-        // Adjust for inverse FFT: conjugate chirp
         if (transform_direction == -1) {
             chirp_im = _mm256_sub_pd(_mm256_setzero_pd(), chirp_im);
         }
 
-        // Complex multiplication
         __m256d result_re = _mm256_fmsub_pd(ifft_re, chirp_re, _mm256_mul_pd(ifft_im, chirp_im));
         __m256d result_im = _mm256_fmadd_pd(ifft_im, chirp_re, _mm256_mul_pd(ifft_re, chirp_im));
 
-        // Store results
+        // Store final results in output_signal (unaligned, as we don’t control its alignment)
         _mm256_storeu_pd(&output_signal[n].re, result_re);
         _mm256_storeu_pd(&output_signal[n].im, result_im);
     }
-    // Scalar tail
+    // Scalar tail for the last few points
     for (; n < signal_length; ++n) {
         double ifft_re = ifft_result[n].re, ifft_im = ifft_result[n].im;
         double chirp_re = chirp_sequence[n].re, chirp_im = chirp_sequence[n].im;
-        if (transform_direction == -1) {
-            chirp_im = -chirp_im;            // Conjugate for inverse FFT
-        }
+        if (transform_direction == -1) chirp_im = -chirp_im;
         output_signal[n].re = ifft_re * chirp_re - ifft_im * chirp_im;
         output_signal[n].im = ifft_im * chirp_re + ifft_re * chirp_im;
     }
 
-    // Step 13: Restore original FFT object state
-    fft_config->sgn = original_sgn;
-    fft_config->N = original_N;
-    fft_config->lt = original_lt;
-    for (int i = 0; i < padded_length; ++i) {
-        fft_config->twiddle[i].im = -fft_config->twiddle[i].im; // Restore twiddle factors
-    }
-
-    // Step 14: Free temporary buffers
-    free(chirped_signal);
-    free(chirp_fft);
-    free(temp_chirp);
-    free(ifft_result);
-    free(chirp_sequence);
+    // Clean up the temporary FFT object
+    // Gotta free it since we created it, keeping memory tidy
+    free_fft(temp_config);
 }
 
 /**
@@ -2779,25 +2952,33 @@ void bluestein_fft(
  * @warning If the FFT object or data pointers are invalid, the function exits with an error.
  * @note Uses `mixed_radix_dit_rec` for power-of-N sizes or `bluestein_fft` for arbitrary sizes.
  */
-void fft_exec(fft_object fft_obj, fft_data *input_data, fft_data *output_data)
-{
-    if (fft_obj == NULL || input_data == NULL || output_data == NULL)
-    {
+void fft_exec(fft_object fft_obj, fft_data *inp, fft_data *oup) {
+    // Check for null pointers to avoid crashes
+    // Ensure we have a valid FFT object and input/output buffers
+    if (fft_obj == NULL || inp == NULL || oup == NULL) {
         fprintf(stderr, "Error: Invalid FFT object or data pointers\n");
         exit(EXIT_FAILURE);
     }
 
-    if (fft_obj->lt == 0)
-    {
-        int stride = 1, factor_index = 0;
-        mixed_radix_dit_rec(output_data, input_data, fft_obj, fft_obj->sgn, fft_obj->N, stride, factor_index);
-    }
-    else if (fft_obj->lt == 1)
-    {
-        bluestein_fft(input_data, output_data, fft_obj, fft_obj->sgn, fft_obj->N);
-    }
-    else
-    {
+    // Dispatch based on the FFT algorithm type
+    // lt = 0 for mixed-radix (factorable lengths), lt = 1 for Bluestein (non-factorable)
+    if (fft_obj->lt == 0) {
+        // Set up for mixed-radix FFT
+        // Start with stride=1, factor_index=0, and scratch_offset=0 for recursion
+        int stride = 1;          // Initial stride for input indexing
+        int factor_index = 0;    // Start at the first prime factor
+        int scratch_offset = 0;  // Initial offset for scratch buffer
+        // Call mixed-radix FFT with transform length (n_fft)
+        // Why n_fft? It’s the actual transform size (N for mixed-radix)
+        mixed_radix_dit_rec(oup, inp, fft_obj, fft_obj->sgn,
+                            fft_obj->n_fft, stride, factor_index, scratch_offset);
+    } else if (fft_obj->lt == 1) {
+        // Run Bluestein FFT for non-factorable lengths
+        // Use n_input for input/output size, as Bluestein pads internally
+        bluestein_fft(inp, oup, fft_obj, fft_obj->sgn, fft_obj->n_input);
+    } else {
+        // Handle invalid algorithm type
+        // This shouldn’t happen unless fft_init is broken
         fprintf(stderr, "Error: Invalid FFT object type (lt = %d)\n", fft_obj->lt);
         exit(EXIT_FAILURE);
     }
@@ -3174,7 +3355,11 @@ void longvectorN(fft_data *twiddle_sequence, int signal_length, int *prime_facto
     }
 }
 
-void free_fft(fft_object object)
-{
-    free(object);
+void free_fft(fft_object object) {
+    if (object) {
+        if (object->twiddles) _mm_free(object->twiddles);
+        if (object->scratch) _mm_free(object->scratch);
+        if (object->twiddle_factors) _mm_free(object->twiddle_factors);
+        free(object);
+    }
 }
