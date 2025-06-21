@@ -4,6 +4,7 @@
         ".fantomasignore": "ignore",
         "highspeedfft.h": "c",
         "limits": "c",
-        "functional": "c"
+        "functional": "c",
+        "random": "c"
     }
 }

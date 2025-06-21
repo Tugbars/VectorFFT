@@ -25,11 +25,6 @@ src/CMakeFiles/highspeedFFT.dir/highSpeedFFT.c.obj: \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/math.h \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/string.h \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sec_api/string_s.h \
- C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/time.h \
- C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sys/timeb.h \
- C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sec_api/sys/timeb_s.h \
- C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/_timeval.h \
- C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/pthread_time.h \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/immintrin.h \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/x86gprintrin.h \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/ia32intrin.h \
@@ -124,4 +119,10 @@ src/CMakeFiles/highspeedFFT.dir/highSpeedFFT.c.obj: \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/amxcomplexintrin.h \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/prfchwintrin.h \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/keylockerintrin.h \
- C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/amxfp16intrin.h
+ C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/amxfp16intrin.h \
+ C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/stdbool.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/time.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sys/timeb.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sec_api/sys/timeb_s.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/_timeval.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/pthread_time.h

@@ -1,11 +1,6 @@
 #ifndef HSFFT_H_
 #define HSFFT_H_
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <math.h>
-#include <string.h>
-
 /*
 
 Sequence Diagram: mixed_radix_dit_rec for N=12, Factors=[3,4]
@@ -312,63 +307,81 @@ Notes:
 
 */
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+#include <string.h>
+#include <immintrin.h>
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #define PI2 6.28318530717958647692528676655900577
+#define MAX_PRECOMPUTED_N 64 // Max size for precomputed Bluestein chirps
+#define MAX_STAGES 64 // Max recursion depth (log3(2^64) ≈ 40, so 64 is safe)
 
 #ifndef fft_type
 #define fft_type double
 #endif
 
-
 typedef struct fft_t {
-  fft_type re;
-  fft_type im;
+    fft_type re;
+    fft_type im;
 } fft_data;
-/*
-#define SADD(a,b) ((a)+(b))
-
-#define SSUB(a,b) ((a)+(b))
-
-#define SMUL(a,b) ((a)*(b))
-*/
 
 typedef struct fft_set* fft_object;
 
-fft_object fft_init(int N, int sgn);
-
-struct fft_set{
-	int N;
-	int sgn;
-	int factors[64];
-	int lf;
-	int lt;
-	fft_data twiddle[1];
+struct fft_set {
+    int n_input;              // Input signal length
+    int n_fft;                // Transform length (N for mixed-radix, M for Bluestein)
+    int sgn;                  // Transform direction (+1 for forward, -1 for inverse)
+    int factors[64];          // Prime factors for mixed-radix or Bluestein
+    int lf;                   // Number of factors
+    int lt;                   // Algorithm type (0=mixed-radix, 1=Bluestein)
+    int max_scratch_size;     // Max size of scratch buffer
+    fft_data *twiddles;       // Twiddle factors for FFT stages
+    fft_data *scratch;        // Scratch workspace for temporary data
+    fft_data *twiddle_factors;// Precomputed twiddles for power-of-2 FFTs (size sum(N/2^i))
+	int stage_twiddle_offset[MAX_STAGES];
+    int num_precomputed_stages;
 };
 
-void fft_exec(fft_object obj,fft_data *inp,fft_data *oup);
+// Global Bluestein chirp data
+static const int pre_sizes[] = {1, 2, 3, 4, 5, 7, 15, 20, 31, 64};
+static const int num_pre = sizeof(pre_sizes) / sizeof(pre_sizes[0]);
+static fft_data **bluestein_chirp; // Pointers to precomputed chirp sequences
+static int *chirp_sizes;           // Sizes of precomputed chirps
+static fft_data *all_chirps;       // Single block for all chirp data
+static int chirp_initialized;      // Flag for chirp initialization
 
-int divideby(int M,int d);
+// Sets up an FFT object with twiddle factors and scratch buffer
+fft_object fft_init(int N, int sgn);
 
+// Runs the FFT (mixed-radix or Bluestein) on input data
+void fft_exec(fft_object obj, fft_data *inp, fft_data *oup);
+
+// Checks if M is fully divisible by d, reducing M to 1
+int divideby(int M, int d);
+
+// Checks if N is divisible by small primes using a lookup table
 int dividebyN(int N);
 
-//void arrrev(int M, int* arr);
+// Factorizes M into primes, storing up to 64 factors
+int factors(int M, int *arr);
 
-int factors(int M, int* arr);
+// Computes twiddle factors for a given radix and signal length
+void twiddle(fft_data *sig, int N, int radix);
 
-void twiddle(fft_data *sig,int N, int radix);
+// Generates twiddle factor sequence based on prime factorization
+void longvectorN(fft_data *sig, int N, int *array, int M);
 
-void longvectorN(fft_data *sig,int N, int *array, int M);
-
+// Frees the FFT object and its buffers
 void free_fft(fft_object object);
 
 #ifdef __cplusplus
 }
 #endif
-
-
-
 
 #endif /* HSFFT_H_ */
