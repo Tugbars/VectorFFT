@@ -338,154 +338,91 @@ typedef struct fft_set* fft_object;
  * @brief Guide to key variables in the mixed-radix FFT implementation.
  *
  * @section Introduction
- * The Fast Fourier Transform (FFT) implementation in `mixed_radix_dit_rec` uses a mixed-radix Decimation-in-Time
- * (DIT) algorithm to compute the Discrete Fourier Transform (DFT) of an N-point signal. The algorithm recursively
- * divides the input into smaller sub-FFTs based on radices (e.g., radix-2, radix-4), computes intermediate results,
- * and combines them using twiddle factors to produce N frequency bins \( X[k] \), each representing the amplitude
- * and phase of frequency \( f_k = k \cdot f_s / N \), where \( f_s \) is the sampling rate.
+ * The `mixed_radix_dit_rec` function implements a mixed-radix Decimation-in-Time (DIT) FFT, computing the Discrete
+ * Fourier Transform (DFT) of an N-point signal into N frequency bins \( X[k] \), each encoding the amplitude and phase
+ * of frequency \( f_k = k \cdot f_s / N \). The algorithm recursively divides the signal into sub-FFTs based on radices
+ * (e.g., radix-2), using only two buffers (`input_buffer`/`output_buffer` and `sub_fft_outputs`) and a complex tracking
+ * mechanism via `sub_fft_size`, `lane`, `sub_fft_outputs`, `stride`, `twiddle_offset`, and `twiddle_step`.
  *
- * This implementation optimizes memory usage by employing **only two storage buffers**: one for input/output
- * (`input_buffer`/`output_buffer`) and one for intermediate sub-FFT results (`sub_fft_outputs`). A complex tracking
- * mechanism, driven by variables `sub_fft_size`, `lane`, `sub_fft_outputs`, `stride`, `twiddle_offset`, and
- * `twiddle_step`, manages recursion, data access, and twiddle factor application. This guide explains their roles,
- * interactions, and how they enable efficient FFT computation with minimal memory.
+ * @section Audio_Example Example
+ * For an audio signal with \( N = 1024 \), \( f_s = 44100 \) Hz, and a 440 Hz tone (\( x[n] = \sin(2\pi \cdot 440 \cdot n / 44100) + 0.1 \cdot \text{noise} \)), the FFT produces 1024 bins, with bin 10 (\( f_{10} \approx 430.66 \) Hz) peaking. These variables manage recursion and phase rotations to align contributions to \( X[10] \).
  *
- * @section Audio_Example Audio Signal Example
- * To illustrate, consider an audio signal with \( N = 1024 \), \( f_s = 44100 \) Hz, containing a 440 Hz tone:
- * \f[
- * x[n] = \sin\left(2\pi \cdot 440 \cdot \frac{n}{44100}\right) + 0.1 \cdot \text{noise}
- * \f]
- * The FFT produces 1024 bins, with bin 10 (\( f_{10} \approx 430.66 \) Hz) capturing the 440 Hz tone. The variables
- * guide the recursive division, data access, and phase rotations to align contributions to bins like \( X[10] \).
- *
- * @section Variable_Guide Variable Roles and Interactions
- * The following variables are critical to the FFT's recursive structure and memory-efficient design:
+ * @section Variable_Guide Variable Roles
  *
  * @subsection Sub_FFT_Size sub_fft_size
- * - **Definition**: The size of each sub-FFT in the current stage, computed as `data_length / radix`.
- * - **Role**: Determines the number of samples processed by each recursive call to `mixed_radix_dit_rec`. It
- *   defines the granularity of the sub-FFT computation, shrinking with each recursive stage until reaching the
- *   base case (`data_length == radix`).
- * - **Example**: For \( N = 1024 \), first stage, radix-2:
- *   - `data_length = 1024`, `radix = 2`.
- *   - `sub_fft_size = 1024 / 2 = 512`.
- *   - Two sub-FFTs, each processing 512 samples.
- * - **Tracking**: As recursion deepens, `sub_fft_size` halves (for radix-2) or reduces by the radix, guiding buffer
- *   allocation and indexing in `sub_fft_outputs`.
- * - **Code Context**:
+ * - **Definition**: Size of each sub-FFT (`data_length / radix`).
+ * - **Role**: Sets the number of samples per sub-FFT, shrinking recursively until the base case (`data_length == radix`).
+ * - **Example**: For \( N = 1024 \), radix-2, first stage: `sub_fft_size = 1024 / 2 = 512`.
+ * - **Tracking**: Guides buffer indexing in `sub_fft_outputs`.
+ * - **Code**:
  *   \code{.c}
  *   int sub_fft_size = data_length / radix;
  *   \endcode
  *
  * @subsection Lane lane
- * - **Definition**: The index of the current sub-FFT within the radix division (0 to `radix-1`).
- * - **Role**: Identifies which subset of samples (or sub-FFT) is being processed in the current iteration. It
- *   controls the offset into `input_buffer` (via `stride`) and `sub_fft_outputs` for storing results, and selects
- *   the appropriate twiddle factors via `twiddle_offset`.
- * - **Example**: For radix-2, first stage:
- *   - `lane = 0`: Processes even samples (\( x[0], x[2], \ldots \)).
- *   - `lane = 1`: Processes odd samples (\( x[1], x[3], \ldots \)).
- * - **Tracking**: Iterates over `radix` to process all sub-FFTs, ensuring each contribution is correctly placed and
- *   rotated.
- * - **Code Context**:
+ * - **Definition**: Index of the current sub-FFT (0 to `radix-1`).
+ * - **Role**: Selects the sample subset (via `stride`) and twiddle factors (via `twiddle_offset`) for each sub-FFT.
+ * - **Example**: For radix-2: `lane = 0` (even samples), `lane = 1` (odd samples).
+ * - **Tracking**: Iterates to process all sub-FFTs.
+ * - **Code**:
  *   \code{.c}
- *   for (int lane = 0; lane < radix; lane++) {
- *       mixed_radix_dit_rec(sub_fft_outputs + lane * sub_fft_size, ...);
- *   }
+ *   for (int lane = 0; lane < radix; lane++) { ... }
  *   \endcode
  *
  * @subsection Sub_FFT_Outputs sub_fft_outputs
- * - **Definition**: A buffer storing the intermediate results (complex bins) of sub-FFTs computed by recursive
- *   calls.
- * - **Role**: Acts as one of the two primary storage buffers, holding sub-FFT results before they are rotated and
- *   combined into the output bins. Each sub-FFT writes `sub_fft_size` complex values, partitioned by `lane`.
- * - **Memory Efficiency**: By reusing `sub_fft_outputs` across stages and sharing it with `output_buffer` in a
- *   ping-pong fashion, the implementation minimizes memory usage.
- * - **Example**: For \( N = 1024 \), first stage, radix-2:
- *   - `sub_fft_size = 512`, `radix = 2`.
- *   - `sub_fft_outputs[0:511]`: Bins from even sub-FFT (lane 0).
- *   - `sub_fft_outputs[512:1023]`: Bins from odd sub-FFT (lane 1).
- * - **Tracking**: The buffer is indexed as `sub_fft_outputs + lane * sub_fft_size`, ensuring non-overlapping storage
- *   for each sub-FFT.
- * - **Code Context**:
+ * - **Definition**: Buffer for sub-FFT results (complex bins).
+ * - **Role**: Stores intermediate sub-FFT outputs, reused across stages to save memory.
+ * - **Example**: For \( N = 1024 \), radix-2: Stores 512 bins for `lane = 0` and 512 for `lane = 1`.
+ * - **Tracking**: Indexed as `sub_fft_outputs + lane * sub_fft_size`.
+ * - **Code**:
  *   \code{.c}
  *   fft_data *base = sub_fft_outputs + lane * sub_fft_size;
  *   \endcode
  *
  * @subsection Stride stride
- * - **Definition**: The spacing between input samples for the current sub-FFT, adjusted across recursive stages.
- * - **Role**: Controls which samples are processed by each sub-FFT, enabling the DIT algorithm to access interleaved
- *   subsets (e.g., even/odd for radix-2). It increases by a factor of `radix` in each recursive call to reflect the
- *   finer granularity of sample selection.
- * - **Example**: For \( N = 1024 \), radix-2:
- *   - First stage: `stride = 512`, selecting \( x[0], x[512] \) (lane 0) or \( x[1], x[513] \) (lane 1).
- *   - Second stage: `stride = 512 * 2 = 1024`.
- *   - Base case: `stride = 512` (for \( x[0], x[512] \)).
- * - **Tracking**: `stride * radix` in recursive calls ensures correct sample access as the problem is divided.
- * - **Code Context**:
+ * - **Definition**: Spacing between input samples for a sub-FFT.
+ * - **Role**: Selects interleaved samples (e.g., even/odd for radix-2), increasing by `radix` per recursive stage.
+ * - **Example**: For \( N = 1024 \), first stage: `stride = 512` (e.g., \( x[0], x[512] \)).
+ * - **Tracking**: Adjusts via `stride * radix` for recursion.
+ * - **Code**:
  *   \code{.c}
- *   mixed_radix_dit_rec(..., input_buffer + lane * stride, ..., stride * radix, ...);
+ *   input_buffer + lane * stride, stride * radix
  *   \endcode
  *
  * @subsection Twiddle_Offset_and_Step twiddle_offset and twiddle_step
- * - **Definition**: Parameters controlling access to precomputed twiddle factors in `fft_obj->twiddle_factors`.
- *   - `twiddle_offset`: Starting index for twiddle factors for the current sub-FFT.
- *   - `twiddle_step`: Increment between twiddle factors for consecutive bins.
- * - **Role**: Select the appropriate twiddle factors (\( e^{-2\pi i k \cdot \text{lane} / N} \)) to rotate
- *   sub-FFT results, aligning them with the correct frequency bins \( f_k \). They manage the complex phase
- *   rotation pattern required for combining sub-FFTs.
- * - **Example**: For \( N = 1024 \), first stage, radix-2:
- *   - Lane 0: `twiddle_offset = 0`, uses \( e^{-2\pi i \cdot 0 \cdot k / 1024} = 1 \).
- *   - Lane 1: `twiddle_offset = 512`, uses \( e^{-2\pi i \cdot 1 \cdot k / 1024} \).
- *   - `twiddle_step = 1` initially, increases to `radix` in recursive calls.
- * - **Tracking**: The complex tracking mechanism adjusts `twiddle_offset` by `lane * sub_fft_size * twiddle_step`
- *   and `twiddle_step` by `radix`, ensuring precise twiddle factor selection across stages.
- * - **Code Context**:
+ * - **Definition**: Control access to twiddle factors in `fft_obj->twiddle_factors`.
+ *   - `twiddle_offset`: Starting index for a sub-FFT’s twiddle factors.
+ *   - `twiddle_step`: Increment between twiddle factors.
+ * - **Role**: Select twiddle factors (\( e^{-2\pi i k \cdot \text{lane} / N} \)) for phase rotation.
+ * - **Example**: For \( N = 1024 \), radix-2: `twiddle_offset = 512` for `lane = 1`, `twiddle_step = 1`.
+ * - **Tracking**: `twiddle_offset + lane * sub_fft_size * twiddle_step`, `twiddle_step * radix`.
+ * - **Code**:
  *   \code{.c}
- *   twiddle_offset + lane * sub_fft_size * twiddle_step, twiddle_step * radix
+ *   twiddle_offset + lane * sub_fft_size * twiddle_step
  *   \endcode
  *
- * @section Two_Storage_Buffers Two-Storage Buffer Strategy
- * The implementation uses only two buffers:
- * - **Input/Output Buffer** (`input_buffer`/`output_buffer`): Stores the input signal initially and the final
- *   frequency bins after computation. It may alternate roles with `sub_fft_outputs` in a ping-pong fashion.
- * - **Sub-FFT Buffer** (`sub_fft_outputs`): Temporarily holds intermediate sub-FFT results during recursion.
+ * @section Two_Buffers Two-Buffer Strategy
+ * Using only `input_buffer`/`output_buffer` and `sub_fft_outputs`, the code minimizes memory via a ping-pong approach.
+ * The variables ensure:
+ * - Non-overlapping storage (`lane * sub_fft_size`).
+ * - Correct sample access (`stride`).
+ * - Precise phase rotations (`twiddle_offset`, `twiddle_step`).
  *
- * This minimizes memory usage, but requires careful tracking via `sub_fft_size`, `lane`, `stride`, `twiddle_offset`,
- * and `twiddle_step` to manage data placement and twiddle factor application. The variables ensure:
- * - Non-overlapping storage in `sub_fft_outputs` (via `lane * sub_fft_size`).
- * - Correct sample access (via `stride`).
- * - Precise phase rotations (via `twiddle_offset` and `twiddle_step`).
- *
- * @section Example_Walkthrough Example Walkthrough: Radix-2, N = 1024
- * For the audio signal, \( N = 1024 \), radix-2:
- * - **First Stage**:
- *   - `data_length = 1024`, `radix = 2`, `sub_fft_size = 512`, `stride = 512`.
- *   - `lane = 0`: Processes even samples, stores results in `sub_fft_outputs[0:511]`.
- *   - `lane = 1`: Processes odd samples, stores in `sub_fft_outputs[512:1023]`.
- *   - `twiddle_offset = 0` (lane 0), `512` (lane 1), `twiddle_step = 1`.
- * - **Base Case (Stage 10)**:
- *   - `data_length = 2`, `stride = 512`.
- *   - Example: \( x[0] \approx 0 \), \( x[512] \approx 0.1 \).
- *   - Outputs: \( 0.1 \), \( -0.1 \).
- * - **Twiddle Rotation**:
- *   - For bin 10 (\( f_{10} \approx 430.66 \) Hz):
- *     - Contribution: \( 0.1 + 0i \).
- *     - Twiddle factor: \( e^{-2\pi i \cdot 10 / 1024} \approx 0.9988 - 0.0491i \).
- *     - Rotated: \( 0.09988 - 0.00491i \).
+ * @section Example_Walkthrough Walkthrough
+ * For \( N = 1024 \), radix-2:
+ * - **First Stage**: `sub_fft_size = 512`, `stride = 512`, `lane = 0, 1`, `twiddle_offset = 0, 512`.
+ * - **Base Case**: `data_length = 2`, outputs 2 bins (e.g., \( x[0] + x[512] \)).
+ * - **Rotation**: Twiddle factors (e.g., \( e^{-2\pi i \cdot 10 / 1024} \)) align contributions to bin 10.
  * - **Output**: 1024 bins, with \( X[10] \) peaking (magnitude ~509.90).
  *
- * @section Practical_Notes Practical Notes
- * - **Memory Efficiency**: The two-buffer strategy reduces memory footprint but increases complexity in tracking
- *   variables.
- * - **Real Inputs**: For audio, \( X[1014] = \text{conj}(X[10]) \). Analyze bins 0 to 512.
+ * @section Practical_Notes Notes
+ * - **Real Inputs**: \( X[1014] = \text{conj}(X[10]) \), analyze bins 0 to 512.
  * - **Normalization**: Divide magnitudes by \( N/2 = 512 \).
- * - **Spectral Leakage**: The 440 Hz tone leaks to bin 11 due to non-exact bin alignment.
- * - **Vectorization**: SSE2/AVX2 optimizes twiddle factor application.
- * - **Date**: Documented on 2025-06-22, 12:38 PM CEST.
+ * - **Leakage**: 440 Hz leaks to bin 11.
+ * - **Vectorization**: Uses SSE2/AVX2.
+ * - **Date**: 2025-06-22, 12:44 PM CEST.
  *
- * @section Example_Code Example Code
- * Combining sub-FFT results with twiddle factors:
+ * @section Example_Code Code
  * \code{.c}
  * for (int lane = 0; lane < radix; lane++) {
  *     fft_data *base = sub_fft_outputs + lane * sub_fft_size;
@@ -500,11 +437,7 @@ typedef struct fft_set* fft_object;
  * }
  * \endcode
  *
- * @section References
- * - @see mixed_radix_dit_rec() for recursive FFT implementation.
- * - @see fft_init() for buffer and twiddle factor setup.
- * - @see twiddle() for twiddle factor computation.
- *
+ * @see mixed_radix_dit_rec, fft_init, twiddle
  * @author Tugbars
  * @date 2025-06-22
  */
