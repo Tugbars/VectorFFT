@@ -1,0 +1,2 @@
+C:\ProgramData\mingw64\mingw64\bin\ar.exe qc libhighspeedFFT.a CMakeFiles/highspeedFFT.dir/highSpeedFFT.c.obj CMakeFiles/highspeedFFT.dir/convolve.c.obj CMakeFiles/highspeedFFT.dir/real.c.obj
+C:\ProgramData\mingw64\mingw64\bin\ranlib.exe libhighspeedFFT.a

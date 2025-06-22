@@ -73,7 +73,7 @@
          * @warning If the real FFT object or data pointers are invalid, or memory allocation fails, the function exits with an error.
          * @note Assumes input_data is Hermitian symmetric, with N/2 + 1 unique complex numbers.
          */
-        void fft_c2r_exec(fft_real_object real_obj, fft_data *input_data, fft_type *output_data);
+        int fft_c2r_exec(fft_real_object real_obj, fft_data *input_data, fft_type *output_data);
 
         /**
          * @brief Frees the memory allocated for a real FFT object.
