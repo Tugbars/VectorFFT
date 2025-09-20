@@ -769,10 +769,29 @@ static void build_twiddles_linear(fft_data *tw, int N)
 }
 
 /**
- * Deinterleave 4 AoS complex numbers (8 doubles) into SoA re[4], im[4].
- * src: [r0,i0, r1,i1, r2,i2, r3,i3]
- * re:  [r0, r1, r2, r3]
- * im:  [i0, i1, i2, i3]
+ * @brief Deinterleave 4 AoS complex numbers (8 doubles) into SoA form (4-wide).
+ *
+ * Converts four adjacent complex values stored as Array-of-Structures (AoS)
+ *  - src[0] = { r0, i0 }
+ *  - src[1] = { r1, i1 }
+ *  - src[2] = { r2, i2 }
+ *  - src[3] = { r3, i3 }
+ * into separate Structure-of-Arrays (SoA) vectors:
+ *  - re = [ r0, r1, r2, r3 ]
+ *  - im = [ i0, i1, i2, i3 ]
+ *
+ * AVX2 lane layout:
+ *   Each __m256d holds four doubles (lanes 0..3). The routine uses
+ *   permute2f128 + unpacklo/hi to transpose from AoS → SoA efficiently.
+ *
+ * @param[in]  src  Pointer to at least 4 consecutive @c fft_data in AoS layout.
+ * @param[out] re   Pointer to an array of at least 4 doubles to receive real parts.
+ * @param[out] im   Pointer to an array of at least 4 doubles to receive imaginary parts.
+ *
+ * @note Loads/stores are unaligned-safe via @c LOADU_PD / @c STOREU_PD.
+ * @warning No bounds checking is performed. @p src, @p re, and @p im must not alias
+ *          in ways that violate strict aliasing.
+ * @see interleave4_soa_to_aos()
  */
 static ALWAYS_INLINE void deinterleave4_aos_to_soa(const fft_data *src, double *re, double *im)
 {
@@ -790,8 +809,28 @@ static ALWAYS_INLINE void deinterleave4_aos_to_soa(const fft_data *src, double *
 }
 
 /**
- * Interleave SoA re[4], im[4] back into AoS complex (4 values)
- * dst: [r0,i0, r1,i1, r2,i2, r3,i3]
+ * @brief Interleave SoA re[4], im[4] back into AoS complex (4 values).
+ *
+ * Inverse of deinterleave4_aos_to_soa(). Takes:
+ *  - re = [ r0, r1, r2, r3 ]
+ *  - im = [ i0, i1, i2, i3 ]
+ * and writes four adjacent complex values in AoS layout:
+ *  - dst[0] = { r0, i0 }
+ *  - dst[1] = { r1, i1 }
+ *  - dst[2] = { r2, i2 }
+ *  - dst[3] = { r3, i3 }
+ *
+ * AVX2 lane layout:
+ *   Packs re and im with unpacklo/hi, then permutes 128-bit halves to
+ *   reconstruct the AoS order.
+ *
+ * @param[in]  re   Pointer to 4 real components.
+ * @param[in]  im   Pointer to 4 imaginary components.
+ * @param[out] dst  Pointer to at least four @c fft_data outputs (AoS).
+ *
+ * @note Stores are unaligned-safe via @c STOREU_PD.
+ * @warning No bounds checking is performed.
+ * @see deinterleave4_aos_to_soa()
  */
 static ALWAYS_INLINE void interleave4_soa_to_aos(const double *re, const double *im, fft_data *dst)
 {
@@ -808,7 +847,27 @@ static ALWAYS_INLINE void interleave4_soa_to_aos(const double *re, const double 
     STOREU_PD(&dst[2].re, v1);
 }
 
-/** Complex multiply in SoA: (ar + i ai) * (br + i bi) */
+/**
+ * @brief Complex multiply (pairwise) in SoA for AVX (4-wide).
+ *
+ * Computes, lane-wise, for four complex numbers in parallel:
+ *   (ar + i*ai) * (br + i*bi)  →  rr + i*ri
+ *
+ * Using the standard identities:
+ *   rr = ar*br − ai*bi
+ *   ri = ar*bi + ai*br
+ *
+ * @param[in]  ar  Real parts of left operand (4-wide @c __m256d).
+ * @param[in]  ai  Imag parts of left operand (4-wide @c __m256d).
+ * @param[in]  br  Real parts of right operand (4-wide @c __m256d).
+ * @param[in]  bi  Imag parts of right operand (4-wide @c __m256d).
+ * @param[out] rr  Real parts of the result (4-wide).
+ * @param[out] ri  Imag parts of the result (4-wide).
+ *
+ * @note Inputs/outputs are SoA (separate real/imag vectors). This avoids
+ *       shuffle overhead compared to AoS SIMD paths.
+ * @warning Outputs @p rr and @p ri are fully overwritten.
+ */
 static ALWAYS_INLINE void cmul_soa_avx(__m256d ar, __m256d ai,
                                        __m256d br, __m256d bi,
                                        __m256d *rr, __m256d *ri)
@@ -834,6 +893,28 @@ static ALWAYS_INLINE void cmul_soa_avx(__m256d ar, __m256d ai,
         _mm_prefetch((const char *)&(ptr)->im, _MM_HINT_T0); \
     } while (0)
 
+/**
+ * @brief Deinterleave two AoS complex numbers into SoA form (2-wide).
+ *
+ * Converts two adjacent complex values stored as Array-of-Structures (AoS)
+ *  - src[0] = { r0, i0 }
+ *  - src[1] = { r1, i1 }
+ * into separate Structure-of-Arrays (SoA) vectors:
+ *  - re2 = [ r0, r1 ]
+ *  - im2 = [ i0, i1 ]
+ *
+ * Layout / lanes:
+ *   - Uses SSE2: each __m128d carries two doubles (lane 0 and lane 1).
+ *
+ * @param[in]  src  Pointer to at least two @c fft_data elements in AoS layout.
+ * @param[out] re2  Pointer to an array of at least 2 doubles to receive real parts.
+ * @param[out] im2  Pointer to an array of at least 2 doubles to receive imaginary parts.
+ *
+ * @note Loads are unaligned-safe (@c _mm_loadu_pd). @p src, @p re2, and @p im2
+ *       must not alias in a way that violates strict aliasing.
+ * @warning No bounds checking is performed.
+ * @see interleave2_soa_to_aos()
+ */    
 static inline void deinterleave2_aos_to_soa(const fft_data *src, double *re2, double *im2)
 {
     __m128d v = _mm_loadu_pd(&src[0].re); // [r0,i0]
@@ -843,6 +924,25 @@ static inline void deinterleave2_aos_to_soa(const fft_data *src, double *re2, do
     _mm_storeu_pd(re2, re);
     _mm_storeu_pd(im2, im);
 }
+
+/**
+ * @brief Interleave SoA (2-wide) back to AoS complex numbers.
+ *
+ * Inverse of deinterleave2_aos_to_soa(). Takes:
+ *  - re2 = [ r0, r1 ]
+ *  - im2 = [ i0, i1 ]
+ * and writes two adjacent complex values in AoS layout:
+ *  - dst[0] = { r0, i0 }
+ *  - dst[1] = { r1, i1 }
+ *
+ * @param[in]  re2  Pointer to 2 real components.
+ * @param[in]  im2  Pointer to 2 imag components.
+ * @param[out] dst  Pointer to at least two @c fft_data outputs (AoS).
+ *
+ * @note Stores are unaligned-safe (@c _mm_storeu_pd).
+ * @warning No bounds checking is performed.
+ * @see deinterleave2_aos_to_soa()
+ */
 static inline void interleave2_soa_to_aos(const double *re2, const double *im2, fft_data *dst)
 {
     __m128d re = _mm_loadu_pd(re2);        // [r0,r1]
@@ -852,13 +952,53 @@ static inline void interleave2_soa_to_aos(const double *re2, const double *im2, 
     _mm_storeu_pd(&dst[0].re, ri0);
     _mm_storeu_pd(&dst[1].re, ri1);
 }
+
+
+/**
+ * @brief Complex multiply (pairwise) in SoA for SSE2 (2-wide).
+ *
+ * Computes, lane-wise:
+ *   (ar + i*ai) * (br + i*bi)  ->  rr + i*ri
+ *
+ * Where each @c __m128d packs two doubles (lane 0 / lane 1).
+ *
+ * @param[in]  ar  Real parts of the left operand (2-wide).
+ * @param[in]  ai  Imag parts of the left operand (2-wide).
+ * @param[in]  br  Real parts of the right operand (2-wide).
+ * @param[in]  bi  Imag parts of the right operand (2-wide).
+ * @param[out] rr  Real parts of the result (2-wide).
+ * @param[out] ri  Imag parts of the result (2-wide).
+ *
+ * @note Uses standard complex multiply:
+ *       rr = ar*br - ai*bi,  ri = ar*bi + ai*br.
+ * @warning Outputs @p rr and @p ri are fully overwritten.
+ */
 static inline void cmul_soa_sse2(__m128d ar, __m128d ai, __m128d br, __m128d bi, __m128d *rr, __m128d *ri)
 {
     *rr = _mm_sub_pd(_mm_mul_pd(ar, br), _mm_mul_pd(ai, bi));
     *ri = _mm_add_pd(_mm_mul_pd(ar, bi), _mm_mul_pd(ai, br));
 }
 
-/** 90° rotation in SoA: i*z  (re,im) -> (-im, re) ; sign = +1 forward, -1 inverse gives ±i */
+/**
+ * @brief 90° complex rotation (±i) in SoA for AVX (4-wide).
+ *
+ * Computes, lane-wise:
+ *   out = (sign) * i * (re + i*im)
+ *
+ * Which is equivalent to:
+ *   if sign == +1:  (out_re, out_im) = (-im,  re)   // multiply by +i
+ *   if sign == -1:  (out_re, out_im) = ( im, -re)   // multiply by -i
+ *
+ * @param[in]  re       Real parts (4-wide, @c __m256d).
+ * @param[in]  im       Imag parts (4-wide, @c __m256d).
+ * @param[in]  sign     Direction: +1 for +i, -1 for -i. (Other values are undefined.)
+ * @param[out] out_re   Real parts of rotated result (4-wide).
+ * @param[out] out_im   Imag parts of rotated result (4-wide).
+ *
+ * @note This is branchy on @p sign to avoid extra shuffles. If you call with
+ *       a compile-time constant sign, compilers typically fold this nicely.
+ * @warning Requires AVX. The inputs/outputs are SoA (separate real/im vectors).
+ */
 static ALWAYS_INLINE void rot90_soa_avx(__m256d re, __m256d im, int sign,
                                         __m256d *out_re, __m256d *out_im)
 {
