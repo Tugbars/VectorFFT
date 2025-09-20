@@ -3,129 +3,19 @@
 #include <immintrin.h>
 
 //==============================================================================
-// INLINE‑FORCE MACRO
+// INLINE / ATTRIBUTES
 //==============================================================================
 #ifdef _MSC_VER
-#define ALWAYS_INLINE __forceinline
+  #define ALWAYS_INLINE __forceinline
 #elif defined(__GNUC__) || defined(__clang__)
-#define ALWAYS_INLINE inline __attribute__((always_inline))
+  #define ALWAYS_INLINE inline __attribute__((always_inline))
 #else
-#define ALWAYS_INLINE inline
+  #define ALWAYS_INLINE inline
 #endif
 
 #ifndef ADDSUB_ROT
-#define ADDSUB_ROT 0
+  #define ADDSUB_ROT 0
 #endif
-
-//==============================================================================
-// CONSTANT VECTORS
-//==============================================================================
-#define AVX_ONE _mm256_set1_pd(1.0) // 256‑bit vector of all 1.0
-#define SSE2_ONE _mm_set1_pd(1.0)   // 128‑bit vector of all 1.0
-
-//==============================================================================
-// FMA MACROS (256‑bit)
-//==============================================================================
-#if defined(__FMA__) || defined(USE_FMA)
-#define FMADD(a, b, c) _mm256_fmadd_pd((a), (b), (c))
-#define FMSUB(a, b, c) _mm256_fmsub_pd((a), (b), (c))
-#define FMADD_SSE2_PD(a, b, c) _mm_fmadd_pd(a, b, c)
-#define FMSUB_SSE2_PD(a, b, c) _mm_fmsub_pd(a, b, c)
-#else
-static ALWAYS_INLINE __m256d fmadd_fallback(__m256d a, __m256d b, __m256d c)
-{
-    return _mm256_add_pd(_mm256_mul_pd(a, b), c);
-}
-static ALWAYS_INLINE __m256d fmsub_fallback(__m256d a, __m256d b, __m256d c)
-{
-    return _mm256_sub_pd(_mm256_mul_pd(a, b), c);
-}
-#define FMADD(a, b, c) fmadd_fallback((a), (b), (c))
-#define FMSUB(a, b, c) fmsub_fallback((a), (b), (c))
-#define FMADD_SSE2_PD(a, b, c) _mm_add_pd(_mm_mul_pd(a, b), c)
-#define FMSUB_SSE2_PD(a, b, c) _mm_sub_pd(_mm_mul_pd(a, b), c)
-#endif
-
-//==============================================================================
-// FMA‑FALLBACK FOR SSE2 (always fallback: SSE2 has no FMA3 opcodes)
-//==============================================================================
-static ALWAYS_INLINE __m128d fmadd_sse2_fallback(__m128d a, __m128d b, __m128d c)
-{
-    return _mm_add_pd(_mm_mul_pd(a, b), c);
-}
-static ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c)
-{
-    return _mm_sub_pd(_mm_mul_pd(a, b), c);
-}
-#define FMADD_SSE2(a, b, c) fmadd_sse2_fallback((a), (b), (c))
-#define FMSUB_SSE2(a, b, c) fmsub_sse2_fallback((a), (b), (c))
-
-//==============================================================================
-// LOAD / STORE MACROS
-//==============================================================================
-#ifdef USE_ALIGNED_SIMD
-// AVX2 aligned
-#define LOAD_PD(ptr) _mm256_load_pd((double const *)(ptr))
-#define STORE_PD(ptr, v) _mm256_store_pd((double *)(ptr), (v))
-// SSE2 aligned
-#define LOAD_SSE2(ptr) _mm_load_pd((double const *)(ptr))
-#define STORE_SSE2(ptr, v) _mm_store_pd((double *)(ptr), (v))
-#else
-// AVX2 unaligned
-#define LOAD_PD(ptr) _mm256_loadu_pd((double const *)(ptr))
-#define STORE_PD(ptr, v) _mm256_storeu_pd((double *)(ptr), (v))
-// SSE2 unaligned
-#define LOAD_SSE2(ptr) _mm_loadu_pd((double const *)(ptr))
-#define STORE_SSE2(ptr, v) _mm_storeu_pd((double *)(ptr), (v))
-#endif
-
-#define LOADU_SSE2(ptr) _mm_loadu_pd((const double *)(ptr))
-
-// After: #define LOADU_SSE2(ptr) _mm_loadu_pd((const double *)(ptr))
-#define STOREU_SSE2(ptr, v) _mm_storeu_pd((double *)(ptr), (v))
-
-//==============================================================================
-// OPTIONAL: Unaligned AVX2 loads for mixed‑radix codepaths
-//==============================================================================
-#define LOADU_PD(ptr) _mm256_loadu_pd((double const *)(ptr))
-#define STOREU_PD(ptr, v) _mm256_storeu_pd((double *)(ptr), (v))
-
-#ifndef FFT_PREFETCH_DISTANCE
-#define FFT_PREFETCH_DISTANCE 8 // ~64B ahead for AoS complex<double>
-#endif
-
-#define FFT_PREFETCH_AOS(ptr)                                \
-    do                                                       \
-    {                                                        \
-        _mm_prefetch((const char *)&(ptr)->re, _MM_HINT_T0); \
-        _mm_prefetch((const char *)&(ptr)->im, _MM_HINT_T0); \
-    } while (0)
-
-// File-scope scalar constants for radix-7
-static const double C1 = 0.62348980185, C2 = -0.22252093395, C3 = -0.9009688679; // cos(51.43°), cos(102.86°), cos(154.29°)
-static const double S1 = 0.78183148246, S2 = 0.97492791218, S3 = 0.43388373911;  // sin(51.43°), sin(102.86°), sin(154.29°)
-
-static const double C3_SQRT3BY2 = 0.8660254037844386; // √3/2 for 120° rotation
-
-// File-scope constants for radix-5
-static const double C5_1 = 0.30901699437;  // cos(72°)
-static const double C5_2 = -0.80901699437; // cos(144°)
-static const double S5_1 = 0.95105651629;  // sin(72°)
-static const double S5_2 = 0.58778525229;  // sin(144°)
-
-static const double C8_1 = 0.7071067811865476; // √2/2 for 45° rotation
-
-// File-scope constants for radix-11
-static const double C11_1 = 0.8412535328311812;   // cos(2π/11)
-static const double C11_2 = 0.4154150130018864;   // cos(4π/11)
-static const double C11_3 = -0.14231483827328514; // cos(6π/11)
-static const double C11_4 = -0.654860733945285;   // cos(8π/11)
-static const double C11_5 = -0.9594929736144974;  // cos(10π/11)
-static const double S11_1 = 0.5406408174555976;   // sin(2π/11)
-static const double S11_2 = 0.9096319953545184;   // sin(4π/11)
-static const double S11_3 = 0.9898214418809327;   // sin(6π/11)
-static const double S11_4 = 0.7557495743542583;   // sin(8π/11)
-static const double S11_5 = 0.28173255684142967;  // sin(10π/11)
 
 /**
  * @brief Build configuration option for twiddle factor computation.
@@ -134,15 +24,142 @@ static const double S11_5 = 0.28173255684142967;  // sin(10π/11)
  */
 #define USE_TWIDDLE_TABLES
 
-// Precomputed lookup table for dividebyN up to 1024
+//==============================================================================
+// FMA MACROS
+//   - AVX: FMADD/FMSUB (256-bit)
+//   - SSE: FMADD_SSE2_PD / FMSUB_SSE2_PD map to FMA if available, else fallback
+//==============================================================================
+#if defined(__FMA__) || defined(USE_FMA)
+  // AVX 256b
+  #define FMADD(a,b,c)        _mm256_fmadd_pd((a),(b),(c))
+  #define FMSUB(a,b,c)        _mm256_fmsub_pd((a),(b),(c))
+  // SSE 128b
+  #define FMADD_SSE2_PD(a,b,c) _mm_fmadd_pd((a),(b),(c))
+  #define FMSUB_SSE2_PD(a,b,c) _mm_fmsub_pd((a),(b),(c))
+#else
+  // AVX 256b fallback
+  static ALWAYS_INLINE __m256d fmadd_fallback(__m256d a, __m256d b, __m256d c) {
+    return _mm256_add_pd(_mm256_mul_pd(a, b), c);
+  }
+  static ALWAYS_INLINE __m256d fmsub_fallback(__m256d a, __m256d b, __m256d c) {
+    return _mm256_sub_pd(_mm256_mul_pd(a, b), c);
+  }
+  #define FMADD(a,b,c)        fmadd_fallback((a),(b),(c))
+  #define FMSUB(a,b,c)        fmsub_fallback((a),(b),(c))
+  // SSE 128b fallback
+  static ALWAYS_INLINE __m128d fmadd_sse2_fallback(__m128d a, __m128d b, __m128d c) {
+    return _mm_add_pd(_mm_mul_pd(a, b), c);
+  }
+  static ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c) {
+    return _mm_sub_pd(_mm_mul_pd(a, b), c);
+  }
+  #define FMADD_SSE2_PD(a,b,c) fmadd_sse2_fallback((a),(b),(c))
+  #define FMSUB_SSE2_PD(a,b,c) fmsub_sse2_fallback((a),(b),(c))
+#endif
+
+// Convenience aliases (explicit SSE2 fallback names)
+#define FMADD_SSE2(a,b,c) fmadd_sse2_fallback((a),(b),(c))
+#define FMSUB_SSE2(a,b,c) fmsub_sse2_fallback((a),(b),(c))
+
+//==============================================================================
+// LOAD / STORE MACROS
+//   Primary macros (LOAD_PD/STORE_PD, LOAD_SSE2/STORE_SSE2) switch on alignment.
+//   Explicit unaligned helpers (LOADU_*/STOREU_*) are always available.
+//==============================================================================
+#ifdef USE_ALIGNED_SIMD
+  // AVX aligned
+  #define LOAD_PD(ptr)        _mm256_load_pd((const double*)(ptr))
+  #define STORE_PD(ptr,v)     _mm256_store_pd((double*)(ptr),(v))
+  // SSE aligned
+  #define LOAD_SSE2(ptr)      _mm_load_pd((const double*)(ptr))
+  #define STORE_SSE2(ptr,v)   _mm_store_pd((double*)(ptr),(v))
+#else
+  // AVX unaligned
+  #define LOAD_PD(ptr)        _mm256_loadu_pd((const double*)(ptr))
+  #define STORE_PD(ptr,v)     _mm256_storeu_pd((double*)(ptr),(v))
+  // SSE unaligned
+  #define LOAD_SSE2(ptr)      _mm_loadu_pd((const double*)(ptr))
+  #define STORE_SSE2(ptr,v)   _mm_storeu_pd((double*)(ptr),(v))
+#endif
+
+// Explicit unaligned helpers (use these when alignment is unknown)
+#define LOADU_PD(ptr)         _mm256_loadu_pd((const double*)(ptr))
+#define STOREU_PD(ptr,v)      _mm256_storeu_pd((double*)(ptr),(v))
+#define LOADU_SSE2(ptr)       _mm_loadu_pd((const double*)(ptr))
+#define STOREU_SSE2(ptr,v)    _mm_storeu_pd((double*)(ptr),(v))
+
+//==============================================================================
+// PREFETCH HELPERS
+//==============================================================================
+#ifndef FFT_PREFETCH_DISTANCE
+  #define FFT_PREFETCH_DISTANCE 8  // ~64B ahead for AoS complex<double>
+#endif
+
+#define FFT_PREFETCH_AOS(ptr) do {                                 \
+  _mm_prefetch((const char*)&(ptr)->re, _MM_HINT_T0);               \
+  _mm_prefetch((const char*)&(ptr)->im, _MM_HINT_T0);               \
+} while (0)
+
+//==============================================================================
+// COMMON CONSTANT VECTORS
+//==============================================================================
+#define AVX_ONE   _mm256_set1_pd(1.0)
+#define SSE2_ONE  _mm_set1_pd(1.0)
+
+//==============================================================================
+// RADIX-SPECIFIC SCALAR CONSTANTS
+//==============================================================================
+
+// --- Radix-3 helper ---
+static const double C3_SQRT3BY2 = 0.8660254037844386; // √3/2 for 120° rotation
+
+// --- Radix-5 constants ---
+static const double C5_1 =  0.30901699437;  // cos(72°)
+static const double C5_2 = -0.80901699437;  // cos(144°)
+static const double S5_1 =  0.95105651629;  // sin(72°)
+static const double S5_2 =  0.58778525229;  // sin(144°)
+
+// --- Radix-7 constants ---
+static const double C1 =  0.62348980185;  // cos( 51.43°)
+static const double C2 = -0.22252093395;  // cos(102.86°)
+static const double C3 = -0.90096886790;  // cos(154.29°)
+static const double S1 =  0.78183148246;  // sin( 51.43°)
+static const double S2 =  0.97492791218;  // sin(102.86°)
+static const double S3 =  0.43388373911;  // sin(154.29°)
+
+// --- Radix-8 constant ---
+static const double C8_1 = 0.7071067811865476; // √2/2 for 45° rotation
+
+// --- Radix-11 constants ---
+static const double C11_1 =  0.8412535328311812;   // cos(2π/11)
+static const double C11_2 =  0.4154150130018864;   // cos(4π/11)
+static const double C11_3 = -0.14231483827328514;  // cos(6π/11)
+static const double C11_4 = -0.6548607339452850;   // cos(8π/11)
+static const double C11_5 = -0.9594929736144974;   // cos(10π/11)
+static const double S11_1 =  0.5406408174555976;   // sin(2π/11)
+static const double S11_2 =  0.9096319953545184;   // sin(4π/11)
+static const double S11_3 =  0.9898214418809327;   // sin(6π/11)
+static const double S11_4 =  0.7557495743542583;   // sin(8π/11)
+static const double S11_5 =  0.28173255684142967;  // sin(10π/11)
+
+
+//==============================================================================
+// DIVISIBILITY LOOKUP (for dividebyN up to 1024)
+//==============================================================================
 #define LOOKUP_MAX 1024
-static const int primes[] = {2, 3, 4, 5, 7, 8, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53};
+
+static const int primes[] = {
+    2, 3, 4, 5, 7, 8, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53
+};
 static const int num_primes = sizeof(primes) / sizeof(primes[0]);
+
 static unsigned char dividebyN_lookup[LOOKUP_MAX]; // 0 = not divisible, 1 = divisible
 
 static const int pre_sizes[] = {1, 2, 3, 4, 5, 7, 15, 20, 31, 64};
 static const int num_pre = (int)(sizeof(pre_sizes) / sizeof(pre_sizes[0]));
+
 static fft_data *all_chirps = NULL; // single contiguous block holding all precomputed sequences
+
 
 // Initialize the lookup table at compile time or runtime
 __attribute__((constructor)) static void init_dividebyN_lookup(void)
@@ -184,61 +201,118 @@ __attribute__((constructor)) static void init_dividebyN_lookup(void)
     }
 }
 
-// Precomputed twiddle factor tables for common radices
-typedef struct
-{
+//==============================================================================
+// TWIDDLE FACTOR TABLES (per radix)
+//==============================================================================
+
+typedef struct {
     double re;
     double im;
 } complex_t;
 
-static const complex_t twiddle_radix2[] = {{1.0, 0.0}, {0.0, -1.0}};
-static const complex_t twiddle_radix3[] = {{1.0, 0.0}, {-0.5, -0.86602540378}, {-0.5, 0.86602540378}};
-static const complex_t twiddle_radix4[] = {{1.0, 0.0}, {0.0, -1.0}, {-1.0, 0.0}, {0.0, 1.0}};
-static const complex_t twiddle_radix5[] = {{1.0, 0.0}, {0.30901699437, -0.95105651629}, {-0.80901699437, -0.58778525229}, {-0.80901699437, 0.58778525229}, {0.30901699437, 0.95105651629}};
-static const complex_t twiddle_radix7[] = {{1.0, 0.0}, {0.62348980185, -0.78183148246}, {-0.22252093395, -0.97492791218}, {-0.9009688679, -0.43388373911}, {-0.9009688679, 0.43388373911}, {-0.22252093395, 0.97492791218}, {0.62348980185, 0.78183148246}};
-static const complex_t twiddle_radix8[] = {{1.0, 0.0}, {0.70710678118, -0.70710678118}, {0.0, -1.0}, {-0.70710678118, -0.70710678118}, {-1.0, 0.0}, {-0.70710678118, 0.70710678118}, {0.0, 1.0}, {0.70710678118, 0.70710678118}};
+// --- Radix-2 ---
+static const complex_t twiddle_radix2[] = {
+    { 1.0,  0.0},
+    { 0.0, -1.0}
+};
 
+// --- Radix-3 ---
+static const complex_t twiddle_radix3[] = {
+    { 1.0,  0.0},
+    {-0.5, -0.86602540378},
+    {-0.5,  0.86602540378}
+};
+
+// --- Radix-4 ---
+static const complex_t twiddle_radix4[] = {
+    { 1.0,  0.0},
+    { 0.0, -1.0},
+    {-1.0,  0.0},
+    { 0.0,  1.0}
+};
+
+// --- Radix-5 ---
+static const complex_t twiddle_radix5[] = {
+    { 1.0,  0.0},
+    { 0.30901699437, -0.95105651629},
+    {-0.80901699437, -0.58778525229},
+    {-0.80901699437,  0.58778525229},
+    { 0.30901699437,  0.95105651629}
+};
+
+// --- Radix-7 ---
+static const complex_t twiddle_radix7[] = {
+    { 1.0,  0.0},
+    { 0.62348980185, -0.78183148246},
+    {-0.22252093395, -0.97492791218},
+    {-0.90096886790, -0.43388373911},
+    {-0.90096886790,  0.43388373911},
+    {-0.22252093395,  0.97492791218},
+    { 0.62348980185,  0.78183148246}
+};
+
+// --- Radix-8 ---
+static const complex_t twiddle_radix8[] = {
+    { 1.0,  0.0},
+    { 0.70710678118, -0.70710678118},
+    { 0.0, -1.0},
+    {-0.70710678118, -0.70710678118},
+    {-1.0,  0.0},
+    {-0.70710678118,  0.70710678118},
+    { 0.0,  1.0},
+    { 0.70710678118,  0.70710678118}
+};
+
+// --- Radix-11 ---
 static const complex_t twiddle_radix11[] = {
-    {1.0, 0.0},                                  // k=0
-    {0.8412535328311812, -0.5406408174555976},   // k=1
-    {0.4154150130018864, -0.9096319953545184},   // k=2
-    {-0.14231483827328514, -0.9898214418809327}, // k=3
-    {-0.654860733945285, -0.7557495743542583},   // k=4
-    {-0.9594929736144974, -0.28173255684142967}, // k=5
-    {-0.9594929736144974, 0.28173255684142967},  // k=6
-    {-0.654860733945285, 0.7557495743542583},    // k=7
-    {-0.14231483827328514, 0.9898214418809327},  // k=8
-    {0.4154150130018864, 0.9096319953545184},    // k=9
-    {0.8412535328311812, 0.5406408174555976}     // k=10
+    { 1.0,  0.0},                                 // k=0
+    { 0.8412535328311812, -0.5406408174555976},   // k=1
+    { 0.4154150130018864, -0.9096319953545184},   // k=2
+    {-0.14231483827328514, -0.9898214418809327},  // k=3
+    {-0.6548607339452850, -0.7557495743542583},   // k=4
+    {-0.9594929736144974, -0.28173255684142967},  // k=5
+    {-0.9594929736144974,  0.28173255684142967},  // k=6
+    {-0.6548607339452850,  0.7557495743542583},   // k=7
+    {-0.14231483827328514,  0.9898214418809327},  // k=8
+    { 0.4154150130018864,  0.9096319953545184},   // k=9
+    { 0.8412535328311812,  0.5406408174555976}    // k=10
 };
 
+// --- Radix-13 ---
 static const complex_t twiddle_radix13[] = {
-    {1.0, 0.0},                                 // k=0
-    {0.8854560256532099, -0.46472317204376856}, // k=1
-    {0.5680647467311558, -0.8229838658936564},  // k=2
-    {0.12053668025532305, -0.992708874098054},  // k=3
-    {-0.3546048870425356, -0.9350162426854148}, // k=4
-    {-0.7485107481711011, -0.6631226582407952}, // k=5
-    {-0.970941817426052, -0.23931566428755774}, // k=6
-    {-0.970941817426052, 0.23931566428755774},  // k=7
-    {-0.7485107481711011, 0.6631226582407952},  // k=8
-    {-0.3546048870425356, 0.9350162426854148},  // k=9
-    {0.12053668025532305, 0.992708874098054},   // k=10
-    {0.5680647467311558, 0.8229838658936564},   // k=11
-    {0.8854560256532099, 0.46472317204376856}   // k=12
+    { 1.0,  0.0},                                 // k=0
+    { 0.8854560256532099, -0.46472317204376856},  // k=1
+    { 0.5680647467311558, -0.8229838658936564},   // k=2
+    { 0.12053668025532305, -0.992708874098054},   // k=3
+    {-0.3546048870425356, -0.9350162426854148},   // k=4
+    {-0.7485107481711011, -0.6631226582407952},   // k=5
+    {-0.970941817426052,  -0.23931566428755774},  // k=6
+    {-0.970941817426052,   0.23931566428755774},  // k=7
+    {-0.7485107481711011,  0.6631226582407952},   // k=8
+    {-0.3546048870425356,  0.9350162426854148},   // k=9
+    { 0.12053668025532305, 0.992708874098054},    // k=10
+    { 0.5680647467311558, 0.8229838658936564},    // k=11
+    { 0.8854560256532099, 0.46472317204376856}    // k=12
 };
 
-// Update the twiddle_tables array to include new radices
+//==============================================================================
+// TWIDDLE DISPATCH TABLE
+//==============================================================================
 static const complex_t *twiddle_tables[14] = {
-    /* 0 */ [0] = NULL,
-    /* 2 */[2] = twiddle_radix2,
-    /* 3 */[3] = twiddle_radix3,
-    /* 4 */[4] = twiddle_radix4,
-    /* 5 */[5] = twiddle_radix5,
-    /* 7 */[7] = twiddle_radix7,
-    /* 8 */[8] = twiddle_radix8,
-    /*11 */[11] = twiddle_radix11,
-    /*13 */[13] = twiddle_radix13};
+    [0]  = NULL,
+    [2]  = twiddle_radix2,
+    [3]  = twiddle_radix3,
+    [4]  = twiddle_radix4,
+    [5]  = twiddle_radix5,
+    [7]  = twiddle_radix7,
+    [8]  = twiddle_radix8,
+    [11] = twiddle_radix11,
+    [13] = twiddle_radix13
+};
+
+//==============================================================================
+// BLUESTEin CHIRP: PRECOMPUTED SMALL-N TABLE
+//==============================================================================
 
 /**
  * @brief Maximum N for precomputed Bluestein chirp sequences.
@@ -257,7 +331,7 @@ static fft_data **bluestein_chirp = NULL;
 static int *chirp_sizes = NULL;
 
 /**
- * @brief Number of precomputed chirp sequences.
+ * @brief Number of precomputed chirp sequences (== num_pre).
  */
 static int num_precomputed = 0;
 
@@ -265,6 +339,36 @@ static int num_precomputed = 0;
  * @brief Flag indicating whether the chirp table has been initialized.
  */
 static int chirp_initialized = 0;
+
+/* Forward decls for portability (MSVC doesn’t support constructor attrs) */
+static void init_bluestein_chirp_body(void);
+static void cleanup_bluestein_chirp_body(void);
+
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((constructor))
+#endif
+static void init_bluestein_chirp(void)
+{
+    init_bluestein_chirp_body();
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((destructor))
+#endif
+static void cleanup_bluestein_chirp(void)
+{
+    cleanup_bluestein_chirp_body();
+}
+
+/* Call this from fft_init() on compilers without constructor attrs (e.g., MSVC).
+   Example:
+       if (!chirp_initialized) ensure_bluestein_chirp_initialized();
+*/
+static ALWAYS_INLINE void ensure_bluestein_chirp_initialized(void)
+{
+    if (!chirp_initialized) init_bluestein_chirp_body();
+}
 
 /**
  * @brief Precomputes Bluestein chirp sequences for small signal lengths at program startup.
@@ -284,76 +388,76 @@ static int chirp_initialized = 0;
  * @warning The caller must ensure `cleanup_bluestein_chirp` is called at program exit (via
  *          `__attribute__((destructor))`) to free memory.
  */
-__attribute__((constructor)) static void init_bluestein_chirp(void)
+static void init_bluestein_chirp_body(void)
 {
-    if (chirp_initialized)
-        return;
+    if (chirp_initialized) return;
 
-    // Figure out how much space we need for all chirp sequences
-    // We’re using pre_sizes[] = {1, 2, 3, 4, 5, 7, 15, 20, 31, 64}
+    // total storage needed (rounded up per size to multiple of 4 for alignment-friendly access)
     int total_chirp = 0;
-    for (int i = 0; i < num_pre; i++)
-    {
-        total_chirp += ((pre_sizes[i] + 3) & ~3); // Round up to next multiple of 4
+    for (int i = 0; i < num_pre; i++) {
+        total_chirp += ((pre_sizes[i] + 3) & ~3);
     }
 
-    // Allocate our three arrays:
-    // - bluestein_chirp: array of pointers to each chirp sequence
-    // - chirp_sizes: stores the length of each chirp (matches pre_sizes)
-    // - all_chirps: one big block for all chirp data
-    bluestein_chirp = (fft_data **)malloc(num_pre * sizeof(fft_data *));
-    chirp_sizes = (int *)malloc(num_pre * sizeof(int));
-    all_chirps = (fft_data *)_mm_malloc(total_chirp * sizeof(fft_data), 32);
-    if (!bluestein_chirp || !chirp_sizes || !all_chirps)
-    {
-        // If any allocation fails, clean up what we got and bail
-        // Trade-off: Exiting is harsh, but it’s a startup error, so recovery is tricky
+    // allocate descriptor arrays
+    bluestein_chirp = (fft_data **)malloc((size_t)num_pre * sizeof(fft_data *));
+    chirp_sizes     = (int *)malloc((size_t)num_pre * sizeof(int));
+    all_chirps      = (fft_data *)_mm_malloc((size_t)total_chirp * sizeof(fft_data), 32);
+
+    if (!bluestein_chirp || !chirp_sizes || !all_chirps) {
         fprintf(stderr, "Error: Memory allocation failed for Bluestein chirp table\n");
-        _mm_free(all_chirps);
-        free(bluestein_chirp);
-        free(chirp_sizes);
-        // exit
+        if (all_chirps) _mm_free(all_chirps);
+        if (bluestein_chirp) free(bluestein_chirp);
+        if (chirp_sizes) free(chirp_sizes);
+        all_chirps = NULL; bluestein_chirp = NULL; chirp_sizes = NULL;
+        chirp_initialized = 0;
+        num_precomputed = 0;
+        return; // fail gracefully; caller can still run without precomputed chirps
     }
 
-    // Set up the pointers and fill the chirp sequences
-    // We walk through each size, point bluestein_chirp[i] to the right spot in all_chirps,
-    // and compute the chirp values (e^{\pi i n^2 / N})
+    // partition the big block and fill chirps
     int offset = 0;
-    for (int idx = 0; idx < num_pre; idx++)
-    {
-        int n = pre_sizes[idx];
-        chirp_sizes[idx] = n;                       // Store the size for lookup in bluestein_exp
-        bluestein_chirp[idx] = all_chirps + offset; // Point to the current chunk
-        offset += ((n + 3) & ~3);                   // Move offset to next aligned boundary
+    for (int idx = 0; idx < num_pre; idx++) {
+        const int n = pre_sizes[idx];
+        const int n_rounded = ((n + 3) & ~3);
 
-        // Compute the chirp sequence for this length
-        // The angle is π n^2 / N, with a quadratic index (l2) to avoid floating-point drift
-        // Why l2? It’s a clever trick to compute n^2 mod 2N without big numbers
-        fft_type theta = M_PI / n;
-        int l2 = 0, len2 = 2 * n;
-        for (int i = 0; i < n; i++)
-        {
-            fft_type angle = theta * l2;
+        chirp_sizes[idx]     = n;                 // logical size
+        bluestein_chirp[idx] = all_chirps + offset;
+        offset += n_rounded;
+
+        // h(i) = e^{π i * i^2 / n}  (Bluestein chirp)
+        // Use quadratic index l2 to accumulate 2*i+1 mod 2n; wrap must be ">= 2n"
+        const fft_type theta = (fft_type)M_PI / (fft_type)n;
+        int l2 = 0;
+        const int len2 = 2 * n;
+
+        for (int i = 0; i < n; i++) {
+            const fft_type angle = theta * (fft_type)l2;
             bluestein_chirp[idx][i].re = cos(angle);
             bluestein_chirp[idx][i].im = sin(angle);
-            l2 += 2 * i + 1; // Quadratic term: n^2 = (2i+1) mod 2N
-            while (l2 > len2)
-                l2 -= len2; // Wrap around to keep indices in bounds
+
+            l2 += 2 * i + 1;
+            while (l2 >= len2) l2 -= len2;  // wrap (>=, not >)
         }
+
+        // If you prefer to zero the padded tail (n..n_rounded-1), uncomment:
+        // for (int i = n; i < n_rounded; ++i) { bluestein_chirp[idx][i].re = 0.0; bluestein_chirp[idx][i].im = 0.0; }
     }
 
+    num_precomputed = num_pre;
     chirp_initialized = 1;
 }
 
-__attribute__((destructor)) static void cleanup_bluestein_chirp(void)
+static void cleanup_bluestein_chirp_body(void)
 {
-    _mm_free(all_chirps);
-    free(bluestein_chirp);
-    free(chirp_sizes);
+    if (all_chirps)      _mm_free(all_chirps);
+    if (bluestein_chirp) free(bluestein_chirp);
+    if (chirp_sizes)     free(chirp_sizes);
+
     all_chirps = NULL;
     bluestein_chirp = NULL;
     chirp_sizes = NULL;
     chirp_initialized = 0;
+    num_precomputed = 0;
 }
 
 /**
