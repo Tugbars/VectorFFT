@@ -122,6 +122,10 @@ static const int primes[] = {2, 3, 4, 5, 7, 8, 11, 13, 17, 23, 29, 31, 37, 41, 4
 static const int num_primes = sizeof(primes) / sizeof(primes[0]);
 static unsigned char dividebyN_lookup[LOOKUP_MAX]; // 0 = not divisible, 1 = divisible
 
+static const int pre_sizes[] = {1, 2, 3, 4, 5, 7, 15, 20, 31, 64};
+static const int num_pre = (int)(sizeof(pre_sizes) / sizeof(pre_sizes[0]));
+static fft_data *all_chirps = NULL; // single contiguous block holding all precomputed sequences
+
 // Initialize the lookup table at compile time or runtime
 __attribute__((constructor)) static void init_dividebyN_lookup(void)
 {
@@ -207,21 +211,16 @@ static const complex_t twiddle_radix13[] = {
 };
 
 // Update the twiddle_tables array to include new radices
-static const complex_t *twiddle_tables[] = {
-    NULL,            // Radix 0 (unused)
-    twiddle_radix2,  // Radix 2
-    twiddle_radix3,  // Radix 3
-    twiddle_radix4,  // Radix 4
-    twiddle_radix5,  // Radix 5
-    NULL,            // Radix 6 (no table)
-    twiddle_radix7,  // Radix 7
-    twiddle_radix8,  // Radix 8
-    NULL,            // Radix 9 (no table)
-    NULL,            // Radix 10 (no table)
-    twiddle_radix11, // Radix 11
-    NULL,            // Radix 12 (no table)
-    twiddle_radix13  // Radix 13
-};
+static const complex_t *twiddle_tables[14] = {
+    /* 0 */ [0] = NULL,
+    /* 2 */[2] = twiddle_radix2,
+    /* 3 */[3] = twiddle_radix3,
+    /* 4 */[4] = twiddle_radix4,
+    /* 5 */[5] = twiddle_radix5,
+    /* 7 */[7] = twiddle_radix7,
+    /* 8 */[8] = twiddle_radix8,
+    /*11 */[11] = twiddle_radix11,
+    /*13 */[13] = twiddle_radix13};
 
 /**
  * @brief Maximum N for precomputed Bluestein chirp sequences.
@@ -412,7 +411,7 @@ fft_object fft_init(int signal_length, int transform_direction)
     int is_factorable = dividebyN(signal_length);
     int is_power_of_2 = 0, is_power_of_3 = 0, is_power_of_5 = 0, is_power_of_7 = 0;
     int is_power_of_11 = 0, is_power_of_13 = 0;
-    int twiddle_count, max_scratch_size, max_padded_length;
+    int twiddle_count = 0, max_scratch_size = 0, max_padded_length = 0;
 
     // Step 4: Set up buffer sizes and check power-of-radix
     // Mixed-radix uses N directly; Bluestein pads to next power of 2 ≥ 2N-1
@@ -430,8 +429,18 @@ fft_object fft_init(int signal_length, int transform_direction)
     }
     else
     {
-        // Bluestein needs M ≥ 2N-1, rounded up to power of 2
-        max_padded_length = (int)pow(2.0, ceil(log2((double)(2 * signal_length - 1))));
+        // Bluestein needs M ≥ 2N-1, rounded up to power of 2.
+        // Use an integer next_pow2 to avoid FP edge cases.
+        int want = 2 * signal_length - 1;
+        unsigned v = (unsigned)want;
+        v--;
+        v |= v >> 1;
+        v |= v >> 2;
+        v |= v >> 4;
+        v |= v >> 8;
+        v |= v >> 16;
+        v++;
+        max_padded_length = (int)v;
         twiddle_count = max_padded_length; // M twiddles for Bluestein
     }
 
@@ -441,6 +450,7 @@ fft_object fft_init(int signal_length, int transform_direction)
     int num_factors = factors(is_factorable ? signal_length : max_padded_length, temp_factors);
     int twiddle_factors_size = 0; // Size for precomputed twiddles
     int scratch_needed = 0;       // Scratch for recursion or Bluestein
+
     if (is_factorable)
     {
         int temp_N = signal_length;
@@ -489,6 +499,7 @@ fft_object fft_init(int signal_length, int transform_direction)
                 temp_N /= radix;
             }
         }
+
         // Ensure scratch size covers worst-case, fallback to 4*N
         // Note: Mixed-radix may need more scratch for twiddles in radix-11/13
         max_scratch_size = scratch_needed;
@@ -522,7 +533,8 @@ fft_object fft_init(int signal_length, int transform_direction)
     if (is_factorable && (is_power_of_2 || is_power_of_3 || is_power_of_5 || is_power_of_7 ||
                           is_power_of_11 || is_power_of_13))
     {
-        fft_config->twiddle_factors = (fft_data *)_mm_malloc(twiddle_factors_size * sizeof(fft_data), 32);
+        fft_config->twiddle_factors =
+            (fft_data *)_mm_malloc(twiddle_factors_size * sizeof(fft_data), 32);
         if (!fft_config->twiddle_factors)
         {
             fprintf(stderr, "Error: Failed to allocate twiddle_factors buffer\n");
@@ -547,32 +559,37 @@ fft_object fft_init(int signal_length, int transform_direction)
 
     // Step 10: Compute twiddle factors
     // Populate twiddles with e^{-2πi k / N} (or e^{-2πi k / M})
-    longvectorN(fft_config->twiddles, fft_config->n_fft, fft_config->factors, fft_config->lf);
+    build_twiddles_linear(fft_config->twiddles, fft_config->n_fft);
 
     // Step 11: Populate twiddle_factors for pure-power FFTs
-    // Store W_n^{j*k} (j=1..radix-1) for each level
-    // Note: Future extension could support mixed-radix special cases by storing offsets per factor
-    if (fft_config->twiddle_factors)
-    {
+    // Store W_{N_stage}^{j*k} (j=1..radix-1) for each level, *mapped* into the global W_N table.
+    // Mapping: W_{N_stage}^{p} == W_{N}^{p * (N / N_stage)}.
+    // Step 11: Populate twiddle_factors for pure-power FFTs (k-major layout)
+// Requires fft_config->twiddles[m] == W_{n_fft}^m  (linear table; see #2 below)
+    if (fft_config->twiddle_factors) {
         int offset = 0;
-        int radix = is_power_of_2 ? 2 : is_power_of_3 ? 3
-                                    : is_power_of_5   ? 5
-                                    : is_power_of_7   ? 7
-                                    : is_power_of_11  ? 11
-                                                      : 13;
-        for (int n = signal_length; n >= radix; n /= radix)
-        {
-            int sub_fft_size = n / radix;
-            for (int j = 1; j < radix; j++)
-            {
-                for (int k = 0; k < sub_fft_size; k++)
-                {
-                    int idx = sub_fft_size - 1 + j * k; // W_n^{j*k}
-                    fft_config->twiddle_factors[offset + (j - 1) * sub_fft_size + k].re = fft_config->twiddles[idx].re;
-                    fft_config->twiddle_factors[offset + (j - 1) * sub_fft_size + k].im = fft_config->twiddles[idx].im;
+        const int radix = (is_power_of_2 ? 2 :
+                        (is_power_of_3 ? 3 :
+                        (is_power_of_5 ? 5 :
+                        (is_power_of_7 ? 7 :
+                        (is_power_of_11 ? 11 : 13)))));
+
+        // Walk pure-power stages: N_stage = signal_length, signal_length/radix, ...
+        for (int N_stage = signal_length; N_stage >= radix; N_stage /= radix) {
+            const int sub_len = N_stage / radix;
+            const int stride  = fft_config->n_fft / N_stage; // exact by construction
+
+            for (int k = 0; k < sub_len; ++k) {
+                const int base = (radix - 1) * k;           // k-major
+                for (int j = 1; j < radix; ++j) {
+                    // Map W_{N_stage}^{j*k} => W_{n_fft}^{ (j*k) * (n_fft/N_stage) }
+                    const int p     = (j * k) % N_stage;
+                    const int idxN  = (p * stride) % fft_config->n_fft;
+                    fft_config->twiddle_factors[offset + base + (j - 1)] =
+                        fft_config->twiddles[idxN];
                 }
             }
-            offset += (radix - 1) * sub_fft_size;
+            offset += (radix - 1) * sub_len;
         }
     }
 
@@ -598,45 +615,155 @@ fft_object fft_init(int signal_length, int transform_direction)
     return fft_config;
 }
 
+/**
+ * @brief Complex multiply (AoS) for two packed complex vectors using AVX.
+ *
+ * Multiplies two vectors of complex numbers stored in **Array-of-Structures (AoS)** layout.
+ * The inputs pack two complex values each:
+ *
+ *   - @p a = [ ar0, ai0, ar1, ai1 ]
+ *   - @p b = [ br0, bi0, br1, bi1 ]
+ *
+ * The result is returned in the same AoS lane order:
+ *
+ *   - return = [ ar0*br0 - ai0*bi0,  ar0*bi0 + ai0*br0,  ar1*br1 - ai1*bi1,  ar1*bi1 + ai1*br1 ]
+ *
+ * This implementation uses lane-wise shuffles and `_mm256_addsub_pd` to perform the
+ * (real, imag) pair computations without horizontal reductions. No FMA is required.
+ *
+ * @param a Packed complex vector in AoS layout: [ ar0, ai0, ar1, ai1 ].
+ * @param b Packed complex vector in AoS layout: [ br0, bi0, br1, bi1 ].
+ * @return __m256d AoS-packed complex product:
+ *         [ re0, im0, re1, im1 ] = [ ar0*br0 - ai0*bi0,  ar0*bi0 + ai0*br0,
+ *                                     ar1*br1 - ai1*bi1,  ar1*bi1 + ai1*br1 ].
+ *
+ * @note Requires AVX support (256-bit double vectors). Layout must be AoS.
+ * @warning If your data is in SoA layout (all reals then all imags), use a different kernel.
+ * @see cmul_sse2_aos for a 128-bit (single complex) SSE2 variant.
+ */
 static ALWAYS_INLINE __m256d cmul_avx2_aos(__m256d a, __m256d b)
 {
-    // a = [ar0, ai0, ar1, ai1]
-    // b = [br0, bi0, br1, bi1]
-    __m256d arbr_aibi = _mm256_mul_pd(a, b);           // [ar*br, ai*bi, ar*br, ai*bi]
-    __m256d a_shuf = _mm256_permute_pd(a, 0b0101);     // [ai, ar, ai, ar]
-    __m256d b_shuf = _mm256_permute_pd(b, 0b0101);     // [bi, br, bi, br]
-    __m256d aibi_arbr = _mm256_mul_pd(a_shuf, b_shuf); // [ai*bi, ar*br, ai*bi, ar*br]
-    // (ar*br - ai*bi, ai*br + ar*bi) in AoS lanes
-    return _mm256_addsub_pd(arbr_aibi, _mm256_permute_pd(aibi_arbr, 0b0101));
+    // a = [ar0, ai0, ar1, ai1], b = [br0, bi0, br1, bi1]
+    __m256d brbr_bibi = b;                              // [br0, bi0, br1, bi1]
+    __m256d b_swapped = _mm256_permute_pd(b, 0b0101);   // [bi0, br0, bi1, br1]
+    __m256d ar_ai = a;                                  // [ar0, ai0, ar1, ai1]
+    __m256d ai_ar = _mm256_permute_pd(a, 0b0101);       // [ai0, ar0, ai1, ar1]
+    __m256d real_im1 = _mm256_mul_pd(ar_ai, brbr_bibi); // [ar0*br0, ai0*bi0, ar1*br1, ai1*bi1]
+    __m256d im_real2 = _mm256_mul_pd(ai_ar, b_swapped); // [ai0*bi0, ar0*br0, ai1*bi1, ar1*br1]
+    return _mm256_addsub_pd(real_im1, im_real2);        // [ar0*br0 - ai0*bi0, ar0*bi0 + ai0*br0, ...]
 }
 
+/**
+ * @brief Complex multiply (AoS) for one packed complex value using SSE2.
+ *
+ * Multiplies two complex numbers stored in **Array-of-Structures (AoS)** layout:
+ *
+ *   - @p a = [ ar, ai ]
+ *   - @p b = [ br, bi ]
+ *
+ * The result is returned as:
+ *
+ *   - return = [ ar*br - ai*bi,  ar*bi + ai*br ]
+ *
+ * Implemented with shuffles and `_mm_addsub_pd` to avoid horizontal sums.
+ *
+ * @param a Packed complex value in AoS layout: [ ar, ai ].
+ * @param b Packed complex value in AoS layout: [ br, bi ].
+ * @return __m128d AoS-packed complex product: [ re, im ].
+ *
+ * @note Requires SSE2 support. Layout must be AoS.
+ * @see cmul_avx2_aos for a 256-bit, two-complex AVX variant.
+ */
 static ALWAYS_INLINE __m128d cmul_sse2_aos(__m128d a, __m128d b)
 {
     // a = [ar, ai], b = [br, bi]
-    __m128d arbr_aibi = _mm_mul_pd(a, b);           // [ar*br, ai*bi]
-    __m128d a_shuf = _mm_shuffle_pd(a, a, 0b01);    // [ai, ar]
-    __m128d b_shuf = _mm_shuffle_pd(b, b, 0b01);    // [bi, br]
-    __m128d aibi_arbr = _mm_mul_pd(a_shuf, b_shuf); // [ai*bi, ar*br]
-    return _mm_addsub_pd(arbr_aibi, _mm_shuffle_pd(aibi_arbr, aibi_arbr, 0b01));
+    __m128d real_im1 = _mm_mul_pd(a, b);         // [ar*br, ai*bi]
+    __m128d ai_ar = _mm_shuffle_pd(a, a, 0b01);  // [ai, ar]
+    __m128d bi_br = _mm_shuffle_pd(b, b, 0b01);  // [bi, br]
+    __m128d im_real2 = _mm_mul_pd(ai_ar, bi_br); // [ai*bi, ar*br]
+    return _mm_addsub_pd(real_im1, im_real2);    // [ar*br - ai*bi, ar*bi + ai*br]
 }
 
-// Optional helpers if you need conjugation inline
+/**
+ * @brief Conjugate two AoS-packed complex doubles with AVX (no cross-lane ops).
+ *
+ * Treats @p z as two complex numbers packed in Array-of-Structures (AoS) layout:
+ *   [ re0, im0, re1, im1 ]  (lane 0..3).
+ *
+ * Conjugation flips the sign of the imaginary parts only:
+ *   [ re0, -im0, re1, -im1 ].
+ *
+ * This uses an XOR with a sign-bit mask built from ±0.0 to toggle the sign
+ * of lanes 1 and 3 (the imaginary lanes) without changing the reals.
+ *
+ * @param z AoS-packed vector [ re0, im0, re1, im1 ].
+ * @return __m256d AoS-packed conjugate [ re0, -im0, re1, -im1 ].
+ *
+ * @note Requires AVX. Data layout must be AoS (interleaved re,im).
+ */
 static ALWAYS_INLINE __m256d conj_avx2_aos(__m256d z)
 {
-    const __m256d mask = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
-    return _mm256_xor_pd(z, mask);
+    const __m256d mask = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // lanes: [re1, im1, re0, im0]? NO.
+    // Correct mask is [0.0, -0.0, 0.0, -0.0] for [re0, im0, re1, im1]:
+    const __m256d corr = _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
+    (void)mask; // avoid unused if you keep both lines for reference
+    return _mm256_xor_pd(z, corr);
 }
+
+/**
+ * @brief Conjugate one AoS-packed complex double with SSE2.
+ *
+ * Treats @p z as a single complex number in AoS layout:
+ *   [ re, im ]  (lane 0..1).
+ *
+ * Conjugation flips the sign of the imaginary part only:
+ *   [ re, -im ].
+ *
+ * @param z AoS-packed vector [ re, im ].
+ * @return __m128d AoS-packed conjugate [ re, -im ].
+ *
+ * @note Requires SSE2. Data layout must be AoS (interleaved re,im).
+ */
 static ALWAYS_INLINE __m128d conj_sse2_aos(__m128d z)
 {
     const __m128d mask = _mm_set_pd(-0.0, 0.0);
     return _mm_xor_pd(z, mask);
 }
 
+/**
+ * @brief Load two consecutive complex samples (AoS) into one AVX register.
+ *
+ * Loads:
+ *   *p_k  = { re(k),   im(k)   }
+ *   *p_k1 = { re(k+1), im(k+1) }
+ *
+ * and returns a single __m256d containing:
+ *   [ re(k), im(k), re(k+1), im(k+1) ].
+ *
+ * Uses unaligned loads for robustness; if your data is guaranteed 16-byte
+ * aligned for each complex sample, you may switch to aligned loads.
+ *
+ * @param p_k  Pointer to complex sample k (AoS: struct { double re, im; }).
+ * @param p_k1 Pointer to complex sample k+1.
+ * @return __m256d Packed vector [ re(k), im(k), re(k+1), im(k+1) ].
+ *
+ * @note Safe for unaligned input. Requires AVX (uses 2×128b -> 256b insert).
+ */
 static inline __m256d load2_aos(const fft_data *p_k, const fft_data *p_k1)
 {
     __m128d lo = _mm_loadu_pd(&p_k->re);  // [re(k), im(k)]
     __m128d hi = _mm_loadu_pd(&p_k1->re); // [re(k+1), im(k+1)]
     return _mm256_insertf128_pd(_mm256_castpd128_pd256(lo), hi, 1);
+}
+
+// Build twiddles in linear order: tw[m] = e^{-2πi m / N}, m=0..N-1
+static void build_twiddles_linear(fft_data *tw, int N) {
+    const double theta = -2.0 * M_PI / (double)N; // forward sign; inverse handled later by flipping imag
+    for (int m = 0; m < N; ++m) {
+        const double ang = theta * (double)m;
+        tw[m].re = cos(ang);
+        tw[m].im = sin(ang);
+    }
 }
 
 /**
@@ -679,18 +806,21 @@ static void mixed_radix_dit_rec(
     int factor_index,
     int scratch_offset)
 {
+    //--------------------------------------------------------------------------
+    // 0) Basic validation
+    //--------------------------------------------------------------------------
     if (data_length <= 0 || stride <= 0 || factor_index < 0)
     {
-        fprintf(stderr, "Error: Invalid mixed-radix FFT inputs - data_length: %d, stride: %d, factor_index: %d\n", data_length, stride, factor_index);
+        fprintf(stderr,
+                "Error: Invalid mixed-radix FFT inputs - data_length: %d, stride: %d, factor_index: %d\n",
+                data_length, stride, factor_index);
         // exit
     }
 
-    int radix, sub_length, new_stride;
-    if (data_length > 1)
-    {
-        radix = fft_obj->factors[factor_index];
-    }
-
+    //--------------------------------------------------------------------------
+    // 1) Base case: length-1 copy (only leaf)
+    //    All other sizes recurse + stage-combine by the current radix.
+    //--------------------------------------------------------------------------
     if (data_length == 1)
     {
         /**
@@ -700,379 +830,111 @@ static void mixed_radix_dit_rec(
          * complex value to the output buffer. This marks the termination of the recursive
          * decomposition, as no further division is possible.
          */
-        output_buffer[0].re = input_buffer[0].re;
-        output_buffer[0].im = input_buffer[0].im;
+        output_buffer[0] = input_buffer[0];
+        return;
     }
-    else if (data_length == 2)
+
+    //--------------------------------------------------------------------------
+    // 2) Current stage radix and subproblem geometry
+    //--------------------------------------------------------------------------
+    const int radix = fft_obj->factors[factor_index];
+    const int sub_len = data_length / radix; // child FFT size
+    const int next_stride = stride * radix;  // stride inside children
+
+    //--------------------------------------------------------------------------
+    // 3) Scratch planning for this stage
+    //
+    // We store the children outputs (lane-major) contiguously in scratch:
+    //   sub_outputs[ i*sub_len + k ] = child i's output at index k  (i=0..radix-1, k=0..sub_len-1)
+    //
+    // If we don't have precomputed per-stage twiddles, we also need space for:
+    //   stage_twiddles[(radix-1)*sub_len], laid out k-major:
+    //     for each k, pack j=1..radix-1: tw[(radix-1)*k + (j-1)] = W_{data_length}^{j*k}
+    //
+    // NOTE: We pass the *same* scratch_offset to each child serially (no overlap in time),
+    //       so siblings can reuse deeper scratch safely.
+    //--------------------------------------------------------------------------
+    fft_data *sub_outputs = fft_obj->scratch + scratch_offset;
+
+    // Required scratch for this stage "frame":
+    const int stage_outputs = radix * sub_len;
+    const int stage_tw_count = (radix - 1) * sub_len;
+    int need_this_stage = stage_outputs; // always need child outputs
+    int twiddle_in_scratch = 0;
+
+    fft_data *stage_tw = NULL;
+
+    if (fft_obj->twiddle_factors != NULL && factor_index < fft_obj->num_precomputed_stages)
     {
-        /**
-         * @brief Radix-2 butterfly operation for two-point FFT.
-         *
-         * Implements a two-point butterfly, the simplest form of DIT FFT, combining two input points
-         * using addition and subtraction. This corresponds to the FFT formula for N=2,
-         * where \(X(0) = x(0) + x(1)\) and \(X(1) = x(0) - x(1)\) for forward transforms,
-         * adjusted by transform_sign for inverse transforms.
-         */
-        fft_type tau1r = output_buffer[0].re, tau1i = output_buffer[0].im;
-
-        output_buffer[0].re = input_buffer[0].re;
-        output_buffer[0].im = input_buffer[0].im;
-        output_buffer[1].re = input_buffer[stride].re;
-        output_buffer[1].im = input_buffer[stride].im;
-
-        output_buffer[0].re = tau1r + output_buffer[1].re;
-        output_buffer[0].im = tau1i + output_buffer[1].im;
-        output_buffer[1].re = tau1r - output_buffer[1].re;
-        output_buffer[1].im = tau1i - output_buffer[1].im;
+        // Use precomputed table (k-major layout): points at this stage’s block.
+        stage_tw = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
     }
-    else if (data_length == 3)
+    else
     {
-        /**
-         * @brief Radix-3 butterfly operation for three-point FFT.
-         *
-         * Implements a three-point butterfly using precomputed constants (e.g., \(\sqrt{3}/2\)),
-         * combining three input points to compute the FFT. This uses the DIT formula for N=3,
-         * where the transform involves rotations by 120° and 240° in the complex plane,
-         * adjusted by transform_sign. Mathematically, it applies \(X(k) = \sum_{n=0}^{2} x(n) \cdot e^{-2\pi i k n / 3}\),
-         * leveraging symmetry and precomputed roots of unity for efficiency.
-         */
-        fft_type tau0r, tau0i, tau1r, tau1i, tau2r, tau2i;
-        const fft_type sqrt3_by_2 = 0.86602540378; // sqrt(3)/2, approximately 0.866, used for 120° rotation
-
-        output_buffer[0].re = input_buffer[0].re;
-        output_buffer[0].im = input_buffer[0].im;
-        output_buffer[1].re = input_buffer[stride].re;
-        output_buffer[1].im = input_buffer[stride].im;
-        output_buffer[2].re = input_buffer[2 * stride].re;
-        output_buffer[2].im = input_buffer[2 * stride].im;
-
-        tau0r = output_buffer[1].re + output_buffer[2].re;                                 // Sum of second and third points (real)
-        tau0i = output_buffer[1].im + output_buffer[2].im;                                 // Sum of second and third points (imag)
-        tau1r = transform_sign * sqrt3_by_2 * (output_buffer[1].re - output_buffer[2].re); // Rotated difference (real)
-        tau1i = transform_sign * sqrt3_by_2 * (output_buffer[1].im - output_buffer[2].im); // Rotated difference (imag)
-        tau2r = output_buffer[0].re - tau0r * 0.5;                                         // Center point adjustment (real)
-        tau2i = output_buffer[0].im - tau0i * 0.5;                                         // Center point adjustment (imag)
-
-        output_buffer[0].re = tau0r + output_buffer[0].re; // Combine with first point (real)
-        output_buffer[0].im = tau0i + output_buffer[0].im; // Combine with first point (imag)
-        output_buffer[1].re = tau2r + tau1i;               // Apply rotation for second output (real)
-        output_buffer[1].im = tau2i - tau1r;               // Apply rotation for second output (imag)
-        output_buffer[2].re = tau2r - tau1i;               // Apply rotation for third output (real)
-        output_buffer[2].im = tau2i + tau1r;               // Apply rotation for third output (imag)
+        // We’ll generate twiddles into scratch right after sub_outputs.
+        twiddle_in_scratch = 1;
+        need_this_stage += stage_tw_count;
+        if (scratch_offset + need_this_stage > fft_obj->max_scratch_size)
+        {
+            fprintf(stderr,
+                    "Error: Scratch too small at stage (radix=%d, N=%d). Need %d, have %d @off=%d\n",
+                    radix, data_length, need_this_stage,
+                    fft_obj->max_scratch_size - scratch_offset, scratch_offset);
+            // exit
+        }
+        stage_tw = sub_outputs + stage_outputs;
     }
-    else if (data_length == 4)
+
+    //--------------------------------------------------------------------------
+    // 4) Recurse into the radix children (serially; reusing deeper scratch)
+    //    Child i writes its sub-FFT into sub_outputs + i*sub_len
+    //--------------------------------------------------------------------------
+    for (int i = 0; i < radix; ++i)
     {
-        /**
-         * @brief Radix-4 butterfly operation for four-point FFT.
-         *
-         * Implements a four-point butterfly, combining four input points using additions, subtractions,
-         * and a 90° rotation (via \(\sqrt{2}/2\)). This corresponds to the DIT formula for N=4,
-         * where the transform involves pairwise combinations and rotations, adjusted by transform_sign.
-         * Mathematically, it computes \(X(k) = \sum_{n=0}^{3} x(n) \cdot e^{-2\pi i k n / 4}\),
-         * leveraging symmetry for efficiency.
-         */
-        fft_type tau0r, tau0i, tau1r, tau1i, tau2r, tau2i, tau3r, tau3i;
-
-        output_buffer[0].re = input_buffer[0].re;
-        output_buffer[0].im = input_buffer[0].im;
-        output_buffer[1].re = input_buffer[stride].re;
-        output_buffer[1].im = input_buffer[stride].im;
-        output_buffer[2].re = input_buffer[2 * stride].re;
-        output_buffer[2].im = input_buffer[2 * stride].im;
-        output_buffer[3].re = input_buffer[3 * stride].re;
-        output_buffer[3].im = input_buffer[3 * stride].im;
-
-        tau0r = output_buffer[0].re + output_buffer[2].re;                    // Sum of first and third points (real)
-        tau0i = output_buffer[0].im + output_buffer[2].im;                    // Sum of first and third points (imag)
-        tau1r = output_buffer[0].re - output_buffer[2].re;                    // Difference of first and third points (real)
-        tau1i = output_buffer[0].im - output_buffer[2].im;                    // Difference of first and third points (imag)
-        tau2r = output_buffer[1].re + output_buffer[3].re;                    // Sum of second and fourth points (real)
-        tau2i = output_buffer[1].im + output_buffer[3].im;                    // Sum of second and fourth points (imag)
-        tau3r = transform_sign * (output_buffer[1].re - output_buffer[3].re); // Rotated difference (real)
-        tau3i = transform_sign * (output_buffer[1].im - output_buffer[3].im); // Rotated difference (imag)
-
-        output_buffer[0].re = tau0r + tau2r; // Combine sums for first output (real)
-        output_buffer[0].im = tau0i + tau2i; // Combine sums for first output (imag)
-        output_buffer[1].re = tau1r + tau3i; // Apply rotation for second output (real)
-        output_buffer[1].im = tau1i - tau3r; // Apply rotation for second output (imag)
-        output_buffer[2].re = tau0r - tau2r; // Combine differences for third output (real)
-        output_buffer[2].im = tau0i - tau2i; // Combine differences for third output (imag)
-        output_buffer[3].re = tau1r - tau3i; // Apply rotation for fourth output (real)
-        output_buffer[3].im = tau1i + tau3r; // Apply rotation for fourth output (imag)
+        mixed_radix_dit_rec(
+            sub_outputs + i * sub_len, // lane i destination
+            input_buffer + i * stride, // lane i source (strided)
+            fft_obj,
+            transform_sign,
+            sub_len,
+            next_stride,
+            factor_index + 1,
+            scratch_offset /* reuse deeper scratch serially */);
     }
-    else if (data_length == 5)
+
+    //--------------------------------------------------------------------------
+    // 5) Prepare per-stage twiddles if not precomputed
+    //
+    // Mapping from W_{data_length} to the global W_{fft_obj->n_fft} table:
+    //   W_{data_length}^{p} == W_{n_fft}^{ p * (n_fft / data_length) }  (exact when data_length | n_fft)
+    //
+    // We fill k-major for SIMD-friendly access:
+    //   for k in [0..sub_len)
+    //     for j in [1..radix-1]
+    //       stage_tw[ (radix-1)*k + (j-1) ] = W^{j*k}
+    //--------------------------------------------------------------------------
+    // 5) Prepare per-stage twiddles if not precomputed (k-major layout)
+    if (twiddle_in_scratch)
     {
-        /**
-         * @brief Radix-5 butterfly operation for five-point FFT.
-         *
-         * Implements a five-point butterfly using precomputed constants (e.g., cos/sin of 72° and 144°),
-         * combining five input points to compute the FFT. This uses the DIT formula for N=5,
-         * involving rotations by 72°, 144°, 216°, and 288° in the complex plane, adjusted by transform_sign.
-         * Mathematically, it computes \(X(k) = \sum_{n=0}^{4} x(n) \cdot e^{-2\pi i k n / 5}\),
-         * leveraging symmetry and precomputed roots of unity for efficiency.
-         */
-        fft_type tau0r, tau0i, tau1r, tau1i, tau2r, tau2i, tau3r, tau3i, tau4r, tau4i, tau5r, tau5i, tau6r, tau6i;
-        const fft_type c1 = 0.30901699437, c2 = -0.80901699437, s1 = 0.95105651629, s2 = 0.58778525229; // cos/sin of 72° and 144°
-
-        output_buffer[0].re = input_buffer[0].re;
-        output_buffer[0].im = input_buffer[0].im;
-        output_buffer[1].re = input_buffer[stride].re;
-        output_buffer[1].im = input_buffer[stride].im;
-        output_buffer[2].re = input_buffer[2 * stride].re;
-        output_buffer[2].im = input_buffer[2 * stride].im;
-        output_buffer[3].re = input_buffer[3 * stride].re;
-        output_buffer[3].im = input_buffer[3 * stride].im;
-        output_buffer[4].re = input_buffer[4 * stride].re;
-        output_buffer[4].im = input_buffer[4 * stride].im;
-
-        tau0r = output_buffer[1].re + output_buffer[4].re; // Sum of first and fifth points (real)
-        tau0i = output_buffer[1].im + output_buffer[4].im; // Sum of first and fifth points (imag)
-        tau2r = output_buffer[1].re - output_buffer[4].re; // Difference of first and fifth points (real)
-        tau2i = output_buffer[1].im - output_buffer[4].im; // Difference of first and fifth points (imag)
-        tau1r = output_buffer[2].re + output_buffer[3].re; // Sum of second and fourth points (real)
-        tau1i = output_buffer[2].im + output_buffer[3].im; // Sum of second and fourth points (imag)
-        tau3r = output_buffer[2].re - output_buffer[3].re; // Difference of second and fourth points (real)
-        tau3i = output_buffer[2].im - output_buffer[3].im; // Difference of second and fourth points (imag)
-
-        tau4r = c1 * tau0r + c2 * tau1r; // Apply 72° rotation (real)
-        tau4i = c1 * tau0i + c2 * tau1i; // Apply 72° rotation (imag)
-        if (transform_sign == 1)
+        const int nfft = fft_obj->n_fft;
+        const int step = nfft / data_length; // exact for our construction
+        for (int k = 0; k < sub_len; ++k)
         {
-            tau5r = s1 * tau2r + s2 * tau3r; // Apply 144° rotation (real, forward)
-            tau5i = s1 * tau2i + s2 * tau3i; // Apply 144° rotation (imag, forward)
+            const int base = (radix - 1) * k;
+            for (int j = 1; j < radix; ++j)
+            {
+                const int p = (j * k) % data_length; // exponent in W_{data_length}
+                const int idxN = (p * step) % nfft;  // map to global W table
+                stage_tw[base + (j - 1)] = fft_obj->twiddles[idxN];
+            }
         }
-        else
-        {
-            tau5r = -s1 * tau2r - s2 * tau3r; // Apply 144° rotation (real, inverse)
-            tau5i = -s1 * tau2i - s2 * tau3i; // Apply 144° rotation (imag, inverse)
-        }
-
-        tau6r = output_buffer[0].re + tau4r; // Combine with center point (real)
-        tau6i = output_buffer[0].im + tau4i; // Combine with center point (imag)
-        output_buffer[1].re = tau6r + tau5i; // First rotated output (real)
-        output_buffer[1].im = tau6i - tau5r; // First rotated output (imag)
-        output_buffer[4].re = tau6r - tau5i; // Fifth rotated output (real)
-        output_buffer[4].im = tau6i + tau5r; // Fifth rotated output (imag)
-
-        tau4r = c2 * tau0r + c1 * tau1r; // Apply 144° rotation (real)
-        tau4i = c2 * tau0i + c1 * tau1i; // Apply 144° rotation (imag)
-        if (transform_sign == 1)
-        {
-            tau5r = s2 * tau2r - s1 * tau3r; // Apply 72° rotation (real, forward)
-            tau5i = s2 * tau2i - s1 * tau3i; // Apply 72° rotation (imag, forward)
-        }
-        else
-        {
-            tau5r = -s2 * tau2r + s1 * tau3r; // Apply 72° rotation (real, inverse)
-            tau5i = -s2 * tau2i + s1 * tau3i; // Apply 72° rotation (imag, inverse)
-        }
-
-        tau6r = output_buffer[0].re + tau4r; // Combine with center point (real)
-        tau6i = output_buffer[0].im + tau4i; // Combine with center point (imag)
-        output_buffer[2].re = tau6r + tau5i; // Second rotated output (real)
-        output_buffer[2].im = tau6i - tau5r; // Second rotated output (imag)
-        output_buffer[3].re = tau6r - tau5i; // Fourth rotated output (real)
-        output_buffer[3].im = tau6i + tau5r; // Fourth rotated output (imag)
-
-        output_buffer[0].re += tau0r + tau1r; // Update center point (real)
-        output_buffer[0].im += tau0i + tau1i; // Update center point (imag)
     }
-    else if (data_length == 7)
-    {
-        /**
-         * @brief Radix-7 butterfly operation for seven-point FFT.
-         *
-         * Implements a seven-point butterfly using precomputed constants (e.g., cos/sin of 51.43°, 102.86°, 154.29°),
-         * combining seven input points to compute the FFT. This uses the DIT formula for N=7,
-         * involving rotations by specific angles in the complex plane, adjusted by transform_sign.
-         * Mathematically, it computes \(X(k) = \sum_{n=0}^{6} x(n) \cdot e^{-2\pi i k n / 7}\),
-         * leveraging symmetry and precomputed roots of unity for efficiency.
-         */
-        fft_type tau0r, tau0i, tau1r, tau1i, tau2r, tau2i, tau3r, tau3i, tau4r, tau4i, tau5r, tau5i, tau6r, tau6i, tau7r, tau7i;
-        const fft_type c1 = 0.62348980185, c2 = -0.22252093395, c3 = -0.9009688679, s1 = 0.78183148246, s2 = 0.97492791218, s3 = 0.43388373911; // cos/sin of 51.43°, 102.86°, 154.29°
 
-        // Copy input to output (7 points), ensuring all input values are loaded for processing
-        for (int i = 0; i < 7; i++)
-        {
-            output_buffer[i].re = input_buffer[i * stride].re; // Load real part
-            output_buffer[i].im = input_buffer[i * stride].im; // Load imaginary part
-        }
-
-        tau0r = output_buffer[1].re + output_buffer[6].re; // Sum of first and seventh points (real)
-        tau3r = output_buffer[1].re - output_buffer[6].re; // Difference of first and seventh points (real)
-        tau0i = output_buffer[1].im + output_buffer[6].im; // Sum of first and seventh points (imag)
-        tau3i = output_buffer[1].im - output_buffer[6].im; // Difference of first and seventh points (imag)
-
-        tau1r = output_buffer[2].re + output_buffer[5].re; // Sum of second and sixth points (real)
-        tau4r = output_buffer[2].re - output_buffer[5].re; // Difference of second and sixth points (real)
-        tau1i = output_buffer[2].im + output_buffer[5].im; // Sum of second and sixth points (imag)
-        tau4i = output_buffer[2].im - output_buffer[5].im; // Difference of second and sixth points (imag)
-
-        tau2r = output_buffer[3].re + output_buffer[4].re; // Sum of third and fifth points (real)
-        tau5r = output_buffer[3].re - output_buffer[4].re; // Difference of third and fifth points (real)
-        tau2i = output_buffer[3].im + output_buffer[4].im; // Sum of third and fifth points (imag)
-        tau5i = output_buffer[3].im - output_buffer[4].im; // Difference of third and fifth points (imag)
-
-        tau6r = output_buffer[0].re + c1 * tau0r + c2 * tau1r + c3 * tau2r; // Combine with center, apply 51.43° rotation (real)
-        tau6i = output_buffer[0].im + c1 * tau0i + c2 * tau1i + c3 * tau2i; // Combine with center, apply 51.43° rotation (imag)
-        if (transform_sign == 1)
-        {
-            tau7r = -s1 * tau3r - s2 * tau4r - s3 * tau5r; // Apply rotations for forward transform (real)
-            tau7i = -s1 * tau3i - s2 * tau4i - s3 * tau5i; // Apply rotations for forward transform (imag)
-        }
-        else
-        {
-            tau7r = s1 * tau3r + s2 * tau4r + s3 * tau5r; // Apply rotations for inverse transform (real)
-            tau7i = s1 * tau3i + s2 * tau4i + s3 * tau5i; // Apply rotations for inverse transform (imag)
-        }
-
-        output_buffer[1].re = tau6r - tau7i; // First rotated output (real)
-        output_buffer[6].re = tau6r + tau7i; // Seventh rotated output (real)
-        output_buffer[1].im = tau6i + tau7r; // First rotated output (imag)
-        output_buffer[6].im = tau6i - tau7r; // Seventh rotated output (imag)
-
-        tau6r = output_buffer[0].re + c2 * tau0r + c3 * tau1r + c1 * tau2r; // Combine with center, apply 102.86° rotation (real)
-        tau6i = output_buffer[0].im + c2 * tau0i + c3 * tau1i + c1 * tau2i; // Combine with center, apply 102.86° rotation (imag)
-        if (transform_sign == 1)
-        {
-            tau7r = -s2 * tau3r + s3 * tau4r + s1 * tau5r; // Apply rotations for forward transform (real)
-            tau7i = -s2 * tau3i + s3 * tau4i + s1 * tau5i; // Apply rotations for forward transform (imag)
-        }
-        else
-        {
-            tau7r = s2 * tau3r - s3 * tau4r - s1 * tau5r; // Apply rotations for inverse transform (real)
-            tau7i = s2 * tau3i - s3 * tau4i - s1 * tau5i; // Apply rotations for inverse transform (imag)
-        }
-
-        output_buffer[2].re = tau6r - tau7i; // Second rotated output (real)
-        output_buffer[5].re = tau6r + tau7i; // Sixth rotated output (real)
-        output_buffer[2].im = tau6i + tau7r; // Second rotated output (imag)
-        output_buffer[5].im = tau6i - tau7r; // Sixth rotated output (imag)
-
-        tau6r = output_buffer[0].re + c3 * tau0r + c1 * tau1r + c2 * tau2r; // Combine with center, apply 154.29° rotation (real)
-        tau6i = output_buffer[0].im + c3 * tau0i + c1 * tau1i + c2 * tau2i; // Combine with center, apply 154.29° rotation (imag)
-        if (transform_sign == 1)
-        {
-            tau7r = -s3 * tau3r + s1 * tau4r - s2 * tau5r; // Apply rotations for forward transform (real)
-            tau7i = -s3 * tau3i + s1 * tau4i - s2 * tau5i; // Apply rotations for forward transform (imag)
-        }
-        else
-        {
-            tau7r = s3 * tau3r - s1 * tau4r + s2 * tau5r; // Apply rotations for inverse transform (real)
-            tau7i = s3 * tau3i - s1 * tau4i + s2 * tau5i; // Apply rotations for inverse transform (imag)
-        }
-
-        output_buffer[3].re = tau6r - tau7i; // Third rotated output (real)
-        output_buffer[4].re = tau6r + tau7i; // Fifth rotated output (real)
-        output_buffer[3].im = tau6i + tau7r; // Third rotated output (imag)
-        output_buffer[4].im = tau6i - tau7r; // Fifth rotated output (imag)
-
-        output_buffer[0].re += tau0r + tau1r + tau2r; // Update center point (real)
-        output_buffer[0].im += tau0i + tau1i + tau2i; // Update center point (imag)
-    }
-    else if (data_length == 8)
-    {
-        /**
-         * @brief Radix-8 butterfly operation for eight-point FFT.
-         *
-         * Implements an eight-point butterfly using precomputed constants (e.g., \(\sqrt{2}/2\)),
-         * combining eight input points to compute the FFT. This uses the DIT formula for N=8,
-         * involving rotations by 45°, 90°, 135°, etc., in the complex plane, adjusted by transform_sign.
-         * Mathematically, it computes \(X(k) = \sum_{n=0}^{7} x(n) \cdot e^{-2\pi i k n / 8}\),
-         * leveraging symmetry and precomputed roots of unity for efficiency.
-         */
-        fft_type tau0r, tau0i, tau1r, tau1i, tau2r, tau2i, tau3r, tau3i, tau4r, tau4i, tau5r, tau5i, tau6r, tau6i, tau7r, tau7i, tau8r, tau8i, tau9r, tau9i;
-        const fft_type c1 = 0.70710678118654752440084436210485, s1 = c1; // sqrt(2)/2, approximately 0.707, used for 45° rotation
-
-        // Copy input to output (8 points), ensuring all input values are loaded for processing
-        for (int i = 0; i < 8; i++)
-        {
-            output_buffer[i].re = input_buffer[i * stride].re; // Load real part
-            output_buffer[i].im = input_buffer[i * stride].im; // Load imaginary part
-        }
-
-        tau0r = output_buffer[0].re + output_buffer[4].re; // Sum of first and fifth points (real)
-        tau4r = output_buffer[0].re - output_buffer[4].re; // Difference of first and fifth points (real)
-        tau0i = output_buffer[0].im + output_buffer[4].im; // Sum of first and fifth points (imag)
-        tau4i = output_buffer[0].im - output_buffer[4].im; // Difference of first and fifth points (imag)
-
-        tau1r = output_buffer[1].re + output_buffer[7].re; // Sum of second and eighth points (real)
-        tau5r = output_buffer[1].re - output_buffer[7].re; // Difference of second and eighth points (real)
-        tau1i = output_buffer[1].im + output_buffer[7].im; // Sum of second and eighth points (imag)
-        tau5i = output_buffer[1].im - output_buffer[7].im; // Difference of second and eighth points (imag)
-
-        tau2r = output_buffer[3].re + output_buffer[5].re; // Sum of fourth and sixth points (real)
-        tau6r = output_buffer[3].re - output_buffer[5].re; // Difference of fourth and sixth points (real)
-        tau2i = output_buffer[3].im + output_buffer[5].im; // Sum of fourth and sixth points (imag)
-        tau6i = output_buffer[3].im - output_buffer[5].im; // Difference of fourth and sixth points (imag)
-
-        tau3r = output_buffer[2].re + output_buffer[6].re; // Sum of third and seventh points (real)
-        tau7r = output_buffer[2].re - output_buffer[6].re; // Difference of third and seventh points (real)
-        tau3i = output_buffer[2].im + output_buffer[6].im; // Sum of third and seventh points (imag)
-        tau7i = output_buffer[2].im - output_buffer[6].im; // Difference of third and seventh points (imag)
-
-        output_buffer[0].re = tau0r + tau1r + tau2r + tau3r; // Combine all sums for first output (real)
-        output_buffer[0].im = tau0i + tau1i + tau2i + tau3i; // Combine all sums for first output (imag)
-        output_buffer[4].re = tau0r - tau1r - tau2r + tau3r; // Combine differences for fifth output (real)
-        output_buffer[4].im = tau0i - tau1i - tau2i + tau3i; // Combine differences for fifth output (imag)
-
-        fft_type temp1r = tau1r - tau2r, temp1i = tau1i - tau2i; // Intermediate difference for rotation
-        fft_type temp2r = tau5r + tau6r, temp2i = tau5i + tau6i; // Intermediate sum for rotation
-
-        tau8r = tau4r + c1 * temp1r; // Apply 45° rotation (real)
-        tau8i = tau4i + c1 * temp1i; // Apply 45° rotation (imag)
-        if (transform_sign == 1)
-        {
-            tau9r = -s1 * temp2r - tau7r; // Apply 45° rotation for forward transform (real)
-            tau9i = -s1 * temp2i - tau7i; // Apply 45° rotation for forward transform (imag)
-        }
-        else
-        {
-            tau9r = s1 * temp2r + tau7r; // Apply 45° rotation for inverse transform (real)
-            tau9i = s1 * temp2i + tau7i; // Apply 45° rotation for inverse transform (imag)
-        }
-
-        output_buffer[1].re = tau8r - tau9i; // Second rotated output (real)
-        output_buffer[1].im = tau8i + tau9r; // Second rotated output (imag)
-        output_buffer[7].re = tau8r + tau9i; // Eighth rotated output (real)
-        output_buffer[7].im = tau8i - tau9r; // Eighth rotated output (imag)
-
-        tau8r = tau0r - tau3r; // Difference for third output (real)
-        tau8i = tau0i - tau3i; // Difference for third output (imag)
-        if (transform_sign == 1)
-        {
-            tau9r = -tau5r + tau6r; // Apply rotation for forward transform (real)
-            tau9i = -tau5i + tau6i; // Apply rotation for forward transform (imag)
-        }
-        else
-        {
-            tau9r = tau5r - tau6r; // Apply rotation for inverse transform (real)
-            tau9i = tau5i - tau6i; // Apply rotation for inverse transform (imag)
-        }
-
-        output_buffer[2].re = tau8r - tau9i; // Third rotated output (real)
-        output_buffer[2].im = tau8i + tau9r; // Third rotated output (imag)
-        output_buffer[6].re = tau8r + tau9i; // Seventh rotated output (real)
-        output_buffer[6].im = tau8i - tau9r; // Seventh rotated output (imag)
-
-        tau8r = tau4r - c1 * temp1r; // Apply -45° rotation (real)
-        tau8i = tau4i - c1 * temp1i; // Apply -45° rotation (imag)
-        if (transform_sign == 1)
-        {
-            tau9r = -s1 * temp2r + tau7r; // Apply 45° rotation for forward transform (real)
-            tau9i = -s1 * temp2i + tau7i; // Apply 45° rotation for forward transform (imag)
-        }
-        else
-        {
-            tau9r = s1 * temp2r - tau7r; // Apply 45° rotation for inverse transform (real)
-            tau9i = s1 * temp2i - tau7i; // Apply 45° rotation for inverse transform (imag)
-        }
-
-        output_buffer[3].re = tau8r - tau9i; // Fourth rotated output (real)
-        output_buffer[3].im = tau8i + tau9r; // Fourth rotated output (imag)
-        output_buffer[5].re = tau8r + tau9i; // Sixth rotated output (real)
-        output_buffer[5].im = tau8i - tau9r; // Sixth rotated output (imag)
-    }
+    //--------------------------------------------------------------------------
+    // 6) Stage combine per radix
+    //    We write stage outputs to 'output_buffer' in canonical DIT order:
+    //      output_buffer[m*sub_len + k] = X_m(k),  m=0..radix-1, k=0..sub_len-1
+    //--------------------------------------------------------------------------
     else if (radix == 2)
     {
         const int sub_fft_length = data_length / 2; // N/2
@@ -1147,39 +1009,60 @@ static void mixed_radix_dit_rec(
         }
 
         // AVX2 body: 2 complex numbers per iter
+        // Negation masks for AoS lanes [re0, im0, re1, im1]
+        const __m256d FLIP_RE = _mm256_set_pd(+0.0, -0.0, +0.0, -0.0); // negate real lanes (0,2)
+        const __m256d FLIP_IM = _mm256_set_pd(-0.0, +0.0, -0.0, +0.0); // negate imag lanes (1,3)
+
+
         int k = 0;
         for (; k + 1 < sub_fft_size; k += 2)
         {
-            // (optional) prefetch a little ahead
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + sub_fft_size].re, _MM_HINT_T0);
+            // (Optional) prefetch a bit ahead – both re/im
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8].re,               _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8].im,               _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + sub_fft_size].re,_MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + sub_fft_size].im,_MM_HINT_T0);
 
-            __m256d even = LOADU_PD(&sub_fft_outputs[k].re);               // [er_k, ei_k, er_k+1, ei_k+1]
-            __m256d odd = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].re); // [or_k, oi_k, or_k+1, oi_k+1]
-            __m256d w = LOADU_PD(&twiddle_factors[k].re);                  // [wr_k, wi_k, wr_k+1, wi_k+1]
+            __m256d even = LOADU_PD(&sub_fft_outputs[k].re);               // [er0, ei0, er1, ei1]
+            __m256d odd  = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].re);// [or0, oi0, or1, oi1]
+            __m256d w    = LOADU_PD(&twiddle_factors[k].re);               // [wr0, wi0, wr1, wi1]
 
-            __m256d tw = cmul_avx2_aos(odd, w); // odd * W_N^k
+            __m256d tw   = cmul_avx2_aos(odd, w); // odd * W^k
 
-            __m256d x0 = _mm256_add_pd(even, tw); // X(k)
-            __m256d x1 = _mm256_sub_pd(even, tw); // X(k+N/2)
+            // X0 = even + tw  (use addsub + flip real lanes of tw)
+            __m256d tw_flip_re = _mm256_xor_pd(tw, FLIP_RE);
+            __m256d x0 = _mm256_addsub_pd(even, tw_flip_re);
 
-            STOREU_PD(&output_buffer[k].re, x0);
-            STOREU_PD(&output_buffer[k + sub_fft_size].re, x1);
+            // X1 = even - tw  (use addsub + flip imag lanes of tw == conj(tw))
+            __m256d tw_conj = _mm256_xor_pd(tw, FLIP_IM);
+            __m256d x1 = _mm256_addsub_pd(even, tw_conj);
+
+            STOREU_PD(&output_buffer[k].re,                  x0);
+            STOREU_PD(&output_buffer[k + sub_fft_size].re,   x1);
         }
 
         // SSE2 tail: last single complex if odd length
         if (k < sub_fft_size)
         {
-            __m128d e = LOADU_SSE2(&sub_fft_outputs[k].re);                // [er, ei]
-            __m128d o = LOADU_SSE2(&sub_fft_outputs[k + sub_fft_size].re); // [or, oi]
-            __m128d w = LOADU_SSE2(&twiddle_factors[k].re);                // [wr, wi]
+            const __m128d FLIP_RE_128 = _mm_set_pd(+0.0, -0.0); // negate real lane (low)
+            const __m128d FLIP_IM_128 = _mm_set_pd(-0.0, +0.0); // negate imag lane (high)
 
-            __m128d tw = cmul_sse2_aos(o, w);
-            __m128d x0 = _mm_add_pd(e, tw);
-            __m128d x1 = _mm_sub_pd(e, tw);
+            __m128d e  = LOADU_SSE2(&sub_fft_outputs[k].re);                 // [er, ei]
+            __m128d o  = LOADU_SSE2(&sub_fft_outputs[k + sub_fft_size].re);  // [or, oi]
+            __m128d w1 = LOADU_SSE2(&twiddle_factors[k].re);                  // [wr, wi]
 
-            STOREU_SSE2(&output_buffer[k].re, x0);
-            STOREU_SSE2(&output_buffer[k + sub_fft_size].re, x1);
+            __m128d tw = cmul_sse2_aos(o, w1);
+
+            // X0 = e + tw
+            __m128d tw_flip_re = _mm_xor_pd(tw, FLIP_RE_128);
+            __m128d x0 = _mm_addsub_pd(e, tw_flip_re);
+
+            // X1 = e - tw
+            __m128d tw_conj = _mm_xor_pd(tw, FLIP_IM_128);
+            __m128d x1 = _mm_addsub_pd(e, tw_conj);
+
+            STOREU_SSE2(&output_buffer[k].re,                 x0);
+            STOREU_SSE2(&output_buffer[k + sub_fft_size].re,  x1);
         }
     }
     else if (radix == 3)
@@ -4038,6 +3921,14 @@ static void mixed_radix_dit_rec(
     }
 }
 
+static inline int find_pre_idx(int N)
+{
+    for (int i = 0; i < num_pre; ++i)
+        if (pre_sizes[i] == N)
+            return i;
+    return -1;
+}
+
 /**
  * @brief Computes the exponential terms for Bluestein’s FFT algorithm.
  *
@@ -4052,64 +3943,52 @@ static void mixed_radix_dit_rec(
  * @warning If lengths are invalid, the function exits with an error.
  * @note Uses PI = 3.1415926535897932384626433832795 for dynamic calculations.
  */
-static void bluestein_exp(fft_data *hl, fft_data *hlt, int input_length, int padded_length)
+static inline void bluestein_exp(fft_data *temp_scratch, fft_data *chirp_out, int N, int M)
 {
-    if (input_length <= 0 || padded_length <= input_length)
+    if (!chirp_initialized)
+        init_bluestein_chirp();
+
+    // 1) Produce chirp_out[n] = exp(+i*pi*n^2/N), n = 0..N-1
+    int pre = find_pre_idx(N);
+    if (pre >= 0)
     {
-        fprintf(stderr, "Error: Invalid lengths for Bluestein’s exponential - input_length: %d, padded_length: %d\n",
-                input_length, padded_length);
-        // exit
+        memcpy(chirp_out, bluestein_chirp[pre], (size_t)N * sizeof(fft_data));
     }
-
-    int index;
-    int found = 0;
-
-    if (input_length < MAX_PRECOMPUTED_N)
+    else
     {
-        for (int idx = 0; idx < num_precomputed; idx++)
+        const double theta = M_PI / (double)N;
+        int l2 = 0, len2 = 2 * N;
+        for (int n = 0; n < N; ++n)
         {
-            if (chirp_sizes[idx] == input_length)
-            {
-                for (index = 0; index < input_length; index++)
-                {
-                    hlt[index] = bluestein_chirp[idx][index];
-                    hl[index] = hlt[index];
-                }
-                found = 1;
-                break;
-            }
+            double angle = theta * (double)l2;
+            chirp_out[n].re = cos(angle);
+            chirp_out[n].im = sin(angle);
+            l2 += 2 * n + 1; // (n+1)^2 - n^2 = 2n+1
+            while (l2 >= len2)
+                l2 -= len2; // wrap mod 2N
         }
     }
 
-    if (!found)
-    { // Fallback to dynamic computation if not precomputed or N >= MAX_PRECOMPUTED_N
-        const fft_type PI = 3.1415926535897932384626433832795;
-        fft_type theta = PI / input_length;
-        int l2 = 0, len2 = 2 * input_length;
-        for (index = 0; index < input_length; ++index)
-        {
-            fft_type angle = theta * l2;
-            hlt[index].re = cos(angle);
-            hlt[index].im = sin(angle);
-            hl[index].re = hlt[index].re;
-            hl[index].im = hlt[index].im;
-            l2 += 2 * index + 1;
-            while (l2 > len2)
-                l2 -= len2;
-        }
-    }
-
-    for (index = input_length; index < padded_length - input_length + 1; index++)
+    // 2) Build kernel b of length M:
+    //    b[0] = 1
+    //    for n=1..N-1: b[n] = conj(chirp_out[n]) = exp(-i*pi*n^2/N), b[M-n] = b[n]
+    for (int i = 0; i < M; ++i)
     {
-        hl[index].re = 0.0;
-        hl[index].im = 0.0;
+        temp_scratch[i].re = 0.0;
+        temp_scratch[i].im = 0.0;
     }
+    temp_scratch[0].re = 1.0;
+    temp_scratch[0].im = 0.0;
 
-    for (index = padded_length - input_length + 1; index < padded_length; index++)
+    const int lim = (N > 1) ? (N - 1) : 0;
+    for (int n = 1; n <= lim; ++n)
     {
-        int mirrored_index = padded_length - index;
-        hl[index].re = hlt[mirrored_index].re;
-        hl[index].im = hlt[mirrored_index].im;
+        fft_data z;
+        z.re = chirp_out[n].re;
+        z.im = -chirp_out[n].im; // conjugate -> exp(-i*pi*n^2/N)
+
+        temp_scratch[n] = z;
+        temp_scratch[M - n] = z; // symmetric placement
     }
 }
 
@@ -4141,217 +4020,271 @@ void bluestein_fft(
     const fft_data *input_signal,
     fft_data *output_signal,
     fft_object fft_config,
-    int transform_direction,
-    int signal_length)
+    int transform_direction, // +1 forward (negative exponential), -1 inverse (positive)
+    int signal_length)       // N
 {
-    // Quick check to make sure we’re not working with nonsense
     if (signal_length <= 0)
     {
         fprintf(stderr, "Error: Signal length (%d) is invalid\n", signal_length);
-        // exit
+        return;
     }
 
-    // Figure out the padded length (M), which is the next power of 2 >= 2N-1
-    // We pull this from max_scratch_size / 4, set up in fft_init to ensure we have enough room
-    int padded_length = fft_config->max_scratch_size / 4;
+    const int N = signal_length;
 
-    // Grab our scratch buffer—our one-stop shop for all temporary data
-    // Why? FFTW’s approach of one big workspace cuts down on mallocs and keeps data cozy in cache
+    // --- choose M = next power of two >= 2N-1 ---
+    int M = 1;
+    int need = 2 * N - 1;
+    while (M < need)
+        M <<= 1;
+
+    // --- scratch layout: 4*M complexes ---
+    if (4 * M > fft_config->max_scratch_size)
+    {
+        fprintf(stderr, "Error: Scratch too small for Bluestein: need %d, have %d\n",
+                4 * M, fft_config->max_scratch_size);
+        return;
+    }
     fft_data *S = fft_config->scratch;
+    fft_data *B_time = S;                // length M: mirrored chirp kernel, pre-scaled by 1/M
+    fft_data *B_fft = S + M;             // length M: FFT(B_time)
+    fft_data *A_fft_or_time = S + 2 * M; // length M: reused buffer
+    fft_data *base_chirp = S + 3 * M;    // length N: bluestein_exp() writes base = exp(+i*pi*n^2/N)
 
-    // Split the scratch into chunks for our needs
-    // - chirped_signal: holds the FFT of the chirp and later the padded signal (M elements)
-    // - temp_chirp: temp storage for chirp and FFT inputs (M elements)
-    // - ifft_result: stores IFFT output (M elements)
-    // - chirp_sequence: the chirp sequence itself (N <= M elements)
-    // Choice: Sequential layout keeps memory access tight; 4*M covers everything we need
-    fft_data *chirped_signal = S;
-    fft_data *temp_chirp = S + padded_length;
-    fft_data *ifft_result = S + 2 * padded_length;
-    fft_data *chirp_sequence = S + 3 * padded_length;
-
-    // Double-check we’ve got enough scratch space
-    // If not, bail out with a clear error—better than segfaulting later
-    if (4 * padded_length > fft_config->max_scratch_size)
+    // --- plans (do NOT mutate a plan to invert) ---
+    fft_object plan_fwd = fft_init(M, +1);
+    fft_object plan_inv = fft_init(M, -1);
+    if (!plan_fwd || !plan_inv)
     {
-        fprintf(stderr, "Error: Scratch buffer too small for Bluestein (need %d, have %d)\n",
-                4 * padded_length, fft_config->max_scratch_size);
-        // exit
+        fprintf(stderr, "Error: Couldn’t create Bluestein FFT plans\n");
+        if (plan_fwd)
+            free_fft(plan_fwd);
+        if (plan_inv)
+            free_fft(plan_inv);
+        return;
     }
 
-    // Set up a temporary FFT object for the padded length (M)
-    // Why not reuse fft_config? Modifying it could mess things up in multi-threaded code,
-    // so we play it safe with a fresh object, even if it’s a bit of extra work
-    fft_object temp_config = fft_init(padded_length, transform_direction);
-    if (!temp_config)
+    // --- get base chirp from your helper ---
+    // Convention used here: bluestein_exp(tmp, chirp_out, N, M) fills chirp_out[n] = exp(+i*pi*n^2/N), n=0..N-1
+    // We pass an unused temp (A_fft_or_time) to satisfy the API.
+    bluestein_exp(A_fft_or_time /*unused temp*/, base_chirp, N, M);
+
+    // --- set up signs (see note below) ---
+    // Forward (+1):  chirpA = conj(base), B uses +sign (base)
+    // Inverse (-1):  chirpA = base,       B uses -sign (conj(base))
+    const int is_forward = (transform_direction == +1);
+
+    // --- build B_time (mirrored kernel) and pre-scale by 1/M ---
+    // zero
+    for (int i = 0; i < M; ++i)
     {
-        fprintf(stderr, "Error: Couldn’t create temporary FFT object\n");
-        // exit
+        B_time[i].re = 0.0;
+        B_time[i].im = 0.0;
     }
 
-    // Generate the chirp sequence (h(n) = e^{πi n^2 / N}) and store it
-    // We use bluestein_exp to pull from our global `all_chirps` array for small N,
-    // or compute it dynamically for larger N. Output goes into temp_chirp and chirp_sequence
-    // Why global all_chirps? One big allocation for all chirps saves us from multiple mallocs
-    // and keeps data close for better cache hits
-    bluestein_exp(temp_chirp, chirp_sequence, signal_length, padded_length);
-
-    // Scale the chirp by 1/M for normalization
-    // Choice: Do this upfront to avoid scaling later, keeping the FFT steps clean
-    fft_type scale = 1.0 / padded_length;
-    for (int i = 0; i < padded_length; ++i)
+    // head
+    if (is_forward)
     {
-        temp_chirp[i].re *= scale;
-        temp_chirp[i].im *= scale;
-    }
-
-    // Compute the FFT of the scaled chirp sequence
-    // We store it in chirped_signal, which we’ll reuse later for the padded signal
-    // Why reuse? Saves scratch space and simplifies buffer management
-    fft_exec(temp_config, temp_chirp, chirped_signal);
-
-    // Multiply the input signal by the chirp sequence (x(n) * h(n) for forward, x(n) * h^*(n) for inverse)
-    // We’re going full AVX2 here to crunch 4 complex numbers at once
-    // Note: chirp_sequence is aligned (from scratch), so we use aligned loads for speed
-    int n = 0;
-    for (; n + 3 < signal_length; n += 4)
-    {
-        // Load 4 input points (reversed order for _mm256_set_pd)
-        __m256d input_re = _mm256_set_pd(input_signal[n + 3].re, input_signal[n + 2].re,
-                                         input_signal[n + 1].re, input_signal[n + 0].re);
-        __m256d input_im = _mm256_set_pd(input_signal[n + 3].im, input_signal[n + 2].im,
-                                         input_signal[n + 1].im, input_signal[n + 0].im);
-        // Load 4 chirp points (aligned, thanks to scratch allocation)
-        __m256d chirp_re = _mm256_load_pd(&chirp_sequence[n].re);
-        __m256d chirp_im = _mm256_load_pd(&chirp_sequence[n].im);
-
-        // For inverse FFT, conjugate the chirp (negate imaginary part)
-        // Why here? It’s cheaper than storing separate conjugated chirps
-        if (transform_direction == -1)
+        // B[n] = base[n]
+        for (int n = 0; n < N; ++n)
         {
-            chirp_im = _mm256_sub_pd(_mm256_setzero_pd(), chirp_im);
+            B_time[n] = base_chirp[n];
         }
-
-        // Complex multiply: (a + bi)(c + di) = (ac - bd) + i(ad + bc)
-        // Using FMA for better precision and speed on modern CPUs
-        __m256d result_re = _mm256_fmsub_pd(input_re, chirp_re, _mm256_mul_pd(input_im, chirp_im));
-        __m256d result_im = _mm256_fmadd_pd(input_im, chirp_re, _mm256_mul_pd(input_re, chirp_im));
-
-        // Store results in temp_chirp (unaligned, as we can’t guarantee alignment)
-        _mm256_storeu_pd(&temp_chirp[n].re, result_re);
-        _mm256_storeu_pd(&temp_chirp[n].im, result_im);
-    }
-    // Handle any leftover points with scalar code
-    // Choice: SIMD for the bulk, scalar for the tail—keeps it simple and robust
-    for (; n < signal_length; ++n)
-    {
-        double input_re = input_signal[n].re, input_im = input_signal[n].im;
-        double chirp_re = chirp_sequence[n].re, chirp_im = chirp_sequence[n].im;
-        if (transform_direction == -1)
-            chirp_im = -chirp_im;
-        temp_chirp[n].re = input_re * chirp_re - input_im * chirp_im;
-        temp_chirp[n].im = input_im * chirp_re + input_re * chirp_im;
-    }
-
-    // Zero-pad the chirped signal to length M
-    // This sets up the convolution by ensuring no aliasing in the frequency domain
-    // Choice: Explicit loop is clear and fast enough; could’ve used memset but this is more readable
-    for (int i = signal_length; i < padded_length; ++i)
-    {
-        temp_chirp[i].re = 0.0;
-        temp_chirp[i].im = 0.0;
-    }
-
-    // Run FFT on the padded chirped signal
-    // We’re storing the result in ifft_result to keep things organized
-    fft_exec(temp_config, temp_chirp, ifft_result);
-
-    // Pointwise multiplication in the frequency domain (y(n) * h_k(n) for forward, y(n) * h_k^*(n) for inverse)
-    // Again, AVX2 for speed, processing 4 complex points at a time
-    n = 0;
-    for (; n + 3 < padded_length; n += 4)
-    {
-        // Load FFT results and chirp FFT
-        // Using aligned loads since ifft_result and chirped_signal are in our aligned scratch buffer
-        __m256d fft_re = _mm256_load_pd(&ifft_result[n].re);
-        __m256d fft_im = _mm256_load_pd(&ifft_result[n].im);
-        __m256d chirp_fft_re = _mm256_load_pd(&chirped_signal[n].re);
-        __m256d chirp_fft_im = _mm256_load_pd(&chirped_signal[n].im);
-
-        // Conjugate chirp FFT for inverse transform
-        // Doing it on-the-fly saves memory and keeps things flexible
-        if (transform_direction == -1)
+        // tail mirror
+        for (int n = 1; n < N; ++n)
         {
-            chirp_fft_im = _mm256_sub_pd(_mm256_setzero_pd(), chirp_fft_im);
+            B_time[M - n] = base_chirp[n];
         }
-
-        // Complex multiply with FMA for efficiency
-        __m256d result_re = _mm256_fmsub_pd(fft_re, chirp_fft_re, _mm256_mul_pd(fft_im, chirp_fft_im));
-        __m256d result_im = _mm256_fmadd_pd(fft_im, chirp_fft_re, _mm256_mul_pd(fft_re, chirp_fft_im));
-
-        // Store back in temp_chirp (unaligned store for safety)
-        _mm256_storeu_pd(&temp_chirp[n].re, result_re);
-        _mm256_storeu_pd(&temp_chirp[n].im, result_im);
     }
-    // Scalar tail for any remaining points
-    // Keeps the code robust for non-multiples of 4
-    for (; n < padded_length; ++n)
+    else
     {
-        double fft_re = ifft_result[n].re, fft_im = ifft_result[n].im;
-        double chirp_fft_re = chirped_signal[n].re, chirp_fft_im = chirped_signal[n].im;
-        if (transform_direction == -1)
-            chirp_fft_im = -chirp_fft_im;
-        temp_chirp[n].re = fft_re * chirp_fft_re - fft_im * chirp_fft_im;
-        temp_chirp[n].im = fft_im * chirp_fft_re + fft_re * chirp_fft_im;
-    }
-
-    // Flip the twiddle factors for the inverse FFT
-    // We’re modifying temp_config’s twiddles to avoid messing with the original fft_config
-    for (int i = 0; i < padded_length; ++i)
-    {
-        temp_config->twiddles[i].im = -temp_config->twiddles[i].im;
-    }
-    temp_config->sgn = -transform_direction;
-
-    // Run the inverse FFT to get the convolution result
-    fft_exec(temp_config, temp_chirp, ifft_result);
-
-    // Final step: multiply by the chirp sequence again to extract the DFT
-    // Same AVX2 approach as before, with aligned loads for chirp_sequence
-    n = 0;
-    for (; n + 3 < signal_length; n += 4)
-    {
-        __m256d ifft_re = _mm256_load_pd(&ifft_result[n].re);
-        __m256d ifft_im = _mm256_load_pd(&ifft_result[n].im);
-        __m256d chirp_re = _mm256_load_pd(&chirp_sequence[n].re);
-        __m256d chirp_im = _mm256_load_pd(&chirp_sequence[n].im);
-
-        if (transform_direction == -1)
+        // B[n] = conj(base[n])
+        for (int n = 0; n < N; ++n)
         {
-            chirp_im = _mm256_sub_pd(_mm256_setzero_pd(), chirp_im);
+            B_time[n].re = base_chirp[n].re;
+            B_time[n].im = -base_chirp[n].im;
         }
-
-        __m256d result_re = _mm256_fmsub_pd(ifft_re, chirp_re, _mm256_mul_pd(ifft_im, chirp_im));
-        __m256d result_im = _mm256_fmadd_pd(ifft_im, chirp_re, _mm256_mul_pd(ifft_re, chirp_im));
-
-        // Store final results in output_signal (unaligned, as we don’t control its alignment)
-        _mm256_storeu_pd(&output_signal[n].re, result_re);
-        _mm256_storeu_pd(&output_signal[n].im, result_im);
+        for (int n = 1; n < N; ++n)
+        {
+            B_time[M - n].re = base_chirp[n].re;
+            B_time[M - n].im = -base_chirp[n].im;
+        }
     }
-    // Scalar tail for the last few points
-    for (; n < signal_length; ++n)
+
+    // pre-scale kernel by 1/M (so IFFT(FFT(A)*FFT(B)) = linear conv)
+    const double invM = 1.0 / (double)M;
+#if defined(__AVX2__)
     {
-        double ifft_re = ifft_result[n].re, ifft_im = ifft_result[n].im;
-        double chirp_re = chirp_sequence[n].re, chirp_im = chirp_sequence[n].im;
-        if (transform_direction == -1)
-            chirp_im = -chirp_im;
-        output_signal[n].re = ifft_re * chirp_re - ifft_im * chirp_im;
-        output_signal[n].im = ifft_im * chirp_re + ifft_re * chirp_im;
+        int i = 0;
+        const __m256d vscale = _mm256_set1_pd(invM);
+        for (; i + 1 < M; i += 2)
+        {
+            __m256d v = LOADU_PD(&B_time[i].re); // AoS: [re_i,im_i,re_{i+1},im_{i+1}]
+            v = _mm256_mul_pd(v, vscale);
+            STOREU_PD(&B_time[i].re, v);
+        }
+        if (i < M)
+        {
+            __m128d t = LOADU_SSE2(&B_time[i].re);
+            t = _mm_mul_pd(t, _mm_set1_pd(invM));
+            STOREU_SSE2(&B_time[i].re, t);
+        }
+    }
+#else
+    for (int i = 0; i < M; ++i)
+    {
+        B_time[i].re *= invM;
+        B_time[i].im *= invM;
+    }
+#endif
+
+    // --- FFT of kernel ---
+    fft_exec(plan_fwd, B_time, B_fft);
+
+    // --- A_time = x[n] * chirpA[n], zero-padded to M ---
+#if defined(__AVX2__)
+    {
+        int n = 0;
+        if (is_forward)
+        {
+            // chirpA = conj(base)
+            for (; n + 1 < N; n += 2)
+            {
+                __m256d x12 = LOADU_PD(&((fft_data *)input_signal)[n].re);
+                __m256d c12 = LOADU_PD(&base_chirp[n].re);
+                // conj(base): [re, -im]
+                __m256d conj_mask = _mm256_set_pd(-0.0, +0.0, -0.0, +0.0);
+                c12 = _mm256_xor_pd(c12, conj_mask);
+                __m256d a12 = cmul_avx2_aos(x12, c12);
+                STOREU_PD(&A_fft_or_time[n].re, a12);
+            }
+        }
+        else
+        {
+            // chirpA = base
+            for (; n + 1 < N; n += 2)
+            {
+                __m256d x12 = LOADU_PD(&((fft_data *)input_signal)[n].re);
+                __m256d c12 = LOADU_PD(&base_chirp[n].re);
+                __m256d a12 = cmul_avx2_aos(x12, c12);
+                STOREU_PD(&A_fft_or_time[n].re, a12);
+            }
+        }
+        if (n < N)
+        {
+            __m128d x1 = LOADU_SSE2(&((fft_data *)input_signal)[n].re);
+            __m128d c1 = LOADU_SSE2(&base_chirp[n].re);
+            if (is_forward)
+            {
+                // conj(base)
+                c1 = _mm_xor_pd(c1, _mm_set_pd(-0.0, +0.0));
+            }
+            __m128d a1 = cmul_sse2_aos(x1, c1);
+            STOREU_SSE2(&A_fft_or_time[n].re, a1);
+        }
+    }
+#else
+    for (int n = 0; n < N; ++n)
+    {
+        double xr = input_signal[n].re, xi = input_signal[n].im;
+        double cr = base_chirp[n].re, ci = base_chirp[n].im;
+        if (is_forward)
+            ci = -ci; // conj(base)
+        A_fft_or_time[n].re = xr * cr - xi * ci;
+        A_fft_or_time[n].im = xi * cr + xr * ci;
+    }
+#endif
+    for (int i = N; i < M; ++i)
+    {
+        A_fft_or_time[i].re = 0.0;
+        A_fft_or_time[i].im = 0.0;
     }
 
-    // Clean up the temporary FFT object
-    // Gotta free it since we created it, keeping memory tidy
-    free_fft(temp_config);
+    // --- FFT(A_time) -> stash into B_time to reuse bandwidth ---
+    fft_exec(plan_fwd, A_fft_or_time, B_time); // B_time now holds FFT(A)
+
+    // --- Pointwise multiply: FFT(A) *= FFT(B) ---
+#if defined(__AVX2__)
+    {
+        int i = 0;
+        for (; i + 1 < M; i += 2)
+        {
+            __m256d Af = LOADU_PD(&B_time[i].re);
+            __m256d Bf = LOADU_PD(&B_fft[i].re);
+            __m256d Cf = cmul_avx2_aos(Af, Bf);
+            STOREU_PD(&A_fft_or_time[i].re, Cf);
+        }
+        if (i < M)
+        {
+            __m128d Af = LOADU_SSE2(&B_time[i].re);
+            __m128d Bf = LOADU_SSE2(&B_fft[i].re);
+            __m128d Cf = cmul_sse2_aos(Af, Bf);
+            STOREU_SSE2(&A_fft_or_time[i].re, Cf);
+        }
+    }
+#else
+    for (int i = 0; i < M; ++i)
+    {
+        double ar = B_time[i].re, ai = B_time[i].im;
+        double br = B_fft[i].re, bi = B_fft[i].im;
+        A_fft_or_time[i].re = ar * br - ai * bi;
+        A_fft_or_time[i].im = ai * br + ar * bi;
+    }
+#endif
+
+    // --- IFFT to time domain (linear convolution, because kernel was pre-scaled by 1/M) ---
+    fft_exec(plan_inv, A_fft_or_time, B_time); // B_time now holds conv(A,B)
+
+    // --- final multiply by chirpA[k] (same sign rule as the first step) ---
+#if defined(__AVX2__)
+    {
+        int k = 0;
+        if (is_forward)
+        {
+            // chirpA = conj(base)
+            for (; k + 1 < N; k += 2)
+            {
+                __m256d y = LOADU_PD(&B_time[k].re);
+                __m256d ck = LOADU_PD(&base_chirp[k].re);
+                ck = _mm256_xor_pd(ck, _mm256_set_pd(-0.0, +0.0, -0.0, +0.0)); // conj
+                __m256d out = cmul_avx2_aos(y, ck);
+                STOREU_PD(&output_signal[k].re, out);
+            }
+        }
+        else
+        {
+            // chirpA = base
+            for (; k + 1 < N; k += 2)
+            {
+                __m256d y = LOADU_PD(&B_time[k].re);
+                __m256d ck = LOADU_PD(&base_chirp[k].re);
+                __m256d out = cmul_avx2_aos(y, ck);
+                STOREU_PD(&output_signal[k].re, out);
+            }
+        }
+        if (k < N)
+        {
+            __m128d y = LOADU_SSE2(&B_time[k].re);
+            __m128d ck = LOADU_SSE2(&base_chirp[k].re);
+            if (is_forward)
+                ck = _mm_xor_pd(ck, _mm_set_pd(-0.0, +0.0)); // conj
+            __m128d out = cmul_sse2_aos(y, ck);
+            STOREU_SSE2(&output_signal[k].re, out);
+        }
+    }
+#else
+    for (int k = 0; k < N; ++k)
+    {
+        double yr = B_time[k].re, yi = B_time[k].im;
+        double cr = base_chirp[k].re, ci = base_chirp[k].im;
+        if (is_forward)
+            ci = -ci; // conj(base)
+        output_signal[k].re = yr * cr - yi * ci;
+        output_signal[k].im = yi * cr + yr * ci;
+    }
+#endif
+
+    free_fft(plan_inv);
+    free_fft(plan_fwd);
 }
 
 /**
