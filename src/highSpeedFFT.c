@@ -13,6 +13,10 @@
 #define ALWAYS_INLINE inline
 #endif
 
+#ifndef ADDSUB_ROT
+#define ADDSUB_ROT 0
+#endif
+
 //==============================================================================
 // CONSTANT VECTORS
 //==============================================================================
@@ -71,7 +75,7 @@ static ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c
 #define STORE_SSE2(ptr, v) _mm_storeu_pd((double *)(ptr), (v))
 #endif
 
-#define LOADU_SSE2(ptr) _mm_loadu_pd((const double*)(ptr))
+#define LOADU_SSE2(ptr) _mm_loadu_pd((const double *)(ptr))
 
 //==============================================================================
 // OPTIONAL: Unaligned AVX2 loads for mixed‑radix codepaths
@@ -594,6 +598,46 @@ fft_object fft_init(int signal_length, int transform_direction)
     return fft_config;
 }
 
+static ALWAYS_INLINE __m256d cmul_avx2_aos(__m256d a, __m256d b)
+{
+    // a = [ar0, ai0, ar1, ai1]
+    // b = [br0, bi0, br1, bi1]
+    __m256d arbr_aibi = _mm256_mul_pd(a, b);           // [ar*br, ai*bi, ar*br, ai*bi]
+    __m256d a_shuf = _mm256_permute_pd(a, 0b0101);     // [ai, ar, ai, ar]
+    __m256d b_shuf = _mm256_permute_pd(b, 0b0101);     // [bi, br, bi, br]
+    __m256d aibi_arbr = _mm256_mul_pd(a_shuf, b_shuf); // [ai*bi, ar*br, ai*bi, ar*br]
+    // (ar*br - ai*bi, ai*br + ar*bi) in AoS lanes
+    return _mm256_addsub_pd(arbr_aibi, _mm256_permute_pd(aibi_arbr, 0b0101));
+}
+
+static ALWAYS_INLINE __m128d cmul_sse2_aos(__m128d a, __m128d b)
+{
+    // a = [ar, ai], b = [br, bi]
+    __m128d arbr_aibi = _mm_mul_pd(a, b);           // [ar*br, ai*bi]
+    __m128d a_shuf = _mm_shuffle_pd(a, a, 0b01);    // [ai, ar]
+    __m128d b_shuf = _mm_shuffle_pd(b, b, 0b01);    // [bi, br]
+    __m128d aibi_arbr = _mm_mul_pd(a_shuf, b_shuf); // [ai*bi, ar*br]
+    return _mm_addsub_pd(arbr_aibi, _mm_shuffle_pd(aibi_arbr, aibi_arbr, 0b01));
+}
+
+// Optional helpers if you need conjugation inline
+static ALWAYS_INLINE __m256d conj_avx2_aos(__m256d z)
+{
+    const __m256d mask = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
+    return _mm256_xor_pd(z, mask);
+}
+static ALWAYS_INLINE __m128d conj_sse2_aos(__m128d z)
+{
+    const __m128d mask = _mm_set_pd(-0.0, 0.0);
+    return _mm_xor_pd(z, mask);
+}
+
+static inline __m256d load2_aos(const fft_data *p_k, const fft_data *p_k1) {
+    __m128d lo = _mm_loadu_pd(&p_k ->re);   // [re(k), im(k)]
+    __m128d hi = _mm_loadu_pd(&p_k1->re);   // [re(k+1), im(k+1)]
+    return _mm256_insertf128_pd(_mm256_castpd128_pd256(lo), hi, 1);
+}
+
 /**
  * @brief Performs recursive mixed-radix decimation-in-time (DIT) FFT on the input data.
  *
@@ -1030,1239 +1074,647 @@ static void mixed_radix_dit_rec(
     }
     else if (radix == 2)
     {
-        /**
-         * @brief Optimized Radix-2 decomposition with AVX2, SSE2 tail, direct output writes,
-         * and 2x unrolled loop with prefetching.
-         *
-         * Intention: Compute FFT for data lengths divisible by 2, splitting into two sub-FFTs
-         * (even/odd indices), applying recursive FFTs, and combining with twiddle factors.
-         * Optimized for power-of-2 (N=2^r) and mixed-radix FFTs.
-         *
-         * Changes from original:
-         * 1. SSE2 tail: Processes two points at a time, reducing scalar tail to at most 1.
-         * 2. Direct writes: Butterflies write to output_buffer, eliminating copy loop.
-         * 3. 2x unroll: Processes 8 points per AVX2 iteration with prefetching.
-         *
-         * Mathematically: Computes:
-         *   X(k) = X_even(k) + W_N^k * X_odd(k),
-         *   X(k+N/2) = X_even(k) - W_N^k * X_odd(k),
-         * where X_even, X_odd are sub-FFTs of size N/2, W_N^k = e^{-2πi k / N}.
-         *
-         * Assumptions:
-         * - output_buffer, sub_fft_outputs, twiddle_factors are 32-byte aligned.
-         * - fft_obj->twiddles has n_fft ≥ data_length elements.
-         * - Scratch buffer is pre-allocated with sufficient size.
-         * - transform_sign and stride are correctly set by caller.
-         */
-        // Step 1: Compute subproblem size and stride
-        int sub_fft_length = data_length / 2; // Size of each sub-FFT (N/2)
-        int next_stride = 2 * stride;         // Double stride for next level
-        int sub_fft_size = sub_fft_length;    // Sub-FFT size for indexing
+        const int sub_fft_length = data_length / 2; // N/2
+        const int next_stride = 2 * stride;
+        const int sub_fft_size = sub_fft_length;
 
-        // Step 2: Validate scratch buffer
-        // Power-of-2: 2*(N/2) for outputs; mixed-radix: (2+1)*(N/2) = 3*(N/2) for outputs + twiddles
-        int required_size = fft_obj->twiddle_factors != NULL ? 2 * sub_fft_size : 3 * sub_fft_size;
+        // Scratch requirement: outputs (2*N/2) + local twiddles (N/2) if not precomputed
+        const int required_size = (fft_obj->twiddle_factors != NULL) ? (2 * sub_fft_size) : (3 * sub_fft_size);
         if (scratch_offset + required_size > fft_obj->max_scratch_size)
         {
-            fprintf(stderr, "Error: Scratch buffer too small for radix-2 at offset %d (need %d, have %d)\n",
-                    scratch_offset, required_size, fft_obj->max_scratch_size - scratch_offset);
+            /*
+            fprintf(stderr, "Error: Scratch too small for radix-2 at off %d (need %d, have %d)
+                            ",
+                    scratch_offset,
+                    required_size, fft_obj->max_scratch_size - scratch_offset);
+            */
             return;
         }
 
-        // Step 3: Assign scratch slices
         fft_data *sub_fft_outputs = fft_obj->scratch + scratch_offset;
         fft_data *twiddle_factors;
+
         if (fft_obj->twiddle_factors != NULL)
         {
             if (factor_index >= fft_obj->num_precomputed_stages)
             {
-                fprintf(stderr, "Error: Invalid factor_index (%d) exceeds num_precomputed_stages (%d) for radix-2\n",
-                        factor_index, fft_obj->num_precomputed_stages);
+                /*
+                fprintf(stderr, "Error: factor_index %d >= num_precomputed_stages %d (radix-2)
+                                ",
+                        factor_index,
+                        fft_obj->num_precomputed_stages);
+                */
                 return;
             }
             twiddle_factors = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
         }
         else
         {
-            twiddle_factors = fft_obj->scratch + scratch_offset + 2 * sub_fft_size;
+            twiddle_factors = fft_obj->scratch + scratch_offset + 2 * sub_fft_size; // tail of this slice
         }
 
-        // Step 4: Compute offsets for child recursions
-        int child_scratch_per_branch = fft_obj->twiddle_factors != NULL ? 2 * (sub_fft_size / 2) : 3 * (sub_fft_size / 2);
+        // Child scratch slices (conservative split)
+        const int child_scratch_per_branch = (fft_obj->twiddle_factors != NULL) ? (2 * (sub_fft_size / 2)) : (3 * (sub_fft_size / 2));
         if (child_scratch_per_branch * 2 > required_size)
         {
-            fprintf(stderr, "Error: Child scratch size (%d) exceeds parent allocation (%d) for radix-2\n",
-                    child_scratch_per_branch * 2, required_size);
             return;
         }
-        int child_offset1 = scratch_offset;
-        int child_offset2 = scratch_offset + required_size / 2;
+        const int child_offset1 = scratch_offset;
+        const int child_offset2 = scratch_offset + required_size / 2; // may be unaligned -> use unaligned loads/stores
 
-        // Step 5: Recurse on even and odd indices
-        mixed_radix_dit_rec(sub_fft_outputs, input_buffer, fft_obj, transform_sign, sub_fft_length,
-                            next_stride, factor_index + 1, child_offset1); // Even indices
+        // Recurse (even, odd)
+        mixed_radix_dit_rec(sub_fft_outputs, input_buffer, fft_obj, transform_sign,
+                            sub_fft_length, next_stride, factor_index + 1, child_offset1);
         mixed_radix_dit_rec(sub_fft_outputs + sub_fft_size, input_buffer + stride, fft_obj, transform_sign,
-                            sub_fft_length, next_stride, factor_index + 1, child_offset2); // Odd indices
+                            sub_fft_length, next_stride, factor_index + 1, child_offset2);
 
-        // Step 6: Prepare twiddle factors (mixed-radix only)
+        // Prepare local twiddles if not precomputed: require twiddles[m] = W_N^m, m=0..N-1
         if (fft_obj->twiddle_factors == NULL)
         {
-            if (fft_obj->n_fft < 2 * sub_fft_size)
+            const int N = 2 * sub_fft_size;
+            if (fft_obj->n_fft < N)
             {
-                fprintf(stderr, "Error: Twiddle array too small (need at least %d elements, have %d)\n",
-                        2 * sub_fft_size, fft_obj->n_fft);
+                fprintf(stderr, "Error: twiddle array too small: need %d have %d", N, fft_obj->n_fft);
                 return;
             }
-            for (int k = 0; k < sub_fft_size; k++)
+            for (int k = 0; k < sub_fft_size; ++k)
             {
-                int idx = sub_fft_length - 1 + k;
+                const int idx = k; // W_N^k
                 twiddle_factors[k].re = fft_obj->twiddles[idx].re;
                 twiddle_factors[k].im = fft_obj->twiddles[idx].im;
             }
         }
 
-        // Step 7: Run AVX2 butterfly operations with 2x unroll and prefetching
+        // AVX2 body: 2 complex numbers per iter
         int k = 0;
-        for (; k + 7 < sub_fft_size; k += 8)
+        for (; k + 1 < sub_fft_size; k += 2)
         {
-            // Prefetch data 128 bytes (16 doubles) ahead
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 16].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 16].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 16 + sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 16 + sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&twiddle_factors[k + 16].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&twiddle_factors[k + 16].im, _MM_HINT_T0);
+            // (optional) prefetch a little ahead
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + sub_fft_size].re, _MM_HINT_T0);
 
-            // First 4 points (k to k+3)
-            __m256d even_re = LOAD_PD(&sub_fft_outputs[k].re);
-            __m256d even_im = LOAD_PD(&sub_fft_outputs[k].im);
-            __m256d odd_re = LOAD_PD(&sub_fft_outputs[k + sub_fft_size].re);
-            __m256d odd_im = LOAD_PD(&sub_fft_outputs[k + sub_fft_size].im);
-            __m256d twiddle_re = LOAD_PD(&twiddle_factors[k].re);
-            __m256d twiddle_im = LOAD_PD(&twiddle_factors[k].im);
+            __m256d even = LOADU_PD(&sub_fft_outputs[k].re);               // [er_k, ei_k, er_k+1, ei_k+1]
+            __m256d odd = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].re); // [or_k, oi_k, or_k+1, oi_k+1]
+            __m256d w = LOADU_PD(&twiddle_factors[k].re);                  // [wr_k, wi_k, wr_k+1, wi_k+1]
 
-            __m256d twiddled_re = FMSUB(odd_re, twiddle_re, _mm256_mul_pd(odd_im, twiddle_im));
-            __m256d twiddled_im = FMADD(odd_im, twiddle_re, _mm256_mul_pd(odd_re, twiddle_im));
+            __m256d tw = cmul_avx2_aos(odd, w); // odd * W_N^k
 
-            STORE_PD(&output_buffer[k].re, FMADD(twiddled_re, AVX_ONE, even_re)); // X(k)
-            STORE_PD(&output_buffer[k].im, FMADD(twiddled_im, AVX_ONE, even_im));
-            STORE_PD(&output_buffer[k + sub_fft_size].re, FMSUB(even_re, AVX_ONE, twiddled_re)); // X(k+N/2)
-            STORE_PD(&output_buffer[k + sub_fft_size].im, FMSUB(even_im, AVX_ONE, twiddled_im));
+            __m256d x0 = _mm256_add_pd(even, tw); // X(k)
+            __m256d x1 = _mm256_sub_pd(even, tw); // X(k+N/2)
 
-            // Second 4 points (k+4 to k+7)
-            __m256d even_re2 = LOAD_PD(&sub_fft_outputs[k + 4].re);
-            __m256d even_im2 = LOAD_PD(&sub_fft_outputs[k + 4].im);
-            __m256d odd_re2 = LOAD_PD(&sub_fft_outputs[k + 4 + sub_fft_size].re);
-            __m256d odd_im2 = LOAD_PD(&sub_fft_outputs[k + 4 + sub_fft_size].im);
-            __m256d twiddle_re2 = LOAD_PD(&twiddle_factors[k + 4].re);
-            __m256d twiddle_im2 = LOAD_PD(&twiddle_factors[k + 4].im);
-
-            __m256d twiddled_re2 = FMSUB(odd_re2, twiddle_re2, _mm256_mul_pd(odd_im2, twiddle_im2));
-            __m256d twiddled_im2 = FMADD(odd_im2, twiddle_re2, _mm256_mul_pd(odd_re2, twiddle_im2));
-
-            STORE_PD(&output_buffer[k + 4].re, FMADD(twiddled_re2, AVX_ONE, even_re2));
-            STORE_PD(&output_buffer[k + 4].im, FMADD(twiddled_im2, AVX_ONE, even_im2));
-            STORE_PD(&output_buffer[k + 4 + sub_fft_size].re, FMSUB(even_re2, AVX_ONE, twiddled_re2));
-            STORE_PD(&output_buffer[k + 4 + sub_fft_size].im, FMSUB(even_im2, AVX_ONE, twiddled_im2));
+            STOREU_PD(&output_buffer[k].re, x0);
+            STOREU_PD(&output_buffer[k + sub_fft_size].re, x1);
         }
 
-        // Step 8: SSE2 tail for remaining 2 points
-        if (k + 1 < sub_fft_size)
-        {
-            __m128d even_re = LOAD_SSE2(&sub_fft_outputs[k].re);
-            __m128d even_im = LOAD_SSE2(&sub_fft_outputs[k].im);
-            __m128d odd_re = LOAD_SSE2(&sub_fft_outputs[k + sub_fft_size].re);
-            __m128d odd_im = LOAD_SSE2(&sub_fft_outputs[k + sub_fft_size].im);
-            __m128d twiddle_re = LOAD_SSE2(&twiddle_factors[k].re);
-            __m128d twiddle_im = LOAD_SSE2(&twiddle_factors[k].im);
-
-            __m128d twiddled_re = FMSUB_SSE2(odd_re, twiddle_re, _mm_mul_pd(odd_im, twiddle_im));
-            __m128d twiddled_im = FMADD_SSE2(odd_im, twiddle_re, _mm_mul_pd(odd_re, twiddle_im));
-
-            STORE_SSE2(&output_buffer[k].re, FMADD_SSE2(twiddled_re, SSE2_ONE, even_re));
-            STORE_SSE2(&output_buffer[k].im, FMADD_SSE2(twiddled_im, SSE2_ONE, even_im));
-            STORE_SSE2(&output_buffer[k + sub_fft_size].re, FMSUB_SSE2(even_re, SSE2_ONE, twiddled_re));
-            STORE_SSE2(&output_buffer[k + sub_fft_size].im, FMSUB_SSE2(even_im, SSE2_ONE, twiddled_im));
-            k += 2;
-        }
-
-        // Step 9: Scalar tail for one remaining point
+        // SSE2 tail: last single complex if odd length
         if (k < sub_fft_size)
         {
-            double even_re = sub_fft_outputs[k].re, even_im = sub_fft_outputs[k].im;
-            double odd_re = sub_fft_outputs[k + sub_fft_size].re, odd_im = sub_fft_outputs[k + sub_fft_size].im;
-            double twiddled_re = odd_re * twiddle_factors[k].re - odd_im * twiddle_factors[k].im;
-            double twiddled_im = odd_im * twiddle_factors[k].re + odd_re * twiddle_factors[k].im;
+            __m128d e = LOADU_SSE2(&sub_fft_outputs[k].re);                // [er, ei]
+            __m128d o = LOADU_SSE2(&sub_fft_outputs[k + sub_fft_size].re); // [or, oi]
+            __m128d w = LOADU_SSE2(&twiddle_factors[k].re);                // [wr, wi]
 
-            output_buffer[k].re = even_re + twiddled_re;
-            output_buffer[k].im = even_im + twiddled_im;
-            output_buffer[k + sub_fft_size].re = even_re - twiddled_re;
-            output_buffer[k + sub_fft_size].im = even_im - twiddled_im;
+            __m128d tw = cmul_sse2_aos(o, w);
+            __m128d x0 = _mm_add_pd(e, tw);
+            __m128d x1 = _mm_sub_pd(e, tw);
+
+            STOREU_SSE2(&output_buffer[k].re, x0);
+            STOREU_SSE2(&output_buffer[k + sub_fft_size].re, x1);
         }
     }
     else if (radix == 3)
     {
-        /**
-         * @brief Optimized Radix-3 decomposition for three-point sub-FFTs with AVX2 vectorization,
-         *        SSE2 tail, direct output writes, and 2x unrolled loop with prefetching.
-         *
-         * Intention: Efficiently compute the FFT for data lengths divisible by 3 by splitting into
-         * three sub-FFTs (indices n mod 3 = 0, 1, 2), applying recursive FFTs, and combining results
-         * with twiddle factors. Optimized for power-of-3 (N=3^r) and mixed-radix FFTs using
-         * pre-allocated scratch and stage-specific twiddle offsets. Follows FFTW’s two-buffer strategy
-         * for thread safety and performance.
-         *
-         * Mathematically: Computes:
-         *   X(k) = X_0(k) + W_N^k * X_1(k) + W_N^{2k} * X_2(k),
-         *   X(k+N/3) = X_0(k) - ½(X_1(k) + X_2(k)) + i * sign * (√3/2) * (X_1(k) - X_2(k)),
-         *   X(k+2N/3) = X_0(k) - ½(X_1(k) + X_2(k)) - i * sign * (√3/2) * (X_1(k) - X_2(k)),
-         * where X_0, X_1, X_2 are sub-FFTs of size N/3, W_N^k = e^{-2πi k / N}.
-         * The butterfly uses 120° and 240° roots of unity (√3/2 for rotation).
-         *
-         * Optimization:
-         * - AVX2 processes 4 k-values per iteration (256-bit vectors), doubling SSE2 throughput.
-         * - 2x unrolling handles 8 k-values per loop, reducing branch overhead.
-         * - Prefetching targets output_buffer 256 bytes ahead to hide memory latency.
-         * - Direct loads from sub_fft_outputs avoid O(N) flattening to out_re/out_im.
-         * - Direct writes to output_buffer eliminate O(N) copy loop.
-         * - SSE2 tail minimizes scalar operations for non-4-aligned sub_fft_size.
-         * - FMA (FMADD/FMSUB) computes (a*b ± c) for accuracy and speed.
-         * - Pre-allocated scratch eliminates malloc/free overhead.
-         * - 32-byte aligned buffers enable aligned SIMD loads/stores.
-         *
-         * Changes from original:
-         * 1. Replaced SSE2 loop with AVX2, processing 4 k-values per iteration.
-         * 2. Added SSE2 tail to handle 2 k-values, reducing scalar tail to at most 1.
-         * 3. Eliminated flattening copy by loading directly from sub_fft_outputs.
-         * 4. Eliminated final copy by writing directly to output_buffer.
-         * 5. Unrolled AVX2 loop 2x with prefetching to output_buffer at 256 bytes.
-         *
-         * @warning Assumes fft_obj->twiddles has n_fft ≥ N elements, scratch and output_buffer
-         *          are 32-byte aligned, and factor_index is valid for twiddle_factors.
-         */
-        // Step 1: Compute subproblem size and stride
-        int sub_fft_length = data_length / 3; // Size of each sub-FFT (N/3)
-        int next_stride = 3 * stride;         // Triple stride for next level
-        int sub_fft_size = sub_fft_length;    // Sub-FFT size for indexing
+        // --- sizes & stride ---
+        const int sub_fft_length = data_length / 3; // N/3
+        const int next_stride = 3 * stride;
+        const int sub_fft_size = sub_fft_length;
 
-        // Step 2: Validate scratch buffer
-        // Power-of-3: 3*(N/3) for outputs; mixed-radix: (3+2)*(N/3) = 5*(N/3) for outputs + twiddles
-        int required_size = fft_obj->twiddle_factors != NULL ? 3 * sub_fft_size : 5 * sub_fft_size;
+        // --- scratch sizing: outputs + local twiddles if needed ---
+        const int required_size =
+            (fft_obj->twiddle_factors != NULL) ? (3 * sub_fft_size) : (5 * sub_fft_size);
         if (scratch_offset + required_size > fft_obj->max_scratch_size)
         {
-            fprintf(stderr, "Error: Scratch buffer too small for radix-3 at offset %d (need %d, have %d)\n",
-                    scratch_offset, required_size, fft_obj->max_scratch_size - scratch_offset);
-            return;
+            /* fprintf(stderr, "..."); */ return;
         }
 
-        // Step 3: Assign scratch slices
-        // sub_fft_outputs: X_0, X_1, X_2 (3*sub_fft_size fft_data)
-        // twiddle_factors: W_N^k, W_N^{2k} (2*sub_fft_size fft_data, mixed-radix only)
+        // sub-FFT outputs live here: X0 | X1 | X2 (each sub_fft_size)
         fft_data *sub_fft_outputs = fft_obj->scratch + scratch_offset;
         fft_data *twiddle_factors;
+
         if (fft_obj->twiddle_factors != NULL)
         {
-            // Validate factor_index for power-of-3 FFTs
             if (factor_index >= fft_obj->num_precomputed_stages)
-            {
-                fprintf(stderr, "Error: Invalid factor_index (%d) exceeds num_precomputed_stages (%d) for radix-3\n",
-                        factor_index, fft_obj->num_precomputed_stages);
+            { /* fprintf... */
                 return;
             }
             twiddle_factors = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
         }
         else
         {
+            // local twiddles occupy tail of this slice: 2*sub_fft_size entries (W^k, W^{2k})
             twiddle_factors = fft_obj->scratch + scratch_offset + 3 * sub_fft_size;
         }
 
-        // Step 4: Compute child scratch offsets
-        // Each child needs 3*(N/9) (power-of-3) or 5*(N/9) (mixed-radix), tiled within parent block
-        int child_scratch_per_branch = fft_obj->twiddle_factors != NULL ? 3 * (sub_fft_size / 3) : 5 * (sub_fft_size / 3);
-        if (child_scratch_per_branch * 3 > required_size)
-        {
-            fprintf(stderr, "Error: Child scratch size (%d) exceeds parent allocation (%d) for radix-3\n",
-                    child_scratch_per_branch * 3, required_size);
+        // --- child scratch partition (conservative) ---
+        const int child_need =
+            (fft_obj->twiddle_factors != NULL) ? (3 * (sub_fft_size / 3)) : (5 * (sub_fft_size / 3));
+        if (3 * child_need > required_size)
+        { /* fprintf... */
             return;
         }
-        int child_offset1 = scratch_offset;                         // First child starts at parent offset
-        int child_offset2 = scratch_offset + required_size / 3;     // Second child uses second third
-        int child_offset3 = scratch_offset + 2 * required_size / 3; // Third child uses final third
 
-        // Step 5: Recurse on three sub-FFTs
-        // Use distinct scratch offsets to prevent overlap
-        for (int i = 0; i < 3; i++)
+        // --- recurse lanes 0,1,2 ---
+        for (int lane = 0; lane < 3; ++lane)
         {
-            mixed_radix_dit_rec(sub_fft_outputs + i * sub_fft_size, input_buffer + i * stride, fft_obj,
-                                transform_sign, sub_fft_length, next_stride, factor_index + 1,
-                                scratch_offset + i * required_size / 3);
+            mixed_radix_dit_rec(
+                sub_fft_outputs + lane * sub_fft_size,
+                input_buffer + lane * stride,
+                fft_obj, transform_sign,
+                sub_fft_length, next_stride,
+                factor_index + 1,
+                scratch_offset + lane * (required_size / 3));
         }
 
-        // Step 6: Prepare twiddle factors (mixed-radix only)
-        // For power-of-3 FFTs, twiddle_factors points to precomputed W_N^k, W_N^{2k} via stage_twiddle_offset
+        // --- prepare local twiddles if not precomputed ---
         if (fft_obj->twiddle_factors == NULL)
         {
-            if (fft_obj->n_fft < 3 * sub_fft_size)
-            {
-                fprintf(stderr, "Error: Twiddle array too small (need at least %d elements, have %d)\n",
-                        3 * sub_fft_size, fft_obj->n_fft);
+            const int N = 3 * sub_fft_size; // stage length
+            if (fft_obj->n_fft < N)
+            { /* fprintf... */
                 return;
             }
-            for (int k = 0; k < sub_fft_size; k++)
+            for (int k = 0; k < sub_fft_size; ++k)
             {
-                int idx = sub_fft_length - 1 + 2 * k;                          // Index for W_N^k, W_N^{2k}
-                twiddle_factors[2 * k + 0].re = fft_obj->twiddles[idx + 0].re; // W_N^k real
-                twiddle_factors[2 * k + 0].im = fft_obj->twiddles[idx + 0].im; // W_N^k imag
-                twiddle_factors[2 * k + 1].re = fft_obj->twiddles[idx + 1].re; // W_N^{2k} real
-                twiddle_factors[2 * k + 1].im = fft_obj->twiddles[idx + 1].im; // W_N^{2k} imag
+                // w1 = W_N^k, w2 = W_N^{2k} (assumes twiddles[m] = W_N^m)
+                twiddle_factors[2 * k + 0] = fft_obj->twiddles[k];
+                twiddle_factors[2 * k + 1] = fft_obj->twiddles[(2 * k) % N];
             }
         }
 
-        // Step 7: AVX2 vectorized butterfly with 2x unroll
-        // Combine: X(k), X(k+N/3), X(k+2N/3) with 120°/240° rotations
-        // Load directly from sub_fft_outputs, write to output_buffer
-        __m256d v_sign_factor = _mm256_set1_pd((double)transform_sign); // ±1 for transform direction
-        __m256d vhalf = _mm256_set1_pd(0.5);                            // Constant for -½(b + c)
-        __m256d vsqrt3by2 = _mm256_set1_pd(C3_SQRT3BY2);                // √3/2 for 120° rotation
+        // --- constants ---
+        const __m256d vhalf = _mm256_set1_pd(0.5);
+        const __m256d vsign_s = _mm256_set1_pd((double)transform_sign * C3_SQRT3BY2);
+
+        // --- AVX2 core: 2 complex per iter ---
         int k = 0;
-        for (; k + 7 < sub_fft_size; k += 8)
+        for (; k + 1 < sub_fft_size; k += 2)
         {
-            // Prefetch output_buffer and twiddle_factors 256 bytes (32 doubles) ahead
-            _mm_prefetch((const char *)&output_buffer[k + 32].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&output_buffer[k + 32].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&output_buffer[k + 32 + sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&output_buffer[k + 32 + sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&output_buffer[k + 32 + 2 * sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&output_buffer[k + 32 + 2 * sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&twiddle_factors[2 * (k + 32)].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&twiddle_factors[2 * (k + 32)].im, _MM_HINT_T0);
+            _mm_prefetch((const char *)&output_buffer[k + 16].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&output_buffer[k + 16 + sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&output_buffer[k + 16 + 2 * sub_fft_size].re, _MM_HINT_T0);
 
-            // First 4 points (k to k+3)
-            // Load directly from sub_fft_outputs with stride sub_fft_size
-            __m256d a_r = LOAD_PD(&sub_fft_outputs[k].re);                    // X_0[k:k+3] real
-            __m256d a_i = LOAD_PD(&sub_fft_outputs[k].im);                    // X_0[k:k+3] imag
-            __m256d b_r = LOAD_PD(&sub_fft_outputs[k + sub_fft_size].re);     // X_1[k:k+3] real
-            __m256d b_i = LOAD_PD(&sub_fft_outputs[k + sub_fft_size].im);     // X_1[k:k+3] imag
-            __m256d c_r = LOAD_PD(&sub_fft_outputs[k + 2 * sub_fft_size].re); // X_2[k:k+3] real
-            __m256d c_i = LOAD_PD(&sub_fft_outputs[k + 2 * sub_fft_size].im); // X_2[k:k+3] imag
+            // a,b,c: sub-FFTs X0,X1,X2 at k and k+1
+            __m256d a = LOADU_PD(&sub_fft_outputs[k].re);
+            __m256d b = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].re);
+            __m256d c = LOADU_PD(&sub_fft_outputs[k + 2 * sub_fft_size].re);
 
-            // Load twiddle factors (W_N^k, W_N^{2k})
-            int idx = 2 * k;
-            __m256d w1r = LOAD_PD(&twiddle_factors[idx + 0].re); // W_N^k real
-            __m256d w1i = LOAD_PD(&twiddle_factors[idx + 0].im); // W_N^k imag
-            __m256d w2r = LOAD_PD(&twiddle_factors[idx + 1].re); // W_N^{2k} real
-            __m256d w2i = LOAD_PD(&twiddle_factors[idx + 1].im); // W_N^{2k} imag
+            __m256d w1 = LOADU_PD(&twiddle_factors[2 * k + 0].re);
+            __m256d w2 = LOADU_PD(&twiddle_factors[2 * k + 1].re);
 
-            // Apply twiddle factors: (b/c) * W_N^k
-            __m256d b2r = FMSUB(b_r, w1r, _mm256_mul_pd(b_i, w1i)); // b_r * w1r - b_i * w1i
-            __m256d b2i = FMADD(b_i, w1r, _mm256_mul_pd(b_r, w1i)); // b_i * w1r + b_r * w1i
-            __m256d c2r = FMSUB(c_r, w2r, _mm256_mul_pd(c_i, w2i)); // c_r * w2r - c_i * w2i
-            __m256d c2i = FMADD(c_i, w2r, _mm256_mul_pd(c_r, w2i)); // c_i * w2r + c_r * w2i
+            __m256d b2 = cmul_avx2_aos(b, w1);
+            __m256d c2 = cmul_avx2_aos(c, w2);
 
-            // Compute sums and differences
-            __m256d sum_r = _mm256_add_pd(b2r, c2r);  // b + c real
-            __m256d sum_i = _mm256_add_pd(b2i, c2i);  // b + c imag
-            __m256d diff_r = _mm256_sub_pd(b2r, c2r); // b - c real
-            __m256d diff_i = _mm256_sub_pd(b2i, c2i); // b - c imag
+            __m256d sum = _mm256_add_pd(b2, c2);
+            __m256d dif = _mm256_sub_pd(b2, c2);
 
-            // X_0 = a + (b + c)
-            __m256d x0r = _mm256_add_pd(a_r, sum_r); // X(k) real
-            __m256d x0i = _mm256_add_pd(a_i, sum_i); // X(k) imag
-            STORE_PD(&output_buffer[k].re, x0r);     // Write to output_buffer
-            STORE_PD(&output_buffer[k].im, x0i);
+            // X0 = a + sum
+            __m256d x0 = _mm256_add_pd(a, sum);
+            STOREU_PD(&output_buffer[k].re, x0);
 
-            // X_1 = a - ½(b + c) + i * (sign * (√3/2) * (b - c))
-            __m256d t_r = _mm256_sub_pd(a_r, _mm256_mul_pd(sum_r, vhalf));                                                      // a - ½(b + c) real
-            __m256d t_i = _mm256_sub_pd(a_i, _mm256_mul_pd(sum_i, vhalf));                                                      // a - ½(b + c) imag
-            __m256d rot_r = _mm256_mul_pd(diff_i, _mm256_mul_pd(v_sign_factor, vsqrt3by2));                                     // sign * (√3/2) * (b - c) real
-            __m256d rot_i = _mm256_mul_pd(_mm256_sub_pd(_mm256_setzero_pd(), diff_r), _mm256_mul_pd(v_sign_factor, vsqrt3by2)); // -sign * (√3/2) * (b - c) imag
-            __m256d x1r = _mm256_add_pd(t_r, rot_r);                                                                            // X(k + N/3) real
-            __m256d x1i = _mm256_add_pd(t_i, rot_i);                                                                            // X(k + N/3) imag
-            STORE_PD(&output_buffer[k + sub_fft_size].re, x1r);                                                                 // Write to output_buffer
-            STORE_PD(&output_buffer[k + sub_fft_size].im, x1i);
+            // t = a - 1/2*sum
+            __m256d t = _mm256_sub_pd(a, _mm256_mul_pd(sum, vhalf));
 
-            // X_2 = a - ½(b + c) - i * (sign * (√3/2) * (b - c))
-            __m256d x2r = _mm256_sub_pd(t_r, rot_r);                // X(k + 2N/3) real
-            __m256d x2i = _mm256_sub_pd(t_i, rot_i);                // X(k + 2N/3) imag
-            STORE_PD(&output_buffer[k + 2 * sub_fft_size].re, x2r); // Write to output_buffer
-            STORE_PD(&output_buffer[k + 2 * sub_fft_size].im, x2i);
+            // rot = (sign*sqrt3/2) * rotate90(dif) ; rotate90(z) = (-Im, Re)
+            __m256d swapped = _mm256_permute_pd(dif, 0b0101);        // [im0,re0, im1,re1]
+            __m256d negmask = _mm256_set_pd(+0.0, -0.0, +0.0, -0.0); // negate lanes 0 and 2 of 'swapped'
+            __m256d rot90 = _mm256_xor_pd(swapped, negmask);         // (-im, re)
+            __m256d rot = _mm256_mul_pd(rot90, vsign_s);
 
-            // Second 4 points (k+4 to k+7)
-            __m256d a_r2 = LOAD_PD(&sub_fft_outputs[k + 4].re);
-            __m256d a_i2 = LOAD_PD(&sub_fft_outputs[k + 4].im);
-            __m256d b_r2 = LOAD_PD(&sub_fft_outputs[k + 4 + sub_fft_size].re);
-            __m256d b_i2 = LOAD_PD(&sub_fft_outputs[k + 4 + sub_fft_size].im);
-            __m256d c_r2 = LOAD_PD(&sub_fft_outputs[k + 4 + 2 * sub_fft_size].re);
-            __m256d c_i2 = LOAD_PD(&sub_fft_outputs[k + 4 + 2 * sub_fft_size].im);
-
-            idx = 2 * (k + 4);
-            __m256d w1r2 = LOAD_PD(&twiddle_factors[idx + 0].re);
-            __m256d w1i2 = LOAD_PD(&twiddle_factors[idx + 0].im);
-            __m256d w2r2 = LOAD_PD(&twiddle_factors[idx + 1].re);
-            __m256d w2i2 = LOAD_PD(&twiddle_factors[idx + 1].im);
-
-            __m256d b2r2 = FMSUB(b_r2, w1r2, _mm256_mul_pd(b_i2, w1i2));
-            __m256d b2i2 = FMADD(b_i2, w1r2, _mm256_mul_pd(b_r2, w1i2));
-            __m256d c2r2 = FMSUB(c_r2, w2r2, _mm256_mul_pd(c_i2, w2i2));
-            __m256d c2i2 = FMADD(c_i2, w2r2, _mm256_mul_pd(c_r2, w2i2));
-
-            __m256d sum_r2 = _mm256_add_pd(b2r2, c2r2);
-            __m256d sum_i2 = _mm256_add_pd(b2i2, c2i2);
-            __m256d diff_r2 = _mm256_sub_pd(b2r2, c2r2);
-            __m256d diff_i2 = _mm256_sub_pd(b2i2, c2i2);
-
-            __m256d x0r2 = _mm256_add_pd(a_r2, sum_r2);
-            __m256d x0i2 = _mm256_add_pd(a_i2, sum_i2);
-            STORE_PD(&output_buffer[k + 4].re, x0r2);
-            STORE_PD(&output_buffer[k + 4].im, x0i2);
-
-            __m256d t_r2 = _mm256_sub_pd(a_r2, _mm256_mul_pd(sum_r2, vhalf));
-            __m256d t_i2 = _mm256_sub_pd(a_i2, _mm256_mul_pd(sum_i2, vhalf));
-            __m256d rot_r2 = _mm256_mul_pd(diff_i2, _mm256_mul_pd(v_sign_factor, vsqrt3by2));
-            __m256d rot_i2 = _mm256_mul_pd(_mm256_sub_pd(_mm256_setzero_pd(), diff_r2), _mm256_mul_pd(v_sign_factor, vsqrt3by2));
-            __m256d x1r2 = _mm256_add_pd(t_r2, rot_r2);
-            __m256d x1i2 = _mm256_add_pd(t_i2, rot_i2);
-            STORE_PD(&output_buffer[k + 4 + sub_fft_size].re, x1r2);
-            STORE_PD(&output_buffer[k + 4 + sub_fft_size].im, x1i2);
-
-            __m256d x2r2 = _mm256_sub_pd(t_r2, rot_r2);
-            __m256d x2i2 = _mm256_sub_pd(t_i2, rot_i2);
-            STORE_PD(&output_buffer[k + 4 + 2 * sub_fft_size].re, x2r2);
-            STORE_PD(&output_buffer[k + 4 + 2 * sub_fft_size].im, x2i2);
+            // X1 = t + rot ; X2 = t - rot
+            __m256d x1 = _mm256_add_pd(t, rot);
+            __m256d x2 = _mm256_sub_pd(t, rot);
+            STOREU_PD(&output_buffer[k + sub_fft_size].re, x1);
+            STOREU_PD(&output_buffer[k + 2 * sub_fft_size].re, x2);
         }
 
-        // Step 8: SSE2 tail for remaining 2 points
-        // Handle k-values not covered by AVX2 loop
-        if (k + 1 < sub_fft_size)
-        {
-            // Preload constants for SSE2
-            __m128d v_sign_factor_sse2 = _mm_set1_pd((double)transform_sign); // ±1 for transform direction
-            __m128d vhalf_sse2 = _mm_set1_pd(0.5);                            // Constant for -½(b + c)
-            __m128d vsqrt3by2_sse2 = _mm_set1_pd(C3_SQRT3BY2);                // √3/2 for 120° rotation
-
-            // Load directly from sub_fft_outputs
-            __m128d a_r = LOAD_SSE2(&sub_fft_outputs[k].re);                    // X_0[k:k+1] real
-            __m128d a_i = LOAD_SSE2(&sub_fft_outputs[k].im);                    // X_0[k:k+1] imag
-            __m128d b_r = LOAD_SSE2(&sub_fft_outputs[k + sub_fft_size].re);     // X_1[k:k+1] real
-            __m128d b_i = LOAD_SSE2(&sub_fft_outputs[k + sub_fft_size].im);     // X_1[k:k+1] imag
-            __m128d c_r = LOAD_SSE2(&sub_fft_outputs[k + 2 * sub_fft_size].re); // X_2[k:k+1] real
-            __m128d c_i = LOAD_SSE2(&sub_fft_outputs[k + 2 * sub_fft_size].im); // X_2[k:k+1] imag
-
-            // Load twiddle factors
-            int idx = 2 * k;
-            __m128d w1r = LOAD_SSE2(&twiddle_factors[idx + 0].re); // W_N^k real
-            __m128d w1i = LOAD_SSE2(&twiddle_factors[idx + 0].im); // W_N^k imag
-            __m128d w2r = LOAD_SSE2(&twiddle_factors[idx + 1].re); // W_N^{2k} real
-            __m128d w2i = LOAD_SSE2(&twiddle_factors[idx + 1].im); // W_N^{2k} imag
-
-            // Apply twiddle factors
-            __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i)); // b_r * w1r - b_i * w1i
-            __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i)); // b_i * w1r + b_r * w1i
-            __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i)); // c_r * w2r - c_i * w2i
-            __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i)); // c_i * w2r + c_r * w2i
-
-            // Compute sums and differences
-            __m128d sum_r = _mm_add_pd(b2r, c2r);  // b + c real
-            __m128d sum_i = _mm_add_pd(b2i, c2i);  // b + c imag
-            __m128d diff_r = _mm_sub_pd(b2r, c2r); // b - c real
-            __m128d diff_i = _mm_sub_pd(b2i, c2i); // b - c imag
-
-            // X_0 = a + (b + c)
-            __m128d x0r = _mm_add_pd(a_r, sum_r);  // X(k) real
-            __m128d x0i = _mm_add_pd(a_i, sum_i);  // X(k) imag
-            STORE_SSE2(&output_buffer[k].re, x0r); // Write to output_buffer
-            STORE_SSE2(&output_buffer[k].im, x0i);
-
-            // X_1 = a - ½(b + c) + i * (sign * (√3/2) * (b - c))
-            __m128d t_r = _mm_sub_pd(a_r, _mm_mul_pd(sum_r, vhalf_sse2));                                                     // a - ½(b + c) real
-            __m128d t_i = _mm_sub_pd(a_i, _mm_mul_pd(sum_i, vhalf_sse2));                                                     // a - ½(b + c) imag
-            __m128d rot_r = _mm_mul_pd(diff_i, _mm_mul_pd(v_sign_factor_sse2, vsqrt3by2_sse2));                               // sign * (√3/2) * (b - c) real
-            __m128d rot_i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), diff_r), _mm_mul_pd(v_sign_factor_sse2, vsqrt3by2_sse2)); // -sign * (√3/2) * (b - c) imag
-            __m128d x1r = _mm_add_pd(t_r, rot_r);                                                                             // X(k + N/3) real
-            __m128d x1i = _mm_add_pd(t_i, rot_i);                                                                             // X(k + N/3) imag
-            STORE_SSE2(&output_buffer[k + sub_fft_size].re, x1r);                                                             // Write to output_buffer
-            STORE_SSE2(&output_buffer[k + sub_fft_size].im, x1i);
-
-            // X_2 = a - ½(b + c) - i * (sign * (√3/2) * (b - c))
-            __m128d x2r = _mm_sub_pd(t_r, rot_r);                     // X(k + 2N/3) real
-            __m128d x2i = _mm_sub_pd(t_i, rot_i);                     // X(k + 2N/3) imag
-            STORE_SSE2(&output_buffer[k + 2 * sub_fft_size].re, x2r); // Write to output_buffer
-            STORE_SSE2(&output_buffer[k + 2 * sub_fft_size].im, x2i);
-            k += 2;
-        }
-
-        // Step 9: Scalar tail for one remaining point
-        // Handle any k not covered by AVX2/SSE2 loops (e.g., sub_fft_size odd)
+        // --- SSE2 tail: 1 complex ---
         if (k < sub_fft_size)
         {
-            // Load twiddle factors
-            fft_type w1r = twiddle_factors[2 * k + 0].re; // W_N^k real
-            fft_type w1i = twiddle_factors[2 * k + 0].im; // W_N^k imag
-            fft_type w2r = twiddle_factors[2 * k + 1].re; // W_N^{2k} real
-            fft_type w2i = twiddle_factors[2 * k + 1].im; // W_N^{2k} imag;
+            const __m128d vhalf128 = _mm_set1_pd(0.5);
+            const __m128d vsign_s128 = _mm_set1_pd((double)transform_sign * C3_SQRT3BY2);
 
-            // Load sub-FFT points directly from sub_fft_outputs
-            fft_type a_re = sub_fft_outputs[k].re;                    // X_0[k] real
-            fft_type a_im = sub_fft_outputs[k].im;                    // X_0[k] imag
-            fft_type b_re = sub_fft_outputs[k + sub_fft_size].re;     // X_1[k] real
-            fft_type b_im = sub_fft_outputs[k + sub_fft_size].im;     // X_1[k] imag
-            fft_type c_re = sub_fft_outputs[k + 2 * sub_fft_size].re; // X_2[k] real
-            fft_type c_im = sub_fft_outputs[k + 2 * sub_fft_size].im; // X_2[k] imag
+            __m128d a = LOADU_SSE2(&sub_fft_outputs[k].re);
+            __m128d b = LOADU_SSE2(&sub_fft_outputs[k + sub_fft_size].re);
+            __m128d c = LOADU_SSE2(&sub_fft_outputs[k + 2 * sub_fft_size].re);
 
-            // Apply twiddle factors
-            fft_type b2_re = b_re * w1r - b_im * w1i; // W_N^k * X_1 real
-            fft_type b2_im = b_im * w1r + b_re * w1i; // W_N^k * X_1 imag
-            fft_type c2_re = c_re * w2r - c_im * w2i; // W_N^{2k} * X_2 real
-            fft_type c2_im = c_im * w2r + c_re * w2i; // W_N^{2k} * X_2 imag
+            __m128d w1 = LOADU_SSE2(&twiddle_factors[2 * k + 0].re);
+            __m128d w2 = LOADU_SSE2(&twiddle_factors[2 * k + 1].re);
 
-            // Compute sums and differences
-            fft_type sum_re = b2_re + c2_re;  // b + c real
-            fft_type sum_im = b2_im + c2_im;  // b + c imag
-            fft_type diff_re = b2_re - c2_re; // b - c real
-            fft_type diff_im = b2_im - c2_im; // b - c imag
+            __m128d b2 = cmul_sse2_aos(b, w1);
+            __m128d c2 = cmul_sse2_aos(c, w2);
 
-            // X_0 = a + (b + c)
-            output_buffer[k].re = a_re + sum_re; // X(k) real
-            output_buffer[k].im = a_im + sum_im; // X(k) imag
+            __m128d sum = _mm_add_pd(b2, c2);
+            __m128d dif = _mm_sub_pd(b2, c2);
 
-            // X_1 = a - ½(b + c) + i * (sign * (√3/2) * (b - c))
-            fft_type t_re = a_re - (sum_re * 0.5);                       // a - ½(b + c) real
-            fft_type t_im = a_im - (sum_im * 0.5);                       // a - ½(b + c) imag
-            fft_type rot_re = diff_im * (transform_sign * C3_SQRT3BY2);  // sign * (√3/2) * (b - c) real
-            fft_type rot_im = -diff_re * (transform_sign * C3_SQRT3BY2); // -sign * (√3/2) * (b - c) imag
-            output_buffer[k + sub_fft_size].re = t_re + rot_re;          // X(k + N/3) real
-            output_buffer[k + sub_fft_size].im = t_im + rot_im;          // X(k + N/3) imag
+            __m128d x0 = _mm_add_pd(a, sum);
+            STOREU_SSE2(&output_buffer[k].re, x0);
 
-            // X_2 = a - ½(b + c) - i * (sign * (√3/2) * (b - c))
-            output_buffer[k + 2 * sub_fft_size].re = t_re - rot_re; // X(k + 2N/3) real
-            output_buffer[k + 2 * sub_fft_size].im = t_im - rot_im; // X(k + 2N/3) imag
+            __m128d t = _mm_sub_pd(a, _mm_mul_pd(sum, vhalf128));
+            __m128d swp = _mm_shuffle_pd(dif, dif, 0b01);           // [im,re]
+            __m128d rot90 = _mm_xor_pd(swp, _mm_set_pd(-0.0, 0.0)); // (-im, re)
+            __m128d rot = _mm_mul_pd(rot90, vsign_s128);
+
+            __m128d x1 = _mm_add_pd(t, rot);
+            __m128d x2 = _mm_sub_pd(t, rot);
+            STOREU_SSE2(&output_buffer[k + sub_fft_size].re, x1);
+            STOREU_SSE2(&output_buffer[k + 2 * sub_fft_size].re, x2);
         }
     }
     else if (radix == 4)
     {
-        /**
-         * @brief Radix-4 decomposition for four-point sub-FFTs with SSE2 vectorization and FMA support.
-         *
-         * Intention: Optimize FFT computation for data lengths divisible by 4 by splitting into
-         * four sub-FFTs, corresponding to indices n mod 4 = 0, 1, 2, 3, and combining results
-         * with twiddle factors. Efficient for power-of-4 (N=4^r) and mixed-radix FFTs using
-         * pre-allocated scratch and stage-specific twiddle offsets. Follows FFTW’s two-buffer
-         * strategy for thread safety and performance.
-         *
-         * Mathematically: Computes:
-         *   X(k) = X_0(k) + W_N^k * X_1(k) + W_N^{2k} * X_2(k) + W_N^{3k} * X_3(k),
-         * where X_0, X_1, X_2, X_3 are sub-FFTs of size N/4, W_N^k = e^{-2πi k / N}.
-         * The radix-4 butterfly uses 90°, 180°, and 270° rotations
-         */
-        // Step 1: Compute subproblem size and stride
-        int sub_fft_length = data_length / 4; // Size of each sub-FFT (N/4)
-        int next_stride = 4 * stride;         // Stride quadruples for next level
-        int sub_fft_size = sub_fft_length;    // Sub-FFT size for indexing
+        // --- sizes & stride ---
+        const int sub_fft_length = data_length / 4; // N/4
+        const int next_stride = 4 * stride;
+        const int sub_fft_size = sub_fft_length;
 
-        // Step 2: Validate scratch buffer
-        // Power-of-4: 4*(N/4) for outputs; mixed-radix: (4+3)*(N/4) = 7*(N/4) for outputs + twiddles
-        int required_size = fft_obj->twiddle_factors != NULL ? 4 * sub_fft_size : 7 * sub_fft_size;
+        // --- scratch sizing: outputs + local twiddles (if not precomputed) ---
+        // outputs: 4 * sub_fft_size
+        // local twiddles (W^k,W^{2k},W^{3k}): 3 * sub_fft_size (only if not precomputed)
+        const int required_size =
+            (fft_obj->twiddle_factors != NULL) ? (4 * sub_fft_size) : (7 * sub_fft_size);
         if (scratch_offset + required_size > fft_obj->max_scratch_size)
         {
-            fprintf(stderr, "Error: Scratch buffer too small for radix-4 at offset %d (need %d, have %d)\n",
-                    scratch_offset, required_size, fft_obj->max_scratch_size - scratch_offset);
-            // exit
+            /* fprintf(stderr, "radix-4: scratch too small\n"); */
+            return;
         }
 
-        // Step 3: Assign scratch slices
-        // sub_fft_outputs: X_0, X_1, X_2, X_3 (4*sub_fft_size fft_data)
-        // twiddle_factors: W_N^k, W_N^{2k}, W_N^{3k} (3*sub_fft_size fft_data, mixed-radix only)
+        // sub-FFT outputs: 4 contiguous blocks of size sub_fft_size (AoS)
         fft_data *sub_fft_outputs = fft_obj->scratch + scratch_offset;
-        fft_data *twiddle_factors;
+
+        // per-stage twiddles (either precomputed or carved from scratch tail)
+        fft_data *twiddle_factors = NULL;
         if (fft_obj->twiddle_factors != NULL)
         {
-            // Validate factor_index for power-of-4 FFTs
             if (factor_index >= fft_obj->num_precomputed_stages)
-            {
-                fprintf(stderr, "Error: Invalid factor_index (%d) exceeds num_precomputed_stages (%d) for radix-4\n",
-                        factor_index, fft_obj->num_precomputed_stages);
-                // exit
+            { /* fprintf... */
+                return;
             }
             twiddle_factors = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
         }
         else
         {
-            twiddle_factors = fft_obj->scratch + scratch_offset + 4 * sub_fft_size;
+            twiddle_factors = fft_obj->scratch + (scratch_offset + 4 * sub_fft_size); // after outputs
         }
 
-        // Step 4: Compute child scratch offsets
-        // Each child needs 4*(N/16) (power-of-4) or 7*(N/16) (mixed-radix), tiled within parent block
-        int child_scratch_per_branch = fft_obj->twiddle_factors != NULL ? 4 * (sub_fft_size / 4) : 7 * (sub_fft_size / 4);
-        if (child_scratch_per_branch * 4 > required_size)
+        // --- child scratch partition (conservative, non-overlapping) ---
+        const int child_need =
+            (fft_obj->twiddle_factors != NULL) ? (4 * (sub_fft_size / 4)) : (7 * (sub_fft_size / 4));
+        if (4 * child_need > required_size)
         {
-            fprintf(stderr, "Error: Child scratch size (%d) exceeds parent allocation (%d) for radix-4\n",
-                    child_scratch_per_branch * 4, required_size);
-            // exit
-        }
-        int child_offsets[4];
-        for (int i = 0; i < 4; i++)
-        {
-            child_offsets[i] = scratch_offset + i * (required_size / 4); // Divide scratch equally
+            /* fprintf(stderr, "radix-4: child scratch exceeds parent allocation\n"); */
+            return;
         }
 
-        // Step 5: Recurse on four sub-FFTs
-        for (int i = 0; i < 4; i++)
+        // --- recurse lanes 0..3 ---
+        for (int lane = 0; lane < 4; ++lane)
         {
-            mixed_radix_dit_rec(sub_fft_outputs + i * sub_fft_size, input_buffer + i * stride, fft_obj,
-                                transform_sign, sub_fft_length, next_stride, factor_index + 1,
-                                child_offsets[i]);
+            mixed_radix_dit_rec(
+                sub_fft_outputs + lane * sub_fft_size,
+                input_buffer + lane * stride,
+                fft_obj, transform_sign,
+                sub_fft_length, next_stride,
+                factor_index + 1,
+                scratch_offset + lane * (required_size / 4));
         }
 
-        // Step 6: Prepare twiddle factors (mixed-radix only)
+        // --- prepare local twiddles if not precomputed ---
         if (fft_obj->twiddle_factors == NULL)
         {
-            if (fft_obj->n_fft < sub_fft_length - 1 + 3 * sub_fft_size)
-            {
-                fprintf(stderr, "Error: Twiddle array too small (need at least %d elements, have %d)\n",
-                        sub_fft_length - 1 + 3 * sub_fft_size, fft_obj->n_fft);
-                // exit
+            const int N = 4 * sub_fft_size; // stage length
+            if (fft_obj->n_fft < N)
+            { /* fprintf... */
+                return;
             }
-#ifdef USE_TWIDDLE_TABLES
-            if (sub_fft_size <= 4 && twiddle_tables[4] != NULL)
+            // Layout per k: [W^k, W^{2k}, W^{3k}]
+            for (int k = 0; k < sub_fft_size; ++k)
             {
-                const complex_t *table = twiddle_tables[4];
-                for (int k = 0; k < sub_fft_size; k++)
-                {
-                    for (int n = 0; n < 3; n++)
-                    {
-                        twiddle_factors[3 * k + n].re = table[n + 1].re; // W_N^{n*k} real
-                        twiddle_factors[3 * k + n].im = table[n + 1].im; // W_N^{n*k} imag
-                    }
-                }
-            }
-            else
-#endif
-            {
-                for (int k = 0; k < sub_fft_size; k++)
-                {
-                    int idx = sub_fft_length - 1 + 3 * k; // Index for W_N^k, W_N^{2k}, W_N^{3k}
-                    for (int n = 0; n < 3; n++)
-                    {
-                        twiddle_factors[3 * k + n].re = fft_obj->twiddles[idx + n].re; // W_N^{n*k} real
-                        twiddle_factors[3 * k + n].im = fft_obj->twiddles[idx + n].im; // W_N^{n*k} imag
-                    }
-                }
+                twiddle_factors[3 * k + 0] = fft_obj->twiddles[(1 * k) % N];
+                twiddle_factors[3 * k + 1] = fft_obj->twiddles[(2 * k) % N];
+                twiddle_factors[3 * k + 2] = fft_obj->twiddles[(3 * k) % N];
             }
         }
 
-        // Step 7: Flatten outputs into contiguous arrays in scratch
-        // Use sub_fft_outputs for 4*sub_fft_size fft_data (8*sub_fft_size doubles)
-        // out_re: first 4*sub_fft_size doubles; out_im: next 4*sub_fft_size doubles
-        double *out_re = (double *)sub_fft_outputs;
-        double *out_im = (double *)sub_fft_outputs + 4 * sub_fft_size;
-        for (int lane = 0; lane < 4; lane++)
-        {
-            fft_data *base = sub_fft_outputs + lane * sub_fft_size;
-            for (int k = 0; k < sub_fft_size; k++)
-            {
-                out_re[lane * sub_fft_size + k] = base[k].re;
-                out_im[lane * sub_fft_size + k] = base[k].im;
-            }
-        }
+        // --- constants ---
+        const __m256d vsign = _mm256_set1_pd((double)transform_sign); // +1 forward, -1 inverse
 
-        // Step 8: SSE2 vectorized butterfly for k=0 to sub_fft_size-1
-        __m128d vsign = _mm_set1_pd((double)transform_sign); // Vectorized transform sign
+        // --- AVX2 core: 2 complex per iter (AoS = [re0,im0,re1,im1]) ---
         int k = 0;
         for (; k + 1 < sub_fft_size; k += 2)
         {
-            // Handle k=0 separately if k=0 is in this loop
-            if (k == 0)
-            {
-                fft_data *X0 = &output_buffer[0];                // First sub-FFT point
-                fft_data *X1 = &output_buffer[sub_fft_size];     // Second sub-FFT point
-                fft_data *X2 = &output_buffer[2 * sub_fft_size]; // Third sub-FFT point
-                fft_data *X3 = &output_buffer[3 * sub_fft_size]; // Fourth sub-FFT point
+            // Prefetch upcoming input streams (modest distance ~64B ahead)
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8].im, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + sub_fft_size].im, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 2 * sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 2 * sub_fft_size].im, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 3 * sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 3 * sub_fft_size].im, _MM_HINT_T0);
 
-                fft_type a_re = X0->re + X2->re;                    // Sum of first and third (real)
-                fft_type a_im = X0->im + X2->im;                    // Sum of first and third (imag)
-                fft_type b_re = X0->re - X2->re;                    // Difference of first and third (real)
-                fft_type b_im = X0->im - X2->im;                    // Difference of first and third (imag)
-                fft_type c_re = X1->re + X3->re;                    // Sum of second and fourth (real)
-                fft_type c_im = X1->im + X3->im;                    // Sum of second and fourth (imag)
-                fft_type d_re = transform_sign * (X1->re - X3->re); // Rotated difference (real, 90°)
-                fft_type d_im = transform_sign * (X1->im - X3->im); // Rotated difference (imag, 90°)
+            // Load a,b,c,d (two k-values per register)
+            __m256d a = LOADU_PD(&sub_fft_outputs[k].re);
+            __m256d b = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].re);
+            __m256d c = LOADU_PD(&sub_fft_outputs[k + 2 * sub_fft_size].re);
+            __m256d d = LOADU_PD(&sub_fft_outputs[k + 3 * sub_fft_size].re);
 
-                X0->re = a_re + c_re; // X(0) real
-                X0->im = a_im + c_im; // X(0) imag
-                X2->re = a_re - c_re; // X(2) real
-                X2->im = a_im - c_im; // X(2) imag
-                X1->re = b_re + d_im; // X(1) real
-                X1->im = b_im - d_re; // X(1) imag
-                X3->re = b_re - d_im; // X(3) real
-                X3->im = b_im + d_re; // X(3) imag
-                continue;
-            }
+            // Load twiddles w1,w2,w3 for k and k+1
+            __m256d w1 = LOADU_PD(&twiddle_factors[3 * k + 0].re); // W^k
+            __m256d w2 = LOADU_PD(&twiddle_factors[3 * k + 1].re); // W^{2k}
+            __m256d w3 = LOADU_PD(&twiddle_factors[3 * k + 2].re); // W^{3k}
 
-            // Load four sub-FFT points for two k values (32-byte aligned with USE_ALIGNED_SIMD)
-            __m128d a_r = LOAD_SSE2(out_re + k);                    // X_0[k:k+1] real
-            __m128d a_i = LOAD_SSE2(out_im + k);                    // X_0[k:k+1] imag
-            __m128d b_r = LOAD_SSE2(out_re + k + sub_fft_size);     // X_1[k:k+1] real
-            __m128d b_i = LOAD_SSE2(out_im + k + sub_fft_size);     // X_1[k:k+1] imag
-            __m128d c_r = LOAD_SSE2(out_re + k + 2 * sub_fft_size); // X_2[k:k+1] real
-            __m128d c_i = LOAD_SSE2(out_im + k + 2 * sub_fft_size); // X_2[k:k+1] imag
-            __m128d d_r = LOAD_SSE2(out_re + k + 3 * sub_fft_size); // X_3[k:k+1] real
-            __m128d d_i = LOAD_SSE2(out_im + k + 3 * sub_fft_size); // X_3[k:k+1] imag
+            // Twiddle application
+            __m256d b2 = cmul_avx2_aos(b, w1);
+            __m256d c2 = cmul_avx2_aos(c, w2);
+            __m256d d2 = cmul_avx2_aos(d, w3);
 
-            // Load twiddle factors for two k values (aligned for power-of-4, scratch for mixed-radix)
-            int idx = 3 * k;                                       // Base index for W_N^k, W_N^{2k}, W_N^{3k}
-            __m128d w1r = LOAD_SSE2(&twiddle_factors[idx + 0].re); // W_N^k real
-            __m128d w1i = LOAD_SSE2(&twiddle_factors[idx + 0].im); // W_N^k imag
-            __m128d w2r = LOAD_SSE2(&twiddle_factors[idx + 1].re); // W_N^{2k} real
-            __m128d w2i = LOAD_SSE2(&twiddle_factors[idx + 1].im); // W_N^{2k} imag
-            __m128d w3r = LOAD_SSE2(&twiddle_factors[idx + 2].re); // W_N^{3k} real
-            __m128d w3i = LOAD_SSE2(&twiddle_factors[idx + 2].im); // W_N^{3k} imag
+            // x0/x2 via sums
+            __m256d sumBD = _mm256_add_pd(b2, d2);
+            __m256d a_plus_c = _mm256_add_pd(a, c2);
+            __m256d a_minus_c = _mm256_sub_pd(a, c2);
 
-            // Apply twiddle factors to X_1, X_2, X_3
-            // FMSUB_SSE2(a, b, c) computes a*b - c, FMADD_SSE2(a, b, c) computes a*b + c
-            __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i)); // W_N^k * X_1 real
-            __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i)); // W_N^k * X_1 imag
-            __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i)); // W_N^{2k} * X_2 real
-            __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i)); // W_N^{2k} * X_2 imag
-            __m128d d2r = FMSUB_SSE2(d_r, w3r, _mm_mul_pd(d_i, w3i)); // W_N^{3k} * X_3 real
-            __m128d d2i = FMADD_SSE2(d_i, w3r, _mm_mul_pd(d_r, w3i)); // W_N^{3k} * X_3 imag
+            __m256d x0 = _mm256_add_pd(a_plus_c, sumBD);  // a + b2 + c2 + d2
+            __m256d x2 = _mm256_sub_pd(a_minus_c, sumBD); // a - b2 + c2 - d2
 
-            // Radix-4 butterfly
-            __m128d a2r = _mm_add_pd(a_r, c2r);                    // X_0 + W_N^{2k} * X_2 real
-            __m128d a2i = _mm_add_pd(a_i, c2i);                    // X_0 + W_N^{2k} * X_2 imag
-            __m128d e_r = _mm_sub_pd(a_r, c2r);                    // X_0 - W_N^{2k} * X_2 real
-            __m128d e_i = _mm_sub_pd(a_i, c2i);                    // X_0 - W_N^{2k} * X_2 imag
-            __m128d f_r = _mm_add_pd(b2r, d2r);                    // W_N^k * X_1 + W_N^{3k} * X_3 real
-            __m128d f_i = _mm_add_pd(b2i, d2i);                    // W_N^k * X_1 + W_N^{3k} * X_3 imag
-            __m128d g_r = _mm_mul_pd(_mm_sub_pd(b2r, d2r), vsign); // (W_N^k * X_1 - W_N^{3k} * X_3) * sign real
-            __m128d g_i = _mm_mul_pd(_mm_sub_pd(b2i, d2i), vsign); // (W_N^k * X_1 - W_N^{3k} * X_3) * sign imag
+            // x1/x3 via 90° rotation of (b2 - d2)
+            __m256d difBD = _mm256_sub_pd(b2, d2);
+#if ADDSUB_ROT
+            // Variant: use addsub to fuse +/- in one insn (bench to keep)
+            __m256d swapped = _mm256_permute_pd(difBD, 0b0101);      // [im0,re0, im1,re1]
+            __m256d negmask = _mm256_set_pd(+0.0, -0.0, +0.0, -0.0); // negate lanes 0 & 2
+            __m256d rot90 = _mm256_xor_pd(swapped, negmask);         // (-im, re)
+            __m256d rot = _mm256_mul_pd(rot90, vsign);               // ± rotation
+            __m256d x1x3 = _mm256_addsub_pd(a_minus_c, rot);         // [x1, x3] interleaved
+            // De-interleave (cheap permutes). If you prefer, keep two separate add/sub below.
+            __m256d x1 = _mm256_permute_pd(x1x3, 0b0000);
+            __m256d x3 = _mm256_permute_pd(x1x3, 0b1111);
+#else
+            __m256d swapped = _mm256_permute_pd(difBD, 0b0101);      // [im0,re0, im1,re1]
+            __m256d negmask = _mm256_set_pd(+0.0, -0.0, +0.0, -0.0); // negate lanes 0 & 2
+            __m256d rot90 = _mm256_xor_pd(swapped, negmask);         // (-im, re)
+            __m256d rot = _mm256_mul_pd(rot90, vsign);               // ± rotation
+            __m256d x1 = _mm256_sub_pd(a_minus_c, rot);              // a - c2 - i*b2 + i*d2
+            __m256d x3 = _mm256_add_pd(a_minus_c, rot);              // a - c2 + i*b2 - i*d2
+#endif
 
-            // Compute outputs
-            STORE_SSE2(out_re + k, _mm_add_pd(a2r, f_r));                    // X(k) real
-            STORE_SSE2(out_im + k, _mm_add_pd(a2i, f_i));                    // X(k) imag
-            STORE_SSE2(out_re + k + 2 * sub_fft_size, _mm_sub_pd(a2r, f_r)); // X(k + N/4) real
-            STORE_SSE2(out_im + k + 2 * sub_fft_size, _mm_sub_pd(a2i, f_i)); // X(k + N/4) imag
-            STORE_SSE2(out_re + k + sub_fft_size, _mm_add_pd(e_r, g_i));     // X(k + N/2) real
-            STORE_SSE2(out_im + k + sub_fft_size, _mm_sub_pd(e_i, g_r));     // X(k + N/2) imag
-            STORE_SSE2(out_re + k + 3 * sub_fft_size, _mm_sub_pd(e_r, g_i)); // X(k + 3N/4) real
-            STORE_SSE2(out_im + k + 3 * sub_fft_size, _mm_add_pd(e_i, g_r)); // X(k + 3N/4) imag
+            // Store
+            STOREU_PD(&output_buffer[k].re, x0);
+            STOREU_PD(&output_buffer[k + sub_fft_size].re, x1);
+            STOREU_PD(&output_buffer[k + 2 * sub_fft_size].re, x2);
+            STOREU_PD(&output_buffer[k + 3 * sub_fft_size].re, x3);
         }
 
-        // Step 9: Scalar tail for remaining k
-        for (; k < sub_fft_size; k++)
+        // --- SSE2 tail: last single complex (only when sub_fft_size is odd) ---
+        if (k < sub_fft_size)
         {
-            // Handle k=0 separately if not covered in vectorized loop
-            if (k == 0)
-            {
-                fft_data *X0 = &output_buffer[0];                // First sub-FFT point
-                fft_data *X1 = &output_buffer[sub_fft_size];     // Second sub-FFT point
-                fft_data *X2 = &output_buffer[2 * sub_fft_size]; // Third sub-FFT point
-                fft_data *X3 = &output_buffer[3 * sub_fft_size]; // Fourth sub-FFT point
+            __m128d a = LOADU_SSE2(&sub_fft_outputs[k].re);
+            __m128d b = LOADU_SSE2(&sub_fft_outputs[k + sub_fft_size].re);
+            __m128d c = LOADU_SSE2(&sub_fft_outputs[k + 2 * sub_fft_size].re);
+            __m128d d = LOADU_SSE2(&sub_fft_outputs[k + 3 * sub_fft_size].re);
 
-                fft_type a_re = X0->re + X2->re;                    // Sum of first and third (real)
-                fft_type a_im = X0->im + X2->im;                    // Sum of first and third (imag)
-                fft_type b_re = X0->re - X2->re;                    // Difference of first and third (real)
-                fft_type b_im = X0->im - X2->im;                    // Difference of first and third (imag)
-                fft_type c_re = X1->re + X3->re;                    // Sum of second and fourth (real)
-                fft_type c_im = X1->im + X3->im;                    // Sum of second and fourth (imag)
-                fft_type d_re = transform_sign * (X1->re - X3->re); // Rotated difference (real, 90°)
-                fft_type d_im = transform_sign * (X1->im - X3->im); // Rotated difference (imag, 90°)
+            __m128d w1 = LOADU_SSE2(&twiddle_factors[3 * k + 0].re);
+            __m128d w2 = LOADU_SSE2(&twiddle_factors[3 * k + 1].re);
+            __m128d w3 = LOADU_SSE2(&twiddle_factors[3 * k + 2].re);
 
-                X0->re = a_re + c_re; // X(0) real
-                X0->im = a_im + c_im; // X(0) imag
-                X2->re = a_re - c_re; // X(2) real
-                X2->im = a_im - c_im; // X(2) imag
-                X1->re = b_re + d_im; // X(1) real
-                X1->im = b_im - d_re; // X(1) imag
-                X3->re = b_re - d_im; // X(3) real
-                X3->im = b_im + d_re; // X(3) imag
-                continue;
-            }
+            __m128d b2 = cmul_sse2_aos(b, w1);
+            __m128d c2 = cmul_sse2_aos(c, w2);
+            __m128d d2 = cmul_sse2_aos(d, w3);
 
-            // Load twiddle factors
-            int idx = 3 * k;                            // Index into twiddle array
-            fft_type w1r = twiddle_factors[idx + 0].re; // W_N^k real
-            fft_type w1i = twiddle_factors[idx + 0].im; // W_N^k imag
-            fft_type w2r = twiddle_factors[idx + 1].re; // W_N^{2k} real
-            fft_type w2i = twiddle_factors[idx + 1].im; // W_N^{2k} imag
-            fft_type w3r = twiddle_factors[idx + 2].re; // W_N^{3k} real
-            fft_type w3i = twiddle_factors[idx + 2].im; // W_N^{3k} imag
+            __m128d sumBD = _mm_add_pd(b2, d2);
+            __m128d a_plus_c = _mm_add_pd(a, c2);
+            __m128d a_minus_c = _mm_sub_pd(a, c2);
 
-            // Load the four sub-FFT points
-            fft_type a_re = out_re[k];                    // X_0[k] real
-            fft_type a_im = out_im[k];                    // X_0[k] imag
-            fft_type b_re = out_re[k + sub_fft_size];     // X_1[k] real
-            fft_type b_im = out_im[k + sub_fft_size];     // X_1[k] imag
-            fft_type c_re = out_re[k + 2 * sub_fft_size]; // X_2[k] real
-            fft_type c_im = out_im[k + 2 * sub_fft_size]; // X_2[k] imag
-            fft_type d_re = out_re[k + 3 * sub_fft_size]; // X_3[k] real
-            fft_type d_im = out_im[k + 3 * sub_fft_size]; // X_3[k] imag
+            __m128d x0 = _mm_add_pd(a_plus_c, sumBD);
+            __m128d x2 = _mm_sub_pd(a_minus_c, sumBD);
 
-            // Apply twiddle factors to X_1, X_2, X_3
-            fft_type b2_re = b_re * w1r - b_im * w1i; // W_N^k * X_1 real
-            fft_type b2_im = b_im * w1r + b_re * w1i; // W_N^k * X_1 imag
-            fft_type c2_re = c_re * w2r - c_im * w2i; // W_N^{2k} * X_2 real
-            fft_type c2_im = c_im * w2r + c_re * w2i; // W_N^{2k} * X_2 imag
-            fft_type d2_re = d_re * w3r - d_im * w3i; // W_N^{3k} * X_3 real
-            fft_type d2_im = d_im * w3r + d_re * w3i; // W_N^{3k} * X_3 imag
+            __m128d difBD = _mm_sub_pd(b2, d2);
+            __m128d swp = _mm_shuffle_pd(difBD, difBD, 0b01);       // [im, re]
+            __m128d rot90 = _mm_xor_pd(swp, _mm_set_pd(-0.0, 0.0)); // (-im, re)
+            __m128d rot = _mm_mul_pd(rot90, _mm_set1_pd((double)transform_sign));
 
-            // Radix-4 butterfly
-            fft_type a2_re = a_re + c2_re;                    // X_0 + W_N^{2k} * X_2 real
-            fft_type a2_im = a_im + c2_im;                    // X_0 + W_N^{2k} * X_2 imag
-            fft_type e_re = a_re - c2_re;                     // X_0 - W_N^{2k} * X_2 real
-            fft_type e_im = a_im - c2_im;                     // X_0 - W_N^{2k} * X_2 imag
-            fft_type f_re = b2_re + d2_re;                    // W_N^k * X_1 + W_N^{3k} * X_3 real
-            fft_type f_im = b2_im + d2_im;                    // W_N^k * X_1 + W_N^{3k} * X_3 imag
-            fft_type g_re = transform_sign * (b2_re - d2_re); // (W_N^k * X_1 - W_N^{3k} * X_3) * sign real
-            fft_type g_im = transform_sign * (b2_im - d2_im); // (W_N^k * X_1 - W_N^{3k} * X_3) * sign imag
+            __m128d x1 = _mm_sub_pd(a_minus_c, rot);
+            __m128d x3 = _mm_add_pd(a_minus_c, rot);
 
-            // Store results
-            out_re[k] = a2_re + f_re;                    // X(k) real
-            out_im[k] = a2_im + f_im;                    // X(k) imag
-            out_re[k + 2 * sub_fft_size] = a2_re - f_re; // X(k + N/4) real
-            out_im[k + 2 * sub_fft_size] = a2_im - f_im; // X(k + N/4) imag
-            out_re[k + sub_fft_size] = e_re + g_im;      // X(k + N/2) real
-            out_im[k + sub_fft_size] = e_im - g_re;      // X(k + N/2) imag
-            out_re[k + 3 * sub_fft_size] = e_re - g_im;  // X(k + 3N/4) real
-            out_im[k + 3 * sub_fft_size] = e_im + g_re;  // X(k + 3N/4) imag
-        }
-
-        // Step 10: Copy flattened results back to output_buffer
-        for (int lane = 0; lane < 4; lane++)
-        {
-            fft_data *base = output_buffer + lane * sub_fft_size;
-            for (int k = 0; k < sub_fft_size; k++)
-            {
-                base[k].re = out_re[lane * sub_fft_size + k];
-                base[k].im = out_im[lane * sub_fft_size + k];
-            }
+            STOREU_SSE2(&output_buffer[k].re, x0);
+            STOREU_SSE2(&output_buffer[k + sub_fft_size].re, x1);
+            STOREU_SSE2(&output_buffer[k + 2 * sub_fft_size].re, x2);
+            STOREU_SSE2(&output_buffer[k + 3 * sub_fft_size].re, x3);
         }
     }
     else if (radix == 5)
     {
-        /**
-         * @brief Radix-5 decomposition for five-point sub-FFTs with SSE2 vectorization and FMA support.
-         *
-         * Intention: Compute the FFT for data lengths divisible by 5 by splitting into five sub-FFTs,
-         * corresponding to indices n mod 5 = 0, 1, 2, 3, 4, and combining results with twiddle factors.
-         * Optimized for power-of-5 (N=5^r) and mixed-radix FFTs using pre-allocated scratch and
-         * stage-specific twiddle offsets. Follows FFTW’s two-buffer strategy for thread safety and
-         * performance.
-         *
-         * Mathematically: Computes:
-         *   X(k) = X_0(k) + W_N^k * X_1(k) + W_N^{2k} * X_2(k) + W_N^{3k} * X_3(k) + W_N^{4k} * X_4(k),
-         * where X_0, ..., X_4 are sub-FFTs of size N/5, W_N^k = e^{-2πi k / N}.
-         * The butterfly uses rotations at 72°, 144°, 216°, and 288° with constants C5_1, C5_2, S5_1, S5_2.
-         *
-         */
-        // Step 1: Compute subproblem size and stride
-        int sub_fft_length = data_length / 5; // Size of each sub-FFT (N/5)
-        int next_stride = 5 * stride;         // Stride increases fivefold
-        int sub_fft_size = sub_fft_length;    // Sub-FFT size for indexing
 
-        // Step 2: Validate scratch buffer
-        // Power-of-5: 5*(N/5) for outputs; mixed-radix: (5+4)*(N/5) = 9*(N/5) for outputs + twiddles
-        int required_size = fft_obj->twiddle_factors != NULL ? 5 * sub_fft_size : 9 * sub_fft_size;
+        // --- stage sizing ---
+        const int sub_fft_length = data_length / 5; // N/5
+        const int next_stride = 5 * stride;
+        const int sub_fft_size = sub_fft_length;
+
+        // outputs (5*N/5) + local twiddles (4*N/5) if not precomputed
+        const int required_size =
+            (fft_obj->twiddle_factors != NULL) ? (5 * sub_fft_size) : (9 * sub_fft_size);
         if (scratch_offset + required_size > fft_obj->max_scratch_size)
         {
-            fprintf(stderr, "Error: Scratch buffer too small for radix-5 at offset %d (need %d, have %d)\n",
-                    scratch_offset, required_size, fft_obj->max_scratch_size - scratch_offset);
-            // exit
+            // fprintf(stderr, "...");  // silenced by request
+            return;
         }
 
-        // Step 3: Assign scratch slices
-        // sub_fft_outputs: X_0, X_1, X_2, X_3, X_4 (5*sub_fft_size fft_data)
-        // twiddle_factors: W_N^k, W_N^{2k}, W_N^{3k}, W_N^{4k} (4*sub_fft_size fft_data, mixed-radix only)
         fft_data *sub_fft_outputs = fft_obj->scratch + scratch_offset;
         fft_data *twiddle_factors;
         if (fft_obj->twiddle_factors != NULL)
         {
-            // Validate factor_index for power-of-5 FFTs
             if (factor_index >= fft_obj->num_precomputed_stages)
             {
-                fprintf(stderr, "Error: Invalid factor_index (%d) exceeds num_precomputed_stages (%d) for radix-5\n",
-                        factor_index, fft_obj->num_precomputed_stages);
-                // exit
+                // fprintf(stderr, "...");  // silenced
+                return;
             }
             twiddle_factors = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
         }
         else
         {
-            twiddle_factors = fft_obj->scratch + scratch_offset + 5 * sub_fft_size;
+            twiddle_factors = fft_obj->scratch + scratch_offset + 5 * sub_fft_size; // tail
         }
 
-        // Step 4: Compute child scratch offsets
-        // Each child needs ceil(sub_fft_size/5)*5 (power-of-5) or ceil(sub_fft_size/5)*9 (mixed-radix)
-        int child_sub_fft_size = (sub_fft_size + 4) / 5; // Ceiling division for next recursion level
-        int child_scratch_per_branch = fft_obj->twiddle_factors != NULL ? 5 * child_sub_fft_size : 9 * child_sub_fft_size;
-        int total_child_scratch = 5 * child_scratch_per_branch; // Total for all 5 children
-        if (scratch_offset + total_child_scratch + (fft_obj->twiddle_factors ? 0 : 4 * sub_fft_size) > fft_obj->max_scratch_size)
+        // --- recurse 5 children ---
+        // child slices are conservatively split; we rely on unaligned loads for safety
+        const int child_need =
+            (fft_obj->twiddle_factors != NULL) ? (5 * (sub_fft_size / 5)) : (9 * (sub_fft_size / 5));
+        (void)child_need; // conservative; keep structure consistent with other radices
+
+        for (int i = 0; i < 5; ++i)
         {
-            fprintf(stderr, "Error: Total child scratch size (%d) exceeds available scratch at offset %d (have %d) for radix-5\n",
-                    total_child_scratch + (fft_obj->twiddle_factors ? 0 : 4 * sub_fft_size),
-                    scratch_offset, fft_obj->max_scratch_size - scratch_offset);
-            // exit
-        }
-        int child_offsets[5];
-        child_offsets[0] = scratch_offset;
-        for (int i = 1; i < 5; i++)
-        {
-            child_offsets[i] = child_offsets[i - 1] + child_scratch_per_branch; // Cumulative offsets
+            mixed_radix_dit_rec(sub_fft_outputs + i * sub_fft_size,
+                                input_buffer + i * stride,
+                                fft_obj, transform_sign,
+                                sub_fft_length, next_stride, factor_index + 1,
+                                scratch_offset + i * (required_size / 5));
         }
 
-        // Step 5: Recurse on five sub-FFTs
-        for (int i = 0; i < 5; i++)
-        {
-            mixed_radix_dit_rec(sub_fft_outputs + i * sub_fft_size, input_buffer + i * stride, fft_obj,
-                                transform_sign, sub_fft_length, next_stride, factor_index + 1,
-                                child_offsets[i]);
-        }
-
-        // Step 6: Prepare twiddle factors (mixed-radix only)
+        // --- local twiddle prep if not precomputed ---
         if (fft_obj->twiddle_factors == NULL)
         {
-            if (fft_obj->n_fft < sub_fft_length - 1 + 4 * sub_fft_size)
+            const int N = 5 * sub_fft_size;
+            if (fft_obj->n_fft < N)
             {
-                fprintf(stderr, "Error: Twiddle array too small (need at least %d elements, have %d)\n",
-                        sub_fft_length - 1 + 4 * sub_fft_size, fft_obj->n_fft);
-                // exit
+                // fprintf(stderr, "...");  // silenced
+                return;
             }
-#ifdef USE_TWIDDLE_TABLES
-            if (sub_fft_size <= 5 && twiddle_tables[5] != NULL)
+            for (int k = 0; k < sub_fft_size; ++k)
             {
-                const complex_t *table = twiddle_tables[5];
-                for (int k = 0; k < sub_fft_size; k++)
-                {
-                    for (int n = 0; n < 4; n++)
-                    {
-                        twiddle_factors[4 * k + n].re = table[n + 1].re; // W_N^{n*k} real
-                        twiddle_factors[4 * k + n].im = table[n + 1].im; // W_N^{n*k} imag
-                    }
-                }
-            }
-            else
-#endif
-            {
-                for (int k = 0; k < sub_fft_size; k++)
-                {
-                    for (int n = 0; n < 4; n++)
-                    {
-                        int idx = n * sub_fft_size + k;                            // Correct indexing for W_N^{n*k}
-                        twiddle_factors[4 * k + n].re = fft_obj->twiddles[idx].re; // W_N^{n*k} real
-                        twiddle_factors[4 * k + n].im = fft_obj->twiddles[idx].im; // W_N^{n*k} imag
-                    }
-                }
+                twiddle_factors[4 * k + 0] = fft_obj->twiddles[(1 * k) % N]; // W_N^{k}
+                twiddle_factors[4 * k + 1] = fft_obj->twiddles[(2 * k) % N]; // W_N^{2k}
+                twiddle_factors[4 * k + 2] = fft_obj->twiddles[(3 * k) % N]; // W_N^{3k}
+                twiddle_factors[4 * k + 3] = fft_obj->twiddles[(4 * k) % N]; // W_N^{4k}
             }
         }
 
-        // Step 7: Flatten outputs into separate real/imag arrays using union
-        union
+        // --- AVX2 core (two complex per iter) with SSE2 tail/fallback ---
+#if defined(__AVX2__)
+        const __m256d vsign = _mm256_set1_pd((double)transform_sign);
+        const __m256d vc1 = _mm256_set1_pd(C5_1);
+        const __m256d vc2 = _mm256_set1_pd(C5_2);
+        const __m256d vs1 = _mm256_set1_pd(S5_1);
+        const __m256d vs2 = _mm256_set1_pd(S5_2);
+
+        // rot90(z) = (-Im, Re) per complex pair
+        const __m256d negmask_ri = _mm256_set_pd(+0.0, -0.0, +0.0, -0.0);
+        auto rot90_avx = [&negmask_ri](__m256d z) -> __m256d
         {
-            fft_data data[5 * sub_fft_size];
-            struct
-            {
-                double re[5 * sub_fft_size];
-                double im[5 * sub_fft_size];
-            } flat;
-        } *scratch_union = (void *)(fft_obj->scratch + scratch_offset);
-        for (int lane = 0; lane < 5; lane++)
-        {
-            fft_data *base = sub_fft_outputs + lane * sub_fft_size;
-            for (int k = 0; k < sub_fft_size; k++)
-            {
-                scratch_union->flat.re[lane * sub_fft_size + k] = base[k].re;
-                scratch_union->flat.im[lane * sub_fft_size + k] = base[k].im;
-            }
-        }
-        double *out_re = scratch_union->flat.re;
-        double *out_im = scratch_union->flat.im;
+            __m256d swp = _mm256_permute_pd(z, 0b0101); // [im0,re0, im1,re1]
+            return _mm256_xor_pd(swp, negmask_ri);      // [-im0,re0, -im1,re1]
+        };
 
-        // Step 8: Scalar prologue for k=0 and k=1
-        {
-            // k=0 (no twiddle multiplications)
-            {
-                fft_data *X0 = &output_buffer[0];                // First sub-FFT point
-                fft_data *X1 = &output_buffer[sub_fft_size];     // Second sub-FFT point
-                fft_data *X2 = &output_buffer[2 * sub_fft_size]; // Third sub-FFT point
-                fft_data *X3 = &output_buffer[3 * sub_fft_size]; // Fourth sub-FFT point
-                fft_data *X4 = &output_buffer[4 * sub_fft_size]; // Fifth sub-FFT point
-
-                fft_type a_re = out_re[0], a_im = out_im[0];                               // First point
-                fft_type b_re = out_re[sub_fft_size], b_im = out_im[sub_fft_size];         // Second point
-                fft_type c_re = out_re[2 * sub_fft_size], c_im = out_im[2 * sub_fft_size]; // Third point
-                fft_type d_re = out_re[3 * sub_fft_size], d_im = out_im[3 * sub_fft_size]; // Fourth point
-                fft_type e_re = out_re[4 * sub_fft_size], e_im = out_im[4 * sub_fft_size]; // Fifth point
-
-                // X0 = a + b + c + d + e
-                X0->re = a_re + b_re + c_re + d_re + e_re; // Sum all points (real)
-                X0->im = a_im + b_im + c_im + d_im + e_im; // Sum all points (imag)
-
-                // X1 = a + c1*(b+e) + c2*(c+d) + i*transform_sign*( s1*(b-e) + s2*(c-d) )
-                X1->re = a_re + C5_1 * (b_re + e_re) + C5_2 * (c_re + d_re) +
-                         transform_sign * (S5_1 * (b_im - e_im) + S5_2 * (c_im - d_im)); // X1 real
-                X1->im = a_im + C5_1 * (b_im + e_im) + C5_2 * (c_im + d_im) -
-                         transform_sign * (S5_1 * (b_re - e_re) + S5_2 * (c_re - d_re)); // X1 imag
-
-                // X4 = a + c1*(b+e) + c2*(c+d) - i*transform_sign*( s1*(b-e) + s2*(c-d) )
-                X4->re = a_re + C5_1 * (b_re + e_re) + C5_2 * (c_re + d_re) -
-                         transform_sign * (S5_1 * (b_im - e_im) + S5_2 * (c_im - d_im)); // X4 real
-                X4->im = a_im + C5_1 * (b_im + e_im) + C5_2 * (c_im + d_im) +
-                         transform_sign * (S5_1 * (b_re - e_re) + S5_2 * (c_re - d_re)); // X4 imag
-
-                // X2 = a + c2*(b+e) + c1*(c+d) + i*transform_sign*( s2*(b-e) - s1*(c-d) )
-                X2->re = a_re + C5_2 * (b_re + e_re) + C5_1 * (c_re + d_re) +
-                         transform_sign * (S5_2 * (b_im - e_im) - S5_1 * (c_im - d_im)); // X2 real
-                X2->im = a_im + C5_2 * (b_im + e_im) + C5_1 * (c_im + d_im) -
-                         transform_sign * (S5_2 * (b_re - e_re) - S5_1 * (c_re - d_re)); // X2 imag
-
-                // X3 = a + c2*(b+e) + c1*(c+d) - i*transform_sign*( s2*(b-e) - s1*(c-d) )
-                X3->re = a_re + C5_2 * (b_re + e_re) + C5_1 * (c_re + d_re) -
-                         transform_sign * (S5_2 * (b_im - e_im) - S5_1 * (c_im - d_im)); // X3 real
-                X3->im = a_im + C5_2 * (b_im + e_im) + C5_1 * (c_im + d_im) +
-                         transform_sign * (S5_2 * (b_re - e_re) - S5_1 * (c_re - d_re)); // X3 imag
-            }
-
-            // k=1 (with twiddle multiplications)
-            if (sub_fft_size > 1)
-            {
-                fft_data *X0 = &output_buffer[1];                    // X(1)
-                fft_data *X1 = &output_buffer[sub_fft_size + 1];     // X(1 + N/5)
-                fft_data *X2 = &output_buffer[2 * sub_fft_size + 1]; // X(1 + 2N/5)
-                fft_data *X3 = &output_buffer[3 * sub_fft_size + 1]; // X(1 + 3N/5)
-                fft_data *X4 = &output_buffer[4 * sub_fft_size + 1]; // X(1 + 4N/5)
-
-                fft_type a_re = out_re[1], a_im = out_im[1];                                       // X_0[1]
-                fft_type b_re = out_re[sub_fft_size + 1], b_im = out_im[sub_fft_size + 1];         // X_1[1]
-                fft_type c_re = out_re[2 * sub_fft_size + 1], c_im = out_im[2 * sub_fft_size + 1]; // X_2[1]
-                fft_type d_re = out_re[3 * sub_fft_size + 1], d_im = out_im[3 * sub_fft_size + 1]; // X_3[1]
-                fft_type e_re = out_re[4 * sub_fft_size + 1], e_im = out_im[4 * sub_fft_size + 1]; // X_4[1]
-
-                // Load twiddle factors for k=1
-                int idx = 4 * 1;                                                               // Index for k=1
-                fft_type w1r = twiddle_factors[idx + 0].re, w1i = twiddle_factors[idx + 0].im; // W_N^1
-                fft_type w2r = twiddle_factors[idx + 1].re, w2i = twiddle_factors[idx + 1].im; // W_N^2
-                fft_type w3r = twiddle_factors[idx + 2].re, w3i = twiddle_factors[idx + 2].im; // W_N^3
-                fft_type w4r = twiddle_factors[idx + 3].re, w4i = twiddle_factors[idx + 3].im; // W_N^4
-
-                // Apply twiddle factors
-                fft_type b2_re = b_re * w1r - b_im * w1i; // W_N^1 * X_1 real
-                fft_type b2_im = b_im * w1r + b_re * w1i; // W_N^1 * X_1 imag
-                fft_type c2_re = c_re * w2r - c_im * w2i; // W_N^2 * X_2 real
-                fft_type c2_im = c_im * w2r + c_re * w2i; // W_N^2 * X_2 imag
-                fft_type d2_re = d_re * w3r - d_im * w3i; // W_N^3 * X_3 real
-                fft_type d2_im = d_im * w3r + d_re * w3i; // W_N^3 * X_3 imag
-                fft_type e2_re = e_re * w4r - e_im * w4i; // W_N^4 * X_4 real
-                fft_type e2_im = e_im * w4r + e_re * w4i; // W_N^4 * X_4 imag
-
-                // Compute pairwise sums and differences
-                fft_type t0_re = b2_re + e2_re; // b + e real
-                fft_type t0_im = b2_im + e2_im; // b + e imag
-                fft_type t1_re = c2_re + d2_re; // c + d real
-                fft_type t1_im = c2_im + d2_im; // c + d imag
-                fft_type t2_re = b2_re - e2_re; // b - e real
-                fft_type t2_im = b2_im - e2_im; // b - e imag
-                fft_type t3_re = c2_re - d2_re; // c - d real
-                fft_type t3_im = c2_im - d2_im; // c - d imag
-
-                // X_0 = a + (b+e) + (c+d)
-                X0->re = a_re + t0_re + t1_re; // X(1) real
-                X0->im = a_im + t0_im + t1_im; // X(1) imag
-
-                // X_1 = a + c1*(b+e) + c2*(c+d) + i*transform_sign*( s1*(b-e) + s2*(c-d) )
-                fft_type tmp1_re = C5_1 * t0_re + C5_2 * t1_re;                    // c1*(b+e) + c2*(c+d) real
-                fft_type tmp1_im = C5_1 * t0_im + C5_2 * t1_im;                    // c1*(b+e) + c2*(c+d) imag
-                fft_type rot1_re = transform_sign * (S5_1 * t2_im + S5_2 * t3_im); // s1*(b-e) + s2*(c-d) real
-                fft_type rot1_im = transform_sign * (S5_2 * t3_re - S5_1 * t2_re); // s2*(c-d) - s1*(b-e) imag
-                X1->re = a_re + tmp1_re + rot1_re;                                 // X(1 + N/5) real
-                X1->im = a_im + tmp1_im - rot1_im;                                 // X(1 + N/5) imag
-
-                // X_4 = a + c1*(b+e) + c2*(c+d) - i*transform_sign*( s1*(b-e) + s2*(c-d) )
-                X4->re = a_re + tmp1_re - rot1_re; // X(1 + 4N/5) real
-                X4->im = a_im + tmp1_im + rot1_im; // X(1 + 4N/5) imag
-
-                // X_2 = a + c2*(b+e) + c1*(c+d) + i*transform_sign*( s2*(b-e) - s1*(c-d) )
-                fft_type tmp2_re = C5_2 * t0_re + C5_1 * t1_re;                    // c2*(b+e) + c1*(c+d) real
-                fft_type tmp2_im = C5_2 * t0_im + C5_1 * t1_im;                    // c2*(b+e) + c1*(c+d) imag
-                fft_type rot2_re = transform_sign * (S5_2 * t2_im - S5_1 * t3_im); // s2*(b-e) - s1*(c-d) real
-                fft_type rot2_im = transform_sign * (S5_1 * t2_re + S5_2 * t3_re); // s1*(b-e) + s2*(c-d) imag
-                X2->re = a_re + tmp2_re + rot2_re;                                 // X(1 + 2N/5) real
-                X2->im = a_im + tmp2_im - rot2_im;                                 // X(1 + 2N/5) imag
-
-                // X_3 = a + c2*(b+e) + c1*(c+d) - i*transform_sign*( s2*(b-e) - s1*(c-d) )
-                X3->re = a_re + tmp2_re - rot2_re; // X(1 + 3N/5) real
-                X3->im = a_im + tmp2_im + rot2_im; // X(1 + 3N/5) imag
-            }
-        }
-
-        // Step 9: SSE2 vectorized butterfly for k=2 to sub_fft_size-1
-        __m128d vsign = _mm_set1_pd((double)transform_sign); // Vectorized transform sign
-        __m128d vc5_1 = _mm_set1_pd(C5_1);                   // cos(72°)
-        __m128d vc5_2 = _mm_set1_pd(C5_2);                   // cos(144°)
-        __m128d vs5_1 = _mm_set1_pd(S5_1);                   // sin(72°)
-        __m128d vs5_2 = _mm_set1_pd(S5_2);                   // sin(144°)
-        int k = 2;
+        int k = 0;
         for (; k + 1 < sub_fft_size; k += 2)
         {
-            // Load five sub-FFT points for two k values (32-byte aligned with USE_ALIGNED_SIMD)
-            __m128d a_r = LOAD_SSE2(out_re + k);                    // X_0[k:k+1] real
-            __m128d a_i = LOAD_SSE2(out_im + k);                    // X_0[k:k+1] imag
-            __m128d b_r = LOAD_SSE2(out_re + k + sub_fft_size);     // X_1[k:k+1] real
-            __m128d b_i = LOAD_SSE2(out_im + k + sub_fft_size);     // X_1[k:k+1] imag
-            __m128d c_r = LOAD_SSE2(out_re + k + 2 * sub_fft_size); // X_2[k:k+1] real
-            __m128d c_i = LOAD_SSE2(out_im + k + 2 * sub_fft_size); // X_2[k:k+1] imag
-            __m128d d_r = LOAD_SSE2(out_re + k + 3 * sub_fft_size); // X_3[k:k+1] real
-            __m128d d_i = LOAD_SSE2(out_im + k + 3 * sub_fft_size); // X_3[k:k+1] imag
-            __m128d e_r = LOAD_SSE2(out_re + k + 4 * sub_fft_size); // X_4[k:k+1] real
-            __m128d e_i = LOAD_SSE2(out_im + k + 4 * sub_fft_size); // X_4[k:k+1] imag
+            // modest input prefetch (~64B ahead)
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8].im, _MM_HINT_T0);
 
-            // Load twiddle factors for two k values (aligned for power-of-5, scratch for mixed-radix)
-            int idx = 4 * k;                                       // Base index for W_N^k, ..., W_N^{4k}
-            __m128d w1r = LOAD_SSE2(&twiddle_factors[idx + 0].re); // W_N^k real
-            __m128d w1i = LOAD_SSE2(&twiddle_factors[idx + 0].im); // W_N^k imag
-            __m128d w2r = LOAD_SSE2(&twiddle_factors[idx + 1].re); // W_N^{2k} real
-            __m128d w2i = LOAD_SSE2(&twiddle_factors[idx + 1].im); // W_N^{2k} imag
-            __m128d w3r = LOAD_SSE2(&twiddle_factors[idx + 2].re); // W_N^{3k} real
-            __m128d w3i = LOAD_SSE2(&twiddle_factors[idx + 2].im); // W_N^{3k} imag
-            __m128d w4r = LOAD_SSE2(&twiddle_factors[idx + 3].re); // W_N^{4k} real
-            __m128d w4i = LOAD_SSE2(&twiddle_factors[idx + 3].im); // W_N^{4k} imag
+            __m256d a = LOADU_PD(&sub_fft_outputs[k].re);
+            __m256d b = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].re);
+            __m256d c = LOADU_PD(&sub_fft_outputs[k + 2 * sub_fft_size].re);
+            __m256d d = LOADU_PD(&sub_fft_outputs[k + 3 * sub_fft_size].re);
+            __m256d e = LOADU_PD(&sub_fft_outputs[k + 4 * sub_fft_size].re);
 
-            // Apply twiddle factors
-            // FMSUB_SSE2(a, b, c) computes a*b - c, FMADD_SSE2(a, b, c) computes a*b + c
-            __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i)); // W_N^k * X_1 real
-            __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i)); // W_N^k * X_1 imag
-            __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i)); // W_N^{2k} * X_2 real
-            __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i)); // W_N^{2k} * X_2 imag
-            __m128d d2r = FMSUB_SSE2(d_r, w3r, _mm_mul_pd(d_i, w3i)); // W_N^{3k} * X_3 real
-            __m128d d2i = FMADD_SSE2(d_i, w3r, _mm_mul_pd(d_r, w3i)); // W_N^{3k} * X_3 imag
-            __m128d e2r = FMSUB_SSE2(e_r, w4r, _mm_mul_pd(e_i, w4i)); // W_N^{4k} * X_4 real
-            __m128d e2i = FMADD_SSE2(e_i, w4r, _mm_mul_pd(e_r, w4i)); // W_N^{4k} * X_4 imag
+            __m256d w1 = LOADU_PD(&twiddle_factors[4 * k + 0].re);
+            __m256d w2 = LOADU_PD(&twiddle_factors[4 * k + 1].re);
+            __m256d w3 = LOADU_PD(&twiddle_factors[4 * k + 2].re);
+            __m256d w4 = LOADU_PD(&twiddle_factors[4 * k + 3].re);
 
-            // Compute pairwise sums and differences
-            __m128d t0r = _mm_add_pd(b2r, e2r); // b + e real
-            __m128d t0i = _mm_add_pd(b2i, e2i); // b + e imag
-            __m128d t1r = _mm_add_pd(c2r, d2r); // c + d real
-            __m128d t1i = _mm_add_pd(c2i, d2i); // c + d imag
-            __m128d t2r = _mm_sub_pd(b2r, e2r); // b - e real
-            __m128d t2i = _mm_sub_pd(b2i, e2i); // b - e imag
-            __m128d t3r = _mm_sub_pd(c2r, d2r); // c - d real
-            __m128d t3i = _mm_sub_pd(c2i, d2i); // c - d imag
+            __m256d b2 = cmul_avx2_aos(b, w1);
+            __m256d c2 = cmul_avx2_aos(c, w2);
+            __m256d d2 = cmul_avx2_aos(d, w3);
+            __m256d e2 = cmul_avx2_aos(e, w4);
 
-            // X_0 = a + (b+e) + (c+d)
-            __m128d x0r = _mm_add_pd(a_r, _mm_add_pd(t0r, t1r)); // X(k) real
-            __m128d x0i = _mm_add_pd(a_i, _mm_add_pd(t0i, t1i)); // X(k) imag
-            STORE_SSE2(out_re + k, x0r);
-            STORE_SSE2(out_im + k, x0i);
+            __m256d t0 = _mm256_add_pd(b2, e2); // b+e
+            __m256d t1 = _mm256_add_pd(c2, d2); // c+d
+            __m256d t2 = _mm256_sub_pd(b2, e2); // b-e
+            __m256d t3 = _mm256_sub_pd(c2, d2); // c-d
 
-            // Compute X_1 and X_4
-            __m128d tmp1r = _mm_add_pd(_mm_mul_pd(vc5_1, t0r), _mm_mul_pd(vc5_2, t1r)); // c1*(b+e) + c2*(c+d) real
-            __m128d tmp1i = _mm_add_pd(_mm_mul_pd(vc5_1, t0i), _mm_mul_pd(vc5_2, t1i)); // c1*(b+e) + c2*(c+d) imag
-            __m128d rot1r = _mm_add_pd(_mm_mul_pd(vs5_1, t2i), _mm_mul_pd(vs5_2, t3i)); // s1*(b-e) + s2*(c-d) real
-            __m128d rot1i = _mm_sub_pd(_mm_mul_pd(vs5_2, t3r), _mm_mul_pd(vs5_1, t2r)); // s2*(c-d) - s1*(b-e) imag
-            rot1r = _mm_mul_pd(rot1r, vsign);                                           // Apply transform_sign
-            rot1i = _mm_mul_pd(rot1i, vsign);
-            __m128d x1r = _mm_add_pd(_mm_add_pd(a_r, tmp1r), rot1r); // X(k + N/5) real
-            __m128d x1i = _mm_sub_pd(_mm_add_pd(a_i, tmp1i), rot1i); // X(k + N/5) imag
-            __m128d x4r = _mm_sub_pd(_mm_add_pd(a_r, tmp1r), rot1r); // X(k + 4N/5) real
-            __m128d x4i = _mm_add_pd(_mm_add_pd(a_i, tmp1i), rot1i); // X(k + 4N/5) imag
-            STORE_SSE2(out_re + k + sub_fft_size, x1r);
-            STORE_SSE2(out_im + k + sub_fft_size, x1i);
-            STORE_SSE2(out_re + k + 4 * sub_fft_size, x4r);
-            STORE_SSE2(out_im + k + 4 * sub_fft_size, x4i);
+            // X0 = a + t0 + t1
+            __m256d x0 = _mm256_add_pd(a, _mm256_add_pd(t0, t1));
+            STOREU_PD(&output_buffer[k].re, x0);
 
-            // Compute X_2 and X_3
-            __m128d tmp2r = _mm_add_pd(_mm_mul_pd(vc5_2, t0r), _mm_mul_pd(vc5_1, t1r)); // c2*(b+e) + c1*(c+d) real
-            __m128d tmp2i = _mm_add_pd(_mm_mul_pd(vc5_2, t0i), _mm_mul_pd(vc5_1, t1i)); // c2*(b+e) + c1*(c+d) imag
-            __m128d rot2r = _mm_sub_pd(_mm_mul_pd(vs5_2, t2i), _mm_mul_pd(vs5_1, t3i)); // s2*(b-e) - s1*(c-d) real
-            __m128d rot2i = _mm_add_pd(_mm_mul_pd(vs5_1, t2r), _mm_mul_pd(vs5_2, t3r)); // s1*(b-e) + s2*(c-d) imag
-            rot2r = _mm_mul_pd(rot2r, vsign);                                           // Apply transform_sign
-            rot2i = _mm_mul_pd(rot2i, vsign);
-            __m128d x2r = _mm_add_pd(_mm_add_pd(a_r, tmp2r), rot2r); // X(k + 2N/5) real
-            __m128d x2i = _mm_sub_pd(_mm_add_pd(a_i, tmp2i), rot2i); // X(k + 2N/5) imag
-            __m128d x3r = _mm_sub_pd(_mm_add_pd(a_r, tmp2r), rot2r); // X(k + 3N/5) real
-            __m128d x3i = _mm_add_pd(_mm_add_pd(a_i, tmp2i), rot2i); // X(k + 3N/5) imag
-            STORE_SSE2(out_re + k + 2 * sub_fft_size, x2r);
-            STORE_SSE2(out_im + k + 2 * sub_fft_size, x2i);
-            STORE_SSE2(out_re + k + 3 * sub_fft_size, x3r);
-            STORE_SSE2(out_im + k + 3 * sub_fft_size, x3i);
+            // X1 / X4
+            __m256d base1 = _mm256_add_pd(_mm256_mul_pd(vs1, t2), _mm256_mul_pd(vs2, t3));
+            __m256d rot1 = _mm256_mul_pd(rot90_avx(base1), vsign);
+            __m256d tmp1 = _mm256_add_pd(_mm256_mul_pd(vc1, t0), _mm256_mul_pd(vc2, t1));
+            __m256d a_pt1 = _mm256_add_pd(a, tmp1);
+            __m256d x1 = _mm256_add_pd(a_pt1, rot1);
+            __m256d x4 = _mm256_sub_pd(a_pt1, rot1);
+            STOREU_PD(&output_buffer[k + sub_fft_size].re, x1);
+            STOREU_PD(&output_buffer[k + 4 * sub_fft_size].re, x4);
+
+            // X2 / X3
+            __m256d base2 = _mm256_sub_pd(_mm256_mul_pd(vs2, t2), _mm256_mul_pd(vs1, t3));
+            __m256d rot2 = _mm256_mul_pd(rot90_avx(base2), vsign);
+            __m256d tmp2 = _mm256_add_pd(_mm256_mul_pd(vc2, t0), _mm256_mul_pd(vc1, t1));
+            __m256d a_pt2 = _mm256_add_pd(a, tmp2);
+            __m256d x2 = _mm256_add_pd(a_pt2, rot2);
+            __m256d x3 = _mm256_sub_pd(a_pt2, rot2);
+            STOREU_PD(&output_buffer[k + 2 * sub_fft_size].re, x2);
+            STOREU_PD(&output_buffer[k + 3 * sub_fft_size].re, x3);
         }
 
-        // Step 10: Scalar tail for remaining k
-        for (; k < sub_fft_size; k++)
+        // SSE2 tail for odd last k
+        if (k < sub_fft_size)
+#endif // __AVX2__
         {
-            // Load twiddle factors
-            int idx = 4 * k;                            // Index into twiddle array
-            fft_type w1r = twiddle_factors[idx + 0].re; // W_N^k real
-            fft_type w1i = twiddle_factors[idx + 0].im; // W_N^k imag
-            fft_type w2r = twiddle_factors[idx + 1].re; // W_N^{2k} real
-            fft_type w2i = twiddle_factors[idx + 1].im; // W_N^{2k} imag
-            fft_type w3r = twiddle_factors[idx + 2].re; // W_N^{3k} real
-            fft_type w3i = twiddle_factors[idx + 2].im; // W_N^{3k} imag
-            fft_type w4r = twiddle_factors[idx + 3].re; // W_N^{4k} real
-            fft_type w4i = twiddle_factors[idx + 3].im; // W_N^{4k} imag
+            const __m128d vsign128 = _mm_set1_pd((double)transform_sign);
+            const __m128d vc1_128 = _mm_set1_pd(C5_1);
+            const __m128d vc2_128 = _mm_set1_pd(C5_2);
+            const __m128d vs1_128 = _mm_set1_pd(S5_1);
+            const __m128d vs2_128 = _mm_set1_pd(S5_2);
 
-            // Load sub-FFT points
-            fft_type a_re = out_re[k], a_im = out_im[k];                                       // X_0[k]
-            fft_type b_re = out_re[k + sub_fft_size], b_im = out_im[k + sub_fft_size];         // X_1[k]
-            fft_type c_re = out_re[k + 2 * sub_fft_size], c_im = out_im[k + 2 * sub_fft_size]; // X_2[k]
-            fft_type d_re = out_re[k + 3 * sub_fft_size], d_im = out_im[k + 3 * sub_fft_size]; // X_3[k]
-            fft_type e_re = out_re[k + 4 * sub_fft_size], e_im = out_im[k + 4 * sub_fft_size]; // X_4[k]
-
-            // Apply twiddle factors
-            fft_type b2_re = b_re * w1r - b_im * w1i; // W_N^k * X_1 real
-            fft_type b2_im = b_im * w1r + b_re * w1i; // W_N^k * X_1 imag
-            fft_type c2_re = c_re * w2r - c_im * w2i; // W_N^{2k} * X_2 real
-            fft_type c2_im = c_im * w2r + c_re * w2i; // W_N^{2k} * X_2 imag
-            fft_type d2_re = d_re * w3r - d_im * w3i; // W_N^{3k} * X_3 real
-            fft_type d2_im = d_im * w3r + d_re * w3i; // W_N^{3k} * X_3 imag
-            fft_type e2_re = e_re * w4r - e_im * w4i; // W_N^{4k} * X_4 real
-            fft_type e2_im = e_im * w4r + e_re * w4i; // W_N^{4k} * X_4 imag
-
-            // Compute pairwise sums and differences
-            fft_type t0_re = b2_re + e2_re; // b + e real
-            fft_type t0_im = b2_im + e2_im; // b + e imag
-            fft_type t1_re = c2_re + d2_re; // c + d real
-            fft_type t1_im = c2_im + d2_im; // c + d imag
-            fft_type t2_re = b2_re - e2_re; // b - e real
-            fft_type t2_im = b2_im - e2_im; // b - e imag
-            fft_type t3_re = c2_re - d2_re; // c - d real
-            fft_type t3_im = c2_im - d2_im; // c - d imag
-
-            // X_0 = a + (b+e) + (c+d)
-            out_re[k] = a_re + t0_re + t1_re; // X(k) real
-            out_im[k] = a_im + t0_im + t1_im; // X(k) imag
-
-            // X_1 = a + c1*(b+e) + c2*(c+d) + i*transform_sign*( s1*(b-e) + s2*(c-d) )
-            fft_type tmp1_re = C5_1 * t0_re + C5_2 * t1_re;                    // c1*(b+e) + c2*(c+d) real
-            fft_type tmp1_im = C5_1 * t0_im + C5_2 * t1_im;                    // c1*(b+e) + c2*(c+d) imag
-            fft_type rot1_re = transform_sign * (S5_1 * t2_im + S5_2 * t3_im); // s1*(b-e) + s2*(c-d) real
-            fft_type rot1_im = transform_sign * (S5_2 * t3_re - S5_1 * t2_re); // s2*(c-d) - s1*(b-e) imag
-            out_re[k + sub_fft_size] = a_re + tmp1_re + rot1_re;               // X(k + N/5) real
-            out_im[k + sub_fft_size] = a_im + tmp1_im - rot1_im;               // X(k + N/5) imag
-
-            // X_4 = a + c1*(b+e) + c2*(c+d) - i*transform_sign*( s1*(b-e) + s2*(c-d) )
-            out_re[k + 4 * sub_fft_size] = a_re + tmp1_re - rot1_re; // X(k + 4N/5) real
-            out_im[k + 4 * sub_fft_size] = a_im + tmp1_im + rot1_im; // X(k + 4N/5) imag
-
-            // X_2 = a + c2*(b+e) + c1*(c+d) + i*transform_sign*( s2*(b-e) - s1*(c-d) )
-            fft_type tmp2_re = C5_2 * t0_re + C5_1 * t1_re;                    // c2*(b+e) + c1*(c+d) real
-            fft_type tmp2_im = C5_2 * t0_im + C5_1 * t1_im;                    // c2*(b+e) + c1*(c+d) imag
-            fft_type rot2_re = transform_sign * (S5_2 * t2_im - S5_1 * t3_im); // s2*(b-e) - s1*(c-d) real
-            fft_type rot2_im = transform_sign * (S5_1 * t2_re + S5_2 * t3_re); // s1*(b-e) + s2*(c-d) imag
-            out_re[k + 2 * sub_fft_size] = a_re + tmp2_re + rot2_re;           // X(k + 2N/5) real
-            out_im[k + 2 * sub_fft_size] = a_im + tmp2_im - rot2_im;           // X(k + 2N/5) imag
-
-            // X_3 = a + c2*(b+e) + c1*(c+d) - i*transform_sign*( s2*(b-e) - s1*(c-d) )
-            out_re[k + 3 * sub_fft_size] = a_re + tmp2_re - rot2_re; // X(k + 3N/5) real
-            out_im[k + 3 * sub_fft_size] = a_im + tmp2_im + rot2_im; // X(k + 3N/5) imag
-        }
-
-        // Step 11: Copy flattened results back to output_buffer
-        for (int lane = 0; lane < 5; lane++)
-        {
-            fft_data *base = output_buffer + lane * sub_fft_size;
-            for (int k = 0; k < sub_fft_size; k++)
+            // If AVX2 not present, run from k=0; if AVX2 present, this runs only for the last odd k.
+#if !defined(__AVX2__)
+            int k = 0;
+            for (; k < sub_fft_size; ++k)
+#endif
             {
-                base[k].re = out_re[lane * sub_fft_size + k];
-                base[k].im = out_im[lane * sub_fft_size + k];
+                // prefetch a bit ahead
+                _mm_prefetch((const char *)&sub_fft_outputs[k + 8].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&sub_fft_outputs[k + 8].im, _MM_HINT_T0);
+
+                __m128d a = LOADU_SSE2(&sub_fft_outputs[k].re);
+                __m128d b = LOADU_SSE2(&sub_fft_outputs[k + sub_fft_size].re);
+                __m128d c = LOADU_SSE2(&sub_fft_outputs[k + 2 * sub_fft_size].re);
+                __m128d d = LOADU_SSE2(&sub_fft_outputs[k + 3 * sub_fft_size].re);
+                __m128d e = LOADU_SSE2(&sub_fft_outputs[k + 4 * sub_fft_size].re);
+
+                __m128d w1 = LOADU_SSE2(&twiddle_factors[4 * k + 0].re);
+                __m128d w2 = LOADU_SSE2(&twiddle_factors[4 * k + 1].re);
+                __m128d w3 = LOADU_SSE2(&twiddle_factors[4 * k + 2].re);
+                __m128d w4 = LOADU_SSE2(&twiddle_factors[4 * k + 3].re);
+
+                __m128d b2 = cmul_sse2_aos(b, w1);
+                __m128d c2 = cmul_sse2_aos(c, w2);
+                __m128d d2 = cmul_sse2_aos(d, w3);
+                __m128d e2 = cmul_sse2_aos(e, w4);
+
+                __m128d t0 = _mm_add_pd(b2, e2);
+                __m128d t1 = _mm_add_pd(c2, d2);
+                __m128d t2 = _mm_sub_pd(b2, e2);
+                __m128d t3 = _mm_sub_pd(c2, d2);
+
+                // X0
+                __m128d x0 = _mm_add_pd(a, _mm_add_pd(t0, t1));
+                STOREU_SSE2(&output_buffer[k].re, x0);
+
+                // rot90 SSE2
+                auto rot90_sse = [](__m128d z) -> __m128d
+                {
+                    __m128d swp = _mm_shuffle_pd(z, z, 0b01);      // [im, re]
+                    return _mm_xor_pd(swp, _mm_set_pd(-0.0, 0.0)); // [-im, re]
+                };
+
+                // X1 / X4
+                __m128d base1 = _mm_add_pd(_mm_mul_pd(vs1_128, t2), _mm_mul_pd(vs2_128, t3));
+                __m128d rot1 = _mm_mul_pd(rot90_sse(base1), vsign128);
+                __m128d tmp1 = _mm_add_pd(_mm_mul_pd(vc1_128, t0), _mm_mul_pd(vc2_128, t1));
+                __m128d a_pt1 = _mm_add_pd(a, tmp1);
+                __m128d x1 = _mm_add_pd(a_pt1, rot1);
+                __m128d x4 = _mm_sub_pd(a_pt1, rot1);
+                STOREU_SSE2(&output_buffer[k + sub_fft_size].re, x1);
+                STOREU_SSE2(&output_buffer[k + 4 * sub_fft_size].re, x4);
+
+                // X2 / X3
+                __m128d base2 = _mm_sub_pd(_mm_mul_pd(vs2_128, t2), _mm_mul_pd(vs1_128, t3));
+                __m128d rot2 = _mm_mul_pd(rot90_sse(base2), vsign128);
+                __m128d tmp2 = _mm_add_pd(_mm_mul_pd(vc2_128, t0), _mm_mul_pd(vc1_128, t1));
+                __m128d a_pt2 = _mm_add_pd(a, tmp2);
+                __m128d x2 = _mm_add_pd(a_pt2, rot2);
+                __m128d x3 = _mm_sub_pd(a_pt2, rot2);
+                STOREU_SSE2(&output_buffer[k + 2 * sub_fft_size].re, x2);
+                STOREU_SSE2(&output_buffer[k + 3 * sub_fft_size].re, x3);
             }
         }
     }
@@ -4246,155 +3698,155 @@ static void mixed_radix_dit_rec(
             STORE_SSE2(&output_buffer[k].re, _mm_add_pd(a_r, sum_r));
             STORE_SSE2(&output_buffer[k].im, _mm_add_pd(a_i, sum_i));
 
-__m128d tmp1r = FMADD_SSE2(vc11_1_sse2, t0r,
-                  FMADD_SSE2(vc11_2_sse2, t1r,
-                    FMADD_SSE2(vc11_3_sse2, t2r,
-                      FMADD_SSE2(vc11_4_sse2, t3r,
-                        FMADD_SSE2(vc11_5_sse2, t4r, a_r)))));
+            __m128d tmp1r = FMADD_SSE2(vc11_1_sse2, t0r,
+                                       FMADD_SSE2(vc11_2_sse2, t1r,
+                                                  FMADD_SSE2(vc11_3_sse2, t2r,
+                                                             FMADD_SSE2(vc11_4_sse2, t3r,
+                                                                        FMADD_SSE2(vc11_5_sse2, t4r, a_r)))));
 
-__m128d tmp1i = FMADD_SSE2(vc11_1_sse2, t0i,
-                  FMADD_SSE2(vc11_2_sse2, t1i,
-                    FMADD_SSE2(vc11_3_sse2, t2i,
-                      FMADD_SSE2(vc11_4_sse2, t3i,
-                        FMADD_SSE2(vc11_5_sse2, t4i, a_i)))));
+            __m128d tmp1i = FMADD_SSE2(vc11_1_sse2, t0i,
+                                       FMADD_SSE2(vc11_2_sse2, t1i,
+                                                  FMADD_SSE2(vc11_3_sse2, t2i,
+                                                             FMADD_SSE2(vc11_4_sse2, t3i,
+                                                                        FMADD_SSE2(vc11_5_sse2, t4i, a_i)))));
 
-__m128d rot1r = FMADD_SSE2(vs11_1_sse2, t5i,
-                  FMADD_SSE2(vs11_2_sse2, t6i,
-                    FMADD_SSE2(vs11_3_sse2, t7i,
-                      FMADD_SSE2(vs11_4_sse2, t8i,
-                        _mm_mul_pd(vs11_5_sse2, t9i)))));
+            __m128d rot1r = FMADD_SSE2(vs11_1_sse2, t5i,
+                                       FMADD_SSE2(vs11_2_sse2, t6i,
+                                                  FMADD_SSE2(vs11_3_sse2, t7i,
+                                                             FMADD_SSE2(vs11_4_sse2, t8i,
+                                                                        _mm_mul_pd(vs11_5_sse2, t9i)))));
 
-__m128d rot1i = FMADD_SSE2(vs11_1_sse2, t5r,
-                  FMADD_SSE2(vs11_2_sse2, t6r,
-                    FMADD_SSE2(vs11_3_sse2, t7r,
-                      FMADD_SSE2(vs11_4_sse2, t8r,
-                        _mm_mul_pd(vs11_5_sse2, t9r)))));
-    rot1r = _mm_mul_pd(vsign_sse2, rot1r);
-    rot1i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot1i);
-    STORE_SSE2(&output_buffer[k + sub_fft_size].re, _mm_add_pd(tmp1r, rot1r));
-    STORE_SSE2(&output_buffer[k + sub_fft_size].im, _mm_add_pd(tmp1i, rot1i));
-    STORE_SSE2(&output_buffer[k + 10 * sub_fft_size].re, _mm_sub_pd(tmp1r, rot1r));
-    STORE_SSE2(&output_buffer[k + 10 * sub_fft_size].im, _mm_sub_pd(tmp1i, rot1i));
+            __m128d rot1i = FMADD_SSE2(vs11_1_sse2, t5r,
+                                       FMADD_SSE2(vs11_2_sse2, t6r,
+                                                  FMADD_SSE2(vs11_3_sse2, t7r,
+                                                             FMADD_SSE2(vs11_4_sse2, t8r,
+                                                                        _mm_mul_pd(vs11_5_sse2, t9r)))));
+            rot1r = _mm_mul_pd(vsign_sse2, rot1r);
+            rot1i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot1i);
+            STORE_SSE2(&output_buffer[k + sub_fft_size].re, _mm_add_pd(tmp1r, rot1r));
+            STORE_SSE2(&output_buffer[k + sub_fft_size].im, _mm_add_pd(tmp1i, rot1i));
+            STORE_SSE2(&output_buffer[k + 10 * sub_fft_size].re, _mm_sub_pd(tmp1r, rot1r));
+            STORE_SSE2(&output_buffer[k + 10 * sub_fft_size].im, _mm_sub_pd(tmp1i, rot1i));
 
-    __m128d tmp2r = FMADD_SSE2(vc11_1_sse2, t0r,
-                  FMADD_SSE2(vc11_2_sse2, t4r,
-                    FMADD_SSE2(vc11_3_sse2, t3r,
-                      FMADD_SSE2(vc11_4_sse2, t1r,
-                        FMADD_SSE2(vc11_5_sse2, t2r, a_r)))));
+            __m128d tmp2r = FMADD_SSE2(vc11_1_sse2, t0r,
+                                       FMADD_SSE2(vc11_2_sse2, t4r,
+                                                  FMADD_SSE2(vc11_3_sse2, t3r,
+                                                             FMADD_SSE2(vc11_4_sse2, t1r,
+                                                                        FMADD_SSE2(vc11_5_sse2, t2r, a_r)))));
 
-__m128d tmp2i = FMADD_SSE2(vc11_1_sse2, t0i,
-                  FMADD_SSE2(vc11_2_sse2, t4i,
-                    FMADD_SSE2(vc11_3_sse2, t3i,
-                      FMADD_SSE2(vc11_4_sse2, t1i,
-                        FMADD_SSE2(vc11_5_sse2, t2i, a_i)))));
+            __m128d tmp2i = FMADD_SSE2(vc11_1_sse2, t0i,
+                                       FMADD_SSE2(vc11_2_sse2, t4i,
+                                                  FMADD_SSE2(vc11_3_sse2, t3i,
+                                                             FMADD_SSE2(vc11_4_sse2, t1i,
+                                                                        FMADD_SSE2(vc11_5_sse2, t2i, a_i)))));
 
-__m128d rot2r = FMADD_SSE2(vs11_1_sse2, t5i,
-                  FMADD_SSE2(vs11_2_sse2, t9i,
-                    FMADD_SSE2(vs11_3_sse2, t8i,
-                      FMADD_SSE2(vs11_4_sse2, t6i,
-                        _mm_mul_pd(vs11_5_sse2, t7i)))));
+            __m128d rot2r = FMADD_SSE2(vs11_1_sse2, t5i,
+                                       FMADD_SSE2(vs11_2_sse2, t9i,
+                                                  FMADD_SSE2(vs11_3_sse2, t8i,
+                                                             FMADD_SSE2(vs11_4_sse2, t6i,
+                                                                        _mm_mul_pd(vs11_5_sse2, t7i)))));
 
-__m128d rot2i = FMADD_SSE2(vs11_1_sse2, t5r,
-                  FMADD_SSE2(vs11_2_sse2, t9r,
-                    FMADD_SSE2(vs11_3_sse2, t8r,
-                      FMADD_SSE2(vs11_4_sse2, t6r,
-                        _mm_mul_pd(vs11_5_sse2, t7r)))));
-    rot2r = _mm_mul_pd(vsign_sse2, rot2r);
-    rot2i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot2i);
-    STORE_SSE2(&output_buffer[k + 2 * sub_fft_size].re, _mm_add_pd(tmp2r, rot2r));
-    STORE_SSE2(&output_buffer[k + 2 * sub_fft_size].im, _mm_add_pd(tmp2i, rot2i));
-    STORE_SSE2(&output_buffer[k + 9 * sub_fft_size].re, _mm_sub_pd(tmp2r, rot2r));
-    STORE_SSE2(&output_buffer[k + 9 * sub_fft_size].im, _mm_sub_pd(tmp2i, rot2i));
+            __m128d rot2i = FMADD_SSE2(vs11_1_sse2, t5r,
+                                       FMADD_SSE2(vs11_2_sse2, t9r,
+                                                  FMADD_SSE2(vs11_3_sse2, t8r,
+                                                             FMADD_SSE2(vs11_4_sse2, t6r,
+                                                                        _mm_mul_pd(vs11_5_sse2, t7r)))));
+            rot2r = _mm_mul_pd(vsign_sse2, rot2r);
+            rot2i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot2i);
+            STORE_SSE2(&output_buffer[k + 2 * sub_fft_size].re, _mm_add_pd(tmp2r, rot2r));
+            STORE_SSE2(&output_buffer[k + 2 * sub_fft_size].im, _mm_add_pd(tmp2i, rot2i));
+            STORE_SSE2(&output_buffer[k + 9 * sub_fft_size].re, _mm_sub_pd(tmp2r, rot2r));
+            STORE_SSE2(&output_buffer[k + 9 * sub_fft_size].im, _mm_sub_pd(tmp2i, rot2i));
 
-__m128d tmp3r = FMADD_SSE2(vc11_1_sse2, t3r,
-                  FMADD_SSE2(vc11_2_sse2, t2r,
-                    FMADD_SSE2(vc11_3_sse2, t0r,
-                      FMADD_SSE2(vc11_4_sse2, t4r,
-                        FMADD_SSE2(vc11_5_sse2, t1r, a_r)))));
+            __m128d tmp3r = FMADD_SSE2(vc11_1_sse2, t3r,
+                                       FMADD_SSE2(vc11_2_sse2, t2r,
+                                                  FMADD_SSE2(vc11_3_sse2, t0r,
+                                                             FMADD_SSE2(vc11_4_sse2, t4r,
+                                                                        FMADD_SSE2(vc11_5_sse2, t1r, a_r)))));
 
-__m128d tmp3i = FMADD_SSE2(vc11_1_sse2, t3i,
-                  FMADD_SSE2(vc11_2_sse2, t2i,
-                    FMADD_SSE2(vc11_3_sse2, t0i,
-                      FMADD_SSE2(vc11_4_sse2, t4i,
-                        FMADD_SSE2(vc11_5_sse2, t1i, a_i)))));
+            __m128d tmp3i = FMADD_SSE2(vc11_1_sse2, t3i,
+                                       FMADD_SSE2(vc11_2_sse2, t2i,
+                                                  FMADD_SSE2(vc11_3_sse2, t0i,
+                                                             FMADD_SSE2(vc11_4_sse2, t4i,
+                                                                        FMADD_SSE2(vc11_5_sse2, t1i, a_i)))));
 
-__m128d rot3r = FMADD_SSE2(vs11_1_sse2, t8i,
-                  FMADD_SSE2(vs11_2_sse2, t7i,
-                    FMADD_SSE2(vs11_3_sse2, t5i,
-                      FMADD_SSE2(vs11_4_sse2, t9i,
-                        _mm_mul_pd(vs11_5_sse2, t6i)))));
+            __m128d rot3r = FMADD_SSE2(vs11_1_sse2, t8i,
+                                       FMADD_SSE2(vs11_2_sse2, t7i,
+                                                  FMADD_SSE2(vs11_3_sse2, t5i,
+                                                             FMADD_SSE2(vs11_4_sse2, t9i,
+                                                                        _mm_mul_pd(vs11_5_sse2, t6i)))));
 
-__m128d rot3i = FMADD_SSE2(vs11_1_sse2, t8r,
-                  FMADD_SSE2(vs11_2_sse2, t7r,
-                    FMADD_SSE2(vs11_3_sse2, t5r,
-                      FMADD_SSE2(vs11_4_sse2, t9r,
-                        _mm_mul_pd(vs11_5_sse2, t6r)))));
-    rot3r = _mm_mul_pd(vsign_sse2, rot3r);
-    rot3i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot3i);
-    STORE_SSE2(&output_buffer[k + 3 * sub_fft_size].re, _mm_add_pd(tmp3r, rot3r));
-    STORE_SSE2(&output_buffer[k + 3 * sub_fft_size].im, _mm_add_pd(tmp3i, rot3i));
-    STORE_SSE2(&output_buffer[k + 8 * sub_fft_size].re, _mm_sub_pd(tmp3r, rot3r));
-    STORE_SSE2(&output_buffer[k + 8 * sub_fft_size].im, _mm_sub_pd(tmp3i, rot3i));
+            __m128d rot3i = FMADD_SSE2(vs11_1_sse2, t8r,
+                                       FMADD_SSE2(vs11_2_sse2, t7r,
+                                                  FMADD_SSE2(vs11_3_sse2, t5r,
+                                                             FMADD_SSE2(vs11_4_sse2, t9r,
+                                                                        _mm_mul_pd(vs11_5_sse2, t6r)))));
+            rot3r = _mm_mul_pd(vsign_sse2, rot3r);
+            rot3i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot3i);
+            STORE_SSE2(&output_buffer[k + 3 * sub_fft_size].re, _mm_add_pd(tmp3r, rot3r));
+            STORE_SSE2(&output_buffer[k + 3 * sub_fft_size].im, _mm_add_pd(tmp3i, rot3i));
+            STORE_SSE2(&output_buffer[k + 8 * sub_fft_size].re, _mm_sub_pd(tmp3r, rot3r));
+            STORE_SSE2(&output_buffer[k + 8 * sub_fft_size].im, _mm_sub_pd(tmp3i, rot3i));
 
-__m128d tmp4r = FMADD_SSE2(vc11_1_sse2, t2r,
-                  FMADD_SSE2(vc11_2_sse2, t4r,
-                    FMADD_SSE2(vc11_3_sse2, t1r,
-                      FMADD_SSE2(vc11_4_sse2, t0r,
-                        FMADD_SSE2(vc11_5_sse2, t3r, a_r)))));
+            __m128d tmp4r = FMADD_SSE2(vc11_1_sse2, t2r,
+                                       FMADD_SSE2(vc11_2_sse2, t4r,
+                                                  FMADD_SSE2(vc11_3_sse2, t1r,
+                                                             FMADD_SSE2(vc11_4_sse2, t0r,
+                                                                        FMADD_SSE2(vc11_5_sse2, t3r, a_r)))));
 
-__m128d tmp4i = FMADD_SSE2(vc11_1_sse2, t2i,
-                  FMADD_SSE2(vc11_2_sse2, t4i,
-                    FMADD_SSE2(vc11_3_sse2, t1i,
-                      FMADD_SSE2(vc11_4_sse2, t0i,
-                        FMADD_SSE2(vc11_5_sse2, t3i, a_i)))));
+            __m128d tmp4i = FMADD_SSE2(vc11_1_sse2, t2i,
+                                       FMADD_SSE2(vc11_2_sse2, t4i,
+                                                  FMADD_SSE2(vc11_3_sse2, t1i,
+                                                             FMADD_SSE2(vc11_4_sse2, t0i,
+                                                                        FMADD_SSE2(vc11_5_sse2, t3i, a_i)))));
 
-__m128d rot4r = FMADD_SSE2(vs11_1_sse2, t7i,
-                  FMADD_SSE2(vs11_2_sse2, t9i,
-                    FMADD_SSE2(vs11_3_sse2, t6i,
-                      FMADD_SSE2(vs11_4_sse2, t5i,
-                        _mm_mul_pd(vs11_5_sse2, t8i)))));
+            __m128d rot4r = FMADD_SSE2(vs11_1_sse2, t7i,
+                                       FMADD_SSE2(vs11_2_sse2, t9i,
+                                                  FMADD_SSE2(vs11_3_sse2, t6i,
+                                                             FMADD_SSE2(vs11_4_sse2, t5i,
+                                                                        _mm_mul_pd(vs11_5_sse2, t8i)))));
 
-__m128d rot4i = FMADD_SSE2(vs11_1_sse2, t7r,
-                  FMADD_SSE2(vs11_2_sse2, t9r,
-                    FMADD_SSE2(vs11_3_sse2, t6r,
-                      FMADD_SSE2(vs11_4_sse2, t5r,
-                        _mm_mul_pd(vs11_5_sse2, t8r)))));
-    rot4r = _mm_mul_pd(vsign_sse2, rot4r);
-    rot4i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot4i);
-    STORE_SSE2(&output_buffer[k + 4 * sub_fft_size].re, _mm_add_pd(tmp4r, rot4r));
-    STORE_SSE2(&output_buffer[k + 4 * sub_fft_size].im, _mm_add_pd(tmp4i, rot4i));
-    STORE_SSE2(&output_buffer[k + 7 * sub_fft_size].re, _mm_sub_pd(tmp4r, rot4r));
-    STORE_SSE2(&output_buffer[k + 7 * sub_fft_size].im, _mm_sub_pd(tmp4i, rot4i));
+            __m128d rot4i = FMADD_SSE2(vs11_1_sse2, t7r,
+                                       FMADD_SSE2(vs11_2_sse2, t9r,
+                                                  FMADD_SSE2(vs11_3_sse2, t6r,
+                                                             FMADD_SSE2(vs11_4_sse2, t5r,
+                                                                        _mm_mul_pd(vs11_5_sse2, t8r)))));
+            rot4r = _mm_mul_pd(vsign_sse2, rot4r);
+            rot4i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot4i);
+            STORE_SSE2(&output_buffer[k + 4 * sub_fft_size].re, _mm_add_pd(tmp4r, rot4r));
+            STORE_SSE2(&output_buffer[k + 4 * sub_fft_size].im, _mm_add_pd(tmp4i, rot4i));
+            STORE_SSE2(&output_buffer[k + 7 * sub_fft_size].re, _mm_sub_pd(tmp4r, rot4r));
+            STORE_SSE2(&output_buffer[k + 7 * sub_fft_size].im, _mm_sub_pd(tmp4i, rot4i));
 
-__m128d tmp5r = FMADD_SSE2(vc11_1_sse2, t1r,
-                  FMADD_SSE2(vc11_2_sse2, t3r,
-                    FMADD_SSE2(vc11_3_sse2, t4r,
-                      FMADD_SSE2(vc11_4_sse2, t2r,
-                        FMADD_SSE2(vc11_5_sse2, t0r, a_r)))));
+            __m128d tmp5r = FMADD_SSE2(vc11_1_sse2, t1r,
+                                       FMADD_SSE2(vc11_2_sse2, t3r,
+                                                  FMADD_SSE2(vc11_3_sse2, t4r,
+                                                             FMADD_SSE2(vc11_4_sse2, t2r,
+                                                                        FMADD_SSE2(vc11_5_sse2, t0r, a_r)))));
 
-__m128d tmp5i = FMADD_SSE2(vc11_1_sse2, t1i,
-                  FMADD_SSE2(vc11_2_sse2, t3i,
-                    FMADD_SSE2(vc11_3_sse2, t4i,
-                      FMADD_SSE2(vc11_4_sse2, t2i,
-                        FMADD_SSE2(vc11_5_sse2, t0i, a_i)))));
+            __m128d tmp5i = FMADD_SSE2(vc11_1_sse2, t1i,
+                                       FMADD_SSE2(vc11_2_sse2, t3i,
+                                                  FMADD_SSE2(vc11_3_sse2, t4i,
+                                                             FMADD_SSE2(vc11_4_sse2, t2i,
+                                                                        FMADD_SSE2(vc11_5_sse2, t0i, a_i)))));
 
-__m128d rot5r = FMADD_SSE2(vs11_1_sse2, t6i,
-                  FMADD_SSE2(vs11_2_sse2, t8i,
-                    FMADD_SSE2(vs11_3_sse2, t9i,
-                      FMADD_SSE2(vs11_4_sse2, t7i,
-                        _mm_mul_pd(vs11_5_sse2, t5i)))));
+            __m128d rot5r = FMADD_SSE2(vs11_1_sse2, t6i,
+                                       FMADD_SSE2(vs11_2_sse2, t8i,
+                                                  FMADD_SSE2(vs11_3_sse2, t9i,
+                                                             FMADD_SSE2(vs11_4_sse2, t7i,
+                                                                        _mm_mul_pd(vs11_5_sse2, t5i)))));
 
-__m128d rot5i = FMADD_SSE2(vs11_1_sse2, t6r,
-                  FMADD_SSE2(vs11_2_sse2, t8r,
-                    FMADD_SSE2(vs11_3_sse2, t9r,
-                      FMADD_SSE2(vs11_4_sse2, t7r,
-                        _mm_mul_pd(vs11_5_sse2, t5r)))));
-    rot5r = _mm_mul_pd(vsign_sse2, rot5r);
-    rot5i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot5i);
-    STORE_SSE2(&output_buffer[k + 5 * sub_fft_size].re, _mm_add_pd(tmp5r, rot5r));
-    STORE_SSE2(&output_buffer[k + 5 * sub_fft_size].im, _mm_add_pd(tmp5i, rot5i));
-    STORE_SSE2(&output_buffer[k + 6 * sub_fft_size].re, _mm_sub_pd(tmp5r, rot5r));
-    STORE_SSE2(&output_buffer[k + 6 * sub_fft_size].im, _mm_sub_pd(tmp5i, rot5i));
+            __m128d rot5i = FMADD_SSE2(vs11_1_sse2, t6r,
+                                       FMADD_SSE2(vs11_2_sse2, t8r,
+                                                  FMADD_SSE2(vs11_3_sse2, t9r,
+                                                             FMADD_SSE2(vs11_4_sse2, t7r,
+                                                                        _mm_mul_pd(vs11_5_sse2, t5r)))));
+            rot5r = _mm_mul_pd(vsign_sse2, rot5r);
+            rot5i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot5i);
+            STORE_SSE2(&output_buffer[k + 5 * sub_fft_size].re, _mm_add_pd(tmp5r, rot5r));
+            STORE_SSE2(&output_buffer[k + 5 * sub_fft_size].im, _mm_add_pd(tmp5i, rot5i));
+            STORE_SSE2(&output_buffer[k + 6 * sub_fft_size].re, _mm_sub_pd(tmp5r, rot5r));
+            STORE_SSE2(&output_buffer[k + 6 * sub_fft_size].im, _mm_sub_pd(tmp5i, rot5i));
         }
 
         for (; k < sub_fft_size; k++)
