@@ -305,6 +305,76 @@ Notes:
 - Memory allocation/free occurs per radix block for temporary arrays.
 =========================================================
 
+ * @brief High-performance mixed-radix / Bluestein FFT with AVX/SSE2 kernels.
+ *
+ * @section Optimizations Optimizations Utilized
+ *
+ * **Algorithm selection & factorization**
+ * - Mixed-radix DIT for N that factors into small primes (2,3,4,5,7,8,11,13).
+ * - Bluestein’s algorithm for arbitrary N (pads to next power-of-two M ≥ 2N−1).
+ * - Fast factorability check via a small-prime **divide-by-N lookup** (0/1 table) to avoid repeated trial division.
+ * - **Pure-power detection** (n = p^k) enabling precomputation of stage-specific twiddles and offsets.
+ *
+ * **Twiddle generation & reuse**
+ * - Linear **global twiddle table** W_N^m (m=0..N−1) built once (cos/sin only once per m).
+ * - **Stage twiddle mapping** for pure-power FFTs: W_{N_stage}^{j*k} ⇒ W_N^{(j*k)*(N/N_stage)} to avoid recomputation/copies.
+ * - Optional **precomputed twiddle tables** for common small radices (2,3,4,5,7,8,11,13) via `USE_TWIDDLE_TABLES`.
+ * - Inverse FFT handled by **sign flip of imag parts** (no trig recompute).
+ *
+ * **Bluestein precomputation**
+ * - Startup constructor builds **precomputed chirp sequences** for small, common sizes
+ *   (e.g., {1,2,3,4,5,7,15,20,31,64}) into a **single contiguous, 32-byte aligned block** (`all_chirps`)
+ *   for cache locality and fewer allocations.
+ * - Quadratic-index accumulator (l2) to compute n² mod 2N **without large intermediates**.
+ *
+ * **SIMD vectorization (AVX/SSE2)**
+ * - Complex multiply kernels for **AoS** and **SoA** layouts:
+ *   - AoS AVX: lane-wise shuffles + `_mm256_addsub_pd` (**no horizontal reductions**).
+ *   - AoS SSE2: shuffles + `_mm_addsub_pd` for one complex value.
+ *   - SoA AVX/SSE2: separate re/im vectors to **avoid shuffle overhead** in hot paths.
+ * - **Deinterleave/interleave** utilities (4-wide AVX, 2-wide SSE2) using `permute2f128` + `unpack*`
+ *   to transpose **AoS ⇄ SoA** efficiently.
+ * - **90° rotations** (±i) realized with sign/select (no general complex multiply).
+ * - **Conjugation** via XOR with sign-bit masks (flip only imag lanes), zero-cost vs mul.
+ *
+ * **FMA usage with safe fallbacks**
+ * - When `__FMA__`/`USE_FMA` is available: `_mm256_fmadd_pd` / `_mm256_fmsub_pd`
+ *   reduce instruction count and rounding (single-rounding property).
+ * - **Portable fallbacks**: fmadd/fmsub expand to mul+add/sub on non-FMA targets,
+ *   and SSE2 paths always use mul+add/sub.
+ *
+ * **Memory layout & alignment**
+ * - **Configurable aligned vs unaligned** load/store macros (`USE_ALIGNED_SIMD`) for portability.
+ * - All large work buffers (**twiddles**, **scratch**, **twiddle_factors**) allocated
+ *   with `_mm_malloc(..., 32)` → **32-byte alignment** (AVX-friendly).
+ * - **Single large scratch** buffer sized for worst case (mixed-radix or Bluestein) to
+ *   limit dynamic allocations during execution.
+ *
+ * **Cache & bandwidth optimizations**
+ * - **Contiguous storage** for precomputed Bluestein chirps (`all_chirps`) improves spatial locality.
+ * - **Broadcast-once** coefficient usage in SIMD kernels; keep hot data in registers to reduce reloads.
+ * - Optional **prefetch** macro (`FFT_PREFETCH_AOS`) to T0-hint ahead on AoS complex streams.
+ *
+ * **Control-flow & constant folding aids**
+ * - `ALWAYS_INLINE` on tiny kernels to enable vectorization and constant-propagation across call sites.
+ * - Branch-free or branch-light hot paths (e.g., conjugation, rot90 with compile-time `sign`).
+ *
+ * **Numerical considerations**
+ * - FMA (when available) provides **single rounding** per multiply-add, reducing accumulated error.
+ * - Radix-specific real constants (e.g., √2/2, √3/2, sin/cos tables for 5/7/11/13) avoid repeated `sin/cos`.
+ *
+ * **Robustness & portability**
+ * - Clean **fallbacks** for FMA and unaligned memory.
+ * - Works for both AoS and SoA internal paths; utility converters provided.
+ * - Constructor/destructor manage lifetime of global precomputations; failure paths clean up allocations.
+ *
+ * @note Key compile-time toggles:
+ *   - `USE_TWIDDLE_TABLES`: use precomputed small-radix twiddles.
+ *   - `USE_ALIGNED_SIMD`: prefer aligned load/stores (requires aligned data).
+ *   - `USE_FMA` / `__FMA__`: enable FMA code paths where supported.
+ *   - `FFT_PREFETCH_DISTANCE`: control look-ahead prefetching for AoS streams.
+ *
+
 */
 
 #include <stdlib.h>
@@ -452,7 +522,7 @@ struct fft_set {
     fft_data *twiddles;       // Twiddle factors for FFT stages
     fft_data *scratch;        // Scratch workspace for temporary data
     fft_data *twiddle_factors;// Precomputed twiddles for power-of-2 FFTs (size sum(N/2^i))
-	int stage_twiddle_offset[MAX_STAGES];
+    int stage_twiddle_offset[MAX_STAGES];
     int num_precomputed_stages;
 };
 
@@ -464,28 +534,78 @@ static int *chirp_sizes;           // Sizes of precomputed chirps
 static fft_data *all_chirps;       // Single block for all chirp data
 static int chirp_initialized;      // Flag for chirp initialization
 
-// Sets up an FFT object with twiddle factors and scratch buffer
+/**
+ * @brief Create an FFT plan for length N and direction sgn.
+ *
+ * Use when your module needs repeated FFTs of the same size/direction.
+ * Allocates twiddles and scratch once; `fft_exec` then runs fast.
+ *
+ * @param N    Transform length (> 0).
+ * @param sgn  +1 = forward (DFT), -1 = inverse (IDFT).
+ * @return     Opaque plan pointer or NULL on failure.
+ *
+ * @note Keep the returned object and reuse it across calls to `fft_exec`.
+ *       Create a separate plan per distinct N/sgn you need.
+ */
 fft_object fft_init(int N, int sgn);
 
-// Runs the FFT (mixed-radix or Bluestein) on input data
+/**
+ * @brief Execute the FFT using a prepared plan.
+ *
+ * Runs either mixed-radix or Bluestein as chosen by the plan.
+ * Safe to call repeatedly with the same plan for different buffers.
+ *
+ * @param obj  Plan from `fft_init`.
+ * @param inp  Pointer to N complex samples (AoS: {re,im}).
+ * @param oup  Pointer to N complex samples (AoS) for results.
+ *
+ * @warning Input and output must not alias unless your usage intends in-place
+ *          semantics and your build/plan supports it. Prefer distinct buffers.
+ */
 void fft_exec(fft_object obj, fft_data *inp, fft_data *oup);
 
-// Checks if M is fully divisible by d, reducing M to 1
+/**
+ * @brief Quick divisibility reducer for internal factoring flows.
+ *
+ * Repeatedly divides M by d while divisible, returns 1 if fully reduced to 1.
+ * Most modules won’t call this directly—use `factors()` instead.
+ *
+ * @param M  Positive integer.
+ * @param d  Divisor (>1).
+ * @return   1 if M reduces to 1 using only d; 0 otherwise.
+ */
 int divideby(int M, int d);
 
-// Checks if N is divisible by small primes using a lookup table
+/**
+ * @brief Fast check: can N be factored only by small supported primes?
+ *
+ * Lets a caller decide strategy (e.g., choose FFT sizes up-front).
+ * Returns non-zero if N is “friendly” (supported mixed-radix); zero otherwise.
+ *
+ * @param N  Positive integer length.
+ * @return   Non-zero if N is supported by small primes; 0 otherwise.
+ */
 int dividebyN(int N);
 
-// Factorizes M into primes, storing up to 64 factors
+/**
+ * @brief Factorize M into primes (up to 64 entries).
+ *
+ * Useful if your module needs to reason about size choices (e.g., batching or
+ * picking buffer sizes that avoid Bluestein). Order is implementation-defined.
+ *
+ * @param M    Positive integer to factor.
+ * @param arr  Output array (capacity >= 64). Receives prime factors.
+ * @return     Number of factors written to arr (0 on failure).
+ */
 int factors(int M, int *arr);
 
-// Computes twiddle factors for a given radix and signal length
-void twiddle(fft_data *sig, int N, int radix);
-
-// Generates twiddle factor sequence based on prime factorization
-void longvectorN(fft_data *sig, int N, int *array, int M);
-
-// Frees the FFT object and its buffers
+/**
+ * @brief Destroy an FFT plan and free its internal buffers.
+ *
+ * Call exactly once per successful `fft_init`.
+ *
+ * @param object  Plan to free (may be NULL).
+ */
 void free_fft(fft_object object);
 
 #ifdef __cplusplus
