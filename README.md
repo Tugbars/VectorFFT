@@ -119,5 +119,3 @@ make test
   * MSVC: `/O2 /arch:AVX2 /fp:fast`
 
 ---
-
-Do you want me to also expand the *“Features”* list to call out radix-7 and radix-13 as **planned but not yet vectorized**, so users know what’s done vs. still scalar?
