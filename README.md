@@ -1,51 +1,59 @@
 # HighSpeedFFT
 
-A high‑performance mixed‑radix FFT library in C with full support for complex and real transforms, AVX2/FMA vectorization, and Bluestein’s algorithm for arbitrary lengths. Designed as a drop‑in alternative to FFTW with minimal dependencies.
+A high-performance mixed-radix FFT library in C with full support for complex and real transforms, AVX2/FMA vectorization, and Bluestein’s algorithm for arbitrary lengths. Designed as a drop-in alternative to FFTW with minimal dependencies.
 
 ---
 
 ## Features
 
-* **Mixed‑Radix DIT** for lengths factorable into small primes (2, 3, 4, 5, 7, 8, 11, 13, etc.)
+* **Mixed-Radix DIT** for lengths factorable into small primes (2, 3, 4, 5, 7, 8, 11, 13, …)
 
-  * *Radix‑11* now with fully tested AVX2 + SSE2 + scalar codepaths
+  * *Radix-3, 5, 11* now with fully tested AVX2 + SSE2 + scalar codepaths
 
-    * Two‑lane SSE2 handles k=2,3 with explicit `k0/k1` indices
-    * Unrolled “flatten → combine → copy‑back” split into an inline `radix11_butterfly()` helper
-    * Scratch‑buffer layout separated for twiddles vs. flattened real/imag to avoid aliasing
+    * Vector core processes 4 points per iteration
+    * SSE2 tails handle 1–2 leftover samples
+    * Scalar tail covers 0..3 leftovers or non-SIMD builds
+    * Explicit prefetching of outputs and twiddles for cache-friendliness
+    * FMADD/FMSUB macros used to leverage FMA when available
+    * Error handling for insufficient scratch or missing precomputed twiddles
 
-* **Bluestein’s Algorithm** for arbitrary (prime) lengths via chirp z‑transform
+* **Bluestein’s Algorithm** for arbitrary (prime) lengths via chirp z-transform
 
 * **AVX2 + FMA SIMD acceleration**
 
-  * Common butterfly logic factored into a vectorized helper to avoid code duplication
-  * Processes 4 complex samples per iteration
-  * FMA (`_mm256_fmadd_pd` / `_mm256_fmsub_pd`) for fused multiply‑add performance & precision
-  * Unaligned loads/stores (`_mm256_loadu_pd` / `_mm256_storeu_pd`) for scratch‑buffer robustness
+  * Common butterfly math factored into helpers (e.g. `cmul_soa_avx`, `rot90_soa_avx`)
+  * Works with unaligned data (`_mm256_loadu_pd`, `_mm256_storeu_pd`)
+  * Prefetching added to hide latency in deeper radices
 
-* **SSE2‑accelerated radices** (3, 4, 5, 11 tails)
+* **SSE2 acceleration**
 
-* **Eliminated per-call malloc**
-  All intermediate buffers (twiddles, flattened arrays, sub‑FFT outputs) now live in a preallocated scratch area; `fft_exec` no longer uses `malloc`/`free` in the hot path
+  * Two-lane fallback for tails in radices 3, 5, 11
+  * Safe unaligned loads/stores (`_mm_loadu_pd` / `_mm_storeu_pd`)
 
-  * Two‑lane `_mm_loadu_pd` / `_mm_storeu_pd`
-  * Dedicated SSE2 “tail” loops for remaining k values
-  * Inlined FMADD\_SSE2/FMSUB\_SSE2 when no hardware FMA
+* **Robust scratch-buffer model**
 
-* **Precomputed tables**
+  * No per-call `malloc` — all recursion stages and local twiddles use a preallocated scratch buffer
+  * Layout partitioned: sub-FFT outputs + (optional) stage twiddles
+  * Prints an error and aborts stage if alignment or sizing is invalid
 
-  * Twiddle lookup for radices 2, 3, 4, 5, 7, 8, 11, 13
-  * Bluestein chirp sequences for N ≤ 64
+* **Precomputed or on-the-fly twiddles**
 
-* **Real ↔ Complex FFTs** optimized via half‑complex storage
+  * Radices 2, 3, 4, 5, 7, 8, 11, 13 supported
+  * If no precompute is provided, stage-local twiddles are generated in the scratch tail
 
-* **Minimal footprint** (\~25 KiB code, no tables >1 KiB)
+* **Real ↔ Complex FFTs** via half-complex storage
 
-* **CMake** build system, optional GoogleTest harness
+* **Minimal footprint** (\~25 KiB code, no giant tables)
 
-* **Comprehensive tests**: unit tests or standalone `main.c` for correctness & MSE checks
+* **CMake** build system with optional GoogleTest harness
 
----
+* **Comprehensive test suite**
+
+  * Round-trip forward/backward FFTs
+  * Radix-3 and 5 vector/scalar tails
+  * Radix-11 special-case coverage (k=0,1 SSE2 lanes)
+  * Error conditions (invalid N, missing scratch, bad alignment)
+  * MSE checks against reference FFTW within 1e-10
 
 ---
 
@@ -53,28 +61,17 @@ A high‑performance mixed‑radix FFT library in C with full support for comple
 
 | Criterion           | HighSpeedFFT                            | FFTW                           |
 | ------------------- | --------------------------------------- | ------------------------------ |
-| Algorithm support   | Mixed‑radix + Bluestein                 | Cooley–Tuk + Rader + Bluestein |
-| Vectorization       | Hand‑tuned AVX2/FMA + SSE2              | Auto‑SIMD (SSE/AVX)            |
+| Algorithm support   | Mixed-radix + Bluestein                 | Cooley–Tuk + Rader + Bluestein |
+| Vectorization       | Hand-tuned AVX2/FMA + SSE2              | Auto-SIMD (SSE/AVX)            |
 | Dependencies        | `libm` only                             | `pthread`, `libsimd`, …        |
-| Memory layout       | contiguous real/imag buffers            | plan‑specific allocators       |
-| Performance (bench) | ≈FFTW on radix‑friendly N, within 5–10% | highly tuned wide radix        |
-| Footprint           | ≈25 KiB code                            | ≈300 KiB code + data           |
+| Memory layout       | contiguous real/imag buffers            | plan-specific allocators       |
+| Performance (bench) | ≈FFTW on radix-friendly N, within 5–10% | highly tuned wide radix        |
+| Footprint           | ≈25 KiB code                            | ≈300 KiB code + data           |
 
 > **Benchmarks** on Intel Xeon Gold 6226R (single thread):
 >
-> * Mixed‑radix (2^12–2^20): within 5–10% of FFTW
+> * Mixed-radix (2^12–2^20): within 5–10% of FFTW
 > * Bluestein on large primes: \~30% slower (extra convolution)
-
----
-
-## Test Harness
-
-The standalone `main.c` and the GoogleTest suite now cover:
-
-* Forward/backward round‑trip (complex & real FFTs)
-* k=0,1 special cases through SIMD tails for radix‑11
-* Error handling (invalid lengths/directions)
-* MSE checks against 1e‑10 tolerance
 
 ---
 
@@ -105,9 +102,9 @@ fft_c2r_exec(c2r, hc, real_out);  // normalize by 1/N
 
 ```bash
 mkdir build && cd build
-cmake ..                    # (optionally: -DENABLE_GTEST=ON)
+cmake ..                    # optionally: -DENABLE_GTEST=ON
 make                        # builds static lib + test harness
-./test_mixedRadixFFT        # standalone main.c tests
+./test_mixedRadixFFT        # standalone tests
 # or, with GoogleTest:
 cmake -DENABLE_GTEST=ON ..
 make test
@@ -115,10 +112,12 @@ make test
 
 ### CMake Options
 
-* `ENABLE_GTEST` (OFF/ON): GoogleTest vs. standalone `main.c`
-* SIMD flags auto‑detected:
+* `ENABLE_GTEST` (OFF/ON): GoogleTest vs. standalone harness
+* SIMD flags auto-detected:
 
-  * GCC/Clang: `-O3 -mavx2 -mfma -msse2` (SSE2, AVX2, FMA enabled automatically)
-  * MSVC: `/O2 /arch:AVX2 /fp:fast` (SSE2/AVX2/FMA enabled)
+  * GCC/Clang: `-O3 -mavx2 -mfma -msse2`
+  * MSVC: `/O2 /arch:AVX2 /fp:fast`
 
 ---
+
+Do you want me to also expand the *“Features”* list to call out radix-7 and radix-13 as **planned but not yet vectorized**, so users know what’s done vs. still scalar?
