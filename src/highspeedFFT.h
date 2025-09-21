@@ -526,14 +526,6 @@ struct fft_set {
     int num_precomputed_stages;
 };
 
-// Global Bluestein chirp data
-static const int pre_sizes[] = {1, 2, 3, 4, 5, 7, 15, 20, 31, 64};
-static const int num_pre = sizeof(pre_sizes) / sizeof(pre_sizes[0]);
-static fft_data **bluestein_chirp; // Pointers to precomputed chirp sequences
-static int *chirp_sizes;           // Sizes of precomputed chirps
-static fft_data *all_chirps;       // Single block for all chirp data
-static int chirp_initialized;      // Flag for chirp initialization
-
 /**
  * @brief Create an FFT plan for length N and direction sgn.
  *
