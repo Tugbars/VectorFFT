@@ -6,16 +6,28 @@
 // INLINE / ATTRIBUTES
 //==============================================================================
 #ifdef _MSC_VER
-  #define ALWAYS_INLINE __forceinline
+#define ALWAYS_INLINE __forceinline
 #elif defined(__GNUC__) || defined(__clang__)
-  #define ALWAYS_INLINE inline __attribute__((always_inline))
+#define ALWAYS_INLINE inline __attribute__((always_inline))
 #else
-  #define ALWAYS_INLINE inline
+#define ALWAYS_INLINE inline
 #endif
 
 #ifndef ADDSUB_ROT
-  #define ADDSUB_ROT 0
+#define ADDSUB_ROT 0
 #endif
+
+//==============================================================================
+// ALIGNMENT HELPERS
+//==============================================================================
+static ALWAYS_INLINE int is_aligned_32(const void *p)
+{
+    return (((uintptr_t)p) & 31) == 0;
+}
+static ALWAYS_INLINE int is_aligned_16(const void *p)
+{
+    return (((uintptr_t)p) & 15) == 0;
+}
 
 /**
  * @brief Build configuration option for twiddle factor computation.
@@ -27,84 +39,162 @@
 //==============================================================================
 // FMA MACROS
 //   - AVX: FMADD/FMSUB (256-bit)
-//   - SSE: FMADD_SSE2_PD / FMSUB_SSE2_PD map to FMA if available, else fallback
+//   - 128-bit: FMADD_SSE2_PD / FMSUB_SSE2_PD use FMA if available, else fallback
+//   - Convenience aliases: FMADD_SSE2 / FMSUB_SSE2 == 128-bit versions
 //==============================================================================
-#if defined(__FMA__) || defined(USE_FMA)
-  // AVX 256b
-  #define FMADD(a,b,c)        _mm256_fmadd_pd((a),(b),(c))
-  #define FMSUB(a,b,c)        _mm256_fmsub_pd((a),(b),(c))
-  // SSE 128b
-  #define FMADD_SSE2_PD(a,b,c) _mm_fmadd_pd((a),(b),(c))
-  #define FMSUB_SSE2_PD(a,b,c) _mm_fmsub_pd((a),(b),(c))
-#else
-  // AVX 256b fallback
-  static ALWAYS_INLINE __m256d fmadd_fallback(__m256d a, __m256d b, __m256d c) {
-    return _mm256_add_pd(_mm256_mul_pd(a, b), c);
-  }
-  static ALWAYS_INLINE __m256d fmsub_fallback(__m256d a, __m256d b, __m256d c) {
-    return _mm256_sub_pd(_mm256_mul_pd(a, b), c);
-  }
-  #define FMADD(a,b,c)        fmadd_fallback((a),(b),(c))
-  #define FMSUB(a,b,c)        fmsub_fallback((a),(b),(c))
-  // SSE 128b fallback
-  static ALWAYS_INLINE __m128d fmadd_sse2_fallback(__m128d a, __m128d b, __m128d c) {
+
+// 128-bit fallback helpers are always available (SSE2 has no FMA)
+static ALWAYS_INLINE __m128d fmadd_sse2_fallback(__m128d a, __m128d b, __m128d c)
+{
     return _mm_add_pd(_mm_mul_pd(a, b), c);
-  }
-  static ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c) {
+}
+static ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c)
+{
     return _mm_sub_pd(_mm_mul_pd(a, b), c);
-  }
-  #define FMADD_SSE2_PD(a,b,c) fmadd_sse2_fallback((a),(b),(c))
-  #define FMSUB_SSE2_PD(a,b,c) fmsub_sse2_fallback((a),(b),(c))
-#endif
+}
 
-// Convenience aliases (explicit SSE2 fallback names)
-#define FMADD_SSE2(a,b,c) fmadd_sse2_fallback((a),(b),(c))
-#define FMSUB_SSE2(a,b,c) fmsub_sse2_fallback((a),(b),(c))
+#if defined(__FMA__) || defined(USE_FMA)
 
-//==============================================================================
-// LOAD / STORE MACROS
-//   Primary macros (LOAD_PD/STORE_PD, LOAD_SSE2/STORE_SSE2) switch on alignment.
-//   Explicit unaligned helpers (LOADU_*/STOREU_*) are always available.
-//==============================================================================
-#ifdef USE_ALIGNED_SIMD
-  // AVX aligned
-  #define LOAD_PD(ptr)        _mm256_load_pd((const double*)(ptr))
-  #define STORE_PD(ptr,v)     _mm256_store_pd((double*)(ptr),(v))
-  // SSE aligned
-  #define LOAD_SSE2(ptr)      _mm_load_pd((const double*)(ptr))
-  #define STORE_SSE2(ptr,v)   _mm_store_pd((double*)(ptr),(v))
+// --- 256-bit AVX FMA ---
+#define FMADD(a, b, c) _mm256_fmadd_pd((a), (b), (c))
+#define FMSUB(a, b, c) _mm256_fmsub_pd((a), (b), (c))
+
+// --- 128-bit FMA (requires -mfma) ---
+#define FMADD_SSE2_PD(a, b, c) _mm_fmadd_pd((a), (b), (c))
+#define FMSUB_SSE2_PD(a, b, c) _mm_fmsub_pd((a), (b), (c))
+
 #else
-  // AVX unaligned
-  #define LOAD_PD(ptr)        _mm256_loadu_pd((const double*)(ptr))
-  #define STORE_PD(ptr,v)     _mm256_storeu_pd((double*)(ptr),(v))
-  // SSE unaligned
-  #define LOAD_SSE2(ptr)      _mm_loadu_pd((const double*)(ptr))
-  #define STORE_SSE2(ptr,v)   _mm_storeu_pd((double*)(ptr),(v))
+
+// --- 256-bit fallback ---
+static ALWAYS_INLINE __m256d fmadd_fallback(__m256d a, __m256d b, __m256d c)
+{
+    return _mm256_add_pd(_mm256_mul_pd(a, b), c);
+}
+static ALWAYS_INLINE __m256d fmsub_fallback(__m256d a, __m256d b, __m256d c)
+{
+    return _mm256_sub_pd(_mm256_mul_pd(a, b), c);
+}
+#define FMADD(a, b, c) fmadd_fallback((a), (b), (c))
+#define FMSUB(a, b, c) fmsub_fallback((a), (b), (c))
+
+// --- 128-bit fallback ---
+#define FMADD_SSE2_PD(a, b, c) fmadd_sse2_fallback((a), (b), (c))
+#define FMSUB_SSE2_PD(a, b, c) fmsub_sse2_fallback((a), (b), (c))
+
 #endif
 
-// Explicit unaligned helpers (use these when alignment is unknown)
-#define LOADU_PD(ptr)         _mm256_loadu_pd((const double*)(ptr))
-#define STOREU_PD(ptr,v)      _mm256_storeu_pd((double*)(ptr),(v))
-#define LOADU_SSE2(ptr)       _mm_loadu_pd((const double*)(ptr))
-#define STOREU_SSE2(ptr,v)    _mm_storeu_pd((double*)(ptr),(v))
+// Convenience aliases to the 128-bit versions
+#define FMADD_SSE2(a, b, c) FMADD_SSE2_PD((a), (b), (c))
+#define FMSUB_SSE2(a, b, c) FMSUB_SSE2_PD((a), (b), (c))
+
+//==============================================================================
+// LOAD / STORE WRAPPERS
+// If USE_ALIGNED_SIMD is defined, enforce alignment at the *access site*.
+// On misalignment:
+//   - If FFT_STRICT_ALIGNMENT is defined: print error and abort()
+//   - Else: print error and FALL BACK to unaligned op
+// If USE_ALIGNED_SIMD is NOT defined: always use unaligned ops (no checks).
+//==============================================================================
+
+static ALWAYS_INLINE __m256d LOAD_PD(const double *ptr)
+{
+#ifdef USE_ALIGNED_SIMD
+    if (!is_aligned_32(ptr))
+    {
+        fprintf(stderr, "FFT ERROR: unaligned AVX load at %p (expected 32B)\n", (void *)ptr);
+#ifdef FFT_STRICT_ALIGNMENT
+        abort();
+#else
+        return _mm256_loadu_pd(ptr);
+#endif
+    }
+    return _mm256_load_pd(ptr);
+#else
+    return _mm256_loadu_pd(ptr);
+#endif
+}
+
+static ALWAYS_INLINE void STORE_PD(double *ptr, __m256d v)
+{
+#ifdef USE_ALIGNED_SIMD
+    if (!is_aligned_32(ptr))
+    {
+        fprintf(stderr, "FFT ERROR: unaligned AVX store at %p (expected 32B)\n", (void *)ptr);
+#ifdef FFT_STRICT_ALIGNMENT
+        abort();
+#else
+        _mm256_storeu_pd(ptr, v);
+        return;
+#endif
+    }
+    _mm256_store_pd(ptr, v);
+#else
+    _mm256_storeu_pd(ptr, v);
+#endif
+}
+
+static ALWAYS_INLINE __m128d LOAD_SSE2(const double *ptr)
+{
+#ifdef USE_ALIGNED_SIMD
+    if (!is_aligned_16(ptr))
+    {
+        fprintf(stderr, "FFT ERROR: unaligned SSE load at %p (expected 16B)\n", (void *)ptr);
+#ifdef FFT_STRICT_ALIGNMENT
+        abort();
+#else
+        return _mm_loadu_pd(ptr);
+#endif
+    }
+    return _mm_load_pd(ptr);
+#else
+    return _mm_loadu_pd(ptr);
+#endif
+}
+
+static ALWAYS_INLINE void STORE_SSE2(double *ptr, __m128d v)
+{
+#ifdef USE_ALIGNED_SIMD
+    if (!is_aligned_16(ptr))
+    {
+        fprintf(stderr, "FFT ERROR: unaligned SSE store at %p (expected 16B)\n", (void *)ptr);
+#ifdef FFT_STRICT_ALIGNMENT
+        abort();
+#else
+        _mm_storeu_pd(ptr, v);
+        return;
+#endif
+    }
+    _mm_store_pd(ptr, v);
+#else
+    _mm_storeu_pd(ptr, v);
+#endif
+}
+
+// Explicit unaligned helpers (bypass checks)
+#define LOADU_PD(ptr) _mm256_loadu_pd((const double *)(ptr))
+#define STOREU_PD(ptr, v) _mm256_storeu_pd((double *)(ptr), (v))
+#define LOADU_SSE2(ptr) _mm_loadu_pd((const double *)(ptr))
+#define STOREU_SSE2(ptr, v) _mm_storeu_pd((double *)(ptr), (v))
 
 //==============================================================================
 // PREFETCH HELPERS
 //==============================================================================
 #ifndef FFT_PREFETCH_DISTANCE
-  #define FFT_PREFETCH_DISTANCE 8  // ~64B ahead for AoS complex<double>
+#define FFT_PREFETCH_DISTANCE 8 // ~64B ahead for AoS complex<double>
 #endif
 
-#define FFT_PREFETCH_AOS(ptr) do {                                 \
-  _mm_prefetch((const char*)&(ptr)->re, _MM_HINT_T0);               \
-  _mm_prefetch((const char*)&(ptr)->im, _MM_HINT_T0);               \
-} while (0)
+#define FFT_PREFETCH_AOS(ptr)                                \
+    do                                                       \
+    {                                                        \
+        _mm_prefetch((const char *)&(ptr)->re, _MM_HINT_T0); \
+        _mm_prefetch((const char *)&(ptr)->im, _MM_HINT_T0); \
+    } while (0)
 
 //==============================================================================
 // COMMON CONSTANT VECTORS
 //==============================================================================
-#define AVX_ONE   _mm256_set1_pd(1.0)
-#define SSE2_ONE  _mm_set1_pd(1.0)
+#define AVX_ONE _mm256_set1_pd(1.0)
+#define SSE2_ONE _mm_set1_pd(1.0)
 
 //==============================================================================
 // RADIX-SPECIFIC SCALAR CONSTANTS
@@ -114,34 +204,33 @@
 static const double C3_SQRT3BY2 = 0.8660254037844386; // √3/2 for 120° rotation
 
 // --- Radix-5 constants ---
-static const double C5_1 =  0.30901699437;  // cos(72°)
-static const double C5_2 = -0.80901699437;  // cos(144°)
-static const double S5_1 =  0.95105651629;  // sin(72°)
-static const double S5_2 =  0.58778525229;  // sin(144°)
+static const double C5_1 = 0.30901699437;  // cos(72°)
+static const double C5_2 = -0.80901699437; // cos(144°)
+static const double S5_1 = 0.95105651629;  // sin(72°)
+static const double S5_2 = 0.58778525229;  // sin(144°)
 
 // --- Radix-7 constants ---
-static const double C1 =  0.62348980185;  // cos( 51.43°)
-static const double C2 = -0.22252093395;  // cos(102.86°)
-static const double C3 = -0.90096886790;  // cos(154.29°)
-static const double S1 =  0.78183148246;  // sin( 51.43°)
-static const double S2 =  0.97492791218;  // sin(102.86°)
-static const double S3 =  0.43388373911;  // sin(154.29°)
+static const double C1 = 0.62348980185;  // cos( 51.43°)
+static const double C2 = -0.22252093395; // cos(102.86°)
+static const double C3 = -0.90096886790; // cos(154.29°)
+static const double S1 = 0.78183148246;  // sin( 51.43°)
+static const double S2 = 0.97492791218;  // sin(102.86°)
+static const double S3 = 0.43388373911;  // sin(154.29°)
 
 // --- Radix-8 constant ---
 static const double C8_1 = 0.7071067811865476; // √2/2 for 45° rotation
 
 // --- Radix-11 constants ---
-static const double C11_1 =  0.8412535328311812;   // cos(2π/11)
-static const double C11_2 =  0.4154150130018864;   // cos(4π/11)
-static const double C11_3 = -0.14231483827328514;  // cos(6π/11)
-static const double C11_4 = -0.6548607339452850;   // cos(8π/11)
-static const double C11_5 = -0.9594929736144974;   // cos(10π/11)
-static const double S11_1 =  0.5406408174555976;   // sin(2π/11)
-static const double S11_2 =  0.9096319953545184;   // sin(4π/11)
-static const double S11_3 =  0.9898214418809327;   // sin(6π/11)
-static const double S11_4 =  0.7557495743542583;   // sin(8π/11)
-static const double S11_5 =  0.28173255684142967;  // sin(10π/11)
-
+static const double C11_1 = 0.8412535328311812;   // cos(2π/11)
+static const double C11_2 = 0.4154150130018864;   // cos(4π/11)
+static const double C11_3 = -0.14231483827328514; // cos(6π/11)
+static const double C11_4 = -0.6548607339452850;  // cos(8π/11)
+static const double C11_5 = -0.9594929736144974;  // cos(10π/11)
+static const double S11_1 = 0.5406408174555976;   // sin(2π/11)
+static const double S11_2 = 0.9096319953545184;   // sin(4π/11)
+static const double S11_3 = 0.9898214418809327;   // sin(6π/11)
+static const double S11_4 = 0.7557495743542583;   // sin(8π/11)
+static const double S11_5 = 0.28173255684142967;  // sin(10π/11)
 
 //==============================================================================
 // DIVISIBILITY LOOKUP (for dividebyN up to 1024)
@@ -149,8 +238,7 @@ static const double S11_5 =  0.28173255684142967;  // sin(10π/11)
 #define LOOKUP_MAX 1024
 
 static const int primes[] = {
-    2, 3, 4, 5, 7, 8, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53
-};
+    2, 3, 4, 5, 7, 8, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53};
 static const int num_primes = sizeof(primes) / sizeof(primes[0]);
 
 static unsigned char dividebyN_lookup[LOOKUP_MAX]; // 0 = not divisible, 1 = divisible
@@ -159,7 +247,6 @@ static const int pre_sizes[] = {1, 2, 3, 4, 5, 7, 15, 20, 31, 64};
 static const int num_pre = (int)(sizeof(pre_sizes) / sizeof(pre_sizes[0]));
 
 static fft_data *all_chirps = NULL; // single contiguous block holding all precomputed sequences
-
 
 // Initialize the lookup table at compile time or runtime
 __attribute__((constructor)) static void init_dividebyN_lookup(void)
@@ -205,110 +292,104 @@ __attribute__((constructor)) static void init_dividebyN_lookup(void)
 // TWIDDLE FACTOR TABLES (per radix)
 //==============================================================================
 
-typedef struct {
+typedef struct
+{
     double re;
     double im;
 } complex_t;
 
 // --- Radix-2 ---
 static const complex_t twiddle_radix2[] = {
-    { 1.0,  0.0},
-    { 0.0, -1.0}
-};
+    {1.0, 0.0},
+    {0.0, -1.0}};
 
 // --- Radix-3 ---
 static const complex_t twiddle_radix3[] = {
-    { 1.0,  0.0},
+    {1.0, 0.0},
     {-0.5, -0.86602540378},
-    {-0.5,  0.86602540378}
-};
+    {-0.5, 0.86602540378}};
 
 // --- Radix-4 ---
 static const complex_t twiddle_radix4[] = {
-    { 1.0,  0.0},
-    { 0.0, -1.0},
-    {-1.0,  0.0},
-    { 0.0,  1.0}
-};
+    {1.0, 0.0},
+    {0.0, -1.0},
+    {-1.0, 0.0},
+    {0.0, 1.0}};
 
 // --- Radix-5 ---
 static const complex_t twiddle_radix5[] = {
-    { 1.0,  0.0},
-    { 0.30901699437, -0.95105651629},
+    {1.0, 0.0},
+    {0.30901699437, -0.95105651629},
     {-0.80901699437, -0.58778525229},
-    {-0.80901699437,  0.58778525229},
-    { 0.30901699437,  0.95105651629}
-};
+    {-0.80901699437, 0.58778525229},
+    {0.30901699437, 0.95105651629}};
 
 // --- Radix-7 ---
 static const complex_t twiddle_radix7[] = {
-    { 1.0,  0.0},
-    { 0.62348980185, -0.78183148246},
+    {1.0, 0.0},
+    {0.62348980185, -0.78183148246},
     {-0.22252093395, -0.97492791218},
     {-0.90096886790, -0.43388373911},
-    {-0.90096886790,  0.43388373911},
-    {-0.22252093395,  0.97492791218},
-    { 0.62348980185,  0.78183148246}
-};
+    {-0.90096886790, 0.43388373911},
+    {-0.22252093395, 0.97492791218},
+    {0.62348980185, 0.78183148246}};
 
 // --- Radix-8 ---
 static const complex_t twiddle_radix8[] = {
-    { 1.0,  0.0},
-    { 0.70710678118, -0.70710678118},
-    { 0.0, -1.0},
+    {1.0, 0.0},
+    {0.70710678118, -0.70710678118},
+    {0.0, -1.0},
     {-0.70710678118, -0.70710678118},
-    {-1.0,  0.0},
-    {-0.70710678118,  0.70710678118},
-    { 0.0,  1.0},
-    { 0.70710678118,  0.70710678118}
-};
+    {-1.0, 0.0},
+    {-0.70710678118, 0.70710678118},
+    {0.0, 1.0},
+    {0.70710678118, 0.70710678118}};
 
 // --- Radix-11 ---
 static const complex_t twiddle_radix11[] = {
-    { 1.0,  0.0},                                 // k=0
-    { 0.8412535328311812, -0.5406408174555976},   // k=1
-    { 0.4154150130018864, -0.9096319953545184},   // k=2
-    {-0.14231483827328514, -0.9898214418809327},  // k=3
-    {-0.6548607339452850, -0.7557495743542583},   // k=4
-    {-0.9594929736144974, -0.28173255684142967},  // k=5
-    {-0.9594929736144974,  0.28173255684142967},  // k=6
-    {-0.6548607339452850,  0.7557495743542583},   // k=7
-    {-0.14231483827328514,  0.9898214418809327},  // k=8
-    { 0.4154150130018864,  0.9096319953545184},   // k=9
-    { 0.8412535328311812,  0.5406408174555976}    // k=10
+    {1.0, 0.0},                                  // k=0
+    {0.8412535328311812, -0.5406408174555976},   // k=1
+    {0.4154150130018864, -0.9096319953545184},   // k=2
+    {-0.14231483827328514, -0.9898214418809327}, // k=3
+    {-0.6548607339452850, -0.7557495743542583},  // k=4
+    {-0.9594929736144974, -0.28173255684142967}, // k=5
+    {-0.9594929736144974, 0.28173255684142967},  // k=6
+    {-0.6548607339452850, 0.7557495743542583},   // k=7
+    {-0.14231483827328514, 0.9898214418809327},  // k=8
+    {0.4154150130018864, 0.9096319953545184},    // k=9
+    {0.8412535328311812, 0.5406408174555976}     // k=10
 };
 
 // --- Radix-13 ---
 static const complex_t twiddle_radix13[] = {
-    { 1.0,  0.0},                                 // k=0
-    { 0.8854560256532099, -0.46472317204376856},  // k=1
-    { 0.5680647467311558, -0.8229838658936564},   // k=2
-    { 0.12053668025532305, -0.992708874098054},   // k=3
-    {-0.3546048870425356, -0.9350162426854148},   // k=4
-    {-0.7485107481711011, -0.6631226582407952},   // k=5
-    {-0.970941817426052,  -0.23931566428755774},  // k=6
-    {-0.970941817426052,   0.23931566428755774},  // k=7
-    {-0.7485107481711011,  0.6631226582407952},   // k=8
-    {-0.3546048870425356,  0.9350162426854148},   // k=9
-    { 0.12053668025532305, 0.992708874098054},    // k=10
-    { 0.5680647467311558, 0.8229838658936564},    // k=11
-    { 0.8854560256532099, 0.46472317204376856}    // k=12
+    {1.0, 0.0},                                 // k=0
+    {0.8854560256532099, -0.46472317204376856}, // k=1
+    {0.5680647467311558, -0.8229838658936564},  // k=2
+    {0.12053668025532305, -0.992708874098054},  // k=3
+    {-0.3546048870425356, -0.9350162426854148}, // k=4
+    {-0.7485107481711011, -0.6631226582407952}, // k=5
+    {-0.970941817426052, -0.23931566428755774}, // k=6
+    {-0.970941817426052, 0.23931566428755774},  // k=7
+    {-0.7485107481711011, 0.6631226582407952},  // k=8
+    {-0.3546048870425356, 0.9350162426854148},  // k=9
+    {0.12053668025532305, 0.992708874098054},   // k=10
+    {0.5680647467311558, 0.8229838658936564},   // k=11
+    {0.8854560256532099, 0.46472317204376856}   // k=12
 };
 
 //==============================================================================
 // TWIDDLE DISPATCH TABLE
 //==============================================================================
 static const complex_t *twiddle_tables[14] = {
-    [0]  = NULL,
-    [2]  = twiddle_radix2,
-    [3]  = twiddle_radix3,
-    [4]  = twiddle_radix4,
-    [5]  = twiddle_radix5,
-    [7]  = twiddle_radix7,
-    [8]  = twiddle_radix8,
+    [0] = NULL,
+    [2] = twiddle_radix2,
+    [3] = twiddle_radix3,
+    [4] = twiddle_radix4,
+    [5] = twiddle_radix5,
+    [7] = twiddle_radix7,
+    [8] = twiddle_radix8,
     [11] = twiddle_radix11,
-    [13] = twiddle_radix13
-};
+    [13] = twiddle_radix13};
 
 //==============================================================================
 // BLUESTEin CHIRP: PRECOMPUTED SMALL-N TABLE
@@ -344,11 +425,11 @@ static int chirp_initialized = 0;
 static void init_bluestein_chirp_body(void);
 static void cleanup_bluestein_chirp_body(void);
 
-
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((constructor))
 #endif
-static void init_bluestein_chirp(void)
+static void
+init_bluestein_chirp(void)
 {
     init_bluestein_chirp_body();
 }
@@ -356,7 +437,8 @@ static void init_bluestein_chirp(void)
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((destructor))
 #endif
-static void cleanup_bluestein_chirp(void)
+static void
+cleanup_bluestein_chirp(void)
 {
     cleanup_bluestein_chirp_body();
 }
@@ -367,7 +449,8 @@ static void cleanup_bluestein_chirp(void)
 */
 static ALWAYS_INLINE void ensure_bluestein_chirp_initialized(void)
 {
-    if (!chirp_initialized) init_bluestein_chirp_body();
+    if (!chirp_initialized)
+        init_bluestein_chirp_body();
 }
 
 /**
@@ -390,25 +473,33 @@ static ALWAYS_INLINE void ensure_bluestein_chirp_initialized(void)
  */
 static void init_bluestein_chirp_body(void)
 {
-    if (chirp_initialized) return;
+    if (chirp_initialized)
+        return;
 
     // total storage needed (rounded up per size to multiple of 4 for alignment-friendly access)
     int total_chirp = 0;
-    for (int i = 0; i < num_pre; i++) {
+    for (int i = 0; i < num_pre; i++)
+    {
         total_chirp += ((pre_sizes[i] + 3) & ~3);
     }
 
     // allocate descriptor arrays
     bluestein_chirp = (fft_data **)malloc((size_t)num_pre * sizeof(fft_data *));
-    chirp_sizes     = (int *)malloc((size_t)num_pre * sizeof(int));
-    all_chirps      = (fft_data *)_mm_malloc((size_t)total_chirp * sizeof(fft_data), 32);
+    chirp_sizes = (int *)malloc((size_t)num_pre * sizeof(int));
+    all_chirps = (fft_data *)_mm_malloc((size_t)total_chirp * sizeof(fft_data), 32);
 
-    if (!bluestein_chirp || !chirp_sizes || !all_chirps) {
+    if (!bluestein_chirp || !chirp_sizes || !all_chirps)
+    {
         fprintf(stderr, "Error: Memory allocation failed for Bluestein chirp table\n");
-        if (all_chirps) _mm_free(all_chirps);
-        if (bluestein_chirp) free(bluestein_chirp);
-        if (chirp_sizes) free(chirp_sizes);
-        all_chirps = NULL; bluestein_chirp = NULL; chirp_sizes = NULL;
+        if (all_chirps)
+            _mm_free(all_chirps);
+        if (bluestein_chirp)
+            free(bluestein_chirp);
+        if (chirp_sizes)
+            free(chirp_sizes);
+        all_chirps = NULL;
+        bluestein_chirp = NULL;
+        chirp_sizes = NULL;
         chirp_initialized = 0;
         num_precomputed = 0;
         return; // fail gracefully; caller can still run without precomputed chirps
@@ -416,11 +507,12 @@ static void init_bluestein_chirp_body(void)
 
     // partition the big block and fill chirps
     int offset = 0;
-    for (int idx = 0; idx < num_pre; idx++) {
+    for (int idx = 0; idx < num_pre; idx++)
+    {
         const int n = pre_sizes[idx];
         const int n_rounded = ((n + 3) & ~3);
 
-        chirp_sizes[idx]     = n;                 // logical size
+        chirp_sizes[idx] = n; // logical size
         bluestein_chirp[idx] = all_chirps + offset;
         offset += n_rounded;
 
@@ -430,13 +522,15 @@ static void init_bluestein_chirp_body(void)
         int l2 = 0;
         const int len2 = 2 * n;
 
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < n; i++)
+        {
             const fft_type angle = theta * (fft_type)l2;
             bluestein_chirp[idx][i].re = cos(angle);
             bluestein_chirp[idx][i].im = sin(angle);
 
             l2 += 2 * i + 1;
-            while (l2 >= len2) l2 -= len2;  // wrap (>=, not >)
+            while (l2 >= len2)
+                l2 -= len2; // wrap (>=, not >)
         }
 
         // If you prefer to zero the padded tail (n..n_rounded-1), uncomment:
@@ -449,9 +543,12 @@ static void init_bluestein_chirp_body(void)
 
 static void cleanup_bluestein_chirp_body(void)
 {
-    if (all_chirps)      _mm_free(all_chirps);
-    if (bluestein_chirp) free(bluestein_chirp);
-    if (chirp_sizes)     free(chirp_sizes);
+    if (all_chirps)
+        _mm_free(all_chirps);
+    if (bluestein_chirp)
+        free(bluestein_chirp);
+    if (chirp_sizes)
+        free(chirp_sizes);
 
     all_chirps = NULL;
     bluestein_chirp = NULL;
@@ -478,7 +575,6 @@ static bool is_exact_power(int n, int p)
         n /= p;
     return n == 1;
 }
-
 
 // Build twiddles in linear order: tw[m] = e^{-2πi m / N}, m=0..N-1
 static void build_twiddles_linear(fft_data *tw, int N)
@@ -891,7 +987,6 @@ static inline __m256d load2_aos(const fft_data *p_k, const fft_data *p_k1)
     return _mm256_insertf128_pd(_mm256_castpd128_pd256(lo), hi, 1);
 }
 
-
 /**
  * @brief Deinterleave 4 AoS complex numbers (8 doubles) into SoA form (4-wide).
  *
@@ -998,14 +1093,9 @@ static ALWAYS_INLINE void cmul_soa_avx(__m256d ar, __m256d ai,
 {
     // rr = ar*br - ai*bi
     // ri = ar*bi + ai*br
-    __m256d ar_br = _mm256_mul_pd(ar, br);
-    __m256d ai_bi = _mm256_mul_pd(ai, bi);
-    __m256d ar_bi = _mm256_mul_pd(ar, bi);
-    __m256d ai_br = _mm256_mul_pd(ai, br);
-    *rr = _mm256_sub_pd(ar_br, ai_bi);
-    *ri = _mm256_add_pd(ar_bi, ai_br);
+    *rr = FMSUB(ar, br, _mm256_mul_pd(ai, bi));
+    *ri = FMADD(ar, bi, _mm256_mul_pd(ai, br));
 }
-
 
 /**
  * @brief Deinterleave two AoS complex numbers into SoA form (2-wide).
@@ -1028,7 +1118,7 @@ static ALWAYS_INLINE void cmul_soa_avx(__m256d ar, __m256d ai,
  *       must not alias in a way that violates strict aliasing.
  * @warning No bounds checking is performed.
  * @see interleave2_soa_to_aos()
- */    
+ */
 static inline void deinterleave2_aos_to_soa(const fft_data *src, double *re2, double *im2)
 {
     __m128d v = _mm_loadu_pd(&src[0].re); // [r0,i0]
@@ -1066,7 +1156,6 @@ static inline void interleave2_soa_to_aos(const double *re2, const double *im2, 
     _mm_storeu_pd(&dst[0].re, ri0);
     _mm_storeu_pd(&dst[1].re, ri1);
 }
-
 
 /**
  * @brief Complex multiply (pairwise) in SoA for SSE2 (2-wide).
@@ -1370,41 +1459,60 @@ static void mixed_radix_dit_rec(
             }
         }
 
-        // AVX2 body: 2 complex numbers per iter
-        // Negation masks for AoS lanes [re0, im0, re1, im1]
-        const __m256d FLIP_RE = _mm256_set_pd(+0.0, -0.0, +0.0, -0.0); // negate real lanes (0,2)
-        const __m256d FLIP_IM = _mm256_set_pd(-0.0, +0.0, -0.0, +0.0); // negate imag lanes (1,3)
-
+        // AVX2 body: 4 complex numbers per iter via SoA (FMA-friendly)
         int k = 0;
-        for (; k + 1 < sub_fft_size; k += 2)
+#if defined(__AVX2__)
+        for (; k + 3 < sub_fft_size; k += 4)
         {
-            // (Optional) prefetch a bit ahead – both re/im
+            // Prefetch a bit ahead – both re/im for even and odd lanes
             _mm_prefetch((const char *)&sub_fft_outputs[k + 8].re, _MM_HINT_T0);
             _mm_prefetch((const char *)&sub_fft_outputs[k + 8].im, _MM_HINT_T0);
             _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + sub_fft_size].re, _MM_HINT_T0);
             _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + sub_fft_size].im, _MM_HINT_T0);
 
-            __m256d even = LOADU_PD(&sub_fft_outputs[k].re);               // [er0, ei0, er1, ei1]
-            __m256d odd = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].re); // [or0, oi0, or1, oi1]
-            __m256d w = LOADU_PD(&twiddle_factors[k].re);                  // [wr0, wi0, wr1, wi1]
+            // ----- AoS -> SoA (4) for even/odd -----
+            double eR[4], eI[4], oR[4], oI[4];
+            deinterleave4_aos_to_soa(&sub_fft_outputs[k], eR, eI);                // even
+            deinterleave4_aos_to_soa(&sub_fft_outputs[k + sub_fft_size], oR, oI); // odd
 
-            __m256d tw = cmul_avx2_aos(odd, w); // odd * W^k
+            __m256d Er = _mm256_loadu_pd(eR), Ei = _mm256_loadu_pd(eI);
+            __m256d Or = _mm256_loadu_pd(oR), Oi = _mm256_loadu_pd(oI);
 
-            // X0 = even + tw  (use addsub + flip real lanes of tw)
-            __m256d tw_flip_re = _mm256_xor_pd(tw, FLIP_RE);
-            __m256d x0 = _mm256_addsub_pd(even, tw_flip_re);
+            // ----- Build 4 twiddles W^{k..k+3} in SoA -----
+            fft_data wa[4];
+            for (int p = 0; p < 4; ++p)
+                wa[p] = twiddle_factors[k + p];
 
-            // X1 = even - tw  (use addsub + flip imag lanes of tw == conj(tw))
-            __m256d tw_conj = _mm256_xor_pd(tw, FLIP_IM);
-            __m256d x1 = _mm256_addsub_pd(even, tw_conj);
+            double wR[4], wI[4];
+            deinterleave4_aos_to_soa(wa, wR, wI);
+            __m256d Wr = _mm256_loadu_pd(wR), Wi = _mm256_loadu_pd(wI);
 
-            STOREU_PD(&output_buffer[k].re, x0);
-            STOREU_PD(&output_buffer[k + sub_fft_size].re, x1);
+            // ----- Twiddle multiply (odd * W^k) with FMA -----
+            __m256d twr, twi;
+            cmul_soa_avx(Or, Oi, Wr, Wi, &twr, &twi); // uses FMADD/FMSUB internally
+
+            // ----- Butterfly: X0 = even + tw, X1 = even - tw -----
+            __m256d x0r = _mm256_add_pd(Er, twr);
+            __m256d x0i = _mm256_add_pd(Ei, twi);
+            __m256d x1r = _mm256_sub_pd(Er, twr);
+            __m256d x1i = _mm256_sub_pd(Ei, twi);
+
+            // ----- SoA -> AoS stores -----
+            double X0R[4], X0I[4], X1R[4], X1I[4];
+            _mm256_storeu_pd(X0R, x0r);
+            _mm256_storeu_pd(X0I, x0i);
+            _mm256_storeu_pd(X1R, x1r);
+            _mm256_storeu_pd(X1I, x1i);
+
+            interleave4_soa_to_aos(X0R, X0I, &output_buffer[k]);
+            interleave4_soa_to_aos(X1R, X1I, &output_buffer[k + sub_fft_size]);
         }
+#endif // __AVX2__
 
-        // SSE2 tail: last single complex if odd length
-        if (k < sub_fft_size)
+        // SSE2 tail: handle remaining 0..3 points (process 1 complex)
+        for (; k < sub_fft_size; ++k)
         {
+            // 128-bit masks for AoS addsub trick
             const __m128d FLIP_RE_128 = _mm_set_pd(+0.0, -0.0); // negate real lane (low)
             const __m128d FLIP_IM_128 = _mm_set_pd(-0.0, +0.0); // negate imag lane (high)
 
@@ -1414,11 +1522,11 @@ static void mixed_radix_dit_rec(
 
             __m128d tw = cmul_sse2_aos(o, w1);
 
-            // X0 = e + tw
+            // X0 = e + tw  (via addsub with flipped real)
             __m128d tw_flip_re = _mm_xor_pd(tw, FLIP_RE_128);
             __m128d x0 = _mm_addsub_pd(e, tw_flip_re);
 
-            // X1 = e - tw
+            // X1 = e - tw  (via addsub with conj(tw) -> flip imag)
             __m128d tw_conj = _mm_xor_pd(tw, FLIP_IM_128);
             __m128d x1 = _mm_addsub_pd(e, tw_conj);
 
@@ -1495,53 +1603,87 @@ static void mixed_radix_dit_rec(
             }
         }
 
-        // --- constants ---
+#if defined(__AVX2__)
         const __m256d vhalf = _mm256_set1_pd(0.5);
         const __m256d vsign_s = _mm256_set1_pd((double)transform_sign * C3_SQRT3BY2);
 
-        // --- AVX2 core: 2 complex per iter ---
         int k = 0;
-        for (; k + 1 < sub_fft_size; k += 2)
+        for (; k + 3 < sub_fft_size; k += 4)
         {
-            _mm_prefetch((const char *)&output_buffer[k + 16].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&output_buffer[k + 16 + sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&output_buffer[k + 16 + 2 * sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 16].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 16 + sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 16 + 2 * sub_fft_size].re, _MM_HINT_T0);
 
-            // a,b,c: sub-FFTs X0,X1,X2 at k and k+1
-            __m256d a = LOADU_PD(&sub_fft_outputs[k].re);
-            __m256d b = LOADU_PD(&sub_fft_outputs[k + sub_fft_size].re);
-            __m256d c = LOADU_PD(&sub_fft_outputs[k + 2 * sub_fft_size].re);
+            // ----- AoS -> SoA (4) for lanes a(=X0), b(=X1), c(=X2) -----
+            double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4];
+            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 0 * sub_fft_size], aR, aI);
+            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 1 * sub_fft_size], bR, bI);
+            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 2 * sub_fft_size], cR, cI);
 
-            // was: LOADU_PD(&twiddle_factors[2*k + 0].re)
-            __m256d w1 = load2_aos(&twiddle_factors[2 * k + 0], &twiddle_factors[2 * (k + 1) + 0]);
-            // was: LOADU_PD(&twiddle_factors[2*k + 1].re)
-            __m256d w2 = load2_aos(&twiddle_factors[2 * k + 1], &twiddle_factors[2 * (k + 1) + 1]);
+            __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
+            __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
+            __m256d Cr = _mm256_loadu_pd(cR), Ci = _mm256_loadu_pd(cI);
 
-            __m256d b2 = cmul_avx2_aos(b, w1);
-            __m256d c2 = cmul_avx2_aos(c, w2);
+            // ----- Build W^{k..k+3} and W^{2(k..k+3)} in SoA -----
+            fft_data w1a[4], w2a[4];
+            for (int p = 0; p < 4; ++p)
+            {
+                w1a[p] = twiddle_factors[2 * (k + p) + 0]; // W^k
+                w2a[p] = twiddle_factors[2 * (k + p) + 1]; // W^{2k}
+            }
+            double w1R[4], w1I[4], w2R[4], w2I[4];
+            deinterleave4_aos_to_soa(w1a, w1R, w1I);
+            deinterleave4_aos_to_soa(w2a, w2R, w2I);
+            __m256d W1r = _mm256_loadu_pd(w1R), W1i = _mm256_loadu_pd(w1I);
+            __m256d W2r = _mm256_loadu_pd(w2R), W2i = _mm256_loadu_pd(w2I);
 
-            __m256d sum = _mm256_add_pd(b2, c2);
-            __m256d dif = _mm256_sub_pd(b2, c2);
+            // ----- Twiddle multiplies with FMA -----
+            __m256d b2r, b2i, c2r, c2i;
+            cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i); // b * W^k
+            cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i); // c * W^{2k}
+
+            // ----- Combine (SoA) -----
+            __m256d sumr = _mm256_add_pd(b2r, c2r);
+            __m256d sumi = _mm256_add_pd(b2i, c2i);
+            __m256d difr = _mm256_sub_pd(b2r, c2r);
+            __m256d difi = _mm256_sub_pd(b2i, c2i);
 
             // X0 = a + sum
-            __m256d x0 = _mm256_add_pd(a, sum);
-            STOREU_PD(&output_buffer[k].re, x0);
+            __m256d x0r = _mm256_add_pd(Ar, sumr);
+            __m256d x0i = _mm256_add_pd(Ai, sumi);
 
             // t = a - 1/2*sum
-            __m256d t = _mm256_sub_pd(a, _mm256_mul_pd(sum, vhalf));
+            __m256d tr = _mm256_sub_pd(Ar, _mm256_mul_pd(sumr, vhalf));
+            __m256d ti = _mm256_sub_pd(Ai, _mm256_mul_pd(sumi, vhalf));
 
-            // rot = (sign*sqrt3/2) * rotate90(dif) ; rotate90(z) = (-Im, Re)
-            __m256d swapped = _mm256_permute_pd(dif, 0b0101);        // [im0,re0, im1,re1]
-            __m256d negmask = _mm256_set_pd(+0.0, -0.0, +0.0, -0.0); // negate lanes 0 and 2 of 'swapped'
-            __m256d rot90 = _mm256_xor_pd(swapped, negmask);         // (-im, re)
-            __m256d rot = _mm256_mul_pd(rot90, vsign_s);
+            // rot = (sign*sqrt3/2) * ( +i * dif )  => rotate +90°, then scale
+            __m256d rr90, ri90;
+            rot90_soa_avx(difr, difi, /*sign=*/+1, &rr90, &ri90);
+            __m256d rrs = _mm256_mul_pd(rr90, vsign_s);
+            __m256d ris = _mm256_mul_pd(ri90, vsign_s);
 
             // X1 = t + rot ; X2 = t - rot
-            __m256d x1 = _mm256_add_pd(t, rot);
-            __m256d x2 = _mm256_sub_pd(t, rot);
-            STOREU_PD(&output_buffer[k + sub_fft_size].re, x1);
-            STOREU_PD(&output_buffer[k + 2 * sub_fft_size].re, x2);
+            __m256d x1r = _mm256_add_pd(tr, rrs);
+            __m256d x1i = _mm256_add_pd(ti, ris);
+            __m256d x2r = _mm256_sub_pd(tr, rrs);
+            __m256d x2i = _mm256_sub_pd(ti, ris);
+
+            // ----- SoA -> AoS stores -----
+            double X0R[4], X0I[4], X1R[4], X1I[4], X2R[4], X2I[4];
+            _mm256_storeu_pd(X0R, x0r);
+            _mm256_storeu_pd(X0I, x0i);
+            _mm256_storeu_pd(X1R, x1r);
+            _mm256_storeu_pd(X1I, x1i);
+            _mm256_storeu_pd(X2R, x2r);
+            _mm256_storeu_pd(X2I, x2i);
+
+            interleave4_soa_to_aos(X0R, X0I, &output_buffer[k + 0 * sub_fft_size]);
+            interleave4_soa_to_aos(X1R, X1I, &output_buffer[k + 1 * sub_fft_size]);
+            interleave4_soa_to_aos(X2R, X2I, &output_buffer[k + 2 * sub_fft_size]);
         }
+#else
+        int k = 0;
+#endif // __AVX2__
 
         // --- SSE2 tail: 1 complex ---
         if (k < sub_fft_size)
@@ -1659,98 +1801,103 @@ static void mixed_radix_dit_rec(
         //   lane1: sub_fft_outputs[sub_fft_size .. 2*sub_fft_size-1], etc.
         // twiddle_factors AoS per-k layout: [W^k, W^{2k}, W^{3k}] (each fft_data)
 #if defined(__AVX2__)
-    int k = 0;
-    for (; k + 3 < sub_fft_size; k += 4)
-    {
-        // modest prefetch (~64B ahead) for each lane
-        _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 0 * sub_fft_size].re, _MM_HINT_T0);
-        _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 0 * sub_fft_size].im, _MM_HINT_T0);
-        _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 1 * sub_fft_size].re, _MM_HINT_T0);
-        _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 1 * sub_fft_size].im, _MM_HINT_T0);
-        _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 2 * sub_fft_size].re, _MM_HINT_T0);
-        _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 2 * sub_fft_size].im, _MM_HINT_T0);
-        _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 3 * sub_fft_size].re, _MM_HINT_T0);
-        _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 3 * sub_fft_size].im, _MM_HINT_T0);
+        int k = 0;
+        for (; k + 3 < sub_fft_size; k += 4)
+        {
+            // modest prefetch (~64B ahead) for each lane
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 0 * sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 0 * sub_fft_size].im, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 1 * sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 1 * sub_fft_size].im, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 2 * sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 2 * sub_fft_size].im, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 3 * sub_fft_size].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 3 * sub_fft_size].im, _MM_HINT_T0);
 
-        // A: gather 4 AoS -> SoA (re[4], im[4]) for each lane A..D
-        double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4], dR[4], dI[4];
+            // A: gather 4 AoS -> SoA (re[4], im[4]) for each lane A..D
+            double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4], dR[4], dI[4];
 
-        deinterleave4_aos_to_soa(&sub_fft_outputs[k + 0 * sub_fft_size], aR, aI); // A
-        deinterleave4_aos_to_soa(&sub_fft_outputs[k + 1 * sub_fft_size], bR, bI); // B
-        deinterleave4_aos_to_soa(&sub_fft_outputs[k + 2 * sub_fft_size], cR, cI); // C
-        deinterleave4_aos_to_soa(&sub_fft_outputs[k + 3 * sub_fft_size], dR, dI); // D
+            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 0 * sub_fft_size], aR, aI); // A
+            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 1 * sub_fft_size], bR, bI); // B
+            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 2 * sub_fft_size], cR, cI); // C
+            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 3 * sub_fft_size], dR, dI); // D
 
-        __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
-        __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
-        __m256d Cr = _mm256_loadu_pd(cR), Ci = _mm256_loadu_pd(cI);
-        __m256d Dr = _mm256_loadu_pd(dR), Di = _mm256_loadu_pd(dI);
+            __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
+            __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
+            __m256d Cr = _mm256_loadu_pd(cR), Ci = _mm256_loadu_pd(cI);
+            __m256d Dr = _mm256_loadu_pd(dR), Di = _mm256_loadu_pd(dI);
 
-        // B: make 4-wide SoA twiddles for k..k+3 (W^k, W^{2k}, W^{3k})
-        fft_data w1a[4], w2a[4], w3a[4];
-        for (int p = 0; p < 4; ++p) {
-            w1a[p] = twiddle_factors[3 * (k + p) + 0];
-            w2a[p] = twiddle_factors[3 * (k + p) + 1];
-            w3a[p] = twiddle_factors[3 * (k + p) + 2];
+            // B: make 4-wide SoA twiddles for k..k+3 (W^k, W^{2k}, W^{3k})
+            fft_data w1a[4], w2a[4], w3a[4];
+            for (int p = 0; p < 4; ++p)
+            {
+                w1a[p] = twiddle_factors[3 * (k + p) + 0];
+                w2a[p] = twiddle_factors[3 * (k + p) + 1];
+                w3a[p] = twiddle_factors[3 * (k + p) + 2];
+            }
+
+            double w1R[4], w1I[4], w2R[4], w2I[4], w3R[4], w3I[4];
+            deinterleave4_aos_to_soa(w1a, w1R, w1I);
+            deinterleave4_aos_to_soa(w2a, w2R, w2I);
+            deinterleave4_aos_to_soa(w3a, w3R, w3I);
+
+            __m256d W1r = _mm256_loadu_pd(w1R), W1i = _mm256_loadu_pd(w1I);
+            __m256d W2r = _mm256_loadu_pd(w2R), W2i = _mm256_loadu_pd(w2I);
+            __m256d W3r = _mm256_loadu_pd(w3R), W3i = _mm256_loadu_pd(w3I);
+
+            // C: apply twiddles in SoA
+            __m256d b2r, b2i, c2r, c2i, d2r, d2i;
+            cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);
+            cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);
+            cmul_soa_avx(Dr, Di, W3r, W3i, &d2r, &d2i);
+
+            // D: radix-4 identities (SoA)
+            __m256d sumBD_r = _mm256_add_pd(b2r, d2r);
+            __m256d sumBD_i = _mm256_add_pd(b2i, d2i);
+            __m256d difBD_r = _mm256_sub_pd(b2r, d2r);
+            __m256d difBD_i = _mm256_sub_pd(b2i, d2i);
+
+            __m256d a_plus_c_r = _mm256_add_pd(Ar, c2r);
+            __m256d a_plus_c_i = _mm256_add_pd(Ai, c2i);
+            __m256d a_minus_c_r = _mm256_sub_pd(Ar, c2r);
+            __m256d a_minus_c_i = _mm256_sub_pd(Ai, c2i);
+
+            // X0 = a + b2 + c2 + d2
+            __m256d x0r = _mm256_add_pd(a_plus_c_r, sumBD_r);
+            __m256d x0i = _mm256_add_pd(a_plus_c_i, sumBD_i);
+
+            // X2 = a - b2 + c2 - d2
+            __m256d x2r = _mm256_sub_pd(a_minus_c_r, sumBD_r);
+            __m256d x2i = _mm256_sub_pd(a_minus_c_i, sumBD_i);
+
+            // X1 / X3 via rot90(difBD) = sign * i * (difBD)
+            __m256d rr, ri;
+            rot90_soa_avx(difBD_r, difBD_i, transform_sign, &rr, &ri);
+            __m256d x1r = _mm256_sub_pd(a_minus_c_r, rr);
+            __m256d x1i = _mm256_sub_pd(a_minus_c_i, ri);
+            __m256d x3r = _mm256_add_pd(a_minus_c_r, rr);
+            __m256d x3i = _mm256_add_pd(a_minus_c_i, ri);
+
+            // E: SoA -> AoS store
+            double X0R[4], X0I[4], X1R[4], X1I[4], X2R[4], X2I[4], X3R[4], X3I[4];
+            _mm256_storeu_pd(X0R, x0r);
+            _mm256_storeu_pd(X0I, x0i);
+            _mm256_storeu_pd(X1R, x1r);
+            _mm256_storeu_pd(X1I, x1i);
+            _mm256_storeu_pd(X2R, x2r);
+            _mm256_storeu_pd(X2I, x2i);
+            _mm256_storeu_pd(X3R, x3r);
+            _mm256_storeu_pd(X3I, x3i);
+
+            interleave4_soa_to_aos(X0R, X0I, &output_buffer[k + 0 * sub_fft_size]);
+            interleave4_soa_to_aos(X1R, X1I, &output_buffer[k + 1 * sub_fft_size]);
+            interleave4_soa_to_aos(X2R, X2I, &output_buffer[k + 2 * sub_fft_size]);
+            interleave4_soa_to_aos(X3R, X3I, &output_buffer[k + 3 * sub_fft_size]);
         }
-
-        double w1R[4], w1I[4], w2R[4], w2I[4], w3R[4], w3I[4];
-        deinterleave4_aos_to_soa(w1a, w1R, w1I);
-        deinterleave4_aos_to_soa(w2a, w2R, w2I);
-        deinterleave4_aos_to_soa(w3a, w3R, w3I);
-
-        __m256d W1r = _mm256_loadu_pd(w1R), W1i = _mm256_loadu_pd(w1I);
-        __m256d W2r = _mm256_loadu_pd(w2R), W2i = _mm256_loadu_pd(w2I);
-        __m256d W3r = _mm256_loadu_pd(w3R), W3i = _mm256_loadu_pd(w3I);
-
-        // C: apply twiddles in SoA
-        __m256d b2r, b2i, c2r, c2i, d2r, d2i;
-        cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);
-        cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);
-        cmul_soa_avx(Dr, Di, W3r, W3i, &d2r, &d2i);
-
-        // D: radix-4 identities (SoA)
-        __m256d sumBD_r = _mm256_add_pd(b2r, d2r);
-        __m256d sumBD_i = _mm256_add_pd(b2i, d2i);
-        __m256d difBD_r = _mm256_sub_pd(b2r, d2r);
-        __m256d difBD_i = _mm256_sub_pd(b2i, d2i);
-
-        __m256d a_plus_c_r  = _mm256_add_pd(Ar, c2r);
-        __m256d a_plus_c_i  = _mm256_add_pd(Ai, c2i);
-        __m256d a_minus_c_r = _mm256_sub_pd(Ar, c2r);
-        __m256d a_minus_c_i = _mm256_sub_pd(Ai, c2i);
-
-        // X0 = a + b2 + c2 + d2
-        __m256d x0r = _mm256_add_pd(a_plus_c_r, sumBD_r);
-        __m256d x0i = _mm256_add_pd(a_plus_c_i, sumBD_i);
-
-        // X2 = a - b2 + c2 - d2
-        __m256d x2r = _mm256_sub_pd(a_minus_c_r, sumBD_r);
-        __m256d x2i = _mm256_sub_pd(a_minus_c_i, sumBD_i);
-
-        // X1 / X3 via rot90(difBD) = sign * i * (difBD)
-        __m256d rr, ri;
-        rot90_soa_avx(difBD_r, difBD_i, transform_sign, &rr, &ri);
-        __m256d x1r = _mm256_sub_pd(a_minus_c_r, rr);
-        __m256d x1i = _mm256_sub_pd(a_minus_c_i, ri);
-        __m256d x3r = _mm256_add_pd(a_minus_c_r, rr);
-        __m256d x3i = _mm256_add_pd(a_minus_c_i, ri);
-
-        // E: SoA -> AoS store
-        double X0R[4], X0I[4], X1R[4], X1I[4], X2R[4], X2I[4], X3R[4], X3I[4];
-        _mm256_storeu_pd(X0R, x0r); _mm256_storeu_pd(X0I, x0i);
-        _mm256_storeu_pd(X1R, x1r); _mm256_storeu_pd(X1I, x1i);
-        _mm256_storeu_pd(X2R, x2r); _mm256_storeu_pd(X2I, x2i);
-        _mm256_storeu_pd(X3R, x3r); _mm256_storeu_pd(X3I, x3i);
-
-        interleave4_soa_to_aos(X0R, X0I, &output_buffer[k + 0 * sub_fft_size]);
-        interleave4_soa_to_aos(X1R, X1I, &output_buffer[k + 1 * sub_fft_size]);
-        interleave4_soa_to_aos(X2R, X2I, &output_buffer[k + 2 * sub_fft_size]);
-        interleave4_soa_to_aos(X3R, X3I, &output_buffer[k + 3 * sub_fft_size]);
-    }
 #else
-    int k = 0;
+        int k = 0;
 #endif // __AVX2__
-        // --- scalar tail for leftover 1..3 elements ---
+       // --- scalar tail for leftover 1..3 elements ---
         for (; k < sub_fft_size; ++k)
         {
             // Load AoS
@@ -1848,7 +1995,6 @@ static void mixed_radix_dit_rec(
             }
         }
 
-        // --- SoA AVX2 core: 4 k's per iter ---
 #if defined(__AVX2__)
         const __m256d vc1 = _mm256_set1_pd(C5_1);
         const __m256d vc2 = _mm256_set1_pd(C5_2);
@@ -1858,9 +2004,10 @@ static void mixed_radix_dit_rec(
         int k = 0;
         for (; k + 3 < sub_fft_size; k += 4)
         {
-            // modest prefetch of AoS lanes ahead
+            // modest prefetch of AoS lanes and twiddles a bit ahead
             _mm_prefetch((const char *)&sub_fft_outputs[k + 8].re, _MM_HINT_T0);
             _mm_prefetch((const char *)&sub_fft_outputs[k + 8].im, _MM_HINT_T0);
+            _mm_prefetch((const char *)&twiddle_factors[4 * (k + 8) + 0].re, _MM_HINT_T0);
 
             // A) AoS -> SoA for 5 lanes, 4 points (k..k+3)
             double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4], dR[4], dI[4], eR[4], eI[4];
@@ -1878,26 +2025,13 @@ static void mixed_radix_dit_rec(
 
             // B) Gather 4 twiddles per j=1..4 across k..k+3, AoS->SoA
             fft_data w1a[4], w2a[4], w3a[4], w4a[4];
-            w1a[0] = twiddle_factors[4 * (k + 0) + 0];
-            w1a[1] = twiddle_factors[4 * (k + 1) + 0];
-            w1a[2] = twiddle_factors[4 * (k + 2) + 0];
-            w1a[3] = twiddle_factors[4 * (k + 3) + 0];
-
-            w2a[0] = twiddle_factors[4 * (k + 0) + 1];
-            w2a[1] = twiddle_factors[4 * (k + 1) + 1];
-            w2a[2] = twiddle_factors[4 * (k + 2) + 1];
-            w2a[3] = twiddle_factors[4 * (k + 3) + 1];
-
-            w3a[0] = twiddle_factors[4 * (k + 0) + 2];
-            w3a[1] = twiddle_factors[4 * (k + 1) + 2];
-            w3a[2] = twiddle_factors[4 * (k + 2) + 2];
-            w3a[3] = twiddle_factors[4 * (k + 3) + 2];
-
-            w4a[0] = twiddle_factors[4 * (k + 0) + 3];
-            w4a[1] = twiddle_factors[4 * (k + 1) + 3];
-            w4a[2] = twiddle_factors[4 * (k + 2) + 3];
-            w4a[3] = twiddle_factors[4 * (k + 3) + 3];
-
+            for (int p = 0; p < 4; ++p)
+            {
+                w1a[p] = twiddle_factors[4 * (k + p) + 0];
+                w2a[p] = twiddle_factors[4 * (k + p) + 1];
+                w3a[p] = twiddle_factors[4 * (k + p) + 2];
+                w4a[p] = twiddle_factors[4 * (k + p) + 3];
+            }
             double w1R[4], w1I[4], w2R[4], w2I[4], w3R[4], w3I[4], w4R[4], w4I[4];
             deinterleave4_aos_to_soa(w1a, w1R, w1I);
             deinterleave4_aos_to_soa(w2a, w2R, w2I);
@@ -1909,7 +2043,7 @@ static void mixed_radix_dit_rec(
             __m256d W3r = _mm256_loadu_pd(w3R), W3i = _mm256_loadu_pd(w3I);
             __m256d W4r = _mm256_loadu_pd(w4R), W4i = _mm256_loadu_pd(w4I);
 
-            // C) Apply twiddles in SoA
+            // C) Twiddle multiplies (SoA, FMA-capable)
             __m256d b2r, b2i, c2r, c2i, d2r, d2i, e2r, e2i;
             cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);
             cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);
@@ -1930,37 +2064,39 @@ static void mixed_radix_dit_rec(
             __m256d x0r = _mm256_add_pd(Ar, _mm256_add_pd(t0r, t1r));
             __m256d x0i = _mm256_add_pd(Ai, _mm256_add_pd(t0i, t1i));
 
-            // base1 = s1*(b-e) + s2*(c-d)
-            __m256d b1r = _mm256_add_pd(_mm256_mul_pd(vs1, t2r), _mm256_mul_pd(vs2, t3r));
-            __m256d b1i = _mm256_add_pd(_mm256_mul_pd(vs1, t2i), _mm256_mul_pd(vs2, t3i));
-            // tmp1  = c1*(b+e) + c2*(c+d)
-            __m256d tmp1r = _mm256_add_pd(_mm256_mul_pd(vc1, t0r), _mm256_mul_pd(vc2, t1r));
-            __m256d tmp1i = _mm256_add_pd(_mm256_mul_pd(vc1, t0i), _mm256_mul_pd(vc2, t1i));
+            // base1 = S5_1*(b-e) + S5_2*(c-d)     (FMA)
+            __m256d base1r = FMADD(vs1, t2r, _mm256_mul_pd(vs2, t3r));
+            __m256d base1i = FMADD(vs1, t2i, _mm256_mul_pd(vs2, t3i));
+            // tmp1  = C5_1*(b+e) + C5_2*(c+d)     (FMA)
+            __m256d tmp1r = FMADD(vc1, t0r, _mm256_mul_pd(vc2, t1r));
+            __m256d tmp1i = FMADD(vc1, t0i, _mm256_mul_pd(vc2, t1i));
+
             // rot1 = sign * i * base1
             __m256d r1r, r1i;
-            rot90_soa_avx(b1r, b1i, transform_sign, &r1r, &r1i);
+            rot90_soa_avx(base1r, base1i, transform_sign, &r1r, &r1i);
             // a_pt1 = a + tmp1
             __m256d a1r = _mm256_add_pd(Ar, tmp1r);
             __m256d a1i = _mm256_add_pd(Ai, tmp1i);
-            // X1 = a_pt1 + rot1 ; X4 = a_pt1 - rot1
+            // X1 / X4
             __m256d x1r = _mm256_add_pd(a1r, r1r);
             __m256d x1i = _mm256_add_pd(a1i, r1i);
             __m256d x4r = _mm256_sub_pd(a1r, r1r);
             __m256d x4i = _mm256_sub_pd(a1i, r1i);
 
-            // base2 = s2*(b-e) - s1*(c-d)
-            __m256d b2r_ = _mm256_sub_pd(_mm256_mul_pd(vs2, t2r), _mm256_mul_pd(vs1, t3r));
-            __m256d b2i_ = _mm256_sub_pd(_mm256_mul_pd(vs2, t2i), _mm256_mul_pd(vs1, t3i));
-            // tmp2  = c2*(b+e) + c1*(c+d)
-            __m256d tmp2r = _mm256_add_pd(_mm256_mul_pd(vc2, t0r), _mm256_mul_pd(vc1, t1r));
-            __m256d tmp2i = _mm256_add_pd(_mm256_mul_pd(vc2, t0i), _mm256_mul_pd(vc1, t1i));
+            // base2 = S5_2*(b-e) - S5_1*(c-d)     (FMSUB)
+            __m256d base2r = FMSUB(vs2, t2r, _mm256_mul_pd(vs1, t3r));
+            __m256d base2i = FMSUB(vs2, t2i, _mm256_mul_pd(vs1, t3i));
+            // tmp2  = C5_2*(b+e) + C5_1*(c+d)     (FMA)
+            __m256d tmp2r = FMADD(vc2, t0r, _mm256_mul_pd(vc1, t1r));
+            __m256d tmp2i = FMADD(vc2, t0i, _mm256_mul_pd(vc1, t1i));
+
             // rot2 = sign * i * base2
             __m256d r2r, r2i;
-            rot90_soa_avx(b2r_, b2i_, transform_sign, &r2r, &r2i);
+            rot90_soa_avx(base2r, base2i, transform_sign, &r2r, &r2i);
             // a_pt2 = a + tmp2
             __m256d a2r = _mm256_add_pd(Ar, tmp2r);
             __m256d a2i = _mm256_add_pd(Ai, tmp2i);
-            // X2 = a_pt2 + rot2 ; X3 = a_pt2 - rot2
+            // X2 / X3
             __m256d x2r = _mm256_add_pd(a2r, r2r);
             __m256d x2i = _mm256_add_pd(a2i, r2i);
             __m256d x3r = _mm256_sub_pd(a2r, r2r);
@@ -2525,12 +2661,12 @@ static void mixed_radix_dit_rec(
 
             // ----- D: radix-8 identities (SoA) -----
             // pair sums/diffs
-            __m256d s0r = _mm256_add_pd(b2r, h2r), s0i = _mm256_add_pd(b2i, h2i); // b+h
-            __m256d d0r = _mm256_sub_pd(b2r, h2r), d0i = _mm256_sub_pd(b2i, h2i); // b-h
-            __m256d s1r = _mm256_add_pd(c2r, g2r), s1i = _mm256_add_pd(c2i, g2i); // c+g
-            __m256d d1r = _mm256_sub_pd(c2r, g2r), d1i = _mm256_sub_pd(c2i, g2i); // c-g
-           __m256d s2r = _mm256_add_pd(d2r, f2r), s2i = _mm256_add_pd(d2i, f2i); // d+f
-           __m256d d2mr = _mm256_sub_pd(d2r, f2r), d2mi = _mm256_sub_pd(d2i, f2i); // d-f
+            __m256d s0r = _mm256_add_pd(b2r, h2r), s0i = _mm256_add_pd(b2i, h2i);   // b+h
+            __m256d d0r = _mm256_sub_pd(b2r, h2r), d0i = _mm256_sub_pd(b2i, h2i);   // b-h
+            __m256d s1r = _mm256_add_pd(c2r, g2r), s1i = _mm256_add_pd(c2i, g2i);   // c+g
+            __m256d d1r = _mm256_sub_pd(c2r, g2r), d1i = _mm256_sub_pd(c2i, g2i);   // c-g
+            __m256d s2r = _mm256_add_pd(d2r, f2r), s2i = _mm256_add_pd(d2i, f2i);   // d+f
+            __m256d d2mr = _mm256_sub_pd(d2r, f2r), d2mi = _mm256_sub_pd(d2i, f2i); // d-f
 
             __m256d t0r = _mm256_add_pd(Ar, e2r), t0i = _mm256_add_pd(Ai, e2i); // a+e2
             __m256d t4r = _mm256_sub_pd(Ar, e2r), t4i = _mm256_sub_pd(Ai, e2i); // a-e2
@@ -2547,7 +2683,7 @@ static void mixed_radix_dit_rec(
             // base26 = (d2 - f2) - (b - h) = d2 - f2 - b + h
             __m256d base26r = _mm256_sub_pd(d2mr, d0r);
             __m256d base26i = _mm256_sub_pd(d2mi, d0i);
-      
+
             __m256d rr26, ri26;
             rot90_soa_avx(base26r, base26i, transform_sign, &rr26, &ri26); // sign * i * base26
             __m256d t02r = _mm256_sub_pd(t0r, s1r);
