@@ -1396,18 +1396,12 @@ static void mixed_radix_dit_rec(
         const int required_size = (fft_obj->twiddle_factors != NULL) ? (2 * sub_fft_size) : (3 * sub_fft_size);
         if (scratch_offset + required_size > fft_obj->max_scratch_size)
         {
-            /*
-            fprintf(stderr, "Error: Scratch too small for radix-2 at off %d (need %d, have %d)
-                            ",
-                    scratch_offset,
-                    required_size, fft_obj->max_scratch_size - scratch_offset);
-            */
+            fprintf(stderr, "Error: Scratch too small for radix-2 at off %d (need %d, have %d)\n",
+                    scratch_offset, required_size, fft_obj->max_scratch_size - scratch_offset);
             return;
         }
-
         fft_data *sub_fft_outputs = fft_obj->scratch + scratch_offset;
         fft_data *twiddle_factors;
-
         if (fft_obj->twiddle_factors != NULL)
         {
             if (factor_index >= fft_obj->num_precomputed_stages)
@@ -1431,8 +1425,10 @@ static void mixed_radix_dit_rec(
         const int child_scratch_per_branch = (fft_obj->twiddle_factors != NULL) ? (2 * (sub_fft_size / 2)) : (3 * (sub_fft_size / 2));
         if (child_scratch_per_branch * 2 > required_size)
         {
+            fprintf(stderr, "Error: Child scratch allocation exceeds required size for radix-2\n");
             return;
         }
+
         const int child_offset1 = scratch_offset;
         const int child_offset2 = scratch_offset + required_size / 2; // may be unaligned -> use unaligned loads/stores
 
@@ -1451,14 +1447,15 @@ static void mixed_radix_dit_rec(
                 fprintf(stderr, "Error: twiddle array too small: need %d have %d", N, fft_obj->n_fft);
                 return;
             }
+            const int step = fft_obj->n_fft / data_length; // Maps W_{data_length}^k to W_{n_fft}^{k * step}
             for (int k = 0; k < sub_fft_size; ++k)
             {
-                const int idx = k; // W_N^k
+                const int idx = (k * step) % fft_obj->n_fft; // Correct index into global twiddle table
                 twiddle_factors[k].re = fft_obj->twiddles[idx].re;
                 twiddle_factors[k].im = fft_obj->twiddles[idx].im;
             }
         }
-
+        
         // AVX2 body: 4 complex numbers per iter via SoA (FMA-friendly)
         int k = 0;
 #if defined(__AVX2__)
@@ -1474,7 +1471,6 @@ static void mixed_radix_dit_rec(
             double eR[4], eI[4], oR[4], oI[4];
             deinterleave4_aos_to_soa(&sub_fft_outputs[k], eR, eI);                // even
             deinterleave4_aos_to_soa(&sub_fft_outputs[k + sub_fft_size], oR, oI); // odd
-
             __m256d Er = _mm256_loadu_pd(eR), Ei = _mm256_loadu_pd(eI);
             __m256d Or = _mm256_loadu_pd(oR), Oi = _mm256_loadu_pd(oI);
 
@@ -1482,7 +1478,6 @@ static void mixed_radix_dit_rec(
             fft_data wa[4];
             for (int p = 0; p < 4; ++p)
                 wa[p] = twiddle_factors[k + p];
-
             double wR[4], wI[4];
             deinterleave4_aos_to_soa(wa, wR, wI);
             __m256d Wr = _mm256_loadu_pd(wR), Wi = _mm256_loadu_pd(wI);
@@ -1490,7 +1485,6 @@ static void mixed_radix_dit_rec(
             // ----- Twiddle multiply (odd * W^k) with FMA -----
             __m256d twr, twi;
             cmul_soa_avx(Or, Oi, Wr, Wi, &twr, &twi); // uses FMADD/FMSUB internally
-
             // ----- Butterfly: X0 = even + tw, X1 = even - tw -----
             __m256d x0r = _mm256_add_pd(Er, twr);
             __m256d x0i = _mm256_add_pd(Ei, twi);
@@ -1503,33 +1497,19 @@ static void mixed_radix_dit_rec(
             _mm256_storeu_pd(X0I, x0i);
             _mm256_storeu_pd(X1R, x1r);
             _mm256_storeu_pd(X1I, x1i);
-
             interleave4_soa_to_aos(X0R, X0I, &output_buffer[k]);
             interleave4_soa_to_aos(X1R, X1I, &output_buffer[k + sub_fft_size]);
         }
 #endif // __AVX2__
-
         // SSE2 tail: handle remaining 0..3 points (process 1 complex)
         for (; k < sub_fft_size; ++k)
         {
-            // 128-bit masks for AoS addsub trick
-            const __m128d FLIP_RE_128 = _mm_set_pd(+0.0, -0.0); // negate real lane (low)
-            const __m128d FLIP_IM_128 = _mm_set_pd(-0.0, +0.0); // negate imag lane (high)
-
             __m128d e = LOADU_SSE2(&sub_fft_outputs[k].re);                // [er, ei]
             __m128d o = LOADU_SSE2(&sub_fft_outputs[k + sub_fft_size].re); // [or, oi]
             __m128d w1 = LOADU_SSE2(&twiddle_factors[k].re);               // [wr, wi]
-
             __m128d tw = cmul_sse2_aos(o, w1);
-
-            // X0 = e + tw  (via addsub with flipped real)
-            __m128d tw_flip_re = _mm_xor_pd(tw, FLIP_RE_128);
-            __m128d x0 = _mm_addsub_pd(e, tw_flip_re);
-
-            // X1 = e - tw  (via addsub with conj(tw) -> flip imag)
-            __m128d tw_conj = _mm_xor_pd(tw, FLIP_IM_128);
-            __m128d x1 = _mm_addsub_pd(e, tw_conj);
-
+            __m128d x0 = _mm_add_pd(e, tw); // e + tw
+            __m128d x1 = _mm_sub_pd(e, tw); // e - tw
             STOREU_SSE2(&output_buffer[k].re, x0);
             STOREU_SSE2(&output_buffer[k + sub_fft_size].re, x1);
         }
