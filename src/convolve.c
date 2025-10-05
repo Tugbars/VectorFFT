@@ -28,6 +28,20 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #endif
 
+
+/* ---------------- private struct definitions ---------------- */
+struct fft_conv_plan_s {
+   int N, H;
+    fft_real_object fwd, inv;
+    fft_type *pad1, *pad2, *time;
+   fft_data *spec1, *spec2, *prod;
+};
+
+struct fft_conv_kernel_s {
+    int N, H;
+    fft_data *spec;
+};
+
 /**
  * @brief Allocates 32-byte aligned memory for SIMD operations.
  *
