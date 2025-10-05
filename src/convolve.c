@@ -110,7 +110,7 @@ static inline int next_pow2_even(int n) {
  */
 int fft_conv_pick_length(int len1, int len2, fft_conv_mode mode) {
     if (len1 <= 0 || len2 <= 0) return -1;
-    int base = (mode == FFTCONV_CIRCULAR) ? MAX(len1, len2) : (len1 + len2 - 1);
+    const int base = len1 + len2 - 1; /* use linear length for both */
     return next_pow2_even(base);
 }
 
@@ -553,7 +553,7 @@ int fft_conv_exec_with_kernel(fft_conv_plan p,
         fprintf(stderr, "Error: Kernel N=%d does not match plan N=%d\n", hspec->N, p->N);
         return -1;
     }
-    if (mode == FFTCONV_LINEAR && !ensure_capacity_for_linear(p->N, lenx, lenh)) {
+    if (!ensure_capacity_for_linear(p->N, lenx, lenh)) {
         fprintf(stderr, "Error: Plan N=%d too small for linear len=%d\n",
                 p->N, lenx + lenh - 1);
         return -1;
