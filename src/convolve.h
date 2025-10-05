@@ -1,61 +1,115 @@
-#ifndef CONVOLVE_H
-#define CONVOLVE_H
-
-#include "real.h" // Provides fft_type, fft_data, fft_real_object, fft_r2c_exec, fft_c2r_exec
-
-/**
- * @file convolve.h
- * @brief FFT-based convolution for real-valued signals.
- * @date June 22, 2025
- * @note Utilizes real-to-complex and complex-to-real FFT transformations from real.h
- *       for efficient convolution of real-valued signals.
+#ifndef FFT_CONV_H
+#define FFT_CONV_H
+/*
+ * @file   fft_conv.h
+ * @brief  Plan-based FFT real convolution with optional precomputed kernel.
+ * @note   Depends on real.h for R2C/C2R FFTs (fft_real_object, fft_data, fft_type).
+ *         The FFT length N must be even. For circular mode, this implementation
+ *         computes a linear convolution (N >= lenx+lenh-1) and folds modulo P=max(lenx,lenh).
  */
 
+#include "real.h"   /* fft_type, fft_data, fft_real_object */
+#include <stddef.h> /* size_t */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ----------------------------- Opaque handles ----------------------------- */
+
+/* Forward-declared opaque structs */
+typedef struct fft_conv_plan_s*   fft_conv_plan;
+typedef struct fft_conv_kernel_s* fft_conv_kernel;
+
+/* ------------------------------- Enumerations ----------------------------- */
+
+typedef enum {
+    FFTCONV_LINEAR = 0,   /* Linear convolution */
+    FFTCONV_CIRCULAR = 1  /* Circular result (produced by folding the linear output) */
+} fft_conv_mode;
+
+typedef enum {
+    FFTCONV_FULL  = 0, /* length = lenx + lenh - 1 */
+    FFTCONV_SAME  = 1, /* length = max(lenx, lenh); centered (your current semantics) */
+    FFTCONV_VALID = 2  /* length = max(lenx,lenh) - min(lenx,lenh) + 1 */
+} fft_conv_out;
+
+/* ------------------------------ Helper chooser ---------------------------- */
 /**
- * @brief Computes the next power of 2 greater than or equal to n.
+ * @brief Pick an FFT length N (even power-of-two) large enough for the operation.
  *
- * Used to determine the optimal FFT length for convolution, ensuring efficient
- * power-of-2 FFT computations.
+ * This implementation uses the linear length for both modes:
+ *   base = lenx + lenh - 1; N = next_pow2_even(base).
  *
- * @param[in] n Input number.
- * @return int The smallest power of 2 >= n.
+ * @return N on success, or -1 on invalid input.
  */
-int next_power_of_two(int n);
+int fft_conv_pick_length(int lenx, int lenh, fft_conv_mode mode);
+
+/* --------------------------------- Plans ---------------------------------- */
+/**
+ * @brief Create a plan with a fixed FFT length N (must be positive and even).
+ * Allocates aligned work buffers and forward/inverse real-FFT objects.
+ */
+fft_conv_plan fft_conv_plan_create(int N);
 
 /**
- * @brief Finds the optimal FFT length for convolution.
- *
- * For linear convolution, pads to the next power of 2 >= min_length (e.g., N + L - 1).
- * For circular convolution, pads to the next power of 2 >= max(N, L).
- *
- * @param[in] min_length Minimum required length (e.g., N + L - 1 for linear).
- * @param[in] conv_type Convolution type: "linear" or "circular".
- * @param[in] length1 Length of the first input signal.
- * @param[in] length2 Length of the second input signal.
- * @return int Optimal padded length for FFT, or -1 on error.
+ * @brief Create a plan with automatically chosen N via fft_conv_pick_length().
  */
-int find_optimal_fft_length(int min_length, const char *conv_type, int length1, int length2);
+fft_conv_plan fft_conv_plan_create_auto(int lenx, int lenh, fft_conv_mode mode);
 
 /**
- * @brief Performs FFT-based convolution of two real-valued signals.
- *
- * Supports linear and circular convolution with output types "full", "same", or "valid".
- * Uses real-to-complex (R2C) and complex-to-real (C2R) FFTs for efficiency, leveraging
- * Hermitian symmetry of real-valued signals.
- *
- * @param[in] type Output type: "full" (full convolution, N+L-1 points),
- *                 "same" (central portion matching larger input, max(N,L) points),
- *                 or "valid" (no padding effects, max(N,L)-min(N,L)+1 points).
- *                 NULL defaults to "full".
- * @param[in] conv_type Convolution type: "linear" (standard) or "circular" (periodic).
- * @param[in] input1 First input signal array (real-valued, length N).
- * @param[in] length1 Length of the first input signal (N > 0).
- * @param[in] input2 Second input signal array (real-valued, length L).
- * @param[in] length2 Length of the second input signal (L > 0).
- * @param[out] output Array to store the convolution result.
- * @return int Length of the output array, or -1 on error (invalid inputs, memory failure, or invalid type).
+ * @brief Destroy a plan and all associated resources.
  */
-int fft_convolve(const char *type, const char *conv_type, fft_type *input1, int length1,
-                 fft_type *input2, int length2, fft_type *output);
+void fft_conv_plan_destroy(fft_conv_plan p);
 
-#endif // CONVOLVE_H
+/* -------------------------------- Kernels --------------------------------- */
+/**
+ * @brief Precompute the FFT of a kernel for reuse with a given plan.
+ *        Stores an aligned spectrum of length (N/2 + 1).
+ */
+fft_conv_kernel fft_conv_kernel_create(fft_conv_plan p,
+                                       const fft_type* kernel, int kernel_len);
+
+/**
+ * @brief Destroy a precomputed kernel.
+ */
+void fft_conv_kernel_destroy(fft_conv_kernel k);
+
+/* --------------------------------- Exec ----------------------------------- */
+/**
+ * @brief Convolve x (lenx) with h (lenh) using plan p.
+ *
+ * Mode:
+ *   - FFTCONV_LINEAR  : direct linear convolution.
+ *   - FFTCONV_CIRCULAR: linear convolution then folded modulo P=max(lenx,lenh).
+ *
+ * Output selection (linear semantics):
+ *   - FFTCONV_FULL  : len = lenx + lenh - 1
+ *   - FFTCONV_SAME  : len = max(lenx, lenh), centered
+ *   - FFTCONV_VALID : len = max(lenx,lenh) - min(lenx,lenh) + 1
+ *
+ * Returns the number of output samples written, or -1 on error.
+ */
+int fft_conv_exec(fft_conv_plan p,
+                  fft_conv_mode mode,
+                  fft_conv_out outsel,
+                  const fft_type* x, int lenx,
+                  const fft_type* h, int lenh,
+                  fft_type* y);
+
+/**
+ * @brief Convolve x (lenx) with a precomputed kernel spectrum (lenh used for slicing).
+ *        Same mode/out semantics as fft_conv_exec().
+ */
+int fft_conv_exec_with_kernel(fft_conv_plan p,
+                              fft_conv_mode mode,
+                              fft_conv_out outsel,
+                              const fft_type* x, int lenx,
+                              fft_conv_kernel hspec, int lenh,
+                              fft_type* y);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
+
+#endif /* FFT_CONV_H */
