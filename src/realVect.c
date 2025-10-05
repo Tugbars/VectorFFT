@@ -1,7 +1,7 @@
 /**
  * @file real.c
  * @brief Real-to-Complex and Complex-to-Real FFT transformations for real-valued signals.
- * @date March 2, 2025
+ * @date October 5, 2025
  * @note Utilizes the high-speed FFT implementation from highspeedFFT.h for efficient transformations.
  *       Vectorized with AVX2 for performance, with scalar fallbacks for compatibility.
  */
@@ -25,12 +25,15 @@ static void* aligned_malloc32(size_t bytes) {
     return malloc(bytes);
 #endif
 }
+
 static void aligned_free32(void* p) {
-#if defined(_MSC_VER)
-    _aligned_free(p);
-#else
-    free(p);
-#endif
+    #if defined(_MSC_VER)
+        _aligned_free(p);
+    #elif defined(_POSIX_VERSION)
+        free(p);
+    #else
+        if (p) free(((void**)p)[-1]);
+    #endif
 }
 
 /**
