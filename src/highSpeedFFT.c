@@ -615,11 +615,7 @@ static void build_twiddles_linear(fft_data *tw, int N)
  * @note Caller must free the object with `free_fft`. Buffers are 32-byte aligned for AVX2/SSE2.
  *       Scratch buffer is sized for worst-case mixed-radix or Bluestein needs.
  */
-Adding Radix-16 and Radix-32 Support to fft_init
-You need to update fft_init to recognize power-of-16 and power-of-32, plus handle their precomputed twiddles.
-
-🔧 Updated fft_init with Radix-16/32 Support
-cfft_object fft_init(int signal_length, int transform_direction)
+fft_object fft_init(int signal_length, int transform_direction)
 {
     // Step 1: Validate inputs
     if (signal_length <= 0 || (transform_direction != 1 && transform_direction != -1))
@@ -4181,17 +4177,6 @@ int factors(int number, int *factors_array)
     {
         factors_array[index++] = 11;
         temp_number /= 11;
-    }
-     // Try radix-32 first (for power-of-2)
-    while (n % 32 == 0 && n > 1) {
-        out_factors[count++] = 32;
-        n /= 32;
-    }
-    
-    // Then radix-16
-    while (n % 16 == 0 && n > 1) {
-        out_factors[count++] = 16;
-        n /= 16;
     }
     while (temp_number % 8 == 0)
     {
