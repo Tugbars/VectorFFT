@@ -638,7 +638,7 @@ fft_object fft_init(int signal_length, int transform_direction)
     int is_factorable = dividebyN(signal_length);
     int is_power_of_2 = 0, is_power_of_3 = 0, is_power_of_5 = 0, is_power_of_7 = 0;
     int is_power_of_11 = 0, is_power_of_13 = 0;
-    int is_power_of_16 = 0, is_power_of_32 = 0;  // ← ADD THESE
+    int is_power_of_16 = 0, is_power_of_32 = 0; // ← ADD THESE
     int twiddle_count = 0, max_scratch_size = 0, max_padded_length = 0;
 
     // Step 4: Set up buffer sizes and check power-of-radix
@@ -646,7 +646,7 @@ fft_object fft_init(int signal_length, int transform_direction)
     {
         max_padded_length = signal_length;
         twiddle_count = signal_length;
-        
+
         // Check for pure powers
         is_power_of_2 = (signal_length & (signal_length - 1)) == 0;
         is_power_of_3 = is_exact_power(signal_length, 3);
@@ -654,8 +654,8 @@ fft_object fft_init(int signal_length, int transform_direction)
         is_power_of_7 = is_exact_power(signal_length, 7);
         is_power_of_11 = is_exact_power(signal_length, 11);
         is_power_of_13 = is_exact_power(signal_length, 13);
-        is_power_of_16 = is_exact_power(signal_length, 16);  // ← ADD
-        is_power_of_32 = is_exact_power(signal_length, 32);  // ← ADD
+        is_power_of_16 = is_exact_power(signal_length, 16); // ← ADD
+        is_power_of_32 = is_exact_power(signal_length, 32); // ← ADD
     }
     else
     {
@@ -681,38 +681,53 @@ fft_object fft_init(int signal_length, int transform_direction)
     if (is_factorable)
     {
         int temp_N = signal_length;
-        
+
         // ========================================================================
         // UPDATED: Check for power-of-16 and power-of-32 FIRST (more optimal)
         // ========================================================================
-        if (is_power_of_32 || is_power_of_16 || is_power_of_2 || is_power_of_3 || 
+        if (is_power_of_32 || is_power_of_16 || is_power_of_2 || is_power_of_3 ||
             is_power_of_5 || is_power_of_7 || is_power_of_11 || is_power_of_13)
         {
             // Determine radix (prefer larger radices for fewer stages)
             int radix;
-            if (is_power_of_32) {
-                radix = 32;  // Best for large power-of-2 FFTs
-            } else if (is_power_of_16) {
-                radix = 16;  // Good for medium power-of-2 FFTs
-            } else if (is_power_of_2) {
-                radix = 2;   // Fallback for small power-of-2
-            } else if (is_power_of_3) {
+            if (is_power_of_32)
+            {
+                radix = 32; // Best for large power-of-2 FFTs
+            }
+            else if (is_power_of_16)
+            {
+                radix = 16; // Good for medium power-of-2 FFTs
+            }
+            else if (is_power_of_2)
+            {
+                radix = 2; // Fallback for small power-of-2
+            }
+            else if (is_power_of_3)
+            {
                 radix = 3;
-            } else if (is_power_of_5) {
+            }
+            else if (is_power_of_5)
+            {
                 radix = 5;
-            } else if (is_power_of_7) {
+            }
+            else if (is_power_of_7)
+            {
                 radix = 7;
-            } else if (is_power_of_11) {
+            }
+            else if (is_power_of_11)
+            {
                 radix = 11;
-            } else {
+            }
+            else
+            {
                 radix = 13;
             }
-            
+
             int stage = 0;
             for (int n = signal_length; n >= radix; n /= radix)
             {
                 int sub_fft_size = n / radix;
-                
+
                 if (stage < MAX_STAGES)
                 {
                     fft_config->stage_twiddle_offset[stage++] = twiddle_factors_size;
@@ -724,9 +739,9 @@ fft_object fft_init(int signal_length, int transform_direction)
                     free_fft(fft_config);
                     return NULL;
                 }
-                
-                twiddle_factors_size += (radix - 1) * sub_fft_size;  // W_n^{j*k}, j=1..r-1
-                scratch_needed += radix * sub_fft_size;              // Outputs
+
+                twiddle_factors_size += (radix - 1) * sub_fft_size; // W_n^{j*k}, j=1..r-1
+                scratch_needed += radix * sub_fft_size;             // Outputs
             }
             fft_config->num_precomputed_stages = stage;
         }
@@ -737,7 +752,7 @@ fft_object fft_init(int signal_length, int transform_direction)
             {
                 int radix = temp_factors[i];
                 scratch_needed += radix * (temp_N / radix);
-                if (radix <= 32)  // ← UPDATED: Include radix-16 and radix-32
+                if (radix <= 32) // ← UPDATED: Include radix-16 and radix-32
                 {
                     scratch_needed += (radix - 1) * (temp_N / radix);
                 }
@@ -772,7 +787,7 @@ fft_object fft_init(int signal_length, int transform_direction)
     // ========================================================================
     // UPDATED: Include radix-16 and radix-32
     // ========================================================================
-    if (is_factorable && (is_power_of_32 || is_power_of_16 || is_power_of_2 || 
+    if (is_factorable && (is_power_of_32 || is_power_of_16 || is_power_of_2 ||
                           is_power_of_3 || is_power_of_5 || is_power_of_7 ||
                           is_power_of_11 || is_power_of_13))
     {
@@ -808,24 +823,39 @@ fft_object fft_init(int signal_length, int transform_direction)
     if (fft_config->twiddle_factors)
     {
         int offset = 0;
-        
+
         // Determine radix (same priority as Step 5)
         int radix;
-        if (is_power_of_32) {
+        if (is_power_of_32)
+        {
             radix = 32;
-        } else if (is_power_of_16) {
+        }
+        else if (is_power_of_16)
+        {
             radix = 16;
-        } else if (is_power_of_2) {
+        }
+        else if (is_power_of_2)
+        {
             radix = 2;
-        } else if (is_power_of_3) {
+        }
+        else if (is_power_of_3)
+        {
             radix = 3;
-        } else if (is_power_of_5) {
+        }
+        else if (is_power_of_5)
+        {
             radix = 5;
-        } else if (is_power_of_7) {
+        }
+        else if (is_power_of_7)
+        {
             radix = 7;
-        } else if (is_power_of_11) {
+        }
+        else if (is_power_of_11)
+        {
             radix = 11;
-        } else {
+        }
+        else
+        {
             radix = 13;
         }
 
@@ -837,7 +867,7 @@ fft_object fft_init(int signal_length, int transform_direction)
 
             for (int k = 0; k < sub_len; ++k)
             {
-                const int base = (radix - 1) * k;  // k-major
+                const int base = (radix - 1) * k; // k-major
                 for (int j = 1; j < radix; ++j)
                 {
                     const int p = (j * k) % N_stage;
@@ -1246,18 +1276,43 @@ static ALWAYS_INLINE void rot90_soa_avx(__m256d re, __m256d im, int sign,
 //==============================================================================
 
 #ifdef __AVX2__
+/**
+ * @brief Rotate two AoS-packed complex numbers by ±i using AVX2.
+ *
+ * Each __m256d contains [re0, im0, re1, im1].
+ * Performs a 90° rotation in the complex plane.
+ *
+ * @param v      Two complex numbers packed as AoS in __m256d.
+ * @param sign   +1 → multiply by +i; -1 → multiply by -i.
+ * @return       Rotated complex pair.
+ */
 static ALWAYS_INLINE __m256d rot90_aos_avx2(__m256d v, int sign)
 {
-    __m256d swp = _mm256_permute_pd(v, 0b0101);
-    if (sign == 1) {
-        const __m256d m = _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
-        return _mm256_xor_pd(swp, m);
-    } else {
-        const __m256d m = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
-        return _mm256_xor_pd(swp, m);
+    __m256d swp = _mm256_permute_pd(v, 0b0101); // swap re↔im per complex
+    if (sign == 1)
+    {
+        const __m256d m = _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // negate im lanes
+        return _mm256_xor_pd(swp, m);                          // +i rotation
+    }
+    else
+    {
+        const __m256d m = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // negate re lanes
+        return _mm256_xor_pd(swp, m);                          // -i rotation
     }
 }
 
+/**
+ * @brief 4-point DIT FFT butterfly (AoS, two complex values per __m256d).
+ *
+ * Implements:
+ *   y0 = a + b + c + d
+ *   y1 = (a - c) + (-i)*(b - d)
+ *   y2 = a + b - c - d
+ *   y3 = (a - c) + (+i)*(b - d)
+ *
+ * @param a,b,c,d        Input/output vectors (in-place).
+ * @param transform_sign +1 for forward FFT, -1 for inverse FFT.
+ */
 static ALWAYS_INLINE void radix4_butterfly_aos(__m256d *a, __m256d *b,
                                                __m256d *c, __m256d *d,
                                                int transform_sign)
@@ -1272,16 +1327,28 @@ static ALWAYS_INLINE void radix4_butterfly_aos(__m256d *a, __m256d *b,
     __m256d Y0 = _mm256_add_pd(S0, S1);
     __m256d Y2 = _mm256_sub_pd(S0, S1);
 
-    // Fix: Use opposite signs for Y1/Y3
+    // Use opposite signs for Y1 and Y3 according to transform direction
     __m256d rot_for_y1 = rot90_aos_avx2(D1, -transform_sign);
-    __m256d rot_for_y3 = rot90_aos_avx2(D1,  transform_sign);
+    __m256d rot_for_y3 = rot90_aos_avx2(D1, transform_sign);
 
     __m256d Y1 = _mm256_add_pd(D0, rot_for_y1);
     __m256d Y3 = _mm256_add_pd(D0, rot_for_y3);
 
-    *a = Y0; *b = Y1; *c = Y2; *d = Y3;
+    *a = Y0;
+    *b = Y1;
+    *c = Y2;
+    *d = Y3;
 }
 
+/**
+ * @brief 2-point DIT FFT butterfly (AoS, two complex per __m256d).
+ *
+ * Computes:
+ *   y0 = a + b
+ *   y1 = a - b
+ *
+ * @param a,b Input/output vectors (in-place).
+ */
 static ALWAYS_INLINE void radix2_butterfly_aos(__m256d *a, __m256d *b)
 {
     __m256d A = *a, B = *b;
@@ -1290,39 +1357,78 @@ static ALWAYS_INLINE void radix2_butterfly_aos(__m256d *a, __m256d *b)
 }
 #endif // __AVX2__
 
-// Scalar helpers (C99-compatible)
-static inline void rot90_scalar(double re, double im, int sign, 
-                                 double *or_, double *oi) {
-    if (sign == 1) { *or_ = -im; *oi =  re; }
-    else           { *or_ =  im; *oi = -re; }
+//==============================================================================
+// Scalar fallbacks (C99-compatible)
+//==============================================================================
+
+/**
+ * @brief Rotate a single complex number by ±i.
+ *
+ * @param re,im   Real and imaginary parts of input.
+ * @param sign    +1 → multiply by +i, -1 → multiply by -i.
+ * @param or_,oi  Output pointers for rotated real/imag parts.
+ */
+static inline void rot90_scalar(double re, double im, int sign,
+                                double *or_, double *oi)
+{
+    if (sign == 1)
+    {
+        *or_ = -im;
+        *oi = re;
+    } // +i
+    else
+    {
+        *or_ = im;
+        *oi = -re;
+    } // -i
 }
 
-static inline void r2_butterfly(fft_data *a, fft_data *b) {
+/**
+ * @brief 2-point scalar DIT butterfly.
+ *
+ * @param a,b Complex inputs/outputs (in-place).
+ */
+static inline void r2_butterfly(fft_data *a, fft_data *b)
+{
     double tr = a->re + b->re, ti = a->im + b->im;
     double ur = a->re - b->re, ui = a->im - b->im;
-    a->re = tr; a->im = ti; 
-    b->re = ur; b->im = ui;
+    a->re = tr;
+    a->im = ti;
+    b->re = ur;
+    b->im = ui;
 }
 
-static inline void r4_butterfly(fft_data *a, fft_data *b, 
-                                 fft_data *c, fft_data *d,
-                                 int transform_sign) {
+/**
+ * @brief 4-point scalar DIT FFT butterfly.
+ *
+ * Implements the same pattern as radix4_butterfly_aos.
+ *
+ * @param a,b,c,d        Complex inputs/outputs (in-place).
+ * @param transform_sign +1 for forward FFT, -1 for inverse FFT.
+ */
+static inline void r4_butterfly(fft_data *a, fft_data *b,
+                                fft_data *c, fft_data *d,
+                                int transform_sign)
+{
     double S0r = a->re + c->re, S0i = a->im + c->im;
     double D0r = a->re - c->re, D0i = a->im - c->im;
     double S1r = b->re + d->re, S1i = b->im + d->im;
     double D1r = b->re - d->re, D1i = b->im - d->im;
 
-    fft_data y0 = { S0r + S1r, S0i + S1i };
-    fft_data y2 = { S0r - S1r, S0i - S1i };
+    fft_data y0 = {S0r + S1r, S0i + S1i};
+    fft_data y2 = {S0r - S1r, S0i - S1i};
 
     double rposr, rposi, rnegr, rnegi;
-    rot90_scalar(D1r, D1i,  transform_sign, &rposr, &rposi);
+    rot90_scalar(D1r, D1i, transform_sign, &rposr, &rposi);
     rot90_scalar(D1r, D1i, -transform_sign, &rnegr, &rnegi);
 
-    fft_data y1 = { D0r + rnegr, D0i + rnegi };
-    fft_data y3 = { D0r + rposr, D0i + rposi };
+    fft_data y1 = {D0r + rnegr, D0i + rnegi};
+    fft_data y3 = {D0r + rposr, D0i + rposi};
 
-    *a = y0; *b = y1; *c = y2; *d = y3;
+    *a = y0;
+    *b = y1;
+    *c = y2;
+    *d = y3;
 }
 
 /**
@@ -3227,88 +3333,103 @@ static void mixed_radix_dit_rec(
         const int thirtysecond = sub_len;
         int k = 0;
 
-    #ifdef __AVX2__
+#ifdef __AVX2__
         for (; k + 1 < thirtysecond; k += 2)
         {
-            if (k + 8 < thirtysecond) {
-                for (int lane = 0; lane < 32; ++lane) {
-                    _mm_prefetch((const char *)&sub_outputs[k + 8 + lane*thirtysecond].re,
-                                _MM_HINT_T0);
+            if (k + 8 < thirtysecond)
+            {
+                for (int lane = 0; lane < 32; ++lane)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + 8 + lane * thirtysecond].re,
+                                 _MM_HINT_T0);
                 }
             }
 
             __m256d x[32];
-            for (int lane = 0; lane < 32; ++lane) {
-                x[lane] = load2_aos(&sub_outputs[k + lane*thirtysecond],
-                                    &sub_outputs[k + lane*thirtysecond + 1]);
+            for (int lane = 0; lane < 32; ++lane)
+            {
+                x[lane] = load2_aos(&sub_outputs[k + lane * thirtysecond],
+                                    &sub_outputs[k + lane * thirtysecond + 1]);
             }
 
             // Stage 1: Twiddles
-            for (int lane = 1; lane < 32; ++lane) {
-                __m256d tw = load2_aos(&stage_tw[31*k + (lane-1)],
-                                    &stage_tw[31*(k+1) + (lane-1)]);
+            for (int lane = 1; lane < 32; ++lane)
+            {
+                __m256d tw = load2_aos(&stage_tw[31 * k + (lane - 1)],
+                                       &stage_tw[31 * (k + 1) + (lane - 1)]);
                 x[lane] = cmul_avx2_aos(x[lane], tw);
             }
 
             // Stage 2: First radix-4
-            for (int g = 0; g < 8; ++g) {
-                radix4_butterfly_aos(&x[g], &x[g+8], &x[g+16], &x[g+24], transform_sign);
+            for (int g = 0; g < 8; ++g)
+            {
+                radix4_butterfly_aos(&x[g], &x[g + 8], &x[g + 16], &x[g + 24], transform_sign);
             }
 
             // Stage 3: Second radix-4
-            for (int g = 0; g < 8; ++g) {
-                int base = 4*g;
-                radix4_butterfly_aos(&x[base], &x[base+1], &x[base+2], &x[base+3], 
-                                    transform_sign);
+            for (int g = 0; g < 8; ++g)
+            {
+                int base = 4 * g;
+                radix4_butterfly_aos(&x[base], &x[base + 1], &x[base + 2], &x[base + 3],
+                                     transform_sign);
             }
 
             // Stage 4: Final radix-2
-            for (int g = 0; g < 16; ++g) {
-                radix2_butterfly_aos(&x[2*g], &x[2*g+1]);
+            for (int g = 0; g < 16; ++g)
+            {
+                radix2_butterfly_aos(&x[2 * g], &x[2 * g + 1]);
             }
 
             // Store
-            for (int m = 0; m < 32; ++m) {
-                STOREU_PD(&output_buffer[k + m*thirtysecond].re, x[m]);
+            for (int m = 0; m < 32; ++m)
+            {
+                STOREU_PD(&output_buffer[k + m * thirtysecond].re, x[m]);
             }
         }
-    #endif // __AVX2__
+#endif // __AVX2__
 
         // Scalar tail
         for (; k < thirtysecond; ++k)
         {
             fft_data x[32];
-            for (int lane = 0; lane < 32; ++lane) {
-                x[lane] = sub_outputs[k + lane*thirtysecond];
+            for (int lane = 0; lane < 32; ++lane)
+            {
+                x[lane] = sub_outputs[k + lane * thirtysecond];
             }
 
             // Stage 1: Twiddles
-            for (int lane = 1; lane < 32; ++lane) {
-                const fft_data w = stage_tw[31*k + (lane-1)];
-                const double rr = x[lane].re*w.re - x[lane].im*w.im;
-                const double ri = x[lane].re*w.im + x[lane].im*w.re;
-                x[lane].re = rr; x[lane].im = ri;
+            for (int lane = 1; lane < 32; ++lane)
+            {
+                const fft_data w = stage_tw[31 * k + (lane - 1)];
+                const double rr = x[lane].re * w.re - x[lane].im * w.im;
+                const double ri = x[lane].re * w.im + x[lane].im * w.re;
+                x[lane].re = rr;
+                x[lane].im = ri;
             }
 
             // Stage 2: First radix-4
-            for (int g = 0; g < 8; ++g) {
-                r4_butterfly(&x[g], &x[g+8], &x[g+16], &x[g+24], transform_sign);
+            for (int g = 0; g < 8; ++g)
+            {
+                r4_butterfly(&x[g], &x[g + 8], &x[g + 16], &x[g + 24], transform_sign);
             }
 
             // Stage 3: Second radix-4
-            for (int g = 0; g < 8; ++g) {
-                int base = 4*g;
-                r4_butterfly(&x[base], &x[base+1], &x[base+2], &x[base+3], transform_sign);
+            for (int g = 0; g < 8; ++g)
+            {
+                int base = 4 * g;
+                r4_butterfly(&x[base], &x[base + 1], &x[base + 2], &x[base + 3], transform_sign);
             }
 
             // Stage 4: Final radix-2
-            for (int g = 0; g < 16; ++g) {
-                r2_butterfly(&x[2*g], &x[2*g+1]);
+            for (int g = 0; g < 16; ++g)
+            {
+                r2_butterfly(&x[2 * g], &x[2 * g + 1]);
             }
 
             // Store
-            for (int m = 0; m < 32; ++m) {
-                output_buffer[k + m*thirtysecond] = x[m];
+            for (int m = 0; m < 32; ++m)
+            {
+                output_buffer[k + m * thirtysecond] = x[m];
             }
         }
     }
@@ -4112,104 +4233,39 @@ int factors(int number, int *factors_array)
 {
     if (factors_array == NULL)
     {
-        fprintf(stderr, "Error: Invalid inputs for factors - number: %d, factors_array: %p\n", number, (void *)factors_array);
-        // exit
+        fprintf(stderr, "Error: Invalid inputs for factors - number: %d, factors_array: %p\n",
+                number, (void *)factors_array);
+        // exit (left as-is in your codebase)
     }
 
     int index = 0, temp_number = number, prime, multiplier, factor1, factor2;
-    // Check divisibility by a list of primes
-    while (temp_number % 53 == 0)
-    {
-        factors_array[index++] = 53;
-        temp_number /= 53;
-    }
-    while (temp_number % 47 == 0)
-    {
-        factors_array[index++] = 47;
-        temp_number /= 47;
-    }
-    while (temp_number % 43 == 0)
-    {
-        factors_array[index++] = 43;
-        temp_number /= 43;
-    }
-    while (temp_number % 41 == 0)
-    {
-        factors_array[index++] = 41;
-        temp_number /= 41;
-    }
-    while (temp_number % 37 == 0)
-    {
-        factors_array[index++] = 37;
-        temp_number /= 37;
-    }
-    while (temp_number % 31 == 0)
-    {
-        factors_array[index++] = 31;
-        temp_number /= 31;
-    }
-    while (temp_number % 29 == 0)
-    {
-        factors_array[index++] = 29;
-        temp_number /= 29;
-    }
-    while (temp_number % 23 == 0)
-    {
-        factors_array[index++] = 23;
-        temp_number /= 23;
-    }
-    while (temp_number % 19 == 0)
-    {
-        factors_array[index++] = 19;
-        temp_number /= 19;
-    }
-    while (temp_number % 17 == 0)
-    {
-        factors_array[index++] = 17;
-        temp_number /= 17;
-    }
-    while (temp_number % 13 == 0)
-    {
-        factors_array[index++] = 13;
-        temp_number /= 13;
-    }
-    while (temp_number % 11 == 0)
-    {
-        factors_array[index++] = 11;
-        temp_number /= 11;
-    }
-    while (temp_number % 8 == 0)
-    {
-        factors_array[index++] = 8;
-        temp_number /= 8;
-    }
-    while (temp_number % 7 == 0)
-    {
-        factors_array[index++] = 7;
-        temp_number /= 7;
-    }
-    while (temp_number % 5 == 0)
-    {
-        factors_array[index++] = 5;
-        temp_number /= 5;
-    }
-    while (temp_number % 4 == 0)
-    {
-        factors_array[index++] = 4;
-        temp_number /= 4;
-    }
-    while (temp_number % 3 == 0)
-    {
-        factors_array[index++] = 3;
-        temp_number /= 3;
-    }
-    while (temp_number % 2 == 0)
-    {
-        factors_array[index++] = 2;
-        temp_number /= 2;
-    }
 
-    // Handle larger numbers using a heuristic (6k ± 1 method)
+    // (unchanged) Large primes first
+    while (temp_number % 53 == 0) { factors_array[index++] = 53; temp_number /= 53; }
+    while (temp_number % 47 == 0) { factors_array[index++] = 47; temp_number /= 47; }
+    while (temp_number % 43 == 0) { factors_array[index++] = 43; temp_number /= 43; }
+    while (temp_number % 41 == 0) { factors_array[index++] = 41; temp_number /= 41; }
+    while (temp_number % 37 == 0) { factors_array[index++] = 37; temp_number /= 37; }
+    while (temp_number % 31 == 0) { factors_array[index++] = 31; temp_number /= 31; }
+    while (temp_number % 29 == 0) { factors_array[index++] = 29; temp_number /= 29; }
+    while (temp_number % 23 == 0) { factors_array[index++] = 23; temp_number /= 23; }
+    while (temp_number % 19 == 0) { factors_array[index++] = 19; temp_number /= 19; }
+    while (temp_number % 17 == 0) { factors_array[index++] = 17; temp_number /= 17; }
+    while (temp_number % 13 == 0) { factors_array[index++] = 13; temp_number /= 13; }
+    while (temp_number % 11 == 0) { factors_array[index++] = 11; temp_number /= 11; }
+
+    while (temp_number % 32 == 0) { factors_array[index++] = 32; temp_number /= 32; } // NEW
+    while (temp_number % 16 == 0) { factors_array[index++] = 16; temp_number /= 16; } // NEW
+    // -------------------------------------------------------------------
+
+    while (temp_number % 8  == 0) { factors_array[index++] = 8;  temp_number /= 8;  }
+    while (temp_number % 7  == 0) { factors_array[index++] = 7;  temp_number /= 7;  }
+    while (temp_number % 5  == 0) { factors_array[index++] = 5;  temp_number /= 5;  }
+    while (temp_number % 4  == 0) { factors_array[index++] = 4;  temp_number /= 4;  }
+    while (temp_number % 3  == 0) { factors_array[index++] = 3;  temp_number /= 3;  }
+    while (temp_number % 2  == 0) { factors_array[index++] = 2;  temp_number /= 2;  }
+
+    // (unchanged) heuristic 6k ± 1
     if (temp_number > 31)
     {
         prime = 2;
