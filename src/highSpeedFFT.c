@@ -232,6 +232,14 @@ static const double S11_3 = 0.9898214418809327;   // sin(6π/11)
 static const double S11_4 = 0.7557495743542583;   // sin(8π/11)
 static const double S11_5 = 0.28173255684142967;  // sin(10π/11)
 
+// Radix-16 constants (mainly just √2/2 variants)
+static const double C16_1 = 0.9238795325112867;  // cos(π/8)
+static const double C16_2 = 0.7071067811865476;  // cos(π/4) = √2/2
+static const double C16_3 = 0.38268343236508984; // cos(3π/8)
+static const double S16_1 = 0.38268343236508984; // sin(π/8)
+static const double S16_2 = 0.7071067811865476;  // sin(π/4)
+static const double S16_3 = 0.9238795325112867;  // sin(3π/8)
+
 //==============================================================================
 // DIVISIBILITY LOOKUP (for dividebyN up to 1024)
 //==============================================================================
@@ -3217,6 +3225,56 @@ static void mixed_radix_dit_rec(
             }
 
             //==================================================================
+            // *** CRITICAL: Apply intermediate twiddles W_4^{jm} ***
+            // After first radix-4, we need W_4^{jm} for j=1,2,3 and m=0..3
+            // W_4 = exp(-2πi/4) = -i
+            // W_4^0 = 1, W_4^1 = -i, W_4^2 = -1, W_4^3 = +i
+            //==================================================================
+
+            for (int m = 0; m < 4; ++m)
+            {
+                // j=1: W_4^m = exp(-2πim/4) = exp(-iπm/2)
+                // m=0: 1, m=1: -i, m=2: -1, m=3: +i
+                if (m == 1) // W_4^1 = -i
+                {
+                    y[4 * m + 1] = rot90_aos_avx2(y[4 * m + 1], -transform_sign);
+                }
+                else if (m == 2) // W_4^2 = -1
+                {
+                    __m256d neg = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
+                    y[4 * m + 1] = _mm256_xor_pd(y[4 * m + 1], neg);
+                }
+                else if (m == 3) // W_4^3 = +i
+                {
+                    y[4 * m + 1] = rot90_aos_avx2(y[4 * m + 1], transform_sign);
+                }
+
+                // j=2: W_4^{2m} = exp(-iπm)
+                // m=0: 1, m=1: -1, m=2: 1, m=3: -1
+                if (m == 1 || m == 3) // W_4^{2m} = -1
+                {
+                    __m256d neg = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
+                    y[4 * m + 2] = _mm256_xor_pd(y[4 * m + 2], neg);
+                }
+
+                // j=3: W_4^{3m} = exp(-3iπm/2)
+                // m=0: 1, m=1: +i, m=2: -1, m=3: -i
+                if (m == 1) // W_4^3 = +i
+                {
+                    y[4 * m + 3] = rot90_aos_avx2(y[4 * m + 3], transform_sign);
+                }
+                else if (m == 2) // W_4^6 = -1
+                {
+                    __m256d neg = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
+                    y[4 * m + 3] = _mm256_xor_pd(y[4 * m + 3], neg);
+                }
+                else if (m == 3) // W_4^9 = -i
+                {
+                    y[4 * m + 3] = rot90_aos_avx2(y[4 * m + 3], -transform_sign);
+                }
+            }
+
+            //==================================================================
             // STAGE 3: Second radix-4 decomposition (transpose + butterfly)
             // Now combine y[0,1,2,3], y[4,5,6,7], y[8,9,10,11], y[12,13,14,15]
             //==================================================================
@@ -3300,6 +3358,55 @@ static void mixed_radix_dit_rec(
                 y[4 * group + 3] = (fft_data){a_mc_r + rotr, a_mc_i + roti};
             }
 
+            // *** Apply intermediate twiddles W_4^{jm} ***
+            for (int m = 0; m < 4; ++m)
+            {
+                // j=1: W_4^m
+                if (m == 1) // -i
+                {
+                    double temp = y[4 * m + 1].re;
+                    y[4 * m + 1].re = y[4 * m + 1].im * transform_sign;
+                    y[4 * m + 1].im = -temp * transform_sign;
+                }
+                else if (m == 2) // -1
+                {
+                    y[4 * m + 1].re = -y[4 * m + 1].re;
+                    y[4 * m + 1].im = -y[4 * m + 1].im;
+                }
+                else if (m == 3) // +i
+                {
+                    double temp = y[4 * m + 1].re;
+                    y[4 * m + 1].re = -y[4 * m + 1].im * transform_sign;
+                    y[4 * m + 1].im = temp * transform_sign;
+                }
+
+                // j=2: W_4^{2m}
+                if (m == 1 || m == 3) // -1
+                {
+                    y[4 * m + 2].re = -y[4 * m + 2].re;
+                    y[4 * m + 2].im = -y[4 * m + 2].im;
+                }
+
+                // j=3: W_4^{3m}
+                if (m == 1) // +i
+                {
+                    double temp = y[4 * m + 3].re;
+                    y[4 * m + 3].re = -y[4 * m + 3].im * transform_sign;
+                    y[4 * m + 3].im = temp * transform_sign;
+                }
+                else if (m == 2) // -1
+                {
+                    y[4 * m + 3].re = -y[4 * m + 3].re;
+                    y[4 * m + 3].im = -y[4 * m + 3].im;
+                }
+                else if (m == 3) // -i
+                {
+                    double temp = y[4 * m + 3].re;
+                    y[4 * m + 3].re = y[4 * m + 3].im * transform_sign;
+                    y[4 * m + 3].im = -temp * transform_sign;
+                }
+            }
+
             // Second radix-4 stage (final)
             for (int m = 0; m < 4; ++m)
             {
@@ -3328,12 +3435,20 @@ static void mixed_radix_dit_rec(
             }
         }
     }
+
     else if (radix == 32)
     {
         const int thirtysecond = sub_len;
         int k = 0;
 
 #ifdef __AVX2__
+        // Precompute twiddle factors for intermediate stages
+        // W_8 = exp(-2πi/8) and W_2 = exp(-2πi/2)
+        const double c8 = 0.7071067811865476;   // cos(π/4) = √2/2
+        const double s8 = 0.7071067811865476;   // sin(π/4)
+        const double c83 = -0.7071067811865476; // cos(3π/4)
+        const double s83 = 0.7071067811865476;  // sin(3π/4)
+
         for (; k + 1 < thirtysecond; k += 2)
         {
             if (k + 8 < thirtysecond)
@@ -3352,7 +3467,7 @@ static void mixed_radix_dit_rec(
                                     &sub_outputs[k + lane * thirtysecond + 1]);
             }
 
-            // Stage 1: Twiddles
+            // Stage 1: Apply input twiddles W^{jk}
             for (int lane = 1; lane < 32; ++lane)
             {
                 __m256d tw = load2_aos(&stage_tw[31 * k + (lane - 1)],
@@ -3360,13 +3475,52 @@ static void mixed_radix_dit_rec(
                 x[lane] = cmul_avx2_aos(x[lane], tw);
             }
 
-            // Stage 2: First radix-4
+            // Stage 2: First radix-4 decomposition (8 groups, stride 8)
             for (int g = 0; g < 8; ++g)
             {
                 radix4_butterfly_aos(&x[g], &x[g + 8], &x[g + 16], &x[g + 24], transform_sign);
             }
 
-            // Stage 3: Second radix-4
+            // *** CRITICAL: Apply intermediate twiddles W_8^{jm} ***
+            // After first radix-4, we need W_8^{jm} for j=1,2,3 and m=0..7
+            // Only non-trivial twiddles (j > 0) need to be applied
+            for (int m = 0; m < 8; ++m)
+            {
+                // j=1: W_8^m = exp(-2πim/8) = exp(-iπm/4)
+                if (m != 0)
+                {
+                    int idx1 = 4 * m + 1;
+                    double angle = -M_PI * m / 4.0;
+                    double wr = cos(angle);
+                    double wi = sin(angle) * transform_sign;
+                    __m256d tw1 = _mm256_set_pd(wi, wr, wi, wr);
+                    x[idx1] = cmul_avx2_aos(x[idx1], tw1);
+                }
+
+                // j=2: W_8^{2m} = exp(-iπm/2)
+                if (m != 0)
+                {
+                    int idx2 = 4 * m + 2;
+                    double angle = -M_PI * m / 2.0;
+                    double wr = cos(angle);
+                    double wi = sin(angle) * transform_sign;
+                    __m256d tw2 = _mm256_set_pd(wi, wr, wi, wr);
+                    x[idx2] = cmul_avx2_aos(x[idx2], tw2);
+                }
+
+                // j=3: W_8^{3m} = exp(-3iπm/4)
+                if (m != 0)
+                {
+                    int idx3 = 4 * m + 3;
+                    double angle = -3.0 * M_PI * m / 4.0;
+                    double wr = cos(angle);
+                    double wi = sin(angle) * transform_sign;
+                    __m256d tw3 = _mm256_set_pd(wi, wr, wi, wr);
+                    x[idx3] = cmul_avx2_aos(x[idx3], tw3);
+                }
+            }
+
+            // Stage 3: Second radix-4 decomposition (8 groups, stride 1)
             for (int g = 0; g < 8; ++g)
             {
                 int base = 4 * g;
@@ -3374,13 +3528,27 @@ static void mixed_radix_dit_rec(
                                      transform_sign);
             }
 
-            // Stage 4: Final radix-2
+            // *** CRITICAL: Apply intermediate twiddles W_2^m ***
+            // After second radix-4, we need W_2^m for m=0..15
+            // W_2^m = exp(-2πim/2) = exp(-iπm) = (-1)^m
+            for (int m = 0; m < 16; ++m)
+            {
+                int idx = 2 * m + 1;
+                if (m % 2 == 1)
+                {
+                    // W_2 = -1, so negate
+                    __m256d neg = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
+                    x[idx] = _mm256_xor_pd(x[idx], neg);
+                }
+            }
+
+            // Stage 4: Final radix-2 decomposition (16 groups)
             for (int g = 0; g < 16; ++g)
             {
                 radix2_butterfly_aos(&x[2 * g], &x[2 * g + 1]);
             }
 
-            // Store
+            // Store results
             for (int m = 0; m < 32; ++m)
             {
                 STOREU_PD(&output_buffer[k + m * thirtysecond].re, x[m]);
@@ -3397,7 +3565,7 @@ static void mixed_radix_dit_rec(
                 x[lane] = sub_outputs[k + lane * thirtysecond];
             }
 
-            // Stage 1: Twiddles
+            // Stage 1: Apply input twiddles
             for (int lane = 1; lane < 32; ++lane)
             {
                 const fft_data w = stage_tw[31 * k + (lane - 1)];
@@ -3413,11 +3581,39 @@ static void mixed_radix_dit_rec(
                 r4_butterfly(&x[g], &x[g + 8], &x[g + 16], &x[g + 24], transform_sign);
             }
 
+            // *** Apply intermediate twiddles W_8^{jm} ***
+            for (int m = 0; m < 8; ++m)
+            {
+                for (int j = 1; j < 4; ++j)
+                {
+                    int idx = 4 * m + j;
+                    double angle = -2.0 * M_PI * j * m / 8.0;
+                    double wr = cos(angle);
+                    double wi = sin(angle) * transform_sign;
+
+                    double xr = x[idx].re;
+                    double xi = x[idx].im;
+                    x[idx].re = xr * wr - xi * wi;
+                    x[idx].im = xr * wi + xi * wr;
+                }
+            }
+
             // Stage 3: Second radix-4
             for (int g = 0; g < 8; ++g)
             {
                 int base = 4 * g;
                 r4_butterfly(&x[base], &x[base + 1], &x[base + 2], &x[base + 3], transform_sign);
+            }
+
+            // *** Apply intermediate twiddles W_2^m ***
+            for (int m = 0; m < 16; ++m)
+            {
+                int idx = 2 * m + 1;
+                if (m % 2 == 1)
+                {
+                    x[idx].re = -x[idx].re;
+                    x[idx].im = -x[idx].im;
+                }
             }
 
             // Stage 4: Final radix-2
@@ -3426,7 +3622,7 @@ static void mixed_radix_dit_rec(
                 r2_butterfly(&x[2 * g], &x[2 * g + 1]);
             }
 
-            // Store
+            // Store results
             for (int m = 0; m < 32; ++m)
             {
                 output_buffer[k + m * thirtysecond] = x[m];
@@ -3872,42 +4068,34 @@ void bluestein_fft(
     const int is_forward = (transform_direction == +1);
 
     // --- build B_time (mirrored kernel) and pre-scale by 1/M ---
-    // zero
+    // Build B_time (mirrored kernel) - must match chirpA sign!
     for (int i = 0; i < M; ++i)
     {
         B_time[i].re = 0.0;
         B_time[i].im = 0.0;
     }
+    B_time[0].re = 1.0;
 
-    // head
     if (is_forward)
     {
-        // B[n] = base[n]
-        for (int n = 0; n < N; ++n)
-        {
-            B_time[n] = base_chirp[n];
-        }
-        // tail mirror
+        // Forward: both chirpA and B use conj(base) = exp(-i*pi*n^2/N)
         for (int n = 1; n < N; ++n)
-        {
-            B_time[M - n] = base_chirp[n];
-        }
-    }
-    else
-    {
-        // B[n] = conj(base[n])
-        for (int n = 0; n < N; ++n)
         {
             B_time[n].re = base_chirp[n].re;
-            B_time[n].im = -base_chirp[n].im;
-        }
-        for (int n = 1; n < N; ++n)
-        {
+            B_time[n].im = -base_chirp[n].im; // conjugate
             B_time[M - n].re = base_chirp[n].re;
             B_time[M - n].im = -base_chirp[n].im;
         }
     }
-
+    else
+    {
+        // Inverse: both chirpA and B use base = exp(+i*pi*n^2/N)
+        for (int n = 1; n < N; ++n)
+        {
+            B_time[n] = base_chirp[n];
+            B_time[M - n] = base_chirp[n];
+        }
+    }
     // pre-scale kernel by 1/M (so IFFT(FFT(A)*FFT(B)) = linear conv)
     const double invM = 1.0 / (double)M;
 #if defined(__AVX2__)
@@ -4241,29 +4429,109 @@ int factors(int number, int *factors_array)
     int index = 0, temp_number = number, prime, multiplier, factor1, factor2;
 
     // (unchanged) Large primes first
-    while (temp_number % 53 == 0) { factors_array[index++] = 53; temp_number /= 53; }
-    while (temp_number % 47 == 0) { factors_array[index++] = 47; temp_number /= 47; }
-    while (temp_number % 43 == 0) { factors_array[index++] = 43; temp_number /= 43; }
-    while (temp_number % 41 == 0) { factors_array[index++] = 41; temp_number /= 41; }
-    while (temp_number % 37 == 0) { factors_array[index++] = 37; temp_number /= 37; }
-    while (temp_number % 31 == 0) { factors_array[index++] = 31; temp_number /= 31; }
-    while (temp_number % 29 == 0) { factors_array[index++] = 29; temp_number /= 29; }
-    while (temp_number % 23 == 0) { factors_array[index++] = 23; temp_number /= 23; }
-    while (temp_number % 19 == 0) { factors_array[index++] = 19; temp_number /= 19; }
-    while (temp_number % 17 == 0) { factors_array[index++] = 17; temp_number /= 17; }
-    while (temp_number % 13 == 0) { factors_array[index++] = 13; temp_number /= 13; }
-    while (temp_number % 11 == 0) { factors_array[index++] = 11; temp_number /= 11; }
+    while (temp_number % 53 == 0)
+    {
+        factors_array[index++] = 53;
+        temp_number /= 53;
+    }
+    while (temp_number % 47 == 0)
+    {
+        factors_array[index++] = 47;
+        temp_number /= 47;
+    }
+    while (temp_number % 43 == 0)
+    {
+        factors_array[index++] = 43;
+        temp_number /= 43;
+    }
+    while (temp_number % 41 == 0)
+    {
+        factors_array[index++] = 41;
+        temp_number /= 41;
+    }
+    while (temp_number % 37 == 0)
+    {
+        factors_array[index++] = 37;
+        temp_number /= 37;
+    }
+    while (temp_number % 31 == 0)
+    {
+        factors_array[index++] = 31;
+        temp_number /= 31;
+    }
+    while (temp_number % 29 == 0)
+    {
+        factors_array[index++] = 29;
+        temp_number /= 29;
+    }
+    while (temp_number % 23 == 0)
+    {
+        factors_array[index++] = 23;
+        temp_number /= 23;
+    }
+    while (temp_number % 19 == 0)
+    {
+        factors_array[index++] = 19;
+        temp_number /= 19;
+    }
+    while (temp_number % 17 == 0)
+    {
+        factors_array[index++] = 17;
+        temp_number /= 17;
+    }
+    while (temp_number % 13 == 0)
+    {
+        factors_array[index++] = 13;
+        temp_number /= 13;
+    }
+    while (temp_number % 11 == 0)
+    {
+        factors_array[index++] = 11;
+        temp_number /= 11;
+    }
 
-    while (temp_number % 32 == 0) { factors_array[index++] = 32; temp_number /= 32; } // NEW
-    while (temp_number % 16 == 0) { factors_array[index++] = 16; temp_number /= 16; } // NEW
+    while (temp_number % 32 == 0)
+    {
+        factors_array[index++] = 32;
+        temp_number /= 32;
+    } // NEW
+    while (temp_number % 16 == 0)
+    {
+        factors_array[index++] = 16;
+        temp_number /= 16;
+    } // NEW
     // -------------------------------------------------------------------
 
-    while (temp_number % 8  == 0) { factors_array[index++] = 8;  temp_number /= 8;  }
-    while (temp_number % 7  == 0) { factors_array[index++] = 7;  temp_number /= 7;  }
-    while (temp_number % 5  == 0) { factors_array[index++] = 5;  temp_number /= 5;  }
-    while (temp_number % 4  == 0) { factors_array[index++] = 4;  temp_number /= 4;  }
-    while (temp_number % 3  == 0) { factors_array[index++] = 3;  temp_number /= 3;  }
-    while (temp_number % 2  == 0) { factors_array[index++] = 2;  temp_number /= 2;  }
+    while (temp_number % 8 == 0)
+    {
+        factors_array[index++] = 8;
+        temp_number /= 8;
+    }
+    while (temp_number % 7 == 0)
+    {
+        factors_array[index++] = 7;
+        temp_number /= 7;
+    }
+    while (temp_number % 5 == 0)
+    {
+        factors_array[index++] = 5;
+        temp_number /= 5;
+    }
+    while (temp_number % 4 == 0)
+    {
+        factors_array[index++] = 4;
+        temp_number /= 4;
+    }
+    while (temp_number % 3 == 0)
+    {
+        factors_array[index++] = 3;
+        temp_number /= 3;
+    }
+    while (temp_number % 2 == 0)
+    {
+        factors_array[index++] = 2;
+        temp_number /= 2;
+    }
 
     // (unchanged) heuristic 6k ± 1
     if (temp_number > 31)
