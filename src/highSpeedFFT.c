@@ -615,11 +615,13 @@ static void build_twiddles_linear(fft_data *tw, int N)
  * @note Caller must free the object with `free_fft`. Buffers are 32-byte aligned for AVX2/SSE2.
  *       Scratch buffer is sized for worst-case mixed-radix or Bluestein needs.
  */
-fft_object fft_init(int signal_length, int transform_direction)
+Adding Radix-16 and Radix-32 Support to fft_init
+You need to update fft_init to recognize power-of-16 and power-of-32, plus handle their precomputed twiddles.
+
+🔧 Updated fft_init with Radix-16/32 Support
+cfft_object fft_init(int signal_length, int transform_direction)
 {
     // Step 1: Validate inputs
-    // Ensure signal length is positive and direction is +1 or -1
-    // Invalid inputs are a user error, so we exit with a clear message
     if (signal_length <= 0 || (transform_direction != 1 && transform_direction != -1))
     {
         fprintf(stderr, "Error: Signal length (%d) or direction (%d) is invalid\n",
@@ -628,40 +630,39 @@ fft_object fft_init(int signal_length, int transform_direction)
     }
 
     // Step 2: Allocate fft_set structure
-    // Allocate early to safely write stage_twiddle_offset in Step 5
     fft_object fft_config = (fft_object)malloc(sizeof(struct fft_set));
     if (!fft_config)
     {
         fprintf(stderr, "Error: Failed to allocate fft_set structure\n");
         return NULL;
     }
-    fft_config->num_precomputed_stages = 0; // Initialize stage count
+    fft_config->num_precomputed_stages = 0;
 
     // Step 3: Initialize algorithm flags
-    // Check if length factors into small primes and if it’s a power of 2, 3, 5, 7, 11, or 13
     int is_factorable = dividebyN(signal_length);
     int is_power_of_2 = 0, is_power_of_3 = 0, is_power_of_5 = 0, is_power_of_7 = 0;
     int is_power_of_11 = 0, is_power_of_13 = 0;
+    int is_power_of_16 = 0, is_power_of_32 = 0;  // ← ADD THESE
     int twiddle_count = 0, max_scratch_size = 0, max_padded_length = 0;
 
     // Step 4: Set up buffer sizes and check power-of-radix
-    // Mixed-radix uses N directly; Bluestein pads to next power of 2 ≥ 2N-1
     if (is_factorable)
     {
-        max_padded_length = signal_length; // No padding for mixed-radix
-        twiddle_count = signal_length;     // N twiddles for all stages
-        // Check for pure powers using is_exact_power
-        is_power_of_2 = (signal_length & (signal_length - 1)) == 0; // Fast power-of-2 check
+        max_padded_length = signal_length;
+        twiddle_count = signal_length;
+        
+        // Check for pure powers
+        is_power_of_2 = (signal_length & (signal_length - 1)) == 0;
         is_power_of_3 = is_exact_power(signal_length, 3);
         is_power_of_5 = is_exact_power(signal_length, 5);
         is_power_of_7 = is_exact_power(signal_length, 7);
         is_power_of_11 = is_exact_power(signal_length, 11);
         is_power_of_13 = is_exact_power(signal_length, 13);
+        is_power_of_16 = is_exact_power(signal_length, 16);  // ← ADD
+        is_power_of_32 = is_exact_power(signal_length, 32);  // ← ADD
     }
     else
     {
-        // Bluestein needs M ≥ 2N-1, rounded up to power of 2.
-        // Use an integer next_pow2 to avoid FP edge cases.
         int want = 2 * signal_length - 1;
         unsigned v = (unsigned)want;
         v--;
@@ -672,34 +673,50 @@ fft_object fft_init(int signal_length, int transform_direction)
         v |= v >> 16;
         v++;
         max_padded_length = (int)v;
-        twiddle_count = max_padded_length; // M twiddles for Bluestein
+        twiddle_count = max_padded_length;
     }
 
     // Step 5: Compute memory requirements
-    // Estimate scratch and twiddle_factors sizes based on factorization
     int temp_factors[64];
     int num_factors = factors(is_factorable ? signal_length : max_padded_length, temp_factors);
-    int twiddle_factors_size = 0; // Size for precomputed twiddles
-    int scratch_needed = 0;       // Scratch for recursion or Bluestein
+    int twiddle_factors_size = 0;
+    int scratch_needed = 0;
 
     if (is_factorable)
     {
         int temp_N = signal_length;
-        if (is_power_of_2 || is_power_of_3 || is_power_of_5 || is_power_of_7 ||
-            is_power_of_11 || is_power_of_13)
+        
+        // ========================================================================
+        // UPDATED: Check for power-of-16 and power-of-32 FIRST (more optimal)
+        // ========================================================================
+        if (is_power_of_32 || is_power_of_16 || is_power_of_2 || is_power_of_3 || 
+            is_power_of_5 || is_power_of_7 || is_power_of_11 || is_power_of_13)
         {
-            // For pure-power FFTs, sum needs per recursion level
-            // Radix-r needs (r-1)*(N/r) twiddles, r*(N/r) scratch
-            int radix = is_power_of_2 ? 2 : is_power_of_3 ? 3
-                                        : is_power_of_5   ? 5
-                                        : is_power_of_7   ? 7
-                                        : is_power_of_11  ? 11
-                                                          : 13;
+            // Determine radix (prefer larger radices for fewer stages)
+            int radix;
+            if (is_power_of_32) {
+                radix = 32;  // Best for large power-of-2 FFTs
+            } else if (is_power_of_16) {
+                radix = 16;  // Good for medium power-of-2 FFTs
+            } else if (is_power_of_2) {
+                radix = 2;   // Fallback for small power-of-2
+            } else if (is_power_of_3) {
+                radix = 3;
+            } else if (is_power_of_5) {
+                radix = 5;
+            } else if (is_power_of_7) {
+                radix = 7;
+            } else if (is_power_of_11) {
+                radix = 11;
+            } else {
+                radix = 13;
+            }
+            
             int stage = 0;
             for (int n = signal_length; n >= radix; n /= radix)
             {
                 int sub_fft_size = n / radix;
-                // Store stage offset for twiddle_factors
+                
                 if (stage < MAX_STAGES)
                 {
                     fft_config->stage_twiddle_offset[stage++] = twiddle_factors_size;
@@ -711,28 +728,27 @@ fft_object fft_init(int signal_length, int transform_direction)
                     free_fft(fft_config);
                     return NULL;
                 }
-                twiddle_factors_size += (radix - 1) * sub_fft_size; // W_n^{j*k}, j=1..r-1
-                scratch_needed += radix * sub_fft_size;             // Outputs
+                
+                twiddle_factors_size += (radix - 1) * sub_fft_size;  // W_n^{j*k}, j=1..r-1
+                scratch_needed += radix * sub_fft_size;              // Outputs
             }
-            fft_config->num_precomputed_stages = stage; // Record number of stages
+            fft_config->num_precomputed_stages = stage;
         }
         else
         {
-            // Mixed-radix: r*(N/r) outputs, (r-1)*(N/r) twiddles for radices ≤ 13
+            // Mixed-radix: r*(N/r) outputs, (r-1)*(N/r) twiddles for radices ≤ 32
             for (int i = 0; i < num_factors; i++)
             {
                 int radix = temp_factors[i];
-                scratch_needed += radix * (temp_N / radix); // Outputs
-                if (radix <= 13)
+                scratch_needed += radix * (temp_N / radix);
+                if (radix <= 32)  // ← UPDATED: Include radix-16 and radix-32
                 {
-                    scratch_needed += (radix - 1) * (temp_N / radix); // Twiddles
+                    scratch_needed += (radix - 1) * (temp_N / radix);
                 }
                 temp_N /= radix;
             }
         }
 
-        // Ensure scratch size covers worst-case, fallback to 4*N
-        // Note: Mixed-radix may need more scratch for twiddles in radix-11/13
         max_scratch_size = scratch_needed;
         if (max_scratch_size < 4 * signal_length)
         {
@@ -741,17 +757,14 @@ fft_object fft_init(int signal_length, int transform_direction)
     }
     else
     {
-        // Bluestein: 4*M for chirped_signal, temp_chirp, ifft_result, chirp_sequence
         max_scratch_size = 4 * max_padded_length;
     }
 
     // Step 6: Allocate twiddle and scratch buffers
-    // 32-byte aligned for AVX2/SSE2 SIMD performance
     fft_config->twiddles = (fft_data *)_mm_malloc(twiddle_count * sizeof(fft_data), 32);
     fft_config->scratch = (fft_data *)_mm_malloc(max_scratch_size * sizeof(fft_data), 32);
     fft_config->twiddle_factors = NULL;
 
-    // Check allocation failures and clean up
     if (!fft_config->twiddles || !fft_config->scratch)
     {
         fprintf(stderr, "Error: Failed to allocate twiddle or scratch buffers\n");
@@ -760,8 +773,11 @@ fft_object fft_init(int signal_length, int transform_direction)
     }
 
     // Step 7: Allocate twiddle_factors for pure-power FFTs
-    // Precompute twiddles to skip copying in mixed_radix_dit_rec
-    if (is_factorable && (is_power_of_2 || is_power_of_3 || is_power_of_5 || is_power_of_7 ||
+    // ========================================================================
+    // UPDATED: Include radix-16 and radix-32
+    // ========================================================================
+    if (is_factorable && (is_power_of_32 || is_power_of_16 || is_power_of_2 || 
+                          is_power_of_3 || is_power_of_5 || is_power_of_7 ||
                           is_power_of_11 || is_power_of_13))
     {
         fft_config->twiddle_factors =
@@ -777,43 +793,57 @@ fft_object fft_init(int signal_length, int transform_direction)
     }
 
     // Step 8: Fill FFT config
-    // Set lengths, direction, algorithm type
     fft_config->n_input = signal_length;
     fft_config->n_fft = is_factorable ? signal_length : max_padded_length;
     fft_config->sgn = transform_direction;
     fft_config->max_scratch_size = max_scratch_size;
-    fft_config->lt = is_factorable ? 0 : 1; // 0 = mixed-radix, 1 = Bluestein
+    fft_config->lt = is_factorable ? 0 : 1;
 
     // Step 9: Factorize n_fft
-    // Store prime factors for recursion in mixed_radix_dit_rec
     fft_config->lf = factors(fft_config->n_fft, fft_config->factors);
 
     // Step 10: Compute twiddle factors
-    // Populate twiddles with e^{-2πi k / N} (or e^{-2πi k / M})
     build_twiddles_linear(fft_config->twiddles, fft_config->n_fft);
 
-    // Step 11: Populate twiddle_factors for pure-power FFTs
-    // Store W_{N_stage}^{j*k} (j=1..radix-1) for each level, *mapped* into the global W_N table.
-    // Mapping: W_{N_stage}^{p} == W_{N}^{p * (N / N_stage)}.
     // Step 11: Populate twiddle_factors for pure-power FFTs (k-major layout)
-    // Requires fft_config->twiddles[m] == W_{n_fft}^m  (linear table; see #2 below)
+    // ========================================================================
+    // UPDATED: Handle radix-16 and radix-32
+    // ========================================================================
     if (fft_config->twiddle_factors)
     {
         int offset = 0;
-        const int radix = (is_power_of_2 ? 2 : (is_power_of_3 ? 3 : (is_power_of_5 ? 5 : (is_power_of_7 ? 7 : (is_power_of_11 ? 11 : 13)))));
+        
+        // Determine radix (same priority as Step 5)
+        int radix;
+        if (is_power_of_32) {
+            radix = 32;
+        } else if (is_power_of_16) {
+            radix = 16;
+        } else if (is_power_of_2) {
+            radix = 2;
+        } else if (is_power_of_3) {
+            radix = 3;
+        } else if (is_power_of_5) {
+            radix = 5;
+        } else if (is_power_of_7) {
+            radix = 7;
+        } else if (is_power_of_11) {
+            radix = 11;
+        } else {
+            radix = 13;
+        }
 
         // Walk pure-power stages: N_stage = signal_length, signal_length/radix, ...
         for (int N_stage = signal_length; N_stage >= radix; N_stage /= radix)
         {
             const int sub_len = N_stage / radix;
-            const int stride = fft_config->n_fft / N_stage; // exact by construction
+            const int stride = fft_config->n_fft / N_stage;
 
             for (int k = 0; k < sub_len; ++k)
             {
-                const int base = (radix - 1) * k; // k-major
+                const int base = (radix - 1) * k;  // k-major
                 for (int j = 1; j < radix; ++j)
                 {
-                    // Map W_{N_stage}^{j*k} => W_{n_fft}^{ (j*k) * (n_fft/N_stage) }
                     const int p = (j * k) % N_stage;
                     const int idxN = (p * stride) % fft_config->n_fft;
                     fft_config->twiddle_factors[offset + base + (j - 1)] =
@@ -825,7 +855,6 @@ fft_object fft_init(int signal_length, int transform_direction)
     }
 
     // Step 12: Adjust twiddles for inverse FFT
-    // Flip imaginary parts for e^{+2πi k / N}
     if (transform_direction == -1)
     {
         for (int i = 0; i < twiddle_count; i++)
@@ -842,7 +871,6 @@ fft_object fft_init(int signal_length, int transform_direction)
     }
 
     // Step 13: Return configured FFT object
-    // Ready for fft_exec with all buffers and factors set
     return fft_config;
 }
 
@@ -1215,6 +1243,90 @@ static ALWAYS_INLINE void rot90_soa_avx(__m256d re, __m256d im, int sign,
         *out_re = im;                                     // +im
         *out_im = _mm256_sub_pd(_mm256_setzero_pd(), re); // -re
     }
+}
+
+//==============================================================================
+// RADIX-32 HELPER FUNCTIONS (place before mixed_radix_dit_rec)
+//==============================================================================
+
+#ifdef __AVX2__
+static ALWAYS_INLINE __m256d rot90_aos_avx2(__m256d v, int sign)
+{
+    __m256d swp = _mm256_permute_pd(v, 0b0101);
+    if (sign == 1) {
+        const __m256d m = _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
+        return _mm256_xor_pd(swp, m);
+    } else {
+        const __m256d m = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
+        return _mm256_xor_pd(swp, m);
+    }
+}
+
+static ALWAYS_INLINE void radix4_butterfly_aos(__m256d *a, __m256d *b,
+                                               __m256d *c, __m256d *d,
+                                               int transform_sign)
+{
+    __m256d A = *a, B = *b, C = *c, D = *d;
+
+    __m256d S0 = _mm256_add_pd(A, C);
+    __m256d D0 = _mm256_sub_pd(A, C);
+    __m256d S1 = _mm256_add_pd(B, D);
+    __m256d D1 = _mm256_sub_pd(B, D);
+
+    __m256d Y0 = _mm256_add_pd(S0, S1);
+    __m256d Y2 = _mm256_sub_pd(S0, S1);
+
+    // Fix: Use opposite signs for Y1/Y3
+    __m256d rot_for_y1 = rot90_aos_avx2(D1, -transform_sign);
+    __m256d rot_for_y3 = rot90_aos_avx2(D1,  transform_sign);
+
+    __m256d Y1 = _mm256_add_pd(D0, rot_for_y1);
+    __m256d Y3 = _mm256_add_pd(D0, rot_for_y3);
+
+    *a = Y0; *b = Y1; *c = Y2; *d = Y3;
+}
+
+static ALWAYS_INLINE void radix2_butterfly_aos(__m256d *a, __m256d *b)
+{
+    __m256d A = *a, B = *b;
+    *a = _mm256_add_pd(A, B);
+    *b = _mm256_sub_pd(A, B);
+}
+#endif // __AVX2__
+
+// Scalar helpers (C99-compatible)
+static inline void rot90_scalar(double re, double im, int sign, 
+                                 double *or_, double *oi) {
+    if (sign == 1) { *or_ = -im; *oi =  re; }
+    else           { *or_ =  im; *oi = -re; }
+}
+
+static inline void r2_butterfly(fft_data *a, fft_data *b) {
+    double tr = a->re + b->re, ti = a->im + b->im;
+    double ur = a->re - b->re, ui = a->im - b->im;
+    a->re = tr; a->im = ti; 
+    b->re = ur; b->im = ui;
+}
+
+static inline void r4_butterfly(fft_data *a, fft_data *b, 
+                                 fft_data *c, fft_data *d,
+                                 int transform_sign) {
+    double S0r = a->re + c->re, S0i = a->im + c->im;
+    double D0r = a->re - c->re, D0i = a->im - c->im;
+    double S1r = b->re + d->re, S1i = b->im + d->im;
+    double D1r = b->re - d->re, D1i = b->im - d->im;
+
+    fft_data y0 = { S0r + S1r, S0i + S1i };
+    fft_data y2 = { S0r - S1r, S0i - S1i };
+
+    double rposr, rposi, rnegr, rnegi;
+    rot90_scalar(D1r, D1i,  transform_sign, &rposr, &rposi);
+    rot90_scalar(D1r, D1i, -transform_sign, &rnegr, &rnegi);
+
+    fft_data y1 = { D0r + rnegr, D0i + rnegi };
+    fft_data y3 = { D0r + rposr, D0i + rposi };
+
+    *a = y0; *b = y1; *c = y2; *d = y3;
 }
 
 /**
@@ -3114,6 +3226,96 @@ static void mixed_radix_dit_rec(
             }
         }
     }
+    else if (radix == 32)
+    {
+        const int thirtysecond = sub_len;
+        int k = 0;
+
+    #ifdef __AVX2__
+        for (; k + 1 < thirtysecond; k += 2)
+        {
+            if (k + 8 < thirtysecond) {
+                for (int lane = 0; lane < 32; ++lane) {
+                    _mm_prefetch((const char *)&sub_outputs[k + 8 + lane*thirtysecond].re,
+                                _MM_HINT_T0);
+                }
+            }
+
+            __m256d x[32];
+            for (int lane = 0; lane < 32; ++lane) {
+                x[lane] = load2_aos(&sub_outputs[k + lane*thirtysecond],
+                                    &sub_outputs[k + lane*thirtysecond + 1]);
+            }
+
+            // Stage 1: Twiddles
+            for (int lane = 1; lane < 32; ++lane) {
+                __m256d tw = load2_aos(&stage_tw[31*k + (lane-1)],
+                                    &stage_tw[31*(k+1) + (lane-1)]);
+                x[lane] = cmul_avx2_aos(x[lane], tw);
+            }
+
+            // Stage 2: First radix-4
+            for (int g = 0; g < 8; ++g) {
+                radix4_butterfly_aos(&x[g], &x[g+8], &x[g+16], &x[g+24], transform_sign);
+            }
+
+            // Stage 3: Second radix-4
+            for (int g = 0; g < 8; ++g) {
+                int base = 4*g;
+                radix4_butterfly_aos(&x[base], &x[base+1], &x[base+2], &x[base+3], 
+                                    transform_sign);
+            }
+
+            // Stage 4: Final radix-2
+            for (int g = 0; g < 16; ++g) {
+                radix2_butterfly_aos(&x[2*g], &x[2*g+1]);
+            }
+
+            // Store
+            for (int m = 0; m < 32; ++m) {
+                STOREU_PD(&output_buffer[k + m*thirtysecond].re, x[m]);
+            }
+        }
+    #endif // __AVX2__
+
+        // Scalar tail
+        for (; k < thirtysecond; ++k)
+        {
+            fft_data x[32];
+            for (int lane = 0; lane < 32; ++lane) {
+                x[lane] = sub_outputs[k + lane*thirtysecond];
+            }
+
+            // Stage 1: Twiddles
+            for (int lane = 1; lane < 32; ++lane) {
+                const fft_data w = stage_tw[31*k + (lane-1)];
+                const double rr = x[lane].re*w.re - x[lane].im*w.im;
+                const double ri = x[lane].re*w.im + x[lane].im*w.re;
+                x[lane].re = rr; x[lane].im = ri;
+            }
+
+            // Stage 2: First radix-4
+            for (int g = 0; g < 8; ++g) {
+                r4_butterfly(&x[g], &x[g+8], &x[g+16], &x[g+24], transform_sign);
+            }
+
+            // Stage 3: Second radix-4
+            for (int g = 0; g < 8; ++g) {
+                int base = 4*g;
+                r4_butterfly(&x[base], &x[base+1], &x[base+2], &x[base+3], transform_sign);
+            }
+
+            // Stage 4: Final radix-2
+            for (int g = 0; g < 16; ++g) {
+                r2_butterfly(&x[2*g], &x[2*g+1]);
+            }
+
+            // Store
+            for (int m = 0; m < 32; ++m) {
+                output_buffer[k + m*thirtysecond] = x[m];
+            }
+        }
+    }
     else
     {
         const int r = radix;           // current radix
@@ -3979,6 +4181,17 @@ int factors(int number, int *factors_array)
     {
         factors_array[index++] = 11;
         temp_number /= 11;
+    }
+     // Try radix-32 first (for power-of-2)
+    while (n % 32 == 0 && n > 1) {
+        out_factors[count++] = 32;
+        n /= 32;
+    }
+    
+    // Then radix-16
+    while (n % 16 == 0 && n > 1) {
+        out_factors[count++] = 16;
+        n /= 16;
     }
     while (temp_number % 8 == 0)
     {
