@@ -1473,7 +1473,7 @@ static void mixed_radix_dit_rec(
             STOREU_SSE2(&output_buffer[k + half].re, _mm_sub_pd(even, tw)); // X_1
         }
     }
-     else if (radix == 3)
+    else if (radix == 3)
     {
         //======================================================================
         // RADIX-3 BUTTERFLY (DIT)
@@ -1496,7 +1496,7 @@ static void mixed_radix_dit_rec(
         //   Y_1[k] = temp + rot
         //   Y_2[k] = temp - rot
         //======================================================================
-        
+
         const int third = sub_len;
         int k = 0;
 
@@ -1506,79 +1506,84 @@ static void mixed_radix_dit_rec(
         //------------------------------------------------------------------
         const __m256d vhalf = _mm256_set1_pd(0.5);
         const __m256d vscl = _mm256_set1_pd(C3_SQRT3BY2);
-        
+
         for (; k + 3 < third; k += 4)
         {
             // Prefetch
-            if (k + 16 < third) {
+            if (k + 16 < third)
+            {
                 _mm_prefetch((const char *)&sub_outputs[k + 16].re, _MM_HINT_T0);
                 _mm_prefetch((const char *)&sub_outputs[k + 16 + third].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&sub_outputs[k + 16 + 2*third].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&sub_outputs[k + 16 + 2 * third].re, _MM_HINT_T0);
             }
-            
+
             // AoS -> SoA: Load 4 complex from each lane
             double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4];
             deinterleave4_aos_to_soa(&sub_outputs[k], aR, aI);
             deinterleave4_aos_to_soa(&sub_outputs[k + third], bR, bI);
-            deinterleave4_aos_to_soa(&sub_outputs[k + 2*third], cR, cI);
-            
+            deinterleave4_aos_to_soa(&sub_outputs[k + 2 * third], cR, cI);
+
             __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
             __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
             __m256d Cr = _mm256_loadu_pd(cR), Ci = _mm256_loadu_pd(cI);
-            
+
             // Load twiddles W^k and W^{2k} (k-major: [W^k, W^{2k}] at 2*k)
             fft_data w1a[4], w2a[4];
-            for (int p = 0; p < 4; ++p) {
-                w1a[p] = stage_tw[2*(k+p)];     // W^k
-                w2a[p] = stage_tw[2*(k+p) + 1]; // W^{2k}
+            for (int p = 0; p < 4; ++p)
+            {
+                w1a[p] = stage_tw[2 * (k + p)];     // W^k
+                w2a[p] = stage_tw[2 * (k + p) + 1]; // W^{2k}
             }
             double w1R[4], w1I[4], w2R[4], w2I[4];
             deinterleave4_aos_to_soa(w1a, w1R, w1I);
             deinterleave4_aos_to_soa(w2a, w2R, w2I);
-            
+
             __m256d W1r = _mm256_loadu_pd(w1R), W1i = _mm256_loadu_pd(w1I);
             __m256d W2r = _mm256_loadu_pd(w2R), W2i = _mm256_loadu_pd(w2I);
-            
+
             // Twiddle multiply
             __m256d b2r, b2i, c2r, c2i;
-            cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);  // b * W^k
-            cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);  // c * W^{2k}
-            
+            cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i); // b * W^k
+            cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i); // c * W^{2k}
+
             // Combine
             __m256d sumr = _mm256_add_pd(b2r, c2r);
             __m256d sumi = _mm256_add_pd(b2i, c2i);
             __m256d difr = _mm256_sub_pd(b2r, c2r);
             __m256d difi = _mm256_sub_pd(b2i, c2i);
-            
+
             // Y_0 = a + sum
             __m256d y0r = _mm256_add_pd(Ar, sumr);
             __m256d y0i = _mm256_add_pd(Ai, sumi);
-            
+
             // temp = a - 0.5*sum
             __m256d tr = _mm256_sub_pd(Ar, _mm256_mul_pd(sumr, vhalf));
             __m256d ti = _mm256_sub_pd(Ai, _mm256_mul_pd(sumi, vhalf));
-            
+
             // rot = (√3/2) * (±i * diff), direction depends on transform_sign
             __m256d rr90, ri90;
             rot90_soa_avx(difr, difi, transform_sign, &rr90, &ri90);
             __m256d rrs = _mm256_mul_pd(rr90, vscl);
             __m256d ris = _mm256_mul_pd(ri90, vscl);
-            
+
             // Y_1 = temp + rot, Y_2 = temp - rot
             __m256d y1r = _mm256_add_pd(tr, rrs);
             __m256d y1i = _mm256_add_pd(ti, ris);
             __m256d y2r = _mm256_sub_pd(tr, rrs);
             __m256d y2i = _mm256_sub_pd(ti, ris);
-            
+
             // SoA -> AoS: Store results
             double Y0R[4], Y0I[4], Y1R[4], Y1I[4], Y2R[4], Y2I[4];
-            _mm256_storeu_pd(Y0R, y0r); _mm256_storeu_pd(Y0I, y0i);
-            _mm256_storeu_pd(Y1R, y1r); _mm256_storeu_pd(Y1I, y1i);
-            _mm256_storeu_pd(Y2R, y2r); _mm256_storeu_pd(Y2I, y2i);
-            
+            _mm256_storeu_pd(Y0R, y0r);
+            _mm256_storeu_pd(Y0I, y0i);
+            _mm256_storeu_pd(Y1R, y1r);
+            _mm256_storeu_pd(Y1I, y1i);
+            _mm256_storeu_pd(Y2R, y2r);
+            _mm256_storeu_pd(Y2I, y2i);
+
             interleave4_soa_to_aos(Y0R, Y0I, &output_buffer[k]);
             interleave4_soa_to_aos(Y1R, Y1I, &output_buffer[k + third]);
-            interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2*third]);
+            interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2 * third]);
         }
 #endif // __AVX2__
 
@@ -1587,46 +1592,46 @@ static void mixed_radix_dit_rec(
         //------------------------------------------------------------------
         const __m128d vhalf128 = _mm_set1_pd(0.5);
         const __m128d vscl128 = _mm_set1_pd(C3_SQRT3BY2);
-        
+
         for (; k < third; ++k)
         {
             __m128d a = LOADU_SSE2(&sub_outputs[k].re);
             __m128d b = LOADU_SSE2(&sub_outputs[k + third].re);
-            __m128d c = LOADU_SSE2(&sub_outputs[k + 2*third].re);
-            
+            __m128d c = LOADU_SSE2(&sub_outputs[k + 2 * third].re);
+
             // Twiddles (k-major)
-            __m128d w1 = LOADU_SSE2(&stage_tw[2*k].re);
-            __m128d w2 = LOADU_SSE2(&stage_tw[2*k + 1].re);
-            
+            __m128d w1 = LOADU_SSE2(&stage_tw[2 * k].re);
+            __m128d w2 = LOADU_SSE2(&stage_tw[2 * k + 1].re);
+
             __m128d b2 = cmul_sse2_aos(b, w1);
             __m128d c2 = cmul_sse2_aos(c, w2);
-            
+
             __m128d sum = _mm_add_pd(b2, c2);
             __m128d dif = _mm_sub_pd(b2, c2);
-            
+
             // Y_0 = a + sum
             __m128d y0 = _mm_add_pd(a, sum);
             STOREU_SSE2(&output_buffer[k].re, y0);
-            
+
             // temp = a - 0.5*sum
             __m128d t = _mm_sub_pd(a, _mm_mul_pd(sum, vhalf128));
-            
+
             // Rotate by ±90° based on transform_sign
-            __m128d swp = _mm_shuffle_pd(dif, dif, 0b01);  // [im, re]
+            __m128d swp = _mm_shuffle_pd(dif, dif, 0b01); // [im, re]
             __m128d rot90 = (transform_sign == 1)
-                ? _mm_xor_pd(swp, _mm_set_pd(-0.0, 0.0))   // +i: (-im, re)
-                : _mm_xor_pd(swp, _mm_set_pd(0.0, -0.0));  // -i: (im, -re)
+                                ? _mm_xor_pd(swp, _mm_set_pd(-0.0, 0.0))  // +i: (-im, re)
+                                : _mm_xor_pd(swp, _mm_set_pd(0.0, -0.0)); // -i: (im, -re)
             __m128d rot = _mm_mul_pd(rot90, vscl128);
-            
+
             // Y_1 = temp + rot, Y_2 = temp - rot
             __m128d y1 = _mm_add_pd(t, rot);
             __m128d y2 = _mm_sub_pd(t, rot);
-            
+
             STOREU_SSE2(&output_buffer[k + third].re, y1);
-            STOREU_SSE2(&output_buffer[k + 2*third].re, y2);
+            STOREU_SSE2(&output_buffer[k + 2 * third].re, y2);
         }
     }
-      else if (radix == 4)
+    else if (radix == 4)
     {
         //======================================================================
         // RADIX-4 BUTTERFLY (DIT)
@@ -1648,7 +1653,7 @@ static void mixed_radix_dit_rec(
         //   Y_1[k] = (a - c2) - rot
         //   Y_3[k] = (a - c2) + rot
         //======================================================================
-        
+
         const int quarter = sub_len;
         int k = 0;
 
@@ -1659,88 +1664,95 @@ static void mixed_radix_dit_rec(
         for (; k + 3 < quarter; k += 4)
         {
             // Prefetch (8 elements ahead for each lane)
-            if (k + 8 < quarter) {
-                for (int lane = 0; lane < 4; ++lane) {
-                    _mm_prefetch((const char *)&sub_outputs[k + 8 + lane*quarter].re, 
+            if (k + 8 < quarter)
+            {
+                for (int lane = 0; lane < 4; ++lane)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + 8 + lane * quarter].re,
                                  _MM_HINT_T0);
                 }
             }
-            
+
             // AoS -> SoA: Load 4 complex from each lane
             double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4], dR[4], dI[4];
             deinterleave4_aos_to_soa(&sub_outputs[k], aR, aI);
             deinterleave4_aos_to_soa(&sub_outputs[k + quarter], bR, bI);
-            deinterleave4_aos_to_soa(&sub_outputs[k + 2*quarter], cR, cI);
-            deinterleave4_aos_to_soa(&sub_outputs[k + 3*quarter], dR, dI);
-            
+            deinterleave4_aos_to_soa(&sub_outputs[k + 2 * quarter], cR, cI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 3 * quarter], dR, dI);
+
             __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
             __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
             __m256d Cr = _mm256_loadu_pd(cR), Ci = _mm256_loadu_pd(cI);
             __m256d Dr = _mm256_loadu_pd(dR), Di = _mm256_loadu_pd(dI);
-            
+
             // Load twiddles (k-major: [W^k, W^{2k}, W^{3k}] at 3*k)
             fft_data w1a[4], w2a[4], w3a[4];
-            for (int p = 0; p < 4; ++p) {
-                w1a[p] = stage_tw[3*(k+p)];      // W^k
-                w2a[p] = stage_tw[3*(k+p) + 1];  // W^{2k}
-                w3a[p] = stage_tw[3*(k+p) + 2];  // W^{3k}
+            for (int p = 0; p < 4; ++p)
+            {
+                w1a[p] = stage_tw[3 * (k + p)];     // W^k
+                w2a[p] = stage_tw[3 * (k + p) + 1]; // W^{2k}
+                w3a[p] = stage_tw[3 * (k + p) + 2]; // W^{3k}
             }
-            
+
             double w1R[4], w1I[4], w2R[4], w2I[4], w3R[4], w3I[4];
             deinterleave4_aos_to_soa(w1a, w1R, w1I);
             deinterleave4_aos_to_soa(w2a, w2R, w2I);
             deinterleave4_aos_to_soa(w3a, w3R, w3I);
-            
+
             __m256d W1r = _mm256_loadu_pd(w1R), W1i = _mm256_loadu_pd(w1I);
             __m256d W2r = _mm256_loadu_pd(w2R), W2i = _mm256_loadu_pd(w2I);
             __m256d W3r = _mm256_loadu_pd(w3R), W3i = _mm256_loadu_pd(w3I);
-            
+
             // Twiddle multiply
             __m256d b2r, b2i, c2r, c2i, d2r, d2i;
-            cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);  // b * W^k
-            cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);  // c * W^{2k}
-            cmul_soa_avx(Dr, Di, W3r, W3i, &d2r, &d2i);  // d * W^{3k}
-            
+            cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i); // b * W^k
+            cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i); // c * W^{2k}
+            cmul_soa_avx(Dr, Di, W3r, W3i, &d2r, &d2i); // d * W^{3k}
+
             // Combine
             __m256d sumBD_r = _mm256_add_pd(b2r, d2r);
             __m256d sumBD_i = _mm256_add_pd(b2i, d2i);
             __m256d difBD_r = _mm256_sub_pd(b2r, d2r);
             __m256d difBD_i = _mm256_sub_pd(b2i, d2i);
-            
-            __m256d a_pc_r = _mm256_add_pd(Ar, c2r);    // a + c2
+
+            __m256d a_pc_r = _mm256_add_pd(Ar, c2r); // a + c2
             __m256d a_pc_i = _mm256_add_pd(Ai, c2i);
-            __m256d a_mc_r = _mm256_sub_pd(Ar, c2r);    // a - c2
+            __m256d a_mc_r = _mm256_sub_pd(Ar, c2r); // a - c2
             __m256d a_mc_i = _mm256_sub_pd(Ai, c2i);
-            
+
             // Y_0 = (a + c2) + sumBD
             __m256d y0r = _mm256_add_pd(a_pc_r, sumBD_r);
             __m256d y0i = _mm256_add_pd(a_pc_i, sumBD_i);
-            
+
             // Y_2 = (a - c2) - sumBD
             __m256d y2r = _mm256_sub_pd(a_mc_r, sumBD_r);
             __m256d y2i = _mm256_sub_pd(a_mc_i, sumBD_i);
-            
+
             // rot = sign * i * difBD
             __m256d rr, ri;
             rot90_soa_avx(difBD_r, difBD_i, transform_sign, &rr, &ri);
-            
+
             // Y_1 = (a - c2) - rot, Y_3 = (a - c2) + rot
             __m256d y1r = _mm256_sub_pd(a_mc_r, rr);
             __m256d y1i = _mm256_sub_pd(a_mc_i, ri);
             __m256d y3r = _mm256_add_pd(a_mc_r, rr);
             __m256d y3i = _mm256_add_pd(a_mc_i, ri);
-            
+
             // SoA -> AoS: Store results
             double Y0R[4], Y0I[4], Y1R[4], Y1I[4], Y2R[4], Y2I[4], Y3R[4], Y3I[4];
-            _mm256_storeu_pd(Y0R, y0r); _mm256_storeu_pd(Y0I, y0i);
-            _mm256_storeu_pd(Y1R, y1r); _mm256_storeu_pd(Y1I, y1i);
-            _mm256_storeu_pd(Y2R, y2r); _mm256_storeu_pd(Y2I, y2i);
-            _mm256_storeu_pd(Y3R, y3r); _mm256_storeu_pd(Y3I, y3i);
-            
+            _mm256_storeu_pd(Y0R, y0r);
+            _mm256_storeu_pd(Y0I, y0i);
+            _mm256_storeu_pd(Y1R, y1r);
+            _mm256_storeu_pd(Y1I, y1i);
+            _mm256_storeu_pd(Y2R, y2r);
+            _mm256_storeu_pd(Y2I, y2i);
+            _mm256_storeu_pd(Y3R, y3r);
+            _mm256_storeu_pd(Y3I, y3i);
+
             interleave4_soa_to_aos(Y0R, Y0I, &output_buffer[k]);
             interleave4_soa_to_aos(Y1R, Y1I, &output_buffer[k + quarter]);
-            interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2*quarter]);
-            interleave4_soa_to_aos(Y3R, Y3I, &output_buffer[k + 3*quarter]);
+            interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2 * quarter]);
+            interleave4_soa_to_aos(Y3R, Y3I, &output_buffer[k + 3 * quarter]);
         }
 #endif // __AVX2__
 
@@ -1752,14 +1764,14 @@ static void mixed_radix_dit_rec(
             // Load lanes
             const fft_data a = sub_outputs[k];
             const fft_data b = sub_outputs[k + quarter];
-            const fft_data c = sub_outputs[k + 2*quarter];
-            const fft_data d = sub_outputs[k + 3*quarter];
-            
+            const fft_data c = sub_outputs[k + 2 * quarter];
+            const fft_data d = sub_outputs[k + 3 * quarter];
+
             // Load twiddles (k-major)
-            const fft_data w1 = stage_tw[3*k];
-            const fft_data w2 = stage_tw[3*k + 1];
-            const fft_data w3 = stage_tw[3*k + 2];
-            
+            const fft_data w1 = stage_tw[3 * k];
+            const fft_data w2 = stage_tw[3 * k + 1];
+            const fft_data w3 = stage_tw[3 * k + 2];
+
             // Twiddle multiply
             double b2r = b.re * w1.re - b.im * w1.im;
             double b2i = b.re * w1.im + b.im * w1.re;
@@ -1767,34 +1779,34 @@ static void mixed_radix_dit_rec(
             double c2i = c.re * w2.im + c.im * w2.re;
             double d2r = d.re * w3.re - d.im * w3.im;
             double d2i = d.re * w3.im + d.im * w3.re;
-            
+
             // Combine
             double sumBD_r = b2r + d2r, sumBD_i = b2i + d2i;
             double difBD_r = b2r - d2r, difBD_i = b2i - d2i;
-            
+
             double a_pc_r = a.re + c2r, a_pc_i = a.im + c2i;
             double a_mc_r = a.re - c2r, a_mc_i = a.im - c2i;
-            
+
             // Y_0, Y_2
             fft_data y0 = {a_pc_r + sumBD_r, a_pc_i + sumBD_i};
             fft_data y2 = {a_mc_r - sumBD_r, a_mc_i - sumBD_i};
-            
+
             // rot = sign * i * difBD
             double rr = (transform_sign == 1) ? -difBD_i : difBD_i;
             double ri = (transform_sign == 1) ? difBD_r : -difBD_r;
-            
+
             // Y_1, Y_3
             fft_data y1 = {a_mc_r - rr, a_mc_i - ri};
             fft_data y3 = {a_mc_r + rr, a_mc_i + ri};
-            
+
             // Store
             output_buffer[k] = y0;
             output_buffer[k + quarter] = y1;
-            output_buffer[k + 2*quarter] = y2;
-            output_buffer[k + 3*quarter] = y3;
+            output_buffer[k + 2 * quarter] = y2;
+            output_buffer[k + 3 * quarter] = y3;
         }
     }
-     else if (radix == 5)
+    else if (radix == 5)
     {
         //======================================================================
         // RADIX-5 BUTTERFLY (Rader/Winograd DIT)
@@ -1810,16 +1822,16 @@ static void mixed_radix_dit_rec(
         //   b2 = b*W^k, c2 = c*W^{2k}, d2 = d*W^{3k}, e2 = e*W^{4k}
         //   t0 = b2+e2, t1 = c2+d2, t2 = b2-e2, t3 = c2-d2
         //   Y_0 = a + t0 + t1
-        //   
+        //
         //   base1 = S5_1*t2 + S5_2*t3,  tmp1 = C5_1*t0 + C5_2*t1
         //   Y_1 = (a + tmp1) + sign*i*base1
         //   Y_4 = (a + tmp1) - sign*i*base1
-        //   
+        //
         //   base2 = S5_2*t2 - S5_1*t3,  tmp2 = C5_2*t0 + C5_1*t1
         //   Y_2 = (a + tmp2) + sign*i*base2
         //   Y_3 = (a + tmp2) - sign*i*base2
         //======================================================================
-        
+
         const int fifth = sub_len;
         int k = 0;
 
@@ -1827,74 +1839,76 @@ static void mixed_radix_dit_rec(
         //------------------------------------------------------------------
         // AVX2 PATH: Process 4 butterflies per iteration (SoA with FMA)
         //------------------------------------------------------------------
-        const __m256d vc1 = _mm256_set1_pd(C5_1);  // cos(2π/5)
-        const __m256d vc2 = _mm256_set1_pd(C5_2);  // cos(4π/5)
-        const __m256d vs1 = _mm256_set1_pd(S5_1);  // sin(2π/5)
-        const __m256d vs2 = _mm256_set1_pd(S5_2);  // sin(4π/5)
-        
+        const __m256d vc1 = _mm256_set1_pd(C5_1); // cos(2π/5)
+        const __m256d vc2 = _mm256_set1_pd(C5_2); // cos(4π/5)
+        const __m256d vs1 = _mm256_set1_pd(S5_1); // sin(2π/5)
+        const __m256d vs2 = _mm256_set1_pd(S5_2); // sin(4π/5)
+
         for (; k + 3 < fifth; k += 4)
         {
             // Prefetch
-            if (k + 8 < fifth) {
+            if (k + 8 < fifth)
+            {
                 _mm_prefetch((const char *)&sub_outputs[k + 8].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&twiddle_factors[4*(k+8)].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&twiddle_factors[4 * (k + 8)].re, _MM_HINT_T0);
             }
-            
+
             // AoS -> SoA: Load 4 complex from each of 5 lanes
             double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4], dR[4], dI[4], eR[4], eI[4];
             deinterleave4_aos_to_soa(&sub_outputs[k], aR, aI);
             deinterleave4_aos_to_soa(&sub_outputs[k + fifth], bR, bI);
-            deinterleave4_aos_to_soa(&sub_outputs[k + 2*fifth], cR, cI);
-            deinterleave4_aos_to_soa(&sub_outputs[k + 3*fifth], dR, dI);
-            deinterleave4_aos_to_soa(&sub_outputs[k + 4*fifth], eR, eI);
-            
+            deinterleave4_aos_to_soa(&sub_outputs[k + 2 * fifth], cR, cI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 3 * fifth], dR, dI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 4 * fifth], eR, eI);
+
             __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
             __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
             __m256d Cr = _mm256_loadu_pd(cR), Ci = _mm256_loadu_pd(cI);
             __m256d Dr = _mm256_loadu_pd(dR), Di = _mm256_loadu_pd(dI);
             __m256d Er = _mm256_loadu_pd(eR), Ei = _mm256_loadu_pd(eI);
-            
+
             // Load twiddles (k-major: [W^k, W^{2k}, W^{3k}, W^{4k}] at 4*k)
             fft_data w1a[4], w2a[4], w3a[4], w4a[4];
-            for (int p = 0; p < 4; ++p) {
-                w1a[p] = stage_tw[4*(k+p)];
-                w2a[p] = stage_tw[4*(k+p) + 1];
-                w3a[p] = stage_tw[4*(k+p) + 2];
-                w4a[p] = stage_tw[4*(k+p) + 3];
+            for (int p = 0; p < 4; ++p)
+            {
+                w1a[p] = stage_tw[4 * (k + p)];
+                w2a[p] = stage_tw[4 * (k + p) + 1];
+                w3a[p] = stage_tw[4 * (k + p) + 2];
+                w4a[p] = stage_tw[4 * (k + p) + 3];
             }
-            
+
             double w1R[4], w1I[4], w2R[4], w2I[4], w3R[4], w3I[4], w4R[4], w4I[4];
             deinterleave4_aos_to_soa(w1a, w1R, w1I);
             deinterleave4_aos_to_soa(w2a, w2R, w2I);
             deinterleave4_aos_to_soa(w3a, w3R, w3I);
             deinterleave4_aos_to_soa(w4a, w4R, w4I);
-            
+
             __m256d W1r = _mm256_loadu_pd(w1R), W1i = _mm256_loadu_pd(w1I);
             __m256d W2r = _mm256_loadu_pd(w2R), W2i = _mm256_loadu_pd(w2I);
             __m256d W3r = _mm256_loadu_pd(w3R), W3i = _mm256_loadu_pd(w3I);
             __m256d W4r = _mm256_loadu_pd(w4R), W4i = _mm256_loadu_pd(w4I);
-            
+
             // Twiddle multiply
             __m256d b2r, b2i, c2r, c2i, d2r, d2i, e2r, e2i;
             cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);
             cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);
             cmul_soa_avx(Dr, Di, W3r, W3i, &d2r, &d2i);
             cmul_soa_avx(Er, Ei, W4r, W4i, &e2r, &e2i);
-            
+
             // Symmetric/anti-symmetric pairs
-            __m256d t0r = _mm256_add_pd(b2r, e2r);  // b2 + e2
+            __m256d t0r = _mm256_add_pd(b2r, e2r); // b2 + e2
             __m256d t0i = _mm256_add_pd(b2i, e2i);
-            __m256d t1r = _mm256_add_pd(c2r, d2r);  // c2 + d2
+            __m256d t1r = _mm256_add_pd(c2r, d2r); // c2 + d2
             __m256d t1i = _mm256_add_pd(c2i, d2i);
-            __m256d t2r = _mm256_sub_pd(b2r, e2r);  // b2 - e2
+            __m256d t2r = _mm256_sub_pd(b2r, e2r); // b2 - e2
             __m256d t2i = _mm256_sub_pd(b2i, e2i);
-            __m256d t3r = _mm256_sub_pd(c2r, d2r);  // c2 - d2
+            __m256d t3r = _mm256_sub_pd(c2r, d2r); // c2 - d2
             __m256d t3i = _mm256_sub_pd(c2i, d2i);
-            
+
             // Y_0 = a + t0 + t1
             __m256d y0r = _mm256_add_pd(Ar, _mm256_add_pd(t0r, t1r));
             __m256d y0i = _mm256_add_pd(Ai, _mm256_add_pd(t0i, t1i));
-            
+
             // First pair: Y_1, Y_4
             // base1 = S5_1*t2 + S5_2*t3  (FMA)
             __m256d base1r = FMADD(vs1, t2r, _mm256_mul_pd(vs2, t3r));
@@ -1902,18 +1916,18 @@ static void mixed_radix_dit_rec(
             // tmp1 = C5_1*t0 + C5_2*t1  (FMA)
             __m256d tmp1r = FMADD(vc1, t0r, _mm256_mul_pd(vc2, t1r));
             __m256d tmp1i = FMADD(vc1, t0i, _mm256_mul_pd(vc2, t1i));
-            
+
             // rot1 = sign * i * base1
             __m256d r1r, r1i;
             rot90_soa_avx(base1r, base1i, transform_sign, &r1r, &r1i);
-            
+
             __m256d a1r = _mm256_add_pd(Ar, tmp1r);
             __m256d a1i = _mm256_add_pd(Ai, tmp1i);
             __m256d y1r = _mm256_add_pd(a1r, r1r);
             __m256d y1i = _mm256_add_pd(a1i, r1i);
             __m256d y4r = _mm256_sub_pd(a1r, r1r);
             __m256d y4i = _mm256_sub_pd(a1i, r1i);
-            
+
             // Second pair: Y_2, Y_3
             // base2 = S5_2*t2 - S5_1*t3  (FMSUB)
             __m256d base2r = FMSUB(vs2, t2r, _mm256_mul_pd(vs1, t3r));
@@ -1921,32 +1935,37 @@ static void mixed_radix_dit_rec(
             // tmp2 = C5_2*t0 + C5_1*t1  (FMA)
             __m256d tmp2r = FMADD(vc2, t0r, _mm256_mul_pd(vc1, t1r));
             __m256d tmp2i = FMADD(vc2, t0i, _mm256_mul_pd(vc1, t1i));
-            
+
             // rot2 = sign * i * base2
             __m256d r2r, r2i;
             rot90_soa_avx(base2r, base2i, transform_sign, &r2r, &r2i);
-            
+
             __m256d a2r = _mm256_add_pd(Ar, tmp2r);
             __m256d a2i = _mm256_add_pd(Ai, tmp2i);
             __m256d y2r = _mm256_add_pd(a2r, r2r);
             __m256d y2i = _mm256_add_pd(a2i, r2i);
             __m256d y3r = _mm256_sub_pd(a2r, r2r);
             __m256d y3i = _mm256_sub_pd(a2i, r2i);
-            
+
             // SoA -> AoS: Store results
             double Y0R[4], Y0I[4], Y1R[4], Y1I[4], Y2R[4], Y2I[4];
             double Y3R[4], Y3I[4], Y4R[4], Y4I[4];
-            _mm256_storeu_pd(Y0R, y0r); _mm256_storeu_pd(Y0I, y0i);
-            _mm256_storeu_pd(Y1R, y1r); _mm256_storeu_pd(Y1I, y1i);
-            _mm256_storeu_pd(Y2R, y2r); _mm256_storeu_pd(Y2I, y2i);
-            _mm256_storeu_pd(Y3R, y3r); _mm256_storeu_pd(Y3I, y3i);
-            _mm256_storeu_pd(Y4R, y4r); _mm256_storeu_pd(Y4I, y4i);
-            
+            _mm256_storeu_pd(Y0R, y0r);
+            _mm256_storeu_pd(Y0I, y0i);
+            _mm256_storeu_pd(Y1R, y1r);
+            _mm256_storeu_pd(Y1I, y1i);
+            _mm256_storeu_pd(Y2R, y2r);
+            _mm256_storeu_pd(Y2I, y2i);
+            _mm256_storeu_pd(Y3R, y3r);
+            _mm256_storeu_pd(Y3I, y3i);
+            _mm256_storeu_pd(Y4R, y4r);
+            _mm256_storeu_pd(Y4I, y4i);
+
             interleave4_soa_to_aos(Y0R, Y0I, &output_buffer[k]);
             interleave4_soa_to_aos(Y1R, Y1I, &output_buffer[k + fifth]);
-            interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2*fifth]);
-            interleave4_soa_to_aos(Y3R, Y3I, &output_buffer[k + 3*fifth]);
-            interleave4_soa_to_aos(Y4R, Y4I, &output_buffer[k + 4*fifth]);
+            interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2 * fifth]);
+            interleave4_soa_to_aos(Y3R, Y3I, &output_buffer[k + 3 * fifth]);
+            interleave4_soa_to_aos(Y4R, Y4I, &output_buffer[k + 4 * fifth]);
         }
 #endif // __AVX2__
 
@@ -1958,385 +1977,335 @@ static void mixed_radix_dit_rec(
             // Load lanes
             const fft_data a = sub_outputs[k];
             const fft_data b = sub_outputs[k + fifth];
-            const fft_data c = sub_outputs[k + 2*fifth];
-            const fft_data d = sub_outputs[k + 3*fifth];
-            const fft_data e = sub_outputs[k + 4*fifth];
-            
+            const fft_data c = sub_outputs[k + 2 * fifth];
+            const fft_data d = sub_outputs[k + 3 * fifth];
+            const fft_data e = sub_outputs[k + 4 * fifth];
+
             // Load twiddles (k-major)
-            const fft_data w1 = stage_tw[4*k];
-            const fft_data w2 = stage_tw[4*k + 1];
-            const fft_data w3 = stage_tw[4*k + 2];
-            const fft_data w4 = stage_tw[4*k + 3];
-            
+            const fft_data w1 = stage_tw[4 * k];
+            const fft_data w2 = stage_tw[4 * k + 1];
+            const fft_data w3 = stage_tw[4 * k + 2];
+            const fft_data w4 = stage_tw[4 * k + 3];
+
             // Twiddle multiply
-            double b2r = b.re*w1.re - b.im*w1.im, b2i = b.re*w1.im + b.im*w1.re;
-            double c2r = c.re*w2.re - c.im*w2.im, c2i = c.re*w2.im + c.im*w2.re;
-            double d2r = d.re*w3.re - d.im*w3.im, d2i = d.re*w3.im + d.im*w3.re;
-            double e2r = e.re*w4.re - e.im*w4.im, e2i = e.re*w4.im + e.im*w4.re;
-            
+            double b2r = b.re * w1.re - b.im * w1.im, b2i = b.re * w1.im + b.im * w1.re;
+            double c2r = c.re * w2.re - c.im * w2.im, c2i = c.re * w2.im + c.im * w2.re;
+            double d2r = d.re * w3.re - d.im * w3.im, d2i = d.re * w3.im + d.im * w3.re;
+            double e2r = e.re * w4.re - e.im * w4.im, e2i = e.re * w4.im + e.im * w4.re;
+
             // Pairs
             double t0r = b2r + e2r, t0i = b2i + e2i;
             double t1r = c2r + d2r, t1i = c2i + d2i;
             double t2r = b2r - e2r, t2i = b2i - e2i;
             double t3r = c2r - d2r, t3i = c2i - d2i;
-            
+
             // Y_0
             fft_data y0 = {a.re + t0r + t1r, a.im + t0i + t1i};
-            
+
             // Y_1, Y_4
-            double base1r = S5_1*t2r + S5_2*t3r, base1i = S5_1*t2i + S5_2*t3i;
-            double tmp1r = C5_1*t0r + C5_2*t1r, tmp1i = C5_1*t0i + C5_2*t1i;
+            double base1r = S5_1 * t2r + S5_2 * t3r, base1i = S5_1 * t2i + S5_2 * t3i;
+            double tmp1r = C5_1 * t0r + C5_2 * t1r, tmp1i = C5_1 * t0i + C5_2 * t1i;
             double r1r = (transform_sign == 1) ? -base1i : base1i;
             double r1i = (transform_sign == 1) ? base1r : -base1r;
             fft_data a1 = {a.re + tmp1r, a.im + tmp1i};
             fft_data y1 = {a1.re + r1r, a1.im + r1i};
             fft_data y4 = {a1.re - r1r, a1.im - r1i};
-            
+
             // Y_2, Y_3
-            double base2r = S5_2*t2r - S5_1*t3r, base2i = S5_2*t2i - S5_1*t3i;
-            double tmp2r = C5_2*t0r + C5_1*t1r, tmp2i = C5_2*t0i + C5_1*t1i;
+            double base2r = S5_2 * t2r - S5_1 * t3r, base2i = S5_2 * t2i - S5_1 * t3i;
+            double tmp2r = C5_2 * t0r + C5_1 * t1r, tmp2i = C5_2 * t0i + C5_1 * t1i;
             double r2r = (transform_sign == 1) ? -base2i : base2i;
             double r2i = (transform_sign == 1) ? base2r : -base2r;
             fft_data a2 = {a.re + tmp2r, a.im + tmp2i};
             fft_data y2 = {a2.re + r2r, a2.im + r2i};
             fft_data y3 = {a2.re - r2r, a2.im - r2i};
-            
+
             // Store
             output_buffer[k] = y0;
             output_buffer[k + fifth] = y1;
-            output_buffer[k + 2*fifth] = y2;
-            output_buffer[k + 3*fifth] = y3;
-            output_buffer[k + 4*fifth] = y4;
+            output_buffer[k + 2 * fifth] = y2;
+            output_buffer[k + 3 * fifth] = y3;
+            output_buffer[k + 4 * fifth] = y4;
         }
     }
     else if (radix == 7)
-{
-    //==========================================================================
-    // RADIX-7 BUTTERFLY (Rader DIT with 3 symmetric pairs)
-    //==========================================================================
-    
-     const int seventh = sub_len;
-    int k = 0;
+    {
+        //==========================================================================
+        // RADIX-7 BUTTERFLY (Rader DIT with 3 symmetric pairs)
+        //==========================================================================
+
+        const int seventh = sub_len;
+        int k = 0;
 
 #ifdef __AVX2__
-    const __m256d vc1 = _mm256_set1_pd(C1);
-    const __m256d vc2 = _mm256_set1_pd(C2);
-    const __m256d vc3 = _mm256_set1_pd(C3);
-    const __m256d vs1 = _mm256_set1_pd(S1);
-    const __m256d vs2 = _mm256_set1_pd(S2);
-    const __m256d vs3 = _mm256_set1_pd(S3);
-    
-    for (; k + 3 < seventh; k += 4) {
-        if (k + 8 < seventh) {
-            _mm_prefetch((const char *)&sub_outputs[k+8].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&stage_tw[6*(k+8)].re, _MM_HINT_T0);
+        const __m256d vc1 = _mm256_set1_pd(C1);
+        const __m256d vc2 = _mm256_set1_pd(C2);
+        const __m256d vc3 = _mm256_set1_pd(C3);
+        const __m256d vs1 = _mm256_set1_pd(S1);
+        const __m256d vs2 = _mm256_set1_pd(S2);
+        const __m256d vs3 = _mm256_set1_pd(S3);
+
+        for (; k + 3 < seventh; k += 4)
+        {
+            if (k + 8 < seventh)
+            {
+                _mm_prefetch((const char *)&sub_outputs[k + 8].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&stage_tw[6 * (k + 8)].re, _MM_HINT_T0);
+            }
+
+            // AoS -> SoA (7 lanes × 4 points)
+            double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4], dR[4], dI[4];
+            double eR[4], eI[4], fR[4], fI[4], gR[4], gI[4];
+
+            deinterleave4_aos_to_soa(&sub_outputs[k], aR, aI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + seventh], bR, bI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 2 * seventh], cR, cI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 3 * seventh], dR, dI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 4 * seventh], eR, eI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 5 * seventh], fR, fI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 6 * seventh], gR, gI);
+
+            __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
+            __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
+            __m256d Cr = _mm256_loadu_pd(cR), Ci = _mm256_loadu_pd(cI);
+            __m256d Dr = _mm256_loadu_pd(dR), Di = _mm256_loadu_pd(dI);
+            __m256d Er = _mm256_loadu_pd(eR), Ei = _mm256_loadu_pd(eI);
+            __m256d Fr = _mm256_loadu_pd(fR), Fi = _mm256_loadu_pd(fI);
+            __m256d Gr = _mm256_loadu_pd(gR), Gi = _mm256_loadu_pd(gI);
+
+            // Load twiddles (k-major: W^k..W^{6k} at 6*k)
+            fft_data w1a[4], w2a[4], w3a[4], w4a[4], w5a[4], w6a[4];
+            for (int p = 0; p < 4; ++p)
+            {
+                w1a[p] = stage_tw[6 * (k + p)];
+                w2a[p] = stage_tw[6 * (k + p) + 1];
+                w3a[p] = stage_tw[6 * (k + p) + 2];
+                w4a[p] = stage_tw[6 * (k + p) + 3];
+                w5a[p] = stage_tw[6 * (k + p) + 4];
+                w6a[p] = stage_tw[6 * (k + p) + 5];
+            }
+
+            double w1R[4], w1I[4], w2R[4], w2I[4], w3R[4], w3I[4];
+            double w4R[4], w4I[4], w5R[4], w5I[4], w6R[4], w6I[4];
+            deinterleave4_aos_to_soa(w1a, w1R, w1I);
+            deinterleave4_aos_to_soa(w2a, w2R, w2I);
+            deinterleave4_aos_to_soa(w3a, w3R, w3I);
+            deinterleave4_aos_to_soa(w4a, w4R, w4I);
+            deinterleave4_aos_to_soa(w5a, w5R, w5I);
+            deinterleave4_aos_to_soa(w6a, w6R, w6I);
+
+            __m256d W1r = _mm256_loadu_pd(w1R), W1i = _mm256_loadu_pd(w1I);
+            __m256d W2r = _mm256_loadu_pd(w2R), W2i = _mm256_loadu_pd(w2I);
+            __m256d W3r = _mm256_loadu_pd(w3R), W3i = _mm256_loadu_pd(w3I);
+            __m256d W4r = _mm256_loadu_pd(w4R), W4i = _mm256_loadu_pd(w4I);
+            __m256d W5r = _mm256_loadu_pd(w5R), W5i = _mm256_loadu_pd(w5I);
+            __m256d W6r = _mm256_loadu_pd(w6R), W6i = _mm256_loadu_pd(w6I);
+
+            // Twiddle multiply
+            __m256d b2r, b2i, c2r, c2i, d2r, d2i, e2r, e2i, f2r, f2i, g2r, g2i;
+            cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);
+            cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);
+            cmul_soa_avx(Dr, Di, W3r, W3i, &d2r, &d2i);
+            cmul_soa_avx(Er, Ei, W4r, W4i, &e2r, &e2i);
+            cmul_soa_avx(Fr, Fi, W5r, W5i, &f2r, &f2i);
+            cmul_soa_avx(Gr, Gi, W6r, W6i, &g2r, &g2i);
+
+            // Symmetric/anti-symmetric pairs
+            __m256d t0r = _mm256_add_pd(b2r, g2r), t0i = _mm256_add_pd(b2i, g2i);
+            __m256d t1r = _mm256_add_pd(c2r, f2r), t1i = _mm256_add_pd(c2i, f2i);
+            __m256d t2r = _mm256_add_pd(d2r, e2r), t2i = _mm256_add_pd(d2i, e2i);
+            __m256d t3r = _mm256_sub_pd(b2r, g2r), t3i = _mm256_sub_pd(b2i, g2i);
+            __m256d t4r = _mm256_sub_pd(c2r, f2r), t4i = _mm256_sub_pd(c2i, f2i);
+            __m256d t5r = _mm256_sub_pd(d2r, e2r), t5i = _mm256_sub_pd(d2i, e2i);
+
+            // Y_0 = a + t0 + t1 + t2
+            __m256d y0r = _mm256_add_pd(Ar, _mm256_add_pd(_mm256_add_pd(t0r, t1r), t2r));
+            __m256d y0i = _mm256_add_pd(Ai, _mm256_add_pd(_mm256_add_pd(t0i, t1i), t2i));
+
+            // Fix #3: Use FMA for base calculations
+            // base1 = S1*t3 + S2*t4 + S3*t5
+            __m256d base1r = FMADD(vs1, t3r, FMADD(vs2, t4r, _mm256_mul_pd(vs3, t5r)));
+            __m256d base1i = FMADD(vs1, t3i, FMADD(vs2, t4i, _mm256_mul_pd(vs3, t5i)));
+
+            __m256d base2r = FMADD(vs2, t3r, FMADD(vs3, t4r, _mm256_mul_pd(vs1, t5r)));
+            __m256d base2i = FMADD(vs2, t3i, FMADD(vs3, t4i, _mm256_mul_pd(vs1, t5i)));
+
+            __m256d base3r = FMADD(vs3, t3r, FMADD(vs1, t4r, _mm256_mul_pd(vs2, t5r)));
+            __m256d base3i = FMADD(vs3, t3i, FMADD(vs1, t4i, _mm256_mul_pd(vs2, t5i)));
+
+            __m256d rr1, ri1, rr2, ri2, rr3, ri3;
+            rot90_soa_avx(base1r, base1i, transform_sign, &rr1, &ri1);
+            rot90_soa_avx(base2r, base2i, transform_sign, &rr2, &ri2);
+            rot90_soa_avx(base3r, base3i, transform_sign, &rr3, &ri3);
+
+            // tmp = a + (C1*t0 + C2*t1 + C3*t2) with nested FMA
+            __m256d tmp1r = _mm256_add_pd(Ar, FMADD(vc1, t0r, FMADD(vc2, t1r, _mm256_mul_pd(vc3, t2r))));
+            __m256d tmp1i = _mm256_add_pd(Ai, FMADD(vc1, t0i, FMADD(vc2, t1i, _mm256_mul_pd(vc3, t2i))));
+
+            __m256d tmp2r = _mm256_add_pd(Ar, FMADD(vc2, t0r, FMADD(vc3, t1r, _mm256_mul_pd(vc1, t2r))));
+            __m256d tmp2i = _mm256_add_pd(Ai, FMADD(vc2, t0i, FMADD(vc3, t1i, _mm256_mul_pd(vc1, t2i))));
+
+            __m256d tmp3r = _mm256_add_pd(Ar, FMADD(vc3, t0r, FMADD(vc1, t1r, _mm256_mul_pd(vc2, t2r))));
+            __m256d tmp3i = _mm256_add_pd(Ai, FMADD(vc3, t0i, FMADD(vc1, t1i, _mm256_mul_pd(vc2, t2i))));
+
+            // Symmetric pairs
+            __m256d y1r = _mm256_add_pd(tmp1r, rr1), y1i = _mm256_add_pd(tmp1i, ri1);
+            __m256d y6r = _mm256_sub_pd(tmp1r, rr1), y6i = _mm256_sub_pd(tmp1i, ri1);
+
+            __m256d y2r = _mm256_add_pd(tmp2r, rr2), y2i = _mm256_add_pd(tmp2i, ri2);
+            __m256d y5r = _mm256_sub_pd(tmp2r, rr2), y5i = _mm256_sub_pd(tmp2i, ri2);
+
+            __m256d y3r = _mm256_add_pd(tmp3r, rr3), y3i = _mm256_add_pd(tmp3i, ri3);
+            __m256d y4r = _mm256_sub_pd(tmp3r, rr3), y4i = _mm256_sub_pd(tmp3i, ri3);
+
+            // SoA -> AoS stores
+            double Y0R[4], Y0I[4], Y1R[4], Y1I[4], Y2R[4], Y2I[4];
+            double Y3R[4], Y3I[4], Y4R[4], Y4I[4], Y5R[4], Y5I[4], Y6R[4], Y6I[4];
+
+            _mm256_storeu_pd(Y0R, y0r);
+            _mm256_storeu_pd(Y0I, y0i);
+            _mm256_storeu_pd(Y1R, y1r);
+            _mm256_storeu_pd(Y1I, y1i);
+            _mm256_storeu_pd(Y2R, y2r);
+            _mm256_storeu_pd(Y2I, y2i);
+            _mm256_storeu_pd(Y3R, y3r);
+            _mm256_storeu_pd(Y3I, y3i);
+            _mm256_storeu_pd(Y4R, y4r);
+            _mm256_storeu_pd(Y4I, y4i);
+            _mm256_storeu_pd(Y5R, y5r);
+            _mm256_storeu_pd(Y5I, y5i);
+            _mm256_storeu_pd(Y6R, y6r);
+            _mm256_storeu_pd(Y6I, y6i);
+
+            interleave4_soa_to_aos(Y0R, Y0I, &output_buffer[k]);
+            interleave4_soa_to_aos(Y1R, Y1I, &output_buffer[k + seventh]);
+            interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2 * seventh]);
+            interleave4_soa_to_aos(Y3R, Y3I, &output_buffer[k + 3 * seventh]);
+            interleave4_soa_to_aos(Y4R, Y4I, &output_buffer[k + 4 * seventh]);
+            interleave4_soa_to_aos(Y5R, Y5I, &output_buffer[k + 5 * seventh]);
+            interleave4_soa_to_aos(Y6R, Y6I, &output_buffer[k + 6 * seventh]);
         }
-        
-        // AoS -> SoA (7 lanes × 4 points)
-        double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4], dR[4], dI[4];
-        double eR[4], eI[4], fR[4], fI[4], gR[4], gI[4];
-        
-        deinterleave4_aos_to_soa(&sub_outputs[k], aR, aI);
-        deinterleave4_aos_to_soa(&sub_outputs[k + seventh], bR, bI);
-        deinterleave4_aos_to_soa(&sub_outputs[k + 2*seventh], cR, cI);
-        deinterleave4_aos_to_soa(&sub_outputs[k + 3*seventh], dR, dI);
-        deinterleave4_aos_to_soa(&sub_outputs[k + 4*seventh], eR, eI);
-        deinterleave4_aos_to_soa(&sub_outputs[k + 5*seventh], fR, fI);
-        deinterleave4_aos_to_soa(&sub_outputs[k + 6*seventh], gR, gI);
-        
-        __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
-        __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
-        __m256d Cr = _mm256_loadu_pd(cR), Ci = _mm256_loadu_pd(cI);
-        __m256d Dr = _mm256_loadu_pd(dR), Di = _mm256_loadu_pd(dI);
-        __m256d Er = _mm256_loadu_pd(eR), Ei = _mm256_loadu_pd(eI);
-        __m256d Fr = _mm256_loadu_pd(fR), Fi = _mm256_loadu_pd(fI);
-        __m256d Gr = _mm256_loadu_pd(gR), Gi = _mm256_loadu_pd(gI);
-        
-        // Load twiddles (k-major: W^k..W^{6k} at 6*k)
-        fft_data w1a[4], w2a[4], w3a[4], w4a[4], w5a[4], w6a[4];
-        for (int p = 0; p < 4; ++p) {
-            w1a[p] = stage_tw[6*(k+p)];
-            w2a[p] = stage_tw[6*(k+p) + 1];
-            w3a[p] = stage_tw[6*(k+p) + 2];
-            w4a[p] = stage_tw[6*(k+p) + 3];
-            w5a[p] = stage_tw[6*(k+p) + 4];
-            w6a[p] = stage_tw[6*(k+p) + 5];
-        }
-        
-        double w1R[4], w1I[4], w2R[4], w2I[4], w3R[4], w3I[4];
-        double w4R[4], w4I[4], w5R[4], w5I[4], w6R[4], w6I[4];
-        deinterleave4_aos_to_soa(w1a, w1R, w1I);
-        deinterleave4_aos_to_soa(w2a, w2R, w2I);
-        deinterleave4_aos_to_soa(w3a, w3R, w3I);
-        deinterleave4_aos_to_soa(w4a, w4R, w4I);
-        deinterleave4_aos_to_soa(w5a, w5R, w5I);
-        deinterleave4_aos_to_soa(w6a, w6R, w6I);
-        
-        __m256d W1r = _mm256_loadu_pd(w1R), W1i = _mm256_loadu_pd(w1I);
-        __m256d W2r = _mm256_loadu_pd(w2R), W2i = _mm256_loadu_pd(w2I);
-        __m256d W3r = _mm256_loadu_pd(w3R), W3i = _mm256_loadu_pd(w3I);
-        __m256d W4r = _mm256_loadu_pd(w4R), W4i = _mm256_loadu_pd(w4I);
-        __m256d W5r = _mm256_loadu_pd(w5R), W5i = _mm256_loadu_pd(w5I);
-        __m256d W6r = _mm256_loadu_pd(w6R), W6i = _mm256_loadu_pd(w6I);
-        
-        // Twiddle multiply
-        __m256d b2r, b2i, c2r, c2i, d2r, d2i, e2r, e2i, f2r, f2i, g2r, g2i;
-        cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);
-        cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);
-        cmul_soa_avx(Dr, Di, W3r, W3i, &d2r, &d2i);
-        cmul_soa_avx(Er, Ei, W4r, W4i, &e2r, &e2i);
-        cmul_soa_avx(Fr, Fi, W5r, W5i, &f2r, &f2i);
-        cmul_soa_avx(Gr, Gi, W6r, W6i, &g2r, &g2i);
-        
-        // Symmetric/anti-symmetric pairs
-        __m256d t0r = _mm256_add_pd(b2r, g2r), t0i = _mm256_add_pd(b2i, g2i);
-        __m256d t1r = _mm256_add_pd(c2r, f2r), t1i = _mm256_add_pd(c2i, f2i);
-        __m256d t2r = _mm256_add_pd(d2r, e2r), t2i = _mm256_add_pd(d2i, e2i);
-        __m256d t3r = _mm256_sub_pd(b2r, g2r), t3i = _mm256_sub_pd(b2i, g2i);
-        __m256d t4r = _mm256_sub_pd(c2r, f2r), t4i = _mm256_sub_pd(c2i, f2i);
-        __m256d t5r = _mm256_sub_pd(d2r, e2r), t5i = _mm256_sub_pd(d2i, e2i);
-        
-        // Y_0 = a + t0 + t1 + t2
-        __m256d y0r = _mm256_add_pd(Ar, _mm256_add_pd(_mm256_add_pd(t0r, t1r), t2r));
-        __m256d y0i = _mm256_add_pd(Ai, _mm256_add_pd(_mm256_add_pd(t0i, t1i), t2i));
-        
-        // Fix #3: Use FMA for base calculations
-        // base1 = S1*t3 + S2*t4 + S3*t5
-        __m256d base1r = FMADD(vs1, t3r, FMADD(vs2, t4r, _mm256_mul_pd(vs3, t5r)));
-        __m256d base1i = FMADD(vs1, t3i, FMADD(vs2, t4i, _mm256_mul_pd(vs3, t5i)));
-        
-        __m256d base2r = FMADD(vs2, t3r, FMADD(vs3, t4r, _mm256_mul_pd(vs1, t5r)));
-        __m256d base2i = FMADD(vs2, t3i, FMADD(vs3, t4i, _mm256_mul_pd(vs1, t5i)));
-        
-        __m256d base3r = FMADD(vs3, t3r, FMADD(vs1, t4r, _mm256_mul_pd(vs2, t5r)));
-        __m256d base3i = FMADD(vs3, t3i, FMADD(vs1, t4i, _mm256_mul_pd(vs2, t5i)));
-        
-        __m256d rr1, ri1, rr2, ri2, rr3, ri3;
-        rot90_soa_avx(base1r, base1i, transform_sign, &rr1, &ri1);
-        rot90_soa_avx(base2r, base2i, transform_sign, &rr2, &ri2);
-        rot90_soa_avx(base3r, base3i, transform_sign, &rr3, &ri3);
-        
-        // tmp = a + (C1*t0 + C2*t1 + C3*t2) with nested FMA
-        __m256d tmp1r = _mm256_add_pd(Ar, FMADD(vc1, t0r, FMADD(vc2, t1r, _mm256_mul_pd(vc3, t2r))));
-        __m256d tmp1i = _mm256_add_pd(Ai, FMADD(vc1, t0i, FMADD(vc2, t1i, _mm256_mul_pd(vc3, t2i))));
-        
-        __m256d tmp2r = _mm256_add_pd(Ar, FMADD(vc2, t0r, FMADD(vc3, t1r, _mm256_mul_pd(vc1, t2r))));
-        __m256d tmp2i = _mm256_add_pd(Ai, FMADD(vc2, t0i, FMADD(vc3, t1i, _mm256_mul_pd(vc1, t2i))));
-        
-        __m256d tmp3r = _mm256_add_pd(Ar, FMADD(vc3, t0r, FMADD(vc1, t1r, _mm256_mul_pd(vc2, t2r))));
-        __m256d tmp3i = _mm256_add_pd(Ai, FMADD(vc3, t0i, FMADD(vc1, t1i, _mm256_mul_pd(vc2, t2i))));
-        
-        // Symmetric pairs
-        __m256d y1r = _mm256_add_pd(tmp1r, rr1), y1i = _mm256_add_pd(tmp1i, ri1);
-        __m256d y6r = _mm256_sub_pd(tmp1r, rr1), y6i = _mm256_sub_pd(tmp1i, ri1);
-        
-        __m256d y2r = _mm256_add_pd(tmp2r, rr2), y2i = _mm256_add_pd(tmp2i, ri2);
-        __m256d y5r = _mm256_sub_pd(tmp2r, rr2), y5i = _mm256_sub_pd(tmp2i, ri2);
-        
-        __m256d y3r = _mm256_add_pd(tmp3r, rr3), y3i = _mm256_add_pd(tmp3i, ri3);
-        __m256d y4r = _mm256_sub_pd(tmp3r, rr3), y4i = _mm256_sub_pd(tmp3i, ri3);
-        
-        // SoA -> AoS stores
-        double Y0R[4], Y0I[4], Y1R[4], Y1I[4], Y2R[4], Y2I[4];
-        double Y3R[4], Y3I[4], Y4R[4], Y4I[4], Y5R[4], Y5I[4], Y6R[4], Y6I[4];
-        
-        _mm256_storeu_pd(Y0R, y0r); _mm256_storeu_pd(Y0I, y0i);
-        _mm256_storeu_pd(Y1R, y1r); _mm256_storeu_pd(Y1I, y1i);
-        _mm256_storeu_pd(Y2R, y2r); _mm256_storeu_pd(Y2I, y2i);
-        _mm256_storeu_pd(Y3R, y3r); _mm256_storeu_pd(Y3I, y3i);
-        _mm256_storeu_pd(Y4R, y4r); _mm256_storeu_pd(Y4I, y4i);
-        _mm256_storeu_pd(Y5R, y5r); _mm256_storeu_pd(Y5I, y5i);
-        _mm256_storeu_pd(Y6R, y6r); _mm256_storeu_pd(Y6I, y6i);
-        
-        interleave4_soa_to_aos(Y0R, Y0I, &output_buffer[k]);
-        interleave4_soa_to_aos(Y1R, Y1I, &output_buffer[k + seventh]);
-        interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2*seventh]);
-        interleave4_soa_to_aos(Y3R, Y3I, &output_buffer[k + 3*seventh]);
-        interleave4_soa_to_aos(Y4R, Y4I, &output_buffer[k + 4*seventh]);
-        interleave4_soa_to_aos(Y5R, Y5I, &output_buffer[k + 5*seventh]);
-        interleave4_soa_to_aos(Y6R, Y6I, &output_buffer[k + 6*seventh]);
-    }
 #endif // __AVX2__
-    
-    // Scalar tail (your code is correct, keep as-is)
-        for (; k < seventh; ++k) {
-        const fft_data a = sub_outputs[k];
-        const fft_data b = sub_outputs[k + seventh];
-        const fft_data c = sub_outputs[k + 2*seventh];
-        const fft_data d = sub_outputs[k + 3*seventh];
-        const fft_data e = sub_outputs[k + 4*seventh];
-        const fft_data f = sub_outputs[k + 5*seventh];
-        const fft_data g = sub_outputs[k + 6*seventh];
-        
-        const fft_data w1 = stage_tw[6*k];
-        const fft_data w2 = stage_tw[6*k + 1];
-        const fft_data w3 = stage_tw[6*k + 2];
-        const fft_data w4 = stage_tw[6*k + 3];
-        const fft_data w5 = stage_tw[6*k + 4];
-        const fft_data w6 = stage_tw[6*k + 5];
-        
-        // Twiddle multiply
-        double b2r = b.re*w1.re - b.im*w1.im, b2i = b.re*w1.im + b.im*w1.re;
-        double c2r = c.re*w2.re - c.im*w2.im, c2i = c.re*w2.im + c.im*w2.re;
-        double d2r = d.re*w3.re - d.im*w3.im, d2i = d.re*w3.im + d.im*w3.re;
-        double e2r = e.re*w4.re - e.im*w4.im, e2i = e.re*w4.im + e.im*w4.re;
-        double f2r = f.re*w5.re - f.im*w5.im, f2i = f.re*w5.im + f.im*w5.re;
-        double g2r = g.re*w6.re - g.im*w6.im, g2i = g.re*w6.im + g.im*w6.re;
-        
-        // Pairs
-        double t0r = b2r + g2r, t0i = b2i + g2i;
-        double t1r = c2r + f2r, t1i = c2i + f2i;
-        double t2r = d2r + e2r, t2i = d2i + e2i;
-        double t3r = b2r - g2r, t3i = b2i - g2i;
-        double t4r = c2r - f2r, t4i = c2i - f2i;
-        double t5r = d2r - e2r, t5i = d2i - e2i;
-        
-        // Y_0
-        fft_data y0 = {a.re + (t0r + t1r + t2r), a.im + (t0i + t1i + t2i)};
-        
-        // Rotations
-        double r1r = (transform_sign == 1) ? -(S1*t3i + S2*t4i + S3*t5i) 
-                                            : (S1*t3i + S2*t4i + S3*t5i);
-        double r1i = (transform_sign == 1) ? (S1*t3r + S2*t4r + S3*t5r) 
-                                            : -(S1*t3r + S2*t4r + S3*t5r);
-        
-        double r2r = (transform_sign == 1) ? -(S2*t3i + S3*t4i + S1*t5i) 
-                                            : (S2*t3i + S3*t4i + S1*t5i);
-        double r2i = (transform_sign == 1) ? (S2*t3r + S3*t4r + S1*t5r) 
-                                            : -(S2*t3r + S3*t4r + S1*t5r);
-        
-        double r3r = (transform_sign == 1) ? -(S3*t3i + S1*t4i + S2*t5i) 
-                                            : (S3*t3i + S1*t4i + S2*t5i);
-        double r3i = (transform_sign == 1) ? (S3*t3r + S1*t4r + S2*t5r) 
-                                            : -(S3*t3r + S1*t4r + S2*t5r);
-        
-        double tmp1r = a.re + (C1*t0r + C2*t1r + C3*t2r);
-        double tmp1i = a.im + (C1*t0i + C2*t1i + C3*t2i);
-        
-        double tmp2r = a.re + (C2*t0r + C3*t1r + C1*t2r);
-        double tmp2i = a.im + (C2*t0i + C3*t1i + C1*t2i);
-        
-        double tmp3r = a.re + (C3*t0r + C1*t1r + C2*t2r);
-        double tmp3i = a.im + (C3*t0i + C1*t1i + C2*t2i);
-        
-        fft_data y1 = {tmp1r + r1r, tmp1i + r1i};
-        fft_data y6 = {tmp1r - r1r, tmp1i - r1i};
-        
-        fft_data y2 = {tmp2r + r2r, tmp2i + r2i};
-        fft_data y5 = {tmp2r - r2r, tmp2i - r2i};
-        
-        fft_data y3 = {tmp3r + r3r, tmp3i + r3i};
-        fft_data y4 = {tmp3r - r3r, tmp3i - r3i};
-        
-        output_buffer[k] = y0;
-        output_buffer[k + seventh] = y1;
-        output_buffer[k + 2*seventh] = y2;
-        output_buffer[k + 3*seventh] = y3;
-        output_buffer[k + 4*seventh] = y4;
-        output_buffer[k + 5*seventh] = y5;
-        output_buffer[k + 6*seventh] = y6;
-    }
+
+        // Scalar tail (your code is correct, keep as-is)
+        for (; k < seventh; ++k)
+        {
+            const fft_data a = sub_outputs[k];
+            const fft_data b = sub_outputs[k + seventh];
+            const fft_data c = sub_outputs[k + 2 * seventh];
+            const fft_data d = sub_outputs[k + 3 * seventh];
+            const fft_data e = sub_outputs[k + 4 * seventh];
+            const fft_data f = sub_outputs[k + 5 * seventh];
+            const fft_data g = sub_outputs[k + 6 * seventh];
+
+            const fft_data w1 = stage_tw[6 * k];
+            const fft_data w2 = stage_tw[6 * k + 1];
+            const fft_data w3 = stage_tw[6 * k + 2];
+            const fft_data w4 = stage_tw[6 * k + 3];
+            const fft_data w5 = stage_tw[6 * k + 4];
+            const fft_data w6 = stage_tw[6 * k + 5];
+
+            // Twiddle multiply
+            double b2r = b.re * w1.re - b.im * w1.im, b2i = b.re * w1.im + b.im * w1.re;
+            double c2r = c.re * w2.re - c.im * w2.im, c2i = c.re * w2.im + c.im * w2.re;
+            double d2r = d.re * w3.re - d.im * w3.im, d2i = d.re * w3.im + d.im * w3.re;
+            double e2r = e.re * w4.re - e.im * w4.im, e2i = e.re * w4.im + e.im * w4.re;
+            double f2r = f.re * w5.re - f.im * w5.im, f2i = f.re * w5.im + f.im * w5.re;
+            double g2r = g.re * w6.re - g.im * w6.im, g2i = g.re * w6.im + g.im * w6.re;
+
+            // Pairs
+            double t0r = b2r + g2r, t0i = b2i + g2i;
+            double t1r = c2r + f2r, t1i = c2i + f2i;
+            double t2r = d2r + e2r, t2i = d2i + e2i;
+            double t3r = b2r - g2r, t3i = b2i - g2i;
+            double t4r = c2r - f2r, t4i = c2i - f2i;
+            double t5r = d2r - e2r, t5i = d2i - e2i;
+
+            // Y_0
+            fft_data y0 = {a.re + (t0r + t1r + t2r), a.im + (t0i + t1i + t2i)};
+
+            // Rotations
+            double r1r = (transform_sign == 1) ? -(S1 * t3i + S2 * t4i + S3 * t5i)
+                                               : (S1 * t3i + S2 * t4i + S3 * t5i);
+            double r1i = (transform_sign == 1) ? (S1 * t3r + S2 * t4r + S3 * t5r)
+                                               : -(S1 * t3r + S2 * t4r + S3 * t5r);
+
+            double r2r = (transform_sign == 1) ? -(S2 * t3i + S3 * t4i + S1 * t5i)
+                                               : (S2 * t3i + S3 * t4i + S1 * t5i);
+            double r2i = (transform_sign == 1) ? (S2 * t3r + S3 * t4r + S1 * t5r)
+                                               : -(S2 * t3r + S3 * t4r + S1 * t5r);
+
+            double r3r = (transform_sign == 1) ? -(S3 * t3i + S1 * t4i + S2 * t5i)
+                                               : (S3 * t3i + S1 * t4i + S2 * t5i);
+            double r3i = (transform_sign == 1) ? (S3 * t3r + S1 * t4r + S2 * t5r)
+                                               : -(S3 * t3r + S1 * t4r + S2 * t5r);
+
+            double tmp1r = a.re + (C1 * t0r + C2 * t1r + C3 * t2r);
+            double tmp1i = a.im + (C1 * t0i + C2 * t1i + C3 * t2i);
+
+            double tmp2r = a.re + (C2 * t0r + C3 * t1r + C1 * t2r);
+            double tmp2i = a.im + (C2 * t0i + C3 * t1i + C1 * t2i);
+
+            double tmp3r = a.re + (C3 * t0r + C1 * t1r + C2 * t2r);
+            double tmp3i = a.im + (C3 * t0i + C1 * t1i + C2 * t2i);
+
+            fft_data y1 = {tmp1r + r1r, tmp1i + r1i};
+            fft_data y6 = {tmp1r - r1r, tmp1i - r1i};
+
+            fft_data y2 = {tmp2r + r2r, tmp2i + r2i};
+            fft_data y5 = {tmp2r - r2r, tmp2i - r2i};
+
+            fft_data y3 = {tmp3r + r3r, tmp3i + r3i};
+            fft_data y4 = {tmp3r - r3r, tmp3i - r3i};
+
+            output_buffer[k] = y0;
+            output_buffer[k + seventh] = y1;
+            output_buffer[k + 2 * seventh] = y2;
+            output_buffer[k + 3 * seventh] = y3;
+            output_buffer[k + 4 * seventh] = y4;
+            output_buffer[k + 5 * seventh] = y5;
+            output_buffer[k + 6 * seventh] = y6;
+        }
     }
     else if (radix == 8)
     {
-        // --- stage sizing ---
-        const int sub_fft_length = data_length / 8; // N/8
-        const int next_stride = 8 * stride;
-        const int sub_fft_size = sub_fft_length;
+        //==========================================================================
+        // RADIX-8 BUTTERFLY (Split-radix DIT)
+        //
+        // Decomposes 8-point DFT into 2× radix-4 stages with √2/2 rotations.
+        // Uses Gentleman-Sande split-radix algorithm for efficiency.
+        //==========================================================================
 
-        // outputs (8*N/8) + local twiddles (7*N/8) if not precomputed
-        const int required_size =
-            (fft_obj->twiddle_factors != NULL) ? (8 * sub_fft_size) : (15 * sub_fft_size);
-        if (scratch_offset + required_size > fft_obj->max_scratch_size)
-            return;
-
-        // sub-FFT outputs: 8 contiguous AoS blocks (X0..X7), each length sub_fft_size
-        fft_data *sub_fft_outputs = fft_obj->scratch + scratch_offset;
-
-        // per-stage twiddles
-        fft_data *twiddle_factors = NULL;
-        if (fft_obj->twiddle_factors != NULL)
-        {
-            if (factor_index >= fft_obj->num_precomputed_stages)
-                return;
-            twiddle_factors = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
-        }
-        else
-        {
-            twiddle_factors = fft_obj->scratch + (scratch_offset + 8 * sub_fft_size); // after outputs
-        }
-
-        // --- recurse lanes 0..7 ---
-        for (int lane = 0; lane < 8; ++lane)
-        {
-            mixed_radix_dit_rec(
-                sub_fft_outputs + lane * sub_fft_size,
-                input_buffer + lane * stride,
-                fft_obj, transform_sign,
-                sub_fft_length, next_stride,
-                factor_index + 1,
-                scratch_offset + lane * (required_size / 8));
-        }
-
-        // --- local twiddle prep if not precomputed ---
-        if (fft_obj->twiddle_factors == NULL)
-        {
-            const int N = 8 * sub_fft_size; // stage length
-            if (fft_obj->n_fft < N)
-                return;
-
-            // per k: [W^{1k}, W^{2k}, ..., W^{7k}]
-            for (int k = 0; k < sub_fft_size; ++k)
-            {
-                twiddle_factors[7 * k + 0] = fft_obj->twiddles[(1 * k) % N];
-                twiddle_factors[7 * k + 1] = fft_obj->twiddles[(2 * k) % N];
-                twiddle_factors[7 * k + 2] = fft_obj->twiddles[(3 * k) % N];
-                twiddle_factors[7 * k + 3] = fft_obj->twiddles[(4 * k) % N];
-                twiddle_factors[7 * k + 4] = fft_obj->twiddles[(5 * k) % N];
-                twiddle_factors[7 * k + 5] = fft_obj->twiddles[(6 * k) % N];
-                twiddle_factors[7 * k + 6] = fft_obj->twiddles[(7 * k) % N];
-            }
-        }
-
-        // =========================
-        // SoA AVX2 core (k += 4)
-        // =========================
-#if defined(__AVX2__)
-        const __m256d vc = _mm256_set1_pd(C8_1); // √2/2
-
+        const int eighth = sub_len;
         int k = 0;
-        for (; k + 3 < sub_fft_size; k += 4)
-        {
-            // modest prefetch (~64B ahead), both re/im for 8 lanes
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 0 * sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 0 * sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 1 * sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 1 * sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 2 * sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 2 * sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 3 * sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 3 * sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 4 * sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 4 * sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 5 * sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 5 * sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 6 * sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 6 * sub_fft_size].im, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 7 * sub_fft_size].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_fft_outputs[k + 8 + 7 * sub_fft_size].im, _MM_HINT_T0);
 
-            // ----- A: AoS -> SoA for 8 lanes, 4 points each -----
+#ifdef __AVX2__
+        const __m256d vc = _mm256_set1_pd(C8_1); // √2/2 = cos(45°)
+
+        for (; k + 3 < eighth; k += 4)
+        {
+            // Prefetch
+            if (k + 8 < eighth)
+            {
+                for (int lane = 0; lane < 8; ++lane)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + 8 + lane * eighth].re,
+                                 _MM_HINT_T0);
+                }
+            }
+
+            // AoS -> SoA: Load 8 lanes × 4 points
             double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4], dR[4], dI[4];
             double eR[4], eI[4], fR[4], fI[4], gR[4], gI[4], hR[4], hI[4];
 
-            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 0 * sub_fft_size], aR, aI);
-            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 1 * sub_fft_size], bR, bI);
-            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 2 * sub_fft_size], cR, cI);
-            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 3 * sub_fft_size], dR, dI);
-            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 4 * sub_fft_size], eR, eI);
-            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 5 * sub_fft_size], fR, fI);
-            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 6 * sub_fft_size], gR, gI);
-            deinterleave4_aos_to_soa(&sub_fft_outputs[k + 7 * sub_fft_size], hR, hI);
+            deinterleave4_aos_to_soa(&sub_outputs[k], aR, aI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + eighth], bR, bI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 2 * eighth], cR, cI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 3 * eighth], dR, dI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 4 * eighth], eR, eI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 5 * eighth], fR, fI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 6 * eighth], gR, gI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 7 * eighth], hR, hI);
 
             __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
             __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
@@ -2347,17 +2316,17 @@ static void mixed_radix_dit_rec(
             __m256d Gr = _mm256_loadu_pd(gR), Gi = _mm256_loadu_pd(gI);
             __m256d Hr = _mm256_loadu_pd(hR), Hi = _mm256_loadu_pd(hI);
 
-            // ----- B: build SoA twiddles for k..k+3 (powers 1..7) -----
+            // Load twiddles (k-major: W^k..W^{7k} at 7*k)
             fft_data w1a[4], w2a[4], w3a[4], w4a[4], w5a[4], w6a[4], w7a[4];
             for (int p = 0; p < 4; ++p)
             {
-                w1a[p] = twiddle_factors[7 * (k + p) + 0];
-                w2a[p] = twiddle_factors[7 * (k + p) + 1];
-                w3a[p] = twiddle_factors[7 * (k + p) + 2];
-                w4a[p] = twiddle_factors[7 * (k + p) + 3];
-                w5a[p] = twiddle_factors[7 * (k + p) + 4];
-                w6a[p] = twiddle_factors[7 * (k + p) + 5];
-                w7a[p] = twiddle_factors[7 * (k + p) + 6];
+                w1a[p] = stage_tw[7 * (k + p)];
+                w2a[p] = stage_tw[7 * (k + p) + 1];
+                w3a[p] = stage_tw[7 * (k + p) + 2];
+                w4a[p] = stage_tw[7 * (k + p) + 3];
+                w5a[p] = stage_tw[7 * (k + p) + 4];
+                w6a[p] = stage_tw[7 * (k + p) + 5];
+                w7a[p] = stage_tw[7 * (k + p) + 6];
             }
 
             double w1R[4], w1I[4], w2R[4], w2I[4], w3R[4], w3I[4];
@@ -2378,8 +2347,9 @@ static void mixed_radix_dit_rec(
             __m256d W6r = _mm256_loadu_pd(w6R), W6i = _mm256_loadu_pd(w6I);
             __m256d W7r = _mm256_loadu_pd(w7R), W7i = _mm256_loadu_pd(w7I);
 
-            // ----- C: apply twiddles in SoA -----
-            __m256d b2r, b2i, c2r, c2i, d2r, d2i, e2r, e2i, f2r, f2i, g2r, g2i, h2r, h2i;
+            // Twiddle multiply
+            __m256d b2r, b2i, c2r, c2i, d2r, d2i, e2r, e2i;
+            __m256d f2r, f2i, g2r, g2i, h2r, h2i;
             cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);
             cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);
             cmul_soa_avx(Dr, Di, W3r, W3i, &d2r, &d2i);
@@ -2388,129 +2358,120 @@ static void mixed_radix_dit_rec(
             cmul_soa_avx(Gr, Gi, W6r, W6i, &g2r, &g2i);
             cmul_soa_avx(Hr, Hi, W7r, W7i, &h2r, &h2i);
 
-            // ----- D: radix-8 identities (SoA) -----
-            // pair sums/diffs
-            __m256d s0r = _mm256_add_pd(b2r, h2r), s0i = _mm256_add_pd(b2i, h2i);   // b+h
-            __m256d d0r = _mm256_sub_pd(b2r, h2r), d0i = _mm256_sub_pd(b2i, h2i);   // b-h
-            __m256d s1r = _mm256_add_pd(c2r, g2r), s1i = _mm256_add_pd(c2i, g2i);   // c+g
-            __m256d d1r = _mm256_sub_pd(c2r, g2r), d1i = _mm256_sub_pd(c2i, g2i);   // c-g
-            __m256d s2r = _mm256_add_pd(d2r, f2r), s2i = _mm256_add_pd(d2i, f2i);   // d+f
-            __m256d d2mr = _mm256_sub_pd(d2r, f2r), d2mi = _mm256_sub_pd(d2i, f2i); // d-f
+            // Symmetric pairs
+            __m256d s0r = _mm256_add_pd(b2r, h2r), s0i = _mm256_add_pd(b2i, h2i);
+            __m256d d0r = _mm256_sub_pd(b2r, h2r), d0i = _mm256_sub_pd(b2i, h2i);
+            __m256d s1r = _mm256_add_pd(c2r, g2r), s1i = _mm256_add_pd(c2i, g2i);
+            __m256d d1r = _mm256_sub_pd(c2r, g2r), d1i = _mm256_sub_pd(c2i, g2i);
+            __m256d s2r = _mm256_add_pd(d2r, f2r), s2i = _mm256_add_pd(d2i, f2i);
+            __m256d d2r_diff = _mm256_sub_pd(d2r, f2r), d2i_diff = _mm256_sub_pd(d2i, f2i);
 
-            __m256d t0r = _mm256_add_pd(Ar, e2r), t0i = _mm256_add_pd(Ai, e2i); // a+e2
-            __m256d t4r = _mm256_sub_pd(Ar, e2r), t4i = _mm256_sub_pd(Ai, e2i); // a-e2
+            __m256d t0r = _mm256_add_pd(Ar, e2r), t0i = _mm256_add_pd(Ai, e2i);
+            __m256d t4r = _mm256_sub_pd(Ar, e2r), t4i = _mm256_sub_pd(Ai, e2i);
 
-            // X0 = t0 + s0 + s1 + s2
-            __m256d x0r = _mm256_add_pd(t0r, _mm256_add_pd(_mm256_add_pd(s0r, s1r), s2r));
-            __m256d x0i = _mm256_add_pd(t0i, _mm256_add_pd(_mm256_add_pd(s0i, s1i), s2i));
+            // Y_0 = t0 + s0 + s1 + s2 (use FMA)
+            __m256d y0r = _mm256_add_pd(t0r, FMADD(s0r, _mm256_set1_pd(1.0),
+                                                   _mm256_add_pd(s1r, s2r)));
+            __m256d y0i = _mm256_add_pd(t0i, FMADD(s0i, _mm256_set1_pd(1.0),
+                                                   _mm256_add_pd(s1i, s2i)));
 
-            // X4 = t4 - s0 - s1 + s2
-            __m256d x4r = _mm256_add_pd(_mm256_sub_pd(t4r, _mm256_add_pd(s0r, s1r)), s2r);
-            __m256d x4i = _mm256_add_pd(_mm256_sub_pd(t4i, _mm256_add_pd(s0i, s1i)), s2i);
+            // Y_4 = t4 - s0 - s1 + s2
+            __m256d y4r = _mm256_add_pd(_mm256_sub_pd(t4r, _mm256_add_pd(s0r, s1r)), s2r);
+            __m256d y4i = _mm256_add_pd(_mm256_sub_pd(t4i, _mm256_add_pd(s0i, s1i)), s2i);
 
-            // X2 / X6:
-            // base26 = (d2 - f2) - (b - h) = d2 - f2 - b + h
-            __m256d base26r = _mm256_sub_pd(d2mr, d0r);
-            __m256d base26i = _mm256_sub_pd(d2mi, d0i);
-
+            // Y_2, Y_6
+            __m256d base26r = _mm256_sub_pd(d2r_diff, d0r);
+            __m256d base26i = _mm256_sub_pd(d2i_diff, d0i);
             __m256d rr26, ri26;
-            rot90_soa_avx(base26r, base26i, transform_sign, &rr26, &ri26); // sign * i * base26
-            __m256d t02r = _mm256_sub_pd(t0r, s1r);
-            __m256d t02i = _mm256_sub_pd(t0i, s1i);
-            __m256d x2r = _mm256_add_pd(t02r, rr26), x2i = _mm256_add_pd(t02i, ri26);
-            __m256d x6r = _mm256_sub_pd(t02r, rr26), x6i = _mm256_sub_pd(t02i, ri26);
+            rot90_soa_avx(base26r, base26i, transform_sign, &rr26, &ri26);
+            __m256d t02r = _mm256_sub_pd(t0r, s1r), t02i = _mm256_sub_pd(t0i, s1i);
+            __m256d y2r = _mm256_add_pd(t02r, rr26), y2i = _mm256_add_pd(t02i, ri26);
+            __m256d y6r = _mm256_sub_pd(t02r, rr26), y6i = _mm256_sub_pd(t02i, ri26);
 
-            // X1 / X7:
-            // real17 = t4 + c*(s0 - s2)
-            __m256d s0ms2r = _mm256_sub_pd(s0r, s2r);
-            __m256d s0ms2i = _mm256_sub_pd(s0i, s2i);
-            __m256d real17r = _mm256_add_pd(t4r, _mm256_mul_pd(vc, s0ms2r));
-            __m256d real17i = _mm256_add_pd(t4i, _mm256_mul_pd(vc, s0ms2i));
-            // V17 = -( d1 + c*(d0 + d2) )
-            __m256d dd_r = _mm256_add_pd(d0r, d2mr);
-            __m256d dd_i = _mm256_add_pd(d0i, d2mi);
-            __m256d V17r = _mm256_add_pd(_mm256_mul_pd(vc, dd_r), d1r);
-            __m256d V17i = _mm256_add_pd(_mm256_mul_pd(vc, dd_i), d1i);
-            V17r = _mm256_sub_pd(_mm256_setzero_pd(), V17r);
-            V17i = _mm256_sub_pd(_mm256_setzero_pd(), V17i);
+            // Y_1, Y_7 (use FMA for c*(s0-s2))
+            __m256d s0ms2r = _mm256_sub_pd(s0r, s2r), s0ms2i = _mm256_sub_pd(s0i, s2i);
+            __m256d real17r = FMADD(vc, s0ms2r, t4r);
+            __m256d real17i = FMADD(vc, s0ms2i, t4i);
+
+            __m256d dd_r = _mm256_add_pd(d0r, d2r_diff);
+            __m256d dd_i = _mm256_add_pd(d0i, d2i_diff);
+            __m256d V17r = _mm256_sub_pd(_mm256_setzero_pd(),
+                                         FMADD(vc, dd_r, d1r));
+            __m256d V17i = _mm256_sub_pd(_mm256_setzero_pd(),
+                                         FMADD(vc, dd_i, d1i));
             __m256d rr17, ri17;
             rot90_soa_avx(V17r, V17i, transform_sign, &rr17, &ri17);
-            __m256d x1r = _mm256_add_pd(real17r, rr17), x1i = _mm256_add_pd(real17i, ri17);
-            __m256d x7r = _mm256_sub_pd(real17r, rr17), x7i = _mm256_sub_pd(real17i, ri17);
+            __m256d y1r = _mm256_add_pd(real17r, rr17), y1i = _mm256_add_pd(real17i, ri17);
+            __m256d y7r = _mm256_sub_pd(real17r, rr17), y7i = _mm256_sub_pd(real17i, ri17);
 
-            // X3 / X5:
-            // real35 = t4 - c*(s0 - s2)
-            __m256d real35r = _mm256_sub_pd(t4r, _mm256_mul_pd(vc, s0ms2r));
-            __m256d real35i = _mm256_sub_pd(t4i, _mm256_mul_pd(vc, s0ms2i));
-            // V35 = -( d1 + c*(d0 - d2) )
-            __m256d dd2_r = _mm256_sub_pd(d0r, d2mr);
-            __m256d dd2_i = _mm256_sub_pd(d0i, d2mi);
-            __m256d V35r = _mm256_add_pd(_mm256_mul_pd(vc, dd2_r), d1r);
-            __m256d V35i = _mm256_add_pd(_mm256_mul_pd(vc, dd2_i), d1i);
-            V35r = _mm256_sub_pd(_mm256_setzero_pd(), V35r);
-            V35i = _mm256_sub_pd(_mm256_setzero_pd(), V35i);
+            // Y_3, Y_5
+            __m256d real35r = FMSUB(vc, s0ms2r, t4r);
+            __m256d real35i = FMSUB(vc, s0ms2i, t4i);
+
+            __m256d dd2_r = _mm256_sub_pd(d0r, d2r_diff);
+            __m256d dd2_i = _mm256_sub_pd(d0i, d2i_diff);
+            __m256d V35r = _mm256_sub_pd(_mm256_setzero_pd(),
+                                         FMADD(vc, dd2_r, d1r));
+            __m256d V35i = _mm256_sub_pd(_mm256_setzero_pd(),
+                                         FMADD(vc, dd2_i, d1i));
             __m256d rr35, ri35;
             rot90_soa_avx(V35r, V35i, transform_sign, &rr35, &ri35);
-            __m256d x3r = _mm256_add_pd(real35r, rr35), x3i = _mm256_add_pd(real35i, ri35);
-            __m256d x5r = _mm256_sub_pd(real35r, rr35), x5i = _mm256_sub_pd(real35i, ri35);
+            __m256d y3r = _mm256_add_pd(real35r, rr35), y3i = _mm256_add_pd(real35i, ri35);
+            __m256d y5r = _mm256_sub_pd(real35r, rr35), y5i = _mm256_sub_pd(real35i, ri35);
 
-            // ----- E: SoA -> AoS stores -----
-            double X0R[4], X0I[4], X1R[4], X1I[4], X2R[4], X2I[4], X3R[4], X3I[4];
-            double X4R[4], X4I[4], X5R[4], X5I[4], X6R[4], X6I[4], X7R[4], X7I[4];
+            // SoA -> AoS stores
+            double Y0R[4], Y0I[4], Y1R[4], Y1I[4], Y2R[4], Y2I[4], Y3R[4], Y3I[4];
+            double Y4R[4], Y4I[4], Y5R[4], Y5I[4], Y6R[4], Y6I[4], Y7R[4], Y7I[4];
 
-            _mm256_storeu_pd(X0R, x0r);
-            _mm256_storeu_pd(X0I, x0i);
-            _mm256_storeu_pd(X1R, x1r);
-            _mm256_storeu_pd(X1I, x1i);
-            _mm256_storeu_pd(X2R, x2r);
-            _mm256_storeu_pd(X2I, x2i);
-            _mm256_storeu_pd(X3R, x3r);
-            _mm256_storeu_pd(X3I, x3i);
-            _mm256_storeu_pd(X4R, x4r);
-            _mm256_storeu_pd(X4I, x4i);
-            _mm256_storeu_pd(X5R, x5r);
-            _mm256_storeu_pd(X5I, x5i);
-            _mm256_storeu_pd(X6R, x6r);
-            _mm256_storeu_pd(X6I, x6i);
-            _mm256_storeu_pd(X7R, x7r);
-            _mm256_storeu_pd(X7I, x7i);
+            _mm256_storeu_pd(Y0R, y0r);
+            _mm256_storeu_pd(Y0I, y0i);
+            _mm256_storeu_pd(Y1R, y1r);
+            _mm256_storeu_pd(Y1I, y1i);
+            _mm256_storeu_pd(Y2R, y2r);
+            _mm256_storeu_pd(Y2I, y2i);
+            _mm256_storeu_pd(Y3R, y3r);
+            _mm256_storeu_pd(Y3I, y3i);
+            _mm256_storeu_pd(Y4R, y4r);
+            _mm256_storeu_pd(Y4I, y4i);
+            _mm256_storeu_pd(Y5R, y5r);
+            _mm256_storeu_pd(Y5I, y5i);
+            _mm256_storeu_pd(Y6R, y6r);
+            _mm256_storeu_pd(Y6I, y6i);
+            _mm256_storeu_pd(Y7R, y7r);
+            _mm256_storeu_pd(Y7I, y7i);
 
-            interleave4_soa_to_aos(X0R, X0I, &output_buffer[k + 0 * sub_fft_size]);
-            interleave4_soa_to_aos(X1R, X1I, &output_buffer[k + 1 * sub_fft_size]);
-            interleave4_soa_to_aos(X2R, X2I, &output_buffer[k + 2 * sub_fft_size]);
-            interleave4_soa_to_aos(X3R, X3I, &output_buffer[k + 3 * sub_fft_size]);
-            interleave4_soa_to_aos(X4R, X4I, &output_buffer[k + 4 * sub_fft_size]);
-            interleave4_soa_to_aos(X5R, X5I, &output_buffer[k + 5 * sub_fft_size]);
-            interleave4_soa_to_aos(X6R, X6I, &output_buffer[k + 6 * sub_fft_size]);
-            interleave4_soa_to_aos(X7R, X7I, &output_buffer[k + 7 * sub_fft_size]);
+            interleave4_soa_to_aos(Y0R, Y0I, &output_buffer[k]);
+            interleave4_soa_to_aos(Y1R, Y1I, &output_buffer[k + eighth]);
+            interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2 * eighth]);
+            interleave4_soa_to_aos(Y3R, Y3I, &output_buffer[k + 3 * eighth]);
+            interleave4_soa_to_aos(Y4R, Y4I, &output_buffer[k + 4 * eighth]);
+            interleave4_soa_to_aos(Y5R, Y5I, &output_buffer[k + 5 * eighth]);
+            interleave4_soa_to_aos(Y6R, Y6I, &output_buffer[k + 6 * eighth]);
+            interleave4_soa_to_aos(Y7R, Y7I, &output_buffer[k + 7 * eighth]);
         }
-#else
-        int k = 0;
 #endif // __AVX2__
 
-        // =========================
-        // scalar AoS tail (1..3)
-        // =========================
-        for (; k < sub_fft_size; ++k)
+        // Scalar tail (keep your existing code, just rename variables)
+        for (; k < eighth; ++k)
         {
-            const fft_data a = sub_fft_outputs[k + 0 * sub_fft_size];
-            const fft_data b = sub_fft_outputs[k + 1 * sub_fft_size];
-            const fft_data c = sub_fft_outputs[k + 2 * sub_fft_size];
-            const fft_data d = sub_fft_outputs[k + 3 * sub_fft_size];
-            const fft_data e = sub_fft_outputs[k + 4 * sub_fft_size];
-            const fft_data f = sub_fft_outputs[k + 5 * sub_fft_size];
-            const fft_data g = sub_fft_outputs[k + 6 * sub_fft_size];
-            const fft_data h = sub_fft_outputs[k + 7 * sub_fft_size];
+            const fft_data a = sub_outputs[k];
+            const fft_data b = sub_outputs[k + eighth];
+            const fft_data c = sub_outputs[k + 2 * eighth];
+            const fft_data d = sub_outputs[k + 3 * eighth];
+            const fft_data e = sub_outputs[k + 4 * eighth];
+            const fft_data f = sub_outputs[k + 5 * eighth];
+            const fft_data g = sub_outputs[k + 6 * eighth];
+            const fft_data h = sub_outputs[k + 7 * eighth];
 
-            const fft_data w1 = twiddle_factors[7 * k + 0];
-            const fft_data w2 = twiddle_factors[7 * k + 1];
-            const fft_data w3 = twiddle_factors[7 * k + 2];
-            const fft_data w4 = twiddle_factors[7 * k + 3];
-            const fft_data w5 = twiddle_factors[7 * k + 4];
-            const fft_data w6 = twiddle_factors[7 * k + 5];
-            const fft_data w7 = twiddle_factors[7 * k + 6];
+            const fft_data w1 = stage_tw[7 * k];
+            const fft_data w2 = stage_tw[7 * k + 1];
+            const fft_data w3 = stage_tw[7 * k + 2];
+            const fft_data w4 = stage_tw[7 * k + 3];
+            const fft_data w5 = stage_tw[7 * k + 4];
+            const fft_data w6 = stage_tw[7 * k + 5];
+            const fft_data w7 = stage_tw[7 * k + 6];
 
-            // twiddle
+            // Twiddle multiply
             double b2r = b.re * w1.re - b.im * w1.im, b2i = b.re * w1.im + b.im * w1.re;
             double c2r = c.re * w2.re - c.im * w2.im, c2i = c.re * w2.im + c.im * w2.re;
             double d2r = d.re * w3.re - d.im * w3.im, d2i = d.re * w3.im + d.im * w3.re;
@@ -2519,7 +2480,7 @@ static void mixed_radix_dit_rec(
             double g2r = g.re * w6.re - g.im * w6.im, g2i = g.re * w6.im + g.im * w6.re;
             double h2r = h.re * w7.re - h.im * w7.im, h2i = h.re * w7.im + h.im * w7.re;
 
-            // sums/diffs
+            // Pairs
             double s0r = b2r + h2r, s0i = b2i + h2i;
             double d0r = b2r - h2r, d0i = b2i - h2i;
             double s1r = c2r + g2r, s1i = c2i + g2i;
@@ -2530,1362 +2491,627 @@ static void mixed_radix_dit_rec(
             double t0r = a.re + e2r, t0i = a.im + e2i;
             double t4r = a.re - e2r, t4i = a.im - e2i;
 
-            // X0
-            fft_data X0 = {t0r + (s0r + s1r + s2r), t0i + (s0i + s1i + s2i)};
+            // Outputs
+            fft_data y0 = {t0r + (s0r + s1r + s2r), t0i + (s0i + s1i + s2i)};
+            fft_data y4 = {t4r - s0r - s1r + s2r, t4i - s0i - s1i + s2i};
 
-            // X4
-            fft_data X4 = {t4r - s0r - s1r + s2r, t4i - s0i - s1i + s2i};
-
-            // X2 / X6
             double base26r = d2mr - d0r, base26i = d2mi - d0i;
-            double rr26 = (transform_sign == 1 ? -base26i : base26i);
-            double ri26 = (transform_sign == 1 ? base26r : -base26r);
+            double rr26 = (transform_sign == 1) ? -base26i : base26i;
+            double ri26 = (transform_sign == 1) ? base26r : -base26r;
             double t02r = t0r - s1r, t02i = t0i - s1i;
-            fft_data X2 = {t02r + rr26, t02i + ri26};
-            fft_data X6 = {t02r - rr26, t02i - ri26};
+            fft_data y2 = {t02r + rr26, t02i + ri26};
+            fft_data y6 = {t02r - rr26, t02i - ri26};
 
-            // X1 / X7
             double s0ms2r = s0r - s2r, s0ms2i = s0i - s2i;
-            double real17r = t4r + C8_1 * s0ms2r;
-            double real17i = t4i + C8_1 * s0ms2i;
+            double real17r = t4r + C8_1 * s0ms2r, real17i = t4i + C8_1 * s0ms2i;
             double dd_r = d0r + d2mr, dd_i = d0i + d2mi;
-            double V17r = -(C8_1 * dd_r + d1r);
-            double V17i = -(C8_1 * dd_i + d1i);
-            double rr17 = (transform_sign == 1 ? -V17i : V17i);
-            double ri17 = (transform_sign == 1 ? V17r : -V17r);
-            fft_data X1 = {real17r + rr17, real17i + ri17};
-            fft_data X7 = {real17r - rr17, real17i - ri17};
+            double V17r = -(C8_1 * dd_r + d1r), V17i = -(C8_1 * dd_i + d1i);
+            double rr17 = (transform_sign == 1) ? -V17i : V17i;
+            double ri17 = (transform_sign == 1) ? V17r : -V17r;
+            fft_data y1 = {real17r + rr17, real17i + ri17};
+            fft_data y7 = {real17r - rr17, real17i - ri17};
 
-            // X3 / X5
-            double real35r = t4r - C8_1 * s0ms2r;
-            double real35i = t4i - C8_1 * s0ms2i;
+            double real35r = t4r - C8_1 * s0ms2r, real35i = t4i - C8_1 * s0ms2i;
             double dd2_r = d0r - d2mr, dd2_i = d0i - d2mi;
-            double V35r = -(C8_1 * dd2_r + d1r);
-            double V35i = -(C8_1 * dd2_i + d1i);
-            double rr35 = (transform_sign == 1 ? -V35i : V35i);
-            double ri35 = (transform_sign == 1 ? V35r : -V35r);
-            fft_data X3 = {real35r + rr35, real35i + ri35};
-            fft_data X5 = {real35r - rr35, real35i - ri35};
+            double V35r = -(C8_1 * dd2_r + d1r), V35i = -(C8_1 * dd2_i + d1i);
+            double rr35 = (transform_sign == 1) ? -V35i : V35i;
+            double ri35 = (transform_sign == 1) ? V35r : -V35r;
+            fft_data y3 = {real35r + rr35, real35i + ri35};
+            fft_data y5 = {real35r - rr35, real35i - ri35};
 
-            output_buffer[k + 0 * sub_fft_size] = X0;
-            output_buffer[k + 1 * sub_fft_size] = X1;
-            output_buffer[k + 2 * sub_fft_size] = X2;
-            output_buffer[k + 3 * sub_fft_size] = X3;
-            output_buffer[k + 4 * sub_fft_size] = X4;
-            output_buffer[k + 5 * sub_fft_size] = X5;
-            output_buffer[k + 6 * sub_fft_size] = X6;
-            output_buffer[k + 7 * sub_fft_size] = X7;
+            output_buffer[k] = y0;
+            output_buffer[k + eighth] = y1;
+            output_buffer[k + 2 * eighth] = y2;
+            output_buffer[k + 3 * eighth] = y3;
+            output_buffer[k + 4 * eighth] = y4;
+            output_buffer[k + 5 * eighth] = y5;
+            output_buffer[k + 6 * eighth] = y6;
+            output_buffer[k + 7 * eighth] = y7;
         }
     }
     else if (radix == 11)
     {
-        /**
-         * @brief Radix-11 decomposition for eleven-point sub-FFTs with AVX2 and SSE2 vectorization and FMA support.
-         *
-         * Computes the FFT for data lengths divisible by 11 by splitting into eleven sub-FFTs (indices n mod 11 = 0 to 10),
-         * applying recursive FFTs, and combining results with twiddle factors. Optimized for power-of-11 (N=11^r) and
-         * mixed-radix FFTs using pre-allocated scratch and stage-specific twiddle offsets.
-         *
-         * Mathematically: Computes:
-         *   X(k) = X_0(k) + W_N^k * X_1(k) + ... + W_N^{10k} * X_10(k),
-         * where X_0, ..., X_10 are sub-FFTs of size N/11, W_N^k = e^{-2πi k / N}.
-         * Uses rotations at multiples of 360°/11 ≈ 32.727° with constants C11_1, ..., S11_5.
-         *
-         * @warning Assumes fft_obj->twiddles has n_fft ≥ N elements, scratch is 32-byte aligned,
-         *          and factor_index is valid for twiddle_factors.
-         */
-        // Step 1: Compute subproblem size and stride
-        int sub_fft_length = data_length / 11; // Size of each sub-FFT (N/11)
-        int next_stride = 11 * stride;         // Stride increases elevenfold
-        int sub_fft_size = sub_fft_length;     // Sub-FFT size for indexing
+        //==========================================================================
+        // RADIX-11 BUTTERFLY (Rader DIT with 5 symmetric pairs)
+        //
+        // Uses Rader's algorithm: maps 11-point DFT to cyclic convolution
+        // Exploits symmetry: 5 pairs (k, 11-k) for k=1..5
+        //
+        // Input:  sub_outputs[0..sub_len-1] through [10*sub_len..11*sub_len-1]
+        //         stage_tw[10*k..10*k+9] (W^k through W^{10k}) k-major
+        // Output: output_buffer in 11 lanes (Y_0..Y_10)
+        //==========================================================================
 
-        // Step 2: Validate scratch buffer
-        int required_size = fft_obj->twiddle_factors != NULL ? 11 * sub_fft_size : 21 * sub_fft_size;
-        if (scratch_offset + required_size > fft_obj->max_scratch_size)
+        const int eleventh = sub_len;
+        int k = 0;
+
+#ifdef __AVX2__
+        //----------------------------------------------------------------------
+        // AVX2 PATH: Process 4 butterflies per iteration (SoA with FMA)
+        //----------------------------------------------------------------------
+        const __m256d vc1 = _mm256_set1_pd(C11_1); // cos(2π/11)
+        const __m256d vc2 = _mm256_set1_pd(C11_2); // cos(4π/11)
+        const __m256d vc3 = _mm256_set1_pd(C11_3); // cos(6π/11)
+        const __m256d vc4 = _mm256_set1_pd(C11_4); // cos(8π/11)
+        const __m256d vc5 = _mm256_set1_pd(C11_5); // cos(10π/11)
+        const __m256d vs1 = _mm256_set1_pd(S11_1); // sin(2π/11)
+        const __m256d vs2 = _mm256_set1_pd(S11_2); // sin(4π/11)
+        const __m256d vs3 = _mm256_set1_pd(S11_3); // sin(6π/11)
+        const __m256d vs4 = _mm256_set1_pd(S11_4); // sin(8π/11)
+        const __m256d vs5 = _mm256_set1_pd(S11_5); // sin(10π/11)
+
+        for (; k + 3 < eleventh; k += 4)
         {
-            fprintf(stderr, "Error: Scratch buffer too small for radix-11 at offset %d (need %d, have %d)\n",
-                    scratch_offset, required_size, fft_obj->max_scratch_size - scratch_offset);
-            // exit
+            if (k + 8 < eleventh)
+            {
+                _mm_prefetch((const char *)&sub_outputs[k + 8].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&stage_tw[10 * (k + 8)].re, _MM_HINT_T0);
+            }
+
+            // AoS -> SoA: Load 11 lanes × 4 points
+            double aR[4], aI[4], bR[4], bI[4], cR[4], cI[4], dR[4], dI[4];
+            double eR[4], eI[4], fR[4], fI[4], gR[4], gI[4], hR[4], hI[4];
+            double iR[4], iI[4], jR[4], jI[4], kR[4], kI[4];
+
+            deinterleave4_aos_to_soa(&sub_outputs[k], aR, aI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + eleventh], bR, bI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 2 * eleventh], cR, cI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 3 * eleventh], dR, dI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 4 * eleventh], eR, eI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 5 * eleventh], fR, fI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 6 * eleventh], gR, gI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 7 * eleventh], hR, hI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 8 * eleventh], iR, iI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 9 * eleventh], jR, jI);
+            deinterleave4_aos_to_soa(&sub_outputs[k + 10 * eleventh], kR, kI);
+
+            __m256d Ar = _mm256_loadu_pd(aR), Ai = _mm256_loadu_pd(aI);
+            __m256d Br = _mm256_loadu_pd(bR), Bi = _mm256_loadu_pd(bI);
+            __m256d Cr = _mm256_loadu_pd(cR), Ci = _mm256_loadu_pd(cI);
+            __m256d Dr = _mm256_loadu_pd(dR), Di = _mm256_loadu_pd(dI);
+            __m256d Er = _mm256_loadu_pd(eR), Ei = _mm256_loadu_pd(eI);
+            __m256d Fr = _mm256_loadu_pd(fR), Fi = _mm256_loadu_pd(fI);
+            __m256d Gr = _mm256_loadu_pd(gR), Gi = _mm256_loadu_pd(gI);
+            __m256d Hr = _mm256_loadu_pd(hR), Hi = _mm256_loadu_pd(hI);
+            __m256d Ir = _mm256_loadu_pd(iR), Ii = _mm256_loadu_pd(iI);
+            __m256d Jr = _mm256_loadu_pd(jR), Ji = _mm256_loadu_pd(jI);
+            __m256d Kr = _mm256_loadu_pd(kR), Ki = _mm256_loadu_pd(kI);
+
+            // Load twiddles (k-major: W^k..W^{10k} at 10*k)
+            fft_data w1a[4], w2a[4], w3a[4], w4a[4], w5a[4];
+            fft_data w6a[4], w7a[4], w8a[4], w9a[4], w10a[4];
+            for (int p = 0; p < 4; ++p)
+            {
+                w1a[p] = stage_tw[10 * (k + p)];
+                w2a[p] = stage_tw[10 * (k + p) + 1];
+                w3a[p] = stage_tw[10 * (k + p) + 2];
+                w4a[p] = stage_tw[10 * (k + p) + 3];
+                w5a[p] = stage_tw[10 * (k + p) + 4];
+                w6a[p] = stage_tw[10 * (k + p) + 5];
+                w7a[p] = stage_tw[10 * (k + p) + 6];
+                w8a[p] = stage_tw[10 * (k + p) + 7];
+                w9a[p] = stage_tw[10 * (k + p) + 8];
+                w10a[p] = stage_tw[10 * (k + p) + 9];
+            }
+
+            double w1R[4], w1I[4], w2R[4], w2I[4], w3R[4], w3I[4], w4R[4], w4I[4];
+            double w5R[4], w5I[4], w6R[4], w6I[4], w7R[4], w7I[4], w8R[4], w8I[4];
+            double w9R[4], w9I[4], w10R[4], w10I[4];
+
+            deinterleave4_aos_to_soa(w1a, w1R, w1I);
+            deinterleave4_aos_to_soa(w2a, w2R, w2I);
+            deinterleave4_aos_to_soa(w3a, w3R, w3I);
+            deinterleave4_aos_to_soa(w4a, w4R, w4I);
+            deinterleave4_aos_to_soa(w5a, w5R, w5I);
+            deinterleave4_aos_to_soa(w6a, w6R, w6I);
+            deinterleave4_aos_to_soa(w7a, w7R, w7I);
+            deinterleave4_aos_to_soa(w8a, w8R, w8I);
+            deinterleave4_aos_to_soa(w9a, w9R, w9I);
+            deinterleave4_aos_to_soa(w10a, w10R, w10I);
+
+            __m256d W1r = _mm256_loadu_pd(w1R), W1i = _mm256_loadu_pd(w1I);
+            __m256d W2r = _mm256_loadu_pd(w2R), W2i = _mm256_loadu_pd(w2I);
+            __m256d W3r = _mm256_loadu_pd(w3R), W3i = _mm256_loadu_pd(w3I);
+            __m256d W4r = _mm256_loadu_pd(w4R), W4i = _mm256_loadu_pd(w4I);
+            __m256d W5r = _mm256_loadu_pd(w5R), W5i = _mm256_loadu_pd(w5I);
+            __m256d W6r = _mm256_loadu_pd(w6R), W6i = _mm256_loadu_pd(w6I);
+            __m256d W7r = _mm256_loadu_pd(w7R), W7i = _mm256_loadu_pd(w7I);
+            __m256d W8r = _mm256_loadu_pd(w8R), W8i = _mm256_loadu_pd(w8I);
+            __m256d W9r = _mm256_loadu_pd(w9R), W9i = _mm256_loadu_pd(w9I);
+            __m256d W10r = _mm256_loadu_pd(w10R), W10i = _mm256_loadu_pd(w10I);
+
+            // Twiddle multiply
+            __m256d b2r, b2i, c2r, c2i, d2r, d2i, e2r, e2i, f2r, f2i;
+            __m256d g2r, g2i, h2r, h2i, i2r, i2i, j2r, j2i, k2r, k2i;
+
+            cmul_soa_avx(Br, Bi, W1r, W1i, &b2r, &b2i);
+            cmul_soa_avx(Cr, Ci, W2r, W2i, &c2r, &c2i);
+            cmul_soa_avx(Dr, Di, W3r, W3i, &d2r, &d2i);
+            cmul_soa_avx(Er, Ei, W4r, W4i, &e2r, &e2i);
+            cmul_soa_avx(Fr, Fi, W5r, W5i, &f2r, &f2i);
+            cmul_soa_avx(Gr, Gi, W6r, W6i, &g2r, &g2i);
+            cmul_soa_avx(Hr, Hi, W7r, W7i, &h2r, &h2i);
+            cmul_soa_avx(Ir, Ii, W8r, W8i, &i2r, &i2i);
+            cmul_soa_avx(Jr, Ji, W9r, W9i, &j2r, &j2i);
+            cmul_soa_avx(Kr, Ki, W10r, W10i, &k2r, &k2i);
+
+            // Form 5 symmetric pairs: (b,k), (c,j), (d,i), (e,h), (f,g)
+            __m256d t0r = _mm256_add_pd(b2r, k2r), t0i = _mm256_add_pd(b2i, k2i);
+            __m256d t1r = _mm256_add_pd(c2r, j2r), t1i = _mm256_add_pd(c2i, j2i);
+            __m256d t2r = _mm256_add_pd(d2r, i2r), t2i = _mm256_add_pd(d2i, i2i);
+            __m256d t3r = _mm256_add_pd(e2r, h2r), t3i = _mm256_add_pd(e2i, h2i);
+            __m256d t4r = _mm256_add_pd(f2r, g2r), t4i = _mm256_add_pd(f2i, g2i);
+
+            __m256d s0r = _mm256_sub_pd(b2r, k2r), s0i = _mm256_sub_pd(b2i, k2i);
+            __m256d s1r = _mm256_sub_pd(c2r, j2r), s1i = _mm256_sub_pd(c2i, j2i);
+            __m256d s2r = _mm256_sub_pd(d2r, i2r), s2i = _mm256_sub_pd(d2i, i2i);
+            __m256d s3r = _mm256_sub_pd(e2r, h2r), s3i = _mm256_sub_pd(e2i, h2i);
+            __m256d s4r = _mm256_sub_pd(f2r, g2r), s4i = _mm256_sub_pd(f2i, g2i);
+
+            // Y_0 = a + t0 + t1 + t2 + t3 + t4
+            __m256d sum_t_r = _mm256_add_pd(_mm256_add_pd(t0r, t1r),
+                                            _mm256_add_pd(_mm256_add_pd(t2r, t3r), t4r));
+            __m256d sum_t_i = _mm256_add_pd(_mm256_add_pd(t0i, t1i),
+                                            _mm256_add_pd(_mm256_add_pd(t2i, t3i), t4i));
+            __m256d y0r = _mm256_add_pd(Ar, sum_t_r);
+            __m256d y0i = _mm256_add_pd(Ai, sum_t_i);
+
+            // For pairs Y_m / Y_{11-m}, m=1..5:
+            // Real part: a + c1*t0 + c2*t1 + c3*t2 + c4*t3 + c5*t4
+            // Imag rot:  s1*s0 + s2*s1 + s3*s2 + s4*s3 + s5*s4
+
+            // Pair 1: Y_1, Y_10
+            __m256d tmp1r = _mm256_add_pd(Ar, FMADD(vc1, t0r, FMADD(vc2, t1r, FMADD(vc3, t2r, FMADD(vc4, t3r, _mm256_mul_pd(vc5, t4r))))));
+            __m256d tmp1i = _mm256_add_pd(Ai, FMADD(vc1, t0i, FMADD(vc2, t1i, FMADD(vc3, t2i, FMADD(vc4, t3i, _mm256_mul_pd(vc5, t4i))))));
+
+            __m256d base1r = FMADD(vs1, s0r, FMADD(vs2, s1r, FMADD(vs3, s2r, FMADD(vs4, s3r, _mm256_mul_pd(vs5, s4r)))));
+            __m256d base1i = FMADD(vs1, s0i, FMADD(vs2, s1i, FMADD(vs3, s2i, FMADD(vs4, s3i, _mm256_mul_pd(vs5, s4i)))));
+
+            __m256d r1r, r1i;
+            rot90_soa_avx(base1r, base1i, transform_sign, &r1r, &r1i);
+
+            __m256d y1r = _mm256_add_pd(tmp1r, r1r), y1i = _mm256_add_pd(tmp1i, r1i);
+            __m256d y10r = _mm256_sub_pd(tmp1r, r1r), y10i = _mm256_sub_pd(tmp1i, r1i);
+
+            // Pair 2: Y_2, Y_9 (permute coefficients cyclically)
+            __m256d tmp2r = _mm256_add_pd(Ar, FMADD(vc2, t0r, FMADD(vc4, t1r, FMADD(vc5, t2r, FMADD(vc3, t3r, _mm256_mul_pd(vc1, t4r))))));
+            __m256d tmp2i = _mm256_add_pd(Ai, FMADD(vc2, t0i, FMADD(vc4, t1i, FMADD(vc5, t2i, FMADD(vc3, t3i, _mm256_mul_pd(vc1, t4i))))));
+
+            __m256d base2r = FMADD(vs2, s0r, FMADD(vs4, s1r, FMADD(vs5, s2r, FMADD(vs3, s3r, _mm256_mul_pd(vs1, s4r)))));
+            __m256d base2i = FMADD(vs2, s0i, FMADD(vs4, s1i, FMADD(vs5, s2i, FMADD(vs3, s3i, _mm256_mul_pd(vs1, s4i)))));
+
+            __m256d r2r, r2i;
+            rot90_soa_avx(base2r, base2i, transform_sign, &r2r, &r2i);
+
+            __m256d y2r = _mm256_add_pd(tmp2r, r2r), y2i = _mm256_add_pd(tmp2i, r2i);
+            __m256d y9r = _mm256_sub_pd(tmp2r, r2r), y9i = _mm256_sub_pd(tmp2i, r2i);
+
+            // Pair 3: Y_3, Y_8
+            __m256d tmp3r = _mm256_add_pd(Ar, FMADD(vc3, t0r, FMADD(vc5, t1r, FMADD(vc2, t2r, FMADD(vc1, t3r, _mm256_mul_pd(vc4, t4r))))));
+            __m256d tmp3i = _mm256_add_pd(Ai, FMADD(vc3, t0i, FMADD(vc5, t1i, FMADD(vc2, t2i, FMADD(vc1, t3i, _mm256_mul_pd(vc4, t4i))))));
+
+            __m256d base3r = FMADD(vs3, s0r, FMADD(vs5, s1r, FMADD(vs2, s2r, FMADD(vs1, s3r, _mm256_mul_pd(vs4, s4r)))));
+            __m256d base3i = FMADD(vs3, s0i, FMADD(vs5, s1i, FMADD(vs2, s2i, FMADD(vs1, s3i, _mm256_mul_pd(vs4, s4i)))));
+
+            __m256d r3r, r3i;
+            rot90_soa_avx(base3r, base3i, transform_sign, &r3r, &r3i);
+
+            __m256d y3r = _mm256_add_pd(tmp3r, r3r), y3i = _mm256_add_pd(tmp3i, r3i);
+            __m256d y8r = _mm256_sub_pd(tmp3r, r3r), y8i = _mm256_sub_pd(tmp3i, r3i);
+
+            // Pair 4: Y_4, Y_7
+            __m256d tmp4r = _mm256_add_pd(Ar, FMADD(vc4, t0r, FMADD(vc3, t1r, FMADD(vc1, t2r, FMADD(vc5, t3r, _mm256_mul_pd(vc2, t4r))))));
+            __m256d tmp4i = _mm256_add_pd(Ai, FMADD(vc4, t0i, FMADD(vc3, t1i, FMADD(vc1, t2i, FMADD(vc5, t3i, _mm256_mul_pd(vc2, t4i))))));
+
+            __m256d base4r = FMADD(vs4, s0r, FMADD(vs3, s1r, FMADD(vs1, s2r, FMADD(vs5, s3r, _mm256_mul_pd(vs2, s4r)))));
+            __m256d base4i = FMADD(vs4, s0i, FMADD(vs3, s1i, FMADD(vs1, s2i, FMADD(vs5, s3i, _mm256_mul_pd(vs2, s4i)))));
+
+            __m256d r4r, r4i;
+            rot90_soa_avx(base4r, base4i, transform_sign, &r4r, &r4i);
+
+            __m256d y4r = _mm256_add_pd(tmp4r, r4r), y4i = _mm256_add_pd(tmp4i, r4i);
+            __m256d y7r = _mm256_sub_pd(tmp4r, r4r), y7i = _mm256_sub_pd(tmp4i, r4i);
+
+            // Pair 5: Y_5, Y_6
+            __m256d tmp5r = _mm256_add_pd(Ar, FMADD(vc5, t0r, FMADD(vc1, t1r, FMADD(vc4, t2r, FMADD(vc2, t3r, _mm256_mul_pd(vc3, t4r))))));
+            __m256d tmp5i = _mm256_add_pd(Ai, FMADD(vc5, t0i, FMADD(vc1, t1i, FMADD(vc4, t2i, FMADD(vc2, t3i, _mm256_mul_pd(vc3, t4i))))));
+
+            __m256d base5r = FMADD(vs5, s0r, FMADD(vs1, s1r, FMADD(vs4, s2r, FMADD(vs2, s3r, _mm256_mul_pd(vs3, s4r)))));
+            __m256d base5i = FMADD(vs5, s0i, FMADD(vs1, s1i, FMADD(vs4, s2i, FMADD(vs2, s3i, _mm256_mul_pd(vs3, s4i)))));
+
+            __m256d r5r, r5i;
+            rot90_soa_avx(base5r, base5i, transform_sign, &r5r, &r5i);
+
+            __m256d y5r = _mm256_add_pd(tmp5r, r5r), y5i = _mm256_add_pd(tmp5i, r5i);
+            __m256d y6r = _mm256_sub_pd(tmp5r, r5r), y6i = _mm256_sub_pd(tmp5i, r5i);
+
+            // SoA -> AoS stores
+            double Y0R[4], Y0I[4], Y1R[4], Y1I[4], Y2R[4], Y2I[4], Y3R[4], Y3I[4];
+            double Y4R[4], Y4I[4], Y5R[4], Y5I[4], Y6R[4], Y6I[4], Y7R[4], Y7I[4];
+            double Y8R[4], Y8I[4], Y9R[4], Y9I[4], Y10R[4], Y10I[4];
+
+            _mm256_storeu_pd(Y0R, y0r);
+            _mm256_storeu_pd(Y0I, y0i);
+            _mm256_storeu_pd(Y1R, y1r);
+            _mm256_storeu_pd(Y1I, y1i);
+            _mm256_storeu_pd(Y2R, y2r);
+            _mm256_storeu_pd(Y2I, y2i);
+            _mm256_storeu_pd(Y3R, y3r);
+            _mm256_storeu_pd(Y3I, y3i);
+            _mm256_storeu_pd(Y4R, y4r);
+            _mm256_storeu_pd(Y4I, y4i);
+            _mm256_storeu_pd(Y5R, y5r);
+            _mm256_storeu_pd(Y5I, y5i);
+            _mm256_storeu_pd(Y6R, y6r);
+            _mm256_storeu_pd(Y6I, y6i);
+            _mm256_storeu_pd(Y7R, y7r);
+            _mm256_storeu_pd(Y7I, y7i);
+            _mm256_storeu_pd(Y8R, y8r);
+            _mm256_storeu_pd(Y8I, y8i);
+            _mm256_storeu_pd(Y9R, y9r);
+            _mm256_storeu_pd(Y9I, y9i);
+            _mm256_storeu_pd(Y10R, y10r);
+            _mm256_storeu_pd(Y10I, y10i);
+
+            interleave4_soa_to_aos(Y0R, Y0I, &output_buffer[k]);
+            interleave4_soa_to_aos(Y1R, Y1I, &output_buffer[k + eleventh]);
+            interleave4_soa_to_aos(Y2R, Y2I, &output_buffer[k + 2 * eleventh]);
+            interleave4_soa_to_aos(Y3R, Y3I, &output_buffer[k + 3 * eleventh]);
+            interleave4_soa_to_aos(Y4R, Y4I, &output_buffer[k + 4 * eleventh]);
+            interleave4_soa_to_aos(Y5R, Y5I, &output_buffer[k + 5 * eleventh]);
+            interleave4_soa_to_aos(Y6R, Y6I, &output_buffer[k + 6 * eleventh]);
+            interleave4_soa_to_aos(Y7R, Y7I, &output_buffer[k + 7 * eleventh]);
+            interleave4_soa_to_aos(Y8R, Y8I, &output_buffer[k + 8 * eleventh]);
+            interleave4_soa_to_aos(Y9R, Y9I, &output_buffer[k + 9 * eleventh]);
+            interleave4_soa_to_aos(Y10R, Y10I, &output_buffer[k + 10 * eleventh]);
         }
+#endif // __AVX2__
 
-        // Step 3: Assign scratch slices
-        fft_data *sub_fft_outputs = fft_obj->scratch + scratch_offset;
-        fft_data *twiddle_factors;
-        if (fft_obj->twiddle_factors != NULL)
+        //======================================================================
+        // SCALAR TAIL: Handle remaining 0..3 elements
+        //======================================================================
+        for (; k < eleventh; ++k)
         {
-            if (factor_index >= fft_obj->num_precomputed_stages)
-            {
-                fprintf(stderr, "Error: Invalid factor_index (%d) exceeds num_precomputed_stages (%d) for radix-11\n",
-                        factor_index, fft_obj->num_precomputed_stages);
-                // exit
-            }
-            twiddle_factors = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
+            // Load 11 lanes
+            const fft_data a = sub_outputs[k];
+            const fft_data b = sub_outputs[k + eleventh];
+            const fft_data c = sub_outputs[k + 2 * eleventh];
+            const fft_data d = sub_outputs[k + 3 * eleventh];
+            const fft_data e = sub_outputs[k + 4 * eleventh];
+            const fft_data f = sub_outputs[k + 5 * eleventh];
+            const fft_data g = sub_outputs[k + 6 * eleventh];
+            const fft_data h = sub_outputs[k + 7 * eleventh];
+            const fft_data i = sub_outputs[k + 8 * eleventh];
+            const fft_data j = sub_outputs[k + 9 * eleventh];
+            const fft_data kval = sub_outputs[k + 10 * eleventh]; // 'k' is loop var
+
+            // Load twiddles (k-major)
+            const fft_data w1 = stage_tw[10 * k];
+            const fft_data w2 = stage_tw[10 * k + 1];
+            const fft_data w3 = stage_tw[10 * k + 2];
+            const fft_data w4 = stage_tw[10 * k + 3];
+            const fft_data w5 = stage_tw[10 * k + 4];
+            const fft_data w6 = stage_tw[10 * k + 5];
+            const fft_data w7 = stage_tw[10 * k + 6];
+            const fft_data w8 = stage_tw[10 * k + 7];
+            const fft_data w9 = stage_tw[10 * k + 8];
+            const fft_data w10 = stage_tw[10 * k + 9];
+
+            // Twiddle multiply
+            double b2r = b.re * w1.re - b.im * w1.im, b2i = b.re * w1.im + b.im * w1.re;
+            double c2r = c.re * w2.re - c.im * w2.im, c2i = c.re * w2.im + c.im * w2.re;
+            double d2r = d.re * w3.re - d.im * w3.im, d2i = d.re * w3.im + d.im * w3.re;
+            double e2r = e.re * w4.re - e.im * w4.im, e2i = e.re * w4.im + e.im * w4.re;
+            double f2r = f.re * w5.re - f.im * w5.im, f2i = f.re * w5.im + f.im * w5.re;
+            double g2r = g.re * w6.re - g.im * w6.im, g2i = g.re * w6.im + g.im * w6.re;
+            double h2r = h.re * w7.re - h.im * w7.im, h2i = h.re * w7.im + h.im * w7.re;
+            double i2r = i.re * w8.re - i.im * w8.im, i2i = i.re * w8.im + i.im * w8.re;
+            double j2r = j.re * w9.re - j.im * w9.im, j2i = j.re * w9.im + j.im * w9.re;
+            double k2r = kval.re * w10.re - kval.im * w10.im, k2i = kval.re * w10.im + kval.im * w10.re;
+
+            // Form 5 symmetric pairs
+            double t0r = b2r + k2r, t0i = b2i + k2i;
+            double t1r = c2r + j2r, t1i = c2i + j2i;
+            double t2r = d2r + i2r, t2i = d2i + i2i;
+            double t3r = e2r + h2r, t3i = e2i + h2i;
+            double t4r = f2r + g2r, t4i = f2i + g2i;
+
+            double s0r = b2r - k2r, s0i = b2i - k2i;
+            double s1r = c2r - j2r, s1i = c2i - j2i;
+            double s2r = d2r - i2r, s2i = d2i - i2i;
+            double s3r = e2r - h2r, s3i = e2i - h2i;
+            double s4r = f2r - g2r, s4i = f2i - g2i;
+
+            // Y_0
+            fft_data y0 = {
+                a.re + (t0r + t1r + t2r + t3r + t4r),
+                a.im + (t0i + t1i + t2i + t3i + t4i)};
+
+            // Pair 1: Y_1, Y_10
+            double tmp1r = a.re + (C11_1 * t0r + C11_2 * t1r + C11_3 * t2r + C11_4 * t3r + C11_5 * t4r);
+            double tmp1i = a.im + (C11_1 * t0i + C11_2 * t1i + C11_3 * t2i + C11_4 * t3i + C11_5 * t4i);
+            double base1r = S11_1 * s0r + S11_2 * s1r + S11_3 * s2r + S11_4 * s3r + S11_5 * s4r;
+            double base1i = S11_1 * s0i + S11_2 * s1i + S11_3 * s2i + S11_4 * s3i + S11_5 * s4i;
+            double r1r = (transform_sign == 1) ? -base1i : base1i;
+            double r1i = (transform_sign == 1) ? base1r : -base1r;
+            fft_data y1 = {tmp1r + r1r, tmp1i + r1i};
+            fft_data y10 = {tmp1r - r1r, tmp1i - r1i};
+
+            // Pair 2: Y_2, Y_9
+            double tmp2r = a.re + (C11_2 * t0r + C11_4 * t1r + C11_5 * t2r + C11_3 * t3r + C11_1 * t4r);
+            double tmp2i = a.im + (C11_2 * t0i + C11_4 * t1i + C11_5 * t2i + C11_3 * t3i + C11_1 * t4i);
+            double base2r = S11_2 * s0r + S11_4 * s1r + S11_5 * s2r + S11_3 * s3r + S11_1 * s4r;
+            double base2i = S11_2 * s0i + S11_4 * s1i + S11_5 * s2i + S11_3 * s3i + S11_1 * s4i;
+            double r2r = (transform_sign == 1) ? -base2i : base2i;
+            double r2i = (transform_sign == 1) ? base2r : -base2r;
+            fft_data y2 = {tmp2r + r2r, tmp2i + r2i};
+            fft_data y9 = {tmp2r - r2r, tmp2i - r2i};
+
+            // Pair 3: Y_3, Y_8
+            double tmp3r = a.re + (C11_3 * t0r + C11_5 * t1r + C11_2 * t2r + C11_1 * t3r + C11_4 * t4r);
+            double tmp3i = a.im + (C11_3 * t0i + C11_5 * t1i + C11_2 * t2i + C11_1 * t3i + C11_4 * t4i);
+            double base3r = S11_3 * s0r + S11_5 * s1r + S11_2 * s2r + S11_1 * s3r + S11_4 * s4r;
+            double base3i = S11_3 * s0i + S11_5 * s1i + S11_2 * s2i + S11_1 * s3i + S11_4 * s4i;
+            double r3r = (transform_sign == 1) ? -base3i : base3i;
+            double r3i = (transform_sign == 1) ? base3r : -base3r;
+            fft_data y3 = {tmp3r + r3r, tmp3i + r3i};
+            fft_data y8 = {tmp3r - r3r, tmp3i - r3i};
+
+            // Pair 4: Y_4, Y_7
+            double tmp4r = a.re + (C11_4 * t0r + C11_3 * t1r + C11_1 * t2r + C11_5 * t3r + C11_2 * t4r);
+            double tmp4i = a.im + (C11_4 * t0i + C11_3 * t1i + C11_1 * t2i + C11_5 * t3i + C11_2 * t4i);
+            double base4r = S11_4 * s0r + S11_3 * s1r + S11_1 * s2r + S11_5 * s3r + S11_2 * s4r;
+            double base4i = S11_4 * s0i + S11_3 * s1i + S11_1 * s2i + S11_5 * s3i + S11_2 * s4i;
+            double r4r = (transform_sign == 1) ? -base4i : base4i;
+            double r4i = (transform_sign == 1) ? base4r : -base4r;
+            fft_data y4 = {tmp4r + r4r, tmp4i + r4i};
+            fft_data y7 = {tmp4r - r4r, tmp4i - r4i};
+
+            // Pair 5: Y_5, Y_6
+            double tmp5r = a.re + (C11_5 * t0r + C11_1 * t1r + C11_4 * t2r + C11_2 * t3r + C11_3 * t4r);
+            double tmp5i = a.im + (C11_5 * t0i + C11_1 * t1i + C11_4 * t2i + C11_2 * t3i + C11_3 * t4i);
+            double base5r = S11_5 * s0r + S11_1 * s1r + S11_4 * s2r + S11_2 * s3r + S11_3 * s4r;
+            double base5i = S11_5 * s0i + S11_1 * s1i + S11_4 * s2i + S11_2 * s3i + S11_3 * s4i;
+            double r5r = (transform_sign == 1) ? -base5i : base5i;
+            double r5i = (transform_sign == 1) ? base5r : -base5r;
+            fft_data y5 = {tmp5r + r5r, tmp5i + r5i};
+            fft_data y6 = {tmp5r - r5r, tmp5i - r5i};
+
+            // Store
+            output_buffer[k] = y0;
+            output_buffer[k + eleventh] = y1;
+            output_buffer[k + 2 * eleventh] = y2;
+            output_buffer[k + 3 * eleventh] = y3;
+            output_buffer[k + 4 * eleventh] = y4;
+            output_buffer[k + 5 * eleventh] = y5;
+            output_buffer[k + 6 * eleventh] = y6;
+            output_buffer[k + 7 * eleventh] = y7;
+            output_buffer[k + 8 * eleventh] = y8;
+            output_buffer[k + 9 * eleventh] = y9;
+            output_buffer[k + 10 * eleventh] = y10;
         }
-        else
+    }
+    else if (radix == 16)
+    {
+        //==========================================================================
+        // RADIX-16 BUTTERFLY (2-stage radix-4 decomposition)
+        //
+        // Decomposes 16-point DFT as: radix-4(radix-4(...))
+        // More efficient than general radix for power-of-2 sizes.
+        //
+        // Input:  sub_outputs[0..sub_len-1] through sub_outputs[15*sub_len-1]
+        //         stage_tw[15*k..15*k+14] (W^k through W^{15k}) k-major
+        // Output: output_buffer in 16 lanes
+        //==========================================================================
+
+        const int sixteenth = sub_len;
+        int k = 0;
+
+#ifdef __AVX2__
+        //----------------------------------------------------------------------
+        // AVX2 PATH: Process 2 complex pairs per iteration (AoS-native)
+        // Uses 2-stage radix-4 decomposition for efficiency
+        //----------------------------------------------------------------------
+        for (; k + 1 < sixteenth; k += 2)
         {
-            twiddle_factors = fft_obj->scratch + scratch_offset + 11 * sub_fft_size;
-        }
-
-        // Step 4: Compute child scratch offsets
-        int child_scratch_per_branch = required_size;
-        int total_child_scratch = 11 * child_scratch_per_branch;
-        if (scratch_offset + total_child_scratch > fft_obj->max_scratch_size)
-        {
-            fprintf(stderr, "Error: Total child scratch size (%d) exceeds available scratch at offset %d (have %d) for radix-11\n",
-                    total_child_scratch, scratch_offset, fft_obj->max_scratch_size - scratch_offset);
-            // exit
-        }
-        int child_offsets[11];
-        child_offsets[0] = scratch_offset;
-        for (int i = 1; i < 11; i++)
-            child_offsets[i] = child_offsets[i - 1] + child_scratch_per_branch;
-
-        // Step 5: Recurse on eleven sub-FFTs
-        for (int i = 0; i < 11; i++)
-            mixed_radix_dit_rec(sub_fft_outputs + i * sub_fft_size, input_buffer + i * stride, fft_obj,
-                                transform_sign, sub_fft_length, next_stride, factor_index + 1,
-                                child_offsets[i]);
-
-        // Step 6: Prepare twiddle factors (mixed-radix only)
-        if (fft_obj->twiddle_factors == NULL)
-        {
-            if (fft_obj->n_fft < sub_fft_length - 1 + 10 * sub_fft_size)
+            if (k + 8 < sixteenth)
             {
-                fprintf(stderr, "Error: Twiddle array too small (need at least %d elements, have %d)\n",
-                        sub_fft_length - 1 + 10 * sub_fft_size, fft_obj->n_fft);
-                // exit
-            }
-#ifdef USE_TWIDDLE_TABLES
-            if (sub_fft_size <= 11 && twiddle_tables[11] != NULL)
-            {
-                const complex_t *table = twiddle_tables[11];
-                for (int k = 0; k < sub_fft_size; k++)
-                    for (int n = 0; n < 10; n++)
-                    {
-                        twiddle_factors[10 * k + n].re = table[n + 1].re;
-                        twiddle_factors[10 * k + n].im = table[n + 1].im;
-                    }
-            }
-            else
-#endif
-            {
-                for (int k = 0; k < sub_fft_size; k++)
-                    for (int n = 0; n < 10; n++)
-                    {
-                        int idx = n * sub_fft_size + k;
-                        twiddle_factors[10 * k + n].re = fft_obj->twiddles[idx].re;
-                        twiddle_factors[10 * k + n].im = fft_obj->twiddles[idx].im;
-                    }
-            }
-        }
-
-        // Step 7: Flatten outputs into separate real/imag arrays using union
-        union
-        {
-            fft_data data[11 * sub_fft_size];
-            struct
-            {
-                double re[11 * sub_fft_size];
-                double im[11 * sub_fft_size];
-            } flat;
-        } *scratch_union = (void *)(fft_obj->scratch + scratch_offset);
-        for (int lane = 0; lane < 11; lane++)
-        {
-            fft_data *base = sub_fft_outputs + lane * sub_fft_size;
-            for (int k = 0; k < sub_fft_size; k++)
-            {
-                scratch_union->flat.re[lane * sub_fft_size + k] = base[k].re;
-                scratch_union->flat.im[lane * sub_fft_size + k] = base[k].im;
-            }
-        }
-        double *out_re = scratch_union->flat.re;
-        double *out_im = scratch_union->flat.im;
-
-        {
-            // Step 8
-            // k=0 (no twiddle multiplications)
-            {
-                fft_data *X[11];
-                for (int i = 0; i < 11; i++)
-                    X[i] = &output_buffer[i * sub_fft_size];
-
-                fft_type a_r = out_re[0], a_i = out_im[0];
-                fft_type b_r = out_re[sub_fft_size], b_i = out_im[sub_fft_size];
-                fft_type c_r = out_re[2 * sub_fft_size], c_i = out_im[2 * sub_fft_size];
-                fft_type d_r = out_re[3 * sub_fft_size], d_i = out_im[3 * sub_fft_size];
-                fft_type e_r = out_re[4 * sub_fft_size], e_i = out_im[4 * sub_fft_size];
-                fft_type f_r = out_re[5 * sub_fft_size], f_i = out_im[5 * sub_fft_size];
-                fft_type g_r = out_re[6 * sub_fft_size], g_i = out_im[6 * sub_fft_size];
-                fft_type h_r = out_re[7 * sub_fft_size], h_i = out_im[7 * sub_fft_size];
-                fft_type i_r = out_re[8 * sub_fft_size], i_i = out_im[8 * sub_fft_size];
-                fft_type j_r = out_re[9 * sub_fft_size], j_i = out_im[9 * sub_fft_size];
-                fft_type k_r = out_re[10 * sub_fft_size], k_i = out_im[10 * sub_fft_size];
-
-                fft_type t0_r = b_r + k_r, t0_i = b_i + k_i; // B + K
-                fft_type t1_r = c_r + j_r, t1_i = c_i + j_i; // C + J
-                fft_type t2_r = d_r + i_r, t2_i = d_i + i_i; // D + I
-                fft_type t3_r = e_r + h_r, t3_i = e_i + h_i; // E + H
-                fft_type t4_r = f_r + g_r, t4_i = f_i + g_i; // F + G
-                fft_type t5_r = b_r - k_r, t5_i = b_i - k_i; // B - K
-                fft_type t6_r = c_r - j_r, t6_i = c_i - j_i; // C - J
-                fft_type t7_r = d_r - i_r, t7_i = d_i - i_i; // D - I
-                fft_type t8_r = e_r - h_r, t8_i = e_i - h_i; // E - H
-                fft_type t9_r = f_r - g_r, t9_i = f_i - g_i; // F - G
-
-                X[0]->re = a_r + t0_r + t1_r + t2_r + t3_r + t4_r;
-                X[0]->im = a_i + t0_i + t1_i + t2_i + t3_i + t4_i;
-
-                fft_type tmp_r = a_r + C11_1 * t0_r + C11_2 * t1_r + C11_3 * t2_r + C11_4 * t3_r + C11_5 * t4_r;
-                fft_type tmp_i = a_i + C11_1 * t0_i + C11_2 * t1_i + C11_3 * t2_i + C11_4 * t3_i + C11_5 * t4_i;
-                fft_type rot_r = transform_sign * (S11_1 * t5_i + S11_2 * t6_i + S11_3 * t7_i + S11_4 * t8_i + S11_5 * t9_i);
-                fft_type rot_i = transform_sign * (-S11_1 * t5_r - S11_2 * t6_r - S11_3 * t7_r - S11_4 * t8_r - S11_5 * t9_r);
-                X[1]->re = tmp_r + rot_r;
-                X[1]->im = tmp_i + rot_i;
-                X[10]->re = tmp_r - rot_r;
-                X[10]->im = tmp_i - rot_i;
-
-                tmp_r = a_r + C11_2 * t0_r + C11_4 * t1_r + C11_5 * t2_r + C11_3 * t3_r + C11_1 * t4_r;
-                tmp_i = a_i + C11_2 * t0_i + C11_4 * t1_i + C11_5 * t2_i + C11_3 * t3_i + C11_1 * t4_i;
-                rot_r = transform_sign * (S11_2 * t5_i + S11_4 * t6_i + S11_5 * t7_i + S11_3 * t8_i + S11_1 * t9_i);
-                rot_i = transform_sign * (-S11_2 * t5_r - S11_4 * t6_r - S11_5 * t7_r - S11_3 * t8_r - S11_1 * t9_r);
-                X[2]->re = tmp_r + rot_r;
-                X[2]->im = tmp_i + rot_i;
-                X[9]->re = tmp_r - rot_r;
-                X[9]->im = tmp_i - rot_i;
-
-                tmp_r = a_r + C11_3 * t0_r + C11_5 * t1_r + C11_2 * t2_r + C11_1 * t3_r + C11_4 * t4_r;
-                tmp_i = a_i + C11_3 * t0_i + C11_5 * t1_i + C11_2 * t2_i + C11_1 * t3_i + C11_4 * t4_i;
-                rot_r = transform_sign * (S11_3 * t5_i + S11_5 * t6_i + S11_2 * t7_i + S11_1 * t8_i + S11_4 * t9_i);
-                rot_i = transform_sign * (-S11_3 * t5_r - S11_5 * t6_r - S11_2 * t7_r - S11_1 * t8_r - S11_4 * t9_r);
-                X[3]->re = tmp_r + rot_r;
-                X[3]->im = tmp_i + rot_i;
-                X[8]->re = tmp_r - rot_r;
-                X[8]->im = tmp_i - rot_i;
-
-                tmp_r = a_r + C11_4 * t0_r + C11_3 * t1_r + C11_1 * t2_r + C11_5 * t3_r + C11_2 * t4_r;
-                tmp_i = a_i + C11_4 * t0_i + C11_3 * t1_i + C11_1 * t2_i + C11_5 * t3_i + C11_2 * t4_i;
-                rot_r = transform_sign * (S11_4 * t5_i + S11_3 * t6_i + S11_1 * t7_i + S11_5 * t8_i + S11_2 * t9_i);
-                rot_i = transform_sign * (-S11_4 * t5_r - S11_3 * t6_r - S11_1 * t7_r - S11_5 * t8_r - S11_2 * t9_r);
-                X[4]->re = tmp_r + rot_r;
-                X[4]->im = tmp_i + rot_i;
-                X[7]->re = tmp_r - rot_r;
-                X[7]->im = tmp_i - rot_i;
-
-                tmp_r = a_r + C11_5 * t0_r + C11_1 * t1_r + C11_4 * t2_r + C11_2 * t3_r + C11_3 * t4_r;
-                tmp_i = a_i + C11_5 * t0_i + C11_1 * t1_i + C11_4 * t2_i + C11_2 * t3_i + C11_3 * t4_i;
-                rot_r = transform_sign * (S11_5 * t5_i + S11_1 * t6_i + S11_4 * t7_i + S11_2 * t8_i + S11_3 * t9_i);
-                rot_i = transform_sign * (-S11_5 * t5_r - S11_1 * t6_r - S11_4 * t7_r - S11_2 * t8_r - S11_3 * t9_r);
-                X[5]->re = tmp_r + rot_r;
-                X[5]->im = tmp_i + rot_i;
-                X[6]->re = tmp_r - rot_r;
-                X[6]->im = tmp_i - rot_i;
-            }
-
-            // k=1 (with twiddle multiplications)
-            if (sub_fft_size > 1)
-            {
-                fft_data *X[11];
-                for (int i = 0; i < 11; i++)
-                    X[i] = &output_buffer[i * sub_fft_size + 1];
-
-                fft_type a_r = out_re[1], a_i = out_im[1];
-                fft_type b_r = out_re[sub_fft_size + 1], b_i = out_im[sub_fft_size + 1];
-                fft_type c_r = out_re[2 * sub_fft_size + 1], c_i = out_im[2 * sub_fft_size + 1];
-                fft_type d_r = out_re[3 * sub_fft_size + 1], d_i = out_im[3 * sub_fft_size + 1];
-                fft_type e_r = out_re[4 * sub_fft_size + 1], e_i = out_im[4 * sub_fft_size + 1];
-                fft_type f_r = out_re[5 * sub_fft_size + 1], f_i = out_im[5 * sub_fft_size + 1];
-                fft_type g_r = out_re[6 * sub_fft_size + 1], g_i = out_im[6 * sub_fft_size + 1];
-                fft_type h_r = out_re[7 * sub_fft_size + 1], h_i = out_im[7 * sub_fft_size + 1];
-                fft_type i_r = out_re[8 * sub_fft_size + 1], i_i = out_im[8 * sub_fft_size + 1];
-                fft_type j_r = out_re[9 * sub_fft_size + 1], j_i = out_im[9 * sub_fft_size + 1];
-                fft_type k_r = out_re[10 * sub_fft_size + 1], k_i = out_im[10 * sub_fft_size + 1];
-
-                int idx = 10 * 1;
-                fft_type w1r = twiddle_factors[idx + 0].re, w1i = twiddle_factors[idx + 0].im;
-                fft_type w2r = twiddle_factors[idx + 1].re, w2i = twiddle_factors[idx + 1].im;
-                fft_type w3r = twiddle_factors[idx + 2].re, w3i = twiddle_factors[idx + 2].im;
-                fft_type w4r = twiddle_factors[idx + 3].re, w4i = twiddle_factors[idx + 3].im;
-                fft_type w5r = twiddle_factors[idx + 4].re, w5i = twiddle_factors[idx + 4].im;
-                fft_type w6r = twiddle_factors[idx + 5].re, w6i = twiddle_factors[idx + 5].im;
-                fft_type w7r = twiddle_factors[idx + 6].re, w7i = twiddle_factors[idx + 6].im;
-                fft_type w8r = twiddle_factors[idx + 7].re, w8i = twiddle_factors[idx + 7].im;
-                fft_type w9r = twiddle_factors[idx + 8].re, w9i = twiddle_factors[idx + 8].im;
-                fft_type w10r = twiddle_factors[idx + 9].re, w10i = twiddle_factors[idx + 9].im;
-
-                fft_type b2_r = b_r * w1r - b_i * w1i, b2_i = b_i * w1r + b_r * w1i;
-                fft_type c2_r = c_r * w2r - c_i * w2i, c2_i = c_i * w2r + c_r * w2i;
-                fft_type d2_r = d_r * w3r - d_i * w3i, d2_i = d_i * w3r + d_r * w3i;
-                fft_type e2_r = e_r * w4r - e_i * w4i, e2_i = e_i * w4r + e_r * w4i;
-                fft_type f2_r = f_r * w5r - f_i * w5i, f2_i = f_i * w5r + f_r * w5i;
-                fft_type g2_r = g_r * w6r - g_i * w6i, g2_i = g_i * w6r + g_r * w6i;
-                fft_type h2_r = h_r * w7r - h_i * w7i, h2_i = h_i * w7r + h_r * w7i;
-                fft_type i2_r = i_r * w8r - i_i * w8i, i2_i = i_i * w8r + i_r * w8i;
-                fft_type j2_r = j_r * w9r - j_i * w9i, j2_i = j_i * w9r + j_r * w9i;
-                fft_type k2_r = k_r * w10r - k_i * w10i, k2_i = k_i * w10r + k_r * w10i;
-
-                fft_type t0_r = b2_r + k2_r, t0_i = b2_i + k2_i;
-                fft_type t1_r = c2_r + j2_r, t1_i = c2_i + j2_i;
-                fft_type t2_r = d2_r + i2_r, t2_i = d2_i + i2_i;
-                fft_type t3_r = e2_r + h2_r, t3_i = e2_i + h2_i;
-                fft_type t4_r = f2_r + g2_r, t4_i = f2_i + g2_i;
-                fft_type t5_r = b2_r - k2_r, t5_i = b2_i - k2_i;
-                fft_type t6_r = c2_r - j2_r, t6_i = c2_i - j2_i;
-                fft_type t7_r = d2_r - i2_r, t7_i = d2_i - i2_i;
-                fft_type t8_r = e2_r - h2_r, t8_i = e2_i - h2_i;
-                fft_type t9_r = f2_r - g2_r, t9_i = f2_i - g2_i;
-
-                X[0]->re = a_r + t0_r + t1_r + t2_r + t3_r + t4_r;
-                X[0]->im = a_i + t0_i + t1_i + t2_i + t3_i + t4_i;
-
-                fft_type tmp_r = a_r + C11_1 * t0_r + C11_2 * t1_r + C11_3 * t2_r + C11_4 * t3_r + C11_5 * t4_r;
-                fft_type tmp_i = a_i + C11_1 * t0_i + C11_2 * t1_i + C11_3 * t2_i + C11_4 * t3_i + C11_5 * t4_i;
-                fft_type rot_r = transform_sign * (S11_1 * t5_i + S11_2 * t6_i + S11_3 * t7_i + S11_4 * t8_i + S11_5 * t9_i);
-                fft_type rot_i = transform_sign * (-S11_1 * t5_r - S11_2 * t6_r - S11_3 * t7_r - S11_4 * t8_r - S11_5 * t9_r);
-                X[1]->re = tmp_r + rot_r;
-                X[1]->im = tmp_i + rot_i;
-                X[10]->re = tmp_r - rot_r;
-                X[10]->im = tmp_i - rot_i;
-
-                tmp_r = a_r + C11_2 * t0_r + C11_4 * t1_r + C11_5 * t2_r + C11_3 * t3_r + C11_1 * t4_r;
-                tmp_i = a_i + C11_2 * t0_i + C11_4 * t1_i + C11_5 * t2_i + C11_3 * t3_i + C11_1 * t4_i;
-                rot_r = transform_sign * (S11_2 * t5_i + S11_4 * t6_i + S11_5 * t7_i + S11_3 * t8_i + S11_1 * t9_i);
-                rot_i = transform_sign * (-S11_2 * t5_r - S11_4 * t6_r - S11_5 * t7_r - S11_3 * t8_r - S11_1 * t9_r);
-                X[2]->re = tmp_r + rot_r;
-                X[2]->im = tmp_i + rot_i;
-                X[9]->re = tmp_r - rot_r;
-                X[9]->im = tmp_i - rot_i;
-
-                tmp_r = a_r + C11_3 * t0_r + C11_5 * t1_r + C11_2 * t2_r + C11_1 * t3_r + C11_4 * t4_r;
-                tmp_i = a_i + C11_3 * t0_i + C11_5 * t1_i + C11_2 * t2_i + C11_1 * t3_i + C11_4 * t4_i;
-                rot_r = transform_sign * (S11_3 * t5_i + S11_5 * t6_i + S11_2 * t7_i + S11_1 * t8_i + S11_4 * t9_i);
-                rot_i = transform_sign * (-S11_3 * t5_r - S11_5 * t6_r - S11_2 * t7_r - S11_1 * t8_r - S11_4 * t9_r);
-                X[3]->re = tmp_r + rot_r;
-                X[3]->im = tmp_i + rot_i;
-                X[8]->re = tmp_r - rot_r;
-                X[8]->im = tmp_i - rot_i;
-
-                tmp_r = a_r + C11_4 * t0_r + C11_3 * t1_r + C11_1 * t2_r + C11_5 * t3_r + C11_2 * t4_r;
-                tmp_i = a_i + C11_4 * t0_i + C11_3 * t1_i + C11_1 * t2_i + C11_5 * t3_i + C11_2 * t4_i;
-                rot_r = transform_sign * (S11_4 * t5_i + S11_3 * t6_i + S11_1 * t7_i + S11_5 * t8_i + S11_2 * t9_i);
-                rot_i = transform_sign * (-S11_4 * t5_r - S11_3 * t6_r - S11_1 * t7_r - S11_5 * t8_r - S11_2 * t9_r);
-                X[4]->re = tmp_r + rot_r;
-                X[4]->im = tmp_i + rot_i;
-                X[7]->re = tmp_r - rot_r;
-                X[7]->im = tmp_i - rot_i;
-
-                tmp_r = a_r + C11_5 * t0_r + C11_1 * t1_r + C11_4 * t2_r + C11_2 * t3_r + C11_3 * t4_r;
-                tmp_i = a_i + C11_5 * t0_i + C11_1 * t1_i + C11_4 * t2_i + C11_2 * t3_i + C11_3 * t4_i;
-                rot_r = transform_sign * (S11_5 * t5_i + S11_1 * t6_i + S11_4 * t7_i + S11_2 * t8_i + S11_3 * t9_i);
-                rot_i = transform_sign * (-S11_5 * t5_r - S11_1 * t6_r - S11_4 * t7_r - S11_2 * t8_r - S11_3 * t9_r);
-                X[5]->re = tmp_r + rot_r;
-                X[5]->im = tmp_i + rot_i;
-                X[6]->re = tmp_r - rot_r;
-                X[6]->im = tmp_i - rot_i;
-            }
-
-            // Copy k=0,1 results from output_buffer to out_re/out_im for consistency
-            for (int i = 0; i < 11; i++)
-            {
-                out_re[i * sub_fft_size] = output_buffer[i * sub_fft_size].re;
-                out_im[i * sub_fft_size] = output_buffer[i * sub_fft_size].im;
-                if (sub_fft_size > 1)
+                for (int lane = 0; lane < 16; ++lane)
                 {
-                    out_re[i * sub_fft_size + 1] = output_buffer[i * sub_fft_size + 1].re;
-                    out_im[i * sub_fft_size + 1] = output_buffer[i * sub_fft_size + 1].im;
+                    _mm_prefetch((const char *)&sub_outputs[k + 8 + lane * sixteenth].re,
+                                 _MM_HINT_T0);
                 }
             }
-        }
 
-        // Step 8b: SSE2 computation for k=2,3 using out_re/out_im
-        if (sub_fft_size > 3)
-        {
-            int k0 = 2;
-            __m128d vsign_sse2 = _mm_set1_pd((double)transform_sign);
-            __m128d vc11_1_sse2 = _mm_set1_pd(C11_1);
-            __m128d vc11_2_sse2 = _mm_set1_pd(C11_2);
-            __m128d vc11_3_sse2 = _mm_set1_pd(C11_3);
-            __m128d vc11_4_sse2 = _mm_set1_pd(C11_4);
-            __m128d vc11_5_sse2 = _mm_set1_pd(C11_5);
-            __m128d vs11_1_sse2 = _mm_set1_pd(S11_1);
-            __m128d vs11_2_sse2 = _mm_set1_pd(S11_2);
-            __m128d vs11_3_sse2 = _mm_set1_pd(S11_3);
-            __m128d vs11_4_sse2 = _mm_set1_pd(S11_4);
-            __m128d vs11_5_sse2 = _mm_set1_pd(S11_5);
+            //==================================================================
+            // STAGE 1: Apply twiddles and perform first radix-4 decomposition
+            //==================================================================
 
-            __m128d a_r = _mm_loadu_pd(out_re + k0);
-            __m128d a_i = _mm_loadu_pd(out_im + k0);
-            __m128d b_r = _mm_loadu_pd(out_re + k0 + sub_fft_size);
-            __m128d b_i = _mm_loadu_pd(out_im + k0 + sub_fft_size);
-            __m128d c_r = _mm_loadu_pd(out_re + k0 + 2 * sub_fft_size);
-            __m128d c_i = _mm_loadu_pd(out_im + k0 + 2 * sub_fft_size);
-            __m128d d_r = _mm_loadu_pd(out_re + k0 + 3 * sub_fft_size);
-            __m128d d_i = _mm_loadu_pd(out_im + k0 + 3 * sub_fft_size);
-            __m128d e_r = _mm_loadu_pd(out_re + k0 + 4 * sub_fft_size);
-            __m128d e_i = _mm_loadu_pd(out_im + k0 + 4 * sub_fft_size);
-            __m128d f_r = _mm_loadu_pd(out_re + k0 + 5 * sub_fft_size);
-            __m128d f_i = _mm_loadu_pd(out_im + k0 + 5 * sub_fft_size);
-            __m128d g_r = _mm_loadu_pd(out_re + k0 + 6 * sub_fft_size);
-            __m128d g_i = _mm_loadu_pd(out_im + k0 + 6 * sub_fft_size);
-            __m128d h_r = _mm_loadu_pd(out_re + k0 + 7 * sub_fft_size);
-            __m128d h_i = _mm_loadu_pd(out_im + k0 + 7 * sub_fft_size);
-            __m128d i_r = _mm_loadu_pd(out_re + k0 + 8 * sub_fft_size);
-            __m128d i_i = _mm_loadu_pd(out_im + k0 + 8 * sub_fft_size);
-            __m128d j_r = _mm_loadu_pd(out_re + k0 + 9 * sub_fft_size);
-            __m128d j_i = _mm_loadu_pd(out_im + k0 + 9 * sub_fft_size);
-            __m128d k_r = _mm_loadu_pd(out_re + k0 + 10 * sub_fft_size);
-            __m128d k_i = _mm_loadu_pd(out_im + k0 + 10 * sub_fft_size);
-
-            int idx_k0 = 10 * 2, idx_k1 = 10 * 3;
-            __m128d w1r = _mm_set_pd(twiddle_factors[idx_k1 + 0].re, twiddle_factors[idx_k0 + 0].re);
-            __m128d w1i = _mm_set_pd(twiddle_factors[idx_k1 + 0].im, twiddle_factors[idx_k0 + 0].im);
-            __m128d w2r = _mm_set_pd(twiddle_factors[idx_k1 + 1].re, twiddle_factors[idx_k0 + 1].re);
-            __m128d w2i = _mm_set_pd(twiddle_factors[idx_k1 + 1].im, twiddle_factors[idx_k0 + 1].im);
-            __m128d w3r = _mm_set_pd(twiddle_factors[idx_k1 + 2].re, twiddle_factors[idx_k0 + 2].re);
-            __m128d w3i = _mm_set_pd(twiddle_factors[idx_k1 + 2].im, twiddle_factors[idx_k0 + 2].im);
-            __m128d w4r = _mm_set_pd(twiddle_factors[idx_k1 + 3].re, twiddle_factors[idx_k0 + 3].re);
-            __m128d w4i = _mm_set_pd(twiddle_factors[idx_k1 + 3].im, twiddle_factors[idx_k0 + 3].im);
-            __m128d w5r = _mm_set_pd(twiddle_factors[idx_k1 + 4].re, twiddle_factors[idx_k0 + 4].re);
-            __m128d w5i = _mm_set_pd(twiddle_factors[idx_k1 + 4].im, twiddle_factors[idx_k0 + 4].im);
-            __m128d w6r = _mm_set_pd(twiddle_factors[idx_k1 + 5].re, twiddle_factors[idx_k0 + 5].re);
-            __m128d w6i = _mm_set_pd(twiddle_factors[idx_k1 + 5].im, twiddle_factors[idx_k0 + 5].im);
-            __m128d w7r = _mm_set_pd(twiddle_factors[idx_k1 + 6].re, twiddle_factors[idx_k0 + 6].re);
-            __m128d w7i = _mm_set_pd(twiddle_factors[idx_k1 + 6].im, twiddle_factors[idx_k0 + 6].im);
-            __m128d w8r = _mm_set_pd(twiddle_factors[idx_k1 + 7].re, twiddle_factors[idx_k0 + 7].re);
-            __m128d w8i = _mm_set_pd(twiddle_factors[idx_k1 + 7].im, twiddle_factors[idx_k0 + 7].im);
-            __m128d w9r = _mm_set_pd(twiddle_factors[idx_k1 + 8].re, twiddle_factors[idx_k0 + 8].re);
-            __m128d w9i = _mm_set_pd(twiddle_factors[idx_k1 + 8].im, twiddle_factors[idx_k0 + 8].im);
-            __m128d w10r = _mm_set_pd(twiddle_factors[idx_k1 + 9].re, twiddle_factors[idx_k0 + 9].re);
-            __m128d w10i = _mm_set_pd(twiddle_factors[idx_k1 + 9].im, twiddle_factors[idx_k0 + 9].im);
-
-            __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i));
-            __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i));
-            __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i));
-            __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i));
-            __m128d d2r = FMSUB_SSE2(d_r, w3r, _mm_mul_pd(d_i, w3i));
-            __m128d d2i = FMADD_SSE2(d_i, w3r, _mm_mul_pd(d_r, w3i));
-            __m128d e2r = FMSUB_SSE2(e_r, w4r, _mm_mul_pd(e_i, w4i));
-            __m128d e2i = FMADD_SSE2(e_i, w4r, _mm_mul_pd(e_r, w4i));
-            __m128d f2r = FMSUB_SSE2(f_r, w5r, _mm_mul_pd(f_i, w5i));
-            __m128d f2i = FMADD_SSE2(f_i, w5r, _mm_mul_pd(f_r, w5i));
-            __m128d g2r = FMSUB_SSE2(g_r, w6r, _mm_mul_pd(g_i, w6i));
-            __m128d g2i = FMADD_SSE2(g_i, w6r, _mm_mul_pd(g_r, w6i));
-            __m128d h2r = FMSUB_SSE2(h_r, w7r, _mm_mul_pd(h_i, w7i));
-            __m128d h2i = FMADD_SSE2(h_i, w7r, _mm_mul_pd(h_r, w7i));
-            __m128d i2r = FMSUB_SSE2(i_r, w8r, _mm_mul_pd(i_i, w8i));
-            __m128d i2i = FMADD_SSE2(i_i, w8r, _mm_mul_pd(i_r, w8i));
-            __m128d j2r = FMSUB_SSE2(j_r, w9r, _mm_mul_pd(j_i, w9i));
-            __m128d j2i = FMADD_SSE2(j_i, w9r, _mm_mul_pd(j_r, w9i));
-            __m128d k2r = FMSUB_SSE2(k_r, w10r, _mm_mul_pd(k_i, w10i));
-            __m128d k2i = FMADD_SSE2(k_i, w10r, _mm_mul_pd(k_r, w10i));
-
-            __m128d t0r = _mm_add_pd(b2r, k2r);
-            __m128d t0i = _mm_add_pd(b2i, k2i);
-            __m128d t1r = _mm_add_pd(c2r, j2r);
-            __m128d t1i = _mm_add_pd(c2i, j2i);
-            __m128d t2r = _mm_add_pd(d2r, i2r);
-            __m128d t2i = _mm_add_pd(d2i, i2i);
-            __m128d t3r = _mm_add_pd(e2r, h2r);
-            __m128d t3i = _mm_add_pd(e2i, h2i);
-            __m128d t4r = _mm_add_pd(f2r, g2r);
-            __m128d t4i = _mm_add_pd(f2i, g2i);
-            __m128d t5r = _mm_sub_pd(b2r, k2r);
-            __m128d t5i = _mm_sub_pd(b2i, k2i);
-            __m128d t6r = _mm_sub_pd(c2r, j2r);
-            __m128d t6i = _mm_sub_pd(c2i, j2i);
-            __m128d t7r = _mm_sub_pd(d2r, i2r);
-            __m128d t7i = _mm_sub_pd(d2i, i2i);
-            __m128d t8r = _mm_sub_pd(e2r, h2r);
-            __m128d t8i = _mm_sub_pd(e2i, h2i);
-            __m128d t9r = _mm_sub_pd(f2r, g2r);
-            __m128d t9i = _mm_sub_pd(f2i, g2i);
-
-            __m128d sum_r = _mm_add_pd(t0r, _mm_add_pd(t1r, _mm_add_pd(t2r, _mm_add_pd(t3r, t4r))));
-            __m128d sum_i = _mm_add_pd(t0i, _mm_add_pd(t1i, _mm_add_pd(t2i, _mm_add_pd(t3i, t4i))));
-            _mm_storeu_pd(&out_re[k0], _mm_add_pd(a_r, sum_r));
-            _mm_storeu_pd(&out_im[k0], _mm_add_pd(a_i, sum_i));
-
-            __m128d tmp1r = FMADD_SSE2(vc11_5_sse2, t4r,
-                                       FMADD_SSE2(vc11_4_sse2, t3r,
-                                                  FMADD_SSE2(vc11_3_sse2, t2r,
-                                                             FMADD_SSE2(vc11_2_sse2, t1r,
-                                                                        FMADD_SSE2(vc11_1_sse2, t0r, a_r)))));
-            __m128d tmp1i = FMADD_SSE2(vc11_5_sse2, t4i,
-                                       FMADD_SSE2(vc11_4_sse2, t3i,
-                                                  FMADD_SSE2(vc11_3_sse2, t2i,
-                                                             FMADD_SSE2(vc11_2_sse2, t1i,
-                                                                        FMADD_SSE2(vc11_1_sse2, t0i, a_i))))); // +1 closing paren
-
-            __m128d rot1r = FMADD_SSE2(vs11_5_sse2, t9i,
-                                       FMADD_SSE2(vs11_4_sse2, t8i,
-                                                  FMADD_SSE2(vs11_3_sse2, t7i,
-                                                             FMADD_SSE2(vs11_2_sse2, t6i,
-                                                                        _mm_mul_pd(vs11_1_sse2, t5i))))); // +1 closing paren
-
-            __m128d rot1i = FMADD_SSE2(vs11_5_sse2, t9r,
-                                       FMADD_SSE2(vs11_4_sse2, t8r,
-                                                  FMADD_SSE2(vs11_3_sse2, t7r,
-                                                             FMADD_SSE2(vs11_2_sse2, t6r,
-                                                                        _mm_mul_pd(vs11_1_sse2, t5r))))); // +1 closing paren
-            rot1r = _mm_mul_pd(vsign_sse2, rot1r);
-            rot1i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot1i);
-            _mm_storeu_pd(&out_re[k0 + sub_fft_size], _mm_add_pd(tmp1r, rot1r));
-            _mm_storeu_pd(&out_im[k0 + sub_fft_size], _mm_add_pd(tmp1i, rot1i));
-            _mm_storeu_pd(&out_re[k0 + 10 * sub_fft_size], _mm_sub_pd(tmp1r, rot1r));
-            _mm_storeu_pd(&out_im[k0 + 10 * sub_fft_size], _mm_sub_pd(tmp1i, rot1i));
-
-            __m128d tmp2r = FMADD_SSE2(vc11_1_sse2, t4r,
-                                       FMADD_SSE2(vc11_3_sse2, t3r,
-                                                  FMADD_SSE2(vc11_5_sse2, t2r,
-                                                             FMADD_SSE2(vc11_4_sse2, t1r,
-                                                                        FMADD_SSE2(vc11_2_sse2, t0r, a_r))))); // +1 )
-
-            __m128d tmp2i = FMADD_SSE2(vc11_1_sse2, t4i,
-                                       FMADD_SSE2(vc11_3_sse2, t3i,
-                                                  FMADD_SSE2(vc11_5_sse2, t2i,
-                                                             FMADD_SSE2(vc11_4_sse2, t1i,
-                                                                        FMADD_SSE2(vc11_2_sse2, t0i, a_i))))); // +1 )
-
-            __m128d rot2r = FMADD_SSE2(vs11_1_sse2, t9i,
-                                       FMADD_SSE2(vs11_3_sse2, t8i,
-                                                  FMADD_SSE2(vs11_5_sse2, t7i,
-                                                             FMADD_SSE2(vs11_4_sse2, t6i,
-                                                                        _mm_mul_pd(vs11_2_sse2, t5i))))); // +1 )
-
-            __m128d rot2i = FMADD_SSE2(vs11_1_sse2, t9r,
-                                       FMADD_SSE2(vs11_3_sse2, t8r,
-                                                  FMADD_SSE2(vs11_5_sse2, t7r,
-                                                             FMADD_SSE2(vs11_4_sse2, t6r,
-                                                                        _mm_mul_pd(vs11_2_sse2, t5r))))); // +1 )
-            rot2r = _mm_mul_pd(vsign_sse2, rot2r);
-            rot2i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot2i);
-            _mm_storeu_pd(&out_re[k0 + 2 * sub_fft_size], _mm_add_pd(tmp2r, rot2r));
-            _mm_storeu_pd(&out_im[k0 + 2 * sub_fft_size], _mm_add_pd(tmp2i, rot2i));
-            _mm_storeu_pd(&out_re[k0 + 9 * sub_fft_size], _mm_sub_pd(tmp2r, rot2r));
-            _mm_storeu_pd(&out_im[k0 + 9 * sub_fft_size], _mm_sub_pd(tmp2i, rot2i));
-
-            __m128d tmp3r = FMADD_SSE2(vc11_4_sse2, t4r,
-                                       FMADD_SSE2(vc11_1_sse2, t3r,
-                                                  FMADD_SSE2(vc11_2_sse2, t2r,
-                                                             FMADD_SSE2(vc11_5_sse2, t1r,
-                                                                        FMADD_SSE2(vc11_3_sse2, t0r, a_r))))); // +1 )
-
-            __m128d tmp3i = FMADD_SSE2(vc11_4_sse2, t4i,
-                                       FMADD_SSE2(vc11_1_sse2, t3i,
-                                                  FMADD_SSE2(vc11_2_sse2, t2i,
-                                                             FMADD_SSE2(vc11_5_sse2, t1i,
-                                                                        FMADD_SSE2(vc11_3_sse2, t0i, a_i))))); // +1 )
-
-            __m128d rot3r = FMADD_SSE2(vs11_4_sse2, t9i,
-                                       FMADD_SSE2(vs11_1_sse2, t8i,
-                                                  FMADD_SSE2(vs11_2_sse2, t7i,
-                                                             FMADD_SSE2(vs11_5_sse2, t6i,
-                                                                        _mm_mul_pd(vs11_3_sse2, t5i))))); // +1 )
-
-            __m128d rot3i = FMADD_SSE2(vs11_4_sse2, t9r,
-                                       FMADD_SSE2(vs11_1_sse2, t8r,
-                                                  FMADD_SSE2(vs11_2_sse2, t7r,
-                                                             FMADD_SSE2(vs11_5_sse2, t6r,
-                                                                        _mm_mul_pd(vs11_3_sse2, t5r))))); // +1 )
-            rot3r = _mm_mul_pd(vsign_sse2, rot3r);
-            rot3i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot3i);
-            _mm_storeu_pd(&out_re[k0 + 3 * sub_fft_size], _mm_add_pd(tmp3r, rot3r));
-            _mm_storeu_pd(&out_im[k0 + 3 * sub_fft_size], _mm_add_pd(tmp3i, rot3i));
-            _mm_storeu_pd(&out_re[k0 + 8 * sub_fft_size], _mm_sub_pd(tmp3r, rot3r));
-            _mm_storeu_pd(&out_im[k0 + 8 * sub_fft_size], _mm_sub_pd(tmp3i, rot3i));
-
-            __m128d tmp4r = FMADD_SSE2(vc11_2_sse2, t4r,
-                                       FMADD_SSE2(vc11_5_sse2, t3r,
-                                                  FMADD_SSE2(vc11_1_sse2, t2r,
-                                                             FMADD_SSE2(vc11_3_sse2, t1r,
-                                                                        FMADD_SSE2(vc11_4_sse2, t0r, a_r))))); // +1 )
-
-            __m128d tmp4i = FMADD_SSE2(vc11_2_sse2, t4i,
-                                       FMADD_SSE2(vc11_5_sse2, t3i,
-                                                  FMADD_SSE2(vc11_1_sse2, t2i,
-                                                             FMADD_SSE2(vc11_3_sse2, t1i,
-                                                                        FMADD_SSE2(vc11_4_sse2, t0i, a_i))))); // +1 )
-
-            __m128d rot4r = FMADD_SSE2(vs11_2_sse2, t9i,
-                                       FMADD_SSE2(vs11_5_sse2, t8i,
-                                                  FMADD_SSE2(vs11_1_sse2, t7i,
-                                                             FMADD_SSE2(vs11_3_sse2, t6i,
-                                                                        _mm_mul_pd(vs11_4_sse2, t5i))))); // +1 )
-
-            __m128d rot4i = FMADD_SSE2(vs11_2_sse2, t9r,
-                                       FMADD_SSE2(vs11_5_sse2, t8r,
-                                                  FMADD_SSE2(vs11_1_sse2, t7r,
-                                                             FMADD_SSE2(vs11_3_sse2, t6r,
-                                                                        _mm_mul_pd(vs11_4_sse2, t5r))))); // +1 )
-            rot4r = _mm_mul_pd(vsign_sse2, rot4r);
-            rot4i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot4i);
-            _mm_storeu_pd(&out_re[k0 + 4 * sub_fft_size], _mm_add_pd(tmp4r, rot4r));
-            _mm_storeu_pd(&out_im[k0 + 4 * sub_fft_size], _mm_add_pd(tmp4i, rot4i));
-            _mm_storeu_pd(&out_re[k0 + 7 * sub_fft_size], _mm_sub_pd(tmp4r, rot4r));
-            _mm_storeu_pd(&out_im[k0 + 7 * sub_fft_size], _mm_sub_pd(tmp4i, rot4i));
-
-            __m128d tmp5r = FMADD_SSE2(vc11_3_sse2, t4r,
-                                       FMADD_SSE2(vc11_2_sse2, t3r,
-                                                  FMADD_SSE2(vc11_4_sse2, t2r,
-                                                             FMADD_SSE2(vc11_1_sse2, t1r,
-                                                                        FMADD_SSE2(vc11_5_sse2, t0r, a_r))))); // +1 )
-
-            __m128d tmp5i = FMADD_SSE2(vc11_3_sse2, t4i,
-                                       FMADD_SSE2(vc11_2_sse2, t3i,
-                                                  FMADD_SSE2(vc11_4_sse2, t2i,
-                                                             FMADD_SSE2(vc11_1_sse2, t1i,
-                                                                        FMADD_SSE2(vc11_5_sse2, t0i, a_i))))); // +1 )
-
-            __m128d rot5r = FMADD_SSE2(vs11_3_sse2, t9i,
-                                       FMADD_SSE2(vs11_2_sse2, t8i,
-                                                  FMADD_SSE2(vs11_4_sse2, t7i,
-                                                             FMADD_SSE2(vs11_1_sse2, t6i,
-                                                                        _mm_mul_pd(vs11_5_sse2, t5i))))); // +1 )
-
-            __m128d rot5i = FMADD_SSE2(vs11_3_sse2, t9r,
-                                       FMADD_SSE2(vs11_2_sse2, t8r,
-                                                  FMADD_SSE2(vs11_4_sse2, t7r,
-                                                             FMADD_SSE2(vs11_1_sse2, t6r,
-                                                                        _mm_mul_pd(vs11_5_sse2, t5r))))); // +1 )
-            rot5r = _mm_mul_pd(vsign_sse2, rot5r);
-            rot5i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot5i);
-            _mm_storeu_pd(&out_re[k0 + 5 * sub_fft_size], _mm_add_pd(tmp5r, rot5r));
-            _mm_storeu_pd(&out_im[k0 + 5 * sub_fft_size], _mm_add_pd(tmp5i, rot5i));
-            _mm_storeu_pd(&out_re[k0 + 6 * sub_fft_size], _mm_sub_pd(tmp5r, rot5r));
-            _mm_storeu_pd(&out_im[k0 + 6 * sub_fft_size], _mm_sub_pd(tmp5i, rot5i));
-
-            // Copy k=2,3 results from out_re/out_im to output_buffer
-            for (int i = 0; i < 11; i++)
+            // Load 2 complex from each of 16 lanes (AoS)
+            __m256d x[16];
+            for (int lane = 0; lane < 16; ++lane)
             {
-                output_buffer[i * sub_fft_size + k0].re = out_re[i * sub_fft_size + k0];
-                output_buffer[i * sub_fft_size + k0].im = out_im[i * sub_fft_size + k0];
-                output_buffer[i * sub_fft_size + k0 + 1].re = out_re[i * sub_fft_size + k0 + 1];
-                output_buffer[i * sub_fft_size + k0 + 1].im = out_im[i * sub_fft_size + k0 + 1];
+                x[lane] = load2_aos(&sub_outputs[k + lane * sixteenth],
+                                    &sub_outputs[k + lane * sixteenth + 1]);
+            }
+
+            // Apply twiddle factors W^{jk} for j=1..15, k=current index
+            __m256d tw[15];
+            for (int j = 0; j < 15; ++j)
+            {
+                tw[j] = load2_aos(&stage_tw[15 * k + j], &stage_tw[15 * (k + 1) + j]);
+            }
+
+            // Twiddle multiply for lanes 1..15 (lane 0 has twiddle = 1)
+            for (int lane = 1; lane < 16; ++lane)
+            {
+                x[lane] = cmul_avx2_aos(x[lane], tw[lane - 1]);
+            }
+
+            //==================================================================
+            // STAGE 2: First radix-4 decomposition (4 groups of 4)
+            // Group 0: x[0,4,8,12], Group 1: x[1,5,9,13], etc.
+            //==================================================================
+
+            __m256d y[16]; // Intermediate results
+
+            for (int group = 0; group < 4; ++group)
+            {
+                // Extract 4 elements: x[group], x[group+4], x[group+8], x[group+12]
+                __m256d a = x[group];
+                __m256d b = x[group + 4];
+                __m256d c = x[group + 8];
+                __m256d d = x[group + 12];
+
+                // Radix-4 butterfly (AoS)
+                __m256d sumBD = _mm256_add_pd(b, d);
+                __m256d difBD = _mm256_sub_pd(b, d);
+                __m256d a_pc = _mm256_add_pd(a, c);
+                __m256d a_mc = _mm256_sub_pd(a, c);
+
+                y[4 * group] = _mm256_add_pd(a_pc, sumBD);     // Y_0
+                y[4 * group + 2] = _mm256_sub_pd(a_pc, sumBD); // Y_2
+
+                // Rotate difBD by ±90°
+                __m256d difBD_swp = _mm256_permute_pd(difBD, 0b0101);
+                __m256d rot = (transform_sign == 1)
+                                  ? _mm256_xor_pd(difBD_swp, _mm256_set_pd(0.0, -0.0, 0.0, -0.0))  // +i
+                                  : _mm256_xor_pd(difBD_swp, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)); // -i
+
+                y[4 * group + 1] = _mm256_sub_pd(a_mc, rot); // Y_1
+                y[4 * group + 3] = _mm256_add_pd(a_mc, rot); // Y_3
+            }
+
+            //==================================================================
+            // STAGE 3: Second radix-4 decomposition (transpose + butterfly)
+            // Now combine y[0,1,2,3], y[4,5,6,7], y[8,9,10,11], y[12,13,14,15]
+            //==================================================================
+
+            for (int m = 0; m < 4; ++m)
+            {
+                __m256d a = y[m];
+                __m256d b = y[m + 4];
+                __m256d c = y[m + 8];
+                __m256d d = y[m + 12];
+
+                // Radix-4 butterfly (final stage, no more twiddles needed)
+                __m256d sumBD = _mm256_add_pd(b, d);
+                __m256d difBD = _mm256_sub_pd(b, d);
+                __m256d a_pc = _mm256_add_pd(a, c);
+                __m256d a_mc = _mm256_sub_pd(a, c);
+
+                __m256d z0 = _mm256_add_pd(a_pc, sumBD);
+                __m256d z2 = _mm256_sub_pd(a_pc, sumBD);
+
+                __m256d difBD_swp = _mm256_permute_pd(difBD, 0b0101);
+                __m256d rot = (transform_sign == 1)
+                                  ? _mm256_xor_pd(difBD_swp, _mm256_set_pd(0.0, -0.0, 0.0, -0.0))
+                                  : _mm256_xor_pd(difBD_swp, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
+
+                __m256d z1 = _mm256_sub_pd(a_mc, rot);
+                __m256d z3 = _mm256_add_pd(a_mc, rot);
+
+                // Store final results
+                STOREU_PD(&output_buffer[k + m * sixteenth].re, z0);
+                STOREU_PD(&output_buffer[k + (m + 4) * sixteenth].re, z1);
+                STOREU_PD(&output_buffer[k + (m + 8) * sixteenth].re, z2);
+                STOREU_PD(&output_buffer[k + (m + 12) * sixteenth].re, z3);
             }
         }
-        // Step 8c: Scalar computation for k=2 when sub_fft_size == 3
-        else if (sub_fft_size == 3)
+#endif // __AVX2__
+
+        //======================================================================
+        // SCALAR TAIL: Handle remaining 0..1 elements
+        //======================================================================
+        for (; k < sixteenth; ++k)
         {
-            int k = 2;
-            fft_data *X[11];
-            for (int i = 0; i < 11; i++)
-                X[i] = &output_buffer[i * sub_fft_size + k];
-
-            fft_type a_r = out_re[k], a_i = out_im[k];
-            fft_type b_r = out_re[k + sub_fft_size], b_i = out_im[k + sub_fft_size];
-            fft_type c_r = out_re[k + 2 * sub_fft_size], c_i = out_im[k + 2 * sub_fft_size];
-            fft_type d_r = out_re[k + 3 * sub_fft_size], d_i = out_im[k + 3 * sub_fft_size];
-            fft_type e_r = out_re[k + 4 * sub_fft_size], e_i = out_im[k + 4 * sub_fft_size];
-            fft_type f_r = out_re[k + 5 * sub_fft_size], f_i = out_im[k + 5 * sub_fft_size];
-            fft_type g_r = out_re[k + 6 * sub_fft_size], g_i = out_im[k + 6 * sub_fft_size];
-            fft_type h_r = out_re[k + 7 * sub_fft_size], h_i = out_im[k + 7 * sub_fft_size];
-            fft_type i_r = out_re[k + 8 * sub_fft_size], i_i = out_im[k + 8 * sub_fft_size];
-            fft_type j_r = out_re[k + 9 * sub_fft_size], j_i = out_im[k + 9 * sub_fft_size];
-            fft_type k_r = out_re[k + 10 * sub_fft_size], k_i = out_im[k + 10 * sub_fft_size];
-
-            int idx = 10 * k;
-            fft_type w1r = twiddle_factors[idx + 0].re, w1i = twiddle_factors[idx + 0].im;
-            fft_type w2r = twiddle_factors[idx + 1].re, w2i = twiddle_factors[idx + 1].im;
-            fft_type w3r = twiddle_factors[idx + 2].re, w3i = twiddle_factors[idx + 2].im;
-            fft_type w4r = twiddle_factors[idx + 3].re, w4i = twiddle_factors[idx + 3].im;
-            fft_type w5r = twiddle_factors[idx + 4].re, w5i = twiddle_factors[idx + 4].im;
-            fft_type w6r = twiddle_factors[idx + 5].re, w6i = twiddle_factors[idx + 5].im;
-            fft_type w7r = twiddle_factors[idx + 6].re, w7i = twiddle_factors[idx + 6].im;
-            fft_type w8r = twiddle_factors[idx + 7].re, w8i = twiddle_factors[idx + 7].im;
-            fft_type w9r = twiddle_factors[idx + 8].re, w9i = twiddle_factors[idx + 8].im;
-            fft_type w10r = twiddle_factors[idx + 9].re, w10i = twiddle_factors[idx + 9].im;
-
-            fft_type b2_r = b_r * w1r - b_i * w1i, b2_i = b_i * w1r + b_r * w1i;
-            fft_type c2_r = c_r * w2r - c_i * w2i, c2_i = c_i * w2r + c_r * w2i;
-            fft_type d2_r = d_r * w3r - d_i * w3i, d2_i = d_i * w3r + d_r * w3i;
-            fft_type e2_r = e_r * w4r - e_i * w4i, e2_i = e_i * w4r + e_r * w4i;
-            fft_type f2_r = f_r * w5r - f_i * w5i, f2_i = f_i * w5r + f_r * w5i;
-            fft_type g2_r = g_r * w6r - g_i * w6i, g2_i = g_i * w6r + g_r * w6i;
-            fft_type h2_r = h_r * w7r - h_i * w7i, h2_i = h_i * w7r + h_r * w7i;
-            fft_type i2_r = i_r * w8r - i_i * w8i, i2_i = i_i * w8r + i_r * w8i;
-            fft_type j2_r = j_r * w9r - j_i * w9i, j2_i = j_i * w9r + j_r * w9i;
-            fft_type k2_r = k_r * w10r - k_i * w10i, k2_i = k_i * w10r + k_r * w10i;
-
-            fft_type t0_r = b2_r + k2_r, t0_i = b2_i + k2_i;
-            fft_type t1_r = c2_r + j2_r, t1_i = c2_i + j2_i;
-            fft_type t2_r = d2_r + i2_r, t2_i = d2_i + i2_i;
-            fft_type t3_r = e2_r + h2_r, t3_i = e2_i + h2_i;
-            fft_type t4_r = f2_r + g2_r, t4_i = f2_i + g2_i;
-            fft_type t5_r = b2_r - k2_r, t5_i = b2_i - k2_i;
-            fft_type t6_r = c2_r - j2_r, t6_i = c2_i - j2_i;
-            fft_type t7_r = d2_r - i2_r, t7_i = d2_i - i2_i;
-            fft_type t8_r = e2_r - h2_r, t8_i = e2_i - h2_i;
-            fft_type t9_r = f2_r - g2_r, t9_i = f2_i - g2_i;
-
-            out_re[k] = a_r + t0_r + t1_r + t2_r + t3_r + t4_r;
-            out_im[k] = a_i + t0_i + t1_i + t2_i + t3_i + t4_i;
-
-            fft_type tmp_r = a_r + C11_1 * t0_r + C11_2 * t1_r + C11_3 * t2_r + C11_4 * t3_r + C11_5 * t4_r;
-            fft_type tmp_i = a_i + C11_1 * t0_i + C11_2 * t1_i + C11_3 * t2_i + C11_4 * t3_i + C11_5 * t4_i;
-            fft_type rot_r = transform_sign * (S11_1 * t5_i + S11_2 * t6_i + S11_3 * t7_i + S11_4 * t8_i + S11_5 * t9_i);
-            fft_type rot_i = transform_sign * (-S11_1 * t5_r - S11_2 * t6_r - S11_3 * t7_r - S11_4 * t8_r - S11_5 * t9_r);
-            out_re[k + sub_fft_size] = tmp_r + rot_r;
-            out_im[k + sub_fft_size] = tmp_i + rot_i;
-            out_re[k + 10 * sub_fft_size] = tmp_r - rot_r;
-            out_im[k + 10 * sub_fft_size] = tmp_i - rot_i;
-
-            tmp_r = a_r + C11_2 * t0_r + C11_4 * t1_r + C11_5 * t2_r + C11_3 * t3_r + C11_1 * t4_r;
-            tmp_i = a_i + C11_2 * t0_i + C11_4 * t1_i + C11_5 * t2_i + C11_3 * t3_i + C11_1 * t4_i;
-            rot_r = transform_sign * (S11_2 * t5_i + S11_4 * t6_i + S11_5 * t7_i + S11_3 * t8_i + S11_1 * t9_i);
-            rot_i = transform_sign * (-S11_2 * t5_r - S11_4 * t6_r - S11_5 * t7_r - S11_3 * t8_r - S11_1 * t9_r);
-            out_re[k + 2 * sub_fft_size] = tmp_r + rot_r;
-            out_im[k + 2 * sub_fft_size] = tmp_i + rot_i;
-            out_re[k + 9 * sub_fft_size] = tmp_r - rot_r;
-            out_im[k + 9 * sub_fft_size] = tmp_i - rot_i;
-
-            tmp_r = a_r + C11_3 * t0_r + C11_5 * t1_r + C11_2 * t2_r + C11_1 * t3_r + C11_4 * t4_r;
-            tmp_i = a_i + C11_3 * t0_i + C11_5 * t1_i + C11_2 * t2_i + C11_1 * t3_i + C11_4 * t4_i;
-            rot_r = transform_sign * (S11_3 * t5_i + S11_5 * t6_i + S11_2 * t7_i + S11_1 * t8_i + S11_4 * t9_i);
-            rot_i = transform_sign * (-S11_3 * t5_r - S11_5 * t6_r - S11_2 * t7_r - S11_1 * t8_r - S11_4 * t9_r);
-            out_re[k + 3 * sub_fft_size] = tmp_r + rot_r;
-            out_im[k + 3 * sub_fft_size] = tmp_i + rot_i;
-            out_re[k + 8 * sub_fft_size] = tmp_r - rot_r;
-            out_im[k + 8 * sub_fft_size] = tmp_i - rot_i;
-
-            tmp_r = a_r + C11_4 * t0_r + C11_3 * t1_r + C11_1 * t2_r + C11_5 * t3_r + C11_2 * t4_r;
-            tmp_i = a_i + C11_4 * t0_i + C11_3 * t1_i + C11_1 * t2_i + C11_5 * t3_i + C11_2 * t4_i;
-            rot_r = transform_sign * (S11_4 * t5_i + S11_3 * t6_i + S11_1 * t7_i + S11_5 * t8_i + S11_2 * t9_i);
-            rot_i = transform_sign * (-S11_4 * t5_r - S11_3 * t6_r - S11_1 * t7_r - S11_5 * t8_r - S11_2 * t9_r);
-            out_re[k + 4 * sub_fft_size] = tmp_r + rot_r;
-            out_im[k + 4 * sub_fft_size] = tmp_i + rot_i;
-            out_re[k + 7 * sub_fft_size] = tmp_r - rot_r;
-            out_im[k + 7 * sub_fft_size] = tmp_i - rot_i;
-
-            tmp_r = a_r + C11_5 * t0_r + C11_1 * t1_r + C11_4 * t2_r + C11_2 * t3_r + C11_3 * t4_r;
-            tmp_i = a_i + C11_5 * t0_i + C11_1 * t1_i + C11_4 * t2_i + C11_2 * t3_i + C11_3 * t4_i;
-            rot_r = transform_sign * (S11_5 * t5_i + S11_1 * t6_i + S11_4 * t7_i + S11_2 * t8_i + S11_3 * t9_i);
-            rot_i = transform_sign * (-S11_5 * t5_r - S11_1 * t6_r - S11_4 * t7_r - S11_2 * t8_r - S11_3 * t9_r);
-            out_re[k + 5 * sub_fft_size] = tmp_r + rot_r;
-            out_im[k + 5 * sub_fft_size] = tmp_i + rot_i;
-            out_re[k + 6 * sub_fft_size] = tmp_r - rot_r;
-            out_im[k + 6 * sub_fft_size] = tmp_i - rot_i;
-
-            // Copy k=2 results from out_re/out_im to output_buffer
-            for (int i = 0; i < 11; i++)
+            // Load 16 lanes
+            fft_data x[16];
+            for (int lane = 0; lane < 16; ++lane)
             {
-                output_buffer[i * sub_fft_size + k].re = out_re[i * sub_fft_size + k];
-                output_buffer[i * sub_fft_size + k].im = out_im[i * sub_fft_size + k];
+                x[lane] = sub_outputs[k + lane * sixteenth];
             }
-        }
 
-        // Step 9: AVX2 vectorized butterfly for k=4 to sub_fft_size-1
-        __m256d vsign = _mm256_set1_pd((double)transform_sign);
-        __m256d vc11_1 = _mm256_set1_pd(C11_1);
-        __m256d vc11_2 = _mm256_set1_pd(C11_2);
-        __m256d vc11_3 = _mm256_set1_pd(C11_3);
-        __m256d vc11_4 = _mm256_set1_pd(C11_4);
-        __m256d vc11_5 = _mm256_set1_pd(C11_5);
-        __m256d vs11_1 = _mm256_set1_pd(S11_1);
-        __m256d vs11_2 = _mm256_set1_pd(S11_2);
-        __m256d vs11_3 = _mm256_set1_pd(S11_3);
-        __m256d vs11_4 = _mm256_set1_pd(S11_4);
-        __m256d vs11_5 = _mm256_set1_pd(S11_5);
-        int k = 4;
-        for (; k + 3 < sub_fft_size; k += 4)
-        {
-            __m256d a_r = LOAD_PD(out_re + k);
-            __m256d a_i = LOAD_PD(out_im + k);
-            __m256d b_r = LOAD_PD(out_re + k + sub_fft_size);
-            __m256d b_i = LOAD_PD(out_im + k + sub_fft_size);
-            __m256d c_r = LOAD_PD(out_re + k + 2 * sub_fft_size);
-            __m256d c_i = LOAD_PD(out_im + k + 2 * sub_fft_size);
-            __m256d d_r = LOAD_PD(out_re + k + 3 * sub_fft_size);
-            __m256d d_i = LOAD_PD(out_im + k + 3 * sub_fft_size);
-            __m256d e_r = LOAD_PD(out_re + k + 4 * sub_fft_size);
-            __m256d e_i = LOAD_PD(out_im + k + 4 * sub_fft_size);
-            __m256d f_r = LOAD_PD(out_re + k + 5 * sub_fft_size);
-            __m256d f_i = LOAD_PD(out_im + k + 5 * sub_fft_size);
-            __m256d g_r = LOAD_PD(out_re + k + 6 * sub_fft_size);
-            __m256d g_i = LOAD_PD(out_im + k + 6 * sub_fft_size);
-            __m256d h_r = LOAD_PD(out_re + k + 7 * sub_fft_size);
-            __m256d h_i = LOAD_PD(out_im + k + 7 * sub_fft_size);
-            __m256d i_r = LOAD_PD(out_re + k + 8 * sub_fft_size);
-            __m256d i_i = LOAD_PD(out_im + k + 8 * sub_fft_size);
-            __m256d j_r = LOAD_PD(out_re + k + 9 * sub_fft_size);
-            __m256d j_i = LOAD_PD(out_im + k + 9 * sub_fft_size);
-            __m256d k_r = LOAD_PD(out_re + k + 10 * sub_fft_size);
-            __m256d k_i = LOAD_PD(out_im + k + 10 * sub_fft_size);
+            // Apply twiddles W^{jk} for j=1..15
+            for (int j = 1; j < 16; ++j)
+            {
+                fft_data tw = stage_tw[15 * k + (j - 1)];
+                double xr = x[j].re, xi = x[j].im;
+                x[j].re = xr * tw.re - xi * tw.im;
+                x[j].im = xr * tw.im + xi * tw.re;
+            }
 
-            int idx = 10 * k;
-            __m256d w1r = LOADU_PD(&twiddle_factors[idx + 0].re);
-            __m256d w1i = LOADU_PD(&twiddle_factors[idx + 0].im);
-            __m256d w2r = LOADU_PD(&twiddle_factors[idx + 1].re);
-            __m256d w2i = LOADU_PD(&twiddle_factors[idx + 1].im);
-            __m256d w3r = LOADU_PD(&twiddle_factors[idx + 2].re);
-            __m256d w3i = LOADU_PD(&twiddle_factors[idx + 2].im);
-            __m256d w4r = LOADU_PD(&twiddle_factors[idx + 3].re);
-            __m256d w4i = LOADU_PD(&twiddle_factors[idx + 3].im);
-            __m256d w5r = LOADU_PD(&twiddle_factors[idx + 4].re);
-            __m256d w5i = LOADU_PD(&twiddle_factors[idx + 4].im);
-            __m256d w6r = LOADU_PD(&twiddle_factors[idx + 5].re);
-            __m256d w6i = LOADU_PD(&twiddle_factors[idx + 5].im);
-            __m256d w7r = LOADU_PD(&twiddle_factors[idx + 6].re);
-            __m256d w7i = LOADU_PD(&twiddle_factors[idx + 6].im);
-            __m256d w8r = LOADU_PD(&twiddle_factors[idx + 7].re);
-            __m256d w8i = LOADU_PD(&twiddle_factors[idx + 7].im);
-            __m256d w9r = LOADU_PD(&twiddle_factors[idx + 8].re);
-            __m256d w9i = LOADU_PD(&twiddle_factors[idx + 8].im);
-            __m256d w10r = LOADU_PD(&twiddle_factors[idx + 9].re);
-            __m256d w10i = LOADU_PD(&twiddle_factors[idx + 9].im);
+            // First radix-4 stage (4 groups of 4)
+            fft_data y[16];
+            for (int group = 0; group < 4; ++group)
+            {
+                fft_data a = x[group];
+                fft_data b = x[group + 4];
+                fft_data c = x[group + 8];
+                fft_data d = x[group + 12];
 
-            __m256d b2r = FMSUB(b_r, w1r, _mm256_mul_pd(b_i, w1i));
-            __m256d b2i = FMADD(b_i, w1r, _mm256_mul_pd(b_r, w1i));
-            __m256d c2r = FMSUB(c_r, w2r, _mm256_mul_pd(c_i, w2i));
-            __m256d c2i = FMADD(c_i, w2r, _mm256_mul_pd(c_r, w2i));
-            __m256d d2r = FMSUB(d_r, w3r, _mm256_mul_pd(d_i, w3i));
-            __m256d d2i = FMADD(d_i, w3r, _mm256_mul_pd(d_r, w3i));
-            __m256d e2r = FMSUB(e_r, w4r, _mm256_mul_pd(e_i, w4i));
-            __m256d e2i = FMADD(e_i, w4r, _mm256_mul_pd(e_r, w4i));
-            __m256d f2r = FMSUB(f_r, w5r, _mm256_mul_pd(f_i, w5i));
-            __m256d f2i = FMADD(f_i, w5r, _mm256_mul_pd(f_r, w5i));
-            __m256d g2r = FMSUB(g_r, w6r, _mm256_mul_pd(g_i, w6i));
-            __m256d g2i = FMADD(g_i, w6r, _mm256_mul_pd(g_r, w6i));
-            __m256d h2r = FMSUB(h_r, w7r, _mm256_mul_pd(h_i, w7i));
-            __m256d h2i = FMADD(h_i, w7r, _mm256_mul_pd(h_r, w7i));
-            __m256d i2r = FMSUB(i_r, w8r, _mm256_mul_pd(i_i, w8i));
-            __m256d i2i = FMADD(i_i, w8r, _mm256_mul_pd(i_r, w8i));
-            __m256d j2r = FMSUB(j_r, w9r, _mm256_mul_pd(j_i, w9i));
-            __m256d j2i = FMADD(j_i, w9r, _mm256_mul_pd(j_r, w9i));
-            __m256d k2r = FMSUB(k_r, w10r, _mm256_mul_pd(k_i, w10i));
-            __m256d k2i = FMADD(k_i, w10r, _mm256_mul_pd(k_r, w10i));
+                // Radix-4 butterfly
+                double sumBDr = b.re + d.re, sumBDi = b.im + d.im;
+                double difBDr = b.re - d.re, difBDi = b.im - d.im;
+                double a_pc_r = a.re + c.re, a_pc_i = a.im + c.im;
+                double a_mc_r = a.re - c.re, a_mc_i = a.im - c.im;
 
-            __m256d t0r = _mm256_add_pd(b2r, k2r);
-            __m256d t0i = _mm256_add_pd(b2i, k2i);
-            __m256d t1r = _mm256_add_pd(c2r, j2r);
-            __m256d t1i = _mm256_add_pd(c2i, j2i);
-            __m256d t2r = _mm256_add_pd(d2r, i2r);
-            __m256d t2i = _mm256_add_pd(d2i, i2i);
-            __m256d t3r = _mm256_add_pd(e2r, h2r);
-            __m256d t3i = _mm256_add_pd(e2i, h2i);
-            __m256d t4r = _mm256_add_pd(f2r, g2r);
-            __m256d t4i = _mm256_add_pd(f2i, g2i);
-            __m256d t5r = _mm256_sub_pd(b2r, k2r);
-            __m256d t5i = _mm256_sub_pd(b2i, k2i);
-            __m256d t6r = _mm256_sub_pd(c2r, j2r);
-            __m256d t6i = _mm256_sub_pd(c2i, j2i);
-            __m256d t7r = _mm256_sub_pd(d2r, i2r);
-            __m256d t7i = _mm256_sub_pd(d2i, i2i);
-            __m256d t8r = _mm256_sub_pd(e2r, h2r);
-            __m256d t8i = _mm256_sub_pd(e2i, h2i);
-            __m256d t9r = _mm256_sub_pd(f2r, g2r);
-            __m256d t9i = _mm256_sub_pd(f2i, g2i);
+                y[4 * group] = (fft_data){a_pc_r + sumBDr, a_pc_i + sumBDi};
+                y[4 * group + 2] = (fft_data){a_pc_r - sumBDr, a_pc_i - sumBDi};
 
-            __m256d sum_r = _mm256_add_pd(t0r, _mm256_add_pd(t1r, _mm256_add_pd(t2r, _mm256_add_pd(t3r, t4r))));
-            __m256d sum_i = _mm256_add_pd(t0i, _mm256_add_pd(t1i, _mm256_add_pd(t2i, _mm256_add_pd(t3i, t4i))));
-            STORE_PD(&output_buffer[k].re, _mm256_add_pd(a_r, sum_r));
-            STORE_PD(&output_buffer[k].im, _mm256_add_pd(a_i, sum_i));
+                double rotr = (transform_sign == 1) ? -difBDi : difBDi;
+                double roti = (transform_sign == 1) ? difBDr : -difBDr;
 
-            __m256d tmp1r = FMADD(vc11_5, t4r,
-                                  FMADD(vc11_4, t3r,
-                                        FMADD(vc11_3, t2r,
-                                              FMADD(vc11_2, t1r,
-                                                    FMADD(vc11_1, t0r, a_r)))));
+                y[4 * group + 1] = (fft_data){a_mc_r - rotr, a_mc_i - roti};
+                y[4 * group + 3] = (fft_data){a_mc_r + rotr, a_mc_i + roti};
+            }
 
-            __m256d tmp1i = FMADD(vc11_5, t4i,
-                                  FMADD(vc11_4, t3i,
-                                        FMADD(vc11_3, t2i,
-                                              FMADD(vc11_2, t1i,
-                                                    FMADD(vc11_1, t0i, a_i)))));
+            // Second radix-4 stage (final)
+            for (int m = 0; m < 4; ++m)
+            {
+                fft_data a = y[m];
+                fft_data b = y[m + 4];
+                fft_data c = y[m + 8];
+                fft_data d = y[m + 12];
 
-            __m256d rot1r = FMADD(vs11_5, t9i,
-                                  FMADD(vs11_4, t8i,
-                                        FMADD(vs11_3, t7i,
-                                              FMADD(vs11_2, t6i,
-                                                    _mm256_mul_pd(vs11_1, t5i)))));
+                double sumBDr = b.re + d.re, sumBDi = b.im + d.im;
+                double difBDr = b.re - d.re, difBDi = b.im - d.im;
+                double a_pc_r = a.re + c.re, a_pc_i = a.im + c.im;
+                double a_mc_r = a.re - c.re, a_mc_i = a.im - c.im;
 
-            __m256d rot1i = FMADD(vs11_5, t9r,
-                                  FMADD(vs11_4, t8r,
-                                        FMADD(vs11_3, t7r,
-                                              FMADD(vs11_2, t6r,
-                                                    _mm256_mul_pd(vs11_1, t5r)))));
-            rot1r = _mm256_mul_pd(vsign, rot1r);
-            rot1i = _mm256_mul_pd(_mm256_sub_pd(_mm256_setzero_pd(), vsign), rot1i);
-            STORE_PD(&output_buffer[k + sub_fft_size].re, _mm256_add_pd(tmp1r, rot1r));
-            STORE_PD(&output_buffer[k + sub_fft_size].im, _mm256_add_pd(tmp1i, rot1i));
-            STORE_PD(&output_buffer[k + 10 * sub_fft_size].re, _mm256_sub_pd(tmp1r, rot1r));
-            STORE_PD(&output_buffer[k + 10 * sub_fft_size].im, _mm256_sub_pd(tmp1i, rot1i));
+                output_buffer[k + m * sixteenth] =
+                    (fft_data){a_pc_r + sumBDr, a_pc_i + sumBDi};
+                output_buffer[k + (m + 8) * sixteenth] =
+                    (fft_data){a_pc_r - sumBDr, a_pc_i - sumBDi};
 
-            __m256d tmp2r = FMADD(vc11_1, t4r,
-                                  FMADD(vc11_3, t3r,
-                                        FMADD(vc11_5, t2r,
-                                              FMADD(vc11_4, t1r,
-                                                    FMADD(vc11_2, t0r, a_r)))));
+                double rotr = (transform_sign == 1) ? -difBDi : difBDi;
+                double roti = (transform_sign == 1) ? difBDr : -difBDr;
 
-            __m256d tmp2i = FMADD(vc11_1, t4i,
-                                  FMADD(vc11_3, t3i,
-                                        FMADD(vc11_5, t2i,
-                                              FMADD(vc11_4, t1i,
-                                                    FMADD(vc11_2, t0i, a_i)))));
-
-            __m256d rot2r = FMADD(vs11_1, t9i,
-                                  FMADD(vs11_3, t8i,
-                                        FMADD(vs11_5, t7i,
-                                              FMADD(vs11_4, t6i,
-                                                    _mm256_mul_pd(vs11_2, t5i)))));
-
-            __m256d rot2i = FMADD(vs11_1, t9r,
-                                  FMADD(vs11_3, t8r,
-                                        FMADD(vs11_5, t7r,
-                                              FMADD(vs11_4, t6r,
-                                                    _mm256_mul_pd(vs11_2, t5r)))));
-            rot2r = _mm256_mul_pd(vsign, rot2r);
-            rot2i = _mm256_mul_pd(_mm256_sub_pd(_mm256_setzero_pd(), vsign), rot2i);
-            STORE_PD(&output_buffer[k + 2 * sub_fft_size].re, _mm256_add_pd(tmp2r, rot2r));
-            STORE_PD(&output_buffer[k + 2 * sub_fft_size].im, _mm256_add_pd(tmp2i, rot2i));
-            STORE_PD(&output_buffer[k + 9 * sub_fft_size].re, _mm256_sub_pd(tmp2r, rot2r));
-            STORE_PD(&output_buffer[k + 9 * sub_fft_size].im, _mm256_sub_pd(tmp2i, rot2i));
-
-            __m256d tmp3r = FMADD(vc11_4, t4r,
-                                  FMADD(vc11_1, t3r,
-                                        FMADD(vc11_2, t2r,
-                                              FMADD(vc11_5, t1r,
-                                                    FMADD(vc11_3, t0r, a_r)))));
-
-            __m256d tmp3i = FMADD(vc11_4, t4i,
-                                  FMADD(vc11_1, t3i,
-                                        FMADD(vc11_2, t2i,
-                                              FMADD(vc11_5, t1i,
-                                                    FMADD(vc11_3, t0i, a_i)))));
-
-            __m256d rot3r = FMADD(vs11_4, t9i,
-                                  FMADD(vs11_1, t8i,
-                                        FMADD(vs11_2, t7i,
-                                              FMADD(vs11_5, t6i,
-                                                    _mm256_mul_pd(vs11_3, t5i)))));
-
-            __m256d rot3i = FMADD(vs11_4, t9r,
-                                  FMADD(vs11_1, t8r,
-                                        FMADD(vs11_2, t7r,
-                                              FMADD(vs11_5, t6r,
-                                                    _mm256_mul_pd(vs11_3, t5r)))));
-            rot3r = _mm256_mul_pd(vsign, rot3r);
-            rot3i = _mm256_mul_pd(_mm256_sub_pd(_mm256_setzero_pd(), vsign), rot3i);
-            STORE_PD(&output_buffer[k + 3 * sub_fft_size].re, _mm256_add_pd(tmp3r, rot3r));
-            STORE_PD(&output_buffer[k + 3 * sub_fft_size].im, _mm256_add_pd(tmp3i, rot3i));
-            STORE_PD(&output_buffer[k + 8 * sub_fft_size].re, _mm256_sub_pd(tmp3r, rot3r));
-            STORE_PD(&output_buffer[k + 8 * sub_fft_size].im, _mm256_sub_pd(tmp3i, rot3i));
-
-            __m256d tmp4r = FMADD(vc11_2, t4r,
-                                  FMADD(vc11_5, t3r,
-                                        FMADD(vc11_1, t2r,
-                                              FMADD(vc11_3, t1r,
-                                                    FMADD(vc11_4, t0r, a_r)))));
-
-            __m256d tmp4i = FMADD(vc11_2, t4i,
-                                  FMADD(vc11_5, t3i,
-                                        FMADD(vc11_1, t2i,
-                                              FMADD(vc11_3, t1i,
-                                                    FMADD(vc11_4, t0i, a_i)))));
-
-            __m256d rot4r = FMADD(vs11_2, t9i,
-                                  FMADD(vs11_5, t8i,
-                                        FMADD(vs11_1, t7i,
-                                              FMADD(vs11_3, t6i,
-                                                    _mm256_mul_pd(vs11_4, t5i)))));
-
-            __m256d rot4i = FMADD(vs11_2, t9r,
-                                  FMADD(vs11_5, t8r,
-                                        FMADD(vs11_1, t7r,
-                                              FMADD(vs11_3, t6r,
-                                                    _mm256_mul_pd(vs11_4, t5r)))));
-            rot4r = _mm256_mul_pd(vsign, rot4r);
-            rot4i = _mm256_mul_pd(_mm256_sub_pd(_mm256_setzero_pd(), vsign), rot4i);
-            STORE_PD(&output_buffer[k + 4 * sub_fft_size].re, _mm256_add_pd(tmp4r, rot4r));
-            STORE_PD(&output_buffer[k + 4 * sub_fft_size].im, _mm256_add_pd(tmp4i, rot4i));
-            STORE_PD(&output_buffer[k + 7 * sub_fft_size].re, _mm256_sub_pd(tmp4r, rot4r));
-            STORE_PD(&output_buffer[k + 7 * sub_fft_size].im, _mm256_sub_pd(tmp4i, rot4i));
-
-            __m256d tmp5r = FMADD(vc11_3, t4r,
-                                  FMADD(vc11_2, t3r,
-                                        FMADD(vc11_4, t2r,
-                                              FMADD(vc11_1, t1r,
-                                                    FMADD(vc11_5, t0r, a_r)))));
-
-            __m256d tmp5i = FMADD(vc11_3, t4i,
-                                  FMADD(vc11_2, t3i,
-                                        FMADD(vc11_4, t2i,
-                                              FMADD(vc11_1, t1i,
-                                                    FMADD(vc11_5, t0i, a_i)))));
-
-            __m256d rot5r = FMADD(vs11_3, t9i,
-                                  FMADD(vs11_2, t8i,
-                                        FMADD(vs11_4, t7i,
-                                              FMADD(vs11_1, t6i,
-                                                    _mm256_mul_pd(vs11_5, t5i)))));
-
-            __m256d rot5i = FMADD(vs11_3, t9r,
-                                  FMADD(vs11_2, t8r,
-                                        FMADD(vs11_4, t7r,
-                                              FMADD(vs11_1, t6r,
-                                                    _mm256_mul_pd(vs11_5, t5r)))));
-            rot5r = _mm256_mul_pd(vsign, rot5r);
-            rot5i = _mm256_mul_pd(_mm256_sub_pd(_mm256_setzero_pd(), vsign), rot5i);
-            STORE_PD(&output_buffer[k + 5 * sub_fft_size].re, _mm256_add_pd(tmp5r, rot5r));
-            STORE_PD(&output_buffer[k + 5 * sub_fft_size].im, _mm256_add_pd(tmp5i, rot5i));
-            STORE_PD(&output_buffer[k + 6 * sub_fft_size].re, _mm256_sub_pd(tmp5r, rot5r));
-            STORE_PD(&output_buffer[k + 6 * sub_fft_size].im, _mm256_sub_pd(tmp5i, rot5i));
-        }
-
-        // Step 10: SSE2 vectorized tail for remaining k
-        __m128d vsign_sse2 = _mm_set1_pd((double)transform_sign);
-        __m128d vc11_1_sse2 = _mm_set1_pd(C11_1);
-        __m128d vc11_2_sse2 = _mm_set1_pd(C11_2);
-        __m128d vc11_3_sse2 = _mm_set1_pd(C11_3);
-        __m128d vc11_4_sse2 = _mm_set1_pd(C11_4);
-        __m128d vc11_5_sse2 = _mm_set1_pd(C11_5);
-        __m128d vs11_1_sse2 = _mm_set1_pd(S11_1);
-        __m128d vs11_2_sse2 = _mm_set1_pd(S11_2);
-        __m128d vs11_3_sse2 = _mm_set1_pd(S11_3);
-        __m128d vs11_4_sse2 = _mm_set1_pd(S11_4);
-        __m128d vs11_5_sse2 = _mm_set1_pd(S11_5);
-        for (; k + 1 < sub_fft_size; k += 2)
-        {
-            __m128d a_r = LOAD_SSE2(out_re + k);
-            __m128d a_i = LOAD_SSE2(out_im + k);
-            __m128d b_r = LOAD_SSE2(out_re + k + sub_fft_size);
-            __m128d b_i = LOAD_SSE2(out_im + k + sub_fft_size);
-            __m128d c_r = LOAD_SSE2(out_re + k + 2 * sub_fft_size);
-            __m128d c_i = LOAD_SSE2(out_im + k + 2 * sub_fft_size);
-            __m128d d_r = LOAD_SSE2(out_re + k + 3 * sub_fft_size);
-            __m128d d_i = LOAD_SSE2(out_im + k + 3 * sub_fft_size);
-            __m128d e_r = LOAD_SSE2(out_re + k + 4 * sub_fft_size);
-            __m128d e_i = LOAD_SSE2(out_im + k + 4 * sub_fft_size);
-            __m128d f_r = LOAD_SSE2(out_re + k + 5 * sub_fft_size);
-            __m128d f_i = LOAD_SSE2(out_im + k + 5 * sub_fft_size);
-            __m128d g_r = LOAD_SSE2(out_re + k + 6 * sub_fft_size);
-            __m128d g_i = LOAD_SSE2(out_im + k + 6 * sub_fft_size);
-            __m128d h_r = LOAD_SSE2(out_re + k + 7 * sub_fft_size);
-            __m128d h_i = LOAD_SSE2(out_im + k + 7 * sub_fft_size);
-            __m128d i_r = LOAD_SSE2(out_re + k + 8 * sub_fft_size);
-            __m128d i_i = LOAD_SSE2(out_im + k + 8 * sub_fft_size);
-            __m128d j_r = LOAD_SSE2(out_re + k + 9 * sub_fft_size);
-            __m128d j_i = LOAD_SSE2(out_im + k + 9 * sub_fft_size);
-            __m128d k_r = LOAD_SSE2(out_re + k + 10 * sub_fft_size);
-            __m128d k_i = LOAD_SSE2(out_im + k + 10 * sub_fft_size);
-
-            int idx = 10 * k;
-            __m128d w1r = LOADU_SSE2(&twiddle_factors[idx + 0].re);
-            __m128d w1i = LOADU_SSE2(&twiddle_factors[idx + 0].im);
-            __m128d w2r = LOADU_SSE2(&twiddle_factors[idx + 1].re);
-            __m128d w2i = LOADU_SSE2(&twiddle_factors[idx + 1].im);
-            __m128d w3r = LOADU_SSE2(&twiddle_factors[idx + 2].re);
-            __m128d w3i = LOADU_SSE2(&twiddle_factors[idx + 2].im);
-            __m128d w4r = LOADU_SSE2(&twiddle_factors[idx + 3].re);
-            __m128d w4i = LOADU_SSE2(&twiddle_factors[idx + 3].im);
-            __m128d w5r = LOADU_SSE2(&twiddle_factors[idx + 4].re);
-            __m128d w5i = LOADU_SSE2(&twiddle_factors[idx + 4].im);
-            __m128d w6r = LOADU_SSE2(&twiddle_factors[idx + 5].re);
-            __m128d w6i = LOADU_SSE2(&twiddle_factors[idx + 5].im);
-            __m128d w7r = LOADU_SSE2(&twiddle_factors[idx + 6].re);
-            __m128d w7i = LOADU_SSE2(&twiddle_factors[idx + 6].im);
-            __m128d w8r = LOADU_SSE2(&twiddle_factors[idx + 7].re);
-            __m128d w8i = LOADU_SSE2(&twiddle_factors[idx + 7].im);
-            __m128d w9r = LOADU_SSE2(&twiddle_factors[idx + 8].re);
-            __m128d w9i = LOADU_SSE2(&twiddle_factors[idx + 8].im);
-            __m128d w10r = LOADU_SSE2(&twiddle_factors[idx + 9].re);
-            __m128d w10i = LOADU_SSE2(&twiddle_factors[idx + 9].im);
-
-            __m128d b2r = FMSUB_SSE2(b_r, w1r, _mm_mul_pd(b_i, w1i));
-            __m128d b2i = FMADD_SSE2(b_i, w1r, _mm_mul_pd(b_r, w1i));
-            __m128d c2r = FMSUB_SSE2(c_r, w2r, _mm_mul_pd(c_i, w2i));
-            __m128d c2i = FMADD_SSE2(c_i, w2r, _mm_mul_pd(c_r, w2i));
-            __m128d d2r = FMSUB_SSE2(d_r, w3r, _mm_mul_pd(d_i, w3i));
-            __m128d d2i = FMADD_SSE2(d_i, w3r, _mm_mul_pd(d_r, w3i));
-            __m128d e2r = FMSUB_SSE2(e_r, w4r, _mm_mul_pd(e_i, w4i));
-            __m128d e2i = FMADD_SSE2(e_i, w4r, _mm_mul_pd(e_r, w4i));
-            __m128d f2r = FMSUB_SSE2(f_r, w5r, _mm_mul_pd(f_i, w5i));
-            __m128d f2i = FMADD_SSE2(f_i, w5r, _mm_mul_pd(f_r, w5i));
-            __m128d g2r = FMSUB_SSE2(g_r, w6r, _mm_mul_pd(g_i, w6i));
-            __m128d g2i = FMADD_SSE2(g_i, w6r, _mm_mul_pd(g_r, w6i));
-            __m128d h2r = FMSUB_SSE2(h_r, w7r, _mm_mul_pd(h_i, w7i));
-            __m128d h2i = FMADD_SSE2(h_i, w7r, _mm_mul_pd(h_r, w7i));
-            __m128d i2r = FMSUB_SSE2(i_r, w8r, _mm_mul_pd(i_i, w8i));
-            __m128d i2i = FMADD_SSE2(i_i, w8r, _mm_mul_pd(i_r, w8i));
-            __m128d j2r = FMSUB_SSE2(j_r, w9r, _mm_mul_pd(j_i, w9i));
-            __m128d j2i = FMADD_SSE2(j_i, w9r, _mm_mul_pd(j_r, w9i));
-            __m128d k2r = FMSUB_SSE2(k_r, w10r, _mm_mul_pd(k_i, w10i));
-            __m128d k2i = FMADD_SSE2(k_i, w10r, _mm_mul_pd(k_r, w10i));
-
-            __m128d t0r = _mm_add_pd(b2r, k2r);
-            __m128d t0i = _mm_add_pd(b2i, k2i);
-            __m128d t1r = _mm_add_pd(c2r, j2r);
-            __m128d t1i = _mm_add_pd(c2i, j2i);
-            __m128d t2r = _mm_add_pd(d2r, i2r);
-            __m128d t2i = _mm_add_pd(d2i, i2i);
-            __m128d t3r = _mm_add_pd(e2r, h2r);
-            __m128d t3i = _mm_add_pd(e2i, h2i);
-            __m128d t4r = _mm_add_pd(f2r, g2r);
-            __m128d t4i = _mm_add_pd(f2i, g2i);
-            __m128d t5r = _mm_sub_pd(b2r, k2r);
-            __m128d t5i = _mm_sub_pd(b2i, k2i);
-            __m128d t6r = _mm_sub_pd(c2r, j2r);
-            __m128d t6i = _mm_sub_pd(c2i, j2i);
-            __m128d t7r = _mm_sub_pd(d2r, i2r);
-            __m128d t7i = _mm_sub_pd(d2i, i2i);
-            __m128d t8r = _mm_sub_pd(e2r, h2r);
-            __m128d t8i = _mm_sub_pd(e2i, h2i);
-            __m128d t9r = _mm_sub_pd(f2r, g2r);
-            __m128d t9i = _mm_sub_pd(f2i, g2i);
-
-            __m128d sum_r = _mm_add_pd(t0r, _mm_add_pd(t1r, _mm_add_pd(t2r, _mm_add_pd(t3r, t4r))));
-            __m128d sum_i = _mm_add_pd(t0i, _mm_add_pd(t1i, _mm_add_pd(t2i, _mm_add_pd(t3i, t4i))));
-            STORE_SSE2(&output_buffer[k].re, _mm_add_pd(a_r, sum_r));
-            STORE_SSE2(&output_buffer[k].im, _mm_add_pd(a_i, sum_i));
-
-            __m128d tmp1r = FMADD_SSE2(vc11_1_sse2, t0r,
-                                       FMADD_SSE2(vc11_2_sse2, t1r,
-                                                  FMADD_SSE2(vc11_3_sse2, t2r,
-                                                             FMADD_SSE2(vc11_4_sse2, t3r,
-                                                                        FMADD_SSE2(vc11_5_sse2, t4r, a_r)))));
-
-            __m128d tmp1i = FMADD_SSE2(vc11_1_sse2, t0i,
-                                       FMADD_SSE2(vc11_2_sse2, t1i,
-                                                  FMADD_SSE2(vc11_3_sse2, t2i,
-                                                             FMADD_SSE2(vc11_4_sse2, t3i,
-                                                                        FMADD_SSE2(vc11_5_sse2, t4i, a_i)))));
-
-            __m128d rot1r = FMADD_SSE2(vs11_1_sse2, t5i,
-                                       FMADD_SSE2(vs11_2_sse2, t6i,
-                                                  FMADD_SSE2(vs11_3_sse2, t7i,
-                                                             FMADD_SSE2(vs11_4_sse2, t8i,
-                                                                        _mm_mul_pd(vs11_5_sse2, t9i)))));
-
-            __m128d rot1i = FMADD_SSE2(vs11_1_sse2, t5r,
-                                       FMADD_SSE2(vs11_2_sse2, t6r,
-                                                  FMADD_SSE2(vs11_3_sse2, t7r,
-                                                             FMADD_SSE2(vs11_4_sse2, t8r,
-                                                                        _mm_mul_pd(vs11_5_sse2, t9r)))));
-            rot1r = _mm_mul_pd(vsign_sse2, rot1r);
-            rot1i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot1i);
-            STORE_SSE2(&output_buffer[k + sub_fft_size].re, _mm_add_pd(tmp1r, rot1r));
-            STORE_SSE2(&output_buffer[k + sub_fft_size].im, _mm_add_pd(tmp1i, rot1i));
-            STORE_SSE2(&output_buffer[k + 10 * sub_fft_size].re, _mm_sub_pd(tmp1r, rot1r));
-            STORE_SSE2(&output_buffer[k + 10 * sub_fft_size].im, _mm_sub_pd(tmp1i, rot1i));
-
-            __m128d tmp2r = FMADD_SSE2(vc11_1_sse2, t0r,
-                                       FMADD_SSE2(vc11_2_sse2, t4r,
-                                                  FMADD_SSE2(vc11_3_sse2, t3r,
-                                                             FMADD_SSE2(vc11_4_sse2, t1r,
-                                                                        FMADD_SSE2(vc11_5_sse2, t2r, a_r)))));
-
-            __m128d tmp2i = FMADD_SSE2(vc11_1_sse2, t0i,
-                                       FMADD_SSE2(vc11_2_sse2, t4i,
-                                                  FMADD_SSE2(vc11_3_sse2, t3i,
-                                                             FMADD_SSE2(vc11_4_sse2, t1i,
-                                                                        FMADD_SSE2(vc11_5_sse2, t2i, a_i)))));
-
-            __m128d rot2r = FMADD_SSE2(vs11_1_sse2, t5i,
-                                       FMADD_SSE2(vs11_2_sse2, t9i,
-                                                  FMADD_SSE2(vs11_3_sse2, t8i,
-                                                             FMADD_SSE2(vs11_4_sse2, t6i,
-                                                                        _mm_mul_pd(vs11_5_sse2, t7i)))));
-
-            __m128d rot2i = FMADD_SSE2(vs11_1_sse2, t5r,
-                                       FMADD_SSE2(vs11_2_sse2, t9r,
-                                                  FMADD_SSE2(vs11_3_sse2, t8r,
-                                                             FMADD_SSE2(vs11_4_sse2, t6r,
-                                                                        _mm_mul_pd(vs11_5_sse2, t7r)))));
-            rot2r = _mm_mul_pd(vsign_sse2, rot2r);
-            rot2i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot2i);
-            STORE_SSE2(&output_buffer[k + 2 * sub_fft_size].re, _mm_add_pd(tmp2r, rot2r));
-            STORE_SSE2(&output_buffer[k + 2 * sub_fft_size].im, _mm_add_pd(tmp2i, rot2i));
-            STORE_SSE2(&output_buffer[k + 9 * sub_fft_size].re, _mm_sub_pd(tmp2r, rot2r));
-            STORE_SSE2(&output_buffer[k + 9 * sub_fft_size].im, _mm_sub_pd(tmp2i, rot2i));
-
-            __m128d tmp3r = FMADD_SSE2(vc11_1_sse2, t3r,
-                                       FMADD_SSE2(vc11_2_sse2, t2r,
-                                                  FMADD_SSE2(vc11_3_sse2, t0r,
-                                                             FMADD_SSE2(vc11_4_sse2, t4r,
-                                                                        FMADD_SSE2(vc11_5_sse2, t1r, a_r)))));
-
-            __m128d tmp3i = FMADD_SSE2(vc11_1_sse2, t3i,
-                                       FMADD_SSE2(vc11_2_sse2, t2i,
-                                                  FMADD_SSE2(vc11_3_sse2, t0i,
-                                                             FMADD_SSE2(vc11_4_sse2, t4i,
-                                                                        FMADD_SSE2(vc11_5_sse2, t1i, a_i)))));
-
-            __m128d rot3r = FMADD_SSE2(vs11_1_sse2, t8i,
-                                       FMADD_SSE2(vs11_2_sse2, t7i,
-                                                  FMADD_SSE2(vs11_3_sse2, t5i,
-                                                             FMADD_SSE2(vs11_4_sse2, t9i,
-                                                                        _mm_mul_pd(vs11_5_sse2, t6i)))));
-
-            __m128d rot3i = FMADD_SSE2(vs11_1_sse2, t8r,
-                                       FMADD_SSE2(vs11_2_sse2, t7r,
-                                                  FMADD_SSE2(vs11_3_sse2, t5r,
-                                                             FMADD_SSE2(vs11_4_sse2, t9r,
-                                                                        _mm_mul_pd(vs11_5_sse2, t6r)))));
-            rot3r = _mm_mul_pd(vsign_sse2, rot3r);
-            rot3i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot3i);
-            STORE_SSE2(&output_buffer[k + 3 * sub_fft_size].re, _mm_add_pd(tmp3r, rot3r));
-            STORE_SSE2(&output_buffer[k + 3 * sub_fft_size].im, _mm_add_pd(tmp3i, rot3i));
-            STORE_SSE2(&output_buffer[k + 8 * sub_fft_size].re, _mm_sub_pd(tmp3r, rot3r));
-            STORE_SSE2(&output_buffer[k + 8 * sub_fft_size].im, _mm_sub_pd(tmp3i, rot3i));
-
-            __m128d tmp4r = FMADD_SSE2(vc11_1_sse2, t2r,
-                                       FMADD_SSE2(vc11_2_sse2, t4r,
-                                                  FMADD_SSE2(vc11_3_sse2, t1r,
-                                                             FMADD_SSE2(vc11_4_sse2, t0r,
-                                                                        FMADD_SSE2(vc11_5_sse2, t3r, a_r)))));
-
-            __m128d tmp4i = FMADD_SSE2(vc11_1_sse2, t2i,
-                                       FMADD_SSE2(vc11_2_sse2, t4i,
-                                                  FMADD_SSE2(vc11_3_sse2, t1i,
-                                                             FMADD_SSE2(vc11_4_sse2, t0i,
-                                                                        FMADD_SSE2(vc11_5_sse2, t3i, a_i)))));
-
-            __m128d rot4r = FMADD_SSE2(vs11_1_sse2, t7i,
-                                       FMADD_SSE2(vs11_2_sse2, t9i,
-                                                  FMADD_SSE2(vs11_3_sse2, t6i,
-                                                             FMADD_SSE2(vs11_4_sse2, t5i,
-                                                                        _mm_mul_pd(vs11_5_sse2, t8i)))));
-
-            __m128d rot4i = FMADD_SSE2(vs11_1_sse2, t7r,
-                                       FMADD_SSE2(vs11_2_sse2, t9r,
-                                                  FMADD_SSE2(vs11_3_sse2, t6r,
-                                                             FMADD_SSE2(vs11_4_sse2, t5r,
-                                                                        _mm_mul_pd(vs11_5_sse2, t8r)))));
-            rot4r = _mm_mul_pd(vsign_sse2, rot4r);
-            rot4i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot4i);
-            STORE_SSE2(&output_buffer[k + 4 * sub_fft_size].re, _mm_add_pd(tmp4r, rot4r));
-            STORE_SSE2(&output_buffer[k + 4 * sub_fft_size].im, _mm_add_pd(tmp4i, rot4i));
-            STORE_SSE2(&output_buffer[k + 7 * sub_fft_size].re, _mm_sub_pd(tmp4r, rot4r));
-            STORE_SSE2(&output_buffer[k + 7 * sub_fft_size].im, _mm_sub_pd(tmp4i, rot4i));
-
-            __m128d tmp5r = FMADD_SSE2(vc11_1_sse2, t1r,
-                                       FMADD_SSE2(vc11_2_sse2, t3r,
-                                                  FMADD_SSE2(vc11_3_sse2, t4r,
-                                                             FMADD_SSE2(vc11_4_sse2, t2r,
-                                                                        FMADD_SSE2(vc11_5_sse2, t0r, a_r)))));
-
-            __m128d tmp5i = FMADD_SSE2(vc11_1_sse2, t1i,
-                                       FMADD_SSE2(vc11_2_sse2, t3i,
-                                                  FMADD_SSE2(vc11_3_sse2, t4i,
-                                                             FMADD_SSE2(vc11_4_sse2, t2i,
-                                                                        FMADD_SSE2(vc11_5_sse2, t0i, a_i)))));
-
-            __m128d rot5r = FMADD_SSE2(vs11_1_sse2, t6i,
-                                       FMADD_SSE2(vs11_2_sse2, t8i,
-                                                  FMADD_SSE2(vs11_3_sse2, t9i,
-                                                             FMADD_SSE2(vs11_4_sse2, t7i,
-                                                                        _mm_mul_pd(vs11_5_sse2, t5i)))));
-
-            __m128d rot5i = FMADD_SSE2(vs11_1_sse2, t6r,
-                                       FMADD_SSE2(vs11_2_sse2, t8r,
-                                                  FMADD_SSE2(vs11_3_sse2, t9r,
-                                                             FMADD_SSE2(vs11_4_sse2, t7r,
-                                                                        _mm_mul_pd(vs11_5_sse2, t5r)))));
-            rot5r = _mm_mul_pd(vsign_sse2, rot5r);
-            rot5i = _mm_mul_pd(_mm_sub_pd(_mm_setzero_pd(), vsign_sse2), rot5i);
-            STORE_SSE2(&output_buffer[k + 5 * sub_fft_size].re, _mm_add_pd(tmp5r, rot5r));
-            STORE_SSE2(&output_buffer[k + 5 * sub_fft_size].im, _mm_add_pd(tmp5i, rot5i));
-            STORE_SSE2(&output_buffer[k + 6 * sub_fft_size].re, _mm_sub_pd(tmp5r, rot5r));
-            STORE_SSE2(&output_buffer[k + 6 * sub_fft_size].im, _mm_sub_pd(tmp5i, rot5i));
-        }
-
-        for (; k < sub_fft_size; k++)
-        {
-            fft_data *X[11];
-            for (int i = 0; i < 11; i++)
-                X[i] = &output_buffer[i * sub_fft_size + k];
-
-            fft_type a_r = out_re[k], a_i = out_im[k];
-            fft_type b_r = out_re[k + sub_fft_size], b_i = out_im[k + sub_fft_size];
-            fft_type c_r = out_re[k + 2 * sub_fft_size], c_i = out_im[k + 2 * sub_fft_size];
-            fft_type d_r = out_re[k + 3 * sub_fft_size], d_i = out_im[k + 3 * sub_fft_size];
-            fft_type e_r = out_re[k + 4 * sub_fft_size], e_i = out_im[k + 4 * sub_fft_size];
-            fft_type f_r = out_re[k + 5 * sub_fft_size], f_i = out_im[k + 5 * sub_fft_size];
-            fft_type g_r = out_re[k + 6 * sub_fft_size], g_i = out_im[k + 6 * sub_fft_size];
-            fft_type h_r = out_re[k + 7 * sub_fft_size], h_i = out_im[k + 7 * sub_fft_size];
-            fft_type i_r = out_re[k + 8 * sub_fft_size], i_i = out_im[k + 8 * sub_fft_size];
-            fft_type j_r = out_re[k + 9 * sub_fft_size], j_i = out_im[k + 9 * sub_fft_size];
-            fft_type k_r = out_re[k + 10 * sub_fft_size], k_i = out_im[k + 10 * sub_fft_size];
-
-            int idx = 10 * k;
-            fft_type w1r = twiddle_factors[idx + 0].re, w1i = twiddle_factors[idx + 0].im;
-            fft_type w2r = twiddle_factors[idx + 1].re, w2i = twiddle_factors[idx + 1].im;
-            fft_type w3r = twiddle_factors[idx + 2].re, w3i = twiddle_factors[idx + 2].im;
-            fft_type w4r = twiddle_factors[idx + 3].re, w4i = twiddle_factors[idx + 3].im;
-            fft_type w5r = twiddle_factors[idx + 4].re, w5i = twiddle_factors[idx + 4].im;
-            fft_type w6r = twiddle_factors[idx + 5].re, w6i = twiddle_factors[idx + 5].im;
-            fft_type w7r = twiddle_factors[idx + 6].re, w7i = twiddle_factors[idx + 6].im;
-            fft_type w8r = twiddle_factors[idx + 7].re, w8i = twiddle_factors[idx + 7].im;
-            fft_type w9r = twiddle_factors[idx + 8].re, w9i = twiddle_factors[idx + 8].im;
-            fft_type w10r = twiddle_factors[idx + 9].re, w10i = twiddle_factors[idx + 9].im;
-
-            fft_type b2_r = b_r * w1r - b_i * w1i, b2_i = b_i * w1r + b_r * w1i;
-            fft_type c2_r = c_r * w2r - c_i * w2i, c2_i = c_i * w2r + c_r * w2i;
-            fft_type d2_r = d_r * w3r - d_i * w3i, d2_i = d_i * w3r + d_r * w3i;
-            fft_type e2_r = e_r * w4r - e_i * w4i, e2_i = e_i * w4r + e_r * w4i;
-            fft_type f2_r = f_r * w5r - f_i * w5i, f2_i = f_i * w5r + f_r * w5i;
-            fft_type g2_r = g_r * w6r - g_i * w6i, g2_i = g_i * w6r + g_r * w6i;
-            fft_type h2_r = h_r * w7r - h_i * w7i, h2_i = h_i * w7r + h_r * w7i;
-            fft_type i2_r = i_r * w8r - i_i * w8i, i2_i = i_i * w8r + i_r * w8i;
-            fft_type j2_r = j_r * w9r - j_i * w9i, j2_i = j_i * w9r + j_r * w9i;
-            fft_type k2_r = k_r * w10r - k_i * w10i, k2_i = k_i * w10r + k_r * w10i;
-
-            fft_type t0_r = b2_r + k2_r, t0_i = b2_i + k2_i;
-            fft_type t1_r = c2_r + j2_r, t1_i = c2_i + j2_i;
-            fft_type t2_r = d2_r + i2_r, t2_i = d2_i + i2_i;
-            fft_type t3_r = e2_r + h2_r, t3_i = e2_i + h2_i;
-            fft_type t4_r = f2_r + g2_r, t4_i = f2_i + g2_i;
-            fft_type t5_r = b2_r - k2_r, t5_i = b2_i - k2_i;
-            fft_type t6_r = c2_r - j2_r, t6_i = c2_i - j2_i;
-            fft_type t7_r = d2_r - i2_r, t7_i = d2_i - i2_i;
-            fft_type t8_r = e2_r - h2_r, t8_i = e2_i - h2_i;
-            fft_type t9_r = f2_r - g2_r, t9_i = f2_i - g2_i;
-
-            X[0]->re = a_r + t0_r + t1_r + t2_r + t3_r + t4_r;
-            X[0]->im = a_i + t0_i + t1_i + t2_i + t3_i + t4_i;
-
-            fft_type tmp_r = a_r + C11_1 * t0_r + C11_2 * t1_r + C11_3 * t2_r + C11_4 * t3_r + C11_5 * t4_r;
-            fft_type tmp_i = a_i + C11_1 * t0_i + C11_2 * t1_i + C11_3 * t2_i + C11_4 * t3_i + C11_5 * t4_i;
-            fft_type rot_r = transform_sign * (S11_1 * t5_i + S11_2 * t6_i + S11_3 * t7_i + S11_4 * t8_i + S11_5 * t9_i);
-            fft_type rot_i = transform_sign * (-S11_1 * t5_r - S11_2 * t6_r - S11_3 * t7_r - S11_4 * t8_r - S11_5 * t9_r);
-            X[1]->re = tmp_r + rot_r;
-            X[1]->im = tmp_i + rot_i;
-            X[10]->re = tmp_r - rot_r;
-            X[10]->im = tmp_i - rot_i;
-
-            tmp_r = a_r + C11_2 * t0_r + C11_4 * t1_r + C11_5 * t2_r + C11_3 * t3_r + C11_1 * t4_r;
-            tmp_i = a_i + C11_2 * t0_i + C11_4 * t1_i + C11_5 * t2_i + C11_3 * t3_i + C11_1 * t4_i;
-            rot_r = transform_sign * (S11_2 * t5_i + S11_4 * t6_i + S11_5 * t7_i + S11_3 * t8_i + S11_1 * t9_i);
-            rot_i = transform_sign * (-S11_2 * t5_r - S11_4 * t6_r - S11_5 * t7_r - S11_3 * t8_r - S11_1 * t9_r);
-            X[2]->re = tmp_r + rot_r;
-            X[2]->im = tmp_i + rot_i;
-            X[9]->re = tmp_r - rot_r;
-            X[9]->im = tmp_i - rot_i;
-
-            tmp_r = a_r + C11_3 * t0_r + C11_5 * t1_r + C11_2 * t2_r + C11_1 * t3_r + C11_4 * t4_r;
-            tmp_i = a_i + C11_3 * t0_i + C11_5 * t1_i + C11_2 * t2_i + C11_1 * t3_i + C11_4 * t4_i;
-            rot_r = transform_sign * (S11_3 * t5_i + S11_5 * t6_i + S11_2 * t7_i + S11_1 * t8_i + S11_4 * t9_i);
-            rot_i = transform_sign * (-S11_3 * t5_r - S11_5 * t6_r - S11_2 * t7_r - S11_1 * t8_r - S11_4 * t9_r);
-            X[3]->re = tmp_r + rot_r;
-            X[3]->im = tmp_i + rot_i;
-            X[8]->re = tmp_r - rot_r;
-            X[8]->im = tmp_i - rot_i;
-
-            tmp_r = a_r + C11_4 * t0_r + C11_3 * t1_r + C11_1 * t2_r + C11_5 * t3_r + C11_2 * t4_r;
-            tmp_i = a_i + C11_4 * t0_i + C11_3 * t1_i + C11_1 * t2_i + C11_5 * t3_i + C11_2 * t4_i;
-            rot_r = transform_sign * (S11_4 * t5_i + S11_3 * t6_i + S11_1 * t7_i + S11_5 * t8_i + S11_2 * t9_i);
-            rot_i = transform_sign * (-S11_4 * t5_r - S11_3 * t6_r - S11_1 * t7_r - S11_5 * t8_r - S11_2 * t9_r);
-            X[4]->re = tmp_r + rot_r;
-            X[4]->im = tmp_i + rot_i;
-            X[7]->re = tmp_r - rot_r;
-            X[7]->im = tmp_i - rot_i;
-
-            tmp_r = a_r + C11_5 * t0_r + C11_1 * t1_r + C11_4 * t2_r + C11_2 * t3_r + C11_3 * t4_r;
-            tmp_i = a_i + C11_5 * t0_i + C11_1 * t1_i + C11_4 * t2_i + C11_2 * t3_i + C11_3 * t4_i;
-            rot_r = transform_sign * (S11_5 * t5_i + S11_1 * t6_i + S11_4 * t7_i + S11_2 * t8_i + S11_3 * t9_i);
-            rot_i = transform_sign * (-S11_5 * t5_r - S11_1 * t6_r - S11_4 * t7_r - S11_2 * t8_r - S11_3 * t9_r);
-            X[5]->re = tmp_r + rot_r;
-            X[5]->im = tmp_i + rot_i;
-            X[6]->re = tmp_r - rot_r;
-            X[6]->im = tmp_i - rot_i;
+                output_buffer[k + (m + 4) * sixteenth] =
+                    (fft_data){a_mc_r - rotr, a_mc_i - roti};
+                output_buffer[k + (m + 12) * sixteenth] =
+                    (fft_data){a_mc_r + rotr, a_mc_i + roti};
+            }
         }
     }
     else
