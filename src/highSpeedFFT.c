@@ -13,10 +13,6 @@
 #define ALWAYS_INLINE inline
 #endif
 
-#ifndef ADDSUB_ROT
-#define ADDSUB_ROT 0
-#endif
-
 //==============================================================================
 // ALIGNMENT HELPERS
 //==============================================================================
@@ -182,19 +178,6 @@ static ALWAYS_INLINE void STORE_SSE2(double *ptr, __m128d v)
 #ifndef FFT_PREFETCH_DISTANCE
 #define FFT_PREFETCH_DISTANCE 8 // ~64B ahead for AoS complex<double>
 #endif
-
-#define FFT_PREFETCH_AOS(ptr)                                \
-    do                                                       \
-    {                                                        \
-        _mm_prefetch((const char *)&(ptr)->re, _MM_HINT_T0); \
-        _mm_prefetch((const char *)&(ptr)->im, _MM_HINT_T0); \
-    } while (0)
-
-//==============================================================================
-// COMMON CONSTANT VECTORS
-//==============================================================================
-#define AVX_ONE _mm256_set1_pd(1.0)
-#define SSE2_ONE _mm_set1_pd(1.0)
 
 //==============================================================================
 // RADIX-SPECIFIC SCALAR CONSTANTS
@@ -449,16 +432,6 @@ static void
 cleanup_bluestein_chirp(void)
 {
     cleanup_bluestein_chirp_body();
-}
-
-/* Call this from fft_init() on compilers without constructor attrs (e.g., MSVC).
-   Example:
-       if (!chirp_initialized) ensure_bluestein_chirp_initialized();
-*/
-static ALWAYS_INLINE void ensure_bluestein_chirp_initialized(void)
-{
-    if (!chirp_initialized)
-        init_bluestein_chirp_body();
 }
 
 /**
@@ -3674,14 +3647,9 @@ static void mixed_radix_dit_rec(
     else if (radix == 16)
     {
         //==========================================================================
-        // RADIX-16 BUTTERFLY (2-stage radix-4 decomposition)
+        // RADIX-16 BUTTERFLY - HIGHLY OPTIMIZED
         //
-        // Decomposes 16-point DFT as: radix-4(radix-4(...))
-        // More efficient than general radix for power-of-2 sizes.
-        //
-        // Input:  sub_outputs[0..sub_len-1] through sub_outputs[15*sub_len-1]
-        //         stage_tw[15*k..15*k+14] (W^k through W^{15k}) k-major
-        // Output: output_buffer in 16 lanes
+        // 2-stage radix-4 decomposition with precomputed intermediate twiddles
         //==========================================================================
 
         const int sixteenth = sub_len;
@@ -3689,25 +3657,185 @@ static void mixed_radix_dit_rec(
 
 #ifdef __AVX2__
         //----------------------------------------------------------------------
-        // AVX2 PATH: Process 2 complex pairs per iteration (AoS-native)
-        // Uses 2-stage radix-4 decomposition for efficiency
+        // Precompute W_4 intermediate twiddles (OUTSIDE loop)
+        //----------------------------------------------------------------------
+
+        // Convert twiddle_radix4 to AVX2 format
+        __m256d W4_avx[4];
+        for (int m = 0; m < 4; ++m)
+        {
+            const complex_t tw = twiddle_radix4[m];
+            double tw_im = (transform_sign == 1) ? tw.im : -tw.im;
+            W4_avx[m] = _mm256_set_pd(tw_im, tw.re, tw_im, tw.re);
+        }
+
+        // Precompute rotation masks
+        const __m256d rot_mask = (transform_sign == 1)
+                                     ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)
+                                     : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
+
+        const __m256d neg_all = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
+
+        //----------------------------------------------------------------------
+        // Main loop: 8x unrolling
+        //----------------------------------------------------------------------
+        for (; k + 7 < sixteenth; k += 8)
+        {
+            if (k + 16 < sixteenth)
+            {
+                _mm_prefetch((const char *)&sub_outputs[k + 16].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&stage_tw[15 * (k + 16)].re, _MM_HINT_T0);
+            }
+
+            //==================================================================
+            // Load all 16 lanes (8 butterflies = 4 AVX2 loads per lane)
+            //==================================================================
+            __m256d x[16][4]; // [lane][butterfly_pair]
+
+            for (int lane = 0; lane < 16; ++lane)
+            {
+                x[lane][0] = load2_aos(&sub_outputs[k + 0 + lane * sixteenth],
+                                       &sub_outputs[k + 1 + lane * sixteenth]);
+                x[lane][1] = load2_aos(&sub_outputs[k + 2 + lane * sixteenth],
+                                       &sub_outputs[k + 3 + lane * sixteenth]);
+                x[lane][2] = load2_aos(&sub_outputs[k + 4 + lane * sixteenth],
+                                       &sub_outputs[k + 5 + lane * sixteenth]);
+                x[lane][3] = load2_aos(&sub_outputs[k + 6 + lane * sixteenth],
+                                       &sub_outputs[k + 7 + lane * sixteenth]);
+            }
+
+            //==================================================================
+            // Stage 1: Apply input twiddles W^{jk}
+            //==================================================================
+            for (int lane = 1; lane < 16; ++lane)
+            {
+                __m256d tw0 = load2_aos(&stage_tw[15 * (k + 0) + (lane - 1)],
+                                        &stage_tw[15 * (k + 1) + (lane - 1)]);
+                __m256d tw1 = load2_aos(&stage_tw[15 * (k + 2) + (lane - 1)],
+                                        &stage_tw[15 * (k + 3) + (lane - 1)]);
+                __m256d tw2 = load2_aos(&stage_tw[15 * (k + 4) + (lane - 1)],
+                                        &stage_tw[15 * (k + 5) + (lane - 1)]);
+                __m256d tw3 = load2_aos(&stage_tw[15 * (k + 6) + (lane - 1)],
+                                        &stage_tw[15 * (k + 7) + (lane - 1)]);
+
+                x[lane][0] = cmul_avx2_aos(x[lane][0], tw0);
+                x[lane][1] = cmul_avx2_aos(x[lane][1], tw1);
+                x[lane][2] = cmul_avx2_aos(x[lane][2], tw2);
+                x[lane][3] = cmul_avx2_aos(x[lane][3], tw3);
+            }
+
+            //==================================================================
+            // Stage 2: First radix-4 (4 groups of 4)
+            //==================================================================
+            __m256d y[16][4];
+
+            for (int group = 0; group < 4; ++group)
+            {
+                for (int b = 0; b < 4; ++b)
+                {
+                    __m256d a = x[group][b];
+                    __m256d c = x[group + 4][b];
+                    __m256d e = x[group + 8][b];
+                    __m256d g = x[group + 12][b];
+
+                    // Radix-4 butterfly
+                    __m256d sumEG = _mm256_add_pd(c, g);
+                    __m256d difEG = _mm256_sub_pd(c, g);
+                    __m256d a_pe = _mm256_add_pd(a, e);
+                    __m256d a_me = _mm256_sub_pd(a, e);
+
+                    y[4 * group][b] = _mm256_add_pd(a_pe, sumEG);
+                    y[4 * group + 2][b] = _mm256_sub_pd(a_pe, sumEG);
+
+                    __m256d difEG_swp = _mm256_permute_pd(difEG, 0b0101);
+                    __m256d rot = _mm256_xor_pd(difEG_swp, rot_mask);
+
+                    y[4 * group + 1][b] = _mm256_sub_pd(a_me, rot);
+                    y[4 * group + 3][b] = _mm256_add_pd(a_me, rot);
+                }
+            }
+
+            //==================================================================
+            // Stage 2.5: Apply intermediate twiddles W_4^{jm}
+            // Using precomputed W4_avx table
+            //==================================================================
+
+            // For each m (0..3), apply W_4^{jm} to positions 4*m+j for j=1,2,3
+            // W_4^{jm} = twiddle_radix4[(j*m) % 4]
+
+            // m=0: all twiddles are 1 (skip)
+
+            // m=1: W_4^j for j=1,2,3
+            for (int b = 0; b < 4; ++b)
+            {
+                y[5][b] = cmul_avx2_aos(y[5][b], W4_avx[1]); // j=1: W_4^1 = -i
+                y[6][b] = cmul_avx2_aos(y[6][b], W4_avx[2]); // j=2: W_4^2 = -1
+                y[7][b] = cmul_avx2_aos(y[7][b], W4_avx[3]); // j=3: W_4^3 = +i
+            }
+
+            // m=2: W_4^{2j} for j=1,2,3
+            for (int b = 0; b < 4; ++b)
+            {
+                y[9][b] = cmul_avx2_aos(y[9][b], W4_avx[2]);   // j=1: W_4^2 = -1
+                y[10][b] = cmul_avx2_aos(y[10][b], W4_avx[0]); // j=2: W_4^4 = 1 (no-op, but keeping for clarity)
+                y[11][b] = cmul_avx2_aos(y[11][b], W4_avx[2]); // j=3: W_4^6 = -1
+            }
+
+            // m=3: W_4^{3j} for j=1,2,3
+            for (int b = 0; b < 4; ++b)
+            {
+                y[13][b] = cmul_avx2_aos(y[13][b], W4_avx[3]); // j=1: W_4^3 = +i
+                y[14][b] = cmul_avx2_aos(y[14][b], W4_avx[2]); // j=2: W_4^6 = -1
+                y[15][b] = cmul_avx2_aos(y[15][b], W4_avx[1]); // j=3: W_4^9 = -i
+            }
+
+            //==================================================================
+            // Stage 3: Second radix-4 (final)
+            //==================================================================
+            for (int m = 0; m < 4; ++m)
+            {
+                for (int b = 0; b < 4; ++b)
+                {
+                    __m256d a = y[m][b];
+                    __m256d c = y[m + 4][b];
+                    __m256d e = y[m + 8][b];
+                    __m256d g = y[m + 12][b];
+
+                    __m256d sumEG = _mm256_add_pd(c, g);
+                    __m256d difEG = _mm256_sub_pd(c, g);
+                    __m256d a_pe = _mm256_add_pd(a, e);
+                    __m256d a_me = _mm256_sub_pd(a, e);
+
+                    __m256d z0 = _mm256_add_pd(a_pe, sumEG);
+                    __m256d z2 = _mm256_sub_pd(a_pe, sumEG);
+
+                    __m256d difEG_swp = _mm256_permute_pd(difEG, 0b0101);
+                    __m256d rot = _mm256_xor_pd(difEG_swp, rot_mask);
+
+                    __m256d z1 = _mm256_sub_pd(a_me, rot);
+                    __m256d z3 = _mm256_add_pd(a_me, rot);
+
+                    // Store results
+                    STOREU_PD(&output_buffer[k + 2 * b + m * sixteenth].re, z0);
+                    STOREU_PD(&output_buffer[k + 2 * b + (m + 4) * sixteenth].re, z1);
+                    STOREU_PD(&output_buffer[k + 2 * b + (m + 8) * sixteenth].re, z2);
+                    STOREU_PD(&output_buffer[k + 2 * b + (m + 12) * sixteenth].re, z3);
+                }
+            }
+        }
+
+        //----------------------------------------------------------------------
+        // Cleanup: 2x unrolling
         //----------------------------------------------------------------------
         for (; k + 1 < sixteenth; k += 2)
         {
             if (k + 8 < sixteenth)
             {
-                for (int lane = 0; lane < 16; ++lane)
-                {
-                    _mm_prefetch((const char *)&sub_outputs[k + 8 + lane * sixteenth].re,
-                                 _MM_HINT_T0);
-                }
+                _mm_prefetch((const char *)&sub_outputs[k + 8].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&stage_tw[15 * (k + 8)].re, _MM_HINT_T0);
             }
 
-            //==================================================================
-            // STAGE 1: Apply twiddles and perform first radix-4 decomposition
-            //==================================================================
-
-            // Load 2 complex from each of 16 lanes (AoS)
+            // Load 16 lanes
             __m256d x[16];
             for (int lane = 0; lane < 16; ++lane)
             {
@@ -3715,108 +3843,52 @@ static void mixed_radix_dit_rec(
                                     &sub_outputs[k + lane * sixteenth + 1]);
             }
 
-            // Apply twiddle factors W^{jk} for j=1..15, k=current index
-            __m256d tw[15];
-            for (int j = 0; j < 15; ++j)
-            {
-                tw[j] = load2_aos(&stage_tw[15 * k + j], &stage_tw[15 * (k + 1) + j]);
-            }
-
-            // Twiddle multiply for lanes 1..15 (lane 0 has twiddle = 1)
+            // Apply input twiddles
             for (int lane = 1; lane < 16; ++lane)
             {
-                x[lane] = cmul_avx2_aos(x[lane], tw[lane - 1]);
+                __m256d tw = load2_aos(&stage_tw[15 * k + (lane - 1)],
+                                       &stage_tw[15 * (k + 1) + (lane - 1)]);
+                x[lane] = cmul_avx2_aos(x[lane], tw);
             }
 
-            //==================================================================
-            // STAGE 2: First radix-4 decomposition (4 groups of 4)
-            // Group 0: x[0,4,8,12], Group 1: x[1,5,9,13], etc.
-            //==================================================================
-
-            __m256d y[16]; // Intermediate results
-
+            // First radix-4 stage
+            __m256d y[16];
             for (int group = 0; group < 4; ++group)
             {
-                // Extract 4 elements: x[group], x[group+4], x[group+8], x[group+12]
                 __m256d a = x[group];
                 __m256d b = x[group + 4];
                 __m256d c = x[group + 8];
                 __m256d d = x[group + 12];
 
-                // Radix-4 butterfly (AoS)
                 __m256d sumBD = _mm256_add_pd(b, d);
                 __m256d difBD = _mm256_sub_pd(b, d);
                 __m256d a_pc = _mm256_add_pd(a, c);
                 __m256d a_mc = _mm256_sub_pd(a, c);
 
-                y[4 * group] = _mm256_add_pd(a_pc, sumBD);     // Y_0
-                y[4 * group + 2] = _mm256_sub_pd(a_pc, sumBD); // Y_2
+                y[4 * group] = _mm256_add_pd(a_pc, sumBD);
+                y[4 * group + 2] = _mm256_sub_pd(a_pc, sumBD);
 
-                // Rotate difBD by ±90°
                 __m256d difBD_swp = _mm256_permute_pd(difBD, 0b0101);
-                __m256d rot = (transform_sign == 1)
-                                  ? _mm256_xor_pd(difBD_swp, _mm256_set_pd(0.0, -0.0, 0.0, -0.0))  // +i
-                                  : _mm256_xor_pd(difBD_swp, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)); // -i
+                __m256d rot = _mm256_xor_pd(difBD_swp, rot_mask);
 
-                y[4 * group + 1] = _mm256_sub_pd(a_mc, rot); // Y_1
-                y[4 * group + 3] = _mm256_add_pd(a_mc, rot); // Y_3
+                y[4 * group + 1] = _mm256_sub_pd(a_mc, rot);
+                y[4 * group + 3] = _mm256_add_pd(a_mc, rot);
             }
 
-            //==================================================================
-            // *** CRITICAL: Apply intermediate twiddles W_4^{jm} ***
-            // After first radix-4, we need W_4^{jm} for j=1,2,3 and m=0..3
-            // W_4 = exp(-2πi/4) = -i
-            // W_4^0 = 1, W_4^1 = -i, W_4^2 = -1, W_4^3 = +i
-            //==================================================================
+            // Apply intermediate twiddles W_4 (using precomputed table)
+            y[5] = cmul_avx2_aos(y[5], W4_avx[1]);
+            y[6] = cmul_avx2_aos(y[6], W4_avx[2]);
+            y[7] = cmul_avx2_aos(y[7], W4_avx[3]);
 
-            for (int m = 0; m < 4; ++m)
-            {
-                // j=1: W_4^m = exp(-2πim/4) = exp(-iπm/2)
-                // m=0: 1, m=1: -i, m=2: -1, m=3: +i
-                if (m == 1) // W_4^1 = -i
-                {
-                    y[4 * m + 1] = rot90_aos_avx2(y[4 * m + 1], -transform_sign);
-                }
-                else if (m == 2) // W_4^2 = -1
-                {
-                    __m256d neg = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
-                    y[4 * m + 1] = _mm256_xor_pd(y[4 * m + 1], neg);
-                }
-                else if (m == 3) // W_4^3 = +i
-                {
-                    y[4 * m + 1] = rot90_aos_avx2(y[4 * m + 1], transform_sign);
-                }
+            y[9] = cmul_avx2_aos(y[9], W4_avx[2]);
+            // y[10] *= W4_avx[0] = 1 (skip)
+            y[11] = cmul_avx2_aos(y[11], W4_avx[2]);
 
-                // j=2: W_4^{2m} = exp(-iπm)
-                // m=0: 1, m=1: -1, m=2: 1, m=3: -1
-                if (m == 1 || m == 3) // W_4^{2m} = -1
-                {
-                    __m256d neg = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
-                    y[4 * m + 2] = _mm256_xor_pd(y[4 * m + 2], neg);
-                }
+            y[13] = cmul_avx2_aos(y[13], W4_avx[3]);
+            y[14] = cmul_avx2_aos(y[14], W4_avx[2]);
+            y[15] = cmul_avx2_aos(y[15], W4_avx[1]);
 
-                // j=3: W_4^{3m} = exp(-3iπm/2)
-                // m=0: 1, m=1: +i, m=2: -1, m=3: -i
-                if (m == 1) // W_4^3 = +i
-                {
-                    y[4 * m + 3] = rot90_aos_avx2(y[4 * m + 3], transform_sign);
-                }
-                else if (m == 2) // W_4^6 = -1
-                {
-                    __m256d neg = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
-                    y[4 * m + 3] = _mm256_xor_pd(y[4 * m + 3], neg);
-                }
-                else if (m == 3) // W_4^9 = -i
-                {
-                    y[4 * m + 3] = rot90_aos_avx2(y[4 * m + 3], -transform_sign);
-                }
-            }
-
-            //==================================================================
-            // STAGE 3: Second radix-4 decomposition (transpose + butterfly)
-            // Now combine y[0,1,2,3], y[4,5,6,7], y[8,9,10,11], y[12,13,14,15]
-            //==================================================================
-
+            // Second radix-4 stage
             for (int m = 0; m < 4; ++m)
             {
                 __m256d a = y[m];
@@ -3824,7 +3896,6 @@ static void mixed_radix_dit_rec(
                 __m256d c = y[m + 8];
                 __m256d d = y[m + 12];
 
-                // Radix-4 butterfly (final stage, no more twiddles needed)
                 __m256d sumBD = _mm256_add_pd(b, d);
                 __m256d difBD = _mm256_sub_pd(b, d);
                 __m256d a_pc = _mm256_add_pd(a, c);
@@ -3834,14 +3905,11 @@ static void mixed_radix_dit_rec(
                 __m256d z2 = _mm256_sub_pd(a_pc, sumBD);
 
                 __m256d difBD_swp = _mm256_permute_pd(difBD, 0b0101);
-                __m256d rot = (transform_sign == 1)
-                                  ? _mm256_xor_pd(difBD_swp, _mm256_set_pd(0.0, -0.0, 0.0, -0.0))
-                                  : _mm256_xor_pd(difBD_swp, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
+                __m256d rot = _mm256_xor_pd(difBD_swp, rot_mask);
 
                 __m256d z1 = _mm256_sub_pd(a_mc, rot);
                 __m256d z3 = _mm256_add_pd(a_mc, rot);
 
-                // Store final results
                 STOREU_PD(&output_buffer[k + m * sixteenth].re, z0);
                 STOREU_PD(&output_buffer[k + (m + 4) * sixteenth].re, z1);
                 STOREU_PD(&output_buffer[k + (m + 8) * sixteenth].re, z2);
