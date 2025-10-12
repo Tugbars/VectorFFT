@@ -89,13 +89,6 @@ static ALWAYS_INLINE __m256d fmsub_fallback(__m256d a, __m256d b, __m256d c)
 #define FFT_ALIGNMENT_CHECK
 #endif
 
-//==============================================================================
-// AVX-512 DETECTION AND SETUP
-//==============================================================================
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
-#define HAS_AVX512
-#endif
-
 //=============================================================================
 // ALIGNMENT HELPER FOR AVX-512
 //==============================================================================
@@ -1059,8 +1052,8 @@ fft_object fft_init(int signal_length, int transform_direction)
  */
 static ALWAYS_INLINE __m512d cmul_avx512_aos(__m512d a, __m512d b)
 {
-    __m512d a_re = _mm512_moveldup_pd(a);        // [ar, ar, ar, ar, ...]
-    __m512d a_im = _mm512_movehdup_pd(a);        // [ai, ai, ai, ai, ...]
+    __m512d a_re = _mm512_movedup_pd(a);        // [ar, ar, ar, ar, ...]
+    __m512d a_im = _mm512_movedup_pd(a);        // [ai, ai, ai, ai, ...]
     __m512d b_flip = _mm512_permute_pd(b, 0x55); // [bi, br, bi, br, ...]
 
     return _mm512_fmaddsub_pd(a_re, b, _mm512_mul_pd(a_im, b_flip));
@@ -2260,17 +2253,31 @@ static void mixed_radix_dit_rec(
         //------------------------------------------------------------------
 
         // Precompute rotation masks (±i multiplication)
-        const __m512d mask_plus_i = _mm512_castsi512_pd(
+        const __m512d mask_plus_i_512 = _mm512_castsi512_pd(
             _mm512_set_epi64(0x0000000000000000, 0x8000000000000000,
                              0x0000000000000000, 0x8000000000000000,
                              0x0000000000000000, 0x8000000000000000,
                              0x0000000000000000, 0x8000000000000000));
-        const __m512d mask_minus_i = _mm512_castsi512_pd(
+        const __m512d mask_minus_i_512  = _mm512_castsi512_pd(
             _mm512_set_epi64(0x8000000000000000, 0x0000000000000000,
                              0x8000000000000000, 0x0000000000000000,
                              0x8000000000000000, 0x0000000000000000,
                              0x8000000000000000, 0x0000000000000000));
-        const __m512d rot_mask = (transform_sign == 1) ? mask_plus_i : mask_minus_i;
+        const __m512d rot_mask_512  = (transform_sign == 1) ? mask_plus_i_512 : mask_minus_i_512 ;
+
+           #define RADIX4_BUTTERFLY_AVX512(a, b2, c2, d2, y0, y1, y2, y3)    \
+        {                                                                 \
+        __m512d sumBD = _mm512_add_pd(b2, d2);                        \
+        __m512d difBD = _mm512_sub_pd(b2, d2);                        \
+        __m512d a_pc = _mm512_add_pd(a, c2);                          \
+        __m512d a_mc = _mm512_sub_pd(a, c2);                          \
+        y0 = _mm512_add_pd(a_pc, sumBD);                              \
+        y2 = _mm512_sub_pd(a_pc, sumBD);                              \
+        __m512d difBD_swp = _mm512_permute_pd(difBD, 0b01010101);     \
+        __m512d rot = _mm512_xor_pd(difBD_swp, rot_mask_512);         \
+        y1 = _mm512_sub_pd(a_mc, rot);                                \
+        y3 = _mm512_add_pd(a_mc, rot);                                \
+        }
 
         for (; k + 15 < quarter; k += 16)
         {
@@ -2340,23 +2347,6 @@ static void mixed_radix_dit_rec(
             __m512d d2_2 = cmul_avx512_aos(d2, w3_2);
             __m512d d2_3 = cmul_avx512_aos(d3, w3_3);
 
-//==================================================================
-// Radix-4 butterfly using macro for clarity
-//==================================================================
-#define RADIX4_BUTTERFLY_AVX512(a, b2, c2, d2, y0, y1, y2, y3)    \
-    {                                                             \
-        __m512d sumBD = _mm512_add_pd(b2, d2);                    \
-        __m512d difBD = _mm512_sub_pd(b2, d2);                    \
-        __m512d a_pc = _mm512_add_pd(a, c2);                      \
-        __m512d a_mc = _mm512_sub_pd(a, c2);                      \
-        y0 = _mm512_add_pd(a_pc, sumBD);                          \
-        y2 = _mm512_sub_pd(a_pc, sumBD);                          \
-        __m512d difBD_swp = _mm512_permute_pd(difBD, 0b01010101); \
-        __m512d rot = _mm512_xor_pd(difBD_swp, rot_mask);         \
-        y1 = _mm512_sub_pd(a_mc, rot);                            \
-        y3 = _mm512_add_pd(a_mc, rot);                            \
-    }
-
             __m512d y0_0, y1_0, y2_0, y3_0;
             __m512d y0_1, y1_1, y2_1, y3_1;
             __m512d y0_2, y1_2, y2_2, y3_2;
@@ -2366,8 +2356,6 @@ static void mixed_radix_dit_rec(
             RADIX4_BUTTERFLY_AVX512(a1, b2_1, c2_1, d2_1, y0_1, y1_1, y2_1, y3_1);
             RADIX4_BUTTERFLY_AVX512(a2, b2_2, c2_2, d2_2, y0_2, y1_2, y2_2, y3_2);
             RADIX4_BUTTERFLY_AVX512(a3, b2_3, c2_3, d2_3, y0_3, y1_3, y2_3, y3_3);
-
-#undef RADIX4_BUTTERFLY_AVX512
 
             //==================================================================
             // Store results
@@ -2393,12 +2381,98 @@ static void mixed_radix_dit_rec(
             STOREU_PD512(&output_buffer[k + 12 + 3 * quarter].re, y3_3);
         }
 
-        // Cleanup: 2x unrolling
-        for (; k + 1 < quarter; k += 2)
-        {
-            // ... similar 2x pattern using load4_aos ...
-        }
+    //==========================================================================
+    // Cleanup: 8x unrolling (process 8 butterflies at once)
+    //==========================================================================
+    for (; k + 7 < quarter; k += 8)
+    {
+        // Load inputs (8 butterflies = 2 AVX-512 registers per lane)
+        __m512d a0 = load4_aos(&sub_outputs[k + 0]);
+        __m512d a1 = load4_aos(&sub_outputs[k + 4]);
 
+        __m512d b0 = load4_aos(&sub_outputs[k + 0 + quarter]);
+        __m512d b1 = load4_aos(&sub_outputs[k + 4 + quarter]);
+
+        __m512d c0 = load4_aos(&sub_outputs[k + 0 + 2 * quarter]);
+        __m512d c1 = load4_aos(&sub_outputs[k + 4 + 2 * quarter]);
+
+        __m512d d0 = load4_aos(&sub_outputs[k + 0 + 3 * quarter]);
+        __m512d d1 = load4_aos(&sub_outputs[k + 4 + 3 * quarter]);
+
+        // Load twiddles
+        __m512d w1_0 = load4_aos(&stage_tw[3 * (k + 0)]);
+        __m512d w1_1 = load4_aos(&stage_tw[3 * (k + 4)]);
+
+        __m512d w2_0 = load4_aos(&stage_tw[3 * (k + 0) + 1]);
+        __m512d w2_1 = load4_aos(&stage_tw[3 * (k + 4) + 1]);
+
+        __m512d w3_0 = load4_aos(&stage_tw[3 * (k + 0) + 2]);
+        __m512d w3_1 = load4_aos(&stage_tw[3 * (k + 4) + 2]);
+
+        // Twiddle multiply
+        __m512d b2_0 = cmul_avx512_aos(b0, w1_0);
+        __m512d b2_1 = cmul_avx512_aos(b1, w1_1);
+
+        __m512d c2_0 = cmul_avx512_aos(c0, w2_0);
+        __m512d c2_1 = cmul_avx512_aos(c1, w2_1);
+
+        __m512d d2_0 = cmul_avx512_aos(d0, w3_0);
+        __m512d d2_1 = cmul_avx512_aos(d1, w3_1);
+
+        // Radix-4 butterfly (using the macro you defined earlier)
+        __m512d y0_0, y1_0, y2_0, y3_0;
+        __m512d y0_1, y1_1, y2_1, y3_1;
+
+        RADIX4_BUTTERFLY_AVX512(a0, b2_0, c2_0, d2_0, y0_0, y1_0, y2_0, y3_0);
+        RADIX4_BUTTERFLY_AVX512(a1, b2_1, c2_1, d2_1, y0_1, y1_1, y2_1, y3_1);
+
+        // Store results
+        STOREU_PD512(&output_buffer[k + 0].re, y0_0);
+        STOREU_PD512(&output_buffer[k + 4].re, y0_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + quarter].re, y1_0);
+        STOREU_PD512(&output_buffer[k + 4 + quarter].re, y1_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + 2 * quarter].re, y2_0);
+        STOREU_PD512(&output_buffer[k + 4 + 2 * quarter].re, y2_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + 3 * quarter].re, y3_0);
+        STOREU_PD512(&output_buffer[k + 4 + 3 * quarter].re, y3_1);
+    }
+
+    //==========================================================================
+    // Cleanup: 4x unrolling (process 4 butterflies at once)
+    //==========================================================================
+    for (; k + 3 < quarter; k += 4)
+    {
+        // Load inputs (4 butterflies = 1 AVX-512 register per lane)
+        __m512d a = load4_aos(&sub_outputs[k]);
+        __m512d b = load4_aos(&sub_outputs[k + quarter]);
+        __m512d c = load4_aos(&sub_outputs[k + 2 * quarter]);
+        __m512d d = load4_aos(&sub_outputs[k + 3 * quarter]);
+
+        // Load twiddles
+        __m512d w1 = load4_aos(&stage_tw[3 * k]);
+        __m512d w2 = load4_aos(&stage_tw[3 * k + 1]);
+        __m512d w3 = load4_aos(&stage_tw[3 * k + 2]);
+
+        // Twiddle multiply
+        __m512d b2 = cmul_avx512_aos(b, w1);
+        __m512d c2 = cmul_avx512_aos(c, w2);
+        __m512d d2 = cmul_avx512_aos(d, w3);
+
+        // Radix-4 butterfly
+        __m512d y0, y1, y2, y3;
+        RADIX4_BUTTERFLY_AVX512(a, b2, c2, d2, y0, y1, y2, y3);
+
+        // Store results
+        STOREU_PD512(&output_buffer[k].re, y0);
+        STOREU_PD512(&output_buffer[k + quarter].re, y1);
+        STOREU_PD512(&output_buffer[k + 2 * quarter].re, y2);
+        STOREU_PD512(&output_buffer[k + 3 * quarter].re, y3);
+    }
+
+    #undef RADIX4_BUTTERFLY_AVX512
 #endif // HAS_AVX512
 
 #ifdef __AVX2__
@@ -2410,6 +2484,21 @@ static void mixed_radix_dit_rec(
         const __m256d mask_plus_i = _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
         const __m256d mask_minus_i = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
         const __m256d rot_mask = (transform_sign == 1) ? mask_plus_i : mask_minus_i;
+
+         // DEFINE AVX2 MACRO
+        #define RADIX4_BUTTERFLY_AVX2(a, b2, c2, d2, y0, y1, y2, y3)      \
+        {                                                                 \
+        __m256d sumBD = _mm256_add_pd(b2, d2);                        \
+        __m256d difBD = _mm256_sub_pd(b2, d2);                        \
+        __m256d a_pc = _mm256_add_pd(a, c2);                          \
+        __m256d a_mc = _mm256_sub_pd(a, c2);                          \
+        y0 = _mm256_add_pd(a_pc, sumBD);                              \
+        y2 = _mm256_sub_pd(a_pc, sumBD);                              \
+        __m256d difBD_swp = _mm256_permute_pd(difBD, 0b0101);         \
+        __m256d rot = _mm256_xor_pd(difBD_swp, rot_mask);             \
+        y1 = _mm256_sub_pd(a_mc, rot);                                \
+        y3 = _mm256_add_pd(a_mc, rot);                                \
+          }
 
         for (; k + 7 < quarter; k += 8)
         {
@@ -2481,24 +2570,6 @@ static void mixed_radix_dit_rec(
             __m256d d2_1 = cmul_avx2_aos(d1, w3_1);
             __m256d d2_2 = cmul_avx2_aos(d2, w3_2);
             __m256d d2_3 = cmul_avx2_aos(d3, w3_3);
-
-//==================================================================
-// Radix-4 butterfly (8 butterflies in parallel)
-//==================================================================
-#define RADIX4_BUTTERFLY_AVX2(a, b2, c2, d2, y0, y1, y2, y3)  \
-    {                                                         \
-        __m256d sumBD = _mm256_add_pd(b2, d2);                \
-        __m256d difBD = _mm256_sub_pd(b2, d2);                \
-        __m256d a_pc = _mm256_add_pd(a, c2);                  \
-        __m256d a_mc = _mm256_sub_pd(a, c2);                  \
-        y0 = _mm256_add_pd(a_pc, sumBD);                      \
-        y2 = _mm256_sub_pd(a_mc, sumBD);                      \
-        __m256d difBD_swp = _mm256_permute_pd(difBD, 0b0101); \
-        __m256d rot = _mm256_xor_pd(difBD_swp, rot_mask);     \
-        y1 = _mm256_sub_pd(a_mc, rot);                        \
-        y3 = _mm256_add_pd(a_mc, rot);                        \
-    }
-
             __m256d y0_0, y1_0, y2_0, y3_0;
             __m256d y0_1, y1_1, y2_1, y3_1;
             __m256d y0_2, y1_2, y2_2, y3_2;
@@ -2508,8 +2579,6 @@ static void mixed_radix_dit_rec(
             RADIX4_BUTTERFLY_AVX2(a1, b2_1, c2_1, d2_1, y0_1, y1_1, y2_1, y3_1);
             RADIX4_BUTTERFLY_AVX2(a2, b2_2, c2_2, d2_2, y0_2, y1_2, y2_2, y3_2);
             RADIX4_BUTTERFLY_AVX2(a3, b2_3, c2_3, d2_3, y0_3, y1_3, y2_3, y3_3);
-
-#undef RADIX4_BUTTERFLY_AVX2
 
             //==================================================================
             // Store results (pure AoS, no conversions!)
@@ -2571,7 +2640,7 @@ static void mixed_radix_dit_rec(
             __m256d a_mc = _mm256_sub_pd(a, c2);
 
             __m256d y0 = _mm256_add_pd(a_pc, sumBD);
-            __m256d y2 = _mm256_sub_pd(a_mc, sumBD);
+            __m256d y2 = _mm256_sub_pd(a_pc, sumBD);
 
             __m256d difBD_swp = _mm256_permute_pd(difBD, 0b0101);
             __m256d rot = _mm256_xor_pd(difBD_swp, rot_mask_final);
@@ -2584,6 +2653,7 @@ static void mixed_radix_dit_rec(
             STOREU_PD(&output_buffer[k + 2 * quarter].re, y2);
             STOREU_PD(&output_buffer[k + 3 * quarter].re, y3);
         }
+        #undef RADIX4_BUTTERFLY_AVX2
 #endif // __AVX2__
 
         //------------------------------------------------------------------
@@ -3312,231 +3382,372 @@ static void mixed_radix_dit_rec(
         int k = 0;
 
 #ifdef HAS_AVX512
-        //----------------------------------------------------------------------
-        // AVX-512 PATH: 16x unrolling (4 registers × 4 complex = 16 butterflies)
-        //----------------------------------------------------------------------
-        const __m512d vc = _mm512_set1_pd(C8_1); // √2/2 = 0.707...
+    //----------------------------------------------------------------------
+    // AVX-512 PATH: 16x unrolling with cleanup loops
+    //----------------------------------------------------------------------
+    const __m512d vc_512 = _mm512_set1_pd(C8_1); // √2/2 = 0.707...
 
-        // Precompute rotation masks for ±i
-        const __m512d mask_plus_i = _mm512_castsi512_pd(
-            _mm512_set_epi64(0x0000000000000000, 0x8000000000000000,
-                             0x0000000000000000, 0x8000000000000000,
-                             0x0000000000000000, 0x8000000000000000,
-                             0x0000000000000000, 0x8000000000000000));
-        const __m512d mask_minus_i = _mm512_castsi512_pd(
-            _mm512_set_epi64(0x8000000000000000, 0x0000000000000000,
-                             0x8000000000000000, 0x0000000000000000,
-                             0x8000000000000000, 0x0000000000000000,
-                             0x8000000000000000, 0x0000000000000000));
-        const __m512d rot_mask = (transform_sign == 1) ? mask_plus_i : mask_minus_i;
+    // Precompute rotation masks for ±i
+    const __m512d mask_plus_i_512 = _mm512_castsi512_pd(
+        _mm512_set_epi64(0x0000000000000000, 0x8000000000000000,
+                         0x0000000000000000, 0x8000000000000000,
+                         0x0000000000000000, 0x8000000000000000,
+                         0x0000000000000000, 0x8000000000000000));
+    const __m512d mask_minus_i_512 = _mm512_castsi512_pd(
+        _mm512_set_epi64(0x8000000000000000, 0x0000000000000000,
+                         0x8000000000000000, 0x0000000000000000,
+                         0x8000000000000000, 0x0000000000000000,
+                         0x8000000000000000, 0x0000000000000000));
+    const __m512d rot_mask_512 = (transform_sign == 1) ? mask_plus_i_512 : mask_minus_i_512;
 
-        for (; k + 15 < eighth; k += 16)
-        {
-            // Prefetch ahead
-            if (k + 32 < eighth)
-            {
-                _mm_prefetch((const char *)&sub_outputs[k + 32].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&stage_tw[7 * (k + 32)].re, _MM_HINT_T0);
-            }
-
-            //==================================================================
-            // Load inputs (16 butterflies = 4 AVX-512 loads per lane × 8 lanes)
-            //==================================================================
-            __m512d a0 = load4_aos(&sub_outputs[k + 0]);
-            __m512d a1 = load4_aos(&sub_outputs[k + 4]);
-            __m512d a2 = load4_aos(&sub_outputs[k + 8]);
-            __m512d a3 = load4_aos(&sub_outputs[k + 12]);
-
-            __m512d b0 = load4_aos(&sub_outputs[k + 0 + eighth]);
-            __m512d b1 = load4_aos(&sub_outputs[k + 4 + eighth]);
-            __m512d b2 = load4_aos(&sub_outputs[k + 8 + eighth]);
-            __m512d b3 = load4_aos(&sub_outputs[k + 12 + eighth]);
-
-            __m512d c0 = load4_aos(&sub_outputs[k + 0 + 2 * eighth]);
-            __m512d c1 = load4_aos(&sub_outputs[k + 4 + 2 * eighth]);
-            __m512d c2 = load4_aos(&sub_outputs[k + 8 + 2 * eighth]);
-            __m512d c3 = load4_aos(&sub_outputs[k + 12 + 2 * eighth]);
-
-            __m512d d0 = load4_aos(&sub_outputs[k + 0 + 3 * eighth]);
-            __m512d d1 = load4_aos(&sub_outputs[k + 4 + 3 * eighth]);
-            __m512d d2 = load4_aos(&sub_outputs[k + 8 + 3 * eighth]);
-            __m512d d3 = load4_aos(&sub_outputs[k + 12 + 3 * eighth]);
-
-            __m512d e0 = load4_aos(&sub_outputs[k + 0 + 4 * eighth]);
-            __m512d e1 = load4_aos(&sub_outputs[k + 4 + 4 * eighth]);
-            __m512d e2 = load4_aos(&sub_outputs[k + 8 + 4 * eighth]);
-            __m512d e3 = load4_aos(&sub_outputs[k + 12 + 4 * eighth]);
-
-            __m512d f0 = load4_aos(&sub_outputs[k + 0 + 5 * eighth]);
-            __m512d f1 = load4_aos(&sub_outputs[k + 4 + 5 * eighth]);
-            __m512d f2 = load4_aos(&sub_outputs[k + 8 + 5 * eighth]);
-            __m512d f3 = load4_aos(&sub_outputs[k + 12 + 5 * eighth]);
-
-            __m512d g0 = load4_aos(&sub_outputs[k + 0 + 6 * eighth]);
-            __m512d g1 = load4_aos(&sub_outputs[k + 4 + 6 * eighth]);
-            __m512d g2 = load4_aos(&sub_outputs[k + 8 + 6 * eighth]);
-            __m512d g3 = load4_aos(&sub_outputs[k + 12 + 6 * eighth]);
-
-            __m512d h0 = load4_aos(&sub_outputs[k + 0 + 7 * eighth]);
-            __m512d h1 = load4_aos(&sub_outputs[k + 4 + 7 * eighth]);
-            __m512d h2 = load4_aos(&sub_outputs[k + 8 + 7 * eighth]);
-            __m512d h3 = load4_aos(&sub_outputs[k + 12 + 7 * eighth]);
-
-            //==================================================================
-            // Load twiddles (k-major: 7 per butterfly)
-            //==================================================================
-            __m512d w1_0 = load4_aos(&stage_tw[7 * (k + 0)]);
-            __m512d w1_1 = load4_aos(&stage_tw[7 * (k + 4)]);
-            __m512d w1_2 = load4_aos(&stage_tw[7 * (k + 8)]);
-            __m512d w1_3 = load4_aos(&stage_tw[7 * (k + 12)]);
-
-            __m512d w2_0 = load4_aos(&stage_tw[7 * (k + 0) + 1]);
-            __m512d w2_1 = load4_aos(&stage_tw[7 * (k + 4) + 1]);
-            __m512d w2_2 = load4_aos(&stage_tw[7 * (k + 8) + 1]);
-            __m512d w2_3 = load4_aos(&stage_tw[7 * (k + 12) + 1]);
-
-            __m512d w3_0 = load4_aos(&stage_tw[7 * (k + 0) + 2]);
-            __m512d w3_1 = load4_aos(&stage_tw[7 * (k + 4) + 2]);
-            __m512d w3_2 = load4_aos(&stage_tw[7 * (k + 8) + 2]);
-            __m512d w3_3 = load4_aos(&stage_tw[7 * (k + 12) + 2]);
-
-            __m512d w4_0 = load4_aos(&stage_tw[7 * (k + 0) + 3]);
-            __m512d w4_1 = load4_aos(&stage_tw[7 * (k + 4) + 3]);
-            __m512d w4_2 = load4_aos(&stage_tw[7 * (k + 8) + 3]);
-            __m512d w4_3 = load4_aos(&stage_tw[7 * (k + 12) + 3]);
-
-            __m512d w5_0 = load4_aos(&stage_tw[7 * (k + 0) + 4]);
-            __m512d w5_1 = load4_aos(&stage_tw[7 * (k + 4) + 4]);
-            __m512d w5_2 = load4_aos(&stage_tw[7 * (k + 8) + 4]);
-            __m512d w5_3 = load4_aos(&stage_tw[7 * (k + 12) + 4]);
-
-            __m512d w6_0 = load4_aos(&stage_tw[7 * (k + 0) + 5]);
-            __m512d w6_1 = load4_aos(&stage_tw[7 * (k + 4) + 5]);
-            __m512d w6_2 = load4_aos(&stage_tw[7 * (k + 8) + 5]);
-            __m512d w6_3 = load4_aos(&stage_tw[7 * (k + 12) + 5]);
-
-            __m512d w7_0 = load4_aos(&stage_tw[7 * (k + 0) + 6]);
-            __m512d w7_1 = load4_aos(&stage_tw[7 * (k + 4) + 6]);
-            __m512d w7_2 = load4_aos(&stage_tw[7 * (k + 8) + 6]);
-            __m512d w7_3 = load4_aos(&stage_tw[7 * (k + 12) + 6]);
-
-            //==================================================================
-            // Twiddle multiply
-            //==================================================================
-            __m512d b2_0 = cmul_avx512_aos(b0, w1_0), b2_1 = cmul_avx512_aos(b1, w1_1);
-            __m512d b2_2 = cmul_avx512_aos(b2, w1_2), b2_3 = cmul_avx512_aos(b3, w1_3);
-
-            __m512d c2_0 = cmul_avx512_aos(c0, w2_0), c2_1 = cmul_avx512_aos(c1, w2_1);
-            __m512d c2_2 = cmul_avx512_aos(c2, w2_2), c2_3 = cmul_avx512_aos(c3, w2_3);
-
-            __m512d d2_0 = cmul_avx512_aos(d0, w3_0), d2_1 = cmul_avx512_aos(d1, w3_1);
-            __m512d d2_2 = cmul_avx512_aos(d2, w3_2), d2_3 = cmul_avx512_aos(d3, w3_3);
-
-            __m512d e2_0 = cmul_avx512_aos(e0, w4_0), e2_1 = cmul_avx512_aos(e1, w4_1);
-            __m512d e2_2 = cmul_avx512_aos(e2, w4_2), e2_3 = cmul_avx512_aos(e3, w4_3);
-
-            __m512d f2_0 = cmul_avx512_aos(f0, w5_0), f2_1 = cmul_avx512_aos(f1, w5_1);
-            __m512d f2_2 = cmul_avx512_aos(f2, w5_2), f2_3 = cmul_avx512_aos(f3, w5_3);
-
-            __m512d g2_0 = cmul_avx512_aos(g0, w6_0), g2_1 = cmul_avx512_aos(g1, w6_1);
-            __m512d g2_2 = cmul_avx512_aos(g2, w6_2), g2_3 = cmul_avx512_aos(g3, w6_3);
-
-            __m512d h2_0 = cmul_avx512_aos(h0, w7_0), h2_1 = cmul_avx512_aos(h1, w7_1);
-            __m512d h2_2 = cmul_avx512_aos(h2, w7_2), h2_3 = cmul_avx512_aos(h3, w7_3);
-
-//==================================================================
-// Radix-8 butterfly (16 butterflies in parallel)
-//==================================================================
-#define RADIX8_BUTTERFLY_AVX512(a, b2, c2, d2, e2, f2, g2, h2, y0, y1, y2, y3, y4, y5, y6, y7) \
-    {                                                                                          \
-        __m512d s0 = _mm512_add_pd(b2, h2), d0 = _mm512_sub_pd(b2, h2);                        \
-        __m512d s1 = _mm512_add_pd(c2, g2), d1 = _mm512_sub_pd(c2, g2);                        \
-        __m512d s2 = _mm512_add_pd(d2, f2), d2_diff = _mm512_sub_pd(d2, f2);                   \
-        __m512d t0 = _mm512_add_pd(a, e2), t4 = _mm512_sub_pd(a, e2);                          \
-        y0 = _mm512_add_pd(t0, _mm512_add_pd(_mm512_add_pd(s0, s1), s2));                      \
-        y4 = _mm512_add_pd(_mm512_sub_pd(t4, _mm512_add_pd(s0, s1)), s2);                      \
-        __m512d base26 = _mm512_sub_pd(d2_diff, d0);                                           \
-        __m512d base26_swp = _mm512_permute_pd(base26, 0b01010101);                            \
-        __m512d rr26 = _mm512_xor_pd(base26_swp, rot_mask);                                    \
-        __m512d t02 = _mm512_sub_pd(t0, s1);                                                   \
-        y2 = _mm512_add_pd(t02, rr26);                                                         \
-        y6 = _mm512_sub_pd(t02, rr26);                                                         \
-        __m512d s0ms2 = _mm512_sub_pd(s0, s2);                                                 \
-        __m512d real17 = _mm512_fmadd_pd(vc, s0ms2, t4);                                       \
-        __m512d dd = _mm512_add_pd(d0, d2_diff);                                               \
-        __m512d V17 = _mm512_sub_pd(_mm512_setzero_pd(), _mm512_fmadd_pd(vc, dd, d1));         \
-        __m512d V17_swp = _mm512_permute_pd(V17, 0b01010101);                                  \
-        __m512d rr17 = _mm512_xor_pd(V17_swp, rot_mask);                                       \
-        y1 = _mm512_add_pd(real17, rr17);                                                      \
-        y7 = _mm512_sub_pd(real17, rr17);                                                      \
-        __m512d real35 = _mm512_fmsub_pd(vc, s0ms2, t4);                                       \
-        __m512d dd2 = _mm512_sub_pd(d0, d2_diff);                                              \
-        __m512d V35 = _mm512_sub_pd(_mm512_setzero_pd(), _mm512_fmadd_pd(vc, dd2, d1));        \
-        __m512d V35_swp = _mm512_permute_pd(V35, 0b01010101);                                  \
-        __m512d rr35 = _mm512_xor_pd(V35_swp, rot_mask);                                       \
-        y3 = _mm512_add_pd(real35, rr35);                                                      \
-        y5 = _mm512_sub_pd(real35, rr35);                                                      \
+    //==================================================================
+    // DEFINE MACRO ONCE AT THE TOP
+    //==================================================================
+    #define RADIX8_BUTTERFLY_AVX512(a, b2, c2, d2, e2, f2, g2, h2, y0, y1, y2, y3, y4, y5, y6, y7) \
+    {                                                                                              \
+        __m512d s0 = _mm512_add_pd(b2, h2), d0 = _mm512_sub_pd(b2, h2);                            \
+        __m512d s1 = _mm512_add_pd(c2, g2), d1 = _mm512_sub_pd(c2, g2);                            \
+        __m512d s2 = _mm512_add_pd(d2, f2), d2_diff = _mm512_sub_pd(d2, f2);                       \
+        __m512d t0 = _mm512_add_pd(a, e2), t4 = _mm512_sub_pd(a, e2);                              \
+        y0 = _mm512_add_pd(t0, _mm512_add_pd(_mm512_add_pd(s0, s1), s2));                          \
+        y4 = _mm512_add_pd(_mm512_sub_pd(t4, _mm512_add_pd(s0, s1)), s2);                          \
+        __m512d base26 = _mm512_sub_pd(d2_diff, d0);                                               \
+        __m512d base26_swp = _mm512_permute_pd(base26, 0b01010101);                                \
+        __m512d rr26 = _mm512_xor_pd(base26_swp, rot_mask_512);                                    \
+        __m512d t02 = _mm512_sub_pd(t0, s1);                                                       \
+        y2 = _mm512_add_pd(t02, rr26);                                                             \
+        y6 = _mm512_sub_pd(t02, rr26);                                                             \
+        __m512d s0ms2 = _mm512_sub_pd(s0, s2);                                                     \
+        __m512d real17 = _mm512_fmadd_pd(vc_512, s0ms2, t4);                                       \
+        __m512d dd = _mm512_add_pd(d0, d2_diff);                                                   \
+        __m512d V17 = _mm512_sub_pd(_mm512_setzero_pd(), _mm512_fmadd_pd(vc_512, dd, d1));         \
+        __m512d V17_swp = _mm512_permute_pd(V17, 0b01010101);                                      \
+        __m512d rr17 = _mm512_xor_pd(V17_swp, rot_mask_512);                                       \
+        y1 = _mm512_add_pd(real17, rr17);                                                          \
+        y7 = _mm512_sub_pd(real17, rr17);                                                          \
+        __m512d real35 = _mm512_fmsub_pd(vc_512, s0ms2, t4);                                       \
+        __m512d dd2 = _mm512_sub_pd(d0, d2_diff);                                                  \
+        __m512d V35 = _mm512_sub_pd(_mm512_setzero_pd(), _mm512_fmadd_pd(vc_512, dd2, d1));        \
+        __m512d V35_swp = _mm512_permute_pd(V35, 0b01010101);                                      \
+        __m512d rr35 = _mm512_xor_pd(V35_swp, rot_mask_512);                                       \
+        y3 = _mm512_add_pd(real35, rr35);                                                          \
+        y5 = _mm512_sub_pd(real35, rr35);                                                          \
     }
 
-            __m512d y0_0, y1_0, y2_0, y3_0, y4_0, y5_0, y6_0, y7_0;
-            __m512d y0_1, y1_1, y2_1, y3_1, y4_1, y5_1, y6_1, y7_1;
-            __m512d y0_2, y1_2, y2_2, y3_2, y4_2, y5_2, y6_2, y7_2;
-            __m512d y0_3, y1_3, y2_3, y3_3, y4_3, y5_3, y6_3, y7_3;
-
-            RADIX8_BUTTERFLY_AVX512(a0, b2_0, c2_0, d2_0, e2_0, f2_0, g2_0, h2_0,
-                                    y0_0, y1_0, y2_0, y3_0, y4_0, y5_0, y6_0, y7_0);
-            RADIX8_BUTTERFLY_AVX512(a1, b2_1, c2_1, d2_1, e2_1, f2_1, g2_1, h2_1,
-                                    y0_1, y1_1, y2_1, y3_1, y4_1, y5_1, y6_1, y7_1);
-            RADIX8_BUTTERFLY_AVX512(a2, b2_2, c2_2, d2_2, e2_2, f2_2, g2_2, h2_2,
-                                    y0_2, y1_2, y2_2, y3_2, y4_2, y5_2, y6_2, y7_2);
-            RADIX8_BUTTERFLY_AVX512(a3, b2_3, c2_3, d2_3, e2_3, f2_3, g2_3, h2_3,
-                                    y0_3, y1_3, y2_3, y3_3, y4_3, y5_3, y6_3, y7_3);
-
-#undef RADIX8_BUTTERFLY_AVX512
-
-            //==================================================================
-            // Store results
-            //==================================================================
-            STOREU_PD512(&output_buffer[k + 0].re, y0_0);
-            STOREU_PD512(&output_buffer[k + 4].re, y0_1);
-            STOREU_PD512(&output_buffer[k + 8].re, y0_2);
-            STOREU_PD512(&output_buffer[k + 12].re, y0_3);
-
-            STOREU_PD512(&output_buffer[k + 0 + eighth].re, y1_0);
-            STOREU_PD512(&output_buffer[k + 4 + eighth].re, y1_1);
-            STOREU_PD512(&output_buffer[k + 8 + eighth].re, y1_2);
-            STOREU_PD512(&output_buffer[k + 12 + eighth].re, y1_3);
-
-            STOREU_PD512(&output_buffer[k + 0 + 2 * eighth].re, y2_0);
-            STOREU_PD512(&output_buffer[k + 4 + 2 * eighth].re, y2_1);
-            STOREU_PD512(&output_buffer[k + 8 + 2 * eighth].re, y2_2);
-            STOREU_PD512(&output_buffer[k + 12 + 2 * eighth].re, y2_3);
-
-            STOREU_PD512(&output_buffer[k + 0 + 3 * eighth].re, y3_0);
-            STOREU_PD512(&output_buffer[k + 4 + 3 * eighth].re, y3_1);
-            STOREU_PD512(&output_buffer[k + 8 + 3 * eighth].re, y3_2);
-            STOREU_PD512(&output_buffer[k + 12 + 3 * eighth].re, y3_3);
-
-            STOREU_PD512(&output_buffer[k + 0 + 4 * eighth].re, y4_0);
-            STOREU_PD512(&output_buffer[k + 4 + 4 * eighth].re, y4_1);
-            STOREU_PD512(&output_buffer[k + 8 + 4 * eighth].re, y4_2);
-            STOREU_PD512(&output_buffer[k + 12 + 4 * eighth].re, y4_3);
-
-            STOREU_PD512(&output_buffer[k + 0 + 5 * eighth].re, y5_0);
-            STOREU_PD512(&output_buffer[k + 4 + 5 * eighth].re, y5_1);
-            STOREU_PD512(&output_buffer[k + 8 + 5 * eighth].re, y5_2);
-            STOREU_PD512(&output_buffer[k + 12 + 5 * eighth].re, y5_3);
-
-            STOREU_PD512(&output_buffer[k + 0 + 6 * eighth].re, y6_0);
-            STOREU_PD512(&output_buffer[k + 4 + 6 * eighth].re, y6_1);
-            STOREU_PD512(&output_buffer[k + 8 + 6 * eighth].re, y6_2);
-            STOREU_PD512(&output_buffer[k + 12 + 6 * eighth].re, y6_3);
-
-            STOREU_PD512(&output_buffer[k + 0 + 7 * eighth].re, y7_0);
-            STOREU_PD512(&output_buffer[k + 4 + 7 * eighth].re, y7_1);
-            STOREU_PD512(&output_buffer[k + 8 + 7 * eighth].re, y7_2);
-            STOREU_PD512(&output_buffer[k + 12 + 7 * eighth].re, y7_3);
+    //==========================================================================
+    // Main loop: 16x unrolling
+    //==========================================================================
+    for (; k + 15 < eighth; k += 16)
+    {
+        if (k + 32 < eighth)
+        {
+            _mm_prefetch((const char *)&sub_outputs[k + 32].re, _MM_HINT_T0);
+            _mm_prefetch((const char *)&stage_tw[7 * (k + 32)].re, _MM_HINT_T0);
         }
+
+        // Load inputs (16 butterflies = 4 loads × 8 lanes)
+        __m512d a0 = load4_aos(&sub_outputs[k + 0]);
+        __m512d a1 = load4_aos(&sub_outputs[k + 4]);
+        __m512d a2 = load4_aos(&sub_outputs[k + 8]);
+        __m512d a3 = load4_aos(&sub_outputs[k + 12]);
+
+        __m512d b0 = load4_aos(&sub_outputs[k + 0 + eighth]);
+        __m512d b1 = load4_aos(&sub_outputs[k + 4 + eighth]);
+        __m512d b2 = load4_aos(&sub_outputs[k + 8 + eighth]);
+        __m512d b3 = load4_aos(&sub_outputs[k + 12 + eighth]);
+
+        __m512d c0 = load4_aos(&sub_outputs[k + 0 + 2 * eighth]);
+        __m512d c1 = load4_aos(&sub_outputs[k + 4 + 2 * eighth]);
+        __m512d c2 = load4_aos(&sub_outputs[k + 8 + 2 * eighth]);
+        __m512d c3 = load4_aos(&sub_outputs[k + 12 + 2 * eighth]);
+
+        __m512d d0 = load4_aos(&sub_outputs[k + 0 + 3 * eighth]);
+        __m512d d1 = load4_aos(&sub_outputs[k + 4 + 3 * eighth]);
+        __m512d d2 = load4_aos(&sub_outputs[k + 8 + 3 * eighth]);
+        __m512d d3 = load4_aos(&sub_outputs[k + 12 + 3 * eighth]);
+
+        __m512d e0 = load4_aos(&sub_outputs[k + 0 + 4 * eighth]);
+        __m512d e1 = load4_aos(&sub_outputs[k + 4 + 4 * eighth]);
+        __m512d e2 = load4_aos(&sub_outputs[k + 8 + 4 * eighth]);
+        __m512d e3 = load4_aos(&sub_outputs[k + 12 + 4 * eighth]);
+
+        __m512d f0 = load4_aos(&sub_outputs[k + 0 + 5 * eighth]);
+        __m512d f1 = load4_aos(&sub_outputs[k + 4 + 5 * eighth]);
+        __m512d f2 = load4_aos(&sub_outputs[k + 8 + 5 * eighth]);
+        __m512d f3 = load4_aos(&sub_outputs[k + 12 + 5 * eighth]);
+
+        __m512d g0 = load4_aos(&sub_outputs[k + 0 + 6 * eighth]);
+        __m512d g1 = load4_aos(&sub_outputs[k + 4 + 6 * eighth]);
+        __m512d g2 = load4_aos(&sub_outputs[k + 8 + 6 * eighth]);
+        __m512d g3 = load4_aos(&sub_outputs[k + 12 + 6 * eighth]);
+
+        __m512d h0 = load4_aos(&sub_outputs[k + 0 + 7 * eighth]);
+        __m512d h1 = load4_aos(&sub_outputs[k + 4 + 7 * eighth]);
+        __m512d h2 = load4_aos(&sub_outputs[k + 8 + 7 * eighth]);
+        __m512d h3 = load4_aos(&sub_outputs[k + 12 + 7 * eighth]);
+
+        // Load twiddles
+        __m512d w1_0 = load4_aos(&stage_tw[7 * (k + 0)]);
+        __m512d w1_1 = load4_aos(&stage_tw[7 * (k + 4)]);
+        __m512d w1_2 = load4_aos(&stage_tw[7 * (k + 8)]);
+        __m512d w1_3 = load4_aos(&stage_tw[7 * (k + 12)]);
+
+        __m512d w2_0 = load4_aos(&stage_tw[7 * (k + 0) + 1]);
+        __m512d w2_1 = load4_aos(&stage_tw[7 * (k + 4) + 1]);
+        __m512d w2_2 = load4_aos(&stage_tw[7 * (k + 8) + 1]);
+        __m512d w2_3 = load4_aos(&stage_tw[7 * (k + 12) + 1]);
+
+        __m512d w3_0 = load4_aos(&stage_tw[7 * (k + 0) + 2]);
+        __m512d w3_1 = load4_aos(&stage_tw[7 * (k + 4) + 2]);
+        __m512d w3_2 = load4_aos(&stage_tw[7 * (k + 8) + 2]);
+        __m512d w3_3 = load4_aos(&stage_tw[7 * (k + 12) + 2]);
+
+        __m512d w4_0 = load4_aos(&stage_tw[7 * (k + 0) + 3]);
+        __m512d w4_1 = load4_aos(&stage_tw[7 * (k + 4) + 3]);
+        __m512d w4_2 = load4_aos(&stage_tw[7 * (k + 8) + 3]);
+        __m512d w4_3 = load4_aos(&stage_tw[7 * (k + 12) + 3]);
+
+        __m512d w5_0 = load4_aos(&stage_tw[7 * (k + 0) + 4]);
+        __m512d w5_1 = load4_aos(&stage_tw[7 * (k + 4) + 4]);
+        __m512d w5_2 = load4_aos(&stage_tw[7 * (k + 8) + 4]);
+        __m512d w5_3 = load4_aos(&stage_tw[7 * (k + 12) + 4]);
+
+        __m512d w6_0 = load4_aos(&stage_tw[7 * (k + 0) + 5]);
+        __m512d w6_1 = load4_aos(&stage_tw[7 * (k + 4) + 5]);
+        __m512d w6_2 = load4_aos(&stage_tw[7 * (k + 8) + 5]);
+        __m512d w6_3 = load4_aos(&stage_tw[7 * (k + 12) + 5]);
+
+        __m512d w7_0 = load4_aos(&stage_tw[7 * (k + 0) + 6]);
+        __m512d w7_1 = load4_aos(&stage_tw[7 * (k + 4) + 6]);
+        __m512d w7_2 = load4_aos(&stage_tw[7 * (k + 8) + 6]);
+        __m512d w7_3 = load4_aos(&stage_tw[7 * (k + 12) + 6]);
+
+        // Twiddle multiply
+        __m512d b2_0 = cmul_avx512_aos(b0, w1_0), b2_1 = cmul_avx512_aos(b1, w1_1);
+        __m512d b2_2 = cmul_avx512_aos(b2, w1_2), b2_3 = cmul_avx512_aos(b3, w1_3);
+
+        __m512d c2_0 = cmul_avx512_aos(c0, w2_0), c2_1 = cmul_avx512_aos(c1, w2_1);
+        __m512d c2_2 = cmul_avx512_aos(c2, w2_2), c2_3 = cmul_avx512_aos(c3, w2_3);
+
+        __m512d d2_0 = cmul_avx512_aos(d0, w3_0), d2_1 = cmul_avx512_aos(d1, w3_1);
+        __m512d d2_2 = cmul_avx512_aos(d2, w3_2), d2_3 = cmul_avx512_aos(d3, w3_3);
+
+        __m512d e2_0 = cmul_avx512_aos(e0, w4_0), e2_1 = cmul_avx512_aos(e1, w4_1);
+        __m512d e2_2 = cmul_avx512_aos(e2, w4_2), e2_3 = cmul_avx512_aos(e3, w4_3);
+
+        __m512d f2_0 = cmul_avx512_aos(f0, w5_0), f2_1 = cmul_avx512_aos(f1, w5_1);
+        __m512d f2_2 = cmul_avx512_aos(f2, w5_2), f2_3 = cmul_avx512_aos(f3, w5_3);
+
+        __m512d g2_0 = cmul_avx512_aos(g0, w6_0), g2_1 = cmul_avx512_aos(g1, w6_1);
+        __m512d g2_2 = cmul_avx512_aos(g2, w6_2), g2_3 = cmul_avx512_aos(g3, w6_3);
+
+        __m512d h2_0 = cmul_avx512_aos(h0, w7_0), h2_1 = cmul_avx512_aos(h1, w7_1);
+        __m512d h2_2 = cmul_avx512_aos(h2, w7_2), h2_3 = cmul_avx512_aos(h3, w7_3);
+
+        // Butterfly
+        __m512d y0_0, y1_0, y2_0, y3_0, y4_0, y5_0, y6_0, y7_0;
+        __m512d y0_1, y1_1, y2_1, y3_1, y4_1, y5_1, y6_1, y7_1;
+        __m512d y0_2, y1_2, y2_2, y3_2, y4_2, y5_2, y6_2, y7_2;
+        __m512d y0_3, y1_3, y2_3, y3_3, y4_3, y5_3, y6_3, y7_3;
+
+        RADIX8_BUTTERFLY_AVX512(a0, b2_0, c2_0, d2_0, e2_0, f2_0, g2_0, h2_0,
+                                y0_0, y1_0, y2_0, y3_0, y4_0, y5_0, y6_0, y7_0);
+        RADIX8_BUTTERFLY_AVX512(a1, b2_1, c2_1, d2_1, e2_1, f2_1, g2_1, h2_1,
+                                y0_1, y1_1, y2_1, y3_1, y4_1, y5_1, y6_1, y7_1);
+        RADIX8_BUTTERFLY_AVX512(a2, b2_2, c2_2, d2_2, e2_2, f2_2, g2_2, h2_2,
+                                y0_2, y1_2, y2_2, y3_2, y4_2, y5_2, y6_2, y7_2);
+        RADIX8_BUTTERFLY_AVX512(a3, b2_3, c2_3, d2_3, e2_3, f2_3, g2_3, h2_3,
+                                y0_3, y1_3, y2_3, y3_3, y4_3, y5_3, y6_3, y7_3);
+
+        // Store results
+        STOREU_PD512(&output_buffer[k + 0].re, y0_0);
+        STOREU_PD512(&output_buffer[k + 4].re, y0_1);
+        STOREU_PD512(&output_buffer[k + 8].re, y0_2);
+        STOREU_PD512(&output_buffer[k + 12].re, y0_3);
+
+        STOREU_PD512(&output_buffer[k + 0 + eighth].re, y1_0);
+        STOREU_PD512(&output_buffer[k + 4 + eighth].re, y1_1);
+        STOREU_PD512(&output_buffer[k + 8 + eighth].re, y1_2);
+        STOREU_PD512(&output_buffer[k + 12 + eighth].re, y1_3);
+
+        STOREU_PD512(&output_buffer[k + 0 + 2 * eighth].re, y2_0);
+        STOREU_PD512(&output_buffer[k + 4 + 2 * eighth].re, y2_1);
+        STOREU_PD512(&output_buffer[k + 8 + 2 * eighth].re, y2_2);
+        STOREU_PD512(&output_buffer[k + 12 + 2 * eighth].re, y2_3);
+
+        STOREU_PD512(&output_buffer[k + 0 + 3 * eighth].re, y3_0);
+        STOREU_PD512(&output_buffer[k + 4 + 3 * eighth].re, y3_1);
+        STOREU_PD512(&output_buffer[k + 8 + 3 * eighth].re, y3_2);
+        STOREU_PD512(&output_buffer[k + 12 + 3 * eighth].re, y3_3);
+
+        STOREU_PD512(&output_buffer[k + 0 + 4 * eighth].re, y4_0);
+        STOREU_PD512(&output_buffer[k + 4 + 4 * eighth].re, y4_1);
+        STOREU_PD512(&output_buffer[k + 8 + 4 * eighth].re, y4_2);
+        STOREU_PD512(&output_buffer[k + 12 + 4 * eighth].re, y4_3);
+
+        STOREU_PD512(&output_buffer[k + 0 + 5 * eighth].re, y5_0);
+        STOREU_PD512(&output_buffer[k + 4 + 5 * eighth].re, y5_1);
+        STOREU_PD512(&output_buffer[k + 8 + 5 * eighth].re, y5_2);
+        STOREU_PD512(&output_buffer[k + 12 + 5 * eighth].re, y5_3);
+
+        STOREU_PD512(&output_buffer[k + 0 + 6 * eighth].re, y6_0);
+        STOREU_PD512(&output_buffer[k + 4 + 6 * eighth].re, y6_1);
+        STOREU_PD512(&output_buffer[k + 8 + 6 * eighth].re, y6_2);
+        STOREU_PD512(&output_buffer[k + 12 + 6 * eighth].re, y6_3);
+
+        STOREU_PD512(&output_buffer[k + 0 + 7 * eighth].re, y7_0);
+        STOREU_PD512(&output_buffer[k + 4 + 7 * eighth].re, y7_1);
+        STOREU_PD512(&output_buffer[k + 8 + 7 * eighth].re, y7_2);
+        STOREU_PD512(&output_buffer[k + 12 + 7 * eighth].re, y7_3);
+    }
+
+    //==========================================================================
+    // Cleanup: 8x unrolling (process 8 butterflies)
+    //==========================================================================
+    for (; k + 7 < eighth; k += 8)
+    {
+        // Load inputs (8 butterflies = 2 loads × 8 lanes)
+        __m512d a0 = load4_aos(&sub_outputs[k + 0]);
+        __m512d a1 = load4_aos(&sub_outputs[k + 4]);
+
+        __m512d b0 = load4_aos(&sub_outputs[k + 0 + eighth]);
+        __m512d b1 = load4_aos(&sub_outputs[k + 4 + eighth]);
+
+        __m512d c0 = load4_aos(&sub_outputs[k + 0 + 2 * eighth]);
+        __m512d c1 = load4_aos(&sub_outputs[k + 4 + 2 * eighth]);
+
+        __m512d d0 = load4_aos(&sub_outputs[k + 0 + 3 * eighth]);
+        __m512d d1 = load4_aos(&sub_outputs[k + 4 + 3 * eighth]);
+
+        __m512d e0 = load4_aos(&sub_outputs[k + 0 + 4 * eighth]);
+        __m512d e1 = load4_aos(&sub_outputs[k + 4 + 4 * eighth]);
+
+        __m512d f0 = load4_aos(&sub_outputs[k + 0 + 5 * eighth]);
+        __m512d f1 = load4_aos(&sub_outputs[k + 4 + 5 * eighth]);
+
+        __m512d g0 = load4_aos(&sub_outputs[k + 0 + 6 * eighth]);
+        __m512d g1 = load4_aos(&sub_outputs[k + 4 + 6 * eighth]);
+
+        __m512d h0 = load4_aos(&sub_outputs[k + 0 + 7 * eighth]);
+        __m512d h1 = load4_aos(&sub_outputs[k + 4 + 7 * eighth]);
+
+        // Load twiddles
+        __m512d w1_0 = load4_aos(&stage_tw[7 * (k + 0)]);
+        __m512d w1_1 = load4_aos(&stage_tw[7 * (k + 4)]);
+
+        __m512d w2_0 = load4_aos(&stage_tw[7 * (k + 0) + 1]);
+        __m512d w2_1 = load4_aos(&stage_tw[7 * (k + 4) + 1]);
+
+        __m512d w3_0 = load4_aos(&stage_tw[7 * (k + 0) + 2]);
+        __m512d w3_1 = load4_aos(&stage_tw[7 * (k + 4) + 2]);
+
+        __m512d w4_0 = load4_aos(&stage_tw[7 * (k + 0) + 3]);
+        __m512d w4_1 = load4_aos(&stage_tw[7 * (k + 4) + 3]);
+
+        __m512d w5_0 = load4_aos(&stage_tw[7 * (k + 0) + 4]);
+        __m512d w5_1 = load4_aos(&stage_tw[7 * (k + 4) + 4]);
+
+        __m512d w6_0 = load4_aos(&stage_tw[7 * (k + 0) + 5]);
+        __m512d w6_1 = load4_aos(&stage_tw[7 * (k + 4) + 5]);
+
+        __m512d w7_0 = load4_aos(&stage_tw[7 * (k + 0) + 6]);
+        __m512d w7_1 = load4_aos(&stage_tw[7 * (k + 4) + 6]);
+
+        // Twiddle multiply
+        __m512d b2_0 = cmul_avx512_aos(b0, w1_0), b2_1 = cmul_avx512_aos(b1, w1_1);
+        __m512d c2_0 = cmul_avx512_aos(c0, w2_0), c2_1 = cmul_avx512_aos(c1, w2_1);
+        __m512d d2_0 = cmul_avx512_aos(d0, w3_0), d2_1 = cmul_avx512_aos(d1, w3_1);
+        __m512d e2_0 = cmul_avx512_aos(e0, w4_0), e2_1 = cmul_avx512_aos(e1, w4_1);
+        __m512d f2_0 = cmul_avx512_aos(f0, w5_0), f2_1 = cmul_avx512_aos(f1, w5_1);
+        __m512d g2_0 = cmul_avx512_aos(g0, w6_0), g2_1 = cmul_avx512_aos(g1, w6_1);
+        __m512d h2_0 = cmul_avx512_aos(h0, w7_0), h2_1 = cmul_avx512_aos(h1, w7_1);
+
+        // Butterfly
+        __m512d y0_0, y1_0, y2_0, y3_0, y4_0, y5_0, y6_0, y7_0;
+        __m512d y0_1, y1_1, y2_1, y3_1, y4_1, y5_1, y6_1, y7_1;
+
+        RADIX8_BUTTERFLY_AVX512(a0, b2_0, c2_0, d2_0, e2_0, f2_0, g2_0, h2_0,
+                                y0_0, y1_0, y2_0, y3_0, y4_0, y5_0, y6_0, y7_0);
+        RADIX8_BUTTERFLY_AVX512(a1, b2_1, c2_1, d2_1, e2_1, f2_1, g2_1, h2_1,
+                                y0_1, y1_1, y2_1, y3_1, y4_1, y5_1, y6_1, y7_1);
+
+        // Store results
+        STOREU_PD512(&output_buffer[k + 0].re, y0_0);
+        STOREU_PD512(&output_buffer[k + 4].re, y0_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + eighth].re, y1_0);
+        STOREU_PD512(&output_buffer[k + 4 + eighth].re, y1_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + 2 * eighth].re, y2_0);
+        STOREU_PD512(&output_buffer[k + 4 + 2 * eighth].re, y2_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + 3 * eighth].re, y3_0);
+        STOREU_PD512(&output_buffer[k + 4 + 3 * eighth].re, y3_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + 4 * eighth].re, y4_0);
+        STOREU_PD512(&output_buffer[k + 4 + 4 * eighth].re, y4_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + 5 * eighth].re, y5_0);
+        STOREU_PD512(&output_buffer[k + 4 + 5 * eighth].re, y5_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + 6 * eighth].re, y6_0);
+        STOREU_PD512(&output_buffer[k + 4 + 6 * eighth].re, y6_1);
+
+        STOREU_PD512(&output_buffer[k + 0 + 7 * eighth].re, y7_0);
+        STOREU_PD512(&output_buffer[k + 4 + 7 * eighth].re, y7_1);
+    }
+
+    //==========================================================================
+    // Cleanup: 4x unrolling (process 4 butterflies)
+    //==========================================================================
+    for (; k + 3 < eighth; k += 4)
+    {
+        // Load inputs (4 butterflies = 1 load × 8 lanes)
+        __m512d a = load4_aos(&sub_outputs[k]);
+        __m512d b = load4_aos(&sub_outputs[k + eighth]);
+        __m512d c = load4_aos(&sub_outputs[k + 2 * eighth]);
+        __m512d d = load4_aos(&sub_outputs[k + 3 * eighth]);
+        __m512d e = load4_aos(&sub_outputs[k + 4 * eighth]);
+        __m512d f = load4_aos(&sub_outputs[k + 5 * eighth]);
+        __m512d g = load4_aos(&sub_outputs[k + 6 * eighth]);
+        __m512d h = load4_aos(&sub_outputs[k + 7 * eighth]);
+
+        // Load twiddles
+        __m512d w1 = load4_aos(&stage_tw[7 * k]);
+        __m512d w2 = load4_aos(&stage_tw[7 * k + 1]);
+        __m512d w3 = load4_aos(&stage_tw[7 * k + 2]);
+        __m512d w4 = load4_aos(&stage_tw[7 * k + 3]);
+        __m512d w5 = load4_aos(&stage_tw[7 * k + 4]);
+        __m512d w6 = load4_aos(&stage_tw[7 * k + 5]);
+        __m512d w7 = load4_aos(&stage_tw[7 * k + 6]);
+
+        // Twiddle multiply
+        __m512d b2 = cmul_avx512_aos(b, w1);
+        __m512d c2 = cmul_avx512_aos(c, w2);
+        __m512d d2 = cmul_avx512_aos(d, w3);
+        __m512d e2 = cmul_avx512_aos(e, w4);
+        __m512d f2 = cmul_avx512_aos(f, w5);
+        __m512d g2 = cmul_avx512_aos(g, w6);
+        __m512d h2 = cmul_avx512_aos(h, w7);
+
+        // Butterfly
+        __m512d y0, y1, y2, y3, y4, y5, y6, y7;
+        RADIX8_BUTTERFLY_AVX512(a, b2, c2, d2, e2, f2, g2, h2,
+                                y0, y1, y2, y3, y4, y5, y6, y7);
+
+        // Store results
+        STOREU_PD512(&output_buffer[k].re, y0);
+        STOREU_PD512(&output_buffer[k + eighth].re, y1);
+        STOREU_PD512(&output_buffer[k + 2 * eighth].re, y2);
+        STOREU_PD512(&output_buffer[k + 3 * eighth].re, y3);
+        STOREU_PD512(&output_buffer[k + 4 * eighth].re, y4);
+        STOREU_PD512(&output_buffer[k + 5 * eighth].re, y5);
+        STOREU_PD512(&output_buffer[k + 6 * eighth].re, y6);
+        STOREU_PD512(&output_buffer[k + 7 * eighth].re, y7);
+    }
+
+    // UNDEFINE MACRO at the end
+    #undef RADIX8_BUTTERFLY_AVX512
 
 #endif // HAS_AVX512
 
@@ -3715,8 +3926,6 @@ static void mixed_radix_dit_rec(
             RADIX8_BUTTERFLY_AVX2(a3, b2_3, c2_3, d2_3, e2_3, f2_3, g2_3, h2_3,
                                   y0_3, y1_3, y2_3, y3_3, y4_3, y5_3, y6_3, y7_3);
 
-#undef RADIX8_BUTTERFLY_AVX2
-
             //==================================================================
             // Store results (pure AoS!)
             //==================================================================
@@ -3843,63 +4052,85 @@ static void mixed_radix_dit_rec(
             STOREU_PD(&output_buffer[k + 6 * eighth].re, y6);
             STOREU_PD(&output_buffer[k + 7 * eighth].re, y7);
         }
-
+        #undef RADIX8_BUTTERFLY_AVX2
 #endif // __AVX2__
 
         //------------------------------------------------------------------
         // SSE2 TAIL: Keep your scalar code
         //------------------------------------------------------------------
-        for (; k < eighth; ++k)
+         for (; k < eighth; ++k)
         {
-            const fft_data a = sub_outputs[k];
-            const fft_data b = sub_outputs[k + eighth];
-            const fft_data c = sub_outputs[k + 2 * eighth];
-            const fft_data d = sub_outputs[k + 3 * eighth];
-            const fft_data e = sub_outputs[k + 4 * eighth];
-            const fft_data f = sub_outputs[k + 5 * eighth];
-            const fft_data g = sub_outputs[k + 6 * eighth];
-            const fft_data h = sub_outputs[k + 7 * eighth];
+            __m128d a = LOADU_SSE2(&sub_outputs[k].re);
+            __m128d b = LOADU_SSE2(&sub_outputs[k + eighth].re);
+            __m128d c = LOADU_SSE2(&sub_outputs[k + 2 * eighth].re);
+            __m128d d = LOADU_SSE2(&sub_outputs[k + 3 * eighth].re);
+            __m128d e = LOADU_SSE2(&sub_outputs[k + 4 * eighth].re);
+            __m128d f = LOADU_SSE2(&sub_outputs[k + 5 * eighth].re);
+            __m128d g = LOADU_SSE2(&sub_outputs[k + 6 * eighth].re);
+            __m128d h = LOADU_SSE2(&sub_outputs[k + 7 * eighth].re);
 
-            const fft_data w1 = stage_tw[7 * k], w2 = stage_tw[7 * k + 1];
-            const fft_data w3 = stage_tw[7 * k + 2], w4 = stage_tw[7 * k + 3];
-            const fft_data w5 = stage_tw[7 * k + 4], w6 = stage_tw[7 * k + 5];
-            const fft_data w7 = stage_tw[7 * k + 6];
+            __m128d w1 = LOADU_SSE2(&stage_tw[7 * k].re);
+            __m128d w2 = LOADU_SSE2(&stage_tw[7 * k + 1].re);
+            __m128d w3 = LOADU_SSE2(&stage_tw[7 * k + 2].re);
+            __m128d w4 = LOADU_SSE2(&stage_tw[7 * k + 3].re);
+            __m128d w5 = LOADU_SSE2(&stage_tw[7 * k + 4].re);
+            __m128d w6 = LOADU_SSE2(&stage_tw[7 * k + 5].re);
+            __m128d w7 = LOADU_SSE2(&stage_tw[7 * k + 6].re);
 
-            double b2r = b.re * w1.re - b.im * w1.im, b2i = b.re * w1.im + b.im * w1.re;
-            double c2r = c.re * w2.re - c.im * w2.im, c2i = c.re * w2.im + c.im * w2.re;
-            double d2r = d.re * w3.re - d.im * w3.im, d2i = d.re * w3.im + d.im * w3.re;
-            double e2r = e.re * w4.re - e.im * w4.im, e2i = e.re * w4.im + e.im * w4.re;
-            double f2r = f.re * w5.re - f.im * w5.im, f2i = f.re * w5.im + f.im * w5.re;
-            double g2r = g.re * w6.re - g.im * w6.im, g2i = g.re * w6.im + g.im * w6.re;
-            double h2r = h.re * w7.re - h.im * w7.im, h2i = h.re * w7.im + h.im * w7.re;
+            __m128d b2 = cmul_sse2_aos(b, w1);
+            __m128d c2 = cmul_sse2_aos(c, w2);
+            __m128d d2 = cmul_sse2_aos(d, w3);
+            __m128d e2 = cmul_sse2_aos(e, w4);
+            __m128d f2 = cmul_sse2_aos(f, w5);
+            __m128d g2 = cmul_sse2_aos(g, w6);
+            __m128d h2 = cmul_sse2_aos(h, w7);
 
-            double s0r = b2r + h2r, s0i = b2i + h2i, d0r = b2r - h2r, d0i = b2i - h2i;
-            double s1r = c2r + g2r, s1i = c2i + g2i, d1r = c2r - g2r, d1i = c2i - g2i;
-            double s2r = d2r + f2r, s2i = d2i + f2i, d2mr = d2r - f2r, d2mi = d2i - f2i;
-            double t0r = a.re + e2r, t0i = a.im + e2i, t4r = a.re - e2r, t4i = a.im - e2i;
+            // Butterfly (same logic as AVX2, using SSE2 instructions)
+            __m128d vc_sse = _mm_set1_pd(C8_1);
+            __m128d rot_mask_sse = (transform_sign == 1) 
+                ? _mm_set_pd(-0.0, 0.0) 
+                : _mm_set_pd(0.0, -0.0);
 
-            output_buffer[k] = (fft_data){t0r + (s0r + s1r + s2r), t0i + (s0i + s1i + s2i)};
-            output_buffer[k + 4 * eighth] = (fft_data){t4r - s0r - s1r + s2r, t4i - s0i - s1i + s2i};
+            __m128d s0 = _mm_add_pd(b2, h2), d0_v = _mm_sub_pd(b2, h2);
+            __m128d s1 = _mm_add_pd(c2, g2), d1_v = _mm_sub_pd(c2, g2);
+            __m128d s2 = _mm_add_pd(d2, f2), d2_diff = _mm_sub_pd(d2, f2);
+            __m128d t0 = _mm_add_pd(a, e2), t4 = _mm_sub_pd(a, e2);
 
-            double base26r = d2mr - d0r, base26i = d2mi - d0i;
-            double rr26 = (transform_sign == 1) ? -base26i : base26i;
-            double ri26 = (transform_sign == 1) ? base26r : -base26r;
-            double t02r = t0r - s1r, t02i = t0i - s1i;
-            output_buffer[k + 2 * eighth] = (fft_data){t02r + rr26, t02i + ri26};
-            output_buffer[k + 6 * eighth] = (fft_data){t02r - rr26, t02i - ri26};
+            __m128d y0 = _mm_add_pd(t0, _mm_add_pd(_mm_add_pd(s0, s1), s2));
+            __m128d y4 = _mm_add_pd(_mm_sub_pd(t4, _mm_add_pd(s0, s1)), s2);
 
-            double s0ms2r = s0r - s2r, s0ms2i = s0i - s2i;
-            double real17r = t4r + C8_1 * s0ms2r, real17i = t4i + C8_1 * s0ms2i;
-            double V17r = -(C8_1 * (d0r + d2mr) + d1r), V17i = -(C8_1 * (d0i + d2mi) + d1i);
-            double rr17 = (transform_sign == 1) ? -V17i : V17i, ri17 = (transform_sign == 1) ? V17r : -V17r;
-            output_buffer[k + eighth] = (fft_data){real17r + rr17, real17i + ri17};
-            output_buffer[k + 7 * eighth] = (fft_data){real17r - rr17, real17i - ri17};
+            __m128d base26 = _mm_sub_pd(d2_diff, d0_v);
+            __m128d base26_swp = _mm_shuffle_pd(base26, base26, 0b01);
+            __m128d rr26 = _mm_xor_pd(base26_swp, rot_mask_sse);
+            __m128d t02 = _mm_sub_pd(t0, s1);
+            __m128d y2 = _mm_add_pd(t02, rr26);
+            __m128d y6 = _mm_sub_pd(t02, rr26);
 
-            double real35r = t4r - C8_1 * s0ms2r, real35i = t4i - C8_1 * s0ms2i;
-            double V35r = -(C8_1 * (d0r - d2mr) + d1r), V35i = -(C8_1 * (d0i - d2mi) + d1i);
-            double rr35 = (transform_sign == 1) ? -V35i : V35i, ri35 = (transform_sign == 1) ? V35r : -V35r;
-            output_buffer[k + 3 * eighth] = (fft_data){real35r + rr35, real35i + ri35};
-            output_buffer[k + 5 * eighth] = (fft_data){real35r - rr35, real35i - ri35};
+            __m128d s0ms2 = _mm_sub_pd(s0, s2);
+            __m128d real17 = FMADD_SSE2(vc_sse, s0ms2, t4);
+            __m128d dd = _mm_add_pd(d0_v, d2_diff);
+            __m128d V17 = _mm_sub_pd(_mm_setzero_pd(), FMADD_SSE2(vc_sse, dd, d1_v));
+            __m128d V17_swp = _mm_shuffle_pd(V17, V17, 0b01);
+            __m128d rr17 = _mm_xor_pd(V17_swp, rot_mask_sse);
+            __m128d y1 = _mm_add_pd(real17, rr17);
+            __m128d y7 = _mm_sub_pd(real17, rr17);
+
+            __m128d real35 = FMSUB_SSE2(vc_sse, s0ms2, t4);
+            __m128d dd2 = _mm_sub_pd(d0_v, d2_diff);
+            __m128d V35 = _mm_sub_pd(_mm_setzero_pd(), FMADD_SSE2(vc_sse, dd2, d1_v));
+            __m128d V35_swp = _mm_shuffle_pd(V35, V35, 0b01);
+            __m128d rr35 = _mm_xor_pd(V35_swp, rot_mask_sse);
+            __m128d y3 = _mm_add_pd(real35, rr35);
+            __m128d y5 = _mm_sub_pd(real35, rr35);
+
+            STOREU_SSE2(&output_buffer[k].re, y0);
+            STOREU_SSE2(&output_buffer[k + eighth].re, y1);
+            STOREU_SSE2(&output_buffer[k + 2 * eighth].re, y2);
+            STOREU_SSE2(&output_buffer[k + 3 * eighth].re, y3);
+            STOREU_SSE2(&output_buffer[k + 4 * eighth].re, y4);
+            STOREU_SSE2(&output_buffer[k + 5 * eighth].re, y5);
+            STOREU_SSE2(&output_buffer[k + 6 * eighth].re, y6);
+            STOREU_SSE2(&output_buffer[k + 7 * eighth].re, y7);
         }
     }
     else if (radix == 11)
