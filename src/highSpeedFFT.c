@@ -5259,32 +5259,6 @@ void fft_exec(fft_object fft_obj, fft_data *inp, fft_data *oup)
 }
 
 /**
- * @brief Checks if a number M is divisible by a divisor d, reducing M repeatedly.
- *
- * Determines if M can be fully divided by d, returning 1 if M becomes 1, 0 otherwise.
- *
- * @param[in] number Number to check for divisibility (M > 0).
- * @param[in] divisor Divisor to divide by (d > 0).
- * @return int 1 if M is fully divisible by d, 0 otherwise.
- * @warning If M or d is invalid (<= 0), the function exits with an error.
- */
-int divideby(int number, int divisor)
-{
-    if (number <= 0 || divisor <= 0)
-    {
-        fprintf(stderr, "Error: Invalid inputs for divideby - number: %d, divisor: %d\n", number, divisor);
-        // exit
-    }
-
-    int result = number;
-    while (result % divisor == 0)
-    {
-        result /= divisor;
-    }
-    return (result == 1) ? 1 : 0;
-}
-
-/**
  * @brief Checks if a number N is divisible by a series of small prime numbers.
  *
  * Uses a precomputed lookup table for small N (<= 1024) and falls back to division for larger N.
