@@ -1,6 +1,8 @@
 #include "highspeedFFT.h"
 #include "time.h"
 #include <immintrin.h>
+#include <pthread.h>
+
 
 //==============================================================================
 // INLINE / ATTRIBUTES
@@ -544,6 +546,8 @@ static int num_precomputed = 0;
  */
 static int chirp_initialized = 0;
 
+static pthread_once_t chirp_init_once = PTHREAD_ONCE_INIT;
+
 /* Forward decls for portability (MSVC doesn’t support constructor attrs) */
 static void init_bluestein_chirp_body(void);
 static void cleanup_bluestein_chirp_body(void);
@@ -586,9 +590,6 @@ cleanup_bluestein_chirp(void)
  */
 static void init_bluestein_chirp_body(void)
 {
-    if (chirp_initialized)
-        return;
-
     // total storage needed (rounded up per size to multiple of 4 for alignment-friendly access)
     int total_chirp = 0;
     for (int i = 0; i < num_pre; i++)
@@ -3748,7 +3749,6 @@ static void mixed_radix_dit_rec(
 
     // UNDEFINE MACRO at the end
     #undef RADIX8_BUTTERFLY_AVX512
-
 #endif // HAS_AVX512
 
 #ifdef __AVX2__
@@ -5668,8 +5668,7 @@ static inline int find_pre_idx(int N)
  */
 static inline void bluestein_exp(fft_data *temp_scratch, fft_data *chirp_out, int N, int M)
 {
-    if (!chirp_initialized)
-        init_bluestein_chirp();
+    pthread_once(&chirp_init_once, init_bluestein_chirp_body);
 
     // 1) Produce chirp_out[n] = exp(+i*pi*n^2/N), n = 0..N-1
     int pre = find_pre_idx(N);
