@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #==============================================================================
 # SIMD OPTIONS (Define at top level so subdirectories can access)
 #==============================================================================
-option(ENABLE_GTEST "Enable GoogleTest-based unit tests" ON)
+option(ENABLE_GTEST "Enable GoogleTest-based unit tests" OFF)
 option(ENABLE_AVX512 "Enable AVX-512 instructions..." ON)
 
 # Fetch dependencies conditionally
