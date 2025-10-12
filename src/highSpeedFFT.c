@@ -1,3 +1,212 @@
+/**
+ * @file highspeedFFT_hybrid_cooleytukey_bluestein.c
+ * @brief Hybrid Adaptive Mixed-Radix Cooley-Tukey / Bluestein FFT Implementation
+ * 
+ * 
+ * SIMD INTRINSICS (x86-64):
+ * -------------------------
+ * #include <immintrin.h>  // AVX2, AVX-512, FMA intrinsics
+ *                         // Includes: <xmmintrin.h>  (SSE)
+ *                         //           <emmintrin.h>  (SSE2)
+ *                         //           <pmmintrin.h>  (SSE3)
+ *                         //           <tmmintrin.h>  (SSSE3)
+ *                         //           <smmintrin.h>  (SSE4.1)
+ *                         //           <nmmintrin.h>  (SSE4.2)
+ *                         //           <ammintrin.h>  (SSE4a)
+ *                         //           <avxintrin.h>  (AVX)
+ *                         //           <avx2intrin.h> (AVX2)
+ *                         //           <fmaintrin.h>  (FMA)
+ *                         //           <avx512fintrin.h> (AVX-512F)
+ * 
+ * COMPILER BUILTINS (GCC/Clang):
+ * ------------------------------
+ * // No explicit include needed, built into compiler:
+ * // __builtin_prefetch() - software prefetch
+ * // __asm__ __volatile__ - inline assembly (CPUID, RDTSC)
+ * 
+ * 
+ * COMPILATION FLAGS REQUIRED:
+ * ===========================
+ * 
+ * BASIC (Minimum):
+ * ---------------
+ * gcc -O3 -march=native -std=c11 highspeedFFT.c -lm -pthread -o fft
+ * 
+ * RECOMMENDED (Best Performance):
+ * ------------------------------
+ * gcc -O3 -march=native -mtune=native \
+ *     -mavx2 -mfma -msse4.2 \
+ *     -std=c11 -Wall -Wextra \
+ *     -ffast-math -funroll-loops \
+ *     highspeedFFT.c -lm -pthread -o fft
+ * 
+ * AVX-512 (Ice Lake+):
+ * -------------------
+ * gcc -O3 -march=skylake-avx512 -mavx512f -mavx512dq \
+ *     -std=c11 highspeedFFT.c -lm -pthread -o fft
+ * 
+ * DEBUG (With Alignment Checks):
+ * -----------------------------
+ * gcc -O0 -g -march=native -std=c11 \
+ *     -DFFT_DEBUG_ALIGNMENT -DFFT_ALIGNMENT_CHECK \
+ *     highspeedFFT.c -lm -pthread -o fft_debug
+ * 
+ * ARCHITECTURE-SPECIFIC FLAGS:
+ * ============================
+ * 
+ * Intel Skylake:
+ * -------------
+ * -march=skylake -mavx2 -mfma
+ * 
+ * Intel Ice Lake:
+ * --------------
+ * -march=icelake-client -mavx512f -mavx512dq
+ * 
+ * AMD Zen 3:
+ * ---------
+ * -march=znver3 -mavx2 -mfma
+ * 
+ * AMD Zen 4:
+ * ---------
+ * -march=znver4 -mavx512f -mavx512vl
+ * 
+ * Apple M1/M2 (ARM64):
+ * -------------------
+ * clang -O3 -mcpu=apple-m1 -std=c11 highspeedFFT.c -lm -pthread
+ * # Note: Need ARM NEON intrinsics instead of x86 intrinsics
+ * 
+ * ARM Neoverse:
+ * ------------
+ * gcc -O3 -mcpu=neoverse-v1 -std=c11 highspeedFFT.c -lm -pthread
+ * 
+ * 
+ * PREPROCESSOR DEFINES (Optional):
+ * ================================
+ * 
+ * -DUSE_ALIGNED_SIMD
+ *   Enforce aligned loads/stores (faster but requires aligned buffers)
+ * 
+ * -DFFT_STRICT_ALIGNMENT
+ *   Abort on misaligned access (debug mode)
+ * 
+ * -DFFT_DEBUG_ALIGNMENT
+ *   Print warnings on misaligned access
+ * 
+ * -DFFT_ALIGNMENT_CHECK
+ *   Enable runtime alignment checking
+ * 
+ * -DUSE_TWIDDLE_TABLES
+ *   Use precomputed twiddle tables (enabled by default)
+ * 
+ * -DUSE_FMA
+ *   Force FMA instructions (auto-detected by default)
+ * 
+ * -DHAS_AVX512
+ *   Enable AVX-512 code paths (auto-detected)
+ * 
+ * -DMAX_STAGES=32
+ *   Maximum recursion depth (default varies)
+ * 
+ * 
+ * RUNTIME ENVIRONMENT VARIABLES:
+ * ==============================
+ * 
+ * HFFT_EXHAUSTIVE_SEARCH=1
+ *   Enable exhaustive prefetch search (slow, one-time)
+ * 
+ * HFFT_WISDOM_FILE=/path/to/wisdom.txt
+ *   Custom wisdom file location (default: ./hfft_wisdom.txt)
+ * 
+ * 
+ * PLATFORM-SPECIFIC NOTES:
+ * ========================
+ * 
+ * LINUX:
+ * -----
+ * - All features supported
+ * - Use GCC 9+ or Clang 10+ for best results
+ * - AVX-512 requires kernel 4.15+ (saves zmm registers)
+ * 
+ * WINDOWS (MSVC):
+ * --------------
+ * - Replace __attribute__((constructor/destructor)) with DllMain hooks
+ * - Use _aligned_malloc instead of _mm_malloc on older MSVC
+ * - Inline assembly syntax differs (use __asm instead of __asm__)
+ * - Compile with: cl /O2 /arch:AVX2 /std:c11 highspeedFFT.c
+ * 
+ * MACOS (Apple Clang):
+ * -------------------
+ * - x86-64: Full support (Intel Macs)
+ * - ARM64 (M1/M2): Need ARM NEON port (x86 intrinsics won't work)
+ * - Compile with: clang -O3 -march=native highspeedFFT.c -lm -pthread
+ * 
+ * FREEBSD:
+ * -------
+ * - Same as Linux, may need -lexecinfo for backtrace
+ * 
+ * ANDROID/iOS:
+ * -----------
+ * - ARM targets require NEON intrinsics (#include <arm_neon.h>)
+ * - May need -fno-strict-aliasing
+ * 
+ * 
+ * ALGORITHM CLASSIFICATION:
+ * ========================
+ * This is a **Hybrid Adaptive Mixed-Radix Cooley-Tukey/Bluestein FFT** with:
+ * 
+ * 1. **Mixed-Radix Cooley-Tukey DIT (Primary Path)**
+ *    - Factorizes N into primes: {2, 3, 4, 5, 7, 8, 11, 13, 16, 17, 23, 29, 31, 32, 37, 41, 43, 47, 53}
+ *    - Uses specialized butterfly kernels for each radix (SIMD-optimized)
+ *    - Decomposition strategy: DIT (Decimation-In-Time) recursive
+ *    - Inspired by: FFTW's "codelets" approach with heavy unrolling
+ * 
+ * 2. **Bluestein's Chirp Z-Transform (Fallback Path)**
+ *    - Handles prime/composite lengths not factorizable by mixed-radix
+ *    - Converts arbitrary DFT to convolution via chirp sequences
+ *    - Padded to next power-of-2 for efficient sub-FFTs
+ *    - Precomputed chirp tables for common small sizes (N ≤ 64)
+ * 
+ * 3. **Pure-Power Optimization Paths**
+ *    - Radix-2^k: 2, 4, 8, 16, 32 (special-cased for power-of-2)
+ *    - Radix-3^k, 5^k, 7^k, 11^k, 13^k (pure-power decompositions)
+ *    - Precomputed twiddle factors in "k-major" layout for cache efficiency
+ * 
+ * 4. **SIMD Vectorization (AVX2/AVX-512/SSE2)**
+ *    - AoS (Array-of-Structures) complex layout throughout
+ *    - 4x/8x/16x loop unrolling for different radices
+ *    - FMA (Fused Multiply-Add) for twiddle multiplications
+ *    - Adaptive prefetch strategy (FFTW-inspired)
+ * 
+ * SIMILAR ALGORITHMS:
+ * ==================
+ * - **FFTW**: "Fastest Fourier Transform in the West" (inspiration for design)
+ * - **Intel MKL DFT**: Also uses hybrid mixed-radix + Bluestein
+ * - **SPIRAL**: Auto-tuned FFT generator with similar philosophy
+ * - **KissFFT**: Simple mixed-radix (but less aggressive optimization)
+ * 
+ * 
+ * PREFETCH STRATEGY - FINAL IMPLEMENTATION (100% of FFTW):
+ * ===========================================================
+ * ✅ Per-stage configuration (distance, hint, strategy)
+ * ✅ Hardware detection (CPUID for L1/L2/L3 sizes)
+ * ✅ Multi-stream prefetching (input, output, twiddles)
+ * ✅ Working set analysis (adapt to cache hierarchy)
+ * ✅ Runtime profiling (cycle counting, hill-climb tuning)
+ * ✅ Stride-aware prefetch (early stages with large strides)
+ * ✅ Blocking-aware prefetch (large radices)
+ * ✅ Write prefetch (RFO avoidance)
+ * ✅ Unroll-aware distance adjustment
+ * 
+ * NEW FEATURES (THE FINAL 20%):
+ * ==============================
+ * ✅ #3: TLB Prefetching (for N > 16M elements)
+ * ✅ #5: Exhaustive Search + Wisdom Database (persistent tuning)
+ * ✅ #7: Prefetch Throttling (budget management)
+ * ✅ #10: CPU-Specific Tuning Database (Intel/AMD/ARM profiles)
+ * 
+ * 
+*/
+
 #include "highspeedFFT.h"
 #include "time.h"
 #include <immintrin.h>
