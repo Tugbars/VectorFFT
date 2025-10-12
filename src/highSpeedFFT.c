@@ -101,6 +101,18 @@ static ALWAYS_INLINE __m256d fmsub_fallback(__m256d a, __m256d b, __m256d c)
 #define FFT_ALIGNMENT_CHECK
 #endif
 
+/**
+ * @brief Load 4 doubles with optional alignment checking.
+ *
+ * Behavior depends on compile flags:
+ * - FFT_DEBUG_ALIGNMENT: Check alignment at runtime, print warning if misaligned
+ * - FFT_STRICT_ALIGNMENT: Abort on misalignment (debug only)
+ * - USE_ALIGNED_SIMD: Use fast aligned load (requires 32-byte aligned ptr)
+ * - Default: Use safe unaligned load
+ *
+ * @param ptr Pointer to 4 doubles (32 bytes). Must be 32-byte aligned if USE_ALIGNED_SIMD is set.
+ * @return AVX register containing the 4 loaded doubles.
+ */
 static ALWAYS_INLINE __m256d LOAD_PD(const double *ptr)
 {
 #ifdef FFT_ALIGNMENT_CHECK
@@ -122,6 +134,15 @@ static ALWAYS_INLINE __m256d LOAD_PD(const double *ptr)
 #endif
 #endif
 }
+
+/**
+ * @brief Store 4 doubles with optional alignment checking.
+ *
+ * Companion to LOAD_PD. Uses aligned/unaligned store based on same compile flags.
+ *
+ * @param ptr Pointer to write 4 doubles. Must be 32-byte aligned if USE_ALIGNED_SIMD is set.
+ * @param v AVX register to store.
+ */
 
 static ALWAYS_INLINE void STORE_PD(double *ptr, __m256d v)
 {
@@ -146,6 +167,15 @@ static ALWAYS_INLINE void STORE_PD(double *ptr, __m256d v)
 #endif
 }
 
+/**
+ * @brief Load 2 doubles with optional alignment checking (SSE2).
+ *
+ * SSE2 version for loading 1 complex number or tail elements.
+ * Uses 16-byte alignment requirement instead of 32-byte.
+ *
+ * @param ptr Pointer to 2 doubles (16 bytes). Must be 16-byte aligned if USE_ALIGNED_SIMD is set.
+ * @return SSE register containing the 2 loaded doubles.
+ */
 static ALWAYS_INLINE __m128d LOAD_SSE2(const double *ptr)
 {
 #ifdef FFT_ALIGNMENT_CHECK
@@ -168,6 +198,14 @@ static ALWAYS_INLINE __m128d LOAD_SSE2(const double *ptr)
 #endif
 }
 
+/**
+ * @brief Store 2 doubles with optional alignment checking (SSE2).
+ *
+ * SSE2 version of STORE_PD for 1 complex number or tail elements.
+ *
+ * @param ptr Pointer to write 2 doubles. Must be 16-byte aligned if USE_ALIGNED_SIMD is set.
+ * @param v SSE register to store.
+ */
 static ALWAYS_INLINE void STORE_SSE2(double *ptr, __m128d v)
 {
 #ifdef FFT_ALIGNMENT_CHECK
