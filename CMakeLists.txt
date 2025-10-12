@@ -1,5 +1,3 @@
-# Top-level CMakeLists.txt
-
 cmake_minimum_required(VERSION 3.10)
 
 project(highspeedFFT_project LANGUAGES C CXX)
@@ -10,8 +8,11 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Option to enable GoogleTest/FFF tests (can be changed manually)
-set(ENABLE_GTEST OFF CACHE BOOL "Enable GoogleTest-based unit tests")
+#==============================================================================
+# SIMD OPTIONS (Define at top level so subdirectories can access)
+#==============================================================================
+option(ENABLE_GTEST "Enable GoogleTest-based unit tests" ON)
+option(ENABLE_AVX512 "Enable AVX-512 instructions..." ON)
 
 # Fetch dependencies conditionally
 if(ENABLE_GTEST)
@@ -40,3 +41,12 @@ add_subdirectory(test)
 
 # Enable CTest
 enable_testing()
+
+#==============================================================================
+# BUILD SUMMARY
+#==============================================================================
+message(STATUS "============================================")
+message(STATUS "Build Configuration:")
+message(STATUS "  GoogleTest: ${ENABLE_GTEST}")
+message(STATUS "  AVX-512:    ${ENABLE_AVX512}")
+message(STATUS "============================================")

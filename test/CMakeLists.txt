@@ -42,6 +42,27 @@ else()
 
     target_link_libraries(test_mixedRadixFFT
         highspeedFFT
-        m
     )
+    
+    # Link math library for non-MSVC
+    if(NOT MSVC)
+        target_link_libraries(test_mixedRadixFFT m)
+    endif()
+    
+    #=======================================================================
+    # AVX-512 SUPPORT FOR TESTS
+    #=======================================================================
+    # Inherit AVX-512 flags from parent if enabled
+    if(ENABLE_AVX512)
+        message(STATUS "Test executable: AVX-512 enabled")
+        target_compile_definitions(test_mixedRadixFFT PRIVATE HAS_AVX512)
+        
+        if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(test_mixedRadixFFT PRIVATE -mavx512f -mavx512dq)
+        elseif(MSVC)
+            target_compile_options(test_mixedRadixFFT PRIVATE /arch:AVX512)
+        endif()
+    else()
+        message(STATUS "Test executable: AVX-512 disabled (use -DENABLE_AVX512=ON to enable)")
+    endif()
 endif()
