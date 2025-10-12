@@ -951,52 +951,6 @@ static ALWAYS_INLINE __m128d cmul_sse2_aos(__m128d a, __m128d b)
 }
 
 /**
- * @brief Conjugate two AoS-packed complex doubles with AVX (no cross-lane ops).
- *
- * Treats @p z as two complex numbers packed in Array-of-Structures (AoS) layout:
- *   [ re0, im0, re1, im1 ]  (lane 0..3).
- *
- * Conjugation flips the sign of the imaginary parts only:
- *   [ re0, -im0, re1, -im1 ].
- *
- * This uses an XOR with a sign-bit mask built from ±0.0 to toggle the sign
- * of lanes 1 and 3 (the imaginary lanes) without changing the reals.
- *
- * @param z AoS-packed vector [ re0, im0, re1, im1 ].
- * @return __m256d AoS-packed conjugate [ re0, -im0, re1, -im1 ].
- *
- * @note Requires AVX. Data layout must be AoS (interleaved re,im).
- */
-static ALWAYS_INLINE __m256d conj_avx2_aos(__m256d z)
-{
-    const __m256d mask = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // lanes: [re1, im1, re0, im0]? NO.
-    // Correct mask is [0.0, -0.0, 0.0, -0.0] for [re0, im0, re1, im1]:
-    const __m256d corr = _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
-    (void)mask; // avoid unused if you keep both lines for reference
-    return _mm256_xor_pd(z, corr);
-}
-
-/**
- * @brief Conjugate one AoS-packed complex double with SSE2.
- *
- * Treats @p z as a single complex number in AoS layout:
- *   [ re, im ]  (lane 0..1).
- *
- * Conjugation flips the sign of the imaginary part only:
- *   [ re, -im ].
- *
- * @param z AoS-packed vector [ re, im ].
- * @return __m128d AoS-packed conjugate [ re, -im ].
- *
- * @note Requires SSE2. Data layout must be AoS (interleaved re,im).
- */
-static ALWAYS_INLINE __m128d conj_sse2_aos(__m128d z)
-{
-    const __m128d mask = _mm_set_pd(-0.0, 0.0);
-    return _mm_xor_pd(z, mask);
-}
-
-/**
  * @brief Load two consecutive complex samples (AoS) into one AVX register.
  *
  * Loads:
