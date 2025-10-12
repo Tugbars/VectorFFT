@@ -28,7 +28,14 @@ if(MATH_LIBRARY)
     target_link_libraries(highspeedFFT PRIVATE ${MATH_LIBRARY})
 endif()
 
-# Check for SSE2 support (required for radix-4)
+#==============================================================================
+# SIMD OPTIONS
+#==============================================================================
+option(ENABLE_AVX512 "Enable AVX-512 instructions (requires Skylake-X/Ice Lake or newer)" OFF)
+
+#==============================================================================
+# SSE2 SUPPORT (Required baseline)
+#==============================================================================
 include(CheckCCompilerFlag)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     check_c_compiler_flag("-msse2" COMPILER_SUPPORTS_SSE2)
@@ -44,25 +51,60 @@ else()
     message(WARNING "Unknown compiler; SSE2 support not guaranteed")
 endif()
 
-# Check for AVX2 support (required for radices 2, 7, 8)
+#==============================================================================
+# AVX2 SUPPORT (Required for radices 2, 7, 8)
+#==============================================================================
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
     if(COMPILER_SUPPORTS_AVX2)
         target_compile_options(highspeedFFT PRIVATE -O3 -mavx2)
+        message(STATUS "AVX2 support enabled with -mavx2")
     else()
         message(FATAL_ERROR "Compiler does not support -mavx2, required for AVX2 intrinsics")
     endif()
 elseif(CMAKE_C_COMPILER_ID MATCHES "MSVC")
-    # MSVC uses /arch:AVX2; no flag check needed, as it's supported in modern versions
     target_compile_options(highspeedFFT PRIVATE /O2 /arch:AVX2)
     if(MSVC_VERSION LESS 1800) # VS 2013 Update 4
         message(WARNING "MSVC version may lack full AVX2 support; recommend VS 2015 or later")
     endif()
+    message(STATUS "AVX2 support enabled with /arch:AVX2")
 else()
     message(WARNING "Unknown compiler; AVX2 support not guaranteed")
 endif()
 
-# Check for FMA support
+#==============================================================================
+# AVX-512 SUPPORT (Optional, for radix-2 and future optimizations)
+#==============================================================================
+if(ENABLE_AVX512)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        check_c_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
+        check_c_compiler_flag("-mavx512dq" COMPILER_SUPPORTS_AVX512DQ)
+        
+        if(COMPILER_SUPPORTS_AVX512F AND COMPILER_SUPPORTS_AVX512DQ)
+            target_compile_options(highspeedFFT PRIVATE -mavx512f -mavx512dq)
+            target_compile_definitions(highspeedFFT PRIVATE HAS_AVX512)
+            message(STATUS "AVX-512 support enabled with -mavx512f -mavx512dq")
+        else()
+            message(WARNING "AVX-512 requested but not supported by compiler, falling back to AVX2")
+        endif()
+    elseif(CMAKE_C_COMPILER_ID MATCHES "MSVC")
+        if(MSVC_VERSION GREATER_EQUAL 1911) # VS 2017 15.3+
+            target_compile_options(highspeedFFT PRIVATE /arch:AVX512)
+            target_compile_definitions(highspeedFFT PRIVATE HAS_AVX512)
+            message(STATUS "AVX-512 support enabled with /arch:AVX512")
+        else()
+            message(WARNING "AVX-512 requested but requires VS 2017 15.3+, falling back to AVX2")
+        endif()
+    else()
+        message(WARNING "AVX-512 requested but unknown compiler; skipping")
+    endif()
+else()
+    message(STATUS "AVX-512 disabled (use -DENABLE_AVX512=ON to enable)")
+endif()
+
+#==============================================================================
+# FMA SUPPORT
+#==============================================================================
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     check_c_compiler_flag("-mfma" COMPILER_SUPPORTS_FMA)
     if(COMPILER_SUPPORTS_FMA)
@@ -78,7 +120,16 @@ elseif(CMAKE_C_COMPILER_ID MATCHES "MSVC")
     message(STATUS "FMA support enabled with /fp:fast and USE_FMA defined")
 endif()
 
-# Note mixed SIMD usage
-message(STATUS "Building with mixed SIMD: SSE2 for radix-4, AVX2 for radices 2, 7, 8")
-
-# TODO: Add checks for aligned allocation (e.g., _aligned_malloc, posix_memalign) for future pre-allocation
+#==============================================================================
+# SUMMARY
+#==============================================================================
+message(STATUS "============================================")
+message(STATUS "SIMD Configuration Summary:")
+message(STATUS "  SSE2:    Enabled (required baseline)")
+message(STATUS "  AVX2:    Enabled (required for radix-2,7,8)")
+if(ENABLE_AVX512)
+    message(STATUS "  AVX-512: Enabled (radix-2 optimized)")
+else()
+    message(STATUS "  AVX-512: Disabled (enable with -DENABLE_AVX512=ON)")
+endif()
+message(STATUS "============================================")

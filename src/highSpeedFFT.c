@@ -13,18 +13,6 @@
 #define ALWAYS_INLINE inline
 #endif
 
-//==============================================================================
-// ALIGNMENT HELPERS
-//==============================================================================
-static ALWAYS_INLINE int is_aligned_32(const void *p)
-{
-    return (((uintptr_t)p) & 31) == 0;
-}
-static ALWAYS_INLINE int is_aligned_16(const void *p)
-{
-    return (((uintptr_t)p) & 15) == 0;
-}
-
 /**
  * @brief Build configuration option for twiddle factor computation.
  * Define USE_TWIDDLE_TABLES to use precomputed lookup tables for radices 2, 3, 4, 5, 7, 8, 11, and 13.
@@ -100,6 +88,94 @@ static ALWAYS_INLINE __m256d fmsub_fallback(__m256d a, __m256d b, __m256d c)
 #ifdef FFT_DEBUG_ALIGNMENT
 #define FFT_ALIGNMENT_CHECK
 #endif
+
+//==============================================================================
+// AVX-512 DETECTION AND SETUP
+//==============================================================================
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+#define HAS_AVX512
+#endif
+
+//=============================================================================
+// ALIGNMENT HELPER FOR AVX-512
+//==============================================================================
+#ifdef HAS_AVX512
+/**
+ * @brief Check 64-byte alignment for AVX-512.
+ */
+static ALWAYS_INLINE int is_aligned_64(const void *p)
+{
+    return (((uintptr_t)p) & 63) == 0;
+}
+#endif
+
+//==============================================================================
+// LOAD / STORE WRAPPERS - AVX-512
+//==============================================================================
+
+/**
+ * @brief Load 8 doubles (512 bits) with alignment handling.
+ */
+static ALWAYS_INLINE __m512d LOAD_PD512(const double *ptr)
+{
+#ifdef FFT_ALIGNMENT_CHECK
+    if (!is_aligned_64(ptr))
+    {
+        fprintf(stderr, "FFT WARNING: unaligned AVX-512 load at %p (expected 64B)\n", (void *)ptr);
+#ifdef FFT_STRICT_ALIGNMENT
+        abort();
+#else
+        return _mm512_loadu_pd(ptr);
+#endif
+    }
+    return _mm512_load_pd(ptr);
+#else
+#ifdef USE_ALIGNED_SIMD
+    return _mm512_load_pd(ptr);
+#else
+    return _mm512_loadu_pd(ptr);
+#endif
+#endif
+}
+
+/**
+ * @brief Store 8 doubles (512 bits) with alignment handling.
+ */
+static ALWAYS_INLINE void STORE_PD512(double *ptr, __m512d v)
+{
+#ifdef FFT_ALIGNMENT_CHECK
+    if (!is_aligned_64(ptr))
+    {
+        fprintf(stderr, "FFT WARNING: unaligned AVX-512 store at %p (expected 64B)\n", (void *)ptr);
+#ifdef FFT_STRICT_ALIGNMENT
+        abort();
+#else
+        _mm512_storeu_pd(ptr, v);
+        return;
+#endif
+    }
+    _mm512_store_pd(ptr, v);
+#else
+#ifdef USE_ALIGNED_SIMD
+    _mm512_store_pd(ptr, v);
+#else
+    _mm512_storeu_pd(ptr, v);
+#endif
+#endif
+}
+
+// Explicit unaligned versions
+#define LOADU_PD512(ptr) _mm512_loadu_pd((const double *)(ptr))
+#define STOREU_PD512(ptr, v) _mm512_storeu_pd((double *)(ptr), (v))
+
+static ALWAYS_INLINE int is_aligned_32(const void *p)
+{
+    return (((uintptr_t)p) & 31) == 0;
+}
+static ALWAYS_INLINE int is_aligned_16(const void *p)
+{
+    return (((uintptr_t)p) & 15) == 0;
+}
 
 /**
  * @brief Load 4 doubles with optional alignment checking.
@@ -946,7 +1022,7 @@ fft_object fft_init(int signal_length, int transform_direction)
             free_fft(fft_config);
             return NULL;
         }
-    } 
+    }
 
     // Step 12: Adjust twiddles for inverse FFT
     if (transform_direction == -1)
@@ -967,6 +1043,47 @@ fft_object fft_init(int signal_length, int transform_direction)
     // Step 13: Return configured FFT object
     return fft_config;
 }
+
+#ifdef HAS_AVX512
+/**
+ * @brief Complex multiply (AoS) for 4 packed complex values using AVX-512.
+ *
+ * Input layout: a = [ar0, ai0, ar1, ai1, ar2, ai2, ar3, ai3]
+ *               b = [br0, bi0, br1, bi1, br2, bi2, br3, bi3]
+ *
+ * Output: [ar0*br0 - ai0*bi0, ar0*bi0 + ai0*br0, ar1*br1 - ai1*bi1, ...]
+ *
+ * @param a First complex vector (4 complex numbers).
+ * @param b Second complex vector (4 complex numbers).
+ * @return Complex product in AoS layout.
+ */
+static ALWAYS_INLINE __m512d cmul_avx512_aos(__m512d a, __m512d b)
+{
+    __m512d a_re = _mm512_moveldup_pd(a);        // [ar, ar, ar, ar, ...]
+    __m512d a_im = _mm512_movehdup_pd(a);        // [ai, ai, ai, ai, ...]
+    __m512d b_flip = _mm512_permute_pd(b, 0x55); // [bi, br, bi, br, ...]
+
+    return _mm512_fmaddsub_pd(a_re, b, _mm512_mul_pd(a_im, b_flip));
+}
+/**
+ * @brief Load 4 consecutive complex numbers (8 doubles) into AVX-512 register.
+ */
+static ALWAYS_INLINE __m512d load4_aos(const fft_data *p)
+{
+    return LOADU_PD512(&p->re);
+}
+
+/**
+ * @brief Store 4 complex numbers from AVX-512 register.
+ *
+ * @param p Pointer to destination.
+ * @param v AVX-512 register containing 4 complex values.
+ */
+static ALWAYS_INLINE void store4_aos(fft_data *p, __m512d v)
+{
+    STOREU_PD512(&p->re, v);
+}
+#endif // HAS_AVX512
 
 /**
  * @brief Complex multiply (AoS) for two packed complex vectors using AVX.
@@ -1614,7 +1731,7 @@ static void mixed_radix_dit_rec(
         );
     }
 
-        //==========================================================================
+    //==========================================================================
     // 7) PREPARE TWIDDLES IF NOT PRECOMPUTED
     //==========================================================================
     if (twiddle_in_scratch)
@@ -1641,13 +1758,118 @@ static void mixed_radix_dit_rec(
     {
         const int half = sub_len;
         int k = 0;
+        const int trivial_end = (half + 1) / 2; // First ~half of twiddles
+
+#ifdef HAS_AVX512
+        //======================================================================
+        // AVX-512 PATH: 16x unrolling (process 16 butterflies at once)
+        //======================================================================
+
+        // Trivial twiddles (W^0 = 1): No complex multiply needed
+        for (; k + 15 < trivial_end; k += 16)
+        {
+            // Prefetch ahead
+            if (k + 32 < trivial_end)
+            {
+                _mm_prefetch((const char *)&sub_outputs[k + 32].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&sub_outputs[k + 32 + half].re, _MM_HINT_T0);
+            }
+
+            // Load 16 even-indexed complex samples (4 loads × 4 complex each)
+            __m512d e0 = load4_aos(&sub_outputs[k + 0]);
+            __m512d e1 = load4_aos(&sub_outputs[k + 4]);
+            __m512d e2 = load4_aos(&sub_outputs[k + 8]);
+            __m512d e3 = load4_aos(&sub_outputs[k + 12]);
+
+            // Load 16 odd samples
+            __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
+            __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
+            __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
+            __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
+
+            // Radix-2 butterfly: X[k] = E[k] + O[k], X[k+N/2] = E[k] - O[k]
+            __m512d x00 = _mm512_add_pd(e0, o0);
+            __m512d x10 = _mm512_sub_pd(e0, o0);
+            __m512d x01 = _mm512_add_pd(e1, o1);
+            __m512d x11 = _mm512_sub_pd(e1, o1);
+            __m512d x02 = _mm512_add_pd(e2, o2);
+            __m512d x12 = _mm512_sub_pd(e2, o2);
+            __m512d x03 = _mm512_add_pd(e3, o3);
+            __m512d x13 = _mm512_sub_pd(e3, o3);
+
+            // Store results
+            STOREU_PD512(&output_buffer[k + 0].re, x00);
+            STOREU_PD512(&output_buffer[k + 4].re, x01);
+            STOREU_PD512(&output_buffer[k + 8].re, x02);
+            STOREU_PD512(&output_buffer[k + 12].re, x03);
+            STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
+            STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
+            STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
+            STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
+        }
+
+        // Non-trivial twiddles: Need complex multiply (W^k * O[k])
+        for (; k + 15 < half; k += 16)
+        {
+            if (k + 32 < half)
+            {
+                _mm_prefetch((const char *)&sub_outputs[k + 32].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&sub_outputs[k + 32 + half].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&stage_tw[k + 32].re, _MM_HINT_T0);
+            }
+
+            // Load even/odd samples
+            __m512d e0 = load4_aos(&sub_outputs[k + 0]);
+            __m512d e1 = load4_aos(&sub_outputs[k + 4]);
+            __m512d e2 = load4_aos(&sub_outputs[k + 8]);
+            __m512d e3 = load4_aos(&sub_outputs[k + 12]);
+
+            __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
+            __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
+            __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
+            __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
+
+            // Load twiddles
+            __m512d w0 = load4_aos(&stage_tw[k + 0]);
+            __m512d w1 = load4_aos(&stage_tw[k + 4]);
+            __m512d w2 = load4_aos(&stage_tw[k + 8]);
+            __m512d w3 = load4_aos(&stage_tw[k + 12]);
+
+            // Twiddle multiply
+            __m512d tw0 = cmul_avx512_aos(o0, w0);
+            __m512d tw1 = cmul_avx512_aos(o1, w1);
+            __m512d tw2 = cmul_avx512_aos(o2, w2);
+            __m512d tw3 = cmul_avx512_aos(o3, w3);
+
+            // Butterfly
+            __m512d x00 = _mm512_add_pd(e0, tw0);
+            __m512d x10 = _mm512_sub_pd(e0, tw0);
+            __m512d x01 = _mm512_add_pd(e1, tw1);
+            __m512d x11 = _mm512_sub_pd(e1, tw1);
+            __m512d x02 = _mm512_add_pd(e2, tw2);
+            __m512d x12 = _mm512_sub_pd(e2, tw2);
+            __m512d x03 = _mm512_add_pd(e3, tw3);
+            __m512d x13 = _mm512_sub_pd(e3, tw3);
+
+            // Store
+            STOREU_PD512(&output_buffer[k + 0].re, x00);
+            STOREU_PD512(&output_buffer[k + 4].re, x01);
+            STOREU_PD512(&output_buffer[k + 8].re, x02);
+            STOREU_PD512(&output_buffer[k + 12].re, x03);
+            STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
+            STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
+            STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
+            STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
+        }
+
+        // Fall through to AVX2 cleanup for remaining elements
+#endif // HAS_AVX512
 
 #ifdef __AVX2__
         //======================================================================
         // OPTIMIZATION 1: First half has trivial twiddles (W^0 = 1)
         // No complex multiply needed! Saves ~50% of work for radix-2.
         //======================================================================
-        const int trivial_end = (half + 1) / 2; // First half rounded up
 
         // Process trivial twiddles with 4x unrolling
         for (; k + 7 < trivial_end; k += 8)
