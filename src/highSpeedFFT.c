@@ -3976,28 +3976,217 @@ static void mixed_radix_dit_rec(
 
     else if (radix == 32)
     {
+        //==========================================================================
+        // RADIX-32 BUTTERFLY - HIGHLY OPTIMIZED
+        //
+        // Decomposition: 4 × 4 × 2 (radix-4, radix-4, radix-2)
+        // With intermediate twiddles precomputed outside loops
+        //==========================================================================
+
         const int thirtysecond = sub_len;
         int k = 0;
 
 #ifdef __AVX2__
-        // Precompute twiddle factors for intermediate stages
-        // W_8 = exp(-2πi/8) and W_2 = exp(-2πi/2)
-        const double c8 = 0.7071067811865476;   // cos(π/4) = √2/2
-        const double s8 = 0.7071067811865476;   // sin(π/4)
-        const double c83 = -0.7071067811865476; // cos(3π/4)
-        const double s83 = 0.7071067811865476;  // sin(3π/4)
+        //----------------------------------------------------------------------
+        // Precompute ALL intermediate twiddles as constants (OUTSIDE loop)
+        //----------------------------------------------------------------------
 
+        // W_8 twiddles: exp(-2πim/8) for m=0..7
+        // These are used between first and second radix-4 stages
+        __m256d W8[8][3]; // [m][j-1] for j=1,2,3
+
+        // W_8^0 = 1 (not needed, m=0 case skipped)
+        // W_8^1 = cos(π/4) - i*sin(π/4) = (√2/2)(1 - i)
+        const double c8 = 0.7071067811865476;
+        W8[1][0] = _mm256_set_pd(-c8, c8, -c8, c8);     // j=1: W_8^1
+        W8[1][1] = _mm256_set_pd(-1.0, 0.0, -1.0, 0.0); // j=2: W_8^2 = -i
+        W8[1][2] = _mm256_set_pd(-c8, -c8, -c8, -c8);   // j=3: W_8^3 = (√2/2)(-1-i)
+
+        // W_8^2 = -i
+        W8[2][0] = _mm256_set_pd(-1.0, 0.0, -1.0, 0.0); // j=1: W_8^2 = -i
+        W8[2][1] = _mm256_set_pd(0.0, -1.0, 0.0, -1.0); // j=2: W_8^4 = -1
+        W8[2][2] = _mm256_set_pd(1.0, 0.0, 1.0, 0.0);   // j=3: W_8^6 = +i
+
+        // W_8^3 = (√2/2)(-1 - i)
+        W8[3][0] = _mm256_set_pd(-c8, -c8, -c8, -c8);
+        W8[3][1] = _mm256_set_pd(1.0, 0.0, 1.0, 0.0); // j=2: W_8^6 = +i
+        W8[3][2] = _mm256_set_pd(c8, -c8, c8, -c8);   // j=3: W_8^9 = (√2/2)(1-i)
+
+        // W_8^4 = -1
+        W8[4][0] = _mm256_set_pd(0.0, -1.0, 0.0, -1.0); // j=1: W_8^4 = -1
+        W8[4][1] = _mm256_set_pd(0.0, 1.0, 0.0, 1.0);   // j=2: W_8^8 = 1
+        W8[4][2] = _mm256_set_pd(0.0, -1.0, 0.0, -1.0); // j=3: W_8^12 = -1
+
+        // W_8^5 = (√2/2)(-1 + i)
+        W8[5][0] = _mm256_set_pd(c8, -c8, c8, -c8);
+        W8[5][1] = _mm256_set_pd(1.0, 0.0, 1.0, 0.0); // j=2: W_8^10 = +i
+        W8[5][2] = _mm256_set_pd(-c8, -c8, -c8, -c8);
+
+        // W_8^6 = +i
+        W8[6][0] = _mm256_set_pd(1.0, 0.0, 1.0, 0.0);
+        W8[6][1] = _mm256_set_pd(0.0, 1.0, 0.0, 1.0);   // j=2: W_8^12 = 1
+        W8[6][2] = _mm256_set_pd(-1.0, 0.0, -1.0, 0.0); // j=3: W_8^18 = -i
+
+        // W_8^7 = (√2/2)(1 + i)
+        W8[7][0] = _mm256_set_pd(c8, c8, c8, c8);
+        W8[7][1] = _mm256_set_pd(-1.0, 0.0, -1.0, 0.0); // j=2: W_8^14 = -i
+        W8[7][2] = _mm256_set_pd(-c8, c8, -c8, c8);
+
+        // Sign adjustment for transform direction
+        const __m256d sign_mask = (transform_sign == 1)
+                                      ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)  // Forward: flip imaginary
+                                      : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // Inverse: flip real
+
+        // Apply sign correction to all W8 twiddles
+        __m256d W8_corrected[8][3];
+        for (int m = 1; m < 8; ++m)
+        {
+            for (int j = 0; j < 3; ++j)
+            {
+                W8_corrected[m][j] = (transform_sign == -1)
+                                         ? _mm256_xor_pd(W8[m][j], sign_mask)
+                                         : W8[m][j];
+            }
+        }
+
+        //----------------------------------------------------------------------
+        // Main loop: 4x unrolling
+        //----------------------------------------------------------------------
+        for (; k + 7 < thirtysecond; k += 8)
+        {
+            if (k + 16 < thirtysecond)
+            {
+                _mm_prefetch((const char *)&sub_outputs[k + 16].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&stage_tw[31 * (k + 16)].re, _MM_HINT_T0);
+            }
+
+            // Load all 32 lanes (4 butterflies × 32 lanes = 128 AVX2 loads)
+            __m256d x[32][4]; // [lane][butterfly_pair]
+            for (int lane = 0; lane < 32; ++lane)
+            {
+                x[lane][0] = load2_aos(&sub_outputs[k + 0 + lane * thirtysecond],
+                                       &sub_outputs[k + 1 + lane * thirtysecond]);
+                x[lane][1] = load2_aos(&sub_outputs[k + 2 + lane * thirtysecond],
+                                       &sub_outputs[k + 3 + lane * thirtysecond]);
+                x[lane][2] = load2_aos(&sub_outputs[k + 4 + lane * thirtysecond],
+                                       &sub_outputs[k + 5 + lane * thirtysecond]);
+                x[lane][3] = load2_aos(&sub_outputs[k + 6 + lane * thirtysecond],
+                                       &sub_outputs[k + 7 + lane * thirtysecond]);
+            }
+
+            //==================================================================
+            // Stage 1: Apply input twiddles W^{jk}
+            //==================================================================
+            for (int lane = 1; lane < 32; ++lane)
+            {
+                __m256d tw0 = load2_aos(&stage_tw[31 * (k + 0) + (lane - 1)],
+                                        &stage_tw[31 * (k + 1) + (lane - 1)]);
+                __m256d tw1 = load2_aos(&stage_tw[31 * (k + 2) + (lane - 1)],
+                                        &stage_tw[31 * (k + 3) + (lane - 1)]);
+                __m256d tw2 = load2_aos(&stage_tw[31 * (k + 4) + (lane - 1)],
+                                        &stage_tw[31 * (k + 5) + (lane - 1)]);
+                __m256d tw3 = load2_aos(&stage_tw[31 * (k + 6) + (lane - 1)],
+                                        &stage_tw[31 * (k + 7) + (lane - 1)]);
+
+                x[lane][0] = cmul_avx2_aos(x[lane][0], tw0);
+                x[lane][1] = cmul_avx2_aos(x[lane][1], tw1);
+                x[lane][2] = cmul_avx2_aos(x[lane][2], tw2);
+                x[lane][3] = cmul_avx2_aos(x[lane][3], tw3);
+            }
+
+            //==================================================================
+            // Stage 2: First radix-4 (8 groups, stride 8)
+            //==================================================================
+            for (int g = 0; g < 8; ++g)
+            {
+                for (int b = 0; b < 4; ++b)
+                {
+                    radix4_butterfly_aos(&x[g][b], &x[g + 8][b],
+                                         &x[g + 16][b], &x[g + 24][b],
+                                         transform_sign);
+                }
+            }
+
+            //==================================================================
+            // Stage 2.5: Apply intermediate twiddles W_8^{jm} (PRECOMPUTED!)
+            //==================================================================
+            for (int m = 1; m < 8; ++m) // m=0 has trivial twiddles
+            {
+                for (int j = 1; j <= 3; ++j)
+                {
+                    int idx = 4 * m + j;
+                    for (int b = 0; b < 4; ++b)
+                    {
+                        x[idx][b] = cmul_avx2_aos(x[idx][b], W8_corrected[m][j - 1]);
+                    }
+                }
+            }
+
+            //==================================================================
+            // Stage 3: Second radix-4 (8 groups, stride 1)
+            //==================================================================
+            for (int g = 0; g < 8; ++g)
+            {
+                int base = 4 * g;
+                for (int b = 0; b < 4; ++b)
+                {
+                    radix4_butterfly_aos(&x[base][b], &x[base + 1][b],
+                                         &x[base + 2][b], &x[base + 3][b],
+                                         transform_sign);
+                }
+            }
+
+            //==================================================================
+            // Stage 3.5: Apply intermediate twiddles W_2^m = (-1)^m
+            //==================================================================
+            const __m256d neg_all = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
+            for (int m = 0; m < 16; ++m)
+            {
+                if (m % 2 == 1)
+                {
+                    int idx = 2 * m + 1;
+                    for (int b = 0; b < 4; ++b)
+                    {
+                        x[idx][b] = _mm256_xor_pd(x[idx][b], neg_all);
+                    }
+                }
+            }
+
+            //==================================================================
+            // Stage 4: Final radix-2 (16 groups)
+            //==================================================================
+            for (int g = 0; g < 16; ++g)
+            {
+                for (int b = 0; b < 4; ++b)
+                {
+                    radix2_butterfly_aos(&x[2 * g][b], &x[2 * g + 1][b]);
+                }
+            }
+
+            //==================================================================
+            // Store results
+            //==================================================================
+            for (int m = 0; m < 32; ++m)
+            {
+                STOREU_PD(&output_buffer[k + 0 + m * thirtysecond].re, x[m][0]);
+                STOREU_PD(&output_buffer[k + 2 + m * thirtysecond].re, x[m][1]);
+                STOREU_PD(&output_buffer[k + 4 + m * thirtysecond].re, x[m][2]);
+                STOREU_PD(&output_buffer[k + 6 + m * thirtysecond].re, x[m][3]);
+            }
+        }
+
+        //----------------------------------------------------------------------
+        // Cleanup: 2x unrolling
+        //----------------------------------------------------------------------
         for (; k + 1 < thirtysecond; k += 2)
         {
             if (k + 8 < thirtysecond)
             {
-                for (int lane = 0; lane < 32; ++lane)
-                {
-                    _mm_prefetch((const char *)&sub_outputs[k + 8 + lane * thirtysecond].re,
-                                 _MM_HINT_T0);
-                }
+                _mm_prefetch((const char *)&sub_outputs[k + 8].re, _MM_HINT_T0);
+                _mm_prefetch((const char *)&stage_tw[31 * (k + 8)].re, _MM_HINT_T0);
             }
 
+            // Load all 32 lanes (2 butterflies per lane)
             __m256d x[32];
             for (int lane = 0; lane < 32; ++lane)
             {
@@ -4005,7 +4194,9 @@ static void mixed_radix_dit_rec(
                                     &sub_outputs[k + lane * thirtysecond + 1]);
             }
 
+            //======================================================================
             // Stage 1: Apply input twiddles W^{jk}
+            //======================================================================
             for (int lane = 1; lane < 32; ++lane)
             {
                 __m256d tw = load2_aos(&stage_tw[31 * k + (lane - 1)],
@@ -4013,88 +4204,86 @@ static void mixed_radix_dit_rec(
                 x[lane] = cmul_avx2_aos(x[lane], tw);
             }
 
+            //======================================================================
             // Stage 2: First radix-4 decomposition (8 groups, stride 8)
+            //======================================================================
             for (int g = 0; g < 8; ++g)
             {
-                radix4_butterfly_aos(&x[g], &x[g + 8], &x[g + 16], &x[g + 24], transform_sign);
-            }
-
-            // *** CRITICAL: Apply intermediate twiddles W_8^{jm} ***
-            // After first radix-4, we need W_8^{jm} for j=1,2,3 and m=0..7
-            // Only non-trivial twiddles (j > 0) need to be applied
-            for (int m = 0; m < 8; ++m)
-            {
-                // j=1: W_8^m = exp(-2πim/8) = exp(-iπm/4)
-                if (m != 0)
-                {
-                    int idx1 = 4 * m + 1;
-                    double angle = -M_PI * m / 4.0;
-                    double wr = cos(angle);
-                    double wi = sin(angle) * transform_sign;
-                    __m256d tw1 = _mm256_set_pd(wi, wr, wi, wr);
-                    x[idx1] = cmul_avx2_aos(x[idx1], tw1);
-                }
-
-                // j=2: W_8^{2m} = exp(-iπm/2)
-                if (m != 0)
-                {
-                    int idx2 = 4 * m + 2;
-                    double angle = -M_PI * m / 2.0;
-                    double wr = cos(angle);
-                    double wi = sin(angle) * transform_sign;
-                    __m256d tw2 = _mm256_set_pd(wi, wr, wi, wr);
-                    x[idx2] = cmul_avx2_aos(x[idx2], tw2);
-                }
-
-                // j=3: W_8^{3m} = exp(-3iπm/4)
-                if (m != 0)
-                {
-                    int idx3 = 4 * m + 3;
-                    double angle = -3.0 * M_PI * m / 4.0;
-                    double wr = cos(angle);
-                    double wi = sin(angle) * transform_sign;
-                    __m256d tw3 = _mm256_set_pd(wi, wr, wi, wr);
-                    x[idx3] = cmul_avx2_aos(x[idx3], tw3);
-                }
-            }
-
-            // Stage 3: Second radix-4 decomposition (8 groups, stride 1)
-            for (int g = 0; g < 8; ++g)
-            {
-                int base = 4 * g;
-                radix4_butterfly_aos(&x[base], &x[base + 1], &x[base + 2], &x[base + 3],
+                radix4_butterfly_aos(&x[g], &x[g + 8], &x[g + 16], &x[g + 24],
                                      transform_sign);
             }
 
-            // *** CRITICAL: Apply intermediate twiddles W_2^m ***
-            // After second radix-4, we need W_2^m for m=0..15
-            // W_2^m = exp(-2πim/2) = exp(-iπm) = (-1)^m
-            for (int m = 0; m < 16; ++m)
+            //======================================================================
+            // Stage 2.5: Apply intermediate twiddles W_8^{jm} (PRECOMPUTED!)
+            //======================================================================
+            for (int m = 1; m < 8; ++m) // m=0 has trivial twiddles
             {
-                int idx = 2 * m + 1;
-                if (m % 2 == 1)
+                for (int j = 1; j <= 3; ++j)
                 {
-                    // W_2 = -1, so negate
-                    __m256d neg = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
-                    x[idx] = _mm256_xor_pd(x[idx], neg);
+                    int idx = 4 * m + j;
+                    x[idx] = cmul_avx2_aos(x[idx], W8_corrected[m][j - 1]);
                 }
             }
 
+            //======================================================================
+            // Stage 3: Second radix-4 decomposition (8 groups, stride 1)
+            //======================================================================
+            for (int g = 0; g < 8; ++g)
+            {
+                int base = 4 * g;
+                radix4_butterfly_aos(&x[base], &x[base + 1],
+                                     &x[base + 2], &x[base + 3],
+                                     transform_sign);
+            }
+
+            //======================================================================
+            // Stage 3.5: Apply intermediate twiddles W_2^m = (-1)^m
+            //======================================================================
+            const __m256d neg_all = _mm256_set_pd(-0.0, -0.0, -0.0, -0.0);
+            for (int m = 0; m < 16; ++m)
+            {
+                if (m % 2 == 1)
+                {
+                    int idx = 2 * m + 1;
+                    x[idx] = _mm256_xor_pd(x[idx], neg_all);
+                }
+            }
+
+            //======================================================================
             // Stage 4: Final radix-2 decomposition (16 groups)
+            //======================================================================
             for (int g = 0; g < 16; ++g)
             {
                 radix2_butterfly_aos(&x[2 * g], &x[2 * g + 1]);
             }
 
+            //======================================================================
             // Store results
+            //======================================================================
             for (int m = 0; m < 32; ++m)
             {
                 STOREU_PD(&output_buffer[k + m * thirtysecond].re, x[m]);
             }
         }
+
 #endif // __AVX2__
 
-        // Scalar tail
+        //----------------------------------------------------------------------
+        // Scalar tail: Precompute twiddles ONCE
+        //----------------------------------------------------------------------
+
+        // Precompute W_8 twiddles for scalar path
+        fft_data W8_scalar[8][3];
+        for (int m = 0; m < 8; ++m)
+        {
+            for (int j = 1; j <= 3; ++j)
+            {
+                double angle = -2.0 * M_PI * j * m / 8.0;
+                W8_scalar[m][j - 1].re = cos(angle);
+                W8_scalar[m][j - 1].im = sin(angle) * transform_sign;
+            }
+        }
+
         for (; k < thirtysecond; ++k)
         {
             fft_data x[32];
@@ -4103,7 +4292,7 @@ static void mixed_radix_dit_rec(
                 x[lane] = sub_outputs[k + lane * thirtysecond];
             }
 
-            // Stage 1: Apply input twiddles
+            // Stage 1: Input twiddles
             for (int lane = 1; lane < 32; ++lane)
             {
                 const fft_data w = stage_tw[31 * k + (lane - 1)];
@@ -4119,20 +4308,17 @@ static void mixed_radix_dit_rec(
                 r4_butterfly(&x[g], &x[g + 8], &x[g + 16], &x[g + 24], transform_sign);
             }
 
-            // *** Apply intermediate twiddles W_8^{jm} ***
+            // Stage 2.5: Intermediate twiddles W_8 (PRECOMPUTED!)
             for (int m = 0; m < 8; ++m)
             {
-                for (int j = 1; j < 4; ++j)
+                for (int j = 1; j <= 3; ++j)
                 {
                     int idx = 4 * m + j;
-                    double angle = -2.0 * M_PI * j * m / 8.0;
-                    double wr = cos(angle);
-                    double wi = sin(angle) * transform_sign;
-
-                    double xr = x[idx].re;
-                    double xi = x[idx].im;
-                    x[idx].re = xr * wr - xi * wi;
-                    x[idx].im = xr * wi + xi * wr;
+                    const fft_data w = W8_scalar[m][j - 1];
+                    const double xr = x[idx].re;
+                    const double xi = x[idx].im;
+                    x[idx].re = xr * w.re - xi * w.im;
+                    x[idx].im = xr * w.im + xi * w.re;
                 }
             }
 
@@ -4143,12 +4329,12 @@ static void mixed_radix_dit_rec(
                 r4_butterfly(&x[base], &x[base + 1], &x[base + 2], &x[base + 3], transform_sign);
             }
 
-            // *** Apply intermediate twiddles W_2^m ***
+            // Stage 3.5: Intermediate twiddles W_2
             for (int m = 0; m < 16; ++m)
             {
-                int idx = 2 * m + 1;
                 if (m % 2 == 1)
                 {
+                    int idx = 2 * m + 1;
                     x[idx].re = -x[idx].re;
                     x[idx].im = -x[idx].im;
                 }
@@ -4160,7 +4346,7 @@ static void mixed_radix_dit_rec(
                 r2_butterfly(&x[2 * g], &x[2 * g + 1]);
             }
 
-            // Store results
+            // Store
             for (int m = 0; m < 32; ++m)
             {
                 output_buffer[k + m * thirtysecond] = x[m];
