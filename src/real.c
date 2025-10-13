@@ -350,46 +350,84 @@ static inline void combine_r2c_avx2(
         X[k].im = 0.5 * im;
     }
 }
-#endif
 
 /**
- * @brief Combines complex input for C2R transformation (scalar).
+ * @brief Combines complex input for C2R transformation (AVX2 vectorized).
  *
- * Prepares complex FFT input F[k] from Hermitian symmetric X[k] for k = 0..N/2-1,
- * using twiddle factors e^{+2πi k / N} (inverse direction).
+ * Vectorized version of combine_c2r_scalar, processing four indices k at a time.
+ * Computes F(k) = (X(k) + conj(X(N/2-k))) + e^{+2πi k / N} * (-(X(k).im + X(N/2-k).im), -(X(N/2-k).re - X(k).re))
+ * using AVX2 with FMA instructions for efficiency.
  *
  * @param[in] X Complex input array [X0, X1, ..., X_{N/2}] (length N/2+1, Hermitian).
  * @param[in] tw_re Real parts of twiddle factors e^{+2πi k / N} (length N/2).
  * @param[in] tw_im Imag parts of twiddle factors (length N/2).
  * @param[out] F Complex output array [F0, F1, ..., F_{N/2-1}] (length N/2).
  * @param[in] H Half the signal length (N/2).
- * @note Formula: F(k) = (X(k) + conj(X(N/2-k))) + e^{+2πi k / N} * (-(X(k).im + X(N/2-k).im), -(X(N/2-k).re - X(k).re))
+ * @note Assumes tw_re, tw_im are 32-byte aligned for optimal performance.
  */
-static inline void combine_c2r_scalar(
+static inline void combine_c2r_avx2(
     const fft_data *restrict X,
     const double *restrict tw_re,
     const double *restrict tw_im,
     fft_data *restrict F,
     int H)
 {
-    for (int k = 0; k < H; ++k)
+    int k = 0;
+    
+    for (; k + 4 <= H; k += 4)
+    {
+        _mm_prefetch((const char *)&X[k + 8].re, _MM_HINT_T0);
+        _mm_prefetch((const char *)&X[H - (k + 8)].re, _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw_re[k + 8], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw_im[k + 8], _MM_HINT_T0);
+        _mm_prefetch((const char *)&F[k + 8].re, _MM_HINT_T0);
+
+        int k0 = k + 0, k1 = k + 1, k2 = k + 2, k3 = k + 3;
+        int m0 = H - k0, m1 = H - k1, m2 = H - k2, m3 = H - k3;
+        
+        __m256d Xk_re = _mm256_set_pd(X[k3].re, X[k2].re, X[k1].re, X[k0].re);
+        __m256d Xk_im = _mm256_set_pd(X[k3].im, X[k2].im, X[k1].im, X[k0].im);
+        __m256d Xm_re = _mm256_set_pd(X[m3].re, X[m2].re, X[m1].re, X[m0].re);
+        __m256d Xm_im = _mm256_set_pd(X[m3].im, X[m2].im, X[m1].im, X[m0].im);
+
+        __m256d t1 = _mm256_sub_pd(_mm256_setzero_pd(), _mm256_add_pd(Xk_im, Xm_im));
+        __m256d t2 = _mm256_sub_pd(Xk_re, Xm_re);
+        __m256d twr = _mm256_loadu_pd(&tw_re[k]);
+        __m256d twi = _mm256_loadu_pd(&tw_im[k]);
+        
+        __m256d sum_re = _mm256_add_pd(Xk_re, Xm_re);
+        __m256d Fr = _mm256_fmadd_pd(t1, twr, sum_re);
+        Fr = _mm256_fnmadd_pd(t2, twi, Fr);
+        
+        __m256d diff_im = _mm256_sub_pd(Xk_im, Xm_im);
+        __m256d Fi = _mm256_fmadd_pd(t2, twr, diff_im);
+        Fi = _mm256_fmadd_pd(t1, twi, Fi);
+        
+        double r[4], im[4];
+        _mm256_storeu_pd(r, Fr);
+        _mm256_storeu_pd(im, Fi);
+        
+        F[k0].re = r[0]; F[k0].im = im[0];
+        F[k1].re = r[1]; F[k1].im = im[1];
+        F[k2].re = r[2]; F[k2].im = im[2];
+        F[k3].re = r[3]; F[k3].im = im[3];
+    }
+    
+    for (; k < H; ++k)
     {
         int m = H - k;
         double Xkr = X[k].re, Xki = X[k].im;
         double Xmr = X[m].re, Xmi = X[m].im;
-        // t1 = -(X(k).im + X(N/2-k).im)
         double t1 = -(Xki + Xmi);
-        // t2 = -(X(N/2-k).re - X(k).re) = X(k).re - X(N/2-k).re
         double t2 = Xkr - Xmr;
-        // F(k) = (X(k).re + X(N/2-k).re) + t1*tw_re - t2*tw_im + i [(X(k).im - X(N/2-k).im) + t2*tw_re + t1*tw_im]
         double Fr = (Xkr + Xmr) + (t1 * tw_re[k] - t2 * tw_im[k]);
         double Fi = (Xki - Xmi) + (t2 * tw_re[k] + t1 * tw_im[k]);
         F[k].re = Fr;
         F[k].im = Fi;
     }
 }
-#endif
 
+#endif // __AVX2__
 /**
  * @brief Performs real-to-complex FFT transformation on real-valued input data.
  *
@@ -529,89 +567,5 @@ void fft_real_free(fft_real_object real_obj)
     aligned_free32(real_obj->workspace);
     free(real_obj);
 }
-}
 
-#if defined(__AVX2__)
-/**
- * @brief Combines complex input for C2R transformation (AVX2 vectorized).
- *
- * Vectorized version of combine_c2r_scalar, processing four indices k at a time.
- * Computes F(k) = (X(k) + conj(X(N/2-k))) + e^{+2πi k / N} * (-(X(k).im + X(N/2-k).im), -(X(N/2-k).re - X(k).re))
- * using AVX2 with FMA instructions for efficiency.
- *
- * @param[in] X Complex input array [X0, X1, ..., X_{N/2}] (length N/2+1, Hermitian).
- * @param[in] tw_re Real parts of twiddle factors e^{+2πi k / N} (length N/2).
- * @param[in] tw_im Imag parts of twiddle factors (length N/2).
- * @param[out] F Complex output array [F0, F1, ..., F_{N/2-1}] (length N/2).
- * @param[in] H Half the signal length (N/2).
- * @note Assumes tw_re, tw_im are 32-byte aligned for optimal performance.
- */
-static inline void combine_c2r_avx2(
-    const fft_data *restrict X,
-    const double *restrict tw_re,
-    const double *restrict tw_im,
-    fft_data *restrict F,
-    int H)
-{
-    int k = 0;
-    // Process four indices k, k+1, k+2, k+3
-    for (; k + 4 <= H; k += 4)
-    {
-        // Prefetch inputs and outputs ~64 bytes ahead
-        _mm_prefetch((const char *)&X[k + 8].re, _MM_HINT_T0);
-        _mm_prefetch((const char *)&X[H - (k + 8)].re, _MM_HINT_T0);
-        _mm_prefetch((const char *)&tw_re[k + 8], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tw_im[k + 8], _MM_HINT_T0);
-        _mm_prefetch((const char *)&F[k + 8].re, _MM_HINT_T0);
 
-        // Load X(k:k+3) and X(N/2-k:N/2-k-3) into SoA vectors
-        int k0 = k + 0, k1 = k + 1, k2 = k + 2, k3 = k + 3;
-        int m0 = H - k0, m1 = H - k1, m2 = H - k2, m3 = H - k3;
-        __m256d Xk_re = _mm256_set_pd(X[k3].re, X[k2].re, X[k1].re, X[k0].re);
-        __m256d Xk_im = _mm256_set_pd(X[k3].im, X[k2].im, X[k1].im, X[k0].im);
-        __m256d Xm_re = _mm256_set_pd(X[m3].re, X[m2].re, X[m1].re, X[m0].re);
-        __m256d Xm_im = _mm256_set_pd(X[m3].im, X[m2].im, X[m1].im, X[m0].im);
-
-        // t1 = -(X(k).im + X(N/2-k).im)
-        __m256d t1 = _mm256_sub_pd(_mm256_setzero_pd(), _mm256_add_pd(Xk_im, Xm_im));
-        // t2 = X(k).re - X(N/2-k).re
-        __m256d t2 = _mm256_sub_pd(Xk_re, Xm_re);
-        // Load twiddle factors
-        __m256d twr = _mm256_loadu_pd(&tw_re[k]);
-        __m256d twi = _mm256_loadu_pd(&tw_im[k]);
-        // Fr = (Xk.re + Xm.re) + t1*tw_re - t2*tw_im
-        __m256d sum_re = _mm256_add_pd(Xk_re, Xm_re);
-        __m256d Fr = _mm256_fmadd_pd(t1, twr, sum_re);
-        Fr = _mm256_fnmadd_pd(t2, twi, Fr);
-        // Fi = (Xk.im - Xm.im) + t2*tw_re + t1*tw_im
-        __m256d diff_im = _mm256_sub_pd(Xk_im, Xm_im);
-        __m256d Fi = _mm256_fmadd_pd(t2, twr, diff_im);
-        Fi = _mm256_fmadd_pd(t1, twi, Fi);
-        // Store results in AoS format
-        double r[4], im[4];
-        _mm256_storeu_pd(r, Fr);
-        _mm256_storeu_pd(im, Fi);
-        F[k0].re = r[0];
-        F[k0].im = im[0];
-        F[k1].re = r[1];
-        F[k1].im = im[1];
-        F[k2].re = r[2];
-        F[k2].im = im[2];
-        F[k3].re = r[3];
-        F[k3].im = im[3];
-    }
-    // Scalar tail for remaining indices
-    for (; k < H; ++k)
-    {
-        int m = H - k;
-        double Xkr = X[k].re, Xki = X[k].im;
-        double Xmr = X[m].re, Xmi = X[m].im;
-        double t1 = -(Xki + Xmi);
-        double t2 = Xkr - Xmr;
-        double Fr = (Xkr + Xmr) + (t1 * tw_re[k] - t2 * tw_im[k]);
-        double Fi = (Xki - Xmi) + (t2 * tw_re[k] + t1 * tw_im[k]);
-        F[k].re = Fr;
-        F[k].im = Fi;
-    }
-}
-#endif

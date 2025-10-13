@@ -528,13 +528,14 @@ static const double S11_4 = 0.7557495743542583;   // sin(8π/11)
 static const double S11_5 = 0.28173255684142967;  // sin(10π/11)
 
 // Radix-16 constants (mainly just √2/2 variants)
+/*
 static const double C16_1 = 0.9238795325112867;  // cos(π/8)
 static const double C16_2 = 0.7071067811865476;  // cos(π/4) = √2/2
 static const double C16_3 = 0.38268343236508984; // cos(3π/8)
 static const double S16_1 = 0.38268343236508984; // sin(π/8)
 static const double S16_2 = 0.7071067811865476;  // sin(π/4)
 static const double S16_3 = 0.9238795325112867;  // sin(3π/8)
-
+*/
 //==============================================================================
 // DIVISIBILITY LOOKUP (for dividebyN up to 1024)
 //==============================================================================
@@ -3028,10 +3029,11 @@ static void mixed_radix_dit_rec(
             __m256d e2_3 = cmul_avx2_aos(e3, w4_3);
 
 //==================================================================
-// Radix-5 butterfly (8 butterflies in parallel)
+// Radix-5 butterfly (8 butterflies in parallel) - Fixed version
 //==================================================================
+// Option 1: Initialize intermediate variables to silence warnings
 #define RADIX5_BUTTERFLY_AVX2(a, b2, c2, d2, e2, y0, y1, y2, y3, y4) \
-    {                                                                \
+    do {                                                              \
         __m256d t0 = _mm256_add_pd(b2, e2);                          \
         __m256d t1 = _mm256_add_pd(c2, d2);                          \
         __m256d t2 = _mm256_sub_pd(b2, e2);                          \
@@ -3051,7 +3053,7 @@ static void mixed_radix_dit_rec(
         __m256d a2 = _mm256_add_pd(a, tmp2);                         \
         y2 = _mm256_add_pd(a2, r2);                                  \
         y3 = _mm256_sub_pd(a2, r2);                                  \
-    }
+    } while(0)
 
             __m256d y0_0, y1_0, y2_0, y3_0, y4_0;
             __m256d y0_1, y1_1, y2_1, y3_1, y4_1;

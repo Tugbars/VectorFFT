@@ -10,6 +10,11 @@
 #include <stdlib.h>
 #include <immintrin.h>
 
+// Forward declarations to avoid circular dependency with highspeedFFT.h
+// These types are defined in highspeedFFT.h
+typedef struct fft_set *fft_object;
+typedef struct fft_t fft_data;
+
 //==============================================================================
 // PREFETCH CONFIGURATION TYPES
 //==============================================================================
@@ -86,6 +91,10 @@ typedef struct {
 // PUBLIC API - INITIALIZATION AND CLEANUP
 //==============================================================================
 
+//==============================================================================
+// PUBLIC API - INITIALIZATION AND CLEANUP
+//==============================================================================
+
 /**
  * @brief Initialize the entire prefetch system
  * 
@@ -95,6 +104,23 @@ typedef struct {
  * @param fft_obj FFT object containing factorization info
  */
 void init_prefetch_system(fft_object fft_obj);
+
+/**
+ * @brief Initialize per-stage prefetch configuration (internal)
+ * 
+ * Called by init_prefetch_system. Can also be called separately for
+ * re-initialization without full system init.
+ * 
+ * @param fft_obj FFT object containing factorization info
+ */
+void init_stage_prefetch(fft_object fft_obj);
+
+/**
+ * @brief Detect CPU cache sizes (internal)
+ * 
+ * Uses CPUID to detect L1/L2/L3 cache sizes. Called by init_prefetch_system.
+ */
+void detect_cache_sizes(void);
 
 /**
  * @brief Cleanup prefetch system resources
@@ -225,6 +251,10 @@ void add_wisdom(
 // ADVANCED API - EXHAUSTIVE SEARCH
 //==============================================================================
 
+//==============================================================================
+// ADVANCED API - EXHAUSTIVE SEARCH
+//==============================================================================
+
 /**
  * @brief Perform exhaustive search for optimal prefetch configuration
  * 
@@ -239,6 +269,94 @@ void search_optimal_prefetch(
     fft_object fft_obj,
     int factor_index,
     stage_prefetch_t *best_config
+);
+
+//==============================================================================
+// ADVANCED API - RUNTIME PROFILING
+//==============================================================================
+
+/**
+ * @brief Start profiling an FFT execution
+ * 
+ * Call before fft_exec() to begin cycle counting for adaptive tuning.
+ */
+void profile_start(void);
+
+/**
+ * @brief End profiling and update adaptive parameters
+ * 
+ * Call after fft_exec() to complete timing and adjust prefetch distances.
+ * 
+ * @param n_elements Number of elements in the FFT
+ */
+void profile_end(int n_elements);
+
+//==============================================================================
+// ADVANCED API - SPECIALIZED PREFETCH OPERATIONS
+//==============================================================================
+
+/**
+ * @brief Adjust prefetch distance based on loop unrolling factor
+ * 
+ * @param base_distance Base prefetch distance
+ * @param unroll_factor Loop unrolling factor (2, 4, 8, 16, etc.)
+ * @return Adjusted distance accounting for larger loop bodies
+ */
+int adjust_distance_for_unroll(int base_distance, int unroll_factor);
+
+/**
+ * @brief Strided prefetch for transpose-like access patterns
+ * 
+ * Prefetches multiple streams with large stride, handling TLB and cache line issues.
+ * 
+ * @param base Base pointer to data
+ * @param idx Current index
+ * @param stride Stride between elements
+ * @param num_streams Number of streams to prefetch
+ * @param cfg Stage configuration
+ */
+void prefetch_strided(
+    const fft_data *base,
+    int idx,
+    int stride,
+    int num_streams,
+    stage_prefetch_t *cfg
+);
+
+/**
+ * @brief Blocking-aware prefetch for large radices
+ * 
+ * Prefetches the start of the next block while processing current block.
+ * 
+ * @param base Base pointer to data
+ * @param block_start Current block start index
+ * @param block_size Size of each block
+ * @param cfg Stage configuration
+ */
+void prefetch_blocked(
+    const fft_data *base,
+    int block_start,
+    int block_size,
+    stage_prefetch_t *cfg
+);
+
+/**
+ * @brief Group prefetch for radix-based access patterns
+ * 
+ * Prefetches all lanes of the next radix group for better pipelining.
+ * 
+ * @param base Base pointer to data
+ * @param group_idx Current group index
+ * @param group_size Size of each group
+ * @param radix Radix of butterfly
+ * @param cfg Stage configuration
+ */
+void prefetch_radix_group(
+    const fft_data *base,
+    int group_idx,
+    int group_size,
+    int radix,
+    stage_prefetch_t *cfg
 );
 
 //==============================================================================

@@ -1,6 +1,3 @@
-#ifndef HSFFT_H_
-#define HSFFT_H_
-
 /*
 
 Sequence Diagram: mixed_radix_dit_rec for N=12, Factors=[3,4]
@@ -376,13 +373,18 @@ Notes:
  *
 
 */
+#ifndef HSFFT_H_
+#define HSFFT_H_
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
 #include <immintrin.h>
-#include <stdbool.h>
 #include <stdbool.h>
 
 
@@ -401,114 +403,6 @@ typedef struct fft_t {
 
 typedef struct fft_set* fft_object;
 
-/**
- * @file fft_variables_guide.h
- * @brief Guide to key variables in the mixed-radix FFT implementation.
- *
- * @section Introduction
- * The `mixed_radix_dit_rec` function implements a mixed-radix Decimation-in-Time (DIT) FFT, computing the Discrete
- * Fourier Transform (DFT) of an N-point signal into N frequency bins \( X[k] \), each encoding the amplitude and phase
- * of frequency \( f_k = k \cdot f_s / N \). The algorithm recursively divides the signal into sub-FFTs based on radices
- * (e.g., radix-2), using only two buffers (`input_buffer`/`output_buffer` and `sub_fft_outputs`) and a complex tracking
- * mechanism via `sub_fft_size`, `lane`, `sub_fft_outputs`, `stride`, `twiddle_offset`, and `twiddle_step`.
- *
- * @section Audio_Example Example
- * For an audio signal with \( N = 1024 \), \( f_s = 44100 \) Hz, and a 440 Hz tone (\( x[n] = \sin(2\pi \cdot 440 \cdot n / 44100) + 0.1 \cdot \text{noise} \)), the FFT produces 1024 bins, with bin 10 (\( f_{10} \approx 430.66 \) Hz) peaking. These variables manage recursion and phase rotations to align contributions to \( X[10] \).
- *
- * @section Variable_Guide Variable Roles
- *
- * @subsection Sub_FFT_Size sub_fft_size
- * - **Definition**: Size of each sub-FFT (`data_length / radix`).
- * - **Role**: Sets the number of samples per sub-FFT, shrinking recursively until the base case (`data_length == radix`).
- * - **Example**: For \( N = 1024 \), radix-2, first stage: `sub_fft_size = 1024 / 2 = 512`.
- * - **Tracking**: Guides buffer indexing in `sub_fft_outputs`.
- * - **Code**:
- *   \code{.c}
- *   int sub_fft_size = data_length / radix;
- *   \endcode
- *
- * @subsection Lane lane
- * - **Definition**: Index of the current sub-FFT (0 to `radix-1`).
- * - **Role**: Selects the sample subset (via `stride`) and twiddle factors (via `twiddle_offset`) for each sub-FFT.
- * - **Example**: For radix-2: `lane = 0` (even samples), `lane = 1` (odd samples).
- * - **Tracking**: Iterates to process all sub-FFTs.
- * - **Code**:
- *   \code{.c}
- *   for (int lane = 0; lane < radix; lane++) { ... }
- *   \endcode
- *
- * @subsection Sub_FFT_Outputs sub_fft_outputs
- * - **Definition**: Buffer for sub-FFT results (complex bins).
- * - **Role**: Stores intermediate sub-FFT outputs, reused across stages to save memory.
- * - **Example**: For \( N = 1024 \), radix-2: Stores 512 bins for `lane = 0` and 512 for `lane = 1`.
- * - **Tracking**: Indexed as `sub_fft_outputs + lane * sub_fft_size`.
- * - **Code**:
- *   \code{.c}
- *   fft_data *base = sub_fft_outputs + lane * sub_fft_size;
- *   \endcode
- *
- * @subsection Stride stride
- * - **Definition**: Spacing between input samples for a sub-FFT.
- * - **Role**: Selects interleaved samples (e.g., even/odd for radix-2), increasing by `radix` per recursive stage.
- * - **Example**: For \( N = 1024 \), first stage: `stride = 512` (e.g., \( x[0], x[512] \)).
- * - **Tracking**: Adjusts via `stride * radix` for recursion.
- * - **Code**:
- *   \code{.c}
- *   input_buffer + lane * stride, stride * radix
- *   \endcode
- *
- * @subsection Twiddle_Offset_and_Step twiddle_offset and twiddle_step
- * - **Definition**: Control access to twiddle factors in `fft_obj->twiddle_factors`.
- *   - `twiddle_offset`: Starting index for a sub-FFT’s twiddle factors.
- *   - `twiddle_step`: Increment between twiddle factors.
- * - **Role**: Select twiddle factors (\( e^{-2\pi i k \cdot \text{lane} / N} \)) for phase rotation.
- * - **Example**: For \( N = 1024 \), radix-2: `twiddle_offset = 512` for `lane = 1`, `twiddle_step = 1`.
- * - **Tracking**: `twiddle_offset + lane * sub_fft_size * twiddle_step`, `twiddle_step * radix`.
- * - **Code**:
- *   \code{.c}
- *   twiddle_offset + lane * sub_fft_size * twiddle_step
- *   \endcode
- *
- * @section Two_Buffers Two-Buffer Strategy
- * Using only `input_buffer`/`output_buffer` and `sub_fft_outputs`, the code minimizes memory via a ping-pong approach.
- * The variables ensure:
- * - Non-overlapping storage (`lane * sub_fft_size`).
- * - Correct sample access (`stride`).
- * - Precise phase rotations (`twiddle_offset`, `twiddle_step`).
- *
- * @section Example_Walkthrough Walkthrough
- * For \( N = 1024 \), radix-2:
- * - **First Stage**: `sub_fft_size = 512`, `stride = 512`, `lane = 0, 1`, `twiddle_offset = 0, 512`.
- * - **Base Case**: `data_length = 2`, outputs 2 bins (e.g., \( x[0] + x[512] \)).
- * - **Rotation**: Twiddle factors (e.g., \( e^{-2\pi i \cdot 10 / 1024} \)) align contributions to bin 10.
- * - **Output**: 1024 bins, with \( X[10] \) peaking (magnitude ~509.90).
- *
- * @section Practical_Notes Notes
- * - **Real Inputs**: \( X[1014] = \text{conj}(X[10]) \), analyze bins 0 to 512.
- * - **Normalization**: Divide magnitudes by \( N/2 = 512 \).
- * - **Leakage**: 440 Hz leaks to bin 11.
- * - **Vectorization**: Uses SSE2/AVX2.
- * - **Date**: 2025-06-22, 12:44 PM CEST.
- *
- * @section Example_Code Code
- * \code{.c}
- * for (int lane = 0; lane < radix; lane++) {
- *     fft_data *base = sub_fft_outputs + lane * sub_fft_size;
- *     for (int k = 0; k < sub_fft_size; k++) {
- *         double a_r = base[k].re;
- *         double a_i = base[k].im;
- *         double w_r = twiddle_factors[twiddle_offset + k * twiddle_step].re;
- *         double w_i = twiddle_factors[twiddle_offset + k * twiddle_step].im;
- *         out_re[k + lane * sub_fft_size] = a_r * w_r - a_i * w_i;
- *         out_im[k + lane * sub_fft_size] = a_r * w_i + a_i * w_r;
- *     }
- * }
- * \endcode
- *
- * @see mixed_radix_dit_rec, fft_init, twiddle
- * @author Tugbars
- * @date 2025-06-22
- */
 struct fft_set {
     int n_input;              // Input signal length
     int n_fft;                // Transform length (N for mixed-radix, M for Bluestein)
