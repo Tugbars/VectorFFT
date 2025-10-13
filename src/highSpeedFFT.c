@@ -208,318 +208,287 @@
 */
 
 #include "highspeedFFT.h"
+#include "prefetch_strategy.h"
 #include "time.h"
 #include <immintrin.h>
 #include <pthread.h>
 
 
 //==============================================================================
-// INLINE / ATTRIBUTES
+// SIMD ABSTRACTION LAYER - Improved Portability
 //==============================================================================
+
+//------------------------------------------------------------------------------
+// Feature Detection
+//------------------------------------------------------------------------------
+#if defined(__AVX512F__)
+    #define HAS_AVX512 1
+    #define HAS_AVX2 1
+    #define HAS_SSE2 1
+#elif defined(__AVX2__)
+    #define HAS_AVX2 1
+    #define HAS_SSE2 1
+#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+    #define HAS_SSE2 1
+#endif
+
+#if defined(__FMA__) || (defined(__AVX2__) && defined(__FMA__))
+    #define HAS_FMA 1
+#endif
+
+//------------------------------------------------------------------------------
+// Compiler-Agnostic Force Inline
+//------------------------------------------------------------------------------
 #ifdef _MSC_VER
-#define ALWAYS_INLINE __forceinline
+    #define ALWAYS_INLINE __forceinline
 #elif defined(__GNUC__) || defined(__clang__)
-#define ALWAYS_INLINE inline __attribute__((always_inline))
+    #define ALWAYS_INLINE inline __attribute__((always_inline))
 #else
-#define ALWAYS_INLINE inline
+    #define ALWAYS_INLINE inline
 #endif
 
-/**
- * @brief Build configuration option for twiddle factor computation.
- * Define USE_TWIDDLE_TABLES to use precomputed lookup tables for radices 2, 3, 4, 5, 7, 8, 11, and 13.
- * If undefined, all twiddle factors are computed dynamically at runtime using cos and sin.
- */
-#define USE_TWIDDLE_TABLES
-
-//==============================================================================
-// FMA MACROS
-//   - AVX: FMADD/FMSUB (256-bit)
-//   - 128-bit: FMADD_SSE2_PD / FMSUB_SSE2_PD use FMA if available, else fallback
-//   - Convenience aliases: FMADD_SSE2 / FMSUB_SSE2 == 128-bit versions
-//==============================================================================
-
-// 128-bit fallback helpers are always available (SSE2 has no FMA)
-static ALWAYS_INLINE __m128d fmadd_sse2_fallback(__m128d a, __m128d b, __m128d c)
+//------------------------------------------------------------------------------
+// Alignment Helpers (Proxy Functions)
+//------------------------------------------------------------------------------
+static ALWAYS_INLINE int is_aligned(const void *p, size_t alignment)
 {
-    return _mm_add_pd(_mm_mul_pd(a, b), c);
-}
-static ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c)
-{
-    return _mm_sub_pd(_mm_mul_pd(a, b), c);
+    return (((uintptr_t)p) & (alignment - 1)) == 0;
 }
 
-#if defined(__FMA__) || defined(USE_FMA)
+static ALWAYS_INLINE int is_aligned_16(const void *p) { return is_aligned(p, 16); }
+static ALWAYS_INLINE int is_aligned_32(const void *p) { return is_aligned(p, 32); }
+static ALWAYS_INLINE int is_aligned_64(const void *p) { return is_aligned(p, 64); }
 
-// --- 256-bit AVX FMA ---
-#define FMADD(a, b, c) _mm256_fmadd_pd((a), (b), (c))
-#define FMSUB(a, b, c) _mm256_fmsub_pd((a), (b), (c))
-
-// --- 128-bit FMA (requires -mfma) ---
-#define FMADD_SSE2_PD(a, b, c) _mm_fmadd_pd((a), (b), (c))
-#define FMSUB_SSE2_PD(a, b, c) _mm_fmsub_pd((a), (b), (c))
-
-#else
-
-// --- 256-bit fallback ---
-static ALWAYS_INLINE __m256d fmadd_fallback(__m256d a, __m256d b, __m256d c)
-{
-    return _mm256_add_pd(_mm256_mul_pd(a, b), c);
-}
-static ALWAYS_INLINE __m256d fmsub_fallback(__m256d a, __m256d b, __m256d c)
-{
-    return _mm256_sub_pd(_mm256_mul_pd(a, b), c);
-}
-#define FMADD(a, b, c) fmadd_fallback((a), (b), (c))
-#define FMSUB(a, b, c) fmsub_fallback((a), (b), (c))
-
-// --- 128-bit fallback ---
-#define FMADD_SSE2_PD(a, b, c) fmadd_sse2_fallback((a), (b), (c))
-#define FMSUB_SSE2_PD(a, b, c) fmsub_sse2_fallback((a), (b), (c))
-
+//------------------------------------------------------------------------------
+// Alignment Policy Configuration
+//------------------------------------------------------------------------------
+#if defined(FFT_DEBUG_ALIGNMENT) || defined(FFT_STRICT_ALIGNMENT)
+    #define CHECK_ALIGNMENT 1
 #endif
 
-// Convenience aliases to the 128-bit versions
-#define FMADD_SSE2(a, b, c) FMADD_SSE2_PD((a), (b), (c))
-#define FMSUB_SSE2(a, b, c) FMSUB_SSE2_PD((a), (b), (c))
+//------------------------------------------------------------------------------
+// SSE2 Load/Store Wrappers (128-bit / 16-byte alignment)
+//------------------------------------------------------------------------------
+#ifdef HAS_SSE2
 
-//==============================================================================
-// LOAD / STORE WRAPPERS
-// If USE_ALIGNED_SIMD is defined, enforce alignment at the *access site*.
-// On misalignment:
-//   - If FFT_STRICT_ALIGNMENT is defined: print error and abort()
-//   - Else: print error and FALL BACK to unaligned op
-// If USE_ALIGNED_SIMD is NOT defined: always use unaligned ops (no checks).
-//==============================================================================
-
-//==============================================================================
-// LOAD / STORE WRAPPERS
-// Debug builds check alignment; release builds use fast paths
-//==============================================================================
-
-#ifdef FFT_DEBUG_ALIGNMENT
-#define FFT_ALIGNMENT_CHECK
-#endif
-
-//=============================================================================
-// ALIGNMENT HELPER FOR AVX-512
-//==============================================================================
-#ifdef HAS_AVX512
-/**
- * @brief Check 64-byte alignment for AVX-512.
- */
-static ALWAYS_INLINE int is_aligned_64(const void *p)
+static ALWAYS_INLINE __m128d load_pd128(const double *ptr)
 {
-    return (((uintptr_t)p) & 63) == 0;
-}
-#endif
-
-//==============================================================================
-// LOAD / STORE WRAPPERS - AVX-512
-//==============================================================================
-
-/**
- * @brief Load 8 doubles (512 bits) with alignment handling.
- */
-static ALWAYS_INLINE __m512d LOAD_PD512(const double *ptr)
-{
-#ifdef FFT_ALIGNMENT_CHECK
-    if (!is_aligned_64(ptr))
-    {
-        fprintf(stderr, "FFT WARNING: unaligned AVX-512 load at %p (expected 64B)\n", (void *)ptr);
-#ifdef FFT_STRICT_ALIGNMENT
-        abort();
-#else
-        return _mm512_loadu_pd(ptr);
-#endif
+#ifdef CHECK_ALIGNMENT
+    if (!is_aligned_16(ptr)) {
+        fprintf(stderr, "FFT WARNING: unaligned SSE2 load at %p\n", (void*)ptr);
+        #ifdef FFT_STRICT_ALIGNMENT
+            abort();
+        #else
+            return _mm_loadu_pd(ptr);
+        #endif
     }
-    return _mm512_load_pd(ptr);
-#else
-#ifdef USE_ALIGNED_SIMD
-    return _mm512_load_pd(ptr);
-#else
-    return _mm512_loadu_pd(ptr);
 #endif
-#endif
-}
-
-/**
- * @brief Store 8 doubles (512 bits) with alignment handling.
- */
-static ALWAYS_INLINE void STORE_PD512(double *ptr, __m512d v)
-{
-#ifdef FFT_ALIGNMENT_CHECK
-    if (!is_aligned_64(ptr))
-    {
-        fprintf(stderr, "FFT WARNING: unaligned AVX-512 store at %p (expected 64B)\n", (void *)ptr);
-#ifdef FFT_STRICT_ALIGNMENT
-        abort();
-#else
-        _mm512_storeu_pd(ptr, v);
-        return;
-#endif
-    }
-    _mm512_store_pd(ptr, v);
-#else
-#ifdef USE_ALIGNED_SIMD
-    _mm512_store_pd(ptr, v);
-#else
-    _mm512_storeu_pd(ptr, v);
-#endif
-#endif
-}
-
-// Explicit unaligned versions
-#define LOADU_PD512(ptr) _mm512_loadu_pd((const double *)(ptr))
-#define STOREU_PD512(ptr, v) _mm512_storeu_pd((double *)(ptr), (v))
-
-static ALWAYS_INLINE int is_aligned_32(const void *p)
-{
-    return (((uintptr_t)p) & 31) == 0;
-}
-static ALWAYS_INLINE int is_aligned_16(const void *p)
-{
-    return (((uintptr_t)p) & 15) == 0;
-}
-
-/**
- * @brief Load 4 doubles with optional alignment checking.
- *
- * Behavior depends on compile flags:
- * - FFT_DEBUG_ALIGNMENT: Check alignment at runtime, print warning if misaligned
- * - FFT_STRICT_ALIGNMENT: Abort on misalignment (debug only)
- * - USE_ALIGNED_SIMD: Use fast aligned load (requires 32-byte aligned ptr)
- * - Default: Use safe unaligned load
- *
- * @param ptr Pointer to 4 doubles (32 bytes). Must be 32-byte aligned if USE_ALIGNED_SIMD is set.
- * @return AVX register containing the 4 loaded doubles.
- */
-static ALWAYS_INLINE __m256d LOAD_PD(const double *ptr)
-{
-#ifdef FFT_ALIGNMENT_CHECK
-    if (!is_aligned_32(ptr))
-    {
-        fprintf(stderr, "FFT WARNING: unaligned AVX load at %p (expected 32B)\n", (void *)ptr);
-#ifdef FFT_STRICT_ALIGNMENT
-        abort();
-#else
-        return _mm256_loadu_pd(ptr);
-#endif
-    }
-    return _mm256_load_pd(ptr);
-#else
-#ifdef USE_ALIGNED_SIMD
-    return _mm256_load_pd(ptr);
-#else
-    return _mm256_loadu_pd(ptr);
-#endif
-#endif
-}
-
-/**
- * @brief Store 4 doubles with optional alignment checking.
- *
- * Companion to LOAD_PD. Uses aligned/unaligned store based on same compile flags.
- *
- * @param ptr Pointer to write 4 doubles. Must be 32-byte aligned if USE_ALIGNED_SIMD is set.
- * @param v AVX register to store.
- */
-
-static ALWAYS_INLINE void STORE_PD(double *ptr, __m256d v)
-{
-#ifdef FFT_ALIGNMENT_CHECK
-    if (!is_aligned_32(ptr))
-    {
-        fprintf(stderr, "FFT WARNING: unaligned AVX store at %p (expected 32B)\n", (void *)ptr);
-#ifdef FFT_STRICT_ALIGNMENT
-        abort();
-#else
-        _mm256_storeu_pd(ptr, v);
-        return;
-#endif
-    }
-    _mm256_store_pd(ptr, v);
-#else
-#ifdef USE_ALIGNED_SIMD
-    _mm256_store_pd(ptr, v);
-#else
-    _mm256_storeu_pd(ptr, v);
-#endif
-#endif
-}
-
-/**
- * @brief Load 2 doubles with optional alignment checking (SSE2).
- *
- * SSE2 version for loading 1 complex number or tail elements.
- * Uses 16-byte alignment requirement instead of 32-byte.
- *
- * @param ptr Pointer to 2 doubles (16 bytes). Must be 16-byte aligned if USE_ALIGNED_SIMD is set.
- * @return SSE register containing the 2 loaded doubles.
- */
-static ALWAYS_INLINE __m128d LOAD_SSE2(const double *ptr)
-{
-#ifdef FFT_ALIGNMENT_CHECK
-    if (!is_aligned_16(ptr))
-    {
-        fprintf(stderr, "FFT WARNING: unaligned SSE load at %p (expected 16B)\n", (void *)ptr);
-#ifdef FFT_STRICT_ALIGNMENT
-        abort();
-#else
-        return _mm_loadu_pd(ptr);
-#endif
-    }
-    return _mm_load_pd(ptr);
-#else
 #ifdef USE_ALIGNED_SIMD
     return _mm_load_pd(ptr);
 #else
     return _mm_loadu_pd(ptr);
 #endif
-#endif
 }
 
-/**
- * @brief Store 2 doubles with optional alignment checking (SSE2).
- *
- * SSE2 version of STORE_PD for 1 complex number or tail elements.
- *
- * @param ptr Pointer to write 2 doubles. Must be 16-byte aligned if USE_ALIGNED_SIMD is set.
- * @param v SSE register to store.
- */
-static ALWAYS_INLINE void STORE_SSE2(double *ptr, __m128d v)
+static ALWAYS_INLINE void store_pd128(double *ptr, __m128d v)
 {
-#ifdef FFT_ALIGNMENT_CHECK
-    if (!is_aligned_16(ptr))
-    {
-        fprintf(stderr, "FFT WARNING: unaligned SSE store at %p (expected 16B)\n", (void *)ptr);
-#ifdef FFT_STRICT_ALIGNMENT
-        abort();
-#else
-        _mm_storeu_pd(ptr, v);
-        return;
-#endif
+#ifdef CHECK_ALIGNMENT
+    if (!is_aligned_16(ptr)) {
+        fprintf(stderr, "FFT WARNING: unaligned SSE2 store at %p\n", (void*)ptr);
+        #ifdef FFT_STRICT_ALIGNMENT
+            abort();
+        #else
+            _mm_storeu_pd(ptr, v);
+            return;
+        #endif
     }
-    _mm_store_pd(ptr, v);
-#else
+#endif
 #ifdef USE_ALIGNED_SIMD
     _mm_store_pd(ptr, v);
 #else
     _mm_storeu_pd(ptr, v);
 #endif
+}
+
+// Explicit unaligned versions
+static ALWAYS_INLINE __m128d loadu_pd128(const double *ptr) {
+    return _mm_loadu_pd(ptr);
+}
+
+static ALWAYS_INLINE void storeu_pd128(double *ptr, __m128d v) {
+    _mm_storeu_pd(ptr, v);
+}
+
+// Legacy aliases
+#define LOAD_SSE2(ptr)      load_pd128((const double*)(ptr))
+#define STORE_SSE2(ptr, v)  store_pd128((double*)(ptr), (v))
+#define LOADU_SSE2(ptr)     loadu_pd128((const double*)(ptr))
+#define STOREU_SSE2(ptr, v) storeu_pd128((double*)(ptr), (v))
+
+#endif // HAS_SSE2
+
+//------------------------------------------------------------------------------
+// AVX2 Load/Store Wrappers (256-bit / 32-byte alignment)
+//------------------------------------------------------------------------------
+#ifdef HAS_AVX2
+
+static ALWAYS_INLINE __m256d load_pd256(const double *ptr)
+{
+#ifdef CHECK_ALIGNMENT
+    if (!is_aligned_32(ptr)) {
+        fprintf(stderr, "FFT WARNING: unaligned AVX2 load at %p\n", (void*)ptr);
+        #ifdef FFT_STRICT_ALIGNMENT
+            abort();
+        #else
+            return _mm256_loadu_pd(ptr);
+        #endif
+    }
+#endif
+#ifdef USE_ALIGNED_SIMD
+    return _mm256_load_pd(ptr);
+#else
+    return _mm256_loadu_pd(ptr);
 #endif
 }
 
-// Explicit unaligned helpers (bypass checks)
-#define LOADU_PD(ptr) _mm256_loadu_pd((const double *)(ptr))
-#define STOREU_PD(ptr, v) _mm256_storeu_pd((double *)(ptr), (v))
-#define LOADU_SSE2(ptr) _mm_loadu_pd((const double *)(ptr))
-#define STOREU_SSE2(ptr, v) _mm_storeu_pd((double *)(ptr), (v))
+static ALWAYS_INLINE void store_pd256(double *ptr, __m256d v)
+{
+#ifdef CHECK_ALIGNMENT
+    if (!is_aligned_32(ptr)) {
+        fprintf(stderr, "FFT WARNING: unaligned AVX2 store at %p\n", (void*)ptr);
+        #ifdef FFT_STRICT_ALIGNMENT
+            abort();
+        #else
+            _mm256_storeu_pd(ptr, v);
+            return;
+        #endif
+    }
+#endif
+#ifdef USE_ALIGNED_SIMD
+    _mm256_store_pd(ptr, v);
+#else
+    _mm256_storeu_pd(ptr, v);
+#endif
+}
 
-//==============================================================================
-// PREFETCH HELPERS
-//==============================================================================
+static ALWAYS_INLINE __m256d loadu_pd256(const double *ptr) {
+    return _mm256_loadu_pd(ptr);
+}
+
+static ALWAYS_INLINE void storeu_pd256(double *ptr, __m256d v) {
+    _mm256_storeu_pd(ptr, v);
+}
+
+// Legacy aliases
+#define LOAD_PD(ptr)      load_pd256((const double*)(ptr))
+#define STORE_PD(ptr, v)  store_pd256((double*)(ptr), (v))
+#define LOADU_PD(ptr)     loadu_pd256((const double*)(ptr))
+#define STOREU_PD(ptr, v) storeu_pd256((double*)(ptr), (v))
+
+#endif // HAS_AVX2
+
+//------------------------------------------------------------------------------
+// AVX-512 Load/Store Wrappers (512-bit / 64-byte alignment)
+//------------------------------------------------------------------------------
+#ifdef HAS_AVX512
+
+static ALWAYS_INLINE __m512d load_pd512(const double *ptr)
+{
+#ifdef CHECK_ALIGNMENT
+    if (!is_aligned_64(ptr)) {
+        fprintf(stderr, "FFT WARNING: unaligned AVX-512 load at %p\n", (void*)ptr);
+        #ifdef FFT_STRICT_ALIGNMENT
+            abort();
+        #else
+            return _mm512_loadu_pd(ptr);
+        #endif
+    }
+#endif
+#ifdef USE_ALIGNED_SIMD
+    return _mm512_load_pd(ptr);
+#else
+    return _mm512_loadu_pd(ptr);
+#endif
+}
+
+static ALWAYS_INLINE void store_pd512(double *ptr, __m512d v)
+{
+#ifdef CHECK_ALIGNMENT
+    if (!is_aligned_64(ptr)) {
+        fprintf(stderr, "FFT WARNING: unaligned AVX-512 store at %p\n", (void*)ptr);
+        #ifdef FFT_STRICT_ALIGNMENT
+            abort();
+        #else
+            _mm512_storeu_pd(ptr, v);
+            return;
+        #endif
+    }
+#endif
+#ifdef USE_ALIGNED_SIMD
+    _mm512_store_pd(ptr, v);
+#else
+    _mm512_storeu_pd(ptr, v);
+#endif
+}
+
+static ALWAYS_INLINE __m512d loadu_pd512(const double *ptr) {
+    return _mm512_loadu_pd(ptr);
+}
+
+static ALWAYS_INLINE void storeu_pd512(double *ptr, __m512d v) {
+    _mm512_storeu_pd(ptr, v);
+}
+
+// Legacy aliases
+#define LOAD_PD512(ptr)      load_pd512((const double*)(ptr))
+#define STORE_PD512(ptr, v)  store_pd512((double*)(ptr), (v))
+#define LOADU_PD512(ptr)     loadu_pd512((const double*)(ptr))
+#define STOREU_PD512(ptr, v) storeu_pd512((double*)(ptr), (v))
+
+#endif // HAS_AVX512
+
+//------------------------------------------------------------------------------
+// FMA Wrappers (Fused Multiply-Add/Sub)
+//------------------------------------------------------------------------------
+#ifdef HAS_FMA
+    // 256-bit FMA
+    #define FMADD(a, b, c)  _mm256_fmadd_pd((a), (b), (c))
+    #define FMSUB(a, b, c)  _mm256_fmsub_pd((a), (b), (c))
+    
+    // 128-bit FMA
+    #define FMADD_SSE2(a, b, c) _mm_fmadd_pd((a), (b), (c))
+    #define FMSUB_SSE2(a, b, c) _mm_fmsub_pd((a), (b), (c))
+#else
+    // 256-bit fallback
+    static ALWAYS_INLINE __m256d fmadd_fallback(__m256d a, __m256d b, __m256d c) {
+        return _mm256_add_pd(_mm256_mul_pd(a, b), c);
+    }
+    static ALWAYS_INLINE __m256d fmsub_fallback(__m256d a, __m256d b, __m256d c) {
+        return _mm256_sub_pd(_mm256_mul_pd(a, b), c);
+    }
+    #define FMADD(a, b, c) fmadd_fallback((a), (b), (c))
+    #define FMSUB(a, b, c) fmsub_fallback((a), (b), (c))
+    
+    // 128-bit fallback
+    static ALWAYS_INLINE __m128d fmadd_sse2_fallback(__m128d a, __m128d b, __m128d c) {
+        return _mm_add_pd(_mm_mul_pd(a, b), c);
+    }
+    static ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c) {
+        return _mm_sub_pd(_mm_mul_pd(a, b), c);
+    }
+    #define FMADD_SSE2(a, b, c) fmadd_sse2_fallback((a), (b), (c))
+    #define FMSUB_SSE2(a, b, c) fmsub_sse2_fallback((a), (b), (c))
+#endif
+
+// Explicit PD suffix aliases (for clarity)
+#define FMADD_SSE2_PD FMADD_SSE2
+#define FMSUB_SSE2_PD FMSUB_SSE2
+
+//------------------------------------------------------------------------------
+// Prefetch Configuration
+//------------------------------------------------------------------------------
 #ifndef FFT_PREFETCH_DISTANCE
-#define FFT_PREFETCH_DISTANCE 8 // ~64B ahead for AoS complex<double>
+    #define FFT_PREFETCH_DISTANCE 8  // Cache lines ahead
 #endif
 
 //==============================================================================
@@ -1243,7 +1212,36 @@ fft_object fft_init(int signal_length, int transform_direction)
         }
     }
 
-    // Step 13: Return configured FFT object
+    // Step 13: Initialize prefetch system (AFTER factorization is complete)
+    // Detect cache sizes once (global state)
+    static int cache_detected = 0;
+    if (!cache_detected) {
+        detect_cache_sizes();
+        cache_detected = 1;
+        
+#ifdef FFT_DEBUG_PREFETCH
+        fprintf(stderr, "FFT: Cache sizes detected - L1: %d KB, L2: %d KB, L3: %d KB\n",
+                g_prefetch_config.l1_size / 1024,
+                g_prefetch_config.l2_size / 1024,
+                g_prefetch_config.l3_size / 1024);
+#endif
+    }
+    
+    // Initialize per-stage prefetch configuration
+    init_stage_prefetch(fft_config);
+    
+#ifdef FFT_DEBUG_PREFETCH
+    fprintf(stderr, "FFT: Initialized %d prefetch stages for N=%d\n",
+            g_prefetch_config.num_stages, signal_length);
+    for (int i = 0; i < g_prefetch_config.num_stages; i++) {
+        stage_prefetch_t *cfg = &g_prefetch_config.stages[i];
+        fprintf(stderr, "  Stage %d: radix=%d, dist=%d, strategy=%d, enable=%d\n",
+                i, fft_config->factors[i], cfg->distance_input, 
+                cfg->strategy, cfg->enable);
+    }
+#endif
+
+    // Step 14: Return configured FFT object
     return fft_config;
 }
 
@@ -1958,283 +1956,294 @@ static void mixed_radix_dit_rec(
     // 8) RADIX DISPATCH
     //==========================================================================
     if (radix == 2)
-    {
-        const int half = sub_len;
-        int k = 0;
-        const int trivial_end = (half + 1) / 2; // First ~half of twiddles
+{
+    const int half = sub_len;
+    int k = 0;
+    const int trivial_end = (half + 1) / 2; // First ~half of twiddles
+
+#ifdef FFT_ENABLE_PREFETCH
+    // Get prefetch configuration for this stage
+    stage_prefetch_t *cfg = get_stage_config(factor_index);
+#else
+    stage_prefetch_t *cfg = NULL;
+#endif
 
 #ifdef HAS_AVX512
-        //======================================================================
-        // AVX-512 PATH: 16x unrolling (process 16 butterflies at once)
-        //======================================================================
+    //======================================================================
+    // AVX-512 PATH: 16x unrolling (process 16 butterflies at once)
+    //======================================================================
 
-        // Trivial twiddles (W^0 = 1): No complex multiply needed
-        for (; k + 15 < trivial_end; k += 16)
-        {
-            // Prefetch ahead
-            if (k + 32 < trivial_end)
-            {
-                _mm_prefetch((const char *)&sub_outputs[k + 32].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&sub_outputs[k + 32 + half].re, _MM_HINT_T0);
-            }
-
-            // Load 16 even-indexed complex samples (4 loads × 4 complex each)
-            __m512d e0 = load4_aos(&sub_outputs[k + 0]);
-            __m512d e1 = load4_aos(&sub_outputs[k + 4]);
-            __m512d e2 = load4_aos(&sub_outputs[k + 8]);
-            __m512d e3 = load4_aos(&sub_outputs[k + 12]);
-
-            // Load 16 odd samples
-            __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
-            __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
-            __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
-            __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
-
-            // Radix-2 butterfly: X[k] = E[k] + O[k], X[k+N/2] = E[k] - O[k]
-            __m512d x00 = _mm512_add_pd(e0, o0);
-            __m512d x10 = _mm512_sub_pd(e0, o0);
-            __m512d x01 = _mm512_add_pd(e1, o1);
-            __m512d x11 = _mm512_sub_pd(e1, o1);
-            __m512d x02 = _mm512_add_pd(e2, o2);
-            __m512d x12 = _mm512_sub_pd(e2, o2);
-            __m512d x03 = _mm512_add_pd(e3, o3);
-            __m512d x13 = _mm512_sub_pd(e3, o3);
-
-            // Store results
-            STOREU_PD512(&output_buffer[k + 0].re, x00);
-            STOREU_PD512(&output_buffer[k + 4].re, x01);
-            STOREU_PD512(&output_buffer[k + 8].re, x02);
-            STOREU_PD512(&output_buffer[k + 12].re, x03);
-            STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
-            STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
-            STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
-            STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
+    // Trivial twiddles (W^0 = 1): No complex multiply needed
+    for (; k + 15 < trivial_end; k += 16)
+    {
+        // NEW: Use prefetch strategy system instead of manual _mm_prefetch
+        if (cfg && cfg->enable && k + 32 < trivial_end) {
+            prefetch_input(&sub_outputs[k + 32], 0, cfg);
+            prefetch_input(&sub_outputs[k + 32 + half], 0, cfg);
         }
 
-        // Non-trivial twiddles: Need complex multiply (W^k * O[k])
-        for (; k + 15 < half; k += 16)
-        {
-            if (k + 32 < half)
-            {
-                _mm_prefetch((const char *)&sub_outputs[k + 32].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&sub_outputs[k + 32 + half].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&stage_tw[k + 32].re, _MM_HINT_T0);
-            }
+        // Load 16 even-indexed complex samples (4 loads × 4 complex each)
+        __m512d e0 = load4_aos(&sub_outputs[k + 0]);
+        __m512d e1 = load4_aos(&sub_outputs[k + 4]);
+        __m512d e2 = load4_aos(&sub_outputs[k + 8]);
+        __m512d e3 = load4_aos(&sub_outputs[k + 12]);
 
-            // Load even/odd samples
-            __m512d e0 = load4_aos(&sub_outputs[k + 0]);
-            __m512d e1 = load4_aos(&sub_outputs[k + 4]);
-            __m512d e2 = load4_aos(&sub_outputs[k + 8]);
-            __m512d e3 = load4_aos(&sub_outputs[k + 12]);
+        // Load 16 odd samples
+        __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
+        __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
+        __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
+        __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
 
-            __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
-            __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
-            __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
-            __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
+        // Radix-2 butterfly: X[k] = E[k] + O[k], X[k+N/2] = E[k] - O[k]
+        __m512d x00 = _mm512_add_pd(e0, o0);
+        __m512d x10 = _mm512_sub_pd(e0, o0);
+        __m512d x01 = _mm512_add_pd(e1, o1);
+        __m512d x11 = _mm512_sub_pd(e1, o1);
+        __m512d x02 = _mm512_add_pd(e2, o2);
+        __m512d x12 = _mm512_sub_pd(e2, o2);
+        __m512d x03 = _mm512_add_pd(e3, o3);
+        __m512d x13 = _mm512_sub_pd(e3, o3);
 
-            // Load twiddles
-            __m512d w0 = load4_aos(&stage_tw[k + 0]);
-            __m512d w1 = load4_aos(&stage_tw[k + 4]);
-            __m512d w2 = load4_aos(&stage_tw[k + 8]);
-            __m512d w3 = load4_aos(&stage_tw[k + 12]);
+        // Store results
+        STOREU_PD512(&output_buffer[k + 0].re, x00);
+        STOREU_PD512(&output_buffer[k + 4].re, x01);
+        STOREU_PD512(&output_buffer[k + 8].re, x02);
+        STOREU_PD512(&output_buffer[k + 12].re, x03);
+        STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
+        STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
+        STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
+        STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
+    }
 
-            // Twiddle multiply
-            __m512d tw0 = cmul_avx512_aos(o0, w0);
-            __m512d tw1 = cmul_avx512_aos(o1, w1);
-            __m512d tw2 = cmul_avx512_aos(o2, w2);
-            __m512d tw3 = cmul_avx512_aos(o3, w3);
-
-            // Butterfly
-            __m512d x00 = _mm512_add_pd(e0, tw0);
-            __m512d x10 = _mm512_sub_pd(e0, tw0);
-            __m512d x01 = _mm512_add_pd(e1, tw1);
-            __m512d x11 = _mm512_sub_pd(e1, tw1);
-            __m512d x02 = _mm512_add_pd(e2, tw2);
-            __m512d x12 = _mm512_sub_pd(e2, tw2);
-            __m512d x03 = _mm512_add_pd(e3, tw3);
-            __m512d x13 = _mm512_sub_pd(e3, tw3);
-
-            // Store
-            STOREU_PD512(&output_buffer[k + 0].re, x00);
-            STOREU_PD512(&output_buffer[k + 4].re, x01);
-            STOREU_PD512(&output_buffer[k + 8].re, x02);
-            STOREU_PD512(&output_buffer[k + 12].re, x03);
-            STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
-            STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
-            STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
-            STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
+    // Non-trivial twiddles: Need complex multiply (W^k * O[k])
+    for (; k + 15 < half; k += 16)
+    {
+        // NEW: Prefetch both data and twiddles using strategy system
+        if (cfg && cfg->enable && k + 32 < half) {
+            prefetch_input(&sub_outputs[k + 32], 0, cfg);
+            prefetch_input(&sub_outputs[k + 32 + half], 0, cfg);
+            prefetch_twiddle(&stage_tw[k + 32], 0, cfg);
         }
 
-        // Fall through to AVX2 cleanup for remaining elements
+        // Load even/odd samples
+        __m512d e0 = load4_aos(&sub_outputs[k + 0]);
+        __m512d e1 = load4_aos(&sub_outputs[k + 4]);
+        __m512d e2 = load4_aos(&sub_outputs[k + 8]);
+        __m512d e3 = load4_aos(&sub_outputs[k + 12]);
+
+        __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
+        __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
+        __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
+        __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
+
+        // Load twiddles
+        __m512d w0 = load4_aos(&stage_tw[k + 0]);
+        __m512d w1 = load4_aos(&stage_tw[k + 4]);
+        __m512d w2 = load4_aos(&stage_tw[k + 8]);
+        __m512d w3 = load4_aos(&stage_tw[k + 12]);
+
+        // Twiddle multiply
+        __m512d tw0 = cmul_avx512_aos(o0, w0);
+        __m512d tw1 = cmul_avx512_aos(o1, w1);
+        __m512d tw2 = cmul_avx512_aos(o2, w2);
+        __m512d tw3 = cmul_avx512_aos(o3, w3);
+
+        // Butterfly
+        __m512d x00 = _mm512_add_pd(e0, tw0);
+        __m512d x10 = _mm512_sub_pd(e0, tw0);
+        __m512d x01 = _mm512_add_pd(e1, tw1);
+        __m512d x11 = _mm512_sub_pd(e1, tw1);
+        __m512d x02 = _mm512_add_pd(e2, tw2);
+        __m512d x12 = _mm512_sub_pd(e2, tw2);
+        __m512d x03 = _mm512_add_pd(e3, tw3);
+        __m512d x13 = _mm512_sub_pd(e3, tw3);
+
+        // Store
+        STOREU_PD512(&output_buffer[k + 0].re, x00);
+        STOREU_PD512(&output_buffer[k + 4].re, x01);
+        STOREU_PD512(&output_buffer[k + 8].re, x02);
+        STOREU_PD512(&output_buffer[k + 12].re, x03);
+        STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
+        STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
+        STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
+        STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
+    }
+
+    // Fall through to AVX2 cleanup for remaining elements
 #endif // HAS_AVX512
 
 #ifdef __AVX2__
-        //======================================================================
-        // OPTIMIZATION 1: First half has trivial twiddles (W^0 = 1)
-        // No complex multiply needed! Saves ~50% of work for radix-2.
-        //======================================================================
+    //======================================================================
+    // OPTIMIZATION 1: First half has trivial twiddles (W^0 = 1)
+    // No complex multiply needed! Saves ~50% of work for radix-2.
+    //======================================================================
 
-        // Process trivial twiddles with 4x unrolling
-        for (; k + 7 < trivial_end; k += 8)
-        {
-            // Prefetch ahead
-            if (k + 16 < trivial_end)
-            {
-                _mm_prefetch((const char *)&sub_outputs[k + 16].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&sub_outputs[k + 16 + half].re, _MM_HINT_T0);
-            }
-
-            // Load 8 even pairs (4 AVX2 loads)
-            __m256d e0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
-            __m256d e1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
-            __m256d e2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
-            __m256d e3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
-
-            // Load 8 odd pairs (4 AVX2 loads)
-            __m256d o0 = load2_aos(&sub_outputs[k + 0 + half], &sub_outputs[k + 1 + half]);
-            __m256d o1 = load2_aos(&sub_outputs[k + 2 + half], &sub_outputs[k + 3 + half]);
-            __m256d o2 = load2_aos(&sub_outputs[k + 4 + half], &sub_outputs[k + 5 + half]);
-            __m256d o3 = load2_aos(&sub_outputs[k + 6 + half], &sub_outputs[k + 7 + half]);
-
-            // Butterfly (no twiddle multiply!)
-            __m256d x00 = _mm256_add_pd(e0, o0);
-            __m256d x10 = _mm256_sub_pd(e0, o0);
-            __m256d x01 = _mm256_add_pd(e1, o1);
-            __m256d x11 = _mm256_sub_pd(e1, o1);
-            __m256d x02 = _mm256_add_pd(e2, o2);
-            __m256d x12 = _mm256_sub_pd(e2, o2);
-            __m256d x03 = _mm256_add_pd(e3, o3);
-            __m256d x13 = _mm256_sub_pd(e3, o3);
-
-            // Store results
-            STOREU_PD(&output_buffer[k + 0].re, x00);
-            STOREU_PD(&output_buffer[k + 2].re, x01);
-            STOREU_PD(&output_buffer[k + 4].re, x02);
-            STOREU_PD(&output_buffer[k + 6].re, x03);
-            STOREU_PD(&output_buffer[k + 0 + half].re, x10);
-            STOREU_PD(&output_buffer[k + 2 + half].re, x11);
-            STOREU_PD(&output_buffer[k + 4 + half].re, x12);
-            STOREU_PD(&output_buffer[k + 6 + half].re, x13);
+    // Process trivial twiddles with 4x unrolling
+    for (; k + 7 < trivial_end; k += 8)
+    {
+        // NEW: Use prefetch strategy system
+        if (cfg && cfg->enable && k + 16 < trivial_end) {
+            prefetch_input(&sub_outputs[k + 16], 0, cfg);
+            prefetch_input(&sub_outputs[k + 16 + half], 0, cfg);
         }
 
-        // Cleanup: 2x unrolling for remaining trivial twiddles
-        for (; k + 1 < trivial_end; k += 2)
-        {
-            __m256d even = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
-            __m256d odd = load2_aos(&sub_outputs[k + half], &sub_outputs[k + half + 1]);
+        // Load 8 even pairs (4 AVX2 loads)
+        __m256d e0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
+        __m256d e1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
+        __m256d e2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
+        __m256d e3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
 
-            __m256d x0 = _mm256_add_pd(even, odd);
-            __m256d x1 = _mm256_sub_pd(even, odd);
+        // Load 8 odd pairs (4 AVX2 loads)
+        __m256d o0 = load2_aos(&sub_outputs[k + 0 + half], &sub_outputs[k + 1 + half]);
+        __m256d o1 = load2_aos(&sub_outputs[k + 2 + half], &sub_outputs[k + 3 + half]);
+        __m256d o2 = load2_aos(&sub_outputs[k + 4 + half], &sub_outputs[k + 5 + half]);
+        __m256d o3 = load2_aos(&sub_outputs[k + 6 + half], &sub_outputs[k + 7 + half]);
 
-            STOREU_PD(&output_buffer[k].re, x0);
-            STOREU_PD(&output_buffer[k + half].re, x1);
+        // Butterfly (no twiddle multiply!)
+        __m256d x00 = _mm256_add_pd(e0, o0);
+        __m256d x10 = _mm256_sub_pd(e0, o0);
+        __m256d x01 = _mm256_add_pd(e1, o1);
+        __m256d x11 = _mm256_sub_pd(e1, o1);
+        __m256d x02 = _mm256_add_pd(e2, o2);
+        __m256d x12 = _mm256_sub_pd(e2, o2);
+        __m256d x03 = _mm256_add_pd(e3, o3);
+        __m256d x13 = _mm256_sub_pd(e3, o3);
+
+        // Store results
+        STOREU_PD(&output_buffer[k + 0].re, x00);
+        STOREU_PD(&output_buffer[k + 2].re, x01);
+        STOREU_PD(&output_buffer[k + 4].re, x02);
+        STOREU_PD(&output_buffer[k + 6].re, x03);
+        STOREU_PD(&output_buffer[k + 0 + half].re, x10);
+        STOREU_PD(&output_buffer[k + 2 + half].re, x11);
+        STOREU_PD(&output_buffer[k + 4 + half].re, x12);
+        STOREU_PD(&output_buffer[k + 6 + half].re, x13);
+    }
+
+    // Cleanup: 2x unrolling for remaining trivial twiddles
+    for (; k + 1 < trivial_end; k += 2)
+    {
+        // NEW: Use prefetch strategy for cleanup loops too
+        if (cfg && cfg->enable && k + 8 < trivial_end) {
+            prefetch_input(&sub_outputs[k + 8], 0, cfg);
+            prefetch_input(&sub_outputs[k + 8 + half], 0, cfg);
         }
 
-        //======================================================================
-        // OPTIMIZATION 2: Second half needs twiddle multiplies (4x unrolled)
-        //======================================================================
-        for (; k + 7 < half; k += 8)
-        {
-            // Prefetch ahead
-            if (k + 16 < half)
-            {
-                _mm_prefetch((const char *)&sub_outputs[k + 16].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&sub_outputs[k + 16 + half].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&stage_tw[k + 16].re, _MM_HINT_T0);
-            }
+        __m256d even = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
+        __m256d odd = load2_aos(&sub_outputs[k + half], &sub_outputs[k + half + 1]);
 
-            // Load 8 even pairs
-            __m256d e0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
-            __m256d e1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
-            __m256d e2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
-            __m256d e3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
+        __m256d x0 = _mm256_add_pd(even, odd);
+        __m256d x1 = _mm256_sub_pd(even, odd);
 
-            // Load 8 odd pairs
-            __m256d o0 = load2_aos(&sub_outputs[k + 0 + half], &sub_outputs[k + 1 + half]);
-            __m256d o1 = load2_aos(&sub_outputs[k + 2 + half], &sub_outputs[k + 3 + half]);
-            __m256d o2 = load2_aos(&sub_outputs[k + 4 + half], &sub_outputs[k + 5 + half]);
-            __m256d o3 = load2_aos(&sub_outputs[k + 6 + half], &sub_outputs[k + 7 + half]);
+        STOREU_PD(&output_buffer[k].re, x0);
+        STOREU_PD(&output_buffer[k + half].re, x1);
+    }
 
-            // Load 8 twiddles
-            __m256d w0 = load2_aos(&stage_tw[k + 0], &stage_tw[k + 1]);
-            __m256d w1 = load2_aos(&stage_tw[k + 2], &stage_tw[k + 3]);
-            __m256d w2 = load2_aos(&stage_tw[k + 4], &stage_tw[k + 5]);
-            __m256d w3 = load2_aos(&stage_tw[k + 6], &stage_tw[k + 7]);
-
-            // Twiddle multiply
-            __m256d tw0 = cmul_avx2_aos(o0, w0);
-            __m256d tw1 = cmul_avx2_aos(o1, w1);
-            __m256d tw2 = cmul_avx2_aos(o2, w2);
-            __m256d tw3 = cmul_avx2_aos(o3, w3);
-
-            // Butterfly
-            __m256d x00 = _mm256_add_pd(e0, tw0);
-            __m256d x10 = _mm256_sub_pd(e0, tw0);
-            __m256d x01 = _mm256_add_pd(e1, tw1);
-            __m256d x11 = _mm256_sub_pd(e1, tw1);
-            __m256d x02 = _mm256_add_pd(e2, tw2);
-            __m256d x12 = _mm256_sub_pd(e2, tw2);
-            __m256d x03 = _mm256_add_pd(e3, tw3);
-            __m256d x13 = _mm256_sub_pd(e3, tw3);
-
-            // Store results
-            STOREU_PD(&output_buffer[k + 0].re, x00);
-            STOREU_PD(&output_buffer[k + 2].re, x01);
-            STOREU_PD(&output_buffer[k + 4].re, x02);
-            STOREU_PD(&output_buffer[k + 6].re, x03);
-            STOREU_PD(&output_buffer[k + 0 + half].re, x10);
-            STOREU_PD(&output_buffer[k + 2 + half].re, x11);
-            STOREU_PD(&output_buffer[k + 4 + half].re, x12);
-            STOREU_PD(&output_buffer[k + 6 + half].re, x13);
+    //======================================================================
+    // OPTIMIZATION 2: Second half needs twiddle multiplies (4x unrolled)
+    //======================================================================
+    for (; k + 7 < half; k += 8)
+    {
+        // NEW: Prefetch data and twiddles using strategy system
+        if (cfg && cfg->enable && k + 16 < half) {
+            prefetch_input(&sub_outputs[k + 16], 0, cfg);
+            prefetch_input(&sub_outputs[k + 16 + half], 0, cfg);
+            prefetch_twiddle(&stage_tw[k + 16], 0, cfg);
         }
 
-        // Cleanup: 2x unrolling for remaining twiddle multiplies
-        for (; k + 1 < half; k += 2)
-        {
-            if (k + 8 < half)
-            {
-                _mm_prefetch((const char *)&sub_outputs[k + 8].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&sub_outputs[k + 8 + half].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&stage_tw[k + 8].re, _MM_HINT_T0);
-            }
+        // Load 8 even pairs
+        __m256d e0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
+        __m256d e1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
+        __m256d e2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
+        __m256d e3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
 
-            __m256d even = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
-            __m256d odd = load2_aos(&sub_outputs[k + half], &sub_outputs[k + half + 1]);
-            __m256d w = load2_aos(&stage_tw[k], &stage_tw[k + 1]);
+        // Load 8 odd pairs
+        __m256d o0 = load2_aos(&sub_outputs[k + 0 + half], &sub_outputs[k + 1 + half]);
+        __m256d o1 = load2_aos(&sub_outputs[k + 2 + half], &sub_outputs[k + 3 + half]);
+        __m256d o2 = load2_aos(&sub_outputs[k + 4 + half], &sub_outputs[k + 5 + half]);
+        __m256d o3 = load2_aos(&sub_outputs[k + 6 + half], &sub_outputs[k + 7 + half]);
 
-            __m256d tw = cmul_avx2_aos(odd, w);
+        // Load 8 twiddles
+        __m256d w0 = load2_aos(&stage_tw[k + 0], &stage_tw[k + 1]);
+        __m256d w1 = load2_aos(&stage_tw[k + 2], &stage_tw[k + 3]);
+        __m256d w2 = load2_aos(&stage_tw[k + 4], &stage_tw[k + 5]);
+        __m256d w3 = load2_aos(&stage_tw[k + 6], &stage_tw[k + 7]);
 
-            __m256d x0 = _mm256_add_pd(even, tw);
-            __m256d x1 = _mm256_sub_pd(even, tw);
+        // Twiddle multiply
+        __m256d tw0 = cmul_avx2_aos(o0, w0);
+        __m256d tw1 = cmul_avx2_aos(o1, w1);
+        __m256d tw2 = cmul_avx2_aos(o2, w2);
+        __m256d tw3 = cmul_avx2_aos(o3, w3);
 
-            STOREU_PD(&output_buffer[k].re, x0);
-            STOREU_PD(&output_buffer[k + half].re, x1);
+        // Butterfly
+        __m256d x00 = _mm256_add_pd(e0, tw0);
+        __m256d x10 = _mm256_sub_pd(e0, tw0);
+        __m256d x01 = _mm256_add_pd(e1, tw1);
+        __m256d x11 = _mm256_sub_pd(e1, tw1);
+        __m256d x02 = _mm256_add_pd(e2, tw2);
+        __m256d x12 = _mm256_sub_pd(e2, tw2);
+        __m256d x03 = _mm256_add_pd(e3, tw3);
+        __m256d x13 = _mm256_sub_pd(e3, tw3);
+
+        // Store results
+        STOREU_PD(&output_buffer[k + 0].re, x00);
+        STOREU_PD(&output_buffer[k + 2].re, x01);
+        STOREU_PD(&output_buffer[k + 4].re, x02);
+        STOREU_PD(&output_buffer[k + 6].re, x03);
+        STOREU_PD(&output_buffer[k + 0 + half].re, x10);
+        STOREU_PD(&output_buffer[k + 2 + half].re, x11);
+        STOREU_PD(&output_buffer[k + 4 + half].re, x12);
+        STOREU_PD(&output_buffer[k + 6 + half].re, x13);
+    }
+
+    // Cleanup: 2x unrolling for remaining twiddle multiplies
+    for (; k + 1 < half; k += 2)
+    {
+        // NEW: Use prefetch strategy for cleanup
+        if (cfg && cfg->enable && k + 8 < half) {
+            prefetch_input(&sub_outputs[k + 8], 0, cfg);
+            prefetch_input(&sub_outputs[k + 8 + half], 0, cfg);
+            prefetch_twiddle(&stage_tw[k + 8], 0, cfg);
         }
+
+        __m256d even = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
+        __m256d odd = load2_aos(&sub_outputs[k + half], &sub_outputs[k + half + 1]);
+        __m256d w = load2_aos(&stage_tw[k], &stage_tw[k + 1]);
+
+        __m256d tw = cmul_avx2_aos(odd, w);
+
+        __m256d x0 = _mm256_add_pd(even, tw);
+        __m256d x1 = _mm256_sub_pd(even, tw);
+
+        STOREU_PD(&output_buffer[k].re, x0);
+        STOREU_PD(&output_buffer[k + half].re, x1);
+    }
 #endif // __AVX2__
 
-        //======================================================================
-        // SSE2 TAIL: Handle remaining 0..1 complex numbers
-        //======================================================================
-        for (; k < half; ++k)
-        {
-            __m128d even = LOADU_SSE2(&sub_outputs[k].re);
-            __m128d odd = LOADU_SSE2(&sub_outputs[k + half].re);
+    //======================================================================
+    // SSE2 TAIL: Handle remaining 0..1 complex numbers
+    // No prefetch needed here (too few iterations, overhead > benefit)
+    //======================================================================
+    for (; k < half; ++k)
+    {
+        __m128d even = LOADU_SSE2(&sub_outputs[k].re);
+        __m128d odd = LOADU_SSE2(&sub_outputs[k + half].re);
 
-            if (k < trivial_end)
-            {
-                // Trivial twiddle (W^0 = 1)
-                STOREU_SSE2(&output_buffer[k].re, _mm_add_pd(even, odd));
-                STOREU_SSE2(&output_buffer[k + half].re, _mm_sub_pd(even, odd));
-            }
-            else
-            {
-                // Non-trivial twiddle
-                __m128d w = LOADU_SSE2(&stage_tw[k].re);
-                __m128d tw = cmul_sse2_aos(odd, w);
-                STOREU_SSE2(&output_buffer[k].re, _mm_add_pd(even, tw));
-                STOREU_SSE2(&output_buffer[k + half].re, _mm_sub_pd(even, tw));
-            }
+        if (k < trivial_end)
+        {
+            // Trivial twiddle (W^0 = 1)
+            STOREU_SSE2(&output_buffer[k].re, _mm_add_pd(even, odd));
+            STOREU_SSE2(&output_buffer[k + half].re, _mm_sub_pd(even, odd));
         }
+        else
+        {
+            // Non-trivial twiddle
+            __m128d w = LOADU_SSE2(&stage_tw[k].re);
+            __m128d tw = cmul_sse2_aos(odd, w);
+            STOREU_SSE2(&output_buffer[k].re, _mm_add_pd(even, tw));
+            STOREU_SSE2(&output_buffer[k + half].re, _mm_sub_pd(even, tw));
+        }
+    }
     }
     else if (radix == 3)
     {
@@ -6655,16 +6664,35 @@ void longvectorN(fft_data *twiddle_sequence, int signal_length, int *prime_facto
     }
 }
 
-void free_fft(fft_object object)
+/**
+ * @brief Frees memory allocated for an FFT object.
+ *
+ * Deallocates all memory associated with an FFT configuration, including twiddle factors,
+ * scratch buffers, and prefetch system resources.
+ *
+ * @param[in] fft_obj FFT object to free.
+ * @warning Always call this when done with an FFT object to prevent memory leaks.
+ */
+void free_fft(fft_object fft_obj)
 {
-    if (object)
+    if (fft_obj)
     {
-        if (object->twiddles)
-            _mm_free(object->twiddles);
-        if (object->scratch)
-            _mm_free(object->scratch);
-        if (object->twiddle_factors)
-            _mm_free(object->twiddle_factors);
-        free(object);
+        // Free main buffers
+        if (fft_obj->twiddles)
+            _mm_free(fft_obj->twiddles);
+        if (fft_obj->scratch)
+            _mm_free(fft_obj->scratch);
+        if (fft_obj->twiddle_factors)
+            _mm_free(fft_obj->twiddle_factors);
+        
+#ifdef FFT_ENABLE_PREFETCH
+        // Cleanup prefetch system resources
+        // NOTE: This cleans up global state, so if you have multiple
+        // FFT objects, you may want to ref-count this
+        cleanup_prefetch_system();
+#endif
+        
+        // Free the object itself
+        free(fft_obj);
     }
 }

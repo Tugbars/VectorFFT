@@ -383,10 +383,8 @@ Notes:
 #include <string.h>
 #include <immintrin.h>
 #include <stdbool.h>
+#include <stdbool.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #define PI2 6.28318530717958647692528676655900577
 #define MAX_PRECOMPUTED_N 64 // Max size for precomputed Bluestein chirps

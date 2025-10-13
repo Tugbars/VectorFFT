@@ -1,3 +1,298 @@
+//==============================================================================
+// ADVANCED PREFETCH SYSTEM - FFTW-Inspired Implementation
+// Phase 1: Core Infrastructure
+//==============================================================================
+
+#include "highspeedFFT.h"
+#include <stdbool.h>
+#include <string.h>
+#include <time.h>
+#include "prefetch_strategy.h"
+
+//==============================================================================
+// ADVANCED PREFETCH SYSTEM (FFTW-Inspired)
+//==============================================================================
+
+
+/**
+ * @brief Global prefetch configuration with sensible defaults
+ */
+static prefetch_config_t g_prefetch_config = {
+    .stages = NULL,
+    .num_stages = 0,
+    .l1_size = 32 * 1024,      // 32KB (conservative)
+    .l2_size = 256 * 1024,     // 256KB (typical)
+    .l3_size = 8 * 1024 * 1024, // 8MB (typical)
+    .cache_line_size = 64,     // 64B (x86-64 standard)
+    .enable_runtime_tuning = false
+};
+
+//==============================================================================
+// Cache Detection (Basic Version)
+//==============================================================================
+
+/**
+ * @brief Detect CPU cache sizes (x86-64 CPUID)
+ */
+static inline void detect_cache_sizes(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    unsigned int eax, ebx, ecx, edx;
+    
+    // Check for CPUID support
+    __asm__ __volatile__ (
+        "cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        : "a"(0x0)
+    );
+    
+    if (eax >= 0x4) {
+        // Intel cache topology (leaf 0x4)
+        for (int i = 0; i < 10; ++i) {
+            __asm__ __volatile__ (
+                "cpuid"
+                : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                : "a"(0x4), "c"(i)
+            );
+            
+            int cache_type = eax & 0x1F;
+            if (cache_type == 0) break; // No more caches
+            
+            int cache_level = (eax >> 5) & 0x7;
+            int cache_size = ((ebx >> 22) + 1) * 
+                           ((ebx >> 12 & 0x3FF) + 1) * 
+                           ((ebx & 0xFFF) + 1) * 
+                           (ecx + 1);
+            
+            if (cache_type == 1 || cache_type == 3) { // Data or Unified
+                if (cache_level == 1) g_prefetch_config.l1_size = cache_size;
+                else if (cache_level == 2) g_prefetch_config.l2_size = cache_size;
+                else if (cache_level == 3) g_prefetch_config.l3_size = cache_size;
+            }
+        }
+    }
+#endif
+}
+
+//==============================================================================
+// Working Set Computation
+//==============================================================================
+
+/**
+ * @brief Compute working set size for a stage
+ * 
+ * FFTW Key Insight: Each stage has a different working set!
+ */
+static inline int compute_stage_working_set(int n_fft, int stage_idx, 
+                                            const int *factors, int num_factors) {
+    int n_stage = n_fft;
+    for (int i = 0; i < stage_idx && i < num_factors; ++i) {
+        n_stage /= factors[i];
+    }
+    return n_stage * sizeof(fft_data);
+}
+
+/**
+ * @brief Compute optimal prefetch distance for a stage
+ */
+static inline int compute_stage_prefetch_distance(int working_set, int stride) {
+    const int l1 = g_prefetch_config.l1_size;
+    const int l2 = g_prefetch_config.l2_size;
+    const int l3 = g_prefetch_config.l3_size;
+    
+    int base_distance;
+    if (working_set < l1 / 2) {
+        base_distance = 2;  // 128B ahead (L1-hot)
+    } else if (working_set < l1) {
+        base_distance = 4;  // 256B ahead (L1-warm)
+    } else if (working_set < l2 / 2) {
+        base_distance = 8;  // 512B ahead (L2-hot)
+    } else if (working_set < l2) {
+        base_distance = 12; // 768B ahead (L2-warm)
+    } else if (working_set < l3 / 2) {
+        base_distance = 16; // 1KB ahead (L3-hot)
+    } else if (working_set < l3) {
+        base_distance = 24; // 1.5KB ahead (L3-warm)
+    } else {
+        base_distance = 32; // 2KB ahead (streaming)
+    }
+    
+    // Adjust for stride (scattered access needs more aggressive prefetch)
+    if (stride > 1) {
+        base_distance += (stride / 2);
+    }
+    
+    return base_distance;
+}
+
+/**
+ * @brief Compute optimal hint for a stage
+ */
+static inline int compute_stage_hint(int working_set) {
+    const int l1 = g_prefetch_config.l1_size;
+    const int l2 = g_prefetch_config.l2_size;
+    const int l3 = g_prefetch_config.l3_size;
+    
+    if (working_set < l1) return _MM_HINT_T0;        // Target L1
+    else if (working_set < l2) return _MM_HINT_T1;   // Target L2
+    else if (working_set < l3) return _MM_HINT_T2;   // Target L3
+    else return _MM_HINT_NTA;                         // Non-temporal
+}
+
+//==============================================================================
+// Stage Configuration Initialization
+//==============================================================================
+
+/**
+ * @brief Initialize per-stage prefetch configuration
+ * 
+ * FFTW Key: Each stage gets a custom prefetch plan!
+ */
+static inline void init_stage_prefetch(fft_object fft_obj) {
+    const int n_fft = fft_obj->n_fft;
+    const int num_factors = fft_obj->lf;
+    const int *factors = fft_obj->factors;
+    
+    // Allocate per-stage configs
+    if (g_prefetch_config.stages) {
+        free(g_prefetch_config.stages);
+    }
+    g_prefetch_config.stages = (stage_prefetch_t *)malloc(
+        num_factors * sizeof(stage_prefetch_t)
+    );
+    g_prefetch_config.num_stages = num_factors;
+    
+    if (!g_prefetch_config.stages) return; // Allocation failure
+    
+    // Configure each stage
+    int stride = 1;
+    for (int stage = 0; stage < num_factors; ++stage) {
+        const int radix = factors[stage];
+        const int working_set = compute_stage_working_set(n_fft, stage, factors, num_factors);
+        
+        stage_prefetch_t *cfg = &g_prefetch_config.stages[stage];
+        
+        // Determine strategy based on radix and working set
+        if (working_set < 1024) {
+            cfg->strategy = PREFETCH_NONE; // Too small, overhead dominates
+        } else if (radix <= 4 && working_set < g_prefetch_config.l1_size) {
+            cfg->strategy = PREFETCH_SINGLE; // Sequential, fits in L1
+        } else if (radix <= 8) {
+            cfg->strategy = PREFETCH_DUAL; // Two streams (in/out)
+        } else {
+            cfg->strategy = PREFETCH_MULTI; // Multiple lanes
+        }
+        
+        // Compute distances
+        cfg->distance_input = compute_stage_prefetch_distance(working_set, stride);
+        cfg->distance_output = cfg->distance_input;
+        cfg->distance_twiddle = cfg->distance_input / 2; // Twiddles reused more
+        
+        // Compute hints
+        cfg->hint_input = compute_stage_hint(working_set);
+        cfg->hint_output = cfg->hint_input;
+        cfg->hint_twiddle = _MM_HINT_T0; // Twiddles should stay hot
+        
+        // Blocking for large radices
+        if (radix >= 16 && working_set > g_prefetch_config.l2_size) {
+            cfg->block_size = g_prefetch_config.l2_size / (radix * sizeof(fft_data));
+        } else {
+            cfg->block_size = 0; // No blocking
+        }
+        
+        cfg->enable = (cfg->strategy != PREFETCH_NONE);
+        
+        stride *= radix; // Stride grows exponentially
+    }
+}
+
+/**
+ * @brief Get prefetch config for current recursion depth
+ */
+static inline stage_prefetch_t* get_stage_config(int factor_index) {
+    if (factor_index < 0 || factor_index >= g_prefetch_config.num_stages) {
+        return NULL;
+    }
+    return &g_prefetch_config.stages[factor_index];
+}
+
+/**
+ * @brief Cleanup prefetch system
+ */
+static inline void cleanup_prefetch_system(void) {
+    if (g_prefetch_config.stages) {
+        free(g_prefetch_config.stages);
+        g_prefetch_config.stages = NULL;
+        g_prefetch_config.num_stages = 0;
+    }
+}
+
+//==============================================================================
+// Basic Prefetch Wrappers
+//==============================================================================
+
+/**
+ * @brief Unified prefetch macro with dynamic configuration
+ */
+#define PREFETCH_HINT(addr, hint) _mm_prefetch((const char *)(addr), (hint))
+
+/**
+ * @brief Stage-aware prefetch for input data
+ */
+static inline void prefetch_input(
+    const fft_data *input,
+    int idx,
+    stage_prefetch_t *cfg
+) {
+    if (!cfg || !cfg->enable) return;
+    PREFETCH_HINT(input + idx + cfg->distance_input, cfg->hint_input);
+}
+
+/**
+ * @brief Stage-aware prefetch for twiddle factors
+ */
+static inline void prefetch_twiddle(
+    const fft_data *twiddle,
+    int idx,
+    stage_prefetch_t *cfg
+) {
+    if (!cfg || !cfg->enable) return;
+    PREFETCH_HINT(twiddle + idx + cfg->distance_twiddle, cfg->hint_twiddle);
+}
+
+/**
+ * @brief Multi-stream prefetch for recursive stages
+ */
+static inline void prefetch_stage_recursive(
+    const fft_data *input_base,
+    const fft_data *twiddle_base,
+    int idx,
+    int stride,
+    int radix,
+    stage_prefetch_t *cfg
+) {
+    if (!cfg || !cfg->enable) return;
+    
+    const int d_in = cfg->distance_input;
+    const int d_tw = cfg->distance_twiddle;
+    
+    // Prefetch input lanes (multi-stream for high radices)
+    if (cfg->strategy >= PREFETCH_MULTI && radix > 4) {
+        for (int lane = 0; lane < radix && lane < 4; ++lane) {
+            PREFETCH_HINT(
+                input_base + (idx + d_in) + lane * stride,
+                cfg->hint_input
+            );
+        }
+    } else {
+        PREFETCH_HINT(input_base + idx + d_in, cfg->hint_input);
+    }
+    
+    // Prefetch twiddles (if present and strategy allows)
+    if (twiddle_base && cfg->strategy >= PREFETCH_DUAL) {
+        PREFETCH_HINT(twiddle_base + idx + d_tw, cfg->hint_twiddle);
+    }
+}
+
 /**
  * @brief Initialize per-stage prefetch configuration
  * 

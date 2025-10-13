@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.10)
-
 project(highspeedFFT_project LANGUAGES C CXX)
 
 # Set language standards
@@ -9,13 +8,18 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 #==============================================================================
-# SIMD OPTIONS (Define at top level so subdirectories can access)
+# BUILD OPTIONS
 #==============================================================================
 option(ENABLE_GTEST "Enable GoogleTest-based unit tests" OFF)
-option(ENABLE_AVX512 "Enable AVX-512 instructions..." ON)
+option(ENABLE_AVX512 "Enable AVX-512 instructions" ON)
+option(ENABLE_PREFETCH "Enable advanced prefetch system" ON)
+option(DEBUG_PREFETCH "Enable prefetch debugging output" OFF)
 
-# Fetch dependencies conditionally
+#==============================================================================
+# FETCH DEPENDENCIES (only if GoogleTest is enabled)
+#==============================================================================
 if(ENABLE_GTEST)
+    message(STATUS "GoogleTest enabled - fetching dependencies")
     include(FetchContent)
 
     # GoogleTest
@@ -33,13 +37,17 @@ if(ENABLE_GTEST)
         GIT_TAG master
     )
     FetchContent_MakeAvailable(fff)
+else()
+    message(STATUS "GoogleTest disabled - using main.c for tests")
 endif()
 
-# Add project subdirectories
+#==============================================================================
+# ADD SUBDIRECTORIES
+#==============================================================================
 add_subdirectory(src)
 add_subdirectory(test)
 
-# Enable CTest
+# Enable CTest (even for main.c tests)
 enable_testing()
 
 #==============================================================================
@@ -47,6 +55,15 @@ enable_testing()
 #==============================================================================
 message(STATUS "============================================")
 message(STATUS "Build Configuration:")
-message(STATUS "  GoogleTest: ${ENABLE_GTEST}")
-message(STATUS "  AVX-512:    ${ENABLE_AVX512}")
+message(STATUS "  Test Framework: ${ENABLE_GTEST}")
+if(ENABLE_GTEST)
+    message(STATUS "    → Using GoogleTest (test_mixedRadixFFT.cpp)")
+else()
+    message(STATUS "    → Using standalone tests (main.c)")
+endif()
+message(STATUS "  AVX-512:        ${ENABLE_AVX512}")
+message(STATUS "  Prefetch:       ${ENABLE_PREFETCH}")
+if(ENABLE_PREFETCH AND DEBUG_PREFETCH)
+    message(STATUS "    → Prefetch Debug: ENABLED")
+endif()
 message(STATUS "============================================")
