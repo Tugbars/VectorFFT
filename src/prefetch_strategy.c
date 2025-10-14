@@ -230,15 +230,11 @@ static __thread prefetch_throttle_t g_throttle = {0};
 static __thread tlb_prefetch_t g_tlb_prefetch = {0};
 static __thread prefetch_profile_t g_prefetch_profile = {0};
 
-
 // Wisdom database
 #define MAX_WISDOM_ENTRIES 256
 static wisdom_entry_t g_wisdom_db[MAX_WISDOM_ENTRIES];
 static int g_wisdom_count = 0;
 static pthread_mutex_t g_wisdom_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-// Runtime profiling
-static prefetch_profile_t g_prefetch_profile = {0};
 
 //==============================================================================
 // INTERNAL HELPER FUNCTIONS
@@ -583,7 +579,7 @@ void init_prefetch_system(fft_object fft_obj) {
     // Initialize TLB prefetch - need to pass actual data pointer
     // NOTE: You'll need to get the actual input data pointer from somewhere
     // This is a design decision - you might need to change the function signature
-    init_tlb_prefetch(fft_obj->n_fft, NULL)
+    init_tlb_prefetch(fft_obj->n_fft, NULL);
     
     // Load wisdom database (once)
     static int wisdom_loaded = 0;
