@@ -364,13 +364,21 @@ static void update_stage_tuning(
                                (stage->search_direction * stage->search_step_size);
             
             // Clamp to valid range and bounce at boundaries
+            bool hit_boundary = false;
             if (next_distance < g_tuning.config.min_distance) {
                 next_distance = g_tuning.config.min_distance;
                 stage->search_direction *= -1;
+                hit_boundary = true;
             }
             if (next_distance > g_tuning.config.max_distance) {
                 next_distance = g_tuning.config.max_distance;
                 stage->search_direction *= -1;
+                hit_boundary = true;
+            }
+            
+            // Reduce step size at boundaries to avoid ping-ponging
+            if (hit_boundary && stage->search_step_size > 1) {
+                stage->search_step_size /= 2;
             }
             
             stage->distance_input = next_distance;
@@ -512,7 +520,11 @@ static void update_global_tuning(uint64_t cycles, int elements) {
 /**
  * @brief Initialize adaptive tuning
  * 
- * NOTE: This is NOT thread-safe. Call from a single controller thread.
+ * NOTE: This is NOT thread-safe. Global state is shared across threads.
+ * Recommended usage:
+ *   1. Make this module thread-local (use __thread for g_tuning), OR
+ *   2. Call only from a single controller thread, OR
+ *   3. Use per-plan tuning state (pass context pointers)
  */
 void init_adaptive_tuning(
     int num_stages,
@@ -556,7 +568,8 @@ void init_adaptive_tuning(
             stages_to_tune = num_stages;
         }
         
-        for (int i = 0; i < stages_to_tune; i++) {
+        // Initialize ALL stages (including untuned ones) to avoid uninitialized reads
+        for (int i = 0; i < num_stages; i++) {
             init_stage_tuning(
                 &g_tuning.stages[i],
                 i,
@@ -564,12 +577,18 @@ void init_adaptive_tuning(
                 working_set_sizes[i],
                 radixes[i]
             );
+            
+            // Mark stages beyond stages_to_tune as "converged" (won't search)
+            if (i >= stages_to_tune) {
+                g_tuning.stages[i].tuning_phase = 2; // Converged/frozen
+            }
         }
         
         g_tuning.tuned_stage_count = stages_to_tune;
         
         if (g_tuning.config.enable_logging) {
-            printf("Initialized per-stage tuning for %d stages\n", stages_to_tune);
+            printf("Initialized per-stage tuning for %d/%d stages\n", 
+                   stages_to_tune, num_stages);
         }
     }
 }
@@ -626,17 +645,27 @@ void profile_fft_end(uint64_t start_cycles, int n_elements, int stage_idx) {
  * @brief Get tuned distance for a stage
  * Returns -1 if tuning is disabled
  * Falls back to global distance for untuned stages
+ * 
+ * Usage: Call this at the start of each FFT stage after warmup.
+ * Example integration with prefetch_strategy.c:
+ * 
+ *   int tuned = get_tuned_distance(stage_idx);
+ *   if (tuned > 0) {
+ *       cfg->distance_input   = tuned;
+ *       cfg->distance_output  = tuned;
+ *       cfg->distance_twiddle = tuned / 2;
+ *   }
  */
 int get_tuned_distance(int stage_idx) {
     if (g_tuning.config.mode == TUNING_MODE_DISABLED) {
         return -1;
     }
     
-    // Return per-stage distance if available and tuned
+    // Return per-stage distance if available (even for untuned stages - they're initialized)
     if (g_tuning.config.mode == TUNING_MODE_PER_STAGE && 
         g_tuning.stages && 
         stage_idx >= 0 && 
-        stage_idx < g_tuning.tuned_stage_count) {
+        stage_idx < g_tuning.num_stages) {
         return g_tuning.stages[stage_idx].distance_input;
     }
     
@@ -693,11 +722,18 @@ void configure_tuning(
     int max_search_iterations,
     int initial_step_size
 ) {
+    // Clamp alpha to valid range
+    if (ewma_alpha <= 0.0) ewma_alpha = 0.01;
+    if (ewma_alpha > 1.0)  ewma_alpha = 1.0;
+    
+    // Clamp threshold to non-negative
+    if (improvement_threshold < 0.0) improvement_threshold = 0.0;
+    
     g_tuning.config.ewma_alpha = ewma_alpha;
-    g_tuning.config.ewma_warmup_samples = ewma_warmup_samples;
+    g_tuning.config.ewma_warmup_samples = ewma_warmup_samples > 0 ? ewma_warmup_samples : 10;
     g_tuning.config.improvement_threshold = improvement_threshold;
-    g_tuning.config.max_search_iterations = max_search_iterations;
-    g_tuning.config.initial_step_size = initial_step_size;
+    g_tuning.config.max_search_iterations = max_search_iterations > 0 ? max_search_iterations : 20;
+    g_tuning.config.initial_step_size = initial_step_size > 0 ? initial_step_size : 4;
 }
 
 void set_tuning_logging(bool enable) {
