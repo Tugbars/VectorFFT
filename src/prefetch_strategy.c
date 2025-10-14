@@ -466,23 +466,19 @@ static inline void record_prefetch_issued(void) {
  * based on the runtime hint value to the appropriate compile-time constant.
  */
 static inline void do_prefetch(const void *addr, int hint) {
+#if defined(__x86_64__) || defined(_M_X64)
     switch (hint) {
-        case _MM_HINT_T0:
-            _mm_prefetch((const char *)addr, _MM_HINT_T0);
-            break;
-        case _MM_HINT_T1:
-            _mm_prefetch((const char *)addr, _MM_HINT_T1);
-            break;
-        case _MM_HINT_T2:
-            _mm_prefetch((const char *)addr, _MM_HINT_T2);
-            break;
-        case _MM_HINT_NTA:
-            _mm_prefetch((const char *)addr, _MM_HINT_NTA);
-            break;
-        default:
-            _mm_prefetch((const char *)addr, _MM_HINT_T0);
-            break;
+        case _MM_HINT_T0:  _mm_prefetch((const char*)addr, _MM_HINT_T0);  break;
+        case _MM_HINT_T1:  _mm_prefetch((const char*)addr, _MM_HINT_T1);  break;
+        case _MM_HINT_T2:  _mm_prefetch((const char*)addr, _MM_HINT_T2);  break;
+        case _MM_HINT_NTA: _mm_prefetch((const char*)addr, _MM_HINT_NTA); break;
+        default:           _mm_prefetch((const char*)addr, _MM_HINT_T0);  break;
     }
+#else
+    // locality 3≈T0, 2≈T1, 1≈T2, 0≈NTA (rough mapping)
+    int locality = (hint==_MM_HINT_NTA) ? 0 : (hint==_MM_HINT_T2 ? 1 : (hint==_MM_HINT_T1 ? 2 : 3));
+    __builtin_prefetch(addr, 0, locality);
+#endif
 }
 
 /**
