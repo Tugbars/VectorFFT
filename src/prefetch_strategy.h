@@ -1,7 +1,74 @@
-//==============================================================================
-// PREFETCH_STRATEGY.H - FFTW-Inspired Prefetch System
-// Clean, dependency-free header with proper declarations
-//==============================================================================
+/**
+ * @brief Hill Climbing Algorithm - Visual Explanation
+ * 
+ * Imagine searching for the highest peak in a mountain range while blindfolded:
+ * 
+ * @code
+ *   Performance (higher is better)
+ *        ^
+ *        |
+ *        |     Global Maximum (best solution)
+ *        |          /\
+ *        |         /  \
+ *        |   /\   /    \
+ *        |  /  \ /      \    Local Maximum (trap!)
+ *        | /    X        \  /\
+ *        |/              \/  \
+ *        +-------------------------> Parameter Space
+ *               (e.g., prefetch distance: 2, 4, 6, 8, 10, 12...)
+ * 
+ * Strategy: Take small steps, always move uphill
+ * Problem: Can get stuck at local maxima (X marks the trap!)
+ * @endcode
+ */
+
+/**
+ * @brief Simple Hill Climbing Pseudocode
+ * 
+ * @algorithm
+ * @code
+ * 1. Start at initial position (e.g., prefetch_distance = 8)
+ * 2. Measure current performance
+ * 3. Try neighbor solutions:
+ *    - Option A: distance = 8 + step (e.g., 12)
+ *    - Option B: distance = 8 - step (e.g., 4)
+ * 4. If neighbor is better:
+ *       Move to neighbor
+ *       Goto step 2
+ *    Else:
+ *       Stop (converged)
+ * @endcode
+ * 
+ * @par Example Trace
+ * @code
+ * Iteration 1: distance=8,  performance=100 cycles/elem
+ * Iteration 2: Try distance=12, performance=95  ← Better! Move here
+ * Iteration 3: Try distance=16, performance=93  ← Better! Move here
+ * Iteration 4: Try distance=20, performance=97  ← Worse! Stop
+ * Result: Best distance = 16
+ * @endcode
+ */
+
+/**
+ * @brief Hill Climbing State Machine
+ * 
+ * @dot
+ * digraph hill_climb {
+ *   rankdir=LR;
+ *   node [shape=box, style=rounded];
+ *   
+ *   init [label="Phase 0\nInitialization"];
+ *   search [label="Phase 1\nActive Search"];
+ *   converged [label="Phase 2\nConverged"];
+ *   
+ *   init -> search [label="First\nmeasurement"];
+ *   search -> search [label="Found improvement:\nAccelerate step size"];
+ *   search -> search [label="No improvement:\nReverse direction\nReduce step size"];
+ *   search -> converged [label="Max iterations\nwithout improvement"];
+ *   converged -> search [label="Performance degrades\n>10%: Re-tune"];
+ * }
+ * @enddot
+ */
 
 #ifndef PREFETCH_STRATEGY_H
 #define PREFETCH_STRATEGY_H
@@ -420,3 +487,355 @@ void print_stage_config(int stage_idx);
 #endif // FFT_DEBUG_PREFETCH
 
 #endif // PREFETCH_STRATEGY_H
+
+
+/**
+ * @brief Hill Climbing for Prefetch Distance Optimization
+ * 
+ * @par What is "Prefetch Distance"?
+ * @code
+ * Prefetch distance = How many iterations ahead to prefetch
+ * 
+ * Example with distance=4:
+ *   Iteration 0: Process data[0],  prefetch data[4]
+ *   Iteration 1: Process data[1],  prefetch data[5]
+ *   Iteration 2: Process data[2],  prefetch data[6]
+ *   Iteration 3: Process data[3],  prefetch data[7]
+ *   Iteration 4: Process data[4],  prefetch data[8]  ← data[4] now in cache!
+ *                     ↑
+ *                prefetched 4 iterations ago
+ * 
+ * Too small (distance=1):  Data arrives too late (cache miss)
+ * Too large (distance=64): Wastes prefetch buffers, evicts useful data
+ * Just right (distance=?): Data arrives exactly when needed
+ * @endcode
+ * 
+ * @par The Search Space
+ * @code
+ *   Performance (lower is better: cycles/element)
+ *        ^
+ *    150 |                            Too far ahead:
+ *        |                            • Wastes buffers
+ *    125 |\                           • Pollutes cache
+ *        | \                    /
+ *    100 |  \                  /
+ *        |   \                /       Too close:
+ *     75 |    \      SWEET   /        • Prefetch arrives late
+ *        |     \     SPOT   /         • Cache misses
+ *     50 |      \    ↓     /
+ *        |       \  /\    /
+ *     25 |        \/  \  /
+ *        |         ↑   \/             Local maxima (traps!)
+ *      0 +----+----+----+----+----+----+----+----+----+---> distance
+ *         2   4   8   12  16  20  24  28  32  36  40
+ *                      ↑
+ *                   optimal = 16
+ * 
+ * Goal: Find the valley (minimum cycles/element)
+ * @endcode
+ */
+
+/**
+ * @brief Complete Hill Climbing Execution Trace
+ * 
+ * @par Scenario: Finding Optimal Prefetch Distance
+ * @code
+ * ═══════════════════════════════════════════════════════════════
+ * PHASE 0: INITIALIZATION
+ * ═══════════════════════════════════════════════════════════════
+ * 
+ * Initial configuration (from heuristics):
+ *   distance = 8
+ *   step_size = 4
+ *   direction = +1 (search upward first)
+ *   
+ * Measure baseline:
+ *   Run FFT with distance=8
+ *   Result: 95 cycles/element
+ *   
+ * State transition: Phase 0 → Phase 1 (Active Search)
+ * 
+ * 
+ * ═══════════════════════════════════════════════════════════════
+ * PHASE 1: ACTIVE SEARCH (Hill Climbing)
+ * ═══════════════════════════════════════════════════════════════
+ * 
+ * ITERATION 1:
+ * ───────────
+ *   Current best: distance=8, throughput=95 cycles/elem
+ *   
+ *   Try: distance = 8 + (+1 * 4) = 12
+ *   Measure: 87 cycles/elem
+ *   
+ *   Improvement: (95 - 87) / 95 = 8.4% ✓
+ *   
+ *   Action: ✓ Accept move to 12
+ *           ✓ Accelerate step_size: 4 → 6
+ *           ✓ Keep direction: +1
+ *   
+ *   New state:
+ *     best_distance = 12
+ *     best_throughput = 87
+ *     iterations_without_improvement = 0
+ * 
+ * 
+ * ITERATION 2:
+ * ───────────
+ *   Current best: distance=12, throughput=87 cycles/elem
+ *   
+ *   Try: distance = 12 + (+1 * 6) = 18
+ *   Measure: 92 cycles/elem
+ *   
+ *   Improvement: (87 - 92) / 87 = -5.7% ✗ (worse!)
+ *   
+ *   Action: ✗ Reject move (stay at 12)
+ *           ✗ Reverse direction: +1 → -1
+ *           ✗ Reduce step: 6 → 3
+ *   
+ *   New state:
+ *     best_distance = 12 (unchanged)
+ *     best_throughput = 87 (unchanged)
+ *     iterations_without_improvement = 1
+ *     direction = -1
+ * 
+ * 
+ * ITERATION 3:
+ * ───────────
+ *   Current best: distance=12, throughput=87 cycles/elem
+ *   
+ *   Try: distance = 12 + (-1 * 3) = 9
+ *   Measure: 90 cycles/elem
+ *   
+ *   Improvement: (87 - 90) / 87 = -3.4% ✗ (worse!)
+ *   
+ *   Action: ✗ Reject move
+ *           ✗ Reverse direction: -1 → +1
+ *           ✗ Reduce step: 3 → 1
+ *   
+ *   New state:
+ *     best_distance = 12 (unchanged)
+ *     best_throughput = 87 (unchanged)  
+ *     iterations_without_improvement = 2
+ *     direction = +1
+ * 
+ * 
+ * ITERATION 4:
+ * ───────────
+ *   Current best: distance=12, throughput=87 cycles/elem
+ *   
+ *   Try: distance = 12 + (+1 * 1) = 13
+ *   Measure: 86 cycles/elem
+ *   
+ *   Improvement: (87 - 86) / 87 = 1.1% ✗ (below threshold of 2%)
+ *   
+ *   Action: ✗ Reject move (improvement too small)
+ *           ✗ Reverse direction: +1 → -1
+ *           ✗ Reduce step: 1 → 1 (minimum)
+ *   
+ *   New state:
+ *     best_distance = 12 (unchanged)
+ *     best_throughput = 87 (unchanged)
+ *     iterations_without_improvement = 3
+ *     direction = -1
+ * 
+ * 
+ * ITERATION 5:
+ * ───────────
+ *   Current best: distance=12, throughput=87 cycles/elem
+ *   
+ *   Try: distance = 12 + (-1 * 1) = 11
+ *   Measure: 88 cycles/elem
+ *   
+ *   Improvement: (87 - 88) / 87 = -1.1% ✗ (worse!)
+ *   
+ *   Action: ✗ Reject move
+ *   
+ *   New state:
+ *     iterations_without_improvement = 4
+ * 
+ * 
+ * [... continues trying small steps around distance=12 ...]
+ * 
+ * 
+ * ITERATION 20:
+ * ────────────
+ *   iterations_without_improvement = 20
+ *   Reached max_search_iterations limit
+ *   
+ *   Action: Declare convergence!
+ *   State transition: Phase 1 → Phase 2 (Converged)
+ * 
+ * 
+ * ═══════════════════════════════════════════════════════════════
+ * PHASE 2: CONVERGED (Monitoring)
+ * ═══════════════════════════════════════════════════════════════
+ * 
+ * Locked in: distance = 12, throughput = 87 cycles/elem
+ * 
+ * Every 10,000 FFT calls:
+ *   Measure current performance
+ *   
+ *   Example at call 10,000:
+ *     Current throughput: 88 cycles/elem
+ *     Degradation: (88 - 87) / 87 = 1.1% (< 10% threshold)
+ *     Action: Continue with distance=12
+ *   
+ *   Example at call 20,000:
+ *     Current throughput: 97 cycles/elem
+ *     Degradation: (97 - 87) / 87 = 11.5% (> 10% threshold)
+ *     Action: ⚠ Performance degraded! Restart search
+ *     State transition: Phase 2 → Phase 1
+ * 
+ * @endcode
+ */
+
+/**
+ * @brief Visual: Convergence to Local Maximum
+ * 
+ * @code
+ *   Performance (lower = better)
+ *        ^
+ *    100 |                                Legend:
+ *        |                                ────
+ *     95 |  ①                             ① Start (distance=8, 95 cycles)
+ *        |     ╲                           ② Try distance=12 (87 cycles) ✓
+ *     90 |        ╲         ③              ③ Try distance=18 (92 cycles) ✗
+ *        |           ╲   ╱                 ④ Try distance=9  (90 cycles) ✗
+ *     87 |              ②  ←  LOCAL        ⑤ Try distance=13 (86 cycles) ✗ (too small)
+ *        |           ╱   ╲  MAXIMUM        
+ *     85 |        ④       ╲                Result: Converged at ②
+ *        |                  ╲              
+ *     80 |                     ╲           Note: Might miss global optimum
+ *        |                        ╲        at distance=16 (if it exists),
+ *     75 |                           ╲     but 87 is still very good!
+ *        +----+----+----+----+----+----+----+----+---> distance
+ *         4   6   8   10  12  14  16  18  20  22
+ *              ↑       ↑               ↑
+ *            start   found           rejected
+ * 
+ * Search path: 8 → 12 → 18(reject) → 9(reject) → 13(reject) → STOP
+ * @endcode
+ */
+
+/**
+ * @brief Why It Stops at Local Maxima
+ * 
+ * @par The Hill Climbing Limitation
+ * @code
+ * Imagine the actual performance landscape:
+ * 
+ *   Cycles/elem
+ *        ^
+ *    100 |     
+ *        |  A          C (better, but unreachable!)
+ *     90 |  |\        /|
+ *        |  | \      / |
+ *     80 |  |  \  B /  |
+ *        |  |   \/\/   |
+ *     70 |  |    /\    |
+ *        |  |   /  \   |
+ *     60 +--+--+----+--+-----> distance
+ *         4  8  12  16  20
+ *         ↑     ↑      ↑
+ *       Start  Stuck  Miss!
+ * 
+ * If we start at A (distance=8):
+ *   • Can only see neighbors: 7, 9
+ *   • Both are downhill (worse)
+ *   • Algorithm says "stop here" (local max at B)
+ *   • Never discovers C (distance=20) which is better!
+ * 
+ * Why we can't reach C from B:
+ *   • Would need to go "uphill" through the valley
+ *   • Hill climbing never accepts worse solutions
+ *   • Stuck at local maximum B
+ * 
+ * Real-world: This is usually OK because:
+ *   1. Performance landscapes are often smooth
+ *   2. Local maxima are still good (87 vs 75 cycles)
+ *   3. Periodic re-tuning gives second chances
+ *   4. Multiple FFT sizes explore different regions
+ * @endcode
+ */
+
+/**
+ * @brief Step Size Adaptation Visualization
+ * 
+ * @code
+ * How step size changes during search:
+ * 
+ * Distance
+ *    20 |                    
+ *       |          ▲ (step=6)
+ *    18 |         /
+ *       |        /
+ *    16 |       /
+ *       |      /
+ *    14 |     /
+ *       | ▲  / (step=4, accelerated to 6)
+ *    12 | |\/
+ *       | |/\  ▼ (step=3, reversed)
+ *    10 | |  \/
+ *       | |   /\ ▼ (step=1, further reduced)
+ *     8 | |  /  \|
+ *       +-|--+---+---+---+----> iteration
+ *         1  2   3   4   5
+ *         
+ * Iteration 1: distance=8→12  (step=4, success, accelerate)
+ * Iteration 2: distance=12→18 (step=6, failure, reverse+reduce)
+ * Iteration 3: distance=12→9  (step=3, failure, reverse+reduce)
+ * Iteration 4: distance=12→13 (step=1, failure, reverse)
+ * Iteration 5: distance=12→11 (step=1, failure, STOP)
+ * 
+ * Result: Converged at distance=12 with progressively
+ *         smaller steps to "home in" on the optimum
+ * @endcode
+ */
+
+/**
+ * @brief Contrast: What if We Used Exhaustive Search?
+ * 
+ * @code
+ * Exhaustive search (like FFTW planner):
+ * ─────────────────────────────────────
+ * distances = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
+ * 
+ * FOR EACH distance:
+ *   Run 100 FFTs
+ *   Measure average throughput
+ * 
+ * Results:
+ *   distance=2:  120 cycles/elem
+ *   distance=4:  105 cycles/elem
+ *   distance=6:   95 cycles/elem
+ *   distance=8:   90 cycles/elem
+ *   distance=10:  88 cycles/elem
+ *   distance=12:  85 cycles/elem ← BEST
+ *   distance=14:  87 cycles/elem
+ *   distance=16:  90 cycles/elem
+ *   distance=18:  95 cycles/elem
+ *   distance=20: 100 cycles/elem
+ *   distance=22: 105 cycles/elem
+ *   distance=24: 110 cycles/elem
+ * 
+ * Total: 12 distances × 100 FFTs = 1,200 FFT executions
+ * Result: GUARANTEED global optimum (distance=12)
+ * 
+ * 
+ * Hill climbing (this code):
+ * ──────────────────────────
+ * Start: distance=8
+ * 
+ * Iteration 1: Try 12 → Better!    (100 FFTs)
+ * Iteration 2: Try 18 → Worse      (100 FFTs)
+ * Iteration 3: Try 9  → Worse      (100 FFTs)
+ * Iteration 4: Try 13 → Same       (100 FFTs)
+ * Iteration 5: Try 11 → Worse      (100 FFTs)
+ * 
+ * Total: ~5 iterations × 100 FFTs = 500 FFT executions
+ * Result: Found local optimum (distance=12)
+ * 
+ * Savings: 58% fewer measurements!
+ * Trade-off: Might miss global optimum (but didn't in this case)
+ * @endcode
+ */
