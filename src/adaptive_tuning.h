@@ -1,6 +1,153 @@
-//==============================================================================
-// adaptive_tuning.h - Adaptive Tuning System
-//==============================================================================
+
+/**
+ * @brief EWMA (Exponentially Weighted Moving Average) Smoothing
+ * 
+ * @par Problem: Noisy Measurements
+ * @code
+ *   Raw measurements fluctuate due to:
+ *     - OS scheduling
+ *     - Cache state
+ *     - Other threads
+ *   
+ *   Example raw data:
+ *     95, 103, 97, 101, 96, 105, 98 cycles/elem
+ *   
+ *   Question: Is 103 better than 95, or just noise?
+ * @endcode
+ * 
+ * @par Solution: EWMA Filter
+ * @code
+ *   Formula: filtered = α * new_sample + (1-α) * old_filtered
+ *   
+ *   With α=0.2:
+ *     Sample 1: 95  → filtered=95
+ *     Sample 2: 103 → filtered=0.2*103 + 0.8*95 = 96.6
+ *     Sample 3: 97  → filtered=0.2*97  + 0.8*96.6 = 96.7
+ *     Sample 4: 101 → filtered=0.2*101 + 0.8*96.7 = 97.6
+ *   
+ *   Effect: Smooth out noise, reveal true trend
+ * @endcode
+ * 
+ * @par Visualization
+ * @code
+ *   Performance
+ *        ^
+ *    105 |     *           *
+ *    100 |   *   *   *   *
+ *     95 | *       *
+ *        +-----------------> Time
+ *         Raw (noisy)
+ *        
+ *        ^
+ *    100 |       /---
+ *     95 |  /---/
+ *        +-----------------> Time
+ *         EWMA (smooth)
+ * @endcode
+ */
+
+/**
+ * @brief Adaptive Step Size Strategy
+ * 
+ * @par Accelerate on Success
+ * @code
+ *   Found improvement?
+ *     step_size = step_size * 3/2
+ *   
+ *   Rationale: If we're heading the right direction,
+ *              take bigger steps to converge faster
+ *   
+ *   Example:
+ *     Initial: step=4
+ *     Success: step=6
+ *     Success: step=9
+ *     Success: step=13
+ *     Failure: step=6 (reduce)
+ * @endcode
+ * 
+ * @par Decelerate on Failure
+ * @code
+ *   No improvement?
+ *     Reverse direction
+ *     step_size = step_size / 2
+ *   
+ *   Rationale: We overshot the optimum,
+ *              take smaller steps to find it
+ *   
+ *   Example:
+ *     distance=16, step=8, direction=+1
+ *     Try 24 → Worse
+ *     → Reverse: direction=-1, step=4
+ *     Try 12 → Worse
+ *     → Reverse: direction=+1, step=2
+ *     Try 18 → Better!
+ * @endcode
+ * 
+ * @par Visual: Converging to Optimum
+ * @code
+ *   Performance
+ *        ^
+ *        |        optimal
+ *        |          ↓
+ *    100 |         *
+ *     95 |       *   *
+ *     90 |     *       *
+ *     85 |   *           *
+ *        +--2--4--6--8-10-12-14-16-18-20-> distance
+ *   
+ *   Search trace:
+ *   Start:    8 (step=4)
+ *   Step +4: 12 (better!)
+ *   Step +6: 18 (worse)
+ *   Step -4: 14 (worse)  
+ *   Step +2: 16 (better!) ← Converged
+ * @endcode
+ */
+
+/**
+ * @brief Handling Multiple Local Maxima
+ * 
+ * @par The Problem
+ * @code
+ *   Performance
+ *        ^
+ *        |    B(local)      A(global)
+ *        |     /\            /\
+ *        |    /  \          /  \
+ *        |   /    \   /\   /    \
+ *        |  /      \ /  \ /      \
+ *        +-------------------------> distance
+ *         2  4  6  8 10 12 14 16 18 20
+ *   
+ *   If we start at 4:
+ *     Hill climb → converge at B (distance=6)
+ *     Miss A (distance=16) which is better!
+ * @endcode
+ * 
+ * @par Solution 1: Random Restarts (This Code)
+ * @code
+ *   Every 10,000 iterations:
+ *     Check if performance degraded
+ *     If yes: Restart search from current position
+ *   
+ *   Rationale: System conditions change over time,
+ *              different optimum may emerge
+ * @endcode
+ * 
+ * @par Solution 2: Multi-Start (Not Implemented)
+ * @code
+ *   Run hill climbing from multiple starting points:
+ *     Start 1: distance=4  → converges to 6
+ *     Start 2: distance=12 → converges to 16
+ *     Start 3: distance=20 → converges to 16
+ *   
+ *   Pick best: distance=16
+ *   
+ *   Pros: Better global coverage
+ *   Cons: More expensive
+ * @endcode
+ */
+
 
 #ifndef ADAPTIVE_TUNING_H
 #define ADAPTIVE_TUNING_H
