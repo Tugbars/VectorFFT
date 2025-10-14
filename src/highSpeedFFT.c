@@ -6276,6 +6276,9 @@ void fft_exec(fft_object fft_obj, fft_data *inp, fft_data *oup)
         fprintf(stderr, "Error: Invalid FFT object or data pointers\n");
         // exit
     }
+    // for future prefetch strategy.
+    // prefetch_set_tlb_region(input, fft_obj->n_fft);  // Set real buffer
+
 
     // Dispatch based on the FFT algorithm type
     // lt = 0 for mixed-radix (factorable lengths), lt = 1 for Bluestein (non-factorable)
