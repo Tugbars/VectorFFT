@@ -208,7 +208,9 @@
 */
 
 #include "highspeedFFT.h"
-//#include "prefetch_strategy.h"
+#ifdef FFT_ENABLE_PREFETCH
+#include "prefetch_strategy.h"
+#endif
 #include "time.h"
 #include <immintrin.h>
 #include <pthread.h>
@@ -1193,14 +1195,14 @@ fft_object fft_init(int signal_length, int transform_direction)
             }
         }
     }
-
+#ifdef FFT_ENABLE_PREFETCH
     // Step 13: Initialize prefetch system (unchanged)
-    //static int cache_detected = 0;
-    //if (!cache_detected) {
-       // detect_cache_sizes();
-    //    cache_detected = 1;
-    //}
-
+    static int cache_detected = 0;
+    if (!cache_detected) {
+        detect_cache_sizes();
+        cache_detected = 1;
+    }
+#endif
     return fft_config;
 }
 
