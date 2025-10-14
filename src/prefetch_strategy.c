@@ -277,6 +277,10 @@ static __thread prefetch_throttle_t g_throttle = {0};
 static __thread tlb_prefetch_t g_tlb_prefetch = {0};
 static __thread prefetch_profile_t g_prefetch_profile = {0};
 
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+static __thread uint64_t g_profile_start_cycles = 0;
+#endif
+
 // Wisdom database
 #define MAX_WISDOM_ENTRIES 256
 static wisdom_entry_t g_wisdom_db[MAX_WISDOM_ENTRIES];
