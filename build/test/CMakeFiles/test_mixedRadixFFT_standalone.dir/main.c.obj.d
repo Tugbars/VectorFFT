@@ -123,4 +123,9 @@ test/CMakeFiles/test_mixedRadixFFT_standalone.dir/main.c.obj: \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/stdbool.h \
  C:/Users/Tugbars/Desktop/highSpeedFFT/src/real.h \
  C:/Users/Tugbars/Desktop/highSpeedFFT/src/highspeedFFT.h \
- C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/cpuid.h
+ C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/cpuid.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/time.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sys/timeb.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sec_api/sys/timeb_s.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/_timeval.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/pthread_time.h

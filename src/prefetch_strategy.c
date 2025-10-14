@@ -1462,7 +1462,7 @@ const cpu_profile_t* get_cpu_profile(void) {
 
 /**
  * @brief Enable or disable prefetching globally
-
+*/
 void set_prefetch_enable(bool enable) {
     for (int i = 0; i < g_prefetch_config.num_stages; i++) {
         g_prefetch_config.stages[i].enable = enable;
