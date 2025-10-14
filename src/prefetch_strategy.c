@@ -422,24 +422,39 @@ static inline void init_throttling(void) {
 /**
  * @brief Initialize TLB prefetching
  */
-static inline void init_tlb_prefetch(int n_fft, const fft_data *base) {
+static inline void init_tlb_prefetch(int n_fft) {
     const int data_size = n_fft * sizeof(fft_data);
     const int page_size = 4096;
     const int num_pages = (data_size + page_size - 1) / page_size;
     
-    if (num_pages > 1024) {
-        g_tlb_prefetch.enabled = true;
-        g_tlb_prefetch.page_distance = 8;
-        g_tlb_prefetch.stride_threshold = page_size / sizeof(fft_data);
-        if (g_tlb_prefetch.stride_threshold == 0) {
-            g_tlb_prefetch.stride_threshold = 1;
-        }
-        g_tlb_prefetch.last_page = 0;
-        g_tlb_prefetch.base = base;             // NEW
-        g_tlb_prefetch.len_elements = n_fft;    // NEW
-    } else {
-        g_tlb_prefetch.enabled = false;
+    g_tlb_prefetch.enabled = false;  // Start disabled
+    g_tlb_prefetch.page_distance = 8;
+    g_tlb_prefetch.stride_threshold = page_size / sizeof(fft_data);
+    if (g_tlb_prefetch.stride_threshold == 0) {
+        g_tlb_prefetch.stride_threshold = 1;
     }
+    g_tlb_prefetch.last_page = 0;
+    g_tlb_prefetch.base = NULL;
+    g_tlb_prefetch.len_elements = 0;
+    
+    // Only potentially enable if large enough
+    if (num_pages > 1024) {
+        g_tlb_prefetch.len_elements = n_fft;
+        // Will be enabled when prefetch_set_tlb_region() is called
+    }
+}
+
+
+// New function to set the actual buffer
+void prefetch_set_tlb_region(const fft_data *base, size_t len_elems) {
+    if (!base || len_elems == 0 || g_tlb_prefetch.stride_threshold == 0) {
+        g_tlb_prefetch.enabled = false;
+        return;
+    }
+    
+    g_tlb_prefetch.base = base;
+    g_tlb_prefetch.len_elements = len_elems;
+    g_tlb_prefetch.enabled = true;
 }
 
 /**
@@ -579,7 +594,7 @@ void init_prefetch_system(fft_object fft_obj) {
     // Initialize TLB prefetch - need to pass actual data pointer
     // NOTE: You'll need to get the actual input data pointer from somewhere
     // This is a design decision - you might need to change the function signature
-    init_tlb_prefetch(fft_obj->n_fft, NULL);
+   init_tlb_prefetch(fft_obj->n_fft);
     
     // Load wisdom database (once)
     static int wisdom_loaded = 0;
