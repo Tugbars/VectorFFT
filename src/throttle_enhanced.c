@@ -2,6 +2,8 @@
 // ENHANCED THROTTLING MODEL - Token Bucket with Time Decay
 // STANDALONE MODULE - Optional integration with prefetch_strategy.c
 //
+// PATCHED VERSION - All critical and architectural fixes applied
+//
 // Compilation modes:
 //   1. Standalone: compile without HFFT_USE_ENHANCED_THROTTLE
 //   2. Integrated: compile with -DHFFT_USE_ENHANCED_THROTTLE
@@ -11,7 +13,9 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <time.h>
-#include <stdlib.h>  // for getenv, atoi
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
 
 // Include x86 intrinsics only on x86 platforms
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
@@ -98,7 +102,7 @@ typedef struct {
         int budget_remaining;
         int window_size;
         int window_counter;
-        int max_outstanding;
+        int max_outstanding;  // Budget per window, not actual in-flight count
     } simple;
     
     // Token bucket mode
@@ -106,7 +110,7 @@ typedef struct {
         token_bucket_t l1_bucket;    // For T0/T1 hints
         token_bucket_t l2_bucket;    // For T2 hints
         token_bucket_t nta_bucket;   // For NTA hints
-        int critical_bypass_count;   // Track bypassed criticals
+        uint32_t critical_bypass_count;   // Track bypassed criticals
     } token;
     
     // Statistics for comparison (per-thread)
@@ -116,16 +120,20 @@ typedef struct {
         uint64_t total_throttled;
         uint64_t critical_issued;
     } stats;
+    
+    // Initialization tracking
+    bool initialized;
 } prefetch_throttle_enhanced_t;
 
 //==============================================================================
 // GLOBAL STATE
 //==============================================================================
 
-// Global configuration
+// Global configuration with version tracking for cross-thread updates
 static struct {
     throttle_mode_t mode;
     bool enable_statistics;
+    uint32_t config_version;  // Incremented on config changes
     
     // Token bucket parameters (tunable)
     struct {
@@ -140,6 +148,7 @@ static struct {
 } g_throttle_config = {
     .mode = THROTTLE_MODE_SIMPLE,
     .enable_statistics = false,
+    .config_version = 0,
     .token_config = {
         .l1_capacity = 8,        // Conservative for L1-bound prefetches
         .l2_capacity = 12,       // More aggressive for L2
@@ -151,27 +160,51 @@ static struct {
 };
 
 static __thread prefetch_throttle_enhanced_t g_throttle_enhanced = {0};
+static __thread uint32_t g_local_config_version = 0;
 
 //==============================================================================
 // HELPER FUNCTIONS
 //==============================================================================
 
 /**
- * @brief Helper to get environment variable as int with default
+ * @brief Clamp refill interval to prevent divide-by-zero
  */
-static int getenv_int(const char* key, int def) {
-    const char* v = getenv(key);
-    return v ? atoi(v) : def;
+static inline uint64_t clamp_refill(uint64_t v) { 
+    return v ? v : 1; 
 }
 
 /**
- * @brief Read CPU timestamp counter (inline for performance)
- * Portable: uses rdtsc on x86, clock_gettime elsewhere
+ * @brief Helper to get environment variable as bounded int with validation
+ */
+static int getenv_int_bounded(const char* key, int def, int minv, int maxv) {
+    const char* v = getenv(key);
+    if (!v || !*v) return def;
+    
+    char* end = NULL;
+    errno = 0;
+    long long t = strtoll(v, &end, 10);
+    
+    // Check for conversion errors
+    if (end == v || errno == ERANGE) return def;
+    
+    // Clamp to bounds
+    if (t < minv) t = minv;
+    if (t > maxv) t = maxv;
+    
+    return (int)t;
+}
+
+/**
+ * @brief Read CPU timestamp counter with serialization (inline for performance)
+ * Uses RDTSCP + CPUID fence to prevent reordering
  */
 static inline uint64_t read_tsc_inline(void) {
 #if HAS_X86_INTRINSICS
-    uint32_t lo, hi;
-    __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
+    unsigned lo, hi, aux;
+    // RDTSCP waits for prior instructions and reads TSC
+    __asm__ __volatile__("rdtscp" : "=a"(lo), "=d"(hi), "=c"(aux) ::);
+    // CPUID serializes subsequent instructions
+    __asm__ __volatile__("cpuid" ::: "%rax", "%rbx", "%rcx", "%rdx");
     return ((uint64_t)hi << 32) | lo;
 #else
     // Fallback: use monotonic clock (nanoseconds as proxy for cycles)
@@ -226,13 +259,40 @@ static inline void init_token_bucket(
     bucket->tokens = capacity;
     bucket->capacity = capacity;
     bucket->last_refill = read_tsc_inline();
-    bucket->refill_interval = refill_interval;
+    bucket->refill_interval = clamp_refill(refill_interval);
     bucket->tokens_per_refill = tokens_per_refill;
 }
 
 /**
- * @brief Apply global token config to live buckets
+ * @brief Ensure bucket parameters match current config (lazy sync)
+ * Handles cross-thread configuration updates
+ */
+static inline void ensure_bucket_params(
+    token_bucket_t* b, 
+    int cap, 
+    uint64_t refi, 
+    int tpr
+) {
+    refi = clamp_refill(refi);
+    
+    if (b->capacity != cap || b->refill_interval != refi || b->tokens_per_refill != tpr) {
+        b->capacity = cap;
+        b->refill_interval = refi;
+        b->tokens_per_refill = tpr;
+        
+        // Clamp current tokens to new capacity
+        if (b->tokens > b->capacity) {
+            b->tokens = b->capacity;
+        }
+    }
+}
+
+/**
+ * @brief Apply global token config to live buckets (current thread only)
  * Call this after modifying g_throttle_config.token_config
+ * 
+ * NOTE: This only updates the CURRENT thread's buckets.
+ * Other threads will lazy-sync via ensure_bucket_params() or on next init.
  */
 static inline void apply_token_config_to_buckets(void) {
     token_bucket_t *buckets[] = {
@@ -246,46 +306,48 @@ static inline void apply_token_config_to_buckets(void) {
         g_throttle_config.token_config.nta_capacity
     };
     
+    const uint64_t refi = clamp_refill(g_throttle_config.token_config.refill_cycles);
+    const int tpr = g_throttle_config.token_config.tokens_per_refill;
+    
     for (int i = 0; i < 3; ++i) {
-        buckets[i]->capacity = capacities[i];
-        buckets[i]->refill_interval = g_throttle_config.token_config.refill_cycles;
-        buckets[i]->tokens_per_refill = g_throttle_config.token_config.tokens_per_refill;
-        
-        // Clamp current tokens to new capacity
-        if (buckets[i]->tokens > buckets[i]->capacity) {
-            buckets[i]->tokens = buckets[i]->capacity;
-        }
+        ensure_bucket_params(buckets[i], capacities[i], refi, tpr);
     }
+    
+    g_local_config_version = g_throttle_config.config_version;
 }
 
 /**
  * @brief Refill tokens based on elapsed time (with overflow protection)
+ * FIXED: Guards against divide-by-zero and overflow
  */
 static inline void refill_bucket(token_bucket_t *bucket) {
+    // Guard against divide-by-zero (paused or misconfigured)
+    if (bucket->refill_interval == 0) return;
+    
     uint64_t now = read_tsc_inline();
     uint64_t elapsed = now - bucket->last_refill;
     
-    if (elapsed >= bucket->refill_interval) {
-        // Calculate how many refill periods have passed (keep as uint64_t)
-        uint64_t periods64 = elapsed / bucket->refill_interval;
-        
-        // Clamp to prevent overflow
-        if (periods64 > (1ULL << 20)) {
-            periods64 = (1ULL << 20);
-        }
-        
-        uint64_t add = periods64 * (uint64_t)bucket->tokens_per_refill;
-        
-        // Saturating add
-        if ((uint64_t)bucket->tokens + add > (uint64_t)bucket->capacity) {
-            bucket->tokens = bucket->capacity;
-        } else {
-            bucket->tokens += (int)add;
-        }
-        
-        // Reduce drift by advancing exactly multiples of interval
-        bucket->last_refill += periods64 * bucket->refill_interval;
+    if (elapsed < bucket->refill_interval) return;
+    
+    // Calculate how many refill periods have passed (keep as uint64_t)
+    uint64_t periods64 = elapsed / bucket->refill_interval;
+    
+    // Clamp to prevent overflow (2^20 periods is already huge)
+    if (periods64 > (1ULL << 20)) {
+        periods64 = (1ULL << 20);
     }
+    
+    uint64_t add = periods64 * (uint64_t)bucket->tokens_per_refill;
+    
+    // Saturating add
+    if ((uint64_t)bucket->tokens + add > (uint64_t)bucket->capacity) {
+        bucket->tokens = bucket->capacity;
+    } else {
+        bucket->tokens += (int)add;
+    }
+    
+    // Reduce drift by advancing exactly multiples of interval
+    bucket->last_refill += periods64 * bucket->refill_interval;
 }
 
 /**
@@ -299,6 +361,44 @@ static inline bool consume_token(token_bucket_t *bucket) {
         return true;
     }
     return false;
+}
+
+/**
+ * @brief Ensure thread-local state is initialized with defaults
+ * Protects against use-before-init bugs
+ */
+static inline void ensure_initialized_defaults(void) {
+    if (g_throttle_enhanced.initialized) return;
+    
+    // Check if all buckets are uninitialized (capacity == 0)
+    if (g_throttle_enhanced.token.l1_bucket.capacity == 0 &&
+        g_throttle_enhanced.token.l2_bucket.capacity == 0 &&
+        g_throttle_enhanced.token.nta_bucket.capacity == 0) {
+        
+        const uint64_t refi = clamp_refill(
+            g_throttle_config.token_config.refill_cycles ?: 1000
+        );
+        const int tpr = g_throttle_config.token_config.tokens_per_refill ?: 4;
+        
+        init_token_bucket(&g_throttle_enhanced.token.l1_bucket, 8, refi, tpr);
+        init_token_bucket(&g_throttle_enhanced.token.l2_bucket, 12, refi, tpr);
+        init_token_bucket(&g_throttle_enhanced.token.nta_bucket, 16, refi, tpr);
+        
+        g_throttle_enhanced.mode = g_throttle_config.mode;
+        g_throttle_enhanced.simple.max_outstanding = 20;
+        g_throttle_enhanced.simple.window_size = 8;
+        g_throttle_enhanced.initialized = true;
+    }
+}
+
+/**
+ * @brief Check if config has changed and sync if needed
+ */
+static inline void sync_config_if_changed(void) {
+    if (g_local_config_version != g_throttle_config.config_version) {
+        apply_token_config_to_buckets();
+        g_throttle_enhanced.mode = g_throttle_config.mode;
+    }
 }
 
 //==============================================================================
@@ -344,20 +444,45 @@ void init_throttling_enhanced(const cpu_profile_t *cpu_profile) {
         
         // Set refill interval based on prefetch latency (~half round-trip)
         uint64_t lat = (uint64_t)cpu_profile->prefetch_latency;
-        g_throttle_config.token_config.refill_cycles = lat ? lat / 2 : 1000;
+        g_throttle_config.token_config.refill_cycles = clamp_refill(lat ? lat / 2 : 1000);
     }
     
-    // Apply environment variable overrides
+    // Apply environment variable overrides with bounds checking
     g_throttle_enhanced.simple.window_size = 
-        getenv_int("HFFT_THROTTLE_WINDOW", 8);
+        getenv_int_bounded("HFFT_THROTTLE_WINDOW", 8, 1, 1000);
+    
     g_throttle_config.token_config.l1_capacity = 
-        getenv_int("HFFT_TB_L1_CAP", g_throttle_config.token_config.l1_capacity);
+        getenv_int_bounded("HFFT_TB_L1_CAP", 
+            g_throttle_config.token_config.l1_capacity, 1, 64);
+    
     g_throttle_config.token_config.l2_capacity = 
-        getenv_int("HFFT_TB_L2_CAP", g_throttle_config.token_config.l2_capacity);
+        getenv_int_bounded("HFFT_TB_L2_CAP", 
+            g_throttle_config.token_config.l2_capacity, 1, 64);
+    
     g_throttle_config.token_config.nta_capacity = 
-        getenv_int("HFFT_TB_NTA_CAP", g_throttle_config.token_config.nta_capacity);
+        getenv_int_bounded("HFFT_TB_NTA_CAP", 
+            g_throttle_config.token_config.nta_capacity, 1, 64);
+    
     g_throttle_config.token_config.refill_cycles = 
-        getenv_int("HFFT_TB_REFILL", g_throttle_config.token_config.refill_cycles);
+        clamp_refill(getenv_int_bounded("HFFT_TB_REFILL", 
+            g_throttle_config.token_config.refill_cycles, 1, 1000000));
+    
+    g_throttle_config.token_config.tokens_per_refill = 
+        getenv_int_bounded("HFFT_TB_TOKENS_PER_REFILL", 
+            g_throttle_config.token_config.tokens_per_refill, 1, 64);
+    
+    // Mode override
+    int mode_env = getenv_int_bounded("HFFT_THROTTLE_MODE", -1, 0, 1);
+    if (mode_env >= 0) {
+        g_throttle_config.mode = (throttle_mode_t)mode_env;
+        g_throttle_enhanced.mode = g_throttle_config.mode;
+    }
+    
+    // Statistics override
+    int stats_env = getenv_int_bounded("HFFT_THROTTLE_STATS", -1, 0, 1);
+    if (stats_env >= 0) {
+        g_throttle_config.enable_statistics = (bool)stats_env;
+    }
     
     // Initialize simple mode state
     g_throttle_enhanced.simple.max_outstanding = 
@@ -368,7 +493,7 @@ void init_throttling_enhanced(const cpu_profile_t *cpu_profile) {
     g_throttle_enhanced.simple.issued_count = 0;
     
     // Initialize token bucket mode state
-    const uint64_t refill_cycles = g_throttle_config.token_config.refill_cycles;
+    const uint64_t refill_cycles = clamp_refill(g_throttle_config.token_config.refill_cycles);
     const int tokens_per = g_throttle_config.token_config.tokens_per_refill;
     
     init_token_bucket(
@@ -401,6 +526,9 @@ void init_throttling_enhanced(const cpu_profile_t *cpu_profile) {
         g_throttle_enhanced.stats.total_throttled = 0;
         g_throttle_enhanced.stats.critical_issued = 0;
     }
+    
+    g_throttle_enhanced.initialized = true;
+    g_local_config_version = g_throttle_config.config_version;
 }
 
 /**
@@ -457,6 +585,25 @@ bool prefetch_throttled_enhanced(
     prefetch_priority_t priority,
     void (*do_prefetch_fn)(const void*, int)
 ) {
+    // Ensure initialized (guards against use-before-init)
+    ensure_initialized_defaults();
+    
+    // Sync config if changed (handles cross-thread updates)
+    sync_config_if_changed();
+    
+    // Ensure bucket params are current
+    if (g_throttle_enhanced.mode == THROTTLE_MODE_TOKEN_BUCKET) {
+        const uint64_t refi = clamp_refill(g_throttle_config.token_config.refill_cycles);
+        const int tpr = g_throttle_config.token_config.tokens_per_refill;
+        
+        ensure_bucket_params(&g_throttle_enhanced.token.l1_bucket, 
+            g_throttle_config.token_config.l1_capacity, refi, tpr);
+        ensure_bucket_params(&g_throttle_enhanced.token.l2_bucket, 
+            g_throttle_config.token_config.l2_capacity, refi, tpr);
+        ensure_bucket_params(&g_throttle_enhanced.token.nta_bucket, 
+            g_throttle_config.token_config.nta_capacity, refi, tpr);
+    }
+    
     if (g_throttle_config.enable_statistics) {
         g_throttle_enhanced.stats.total_requested++;
     }
@@ -469,10 +616,14 @@ bool prefetch_throttled_enhanced(
     }
 #endif
     
+    // Track whether we actually dispatched (fixes ghost dispatch bug)
+    bool dispatched = false;
+    
     // Critical priority always bypasses throttling
     if (priority == PREFETCH_PRIO_CRITICAL) {
         if (prefetch_impl) {
             prefetch_impl(addr, hint);
+            dispatched = true;
         }
         
         if (g_throttle_enhanced.mode == THROTTLE_MODE_TOKEN_BUCKET) {
@@ -480,11 +631,13 @@ bool prefetch_throttled_enhanced(
         }
         
         if (g_throttle_config.enable_statistics) {
+            if (dispatched) {
+                g_throttle_enhanced.stats.total_issued++;
+            }
             g_throttle_enhanced.stats.critical_issued++;
-            g_throttle_enhanced.stats.total_issued++;
         }
         
-        return true;
+        return dispatched;
     }
     
     // Check throttling based on mode
@@ -494,24 +647,26 @@ bool prefetch_throttled_enhanced(
         can_issue = can_prefetch_simple();
         if (can_issue && prefetch_impl) {
             prefetch_impl(addr, hint);
+            dispatched = true;
             record_prefetch_simple(true);
         }
     } else { // THROTTLE_MODE_TOKEN_BUCKET
         can_issue = can_prefetch_token_bucket(hint);
         if (can_issue && prefetch_impl) {
             prefetch_impl(addr, hint);
+            dispatched = true;
         }
     }
     
     if (g_throttle_config.enable_statistics) {
-        if (can_issue) {
+        if (dispatched) {
             g_throttle_enhanced.stats.total_issued++;
         } else {
             g_throttle_enhanced.stats.total_throttled++;
         }
     }
     
-    return can_issue;
+    return dispatched;
 }
 
 /**
@@ -520,7 +675,8 @@ bool prefetch_throttled_enhanced(
  */
 void set_throttle_mode(throttle_mode_t mode) {
     g_throttle_config.mode = mode;
-    g_throttle_enhanced.mode = mode;  // Apply immediately to TLS
+    g_throttle_enhanced.mode = mode;
+    g_throttle_config.config_version++;
 }
 
 /**
@@ -536,10 +692,12 @@ void configure_token_bucket(
     g_throttle_config.token_config.l1_capacity = l1_capacity;
     g_throttle_config.token_config.l2_capacity = l2_capacity;
     g_throttle_config.token_config.nta_capacity = nta_capacity;
-    g_throttle_config.token_config.refill_cycles = refill_cycles;
+    g_throttle_config.token_config.refill_cycles = clamp_refill(refill_cycles);
     g_throttle_config.token_config.tokens_per_refill = tokens_per_refill;
     
-    // Apply changes to live buckets
+    g_throttle_config.config_version++;
+    
+    // Apply changes to current thread's live buckets
     apply_token_config_to_buckets();
 }
 
@@ -585,17 +743,25 @@ void get_throttle_stats(
 }
 
 /**
- * @brief Print throttling statistics
+ * @brief Print throttling statistics (thread-safe via local buffer)
  */
 void print_throttle_stats(void) {
-    // Always print mode for debugging, even if stats disabled
-    printf("=== Throttling Statistics (this thread) ===\n");
-    printf("Mode: %s\n", 
+    // Buffer output to avoid interleaved prints in multi-threaded context
+    char buffer[2048];
+    int pos = 0;
+    
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+        "=== Throttling Statistics (this thread) ===\n");
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+        "Mode: %s\n", 
         g_throttle_enhanced.mode == THROTTLE_MODE_SIMPLE ? "Simple" : "Token Bucket");
     
     if (!g_throttle_config.enable_statistics) {
-        printf("Statistics collection not enabled\n");
-        printf("==========================================\n");
+        pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+            "Statistics collection not enabled\n");
+        pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+            "==========================================\n");
+        printf("%s", buffer);
         return;
     }
     
@@ -603,27 +769,40 @@ void print_throttle_stats(void) {
     double rate;
     get_throttle_stats(&req, &issued, &throttled, &critical, &rate);
     
-    printf("Total requested: %llu\n", (unsigned long long)req);
-    printf("Total issued: %llu\n", (unsigned long long)issued);
-    printf("Total throttled: %llu\n", (unsigned long long)throttled);
-    printf("Critical issued: %llu\n", (unsigned long long)critical);
-    printf("Throttle rate: %.2f%%\n", rate * 100.0);
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+        "Total requested: %llu\n", (unsigned long long)req);
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+        "Total issued: %llu\n", (unsigned long long)issued);
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+        "Total throttled: %llu\n", (unsigned long long)throttled);
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+        "Critical issued: %llu\n", (unsigned long long)critical);
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+        "Throttle rate: %.2f%%\n", rate * 100.0);
     
     if (g_throttle_enhanced.mode == THROTTLE_MODE_TOKEN_BUCKET) {
-        printf("\nToken Bucket State:\n");
-        printf("  L1 tokens: %d / %d\n", 
+        pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+            "\nToken Bucket State:\n");
+        pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+            "  L1 tokens: %d / %d\n", 
             g_throttle_enhanced.token.l1_bucket.tokens,
             g_throttle_enhanced.token.l1_bucket.capacity);
-        printf("  L2 tokens: %d / %d\n",
+        pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+            "  L2 tokens: %d / %d\n",
             g_throttle_enhanced.token.l2_bucket.tokens,
             g_throttle_enhanced.token.l2_bucket.capacity);
-        printf("  NTA tokens: %d / %d\n",
+        pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+            "  NTA tokens: %d / %d\n",
             g_throttle_enhanced.token.nta_bucket.tokens,
             g_throttle_enhanced.token.nta_bucket.capacity);
-        printf("  Critical bypasses: %d\n",
+        pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+            "  Critical bypasses: %u\n",
             g_throttle_enhanced.token.critical_bypass_count);
     }
-    printf("==========================================\n");
+    pos += snprintf(buffer + pos, sizeof(buffer) - pos,
+        "==========================================\n");
+    
+    printf("%s", buffer);
 }
 
 //==============================================================================
@@ -635,6 +814,8 @@ void print_throttle_stats(void) {
  * 
  * Call this periodically (e.g., every 1000 FFT calls) to adjust parameters
  * Note: Not thread-safe. Call from single controller thread.
+ * 
+ * IMPROVED: Now adjusts both rate (tokens_per_refill) and capacity
  */
 void autotune_token_bucket(void) {
     if (g_throttle_enhanced.mode != THROTTLE_MODE_TOKEN_BUCKET) return;
@@ -650,15 +831,23 @@ void autotune_token_bucket(void) {
     // Too low = wasting MSHR, too high = starving performance
     
     if (throttle_rate < 0.10) {
-        // Under-throttling: reduce capacities slightly
-        g_throttle_config.token_config.l1_capacity = 
-            (g_throttle_config.token_config.l1_capacity * 9) / 10;
-        g_throttle_config.token_config.l2_capacity = 
-            (g_throttle_config.token_config.l2_capacity * 9) / 10;
-        g_throttle_config.token_config.nta_capacity = 
-            (g_throttle_config.token_config.nta_capacity * 9) / 10;
+        // Under-throttling: reduce rate first (smoother), then capacity
+        if (g_throttle_config.token_config.tokens_per_refill > 1) {
+            g_throttle_config.token_config.tokens_per_refill = 
+                (g_throttle_config.token_config.tokens_per_refill * 9) / 10;
+        } else {
+            // Rate already minimal, reduce capacities
+            g_throttle_config.token_config.l1_capacity = 
+                (g_throttle_config.token_config.l1_capacity * 9) / 10;
+            g_throttle_config.token_config.l2_capacity = 
+                (g_throttle_config.token_config.l2_capacity * 9) / 10;
+            g_throttle_config.token_config.nta_capacity = 
+                (g_throttle_config.token_config.nta_capacity * 9) / 10;
+        }
         
         // Clamp to minimums
+        if (g_throttle_config.token_config.tokens_per_refill < 1)
+            g_throttle_config.token_config.tokens_per_refill = 1;
         if (g_throttle_config.token_config.l1_capacity < 4)
             g_throttle_config.token_config.l1_capacity = 4;
         if (g_throttle_config.token_config.l2_capacity < 6)
@@ -667,13 +856,18 @@ void autotune_token_bucket(void) {
             g_throttle_config.token_config.nta_capacity = 8;
             
     } else if (throttle_rate > 0.30) {
-        // Over-throttling: increase capacities slightly
-        g_throttle_config.token_config.l1_capacity = 
-            (g_throttle_config.token_config.l1_capacity * 11) / 10;
-        g_throttle_config.token_config.l2_capacity = 
-            (g_throttle_config.token_config.l2_capacity * 11) / 10;
-        g_throttle_config.token_config.nta_capacity = 
-            (g_throttle_config.token_config.nta_capacity * 11) / 10;
+        // Over-throttling: increase rate first (smoother), then capacity
+        if (g_throttle_config.token_config.tokens_per_refill < 64) {
+            g_throttle_config.token_config.tokens_per_refill++;
+        } else {
+            // Rate already maxed, increase capacities
+            g_throttle_config.token_config.l1_capacity = 
+                (g_throttle_config.token_config.l1_capacity * 11) / 10;
+            g_throttle_config.token_config.l2_capacity = 
+                (g_throttle_config.token_config.l2_capacity * 11) / 10;
+            g_throttle_config.token_config.nta_capacity = 
+                (g_throttle_config.token_config.nta_capacity * 11) / 10;
+        }
         
         // Clamp to CPU limits (from profile)
         int max_buffers = g_throttle_config.prefetch_buffers_cap;
@@ -685,7 +879,10 @@ void autotune_token_bucket(void) {
             g_throttle_config.token_config.nta_capacity = max_buffers;
     }
     
-    // Apply changes to live buckets
+    // Increment config version to propagate changes
+    g_throttle_config.config_version++;
+    
+    // Apply changes to live buckets (current thread)
     apply_token_config_to_buckets();
     
     // Reset statistics for next tuning period
