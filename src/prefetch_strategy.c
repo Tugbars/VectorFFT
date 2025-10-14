@@ -2,6 +2,33 @@
 // ADVANCED PREFETCH SYSTEM - FFTW-Inspired Implementation
 // Clean, properly ordered implementation
 //==============================================================================
+/*
+┌─────────────────────────────────┐
+│  prefetch_strategy.c            │
+│  ├─ init_prefetch_system()      │
+│  ├─ prefetch_input()            │
+│  ├─ prefetch_twiddle()          │
+│  └─ get_stage_config()          │
+└─────────────────────────────────┘
+         │
+         │ Calls (optional)
+         ▼
+┌─────────────────────────────────┐
+│  throttle_enhanced.c (NEW)      │
+│  ├─ prefetch_throttled_enhanced()│
+│  └─ Token bucket logic          │
+└─────────────────────────────────┘
+
+         │
+         │ Calls (optional)
+         ▼
+┌─────────────────────────────────┐
+│  adaptive_tuning.c (NEW)        │
+│  ├─ profile_fft_start/end()     │
+│  ├─ get_tuned_distance()        │
+│  └─ EWMA/per-stage tuning       │
+└─────────────────────────────────┘
+*/
 
 #include <stdlib.h>
 #include <stdio.h>
