@@ -1,6 +1,20 @@
 //==============================================================================
 // ADVANCED PREFETCH SYSTEM - FFTW-Inspired Implementation
-// Clean, properly ordered implementation
+// Clean, properly ordered implementation with OPTIONAL enhanced modules
+//
+// Compilation modes:
+//   Default: gcc prefetch_strategy.c
+//            Uses built-in simple throttling and profiling
+//
+//   Enhanced: gcc -DHFFT_USE_ENHANCED_THROTTLE prefetch_strategy.c throttle_enhanced.c
+//             Links with advanced token bucket throttling
+//
+//   Adaptive: gcc -DHFFT_USE_ADAPTIVE_TUNING prefetch_strategy.c adaptive_tuning.c
+//             Links with EWMA-based adaptive distance tuning
+//
+//   Full:     gcc -DHFFT_USE_ENHANCED_THROTTLE -DHFFT_USE_ADAPTIVE_TUNING \
+//                 prefetch_strategy.c throttle_enhanced.c adaptive_tuning.c
+//             Uses all advanced features
 //==============================================================================
 /*
 ┌─────────────────────────────────┐
@@ -11,19 +25,18 @@
 │  └─ get_stage_config()          │
 └─────────────────────────────────┘
          │
-         │ Calls (optional)
+         │ Optional: -DHFFT_USE_ENHANCED_THROTTLE
          ▼
 ┌─────────────────────────────────┐
-│  throttle_enhanced.c (NEW)      │
+│  throttle_enhanced.c            │
 │  ├─ prefetch_throttled_enhanced()│
 │  └─ Token bucket logic          │
 └─────────────────────────────────┘
-
          │
-         │ Calls (optional)
+         │ Optional: -DHFFT_USE_ADAPTIVE_TUNING
          ▼
 ┌─────────────────────────────────┐
-│  adaptive_tuning.c (NEW)        │
+│  adaptive_tuning.c              │
 │  ├─ profile_fft_start/end()     │
 │  ├─ get_tuned_distance()        │
 │  └─ EWMA/per-stage tuning       │
@@ -39,6 +52,40 @@
 
 #include "highspeedFFT.h"
 #include "prefetch_strategy.h"
+
+//==============================================================================
+// OPTIONAL MODULE INTEGRATION
+//==============================================================================
+
+#ifdef HFFT_USE_ENHANCED_THROTTLE
+// Forward declarations for enhanced throttling module
+extern void init_throttling_enhanced(const cpu_profile_t *cpu_profile);
+extern bool prefetch_throttled_enhanced(
+    const void *addr, int hint, prefetch_priority_t priority,
+    void (*do_prefetch_fn)(const void*, int));
+extern void set_throttle_mode(int mode);
+extern void configure_token_bucket(int l1, int l2, int nta, uint64_t refill, int tokens);
+extern void set_throttle_statistics(bool enable);
+extern void print_throttle_stats(void);
+extern void autotune_token_bucket(void);
+#define THROTTLE_MODE_TOKEN_BUCKET 1
+#endif
+
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+// Forward declarations for adaptive tuning module
+extern void init_adaptive_tuning(int num_stages, const int *distances, 
+                                 const int *working_sets, const int *radixes);
+extern void cleanup_adaptive_tuning(void);
+extern uint64_t profile_fft_start(void);
+extern void profile_fft_end(uint64_t start, int n_elements, int stage_idx);
+extern int get_tuned_distance(int stage_idx);
+extern void apply_tuned_distances(stage_prefetch_t *stages, int n);
+extern void set_tuning_mode(int mode);
+extern void set_tuning_logging(bool enable);
+extern void print_tuning_report(void);
+#define TUNING_MODE_EWMA 2
+#define TUNING_MODE_PER_STAGE 3
+#endif
 
 //==============================================================================
 // INTERNAL TYPE DEFINITIONS (not in header)
@@ -63,8 +110,8 @@ typedef struct {
     int page_distance;
     int stride_threshold;
     uintptr_t last_page;
-    const fft_data *base;      // NEW
-    size_t len_elements;       // NEW
+    const fft_data *base;
+    size_t len_elements;
 } tlb_prefetch_t;
 
 /**
@@ -78,7 +125,7 @@ typedef enum {
 } prefetch_priority_t;
 
 /**
- * @brief Runtime profiling for adaptive tuning
+ * @brief Runtime profiling for adaptive tuning (built-in simple version)
  */
 typedef struct {
     unsigned long long total_cycles;
@@ -409,7 +456,7 @@ static inline int compute_stage_hint(int working_set) {
 }
 
 /**
- * @brief Initialize throttling
+ * @brief Initialize throttling (built-in simple version)
  */
 static inline void init_throttling(void) {
     g_throttle.max_outstanding = g_cpu_profile->prefetch_buffers;
@@ -427,7 +474,7 @@ static inline void init_tlb_prefetch(int n_fft) {
     const int page_size = 4096;
     const int num_pages = (data_size + page_size - 1) / page_size;
     
-    g_tlb_prefetch.enabled = false;  // Start disabled
+    g_tlb_prefetch.enabled = false;
     g_tlb_prefetch.page_distance = 8;
     g_tlb_prefetch.stride_threshold = page_size / sizeof(fft_data);
     if (g_tlb_prefetch.stride_threshold == 0) {
@@ -437,15 +484,11 @@ static inline void init_tlb_prefetch(int n_fft) {
     g_tlb_prefetch.base = NULL;
     g_tlb_prefetch.len_elements = 0;
     
-    // Only potentially enable if large enough
     if (num_pages > 1024) {
         g_tlb_prefetch.len_elements = n_fft;
-        // Will be enabled when prefetch_set_tlb_region() is called
     }
 }
 
-
-// New function to set the actual buffer
 void prefetch_set_tlb_region(const fft_data *base, size_t len_elems) {
     if (!base || len_elems == 0 || g_tlb_prefetch.stride_threshold == 0) {
         g_tlb_prefetch.enabled = false;
@@ -458,7 +501,7 @@ void prefetch_set_tlb_region(const fft_data *base, size_t len_elems) {
 }
 
 /**
- * @brief Check if we can issue a prefetch
+ * @brief Check if we can issue a prefetch (built-in simple version)
  */
 static inline bool can_prefetch(void) {
     g_throttle.window_counter++;
@@ -472,23 +515,19 @@ static inline bool can_prefetch(void) {
 }
 
 /**
- * @brief Record prefetch issued
+ * @brief Record prefetch issued (built-in simple version)
  */
 static inline void record_prefetch_issued(bool critical) {
     if (!critical) {
         if (g_throttle.budget_remaining > 0) {
             g_throttle.budget_remaining--;
         }
-        // Budget stays at 0 if already depleted, won't go negative
     }
     g_throttle.issued_count++;
 }
 
 /**
  * @brief Prefetch dispatch based on hint value
- * 
- * _mm_prefetch requires compile-time constant hint, so we need to dispatch
- * based on the runtime hint value to the appropriate compile-time constant.
  */
 static inline void do_prefetch(const void *addr, int hint) {
 #if defined(__x86_64__) || defined(_M_X64)
@@ -500,7 +539,6 @@ static inline void do_prefetch(const void *addr, int hint) {
         default:           _mm_prefetch((const char*)addr, _MM_HINT_T0);  break;
     }
 #else
-    // locality 3≈T0, 2≈T1, 1≈T2, 0≈NTA (rough mapping)
     int locality = (hint==_MM_HINT_NTA) ? 0 : (hint==_MM_HINT_T2 ? 1 : (hint==_MM_HINT_T1 ? 2 : 3));
     __builtin_prefetch(addr, 0, locality);
 #endif
@@ -508,22 +546,29 @@ static inline void do_prefetch(const void *addr, int hint) {
 
 /**
  * @brief Throttled prefetch with priority
+ * Automatically uses enhanced throttling if compiled with HFFT_USE_ENHANCED_THROTTLE
  */
 static inline void prefetch_throttled(
     const void *addr,
     int hint,
     prefetch_priority_t priority
 ) {
+#ifdef HFFT_USE_ENHANCED_THROTTLE
+    // Use enhanced token bucket throttling
+    prefetch_throttled_enhanced(addr, hint, priority, do_prefetch);
+#else
+    // Use built-in simple throttling
     if (priority == PREFETCH_PRIO_CRITICAL) {
         do_prefetch(addr, hint);
-        record_prefetch_issued(true);  // Pass true for critical
+        record_prefetch_issued(true);
         return;
     }
     
     if (can_prefetch()) {
         do_prefetch(addr, hint);
-        record_prefetch_issued(false);  // Pass false for normal
+        record_prefetch_issued(false);
     }
+#endif
 }
 
 /**
@@ -541,7 +586,6 @@ static inline void prefetch_tlb(const fft_data *addr) {
     if (page != g_tlb_prefetch.last_page) {
         const uintptr_t future = (page + (uintptr_t)g_tlb_prefetch.page_distance) * page_sz;
         
-        // Bounds check before access
         if (future >= base_u && future < end_u) {
             __builtin_prefetch((const void*)future, 0, 0);
         }
@@ -549,6 +593,7 @@ static inline void prefetch_tlb(const fft_data *addr) {
         g_tlb_prefetch.last_page = page;
     }
 }
+
 /**
  * @brief Write prefetch
  */
@@ -588,13 +633,27 @@ void init_prefetch_system(fft_object fft_obj) {
         cache_detected = 1;
     }
     
-    // Initialize throttling
-    init_throttling();
+    // Initialize throttling (built-in or enhanced)
+#ifdef HFFT_USE_ENHANCED_THROTTLE
+    init_throttling_enhanced(g_cpu_profile);
     
-    // Initialize TLB prefetch - need to pass actual data pointer
-    // NOTE: You'll need to get the actual input data pointer from somewhere
-    // This is a design decision - you might need to change the function signature
-   init_tlb_prefetch(fft_obj->n_fft);
+    // Check env var for enhanced throttle mode
+    const char *throttle_mode = getenv("HFFT_THROTTLE_MODE");
+    if (throttle_mode && strcmp(throttle_mode, "token") == 0) {
+        set_throttle_mode(THROTTLE_MODE_TOKEN_BUCKET);
+        fprintf(stderr, "HFFT: Using token bucket throttling\n");
+    }
+    
+    const char *throttle_stats = getenv("HFFT_THROTTLE_STATS");
+    if (throttle_stats && atoi(throttle_stats) == 1) {
+        set_throttle_statistics(true);
+    }
+#else
+    init_throttling();
+#endif
+    
+    // Initialize TLB prefetch
+    init_tlb_prefetch(fft_obj->n_fft);
     
     // Load wisdom database (once)
     static int wisdom_loaded = 0;
@@ -620,6 +679,17 @@ void init_prefetch_system(fft_object fft_obj) {
     g_prefetch_config.num_stages = num_factors;
     
     if (!g_prefetch_config.stages) return;
+    
+    // Prepare arrays for adaptive tuning
+    int *initial_distances = NULL;
+    int *working_sets = NULL;
+    int *radixes = NULL;
+    
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+    initial_distances = (int*)malloc(num_factors * sizeof(int));
+    working_sets = (int*)malloc(num_factors * sizeof(int));
+    radixes = (int*)malloc(num_factors * sizeof(int));
+#endif
     
     int stride = 1;
     for (int stage = 0; stage < num_factors; ++stage) {
@@ -671,8 +741,42 @@ void init_prefetch_system(fft_object fft_obj) {
             cfg->block_size = 0;
         }
         
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+        if (initial_distances) initial_distances[stage] = cfg->distance_input;
+        if (working_sets) working_sets[stage] = working_set;
+        if (radixes) radixes[stage] = radix;
+#endif
+        
         stride *= radix;
     }
+    
+    // Initialize adaptive tuning if enabled
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+    if (initial_distances && working_sets && radixes) {
+        init_adaptive_tuning(num_factors, initial_distances, working_sets, radixes);
+        
+        // Check env var for tuning mode
+        const char *tuning_mode = getenv("HFFT_TUNING_MODE");
+        if (tuning_mode) {
+            if (strcmp(tuning_mode, "ewma") == 0) {
+                set_tuning_mode(TUNING_MODE_EWMA);
+                fprintf(stderr, "HFFT: Using EWMA adaptive tuning\n");
+            } else if (strcmp(tuning_mode, "per_stage") == 0) {
+                set_tuning_mode(TUNING_MODE_PER_STAGE);
+                fprintf(stderr, "HFFT: Using per-stage adaptive tuning\n");
+            }
+        }
+        
+        const char *tuning_log = getenv("HFFT_TUNING_LOG");
+        if (tuning_log && atoi(tuning_log) == 1) {
+            set_tuning_logging(true);
+        }
+    }
+    
+    free(initial_distances);
+    free(working_sets);
+    free(radixes);
+#endif
 }
 
 void cleanup_prefetch_system(void) {
@@ -681,6 +785,10 @@ void cleanup_prefetch_system(void) {
         g_prefetch_config.stages = NULL;
         g_prefetch_config.num_stages = 0;
     }
+    
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+    cleanup_adaptive_tuning();
+#endif
 }
 
 stage_prefetch_t* get_stage_config(int factor_index) {
@@ -692,6 +800,15 @@ stage_prefetch_t* get_stage_config(int factor_index) {
 
 void prefetch_input(const fft_data *input, int idx, stage_prefetch_t *cfg) {
     if (!cfg || !cfg->enable) return;
+    
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+    // Use adaptively tuned distance if available
+    int tuned = get_tuned_distance(cfg - g_prefetch_config.stages);
+    if (tuned > 0) {
+        cfg->distance_input = tuned;
+    }
+#endif
+    
     do_prefetch(input + idx + cfg->distance_input, cfg->hint_input);
 }
 
@@ -776,7 +893,6 @@ void load_wisdom(const char *filename) {
     char line[256];
     
     while (g_wisdom_count < MAX_WISDOM_ENTRIES && fgets(line, sizeof(line), fp)) {
-        // Skip comments and blank lines
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
         
         wisdom_entry_t *entry = &g_wisdom_db[g_wisdom_count];
@@ -822,9 +938,9 @@ void save_wisdom(const char *filename) {
             entry->distance_input,
             entry->distance_twiddle,
             entry->hint,
-            (int)entry->strategy,  // Cast enum to int
+            (int)entry->strategy,
             entry->cycles_per_element,
-            (long long)entry->timestamp  // Cast time_t to long long
+            (long long)entry->timestamp
         );
     }
     
@@ -878,27 +994,24 @@ void search_optimal_prefetch(
     int factor_index,
     stage_prefetch_t *best_config
 ) {
-    // Check wisdom first
     const int radix = fft_obj->factors[factor_index];
     wisdom_entry_t *wisdom = find_wisdom(fft_obj->n_fft, radix);
     
     if (wisdom) {
-        // Initialize ALL fields comprehensively
         *best_config = (stage_prefetch_t){
             .enable = true,
             .strategy = wisdom->strategy,
             .distance_input = wisdom->distance_input,
-            .distance_output = wisdom->distance_input,  // NEW
+            .distance_output = wisdom->distance_input,
             .distance_twiddle = wisdom->distance_twiddle,
             .hint_input = wisdom->hint,
-            .hint_output = wisdom->hint,                // NEW
-            .hint_twiddle = _MM_HINT_T0,                // NEW
-            .block_size = 0                             // NEW
+            .hint_output = wisdom->hint,
+            .hint_twiddle = _MM_HINT_T0,
+            .block_size = 0
         };
         return;
     }
     
-    // No wisdom - use heuristics
     const int n_fft = fft_obj->n_fft;
     const int working_set = compute_stage_working_set(
         n_fft, factor_index, fft_obj->factors, fft_obj->lf
@@ -906,25 +1019,25 @@ void search_optimal_prefetch(
     
     if (working_set < 1024) {
         best_config->strategy = PREFETCH_NONE;
-        best_config->enable = false;  // NEW
+        best_config->enable = false;
     } else if (radix <= 4 && working_set < g_prefetch_config.l1_size) {
         best_config->strategy = PREFETCH_SINGLE;
-        best_config->enable = true;   // NEW
+        best_config->enable = true;
     } else if (radix <= 8) {
         best_config->strategy = PREFETCH_DUAL;
-        best_config->enable = true;   // NEW
+        best_config->enable = true;
     } else {
         best_config->strategy = PREFETCH_MULTI;
-        best_config->enable = true;   // NEW
+        best_config->enable = true;
     }
     
     best_config->distance_input = compute_stage_prefetch_distance(working_set, 1);
-    best_config->distance_output = best_config->distance_input;   // NEW
+    best_config->distance_output = best_config->distance_input;
     best_config->distance_twiddle = best_config->distance_input / 2;
     best_config->hint_input = compute_stage_hint(working_set);
-    best_config->hint_output = best_config->hint_input;           // NEW
+    best_config->hint_output = best_config->hint_input;
     best_config->hint_twiddle = _MM_HINT_T0;
-    best_config->block_size = 0;                                  // NEW
+    best_config->block_size = 0;
 }
 
 const prefetch_config_t* get_prefetch_config(void) {
@@ -946,11 +1059,28 @@ void set_prefetch_enable(bool enable) {
 //==============================================================================
 
 void profile_start(void) {
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+    // Use enhanced adaptive tuning module
+    profile_fft_start();
+#else
+    // Use built-in simple profiling
     if (!g_prefetch_config.enable_runtime_tuning) return;
     g_prefetch_profile.total_cycles = read_tsc();
+#endif
 }
 
 void profile_end(int n_elements) {
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+    // Use enhanced adaptive tuning module
+    profile_fft_end(0, n_elements, -1);
+    
+    // Apply tuned distances periodically
+    static int call_count = 0;
+    if (++call_count % 100 == 0) {
+        apply_tuned_distances(g_prefetch_config.stages, g_prefetch_config.num_stages);
+    }
+#else
+    // Use built-in simple profiling
     if (!g_prefetch_config.enable_runtime_tuning) return;
     
     unsigned long long end = read_tsc();
@@ -958,21 +1088,18 @@ void profile_end(int n_elements) {
     
     g_prefetch_profile.total_calls++;
     
-    // Compute throughput (cycles per complex element)
     double throughput = (double)elapsed / (double)n_elements;
     
-    // Adaptive tuning state machine
     switch (g_prefetch_profile.tuning_phase) {
-        case 0: // Initial measurement
+        case 0:
             g_prefetch_profile.best_throughput = throughput;
             g_prefetch_profile.best_distance = g_prefetch_profile.current_distance;
             g_prefetch_profile.tuning_phase = 1;
             g_prefetch_profile.tuning_iterations = 0;
             break;
             
-        case 1: // Search phase (try different distances)
+        case 1:
             if (throughput < g_prefetch_profile.best_throughput * 0.98) {
-                // Found better configuration (2% improvement threshold)
                 g_prefetch_profile.best_throughput = throughput;
                 g_prefetch_profile.best_distance = g_prefetch_profile.current_distance;
                 g_prefetch_profile.tuning_iterations = 0;
@@ -980,33 +1107,47 @@ void profile_end(int n_elements) {
                 g_prefetch_profile.tuning_iterations++;
             }
             
-            // Try different distances (hill climbing)
             if (g_prefetch_profile.tuning_iterations < 5) {
-                // Increase distance
                 g_prefetch_profile.current_distance += 4;
             } else if (g_prefetch_profile.tuning_iterations < 10) {
-                // Decrease distance
                 g_prefetch_profile.current_distance -= 2;
             } else {
-                // Converged - use best found
                 g_prefetch_profile.tuning_phase = 2;
                 g_prefetch_profile.current_distance = g_prefetch_profile.best_distance;
                 
-                // Apply best distance to all stages
                 for (int i = 0; i < g_prefetch_config.num_stages; ++i) {
                     g_prefetch_config.stages[i].distance_input = g_prefetch_profile.best_distance;
                 }
             }
             break;
             
-        case 2: // Converged (occasionally re-check)
+        case 2:
             if (g_prefetch_profile.total_calls % 1000 == 0) {
-                // Periodic re-tuning (adaptive to changing workload)
                 g_prefetch_profile.tuning_phase = 1;
                 g_prefetch_profile.tuning_iterations = 0;
             }
             break;
     }
+#endif
+}
+
+//==============================================================================
+// STATISTICS AND REPORTING
+//==============================================================================
+
+void print_prefetch_statistics(void) {
+#ifdef HFFT_USE_ENHANCED_THROTTLE
+    print_throttle_stats();
+#endif
+
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+    print_tuning_report();
+#endif
+
+    printf("\n=== Prefetch Configuration ===\n");
+    printf("CPU: %s\n", g_cpu_profile->name);
+    printf("Stages: %d\n", g_prefetch_config.num_stages);
+    printf("==============================\n\n");
 }
 
 //==============================================================================
@@ -1014,11 +1155,10 @@ void profile_end(int n_elements) {
 //==============================================================================
 
 int adjust_distance_for_unroll(int base_distance, int unroll_factor) {
-    // Rule of thumb: prefetch_distance ≈ base_distance * sqrt(unroll_factor)
     if (unroll_factor <= 2) return base_distance;
     else if (unroll_factor <= 4) return base_distance + 2;
     else if (unroll_factor <= 8) return base_distance + 4;
-    else return base_distance + 8; // 16x+ unrolling
+    else return base_distance + 8;
 }
 
 void prefetch_strided(
@@ -1032,14 +1172,12 @@ void prefetch_strided(
     
     const int d = cfg->distance_input;
     const int hint = cfg->hint_input;
-    const int cl_per_stride = (stride * sizeof(fft_data) + 63) / 64; // Cache lines
+    const int cl_per_stride = (stride * sizeof(fft_data) + 63) / 64;
     
-    // Prefetch multiple streams (scattered by stride)
     for (int s = 0; s < num_streams && s < 4; ++s) {
         const fft_data *ptr = base + (idx + d) + s * stride;
         do_prefetch(ptr, hint);
         
-        // For very large strides, prefetch intermediate cache lines
         if (cl_per_stride > 2) {
             for (int cl = 1; cl < cl_per_stride && cl < 4; ++cl) {
                 do_prefetch((char*)ptr + cl * 64, hint);
@@ -1056,11 +1194,9 @@ void prefetch_blocked(
 ) {
     if (!cfg || !cfg->enable || cfg->block_size == 0) return;
     
-    // Prefetch start of next block
     const int next_block = block_start + block_size;
     const int hint = cfg->hint_input;
     
-    // Touch multiple cache lines at block boundary
     for (int i = 0; i < 8 && i < block_size; i += 4) {
         do_prefetch(base + next_block + i, hint);
     }
@@ -1078,7 +1214,6 @@ void prefetch_radix_group(
     const int d = cfg->distance_input;
     const int hint = cfg->hint_input;
     
-    // Prefetch next radix group (all lanes)
     const int next_group = group_idx + d;
     for (int lane = 0; lane < radix && lane < 8; ++lane) {
         do_prefetch(base + next_group + lane * group_size, hint);
@@ -1102,6 +1237,19 @@ void print_prefetch_config(void) {
     printf("Number of stages: %d\n", g_prefetch_config.num_stages);
     printf("Runtime tuning: %s\n", 
         g_prefetch_config.enable_runtime_tuning ? "enabled" : "disabled");
+    
+#ifdef HFFT_USE_ENHANCED_THROTTLE
+    printf("Enhanced throttling: ENABLED\n");
+#else
+    printf("Enhanced throttling: disabled\n");
+#endif
+
+#ifdef HFFT_USE_ADAPTIVE_TUNING
+    printf("Adaptive tuning: ENABLED\n");
+#else
+    printf("Adaptive tuning: disabled\n");
+#endif
+    
     printf("==============================\n");
 }
 
