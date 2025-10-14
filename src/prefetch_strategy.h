@@ -1,7 +1,74 @@
-//==============================================================================
-// PREFETCH_STRATEGY.H - FFTW-Inspired Prefetch System
-// Clean, dependency-free header with proper declarations
-//==============================================================================
+/**
+ * @brief Hill Climbing Algorithm - Visual Explanation
+ * 
+ * Imagine searching for the highest peak in a mountain range while blindfolded:
+ * 
+ * @code
+ *   Performance (higher is better)
+ *        ^
+ *        |
+ *        |     Global Maximum (best solution)
+ *        |          /\
+ *        |         /  \
+ *        |   /\   /    \
+ *        |  /  \ /      \    Local Maximum (trap!)
+ *        | /    X        \  /\
+ *        |/              \/  \
+ *        +-------------------------> Parameter Space
+ *               (e.g., prefetch distance: 2, 4, 6, 8, 10, 12...)
+ * 
+ * Strategy: Take small steps, always move uphill
+ * Problem: Can get stuck at local maxima (X marks the trap!)
+ * @endcode
+ */
+
+/**
+ * @brief Simple Hill Climbing Pseudocode
+ * 
+ * @algorithm
+ * @code
+ * 1. Start at initial position (e.g., prefetch_distance = 8)
+ * 2. Measure current performance
+ * 3. Try neighbor solutions:
+ *    - Option A: distance = 8 + step (e.g., 12)
+ *    - Option B: distance = 8 - step (e.g., 4)
+ * 4. If neighbor is better:
+ *       Move to neighbor
+ *       Goto step 2
+ *    Else:
+ *       Stop (converged)
+ * @endcode
+ * 
+ * @par Example Trace
+ * @code
+ * Iteration 1: distance=8,  performance=100 cycles/elem
+ * Iteration 2: Try distance=12, performance=95  ← Better! Move here
+ * Iteration 3: Try distance=16, performance=93  ← Better! Move here
+ * Iteration 4: Try distance=20, performance=97  ← Worse! Stop
+ * Result: Best distance = 16
+ * @endcode
+ */
+
+/**
+ * @brief Hill Climbing State Machine
+ * 
+ * @dot
+ * digraph hill_climb {
+ *   rankdir=LR;
+ *   node [shape=box, style=rounded];
+ *   
+ *   init [label="Phase 0\nInitialization"];
+ *   search [label="Phase 1\nActive Search"];
+ *   converged [label="Phase 2\nConverged"];
+ *   
+ *   init -> search [label="First\nmeasurement"];
+ *   search -> search [label="Found improvement:\nAccelerate step size"];
+ *   search -> search [label="No improvement:\nReverse direction\nReduce step size"];
+ *   search -> converged [label="Max iterations\nwithout improvement"];
+ *   converged -> search [label="Performance degrades\n>10%: Re-tune"];
+ * }
+ * @enddot
+ */
 
 #ifndef PREFETCH_STRATEGY_H
 #define PREFETCH_STRATEGY_H
