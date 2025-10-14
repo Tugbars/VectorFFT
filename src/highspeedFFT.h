@@ -524,6 +524,14 @@ struct fft_set {
     fft_data *twiddle_factors;// Precomputed twiddles for power-of-2 FFTs (size sum(N/2^i))
     int stage_twiddle_offset[MAX_STAGES];
     int num_precomputed_stages;
+    
+    // ADD THESE NEW FIELDS:
+    int prime_factors[32];      // Pure prime factorization
+    int num_prime_factors;       // Number of prime factors
+    int radices[32];            // Execution radices (may include composites)
+    int num_radices;            // Number of radices
+    bool is_single_radix;       // True if all radices are the same
+    int single_radix;           // The radix value if single, 0 otherwise
 };
 
 /**
@@ -599,6 +607,8 @@ int factors(int M, int *arr);
  * @param object  Plan to free (may be NULL).
  */
 void free_fft(fft_object object);
+
+int get_fft_execution_radices(int number, int *radices, int *prime_factors, int num_prime_factors);
 
 #ifdef __cplusplus
 }
