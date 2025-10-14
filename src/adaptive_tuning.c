@@ -6,6 +6,21 @@
 #include <stdbool.h>
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+// Include TSC reading function
+#if defined(__x86_64__) || defined(_M_X64)
+static inline uint64_t read_tsc_inline(void) {
+    uint32_t lo, hi;
+    __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+#else
+static inline uint64_t read_tsc_inline(void) {
+    return 0;
+}
+#endif
 
 /**
  * @brief Tuning modes
@@ -156,11 +171,9 @@ static inline void ewma_init(ewma_filter_t *filter, double alpha) {
  */
 static inline void ewma_update(ewma_filter_t *filter, double sample) {
     if (!filter->initialized) {
-        // First sample: initialize with raw value
         filter->value = sample;
         filter->initialized = true;
     } else {
-        // EWMA update: value = alpha * sample + (1 - alpha) * old_value
         filter->value = filter->alpha * sample + (1.0 - filter->alpha) * filter->value;
     }
     filter->sample_count++;
@@ -204,7 +217,7 @@ static void init_stage_tuning(
     stage->total_elements = 0;
     stage->best_distance = initial_distance;
     stage->best_throughput = INFINITY;
-    stage->tuning_phase = 0; // init
+    stage->tuning_phase = 0;
     stage->iterations_without_improvement = 0;
     stage->search_direction = 1;
     stage->search_step_size = g_tuning.config.initial_step_size;
@@ -222,24 +235,20 @@ static void update_stage_tuning(
     uint64_t cycles,
     int elements
 ) {
-    // Update statistics
+    if (elements == 0) return; // Avoid division by zero
+    
     stage->total_cycles += cycles;
     stage->total_elements += elements;
     
-    // Calculate throughput (cycles per element)
     double throughput = (double)cycles / (double)elements;
-    
-    // Update EWMA
     ewma_update(&stage->throughput, throughput);
     
-    // Wait for warmup before tuning
     if (!ewma_is_warmed_up(&stage->throughput, g_tuning.config.ewma_warmup_samples)) {
         return;
     }
     
     double filtered_throughput = ewma_get(&stage->throughput);
     
-    // State machine for hill-climbing
     switch (stage->tuning_phase) {
         case 0: // Initial measurement
             stage->best_throughput = filtered_throughput;
@@ -254,11 +263,9 @@ static void update_stage_tuning(
             break;
             
         case 1: { // Active search
-            // Check if this is an improvement
             double improvement = (stage->best_throughput - filtered_throughput) / stage->best_throughput;
             
             if (improvement > stage->improvement_threshold) {
-                // Found improvement!
                 stage->best_throughput = filtered_throughput;
                 stage->best_distance = stage->distance_input;
                 stage->iterations_without_improvement = 0;
@@ -273,16 +280,13 @@ static void update_stage_tuning(
                         stage->stage_idx, improvement * 100.0, stage->best_distance);
                 }
                 
-                // Continue in same direction, increase step size (accelerate)
                 stage->search_step_size = (stage->search_step_size * 3) / 2;
                 if (stage->search_step_size > 16) stage->search_step_size = 16;
                 
             } else {
-                // No improvement
                 stage->iterations_without_improvement++;
                 
                 if (stage->iterations_without_improvement >= stage->max_iterations_no_improve) {
-                    // Converged - stop tuning
                     stage->tuning_phase = 2;
                     stage->distance_input = stage->best_distance;
                     stage->distance_twiddle = stage->best_distance / 2;
@@ -294,9 +298,7 @@ static void update_stage_tuning(
                     break;
                 }
                 
-                // Try different direction or smaller step
                 if (stage->iterations_without_improvement % 3 == 0) {
-                    // Reverse direction
                     stage->search_direction *= -1;
                     stage->search_step_size /= 2;
                     if (stage->search_step_size < 1) stage->search_step_size = 1;
@@ -304,3 +306,340 @@ static void update_stage_tuning(
             }
             
             // Compute next distance to try
+            int next_distance = stage->distance_input + 
+                               (stage->search_direction * stage->search_step_size);
+            
+            if (next_distance < g_tuning.config.min_distance) {
+                next_distance = g_tuning.config.min_distance;
+                stage->search_direction *= -1;
+            }
+            if (next_distance > g_tuning.config.max_distance) {
+                next_distance = g_tuning.config.max_distance;
+                stage->search_direction *= -1;
+            }
+            
+            stage->distance_input = next_distance;
+            stage->distance_twiddle = next_distance / 2;
+            break;
+        }
+            
+        case 2: // Converged
+            if (g_tuning.config.enable_periodic_retune &&
+                stage->total_elements > 0 &&
+                (stage->total_elements % g_tuning.config.retune_interval) < elements) {
+                
+                if (filtered_throughput > stage->best_throughput * 1.10) {
+                    if (g_tuning.config.enable_logging) {
+                        printf("Stage %d: Performance degraded, restarting search\n", 
+                            stage->stage_idx);
+                    }
+                    stage->tuning_phase = 1;
+                    stage->iterations_without_improvement = 0;
+                    stage->search_step_size = g_tuning.config.initial_step_size;
+                }
+            }
+            break;
+    }
+}
+
+//==============================================================================
+// GLOBAL (SIMPLE) TUNING WITH EWMA
+//==============================================================================
+
+static void init_global_tuning(int initial_distance) {
+    g_tuning.global.throughput_ewma = 0.0;
+    g_tuning.global.current_distance = initial_distance;
+    g_tuning.global.best_distance = initial_distance;
+    g_tuning.global.best_throughput = INFINITY;
+    g_tuning.global.tuning_phase = 0;
+    g_tuning.global.iterations_without_improvement = 0;
+    g_tuning.global.total_calls = 0;
+}
+
+static void update_global_tuning(uint64_t cycles, int elements) {
+    if (elements == 0) return;
+    
+    g_tuning.global.total_calls++;
+    
+    double throughput = (double)cycles / (double)elements;
+    
+    if (g_tuning.global.total_calls == 1) {
+        g_tuning.global.throughput_ewma = throughput;
+    } else {
+        g_tuning.global.throughput_ewma = 
+            g_tuning.config.ewma_alpha * throughput + 
+            (1.0 - g_tuning.config.ewma_alpha) * g_tuning.global.throughput_ewma;
+    }
+    
+    if (g_tuning.global.total_calls < g_tuning.config.ewma_warmup_samples) {
+        return;
+    }
+    
+    double filtered = g_tuning.global.throughput_ewma;
+    
+    switch (g_tuning.global.tuning_phase) {
+        case 0:
+            g_tuning.global.best_throughput = filtered;
+            g_tuning.global.best_distance = g_tuning.global.current_distance;
+            g_tuning.global.tuning_phase = 1;
+            break;
+            
+        case 1: {
+            double improvement = 
+                (g_tuning.global.best_throughput - filtered) / g_tuning.global.best_throughput;
+            
+            if (improvement > g_tuning.config.improvement_threshold) {
+                g_tuning.global.best_throughput = filtered;
+                g_tuning.global.best_distance = g_tuning.global.current_distance;
+                g_tuning.global.iterations_without_improvement = 0;
+                
+                if (g_tuning.config.enable_logging) {
+                    printf("Global: Improvement %.2f%%, distance=%d\n",
+                        improvement * 100.0, g_tuning.global.best_distance);
+                }
+            } else {
+                g_tuning.global.iterations_without_improvement++;
+                
+                if (g_tuning.global.iterations_without_improvement >= 
+                    g_tuning.config.max_search_iterations) {
+                    g_tuning.global.tuning_phase = 2;
+                    g_tuning.global.current_distance = g_tuning.global.best_distance;
+                    
+                    if (g_tuning.config.enable_logging) {
+                        printf("Global: Converged at distance=%d\n", 
+                            g_tuning.global.best_distance);
+                    }
+                }
+            }
+            
+            if (g_tuning.global.tuning_phase == 1) {
+                int step = 4;
+                if (g_tuning.global.iterations_without_improvement % 2 == 0) {
+                    g_tuning.global.current_distance += step;
+                } else {
+                    g_tuning.global.current_distance -= step;
+                }
+                
+                if (g_tuning.global.current_distance < g_tuning.config.min_distance)
+                    g_tuning.global.current_distance = g_tuning.config.min_distance;
+                if (g_tuning.global.current_distance > g_tuning.config.max_distance)
+                    g_tuning.global.current_distance = g_tuning.config.max_distance;
+            }
+            break;
+        }
+            
+        case 2:
+            if (g_tuning.config.enable_periodic_retune &&
+                (g_tuning.global.total_calls % g_tuning.config.retune_interval) == 0) {
+                
+                if (filtered > g_tuning.global.best_throughput * 1.10) {
+                    g_tuning.global.tuning_phase = 1;
+                    g_tuning.global.iterations_without_improvement = 0;
+                }
+            }
+            break;
+    }
+}
+
+//==============================================================================
+// PUBLIC API
+//==============================================================================
+
+void init_adaptive_tuning(
+    int num_stages,
+    const int *initial_distances,
+    const int *working_set_sizes,
+    const int *radixes
+) {
+    g_tuning.num_stages = num_stages;
+    
+    g_tuning.stats.total_fft_calls = 0;
+    g_tuning.stats.total_tuning_changes = 0;
+    g_tuning.stats.avg_improvement = 0.0;
+    
+    if (g_tuning.config.mode == TUNING_MODE_DISABLED) {
+        return;
+    }
+    
+    int global_initial = (num_stages > 0) ? initial_distances[0] : 8;
+    init_global_tuning(global_initial);
+    
+    if (g_tuning.config.mode == TUNING_MODE_PER_STAGE || 
+        g_tuning.config.tune_stages_independently) {
+        
+        if (g_tuning.stages) {
+            free(g_tuning.stages);
+        }
+        
+        g_tuning.stages = (stage_tuning_state_t*)calloc(
+            num_stages, sizeof(stage_tuning_state_t)
+        );
+        
+        if (!g_tuning.stages) {
+            fprintf(stderr, "Failed to allocate per-stage tuning state\n");
+            g_tuning.config.mode = TUNING_MODE_SIMPLE;
+            return;
+        }
+        
+        int stages_to_tune = g_tuning.config.stages_to_tune;
+        if (stages_to_tune == 0 || stages_to_tune > num_stages) {
+            stages_to_tune = num_stages;
+        }
+        
+        for (int i = 0; i < stages_to_tune; i++) {
+            init_stage_tuning(
+                &g_tuning.stages[i],
+                i,
+                initial_distances[i],
+                working_set_sizes[i],
+                radixes[i]
+            );
+        }
+        
+        if (g_tuning.config.enable_logging) {
+            printf("Initialized per-stage tuning for %d stages\n", stages_to_tune);
+        }
+    }
+}
+
+void cleanup_adaptive_tuning(void) {
+    if (g_tuning.stages) {
+        free(g_tuning.stages);
+        g_tuning.stages = NULL;
+    }
+    g_tuning.num_stages = 0;
+}
+
+uint64_t profile_fft_start(void) {
+    if (g_tuning.config.mode == TUNING_MODE_DISABLED) {
+        return 0;
+    }
+    return read_tsc_inline();
+}
+
+void profile_fft_end(uint64_t start_cycles, int n_elements, int stage_idx) {
+    if (g_tuning.config.mode == TUNING_MODE_DISABLED) {
+        return;
+    }
+    
+    uint64_t end_cycles = read_tsc_inline();
+    uint64_t elapsed = end_cycles - start_cycles;
+    
+    g_tuning.stats.total_fft_calls++;
+    
+    switch (g_tuning.config.mode) {
+        case TUNING_MODE_SIMPLE:
+        case TUNING_MODE_EWMA:
+            update_global_tuning(elapsed, n_elements);
+            break;
+            
+        case TUNING_MODE_PER_STAGE:
+            if (stage_idx >= 0 && stage_idx < g_tuning.num_stages && g_tuning.stages) {
+                update_stage_tuning(&g_tuning.stages[stage_idx], elapsed, n_elements);
+            }
+            break;
+            
+        default:
+            break;
+    }
+}
+
+int get_tuned_distance(int stage_idx) {
+    if (g_tuning.config.mode == TUNING_MODE_DISABLED) {
+        return -1;
+    }
+    
+    if (g_tuning.config.mode == TUNING_MODE_PER_STAGE && 
+        g_tuning.stages && 
+        stage_idx >= 0 && 
+        stage_idx < g_tuning.num_stages) {
+        return g_tuning.stages[stage_idx].distance_input;
+    }
+    
+    return g_tuning.global.current_distance;
+}
+
+void set_tuning_mode(tuning_mode_t mode) {
+    g_tuning.config.mode = mode;
+}
+
+void configure_tuning(
+    double ewma_alpha,
+    int ewma_warmup_samples,
+    double improvement_threshold,
+    int max_search_iterations,
+    int initial_step_size
+) {
+    g_tuning.config.ewma_alpha = ewma_alpha;
+    g_tuning.config.ewma_warmup_samples = ewma_warmup_samples;
+    g_tuning.config.improvement_threshold = improvement_threshold;
+    g_tuning.config.max_search_iterations = max_search_iterations;
+    g_tuning.config.initial_step_size = initial_step_size;
+}
+
+void set_tuning_logging(bool enable) {
+    g_tuning.config.enable_logging = enable;
+}
+
+void set_periodic_retune(bool enable, uint64_t interval) {
+    g_tuning.config.enable_periodic_retune = enable;
+    if (interval > 0) {
+        g_tuning.config.retune_interval = interval;
+    }
+}
+
+void get_tuning_stats(
+    uint64_t *total_calls,
+    uint64_t *total_changes,
+    double *avg_improvement,
+    int *best_distances_out,
+    int max_stages
+) {
+    if (total_calls) *total_calls = g_tuning.stats.total_fft_calls;
+    if (total_changes) *total_changes = g_tuning.stats.total_tuning_changes;
+    if (avg_improvement) *avg_improvement = g_tuning.stats.avg_improvement;
+    
+    if (best_distances_out && max_stages > 0) {
+        if (g_tuning.config.mode == TUNING_MODE_PER_STAGE && g_tuning.stages) {
+            int n = (max_stages < g_tuning.num_stages) ? max_stages : g_tuning.num_stages;
+            for (int i = 0; i < n; i++) {
+                best_distances_out[i] = g_tuning.stages[i].best_distance;
+            }
+        } else {
+            for (int i = 0; i < max_stages; i++) {
+                best_distances_out[i] = g_tuning.global.best_distance;
+            }
+        }
+    }
+}
+
+void print_tuning_report(void) {
+    printf("\n=== Adaptive Tuning Report ===\n");
+    printf("Mode: ");
+    switch (g_tuning.config.mode) {
+        case TUNING_MODE_DISABLED: printf("Disabled\n"); return;
+        case TUNING_MODE_SIMPLE: printf("Simple\n"); break;
+        case TUNING_MODE_EWMA: printf("EWMA-Filtered\n"); break;
+        case TUNING_MODE_PER_STAGE: printf("Per-Stage\n"); break;
+    }
+    
+    printf("Total FFT calls: %llu\n", (unsigned long long)g_tuning.stats.total_fft_calls);
+    printf("Total tuning changes: %llu\n", (unsigned long long)g_tuning.stats.total_tuning_changes);
+    printf("Average improvement: %.2f%%\n", g_tuning.stats.avg_improvement * 100.0);
+    
+    if (g_tuning.config.mode == TUNING_MODE_PER_STAGE && g_tuning.stages) {
+        printf("\nPer-Stage Results:\n");
+        for (int i = 0; i < g_tuning.num_stages; i++) {
+            stage_tuning_state_t *s = &g_tuning.stages[i];
+            printf("  Stage %d: distance=%d, throughput=%.2f cycles/elem, phase=%d\n",
+                i, s->best_distance, s->best_throughput, s->tuning_phase);
+        }
+    } else {
+        printf("\nGlobal Result:\n");
+        printf("  Best distance: %d\n", g_tuning.global.best_distance);
+        printf("  Best throughput: %.2f cycles/elem\n", g_tuning.global.best_throughput);
+        printf("  Phase: %d\n", g_tuning.global.tuning_phase);
+    }
+    
+    printf("==============================\n\n");
+}
