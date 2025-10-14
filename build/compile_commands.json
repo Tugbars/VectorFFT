@@ -1,0 +1,32 @@
+[
+{
+  "directory": "C:/Users/Tugbars/Desktop/highSpeedFFT/build/src",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -DHAS_AVX512 @CMakeFiles/highspeedFFT.dir/includes_C.rsp -g -std=gnu11 -O3 -march=native -mtune=native -mavx2 -mfma -msse4.2 -ffast-math -funroll-loops -Wall -Wextra -mavx512f -mavx512dq -o CMakeFiles\\highspeedFFT.dir\\highSpeedFFT.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\src\\highSpeedFFT.c",
+  "file": "C:/Users/Tugbars/Desktop/highSpeedFFT/src/highSpeedFFT.c",
+  "output": "src/CMakeFiles/highspeedFFT.dir/highSpeedFFT.c.obj"
+},
+{
+  "directory": "C:/Users/Tugbars/Desktop/highSpeedFFT/build/src",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -DHAS_AVX512 @CMakeFiles/highspeedFFT.dir/includes_C.rsp -g -std=gnu11 -O3 -march=native -mtune=native -mavx2 -mfma -msse4.2 -ffast-math -funroll-loops -Wall -Wextra -mavx512f -mavx512dq -o CMakeFiles\\highspeedFFT.dir\\prefetch_strategy.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\src\\prefetch_strategy.c",
+  "file": "C:/Users/Tugbars/Desktop/highSpeedFFT/src/prefetch_strategy.c",
+  "output": "src/CMakeFiles/highspeedFFT.dir/prefetch_strategy.c.obj"
+},
+{
+  "directory": "C:/Users/Tugbars/Desktop/highSpeedFFT/build/src",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -DHAS_AVX512 @CMakeFiles/highspeedFFT.dir/includes_C.rsp -g -std=gnu11 -O3 -march=native -mtune=native -mavx2 -mfma -msse4.2 -ffast-math -funroll-loops -Wall -Wextra -mavx512f -mavx512dq -o CMakeFiles\\highspeedFFT.dir\\real.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\src\\real.c",
+  "file": "C:/Users/Tugbars/Desktop/highSpeedFFT/src/real.c",
+  "output": "src/CMakeFiles/highspeedFFT.dir/real.c.obj"
+},
+{
+  "directory": "C:/Users/Tugbars/Desktop/highSpeedFFT/build/src",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -DHAS_AVX512 @CMakeFiles/highspeedFFT.dir/includes_C.rsp -g -std=gnu11 -O3 -march=native -mtune=native -mavx2 -mfma -msse4.2 -ffast-math -funroll-loops -Wall -Wextra -mavx512f -mavx512dq -o CMakeFiles\\highspeedFFT.dir\\convolve.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\src\\convolve.c",
+  "file": "C:/Users/Tugbars/Desktop/highSpeedFFT/src/convolve.c",
+  "output": "src/CMakeFiles/highspeedFFT.dir/convolve.c.obj"
+},
+{
+  "directory": "C:/Users/Tugbars/Desktop/highSpeedFFT/build/test",
+  "command": "C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe -DHAS_AVX512 @CMakeFiles/test_mixedRadixFFT_standalone.dir/includes_C.rsp -g -std=gnu11 -mavx512f -mavx512dq -O3 -march=native -mavx2 -mfma -Wall -Wextra -o CMakeFiles\\test_mixedRadixFFT_standalone.dir\\main.c.obj -c C:\\Users\\Tugbars\\Desktop\\highSpeedFFT\\test\\main.c",
+  "file": "C:/Users/Tugbars/Desktop/highSpeedFFT/test/main.c",
+  "output": "test/CMakeFiles/test_mixedRadixFFT_standalone.dir/main.c.obj"
+}
+]

@@ -1,0 +1,26 @@
+
+# Consider dependencies only in project.
+set(CMAKE_DEPENDS_IN_PROJECT_ONLY OFF)
+
+# The set of languages for which implicit dependencies are needed:
+set(CMAKE_DEPENDS_LANGUAGES
+  )
+
+# The set of dependency files which are needed:
+set(CMAKE_DEPENDS_DEPENDENCY_FILES
+  "C:/Users/Tugbars/Desktop/highSpeedFFT/src/convolve.c" "src/CMakeFiles/highspeedFFT.dir/convolve.c.obj" "gcc" "src/CMakeFiles/highspeedFFT.dir/convolve.c.obj.d"
+  "C:/Users/Tugbars/Desktop/highSpeedFFT/src/highSpeedFFT.c" "src/CMakeFiles/highspeedFFT.dir/highSpeedFFT.c.obj" "gcc" "src/CMakeFiles/highspeedFFT.dir/highSpeedFFT.c.obj.d"
+  "C:/Users/Tugbars/Desktop/highSpeedFFT/src/prefetch_strategy.c" "src/CMakeFiles/highspeedFFT.dir/prefetch_strategy.c.obj" "gcc" "src/CMakeFiles/highspeedFFT.dir/prefetch_strategy.c.obj.d"
+  "C:/Users/Tugbars/Desktop/highSpeedFFT/src/real.c" "src/CMakeFiles/highspeedFFT.dir/real.c.obj" "gcc" "src/CMakeFiles/highspeedFFT.dir/real.c.obj.d"
+  )
+
+# Targets to which this target links which contain Fortran sources.
+set(CMAKE_Fortran_TARGET_LINKED_INFO_FILES
+  )
+
+# Targets to which this target links which contain Fortran sources.
+set(CMAKE_Fortran_TARGET_FORWARD_LINKED_INFO_FILES
+  )
+
+# Fortran module output directory.
+set(CMAKE_Fortran_TARGET_MODULE_DIR "")

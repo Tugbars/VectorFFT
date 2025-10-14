@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #==============================================================================
 option(ENABLE_GTEST "Enable GoogleTest-based unit tests" OFF)
 option(ENABLE_AVX512 "Enable AVX-512 instructions" ON)
-option(ENABLE_PREFETCH "Enable advanced prefetch system" ON)
+option(ENABLE_PREFETCH "Enable advanced prefetch system" OFF)
 option(DEBUG_PREFETCH "Enable prefetch debugging output" OFF)
 
 #==============================================================================
