@@ -931,8 +931,11 @@ fft_object fft_init(int signal_length, int transform_direction)
     int is_factorable = dividebyN(signal_length);
     int is_power_of_2 = 0, is_power_of_3 = 0, is_power_of_5 = 0, is_power_of_7 = 0;
     int is_power_of_11 = 0, is_power_of_13 = 0;
-    int is_power_of_16 = 0, is_power_of_32 = 0; // ← ADD THESE
+    int is_power_of_16 = 0, is_power_of_32 = 0;
     int twiddle_count = 0, max_scratch_size = 0, max_padded_length = 0;
+
+    // ⭐ NEW: Declare this at function scope so it survives
+    int twiddle_factors_size = 0;
 
     // Step 4: Set up buffer sizes and check power-of-radix
     if (is_factorable)
@@ -947,8 +950,8 @@ fft_object fft_init(int signal_length, int transform_direction)
         is_power_of_7 = is_exact_power(signal_length, 7);
         is_power_of_11 = is_exact_power(signal_length, 11);
         is_power_of_13 = is_exact_power(signal_length, 13);
-        is_power_of_16 = is_exact_power(signal_length, 16); // ← ADD
-        is_power_of_32 = is_exact_power(signal_length, 32); // ← ADD
+        is_power_of_16 = is_exact_power(signal_length, 16);
+        is_power_of_32 = is_exact_power(signal_length, 32);
     }
     else
     {
@@ -968,32 +971,29 @@ fft_object fft_init(int signal_length, int transform_direction)
     // Step 5: Compute memory requirements
     int temp_factors[64];
     int num_factors = factors(is_factorable ? signal_length : max_padded_length, temp_factors);
-    int twiddle_factors_size = 0;
+    // ⚠️ REMOVED: int twiddle_factors_size = 0;  (now declared at top)
     int scratch_needed = 0;
 
     if (is_factorable)
     {
         int temp_N = signal_length;
 
-        // ========================================================================
-        // UPDATED: Check for power-of-16 and power-of-32 FIRST (more optimal)
-        // ========================================================================
         if (is_power_of_32 || is_power_of_16 || is_power_of_2 || is_power_of_3 ||
             is_power_of_5 || is_power_of_7 || is_power_of_11 || is_power_of_13)
         {
-            // Determine radix (prefer larger radices for fewer stages)
+            // Determine radix
             int radix;
             if (is_power_of_32)
             {
-                radix = 32; // Best for large power-of-2 FFTs
+                radix = 32;
             }
             else if (is_power_of_16)
             {
-                radix = 16; // Good for medium power-of-2 FFTs
+                radix = 16;
             }
             else if (is_power_of_2)
             {
-                radix = 2; // Fallback for small power-of-2
+                radix = 2;
             }
             else if (is_power_of_3)
             {
@@ -1033,19 +1033,19 @@ fft_object fft_init(int signal_length, int transform_direction)
                     return NULL;
                 }
 
-                twiddle_factors_size += (radix - 1) * sub_fft_size; // W_n^{j*k}, j=1..r-1
-                scratch_needed += radix * sub_fft_size;             // Outputs
+                twiddle_factors_size += (radix - 1) * sub_fft_size;
+                scratch_needed += radix * sub_fft_size;
             }
             fft_config->num_precomputed_stages = stage;
         }
         else
         {
-            // Mixed-radix: r*(N/r) outputs, (r-1)*(N/r) twiddles for radices ≤ 32
+            // Mixed-radix
             for (int i = 0; i < num_factors; i++)
             {
                 int radix = temp_factors[i];
                 scratch_needed += radix * (temp_N / radix);
-                if (radix <= 32) // ← UPDATED: Include radix-16 and radix-32
+                if (radix <= 32)
                 {
                     scratch_needed += (radix - 1) * (temp_N / radix);
                 }
@@ -1077,9 +1077,6 @@ fft_object fft_init(int signal_length, int transform_direction)
     }
 
     // Step 7: Allocate twiddle_factors for pure-power FFTs
-    // ========================================================================
-    // UPDATED: Include radix-16 and radix-32
-    // ========================================================================
     if (is_factorable && (is_power_of_32 || is_power_of_16 || is_power_of_2 ||
                           is_power_of_3 || is_power_of_5 || is_power_of_7 ||
                           is_power_of_11 || is_power_of_13))
@@ -1109,11 +1106,7 @@ fft_object fft_init(int signal_length, int transform_direction)
     // Step 10: Compute twiddle factors
     build_twiddles_linear(fft_config->twiddles, fft_config->n_fft);
 
-    // Step 11: Populate twiddle_factors for pure-power FFTs (k-major layout)
-    // ========================================================================
-    // UPDATED: Handle radix-16 and radix-32
-    // ========================================================================
-
+    // Step 11: Populate twiddle_factors for pure-power FFTs
     if (fft_config->twiddle_factors)
     {
         int offset = 0;
@@ -1153,41 +1146,28 @@ fft_object fft_init(int signal_length, int transform_direction)
             radix = 13;
         }
 
-        // Walk pure-power stages from largest to smallest
-        // For N = radix^s, we have s stages: N, N/radix, N/radix^2, ..., radix
         for (int N_stage = signal_length; N_stage >= radix; N_stage /= radix)
         {
-            const int sub_len = N_stage / radix; // Size of sub-FFTs at this stage
-
-            // Twiddle stride in the main twiddle table
-            // W_{N_stage}^p corresponds to W_{n_fft}^{p * stride}
+            const int sub_len = N_stage / radix;
             const int stride = fft_config->n_fft / N_stage;
 
-            // For each sub-FFT index k, compute twiddles W^{j*k} for j=1..radix-1
-            // Store in k-major order: [(radix-1)*k + (j-1)]
             for (int k = 0; k < sub_len; ++k)
             {
                 const int base = (radix - 1) * k;
 
                 for (int j = 1; j < radix; ++j)
                 {
-                    // Compute the phase: (j * k) mod N_stage
                     const int p = (j * k) % N_stage;
-
-                    // Map to main twiddle table index
                     const int idxN = (p * stride) % fft_config->n_fft;
 
-                    // Store twiddle
                     fft_config->twiddle_factors[offset + base + (j - 1)] =
                         fft_config->twiddles[idxN];
                 }
             }
 
-            // Move to next stage's offset
             offset += (radix - 1) * sub_len;
         }
 
-        // Verify we used exactly the space we allocated
         if (offset != twiddle_factors_size)
         {
             fprintf(stderr, "Error: Twiddle offset mismatch: computed %d, expected %d\n",
@@ -1204,6 +1184,7 @@ fft_object fft_init(int signal_length, int transform_direction)
         {
             fft_config->twiddles[i].im = -fft_config->twiddles[i].im;
         }
+        // ⭐ NOW SAFE: twiddle_factors_size is still in scope
         if (fft_config->twiddle_factors)
         {
             for (int i = 0; i < twiddle_factors_size; i++)
@@ -1213,36 +1194,13 @@ fft_object fft_init(int signal_length, int transform_direction)
         }
     }
 
-    // Step 13: Initialize prefetch system (AFTER factorization is complete)
-    // Detect cache sizes once (global state)
+    // Step 13: Initialize prefetch system (unchanged)
     static int cache_detected = 0;
     if (!cache_detected) {
         detect_cache_sizes();
         cache_detected = 1;
-        
-#ifdef FFT_DEBUG_PREFETCH
-        fprintf(stderr, "FFT: Cache sizes detected - L1: %d KB, L2: %d KB, L3: %d KB\n",
-                g_prefetch_config.l1_size / 1024,
-                g_prefetch_config.l2_size / 1024,
-                g_prefetch_config.l3_size / 1024);
-#endif
     }
-    
-    // Initialize per-stage prefetch configuration
-    init_stage_prefetch(fft_config);
-    
-#ifdef FFT_DEBUG_PREFETCH
-    fprintf(stderr, "FFT: Initialized %d prefetch stages for N=%d\n",
-            g_prefetch_config.num_stages, signal_length);
-    for (int i = 0; i < g_prefetch_config.num_stages; i++) {
-        stage_prefetch_t *cfg = &g_prefetch_config.stages[i];
-        fprintf(stderr, "  Stage %d: radix=%d, dist=%d, strategy=%d, enable=%d\n",
-                i, fft_config->factors[i], cfg->distance_input, 
-                cfg->strategy, cfg->enable);
-    }
-#endif
 
-    // Step 14: Return configured FFT object
     return fft_config;
 }
 
@@ -1956,296 +1914,290 @@ static void mixed_radix_dit_rec(
     //==========================================================================
     // 8) RADIX DISPATCH
     //==========================================================================
-    if (radix == 2)
-{
-    const int half = sub_len;
-    int k = 0;
-    const int trivial_end = (half + 1) / 2; // First ~half of twiddles
-
-#ifdef FFT_ENABLE_PREFETCH
-    // Get prefetch configuration for this stage
-    stage_prefetch_t *cfg = get_stage_config(factor_index);
-#else
-    stage_prefetch_t *cfg = NULL;
-#endif
-
-#ifdef HAS_AVX512
-    //======================================================================
-    // AVX-512 PATH: 16x unrolling (process 16 butterflies at once)
-    //======================================================================
-
-    // Trivial twiddles (W^0 = 1): No complex multiply needed
-    for (; k + 15 < trivial_end; k += 16)
+        if (radix == 2)
     {
-        // NEW: Use prefetch strategy system instead of manual _mm_prefetch
-        if (cfg && cfg->enable && k + 32 < trivial_end) {
-            prefetch_input(&sub_outputs[k + 32], 0, cfg);
-            prefetch_input(&sub_outputs[k + 32 + half], 0, cfg);
-        }
+        const int half = sub_len;
+        int k = 0;
+        const int trivial_end = (half + 1) / 2; // First ~half of twiddles
 
-        // Load 16 even-indexed complex samples (4 loads × 4 complex each)
-        __m512d e0 = load4_aos(&sub_outputs[k + 0]);
-        __m512d e1 = load4_aos(&sub_outputs[k + 4]);
-        __m512d e2 = load4_aos(&sub_outputs[k + 8]);
-        __m512d e3 = load4_aos(&sub_outputs[k + 12]);
+    #ifdef HAS_AVX512
+        //======================================================================
+        // AVX-512 PATH: 16x unrolling (process 16 butterflies at once)
+        //======================================================================
 
-        // Load 16 odd samples
-        __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
-        __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
-        __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
-        __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
-
-        // Radix-2 butterfly: X[k] = E[k] + O[k], X[k+N/2] = E[k] - O[k]
-        __m512d x00 = _mm512_add_pd(e0, o0);
-        __m512d x10 = _mm512_sub_pd(e0, o0);
-        __m512d x01 = _mm512_add_pd(e1, o1);
-        __m512d x11 = _mm512_sub_pd(e1, o1);
-        __m512d x02 = _mm512_add_pd(e2, o2);
-        __m512d x12 = _mm512_sub_pd(e2, o2);
-        __m512d x03 = _mm512_add_pd(e3, o3);
-        __m512d x13 = _mm512_sub_pd(e3, o3);
-
-        // Store results
-        STOREU_PD512(&output_buffer[k + 0].re, x00);
-        STOREU_PD512(&output_buffer[k + 4].re, x01);
-        STOREU_PD512(&output_buffer[k + 8].re, x02);
-        STOREU_PD512(&output_buffer[k + 12].re, x03);
-        STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
-        STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
-        STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
-        STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
-    }
-
-    // Non-trivial twiddles: Need complex multiply (W^k * O[k])
-    for (; k + 15 < half; k += 16)
-    {
-        // NEW: Prefetch both data and twiddles using strategy system
-        if (cfg && cfg->enable && k + 32 < half) {
-            prefetch_input(&sub_outputs[k + 32], 0, cfg);
-            prefetch_input(&sub_outputs[k + 32 + half], 0, cfg);
-            prefetch_twiddle(&stage_tw[k + 32], 0, cfg);
-        }
-
-        // Load even/odd samples
-        __m512d e0 = load4_aos(&sub_outputs[k + 0]);
-        __m512d e1 = load4_aos(&sub_outputs[k + 4]);
-        __m512d e2 = load4_aos(&sub_outputs[k + 8]);
-        __m512d e3 = load4_aos(&sub_outputs[k + 12]);
-
-        __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
-        __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
-        __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
-        __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
-
-        // Load twiddles
-        __m512d w0 = load4_aos(&stage_tw[k + 0]);
-        __m512d w1 = load4_aos(&stage_tw[k + 4]);
-        __m512d w2 = load4_aos(&stage_tw[k + 8]);
-        __m512d w3 = load4_aos(&stage_tw[k + 12]);
-
-        // Twiddle multiply
-        __m512d tw0 = cmul_avx512_aos(o0, w0);
-        __m512d tw1 = cmul_avx512_aos(o1, w1);
-        __m512d tw2 = cmul_avx512_aos(o2, w2);
-        __m512d tw3 = cmul_avx512_aos(o3, w3);
-
-        // Butterfly
-        __m512d x00 = _mm512_add_pd(e0, tw0);
-        __m512d x10 = _mm512_sub_pd(e0, tw0);
-        __m512d x01 = _mm512_add_pd(e1, tw1);
-        __m512d x11 = _mm512_sub_pd(e1, tw1);
-        __m512d x02 = _mm512_add_pd(e2, tw2);
-        __m512d x12 = _mm512_sub_pd(e2, tw2);
-        __m512d x03 = _mm512_add_pd(e3, tw3);
-        __m512d x13 = _mm512_sub_pd(e3, tw3);
-
-        // Store
-        STOREU_PD512(&output_buffer[k + 0].re, x00);
-        STOREU_PD512(&output_buffer[k + 4].re, x01);
-        STOREU_PD512(&output_buffer[k + 8].re, x02);
-        STOREU_PD512(&output_buffer[k + 12].re, x03);
-        STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
-        STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
-        STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
-        STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
-    }
-
-    // Fall through to AVX2 cleanup for remaining elements
-#endif // HAS_AVX512
-
-#ifdef __AVX2__
-    //======================================================================
-    // OPTIMIZATION 1: First half has trivial twiddles (W^0 = 1)
-    // No complex multiply needed! Saves ~50% of work for radix-2.
-    //======================================================================
-
-    // Process trivial twiddles with 4x unrolling
-    for (; k + 7 < trivial_end; k += 8)
-    {
-        // NEW: Use prefetch strategy system
-        if (cfg && cfg->enable && k + 16 < trivial_end) {
-            prefetch_input(&sub_outputs[k + 16], 0, cfg);
-            prefetch_input(&sub_outputs[k + 16 + half], 0, cfg);
-        }
-
-        // Load 8 even pairs (4 AVX2 loads)
-        __m256d e0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
-        __m256d e1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
-        __m256d e2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
-        __m256d e3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
-
-        // Load 8 odd pairs (4 AVX2 loads)
-        __m256d o0 = load2_aos(&sub_outputs[k + 0 + half], &sub_outputs[k + 1 + half]);
-        __m256d o1 = load2_aos(&sub_outputs[k + 2 + half], &sub_outputs[k + 3 + half]);
-        __m256d o2 = load2_aos(&sub_outputs[k + 4 + half], &sub_outputs[k + 5 + half]);
-        __m256d o3 = load2_aos(&sub_outputs[k + 6 + half], &sub_outputs[k + 7 + half]);
-
-        // Butterfly (no twiddle multiply!)
-        __m256d x00 = _mm256_add_pd(e0, o0);
-        __m256d x10 = _mm256_sub_pd(e0, o0);
-        __m256d x01 = _mm256_add_pd(e1, o1);
-        __m256d x11 = _mm256_sub_pd(e1, o1);
-        __m256d x02 = _mm256_add_pd(e2, o2);
-        __m256d x12 = _mm256_sub_pd(e2, o2);
-        __m256d x03 = _mm256_add_pd(e3, o3);
-        __m256d x13 = _mm256_sub_pd(e3, o3);
-
-        // Store results
-        STOREU_PD(&output_buffer[k + 0].re, x00);
-        STOREU_PD(&output_buffer[k + 2].re, x01);
-        STOREU_PD(&output_buffer[k + 4].re, x02);
-        STOREU_PD(&output_buffer[k + 6].re, x03);
-        STOREU_PD(&output_buffer[k + 0 + half].re, x10);
-        STOREU_PD(&output_buffer[k + 2 + half].re, x11);
-        STOREU_PD(&output_buffer[k + 4 + half].re, x12);
-        STOREU_PD(&output_buffer[k + 6 + half].re, x13);
-    }
-
-    // Cleanup: 2x unrolling for remaining trivial twiddles
-    for (; k + 1 < trivial_end; k += 2)
-    {
-        // NEW: Use prefetch strategy for cleanup loops too
-        if (cfg && cfg->enable && k + 8 < trivial_end) {
-            prefetch_input(&sub_outputs[k + 8], 0, cfg);
-            prefetch_input(&sub_outputs[k + 8 + half], 0, cfg);
-        }
-
-        __m256d even = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
-        __m256d odd = load2_aos(&sub_outputs[k + half], &sub_outputs[k + half + 1]);
-
-        __m256d x0 = _mm256_add_pd(even, odd);
-        __m256d x1 = _mm256_sub_pd(even, odd);
-
-        STOREU_PD(&output_buffer[k].re, x0);
-        STOREU_PD(&output_buffer[k + half].re, x1);
-    }
-
-    //======================================================================
-    // OPTIMIZATION 2: Second half needs twiddle multiplies (4x unrolled)
-    //======================================================================
-    for (; k + 7 < half; k += 8)
-    {
-        // NEW: Prefetch data and twiddles using strategy system
-        if (cfg && cfg->enable && k + 16 < half) {
-            prefetch_input(&sub_outputs[k + 16], 0, cfg);
-            prefetch_input(&sub_outputs[k + 16 + half], 0, cfg);
-            prefetch_twiddle(&stage_tw[k + 16], 0, cfg);
-        }
-
-        // Load 8 even pairs
-        __m256d e0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
-        __m256d e1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
-        __m256d e2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
-        __m256d e3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
-
-        // Load 8 odd pairs
-        __m256d o0 = load2_aos(&sub_outputs[k + 0 + half], &sub_outputs[k + 1 + half]);
-        __m256d o1 = load2_aos(&sub_outputs[k + 2 + half], &sub_outputs[k + 3 + half]);
-        __m256d o2 = load2_aos(&sub_outputs[k + 4 + half], &sub_outputs[k + 5 + half]);
-        __m256d o3 = load2_aos(&sub_outputs[k + 6 + half], &sub_outputs[k + 7 + half]);
-
-        // Load 8 twiddles
-        __m256d w0 = load2_aos(&stage_tw[k + 0], &stage_tw[k + 1]);
-        __m256d w1 = load2_aos(&stage_tw[k + 2], &stage_tw[k + 3]);
-        __m256d w2 = load2_aos(&stage_tw[k + 4], &stage_tw[k + 5]);
-        __m256d w3 = load2_aos(&stage_tw[k + 6], &stage_tw[k + 7]);
-
-        // Twiddle multiply
-        __m256d tw0 = cmul_avx2_aos(o0, w0);
-        __m256d tw1 = cmul_avx2_aos(o1, w1);
-        __m256d tw2 = cmul_avx2_aos(o2, w2);
-        __m256d tw3 = cmul_avx2_aos(o3, w3);
-
-        // Butterfly
-        __m256d x00 = _mm256_add_pd(e0, tw0);
-        __m256d x10 = _mm256_sub_pd(e0, tw0);
-        __m256d x01 = _mm256_add_pd(e1, tw1);
-        __m256d x11 = _mm256_sub_pd(e1, tw1);
-        __m256d x02 = _mm256_add_pd(e2, tw2);
-        __m256d x12 = _mm256_sub_pd(e2, tw2);
-        __m256d x03 = _mm256_add_pd(e3, tw3);
-        __m256d x13 = _mm256_sub_pd(e3, tw3);
-
-        // Store results
-        STOREU_PD(&output_buffer[k + 0].re, x00);
-        STOREU_PD(&output_buffer[k + 2].re, x01);
-        STOREU_PD(&output_buffer[k + 4].re, x02);
-        STOREU_PD(&output_buffer[k + 6].re, x03);
-        STOREU_PD(&output_buffer[k + 0 + half].re, x10);
-        STOREU_PD(&output_buffer[k + 2 + half].re, x11);
-        STOREU_PD(&output_buffer[k + 4 + half].re, x12);
-        STOREU_PD(&output_buffer[k + 6 + half].re, x13);
-    }
-
-    // Cleanup: 2x unrolling for remaining twiddle multiplies
-    for (; k + 1 < half; k += 2)
-    {
-        // NEW: Use prefetch strategy for cleanup
-        if (cfg && cfg->enable && k + 8 < half) {
-            prefetch_input(&sub_outputs[k + 8], 0, cfg);
-            prefetch_input(&sub_outputs[k + 8 + half], 0, cfg);
-            prefetch_twiddle(&stage_tw[k + 8], 0, cfg);
-        }
-
-        __m256d even = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
-        __m256d odd = load2_aos(&sub_outputs[k + half], &sub_outputs[k + half + 1]);
-        __m256d w = load2_aos(&stage_tw[k], &stage_tw[k + 1]);
-
-        __m256d tw = cmul_avx2_aos(odd, w);
-
-        __m256d x0 = _mm256_add_pd(even, tw);
-        __m256d x1 = _mm256_sub_pd(even, tw);
-
-        STOREU_PD(&output_buffer[k].re, x0);
-        STOREU_PD(&output_buffer[k + half].re, x1);
-    }
-#endif // __AVX2__
-
-    //======================================================================
-    // SSE2 TAIL: Handle remaining 0..1 complex numbers
-    // No prefetch needed here (too few iterations, overhead > benefit)
-    //======================================================================
-    for (; k < half; ++k)
-    {
-        __m128d even = LOADU_SSE2(&sub_outputs[k].re);
-        __m128d odd = LOADU_SSE2(&sub_outputs[k + half].re);
-
-        if (k < trivial_end)
+        // Trivial twiddles (W^0 = 1): No complex multiply needed
+        for (; k + 15 < trivial_end; k += 16)
         {
-            // Trivial twiddle (W^0 = 1)
-            STOREU_SSE2(&output_buffer[k].re, _mm_add_pd(even, odd));
-            STOREU_SSE2(&output_buffer[k + half].re, _mm_sub_pd(even, odd));
+            // NEW: Use prefetch strategy system instead of manual _mm_prefetch
+            if (k + 32 < half) {
+                _mm_prefetch((const char*)&sub_outputs[k + 32], _MM_HINT_T0);
+                _mm_prefetch((const char*)&sub_outputs[k + 32 + half], _MM_HINT_T0);
+            }
+
+
+            // Load 16 even-indexed complex samples (4 loads × 4 complex each)
+            __m512d e0 = load4_aos(&sub_outputs[k + 0]);
+            __m512d e1 = load4_aos(&sub_outputs[k + 4]);
+            __m512d e2 = load4_aos(&sub_outputs[k + 8]);
+            __m512d e3 = load4_aos(&sub_outputs[k + 12]);
+
+            // Load 16 odd samples
+            __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
+            __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
+            __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
+            __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
+
+            // Radix-2 butterfly: X[k] = E[k] + O[k], X[k+N/2] = E[k] - O[k]
+            __m512d x00 = _mm512_add_pd(e0, o0);
+            __m512d x10 = _mm512_sub_pd(e0, o0);
+            __m512d x01 = _mm512_add_pd(e1, o1);
+            __m512d x11 = _mm512_sub_pd(e1, o1);
+            __m512d x02 = _mm512_add_pd(e2, o2);
+            __m512d x12 = _mm512_sub_pd(e2, o2);
+            __m512d x03 = _mm512_add_pd(e3, o3);
+            __m512d x13 = _mm512_sub_pd(e3, o3);
+
+            // Store results
+            STOREU_PD512(&output_buffer[k + 0].re, x00);
+            STOREU_PD512(&output_buffer[k + 4].re, x01);
+            STOREU_PD512(&output_buffer[k + 8].re, x02);
+            STOREU_PD512(&output_buffer[k + 12].re, x03);
+            STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
+            STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
+            STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
+            STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
         }
-        else
+
+        // Non-trivial twiddles: Need complex multiply (W^k * O[k])
+        for (; k + 15 < half; k += 16)
         {
-            // Non-trivial twiddle
-            __m128d w = LOADU_SSE2(&stage_tw[k].re);
-            __m128d tw = cmul_sse2_aos(odd, w);
-            STOREU_SSE2(&output_buffer[k].re, _mm_add_pd(even, tw));
-            STOREU_SSE2(&output_buffer[k + half].re, _mm_sub_pd(even, tw));
+            // NEW: Prefetch both data and twiddles using strategy system
+            if (k + 32 < half) {
+                _mm_prefetch((const char*)&sub_outputs[k + 32], _MM_HINT_T0);
+                _mm_prefetch((const char*)&sub_outputs[k + 32 + half], _MM_HINT_T0);
+                _mm_prefetch((const char*)&stage_tw[k + 32], _MM_HINT_T0);
+            }
+
+
+            // Load even/odd samples
+            __m512d e0 = load4_aos(&sub_outputs[k + 0]);
+            __m512d e1 = load4_aos(&sub_outputs[k + 4]);
+            __m512d e2 = load4_aos(&sub_outputs[k + 8]);
+            __m512d e3 = load4_aos(&sub_outputs[k + 12]);
+
+            __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
+            __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
+            __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
+            __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
+
+            // Load twiddles
+            __m512d w0 = load4_aos(&stage_tw[k + 0]);
+            __m512d w1 = load4_aos(&stage_tw[k + 4]);
+            __m512d w2 = load4_aos(&stage_tw[k + 8]);
+            __m512d w3 = load4_aos(&stage_tw[k + 12]);
+
+            // Twiddle multiply
+            __m512d tw0 = cmul_avx512_aos(o0, w0);
+            __m512d tw1 = cmul_avx512_aos(o1, w1);
+            __m512d tw2 = cmul_avx512_aos(o2, w2);
+            __m512d tw3 = cmul_avx512_aos(o3, w3);
+
+            // Butterfly
+            __m512d x00 = _mm512_add_pd(e0, tw0);
+            __m512d x10 = _mm512_sub_pd(e0, tw0);
+            __m512d x01 = _mm512_add_pd(e1, tw1);
+            __m512d x11 = _mm512_sub_pd(e1, tw1);
+            __m512d x02 = _mm512_add_pd(e2, tw2);
+            __m512d x12 = _mm512_sub_pd(e2, tw2);
+            __m512d x03 = _mm512_add_pd(e3, tw3);
+            __m512d x13 = _mm512_sub_pd(e3, tw3);
+
+            // Store
+            STOREU_PD512(&output_buffer[k + 0].re, x00);
+            STOREU_PD512(&output_buffer[k + 4].re, x01);
+            STOREU_PD512(&output_buffer[k + 8].re, x02);
+            STOREU_PD512(&output_buffer[k + 12].re, x03);
+            STOREU_PD512(&output_buffer[k + 0 + half].re, x10);
+            STOREU_PD512(&output_buffer[k + 4 + half].re, x11);
+            STOREU_PD512(&output_buffer[k + 8 + half].re, x12);
+            STOREU_PD512(&output_buffer[k + 12 + half].re, x13);
         }
-    }
-    }
+
+        // Fall through to AVX2 cleanup for remaining elements
+    #endif // HAS_AVX512
+
+    #ifdef __AVX2__
+        //======================================================================
+        // OPTIMIZATION 1: First half has trivial twiddles (W^0 = 1)
+        // No complex multiply needed! Saves ~50% of work for radix-2.
+        //======================================================================
+
+        // Process trivial twiddles with 4x unrolling
+        for (; k + 7 < trivial_end; k += 8)
+        {
+            // NEW: Use prefetch strategy system
+            if (k + 16 < half) {
+                _mm_prefetch((const char*)&sub_outputs[k + 16], _MM_HINT_T0);
+                _mm_prefetch((const char*)&sub_outputs[k + 16 + half], _MM_HINT_T0);
+            }
+            // Load 8 even pairs (4 AVX2 loads)
+            __m256d e0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
+            __m256d e1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
+            __m256d e2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
+            __m256d e3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
+
+            // Load 8 odd pairs (4 AVX2 loads)
+            __m256d o0 = load2_aos(&sub_outputs[k + 0 + half], &sub_outputs[k + 1 + half]);
+            __m256d o1 = load2_aos(&sub_outputs[k + 2 + half], &sub_outputs[k + 3 + half]);
+            __m256d o2 = load2_aos(&sub_outputs[k + 4 + half], &sub_outputs[k + 5 + half]);
+            __m256d o3 = load2_aos(&sub_outputs[k + 6 + half], &sub_outputs[k + 7 + half]);
+
+            // Butterfly (no twiddle multiply!)
+            __m256d x00 = _mm256_add_pd(e0, o0);
+            __m256d x10 = _mm256_sub_pd(e0, o0);
+            __m256d x01 = _mm256_add_pd(e1, o1);
+            __m256d x11 = _mm256_sub_pd(e1, o1);
+            __m256d x02 = _mm256_add_pd(e2, o2);
+            __m256d x12 = _mm256_sub_pd(e2, o2);
+            __m256d x03 = _mm256_add_pd(e3, o3);
+            __m256d x13 = _mm256_sub_pd(e3, o3);
+
+            // Store results
+            STOREU_PD(&output_buffer[k + 0].re, x00);
+            STOREU_PD(&output_buffer[k + 2].re, x01);
+            STOREU_PD(&output_buffer[k + 4].re, x02);
+            STOREU_PD(&output_buffer[k + 6].re, x03);
+            STOREU_PD(&output_buffer[k + 0 + half].re, x10);
+            STOREU_PD(&output_buffer[k + 2 + half].re, x11);
+            STOREU_PD(&output_buffer[k + 4 + half].re, x12);
+            STOREU_PD(&output_buffer[k + 6 + half].re, x13);
+        }
+
+        // Cleanup: 2x unrolling for remaining trivial twiddles
+        for (; k + 1 < trivial_end; k += 2)
+        {
+            // NEW: Use prefetch strategy for cleanup loops too
+            if (k + 8 < half) {
+                _mm_prefetch((const char*)&sub_outputs[k + 8], _MM_HINT_T0);
+                _mm_prefetch((const char*)&sub_outputs[k + 8 + half], _MM_HINT_T0);
+            }
+
+            __m256d even = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
+            __m256d odd = load2_aos(&sub_outputs[k + half], &sub_outputs[k + half + 1]);
+
+            __m256d x0 = _mm256_add_pd(even, odd);
+            __m256d x1 = _mm256_sub_pd(even, odd);
+
+            STOREU_PD(&output_buffer[k].re, x0);
+            STOREU_PD(&output_buffer[k + half].re, x1);
+        }
+
+        //======================================================================
+        // OPTIMIZATION 2: Second half needs twiddle multiplies (4x unrolled)
+        //======================================================================
+        for (; k + 7 < half; k += 8)
+        {
+            // NEW: Prefetch data and twiddles using strategy system
+            if (k + 16 < half) {
+                _mm_prefetch((const char*)&sub_outputs[k + 16], _MM_HINT_T0);
+                _mm_prefetch((const char*)&sub_outputs[k + 16 + half], _MM_HINT_T0);
+                _mm_prefetch((const char*)&stage_tw[k + 16], _MM_HINT_T0);
+            }
+
+            // Load 8 even pairs
+            __m256d e0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
+            __m256d e1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
+            __m256d e2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
+            __m256d e3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
+
+            // Load 8 odd pairs
+            __m256d o0 = load2_aos(&sub_outputs[k + 0 + half], &sub_outputs[k + 1 + half]);
+            __m256d o1 = load2_aos(&sub_outputs[k + 2 + half], &sub_outputs[k + 3 + half]);
+            __m256d o2 = load2_aos(&sub_outputs[k + 4 + half], &sub_outputs[k + 5 + half]);
+            __m256d o3 = load2_aos(&sub_outputs[k + 6 + half], &sub_outputs[k + 7 + half]);
+
+            // Load 8 twiddles
+            __m256d w0 = load2_aos(&stage_tw[k + 0], &stage_tw[k + 1]);
+            __m256d w1 = load2_aos(&stage_tw[k + 2], &stage_tw[k + 3]);
+            __m256d w2 = load2_aos(&stage_tw[k + 4], &stage_tw[k + 5]);
+            __m256d w3 = load2_aos(&stage_tw[k + 6], &stage_tw[k + 7]);
+
+            // Twiddle multiply
+            __m256d tw0 = cmul_avx2_aos(o0, w0);
+            __m256d tw1 = cmul_avx2_aos(o1, w1);
+            __m256d tw2 = cmul_avx2_aos(o2, w2);
+            __m256d tw3 = cmul_avx2_aos(o3, w3);
+
+            // Butterfly
+            __m256d x00 = _mm256_add_pd(e0, tw0);
+            __m256d x10 = _mm256_sub_pd(e0, tw0);
+            __m256d x01 = _mm256_add_pd(e1, tw1);
+            __m256d x11 = _mm256_sub_pd(e1, tw1);
+            __m256d x02 = _mm256_add_pd(e2, tw2);
+            __m256d x12 = _mm256_sub_pd(e2, tw2);
+            __m256d x03 = _mm256_add_pd(e3, tw3);
+            __m256d x13 = _mm256_sub_pd(e3, tw3);
+
+            // Store results
+            STOREU_PD(&output_buffer[k + 0].re, x00);
+            STOREU_PD(&output_buffer[k + 2].re, x01);
+            STOREU_PD(&output_buffer[k + 4].re, x02);
+            STOREU_PD(&output_buffer[k + 6].re, x03);
+            STOREU_PD(&output_buffer[k + 0 + half].re, x10);
+            STOREU_PD(&output_buffer[k + 2 + half].re, x11);
+            STOREU_PD(&output_buffer[k + 4 + half].re, x12);
+            STOREU_PD(&output_buffer[k + 6 + half].re, x13);
+        }
+
+        // Cleanup: 2x unrolling for remaining twiddle multiplies
+        for (; k + 1 < half; k += 2)
+        {
+            // NEW: Use prefetch strategy for cleanup
+            if (k + 8 < half) {
+                _mm_prefetch((const char*)&sub_outputs[k + 8], _MM_HINT_T0);
+                _mm_prefetch((const char*)&sub_outputs[k + 8 + half], _MM_HINT_T0);
+                _mm_prefetch((const char*)&stage_tw[k + 8], _MM_HINT_T0);
+            }
+
+            __m256d even = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
+            __m256d odd = load2_aos(&sub_outputs[k + half], &sub_outputs[k + half + 1]);
+            __m256d w = load2_aos(&stage_tw[k], &stage_tw[k + 1]);
+
+            __m256d tw = cmul_avx2_aos(odd, w);
+
+            __m256d x0 = _mm256_add_pd(even, tw);
+            __m256d x1 = _mm256_sub_pd(even, tw);
+
+            STOREU_PD(&output_buffer[k].re, x0);
+            STOREU_PD(&output_buffer[k + half].re, x1);
+        }
+    #endif // __AVX2__
+
+        //======================================================================
+        // SSE2 TAIL: Handle remaining 0..1 complex numbers
+        // No prefetch needed here (too few iterations, overhead > benefit)
+        //======================================================================
+        for (; k < half; ++k)
+        {
+            __m128d even = LOADU_SSE2(&sub_outputs[k].re);
+            __m128d odd = LOADU_SSE2(&sub_outputs[k + half].re);
+
+            if (k < trivial_end)
+            {
+                // Trivial twiddle (W^0 = 1)
+                STOREU_SSE2(&output_buffer[k].re, _mm_add_pd(even, odd));
+                STOREU_SSE2(&output_buffer[k + half].re, _mm_sub_pd(even, odd));
+            }
+            else
+            {
+                // Non-trivial twiddle
+                __m128d w = LOADU_SSE2(&stage_tw[k].re);
+                __m128d tw = cmul_sse2_aos(odd, w);
+                STOREU_SSE2(&output_buffer[k].re, _mm_add_pd(even, tw));
+                STOREU_SSE2(&output_buffer[k + half].re, _mm_sub_pd(even, tw));
+            }
+        }
+        }
     else if (radix == 3)
     {
         //======================================================================
