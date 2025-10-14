@@ -63,6 +63,8 @@ typedef struct {
     int page_distance;
     int stride_threshold;
     uintptr_t last_page;
+    const fft_data *base;      // NEW
+    size_t len_elements;       // NEW
 } tlb_prefetch_t;
 
 /**
@@ -226,6 +228,8 @@ static const cpu_profile_t *g_cpu_profile = &cpu_profiles[9]; // Default: Generi
 // Thread-local state
 static __thread prefetch_throttle_t g_throttle = {0};
 static __thread tlb_prefetch_t g_tlb_prefetch = {0};
+static __thread prefetch_profile_t g_prefetch_profile = {0};
+
 
 // Wisdom database
 #define MAX_WISDOM_ENTRIES 256
@@ -422,7 +426,7 @@ static inline void init_throttling(void) {
 /**
  * @brief Initialize TLB prefetching
  */
-static inline void init_tlb_prefetch(int n_fft) {
+static inline void init_tlb_prefetch(int n_fft, const fft_data *base) {
     const int data_size = n_fft * sizeof(fft_data);
     const int page_size = 4096;
     const int num_pages = (data_size + page_size - 1) / page_size;
@@ -431,7 +435,12 @@ static inline void init_tlb_prefetch(int n_fft) {
         g_tlb_prefetch.enabled = true;
         g_tlb_prefetch.page_distance = 8;
         g_tlb_prefetch.stride_threshold = page_size / sizeof(fft_data);
+        if (g_tlb_prefetch.stride_threshold == 0) {
+            g_tlb_prefetch.stride_threshold = 1;
+        }
         g_tlb_prefetch.last_page = 0;
+        g_tlb_prefetch.base = base;             // NEW
+        g_tlb_prefetch.len_elements = n_fft;    // NEW
     } else {
         g_tlb_prefetch.enabled = false;
     }
@@ -454,8 +463,13 @@ static inline bool can_prefetch(void) {
 /**
  * @brief Record prefetch issued
  */
-static inline void record_prefetch_issued(void) {
-    g_throttle.budget_remaining--;
+static inline void record_prefetch_issued(bool critical) {
+    if (!critical) {
+        if (g_throttle.budget_remaining > 0) {
+            g_throttle.budget_remaining--;
+        }
+        // Budget stays at 0 if already depleted, won't go negative
+    }
     g_throttle.issued_count++;
 }
 
@@ -491,13 +505,13 @@ static inline void prefetch_throttled(
 ) {
     if (priority == PREFETCH_PRIO_CRITICAL) {
         do_prefetch(addr, hint);
-        record_prefetch_issued();
+        record_prefetch_issued(true);  // Pass true for critical
         return;
     }
     
     if (can_prefetch()) {
         do_prefetch(addr, hint);
-        record_prefetch_issued();
+        record_prefetch_issued(false);  // Pass false for normal
     }
 }
 
@@ -507,19 +521,23 @@ static inline void prefetch_throttled(
 static inline void prefetch_tlb(const fft_data *addr) {
     if (!g_tlb_prefetch.enabled) return;
     
-    const uintptr_t page = (uintptr_t)addr / 4096;
+    const uintptr_t page_sz = 4096;
+    uintptr_t base_u = (uintptr_t)g_tlb_prefetch.base;
+    uintptr_t end_u = base_u + g_tlb_prefetch.len_elements * sizeof(fft_data);
+    
+    const uintptr_t page = (uintptr_t)addr / page_sz;
     
     if (page != g_tlb_prefetch.last_page) {
-        const uintptr_t future_page = page + g_tlb_prefetch.page_distance;
-        const fft_data *future_addr = (const fft_data*)(future_page * 4096);
+        const uintptr_t future = (page + (uintptr_t)g_tlb_prefetch.page_distance) * page_sz;
         
-        volatile char dummy = *((const volatile char*)future_addr);
-        (void)dummy;
+        // Bounds check before access
+        if (future >= base_u && future < end_u) {
+            __builtin_prefetch((const void*)future, 0, 0);
+        }
         
         g_tlb_prefetch.last_page = page;
     }
 }
-
 /**
  * @brief Write prefetch
  */
@@ -562,8 +580,10 @@ void init_prefetch_system(fft_object fft_obj) {
     // Initialize throttling
     init_throttling();
     
-    // Initialize TLB prefetch
-    init_tlb_prefetch(fft_obj->n_fft);
+    // Initialize TLB prefetch - need to pass actual data pointer
+    // NOTE: You'll need to get the actual input data pointer from somewhere
+    // This is a design decision - you might need to change the function signature
+    init_tlb_prefetch(fft_obj->n_fft, NULL)
     
     // Load wisdom database (once)
     static int wisdom_loaded = 0;
@@ -742,21 +762,30 @@ void load_wisdom(const char *filename) {
     pthread_mutex_lock(&g_wisdom_mutex);
     
     g_wisdom_count = 0;
-    while (g_wisdom_count < MAX_WISDOM_ENTRIES && !feof(fp)) {
+    char line[256];
+    
+    while (g_wisdom_count < MAX_WISDOM_ENTRIES && fgets(line, sizeof(line), fp)) {
+        // Skip comments and blank lines
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+        
         wisdom_entry_t *entry = &g_wisdom_db[g_wisdom_count];
         
-        int items = fscanf(fp, "%d %d %d %d %d %d %lf %ld\n",
+        int strategy_int;
+        long long timestamp_ll;
+        int items = sscanf(line, "%d %d %d %d %d %d %lf %lld",
             &entry->n_fft,
             &entry->radix,
             &entry->distance_input,
             &entry->distance_twiddle,
             &entry->hint,
-            (int*)&entry->strategy,
+            &strategy_int,
             &entry->cycles_per_element,
-            &entry->timestamp
+            &timestamp_ll
         );
         
         if (items == 8) {
+            entry->strategy = (prefetch_strategy_t)strategy_int;
+            entry->timestamp = (time_t)timestamp_ll;
             g_wisdom_count++;
         }
     }
@@ -776,15 +805,15 @@ void save_wisdom(const char *filename) {
     
     for (int i = 0; i < g_wisdom_count; i++) {
         wisdom_entry_t *entry = &g_wisdom_db[i];
-        fprintf(fp, "%d %d %d %d %d %d %.6f %ld\n",
+        fprintf(fp, "%d %d %d %d %d %d %.6f %lld\n",
             entry->n_fft,
             entry->radix,
             entry->distance_input,
             entry->distance_twiddle,
             entry->hint,
-            entry->strategy,
+            (int)entry->strategy,  // Cast enum to int
             entry->cycles_per_element,
-            entry->timestamp
+            (long long)entry->timestamp  // Cast time_t to long long
         );
     }
     
@@ -843,15 +872,22 @@ void search_optimal_prefetch(
     wisdom_entry_t *wisdom = find_wisdom(fft_obj->n_fft, radix);
     
     if (wisdom) {
-        best_config->distance_input = wisdom->distance_input;
-        best_config->distance_twiddle = wisdom->distance_twiddle;
-        best_config->hint_input = wisdom->hint;
-        best_config->strategy = wisdom->strategy;
+        // Initialize ALL fields comprehensively
+        *best_config = (stage_prefetch_t){
+            .enable = true,
+            .strategy = wisdom->strategy,
+            .distance_input = wisdom->distance_input,
+            .distance_output = wisdom->distance_input,  // NEW
+            .distance_twiddle = wisdom->distance_twiddle,
+            .hint_input = wisdom->hint,
+            .hint_output = wisdom->hint,                // NEW
+            .hint_twiddle = _MM_HINT_T0,                // NEW
+            .block_size = 0                             // NEW
+        };
         return;
     }
     
     // No wisdom - use heuristics
-    // Full exhaustive search would go here
     const int n_fft = fft_obj->n_fft;
     const int working_set = compute_stage_working_set(
         n_fft, factor_index, fft_obj->factors, fft_obj->lf
@@ -859,19 +895,25 @@ void search_optimal_prefetch(
     
     if (working_set < 1024) {
         best_config->strategy = PREFETCH_NONE;
+        best_config->enable = false;  // NEW
     } else if (radix <= 4 && working_set < g_prefetch_config.l1_size) {
         best_config->strategy = PREFETCH_SINGLE;
+        best_config->enable = true;   // NEW
     } else if (radix <= 8) {
         best_config->strategy = PREFETCH_DUAL;
+        best_config->enable = true;   // NEW
     } else {
         best_config->strategy = PREFETCH_MULTI;
+        best_config->enable = true;   // NEW
     }
     
     best_config->distance_input = compute_stage_prefetch_distance(working_set, 1);
+    best_config->distance_output = best_config->distance_input;   // NEW
     best_config->distance_twiddle = best_config->distance_input / 2;
     best_config->hint_input = compute_stage_hint(working_set);
+    best_config->hint_output = best_config->hint_input;           // NEW
     best_config->hint_twiddle = _MM_HINT_T0;
-    best_config->enable = (best_config->strategy != PREFETCH_NONE);
+    best_config->block_size = 0;                                  // NEW
 }
 
 const prefetch_config_t* get_prefetch_config(void) {
