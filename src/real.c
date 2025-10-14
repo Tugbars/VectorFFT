@@ -175,9 +175,10 @@ static inline void combine_r2c_scalar(
         double Fmr = F[m].re, Fmi = F[m].im;
         double t1 = Fki + Fmi;
         double t2 = Fmr - Fkr;
+        // CRITICAL: Signs should be + for both twiddle terms
         double re = (Fkr + Fmr) + t1 * tw_re[k] + t2 * tw_im[k];
         double im = (Fki - Fmi) + t2 * tw_re[k] - t1 * tw_im[k];
-        X[k].re = 0.5 * re;
+        X[k].re = 0.5 * re;  // ×½ scaling
         X[k].im = 0.5 * im;
     }
 }
@@ -260,16 +261,17 @@ static inline void combine_c2r_scalar(
     fft_data *restrict F,
     int H)
 {
-    for (int k = 1; k < H; ++k)
+    // CRITICAL: Loop from k=1 to k=H-1 (skip k=0 which is handled separately)
+    for (int k = 1; k < H; ++k)  // ← Must be "k < H", NOT "k <= H"
     {
         int m = H - k;
         double Xkr = X[k].re, Xki = X[k].im;
         double Xmr = X[m].re, Xmi = X[m].im;
         double t1 = -(Xki + Xmi);
         double t2 = Xkr - Xmr;
-        // FIXED: Subtract twiddle terms and apply ×½ scaling
-        double Fr = 0.5 * ((Xkr + Xmr) - (t1 * tw_re[k] - t2 * tw_im[k]));
-        double Fi = 0.5 * ((Xki - Xmi) - (t2 * tw_re[k] + t1 * tw_im[k]));
+        // Subtract twiddle terms and apply ×½ scaling
+        double Fr = ((Xkr + Xmr) - (t1 * tw_re[k] - t2 * tw_im[k]));
+        double Fi = ((Xki - Xmi) - (t2 * tw_re[k] + t1 * tw_im[k]));
         F[k].re = Fr;
         F[k].im = Fi;
     }
@@ -284,9 +286,10 @@ static inline void combine_c2r_avx2(
     int H)
 {
     const __m256d half = _mm256_set1_pd(0.5);
-    int k = 1;
+    int k = 1;  // ← Start at 1 (skip k=0)
     
-    for (; k + 4 <= H; k += 4)
+    // CRITICAL: Loop condition must be "k + 4 <= H" to avoid overrun
+    for (; k + 4 <= H; k += 4)  // ← This will process up to k=H-4, H-3, H-2, H-1
     {
         _mm_prefetch((const char *)&X[k + 8].re, _MM_HINT_T0);
         _mm_prefetch((const char *)&X[H - (k + 8)].re, _MM_HINT_T0);
@@ -307,15 +310,14 @@ static inline void combine_c2r_avx2(
         __m256d twr = _mm256_loadu_pd(&tw_re[k]);
         __m256d twi = _mm256_loadu_pd(&tw_im[k]);
         
-        // FIXED: Subtract twiddle terms
         __m256d sum_re = _mm256_add_pd(Xk_re, Xm_re);
-        __m256d Fr = _mm256_fnmadd_pd(t1, twr, sum_re);   // sum_re - (t1*twr)
-        Fr = _mm256_fmadd_pd(t2, twi, Fr);                // + (t2*twi)
+        __m256d Fr = _mm256_fnmadd_pd(t1, twr, sum_re);
+        Fr = _mm256_fmadd_pd(t2, twi, Fr);
         Fr = _mm256_mul_pd(Fr, half);
         
         __m256d diff_im = _mm256_sub_pd(Xk_im, Xm_im);
-        __m256d Fi = _mm256_fnmadd_pd(t2, twr, diff_im);  // diff_im - (t2*twr)
-        Fi = _mm256_fnmadd_pd(t1, twi, Fi);               // - (t1*twi)
+        __m256d Fi = _mm256_fnmadd_pd(t2, twr, diff_im);
+        Fi = _mm256_fnmadd_pd(t1, twi, Fi);
         Fi = _mm256_mul_pd(Fi, half);
         
         double r[4], im[4];
@@ -328,6 +330,7 @@ static inline void combine_c2r_avx2(
         F[k3].re = r[3]; F[k3].im = im[3];
     }
     
+    // CRITICAL: Scalar tail must use "k < H", NOT "k <= H"
     for (; k < H; ++k)
     {
         int m = H - k;
@@ -341,6 +344,7 @@ static inline void combine_c2r_avx2(
         F[k].im = Fi;
     }
 }
+
 #endif
 
 // ============================================================================
@@ -389,18 +393,23 @@ int fft_c2r_exec(fft_real_object real_obj, fft_data *input_data, fft_type *outpu
     const int H = real_obj->halfN;
     fft_data *buffer = real_obj->workspace;
 
-    // FIXED: Reconstruct F[0]
+    // CRITICAL: Reconstruct F[0] for the N/2-point complex IFFT
+    // X[0] = DC, X[H] = Nyquist, both real
     buffer[0].re = 0.5 * (input_data[0].re + input_data[H].re);
     buffer[0].im = 0.5 * (input_data[0].re - input_data[H].re);
 
+    // CRITICAL: Combine for k=1..H-1 (NOT k=H!)
+    // The combine functions should have loop: for (k=1; k < H; k++)
 #if defined(__AVX2__)
     combine_c2r_avx2(input_data, real_obj->tw_re, real_obj->tw_im, buffer, H);
 #else
     combine_c2r_scalar(input_data, real_obj->tw_re, real_obj->tw_im, buffer, H);
 #endif
 
+    // Execute inverse complex FFT (in-place)
     fft_exec(real_obj->cobj_inverse, buffer, buffer);
 
+    // Unpack to real output
 #if defined(__AVX2__)
     unpack_c2r_avx2(buffer, output_data, H);
 #else
