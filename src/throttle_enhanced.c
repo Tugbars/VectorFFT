@@ -1,6 +1,10 @@
 //==============================================================================
 // ENHANCED THROTTLING MODEL - Token Bucket with Time Decay
-// Links with prefetch_strategy.c - provides enhanced throttling backend
+// STANDALONE MODULE - Optional integration with prefetch_strategy.c
+//
+// Compilation modes:
+//   1. Standalone: compile without HFFT_USE_ENHANCED_THROTTLE
+//   2. Integrated: compile with -DHFFT_USE_ENHANCED_THROTTLE
 //==============================================================================
 
 #include <stdint.h>
@@ -8,27 +12,6 @@
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>  // for getenv, atoi
-
-// Forward declare cpu_profile_t (defined in prefetch_strategy.h)
-typedef struct {
-    const char *name;
-    int prefetch_buffers;
-    int prefetch_latency;
-    int l1_latency;
-    int l2_latency;
-    int l3_latency;
-    bool has_write_prefetch;
-    bool has_strong_hwpf;
-    int optimal_distance[8];
-} cpu_profile_t;
-
-// Forward declare prefetch_priority_t (defined in prefetch_strategy.c)
-typedef enum {
-    PREFETCH_PRIO_LOW = 3,
-    PREFETCH_PRIO_MEDIUM = 2,
-    PREFETCH_PRIO_HIGH = 1,
-    PREFETCH_PRIO_CRITICAL = 0
-} prefetch_priority_t;
 
 // Include x86 intrinsics only on x86 platforms
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
@@ -42,6 +25,38 @@ typedef enum {
 #define _MM_HINT_T2  3
 #define _MM_HINT_NTA 0
 #endif
+
+//==============================================================================
+// STANDALONE TYPE DEFINITIONS
+// These are only used if NOT linking with prefetch_strategy.c
+//==============================================================================
+
+#ifndef HFFT_USE_ENHANCED_THROTTLE
+
+/**
+ * @brief Standalone CPU profile (subset needed for throttling)
+ */
+typedef struct {
+    const char *name;
+    int prefetch_buffers;
+    int prefetch_latency;
+} cpu_profile_t;
+
+/**
+ * @brief Standalone prefetch priority
+ */
+typedef enum {
+    PREFETCH_PRIO_LOW = 3,
+    PREFETCH_PRIO_MEDIUM = 2,
+    PREFETCH_PRIO_HIGH = 1,
+    PREFETCH_PRIO_CRITICAL = 0
+} prefetch_priority_t;
+
+#endif // !HFFT_USE_ENHANCED_THROTTLE
+
+//==============================================================================
+// CORE TYPES (always defined)
+//==============================================================================
 
 /**
  * @brief Throttling modes
@@ -102,6 +117,10 @@ typedef struct {
         uint64_t critical_issued;
     } stats;
 } prefetch_throttle_enhanced_t;
+
+//==============================================================================
+// GLOBAL STATE
+//==============================================================================
 
 // Global configuration
 static struct {
@@ -283,6 +302,33 @@ static inline bool consume_token(token_bucket_t *bucket) {
 }
 
 //==============================================================================
+// STANDALONE PREFETCH IMPLEMENTATION (used when not integrated)
+//==============================================================================
+
+#ifndef HFFT_USE_ENHANCED_THROTTLE
+
+/**
+ * @brief Standalone prefetch dispatch
+ */
+static inline void do_prefetch_standalone(const void *addr, int hint) {
+#if HAS_X86_INTRINSICS
+    switch (hint) {
+        case _MM_HINT_T0:  _mm_prefetch((const char*)addr, _MM_HINT_T0);  break;
+        case _MM_HINT_T1:  _mm_prefetch((const char*)addr, _MM_HINT_T1);  break;
+        case _MM_HINT_T2:  _mm_prefetch((const char*)addr, _MM_HINT_T2);  break;
+        case _MM_HINT_NTA: _mm_prefetch((const char*)addr, _MM_HINT_NTA); break;
+        default:           _mm_prefetch((const char*)addr, _MM_HINT_T0);  break;
+    }
+#else
+    // locality 3≈T0, 2≈T1, 1≈T2, 0≈NTA (rough mapping)
+    int locality = (hint==_MM_HINT_NTA) ? 0 : (hint==_MM_HINT_T2 ? 1 : (hint==_MM_HINT_T1 ? 2 : 3));
+    __builtin_prefetch(addr, 0, locality);
+#endif
+}
+
+#endif // !HFFT_USE_ENHANCED_THROTTLE
+
+//==============================================================================
 // PUBLIC API
 //==============================================================================
 
@@ -394,8 +440,16 @@ static inline bool can_prefetch_token_bucket(int hint) {
 /**
  * @brief Main throttled prefetch function
  * 
- * This replaces/enhances the prefetch_throttled() in prefetch_strategy.c
- * when token bucket mode is enabled.
+ * @param addr Address to prefetch
+ * @param hint Prefetch hint (T0/T1/T2/NTA)
+ * @param priority Prefetch priority
+ * @param do_prefetch_fn Function pointer to actual prefetch implementation
+ *                       (pass NULL to use built-in standalone version)
+ * 
+ * When integrated with prefetch_strategy.c:
+ *   - Pass the do_prefetch() function from that module
+ * When standalone:
+ *   - Pass NULL to use the built-in implementation
  */
 bool prefetch_throttled_enhanced(
     const void *addr,
@@ -407,9 +461,19 @@ bool prefetch_throttled_enhanced(
         g_throttle_enhanced.stats.total_requested++;
     }
     
+    // Select prefetch implementation
+    void (*prefetch_impl)(const void*, int) = do_prefetch_fn;
+#ifndef HFFT_USE_ENHANCED_THROTTLE
+    if (!prefetch_impl) {
+        prefetch_impl = do_prefetch_standalone;
+    }
+#endif
+    
     // Critical priority always bypasses throttling
     if (priority == PREFETCH_PRIO_CRITICAL) {
-        do_prefetch_fn(addr, hint);
+        if (prefetch_impl) {
+            prefetch_impl(addr, hint);
+        }
         
         if (g_throttle_enhanced.mode == THROTTLE_MODE_TOKEN_BUCKET) {
             g_throttle_enhanced.token.critical_bypass_count++;
@@ -428,14 +492,14 @@ bool prefetch_throttled_enhanced(
     
     if (g_throttle_enhanced.mode == THROTTLE_MODE_SIMPLE) {
         can_issue = can_prefetch_simple();
-        if (can_issue) {
-            do_prefetch_fn(addr, hint);
+        if (can_issue && prefetch_impl) {
+            prefetch_impl(addr, hint);
             record_prefetch_simple(true);
         }
     } else { // THROTTLE_MODE_TOKEN_BUCKET
         can_issue = can_prefetch_token_bucket(hint);
-        if (can_issue) {
-            do_prefetch_fn(addr, hint);
+        if (can_issue && prefetch_impl) {
+            prefetch_impl(addr, hint);
         }
     }
     
@@ -448,19 +512,6 @@ bool prefetch_throttled_enhanced(
     }
     
     return can_issue;
-}
-
-/**
- * @brief Drop-in replacement wrapper for easy migration
- * Call this from prefetch_strategy.c's prefetch_throttled()
- */
-static inline bool throttle_issue_prefetch(
-    const void *addr, 
-    int hint, 
-    prefetch_priority_t prio,
-    void (*do_prefetch_fn)(const void*, int)
-) {
-    return prefetch_throttled_enhanced(addr, hint, prio, do_prefetch_fn);
 }
 
 /**
