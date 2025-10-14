@@ -1,5 +1,10 @@
 //==============================================================================
 // ENHANCED ADAPTIVE TUNING - EWMA Filtering & Per-Stage Optimization
+// STANDALONE MODULE - Optional integration with prefetch_strategy.c
+//
+// Compilation modes:
+//   1. Standalone: compile without HFFT_USE_ADAPTIVE_TUNING
+//   2. Integrated: compile with -DHFFT_USE_ADAPTIVE_TUNING
 //==============================================================================
 
 #include <stdint.h>
@@ -8,19 +13,55 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <float.h>
+#include <time.h>
 
-// Include TSC reading function
-#if defined(__x86_64__) || defined(_M_X64)
+// Epsilon for denominator guards
+#define EPS 1e-12
+
+//==============================================================================
+// PORTABLE TSC IMPLEMENTATION
+//==============================================================================
+
+/**
+ * @brief Read CPU timestamp counter (portable)
+ * Uses rdtsc on x86, clock_gettime elsewhere
+ */
 static inline uint64_t read_tsc_inline(void) {
+#if defined(__x86_64__) || defined(_M_X64)
     uint32_t lo, hi;
     __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
     return ((uint64_t)hi << 32) | lo;
-}
 #else
-static inline uint64_t read_tsc_inline(void) {
-    return 0;
-}
+    // Fallback: use monotonic clock (nanoseconds as "cycles")
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 #endif
+}
+
+//==============================================================================
+// STANDALONE TYPE DEFINITIONS
+// Only used if NOT linking with prefetch_strategy.c
+//==============================================================================
+
+#ifndef HFFT_USE_ADAPTIVE_TUNING
+
+/**
+ * @brief Standalone stage prefetch config (minimal subset)
+ */
+typedef struct {
+    bool enable;
+    int distance_input;
+    int distance_output;
+    int distance_twiddle;
+} stage_prefetch_t;
+
+#endif // !HFFT_USE_ADAPTIVE_TUNING
+
+//==============================================================================
+// CORE TYPES (always defined)
+//==============================================================================
 
 /**
  * @brief Tuning modes
@@ -122,6 +163,7 @@ typedef struct {
     // Per-stage state
     stage_tuning_state_t *stages;
     int num_stages;
+    int tuned_stage_count;  // How many stages actually being tuned
     
     // Statistics
     struct {
@@ -149,7 +191,8 @@ static adaptive_tuning_state_t g_tuning = {
         .retune_interval = 10000
     },
     .stages = NULL,
-    .num_stages = 0
+    .num_stages = 0,
+    .tuned_stage_count = 0
 };
 
 //==============================================================================
@@ -208,15 +251,21 @@ static void init_stage_tuning(
     int radix
 ) {
     stage->stage_idx = stage_idx;
-    stage->distance_input = initial_distance;
-    stage->distance_twiddle = initial_distance / 2;
+    
+    // Clamp initial distance to valid range
+    int d0 = initial_distance;
+    if (d0 < g_tuning.config.min_distance) d0 = g_tuning.config.min_distance;
+    if (d0 > g_tuning.config.max_distance) d0 = g_tuning.config.max_distance;
+    
+    stage->distance_input = d0;
+    stage->distance_twiddle = d0 / 2;
     
     ewma_init(&stage->throughput, g_tuning.config.ewma_alpha);
     
     stage->total_cycles = 0;
     stage->total_elements = 0;
-    stage->best_distance = initial_distance;
-    stage->best_throughput = INFINITY;
+    stage->best_distance = d0;
+    stage->best_throughput = DBL_MAX;  // Use DBL_MAX instead of INFINITY
     stage->tuning_phase = 0;
     stage->iterations_without_improvement = 0;
     stage->search_direction = 1;
@@ -263,7 +312,9 @@ static void update_stage_tuning(
             break;
             
         case 1: { // Active search
-            double improvement = (stage->best_throughput - filtered_throughput) / stage->best_throughput;
+            // Guard against division by near-zero
+            double denom = (stage->best_throughput > EPS) ? stage->best_throughput : EPS;
+            double improvement = (stage->best_throughput - filtered_throughput) / denom;
             
             if (improvement > stage->improvement_threshold) {
                 stage->best_throughput = filtered_throughput;
@@ -280,6 +331,7 @@ static void update_stage_tuning(
                         stage->stage_idx, improvement * 100.0, stage->best_distance);
                 }
                 
+                // Accelerate step size on success
                 stage->search_step_size = (stage->search_step_size * 3) / 2;
                 if (stage->search_step_size > 16) stage->search_step_size = 16;
                 
@@ -287,6 +339,7 @@ static void update_stage_tuning(
                 stage->iterations_without_improvement++;
                 
                 if (stage->iterations_without_improvement >= stage->max_iterations_no_improve) {
+                    // Converged
                     stage->tuning_phase = 2;
                     stage->distance_input = stage->best_distance;
                     stage->distance_twiddle = stage->best_distance / 2;
@@ -298,6 +351,7 @@ static void update_stage_tuning(
                     break;
                 }
                 
+                // Reverse direction and reduce step periodically
                 if (stage->iterations_without_improvement % 3 == 0) {
                     stage->search_direction *= -1;
                     stage->search_step_size /= 2;
@@ -309,6 +363,7 @@ static void update_stage_tuning(
             int next_distance = stage->distance_input + 
                                (stage->search_direction * stage->search_step_size);
             
+            // Clamp to valid range and bounce at boundaries
             if (next_distance < g_tuning.config.min_distance) {
                 next_distance = g_tuning.config.min_distance;
                 stage->search_direction *= -1;
@@ -326,8 +381,9 @@ static void update_stage_tuning(
         case 2: // Converged
             if (g_tuning.config.enable_periodic_retune &&
                 stage->total_elements > 0 &&
-                (stage->total_elements % g_tuning.config.retune_interval) < elements) {
+                (stage->total_elements % g_tuning.config.retune_interval) < (uint64_t)elements) {
                 
+                // Retrigger if performance degrades by >10%
                 if (filtered_throughput > stage->best_throughput * 1.10) {
                     if (g_tuning.config.enable_logging) {
                         printf("Stage %d: Performance degraded, restarting search\n", 
@@ -347,10 +403,15 @@ static void update_stage_tuning(
 //==============================================================================
 
 static void init_global_tuning(int initial_distance) {
+    // Clamp initial distance to valid range
+    int d0 = initial_distance;
+    if (d0 < g_tuning.config.min_distance) d0 = g_tuning.config.min_distance;
+    if (d0 > g_tuning.config.max_distance) d0 = g_tuning.config.max_distance;
+    
     g_tuning.global.throughput_ewma = 0.0;
-    g_tuning.global.current_distance = initial_distance;
-    g_tuning.global.best_distance = initial_distance;
-    g_tuning.global.best_throughput = INFINITY;
+    g_tuning.global.current_distance = d0;
+    g_tuning.global.best_distance = d0;
+    g_tuning.global.best_throughput = DBL_MAX;  // Use DBL_MAX instead of INFINITY
     g_tuning.global.tuning_phase = 0;
     g_tuning.global.iterations_without_improvement = 0;
     g_tuning.global.total_calls = 0;
@@ -371,7 +432,7 @@ static void update_global_tuning(uint64_t cycles, int elements) {
             (1.0 - g_tuning.config.ewma_alpha) * g_tuning.global.throughput_ewma;
     }
     
-    if (g_tuning.global.total_calls < g_tuning.config.ewma_warmup_samples) {
+    if (g_tuning.global.total_calls < (uint64_t)g_tuning.config.ewma_warmup_samples) {
         return;
     }
     
@@ -385,8 +446,10 @@ static void update_global_tuning(uint64_t cycles, int elements) {
             break;
             
         case 1: {
-            double improvement = 
-                (g_tuning.global.best_throughput - filtered) / g_tuning.global.best_throughput;
+            // Guard against division by near-zero
+            double denom = (g_tuning.global.best_throughput > EPS) ? 
+                          g_tuning.global.best_throughput : EPS;
+            double improvement = (g_tuning.global.best_throughput - filtered) / denom;
             
             if (improvement > g_tuning.config.improvement_threshold) {
                 g_tuning.global.best_throughput = filtered;
@@ -420,6 +483,7 @@ static void update_global_tuning(uint64_t cycles, int elements) {
                     g_tuning.global.current_distance -= step;
                 }
                 
+                // Clamp to valid range
                 if (g_tuning.global.current_distance < g_tuning.config.min_distance)
                     g_tuning.global.current_distance = g_tuning.config.min_distance;
                 if (g_tuning.global.current_distance > g_tuning.config.max_distance)
@@ -445,6 +509,11 @@ static void update_global_tuning(uint64_t cycles, int elements) {
 // PUBLIC API
 //==============================================================================
 
+/**
+ * @brief Initialize adaptive tuning
+ * 
+ * NOTE: This is NOT thread-safe. Call from a single controller thread.
+ */
 void init_adaptive_tuning(
     int num_stages,
     const int *initial_distances,
@@ -452,6 +521,7 @@ void init_adaptive_tuning(
     const int *radixes
 ) {
     g_tuning.num_stages = num_stages;
+    g_tuning.tuned_stage_count = 0;
     
     g_tuning.stats.total_fft_calls = 0;
     g_tuning.stats.total_tuning_changes = 0;
@@ -461,7 +531,7 @@ void init_adaptive_tuning(
         return;
     }
     
-    int global_initial = (num_stages > 0) ? initial_distances[0] : 8;
+    int global_initial = (num_stages > 0 && initial_distances) ? initial_distances[0] : 8;
     init_global_tuning(global_initial);
     
     if (g_tuning.config.mode == TUNING_MODE_PER_STAGE || 
@@ -496,6 +566,8 @@ void init_adaptive_tuning(
             );
         }
         
+        g_tuning.tuned_stage_count = stages_to_tune;
+        
         if (g_tuning.config.enable_logging) {
             printf("Initialized per-stage tuning for %d stages\n", stages_to_tune);
         }
@@ -508,6 +580,7 @@ void cleanup_adaptive_tuning(void) {
         g_tuning.stages = NULL;
     }
     g_tuning.num_stages = 0;
+    g_tuning.tuned_stage_count = 0;
 }
 
 uint64_t profile_fft_start(void) {
@@ -517,6 +590,11 @@ uint64_t profile_fft_start(void) {
     return read_tsc_inline();
 }
 
+/**
+ * @brief End profiling and update tuning
+ * 
+ * NOTE: This is NOT thread-safe. Call from a single controller thread.
+ */
 void profile_fft_end(uint64_t start_cycles, int n_elements, int stage_idx) {
     if (g_tuning.config.mode == TUNING_MODE_DISABLED) {
         return;
@@ -534,7 +612,7 @@ void profile_fft_end(uint64_t start_cycles, int n_elements, int stage_idx) {
             break;
             
         case TUNING_MODE_PER_STAGE:
-            if (stage_idx >= 0 && stage_idx < g_tuning.num_stages && g_tuning.stages) {
+            if (stage_idx >= 0 && stage_idx < g_tuning.tuned_stage_count && g_tuning.stages) {
                 update_stage_tuning(&g_tuning.stages[stage_idx], elapsed, n_elements);
             }
             break;
@@ -544,19 +622,64 @@ void profile_fft_end(uint64_t start_cycles, int n_elements, int stage_idx) {
     }
 }
 
+/**
+ * @brief Get tuned distance for a stage
+ * Returns -1 if tuning is disabled
+ * Falls back to global distance for untuned stages
+ */
 int get_tuned_distance(int stage_idx) {
     if (g_tuning.config.mode == TUNING_MODE_DISABLED) {
         return -1;
     }
     
+    // Return per-stage distance if available and tuned
     if (g_tuning.config.mode == TUNING_MODE_PER_STAGE && 
         g_tuning.stages && 
         stage_idx >= 0 && 
-        stage_idx < g_tuning.num_stages) {
+        stage_idx < g_tuning.tuned_stage_count) {
         return g_tuning.stages[stage_idx].distance_input;
     }
     
+    // Fall back to global distance
     return g_tuning.global.current_distance;
+}
+
+/**
+ * @brief Apply tuned distances back to stage prefetch configs
+ * 
+ * Call this periodically after profile_fft_end() to propagate tuning
+ * results back to the FFT engine.
+ */
+void apply_tuned_distances(stage_prefetch_t *stages, int n) {
+    if (!stages || g_tuning.config.mode == TUNING_MODE_DISABLED) return;
+    
+    if (g_tuning.config.mode == TUNING_MODE_PER_STAGE && g_tuning.stages) {
+        // Apply per-stage tuned distances
+        int m = (g_tuning.tuned_stage_count < n) ? g_tuning.tuned_stage_count : n;
+        for (int i = 0; i < m; ++i) {
+            int d = g_tuning.stages[i].distance_input;
+            stages[i].distance_input   = d;
+            stages[i].distance_output  = d;
+            stages[i].distance_twiddle = d / 2;
+        }
+        // Fall back to global for remaining stages
+        if (m < n) {
+            int d = g_tuning.global.current_distance;
+            for (int i = m; i < n; ++i) {
+                stages[i].distance_input   = d;
+                stages[i].distance_output  = d;
+                stages[i].distance_twiddle = d / 2;
+            }
+        }
+    } else {
+        // Apply global tuned distance to all stages
+        int d = g_tuning.global.current_distance;
+        for (int i = 0; i < n; ++i) {
+            stages[i].distance_input   = d;
+            stages[i].distance_output  = d;
+            stages[i].distance_twiddle = d / 2;
+        }
+    }
 }
 
 void set_tuning_mode(tuning_mode_t mode) {
@@ -601,9 +724,13 @@ void get_tuning_stats(
     
     if (best_distances_out && max_stages > 0) {
         if (g_tuning.config.mode == TUNING_MODE_PER_STAGE && g_tuning.stages) {
-            int n = (max_stages < g_tuning.num_stages) ? max_stages : g_tuning.num_stages;
+            int n = (max_stages < g_tuning.tuned_stage_count) ? max_stages : g_tuning.tuned_stage_count;
             for (int i = 0; i < n; i++) {
                 best_distances_out[i] = g_tuning.stages[i].best_distance;
+            }
+            // Fill remaining with global
+            for (int i = n; i < max_stages; i++) {
+                best_distances_out[i] = g_tuning.global.best_distance;
             }
         } else {
             for (int i = 0; i < max_stages; i++) {
@@ -629,7 +756,7 @@ void print_tuning_report(void) {
     
     if (g_tuning.config.mode == TUNING_MODE_PER_STAGE && g_tuning.stages) {
         printf("\nPer-Stage Results:\n");
-        for (int i = 0; i < g_tuning.num_stages; i++) {
+        for (int i = 0; i < g_tuning.tuned_stage_count; i++) {
             stage_tuning_state_t *s = &g_tuning.stages[i];
             printf("  Stage %d: distance=%d, throughput=%.2f cycles/elem, phase=%d\n",
                 i, s->best_distance, s->best_throughput, s->tuning_phase);
