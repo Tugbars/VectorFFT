@@ -1,6 +1,8 @@
 #include "highspeedFFT.h"
 #include "real.h"
 #include <math.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 #define M_PI 3.14159265358979323846
 
@@ -64,16 +66,6 @@ void print_real(fft_type *data, int length, const char *label)
         printf("  [%d] %.6f\n", i, data[i]);
     }
     printf("\n");
-}
-
-void free_real_fft(fft_real_object real_obj)
-{
-    // Code to free the real FFT object, e.g., freeing memory allocated for real_obj
-    if (real_obj != NULL)
-    {
-        free(real_obj->cobj); // Example: freeing the underlying complex FFT object
-        free(real_obj);       // Freeing the real FFT object itself
-    }
 }
 
 int main()
@@ -165,7 +157,7 @@ int main()
         printf("\n");
     }
 
-    // **Real FFT Tests**
+    // **Real FFT Tests** - UPDATED FOR UNIFIED API
     int real_lengths[] = {4, 8, 16, 32, 64}; // Even lengths only
     int num_real_tests = sizeof(real_lengths) / sizeof(real_lengths[0]);
 
@@ -177,7 +169,7 @@ int main()
 
         // Allocate memory
         fft_type *real_input = (fft_type *)malloc(N * sizeof(fft_type));
-        fft_data *complex_output = (fft_data *)malloc(N * sizeof(fft_data)); // Full N for symmetry
+        fft_data *complex_output = (fft_data *)malloc((N/2 + 1) * sizeof(fft_data)); // FIXED: N/2+1
         fft_type *real_inverse = (fft_type *)malloc(N * sizeof(fft_type));
         if (!real_input || !complex_output || !real_inverse)
         {
@@ -192,9 +184,9 @@ int main()
         generate_real_signal(real_input, N, freq, amplitude);
         print_real(real_input, N, "Original Real Signal");
 
-        // Initialize and perform real-to-complex FFT
-        fft_real_object r2c = fft_real_init(N, 1);
-        if (!r2c)
+        // FIXED: Create single unified real FFT object (no direction parameter)
+        fft_real_object rfft = fft_real_init(N);
+        if (!rfft)
         {
             fprintf(stderr, "Real FFT initialization failed for N = %d\n", N);
             free(real_input);
@@ -202,21 +194,29 @@ int main()
             free(real_inverse);
             continue;
         }
-        fft_r2c_exec(r2c, real_input, complex_output);
-        print_complex(complex_output, N / 2 + 1, "R2C FFT Output"); // Print unique values
 
-        // Initialize and perform complex-to-real FFT
-        fft_real_object c2r = fft_real_init(N, -1);
-        if (!c2r)
+        // Perform real-to-complex FFT
+        if (fft_r2c_exec(rfft, real_input, complex_output) != 0)
         {
-            fprintf(stderr, "Real IFFT initialization failed for N = %d\n", N);
-            free_real_fft(r2c);
+            fprintf(stderr, "R2C execution failed for N = %d\n", N);
+            fft_real_free(rfft);
             free(real_input);
             free(complex_output);
             free(real_inverse);
             continue;
         }
-        fft_c2r_exec(c2r, complex_output, real_inverse);
+        print_complex(complex_output, N / 2 + 1, "R2C FFT Output");
+
+        // Perform complex-to-real FFT (uses same object!)
+        if (fft_c2r_exec(rfft, complex_output, real_inverse) != 0)
+        {
+            fprintf(stderr, "C2R execution failed for N = %d\n", N);
+            fft_real_free(rfft);
+            free(real_input);
+            free(complex_output);
+            free(real_inverse);
+            continue;
+        }
 
         // Scale inverse output
         for (int i = 0; i < N; i++)
@@ -237,16 +237,15 @@ int main()
             printf("Test failed (MSE exceeds tolerance)\n");
         }
 
-        // Cleanup
-        free_real_fft(r2c);
-        free_real_fft(c2r);
+        // FIXED: Cleanup - single object only
+        fft_real_free(rfft);
         free(real_input);
         free(complex_output);
         free(real_inverse);
         printf("\n");
     }
 
-    // **Error Handling Tests**
+    // **Error Handling Tests** - UPDATED
     printf("=== Error Handling Tests ===\n");
 
     // Complex FFT: Invalid length
@@ -263,28 +262,28 @@ int main()
         printf("Complex FFT: Correctly handled invalid direction (0)\n");
     }
 
+    // FIXED: Real FFT error handling - no direction parameter now
     // Real FFT: Odd length
-    fft_real_object bad_r2c = fft_real_init(5, 1);
+    fft_real_object bad_r2c = fft_real_init(5);
     if (!bad_r2c)
     {
         printf("Real FFT: Correctly handled odd length (5)\n");
     }
 
-    // Real FFT: Invalid direction
-    bad_r2c = fft_real_init(8, 0);
-    if (!bad_r2c)
-    {
-        printf("Real FFT: Correctly handled invalid direction (0)\n");
-    }
-
     // Real FFT: Zero length
-    bad_r2c = fft_real_init(0, 1);
+    bad_r2c = fft_real_init(0);
     if (!bad_r2c)
     {
         printf("Real FFT: Correctly handled invalid length (0)\n");
     }
 
+    // Real FFT: Negative length
+    bad_r2c = fft_real_init(-8);
+    if (!bad_r2c)
+    {
+        printf("Real FFT: Correctly handled negative length (-8)\n");
+    }
+
+    printf("\n=== All Tests Complete ===\n");
     return EXIT_SUCCESS;
 }
-    
-

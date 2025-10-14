@@ -31,11 +31,12 @@
 
 /* ---------------- private struct definitions ---------------- */
 struct fft_conv_plan_s {
-   int N, H;
-    fft_real_object fwd, inv;
+    int N, H;
+    fft_real_object rfft;  // CHANGED: Single unified object (was fwd + inv)
     fft_type *pad1, *pad2, *time;
-   fft_data *spec1, *spec2, *prod;
+    fft_data *spec1, *spec2, *prod;
 };
+
 
 struct fft_conv_kernel_s {
     int N, H;
@@ -262,31 +263,40 @@ static inline void fold_circular(double* restrict y, int N, int P) {
  */
 fft_conv_plan fft_conv_plan_create(int N) {
     if (N <= 0 || (N & 1)) return NULL;
+    
     fft_conv_plan p = (fft_conv_plan)calloc(1, sizeof(*p));
     if (!p) return NULL;
+    
     p->N = N;
     p->H = N / 2;
-    p->fwd = fft_real_init(N, 1);
-    p->inv = fft_real_init(N, -1);
-    if (!p->fwd || !p->inv) {
+    
+    // FIXED: Create single unified real FFT object (no direction parameter)
+    p->rfft = fft_real_init(N);
+    if (!p->rfft) {
         fft_conv_plan_destroy(p);
         return NULL;
     }
+    
     size_t nD = (size_t)N * sizeof(fft_type);
     size_t nC = (size_t)(p->H + 1) * sizeof(fft_data);
+    
     p->pad1 = (fft_type*)aligned_malloc32(nD);
     p->pad2 = (fft_type*)aligned_malloc32(nD);
     p->time = (fft_type*)aligned_malloc32(nD);
     p->spec1 = (fft_data*)aligned_malloc32(nC);
     p->spec2 = (fft_data*)aligned_malloc32(nC);
     p->prod = (fft_data*)aligned_malloc32(nC);
-    if (!p->pad1 || !p->pad2 || !p->time || !p->spec1 || !p->spec2 || !p->prod) {
+    
+    if (!p->pad1 || !p->pad2 || !p->time || 
+        !p->spec1 || !p->spec2 || !p->prod) {
         fft_conv_plan_destroy(p);
         return NULL;
     }
+    
     // Zero-initialize padded inputs
     memset(p->pad1, 0, nD);
     memset(p->pad2, 0, nD);
+    
     return p;
 }
 
@@ -316,8 +326,10 @@ fft_conv_plan fft_conv_plan_create_auto(int len1, int len2, fft_conv_mode mode) 
  */
 void fft_conv_plan_destroy(fft_conv_plan p) {
     if (!p) return;
-    if (p->fwd) fft_real_free(p->fwd);
-    if (p->inv) fft_real_free(p->inv);
+    
+    // FIXED: Free single unified object
+    if (p->rfft) fft_real_free(p->rfft);
+    
     aligned_free32(p->pad1);
     aligned_free32(p->pad2);
     aligned_free32(p->time);
@@ -341,12 +353,17 @@ void fft_conv_plan_destroy(fft_conv_plan p) {
 fft_conv_kernel fft_conv_kernel_create(fft_conv_plan p,
                                        const fft_type* kernel, int kernel_len) {
     if (!p || !kernel || kernel_len <= 0) return NULL;
-    // Prepare pad2 -> spec2, then copy to kernel object
+    
+    // Prepare pad2 -> spec2
     memset(p->pad2, 0, (size_t)p->N * sizeof(fft_type));
     memcpy(p->pad2, kernel, (size_t)kernel_len * sizeof(fft_type));
-    if (fft_r2c_exec(p->fwd, p->pad2, p->spec2) != 0) return NULL;
+    
+    // FIXED: Use unified rfft for R2C
+    if (fft_r2c_exec(p->rfft, p->pad2, p->spec2) != 0) return NULL;
+    
     fft_conv_kernel k = (fft_conv_kernel)calloc(1, sizeof(*k));
     if (!k) return NULL;
+    
     k->N = p->N;
     k->H = p->H;
     k->spec = (fft_data*)aligned_malloc32((size_t)(k->H + 1) * sizeof(fft_data));
@@ -354,6 +371,7 @@ fft_conv_kernel fft_conv_kernel_create(fft_conv_plan p,
         fft_conv_kernel_destroy(k);
         return NULL;
     }
+    
     memcpy(k->spec, p->spec2, (size_t)(k->H + 1) * sizeof(fft_data));
     return k;
 }
@@ -482,29 +500,35 @@ int fft_conv_exec(fft_conv_plan p,
         fprintf(stderr, "Error: Invalid arguments to fft_conv_exec\n");
         return -1;
     }
+    
     if (mode == FFTCONV_LINEAR && !ensure_capacity_for_linear(p->N, lenx, lenh)) {
         fprintf(stderr, "Error: Plan N=%d too small for linear len=%d\n",
                 p->N, lenx + lenh - 1);
         return -1;
     }
+    
     // Pad inputs
     memset(p->pad1, 0, (size_t)p->N * sizeof(fft_type));
     memset(p->pad2, 0, (size_t)p->N * sizeof(fft_type));
     memcpy(p->pad1, x, (size_t)lenx * sizeof(fft_type));
     memcpy(p->pad2, h, (size_t)lenh * sizeof(fft_type));
-    // Forward R2C FFTs
-    if (fft_r2c_exec(p->fwd, p->pad1, p->spec1) != 0 ||
-        fft_r2c_exec(p->fwd, p->pad2, p->spec2) != 0) {
+    
+    // FIXED: Forward R2C FFTs using unified rfft
+    if (fft_r2c_exec(p->rfft, p->pad1, p->spec1) != 0 ||
+        fft_r2c_exec(p->rfft, p->pad2, p->spec2) != 0) {
         fprintf(stderr, "Error: fft_r2c_exec failed\n");
         return -1;
     }
+    
     // Pointwise multiply
     pointwise_multiply(p->spec1, p->spec2, p->prod, p->H);
-    // Inverse C2R FFT
-    if (fft_c2r_exec(p->inv, p->prod, p->time) != 0) {
+    
+    // FIXED: Inverse C2R FFT using unified rfft
+    if (fft_c2r_exec(p->rfft, p->prod, p->time) != 0) {
         fprintf(stderr, "Error: fft_c2r_exec failed\n");
         return -1;
     }
+    
     // Scale by 1/N
     const double invN = 1.0 / (double)p->N;
 #if defined(__AVX2__)
@@ -512,6 +536,7 @@ int fft_conv_exec(fft_conv_plan p,
 #else
     scale_real_scalar(p->time, p->N, invN);
 #endif
+    
     // Output based on mode
     if (mode == FFTCONV_CIRCULAR) {
         const int P = MAX(lenx, lenh);
@@ -549,30 +574,38 @@ int fft_conv_exec_with_kernel(fft_conv_plan p,
         fprintf(stderr, "Error: Invalid arguments to fft_conv_exec_with_kernel\n");
         return -1;
     }
+    
     if (hspec->N != p->N) {
-        fprintf(stderr, "Error: Kernel N=%d does not match plan N=%d\n", hspec->N, p->N);
+        fprintf(stderr, "Error: Kernel N=%d does not match plan N=%d\n", 
+                hspec->N, p->N);
         return -1;
     }
+    
     if (!ensure_capacity_for_linear(p->N, lenx, lenh)) {
         fprintf(stderr, "Error: Plan N=%d too small for linear len=%d\n",
                 p->N, lenx + lenh - 1);
         return -1;
     }
+    
     // Pad input x only
     memset(p->pad1, 0, (size_t)p->N * sizeof(fft_type));
     memcpy(p->pad1, x, (size_t)lenx * sizeof(fft_type));
-    // Forward R2C for x; reuse precomputed kernel spectrum
-    if (fft_r2c_exec(p->fwd, p->pad1, p->spec1) != 0) {
+    
+    // FIXED: Forward R2C for x using unified rfft
+    if (fft_r2c_exec(p->rfft, p->pad1, p->spec1) != 0) {
         fprintf(stderr, "Error: fft_r2c_exec failed\n");
         return -1;
     }
+    
     // Multiply x̂ .* ĥ
     pointwise_multiply(p->spec1, hspec->spec, p->prod, p->H);
-    // Inverse C2R FFT
-    if (fft_c2r_exec(p->inv, p->prod, p->time) != 0) {
+    
+    // FIXED: Inverse C2R FFT using unified rfft
+    if (fft_c2r_exec(p->rfft, p->prod, p->time) != 0) {
         fprintf(stderr, "Error: fft_c2r_exec failed\n");
         return -1;
     }
+    
     // Scale by 1/N
     const double invN = 1.0 / (double)p->N;
 #if defined(__AVX2__)
@@ -580,6 +613,7 @@ int fft_conv_exec_with_kernel(fft_conv_plan p,
 #else
     scale_real_scalar(p->time, p->N, invN);
 #endif
+    
     // Output based on mode
     if (mode == FFTCONV_CIRCULAR) {
         const int P = MAX(lenx, lenh);

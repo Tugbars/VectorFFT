@@ -21,13 +21,14 @@ extern "C" {
  * in Structure-of-Arrays (SoA) format, and a preallocated workspace buffer
  * to eliminate dynamic memory allocation during execution.
  */
-struct fft_real_object_s {
-    int halfN;              /**< Half the signal length (N/2) */
-    fft_object cobj;        /**< Underlying complex FFT object for N/2 */
-    double *tw_re;          /**< Real parts of twiddle factors (length N/2) */
-    double *tw_im;          /**< Imaginary parts of twiddle factors (length N/2) */
-    fft_data *workspace;    /**< Preallocated workspace buffer (length N/2) - NEW */
-};
+typedef struct fft_real_object_s {
+    int halfN;
+    fft_object cobj_forward;  // For R2C
+    fft_object cobj_inverse;  // For C2R
+    double *tw_re;
+    double *tw_im;
+    fft_data *workspace;
+} *fft_real_object;
 
 typedef struct fft_real_object_s* fft_real_object;
 
@@ -41,7 +42,7 @@ typedef struct fft_real_object_s* fft_real_object;
  * @param[in] transform_direction Direction of the transform (+1 for forward, -1 for inverse).
  * @return fft_real_object Pointer to the initialized object, or NULL on failure.
  */
-fft_real_object fft_real_init(int signal_length, int transform_direction);
+fft_real_object fft_real_init(int signal_length);
 
 /**
  * @brief Executes real-to-complex FFT transformation.
