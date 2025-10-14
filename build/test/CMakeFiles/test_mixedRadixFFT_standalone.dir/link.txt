@@ -1,0 +1,3 @@
+"C:\Program Files\CMake\bin\cmake.exe" -E rm -f CMakeFiles\test_mixedRadixFFT_standalone.dir/objects.a
+C:\ProgramData\mingw64\mingw64\bin\ar.exe qc CMakeFiles\test_mixedRadixFFT_standalone.dir/objects.a @CMakeFiles\test_mixedRadixFFT_standalone.dir\objects1.rsp
+C:\ProgramData\mingw64\mingw64\bin\gcc.exe -g -Wl,--whole-archive CMakeFiles\test_mixedRadixFFT_standalone.dir/objects.a -Wl,--no-whole-archive -o test_mixedRadixFFT_standalone.exe -Wl,--out-implib,libtest_mixedRadixFFT_standalone.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\test_mixedRadixFFT_standalone.dir\linkLibs.rsp
