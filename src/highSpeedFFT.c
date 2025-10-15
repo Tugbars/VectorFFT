@@ -1242,14 +1242,17 @@ static ALWAYS_INLINE void store4_aos(fft_data *p, __m512d v)
  */
 static ALWAYS_INLINE __m256d cmul_avx2_aos(__m256d a, __m256d b)
 {
-    // a = [ar0, ai0, ar1, ai1], b = [br0, bi0, br1, bi1]
-    __m256d brbr_bibi = b;                              // [br0, bi0, br1, bi1]
-    __m256d b_swapped = _mm256_permute_pd(b, 0b0101);   // [bi0, br0, bi1, br1]
-    __m256d ar_ai = a;                                  // [ar0, ai0, ar1, ai1]
-    __m256d ai_ar = _mm256_permute_pd(a, 0b0101);       // [ai0, ar0, ai1, ar1]
-    __m256d real_im1 = _mm256_mul_pd(ar_ai, brbr_bibi); // [ar0*br0, ai0*bi0, ar1*br1, ai1*bi1]
-    __m256d im_real2 = _mm256_mul_pd(ai_ar, b_swapped); // [ai0*bi0, ar0*br0, ai1*bi1, ar1*br1]
-    return _mm256_addsub_pd(real_im1, im_real2);        // [ar0*br0 - ai0*bi0, ar0*bi0 + ai0*br0, ...]
+    __m256d ar_ai   = a;                              // [ar0, ai0, ar1, ai1]
+    __m256d ai_ar   = _mm256_permute_pd(a, 0b0101);   // [ai0, ar0, ai1, ar1]
+    __m256d br_bi   = b;                              // [br0, bi0, br1, bi1]
+    __m256d bi_br   = _mm256_permute_pd(b, 0b0101);   // [bi0, br0, bi1, br1]
+
+    /* real = ar*br - ai*bi ,  imag = ar*bi + ai*br */
+    __m256d prod1 = _mm256_mul_pd(ar_ai, br_bi);      // [ar*br, ai*bi, ...]
+    __m256d prod2 = _mm256_mul_pd(ai_ar, bi_br);      // [ai*bi, ar*br, ...]
+
+    /* _mm256_addsub_pd(prod2, prod1)  ->  [prod1 - prod2, prod1 + prod2] */
+    return _mm256_addsub_pd(prod1, prod2);
 }
 
 /**
