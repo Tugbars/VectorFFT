@@ -1298,11 +1298,20 @@ static ALWAYS_INLINE __m256d cmul_avx2_aos(__m256d a, __m256d b)
 static ALWAYS_INLINE __m128d cmul_sse2_aos(__m128d a, __m128d b)
 {
     // a = [ar, ai], b = [br, bi]
-    __m128d real_im1 = _mm_mul_pd(a, b);         // [ar*br, ai*bi]
-    __m128d ai_ar = _mm_shuffle_pd(a, a, 0b01);  // [ai, ar]
-    __m128d bi_br = _mm_shuffle_pd(b, b, 0b01);  // [bi, br]
-    __m128d im_real2 = _mm_mul_pd(ai_ar, bi_br); // [ai*bi, ar*br]
-    return _mm_addsub_pd(real_im1, im_real2);    // [ar*br - ai*bi, ar*bi + ai*br]
+    __m128d brbr = _mm_shuffle_pd(b, b, 0b00);      // [br, br]
+    __m128d bibi = _mm_shuffle_pd(b, b, 0b11);      // [bi, bi]
+
+    __m128d p_br = _mm_mul_pd(a, brbr);             // [ar*br, ai*br]
+    __m128d p_bi = _mm_mul_pd(a, bibi);             // [ar*bi, ai*bi]
+    __m128d p_bi_sw = _mm_shuffle_pd(p_bi, p_bi, 0b01); // [ai*bi, ar*bi]
+
+    // diff = [ar*br - ai*bi,  ai*br - ar*bi]
+    __m128d diff = _mm_sub_pd(p_br, p_bi_sw);
+    // sum  = [ar*br + ai*bi,  ai*br + ar*bi]  -> sum.high is the desired imag
+    __m128d sum  = _mm_add_pd(p_br, p_bi_sw);
+
+    // result = [ diff.low (re),  sum.high (im) ]
+    return _mm_move_sd(sum, diff);
 }
 
 /**
