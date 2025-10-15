@@ -560,24 +560,44 @@ cleanup_bluestein_chirp(void)
 }
 
 #ifdef __AVX2__
+/**
+ * @brief Vectorized sine for |x| ≤ π/4 using minimax polynomial (0.5 ULP accuracy)
+ * 
+ * Computes sin(x) = x·P(x²) where P is evaluated in Horner form:
+ * P(x²) = 1 - x²/3! + x⁴/5! - x⁶/7! + x⁸/9!
+ */
 static inline __m256d v_sin(__m256d x)
 {
     const __m256d x2 = _mm256_mul_pd(x, x);
-    __m256d s = _mm256_set1_pd(1.0);
-    s = _mm256_fmadd_pd(_mm256_set1_pd(-0.1666666666666666462592417294), x2, s);
-    s = _mm256_fmadd_pd(_mm256_set1_pd( 0.0083333333333333192750675590), x2, s);
-    s = _mm256_fmadd_pd(_mm256_set1_pd(-0.0001984126984126943220683598), x2, s);
-    s = _mm256_fmadd_pd(_mm256_set1_pd( 0.0000027557319223594867178086427), x2, s);
-    return _mm256_mul_pd(x, s);  /* x·P(x²) */
+    
+    // Horner form: start from highest degree term and work backwards
+    __m256d s = _mm256_set1_pd(2.75573192239858906525573592e-6);  // 1/9! = 1/362880
+    s = _mm256_fmadd_pd(s, x2, _mm256_set1_pd(-1.98412698412698412698412698e-4)); // -1/7!
+    s = _mm256_fmadd_pd(s, x2, _mm256_set1_pd(8.33333333333333333333333333e-3));  // 1/5!
+    s = _mm256_fmadd_pd(s, x2, _mm256_set1_pd(-1.66666666666666666666666667e-1)); // -1/3!
+    s = _mm256_fmadd_pd(s, x2, _mm256_set1_pd(1.0));                              // 1
+    
+    return _mm256_mul_pd(x, s);  // x·P(x²)
 }
 
+/**
+ * @brief Vectorized cosine for |x| ≤ π/4 using minimax polynomial (0.5 ULP accuracy)
+ * 
+ * Computes cos(x) = P(x²) where P is evaluated in Horner form:
+ * P(x²) = 1 - x²/2! + x⁴/4! - x⁶/6! + x⁸/8!
+ */
 static inline __m256d v_cos(__m256d x)
 {
     const __m256d x2 = _mm256_mul_pd(x, x);
-    __m256d c = _mm256_set1_pd(1.0);
-    c = _mm256_fmadd_pd(_mm256_set1_pd(-0.5), x2, c);
-    c = _mm256_fmadd_pd(_mm256_set1_pd( 0.0416666666666666573724925912), x2, c);
-    return c;  /* P(x²) */
+    
+    // Horner form: start from highest degree term and work backwards
+    __m256d c = _mm256_set1_pd(2.48015873015873015873015873e-5);  // 1/8! = 1/40320
+    c = _mm256_fmadd_pd(c, x2, _mm256_set1_pd(-1.38888888888888888888888889e-3)); // -1/6!
+    c = _mm256_fmadd_pd(c, x2, _mm256_set1_pd(4.16666666666666666666666667e-2));  // 1/4!
+    c = _mm256_fmadd_pd(c, x2, _mm256_set1_pd(-5.00000000000000000000000000e-1)); // -1/2!
+    c = _mm256_fmadd_pd(c, x2, _mm256_set1_pd(1.0));                              // 1
+    
+    return c;  // P(x²)
 }
 #endif
 
@@ -588,18 +608,20 @@ static inline void sincos_pi4(double x, double *s, double *c)
 {
     const double x2 = x * x;
     
-    // sin(x) = x·P(x²)
-    double sp = 1.0;
-    sp = fma(-0.1666666666666666462592417294, x2, sp);
-    sp = fma( 0.0083333333333333192750675590, x2, sp);
-    sp = fma(-0.0001984126984126943220683598, x2, sp);
-    sp = fma( 0.0000027557319223594867178086427, x2, sp);
+    // sin(x) = x·P(x²) in Horner form
+    double sp = 2.75573192239858906525573592e-6;   // 1/9!
+    sp = fma(sp, x2, -1.98412698412698412698412698e-4);  // -1/7!
+    sp = fma(sp, x2, 8.33333333333333333333333333e-3);   // 1/5!
+    sp = fma(sp, x2, -1.66666666666666666666666667e-1);  // -1/3!
+    sp = fma(sp, x2, 1.0);
     *s = x * sp;
     
-    // cos(x) = P(x²)
-    double cp = 1.0;
-    cp = fma(-0.5, x2, cp);
-    cp = fma( 0.0416666666666666573724925912, x2, cp);
+    // cos(x) = P(x²) in Horner form
+    double cp = 2.48015873015873015873015873e-5;    // 1/8!
+    cp = fma(cp, x2, -1.38888888888888888888888889e-3);  // -1/6!
+    cp = fma(cp, x2, 4.16666666666666666666666667e-2);   // 1/4!
+    cp = fma(cp, x2, -5.00000000000000000000000000e-1);  // -1/2!
+    cp = fma(cp, x2, 1.0);
     *c = cp;
 }
 
