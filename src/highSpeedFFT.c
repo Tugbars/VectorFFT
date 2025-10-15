@@ -806,142 +806,122 @@ static void cleanup_bluestein_chirp_body(void)
 
 static void build_twiddles_linear(fft_data *tw, int N)
 {
-    //==========================================================================
-    // STEP 1: Exact cardinal angles (0°, 90°, 180°, 270°)
-    //==========================================================================
+    // Use exact values for cardinal points to eliminate rounding
     tw[0].re = 1.0;
     tw[0].im = 0.0;
 
-    if (N > 1)
+    if (N % 4 == 0)
+    {
+        int quarter = N / 4;
+        tw[quarter].re = 0.0;
+        tw[quarter].im = -1.0;
+
+        if (N > 4)
+        {
+            tw[3 * quarter].re = 0.0;
+            tw[3 * quarter].im = 1.0;
+        }
+    }
+
+    if (N % 2 == 0)
     {
         tw[N / 2].re = -1.0;
         tw[N / 2].im = 0.0;
     }
 
-    if (N > 2)
-    {
-        tw[N / 4].re = 0.0;
-        tw[N / 4].im = -1.0;
-
-        if (N > 3)
-        {
-            tw[3 * N / 4].re = 0.0;
-            tw[3 * N / 4].im = 1.0;
-        }
-    }
-
-    //==========================================================================
-    // STEP 2: Compute first quadrant with 0.5-ULP minimax polynomials
-    // Valid for |x| ≤ π/4; first quadrant angles satisfy this for all N ≥ 4
-    // FMA throughout minimizes intermediate rounding errors
-    //==========================================================================
     const double theta = -2.0 * M_PI / (double)N;
-    const int quarter = N / 4;
+    const int half = N / 2;
 
-    int m = 1;
+    // Compute first half with maximum precision
+    int k = 1;
 
 #ifdef __AVX2__
-    // AVX2+FMA path: Process 4 angles at once with 0.5-ULP precision
     const __m256d vtheta = _mm256_set1_pd(theta);
 
-    for (; m + 3 < quarter; m += 4)
+    // Vectorized computation with FMA for minimal rounding
+    for (; k + 3 < half; k += 4)
     {
-        // Compute indices: [m, m+1, m+2, m+3]
-        __m256d vm = _mm256_set_pd((double)(m + 3), (double)(m + 2),
-                                   (double)(m + 1), (double)m);
-
-        // FMA: ang = theta * m (compiler folds into single FMA)
-        __m256d vang = _mm256_mul_pd(vtheta, vm);
-
-        // Compute cos/sin with 0.5-ULP minimax polynomials
-        __m256d vc = v_cos(vang);
-        __m256d vs = v_sin(vang);
-
-        // Store interleaved [re0, im0, re1, im1, re2, im2, re3, im3]
-        // Layout: tw[m..m+3] = [{re,im}, {re,im}, {re,im}, {re,im}]
-        double *p = (double *)&tw[m];
-
-        // Extract and store in AoS format
-        double re[4], im[4];
-        _mm256_storeu_pd(re, vc);
-        _mm256_storeu_pd(im, vs);
-
-        for (int i = 0; i < 4; ++i)
+        // Skip cardinal points
+        bool skip[4] = {false, false, false, false};
+        if (N % 4 == 0)
         {
-            tw[m + i].re = re[i];
-            tw[m + i].im = im[i];
+            int quarter = N / 4;
+            for (int j = 0; j < 4; j++)
+            {
+                if ((k + j) == quarter || (k + j) == half)
+                    skip[j] = true;
+            }
+        }
+
+        __m256d vk = _mm256_set_pd((double)(k + 3), (double)(k + 2),
+                                   (double)(k + 1), (double)k);
+        __m256d vang = _mm256_mul_pd(vtheta, vk);
+
+        // For angles in [-π/4, π/4], use minimax polynomials
+        double angles[4];
+        _mm256_storeu_pd(angles, vang);
+
+        for (int j = 0; j < 4; j++)
+        {
+            if (!skip[j])
+            {
+                double ang = angles[j];
+
+                // Use high-precision sin/cos
+                if (fabs(ang) <= M_PI / 4.0)
+                {
+                    // Use your 0.5-ULP minimax polynomials
+                    sincos_pi4(ang, &tw[k + j].im, &tw[k + j].re);
+                }
+                else
+                {
+                    // Use system sin/cos with FMA if available
+                    tw[k + j].re = cos(ang);
+                    tw[k + j].im = sin(ang);
+                }
+            }
         }
     }
 #endif
 
-    // Scalar cleanup with same 0.5-ULP polynomial
-    for (; m < quarter; ++m)
+    // Scalar path with minimal rounding
+    for (; k < half; k++)
     {
-        const double ang = theta * (double)m;
-        sincos_pi4(ang, &tw[m].im, &tw[m].re);
-    }
+        // Skip exact cardinal points
+        if (N % 4 == 0 && k == N / 4)
+            continue;
 
-    //==========================================================================
-    // STEP 3: Derive remaining quadrants using vectorized symmetry
-    // Symmetry operations are exact (no rounding); inherit 0.5 ULP from Q1 only
-    //==========================================================================
-    m = 1;
+        double angle = theta * k;
 
-#ifdef __AVX2__
-    // AVX2 path: Process 2 complex values (4 doubles) per iteration
-    for (; m + 1 < quarter; m += 2)
-    {
-        // Load 2 complex values from first quadrant: [re0, im0, re1, im1]
-        __m256d v_q1 = _mm256_loadu_pd(&tw[m].re);
-
-        // Quadrant II: [im, -re] for each complex
-        if (quarter + m + 1 < N / 2)
-        {
-            __m256d v_q2 = _mm256_permute_pd(v_q1, 0b0101); // [im0, re0, im1, re1]
-            v_q2 = _mm256_xor_pd(v_q2, _mm256_set_pd(0.0, -0.0, 0.0, -0.0));
-            _mm256_storeu_pd(&tw[quarter + m].re, v_q2);
-        }
-
-        // Quadrant III: [-re, -im] for each complex
-        if (N / 2 + m + 1 < 3 * quarter)
-        {
-            __m256d v_q3 = _mm256_xor_pd(v_q1, _mm256_set1_pd(-0.0));
-            _mm256_storeu_pd(&tw[N / 2 + m].re, v_q3);
-        }
-
-        // Quadrant IV: [-im, re] for each complex
-        if (3 * quarter + m + 1 < N)
-        {
-            __m256d v_q4 = _mm256_permute_pd(v_q1, 0b0101); // [im0, re0, im1, re1]
-            v_q4 = _mm256_xor_pd(v_q4, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
-            _mm256_storeu_pd(&tw[3 * quarter + m].re, v_q4);
-        }
-    }
+        // Use sincos if available for atomic computation
+#ifdef __GNUC__
+        sincos(angle, &tw[k].im, &tw[k].re);
+#else
+        tw[k].re = cos(angle);
+        tw[k].im = sin(angle);
 #endif
+    }
 
-    // Scalar cleanup for remaining elements
-    for (; m < quarter; ++m)
+    // Second half uses exact conjugate symmetry (no additional rounding)
+    for (k = half + 1; k < N; k++)
     {
-        // Quadrant II: [im, -re]
-        if (quarter + m < N / 2)
-        {
-            tw[quarter + m].re = tw[m].im;
-            tw[quarter + m].im = -tw[m].re;
-        }
+        int mirror = N - k;
+        tw[k].re = tw[mirror].re;  // Exact copy
+        tw[k].im = -tw[mirror].im; // Exact negation
+    }
 
-        // Quadrant III: [-re, -im]
-        if (N / 2 + m < 3 * quarter)
-        {
-            tw[N / 2 + m].re = -tw[m].re;
-            tw[N / 2 + m].im = -tw[m].im;
-        }
-
-        // Quadrant IV: [-im, re]
-        if (3 * quarter + m < N)
-        {
-            tw[3 * quarter + m].re = -tw[m].im;
-            tw[3 * quarter + m].im = tw[m].re;
-        }
+    // Special handling for N=8 exact values
+    if (N == 8)
+    {
+        tw[1].re = 0.7071067811865476; // sqrt(2)/2 to full precision
+        tw[1].im = -0.7071067811865476;
+        tw[3].re = -0.7071067811865476;
+        tw[3].im = -0.7071067811865476;
+        // Mirror for second half
+        tw[5].re = tw[3].re;
+        tw[5].im = -tw[3].im;
+        tw[7].re = tw[1].re;
+        tw[7].im = -tw[1].im;
     }
 }
 
@@ -974,6 +954,7 @@ static void build_twiddles_linear(fft_data *tw, int N)
  */
 fft_object fft_init(int signal_length, int transform_direction)
 {
+
     // Step 1: Validate inputs
     if (signal_length <= 0 || (transform_direction != 1 && transform_direction != -1))
     {
@@ -1032,6 +1013,11 @@ fft_object fft_init(int signal_length, int transform_direction)
         int execution_radices[32];
         int num_radices = get_fft_execution_radices(signal_length, execution_radices,
                                                     prime_factors, num_prime_factors);
+        printf("FFT N=%d, radices: ", signal_length);
+        for (int i = 0; i < num_radices; i++)
+        {
+            printf("%d ", execution_radices[i]);
+        }
 
         // Check if it's a single radix (all radices are the same)
         is_single_radix = true;
@@ -2271,24 +2257,35 @@ static void mixed_radix_dit_rec(
         //======================================================================
         // RADIX-3 BUTTERFLY (DIT) - FFTW-STYLE OPTIMIZED
         //
-        // Stays in AoS throughout, uses 2x or 4x unrolling for better ILP.
-        // Eliminates all AoS ↔ SoA conversions.
+        // Uses Rader's algorithm with symmetry exploitation:
+        // Y_0 = a + b + c
+        // Y_1 = a + (b+c)*C1 + i*sgn*(b-c)*S1
+        // Y_2 = a + (b+c)*C2 + i*sgn*(b-c)*S2
+        //
+        // Where C1 = cos(2π/3) = -0.5, S1 = sin(2π/3) = √3/2
+        //       C2 = cos(4π/3) = -0.5, S2 = sin(4π/3) = -√3/2
+        //
+        // Optimization: C1 = C2 = -0.5, so factor out common term
         //======================================================================
 
         const int third = sub_len;
         int k = 0;
 
-#ifdef __AVX2__
-        //------------------------------------------------------------------
-        // AVX2 PATH: 4x unrolled, pure AoS, no conversions
-        //------------------------------------------------------------------
-        const __m256d vhalf = _mm256_set1_pd(0.5);
-        const __m256d vsqrt3_2 = _mm256_set1_pd(C3_SQRT3BY2);
+        // Constants
+        const double C_HALF = -0.5;                  // cos(2π/3) = cos(4π/3)
+        const double S_SQRT3_2 = 0.8660254037844386; // √3/2
 
-        // Precompute rotation masks for ±i multiplication
-        const __m256d mask_neg_i = _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // multiply by -i
-        const __m256d mask_pos_i = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // multiply by +i
-        const __m256d rot_mask = (transform_sign == 1) ? mask_neg_i : mask_pos_i;
+#ifdef __AVX2__
+        //----------------------------------------------------------------------
+        // AVX2 PATH: 8x unrolling, pure AoS
+        //----------------------------------------------------------------------
+        const __m256d v_half = _mm256_set1_pd(C_HALF);
+        const __m256d v_sqrt3_2 = _mm256_set1_pd(S_SQRT3_2);
+
+        // Precompute rotation mask for ±i multiplication
+        const __m256d rot_mask = (transform_sign == 1)
+                                     ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)  // Forward: multiply by -i
+                                     : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // Inverse: multiply by +i
 
         for (; k + 7 < third; k += 8)
         {
@@ -2320,7 +2317,7 @@ static void mixed_radix_dit_rec(
             __m256d c3 = load2_aos(&sub_outputs[k + 6 + 2 * third], &sub_outputs[k + 7 + 2 * third]);
 
             //==================================================================
-            // Load twiddles W^k and W^{2k} (k-major: interleaved pairs)
+            // Load twiddles W^k and W^{2k} (k-major: stage_tw[2k], stage_tw[2k+1])
             //==================================================================
             __m256d w1_0 = load2_aos(&stage_tw[2 * (k + 0)], &stage_tw[2 * (k + 1)]);
             __m256d w1_1 = load2_aos(&stage_tw[2 * (k + 2)], &stage_tw[2 * (k + 3)]);
@@ -2345,20 +2342,28 @@ static void mixed_radix_dit_rec(
             __m256d c2_2 = cmul_avx2_aos(c2, w2_2);
             __m256d c2_3 = cmul_avx2_aos(c3, w2_3);
 
-//==================================================================
-// Radix-3 butterfly computation (8 butterflies in parallel)
-//==================================================================
-#define RADIX3_BUTTERFLY_AVX2(a, b2, c2, y0, y1, y2)                \
-    {                                                               \
-        __m256d sum = _mm256_add_pd(b2, c2);                        \
-        __m256d dif = _mm256_sub_pd(b2, c2);                        \
-        y0 = _mm256_add_pd(a, sum);                                 \
-        __m256d temp = _mm256_sub_pd(a, _mm256_mul_pd(sum, vhalf)); \
-        __m256d dif_swp = _mm256_permute_pd(dif, 0b0101);           \
-        __m256d rot90 = _mm256_xor_pd(dif_swp, rot_mask);           \
-        __m256d rot = _mm256_mul_pd(rot90, vsqrt3_2);               \
-        y1 = _mm256_add_pd(temp, rot);                              \
-        y2 = _mm256_sub_pd(temp, rot);                              \
+            //==================================================================
+            // Radix-3 butterfly computation (8 butterflies in parallel)
+            //
+            // sum = b2 + c2
+            // dif = b2 - c2
+            // Y_0 = a + sum
+            // common = a - 0.5 * sum
+            // Y_1 = common + i*sgn * √3/2 * dif
+            // Y_2 = common - i*sgn * √3/2 * dif
+            //==================================================================
+
+#define RADIX3_BUTTERFLY_AVX2(a, b2, c2, y0, y1, y2)          \
+    {                                                         \
+        __m256d sum = _mm256_add_pd(b2, c2);                  \
+        __m256d dif = _mm256_sub_pd(b2, c2);                  \
+        y0 = _mm256_add_pd(a, sum);                           \
+        __m256d common = FMADD(v_half, sum, a);               \
+        __m256d dif_swp = _mm256_permute_pd(dif, 0b0101);     \
+        __m256d rot90 = _mm256_xor_pd(dif_swp, rot_mask);     \
+        __m256d scaled_rot = _mm256_mul_pd(rot90, v_sqrt3_2); \
+        y1 = _mm256_add_pd(common, scaled_rot);               \
+        y2 = _mm256_sub_pd(common, scaled_rot);               \
     }
 
             __m256d y0_0, y1_0, y2_0;
@@ -2374,7 +2379,7 @@ static void mixed_radix_dit_rec(
 #undef RADIX3_BUTTERFLY_AVX2
 
             //==================================================================
-            // Store results (pure AoS, no conversions!)
+            // Store results (pure AoS)
             //==================================================================
             STOREU_PD(&output_buffer[k + 0].re, y0_0);
             STOREU_PD(&output_buffer[k + 2].re, y0_1);
@@ -2392,13 +2397,9 @@ static void mixed_radix_dit_rec(
             STOREU_PD(&output_buffer[k + 6 + 2 * third].re, y2_3);
         }
 
-        //------------------------------------------------------------------
-        // Cleanup: 2x unrolling for remaining butterflies
-        //------------------------------------------------------------------
-        const __m256d rot_mask_final = (transform_sign == 1)
-                                           ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)
-                                           : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
-
+        //----------------------------------------------------------------------
+        // Cleanup: 2x unrolling
+        //----------------------------------------------------------------------
         for (; k + 1 < third; k += 2)
         {
             if (k + 8 < third)
@@ -2422,14 +2423,14 @@ static void mixed_radix_dit_rec(
             __m256d dif = _mm256_sub_pd(b2, c2);
 
             __m256d y0 = _mm256_add_pd(a, sum);
-            __m256d temp = _mm256_sub_pd(a, _mm256_mul_pd(sum, vhalf));
+            __m256d common = FMADD(v_half, sum, a);
 
             __m256d dif_swp = _mm256_permute_pd(dif, 0b0101);
-            __m256d rot90 = _mm256_xor_pd(dif_swp, rot_mask_final);
-            __m256d rot = _mm256_mul_pd(rot90, vsqrt3_2);
+            __m256d rot90 = _mm256_xor_pd(dif_swp, rot_mask);
+            __m256d scaled_rot = _mm256_mul_pd(rot90, v_sqrt3_2);
 
-            __m256d y1 = _mm256_add_pd(temp, rot);
-            __m256d y2 = _mm256_sub_pd(temp, rot);
+            __m256d y1 = _mm256_add_pd(common, scaled_rot);
+            __m256d y2 = _mm256_sub_pd(common, scaled_rot);
 
             STOREU_PD(&output_buffer[k].re, y0);
             STOREU_PD(&output_buffer[k + third].re, y1);
@@ -2437,43 +2438,63 @@ static void mixed_radix_dit_rec(
         }
 #endif // __AVX2__
 
-        //------------------------------------------------------------------
+        //----------------------------------------------------------------------
         // SSE2 TAIL: Handle remaining 0..1 elements
-        //------------------------------------------------------------------
-        const __m128d vhalf128 = _mm_set1_pd(0.5);
-        const __m128d vsqrt3_128 = _mm_set1_pd(C3_SQRT3BY2);
-
+        //----------------------------------------------------------------------
         for (; k < third; ++k)
         {
-            __m128d a = LOADU_SSE2(&sub_outputs[k].re);
-            __m128d b = LOADU_SSE2(&sub_outputs[k + third].re);
-            __m128d c = LOADU_SSE2(&sub_outputs[k + 2 * third].re);
+            // Load inputs
+            fft_data a = sub_outputs[k];
+            fft_data b = sub_outputs[k + third];
+            fft_data c = sub_outputs[k + 2 * third];
 
-            __m128d w1 = LOADU_SSE2(&stage_tw[2 * k].re);
-            __m128d w2 = LOADU_SSE2(&stage_tw[2 * k + 1].re);
+            // Load twiddles
+            fft_data w1 = stage_tw[2 * k];
+            fft_data w2 = stage_tw[2 * k + 1];
 
-            __m128d b2 = cmul_sse2_aos(b, w1);
-            __m128d c2 = cmul_sse2_aos(c, w2);
+            // Twiddle multiply
+            double b2r = b.re * w1.re - b.im * w1.im;
+            double b2i = b.re * w1.im + b.im * w1.re;
 
-            __m128d sum = _mm_add_pd(b2, c2);
-            __m128d dif = _mm_sub_pd(b2, c2);
+            double c2r = c.re * w2.re - c.im * w2.im;
+            double c2i = c.re * w2.im + c.im * w2.re;
 
-            __m128d y0 = _mm_add_pd(a, sum);
-            STOREU_SSE2(&output_buffer[k].re, y0);
+            // Radix-3 butterfly
+            double sumr = b2r + c2r;
+            double sumi = b2i + c2i;
+            double difr = b2r - c2r;
+            double difi = b2i - c2i;
 
-            __m128d temp = _mm_sub_pd(a, _mm_mul_pd(sum, vhalf128));
+            // Y_0 = a + sum
+            output_buffer[k].re = a.re + sumr;
+            output_buffer[k].im = a.im + sumi;
 
-            __m128d swp = _mm_shuffle_pd(dif, dif, 0b01);
-            __m128d rot90 = (transform_sign == 1)
-                                ? _mm_xor_pd(swp, _mm_set_pd(-0.0, 0.0))
-                                : _mm_xor_pd(swp, _mm_set_pd(0.0, -0.0));
-            __m128d rot = _mm_mul_pd(rot90, vsqrt3_128);
+            // common = a - 0.5 * sum
+            double commonr = a.re + C_HALF * sumr;
+            double commoni = a.im + C_HALF * sumi;
 
-            __m128d y1 = _mm_add_pd(temp, rot);
-            __m128d y2 = _mm_sub_pd(temp, rot);
+            // scaled_rot = i*sgn * √3/2 * dif
+            double scaled_rotr, scaled_roti;
+            if (transform_sign == 1)
+            {
+                // Forward: multiply by -i
+                scaled_rotr = S_SQRT3_2 * difi;
+                scaled_roti = -S_SQRT3_2 * difr;
+            }
+            else
+            {
+                // Inverse: multiply by +i
+                scaled_rotr = -S_SQRT3_2 * difi;
+                scaled_roti = S_SQRT3_2 * difr;
+            }
 
-            STOREU_SSE2(&output_buffer[k + third].re, y1);
-            STOREU_SSE2(&output_buffer[k + 2 * third].re, y2);
+            // Y_1 = common + scaled_rot
+            output_buffer[k + third].re = commonr + scaled_rotr;
+            output_buffer[k + third].im = commoni + scaled_roti;
+
+            // Y_2 = common - scaled_rot
+            output_buffer[k + 2 * third].re = commonr - scaled_rotr;
+            output_buffer[k + 2 * third].im = commoni - scaled_roti;
         }
     }
     else if (radix == 4)
@@ -5012,24 +5033,19 @@ static void mixed_radix_dit_rec(
             }
         }
     }
-
+    // Corrected Radix-32 Implementation
     else if (radix == 32)
     {
         //==========================================================================
-        // RADIX-32 BUTTERFLY - 4×8 DECOMPOSITION (CORRECTED VERSION)
-        //
-        // Strategy: 32 = 4 × 8
-        // After first radix-4, apply W_32^{j*g} twiddles (NOT W_4!)
-        // Then radix-8 on each octave
+        // RADIX-32 BUTTERFLY - 4×8 DECOMPOSITION (FFTW STYLE)
         //==========================================================================
-
         const int thirtysecond = sub_len;
         int k = 0;
 
 #ifdef __AVX2__
-        //----------------------------------------------------------------------
-        // Precompute W_32 twiddle tables for Stage 2.5 (OUTSIDE loop)
-        //----------------------------------------------------------------------
+        //--------------------------------------------------------------------------
+        // Precompute W_32 twiddle tables for intermediate stage
+        //--------------------------------------------------------------------------
         __m256d W32_jg[3][8];
         for (int j = 1; j <= 3; ++j)
         {
@@ -5041,26 +5057,22 @@ static void mixed_radix_dit_rec(
             }
         }
 
-        const __m256d rot_mask = (transform_sign == 1)
-                                     ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)
-                                     : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
-
-        //----------------------------------------------------------------------
+        //--------------------------------------------------------------------------
         // Main loop: 8x unrolling
-        //----------------------------------------------------------------------
+        //--------------------------------------------------------------------------
         for (; k + 7 < thirtysecond; k += 8)
         {
+            // Prefetching
             if (k + 16 < thirtysecond)
             {
                 _mm_prefetch((const char *)&sub_outputs[k + 16].re, _MM_HINT_T0);
                 _mm_prefetch((const char *)&stage_tw[31 * (k + 16)].re, _MM_HINT_T0);
             }
 
-            //==================================================================
+            //======================================================================
             // Load all 32 lanes
-            //==================================================================
+            //======================================================================
             __m256d x[32][4];
-
             for (int lane = 0; lane < 32; ++lane)
             {
                 x[lane][0] = load2_aos(&sub_outputs[k + 0 + lane * thirtysecond],
@@ -5073,9 +5085,9 @@ static void mixed_radix_dit_rec(
                                        &sub_outputs[k + 7 + lane * thirtysecond]);
             }
 
-            //==================================================================
+            //======================================================================
             // Stage 1: Apply input twiddles W^{jk}
-            //==================================================================
+            //======================================================================
             for (int lane = 1; lane < 32; ++lane)
             {
                 __m256d tw0 = load2_aos(&stage_tw[31 * (k + 0) + (lane - 1)],
@@ -5093,9 +5105,9 @@ static void mixed_radix_dit_rec(
                 x[lane][3] = cmul_avx2_aos(x[lane][3], tw3);
             }
 
-            //==================================================================
+            //======================================================================
             // Stage 2: First radix-4 (8 groups, stride 8)
-            //==================================================================
+            //======================================================================
             for (int g = 0; g < 8; ++g)
             {
                 for (int b = 0; b < 4; ++b)
@@ -5106,9 +5118,9 @@ static void mixed_radix_dit_rec(
                 }
             }
 
-            //==================================================================
-            // Stage 2.5: Apply intermediate twiddles W_32^{j*g} (CORRECTED!)
-            //==================================================================
+            //======================================================================
+            // Stage 2.5: Apply intermediate twiddles W_32^{j*g}
+            //======================================================================
             for (int g = 0; g < 8; ++g)
             {
                 for (int j = 1; j <= 3; ++j)
@@ -5122,97 +5134,68 @@ static void mixed_radix_dit_rec(
                 }
             }
 
-            //==================================================================
-            // Stage 3: Radix-8 on each octave
-            //==================================================================
+            //======================================================================
+            // Stage 3: Radix-8 on each octave (CORRECTED)
+            //======================================================================
             for (int octave = 0; octave < 4; ++octave)
             {
                 int base = 8 * octave;
 
                 for (int b = 0; b < 4; ++b)
                 {
-                    // First radix-4 on evens
+                    // Radix-8 = 2×4 decomposition
+
+                    // First radix-4 on evens [0,2,4,6]
                     __m256d e[4];
-                    radix4_butterfly_aos(&x[base][b], &x[base + 2][b],
-                                         &x[base + 4][b], &x[base + 6][b],
-                                         transform_sign);
                     e[0] = x[base][b];
                     e[1] = x[base + 2][b];
                     e[2] = x[base + 4][b];
                     e[3] = x[base + 6][b];
 
-                    // Second radix-4 on odds
+                    radix4_butterfly_aos(&e[0], &e[1], &e[2], &e[3], transform_sign);
+
+                    // Second radix-4 on odds [1,3,5,7]
                     __m256d o[4];
-                    radix4_butterfly_aos(&x[base + 1][b], &x[base + 3][b],
-                                         &x[base + 5][b], &x[base + 7][b],
-                                         transform_sign);
                     o[0] = x[base + 1][b];
                     o[1] = x[base + 3][b];
                     o[2] = x[base + 5][b];
                     o[3] = x[base + 7][b];
 
-                    // Apply W_8 twiddles
-                    const double c8 = 0.7071067811865476;
+                    radix4_butterfly_aos(&o[0], &o[1], &o[2], &o[3], transform_sign);
 
-                    // o[1] *= W_8^1
+                    // Apply W_8 twiddles to odd results
+                    const __m256d c8v = _mm256_set1_pd(0.7071067811865476); // √2/2
+
+                    // o[1] *= W_8^1 = (√2/2)(1 - i*sgn)
                     {
-                        __m256d real = _mm256_unpacklo_pd(o[1], o[1]);
-                        __m256d imag = _mm256_unpackhi_pd(o[1], o[1]);
-
-                        if (transform_sign == 1)
-                        {
-                            __m256d new_r = _mm256_mul_pd(_mm256_add_pd(real, imag), _mm256_set1_pd(c8));
-                            __m256d new_i = _mm256_mul_pd(_mm256_sub_pd(imag, real), _mm256_set1_pd(c8));
-                            o[1] = _mm256_unpacklo_pd(new_r, new_i);
-                        }
-                        else
-                        {
-                            __m256d new_r = _mm256_mul_pd(_mm256_sub_pd(real, imag), _mm256_set1_pd(c8));
-                            __m256d new_i = _mm256_mul_pd(_mm256_add_pd(imag, real), _mm256_set1_pd(c8));
-                            o[1] = _mm256_unpacklo_pd(new_r, new_i);
-                        }
+                        __m256d swapped = _mm256_permute_pd(o[1], 0b0101); // swap re/im
+                        __m256d sign_mask = (transform_sign == 1)
+                                                ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)
+                                                : _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
+                        __m256d rotated = _mm256_xor_pd(swapped, sign_mask);
+                        o[1] = _mm256_mul_pd(_mm256_add_pd(o[1], rotated), c8v);
                     }
 
                     // o[2] *= W_8^2 = -i*sgn
                     {
                         __m256d swapped = _mm256_permute_pd(o[2], 0b0101);
-                        if (transform_sign == 1)
-                        {
-                            o[2] = _mm256_xor_pd(swapped, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
-                        }
-                        else
-                        {
-                            o[2] = _mm256_xor_pd(swapped, _mm256_set_pd(0.0, -0.0, 0.0, -0.0));
-                        }
+                        o[2] = (transform_sign == 1)
+                                   ? _mm256_xor_pd(swapped, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0))
+                                   : _mm256_xor_pd(swapped, _mm256_set_pd(0.0, -0.0, 0.0, -0.0));
                     }
 
-                    // o[3] *= W_8^3 (CORRECTED!)
+                    // o[3] *= W_8^3 = (√2/2)(-1 - i*sgn)
                     {
-                        const __m256d c8v = _mm256_set1_pd(0.7071067811865476);
-                        __m256d real = _mm256_unpacklo_pd(o[3], o[3]);
-                        __m256d imag = _mm256_unpackhi_pd(o[3], o[3]);
-                        __m256d sum = _mm256_add_pd(real, imag);
-                        __m256d dif = _mm256_sub_pd(real, imag);
-                        __m256d new_r, new_i;
-
-                        if (transform_sign == 1)
-                        {
-                            new_r = _mm256_mul_pd(dif, c8v);
-                            new_i = _mm256_mul_pd(sum, c8v);
-                            const __m256d neg = _mm256_set1_pd(-0.0);
-                            new_r = _mm256_xor_pd(new_r, neg);
-                            new_i = _mm256_xor_pd(new_i, neg);
-                        }
-                        else
-                        {
-                            new_r = _mm256_mul_pd(sum, c8v);
-                            new_r = _mm256_xor_pd(new_r, _mm256_set1_pd(-0.0));
-                            new_i = _mm256_mul_pd(dif, c8v);
-                        }
-                        o[3] = _mm256_unpacklo_pd(new_r, new_i);
+                        __m256d swapped = _mm256_permute_pd(o[3], 0b0101); // swap re/im
+                        __m256d sign_mask = (transform_sign == 1)
+                                                ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)  // negate imaginary
+                                                : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // negate real
+                        __m256d rotated = _mm256_xor_pd(swapped, sign_mask);
+                        __m256d sum = _mm256_sub_pd(rotated, o[3]); // rotated - original
+                        o[3] = _mm256_mul_pd(sum, c8v);
                     }
 
-                    // Combine
+                    // Final radix-2 combination
                     x[base][b] = _mm256_add_pd(e[0], o[0]);
                     x[base + 4][b] = _mm256_sub_pd(e[0], o[0]);
                     x[base + 1][b] = _mm256_add_pd(e[1], o[1]);
@@ -5224,9 +5207,9 @@ static void mixed_radix_dit_rec(
                 }
             }
 
-            //==================================================================
+            //======================================================================
             // Store results
-            //==================================================================
+            //======================================================================
             for (int m = 0; m < 32; ++m)
             {
                 STOREU_PD(&output_buffer[k + 0 + m * thirtysecond].re, x[m][0]);
@@ -5236,31 +5219,22 @@ static void mixed_radix_dit_rec(
             }
         }
 
-        //----------------------------------------------------------------------
+        //--------------------------------------------------------------------------
         // Cleanup: 2x unrolling
-        //----------------------------------------------------------------------
+        //--------------------------------------------------------------------------
         for (; k + 1 < thirtysecond; k += 2)
         {
-            if (k + 8 < thirtysecond)
-            {
-                _mm_prefetch((const char *)&sub_outputs[k + 8].re, _MM_HINT_T0);
-                _mm_prefetch((const char *)&stage_tw[31 * (k + 8)].re, _MM_HINT_T0);
-            }
-
-            //==================================================================
-            // Load all 32 lanes
-            //==================================================================
+            // Similar pattern but with 2x unrolling
             __m256d x[32];
 
+            // Load
             for (int lane = 0; lane < 32; ++lane)
             {
                 x[lane] = load2_aos(&sub_outputs[k + lane * thirtysecond],
                                     &sub_outputs[k + lane * thirtysecond + 1]);
             }
 
-            //==================================================================
-            // Stage 1: Apply input twiddles
-            //==================================================================
+            // Stage 1: Input twiddles
             for (int lane = 1; lane < 32; ++lane)
             {
                 __m256d tw = load2_aos(&stage_tw[31 * k + (lane - 1)],
@@ -5268,17 +5242,13 @@ static void mixed_radix_dit_rec(
                 x[lane] = cmul_avx2_aos(x[lane], tw);
             }
 
-            //==================================================================
             // Stage 2: First radix-4
-            //==================================================================
             for (int g = 0; g < 8; ++g)
             {
                 radix4_butterfly_aos(&x[g], &x[g + 8], &x[g + 16], &x[g + 24], transform_sign);
             }
 
-            //==================================================================
-            // Stage 2.5: Apply W_32^{j*g} (CORRECTED!)
-            //==================================================================
+            // Stage 2.5: W_32 twiddles
             for (int g = 0; g < 8; ++g)
             {
                 for (int j = 1; j <= 3; ++j)
@@ -5289,88 +5259,49 @@ static void mixed_radix_dit_rec(
                 }
             }
 
-            //==================================================================
-            // Stage 3: Radix-8 on each octave
-            //==================================================================
+            // Stage 3: Radix-8
             for (int octave = 0; octave < 4; ++octave)
             {
                 int base = 8 * octave;
 
-                // First radix-4 on evens
-                __m256d e[4];
-                radix4_butterfly_aos(&x[base], &x[base + 2], &x[base + 4], &x[base + 6], transform_sign);
-                e[0] = x[base];
-                e[1] = x[base + 2];
-                e[2] = x[base + 4];
-                e[3] = x[base + 6];
+                // Even radix-4
+                __m256d e[4] = {x[base], x[base + 2], x[base + 4], x[base + 6]};
+                radix4_butterfly_aos(&e[0], &e[1], &e[2], &e[3], transform_sign);
 
-                // Second radix-4 on odds
-                __m256d o[4];
-                radix4_butterfly_aos(&x[base + 1], &x[base + 3], &x[base + 5], &x[base + 7], transform_sign);
-                o[0] = x[base + 1];
-                o[1] = x[base + 3];
-                o[2] = x[base + 5];
-                o[3] = x[base + 7];
+                // Odd radix-4
+                __m256d o[4] = {x[base + 1], x[base + 3], x[base + 5], x[base + 7]};
+                radix4_butterfly_aos(&o[0], &o[1], &o[2], &o[3], transform_sign);
 
-                // Apply W_8 twiddles
-                const double c8 = 0.7071067811865476;
+                // Apply W_8 twiddles (same as above)
+                const __m256d c8v = _mm256_set1_pd(0.7071067811865476);
 
                 // o[1] *= W_8^1
                 {
-                    __m256d real = _mm256_unpacklo_pd(o[1], o[1]);
-                    __m256d imag = _mm256_unpackhi_pd(o[1], o[1]);
-
-                    if (transform_sign == 1)
-                    {
-                        __m256d new_r = _mm256_mul_pd(_mm256_add_pd(real, imag), _mm256_set1_pd(c8));
-                        __m256d new_i = _mm256_mul_pd(_mm256_sub_pd(imag, real), _mm256_set1_pd(c8));
-                        o[1] = _mm256_unpacklo_pd(new_r, new_i);
-                    }
-                    else
-                    {
-                        __m256d new_r = _mm256_mul_pd(_mm256_sub_pd(real, imag), _mm256_set1_pd(c8));
-                        __m256d new_i = _mm256_mul_pd(_mm256_add_pd(imag, real), _mm256_set1_pd(c8));
-                        o[1] = _mm256_unpacklo_pd(new_r, new_i);
-                    }
+                    __m256d swapped = _mm256_permute_pd(o[1], 0b0101);
+                    __m256d sign_mask = (transform_sign == 1)
+                                            ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)
+                                            : _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
+                    __m256d rotated = _mm256_xor_pd(swapped, sign_mask);
+                    o[1] = _mm256_mul_pd(_mm256_add_pd(o[1], rotated), c8v);
                 }
 
                 // o[2] *= W_8^2
                 {
                     __m256d swapped = _mm256_permute_pd(o[2], 0b0101);
-                    if (transform_sign == 1)
-                    {
-                        o[2] = _mm256_xor_pd(swapped, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));
-                    }
-                    else
-                    {
-                        o[2] = _mm256_xor_pd(swapped, _mm256_set_pd(0.0, -0.0, 0.0, -0.0));
-                    }
+                    o[2] = (transform_sign == 1)
+                               ? _mm256_xor_pd(swapped, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0))
+                               : _mm256_xor_pd(swapped, _mm256_set_pd(0.0, -0.0, 0.0, -0.0));
                 }
 
-                // o[3] *= W_8^3 (CORRECTED!)
+                // o[3] *= W_8^3
                 {
-                    const __m256d c8v = _mm256_set1_pd(0.7071067811865476);
-                    __m256d real = _mm256_unpacklo_pd(o[3], o[3]);
-                    __m256d imag = _mm256_unpackhi_pd(o[3], o[3]);
-                    __m256d sum = _mm256_add_pd(real, imag);
-                    __m256d dif = _mm256_sub_pd(real, imag);
-                    __m256d new_r, new_i;
-
-                    if (transform_sign == 1)
-                    {
-                        new_r = _mm256_mul_pd(dif, c8v);
-                        new_i = _mm256_mul_pd(sum, c8v);
-                        const __m256d neg = _mm256_set1_pd(-0.0);
-                        new_r = _mm256_xor_pd(new_r, neg);
-                        new_i = _mm256_xor_pd(new_i, neg);
-                    }
-                    else
-                    {
-                        new_r = _mm256_mul_pd(sum, c8v);
-                        new_r = _mm256_xor_pd(new_r, _mm256_set1_pd(-0.0));
-                        new_i = _mm256_mul_pd(dif, c8v);
-                    }
-                    o[3] = _mm256_unpacklo_pd(new_r, new_i);
+                    __m256d swapped = _mm256_permute_pd(o[3], 0b0101);
+                    __m256d sign_mask = (transform_sign == 1)
+                                            ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)
+                                            : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
+                    __m256d rotated = _mm256_xor_pd(swapped, sign_mask);
+                    __m256d sum = _mm256_sub_pd(rotated, o[3]);
+                    o[3] = _mm256_mul_pd(sum, c8v);
                 }
 
                 // Combine
@@ -5384,20 +5315,23 @@ static void mixed_radix_dit_rec(
                 x[base + 7] = _mm256_sub_pd(e[3], o[3]);
             }
 
-            //==================================================================
-            // Store results
-            //==================================================================
-            for (int m = 0; m < 32; ++m)
+            // Store
+            for (int g = 0; g < 8; ++g)
             {
-                STOREU_PD(&output_buffer[k + m * thirtysecond].re, x[m]);
+                for (int j = 0; j < 4; ++j)
+                {
+                    int input_idx = j * 8 + g;  // Index in x[] array
+                    int output_idx = g * 4 + j; // Correct DIT output position
+
+                    STOREU_PD(&output_buffer[k + output_idx * thirtysecond].re, x[input_idx]);
+                }
             }
         }
-
 #endif // __AVX2__
 
-        //----------------------------------------------------------------------
+        //--------------------------------------------------------------------------
         // Scalar tail
-        //----------------------------------------------------------------------
+        //--------------------------------------------------------------------------
         for (; k < thirtysecond; ++k)
         {
             // Load 32 lanes
@@ -5423,7 +5357,7 @@ static void mixed_radix_dit_rec(
                 r4_butterfly(&x[g], &x[g + 8], &x[g + 16], &x[g + 24], transform_sign);
             }
 
-            // Stage 2.5: Apply W_32^{j*g} (CORRECTED!)
+            // Stage 2.5: Apply W_32^{j*g}
             for (int g = 0; g < 8; ++g)
             {
                 for (int j = 1; j <= 3; ++j)
@@ -5442,26 +5376,18 @@ static void mixed_radix_dit_rec(
             {
                 int base = 8 * octave;
 
-                // First radix-4 on evens
-                fft_data e[4];
-                r4_butterfly(&x[base], &x[base + 2], &x[base + 4], &x[base + 6], transform_sign);
-                e[0] = x[base];
-                e[1] = x[base + 2];
-                e[2] = x[base + 4];
-                e[3] = x[base + 6];
+                // Even radix-4
+                fft_data e[4] = {x[base], x[base + 2], x[base + 4], x[base + 6]};
+                r4_butterfly(&e[0], &e[1], &e[2], &e[3], transform_sign);
 
-                // Second radix-4 on odds
-                fft_data o[4];
-                r4_butterfly(&x[base + 1], &x[base + 3], &x[base + 5], &x[base + 7], transform_sign);
-                o[0] = x[base + 1];
-                o[1] = x[base + 3];
-                o[2] = x[base + 5];
-                o[3] = x[base + 7];
+                // Odd radix-4
+                fft_data o[4] = {x[base + 1], x[base + 3], x[base + 5], x[base + 7]};
+                r4_butterfly(&o[0], &o[1], &o[2], &o[3], transform_sign);
 
                 // Apply W_8 twiddles
-                const double c8 = 0.7071067811865476;
+                const double c8 = 0.7071067811865476; // √2/2
 
-                // o[1] *= W_8^1
+                // o[1] *= W_8^1 = (√2/2)(1 - i*sgn)
                 {
                     double r = o[1].re, i = o[1].im;
                     if (transform_sign == 1)
@@ -5476,7 +5402,7 @@ static void mixed_radix_dit_rec(
                     }
                 }
 
-                // o[2] *= W_8^2
+                // o[2] *= W_8^2 = -i*sgn
                 {
                     double r = o[2].re, i = o[2].im;
                     if (transform_sign == 1)
@@ -5491,18 +5417,20 @@ static void mixed_radix_dit_rec(
                     }
                 }
 
-                // o[3] *= W_8^3 (CORRECTED!)
+                // o[3] *= W_8^3 = (√2/2)(-1 - i*sgn)
                 {
                     double r = o[3].re, i = o[3].im;
                     if (transform_sign == 1)
                     {
-                        o[3].re = -(r - i) * c8;
-                        o[3].im = -(r + i) * c8;
+                        // Forward: W_8^3 = (-1 - i)/√2
+                        o[3].re = (-r + i) * c8;
+                        o[3].im = (-r - i) * c8;
                     }
                     else
                     {
-                        o[3].re = -(r + i) * c8;
-                        o[3].im = (r - i) * c8;
+                        // Inverse: W_8^{-3} = (-1 + i)/√2
+                        o[3].re = (-r - i) * c8;
+                        o[3].im = (r - i) * c8; // FIXED: positive sign
                     }
                 }
 
@@ -5518,9 +5446,14 @@ static void mixed_radix_dit_rec(
             }
 
             // Store
-            for (int m = 0; m < 32; ++m)
+            for (int g = 0; g < 8; ++g)
             {
-                output_buffer[k + m * thirtysecond] = x[m];
+                for (int j = 0; j < 4; ++j)
+                {
+                    int input_idx = j * 8 + g;
+                    int output_idx = g * 4 + j;
+                    output_buffer[k + output_idx * thirtysecond] = x[input_idx];
+                }
             }
         }
     }
@@ -5987,6 +5920,7 @@ void bluestein_fft(
     fft_object fft_config,
     int transform_direction,
     int signal_length)
+
 {
     if (signal_length <= 0)
     {
@@ -6540,6 +6474,10 @@ int factors(int number, int *factors_array)
  * @brief Determines optimal execution radices for FFT (like FFTW's planner)
  * Returns radices to use for actual FFT execution (may include composite radices)
  */
+/**
+ * @brief Determines optimal execution radices for FFT (like FFTW's planner)
+ * Returns radices to use for actual FFT execution (may include composite radices)
+ */
 int get_fft_execution_radices(int number, int *radices, int *prime_factors, int num_prime_factors)
 {
     int index = 0;
@@ -6561,8 +6499,10 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
 
     // Strategy: Use largest possible composite radices for efficiency
 
+    // **FIX: Check temp_n first to ensure we don't over-consume factors**
+
     // Radix-32 (2^5) - most efficient for powers of 2
-    while (count_2 >= 5 && temp_n >= 32)
+    while (count_2 >= 5 && temp_n % 32 == 0) // ← ADD THIS CHECK
     {
         radices[index++] = 32;
         temp_n /= 32;
@@ -6570,7 +6510,7 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     }
 
     // Radix-16 (2^4)
-    while (count_2 >= 4 && temp_n >= 16)
+    while (count_2 >= 4 && temp_n % 16 == 0) // ← ADD THIS CHECK
     {
         radices[index++] = 16;
         temp_n /= 16;
@@ -6578,7 +6518,7 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     }
 
     // Radix-8 (2^3)
-    while (count_2 >= 3 && temp_n >= 8)
+    while (count_2 >= 3 && temp_n % 8 == 0) // ← ADD THIS CHECK
     {
         radices[index++] = 8;
         temp_n /= 8;
@@ -6586,7 +6526,7 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     }
 
     // Radix-9 (3^2) if you have optimized radix-9 kernel
-    while (count_3 >= 2 && temp_n >= 9)
+    while (count_3 >= 2 && temp_n % 9 == 0) // ← ADD THIS CHECK
     {
         radices[index++] = 9;
         temp_n /= 9;
@@ -6594,7 +6534,7 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     }
 
     // Radix-4 (2^2)
-    while (count_2 >= 2 && temp_n >= 4)
+    while (count_2 >= 2 && temp_n % 4 == 0) // ← ADD THIS CHECK
     {
         radices[index++] = 4;
         temp_n /= 4;
@@ -6602,28 +6542,28 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     }
 
     // Now handle remaining prime radices
-    while (count_7 > 0 && temp_n >= 7)
+    while (count_7 > 0 && temp_n % 7 == 0)
     {
         radices[index++] = 7;
         temp_n /= 7;
         count_7--;
     }
 
-    while (count_5 > 0 && temp_n >= 5)
+    while (count_5 > 0 && temp_n % 5 == 0)
     {
         radices[index++] = 5;
         temp_n /= 5;
         count_5--;
     }
 
-    while (count_3 > 0 && temp_n >= 3)
+    while (count_3 > 0 && temp_n % 3 == 0)
     {
         radices[index++] = 3;
         temp_n /= 3;
         count_3--;
     }
 
-    while (count_2 > 0 && temp_n >= 2)
+    while (count_2 > 0 && temp_n % 2 == 0)
     {
         radices[index++] = 2;
         temp_n /= 2;

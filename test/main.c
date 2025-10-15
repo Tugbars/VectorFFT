@@ -457,7 +457,7 @@ void test1_delta_function(void) {
     printf("Expected: All frequency bins should be (1.0, 0.0)\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 8;
+    const int N = 32;
     fft_data *input = (fft_data *)calloc(N, sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
     
@@ -501,7 +501,7 @@ void test2_dc_component(void) {
     printf("Expected: X[0] = (8.0, 0.0), all others = (0.0, 0.0)\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 8;
+    const int N = 32;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
     
@@ -538,7 +538,7 @@ void test2_dc_component(void) {
     }
     
     printf("\nResult: %s\n", 
-           (fabs(output[0].re - 8.0) < 1e-6 && all_others_zero) ? "PASS ✓" : "FAIL ✗");
+           (fabs(output[0].re - 32.0) < 1e-6 && all_others_zero) ? "PASS ✓" : "FAIL ✗");
     
     free_fft(fft);
     free(input);
@@ -551,7 +551,7 @@ void test3_twiddle_factors(void) {
     printf("Expected: W_k = exp(-2πi*k/8) for forward transform\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 8;
+    const int N = 32;
     fft_object fft = fft_init(N, 1);
     
     printf("\nk  | Computed                  | Expected                  | Error\n");
@@ -592,7 +592,7 @@ void test4_single_frequency(void) {
     printf("Expected: X[1] = X[7] = (4.0, 0.0), all others ≈ 0\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 8;
+    const int N = 32;
     const int k_freq = 1;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
@@ -653,7 +653,7 @@ void test5_roundtrip(void) {
     printf("Expected: Perfect reconstruction after scaling by 1/N\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 8;
+    const int N = 32;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *freq = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *reconstructed = (fft_data *)malloc(N * sizeof(fft_data));
@@ -719,7 +719,7 @@ void test6_energy_conservation(void) {
     printf("Expected: ∑|x[n]|² = (1/N) ∑|X[k]|²\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 8;
+    const int N = 32;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
     
@@ -1183,7 +1183,7 @@ void run_all_benchmarks(void) {
 }
 
 
-int run_comprehensive_complex_fft_N8_tests(void) {
+int run_comprehensive_complex_fft_N32_tests(void) {
     printf("\n");
     printf("╔----------------------------------------------------------------╗\n");
     printf("║              N=8 FFT DIAGNOSTIC TEST SUITE                    ║\n");
@@ -1252,7 +1252,7 @@ int run_comprehensive_complex_fft_tests(void) {
 
 void debug_fft_scaling(void) {
     printf("\n=== DEBUG: FFT Scaling Convention ===\n");
-    const int N = 8;
+    const int N = 32;
     
     fft_data *input = (fft_data *)calloc(N, sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
@@ -1337,7 +1337,7 @@ void debug_parseval_detailed(void) {
 
 void diagnose_fft_issue(void) {
     printf("\n=== DIAGNOSTIC: FFT Direction Test ===\n");
-    int N = 8;
+    int N = 32;
     
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *freq = (fft_data *)malloc(N * sizeof(fft_data));
@@ -1424,14 +1424,76 @@ void debug_radix_selection(void) {
     }
 }
 
+void debug_radix_32_execution(void) {
+    printf("\n=== DEBUG: Radix-32 Execution Trace ===\n");
+    const int N = 32;
+    
+    fft_object fft = fft_init(N, 1);
+    if (!fft) {
+        printf("ERROR: Failed to initialize FFT\n");
+        return;
+    }
+    
+    // Print FFT plan
+    printf("\nFFT Plan for N=%d:\n", N);
+    printf("  n_input:  %d\n", fft->n_input);
+    printf("  n_fft:    %d\n", fft->n_fft);
+    printf("  sgn:      %d\n", fft->sgn);
+    printf("  lt:       %d (0=mixed-radix, 1=Bluestein)\n", fft->lt);
+    printf("  lf:       %d (number of radix stages)\n", fft->lf);
+    printf("  factors:  [");
+    for (int i = 0; i < fft->lf; i++) {
+        printf("%d", fft->factors[i]);
+        if (i < fft->lf - 1) printf(", ");
+    }
+    printf("]\n");
+    
+    // Print precomputation info
+    printf("  num_precomputed_stages: %d\n", fft->num_precomputed_stages);
+    printf("  twiddle_factors: %s\n", fft->twiddle_factors ? "allocated" : "NULL");
+    
+    if (fft->twiddle_factors && fft->num_precomputed_stages > 0) {
+        printf("\n  Stage twiddle offsets:\n");
+        for (int i = 0; i < fft->num_precomputed_stages; i++) {
+            printf("    Stage %d: offset=%d\n", i, fft->stage_twiddle_offset[i]);
+        }
+    }
+    
+    // Test execution
+    fft_data *input = (fft_data *)calloc(N, sizeof(fft_data));
+    fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
+    
+    input[0].re = 1.0;  // Impulse
+    
+    printf("\nExecuting FFT...\n");
+    fft_exec(fft, input, output);
+    
+    // Verify result (should be all 1.0 for impulse)
+    int correct = 1;
+    for (int k = 0; k < N; k++) {
+        if (fabs(output[k].re - 1.0) > 1e-9 || fabs(output[k].im) > 1e-9) {
+            correct = 0;
+            break;
+        }
+    }
+    
+    printf("Result: %s\n", correct ? "CORRECT ✓" : "INCORRECT ✗");
+    
+    free_fft(fft);
+    free(input);
+    free(output);
+}
+
 int main()
 {
+
+    debug_radix_32_execution();
     //debug_fft_scaling();
     //debug_radix_selection();
     //debug_parseval_detailed();
     int all_passed = run_comprehensive_complex_fft_tests();
-   // int all_passed = true;
-    //run_comprehensive_complex_fft_N8_tests();
+    //int all_passed = true;
+    //run_comprehensive_complex_fft_N32_tests();
    //run_all_benchmarks();
 
     printf("\n=== All Tests Complete ===\n");
