@@ -22,7 +22,11 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         -mavx2
         -mfma
         -msse4.2
-        -ffast-math
+        
+        # Optional, safer fast-math components:
+        -fno-math-errno         # OK: Don't set errno in math functions
+        -ffinite-math-only      # OK if you never pass NaN/Inf
+
         -funroll-loops
         -Wall
         -Wextra
