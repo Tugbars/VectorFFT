@@ -1504,6 +1504,100 @@ void debug_radix_7_execution(void) {
     free(output);
 }
 
+void test_n5_inverse(void) {
+    printf("\n=== N=5 Inverse FFT Test ===\n");
+    fft_data input[5] = {{1,0}, {2,0}, {3,0}, {4,0}, {5,0}};
+    fft_data freq[5], recon[5];
+    
+    fft_object fwd = fft_init(5, 1);  // forward
+    fft_object inv = fft_init(5, -1); // inverse
+    
+    fft_exec(fwd, input, freq);
+    fft_exec(inv, freq, recon);
+    
+    // Scale by 1/N
+    for (int i = 0; i < 5; i++) {
+        recon[i].re /= 5;
+        recon[i].im /= 5;
+    }
+    
+    printf("Reconstruction errors:\n");
+    for (int i = 0; i < 5; i++) {
+        double err = sqrt(pow(input[i].re - recon[i].re, 2) + 
+                         pow(input[i].im - recon[i].im, 2));
+        printf("  [%d]: %.3e %s\n", i, err, (err < 1e-10) ? "✓" : "✗");
+    }
+    
+    free_fft(fwd);
+    free_fft(inv);
+}
+
+void test_n64_forward(void) {
+    printf("\n=== N=64 Forward FFT Test ===\n");
+    fft_data input[64], output[64];
+    
+    // Impulse
+    for (int i = 0; i < 64; i++) {
+        input[i].re = (i == 0) ? 1.0 : 0.0;
+        input[i].im = 0.0;
+    }
+    
+    fft_object fwd = fft_init(64, 1);
+    fft_exec(fwd, input, output);
+    
+    printf("Impulse FFT (should be all 1+0i):\n");
+    int errors = 0;
+    for (int k = 0; k < 64; k++) {
+        double err = sqrt(pow(output[k].re - 1.0, 2) + pow(output[k].im, 2));
+        if (err > 1e-10) {
+            printf("  X[%2d]: (%.6f, %.6f) error=%.3e ✗\n", 
+                   k, output[k].re, output[k].im, err);
+            errors++;
+            if (errors > 10) {
+                printf("  ... (showing first 10 errors)\n");
+                break;
+            }
+        }
+    }
+    
+    if (errors == 0) printf("All correct! ✓\n");
+    free_fft(fwd);
+}
+
+void debug_n64(void) {
+    printf("\n=== N=64 Debug ===\n");
+    
+    fft_object fwd = fft_init(64, 1);
+    
+    printf("N=64 factorization:\n");
+    printf("  lf (num factors): %d\n", fwd->lf);
+    printf("  factors: ");
+    for (int i = 0; i < fwd->lf; i++) {
+        printf("%d ", fwd->factors[i]);
+    }
+    printf("\n");
+    
+    // Test with simple input
+    fft_data input[64], output[64];
+    for (int i = 0; i < 64; i++) {
+        input[i].re = (i == 0) ? 1.0 : 0.0;
+        input[i].im = 0.0;
+    }
+    
+    fft_exec(fwd, input, output);
+    
+    printf("\nImpulse response errors:\n");
+    for (int k = 0; k < 64; k++) {
+        double err = sqrt(pow(output[k].re - 1.0, 2) + pow(output[k].im, 2));
+        if (err > 1e-10) {
+            printf("  X[%2d] = (%8.5f, %8.5f) err=%.3e\n", 
+                   k, output[k].re, output[k].im, err);
+        }
+    }
+    
+    free_fft(fwd);
+}
+
 int main()
 {
 
@@ -1512,9 +1606,13 @@ int main()
     //debug_radix_selection();
     //debug_parseval_detailed();
     int all_passed = run_comprehensive_complex_fft_tests();
-    //int all_passed = true;
-    //run_comprehensive_complex_fft_N32_tests();
+    //
+    //run_comprehensive_complex_fft_N32_tests(); int all_passed = true;
+    //test_n5_inverse(); int all_passed = true;
    //run_all_benchmarks();
+
+    //test_n64_forward(); int all_passed = true;
+    //debug_n64(); int all_passed = true;
 
     printf("\n=== All Tests Complete ===\n");
     return all_passed ? EXIT_SUCCESS : EXIT_FAILURE;

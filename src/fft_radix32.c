@@ -166,10 +166,9 @@ void fft_radix32_butterfly(
         -(double)transform_sign * 0.7071067811865476,
         0.7071067811865476);
 
-    const __m256d W8_2 = (transform_sign == 1)
-                             ? _mm256_set_pd(-1.0, 0.0, -1.0, 0.0) // -i for forward
-                             : _mm256_set_pd(1.0, 0.0, 1.0, 0.0);  // +i for inverse
-
+     const __m256d W8_2 = (transform_sign == 1)
+                         ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // +i for inverse
+                         : _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // -i for forward
     const __m256d W8_3 = _mm256_set_pd(
         -(double)transform_sign * 0.7071067811865476,
         -0.7071067811865476,
@@ -178,8 +177,8 @@ void fft_radix32_butterfly(
 
     // Precompute masks for rotations
     const __m256d rot_mask_r4 = (transform_sign == 1)
-                                    ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)
-                                    : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
+                                ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // FIXED
+                                : _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // FIXED
 
     //==========================================================================
     // MAIN LOOP: 16x UNROLLING FOR MAXIMUM THROUGHPUT

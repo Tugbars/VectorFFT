@@ -40,9 +40,9 @@ void fft_radix3_butterfly(
     // After permute: [im0, re0, im1, re1]
     // Forward (sgn=+1): multiply by -i → negate lanes 1,3 (imaginary after swap)
     // Inverse (sgn=-1): multiply by +i → negate lanes 0,2 (real after swap)
-    const __m256d rot_mask = (transform_sign == 1)
-                                 ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)  // -i: negate lanes [3]=0,[2]=-0,[1]=0,[0]=-0
-                                 : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // +i: negate lanes [3]=-0,[2]=0,[1]=-0,[0]=0
+   const __m256d rot_mask = (transform_sign == 1)
+                             ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // +i (SWAPPED)
+                             : _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // -i (SWAPPED)
 
     for (; k + 7 < third; k += 8)
     {
@@ -232,17 +232,15 @@ void fft_radix3_butterfly(
 
         // scaled_rot = (-i*sgn) * √3/2 * dif
         double scaled_rotr, scaled_roti;
-        if (transform_sign == 1)
-        {
-            // Forward: multiply by -i
-            scaled_rotr = S_SQRT3_2 * difi;
-            scaled_roti = -S_SQRT3_2 * difr;
+        if (transform_sign == 1) {
+            // Forward: multiply by +i (SWAPPED)
+            scaled_rotr = -S_SQRT3_2 * difi;  // NEGATED
+            scaled_roti = S_SQRT3_2 * difr;   // NO NEGATE
         }
-        else
-        {
-            // Inverse: multiply by +i
-            scaled_rotr = -S_SQRT3_2 * difi;
-            scaled_roti = S_SQRT3_2 * difr;
+        else {
+            // Inverse: multiply by -i (SWAPPED)
+            scaled_rotr = S_SQRT3_2 * difi;   // NO NEGATE
+            scaled_roti = -S_SQRT3_2 * difr;  // NEGATED
         }
 
         // Y_1 = common + scaled_rot

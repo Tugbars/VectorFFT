@@ -4,8 +4,9 @@
 // --- Radix-5 constants ---
 static const double C5_1 = 0.30901699437;  // cos(72°)
 static const double C5_2 = -0.80901699437; // cos(144°)
-static const double S5_1 = 0.95105651629;  // sin(72°)
-static const double S5_2 = 0.58778525229;  // sin(144°)
+static const double S5_1 = 0.95105651629;  // sin(72°)  ← BACK TO POSITIVE
+static const double S5_2 = 0.58778525229;  // sin(144°) ← BACK TO POSITIVE
+
 
 void fft_radix5_butterfly(
     fft_data *output_buffer,
@@ -19,6 +20,7 @@ void fft_radix5_butterfly(
     //
     // Pure AoS, no conversions, 8x unrolling for maximum performance.
     //======================================================================
+
 
     const int fifth = sub_len;
     int k = 0;
@@ -150,8 +152,8 @@ void fft_radix5_butterfly(
         __m256d base2_swp = _mm256_permute_pd(base2, 0b0101);        \
         __m256d r2 = _mm256_xor_pd(base2_swp, rot_mask);             \
         __m256d a2 = _mm256_add_pd(a, tmp2);                         \
-        y2 = _mm256_add_pd(a2, r2);                                  \
-        y3 = _mm256_sub_pd(a2, r2);                                  \
+        y3 = _mm256_add_pd(a2, r2);                                  \
+        y2 = _mm256_sub_pd(a2, r2);                                  \
     } while (0)
 
         __m256d y0_0, y1_0, y2_0, y3_0, y4_0;
@@ -232,7 +234,7 @@ void fft_radix5_butterfly(
         __m256d base1 = FMADD(vs1, t2, _mm256_mul_pd(vs2, t3));
         __m256d tmp1 = FMADD(vc1, t0, _mm256_mul_pd(vc2, t1));
         __m256d base1_swp = _mm256_permute_pd(base1, 0b0101);
-        __m256d r1 = _mm256_xor_pd(base1_swp, rot_mask); // Reuse rot_mask
+        __m256d r1 = _mm256_xor_pd(base1_swp, rot_mask);
         __m256d a1 = _mm256_add_pd(a, tmp1);
         __m256d y1 = _mm256_add_pd(a1, r1);
         __m256d y4 = _mm256_sub_pd(a1, r1);
@@ -240,10 +242,10 @@ void fft_radix5_butterfly(
         __m256d base2 = FMSUB(vs2, t2, _mm256_mul_pd(vs1, t3));
         __m256d tmp2 = FMADD(vc2, t0, _mm256_mul_pd(vc1, t1));
         __m256d base2_swp = _mm256_permute_pd(base2, 0b0101);
-        __m256d r2 = _mm256_xor_pd(base2_swp, rot_mask); // Reuse rot_mask
+        __m256d r2 = _mm256_xor_pd(base2_swp, rot_mask);
         __m256d a2 = _mm256_add_pd(a, tmp2);
-        __m256d y2 = _mm256_add_pd(a2, r2);
-        __m256d y3 = _mm256_sub_pd(a2, r2);
+        __m256d y3 = _mm256_add_pd(a2, r2);  // ← SWAPPED
+        __m256d y2 = _mm256_sub_pd(a2, r2);  // ← SWAPPED
 
         STOREU_PD(&output_buffer[k].re, y0);
         STOREU_PD(&output_buffer[k + fifth].re, y1);
@@ -290,9 +292,11 @@ void fft_radix5_butterfly(
         __m128d base1 = FMADD_SSE2(vs1_128, t2, _mm_mul_pd(vs2_128, t3));
         __m128d tmp1 = FMADD_SSE2(vc1_128, t0, _mm_mul_pd(vc2_128, t1));
         __m128d base1_swp = _mm_shuffle_pd(base1, base1, 0b01);
+         // ✅ FIX: SWAP THE ROTATION MASK CONDITIONS
         __m128d r1 = (transform_sign == 1)
-                         ? _mm_xor_pd(base1_swp, _mm_set_pd(-0.0, 0.0))  // -i: negate lane 1
-                         : _mm_xor_pd(base1_swp, _mm_set_pd(0.0, -0.0)); // +i: negate lane 0
+                     ? _mm_xor_pd(base1_swp, _mm_set_pd(-0.0, 0.0))  // +i (was -i)
+                     : _mm_xor_pd(base1_swp, _mm_set_pd(0.0, -0.0)); // -i (was +i)
+                 
         __m128d a1 = _mm_add_pd(a, tmp1);
         __m128d y1 = _mm_add_pd(a1, r1);
         __m128d y4 = _mm_sub_pd(a1, r1);
@@ -300,12 +304,13 @@ void fft_radix5_butterfly(
         __m128d base2 = FMSUB_SSE2(vs2_128, t2, _mm_mul_pd(vs1_128, t3));
         __m128d tmp2 = FMADD_SSE2(vc2_128, t0, _mm_mul_pd(vc1_128, t1));
         __m128d base2_swp = _mm_shuffle_pd(base2, base2, 0b01);
-        __m128d r2 = (transform_sign == 1)
-                         ? _mm_xor_pd(base2_swp, _mm_set_pd(-0.0, 0.0))  // -i: negate lane 1
-                         : _mm_xor_pd(base2_swp, _mm_set_pd(0.0, -0.0)); // +i: negate lane 0
+         __m128d r2 = (transform_sign == 1)
+                     ? _mm_xor_pd(base2_swp, _mm_set_pd(0.0, -0.0))  // -i (was +i) 
+                     : _mm_xor_pd(base2_swp, _mm_set_pd(-0.0, 0.0)); // +i (was -i)
+                     
         __m128d a2 = _mm_add_pd(a, tmp2);
-        __m128d y2 = _mm_add_pd(a2, r2);
-        __m128d y3 = _mm_sub_pd(a2, r2);
+        __m128d y3 = _mm_add_pd(a2, r2);  // ← SWAPPED
+        __m128d y2 = _mm_sub_pd(a2, r2);  // ← SWAPPED
 
         STOREU_SSE2(&output_buffer[k + fifth].re, y1);
         STOREU_SSE2(&output_buffer[k + 2 * fifth].re, y2);
