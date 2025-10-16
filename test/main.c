@@ -1511,9 +1511,9 @@ int main()
     //debug_fft_scaling();
     //debug_radix_selection();
     //debug_parseval_detailed();
-    //int all_passed = run_comprehensive_complex_fft_tests();
-    int all_passed = true;
-    run_comprehensive_complex_fft_N32_tests();
+    int all_passed = run_comprehensive_complex_fft_tests();
+    //int all_passed = true;
+    //run_comprehensive_complex_fft_N32_tests();
    //run_all_benchmarks();
 
     printf("\n=== All Tests Complete ===\n");
