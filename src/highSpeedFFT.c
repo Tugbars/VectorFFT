@@ -305,9 +305,6 @@ static ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c
 // RADIX-SPECIFIC SCALAR CONSTANTS
 //==============================================================================
 
-// --- Radix-3 helper ---
-static const double C3_SQRT3BY2 = 0.8660254037844386; // √3/2 for 120° rotation
-
 // --- Radix-5 constants ---
 static const double C5_1 = 0.30901699437;  // cos(72°)
 static const double C5_2 = -0.80901699437; // cos(144°)
@@ -321,9 +318,6 @@ const double C3 = -0.90096886790241915; // cos(6π/7)
 const double S1 = 0.78183148246802981;  // sin(2π/7)
 const double S2 = 0.97492791218182360;  // sin(4π/7)
 const double S3 = 0.43388373911755806;  // sin(6π/7)
-
-// --- Radix-8 constant ---
-static const double C8_1 = 0.7071067811865476; // √2/2 for 45° rotation
 
 // --- Radix-11 constants ---
 static const double C11_1 = 0.8412535328311812;   // cos(2π/11)
@@ -395,7 +389,6 @@ __attribute__((constructor)) static void init_dividebyN_lookup(void)
 
 // Precomputed Rader constants (OUTSIDE function, init once)
 static const int L = 6;
-static const int perm_in[6] = {1, 3, 2, 6, 4, 5};
 static const int out_perm[6] = {1, 5, 4, 6, 2, 3};
 
 // Convolution twiddles: 6 complex = 12 doubles, broadcastable
@@ -5364,8 +5357,7 @@ static void mixed_radix_dit_rec(
                                         ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)
                                         : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
 
-        const __m256d swap_mask = _mm256_set_pd(1.0, 1.0, 1.0, 1.0);
-
+    
         //==========================================================================
         // MAIN LOOP: 16x UNROLLING FOR MAXIMUM THROUGHPUT
         //==========================================================================
@@ -6140,11 +6132,9 @@ static void mixed_radix_dit_rec(
                     // GENERAL PATH: Compute phase powers and accumulate
                     //==============================================================
                     const fft_data step = W_r[m];
-                    __m256d step_vec = _mm256_set_pd(step.im, step.re, step.im, step.re);
 
                     // Precompute first few powers
                     fft_data ph = {1.0, 0.0}; // ph^0
-                    __m256d ph_vec = _mm256_set_pd(0.0, 1.0, 0.0, 1.0);
 
                     sum0 = T[0][0];
                     sum1 = T[0][1];
