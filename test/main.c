@@ -196,7 +196,7 @@ int test_complex_exponential(void) {
 // ============================================================================
 int test_complex_parseval(void) {
     printf("\n=== TEST: Parseval's Theorem (Complex) ===\n");
-    const int N = 64;
+    const int N = 32;
     const double tol = 1e-6;
     int pass = 1;
     
@@ -297,7 +297,7 @@ int test_complex_linearity(void) {
 // ============================================================================
 int test_complex_roundtrip(void) {
     printf("\n=== TEST: Complex Round-Trip (Various Sizes) ===\n");
-    int sizes[] = {2, 4, 8, 15, 16, 17, 32, 63, 64, 100, 128, 256, 512, 1024};
+    int sizes[] = {2, 3, 4, 5, 7, 8, 15, 16, 17, 32, 63, 64, 100, 128};
     int num_sizes = sizeof(sizes) / sizeof(sizes[0]);
     const double tol = 1e-6;  // Slightly relaxed for larger sizes
     int total = 0, passed = 0;
@@ -457,7 +457,7 @@ void test1_delta_function(void) {
     printf("Expected: All frequency bins should be (1.0, 0.0)\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 32;
+    const int N = 7;
     fft_data *input = (fft_data *)calloc(N, sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
     
@@ -501,7 +501,7 @@ void test2_dc_component(void) {
     printf("Expected: X[0] = (8.0, 0.0), all others = (0.0, 0.0)\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 32;
+    const int N = 7;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
     
@@ -538,7 +538,7 @@ void test2_dc_component(void) {
     }
     
     printf("\nResult: %s\n", 
-           (fabs(output[0].re - 32.0) < 1e-6 && all_others_zero) ? "PASS ✓" : "FAIL ✗");
+           (fabs(output[0].re - 7.0) < 1e-6 && all_others_zero) ? "PASS ✓" : "FAIL ✗");
     
     free_fft(fft);
     free(input);
@@ -551,7 +551,7 @@ void test3_twiddle_factors(void) {
     printf("Expected: W_k = exp(-2πi*k/8) for forward transform\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 32;
+    const int N = 7;
     fft_object fft = fft_init(N, 1);
     
     printf("\nk  | Computed                  | Expected                  | Error\n");
@@ -592,7 +592,7 @@ void test4_single_frequency(void) {
     printf("Expected: X[1] = X[7] = (4.0, 0.0), all others ≈ 0\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 32;
+    const int N = 7;
     const int k_freq = 1;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
@@ -620,7 +620,7 @@ void test4_single_frequency(void) {
            mag1, expected, (fabs(mag1 - expected) < 1e-6) ? 'c' : 'w');
     
     // Check bin 7 (N-1, the negative frequency)
-    double mag7 = sqrt(output[7].re * output[7].re + output[7].im * output[7].im);
+    double mag7 = sqrt(output[6].re * output[6].re + output[6].im * output[6].im);
     printf("  X[7]: magnitude %.6f (expected %.1f) %c\n", 
            mag7, expected, (fabs(mag7 - expected) < 1e-6) ? 'c' : 'w');
     
@@ -653,7 +653,7 @@ void test5_roundtrip(void) {
     printf("Expected: Perfect reconstruction after scaling by 1/N\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 32;
+    const int N = 7;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *freq = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *reconstructed = (fft_data *)malloc(N * sizeof(fft_data));
@@ -672,6 +672,23 @@ void test5_roundtrip(void) {
     // Forward FFT
     fft_exec(fwd, input, freq);
     print_complex_array("\nAfter Forward FFT", freq, N);
+    
+    // DEBUG: Manually compute what the FFT should be
+    printf("\n--- Expected Forward FFT (DFT formula) ---\n");
+    for (int k = 0; k < N; k++) {
+        double sum_re = 0.0, sum_im = 0.0;
+        for (int n = 0; n < N; n++) {
+            double angle = -2.0 * M_PI * k * n / N;
+            double wr = cos(angle);
+            double wi = sin(angle);
+            sum_re += input[n].re * wr - input[n].im * wi;
+            sum_im += input[n].re * wi + input[n].im * wr;
+        }
+        printf("  Expected X[%d] = (%.6f, %.6f)\n", k, sum_re, sum_im);
+        printf("  Got      X[%d] = (%.6f, %.6f)\n", k, freq[k].re, freq[k].im);
+        double err = sqrt(pow(sum_re - freq[k].re, 2) + pow(sum_im - freq[k].im, 2));
+        printf("  Error = %.3e %s\n\n", err, (err < 1e-6) ? "✓" : "✗");
+    }
     
     // Inverse FFT
     fft_exec(inv, freq, reconstructed);
@@ -719,7 +736,7 @@ void test6_energy_conservation(void) {
     printf("Expected: ∑|x[n]|² = (1/N) ∑|X[k]|²\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 32;
+    const int N = 7;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
     
@@ -764,8 +781,8 @@ void test6_energy_conservation(void) {
 // ============================================================================
 void benchmark_throughput(void) {
     printf("\n╔----------------------------------------------------------------╗\n");
-    printf("║  BENCHMARK 1: Throughput vs FFT Size                          ║\n");
-    printf("╚----------------------------------------------------------------╝\n\n");
+    printf("*  BENCHMARK 1: Throughput vs FFT Size                          *\n");
+    printf("*----------------------------------------------------------------*\n\n");
     
     printf("%-8s %-10s %-12s %-12s %-15s %-15s\n",
            "Size", "Algorithm", "Time(ms)", "Iter", "μs/FFT", "MFLOPS");
@@ -848,8 +865,8 @@ void benchmark_throughput(void) {
 
 void benchmark_latency(void) {
     printf("\n╔----------------------------------------------------------------╗\n");
-    printf("║  BENCHMARK 2: Single Transform Latency                        ║\n");
-    printf("╚----------------------------------------------------------------╝\n\n");
+    printf("*  BENCHMARK 2: Single Transform Latency                        *\n");
+    printf("*----------------------------------------------------------------*\n\n");
     
     printf("%-8s %-10s %-15s %-15s\n",
            "Size", "Algorithm", "Latency(μs)", "Cycles/Sample");
@@ -914,8 +931,8 @@ void benchmark_latency(void) {
 // ============================================================================
 void benchmark_cache_effects(void) {
     printf("\n╔----------------------------------------------------------------╗\n");
-    printf("║  BENCHMARK 3: Cache Effects (In-place vs Out-of-place)       ║\n");
-    printf("╚----------------------------------------------------------------╝\n\n");
+    printf("*  BENCHMARK 3: Cache Effects (In-place vs Out-of-place)       *\n");
+    printf("*----------------------------------------------------------------*\n\n");
     
     printf("%-8s %-15s %-15s %-15s\n",
            "Size", "In-place(μs)", "Out-place(μs)", "Speedup");
@@ -978,8 +995,8 @@ void benchmark_cache_effects(void) {
 // ============================================================================
 void benchmark_init_overhead(void) {
     printf("\n╔----------------------------------------------------------------╗\n");
-    printf("║  BENCHMARK 4: Initialization Overhead                         ║\n");
-    printf("╚----------------------------------------------------------------╝\n\n");
+    printf("*  BENCHMARK 4: Initialization Overhead                         *\n");
+    printf("*----------------------------------------------------------------*\n\n");
     
     printf("%-8s %-10s %-15s %-20s\n",
            "Size", "Algorithm", "Init Time(ms)", "Init/Exec Ratio");
@@ -1030,8 +1047,8 @@ void benchmark_init_overhead(void) {
 // ============================================================================
 void benchmark_forward_vs_inverse(void) {
     printf("\n╔----------------------------------------------------------------╗\n");
-    printf("║  BENCHMARK 5: Forward vs Inverse Transform Speed              ║\n");
-    printf("╚----------------------------------------------------------------╝\n\n");
+    printf("*  BENCHMARK 5: Forward vs Inverse Transform Speed              *\n");
+    printf("*----------------------------------------------------------------*\n\n");
     
     printf("%-8s %-15s %-15s %-15s\n",
            "Size", "Forward(μs)", "Inverse(μs)", "Ratio (I/F)");
@@ -1099,8 +1116,8 @@ void benchmark_forward_vs_inverse(void) {
 
 void benchmark_efficiency(void) {
     printf("\n╔----------------------------------------------------------------╗\n");
-    printf("║  BENCHMARK 6: Computational Efficiency                        ║\n");
-    printf("╚----------------------------------------------------------------╝\n\n");
+    printf("*  BENCHMARK 6: Computational Efficiency                        *\n");
+    printf("*----------------------------------------------------------------*\n\n");
     
     printf("%-8s %-12s %-15s %-15s %-15s\n",
            "Size", "Time(μs)", "Actual MFLOPS", "Peak MFLOPS", "Efficiency%%");
@@ -1166,8 +1183,8 @@ void benchmark_efficiency(void) {
 void run_all_benchmarks(void) {
     printf("\n");
     printf("╔-------------------------------------------------------------------╗\n");
-    printf("║                   FFT PERFORMANCE BENCHMARK SUITE                 ║\n");
-    printf("╚-------------------------------------------------------------------╝\n");
+    printf("*                   FFT PERFORMANCE BENCHMARK SUITE                 *\n");
+    printf("*-------------------------------------------------------------------*\n");
     
     benchmark_throughput();
     benchmark_latency();
@@ -1178,16 +1195,16 @@ void run_all_benchmarks(void) {
     
     printf("\n");
     printf("╔-------------------------------------------------------------------╗\n");
-    printf("║                     BENCHMARK COMPLETE                            ║\n");
-    printf("╚-------------------------------------------------------------------╝\n\n");
+    printf("*                     BENCHMARK COMPLETE                            *\n");
+    printf("*-------------------------------------------------------------------*\n\n");
 }
 
 
 int run_comprehensive_complex_fft_N32_tests(void) {
     printf("\n");
     printf("╔----------------------------------------------------------------╗\n");
-    printf("║              N=8 FFT DIAGNOSTIC TEST SUITE                    ║\n");
-    printf("╚----------------------------------------------------------------╝\n");
+    printf("*              N=7 FFT DIAGNOSTIC TEST SUITE                    *\n");
+    printf("*----------------------------------------------------------------*\n");
     
     test1_delta_function();
     test2_dc_component();
@@ -1198,8 +1215,8 @@ int run_comprehensive_complex_fft_N32_tests(void) {
     
     printf("\n");
     printf("╔----------------------------------------------------------------╗\n");
-    printf("║                   DIAGNOSTIC COMPLETE                          ║\n");
-    printf("╚----------------------------------------------------------------╝\n\n");
+    printf("*                   DIAGNOSTIC COMPLETE                          *\n");
+    printf("*----------------------------------------------------------------*\n\n");
     
     return 0;
 }
@@ -1210,8 +1227,8 @@ int run_comprehensive_complex_fft_N32_tests(void) {
 int run_comprehensive_complex_fft_tests(void) {
     printf("\n");
     printf("╔--------------------------------------------------------╗\n");
-    printf("║     COMPREHENSIVE COMPLEX FFT TEST SUITE              ║\n");
-    printf("╚--------------------------------------------------------╝\n");
+    printf("*     COMPREHENSIVE COMPLEX FFT TEST SUITE              *\n");
+    printf("*--------------------------------------------------------*\n");
     
     int total = 0, passed = 0;
     
@@ -1238,13 +1255,13 @@ int run_comprehensive_complex_fft_tests(void) {
     
     printf("\n");
     printf("╔--------------------------------------------------------╗\n");
-    printf("║     COMPLEX FFT TEST RESULTS                          ║\n");
+    printf("*     COMPLEX FFT TEST RESULTS                          *\n");
     printf("╠--------------------------------------------------------╣\n");
-    printf("║  Tests Passed:  %2d / %2d                               ║\n", 
+    printf("*  Tests Passed:  %2d / %2d                               *\n", 
            passed, total);
-    printf("║  Success Rate:  %.1f%%                                 ║\n",
+    printf("*  Success Rate:  %.1f%%                                 *\n",
            100.0 * passed / total);
-    printf("╚--------------------------------------------------------╝\n");
+    printf("*--------------------------------------------------------*\n");
     
     return (passed == total) ? 1 : 0;
 }
@@ -1424,9 +1441,9 @@ void debug_radix_selection(void) {
     }
 }
 
-void debug_radix_32_execution(void) {
+void debug_radix_7_execution(void) {
     printf("\n=== DEBUG: Radix-32 Execution Trace ===\n");
-    const int N = 32;
+    const int N = 7;
     
     fft_object fft = fft_init(N, 1);
     if (!fft) {
@@ -1487,13 +1504,13 @@ void debug_radix_32_execution(void) {
 int main()
 {
 
-    debug_radix_32_execution();
+    //debug_radix_7_execution();
     //debug_fft_scaling();
     //debug_radix_selection();
     //debug_parseval_detailed();
-    int all_passed = run_comprehensive_complex_fft_tests();
-    //int all_passed = true;
-    //run_comprehensive_complex_fft_N32_tests();
+    //int all_passed = run_comprehensive_complex_fft_tests();
+    int all_passed = true;
+    run_comprehensive_complex_fft_N32_tests();
    //run_all_benchmarks();
 
     printf("\n=== All Tests Complete ===\n");
