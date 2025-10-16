@@ -44,6 +44,18 @@ void fft_radix4_butterfly(
     int sub_len,
     int transform_sign)
 {
+
+    printf(">>> radix4: quarter\n");
+    fflush(stdout);
+    printf(">>> Pointers: output_buffer=%p, sub_outputs=%p, stage_tw=%p\n", 
+           (void*)output_buffer, (void*)sub_outputs, (void*)stage_tw);
+    fflush(stdout);
+
+    // Check if they're the same (aliasing issue?)
+    if (output_buffer == sub_outputs) {
+        printf(">>> WARNING: output_buffer == sub_outputs (ALIASING!)\n");
+        fflush(stdout);
+    }
     const int quarter = sub_len;
     int k = 0;
 
@@ -61,6 +73,8 @@ void fft_radix4_butterfly(
 #endif
 
 #ifdef HAS_AVX512
+printf(">>> AVX512 path, k=%d\n", k);
+    fflush(stdout);
     //======================================================================
     // AVX-512: SOFTWARE PIPELINED + PARALLEL
     //======================================================================
@@ -433,6 +447,8 @@ void fft_radix4_butterfly(
 #endif // HAS_AVX512
 
 #ifdef __AVX2__
+ printf(">>> AVX2 path, k=%d, quarter=%d\n", k, quarter);
+    fflush(stdout);
     //======================================================================
     // AVX2 PATH WITH OPTIONAL PARALLELIZATION
     //======================================================================
@@ -560,6 +576,9 @@ void fft_radix4_butterfly(
     // Serial AVX2
     for (; k + 7 < quarter; k += 8)
     {
+        printf(">>> AVX2 8x: k=%d, k+7=%d, quarter=%d, condition=%d\n", 
+           k, k+7, quarter, (k + 7 < quarter));
+    fflush(stdout);
         if (k + 16 < quarter)
         {
             _mm_prefetch((const char *)&sub_outputs[k + 16].re, _MM_HINT_T0);
@@ -569,86 +588,151 @@ void fft_radix4_butterfly(
             _mm_prefetch((const char *)&stage_tw[3 * (k + 16)].re, _MM_HINT_T0);
         }
 
+           printf(">>> Loading a,b,c,d...\n");
+    fflush(stdout);
+
         __m256d a0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
         __m256d a1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
         __m256d a2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
         __m256d a3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
+
+        printf(">>> Loaded a, loading b...\n");
+    fflush(stdout);
 
         __m256d b0 = load2_aos(&sub_outputs[k + 0 + quarter], &sub_outputs[k + 1 + quarter]);
         __m256d b1 = load2_aos(&sub_outputs[k + 2 + quarter], &sub_outputs[k + 3 + quarter]);
         __m256d b2 = load2_aos(&sub_outputs[k + 4 + quarter], &sub_outputs[k + 5 + quarter]);
         __m256d b3 = load2_aos(&sub_outputs[k + 6 + quarter], &sub_outputs[k + 7 + quarter]);
 
+            printf(">>> Loaded b, loading c...\n");
+    fflush(stdout);
+
+
         __m256d c0 = load2_aos(&sub_outputs[k + 0 + 2 * quarter], &sub_outputs[k + 1 + 2 * quarter]);
         __m256d c1 = load2_aos(&sub_outputs[k + 2 + 2 * quarter], &sub_outputs[k + 3 + 2 * quarter]);
         __m256d c2 = load2_aos(&sub_outputs[k + 4 + 2 * quarter], &sub_outputs[k + 5 + 2 * quarter]);
         __m256d c3 = load2_aos(&sub_outputs[k + 6 + 2 * quarter], &sub_outputs[k + 7 + 2 * quarter]);
+
+         printf(">>> Loaded c, loading d...\n");
+    fflush(stdout);
 
         __m256d d0 = load2_aos(&sub_outputs[k + 0 + 3 * quarter], &sub_outputs[k + 1 + 3 * quarter]);
         __m256d d1 = load2_aos(&sub_outputs[k + 2 + 3 * quarter], &sub_outputs[k + 3 + 3 * quarter]);
         __m256d d2 = load2_aos(&sub_outputs[k + 4 + 3 * quarter], &sub_outputs[k + 5 + 3 * quarter]);
         __m256d d3 = load2_aos(&sub_outputs[k + 6 + 3 * quarter], &sub_outputs[k + 7 + 3 * quarter]);
 
+         printf(">>> Loaded d, loading twiddles...\n");
+    fflush(stdout);
+
         __m256d w1_0 = load2_aos(&stage_tw[3 * (k + 0)], &stage_tw[3 * (k + 1)]);
         __m256d w1_1 = load2_aos(&stage_tw[3 * (k + 2)], &stage_tw[3 * (k + 3)]);
         __m256d w1_2 = load2_aos(&stage_tw[3 * (k + 4)], &stage_tw[3 * (k + 5)]);
         __m256d w1_3 = load2_aos(&stage_tw[3 * (k + 6)], &stage_tw[3 * (k + 7)]);
+
+         printf(">>> Loaded w1, loading w2...\n");
+    fflush(stdout);
 
         __m256d w2_0 = load2_aos(&stage_tw[3 * (k + 0) + 1], &stage_tw[3 * (k + 1) + 1]);
         __m256d w2_1 = load2_aos(&stage_tw[3 * (k + 2) + 1], &stage_tw[3 * (k + 3) + 1]);
         __m256d w2_2 = load2_aos(&stage_tw[3 * (k + 4) + 1], &stage_tw[3 * (k + 5) + 1]);
         __m256d w2_3 = load2_aos(&stage_tw[3 * (k + 6) + 1], &stage_tw[3 * (k + 7) + 1]);
 
+        printf(">>> Loaded w2, loading w3...\n");
+    fflush(stdout);
+
         __m256d w3_0 = load2_aos(&stage_tw[3 * (k + 0) + 2], &stage_tw[3 * (k + 1) + 2]);
         __m256d w3_1 = load2_aos(&stage_tw[3 * (k + 2) + 2], &stage_tw[3 * (k + 3) + 2]);
         __m256d w3_2 = load2_aos(&stage_tw[3 * (k + 4) + 2], &stage_tw[3 * (k + 5) + 2]);
         __m256d w3_3 = load2_aos(&stage_tw[3 * (k + 6) + 2], &stage_tw[3 * (k + 7) + 2]);
 
+         printf(">>> All loaded, computing cmul...\n");
+    fflush(stdout);
+
         __m256d b2_0 = cmul_avx2_aos(b0, w1_0);
+        printf(">>> cmul 1/12 done\n"); fflush(stdout);
         __m256d b2_1 = cmul_avx2_aos(b1, w1_1);
+        printf(">>> cmul 2/12 done\n"); fflush(stdout);
         __m256d b2_2 = cmul_avx2_aos(b2, w1_2);
+        printf(">>> cmul 3/12 done\n"); fflush(stdout);
         __m256d b2_3 = cmul_avx2_aos(b3, w1_3);
+        printf(">>> cmul 4/12 done\n"); fflush(stdout);
 
         __m256d c2_0 = cmul_avx2_aos(c0, w2_0);
+        printf(">>> cmul 5/12 done\n"); fflush(stdout);
         __m256d c2_1 = cmul_avx2_aos(c1, w2_1);
+           printf(">>> cmul 6/12 done\n"); fflush(stdout);
         __m256d c2_2 = cmul_avx2_aos(c2, w2_2);
+           printf(">>> cmul 7/12 done\n"); fflush(stdout);
         __m256d c2_3 = cmul_avx2_aos(c3, w2_3);
+           printf(">>> cmul 8/12 done\n"); fflush(stdout);
 
         __m256d d2_0 = cmul_avx2_aos(d0, w3_0);
+           printf(">>> cmul 9/12 done\n"); fflush(stdout);
         __m256d d2_1 = cmul_avx2_aos(d1, w3_1);
+           printf(">>> cmul 10/12 done\n"); fflush(stdout);
         __m256d d2_2 = cmul_avx2_aos(d2, w3_2);
+           printf(">>> cmul 11/12 done\n"); fflush(stdout);
         __m256d d2_3 = cmul_avx2_aos(d3, w3_3);
+           printf(">>> cmul 12/12 done\n"); fflush(stdout);
 
         __m256d y0_0, y1_0, y2_0, y3_0;
         __m256d y0_1, y1_1, y2_1, y3_1;
         __m256d y0_2, y1_2, y2_2, y3_2;
         __m256d y0_3, y1_3, y2_3, y3_3;
 
-        RADIX4_BUTTERFLY_AVX2(a0, b2_0, c2_0, d2_0, y0_0, y1_0, y2_0, y3_0);
-        RADIX4_BUTTERFLY_AVX2(a1, b2_1, c2_1, d2_1, y0_1, y1_1, y2_1, y3_1);
-        RADIX4_BUTTERFLY_AVX2(a2, b2_2, c2_2, d2_2, y0_2, y1_2, y2_2, y3_2);
-        RADIX4_BUTTERFLY_AVX2(a3, b2_3, c2_3, d2_3, y0_3, y1_3, y2_3, y3_3);
+        printf(">>> Computing butterflies...\n");
+    fflush(stdout);
 
+        RADIX4_BUTTERFLY_AVX2(a0, b2_0, c2_0, d2_0, y0_0, y1_0, y2_0, y3_0);
+          printf(">>> Butterfly 1/4 done\n"); fflush(stdout);
+        RADIX4_BUTTERFLY_AVX2(a1, b2_1, c2_1, d2_1, y0_1, y1_1, y2_1, y3_1);
+          printf(">>> Butterfly 2/4 done\n"); fflush(stdout);
+        RADIX4_BUTTERFLY_AVX2(a2, b2_2, c2_2, d2_2, y0_2, y1_2, y2_2, y3_2);
+          printf(">>> Butterfly 3/4 done\n"); fflush(stdout);
+        RADIX4_BUTTERFLY_AVX2(a3, b2_3, c2_3, d2_3, y0_3, y1_3, y2_3, y3_3);
+          printf(">>> Butterfly 4/4 done\n"); fflush(stdout);
+
+          printf(">>> Storing results...\n");
+    fflush(stdout);
+
+    printf(">>> About to store to: &output_buffer[%d] = %p\n", 
+           k, (void*)&output_buffer[k]);
+    printf(">>> About to store to: &output_buffer[%d+quarter] = %p\n", 
+           k, (void*)&output_buffer[k + quarter]);
+    fflush(stdout);
         STOREU_PD(&output_buffer[k + 0].re, y0_0);
         STOREU_PD(&output_buffer[k + 2].re, y0_1);
         STOREU_PD(&output_buffer[k + 4].re, y0_2);
         STOREU_PD(&output_buffer[k + 6].re, y0_3);
+
+         printf(">>> Store 4/16 done\n"); fflush(stdout);
 
         STOREU_PD(&output_buffer[k + 0 + quarter].re, y1_0);
         STOREU_PD(&output_buffer[k + 2 + quarter].re, y1_1);
         STOREU_PD(&output_buffer[k + 4 + quarter].re, y1_2);
         STOREU_PD(&output_buffer[k + 6 + quarter].re, y1_3);
 
+         printf(">>> Store 8/16 done\n"); fflush(stdout);
+
         STOREU_PD(&output_buffer[k + 0 + 2 * quarter].re, y2_0);
         STOREU_PD(&output_buffer[k + 2 + 2 * quarter].re, y2_1);
         STOREU_PD(&output_buffer[k + 4 + 2 * quarter].re, y2_2);
         STOREU_PD(&output_buffer[k + 6 + 2 * quarter].re, y2_3);
 
+         printf(">>> Store 12/16 done\n"); fflush(stdout);
+
         STOREU_PD(&output_buffer[k + 0 + 3 * quarter].re, y3_0);
         STOREU_PD(&output_buffer[k + 2 + 3 * quarter].re, y3_1);
         STOREU_PD(&output_buffer[k + 4 + 3 * quarter].re, y3_2);
         STOREU_PD(&output_buffer[k + 6 + 3 * quarter].re, y3_3);
+
+         printf(">>> Store 16/16 done\n"); fflush(stdout);
+        printf(">>> AVX2 8x: iteration complete, about to increment k\n");
+    fflush(stdout);
     }
+
+     printf(">>> AVX2 8x done, k=%d\n", k);
+    fflush(stdout);
 
     // 2x cleanup
     const __m256d rot_mask_final = (transform_sign == 1)
@@ -698,11 +782,18 @@ void fft_radix4_butterfly(
         STOREU_PD(&output_buffer[k + 3 * quarter].re, y3);
     }
 #undef RADIX4_BUTTERFLY_AVX2
+    printf(">>> AVX2 2x done, k=%d\n", k);
+    fflush(stdout);
+
 #endif // __AVX2__
 
     //======================================================================
     // SSE2 TAIL
     //======================================================================
+
+     printf(">>> SSE2 tail, k=%d\n", k);
+    fflush(stdout);
+    
     for (; k < quarter; ++k)
     {
         __m128d a = LOADU_SSE2(&sub_outputs[k].re);
@@ -739,6 +830,9 @@ void fft_radix4_butterfly(
         STOREU_SSE2(&output_buffer[k + 2 * quarter].re, y2);
         STOREU_SSE2(&output_buffer[k + 3 * quarter].re, y3);
     }
+
+    printf(">>> radix4 COMPLETE, k=%d\n", k);
+    fflush(stdout);
 
     // Memory fence for non-temporal stores
     if (quarter >= 4096)
