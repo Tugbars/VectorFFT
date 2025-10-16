@@ -457,7 +457,7 @@ void test1_delta_function(void) {
     printf("Expected: All frequency bins should be (1.0, 0.0)\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 7;
+    const int N = 15;
     fft_data *input = (fft_data *)calloc(N, sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
     
@@ -501,7 +501,7 @@ void test2_dc_component(void) {
     printf("Expected: X[0] = (8.0, 0.0), all others = (0.0, 0.0)\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 7;
+    const int N = 15;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
     
@@ -520,9 +520,9 @@ void test2_dc_component(void) {
     
     // Check results
     printf("\n--- Analysis ---\n");
-    printf("  X[0]: expected (8.0, 0.0), got (%.6f, %.6f) %c\n",
+    printf("  X[0]: expected (N, 0.0), got (%.6f, %.6f) %c\n",
            output[0].re, output[0].im,
-           (fabs(output[0].re - 8.0) < 1e-6 && fabs(output[0].im) < 1e-6) ? 'c' : 'w');
+           (fabs(output[0].re - N) < 1e-6 && fabs(output[0].im) < 1e-6) ? 'c' : 'w');
     
     int all_others_zero = 1;
     for (int k = 1; k < N; k++) {
@@ -551,7 +551,7 @@ void test3_twiddle_factors(void) {
     printf("Expected: W_k = exp(-2πi*k/8) for forward transform\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 7;
+    const int N = 15;
     fft_object fft = fft_init(N, 1);
     
     printf("\nk  | Computed                  | Expected                  | Error\n");
@@ -592,7 +592,7 @@ void test4_single_frequency(void) {
     printf("Expected: X[1] = X[7] = (4.0, 0.0), all others ≈ 0\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 7;
+    const int N = 15;
     const int k_freq = 1;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *output = (fft_data *)malloc(N * sizeof(fft_data));
@@ -656,7 +656,7 @@ void test5_roundtrip(void) {
     printf("Expected: Perfect reconstruction after scaling by 1/N\n");
     printf("----------------------------------------------------------------\n");
     
-    const int N = 7;
+    const int N = 15;
     fft_data *input = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *freq = (fft_data *)malloc(N * sizeof(fft_data));
     fft_data *reconstructed = (fft_data *)malloc(N * sizeof(fft_data));
@@ -1206,7 +1206,7 @@ void run_all_benchmarks(void) {
 int run_comprehensive_complex_fft_N32_tests(void) {
     printf("\n");
     printf("╔----------------------------------------------------------------╗\n");
-    printf("*              N=7 FFT DIAGNOSTIC TEST SUITE                    *\n");
+    printf("*              N=15 FFT DIAGNOSTIC TEST SUITE                    *\n");
     printf("*----------------------------------------------------------------*\n");
     
     test1_delta_function();

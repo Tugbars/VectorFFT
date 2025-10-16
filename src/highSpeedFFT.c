@@ -812,7 +812,7 @@ static void build_twiddles_linear(fft_data *tw, int N)
                 // Use high-precision sin/cos
                 if (fabs(ang) <= M_PI / 4.0)
                 {
-// Use your 0.5-ULP minimax polynomials if available
+// Use 0.5-ULP minimax polynomials if available
 #ifdef HAVE_SINCOS_PI4
                     sincos_pi4(ang, &tw[k + j].im, &tw[k + j].re);
 #else
@@ -1758,7 +1758,6 @@ static void mixed_radix_dit_rec(
     //==========================================================================
     // 2) CURRENT STAGE GEOMETRY
     //==========================================================================
-    // CRITICAL FIX: Bounds check BEFORE accessing the array
     if (factor_index >= fft_obj->lf)
     {
         fprintf(stderr, "Error: factor_index out of range (%d >= %d)\n",
@@ -1824,29 +1823,7 @@ static void mixed_radix_dit_rec(
         stage_tw = sub_outputs + stage_outputs_size;
     }
 
-    //==========================================================================
-    // 4) COMPUTE CHILD SCRATCH REQUIREMENTS (for parallel/optimized layout)
-    //
-    // FIX: Simplify - let children validate themselves
-    //==========================================================================
-    // FIX: Remove the child scratch estimation entirely - it's fragile and redundant
-    // Each child will check its own needs when it runs
-
-    //==========================================================================
-    // 5) ALLOCATE CHILD SCRATCH REGIONS (non-overlapping for better cache use)
-    //
-    // Two strategies:
-    // A) Serial (original): All children share same scratch region
-    // B) Parallel-ready: Each child gets dedicated scratch region
-    //
-    // We use strategy A for now (serial) but with better layout planning
-    //==========================================================================
-
-    // Child scratch starts AFTER this stage's data
     const int child_scratch_base = scratch_offset + need_this_stage;
-
-    // FIX: Remove the pre-check - children will validate themselves
-    // This eliminates the fragile prediction logic
 
     //==========================================================================
     // 6) RECURSE INTO RADIX CHILDREN (serial execution, shared child scratch)
@@ -1892,42 +1869,51 @@ static void mixed_radix_dit_rec(
     //==========================================================================
     if (radix == 2)
     {
-        const int half = sub_len;
+        const int half = sub_len; // K = N/2
 
-        // Handle k=0 specially (W^0 = 1)
+        //======================================================================
+        // STAGE 0: SPECIAL CASE k=0 (W^0 = 1, NO TWIDDLE)
+        //======================================================================
         {
-            fft_data even_0 = sub_outputs[0];
-            fft_data odd_0 = sub_outputs[half];
-            output_buffer[0].re = even_0.re + odd_0.re;
+            fft_data even_0 = sub_outputs[0];           // X[0*k]
+            fft_data odd_0 = sub_outputs[half];         // X[1*k]
+            output_buffer[0].re = even_0.re + odd_0.re; // Y[0*k] = X[0*k] + X[1*k]
             output_buffer[0].im = even_0.im + odd_0.im;
-            output_buffer[half].re = even_0.re - odd_0.re;
+            output_buffer[half].re = even_0.re - odd_0.re; // Y[1*k] = X[0*k] - X[1*k]
             output_buffer[half].im = even_0.im - odd_0.im;
         }
 
-        // Optional: Handle k=N/4 specially when it exists (W^(N/4) = ±i)
+        //======================================================================
+        // STAGE 1: SPECIAL CASE k=N/4 (W^(N/4) = ±i, 90° ROTATION)
+        // Only if N divisible by 4
+        //======================================================================
         int k_quarter = 0;
-        if ((half & 1) == 0) // N/4 is an integer
+        if ((half & 1) == 0) // N/4 exists
         {
-            k_quarter = half >> 1;
-            fft_data even_q = sub_outputs[k_quarter];
-            fft_data odd_q = sub_outputs[half + k_quarter];
+            k_quarter = half >> 1; // k = N/4
 
-            // Rotate odd by ±90° (multiply by ±i)
+            fft_data even_q = sub_outputs[k_quarter];       // X[0*(N/4)]
+            fft_data odd_q = sub_outputs[half + k_quarter]; // X[1*(N/4)]
+
+            // Rotate odd by ±90°: odd * (±i) = ∓im + i*re
             double rotated_re = transform_sign > 0 ? odd_q.im : -odd_q.im;
             double rotated_im = transform_sign > 0 ? -odd_q.re : odd_q.re;
 
-            output_buffer[k_quarter].re = even_q.re + rotated_re;
+            output_buffer[k_quarter].re = even_q.re + rotated_re; // Y[0*(N/4)]
             output_buffer[k_quarter].im = even_q.im + rotated_im;
-            output_buffer[half + k_quarter].re = even_q.re - rotated_re;
+            output_buffer[half + k_quarter].re = even_q.re - rotated_re; // Y[1*(N/4)]
             output_buffer[half + k_quarter].im = even_q.im - rotated_im;
         }
 
-        // Process k values in two ranges to avoid k_quarter if it exists
-        int k = 1; // Start from 1 since we handled k=0
-        int range1_end = k_quarter ? k_quarter : half;
+        //======================================================================
+        // STAGE 2: GENERAL CASE k=1...N/2-1 (TWIDDLE MULTIPLY REQUIRED)
+        // Split into 2 ranges to skip k=N/4 if it exists
+        //======================================================================
+        int k = 1;                                     // Start after k=0
+        int range1_end = k_quarter ? k_quarter : half; // Range 1: [1, N/4)
 
 #ifdef HAS_AVX512
-        //======================================================================
+                                                       //======================================================================
         // AVX-512: First range [1, k_quarter) or [1, half) if no k_quarter
         //======================================================================
         for (; k + 15 < range1_end; k += 16)
@@ -3604,7 +3590,7 @@ static void mixed_radix_dit_rec(
             __m256d y3_2 = _mm256_add_pd(x0_2, v5_2);
             __m256d y3_3 = _mm256_add_pd(x0_3, v5_3);
 
-            // Store (pure AoS, like your radix-5)
+            // Store (pure AoS, like radix-5)
             STOREU_PD(&output_buffer[k + 0 * seventh + 0].re, y0_0);
             STOREU_PD(&output_buffer[k + 0 * seventh + 2].re, y0_1);
             STOREU_PD(&output_buffer[k + 0 * seventh + 4].re, y0_2);
@@ -3739,7 +3725,7 @@ static void mixed_radix_dit_rec(
         // -----------------------------
         for (; k < seventh; ++k)
         {
-            // scalar Rader (same as your passing scalar path)
+            // scalar Rader 
             // load
             fft_data x0 = sub_outputs[k + 0 * seventh];
             fft_data x1 = sub_outputs[k + 1 * seventh];
@@ -5357,7 +5343,6 @@ static void mixed_radix_dit_rec(
                                         ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)
                                         : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
 
-    
         //==========================================================================
         // MAIN LOOP: 16x UNROLLING FOR MAXIMUM THROUGHPUT
         //==========================================================================
@@ -5979,58 +5964,74 @@ static void mixed_radix_dit_rec(
         //==========================================================================
 
         const int r = radix;
-        const int K = data_length / r;
+        const int K = data_length / r; // child FFT length
         const int next_stride = r * stride;
         const int nst = r - 1;
 
-        // Scratch layout
+        // How much scratch THIS stage needs (sub_outputs [+ stage_tw if not precomp])
         const int need_this = (fft_obj->twiddle_factors &&
                                factor_index < fft_obj->num_precomputed_stages)
                                   ? (r * K)
                                   : (r * K + nst * K);
 
         if (scratch_offset + need_this > fft_obj->max_scratch_size)
-            return;
+            return; // or handle error
 
         fft_data *sub_outputs = fft_obj->scratch + scratch_offset;
         fft_data *stage_tw = NULL;
-        int have_precomp = (fft_obj->twiddle_factors &&
-                            factor_index < fft_obj->num_precomputed_stages);
+
+        const int have_precomp =
+            (fft_obj->twiddle_factors && factor_index < fft_obj->num_precomputed_stages);
 
         if (have_precomp)
-            stage_tw = fft_obj->twiddle_factors +
-                       fft_obj->stage_twiddle_offset[factor_index];
+        {
+            stage_tw = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
+        }
         else
-            stage_tw = sub_outputs + r * K;
+        {
+            stage_tw = sub_outputs + r * K; // twiddles live after sub_outputs in scratch
+        }
 
-        // *** FIXED: Give each child its OWN scratch space ***
-        const int stage_scratch = r * K + (have_precomp ? 0 : nst * K);
+        // ---- Child recursion gets its OWN scratch above this stage's block ----
+        const int stage_scratch = need_this;
         const int child_scratch_offset = scratch_offset + stage_scratch;
 
-        // Recurse r children - FIXED SCRATCH!
         for (int j = 0; j < r; ++j)
         {
             mixed_radix_dit_rec(
-                sub_outputs + j * K,
-                input_buffer + j * stride,
+                /* child writes its final outputs here: */ sub_outputs + j * K,
+                /* child reads from: */ input_buffer + j * stride,
                 fft_obj, transform_sign,
-                K, next_stride, factor_index + 1,
-                child_scratch_offset); // *** CHANGED: child's own scratch ***
+                /* child length: */ K,
+                /* child stride: */ next_stride,
+                /* next factor idx: */ factor_index + 1,
+                /* child's own scratch: */ child_scratch_offset);
         }
 
-        // Build twiddles if needed
+        // ---- Build per-stage twiddles if not precomputed ----
         if (!have_precomp)
         {
-            const int N = r * K;
+            // Current stage length (what this call is combining):
+            const int N_stage = r * K; // == data_length
+            // Map stage-local exponent to the GLOBAL twiddle table:
+            // stride_tbl = N_global / N_stage
+            const int stride_tbl = fft_obj->n_fft / data_length;
+
+            // Fill layout: for each column k, store (r-1) twiddles [j=1..r-1]
             for (int k = 0; k < K; ++k)
             {
                 const int base = nst * k;
                 for (int j = 1; j < r; ++j)
                 {
-                    const int idxN = (j * k) % N;
-                    stage_tw[base + (j - 1)] = fft_obj->twiddles[idxN];
+                    // local exponent e = (j * k) mod N_stage (DIT Cooley–Tukey)
+                    const int e_local = (j * k) % N_stage;
+                    // global index into twiddle table:
+                    const int idxTbl = (e_local * stride_tbl) % fft_obj->n_fft;
+                    stage_tw[base + (j - 1)] = fft_obj->twiddles[idxTbl];
                 }
             }
+            // NOTE: No extra sign flip here — fft_obj->twiddles were already
+            // adjusted for forward/inverse in fft_init().
         }
 
         // Precompute W_r^m for m=0..r-1
