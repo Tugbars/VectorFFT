@@ -17,6 +17,8 @@
 			"add_library",
 			"install",
 			"target_compile_options",
+			"target_link_libraries",
+			"target_compile_definitions",
 			"target_include_directories"
 		],
 		"files" : 
@@ -37,17 +39,29 @@
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 123,
+				"line" : 136,
 				"parent" : 0
 			},
 			{
 				"command" : 2,
 				"file" : 0,
-				"line" : 33,
+				"line" : 46,
 				"parent" : 0
 			},
 			{
 				"command" : 3,
+				"file" : 0,
+				"line" : 35,
+				"parent" : 0
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 36,
+				"parent" : 0
+			},
+			{
+				"command" : 5,
 				"file" : 0,
 				"line" : 25,
 				"parent" : 0
@@ -109,12 +123,23 @@
 				{
 					"backtrace" : 3,
 					"fragment" : "-Wextra"
+				},
+				{
+					"backtrace" : 4,
+					"fragment" : "-fopenmp"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 5,
+					"define" : "HAVE_OPENMP"
 				}
 			],
 			"includes" : 
 			[
 				{
-					"backtrace" : 4,
+					"backtrace" : 6,
 					"path" : "C:/Users/Tugbars/Desktop/highSpeedFFT/src"
 				}
 			],

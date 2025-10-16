@@ -93,6 +93,8 @@ test_mixedRadixFFT_standalone_EXTERNAL_OBJECTS =
 test/test_mixedRadixFFT_standalone.exe: test/CMakeFiles/test_mixedRadixFFT_standalone.dir/main.c.obj
 test/test_mixedRadixFFT_standalone.exe: test/CMakeFiles/test_mixedRadixFFT_standalone.dir/build.make
 test/test_mixedRadixFFT_standalone.exe: src/libhighspeedFFT.a
+test/test_mixedRadixFFT_standalone.exe: C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/libgomp.dll.a
+test/test_mixedRadixFFT_standalone.exe: C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/lib/libmingwthrd.a
 test/test_mixedRadixFFT_standalone.exe: test/CMakeFiles/test_mixedRadixFFT_standalone.dir/linkLibs.rsp
 test/test_mixedRadixFFT_standalone.exe: test/CMakeFiles/test_mixedRadixFFT_standalone.dir/objects1.rsp
 test/test_mixedRadixFFT_standalone.exe: test/CMakeFiles/test_mixedRadixFFT_standalone.dir/link.txt

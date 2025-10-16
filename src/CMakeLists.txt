@@ -27,6 +27,19 @@ target_include_directories(highspeedFFT PUBLIC
 )
 
 #==============================================================================
+# OPENMP SUPPORT
+#==============================================================================
+find_package(OpenMP)
+if(OpenMP_C_FOUND)
+    message(STATUS "Library: OpenMP ENABLED (${OpenMP_C_VERSION})")
+    target_link_libraries(highspeedFFT PUBLIC OpenMP::OpenMP_C)
+    target_compile_definitions(highspeedFFT PUBLIC HAVE_OPENMP)
+else()
+    message(STATUS "Library: OpenMP NOT FOUND (multi-threading disabled)")
+endif()
+
+
+#==============================================================================
 # COMPILER FLAGS (Platform-Specific)
 #==============================================================================
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

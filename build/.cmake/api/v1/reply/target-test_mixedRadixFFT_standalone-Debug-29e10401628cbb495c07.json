@@ -15,12 +15,16 @@
 		[
 			"add_executable",
 			"target_link_libraries",
+			"set_property",
+			"find_package",
 			"target_compile_options",
 			"target_include_directories"
 		],
 		"files" : 
 		[
-			"test/CMakeLists.txt"
+			"test/CMakeLists.txt",
+			"C:/Program Files/CMake/share/cmake-3.28/Modules/FindOpenMP.cmake",
+			"src/CMakeLists.txt"
 		],
 		"nodes" : 
 		[
@@ -46,13 +50,32 @@
 				"parent" : 0
 			},
 			{
+				"file" : 2
+			},
+			{
+				"command" : 3,
+				"file" : 2,
+				"line" : 32,
+				"parent" : 4
+			},
+			{
+				"file" : 1,
+				"parent" : 5
+			},
+			{
 				"command" : 2,
+				"file" : 1,
+				"line" : 619,
+				"parent" : 6
+			},
+			{
+				"command" : 4,
 				"file" : 0,
 				"line" : 130,
 				"parent" : 0
 			},
 			{
-				"command" : 3,
+				"command" : 5,
 				"file" : 0,
 				"line" : 84,
 				"parent" : 0
@@ -68,38 +91,49 @@
 					"fragment" : "-g -std=gnu11"
 				},
 				{
-					"backtrace" : 4,
+					"backtrace" : 8,
 					"fragment" : "-O3"
 				},
 				{
-					"backtrace" : 4,
+					"backtrace" : 8,
 					"fragment" : "-march=native"
 				},
 				{
-					"backtrace" : 4,
+					"backtrace" : 8,
 					"fragment" : "-mavx2"
 				},
 				{
-					"backtrace" : 4,
+					"backtrace" : 8,
 					"fragment" : "-mfma"
 				},
 				{
-					"backtrace" : 4,
+					"backtrace" : 8,
 					"fragment" : "-Wall"
 				},
 				{
-					"backtrace" : 4,
+					"backtrace" : 8,
 					"fragment" : "-Wextra"
+				},
+				{
+					"backtrace" : 2,
+					"fragment" : "-fopenmp"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 2,
+					"define" : "HAVE_OPENMP"
 				}
 			],
 			"includes" : 
 			[
 				{
-					"backtrace" : 5,
+					"backtrace" : 9,
 					"path" : "C:/Users/Tugbars/Desktop/highSpeedFFT/test"
 				},
 				{
-					"backtrace" : 5,
+					"backtrace" : 9,
 					"path" : "C:/Users/Tugbars/Desktop/highSpeedFFT/src"
 				}
 			],
@@ -151,6 +185,16 @@
 			{
 				"backtrace" : 3,
 				"fragment" : "-lpthread",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 7,
+				"fragment" : "C:\\ProgramData\\mingw64\\mingw64\\lib\\gcc\\x86_64-w64-mingw32\\13.2.0\\libgomp.dll.a",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 7,
+				"fragment" : "C:\\ProgramData\\mingw64\\mingw64\\x86_64-w64-mingw32\\lib\\libmingwthrd.a",
 				"role" : "libraries"
 			},
 			{
