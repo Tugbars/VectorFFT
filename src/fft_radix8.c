@@ -37,9 +37,9 @@ void fft_radix8_butterfly(
     const __m256d neg_mask = _mm256_set1_pd(-0.0);
 
     // Pre-compute W_8^2 rotation masks for both forward and inverse
-    const __m256d w8_2_mask = (transform_sign == 1)
-                                  ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // Forward: (im, -re)
-                                  : _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // Inverse: (-im, re)
+   const __m256d w8_2_mask = (transform_sign == 1)
+                              ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)  // Forward: -i  
+                              : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // Inverse: +i
 
     // Tuned prefetch distances for typical cache hierarchies
     const int prefetch_L1 = 16; // L1 distance
@@ -612,9 +612,9 @@ void fft_radix8_butterfly(
             }
             else
             {
-                double dif_scaled = (r - i) * c8;
-                o[3].re = -dif_scaled;
-                o[3].im = dif_scaled;
+                double dif = (r - i) * c8;
+                o[3].re = -dif;
+                o[3].im = dif;
             }
         }
 

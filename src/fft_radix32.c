@@ -60,19 +60,23 @@ static ALWAYS_INLINE void radix4_butterfly_aos(__m256d *a, __m256d *b,
     __m256d Y0 = _mm256_add_pd(S0, S1);
     __m256d Y2 = _mm256_sub_pd(S0, S1);
 
-    // Use opposite signs for Y1 and Y3 according to transform direction
-    __m256d rot_for_y1 = rot90_aos_avx2(D1, -transform_sign);
-    __m256d rot_for_y3 = rot90_aos_avx2(D1, transform_sign);
+    // FIXED: Match fft_radix4.c exactly
+    __m256d D1_swp = _mm256_permute_pd(D1, 0b0101);
 
-    __m256d Y1 = _mm256_add_pd(D0, rot_for_y1);
-    __m256d Y3 = _mm256_add_pd(D0, rot_for_y3);
+    const __m256d rot_mask = (transform_sign == 1)
+                                 ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)  // ✅ Match standalone
+                                 : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // ✅ Match standalone
+
+    __m256d rot = _mm256_xor_pd(D1_swp, rot_mask);
+
+    __m256d Y1 = _mm256_sub_pd(D0, rot);
+    __m256d Y3 = _mm256_add_pd(D0, rot);
 
     *a = Y0;
     *b = Y1;
     *c = Y2;
     *d = Y3;
 }
-
 
 void fft_radix32_butterfly(
     fft_data *output_buffer,
@@ -166,9 +170,9 @@ void fft_radix32_butterfly(
         -(double)transform_sign * 0.7071067811865476,
         0.7071067811865476);
 
-     const __m256d W8_2 = (transform_sign == 1)
-                         ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // +i for inverse
-                         : _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // -i for forward
+    const __m256d W8_2 = (transform_sign == 1)
+                             ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // +i for inverse
+                             : _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // -i for forward
     const __m256d W8_3 = _mm256_set_pd(
         -(double)transform_sign * 0.7071067811865476,
         -0.7071067811865476,
@@ -177,8 +181,8 @@ void fft_radix32_butterfly(
 
     // Precompute masks for rotations
     const __m256d rot_mask_r4 = (transform_sign == 1)
-                                ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // FIXED
-                                : _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // FIXED
+                                    ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)  // SWAP
+                                    : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); // SWAP
 
     //==========================================================================
     // MAIN LOOP: 16x UNROLLING FOR MAXIMUM THROUGHPUT
@@ -587,10 +591,21 @@ void fft_radix32_butterfly(
             }
         }
 
-        for (int m = 0; m < 32; ++m)
+        for (int g = 0; g < 8; ++g)
         {
-            STOREU_PD(&output_buffer[k + 0 + m * thirtysecond].re, x[m][0]);
-            STOREU_PD(&output_buffer[k + 2 + m * thirtysecond].re, x[m][1]);
+            for (int j = 0; j < 4; ++j)
+            {
+                const int input_idx = j * 8 + g;
+                const int output_idx = g * 4 + j;
+                STOREU_PD(&output_buffer[k + output_idx * thirtysecond].re, x[input_idx][0]);
+                STOREU_PD(&output_buffer[k + 2 + output_idx * thirtysecond].re, x[input_idx][1]);
+            }
+        }
+
+        if (thirtysecond == 4 && k == 0)
+        {
+            printf("  Output buffer[4]=(%f,%f)\n",
+                   output_buffer[4].re, output_buffer[4].im);
         }
     }
 
@@ -651,7 +666,37 @@ void fft_radix32_butterfly(
             x[base + 3] = _mm256_add_pd(e[3], o[3]);
             x[base + 7] = _mm256_sub_pd(e[3], o[3]);
         }
-
+        //======================================================================
+        // STORE RESULTS WITH TRANSPOSE
+        //
+        // CRITICAL: Output must be transposed from compute order to memory order.
+        //
+        // During computation, data is organized as x[lane][butterfly]:
+        //   - 32 lanes (frequency bins after first radix-4)
+        //   - 2 butterfly pairs per lane (from k, k+2 input indices)
+        //
+        // After radix-8 octaves, x[] contains data in "frequency-major" order:
+        //   x[0..7]   = octave 0 outputs (8 frequency bins)
+        //   x[8..15]  = octave 1 outputs
+        //   x[16..23] = octave 2 outputs
+        //   x[24..31] = octave 3 outputs
+        //
+        // But output_buffer[] expects "time-major" order for correct FFT indexing:
+        //   output[0, 4, 8, 12, ...]   = time samples from each octave
+        //   output[1, 5, 9, 13, ...]   = time samples from each octave
+        //   ...
+        //
+        // The transpose converts: x[j*8 + g] → output[g*4 + j]
+        //   where g = octave (0..7), j = position within octave (0..3)
+        //
+        // Example mapping for k=0, thirtysecond=4:
+        //   x[0] → output[0]    x[8]  → output[4]    x[16] → output[8]
+        //   x[1] → output[4]    x[9]  → output[5]    x[17] → output[9]
+        //   x[4] → output[16]   x[12] → output[20]   ...
+        //
+        // Without this transpose, outputs are written to wrong indices, causing
+        // catastrophic errors in multi-stage FFT decompositions (e.g., N=128=32×4).
+        //======================================================================
         for (int g = 0; g < 8; ++g)
         {
             for (int j = 0; j < 4; ++j)

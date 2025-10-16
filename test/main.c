@@ -356,7 +356,8 @@ int test_complex_roundtrip(void) {
             passed++;
         } else {
             printf("  N=%4d: FAIL (MSE=%.3e, threshold=%.3e)\n", N, mse, adaptive_tol);
-            // Print first few samples for debugging
+            
+            // ✅ FIXED: Show first 4 samples always
             printf("    First 4 samples:\n");
             for (int i = 0; i < 4 && i < N; i++) {
                 double err_re = input[i].re - reconstructed[i].re;
@@ -365,6 +366,23 @@ int test_complex_roundtrip(void) {
                        i, input[i].re, input[i].im,
                        reconstructed[i].re, reconstructed[i].im,
                        err_re, err_im);
+            }
+            
+            // ✅ FIXED: Show first 10 large errors
+            printf("    First 10 large errors:\n");
+            int count = 0;
+            for (int i = 0; i < N && count < 10; i++) {
+                double err_re = input[i].re - reconstructed[i].re;
+                double err_im = input[i].im - reconstructed[i].im;
+                double err_mag = sqrt(err_re*err_re + err_im*err_im);
+                
+                if (err_mag > 0.01) {  // Only show significant errors
+                    printf("      [%d] orig=(%.6f,%.6f) recon=(%.6f,%.6f) err=(%.3e,%.3e)\n",
+                        i, input[i].re, input[i].im, 
+                        reconstructed[i].re, reconstructed[i].im, 
+                        err_re, err_im);
+                    count++;
+                }
             }
         }
         
@@ -1598,6 +1616,56 @@ void debug_n64(void) {
     free_fft(fwd);
 }
 
+void test_power_of_2_sizes(void) {
+    printf("\n=== Power-of-2 Sizes Test ===\n");
+    
+    int sizes[] = {8, 16, 32, 64, 128, 256};
+    
+    for (int i = 0; i < 6; i++) {
+        int N = sizes[i];
+        fft_data *input = malloc(N * sizeof(fft_data));
+        fft_data *freq = malloc(N * sizeof(fft_data));
+        fft_data *recon = malloc(N * sizeof(fft_data));
+        
+        // Complex exponential input
+        for (int n = 0; n < N; n++) {
+            input[n].re = cos(2.0 * M_PI * n / N);
+            input[n].im = sin(2.0 * M_PI * n / N);
+        }
+        
+        fft_object fwd = fft_init(N, 1);
+        fft_object inv = fft_init(N, -1);
+        
+        fft_exec(fwd, input, freq);
+        fft_exec(inv, freq, recon);
+        
+        for (int n = 0; n < N; n++) {
+            recon[n].re /= N;
+            recon[n].im /= N;
+        }
+        
+        double mse = 0;
+        for (int n = 0; n < N; n++) {
+            double err_re = input[n].re - recon[n].re;
+            double err_im = input[n].im - recon[n].im;
+            mse += err_re * err_re + err_im * err_im;
+        }
+        mse /= N;
+        
+        printf("  N=%4d: MSE=%.3e %s (factors: ", N, mse, (mse < 1e-10) ? "✓" : "✗");
+        for (int j = 0; j < fwd->lf; j++) {
+            printf("%d ", fwd->factors[j]);
+        }
+        printf(")\n");
+        
+        free_fft(fwd);
+        free_fft(inv);
+        free(input);
+        free(freq);
+        free(recon);
+    }
+}
+
 int main()
 {
 
@@ -1613,6 +1681,7 @@ int main()
 
     //test_n64_forward(); int all_passed = true;
     //debug_n64(); int all_passed = true;
+    //test_power_of_2_sizes();  int all_passed = true;
 
     printf("\n=== All Tests Complete ===\n");
     return all_passed ? EXIT_SUCCESS : EXIT_FAILURE;

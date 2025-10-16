@@ -14,6 +14,7 @@ void fft_radix4_butterfly(
     // Pure AoS, no conversions, heavy unrolling for maximum performance.
     //======================================================================
 
+
     const int quarter = sub_len;
     int k = 0;
 
@@ -24,16 +25,16 @@ void fft_radix4_butterfly(
 
     // Precompute rotation masks - FIXED
     const __m512d rot_mask_512 = (transform_sign == 1)
-        ? _mm512_castsi512_pd(_mm512_set_epi64(
-            0x0000000000000000, 0x8000000000000000,  // -0.0, 0.0 (lane 3)
-            0x0000000000000000, 0x8000000000000000,  // -0.0, 0.0 (lane 2)
-            0x0000000000000000, 0x8000000000000000,  // -0.0, 0.0 (lane 1)
-            0x0000000000000000, 0x8000000000000000)) // -0.0, 0.0 (lane 0)
-        : _mm512_castsi512_pd(_mm512_set_epi64(
-            0x8000000000000000, 0x0000000000000000,  // 0.0, -0.0 (lane 3)
-            0x8000000000000000, 0x0000000000000000,  // 0.0, -0.0 (lane 2)
-            0x8000000000000000, 0x0000000000000000,  // 0.0, -0.0 (lane 1)
-            0x8000000000000000, 0x0000000000000000)); // 0.0, -0.0 (lane 0)
+    ? _mm512_castsi512_pd(_mm512_set_epi64(
+        0x8000000000000000, 0x0000000000000000,  // 0.0, -0.0 for -i
+        0x8000000000000000, 0x0000000000000000,
+        0x8000000000000000, 0x0000000000000000,
+        0x8000000000000000, 0x0000000000000000))
+    : _mm512_castsi512_pd(_mm512_set_epi64(
+        0x0000000000000000, 0x8000000000000000,  // -0.0, 0.0 for +i
+        0x0000000000000000, 0x8000000000000000,
+        0x0000000000000000, 0x8000000000000000,
+        0x0000000000000000, 0x8000000000000000));
 
 #define RADIX4_BUTTERFLY_AVX512(a, b2, c2, d2, y0, y1, y2, y3)    \
     {                                                             \
@@ -252,8 +253,8 @@ void fft_radix4_butterfly(
 
     // Precompute rotation masks
     const __m256d rot_mask = (transform_sign == 1)
-                             ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // This is actually +i
-                             : _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // This is actually -i
+                         ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // Match radix-32
+                         : _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
 
     // DEFINE AVX2 MACRO
 #define RADIX4_BUTTERFLY_AVX2(a, b2, c2, d2, y0, y1, y2, y3)  \
@@ -378,8 +379,8 @@ void fft_radix4_butterfly(
     // Cleanup: 2x unrolling
     //------------------------------------------------------------------
     const __m256d rot_mask_final = (transform_sign == 1)
-                             ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)  // This is actually +i
-                             : _mm256_set_pd(0.0, -0.0, 0.0, -0.0); // This is actually -i
+                               ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)
+                               : _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
 
     for (; k + 1 < quarter; k += 2)
     {
@@ -429,8 +430,10 @@ void fft_radix4_butterfly(
     //------------------------------------------------------------------
     // SSE2 TAIL: Handle remaining 0..1 elements
     //------------------------------------------------------------------
+ 
     for (; k < quarter; ++k)
     {
+
         __m128d a = LOADU_SSE2(&sub_outputs[k].re);
         __m128d b = LOADU_SSE2(&sub_outputs[k + quarter].re);
         __m128d c = LOADU_SSE2(&sub_outputs[k + 2 * quarter].re);
@@ -454,8 +457,8 @@ void fft_radix4_butterfly(
 
         __m128d swp = _mm_shuffle_pd(difBD, difBD, 0b01);
         __m128d rot = (transform_sign == 1)
-                          ? _mm_xor_pd(swp, _mm_set_pd(0.0, -0.0))  // +i (was -0.0, 0.0)
-                          : _mm_xor_pd(swp, _mm_set_pd(-0.0, 0.0)); // -i (was 0.0, -0.0)
+                  ? _mm_xor_pd(swp, _mm_set_pd(0.0, -0.0))  
+                  : _mm_xor_pd(swp, _mm_set_pd(-0.0, 0.0));
 
         __m128d y1 = _mm_sub_pd(a_mc, rot);
         __m128d y3 = _mm_add_pd(a_mc, rot);

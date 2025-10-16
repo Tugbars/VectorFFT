@@ -1298,7 +1298,7 @@ static void mixed_radix_dit_rec(
     // Corrected Radix-32 Implementation
     else if (radix == 32)
     {
-       fft_radix32_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix32_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
     }
     else
     {
