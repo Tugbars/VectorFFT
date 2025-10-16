@@ -17,7 +17,6 @@
 #include "fft_radix16.h"
 #include "fft_radix32.h"
 #include <immintrin.h>
-#include <pthread.h>
 
 //==============================================================================
 // PRIME FACTORIZATION AND DIVISIBILITY SYSTEM
