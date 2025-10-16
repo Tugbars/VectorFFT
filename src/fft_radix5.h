@@ -3,11 +3,6 @@
 
 #include "highspeedFFT.h"
 
-#ifndef FFT_RADIX5_H
-#define FFT_RADIX5_H
-
-#include "highspeedFFT.h"
-
 /**
  * @brief Radix-5 FFT butterfly: The Goldilocks Prime Radix
  * 

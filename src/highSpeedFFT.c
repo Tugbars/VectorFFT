@@ -20,100 +20,390 @@
 #include <pthread.h>
 
 //==============================================================================
-// DIVISIBILITY LOOKUP (for dividebyN up to 1024)
+// PRIME FACTORIZATION AND DIVISIBILITY SYSTEM
 //==============================================================================
+
 #define LOOKUP_MAX 1024
 
+// Core primes used for FFT (includes composite radices 4, 8 for FFT optimization)
 static const int primes[] = {
-    2, 3, 4, 5, 7, 8, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53};
+    2, 3, 4, 5, 7, 8, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53
+};
 static const int num_primes = sizeof(primes) / sizeof(primes[0]);
 
+// Actual prime-only list (for factorization)
+static const int true_primes[] = {
+    2, 3, 5, 7, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53
+};
+static const int num_true_primes = sizeof(true_primes) / sizeof(true_primes[0]);
+
+// Divisibility lookup table
 static unsigned char dividebyN_lookup[LOOKUP_MAX]; // 0 = not divisible, 1 = divisible
 
+// Bluestein chirp precomputation
 static const int pre_sizes[] = {1, 2, 3, 4, 5, 7, 15, 20, 31, 64};
 static const int num_pre = (int)(sizeof(pre_sizes) / sizeof(pre_sizes[0]));
+static fft_data *all_chirps = NULL;
 
-static fft_data *all_chirps = NULL; // single contiguous block holding all precomputed sequences
+// Extended prime table for large factors
+static int *extended_primes = NULL;
+static int num_extended = 0;
+static int max_extended_prime = 0;
 
-// Initialize the lookup table at compile time or runtime
-__attribute__((constructor)) static void init_dividebyN_lookup(void)
+//==============================================================================
+// UNIFIED INITIALIZATION - Runs once at program startup
+//==============================================================================
+__attribute__((constructor))
+static void init_fft_prime_system(void)
 {
-    // Set all to 0 initially (not divisible)
-    for (int i = 0; i < LOOKUP_MAX; i++)
-    {
-        dividebyN_lookup[i] = 0;
-    }
-    dividebyN_lookup[1] = 1; // Special case: 1 is "divisible" (no factors needed)
-
-    // Mark numbers divisible by the primes
-    for (int n = 2; n < LOOKUP_MAX; n++)
-    {
+    //==========================================================================
+    // 1. Build divisibility lookup table (for dividebyN up to 1024)
+    //==========================================================================
+    memset(dividebyN_lookup, 0, LOOKUP_MAX);
+    dividebyN_lookup[1] = 1; // Special case: 1 is "divisible"
+    
+    for (int n = 2; n < LOOKUP_MAX; n++) {
         int temp = n;
         int divisible = 1;
-        while (temp > 1)
-        {
+        
+        while (temp > 1) {
             int factored = 0;
-            for (int j = 0; j < num_primes; j++)
-            {
-                if (temp % primes[j] == 0)
-                {
+            
+            // Try dividing by each prime in our supported set
+            for (int j = 0; j < num_primes; j++) {
+                if (temp % primes[j] == 0) {
                     temp /= primes[j];
                     factored = 1;
                     break;
                 }
             }
-            if (!factored)
-            {
+            
+            if (!factored) {
                 divisible = 0;
                 break;
             }
         }
-        if (divisible)
-        {
+        
+        if (divisible) {
             dividebyN_lookup[n] = 1;
         }
     }
+    
+    //==========================================================================
+    // 2. Build extended prime table (59 to 10000) using Sieve of Eratosthenes
+    //==========================================================================
+    const int limit = 10000;
+    char *sieve = (char *)calloc(limit + 1, 1);
+    
+    if (!sieve) {
+        fprintf(stderr, "Warning: Failed to allocate sieve for extended primes\n");
+        return;
+    }
+    
+    // Sieve of Eratosthenes
+    for (int i = 2; i * i <= limit; i++) {
+        if (!sieve[i]) {
+            for (int j = i * i; j <= limit; j += i)
+                sieve[j] = 1;
+        }
+    }
+    
+    // Count primes > 53 (we already have primes up to 53)
+    num_extended = 0;
+    for (int i = 59; i <= limit; i++)
+        if (!sieve[i]) num_extended++;
+    
+    if (num_extended > 0) {
+        extended_primes = (int *)malloc(num_extended * sizeof(int));
+        
+        if (extended_primes) {
+            int idx = 0;
+            for (int i = 59; i <= limit; i++)
+                if (!sieve[i]) extended_primes[idx++] = i;
+            
+            max_extended_prime = extended_primes[num_extended - 1];
+        } else {
+            fprintf(stderr, "Warning: Failed to allocate extended prime table\n");
+        }
+    }
+    
+    free(sieve);
 }
 
-// Precomputed Rader constants (OUTSIDE function, init once)
-static const int L = 6;
-static const int out_perm[6] = {1, 5, 4, 6, 2, 3};
-
-// Convolution twiddles: 6 complex = 12 doubles, broadcastable
-static double tw_fwd_re[12], tw_fwd_im[12]; // [tw0.re, tw0.im, tw1.re, tw1.im, ...]
-static double tw_inv_re[12], tw_inv_im[12];
-
-static void init_radix7_twiddles(void) __attribute__((constructor));
-static void init_radix7_twiddles(void)
+//==============================================================================
+// CLEANUP - Runs at program exit
+//==============================================================================
+__attribute__((destructor))
+static void cleanup_fft_prime_system(void)
 {
-    const double angle_fwd = -2.0 * M_PI / 7.0;
-    const double angle_inv = +2.0 * M_PI / 7.0;
-
-    for (int q = 0; q < L; ++q)
-    {
-        double a_fwd = out_perm[q] * angle_fwd;
-        double a_inv = out_perm[q] * angle_inv;
-#ifdef __GNUC__
-        double s_fwd, c_fwd, s_inv, c_inv;
-        sincos(a_fwd, &s_fwd, &c_fwd);
-        sincos(a_inv, &s_inv, &c_inv);
-        tw_fwd_re[2 * q + 0] = c_fwd;
-        tw_fwd_im[2 * q + 0] = s_fwd;
-        tw_fwd_re[2 * q + 1] = c_fwd;
-        tw_fwd_im[2 * q + 1] = s_fwd;
-        tw_inv_re[2 * q + 0] = c_inv;
-        tw_inv_im[2 * q + 0] = s_inv;
-        tw_inv_re[2 * q + 1] = c_inv;
-        tw_inv_im[2 * q + 1] = s_inv;
-#else
-        tw_fwd_re[2 * q + 0] = tw_fwd_re[2 * q + 1] = cos(a_fwd);
-        tw_fwd_im[2 * q + 0] = tw_fwd_im[2 * q + 1] = sin(a_fwd);
-        tw_inv_re[2 * q + 0] = tw_inv_re[2 * q + 1] = cos(a_inv);
-        tw_inv_im[2 * q + 0] = tw_inv_im[2 * q + 1] = sin(a_inv);
-#endif
+    if (extended_primes) {
+        free(extended_primes);
+        extended_primes = NULL;
     }
 }
 
+//==============================================================================
+// DIVISIBILITY CHECK - Fast lookup for N < 1024, computed for larger N
+//==============================================================================
+int dividebyN(int number)
+{
+    // Fast path: lookup table for small N
+    if (number < LOOKUP_MAX) {
+        return dividebyN_lookup[number];
+    }
+    
+    // Slow path: compute for larger N
+    int temp = number;
+    
+    // Try small primes first
+    for (int i = 0; i < num_primes && temp > 1; i++) {
+        while (temp % primes[i] == 0) {
+            temp /= primes[i];
+        }
+    }
+    
+    return (temp == 1) ? 1 : 0;
+}
+
+//==============================================================================
+// PRIME FACTORIZATION - Three-phase hybrid approach
+//==============================================================================
+/**
+ * @brief Fast prime factorization using hybrid approach
+ * 
+ * Phase 1: Small primes (2-53) using existing true_primes array
+ * Phase 2: Medium primes (59-10000) using precomputed extended_primes table
+ * Phase 3: Large primes (>10000) using wheel factorization (6k±1)
+ * 
+ * @param number The number to factorize (must be > 0)
+ * @param factors_array Output array for prime factors (must hold at least 32 elements)
+ * @return Number of prime factors found, or 0 on error
+ */
+int factors(int number, int *factors_array)
+{
+    if (factors_array == NULL || number <= 0) {
+        fprintf(stderr, "Error: Invalid inputs for factors - number: %d\n", number);
+        return 0;
+    }
+
+    int index = 0;
+    int n = number;
+    
+    //==========================================================================
+    // PHASE 1: Factor using small primes (2-53)
+    //==========================================================================
+    for (int i = 0; i < num_true_primes && n > 1; i++) {
+        int p = true_primes[i];
+        
+        // Early exit if p² > n (remaining n must be prime or 1)
+        if (p * p > n) break;
+        
+        while (n % p == 0) {
+            if (index >= 32) {
+                fprintf(stderr, "Error: Too many prime factors (>32)\n");
+                return index;
+            }
+            factors_array[index++] = p;
+            n /= p;
+        }
+    }
+    
+    //==========================================================================
+    // PHASE 2: Factor using extended prime table (59-10000)
+    //==========================================================================
+    if (extended_primes && n > 1) {
+        for (int i = 0; i < num_extended && n > 1; i++) {
+            int p = extended_primes[i];
+            
+            // Early exit
+            if (p * p > n) break;
+            
+            while (n % p == 0) {
+                if (index >= 32) {
+                    fprintf(stderr, "Error: Too many prime factors (>32)\n");
+                    return index;
+                }
+                factors_array[index++] = p;
+                n /= p;
+            }
+        }
+    }
+    
+    //==========================================================================
+    // PHASE 3: Wheel factorization for very large primes (>10000)
+    //==========================================================================
+    if (n > 1) {
+        // Check if we need wheel factorization
+        // (n is either prime or has factors > max_extended_prime)
+        int sqrt_n = (int)sqrt((double)n) + 1;
+        
+        // Only do wheel factorization if n might have large factors
+        if (!extended_primes || sqrt_n > max_extended_prime) {
+            // Start from first candidate after max_extended_prime
+            int start_k = extended_primes ? (max_extended_prime + 6) / 6 : 1668;
+            
+            for (int k = start_k; 6*k - 1 <= sqrt_n && n > 1; k++) {
+                // Check 6k-1
+                int p1 = 6*k - 1;
+                while (n % p1 == 0) {
+                    if (index >= 32) {
+                        fprintf(stderr, "Error: Too many prime factors (>32)\n");
+                        return index;
+                    }
+                    factors_array[index++] = p1;
+                    n /= p1;
+                    sqrt_n = (int)sqrt((double)n) + 1;
+                }
+                
+                // Check 6k+1
+                int p2 = 6*k + 1;
+                if (p2 <= sqrt_n) {
+                    while (n % p2 == 0) {
+                        if (index >= 32) {
+                            fprintf(stderr, "Error: Too many prime factors (>32)\n");
+                            return index;
+                        }
+                        factors_array[index++] = p2;
+                        n /= p2;
+                        sqrt_n = (int)sqrt((double)n) + 1;
+                    }
+                }
+            }
+        }
+    }
+    
+    //==========================================================================
+    // Remaining n is a prime factor (or 1)
+    //==========================================================================
+    if (n > 1) {
+        if (index >= 32) {
+            fprintf(stderr, "Error: Too many prime factors (>32)\n");
+            return index;
+        }
+        factors_array[index++] = n;
+    }
+    
+    return index;
+}
+
+/**
+ * @brief Determines optimal execution radices for FFT (like FFTW's planner)
+ * Returns radices to use for actual FFT execution (may include composite radices)
+ */
+int get_fft_execution_radices(int number, int *radices, int *prime_factors, int num_prime_factors)
+{
+    int index = 0;
+    int temp_n = number;
+
+    // Count how many times each prime appears
+    int count_2 = 0, count_3 = 0, count_5 = 0, count_7 = 0;
+    for (int i = 0; i < num_prime_factors; i++)
+    {
+        if (prime_factors[i] == 2)
+            count_2++;
+        else if (prime_factors[i] == 3)
+            count_3++;
+        else if (prime_factors[i] == 5)
+            count_5++;
+        else if (prime_factors[i] == 7)
+            count_7++;
+    }
+
+    // Strategy: Use largest possible composite radices for efficiency
+
+    // **FIX: Check temp_n first to ensure we don't over-consume factors**
+
+    // Radix-32 (2^5) - most efficient for powers of 2
+    while (count_2 >= 5 && temp_n % 32 == 0) // ← ADD THIS CHECK
+    {
+        radices[index++] = 32;
+        temp_n /= 32;
+        count_2 -= 5;
+    }
+
+    // Radix-16 (2^4)
+    while (count_2 >= 4 && temp_n % 16 == 0) // ← ADD THIS CHECK
+    {
+        radices[index++] = 16;
+        temp_n /= 16;
+        count_2 -= 4;
+    }
+
+    // Radix-8 (2^3)
+    while (count_2 >= 3 && temp_n % 8 == 0) // ← ADD THIS CHECK
+    {
+        radices[index++] = 8;
+        temp_n /= 8;
+        count_2 -= 3;
+    }
+
+    // Radix-9 (3^2) if you have optimized radix-9 kernel
+    while (count_3 >= 2 && temp_n % 9 == 0) // ← ADD THIS CHECK
+    {
+        radices[index++] = 9;
+        temp_n /= 9;
+        count_3 -= 2;
+    }
+
+    // Radix-4 (2^2)
+    while (count_2 >= 2 && temp_n % 4 == 0) // ← ADD THIS CHECK
+    {
+        radices[index++] = 4;
+        temp_n /= 4;
+        count_2 -= 2;
+    }
+
+    // Now handle remaining prime radices
+    while (count_7 > 0 && temp_n % 7 == 0)
+    {
+        radices[index++] = 7;
+        temp_n /= 7;
+        count_7--;
+    }
+
+    while (count_5 > 0 && temp_n % 5 == 0)
+    {
+        radices[index++] = 5;
+        temp_n /= 5;
+        count_5--;
+    }
+
+    while (count_3 > 0 && temp_n % 3 == 0)
+    {
+        radices[index++] = 3;
+        temp_n /= 3;
+        count_3--;
+    }
+
+    while (count_2 > 0 && temp_n % 2 == 0)
+    {
+        radices[index++] = 2;
+        temp_n /= 2;
+        count_2--;
+    }
+
+    // Handle any other prime factors from the original factorization
+    for (int i = 0; i < num_prime_factors; i++)
+    {
+        int prime = prime_factors[i];
+        if (prime > 7) // We've already handled 2,3,5,7
+        {
+            while (temp_n % prime == 0 && temp_n >= prime)
+            {
+                radices[index++] = prime;
+                temp_n /= prime;
+            }
+        }
+    }
+
+    // Safety check - shouldn't happen if factorization was correct
+    if (temp_n > 1)
+    {
+        radices[index++] = temp_n;
+    }
+
+    return index;
+}
 
 //==============================================================================
 // BLUESTEin CHIRP: PRECOMPUTED SMALL-N TABLE
@@ -1781,334 +2071,6 @@ void fft_exec(fft_object fft_obj, fft_data *inp, fft_data *oup)
         fprintf(stderr, "Error: Invalid FFT object type (lt = %d)\n", fft_obj->lt);
         // exit
     }
-}
-
-/**
- * @brief Checks if a number N is divisible by a series of small prime numbers.
- *
- * Uses a precomputed lookup table for small N (<= 1024) and falls back to division for larger N.
- *
- * @param[in] number Number to check for divisibility (N > 0).
- * @return int 1 if N is fully divisible by the primes, 0 otherwise.
- * @warning If N is invalid (<= 0), the function exits with an error.
- */
-int dividebyN(int number)
-{
-
-    // Use lookup table for small N
-    if (number < LOOKUP_MAX)
-    {
-        return dividebyN_lookup[number];
-    }
-
-    // Fallback for larger N
-    int result = number;
-    while (result % 53 == 0)
-        result /= 53;
-    while (result % 47 == 0)
-        result /= 47;
-    while (result % 43 == 0)
-        result /= 43;
-    while (result % 41 == 0)
-        result /= 41;
-    while (result % 37 == 0)
-        result /= 37;
-    while (result % 31 == 0)
-        result /= 31;
-    while (result % 29 == 0)
-        result /= 29;
-    while (result % 23 == 0)
-        result /= 23;
-    while (result % 17 == 0)
-        result /= 17;
-    while (result % 13 == 0)
-        result /= 13;
-    while (result % 11 == 0)
-        result /= 11;
-    while (result % 8 == 0)
-        result /= 8;
-    while (result % 7 == 0)
-        result /= 7;
-    while (result % 5 == 0)
-        result /= 5;
-    while (result % 4 == 0)
-        result /= 4;
-    while (result % 3 == 0)
-        result /= 3;
-    while (result % 2 == 0)
-        result /= 2;
-    return (result == 1) ? 1 : 0;
-}
-
-/**
- * @brief Computes the prime factorization of a number M into an array of factors.
- *
- * Decomposes M into its prime factors, storing them in the provided array up to a maximum of 32 factors.
- * Uses a list of primes and a heuristic for larger numbers.
- *
- * @param[in] number Number to factorize (M > 0).
- * @param[out] factors_array Array to store the prime factors (size at least 32).
- * @return int Number of factors found.
- * @warning If M is invalid (<= 0) or the array is NULL, the function exits with an error.
- */
-/**
- * @brief Pure prime factorization - determines if N is factorable
- * Only returns prime numbers as factors
- */
-int factors(int number, int *factors_array)
-{
-    if (factors_array == NULL || number <= 0)
-    {
-        fprintf(stderr, "Error: Invalid inputs for factors - number: %d, factors_array: %p\n",
-                number, (void *)factors_array);
-        return 0;
-    }
-
-    int index = 0, temp_number = number;
-
-    // Factor out small primes first (most common)
-    while (temp_number % 2 == 0)
-    {
-        factors_array[index++] = 2;
-        temp_number /= 2;
-    }
-    while (temp_number % 3 == 0)
-    {
-        factors_array[index++] = 3;
-        temp_number /= 3;
-    }
-    while (temp_number % 5 == 0)
-    {
-        factors_array[index++] = 5;
-        temp_number /= 5;
-    }
-    while (temp_number % 7 == 0)
-    {
-        factors_array[index++] = 7;
-        temp_number /= 7;
-    }
-    while (temp_number % 11 == 0)
-    {
-        factors_array[index++] = 11;
-        temp_number /= 11;
-    }
-    while (temp_number % 13 == 0)
-    {
-        factors_array[index++] = 13;
-        temp_number /= 13;
-    }
-    while (temp_number % 17 == 0)
-    {
-        factors_array[index++] = 17;
-        temp_number /= 17;
-    }
-    while (temp_number % 19 == 0)
-    {
-        factors_array[index++] = 19;
-        temp_number /= 19;
-    }
-    while (temp_number % 23 == 0)
-    {
-        factors_array[index++] = 23;
-        temp_number /= 23;
-    }
-    while (temp_number % 29 == 0)
-    {
-        factors_array[index++] = 29;
-        temp_number /= 29;
-    }
-    while (temp_number % 31 == 0)
-    {
-        factors_array[index++] = 31;
-        temp_number /= 31;
-    }
-    while (temp_number % 37 == 0)
-    {
-        factors_array[index++] = 37;
-        temp_number /= 37;
-    }
-    while (temp_number % 41 == 0)
-    {
-        factors_array[index++] = 41;
-        temp_number /= 41;
-    }
-    while (temp_number % 43 == 0)
-    {
-        factors_array[index++] = 43;
-        temp_number /= 43;
-    }
-    while (temp_number % 47 == 0)
-    {
-        factors_array[index++] = 47;
-        temp_number /= 47;
-    }
-    while (temp_number % 53 == 0)
-    {
-        factors_array[index++] = 53;
-        temp_number /= 53;
-    }
-
-    // Handle larger primes using 6k ± 1 heuristic
-    if (temp_number > 53)
-    {
-        int k = 9; // Start from 6*9 = 54
-        while (temp_number > 1 && index < 32)
-        {
-            int factor1 = 6 * k - 1;
-            int factor2 = 6 * k + 1;
-
-            // Check if we've gone beyond sqrt(temp_number)
-            if (factor1 * factor1 > temp_number)
-            {
-                // temp_number must be prime itself
-                factors_array[index++] = temp_number;
-                break;
-            }
-
-            // Only check if these are actual factors
-            while (temp_number % factor1 == 0)
-            {
-                factors_array[index++] = factor1;
-                temp_number /= factor1;
-            }
-            while (temp_number % factor2 == 0)
-            {
-                factors_array[index++] = factor2;
-                temp_number /= factor2;
-            }
-            k++;
-        }
-    }
-    else if (temp_number > 1)
-    {
-        // Remaining number is prime
-        factors_array[index++] = temp_number;
-    }
-
-    return index;
-}
-
-/**
- * @brief Determines optimal execution radices for FFT (like FFTW's planner)
- * Returns radices to use for actual FFT execution (may include composite radices)
- */
-/**
- * @brief Determines optimal execution radices for FFT (like FFTW's planner)
- * Returns radices to use for actual FFT execution (may include composite radices)
- */
-int get_fft_execution_radices(int number, int *radices, int *prime_factors, int num_prime_factors)
-{
-    int index = 0;
-    int temp_n = number;
-
-    // Count how many times each prime appears
-    int count_2 = 0, count_3 = 0, count_5 = 0, count_7 = 0;
-    for (int i = 0; i < num_prime_factors; i++)
-    {
-        if (prime_factors[i] == 2)
-            count_2++;
-        else if (prime_factors[i] == 3)
-            count_3++;
-        else if (prime_factors[i] == 5)
-            count_5++;
-        else if (prime_factors[i] == 7)
-            count_7++;
-    }
-
-    // Strategy: Use largest possible composite radices for efficiency
-
-    // **FIX: Check temp_n first to ensure we don't over-consume factors**
-
-    // Radix-32 (2^5) - most efficient for powers of 2
-    while (count_2 >= 5 && temp_n % 32 == 0) // ← ADD THIS CHECK
-    {
-        radices[index++] = 32;
-        temp_n /= 32;
-        count_2 -= 5;
-    }
-
-    // Radix-16 (2^4)
-    while (count_2 >= 4 && temp_n % 16 == 0) // ← ADD THIS CHECK
-    {
-        radices[index++] = 16;
-        temp_n /= 16;
-        count_2 -= 4;
-    }
-
-    // Radix-8 (2^3)
-    while (count_2 >= 3 && temp_n % 8 == 0) // ← ADD THIS CHECK
-    {
-        radices[index++] = 8;
-        temp_n /= 8;
-        count_2 -= 3;
-    }
-
-    // Radix-9 (3^2) if you have optimized radix-9 kernel
-    while (count_3 >= 2 && temp_n % 9 == 0) // ← ADD THIS CHECK
-    {
-        radices[index++] = 9;
-        temp_n /= 9;
-        count_3 -= 2;
-    }
-
-    // Radix-4 (2^2)
-    while (count_2 >= 2 && temp_n % 4 == 0) // ← ADD THIS CHECK
-    {
-        radices[index++] = 4;
-        temp_n /= 4;
-        count_2 -= 2;
-    }
-
-    // Now handle remaining prime radices
-    while (count_7 > 0 && temp_n % 7 == 0)
-    {
-        radices[index++] = 7;
-        temp_n /= 7;
-        count_7--;
-    }
-
-    while (count_5 > 0 && temp_n % 5 == 0)
-    {
-        radices[index++] = 5;
-        temp_n /= 5;
-        count_5--;
-    }
-
-    while (count_3 > 0 && temp_n % 3 == 0)
-    {
-        radices[index++] = 3;
-        temp_n /= 3;
-        count_3--;
-    }
-
-    while (count_2 > 0 && temp_n % 2 == 0)
-    {
-        radices[index++] = 2;
-        temp_n /= 2;
-        count_2--;
-    }
-
-    // Handle any other prime factors from the original factorization
-    for (int i = 0; i < num_prime_factors; i++)
-    {
-        int prime = prime_factors[i];
-        if (prime > 7) // We've already handled 2,3,5,7
-        {
-            while (temp_n % prime == 0 && temp_n >= prime)
-            {
-                radices[index++] = prime;
-                temp_n /= prime;
-            }
-        }
-    }
-
-    // Safety check - shouldn't happen if factorization was correct
-    if (temp_n > 1)
-    {
-        radices[index++] = temp_n;
-    }
-
-    return index;
 }
 
 /**

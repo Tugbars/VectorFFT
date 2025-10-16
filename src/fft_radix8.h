@@ -3,11 +3,6 @@
 
 #include "highspeedFFT.h"
 
-#ifndef FFT_RADIX8_H
-#define FFT_RADIX8_H
-
-#include "highspeedFFT.h"
-
 /**
  * @brief Radix-8 FFT butterfly using 2×Radix-4 decomposition (FFTW-style)
  * 

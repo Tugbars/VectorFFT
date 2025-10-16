@@ -3,11 +3,6 @@
 
 #include "highspeedFFT.h"
 
-#ifndef FFT_RADIX13_H
-#define FFT_RADIX13_H
-
-#include "highspeedFFT.h"
-
 /**
  * @brief Radix-13 FFT butterfly using Pure Rader's Algorithm (No Symmetry Exploitation)
  * 

@@ -1,14 +1,14 @@
-#include "fft_radix2.h"   // ✅ Gets highSpeedFFT.h → fft_types.h
-#include "simd_math.h"    // ✅ Gets complex math operations
+#include "fft_radix2.h" // ✅ Gets highSpeedFFT.h → fft_types.h
+#include "simd_math.h"  // ✅ Gets complex math operations
 
 /**
  * @brief Optimized radix-2 butterfly with multi-stage SIMD processing
- * 
+ *
  * ALGORITHM OVERVIEW:
  * The radix-2 butterfly combines two N/2-point FFTs into one N-point FFT:
  *   Y[k]       = Even[k] + W^k * Odd[k]     (first half)
  *   Y[k + N/2] = Even[k] - W^k * Odd[k]     (second half)
- * 
+ *
  * KEY OPTIMIZATIONS:
  * 1. Special cases eliminate expensive operations for symmetry points
  * 2. SIMD processes multiple butterflies in parallel
@@ -105,15 +105,15 @@ void fft_radix2_butterfly(
         __m512d e1 = load4_aos(&sub_outputs[k + 4]);
         __m512d e2 = load4_aos(&sub_outputs[k + 8]);
         __m512d e3 = load4_aos(&sub_outputs[k + 12]);
-         
-         // Load 16 odd samples
+
+        // Load 16 odd samples
         __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
         __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
         __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
         __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
 
-         // Load 16 twiddle factors W^k
-         // NOTE: stage_tw[k] contains the precomputed W^k value
+        // Load 16 twiddle factors W^k
+        // NOTE: stage_tw[k] contains the precomputed W^k value
         __m512d w0 = load4_aos(&stage_tw[k + 0]);
         __m512d w1 = load4_aos(&stage_tw[k + 4]);
         __m512d w2 = load4_aos(&stage_tw[k + 8]);
