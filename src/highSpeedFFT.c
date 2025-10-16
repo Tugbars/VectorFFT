@@ -315,12 +315,12 @@ static const double S5_1 = 0.95105651629;  // sin(72°)
 static const double S5_2 = 0.58778525229;  // sin(144°)
 
 // --- Radix-7 constants ---
-static const double C1 = 0.62348980185;  // cos( 51.43°)
-static const double C2 = -0.22252093395; // cos(102.86°)
-static const double C3 = -0.90096886790; // cos(154.29°)
-static const double S1 = 0.78183148246;  // sin( 51.43°)
-static const double S2 = 0.97492791218;  // sin(102.86°)
-static const double S3 = 0.43388373911;  // sin(154.29°)
+    const double C1 = 0.6234898018587336;   // cos(2π/7)
+    const double C2 = -0.22252093395631440; // cos(4π/7)
+    const double C3 = -0.90096886790241915; // cos(6π/7)
+    const double S1 = 0.78183148246802981;  // sin(2π/7)
+    const double S2 = 0.97492791218182360;  // sin(4π/7)
+    const double S3 = 0.43388373911755806;  // sin(6π/7)
 
 // --- Radix-8 constant ---
 static const double C8_1 = 0.7071067811865476; // √2/2 for 45° rotation
@@ -737,11 +737,11 @@ static void build_twiddles_linear(fft_data *tw, int N)
     }
 
     const double theta = -2.0 * M_PI / (double)N;
-    
+
     // Compute the first half of twiddle factors
     // For odd N: compute indices 1 to (N-1)/2
     // For even N: compute indices 1 to N/2-1 (N/2 already set above)
-    const int last_to_compute = (N - 1) / 2;  // Works for both odd and even N
+    const int last_to_compute = (N - 1) / 2; // Works for both odd and even N
 
     int k = 1;
 
@@ -779,23 +779,23 @@ static void build_twiddles_linear(fft_data *tw, int N)
                 // Use high-precision sin/cos
                 if (fabs(ang) <= M_PI / 4.0)
                 {
-                    // Use your 0.5-ULP minimax polynomials if available
-                    #ifdef HAVE_SINCOS_PI4
+// Use your 0.5-ULP minimax polynomials if available
+#ifdef HAVE_SINCOS_PI4
                     sincos_pi4(ang, &tw[k + j].im, &tw[k + j].re);
-                    #else
+#else
                     tw[k + j].re = cos(ang);
                     tw[k + j].im = sin(ang);
-                    #endif
+#endif
                 }
                 else
                 {
-                    // Use system sin/cos
-                    #ifdef __GNUC__
+// Use system sin/cos
+#ifdef __GNUC__
                     sincos(ang, &tw[k + j].im, &tw[k + j].re);
-                    #else
+#else
                     tw[k + j].re = cos(ang);
                     tw[k + j].im = sin(ang);
-                    #endif
+#endif
                 }
             }
         }
@@ -823,22 +823,22 @@ static void build_twiddles_linear(fft_data *tw, int N)
     // Second half uses exact conjugate symmetry
     // Start from the first index that needs mirroring
     int mirror_start = last_to_compute + 1;
-    
+
     // For even N, if N/2 is already set, skip it
     if (N % 2 == 0 && mirror_start == N / 2)
         mirror_start++;
-    
+
     for (k = mirror_start; k < N; k++)
     {
         int mirror = N - k;
-        tw[k].re = tw[mirror].re;   // Exact copy
-        tw[k].im = -tw[mirror].im;  // Exact negation (conjugate)
+        tw[k].re = tw[mirror].re;  // Exact copy
+        tw[k].im = -tw[mirror].im; // Exact negation (conjugate)
     }
 
     // Special handling for N=8 exact values ( optimization)
     if (N == 8)
     {
-        tw[1].re = 0.7071067811865476;  // sqrt(2)/2 to full precision
+        tw[1].re = 0.7071067811865476; // sqrt(2)/2 to full precision
         tw[1].im = -0.7071067811865476;
         tw[3].re = -0.7071067811865476;
         tw[3].im = -0.7071067811865476;
@@ -1064,73 +1064,55 @@ fft_object fft_init(int signal_length, int transform_direction)
     build_twiddles_linear(fft_config->twiddles, fft_config->n_fft);
 
     // Step 11: Populate twiddle_factors for single-radix FFTs
+    // Step 11: Populate twiddle_factors for single-radix FFTs
     if (fft_config->twiddle_factors && is_single_radix)
-{
-    int offset = 0;
-    int radix = single_radix;
-
-    for (int N_stage = signal_length; N_stage >= radix; N_stage /= radix)
     {
-        const int sub_len = N_stage / radix;
-        const int stride = fft_config->n_fft / N_stage;
+        int offset = 0;
+        int radix = single_radix;
 
-        for (int k = 0; k < sub_len; ++k)
+        for (int N_stage = signal_length; N_stage >= radix; N_stage /= radix)
         {
-            const int base = (radix - 1) * k;
+            const int sub_len = N_stage / radix;
+            const int stride = fft_config->n_fft / N_stage;
 
-            // Use Rader permutation for prime radices
-            if (radix == 7)
+            for (int k = 0; k < sub_len; ++k)
             {
-                // Rader permutation for radix-7: indices [1,2,4,3,6,5]
-                const int perm[6] = {1, 2, 4, 3, 6, 5};
-                for (int j = 0; j < 6; ++j)
+                const int base = (radix - 1) * k;
+
+                if (radix == 7)
                 {
-                    const int p = (perm[j] * k) % N_stage;
-                    const int idxN = (p * stride) % fft_config->n_fft;
-                    fft_config->twiddle_factors[offset + base + j] =
-                        fft_config->twiddles[idxN];
+                    // For Good-Thomas radix-7, store twiddles in sequential order
+                    // w^1, w^2, w^3, w^4, w^5, w^6
+                    for (int j = 1; j <= 6; ++j)
+                    {
+                        const int p = (j * k) % N_stage;
+                        const int idxN = (p * stride) % fft_config->n_fft;
+                        fft_config->twiddle_factors[offset + base + (j - 1)] = fft_config->twiddles[idxN];
+                    }
+                }
+                else
+                {
+                    // Standard DIT for other radices
+                    for (int j = 1; j < radix; ++j)
+                    {
+                        const int p = (j * k) % N_stage;
+                        const int idxN = (p * stride) % fft_config->n_fft;
+                        fft_config->twiddle_factors[offset + base + (j - 1)] = fft_config->twiddles[idxN];
+                    }
                 }
             }
-            else if (radix == 11)
-            {
-                // Rader permutation for radix-11: powers of 2 mod 11
-                const int perm[10] = {1, 2, 4, 8, 5, 10, 9, 7, 3, 6};
-                for (int j = 0; j < 10; ++j)
-                {
-                    const int p = (perm[j] * k) % N_stage;
-                    const int idxN = (p * stride) % fft_config->n_fft;
-                    fft_config->twiddle_factors[offset + base + j] =
-                        fft_config->twiddles[idxN];
-                }
-            }
-            else if (radix == 17)
-            {
-                // Rader permutation for radix-17: powers of 3 mod 17
-                const int perm[16] = {1, 3, 9, 10, 13, 5, 15, 11, 16, 14, 8, 7, 4, 12, 2, 6};
-                for (int j = 0; j < 16; ++j)
-                {
-                    const int p = (perm[j] * k) % N_stage;
-                    const int idxN = (p * stride) % fft_config->n_fft;
-                    fft_config->twiddle_factors[offset + base + j] =
-                        fft_config->twiddles[idxN];
-                }
-            }
-            else
-            {
-                // Standard DIT ordering for composite radices (2,3,4,5,8,16,32)
-                for (int j = 1; j < radix; ++j)
-                {
-                    const int p = (j * k) % N_stage;
-                    const int idxN = (p * stride) % fft_config->n_fft;
-                    fft_config->twiddle_factors[offset + base + (j - 1)] =
-                        fft_config->twiddles[idxN];
-                }
-            }
+
+            offset += (radix - 1) * sub_len; // Move this OUTSIDE the k loop
         }
 
-        offset += (radix - 1) * sub_len;
+        if (offset != twiddle_factors_size)
+        {
+            fprintf(stderr, "Error: Twiddle offset mismatch: computed %d, expected %d\n",
+                    offset, twiddle_factors_size);
+            free_fft(fft_config);
+            return NULL;
+        }
     }
-}
 
     // Step 12: Adjust twiddles for inverse FFT
     if (transform_direction == -1)
@@ -3221,33 +3203,16 @@ static void mixed_radix_dit_rec(
    else if (radix == 7)
 {
     //==========================================================================
-    // RADIX-7 BUTTERFLY (Good-Thomas) - FFTW-STYLE OPTIMIZED
-    // Input permutation: [0, 1, 3, 2, 6, 4, 5]
-    // Output: sequential [0, 1, 2, 3, 4, 5, 6]
+    // RADIX-7 BUTTERFLY (Good-Thomas Algorithm)
+    // Based on FFTW's approach with minimal operations
     //==========================================================================
-
-    // DEBUG: Print inputs to the butterfly
-    printf("\n=== RADIX-7 BUTTERFLY DEBUG ===\n");
-    printf("sub_len = %d, seventh = %d\n", sub_len, sub_len);
-    printf("transform_sign = %d\n", transform_sign);
-    printf("\nInputs to butterfly (sub_outputs):\n");
-    for (int i = 0; i < 7; i++) {
-        printf("  sub_outputs[%d*%d] = (%.6f, %.6f)\n", 
-               i, sub_len, sub_outputs[i*sub_len].re, sub_outputs[i*sub_len].im);
-    }
-    printf("\nTwiddle factors (first butterfly, k=0):\n");
-    for (int j = 0; j < 6; j++) {
-        printf("  stage_tw[%d] = (%.6f, %.6f)\n", 
-               j, stage_tw[j].re, stage_tw[j].im);
-    }
-    printf("===============================\n\n");
-
+    
     const int seventh = sub_len;
     int k = 0;
 
 #ifdef __AVX2__
     //------------------------------------------------------------------
-    // AVX2 PATH: 4x unrolled, pure AoS
+    // AVX2 PATH: Process 8 butterflies at once
     //------------------------------------------------------------------
     const __m256d vc1 = _mm256_set1_pd(C1);
     const __m256d vc2 = _mm256_set1_pd(C2);
@@ -3256,175 +3221,176 @@ static void mixed_radix_dit_rec(
     const __m256d vs2 = _mm256_set1_pd(S2);
     const __m256d vs3 = _mm256_set1_pd(S3);
 
-    // Precompute rotation masks
-    const __m256d mask_plus_i = _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
-    const __m256d mask_minus_i = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
-    const __m256d rot_mask = (transform_sign == 1) ? mask_minus_i : mask_plus_i;
-
     for (; k + 7 < seventh; k += 8)
     {
-        // Prefetch ahead
-        if (k + 16 < seventh)
-        {
-            _mm_prefetch((const char *)&sub_outputs[k + 16].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&stage_tw[6 * (k + 16)].re, _MM_HINT_T0);
+        //==================================================================
+        // Load 7 inputs for 8 butterflies (standard order)
+        //==================================================================
+        __m256d x0_0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
+        __m256d x0_1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
+        __m256d x0_2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
+        __m256d x0_3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
+        
+        __m256d x1_0 = load2_aos(&sub_outputs[k + 0 + seventh], &sub_outputs[k + 1 + seventh]);
+        __m256d x1_1 = load2_aos(&sub_outputs[k + 2 + seventh], &sub_outputs[k + 3 + seventh]);
+        __m256d x1_2 = load2_aos(&sub_outputs[k + 4 + seventh], &sub_outputs[k + 5 + seventh]);
+        __m256d x1_3 = load2_aos(&sub_outputs[k + 6 + seventh], &sub_outputs[k + 7 + seventh]);
+        
+        __m256d x2_0 = load2_aos(&sub_outputs[k + 0 + 2*seventh], &sub_outputs[k + 1 + 2*seventh]);
+        __m256d x2_1 = load2_aos(&sub_outputs[k + 2 + 2*seventh], &sub_outputs[k + 3 + 2*seventh]);
+        __m256d x2_2 = load2_aos(&sub_outputs[k + 4 + 2*seventh], &sub_outputs[k + 5 + 2*seventh]);
+        __m256d x2_3 = load2_aos(&sub_outputs[k + 6 + 2*seventh], &sub_outputs[k + 7 + 2*seventh]);
+        
+        __m256d x3_0 = load2_aos(&sub_outputs[k + 0 + 3*seventh], &sub_outputs[k + 1 + 3*seventh]);
+        __m256d x3_1 = load2_aos(&sub_outputs[k + 2 + 3*seventh], &sub_outputs[k + 3 + 3*seventh]);
+        __m256d x3_2 = load2_aos(&sub_outputs[k + 4 + 3*seventh], &sub_outputs[k + 5 + 3*seventh]);
+        __m256d x3_3 = load2_aos(&sub_outputs[k + 6 + 3*seventh], &sub_outputs[k + 7 + 3*seventh]);
+        
+        __m256d x4_0 = load2_aos(&sub_outputs[k + 0 + 4*seventh], &sub_outputs[k + 1 + 4*seventh]);
+        __m256d x4_1 = load2_aos(&sub_outputs[k + 2 + 4*seventh], &sub_outputs[k + 3 + 4*seventh]);
+        __m256d x4_2 = load2_aos(&sub_outputs[k + 4 + 4*seventh], &sub_outputs[k + 5 + 4*seventh]);
+        __m256d x4_3 = load2_aos(&sub_outputs[k + 6 + 4*seventh], &sub_outputs[k + 7 + 4*seventh]);
+        
+        __m256d x5_0 = load2_aos(&sub_outputs[k + 0 + 5*seventh], &sub_outputs[k + 1 + 5*seventh]);
+        __m256d x5_1 = load2_aos(&sub_outputs[k + 2 + 5*seventh], &sub_outputs[k + 3 + 5*seventh]);
+        __m256d x5_2 = load2_aos(&sub_outputs[k + 4 + 5*seventh], &sub_outputs[k + 5 + 5*seventh]);
+        __m256d x5_3 = load2_aos(&sub_outputs[k + 6 + 5*seventh], &sub_outputs[k + 7 + 5*seventh]);
+        
+        __m256d x6_0 = load2_aos(&sub_outputs[k + 0 + 6*seventh], &sub_outputs[k + 1 + 6*seventh]);
+        __m256d x6_1 = load2_aos(&sub_outputs[k + 2 + 6*seventh], &sub_outputs[k + 3 + 6*seventh]);
+        __m256d x6_2 = load2_aos(&sub_outputs[k + 4 + 6*seventh], &sub_outputs[k + 5 + 6*seventh]);
+        __m256d x6_3 = load2_aos(&sub_outputs[k + 6 + 6*seventh], &sub_outputs[k + 7 + 6*seventh]);
+
+        //==================================================================
+        // Load and apply twiddle factors
+        //==================================================================
+        __m256d w1_0 = load2_aos(&stage_tw[6*k + 0], &stage_tw[6*(k+1) + 0]);
+        __m256d w1_1 = load2_aos(&stage_tw[6*(k+2) + 0], &stage_tw[6*(k+3) + 0]);
+        __m256d w1_2 = load2_aos(&stage_tw[6*(k+4) + 0], &stage_tw[6*(k+5) + 0]);
+        __m256d w1_3 = load2_aos(&stage_tw[6*(k+6) + 0], &stage_tw[6*(k+7) + 0]);
+        
+        __m256d w2_0 = load2_aos(&stage_tw[6*k + 1], &stage_tw[6*(k+1) + 1]);
+        __m256d w2_1 = load2_aos(&stage_tw[6*(k+2) + 1], &stage_tw[6*(k+3) + 1]);
+        __m256d w2_2 = load2_aos(&stage_tw[6*(k+4) + 1], &stage_tw[6*(k+5) + 1]);
+        __m256d w2_3 = load2_aos(&stage_tw[6*(k+6) + 1], &stage_tw[6*(k+7) + 1]);
+        
+        __m256d w3_0 = load2_aos(&stage_tw[6*k + 2], &stage_tw[6*(k+1) + 2]);
+        __m256d w3_1 = load2_aos(&stage_tw[6*(k+2) + 2], &stage_tw[6*(k+3) + 2]);
+        __m256d w3_2 = load2_aos(&stage_tw[6*(k+4) + 2], &stage_tw[6*(k+5) + 2]);
+        __m256d w3_3 = load2_aos(&stage_tw[6*(k+6) + 2], &stage_tw[6*(k+7) + 2]);
+        
+        __m256d w4_0 = load2_aos(&stage_tw[6*k + 3], &stage_tw[6*(k+1) + 3]);
+        __m256d w4_1 = load2_aos(&stage_tw[6*(k+2) + 3], &stage_tw[6*(k+3) + 3]);
+        __m256d w4_2 = load2_aos(&stage_tw[6*(k+4) + 3], &stage_tw[6*(k+5) + 3]);
+        __m256d w4_3 = load2_aos(&stage_tw[6*(k+6) + 3], &stage_tw[6*(k+7) + 3]);
+        
+        __m256d w5_0 = load2_aos(&stage_tw[6*k + 4], &stage_tw[6*(k+1) + 4]);
+        __m256d w5_1 = load2_aos(&stage_tw[6*(k+2) + 4], &stage_tw[6*(k+3) + 4]);
+        __m256d w5_2 = load2_aos(&stage_tw[6*(k+4) + 4], &stage_tw[6*(k+5) + 4]);
+        __m256d w5_3 = load2_aos(&stage_tw[6*(k+6) + 4], &stage_tw[6*(k+7) + 4]);
+        
+        __m256d w6_0 = load2_aos(&stage_tw[6*k + 5], &stage_tw[6*(k+1) + 5]);
+        __m256d w6_1 = load2_aos(&stage_tw[6*(k+2) + 5], &stage_tw[6*(k+3) + 5]);
+        __m256d w6_2 = load2_aos(&stage_tw[6*(k+4) + 5], &stage_tw[6*(k+5) + 5]);
+        __m256d w6_3 = load2_aos(&stage_tw[6*(k+6) + 5], &stage_tw[6*(k+7) + 5]);
+
+        // Apply twiddles
+        x1_0 = cmul_avx2_aos(x1_0, w1_0);
+        x1_1 = cmul_avx2_aos(x1_1, w1_1);
+        x1_2 = cmul_avx2_aos(x1_2, w1_2);
+        x1_3 = cmul_avx2_aos(x1_3, w1_3);
+        
+        x2_0 = cmul_avx2_aos(x2_0, w2_0);
+        x2_1 = cmul_avx2_aos(x2_1, w2_1);
+        x2_2 = cmul_avx2_aos(x2_2, w2_2);
+        x2_3 = cmul_avx2_aos(x2_3, w2_3);
+        
+        x3_0 = cmul_avx2_aos(x3_0, w3_0);
+        x3_1 = cmul_avx2_aos(x3_1, w3_1);
+        x3_2 = cmul_avx2_aos(x3_2, w3_2);
+        x3_3 = cmul_avx2_aos(x3_3, w3_3);
+        
+        x4_0 = cmul_avx2_aos(x4_0, w4_0);
+        x4_1 = cmul_avx2_aos(x4_1, w4_1);
+        x4_2 = cmul_avx2_aos(x4_2, w4_2);
+        x4_3 = cmul_avx2_aos(x4_3, w4_3);
+        
+        x5_0 = cmul_avx2_aos(x5_0, w5_0);
+        x5_1 = cmul_avx2_aos(x5_1, w5_1);
+        x5_2 = cmul_avx2_aos(x5_2, w5_2);
+        x5_3 = cmul_avx2_aos(x5_3, w5_3);
+        
+        x6_0 = cmul_avx2_aos(x6_0, w6_0);
+        x6_1 = cmul_avx2_aos(x6_1, w6_1);
+        x6_2 = cmul_avx2_aos(x6_2, w6_2);
+        x6_3 = cmul_avx2_aos(x6_3, w6_3);
+
+        //==================================================================
+        // Compute radix-7 DFT using Good-Thomas mapping
+        //==================================================================
+        
+        // Macro for the radix-7 butterfly computation
+#define RADIX7_DFT(x0, x1, x2, x3, x4, x5, x6, y0, y1, y2, y3, y4, y5, y6) \
+        { \
+            /* Symmetric sums for real part */ \
+            __m256d t1p6 = _mm256_add_pd(x1, x6); \
+            __m256d t2p5 = _mm256_add_pd(x2, x5); \
+            __m256d t3p4 = _mm256_add_pd(x3, x4); \
+            \
+            /* Antisymmetric differences for imaginary part */ \
+            __m256d t1m6 = _mm256_sub_pd(x1, x6); \
+            __m256d t2m5 = _mm256_sub_pd(x2, x5); \
+            __m256d t3m4 = _mm256_sub_pd(x3, x4); \
+            \
+            /* DC component */ \
+            y0 = _mm256_add_pd(x0, _mm256_add_pd(_mm256_add_pd(t1p6, t2p5), t3p4)); \
+            \
+            /* Real symmetric combinations */ \
+            __m256d r1 = _mm256_add_pd(x0, FMADD(vc1, t1p6, FMADD(vc2, t2p5, _mm256_mul_pd(vc3, t3p4)))); \
+            __m256d r2 = _mm256_add_pd(x0, FMADD(vc2, t1p6, FMADD(vc3, t2p5, _mm256_mul_pd(vc1, t3p4)))); \
+            __m256d r3 = _mm256_add_pd(x0, FMADD(vc3, t1p6, FMADD(vc1, t2p5, _mm256_mul_pd(vc2, t3p4)))); \
+            \
+            /* Imaginary antisymmetric combinations */ \
+            __m256d i1 = FMADD(vs1, t1m6, FMADD(vs2, t2m5, _mm256_mul_pd(vs3, t3m4))); \
+            __m256d i2 = FMADD(vs2, t1m6, FMADD(vs3, t2m5, _mm256_mul_pd(vs1, t3m4))); \
+            __m256d i3 = FMADD(vs3, t1m6, FMADD(vs1, t2m5, _mm256_mul_pd(vs2, t3m4))); \
+            \
+            /* Apply rotation for complex multiplication by i */ \
+            __m256d i1_swp = _mm256_permute_pd(i1, 0b0101); \
+            __m256d i2_swp = _mm256_permute_pd(i2, 0b0101); \
+            __m256d i3_swp = _mm256_permute_pd(i3, 0b0101); \
+            \
+            const __m256d sign_mask = (transform_sign == 1) ? \
+                _mm256_set_pd(0.0, -0.0, 0.0, -0.0)  : \
+                _mm256_set_pd(-0.0,  0.0, -0.0,  0.0);  \
+            \
+            __m256d rot1 = _mm256_xor_pd(i1_swp, sign_mask); \
+            __m256d rot2 = _mm256_xor_pd(i2_swp, sign_mask); \
+            __m256d rot3 = _mm256_xor_pd(i3_swp, sign_mask); \
+            \
+            /* Combine real and imaginary parts */ \
+            y1 = _mm256_add_pd(r1, rot1); \
+            y6 = _mm256_sub_pd(r1, rot1); \
+            y2 = _mm256_add_pd(r2, rot2); \
+            y5 = _mm256_sub_pd(r2, rot2); \
+            y3 = _mm256_add_pd(r3, rot3); \
+            y4 = _mm256_sub_pd(r3, rot3); \
         }
-
-        //==================================================================
-        // Load inputs with PERMUTATION [0, 1, 3, 2, 6, 4, 5]
-        //==================================================================
-        __m256d a0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
-        __m256d a1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
-        __m256d a2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
-        __m256d a3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
-
-        __m256d b0 = load2_aos(&sub_outputs[k + 0 + seventh], &sub_outputs[k + 1 + seventh]);
-        __m256d b1 = load2_aos(&sub_outputs[k + 2 + seventh], &sub_outputs[k + 3 + seventh]);
-        __m256d b2 = load2_aos(&sub_outputs[k + 4 + seventh], &sub_outputs[k + 5 + seventh]);
-        __m256d b3 = load2_aos(&sub_outputs[k + 6 + seventh], &sub_outputs[k + 7 + seventh]);
-
-        // Load c from index 3 (permuted)
-        __m256d c0 = load2_aos(&sub_outputs[k + 0 + 3 * seventh], &sub_outputs[k + 1 + 3 * seventh]);
-        __m256d c1 = load2_aos(&sub_outputs[k + 2 + 3 * seventh], &sub_outputs[k + 3 + 3 * seventh]);
-        __m256d c2 = load2_aos(&sub_outputs[k + 4 + 3 * seventh], &sub_outputs[k + 5 + 3 * seventh]);
-        __m256d c3 = load2_aos(&sub_outputs[k + 6 + 3 * seventh], &sub_outputs[k + 7 + 3 * seventh]);
-
-        // Load d from index 2 (permuted)
-        __m256d d0 = load2_aos(&sub_outputs[k + 0 + 2 * seventh], &sub_outputs[k + 1 + 2 * seventh]);
-        __m256d d1 = load2_aos(&sub_outputs[k + 2 + 2 * seventh], &sub_outputs[k + 3 + 2 * seventh]);
-        __m256d d2 = load2_aos(&sub_outputs[k + 4 + 2 * seventh], &sub_outputs[k + 5 + 2 * seventh]);
-        __m256d d3 = load2_aos(&sub_outputs[k + 6 + 2 * seventh], &sub_outputs[k + 7 + 2 * seventh]);
-
-        // Load e from index 6 (permuted)
-        __m256d e0 = load2_aos(&sub_outputs[k + 0 + 6 * seventh], &sub_outputs[k + 1 + 6 * seventh]);
-        __m256d e1 = load2_aos(&sub_outputs[k + 2 + 6 * seventh], &sub_outputs[k + 3 + 6 * seventh]);
-        __m256d e2 = load2_aos(&sub_outputs[k + 4 + 6 * seventh], &sub_outputs[k + 5 + 6 * seventh]);
-        __m256d e3 = load2_aos(&sub_outputs[k + 6 + 6 * seventh], &sub_outputs[k + 7 + 6 * seventh]);
-
-        // Load f from index 4 (permuted)
-        __m256d f0 = load2_aos(&sub_outputs[k + 0 + 4 * seventh], &sub_outputs[k + 1 + 4 * seventh]);
-        __m256d f1 = load2_aos(&sub_outputs[k + 2 + 4 * seventh], &sub_outputs[k + 3 + 4 * seventh]);
-        __m256d f2 = load2_aos(&sub_outputs[k + 4 + 4 * seventh], &sub_outputs[k + 5 + 4 * seventh]);
-        __m256d f3 = load2_aos(&sub_outputs[k + 6 + 4 * seventh], &sub_outputs[k + 7 + 4 * seventh]);
-
-        // Load g from index 5 (permuted)
-        __m256d g0 = load2_aos(&sub_outputs[k + 0 + 5 * seventh], &sub_outputs[k + 1 + 5 * seventh]);
-        __m256d g1 = load2_aos(&sub_outputs[k + 2 + 5 * seventh], &sub_outputs[k + 3 + 5 * seventh]);
-        __m256d g2 = load2_aos(&sub_outputs[k + 4 + 5 * seventh], &sub_outputs[k + 5 + 5 * seventh]);
-        __m256d g3 = load2_aos(&sub_outputs[k + 6 + 5 * seventh], &sub_outputs[k + 7 + 5 * seventh]);
-
-        //==================================================================
-        // Load twiddles (k-major: 6 per butterfly)
-        //==================================================================
-        __m256d w1_0 = load2_aos(&stage_tw[6 * (k + 0)], &stage_tw[6 * (k + 1)]);
-        __m256d w1_1 = load2_aos(&stage_tw[6 * (k + 2)], &stage_tw[6 * (k + 3)]);
-        __m256d w1_2 = load2_aos(&stage_tw[6 * (k + 4)], &stage_tw[6 * (k + 5)]);
-        __m256d w1_3 = load2_aos(&stage_tw[6 * (k + 6)], &stage_tw[6 * (k + 7)]);
-
-        __m256d w2_0 = load2_aos(&stage_tw[6 * (k + 0) + 1], &stage_tw[6 * (k + 1) + 1]);
-        __m256d w2_1 = load2_aos(&stage_tw[6 * (k + 2) + 1], &stage_tw[6 * (k + 3) + 1]);
-        __m256d w2_2 = load2_aos(&stage_tw[6 * (k + 4) + 1], &stage_tw[6 * (k + 5) + 1]);
-        __m256d w2_3 = load2_aos(&stage_tw[6 * (k + 6) + 1], &stage_tw[6 * (k + 7) + 1]);
-
-        __m256d w3_0 = load2_aos(&stage_tw[6 * (k + 0) + 2], &stage_tw[6 * (k + 1) + 2]);
-        __m256d w3_1 = load2_aos(&stage_tw[6 * (k + 2) + 2], &stage_tw[6 * (k + 3) + 2]);
-        __m256d w3_2 = load2_aos(&stage_tw[6 * (k + 4) + 2], &stage_tw[6 * (k + 5) + 2]);
-        __m256d w3_3 = load2_aos(&stage_tw[6 * (k + 6) + 2], &stage_tw[6 * (k + 7) + 2]);
-
-        __m256d w4_0 = load2_aos(&stage_tw[6 * (k + 0) + 3], &stage_tw[6 * (k + 1) + 3]);
-        __m256d w4_1 = load2_aos(&stage_tw[6 * (k + 2) + 3], &stage_tw[6 * (k + 3) + 3]);
-        __m256d w4_2 = load2_aos(&stage_tw[6 * (k + 4) + 3], &stage_tw[6 * (k + 5) + 3]);
-        __m256d w4_3 = load2_aos(&stage_tw[6 * (k + 6) + 3], &stage_tw[6 * (k + 7) + 3]);
-
-        __m256d w5_0 = load2_aos(&stage_tw[6 * (k + 0) + 4], &stage_tw[6 * (k + 1) + 4]);
-        __m256d w5_1 = load2_aos(&stage_tw[6 * (k + 2) + 4], &stage_tw[6 * (k + 3) + 4]);
-        __m256d w5_2 = load2_aos(&stage_tw[6 * (k + 4) + 4], &stage_tw[6 * (k + 5) + 4]);
-        __m256d w5_3 = load2_aos(&stage_tw[6 * (k + 6) + 4], &stage_tw[6 * (k + 7) + 4]);
-
-        __m256d w6_0 = load2_aos(&stage_tw[6 * (k + 0) + 5], &stage_tw[6 * (k + 1) + 5]);
-        __m256d w6_1 = load2_aos(&stage_tw[6 * (k + 2) + 5], &stage_tw[6 * (k + 3) + 5]);
-        __m256d w6_2 = load2_aos(&stage_tw[6 * (k + 4) + 5], &stage_tw[6 * (k + 5) + 5]);
-        __m256d w6_3 = load2_aos(&stage_tw[6 * (k + 6) + 5], &stage_tw[6 * (k + 7) + 5]);
-
-        //==================================================================
-        // Twiddle multiply
-        //==================================================================
-        __m256d b2_0 = cmul_avx2_aos(b0, w1_0);
-        __m256d b2_1 = cmul_avx2_aos(b1, w1_1);
-        __m256d b2_2 = cmul_avx2_aos(b2, w1_2);
-        __m256d b2_3 = cmul_avx2_aos(b3, w1_3);
-
-        __m256d c2_0 = cmul_avx2_aos(c0, w2_0);
-        __m256d c2_1 = cmul_avx2_aos(c1, w2_1);
-        __m256d c2_2 = cmul_avx2_aos(c2, w2_2);
-        __m256d c2_3 = cmul_avx2_aos(c3, w2_3);
-
-        __m256d d2_0 = cmul_avx2_aos(d0, w3_0);
-        __m256d d2_1 = cmul_avx2_aos(d1, w3_1);
-        __m256d d2_2 = cmul_avx2_aos(d2, w3_2);
-        __m256d d2_3 = cmul_avx2_aos(d3, w3_3);
-
-        __m256d e2_0 = cmul_avx2_aos(e0, w4_0);
-        __m256d e2_1 = cmul_avx2_aos(e1, w4_1);
-        __m256d e2_2 = cmul_avx2_aos(e2, w4_2);
-        __m256d e2_3 = cmul_avx2_aos(e3, w4_3);
-
-        __m256d f2_0 = cmul_avx2_aos(f0, w5_0);
-        __m256d f2_1 = cmul_avx2_aos(f1, w5_1);
-        __m256d f2_2 = cmul_avx2_aos(f2, w5_2);
-        __m256d f2_3 = cmul_avx2_aos(f3, w5_3);
-
-        __m256d g2_0 = cmul_avx2_aos(g0, w6_0);
-        __m256d g2_1 = cmul_avx2_aos(g1, w6_1);
-        __m256d g2_2 = cmul_avx2_aos(g2, w6_2);
-        __m256d g2_3 = cmul_avx2_aos(g3, w6_3);
-
-        //==================================================================
-        // Radix-7 butterfly (8 butterflies in parallel)
-        //==================================================================
-#define RADIX7_BUTTERFLY_AVX2(a, b2, c2, d2, e2, f2, g2, y0, y1, y2, y3, y4, y5, y6)             \
-    {                                                                                            \
-        __m256d t0 = _mm256_add_pd(b2, g2);                                                      \
-        __m256d t1 = _mm256_add_pd(c2, f2);                                                      \
-        __m256d t2 = _mm256_add_pd(d2, e2);                                                      \
-        __m256d t3 = _mm256_sub_pd(b2, g2);                                                      \
-        __m256d t4 = _mm256_sub_pd(c2, f2);                                                      \
-        __m256d t5 = _mm256_sub_pd(d2, e2);                                                      \
-        y0 = _mm256_add_pd(a, _mm256_add_pd(_mm256_add_pd(t0, t1), t2));                         \
-        __m256d base1 = FMADD(vs1, t3, FMADD(vs2, t4, _mm256_mul_pd(vs3, t5)));                  \
-        __m256d base2 = FMADD(vs2, t3, FMADD(vs3, t4, _mm256_mul_pd(vs1, t5)));                  \
-        __m256d base3 = FMADD(vs3, t3, FMADD(vs1, t4, _mm256_mul_pd(vs2, t5)));                  \
-        __m256d base1_swp = _mm256_permute_pd(base1, 0b0101);                                    \
-        __m256d base2_swp = _mm256_permute_pd(base2, 0b0101);                                    \
-        __m256d base3_swp = _mm256_permute_pd(base3, 0b0101);                                    \
-        __m256d r1 = _mm256_xor_pd(base1_swp, rot_mask);                                         \
-        __m256d r2 = _mm256_xor_pd(base2_swp, rot_mask);                                         \
-        __m256d r3 = _mm256_xor_pd(base3_swp, rot_mask);                                         \
-        __m256d tmp1 = _mm256_add_pd(a, FMADD(vc1, t0, FMADD(vc2, t1, _mm256_mul_pd(vc3, t2)))); \
-        __m256d tmp2 = _mm256_add_pd(a, FMADD(vc2, t0, FMADD(vc3, t1, _mm256_mul_pd(vc1, t2)))); \
-        __m256d tmp3 = _mm256_add_pd(a, FMADD(vc3, t0, FMADD(vc1, t1, _mm256_mul_pd(vc2, t2)))); \
-        y1 = _mm256_add_pd(tmp1, r1);                                                            \
-        y6 = _mm256_sub_pd(tmp1, r1);                                                            \
-        y2 = _mm256_add_pd(tmp2, r2);                                                            \
-        y5 = _mm256_sub_pd(tmp2, r2);                                                            \
-        y3 = _mm256_add_pd(tmp3, r3);                                                            \
-        y4 = _mm256_sub_pd(tmp3, r3);                                                            \
-    }
 
         __m256d y0_0, y1_0, y2_0, y3_0, y4_0, y5_0, y6_0;
         __m256d y0_1, y1_1, y2_1, y3_1, y4_1, y5_1, y6_1;
         __m256d y0_2, y1_2, y2_2, y3_2, y4_2, y5_2, y6_2;
         __m256d y0_3, y1_3, y2_3, y3_3, y4_3, y5_3, y6_3;
 
-        RADIX7_BUTTERFLY_AVX2(a0, b2_0, c2_0, d2_0, e2_0, f2_0, g2_0, y0_0, y1_0, y2_0, y3_0, y4_0, y5_0, y6_0);
-        RADIX7_BUTTERFLY_AVX2(a1, b2_1, c2_1, d2_1, e2_1, f2_1, g2_1, y0_1, y1_1, y2_1, y3_1, y4_1, y5_1, y6_1);
-        RADIX7_BUTTERFLY_AVX2(a2, b2_2, c2_2, d2_2, e2_2, f2_2, g2_2, y0_2, y1_2, y2_2, y3_2, y4_2, y5_2, y6_2);
-        RADIX7_BUTTERFLY_AVX2(a3, b2_3, c2_3, d2_3, e2_3, f2_3, g2_3, y0_3, y1_3, y2_3, y3_3, y4_3, y5_3, y6_3);
+        RADIX7_DFT(x0_0, x1_0, x2_0, x3_0, x4_0, x5_0, x6_0, y0_0, y1_0, y2_0, y3_0, y4_0, y5_0, y6_0);
+        RADIX7_DFT(x0_1, x1_1, x2_1, x3_1, x4_1, x5_1, x6_1, y0_1, y1_1, y2_1, y3_1, y4_1, y5_1, y6_1);
+        RADIX7_DFT(x0_2, x1_2, x2_2, x3_2, x4_2, x5_2, x6_2, y0_2, y1_2, y2_2, y3_2, y4_2, y5_2, y6_2);
+        RADIX7_DFT(x0_3, x1_3, x2_3, x3_3, x4_3, x5_3, x6_3, y0_3, y1_3, y2_3, y3_3, y4_3, y5_3, y6_3);
 
-#undef RADIX7_BUTTERFLY_AVX2
+#undef RADIX7_DFT
 
         //==================================================================
-        // Store results - SEQUENTIAL OUTPUT
+        // Store results
         //==================================================================
         STOREU_PD(&output_buffer[k + 0].re, y0_0);
         STOREU_PD(&output_buffer[k + 2].re, y0_1);
@@ -3436,175 +3402,157 @@ static void mixed_radix_dit_rec(
         STOREU_PD(&output_buffer[k + 4 + seventh].re, y1_2);
         STOREU_PD(&output_buffer[k + 6 + seventh].re, y1_3);
 
-        STOREU_PD(&output_buffer[k + 0 + 2 * seventh].re, y2_0);
-        STOREU_PD(&output_buffer[k + 2 + 2 * seventh].re, y2_1);
-        STOREU_PD(&output_buffer[k + 4 + 2 * seventh].re, y2_2);
-        STOREU_PD(&output_buffer[k + 6 + 2 * seventh].re, y2_3);
+        STOREU_PD(&output_buffer[k + 0 + 2*seventh].re, y2_0);
+        STOREU_PD(&output_buffer[k + 2 + 2*seventh].re, y2_1);
+        STOREU_PD(&output_buffer[k + 4 + 2*seventh].re, y2_2);
+        STOREU_PD(&output_buffer[k + 6 + 2*seventh].re, y2_3);
 
-        STOREU_PD(&output_buffer[k + 0 + 3 * seventh].re, y3_0);
-        STOREU_PD(&output_buffer[k + 2 + 3 * seventh].re, y3_1);
-        STOREU_PD(&output_buffer[k + 4 + 3 * seventh].re, y3_2);
-        STOREU_PD(&output_buffer[k + 6 + 3 * seventh].re, y3_3);
+        STOREU_PD(&output_buffer[k + 0 + 3*seventh].re, y3_0);
+        STOREU_PD(&output_buffer[k + 2 + 3*seventh].re, y3_1);
+        STOREU_PD(&output_buffer[k + 4 + 3*seventh].re, y3_2);
+        STOREU_PD(&output_buffer[k + 6 + 3*seventh].re, y3_3);
 
-        STOREU_PD(&output_buffer[k + 0 + 4 * seventh].re, y4_0);
-        STOREU_PD(&output_buffer[k + 2 + 4 * seventh].re, y4_1);
-        STOREU_PD(&output_buffer[k + 4 + 4 * seventh].re, y4_2);
-        STOREU_PD(&output_buffer[k + 6 + 4 * seventh].re, y4_3);
+        STOREU_PD(&output_buffer[k + 0 + 4*seventh].re, y4_0);
+        STOREU_PD(&output_buffer[k + 2 + 4*seventh].re, y4_1);
+        STOREU_PD(&output_buffer[k + 4 + 4*seventh].re, y4_2);
+        STOREU_PD(&output_buffer[k + 6 + 4*seventh].re, y4_3);
 
-        STOREU_PD(&output_buffer[k + 0 + 5 * seventh].re, y5_0);
-        STOREU_PD(&output_buffer[k + 2 + 5 * seventh].re, y5_1);
-        STOREU_PD(&output_buffer[k + 4 + 5 * seventh].re, y5_2);
-        STOREU_PD(&output_buffer[k + 6 + 5 * seventh].re, y5_3);
+        STOREU_PD(&output_buffer[k + 0 + 5*seventh].re, y5_0);
+        STOREU_PD(&output_buffer[k + 2 + 5*seventh].re, y5_1);
+        STOREU_PD(&output_buffer[k + 4 + 5*seventh].re, y5_2);
+        STOREU_PD(&output_buffer[k + 6 + 5*seventh].re, y5_3);
 
-        STOREU_PD(&output_buffer[k + 0 + 6 * seventh].re, y6_0);
-        STOREU_PD(&output_buffer[k + 2 + 6 * seventh].re, y6_1);
-        STOREU_PD(&output_buffer[k + 4 + 6 * seventh].re, y6_2);
-        STOREU_PD(&output_buffer[k + 6 + 6 * seventh].re, y6_3);
-    }
-
-    //------------------------------------------------------------------
-    // Cleanup: 2x unrolling with PERMUTED INPUTS
-    //------------------------------------------------------------------
-    const __m256d rot_mask_final = (transform_sign == 1)
-                                       ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)
-                                       : _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
-
-    for (; k + 1 < seventh; k += 2)
-    {
-        if (k + 8 < seventh)
-        {
-            _mm_prefetch((const char *)&sub_outputs[k + 8].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&stage_tw[6 * (k + 8)].re, _MM_HINT_T0);
-        }
-
-        // Load inputs with PERMUTATION [0, 1, 3, 2, 6, 4, 5]
-        __m256d a = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
-        __m256d b = load2_aos(&sub_outputs[k + seventh], &sub_outputs[k + seventh + 1]);
-        __m256d c = load2_aos(&sub_outputs[k + 3 * seventh], &sub_outputs[k + 3 * seventh + 1]);  // permuted
-        __m256d d = load2_aos(&sub_outputs[k + 2 * seventh], &sub_outputs[k + 2 * seventh + 1]);  // permuted
-        __m256d e = load2_aos(&sub_outputs[k + 6 * seventh], &sub_outputs[k + 6 * seventh + 1]);  // permuted
-        __m256d f = load2_aos(&sub_outputs[k + 4 * seventh], &sub_outputs[k + 4 * seventh + 1]);  // permuted
-        __m256d g = load2_aos(&sub_outputs[k + 5 * seventh], &sub_outputs[k + 5 * seventh + 1]);  // permuted
-
-        // Load twiddles (2 butterflies)
-        __m256d w1 = load2_aos(&stage_tw[6 * k], &stage_tw[6 * (k + 1)]);
-        __m256d w2 = load2_aos(&stage_tw[6 * k + 1], &stage_tw[6 * (k + 1) + 1]);
-        __m256d w3 = load2_aos(&stage_tw[6 * k + 2], &stage_tw[6 * (k + 1) + 2]);
-        __m256d w4 = load2_aos(&stage_tw[6 * k + 3], &stage_tw[6 * (k + 1) + 3]);
-        __m256d w5 = load2_aos(&stage_tw[6 * k + 4], &stage_tw[6 * (k + 1) + 4]);
-        __m256d w6 = load2_aos(&stage_tw[6 * k + 5], &stage_tw[6 * (k + 1) + 5]);
-
-        // Twiddle multiply
-        __m256d b2 = cmul_avx2_aos(b, w1);
-        __m256d c2 = cmul_avx2_aos(c, w2);
-        __m256d d2 = cmul_avx2_aos(d, w3);
-        __m256d e2 = cmul_avx2_aos(e, w4);
-        __m256d f2 = cmul_avx2_aos(f, w5);
-        __m256d g2 = cmul_avx2_aos(g, w6);
-
-        // Radix-7 butterfly computation
-        __m256d t0 = _mm256_add_pd(b2, g2);
-        __m256d t1 = _mm256_add_pd(c2, f2);
-        __m256d t2 = _mm256_add_pd(d2, e2);
-        __m256d t3 = _mm256_sub_pd(b2, g2);
-        __m256d t4 = _mm256_sub_pd(c2, f2);
-        __m256d t5 = _mm256_sub_pd(d2, e2);
-
-        __m256d y0 = _mm256_add_pd(a, _mm256_add_pd(_mm256_add_pd(t0, t1), t2));
-
-        __m256d base1 = FMADD(vs1, t3, FMADD(vs2, t4, _mm256_mul_pd(vs3, t5)));
-        __m256d base2 = FMADD(vs2, t3, FMADD(vs3, t4, _mm256_mul_pd(vs1, t5)));
-        __m256d base3 = FMADD(vs3, t3, FMADD(vs1, t4, _mm256_mul_pd(vs2, t5)));
-
-        __m256d base1_swp = _mm256_permute_pd(base1, 0b0101);
-        __m256d base2_swp = _mm256_permute_pd(base2, 0b0101);
-        __m256d base3_swp = _mm256_permute_pd(base3, 0b0101);
-
-        __m256d r1 = _mm256_xor_pd(base1_swp, rot_mask_final);
-        __m256d r2 = _mm256_xor_pd(base2_swp, rot_mask_final);
-        __m256d r3 = _mm256_xor_pd(base3_swp, rot_mask_final);
-
-        __m256d tmp1 = _mm256_add_pd(a, FMADD(vc1, t0, FMADD(vc2, t1, _mm256_mul_pd(vc3, t2))));
-        __m256d tmp2 = _mm256_add_pd(a, FMADD(vc2, t0, FMADD(vc3, t1, _mm256_mul_pd(vc1, t2))));
-        __m256d tmp3 = _mm256_add_pd(a, FMADD(vc3, t0, FMADD(vc1, t1, _mm256_mul_pd(vc2, t2))));
-
-        __m256d y1 = _mm256_add_pd(tmp1, r1);
-        __m256d y6 = _mm256_sub_pd(tmp1, r1);
-        __m256d y2 = _mm256_add_pd(tmp2, r2);
-        __m256d y5 = _mm256_sub_pd(tmp2, r2);
-        __m256d y3 = _mm256_add_pd(tmp3, r3);
-        __m256d y4 = _mm256_sub_pd(tmp3, r3);
-
-        // Store results - SEQUENTIAL
-        STOREU_PD(&output_buffer[k].re, y0);
-        STOREU_PD(&output_buffer[k + seventh].re, y1);
-        STOREU_PD(&output_buffer[k + 2 * seventh].re, y2);
-        STOREU_PD(&output_buffer[k + 3 * seventh].re, y3);
-        STOREU_PD(&output_buffer[k + 4 * seventh].re, y4);
-        STOREU_PD(&output_buffer[k + 5 * seventh].re, y5);
-        STOREU_PD(&output_buffer[k + 6 * seventh].re, y6);
+        STOREU_PD(&output_buffer[k + 0 + 6*seventh].re, y6_0);
+        STOREU_PD(&output_buffer[k + 2 + 6*seventh].re, y6_1);
+        STOREU_PD(&output_buffer[k + 4 + 6*seventh].re, y6_2);
+        STOREU_PD(&output_buffer[k + 6 + 6*seventh].re, y6_3);
     }
 #endif // __AVX2__
 
     //------------------------------------------------------------------
-    // Scalar tail: Single butterfly with PERMUTED INPUTS
+    // Scalar path for remaining elements
     //------------------------------------------------------------------
     for (; k < seventh; ++k)
     {
-        // Load inputs with PERMUTATION [0, 1, 3, 2, 6, 4, 5]
-        const fft_data a = sub_outputs[k];
-        const fft_data b = sub_outputs[k + seventh];
-        const fft_data c = sub_outputs[k + 3 * seventh];  // permuted from 2
-        const fft_data d = sub_outputs[k + 2 * seventh];  // permuted from 3
-        const fft_data e = sub_outputs[k + 6 * seventh];  // permuted from 4
-        const fft_data f = sub_outputs[k + 4 * seventh];  // permuted from 5
-        const fft_data g = sub_outputs[k + 5 * seventh];  // permuted from 6
+        // Load 7 inputs
+        fft_data x0 = sub_outputs[k];
+        fft_data x1 = sub_outputs[k + seventh];
+        fft_data x2 = sub_outputs[k + 2*seventh];
+        fft_data x3 = sub_outputs[k + 3*seventh];
+        fft_data x4 = sub_outputs[k + 4*seventh];
+        fft_data x5 = sub_outputs[k + 5*seventh];
+        fft_data x6 = sub_outputs[k + 6*seventh];
 
-        const fft_data w1 = stage_tw[6 * k];
-        const fft_data w2 = stage_tw[6 * k + 1];
-        const fft_data w3 = stage_tw[6 * k + 2];
-        const fft_data w4 = stage_tw[6 * k + 3];
-        const fft_data w5 = stage_tw[6 * k + 4];
-        const fft_data w6 = stage_tw[6 * k + 5];
+        // Load and apply twiddle factors
+        fft_data w1 = stage_tw[6*k + 0];
+        fft_data w2 = stage_tw[6*k + 1];
+        fft_data w3 = stage_tw[6*k + 2];
+        fft_data w4 = stage_tw[6*k + 3];
+        fft_data w5 = stage_tw[6*k + 4];
+        fft_data w6 = stage_tw[6*k + 5];
 
-        double b2r = b.re * w1.re - b.im * w1.im, b2i = b.re * w1.im + b.im * w1.re;
-        double c2r = c.re * w2.re - c.im * w2.im, c2i = c.re * w2.im + c.im * w2.re;
-        double d2r = d.re * w3.re - d.im * w3.im, d2i = d.re * w3.im + d.im * w3.re;
-        double e2r = e.re * w4.re - e.im * w4.im, e2i = e.re * w4.im + e.im * w4.re;
-        double f2r = f.re * w5.re - f.im * w5.im, f2i = f.re * w5.im + f.im * w5.re;
-        double g2r = g.re * w6.re - g.im * w6.im, g2i = g.re * w6.im + g.im * w6.re;
+        // Apply twiddles (complex multiply)
+        double x1r = x1.re * w1.re - x1.im * w1.im;
+        double x1i = x1.re * w1.im + x1.im * w1.re;
+        
+        double x2r = x2.re * w2.re - x2.im * w2.im;
+        double x2i = x2.re * w2.im + x2.im * w2.re;
+        
+        double x3r = x3.re * w3.re - x3.im * w3.im;
+        double x3i = x3.re * w3.im + x3.im * w3.re;
+        
+        double x4r = x4.re * w4.re - x4.im * w4.im;
+        double x4i = x4.re * w4.im + x4.im * w4.re;
+        
+        double x5r = x5.re * w5.re - x5.im * w5.im;
+        double x5i = x5.re * w5.im + x5.im * w5.re;
+        
+        double x6r = x6.re * w6.re - x6.im * w6.im;
+        double x6i = x6.re * w6.im + x6.im * w6.re;
 
-        double t0r = b2r + g2r, t0i = b2i + g2i;
-        double t1r = c2r + f2r, t1i = c2i + f2i;
-        double t2r = d2r + e2r, t2i = d2i + e2i;
-        double t3r = b2r - g2r, t3i = b2i - g2i;
-        double t4r = c2r - f2r, t4i = c2i - f2i;
-        double t5r = d2r - e2r, t5i = d2i - e2i;
+        // Compute radix-7 DFT
+        // Symmetric sums
+        double t1p6_r = x1r + x6r;
+        double t1p6_i = x1i + x6i;
+        double t2p5_r = x2r + x5r;
+        double t2p5_i = x2i + x5i;
+        double t3p4_r = x3r + x4r;
+        double t3p4_i = x3i + x4i;
 
-        fft_data y0 = {a.re + (t0r + t1r + t2r), a.im + (t0i + t1i + t2i)};
+        // Antisymmetric differences
+        double t1m6_r = x1r - x6r;
+        double t1m6_i = x1i - x6i;
+        double t2m5_r = x2r - x5r;
+        double t2m5_i = x2i - x5i;
+        double t3m4_r = x3r - x4r;
+        double t3m4_i = x3i - x4i;
 
-        double r1r = (transform_sign == 1) ? (S1 * t3i + S2 * t4i + S3 * t5i) : -(S1 * t3i + S2 * t4i + S3 * t5i);
-        double r1i = (transform_sign == 1) ? -(S1 * t3r + S2 * t4r + S3 * t5r) : (S1 * t3r + S2 * t4r + S3 * t5r);
-        double r2r = (transform_sign == 1) ? (S2 * t3i + S3 * t4i + S1 * t5i) : -(S2 * t3i + S3 * t4i + S1 * t5i);
-        double r2i = (transform_sign == 1) ? -(S2 * t3r + S3 * t4r + S1 * t5r) : (S2 * t3r + S3 * t4r + S1 * t5r);
-        double r3r = (transform_sign == 1) ? (S3 * t3i + S1 * t4i + S2 * t5i) : -(S3 * t3i + S1 * t4i + S2 * t5i);
-        double r3i = (transform_sign == 1) ? -(S3 * t3r + S1 * t4r + S2 * t5r) : (S3 * t3r + S1 * t4r + S2 * t5r);
+        // Y[0] = DC component
+        output_buffer[k].re = x0.re + t1p6_r + t2p5_r + t3p4_r;
+        output_buffer[k].im = x0.im + t1p6_i + t2p5_i + t3p4_i;
 
-        double tmp1r = a.re + (C1 * t0r + C2 * t1r + C3 * t2r);
-        double tmp1i = a.im + (C1 * t0i + C2 * t1i + C3 * t2i);
-        double tmp2r = a.re + (C2 * t0r + C3 * t1r + C1 * t2r);
-        double tmp2i = a.im + (C2 * t0i + C3 * t1i + C1 * t2i);
-        double tmp3r = a.re + (C3 * t0r + C1 * t1r + C2 * t2r);
-        double tmp3i = a.im + (C3 * t0i + C1 * t1i + C2 * t2i);
+        // Real symmetric parts
+        double r1_r = x0.re + C1*t1p6_r + C2*t2p5_r + C3*t3p4_r;
+        double r1_i = x0.im + C1*t1p6_i + C2*t2p5_i + C3*t3p4_i;
+        
+        double r2_r = x0.re + C2*t1p6_r + C3*t2p5_r + C1*t3p4_r;
+        double r2_i = x0.im + C2*t1p6_i + C3*t2p5_i + C1*t3p4_i;
+        
+        double r3_r = x0.re + C3*t1p6_r + C1*t2p5_r + C2*t3p4_r;
+        double r3_i = x0.im + C3*t1p6_i + C1*t2p5_i + C2*t3p4_i;
 
-        // SEQUENTIAL OUTPUT
-        output_buffer[k] = y0;
-        output_buffer[k + seventh] = (fft_data){tmp1r + r1r, tmp1i + r1i};
-        output_buffer[k + 2 * seventh] = (fft_data){tmp2r + r2r, tmp2i + r2i};
-        output_buffer[k + 3 * seventh] = (fft_data){tmp3r + r3r, tmp3i + r3i};
-        output_buffer[k + 4 * seventh] = (fft_data){tmp3r - r3r, tmp3i - r3i};
-        output_buffer[k + 5 * seventh] = (fft_data){tmp2r - r2r, tmp2i - r2i};
-        output_buffer[k + 6 * seventh] = (fft_data){tmp1r - r1r, tmp1i - r1i};
+        // Imaginary antisymmetric parts
+        double i1_r = S1*t1m6_r + S2*t2m5_r + S3*t3m4_r;
+        double i1_i = S1*t1m6_i + S2*t2m5_i + S3*t3m4_i;
+        
+        double i2_r = S2*t1m6_r + S3*t2m5_r + S1*t3m4_r;
+        double i2_i = S2*t1m6_i + S3*t2m5_i + S1*t3m4_i;
+        
+        double i3_r = S3*t1m6_r + S1*t2m5_r + S2*t3m4_r;
+        double i3_i = S3*t1m6_i + S1*t2m5_i + S2*t3m4_i;
+
+        // Apply complex rotation (multiply by i or -i based on transform direction)
+        double rot1_r, rot1_i, rot2_r, rot2_i, rot3_r, rot3_i;
+
+        if (transform_sign == 1)
+        {
+            // Forward transform: multiply by +i
+            rot1_r = -i1_i;
+            rot1_i = i1_r;
+            rot2_r = -i2_i;
+            rot2_i = i2_r;
+            rot3_r = -i3_i;
+            rot3_i = i3_r;
+        }
+        else
+        {
+            // Inverse transform: multiply by -i
+            rot1_r = i1_i;
+            rot1_i = -i1_r;
+            rot2_r = i2_i;
+            rot2_i = -i2_r;
+            rot3_r = i3_i;
+            rot3_i = -i3_r;
+        }
+
+        // Combine and store results
+        output_buffer[k + seventh].re = r1_r + rot1_r;
+        output_buffer[k + seventh].im = r1_i + rot1_i;
+        
+        output_buffer[k + 2*seventh].re = r2_r + rot2_r;
+        output_buffer[k + 2*seventh].im = r2_i + rot2_i;
+        
+        output_buffer[k + 3*seventh].re = r3_r + rot3_r;
+        output_buffer[k + 3*seventh].im = r3_i + rot3_i;
+        
+        output_buffer[k + 4*seventh].re = r3_r - rot3_r;
+        output_buffer[k + 4*seventh].im = r3_i - rot3_i;
+        
+        output_buffer[k + 5*seventh].re = r2_r - rot2_r;
+        output_buffer[k + 5*seventh].im = r2_i - rot2_i;
+        
+        output_buffer[k + 6*seventh].re = r1_r - rot1_r;
+        output_buffer[k + 6*seventh].im = r1_i - rot1_i;
     }
 }
     else if (radix == 8)
