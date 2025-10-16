@@ -1,7 +1,20 @@
 #include "fft_radix2.h"   // ✅ Gets highSpeedFFT.h → fft_types.h
 #include "simd_math.h"    // ✅ Gets complex math operations
 
-
+/**
+ * @brief Optimized radix-2 butterfly with multi-stage SIMD processing
+ * 
+ * ALGORITHM OVERVIEW:
+ * The radix-2 butterfly combines two N/2-point FFTs into one N-point FFT:
+ *   Y[k]       = Even[k] + W^k * Odd[k]     (first half)
+ *   Y[k + N/2] = Even[k] - W^k * Odd[k]     (second half)
+ * 
+ * KEY OPTIMIZATIONS:
+ * 1. Special cases eliminate expensive operations for symmetry points
+ * 2. SIMD processes multiple butterflies in parallel
+ * 3. Prefetching hides memory latency
+ * 4. Range splitting allows skipping already-computed k=N/4 point
+ */
 void fft_radix2_butterfly(
     fft_data *output_buffer,
     fft_data *sub_outputs,
@@ -14,6 +27,9 @@ void fft_radix2_butterfly(
     //======================================================================
     // STAGE 0: SPECIAL CASE k=0 (W^0 = 1, NO TWIDDLE)
     //======================================================================
+    // OPTIMIZATION: When k=0, W^0 = 1, so twiddle multiply reduces to addition
+    // This saves 4 FLOPs (2 multiplies, 2 multiply-adds) per butterfly
+    // Formula: Y[0] = X_even[0] + X_odd[0], Y[N/2] = X_even[0] - X_odd[0]
     {
         fft_data even_0 = sub_outputs[0];           // X[0*k]
         fft_data odd_0 = sub_outputs[half];         // X[1*k]
@@ -25,8 +41,11 @@ void fft_radix2_butterfly(
 
     //======================================================================
     // STAGE 1: SPECIAL CASE k=N/4 (W^(N/4) = ±i, 90° ROTATION)
-    // Only if N divisible by 4
     //======================================================================
+    // OPTIMIZATION: When k=N/4, W^(N/4) = exp(±iπ/2) = ±i (pure imaginary)
+    // Multiplying by ±i is just a swap-and-negate: (a+bi)*(±i) = ∓b + a*i
+    // This reduces complex multiply (6 FLOPs) to simple swaps and sign flips
+    // Only valid when N is divisible by 4 (half is even)
     int k_quarter = 0;
     if ((half & 1) == 0) // N/4 exists
     {
@@ -35,7 +54,9 @@ void fft_radix2_butterfly(
         fft_data even_q = sub_outputs[k_quarter];       // X[0*(N/4)]
         fft_data odd_q = sub_outputs[half + k_quarter]; // X[1*(N/4)]
 
-        // Rotate odd by ±90°: odd * (±i) = ∓im + i*re
+        // Rotate odd by ±90°: multiply by ±i
+        // Forward FFT (sign < 0): -i → rotated = (im, -re)
+        // Inverse FFT (sign > 0): +i → rotated = (-im, re)
         double rotated_re = transform_sign > 0 ? odd_q.im : -odd_q.im;
         double rotated_im = transform_sign > 0 ? -odd_q.re : odd_q.re;
 
@@ -46,16 +67,28 @@ void fft_radix2_butterfly(
     }
 
     //======================================================================
-    // STAGE 2: GENERAL CASE k=1...N/2-1 (TWIDDLE MULTIPLY REQUIRED)
-    // Split into 2 ranges to skip k=N/4 if it exists
+    // STAGE 2: GENERAL CASE k=1...N/2-1 (FULL TWIDDLE MULTIPLY REQUIRED)
     //======================================================================
+    // For all other k values, we need the full complex multiplication:
+    //   twiddle = X_odd[k] * W^k
+    //   Y[k] = X_even[k] + twiddle
+    //   Y[k + N/2] = X_even[k] - twiddle
+    //
+    // OPTIMIZATION: Split into two ranges to skip k=N/4 if it exists
+    // Range 1: [1, N/4)  and  Range 2: (N/4, N/2)
     int k = 1;                                     // Start after k=0
     int range1_end = k_quarter ? k_quarter : half; // Range 1: [1, N/4)
 
 #ifdef HAS_AVX512
-                                                   //======================================================================
-    // AVX-512: First range [1, k_quarter) or [1, half) if no k_quarter
     //======================================================================
+    // AVX-512 TIER: Process 16 complex pairs per iteration (8 butterflies)
+    //======================================================================
+    // OPTIMIZATION: AVX-512 provides 512-bit registers holding 8 doubles
+    // Each complex number needs 2 doubles (re, im) in Array-of-Structures layout
+    // We process 4 complex numbers per vector, using 4 vectors = 16 complex pairs
+    //
+    // BENEFIT: 16x parallelism vs scalar code
+    // THROUGHPUT: ~16 butterflies per ~20 cycles (0.8 cycles per butterfly)
     for (; k + 15 < range1_end; k += 16)
     {
         // Prefetch
@@ -66,24 +99,29 @@ void fft_radix2_butterfly(
             _mm_prefetch((const char *)&stage_tw[k + 32], _MM_HINT_T0);
         }
 
-        // Load even/odd samples
+        // Load 16 even samples (4 vectors × 4 complex numbers)
+        // load4_aos() loads 4 consecutive fft_data structs into one __m512d
         __m512d e0 = load4_aos(&sub_outputs[k + 0]);
         __m512d e1 = load4_aos(&sub_outputs[k + 4]);
         __m512d e2 = load4_aos(&sub_outputs[k + 8]);
         __m512d e3 = load4_aos(&sub_outputs[k + 12]);
-
+         
+         // Load 16 odd samples
         __m512d o0 = load4_aos(&sub_outputs[k + 0 + half]);
         __m512d o1 = load4_aos(&sub_outputs[k + 4 + half]);
         __m512d o2 = load4_aos(&sub_outputs[k + 8 + half]);
         __m512d o3 = load4_aos(&sub_outputs[k + 12 + half]);
 
-        // Load twiddles - FIX: stage_tw[k] contains W^k
+         // Load 16 twiddle factors W^k
+         // NOTE: stage_tw[k] contains the precomputed W^k value
         __m512d w0 = load4_aos(&stage_tw[k + 0]);
         __m512d w1 = load4_aos(&stage_tw[k + 4]);
         __m512d w2 = load4_aos(&stage_tw[k + 8]);
         __m512d w3 = load4_aos(&stage_tw[k + 12]);
 
-        // Twiddle multiply
+        // Complex multiply: twiddle = odd * W^k
+        // cmul_avx512_aos performs (a+bi)*(c+di) = (ac-bd) + (ad+bc)i
+        // using FMA instructions for optimal throughput
         __m512d tw0 = cmul_avx512_aos(o0, w0);
         __m512d tw1 = cmul_avx512_aos(o1, w1);
         __m512d tw2 = cmul_avx512_aos(o2, w2);
@@ -201,8 +239,10 @@ void fft_radix2_butterfly(
     }
 
     //======================================================================
-    // Second range: (k_quarter, half) if k_quarter exists
+    // SECOND RANGE: (k_quarter, half) - Process points after k=N/4
     //======================================================================
+    // OPTIMIZATION: We already computed k=N/4 in the special case above
+    // Split the loop to skip redundant computation and maintain accuracy
     if (k_quarter)
     {
         k = k_quarter + 1; // Skip k_quarter since we handled it
