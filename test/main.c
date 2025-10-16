@@ -623,21 +623,24 @@ void test4_single_frequency(void) {
     double mag7 = sqrt(output[6].re * output[6].re + output[6].im * output[6].im);
     printf("  X[7]: magnitude %.6f (expected %.1f) %c\n", 
            mag7, expected, (fabs(mag7 - expected) < 1e-6) ? 'c' : 'w');
-    
-    // Check all others are zero
+
     int others_ok = 1;
-    for (int k = 0; k < N; k++) {
-        if (k == 1 || k == 7) continue;
+    for (int k = 0; k < N; k++)
+    {
+        if (k == k_freq || k == (N - k_freq))
+            continue; // skip the two cosine bins
         double mag = sqrt(output[k].re * output[k].re + output[k].im * output[k].im);
-        if (mag > 1e-6) {
+        if (mag > 1e-6)
+        {
             printf("  X[%d]: magnitude %.3e (expected 0) ✗\n", k, mag);
             others_ok = 0;
         }
     }
-    if (others_ok) {
+    if (others_ok)
+    {
         printf("  X[0,2,3,4,5,6]: all zero ✓\n");
     }
-    
+
     printf("\nResult: %s\n", 
            (fabs(mag1 - expected) < 1e-6 && fabs(mag7 - expected) < 1e-6 && others_ok) 
            ? "PASS ✓" : "FAIL ✗");
