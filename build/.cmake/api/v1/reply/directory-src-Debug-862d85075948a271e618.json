@@ -1,0 +1,76 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"install"
+		],
+		"files" : 
+		[
+			"src/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 123,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 128,
+				"parent" : 0
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 1,
+			"component" : "Unspecified",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"src/libhighspeedFFT.a"
+			],
+			"targetId" : "highspeedFFT::@145eef247bfb46b6828c",
+			"targetIndex" : 0,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 2,
+			"component" : "Unspecified",
+			"destination" : "include",
+			"paths" : 
+			[
+				"src/highSpeedFFT.h",
+				"src/real.h",
+				"src/convolve.h",
+				"src/simd_utils.h",
+				"src/simd_math.h",
+				"src/simd_math_impl.h",
+				"src/fft_radix2.h",
+				"src/fft_radix3.h",
+				"src/fft_radix4.h",
+				"src/fft_radix5.h",
+				"src/fft_radix7.h",
+				"src/fft_radix8.h",
+				"src/fft_radix11.h",
+				"src/fft_radix13.h",
+				"src/fft_radix16.h",
+				"src/fft_radix32.h"
+			],
+			"type" : "file"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "src",
+		"source" : "src"
+	}
+}

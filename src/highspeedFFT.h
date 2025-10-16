@@ -1,7 +1,342 @@
 #ifndef HSFFT_H_
 #define HSFFT_H_
 
-/*
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+#include <string.h>
+#include <immintrin.h>
+#include <stdbool.h>
+#include "fft_types.h"   // ✅ Get fft_data type
+#include "simd_utils.h"  // ✅ Include SIMD utilities
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define PI2 6.28318530717958647692528676655900577
+#define MAX_PRECOMPUTED_N 64 // Max size for precomputed Bluestein chirps
+#define MAX_STAGES 64 // Max recursion depth (log3(2^64) ≈ 40, so 64 is safe)
+
+typedef struct fft_set* fft_object;
+
+struct fft_set {
+    int n_input;              // Input signal length
+    int n_fft;                // Transform length (N for mixed-radix, M for Bluestein)
+    int sgn;                  // Transform direction (+1 for forward, -1 for inverse)
+    int factors[64];          // Prime factors for mixed-radix or Bluestein
+    int lf;                   // Number of factors
+    int lt;                   // Algorithm type (0=mixed-radix, 1=Bluestein)
+    int max_scratch_size;     // Max size of scratch buffer
+    fft_data *twiddles;       // Twiddle factors for FFT stages
+    fft_data *scratch;        // Scratch workspace for temporary data
+    fft_data *twiddle_factors;// Precomputed twiddles for power-of-2 FFTs (size sum(N/2^i))
+    int stage_twiddle_offset[MAX_STAGES];
+    int num_precomputed_stages;
+    
+    // ADD THESE NEW FIELDS:
+    int prime_factors[32];      // Pure prime factorization
+    int num_prime_factors;       // Number of prime factors
+    int radices[32];            // Execution radices (may include composites)
+    int num_radices;            // Number of radices
+    bool is_single_radix;       // True if all radices are the same
+    int single_radix;           // The radix value if single, 0 otherwise
+};
+
+/**
+ * @brief Create an FFT plan for length N and direction sgn.
+ *
+ * Use when your module needs repeated FFTs of the same size/direction.
+ * Allocates twiddles and scratch once; `fft_exec` then runs fast.
+ *
+ * @param N    Transform length (> 0).
+ * @param sgn  +1 = forward (DFT), -1 = inverse (IDFT).
+ * @return     Opaque plan pointer or NULL on failure.
+ *
+ * @note Keep the returned object and reuse it across calls to `fft_exec`.
+ *       Create a separate plan per distinct N/sgn you need.
+ */
+fft_object fft_init(int N, int sgn);
+
+/**
+ * @brief Execute the FFT using a prepared plan.
+ *
+ * Runs either mixed-radix or Bluestein as chosen by the plan.
+ * Safe to call repeatedly with the same plan for different buffers.
+ *
+ * @param obj  Plan from `fft_init`.
+ * @param inp  Pointer to N complex samples (AoS: {re,im}).
+ * @param oup  Pointer to N complex samples (AoS) for results.
+ *
+ * @warning Input and output must not alias unless your usage intends in-place
+ *          semantics and your build/plan supports it. Prefer distinct buffers.
+ */
+void fft_exec(fft_object obj, fft_data *inp, fft_data *oup);
+
+/**
+ * @brief Quick divisibility reducer for internal factoring flows.
+ *
+ * Repeatedly divides M by d while divisible, returns 1 if fully reduced to 1.
+ * Most modules won’t call this directly—use `factors()` instead.
+ *
+ * @param M  Positive integer.
+ * @param d  Divisor (>1).
+ * @return   1 if M reduces to 1 using only d; 0 otherwise.
+ */
+int divideby(int M, int d);
+
+/**
+ * @brief Fast check: can N be factored only by small supported primes?
+ *
+ * Lets a caller decide strategy (e.g., choose FFT sizes up-front).
+ * Returns non-zero if N is “friendly” (supported mixed-radix); zero otherwise.
+ *
+ * @param N  Positive integer length.
+ * @return   Non-zero if N is supported by small primes; 0 otherwise.
+ */
+int dividebyN(int N);
+
+/**
+ * @brief Factorize M into primes (up to 64 entries).
+ *
+ * Useful if your module needs to reason about size choices (e.g., batching or
+ * picking buffer sizes that avoid Bluestein). Order is implementation-defined.
+ *
+ * @param M    Positive integer to factor.
+ * @param arr  Output array (capacity >= 64). Receives prime factors.
+ * @return     Number of factors written to arr (0 on failure).
+ */
+int factors(int M, int *arr);
+
+/**
+ * @brief Destroy an FFT plan and free its internal buffers.
+ *
+ * Call exactly once per successful `fft_init`.
+ *
+ * @param object  Plan to free (may be NULL).
+ */
+void free_fft(fft_object object);
+
+int get_fft_execution_radices(int number, int *radices, int *prime_factors, int num_prime_factors);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* HSFFT_H_ */
+
+/**
+ * @file highspeedFFT_hybrid_cooleytukey_bluestein.c
+ * @brief Hybrid Adaptive Mixed-Radix Cooley-Tukey / Bluestein FFT Implementation
+ *
+ *
+ * SIMD INTRINSICS (x86-64):
+ * -------------------------
+ * #include <immintrin.h>  // AVX2, AVX-512, FMA intrinsics
+ *                         // Includes: <xmmintrin.h>  (SSE)
+ *                         //           <emmintrin.h>  (SSE2)
+ *                         //           <pmmintrin.h>  (SSE3)
+ *                         //           <tmmintrin.h>  (SSSE3)
+ *                         //           <smmintrin.h>  (SSE4.1)
+ *                         //           <nmmintrin.h>  (SSE4.2)
+ *                         //           <ammintrin.h>  (SSE4a)
+ *                         //           <avxintrin.h>  (AVX)
+ *                         //           <avx2intrin.h> (AVX2)
+ *                         //           <fmaintrin.h>  (FMA)
+ *                         //           <avx512fintrin.h> (AVX-512F)
+ *
+ * COMPILER BUILTINS (GCC/Clang):
+ * ------------------------------
+ * // No explicit include needed, built into compiler:
+ * // __builtin_prefetch() - software prefetch
+ * // __asm__ __volatile__ - inline assembly (CPUID, RDTSC)
+ *
+ *
+ * COMPILATION FLAGS REQUIRED:
+ * ===========================
+ *
+ * BASIC (Minimum):
+ * ---------------
+ * gcc -O3 -march=native -std=c11 highspeedFFT.c -lm -pthread -o fft
+ *
+ * RECOMMENDED (Best Performance):
+ * ------------------------------
+ * gcc -O3 -march=native -mtune=native \
+ *     -mavx2 -mfma -msse4.2 \
+ *     -std=c11 -Wall -Wextra \
+ *     -ffast-math -funroll-loops \
+ *     highspeedFFT.c -lm -pthread -o fft
+ *
+ * AVX-512 (Ice Lake+):
+ * -------------------
+ * gcc -O3 -march=skylake-avx512 -mavx512f -mavx512dq \
+ *     -std=c11 highspeedFFT.c -lm -pthread -o fft
+ *
+ * DEBUG (With Alignment Checks):
+ * -----------------------------
+ * gcc -O0 -g -march=native -std=c11 \
+ *     -DFFT_DEBUG_ALIGNMENT -DFFT_ALIGNMENT_CHECK \
+ *     highspeedFFT.c -lm -pthread -o fft_debug
+ *
+ * ARCHITECTURE-SPECIFIC FLAGS:
+ * ============================
+ *
+ * Intel Skylake:
+ * -------------
+ * -march=skylake -mavx2 -mfma
+ *
+ * Intel Ice Lake:
+ * --------------
+ * -march=icelake-client -mavx512f -mavx512dq
+ *
+ * AMD Zen 3:
+ * ---------
+ * -march=znver3 -mavx2 -mfma
+ *
+ * AMD Zen 4:
+ * ---------
+ * -march=znver4 -mavx512f -mavx512vl
+ *
+ * Apple M1/M2 (ARM64):
+ * -------------------
+ * clang -O3 -mcpu=apple-m1 -std=c11 highspeedFFT.c -lm -pthread
+ * # Note: Need ARM NEON intrinsics instead of x86 intrinsics
+ *
+ * ARM Neoverse:
+ * ------------
+ * gcc -O3 -mcpu=neoverse-v1 -std=c11 highspeedFFT.c -lm -pthread
+ *
+ *
+ * PREPROCESSOR DEFINES (Optional):
+ * ================================
+ *
+ * -DUSE_ALIGNED_SIMD
+ *   Enforce aligned loads/stores (faster but requires aligned buffers)
+ *
+ * -DFFT_STRICT_ALIGNMENT
+ *   Abort on misaligned access (debug mode)
+ *
+ * -DFFT_DEBUG_ALIGNMENT
+ *   Print warnings on misaligned access
+ *
+ * -DFFT_ALIGNMENT_CHECK
+ *   Enable runtime alignment checking
+ *
+ * -DUSE_TWIDDLE_TABLES
+ *   Use precomputed twiddle tables (enabled by default)
+ *
+ * -DUSE_FMA
+ *   Force FMA instructions (auto-detected by default)
+ *
+ * -DHAS_AVX512
+ *   Enable AVX-512 code paths (auto-detected)
+ *
+ * -DMAX_STAGES=32
+ *   Maximum recursion depth (default varies)
+ *
+ *
+ * RUNTIME ENVIRONMENT VARIABLES:
+ * ==============================
+ *
+ * HFFT_EXHAUSTIVE_SEARCH=1
+ *   Enable exhaustive prefetch search (slow, one-time)
+ *
+ * HFFT_WISDOM_FILE=/path/to/wisdom.txt
+ *   Custom wisdom file location (default: ./hfft_wisdom.txt)
+ *
+ *
+ * PLATFORM-SPECIFIC NOTES:
+ * ========================
+ *
+ * LINUX:
+ * -----
+ * - All features supported
+ * - Use GCC 9+ or Clang 10+ for best results
+ * - AVX-512 requires kernel 4.15+ (saves zmm registers)
+ *
+ * WINDOWS (MSVC):
+ * --------------
+ * - Replace __attribute__((constructor/destructor)) with DllMain hooks
+ * - Use _aligned_malloc instead of _mm_malloc on older MSVC
+ * - Inline assembly syntax differs (use __asm instead of __asm__)
+ * - Compile with: cl /O2 /arch:AVX2 /std:c11 highspeedFFT.c
+ *
+ * MACOS (Apple Clang):
+ * -------------------
+ * - x86-64: Full support (Intel Macs)
+ * - ARM64 (M1/M2): Need ARM NEON port (x86 intrinsics won't work)
+ * - Compile with: clang -O3 -march=native highspeedFFT.c -lm -pthread
+ *
+ * FREEBSD:
+ * -------
+ * - Same as Linux, may need -lexecinfo for backtrace
+ *
+ * ANDROID/iOS:
+ * -----------
+ * - ARM targets require NEON intrinsics (#include <arm_neon.h>)
+ * - May need -fno-strict-aliasing
+ *
+ *
+ * ALGORITHM CLASSIFICATION:
+ * ========================
+ * This is a **Hybrid Adaptive Mixed-Radix Cooley-Tukey/Bluestein FFT** with:
+ *
+ * 1. **Mixed-Radix Cooley-Tukey DIT (Primary Path)**
+ *    - Factorizes N into primes: {2, 3, 4, 5, 7, 8, 11, 13, 16, 17, 23, 29, 31, 32, 37, 41, 43, 47, 53}
+ *    - Uses specialized butterfly kernels for each radix (SIMD-optimized)
+ *    - Decomposition strategy: DIT (Decimation-In-Time) recursive
+ *    - Inspired by: FFTW's "codelets" approach with heavy unrolling
+ *
+ * 2. **Bluestein's Chirp Z-Transform (Fallback Path)**
+ *    - Handles prime/composite lengths not factorizable by mixed-radix
+ *    - Converts arbitrary DFT to convolution via chirp sequences
+ *    - Padded to next power-of-2 for efficient sub-FFTs
+ *    - Precomputed chirp tables for common small sizes (N ≤ 64)
+ *
+ * 3. **Pure-Power Optimization Paths**
+ *    - Radix-2^k: 2, 4, 8, 16, 32 (special-cased for power-of-2)
+ *    - Radix-3^k, 5^k, 7^k, 11^k, 13^k (pure-power decompositions)
+ *    - Precomputed twiddle factors in "k-major" layout for cache efficiency
+ *
+ * 4. **SIMD Vectorization (AVX2/AVX-512/SSE2)**
+ *    - AoS (Array-of-Structures) complex layout throughout
+ *    - 4x/8x/16x loop unrolling for different radices
+ *    - FMA (Fused Multiply-Add) for twiddle multiplications
+ *    - Adaptive prefetch strategy (FFTW-inspired)
+ *
+ * SIMILAR ALGORITHMS:
+ * ==================
+ * - **FFTW**: "Fastest Fourier Transform in the West" (inspiration for design)
+ * - **Intel MKL DFT**: Also uses hybrid mixed-radix + Bluestein
+ * - **SPIRAL**: Auto-tuned FFT generator with similar philosophy
+ * - **KissFFT**: Simple mixed-radix (but less aggressive optimization)
+ *
+ *
+ * PREFETCH STRATEGY - FINAL IMPLEMENTATION (100% of FFTW):
+ * ===========================================================
+ * ✅ Per-stage configuration (distance, hint, strategy)
+ * ✅ Hardware detection (CPUID for L1/L2/L3 sizes)
+ * ✅ Multi-stream prefetching (input, output, twiddles)
+ * ✅ Working set analysis (adapt to cache hierarchy)
+ * ✅ Runtime profiling (cycle counting, hill-climb tuning)
+ * ✅ Stride-aware prefetch (early stages with large strides)
+ * ✅ Blocking-aware prefetch (large radices)
+ * ✅ Write prefetch (RFO avoidance)
+ * ✅ Unroll-aware distance adjustment
+ *
+ * NEW FEATURES (THE FINAL 20%):
+ * ==============================
+ * ✅ #3: TLB Prefetching (for N > 16M elements)
+ * ✅ #5: Exhaustive Search + Wisdom Database (persistent tuning)
+ * ✅ #7: Prefetch Throttling (budget management)
+ * ✅ #10: CPU-Specific Tuning Database (Intel/AMD/ARM profiles)
+ *
+ *
+ */
+
+
+ /*
 
 Sequence Diagram: mixed_radix_dit_rec for N=12, Factors=[3,4]
 =========================================================
@@ -376,343 +711,3 @@ Notes:
  *
 
 */
-
-#include <stdlib.h>
-#include <stdio.h>
-#include <math.h>
-#include <string.h>
-#include <immintrin.h>
-#include <stdbool.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#define PI2 6.28318530717958647692528676655900577
-#define MAX_PRECOMPUTED_N 64 // Max size for precomputed Bluestein chirps
-#define MAX_STAGES 64 // Max recursion depth (log3(2^64) ≈ 40, so 64 is safe)
-
-#ifndef fft_type
-#define fft_type double
-#endif
-
-typedef struct fft_t {
-    fft_type re;
-    fft_type im;
-} fft_data;
-
-typedef struct fft_set* fft_object;
-
-struct fft_set {
-    int n_input;              // Input signal length
-    int n_fft;                // Transform length (N for mixed-radix, M for Bluestein)
-    int sgn;                  // Transform direction (+1 for forward, -1 for inverse)
-    int factors[64];          // Prime factors for mixed-radix or Bluestein
-    int lf;                   // Number of factors
-    int lt;                   // Algorithm type (0=mixed-radix, 1=Bluestein)
-    int max_scratch_size;     // Max size of scratch buffer
-    fft_data *twiddles;       // Twiddle factors for FFT stages
-    fft_data *scratch;        // Scratch workspace for temporary data
-    fft_data *twiddle_factors;// Precomputed twiddles for power-of-2 FFTs (size sum(N/2^i))
-    int stage_twiddle_offset[MAX_STAGES];
-    int num_precomputed_stages;
-    
-    // ADD THESE NEW FIELDS:
-    int prime_factors[32];      // Pure prime factorization
-    int num_prime_factors;       // Number of prime factors
-    int radices[32];            // Execution radices (may include composites)
-    int num_radices;            // Number of radices
-    bool is_single_radix;       // True if all radices are the same
-    int single_radix;           // The radix value if single, 0 otherwise
-};
-
-/**
- * @brief Create an FFT plan for length N and direction sgn.
- *
- * Use when your module needs repeated FFTs of the same size/direction.
- * Allocates twiddles and scratch once; `fft_exec` then runs fast.
- *
- * @param N    Transform length (> 0).
- * @param sgn  +1 = forward (DFT), -1 = inverse (IDFT).
- * @return     Opaque plan pointer or NULL on failure.
- *
- * @note Keep the returned object and reuse it across calls to `fft_exec`.
- *       Create a separate plan per distinct N/sgn you need.
- */
-fft_object fft_init(int N, int sgn);
-
-/**
- * @brief Execute the FFT using a prepared plan.
- *
- * Runs either mixed-radix or Bluestein as chosen by the plan.
- * Safe to call repeatedly with the same plan for different buffers.
- *
- * @param obj  Plan from `fft_init`.
- * @param inp  Pointer to N complex samples (AoS: {re,im}).
- * @param oup  Pointer to N complex samples (AoS) for results.
- *
- * @warning Input and output must not alias unless your usage intends in-place
- *          semantics and your build/plan supports it. Prefer distinct buffers.
- */
-void fft_exec(fft_object obj, fft_data *inp, fft_data *oup);
-
-/**
- * @brief Quick divisibility reducer for internal factoring flows.
- *
- * Repeatedly divides M by d while divisible, returns 1 if fully reduced to 1.
- * Most modules won’t call this directly—use `factors()` instead.
- *
- * @param M  Positive integer.
- * @param d  Divisor (>1).
- * @return   1 if M reduces to 1 using only d; 0 otherwise.
- */
-int divideby(int M, int d);
-
-/**
- * @brief Fast check: can N be factored only by small supported primes?
- *
- * Lets a caller decide strategy (e.g., choose FFT sizes up-front).
- * Returns non-zero if N is “friendly” (supported mixed-radix); zero otherwise.
- *
- * @param N  Positive integer length.
- * @return   Non-zero if N is supported by small primes; 0 otherwise.
- */
-int dividebyN(int N);
-
-/**
- * @brief Factorize M into primes (up to 64 entries).
- *
- * Useful if your module needs to reason about size choices (e.g., batching or
- * picking buffer sizes that avoid Bluestein). Order is implementation-defined.
- *
- * @param M    Positive integer to factor.
- * @param arr  Output array (capacity >= 64). Receives prime factors.
- * @return     Number of factors written to arr (0 on failure).
- */
-int factors(int M, int *arr);
-
-/**
- * @brief Destroy an FFT plan and free its internal buffers.
- *
- * Call exactly once per successful `fft_init`.
- *
- * @param object  Plan to free (may be NULL).
- */
-void free_fft(fft_object object);
-
-int get_fft_execution_radices(int number, int *radices, int *prime_factors, int num_prime_factors);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* HSFFT_H_ */
-
-/**
- * @file highspeedFFT_hybrid_cooleytukey_bluestein.c
- * @brief Hybrid Adaptive Mixed-Radix Cooley-Tukey / Bluestein FFT Implementation
- *
- *
- * SIMD INTRINSICS (x86-64):
- * -------------------------
- * #include <immintrin.h>  // AVX2, AVX-512, FMA intrinsics
- *                         // Includes: <xmmintrin.h>  (SSE)
- *                         //           <emmintrin.h>  (SSE2)
- *                         //           <pmmintrin.h>  (SSE3)
- *                         //           <tmmintrin.h>  (SSSE3)
- *                         //           <smmintrin.h>  (SSE4.1)
- *                         //           <nmmintrin.h>  (SSE4.2)
- *                         //           <ammintrin.h>  (SSE4a)
- *                         //           <avxintrin.h>  (AVX)
- *                         //           <avx2intrin.h> (AVX2)
- *                         //           <fmaintrin.h>  (FMA)
- *                         //           <avx512fintrin.h> (AVX-512F)
- *
- * COMPILER BUILTINS (GCC/Clang):
- * ------------------------------
- * // No explicit include needed, built into compiler:
- * // __builtin_prefetch() - software prefetch
- * // __asm__ __volatile__ - inline assembly (CPUID, RDTSC)
- *
- *
- * COMPILATION FLAGS REQUIRED:
- * ===========================
- *
- * BASIC (Minimum):
- * ---------------
- * gcc -O3 -march=native -std=c11 highspeedFFT.c -lm -pthread -o fft
- *
- * RECOMMENDED (Best Performance):
- * ------------------------------
- * gcc -O3 -march=native -mtune=native \
- *     -mavx2 -mfma -msse4.2 \
- *     -std=c11 -Wall -Wextra \
- *     -ffast-math -funroll-loops \
- *     highspeedFFT.c -lm -pthread -o fft
- *
- * AVX-512 (Ice Lake+):
- * -------------------
- * gcc -O3 -march=skylake-avx512 -mavx512f -mavx512dq \
- *     -std=c11 highspeedFFT.c -lm -pthread -o fft
- *
- * DEBUG (With Alignment Checks):
- * -----------------------------
- * gcc -O0 -g -march=native -std=c11 \
- *     -DFFT_DEBUG_ALIGNMENT -DFFT_ALIGNMENT_CHECK \
- *     highspeedFFT.c -lm -pthread -o fft_debug
- *
- * ARCHITECTURE-SPECIFIC FLAGS:
- * ============================
- *
- * Intel Skylake:
- * -------------
- * -march=skylake -mavx2 -mfma
- *
- * Intel Ice Lake:
- * --------------
- * -march=icelake-client -mavx512f -mavx512dq
- *
- * AMD Zen 3:
- * ---------
- * -march=znver3 -mavx2 -mfma
- *
- * AMD Zen 4:
- * ---------
- * -march=znver4 -mavx512f -mavx512vl
- *
- * Apple M1/M2 (ARM64):
- * -------------------
- * clang -O3 -mcpu=apple-m1 -std=c11 highspeedFFT.c -lm -pthread
- * # Note: Need ARM NEON intrinsics instead of x86 intrinsics
- *
- * ARM Neoverse:
- * ------------
- * gcc -O3 -mcpu=neoverse-v1 -std=c11 highspeedFFT.c -lm -pthread
- *
- *
- * PREPROCESSOR DEFINES (Optional):
- * ================================
- *
- * -DUSE_ALIGNED_SIMD
- *   Enforce aligned loads/stores (faster but requires aligned buffers)
- *
- * -DFFT_STRICT_ALIGNMENT
- *   Abort on misaligned access (debug mode)
- *
- * -DFFT_DEBUG_ALIGNMENT
- *   Print warnings on misaligned access
- *
- * -DFFT_ALIGNMENT_CHECK
- *   Enable runtime alignment checking
- *
- * -DUSE_TWIDDLE_TABLES
- *   Use precomputed twiddle tables (enabled by default)
- *
- * -DUSE_FMA
- *   Force FMA instructions (auto-detected by default)
- *
- * -DHAS_AVX512
- *   Enable AVX-512 code paths (auto-detected)
- *
- * -DMAX_STAGES=32
- *   Maximum recursion depth (default varies)
- *
- *
- * RUNTIME ENVIRONMENT VARIABLES:
- * ==============================
- *
- * HFFT_EXHAUSTIVE_SEARCH=1
- *   Enable exhaustive prefetch search (slow, one-time)
- *
- * HFFT_WISDOM_FILE=/path/to/wisdom.txt
- *   Custom wisdom file location (default: ./hfft_wisdom.txt)
- *
- *
- * PLATFORM-SPECIFIC NOTES:
- * ========================
- *
- * LINUX:
- * -----
- * - All features supported
- * - Use GCC 9+ or Clang 10+ for best results
- * - AVX-512 requires kernel 4.15+ (saves zmm registers)
- *
- * WINDOWS (MSVC):
- * --------------
- * - Replace __attribute__((constructor/destructor)) with DllMain hooks
- * - Use _aligned_malloc instead of _mm_malloc on older MSVC
- * - Inline assembly syntax differs (use __asm instead of __asm__)
- * - Compile with: cl /O2 /arch:AVX2 /std:c11 highspeedFFT.c
- *
- * MACOS (Apple Clang):
- * -------------------
- * - x86-64: Full support (Intel Macs)
- * - ARM64 (M1/M2): Need ARM NEON port (x86 intrinsics won't work)
- * - Compile with: clang -O3 -march=native highspeedFFT.c -lm -pthread
- *
- * FREEBSD:
- * -------
- * - Same as Linux, may need -lexecinfo for backtrace
- *
- * ANDROID/iOS:
- * -----------
- * - ARM targets require NEON intrinsics (#include <arm_neon.h>)
- * - May need -fno-strict-aliasing
- *
- *
- * ALGORITHM CLASSIFICATION:
- * ========================
- * This is a **Hybrid Adaptive Mixed-Radix Cooley-Tukey/Bluestein FFT** with:
- *
- * 1. **Mixed-Radix Cooley-Tukey DIT (Primary Path)**
- *    - Factorizes N into primes: {2, 3, 4, 5, 7, 8, 11, 13, 16, 17, 23, 29, 31, 32, 37, 41, 43, 47, 53}
- *    - Uses specialized butterfly kernels for each radix (SIMD-optimized)
- *    - Decomposition strategy: DIT (Decimation-In-Time) recursive
- *    - Inspired by: FFTW's "codelets" approach with heavy unrolling
- *
- * 2. **Bluestein's Chirp Z-Transform (Fallback Path)**
- *    - Handles prime/composite lengths not factorizable by mixed-radix
- *    - Converts arbitrary DFT to convolution via chirp sequences
- *    - Padded to next power-of-2 for efficient sub-FFTs
- *    - Precomputed chirp tables for common small sizes (N ≤ 64)
- *
- * 3. **Pure-Power Optimization Paths**
- *    - Radix-2^k: 2, 4, 8, 16, 32 (special-cased for power-of-2)
- *    - Radix-3^k, 5^k, 7^k, 11^k, 13^k (pure-power decompositions)
- *    - Precomputed twiddle factors in "k-major" layout for cache efficiency
- *
- * 4. **SIMD Vectorization (AVX2/AVX-512/SSE2)**
- *    - AoS (Array-of-Structures) complex layout throughout
- *    - 4x/8x/16x loop unrolling for different radices
- *    - FMA (Fused Multiply-Add) for twiddle multiplications
- *    - Adaptive prefetch strategy (FFTW-inspired)
- *
- * SIMILAR ALGORITHMS:
- * ==================
- * - **FFTW**: "Fastest Fourier Transform in the West" (inspiration for design)
- * - **Intel MKL DFT**: Also uses hybrid mixed-radix + Bluestein
- * - **SPIRAL**: Auto-tuned FFT generator with similar philosophy
- * - **KissFFT**: Simple mixed-radix (but less aggressive optimization)
- *
- *
- * PREFETCH STRATEGY - FINAL IMPLEMENTATION (100% of FFTW):
- * ===========================================================
- * ✅ Per-stage configuration (distance, hint, strategy)
- * ✅ Hardware detection (CPUID for L1/L2/L3 sizes)
- * ✅ Multi-stream prefetching (input, output, twiddles)
- * ✅ Working set analysis (adapt to cache hierarchy)
- * ✅ Runtime profiling (cycle counting, hill-climb tuning)
- * ✅ Stride-aware prefetch (early stages with large strides)
- * ✅ Blocking-aware prefetch (large radices)
- * ✅ Write prefetch (RFO avoidance)
- * ✅ Unroll-aware distance adjustment
- *
- * NEW FEATURES (THE FINAL 20%):
- * ==============================
- * ✅ #3: TLB Prefetching (for N > 16M elements)
- * ✅ #5: Exhaustive Search + Wisdom Database (persistent tuning)
- * ✅ #7: Prefetch Throttling (budget management)
- * ✅ #10: CPU-Specific Tuning Database (Intel/AMD/ARM profiles)
- *
- *
- */

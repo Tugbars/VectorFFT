@@ -5,6 +5,7 @@
         "highspeedfft.h": "c",
         "limits": "c",
         "functional": "c",
-        "random": "c"
+        "random": "c",
+        "immintrin.h": "c"
     }
 }
