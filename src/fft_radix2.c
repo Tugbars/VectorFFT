@@ -100,7 +100,7 @@ void fft_radix2_butterfly(
     (void)use_parallel; // Suppress unused variable warning
 #endif
 
-#ifdef HAS_AVX512
+#ifdef __AVX512F__
     //======================================================================
     // AVX-512 PATH WITH SOFTWARE PIPELINING
     //======================================================================
