@@ -1,22 +1,77 @@
+// fft_radix5_optimized.c
+// Ultra-optimized radix-5 butterfly with self-computed twiddles and deep pipelining
 #include "fft_radix5.h"
 #include "simd_math.h"
+#include <math.h>
 
-static const double C5_1 = 0.30901699437;
-static const double C5_2 = -0.80901699437;
-static const double S5_1 = 0.95105651629;
-static const double S5_2 = 0.58778525229;
+// Radix-5 butterfly constants
+static const double C5_1 = 0.30901699437494742410;  // cos(2π/5)
+static const double C5_2 = -0.80901699437494742410; // cos(4π/5)
+static const double S5_1 = 0.95105651629515357212;  // sin(2π/5)
+static const double S5_2 = 0.58778525229247312917;  // sin(4π/5)
+
+// Prefetch distances
+#define PREFETCH_L1 8
+#define PREFETCH_L2 32
+#define PREFETCH_L3 64
+
+// Non-temporal store threshold
+#define STREAM_THRESHOLD 8192
 
 void fft_radix5_butterfly(
-    fft_data * restrict output_buffer,
-    fft_data * restrict sub_outputs,
-    const fft_data * restrict stage_tw,
+    fft_data *restrict output_buffer,
+    fft_data *restrict sub_outputs,
+    const fft_data *restrict stage_tw, // Unused - we compute our own
     int sub_len,
     int transform_sign)
 {
-    const int fifth = sub_len;
+    const int K = sub_len;
+    const int N = 5 * K;
+
+    //==========================================================================
+    // PRECOMPUTE: Base twiddles
+    //==========================================================================
+    const double base_angle = -2.0 * M_PI / N * transform_sign;
+
+    // Base twiddle factors W_N^j for j=1,2,3,4
+    fft_data W_base[4];
+    for (int j = 1; j <= 4; j++)
+    {
+        double angle = base_angle * j;
+#ifdef __GNUC__
+        sincos(angle, &W_base[j - 1].im, &W_base[j - 1].re);
+#else
+        W_base[j - 1].re = cos(angle);
+        W_base[j - 1].im = sin(angle);
+#endif
+    }
+
+    // Precompute W_base^16 for 16x unroll (batch twiddle updates)
+    fft_data W_base16[4];
+    for (int j = 0; j < 4; j++)
+    {
+        fft_data temp = W_base[j];
+        // temp^16 via four squarings
+        for (int sq = 0; sq < 4; sq++)
+        {
+            double re = temp.re * temp.re - temp.im * temp.im;
+            double im = 2.0 * temp.re * temp.im;
+            temp.re = re;
+            temp.im = im;
+        }
+        W_base16[j] = temp;
+    }
+
+    // Current twiddle factors W^k (starts at k=0, W^0=1)
+    fft_data W_curr[4] = {{1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}};
+
     int k = 0;
 
 #ifdef __AVX2__
+    //==========================================================================
+    // AVX2 PATH: 16X UNROLL WITH DEEP PIPELINE
+    //==========================================================================
+
     const __m256d vc1 = _mm256_set1_pd(C5_1);
     const __m256d vc2 = _mm256_set1_pd(C5_2);
     const __m256d vs1 = _mm256_set1_pd(S5_1);
@@ -26,503 +81,474 @@ void fft_radix5_butterfly(
                                  ? _mm256_set_pd(0.0, -0.0, 0.0, -0.0)
                                  : _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
 
-    // Pointer arithmetic optimization
-    fft_data * restrict out0 = output_buffer;
-    fft_data * restrict out1 = output_buffer + fifth;
-    fft_data * restrict out2 = output_buffer + 2 * fifth;
-    fft_data * restrict out3 = output_buffer + 3 * fifth;
-    fft_data * restrict out4 = output_buffer + 4 * fifth;
-    
-    const fft_data * restrict in0 = sub_outputs;
-    const fft_data * restrict in1 = sub_outputs + fifth;
-    const fft_data * restrict in2 = sub_outputs + 2 * fifth;
-    const fft_data * restrict in3 = sub_outputs + 3 * fifth;
-    const fft_data * restrict in4 = sub_outputs + 4 * fifth;
+    const int use_streaming = (K >= STREAM_THRESHOLD);
 
-    //======================================================================
-    // Main loop: 16x unrolling
-    //======================================================================
-    for (; k + 15 < fifth; k += 16)
+//--------------------------------------------------------------------------
+// FMA-OPTIMIZED COMPLEX MULTIPLY
+//--------------------------------------------------------------------------
+#define CMUL_FMA(out, a, w)                                          \
+    do                                                               \
+    {                                                                \
+        __m256d ar = _mm256_unpacklo_pd(a, a);                       \
+        __m256d ai = _mm256_unpackhi_pd(a, a);                       \
+        __m256d wr = _mm256_unpacklo_pd(w, w);                       \
+        __m256d wi = _mm256_unpackhi_pd(w, w);                       \
+        __m256d re = _mm256_fmsub_pd(ar, wr, _mm256_mul_pd(ai, wi)); \
+        __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr)); \
+        (out) = _mm256_unpacklo_pd(re, im);                          \
+    } while (0)
+
+//--------------------------------------------------------------------------
+// RADIX-5 BUTTERFLY (ALL FMA OPS)
+//--------------------------------------------------------------------------
+#define BUTTERFLY_R5(a, b2, c2, d2, e2, y0, y1, y2, y3, y4)               \
+    do                                                                    \
+    {                                                                     \
+        __m256d t0 = _mm256_add_pd(b2, e2);                               \
+        __m256d t1 = _mm256_add_pd(c2, d2);                               \
+        __m256d t2 = _mm256_sub_pd(b2, e2);                               \
+        __m256d t3 = _mm256_sub_pd(c2, d2);                               \
+        y0 = _mm256_add_pd(a, _mm256_add_pd(t0, t1));                     \
+        __m256d base1 = _mm256_fmadd_pd(vs1, t2, _mm256_mul_pd(vs2, t3)); \
+        __m256d tmp1 = _mm256_fmadd_pd(vc1, t0, _mm256_mul_pd(vc2, t1));  \
+        __m256d base1_swp = _mm256_permute_pd(base1, 0b0101);             \
+        __m256d r1 = _mm256_xor_pd(base1_swp, rot_mask);                  \
+        __m256d a1 = _mm256_add_pd(a, tmp1);                              \
+        y1 = _mm256_add_pd(a1, r1);                                       \
+        y4 = _mm256_sub_pd(a1, r1);                                       \
+        __m256d base2 = _mm256_fmsub_pd(vs2, t2, _mm256_mul_pd(vs1, t3)); \
+        __m256d tmp2 = _mm256_fmadd_pd(vc2, t0, _mm256_mul_pd(vc1, t1));  \
+        __m256d base2_swp = _mm256_permute_pd(base2, 0b0101);             \
+        __m256d r2 = _mm256_xor_pd(base2_swp, rot_mask);                  \
+        __m256d a2 = _mm256_add_pd(a, tmp2);                              \
+        y3 = _mm256_add_pd(a2, r2);                                       \
+        y2 = _mm256_sub_pd(a2, r2);                                       \
+    } while (0)
+
+//--------------------------------------------------------------------------
+// VECTORIZED TWIDDLE UPDATE: W_curr *= W_base16
+//--------------------------------------------------------------------------
+#define UPDATE_TWIDDLES_16X()                                                                         \
+    do                                                                                                \
+    {                                                                                                 \
+        __m256d W_re = _mm256_set_pd(W_curr[3].re, W_curr[2].re, W_curr[1].re, W_curr[0].re);         \
+        __m256d W_im = _mm256_set_pd(W_curr[3].im, W_curr[2].im, W_curr[1].im, W_curr[0].im);         \
+        __m256d B_re = _mm256_set_pd(W_base16[3].re, W_base16[2].re, W_base16[1].re, W_base16[0].re); \
+        __m256d B_im = _mm256_set_pd(W_base16[3].im, W_base16[2].im, W_base16[1].im, W_base16[0].im); \
+        __m256d new_re = _mm256_fmsub_pd(W_re, B_re, _mm256_mul_pd(W_im, B_im));                      \
+        __m256d new_im = _mm256_fmadd_pd(W_re, B_im, _mm256_mul_pd(W_im, B_re));                      \
+        double re_tmp[4], im_tmp[4];                                                                  \
+        _mm256_storeu_pd(re_tmp, new_re);                                                             \
+        _mm256_storeu_pd(im_tmp, new_im);                                                             \
+        W_curr[0].re = re_tmp[0];                                                                     \
+        W_curr[0].im = im_tmp[0];                                                                     \
+        W_curr[1].re = re_tmp[1];                                                                     \
+        W_curr[1].im = im_tmp[1];                                                                     \
+        W_curr[2].re = re_tmp[2];                                                                     \
+        W_curr[2].im = im_tmp[2];                                                                     \
+        W_curr[3].re = re_tmp[3];                                                                     \
+        W_curr[3].im = im_tmp[3];                                                                     \
+    } while (0)
+
+    //==========================================================================
+    // MAIN LOOP: 16X UNROLL
+    //==========================================================================
+    if (k + 31 < K)
     {
-        if (k + 32 < fifth)
+        //======================================================================
+        // PROLOGUE: Precompute first 32 twiddle factors
+        //======================================================================
+        fft_data W_table[32][4];
+        fft_data W_temp[4] = {{1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}};
+
+        for (int i = 0; i < 32; i++)
         {
-            _mm_prefetch((const char *)&in0[k + 32].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&in1[k + 32].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&in2[k + 32].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&in3[k + 32].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&in4[k + 32].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&stage_tw[4 * (k + 32)].re, _MM_HINT_T0);
+            for (int j = 0; j < 4; j++)
+            {
+                W_table[i][j] = W_temp[j];
+            }
+
+            // Update W_temp *= W_base
+            for (int j = 0; j < 4; j++)
+            {
+                double re = W_temp[j].re * W_base[j].re - W_temp[j].im * W_base[j].im;
+                double im = W_temp[j].re * W_base[j].im + W_temp[j].im * W_base[j].re;
+                W_temp[j].re = re;
+                W_temp[j].im = im;
+            }
         }
 
-        // Load inputs
-        __m256d a0 = load2_aos(&in0[k + 0], &in0[k + 1]);
-        __m256d a1 = load2_aos(&in0[k + 2], &in0[k + 3]);
-        __m256d a2 = load2_aos(&in0[k + 4], &in0[k + 5]);
-        __m256d a3 = load2_aos(&in0[k + 6], &in0[k + 7]);
-        __m256d a4 = load2_aos(&in0[k + 8], &in0[k + 9]);
-        __m256d a5 = load2_aos(&in0[k + 10], &in0[k + 11]);
-        __m256d a6 = load2_aos(&in0[k + 12], &in0[k + 13]);
-        __m256d a7 = load2_aos(&in0[k + 14], &in0[k + 15]);
-
-        __m256d b0 = load2_aos(&in1[k + 0], &in1[k + 1]);
-        __m256d b1 = load2_aos(&in1[k + 2], &in1[k + 3]);
-        __m256d b2 = load2_aos(&in1[k + 4], &in1[k + 5]);
-        __m256d b3 = load2_aos(&in1[k + 6], &in1[k + 7]);
-        __m256d b4 = load2_aos(&in1[k + 8], &in1[k + 9]);
-        __m256d b5 = load2_aos(&in1[k + 10], &in1[k + 11]);
-        __m256d b6 = load2_aos(&in1[k + 12], &in1[k + 13]);
-        __m256d b7 = load2_aos(&in1[k + 14], &in1[k + 15]);
-
-        __m256d c0 = load2_aos(&in2[k + 0], &in2[k + 1]);
-        __m256d c1 = load2_aos(&in2[k + 2], &in2[k + 3]);
-        __m256d c2 = load2_aos(&in2[k + 4], &in2[k + 5]);
-        __m256d c3 = load2_aos(&in2[k + 6], &in2[k + 7]);
-        __m256d c4 = load2_aos(&in2[k + 8], &in2[k + 9]);
-        __m256d c5 = load2_aos(&in2[k + 10], &in2[k + 11]);
-        __m256d c6 = load2_aos(&in2[k + 12], &in2[k + 13]);
-        __m256d c7 = load2_aos(&in2[k + 14], &in2[k + 15]);
-
-        __m256d d0 = load2_aos(&in3[k + 0], &in3[k + 1]);
-        __m256d d1 = load2_aos(&in3[k + 2], &in3[k + 3]);
-        __m256d d2 = load2_aos(&in3[k + 4], &in3[k + 5]);
-        __m256d d3 = load2_aos(&in3[k + 6], &in3[k + 7]);
-        __m256d d4 = load2_aos(&in3[k + 8], &in3[k + 9]);
-        __m256d d5 = load2_aos(&in3[k + 10], &in3[k + 11]);
-        __m256d d6 = load2_aos(&in3[k + 12], &in3[k + 13]);
-        __m256d d7 = load2_aos(&in3[k + 14], &in3[k + 15]);
-
-        __m256d e0 = load2_aos(&in4[k + 0], &in4[k + 1]);
-        __m256d e1 = load2_aos(&in4[k + 2], &in4[k + 3]);
-        __m256d e2 = load2_aos(&in4[k + 4], &in4[k + 5]);
-        __m256d e3 = load2_aos(&in4[k + 6], &in4[k + 7]);
-        __m256d e4 = load2_aos(&in4[k + 8], &in4[k + 9]);
-        __m256d e5 = load2_aos(&in4[k + 10], &in4[k + 11]);
-        __m256d e6 = load2_aos(&in4[k + 12], &in4[k + 13]);
-        __m256d e7 = load2_aos(&in4[k + 14], &in4[k + 15]);
-
-        // Load twiddles (interleaved for better scheduling)
-        __m256d w1_0 = load2_aos(&stage_tw[4 * (k + 0)], &stage_tw[4 * (k + 1)]);
-        __m256d w2_0 = load2_aos(&stage_tw[4 * (k + 0) + 1], &stage_tw[4 * (k + 1) + 1]);
-        __m256d w3_0 = load2_aos(&stage_tw[4 * (k + 0) + 2], &stage_tw[4 * (k + 1) + 2]);
-        __m256d w4_0 = load2_aos(&stage_tw[4 * (k + 0) + 3], &stage_tw[4 * (k + 1) + 3]);
-
-        __m256d w1_1 = load2_aos(&stage_tw[4 * (k + 2)], &stage_tw[4 * (k + 3)]);
-        __m256d w2_1 = load2_aos(&stage_tw[4 * (k + 2) + 1], &stage_tw[4 * (k + 3) + 1]);
-        __m256d w3_1 = load2_aos(&stage_tw[4 * (k + 2) + 2], &stage_tw[4 * (k + 3) + 2]);
-        __m256d w4_1 = load2_aos(&stage_tw[4 * (k + 2) + 3], &stage_tw[4 * (k + 3) + 3]);
-
-        __m256d w1_2 = load2_aos(&stage_tw[4 * (k + 4)], &stage_tw[4 * (k + 5)]);
-        __m256d w2_2 = load2_aos(&stage_tw[4 * (k + 4) + 1], &stage_tw[4 * (k + 5) + 1]);
-        __m256d w3_2 = load2_aos(&stage_tw[4 * (k + 4) + 2], &stage_tw[4 * (k + 5) + 2]);
-        __m256d w4_2 = load2_aos(&stage_tw[4 * (k + 4) + 3], &stage_tw[4 * (k + 5) + 3]);
-
-        __m256d w1_3 = load2_aos(&stage_tw[4 * (k + 6)], &stage_tw[4 * (k + 7)]);
-        __m256d w2_3 = load2_aos(&stage_tw[4 * (k + 6) + 1], &stage_tw[4 * (k + 7) + 1]);
-        __m256d w3_3 = load2_aos(&stage_tw[4 * (k + 6) + 2], &stage_tw[4 * (k + 7) + 2]);
-        __m256d w4_3 = load2_aos(&stage_tw[4 * (k + 6) + 3], &stage_tw[4 * (k + 7) + 3]);
-
-        __m256d w1_4 = load2_aos(&stage_tw[4 * (k + 8)], &stage_tw[4 * (k + 9)]);
-        __m256d w2_4 = load2_aos(&stage_tw[4 * (k + 8) + 1], &stage_tw[4 * (k + 9) + 1]);
-        __m256d w3_4 = load2_aos(&stage_tw[4 * (k + 8) + 2], &stage_tw[4 * (k + 9) + 2]);
-        __m256d w4_4 = load2_aos(&stage_tw[4 * (k + 8) + 3], &stage_tw[4 * (k + 9) + 3]);
-
-        __m256d w1_5 = load2_aos(&stage_tw[4 * (k + 10)], &stage_tw[4 * (k + 11)]);
-        __m256d w2_5 = load2_aos(&stage_tw[4 * (k + 10) + 1], &stage_tw[4 * (k + 11) + 1]);
-        __m256d w3_5 = load2_aos(&stage_tw[4 * (k + 10) + 2], &stage_tw[4 * (k + 11) + 2]);
-        __m256d w4_5 = load2_aos(&stage_tw[4 * (k + 10) + 3], &stage_tw[4 * (k + 11) + 3]);
-
-        __m256d w1_6 = load2_aos(&stage_tw[4 * (k + 12)], &stage_tw[4 * (k + 13)]);
-        __m256d w2_6 = load2_aos(&stage_tw[4 * (k + 12) + 1], &stage_tw[4 * (k + 13) + 1]);
-        __m256d w3_6 = load2_aos(&stage_tw[4 * (k + 12) + 2], &stage_tw[4 * (k + 13) + 2]);
-        __m256d w4_6 = load2_aos(&stage_tw[4 * (k + 12) + 3], &stage_tw[4 * (k + 13) + 3]);
-
-        __m256d w1_7 = load2_aos(&stage_tw[4 * (k + 14)], &stage_tw[4 * (k + 15)]);
-        __m256d w2_7 = load2_aos(&stage_tw[4 * (k + 14) + 1], &stage_tw[4 * (k + 15) + 1]);
-        __m256d w3_7 = load2_aos(&stage_tw[4 * (k + 14) + 2], &stage_tw[4 * (k + 15) + 2]);
-        __m256d w4_7 = load2_aos(&stage_tw[4 * (k + 14) + 3], &stage_tw[4 * (k + 15) + 3]);
-
-        // Twiddle multiply
-        __m256d b2_0 = cmul_avx2_aos(b0, w1_0);
-        __m256d c2_0 = cmul_avx2_aos(c0, w2_0);
-        __m256d d2_0 = cmul_avx2_aos(d0, w3_0);
-        __m256d e2_0 = cmul_avx2_aos(e0, w4_0);
-
-        __m256d b2_1 = cmul_avx2_aos(b1, w1_1);
-        __m256d c2_1 = cmul_avx2_aos(c1, w2_1);
-        __m256d d2_1 = cmul_avx2_aos(d1, w3_1);
-        __m256d e2_1 = cmul_avx2_aos(e1, w4_1);
-
-        __m256d b2_2 = cmul_avx2_aos(b2, w1_2);
-        __m256d c2_2 = cmul_avx2_aos(c2, w2_2);
-        __m256d d2_2 = cmul_avx2_aos(d2, w3_2);
-        __m256d e2_2 = cmul_avx2_aos(e2, w4_2);
-
-        __m256d b2_3 = cmul_avx2_aos(b3, w1_3);
-        __m256d c2_3 = cmul_avx2_aos(c3, w2_3);
-        __m256d d2_3 = cmul_avx2_aos(d3, w3_3);
-        __m256d e2_3 = cmul_avx2_aos(e3, w4_3);
-
-        __m256d b2_4 = cmul_avx2_aos(b4, w1_4);
-        __m256d c2_4 = cmul_avx2_aos(c4, w2_4);
-        __m256d d2_4 = cmul_avx2_aos(d4, w3_4);
-        __m256d e2_4 = cmul_avx2_aos(e4, w4_4);
-
-        __m256d b2_5 = cmul_avx2_aos(b5, w1_5);
-        __m256d c2_5 = cmul_avx2_aos(c5, w2_5);
-        __m256d d2_5 = cmul_avx2_aos(d5, w3_5);
-        __m256d e2_5 = cmul_avx2_aos(e5, w4_5);
-
-        __m256d b2_6 = cmul_avx2_aos(b6, w1_6);
-        __m256d c2_6 = cmul_avx2_aos(c6, w2_6);
-        __m256d d2_6 = cmul_avx2_aos(d6, w3_6);
-        __m256d e2_6 = cmul_avx2_aos(e6, w4_6);
-
-        __m256d b2_7 = cmul_avx2_aos(b7, w1_7);
-        __m256d c2_7 = cmul_avx2_aos(c7, w2_7);
-        __m256d d2_7 = cmul_avx2_aos(d7, w3_7);
-        __m256d e2_7 = cmul_avx2_aos(e7, w4_7);
-
-        // Butterfly computation
-#define RADIX5_BUTTERFLY_AVX2(a, b2, c2, d2, e2, y0, y1, y2, y3, y4) \
-    do {                                                             \
-        __m256d t0 = _mm256_add_pd(b2, e2);                          \
-        __m256d t1 = _mm256_add_pd(c2, d2);                          \
-        __m256d t2 = _mm256_sub_pd(b2, e2);                          \
-        __m256d t3 = _mm256_sub_pd(c2, d2);                          \
-        y0 = _mm256_add_pd(a, _mm256_add_pd(t0, t1));                \
-        __m256d base1 = FMADD(vs1, t2, _mm256_mul_pd(vs2, t3));      \
-        __m256d tmp1 = FMADD(vc1, t0, _mm256_mul_pd(vc2, t1));       \
-        __m256d base1_swp = _mm256_permute_pd(base1, 0b0101);        \
-        __m256d r1 = _mm256_xor_pd(base1_swp, rot_mask);             \
-        __m256d a1 = _mm256_add_pd(a, tmp1);                         \
-        y1 = _mm256_add_pd(a1, r1);                                  \
-        y4 = _mm256_sub_pd(a1, r1);                                  \
-        __m256d base2 = FMSUB(vs2, t2, _mm256_mul_pd(vs1, t3));      \
-        __m256d tmp2 = FMADD(vc2, t0, _mm256_mul_pd(vc1, t1));       \
-        __m256d base2_swp = _mm256_permute_pd(base2, 0b0101);        \
-        __m256d r2 = _mm256_xor_pd(base2_swp, rot_mask);             \
-        __m256d a2 = _mm256_add_pd(a, tmp2);                         \
-        y3 = _mm256_add_pd(a2, r2);                                  \
-        y2 = _mm256_sub_pd(a2, r2);                                  \
-    } while(0)
-
-        __m256d y0_0, y1_0, y2_0, y3_0, y4_0;
-        __m256d y0_1, y1_1, y2_1, y3_1, y4_1;
-        __m256d y0_2, y1_2, y2_2, y3_2, y4_2;
-        __m256d y0_3, y1_3, y2_3, y3_3, y4_3;
-        __m256d y0_4, y1_4, y2_4, y3_4, y4_4;
-        __m256d y0_5, y1_5, y2_5, y3_5, y4_5;
-        __m256d y0_6, y1_6, y2_6, y3_6, y4_6;
-        __m256d y0_7, y1_7, y2_7, y3_7, y4_7;
-
-        RADIX5_BUTTERFLY_AVX2(a0, b2_0, c2_0, d2_0, e2_0, y0_0, y1_0, y2_0, y3_0, y4_0);
-        RADIX5_BUTTERFLY_AVX2(a1, b2_1, c2_1, d2_1, e2_1, y0_1, y1_1, y2_1, y3_1, y4_1);
-        RADIX5_BUTTERFLY_AVX2(a2, b2_2, c2_2, d2_2, e2_2, y0_2, y1_2, y2_2, y3_2, y4_2);
-        RADIX5_BUTTERFLY_AVX2(a3, b2_3, c2_3, d2_3, e2_3, y0_3, y1_3, y2_3, y3_3, y4_3);
-        RADIX5_BUTTERFLY_AVX2(a4, b2_4, c2_4, d2_4, e2_4, y0_4, y1_4, y2_4, y3_4, y4_4);
-        RADIX5_BUTTERFLY_AVX2(a5, b2_5, c2_5, d2_5, e2_5, y0_5, y1_5, y2_5, y3_5, y4_5);
-        RADIX5_BUTTERFLY_AVX2(a6, b2_6, c2_6, d2_6, e2_6, y0_6, y1_6, y2_6, y3_6, y4_6);
-        RADIX5_BUTTERFLY_AVX2(a7, b2_7, c2_7, d2_7, e2_7, y0_7, y1_7, y2_7, y3_7, y4_7);
-
-#undef RADIX5_BUTTERFLY_AVX2
-
-        // Store results
-        STOREU_PD(&out0[k + 0].re, y0_0);
-        STOREU_PD(&out0[k + 2].re, y0_1);
-        STOREU_PD(&out0[k + 4].re, y0_2);
-        STOREU_PD(&out0[k + 6].re, y0_3);
-        STOREU_PD(&out0[k + 8].re, y0_4);
-        STOREU_PD(&out0[k + 10].re, y0_5);
-        STOREU_PD(&out0[k + 12].re, y0_6);
-        STOREU_PD(&out0[k + 14].re, y0_7);
-
-        STOREU_PD(&out1[k + 0].re, y1_0);
-        STOREU_PD(&out1[k + 2].re, y1_1);
-        STOREU_PD(&out1[k + 4].re, y1_2);
-        STOREU_PD(&out1[k + 6].re, y1_3);
-        STOREU_PD(&out1[k + 8].re, y1_4);
-        STOREU_PD(&out1[k + 10].re, y1_5);
-        STOREU_PD(&out1[k + 12].re, y1_6);
-        STOREU_PD(&out1[k + 14].re, y1_7);
-
-        STOREU_PD(&out2[k + 0].re, y2_0);
-        STOREU_PD(&out2[k + 2].re, y2_1);
-        STOREU_PD(&out2[k + 4].re, y2_2);
-        STOREU_PD(&out2[k + 6].re, y2_3);
-        STOREU_PD(&out2[k + 8].re, y2_4);
-        STOREU_PD(&out2[k + 10].re, y2_5);
-        STOREU_PD(&out2[k + 12].re, y2_6);
-        STOREU_PD(&out2[k + 14].re, y2_7);
-
-        STOREU_PD(&out3[k + 0].re, y3_0);
-        STOREU_PD(&out3[k + 2].re, y3_1);
-        STOREU_PD(&out3[k + 4].re, y3_2);
-        STOREU_PD(&out3[k + 6].re, y3_3);
-        STOREU_PD(&out3[k + 8].re, y3_4);
-        STOREU_PD(&out3[k + 10].re, y3_5);
-        STOREU_PD(&out3[k + 12].re, y3_6);
-        STOREU_PD(&out3[k + 14].re, y3_7);
-
-        STOREU_PD(&out4[k + 0].re, y4_0);
-        STOREU_PD(&out4[k + 2].re, y4_1);
-        STOREU_PD(&out4[k + 4].re, y4_2);
-        STOREU_PD(&out4[k + 6].re, y4_3);
-        STOREU_PD(&out4[k + 8].re, y4_4);
-        STOREU_PD(&out4[k + 10].re, y4_5);
-        STOREU_PD(&out4[k + 12].re, y4_6);
-        STOREU_PD(&out4[k + 14].re, y4_7);
-    }
-
-    //======================================================================
-    // Cleanup: 8x unrolling
-    //======================================================================
-    for (; k + 7 < fifth; k += 8)
-    {
-        if (k + 16 < fifth)
+        // Update W_curr to W^32 for main loop
+        for (int step = 0; step < 32; step++)
         {
-            _mm_prefetch((const char *)&in0[k + 16].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&in1[k + 16].re, _MM_HINT_T0);
-            _mm_prefetch((const char *)&in2[k + 16].re, _MM_HINT_T0);
+            for (int j = 0; j < 4; j++)
+            {
+                double re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+                double im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+                W_curr[j].re = re;
+                W_curr[j].im = im;
+            }
         }
 
-        __m256d a0 = load2_aos(&in0[k], &in0[k + 1]);
-        __m256d a1 = load2_aos(&in0[k + 2], &in0[k + 3]);
-        __m256d a2 = load2_aos(&in0[k + 4], &in0[k + 5]);
-        __m256d a3 = load2_aos(&in0[k + 6], &in0[k + 7]);
+        k = 32;
 
-        __m256d b0 = load2_aos(&in1[k], &in1[k + 1]);
-        __m256d b1 = load2_aos(&in1[k + 2], &in1[k + 3]);
-        __m256d b2 = load2_aos(&in1[k + 4], &in1[k + 5]);
-        __m256d b3 = load2_aos(&in1[k + 6], &in1[k + 7]);
+        //======================================================================
+        // MAIN PIPELINED LOOP
+        //======================================================================
+        for (; k + 31 < K; k += 32)
+        {
+            //==================================================================
+            // PREFETCH
+            //==================================================================
+            if (k + PREFETCH_L3 < K)
+            {
+                for (int lane = 0; lane < 5; lane++)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L3 + lane * K], _MM_HINT_T2);
+                }
+            }
+            if (k + PREFETCH_L2 < K)
+            {
+                for (int lane = 0; lane < 5; lane++)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2 + lane * K], _MM_HINT_T1);
+                }
+            }
+            if (k + PREFETCH_L1 < K)
+            {
+                for (int lane = 0; lane < 5; lane++)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1 + lane * K], _MM_HINT_T0);
+                }
+            }
 
-        __m256d c0 = load2_aos(&in2[k], &in2[k + 1]);
-        __m256d c1 = load2_aos(&in2[k + 2], &in2[k + 3]);
-        __m256d c2 = load2_aos(&in2[k + 4], &in2[k + 5]);
-        __m256d c3 = load2_aos(&in2[k + 6], &in2[k + 7]);
+            //==================================================================
+            // Process 16 pairs (32 butterflies)
+            //==================================================================
+            fft_data W_curr_copy[4];
+            for (int j = 0; j < 4; j++)
+            {
+                W_curr_copy[j] = W_curr[j];
+            }
 
-        __m256d d0 = load2_aos(&in3[k], &in3[k + 1]);
-        __m256d d1 = load2_aos(&in3[k + 2], &in3[k + 3]);
-        __m256d d2 = load2_aos(&in3[k + 4], &in3[k + 5]);
-        __m256d d3 = load2_aos(&in3[k + 6], &in3[k + 7]);
+            for (int p = 0; p < 16; p++)
+            {
+                int kk = k + 2 * p;
 
-        __m256d e0 = load2_aos(&in4[k], &in4[k + 1]);
-        __m256d e1 = load2_aos(&in4[k + 2], &in4[k + 3]);
-        __m256d e2 = load2_aos(&in4[k + 4], &in4[k + 5]);
-        __m256d e3 = load2_aos(&in4[k + 6], &in4[k + 7]);
+                // Load inputs
+                __m256d a = load2_aos(&sub_outputs[kk], &sub_outputs[kk + 1]);
+                __m256d b = load2_aos(&sub_outputs[kk + K], &sub_outputs[kk + 1 + K]);
+                __m256d c = load2_aos(&sub_outputs[kk + 2 * K], &sub_outputs[kk + 1 + 2 * K]);
+                __m256d d = load2_aos(&sub_outputs[kk + 3 * K], &sub_outputs[kk + 1 + 3 * K]);
+                __m256d e = load2_aos(&sub_outputs[kk + 4 * K], &sub_outputs[kk + 1 + 4 * K]);
 
-        __m256d w1_0 = load2_aos(&stage_tw[4 * k], &stage_tw[4 * (k + 1)]);
-        __m256d w2_0 = load2_aos(&stage_tw[4 * k + 1], &stage_tw[4 * (k + 1) + 1]);
-        __m256d w3_0 = load2_aos(&stage_tw[4 * k + 2], &stage_tw[4 * (k + 1) + 2]);
-        __m256d w4_0 = load2_aos(&stage_tw[4 * k + 3], &stage_tw[4 * (k + 1) + 3]);
+                // Compute twiddles for kk and kk+1
+                fft_data W_kk[4], W_kk1[4];
+                for (int j = 0; j < 4; j++)
+                {
+                    W_kk[j] = W_curr_copy[j];
 
-        __m256d w1_1 = load2_aos(&stage_tw[4 * (k + 2)], &stage_tw[4 * (k + 3)]);
-        __m256d w2_1 = load2_aos(&stage_tw[4 * (k + 2) + 1], &stage_tw[4 * (k + 3) + 1]);
-        __m256d w3_1 = load2_aos(&stage_tw[4 * (k + 2) + 2], &stage_tw[4 * (k + 3) + 2]);
-        __m256d w4_1 = load2_aos(&stage_tw[4 * (k + 2) + 3], &stage_tw[4 * (k + 3) + 3]);
+                    // W_kk1 = W_kk * W_base
+                    W_kk1[j].re = W_kk[j].re * W_base[j].re - W_kk[j].im * W_base[j].im;
+                    W_kk1[j].im = W_kk[j].re * W_base[j].im + W_kk[j].im * W_base[j].re;
 
-        __m256d w1_2 = load2_aos(&stage_tw[4 * (k + 4)], &stage_tw[4 * (k + 5)]);
-        __m256d w2_2 = load2_aos(&stage_tw[4 * (k + 4) + 1], &stage_tw[4 * (k + 5) + 1]);
-        __m256d w3_2 = load2_aos(&stage_tw[4 * (k + 4) + 2], &stage_tw[4 * (k + 5) + 2]);
-        __m256d w4_2 = load2_aos(&stage_tw[4 * (k + 4) + 3], &stage_tw[4 * (k + 5) + 3]);
+                    // Update for next pair
+                    double re = W_kk1[j].re * W_base[j].re - W_kk1[j].im * W_base[j].im;
+                    double im = W_kk1[j].re * W_base[j].im + W_kk1[j].im * W_base[j].re;
+                    W_curr_copy[j].re = re;
+                    W_curr_copy[j].im = im;
+                }
 
-        __m256d w1_3 = load2_aos(&stage_tw[4 * (k + 6)], &stage_tw[4 * (k + 7)]);
-        __m256d w2_3 = load2_aos(&stage_tw[4 * (k + 6) + 1], &stage_tw[4 * (k + 7) + 1]);
-        __m256d w3_3 = load2_aos(&stage_tw[4 * (k + 6) + 2], &stage_tw[4 * (k + 7) + 2]);
-        __m256d w4_3 = load2_aos(&stage_tw[4 * (k + 6) + 3], &stage_tw[4 * (k + 7) + 3]);
+                // Pack twiddles
+                __m256d w1 = _mm256_set_pd(W_kk1[0].im, W_kk1[0].re, W_kk[0].im, W_kk[0].re);
+                __m256d w2 = _mm256_set_pd(W_kk1[1].im, W_kk1[1].re, W_kk[1].im, W_kk[1].re);
+                __m256d w3 = _mm256_set_pd(W_kk1[2].im, W_kk1[2].re, W_kk[2].im, W_kk[2].re);
+                __m256d w4 = _mm256_set_pd(W_kk1[3].im, W_kk1[3].re, W_kk[3].im, W_kk[3].re);
 
-        __m256d b2_0 = cmul_avx2_aos(b0, w1_0);
-        __m256d c2_0 = cmul_avx2_aos(c0, w2_0);
-        __m256d d2_0 = cmul_avx2_aos(d0, w3_0);
-        __m256d e2_0 = cmul_avx2_aos(e0, w4_0);
+                // Twiddle multiply
+                __m256d b2, c2, d2, e2;
+                CMUL_FMA(b2, b, w1);
+                CMUL_FMA(c2, c, w2);
+                CMUL_FMA(d2, d, w3);
+                CMUL_FMA(e2, e, w4);
 
-        __m256d b2_1 = cmul_avx2_aos(b1, w1_1);
-        __m256d c2_1 = cmul_avx2_aos(c1, w2_1);
-        __m256d d2_1 = cmul_avx2_aos(d1, w3_1);
-        __m256d e2_1 = cmul_avx2_aos(e1, w4_1);
+                // Butterfly
+                __m256d y0, y1, y2, y3, y4;
+                BUTTERFLY_R5(a, b2, c2, d2, e2, y0, y1, y2, y3, y4);
 
-        __m256d b2_2 = cmul_avx2_aos(b2, w1_2);
-        __m256d c2_2 = cmul_avx2_aos(c2, w2_2);
-        __m256d d2_2 = cmul_avx2_aos(d2, w3_2);
-        __m256d e2_2 = cmul_avx2_aos(e2, w4_2);
+                // Store
+                if (use_streaming)
+                {
+                    _mm256_stream_pd(&output_buffer[kk].re, y0);
+                    _mm256_stream_pd(&output_buffer[kk + K].re, y1);
+                    _mm256_stream_pd(&output_buffer[kk + 2 * K].re, y2);
+                    _mm256_stream_pd(&output_buffer[kk + 3 * K].re, y3);
+                    _mm256_stream_pd(&output_buffer[kk + 4 * K].re, y4);
+                }
+                else
+                {
+                    STOREU_PD(&output_buffer[kk].re, y0);
+                    STOREU_PD(&output_buffer[kk + K].re, y1);
+                    STOREU_PD(&output_buffer[kk + 2 * K].re, y2);
+                    STOREU_PD(&output_buffer[kk + 3 * K].re, y3);
+                    STOREU_PD(&output_buffer[kk + 4 * K].re, y4);
+                }
+            }
 
-        __m256d b2_3 = cmul_avx2_aos(b3, w1_3);
-        __m256d c2_3 = cmul_avx2_aos(c3, w2_3);
-        __m256d d2_3 = cmul_avx2_aos(d3, w3_3);
-        __m256d e2_3 = cmul_avx2_aos(e3, w4_3);
+            // Update W_curr for next iteration (k += 32)
+            UPDATE_TWIDDLES_16X();
+            UPDATE_TWIDDLES_16X();
+        }
 
-#define RADIX5_BUTTERFLY_AVX2(a, b2, c2, d2, e2, y0, y1, y2, y3, y4) \
-    do {                                                             \
-        __m256d t0 = _mm256_add_pd(b2, e2);                          \
-        __m256d t1 = _mm256_add_pd(c2, d2);                          \
-        __m256d t2 = _mm256_sub_pd(b2, e2);                          \
-        __m256d t3 = _mm256_sub_pd(c2, d2);                          \
-        y0 = _mm256_add_pd(a, _mm256_add_pd(t0, t1));                \
-        __m256d base1 = FMADD(vs1, t2, _mm256_mul_pd(vs2, t3));      \
-        __m256d tmp1 = FMADD(vc1, t0, _mm256_mul_pd(vc2, t1));       \
-        __m256d base1_swp = _mm256_permute_pd(base1, 0b0101);        \
-        __m256d r1 = _mm256_xor_pd(base1_swp, rot_mask);             \
-        __m256d a1 = _mm256_add_pd(a, tmp1);                         \
-        y1 = _mm256_add_pd(a1, r1);                                  \
-        y4 = _mm256_sub_pd(a1, r1);                                  \
-        __m256d base2 = FMSUB(vs2, t2, _mm256_mul_pd(vs1, t3));      \
-        __m256d tmp2 = FMADD(vc2, t0, _mm256_mul_pd(vc1, t1));       \
-        __m256d base2_swp = _mm256_permute_pd(base2, 0b0101);        \
-        __m256d r2 = _mm256_xor_pd(base2_swp, rot_mask);             \
-        __m256d a2 = _mm256_add_pd(a, tmp2);                         \
-        y3 = _mm256_add_pd(a2, r2);                                  \
-        y2 = _mm256_sub_pd(a2, r2);                                  \
-    } while(0)
-
-        __m256d y0_0, y1_0, y2_0, y3_0, y4_0;
-        __m256d y0_1, y1_1, y2_1, y3_1, y4_1;
-        __m256d y0_2, y1_2, y2_2, y3_2, y4_2;
-        __m256d y0_3, y1_3, y2_3, y3_3, y4_3;
-
-        RADIX5_BUTTERFLY_AVX2(a0, b2_0, c2_0, d2_0, e2_0, y0_0, y1_0, y2_0, y3_0, y4_0);
-        RADIX5_BUTTERFLY_AVX2(a1, b2_1, c2_1, d2_1, e2_1, y0_1, y1_1, y2_1, y3_1, y4_1);
-        RADIX5_BUTTERFLY_AVX2(a2, b2_2, c2_2, d2_2, e2_2, y0_2, y1_2, y2_2, y3_2, y4_2);
-        RADIX5_BUTTERFLY_AVX2(a3, b2_3, c2_3, d2_3, e2_3, y0_3, y1_3, y2_3, y3_3, y4_3);
-
-#undef RADIX5_BUTTERFLY_AVX2
-
-        STOREU_PD(&out0[k].re, y0_0);
-        STOREU_PD(&out0[k + 2].re, y0_1);
-        STOREU_PD(&out0[k + 4].re, y0_2);
-        STOREU_PD(&out0[k + 6].re, y0_3);
-
-        STOREU_PD(&out1[k].re, y1_0);
-        STOREU_PD(&out1[k + 2].re, y1_1);
-        STOREU_PD(&out1[k + 4].re, y1_2);
-        STOREU_PD(&out1[k + 6].re, y1_3);
-
-        STOREU_PD(&out2[k].re, y2_0);
-        STOREU_PD(&out2[k + 2].re, y2_1);
-        STOREU_PD(&out2[k + 4].re, y2_2);
-        STOREU_PD(&out2[k + 6].re, y2_3);
-
-        STOREU_PD(&out3[k].re, y3_0);
-        STOREU_PD(&out3[k + 2].re, y3_1);
-        STOREU_PD(&out3[k + 4].re, y3_2);
-        STOREU_PD(&out3[k + 6].re, y3_3);
-
-        STOREU_PD(&out4[k].re, y4_0);
-        STOREU_PD(&out4[k + 2].re, y4_1);
-        STOREU_PD(&out4[k + 4].re, y4_2);
-        STOREU_PD(&out4[k + 6].re, y4_3);
+        if (use_streaming)
+        {
+            _mm_sfence();
+        }
     }
 
-    //======================================================================
-    // Cleanup: 2x unrolling
-    //======================================================================
-    for (; k + 1 < fifth; k += 2)
+    //==========================================================================
+    // CLEANUP: 8X UNROLL
+    //==========================================================================
+    if (k + 15 < K)
     {
-        __m256d a = load2_aos(&in0[k], &in0[k + 1]);
-        __m256d b = load2_aos(&in1[k], &in1[k + 1]);
-        __m256d c = load2_aos(&in2[k], &in2[k + 1]);
-        __m256d d = load2_aos(&in3[k], &in3[k + 1]);
-        __m256d e = load2_aos(&in4[k], &in4[k + 1]);
+        for (; k + 15 < K; k += 16)
+        {
+            if (k + 24 < K)
+            {
+                for (int lane = 0; lane < 5; lane++)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + 24 + lane * K], _MM_HINT_T0);
+                }
+            }
 
-        __m256d w1 = load2_aos(&stage_tw[4 * k], &stage_tw[4 * (k + 1)]);
-        __m256d w2 = load2_aos(&stage_tw[4 * k + 1], &stage_tw[4 * (k + 1) + 1]);
-        __m256d w3 = load2_aos(&stage_tw[4 * k + 2], &stage_tw[4 * (k + 1) + 2]);
-        __m256d w4 = load2_aos(&stage_tw[4 * k + 3], &stage_tw[4 * (k + 1) + 3]);
+            for (int p = 0; p < 8; p++)
+            {
+                int kk = k + 2 * p;
 
-        __m256d b2 = cmul_avx2_aos(b, w1);
-        __m256d c2 = cmul_avx2_aos(c, w2);
-        __m256d d2 = cmul_avx2_aos(d, w3);
-        __m256d e2 = cmul_avx2_aos(e, w4);
+                __m256d a = load2_aos(&sub_outputs[kk], &sub_outputs[kk + 1]);
+                __m256d b = load2_aos(&sub_outputs[kk + K], &sub_outputs[kk + 1 + K]);
+                __m256d c = load2_aos(&sub_outputs[kk + 2 * K], &sub_outputs[kk + 1 + 2 * K]);
+                __m256d d = load2_aos(&sub_outputs[kk + 3 * K], &sub_outputs[kk + 1 + 3 * K]);
+                __m256d e = load2_aos(&sub_outputs[kk + 4 * K], &sub_outputs[kk + 1 + 4 * K]);
 
-        __m256d t0 = _mm256_add_pd(b2, e2);
-        __m256d t1 = _mm256_add_pd(c2, d2);
-        __m256d t2 = _mm256_sub_pd(b2, e2);
-        __m256d t3 = _mm256_sub_pd(c2, d2);
+                fft_data W_kk[4], W_kk1[4];
+                for (int j = 0; j < 4; j++)
+                {
+                    W_kk[j] = W_curr[j];
+                    W_kk1[j].re = W_kk[j].re * W_base[j].re - W_kk[j].im * W_base[j].im;
+                    W_kk1[j].im = W_kk[j].re * W_base[j].im + W_kk[j].im * W_base[j].re;
+                }
 
-        __m256d y0 = _mm256_add_pd(a, _mm256_add_pd(t0, t1));
+                __m256d w1 = _mm256_set_pd(W_kk1[0].im, W_kk1[0].re, W_kk[0].im, W_kk[0].re);
+                __m256d w2 = _mm256_set_pd(W_kk1[1].im, W_kk1[1].re, W_kk[1].im, W_kk[1].re);
+                __m256d w3 = _mm256_set_pd(W_kk1[2].im, W_kk1[2].re, W_kk[2].im, W_kk[2].re);
+                __m256d w4 = _mm256_set_pd(W_kk1[3].im, W_kk1[3].re, W_kk[3].im, W_kk[3].re);
 
-        __m256d base1 = FMADD(vs1, t2, _mm256_mul_pd(vs2, t3));
-        __m256d tmp1 = FMADD(vc1, t0, _mm256_mul_pd(vc2, t1));
-        __m256d base1_swp = _mm256_permute_pd(base1, 0b0101);
-        __m256d r1 = _mm256_xor_pd(base1_swp, rot_mask);
-        __m256d a1 = _mm256_add_pd(a, tmp1);
-        __m256d y1 = _mm256_add_pd(a1, r1);
-        __m256d y4 = _mm256_sub_pd(a1, r1);
+                __m256d b2, c2, d2, e2;
+                CMUL_FMA(b2, b, w1);
+                CMUL_FMA(c2, c, w2);
+                CMUL_FMA(d2, d, w3);
+                CMUL_FMA(e2, e, w4);
 
-        __m256d base2 = FMSUB(vs2, t2, _mm256_mul_pd(vs1, t3));
-        __m256d tmp2 = FMADD(vc2, t0, _mm256_mul_pd(vc1, t1));
-        __m256d base2_swp = _mm256_permute_pd(base2, 0b0101);
-        __m256d r2 = _mm256_xor_pd(base2_swp, rot_mask);
-        __m256d a2 = _mm256_add_pd(a, tmp2);
-        __m256d y3 = _mm256_add_pd(a2, r2);
-        __m256d y2 = _mm256_sub_pd(a2, r2);
+                __m256d y0, y1, y2, y3, y4;
+                BUTTERFLY_R5(a, b2, c2, d2, e2, y0, y1, y2, y3, y4);
 
-        STOREU_PD(&out0[k].re, y0);
-        STOREU_PD(&out1[k].re, y1);
-        STOREU_PD(&out2[k].re, y2);
-        STOREU_PD(&out3[k].re, y3);
-        STOREU_PD(&out4[k].re, y4);
+                STOREU_PD(&output_buffer[kk].re, y0);
+                STOREU_PD(&output_buffer[kk + K].re, y1);
+                STOREU_PD(&output_buffer[kk + 2 * K].re, y2);
+                STOREU_PD(&output_buffer[kk + 3 * K].re, y3);
+                STOREU_PD(&output_buffer[kk + 4 * K].re, y4);
+
+                // Update W_curr twice
+                for (int j = 0; j < 4; j++)
+                {
+                    double re = W_kk1[j].re * W_base[j].re - W_kk1[j].im * W_base[j].im;
+                    double im = W_kk1[j].re * W_base[j].im + W_kk1[j].im * W_base[j].re;
+                    W_curr[j].re = re;
+                    W_curr[j].im = im;
+                }
+            }
+        }
     }
+
+    //==========================================================================
+    // CLEANUP: 2X UNROLL
+    //==========================================================================
+    for (; k + 1 < K; k += 2)
+    {
+        __m256d a = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
+        __m256d b = load2_aos(&sub_outputs[k + K], &sub_outputs[k + 1 + K]);
+        __m256d c = load2_aos(&sub_outputs[k + 2 * K], &sub_outputs[k + 1 + 2 * K]);
+        __m256d d = load2_aos(&sub_outputs[k + 3 * K], &sub_outputs[k + 1 + 3 * K]);
+        __m256d e = load2_aos(&sub_outputs[k + 4 * K], &sub_outputs[k + 1 + 4 * K]);
+
+        fft_data W_k1[4];
+        for (int j = 0; j < 4; j++)
+        {
+            W_k1[j].re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+            W_k1[j].im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+        }
+
+        __m256d w1 = _mm256_set_pd(W_k1[0].im, W_k1[0].re, W_curr[0].im, W_curr[0].re);
+        __m256d w2 = _mm256_set_pd(W_k1[1].im, W_k1[1].re, W_curr[1].im, W_curr[1].re);
+        __m256d w3 = _mm256_set_pd(W_k1[2].im, W_k1[2].re, W_curr[2].im, W_curr[2].re);
+        __m256d w4 = _mm256_set_pd(W_k1[3].im, W_k1[3].re, W_curr[3].im, W_curr[3].re);
+
+        __m256d b2, c2, d2, e2;
+        CMUL_FMA(b2, b, w1);
+        CMUL_FMA(c2, c, w2);
+        CMUL_FMA(d2, d, w3);
+        CMUL_FMA(e2, e, w4);
+
+        __m256d y0, y1, y2, y3, y4;
+        BUTTERFLY_R5(a, b2, c2, d2, e2, y0, y1, y2, y3, y4);
+
+        STOREU_PD(&output_buffer[k].re, y0);
+        STOREU_PD(&output_buffer[k + K].re, y1);
+        STOREU_PD(&output_buffer[k + 2 * K].re, y2);
+        STOREU_PD(&output_buffer[k + 3 * K].re, y3);
+        STOREU_PD(&output_buffer[k + 4 * K].re, y4);
+
+        // Update W_curr twice
+        for (int j = 0; j < 4; j++)
+        {
+            double re = W_k1[j].re * W_base[j].re - W_k1[j].im * W_base[j].im;
+            double im = W_k1[j].re * W_base[j].im + W_k1[j].im * W_base[j].re;
+            W_curr[j].re = re;
+            W_curr[j].im = im;
+        }
+    }
+
+#undef CMUL_FMA
+#undef BUTTERFLY_R5
+#undef UPDATE_TWIDDLES_16X
+
 #endif // __AVX2__
 
-    //======================================================================
-    // Scalar tail
-    //======================================================================
-    for (; k < fifth; ++k)
+    //==========================================================================
+    // SCALAR TAIL
+    //==========================================================================
+    // Initialize W_curr if AVX2 didn't run
+    if (k == 0)
     {
-        __m128d a = LOADU_SSE2(&sub_outputs[k].re);
-        __m128d b = LOADU_SSE2(&sub_outputs[k + fifth].re);
-        __m128d c = LOADU_SSE2(&sub_outputs[k + 2 * fifth].re);
-        __m128d d = LOADU_SSE2(&sub_outputs[k + 3 * fifth].re);
-        __m128d e = LOADU_SSE2(&sub_outputs[k + 4 * fifth].re);
+        for (int j = 0; j < 4; j++)
+        {
+            W_curr[j].re = 1.0;
+            W_curr[j].im = 0.0;
+        }
+    }
+    else if (k > 0 && k < 32)
+    {
+        // Recompute W^k
+        for (int j = 0; j < 4; j++)
+        {
+            W_curr[j].re = 1.0;
+            W_curr[j].im = 0.0;
+        }
 
-        __m128d w1 = LOADU_SSE2(&stage_tw[4 * k].re);
-        __m128d w2 = LOADU_SSE2(&stage_tw[4 * k + 1].re);
-        __m128d w3 = LOADU_SSE2(&stage_tw[4 * k + 2].re);
-        __m128d w4 = LOADU_SSE2(&stage_tw[4 * k + 3].re);
+        for (int step = 0; step < k; step++)
+        {
+            for (int j = 0; j < 4; j++)
+            {
+                double re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+                double im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+                W_curr[j].re = re;
+                W_curr[j].im = im;
+            }
+        }
+    }
 
-        __m128d b2 = cmul_sse2_aos(b, w1);
-        __m128d c2 = cmul_sse2_aos(c, w2);
-        __m128d d2 = cmul_sse2_aos(d, w3);
-        __m128d e2 = cmul_sse2_aos(e, w4);
+    for (; k < K; ++k)
+    {
+        fft_data a = sub_outputs[k];
+        fft_data b = sub_outputs[k + K];
+        fft_data c = sub_outputs[k + 2 * K];
+        fft_data d = sub_outputs[k + 3 * K];
+        fft_data e = sub_outputs[k + 4 * K];
 
-        __m128d t0 = _mm_add_pd(b2, e2);
-        __m128d t1 = _mm_add_pd(c2, d2);
-        __m128d t2 = _mm_sub_pd(b2, e2);
-        __m128d t3 = _mm_sub_pd(c2, d2);
+        // Apply twiddles using W_curr
+        double b2r = b.re * W_curr[0].re - b.im * W_curr[0].im;
+        double b2i = b.re * W_curr[0].im + b.im * W_curr[0].re;
 
-        __m128d y0 = _mm_add_pd(a, _mm_add_pd(t0, t1));
-        STOREU_SSE2(&output_buffer[k].re, y0);
+        double c2r = c.re * W_curr[1].re - c.im * W_curr[1].im;
+        double c2i = c.re * W_curr[1].im + c.im * W_curr[1].re;
 
-        const __m128d vc1_128 = _mm_set1_pd(C5_1);
-        const __m128d vc2_128 = _mm_set1_pd(C5_2);
-        const __m128d vs1_128 = _mm_set1_pd(S5_1);
-        const __m128d vs2_128 = _mm_set1_pd(S5_2);
+        double d2r = d.re * W_curr[2].re - d.im * W_curr[2].im;
+        double d2i = d.re * W_curr[2].im + d.im * W_curr[2].re;
 
-        __m128d base1 = FMADD_SSE2(vs1_128, t2, _mm_mul_pd(vs2_128, t3));
-        __m128d tmp1 = FMADD_SSE2(vc1_128, t0, _mm_mul_pd(vc2_128, t1));
-        __m128d base1_swp = _mm_shuffle_pd(base1, base1, 0b01);
-        // Exactly as in original document 2 (with the "FIX" applied)
-        __m128d r1 = (transform_sign == 1)
-                     ? _mm_xor_pd(base1_swp, _mm_set_pd(-0.0, 0.0))  // +i (SWAPPED)
-                     : _mm_xor_pd(base1_swp, _mm_set_pd(0.0, -0.0)); // -i (SWAPPED)
-                 
-        __m128d a1 = _mm_add_pd(a, tmp1);
-        __m128d y1 = _mm_add_pd(a1, r1);
-        __m128d y4 = _mm_sub_pd(a1, r1);
+        double e2r = e.re * W_curr[3].re - e.im * W_curr[3].im;
+        double e2i = e.re * W_curr[3].im + e.im * W_curr[3].re;
 
-        __m128d base2 = FMSUB_SSE2(vs2_128, t2, _mm_mul_pd(vs1_128, t3));
-        __m128d tmp2 = FMADD_SSE2(vc2_128, t0, _mm_mul_pd(vc1_128, t1));
-        __m128d base2_swp = _mm_shuffle_pd(base2, base2, 0b01);
-        __m128d r2 = (transform_sign == 1)
-                     ? _mm_xor_pd(base2_swp, _mm_set_pd(0.0, -0.0))  // -i (SWAPPED) 
-                     : _mm_xor_pd(base2_swp, _mm_set_pd(-0.0, 0.0)); // +i (SWAPPED)
-                     
-        __m128d a2 = _mm_add_pd(a, tmp2);
-        __m128d y3 = _mm_add_pd(a2, r2);
-        __m128d y2 = _mm_sub_pd(a2, r2);
+        // Update W_curr for next iteration
+        for (int j = 0; j < 4; j++)
+        {
+            double re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+            double im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+            W_curr[j].re = re;
+            W_curr[j].im = im;
+        }
 
-        STOREU_SSE2(&output_buffer[k + fifth].re, y1);
-        STOREU_SSE2(&output_buffer[k + 2 * fifth].re, y2);
-        STOREU_SSE2(&output_buffer[k + 3 * fifth].re, y3);
-        STOREU_SSE2(&output_buffer[k + 4 * fifth].re, y4);
+        // Radix-5 butterfly
+        double t0r = b2r + e2r;
+        double t0i = b2i + e2i;
+        double t1r = c2r + d2r;
+        double t1i = c2i + d2i;
+        double t2r = b2r - e2r;
+        double t2i = b2i - e2i;
+        double t3r = c2r - d2r;
+        double t3i = c2i - d2i;
+
+        output_buffer[k].re = a.re + t0r + t1r;
+        output_buffer[k].im = a.im + t0i + t1i;
+
+        double base1r = S5_1 * t2r + S5_2 * t3r;
+        double base1i = S5_1 * t2i + S5_2 * t3i;
+        double tmp1r = C5_1 * t0r + C5_2 * t1r;
+        double tmp1i = C5_1 * t0i + C5_2 * t1i;
+
+        double r1r, r1i;
+        if (transform_sign == 1)
+        {
+            r1r = base1i;
+            r1i = -base1r;
+        }
+        else
+        {
+            r1r = -base1i;
+            r1i = base1r;
+        }
+
+        double a1r = a.re + tmp1r;
+        double a1i = a.im + tmp1i;
+
+        output_buffer[k + K].re = a1r + r1r;
+        output_buffer[k + K].im = a1i + r1i;
+        output_buffer[k + 4 * K].re = a1r - r1r;
+        output_buffer[k + 4 * K].im = a1i - r1i;
+
+        double base2r = S5_2 * t2r - S5_1 * t3r;
+        double base2i = S5_2 * t2i - S5_1 * t3i;
+        double tmp2r = C5_2 * t0r + C5_1 * t1r;
+        double tmp2i = C5_2 * t0i + C5_1 * t1i;
+
+        double r2r, r2i;
+        if (transform_sign == 1)
+        {
+            r2r = -base2i;
+            r2i = base2r;
+        }
+        else
+        {
+            r2r = base2i;
+            r2i = -base2r;
+        }
+
+        double a2r = a.re + tmp2r;
+        double a2i = a.im + tmp2i;
+
+        output_buffer[k + 3 * K].re = a2r + r2r;
+        output_buffer[k + 3 * K].im = a2i + r2i;
+        output_buffer[k + 2 * K].re = a2r - r2r;
+        output_buffer[k + 2 * K].im = a2i - r2i;
     }
 }

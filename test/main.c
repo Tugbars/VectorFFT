@@ -1763,6 +1763,732 @@ void verify_twiddle_convention(void) {
     free_fft(inv);
 }
 
+void diagnose_n512(void) {
+    printf("\n=== Diagnosing N=512 ===\n");
+    
+    fft_object fwd = fft_init(512, +1);
+    
+    printf("Factors: ");
+    for (int i = 0; i < fwd->lf; i++) {
+        printf("%d ", fwd->factors[i]);
+    }
+    printf("\n");
+    
+    printf("Number of precomputed stages: %d\n", fwd->num_precomputed_stages);
+    
+    if (fwd->twiddle_factors) {
+        printf("Using precomputed twiddle_factors\n");
+        printf("Stage offsets:\n");
+        for (int i = 0; i < fwd->num_precomputed_stages; i++) {
+            printf("  Stage %d: offset=%d\n", i, fwd->stage_twiddle_offset[i]);
+        }
+    } else {
+        printf("NOT using precomputed twiddle_factors (dynamic generation)\n");
+    }
+    
+    printf("Max scratch size: %d\n", fwd->max_scratch_size);
+    
+    // Count expected stages
+    int expected_stages = 0;
+    for (int n = 512; n > 1; n /= 2) {
+        expected_stages++;
+    }
+    printf("Expected stages (512->256->...->2->1): %d\n", expected_stages);
+    
+    free_fft(fwd);
+}
+
+void test_n512_after_fix(void) {
+    printf("\n=== Testing N=512 After Radix-8 Fix ===\n");
+    
+    int N = 512;
+    
+    fft_data *input = (fft_data*)_mm_malloc(N * sizeof(fft_data), 32);
+    fft_data *output = (fft_data*)_mm_malloc(N * sizeof(fft_data), 32);
+    fft_data *reconstructed = (fft_data*)_mm_malloc(N * sizeof(fft_data), 32);
+    
+    // Impulse
+    for (int j = 0; j < N; j++) {
+        input[j].re = (j == 0) ? 1.0 : 0.0;
+        input[j].im = 0.0;
+    }
+    
+    // Forward
+    fft_object fwd = fft_init(N, +1);
+    printf("Forward FFT (sgn=%+d):\n", fwd->sgn);
+    printf("  Decomposition: ");
+    for (int i = 0; i < fwd->lf; i++) {
+        printf("%d ", fwd->factors[i]);
+    }
+    printf("\n");
+    
+    fft_exec(fwd, input, output);
+    
+    printf("  DC bin: (%.10f, %.10f) [expect (1, 0)]\n", output[0].re, output[0].im);
+    printf("  Bin 1:  (%.10f, %.10f) [expect (1, 0)]\n", output[1].re, output[1].im);
+    printf("  Bin 2:  (%.10f, %.10f) [expect (1, 0)]\n", output[2].re, output[2].im);
+    
+    // Check all bins should be (1, 0) for impulse input
+    int forward_pass = 1;
+    for (int j = 0; j < N; j++) {
+        if (fabs(output[j].re - 1.0) > 1e-10 || fabs(output[j].im) > 1e-10) {
+            forward_pass = 0;
+            printf("  ERROR at bin %d: (%.10f, %.10f)\n", j, output[j].re, output[j].im);
+            if (j > 10) {
+                printf("  ... (stopping after first 10 errors)\n");
+                break;
+            }
+        }
+    }
+    printf("Forward FFT: %s\n\n", forward_pass ? "PASS" : "FAIL");
+    
+    // Inverse
+    fft_object inv = fft_init(N, -1);
+    printf("Inverse FFT (sgn=%+d):\n", inv->sgn);
+    fft_exec(inv, output, reconstructed);
+    
+    // Scale
+    for (int j = 0; j < N; j++) {
+        reconstructed[j].re /= N;
+        reconstructed[j].im /= N;
+    }
+    
+    printf("  Reconstructed[0]: (%.10f, %.10f) [expect (1, 0)]\n", 
+           reconstructed[0].re, reconstructed[0].im);
+    printf("  Reconstructed[1]: (%.10f, %.10f) [expect (0, 0)]\n", 
+           reconstructed[1].re, reconstructed[1].im);
+    
+    // Check
+    double max_err = 0.0;
+    int error_count = 0;
+    for (int j = 0; j < N; j++) {
+        double err_re = fabs(reconstructed[j].re - input[j].re);
+        double err_im = fabs(reconstructed[j].im - input[j].im);
+        double err = fmax(err_re, err_im);
+        if (err > 1e-10) {
+            error_count++;
+            if (error_count <= 5) {
+                printf("  ERROR at [%d]: got (%.10f, %.10f), expect (%.10f, %.10f)\n",
+                       j, reconstructed[j].re, reconstructed[j].im, input[j].re, input[j].im);
+            }
+        }
+        max_err = fmax(max_err, err);
+    }
+    
+    printf("\nRound-trip: Max error = %.6e %s\n", 
+           max_err, (max_err < 1e-10) ? "PASS" : "FAIL");
+    printf("  Total errors: %d / %d bins\n", error_count, N);
+    
+    free_fft(fwd);
+    free_fft(inv);
+    _mm_free(input);
+    _mm_free(output);
+    _mm_free(reconstructed);
+}
+
+void debug_n8(void) {
+    printf("\n=== Debug N=8 ===\n");
+    fft_object fwd = fft_init(8, +1);
+    fft_object inv = fft_init(8, -1);
+    
+    printf("Forward decomposition: ");
+    for (int i = 0; i < fwd->lf; i++) printf("%d ", fwd->factors[i]);
+    printf("\n");
+    
+    printf("Inverse decomposition: ");
+    for (int i = 0; i < inv->lf; i++) printf("%d ", inv->factors[i]);
+    printf("\n");
+    
+    printf("Forward twiddles[1]: (%.6f, %.6f)\n", 
+           fwd->twiddles[1].re, fwd->twiddles[1].im);
+    printf("Inverse twiddles[1]: (%.6f, %.6f)\n",
+           inv->twiddles[1].re, inv->twiddles[1].im);
+    
+    free_fft(fwd);
+    free_fft(inv);
+}
+
+void test_n8_detailed(void) {
+    printf("\n=== Detailed N=8 Test ===\n");
+    
+    int N = 8;
+    fft_data *input = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *fwd_out = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *inv_out = (fft_data*)malloc(N * sizeof(fft_data));
+    
+    // Simple test: [1, 0, 0, 0, 0, 0, 0, 0]
+    for (int i = 0; i < N; i++) {
+        input[i].re = (i == 0) ? 1.0 : 0.0;
+        input[i].im = 0.0;
+    }
+    
+    fft_object fwd = fft_init(N, +1);
+    fft_object inv = fft_init(N, -1);
+    
+    printf("Input: [%.2f+%.2fi, ...]\n", input[0].re, input[0].im);
+    
+    // Forward FFT
+    fft_exec(fwd, input, fwd_out);
+    
+    printf("Forward output (should all be 1+0i):\n");
+    for (int i = 0; i < N; i++) {
+        printf("  [%d] = %.6f + %.6fi\n", i, fwd_out[i].re, fwd_out[i].im);
+    }
+    
+    // Inverse FFT
+    fft_exec(inv, fwd_out, inv_out);
+    
+    printf("\nInverse output (before scaling):\n");
+    for (int i = 0; i < N; i++) {
+        printf("  [%d] = %.6f + %.6fi\n", i, inv_out[i].re, inv_out[i].im);
+    }
+    
+    // Scale
+    for (int i = 0; i < N; i++) {
+        inv_out[i].re /= N;
+        inv_out[i].im /= N;
+    }
+    
+    printf("\nInverse output (after scaling, should be [1+0i, 0+0i, ...]):\n");
+    for (int i = 0; i < N; i++) {
+        printf("  [%d] = %.6f + %.6fi\n", i, inv_out[i].re, inv_out[i].im);
+    }
+    
+    free_fft(fwd);
+    free_fft(inv);
+    free(input);
+    free(fwd_out);
+    free(inv_out);
+}
+
+void test_n8_final(void) {
+    printf("\n=== Testing N=8 After Final Fix ===\n");
+    
+    int N = 8;
+    fft_data *input = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *output = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *recon = (fft_data*)malloc(N * sizeof(fft_data));
+    
+    // Test signal with frequencies
+    for (int i = 0; i < N; i++) {
+        input[i].re = cos(2.0 * M_PI * i / N) + 0.5 * sin(2.0 * M_PI * 2 * i / N);
+        input[i].im = sin(2.0 * M_PI * i / N) - 0.3 * cos(2.0 * M_PI * 2 * i / N);
+    }
+    
+    fft_object fwd = fft_init(N, +1);
+    fft_object inv = fft_init(N, -1);
+    
+    fft_exec(fwd, input, output);
+    fft_exec(inv, output, recon);
+    
+    // Scale
+    for (int i = 0; i < N; i++) {
+        recon[i].re /= N;
+        recon[i].im /= N;
+    }
+    
+    // Check error
+    double max_err = 0.0;
+    for (int i = 0; i < N; i++) {
+        double err_re = fabs(recon[i].re - input[i].re);
+        double err_im = fabs(recon[i].im - input[i].im);
+        max_err = fmax(max_err, fmax(err_re, err_im));
+    }
+    
+    printf("N=8: Max error = %.6e %s\n", 
+           max_err, (max_err < 1e-10) ? "✓ PASS" : "✗ FAIL");
+    
+    if (max_err >= 1e-10) {
+        printf("First 4 errors:\n");
+        for (int i = 0; i < 4; i++) {
+            printf("  [%d] err=(%.3e, %.3e)\n", i,
+                   fabs(recon[i].re - input[i].re),
+                   fabs(recon[i].im - input[i].im));
+        }
+    }
+    
+    free_fft(fwd);
+    free_fft(inv);
+    free(input);
+    free(output);
+    free(recon);
+}
+
+void debug_stage_twiddles_n8(void) {
+    printf("\n=== Debug Stage Twiddles for N=8 ===\n");
+    
+    fft_object fwd = fft_init(8, +1);
+    fft_object inv = fft_init(8, -1);
+    
+    printf("Forward (sgn=+1):\n");
+    if (fwd->twiddle_factors) {
+        printf("  Using precomputed twiddle_factors\n");
+        for (int i = 0; i < 7; i++) {
+            printf("  stage_tw[%d] = (%.6f, %.6f)\n", 
+                   i, fwd->twiddle_factors[i].re, fwd->twiddle_factors[i].im);
+        }
+    } else {
+        printf("  NO precomputed twiddles (would generate dynamically)\n");
+    }
+    
+    printf("\nInverse (sgn=-1):\n");
+    if (inv->twiddle_factors) {
+        printf("  Using precomputed twiddle_factors\n");
+        for (int i = 0; i < 7; i++) {
+            printf("  stage_tw[%d] = (%.6f, %.6f)\n", 
+                   i, inv->twiddle_factors[i].re, inv->twiddle_factors[i].im);
+        }
+    } else {
+        printf("  NO precomputed twiddles (would generate dynamically)\n");
+    }
+    
+    free_fft(fwd);
+    free_fft(inv);
+}
+
+void test_n8_final_with_fixed_twiddles(void) {
+    printf("\n=== Testing N=8 After Twiddle Fix ===\n");
+    
+    int N = 8;
+    fft_data *input = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *output = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *recon = (fft_data*)malloc(N * sizeof(fft_data));
+    
+    // Test signal
+    for (int i = 0; i < N; i++) {
+        input[i].re = cos(2.0 * M_PI * i / N) + 0.5 * sin(2.0 * M_PI * 2 * i / N);
+        input[i].im = sin(2.0 * M_PI * i / N) - 0.3 * cos(2.0 * M_PI * 2 * i / N);
+    }
+    
+    fft_object fwd = fft_init(N, +1);
+    fft_object inv = fft_init(N, -1);
+    
+    fft_exec(fwd, input, output);
+    fft_exec(inv, output, recon);
+    
+    for (int i = 0; i < N; i++) {
+        recon[i].re /= N;
+        recon[i].im /= N;
+    }
+    
+    double max_err = 0.0;
+    for (int i = 0; i < N; i++) {
+        double err = fmax(fabs(recon[i].re - input[i].re),
+                         fabs(recon[i].im - input[i].im));
+        max_err = fmax(max_err, err);
+    }
+    
+    printf("N=8: Max error = %.6e %s\n", 
+           max_err, (max_err < 1e-10) ? "✓ PASS" : "✗ FAIL");
+    
+    free_fft(fwd);
+    free_fft(inv);
+    free(input);
+    free(output);
+    free(recon);
+}
+
+void debug_radix8_step_by_step(void) {
+    printf("\n=== Debug Radix-8 Step-by-Step ===\n");
+    
+    int N = 8;
+    fft_data *input = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *output = (fft_data*)malloc(N * sizeof(fft_data));
+    
+    // Simple impulse: [1, 0, 0, 0, 0, 0, 0, 0]
+    for (int i = 0; i < N; i++) {
+        input[i].re = (i == 0) ? 1.0 : 0.0;
+        input[i].im = 0.0;
+    }
+    
+    printf("Input (impulse):\n");
+    for (int i = 0; i < N; i++) {
+        printf("  [%d] = %.3f + %.3fi\n", i, input[i].re, input[i].im);
+    }
+    
+    // Forward FFT
+    fft_object fwd = fft_init(N, +1);
+    
+    printf("\nForward FFT internals:\n");
+    printf("  Decomposition: ");
+    for (int i = 0; i < fwd->lf; i++) printf("%d ", fwd->factors[i]);
+    printf("\n");
+    printf("  Transform sign: %d\n", fwd->sgn);
+    
+    // Manually call radix-8 butterfly
+    const int K = 1;  // sub_len for single radix-8
+    const int s = fwd->sgn;  // +1 for forward
+    
+    printf("\n  Inside radix-8 butterfly:\n");
+    printf("    K = %d, N = %d, s = %d\n", K, 8, s);
+    
+    // Check W_base values
+    const double c8 = 0.7071067811865476;
+    printf("    W_base[0] (W_8^1) = (%.6f, %.6f) [expect (0.707, -0.707) for forward]\n",
+           c8, -c8 * s);
+    printf("    W_base[1] (W_8^2) = (%.6f, %.6f) [expect (0.0, -1.0) for forward]\n",
+           0.0, -1.0 * s);
+    
+    // Check rot_sign
+    const int rot_sign = -s;
+    printf("    rot_sign = %d [expect -1 for forward]\n", rot_sign);
+    
+    fft_exec(fwd, input, output);
+    
+    printf("\nForward FFT output (should all be 1+0i):\n");
+    int errors = 0;
+    for (int i = 0; i < N; i++) {
+        printf("  [%d] = %.6f + %.6fi", i, output[i].re, output[i].im);
+        if (fabs(output[i].re - 1.0) > 1e-10 || fabs(output[i].im) > 1e-10) {
+            printf(" ✗ ERROR");
+            errors++;
+        } else {
+            printf(" ✓");
+        }
+        printf("\n");
+    }
+    
+    printf("\nTotal errors: %d / %d\n", errors, N);
+    
+    // Now test inverse
+    printf("\n=== Testing Inverse ===\n");
+    
+    fft_object inv = fft_init(N, -1);
+    fft_data *recon = (fft_data*)malloc(N * sizeof(fft_data));
+    
+    fft_exec(inv, output, recon);
+    
+    printf("\nInverse FFT output (before scaling):\n");
+    for (int i = 0; i < N; i++) {
+        printf("  [%d] = %.6f + %.6fi\n", i, recon[i].re, recon[i].im);
+    }
+    
+    // Scale
+    for (int i = 0; i < N; i++) {
+        recon[i].re /= N;
+        recon[i].im /= N;
+    }
+    
+    printf("\nInverse FFT output (after scaling, should be impulse):\n");
+    errors = 0;
+    for (int i = 0; i < N; i++) {
+        double expect_re = (i == 0) ? 1.0 : 0.0;
+        printf("  [%d] = %.6f + %.6fi", i, recon[i].re, recon[i].im);
+        if (fabs(recon[i].re - expect_re) > 1e-10 || fabs(recon[i].im) > 1e-10) {
+            printf(" ✗ ERROR (expect %.1f + 0i)", expect_re);
+            errors++;
+        } else {
+            printf(" ✓");
+        }
+        printf("\n");
+    }
+    
+    printf("\nTotal errors: %d / %d\n", errors, N);
+    
+    free_fft(fwd);
+    free_fft(inv);
+    free(input);
+    free(output);
+    free(recon);
+}
+
+void test_n8_complex_signal(void) {
+    printf("\n=== Testing N=8 with Complex Signal ===\n");
+    
+    int N = 8;
+    fft_data *input = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *output = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *recon = (fft_data*)malloc(N * sizeof(fft_data));
+    
+    // Complex signal with frequencies (like your test)
+    for (int i = 0; i < N; i++) {
+        input[i].re = cos(2.0 * M_PI * i / N) + 0.5 * sin(2.0 * M_PI * 2 * i / N);
+        input[i].im = sin(2.0 * M_PI * i / N) - 0.3 * cos(2.0 * M_PI * 2 * i / N);
+    }
+    
+    printf("Input signal:\n");
+    for (int i = 0; i < 4; i++) {
+        printf("  [%d] = %.6f + %.6fi\n", i, input[i].re, input[i].im);
+    }
+    printf("  ...\n");
+    
+    fft_object fwd = fft_init(N, +1);
+    fft_object inv = fft_init(N, -1);
+    
+    fft_exec(fwd, input, output);
+    fft_exec(inv, output, recon);
+    
+    // Scale
+    for (int i = 0; i < N; i++) {
+        recon[i].re /= N;
+        recon[i].im /= N;
+    }
+    
+    printf("\nReconstruction:\n");
+    double max_err = 0.0;
+    for (int i = 0; i < N; i++) {
+        double err_re = fabs(recon[i].re - input[i].re);
+        double err_im = fabs(recon[i].im - input[i].im);
+        double err = fmax(err_re, err_im);
+        max_err = fmax(max_err, err);
+        
+        if (i < 4 || err > 1e-10) {
+            printf("  [%d] orig=(%.6f, %.6f) recon=(%.6f, %.6f) err=%.3e\n",
+                   i, input[i].re, input[i].im, recon[i].re, recon[i].im, err);
+        }
+    }
+    
+    printf("\nMax error: %.6e %s\n", 
+           max_err, (max_err < 1e-10) ? "✓ PASS" : "✗ FAIL");
+    
+    free_fft(fwd);
+    free_fft(inv);
+    free(input);
+    free(output);
+    free(recon);
+}
+
+#include <time.h>
+
+//==============================================================================
+// INTERNAL HELPER FUNCTIONS
+//==============================================================================
+
+static void generate_test_signal(fft_data *signal, int N, int test_type) {
+    switch(test_type) {
+        case 0: // Impulse
+            for (int i = 0; i < N; i++) {
+                signal[i].re = (i == 0) ? 1.0 : 0.0;
+                signal[i].im = 0.0;
+            }
+            break;
+        case 1: // Sine wave (frequency = 1)
+            for (int i = 0; i < N; i++) {
+                signal[i].re = sin(2.0 * M_PI * i / N);
+                signal[i].im = 0.0;
+            }
+            break;
+        case 2: // Random
+            for (int i = 0; i < N; i++) {
+                signal[i].re = (double)rand() / RAND_MAX - 0.5;
+                signal[i].im = (double)rand() / RAND_MAX - 0.5;
+            }
+            break;
+    }
+}
+
+static double compute_max_error(fft_data *result, fft_data *expected, int N) {
+    double max_err = 0.0;
+    for (int i = 0; i < N; i++) {
+        double err_re = fabs(result[i].re - expected[i].re);
+        double err_im = fabs(result[i].im - expected[i].im);
+        double err = sqrt(err_re * err_re + err_im * err_im);
+        if (err > max_err) max_err = err;
+    }
+    return max_err;
+}
+
+static void naive_dft(fft_data *input, fft_data *output, int N, int sign) {
+    for (int k = 0; k < N; k++) {
+        double sum_re = 0.0, sum_im = 0.0;
+        for (int n = 0; n < N; n++) {
+            double angle = -sign * 2.0 * M_PI * k * n / N;
+            double wr = cos(angle);
+            double wi = sin(angle);
+            sum_re += input[n].re * wr - input[n].im * wi;
+            sum_im += input[n].re * wi + input[n].im * wr;
+        }
+        output[k].re = sum_re;
+        output[k].im = sum_im;
+    }
+}
+
+static double benchmark_fft(fft_object plan, fft_data *input, fft_data *output, int iterations) {
+    clock_t start = clock();
+    for (int i = 0; i < iterations; i++) {
+        fft_exec(plan, input, output);
+    }
+    clock_t end = clock();
+    return (double)(end - start) / CLOCKS_PER_SEC / iterations;
+}
+
+static void print_factorization(int N) {
+    int factors[32];
+    int num_factors = 0;
+    int temp = N;
+    
+    // Count factors of 2 first
+    int count_2 = 0;
+    while (temp % 2 == 0) {
+        count_2++;
+        temp /= 2;
+    }
+    
+    // Rebuild temp
+    temp = N;
+    
+    // Now safely extract radix-8 (needs at least 3 factors of 2)
+    while (count_2 >= 3 && temp % 8 == 0) {
+        factors[num_factors++] = 8;
+        temp /= 8;
+        count_2 -= 3;
+    }
+    
+    // Radix-4 (needs at least 2 factors of 2)
+    while (count_2 >= 2 && temp % 4 == 0) {
+        factors[num_factors++] = 4;
+        temp /= 4;
+        count_2 -= 2;
+    }
+    
+    // Radix-2 (needs at least 1 factor of 2)
+    while (count_2 >= 1 && temp % 2 == 0) {
+        factors[num_factors++] = 2;
+        temp /= 2;
+        count_2--;
+    }
+    
+    // Any remaining prime factor
+    if (temp > 1) {
+        factors[num_factors++] = temp;
+    }
+    
+    // Print factorization
+    for (int i = 0; i < num_factors; i++) {
+        printf("%d", factors[i]);
+        if (i < num_factors - 1) printf(" x ");
+    }
+}
+
+static int test_single_size(int N) {
+    const char* test_names[] = {"Impulse", "Sine Wave", "Random"};
+    int all_passed = 1;
+    
+    printf("-------------------------------------------------------------\n");
+    printf("Testing N = %d (", N);
+    print_factorization(N);
+    printf(")\n");
+    
+    // Allocate buffers
+    fft_data *input = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *output = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *expected = (fft_data*)malloc(N * sizeof(fft_data));
+    fft_data *roundtrip = (fft_data*)malloc(N * sizeof(fft_data));
+    
+    if (!input || !output || !expected || !roundtrip) {
+        printf("[FAIL] Memory allocation error\n");
+        free(input); free(output); free(expected); free(roundtrip);
+        return 0;
+    }
+    
+    // Create FFT plans
+    fft_object fwd_plan = fft_init(N, 1);
+    fft_object inv_plan = fft_init(N, -1);
+    
+    if (!fwd_plan || !inv_plan) {
+        printf("[FAIL] FFT plan creation error\n");
+        if (fwd_plan) free_fft(fwd_plan);
+        if (inv_plan) free_fft(inv_plan);
+        free(input); free(output); free(expected); free(roundtrip);
+        return 0;
+    }
+    
+    // Run tests for each signal type
+    for (int test_type = 0; test_type < 3; test_type++) {
+        generate_test_signal(input, N, test_type);
+        
+        // Accuracy test (only for small N)
+        if (N <= 512) {
+            naive_dft(input, expected, N, 1);
+            fft_exec(fwd_plan, input, output);
+            
+            double error = compute_max_error(output, expected, N);
+            double tolerance = 1e-10 * N;
+            
+            if (error < tolerance) {
+                printf("  [PASS] %s: max error = %.2e\n", 
+                       test_names[test_type], error);
+            } else {
+                printf("  [FAIL] %s: max error = %.2e (tolerance = %.2e)\n", 
+                       test_names[test_type], error, tolerance);
+                all_passed = 0;
+            }
+        }
+        
+        // Roundtrip test (FFT -> IFFT)
+        fft_exec(fwd_plan, input, output);
+        fft_exec(inv_plan, output, roundtrip);
+        
+        for (int i = 0; i < N; i++) {
+            roundtrip[i].re /= N;
+            roundtrip[i].im /= N;
+        }
+        
+        double roundtrip_error = compute_max_error(roundtrip, input, N);
+        double rt_tolerance = 1e-10 * N;
+        
+        if (roundtrip_error < rt_tolerance) {
+            printf("  [PASS] %s (Roundtrip): error = %.2e\n", 
+                   test_names[test_type], roundtrip_error);
+        } else {
+            printf("  [FAIL] %s (Roundtrip): error = %.2e (tolerance = %.2e)\n", 
+                   test_names[test_type], roundtrip_error, rt_tolerance);
+            all_passed = 0;
+        }
+    }
+    
+    // Benchmark
+    if (N >= 512) {
+        int iterations = (N <= 4096) ? 10000 : 1000;
+        double time = benchmark_fft(fwd_plan, input, output, iterations);
+        double mflops = (5.0 * N * log2(N) / time) / 1e6;
+        
+        printf("  [PERF] %.3f microseconds/FFT (%.1f MFLOPS)\n", 
+               time * 1e6, mflops);
+    }
+    
+    // Cleanup
+    free_fft(fwd_plan);
+    free_fft(inv_plan);
+    free(input);
+    free(output);
+    free(expected);
+    free(roundtrip);
+    
+    return all_passed;
+}
+
+//==============================================================================
+// PUBLIC API - Call this from your test suite main()
+//==============================================================================
+
+int test_radix8_suite(void) {
+    printf("=============================================================\n");
+    printf("RADIX-8 FFT OPTIMIZATION TEST SUITE\n");
+    printf("=============================================================\n\n");
+    
+    // Test sizes: powers of 8 and combinations
+    int test_sizes[] = {8, 64, 512, 4096, 8*8*8, 8*8*8*8, 16384};
+    int num_tests = sizeof(test_sizes) / sizeof(test_sizes[0]);
+    
+    int all_passed = 1;
+    
+    for (int i = 0; i < num_tests; i++) {
+        if (!test_single_size(test_sizes[i])) {
+            all_passed = 0;
+        }
+    }
+    
+    printf("-------------------------------------------------------------\n");
+    if (all_passed) {
+        printf("*** ALL RADIX-8 TESTS PASSED ***\n");
+        return 0;
+    } else {
+        printf("*** SOME RADIX-8 TESTS FAILED ***\n");
+        return 1;
+    }
+}
+
 int main()
 {
 
@@ -1770,14 +2496,21 @@ int main()
     //debug_fft_scaling();
     //debug_radix_selection();
     //debug_parseval_detailed();
-    //run_comprehensive_complex_fft_tests();
-
-    test_radix2_only(); 
-    verify_twiddle_convention();
-    //
+    run_comprehensive_complex_fft_tests();
+    //test_n8_final_with_fixed_twiddles();
+    //test_n8_complex_signal();
+    //test_n8_final();
+    //debug_stage_twiddles_n8();
+    //test_n8_detailed();
+    //test_radix2_only(); 
+    //verify_twiddle_convention();
+    //diagnose_n512();
+    //test_n512_after_fix();
+    //test_radix8_suite();
+    
     //run_comprehensive_complex_fft_N32_tests(); int all_passed = true;
     //test_n5_inverse(); int all_passed = true;
-   //run_all_benchmarks();
+   
 
     //test_n64_forward(); int all_passed = true;
     //debug_n64(); int all_passed = true;

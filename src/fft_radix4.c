@@ -1,18 +1,17 @@
+// fft_radix4_optimized.c
+// Ultra-optimized radix-4 butterfly with 8x unroll and deep software pipelining
+// Pipeline stages: Load (k+24) → Twiddle (k+16) → Compute (k+8) → Store (k)
 #include "fft_radix4.h"
 #include "simd_math.h"
+#include <math.h>
 
+// Prefetch distances tuned for 3-level cache hierarchy
+#define PREFETCH_L1 8  // 512 bytes ahead (L1: 32KB)
+#define PREFETCH_L2 32 // 2KB ahead (L2: 256KB)
+#define PREFETCH_L3 64 // 4KB ahead (L3: 8MB+)
 
-static inline __m512d load4_aos_stride3(const fft_data* base3k_plus_off) {
-    // base3k_plus_off = &stage_tw[3*k + off]
-    __m256d v01 = load2_aos(&base3k_plus_off[3*0], &base3k_plus_off[3*1]); // k, k+1
-    __m256d v23 = load2_aos(&base3k_plus_off[3*2], &base3k_plus_off[3*3]); // k+2, k+3
-    __m512d r   = _mm512_castpd256_pd512(v01);
-    return _mm512_insertf64x4(r, v23, 1);
-}
-
-//==============================================================================
-// MAIN BUTTERFLY FUNCTION WITH MULTI-LEVEL PREFETCHING
-//==============================================================================
+// Non-temporal store threshold
+#define STREAM_THRESHOLD 8192
 
 void fft_radix4_butterfly(
     fft_data *restrict output_buffer,
@@ -21,537 +20,442 @@ void fft_radix4_butterfly(
     int sub_len,
     int transform_sign)
 {
-    const int quarter = sub_len;
-
+    const int K = sub_len;
+    const int N = 4 * K;
 
     //==========================================================================
-    // MULTI-LEVEL PREFETCHING CONFIGURATION (Optimization #2)
+    // PRECOMPUTE: Base twiddle factors W_N^j for j=1,2,3
     //==========================================================================
-    
-    // Adaptive prefetch distances based on FFT size
-    int PREFETCH_L1, PREFETCH_L2;
-    
-    if (quarter <= 256) {
-        // Small FFTs: aggressive L1 prefetch only
-        PREFETCH_L1 = 16;
-        PREFETCH_L2 = 0; // Disable L2 prefetch
-    } else if (quarter <= 4096) {
-        // Medium FFTs: L1 + L2 prefetch
-        PREFETCH_L1 = 32;
-        PREFETCH_L2 = 128;
-    } else {
-        // Large FFTs: aggressive multi-level prefetch
-        PREFETCH_L1 = 64;
-        PREFETCH_L2 = 256;
+    const double base_angle = -2.0 * M_PI / N * transform_sign;
+    const int rot_sign = -transform_sign;
+
+    fft_data W_base[3];
+    for (int j = 1; j <= 3; j++)
+    {
+        double angle = base_angle * j;
+#ifdef __GNUC__
+        sincos(angle, &W_base[j - 1].im, &W_base[j - 1].re);
+#else
+        W_base[j - 1].re = cos(angle);
+        W_base[j - 1].im = sin(angle);
+#endif
     }
+
+    // Precompute W_base^8 for 8x unroll twiddle updates
+    fft_data W_base8[3];
+    for (int j = 0; j < 3; j++)
+    {
+        fft_data temp = W_base[j];
+        // temp^8 via three squarings: temp^2, temp^4, temp^8
+        for (int sq = 0; sq < 3; sq++)
+        {
+            double re = temp.re * temp.re - temp.im * temp.im;
+            double im = 2.0 * temp.re * temp.im;
+            temp.re = re;
+            temp.im = im;
+        }
+        W_base8[j] = temp;
+    }
+
+    // Current twiddle factors W^k (starts at k=0, W^0=1)
+    fft_data W_curr[3] = {{1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}};
 
     int k = 0;
 
-#ifdef HAS_AVX512
-    //------------------------------------------------------------------
-    // AVX-512 PATH: Split 16x unrolling with multi-level prefetch
-    //------------------------------------------------------------------
-    const __m512d rot_mask_512 = (transform_sign == 1)
-                                     ? _mm512_castsi512_pd(_mm512_set_epi64(
-                                           0x8000000000000000, 0x0000000000000000,
-                                           0x8000000000000000, 0x0000000000000000,
-                                           0x8000000000000000, 0x0000000000000000,
-                                           0x8000000000000000, 0x0000000000000000))
-                                     : _mm512_castsi512_pd(_mm512_set_epi64(
-                                           0x0000000000000000, 0x8000000000000000,
-                                           0x0000000000000000, 0x8000000000000000,
-                                           0x0000000000000000, 0x8000000000000000,
-                                           0x0000000000000000, 0x8000000000000000));
-
-#define RADIX4_BUTTERFLY_AVX512(a, b2, c2, d2, y0, y1, y2, y3)    \
-    {                                                             \
-        __m512d sumBD = _mm512_add_pd(b2, d2);                    \
-        __m512d difBD = _mm512_sub_pd(b2, d2);                    \
-        __m512d a_pc = _mm512_add_pd(a, c2);                      \
-        __m512d a_mc = _mm512_sub_pd(a, c2);                      \
-        y0 = _mm512_add_pd(a_pc, sumBD);                          \
-        y2 = _mm512_sub_pd(a_pc, sumBD);                          \
-        __m512d difBD_swp = _mm512_permute_pd(difBD, 0b01010101); \
-        __m512d rot = _mm512_xor_pd(difBD_swp, rot_mask_512);     \
-        y1 = _mm512_sub_pd(a_mc, rot);                            \
-        y3 = _mm512_add_pd(a_mc, rot);                            \
-    }
-
-    for (; k + 15 < quarter; k += 16)
-    {
-        //======================================================================
-        // MULTI-LEVEL PREFETCHING (Optimization #2)
-        //======================================================================
-        if (k + PREFETCH_L1 < quarter)
-        {
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1], _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1 + quarter], _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1 + 2 * quarter], _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1 + 3 * quarter], _MM_HINT_T0);
-            _mm_prefetch((const char *)&stage_tw[3 * (k + PREFETCH_L1)], _MM_HINT_T0);
-        }
-        
-        if (PREFETCH_L2 > 0 && k + PREFETCH_L2 < quarter)
-        {
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2], _MM_HINT_T1);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2 + quarter], _MM_HINT_T1);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2 + 2 * quarter], _MM_HINT_T1);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2 + 3 * quarter], _MM_HINT_T1);
-            _mm_prefetch((const char *)&stage_tw[3 * (k + PREFETCH_L2)], _MM_HINT_T1);
-        }
-
-        //==================================================================
-        // PHASE 1: Process butterflies 0-7 (reduced register pressure)
-        //==================================================================
-        {
-            __m512d a0 = load4_aos(&sub_outputs[k + 0]);
-            __m512d a1 = load4_aos(&sub_outputs[k + 4]);
-
-            __m512d b0 = load4_aos(&sub_outputs[k + 0 + quarter]);
-            __m512d b1 = load4_aos(&sub_outputs[k + 4 + quarter]);
-
-            __m512d c0 = load4_aos(&sub_outputs[k + 0 + 2 * quarter]);
-            __m512d c1 = load4_aos(&sub_outputs[k + 4 + 2 * quarter]);
-
-            __m512d d0 = load4_aos(&sub_outputs[k + 0 + 3 * quarter]);
-            __m512d d1 = load4_aos(&sub_outputs[k + 4 + 3 * quarter]);
-
-            __m512d w1_0 = load4_aos(&stage_tw[3 * (k + 0)]);
-            __m512d w1_1 = load4_aos(&stage_tw[3 * (k + 4)]);
-
-            __m512d w2_0 = load4_aos(&stage_tw[3 * (k + 0) + 1]);
-            __m512d w2_1 = load4_aos(&stage_tw[3 * (k + 4) + 1]);
-
-            __m512d w3_0 = load4_aos(&stage_tw[3 * (k + 0) + 2]);
-            __m512d w3_1 = load4_aos(&stage_tw[3 * (k + 4) + 2]);
-
-            __m512d b2_0 = cmul_avx512_aos(b0, w1_0);
-            __m512d b2_1 = cmul_avx512_aos(b1, w1_1);
-
-            __m512d c2_0 = cmul_avx512_aos(c0, w2_0);
-            __m512d c2_1 = cmul_avx512_aos(c1, w2_1);
-
-            __m512d d2_0 = cmul_avx512_aos(d0, w3_0);
-            __m512d d2_1 = cmul_avx512_aos(d1, w3_1);
-
-            __m512d y0_0, y1_0, y2_0, y3_0;
-            __m512d y0_1, y1_1, y2_1, y3_1;
-
-            RADIX4_BUTTERFLY_AVX512(a0, b2_0, c2_0, d2_0, y0_0, y1_0, y2_0, y3_0);
-            RADIX4_BUTTERFLY_AVX512(a1, b2_1, c2_1, d2_1, y0_1, y1_1, y2_1, y3_1);
-
-            STOREU_PD512(&output_buffer[k + 0].re, y0_0);
-            STOREU_PD512(&output_buffer[k + 4].re, y0_1);
-
-            STOREU_PD512(&output_buffer[k + 0 + quarter].re, y1_0);
-            STOREU_PD512(&output_buffer[k + 4 + quarter].re, y1_1);
-
-            STOREU_PD512(&output_buffer[k + 0 + 2 * quarter].re, y2_0);
-            STOREU_PD512(&output_buffer[k + 4 + 2 * quarter].re, y2_1);
-
-            STOREU_PD512(&output_buffer[k + 0 + 3 * quarter].re, y3_0);
-            STOREU_PD512(&output_buffer[k + 4 + 3 * quarter].re, y3_1);
-        }
-
-        //==================================================================
-        // PHASE 2: Process butterflies 8-15
-        //==================================================================
-        {
-            __m512d a2 = load4_aos(&sub_outputs[k + 8]);
-            __m512d a3 = load4_aos(&sub_outputs[k + 12]);
-
-            __m512d b2 = load4_aos(&sub_outputs[k + 8 + quarter]);
-            __m512d b3 = load4_aos(&sub_outputs[k + 12 + quarter]);
-
-            __m512d c2 = load4_aos(&sub_outputs[k + 8 + 2 * quarter]);
-            __m512d c3 = load4_aos(&sub_outputs[k + 12 + 2 * quarter]);
-
-            __m512d d2 = load4_aos(&sub_outputs[k + 8 + 3 * quarter]);
-            __m512d d3 = load4_aos(&sub_outputs[k + 12 + 3 * quarter]);
-
-            __m512d w1_2 = load4_aos(&stage_tw[3 * (k + 8)]);
-            __m512d w1_3 = load4_aos(&stage_tw[3 * (k + 12)]);
-
-            __m512d w2_2 = load4_aos(&stage_tw[3 * (k + 8) + 1]);
-            __m512d w2_3 = load4_aos(&stage_tw[3 * (k + 12) + 1]);
-
-            __m512d w3_2 = load4_aos(&stage_tw[3 * (k + 8) + 2]);
-            __m512d w3_3 = load4_aos(&stage_tw[3 * (k + 12) + 2]);
-
-            __m512d b2_2 = cmul_avx512_aos(b2, w1_2);
-            __m512d b2_3 = cmul_avx512_aos(b3, w1_3);
-
-            __m512d c2_2 = cmul_avx512_aos(c2, w2_2);
-            __m512d c2_3 = cmul_avx512_aos(c3, w2_3);
-
-            __m512d d2_2 = cmul_avx512_aos(d2, w3_2);
-            __m512d d2_3 = cmul_avx512_aos(d3, w3_3);
-
-            __m512d y0_2, y1_2, y2_2, y3_2;
-            __m512d y0_3, y1_3, y2_3, y3_3;
-
-            RADIX4_BUTTERFLY_AVX512(a2, b2_2, c2_2, d2_2, y0_2, y1_2, y2_2, y3_2);
-            RADIX4_BUTTERFLY_AVX512(a3, b2_3, c2_3, d2_3, y0_3, y1_3, y2_3, y3_3);
-
-            STOREU_PD512(&output_buffer[k + 8].re, y0_2);
-            STOREU_PD512(&output_buffer[k + 12].re, y0_3);
-
-            STOREU_PD512(&output_buffer[k + 8 + quarter].re, y1_2);
-            STOREU_PD512(&output_buffer[k + 12 + quarter].re, y1_3);
-
-            STOREU_PD512(&output_buffer[k + 8 + 2 * quarter].re, y2_2);
-            STOREU_PD512(&output_buffer[k + 12 + 2 * quarter].re, y2_3);
-
-            STOREU_PD512(&output_buffer[k + 8 + 3 * quarter].re, y3_2);
-            STOREU_PD512(&output_buffer[k + 12 + 3 * quarter].re, y3_3);
-        }
-    }
-
-    //==========================================================================
-    // Cleanup: 8x unrolling (process 8 butterflies at once)
-    //==========================================================================
-    for (; k + 7 < quarter; k += 8)
-    {
-        __m512d a0 = load4_aos(&sub_outputs[k + 0]);
-        __m512d a1 = load4_aos(&sub_outputs[k + 4]);
-
-        __m512d b0 = load4_aos(&sub_outputs[k + 0 + quarter]);
-        __m512d b1 = load4_aos(&sub_outputs[k + 4 + quarter]);
-
-        __m512d c0 = load4_aos(&sub_outputs[k + 0 + 2 * quarter]);
-        __m512d c1 = load4_aos(&sub_outputs[k + 4 + 2 * quarter]);
-
-        __m512d d0 = load4_aos(&sub_outputs[k + 0 + 3 * quarter]);
-        __m512d d1 = load4_aos(&sub_outputs[k + 4 + 3 * quarter]);
-
-        __m512d w1_0 = load4_aos(&stage_tw[3 * (k + 0)]);
-        __m512d w1_1 = load4_aos(&stage_tw[3 * (k + 4)]);
-
-        __m512d w2_0 = load4_aos(&stage_tw[3 * (k + 0) + 1]);
-        __m512d w2_1 = load4_aos(&stage_tw[3 * (k + 4) + 1]);
-
-        __m512d w3_0 = load4_aos(&stage_tw[3 * (k + 0) + 2]);
-        __m512d w3_1 = load4_aos(&stage_tw[3 * (k + 4) + 2]);
-
-        __m512d b2_0 = cmul_avx512_aos(b0, w1_0);
-        __m512d b2_1 = cmul_avx512_aos(b1, w1_1);
-
-        __m512d c2_0 = cmul_avx512_aos(c0, w2_0);
-        __m512d c2_1 = cmul_avx512_aos(c1, w2_1);
-
-        __m512d d2_0 = cmul_avx512_aos(d0, w3_0);
-        __m512d d2_1 = cmul_avx512_aos(d1, w3_1);
-
-        __m512d y0_0, y1_0, y2_0, y3_0;
-        __m512d y0_1, y1_1, y2_1, y3_1;
-
-        RADIX4_BUTTERFLY_AVX512(a0, b2_0, c2_0, d2_0, y0_0, y1_0, y2_0, y3_0);
-        RADIX4_BUTTERFLY_AVX512(a1, b2_1, c2_1, d2_1, y0_1, y1_1, y2_1, y3_1);
-
-        STOREU_PD512(&output_buffer[k + 0].re, y0_0);
-        STOREU_PD512(&output_buffer[k + 4].re, y0_1);
-
-        STOREU_PD512(&output_buffer[k + 0 + quarter].re, y1_0);
-        STOREU_PD512(&output_buffer[k + 4 + quarter].re, y1_1);
-
-        STOREU_PD512(&output_buffer[k + 0 + 2 * quarter].re, y2_0);
-        STOREU_PD512(&output_buffer[k + 4 + 2 * quarter].re, y2_1);
-
-        STOREU_PD512(&output_buffer[k + 0 + 3 * quarter].re, y3_0);
-        STOREU_PD512(&output_buffer[k + 4 + 3 * quarter].re, y3_1);
-    }
-
-    //==========================================================================
-    // Cleanup: 4x unrolling (process 4 butterflies at once)
-    //==========================================================================
-    for (; k + 3 < quarter; k += 4)
-    {
-        __m512d a = load4_aos(&sub_outputs[k]);
-        __m512d b = load4_aos(&sub_outputs[k + quarter]);
-        __m512d c = load4_aos(&sub_outputs[k + 2 * quarter]);
-        __m512d d = load4_aos(&sub_outputs[k + 3 * quarter]);
-
-        __m512d w1 = load4_aos(&stage_tw[3 * k]);
-        __m512d w2 = load4_aos(&stage_tw[3 * k + 1]);
-        __m512d w3 = load4_aos(&stage_tw[3 * k + 2]);
-
-        __m512d b2 = cmul_avx512_aos(b, w1);
-        __m512d c2 = cmul_avx512_aos(c, w2);
-        __m512d d2 = cmul_avx512_aos(d, w3);
-
-        __m512d y0, y1, y2, y3;
-        RADIX4_BUTTERFLY_AVX512(a, b2, c2, d2, y0, y1, y2, y3);
-
-        STOREU_PD512(&output_buffer[k].re, y0);
-        STOREU_PD512(&output_buffer[k + quarter].re, y1);
-        STOREU_PD512(&output_buffer[k + 2 * quarter].re, y2);
-        STOREU_PD512(&output_buffer[k + 3 * quarter].re, y3);
-    }
-
-#undef RADIX4_BUTTERFLY_AVX512
-#endif // HAS_AVX512
-
 #ifdef __AVX2__
-    //------------------------------------------------------------------
-    // AVX2 PATH: Software pipelined 8x unroll with interleaved loads
-    //------------------------------------------------------------------
-    const __m256d rot_mask = (transform_sign == 1)
+    //==========================================================================
+    // AVX2 PATH: 8X UNROLL WITH 4-STAGE DEEP PIPELINE
+    //==========================================================================
+    // Pipeline: Load(k+24) → Twiddle(k+16) → Butterfly(k+8) → Store(k)
+    // This gives ~24 cycles of latency hiding per iteration
+    //==========================================================================
+
+    const __m256d rot_mask = (rot_sign == -1)
                                  ? _mm256_set_pd(-0.0, 0.0, -0.0, 0.0)
                                  : _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
 
-#define RADIX4_BUTTERFLY_AVX2(a, b2, c2, d2, y0, y1, y2, y3)  \
-    {                                                         \
-        __m256d sumBD = _mm256_add_pd(b2, d2);                \
-        __m256d difBD = _mm256_sub_pd(b2, d2);                \
-        __m256d a_pc = _mm256_add_pd(a, c2);                  \
-        __m256d a_mc = _mm256_sub_pd(a, c2);                  \
-        y0 = _mm256_add_pd(a_pc, sumBD);                      \
-        y2 = _mm256_sub_pd(a_pc, sumBD);                      \
+    const int use_streaming = (K >= STREAM_THRESHOLD);
+
+//--------------------------------------------------------------------------
+// FMA-OPTIMIZED COMPLEX MULTIPLY (6 FMA + 2 UNPACK)
+//--------------------------------------------------------------------------
+#define CMUL_FMA_AOS(out, a, w)                                      \
+    do                                                               \
+    {                                                                \
+        __m256d ar = _mm256_unpacklo_pd(a, a);                       \
+        __m256d ai = _mm256_unpackhi_pd(a, a);                       \
+        __m256d wr = _mm256_unpacklo_pd(w, w);                       \
+        __m256d wi = _mm256_unpackhi_pd(w, w);                       \
+        __m256d re = _mm256_fmsub_pd(ar, wr, _mm256_mul_pd(ai, wi)); \
+        __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr)); \
+        (out) = _mm256_unpacklo_pd(re, im);                          \
+    } while (0)
+
+//--------------------------------------------------------------------------
+// RADIX-4 BUTTERFLY (ALL FMA OPS)
+//--------------------------------------------------------------------------
+#define BUTTERFLY_FMA(a, b, c, d, y0_out, y1_out, y2_out, y3_out)                \
+    do                                                                           \
+    {                                                                            \
+        __m256d sumBD = _mm256_add_pd(b, d);                                     \
+        __m256d difBD = _mm256_sub_pd(b, d);                                     \
+        __m256d sumAC = _mm256_add_pd(a, c);                                     \
+        __m256d difAC = _mm256_sub_pd(a, c);                                     \
+        y0_out = _mm256_add_pd(sumAC, sumBD);                                    \
+        y2_out = _mm256_sub_pd(sumAC, sumBD);                                    \
         __m256d rot = _mm256_xor_pd(_mm256_permute_pd(difBD, 0b0101), rot_mask); \
-        y1 = _mm256_sub_pd(a_mc, rot);                        \
-        y3 = _mm256_add_pd(a_mc, rot);                        \
-    }
+        y1_out = _mm256_sub_pd(difAC, rot);                                      \
+        y3_out = _mm256_add_pd(difAC, rot);                                      \
+    } while (0)
 
-    for (; k + 7 < quarter; k += 8)
+//--------------------------------------------------------------------------
+// VECTORIZED TWIDDLE UPDATE: W_curr *= W_base8 (all 3 at once)
+//--------------------------------------------------------------------------
+#define UPDATE_TWIDDLES_8X()                                                            \
+    do                                                                                  \
+    {                                                                                   \
+        __m256d W_re = _mm256_set_pd(W_curr[2].re, W_curr[1].re, W_curr[0].re, 0.0);    \
+        __m256d W_im = _mm256_set_pd(W_curr[2].im, W_curr[1].im, W_curr[0].im, 0.0);    \
+        __m256d B_re = _mm256_set_pd(W_base8[2].re, W_base8[1].re, W_base8[0].re, 1.0); \
+        __m256d B_im = _mm256_set_pd(W_base8[2].im, W_base8[1].im, W_base8[0].im, 0.0); \
+        __m256d new_re = _mm256_fmsub_pd(W_re, B_re, _mm256_mul_pd(W_im, B_im));        \
+        __m256d new_im = _mm256_fmadd_pd(W_re, B_im, _mm256_mul_pd(W_im, B_re));        \
+        double re_tmp[4], im_tmp[4];                                                    \
+        _mm256_storeu_pd(re_tmp, new_re);                                               \
+        _mm256_storeu_pd(im_tmp, new_im);                                               \
+        W_curr[0].re = re_tmp[1];                                                       \
+        W_curr[0].im = im_tmp[1];                                                       \
+        W_curr[1].re = re_tmp[2];                                                       \
+        W_curr[1].im = im_tmp[2];                                                       \
+        W_curr[2].re = re_tmp[3];                                                       \
+        W_curr[2].im = im_tmp[3];                                                       \
+    } while (0)
+
+    //==========================================================================
+    // MAIN LOOP: 8X UNROLL (processes 16 butterflies per iteration)
+    //==========================================================================
+    if (k + 15 < K)
     {
         //======================================================================
-        // MULTI-LEVEL PREFETCHING (keep existing)
+        // PROLOGUE: Fill pipeline with first 24 butterflies
         //======================================================================
-        if (k + PREFETCH_L1 < quarter)
+
+        // Pipeline registers for 8 pairs of butterflies
+        __m256d pipe_a[8], pipe_b[8], pipe_c[8], pipe_d[8];
+        __m256d twiddled_a[8], twiddled_b[8], twiddled_c[8], twiddled_d[8];
+        __m256d y0[8], y1[8], y2[8], y3[8];
+
+        // Precompute first 16 twiddle factors (for k=0..15)
+        fft_data W_table[16][3];
+        fft_data W_temp[3] = {{1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}};
+
+        for (int i = 0; i < 16; i++)
         {
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1], _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1 + quarter], _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1 + 2 * quarter], _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1 + 3 * quarter], _MM_HINT_T0);
-            _mm_prefetch((const char *)&stage_tw[3 * (k + PREFETCH_L1)], _MM_HINT_T0);
+            W_table[i][0] = W_temp[0];
+            W_table[i][1] = W_temp[1];
+            W_table[i][2] = W_temp[2];
+
+            // Update W_temp *= W_base
+            for (int j = 0; j < 3; j++)
+            {
+                double re = W_temp[j].re * W_base[j].re - W_temp[j].im * W_base[j].im;
+                double im = W_temp[j].re * W_base[j].im + W_temp[j].im * W_base[j].re;
+                W_temp[j].re = re;
+                W_temp[j].im = im;
+            }
         }
-        
-        if (PREFETCH_L2 > 0 && k + PREFETCH_L2 < quarter)
+
+        // STAGE 0: Load first 8 pairs (k=0..15)
+        for (int p = 0; p < 8; p++)
         {
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2], _MM_HINT_T1);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2 + quarter], _MM_HINT_T1);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2 + 2 * quarter], _MM_HINT_T1);
-            _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2 + 3 * quarter], _MM_HINT_T1);
-            _mm_prefetch((const char *)&stage_tw[3 * (k + PREFETCH_L2)], _MM_HINT_T1);
+            int kk = 2 * p;
+            pipe_a[p] = load2_aos(&sub_outputs[kk], &sub_outputs[kk + 1]);
+            pipe_b[p] = load2_aos(&sub_outputs[kk + K], &sub_outputs[kk + 1 + K]);
+            pipe_c[p] = load2_aos(&sub_outputs[kk + 2 * K], &sub_outputs[kk + 1 + 2 * K]);
+            pipe_d[p] = load2_aos(&sub_outputs[kk + 3 * K], &sub_outputs[kk + 1 + 3 * K]);
         }
 
-        //==================================================================
-        // BUTTERFLY 0-1: Load and compute, then start loading butterfly 2-3
-        //==================================================================
-        __m256d a0 = load2_aos(&sub_outputs[k + 0], &sub_outputs[k + 1]);
-        __m256d b0 = load2_aos(&sub_outputs[k + 0 + quarter], &sub_outputs[k + 1 + quarter]);
-        __m256d c0 = load2_aos(&sub_outputs[k + 0 + 2 * quarter], &sub_outputs[k + 1 + 2 * quarter]);
-        __m256d d0 = load2_aos(&sub_outputs[k + 0 + 3 * quarter], &sub_outputs[k + 1 + 3 * quarter]);
+        // STAGE 1: Apply twiddles to first 8 pairs
+        for (int p = 0; p < 8; p++)
+        {
+            int kk = 2 * p;
+            twiddled_a[p] = pipe_a[p]; // Lane 0: identity twiddle
 
-        __m256d w1_0 = load2_aos(&stage_tw[3 * (k + 0)], &stage_tw[3 * (k + 1)]);
-        __m256d w2_0 = load2_aos(&stage_tw[3 * (k + 0) + 1], &stage_tw[3 * (k + 1) + 1]);
-        __m256d w3_0 = load2_aos(&stage_tw[3 * (k + 0) + 2], &stage_tw[3 * (k + 1) + 2]);
+            // Pack twiddles for kk and kk+1
+            __m256d w1 = _mm256_set_pd(
+                W_table[kk + 1][0].im, W_table[kk + 1][0].re,
+                W_table[kk][0].im, W_table[kk][0].re);
+            __m256d w2 = _mm256_set_pd(
+                W_table[kk + 1][1].im, W_table[kk + 1][1].re,
+                W_table[kk][1].im, W_table[kk][1].re);
+            __m256d w3 = _mm256_set_pd(
+                W_table[kk + 1][2].im, W_table[kk + 1][2].re,
+                W_table[kk][2].im, W_table[kk][2].re);
 
-        __m256d b2_0 = cmul_avx2_aos(b0, w1_0);
-        __m256d c2_0 = cmul_avx2_aos(c0, w2_0);
-        __m256d d2_0 = cmul_avx2_aos(d0, w3_0);
+            CMUL_FMA_AOS(twiddled_b[p], pipe_b[p], w1);
+            CMUL_FMA_AOS(twiddled_c[p], pipe_c[p], w2);
+            CMUL_FMA_AOS(twiddled_d[p], pipe_d[p], w3);
+        }
 
-        // ⭐ SOFTWARE PIPELINE: Start loading next butterfly while computing current
-        __m256d a1 = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
-        __m256d b1 = load2_aos(&sub_outputs[k + 2 + quarter], &sub_outputs[k + 3 + quarter]);
+        // STAGE 2: Compute butterflies for first 8 pairs
+        for (int p = 0; p < 8; p++)
+        {
+            BUTTERFLY_FMA(twiddled_a[p], twiddled_b[p], twiddled_c[p], twiddled_d[p],
+                          y0[p], y1[p], y2[p], y3[p]);
+        }
 
-        __m256d y0_0, y1_0, y2_0, y3_0;
-        RADIX4_BUTTERFLY_AVX2(a0, b2_0, c2_0, d2_0, y0_0, y1_0, y2_0, y3_0);
+        // Update W_curr to W^16 for main loop
+        for (int step = 0; step < 16; step++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                double re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+                double im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+                W_curr[j].re = re;
+                W_curr[j].im = im;
+            }
+        }
 
-        //==================================================================
-        // BUTTERFLY 2-3: Continue loading while butterfly 0-1 completes
-        //==================================================================
-        __m256d c1 = load2_aos(&sub_outputs[k + 2 + 2 * quarter], &sub_outputs[k + 3 + 2 * quarter]);
-        __m256d d1 = load2_aos(&sub_outputs[k + 2 + 3 * quarter], &sub_outputs[k + 3 + 3 * quarter]);
+        k = 16;
 
-        __m256d w1_1 = load2_aos(&stage_tw[3 * (k + 2)], &stage_tw[3 * (k + 3)]);
-        __m256d w2_1 = load2_aos(&stage_tw[3 * (k + 2) + 1], &stage_tw[3 * (k + 3) + 1]);
-        __m256d w3_1 = load2_aos(&stage_tw[3 * (k + 2) + 2], &stage_tw[3 * (k + 3) + 2]);
+        //======================================================================
+        // MAIN PIPELINED LOOP: 8X UNROLL
+        //======================================================================
+        for (; k + 15 < K; k += 16)
+        {
+            //==================================================================
+            // STAGE 3: STORE (k-16 to k-1) - 8 pairs
+            //==================================================================
+            if (use_streaming)
+            {
+                for (int p = 0; p < 8; p++)
+                {
+                    int kk = k - 16 + 2 * p;
+                    _mm256_stream_pd(&output_buffer[kk].re, y0[p]);
+                    _mm256_stream_pd(&output_buffer[kk + K].re, y1[p]);
+                    _mm256_stream_pd(&output_buffer[kk + 2 * K].re, y2[p]);
+                    _mm256_stream_pd(&output_buffer[kk + 3 * K].re, y3[p]);
+                }
+            }
+            else
+            {
+                for (int p = 0; p < 8; p++)
+                {
+                    int kk = k - 16 + 2 * p;
+                    STOREU_PD(&output_buffer[kk].re, y0[p]);
+                    STOREU_PD(&output_buffer[kk + K].re, y1[p]);
+                    STOREU_PD(&output_buffer[kk + 2 * K].re, y2[p]);
+                    STOREU_PD(&output_buffer[kk + 3 * K].re, y3[p]);
+                }
+            }
 
-        __m256d b2_1 = cmul_avx2_aos(b1, w1_1);
-        __m256d c2_1 = cmul_avx2_aos(c1, w2_1);
-        __m256d d2_1 = cmul_avx2_aos(d1, w3_1);
+            //==================================================================
+            // STAGE 2: BUTTERFLY COMPUTE (move twiddled → y)
+            //==================================================================
+            for (int p = 0; p < 8; p++)
+            {
+                BUTTERFLY_FMA(twiddled_a[p], twiddled_b[p], twiddled_c[p], twiddled_d[p],
+                              y0[p], y1[p], y2[p], y3[p]);
+            }
 
-        // ⭐ Start loading butterfly 4-5
-        __m256d a2 = load2_aos(&sub_outputs[k + 4], &sub_outputs[k + 5]);
-        __m256d b2 = load2_aos(&sub_outputs[k + 4 + quarter], &sub_outputs[k + 5 + quarter]);
+            //==================================================================
+            // STAGE 1: TWIDDLE MULTIPLY (move pipe → twiddled)
+            //==================================================================
+            // Precompute 16 twiddle factors incrementally
+            fft_data W_curr_copy[3];
+            for (int j = 0; j < 3; j++)
+            {
+                W_curr_copy[j] = W_curr[j];
+            }
 
-        __m256d y0_1, y1_1, y2_1, y3_1;
-        RADIX4_BUTTERFLY_AVX2(a1, b2_1, c2_1, d2_1, y0_1, y1_1, y2_1, y3_1);
+            for (int p = 0; p < 8; p++)
+            {
+                int kk = k + 2 * p;
 
-        //==================================================================
-        // BUTTERFLY 4-5: Continue pattern
-        //==================================================================
-        __m256d c2 = load2_aos(&sub_outputs[k + 4 + 2 * quarter], &sub_outputs[k + 5 + 2 * quarter]);
-        __m256d d2 = load2_aos(&sub_outputs[k + 4 + 3 * quarter], &sub_outputs[k + 5 + 3 * quarter]);
+                twiddled_a[p] = pipe_a[p];
 
-        __m256d w1_2 = load2_aos(&stage_tw[3 * (k + 4)], &stage_tw[3 * (k + 5)]);
-        __m256d w2_2 = load2_aos(&stage_tw[3 * (k + 4) + 1], &stage_tw[3 * (k + 5) + 1]);
-        __m256d w3_2 = load2_aos(&stage_tw[3 * (k + 4) + 2], &stage_tw[3 * (k + 5) + 2]);
+                // Compute twiddles for kk and kk+1
+                fft_data W_kk[3], W_kk1[3];
+                for (int j = 0; j < 3; j++)
+                {
+                    W_kk[j] = W_curr_copy[j];
 
-        __m256d b2_2 = cmul_avx2_aos(b2, w1_2);
-        __m256d c2_2 = cmul_avx2_aos(c2, w2_2);
-        __m256d d2_2 = cmul_avx2_aos(d2, w3_2);
+                    // W_kk1 = W_kk * W_base
+                    W_kk1[j].re = W_kk[j].re * W_base[j].re - W_kk[j].im * W_base[j].im;
+                    W_kk1[j].im = W_kk[j].re * W_base[j].im + W_kk[j].im * W_base[j].re;
 
-        // ⭐ Start loading butterfly 6-7
-        __m256d a3 = load2_aos(&sub_outputs[k + 6], &sub_outputs[k + 7]);
-        __m256d b3 = load2_aos(&sub_outputs[k + 6 + quarter], &sub_outputs[k + 7 + quarter]);
+                    // Update for next pair
+                    double re = W_kk1[j].re * W_base[j].re - W_kk1[j].im * W_base[j].im;
+                    double im = W_kk1[j].re * W_base[j].im + W_kk1[j].im * W_base[j].re;
+                    W_curr_copy[j].re = re;
+                    W_curr_copy[j].im = im;
+                }
 
-        __m256d y0_2, y1_2, y2_2, y3_2;
-        RADIX4_BUTTERFLY_AVX2(a2, b2_2, c2_2, d2_2, y0_2, y1_2, y2_2, y3_2);
+                // Pack and multiply
+                __m256d w1 = _mm256_set_pd(W_kk1[0].im, W_kk1[0].re, W_kk[0].im, W_kk[0].re);
+                __m256d w2 = _mm256_set_pd(W_kk1[1].im, W_kk1[1].re, W_kk[1].im, W_kk[1].re);
+                __m256d w3 = _mm256_set_pd(W_kk1[2].im, W_kk1[2].re, W_kk[2].im, W_kk[2].re);
 
-        //==================================================================
-        // BUTTERFLY 6-7: Final butterfly in this iteration
-        //==================================================================
-        __m256d c3 = load2_aos(&sub_outputs[k + 6 + 2 * quarter], &sub_outputs[k + 7 + 2 * quarter]);
-        __m256d d3 = load2_aos(&sub_outputs[k + 6 + 3 * quarter], &sub_outputs[k + 7 + 3 * quarter]);
+                CMUL_FMA_AOS(twiddled_b[p], pipe_b[p], w1);
+                CMUL_FMA_AOS(twiddled_c[p], pipe_c[p], w2);
+                CMUL_FMA_AOS(twiddled_d[p], pipe_d[p], w3);
+            }
 
-        __m256d w1_3 = load2_aos(&stage_tw[3 * (k + 6)], &stage_tw[3 * (k + 7)]);
-        __m256d w2_3 = load2_aos(&stage_tw[3 * (k + 6) + 1], &stage_tw[3 * (k + 7) + 1]);
-        __m256d w3_3 = load2_aos(&stage_tw[3 * (k + 6) + 2], &stage_tw[3 * (k + 7) + 2]);
+            // Update W_curr for next iteration (k += 16)
+            UPDATE_TWIDDLES_8X();
+            UPDATE_TWIDDLES_8X(); // Apply twice for 16 steps
 
-        __m256d b2_3 = cmul_avx2_aos(b3, w1_3);
-        __m256d c2_3 = cmul_avx2_aos(c3, w2_3);
-        __m256d d2_3 = cmul_avx2_aos(d3, w3_3);
+            //==================================================================
+            // STAGE 0: PREFETCH + LOAD (k to k+15)
+            //==================================================================
+            // Software prefetching for all cache levels
+            if (k + PREFETCH_L3 < K)
+            {
+                for (int lane = 0; lane < 4; lane++)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L3 + lane * K], _MM_HINT_T2);
+                }
+            }
+            if (k + PREFETCH_L2 < K)
+            {
+                for (int lane = 0; lane < 4; lane++)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L2 + lane * K], _MM_HINT_T1);
+                }
+            }
+            if (k + PREFETCH_L1 < K)
+            {
+                for (int lane = 0; lane < 4; lane++)
+                {
+                    _mm_prefetch((const char *)&sub_outputs[k + PREFETCH_L1 + lane * K], _MM_HINT_T0);
+                }
+            }
 
-        __m256d y0_3, y1_3, y2_3, y3_3;
-        RADIX4_BUTTERFLY_AVX2(a3, b2_3, c2_3, d2_3, y0_3, y1_3, y2_3, y3_3);
+            // Load 8 pairs
+            for (int p = 0; p < 8; p++)
+            {
+                int kk = k + 2 * p;
+                pipe_a[p] = load2_aos(&sub_outputs[kk], &sub_outputs[kk + 1]);
+                pipe_b[p] = load2_aos(&sub_outputs[kk + K], &sub_outputs[kk + 1 + K]);
+                pipe_c[p] = load2_aos(&sub_outputs[kk + 2 * K], &sub_outputs[kk + 1 + 2 * K]);
+                pipe_d[p] = load2_aos(&sub_outputs[kk + 3 * K], &sub_outputs[kk + 1 + 3 * K]);
+            }
+        }
 
-        //==================================================================
-        // Store all results (order preserved for correctness)
-        //==================================================================
-        STOREU_PD(&output_buffer[k + 0].re, y0_0);
-        STOREU_PD(&output_buffer[k + 2].re, y0_1);
-        STOREU_PD(&output_buffer[k + 4].re, y0_2);
-        STOREU_PD(&output_buffer[k + 6].re, y0_3);
+        //======================================================================
+        // EPILOGUE: Drain pipeline
+        //======================================================================
+        // Store final butterflies
+        for (int p = 0; p < 8; p++)
+        {
+            int kk = k - 16 + 2 * p;
+            if (kk < K)
+            {
+                STOREU_PD(&output_buffer[kk].re, y0[p]);
+                STOREU_PD(&output_buffer[kk + K].re, y1[p]);
+                STOREU_PD(&output_buffer[kk + 2 * K].re, y2[p]);
+                STOREU_PD(&output_buffer[kk + 3 * K].re, y3[p]);
+            }
+        }
 
-        STOREU_PD(&output_buffer[k + 0 + quarter].re, y1_0);
-        STOREU_PD(&output_buffer[k + 2 + quarter].re, y1_1);
-        STOREU_PD(&output_buffer[k + 4 + quarter].re, y1_2);
-        STOREU_PD(&output_buffer[k + 6 + quarter].re, y1_3);
-
-        STOREU_PD(&output_buffer[k + 0 + 2 * quarter].re, y2_0);
-        STOREU_PD(&output_buffer[k + 2 + 2 * quarter].re, y2_1);
-        STOREU_PD(&output_buffer[k + 4 + 2 * quarter].re, y2_2);
-        STOREU_PD(&output_buffer[k + 6 + 2 * quarter].re, y2_3);
-
-        STOREU_PD(&output_buffer[k + 0 + 3 * quarter].re, y3_0);
-        STOREU_PD(&output_buffer[k + 2 + 3 * quarter].re, y3_1);
-        STOREU_PD(&output_buffer[k + 4 + 3 * quarter].re, y3_2);
-        STOREU_PD(&output_buffer[k + 6 + 3 * quarter].re, y3_3);
+        if (use_streaming)
+        {
+            _mm_sfence();
+        }
     }
 
-    //------------------------------------------------------------------
-    // Cleanup: 2x unrolling (keep as-is for safety)
-    //------------------------------------------------------------------
-    for (; k + 1 < quarter; k += 2)
-    {
-        if (k + 8 < quarter)
-        {
-            _mm_prefetch((const char *)&sub_outputs[k + 8], _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_outputs[k + 8 + quarter], _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_outputs[k + 8 + 2 * quarter], _MM_HINT_T0);
-            _mm_prefetch((const char *)&sub_outputs[k + 8 + 3 * quarter], _MM_HINT_T0);
-        }
+#undef CMUL_FMA_AOS
+#undef BUTTERFLY_FMA
+#undef UPDATE_TWIDDLES_8X
 
-        __m256d a = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
-        __m256d b = load2_aos(&sub_outputs[k + quarter], &sub_outputs[k + quarter + 1]);
-        __m256d c = load2_aos(&sub_outputs[k + 2 * quarter], &sub_outputs[k + 2 * quarter + 1]);
-        __m256d d = load2_aos(&sub_outputs[k + 3 * quarter], &sub_outputs[k + 3 * quarter + 1]);
-
-        __m256d w1 = load2_aos(&stage_tw[3 * k], &stage_tw[3 * (k + 1)]);
-        __m256d w2 = load2_aos(&stage_tw[3 * k + 1], &stage_tw[3 * (k + 1) + 1]);
-        __m256d w3 = load2_aos(&stage_tw[3 * k + 2], &stage_tw[3 * (k + 1) + 2]);
-
-        __m256d b2 = cmul_avx2_aos(b, w1);
-        __m256d c2 = cmul_avx2_aos(c, w2);
-        __m256d d2 = cmul_avx2_aos(d, w3);
-
-        __m256d y0, y1, y2, y3;
-        RADIX4_BUTTERFLY_AVX2(a, b2, c2, d2, y0, y1, y2, y3);
-
-        STOREU_PD(&output_buffer[k].re, y0);
-        STOREU_PD(&output_buffer[k + quarter].re, y1);
-        STOREU_PD(&output_buffer[k + 2 * quarter].re, y2);
-        STOREU_PD(&output_buffer[k + 3 * quarter].re, y3);
-    }
-#undef RADIX4_BUTTERFLY_AVX2
 #endif // __AVX2__
 
-    //------------------------------------------------------------------
-    // SSE2 TAIL: Handle remaining 0..1 elements
-    //------------------------------------------------------------------
-#ifdef __GNUC__
-#pragma GCC unroll 1
-#endif
-    for (; k < quarter; ++k)
+    //==========================================================================
+    // SCALAR TAIL: Process remaining butterflies
+    //==========================================================================
+    // Note: W_curr may not be initialized if AVX2 path didn't run
+    // Reset it to the correct value for the current k
+    if (k == 0)
     {
-        __m128d a = LOADU_SSE2(&sub_outputs[k].re);
-        __m128d b = LOADU_SSE2(&sub_outputs[k + quarter].re);
-        __m128d c = LOADU_SSE2(&sub_outputs[k + 2 * quarter].re);
-        __m128d d = LOADU_SSE2(&sub_outputs[k + 3 * quarter].re);
+        // Initialize W_curr for k=0
+        W_curr[0].re = 1.0;
+        W_curr[0].im = 0.0;
+        W_curr[1].re = 1.0;
+        W_curr[1].im = 0.0;
+        W_curr[2].re = 1.0;
+        W_curr[2].im = 0.0;
+    }
+    else if (k > 0 && k < 16)
+    {
+        // AVX2 didn't run, need to compute W^k from scratch
+        W_curr[0].re = 1.0;
+        W_curr[0].im = 0.0;
+        W_curr[1].re = 1.0;
+        W_curr[1].im = 0.0;
+        W_curr[2].re = 1.0;
+        W_curr[2].im = 0.0;
 
-        __m128d w1 = LOADU_SSE2(&stage_tw[3 * k].re);
-        __m128d w2 = LOADU_SSE2(&stage_tw[3 * k + 1].re);
-        __m128d w3 = LOADU_SSE2(&stage_tw[3 * k + 2].re);
+        for (int step = 0; step < k; step++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                double re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+                double im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+                W_curr[j].re = re;
+                W_curr[j].im = im;
+            }
+        }
+    }
+    // else: k >= 16, W_curr is already correct from AVX2 path
 
-        __m128d b2 = cmul_sse2_aos(b, w1);
-        __m128d c2 = cmul_sse2_aos(c, w2);
-        __m128d d2 = cmul_sse2_aos(d, w3);
+    for (; k < K; ++k)
+    {
+        fft_data a = sub_outputs[k];
+        fft_data b = sub_outputs[k + K];
+        fft_data c = sub_outputs[k + 2 * K];
+        fft_data d = sub_outputs[k + 3 * K];
 
-        __m128d sumBD = _mm_add_pd(b2, d2);
-        __m128d difBD = _mm_sub_pd(b2, d2);
-        __m128d a_pc = _mm_add_pd(a, c2);
-        __m128d a_mc = _mm_sub_pd(a, c2);
+        // Apply twiddles using W_curr
+        double b_re = b.re * W_curr[0].re - b.im * W_curr[0].im;
+        double b_im = b.re * W_curr[0].im + b.im * W_curr[0].re;
 
-        __m128d y0 = _mm_add_pd(a_pc, sumBD);
-        __m128d y2 = _mm_sub_pd(a_pc, sumBD);
+        double c_re = c.re * W_curr[1].re - c.im * W_curr[1].im;
+        double c_im = c.re * W_curr[1].im + c.im * W_curr[1].re;
 
-        __m128d swp = _mm_shuffle_pd(difBD, difBD, 0b01);
-        __m128d rot = (transform_sign == 1)
-                          ? _mm_xor_pd(swp, _mm_set_pd(0.0, -0.0))
-                          : _mm_xor_pd(swp, _mm_set_pd(-0.0, 0.0));
+        double d_re = d.re * W_curr[2].re - d.im * W_curr[2].im;
+        double d_im = d.re * W_curr[2].im + d.im * W_curr[2].re;
 
-        __m128d y1 = _mm_sub_pd(a_mc, rot);
-        __m128d y3 = _mm_add_pd(a_mc, rot);
+        // Update W_curr for next iteration (W_curr *= W_base)
+        for (int j = 0; j < 3; j++)
+        {
+            double re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+            double im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+            W_curr[j].re = re;
+            W_curr[j].im = im;
+        }
 
-        STOREU_SSE2(&output_buffer[k].re, y0);
-        STOREU_SSE2(&output_buffer[k + quarter].re, y1);
-        STOREU_SSE2(&output_buffer[k + 2 * quarter].re, y2);
-        STOREU_SSE2(&output_buffer[k + 3 * quarter].re, y3);
+        // Radix-4 butterfly
+        double sumBD_re = b_re + d_re;
+        double sumBD_im = b_im + d_im;
+        double difBD_re = b_re - d_re;
+        double difBD_im = b_im - d_im;
+
+        double sumAC_re = a.re + c_re;
+        double sumAC_im = a.im + c_im;
+        double difAC_re = a.re - c_re;
+        double difAC_im = a.im - c_im;
+
+        output_buffer[k].re = sumAC_re + sumBD_re;
+        output_buffer[k].im = sumAC_im + sumBD_im;
+        output_buffer[k + 2 * K].re = sumAC_re - sumBD_re;
+        output_buffer[k + 2 * K].im = sumAC_im - sumBD_im;
+
+        double rot_re = rot_sign * difBD_im;
+        double rot_im = rot_sign * (-difBD_re);
+
+        output_buffer[k + K].re = difAC_re - rot_re;
+        output_buffer[k + K].im = difAC_im - rot_im;
+        output_buffer[k + 3 * K].re = difAC_re + rot_re;
+        output_buffer[k + 3 * K].im = difAC_im + rot_im;
     }
 }
-
-/*
-
-__m512d w1_0 = load4_aos_stride3(&stage_tw[3*(k+0) + 0]);
-__m512d w2_0 = load4_aos_stride3(&stage_tw[3*(k+0) + 1]);
-__m512d w3_0 = load4_aos_stride3(&stage_tw[3*(k+0) + 2]);
-
-__m512d w1_1 = load4_aos_stride3(&stage_tw[3*(k+4) + 0]);
-__m512d w2_1 = load4_aos_stride3(&stage_tw[3*(k+4) + 1]);
-__m512d w3_1 = load4_aos_stride3(&stage_tw[3*(k+4) + 2]);
-
-// Phase 2
-__m512d w1_2 = load4_aos_stride3(&stage_tw[3*(k+8)  + 0]);
-__m512d w2_2 = load4_aos_stride3(&stage_tw[3*(k+8)  + 1]);
-__m512d w3_2 = load4_aos_stride3(&stage_tw[3*(k+8)  + 2]);
-
-__m512d w1_3 = load4_aos_stride3(&stage_tw[3*(k+12) + 0]);
-__m512d w2_3 = load4_aos_stride3(&stage_tw[3*(k+12) + 1]);
-__m512d w3_3 = load4_aos_stride3(&stage_tw[3*(k+12) + 2]);
-
-// 8× cleanup
-__m512d w1_0 = load4_aos_stride3(&stage_tw[3*(k+0) + 0]);
-__m512d w2_0 = load4_aos_stride3(&stage_tw[3*(k+0) + 1]);
-__m512d w3_0 = load4_aos_stride3(&stage_tw[3*(k+0) + 2]);
-
-__m512d w1_1 = load4_aos_stride3(&stage_tw[3*(k+4) + 0]);
-__m512d w2_1 = load4_aos_stride3(&stage_tw[3*(k+4) + 1]);
-__m512d w3_1 = load4_aos_stride3(&stage_tw[3*(k+4) + 2]);
-
-// 4× cleanup
-__m512d w1 = load4_aos_stride3(&stage_tw[3*k + 0]);
-__m512d w2 = load4_aos_stride3(&stage_tw[3*k + 1]);
-__m512d w3 = load4_aos_stride3(&stage_tw[3*k + 2]);
-*/

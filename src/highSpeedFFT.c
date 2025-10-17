@@ -26,19 +26,16 @@
 
 // Core primes used for FFT (includes composite radices 4, 8 for FFT optimization)
 static const int primes[] = {
-    2, 3, 4, 5, 7, 8, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53
-};
+    2, 3, 4, 5, 7, 8, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53};
 static const int num_primes = sizeof(primes) / sizeof(primes[0]);
 
 // Actual prime-only list (for factorization)
 static const int true_primes[] = {
-    2, 3, 5, 7, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53
-};
+    2, 3, 5, 7, 11, 13, 17, 23, 29, 31, 37, 41, 43, 47, 53};
 static const int num_true_primes = sizeof(true_primes) / sizeof(true_primes[0]);
 
 // Divisibility lookup table
 static unsigned char dividebyN_lookup[LOOKUP_MAX]; // 0 = not divisible, 1 = divisible
-
 
 // Extended prime table for large factors
 static int *extended_primes = NULL;
@@ -48,90 +45,104 @@ static int max_extended_prime = 0;
 //==============================================================================
 // UNIFIED INITIALIZATION - Runs once at program startup
 //==============================================================================
-__attribute__((constructor))
-static void init_fft_prime_system(void)
+__attribute__((constructor)) static void init_fft_prime_system(void)
 {
     //==========================================================================
     // 1. Build divisibility lookup table (for dividebyN up to 1024)
     //==========================================================================
     memset(dividebyN_lookup, 0, LOOKUP_MAX);
     dividebyN_lookup[1] = 1; // Special case: 1 is "divisible"
-    
-    for (int n = 2; n < LOOKUP_MAX; n++) {
+
+    for (int n = 2; n < LOOKUP_MAX; n++)
+    {
         int temp = n;
         int divisible = 1;
-        
-        while (temp > 1) {
+
+        while (temp > 1)
+        {
             int factored = 0;
-            
+
             // Try dividing by each prime in our supported set
-            for (int j = 0; j < num_primes; j++) {
-                if (temp % primes[j] == 0) {
+            for (int j = 0; j < num_primes; j++)
+            {
+                if (temp % primes[j] == 0)
+                {
                     temp /= primes[j];
                     factored = 1;
                     break;
                 }
             }
-            
-            if (!factored) {
+
+            if (!factored)
+            {
                 divisible = 0;
                 break;
             }
         }
-        
-        if (divisible) {
+
+        if (divisible)
+        {
             dividebyN_lookup[n] = 1;
         }
     }
-    
+
     //==========================================================================
     // 2. Build extended prime table (59 to 10000) using Sieve of Eratosthenes
     //==========================================================================
     const int limit = 10000;
     char *sieve = (char *)calloc(limit + 1, 1);
-    
-    if (!sieve) {
+
+    if (!sieve)
+    {
         fprintf(stderr, "Warning: Failed to allocate sieve for extended primes\n");
         return;
     }
-    
+
     // Sieve of Eratosthenes
-    for (int i = 2; i * i <= limit; i++) {
-        if (!sieve[i]) {
+    for (int i = 2; i * i <= limit; i++)
+    {
+        if (!sieve[i])
+        {
             for (int j = i * i; j <= limit; j += i)
                 sieve[j] = 1;
         }
     }
-    
+
     // Count primes > 53 (we already have primes up to 53)
     num_extended = 0;
     for (int i = 59; i <= limit; i++)
-        if (!sieve[i]) num_extended++;
-    
-    if (num_extended > 0) {
+        if (!sieve[i])
+            num_extended++;
+
+    if (num_extended > 0)
+    {
         extended_primes = (int *)malloc(num_extended * sizeof(int));
-        
-        if (extended_primes) {
+
+        if (extended_primes)
+        {
             int idx = 0;
             for (int i = 59; i <= limit; i++)
-                if (!sieve[i]) extended_primes[idx++] = i;
-            
+                if (!sieve[i])
+                    extended_primes[idx++] = i;
+
             max_extended_prime = extended_primes[num_extended - 1];
-        } else {
+        }
+        else
+        {
             fprintf(stderr, "Warning: Failed to allocate extended prime table\n");
         }
     }
-    
+
     free(sieve);
 }
 
 //==============================================================================
 // CLEANUP - Runs at program exit
 //==============================================================================
-__attribute__((destructor))
-static void cleanup_fft_prime_system(void)
+__attribute__((destructor)) static void cleanup_fft_prime_system(void)
 {
-    if (extended_primes) {
+    if (extended_primes)
+    {
         free(extended_primes);
         extended_primes = NULL;
     }
@@ -143,20 +154,23 @@ static void cleanup_fft_prime_system(void)
 int dividebyN(int number)
 {
     // Fast path: lookup table for small N
-    if (number < LOOKUP_MAX) {
+    if (number < LOOKUP_MAX)
+    {
         return dividebyN_lookup[number];
     }
-    
+
     // Slow path: compute for larger N
     int temp = number;
-    
+
     // Try small primes first
-    for (int i = 0; i < num_primes && temp > 1; i++) {
-        while (temp % primes[i] == 0) {
+    for (int i = 0; i < num_primes && temp > 1; i++)
+    {
+        while (temp % primes[i] == 0)
+        {
             temp /= primes[i];
         }
     }
-    
+
     return (temp == 1) ? 1 : 0;
 }
 
@@ -165,36 +179,41 @@ int dividebyN(int number)
 //==============================================================================
 /**
  * @brief Fast prime factorization using hybrid approach
- * 
+ *
  * Phase 1: Small primes (2-53) using existing true_primes array
  * Phase 2: Medium primes (59-10000) using precomputed extended_primes table
  * Phase 3: Large primes (>10000) using wheel factorization (6k±1)
- * 
+ *
  * @param number The number to factorize (must be > 0)
  * @param factors_array Output array for prime factors (must hold at least 32 elements)
  * @return Number of prime factors found, or 0 on error
  */
 int factors(int number, int *factors_array)
 {
-    if (factors_array == NULL || number <= 0) {
+    if (factors_array == NULL || number <= 0)
+    {
         fprintf(stderr, "Error: Invalid inputs for factors - number: %d\n", number);
         return 0;
     }
 
     int index = 0;
     int n = number;
-    
+
     //==========================================================================
     // PHASE 1: Factor using small primes (2-53)
     //==========================================================================
-    for (int i = 0; i < num_true_primes && n > 1; i++) {
+    for (int i = 0; i < num_true_primes && n > 1; i++)
+    {
         int p = true_primes[i];
-        
+
         // Early exit if p² > n (remaining n must be prime or 1)
-        if (p * p > n) break;
-        
-        while (n % p == 0) {
-            if (index >= 32) {
+        if (p * p > n)
+            break;
+
+        while (n % p == 0)
+        {
+            if (index >= 32)
+            {
                 fprintf(stderr, "Error: Too many prime factors (>32)\n");
                 return index;
             }
@@ -202,19 +221,24 @@ int factors(int number, int *factors_array)
             n /= p;
         }
     }
-    
+
     //==========================================================================
     // PHASE 2: Factor using extended prime table (59-10000)
     //==========================================================================
-    if (extended_primes && n > 1) {
-        for (int i = 0; i < num_extended && n > 1; i++) {
+    if (extended_primes && n > 1)
+    {
+        for (int i = 0; i < num_extended && n > 1; i++)
+        {
             int p = extended_primes[i];
-            
+
             // Early exit
-            if (p * p > n) break;
-            
-            while (n % p == 0) {
-                if (index >= 32) {
+            if (p * p > n)
+                break;
+
+            while (n % p == 0)
+            {
+                if (index >= 32)
+                {
                     fprintf(stderr, "Error: Too many prime factors (>32)\n");
                     return index;
                 }
@@ -223,25 +247,30 @@ int factors(int number, int *factors_array)
             }
         }
     }
-    
+
     //==========================================================================
     // PHASE 3: Wheel factorization for very large primes (>10000)
     //==========================================================================
-    if (n > 1) {
+    if (n > 1)
+    {
         // Check if we need wheel factorization
         // (n is either prime or has factors > max_extended_prime)
         int sqrt_n = (int)sqrt((double)n) + 1;
-        
+
         // Only do wheel factorization if n might have large factors
-        if (!extended_primes || sqrt_n > max_extended_prime) {
+        if (!extended_primes || sqrt_n > max_extended_prime)
+        {
             // Start from first candidate after max_extended_prime
             int start_k = extended_primes ? (max_extended_prime + 6) / 6 : 1668;
-            
-            for (int k = start_k; 6*k - 1 <= sqrt_n && n > 1; k++) {
+
+            for (int k = start_k; 6 * k - 1 <= sqrt_n && n > 1; k++)
+            {
                 // Check 6k-1
-                int p1 = 6*k - 1;
-                while (n % p1 == 0) {
-                    if (index >= 32) {
+                int p1 = 6 * k - 1;
+                while (n % p1 == 0)
+                {
+                    if (index >= 32)
+                    {
                         fprintf(stderr, "Error: Too many prime factors (>32)\n");
                         return index;
                     }
@@ -249,12 +278,15 @@ int factors(int number, int *factors_array)
                     n /= p1;
                     sqrt_n = (int)sqrt((double)n) + 1;
                 }
-                
+
                 // Check 6k+1
-                int p2 = 6*k + 1;
-                if (p2 <= sqrt_n) {
-                    while (n % p2 == 0) {
-                        if (index >= 32) {
+                int p2 = 6 * k + 1;
+                if (p2 <= sqrt_n)
+                {
+                    while (n % p2 == 0)
+                    {
+                        if (index >= 32)
+                        {
                             fprintf(stderr, "Error: Too many prime factors (>32)\n");
                             return index;
                         }
@@ -266,18 +298,20 @@ int factors(int number, int *factors_array)
             }
         }
     }
-    
+
     //==========================================================================
     // Remaining n is a prime factor (or 1)
     //==========================================================================
-    if (n > 1) {
-        if (index >= 32) {
+    if (n > 1)
+    {
+        if (index >= 32)
+        {
             fprintf(stderr, "Error: Too many prime factors (>32)\n");
             return index;
         }
         factors_array[index++] = n;
     }
-    
+
     return index;
 }
 
@@ -307,9 +341,9 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     // Strategy: Use largest possible composite radices for efficiency
 
     // **FIX: Check temp_n first to ensure we don't over-consume factors**
-
+    /**/
     // Radix-32 (2^5) - most efficient for powers of 2
-    while (count_2 >= 5 && temp_n % 32 == 0) // ← ADD THIS CHECK
+    while (count_2 >= 5 && temp_n % 32 == 0)
     {
         radices[index++] = 32;
         temp_n /= 32;
@@ -317,16 +351,15 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     }
 
     // Radix-16 (2^4)
-    while (count_2 >= 4 && temp_n % 16 == 0) // ← ADD THIS CHECK
+    while (count_2 >= 4 && temp_n % 16 == 0)
     {
         radices[index++] = 16;
         temp_n /= 16;
         count_2 -= 4;
     }
-    
 
     // Radix-8 (2^3)
-    while (count_2 >= 3 && temp_n % 8 == 0) // ← ADD THIS CHECK
+    while (count_2 >= 3 && temp_n % 8 == 0)
     {
         radices[index++] = 8;
         temp_n /= 8;
@@ -334,7 +367,7 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     }
 
     // Radix-9 (3^2) if you have optimized radix-9 kernel
-    while (count_3 >= 2 && temp_n % 9 == 0) // ← ADD THIS CHECK
+    while (count_3 >= 2 && temp_n % 9 == 0)
     {
         radices[index++] = 9;
         temp_n /= 9;
@@ -342,7 +375,7 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     }
 
     // Radix-4 (2^2)
-    while (count_2 >= 2 && temp_n % 4 == 0) // ← ADD THIS CHECK
+    while (count_2 >= 2 && temp_n % 4 == 0)
     {
         radices[index++] = 4;
         temp_n /= 4;
@@ -407,23 +440,23 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
 
 /**
  * @brief Precomputed chirp sequences for common prime signal lengths
- * 
+ *
  * RATIONALE:
  * ----------
  * Bluestein's algorithm is ONLY used when N cannot be factored into
  * supported radices (2, 3, 5, 7, 11, 13, 17, 23, 29, 31, ..., 53).
- * 
+ *
  * These are primes that are:
  *   1. NOT in your supported radix list
  *   2. Common in real-world applications (spectrum analysis, signal processing)
- * 
+ *
  * Why these specific primes?
  * - 17, 19, 23, 29, 37, 41, 43, 47: Mid-size primes without dedicated radix kernels
  * - 59, 61, 67, 71, 73: Common in audio/RF (sample rates, filter lengths)
  * - 97, 101, 103, 107, 109, 113: Prime factorization of common DSP block sizes
- * 
+ *
  * MEMORY COST: ~50 KB (trivial compared to 10-100× speedup)
- * 
+ *
  * EXCLUDED:
  * - 2, 3, 5, 7, 11, 13: Have dedicated radix kernels (never use Bluestein)
  * - Large primes (>127): Rare in practice, dynamic computation is acceptable
@@ -431,21 +464,20 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
 static const int pre_sizes[] = {
     // Small primes without radix kernels
     17, 19, 23, 29,
-    
+
     // Mid-size primes (common in audio: 44.1k, 48k sample rates)
     31, 37, 41, 43, 47,
-    
+
     // Larger primes (common in RF/radar processing)
     53, 59, 61, 67, 71, 73,
-    
+
     // Uncommon but fast to precompute
-    79, 83, 89, 97, 101, 103, 107, 109, 113, 127
-};
+    79, 83, 89, 97, 101, 103, 107, 109, 113, 127};
 static const int num_pre = sizeof(pre_sizes) / sizeof(pre_sizes[0]);
 
-static fft_data *all_chirps = NULL;      // Single contiguous block
+static fft_data *all_chirps = NULL;       // Single contiguous block
 static fft_data **bluestein_chirp = NULL; // Array of pointers into all_chirps
-static int *chirp_offsets = NULL;        // Offset for each size (faster than recomputing)
+static int *chirp_offsets = NULL;         // Offset for each size (faster than recomputing)
 static int chirp_initialized = 0;
 
 //==============================================================================
@@ -453,10 +485,10 @@ static int chirp_initialized = 0;
 //==============================================================================
 /**
  * @brief High-precision sine/cosine using minimax polynomials
- * 
+ *
  * Achieves 0.5 ULP (Unit in Last Place) accuracy for angles in [-π/4, π/4]
  * Uses Horner's method with FMA for minimal rounding error
- * 
+ *
  * @param x Angle in radians, must satisfy |x| ≤ π/4
  * @param s Output sine value
  * @param c Output cosine value
@@ -470,7 +502,7 @@ static inline void sincos_pi4(double x, double *s, double *c)
     sp = fma(sp, x2, -1.98412698412698412698412698e-4); // -1/7!
     sp = fma(sp, x2, 8.33333333333333333333333333e-3);  // +1/5!
     sp = fma(sp, x2, -1.66666666666666666666666667e-1); // -1/3!
-    sp = fma(sp, x2, 1.0);                               // +1/1!
+    sp = fma(sp, x2, 1.0);                              // +1/1!
     *s = x * sp;
 
     // cos(x) = P(x²) using Taylor series
@@ -478,7 +510,7 @@ static inline void sincos_pi4(double x, double *s, double *c)
     cp = fma(cp, x2, -1.38888888888888888888888889e-3); // -1/6!
     cp = fma(cp, x2, 4.16666666666666666666666667e-2);  // +1/4!
     cp = fma(cp, x2, -5.00000000000000000000000000e-1); // -1/2!
-    cp = fma(cp, x2, 1.0);                               // +1/0!
+    cp = fma(cp, x2, 1.0);                              // +1/0!
     *c = cp;
 }
 
@@ -487,10 +519,10 @@ static inline void sincos_pi4(double x, double *s, double *c)
 //==============================================================================
 /**
  * @brief Compute single chirp value: h(i) = exp(πi·i²/N)
- * 
+ *
  * Uses direct i² computation to avoid accumulation error
  * Applies range reduction for angles > π/4
- * 
+ *
  * @param i Index in chirp sequence
  * @param N Signal length
  * @param theta Precomputed π/N
@@ -500,16 +532,19 @@ static inline void sincos_pi4(double x, double *s, double *c)
 static inline fft_data compute_chirp_sample(int i, int N, double theta, int len2)
 {
     fft_data result;
-    
+
     // Direct i² computation (no accumulation error)
     const long long i_sq = (long long)i * (long long)i;
     const long long i_sq_mod = i_sq % (long long)len2;
     const double angle = theta * (double)i_sq_mod;
-    
+
     // High-precision sin/cos for small angles, system sin/cos otherwise
-    if (fabs(angle) <= M_PI / 4.0) {
+    if (fabs(angle) <= M_PI / 4.0)
+    {
         sincos_pi4(angle, &result.im, &result.re);
-    } else {
+    }
+    else
+    {
         // Range reduction: Use system sin/cos for larger angles
         // (only happens for very small N where optimization matters less)
 #ifdef __GNUC__
@@ -519,7 +554,7 @@ static inline fft_data compute_chirp_sample(int i, int N, double theta, int len2
         result.im = sin(angle);
 #endif
     }
-    
+
     return result;
 }
 
@@ -528,111 +563,120 @@ static inline fft_data compute_chirp_sample(int i, int N, double theta, int len2
 //==============================================================================
 /**
  * @brief Initialize precomputed Bluestein chirp sequences
- * 
+ *
  * Memory Layout:
  * - Single contiguous allocation (all_chirps) for cache efficiency
  * - Each sequence padded to 4-element boundary for SIMD alignment
  * - Descriptor arrays (bluestein_chirp, chirp_offsets) for fast lookup
- * 
+ *
  * Optimization Strategy:
  * - AVX2: Vectorized computation for 4 samples at once
  * - Scalar: Fallback for tail elements
  * - Direct i² computation: Avoids accumulation error
  * - 0.5 ULP precision: High-accuracy trigonometric functions
- * 
+ *
  * Precomputed Sizes: {1, 2, 3, 4, 5, 7, 15, 20, 31, 64}
  * Total Memory: ~1 KB (negligible overhead for 10-100× speedup)
  */
-__attribute__((constructor))
-static void init_bluestein_chirp(void)
+__attribute__((constructor)) static void init_bluestein_chirp(void)
 {
     // Calculate total storage with alignment padding
     int total_size = 0;
-    for (int i = 0; i < num_pre; i++) {
+    for (int i = 0; i < num_pre; i++)
+    {
         total_size += ((pre_sizes[i] + 3) & ~3); // Round up to multiple of 4
     }
-    
+
     // Allocate all memory upfront
     all_chirps = (fft_data *)_mm_malloc(total_size * sizeof(fft_data), 32);
     bluestein_chirp = (fft_data **)malloc(num_pre * sizeof(fft_data *));
     chirp_offsets = (int *)malloc(num_pre * sizeof(int));
-    
-    if (!all_chirps || !bluestein_chirp || !chirp_offsets) {
+
+    if (!all_chirps || !bluestein_chirp || !chirp_offsets)
+    {
         fprintf(stderr, "Fatal: Failed to allocate Bluestein chirp table (%d bytes)\n",
                 (int)(total_size * sizeof(fft_data)));
         goto cleanup_and_exit;
     }
-    
+
     // Build lookup tables and compute chirps
     int offset = 0;
-    for (int idx = 0; idx < num_pre; idx++) {
+    for (int idx = 0; idx < num_pre; idx++)
+    {
         const int n = pre_sizes[idx];
         const int n_rounded = (n + 3) & ~3;
-        
+
         // Setup descriptors
         chirp_offsets[idx] = offset;
         bluestein_chirp[idx] = all_chirps + offset;
         offset += n_rounded;
-        
+
         // Precompute constants
         const double theta = M_PI / (double)n;
         const int len2 = 2 * n;
-        
+
         int i = 0;
-        
+
 #ifdef __AVX2__
         //======================================================================
         // AVX2: Process 4 chirp samples simultaneously
         //======================================================================
         const __m256d vtheta = _mm256_set1_pd(theta);
         const __m256d vlen2 = _mm256_set1_pd((double)len2);
-        
-        for (; i + 3 < n; i += 4) {
+
+        for (; i + 3 < n; i += 4)
+        {
             // Compute i² mod 2N for 4 consecutive indices
             __m256d vi = _mm256_set_pd((double)(i + 3), (double)(i + 2),
                                        (double)(i + 1), (double)i);
             __m256d vi_sq = _mm256_mul_pd(vi, vi);
-            
+
             // Modulo operation: i² mod 2N = i² - floor(i²/2N) * 2N
             __m256d vi_sq_div = _mm256_div_pd(vi_sq, vlen2);
             __m256d vi_sq_floor = _mm256_floor_pd(vi_sq_div);
             __m256d vi_sq_mod = _mm256_fnmadd_pd(vi_sq_floor, vlen2, vi_sq);
-            
+
             // Compute angles: θ * (i² mod 2N)
             __m256d vang = _mm256_mul_pd(vtheta, vi_sq_mod);
-            
+
             // Extract and compute (vectorized trig not worth it for small N)
             double angles[4];
             _mm256_storeu_pd(angles, vang);
-            
-            for (int j = 0; j < 4; j++) {
-                bluestein_chirp[idx][i + j] = 
+
+            for (int j = 0; j < 4; j++)
+            {
+                bluestein_chirp[idx][i + j] =
                     compute_chirp_sample(i + j, n, theta, len2);
             }
         }
 #endif // __AVX2__
-        
+
         //======================================================================
         // Scalar: Process remaining samples
         //======================================================================
-        for (; i < n; i++) {
+        for (; i < n; i++)
+        {
             bluestein_chirp[idx][i] = compute_chirp_sample(i, n, theta, len2);
         }
-        
+
         // Zero-pad alignment tail
-        for (int j = n; j < n_rounded; j++) {
+        for (int j = n; j < n_rounded; j++)
+        {
             bluestein_chirp[idx][j].re = 0.0;
             bluestein_chirp[idx][j].im = 0.0;
         }
     }
-    
+
     chirp_initialized = 1;
     return;
-    
+
 cleanup_and_exit:
-    if (all_chirps) _mm_free(all_chirps);
-    if (bluestein_chirp) free(bluestein_chirp);
-    if (chirp_offsets) free(chirp_offsets);
+    if (all_chirps)
+        _mm_free(all_chirps);
+    if (bluestein_chirp)
+        free(bluestein_chirp);
+    if (chirp_offsets)
+        free(chirp_offsets);
     all_chirps = NULL;
     bluestein_chirp = NULL;
     chirp_offsets = NULL;
@@ -642,18 +686,20 @@ cleanup_and_exit:
 //==============================================================================
 // CLEANUP
 //==============================================================================
-__attribute__((destructor))
-static void cleanup_bluestein_chirp(void)
+__attribute__((destructor)) static void cleanup_bluestein_chirp(void)
 {
-    if (all_chirps) {
+    if (all_chirps)
+    {
         _mm_free(all_chirps);
         all_chirps = NULL;
     }
-    if (bluestein_chirp) {
+    if (bluestein_chirp)
+    {
         free(bluestein_chirp);
         bluestein_chirp = NULL;
     }
-    if (chirp_offsets) {
+    if (chirp_offsets)
+    {
         free(chirp_offsets);
         chirp_offsets = NULL;
     }
@@ -662,45 +708,69 @@ static void cleanup_bluestein_chirp(void)
 
 /**
  * @brief Fast lookup helper for precomputed chirp index
- * 
+ *
  * @param N Signal length
  * @return Index into pre_sizes[] array, or -1 if not precomputed
- * 
+ *
  * @note Linear search is optimal for small arrays (10 elements)
  *       Branch predictor makes this ~10 cycles worst-case
  */
 static inline int find_chirp_index(int N)
 {
     // Unrolled linear search matching pre_sizes[]
-    if (N == 17) return 0;
-    if (N == 19) return 1;
-    if (N == 23) return 2;
-    if (N == 29) return 3;
-    if (N == 31) return 4;
-    if (N == 37) return 5;
-    if (N == 41) return 6;
-    if (N == 43) return 7;
-    if (N == 47) return 8;
-    if (N == 53) return 9;
-    if (N == 59) return 10;
-    if (N == 61) return 11;
-    if (N == 67) return 12;
-    if (N == 71) return 13;
-    if (N == 73) return 14;
-    if (N == 79) return 15;
-    if (N == 83) return 16;
-    if (N == 89) return 17;
-    if (N == 97) return 18;
-    if (N == 101) return 19;
-    if (N == 103) return 20;
-    if (N == 107) return 21;
-    if (N == 109) return 22;
-    if (N == 113) return 23;
-    if (N == 127) return 24;
-    
-    return -1;  // Not precomputed
-}
+    if (N == 17)
+        return 0;
+    if (N == 19)
+        return 1;
+    if (N == 23)
+        return 2;
+    if (N == 29)
+        return 3;
+    if (N == 31)
+        return 4;
+    if (N == 37)
+        return 5;
+    if (N == 41)
+        return 6;
+    if (N == 43)
+        return 7;
+    if (N == 47)
+        return 8;
+    if (N == 53)
+        return 9;
+    if (N == 59)
+        return 10;
+    if (N == 61)
+        return 11;
+    if (N == 67)
+        return 12;
+    if (N == 71)
+        return 13;
+    if (N == 73)
+        return 14;
+    if (N == 79)
+        return 15;
+    if (N == 83)
+        return 16;
+    if (N == 89)
+        return 17;
+    if (N == 97)
+        return 18;
+    if (N == 101)
+        return 19;
+    if (N == 103)
+        return 20;
+    if (N == 107)
+        return 21;
+    if (N == 109)
+        return 22;
+    if (N == 113)
+        return 23;
+    if (N == 127)
+        return 24;
 
+    return -1; // Not precomputed
+}
 
 static void build_twiddles_linear(fft_data *tw, int N)
 {
@@ -904,7 +974,7 @@ fft_object fft_init(int signal_length, int transform_direction)
         int execution_radices[32];
         int num_radices = get_fft_execution_radices(signal_length, execution_radices,
                                                     prime_factors, num_prime_factors);
-                                                    
+
         // Check if it's a single radix (all radices are the same)
         is_single_radix = true;
         int first_radix = execution_radices[0];
@@ -930,7 +1000,7 @@ fft_object fft_init(int signal_length, int transform_direction)
             int radix = first_radix;
             int stage = 0;
 
-            for (int n = signal_length; n > radix; n /= radix)
+            for (int n = signal_length; n >= radix; n /= radix)
             {
                 int sub_fft_size = n / radix;
 
@@ -1042,28 +1112,30 @@ fft_object fft_init(int signal_length, int transform_direction)
 
                 if (radix == 7)
                 {
-                    // For Good-Thomas radix-7, store twiddles in sequential order
-                    // w^1, w^2, w^3, w^4, w^5, w^6
+                    // Special case for Good-Thomas radix-7
                     for (int j = 1; j <= 6; ++j)
                     {
                         const int p = (j * k) % N_stage;
                         const int idxN = (p * stride) % fft_config->n_fft;
-                        fft_config->twiddle_factors[offset + base + (j - 1)] = fft_config->twiddles[idxN];
+                        fft_config->twiddle_factors[offset + base + (j - 1)] =
+                            fft_config->twiddles[idxN];
                     }
                 }
                 else
                 {
-                    // Standard DIT for other radices
+                    // Standard DIT
                     for (int j = 1; j < radix; ++j)
                     {
-                        const int p = (j * k) % N_stage;
+                        // FIX: Use j directly when k=0 (base case)
+                        const int p = (sub_len == 1) ? j : ((j * k) % N_stage);
                         const int idxN = (p * stride) % fft_config->n_fft;
-                        fft_config->twiddle_factors[offset + base + (j - 1)] = fft_config->twiddles[idxN];
+                        fft_config->twiddle_factors[offset + base + (j - 1)] =
+                            fft_config->twiddles[idxN];
                     }
                 }
             }
 
-            offset += (radix - 1) * sub_len; // Move this OUTSIDE the k loop
+            offset += (radix - 1) * sub_len;
         }
 
         if (offset != twiddle_factors_size)
@@ -1104,7 +1176,6 @@ fft_object fft_init(int signal_length, int transform_direction)
 
     return fft_config;
 }
-
 
 static void mixed_radix_dit_rec(
     fft_data *output_buffer,
@@ -1228,19 +1299,18 @@ static void mixed_radix_dit_rec(
     //==========================================================================
     // 7) PREPARE TWIDDLES IF NOT PRECOMPUTED
     //==========================================================================
-   if (twiddle_in_scratch)
+    if (twiddle_in_scratch)
     {
         const int nfft = fft_obj->n_fft;
-        const int step = nfft / data_length;  // Global stride for this stage
-        
+        const int step = nfft / data_length;
+
         for (int k = 0; k < sub_len; ++k)
         {
             const int base = (radix - 1) * k;
             for (int j = 1; j < radix; ++j)
             {
-                // Correct exponent: j*k mod (current stage length)
-                const int stage_length = data_length;  // Current stage's full length
-                const int e_local = (j * k) % stage_length;
+                // FIX: Use j directly when sub_len=1 (base case)
+                const int e_local = (sub_len == 1) ? j : ((j * k) % data_length);
                 const int idxN = (e_local * step) % nfft;
                 stage_tw[base + (j - 1)] = fft_obj->twiddles[idxN];
             }
@@ -1268,19 +1338,19 @@ static void mixed_radix_dit_rec(
     }
     else if (radix == 7)
     {
-       fft_radix7_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix7_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
     }
     else if (radix == 8)
     {
-       fft_radix8_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix8_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
     }
     else if (radix == 11)
     {
-       fft_radix11_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix11_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
     }
     else if (radix == 13)
     {
-       fft_radix13_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix13_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
     }
     else if (radix == 16)
     {
@@ -1665,45 +1735,44 @@ static void mixed_radix_dit_rec(
     }
 }
 
-
 /**
  * @brief Generate Bluestein chirp sequences for arbitrary signal length
- * 
+ *
  * Bluestein's algorithm requires two chirp sequences to transform the DFT
  * into a convolution that can be computed efficiently:
- * 
+ *
  * MATHEMATICAL BACKGROUND:
  * ------------------------
  * The DFT formula X[k] = Σ x[n]·exp(-2πi·kn/N) can be rewritten using:
  *   k·n = (k² + n² - (k-n)²) / 2
- * 
+ *
  * This gives: X[k] = exp(-πi·k²/N) · Σ[x[n]·exp(-πi·n²/N)·exp(πi·(k-n)²/N)]
- * 
+ *
  * The sum is now a convolution! We compute:
  *   1. chirp_out[n] = exp(+πi·n²/N)  - Forward chirp (length N)
  *   2. temp_scratch  = exp(+πi·m²/N)  - Convolution kernel (length M, mirrored)
- * 
+ *
  * The actual DFT is recovered by:
  *   - Multiply input by conj(chirp_out)
  *   - Convolve with kernel
  *   - Multiply result by conj(chirp_out)
- * 
+ *
  * OPTIMIZATION STRATEGY:
  * ----------------------
  * - Use precomputed chirps for N ∈ {1,2,3,4,5,7,15,20,31,64} (fast path)
  * - Dynamic computation for arbitrary N (uses incremental angle update)
  * - Direct i² computation for numerical stability
- * 
+ *
  * @param[out] temp_scratch Convolution kernel buffer (length M)
  *                          Layout: b[0]=1, b[1..N-1]=conj(chirp), b[M-N+1..M-1]=conj(chirp) mirrored
  *                          Zeroed elsewhere for padding
- * 
+ *
  * @param[out] chirp_out    Forward chirp sequence (length N)
  *                          Values: exp(+πi·n²/N) for n=0..N-1
- * 
+ *
  * @param[in]  N            Signal length (arbitrary positive integer)
  * @param[in]  M            Padded length for convolution (M ≥ 2N-1, typically next power of 2)
- * 
+ *
  * @note NUMERICAL PRECISION:
  *       - Incremental method: Accumulates angle using (n+1)² - n² = 2n+1
  *         Advantage: Fast (no multiply per iteration)
@@ -1712,48 +1781,52 @@ static void mixed_radix_dit_rec(
  *         Advantage: No accumulation error (always accurate)
  *         Drawback: One extra multiply per iteration
  *       We use incremental for speed since Bluestein is for small/medium N
- * 
+ *
  * @warning MEMORY REQUIREMENTS:
  *          - chirp_out: N complex values (16N bytes)
  *          - temp_scratch: M complex values (16M bytes)
  *          Both must be pre-allocated by caller
- * 
+ *
  * @warning THREAD SAFETY:
  *          - Precomputed table access is read-only (thread-safe)
  *          - Dynamic computation writes only to provided buffers (thread-safe)
  *          - Safe to call from multiple threads with different buffers
  */
-static inline void bluestein_exp(fft_data *temp_scratch, fft_data *chirp_out, 
-                                  int N, int M)
+static inline void bluestein_exp(fft_data *temp_scratch, fft_data *chirp_out,
+                                 int N, int M)
 {
-    if (N <= 0 || M < 2*N - 1) {
+    if (N <= 0 || M < 2 * N - 1)
+    {
         fprintf(stderr, "Error: Invalid Bluestein parameters N=%d, M=%d\n", N, M);
         return;
     }
-    
+
     //==========================================================================
     // STEP 1: Generate forward chirp sequence chirp_out[n] = exp(+πi·n²/N)
     //==========================================================================
-    
+
     // Try precomputed table first (fast path for common sizes)
     const int pre_idx = find_chirp_index(N);
-    
-    if (pre_idx >= 0 && chirp_initialized) {
+
+    if (pre_idx >= 0 && chirp_initialized)
+    {
         // Fast path: Copy from precomputed table
         memcpy(chirp_out, bluestein_chirp[pre_idx], (size_t)N * sizeof(fft_data));
-    } 
-    else {
+    }
+    else
+    {
         // Slow path: Dynamic computation for arbitrary N
         const double theta = M_PI / (double)N;
         const int len2 = 2 * N;
-        
+
         // Use incremental angle computation: (n+1)² = n² + 2n + 1
         // Maintains i² mod 2N to avoid overflow for large N
         int i_sq_mod = 0;
-        
-        for (int n = 0; n < N; n++) {
+
+        for (int n = 0; n < N; n++)
+        {
             const double angle = theta * (double)i_sq_mod;
-            
+
             // High-precision sin/cos
 #ifdef __GNUC__
             sincos(angle, &chirp_out[n].im, &chirp_out[n].re);
@@ -1761,44 +1834,46 @@ static inline void bluestein_exp(fft_data *temp_scratch, fft_data *chirp_out,
             chirp_out[n].re = cos(angle);
             chirp_out[n].im = sin(angle);
 #endif
-            
+
             // Incremental update: (n+1)² - n² = 2n + 1
-            i_sq_mod += 2*n + 1;
-            if (i_sq_mod >= len2) {
+            i_sq_mod += 2 * n + 1;
+            if (i_sq_mod >= len2)
+            {
                 i_sq_mod -= len2; // Keep in range [0, 2N)
             }
         }
     }
-    
+
     //==========================================================================
     // STEP 2: Build convolution kernel temp_scratch (length M, mirrored)
     //==========================================================================
-    // 
+    //
     // The kernel b needs to be:
     //   b[0] = 1
     //   b[n] = conj(chirp_out[n]) for n=1..N-1
     //   b[M-n] = conj(chirp_out[n]) for n=1..N-1 (mirrored symmetry)
     //   b[k] = 0 elsewhere (zero-padding)
-    // 
+    //
     // This creates a symmetric kernel for circular convolution
     //==========================================================================
-    
+
     // Zero the entire buffer first
     memset(temp_scratch, 0, (size_t)M * sizeof(fft_data));
-    
+
     // Set DC component
     temp_scratch[0].re = 1.0;
     temp_scratch[0].im = 0.0;
-    
+
     // Fill symmetric positions with conjugated chirp
     // Conjugate: exp(+πi·n²/N)* = exp(-πi·n²/N)
-    for (int n = 1; n < N; n++) {
+    for (int n = 1; n < N; n++)
+    {
         fft_data z;
         z.re = chirp_out[n].re;
-        z.im = -chirp_out[n].im;  // Conjugate
-        
-        temp_scratch[n] = z;      // Forward positions
-        temp_scratch[M - n] = z;  // Mirrored positions (wrap-around)
+        z.im = -chirp_out[n].im; // Conjugate
+
+        temp_scratch[n] = z;     // Forward positions
+        temp_scratch[M - n] = z; // Mirrored positions (wrap-around)
     }
 }
 
@@ -2161,7 +2236,6 @@ void fft_exec(fft_object fft_obj, fft_data *inp, fft_data *oup)
         // Why n_fft? It’s the actual transform size (N for mixed-radix)
         mixed_radix_dit_rec(oup, inp, fft_obj, fft_obj->sgn,
                             fft_obj->n_fft, stride, factor_index, scratch_offset);
-                            
     }
     else if (fft_obj->lt == 1)
     {
