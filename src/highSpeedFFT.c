@@ -290,12 +290,6 @@ int get_fft_execution_radices(int number, int *radices, int *prime_factors, int 
     int index = 0;
     int temp_n = number;
 
-    if (number == 15) {
-    radices[0] = 3;
-    radices[1] = 5;
-    return 2;
-}
-
     // Count how many times each prime appears
     int count_2 = 0, count_3 = 0, count_5 = 0, count_7 = 0;
     for (int i = 0; i < num_prime_factors; i++)
@@ -910,12 +904,7 @@ fft_object fft_init(int signal_length, int transform_direction)
         int execution_radices[32];
         int num_radices = get_fft_execution_radices(signal_length, execution_radices,
                                                     prime_factors, num_prime_factors);
-        printf("FFT N=%d, radices: ", signal_length);
-        for (int i = 0; i < num_radices; i++)
-        {
-            printf("%d ", execution_radices[i]);
-        }
-
+                                                    
         // Check if it's a single radix (all radices are the same)
         is_single_radix = true;
         int first_radix = execution_radices[0];
@@ -1239,18 +1228,20 @@ static void mixed_radix_dit_rec(
     //==========================================================================
     // 7) PREPARE TWIDDLES IF NOT PRECOMPUTED
     //==========================================================================
-    if (twiddle_in_scratch)
+   if (twiddle_in_scratch)
     {
         const int nfft = fft_obj->n_fft;
-        const int step = nfft / data_length;
-
+        const int step = nfft / data_length;  // Global stride for this stage
+        
         for (int k = 0; k < sub_len; ++k)
         {
             const int base = (radix - 1) * k;
             for (int j = 1; j < radix; ++j)
             {
-                const int p = (j * k) % data_length;
-                const int idxN = (p * step) % nfft;
+                // Correct exponent: j*k mod (current stage length)
+                const int stage_length = data_length;  // Current stage's full length
+                const int e_local = (j * k) % stage_length;
+                const int idxN = (e_local * step) % nfft;
                 stage_tw[base + (j - 1)] = fft_obj->twiddles[idxN];
             }
         }
@@ -2184,13 +2175,6 @@ void fft_exec(fft_object fft_obj, fft_data *inp, fft_data *oup)
         // This shouldn’t happen unless fft_init is broken
         fprintf(stderr, "Error: Invalid FFT object type (lt = %d)\n", fft_obj->lt);
         // exit
-    }
-
-    if (fft_obj->sgn == -1 && fft_obj->n_input == 15)
-    {
-        fft_data temp = oup[9];
-        oup[9] = oup[14];
-        oup[14] = temp;
     }
 }
 

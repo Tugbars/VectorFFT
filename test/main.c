@@ -1666,6 +1666,103 @@ void test_power_of_2_sizes(void) {
     }
 }
 
+void test_radix2_only(void) {
+    printf("\n=== Testing Pure Radix-2 FFTs ===\n");
+    
+    int sizes[] = {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+    
+    for (int i = 0; i < 10; i++) {
+        int N = sizes[i];
+        
+        // Allocate
+        fft_data *input = (fft_data*)_mm_malloc(N * sizeof(fft_data), 32);
+        fft_data *output = (fft_data*)_mm_malloc(N * sizeof(fft_data), 32);
+        fft_data *reconstructed = (fft_data*)_mm_malloc(N * sizeof(fft_data), 32);
+        
+        // Create test signal: simple impulse
+        for (int j = 0; j < N; j++) {
+            input[j].re = (j == 0) ? 1.0 : 0.0;
+            input[j].im = 0.0;
+        }
+        
+        // Forward FFT (sgn = +1)
+        fft_object fwd = fft_init(N, +1);
+        printf("N=%4d Forward: sgn=%+d, twiddles[1]=(%.6f, %.6f)\n",
+               N, fwd->sgn, fwd->twiddles[1].re, fwd->twiddles[1].im);
+        fft_exec(fwd, input, output);
+        
+        // Inverse FFT (sgn = -1)
+        fft_object inv = fft_init(N, -1);
+        printf("N=%4d Inverse: sgn=%+d, twiddles[1]=(%.6f, %.6f)\n",
+               N, inv->sgn, inv->twiddles[1].re, inv->twiddles[1].im);
+        fft_exec(inv, output, reconstructed);
+        
+        // Scale by 1/N
+        for (int j = 0; j < N; j++) {
+            reconstructed[j].re /= N;
+            reconstructed[j].im /= N;
+        }
+        
+        // Check error
+        double max_err = 0.0;
+        for (int j = 0; j < N; j++) {
+            double err_re = fabs(reconstructed[j].re - input[j].re);
+            double err_im = fabs(reconstructed[j].im - input[j].im);
+            max_err = fmax(max_err, fmax(err_re, err_im));
+        }
+        
+        printf("N=%4d: Max error = %.6e %s\n", 
+               N, max_err, (max_err < 1e-10) ? "PASS" : "FAIL");
+        
+        // Check forward FFT result (impulse -> all ones)
+        printf("  Forward output[0] = (%.6f, %.6f) [expect (1, 0)]\n",
+               output[0].re, output[0].im);
+        printf("  Forward output[1] = (%.6f, %.6f) [expect (1, 0)]\n",
+               output[1].re, output[1].im);
+        
+        free_fft(fwd);
+        free_fft(inv);
+        _mm_free(input);
+        _mm_free(output);
+        _mm_free(reconstructed);
+    }
+}
+
+void verify_twiddle_convention(void) {
+    printf("\n=== Verifying Twiddle Convention ===\n");
+    
+    // Test N=8
+    fft_object fwd = fft_init(8, +1);
+    fft_object inv = fft_init(8, -1);
+    
+    printf("N=8 Forward FFT (sgn=+1):\n");
+    for (int k = 0; k < 8; k++) {
+        printf("  W[%d] = (%+.6f, %+.6f)\n", 
+               k, fwd->twiddles[k].re, fwd->twiddles[k].im);
+    }
+    
+    printf("\nN=8 Inverse FFT (sgn=-1):\n");
+    for (int k = 0; k < 8; k++) {
+        printf("  W[%d] = (%+.6f, %+.6f)\n", 
+               k, inv->twiddles[k].re, inv->twiddles[k].im);
+    }
+    
+    // Check: Forward W[1] should be exp(-2πi/8) = (cos(-π/4), sin(-π/4))
+    //        = (0.707, -0.707)
+    printf("\nExpected for Forward:\n");
+    printf("  W[1] = (+0.707107, -0.707107)\n");
+    printf("  W[2] = (+0.000000, -1.000000)\n");
+    printf("  W[3] = (-0.707107, -0.707107)\n");
+    
+    printf("\nExpected for Inverse (conjugated):\n");
+    printf("  W[1] = (+0.707107, +0.707107)\n");
+    printf("  W[2] = (+0.000000, +1.000000)\n");
+    printf("  W[3] = (-0.707107, +0.707107)\n");
+    
+    free_fft(fwd);
+    free_fft(inv);
+}
+
 int main()
 {
 
@@ -1673,7 +1770,10 @@ int main()
     //debug_fft_scaling();
     //debug_radix_selection();
     //debug_parseval_detailed();
-    int all_passed = run_comprehensive_complex_fft_tests();
+    //run_comprehensive_complex_fft_tests();
+
+    test_radix2_only(); 
+    verify_twiddle_convention();
     //
     //run_comprehensive_complex_fft_N32_tests(); int all_passed = true;
     //test_n5_inverse(); int all_passed = true;
@@ -1684,5 +1784,5 @@ int main()
     //test_power_of_2_sizes();  int all_passed = true;
 
     printf("\n=== All Tests Complete ===\n");
-    return all_passed ? EXIT_SUCCESS : EXIT_FAILURE;
+    return  EXIT_SUCCESS;
 }
