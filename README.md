@@ -8,7 +8,7 @@
 
 * **Mixed-Radix DIT** for lengths factorable into small primes (2, 3, 4, 5, 7, 8, 11, 13, …)
 
-  * *Radix-3, 5, 11* now with fully tested AVX2 + SSE2 + scalar codepaths
+  * *Radix-2, 3, 4, 5, 7, 8, 11, 13, 16, 32 now with fully tested AVX2 + SSE2 + scalar codepaths
 
     * Vector core processes 4 points per iteration
     * SSE2 tails handle 1–2 leftover samples
