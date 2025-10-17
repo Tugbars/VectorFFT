@@ -913,9 +913,9 @@ static void build_twiddles_linear(fft_data *tw, int N)
     }
 }
 
+
 fft_object fft_init(int signal_length, int transform_direction)
 {
-
     // Step 1: Validate inputs
     if (signal_length <= 0 || (transform_direction != 1 && transform_direction != -1))
     {
@@ -931,22 +931,77 @@ fft_object fft_init(int signal_length, int transform_direction)
         fprintf(stderr, "Error: Failed to allocate fft_set structure\n");
         return NULL;
     }
+
+    // Initialize to safe defaults
+    fft_config->twiddles = NULL;
+    fft_config->scratch = NULL;
+    fft_config->twiddle_factors = NULL;
     fft_config->num_precomputed_stages = 0;
 
-    // Step 3: Initialize algorithm flags
+    // Step 3: Check if signal length is factorable
     int is_factorable = dividebyN(signal_length);
-    int twiddle_count = 0, max_scratch_size = 0, max_padded_length = 0;
-    int twiddle_factors_size = 0;
-    int scratch_needed = 0;
+    int max_scratch_size = 0;
+    int max_padded_length = 0;
 
-    // Step 4: Set up buffer sizes
+    // Step 4: Set up buffer sizes and factorization
     if (is_factorable)
     {
+        //======================================================================
+        // FACTORABLE FFT PATH (mixed-radix)
+        //======================================================================
+        
         max_padded_length = signal_length;
-        twiddle_count = signal_length;
+
+        // Get prime factorization
+        int prime_factors[32];
+        int num_prime_factors = factors(signal_length, prime_factors);
+
+        if (num_prime_factors == 0)
+        {
+            fprintf(stderr, "Error: Failed to factorize N=%d\n", signal_length);
+            free(fft_config);
+            return NULL;
+        }
+
+        // Determine execution radices (optimized: prefer radix-32, 16, 8, 4)
+        int execution_radices[32];
+        int num_radices = get_fft_execution_radices(signal_length, execution_radices,
+                                                    prime_factors, num_prime_factors);
+
+        // Store execution plan
+        fft_config->lf = num_radices;
+        memcpy(fft_config->factors, execution_radices, num_radices * sizeof(int));
+
+        // Compute scratch size for recursive mixed-radix FFT
+        // Each stage needs radix * sub_len space for child outputs
+        int temp_N = signal_length;
+        int scratch_needed = 0;
+
+        for (int i = 0; i < num_radices; i++)
+        {
+            int radix = execution_radices[i];
+            int sub_len = temp_N / radix;
+            
+            // This stage needs: radix * sub_len for child outputs
+            scratch_needed += radix * sub_len;
+            
+            temp_N = sub_len; // Next stage size
+        }
+
+        // Add safety margin (general radix fallback may need more)
+        max_scratch_size = scratch_needed;
+        if (max_scratch_size < 4 * signal_length)
+        {
+            max_scratch_size = 4 * signal_length;
+        }
     }
     else
     {
+        //======================================================================
+        // NON-FACTORABLE FFT PATH (Bluestein)
+        //======================================================================
+        
+        // Pad to next power of 2: M >= 2N-1
         int want = 2 * signal_length - 1;
         unsigned v = (unsigned)want;
         v--;
@@ -957,215 +1012,65 @@ fft_object fft_init(int signal_length, int transform_direction)
         v |= v >> 16;
         v++;
         max_padded_length = (int)v;
-        twiddle_count = max_padded_length;
-    }
 
-    // Step 5: Compute memory requirements and determine execution plan
-    bool is_single_radix = false;
-    int single_radix = 0;
-
-    if (is_factorable)
-    {
-        // Get prime factorization
-        int prime_factors[32];
-        int num_prime_factors = factors(signal_length, prime_factors);
-
-        // Determine execution radices (optimized for performance)
-        int execution_radices[32];
-        int num_radices = get_fft_execution_radices(signal_length, execution_radices,
-                                                    prime_factors, num_prime_factors);
-
-        // Check if it's a single radix (all radices are the same)
-        is_single_radix = true;
-        int first_radix = execution_radices[0];
-        for (int i = 1; i < num_radices; i++)
-        {
-            if (execution_radices[i] != first_radix)
-            {
-                is_single_radix = false;
-                break;
-            }
-        }
-
-        if (is_single_radix)
-        {
-            single_radix = first_radix;
-        }
-
-        int temp_N = signal_length;
-
-        if (is_single_radix && num_radices > 0)
-        {
-            // Single radix optimization
-            int radix = first_radix;
-            int stage = 0;
-
-            for (int n = signal_length; n >= radix; n /= radix)
-            {
-                int sub_fft_size = n / radix;
-
-                if (stage < MAX_STAGES)
-                {
-                    fft_config->stage_twiddle_offset[stage++] = twiddle_factors_size;
-                }
-                else
-                {
-                    fprintf(stderr, "Error: Exceeded MAX_STAGES (%d) for N=%d, radix=%d\n",
-                            MAX_STAGES, signal_length, radix);
-                    free(fft_config);
-                    return NULL;
-                }
-
-                twiddle_factors_size += (radix - 1) * sub_fft_size;
-                scratch_needed += radix * sub_fft_size;
-            }
-            fft_config->num_precomputed_stages = stage;
-        }
-        else
-        {
-            // Mixed-radix FFT
-            for (int i = 0; i < num_radices; i++)
-            {
-                int radix = execution_radices[i];
-                scratch_needed += radix * (temp_N / radix);
-
-                // Support all radices up to 32
-                if (radix <= 32)
-                {
-                    scratch_needed += (radix - 1) * (temp_N / radix);
-                }
-                temp_N /= radix;
-            }
-        }
-
-        // Store the execution radices in the factors array (for use in fft_exec)
-        fft_config->lf = num_radices;
-        memcpy(fft_config->factors, execution_radices, num_radices * sizeof(int));
-
-        max_scratch_size = scratch_needed;
-        if (max_scratch_size < 4 * signal_length)
-        {
-            max_scratch_size = 4 * signal_length;
-        }
-    }
-    else
-    {
-        // Non-factorable: use Bluestein's algorithm
+        // Bluestein needs scratch space for convolution: 4*M
         max_scratch_size = 4 * max_padded_length;
 
-        // For Bluestein, we need the factorization of the padded length
+        // Factorize the padded length (for internal FFTs)
         fft_config->lf = factors(max_padded_length, fft_config->factors);
     }
 
-    // Step 6: Allocate twiddle and scratch buffers
-    fft_config->twiddles = (fft_data *)_mm_malloc(twiddle_count * sizeof(fft_data), 32);
-    fft_config->scratch = (fft_data *)_mm_malloc(max_scratch_size * sizeof(fft_data), 32);
-    fft_config->twiddle_factors = NULL;
+    // Step 5: Allocate twiddles (ONLY for Bluestein)
+    int twiddle_count = is_factorable ? 0 : max_padded_length;
 
-    if (!fft_config->twiddles || !fft_config->scratch)
+    if (twiddle_count > 0)
     {
-        fprintf(stderr, "Error: Failed to allocate twiddle or scratch buffers\n");
-        free_fft(fft_config);
-        return NULL;
-    }
-
-    // Step 7: Allocate twiddle_factors for single-radix FFTs
-    if (is_factorable && is_single_radix && twiddle_factors_size > 0)
-    {
-        fft_config->twiddle_factors =
-            (fft_data *)_mm_malloc(twiddle_factors_size * sizeof(fft_data), 32);
-        if (!fft_config->twiddle_factors)
+        fft_config->twiddles = (fft_data *)_mm_malloc(twiddle_count * sizeof(fft_data), 32);
+        if (!fft_config->twiddles)
         {
-            fprintf(stderr, "Error: Failed to allocate twiddle_factors buffer\n");
-            _mm_free(fft_config->twiddles);
-            _mm_free(fft_config->scratch);
+            fprintf(stderr, "Error: Failed to allocate twiddle buffer (%d elements)\n", 
+                    twiddle_count);
             free(fft_config);
             return NULL;
         }
     }
 
-    // Step 8: Fill FFT config
+    // Step 6: Allocate scratch buffer
+    fft_config->scratch = (fft_data *)_mm_malloc(max_scratch_size * sizeof(fft_data), 32);
+    if (!fft_config->scratch)
+    {
+        fprintf(stderr, "Error: Failed to allocate scratch buffer (%d elements)\n", 
+                max_scratch_size);
+        if (fft_config->twiddles)
+            _mm_free(fft_config->twiddles);
+        free(fft_config);
+        return NULL;
+    }
+
+    // Step 7: Fill FFT config
     fft_config->n_input = signal_length;
     fft_config->n_fft = is_factorable ? signal_length : max_padded_length;
     fft_config->sgn = transform_direction;
     fft_config->max_scratch_size = max_scratch_size;
     fft_config->lt = is_factorable ? 0 : 1;
 
-    // Step 10: Compute twiddle factors
-    build_twiddles_linear(fft_config->twiddles, fft_config->n_fft);
-
-    // Step 11: Populate twiddle_factors for single-radix FFTs
-    // Step 11: Populate twiddle_factors for single-radix FFTs
-    if (fft_config->twiddle_factors && is_single_radix)
+    // Step 8: Compute twiddle factors ONLY for Bluestein
+    if (!is_factorable)
     {
-        int offset = 0;
-        int radix = single_radix;
+        build_twiddles_linear(fft_config->twiddles, fft_config->n_fft);
 
-        for (int N_stage = signal_length; N_stage >= radix; N_stage /= radix)
+        // Adjust twiddles for inverse FFT
+        if (transform_direction == -1)
         {
-            const int sub_len = N_stage / radix;
-            const int stride = fft_config->n_fft / N_stage;
-
-            for (int k = 0; k < sub_len; ++k)
+            for (int i = 0; i < twiddle_count; i++)
             {
-                const int base = (radix - 1) * k;
-
-                if (radix == 7)
-                {
-                    // Special case for Good-Thomas radix-7
-                    for (int j = 1; j <= 6; ++j)
-                    {
-                        const int p = (j * k) % N_stage;
-                        const int idxN = (p * stride) % fft_config->n_fft;
-                        fft_config->twiddle_factors[offset + base + (j - 1)] =
-                            fft_config->twiddles[idxN];
-                    }
-                }
-                else
-                {
-                    // Standard DIT
-                    for (int j = 1; j < radix; ++j)
-                    {
-                        // FIX: Use j directly when k=0 (base case)
-                        const int p = (sub_len == 1) ? j : ((j * k) % N_stage);
-                        const int idxN = (p * stride) % fft_config->n_fft;
-                        fft_config->twiddle_factors[offset + base + (j - 1)] =
-                            fft_config->twiddles[idxN];
-                    }
-                }
-            }
-
-            offset += (radix - 1) * sub_len;
-        }
-
-        if (offset != twiddle_factors_size)
-        {
-            fprintf(stderr, "Error: Twiddle offset mismatch: computed %d, expected %d\n",
-                    offset, twiddle_factors_size);
-            free_fft(fft_config);
-            return NULL;
-        }
-    }
-
-    // Step 12: Adjust twiddles for inverse FFT
-    if (transform_direction == -1)
-    {
-        for (int i = 0; i < twiddle_count; i++)
-        {
-            fft_config->twiddles[i].im = -fft_config->twiddles[i].im;
-        }
-
-        if (fft_config->twiddle_factors)
-        {
-            for (int i = 0; i < twiddle_factors_size; i++)
-            {
-                fft_config->twiddle_factors[i].im = -fft_config->twiddle_factors[i].im;
+                fft_config->twiddles[i].im = -fft_config->twiddles[i].im;
             }
         }
     }
 
 #ifdef FFT_ENABLE_PREFETCH
-    // Step 13: Initialize prefetch system
+    // Step 9: Initialize prefetch system (if enabled)
     static int cache_detected = 0;
     if (!cache_detected)
     {
@@ -1176,6 +1081,10 @@ fft_object fft_init(int signal_length, int transform_direction)
 
     return fft_config;
 }
+
+// ============================================================================
+// FIXED: mixed_radix_dit_rec - Remove stage_tw preparation
+// ============================================================================
 
 static void mixed_radix_dit_rec(
     fft_data *output_buffer,
@@ -1192,8 +1101,7 @@ static void mixed_radix_dit_rec(
     //==========================================================================
     if (data_length <= 0 || stride <= 0 || factor_index < 0)
     {
-        fprintf(stderr,
-                "Error: Invalid params - N=%d, stride=%d, factor_idx=%d\n",
+        fprintf(stderr, "Error: Invalid params - N=%d, stride=%d, factor_idx=%d\n",
                 data_length, stride, factor_index);
         return;
     }
@@ -1219,7 +1127,6 @@ static void mixed_radix_dit_rec(
 
     const int radix = fft_obj->factors[factor_index];
 
-    // FIX: Validate radix is appropriate for this data_length
     if (radix <= 1 || (data_length % radix) != 0)
     {
         fprintf(stderr, "Error: Invalid radix=%d for N=%d at factor_idx=%d\n",
@@ -1227,218 +1134,148 @@ static void mixed_radix_dit_rec(
         return;
     }
 
-    const int sub_len = data_length / radix; // child FFT size
-    const int next_stride = stride * radix;  // stride for children
+    const int sub_len = data_length / radix;
+    const int next_stride = stride * radix;
 
     //==========================================================================
     // 3) SCRATCH PLANNING FOR THIS STAGE
-    //
-    // Layout in scratch[scratch_offset..]:
-    //   - sub_outputs[radix * sub_len]: child FFT outputs (lane-major)
-    //   - stage_tw[(radix-1) * sub_len]: twiddles if not precomputed (k-major)
-    //
-    // Child scratch starts AFTER this stage's frame (serial recursion).
     //==========================================================================
     fft_data *sub_outputs = fft_obj->scratch + scratch_offset;
-
     const int stage_outputs_size = radix * sub_len;
-    const int stage_tw_size = (radix - 1) * sub_len;
 
     int need_this_stage = stage_outputs_size;
-    int twiddle_in_scratch = 0;
-    fft_data *stage_tw = NULL;
 
-    // Check if we have precomputed twiddles for this stage
-    if (fft_obj->twiddle_factors != NULL &&
-        factor_index < fft_obj->num_precomputed_stages)
+    if (scratch_offset + need_this_stage > fft_obj->max_scratch_size)
     {
-        // Use precomputed table (k-major layout)
-        stage_tw = fft_obj->twiddle_factors +
-                   fft_obj->stage_twiddle_offset[factor_index];
-    }
-    else
-    {
-        // Generate twiddles dynamically into scratch
-        twiddle_in_scratch = 1;
-        need_this_stage += stage_tw_size;
-
-        if (scratch_offset + need_this_stage > fft_obj->max_scratch_size)
-        {
-            fprintf(stderr,
-                    "Error: Scratch overflow at radix=%d, N=%d. "
-                    "Need %d, have %d (offset=%d)\n",
-                    radix, data_length, need_this_stage,
-                    fft_obj->max_scratch_size - scratch_offset, scratch_offset);
-            return;
-        }
-
-        stage_tw = sub_outputs + stage_outputs_size;
+        fprintf(stderr, "Error: Scratch overflow at radix=%d, N=%d\n", radix, data_length);
+        return;
     }
 
     const int child_scratch_base = scratch_offset + need_this_stage;
 
     //==========================================================================
-    // 6) RECURSE INTO RADIX CHILDREN (serial execution, shared child scratch)
-    //
-    // All children share child_scratch_base since they execute serially
+    // 4) RECURSE INTO RADIX CHILDREN
     //==========================================================================
     for (int i = 0; i < radix; ++i)
     {
         mixed_radix_dit_rec(
-            sub_outputs + i * sub_len, // lane i destination
-            input_buffer + i * stride, // lane i source (strided)
+            sub_outputs + i * sub_len,
+            input_buffer + i * stride,
             fft_obj,
             transform_sign,
             sub_len,
             next_stride,
             factor_index + 1,
-            child_scratch_base // ← All children share this offset
-        );
+            child_scratch_base);
     }
 
     //==========================================================================
-    // 7) PREPARE TWIDDLES IF NOT PRECOMPUTED
-    //==========================================================================
-    if (twiddle_in_scratch)
-    {
-        const int nfft = fft_obj->n_fft;
-        const int step = nfft / data_length;
-
-        for (int k = 0; k < sub_len; ++k)
-        {
-            const int base = (radix - 1) * k;
-            for (int j = 1; j < radix; ++j)
-            {
-                // FIX: Use j directly when sub_len=1 (base case)
-                const int e_local = (sub_len == 1) ? j : ((j * k) % data_length);
-                const int idxN = (e_local * step) % nfft;
-                stage_tw[base + (j - 1)] = fft_obj->twiddles[idxN];
-            }
-        }
-    }
-
-    //==========================================================================
-    // 8) RADIX DISPATCH
+    // 5) RADIX DISPATCH (NO stage_tw needed - computed on-the-fly)
     //==========================================================================
     if (radix == 2)
     {
-        fft_radix2_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        // Radix-2 computes its own twiddles
+        fft_radix2_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
     else if (radix == 3)
     {
-        fft_radix3_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix3_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
     else if (radix == 4)
     {
-        fft_radix4_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix4_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
     else if (radix == 5)
     {
-        fft_radix5_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix5_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
     else if (radix == 7)
     {
-        fft_radix7_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix7_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
     else if (radix == 8)
     {
-        fft_radix8_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix8_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
     else if (radix == 11)
     {
-        fft_radix11_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix11_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
     else if (radix == 13)
     {
-        fft_radix13_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix13_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
     else if (radix == 16)
     {
-        fft_radix16_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix16_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
-    // Corrected Radix-32 Implementation
     else if (radix == 32)
     {
-        fft_radix32_butterfly(output_buffer, sub_outputs, stage_tw, sub_len, transform_sign);
+        fft_radix32_butterfly(output_buffer, sub_outputs, NULL, sub_len, transform_sign);
     }
     else
     {
-        //==========================================================================
-        // GENERAL RADIX FALLBACK - FIXED SCRATCH MANAGEMENT
-        //==========================================================================
+        //======================================================================
+        // GENERAL RADIX FALLBACK - Self-contained twiddle computation
+        //======================================================================
 
         const int r = radix;
-        const int K = data_length / r; // child FFT length
-        const int next_stride = r * stride;
-        const int nst = r - 1;
+        const int K = data_length / r;
+        const int N = data_length;
 
-        // How much scratch THIS stage needs (sub_outputs [+ stage_tw if not precomp])
-        const int need_this = (fft_obj->twiddle_factors &&
-                               factor_index < fft_obj->num_precomputed_stages)
-                                  ? (r * K)
-                                  : (r * K + nst * K);
+        // Base twiddles: W_N^j for j=1..(r-1)
+        const double base_angle = -2.0 * M_PI / N * transform_sign;
+        fft_data W_base[63] __attribute__((aligned(32)));
 
-        if (scratch_offset + need_this > fft_obj->max_scratch_size)
-            return; // or handle error
+#ifdef __AVX2__
+#ifdef __GNUC__
+        sincos(base_angle, &W_base[0].im, &W_base[0].re);
+#else
+        W_base[0].re = cos(base_angle);
+        W_base[0].im = sin(base_angle);
+#endif
 
-        fft_data *sub_outputs = fft_obj->scratch + scratch_offset;
-        fft_data *stage_tw = NULL;
+        W_base[1].re = W_base[0].re * W_base[0].re - W_base[0].im * W_base[0].im;
+        W_base[1].im = 2.0 * W_base[0].re * W_base[0].im;
 
-        const int have_precomp =
-            (fft_obj->twiddle_factors && factor_index < fft_obj->num_precomputed_stages);
+        __m256d w_base0 = _mm256_setr_pd(W_base[0].re, W_base[0].im,
+                                         W_base[0].re, W_base[0].im);
 
-        if (have_precomp)
+        for (int j = 2; j < r - 1; j += 2)
         {
-            stage_tw = fft_obj->twiddle_factors + fft_obj->stage_twiddle_offset[factor_index];
-        }
-        else
-        {
-            stage_tw = sub_outputs + r * K; // twiddles live after sub_outputs in scratch
-        }
-
-        // ---- Child recursion gets its OWN scratch above this stage's block ----
-        const int stage_scratch = need_this;
-        const int child_scratch_offset = scratch_offset + stage_scratch;
-
-        for (int j = 0; j < r; ++j)
-        {
-            mixed_radix_dit_rec(
-                /* child writes its final outputs here: */ sub_outputs + j * K,
-                /* child reads from: */ input_buffer + j * stride,
-                fft_obj, transform_sign,
-                /* child length: */ K,
-                /* child stride: */ next_stride,
-                /* next factor idx: */ factor_index + 1,
-                /* child's own scratch: */ child_scratch_offset);
+            __m256d w_prev = _mm256_loadu_pd(&W_base[j - 2].re);
+            __m256d ar = _mm256_unpacklo_pd(w_prev, w_prev);
+            __m256d ai = _mm256_unpackhi_pd(w_prev, w_prev);
+            __m256d br = _mm256_unpacklo_pd(w_base0, w_base0);
+            __m256d bi = _mm256_unpackhi_pd(w_base0, w_base0);
+            __m256d re = _mm256_fmsub_pd(ar, br, _mm256_mul_pd(ai, bi));
+            __m256d im = _mm256_fmadd_pd(ar, bi, _mm256_mul_pd(ai, br));
+            __m256d result = _mm256_unpacklo_pd(re, im);
+            _mm256_storeu_pd(&W_base[j].re, result);
         }
 
-        // ---- Build per-stage twiddles if not precomputed ----
-        if (!have_precomp)
+        if ((r - 1) % 2 == 1)
         {
-            // Current stage length (what this call is combining):
-            const int N_stage = r * K; // == data_length
-            // Map stage-local exponent to the GLOBAL twiddle table:
-            // stride_tbl = N_global / N_stage
-            const int stride_tbl = fft_obj->n_fft / data_length;
-
-            // Fill layout: for each column k, store (r-1) twiddles [j=1..r-1]
-            for (int k = 0; k < K; ++k)
-            {
-                const int base = nst * k;
-                for (int j = 1; j < r; ++j)
-                {
-                    // local exponent e = (j * k) mod N_stage (DIT Cooley–Tukey)
-                    const int e_local = (j * k) % N_stage;
-                    // global index into twiddle table:
-                    const int idxTbl = (e_local * stride_tbl) % fft_obj->n_fft;
-                    stage_tw[base + (j - 1)] = fft_obj->twiddles[idxTbl];
-                }
-            }
-            // NOTE: No extra sign flip here — fft_obj->twiddles were already
-            // adjusted for forward/inverse in fft_init().
+            int j = r - 2;
+            double re = W_base[j - 1].re * W_base[0].re - W_base[j - 1].im * W_base[0].im;
+            double im = W_base[j - 1].re * W_base[0].im + W_base[j - 1].im * W_base[0].re;
+            W_base[j].re = re;
+            W_base[j].im = im;
         }
+#else
+        for (int j = 1; j < r; j++)
+        {
+            double angle = base_angle * j;
+#ifdef __GNUC__
+            sincos(angle, &W_base[j - 1].im, &W_base[j - 1].re);
+#else
+            W_base[j - 1].re = cos(angle);
+            W_base[j - 1].im = sin(angle);
+#endif
+        }
+#endif
 
-        // Precompute W_r^m for m=0..r-1
+        // DFT kernel twiddles
         fft_data W_r[64];
         for (int m = 0; m < r; ++m)
         {
@@ -1447,61 +1284,71 @@ static void mixed_radix_dit_rec(
             W_r[m].im = -(double)transform_sign * sin(theta);
         }
 
-#ifdef __AVX2__
-        //==========================================================================
-        // AVX2: 4x unrolled with vectorized phase accumulation
-        //==========================================================================
+        // Current twiddles W^k
+        fft_data W_curr[63] __attribute__((aligned(32)));
+        for (int j = 0; j < r - 1; j++)
+        {
+            W_curr[j].re = 1.0;
+            W_curr[j].im = 0.0;
+        }
+
         int k = 0;
 
-        // Main loop: process 4 butterflies at once (k, k+1, k+2, k+3)
+#ifdef __AVX2__
+        // 4x unrolled AVX2 loop
         for (; k + 3 < K; k += 4)
         {
-            // Prefetch
             if (k + 12 < K)
             {
                 for (int j = 0; j < r; ++j)
                 {
                     _mm_prefetch((const char *)&sub_outputs[j * K + k + 12].re, _MM_HINT_T0);
-                    if (j < r - 1)
-                        _mm_prefetch((const char *)&stage_tw[nst * (k + 12) + j].re, _MM_HINT_T0);
                 }
             }
 
-            // Apply stage twiddles to all lanes
-            // T[j][i] holds butterfly i for lane j (i=0,1 in lower/upper halves of __m256d)
-            __m256d T[64][2]; // [lane][pair_index]
+            // Pre-compute twiddles for k, k+1, k+2, k+3
+            fft_data W_k[4][63];
+            for (int kk_idx = 0; kk_idx < 4; kk_idx++)
+            {
+                for (int j = 0; j < r - 1; j++)
+                {
+                    W_k[kk_idx][j] = W_curr[j];
+                }
 
-            // Lane 0: no twiddle
+                for (int j = 0; j < r - 1; j++)
+                {
+                    double re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+                    double im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+                    W_curr[j].re = re;
+                    W_curr[j].im = im;
+                }
+            }
+
+            __m256d T[64][2];
+
             T[0][0] = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
             T[0][1] = load2_aos(&sub_outputs[k + 2], &sub_outputs[k + 3]);
 
-            // Lanes 1..r-1: apply stage twiddles
             for (int j = 1; j < r; ++j)
             {
-                __m256d a0 = load2_aos(&sub_outputs[j * K + k],
-                                       &sub_outputs[j * K + k + 1]);
-                __m256d a1 = load2_aos(&sub_outputs[j * K + k + 2],
-                                       &sub_outputs[j * K + k + 3]);
+                __m256d a0 = load2_aos(&sub_outputs[j * K + k], &sub_outputs[j * K + k + 1]);
+                __m256d a1 = load2_aos(&sub_outputs[j * K + k + 2], &sub_outputs[j * K + k + 3]);
 
-                __m256d w0 = load2_aos(&stage_tw[nst * k + (j - 1)],
-                                       &stage_tw[nst * (k + 1) + (j - 1)]);
-                __m256d w1 = load2_aos(&stage_tw[nst * (k + 2) + (j - 1)],
-                                       &stage_tw[nst * (k + 3) + (j - 1)]);
+                __m256d w0 = _mm256_set_pd(W_k[1][j - 1].im, W_k[1][j - 1].re,
+                                           W_k[0][j - 1].im, W_k[0][j - 1].re);
+                __m256d w1 = _mm256_set_pd(W_k[3][j - 1].im, W_k[3][j - 1].re,
+                                           W_k[2][j - 1].im, W_k[2][j - 1].re);
 
                 T[j][0] = cmul_avx2_aos(a0, w0);
                 T[j][1] = cmul_avx2_aos(a1, w1);
             }
 
-            // Compute outputs for each m
             for (int m = 0; m < r; ++m)
             {
                 __m256d sum0, sum1;
 
                 if (m == 0)
                 {
-                    //==============================================================
-                    // FAST PATH m=0: W_r[0]^j = 1 for all j, just sum
-                    //==============================================================
                     sum0 = T[0][0];
                     sum1 = T[0][1];
                     for (int j = 1; j < r; ++j)
@@ -1512,9 +1359,6 @@ static void mixed_radix_dit_rec(
                 }
                 else if (r % 2 == 0 && m == r / 2)
                 {
-                    //==============================================================
-                    // FAST PATH m=r/2: W_r[r/2] = -1, so alternating signs
-                    //==============================================================
                     sum0 = T[0][0];
                     sum1 = T[0][1];
                     for (int j = 1; j < r; ++j)
@@ -1533,73 +1377,33 @@ static void mixed_radix_dit_rec(
                 }
                 else
                 {
-                    //==============================================================
-                    // GENERAL PATH: Compute phase powers and accumulate
-                    //==============================================================
                     const fft_data step = W_r[m];
-
-                    // Precompute first few powers
-                    fft_data ph = {1.0, 0.0}; // ph^0
+                    fft_data ph = {1.0, 0.0};
 
                     sum0 = T[0][0];
                     sum1 = T[0][1];
 
-                    // Unroll inner loop by 2 for better ILP
-                    int j = 1;
-                    for (; j + 1 < r; j += 2)
-                    {
-                        // ph *= step (for j)
-                        double new_re = ph.re * step.re - ph.im * step.im;
-                        double new_im = ph.re * step.im + ph.im * step.re;
-                        ph.re = new_re;
-                        ph.im = new_im;
-                        __m256d ph_vec1 = _mm256_set_pd(ph.im, ph.re, ph.im, ph.re);
-
-                        // Accumulate j
-                        __m256d term0 = cmul_avx2_aos(T[j][0], ph_vec1);
-                        __m256d term1 = cmul_avx2_aos(T[j][1], ph_vec1);
-                        sum0 = _mm256_add_pd(sum0, term0);
-                        sum1 = _mm256_add_pd(sum1, term1);
-
-                        // ph *= step (for j+1)
-                        new_re = ph.re * step.re - ph.im * step.im;
-                        new_im = ph.re * step.im + ph.im * step.re;
-                        ph.re = new_re;
-                        ph.im = new_im;
-                        __m256d ph_vec2 = _mm256_set_pd(ph.im, ph.re, ph.im, ph.re);
-
-                        // Accumulate j+1
-                        term0 = cmul_avx2_aos(T[j + 1][0], ph_vec2);
-                        term1 = cmul_avx2_aos(T[j + 1][1], ph_vec2);
-                        sum0 = _mm256_add_pd(sum0, term0);
-                        sum1 = _mm256_add_pd(sum1, term1);
-                    }
-
-                    // Handle remaining j (if r-1 is odd)
-                    for (; j < r; ++j)
+                    for (int j = 1; j < r; j++)
                     {
                         double new_re = ph.re * step.re - ph.im * step.im;
                         double new_im = ph.re * step.im + ph.im * step.re;
                         ph.re = new_re;
                         ph.im = new_im;
-                        __m256d ph_vec_final = _mm256_set_pd(ph.im, ph.re, ph.im, ph.re);
 
-                        __m256d term0 = cmul_avx2_aos(T[j][0], ph_vec_final);
-                        __m256d term1 = cmul_avx2_aos(T[j][1], ph_vec_final);
+                        __m256d ph_vec = _mm256_set_pd(ph.im, ph.re, ph.im, ph.re);
+                        __m256d term0 = cmul_avx2_aos(T[j][0], ph_vec);
+                        __m256d term1 = cmul_avx2_aos(T[j][1], ph_vec);
                         sum0 = _mm256_add_pd(sum0, term0);
                         sum1 = _mm256_add_pd(sum1, term1);
                     }
                 }
 
-                // Store results
                 STOREU_PD(&output_buffer[m * K + k].re, sum0);
                 STOREU_PD(&output_buffer[m * K + k + 2].re, sum1);
             }
         }
 
-        //==========================================================================
-        // Cleanup: 2x unrolled
-        //==========================================================================
+        // 2x cleanup
         for (; k + 1 < K; k += 2)
         {
             if (k + 8 < K)
@@ -1608,15 +1412,31 @@ static void mixed_radix_dit_rec(
                     _mm_prefetch((const char *)&sub_outputs[j * K + k + 8].re, _MM_HINT_T0);
             }
 
+            fft_data W_k[2][63];
+            for (int kk_idx = 0; kk_idx < 2; kk_idx++)
+            {
+                for (int j = 0; j < r - 1; j++)
+                {
+                    W_k[kk_idx][j] = W_curr[j];
+                }
+
+                for (int j = 0; j < r - 1; j++)
+                {
+                    double re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+                    double im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+                    W_curr[j].re = re;
+                    W_curr[j].im = im;
+                }
+            }
+
             __m256d T[64];
             T[0] = load2_aos(&sub_outputs[k], &sub_outputs[k + 1]);
 
             for (int j = 1; j < r; ++j)
             {
-                __m256d a = load2_aos(&sub_outputs[j * K + k],
-                                      &sub_outputs[j * K + k + 1]);
-                __m256d w = load2_aos(&stage_tw[nst * k + (j - 1)],
-                                      &stage_tw[nst * (k + 1) + (j - 1)]);
+                __m256d a = load2_aos(&sub_outputs[j * K + k], &sub_outputs[j * K + k + 1]);
+                __m256d w = _mm256_set_pd(W_k[1][j - 1].im, W_k[1][j - 1].re,
+                                          W_k[0][j - 1].im, W_k[0][j - 1].re);
                 T[j] = cmul_avx2_aos(a, w);
             }
 
@@ -1632,8 +1452,7 @@ static void mixed_radix_dit_rec(
                 else if (r % 2 == 0 && m == r / 2)
                 {
                     for (int j = 1; j < r; ++j)
-                        sum = (j % 2 == 1) ? _mm256_sub_pd(sum, T[j])
-                                           : _mm256_add_pd(sum, T[j]);
+                        sum = (j % 2 == 1) ? _mm256_sub_pd(sum, T[j]) : _mm256_add_pd(sum, T[j]);
                 }
                 else
                 {
@@ -1656,30 +1475,28 @@ static void mixed_radix_dit_rec(
                 STOREU_PD(&output_buffer[m * K + k].re, sum);
             }
         }
-#else
-        int k = 0;
 #endif
 
-        //==========================================================================
-        // SCALAR TAIL
-        //==========================================================================
+        // Scalar tail
         for (; k < K; ++k)
         {
-            if (k + 8 < K)
-            {
-                for (int j = 0; j < r; ++j)
-                    _mm_prefetch((const char *)&sub_outputs[j * K + k + 8].re, _MM_HINT_T0);
-            }
-
             fft_data T[64];
             T[0] = sub_outputs[k];
 
             for (int j = 1; j < r; ++j)
             {
                 const fft_data a = sub_outputs[j * K + k];
-                const fft_data w = stage_tw[nst * k + (j - 1)];
+                const fft_data w = W_curr[j - 1];
                 T[j].re = a.re * w.re - a.im * w.im;
                 T[j].im = a.re * w.im + a.im * w.re;
+            }
+
+            for (int j = 0; j < r - 1; j++)
+            {
+                double re = W_curr[j].re * W_base[j].re - W_curr[j].im * W_base[j].im;
+                double im = W_curr[j].re * W_base[j].im + W_curr[j].im * W_base[j].re;
+                W_curr[j].re = re;
+                W_curr[j].im = im;
             }
 
             for (int m = 0; m < r; ++m)

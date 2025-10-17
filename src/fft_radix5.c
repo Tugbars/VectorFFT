@@ -25,13 +25,15 @@ void fft_radix5_butterfly(
     int sub_len,
     int transform_sign)
 {
+
+    
     const int K = sub_len;
     const int N = 5 * K;
 
     //==========================================================================
     // PRECOMPUTE: Base twiddles using vectorized recurrence
     //==========================================================================
-    const double base_angle = -2.0 * M_PI / N * transform_sign;
+    const double base_angle = 2.0 * M_PI / N * transform_sign;
 
     // Base twiddle factors W_N^j for j=1,2,3,4
     fft_data W_base[4] __attribute__((aligned(32)));
@@ -99,6 +101,10 @@ void fft_radix5_butterfly(
 #endif
 
     int k = 0;
+
+        printf("DEBUG: N=%d, transform_sign=%d, base_angle=%.6f\n", 
+       N, transform_sign, base_angle);
+printf("  W_base[0] = %.6f + %.6fi\n", W_base[0].re, W_base[0].im);
 
 #ifdef __AVX2__
     //==========================================================================
