@@ -29,12 +29,48 @@ void fft_radix5_butterfly(
     const int N = 5 * K;
 
     //==========================================================================
-    // PRECOMPUTE: Base twiddles
+    // PRECOMPUTE: Base twiddles using vectorized recurrence
     //==========================================================================
     const double base_angle = -2.0 * M_PI / N * transform_sign;
 
-    // Base twiddle factors W_N^j for j=1,2,3,4 (scalar - only 4 values)
-    fft_data W_base[4];
+    // Base twiddle factors W_N^j for j=1,2,3,4
+    fft_data W_base[4] __attribute__((aligned(32)));
+
+#ifdef __AVX2__
+    // Vectorized W_base computation
+    // Replaces 3 sin/cos calls with 2 vectorized multiplies
+
+#ifdef __GNUC__
+    sincos(base_angle, &W_base[0].im, &W_base[0].re);
+#else
+    W_base[0].re = cos(base_angle);
+    W_base[0].im = sin(base_angle);
+#endif
+
+    __m256d w_base0 = _mm256_setr_pd(W_base[0].re, W_base[0].im,
+                                     W_base[0].re, W_base[0].im);
+
+    // W_base[1] = W_base[0]^2
+    {
+        double re = W_base[0].re * W_base[0].re - W_base[0].im * W_base[0].im;
+        double im = 2.0 * W_base[0].re * W_base[0].im;
+        W_base[1].re = re;
+        W_base[1].im = im;
+    }
+
+    // W_base[2,3] = W_base[0,1] * W_base[0] (vectorized)
+    {
+        __m256d w_prev = _mm256_loadu_pd(&W_base[0].re);
+        __m256d ar = _mm256_unpacklo_pd(w_prev, w_prev);
+        __m256d ai = _mm256_unpackhi_pd(w_prev, w_prev);
+        __m256d br = _mm256_unpacklo_pd(w_base0, w_base0);
+        __m256d bi = _mm256_unpackhi_pd(w_base0, w_base0);
+        __m256d re = _mm256_fmsub_pd(ar, br, _mm256_mul_pd(ai, bi));
+        __m256d im = _mm256_fmadd_pd(ar, bi, _mm256_mul_pd(ai, br));
+        __m256d result = _mm256_unpacklo_pd(re, im);
+        _mm256_storeu_pd(&W_base[2].re, result);
+    }
+#else
     for (int j = 1; j <= 4; j++)
     {
         double angle = base_angle * j;
@@ -45,9 +81,22 @@ void fft_radix5_butterfly(
         W_base[j - 1].im = sin(angle);
 #endif
     }
+#endif
 
     // Current twiddle factors W^k (starts at k=0, W^0=1)
-    fft_data W_curr[4] = {{1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}};
+    fft_data W_curr[4] __attribute__((aligned(32)));
+
+#ifdef __AVX2__
+    __m256d ones = _mm256_setr_pd(1.0, 0.0, 1.0, 0.0);
+    _mm256_storeu_pd(&W_curr[0].re, ones);
+    _mm256_storeu_pd(&W_curr[2].re, ones);
+#else
+    for (int j = 0; j < 4; j++)
+    {
+        W_curr[j].re = 1.0;
+        W_curr[j].im = 0.0;
+    }
+#endif
 
     int k = 0;
 

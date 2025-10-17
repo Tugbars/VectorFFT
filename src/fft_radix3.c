@@ -23,14 +23,34 @@ void fft_radix3_butterfly(
     const int N = 3 * K;
 
     //==========================================================================
-    // PRECOMPUTE: Radix-3 constants and base twiddles
+    // PRECOMPUTE: Base twiddles using vectorized recurrence
     //==========================================================================
     const double C_HALF = -0.5;
     const double S_SQRT3_2 = 0.8660254037844386467618; // sqrt(3)/2
     const double base_angle = -2.0 * M_PI / N * transform_sign;
 
-    // Base twiddle factors W_N^j for j=1,2 (scalar - only 2 values)
-    fft_data W_base[2];
+    // Base twiddle factors W_N^j for j=1,2
+    fft_data W_base[2] __attribute__((aligned(16)));
+
+#ifdef __AVX2__
+    // Vectorized W_base computation
+    // W_base[0] = W_N^1, W_base[1] = W_N^2 = (W_N^1)^2
+
+#ifdef __GNUC__
+    sincos(base_angle, &W_base[0].im, &W_base[0].re);
+#else
+    W_base[0].re = cos(base_angle);
+    W_base[0].im = sin(base_angle);
+#endif
+
+    // W_base[1] = W_base[0]^2 (scalar is fine for just 1 squaring)
+    {
+        double re = W_base[0].re * W_base[0].re - W_base[0].im * W_base[0].im;
+        double im = 2.0 * W_base[0].re * W_base[0].im;
+        W_base[1].re = re;
+        W_base[1].im = im;
+    }
+#else
     for (int j = 1; j <= 2; j++)
     {
         double angle = base_angle * j;
@@ -41,9 +61,14 @@ void fft_radix3_butterfly(
         W_base[j - 1].im = sin(angle);
 #endif
     }
+#endif
 
     // Current twiddle factors W^k (starts at k=0, W^0=1)
-    fft_data W_curr[2] = {{1.0, 0.0}, {1.0, 0.0}};
+    fft_data W_curr[2] __attribute__((aligned(16)));
+    W_curr[0].re = 1.0;
+    W_curr[0].im = 0.0;
+    W_curr[1].re = 1.0;
+    W_curr[1].im = 0.0;
 
     int k = 0;
 
