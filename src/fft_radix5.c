@@ -1,5 +1,5 @@
 // fft_radix5_optimized.c
-// Ultra-optimized radix-5 butterfly with self-computed twiddles and deep pipelining
+// Ultra-optimized radix-5 butterfly with vectorized twiddle computation
 #include "fft_radix5.h"
 #include "simd_math.h"
 #include <math.h>
@@ -33,7 +33,7 @@ void fft_radix5_butterfly(
     //==========================================================================
     const double base_angle = -2.0 * M_PI / N * transform_sign;
 
-    // Base twiddle factors W_N^j for j=1,2,3,4
+    // Base twiddle factors W_N^j for j=1,2,3,4 (scalar - only 4 values)
     fft_data W_base[4];
     for (int j = 1; j <= 4; j++)
     {
@@ -46,22 +46,6 @@ void fft_radix5_butterfly(
 #endif
     }
 
-    // Precompute W_base^16 for 16x unroll (batch twiddle updates)
-    fft_data W_base16[4];
-    for (int j = 0; j < 4; j++)
-    {
-        fft_data temp = W_base[j];
-        // temp^16 via four squarings
-        for (int sq = 0; sq < 4; sq++)
-        {
-            double re = temp.re * temp.re - temp.im * temp.im;
-            double im = 2.0 * temp.re * temp.im;
-            temp.re = re;
-            temp.im = im;
-        }
-        W_base16[j] = temp;
-    }
-
     // Current twiddle factors W^k (starts at k=0, W^0=1)
     fft_data W_curr[4] = {{1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}};
 
@@ -69,9 +53,80 @@ void fft_radix5_butterfly(
 
 #ifdef __AVX2__
     //==========================================================================
-    // AVX2 PATH: 16X UNROLL WITH DEEP PIPELINE
+    // VECTORIZED TWIDDLE PRECOMPUTATION
     //==========================================================================
 
+    // Precompute W_base^4 and W_base^16 using FMA (faster than scalar)
+    fft_data W_base4[4], W_base16[4];
+
+    // Pack all 4 W_base values into one AVX2 register [re0,im0,re1,im1,re2,im2,re3,im3]
+    // But AVX2 is only 256-bit (4 doubles), so we need 2 registers
+    __m256d w_base_vec0 = _mm256_setr_pd(W_base[0].re, W_base[0].im,
+                                         W_base[1].re, W_base[1].im);
+    __m256d w_base_vec1 = _mm256_setr_pd(W_base[2].re, W_base[2].im,
+                                         W_base[3].re, W_base[3].im);
+
+    // Compute W_base^2 using vectorized complex multiply with FMA
+    // For first pair (W_base[0] and W_base[1])
+    __m256d w_re0 = _mm256_unpacklo_pd(w_base_vec0, w_base_vec0);
+    __m256d w_im0 = _mm256_unpackhi_pd(w_base_vec0, w_base_vec0);
+    __m256d w2_re0 = _mm256_fmsub_pd(w_re0, w_re0, _mm256_mul_pd(w_im0, w_im0));
+    __m256d w2_im0 = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(w_re0, w_im0));
+    __m256d w_base2_vec0 = _mm256_unpacklo_pd(w2_re0, w2_im0);
+
+    // For second pair (W_base[2] and W_base[3])
+    __m256d w_re1 = _mm256_unpacklo_pd(w_base_vec1, w_base_vec1);
+    __m256d w_im1 = _mm256_unpackhi_pd(w_base_vec1, w_base_vec1);
+    __m256d w2_re1 = _mm256_fmsub_pd(w_re1, w_re1, _mm256_mul_pd(w_im1, w_im1));
+    __m256d w2_im1 = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(w_re1, w_im1));
+    __m256d w_base2_vec1 = _mm256_unpacklo_pd(w2_re1, w2_im1);
+
+    // W^4 = W^2 * W^2
+    w_re0 = _mm256_unpacklo_pd(w_base2_vec0, w_base2_vec0);
+    w_im0 = _mm256_unpackhi_pd(w_base2_vec0, w_base2_vec0);
+    __m256d w4_re0 = _mm256_fmsub_pd(w_re0, w_re0, _mm256_mul_pd(w_im0, w_im0));
+    __m256d w4_im0 = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(w_re0, w_im0));
+    __m256d w_base4_vec0 = _mm256_unpacklo_pd(w4_re0, w4_im0);
+
+    w_re1 = _mm256_unpacklo_pd(w_base2_vec1, w_base2_vec1);
+    w_im1 = _mm256_unpackhi_pd(w_base2_vec1, w_base2_vec1);
+    __m256d w4_re1 = _mm256_fmsub_pd(w_re1, w_re1, _mm256_mul_pd(w_im1, w_im1));
+    __m256d w4_im1 = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(w_re1, w_im1));
+    __m256d w_base4_vec1 = _mm256_unpacklo_pd(w4_re1, w4_im1);
+
+    // Extract W_base^4
+    _mm_storeu_pd(&W_base4[0].re, _mm256_castpd256_pd128(w_base4_vec0));
+    _mm_storeu_pd(&W_base4[1].re, _mm256_extractf128_pd(w_base4_vec0, 1));
+    _mm_storeu_pd(&W_base4[2].re, _mm256_castpd256_pd128(w_base4_vec1));
+    _mm_storeu_pd(&W_base4[3].re, _mm256_extractf128_pd(w_base4_vec1, 1));
+
+    // W^16 = (W^4)^2 then square twice more
+    __m256d w16_vec0 = w_base4_vec0;
+    __m256d w16_vec1 = w_base4_vec1;
+    for (int sq = 0; sq < 2; sq++)
+    {
+        w_re0 = _mm256_unpacklo_pd(w16_vec0, w16_vec0);
+        w_im0 = _mm256_unpackhi_pd(w16_vec0, w16_vec0);
+        __m256d re0 = _mm256_fmsub_pd(w_re0, w_re0, _mm256_mul_pd(w_im0, w_im0));
+        __m256d im0 = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(w_re0, w_im0));
+        w16_vec0 = _mm256_unpacklo_pd(re0, im0);
+
+        w_re1 = _mm256_unpacklo_pd(w16_vec1, w16_vec1);
+        w_im1 = _mm256_unpackhi_pd(w16_vec1, w16_vec1);
+        __m256d re1 = _mm256_fmsub_pd(w_re1, w_re1, _mm256_mul_pd(w_im1, w_im1));
+        __m256d im1 = _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_mul_pd(w_re1, w_im1));
+        w16_vec1 = _mm256_unpacklo_pd(re1, im1);
+    }
+
+    // Extract W_base^16
+    _mm_storeu_pd(&W_base16[0].re, _mm256_castpd256_pd128(w16_vec0));
+    _mm_storeu_pd(&W_base16[1].re, _mm256_extractf128_pd(w16_vec0, 1));
+    _mm_storeu_pd(&W_base16[2].re, _mm256_castpd256_pd128(w16_vec1));
+    _mm_storeu_pd(&W_base16[3].re, _mm256_extractf128_pd(w16_vec1, 1));
+
+    //==========================================================================
+    // AVX2 CONSTANTS
+    //==========================================================================
     const __m256d vc1 = _mm256_set1_pd(C5_1);
     const __m256d vc2 = _mm256_set1_pd(C5_2);
     const __m256d vs1 = _mm256_set1_pd(S5_1);
@@ -126,59 +181,134 @@ void fft_radix5_butterfly(
     } while (0)
 
 //--------------------------------------------------------------------------
-// VECTORIZED TWIDDLE UPDATE: W_curr *= W_base16
+// IMPROVED VECTORIZED TWIDDLE UPDATE: W_curr *= W_base16
 //--------------------------------------------------------------------------
-#define UPDATE_TWIDDLES_16X()                                                                         \
-    do                                                                                                \
-    {                                                                                                 \
-        __m256d W_re = _mm256_set_pd(W_curr[3].re, W_curr[2].re, W_curr[1].re, W_curr[0].re);         \
-        __m256d W_im = _mm256_set_pd(W_curr[3].im, W_curr[2].im, W_curr[1].im, W_curr[0].im);         \
-        __m256d B_re = _mm256_set_pd(W_base16[3].re, W_base16[2].re, W_base16[1].re, W_base16[0].re); \
-        __m256d B_im = _mm256_set_pd(W_base16[3].im, W_base16[2].im, W_base16[1].im, W_base16[0].im); \
-        __m256d new_re = _mm256_fmsub_pd(W_re, B_re, _mm256_mul_pd(W_im, B_im));                      \
-        __m256d new_im = _mm256_fmadd_pd(W_re, B_im, _mm256_mul_pd(W_im, B_re));                      \
-        double re_tmp[4], im_tmp[4];                                                                  \
-        _mm256_storeu_pd(re_tmp, new_re);                                                             \
-        _mm256_storeu_pd(im_tmp, new_im);                                                             \
-        W_curr[0].re = re_tmp[0];                                                                     \
-        W_curr[0].im = im_tmp[0];                                                                     \
-        W_curr[1].re = re_tmp[1];                                                                     \
-        W_curr[1].im = im_tmp[1];                                                                     \
-        W_curr[2].re = re_tmp[2];                                                                     \
-        W_curr[2].im = im_tmp[2];                                                                     \
-        W_curr[3].re = re_tmp[3];                                                                     \
-        W_curr[3].im = im_tmp[3];                                                                     \
+#define UPDATE_TWIDDLES_16X()                                                         \
+    do                                                                                \
+    {                                                                                 \
+        __m256d W_packed0 = _mm256_setr_pd(W_curr[0].re, W_curr[0].im,                \
+                                           W_curr[1].re, W_curr[1].im);               \
+        __m256d W_packed1 = _mm256_setr_pd(W_curr[2].re, W_curr[2].im,                \
+                                           W_curr[3].re, W_curr[3].im);               \
+        __m256d B_packed0 = _mm256_setr_pd(W_base16[0].re, W_base16[0].im,            \
+                                           W_base16[1].re, W_base16[1].im);           \
+        __m256d B_packed1 = _mm256_setr_pd(W_base16[2].re, W_base16[2].im,            \
+                                           W_base16[3].re, W_base16[3].im);           \
+                                                                                      \
+        __m256d W_rr0 = _mm256_unpacklo_pd(W_packed0, W_packed0);                     \
+        __m256d W_ii0 = _mm256_unpackhi_pd(W_packed0, W_packed0);                     \
+        __m256d B_rr0 = _mm256_unpacklo_pd(B_packed0, B_packed0);                     \
+        __m256d B_ii0 = _mm256_unpackhi_pd(B_packed0, B_packed0);                     \
+        __m256d new_re0 = _mm256_fmsub_pd(W_rr0, B_rr0, _mm256_mul_pd(W_ii0, B_ii0)); \
+        __m256d new_im0 = _mm256_fmadd_pd(W_rr0, B_ii0, _mm256_mul_pd(W_ii0, B_rr0)); \
+        __m256d result0 = _mm256_unpacklo_pd(new_re0, new_im0);                       \
+                                                                                      \
+        __m256d W_rr1 = _mm256_unpacklo_pd(W_packed1, W_packed1);                     \
+        __m256d W_ii1 = _mm256_unpackhi_pd(W_packed1, W_packed1);                     \
+        __m256d B_rr1 = _mm256_unpacklo_pd(B_packed1, B_packed1);                     \
+        __m256d B_ii1 = _mm256_unpackhi_pd(B_packed1, B_packed1);                     \
+        __m256d new_re1 = _mm256_fmsub_pd(W_rr1, B_rr1, _mm256_mul_pd(W_ii1, B_ii1)); \
+        __m256d new_im1 = _mm256_fmadd_pd(W_rr1, B_ii1, _mm256_mul_pd(W_ii1, B_rr1)); \
+        __m256d result1 = _mm256_unpacklo_pd(new_re1, new_im1);                       \
+                                                                                      \
+        __m128d lo0 = _mm256_castpd256_pd128(result0);                                \
+        __m128d hi0 = _mm256_extractf128_pd(result0, 1);                              \
+        __m128d lo1 = _mm256_castpd256_pd128(result1);                                \
+        __m128d hi1 = _mm256_extractf128_pd(result1, 1);                              \
+        _mm_storeu_pd(&W_curr[0].re, lo0);                                            \
+        _mm_storeu_pd(&W_curr[1].re, hi0);                                            \
+        _mm_storeu_pd(&W_curr[2].re, lo1);                                            \
+        _mm_storeu_pd(&W_curr[3].re, hi1);                                            \
+    } while (0)
+
+//--------------------------------------------------------------------------
+// VECTORIZED TWIDDLE BLOCK GENERATION (32 twiddle sets at once)
+//--------------------------------------------------------------------------
+#define GENERATE_TWIDDLE_BLOCK(twiddles, W_start)                                      \
+    do                                                                                 \
+    {                                                                                  \
+        /* Initialize first 4 twiddles using scalar recurrence */                      \
+        fft_data W_temp[4] = {W_start[0], W_start[1], W_start[2], W_start[3]};         \
+        for (int i = 0; i < 4; i++)                                                    \
+        {                                                                              \
+            twiddles[i * 4] = W_temp[0];                                               \
+            twiddles[i * 4 + 1] = W_temp[1];                                           \
+            twiddles[i * 4 + 2] = W_temp[2];                                           \
+            twiddles[i * 4 + 3] = W_temp[3];                                           \
+            for (int j = 0; j < 4; j++)                                                \
+            {                                                                          \
+                double re = W_temp[j].re * W_base[j].re - W_temp[j].im * W_base[j].im; \
+                double im = W_temp[j].re * W_base[j].im + W_temp[j].im * W_base[j].re; \
+                W_temp[j].re = re;                                                     \
+                W_temp[j].im = im;                                                     \
+            }                                                                          \
+        }                                                                              \
+                                                                                       \
+        /* Vectorized: W[i+4] = W[i] * W_base^4 */                                     \
+        __m256d base4_w0 = _mm256_setr_pd(W_base4[0].re, W_base4[0].im,                \
+                                          W_base4[0].re, W_base4[0].im);               \
+        __m256d base4_w1 = _mm256_setr_pd(W_base4[1].re, W_base4[1].im,                \
+                                          W_base4[1].re, W_base4[1].im);               \
+        __m256d base4_w2 = _mm256_setr_pd(W_base4[2].re, W_base4[2].im,                \
+                                          W_base4[2].re, W_base4[2].im);               \
+        __m256d base4_w3 = _mm256_setr_pd(W_base4[3].re, W_base4[3].im,                \
+                                          W_base4[3].re, W_base4[3].im);               \
+                                                                                       \
+        for (int i = 4; i < 32; i += 2)                                                \
+        {                                                                              \
+            __m256d w0_prev = _mm256_loadu_pd(&twiddles[(i - 4) * 4].re);              \
+            __m256d w1_prev = _mm256_loadu_pd(&twiddles[(i - 4) * 4 + 1].re);          \
+            __m256d w2_prev = _mm256_loadu_pd(&twiddles[(i - 4) * 4 + 2].re);          \
+            __m256d w3_prev = _mm256_loadu_pd(&twiddles[(i - 4) * 4 + 3].re);          \
+                                                                                       \
+            __m256d ar, ai, br, bi, re, im;                                            \
+            ar = _mm256_unpacklo_pd(w0_prev, w0_prev);                                 \
+            ai = _mm256_unpackhi_pd(w0_prev, w0_prev);                                 \
+            br = _mm256_unpacklo_pd(base4_w0, base4_w0);                               \
+            bi = _mm256_unpackhi_pd(base4_w0, base4_w0);                               \
+            re = _mm256_fmsub_pd(ar, br, _mm256_mul_pd(ai, bi));                       \
+            im = _mm256_fmadd_pd(ar, bi, _mm256_mul_pd(ai, br));                       \
+            __m256d w0_new = _mm256_unpacklo_pd(re, im);                               \
+                                                                                       \
+            ar = _mm256_unpacklo_pd(w1_prev, w1_prev);                                 \
+            ai = _mm256_unpackhi_pd(w1_prev, w1_prev);                                 \
+            br = _mm256_unpacklo_pd(base4_w1, base4_w1);                               \
+            bi = _mm256_unpackhi_pd(base4_w1, base4_w1);                               \
+            re = _mm256_fmsub_pd(ar, br, _mm256_mul_pd(ai, bi));                       \
+            im = _mm256_fmadd_pd(ar, bi, _mm256_mul_pd(ai, br));                       \
+            __m256d w1_new = _mm256_unpacklo_pd(re, im);                               \
+                                                                                       \
+            ar = _mm256_unpacklo_pd(w2_prev, w2_prev);                                 \
+            ai = _mm256_unpackhi_pd(w2_prev, w2_prev);                                 \
+            br = _mm256_unpacklo_pd(base4_w2, base4_w2);                               \
+            bi = _mm256_unpackhi_pd(base4_w2, base4_w2);                               \
+            re = _mm256_fmsub_pd(ar, br, _mm256_mul_pd(ai, bi));                       \
+            im = _mm256_fmadd_pd(ar, bi, _mm256_mul_pd(ai, br));                       \
+            __m256d w2_new = _mm256_unpacklo_pd(re, im);                               \
+                                                                                       \
+            ar = _mm256_unpacklo_pd(w3_prev, w3_prev);                                 \
+            ai = _mm256_unpackhi_pd(w3_prev, w3_prev);                                 \
+            br = _mm256_unpacklo_pd(base4_w3, base4_w3);                               \
+            bi = _mm256_unpackhi_pd(base4_w3, base4_w3);                               \
+            re = _mm256_fmsub_pd(ar, br, _mm256_mul_pd(ai, bi));                       \
+            im = _mm256_fmadd_pd(ar, bi, _mm256_mul_pd(ai, br));                       \
+            __m256d w3_new = _mm256_unpacklo_pd(re, im);                               \
+                                                                                       \
+            _mm256_storeu_pd(&twiddles[i * 4].re, w0_new);                             \
+            _mm256_storeu_pd(&twiddles[i * 4 + 1].re, w1_new);                         \
+            _mm256_storeu_pd(&twiddles[i * 4 + 2].re, w2_new);                         \
+            _mm256_storeu_pd(&twiddles[i * 4 + 3].re, w3_new);                         \
+        }                                                                              \
     } while (0)
 
     //==========================================================================
-    // MAIN LOOP: 16X UNROLL
+    // MAIN LOOP: 16X UNROLL WITH PRE-COMPUTED TWIDDLES
     //==========================================================================
     if (k + 31 < K)
     {
         //======================================================================
-        // PROLOGUE: Precompute first 32 twiddle factors
+        // Update W_curr to W^32 for main loop start
         //======================================================================
-        fft_data W_table[32][4];
-        fft_data W_temp[4] = {{1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}, {1.0, 0.0}};
-
-        for (int i = 0; i < 32; i++)
-        {
-            for (int j = 0; j < 4; j++)
-            {
-                W_table[i][j] = W_temp[j];
-            }
-
-            // Update W_temp *= W_base
-            for (int j = 0; j < 4; j++)
-            {
-                double re = W_temp[j].re * W_base[j].re - W_temp[j].im * W_base[j].im;
-                double im = W_temp[j].re * W_base[j].im + W_temp[j].im * W_base[j].re;
-                W_temp[j].re = re;
-                W_temp[j].im = im;
-            }
-        }
-
-        // Update W_curr to W^32 for main loop
         for (int step = 0; step < 32; step++)
         {
             for (int j = 0; j < 4; j++)
@@ -197,6 +327,27 @@ void fft_radix5_butterfly(
         //======================================================================
         for (; k + 31 < K; k += 32)
         {
+            // Pre-compute all 32 twiddle sets for this block
+            fft_data twiddles[128] __attribute__((aligned(32))); // 32 * 4 twiddles
+
+            // Generate W^k, W^(k+1), ..., W^(k+31)
+            fft_data W_block_start[4] = {W_curr[0], W_curr[1], W_curr[2], W_curr[3]};
+
+            // Rewind to k-32 for block generation
+            for (int back = 0; back < 32; back++)
+            {
+                for (int j = 0; j < 4; j++)
+                {
+                    // Multiply by W_base^(-1) = conjugate
+                    double re = W_block_start[j].re * W_base[j].re + W_block_start[j].im * W_base[j].im;
+                    double im = -W_block_start[j].re * W_base[j].im + W_block_start[j].im * W_base[j].re;
+                    W_block_start[j].re = re;
+                    W_block_start[j].im = im;
+                }
+            }
+
+            GENERATE_TWIDDLE_BLOCK(twiddles, W_block_start);
+
             //==================================================================
             // PREFETCH
             //==================================================================
@@ -223,17 +374,13 @@ void fft_radix5_butterfly(
             }
 
             //==================================================================
-            // Process 16 pairs (32 butterflies)
+            // Process 16 pairs (32 butterflies) using pre-computed twiddles
             //==================================================================
-            fft_data W_curr_copy[4];
-            for (int j = 0; j < 4; j++)
-            {
-                W_curr_copy[j] = W_curr[j];
-            }
-
             for (int p = 0; p < 16; p++)
             {
                 int kk = k + 2 * p;
+                int tw_base = k - 32;
+                int tw_offset = (kk - tw_base) * 4;
 
                 // Load inputs
                 __m256d a = load2_aos(&sub_outputs[kk], &sub_outputs[kk + 1]);
@@ -242,28 +389,11 @@ void fft_radix5_butterfly(
                 __m256d d = load2_aos(&sub_outputs[kk + 3 * K], &sub_outputs[kk + 1 + 3 * K]);
                 __m256d e = load2_aos(&sub_outputs[kk + 4 * K], &sub_outputs[kk + 1 + 4 * K]);
 
-                // Compute twiddles for kk and kk+1
-                fft_data W_kk[4], W_kk1[4];
-                for (int j = 0; j < 4; j++)
-                {
-                    W_kk[j] = W_curr_copy[j];
-
-                    // W_kk1 = W_kk * W_base
-                    W_kk1[j].re = W_kk[j].re * W_base[j].re - W_kk[j].im * W_base[j].im;
-                    W_kk1[j].im = W_kk[j].re * W_base[j].im + W_kk[j].im * W_base[j].re;
-
-                    // Update for next pair
-                    double re = W_kk1[j].re * W_base[j].re - W_kk1[j].im * W_base[j].im;
-                    double im = W_kk1[j].re * W_base[j].im + W_kk1[j].im * W_base[j].re;
-                    W_curr_copy[j].re = re;
-                    W_curr_copy[j].im = im;
-                }
-
-                // Pack twiddles
-                __m256d w1 = _mm256_set_pd(W_kk1[0].im, W_kk1[0].re, W_kk[0].im, W_kk[0].re);
-                __m256d w2 = _mm256_set_pd(W_kk1[1].im, W_kk1[1].re, W_kk[1].im, W_kk[1].re);
-                __m256d w3 = _mm256_set_pd(W_kk1[2].im, W_kk1[2].re, W_kk[2].im, W_kk[2].re);
-                __m256d w4 = _mm256_set_pd(W_kk1[3].im, W_kk1[3].re, W_kk[3].im, W_kk[3].re);
+                // Load pre-computed twiddles
+                __m256d w1 = _mm256_loadu_pd(&twiddles[tw_offset].re);
+                __m256d w2 = _mm256_loadu_pd(&twiddles[tw_offset + 2].re);
+                __m256d w3 = _mm256_loadu_pd(&twiddles[tw_offset + 4].re);
+                __m256d w4 = _mm256_loadu_pd(&twiddles[tw_offset + 6].re);
 
                 // Twiddle multiply
                 __m256d b2, c2, d2, e2;
@@ -297,7 +427,7 @@ void fft_radix5_butterfly(
 
             // Update W_curr for next iteration (k += 32)
             UPDATE_TWIDDLES_16X();
-            UPDATE_TWIDDLES_16X();
+            UPDATE_TWIDDLES_16X(); // Apply twice for 32 steps
         }
 
         if (use_streaming)
@@ -422,6 +552,7 @@ void fft_radix5_butterfly(
 #undef CMUL_FMA
 #undef BUTTERFLY_R5
 #undef UPDATE_TWIDDLES_16X
+#undef GENERATE_TWIDDLE_BLOCK
 
 #endif // __AVX2__
 
