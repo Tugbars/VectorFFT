@@ -1,7 +1,7 @@
 # HighSpeedFFT
 
-A high-performance mixed-radix FFT library in C with full support for complex and real transforms, AVX2/FMA vectorization, and Bluestein’s algorithm for arbitrary lengths. Designed as a drop-in alternative to FFTW with minimal dependencies.
-
+VectorFFT is a vectorized, pure C FFT library optimized for x86 processors (AVX-512, AVX2, SSE2) with zero external dependencies. It implements mixed-radix algorithms for common sizes and Bluestein's method for arbitrary lengths, with OpenMP multi-threading for large transforms.
+Designed for both digital signal processing and financial applications requiring high-performance spectral analysis. VectorFFT combines the speed of hand-optimized SIMD code with the simplicity of standalone C, making it ideal for embedded systems, real-time applications, and projects where FFTW/MKL are overkill.
 ---
 
 ## Features
