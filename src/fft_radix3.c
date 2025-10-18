@@ -29,7 +29,7 @@ void fft_radix3_butterfly(
     //==========================================================================
     const double C_HALF = -0.5;
     const double S_SQRT3_2 = 0.8660254037844386467618; // sqrt(3)/2
-    const double base_angle = 2.0 * M_PI / N * transform_sign;
+    const double base_angle = -2.0 * M_PI / N;
 
     // Base twiddle factors W_N^j for j=1,2
     fft_data W_base[2] __attribute__((aligned(16)));
@@ -73,10 +73,6 @@ void fft_radix3_butterfly(
     W_curr[1].im = 0.0;
 
     int k = 0;
-
-        printf("DEBUG: N=%d, transform_sign=%d, base_angle=%.6f\n", 
-       N, transform_sign, base_angle);
-printf("  W_base[0] = %.6f + %.6fi\n", W_base[0].re, W_base[0].im);
 
 #ifdef __AVX2__
     //==========================================================================
