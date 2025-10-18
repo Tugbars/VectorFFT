@@ -137,36 +137,5 @@ void fft_radix3_fv(
  * - TOTAL: ~22 cycles / 2 butterflies = ~11 cycles/butterfly
  * 
  * With proper pipelining and OOO execution: ~6 cycles/butterfly
- * 
- * BANDWIDTH:
- * - Per butterfly: Read 80 bytes (3 inputs + 2 twiddles), Write 48 bytes
- * - Total: 128 bytes / butterfly
- * - At 6 cycles/butterfly @ 3 GHz: 64 GB/s
- * - Well within DDR4-3200 bandwidth
- * 
- * COMPARISON TO OLD APPROACH:
- * - OLD: ~250 cycles/butterfly (sin/cos + accumulation + block generation)
- * - NEW: ~6 cycles/butterfly (just multiply)
- * - SPEEDUP: 40x faster execution!
  */
 
-//==============================================================================
-// CODE SIZE COMPARISON
-//==============================================================================
-
-/**
- * OLD (with on-the-fly twiddles):
- * - Lines of code: ~550
- * - Twiddle block generation: ~80 lines
- * - W_curr management: ~60 lines
- * - W_base4/W_base16: ~40 lines
- * - Complexity: Very High
- * 
- * NEW (with precomputed + macros):
- * - Lines of code: ~120
- * - Macro shared code: ~150 lines (in header)
- * - Unique code: ~10 lines (just the rotation)
- * - Complexity: Low
- * 
- * REDUCTION: 78% less code, 98% less complexity
- */

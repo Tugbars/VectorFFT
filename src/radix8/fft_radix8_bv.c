@@ -202,13 +202,4 @@ void fft_radix8_bv(
  * 2. Only constant values differ (XOR masks, W_8 constants)
  * 3. Constants are loaded once and reused
  * 
- * COMPARISON TO OLD APPROACH:
- * - OLD: Forward and inverse in same function, runtime branches
- * - NEW: Separate functions, no branches, dispatcher selects at plan time
- * - BENEFIT: Better inlining, better branch prediction, cleaner code
- * 
- * SPEEDUP OVER OLD:
- * - OLD: ~300 cycles/butterfly
- * - NEW: ~20 cycles/butterfly
- * - SPEEDUP: 15x faster!
  */

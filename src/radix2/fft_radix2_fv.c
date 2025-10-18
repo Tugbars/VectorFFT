@@ -11,6 +11,7 @@
 
 #include "fft_radix2.h"
 #include "simd_math.h"
+#include "fft_radix2_macros.h"
 
 //==============================================================================
 // FORWARD RADIX-2 BUTTERFLY - Main Function
@@ -267,24 +268,6 @@ void fft_radix2_fv(
         }
     }
 }
-
-//==============================================================================
-// CODE SIZE COMPARISON
-//==============================================================================
-
-/**
- * OLD (with direction logic):
- * - Lines of code: ~450
- * - Branches: ~15 (direction checks, NULL checks)
- * - Complexity: High
- * 
- * NEW (forward only, macros):
- * - Lines of code: ~280
- * - Branches: ~5 (loop iterations, k_quarter check)
- * - Complexity: Low
- * 
- * REDUCTION: 38% less code, 67% fewer branches
- */
 
 //==============================================================================
 // PERFORMANCE NOTES
