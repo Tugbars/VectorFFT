@@ -31,6 +31,413 @@
 #define S5_1 0.95105651629515357212  // sin(2π/5)
 #define S5_2 0.58778525229247312917  // sin(4π/5)
 
+
+//==============================================================================
+// AVX-512 SUPPORT - Radix-5 (processes 4 butterflies)
+//==============================================================================
+
+#ifdef __AVX512F__
+
+//==============================================================================
+// GEOMETRIC CONSTANTS - Radix-5 (IDENTICAL for forward/inverse)
+//==============================================================================
+
+// These are derived from exp(±2πi/5) decomposition
+#define C5_1  0.30901699437494742410   // cos(2π/5) = (sqrt(5) - 1) / 4
+#define C5_2  (-0.80901699437494742410) // cos(4π/5) = -(sqrt(5) + 1) / 4
+#define S5_1  0.95105651629515357212   // sin(2π/5)
+#define S5_2  0.58778525229247312917   // sin(4π/5)
+
+//==============================================================================
+// COMPLEX MULTIPLICATION - AVX-512
+//==============================================================================
+
+/**
+ * @brief Optimized complex multiply for AVX-512: out = a * w (4 complex values)
+ */
+#define CMUL_FMA_R5_AVX512(out, a, w)                                     \
+    do                                                                    \
+    {                                                                     \
+        __m512d ar = _mm512_unpacklo_pd(a, a);                            \
+        __m512d ai = _mm512_unpackhi_pd(a, a);                            \
+        __m512d wr = _mm512_unpacklo_pd(w, w);                            \
+        __m512d wi = _mm512_unpackhi_pd(w, w);                            \
+        __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi));     \
+        __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr));     \
+        (out) = _mm512_unpacklo_pd(re, im);                               \
+    } while (0)
+
+//==============================================================================
+// RADIX-5 BUTTERFLY CORE - AVX-512 (IDENTICAL for forward/inverse)
+//==============================================================================
+
+/**
+ * @brief Compute intermediate sums for radix-5 (AVX-512, 4 butterflies)
+ * 
+ * Stage 1: Compute pair sums
+ * s1 = tw_b + tw_e  (indices 1 and 4)
+ * s2 = tw_c + tw_d  (indices 2 and 3)
+ * d1 = tw_b - tw_e
+ * d2 = tw_c - tw_d
+ * 
+ * Stage 2: Common terms
+ * sum_all = s1 + s2
+ * y0 = a + sum_all
+ */
+#define RADIX5_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, tw_d, tw_e,          \
+                                     s1, s2, d1, d2, sum_all, y0)        \
+    do {                                                                  \
+        s1 = _mm512_add_pd(tw_b, tw_e);  /* b + e */                      \
+        s2 = _mm512_add_pd(tw_c, tw_d);  /* c + d */                      \
+        d1 = _mm512_sub_pd(tw_b, tw_e);  /* b - e */                      \
+        d2 = _mm512_sub_pd(tw_c, tw_d);  /* c - d */                      \
+        sum_all = _mm512_add_pd(s1, s2);                                  \
+        y0 = _mm512_add_pd(a, sum_all);                                   \
+    } while (0)
+
+//==============================================================================
+// INTERMEDIATE COMPUTATIONS - AVX-512 (IDENTICAL for forward/inverse)
+//==============================================================================
+
+/**
+ * @brief Compute scaled sums using geometric constants (AVX-512)
+ * 
+ * t1 = a + C5_1 * s1 + C5_2 * s2
+ * t2 = a + C5_2 * s1 + C5_1 * s2
+ */
+#define RADIX5_COMPUTE_T_AVX512(a, s1, s2, t1, t2)                        \
+    do {                                                                   \
+        const __m512d vc51 = _mm512_set1_pd(C5_1);                         \
+        const __m512d vc52 = _mm512_set1_pd(C5_2);                         \
+        t1 = _mm512_fmadd_pd(vc51, s1, a);                                 \
+        t1 = _mm512_fmadd_pd(vc52, s2, t1);                                \
+        t2 = _mm512_fmadd_pd(vc52, s1, a);                                 \
+        t2 = _mm512_fmadd_pd(vc51, s2, t2);                                \
+    } while (0)
+
+//==============================================================================
+// ROTATION AND SCALING - DIRECTION-SPECIFIC
+//==============================================================================
+
+/**
+ * @brief FORWARD rotation and scaling (AVX-512, 4 butterflies)
+ * 
+ * u1 = -i * (S5_1 * d1 + S5_2 * d2)
+ * u2 = -i * (S5_2 * d1 - S5_1 * d2)
+ * 
+ * Where -i * (a + bi) = b - ai
+ */
+#define RADIX5_ROTATE_FORWARD_AVX512(d1, d2, u1, u2)                      \
+    do {                                                                   \
+        const __m512d vs51 = _mm512_set1_pd(S5_1);                         \
+        const __m512d vs52 = _mm512_set1_pd(S5_2);                         \
+        const __m512d rot_mask = _mm512_set_pd(0.0, -0.0, 0.0, -0.0,      \
+                                                0.0, -0.0, 0.0, -0.0);     \
+                                                                           \
+        /* Compute S5_1 * d1 + S5_2 * d2 */                                \
+        __m512d temp1 = _mm512_mul_pd(vs51, d1);                           \
+        temp1 = _mm512_fmadd_pd(vs52, d2, temp1);                          \
+                                                                           \
+        /* Compute S5_2 * d1 - S5_1 * d2 */                                \
+        __m512d temp2 = _mm512_mul_pd(vs52, d1);                           \
+        temp2 = _mm512_fnmadd_pd(vs51, d2, temp2);                         \
+                                                                           \
+        /* Apply -i rotation: (a + bi) * (-i) = b - ai */                  \
+        __m512d temp1_swp = _mm512_permute_pd(temp1, 0b01010101);          \
+        u1 = _mm512_xor_pd(temp1_swp, rot_mask);                           \
+                                                                           \
+        __m512d temp2_swp = _mm512_permute_pd(temp2, 0b01010101);          \
+        u2 = _mm512_xor_pd(temp2_swp, rot_mask);                           \
+    } while (0)
+
+/**
+ * @brief INVERSE rotation and scaling (AVX-512, 4 butterflies)
+ * 
+ * u1 = +i * (S5_1 * d1 + S5_2 * d2)
+ * u2 = +i * (S5_2 * d1 - S5_1 * d2)
+ * 
+ * Where +i * (a + bi) = -b + ai
+ */
+#define RADIX5_ROTATE_INVERSE_AVX512(d1, d2, u1, u2)                      \
+    do {                                                                   \
+        const __m512d vs51 = _mm512_set1_pd(S5_1);                         \
+        const __m512d vs52 = _mm512_set1_pd(S5_2);                         \
+        const __m512d rot_mask = _mm512_set_pd(-0.0, 0.0, -0.0, 0.0,      \
+                                                -0.0, 0.0, -0.0, 0.0);     \
+                                                                           \
+        /* Compute S5_1 * d1 + S5_2 * d2 */                                \
+        __m512d temp1 = _mm512_mul_pd(vs51, d1);                           \
+        temp1 = _mm512_fmadd_pd(vs52, d2, temp1);                          \
+                                                                           \
+        /* Compute S5_2 * d1 - S5_1 * d2 */                                \
+        __m512d temp2 = _mm512_mul_pd(vs52, d1);                           \
+        temp2 = _mm512_fnmadd_pd(vs51, d2, temp2);                         \
+                                                                           \
+        /* Apply +i rotation: (a + bi) * (+i) = -b + ai */                 \
+        __m512d temp1_swp = _mm512_permute_pd(temp1, 0b01010101);          \
+        u1 = _mm512_xor_pd(temp1_swp, rot_mask);                           \
+                                                                           \
+        __m512d temp2_swp = _mm512_permute_pd(temp2, 0b01010101);          \
+        u2 = _mm512_xor_pd(temp2_swp, rot_mask);                           \
+    } while (0)
+
+//==============================================================================
+// OUTPUT ASSEMBLY - AVX-512 (IDENTICAL for forward/inverse)
+//==============================================================================
+
+/**
+ * @brief Assemble final radix-5 outputs (AVX-512, 4 butterflies)
+ * 
+ * y0 already computed (sum of all inputs)
+ * y1 = t1 + u1
+ * y2 = t2 + u2
+ * y3 = t2 - u2
+ * y4 = t1 - u1
+ */
+#define RADIX5_ASSEMBLE_OUTPUTS_AVX512(y0, t1, t2, u1, u2,               \
+                                       y1, y2, y3, y4)                   \
+    do {                                                                  \
+        y1 = _mm512_add_pd(t1, u1);                                       \
+        y2 = _mm512_add_pd(t2, u2);                                       \
+        y3 = _mm512_sub_pd(t2, u2);                                       \
+        y4 = _mm512_sub_pd(t1, u1);                                       \
+    } while (0)
+
+//==============================================================================
+// APPLY PRECOMPUTED TWIDDLES - AVX-512
+//==============================================================================
+
+/**
+ * @brief AVX-512: Apply stage twiddles for 4 butterflies (kk through kk+3)
+ *
+ * stage_tw layout: [W^(1*k), W^(2*k), W^(3*k), W^(4*k)] for each k
+ */
+#define APPLY_STAGE_TWIDDLES_R5_AVX512(kk, b, c, d, e, stage_tw,         \
+                                       tw_b, tw_c, tw_d, tw_e)           \
+    do {                                                                  \
+        __m512d w1 = load4_aos(&stage_tw[(kk)*4 + 0],                    \
+                               &stage_tw[(kk+1)*4 + 0],                   \
+                               &stage_tw[(kk+2)*4 + 0],                   \
+                               &stage_tw[(kk+3)*4 + 0]);                  \
+        __m512d w2 = load4_aos(&stage_tw[(kk)*4 + 1],                    \
+                               &stage_tw[(kk+1)*4 + 1],                   \
+                               &stage_tw[(kk+2)*4 + 1],                   \
+                               &stage_tw[(kk+3)*4 + 1]);                  \
+        __m512d w3 = load4_aos(&stage_tw[(kk)*4 + 2],                    \
+                               &stage_tw[(kk+1)*4 + 2],                   \
+                               &stage_tw[(kk+2)*4 + 2],                   \
+                               &stage_tw[(kk+3)*4 + 2]);                  \
+        __m512d w4 = load4_aos(&stage_tw[(kk)*4 + 3],                    \
+                               &stage_tw[(kk+1)*4 + 3],                   \
+                               &stage_tw[(kk+2)*4 + 3],                   \
+                               &stage_tw[(kk+3)*4 + 3]);                  \
+                                                                          \
+        CMUL_FMA_R5_AVX512(tw_b, b, w1);                                  \
+        CMUL_FMA_R5_AVX512(tw_c, c, w2);                                  \
+        CMUL_FMA_R5_AVX512(tw_d, d, w3);                                  \
+        CMUL_FMA_R5_AVX512(tw_e, e, w4);                                  \
+    } while (0)
+
+//==============================================================================
+// DATA MOVEMENT - AVX-512
+//==============================================================================
+
+/**
+ * @brief Load 5 lanes for 4 butterflies (kk through kk+3)
+ *
+ * Loads input data for 5 lanes (0 to 4) from sub_outputs buffer.
+ * Each register holds 4 complex values (for 4 butterflies) in AoS layout.
+ */
+#define LOAD_5_LANES_AVX512(kk, K, sub_outputs, a, b, c, d, e)           \
+    do {                                                                  \
+        a = load4_aos(&sub_outputs[kk],                                   \
+                      &sub_outputs[(kk)+1],                               \
+                      &sub_outputs[(kk)+2],                               \
+                      &sub_outputs[(kk)+3]);                              \
+        b = load4_aos(&sub_outputs[(kk)+K],                               \
+                      &sub_outputs[(kk)+1+K],                             \
+                      &sub_outputs[(kk)+2+K],                             \
+                      &sub_outputs[(kk)+3+K]);                            \
+        c = load4_aos(&sub_outputs[(kk)+2*K],                             \
+                      &sub_outputs[(kk)+1+2*K],                           \
+                      &sub_outputs[(kk)+2+2*K],                           \
+                      &sub_outputs[(kk)+3+2*K]);                          \
+        d = load4_aos(&sub_outputs[(kk)+3*K],                             \
+                      &sub_outputs[(kk)+1+3*K],                           \
+                      &sub_outputs[(kk)+2+3*K],                           \
+                      &sub_outputs[(kk)+3+3*K]);                          \
+        e = load4_aos(&sub_outputs[(kk)+4*K],                             \
+                      &sub_outputs[(kk)+1+4*K],                           \
+                      &sub_outputs[(kk)+2+4*K],                           \
+                      &sub_outputs[(kk)+3+4*K]);                          \
+    } while (0)
+
+/**
+ * @brief Store 5 outputs for 4 butterflies (AVX-512)
+ */
+#define STORE_5_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3, y4)  \
+    do {                                                                 \
+        STOREU_PD512(&output_buffer[kk].re, y0);                         \
+        STOREU_PD512(&output_buffer[(kk)+K].re, y1);                     \
+        STOREU_PD512(&output_buffer[(kk)+2*K].re, y2);                   \
+        STOREU_PD512(&output_buffer[(kk)+3*K].re, y3);                   \
+        STOREU_PD512(&output_buffer[(kk)+4*K].re, y4);                   \
+    } while (0)
+
+/**
+ * @brief Store with streaming (AVX-512)
+ */
+#define STORE_5_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3, y4) \
+    do {                                                                       \
+        _mm512_stream_pd(&output_buffer[kk].re, y0);                           \
+        _mm512_stream_pd(&output_buffer[(kk)+K].re, y1);                       \
+        _mm512_stream_pd(&output_buffer[(kk)+2*K].re, y2);                     \
+        _mm512_stream_pd(&output_buffer[(kk)+3*K].re, y3);                     \
+        _mm512_stream_pd(&output_buffer[(kk)+4*K].re, y4);                     \
+    } while (0)
+
+//==============================================================================
+// PREFETCHING - AVX-512
+//==============================================================================
+
+#define PREFETCH_L1_R5_AVX512 16
+#define PREFETCH_L2_R5_AVX512 64
+#define PREFETCH_L3_R5_AVX512 128
+
+#define PREFETCH_5_LANES_AVX512(k, K, distance, sub_outputs, stage_tw, hint)    \
+    do {                                                                        \
+        if ((k) + (distance) < K) {                                             \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)], hint);     \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+K], hint);   \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+2*K], hint); \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+3*K], hint); \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+4*K], hint); \
+            _mm_prefetch((const char *)&stage_tw[((k)+(distance))*4], hint);    \
+        }                                                                       \
+    } while (0)
+
+//==============================================================================
+// COMPLETE BUTTERFLY PIPELINE - AVX-512
+//==============================================================================
+
+/**
+ * @brief Complete AVX-512 radix-5 butterfly (FORWARD, 4 butterflies)
+ *
+ * Processes 4 butterflies (20 complex values) in one macro call.
+ * 
+ * Algorithm:
+ * 1. Load 5 lanes for 4 butterflies (20 complex values)
+ * 2. Apply input twiddles to lanes 1-4
+ * 3. Compute pair sums and differences
+ * 4. Compute intermediate t1, t2
+ * 5. Apply forward rotation to get u1, u2
+ * 6. Assemble 5 outputs
+ * 7. Store 20 outputs
+ */
+#define RADIX5_PIPELINE_4_FV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                         \
+        /* Step 1: Load 5 lanes for 4 butterflies */                            \
+        __m512d a, b, c, d, e;                                                   \
+        LOAD_5_LANES_AVX512(kk, K, sub_outputs, a, b, c, d, e);                  \
+                                                                                 \
+        /* Step 2: Apply precomputed stage twiddles */                          \
+        __m512d tw_b, tw_c, tw_d, tw_e;                                          \
+        APPLY_STAGE_TWIDDLES_R5_AVX512(kk, b, c, d, e, stage_tw,                 \
+                                       tw_b, tw_c, tw_d, tw_e);                  \
+                                                                                 \
+        /* Step 3: Compute butterfly core */                                    \
+        __m512d s1, s2, d1, d2, sum_all, y0;                                     \
+        RADIX5_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, tw_d, tw_e,                  \
+                                     s1, s2, d1, d2, sum_all, y0);               \
+                                                                                 \
+        /* Step 4: Compute intermediate values */                               \
+        __m512d t1, t2;                                                          \
+        RADIX5_COMPUTE_T_AVX512(a, s1, s2, t1, t2);                              \
+                                                                                 \
+        /* Step 5: Apply forward rotation */                                    \
+        __m512d u1, u2;                                                          \
+        RADIX5_ROTATE_FORWARD_AVX512(d1, d2, u1, u2);                            \
+                                                                                 \
+        /* Step 6: Assemble outputs */                                          \
+        __m512d y1, y2, y3, y4;                                                  \
+        RADIX5_ASSEMBLE_OUTPUTS_AVX512(y0, t1, t2, u1, u2, y1, y2, y3, y4);      \
+                                                                                 \
+        /* Step 7: Store results */                                             \
+        STORE_5_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3, y4);          \
+    } while (0)
+
+/**
+ * @brief Complete AVX-512 radix-5 butterfly (INVERSE, 4 butterflies)
+ */
+#define RADIX5_PIPELINE_4_BV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                         \
+        __m512d a, b, c, d, e;                                                   \
+        LOAD_5_LANES_AVX512(kk, K, sub_outputs, a, b, c, d, e);                  \
+                                                                                 \
+        __m512d tw_b, tw_c, tw_d, tw_e;                                          \
+        APPLY_STAGE_TWIDDLES_R5_AVX512(kk, b, c, d, e, stage_tw,                 \
+                                       tw_b, tw_c, tw_d, tw_e);                  \
+                                                                                 \
+        __m512d s1, s2, d1, d2, sum_all, y0;                                     \
+        RADIX5_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, tw_d, tw_e,                  \
+                                     s1, s2, d1, d2, sum_all, y0);               \
+                                                                                 \
+        __m512d t1, t2;                                                          \
+        RADIX5_COMPUTE_T_AVX512(a, s1, s2, t1, t2);                              \
+                                                                                 \
+        __m512d u1, u2;                                                          \
+        RADIX5_ROTATE_INVERSE_AVX512(d1, d2, u1, u2);  /* INVERSE rotation */    \
+                                                                                 \
+        __m512d y1, y2, y3, y4;                                                  \
+        RADIX5_ASSEMBLE_OUTPUTS_AVX512(y0, t1, t2, u1, u2, y1, y2, y3, y4);      \
+                                                                                 \
+        STORE_5_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3, y4);          \
+    } while (0)
+
+//==============================================================================
+// STREAMING VERSIONS
+//==============================================================================
+
+#define RADIX5_PIPELINE_4_FV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                                \
+        __m512d a, b, c, d, e;                                                          \
+        LOAD_5_LANES_AVX512(kk, K, sub_outputs, a, b, c, d, e);                         \
+        __m512d tw_b, tw_c, tw_d, tw_e;                                                 \
+        APPLY_STAGE_TWIDDLES_R5_AVX512(kk, b, c, d, e, stage_tw,                        \
+                                       tw_b, tw_c, tw_d, tw_e);                         \
+        __m512d s1, s2, d1, d2, sum_all, y0;                                            \
+        RADIX5_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, tw_d, tw_e,                         \
+                                     s1, s2, d1, d2, sum_all, y0);                      \
+        __m512d t1, t2;                                                                 \
+        RADIX5_COMPUTE_T_AVX512(a, s1, s2, t1, t2);                                     \
+        __m512d u1, u2;                                                                 \
+        RADIX5_ROTATE_FORWARD_AVX512(d1, d2, u1, u2);                                   \
+        __m512d y1, y2, y3, y4;                                                         \
+        RADIX5_ASSEMBLE_OUTPUTS_AVX512(y0, t1, t2, u1, u2, y1, y2, y3, y4);             \
+        STORE_5_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3, y4);          \
+    } while (0)
+
+#define RADIX5_PIPELINE_4_BV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                                \
+        __m512d a, b, c, d, e;                                                          \
+        LOAD_5_LANES_AVX512(kk, K, sub_outputs, a, b, c, d, e);                         \
+        __m512d tw_b, tw_c, tw_d, tw_e;                                                 \
+        APPLY_STAGE_TWIDDLES_R5_AVX512(kk, b, c, d, e, stage_tw,                        \
+                                       tw_b, tw_c, tw_d, tw_e);                         \
+        __m512d s1, s2, d1, d2, sum_all, y0;                                            \
+        RADIX5_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, tw_d, tw_e,                         \
+                                     s1, s2, d1, d2, sum_all, y0);                      \
+        __m512d t1, t2;                                                                 \
+        RADIX5_COMPUTE_T_AVX512(a, s1, s2, t1, t2);                                     \
+        __m512d u1, u2;                                                                 \
+        RADIX5_ROTATE_INVERSE_AVX512(d1, d2, u1, u2);                                   \
+        __m512d y1, y2, y3, y4;                                                         \
+        RADIX5_ASSEMBLE_OUTPUTS_AVX512(y0, t1, t2, u1, u2, y1, y2, y3, y4);             \
+        STORE_5_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3, y4);          \
+    } while (0)
+
+#endif // __AVX512F__
+
 //==============================================================================
 // COMPLEX MULTIPLICATION - FMA-optimized (IDENTICAL for both directions)
 //==============================================================================
