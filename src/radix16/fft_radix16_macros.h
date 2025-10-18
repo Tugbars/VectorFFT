@@ -1,3 +1,4 @@
+```c
 //==============================================================================
 // fft_radix16_macros.h - Shared Macros for Radix-16 Butterflies
 //==============================================================================
@@ -23,6 +24,13 @@
 // We'll manually include the key radix-4 macros we need
 // (In real code, could #include "fft_radix4_macros.h")
 
+/**
+ * @brief Optimized complex multiply: out = a * w (6 FMA + 2 UNPACK)
+ *
+ * This macro performs a complex multiplication using AVX2 instructions, optimized with fused multiply-add (FMA) operations.
+ * It is reused from the radix-4 implementation and used for applying twiddle factors in both forward and inverse transforms.
+ * The operation assumes Array-of-Structures (AoS) layout for complex numbers (real and imaginary parts interleaved).
+ */
 #ifdef __AVX2__
 #define CMUL_FMA_AOS(out, a, w)                                      \
     do                                                               \
@@ -49,6 +57,9 @@
  * W_4^1 = -i
  * W_4^2 = -1
  * W_4^3 = +i
+ *
+ * These constants are used to apply fixed intermediate twiddles in the radix-16 butterfly for the forward transform.
+ * They facilitate the two-stage decomposition by multiplying outputs from the first radix-4 stage.
  */
 #define W4_FV_0_RE 1.0
 #define W4_FV_0_IM 0.0
@@ -67,6 +78,9 @@
  * W_4^1 = +i
  * W_4^2 = -1
  * W_4^3 = -i
+ *
+ * These constants are used to apply fixed intermediate twiddles in the radix-16 butterfly for the inverse transform.
+ * They are the complex conjugates of the forward twiddles, ensuring the inverse operation reverses the forward transform.
  */
 #define W4_BV_0_RE 1.0
 #define W4_BV_0_IM 0.0
@@ -81,6 +95,13 @@
 // RADIX-4 BUTTERFLY - Reused from radix-4
 //==============================================================================
 
+/**
+ * @brief Radix-4 butterfly core (IDENTICAL for forward/inverse)
+ *
+ * This macro implements the core arithmetic of a radix-4 butterfly, reused from the radix-4 implementation.
+ * It is applied in both stages of the radix-16 decomposition to compute sums, differences, and rotations.
+ * The rot_mask parameter allows direction-specific rotation (e.g., for -i or +i multiplication).
+ */
 #ifdef __AVX2__
 #define RADIX4_BUTTERFLY_AVX2(a, b, c, d, y0, y1, y2, y3, rot_mask) \
     do                                                              \
@@ -113,6 +134,9 @@
  * - y[4..7]:   W_4^{0*j, 1*j, 2*j, 3*j} = {1, -i, -1, +i}
  * - y[8..11]:  W_4^{0*j, 2*j, 0*j, 2*j} = {1, -1, 1, -1}
  * - y[12..15]: W_4^{0*j, 3*j, 2*j, 1*j} = {1, +i, -1, -i}
+ *
+ * This macro applies fixed twiddle factors from the 4th roots of unity to the outputs of the first radix-4 stage.
+ * It uses optimized complex multiplications for the forward transform in the radix-16 butterfly.
  */
 #ifdef __AVX2__
 #define APPLY_W4_INTERMEDIATE_FV_AVX2(y)                                                \
@@ -150,6 +174,9 @@
  * @brief Apply W_4 intermediate twiddles for INVERSE FFT
  *
  * Same pattern but with conjugated W_4 twiddles
+ *
+ * This macro applies fixed twiddle factors from the 4th roots of unity to the outputs of the first radix-4 stage.
+ * It uses optimized complex multiplications for the inverse transform in the radix-16 butterfly.
  */
 #ifdef __AVX2__
 #define APPLY_W4_INTERMEDIATE_BV_AVX2(y)                                                \
@@ -183,7 +210,12 @@
     } while (0)
 #endif
 
-// Scalar versions
+/**
+ * @brief Scalar version to apply W_4 intermediate twiddles for FORWARD FFT.
+ *
+ * This macro performs the same twiddle applications as APPLY_W4_INTERMEDIATE_FV_AVX2 but in scalar arithmetic.
+ * It is used for non-SIMD paths or small sizes in the forward transform.
+ */
 #define APPLY_W4_INTERMEDIATE_FV_SCALAR(y)              \
     do                                                  \
     {                                                   \
@@ -226,6 +258,12 @@
         }                                               \
     } while (0)
 
+/**
+ * @brief Scalar version to apply W_4 intermediate twiddles for INVERSE FFT.
+ *
+ * This macro performs the same twiddle applications as APPLY_W4_INTERMEDIATE_BV_AVX2 but in scalar arithmetic.
+ * It is used for non-SIMD paths or small sizes in the inverse transform.
+ */
 #define APPLY_W4_INTERMEDIATE_BV_SCALAR(y)              \
     do                                                  \
     {                                                   \
@@ -276,6 +314,9 @@
  * @brief Scalar: Apply stage twiddles to lanes 1-15
  *
  * stage_tw layout: [W^(1*k), W^(2*k), ..., W^(15*k)] for each k
+ *
+ * This macro multiplies the input lanes 1 through 15 by precomputed twiddle factors for the current stage.
+ * It is the first step in the radix-16 butterfly, preparing inputs for the first radix-4 stage.
  */
 #define APPLY_STAGE_TWIDDLES_R16_SCALAR(k, x, stage_tw)                \
     do                                                                 \
@@ -291,6 +332,9 @@
 
 /**
  * @brief AVX2: Apply stage twiddles for 2 butterflies (kk and kk+1)
+ *
+ * This macro applies precomputed twiddle factors to inputs for two simultaneous butterflies using AVX2.
+ * It loads twiddles in AoS format and uses CMUL_FMA_AOS for multiplication, optimizing for SIMD parallelism.
  */
 #ifdef __AVX2__
 #define APPLY_STAGE_TWIDDLES_R16_AVX2(kk, x, stage_tw)                                                 \
@@ -308,6 +352,12 @@
 // DATA MOVEMENT - IDENTICAL for forward/inverse
 //==============================================================================
 
+/**
+ * @brief Load 16 lanes for AVX2 (two butterflies: kk and kk+1).
+ *
+ * This macro loads input data for 16 lanes (0 to 15) from the sub_outputs buffer into SIMD registers.
+ * It assumes AoS layout and loads two complex values per register (for two butterflies).
+ */
 #ifdef __AVX2__
 #define LOAD_16_LANES_AVX2(kk, K, sub_outputs, x)                                                  \
     do                                                                                             \
@@ -317,7 +367,14 @@
             x[lane] = load2_aos(&sub_outputs[(kk) + lane * K], &sub_outputs[(kk) + 1 + lane * K]); \
         }                                                                                          \
     } while (0)
+#endif
 
+/**
+ * @brief Store 16 lanes for AVX2 (unaligned store).
+ *
+ * This macro stores the final outputs from the radix-16 butterfly into the output buffer.
+ * It handles strided storage across 4 groups, using unaligned stores for flexibility.
+ */
 #define STORE_16_LANES_AVX2(kk, K, output_buffer, z, m_offset)            \
     do                                                                    \
     {                                                                     \
@@ -330,6 +387,12 @@
         }                                                                 \
     } while (0)
 
+/**
+ * @brief Store 16 lanes for AVX2 with streaming stores.
+ *
+ * Similar to STORE_16_LANES_AVX2, but uses non-temporal streaming stores to bypass cache for large datasets.
+ * This is beneficial for performance when the output is not immediately reused, reducing cache pollution.
+ */
 #define STORE_16_LANES_AVX2_STREAM(kk, K, output_buffer, z, m_offset)            \
     do                                                                           \
     {                                                                            \
@@ -341,16 +404,27 @@
             _mm256_stream_pd(&output_buffer[(kk) + (m + 12) * K].re, z[m + 12]); \
         }                                                                        \
     } while (0)
-#endif
 
 //==============================================================================
 // PREFETCHING
 //==============================================================================
 
+/**
+ * @brief Prefetch distances for L1, L2, and L3 caches.
+ *
+ * These constants define how far ahead to prefetch data in terms of indices.
+ * They are tuned to improve memory access performance by bringing data into caches before it's needed.
+ */
 #define PREFETCH_L1 8
 #define PREFETCH_L2 32
 #define PREFETCH_L3 64
 
+/**
+ * @brief Prefetch 16 lanes ahead for AVX2.
+ *
+ * This macro issues prefetch instructions for future data accesses in the sub_outputs buffer.
+ * It prefetches 16 strided lanes, using the specified cache hint to optimize memory hierarchy usage.
+ */
 #ifdef __AVX2__
 #define PREFETCH_16_LANES(k, K, distance, sub_outputs, hint)                                 \
     do                                                                                       \
@@ -366,3 +440,4 @@
 #endif
 
 #endif // FFT_RADIX16_MACROS_H
+```
