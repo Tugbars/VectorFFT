@@ -20,10 +20,14 @@
 // COMPLEX MULTIPLICATION - FMA-optimized (IDENTICAL for both directions)
 //==============================================================================
 
-#ifdef __AVX2__
 /**
  * @brief Optimized complex multiply: out = a * w (6 FMA + 2 UNPACK)
+ *
+ * This macro performs a complex multiplication using AVX2 instructions, optimized with fused multiply-add (FMA) operations.
+ * It is used for applying twiddle factors in the radix-32 butterfly for both forward and inverse transforms.
+ * The operation assumes Array-of-Structures (AoS) layout for complex numbers (real and imaginary parts interleaved).
  */
+#ifdef __AVX2__
 #define CMUL_FMA_R32(out, a, w)                                      \
     do                                                               \
     {                                                                \
@@ -43,6 +47,9 @@
 
 /**
  * @brief Core radix-4 sums/differences (IDENTICAL for forward/inverse)
+ *
+ * This macro computes the basic sums and differences for a radix-4 butterfly, used as a building block in the radix-32 decomposition.
+ * It processes AVX2 vectors containing two complex numbers each and is identical for both forward and inverse transforms.
  */
 #ifdef __AVX2__
 #define RADIX4_BUTTERFLY_CORE_R32(a, b, c, d, sumBD, difBD, sumAC, difAC) \
@@ -54,7 +61,12 @@
     } while (0)
 #endif
 
-// Scalar version
+/**
+ * @brief Scalar version of the radix-4 butterfly core sums/differences.
+ *
+ * This macro performs the same sum and difference calculations as RADIX4_BUTTERFLY_CORE_R32 but in scalar mode.
+ * It is used for tail cases or non-SIMD environments in the radix-32 butterfly.
+ */
 #define RADIX4_BUTTERFLY_CORE_R32_SCALAR(a, b, c, d, \
                                           sumBD, difBD, sumAC, difAC) \
     do { \
@@ -74,6 +86,9 @@
 
 /**
  * @brief FORWARD rotation: -i * difBD
+ *
+ * This macro applies a forward rotation (multiplication by -i) to the difference vector in the radix-4 butterfly.
+ * It uses AVX2 permute and XOR operations for efficiency in the forward transform.
  */
 #ifdef __AVX2__
 #define RADIX4_ROTATE_FORWARD_R32(difBD, rot) \
@@ -83,6 +98,11 @@
     } while (0)
 #endif
 
+/**
+ * @brief Scalar forward rotation: -i * difBD
+ *
+ * This macro applies the forward rotation (multiplication by -i) in scalar mode for the radix-4 butterfly.
+ */
 #define RADIX4_ROTATE_FORWARD_R32_SCALAR(difBD, rot) \
     do { \
         rot.re = difBD.im;   \
@@ -91,6 +111,9 @@
 
 /**
  * @brief INVERSE rotation: +i * difBD
+ *
+ * This macro applies an inverse rotation (multiplication by +i) to the difference vector in the radix-4 butterfly.
+ * It uses AVX2 permute and XOR operations for efficiency in the inverse transform.
  */
 #ifdef __AVX2__
 #define RADIX4_ROTATE_INVERSE_R32(difBD, rot) \
@@ -100,6 +123,11 @@
     } while (0)
 #endif
 
+/**
+ * @brief Scalar inverse rotation: +i * difBD
+ *
+ * This macro applies the inverse rotation (multiplication by +i) in scalar mode for the radix-4 butterfly.
+ */
 #define RADIX4_ROTATE_INVERSE_R32_SCALAR(difBD, rot) \
     do { \
         rot.re = -difBD.im;  \
@@ -110,6 +138,12 @@
 // OUTPUT ASSEMBLY - IDENTICAL for forward/inverse
 //==============================================================================
 
+/**
+ * @brief Assemble final outputs from radix-4 intermediates
+ *
+ * This macro combines the sums, differences, and rotated values to produce the four outputs of a radix-4 butterfly.
+ * It is identical for both forward and inverse transforms in AVX2 mode.
+ */
 #ifdef __AVX2__
 #define RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC, sumBD, difAC, rot, y0, y1, y2, y3) \
     do { \
@@ -120,6 +154,11 @@
     } while (0)
 #endif
 
+/**
+ * @brief Scalar version to assemble final outputs from radix-4 intermediates.
+ *
+ * This macro performs the same output assembly as RADIX4_ASSEMBLE_OUTPUTS_R32 but in scalar mode.
+ */
 #define RADIX4_ASSEMBLE_OUTPUTS_R32_SCALAR(sumAC, sumBD, difAC, rot, y0, y1, y2, y3) \
     do { \
         y0.re = sumAC.re + sumBD.re; \
@@ -144,6 +183,9 @@
  * @param stage_tw Precomputed stage twiddles [K * 31]
  * @param lane Lane index (1-31)
  * @param tw_out Output twiddled vector
+ *
+ * This macro applies precomputed twiddle factors to a specific lane for two butterflies simultaneously using AVX2.
+ * It loads twiddles directly into a vector and uses CMUL_FMA_R32 for multiplication.
  */
 #ifdef __AVX2__
 #define APPLY_STAGE_TWIDDLE_R32(kk, d_vec, stage_tw, lane, tw_out) \
@@ -165,6 +207,9 @@
  * 
  * Applies to lanes [8..31] after first radix-4 layer
  * For j=1,2,3 and g=0..7
+ *
+ * This macro applies hardcoded twiddle factors from the 32nd roots of unity to lanes 8-31 after the first radix-4 stage.
+ * It uses precomputed constants for efficiency in the forward transform.
  */
 #ifdef __AVX2__
 #define APPLY_W32_TWIDDLES_FV_AVX2(x) \
@@ -203,6 +248,9 @@
 
 /**
  * @brief Apply W_32 twiddles (INVERSE: exp(+2πi*j*g/32))
+ *
+ * This macro applies hardcoded twiddle factors from the 32nd roots of unity to lanes 8-31 after the first radix-4 stage.
+ * It uses precomputed constants (conjugates of forward) for efficiency in the inverse transform.
  */
 #ifdef __AVX2__
 #define APPLY_W32_TWIDDLES_BV_AVX2(x) \
@@ -249,6 +297,9 @@
  * W_8^1 = (√2/2, -√2/2)
  * W_8^2 = (0, -1) = -i
  * W_8^3 = (-√2/2, -√2/2)
+ *
+ * This macro applies hardcoded twiddle factors from the 8th roots of unity to specified outputs.
+ * It uses optimized CMUL_FMA_R32 and permute/XOR for efficiency in the forward transform.
  */
 #ifdef __AVX2__
 #define APPLY_W8_TWIDDLES_FV_AVX2(o1, o2, o3) \
@@ -271,6 +322,9 @@
  * W_8^1 = (√2/2, +√2/2)
  * W_8^2 = (0, +1) = +i
  * W_8^3 = (-√2/2, +√2/2)
+ *
+ * This macro applies hardcoded twiddle factors from the 8th roots of unity to specified outputs.
+ * It uses optimized CMUL_FMA_R32 and permute/XOR for efficiency in the inverse transform.
  */
 #ifdef __AVX2__
 #define APPLY_W8_TWIDDLES_BV_AVX2(o1, o2, o3) \
@@ -293,6 +347,9 @@
 
 /**
  * @brief Apply W_8 twiddles (FORWARD, scalar)
+ *
+ * This macro applies hardcoded twiddle factors from the 8th roots of unity in scalar mode for the forward transform.
+ * It optimizes multiplications for the specific constants.
  */
 #define APPLY_W8_TWIDDLES_FV_SCALAR(o) \
     do { \
@@ -320,6 +377,9 @@
 
 /**
  * @brief Apply W_8 twiddles (INVERSE, scalar)
+ *
+ * This macro applies hardcoded twiddle factors from the 8th roots of unity in scalar mode for the inverse transform.
+ * It optimizes multiplications for the specific constants.
  */
 #define APPLY_W8_TWIDDLES_BV_SCALAR(o) \
     do { \
@@ -351,6 +411,9 @@
 
 /**
  * @brief Combine even/odd radix-4 results into radix-8 output
+ *
+ * This macro performs radix-2 combinations of even and odd outputs from radix-4 butterflies to form radix-8 results.
+ * It computes sums and differences for eight outputs and is identical for both forward and inverse transforms.
  */
 #ifdef __AVX2__
 #define RADIX8_COMBINE_R32(e0, e1, e2, e3, o0, o1, o2, o3, \
@@ -371,22 +434,34 @@
 // DATA MOVEMENT - IDENTICAL for forward/inverse
 //==============================================================================
 
-#ifdef __AVX2__
 /**
  * @brief Load 2 complex values from two locations
+ *
+ * This macro loads two complex values (AoS format) from separate pointers into an AVX2 vector.
+ * It is a wrapper around load2_aos for data movement in the radix-32 butterfly.
  */
+#ifdef __AVX2__
 #define LOAD_2_COMPLEX_R32(ptr1, ptr2) \
     load2_aos(ptr1, ptr2)
+#endif
 
 /**
  * @brief Store 2 complex values
+ *
+ * This macro stores an AVX2 vector containing two complex values (AoS) to a pointer using unaligned store.
  */
+#ifdef __AVX2__
 #define STORE_2_COMPLEX_R32(ptr, vec) \
     STOREU_PD(&(ptr)->re, vec)
+#endif
 
 /**
  * @brief Store with streaming
+ *
+ * This macro stores an AVX2 vector containing two complex values (AoS) using non-temporal streaming store.
+ * It bypasses cache for large data sets to improve performance.
  */
+#ifdef __AVX2__
 #define STORE_2_COMPLEX_R32_STREAM(ptr, vec) \
     _mm256_stream_pd(&(ptr)->re, vec)
 #endif
@@ -395,10 +470,22 @@
 // PREFETCHING - IDENTICAL for forward/inverse
 //==============================================================================
 
+/**
+ * @brief Prefetch distances for L1, L2, and L3 caches in radix-32.
+ *
+ * These constants define how far ahead to prefetch data in terms of indices for the radix-32 butterfly.
+ * They are tuned to optimize memory access by loading data into caches preemptively.
+ */
 #define PREFETCH_L1_R32 8
 #define PREFETCH_L2_R32 32
 #define PREFETCH_L3_R32 64
 
+/**
+ * @brief Prefetch 32 lanes ahead for AVX2 in radix-32.
+ *
+ * This macro issues prefetch instructions for future strided data accesses in the sub_outputs buffer.
+ * It prefetches every 4th lane to cover the 32 lanes efficiently, using the specified cache hint.
+ */
 #ifdef __AVX2__
 #define PREFETCH_32_LANES_R32(k, K, distance, sub_outputs, hint) \
     do { \
@@ -416,6 +503,9 @@
 
 /**
  * @brief Complete scalar radix-4 butterfly (forward version)
+ *
+ * This macro performs a full radix-4 butterfly in scalar mode for the forward transform.
+ * It computes core arithmetic, applies rotation, assembles outputs, and overwrites inputs with results.
  */
 #define RADIX4_BUTTERFLY_SCALAR_FV_R32(a, b, c, d) \
     do { \
@@ -436,6 +526,9 @@
 
 /**
  * @brief Complete scalar radix-4 butterfly (inverse version)
+ *
+ * This macro performs a full radix-4 butterfly in scalar mode for the inverse transform.
+ * It computes core arithmetic, applies rotation, assembles outputs, and overwrites inputs with results.
  */
 #define RADIX4_BUTTERFLY_SCALAR_BV_R32(a, b, c, d) \
     do { \
