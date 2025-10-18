@@ -268,13 +268,4 @@ void fft_radix16_bv(
  * 2. Only constant values differ (rotation masks, W_4 constants)
  * 3. Constants are loaded once and reused
  * 
- * COMPARISON TO OLD APPROACH:
- * - OLD: Forward and inverse in same function, runtime branches
- * - NEW: Separate functions, no branches, dispatcher selects at plan time
- * - BENEFIT: Better inlining, better branch prediction, cleaner code
- * 
- * SPEEDUP OVER OLD:
- * - OLD: ~400 cycles/butterfly
- * - NEW: ~40 cycles/butterfly
- * - SPEEDUP: 10x faster!
  */
