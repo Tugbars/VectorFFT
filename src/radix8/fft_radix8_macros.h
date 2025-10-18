@@ -21,7 +21,12 @@
 // W_8 CONSTANTS - Direction-dependent
 //==============================================================================
 
-// High-precision sqrt(2)/2
+/**
+ * @brief High-precision constant for sqrt(2)/2.
+ *
+ * This constant is used in the definitions of W_8 twiddle factors for both forward and inverse FFTs.
+ * It represents the cosine and sine values for π/4 radians, which appear in the twiddle factors for radix-8 decomposition.
+ */
 #define C8_CONSTANT 0.7071067811865475244008443621048490392848359376887
 
 /**
@@ -31,6 +36,9 @@
  * W_8^1 = (√2/2, -√2/2)
  * W_8^2 = (0, -1)
  * W_8^3 = (-√2/2, -√2/2)
+ *
+ * These constants are used to apply fixed geometric twiddles in the radix-8 butterfly for the forward transform.
+ * They facilitate the decomposition by multiplying specific outputs from the sub-butterflies.
  */
 #define W8_FV_1_RE  C8_CONSTANT
 #define W8_FV_1_IM  (-C8_CONSTANT)
@@ -46,6 +54,9 @@
  * W_8^1 = (√2/2, +√2/2)
  * W_8^2 = (0, +1)
  * W_8^3 = (-√2/2, +√2/2)
+ *
+ * These constants are used to apply fixed geometric twiddles in the radix-8 butterfly for the inverse transform.
+ * They are the complex conjugates of the forward twiddles, ensuring the inverse operation reverses the forward transform.
  */
 #define W8_BV_1_RE  C8_CONSTANT
 #define W8_BV_1_IM  C8_CONSTANT
@@ -59,6 +70,13 @@
 //==============================================================================
 
 #ifdef __AVX2__
+/**
+ * @brief Optimized complex multiply: out = a * w (6 FMA + 2 UNPACK)
+ *
+ * This macro performs a complex multiplication using AVX2 instructions, optimized with fused multiply-add (FMA) operations.
+ * It is used for applying twiddle factors to inputs in both forward and inverse transforms.
+ * The operation assumes Array-of-Structures (AoS) layout for complex numbers (real and imaginary parts interleaved).
+ */
 #define CMUL_FMA_AOS(out, a, w)                                      \
     do                                                               \
     {                                                                \
@@ -78,6 +96,10 @@
 
 /**
  * @brief Radix-4 butterfly core (IDENTICAL for forward/inverse)
+ *
+ * This macro implements the core arithmetic of a radix-4 butterfly, used as sub-components in the radix-8 decomposition.
+ * It computes sums and differences for even and odd indices, with a rotation for the imaginary unit multiplication.
+ * The rot_mask parameter allows direction-specific rotation (e.g., -i for forward, +i for inverse).
  */
 #ifdef __AVX2__
 #define RADIX4_CORE_AVX2(a, b, c, d, y0, y1, y2, y3, rot_mask) \
@@ -98,7 +120,13 @@
     } while (0)
 #endif
 
-// Scalar version
+/**
+ * @brief Scalar version of the radix-4 butterfly core.
+ *
+ * This macro performs the same operations as RADIX4_CORE_AVX2 but in scalar mode, without SIMD instructions.
+ * It is used for handling tail cases or non-SIMD environments in the radix-8 butterfly.
+ * The rot_sign parameter controls the direction of rotation (+1 or -1 for inverse/forward).
+ */
 #define RADIX4_CORE_SCALAR(a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im, \
                            y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, \
                            rot_sign) \
@@ -136,6 +164,9 @@
  * o[1] *= W_8^1 = (√2/2, -√2/2)
  * o[2] *= W_8^2 = (0, -1)
  * o[3] *= W_8^3 = (-√2/2, -√2/2)
+ *
+ * This macro applies fixed twiddle factors from the 8th roots of unity to the odd outputs of the sub-butterflies.
+ * It uses optimized FMA and permute operations for efficiency in the forward transform.
  */
 #ifdef __AVX2__
 #define APPLY_W8_TWIDDLES_FV_AVX2(o) \
@@ -178,6 +209,9 @@
  * o[1] *= W_8^1 = (√2/2, +√2/2)
  * o[2] *= W_8^2 = (0, +1)
  * o[3] *= W_8^3 = (-√2/2, +√2/2)
+ *
+ * This macro applies fixed twiddle factors from the 8th roots of unity to the odd outputs of the sub-butterflies.
+ * It uses optimized FMA and permute operations for efficiency in the inverse transform.
  */
 #ifdef __AVX2__
 #define APPLY_W8_TWIDDLES_BV_AVX2(o) \
@@ -214,7 +248,12 @@
     } while (0)
 #endif
 
-// Scalar versions
+/**
+ * @brief Scalar version to apply W_8 twiddles for FORWARD FFT.
+ *
+ * This macro performs the same twiddle applications as APPLY_W8_TWIDDLES_FV_AVX2 but in scalar arithmetic.
+ * It is used for non-SIMD paths or small sizes in the forward transform.
+ */
 #define APPLY_W8_TWIDDLES_FV_SCALAR(o) \
     do { \
         /* o[1] *= W_8^1 */ \
@@ -237,6 +276,12 @@
         } \
     } while (0)
 
+/**
+ * @brief Scalar version to apply W_8 twiddles for INVERSE FFT.
+ *
+ * This macro performs the same twiddle applications as APPLY_W8_TWIDDLES_BV_AVX2 but in scalar arithmetic.
+ * It is used for non-SIMD paths or small sizes in the inverse transform.
+ */
 #define APPLY_W8_TWIDDLES_BV_SCALAR(o) \
     do { \
         /* o[1] *= W_8^1 */ \
@@ -263,6 +308,12 @@
 // FINAL RADIX-2 COMBINATION - IDENTICAL for forward/inverse
 //==============================================================================
 
+/**
+ * @brief Final radix-2 combination for AVX2 (unaligned store).
+ *
+ * This macro combines the even and odd outputs from the sub-butterflies using radix-2 sums and differences.
+ * It stores the results directly into the output buffer, used in the last stage of the radix-8 butterfly.
+ */
 #ifdef __AVX2__
 #define FINAL_RADIX2_AVX2(e, o, output_buffer, k, K) \
     do { \
@@ -274,6 +325,12 @@
         } \
     } while (0)
 
+/**
+ * @brief Final radix-2 combination for AVX2 with streaming stores.
+ *
+ * Similar to FINAL_RADIX2_AVX2, but uses non-temporal streaming stores to bypass cache for large datasets.
+ * This is beneficial for performance when the output is not immediately reused, reducing cache pollution.
+ */
 #define FINAL_RADIX2_AVX2_STREAM(e, o, output_buffer, k, K) \
     do { \
         for (int m = 0; m < 4; m++) { \
@@ -285,6 +342,12 @@
     } while (0)
 #endif
 
+/**
+ * @brief Scalar version of the final radix-2 combination.
+ *
+ * This macro performs the radix-2 sums and differences in scalar mode and stores them into the output buffer.
+ * It is used for tail handling or non-SIMD environments in the radix-8 butterfly.
+ */
 #define FINAL_RADIX2_SCALAR(e, o, output_buffer, k, K) \
     do { \
         for (int m = 0; m < 4; m++) { \
@@ -303,6 +366,9 @@
  * @brief Scalar: Apply stage twiddles to lanes 1-7
  * 
  * stage_tw layout: [W^(1*k), W^(2*k), ..., W^(7*k)] for each k
+ *
+ * This macro multiplies the input lanes 1 through 7 by precomputed twiddle factors for the current stage.
+ * It is the first step in the radix-8 butterfly, preparing inputs for the sub-butterflies.
  */
 #define APPLY_STAGE_TWIDDLES_SCALAR(k, x, stage_tw) \
     do { \
@@ -316,6 +382,9 @@
 
 /**
  * @brief AVX2: Apply stage twiddles for 2 butterflies (kk and kk+1)
+ *
+ * This macro applies precomputed twiddle factors to inputs for two simultaneous butterflies using AVX2.
+ * It loads twiddles in AoS format and uses CMUL_FMA_AOS for multiplication, optimizing for SIMD parallelism.
  */
 #ifdef __AVX2__
 #define APPLY_STAGE_TWIDDLES_AVX2(kk, x, stage_tw) \
@@ -331,6 +400,12 @@
 // DATA MOVEMENT - IDENTICAL for forward/inverse
 //==============================================================================
 
+/**
+ * @brief Load 8 lanes for AVX2 (two butterflies: kk and kk+1).
+ *
+ * This macro loads input data for 8 lanes (0 to 7) from the sub_outputs buffer into SIMD registers.
+ * It assumes AoS layout and loads two complex values per register (for two butterflies).
+ */
 #ifdef __AVX2__
 #define LOAD_8_LANES_AVX2(kk, K, sub_outputs, x) \
     do { \
@@ -345,10 +420,22 @@
 // PREFETCHING - IDENTICAL for forward/inverse
 //==============================================================================
 
+/**
+ * @brief Prefetch distances for L1, L2, and L3 caches.
+ *
+ * These constants define how far ahead to prefetch data in terms of indices.
+ * They are tuned to improve memory access performance by bringing data into caches before it's needed.
+ */
 #define PREFETCH_L1 16
 #define PREFETCH_L2 32
 #define PREFETCH_L3 64
 
+/**
+ * @brief Prefetch 8 lanes ahead for AVX2.
+ *
+ * This macro issues prefetch instructions for future data accesses in the sub_outputs buffer.
+ * It prefetches one base lane and seven additional strided lanes, using the specified cache hint.
+ */
 #ifdef __AVX2__
 #define PREFETCH_8_LANES(k, K, distance, sub_outputs, hint) \
     do { \
