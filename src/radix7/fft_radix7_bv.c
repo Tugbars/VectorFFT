@@ -1,14 +1,25 @@
 //==============================================================================
-// fft_radix7_fv.c - Forward Radix-7 Rader Butterfly (Precomputed Twiddles)
+// fft_radix7_bv.c - INVERSE Radix-7 Rader Butterfly (Precomputed Twiddles)
 //==============================================================================
 //
 // DESIGN PRINCIPLES:
-// 1. No direction parameter - always forward FFT
-// 2. stage_tw precomputed (from Twiddle Manager)
-// 3. rader_tw precomputed (from Rader Manager) with forward sign
-// 4. Macros for 99% code reuse with inverse
-// 5. Rader's algorithm with generator g=3 for prime 7
-//
+// 1. No direction parameter - always INVERSE FFT
+// 2. stage_tw precomputed (from Twiddle Manager) - CONJUGATED
+// 3. rader_tw precomputed (from Rader Manager) with INVERSE sign
+// ...
+
+/**
+ * @brief Ultra-optimized INVERSE radix-7 Rader butterfly
+ * 
+ * ASSUMPTIONS:
+ * - stage_tw is NEVER NULL (precomputed, K×6 values, CONJUGATED)
+ * - rader_tw is NEVER NULL (precomputed, 6 values with INVERSE sign)
+ * - Direction is ALWAYS INVERSE
+ * 
+ * TWIDDLE LAYOUT:
+ * - stage_tw[k*6 + (r-1)] = W_N^(-r*k) = conj(W_N^(r*k)) for r=1..6
+ * - rader_tw[q] = exp(+2πi * out_perm[q] / 7) for q=0..5  [NOTE: positive sign]
+ */
 
 #include "fft_radix7.h"
 #include "simd_math.h"
@@ -37,7 +48,7 @@
  * - out_perm = [1,5,4,6,2,3]
  * - 6-point cyclic convolution
  */
-void fft_radix7_fv(
+void fft_radix7_bv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
     const fft_data *restrict stage_tw,
