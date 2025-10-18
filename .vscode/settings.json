@@ -7,6 +7,9 @@
         "functional": "c",
         "random": "c",
         "immintrin.h": "c",
-        "pthread.h": "c"
+        "pthread.h": "c",
+        "charconv": "c",
+        "xmemory": "c",
+        "simd_math.h": "c"
     }
 }
