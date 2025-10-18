@@ -121,66 +121,124 @@ make test
 ---
 
 ## Architecture
-┌─────────────────────────────────────────────────────────────┐
-│  fft_twiddle_manager.c/.h                                   │
-│    - Isolated twiddle computation                            │
-│    - Zero knowledge of FFT algorithm                         │
-│    - Returns handles with correct twiddles                   │
-└─────────────────────────────────────────────────────────────┘
-                             │
-              ┌──────────────┴──────────────┐
-              ↓                             ↓
-┌──────────────────────────┐  ┌──────────────────────────┐
-│  FORWARD Radix Functions │  │  INVERSE Radix Functions │
-├──────────────────────────┤  ├──────────────────────────┤
-│  fft_radix2_fv()         │  │  fft_radix2_bv()         │
-│  fft_radix3_fv()         │  │  fft_radix3_bv()         │
-│  fft_radix4_fv()         │  │  fft_radix4_bv()         │
-│  fft_radix5_fv()         │  │  fft_radix5_bv()         │
-│  fft_radix7_fv()         │  │  fft_radix7_bv()         │
-│  fft_radix8_fv()         │  │  fft_radix8_bv()         │
-│  ...                     │  │  ...                     │
-└──────────────────────────┘  └──────────────────────────┘
-       │                             │
-       └──────────────┬──────────────┘
-                      ↓
-         ┌─────────────────────────┐
-         │  Dispatcher              │
-         │  (selects correct func)  │
-         └─────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│  FFT_INIT (Planning)                                │
+│                                                     │
+│  1. Factorize N into radices                       │
+│  2. For each stage:                                │
+│     ┌──────────────────────────────────────┐      │
+│     │ Twiddle Manager                       │      │
+│     │ - Computes stage_tw[r,k] = W^(r*k)   │      │
+│     │ - Stores in plan.stages[i].tw        │      │
+│     └──────────────────────────────────────┘      │
+│     ┌──────────────────────────────────────┐      │
+│     │ Rader Manager (if prime radix)        │      │
+│     │ - Computes conv_tw[q] = exp(...)     │      │
+│     │ - Stores in rader_plan_fwd/inv        │      │
+│     └──────────────────────────────────────┘      │
+│  3. Store plan.direction = FORWARD/INVERSE         │
+└─────────────────────────────────────────────────────┘
+                         │
+                         ↓
+┌─────────────────────────────────────────────────────┐
+│  FFT_EXEC (Execution)                               │
+│                                                     │
+│  Dispatcher:                                        │
+│    if (plan.direction == FORWARD):                 │
+│      radix7_fv(stage.tw, stage.rader_fwd)          │
+│    else:                                           │
+│      radix7_bv(stage.tw, stage.rader_inv)          │
+└─────────────────────────────────────────────────────┘
+                         │
+                         ↓
+┌─────────────────────────────────────────────────────┐
+│  RADIX BUTTERFLY (Arithmetic)                       │
+│                                                     │
+│  void radix7_fv(out, in, stage_tw, rader_tw) {    │
+│    // Just compute DFT using provided twiddles     │
+│    // No knowledge of direction!                   │
+│    // Direction is baked into constants            │
+│  }                                                 │
+└─────────────────────────────────────────────────────┘
+
+void radix7_fv(out, in, stage_tw, rader_tw, sub_len) {
+    for (k = 0; k < sub_len; k++) {
+        // 1. Load inputs
+        x0 = in[k + 0*sub_len];
+        x1 = in[k + 1*sub_len];
+        ...
+        
+        // 2. Apply stage twiddles (pre-computed!)
+        if (sub_len > 1) {
+            x1 *= stage_tw[k*6 + 0];  // W^(1*k)
+            x2 *= stage_tw[k*6 + 1];  // W^(2*k)
+            ...
+        }
+        
+        // 3. Rader convolution (pre-computed twiddles!)
+        tx = permute(x1, x3, x2, x6, x4, x5);
+        for (q = 0; q < 6; q++) {
+            conv[q] = 0;
+            for (l = 0; l < 6; l++) {
+                // ✅ USE PRE-COMPUTED rader_tw!
+                conv[q] += tx[l] * rader_tw[(q-l) % 6];
+            }
+        }
+        
+        // 4. Output (using pre-computed convolution result)
+        out[k + 0*sub_len] = x0 + sum(conv);
+        out[k + 1*sub_len] = x0 + conv[0];
+        ...
+    }
+}
 ```
+
+**KEY:** The function doesn't know if it's forward or inverse!
+- It just uses the twiddles it's given
+- Those twiddles have the correct sign (computed by twiddle manager)
 
 ---
 
-## 📁 File Structure
+## 🧩 Rader Special Case
+
+### **Two Twiddle Types in Rader:**
+
+| Twiddle Type | Purpose | Who computes? | When used? |
+|-------------|---------|---------------|-----------|
+| **Stage twiddles** | Connect sub-FFTs (Cooley-Tukey) | Twiddle Manager | DIT multiply |
+| **Convolution twiddles** | Rader cyclic convolution | Rader Manager | Inside Rader loop |
+
+### **Rader Plan Per Direction:**
 ```
-src/
-├── fft_twiddle_manager.h       ← Twiddle API
-├── fft_twiddle_manager.c       ← Twiddle implementation
+Planning creates TWO Rader plans for each prime:
+
+rader_plan_fwd_7:
+  conv_tw[6] = exp(-2πi * out_perm[q] / 7)  // Negative!
+
+rader_plan_inv_7:
+  conv_tw[6] = exp(+2πi * out_perm[q] / 7)  // Positive!
+
+Dispatcher selects:
+  if FORWARD: pass rader_plan_fwd_7.conv_tw to radix7_fv()
+  if INVERSE: pass rader_plan_inv_7.conv_tw to radix7_bv()
+
+  src/
+├── planning/
+│   ├── fft_planning.h          # Main planning API (fft_init umbrella)
+│   ├── fft_planning.c          # Factorization + stage setup
+│   ├── fft_twiddles.h          # Twiddle Manager (single source)
+│   ├── fft_twiddles.c          # AVX2 twiddle computation
+│   └── fft_rader_plans.h/c     # Rader Manager (single source)
 │
-├── radix_forward/              ← Forward variants
-│   ├── fft_radix2_fv.c         ← "fv" = forward
+├── execution/
+│   ├── fft_executor.h/c        # Dispatcher (calls _fv/_bv)
+│   └── fft_exec.c              # Main fft_exec() function
+│
+├── radix_forward/
+│   ├── fft_radix2_fv.c
 │   ├── fft_radix3_fv.c
-│   ├── fft_radix4_fv.c
-│   ├── fft_radix5_fv.c
-│   ├── fft_radix7_fv.c
-│   ├── fft_radix8_fv.c
-│   ├── fft_radix11_fv.c
-│   ├── fft_radix13_fv.c
-│   ├── fft_radix16_fv.c
-│   └── fft_radix32_fv.c
+│   └── ...
 │
-├── radix_inverse/              ← Inverse variants
-│   ├── fft_radix2_bv.c         ← "bv" = backward
-│   ├── fft_radix3_bv.c
-│   ├── fft_radix4_bv.c
-│   ├── fft_radix5_bv.c
-│   ├── fft_radix7_bv.c
-│   ├── fft_radix8_bv.c
-│   ├── fft_radix11_bv.c
-│   ├── fft_radix13_bv.c
-│   ├── fft_radix16_bv.c
-│   └── fft_radix32_bv.c
-│
-├── fft_radix_dispatch.h        ← Function pointer typedefs
-└── highspeedFFT.c              ← Main FFT with dispatcher
+└── radix_inverse/
+    ├── fft_radix2_bv.c
+    └── ...
