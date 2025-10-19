@@ -3,7 +3,8 @@
 //==============================================================================
 
 #include "fft_planning_types.h"
-#include "bluestein.h"
+#include "fft_planning.h"
+#include "../bluestein/bluestein.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,10 +14,6 @@
     #define aligned_free(ptr) _aligned_free(ptr)
 #else
     #define aligned_free(ptr) free(ptr)
-#endif
-
-#ifndef FFT_LOG_ERROR
-#define FFT_LOG_ERROR(fmt, ...) fprintf(stderr, "[FFT ERROR] " fmt "\n", ##__VA_ARGS__)
 #endif
 
 //==============================================================================
@@ -246,7 +243,6 @@ int fft_exec_dft(
     
     switch (plan->strategy) {
         case FFT_EXEC_INPLACE_BITREV:
-            // Don't need workspace, ignore it
             if (input != output) {
                 memcpy(output, input, plan->n_fft * sizeof(fft_data));
             }
@@ -265,7 +261,6 @@ int fft_exec_dft(
                 return -1;
             }
             
-            // Dispatch to Bluestein
             size_t scratch_size = bluestein_get_scratch_size(plan->n_input);
             
             if (plan->direction == FFT_FORWARD) {
@@ -290,4 +285,76 @@ int fft_exec_dft(
             FFT_LOG_ERROR("Unknown execution strategy");
             return -1;
     }
+    
+    // ❌ REMOVED: No normalization here!
+    // User applies 1/N manually if needed
+}
+
+
+int fft_exec_normalized(
+    fft_object plan,
+    const fft_data *input,
+    fft_data *output,
+    fft_data *workspace)
+{
+    // Execute unnormalized transform
+    int result = fft_exec_dft(plan, input, output, workspace);
+    if (result != 0) return result;
+    
+    // Apply 1/N normalization
+    const double scale = 1.0 / (double)plan->n_fft;
+    for (int i = 0; i < plan->n_fft; i++) {
+        output[i].re *= scale;
+        output[i].im *= scale;
+    }
+    
+    return 0;
+}
+
+int fft_roundtrip_normalized(
+    fft_object fwd_plan,
+    fft_object inv_plan,
+    const fft_data *input,
+    fft_data *output,
+    fft_data *workspace)
+{
+    if (!fwd_plan || !inv_plan || !input || !output) {
+        return -1;
+    }
+    
+    if (fwd_plan->n_fft != inv_plan->n_fft) {
+        FFT_LOG_ERROR("Plan size mismatch: forward=%d, inverse=%d",
+                      fwd_plan->n_fft, inv_plan->n_fft);
+        return -1;
+    }
+    
+    const int N = fwd_plan->n_fft;
+    
+    // Allocate temporary buffer for frequency domain
+    fft_data *freq = (fft_data*)malloc(N * sizeof(fft_data));
+    if (!freq) return -1;
+    
+    // Forward transform
+    int result = fft_exec_dft(fwd_plan, input, freq, workspace);
+    if (result != 0) {
+        free(freq);
+        return result;
+    }
+    
+    // Inverse transform
+    result = fft_exec_dft(inv_plan, freq, output, workspace);
+    if (result != 0) {
+        free(freq);
+        return result;
+    }
+    
+    // Normalize by 1/N
+    const double scale = 1.0 / (double)N;
+    for (int i = 0; i < N; i++) {
+        output[i].re *= scale;
+        output[i].im *= scale;
+    }
+    
+    free(freq);
+    return 0;
 }
