@@ -13,68 +13,6 @@
 #endif
 
 //==============================================================================
-// DFT KERNEL TWIDDLE COMPUTATION
-//==============================================================================
-
-/**
- * @brief Compute DFT kernel twiddles W_r[m] = exp(sign × 2πim/r)
- * 
- * @param W_r Output array [radix elements]
- * @param radix Radix value
- * @param sign +1.0 for inverse, -1.0 for forward
- */
-static inline void compute_dft_kernel_twiddles(
-    fft_data *W_r, 
-    int radix, 
-    double sign)
-{
-    for (int m = 0; m < radix; m++) {
-        double theta = sign * 2.0 * M_PI * (double)m / (double)radix;
-#ifdef __GNUC__
-        sincos(theta, &W_r[m].im, &W_r[m].re);
-#else
-        W_r[m].re = cos(theta);
-        W_r[m].im = sin(theta);
-#endif
-    }
-}
-
-//==============================================================================
-// SCALAR: APPLY STAGE TWIDDLES
-//==============================================================================
-
-/**
- * @brief Apply stage twiddles in scalar mode: T[j] = input[j] × stage_tw
- * 
- * @param T Output array [radix elements]
- * @param sub_outputs Input buffer (strided by K)
- * @param stage_tw Stage twiddles [(radix-1) elements per k]
- * @param k Current k-index
- * @param K Sub-length (stride)
- * @param radix Radix value
- */
-static inline void apply_stage_twiddles_scalar(
-    fft_data *T,
-    const fft_data *sub_outputs,
-    const fft_data *stage_tw,
-    int k,
-    int K,
-    int radix)
-{
-    // T[0] = sub_outputs[k] (no twiddle for j=0)
-    T[0] = sub_outputs[k];
-    
-    // T[j] = sub_outputs[j*K + k] × stage_tw[k*(radix-1) + (j-1)]
-    for (int j = 1; j < radix; j++) {
-        const fft_data a = sub_outputs[j*K + k];
-        const fft_data w = stage_tw[k*(radix-1) + (j-1)];
-        
-        T[j].re = a.re * w.re - a.im * w.im;
-        T[j].im = a.re * w.im + a.im * w.re;
-    }
-}
-
-//==============================================================================
 // SCALAR: DFT COMPUTATION (3 cases)
 //==============================================================================
 

@@ -437,7 +437,7 @@ static ALWAYS_INLINE __m128d fmsub_sse2_fallback(__m128d a, __m128d b, __m128d c
  * Override with: -DFFT_PREFETCH_DISTANCE=16
  */
 #ifndef FFT_PREFETCH_DISTANCE
-#define FFT_PREFETCH_DISTANCE 8 // Cache lines ahead
+ #define FFT_PREFETCH_DISTANCE 8 // Cache lines ahead
 #endif
 
 #endif // SIMD_UTILS_H

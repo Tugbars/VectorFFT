@@ -885,6 +885,27 @@ fft_object fft_init(int N, fft_direction_t direction)
         
         FFT_LOG_DEBUG("  Stage %d: radix=%d, N=%d, sub_len=%d, twiddles=%d",
                i, radix, N_stage, sub_len, (radix - 1) * sub_len);
+
+        // ──────────────────────────────────────────────────────────────────
+        // ⚡ NEW: Compute DFT kernel twiddles for general radix
+        // ──────────────────────────────────────────────────────────────────
+        
+        // Only compute for radices that will use general radix fallback
+        int needs_dft_kernel = !has_radix_implementation(radix);
+        
+        if (needs_dft_kernel) {
+            stage->dft_kernel_tw = compute_dft_kernel_twiddles(radix, direction);
+            
+            if (!stage->dft_kernel_tw) {
+                FFT_LOG_ERROR("Failed to compute DFT kernel twiddles for radix %d", radix);
+                free_fft(plan);
+                return NULL;
+            }
+            
+            FFT_LOG_DEBUG("    → DFT kernel: radix=%d, twiddles=%d", radix, radix);
+        } else {
+            stage->dft_kernel_tw = NULL;  // Not needed for specialized radices
+        }
         
         // ──────────────────────────────────────────────────────────────────
         // Rader Manager: Fetch convolution twiddles for prime radices
@@ -951,15 +972,30 @@ void free_fft(fft_object plan)
 {
     if (!plan) return;
     
-    // Free Cooley-Tukey stage resources
-    for (int i = 0; i < plan->num_stages; i++) {
-        if (plan->stages[i].stage_tw) {
-            free_stage_twiddles(plan->stages[i].stage_tw);
+    // ──────────────────────────────────────────────────────────────────
+    // Free Cooley-Tukey stage resources (ONLY if not Bluestein)
+    // ──────────────────────────────────────────────────────────────────
+    
+    if (plan->strategy != FFT_EXEC_BLUESTEIN) {  // ⚡ GUARD CONDITION
+        for (int i = 0; i < plan->num_stages; i++) {
+            // Free stage twiddles (always allocated for CT path)
+            if (plan->stages[i].stage_tw) {
+                free_stage_twiddles(plan->stages[i].stage_tw);
+            }
+            
+            // ⚡ Free DFT kernel twiddles (only if allocated)
+            if (plan->stages[i].dft_kernel_tw) {
+                free_dft_kernel_twiddles(plan->stages[i].dft_kernel_tw);
+            }
+            
+            // Note: stages[i].rader_tw is NOT freed (borrowed from global cache)
         }
-        // Note: stages[i].rader_tw is NOT freed (borrowed from global cache)
     }
     
+    // ──────────────────────────────────────────────────────────────────
     // Free Bluestein resources (if applicable)
+    // ──────────────────────────────────────────────────────────────────
+    
     if (plan->strategy == FFT_EXEC_BLUESTEIN) {
         if (plan->direction == FFT_FORWARD) {
             bluestein_plan_free_forward(plan->bluestein_fwd);

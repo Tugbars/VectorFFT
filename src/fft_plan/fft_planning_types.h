@@ -473,13 +473,18 @@ typedef enum {
  * Stage twiddles use interleaved format tw[k*(radix-1) + (r-1)] = W^(r*k)
  * to optimize cache access during butterfly operations.
  */
+
 typedef struct {
     int radix;         ///< Radix for this stage (2, 3, 4, 5, 7, 8, 9, 11, 13, 16, 32, etc.)
     int N_stage;       ///< Transform size at this stage (N / product of previous radices)
     int sub_len;       ///< Butterfly stride (N_stage / radix)
     
-    fft_data *stage_tw;    ///< Pre-computed Cooley-Tukey twiddles [(radix-1) × sub_len elements, OWNED]
-    fft_data *rader_tw;    ///< Rader convolution twiddles [radix-1 elements, BORROWED from cache or NULL]
+    fft_data *stage_tw;     ///< Cooley-Tukey stage twiddles [(radix-1) × sub_len, OWNED]
+    fft_data *rader_tw;     ///< Rader convolution twiddles [radix-1, BORROWED from cache]
+    fft_data *dft_kernel_tw; ///< ⚡ NEW: DFT kernel twiddles [radix, OWNED]
+                             ///< W_r[m] = exp(sign × 2πim/radix) for m=0..radix-1
+                             ///< NULL for specialized radices (2,3,4,5,7,8,11,13)
+                             ///< Populated for general radix fallback
     
 } stage_descriptor;
 
