@@ -1764,3 +1764,122 @@ GPUs have massive thread counts but limited shared memory:
 Recommendation: GPU FFTs use different algorithm (Cooley-Tukey with 
                  local reordering, not Stockham)
 ```
+
+
+### 8.7  **Visual Flow (N=12 = 4×3)**
+```
+INPUT DATA (natural order):
+┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
+│ x0 │ x1 │ x2 │ x3 │ x4 │ x5 │ x6 │ x7 │ x8 │ x9 │x10 │x11 │
+└────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┘
+
+MEMORY: data[0..11] (user buffer)
+
+
+STEP 1: ALLOCATE TEMP BUFFER
+┌────────────────────────────────────────────┐
+│  temp = malloc(12 × sizeof(complex))       │
+│                                            │
+│  MEMORY STATE:                             │
+│  data[0..11]  ← User's buffer             │
+│  temp[0..11]  ← Hidden allocation ⚠️      │
+└────────────────────────────────────────────┘
+
+
+STEP 2: STAGE 1 - RADIX-4 (read from data, write to temp)
+┌─────────────────────────────────────────────────────────┐
+│  Process 3 groups of 4 elements:                       │
+│                                                         │
+│  Group 0: DFT4(x0, x1, x2, x3)   → temp[0,3,6,9]     │
+│  Group 1: DFT4(x4, x5, x6, x7)   → temp[1,4,7,10]    │
+│  Group 2: DFT4(x8, x9, x10, x11) → temp[2,5,8,11]    │
+│                                                         │
+│  Input stride: 1 (contiguous)                          │
+│  Output stride: 3 (interleaved for next stage)        │
+└─────────────────────────────────────────────────────────┘
+
+AFTER STAGE 1:
+data (unchanged): [x0 |x1 |x2 |x3 |x4 |x5 |x6 |x7 |x8 |x9 |x10|x11]
+temp (reordered): [y0 |y4 |y8 |y1 |y5 |y9 |y2 |y6 |y10|y3 |y7 |y11]
+                   └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘
+                   Group 0  Group 1  Group 2  Group 3
+                   (for radix-3 stage)
+
+POINTERS: in=temp, out=data (swap!)
+
+
+STEP 3: STAGE 2 - RADIX-3 (read from temp, write to data)
+┌─────────────────────────────────────────────────────────┐
+│  Process 4 groups of 3 elements:                       │
+│                                                         │
+│  Group 0: DFT3(y0, y4, y8)   → data[0,1,2]           │
+│  Group 1: DFT3(y1, y5, y9)   → data[3,4,5]           │
+│  Group 2: DFT3(y2, y6, y10)  → data[6,7,8]           │
+│  Group 3: DFT3(y3, y7, y11)  → data[9,10,11]         │
+│                                                         │
+│  Input stride: 3 (from previous stage)                 │
+│  Output stride: 1 (contiguous final result)            │
+└─────────────────────────────────────────────────────────┘
+
+OUTPUT (back in user buffer):
+data: [X0 |X1 |X2 |X3 |X4 |X5 |X6 |X7 |X8 |X9 |X10|X11]
+temp: (freed)
+
+
+STEP 4: CLEANUP
+┌────────────────────────────────────────────┐
+│  free(temp)                                │
+│                                            │
+│  Result is in 'data' (user's buffer)      │
+│  User thinks it was in-place! 😊          │
+└────────────────────────────────────────────┘
+```
+
+### **Memory Timeline**
+```
+TIME:    0ms          5ms         10ms        15ms
+         │            │            │            │
+MEMORY:  │            │            │            │
+         │  ┌──────┐  │  ┌──────┐  │  ┌──────┐  │
+data[12] │  │ input│──┼→│ .... │──┼→│output│  │
+         │  └──────┘  │  └──────┘  │  └──────┘  │
+         │            │            │            │
+temp[12] │  [ALLOC]───┼→│ temp │───┼→[FREE]    │
+         │            │  └──────┘  │            │
+         ↓            ↓            ↓            ↓
+      Start       Stage 1      Stage 2       End
+
+Peak memory: 2×12 = 24 elements ⚠️ NOT truly in-place!
+```
+
+### **Data Flow Diagram**
+```
+STAGE 1: RADIX-4 (data → temp with reordering)
+
+data buffer:                    temp buffer:
+┌───┬───┬───┬───┐              ┌───┬───┬───┬───┐
+│ 0 │ 1 │ 2 │ 3 │──DFT4──→    │ 0 │ 4 │ 8 │ 1 │
+├───┼───┼───┼───┤              ├───┼───┼───┼───┤
+│ 4 │ 5 │ 6 │ 7 │──DFT4──→    │ 5 │ 9 │ 2 │ 6 │
+├───┼───┼───┼───┤              ├───┼───┼───┼───┤
+│ 8 │ 9 │10 │11 │──DFT4──→    │10 │ 3 │ 7 │11 │
+└───┴───┴───┴───┘              └───┴───┴───┴───┘
+ Input groups                   Reordered for next stage
+ (stride 1)                     (stride 3 in groups)
+
+
+STAGE 2: RADIX-3 (temp → data with reordering)
+
+temp buffer:                    data buffer:
+┌───┬───┬───┐                  ┌───┬───┬───┐
+│ 0 │ 4 │ 8 │──DFT3──→        │ 0 │ 1 │ 2 │
+├───┼───┼───┤                  ├───┼───┼───┤
+│ 1 │ 5 │ 9 │──DFT3──→        │ 3 │ 4 │ 5 │
+├───┼───┼───┤                  ├───┼───┼───┤
+│ 2 │ 6 │10 │──DFT3──→        │ 6 │ 7 │ 8 │
+├───┼───┼───┤                  ├───┼───┼───┤
+│ 3 │ 7 │11 │──DFT3──→        │ 9 │10 │11 │
+└───┴───┴───┘                  └───┴───┴───┘
+ Groups with                    Final output
+ stride 3                       (natural order)
+```
