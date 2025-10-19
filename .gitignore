@@ -4,3 +4,6 @@
 /build/.cmake/api
 /build/test/CMakeFiles
 /build/test
+/build/src/CMakeFiles
+build/test/test_mixedRadixFFT_standalone.exe
+/build/.cmake
