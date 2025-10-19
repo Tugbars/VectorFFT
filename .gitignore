@@ -1,1 +1,4 @@
 /build
+/build/test
+/build/.cmake
+/build/.cmake/api

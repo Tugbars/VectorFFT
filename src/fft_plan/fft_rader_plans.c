@@ -1,230 +1,369 @@
-// fft_twiddles.c
-// SINGLE SOURCE OF TRUTH for all twiddle computation
-// Ultra-optimized: AVX2, FMA, loop unrolling, prefetching
-
-#ifndef FFT_TWIDDLES_H
-#define FFT_TWIDDLES_H
-
-#include "fft_planning_types.h"
-
-//==============================================================================
-// API - Twiddle Manager
-//==============================================================================
-
-/**
- * @brief Compute Cooley-Tukey stage twiddles (SINGLE SOURCE OF TRUTH)
- * 
- * Computes: W^(r*k) = exp(sign * 2πi * r * k / N_stage)
- *   where sign = -1 for FORWARD, +1 for INVERSE
- *         r = 1..radix-1, k = 0..sub_len-1
- * 
- * Layout: Interleaved [W^(1*0), W^(2*0), ..., W^(R-1*0),
- *                      W^(1*1), W^(2*1), ..., W^(R-1*1), ...]
- * 
- * @param N_stage Current stage size
- * @param radix Radix of decomposition
- * @param direction FORWARD or INVERSE
- * @return Allocated array of (radix-1) * sub_len twiddles (32-byte aligned)
- */
-fft_data* compute_stage_twiddles(
-    int N_stage,
-    int radix,
-    fft_direction_t direction
-);
-
-/**
- * @brief Free stage twiddles
- */
-void free_stage_twiddles(fft_data *twiddles);
-
-#endif // FFT_TWIDDLES_H
-
 //==============================================================================
 // IMPLEMENTATION
 //==============================================================================
 
 #include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 #include <math.h>
 
-#ifdef __AVX2__
-#include <immintrin.h>
-#endif
-
 #ifdef _WIN32
+    #include <windows.h>
     #include <malloc.h>
     #define aligned_alloc(alignment, size) _aligned_malloc(size, alignment)
     #define aligned_free(ptr) _aligned_free(ptr)
+    
+    // Windows mutex
+    static CRITICAL_SECTION g_rader_mutex;
+    static int g_mutex_initialized = 0;
+    
+    static inline void mutex_init(void) {
+        if (!g_mutex_initialized) {
+            InitializeCriticalSection(&g_rader_mutex);
+            g_mutex_initialized = 1;
+        }
+    }
+    static inline void mutex_lock(void) { EnterCriticalSection(&g_rader_mutex); }
+    static inline void mutex_unlock(void) { LeaveCriticalSection(&g_rader_mutex); }
+    static inline void mutex_destroy(void) { 
+        if (g_mutex_initialized) {
+            DeleteCriticalSection(&g_rader_mutex);
+            g_mutex_initialized = 0;
+        }
+    }
 #else
+    #include <pthread.h>
     #define aligned_free(ptr) free(ptr)
+    
+    // POSIX mutex
+    static pthread_mutex_t g_rader_mutex = PTHREAD_MUTEX_INITIALIZER;
+    
+    static inline void mutex_init(void) { /* Already initialized statically */ }
+    static inline void mutex_lock(void) { pthread_mutex_lock(&g_rader_mutex); }
+    static inline void mutex_unlock(void) { pthread_mutex_unlock(&g_rader_mutex); }
+    static inline void mutex_destroy(void) { pthread_mutex_destroy(&g_rader_mutex); }
 #endif
 
 #ifndef M_PI
-#define M_PI 3.14159265358979323846264338327950288
+#define M_PI 3.14159265358979323846264338327950288419716939937510
 #endif
 
 //==============================================================================
-// HIGH-PRECISION MINIMAX TRIG (0.5 ULP for |x| ≤ π/4)
+// GLOBAL CACHE
 //==============================================================================
 
-static inline void sincos_minimax(double x, double *s, double *c)
+#define MAX_RADER_PRIMES 16  // Support up to 16 different prime radices
+
+static rader_plan_cache_entry g_rader_cache[MAX_RADER_PRIMES];
+static int g_cache_initialized = 0;
+
+//==============================================================================
+// PRIMITIVE ROOT DATABASE
+//==============================================================================
+
+typedef struct {
+    int prime;
+    int generator;  // Primitive root (smallest)
+} prime_generator_pair;
+
+// ✅ Expanded to support more primes
+static const prime_generator_pair g_primitive_roots[] = {
+    {7,   3},   // 3^1=3, 3^2=2, 3^3=6, 3^4=4, 3^5=5, 3^6=1 (mod 7)
+    {11,  2},   // 2 is primitive root mod 11
+    {13,  2},   // 2 is primitive root mod 13
+    {17,  3},   // 3 is primitive root mod 17
+    {19,  2},   // 2 is primitive root mod 19
+    {23,  5},   // 5 is primitive root mod 23
+    {29,  2},   // 2 is primitive root mod 29
+    {31,  3},   // 3 is primitive root mod 31
+    {37,  2},   // 2 is primitive root mod 37
+    {41,  6},   // 6 is primitive root mod 41
+    {43,  3},   // 3 is primitive root mod 43
+    {47,  5},   // 5 is primitive root mod 47
+    {53,  2},   // 2 is primitive root mod 53
+    {59,  2},   // 2 is primitive root mod 59
+    {61,  2},   // 2 is primitive root mod 61
+    {67,  2},   // 2 is primitive root mod 67
+};
+
+static const int NUM_KNOWN_PRIMES = sizeof(g_primitive_roots) / sizeof(g_primitive_roots[0]);
+
+//==============================================================================
+// HELPER: Find primitive root
+//==============================================================================
+
+static int find_primitive_root(int prime)
 {
-    const double x2 = x * x;
-    
-    // sin(x) using FMA
-    double sp = 2.75573192239858906525e-6;
-    sp = fma(sp, x2, -1.98412698412698413e-4);
-    sp = fma(sp, x2, 8.33333333333333333e-3);
-    sp = fma(sp, x2, -1.66666666666666667e-1);
-    sp = fma(sp, x2, 1.0);
-    *s = x * sp;
-    
-    // cos(x) using FMA
-    double cp = 2.48015873015873016e-5;
-    cp = fma(cp, x2, -1.38888888888888889e-3);
-    cp = fma(cp, x2, 4.16666666666666667e-2);
-    cp = fma(cp, x2, -5.00000000000000000e-1);
-    cp = fma(cp, x2, 1.0);
-    *c = cp;
+    for (int i = 0; i < NUM_KNOWN_PRIMES; i++) {
+        if (g_primitive_roots[i].prime == prime) {
+            return g_primitive_roots[i].generator;
+        }
+    }
+    return -1;  // Not found
 }
+
+//==============================================================================
+// HELPER: Modular exponentiation (g^exp mod prime)
+//==============================================================================
+
+static int mod_pow(int base, int exp, int mod)
+{
+    int result = 1;
+    base %= mod;
+    while (exp > 0) {
+        if (exp & 1) {
+            result = (result * base) % mod;
+        }
+        base = (base * base) % mod;
+        exp >>= 1;
+    }
+    return result;
+}
+
+//==============================================================================
+// HELPER: Compute permutations from primitive root
+//==============================================================================
+
+static void compute_permutations(int prime, int g, int *perm_in, int *perm_out)
+{
+    // Input permutation: [g^0, g^1, g^2, ..., g^(p-2)] mod p
+    // These are indices 1..(p-1) in some order
+    for (int i = 0; i < prime - 1; i++) {
+        perm_in[i] = mod_pow(g, i, prime);
+    }
+    
+    // Output permutation: inverse of input (where does each index go?)
+    for (int i = 0; i < prime - 1; i++) {
+        int idx = perm_in[i] - 1;  // Map to 0..(p-2)
+        perm_out[idx] = i;
+    }
+}
+
+//==============================================================================
+// SINCOS WRAPPER (reuse from fft_twiddles.c logic)
+//==============================================================================
 
 static inline void sincos_auto(double x, double *s, double *c)
 {
-    if (fabs(x) <= M_PI / 4.0) {
-        sincos_minimax(x, s, c);
-    } else {
 #ifdef __GNUC__
-        sincos(x, s, c);
+    sincos(x, s, c);
 #else
-        *s = sin(x);
-        *c = cos(x);
+    *s = sin(x);
+    *c = cos(x);
 #endif
-    }
 }
 
 //==============================================================================
-// AVX2 TWIDDLE COMPUTATION - 4x unrolled with FMA
+// CREATE RADER PLAN FOR PRIME
 //==============================================================================
 
-#ifdef __AVX2__
-
-/**
- * @brief AVX2 twiddle computation with software pipelining
- * Processes 4 twiddles per iteration with FMA
- */
-static void compute_twiddles_avx2(
-    fft_data *tw,
-    int count,
-    double base_angle,
-    int stride)
+static int create_rader_plan_for_prime(int prime)
 {
-    const __m256d vbase = _mm256_set1_pd(base_angle);
-    const __m256d vstride = _mm256_set1_pd((double)stride);
+    // Find primitive root
+    int g = find_primitive_root(prime);
+    if (g < 0) {
+        fprintf(stderr, "[Rader] No primitive root found for prime %d\n", prime);
+        return -1;
+    }
     
-    int i = 0;
-    
-    // ✅ Software pipeline: Prefetch ahead
-    const int PREFETCH_DISTANCE = 64;
-    
-    // ✅ 4x unrolled main loop with FMA
-    for (; i + 3 < count; i += 4) {
-        // Prefetch future iterations
-        if (i + PREFETCH_DISTANCE < count) {
-            _mm_prefetch((const char*)&tw[i + PREFETCH_DISTANCE], _MM_HINT_T0);
-        }
-        
-        // Compute angles: base_angle * stride * [i, i+1, i+2, i+3]
-        __m256d vi = _mm256_set_pd((double)(i+3), (double)(i+2), 
-                                   (double)(i+1), (double)i);
-        __m256d vang = _mm256_mul_pd(_mm256_mul_pd(vbase, vstride), vi);
-        
-        // Extract angles for sincos
-        double angles[4];
-        _mm256_storeu_pd(angles, vang);
-        
-        // Compute sin/cos (scalar - system functions often use SIMD internally)
-        for (int j = 0; j < 4; j++) {
-            sincos_auto(angles[j], &tw[i+j].im, &tw[i+j].re);
+    // Find free slot in cache
+    int slot = -1;
+    for (int i = 0; i < MAX_RADER_PRIMES; i++) {
+        if (g_rader_cache[i].prime == 0) {
+            slot = i;
+            break;
         }
     }
     
-    // Scalar tail
-    for (; i < count; i++) {
-        double angle = base_angle * (double)stride * (double)i;
-        sincos_auto(angle, &tw[i].im, &tw[i].re);
+    if (slot < 0) {
+        fprintf(stderr, "[Rader] Cache full (max %d primes)\n", MAX_RADER_PRIMES);
+        return -1;
     }
+    
+    rader_plan_cache_entry *entry = &g_rader_cache[slot];
+    
+    // ✅ FIXED: Allocate and compute permutations
+    entry->perm_in = (int*)malloc((prime - 1) * sizeof(int));
+    entry->perm_out = (int*)malloc((prime - 1) * sizeof(int));
+    
+    if (!entry->perm_in || !entry->perm_out) {
+        fprintf(stderr, "[Rader] Memory allocation failed for prime %d\n", prime);
+        free(entry->perm_in);
+        free(entry->perm_out);
+        return -1;
+    }
+    
+    compute_permutations(prime, g, entry->perm_in, entry->perm_out);
+    
+    // ✅ Allocate convolution twiddles (aligned for SIMD)
+    entry->conv_tw_fwd = (fft_data*)aligned_alloc(32, (prime - 1) * sizeof(fft_data));
+    entry->conv_tw_inv = (fft_data*)aligned_alloc(32, (prime - 1) * sizeof(fft_data));
+    
+    if (!entry->conv_tw_fwd || !entry->conv_tw_inv) {
+        fprintf(stderr, "[Rader] Failed to allocate twiddles for prime %d\n", prime);
+        free(entry->perm_in);
+        free(entry->perm_out);
+        aligned_free(entry->conv_tw_fwd);
+        aligned_free(entry->conv_tw_inv);
+        return -1;
+    }
+    
+    // ✅ Compute convolution twiddles: exp(±2πi * out_perm[q] / prime)
+    for (int q = 0; q < prime - 1; q++) {
+        int idx = entry->perm_out[q];
+        
+        // FORWARD: exp(-2πi * idx / prime)
+        double angle_fwd = -2.0 * M_PI * (double)idx / (double)prime;
+        sincos_auto(angle_fwd, &entry->conv_tw_fwd[q].im, &entry->conv_tw_fwd[q].re);
+        
+        // INVERSE: exp(+2πi * idx / prime)
+        double angle_inv = +2.0 * M_PI * (double)idx / (double)prime;
+        sincos_auto(angle_inv, &entry->conv_tw_inv[q].im, &entry->conv_tw_inv[q].re);
+    }
+    
+    entry->prime = prime;
+    entry->primitive_root = g;
+    
+#ifdef FFT_DEBUG_RADER
+    fprintf(stderr, "[Rader] Created plan for prime %d (g=%d) in slot %d\n", 
+            prime, g, slot);
+#endif
+    
+    return 0;
 }
 
-#endif // __AVX2__
-
 //==============================================================================
-// MAIN TWIDDLE COMPUTATION (SINGLE SOURCE OF TRUTH)
+// INIT CACHE (Thread-safe)
 //==============================================================================
 
-fft_data* compute_stage_twiddles(
-    int N_stage,
-    int radix,
-    fft_direction_t direction)
+void init_rader_cache(void)
 {
-    if (radix < 2 || N_stage < radix) {
+    mutex_init();
+    mutex_lock();
+    
+    if (g_cache_initialized) {
+        mutex_unlock();
+        return;
+    }
+    
+    // ✅ Clear cache
+    memset(g_rader_cache, 0, sizeof(g_rader_cache));
+    
+    // ✅ Pre-populate common primes (7, 11, 13)
+    create_rader_plan_for_prime(7);
+    create_rader_plan_for_prime(11);
+    create_rader_plan_for_prime(13);
+    
+    g_cache_initialized = 1;
+    
+    mutex_unlock();
+}
+
+//==============================================================================
+// CLEANUP CACHE (Thread-safe)
+//==============================================================================
+
+void cleanup_rader_cache(void)
+{
+    mutex_lock();
+    
+    if (!g_cache_initialized) {
+        mutex_unlock();
+        return;
+    }
+    
+    for (int i = 0; i < MAX_RADER_PRIMES; i++) {
+        rader_plan_cache_entry *entry = &g_rader_cache[i];
+        if (entry->prime > 0) {
+            aligned_free(entry->conv_tw_fwd);
+            aligned_free(entry->conv_tw_inv);
+            free(entry->perm_in);
+            free(entry->perm_out);
+        }
+    }
+    
+    memset(g_rader_cache, 0, sizeof(g_rader_cache));
+    g_cache_initialized = 0;
+    
+    mutex_unlock();
+    mutex_destroy();
+}
+
+//==============================================================================
+// GET TWIDDLES (Thread-safe)
+//==============================================================================
+
+const fft_data* get_rader_twiddles(int prime, fft_direction_t direction)
+{
+    mutex_lock();
+    
+    // Ensure cache is initialized
+    if (!g_cache_initialized) {
+        mutex_unlock();
+        init_rader_cache();
+        mutex_lock();
+    }
+    
+    // Search cache
+    for (int i = 0; i < MAX_RADER_PRIMES; i++) {
+        if (g_rader_cache[i].prime == prime) {
+            const fft_data *result = (direction == FFT_FORWARD) 
+                ? g_rader_cache[i].conv_tw_fwd 
+                : g_rader_cache[i].conv_tw_inv;
+            mutex_unlock();
+            return result;
+        }
+    }
+    
+    // Not found - create on demand
+    mutex_unlock();
+    
+    if (create_rader_plan_for_prime(prime) < 0) {
         return NULL;
     }
     
-    const int sub_len = N_stage / radix;
-    const int num_twiddles = (radix - 1) * sub_len;
-    
-    // ✅ Allocate 32-byte aligned for AVX2
-    fft_data *tw = (fft_data*)aligned_alloc(32, num_twiddles * sizeof(fft_data));
-    if (!tw) return NULL;
-    
-    // ✅ Twiddle sign based on direction
-    const double sign = (direction == FFT_FORWARD) ? -1.0 : +1.0;
-    const double base_angle = sign * 2.0 * M_PI / (double)N_stage;
-    
-    // ✅ Interleaved layout: tw[k*(radix-1) + (r-1)] = W^(r*k)
-#ifdef __AVX2__
-    // AVX2 path: Vectorized computation per r
-    for (int r = 1; r < radix; r++) {
-        // Compute all k for this r: W^(r*0), W^(r*1), W^(r*2), ...
-        int offset = r - 1;  // Base offset in interleaved layout
-        compute_twiddles_avx2(&tw[offset], sub_len, base_angle, radix - 1, r);
-    }
-    
-    // Manual inline for small sub_len (avoid function call overhead)
-    if (sub_len <= 8) {
-        for (int k = 0; k < sub_len; k++) {
-            for (int r = 1; r < radix; r++) {
-                int idx = k * (radix - 1) + (r - 1);
-                double angle = base_angle * (double)r * (double)k;
-                sincos_auto(angle, &tw[idx].im, &tw[idx].re);
-            }
-        }
-    } else {
-        // Large sub_len: compute row-major then transpose (cache-friendly)
-        for (int r = 1; r < radix; r++) {
-            for (int k = 0; k < sub_len; k++) {
-                int idx = k * (radix - 1) + (r - 1);
-                double angle = base_angle * (double)r * (double)k;
-                sincos_auto(angle, &tw[idx].im, &tw[idx].re);
-            }
-        }
-    }
-#else
-    // Scalar path
-    for (int k = 0; k < sub_len; k++) {
-        for (int r = 1; r < radix; r++) {
-            int idx = k * (radix - 1) + (r - 1);
-            double angle = base_angle * (double)r * (double)k;
-            sincos_auto(angle, &tw[idx].im, &tw[idx].re);
-        }
-    }
-#endif
-    
-    return tw;
+    // Recursive call (now it exists in cache)
+    return get_rader_twiddles(prime, direction);
 }
 
-void free_stage_twiddles(fft_data *twiddles)
+//==============================================================================
+// GET PERMUTATIONS (Thread-safe)
+//==============================================================================
+
+const int* get_rader_input_perm(int prime)
 {
-    if (twiddles) {
-        aligned_free(twiddles);
+    mutex_lock();
+    
+    for (int i = 0; i < MAX_RADER_PRIMES; i++) {
+        if (g_rader_cache[i].prime == prime) {
+            const int *result = g_rader_cache[i].perm_in;
+            mutex_unlock();
+            return result;
+        }
     }
+    
+    mutex_unlock();
+    
+    // Trigger creation by calling get_rader_twiddles
+    get_rader_twiddles(prime, FFT_FORWARD);
+    return get_rader_input_perm(prime);
+}
+
+const int* get_rader_output_perm(int prime)
+{
+    mutex_lock();
+    
+    for (int i = 0; i < MAX_RADER_PRIMES; i++) {
+        if (g_rader_cache[i].prime == prime) {
+            const int *result = g_rader_cache[i].perm_out;
+            mutex_unlock();
+            return result;
+        }
+    }
+    
+    mutex_unlock();
+    
+    // Trigger creation by calling get_rader_twiddles
+    get_rader_twiddles(prime, FFT_FORWARD);
+    return get_rader_output_perm(prime);
 }

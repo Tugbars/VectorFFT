@@ -1,38 +1,3 @@
-// fft_planning.c
-// MAIN PLANNING ORCHESTRATOR - The "fft_init" umbrella
-// Coordinates: Factorization → Twiddle Manager → Rader Manager → Plan
-
-#ifndef FFT_PLANNING_H
-#define FFT_PLANNING_H
-
-#include "fft_planning_types.h"
-
-//==============================================================================
-// MAIN API
-//==============================================================================
-
-/**
- * @brief Create FFT plan (FFTW-style planning)
- * 
- * This is the UMBRELLA function that orchestrates:
- *   1. Factorization
- *   2. Twiddle Manager (compute stage twiddles)
- *   3. Rader Manager (get Rader plans)
- *   4. Scratch allocation
- * 
- * @param N Signal length
- * @param direction FORWARD or INVERSE
- * @return Complete FFT plan (or NULL on error)
- */
-fft_object fft_init(int N, fft_direction_t direction);
-
-/**
- * @brief Free FFT plan
- */
-void free_fft(fft_object plan);
-
-#endif // FFT_PLANNING_H
-
 //==============================================================================
 // IMPLEMENTATION
 //==============================================================================
@@ -51,6 +16,40 @@ void free_fft(fft_object plan);
     #define aligned_free(ptr) free(ptr)
 #endif
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846264338327950288419716939937510
+#endif
+
+//==============================================================================
+// LOGGING (Configurable)
+//==============================================================================
+
+// ✅ Allow user to override logging
+#ifndef FFT_LOG_ERROR
+#define FFT_LOG_ERROR(fmt, ...) fprintf(stderr, "[FFT ERROR] " fmt "\n", ##__VA_ARGS__)
+#endif
+
+#ifndef FFT_LOG_DEBUG
+#ifdef FFT_DEBUG_PLANNING
+#define FFT_LOG_DEBUG(fmt, ...) fprintf(stderr, "[FFT DEBUG] " fmt "\n", ##__VA_ARGS__)
+#else
+#define FFT_LOG_DEBUG(fmt, ...) ((void)0)
+#endif
+#endif
+
+//==============================================================================
+// HELPER: Next power of 2
+//==============================================================================
+
+static int next_pow2(int n)
+{
+    int p = 1;
+    while (p < n) {
+        p <<= 1;
+    }
+    return p;
+}
+
 //==============================================================================
 // FACTORIZATION
 //==============================================================================
@@ -59,15 +58,18 @@ void free_fft(fft_object plan);
  * @brief Factorize N into radices (FFTW-style: prefer large radices)
  * 
  * Strategy: Try radices in order: 32, 16, 13, 11, 9, 8, 7, 5, 4, 3, 2
+ * 
+ * ✅ Extended to support more primes (17, 19, 23, etc.) from Rader Manager
  */
 static int factorize(int N, int *factors)
 {
     int num_factors = 0;
     int n = N;
     
-    // Radix priority (largest first for efficiency)
-    const int radix_order[] = {32, 16, 13, 11, 9, 8, 7, 5, 4, 3, 2};
-    const int num_radices = 11;
+    // ✅ Extended radix priority (largest first for efficiency)
+    const int radix_order[] = {32, 16, 13, 11, 9, 8, 7, 5, 4, 3, 2, 
+                               17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67};
+    const int num_radices = sizeof(radix_order) / sizeof(radix_order[0]);
     
     while (n > 1) {
         int found = 0;
@@ -83,18 +85,73 @@ static int factorize(int N, int *factors)
         }
         
         if (!found) {
-            // Can't factorize - need Bluestein
-            fprintf(stderr, "[FFT] Cannot factorize N=%d into supported radices\n", N);
+            // Can't factorize - will use Bluestein
             return -1;
         }
         
-        if (num_factors >= 32) {
-            fprintf(stderr, "[FFT] Too many factors (>32) for N=%d\n", N);
+        if (num_factors >= MAX_FFT_STAGES) {
+            FFT_LOG_ERROR("Too many factors (>%d) for N=%d", MAX_FFT_STAGES, N);
             return -1;
         }
     }
     
     return num_factors;
+}
+
+//==============================================================================
+// BLUESTEIN PLANNING
+//==============================================================================
+
+/**
+ * @brief Plan Bluestein's algorithm for arbitrary N
+ * 
+ * Strategy: Pad to M = next_pow2(2*N-1), compute chirp twiddles
+ */
+static int plan_bluestein(fft_plan *plan, int N, fft_direction_t direction)
+{
+    // ✅ Compute padded size
+    int M = next_pow2(2 * N - 1);
+    
+    FFT_LOG_DEBUG("Using Bluestein: N=%d → M=%d (power-of-2)", N, M);
+    
+    plan->use_bluestein = 1;
+    plan->n_input = N;
+    plan->n_fft = M;
+    
+    // ✅ Allocate chirp twiddles: b[k] = exp(±πi * k^2 / N)
+    plan->bluestein_tw = (fft_data*)aligned_alloc(32, M * sizeof(fft_data));
+    if (!plan->bluestein_tw) {
+        FFT_LOG_ERROR("Failed to allocate Bluestein chirp twiddles");
+        return -1;
+    }
+    
+    // ✅ Compute chirp: b[k] = exp(sign * πi * k^2 / N)
+    const double sign = (direction == FFT_FORWARD) ? -1.0 : +1.0;
+    
+    for (int k = 0; k < N; k++) {
+        double angle = sign * M_PI * (double)(k * k) / (double)N;
+        plan->bluestein_tw[k].re = cos(angle);
+        plan->bluestein_tw[k].im = sin(angle);
+    }
+    
+    // Zero-pad the rest
+    for (int k = N; k < M; k++) {
+        plan->bluestein_tw[k].re = 0.0;
+        plan->bluestein_tw[k].im = 0.0;
+    }
+    
+    // ✅ Create internal FFT plans for M (recursive)
+    plan->bluestein_plan_fwd = fft_init(M, FFT_FORWARD);
+    plan->bluestein_plan_inv = fft_init(M, FFT_INVERSE);
+    
+    if (!plan->bluestein_plan_fwd || !plan->bluestein_plan_inv) {
+        FFT_LOG_ERROR("Failed to create internal Bluestein plans for M=%d", M);
+        return -1;
+    }
+    
+    FFT_LOG_DEBUG("Bluestein planning complete: N=%d, M=%d", N, M);
+    
+    return 0;
 }
 
 //==============================================================================
@@ -107,12 +164,12 @@ fft_object fft_init(int N, fft_direction_t direction)
     // VALIDATION
     //==========================================================================
     if (N <= 0) {
-        fprintf(stderr, "[FFT] Invalid size N=%d\n", N);
+        FFT_LOG_ERROR("Invalid size N=%d", N);
         return NULL;
     }
     
     if (direction != FFT_FORWARD && direction != FFT_INVERSE) {
-        fprintf(stderr, "[FFT] Invalid direction %d\n", direction);
+        FFT_LOG_ERROR("Invalid direction %d", direction);
         return NULL;
     }
     
@@ -133,17 +190,23 @@ fft_object fft_init(int N, fft_direction_t direction)
     int num_stages = factorize(N, plan->factors);
     
     if (num_stages < 0) {
-        // Factorization failed - TODO: use Bluestein
-        fprintf(stderr, "[FFT] Bluestein not yet implemented\n");
-        free(plan);
-        return NULL;
+        // ✅ Factorization failed - use Bluestein
+        FFT_LOG_DEBUG("Cannot factorize N=%d, using Bluestein", N);
+        
+        if (plan_bluestein(plan, N, direction) < 0) {
+            free_fft(plan);
+            return NULL;
+        }
+        
+        return plan;  // Bluestein plan complete
     }
     
     plan->num_stages = num_stages;
     
-#ifdef FFT_DEBUG_PLANNING
-    fprintf(stderr, "[FFT] Planning N=%d, direction=%s\n", 
+    FFT_LOG_DEBUG("Planning N=%d, direction=%s", 
            N, direction == FFT_FORWARD ? "FORWARD" : "INVERSE");
+    
+#ifdef FFT_DEBUG_PLANNING
     fprintf(stderr, "[FFT] Factorization: ");
     for (int i = 0; i < num_stages; i++) {
         fprintf(stderr, "%d%s", plan->factors[i], 
@@ -171,33 +234,36 @@ fft_object fft_init(int N, fft_direction_t direction)
         stage->stage_tw = compute_stage_twiddles(N_stage, radix, direction);
         
         if (!stage->stage_tw) {
-            fprintf(stderr, "[FFT] Failed to compute twiddles for stage %d\n", i);
+            FFT_LOG_ERROR("Failed to compute twiddles for stage %d", i);
             free_fft(plan);
             return NULL;
         }
         
-#ifdef FFT_DEBUG_PLANNING
-        int num_tw = (radix - 1) * sub_len;
-        fprintf(stderr, "[FFT] Stage %d: radix=%d, N=%d, sub_len=%d, twiddles=%d\n",
-               i, radix, N_stage, sub_len, num_tw);
-#endif
+        FFT_LOG_DEBUG("Stage %d: radix=%d, N=%d, sub_len=%d, twiddles=%d",
+               i, radix, N_stage, sub_len, (radix - 1) * sub_len);
         
         //======================================================================
         // RADER MANAGER: Get Rader twiddles (if prime radix)
         //======================================================================
-        if (radix == 7 || radix == 11 || radix == 13) {
-            stage->rader_tw = (fft_data*)get_rader_twiddles(radix, direction);
+        if (radix >= 7 && radix <= 67) {  // ✅ Extended prime support
+            // Check if actually prime (simple check for our known set)
+            int is_prime = (radix == 7 || radix == 11 || radix == 13 || 
+                           radix == 17 || radix == 19 || radix == 23 ||
+                           radix == 29 || radix == 31 || radix == 37 ||
+                           radix == 41 || radix == 43 || radix == 47 ||
+                           radix == 53 || radix == 59 || radix == 61 || radix == 67);
             
-            if (!stage->rader_tw) {
-                fprintf(stderr, "[FFT] Failed to get Rader plan for prime %d\n", radix);
-                free_fft(plan);
-                return NULL;
+            if (is_prime) {
+                stage->rader_tw = (fft_data*)get_rader_twiddles(radix, direction);
+                
+                if (!stage->rader_tw) {
+                    FFT_LOG_ERROR("Failed to get Rader plan for prime %d", radix);
+                    free_fft(plan);
+                    return NULL;
+                }
+                
+                FFT_LOG_DEBUG("  → Rader: prime=%d, conv_twiddles=%d", radix, radix - 1);
             }
-            
-#ifdef FFT_DEBUG_PLANNING
-            fprintf(stderr, "[FFT]   → Rader: prime=%d, conv_twiddles=%d\n",
-                   radix, radix - 1);
-#endif
         } else {
             stage->rader_tw = NULL;
         }
@@ -208,37 +274,38 @@ fft_object fft_init(int N, fft_direction_t direction)
     //==========================================================================
     // STEP 3: ALLOCATE SCRATCH BUFFER
     //==========================================================================
-    // Compute required scratch size (worst case: radix * sub_len per stage)
-    size_t scratch_needed = 0;
+    // ✅ FIXED: Use MAX per stage (not sum) + safety margin
+    size_t scratch_max = 0;
     N_stage = N;
     
     for (int i = 0; i < num_stages; i++) {
         int radix = plan->factors[i];
         int sub_len = N_stage / radix;
-        scratch_needed += radix * sub_len;
+        
+        // Each stage needs at most radix * sub_len for temp storage
+        size_t stage_need = radix * sub_len;
+        if (stage_need > scratch_max) {
+            scratch_max = stage_need;
+        }
+        
         N_stage = sub_len;
     }
     
-    // Add safety margin
-    if (scratch_needed < 4 * N) {
-        scratch_needed = 4 * N;
-    }
+    // ✅ Add margin for Rader convolutions and safety
+    size_t scratch_needed = scratch_max + 4 * N;
     
     plan->scratch_size = scratch_needed;
     plan->scratch = (fft_data*)aligned_alloc(32, scratch_needed * sizeof(fft_data));
     
     if (!plan->scratch) {
-        fprintf(stderr, "[FFT] Failed to allocate scratch buffer (%zu elements)\n",
-               scratch_needed);
+        FFT_LOG_ERROR("Failed to allocate scratch buffer (%zu elements)", scratch_needed);
         free_fft(plan);
         return NULL;
     }
     
-#ifdef FFT_DEBUG_PLANNING
-    fprintf(stderr, "[FFT] Scratch buffer: %zu elements (%.2f KB)\n",
+    FFT_LOG_DEBUG("Scratch buffer: %zu elements (%.2f KB)",
            scratch_needed, scratch_needed * sizeof(fft_data) / 1024.0);
-    fprintf(stderr, "[FFT] Planning complete!\n\n");
-#endif
+    FFT_LOG_DEBUG("Planning complete!");
     
     return plan;
 }
@@ -266,8 +333,17 @@ void free_fft(fft_object plan)
     
     // Free Bluestein resources (if used)
     if (plan->use_bluestein) {
-        if (plan->bluestein_tw) aligned_free(plan->bluestein_tw);
-        // TODO: Free internal Bluestein plans
+        if (plan->bluestein_tw) {
+            aligned_free(plan->bluestein_tw);
+        }
+        
+        // Free internal Bluestein plans (recursive)
+        if (plan->bluestein_plan_fwd) {
+            free_fft((fft_plan*)plan->bluestein_plan_fwd);
+        }
+        if (plan->bluestein_plan_inv) {
+            free_fft((fft_plan*)plan->bluestein_plan_inv);
+        }
     }
     
     free(plan);
