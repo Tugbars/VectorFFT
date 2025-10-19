@@ -122,6 +122,10 @@ test/CMakeFiles/test_mixedRadixFFT_standalone.dir/main.c.obj: \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/keylockerintrin.h \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/amxfp16intrin.h \
  C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/stdbool.h \
+ C:/Users/Tugbars/Desktop/highSpeedFFT/src/fft_types.h \
+ C:/Users/Tugbars/Desktop/highSpeedFFT/src/simd_utils.h \
+ C:/ProgramData/mingw64/mingw64/lib/gcc/x86_64-w64-mingw32/13.2.0/include/stdint.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/stdint.h \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/windows.h \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sdkddkver.h \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/excpt.h \
@@ -273,4 +277,8 @@ test/CMakeFiles/test_mixedRadixFFT_standalone.dir/main.c.obj: \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sec_api/stralign_s.h \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/winsvc.h \
  C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/mcx.h \
- C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/imm.h
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/imm.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/time.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sys/timeb.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/sec_api/sys/timeb_s.h \
+ C:/ProgramData/mingw64/mingw64/x86_64-w64-mingw32/include/pthread_time.h

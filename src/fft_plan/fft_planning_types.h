@@ -348,55 +348,138 @@ g_rader_cache[i]  (GLOBAL, thread-safe)
 └─ perm_out                   ✅ OWNED (freed by cleanup_rader_cache)
 
 */
+
+//==============================================================================
+// fft_planning_types.h (add to top-level comment)
+//==============================================================================
+
+/**
+ * @file fft_planning_types.h
+ * @brief Core types for FFTW-style FFT planning system
+ * 
+ * **NORMALIZATION CONVENTION (FFTW-compatible):**
+ * 
+ * Forward DFT (unnormalized):
+ *   X[k] = Σ_{n=0}^{N-1} x[n] × exp(-2πikn/N)
+ * 
+ * Inverse DFT (unnormalized):
+ *   x[n] = Σ_{k=0}^{N-1} X[k] × exp(+2πikn/N)
+ * 
+ * Round-trip identity:
+ *   IDFT(DFT(x)) = N × x
+ * 
+ * Users must manually scale by 1/N if needed. This convention:
+ * - Maximizes performance (no hidden multiplications)
+ * - Provides flexibility (user chooses normalization point)
+ * - Matches FFTW, ensuring compatibility
+ * - Simplifies implementation (all butterflies unnormalized)
+ */
+
 #ifndef FFT_PLANNING_TYPES_H
 #define FFT_PLANNING_TYPES_H
 
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef FFT_LOG_ERROR
+#define FFT_LOG_ERROR(fmt, ...) fprintf(stderr, "[FFT ERROR] " fmt "\n", ##__VA_ARGS__)
+#endif
+
 //==============================================================================
 // CONFIGURATION
 //==============================================================================
 
-#define MAX_FFT_STAGES 32  // ✅ Configurable max stages (increased from hardcoded 32)
+#define MAX_FFT_STAGES 32  ///< Maximum factorization depth (supports up to 2^32)
 
 //==============================================================================
-// FORWARD DECLARATIONS (separate opaque types)
+// FORWARD DECLARATIONS
 //==============================================================================
 
+/**
+ * @brief Opaque type for forward Bluestein transform plans
+ * 
+ * Separate types for forward/inverse enforce type safety and allow
+ * direction-specific optimizations (different chirp signs).
+ */
 typedef struct bluestein_plan_forward_s bluestein_plan_forward;
+
+/**
+ * @brief Opaque type for inverse Bluestein transform plans
+ * 
+ * Implementation lives in bluestein.c to hide internal complexity.
+ */
 typedef struct bluestein_plan_inverse_s bluestein_plan_inverse;
 
 //==============================================================================
 // BASIC TYPES
 //==============================================================================
 
+/**
+ * @brief Complex number in interleaved format (AoS)
+ * 
+ * Layout chosen for:
+ * - Easy complex arithmetic
+ * - Natural alignment (16 bytes)
+ * - AVX2 compatibility (2 complex = 1 YMM register)
+ */
 typedef struct { double re, im; } fft_data;
 
+/**
+ * @brief FFT direction: forward (analysis) or inverse (synthesis)
+ * 
+ * Values chosen to match sign in twiddle factor: exp(direction × 2πi/N)
+ * This eliminates runtime branching in twiddle computation.
+ */
 typedef enum { 
-    FFT_FORWARD = 1, 
-    FFT_INVERSE = -1 
+    FFT_FORWARD = 1,   ///< Forward FFT (time → frequency), exp(-2πi/N)
+    FFT_INVERSE = -1   ///< Inverse FFT (frequency → time), exp(+2πi/N)
 } fft_direction_t;
 
 //==============================================================================
-// STAGE DESCRIPTOR - What each stage needs
+// EXECUTION STRATEGY
 //==============================================================================
 
+/**
+ * @brief Algorithm selected by planner based on transform size
+ * 
+ * Strategy determines memory requirements and execution path:
+ * 
+ * **Design rationale:**
+ * - Power-of-2 sizes use bit-reversal (true in-place, zero workspace)
+ * - Composite sizes use Stockham (cache-friendly, needs 1× workspace)
+ * - Prime sizes use Bluestein (arbitrary N support, needs 3× workspace)
+ * 
+ * Strategy is fixed at plan time for optimal performance.
+ */
+typedef enum {
+    FFT_EXEC_INPLACE_BITREV,    ///< Bit-reversal Cooley-Tukey (N = 2^k only, 0 workspace)
+    FFT_EXEC_STOCKHAM,          ///< Stockham auto-sort (any composite N, 1N workspace)
+    FFT_EXEC_BLUESTEIN,         ///< Bluestein chirp-z (arbitrary N, 3M workspace where M = 2^⌈log₂(2N-1)⌉)
+    FFT_EXEC_OUT_OF_PLACE       ///< Generic out-of-place (reserved for future use)
+} fft_exec_strategy_t;
+
+//==============================================================================
+// STAGE DESCRIPTOR
+//==============================================================================
+
+/**
+ * @brief Pre-computed data for one Cooley-Tukey decomposition stage
+ * 
+ * **Memory ownership:**
+ * - stage_tw: OWNED by stage (freed with plan)
+ * - rader_tw: BORROWED from global cache (never freed by stage)
+ * 
+ * **Layout rationale:**
+ * Stage twiddles use interleaved format tw[k*(radix-1) + (r-1)] = W^(r*k)
+ * to optimize cache access during butterfly operations.
+ */
 typedef struct {
-    // Stage geometry
-    int radix;           // 2, 3, 5, 7, 11, 13, etc.
-    int N_stage;         // Size at this stage (N / product of previous radices)
-    int sub_len;         // N_stage / radix
+    int radix;         ///< Radix for this stage (2, 3, 4, 5, 7, 8, 9, 11, 13, 16, 32, etc.)
+    int N_stage;       ///< Transform size at this stage (N / product of previous radices)
+    int sub_len;       ///< Butterfly stride (N_stage / radix)
     
-    // ✅ Pre-computed Cooley-Tukey stage twiddles
-    // Layout: stage_tw[k*(radix-1) + (r-1)] = W^(r*k)
-    // Size: (radix-1) * sub_len complex numbers
-    fft_data *stage_tw;
-    
-    // ✅ Pre-computed Rader convolution twiddles (NULL if not Rader radix)
-    // Points to global Rader cache (shared across stages with same prime)
-    // NOT owned by this stage (do not free)
-    fft_data *rader_tw;
+    fft_data *stage_tw;    ///< Pre-computed Cooley-Tukey twiddles [(radix-1) × sub_len elements, OWNED]
+    fft_data *rader_tw;    ///< Rader convolution twiddles [radix-1 elements, BORROWED from cache or NULL]
     
 } stage_descriptor;
 
@@ -404,56 +487,101 @@ typedef struct {
 // FFT PLAN - Everything pre-computed at planning time
 //==============================================================================
 
+/**
+ * @brief Complete FFT execution plan with pre-computed twiddle factors
+ * 
+ * **Architecture overview:**
+ * Plans follow the "compile once, execute many" pattern. All expensive
+ * computations (factorization, twiddle generation, strategy selection)
+ * happen once at planning time.
+ * 
+ * **Memory model:**
+ * Plans own their twiddle factors but NOT workspace buffers. Users provide
+ * workspace at execution time for maximum flexibility and thread safety.
+ * 
+ * **Execution paths:**
+ * 1. Cooley-Tukey (power-of-2 or composite): num_stages butterflies using stages[]
+ * 2. Bluestein (prime or arbitrary): delegates to bluestein_fwd/inv plans
+ * 
+ * **Design decisions:**
+ * - No scratch buffer in plan: enables thread-safe execution with shared plans
+ * - Separate Bluestein plans: type safety + direction-specific optimizations
+ * - Factorization stored: enables optimal butterfly dispatch
+ */
 typedef struct fft_plan_struct {
-    int n_input;
-    int n_fft;
-    fft_direction_t direction;
+    int n_input;               ///< Original input size requested by user
+    int n_fft;                 ///< Actual FFT size (may differ for Bluestein: M = 2^⌈log₂(2N-1)⌉)
+    fft_direction_t direction; ///< Transform direction (fixed at plan time)
     
-    int use_bluestein;
+    fft_exec_strategy_t strategy; ///< Execution algorithm selected by planner
     
-    // Cooley-Tukey data
-    int num_stages;
-    int factors[MAX_FFT_STAGES];
-    stage_descriptor stages[MAX_FFT_STAGES];
+    // ─────────────────────────────────────────────────────────────────────
+    // Cooley-Tukey decomposition data (used if strategy != BLUESTEIN)
+    // ─────────────────────────────────────────────────────────────────────
     
-    //==========================================================================
-    // ✅ BLUESTEIN DATA - Completely separate forward/inverse
-    //==========================================================================
+    int num_stages;                      ///< Number of decomposition stages (0 for Bluestein)
+    int factors[MAX_FFT_STAGES];         ///< Radix sequence [r₀, r₁, ..., rₖ] where N = r₀×r₁×...×rₖ
+    stage_descriptor stages[MAX_FFT_STAGES]; ///< Per-stage twiddles and metadata
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // Bluestein algorithm data (used if strategy == BLUESTEIN)
+    // ─────────────────────────────────────────────────────────────────────
+    
+    /**
+     * @brief Direction-specific Bluestein plans (type-safe union)
+     * 
+     * Only one field is active based on plan->direction:
+     * - FFT_FORWARD: uses bluestein_fwd
+     * - FFT_INVERSE: uses bluestein_inv
+     * 
+     * Separate types prevent accidental misuse and enable different
+     * chirp computations (exp(+πin²/N) vs exp(-πin²/N)).
+     */
     union {
-        bluestein_plan_forward *bluestein_fwd;  // Used if direction == FFT_FORWARD
-        bluestein_plan_inverse *bluestein_inv;  // Used if direction == FFT_INVERSE
-        void *bluestein_generic;                 // For NULL checks
+        bluestein_plan_forward *bluestein_fwd;  ///< Forward Bluestein plan (active if direction == FFT_FORWARD)
+        bluestein_plan_inverse *bluestein_inv;  ///< Inverse Bluestein plan (active if direction == FFT_INVERSE)
+        void *bluestein_generic;                ///< Generic pointer for NULL checks
     };
-    
-    // Scratch buffer
-    fft_data *scratch;
-    size_t scratch_size;
     
 } fft_plan;
 
-typedef fft_plan* fft_object;  // For compatibility with your existing code
+/**
+ * @brief Opaque plan handle for public API
+ * 
+ * Users interact with fft_object pointers; internal structure is hidden.
+ */
+typedef fft_plan* fft_object;
 
 //==============================================================================
 // RADER PLAN CACHE ENTRY
 //==============================================================================
 
+/**
+ * @brief Global cache entry for prime-radix Rader algorithm data
+ * 
+ * **Rader's algorithm overview:**
+ * For prime P, DFT reduces to:
+ * 1. Separate DC term (index 0)
+ * 2. Circular convolution of size P-1 using generator permutation
+ * 
+ * **Cache rationale:**
+ * - Rader plans are expensive to compute (primitive root search, permutations)
+ * - Same prime appears in many transforms (e.g., all N = 7×k)
+ * - Thread-safe lazy initialization with mutex protection
+ * 
+ * **Memory ownership:**
+ * Cache owns all fields; stages only borrow pointers. Cleanup at program exit.
+ */
 typedef struct {
-    int prime;                   // 7, 11, 13, 17, 19, 23, etc.
+    int prime;                 ///< Prime radix (7, 11, 13, 17, 19, 23, ..., 67)
     
-    // Direction-specific convolution twiddles (OWNED by cache)
-    fft_data *conv_tw_fwd;       // exp(-2πi * out_perm[q] / prime)
-    fft_data *conv_tw_inv;       // exp(+2πi * out_perm[q] / prime)
+    fft_data *conv_tw_fwd;     ///< Forward convolution twiddles [P-1 elements, exp(-2πi×g^q/P)]
+    fft_data *conv_tw_inv;     ///< Inverse convolution twiddles [P-1 elements, exp(+2πi×g^q/P)]
     
-    // ✅ Permutation arrays (shared by both directions, OWNED by cache)
-    // These are useful for:
-    // - Dynamic butterfly generation
-    // - Verification/testing
-    // - Debugging
-    // Butterfly implementations may hardcode these for performance
-    int *perm_in;                // Input permutation: [g^0, g^1, ..., g^(p-2)] mod p
-    int *perm_out;               // Output permutation: inverse of perm_in
+    int *perm_in;              ///< Input permutation [P-1 elements]: [g^0, g^1, ..., g^(P-2)] mod P
+    int *perm_out;             ///< Output permutation [P-1 elements]: inverse of perm_in
     
-    int primitive_root;          // Generator (e.g., 3 for prime=7)
+    int primitive_root;        ///< Generator g (smallest primitive root mod P)
     
 } rader_plan_cache_entry;
 
@@ -461,16 +589,32 @@ typedef struct {
 // RADIX FUNCTION POINTER TYPES
 //==============================================================================
 
-// Forward radix butterfly signature
+/**
+ * @brief Signature for forward radix-N butterfly implementations
+ * 
+ * **Calling convention:**
+ * - Read from input with stride determined by algorithm (Cooley-Tukey or Stockham)
+ * - Apply radix-N DFT with twiddle factors from stage_tw
+ * - If prime radix (rader_tw != NULL), use Rader's convolution algorithm
+ * - Write to output with stride determined by algorithm
+ * 
+ * **SIMD optimization:**
+ * Implementations should process multiple butterflies using AVX2/AVX-512 when possible.
+ */
 typedef void (*radix_fv_func)(
-    fft_data *restrict output,
-    fft_data *restrict input,
-    const fft_data *restrict stage_tw,
-    const fft_data *restrict rader_tw,
-    int sub_len
+    fft_data *restrict output,         ///< Output buffer (write with computed stride)
+    fft_data *restrict input,          ///< Input buffer (read with computed stride)
+    const fft_data *restrict stage_tw, ///< Stage twiddles [(radix-1)×sub_len elements]
+    const fft_data *restrict rader_tw, ///< Rader twiddles [radix-1 elements, or NULL if not prime]
+    int sub_len                        ///< Butterfly stride/count parameter
 );
 
-// Inverse radix butterfly signature
+/**
+ * @brief Signature for inverse radix-N butterfly implementations
+ * 
+ * Identical to radix_fv_func but uses inverse twiddles (conjugated).
+ * Separate type enables compiler optimizations and type checking.
+ */
 typedef void (*radix_bv_func)(
     fft_data *restrict output,
     fft_data *restrict input,

@@ -368,4 +368,123 @@ void init_rader_cache(void);
  */
 void cleanup_rader_cache(void);
 
+/**
+ * @brief Execute FFT with user-provided workspace (UNNORMALIZED)
+ * 
+ * **CRITICAL: This function is UNNORMALIZED (FFTW convention)**
+ * 
+ * Forward transform:
+ *   output[k] = Σ input[n] × exp(-2πikn/N)
+ * 
+ * Inverse transform:
+ *   output[n] = Σ input[k] × exp(+2πikn/N)
+ * 
+ * Round-trip behavior:
+ *   fft_exec_dft(inv_plan, fft_exec_dft(fwd_plan, x)) = N × x
+ * 
+ * **User must apply normalization manually:**
+ * 
+ * Option 1: Normalize inverse (most common)
+ * ```c
+ * fft_exec_dft(fwd_plan, input, freq, workspace);
+ * fft_exec_dft(inv_plan, freq, output, workspace);
+ * 
+ * // Normalize output
+ * for (int i = 0; i < N; i++) {
+ *     output[i].re /= N;
+ *     output[i].im /= N;
+ * }
+ * ```
+ * 
+ * Option 2: Symmetric normalization (Parseval)
+ * ```c
+ * double scale = 1.0 / sqrt(N);
+ * 
+ * // Scale after forward
+ * fft_exec_dft(fwd_plan, input, freq, workspace);
+ * for (int i = 0; i < N; i++) {
+ *     freq[i].re *= scale;
+ *     freq[i].im *= scale;
+ * }
+ * 
+ * // Scale after inverse
+ * fft_exec_dft(inv_plan, freq, output, workspace);
+ * for (int i = 0; i < N; i++) {
+ *     output[i].re *= scale;
+ *     output[i].im *= scale;
+ * }
+ * ```
+ * 
+ * Option 3: No normalization (for certain algorithms)
+ * ```c
+ * // Useful for correlation, convolution, etc.
+ * fft_exec_dft(fwd_plan, x, X, workspace);
+ * fft_exec_dft(fwd_plan, y, Y, workspace);
+ * 
+ * // Pointwise multiply
+ * for (int i = 0; i < N; i++) {
+ *     Z[i].re = X[i].re * Y[i].re - X[i].im * Y[i].im;
+ *     Z[i].im = X[i].re * Y[i].im + X[i].im * Y[i].re;
+ * }
+ * 
+ * fft_exec_dft(inv_plan, Z, z, workspace);
+ * // z = N × (x ⊛ y) - circular convolution scaled by N
+ * ```
+ * 
+ * @param plan FFT plan
+ * @param input Input buffer (N elements)
+ * @param output Output buffer (N elements)
+ * @param workspace Working buffer (from fft_get_workspace_size, or NULL if not needed)
+ * @return 0 on success, -1 on error
+ */
+int fft_exec_dft(
+    fft_object plan,
+    const fft_data *input,
+    fft_data *output,
+    fft_data *workspace
+);
+
+
+/**
+ * @brief Execute forward FFT with automatic 1/N normalization
+ * 
+ * Convenience wrapper that applies 1/N scaling after transform.
+ * Equivalent to fft_exec_dft() + manual scaling.
+ * 
+ * Result: output[k] = (1/N) Σ input[n] × exp(-2πikn/N)
+ * 
+ * @param plan Forward FFT plan
+ * @param input Input signal
+ * @param output Normalized frequency domain output
+ * @param workspace Working buffer
+ * @return 0 on success, -1 on error
+ */
+int fft_exec_normalized(
+    fft_object plan,
+    const fft_data *input,
+    fft_data *output,
+    fft_data *workspace
+);
+
+/**
+ * @brief Execute FFT round-trip with automatic normalization
+ * 
+ * Performs: output = IDFT(DFT(input)) / N
+ * Useful for testing: output should equal input (up to floating point error)
+ * 
+ * @param fwd_plan Forward plan
+ * @param inv_plan Inverse plan (must match fwd_plan size)
+ * @param input Input signal
+ * @param output Round-trip output (should equal input)
+ * @param workspace Working buffer (must fit both transforms)
+ * @return 0 on success, -1 on error
+ */
+int fft_roundtrip_normalized(
+    fft_object fwd_plan,
+    fft_object inv_plan,
+    const fft_data *input,
+    fft_data *output,
+    fft_data *workspace
+);
+
 #endif // FFT_PLANNING_H
