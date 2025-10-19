@@ -39,7 +39,6 @@ void fft_radix11_fv(
                                     s0, s1, s2, s3, s4, y0);
 
         // Step 4-8: Compute 5 conjugate pairs
-        // Each pair: real part (same) + rotation (±)
 
         // Pair 1: Y_1, Y_10
         __m256d real1, rot1;

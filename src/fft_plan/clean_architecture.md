@@ -1,338 +1,351 @@
 # Clean FFT Architecture - Final Summary
 
-## 🎯 What You Now Have
-
-A **production-ready** FFT implementation with:
-- ✅ Separate `_fv` (forward) and `_bv` (inverse) butterflies
-- ✅ Shared macros (no code duplication)
-- ✅ Precomputed twiddles (10-19x speedup)
-- ✅ Clean SIMD paths (AVX-512, AVX2, SSE2)
-- ✅ Zero branches in hot path
-
----
-
-## 📁 File Structure
-
 ```
-fft/
-├── planning/
-│   ├── fft_planning_types.h       ✅ Core types
-│   ├── fft_planning.c             ✅ Orchestrator (FIXED)
-│   ├── fft_twiddles.c             ✅ Twiddle manager (FIXED)
-│   └── fft_rader_plans.c          ✅ Rader manager (FIXED)
-│
-├── butterflies/
-│   ├── fft_radix2_macros.h        ✅ NEW - Shared macros
-│   ├── fft_radix2_fv.c            ✅ NEW - Forward butterfly
-│   ├── fft_radix2_bv.c            ✅ NEW - Inverse butterfly
-│   ├── fft_radix4_fv.c            📝 TODO (same pattern)
-│   ├── fft_radix4_bv.c            📝 TODO (same pattern)
-│   └── ... (other radices)
-│
-└── execution/
-    ├── highspeedFFT.c             🔧 Dispatcher (needs update)
-    └── simd_math.c                ✅ SIMD helpers (unchanged)
-```
-
----
-
-## 🔧 Integration Steps
-
-### Step 1: Add New Files
-
-```bash
-# Copy new butterfly implementations
-cp fft_radix2_macros.h  src/butterflies/
-cp fft_radix2_fv.c      src/butterflies/
-cp fft_radix2_bv.c      src/butterflies/
-
-# Copy fixed planning module
-cp fft_planning_types.h src/planning/
-cp fft_twiddles.c       src/planning/
-cp fft_rader_plans.c    src/planning/
-```
-
-### Step 2: Update Dispatcher
-
-In your `mixed_radix_dit_rec`, replace:
-
-```c
-// ❌ OLD: Direction passed at runtime
-fft_radix2_butterfly(output, input, NULL, sub_len, transform_sign);
-```
-
-With:
-
-```c
-// ✅ NEW: Dispatch based on plan direction
-const fft_data *stage_tw = plan->stages[stage_idx].stage_tw;
-
-if (plan->direction == FFT_FORWARD) {
-    fft_radix2_fv(output, input, stage_tw, sub_len);
-} else {
-    fft_radix2_bv(output, input, stage_tw, sub_len);
-}
-```
-
-### Step 3: Update `fft_init`
-
-Add twiddle precomputation:
-
-```c
-// In your factorization loop:
-for (int i = 0; i < num_stages; i++) {
-    int radix = factors[i];
-    int N_stage = N / product_of_previous_factors;
+fft_init(N, direction)
+    │
+    ├─ Validate N > 0, direction valid
+    │
+    ├─ Allocate fft_plan struct (calloc)
+    │   ├─ plan->n_input = N
+    │   ├─ plan->n_fft = N
+    │   ├─ plan->direction = direction
+    │   └─ plan->use_bluestein = 0
+    │
+    ├─ factorize(N, plan->factors) → num_stages
+    │     │
+    │     ├─ Try radices in priority order:
+    │     │   [32, 16, 13, 11, 9, 8, 7, 5, 4, 3, 2,
+    │     │    17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67]
+    │     │
+    │     ├─ While (n > 1):
+    │     │   ├─ Find largest radix r that divides n
+    │     │   ├─ factors[num_factors++] = r
+    │     │   ├─ n /= r
+    │     │   └─ IF (num_factors >= MAX_FFT_STAGES): ERROR
+    │     │
+    │     └─ Return: num_stages (success) or -1 (unfactorizable)
+    │
+    │
+    ├─ ══════════════════════════════════════════════════════════
+    │  BRANCH 1: BLUESTEIN PATH (unfactorizable N)
+    │  ══════════════════════════════════════════════════════════
+    │
+    ├─ IF num_stages < 0:
+    │   │
+    │   └─ DISPATCH → plan_bluestein(plan, N, direction)
+    │        │
+    │        ├─ M = next_pow2(2*N - 1)  // Pad to power-of-2
+    │        │   └─> Example: N=509 → M=1024
+    │        │
+    │        ├─ plan->use_bluestein = 1
+    │        ├─ plan->n_input = N
+    │        ├─ plan->n_fft = M
+    │        │
+    │        ├─ Allocate chirp twiddles: bluestein_tw[M]
+    │        │   │
+    │        │   ├─ sign = (direction == FFT_FORWARD) ? -1.0 : +1.0
+    │        │   │
+    │        │   └─ FOR k = 0..N-1:
+    │        │       ├─ angle = sign * π * k² / N
+    │        │       └─ bluestein_tw[k] = exp(i * angle)
+    │        │           └─> Store as {cos(angle), sin(angle)}
+    │        │
+    │        │   └─ Zero-pad: bluestein_tw[N..M-1] = {0, 0}
+    │        │
+    │        ├─ ✅ Create SEPARATE forward/inverse plans for M:
+    │        │   │
+    │        │   ├─ IF direction == FFT_FORWARD:
+    │        │   │   ├─ plan->bluestein_fwd = fft_init(M, FFT_FORWARD)  ← RECURSIVE
+    │        │   │   └─ plan->bluestein_inv = fft_init(M, FFT_INVERSE)  ← RECURSIVE
+    │        │   │
+    │        │   └─ (Same for FFT_INVERSE direction)
+    │        │       └─> ✅ Separate opaque types enforce type safety
+    │        │
+    │        └─ Return 0 (success) or -1 (error)
+    │
+    │   └─> RETURN plan (Bluestein planning complete)
+    │
+    │
+    ├─ ══════════════════════════════════════════════════════════
+    │  BRANCH 2: COOLEY-TUKEY PATH (factorizable N)
+    │  ══════════════════════════════════════════════════════════
+    │
+    └─ ELSE (Cooley-Tukey path):
+         │
+         ├─ plan->num_stages = num_stages
+         │
+         ├─ Log factorization:
+         │   └─> "Factorization: 13×11×7" (example)
+         │
+         │
+         ├─ ════════════════════════════════════════════════════
+         │  STAGE CONSTRUCTION LOOP
+         │  ════════════════════════════════════════════════════
+         │
+         ├─ N_stage = N  // Initial transform size
+         │
+         └─ FOR stage i = 0 to num_stages-1:
+              │
+              ├─ radix = plan->factors[i]
+              ├─ sub_len = N_stage / radix
+              │
+              ├─ stage_descriptor *stage = &plan->stages[i]
+              ├─ stage->radix = radix
+              ├─ stage->N_stage = N_stage
+              ├─ stage->sub_len = sub_len
+              │
+              │
+              ├─ ════════════════════════════════════════════════
+              │  TWIDDLE MANAGER: Cooley-Tukey Stage Twiddles
+              │  ════════════════════════════════════════════════
+              │
+              ├─ DISPATCH → compute_stage_twiddles(N_stage, radix, direction)
+              │    │
+              │    ├─ Validate: radix >= 2, N_stage >= radix
+              │    │
+              │    ├─ num_twiddles = (radix - 1) × sub_len
+              │    │   └─> Layout: tw[k*(radix-1) + (r-1)] = W_N^(r*k)
+              │    │       where W_N = exp(sign * 2πi/N_stage)
+              │    │
+              │    ├─ Allocate: tw = aligned_alloc(32, num_twiddles × sizeof(fft_data))
+              │    │   └─> 32-byte aligned for AVX2
+              │    │
+              │    ├─ sign = (direction == FFT_FORWARD) ? -1.0 : +1.0
+              │    ├─ base_angle = sign × 2π / N_stage
+              │    │
+              │    ├─ ┌─────────────────────────────────────────┐
+              │    │   │ TWIDDLE COMPUTATION DISPATCH           │
+              │    │   └─────────────────────────────────────────┘
+              │    │
+              │    ├─ IF __AVX2__ AND sub_len > 8:
+              │    │   │
+              │    │   └─ AVX2 Vectorized Path:
+              │    │       │
+              │    │       ├─ FOR r = 1 to radix-1:
+              │    │       │   │
+              │    │       │   ├─ offset = r - 1
+              │    │       │   │
+              │    │       │   └─ compute_twiddles_avx2(&tw[offset], sub_len, 
+              │    │       │                             base_angle, r, radix-1)
+              │    │       │        │
+              │    │       │        ├─ vbase = _mm256_set1_pd(base_angle)
+              │    │       │        ├─ vr = _mm256_set1_pd((double)r)
+              │    │       │        │
+              │    │       │        └─ FOR i = 0 to sub_len-1 (step 4):
+              │    │       │            │
+              │    │       │            ├─ Prefetch: &tw[(i+16) * interleave]
+              │    │       │            │
+              │    │       │            ├─ vi = {i, i+1, i+2, i+3}
+              │    │       │            ├─ vang = vbase × vr × vi  (FMA)
+              │    │       │            │
+              │    │       │            ├─ Extract 4 angles
+              │    │       │            │
+              │    │       │            └─ FOR j = 0..3:
+              │    │       │                ├─ idx = (i+j) × interleave
+              │    │       │                └─ sincos_auto(angles[j], 
+              │    │       │                     &tw[idx].im, &tw[idx].re)
+              │    │       │                     │
+              │    │       │                     ├─ IF |angle| ≤ π/4:
+              │    │       │                     │   └─> sincos_minimax() 
+              │    │       │                     │       (0.5 ULP, FMA polynomials)
+              │    │       │                     │
+              │    │       │                     └─ ELSE:
+              │    │       │                         └─> sincos() / sin()+cos()
+              │    │       │                             (system libc)
+              │    │       │
+              │    │       └─ Scalar tail for remainder
+              │    │
+              │    └─ ELSE (Scalar Path):
+              │        │
+              │        └─ FOR k = 0 to sub_len-1:
+              │            └─ FOR r = 1 to radix-1:
+              │                ├─ idx = k × (radix-1) + (r-1)
+              │                ├─ angle = base_angle × r × k
+              │                └─ sincos_auto(angle, &tw[idx].im, &tw[idx].re)
+              │    │
+              │    └─ Return tw (OWNED by stage)
+              │
+              ├─ stage->stage_tw = tw
+              │
+              ├─ Log: "Stage %d: radix=%d, N=%d, sub_len=%d, twiddles=%d"
+              │
+              │
+              ├─ ════════════════════════════════════════════════
+              │  RADER MANAGER: Prime Radix Convolution Twiddles
+              │  ════════════════════════════════════════════════
+              │
+              ├─ IF is_prime(radix) AND radix >= 7:
+              │   │
+              │   │   // Known primes: 7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67
+              │   │
+              │   └─ DISPATCH → get_rader_twiddles(radix, direction)
+              │        │
+              │        ├─ mutex_lock()  // Thread-safe cache access
+              │        │
+              │        ├─ IF !g_cache_initialized:
+              │        │   └─ init_rader_cache()
+              │        │       ├─ memset(g_rader_cache, 0, ...)
+              │        │       ├─ Pre-populate: create_rader_plan_for_prime(7)
+              │        │       ├─ Pre-populate: create_rader_plan_for_prime(11)
+              │        │       ├─ Pre-populate: create_rader_plan_for_prime(13)
+              │        │       └─ g_cache_initialized = 1
+              │        │
+              │        ├─ ┌────────────────────────────────────────┐
+              │        │   │ CACHE LOOKUP                          │
+              │        │   └────────────────────────────────────────┘
+              │        │
+              │        ├─ FOR i = 0 to MAX_RADER_PRIMES-1:
+              │        │   └─ IF g_rader_cache[i].prime == radix:
+              │        │       ├─ entry = &g_rader_cache[i]
+              │        │       │
+              │        │       ├─ result = (direction == FFT_FORWARD)
+              │        │       │           ? entry->conv_tw_fwd
+              │        │       │           : entry->conv_tw_inv
+              │        │       │
+              │        │       ├─ mutex_unlock()
+              │        │       └─ RETURN result  ← CACHE HIT ✅
+              │        │
+              │        ├─ // Cache miss - create new entry
+              │        │
+              │        ├─ mutex_unlock()  // Release during creation
+              │        │
+              │        ├─ ┌────────────────────────────────────────┐
+              │        │   │ CREATE NEW RADER PLAN                 │
+              │        │   └────────────────────────────────────────┘
+              │        │
+              │        └─ create_rader_plan_for_prime(radix)
+              │             │
+              │             ├─ Find primitive root g from database:
+              │             │   │
+              │             │   └─ g_primitive_roots[] = {
+              │             │        {7,3}, {11,2}, {13,2}, {17,3}, {19,2},
+              │             │        {23,5}, {29,2}, {31,3}, {37,2}, {41,6},
+              │             │        {43,3}, {47,5}, {53,2}, {59,2}, {61,2}, {67,2}
+              │             │      }
+              │             │
+              │             ├─ IF g < 0: ERROR (prime not in database)
+              │             │
+              │             ├─ Find free cache slot:
+              │             │   └─ FOR i=0..MAX_RADER_PRIMES-1:
+              │             │       IF g_rader_cache[i].prime == 0: slot=i; break
+              │             │
+              │             ├─ IF slot < 0: ERROR (cache full)
+              │             │
+              │             ├─ entry = &g_rader_cache[slot]
+              │             │
+              │             ├─ ┌──────────────────────────────────┐
+              │             │   │ COMPUTE PERMUTATIONS            │
+              │             │   └──────────────────────────────────┘
+              │             │
+              │             ├─ Allocate:
+              │             │   ├─ entry->perm_in = malloc((radix-1) × sizeof(int))
+              │             │   └─ entry->perm_out = malloc((radix-1) × sizeof(int))
+              │             │
+              │             ├─ compute_permutations(radix, g, perm_in, perm_out)
+              │             │   │
+              │             │   ├─ Input permutation (generator powers):
+              │             │   │   └─ FOR i = 0 to radix-2:
+              │             │   │       └─ perm_in[i] = g^i mod radix
+              │             │   │           └─> [g^0, g^1, g^2, ..., g^(p-2)] mod p
+              │             │   │
+              │             │   └─ Output permutation (inverse mapping):
+              │             │       └─ FOR i = 0 to radix-2:
+              │             │           ├─ idx = perm_in[i] - 1  // Map to 0..(p-2)
+              │             │           └─ perm_out[idx] = i
+              │             │
+              │             ├─ ┌──────────────────────────────────┐
+              │             │   │ COMPUTE CONVOLUTION TWIDDLES    │
+              │             │   └──────────────────────────────────┘
+              │             │
+              │             ├─ Allocate (32-byte aligned for AVX2):
+              │             │   ├─ entry->conv_tw_fwd = aligned_alloc(32, (radix-1)×...)
+              │             │   └─ entry->conv_tw_inv = aligned_alloc(32, (radix-1)×...)
+              │             │
+              │             ├─ FOR q = 0 to radix-2:
+              │             │   │
+              │             │   ├─ idx = perm_out[q]
+              │             │   │
+              │             │   ├─ FORWARD twiddle: exp(-2πi × idx / radix)
+              │             │   │   ├─ angle_fwd = -2π × idx / radix
+              │             │   │   └─ sincos_auto(angle_fwd, 
+              │             │   │        &conv_tw_fwd[q].im, &conv_tw_fwd[q].re)
+              │             │   │
+              │             │   └─ INVERSE twiddle: exp(+2πi × idx / radix)
+              │             │       ├─ angle_inv = +2π × idx / radix
+              │             │       └─ sincos_auto(angle_inv, 
+              │             │            &conv_tw_inv[q].im, &conv_tw_inv[q].re)
+              │             │
+              │             ├─ entry->prime = radix
+              │             ├─ entry->primitive_root = g
+              │             │
+              │             ├─ Log: "Created Rader plan for prime %d (g=%d) in slot %d"
+              │             │
+              │             └─ Return 0 (success)
+              │
+              │        └─ Recursive call: get_rader_twiddles(radix, direction)
+              │            └─> Now in cache, will return immediately ✅
+              │
+              ├─ stage->rader_tw = (returned pointer from cache)
+              │   └─> ✅ NOT OWNED by stage (shared from global cache)
+              │
+              └─ ELSE:
+                  └─ stage->rader_tw = NULL
+                      └─> Non-prime or radix < 7 (e.g., 2,3,4,5,8,9,16,32)
+              │
+              ├─ Log: "  → Rader: prime=%d, conv_twiddles=%d" (if applicable)
+              │
+              └─ N_stage = sub_len  // Update for next stage
+         
+         │
+         ├─ ════════════════════════════════════════════════════
+         │  SCRATCH BUFFER ALLOCATION
+         │  ════════════════════════════════════════════════════
+         │
+         ├─ Compute maximum scratch needed across all stages:
+         │   │
+         │   ├─ scratch_max = 0
+         │   ├─ N_stage = N
+         │   │
+         │   └─ FOR i = 0 to num_stages-1:
+         │       ├─ radix = plan->factors[i]
+         │       ├─ sub_len = N_stage / radix
+         │       ├─ stage_need = radix × sub_len
+         │       ├─ IF stage_need > scratch_max:
+         │       │   └─ scratch_max = stage_need
+         │       └─ N_stage = sub_len
+         │
+         ├─ Add margin for Rader convolutions:
+         │   └─ scratch_needed = scratch_max + 4×N
+         │
+         ├─ plan->scratch_size = scratch_needed
+         ├─ plan->scratch = aligned_alloc(32, scratch_needed × sizeof(fft_data))
+         │
+         ├─ IF !plan->scratch: ERROR (allocation failed)
+         │
+         ├─ Log: "Scratch buffer: %zu elements (%.2f KB)"
+         │
+         └─ Log: "Planning complete!"
     
-    // ✅ Precompute stage twiddles
-    plan->stages[i].stage_tw = 
-        compute_stage_twiddles(N_stage, radix, direction);
-    
-    // ✅ Get Rader twiddles (if prime)
-    if (IS_PRIME(radix) && radix >= 7) {
-        plan->stages[i].rader_tw = 
-            get_rader_twiddles(radix, direction);
-    }
-}
+    └─ RETURN plan  ✅ PLANNING COMPLETE
 ```
 
 ---
 
-## 📊 Performance Comparison
-
-### Code Size
-
-| Component | OLD (On-the-fly) | NEW (Separate _fv/_bv) | Change |
-|-----------|------------------|------------------------|--------|
-| **radix2 butterfly** | 450 lines | 2×280 lines = 560 | +24% total |
-| **Shared macros** | 0 lines | 150 lines | N/A |
-| **Effective code** | 450 lines | 430 lines (with macros) | -4% |
-| **Branches** | 15 | 5 per function | -67% |
-
-### Execution Speed
-
-| FFT Size | OLD (Compute Twiddles) | NEW (Precomputed) | Speedup |
-|----------|------------------------|-------------------|---------|
-| N=1024 | 150 µs | 15 µs | **10x** |
-| N=4096 | 600 µs | 60 µs | **10x** |
-| N=16384 | 2.5 ms | 250 µs | **10x** |
-
-### Memory Overhead
-
-| Stage | OLD | NEW | Extra |
-|-------|-----|-----|-------|
-| Radix-2, sub_len=2048 | 0 KB | 32 KB | 32 KB |
-| Radix-4, sub_len=512 | 0 KB | 24 KB | 24 KB |
-| **Total (N=4096)** | **0 KB** | **~60 KB** | **Negligible!** |
-
-**Conclusion:** Pay 60 KB once, get 10x speedup forever!
-
----
-
-## 🧩 How the Pieces Fit Together
-
+## Memory Ownership Summary
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  fft_init (Planning Phase)                                   │
-│                                                              │
-│  1. Factorize N → [32, 4, 8] (for N=1024)                  │
-│  2. For each stage:                                         │
-│     ┌──────────────────────────────────────┐               │
-│     │ Twiddle Manager                       │               │
-│     │ compute_stage_twiddles(N, r, dir)    │               │
-│     │ → Returns W^(r*k) for k=0..sub_len   │               │
-│     │ → Stored in plan->stages[i].stage_tw │               │
-│     └──────────────────────────────────────┘               │
-│     ┌──────────────────────────────────────┐               │
-│     │ Rader Manager (if prime)              │               │
-│     │ get_rader_twiddles(7, dir)           │               │
-│     │ → Returns cached conv twiddles        │               │
-│     │ → Stored in plan->stages[i].rader_tw │               │
-│     └──────────────────────────────────────┘               │
-│  3. Store plan->direction = FORWARD/INVERSE                 │
-└─────────────────────────────────────────────────────────────┘
-                         │
-                         ↓
-┌─────────────────────────────────────────────────────────────┐
-│  fft_exec (Execution Phase)                                  │
-│                                                              │
-│  Dispatcher:                                                │
-│    for each stage:                                          │
-│      stage_tw = plan->stages[i].stage_tw                    │
-│      rader_tw = plan->stages[i].rader_tw                    │
-│                                                              │
-│      if (plan->direction == FFT_FORWARD):                   │
-│        fft_radix2_fv(out, in, stage_tw, sub_len)           │
-│      else:                                                  │
-│        fft_radix2_bv(out, in, stage_tw, sub_len)           │
-└─────────────────────────────────────────────────────────────┘
-                         │
-                         ↓
-┌─────────────────────────────────────────────────────────────┐
-│  fft_radix2_fv (Butterfly - Forward)                        │
-│                                                              │
-│  for (k = 0; k < sub_len; k++) {                            │
-│    // ✅ Load precomputed twiddle (1 cycle)                │
-│    w = stage_tw[k];                                         │
-│                                                              │
-│    // ✅ Complex multiply (4 cycles)                        │
-│    tw_odd = odd * w;                                        │
-│                                                              │
-│    // ✅ Butterfly (2 cycles)                               │
-│    output[k] = even + tw_odd;                               │
-│    output[k+half] = even - tw_odd;                          │
-│  }                                                          │
-│                                                              │
-│  // NO sin/cos computation!                                 │
-│  // NO direction checks!                                    │
-│  // TOTAL: ~7 cycles/butterfly (vs 210 cycles OLD)          │
-└─────────────────────────────────────────────────────────────┘
+fft_plan
+├─ stages[i].stage_tw          ✅ OWNED (freed by free_stage_twiddles)
+├─ stages[i].rader_tw          ❌ BORROWED (pointer to g_rader_cache[].conv_tw_*)
+├─ scratch                     ✅ OWNED (freed by aligned_free)
+├─ bluestein_tw               ✅ OWNED (if Bluestein, freed by aligned_free)
+├─ bluestein_plan_fwd         ✅ OWNED (recursive fft_plan, freed by free_fft)
+└─ bluestein_plan_inv         ✅ OWNED (recursive fft_plan, freed by free_fft)
+
+g_rader_cache[i]  (GLOBAL, thread-safe)
+├─ conv_tw_fwd                ✅ OWNED (freed by cleanup_rader_cache)
+├─ conv_tw_inv                ✅ OWNED (freed by cleanup_rader_cache)
+├─ perm_in                    ✅ OWNED (freed by cleanup_rader_cache)
+└─ perm_out                   ✅ OWNED (freed by cleanup_rader_cache)
 ```
 
 ---
-
-## 🎨 Design Principles Achieved
-
-### 1. **Single Source of Truth**
-- ✅ Twiddles computed ONCE (by `compute_stage_twiddles`)
-- ✅ Rader twiddles cached GLOBALLY (by `get_rader_twiddles`)
-- ✅ Butterflies just multiply (no recomputation)
-
-### 2. **Separation of Concerns**
-```
-Planning:   Compute twiddles with correct sign
-Dispatcher: Select _fv or _bv based on plan
-Butterfly:  Dumb multiply (direction-agnostic)
-```
-
-### 3. **No Direction Logic in Hot Path**
-```c
-// ❌ OLD: Runtime branch
-if (transform_sign > 0) {
-    w.im = -sin(angle);
-} else {
-    w.im = sin(angle);
-}
-
-// ✅ NEW: No branch (sign baked into twiddles)
-w = stage_tw[k];  // Already has correct sign!
-```
-
-### 4. **Macro Reuse**
-```c
-// Same butterfly macro works for both forward and inverse
-RADIX2_BUTTERFLY_AVX2(even, odd, w, x0, x1);
-
-// Only difference: which twiddles you pass
-// Forward: stage_tw_fwd (computed with sign = -1)
-// Inverse: stage_tw_inv (computed with sign = +1)
-```
-
----
-
-## 🚀 Next Steps
-
-### Immediate (1-2 hours)
-1. ✅ Integrate radix-2 `_fv` and `_bv`
-2. 🔧 Update dispatcher in `mixed_radix_dit_rec`
-3. 🧪 Test forward/inverse accuracy
-4. 📊 Benchmark speedup
-
-### Short-term (1 week)
-1. 📝 Create radix-4 `_fv` and `_bv` (same pattern as radix-2)
-2. 📝 Create radix-8 `_fv` and `_bv`
-3. 📝 Create radix-16 `_fv` and `_bv`
-4. 📝 Create radix-32 `_fv` and `_bv`
-
-### Medium-term (2-3 weeks)
-1. 📝 Create radix-3, radix-5 (odd radices)
-2. 📝 Create radix-7, radix-11, radix-13 (with Rader)
-3. 🎯 Optimize Rader convolution (SIMD)
-4. 🧪 Full test suite (vs FFTW)
-
----
-
-## 📋 Checklist: Is It Working?
-
-### Planning Phase
-- [ ] `compute_stage_twiddles` returns non-NULL
-- [ ] `get_rader_twiddles` returns non-NULL (for primes)
-- [ ] `plan->stages[i].stage_tw` is populated
-- [ ] No memory leaks (Valgrind clean)
-
-### Execution Phase
-- [ ] Dispatcher calls correct `_fv` or `_bv`
-- [ ] Stage twiddles loaded correctly
-- [ ] No segfaults (alignment issues)
-- [ ] Results match reference (max error < 1e-10)
-
-### Performance
-- [ ] Planning time: 1-10 ms (acceptable)
-- [ ] Execution time: 10x faster than old code
-- [ ] Memory usage: Plan + Scratch < 1 MB
-
----
-
-## 🎯 Success Criteria
-
-Your FFT library is **production-ready** when:
-
-✅ **Correctness**
-- Forward → Inverse = Identity (within 1e-10)
-- Matches FFTW results (max error < 1e-12)
-- Passes all prime sizes (7, 11, 13, etc.)
-
-✅ **Performance**
-- 10x faster than on-the-fly twiddles
-- Within 2x of FFTW (competitive)
-- Scales to N=1M+ without degradation
-
-✅ **Quality**
-- No memory leaks
-- Thread-safe
-- Clean code (macros, separation of concerns)
-- Well-documented
-
----
-
-## 🔮 Future Enhancements
-
-Once the core is stable:
-
-1. **In-place transforms** (save memory)
-2. **Real-to-complex** (r2c optimization)
-3. **Multi-dimensional** (2D/3D FFTs)
-4. **GPU port** (CUDA/OpenCL)
-5. **ARM NEON** (for mobile/embedded)
-
----
-
-## 💡 Key Takeaways
-
-### What Changed
-- ✅ Separate `_fv`/`_bv` functions (no direction parameter)
-- ✅ Precomputed twiddles (FFTW approach)
-- ✅ Shared macros (DRY principle)
-- ✅ Clean SIMD paths (no branches)
-
-### What Stayed the Same
-- ✅ Your battle-tested Bluestein
-- ✅ Your SIMD helpers
-- ✅ Your general radix fallback
-- ✅ Your prefetch strategies
-
-### What You Gained
-- ✅ **10x faster execution**
-- ✅ **Cleaner code** (38% less, 67% fewer branches)
-- ✅ **Easier maintenance** (change macros, both functions benefit)
-- ✅ **Future-proof** (easy to add AVX-512, ARM NEON)
-
----
-
-You now have a **clean, fast, maintainable** FFT implementation! 🎉
-
-Ready to integrate? Let me know if you need:
-- Example dispatcher code
-- Test harness
-- Benchmark suite
-- More radices (radix-4, radix-8, etc.)
