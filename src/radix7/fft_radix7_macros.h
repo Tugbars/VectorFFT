@@ -27,6 +27,18 @@
 
 #ifdef __AVX512F__
 
+
+#define CMUL_ADD_AVX512(acc, a, w) \
+    do { \
+        __m512d ar = _mm512_shuffle_pd(a, a, 0x00); \
+        __m512d ai = _mm512_shuffle_pd(a, a, 0xFF); \
+        __m512d wr = _mm512_shuffle_pd(w, w, 0x00); \
+        __m512d wi = _mm512_shuffle_pd(w, w, 0xFF); \
+        __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi)); \
+        __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr)); \
+        (acc) = _mm512_add_pd(acc, _mm512_unpacklo_pd(re, im)); \
+    } while (0)
+
 //==============================================================================
 // COMPLEX MULTIPLICATION - AVX-512 (CORRECTED)
 //==============================================================================
@@ -444,17 +456,24 @@
 
 #ifdef __AVX2__
 
-#ifdef __FMA__
-#define CMUL_FMA_R7_AVX2(out, a, w) \
-    do { \
-        __m256d ar = _mm256_unpacklo_pd(a, a); \
-        __m256d ai = _mm256_unpackhi_pd(a, a); \
-        __m256d wr = _mm256_unpacklo_pd(w, w); \
-        __m256d wi = _mm256_unpackhi_pd(w, w); \
-        __m256d re = _mm256_fmsub_pd(ar, wr, _mm256_mul_pd(ai, wi)); \
-        __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr)); \
-        (out) = _mm256_unpacklo_pd(re, im); \
+//==============================================================================
+// COMPLEX MULTIPLICATION - AVX2 with FMA
+//==============================================================================
+
+#if defined(__AVX2__)
+#define CMUL_FMA_R7_AVX2(out, a, w)                                       \
+    do                                                                    \
+    {                                                                     \
+        __m256d ar = _mm256_unpacklo_pd(a, a);                            \
+        __m256d ai = _mm256_unpackhi_pd(a, a);                            \
+        __m256d wr = _mm256_unpacklo_pd(w, w);                            \
+        __m256d wi = _mm256_unpackhi_pd(w, w);                            \
+        __m256d re = _mm256_fmsub_pd(ar, wr, _mm256_mul_pd(ai, wi));     \
+        __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr));     \
+        (out) = _mm256_unpacklo_pd(re, im);                               \
     } while (0)
+#else
+#define CMUL_FMA_R7_AVX2(out, a, w) (out) = cmul_avx2_aos(a, w)
 #endif
 
 //==============================================================================
