@@ -66,6 +66,7 @@ alignas(32) static const double ROT_MASK_INV_AVX2_DATA[4] = {
 #define ROT_MASK_INV_AVX2 (_mm256_load_pd(ROT_MASK_INV_AVX2_DATA))
 #endif
 
+
 //==============================================================================
 // AVX-512 SUPPORT
 //==============================================================================
@@ -185,6 +186,17 @@ alignas(32) static const double ROT_MASK_INV_AVX2_DATA[4] = {
         _mm512_stream_pd(&output_buffer[kk].re, y0);                  \
         _mm512_stream_pd(&output_buffer[(kk) + K].re, y1);            \
         _mm512_stream_pd(&output_buffer[(kk) + 2 * K].re, y2);        \
+    } while (0)
+
+// Mask for 3 complex numbers (6 doubles out of 8) - prevents OOB writes
+#define MASK_3_COMPLEX_AVX512 ((__mmask8)0x3F) // bits 0-5 set
+
+#define STORE_3_LANES_AVX512_MASKED(kk, K, output_buffer, y0, y1, y2, mask) \
+    do                                                                      \
+    {                                                                       \
+        _mm512_mask_storeu_pd(&output_buffer[kk].re, mask, y0);             \
+        _mm512_mask_storeu_pd(&output_buffer[(kk) + K].re, mask, y1);       \
+        _mm512_mask_storeu_pd(&output_buffer[(kk) + 2 * K].re, mask, y2);   \
     } while (0)
 
 //==============================================================================

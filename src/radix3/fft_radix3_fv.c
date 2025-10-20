@@ -59,9 +59,10 @@ static __always_inline void radix3_small_fv(
         const __m512d v_half = _mm512_set1_pd(C_HALF);
         const __m512d v_sqrt3_2 = _mm512_set1_pd(S_SQRT3_2);
         const __m512d rot_mask = ROT_MASK_FWD_AVX512;
-        // Process 3 butterflies (4th will be garbage but not written)
-        RADIX3_PIPELINE_4_FV_AVX512(0, 3, sub_outputs, stage_tw, output_buffer,
-                                    v_half, v_sqrt3_2, rot_mask);
+        const __mmask8 mask = MASK_3_COMPLEX_AVX512;
+        // Use masked store to avoid OOB write for 4th butterfly
+        RADIX3_PIPELINE_4_AVX512_MASKED(0, 3, sub_outputs, stage_tw, output_buffer,
+                                        v_half, v_sqrt3_2, rot_mask, mask);
     }
 #elif defined(__AVX2__)
     {
