@@ -17,6 +17,8 @@
         "fft_radix13_macros.h": "c",
         "fft_radix32.h": "c",
         "fft_radix32_uniform.h": "c",
-        "fft_radix11_macros.h": "c"
+        "fft_radix11_macros.h": "c",
+        "fft_radix2.h": "c",
+        "fft_radix2_macros.h": "c"
     }
 }

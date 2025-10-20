@@ -24,23 +24,24 @@ void fft_radix2_bv(
     output_buffer = __builtin_assume_aligned(output_buffer, 32);
     sub_outputs = __builtin_assume_aligned(sub_outputs, 32);
     stage_tw = __builtin_assume_aligned(stage_tw, 32);
-    
+
     const int half = sub_len;
-    
+
     //==========================================================================
     // STAGE 0: k=0 (W^0 = 1) - Inline helper (IDENTICAL to forward)
     //==========================================================================
     radix2_butterfly_k0(output_buffer, sub_outputs, half);
-    
+
     //==========================================================================
     // STAGE 1: k=N/4 (W^(N/4) = +i for inverse) ⚡ ONLY DIFFERENCE
     //==========================================================================
     int k_quarter = 0;
-    if ((half & 1) == 0) {
+    if ((half & 1) == 0)
+    {
         k_quarter = half >> 1;
         radix2_butterfly_k_quarter(output_buffer, sub_outputs, half, k_quarter, true);
     }
-    
+
     //==========================================================================
     // STAGE 2: General case - Unified loop helper (IDENTICAL to forward)
     //==========================================================================
@@ -57,16 +58,16 @@ void fft_radix2_bv(
  * - All loop structures (via inline helper)
  * - k=0 handling (via inline helper)
  * - Butterfly arithmetic (same macro)
- * 
+ *
  * DIFFERENCE (1 parameter):
  * - Line 40: radix2_butterfly_k_quarter(..., true) vs (..., false)
  *            ^^^^
  *            is_inverse flag
- * 
+ *
  * TWIDDLE DIFFERENCE (handled externally by planner):
  * - Forward:  stage_tw contains exp(-2πik/N) - planner computes this
  * - Inverse:  stage_tw contains exp(+2πik/N) - planner computes this
- * 
+ *
  * WHY SEPARATE FUNCTIONS:
  * - Single source of truth for stage twiddles
  * - No runtime direction checks
