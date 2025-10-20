@@ -872,7 +872,257 @@ __m512d rot_pos_i_avx512(__m512d v) {
         y_11m = _mm512_sub_pd(real, rot);                   \
     } while (0)
 
-// Note: Full AVX-512 implementation would include all 5 pairs
-// Following same pattern as Pair 1 above (omitted for brevity)
+#ifdef __AVX512F__
+//==============================================================================
+// AVX-512 COMPLETE IMPLEMENTATION (4-way parallelism)
+//==============================================================================
+
+/**
+ * @brief Load 11 lanes for 4 butterflies (AVX-512)
+ * 
+ * Loads 44 complex values (11 lanes × 4 butterflies) into 11 __m512d registers.
+ * Each register holds 4 complex pairs (8 doubles).
+ * 
+ * Memory layout: [butterfly0, butterfly1, butterfly2, butterfly3] interleaved
+ */
+#define LOAD_11_LANES_AVX512(kk, K, sub_outputs, a, b, c, d, e, f, g, h, i, j, xk) \
+    do {                                                                            \
+        a = load4_aos(&sub_outputs[kk], &sub_outputs[(kk)+1],                       \
+                      &sub_outputs[(kk)+2], &sub_outputs[(kk)+3]);                 \
+        b = load4_aos(&sub_outputs[(kk)+K], &sub_outputs[(kk)+1+K],                 \
+                      &sub_outputs[(kk)+2+K], &sub_outputs[(kk)+3+K]);             \
+        c = load4_aos(&sub_outputs[(kk)+2*K], &sub_outputs[(kk)+1+2*K],             \
+                      &sub_outputs[(kk)+2+2*K], &sub_outputs[(kk)+3+2*K]);         \
+        d = load4_aos(&sub_outputs[(kk)+3*K], &sub_outputs[(kk)+1+3*K],             \
+                      &sub_outputs[(kk)+2+3*K], &sub_outputs[(kk)+3+3*K]);         \
+        e = load4_aos(&sub_outputs[(kk)+4*K], &sub_outputs[(kk)+1+4*K],             \
+                      &sub_outputs[(kk)+2+4*K], &sub_outputs[(kk)+3+4*K]);         \
+        f = load4_aos(&sub_outputs[(kk)+5*K], &sub_outputs[(kk)+1+5*K],             \
+                      &sub_outputs[(kk)+2+5*K], &sub_outputs[(kk)+3+5*K]);         \
+        g = load4_aos(&sub_outputs[(kk)+6*K], &sub_outputs[(kk)+1+6*K],             \
+                      &sub_outputs[(kk)+2+6*K], &sub_outputs[(kk)+3+6*K]);         \
+        h = load4_aos(&sub_outputs[(kk)+7*K], &sub_outputs[(kk)+1+7*K],             \
+                      &sub_outputs[(kk)+2+7*K], &sub_outputs[(kk)+3+7*K]);         \
+        i = load4_aos(&sub_outputs[(kk)+8*K], &sub_outputs[(kk)+1+8*K],             \
+                      &sub_outputs[(kk)+2+8*K], &sub_outputs[(kk)+3+8*K]);         \
+        j = load4_aos(&sub_outputs[(kk)+9*K], &sub_outputs[(kk)+1+9*K],             \
+                      &sub_outputs[(kk)+2+9*K], &sub_outputs[(kk)+3+9*K]);         \
+        xk = load4_aos(&sub_outputs[(kk)+10*K], &sub_outputs[(kk)+1+10*K],          \
+                       &sub_outputs[(kk)+2+10*K], &sub_outputs[(kk)+3+10*K]);       \
+    } while (0)
+
+/**
+ * @brief Store 11 lanes for 4 butterflies (AVX-512)
+ */
+#define STORE_11_LANES_AVX512(kk, K, output, y0, y1, y2, y3, y4, y5, y6, y7, y8, y9, y10) \
+    do {                                                                                   \
+        _mm512_storeu_pd(&output[kk].re, y0);                                              \
+        _mm512_storeu_pd(&output[(kk)+K].re, y1);                                          \
+        _mm512_storeu_pd(&output[(kk)+2*K].re, y2);                                        \
+        _mm512_storeu_pd(&output[(kk)+3*K].re, y3);                                        \
+        _mm512_storeu_pd(&output[(kk)+4*K].re, y4);                                        \
+        _mm512_storeu_pd(&output[(kk)+5*K].re, y5);                                        \
+        _mm512_storeu_pd(&output[(kk)+6*K].re, y6);                                        \
+        _mm512_storeu_pd(&output[(kk)+7*K].re, y7);                                        \
+        _mm512_storeu_pd(&output[(kk)+8*K].re, y8);                                        \
+        _mm512_storeu_pd(&output[(kk)+9*K].re, y9);                                        \
+        _mm512_storeu_pd(&output[(kk)+10*K].re, y10);                                      \
+    } while (0)
+
+/**
+ * @brief Apply stage twiddles for 4 butterflies (AVX-512)
+ */
+#define APPLY_STAGE_TWIDDLES_R11_AVX512(kk, b, c, d, e, f, g, h, i, j, xk, stage_tw) \
+    do {                                                                              \
+        if (sub_len > 1) {                                                            \
+            __m512d w1 = load4_aos(&stage_tw[10*(kk)+0], &stage_tw[10*(kk+1)+0],      \
+                                   &stage_tw[10*(kk+2)+0], &stage_tw[10*(kk+3)+0]);  \
+            __m512d w2 = load4_aos(&stage_tw[10*(kk)+1], &stage_tw[10*(kk+1)+1],      \
+                                   &stage_tw[10*(kk+2)+1], &stage_tw[10*(kk+3)+1]);  \
+            __m512d w3 = load4_aos(&stage_tw[10*(kk)+2], &stage_tw[10*(kk+1)+2],      \
+                                   &stage_tw[10*(kk+2)+2], &stage_tw[10*(kk+3)+2]);  \
+            __m512d w4 = load4_aos(&stage_tw[10*(kk)+3], &stage_tw[10*(kk+1)+3],      \
+                                   &stage_tw[10*(kk+2)+3], &stage_tw[10*(kk+3)+3]);  \
+            __m512d w5 = load4_aos(&stage_tw[10*(kk)+4], &stage_tw[10*(kk+1)+4],      \
+                                   &stage_tw[10*(kk+2)+4], &stage_tw[10*(kk+3)+4]);  \
+            __m512d w6 = load4_aos(&stage_tw[10*(kk)+5], &stage_tw[10*(kk+1)+5],      \
+                                   &stage_tw[10*(kk+2)+5], &stage_tw[10*(kk+3)+5]);  \
+            __m512d w7 = load4_aos(&stage_tw[10*(kk)+6], &stage_tw[10*(kk+1)+6],      \
+                                   &stage_tw[10*(kk+2)+6], &stage_tw[10*(kk+3)+6]);  \
+            __m512d w8 = load4_aos(&stage_tw[10*(kk)+7], &stage_tw[10*(kk+1)+7],      \
+                                   &stage_tw[10*(kk+2)+7], &stage_tw[10*(kk+3)+7]);  \
+            __m512d w9 = load4_aos(&stage_tw[10*(kk)+8], &stage_tw[10*(kk+1)+8],      \
+                                   &stage_tw[10*(kk+2)+8], &stage_tw[10*(kk+3)+8]);  \
+            __m512d w10 = load4_aos(&stage_tw[10*(kk)+9], &stage_tw[10*(kk+1)+9],     \
+                                    &stage_tw[10*(kk+2)+9], &stage_tw[10*(kk+3)+9]); \
+            b = cmul_fma_r11_avx512(b, w1);                                           \
+            c = cmul_fma_r11_avx512(c, w2);                                           \
+            d = cmul_fma_r11_avx512(d, w3);                                           \
+            e = cmul_fma_r11_avx512(e, w4);                                           \
+            f = cmul_fma_r11_avx512(f, w5);                                           \
+            g = cmul_fma_r11_avx512(g, w6);                                           \
+            h = cmul_fma_r11_avx512(h, w7);                                           \
+            i = cmul_fma_r11_avx512(i, w8);                                           \
+            j = cmul_fma_r11_avx512(j, w9);                                           \
+            xk = cmul_fma_r11_avx512(xk, w10);                                        \
+        }                                                                             \
+    } while (0)
+
+/**
+ * @brief Butterfly core for AVX-512 (4 butterflies at once)
+ */
+#define RADIX11_BUTTERFLY_CORE_AVX512(a, b, c, d, e, f, g, h, i, j, xk,           \
+                                      t0, t1, t2, t3, t4, s0, s1, s2, s3, s4, y0) \
+    do {                                                                           \
+        t0 = _mm512_add_pd(b, xk);                                                 \
+        t1 = _mm512_add_pd(c, j);                                                  \
+        t2 = _mm512_add_pd(d, i);                                                  \
+        t3 = _mm512_add_pd(e, h);                                                  \
+        t4 = _mm512_add_pd(f, g);                                                  \
+        s0 = _mm512_sub_pd(b, xk);                                                 \
+        s1 = _mm512_sub_pd(c, j);                                                  \
+        s2 = _mm512_sub_pd(d, i);                                                  \
+        s3 = _mm512_sub_pd(e, h);                                                  \
+        s4 = _mm512_sub_pd(f, g);                                                  \
+        __m512d sum_t = _mm512_add_pd(_mm512_add_pd(t0, t1),                      \
+                                      _mm512_add_pd(_mm512_add_pd(t2, t3), t4));  \
+        y0 = _mm512_add_pd(a, sum_t);                                              \
+    } while (0)
+
+//==============================================================================
+// ALL 5 REAL PAIRS (AVX-512)
+//==============================================================================
+
+#define RADIX11_REAL_PAIR1_AVX512(a, t0, t1, t2, t3, t4, K, real_out)             \
+    do {                                                                          \
+        real_out = _mm512_add_pd(a, _mm512_fmadd_pd(K.c1, t0,                     \
+            _mm512_fmadd_pd(K.c2, t1, _mm512_fmadd_pd(K.c3, t2,                   \
+            _mm512_fmadd_pd(K.c4, t3, _mm512_mul_pd(K.c5, t4))))));               \
+    } while (0)
+
+#define RADIX11_REAL_PAIR2_AVX512(a, t0, t1, t2, t3, t4, K, real_out)             \
+    do {                                                                          \
+        real_out = _mm512_add_pd(a, _mm512_fmadd_pd(K.c2, t0,                     \
+            _mm512_fmadd_pd(K.c4, t1, _mm512_fmadd_pd(K.c5, t2,                   \
+            _mm512_fmadd_pd(K.c3, t3, _mm512_mul_pd(K.c1, t4))))));               \
+    } while (0)
+
+#define RADIX11_REAL_PAIR3_AVX512(a, t0, t1, t2, t3, t4, K, real_out)             \
+    do {                                                                          \
+        real_out = _mm512_add_pd(a, _mm512_fmadd_pd(K.c3, t0,                     \
+            _mm512_fmadd_pd(K.c5, t1, _mm512_fmadd_pd(K.c2, t2,                   \
+            _mm512_fmadd_pd(K.c1, t3, _mm512_mul_pd(K.c4, t4))))));               \
+    } while (0)
+
+#define RADIX11_REAL_PAIR4_AVX512(a, t0, t1, t2, t3, t4, K, real_out)             \
+    do {                                                                          \
+        real_out = _mm512_add_pd(a, _mm512_fmadd_pd(K.c4, t0,                     \
+            _mm512_fmadd_pd(K.c3, t1, _mm512_fmadd_pd(K.c1, t2,                   \
+            _mm512_fmadd_pd(K.c5, t3, _mm512_mul_pd(K.c2, t4))))));               \
+    } while (0)
+
+#define RADIX11_REAL_PAIR5_AVX512(a, t0, t1, t2, t3, t4, K, real_out)             \
+    do {                                                                          \
+        real_out = _mm512_add_pd(a, _mm512_fmadd_pd(K.c5, t0,                     \
+            _mm512_fmadd_pd(K.c1, t1, _mm512_fmadd_pd(K.c4, t2,                   \
+            _mm512_fmadd_pd(K.c2, t3, _mm512_mul_pd(K.c3, t4))))));               \
+    } while (0)
+
+//==============================================================================
+// ALL 5 IMAGINARY PAIRS - FORWARD (AVX-512)
+//==============================================================================
+
+#define RADIX11_IMAG_PAIR1_FV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s1, s0, _mm512_fmadd_pd(K.s2, s1,       \
+            _mm512_fmadd_pd(K.s3, s2, _mm512_fmadd_pd(K.s4, s3,                  \
+            _mm512_mul_pd(K.s5, s4)))));                                          \
+        rot_out = rot_neg_i_avx512(base);                                         \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR2_FV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s2, s0, _mm512_fmadd_pd(K.s4, s1,       \
+            _mm512_fmadd_pd(K.s5, s2, _mm512_fmadd_pd(K.s3, s3,                  \
+            _mm512_mul_pd(K.s1, s4)))));                                          \
+        rot_out = rot_neg_i_avx512(base);                                         \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR3_FV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s3, s0, _mm512_fmadd_pd(K.s5, s1,       \
+            _mm512_fmadd_pd(K.s2, s2, _mm512_fmadd_pd(K.s1, s3,                  \
+            _mm512_mul_pd(K.s4, s4)))));                                          \
+        rot_out = rot_neg_i_avx512(base);                                         \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR4_FV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s4, s0, _mm512_fmadd_pd(K.s3, s1,       \
+            _mm512_fmadd_pd(K.s1, s2, _mm512_fmadd_pd(K.s5, s3,                  \
+            _mm512_mul_pd(K.s2, s4)))));                                          \
+        rot_out = rot_neg_i_avx512(base);                                         \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR5_FV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s5, s0, _mm512_fmadd_pd(K.s1, s1,       \
+            _mm512_fmadd_pd(K.s4, s2, _mm512_fmadd_pd(K.s2, s3,                  \
+            _mm512_mul_pd(K.s3, s4)))));                                          \
+        rot_out = rot_neg_i_avx512(base);                                         \
+    } while (0)
+
+//==============================================================================
+// ALL 5 IMAGINARY PAIRS - INVERSE (AVX-512)
+//==============================================================================
+
+#define RADIX11_IMAG_PAIR1_BV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s1, s0, _mm512_fmadd_pd(K.s2, s1,       \
+            _mm512_fmadd_pd(K.s3, s2, _mm512_fmadd_pd(K.s4, s3,                  \
+            _mm512_mul_pd(K.s5, s4)))));                                          \
+        rot_out = rot_pos_i_avx512(base);                                         \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR2_BV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s2, s0, _mm512_fmadd_pd(K.s4, s1,       \
+            _mm512_fmadd_pd(K.s5, s2, _mm512_fmadd_pd(K.s3, s3,                  \
+            _mm512_mul_pd(K.s1, s4)))));                                          \
+        rot_out = rot_pos_i_avx512(base);                                         \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR3_BV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s3, s0, _mm512_fmadd_pd(K.s5, s1,       \
+            _mm512_fmadd_pd(K.s2, s2, _mm512_fmadd_pd(K.s1, s3,                  \
+            _mm512_mul_pd(K.s4, s4)))));                                          \
+        rot_out = rot_pos_i_avx512(base);                                         \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR4_BV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s4, s0, _mm512_fmadd_pd(K.s3, s1,       \
+            _mm512_fmadd_pd(K.s1, s2, _mm512_fmadd_pd(K.s5, s3,                  \
+            _mm512_mul_pd(K.s2, s4)))));                                          \
+        rot_out = rot_pos_i_avx512(base);                                         \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR5_BV_AVX512(s0, s1, s2, s3, s4, K, rot_out)             \
+    do {                                                                          \
+        __m512d base = _mm512_fmadd_pd(K.s5, s0, _mm512_fmadd_pd(K.s1, s1,       \
+            _mm512_fmadd_pd(K.s4, s2, _mm512_fmadd_pd(K.s2, s3,                  \
+            _mm512_mul_pd(K.s3, s4)))));                                          \
+        rot_out = rot_pos_i_avx512(base);                                         \
+    } while (0)
+
+/**
+ * @brief Assemble output pairs (AVX-512)
+ */
+#define RADIX11_ASSEMBLE_PAIR_AVX512(real, rot, y_m, y_11m) \
+    do {                                                    \
+        y_m = _mm512_add_pd(real, rot);                     \
+        y_11m = _mm512_sub_pd(real, rot);                   \
+    } while (0)
 
 #endif // __AVX512F__
