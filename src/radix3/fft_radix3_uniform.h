@@ -388,12 +388,17 @@
  *     → Excellent guide to low-level SIMD optimization used here
  * 
  */
-void fft_radix3_butterfly(
-    fft_data *output_buffer,
-    fft_data *sub_outputs,
-    const fft_data *stage_tw,
-    int sub_len,
-    int transform_sign);
+void fft_radix3_bv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_data *restrict stage_tw,
+    int sub_len);
+
+void fft_radix3_fv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_data *restrict stage_tw,
+    int sub_len);
 
 #endif // FFT_RADIX3_HThis documentation follows your style and provides:
 
