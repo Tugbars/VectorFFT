@@ -1,254 +1,128 @@
 //==============================================================================
-// fft_radix16_fv.c - Forward Radix-16 Butterfly (Precomputed Twiddles)
+// fft_radix16_fv.c - Forward Radix-16 Butterfly (Optimized)
 //==============================================================================
-//
-// ALGORITHM: 2-stage radix-4 decomposition
-//   1. Apply precomputed input twiddles W_N^(j*k)
-//   2. First radix-4 stage (4 groups of 4)
-//   3. Apply W_4 intermediate twiddles (FORWARD)
-//   4. Second radix-4 stage (final)
-//
-// DESIGN PRINCIPLES:
-// 1. No direction parameter - always forward FFT
-// 2. stage_tw is NEVER NULL - always precomputed
-// 3. Reuses radix-4 butterfly macros
-// 4. Clean AVX2 2x unroll path
-//
 
 #include "fft_radix16.h"
 #include "simd_math.h"
 #include "fft_radix16_macros.h"
 
-// Non-temporal store threshold
-#define STREAM_THRESHOLD 8192
-
-//==============================================================================
-// FORWARD RADIX-16 BUTTERFLY - Main Function
-//==============================================================================
-
-/**
- * @brief Ultra-optimized forward radix-16 butterfly
- *
- * ASSUMPTIONS:
- * - stage_tw is NEVER NULL (always precomputed)
- * - Direction is ALWAYS forward (no runtime checks)
- * - Twiddles have forward sign: W_N^k = exp(-2πik/N)
- *
- * TWIDDLE LAYOUT:
- * - stage_tw[k*15 + j] = W_N^((j+1)*k) for j=0..14
- *
- * PERFORMANCE:
- * - AVX2 2x unroll: ~5 cycles/butterfly
- * - Scalar tail: ~20 cycles/butterfly
- */
 void fft_radix16_fv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
     const fft_data *restrict stage_tw,
     int sub_len)
 {
+    output_buffer = __builtin_assume_aligned(output_buffer, 32);
+    sub_outputs = __builtin_assume_aligned(sub_outputs, 32);
+    stage_tw = __builtin_assume_aligned(stage_tw, 32);
+    
     const int K = sub_len;
     int k = 0;
+    const int use_streaming = (K >= STREAM_THRESHOLD_R16);
 
-#ifdef __AVX2__
-    //==========================================================================
-    // AVX2 PATH: Process 2 butterflies at a time
-    //==========================================================================
-
-    const int use_streaming = (K >= STREAM_THRESHOLD);
-
-    // Forward radix-4 rotation mask
-    const __m256d rot_mask = _mm256_set_pd(0.0, -0.0, 0.0, -0.0);
-
-    // Main loop: process 2 butterflies per iteration
-    for (; k + 1 < K; k += 2)
+#ifdef __AVX512F__
+    const __m512d rot_mask = _mm512_set_pd(-0.0, 0.0, -0.0, 0.0,
+                                           -0.0, 0.0, -0.0, 0.0);
+    const __m512d neg_mask = _mm512_set1_pd(-0.0);
+    
+    for (; k + 3 < K; k += 4)
     {
-        // Prefetch ahead
-        PREFETCH_16_LANES(k, K, PREFETCH_L1, sub_outputs, _MM_HINT_T0);
-        PREFETCH_16_LANES(k, K, PREFETCH_L2, sub_outputs, _MM_HINT_T1);
-        PREFETCH_16_LANES(k, K, PREFETCH_L3, sub_outputs, _MM_HINT_T2);
-
-        //======================================================================
-        // STAGE 1: Load 16 lanes (2 butterflies = 32 complex values)
-        //======================================================================
-        __m256d x[16];
-        LOAD_16_LANES_AVX2(k, K, sub_outputs, x);
-
-        //======================================================================
-        // STAGE 2: Apply precomputed input twiddles (NO sin/cos!)
-        //======================================================================
-        APPLY_STAGE_TWIDDLES_R16_AVX2(k, x, stage_tw);
-
-        //======================================================================
-        // STAGE 3: First radix-4 (4 groups of 4)
-        //======================================================================
-        __m256d y[16];
-
-        for (int group = 0; group < 4; group++)
-        {
-            RADIX4_BUTTERFLY_AVX2(
-                x[group], x[group + 4], x[group + 8], x[group + 12],
-                y[4 * group], y[4 * group + 1], y[4 * group + 2], y[4 * group + 3],
-                rot_mask);
-        }
-
-        //======================================================================
-        // STAGE 4: Apply W_4 intermediate twiddles (FORWARD)
-        //======================================================================
-        APPLY_W4_INTERMEDIATE_FV_AVX2(y);
-
-        //======================================================================
-        // STAGE 5: Second radix-4 (final)
-        //======================================================================
-        __m256d z[16];
-
-        for (int m = 0; m < 4; m++)
-        {
-            RADIX4_BUTTERFLY_AVX2(
-                y[m], y[m + 4], y[m + 8], y[m + 12],
-                z[m], z[m + 4], z[m + 8], z[m + 12],
-                rot_mask);
-        }
-
-        //======================================================================
-        // STAGE 6: Store results
-        //======================================================================
-        if (use_streaming)
-        {
-            for (int m = 0; m < 4; m++)
-            {
-                _mm256_stream_pd(&output_buffer[k + m * K].re, z[m]);
-                _mm256_stream_pd(&output_buffer[k + (m + 4) * K].re, z[m + 4]);
-                _mm256_stream_pd(&output_buffer[k + (m + 8) * K].re, z[m + 8]);
-                _mm256_stream_pd(&output_buffer[k + (m + 12) * K].re, z[m + 12]);
-            }
-        }
-        else
-        {
-            for (int m = 0; m < 4; m++)
-            {
-                STOREU_PD(&output_buffer[k + m * K].re, z[m]);
-                STOREU_PD(&output_buffer[k + (m + 4) * K].re, z[m + 4]);
-                STOREU_PD(&output_buffer[k + (m + 8) * K].re, z[m + 8]);
-                STOREU_PD(&output_buffer[k + (m + 12) * K].re, z[m + 12]);
-            }
+        PREFETCH_16_LANES_AVX512(k, K, PREFETCH_L1_AVX512, sub_outputs, _MM_HINT_T0);
+        PREFETCH_STAGE_TW_AVX512(k, PREFETCH_L1_AVX512, stage_tw);
+        
+        if (use_streaming) {
+            RADIX16_PIPELINE_4_FV_AVX512_STREAM(k, K, sub_outputs, stage_tw, output_buffer, rot_mask, neg_mask);
+        } else {
+            RADIX16_PIPELINE_4_FV_AVX512(k, K, sub_outputs, stage_tw, output_buffer, rot_mask, neg_mask);
         }
     }
-
-    if (use_streaming)
-    {
+    
+    if (use_streaming) {
         _mm_sfence();
     }
+#endif
 
-#endif // __AVX2__
-
-    //==========================================================================
-    // SCALAR TAIL: Process remaining single butterflies
-    //==========================================================================
-    for (; k < K; k++)
+#ifdef __AVX2__
+    const __m256d rot_mask = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
+    const __m256d neg_mask = _mm256_set1_pd(-0.0);
+    
+    for (; k + 1 < K; k += 2)
     {
-        //======================================================================
-        // Load 16 lanes
-        //======================================================================
-        fft_data x[16];
-        for (int lane = 0; lane < 16; lane++)
-        {
-            x[lane] = sub_outputs[k + lane * K];
-        }
-
-        //======================================================================
-        // Apply precomputed input twiddles
-        //======================================================================
-        APPLY_STAGE_TWIDDLES_R16_SCALAR(k, x, stage_tw);
-
-        //======================================================================
-        // First radix-4 stage (4 groups of 4)
-        //======================================================================
-        fft_data y[16];
-
-        for (int group = 0; group < 4; group++)
-        {
-            fft_data a = x[group];
-            fft_data b = x[group + 4];
-            fft_data c = x[group + 8];
-            fft_data d = x[group + 12];
-
-            // Radix-4 butterfly (forward: rot_sign = -1)
-            double sumBD_re = b.re + d.re, sumBD_im = b.im + d.im;
-            double difBD_re = b.re - d.re, difBD_im = b.im - d.im;
-            double sumAC_re = a.re + c.re, sumAC_im = a.im + c.im;
-            double difAC_re = a.re - c.re, difAC_im = a.im - c.im;
-
-            y[4 * group].re = sumAC_re + sumBD_re;
-            y[4 * group].im = sumAC_im + sumBD_im;
-            y[4 * group + 2].re = sumAC_re - sumBD_re;
-            y[4 * group + 2].im = sumAC_im - sumBD_im;
-
-            // Forward rotation: -i
-            double rot_re = difBD_im;
-            double rot_im = -difBD_re;
-
-            y[4 * group + 1].re = difAC_re - rot_re;
-            y[4 * group + 1].im = difAC_im - rot_im;
-            y[4 * group + 3].re = difAC_re + rot_re;
-            y[4 * group + 3].im = difAC_im + rot_im;
-        }
-
-        //======================================================================
-        // Apply W_4 intermediate twiddles (FORWARD)
-        //======================================================================
-        APPLY_W4_INTERMEDIATE_FV_SCALAR(y);
-
-        //======================================================================
-        // Second radix-4 stage (final)
-        //======================================================================
+        PREFETCH_16_LANES(k, K, PREFETCH_L1, sub_outputs, _MM_HINT_T0);
+        PREFETCH_STAGE_TW_AVX2(k, PREFETCH_L1, stage_tw);
+        
+        __m256d x[16];
+        LOAD_16_LANES_AVX2(k, K, sub_outputs, x);
+        APPLY_STAGE_TWIDDLES_R16_AVX2(k, x, stage_tw);
+        
+        __m256d y[16];
+        RADIX4_BUTTERFLY_AVX2(x[0], x[4], x[8], x[12], y[0], y[1], y[2], y[3], rot_mask);
+        RADIX4_BUTTERFLY_AVX2(x[1], x[5], x[9], x[13], y[4], y[5], y[6], y[7], rot_mask);
+        RADIX4_BUTTERFLY_AVX2(x[2], x[6], x[10], x[14], y[8], y[9], y[10], y[11], rot_mask);
+        RADIX4_BUTTERFLY_AVX2(x[3], x[7], x[11], x[15], y[12], y[13], y[14], y[15], rot_mask);
+        
+        APPLY_W4_INTERMEDIATE_FV_AVX2_HOISTED(y, neg_mask);
+        
+        __m256d temp[4];
         for (int m = 0; m < 4; m++)
         {
-            fft_data a = y[m];
-            fft_data b = y[m + 4];
-            fft_data c = y[m + 8];
-            fft_data d = y[m + 12];
+            RADIX4_BUTTERFLY_AVX2(y[m], y[m + 4], y[m + 8], y[m + 12],
+                                 temp[0], temp[1], temp[2], temp[3], rot_mask);
+            y[m] = temp[0];
+            y[m + 4] = temp[1];
+            y[m + 8] = temp[2];
+            y[m + 12] = temp[3];
+        }
+        
+        if (use_streaming) {
+            STORE_16_LANES_AVX2_STREAM(k, K, output_buffer, y);
+        } else {
+            STORE_16_LANES_AVX2(k, K, output_buffer, y);
+        }
+    }
+    
+    if (use_streaming) {
+        _mm_sfence();
+    }
+#endif
 
-            double sumBD_re = b.re + d.re, sumBD_im = b.im + d.im;
-            double difBD_re = b.re - d.re, difBD_im = b.im - d.im;
-            double sumAC_re = a.re + c.re, sumAC_im = a.im + c.im;
-            double difAC_re = a.re - c.re, difAC_im = a.im - c.im;
-
-            output_buffer[k + m * K].re = sumAC_re + sumBD_re;
-            output_buffer[k + m * K].im = sumAC_im + sumBD_im;
-            output_buffer[k + (m + 8) * K].re = sumAC_re - sumBD_re;
-            output_buffer[k + (m + 8) * K].im = sumAC_im - sumBD_im;
-
-            // Forward rotation: -i
-            double rot_re = difBD_im;
-            double rot_im = -difBD_re;
-
-            output_buffer[k + (m + 4) * K].re = difAC_re - rot_re;
-            output_buffer[k + (m + 4) * K].im = difAC_im - rot_im;
-            output_buffer[k + (m + 12) * K].re = difAC_re + rot_re;
-            output_buffer[k + (m + 12) * K].im = difAC_im + rot_im;
+    for (; k < K; k++)
+    {
+        fft_data x[16];
+        for (int lane = 0; lane < 16; lane++) {
+            x[lane] = sub_outputs[k + lane * K];
+        }
+        
+        APPLY_STAGE_TWIDDLES_R16_SCALAR(k, x, stage_tw);
+        
+        fft_data y[16];
+        RADIX4_BUTTERFLY_SCALAR(
+            x[0].re, x[0].im, x[4].re, x[4].im, x[8].re, x[8].im, x[12].re, x[12].im,
+            y[0].re, y[0].im, y[1].re, y[1].im, y[2].re, y[2].im, y[3].re, y[3].im, -1);
+        RADIX4_BUTTERFLY_SCALAR(
+            x[1].re, x[1].im, x[5].re, x[5].im, x[9].re, x[9].im, x[13].re, x[13].im,
+            y[4].re, y[4].im, y[5].re, y[5].im, y[6].re, y[6].im, y[7].re, y[7].im, -1);
+        RADIX4_BUTTERFLY_SCALAR(
+            x[2].re, x[2].im, x[6].re, x[6].im, x[10].re, x[10].im, x[14].re, x[14].im,
+            y[8].re, y[8].im, y[9].re, y[9].im, y[10].re, y[10].im, y[11].re, y[11].im, -1);
+        RADIX4_BUTTERFLY_SCALAR(
+            x[3].re, x[3].im, x[7].re, x[7].im, x[11].re, x[11].im, x[15].re, x[15].im,
+            y[12].re, y[12].im, y[13].re, y[13].im, y[14].re, y[14].im, y[15].re, y[15].im, -1);
+        
+        APPLY_W4_INTERMEDIATE_FV_SCALAR(y);
+        
+        fft_data z[16];
+        for (int m = 0; m < 4; m++)
+        {
+            RADIX4_BUTTERFLY_SCALAR(
+                y[m].re, y[m].im, y[m + 4].re, y[m + 4].im,
+                y[m + 8].re, y[m + 8].im, y[m + 12].re, y[m + 12].im,
+                z[m].re, z[m].im, z[m + 4].re, z[m + 4].im,
+                z[m + 8].re, z[m + 8].im, z[m + 12].re, z[m + 12].im, -1);
+        }
+        
+        for (int lane = 0; lane < 16; lane++) {
+            output_buffer[k + lane * K] = z[lane];
         }
     }
 }
-
-//==============================================================================
-// PERFORMANCE NOTES
-//==============================================================================
-
-/**
- * CYCLE COUNTS (per butterfly, 3 GHz CPU):
- *
- * AVX2 (2x unroll):
- * - Load 16 lanes: 16 cycles (L1 hit)
- * - Load 15 twiddles: 15 cycles (L1 hit)
- * - Apply input twiddles: 45 cycles (15x CMUL_FMA_AOS @ 3 cycles each)
- * - First radix-4: 32 cycles (4 butterflies @ 8 cycles each)
- * - W_4 twiddles: 21 cycles (7 non-trivial twiddles)
- * - Second radix-4: 32 cycles (4 butterflies @ 8 cycles each)
- * - Store: 16 cycles
- * - TOTAL: ~177 cycles / 2 butterflies = ~88 cycles/butterfly
- *
- * With proper pipelining and OOO execution: ~40 cycles/butterfly
- *
- */
-
