@@ -444,6 +444,19 @@
 
 #ifdef __AVX2__
 
+#ifdef __FMA__
+#define CMUL_FMA_R7_AVX2(out, a, w) \
+    do { \
+        __m256d ar = _mm256_unpacklo_pd(a, a); \
+        __m256d ai = _mm256_unpackhi_pd(a, a); \
+        __m256d wr = _mm256_unpacklo_pd(w, w); \
+        __m256d wi = _mm256_unpackhi_pd(w, w); \
+        __m256d re = _mm256_fmsub_pd(ar, wr, _mm256_mul_pd(ai, wi)); \
+        __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr)); \
+        (out) = _mm256_unpacklo_pd(re, im); \
+    } while (0)
+#endif
+
 //==============================================================================
 // Y0 COMPUTATION - AVX2
 //==============================================================================
