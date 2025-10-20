@@ -1,5 +1,3 @@
-I agree with all your points.Here's the fixed code:
-
 ```c
 //==============================================================================
 // fft_radix11_macros.h - Shared Macros for Radix-11 Butterflies
