@@ -333,13 +333,17 @@
  *          Falls back gracefully to slower paths if SIMD unavailable.
  *
  */
-void fft_radix4_butterfly(
+void fft_radix4_bv(
     fft_data *restrict output_buffer,
-    fft_data *restrict sub_outputs,
+    const fft_data *restrict sub_outputs,
     const fft_data *restrict stage_tw,
-    int sub_len,
-    int transform_sign);
+    int sub_len);
 
+void fft_radix4_fv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_data *restrict stage_tw,
+    int sub_len):
 
 #endif // FFT_RADIX3_H
 
