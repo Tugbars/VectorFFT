@@ -1,37 +1,35 @@
 //==============================================================================
-// fft_radix4_macros.h - Shared Macros for Radix-4 Butterflies
+// fft_radix4_macros.h - Shared Macros for Radix-4 Butterflies (OPTIMIZED)
 //==============================================================================
 //
-// USAGE:
-//   #include "fft_radix4_macros.h" in both fft_radix4_fv.c and fft_radix4_bv.c
-//
-// BENEFITS:
-//   - 99% code reuse between forward/inverse
-//   - Single source of truth for butterfly patterns
-//   - Only difference: rotation direction (3 lines)
+// DESIGN:
+// - Small helpers: Could use inline functions (but macros work well here)
+// - Large SIMD blocks: Macros (performance)
+// - Direction stays in function names (_fv vs _bv)
 //
 
 #ifndef FFT_RADIX4_MACROS_H
 #define FFT_RADIX4_MACROS_H
 
+#include "fft_radix4.h"
 #include "simd_math.h"
 
 //==============================================================================
-// AVX-512 SUPPORT - 4X throughput vs AVX2
+// STREAMING THRESHOLD
+//==============================================================================
+
+#define STREAM_THRESHOLD 8192  // Use non-temporal stores for K >= 8192
+
+//==============================================================================
+// AVX-512 SUPPORT
 //==============================================================================
 
 #ifdef __AVX512F__
 
 //==============================================================================
-// COMPLEX MULTIPLICATION - AVX-512 (processes 4 butterflies)
+// COMPLEX MULTIPLICATION - AVX-512
 //==============================================================================
 
-/**
- * @brief Optimized complex multiply for AVX-512: out = a * w (4 complex values)
- *
- * Uses FMA and handles 4 complex numbers (8 doubles) per operation.
- * Same algorithm as AVX2 version but with 512-bit registers.
- */
 #define CMUL_FMA_AOS_AVX512(out, a, w)                                    \
     do                                                                    \
     {                                                                     \
@@ -48,11 +46,6 @@
 // RADIX-4 BUTTERFLY CORE - AVX-512
 //==============================================================================
 
-/**
- * @brief Core radix-4 sums/differences for AVX-512 (4 butterflies)
- *
- * Identical logic to AVX2 version but processes 4 complex values at once.
- */
 #define RADIX4_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, tw_d, sumBD, difBD, sumAC, difAC) \
     do                                                                                \
     {                                                                                 \
@@ -66,12 +59,6 @@
 // ROTATION - AVX-512
 //==============================================================================
 
-/**
- * @brief FORWARD rotation: -i * difBD using AVX-512
- *
- * Processes 4 complex values using AVX-512 permute and XOR.
- * (a + bi) * (-i) = b - ai
- */
 #define RADIX4_ROTATE_FORWARD_AVX512(difBD, rot)                                        \
     do                                                                                  \
     {                                                                                   \
@@ -79,12 +66,6 @@
         rot = _mm512_xor_pd(_mm512_permute_pd(difBD, 0b01010101), rot_mask_fv);         \
     } while (0)
 
-/**
- * @brief INVERSE rotation: +i * difBD using AVX-512
- *
- * Processes 4 complex values using AVX-512 permute and XOR.
- * (a + bi) * (+i) = -b + ai
- */
 #define RADIX4_ROTATE_INVERSE_AVX512(difBD, rot)                                        \
     do                                                                                  \
     {                                                                                   \
@@ -96,15 +77,6 @@
 // OUTPUT ASSEMBLY - AVX-512
 //==============================================================================
 
-/**
- * @brief Assemble final outputs from butterfly intermediates (AVX-512)
- *
- * Processes 4 butterflies simultaneously.
- * y0 = sumAC + sumBD
- * y1 = difAC - rot
- * y2 = sumAC - sumBD
- * y3 = difAC + rot
- */
 #define RADIX4_ASSEMBLE_OUTPUTS_AVX512(sumAC, sumBD, difAC, rot, y0, y1, y2, y3) \
     do                                                                           \
     {                                                                            \
@@ -118,12 +90,6 @@
 // APPLY PRECOMPUTED TWIDDLES - AVX-512
 //==============================================================================
 
-/**
- * @brief AVX-512: Apply stage twiddles for 4 butterflies (kk, kk+1, kk+2, kk+3)
- *
- * Loads and applies twiddle factors to lanes 1, 2, and 3 for four butterflies.
- * Uses load4_aos to pack 4 complex values into one 512-bit register.
- */
 #define APPLY_STAGE_TWIDDLES_AVX512(kk, b_vec, c_vec, d_vec, stage_tw,           \
                                     tw_b, tw_c, tw_d)                            \
     do                                                                           \
@@ -150,12 +116,6 @@
 // DATA MOVEMENT - AVX-512
 //==============================================================================
 
-/**
- * @brief Load 4 lanes for 4 butterflies (kk, kk+1, kk+2, kk+3)
- *
- * Loads strided data from sub_outputs into AVX-512 registers.
- * Each register holds 4 complex values (8 doubles).
- */
 #define LOAD_4_LANES_AVX512(kk, K, sub_outputs, a, b, c, d)                           \
     do                                                                                \
     {                                                                                 \
@@ -177,12 +137,6 @@
                       &sub_outputs[(kk) + 3 + 3 * K]);                                \
     } while (0)
 
-/**
- * @brief Store 4 outputs for 4 butterflies (AVX-512)
- *
- * Stores four 512-bit vectors (each with 4 complex values) to output_buffer.
- * Uses unaligned stores for flexibility.
- */
 #define STORE_4_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3)      \
     do                                                                  \
     {                                                                   \
@@ -192,12 +146,6 @@
         STOREU_PD512(&output_buffer[(kk) + 3 * K].re, y3);              \
     } while (0)
 
-/**
- * @brief Store with non-temporal hint (streaming) - AVX-512
- *
- * Uses streaming stores to bypass cache for large datasets.
- * Beneficial when output is not immediately reused.
- */
 #define STORE_4_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3) \
     do                                                                    \
     {                                                                     \
@@ -211,20 +159,10 @@
 // PREFETCHING - AVX-512
 //==============================================================================
 
-/**
- * @brief Prefetch distances optimized for AVX-512 (larger working set)
- */
-#define PREFETCH_L1_AVX512 16  // 1KB ahead
-#define PREFETCH_L2_AVX512 64  // 4KB ahead
-#define PREFETCH_L3_AVX512 128 // 8KB ahead
+#define PREFETCH_L1_AVX512 16
+#define PREFETCH_TWIDDLE_AVX512 16
 
-/**
- * @brief Prefetch 4 lanes ahead for AVX-512 (4 butterflies)
- *
- * Prefetches more aggressively than AVX2 due to higher throughput.
- * Issues prefetch for all 4 strided lanes plus twiddles.
- */
-#define PREFETCH_4_LANES_AVX512(k, K, distance, sub_outputs, stage_tw, hint)          \
+#define PREFETCH_4_LANES_AVX512(k, K, distance, sub_outputs, hint)                    \
     do                                                                                \
     {                                                                                 \
         if ((k) + (distance) < K)                                                     \
@@ -233,7 +171,6 @@
             _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + K], hint);     \
             _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + 2 * K], hint); \
             _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + 3 * K], hint); \
-            _mm_prefetch((const char *)&stage_tw[(k) + (distance)], hint);            \
         }                                                                             \
     } while (0)
 
@@ -241,17 +178,6 @@
 // COMPLETE BUTTERFLY PIPELINE - AVX-512
 //==============================================================================
 
-/**
- * @brief Complete AVX-512 radix-4 butterfly pipeline (FORWARD, 4 butterflies)
- *
- * Processes 4 butterflies in one macro call:
- * - Load 4 lanes
- * - Apply twiddles
- * - Butterfly core
- * - Forward rotation
- * - Assemble outputs
- * - Store results
- */
 #define RADIX4_PIPELINE_4_FV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer) \
     do                                                                           \
     {                                                                            \
@@ -275,11 +201,6 @@
         STORE_4_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3);              \
     } while (0)
 
-/**
- * @brief Complete AVX-512 radix-4 butterfly pipeline (INVERSE, 4 butterflies)
- *
- * Identical to forward except uses inverse rotation.
- */
 #define RADIX4_PIPELINE_4_BV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer) \
     do                                                                           \
     {                                                                            \
@@ -303,11 +224,6 @@
         STORE_4_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3);              \
     } while (0)
 
-/**
- * @brief Streaming version (forward) - for large transforms
- *
- * Uses non-temporal stores to avoid cache pollution.
- */
 #define RADIX4_PIPELINE_4_FV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer) \
     do                                                                                  \
     {                                                                                   \
@@ -331,20 +247,41 @@
         STORE_4_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3);              \
     } while (0)
 
+#define RADIX4_PIPELINE_4_BV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer) \
+    do                                                                                  \
+    {                                                                                   \
+        __m512d a, b, c, d;                                                             \
+        LOAD_4_LANES_AVX512(kk, K, sub_outputs, a, b, c, d);                            \
+                                                                                        \
+        __m512d tw_b, tw_c, tw_d;                                                       \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, b, c, d, stage_tw, tw_b, tw_c, tw_d);           \
+                                                                                        \
+        __m512d sumBD, difBD, sumAC, difAC;                                             \
+        RADIX4_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, tw_d,                               \
+                                     sumBD, difBD, sumAC, difAC);                       \
+                                                                                        \
+        __m512d rot;                                                                    \
+        RADIX4_ROTATE_INVERSE_AVX512(difBD, rot);                                       \
+                                                                                        \
+        __m512d y0, y1, y2, y3;                                                         \
+        RADIX4_ASSEMBLE_OUTPUTS_AVX512(sumAC, sumBD, difAC, rot,                        \
+                                       y0, y1, y2, y3);                                 \
+                                                                                        \
+        STORE_4_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3);              \
+    } while (0)
+
 #endif // __AVX512F__
 
 //==============================================================================
-// COMPLEX MULTIPLICATION - FMA-optimized (IDENTICAL for both directions)
+// AVX2 SUPPORT
 //==============================================================================
 
-/**
- * @brief Optimized complex multiply: out = a * w (6 FMA + 2 UNPACK)
- *
- * This macro performs a complex multiplication using AVX2 instructions, optimized with fused multiply-add (FMA) operations.
- * It is used for applying twiddle factors in both forward and inverse transforms.
- * The operation assumes Array-of-Structures (AoS) layout for complex numbers (real and imaginary parts interleaved).
- */
 #ifdef __AVX2__
+
+//==============================================================================
+// COMPLEX MULTIPLICATION - AVX2
+//==============================================================================
+
 #define CMUL_FMA_AOS(out, a, w)                                      \
     do                                                               \
     {                                                                \
@@ -356,25 +293,11 @@
         __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr)); \
         (out) = _mm256_unpacklo_pd(re, im);                          \
     } while (0)
-#endif
 
 //==============================================================================
-// RADIX-4 BUTTERFLY CORE - Direction-agnostic arithmetic
+// RADIX-4 BUTTERFLY CORE - AVX2
 //==============================================================================
 
-/**
- * @brief Core radix-4 sums/differences (IDENTICAL for forward/inverse)
- *
- * Computes:
- *   sumBD = tw_b + tw_d
- *   difBD = tw_b - tw_d
- *   sumAC = a + tw_c
- *   difAC = a - tw_c
- *
- * This macro computes the basic sums and differences for the radix-4 butterfly using AVX2.
- * It is identical for both forward and inverse transforms and prepares intermediates for rotation and assembly.
- */
-#ifdef __AVX2__
 #define RADIX4_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, tw_d, sumBD, difBD, sumAC, difAC) \
     do                                                                              \
     {                                                                               \
@@ -383,14 +306,203 @@
         sumAC = _mm256_add_pd(a, tw_c);                                             \
         difAC = _mm256_sub_pd(a, tw_c);                                             \
     } while (0)
-#endif
 
-/**
- * @brief Scalar version of the radix-4 butterfly core sums/differences.
- *
- * This macro performs the same sum and difference calculations as RADIX4_BUTTERFLY_CORE_AVX2 but in scalar mode.
- * It is used for tail cases or non-SIMD environments.
- */
+//==============================================================================
+// ROTATION - AVX2
+//==============================================================================
+
+#define RADIX4_ROTATE_FORWARD_AVX2(difBD, rot)                              \
+    do                                                                      \
+    {                                                                       \
+        __m256d rot_mask_fv = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);          \
+        rot = _mm256_xor_pd(_mm256_permute_pd(difBD, 0b0101), rot_mask_fv); \
+    } while (0)
+
+#define RADIX4_ROTATE_INVERSE_AVX2(difBD, rot)                              \
+    do                                                                      \
+    {                                                                       \
+        __m256d rot_mask_bv = _mm256_set_pd(0.0, -0.0, 0.0, -0.0);          \
+        rot = _mm256_xor_pd(_mm256_permute_pd(difBD, 0b0101), rot_mask_bv); \
+    } while (0)
+
+//==============================================================================
+// OUTPUT ASSEMBLY - AVX2
+//==============================================================================
+
+#define RADIX4_ASSEMBLE_OUTPUTS_AVX2(sumAC, sumBD, difAC, rot, y0, y1, y2, y3) \
+    do                                                                         \
+    {                                                                          \
+        y0 = _mm256_add_pd(sumAC, sumBD);                                      \
+        y2 = _mm256_sub_pd(sumAC, sumBD);                                      \
+        y1 = _mm256_sub_pd(difAC, rot);                                        \
+        y3 = _mm256_add_pd(difAC, rot);                                        \
+    } while (0)
+
+//==============================================================================
+// APPLY PRECOMPUTED TWIDDLES - AVX2
+//==============================================================================
+
+#define APPLY_STAGE_TWIDDLES_AVX2(kk, b_vec, c_vec, d_vec, stage_tw,                  \
+                                  tw_b, tw_c, tw_d)                                   \
+    do                                                                                \
+    {                                                                                 \
+        __m256d w1 = load2_aos(&stage_tw[(kk) * 3 + 0], &stage_tw[(kk + 1) * 3 + 0]); \
+        __m256d w2 = load2_aos(&stage_tw[(kk) * 3 + 1], &stage_tw[(kk + 1) * 3 + 1]); \
+        __m256d w3 = load2_aos(&stage_tw[(kk) * 3 + 2], &stage_tw[(kk + 1) * 3 + 2]); \
+                                                                                      \
+        CMUL_FMA_AOS(tw_b, b_vec, w1);                                                \
+        CMUL_FMA_AOS(tw_c, c_vec, w2);                                                \
+        CMUL_FMA_AOS(tw_d, d_vec, w3);                                                \
+    } while (0)
+
+//==============================================================================
+// DATA MOVEMENT - AVX2
+//==============================================================================
+
+#define LOAD_4_LANES_AVX2(kk, K, sub_outputs, a, b, c, d)                          \
+    do                                                                             \
+    {                                                                              \
+        a = load2_aos(&sub_outputs[kk], &sub_outputs[(kk) + 1]);                   \
+        b = load2_aos(&sub_outputs[(kk) + K], &sub_outputs[(kk) + 1 + K]);         \
+        c = load2_aos(&sub_outputs[(kk) + 2 * K], &sub_outputs[(kk) + 1 + 2 * K]); \
+        d = load2_aos(&sub_outputs[(kk) + 3 * K], &sub_outputs[(kk) + 1 + 3 * K]); \
+    } while (0)
+
+#define STORE_4_LANES_AVX2(kk, K, output_buffer, y0, y1, y2, y3) \
+    do                                                           \
+    {                                                            \
+        STOREU_PD(&output_buffer[kk].re, y0);                    \
+        STOREU_PD(&output_buffer[(kk) + K].re, y1);              \
+        STOREU_PD(&output_buffer[(kk) + 2 * K].re, y2);          \
+        STOREU_PD(&output_buffer[(kk) + 3 * K].re, y3);          \
+    } while (0)
+
+#define STORE_4_LANES_AVX2_STREAM(kk, K, output_buffer, y0, y1, y2, y3) \
+    do                                                                  \
+    {                                                                   \
+        _mm256_stream_pd(&output_buffer[kk].re, y0);                    \
+        _mm256_stream_pd(&output_buffer[(kk) + K].re, y1);              \
+        _mm256_stream_pd(&output_buffer[(kk) + 2 * K].re, y2);          \
+        _mm256_stream_pd(&output_buffer[(kk) + 3 * K].re, y3);          \
+    } while (0)
+
+//==============================================================================
+// PREFETCHING - AVX2
+//==============================================================================
+
+#define PREFETCH_L1 8
+#define PREFETCH_TWIDDLE 8
+
+#define PREFETCH_4_LANES_AVX2(k, K, distance, sub_outputs, hint)                      \
+    do                                                                                \
+    {                                                                                 \
+        if ((k) + (distance) < K)                                                     \
+        {                                                                             \
+            _mm_prefetch((const char *)&sub_outputs[(k) + (distance)], hint);         \
+            _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + K], hint);     \
+            _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + 2 * K], hint); \
+            _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + 3 * K], hint); \
+        }                                                                             \
+    } while (0)
+
+//==============================================================================
+// COMPLETE BUTTERFLY PIPELINE - AVX2
+//==============================================================================
+
+#define RADIX4_PIPELINE_2_FV_AVX2(k, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                      \
+        __m256d a, b, c, d;                                                   \
+        LOAD_4_LANES_AVX2(k, K, sub_outputs, a, b, c, d);                     \
+                                                                              \
+        __m256d tw_b, tw_c, tw_d;                                             \
+        APPLY_STAGE_TWIDDLES_AVX2(k, b, c, d, stage_tw, tw_b, tw_c, tw_d);    \
+                                                                              \
+        __m256d sumBD, difBD, sumAC, difAC;                                   \
+        RADIX4_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, tw_d,                       \
+                                   sumBD, difBD, sumAC, difAC);               \
+                                                                              \
+        __m256d rot;                                                          \
+        RADIX4_ROTATE_FORWARD_AVX2(difBD, rot);                               \
+                                                                              \
+        __m256d y0, y1, y2, y3;                                               \
+        RADIX4_ASSEMBLE_OUTPUTS_AVX2(sumAC, sumBD, difAC, rot,                \
+                                     y0, y1, y2, y3);                         \
+                                                                              \
+        STORE_4_LANES_AVX2(k, K, output_buffer, y0, y1, y2, y3);              \
+    } while (0)
+
+#define RADIX4_PIPELINE_2_BV_AVX2(k, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                      \
+        __m256d a, b, c, d;                                                   \
+        LOAD_4_LANES_AVX2(k, K, sub_outputs, a, b, c, d);                     \
+                                                                              \
+        __m256d tw_b, tw_c, tw_d;                                             \
+        APPLY_STAGE_TWIDDLES_AVX2(k, b, c, d, stage_tw, tw_b, tw_c, tw_d);    \
+                                                                              \
+        __m256d sumBD, difBD, sumAC, difAC;                                   \
+        RADIX4_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, tw_d,                       \
+                                   sumBD, difBD, sumAC, difAC);               \
+                                                                              \
+        __m256d rot;                                                          \
+        RADIX4_ROTATE_INVERSE_AVX2(difBD, rot);                               \
+                                                                              \
+        __m256d y0, y1, y2, y3;                                               \
+        RADIX4_ASSEMBLE_OUTPUTS_AVX2(sumAC, sumBD, difAC, rot,                \
+                                     y0, y1, y2, y3);                         \
+                                                                              \
+        STORE_4_LANES_AVX2(k, K, output_buffer, y0, y1, y2, y3);              \
+    } while (0)
+
+#define RADIX4_PIPELINE_2_FV_AVX2_STREAM(k, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                             \
+        __m256d a, b, c, d;                                                          \
+        LOAD_4_LANES_AVX2(k, K, sub_outputs, a, b, c, d);                            \
+                                                                                     \
+        __m256d tw_b, tw_c, tw_d;                                                    \
+        APPLY_STAGE_TWIDDLES_AVX2(k, b, c, d, stage_tw, tw_b, tw_c, tw_d);           \
+                                                                                     \
+        __m256d sumBD, difBD, sumAC, difAC;                                          \
+        RADIX4_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, tw_d,                              \
+                                   sumBD, difBD, sumAC, difAC);                      \
+                                                                                     \
+        __m256d rot;                                                                 \
+        RADIX4_ROTATE_FORWARD_AVX2(difBD, rot);                                      \
+                                                                                     \
+        __m256d y0, y1, y2, y3;                                                      \
+        RADIX4_ASSEMBLE_OUTPUTS_AVX2(sumAC, sumBD, difAC, rot,                       \
+                                     y0, y1, y2, y3);                                \
+                                                                                     \
+        STORE_4_LANES_AVX2_STREAM(k, K, output_buffer, y0, y1, y2, y3);              \
+    } while (0)
+
+#define RADIX4_PIPELINE_2_BV_AVX2_STREAM(k, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                             \
+        __m256d a, b, c, d;                                                          \
+        LOAD_4_LANES_AVX2(k, K, sub_outputs, a, b, c, d);                            \
+                                                                                     \
+        __m256d tw_b, tw_c, tw_d;                                                    \
+        APPLY_STAGE_TWIDDLES_AVX2(k, b, c, d, stage_tw, tw_b, tw_c, tw_d);           \
+                                                                                     \
+        __m256d sumBD, difBD, sumAC, difAC;                                          \
+        RADIX4_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, tw_d,                              \
+                                   sumBD, difBD, sumAC, difAC);                      \
+                                                                                     \
+        __m256d rot;                                                                 \
+        RADIX4_ROTATE_INVERSE_AVX2(difBD, rot);                                      \
+                                                                                     \
+        __m256d y0, y1, y2, y3;                                                      \
+        RADIX4_ASSEMBLE_OUTPUTS_AVX2(sumAC, sumBD, difAC, rot,                       \
+                                     y0, y1, y2, y3);                                \
+                                                                                     \
+        STORE_4_LANES_AVX2_STREAM(k, K, output_buffer, y0, y1, y2, y3);              \
+    } while (0)
+
+#endif // __AVX2__
+
+//==============================================================================
+// SCALAR SUPPORT
+//==============================================================================
+
 #define RADIX4_BUTTERFLY_CORE_SCALAR(a, tw_b, tw_c, tw_d,                    \
                                      sumBD_re, sumBD_im, difBD_re, difBD_im, \
                                      sumAC_re, sumAC_im, difAC_re, difAC_im) \
@@ -406,17 +518,6 @@
         difAC_im = a.im - tw_c.im;                                           \
     } while (0)
 
-//==============================================================================
-// ROTATION - ONLY DIFFERENCE BETWEEN FORWARD/INVERSE
-//==============================================================================
-
-/**
- * @brief FORWARD rotation: -i * difBD
- *
- * (a + bi) * (-i) = b - ai
- *
- * This macro applies a forward rotation (multiplication by -i) to the difference terms in scalar mode.
- */
 #define RADIX4_ROTATE_FORWARD_SCALAR(difBD_re, difBD_im, rot_re, rot_im) \
     do                                                                   \
     {                                                                    \
@@ -424,27 +525,6 @@
         rot_im = -difBD_re;                                              \
     } while (0)
 
-/**
- * @brief FORWARD rotation: -i * difBD using AVX2
- *
- * This macro applies a forward rotation (multiplication by -i) to the difference vector using AVX2 permute and XOR.
- */
-#ifdef __AVX2__
-#define RADIX4_ROTATE_FORWARD_AVX2(difBD, rot)                              \
-    do                                                                      \
-    {                                                                       \
-        __m256d rot_mask_fv = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);          \
-        rot = _mm256_xor_pd(_mm256_permute_pd(difBD, 0b0101), rot_mask_fv); \
-    } while (0)
-#endif
-
-/**
- * @brief INVERSE rotation: +i * difBD
- *
- * (a + bi) * (+i) = -b + ai
- *
- * This macro applies an inverse rotation (multiplication by +i) to the difference terms in scalar mode.
- */
 #define RADIX4_ROTATE_INVERSE_SCALAR(difBD_re, difBD_im, rot_re, rot_im) \
     do                                                                   \
     {                                                                    \
@@ -452,51 +532,6 @@
         rot_im = difBD_re;                                               \
     } while (0)
 
-/**
- * @brief INVERSE rotation: +i * difBD using AVX2
- *
- * This macro applies an inverse rotation (multiplication by +i) to the difference vector using AVX2 permute and XOR.
- */
-#ifdef __AVX2__
-#define RADIX4_ROTATE_INVERSE_AVX2(difBD, rot)                              \
-    do                                                                      \
-    {                                                                       \
-        __m256d rot_mask_bv = _mm256_set_pd(0.0, -0.0, 0.0, -0.0);          \
-        rot = _mm256_xor_pd(_mm256_permute_pd(difBD, 0b0101), rot_mask_bv); \
-    } while (0)
-#endif
-
-//==============================================================================
-// OUTPUT ASSEMBLY - IDENTICAL for forward/inverse
-//==============================================================================
-
-/**
- * @brief Assemble final outputs from butterfly intermediates
- *
- * y0 = sumAC + sumBD
- * y1 = difAC - rot
- * y2 = sumAC - sumBD
- * y3 = difAC + rot
- *
- * This macro combines the sums, differences, and rotated values to produce the four outputs of the radix-4 butterfly using AVX2.
- * It is identical for both forward and inverse transforms.
- */
-#ifdef __AVX2__
-#define RADIX4_ASSEMBLE_OUTPUTS_AVX2(sumAC, sumBD, difAC, rot, y0, y1, y2, y3) \
-    do                                                                         \
-    {                                                                          \
-        y0 = _mm256_add_pd(sumAC, sumBD);                                      \
-        y2 = _mm256_sub_pd(sumAC, sumBD);                                      \
-        y1 = _mm256_sub_pd(difAC, rot);                                        \
-        y3 = _mm256_add_pd(difAC, rot);                                        \
-    } while (0)
-#endif
-
-/**
- * @brief Scalar version to assemble final outputs from butterfly intermediates.
- *
- * This macro performs the same output assembly as RADIX4_ASSEMBLE_OUTPUTS_AVX2 but in scalar mode.
- */
 #define RADIX4_ASSEMBLE_OUTPUTS_SCALAR(sumAC_re, sumAC_im, sumBD_re, sumBD_im, \
                                        difAC_re, difAC_im, rot_re, rot_im,     \
                                        y0, y1, y2, y3)                         \
@@ -512,18 +547,6 @@
         y3.im = difAC_im + rot_im;                                             \
     } while (0)
 
-//==============================================================================
-// APPLY PRECOMPUTED TWIDDLES - IDENTICAL for forward/inverse
-//==============================================================================
-
-/**
- * @brief Scalar: Apply stage twiddles to lanes 1, 2, 3
- *
- * stage_tw layout: [W^(1*k), W^(2*k), W^(3*k)] for each k
- *
- * This macro multiplies lanes 1, 2, and 3 by precomputed twiddle factors in scalar mode.
- * It is the first step in the butterfly, preparing twiddled inputs for the core arithmetic.
- */
 #define APPLY_STAGE_TWIDDLES_SCALAR(k, b, c, d, stage_tw, tw_b, tw_c, tw_d) \
     do                                                                      \
     {                                                                       \
@@ -539,126 +562,6 @@
         tw_d.im = d.re * w_ptr[2].im + d.im * w_ptr[2].re;                  \
     } while (0)
 
-/**
- * @brief AVX2: Apply stage twiddles for 2 butterflies (kk and kk+1)
- *
- * This macro applies precomputed twiddle factors to lanes 1, 2, and 3 for two butterflies simultaneously using AVX2.
- * It loads twiddles in AoS format and uses CMUL_FMA_AOS for multiplication.
- */
-#ifdef __AVX2__
-#define APPLY_STAGE_TWIDDLES_AVX2(kk, b_vec, c_vec, d_vec, stage_tw,                  \
-                                  tw_b, tw_c, tw_d)                                   \
-    do                                                                                \
-    {                                                                                 \
-        __m256d w1 = load2_aos(&stage_tw[(kk) * 3 + 0], &stage_tw[(kk + 1) * 3 + 0]); \
-        __m256d w2 = load2_aos(&stage_tw[(kk) * 3 + 1], &stage_tw[(kk + 1) * 3 + 1]); \
-        __m256d w3 = load2_aos(&stage_tw[(kk) * 3 + 2], &stage_tw[(kk + 1) * 3 + 2]); \
-                                                                                      \
-        CMUL_FMA_AOS(tw_b, b_vec, w1);                                                \
-        CMUL_FMA_AOS(tw_c, c_vec, w2);                                                \
-        CMUL_FMA_AOS(tw_d, d_vec, w3);                                                \
-    } while (0)
-#endif
-
-//==============================================================================
-// DATA MOVEMENT - IDENTICAL for forward/inverse
-//==============================================================================
-
-/**
- * @brief Load 4 lanes for 2 butterflies (kk and kk+1)
- *
- * This macro loads four strided inputs from the sub_outputs buffer into AVX2 vectors.
- * Each vector holds two complex values (for two butterflies), assuming AoS layout.
- */
-#ifdef __AVX2__
-#define LOAD_4_LANES_AVX2(kk, K, sub_outputs, a, b, c, d)                          \
-    do                                                                             \
-    {                                                                              \
-        a = load2_aos(&sub_outputs[kk], &sub_outputs[(kk) + 1]);                   \
-        b = load2_aos(&sub_outputs[(kk) + K], &sub_outputs[(kk) + 1 + K]);         \
-        c = load2_aos(&sub_outputs[(kk) + 2 * K], &sub_outputs[(kk) + 1 + 2 * K]); \
-        d = load2_aos(&sub_outputs[(kk) + 3 * K], &sub_outputs[(kk) + 1 + 3 * K]); \
-    } while (0)
-#endif
-
-/**
- * @brief Store 4 outputs for 2 butterflies
- *
- * This macro stores four AVX2 vectors (each with two complex values) back to the output_buffer in strided fashion.
- * It uses unaligned stores for flexibility.
- */
-#ifdef __AVX2__
-#define STORE_4_LANES_AVX2(kk, K, output_buffer, y0, y1, y2, y3) \
-    do                                                           \
-    {                                                            \
-        STOREU_PD(&output_buffer[kk].re, y0);                    \
-        STOREU_PD(&output_buffer[(kk) + K].re, y1);              \
-        STOREU_PD(&output_buffer[(kk) + 2 * K].re, y2);          \
-        STOREU_PD(&output_buffer[(kk) + 3 * K].re, y3);          \
-    } while (0)
-#endif
-
-/**
- * @brief Store with non-temporal hint (streaming)
- *
- * This macro stores four AVX2 vectors using non-temporal streaming stores to bypass cache for large datasets.
- * It is beneficial for performance when the output is not immediately reused, reducing cache pollution.
- */
-#ifdef __AVX2__
-#define STORE_4_LANES_AVX2_STREAM(kk, K, output_buffer, y0, y1, y2, y3) \
-    do                                                                  \
-    {                                                                   \
-        _mm256_stream_pd(&output_buffer[kk].re, y0);                    \
-        _mm256_stream_pd(&output_buffer[(kk) + K].re, y1);              \
-        _mm256_stream_pd(&output_buffer[(kk) + 2 * K].re, y2);          \
-        _mm256_stream_pd(&output_buffer[(kk) + 3 * K].re, y3);          \
-    } while (0)
-#endif
-
-//==============================================================================
-// PREFETCHING - IDENTICAL for forward/inverse
-//==============================================================================
-
-/**
- * @brief Prefetch distances for L1, L2, and L3 caches.
- *
- * These constants define how far ahead to prefetch data in terms of indices.
- * They are tuned to improve memory access performance by bringing data into caches before it's needed (512 bytes for L1, etc.).
- */
-#define PREFETCH_L1 8  // 512 bytes ahead
-#define PREFETCH_L2 32 // 2KB ahead
-#define PREFETCH_L3 64 // 4KB ahead
-
-/**
- * @brief Prefetch 4 lanes ahead for AVX2.
- *
- * This macro issues prefetch instructions for future strided data accesses in the sub_outputs buffer.
- * It prefetches four lanes, using the specified cache hint to optimize memory hierarchy usage.
- */
-#ifdef __AVX2__
-#define PREFETCH_4_LANES(k, K, distance, sub_outputs, hint)                           \
-    do                                                                                \
-    {                                                                                 \
-        if ((k) + (distance) < K)                                                     \
-        {                                                                             \
-            _mm_prefetch((const char *)&sub_outputs[(k) + (distance)], hint);         \
-            _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + K], hint);     \
-            _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + 2 * K], hint); \
-            _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + 3 * K], hint); \
-        }                                                                             \
-    } while (0)
-#endif
-
-//==============================================================================
-// COMPLETE BUTTERFLY - Forward/Inverse in one macro call
-//==============================================================================
-
-/**
- * @brief Complete scalar radix-4 butterfly (forward version)
- *
- * This macro performs a full radix-4 butterfly in scalar mode for the forward transform.
- * It applies twiddles, computes core arithmetic, applies rotation, assembles outputs, and stores them.
- */
 #define RADIX4_BUTTERFLY_SCALAR_FV(k, K, sub_outputs, stage_tw, output_buffer) \
     do                                                                         \
     {                                                                          \
@@ -690,12 +593,6 @@
         output_buffer[k + 3 * K] = y3;                                         \
     } while (0)
 
-/**
- * @brief Complete scalar radix-4 butterfly (inverse version)
- *
- * This macro performs a full radix-4 butterfly in scalar mode for the inverse transform.
- * It applies twiddles, computes core arithmetic, applies rotation, assembles outputs, and stores them.
- */
 #define RADIX4_BUTTERFLY_SCALAR_BV(k, K, sub_outputs, stage_tw, output_buffer) \
     do                                                                         \
     {                                                                          \
