@@ -1,15 +1,20 @@
 //==============================================================================
-// fft_radix8_macros.h - Shared Macros for Radix-8 Butterflies
+// fft_radix8_macros.h - Optimized Shared Macros for Radix-8 Butterflies
 //==============================================================================
 //
-// ALGORITHM: Split-radix 2×(4,4) decomposition
+// ALGORITHM: Split-radix 2×(4,4) decomposition with fused operations
 //   1. Apply input twiddles W_N^(j*k) to lanes 1-7
 //   2. Two parallel radix-4 butterflies (even [0,2,4,6], odd [1,3,5,7])
-//   3. Apply W_8 geometric twiddles to odd outputs
+//   3. Apply W_8 geometric twiddles to odd outputs (FUSED with radix-4)
 //   4. Final radix-2 combination
 //
-// USAGE:
-//   #include "fft_radix8_macros.h" in both fft_radix8_fv.c and fft_radix8_bv.c
+// OPTIMIZATIONS:
+//   - Hoisted W_8 constants outside loops
+//   - Fused radix-4 + W_8 twiddle application
+//   - Optimized W_8^2 = (0, ±1) handling
+//   - Single-level prefetching (no cache pollution)
+//   - Full AVX-512 support (4 butterflies/iteration)
+//   - Alignment hints for better codegen
 //
 
 #ifndef FFT_RADIX8_MACROS_H
@@ -18,55 +23,58 @@
 #include "simd_math.h"
 
 //==============================================================================
+// CONFIGURATION
+//==============================================================================
+
+/**
+ * @brief Streaming store threshold
+ *
+ * For K >= STREAM_THRESHOLD, use non-temporal stores to avoid cache pollution.
+ * Tuned for modern CPUs with large L3 caches.
+ */
+#define STREAM_THRESHOLD 2048
+
+//==============================================================================
 // W_8 CONSTANTS - Direction-dependent
 //==============================================================================
 
 /**
- * @brief High-precision constant for sqrt(2)/2.
- *
- * This constant is used in the definitions of W_8 twiddle factors for both forward and inverse FFTs.
- * It represents the cosine and sine values for π/4 radians, which appear in the twiddle factors for radix-8 decomposition.
+ * @brief High-precision constant for sqrt(2)/2
  */
 #define C8_CONSTANT 0.7071067811865475244008443621048490392848359376887
 
 /**
  * @brief W_8 twiddle constants for FORWARD FFT
- * 
+ *
  * W_8 = exp(-2πi/8) = exp(-πi/4)
  * W_8^1 = (√2/2, -√2/2)
  * W_8^2 = (0, -1)
  * W_8^3 = (-√2/2, -√2/2)
- *
- * These constants are used to apply fixed geometric twiddles in the radix-8 butterfly for the forward transform.
- * They facilitate the decomposition by multiplying specific outputs from the sub-butterflies.
  */
-#define W8_FV_1_RE  C8_CONSTANT
-#define W8_FV_1_IM  (-C8_CONSTANT)
-#define W8_FV_2_RE  0.0
-#define W8_FV_2_IM  (-1.0)
-#define W8_FV_3_RE  (-C8_CONSTANT)
-#define W8_FV_3_IM  (-C8_CONSTANT)
+#define W8_FV_1_RE C8_CONSTANT
+#define W8_FV_1_IM (-C8_CONSTANT)
+#define W8_FV_2_RE 0.0
+#define W8_FV_2_IM (-1.0)
+#define W8_FV_3_RE (-C8_CONSTANT)
+#define W8_FV_3_IM (-C8_CONSTANT)
 
 /**
  * @brief W_8 twiddle constants for INVERSE FFT
- * 
+ *
  * W_8 = exp(+2πi/8) = exp(+πi/4)
  * W_8^1 = (√2/2, +√2/2)
  * W_8^2 = (0, +1)
  * W_8^3 = (-√2/2, +√2/2)
- *
- * These constants are used to apply fixed geometric twiddles in the radix-8 butterfly for the inverse transform.
- * They are the complex conjugates of the forward twiddles, ensuring the inverse operation reverses the forward transform.
  */
-#define W8_BV_1_RE  C8_CONSTANT
-#define W8_BV_1_IM  C8_CONSTANT
-#define W8_BV_2_RE  0.0
-#define W8_BV_2_IM  1.0
-#define W8_BV_3_RE  (-C8_CONSTANT)
-#define W8_BV_3_IM  C8_CONSTANT
+#define W8_BV_1_RE C8_CONSTANT
+#define W8_BV_1_IM C8_CONSTANT
+#define W8_BV_2_RE 0.0
+#define W8_BV_2_IM 1.0
+#define W8_BV_3_RE (-C8_CONSTANT)
+#define W8_BV_3_IM C8_CONSTANT
 
 //==============================================================================
-// AVX-512 SUPPORT - 4X throughput vs AVX2 (processes 4 butterflies)
+// AVX-512 SUPPORT - 4X throughput vs AVX2
 //==============================================================================
 
 #ifdef __AVX512F__
@@ -77,20 +85,17 @@
 
 /**
  * @brief Optimized complex multiply for AVX-512: out = a * w (4 complex values)
- *
- * Uses FMA and handles 4 complex numbers (8 doubles) per operation.
- * Same algorithm as AVX2 version but with 512-bit registers.
  */
-#define CMUL_FMA_AOS_AVX512(out, a, w)                                    \
-    do                                                                    \
-    {                                                                     \
-        __m512d ar = _mm512_unpacklo_pd(a, a);                            \
-        __m512d ai = _mm512_unpackhi_pd(a, a);                            \
-        __m512d wr = _mm512_unpacklo_pd(w, w);                            \
-        __m512d wi = _mm512_unpackhi_pd(w, w);                            \
-        __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi));     \
-        __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr));     \
-        (out) = _mm512_unpacklo_pd(re, im);                               \
+#define CMUL_FMA_AOS_AVX512(out, a, w)                               \
+    do                                                               \
+    {                                                                \
+        __m512d ar = _mm512_unpacklo_pd(a, a);                       \
+        __m512d ai = _mm512_unpackhi_pd(a, a);                       \
+        __m512d wr = _mm512_unpacklo_pd(w, w);                       \
+        __m512d wi = _mm512_unpackhi_pd(w, w);                       \
+        __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi)); \
+        __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr)); \
+        (out) = _mm512_unpacklo_pd(re, im);                          \
     } while (0)
 
 //==============================================================================
@@ -99,115 +104,126 @@
 
 /**
  * @brief Radix-4 butterfly core for AVX-512 (4 butterflies)
- *
- * Processes 4 radix-4 butterflies simultaneously for even/odd splits.
- * Used as sub-components in the radix-8 split-radix decomposition.
  */
-#define RADIX4_CORE_AVX512(a, b, c, d, y0, y1, y2, y3, rot_mask) \
-    do { \
-        __m512d sum_bd = _mm512_add_pd(b, d); \
-        __m512d dif_bd = _mm512_sub_pd(b, d); \
-        __m512d sum_ac = _mm512_add_pd(a, c); \
-        __m512d dif_ac = _mm512_sub_pd(a, c); \
-        \
-        y0 = _mm512_add_pd(sum_ac, sum_bd); \
-        y2 = _mm512_sub_pd(sum_ac, sum_bd); \
-        \
+#define RADIX4_CORE_AVX512(a, b, c, d, y0, y1, y2, y3, rot_mask)    \
+    do                                                              \
+    {                                                               \
+        __m512d sum_bd = _mm512_add_pd(b, d);                       \
+        __m512d dif_bd = _mm512_sub_pd(b, d);                       \
+        __m512d sum_ac = _mm512_add_pd(a, c);                       \
+        __m512d dif_ac = _mm512_sub_pd(a, c);                       \
+                                                                    \
+        y0 = _mm512_add_pd(sum_ac, sum_bd);                         \
+        y2 = _mm512_sub_pd(sum_ac, sum_bd);                         \
+                                                                    \
         __m512d dif_bd_swp = _mm512_permute_pd(dif_bd, 0b01010101); \
-        __m512d dif_bd_rot = _mm512_xor_pd(dif_bd_swp, rot_mask); \
-        \
-        y1 = _mm512_sub_pd(dif_ac, dif_bd_rot); \
-        y3 = _mm512_add_pd(dif_ac, dif_bd_rot); \
+        __m512d dif_bd_rot = _mm512_xor_pd(dif_bd_swp, rot_mask);   \
+                                                                    \
+        y1 = _mm512_sub_pd(dif_ac, dif_bd_rot);                     \
+        y3 = _mm512_add_pd(dif_ac, dif_bd_rot);                     \
     } while (0)
 
 //==============================================================================
-// W_8 TWIDDLE APPLICATION - AVX-512
+// FUSED RADIX-4 + W_8 TWIDDLE APPLICATION - AVX-512 (NEW!)
 //==============================================================================
 
 /**
- * @brief Apply W_8 twiddles for FORWARD FFT (AVX-512, 4 butterflies)
- * 
- * Processes 4 butterflies simultaneously:
- * o[1] *= W_8^1 = (√2/2, -√2/2)
- * o[2] *= W_8^2 = (0, -1)
- * o[3] *= W_8^3 = (-√2/2, -√2/2)
+ * @brief Fused odd radix-4 butterfly with W_8 twiddle application (FORWARD)
  *
- * Uses optimized FMA and permute operations across 512-bit registers.
+ * Combines radix-4 butterfly on odd lanes [1,3,5,7] with immediate W_8
+ * twiddle multiplication. Reduces register pressure and improves scheduling.
+ *
+ * @param x1,x3,x5,x7 Odd input lanes
+ * @param o0,o1,o2,o3 Output registers
+ * @param rot_mask Forward rotation mask (-i)
+ * @param vw81_re,vw81_im W_8^1 constants (hoisted)
+ * @param vw83_re,vw83_im W_8^3 constants (hoisted)
  */
-#define APPLY_W8_TWIDDLES_FV_AVX512(o) \
-    do { \
-        const __m512d vw81_re = _mm512_set1_pd(W8_FV_1_RE); \
-        const __m512d vw81_im = _mm512_set1_pd(W8_FV_1_IM); \
-        const __m512d vw83_re = _mm512_set1_pd(W8_FV_3_RE); \
-        const __m512d vw83_im = _mm512_set1_pd(W8_FV_3_IM); \
-        \
-        /* o[1] *= W_8^1 */ \
-        { \
-            __m512d o1_re = _mm512_movedup_pd(o[1]); \
-            __m512d o1_im = _mm512_permute_pd(o[1], 0xFF); \
-            __m512d new_re = _mm512_fmsub_pd(o1_re, vw81_re, _mm512_mul_pd(o1_im, vw81_im)); \
-            __m512d new_im = _mm512_fmadd_pd(o1_re, vw81_im, _mm512_mul_pd(o1_im, vw81_re)); \
-            o[1] = _mm512_unpacklo_pd(new_re, new_im); \
-        } \
-        \
-        /* o[2] *= W_8^2 = (0, -1) - optimized: swap and negate */ \
-        { \
-            __m512d o2_rotated = _mm512_permute_pd(o[2], 0x55); \
-            const __m512d rot90_mask = _mm512_set_pd(-0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0); \
-            o[2] = _mm512_xor_pd(o2_rotated, rot90_mask); \
-        } \
-        \
-        /* o[3] *= W_8^3 */ \
-        { \
-            __m512d o3_re = _mm512_movedup_pd(o[3]); \
-            __m512d o3_im = _mm512_permute_pd(o[3], 0xFF); \
-            __m512d new_re = _mm512_fmsub_pd(o3_re, vw83_re, _mm512_mul_pd(o3_im, vw83_im)); \
-            __m512d new_im = _mm512_fmadd_pd(o3_re, vw83_im, _mm512_mul_pd(o3_im, vw83_re)); \
-            o[3] = _mm512_unpacklo_pd(new_re, new_im); \
-        } \
+#define RADIX4_ODD_WITH_W8_FV_AVX512(x1, x3, x5, x7, o0, o1, o2, o3, rot_mask, vw81_re, vw81_im, vw83_re, vw83_im) \
+    do                                                                                                             \
+    {                                                                                                              \
+        /* Standard radix-4 arithmetic */                                                                          \
+        __m512d sum_bd = _mm512_add_pd(x3, x7);                                                                    \
+        __m512d dif_bd = _mm512_sub_pd(x3, x7);                                                                    \
+        __m512d sum_ac = _mm512_add_pd(x1, x5);                                                                    \
+        __m512d dif_ac = _mm512_sub_pd(x1, x5);                                                                    \
+                                                                                                                   \
+        o0 = _mm512_add_pd(sum_ac, sum_bd); /* No twiddle on o[0] */                                               \
+        __m512d o2_pre = _mm512_sub_pd(sum_ac, sum_bd);                                                            \
+                                                                                                                   \
+        __m512d dif_bd_swp = _mm512_permute_pd(dif_bd, 0b01010101);                                                \
+        __m512d dif_bd_rot = _mm512_xor_pd(dif_bd_swp, rot_mask);                                                  \
+                                                                                                                   \
+        __m512d o1_pre = _mm512_sub_pd(dif_ac, dif_bd_rot);                                                        \
+        __m512d o3_pre = _mm512_add_pd(dif_ac, dif_bd_rot);                                                        \
+                                                                                                                   \
+        /* Fuse W_8 twiddles immediately */                                                                        \
+        /* o1 *= W_8^1 = (√2/2, -√2/2) */                                                                          \
+        {                                                                                                          \
+            __m512d o1_re = _mm512_movedup_pd(o1_pre);                                                             \
+            __m512d o1_im = _mm512_permute_pd(o1_pre, 0xFF);                                                       \
+            __m512d new_re = _mm512_fmsub_pd(o1_re, vw81_re, _mm512_mul_pd(o1_im, vw81_im));                       \
+            __m512d new_im = _mm512_fmadd_pd(o1_re, vw81_im, _mm512_mul_pd(o1_im, vw81_re));                       \
+            o1 = _mm512_unpacklo_pd(new_re, new_im);                                                               \
+        }                                                                                                          \
+                                                                                                                   \
+        /* o2 *= W_8^2 = (0, -1) - just swap and sign flip */                                                      \
+        o2 = _mm512_permute_pd(o2_pre, 0x55);                                                                      \
+        o2 = _mm512_xor_pd(o2, _mm512_set_pd(-0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0));                         \
+                                                                                                                   \
+        /* o3 *= W_8^3 = (-√2/2, -√2/2) */                                                                         \
+        {                                                                                                          \
+            __m512d o3_re = _mm512_movedup_pd(o3_pre);                                                             \
+            __m512d o3_im = _mm512_permute_pd(o3_pre, 0xFF);                                                       \
+            __m512d new_re = _mm512_fmsub_pd(o3_re, vw83_re, _mm512_mul_pd(o3_im, vw83_im));                       \
+            __m512d new_im = _mm512_fmadd_pd(o3_re, vw83_im, _mm512_mul_pd(o3_im, vw83_re));                       \
+            o3 = _mm512_unpacklo_pd(new_re, new_im);                                                               \
+        }                                                                                                          \
     } while (0)
 
 /**
- * @brief Apply W_8 twiddles for INVERSE FFT (AVX-512, 4 butterflies)
- * 
- * Processes 4 butterflies simultaneously:
- * o[1] *= W_8^1 = (√2/2, +√2/2)
- * o[2] *= W_8^2 = (0, +1)
- * o[3] *= W_8^3 = (-√2/2, +√2/2)
- *
- * Uses optimized FMA and permute operations across 512-bit registers.
+ * @brief Fused odd radix-4 butterfly with W_8 twiddle application (INVERSE)
  */
-#define APPLY_W8_TWIDDLES_BV_AVX512(o) \
-    do { \
-        const __m512d vw81_re = _mm512_set1_pd(W8_BV_1_RE); \
-        const __m512d vw81_im = _mm512_set1_pd(W8_BV_1_IM); \
-        const __m512d vw83_re = _mm512_set1_pd(W8_BV_3_RE); \
-        const __m512d vw83_im = _mm512_set1_pd(W8_BV_3_IM); \
-        \
-        /* o[1] *= W_8^1 */ \
-        { \
-            __m512d o1_re = _mm512_movedup_pd(o[1]); \
-            __m512d o1_im = _mm512_permute_pd(o[1], 0xFF); \
-            __m512d new_re = _mm512_fmsub_pd(o1_re, vw81_re, _mm512_mul_pd(o1_im, vw81_im)); \
-            __m512d new_im = _mm512_fmadd_pd(o1_re, vw81_im, _mm512_mul_pd(o1_im, vw81_re)); \
-            o[1] = _mm512_unpacklo_pd(new_re, new_im); \
-        } \
-        \
-        /* o[2] *= W_8^2 = (0, +1) - optimized: swap and negate */ \
-        { \
-            __m512d o2_rotated = _mm512_permute_pd(o[2], 0x55); \
-            const __m512d rot90_mask = _mm512_set_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0); \
-            o[2] = _mm512_xor_pd(o2_rotated, rot90_mask); \
-        } \
-        \
-        /* o[3] *= W_8^3 */ \
-        { \
-            __m512d o3_re = _mm512_movedup_pd(o[3]); \
-            __m512d o3_im = _mm512_permute_pd(o[3], 0xFF); \
-            __m512d new_re = _mm512_fmsub_pd(o3_re, vw83_re, _mm512_mul_pd(o3_im, vw83_im)); \
-            __m512d new_im = _mm512_fmadd_pd(o3_re, vw83_im, _mm512_mul_pd(o3_im, vw83_re)); \
-            o[3] = _mm512_unpacklo_pd(new_re, new_im); \
-        } \
+#define RADIX4_ODD_WITH_W8_BV_AVX512(x1, x3, x5, x7, o0, o1, o2, o3, rot_mask, vw81_re, vw81_im, vw83_re, vw83_im) \
+    do                                                                                                             \
+    {                                                                                                              \
+        /* Standard radix-4 arithmetic */                                                                          \
+        __m512d sum_bd = _mm512_add_pd(x3, x7);                                                                    \
+        __m512d dif_bd = _mm512_sub_pd(x3, x7);                                                                    \
+        __m512d sum_ac = _mm512_add_pd(x1, x5);                                                                    \
+        __m512d dif_ac = _mm512_sub_pd(x1, x5);                                                                    \
+                                                                                                                   \
+        o0 = _mm512_add_pd(sum_ac, sum_bd);                                                                        \
+        __m512d o2_pre = _mm512_sub_pd(sum_ac, sum_bd);                                                            \
+                                                                                                                   \
+        __m512d dif_bd_swp = _mm512_permute_pd(dif_bd, 0b01010101);                                                \
+        __m512d dif_bd_rot = _mm512_xor_pd(dif_bd_swp, rot_mask);                                                  \
+                                                                                                                   \
+        __m512d o1_pre = _mm512_sub_pd(dif_ac, dif_bd_rot);                                                        \
+        __m512d o3_pre = _mm512_add_pd(dif_ac, dif_bd_rot);                                                        \
+                                                                                                                   \
+        /* Fuse W_8 twiddles (inverse sign) */                                                                     \
+        /* o1 *= W_8^1 = (√2/2, +√2/2) */                                                                          \
+        {                                                                                                          \
+            __m512d o1_re = _mm512_movedup_pd(o1_pre);                                                             \
+            __m512d o1_im = _mm512_permute_pd(o1_pre, 0xFF);                                                       \
+            __m512d new_re = _mm512_fmsub_pd(o1_re, vw81_re, _mm512_mul_pd(o1_im, vw81_im));                       \
+            __m512d new_im = _mm512_fmadd_pd(o1_re, vw81_im, _mm512_mul_pd(o1_im, vw81_re));                       \
+            o1 = _mm512_unpacklo_pd(new_re, new_im);                                                               \
+        }                                                                                                          \
+                                                                                                                   \
+        /* o2 *= W_8^2 = (0, +1) */                                                                                \
+        o2 = _mm512_permute_pd(o2_pre, 0x55);                                                                      \
+        o2 = _mm512_xor_pd(o2, _mm512_set_pd(0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0));                         \
+                                                                                                                   \
+        /* o3 *= W_8^3 = (-√2/2, +√2/2) */                                                                         \
+        {                                                                                                          \
+            __m512d o3_re = _mm512_movedup_pd(o3_pre);                                                             \
+            __m512d o3_im = _mm512_permute_pd(o3_pre, 0xFF);                                                       \
+            __m512d new_re = _mm512_fmsub_pd(o3_re, vw83_re, _mm512_mul_pd(o3_im, vw83_im));                       \
+            __m512d new_im = _mm512_fmadd_pd(o3_re, vw83_im, _mm512_mul_pd(o3_im, vw83_re));                       \
+            o3 = _mm512_unpacklo_pd(new_re, new_im);                                                               \
+        }                                                                                                          \
     } while (0)
 
 //==============================================================================
@@ -215,35 +231,33 @@
 //==============================================================================
 
 /**
- * @brief Final radix-2 combination for AVX-512 (4 butterflies)
- *
- * Combines even and odd outputs using radix-2 sums and differences.
- * Stores results directly into the output buffer with unaligned stores.
+ * @brief Final radix-2 combination with normal stores
  */
-#define FINAL_RADIX2_AVX512(e, o, output_buffer, k, K) \
-    do { \
-        for (int m = 0; m < 4; m++) { \
-            __m512d sum = _mm512_add_pd(e[m], o[m]); \
-            __m512d dif = _mm512_sub_pd(e[m], o[m]); \
-            STOREU_PD512(&output_buffer[k + m * K].re, sum); \
+#define FINAL_RADIX2_AVX512(e, o, output_buffer, k, K)             \
+    do                                                             \
+    {                                                              \
+        for (int m = 0; m < 4; m++)                                \
+        {                                                          \
+            __m512d sum = _mm512_add_pd(e[m], o[m]);               \
+            __m512d dif = _mm512_sub_pd(e[m], o[m]);               \
+            STOREU_PD512(&output_buffer[k + m * K].re, sum);       \
             STOREU_PD512(&output_buffer[k + (m + 4) * K].re, dif); \
-        } \
+        }                                                          \
     } while (0)
 
 /**
- * @brief Final radix-2 combination for AVX-512 with streaming stores
- *
- * Uses non-temporal stores to bypass cache for large datasets.
- * Beneficial for performance when output is not immediately reused.
+ * @brief Final radix-2 combination with streaming stores
  */
-#define FINAL_RADIX2_AVX512_STREAM(e, o, output_buffer, k, K) \
-    do { \
-        for (int m = 0; m < 4; m++) { \
-            __m512d sum = _mm512_add_pd(e[m], o[m]); \
-            __m512d dif = _mm512_sub_pd(e[m], o[m]); \
-            _mm512_stream_pd(&output_buffer[k + m * K].re, sum); \
+#define FINAL_RADIX2_AVX512_STREAM(e, o, output_buffer, k, K)          \
+    do                                                                 \
+    {                                                                  \
+        for (int m = 0; m < 4; m++)                                    \
+        {                                                              \
+            __m512d sum = _mm512_add_pd(e[m], o[m]);                   \
+            __m512d dif = _mm512_sub_pd(e[m], o[m]);                   \
+            _mm512_stream_pd(&output_buffer[k + m * K].re, sum);       \
             _mm512_stream_pd(&output_buffer[k + (m + 4) * K].re, dif); \
-        } \
+        }                                                              \
     } while (0)
 
 //==============================================================================
@@ -251,20 +265,19 @@
 //==============================================================================
 
 /**
- * @brief AVX-512: Apply stage twiddles for 4 butterflies (kk through kk+3)
- *
- * Applies precomputed twiddle factors to lanes 1-7 for four butterflies.
- * Uses load4_aos to pack 4 complex values into one 512-bit register.
+ * @brief Apply stage twiddles for 4 butterflies
  */
-#define APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw) \
-    do { \
-        for (int j = 1; j <= 7; j++) { \
-            __m512d w = load4_aos(&stage_tw[(kk)*7 + (j-1)], \
-                                  &stage_tw[(kk+1)*7 + (j-1)], \
-                                  &stage_tw[(kk+2)*7 + (j-1)], \
-                                  &stage_tw[(kk+3)*7 + (j-1)]); \
-            CMUL_FMA_AOS_AVX512(x[j], x[j], w); \
-        } \
+#define APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw)                  \
+    do                                                                \
+    {                                                                 \
+        for (int j = 1; j <= 7; j++)                                  \
+        {                                                             \
+            __m512d w = load4_aos(&stage_tw[(kk) * 7 + (j - 1)],      \
+                                  &stage_tw[(kk + 1) * 7 + (j - 1)],  \
+                                  &stage_tw[(kk + 2) * 7 + (j - 1)],  \
+                                  &stage_tw[(kk + 3) * 7 + (j - 1)]); \
+            CMUL_FMA_AOS_AVX512(x[j], x[j], w);                       \
+        }                                                             \
     } while (0)
 
 //==============================================================================
@@ -272,228 +285,142 @@
 //==============================================================================
 
 /**
- * @brief Load 8 lanes for AVX-512 (four butterflies: kk, kk+1, kk+2, kk+3)
- *
- * Loads input data for 8 lanes (0 to 7) from sub_outputs buffer into SIMD registers.
- * Each register holds 4 complex values (for 4 butterflies) in AoS layout.
+ * @brief Load 8 lanes for 4 butterflies
  */
-#define LOAD_8_LANES_AVX512(kk, K, sub_outputs, x) \
-    do { \
-        x[0] = load4_aos(&sub_outputs[kk], \
-                         &sub_outputs[(kk)+1], \
-                         &sub_outputs[(kk)+2], \
-                         &sub_outputs[(kk)+3]); \
-        for (int j = 1; j <= 7; j++) { \
-            x[j] = load4_aos(&sub_outputs[(kk)+j*K], \
-                             &sub_outputs[(kk)+1+j*K], \
-                             &sub_outputs[(kk)+2+j*K], \
-                             &sub_outputs[(kk)+3+j*K]); \
-        } \
+#define LOAD_8_LANES_AVX512(kk, K, sub_outputs, x)            \
+    do                                                        \
+    {                                                         \
+        x[0] = load4_aos(&sub_outputs[kk],                    \
+                         &sub_outputs[(kk) + 1],              \
+                         &sub_outputs[(kk) + 2],              \
+                         &sub_outputs[(kk) + 3]);             \
+        for (int j = 1; j <= 7; j++)                          \
+        {                                                     \
+            x[j] = load4_aos(&sub_outputs[(kk) + j * K],      \
+                             &sub_outputs[(kk) + 1 + j * K],  \
+                             &sub_outputs[(kk) + 2 + j * K],  \
+                             &sub_outputs[(kk) + 3 + j * K]); \
+        }                                                     \
     } while (0)
 
 //==============================================================================
-// PREFETCHING - AVX-512
+// PREFETCHING - AVX-512 (Single level, optimized)
 //==============================================================================
 
 /**
- * @brief Prefetch distances optimized for AVX-512 (larger working set)
+ * @brief Prefetch distance for AVX-512 L1 cache
  */
-#define PREFETCH_L1_AVX512 32  // 2KB ahead
-#define PREFETCH_L2_AVX512 64  // 4KB ahead
-#define PREFETCH_L3_AVX512 128 // 8KB ahead
+#define PREFETCH_L1_AVX512 16
 
 /**
- * @brief Prefetch 8 lanes ahead for AVX-512 (4 butterflies)
- *
- * Prefetches more aggressively than AVX2 due to higher throughput.
- * Issues prefetch for base lane and 7 additional strided lanes, plus twiddles.
+ * @brief Optimized single-level prefetch for AVX-512
  */
-#define PREFETCH_8_LANES_AVX512(k, K, distance, sub_outputs, stage_tw, hint) \
-    do { \
-        if ((k) + (distance) < K) { \
-            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)], hint); \
-            for (int j = 1; j < 8; j++) { \
-                _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+j*K], hint); \
-            } \
-            _mm_prefetch((const char *)&stage_tw[((k)+(distance))*7], hint); \
-        } \
+#define PREFETCH_8_LANES_AVX512(k, K, distance, sub_outputs, hint)                        \
+    do                                                                                    \
+    {                                                                                     \
+        if ((k) + (distance) < K)                                                         \
+        {                                                                                 \
+            _mm_prefetch((const char *)&sub_outputs[(k) + (distance)], hint);             \
+            for (int j = 1; j < 8; j++)                                                   \
+            {                                                                             \
+                _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + j * K], hint); \
+            }                                                                             \
+        }                                                                                 \
     } while (0)
 
 //==============================================================================
-// COMPLETE BUTTERFLY PIPELINE - AVX-512
+// COMPLETE BUTTERFLY PIPELINE - AVX-512 (OPTIMIZED!)
 //==============================================================================
 
 /**
- * @brief Complete AVX-512 radix-8 butterfly pipeline (FORWARD, 4 butterflies)
+ * @brief Complete optimized radix-8 butterfly (FORWARD, 4 butterflies)
  *
- * Processes 4 butterflies in one macro call using split-radix 2×(4,4):
- * 1. Load 8 lanes
- * 2. Apply input twiddles (lanes 1-7)
- * 3. Two parallel radix-4 butterflies (even/odd)
- * 4. Apply W_8 geometric twiddles (forward)
- * 5. Final radix-2 combination
- * 6. Store results
+ * Uses fused radix-4 + W_8 twiddle application for better performance.
  */
-#define RADIX8_PIPELINE_4_FV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer) \
-    do { \
-        /* Step 1: Load inputs */ \
-        __m512d x[8]; \
-        LOAD_8_LANES_AVX512(kk, K, sub_outputs, x); \
-        \
-        /* Step 2: Apply input twiddles */ \
-        APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw); \
-        \
-        /* Step 3: Split into even [0,2,4,6] and odd [1,3,5,7] */ \
-        __m512d e[4], o[4]; \
-        \
-        /* Forward rotation mask: -i */ \
-        const __m512d rot_mask_fv = _mm512_set_pd(-0.0, 0.0, -0.0, 0.0, \
-                                                   -0.0, 0.0, -0.0, 0.0); \
-        \
-        /* Even radix-4 butterfly: [0,2,4,6] */ \
-        RADIX4_CORE_AVX512(x[0], x[2], x[4], x[6], e[0], e[1], e[2], e[3], rot_mask_fv); \
-        \
-        /* Odd radix-4 butterfly: [1,3,5,7] */ \
-        RADIX4_CORE_AVX512(x[1], x[3], x[5], x[7], o[0], o[1], o[2], o[3], rot_mask_fv); \
-        \
-        /* Step 4: Apply W_8 geometric twiddles to odd outputs */ \
-        APPLY_W8_TWIDDLES_FV_AVX512(o); \
-        \
-        /* Step 5: Final radix-2 combination and store */ \
-        FINAL_RADIX2_AVX512(e, o, output_buffer, kk, K); \
+#define RADIX8_PIPELINE_4_FV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer, rot_mask, vw81_re, vw81_im, vw83_re, vw83_im) \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        __m512d x[8];                                                                                                          \
+        LOAD_8_LANES_AVX512(kk, K, sub_outputs, x);                                                                            \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw);                                                                          \
+                                                                                                                               \
+        __m512d e[4], o[4];                                                                                                    \
+                                                                                                                               \
+        /* Even radix-4: [0,2,4,6] - no twiddles */                                                                            \
+        RADIX4_CORE_AVX512(x[0], x[2], x[4], x[6], e[0], e[1], e[2], e[3], rot_mask);                                          \
+                                                                                                                               \
+        /* Odd radix-4 + W_8 twiddles (FUSED) */                                                                               \
+        RADIX4_ODD_WITH_W8_FV_AVX512(x[1], x[3], x[5], x[7], o[0], o[1], o[2], o[3],                                           \
+                                     rot_mask, vw81_re, vw81_im, vw83_re, vw83_im);                                            \
+                                                                                                                               \
+        FINAL_RADIX2_AVX512(e, o, output_buffer, kk, K);                                                                       \
     } while (0)
 
 /**
- * @brief Complete AVX-512 radix-8 butterfly pipeline (INVERSE, 4 butterflies)
- *
- * Identical to forward except uses inverse W_8 twiddles and rotation.
+ * @brief Complete optimized radix-8 butterfly (INVERSE, 4 butterflies)
  */
-#define RADIX8_PIPELINE_4_BV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer) \
-    do { \
-        /* Step 1: Load inputs */ \
-        __m512d x[8]; \
-        LOAD_8_LANES_AVX512(kk, K, sub_outputs, x); \
-        \
-        /* Step 2: Apply input twiddles */ \
-        APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw); \
-        \
-        /* Step 3: Split into even [0,2,4,6] and odd [1,3,5,7] */ \
-        __m512d e[4], o[4]; \
-        \
-        /* Inverse rotation mask: +i */ \
-        const __m512d rot_mask_bv = _mm512_set_pd(0.0, -0.0, 0.0, -0.0, \
-                                                   0.0, -0.0, 0.0, -0.0); \
-        \
-        /* Even radix-4 butterfly: [0,2,4,6] */ \
-        RADIX4_CORE_AVX512(x[0], x[2], x[4], x[6], e[0], e[1], e[2], e[3], rot_mask_bv); \
-        \
-        /* Odd radix-4 butterfly: [1,3,5,7] */ \
-        RADIX4_CORE_AVX512(x[1], x[3], x[5], x[7], o[0], o[1], o[2], o[3], rot_mask_bv); \
-        \
-        /* Step 4: Apply W_8 geometric twiddles to odd outputs (inverse) */ \
-        APPLY_W8_TWIDDLES_BV_AVX512(o); \
-        \
-        /* Step 5: Final radix-2 combination and store */ \
-        FINAL_RADIX2_AVX512(e, o, output_buffer, kk, K); \
+#define RADIX8_PIPELINE_4_BV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer, rot_mask, vw81_re, vw81_im, vw83_re, vw83_im) \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        __m512d x[8];                                                                                                          \
+        LOAD_8_LANES_AVX512(kk, K, sub_outputs, x);                                                                            \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw);                                                                          \
+                                                                                                                               \
+        __m512d e[4], o[4];                                                                                                    \
+                                                                                                                               \
+        RADIX4_CORE_AVX512(x[0], x[2], x[4], x[6], e[0], e[1], e[2], e[3], rot_mask);                                          \
+        RADIX4_ODD_WITH_W8_BV_AVX512(x[1], x[3], x[5], x[7], o[0], o[1], o[2], o[3],                                           \
+                                     rot_mask, vw81_re, vw81_im, vw83_re, vw83_im);                                            \
+                                                                                                                               \
+        FINAL_RADIX2_AVX512(e, o, output_buffer, kk, K);                                                                       \
     } while (0)
 
 /**
- * @brief Streaming version (forward) - for large transforms
- *
- * Uses non-temporal stores to avoid cache pollution.
+ * @brief Streaming version (forward)
  */
-#define RADIX8_PIPELINE_4_FV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer) \
-    do { \
-        __m512d x[8]; \
-        LOAD_8_LANES_AVX512(kk, K, sub_outputs, x); \
-        APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw); \
-        \
-        __m512d e[4], o[4]; \
-        const __m512d rot_mask_fv = _mm512_set_pd(-0.0, 0.0, -0.0, 0.0, \
-                                                   -0.0, 0.0, -0.0, 0.0); \
-        \
-        RADIX4_CORE_AVX512(x[0], x[2], x[4], x[6], e[0], e[1], e[2], e[3], rot_mask_fv); \
-        RADIX4_CORE_AVX512(x[1], x[3], x[5], x[7], o[0], o[1], o[2], o[3], rot_mask_fv); \
-        \
-        APPLY_W8_TWIDDLES_FV_AVX512(o); \
-        \
-        FINAL_RADIX2_AVX512_STREAM(e, o, output_buffer, kk, K); \
+#define RADIX8_PIPELINE_4_FV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer, rot_mask, vw81_re, vw81_im, vw83_re, vw83_im) \
+    do                                                                                                                                \
+    {                                                                                                                                 \
+        __m512d x[8];                                                                                                                 \
+        LOAD_8_LANES_AVX512(kk, K, sub_outputs, x);                                                                                   \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw);                                                                                 \
+                                                                                                                                      \
+        __m512d e[4], o[4];                                                                                                           \
+        RADIX4_CORE_AVX512(x[0], x[2], x[4], x[6], e[0], e[1], e[2], e[3], rot_mask);                                                 \
+        RADIX4_ODD_WITH_W8_FV_AVX512(x[1], x[3], x[5], x[7], o[0], o[1], o[2], o[3],                                                  \
+                                     rot_mask, vw81_re, vw81_im, vw83_re, vw83_im);                                                   \
+                                                                                                                                      \
+        FINAL_RADIX2_AVX512_STREAM(e, o, output_buffer, kk, K);                                                                       \
     } while (0)
 
 /**
- * @brief Streaming version (inverse) - for large transforms
+ * @brief Streaming version (inverse)
  */
-#define RADIX8_PIPELINE_4_BV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer) \
-    do { \
-        __m512d x[8]; \
-        LOAD_8_LANES_AVX512(kk, K, sub_outputs, x); \
-        APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw); \
-        \
-        __m512d e[4], o[4]; \
-        const __m512d rot_mask_bv = _mm512_set_pd(0.0, -0.0, 0.0, -0.0, \
-                                                   0.0, -0.0, 0.0, -0.0); \
-        \
-        RADIX4_CORE_AVX512(x[0], x[2], x[4], x[6], e[0], e[1], e[2], e[3], rot_mask_bv); \
-        RADIX4_CORE_AVX512(x[1], x[3], x[5], x[7], o[0], o[1], o[2], o[3], rot_mask_bv); \
-        \
-        APPLY_W8_TWIDDLES_BV_AVX512(o); \
-        \
-        FINAL_RADIX2_AVX512_STREAM(e, o, output_buffer, kk, K); \
+#define RADIX8_PIPELINE_4_BV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer, rot_mask, vw81_re, vw81_im, vw83_re, vw83_im) \
+    do                                                                                                                                \
+    {                                                                                                                                 \
+        __m512d x[8];                                                                                                                 \
+        LOAD_8_LANES_AVX512(kk, K, sub_outputs, x);                                                                                   \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, x, stage_tw);                                                                                 \
+                                                                                                                                      \
+        __m512d e[4], o[4];                                                                                                           \
+        RADIX4_CORE_AVX512(x[0], x[2], x[4], x[6], e[0], e[1], e[2], e[3], rot_mask);                                                 \
+        RADIX4_ODD_WITH_W8_BV_AVX512(x[1], x[3], x[5], x[7], o[0], o[1], o[2], o[3],                                                  \
+                                     rot_mask, vw81_re, vw81_im, vw83_re, vw83_im);                                                   \
+                                                                                                                                      \
+        FINAL_RADIX2_AVX512_STREAM(e, o, output_buffer, kk, K);                                                                       \
     } while (0)
 
 #endif // __AVX512F__
 
 //==============================================================================
-// USAGE EXAMPLE (for future implementation)
-//==============================================================================
-
-/**
- * In fft_radix8_fv.c or fft_radix8_bv.c:
- *
- * #ifdef __AVX512F__
- *     // Main loop: 4 butterflies per iteration (32 complex values processed)
- *     for (; k + 3 < K; k += 4) {
- *         PREFETCH_8_LANES_AVX512(k, K, PREFETCH_L1_AVX512, sub_outputs, stage_tw, _MM_HINT_T0);
- *         RADIX8_PIPELINE_4_FV_AVX512(k, K, sub_outputs, stage_tw, output_buffer);
- *     }
- * #endif
- *
- * #ifdef __AVX2__
- *     // Fallback to AVX2: 2 butterflies per iteration
- *     for (; k + 1 < K; k += 2) {
- *         PREFETCH_8_LANES(k, K, PREFETCH_L1, sub_outputs, _MM_HINT_T0);
- *         // ... existing AVX2 code ...
- *     }
- * #endif
- *
- * // Scalar tail
- * for (; k < K; k++) {
- *     // ... scalar butterfly ...
- * }
- *
- * PERFORMANCE NOTES:
- * - AVX-512 processes 4 butterflies (32 complex values) per iteration
- * - Split-radix 2×(4,4) decomposition enables efficient parallelism
- * - 2x throughput vs AVX2 (which does 2 butterflies = 16 complex values)
- * - 4x throughput vs scalar
- * - Radix-8 is particularly efficient for sizes N = 8^k
- * - Expect 35-55% speedup on Skylake-X/Cascade Lake CPUs
- * - Expect 55-85% speedup on Ice Lake/Sapphire Rapids with full AVX-512 FP
- * - Use streaming stores for transforms larger than L3 cache
- * - The split-radix structure minimizes twiddle complexity while maximizing SIMD utilization
- */
-
-//==============================================================================
-// COMPLEX MULTIPLICATION - FMA-optimized (IDENTICAL for both directions)
+// AVX2 SUPPORT
 //==============================================================================
 
 #ifdef __AVX2__
+
 /**
- * @brief Optimized complex multiply: out = a * w (6 FMA + 2 UNPACK)
- *
- * This macro performs a complex multiplication using AVX2 instructions, optimized with fused multiply-add (FMA) operations.
- * It is used for applying twiddle factors to inputs in both forward and inverse transforms.
- * The operation assumes Array-of-Structures (AoS) layout for complex numbers (real and imaginary parts interleaved).
+ * @brief Complex multiply for AVX2 with FMA
  */
 #define CMUL_FMA_AOS(out, a, w)                                      \
     do                                                               \
@@ -506,364 +433,302 @@
         __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr)); \
         (out) = _mm256_unpacklo_pd(re, im);                          \
     } while (0)
-#endif
-
-//==============================================================================
-// RADIX-4 SUB-BUTTERFLY - Used for even/odd splits
-//==============================================================================
 
 /**
- * @brief Radix-4 butterfly core (IDENTICAL for forward/inverse)
- *
- * This macro implements the core arithmetic of a radix-4 butterfly, used as sub-components in the radix-8 decomposition.
- * It computes sums and differences for even and odd indices, with a rotation for the imaginary unit multiplication.
- * The rot_mask parameter allows direction-specific rotation (e.g., -i for forward, +i for inverse).
+ * @brief Radix-4 core for AVX2
  */
-#ifdef __AVX2__
-#define RADIX4_CORE_AVX2(a, b, c, d, y0, y1, y2, y3, rot_mask) \
-    do { \
-        __m256d sum_bd = _mm256_add_pd(b, d); \
-        __m256d dif_bd = _mm256_sub_pd(b, d); \
-        __m256d sum_ac = _mm256_add_pd(a, c); \
-        __m256d dif_ac = _mm256_sub_pd(a, c); \
-        \
-        y0 = _mm256_add_pd(sum_ac, sum_bd); \
-        y2 = _mm256_sub_pd(sum_ac, sum_bd); \
-        \
-        __m256d dif_bd_swp = _mm256_permute_pd(dif_bd, 0b0101); \
+#define RADIX4_CORE_AVX2(a, b, c, d, y0, y1, y2, y3, rot_mask)    \
+    do                                                            \
+    {                                                             \
+        __m256d sum_bd = _mm256_add_pd(b, d);                     \
+        __m256d dif_bd = _mm256_sub_pd(b, d);                     \
+        __m256d sum_ac = _mm256_add_pd(a, c);                     \
+        __m256d dif_ac = _mm256_sub_pd(a, c);                     \
+                                                                  \
+        y0 = _mm256_add_pd(sum_ac, sum_bd);                       \
+        y2 = _mm256_sub_pd(sum_ac, sum_bd);                       \
+                                                                  \
+        __m256d dif_bd_swp = _mm256_permute_pd(dif_bd, 0b0101);   \
         __m256d dif_bd_rot = _mm256_xor_pd(dif_bd_swp, rot_mask); \
-        \
-        y1 = _mm256_sub_pd(dif_ac, dif_bd_rot); \
-        y3 = _mm256_add_pd(dif_ac, dif_bd_rot); \
+                                                                  \
+        y1 = _mm256_sub_pd(dif_ac, dif_bd_rot);                   \
+        y3 = _mm256_add_pd(dif_ac, dif_bd_rot);                   \
     } while (0)
-#endif
+
+//==============================================================================
+// FUSED RADIX-4 + W_8 - AVX2 (NEW!)
+//==============================================================================
 
 /**
- * @brief Scalar version of the radix-4 butterfly core.
- *
- * This macro performs the same operations as RADIX4_CORE_AVX2 but in scalar mode, without SIMD instructions.
- * It is used for handling tail cases or non-SIMD environments in the radix-8 butterfly.
- * The rot_sign parameter controls the direction of rotation (+1 or -1 for inverse/forward).
+ * @brief Fused odd radix-4 + W_8 twiddles (FORWARD, AVX2)
  */
-#define RADIX4_CORE_SCALAR(a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im, \
+#define RADIX4_ODD_WITH_W8_FV_AVX2(x1, x3, x5, x7, o0, o1, o2, o3, rot_mask, vw81_re, vw81_im, vw83_re, vw83_im) \
+    do                                                                                                           \
+    {                                                                                                            \
+        __m256d sum_bd = _mm256_add_pd(x3, x7);                                                                  \
+        __m256d dif_bd = _mm256_sub_pd(x3, x7);                                                                  \
+        __m256d sum_ac = _mm256_add_pd(x1, x5);                                                                  \
+        __m256d dif_ac = _mm256_sub_pd(x1, x5);                                                                  \
+                                                                                                                 \
+        o0 = _mm256_add_pd(sum_ac, sum_bd);                                                                      \
+        __m256d o2_pre = _mm256_sub_pd(sum_ac, sum_bd);                                                          \
+                                                                                                                 \
+        __m256d dif_bd_swp = _mm256_permute_pd(dif_bd, 0b0101);                                                  \
+        __m256d dif_bd_rot = _mm256_xor_pd(dif_bd_swp, rot_mask);                                                \
+                                                                                                                 \
+        __m256d o1_pre = _mm256_sub_pd(dif_ac, dif_bd_rot);                                                      \
+        __m256d o3_pre = _mm256_add_pd(dif_ac, dif_bd_rot);                                                      \
+                                                                                                                 \
+        /* Fuse W_8 twiddles */                                                                                  \
+        {                                                                                                        \
+            __m256d o1_re = _mm256_movedup_pd(o1_pre);                                                           \
+            __m256d o1_im = _mm256_permute_pd(o1_pre, 0xF);                                                      \
+            __m256d new_re = _mm256_fmsub_pd(o1_re, vw81_re, _mm256_mul_pd(o1_im, vw81_im));                     \
+            __m256d new_im = _mm256_fmadd_pd(o1_re, vw81_im, _mm256_mul_pd(o1_im, vw81_re));                     \
+            o1 = _mm256_unpacklo_pd(new_re, new_im);                                                             \
+        }                                                                                                        \
+                                                                                                                 \
+        o2 = _mm256_permute_pd(o2_pre, 0x5);                                                                     \
+        o2 = _mm256_xor_pd(o2, _mm256_set_pd(-0.0, 0.0, -0.0, 0.0));                                             \
+                                                                                                                 \
+        {                                                                                                        \
+            __m256d o3_re = _mm256_movedup_pd(o3_pre);                                                           \
+            __m256d o3_im = _mm256_permute_pd(o3_pre, 0xF);                                                      \
+            __m256d new_re = _mm256_fmsub_pd(o3_re, vw83_re, _mm256_mul_pd(o3_im, vw83_im));                     \
+            __m256d new_im = _mm256_fmadd_pd(o3_re, vw83_im, _mm256_mul_pd(o3_im, vw83_re));                     \
+            o3 = _mm256_unpacklo_pd(new_re, new_im);                                                             \
+        }                                                                                                        \
+    } while (0)
+
+/**
+ * @brief Fused odd radix-4 + W_8 twiddles (INVERSE, AVX2)
+ */
+#define RADIX4_ODD_WITH_W8_BV_AVX2(x1, x3, x5, x7, o0, o1, o2, o3, rot_mask, vw81_re, vw81_im, vw83_re, vw83_im) \
+    do                                                                                                           \
+    {                                                                                                            \
+        __m256d sum_bd = _mm256_add_pd(x3, x7);                                                                  \
+        __m256d dif_bd = _mm256_sub_pd(x3, x7);                                                                  \
+        __m256d sum_ac = _mm256_add_pd(x1, x5);                                                                  \
+        __m256d dif_ac = _mm256_sub_pd(x1, x5);                                                                  \
+                                                                                                                 \
+        o0 = _mm256_add_pd(sum_ac, sum_bd);                                                                      \
+        __m256d o2_pre = _mm256_sub_pd(sum_ac, sum_bd);                                                          \
+                                                                                                                 \
+        __m256d dif_bd_swp = _mm256_permute_pd(dif_bd, 0b0101);                                                  \
+        __m256d dif_bd_rot = _mm256_xor_pd(dif_bd_swp, rot_mask);                                                \
+                                                                                                                 \
+        __m256d o1_pre = _mm256_sub_pd(dif_ac, dif_bd_rot);                                                      \
+        __m256d o3_pre = _mm256_add_pd(dif_ac, dif_bd_rot);                                                      \
+                                                                                                                 \
+        /* Fuse W_8 twiddles (inverse) */                                                                        \
+        {                                                                                                        \
+            __m256d o1_re = _mm256_movedup_pd(o1_pre);                                                           \
+            __m256d o1_im = _mm256_permute_pd(o1_pre, 0xF);                                                      \
+            __m256d new_re = _mm256_fmsub_pd(o1_re, vw81_re, _mm256_mul_pd(o1_im, vw81_im));                     \
+            __m256d new_im = _mm256_fmadd_pd(o1_re, vw81_im, _mm256_mul_pd(o1_im, vw81_re));                     \
+            o1 = _mm256_unpacklo_pd(new_re, new_im);                                                             \
+        }                                                                                                        \
+                                                                                                                 \
+        o2 = _mm256_permute_pd(o2_pre, 0x5);                                                                     \
+        o2 = _mm256_xor_pd(o2, _mm256_set_pd(0.0, -0.0, 0.0, -0.0));                                             \
+                                                                                                                 \
+        {                                                                                                        \
+            __m256d o3_re = _mm256_movedup_pd(o3_pre);                                                           \
+            __m256d o3_im = _mm256_permute_pd(o3_pre, 0xF);                                                      \
+            __m256d new_re = _mm256_fmsub_pd(o3_re, vw83_re, _mm256_mul_pd(o3_im, vw83_im));                     \
+            __m256d new_im = _mm256_fmadd_pd(o3_re, vw83_im, _mm256_mul_pd(o3_im, vw83_re));                     \
+            o3 = _mm256_unpacklo_pd(new_re, new_im);                                                             \
+        }                                                                                                        \
+    } while (0)
+
+/**
+ * @brief Final radix-2 for AVX2
+ */
+#define FINAL_RADIX2_AVX2(e, o, output_buffer, k, K)            \
+    do                                                          \
+    {                                                           \
+        for (int m = 0; m < 4; m++)                             \
+        {                                                       \
+            __m256d sum = _mm256_add_pd(e[m], o[m]);            \
+            __m256d dif = _mm256_sub_pd(e[m], o[m]);            \
+            STOREU_PD(&output_buffer[k + m * K].re, sum);       \
+            STOREU_PD(&output_buffer[k + (m + 4) * K].re, dif); \
+        }                                                       \
+    } while (0)
+
+/**
+ * @brief Final radix-2 for AVX2 with streaming stores
+ */
+#define FINAL_RADIX2_AVX2_STREAM(e, o, output_buffer, k, K)            \
+    do                                                                 \
+    {                                                                  \
+        for (int m = 0; m < 4; m++)                                    \
+        {                                                              \
+            __m256d sum = _mm256_add_pd(e[m], o[m]);                   \
+            __m256d dif = _mm256_sub_pd(e[m], o[m]);                   \
+            _mm256_stream_pd(&output_buffer[k + m * K].re, sum);       \
+            _mm256_stream_pd(&output_buffer[k + (m + 4) * K].re, dif); \
+        }                                                              \
+    } while (0)
+
+/**
+ * @brief Apply stage twiddles (AVX2)
+ */
+#define APPLY_STAGE_TWIDDLES_AVX2(kk, x, stage_tw)                                                   \
+    do                                                                                               \
+    {                                                                                                \
+        for (int j = 1; j <= 7; j++)                                                                 \
+        {                                                                                            \
+            __m256d w = load2_aos(&stage_tw[(kk) * 7 + (j - 1)], &stage_tw[(kk + 1) * 7 + (j - 1)]); \
+            CMUL_FMA_AOS(x[j], x[j], w);                                                             \
+        }                                                                                            \
+    } while (0)
+
+/**
+ * @brief Load 8 lanes (AVX2)
+ */
+#define LOAD_8_LANES_AVX2(kk, K, sub_outputs, x)                                          \
+    do                                                                                    \
+    {                                                                                     \
+        x[0] = load2_aos(&sub_outputs[kk], &sub_outputs[(kk) + 1]);                       \
+        for (int j = 1; j <= 7; j++)                                                      \
+        {                                                                                 \
+            x[j] = load2_aos(&sub_outputs[(kk) + j * K], &sub_outputs[(kk) + 1 + j * K]); \
+        }                                                                                 \
+    } while (0)
+
+/**
+ * @brief Prefetch distance for AVX2 L1 cache
+ */
+#define PREFETCH_L1 8
+
+/**
+ * @brief Optimized single-level prefetch for AVX2
+ */
+#define PREFETCH_8_LANES(k, K, distance, sub_outputs, hint)                               \
+    do                                                                                    \
+    {                                                                                     \
+        if ((k) + (distance) < K)                                                         \
+        {                                                                                 \
+            _mm_prefetch((const char *)&sub_outputs[(k) + (distance)], hint);             \
+            for (int j = 1; j < 8; j++)                                                   \
+            {                                                                             \
+                _mm_prefetch((const char *)&sub_outputs[(k) + (distance) + j * K], hint); \
+            }                                                                             \
+        }                                                                                 \
+    } while (0)
+
+#endif // __AVX2__
+
+//==============================================================================
+// SCALAR SUPPORT
+//==============================================================================
+
+/**
+ * @brief Radix-4 core for scalar implementation
+ */
+#define RADIX4_CORE_SCALAR(a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,         \
                            y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, \
-                           rot_sign) \
-    do { \
-        double sum_bd_re = b_re + d_re; \
-        double sum_bd_im = b_im + d_im; \
-        double dif_bd_re = b_re - d_re; \
-        double dif_bd_im = b_im - d_im; \
-        double sum_ac_re = a_re + c_re; \
-        double sum_ac_im = a_im + c_im; \
-        double dif_ac_re = a_re - c_re; \
-        double dif_ac_im = a_im - c_im; \
-        \
-        y0_re = sum_ac_re + sum_bd_re; \
-        y0_im = sum_ac_im + sum_bd_im; \
-        y2_re = sum_ac_re - sum_bd_re; \
-        y2_im = sum_ac_im - sum_bd_im; \
-        \
-        double rot_re = (rot_sign) * dif_bd_im; \
-        double rot_im = (rot_sign) * (-dif_bd_re); \
-        \
-        y1_re = dif_ac_re - rot_re; \
-        y1_im = dif_ac_im - rot_im; \
-        y3_re = dif_ac_re + rot_re; \
-        y3_im = dif_ac_im + rot_im; \
+                           rot_sign)                                               \
+    do                                                                             \
+    {                                                                              \
+        double sum_bd_re = b_re + d_re;                                            \
+        double sum_bd_im = b_im + d_im;                                            \
+        double dif_bd_re = b_re - d_re;                                            \
+        double dif_bd_im = b_im - d_im;                                            \
+        double sum_ac_re = a_re + c_re;                                            \
+        double sum_ac_im = a_im + c_im;                                            \
+        double dif_ac_re = a_re - c_re;                                            \
+        double dif_ac_im = a_im - c_im;                                            \
+                                                                                   \
+        y0_re = sum_ac_re + sum_bd_re;                                             \
+        y0_im = sum_ac_im + sum_bd_im;                                             \
+        y2_re = sum_ac_re - sum_bd_re;                                             \
+        y2_im = sum_ac_im - sum_bd_im;                                             \
+                                                                                   \
+        double rot_re = (rot_sign) * dif_bd_im;                                    \
+        double rot_im = (rot_sign) * (-dif_bd_re);                                 \
+                                                                                   \
+        y1_re = dif_ac_re - rot_re;                                                \
+        y1_im = dif_ac_im - rot_im;                                                \
+        y3_re = dif_ac_re + rot_re;                                                \
+        y3_im = dif_ac_im + rot_im;                                                \
     } while (0)
 
-//==============================================================================
-// W_8 TWIDDLE APPLICATION - Direction-specific
-//==============================================================================
-
 /**
- * @brief Apply W_8 twiddles for FORWARD FFT (AVX2)
- * 
- * o[1] *= W_8^1 = (√2/2, -√2/2)
- * o[2] *= W_8^2 = (0, -1)
- * o[3] *= W_8^3 = (-√2/2, -√2/2)
- *
- * This macro applies fixed twiddle factors from the 8th roots of unity to the odd outputs of the sub-butterflies.
- * It uses optimized FMA and permute operations for efficiency in the forward transform.
+ * @brief Apply W_8 twiddles for forward scalar
  */
-#ifdef __AVX2__
-#define APPLY_W8_TWIDDLES_FV_AVX2(o) \
-    do { \
-        const __m256d vw81_re = _mm256_set1_pd(W8_FV_1_RE); \
-        const __m256d vw81_im = _mm256_set1_pd(W8_FV_1_IM); \
-        const __m256d vw83_re = _mm256_set1_pd(W8_FV_3_RE); \
-        const __m256d vw83_im = _mm256_set1_pd(W8_FV_3_IM); \
-        \
-        /* o[1] *= W_8^1 */ \
-        { \
-            __m256d o1_re = _mm256_movedup_pd(o[1]); \
-            __m256d o1_im = _mm256_permute_pd(o[1], 0xF); \
-            __m256d new_re = _mm256_fmsub_pd(o1_re, vw81_re, _mm256_mul_pd(o1_im, vw81_im)); \
-            __m256d new_im = _mm256_fmadd_pd(o1_re, vw81_im, _mm256_mul_pd(o1_im, vw81_re)); \
-            o[1] = _mm256_unpacklo_pd(new_re, new_im); \
-        } \
-        \
-        /* o[2] *= W_8^2 = (0, -1) - optimized: swap and negate */ \
-        { \
-            __m256d o2_rotated = _mm256_permute_pd(o[2], 0x5); \
-            const __m256d rot90_mask = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); \
-            o[2] = _mm256_xor_pd(o2_rotated, rot90_mask); \
-        } \
-        \
-        /* o[3] *= W_8^3 */ \
-        { \
-            __m256d o3_re = _mm256_movedup_pd(o[3]); \
-            __m256d o3_im = _mm256_permute_pd(o[3], 0xF); \
-            __m256d new_re = _mm256_fmsub_pd(o3_re, vw83_re, _mm256_mul_pd(o3_im, vw83_im)); \
-            __m256d new_im = _mm256_fmadd_pd(o3_re, vw83_im, _mm256_mul_pd(o3_im, vw83_re)); \
-            o[3] = _mm256_unpacklo_pd(new_re, new_im); \
-        } \
-    } while (0)
-#endif
-
-/**
- * @brief Apply W_8 twiddles for INVERSE FFT (AVX2)
- * 
- * o[1] *= W_8^1 = (√2/2, +√2/2)
- * o[2] *= W_8^2 = (0, +1)
- * o[3] *= W_8^3 = (-√2/2, +√2/2)
- *
- * This macro applies fixed twiddle factors from the 8th roots of unity to the odd outputs of the sub-butterflies.
- * It uses optimized FMA and permute operations for efficiency in the inverse transform.
- */
-#ifdef __AVX2__
-#define APPLY_W8_TWIDDLES_BV_AVX2(o) \
-    do { \
-        const __m256d vw81_re = _mm256_set1_pd(W8_BV_1_RE); \
-        const __m256d vw81_im = _mm256_set1_pd(W8_BV_1_IM); \
-        const __m256d vw83_re = _mm256_set1_pd(W8_BV_3_RE); \
-        const __m256d vw83_im = _mm256_set1_pd(W8_BV_3_IM); \
-        \
-        /* o[1] *= W_8^1 */ \
-        { \
-            __m256d o1_re = _mm256_movedup_pd(o[1]); \
-            __m256d o1_im = _mm256_permute_pd(o[1], 0xF); \
-            __m256d new_re = _mm256_fmsub_pd(o1_re, vw81_re, _mm256_mul_pd(o1_im, vw81_im)); \
-            __m256d new_im = _mm256_fmadd_pd(o1_re, vw81_im, _mm256_mul_pd(o1_im, vw81_re)); \
-            o[1] = _mm256_unpacklo_pd(new_re, new_im); \
-        } \
-        \
-        /* o[2] *= W_8^2 = (0, +1) - optimized: swap and negate */ \
-        { \
-            __m256d o2_rotated = _mm256_permute_pd(o[2], 0x5); \
-            const __m256d rot90_mask = _mm256_set_pd(0.0, -0.0, 0.0, -0.0); \
-            o[2] = _mm256_xor_pd(o2_rotated, rot90_mask); \
-        } \
-        \
-        /* o[3] *= W_8^3 */ \
-        { \
-            __m256d o3_re = _mm256_movedup_pd(o[3]); \
-            __m256d o3_im = _mm256_permute_pd(o[3], 0xF); \
-            __m256d new_re = _mm256_fmsub_pd(o3_re, vw83_re, _mm256_mul_pd(o3_im, vw83_im)); \
-            __m256d new_im = _mm256_fmadd_pd(o3_re, vw83_im, _mm256_mul_pd(o3_im, vw83_re)); \
-            o[3] = _mm256_unpacklo_pd(new_re, new_im); \
-        } \
-    } while (0)
-#endif
-
-/**
- * @brief Scalar version to apply W_8 twiddles for FORWARD FFT.
- *
- * This macro performs the same twiddle applications as APPLY_W8_TWIDDLES_FV_AVX2 but in scalar arithmetic.
- * It is used for non-SIMD paths or small sizes in the forward transform.
- */
-#define APPLY_W8_TWIDDLES_FV_SCALAR(o) \
-    do { \
-        /* o[1] *= W_8^1 */ \
-        { \
-            double r = o[1].re, i = o[1].im; \
+#define APPLY_W8_TWIDDLES_FV_SCALAR(o)                 \
+    do                                                 \
+    {                                                  \
+        {                                              \
+            double r = o[1].re, i = o[1].im;           \
             o[1].re = r * W8_FV_1_RE - i * W8_FV_1_IM; \
             o[1].im = r * W8_FV_1_IM + i * W8_FV_1_RE; \
-        } \
-        /* o[2] *= W_8^2 = (0, -1) */ \
-        { \
-            double r = o[2].re, i = o[2].im; \
-            o[2].re = -i * W8_FV_2_IM; \
-            o[2].im = r * W8_FV_2_IM; \
-        } \
-        /* o[3] *= W_8^3 */ \
-        { \
-            double r = o[3].re, i = o[3].im; \
+        }                                              \
+        {                                              \
+            double r = o[2].re, i = o[2].im;           \
+            o[2].re = -i * W8_FV_2_IM;                 \
+            o[2].im = r * W8_FV_2_IM;                  \
+        }                                              \
+        {                                              \
+            double r = o[3].re, i = o[3].im;           \
             o[3].re = r * W8_FV_3_RE - i * W8_FV_3_IM; \
             o[3].im = r * W8_FV_3_IM + i * W8_FV_3_RE; \
-        } \
+        }                                              \
     } while (0)
 
 /**
- * @brief Scalar version to apply W_8 twiddles for INVERSE FFT.
- *
- * This macro performs the same twiddle applications as APPLY_W8_TWIDDLES_BV_AVX2 but in scalar arithmetic.
- * It is used for non-SIMD paths or small sizes in the inverse transform.
+ * @brief Apply W_8 twiddles for inverse scalar
  */
-#define APPLY_W8_TWIDDLES_BV_SCALAR(o) \
-    do { \
-        /* o[1] *= W_8^1 */ \
-        { \
-            double r = o[1].re, i = o[1].im; \
+#define APPLY_W8_TWIDDLES_BV_SCALAR(o)                 \
+    do                                                 \
+    {                                                  \
+        {                                              \
+            double r = o[1].re, i = o[1].im;           \
             o[1].re = r * W8_BV_1_RE - i * W8_BV_1_IM; \
             o[1].im = r * W8_BV_1_IM + i * W8_BV_1_RE; \
-        } \
-        /* o[2] *= W_8^2 = (0, +1) */ \
-        { \
-            double r = o[2].re, i = o[2].im; \
-            o[2].re = -i * W8_BV_2_IM; \
-            o[2].im = r * W8_BV_2_IM; \
-        } \
-        /* o[3] *= W_8^3 */ \
-        { \
-            double r = o[3].re, i = o[3].im; \
+        }                                              \
+        {                                              \
+            double r = o[2].re, i = o[2].im;           \
+            o[2].re = -i * W8_BV_2_IM;                 \
+            o[2].im = r * W8_BV_2_IM;                  \
+        }                                              \
+        {                                              \
+            double r = o[3].re, i = o[3].im;           \
             o[3].re = r * W8_BV_3_RE - i * W8_BV_3_IM; \
             o[3].im = r * W8_BV_3_IM + i * W8_BV_3_RE; \
-        } \
-    } while (0)
-
-//==============================================================================
-// FINAL RADIX-2 COMBINATION - IDENTICAL for forward/inverse
-//==============================================================================
-
-/**
- * @brief Final radix-2 combination for AVX2 (unaligned store).
- *
- * This macro combines the even and odd outputs from the sub-butterflies using radix-2 sums and differences.
- * It stores the results directly into the output buffer, used in the last stage of the radix-8 butterfly.
- */
-#ifdef __AVX2__
-#define FINAL_RADIX2_AVX2(e, o, output_buffer, k, K) \
-    do { \
-        for (int m = 0; m < 4; m++) { \
-            __m256d sum = _mm256_add_pd(e[m], o[m]); \
-            __m256d dif = _mm256_sub_pd(e[m], o[m]); \
-            STOREU_PD(&output_buffer[k + m * K].re, sum); \
-            STOREU_PD(&output_buffer[k + (m + 4) * K].re, dif); \
-        } \
+        }                                              \
     } while (0)
 
 /**
- * @brief Final radix-2 combination for AVX2 with streaming stores.
- *
- * Similar to FINAL_RADIX2_AVX2, but uses non-temporal streaming stores to bypass cache for large datasets.
- * This is beneficial for performance when the output is not immediately reused, reducing cache pollution.
+ * @brief Final radix-2 for scalar
  */
-#define FINAL_RADIX2_AVX2_STREAM(e, o, output_buffer, k, K) \
-    do { \
-        for (int m = 0; m < 4; m++) { \
-            __m256d sum = _mm256_add_pd(e[m], o[m]); \
-            __m256d dif = _mm256_sub_pd(e[m], o[m]); \
-            _mm256_stream_pd(&output_buffer[k + m * K].re, sum); \
-            _mm256_stream_pd(&output_buffer[k + (m + 4) * K].re, dif); \
-        } \
-    } while (0)
-#endif
-
-/**
- * @brief Scalar version of the final radix-2 combination.
- *
- * This macro performs the radix-2 sums and differences in scalar mode and stores them into the output buffer.
- * It is used for tail handling or non-SIMD environments in the radix-8 butterfly.
- */
-#define FINAL_RADIX2_SCALAR(e, o, output_buffer, k, K) \
-    do { \
-        for (int m = 0; m < 4; m++) { \
-            output_buffer[k + m * K].re = e[m].re + o[m].re; \
-            output_buffer[k + m * K].im = e[m].im + o[m].im; \
+#define FINAL_RADIX2_SCALAR(e, o, output_buffer, k, K)             \
+    do                                                             \
+    {                                                              \
+        for (int m = 0; m < 4; m++)                                \
+        {                                                          \
+            output_buffer[k + m * K].re = e[m].re + o[m].re;       \
+            output_buffer[k + m * K].im = e[m].im + o[m].im;       \
             output_buffer[k + (m + 4) * K].re = e[m].re - o[m].re; \
             output_buffer[k + (m + 4) * K].im = e[m].im - o[m].im; \
-        } \
-    } while (0)
-
-//==============================================================================
-// APPLY PRECOMPUTED TWIDDLES - IDENTICAL for forward/inverse
-//==============================================================================
-
-/**
- * @brief Scalar: Apply stage twiddles to lanes 1-7
- * 
- * stage_tw layout: [W^(1*k), W^(2*k), ..., W^(7*k)] for each k
- *
- * This macro multiplies the input lanes 1 through 7 by precomputed twiddle factors for the current stage.
- * It is the first step in the radix-8 butterfly, preparing inputs for the sub-butterflies.
- */
-#define APPLY_STAGE_TWIDDLES_SCALAR(k, x, stage_tw) \
-    do { \
-        const fft_data *w_ptr = &stage_tw[(k)*7]; \
-        for (int j = 1; j <= 7; j++) { \
-            fft_data a = x[j]; \
-            x[j].re = a.re * w_ptr[j-1].re - a.im * w_ptr[j-1].im; \
-            x[j].im = a.re * w_ptr[j-1].im + a.im * w_ptr[j-1].re; \
-        } \
+        }                                                          \
     } while (0)
 
 /**
- * @brief AVX2: Apply stage twiddles for 2 butterflies (kk and kk+1)
- *
- * This macro applies precomputed twiddle factors to inputs for two simultaneous butterflies using AVX2.
- * It loads twiddles in AoS format and uses CMUL_FMA_AOS for multiplication, optimizing for SIMD parallelism.
+ * @brief Apply stage twiddles for scalar
  */
-#ifdef __AVX2__
-#define APPLY_STAGE_TWIDDLES_AVX2(kk, x, stage_tw) \
-    do { \
-        for (int j = 1; j <= 7; j++) { \
-            __m256d w = load2_aos(&stage_tw[(kk)*7 + (j-1)], &stage_tw[(kk+1)*7 + (j-1)]); \
-            CMUL_FMA_AOS(x[j], x[j], w); \
-        } \
+#define APPLY_STAGE_TWIDDLES_SCALAR(k, x, stage_tw)                    \
+    do                                                                 \
+    {                                                                  \
+        const fft_data *w_ptr = &stage_tw[(k) * 7];                    \
+        for (int j = 1; j <= 7; j++)                                   \
+        {                                                              \
+            fft_data a = x[j];                                         \
+            x[j].re = a.re * w_ptr[j - 1].re - a.im * w_ptr[j - 1].im; \
+            x[j].im = a.re * w_ptr[j - 1].im + a.im * w_ptr[j - 1].re; \
+        }                                                              \
     } while (0)
-#endif
-
-//==============================================================================
-// DATA MOVEMENT - IDENTICAL for forward/inverse
-//==============================================================================
-
-/**
- * @brief Load 8 lanes for AVX2 (two butterflies: kk and kk+1).
- *
- * This macro loads input data for 8 lanes (0 to 7) from the sub_outputs buffer into SIMD registers.
- * It assumes AoS layout and loads two complex values per register (for two butterflies).
- */
-#ifdef __AVX2__
-#define LOAD_8_LANES_AVX2(kk, K, sub_outputs, x) \
-    do { \
-        x[0] = load2_aos(&sub_outputs[kk], &sub_outputs[(kk)+1]); \
-        for (int j = 1; j <= 7; j++) { \
-            x[j] = load2_aos(&sub_outputs[(kk)+j*K], &sub_outputs[(kk)+1+j*K]); \
-        } \
-    } while (0)
-#endif
-
-//==============================================================================
-// PREFETCHING - IDENTICAL for forward/inverse
-//==============================================================================
-
-/**
- * @brief Prefetch distances for L1, L2, and L3 caches.
- *
- * These constants define how far ahead to prefetch data in terms of indices.
- * They are tuned to improve memory access performance by bringing data into caches before it's needed.
- */
-#define PREFETCH_L1 16
-#define PREFETCH_L2 32
-#define PREFETCH_L3 64
-
-/**
- * @brief Prefetch 8 lanes ahead for AVX2.
- *
- * This macro issues prefetch instructions for future data accesses in the sub_outputs buffer.
- * It prefetches one base lane and seven additional strided lanes, using the specified cache hint.
- */
-#ifdef __AVX2__
-#define PREFETCH_8_LANES(k, K, distance, sub_outputs, hint) \
-    do { \
-        if ((k) + (distance) < K) { \
-            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)], hint); \
-            for (int j = 1; j < 8; j++) { \
-                _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+j*K], hint); \
-            } \
-        } \
-    } while (0)
-#endif
 
 #endif // FFT_RADIX8_MACROS_H
