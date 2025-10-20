@@ -30,17 +30,18 @@
 // COMPLEX MULTIPLICATION - AVX-512
 //==============================================================================
 
-#define CMUL_FMA_AOS_AVX512(out, a, w)                                    \
-    do                                                                    \
-    {                                                                     \
-        __m512d ar = _mm512_unpacklo_pd(a, a);                            \
-        __m512d ai = _mm512_unpackhi_pd(a, a);                            \
-        __m512d wr = _mm512_unpacklo_pd(w, w);                            \
-        __m512d wi = _mm512_unpackhi_pd(w, w);                            \
-        __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi));     \
-        __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr));     \
-        (out) = _mm512_unpacklo_pd(re, im);                               \
-    } while (0)
+#define CMUL_FMA_AOS_AVX512(out, a, w)                                   \
+do {                                                                      \
+    /* ar = [re0,re0,re1,re1,re2,re2,re3,re3] */                          \
+    __m512d ar = _mm512_shuffle_pd(a, a, 0x00);                           \
+    /* ai = [im0,im0,im1,im1,im2,im2,im3,im3] */                          \
+    __m512d ai = _mm512_shuffle_pd(a, a, 0xFF);                           \
+    __m512d wr = _mm512_shuffle_pd(w, w, 0x00);                           \
+    __m512d wi = _mm512_shuffle_pd(w, w, 0xFF);                           \
+    __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi));          \
+    __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr));          \
+    (out) = _mm512_unpacklo_pd(re, im); /* interleave back to AOS */      \
+} while (0)
 
 //==============================================================================
 // RADIX-4 BUTTERFLY CORE - AVX-512
