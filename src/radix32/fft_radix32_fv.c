@@ -10,7 +10,7 @@
 // 5. Radix-32 = 4×(8) decomposition
 //
 
-#include "fft_radix32.h"
+#include "fft_radix32_uniform.h"
 #include "simd_math.h"
 #include "fft_radix32_macros.h"
 

@@ -370,12 +370,18 @@
  *              radix-32 represents the pinnacle of single-stage FFT optimization
  *              for extremely large transforms on modern hardware.
  */
-void fft_radix32_butterfly(
-    fft_data *output_buffer,
-    fft_data *sub_outputs,
-    const fft_data *stage_tw,
-    int sub_len,
-    int transform_sign);
+void fft_radix32_fv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_data *restrict stage_tw,
+    int sub_len);
+
+
+void fft_radix32_bv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_data *restrict stage_tw,
+    int sub_len);
 
 #endif // FFT_RADIX32_H
 

@@ -1,6 +1,9 @@
 //==============================================================================
 // fft_radix11_bv.c - Radix-11 BACKWARD/INVERSE Butterfly (AVX-512 + AVX2 + Scalar)
 //==============================================================================
+#include "fft_radix11_uniform.h"
+#include "fft_radix11_macros.h"
+#include "highSpeedFFT.h"
 
 /**
  * @brief Radix-11 inverse DFT butterfly with multi-tier SIMD optimization

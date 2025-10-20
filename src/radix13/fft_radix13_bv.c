@@ -2,6 +2,7 @@
 // fft_radix13_bv.c - Radix-13 Butterfly (INVERSE Transform, Rader's Algorithm)
 //==============================================================================
 
+#include "fft_radix13_uniform.h"
 #include "fft_radix13_macros.h"
 #include "highSpeedFFT.h"
 

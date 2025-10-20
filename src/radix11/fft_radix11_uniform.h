@@ -317,12 +317,17 @@
  *          For randomly-sized problems, consider padding to power-of-2
  *          rather than using radix-11 unless performance critical.
  */
-void fft_radix11_butterfly(
+void fft_radix11_fv(
     fft_data *output_buffer,
     fft_data *sub_outputs,
     const fft_data *stage_tw,
-    int sub_len,
-    int transform_sign);
+    int sub_len);
+
+void fft_radix11_bv(
+    fft_data *output_buffer,
+    fft_data *sub_outputs,
+    const fft_data *stage_tw,
+    int sub_len);    
 
 #endif // FFT_RADIX3_H
 

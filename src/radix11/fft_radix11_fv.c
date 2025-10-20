@@ -2,6 +2,7 @@
 // fft_radix11_fv.c - Radix-11 FORWARD Butterfly (AVX-512 + AVX2 + Scalar)
 //==============================================================================
 
+#include "fft_radix11_uniform.h"
 #include "fft_radix11_macros.h"
 #include "highSpeedFFT.h"
 

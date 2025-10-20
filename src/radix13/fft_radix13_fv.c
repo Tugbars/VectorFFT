@@ -2,6 +2,7 @@
 // fft_radix13_fv.c - Radix-13 Butterfly (FORWARD Transform, Rader's Algorithm)
 //==============================================================================
 
+#include "fft_radix13_uniform.h"
 #include "fft_radix13_macros.h"
 #include "highSpeedFFT.h"
 

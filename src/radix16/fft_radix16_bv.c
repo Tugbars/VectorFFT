@@ -2,7 +2,7 @@
 // fft_radix16_bv.c - Inverse Radix-16 Butterfly (Optimized)
 //==============================================================================
 
-#include "fft_radix16.h"
+#include "fft_radix16_uniform.h"
 #include "simd_math.h"
 #include "fft_radix16_macros.h"
 

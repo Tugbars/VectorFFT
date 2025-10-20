@@ -358,12 +358,17 @@
  *              inefficiency" - it's expensive, but at least we're using
  *              the CPU cores to their full potential!
  */
-void fft_radix13_butterfly(
+void fft_radix13_bv(
     fft_data *output_buffer,
     fft_data *sub_outputs,
     const fft_data *stage_tw,
-    int sub_len,
-    int transform_sign);
+    int sub_len);
+
+    void fft_radix13_fv(
+    fft_data *output_buffer,
+    fft_data *sub_outputs,
+    const fft_data *stage_tw,
+    int sub_len);
 
 #endif // FFT_RADIX3_H
 
