@@ -8,6 +8,14 @@
 // - Direction in function names (_fv vs _bv)
 // - Shared implementation via macros
 //
+// OPTIMIZATION FEATURES:
+// - FMA (Fused Multiply-Add) for AVX2 and AVX-512
+// - Fused complex multiply-add operations in convolution
+// - Hoisted Rader twiddle broadcasts outside hot loops
+// - Streaming stores for large transforms (K >= 8192)
+// - Single-level prefetching with tuned distances
+// - Separate code paths for streaming vs normal stores (no branches in loops)
+//
 
 #ifndef FFT_RADIX7_MACROS_H
 #define FFT_RADIX7_MACROS_H
@@ -19,6 +27,12 @@
 // STREAMING THRESHOLD
 //==============================================================================
 
+/**
+ * @brief Threshold for switching to streaming stores
+ * 
+ * For K >= STREAM_THRESHOLD, use non-temporal stores to avoid cache pollution.
+ * Typical value: 8192 (produces ~230KB of output data with radix-7).
+ */
 #define STREAM_THRESHOLD 8192
 
 //==============================================================================
@@ -27,26 +41,24 @@
 
 #ifdef __AVX512F__
 
-
-#define CMUL_ADD_AVX512(acc, a, w) \
-    do { \
-        __m512d ar = _mm512_shuffle_pd(a, a, 0x00); \
-        __m512d ai = _mm512_shuffle_pd(a, a, 0xFF); \
-        __m512d wr = _mm512_shuffle_pd(w, w, 0x00); \
-        __m512d wi = _mm512_shuffle_pd(w, w, 0xFF); \
-        __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi)); \
-        __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr)); \
-        (acc) = _mm512_add_pd(acc, _mm512_unpacklo_pd(re, im)); \
-    } while (0)
-
 //==============================================================================
-// COMPLEX MULTIPLICATION - AVX-512 (CORRECTED)
+// COMPLEX MULTIPLICATION - AVX-512
 //==============================================================================
 
 /**
- * @brief Optimized complex multiply for AVX-512: out = a * w (4 complex values)
+ * @brief Complex multiply for AVX-512: out = a * w (4 complex values)
  * 
- * CORRECTED: Uses shuffle_pd instead of unpacklo/hi
+ * Computes (ar + i*ai) * (wr + i*wi) = (ar*wr - ai*wi) + i*(ar*wi + ai*wr)
+ * 
+ * Uses FMA (fused multiply-add) for optimal performance:
+ * - re = ar*wr - ai*wi  (via fmsub)
+ * - im = ar*wi + ai*wr  (via fmadd)
+ * 
+ * @param out Result vector (4 complex doubles)
+ * @param a   First operand (4 complex doubles)
+ * @param w   Second operand (4 complex doubles, typically twiddle)
+ * 
+ * @note Uses shuffle_pd instead of unpack for correct lane handling
  */
 #define CMUL_FMA_R7_AVX512(out, a, w)                                     \
     do                                                                    \
@@ -61,9 +73,46 @@
     } while (0)
 
 //==============================================================================
+// FUSED COMPLEX MULTIPLY-ADD - AVX-512
+//==============================================================================
+
+/**
+ * @brief Fused complex multiply-add: acc += a * w (4 complex values)
+ * 
+ * Performs complex multiplication and accumulates into acc.
+ * More efficient than separate CMUL + ADD due to reduced register pressure.
+ * 
+ * Critical for Rader convolution performance (36 multiply-adds per butterfly).
+ * 
+ * @param acc Accumulator (modified in-place)
+ * @param a   First operand
+ * @param w   Second operand (twiddle)
+ */
+#define CMUL_ADD_FMA_R7_AVX512(acc, a, w)                                 \
+    do                                                                    \
+    {                                                                     \
+        __m512d ar = _mm512_shuffle_pd(a, a, 0x00);                       \
+        __m512d ai = _mm512_shuffle_pd(a, a, 0xFF);                       \
+        __m512d wr = _mm512_shuffle_pd(w, w, 0x00);                       \
+        __m512d wi = _mm512_shuffle_pd(w, w, 0xFF);                       \
+        __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi));     \
+        __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr));     \
+        (acc) = _mm512_add_pd(acc, _mm512_unpacklo_pd(re, im));          \
+    } while (0)
+
+//==============================================================================
 // RADER Y0 COMPUTATION - AVX-512
 //==============================================================================
 
+/**
+ * @brief Compute DC component y0 = sum of all 7 inputs
+ * 
+ * First step of Rader's algorithm: compute the DC (zero-frequency) component.
+ * This is simply the sum of all input values.
+ * 
+ * @param x0-x6 Input values (7 lanes)
+ * @param y0    Output DC component
+ */
 #define COMPUTE_Y0_R7_AVX512(x0, x1, x2, x3, x4, x5, x6, y0)              \
     do {                                                                   \
         y0 = _mm512_add_pd(_mm512_add_pd(_mm512_add_pd(x0, x1),           \
@@ -72,9 +121,20 @@
     } while (0)
 
 //==============================================================================
-// RADER TWIDDLE BROADCAST - AVX-512 (UNROLLED)
+// RADER TWIDDLE BROADCAST - AVX-512
 //==============================================================================
 
+/**
+ * @brief Broadcast 6 Rader twiddle factors to AVX-512 registers
+ * 
+ * Each twiddle is replicated 4 times (for 4 parallel butterflies).
+ * Layout: [re0, im0, re1, im1, re2, im2, re3, im3] where all copies are identical.
+ * 
+ * This should be called ONCE before the butterfly loop, not inside it.
+ * 
+ * @param rader_tw Input twiddle array (6 complex doubles)
+ * @param tw_brd   Output broadcast array (6 AVX-512 vectors)
+ */
 #define BROADCAST_RADER_TWIDDLES_R7_AVX512(rader_tw, tw_brd)              \
     do {                                                                   \
         tw_brd[0] = _mm512_set_pd(                                         \
@@ -110,102 +170,96 @@
     } while (0)
 
 //==============================================================================
-// RADER CYCLIC CONVOLUTION - AVX-512 (FIXED)
+// RADER CYCLIC CONVOLUTION - AVX-512
 //==============================================================================
 
 /**
- * @brief 6-point cyclic convolution for AVX-512 (4 butterflies)
+ * @brief 6-point cyclic convolution for Rader's algorithm (4 butterflies)
  * 
- * FIXED: Proper initialization and temporary variable usage
+ * Core of Rader's algorithm: convolve permuted inputs with precomputed twiddles.
+ * Computes v[q] = sum_{l=0}^{5} tx[l] * tw[(q-l) mod 6] for q=0..5
+ * 
+ * Uses fused multiply-add operations for optimal performance.
+ * This is the most expensive part of radix-7 (36 complex multiplies per butterfly).
+ * 
+ * @param tx0-tx5 Permuted input values
+ * @param tw_brd  Broadcast Rader twiddles (6 vectors)
+ * @param v0-v5   Output convolution results
  */
 #define RADER_CONVOLUTION_R7_AVX512(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd, \
                                     v0, v1, v2, v3, v4, v5)               \
     do {                                                                   \
-        __m512d tmp;                                                       \
+        /* Initialize accumulators to zero */                              \
+        v0 = _mm512_setzero_pd();                                          \
+        v1 = _mm512_setzero_pd();                                          \
+        v2 = _mm512_setzero_pd();                                          \
+        v3 = _mm512_setzero_pd();                                          \
+        v4 = _mm512_setzero_pd();                                          \
+        v5 = _mm512_setzero_pd();                                          \
         \
         /* q=0: indices [0,5,4,3,2,1] */                                   \
-        CMUL_FMA_R7_AVX512(v0, tx0, tw_brd[0]);                            \
-        CMUL_FMA_R7_AVX512(tmp, tx1, tw_brd[5]);                           \
-        v0 = _mm512_add_pd(v0, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx2, tw_brd[4]);                           \
-        v0 = _mm512_add_pd(v0, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx3, tw_brd[3]);                           \
-        v0 = _mm512_add_pd(v0, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx4, tw_brd[2]);                           \
-        v0 = _mm512_add_pd(v0, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx5, tw_brd[1]);                           \
-        v0 = _mm512_add_pd(v0, tmp);                                       \
+        CMUL_ADD_FMA_R7_AVX512(v0, tx0, tw_brd[0]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v0, tx1, tw_brd[5]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v0, tx2, tw_brd[4]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v0, tx3, tw_brd[3]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v0, tx4, tw_brd[2]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v0, tx5, tw_brd[1]);                        \
         \
         /* q=1: indices [1,0,5,4,3,2] */                                   \
-        CMUL_FMA_R7_AVX512(v1, tx0, tw_brd[1]);                            \
-        CMUL_FMA_R7_AVX512(tmp, tx1, tw_brd[0]);                           \
-        v1 = _mm512_add_pd(v1, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx2, tw_brd[5]);                           \
-        v1 = _mm512_add_pd(v1, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx3, tw_brd[4]);                           \
-        v1 = _mm512_add_pd(v1, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx4, tw_brd[3]);                           \
-        v1 = _mm512_add_pd(v1, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx5, tw_brd[2]);                           \
-        v1 = _mm512_add_pd(v1, tmp);                                       \
+        CMUL_ADD_FMA_R7_AVX512(v1, tx0, tw_brd[1]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v1, tx1, tw_brd[0]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v1, tx2, tw_brd[5]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v1, tx3, tw_brd[4]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v1, tx4, tw_brd[3]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v1, tx5, tw_brd[2]);                        \
         \
         /* q=2: indices [2,1,0,5,4,3] */                                   \
-        CMUL_FMA_R7_AVX512(v2, tx0, tw_brd[2]);                            \
-        CMUL_FMA_R7_AVX512(tmp, tx1, tw_brd[1]);                           \
-        v2 = _mm512_add_pd(v2, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx2, tw_brd[0]);                           \
-        v2 = _mm512_add_pd(v2, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx3, tw_brd[5]);                           \
-        v2 = _mm512_add_pd(v2, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx4, tw_brd[4]);                           \
-        v2 = _mm512_add_pd(v2, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx5, tw_brd[3]);                           \
-        v2 = _mm512_add_pd(v2, tmp);                                       \
+        CMUL_ADD_FMA_R7_AVX512(v2, tx0, tw_brd[2]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v2, tx1, tw_brd[1]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v2, tx2, tw_brd[0]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v2, tx3, tw_brd[5]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v2, tx4, tw_brd[4]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v2, tx5, tw_brd[3]);                        \
         \
         /* q=3: indices [3,2,1,0,5,4] */                                   \
-        CMUL_FMA_R7_AVX512(v3, tx0, tw_brd[3]);                            \
-        CMUL_FMA_R7_AVX512(tmp, tx1, tw_brd[2]);                           \
-        v3 = _mm512_add_pd(v3, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx2, tw_brd[1]);                           \
-        v3 = _mm512_add_pd(v3, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx3, tw_brd[0]);                           \
-        v3 = _mm512_add_pd(v3, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx4, tw_brd[5]);                           \
-        v3 = _mm512_add_pd(v3, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx5, tw_brd[4]);                           \
-        v3 = _mm512_add_pd(v3, tmp);                                       \
+        CMUL_ADD_FMA_R7_AVX512(v3, tx0, tw_brd[3]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v3, tx1, tw_brd[2]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v3, tx2, tw_brd[1]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v3, tx3, tw_brd[0]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v3, tx4, tw_brd[5]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v3, tx5, tw_brd[4]);                        \
         \
         /* q=4: indices [4,3,2,1,0,5] */                                   \
-        CMUL_FMA_R7_AVX512(v4, tx0, tw_brd[4]);                            \
-        CMUL_FMA_R7_AVX512(tmp, tx1, tw_brd[3]);                           \
-        v4 = _mm512_add_pd(v4, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx2, tw_brd[2]);                           \
-        v4 = _mm512_add_pd(v4, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx3, tw_brd[1]);                           \
-        v4 = _mm512_add_pd(v4, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx4, tw_brd[0]);                           \
-        v4 = _mm512_add_pd(v4, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx5, tw_brd[5]);                           \
-        v4 = _mm512_add_pd(v4, tmp);                                       \
+        CMUL_ADD_FMA_R7_AVX512(v4, tx0, tw_brd[4]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v4, tx1, tw_brd[3]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v4, tx2, tw_brd[2]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v4, tx3, tw_brd[1]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v4, tx4, tw_brd[0]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v4, tx5, tw_brd[5]);                        \
         \
         /* q=5: indices [5,4,3,2,1,0] */                                   \
-        CMUL_FMA_R7_AVX512(v5, tx0, tw_brd[5]);                            \
-        CMUL_FMA_R7_AVX512(tmp, tx1, tw_brd[4]);                           \
-        v5 = _mm512_add_pd(v5, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx2, tw_brd[3]);                           \
-        v5 = _mm512_add_pd(v5, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx3, tw_brd[2]);                           \
-        v5 = _mm512_add_pd(v5, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx4, tw_brd[1]);                           \
-        v5 = _mm512_add_pd(v5, tmp);                                       \
-        CMUL_FMA_R7_AVX512(tmp, tx5, tw_brd[0]);                           \
-        v5 = _mm512_add_pd(v5, tmp);                                       \
+        CMUL_ADD_FMA_R7_AVX512(v5, tx0, tw_brd[5]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v5, tx1, tw_brd[4]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v5, tx2, tw_brd[3]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v5, tx3, tw_brd[2]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v5, tx4, tw_brd[1]);                        \
+        CMUL_ADD_FMA_R7_AVX512(v5, tx5, tw_brd[0]);                        \
     } while (0)
 
 //==============================================================================
 // OUTPUT ASSEMBLY - AVX-512
 //==============================================================================
 
+/**
+ * @brief Assemble final outputs using inverse permutation
+ * 
+ * Adds DC component (x0) to each convolution result (v0-v5) and
+ * places them in the correct output positions according to out_perm=[1,5,4,6,2,3].
+ * 
+ * @param x0    DC component (copied to all non-DC outputs)
+ * @param v0-v5 Convolution results
+ * @param y0-y6 Final output values (7 lanes)
+ */
 #define ASSEMBLE_OUTPUTS_R7_AVX512(x0, v0, v1, v2, v3, v4, v5,           \
                                    y0, y1, y2, y3, y4, y5, y6)           \
     do {                                                                  \
@@ -221,6 +275,17 @@
 // APPLY PRECOMPUTED STAGE TWIDDLES - AVX-512
 //==============================================================================
 
+/**
+ * @brief Apply inter-stage twiddle factors to inputs x1-x6
+ * 
+ * In multi-stage FFTs, each butterfly needs to multiply by twiddle factors
+ * that depend on its position in the stage. x0 is never multiplied (always 1).
+ * 
+ * @param kk       Butterfly index (base of 4 parallel butterflies)
+ * @param x1-x6    Input/output values (modified in-place)
+ * @param stage_tw Stage twiddle array (6 twiddles per butterfly)
+ * @param sub_len  Length of sub-transform (skip if sub_len==1)
+ */
 #define APPLY_STAGE_TWIDDLES_R7_AVX512(kk, x1, x2, x3, x4, x5, x6, stage_tw, sub_len) \
     do {                                                                               \
         if (sub_len > 1) {                                                             \
@@ -262,6 +327,17 @@
 // DATA MOVEMENT - AVX-512
 //==============================================================================
 
+/**
+ * @brief Load 7 lanes of data for 4 parallel butterflies
+ * 
+ * Loads data in AoS (Array of Structures) format where each butterfly's
+ * 7 inputs are strided by K positions in memory.
+ * 
+ * @param kk          Base butterfly index
+ * @param K           Stride between lanes
+ * @param sub_outputs Input data array
+ * @param x0-x6       Output registers (7 AVX-512 vectors)
+ */
 #define LOAD_7_LANES_AVX512(kk, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6) \
     do {                                                                     \
         x0 = load4_aos(&sub_outputs[kk],                                     \
@@ -294,6 +370,12 @@
                        &sub_outputs[(kk)+3+6*K]);                            \
     } while (0)
 
+/**
+ * @brief Store 7 lanes of data for 4 parallel butterflies (normal stores)
+ * 
+ * Uses regular unaligned stores. Suitable for small/medium transforms
+ * where data fits in cache.
+ */
 #define STORE_7_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6) \
     do {                                                                        \
         STOREU_PD512(&output_buffer[kk].re, y0);                                \
@@ -305,6 +387,14 @@
         STOREU_PD512(&output_buffer[(kk)+6*K].re, y6);                          \
     } while (0)
 
+/**
+ * @brief Store 7 lanes of data using streaming (non-temporal) stores
+ * 
+ * For large transforms (K >= STREAM_THRESHOLD), streaming stores avoid
+ * polluting the cache with write-allocate traffic.
+ * 
+ * @note Requires _mm_sfence() after the loop
+ */
 #define STORE_7_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6) \
     do {                                                                               \
         _mm512_stream_pd(&output_buffer[kk].re, y0);                                   \
@@ -317,12 +407,27 @@
     } while (0)
 
 //==============================================================================
-// PREFETCHING - AVX-512 (UNROLLED)
+// PREFETCHING - AVX-512
 //==============================================================================
 
+/** @brief Prefetch distance for L1 cache (4 iterations ahead) */
 #define PREFETCH_L1_R7_AVX512 16
+
+/** @brief Prefetch distance for twiddle factors */
 #define PREFETCH_TWIDDLE_R7_AVX512 16
 
+/**
+ * @brief Prefetch all 7 lanes for upcoming butterflies
+ * 
+ * Issues prefetch hints for data that will be needed in future iterations.
+ * Single-level prefetch to L1 cache to avoid pollution.
+ * 
+ * @param k         Current butterfly index
+ * @param K         Stride between lanes
+ * @param distance  How many iterations ahead to prefetch
+ * @param sub_outputs Data array to prefetch from
+ * @param hint      Cache hint (_MM_HINT_T0 for temporal L1)
+ */
 #define PREFETCH_7_LANES_R7_AVX512(k, K, distance, sub_outputs, hint)             \
     do {                                                                          \
         if ((k) + (distance) < K) {                                               \
@@ -340,6 +445,15 @@
 // RADER PERMUTATIONS
 //==============================================================================
 
+/**
+ * @brief Permute non-DC inputs according to Rader's algorithm
+ * 
+ * Generator g=3 for prime 7 produces permutation: [1,3,2,6,4,5]
+ * This reorders inputs before the cyclic convolution.
+ * 
+ * @param x1-x6   Original inputs
+ * @param tx0-tx5 Permuted outputs
+ */
 #define PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5) \
     do { \
         tx0 = x1; \
@@ -351,101 +465,153 @@
     } while (0)
 
 //==============================================================================
-// COMPLETE BUTTERFLY PIPELINE - AVX-512
+// COMPLETE BUTTERFLY PIPELINES - AVX-512
 //==============================================================================
 
+/**
+ * @brief Complete radix-7 butterfly pipeline with internal broadcast (forward)
+ * 
+ * Processes 4 butterflies in parallel. Broadcasts Rader twiddles inside the macro.
+ * Use this version when Rader twiddles cannot be hoisted.
+ * 
+ * @param kk            Butterfly index (0, 4, 8, ...)
+ * @param K             Sub-transform length
+ * @param sub_outputs   Input data
+ * @param stage_tw      Stage twiddle factors
+ * @param rader_tw      Rader twiddle factors (6 complex doubles)
+ * @param output_buffer Output data
+ * @param sub_len       Length indicator (controls stage twiddle application)
+ */
 #define RADIX7_PIPELINE_4_FV_AVX512(kk, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
     do {                                                                                             \
         __m512d x0, x1, x2, x3, x4, x5, x6;                                                          \
         LOAD_7_LANES_AVX512(kk, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6);                         \
-                                                                                                     \
         APPLY_STAGE_TWIDDLES_R7_AVX512(kk, x1, x2, x3, x4, x5, x6, stage_tw, sub_len);               \
-                                                                                                     \
         __m512d y0;                                                                                  \
         COMPUTE_Y0_R7_AVX512(x0, x1, x2, x3, x4, x5, x6, y0);                                        \
-                                                                                                     \
         __m512d tx0, tx1, tx2, tx3, tx4, tx5;                                                        \
         PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5);                    \
-                                                                                                     \
         __m512d tw_brd[6];                                                                           \
         BROADCAST_RADER_TWIDDLES_R7_AVX512(rader_tw, tw_brd);                                        \
-                                                                                                     \
         __m512d v0, v1, v2, v3, v4, v5;                                                              \
         RADER_CONVOLUTION_R7_AVX512(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd,                            \
                                     v0, v1, v2, v3, v4, v5);                                         \
-                                                                                                     \
         __m512d y1, y2, y3, y4, y5, y6;                                                              \
         ASSEMBLE_OUTPUTS_R7_AVX512(x0, v0, v1, v2, v3, v4, v5,                                       \
                                    y0, y1, y2, y3, y4, y5, y6);                                      \
-                                                                                                     \
         STORE_7_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6);                      \
     } while (0)
 
+/**
+ * @brief Complete radix-7 butterfly pipeline with hoisted broadcast (forward, normal stores)
+ * 
+ * More efficient version where Rader twiddles are broadcast outside the loop.
+ * Use this when possible for ~1-2% speedup.
+ * 
+ * @param tw_brd Pre-broadcast Rader twiddles (array of 6 AVX-512 vectors)
+ */
+#define RADIX7_PIPELINE_4_FV_AVX512_HOISTED(kk, K, sub_outputs, stage_tw, tw_brd, output_buffer, sub_len) \
+    do {                                                                                                   \
+        __m512d x0, x1, x2, x3, x4, x5, x6;                                                                \
+        LOAD_7_LANES_AVX512(kk, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6);                               \
+        APPLY_STAGE_TWIDDLES_R7_AVX512(kk, x1, x2, x3, x4, x5, x6, stage_tw, sub_len);                     \
+        __m512d y0;                                                                                        \
+        COMPUTE_Y0_R7_AVX512(x0, x1, x2, x3, x4, x5, x6, y0);                                              \
+        __m512d tx0, tx1, tx2, tx3, tx4, tx5;                                                              \
+        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5);                          \
+        __m512d v0, v1, v2, v3, v4, v5;                                                                    \
+        RADER_CONVOLUTION_R7_AVX512(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd,                                  \
+                                    v0, v1, v2, v3, v4, v5);                                               \
+        __m512d y1, y2, y3, y4, y5, y6;                                                                    \
+        ASSEMBLE_OUTPUTS_R7_AVX512(x0, v0, v1, v2, v3, v4, v5,                                             \
+                                   y0, y1, y2, y3, y4, y5, y6);                                            \
+        STORE_7_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6);                            \
+    } while (0)
+
+/**
+ * @brief Radix-7 butterfly with hoisted broadcast and streaming stores (forward)
+ */
+#define RADIX7_PIPELINE_4_FV_AVX512_STREAM_HOISTED(kk, K, sub_outputs, stage_tw, tw_brd, output_buffer, sub_len) \
+    do {                                                                                                          \
+        __m512d x0, x1, x2, x3, x4, x5, x6;                                                                       \
+        LOAD_7_LANES_AVX512(kk, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6);                                      \
+        APPLY_STAGE_TWIDDLES_R7_AVX512(kk, x1, x2, x3, x4, x5, x6, stage_tw, sub_len);                            \
+        __m512d y0;                                                                                               \
+        COMPUTE_Y0_R7_AVX512(x0, x1, x2, x3, x4, x5, x6, y0);                                                     \
+        __m512d tx0, tx1, tx2, tx3, tx4, tx5;                                                                     \
+        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5);                                 \
+        __m512d v0, v1, v2, v3, v4, v5;                                                                           \
+        RADER_CONVOLUTION_R7_AVX512(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd,                                         \
+                                    v0, v1, v2, v3, v4, v5);                                                      \
+        __m512d y1, y2, y3, y4, y5, y6;                                                                           \
+        ASSEMBLE_OUTPUTS_R7_AVX512(x0, v0, v1, v2, v3, v4, v5,                                                    \
+                                   y0, y1, y2, y3, y4, y5, y6);                                                   \
+        STORE_7_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6);                            \
+    } while (0)
+
+/**
+ * @brief Complete radix-7 butterfly pipeline (inverse, internal broadcast)
+ */
 #define RADIX7_PIPELINE_4_BV_AVX512(kk, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
     do {                                                                                             \
         __m512d x0, x1, x2, x3, x4, x5, x6;                                                          \
         LOAD_7_LANES_AVX512(kk, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6);                         \
-                                                                                                     \
         APPLY_STAGE_TWIDDLES_R7_AVX512(kk, x1, x2, x3, x4, x5, x6, stage_tw, sub_len);               \
-                                                                                                     \
         __m512d y0;                                                                                  \
         COMPUTE_Y0_R7_AVX512(x0, x1, x2, x3, x4, x5, x6, y0);                                        \
-                                                                                                     \
         __m512d tx0, tx1, tx2, tx3, tx4, tx5;                                                        \
         PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5);                    \
-                                                                                                     \
         __m512d tw_brd[6];                                                                           \
         BROADCAST_RADER_TWIDDLES_R7_AVX512(rader_tw, tw_brd);                                        \
-                                                                                                     \
         __m512d v0, v1, v2, v3, v4, v5;                                                              \
         RADER_CONVOLUTION_R7_AVX512(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd,                            \
                                     v0, v1, v2, v3, v4, v5);                                         \
-                                                                                                     \
         __m512d y1, y2, y3, y4, y5, y6;                                                              \
         ASSEMBLE_OUTPUTS_R7_AVX512(x0, v0, v1, v2, v3, v4, v5,                                       \
                                    y0, y1, y2, y3, y4, y5, y6);                                      \
-                                                                                                     \
         STORE_7_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6);                      \
     } while (0)
 
-#define RADIX7_PIPELINE_4_FV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
-    do {                                                                                                    \
-        __m512d x0, x1, x2, x3, x4, x5, x6;                                                                 \
-        LOAD_7_LANES_AVX512(kk, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6);                                \
-        APPLY_STAGE_TWIDDLES_R7_AVX512(kk, x1, x2, x3, x4, x5, x6, stage_tw, sub_len);                      \
-        __m512d y0;                                                                                         \
-        COMPUTE_Y0_R7_AVX512(x0, x1, x2, x3, x4, x5, x6, y0);                                               \
-        __m512d tx0, tx1, tx2, tx3, tx4, tx5;                                                               \
-        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5);                           \
-        __m512d tw_brd[6];                                                                                  \
-        BROADCAST_RADER_TWIDDLES_R7_AVX512(rader_tw, tw_brd);                                               \
-        __m512d v0, v1, v2, v3, v4, v5;                                                                     \
-        RADER_CONVOLUTION_R7_AVX512(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd,                                   \
-                                    v0, v1, v2, v3, v4, v5);                                                \
-        __m512d y1, y2, y3, y4, y5, y6;                                                                     \
-        ASSEMBLE_OUTPUTS_R7_AVX512(x0, v0, v1, v2, v3, v4, v5,                                              \
-                                   y0, y1, y2, y3, y4, y5, y6);                                             \
-        STORE_7_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6);                      \
+/**
+ * @brief Radix-7 butterfly with hoisted broadcast (inverse, normal stores)
+ */
+#define RADIX7_PIPELINE_4_BV_AVX512_HOISTED(kk, K, sub_outputs, stage_tw, tw_brd, output_buffer, sub_len) \
+    do {                                                                                                   \
+        __m512d x0, x1, x2, x3, x4, x5, x6;                                                                \
+        LOAD_7_LANES_AVX512(kk, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6);                               \
+        APPLY_STAGE_TWIDDLES_R7_AVX512(kk, x1, x2, x3, x4, x5, x6, stage_tw, sub_len);                     \
+        __m512d y0;                                                                                        \
+        COMPUTE_Y0_R7_AVX512(x0, x1, x2, x3, x4, x5, x6, y0);                                              \
+        __m512d tx0, tx1, tx2, tx3, tx4, tx5;                                                              \
+        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5);                          \
+        __m512d v0, v1, v2, v3, v4, v5;                                                                    \
+        RADER_CONVOLUTION_R7_AVX512(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd,                                  \
+                                    v0, v1, v2, v3, v4, v5);                                               \
+        __m512d y1, y2, y3, y4, y5, y6;                                                                    \
+        ASSEMBLE_OUTPUTS_R7_AVX512(x0, v0, v1, v2, v3, v4, v5,                                             \
+                                   y0, y1, y2, y3, y4, y5, y6);                                            \
+        STORE_7_LANES_AVX512(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6);                            \
     } while (0)
 
-#define RADIX7_PIPELINE_4_BV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
-    do {                                                                                                    \
-        __m512d x0, x1, x2, x3, x4, x5, x6;                                                                 \
-        LOAD_7_LANES_AVX512(kk, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6);                                \
-        APPLY_STAGE_TWIDDLES_R7_AVX512(kk, x1, x2, x3, x4, x5, x6, stage_tw, sub_len);                      \
-        __m512d y0;                                                                                         \
-        COMPUTE_Y0_R7_AVX512(x0, x1, x2, x3, x4, x5, x6, y0);                                               \
-        __m512d tx0, tx1, tx2, tx3, tx4, tx5;                                                               \
-        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5);                           \
-        __m512d tw_brd[6];                                                                                  \
-        BROADCAST_RADER_TWIDDLES_R7_AVX512(rader_tw, tw_brd);                                               \
-        __m512d v0, v1, v2, v3, v4, v5;                                                                     \
-        RADER_CONVOLUTION_R7_AVX512(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd,                                   \
-                                    v0, v1, v2, v3, v4, v5);                                                \
-        __m512d y1, y2, y3, y4, y5, y6;                                                                     \
-        ASSEMBLE_OUTPUTS_R7_AVX512(x0, v0, v1, v2, v3, v4, v5,                                              \
-                                   y0, y1, y2, y3, y4, y5, y6);                                             \
-        STORE_7_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6);                      \
+/**
+ * @brief Radix-7 butterfly with hoisted broadcast and streaming stores (inverse)
+ */
+#define RADIX7_PIPELINE_4_BV_AVX512_STREAM_HOISTED(kk, K, sub_outputs, stage_tw, tw_brd, output_buffer, sub_len) \
+    do {                                                                                                          \
+        __m512d x0, x1, x2, x3, x4, x5, x6;                                                                       \
+        LOAD_7_LANES_AVX512(kk, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6);                                      \
+        APPLY_STAGE_TWIDDLES_R7_AVX512(kk, x1, x2, x3, x4, x5, x6, stage_tw, sub_len);                            \
+        __m512d y0;                                                                                               \
+        COMPUTE_Y0_R7_AVX512(x0, x1, x2, x3, x4, x5, x6, y0);                                                     \
+        __m512d tx0, tx1, tx2, tx3, tx4, tx5;                                                                     \
+        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5);                                 \
+        __m512d v0, v1, v2, v3, v4, v5;                                                                           \
+        RADER_CONVOLUTION_R7_AVX512(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd,                                         \
+                                    v0, v1, v2, v3, v4, v5);                                                      \
+        __m512d y1, y2, y3, y4, y5, y6;                                                                           \
+        ASSEMBLE_OUTPUTS_R7_AVX512(x0, v0, v1, v2, v3, v4, v5,                                                    \
+                                   y0, y1, y2, y3, y4, y5, y6);                                                   \
+        STORE_7_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2, y3, y4, y5, y6);                            \
     } while (0)
 
 #endif // __AVX512F__
@@ -457,10 +623,15 @@
 #ifdef __AVX2__
 
 //==============================================================================
-// COMPLEX MULTIPLICATION - AVX2 with FMA
+// COMPLEX MULTIPLICATION - AVX2
 //==============================================================================
 
-#if defined(__AVX2__)
+/**
+ * @brief Complex multiply for AVX2: out = a * w (2 complex values)
+ * 
+ * Uses FMA if available (Haswell+), falls back to separate mul/add on Ivy Bridge.
+ */
+#if defined(__FMA__)
 #define CMUL_FMA_R7_AVX2(out, a, w)                                       \
     do                                                                    \
     {                                                                     \
@@ -477,9 +648,42 @@
 #endif
 
 //==============================================================================
+// FUSED COMPLEX MULTIPLY-ADD - AVX2
+//==============================================================================
+
+/**
+ * @brief Fused complex multiply-add: acc += a * w (2 complex values)
+ * 
+ * Critical for Rader convolution performance on AVX2 systems.
+ */
+#if defined(__FMA__)
+#define CMUL_ADD_FMA_R7_AVX2(acc, a, w)                                   \
+    do                                                                    \
+    {                                                                     \
+        __m256d ar = _mm256_unpacklo_pd(a, a);                            \
+        __m256d ai = _mm256_unpackhi_pd(a, a);                            \
+        __m256d wr = _mm256_unpacklo_pd(w, w);                            \
+        __m256d wi = _mm256_unpackhi_pd(w, w);                            \
+        __m256d re = _mm256_fmsub_pd(ar, wr, _mm256_mul_pd(ai, wi));     \
+        __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr));     \
+        (acc) = _mm256_add_pd(acc, _mm256_unpacklo_pd(re, im));          \
+    } while (0)
+#else
+#define CMUL_ADD_FMA_R7_AVX2(acc, a, w)                                   \
+    do                                                                    \
+    {                                                                     \
+        __m256d tmp = cmul_avx2_aos(a, w);                                \
+        (acc) = _mm256_add_pd(acc, tmp);                                  \
+    } while (0)
+#endif
+
+//==============================================================================
 // Y0 COMPUTATION - AVX2
 //==============================================================================
 
+/**
+ * @brief Compute DC component (sum of all inputs)
+ */
 #define COMPUTE_Y0_R7_AVX2(x0, x1, x2, x3, x4, x5, x6, y0) \
     do { \
         y0 = _mm256_add_pd( \
@@ -491,6 +695,9 @@
 // APPLY STAGE TWIDDLES - AVX2
 //==============================================================================
 
+/**
+ * @brief Apply inter-stage twiddle factors (AVX2 version)
+ */
 #define APPLY_STAGE_TWIDDLES_R7_AVX2(k, x1, x2, x3, x4, x5, x6, stage_tw, sub_len) \
     do { \
         if (sub_len > 1) { \
@@ -501,19 +708,22 @@
             __m256d w5 = load2_aos(&stage_tw[6*(k)+4], &stage_tw[6*(k+1)+4]); \
             __m256d w6 = load2_aos(&stage_tw[6*(k)+5], &stage_tw[6*(k+1)+5]); \
             \
-            x1 = cmul_avx2_aos(x1, w1); \
-            x2 = cmul_avx2_aos(x2, w2); \
-            x3 = cmul_avx2_aos(x3, w3); \
-            x4 = cmul_avx2_aos(x4, w4); \
-            x5 = cmul_avx2_aos(x5, w5); \
-            x6 = cmul_avx2_aos(x6, w6); \
+            CMUL_FMA_R7_AVX2(x1, x1, w1); \
+            CMUL_FMA_R7_AVX2(x2, x2, w2); \
+            CMUL_FMA_R7_AVX2(x3, x3, w3); \
+            CMUL_FMA_R7_AVX2(x4, x4, w4); \
+            CMUL_FMA_R7_AVX2(x5, x5, w5); \
+            CMUL_FMA_R7_AVX2(x6, x6, w6); \
         } \
     } while (0)
 
 //==============================================================================
-// BROADCAST RADER TWIDDLES - AVX2 (UNROLLED)
+// BROADCAST RADER TWIDDLES - AVX2
 //==============================================================================
 
+/**
+ * @brief Broadcast 6 Rader twiddles for AVX2 (2 parallel butterflies)
+ */
 #define BROADCAST_RADER_TWIDDLES_R7_AVX2(rader_tw, tw_brd) \
     do { \
         tw_brd[0] = _mm256_set_pd(rader_tw[0].im, rader_tw[0].re, \
@@ -531,97 +741,74 @@
     } while (0)
 
 //==============================================================================
-// RADER CYCLIC CONVOLUTION - AVX2 (FIXED)
+// RADER CYCLIC CONVOLUTION - AVX2
 //==============================================================================
 
+/**
+ * @brief 6-point cyclic convolution for AVX2 (2 butterflies)
+ * 
+ * Uses fused multiply-add operations when FMA is available.
+ */
 #define RADER_CONVOLUTION_R7_AVX2(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd, \
                                    v0, v1, v2, v3, v4, v5) \
     do { \
-        __m256d tmp; \
+        v0 = _mm256_setzero_pd(); \
+        v1 = _mm256_setzero_pd(); \
+        v2 = _mm256_setzero_pd(); \
+        v3 = _mm256_setzero_pd(); \
+        v4 = _mm256_setzero_pd(); \
+        v5 = _mm256_setzero_pd(); \
         \
-        /* q=0 */ \
-        v0 = cmul_avx2_aos(tx0, tw_brd[0]); \
-        tmp = cmul_avx2_aos(tx1, tw_brd[5]); \
-        v0 = _mm256_add_pd(v0, tmp); \
-        tmp = cmul_avx2_aos(tx2, tw_brd[4]); \
-        v0 = _mm256_add_pd(v0, tmp); \
-        tmp = cmul_avx2_aos(tx3, tw_brd[3]); \
-        v0 = _mm256_add_pd(v0, tmp); \
-        tmp = cmul_avx2_aos(tx4, tw_brd[2]); \
-        v0 = _mm256_add_pd(v0, tmp); \
-        tmp = cmul_avx2_aos(tx5, tw_brd[1]); \
-        v0 = _mm256_add_pd(v0, tmp); \
+        CMUL_ADD_FMA_R7_AVX2(v0, tx0, tw_brd[0]); \
+        CMUL_ADD_FMA_R7_AVX2(v0, tx1, tw_brd[5]); \
+        CMUL_ADD_FMA_R7_AVX2(v0, tx2, tw_brd[4]); \
+        CMUL_ADD_FMA_R7_AVX2(v0, tx3, tw_brd[3]); \
+        CMUL_ADD_FMA_R7_AVX2(v0, tx4, tw_brd[2]); \
+        CMUL_ADD_FMA_R7_AVX2(v0, tx5, tw_brd[1]); \
         \
-        /* q=1 */ \
-        v1 = cmul_avx2_aos(tx0, tw_brd[1]); \
-        tmp = cmul_avx2_aos(tx1, tw_brd[0]); \
-        v1 = _mm256_add_pd(v1, tmp); \
-        tmp = cmul_avx2_aos(tx2, tw_brd[5]); \
-        v1 = _mm256_add_pd(v1, tmp); \
-        tmp = cmul_avx2_aos(tx3, tw_brd[4]); \
-        v1 = _mm256_add_pd(v1, tmp); \
-        tmp = cmul_avx2_aos(tx4, tw_brd[3]); \
-        v1 = _mm256_add_pd(v1, tmp); \
-        tmp = cmul_avx2_aos(tx5, tw_brd[2]); \
-        v1 = _mm256_add_pd(v1, tmp); \
+        CMUL_ADD_FMA_R7_AVX2(v1, tx0, tw_brd[1]); \
+        CMUL_ADD_FMA_R7_AVX2(v1, tx1, tw_brd[0]); \
+        CMUL_ADD_FMA_R7_AVX2(v1, tx2, tw_brd[5]); \
+        CMUL_ADD_FMA_R7_AVX2(v1, tx3, tw_brd[4]); \
+        CMUL_ADD_FMA_R7_AVX2(v1, tx4, tw_brd[3]); \
+        CMUL_ADD_FMA_R7_AVX2(v1, tx5, tw_brd[2]); \
         \
-        /* q=2 */ \
-        v2 = cmul_avx2_aos(tx0, tw_brd[2]); \
-        tmp = cmul_avx2_aos(tx1, tw_brd[1]); \
-        v2 = _mm256_add_pd(v2, tmp); \
-        tmp = cmul_avx2_aos(tx2, tw_brd[0]); \
-        v2 = _mm256_add_pd(v2, tmp); \
-        tmp = cmul_avx2_aos(tx3, tw_brd[5]); \
-        v2 = _mm256_add_pd(v2, tmp); \
-        tmp = cmul_avx2_aos(tx4, tw_brd[4]); \
-        v2 = _mm256_add_pd(v2, tmp); \
-        tmp = cmul_avx2_aos(tx5, tw_brd[3]); \
-        v2 = _mm256_add_pd(v2, tmp); \
+        CMUL_ADD_FMA_R7_AVX2(v2, tx0, tw_brd[2]); \
+        CMUL_ADD_FMA_R7_AVX2(v2, tx1, tw_brd[1]); \
+        CMUL_ADD_FMA_R7_AVX2(v2, tx2, tw_brd[0]); \
+        CMUL_ADD_FMA_R7_AVX2(v2, tx3, tw_brd[5]); \
+        CMUL_ADD_FMA_R7_AVX2(v2, tx4, tw_brd[4]); \
+        CMUL_ADD_FMA_R7_AVX2(v2, tx5, tw_brd[3]); \
         \
-        /* q=3 */ \
-        v3 = cmul_avx2_aos(tx0, tw_brd[3]); \
-        tmp = cmul_avx2_aos(tx1, tw_brd[2]); \
-        v3 = _mm256_add_pd(v3, tmp); \
-        tmp = cmul_avx2_aos(tx2, tw_brd[1]); \
-        v3 = _mm256_add_pd(v3, tmp); \
-        tmp = cmul_avx2_aos(tx3, tw_brd[0]); \
-        v3 = _mm256_add_pd(v3, tmp); \
-        tmp = cmul_avx2_aos(tx4, tw_brd[5]); \
-        v3 = _mm256_add_pd(v3, tmp); \
-        tmp = cmul_avx2_aos(tx5, tw_brd[4]); \
-        v3 = _mm256_add_pd(v3, tmp); \
+        CMUL_ADD_FMA_R7_AVX2(v3, tx0, tw_brd[3]); \
+        CMUL_ADD_FMA_R7_AVX2(v3, tx1, tw_brd[2]); \
+        CMUL_ADD_FMA_R7_AVX2(v3, tx2, tw_brd[1]); \
+        CMUL_ADD_FMA_R7_AVX2(v3, tx3, tw_brd[0]); \
+        CMUL_ADD_FMA_R7_AVX2(v3, tx4, tw_brd[5]); \
+        CMUL_ADD_FMA_R7_AVX2(v3, tx5, tw_brd[4]); \
         \
-        /* q=4 */ \
-        v4 = cmul_avx2_aos(tx0, tw_brd[4]); \
-        tmp = cmul_avx2_aos(tx1, tw_brd[3]); \
-        v4 = _mm256_add_pd(v4, tmp); \
-        tmp = cmul_avx2_aos(tx2, tw_brd[2]); \
-        v4 = _mm256_add_pd(v4, tmp); \
-        tmp = cmul_avx2_aos(tx3, tw_brd[1]); \
-        v4 = _mm256_add_pd(v4, tmp); \
-        tmp = cmul_avx2_aos(tx4, tw_brd[0]); \
-        v4 = _mm256_add_pd(v4, tmp); \
-        tmp = cmul_avx2_aos(tx5, tw_brd[5]); \
-        v4 = _mm256_add_pd(v4, tmp); \
+        CMUL_ADD_FMA_R7_AVX2(v4, tx0, tw_brd[4]); \
+        CMUL_ADD_FMA_R7_AVX2(v4, tx1, tw_brd[3]); \
+        CMUL_ADD_FMA_R7_AVX2(v4, tx2, tw_brd[2]); \
+        CMUL_ADD_FMA_R7_AVX2(v4, tx3, tw_brd[1]); \
+        CMUL_ADD_FMA_R7_AVX2(v4, tx4, tw_brd[0]); \
+        CMUL_ADD_FMA_R7_AVX2(v4, tx5, tw_brd[5]); \
         \
-        /* q=5 */ \
-        v5 = cmul_avx2_aos(tx0, tw_brd[5]); \
-        tmp = cmul_avx2_aos(tx1, tw_brd[4]); \
-        v5 = _mm256_add_pd(v5, tmp); \
-        tmp = cmul_avx2_aos(tx2, tw_brd[3]); \
-        v5 = _mm256_add_pd(v5, tmp); \
-        tmp = cmul_avx2_aos(tx3, tw_brd[2]); \
-        v5 = _mm256_add_pd(v5, tmp); \
-        tmp = cmul_avx2_aos(tx4, tw_brd[1]); \
-        v5 = _mm256_add_pd(v5, tmp); \
-        tmp = cmul_avx2_aos(tx5, tw_brd[0]); \
-        v5 = _mm256_add_pd(v5, tmp); \
+        CMUL_ADD_FMA_R7_AVX2(v5, tx0, tw_brd[5]); \
+        CMUL_ADD_FMA_R7_AVX2(v5, tx1, tw_brd[4]); \
+        CMUL_ADD_FMA_R7_AVX2(v5, tx2, tw_brd[3]); \
+        CMUL_ADD_FMA_R7_AVX2(v5, tx3, tw_brd[2]); \
+        CMUL_ADD_FMA_R7_AVX2(v5, tx4, tw_brd[1]); \
+        CMUL_ADD_FMA_R7_AVX2(v5, tx5, tw_brd[0]); \
     } while (0)
 
 //==============================================================================
 // OUTPUT ASSEMBLY - AVX2
 //==============================================================================
 
+/**
+ * @brief Assemble final outputs (AVX2 version)
+ */
 #define ASSEMBLE_OUTPUTS_R7_AVX2(x0, v0, v1, v2, v3, v4, v5, \
                                   y0, y1, y2, y3, y4, y5, y6) \
     do { \
@@ -637,6 +824,9 @@
 // DATA MOVEMENT - AVX2
 //==============================================================================
 
+/**
+ * @brief Load 7 lanes for 2 parallel butterflies
+ */
 #define LOAD_7_LANES_AVX2(k, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6) \
     do { \
         x0 = load2_aos(&sub_outputs[(k)+0*K], &sub_outputs[(k)+1+0*K]); \
@@ -648,6 +838,9 @@
         x6 = load2_aos(&sub_outputs[(k)+6*K], &sub_outputs[(k)+1+6*K]); \
     } while (0)
 
+/**
+ * @brief Store 7 lanes using normal stores (AVX2 version)
+ */
 #define STORE_7_LANES_AVX2(k, K, output_buffer, y0, y1, y2, y3, y4, y5, y6) \
     do { \
         STOREU_PD(&output_buffer[(k)+0*K].re, y0); \
@@ -659,6 +852,9 @@
         STOREU_PD(&output_buffer[(k)+6*K].re, y6); \
     } while (0)
 
+/**
+ * @brief Store 7 lanes using streaming stores (AVX2 version)
+ */
 #define STORE_7_LANES_AVX2_STREAM(k, K, output_buffer, y0, y1, y2, y3, y4, y5, y6) \
     do { \
         _mm256_stream_pd(&output_buffer[(k)+0*K].re, y0); \
@@ -671,12 +867,16 @@
     } while (0)
 
 //==============================================================================
-// PREFETCHING - AVX2 (UNROLLED)
+// PREFETCHING - AVX2
 //==============================================================================
 
+/** @brief Prefetch distance for AVX2 systems */
 #define PREFETCH_L1_R7 8
 #define PREFETCH_TWIDDLE_R7 8
 
+/**
+ * @brief Prefetch 7 lanes for AVX2
+ */
 #define PREFETCH_7_LANES_R7_AVX2(k, K, distance, sub_outputs, hint) \
     do { \
         if ((k) + (distance) < K) { \
@@ -691,64 +891,36 @@
     } while (0)
 
 //==============================================================================
-// COMPLETE BUTTERFLY PIPELINE - AVX2
+// COMPLETE BUTTERFLY PIPELINES - AVX2
 //==============================================================================
 
+/**
+ * @brief Complete radix-7 butterfly pipeline with internal broadcast (forward, AVX2)
+ */
 #define RADIX7_PIPELINE_2_FV_AVX2(k, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
     do { \
         __m256d x0, x1, x2, x3, x4, x5, x6; \
         LOAD_7_LANES_AVX2(k, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6); \
-        \
         APPLY_STAGE_TWIDDLES_R7_AVX2(k, x1, x2, x3, x4, x5, x6, stage_tw, sub_len); \
-        \
         __m256d y0; \
         COMPUTE_Y0_R7_AVX2(x0, x1, x2, x3, x4, x5, x6, y0); \
-        \
         __m256d tx0, tx1, tx2, tx3, tx4, tx5; \
         PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5); \
-        \
         __m256d tw_brd[6]; \
         BROADCAST_RADER_TWIDDLES_R7_AVX2(rader_tw, tw_brd); \
-        \
         __m256d v0, v1, v2, v3, v4, v5; \
         RADER_CONVOLUTION_R7_AVX2(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd, \
                                    v0, v1, v2, v3, v4, v5); \
-        \
         __m256d y1, y2, y3, y4, y5, y6; \
         ASSEMBLE_OUTPUTS_R7_AVX2(x0, v0, v1, v2, v3, v4, v5, \
                                   y0, y1, y2, y3, y4, y5, y6); \
-        \
         STORE_7_LANES_AVX2(k, K, output_buffer, y0, y1, y2, y3, y4, y5, y6); \
     } while (0)
 
-#define RADIX7_PIPELINE_2_BV_AVX2(k, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
-    do { \
-        __m256d x0, x1, x2, x3, x4, x5, x6; \
-        LOAD_7_LANES_AVX2(k, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6); \
-        \
-        APPLY_STAGE_TWIDDLES_R7_AVX2(k, x1, x2, x3, x4, x5, x6, stage_tw, sub_len); \
-        \
-        __m256d y0; \
-        COMPUTE_Y0_R7_AVX2(x0, x1, x2, x3, x4, x5, x6, y0); \
-        \
-        __m256d tx0, tx1, tx2, tx3, tx4, tx5; \
-        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5); \
-        \
-        __m256d tw_brd[6]; \
-        BROADCAST_RADER_TWIDDLES_R7_AVX2(rader_tw, tw_brd); \
-        \
-        __m256d v0, v1, v2, v3, v4, v5; \
-        RADER_CONVOLUTION_R7_AVX2(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd, \
-                                   v0, v1, v2, v3, v4, v5); \
-        \
-        __m256d y1, y2, y3, y4, y5, y6; \
-        ASSEMBLE_OUTPUTS_R7_AVX2(x0, v0, v1, v2, v3, v4, v5, \
-                                  y0, y1, y2, y3, y4, y5, y6); \
-        \
-        STORE_7_LANES_AVX2(k, K, output_buffer, y0, y1, y2, y3, y4, y5, y6); \
-    } while (0)
-
-#define RADIX7_PIPELINE_2_FV_AVX2_STREAM(k, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
+/**
+ * @brief Radix-7 butterfly with hoisted broadcast (forward, normal stores, AVX2)
+ */
+#define RADIX7_PIPELINE_2_FV_AVX2_HOISTED(k, K, sub_outputs, stage_tw, tw_brd, output_buffer, sub_len) \
     do { \
         __m256d x0, x1, x2, x3, x4, x5, x6; \
         LOAD_7_LANES_AVX2(k, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6); \
@@ -757,8 +929,27 @@
         COMPUTE_Y0_R7_AVX2(x0, x1, x2, x3, x4, x5, x6, y0); \
         __m256d tx0, tx1, tx2, tx3, tx4, tx5; \
         PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5); \
-        __m256d tw_brd[6]; \
-        BROADCAST_RADER_TWIDDLES_R7_AVX2(rader_tw, tw_brd); \
+        __m256d v0, v1, v2, v3, v4, v5; \
+        RADER_CONVOLUTION_R7_AVX2(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd, \
+                                   v0, v1, v2, v3, v4, v5); \
+        __m256d y1, y2, y3, y4, y5, y6; \
+        ASSEMBLE_OUTPUTS_R7_AVX2(x0, v0, v1, v2, v3, v4, v5, \
+                                  y0, y1, y2, y3, y4, y5, y6); \
+        STORE_7_LANES_AVX2(k, K, output_buffer, y0, y1, y2, y3, y4, y5, y6); \
+    } while (0)
+
+/**
+ * @brief Radix-7 butterfly with hoisted broadcast and streaming stores (forward, AVX2)
+ */
+#define RADIX7_PIPELINE_2_FV_AVX2_STREAM_HOISTED(k, K, sub_outputs, stage_tw, tw_brd, output_buffer, sub_len) \
+    do { \
+        __m256d x0, x1, x2, x3, x4, x5, x6; \
+        LOAD_7_LANES_AVX2(k, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6); \
+        APPLY_STAGE_TWIDDLES_R7_AVX2(k, x1, x2, x3, x4, x5, x6, stage_tw, sub_len); \
+        __m256d y0; \
+        COMPUTE_Y0_R7_AVX2(x0, x1, x2, x3, x4, x5, x6, y0); \
+        __m256d tx0, tx1, tx2, tx3, tx4, tx5; \
+        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5); \
         __m256d v0, v1, v2, v3, v4, v5; \
         RADER_CONVOLUTION_R7_AVX2(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd, \
                                    v0, v1, v2, v3, v4, v5); \
@@ -768,7 +959,10 @@
         STORE_7_LANES_AVX2_STREAM(k, K, output_buffer, y0, y1, y2, y3, y4, y5, y6); \
     } while (0)
 
-#define RADIX7_PIPELINE_2_BV_AVX2_STREAM(k, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
+/**
+ * @brief Complete radix-7 butterfly pipeline (inverse, internal broadcast, AVX2)
+ */
+#define RADIX7_PIPELINE_2_BV_AVX2(k, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
     do { \
         __m256d x0, x1, x2, x3, x4, x5, x6; \
         LOAD_7_LANES_AVX2(k, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6); \
@@ -779,6 +973,48 @@
         PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5); \
         __m256d tw_brd[6]; \
         BROADCAST_RADER_TWIDDLES_R7_AVX2(rader_tw, tw_brd); \
+        __m256d v0, v1, v2, v3, v4, v5; \
+        RADER_CONVOLUTION_R7_AVX2(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd, \
+                                   v0, v1, v2, v3, v4, v5); \
+        __m256d y1, y2, y3, y4, y5, y6; \
+        ASSEMBLE_OUTPUTS_R7_AVX2(x0, v0, v1, v2, v3, v4, v5, \
+                                  y0, y1, y2, y3, y4, y5, y6); \
+        STORE_7_LANES_AVX2(k, K, output_buffer, y0, y1, y2, y3, y4, y5, y6); \
+    } while (0)
+
+/**
+ * @brief Radix-7 butterfly with hoisted broadcast (inverse, normal stores, AVX2)
+ */
+#define RADIX7_PIPELINE_2_BV_AVX2_HOISTED(k, K, sub_outputs, stage_tw, tw_brd, output_buffer, sub_len) \
+    do { \
+        __m256d x0, x1, x2, x3, x4, x5, x6; \
+        LOAD_7_LANES_AVX2(k, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6); \
+        APPLY_STAGE_TWIDDLES_R7_AVX2(k, x1, x2, x3, x4, x5, x6, stage_tw, sub_len); \
+        __m256d y0; \
+        COMPUTE_Y0_R7_AVX2(x0, x1, x2, x3, x4, x5, x6, y0); \
+        __m256d tx0, tx1, tx2, tx3, tx4, tx5; \
+        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5); \
+        __m256d v0, v1, v2, v3, v4, v5; \
+        RADER_CONVOLUTION_R7_AVX2(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd, \
+                                   v0, v1, v2, v3, v4, v5); \
+        __m256d y1, y2, y3, y4, y5, y6; \
+        ASSEMBLE_OUTPUTS_R7_AVX2(x0, v0, v1, v2, v3, v4, v5, \
+                                  y0, y1, y2, y3, y4, y5, y6); \
+        STORE_7_LANES_AVX2(k, K, output_buffer, y0, y1, y2, y3, y4, y5, y6); \
+    } while (0)
+
+/**
+ * @brief Radix-7 butterfly with hoisted broadcast and streaming stores (inverse, AVX2)
+ */
+#define RADIX7_PIPELINE_2_BV_AVX2_STREAM_HOISTED(k, K, sub_outputs, stage_tw, tw_brd, output_buffer, sub_len) \
+    do { \
+        __m256d x0, x1, x2, x3, x4, x5, x6; \
+        LOAD_7_LANES_AVX2(k, K, sub_outputs, x0, x1, x2, x3, x4, x5, x6); \
+        APPLY_STAGE_TWIDDLES_R7_AVX2(k, x1, x2, x3, x4, x5, x6, stage_tw, sub_len); \
+        __m256d y0; \
+        COMPUTE_Y0_R7_AVX2(x0, x1, x2, x3, x4, x5, x6, y0); \
+        __m256d tx0, tx1, tx2, tx3, tx4, tx5; \
+        PERMUTE_INPUTS_R7(x1, x2, x3, x4, x5, x6, tx0, tx1, tx2, tx3, tx4, tx5); \
         __m256d v0, v1, v2, v3, v4, v5; \
         RADER_CONVOLUTION_R7_AVX2(tx0, tx1, tx2, tx3, tx4, tx5, tw_brd, \
                                    v0, v1, v2, v3, v4, v5); \
@@ -794,6 +1030,15 @@
 // SCALAR SUPPORT
 //==============================================================================
 
+/**
+ * @brief Scalar 6-point cyclic convolution for Rader's algorithm
+ * 
+ * Reference implementation, used for tail cases and systems without SIMD.
+ * 
+ * @param tx       Permuted input array (6 complex values)
+ * @param rader_tw Rader twiddle factors (6 complex values)
+ * @param v        Output convolution results (6 complex values)
+ */
 #define RADER_CONVOLUTION_R7_SCALAR(tx, rader_tw, v) \
     do { \
         for (int _q = 0; _q < 6; ++_q) { \
@@ -821,6 +1066,15 @@
  * @brief Complete scalar radix-7 butterfly (forward version)
  * 
  * Implements full Rader's algorithm in scalar mode for tail cases.
+ * Used when K is not a multiple of SIMD width.
+ * 
+ * @param k             Butterfly index
+ * @param K             Stride between lanes
+ * @param sub_outputs   Input data
+ * @param stage_tw      Stage twiddle factors
+ * @param rader_tw      Rader twiddle factors
+ * @param output_buffer Output data
+ * @param sub_len       Sub-transform length
  */
 #define RADIX7_BUTTERFLY_SCALAR_FV(k, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
     do { \
@@ -880,7 +1134,7 @@
 /**
  * @brief Complete scalar radix-7 butterfly (inverse version)
  * 
- * Identical to forward - only rader_tw sign differs (precomputed by manager).
+ * Identical to forward version - only rader_tw sign differs (precomputed by manager).
  */
 #define RADIX7_BUTTERFLY_SCALAR_BV(k, K, sub_outputs, stage_tw, rader_tw, output_buffer, sub_len) \
     do { \
@@ -938,3 +1192,55 @@
     } while (0)
 
 #endif // FFT_RADIX7_MACROS_H
+
+//==============================================================================
+// OPTIMIZATION SUMMARY
+//==============================================================================
+
+/**
+ * OPTIMIZATIONS IMPLEMENTED:
+ * 
+ * 1. ✅ FMA Support
+ *    - AVX-512: Always uses FMA (part of AVX-512F)
+ *    - AVX2: Conditional FMA (Haswell+), fallback for Ivy Bridge
+ *    - Estimated gain: 5-10% on FMA-capable CPUs
+ * 
+ * 2. ✅ Fused Multiply-Add Operations
+ *    - CMUL_ADD_FMA_R7_* macros eliminate temporary variables
+ *    - Critical for Rader convolution (36 complex multiplies per butterfly)
+ *    - Estimated gain: 2-5% (reduced register pressure)
+ * 
+ * 3. ✅ Hoisted Rader Twiddle Broadcasts
+ *    - Broadcast done ONCE outside loop instead of per-iteration
+ *    - Separate _HOISTED macros for all variants
+ *    - Estimated gain: 1-2%
+ * 
+ * 4. ✅ Separate Streaming/Normal Store Loops
+ *    - No branches in hot path
+ *    - Streaming for K >= 8192 (avoids cache pollution)
+ *    - Estimated gain: 1-3%
+ * 
+ * 5. ✅ Single-Level Prefetching
+ *    - Tuned distances: 16 for AVX-512, 8 for AVX2
+ *    - Only L1 prefetch (no cache pollution)
+ *    - Estimated gain: 2-5%
+ * 
+ * 6. ✅ Alignment Hints
+ *    - __builtin_assume_aligned in calling functions
+ *    - Better compiler codegen
+ *    - Estimated gain: 2-5%
+ * 
+ * TOTAL ESTIMATED GAIN: 15-30% over naive implementation
+ * 
+ * PERFORMANCE TARGETS:
+ * - AVX-512: ~2.5 cycles/butterfly (4 butterflies per iteration)
+ * - AVX2:    ~5.0 cycles/butterfly (2 butterflies per iteration)
+ * - Scalar:  ~25 cycles/butterfly
+ * 
+ * ARCHITECTURE NOTES:
+ * - Radix-7 is more expensive than radix-2/3/4 due to Rader's algorithm
+ * - 6-point cyclic convolution is the bottleneck (36 complex multiplies)
+ * - Still worth it for mixed-radix FFTs of size 7^k * 2^m
+ * - Twiddles come from external manager (single source of truth)
+ * - Forward/inverse handled by twiddle sign (no runtime branches)
+ */
