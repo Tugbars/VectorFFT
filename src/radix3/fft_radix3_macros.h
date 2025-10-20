@@ -1,5 +1,5 @@
 //==============================================================================
-// fft_radix2_macros.h - Shared Macros + Inline Helpers for Radix-2 Butterflies
+// fft_radix3_macros.h - Shared Macros + Inline Helpers for Radix-3 Butterflies
 //==============================================================================
 //
 // DESIGN:
@@ -8,300 +8,560 @@
 // - Direction stays in function names (_fv vs _bv)
 //
 
-#ifndef FFT_RADIX2_MACROS_H
-#define FFT_RADIX2_MACROS_H
+#ifndef FFT_RADIX3_MACROS_H
+#define FFT_RADIX3_MACROS_H
 
-#include "fft_radix2.h"
+#include "fft_radix3.h"
 #include "simd_math.h"
 
 //==============================================================================
-// BUTTERFLY ARITHMETIC - Core Pattern (MACROS - used in hot loops)
+// GEOMETRIC CONSTANTS - IDENTICAL for forward/inverse
+//==============================================================================
+
+#define C_HALF      (-0.5)
+#define S_SQRT3_2   0.8660254037844386467618  // sqrt(3)/2
+
+//==============================================================================
+// STREAMING THRESHOLD
+//==============================================================================
+
+#define STREAM_THRESHOLD 8192  // Use non-temporal stores for K >= 8192
+
+//==============================================================================
+// AVX-512 SUPPORT
 //==============================================================================
 
 #ifdef __AVX512F__
-#define RADIX2_BUTTERFLY_AVX512(even, odd, twiddle, y0_out, y1_out) \
-    do { \
-        __m512d tw_odd = cmul_avx512_aos(odd, twiddle); \
-        y0_out = _mm512_add_pd(even, tw_odd); \
-        y1_out = _mm512_sub_pd(even, tw_odd); \
+
+//==============================================================================
+// COMPLEX MULTIPLICATION - AVX-512
+//==============================================================================
+
+#define CMUL_FMA_AOS_AVX512(out, a, w)                                    \
+    do                                                                    \
+    {                                                                     \
+        __m512d ar = _mm512_unpacklo_pd(a, a);                            \
+        __m512d ai = _mm512_unpackhi_pd(a, a);                            \
+        __m512d wr = _mm512_unpacklo_pd(w, w);                            \
+        __m512d wi = _mm512_unpackhi_pd(w, w);                            \
+        __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi));     \
+        __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr));     \
+        (out) = _mm512_unpacklo_pd(re, im);                               \
     } while (0)
-#endif
+
+//==============================================================================
+// RADIX-3 BUTTERFLY CORE - AVX-512
+//==============================================================================
+
+#define RADIX3_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, sum, dif, common)    \
+    do {                                                                  \
+        const __m512d v_half = _mm512_set1_pd(C_HALF);                    \
+        sum = _mm512_add_pd(tw_b, tw_c);                                  \
+        dif = _mm512_sub_pd(tw_b, tw_c);                                  \
+        common = _mm512_fmadd_pd(v_half, sum, a);                         \
+    } while (0)
+
+//==============================================================================
+// ROTATION AND SCALING - AVX-512
+//==============================================================================
+
+#define RADIX3_ROTATE_FORWARD_AVX512(dif, scaled_rot)                         \
+    do {                                                                      \
+        const __m512d v_sqrt3_2 = _mm512_set1_pd(S_SQRT3_2);                  \
+        const __m512d rot_mask = _mm512_set_pd(0.0, -0.0, 0.0, -0.0,         \
+                                                0.0, -0.0, 0.0, -0.0);        \
+        __m512d dif_swp = _mm512_permute_pd(dif, 0b01010101);                 \
+        __m512d rot90 = _mm512_xor_pd(dif_swp, rot_mask);                     \
+        scaled_rot = _mm512_mul_pd(rot90, v_sqrt3_2);                         \
+    } while (0)
+
+#define RADIX3_ROTATE_INVERSE_AVX512(dif, scaled_rot)                         \
+    do {                                                                      \
+        const __m512d v_sqrt3_2 = _mm512_set1_pd(S_SQRT3_2);                  \
+        const __m512d rot_mask = _mm512_set_pd(-0.0, 0.0, -0.0, 0.0,         \
+                                                -0.0, 0.0, -0.0, 0.0);        \
+        __m512d dif_swp = _mm512_permute_pd(dif, 0b01010101);                 \
+        __m512d rot90 = _mm512_xor_pd(dif_swp, rot_mask);                     \
+        scaled_rot = _mm512_mul_pd(rot90, v_sqrt3_2);                         \
+    } while (0)
+
+//==============================================================================
+// OUTPUT ASSEMBLY - AVX-512
+//==============================================================================
+
+#define RADIX3_ASSEMBLE_OUTPUTS_AVX512(a, sum, common, scaled_rot, y0, y1, y2) \
+    do {                                                                        \
+        y0 = _mm512_add_pd(a, sum);                                             \
+        y1 = _mm512_add_pd(common, scaled_rot);                                 \
+        y2 = _mm512_sub_pd(common, scaled_rot);                                 \
+    } while (0)
+
+//==============================================================================
+// APPLY PRECOMPUTED TWIDDLES - AVX-512
+//==============================================================================
+
+#define APPLY_STAGE_TWIDDLES_AVX512(kk, b, c, stage_tw, tw_b, tw_c)      \
+    do {                                                                  \
+        __m512d w1 = load4_aos(&stage_tw[(kk)*2 + 0],                    \
+                               &stage_tw[(kk+1)*2 + 0],                   \
+                               &stage_tw[(kk+2)*2 + 0],                   \
+                               &stage_tw[(kk+3)*2 + 0]);                  \
+        __m512d w2 = load4_aos(&stage_tw[(kk)*2 + 1],                    \
+                               &stage_tw[(kk+1)*2 + 1],                   \
+                               &stage_tw[(kk+2)*2 + 1],                   \
+                               &stage_tw[(kk+3)*2 + 1]);                  \
+                                                                          \
+        CMUL_FMA_AOS_AVX512(tw_b, b, w1);                                 \
+        CMUL_FMA_AOS_AVX512(tw_c, c, w2);                                 \
+    } while (0)
+
+//==============================================================================
+// DATA MOVEMENT - AVX-512
+//==============================================================================
+
+#define LOAD_3_LANES_AVX512(kk, K, sub_outputs, a, b, c)                 \
+    do {                                                                  \
+        a = load4_aos(&sub_outputs[kk],                                   \
+                      &sub_outputs[(kk)+1],                               \
+                      &sub_outputs[(kk)+2],                               \
+                      &sub_outputs[(kk)+3]);                              \
+        b = load4_aos(&sub_outputs[(kk)+K],                               \
+                      &sub_outputs[(kk)+1+K],                             \
+                      &sub_outputs[(kk)+2+K],                             \
+                      &sub_outputs[(kk)+3+K]);                            \
+        c = load4_aos(&sub_outputs[(kk)+2*K],                             \
+                      &sub_outputs[(kk)+1+2*K],                           \
+                      &sub_outputs[(kk)+2+2*K],                           \
+                      &sub_outputs[(kk)+3+2*K]);                          \
+    } while (0)
+
+#define STORE_3_LANES_AVX512(kk, K, output_buffer, y0, y1, y2)           \
+    do {                                                                  \
+        STOREU_PD512(&output_buffer[kk].re, y0);                          \
+        STOREU_PD512(&output_buffer[(kk)+K].re, y1);                      \
+        STOREU_PD512(&output_buffer[(kk)+2*K].re, y2);                    \
+    } while (0)
+
+#define STORE_3_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2)    \
+    do {                                                                  \
+        _mm512_stream_pd(&output_buffer[kk].re, y0);                      \
+        _mm512_stream_pd(&output_buffer[(kk)+K].re, y1);                  \
+        _mm512_stream_pd(&output_buffer[(kk)+2*K].re, y2);                \
+    } while (0)
+
+//==============================================================================
+// PREFETCHING - AVX-512
+//==============================================================================
+
+#define PREFETCH_L1_AVX512 16
+#define PREFETCH_TWIDDLE_AVX512 16
+
+#define PREFETCH_3_LANES_AVX512(k, K, distance, sub_outputs, hint)              \
+    do {                                                                        \
+        if ((k) + (distance) < K) {                                             \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)], hint);     \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+K], hint);   \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+2*K], hint); \
+        }                                                                       \
+    } while (0)
+
+//==============================================================================
+// COMPLETE BUTTERFLY PIPELINE - AVX-512
+//==============================================================================
+
+#define RADIX3_PIPELINE_4_FV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                         \
+        __m512d a, b, c;                                                         \
+        LOAD_3_LANES_AVX512(kk, K, sub_outputs, a, b, c);                        \
+                                                                                 \
+        __m512d tw_b, tw_c;                                                      \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, b, c, stage_tw, tw_b, tw_c);             \
+                                                                                 \
+        __m512d sum, dif, common;                                                \
+        RADIX3_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, sum, dif, common);           \
+                                                                                 \
+        __m512d scaled_rot;                                                      \
+        RADIX3_ROTATE_FORWARD_AVX512(dif, scaled_rot);                           \
+                                                                                 \
+        __m512d y0, y1, y2;                                                      \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX512(a, sum, common, scaled_rot, y0, y1, y2);  \
+                                                                                 \
+        STORE_3_LANES_AVX512(kk, K, output_buffer, y0, y1, y2);                  \
+    } while (0)
+
+#define RADIX3_PIPELINE_4_BV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                         \
+        __m512d a, b, c;                                                         \
+        LOAD_3_LANES_AVX512(kk, K, sub_outputs, a, b, c);                        \
+                                                                                 \
+        __m512d tw_b, tw_c;                                                      \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, b, c, stage_tw, tw_b, tw_c);             \
+                                                                                 \
+        __m512d sum, dif, common;                                                \
+        RADIX3_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, sum, dif, common);           \
+                                                                                 \
+        __m512d scaled_rot;                                                      \
+        RADIX3_ROTATE_INVERSE_AVX512(dif, scaled_rot);                           \
+                                                                                 \
+        __m512d y0, y1, y2;                                                      \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX512(a, sum, common, scaled_rot, y0, y1, y2);  \
+                                                                                 \
+        STORE_3_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2);           \
+    } while (0)
+
+#define RADIX3_PIPELINE_4_FV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                                \
+        __m512d a, b, c;                                                                \
+        LOAD_3_LANES_AVX512(kk, K, sub_outputs, a, b, c);                               \
+                                                                                        \
+        __m512d tw_b, tw_c;                                                             \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, b, c, stage_tw, tw_b, tw_c);                    \
+                                                                                        \
+        __m512d sum, dif, common;                                                       \
+        RADIX3_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, sum, dif, common);                  \
+                                                                                        \
+        __m512d scaled_rot;                                                             \
+        RADIX3_ROTATE_FORWARD_AVX512(dif, scaled_rot);                                  \
+                                                                                        \
+        __m512d y0, y1, y2;                                                             \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX512(a, sum, common, scaled_rot, y0, y1, y2);         \
+                                                                                        \
+        STORE_3_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2);                  \
+    } while (0)
+
+#define RADIX3_PIPELINE_4_BV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer) \
+    do {                                                                                \
+        __m512d a, b, c;                                                                \
+        LOAD_3_LANES_AVX512(kk, K, sub_outputs, a, b, c);                               \
+                                                                                        \
+        __m512d tw_b, tw_c;                                                             \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, b, c, stage_tw, tw_b, tw_c);                    \
+                                                                                        \
+        __m512d sum, dif, common;                                                       \
+        RADIX3_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, sum, dif, common);                  \
+                                                                                        \
+        __m512d scaled_rot;                                                             \
+        RADIX3_ROTATE_INVERSE_AVX512(dif, scaled_rot);                                  \
+                                                                                        \
+        __m512d y0, y1, y2;                                                             \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX512(a, sum, common, scaled_rot, y0, y1, y2);         \
+                                                                                        \
+        STORE_3_LANES_AVX512_STREAM(kk, K, output_buffer, y0, y1, y2);                  \
+    } while (0)
+
+#endif // __AVX512F__
+
+//==============================================================================
+// AVX2 SUPPORT
+//==============================================================================
 
 #ifdef __AVX2__
-#define RADIX2_BUTTERFLY_AVX2(even, odd, twiddle, y0_out, y1_out) \
-    do { \
-        __m256d tw_odd = cmul_avx2_aos(odd, twiddle); \
-        y0_out = _mm256_add_pd(even, tw_odd); \
-        y1_out = _mm256_sub_pd(even, tw_odd); \
-    } while (0)
-#endif
 
-#define RADIX2_BUTTERFLY_SSE2(even, odd, twiddle, y0_out, y1_out) \
-    do { \
-        __m128d tw_odd = cmul_sse2_aos(odd, twiddle); \
-        y0_out = _mm_add_pd(even, tw_odd); \
-        y1_out = _mm_sub_pd(even, tw_odd); \
+//==============================================================================
+// COMPLEX MULTIPLICATION - AVX2
+//==============================================================================
+
+#define CMUL_FMA_AOS(out, a, w)                                      \
+    do                                                               \
+    {                                                                \
+        __m256d ar = _mm256_unpacklo_pd(a, a);                       \
+        __m256d ai = _mm256_unpackhi_pd(a, a);                       \
+        __m256d wr = _mm256_unpacklo_pd(w, w);                       \
+        __m256d wi = _mm256_unpackhi_pd(w, w);                       \
+        __m256d re = _mm256_fmsub_pd(ar, wr, _mm256_mul_pd(ai, wi)); \
+        __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr)); \
+        (out) = _mm256_unpacklo_pd(re, im);                          \
     } while (0)
 
 //==============================================================================
-// PREFETCHING - Cache Optimization (keep current distance)
+// RADIX-3 BUTTERFLY CORE - AVX2
 //==============================================================================
 
-#ifdef __AVX512F__
-#define PREFETCH_NEXT_AVX512(k, distance, sub_outputs, stage_tw, half, end) \
+#define RADIX3_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, sum, dif, common) \
     do { \
-        if ((k) + (distance) < (end)) { \
-            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)], _MM_HINT_T0); \
-            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+8], _MM_HINT_T0); \
-            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+(half)], _MM_HINT_T0); \
-            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+(half)+8], _MM_HINT_T0); \
-            _mm_prefetch((const char *)&stage_tw[(k)+(distance)], _MM_HINT_T0); \
-            _mm_prefetch((const char *)&stage_tw[(k)+(distance)+8], _MM_HINT_T0); \
+        const __m256d v_half = _mm256_set1_pd(C_HALF); \
+        sum = _mm256_add_pd(tw_b, tw_c); \
+        dif = _mm256_sub_pd(tw_b, tw_c); \
+        common = _mm256_fmadd_pd(v_half, sum, a); \
+    } while (0)
+
+//==============================================================================
+// ROTATION AND SCALING - AVX2
+//==============================================================================
+
+#define RADIX3_ROTATE_FORWARD_AVX2(dif, scaled_rot, v_sqrt3_2) \
+    do { \
+        const __m256d rot_mask = _mm256_set_pd(0.0, -0.0, 0.0, -0.0); \
+        __m256d dif_swp = _mm256_permute_pd(dif, 0b0101); \
+        __m256d rot90 = _mm256_xor_pd(dif_swp, rot_mask); \
+        scaled_rot = _mm256_mul_pd(rot90, v_sqrt3_2); \
+    } while (0)
+
+#define RADIX3_ROTATE_INVERSE_AVX2(dif, scaled_rot, v_sqrt3_2) \
+    do { \
+        const __m256d rot_mask = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0); \
+        __m256d dif_swp = _mm256_permute_pd(dif, 0b0101); \
+        __m256d rot90 = _mm256_xor_pd(dif_swp, rot_mask); \
+        scaled_rot = _mm256_mul_pd(rot90, v_sqrt3_2); \
+    } while (0)
+
+//==============================================================================
+// OUTPUT ASSEMBLY - AVX2
+//==============================================================================
+
+#define RADIX3_ASSEMBLE_OUTPUTS_AVX2(a, sum, common, scaled_rot, y0, y1, y2) \
+    do { \
+        y0 = _mm256_add_pd(a, sum); \
+        y1 = _mm256_add_pd(common, scaled_rot); \
+        y2 = _mm256_sub_pd(common, scaled_rot); \
+    } while (0)
+
+//==============================================================================
+// APPLY PRECOMPUTED TWIDDLES - AVX2
+//==============================================================================
+
+#define APPLY_STAGE_TWIDDLES_AVX2(kk, b, c, stage_tw, tw_b, tw_c) \
+    do { \
+        __m256d w1 = load2_aos(&stage_tw[(kk)*2 + 0], &stage_tw[(kk+1)*2 + 0]); \
+        __m256d w2 = load2_aos(&stage_tw[(kk)*2 + 1], &stage_tw[(kk+1)*2 + 1]); \
+        \
+        CMUL_FMA_AOS(tw_b, b, w1); \
+        CMUL_FMA_AOS(tw_c, c, w2); \
+    } while (0)
+
+//==============================================================================
+// DATA MOVEMENT - AVX2
+//==============================================================================
+
+#define LOAD_3_LANES_AVX2(kk, K, sub_outputs, a, b, c) \
+    do { \
+        a = load2_aos(&sub_outputs[kk], &sub_outputs[(kk)+1]); \
+        b = load2_aos(&sub_outputs[(kk)+K], &sub_outputs[(kk)+1+K]); \
+        c = load2_aos(&sub_outputs[(kk)+2*K], &sub_outputs[(kk)+1+2*K]); \
+    } while (0)
+
+#define STORE_3_LANES_AVX2(kk, K, output_buffer, y0, y1, y2) \
+    do { \
+        STOREU_PD(&output_buffer[kk].re, y0); \
+        STOREU_PD(&output_buffer[(kk)+K].re, y1); \
+        STOREU_PD(&output_buffer[(kk)+2*K].re, y2); \
+    } while (0)
+
+#define STORE_3_LANES_AVX2_STREAM(kk, K, output_buffer, y0, y1, y2) \
+    do { \
+        _mm256_stream_pd(&output_buffer[kk].re, y0); \
+        _mm256_stream_pd(&output_buffer[(kk)+K].re, y1); \
+        _mm256_stream_pd(&output_buffer[(kk)+2*K].re, y2); \
+    } while (0)
+
+//==============================================================================
+// PREFETCHING - AVX2
+//==============================================================================
+
+#define PREFETCH_L1 8
+#define PREFETCH_TWIDDLE 8
+
+#define PREFETCH_3_LANES_AVX2(k, K, distance, sub_outputs, hint) \
+    do { \
+        if ((k) + (distance) < K) { \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)], hint); \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+K], hint); \
+            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+2*K], hint); \
         } \
     } while (0)
-#endif
 
-#define PREFETCH_NEXT_AVX2(k, distance, sub_outputs, stage_tw, half, end) \
+//==============================================================================
+// COMPLETE BUTTERFLY PIPELINE - AVX2
+//==============================================================================
+
+#define RADIX3_PIPELINE_2_FV_AVX2(k, K, sub_outputs, stage_tw, output_buffer, v_sqrt3_2) \
     do { \
-        if ((k) + (distance) < (end)) { \
-            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)], _MM_HINT_T0); \
-            _mm_prefetch((const char *)&sub_outputs[(k)+(distance)+(half)], _MM_HINT_T0); \
-            _mm_prefetch((const char *)&stage_tw[(k)+(distance)], _MM_HINT_T0); \
-        } \
+        __m256d a, b, c; \
+        LOAD_3_LANES_AVX2(k, K, sub_outputs, a, b, c); \
+        \
+        __m256d tw_b, tw_c; \
+        APPLY_STAGE_TWIDDLES_AVX2(k, b, c, stage_tw, tw_b, tw_c); \
+        \
+        __m256d sum, dif, common; \
+        RADIX3_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, sum, dif, common); \
+        \
+        __m256d scaled_rot; \
+        RADIX3_ROTATE_FORWARD_AVX2(dif, scaled_rot, v_sqrt3_2); \
+        \
+        __m256d y0, y1, y2; \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX2(a, sum, common, scaled_rot, y0, y1, y2); \
+        \
+        STORE_3_LANES_AVX2(k, K, output_buffer, y0, y1, y2); \
     } while (0)
 
-//==============================================================================
-// SPECIAL CASES - Small Inline Helpers (TYPE SAFE)
-//==============================================================================
-
-/**
- * @brief k=0 butterfly (W^0 = 1, no twiddle)
- * IDENTICAL for forward and inverse
- */
-static __always_inline void radix2_butterfly_k0(
-    fft_data *restrict output_buffer,
-    const fft_data *restrict sub_outputs,
-    int half)
-{
-    fft_data even_0 = sub_outputs[0];
-    fft_data odd_0 = sub_outputs[half];
-    
-    output_buffer[0].re = even_0.re + odd_0.re;
-    output_buffer[0].im = even_0.im + odd_0.im;
-    output_buffer[half].re = even_0.re - odd_0.re;
-    output_buffer[half].im = even_0.im - odd_0.im;
-}
-
-/**
- * @brief k=N/4 butterfly - parameterized by direction
- * 
- * @param is_inverse: false = forward (-i rotation), true = inverse (+i rotation)
- * 
- * Forward:  W^(N/4) = -i → (a+bi)*(-i) = b-ai
- * Inverse:  W^(N/4) = +i → (a+bi)*(i)  = -b+ai
- */
-static __always_inline void radix2_butterfly_k_quarter(
-    fft_data *restrict output_buffer,
-    const fft_data *restrict sub_outputs,
-    int half,
-    int k_quarter,
-    bool is_inverse)
-{
-    fft_data even_q = sub_outputs[k_quarter];
-    fft_data odd_q = sub_outputs[half + k_quarter];
-    
-    double rotated_re, rotated_im;
-    
-    if (is_inverse) {
-        // Inverse: multiply by +i
-        rotated_re = -odd_q.im;  // -b
-        rotated_im = odd_q.re;   // a
-    } else {
-        // Forward: multiply by -i
-        rotated_re = odd_q.im;   // b
-        rotated_im = -odd_q.re;  // -a
-    }
-    
-    output_buffer[k_quarter].re = even_q.re + rotated_re;
-    output_buffer[k_quarter].im = even_q.im + rotated_im;
-    output_buffer[half + k_quarter].re = even_q.re - rotated_re;
-    output_buffer[half + k_quarter].im = even_q.im - rotated_im;
-}
-
-//==============================================================================
-// COMPLETE BUTTERFLY PIPELINES (MACROS - large hot paths)
-//==============================================================================
-
-#ifdef __AVX512F__
-/**
- * @brief Complete 16-butterfly pipeline: prefetch -> load -> compute -> store
- */
-#define RADIX2_PIPELINE_16_AVX512(k, sub_outputs, stage_tw, output_buffer, half, end) \
+#define RADIX3_PIPELINE_2_BV_AVX2(k, K, sub_outputs, stage_tw, output_buffer, v_sqrt3_2) \
     do { \
-        PREFETCH_NEXT_AVX512(k, 32, sub_outputs, stage_tw, half, end); \
+        __m256d a, b, c; \
+        LOAD_3_LANES_AVX2(k, K, sub_outputs, a, b, c); \
         \
-        __m512d e0 = load4_aos(&sub_outputs[(k)+0]); \
-        __m512d e1 = load4_aos(&sub_outputs[(k)+4]); \
-        __m512d e2 = load4_aos(&sub_outputs[(k)+8]); \
-        __m512d e3 = load4_aos(&sub_outputs[(k)+12]); \
+        __m256d tw_b, tw_c; \
+        APPLY_STAGE_TWIDDLES_AVX2(k, b, c, stage_tw, tw_b, tw_c); \
         \
-        __m512d o0 = load4_aos(&sub_outputs[(k)+(half)]); \
-        __m512d o1 = load4_aos(&sub_outputs[(k)+(half)+4]); \
-        __m512d o2 = load4_aos(&sub_outputs[(k)+(half)+8]); \
-        __m512d o3 = load4_aos(&sub_outputs[(k)+(half)+12]); \
+        __m256d sum, dif, common; \
+        RADIX3_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, sum, dif, common); \
         \
-        __m512d w0 = load4_aos(&stage_tw[(k)+0]); \
-        __m512d w1 = load4_aos(&stage_tw[(k)+4]); \
-        __m512d w2 = load4_aos(&stage_tw[(k)+8]); \
-        __m512d w3 = load4_aos(&stage_tw[(k)+12]); \
+        __m256d scaled_rot; \
+        RADIX3_ROTATE_INVERSE_AVX2(dif, scaled_rot, v_sqrt3_2); \
         \
-        __m512d x00, x10, x01, x11, x02, x12, x03, x13; \
-        RADIX2_BUTTERFLY_AVX512(e0, o0, w0, x00, x10); \
-        RADIX2_BUTTERFLY_AVX512(e1, o1, w1, x01, x11); \
-        RADIX2_BUTTERFLY_AVX512(e2, o2, w2, x02, x12); \
-        RADIX2_BUTTERFLY_AVX512(e3, o3, w3, x03, x13); \
+        __m256d y0, y1, y2; \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX2(a, sum, common, scaled_rot, y0, y1, y2); \
         \
-        STOREU_PD512(&output_buffer[(k)+0].re, x00); \
-        STOREU_PD512(&output_buffer[(k)+4].re, x01); \
-        STOREU_PD512(&output_buffer[(k)+8].re, x02); \
-        STOREU_PD512(&output_buffer[(k)+12].re, x03); \
-        STOREU_PD512(&output_buffer[(k)+(half)].re, x10); \
-        STOREU_PD512(&output_buffer[(k)+(half)+4].re, x11); \
-        STOREU_PD512(&output_buffer[(k)+(half)+8].re, x12); \
-        STOREU_PD512(&output_buffer[(k)+(half)+12].re, x13); \
-    } while (0)
-#endif
-
-#ifdef __AVX2__
-/**
- * @brief Complete 8-butterfly pipeline: prefetch -> load -> compute -> store
- */
-#define RADIX2_PIPELINE_8_AVX2(k, sub_outputs, stage_tw, output_buffer, half, end) \
-    do { \
-        PREFETCH_NEXT_AVX2(k, 16, sub_outputs, stage_tw, half, end); \
-        \
-        __m256d e0 = load2_aos(&sub_outputs[(k)+0], &sub_outputs[(k)+1]); \
-        __m256d e1 = load2_aos(&sub_outputs[(k)+2], &sub_outputs[(k)+3]); \
-        __m256d e2 = load2_aos(&sub_outputs[(k)+4], &sub_outputs[(k)+5]); \
-        __m256d e3 = load2_aos(&sub_outputs[(k)+6], &sub_outputs[(k)+7]); \
-        \
-        __m256d o0 = load2_aos(&sub_outputs[(k)+(half)], &sub_outputs[(k)+(half)+1]); \
-        __m256d o1 = load2_aos(&sub_outputs[(k)+(half)+2], &sub_outputs[(k)+(half)+3]); \
-        __m256d o2 = load2_aos(&sub_outputs[(k)+(half)+4], &sub_outputs[(k)+(half)+5]); \
-        __m256d o3 = load2_aos(&sub_outputs[(k)+(half)+6], &sub_outputs[(k)+(half)+7]); \
-        \
-        __m256d w0 = load2_aos(&stage_tw[(k)+0], &stage_tw[(k)+1]); \
-        __m256d w1 = load2_aos(&stage_tw[(k)+2], &stage_tw[(k)+3]); \
-        __m256d w2 = load2_aos(&stage_tw[(k)+4], &stage_tw[(k)+5]); \
-        __m256d w3 = load2_aos(&stage_tw[(k)+6], &stage_tw[(k)+7]); \
-        \
-        __m256d x00, x10, x01, x11, x02, x12, x03, x13; \
-        RADIX2_BUTTERFLY_AVX2(e0, o0, w0, x00, x10); \
-        RADIX2_BUTTERFLY_AVX2(e1, o1, w1, x01, x11); \
-        RADIX2_BUTTERFLY_AVX2(e2, o2, w2, x02, x12); \
-        RADIX2_BUTTERFLY_AVX2(e3, o3, w3, x03, x13); \
-        \
-        STOREU_PD(&output_buffer[(k)+0].re, x00); \
-        STOREU_PD(&output_buffer[(k)+2].re, x01); \
-        STOREU_PD(&output_buffer[(k)+4].re, x02); \
-        STOREU_PD(&output_buffer[(k)+6].re, x03); \
-        STOREU_PD(&output_buffer[(k)+(half)].re, x10); \
-        STOREU_PD(&output_buffer[(k)+(half)+2].re, x11); \
-        STOREU_PD(&output_buffer[(k)+(half)+4].re, x12); \
-        STOREU_PD(&output_buffer[(k)+(half)+6].re, x13); \
+        STORE_3_LANES_AVX2(k, K, output_buffer, y0, y1, y2); \
     } while (0)
 
-/**
- * @brief Complete 2-butterfly pipeline (AVX2)
- */
-#define RADIX2_PIPELINE_2_AVX2(k, sub_outputs, stage_tw, output_buffer, half) \
+#define RADIX3_PIPELINE_2_FV_AVX2_STREAM(k, K, sub_outputs, stage_tw, output_buffer, v_sqrt3_2) \
     do { \
-        __m256d even = load2_aos(&sub_outputs[k], &sub_outputs[(k)+1]); \
-        __m256d odd = load2_aos(&sub_outputs[(k)+(half)], &sub_outputs[(k)+(half)+1]); \
-        __m256d w = load2_aos(&stage_tw[k], &stage_tw[(k)+1]); \
+        __m256d a, b, c; \
+        LOAD_3_LANES_AVX2(k, K, sub_outputs, a, b, c); \
         \
-        __m256d x0, x1; \
-        RADIX2_BUTTERFLY_AVX2(even, odd, w, x0, x1); \
+        __m256d tw_b, tw_c; \
+        APPLY_STAGE_TWIDDLES_AVX2(k, b, c, stage_tw, tw_b, tw_c); \
         \
-        STOREU_PD(&output_buffer[k].re, x0); \
-        STOREU_PD(&output_buffer[(k)+(half)].re, x1); \
-    } while (0)
-#endif
-
-/**
- * @brief Complete 1-butterfly pipeline (SSE2)
- */
-#define RADIX2_PIPELINE_1_SSE2(k, sub_outputs, stage_tw, output_buffer, half) \
-    do { \
-        __m128d even = LOADU_SSE2(&sub_outputs[k].re); \
-        __m128d odd = LOADU_SSE2(&sub_outputs[(k)+(half)].re); \
-        __m128d w = LOADU_SSE2(&stage_tw[k].re); \
+        __m256d sum, dif, common; \
+        RADIX3_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, sum, dif, common); \
         \
-        __m128d x0, x1; \
-        RADIX2_BUTTERFLY_SSE2(even, odd, w, x0, x1); \
+        __m256d scaled_rot; \
+        RADIX3_ROTATE_FORWARD_AVX2(dif, scaled_rot, v_sqrt3_2); \
         \
-        STOREU_SSE2(&output_buffer[k].re, x0); \
-        STOREU_SSE2(&output_buffer[(k)+(half)].re, x1); \
+        __m256d y0, y1, y2; \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX2(a, sum, common, scaled_rot, y0, y1, y2); \
+        \
+        STORE_3_LANES_AVX2_STREAM(k, K, output_buffer, y0, y1, y2); \
     } while (0)
 
+#define RADIX3_PIPELINE_2_BV_AVX2_STREAM(k, K, sub_outputs, stage_tw, output_buffer, v_sqrt3_2) \
+    do { \
+        __m256d a, b, c; \
+        LOAD_3_LANES_AVX2(k, K, sub_outputs, a, b, c); \
+        \
+        __m256d tw_b, tw_c; \
+        APPLY_STAGE_TWIDDLES_AVX2(k, b, c, stage_tw, tw_b, tw_c); \
+        \
+        __m256d sum, dif, common; \
+        RADIX3_BUTTERFLY_CORE_AVX2(a, tw_b, tw_c, sum, dif, common); \
+        \
+        __m256d scaled_rot; \
+        RADIX3_ROTATE_INVERSE_AVX2(dif, scaled_rot, v_sqrt3_2); \
+        \
+        __m256d y0, y1, y2; \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX2(a, sum, common, scaled_rot, y0, y1, y2); \
+        \
+        STORE_3_LANES_AVX2_STREAM(k, K, output_buffer, y0, y1, y2); \
+    } while (0)
+
+#endif // __AVX2__
+
 //==============================================================================
-// UNIFIED LOOP HELPER (INLINE - complex control flow)
+// SCALAR SUPPORT
 //==============================================================================
 
-/**
- * @brief Process main loop with k=N/4 skip logic
- * 
- * This handles the tricky part: processing k ∈ [1, N/2) while skipping k=N/4
- * Separate inline function for readability and type safety
- */
-static __always_inline void radix2_process_main_loop(
-    fft_data *restrict output_buffer,
-    const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
-    int half,
-    int k_quarter)
-{
-    int k = 1;
-    
-#ifdef __AVX512F__
-    // AVX-512: 16x butterflies
-    while (k + 15 < half) {
-        if (k == k_quarter) { k++; continue; }
-        if (k_quarter && k < k_quarter && k_quarter < k + 16) {
-            // k_quarter falls in this iteration - process around it
-            break; // Fall through to smaller widths
-        }
-        RADIX2_PIPELINE_16_AVX512(k, sub_outputs, stage_tw, output_buffer, half, half);
-        k += 16;
-    }
-#endif
-    
-#ifdef __AVX2__
-    // AVX2: 8x butterflies
-    while (k + 7 < half) {
-        if (k == k_quarter) { k++; continue; }
-        if (k_quarter && k < k_quarter && k_quarter < k + 8) {
-            // k_quarter falls in this iteration - process around it
-            break; // Fall through to smaller widths
-        }
-        RADIX2_PIPELINE_8_AVX2(k, sub_outputs, stage_tw, output_buffer, half, half);
-        k += 8;
-    }
-    
-    // AVX2: 2x butterflies
-    while (k + 1 < half) {
-        if (k == k_quarter) { k++; continue; }
-        RADIX2_PIPELINE_2_AVX2(k, sub_outputs, stage_tw, output_buffer, half);
-        k += 2;
-    }
-#endif
-    
-    // SSE2: 1x butterfly tail
-    while (k < half) {
-        if (k == k_quarter) { k++; continue; }
-        RADIX2_PIPELINE_1_SSE2(k, sub_outputs, stage_tw, output_buffer, half);
-        k++;
-    }
-}
+#define RADIX3_BUTTERFLY_CORE_SCALAR(a, tw_b, tw_c, \
+                                      sum_re, sum_im, dif_re, dif_im, \
+                                      common_re, common_im) \
+    do { \
+        sum_re = tw_b.re + tw_c.re; \
+        sum_im = tw_b.im + tw_c.im; \
+        dif_re = tw_b.re - tw_c.re; \
+        dif_im = tw_b.im - tw_c.im; \
+        common_re = a.re + C_HALF * sum_re; \
+        common_im = a.im + C_HALF * sum_im; \
+    } while (0)
 
-#endif // FFT_RADIX2_MACROS_H
+#define RADIX3_ROTATE_FORWARD_SCALAR(dif_re, dif_im, scaled_rot_re, scaled_rot_im) \
+    do { \
+        scaled_rot_re = S_SQRT3_2 * dif_im; \
+        scaled_rot_im = -S_SQRT3_2 * dif_re; \
+    } while (0)
+
+#define RADIX3_ROTATE_INVERSE_SCALAR(dif_re, dif_im, scaled_rot_re, scaled_rot_im) \
+    do { \
+        scaled_rot_re = -S_SQRT3_2 * dif_im; \
+        scaled_rot_im = S_SQRT3_2 * dif_re; \
+    } while (0)
+
+#define RADIX3_ASSEMBLE_OUTPUTS_SCALAR(a, sum_re, sum_im, \
+                                        common_re, common_im, \
+                                        scaled_rot_re, scaled_rot_im, \
+                                        y0, y1, y2) \
+    do { \
+        y0.re = a.re + sum_re; \
+        y0.im = a.im + sum_im; \
+        y1.re = common_re + scaled_rot_re; \
+        y1.im = common_im + scaled_rot_im; \
+        y2.re = common_re - scaled_rot_re; \
+        y2.im = common_im - scaled_rot_im; \
+    } while (0)
+
+#define APPLY_STAGE_TWIDDLES_SCALAR(k, b, c, stage_tw, tw_b, tw_c) \
+    do { \
+        const fft_data *w_ptr = &stage_tw[(k)*2]; \
+        \
+        tw_b.re = b.re * w_ptr[0].re - b.im * w_ptr[0].im; \
+        tw_b.im = b.re * w_ptr[0].im + b.im * w_ptr[0].re; \
+        \
+        tw_c.re = c.re * w_ptr[1].re - c.im * w_ptr[1].im; \
+        tw_c.im = c.re * w_ptr[1].im + c.im * w_ptr[1].re; \
+    } while (0)
+
+#define RADIX3_BUTTERFLY_SCALAR_FV(k, K, sub_outputs, stage_tw, output_buffer) \
+    do { \
+        fft_data a = sub_outputs[k]; \
+        fft_data b = sub_outputs[k + K]; \
+        fft_data c = sub_outputs[k + 2*K]; \
+        \
+        fft_data tw_b, tw_c; \
+        APPLY_STAGE_TWIDDLES_SCALAR(k, b, c, stage_tw, tw_b, tw_c); \
+        \
+        double sum_re, sum_im, dif_re, dif_im, common_re, common_im; \
+        RADIX3_BUTTERFLY_CORE_SCALAR(a, tw_b, tw_c, \
+                                      sum_re, sum_im, dif_re, dif_im, \
+                                      common_re, common_im); \
+        \
+        double scaled_rot_re, scaled_rot_im; \
+        RADIX3_ROTATE_FORWARD_SCALAR(dif_re, dif_im, scaled_rot_re, scaled_rot_im); \
+        \
+        fft_data y0, y1, y2; \
+        RADIX3_ASSEMBLE_OUTPUTS_SCALAR(a, sum_re, sum_im, \
+                                        common_re, common_im, \
+                                        scaled_rot_re, scaled_rot_im, \
+                                        y0, y1, y2); \
+        \
+        output_buffer[k] = y0; \
+        output_buffer[k + K] = y1; \
+        output_buffer[k + 2*K] = y2; \
+    } while (0)
+
+#define RADIX3_BUTTERFLY_SCALAR_BV(k, K, sub_outputs, stage_tw, output_buffer) \
+    do { \
+        fft_data a = sub_outputs[k]; \
+        fft_data b = sub_outputs[k + K]; \
+        fft_data c = sub_outputs[k + 2*K]; \
+        \
+        fft_data tw_b, tw_c; \
+        APPLY_STAGE_TWIDDLES_SCALAR(k, b, c, stage_tw, tw_b, tw_c); \
+        \
+        double sum_re, sum_im, dif_re, dif_im, common_re, common_im; \
+        RADIX3_BUTTERFLY_CORE_SCALAR(a, tw_b, tw_c, \
+                                      sum_re, sum_im, dif_re, dif_im, \
+                                      common_re, common_im); \
+        \
+        double scaled_rot_re, scaled_rot_im; \
+        RADIX3_ROTATE_INVERSE_SCALAR(dif_re, dif_im, scaled_rot_re, scaled_rot_im); \
+        \
+        fft_data y0, y1, y2; \
+        RADIX3_ASSEMBLE_OUTPUTS_SCALAR(a, sum_re, sum_im, \
+                                        common_re, common_im, \
+                                        scaled_rot_re, scaled_rot_im, \
+                                        y0, y1, y2); \
+        \
+        output_buffer[k] = y0; \
+        output_buffer[k + K] = y1; \
+        output_buffer[k + 2*K] = y2; \
+    } while (0)
+
+#endif // FFT_RADIX3_MACROS_H
