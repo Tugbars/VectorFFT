@@ -5,7 +5,7 @@
 #ifndef BLUESTEIN_H
 #define BLUESTEIN_H
 
-#include "fft_planning_types.h"
+#include "../fft_plan/fft_planning_types.h"
 
 //==============================================================================
 // OPAQUE TYPES (completely separate structures)
