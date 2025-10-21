@@ -13,7 +13,7 @@
 // TOTAL GAIN: ~20% over previous SoA version, ~120% over naive baseline!
 //
 
-#include "fft_radix2.h"
+#include "fft_radix2_uniform.h"
 #include "fft_radix2_macros.h"
 
 /**
