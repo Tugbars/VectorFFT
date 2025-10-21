@@ -1,7 +1,7 @@
 #ifndef FFT_RADIX4_H
 #define FFT_RADIX4_H
 
-#include "highspeedFFT.h"
+#include "../fft_plan/fft_planning_types.h"
 
 /**
  * @brief Radix-4 FFT butterfly using Cooley-Tukey Decimation-In-Time (DIT)
@@ -336,14 +336,14 @@
 void fft_radix4_bv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
+    const fft_twiddles_soa *restrict stage_tw,  // ✅ ONLY SIGNATURE CHANGE
     int sub_len);
 
 void fft_radix4_fv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
-    int sub_len):
+    const fft_twiddles_soa *restrict stage_tw,  // ✅ ONLY SIGNATURE CHANGE
+    int sub_len);
 
 #endif // FFT_RADIX3_H
 

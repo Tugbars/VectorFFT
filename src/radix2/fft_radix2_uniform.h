@@ -1,9 +1,7 @@
 #ifndef FFT_RADIX2_H
 #define FFT_RADIX2_H
 
-#include "highspeedFFT.h"
 #include "../fft_plan/fft_planning_types.h"
-
 
 /**
  * @brief Optimized radix-2 FFT butterfly operation with SIMD acceleration
