@@ -1,8 +1,7 @@
 #ifndef FFT_RADIX5_H
 #define FFT_RADIX5_H
 
-#include "highspeedFFT.h"
-
+#include "../fft_plan/fft_planning_types.h"
 /**
  * @brief Radix-5 FFT butterfly: The Goldilocks Prime Radix
  * 
@@ -374,12 +373,17 @@
  *              - Mixed-radix FFTs (avoiding power-of-2 padding)
  *              - Any application where N naturally contains factor 5
  */
-void fft_radix5_butterfly(
-    fft_data *output_buffer,
-    fft_data *sub_outputs,
-    const fft_data *stage_tw,
-    int sub_len,
-    int transform_sign);
+void fft_radix5_bv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_twiddles_soa *restrict stage_tw,  // ✅ SOA SIGNATURE
+    int sub_len);
+
+void fft_radix5_fv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_twiddles_soa *restrict stage_tw,  // ✅ SOA SIGNATURE
+    int sub_len);
 
 #endif // FFT_RADIX3_H
 

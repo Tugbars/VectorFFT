@@ -1,7 +1,7 @@
 #ifndef FFT_RADIX8_H
 #define FFT_RADIX8_H
 
-#include "highspeedFFT.h"
+#include "../fft_plan/fft_planning_types.h"
 
 /**
  * @brief Radix-8 FFT butterfly using 2×Radix-4 decomposition (FFTW-style)
@@ -248,17 +248,17 @@
  *          Designed for low-latency high-frequency trading environments
  *          where even nanosecond improvements matter.
  */
-void fft_radix8_fv(
-    fft_data *restrict output_buffer,
-    const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
-    int sub_len);
-
 void fft_radix8_bv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
-    int sub_len);    
+    const fft_twiddles_soa *restrict stage_tw,  // ✅ SOA SIGNATURE
+    int sub_len);
+
+void fft_radix8_fv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_twiddles_soa *restrict stage_tw,  // ✅ SOA SIGNATURE
+    int sub_len);
 
 #endif // FFT_RADIX3_H
 
