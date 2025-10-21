@@ -26,6 +26,7 @@
         "string": "c",
         "optional": "c",
         "memory": "c",
-        "new": "c"
+        "new": "c",
+        "iterator": "c"
     }
 }

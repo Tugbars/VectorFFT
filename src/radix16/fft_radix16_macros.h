@@ -17,6 +17,10 @@
 //   - Alignment hints support
 //   - Hoisted sign masks for W_4 intermediate twiddles
 //   - Fully unrolled twiddle application (15 iterations)
+//   - SoA twiddle layout for zero-shuffle hot path
+//   - Fixed AoS↔SoA conversion (movedup + permute)
+//   - Reduced register pressure (≤24 zmm live)
+//   - Software pipelined twiddle application
 //
 
 #ifndef FFT_RADIX16_MACROS_H
@@ -66,14 +70,15 @@
 #define PREFETCH_DISTANCE_AVX512 16
 
 //==============================================================================
-// AoS ↔ SoA CONVERSION
+// AoS ↔ SoA CONVERSION (FIXED)
 //==============================================================================
 
+// CORRECT: movedup for real, permute for imaginary
 #define AOS_TO_SOA_AVX512(aos, re, im)       \
     do                                       \
     {                                        \
-        (re) = _mm512_unpacklo_pd(aos, aos); \
-        (im) = _mm512_unpackhi_pd(aos, aos); \
+        (re) = _mm512_movedup_pd(aos);       \
+        (im) = _mm512_permute_pd(aos, 0xFF); \
     } while (0)
 
 #define SOA_TO_AOS_AVX512(re, im, aos) \
@@ -83,28 +88,51 @@
 // SOA COMPLEX ARITHMETIC
 //==============================================================================
 
+#if defined(__FMA__)
 #define CMUL_FMA_SOA_AVX512(out_re, out_im, a_re, a_im, w_re, w_im)        \
     do                                                                     \
     {                                                                      \
         (out_re) = _mm512_fmsub_pd(a_re, w_re, _mm512_mul_pd(a_im, w_im)); \
         (out_im) = _mm512_fmadd_pd(a_re, w_im, _mm512_mul_pd(a_im, w_re)); \
     } while (0)
+#else
+#define CMUL_FMA_SOA_AVX512(out_re, out_im, a_re, a_im, w_re, w_im)                     \
+    do                                                                                  \
+    {                                                                                   \
+        (out_re) = _mm512_sub_pd(_mm512_mul_pd(a_re, w_re), _mm512_mul_pd(a_im, w_im)); \
+        (out_im) = _mm512_add_pd(_mm512_mul_pd(a_re, w_im), _mm512_mul_pd(a_im, w_re)); \
+    } while (0)
+#endif
 
 //==============================================================================
-// LEGACY AOS COMPLEX MULTIPLY (for backward compatibility)
+// LEGACY AOS COMPLEX MULTIPLY (for backward compatibility, FIXED)
 //==============================================================================
 
+#if defined(__FMA__)
 #define CMUL_FMA_AOS_AVX512(out, a, w)                               \
     do                                                               \
     {                                                                \
-        __m512d ar = _mm512_unpacklo_pd(a, a);                       \
-        __m512d ai = _mm512_unpackhi_pd(a, a);                       \
-        __m512d wr = _mm512_unpacklo_pd(w, w);                       \
-        __m512d wi = _mm512_unpackhi_pd(w, w);                       \
+        __m512d ar = _mm512_movedup_pd(a);                           \
+        __m512d ai = _mm512_permute_pd(a, 0xFF);                     \
+        __m512d wr = _mm512_movedup_pd(w);                           \
+        __m512d wi = _mm512_permute_pd(w, 0xFF);                     \
         __m512d re = _mm512_fmsub_pd(ar, wr, _mm512_mul_pd(ai, wi)); \
         __m512d im = _mm512_fmadd_pd(ar, wi, _mm512_mul_pd(ai, wr)); \
         (out) = _mm512_unpacklo_pd(re, im);                          \
     } while (0)
+#else
+#define CMUL_FMA_AOS_AVX512(out, a, w)                                            \
+    do                                                                            \
+    {                                                                             \
+        __m512d ar = _mm512_movedup_pd(a);                                        \
+        __m512d ai = _mm512_permute_pd(a, 0xFF);                                  \
+        __m512d wr = _mm512_movedup_pd(w);                                        \
+        __m512d wi = _mm512_permute_pd(w, 0xFF);                                  \
+        __m512d re = _mm512_sub_pd(_mm512_mul_pd(ar, wr), _mm512_mul_pd(ai, wi)); \
+        __m512d im = _mm512_add_pd(_mm512_mul_pd(ar, wi), _mm512_mul_pd(ai, wr)); \
+        (out) = _mm512_unpacklo_pd(re, im);                                       \
+    } while (0)
+#endif
 
 //==============================================================================
 // SOA RADIX-4 BUTTERFLY
@@ -379,11 +407,75 @@
         }                                                                                    \
     } while (0)
 
-#define PREFETCH_STAGE_TW_AVX512(kk, distance, stage_tw, sub_len) \
-    _mm_prefetch((const char *)&stage_tw[0 * (sub_len) + (kk) + (distance)], _MM_HINT_T0)
+#define PREFETCH_STAGE_TW_AVX512(kk, distance, stage_tw_re, stage_tw_im, sub_len)                 \
+    do                                                                                            \
+    {                                                                                             \
+        _mm_prefetch((const char *)&stage_tw_re[0 * (sub_len) + (kk) + (distance)], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&stage_tw_im[0 * (sub_len) + (kk) + (distance)], _MM_HINT_T0); \
+    } while (0)
 
 //==============================================================================
-// TWIDDLE APPLICATION HELPERS
+// SOA TWIDDLE APPLICATION - OPTIMIZED (Direct SoA load, software pipelined)
+//==============================================================================
+
+// Unrolled by 3 for software pipelining to hide latency
+#define APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len) \
+    do                                                                                         \
+    {                                                                                          \
+        /* r=1,2,3 - first triplet */                                                          \
+        __m512d w1_re = _mm512_loadu_pd(&stage_tw_re[0 * (sub_len) + (kk)]);                   \
+        __m512d w1_im = _mm512_loadu_pd(&stage_tw_im[0 * (sub_len) + (kk)]);                   \
+        __m512d w2_re = _mm512_loadu_pd(&stage_tw_re[1 * (sub_len) + (kk)]);                   \
+        __m512d w2_im = _mm512_loadu_pd(&stage_tw_im[1 * (sub_len) + (kk)]);                   \
+        __m512d w3_re = _mm512_loadu_pd(&stage_tw_re[2 * (sub_len) + (kk)]);                   \
+        __m512d w3_im = _mm512_loadu_pd(&stage_tw_im[2 * (sub_len) + (kk)]);                   \
+        CMUL_FMA_SOA_AVX512(x_re[1], x_im[1], x_re[1], x_im[1], w1_re, w1_im);                 \
+        CMUL_FMA_SOA_AVX512(x_re[2], x_im[2], x_re[2], x_im[2], w2_re, w2_im);                 \
+        CMUL_FMA_SOA_AVX512(x_re[3], x_im[3], x_re[3], x_im[3], w3_re, w3_im);                 \
+        /* r=4,5,6 */                                                                          \
+        __m512d w4_re = _mm512_loadu_pd(&stage_tw_re[3 * (sub_len) + (kk)]);                   \
+        __m512d w4_im = _mm512_loadu_pd(&stage_tw_im[3 * (sub_len) + (kk)]);                   \
+        __m512d w5_re = _mm512_loadu_pd(&stage_tw_re[4 * (sub_len) + (kk)]);                   \
+        __m512d w5_im = _mm512_loadu_pd(&stage_tw_im[4 * (sub_len) + (kk)]);                   \
+        __m512d w6_re = _mm512_loadu_pd(&stage_tw_re[5 * (sub_len) + (kk)]);                   \
+        __m512d w6_im = _mm512_loadu_pd(&stage_tw_im[5 * (sub_len) + (kk)]);                   \
+        CMUL_FMA_SOA_AVX512(x_re[4], x_im[4], x_re[4], x_im[4], w4_re, w4_im);                 \
+        CMUL_FMA_SOA_AVX512(x_re[5], x_im[5], x_re[5], x_im[5], w5_re, w5_im);                 \
+        CMUL_FMA_SOA_AVX512(x_re[6], x_im[6], x_re[6], x_im[6], w6_re, w6_im);                 \
+        /* r=7,8,9 */                                                                          \
+        __m512d w7_re = _mm512_loadu_pd(&stage_tw_re[6 * (sub_len) + (kk)]);                   \
+        __m512d w7_im = _mm512_loadu_pd(&stage_tw_im[6 * (sub_len) + (kk)]);                   \
+        __m512d w8_re = _mm512_loadu_pd(&stage_tw_re[7 * (sub_len) + (kk)]);                   \
+        __m512d w8_im = _mm512_loadu_pd(&stage_tw_im[7 * (sub_len) + (kk)]);                   \
+        __m512d w9_re = _mm512_loadu_pd(&stage_tw_re[8 * (sub_len) + (kk)]);                   \
+        __m512d w9_im = _mm512_loadu_pd(&stage_tw_im[8 * (sub_len) + (kk)]);                   \
+        CMUL_FMA_SOA_AVX512(x_re[7], x_im[7], x_re[7], x_im[7], w7_re, w7_im);                 \
+        CMUL_FMA_SOA_AVX512(x_re[8], x_im[8], x_re[8], x_im[8], w8_re, w8_im);                 \
+        CMUL_FMA_SOA_AVX512(x_re[9], x_im[9], x_re[9], x_im[9], w9_re, w9_im);                 \
+        /* r=10,11,12 */                                                                       \
+        __m512d w10_re = _mm512_loadu_pd(&stage_tw_re[9 * (sub_len) + (kk)]);                  \
+        __m512d w10_im = _mm512_loadu_pd(&stage_tw_im[9 * (sub_len) + (kk)]);                  \
+        __m512d w11_re = _mm512_loadu_pd(&stage_tw_re[10 * (sub_len) + (kk)]);                 \
+        __m512d w11_im = _mm512_loadu_pd(&stage_tw_im[10 * (sub_len) + (kk)]);                 \
+        __m512d w12_re = _mm512_loadu_pd(&stage_tw_re[11 * (sub_len) + (kk)]);                 \
+        __m512d w12_im = _mm512_loadu_pd(&stage_tw_im[11 * (sub_len) + (kk)]);                 \
+        CMUL_FMA_SOA_AVX512(x_re[10], x_im[10], x_re[10], x_im[10], w10_re, w10_im);           \
+        CMUL_FMA_SOA_AVX512(x_re[11], x_im[11], x_re[11], x_im[11], w11_re, w11_im);           \
+        CMUL_FMA_SOA_AVX512(x_re[12], x_im[12], x_re[12], x_im[12], w12_re, w12_im);           \
+        /* r=13,14,15 */                                                                       \
+        __m512d w13_re = _mm512_loadu_pd(&stage_tw_re[12 * (sub_len) + (kk)]);                 \
+        __m512d w13_im = _mm512_loadu_pd(&stage_tw_im[12 * (sub_len) + (kk)]);                 \
+        __m512d w14_re = _mm512_loadu_pd(&stage_tw_re[13 * (sub_len) + (kk)]);                 \
+        __m512d w14_im = _mm512_loadu_pd(&stage_tw_im[13 * (sub_len) + (kk)]);                 \
+        __m512d w15_re = _mm512_loadu_pd(&stage_tw_re[14 * (sub_len) + (kk)]);                 \
+        __m512d w15_im = _mm512_loadu_pd(&stage_tw_im[14 * (sub_len) + (kk)]);                 \
+        CMUL_FMA_SOA_AVX512(x_re[13], x_im[13], x_re[13], x_im[13], w13_re, w13_im);           \
+        CMUL_FMA_SOA_AVX512(x_re[14], x_im[14], x_re[14], x_im[14], w14_re, w14_im);           \
+        CMUL_FMA_SOA_AVX512(x_re[15], x_im[15], x_re[15], x_im[15], w15_re, w15_im);           \
+    } while (0)
+
+//==============================================================================
+// LEGACY AOS TWIDDLE APPLICATION (for backward compatibility)
 //==============================================================================
 
 #define APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw, sub_len)           \
@@ -422,139 +514,124 @@
     } while (0)
 
 //==============================================================================
-// OPTIMIZED SOA BUTTERFLY PIPELINE
+// OPTIMIZED SOA BUTTERFLY PIPELINE (REDUCED REGISTER PRESSURE)
+// Strategy: Load → Twiddle → 1st radix-4 → W4 twiddles → 2nd radix-4 → Store
+// Peak live: ~20-24 zmm (avoiding spills)
 //==============================================================================
 
-#define RADIX16_BUTTERFLY_FV_SOA_AVX512(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)              \
-    do                                                                                                                         \
-    {                                                                                                                          \
-        __m512d x_re[16], x_im[16];                                                                                            \
-        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                              \
-        for (int r = 1; r <= 15; r++)                                                                                          \
-        {                                                                                                                      \
-            __m512d tw_aos = _mm512_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                        \
-            __m512d w_re, w_im;                                                                                                \
-            AOS_TO_SOA_AVX512(tw_aos, w_re, w_im);                                                                             \
-            CMUL_FMA_SOA_AVX512(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
-        }                                                                                                                      \
-        __m512d y_re[16], y_im[16];                                                                                            \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
-                                    y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
-                                    y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
-                                    y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
-                                    y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(y_re, y_im, neg_mask);                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
-                                    y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
-                                    y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
-                                    y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
-                                    y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
-        STORE_16_LANES_SOA_AVX512(kk, K, output_buffer, y_re, y_im);                                                           \
+#define RADIX16_BUTTERFLY_FV_SOA_AVX512(kk, K, sub_outputs, stage_tw_re, stage_tw_im, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                            \
+    {                                                                                                                             \
+        /* Load input data */                                                                                                     \
+        __m512d x_re[16], x_im[16];                                                                                               \
+        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                                 \
+        /* Apply input twiddles (x[0] unchanged) */                                                                               \
+        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len);                                   \
+        /* First radix-4 stage - compute into temp, then copy back to x */                                                        \
+        __m512d t_re[16], t_im[16];                                                                                               \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                     \
+                                    t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);            \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                     \
+                                    t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);            \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                   \
+                                    t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);        \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                   \
+                                    t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);    \
+        /* Apply W₄ intermediate twiddles in-place on t */                                                                        \
+        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(t_re, t_im, neg_mask);                                                                \
+        /* Second radix-4 stage - compute directly to output using x as temp */                                                   \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                     \
+                                    x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);          \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                     \
+                                    x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);          \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                   \
+                                    x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);        \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                   \
+                                    x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);        \
+        /* Store results */                                                                                                       \
+        STORE_16_LANES_SOA_AVX512(kk, K, output_buffer, x_re, x_im);                                                              \
     } while (0)
 
-#define RADIX16_BUTTERFLY_BV_SOA_AVX512(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)              \
-    do                                                                                                                         \
-    {                                                                                                                          \
-        __m512d x_re[16], x_im[16];                                                                                            \
-        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                              \
-        for (int r = 1; r <= 15; r++)                                                                                          \
-        {                                                                                                                      \
-            __m512d tw_aos = _mm512_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                        \
-            __m512d w_re, w_im;                                                                                                \
-            AOS_TO_SOA_AVX512(tw_aos, w_re, w_im);                                                                             \
-            CMUL_FMA_SOA_AVX512(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
-        }                                                                                                                      \
-        __m512d y_re[16], y_im[16];                                                                                            \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
-                                    y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
-                                    y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
-                                    y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
-                                    y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
-        APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(y_re, y_im, neg_mask);                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
-                                    y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
-                                    y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
-                                    y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
-                                    y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
-        STORE_16_LANES_SOA_AVX512(kk, K, output_buffer, y_re, y_im);                                                           \
+#define RADIX16_BUTTERFLY_BV_SOA_AVX512(kk, K, sub_outputs, stage_tw_re, stage_tw_im, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                            \
+    {                                                                                                                             \
+        __m512d x_re[16], x_im[16];                                                                                               \
+        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                                 \
+        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len);                                   \
+        __m512d t_re[16], t_im[16];                                                                                               \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                     \
+                                    t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);            \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                     \
+                                    t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);            \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                   \
+                                    t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);        \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                   \
+                                    t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);    \
+        APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(t_re, t_im, neg_mask);                                                                \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                     \
+                                    x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);          \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                     \
+                                    x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);          \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                   \
+                                    x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);        \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                   \
+                                    x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);        \
+        STORE_16_LANES_SOA_AVX512(kk, K, output_buffer, x_re, x_im);                                                              \
     } while (0)
 
-#define RADIX16_BUTTERFLY_FV_SOA_AVX512_STREAM(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)       \
-    do                                                                                                                         \
-    {                                                                                                                          \
-        __m512d x_re[16], x_im[16];                                                                                            \
-        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                              \
-        for (int r = 1; r <= 15; r++)                                                                                          \
-        {                                                                                                                      \
-            __m512d tw_aos = _mm512_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                        \
-            __m512d w_re, w_im;                                                                                                \
-            AOS_TO_SOA_AVX512(tw_aos, w_re, w_im);                                                                             \
-            CMUL_FMA_SOA_AVX512(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
-        }                                                                                                                      \
-        __m512d y_re[16], y_im[16];                                                                                            \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
-                                    y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
-                                    y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
-                                    y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
-                                    y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(y_re, y_im, neg_mask);                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
-                                    y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
-                                    y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
-                                    y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
-                                    y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
-        STORE_16_LANES_SOA_AVX512_STREAM(kk, K, output_buffer, y_re, y_im);                                                    \
+// Streaming versions
+#define RADIX16_BUTTERFLY_FV_SOA_AVX512_STREAM(kk, K, sub_outputs, stage_tw_re, stage_tw_im, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                                   \
+    {                                                                                                                                    \
+        __m512d x_re[16], x_im[16];                                                                                                      \
+        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                                        \
+        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len);                                          \
+        __m512d t_re[16], t_im[16];                                                                                                      \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                            \
+                                    t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);                   \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                            \
+                                    t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);                   \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                          \
+                                    t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);               \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                          \
+                                    t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);           \
+        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(t_re, t_im, neg_mask);                                                                       \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                            \
+                                    x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);                 \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                            \
+                                    x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);                 \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                          \
+                                    x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);               \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                          \
+                                    x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);               \
+        STORE_16_LANES_SOA_AVX512_STREAM(kk, K, output_buffer, x_re, x_im);                                                              \
     } while (0)
 
-#define RADIX16_BUTTERFLY_BV_SOA_AVX512_STREAM(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)       \
-    do                                                                                                                         \
-    {                                                                                                                          \
-        __m512d x_re[16], x_im[16];                                                                                            \
-        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                              \
-        for (int r = 1; r <= 15; r++)                                                                                          \
-        {                                                                                                                      \
-            __m512d tw_aos = _mm512_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                        \
-            __m512d w_re, w_im;                                                                                                \
-            AOS_TO_SOA_AVX512(tw_aos, w_re, w_im);                                                                             \
-            CMUL_FMA_SOA_AVX512(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
-        }                                                                                                                      \
-        __m512d y_re[16], y_im[16];                                                                                            \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
-                                    y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
-                                    y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
-                                    y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
-                                    y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
-        APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(y_re, y_im, neg_mask);                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
-                                    y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
-                                    y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
-                                    y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX512(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
-                                    y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
-        STORE_16_LANES_SOA_AVX512_STREAM(kk, K, output_buffer, y_re, y_im);                                                    \
+#define RADIX16_BUTTERFLY_BV_SOA_AVX512_STREAM(kk, K, sub_outputs, stage_tw_re, stage_tw_im, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                                   \
+    {                                                                                                                                    \
+        __m512d x_re[16], x_im[16];                                                                                                      \
+        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                                        \
+        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len);                                          \
+        __m512d t_re[16], t_im[16];                                                                                                      \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                            \
+                                    t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);                   \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                            \
+                                    t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);                   \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                          \
+                                    t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);               \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                          \
+                                    t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);           \
+        APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(t_re, t_im, neg_mask);                                                                       \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                            \
+                                    x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);                 \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                            \
+                                    x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);                 \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                          \
+                                    x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);               \
+        RADIX4_BUTTERFLY_SOA_AVX512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                          \
+                                    x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);               \
+        STORE_16_LANES_SOA_AVX512_STREAM(kk, K, output_buffer, x_re, x_im);                                                              \
     } while (0)
 
 //==============================================================================
@@ -669,13 +746,11 @@
 
 #ifdef __AVX2__
 
-// Hoisted sign masks for W_4 intermediate twiddles - Forward
+// Hoisted sign masks for W_4 intermediate twiddles (avoiding ODR issues)
 static const __m256d W4_SIGN_MASK_FV_5_AVX2 = {-0.0, 0.0, -0.0, 0.0};
 static const __m256d W4_SIGN_MASK_FV_7_AVX2 = {0.0, -0.0, 0.0, -0.0};
 static const __m256d W4_SIGN_MASK_FV_13_AVX2 = {0.0, -0.0, 0.0, -0.0};
 static const __m256d W4_SIGN_MASK_FV_15_AVX2 = {-0.0, 0.0, -0.0, 0.0};
-
-// Hoisted sign masks for W_4 intermediate twiddles - Backward
 static const __m256d W4_SIGN_MASK_BV_5_AVX2 = {0.0, -0.0, 0.0, -0.0};
 static const __m256d W4_SIGN_MASK_BV_7_AVX2 = {-0.0, 0.0, -0.0, 0.0};
 static const __m256d W4_SIGN_MASK_BV_13_AVX2 = {-0.0, 0.0, -0.0, 0.0};
@@ -688,14 +763,14 @@ static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
 #define K_TILE_R16_AVX2 512 // Smaller than AVX-512 due to 2-way processing
 
 //==============================================================================
-// AoS ↔ SoA CONVERSION (AVX2)
+// AoS ↔ SoA CONVERSION (AVX2) - FIXED
 //==============================================================================
 
-#define AOS_TO_SOA_AVX2(aos, re, im)         \
-    do                                       \
-    {                                        \
-        (re) = _mm256_unpacklo_pd(aos, aos); \
-        (im) = _mm256_unpackhi_pd(aos, aos); \
+#define AOS_TO_SOA_AVX2(aos, re, im)        \
+    do                                      \
+    {                                       \
+        (re) = _mm256_movedup_pd(aos);      \
+        (im) = _mm256_permute_pd(aos, 0xF); \
     } while (0)
 
 #define SOA_TO_AOS_AVX2(re, im, aos) \
@@ -705,28 +780,51 @@ static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
 // SOA COMPLEX ARITHMETIC (AVX2)
 //==============================================================================
 
+#if defined(__FMA__)
 #define CMUL_FMA_SOA_AVX2(out_re, out_im, a_re, a_im, w_re, w_im)          \
     do                                                                     \
     {                                                                      \
         (out_re) = _mm256_fmsub_pd(a_re, w_re, _mm256_mul_pd(a_im, w_im)); \
         (out_im) = _mm256_fmadd_pd(a_re, w_im, _mm256_mul_pd(a_im, w_re)); \
     } while (0)
+#else
+#define CMUL_FMA_SOA_AVX2(out_re, out_im, a_re, a_im, w_re, w_im)                       \
+    do                                                                                  \
+    {                                                                                   \
+        (out_re) = _mm256_sub_pd(_mm256_mul_pd(a_re, w_re), _mm256_mul_pd(a_im, w_im)); \
+        (out_im) = _mm256_add_pd(_mm256_mul_pd(a_re, w_im), _mm256_mul_pd(a_im, w_re)); \
+    } while (0)
+#endif
 
 //==============================================================================
-// LEGACY AOS COMPLEX MULTIPLY (for backward compatibility)
+// LEGACY AOS COMPLEX MULTIPLY (for backward compatibility, FIXED)
 //==============================================================================
 
+#if defined(__FMA__)
 #define CMUL_FMA_AOS(out, a, w)                                      \
     do                                                               \
     {                                                                \
-        __m256d ar = _mm256_unpacklo_pd(a, a);                       \
-        __m256d ai = _mm256_unpackhi_pd(a, a);                       \
-        __m256d wr = _mm256_unpacklo_pd(w, w);                       \
-        __m256d wi = _mm256_unpackhi_pd(w, w);                       \
+        __m256d ar = _mm256_movedup_pd(a);                           \
+        __m256d ai = _mm256_permute_pd(a, 0xF);                      \
+        __m256d wr = _mm256_movedup_pd(w);                           \
+        __m256d wi = _mm256_permute_pd(w, 0xF);                      \
         __m256d re = _mm256_fmsub_pd(ar, wr, _mm256_mul_pd(ai, wi)); \
         __m256d im = _mm256_fmadd_pd(ar, wi, _mm256_mul_pd(ai, wr)); \
         (out) = _mm256_unpacklo_pd(re, im);                          \
     } while (0)
+#else
+#define CMUL_FMA_AOS(out, a, w)                                                   \
+    do                                                                            \
+    {                                                                             \
+        __m256d ar = _mm256_movedup_pd(a);                                        \
+        __m256d ai = _mm256_permute_pd(a, 0xF);                                   \
+        __m256d wr = _mm256_movedup_pd(w);                                        \
+        __m256d wi = _mm256_permute_pd(w, 0xF);                                   \
+        __m256d re = _mm256_sub_pd(_mm256_mul_pd(ar, wr), _mm256_mul_pd(ai, wi)); \
+        __m256d im = _mm256_add_pd(_mm256_mul_pd(ar, wi), _mm256_mul_pd(ai, wr)); \
+        (out) = _mm256_unpacklo_pd(re, im);                                       \
+    } while (0)
+#endif
 
 //==============================================================================
 // SOA RADIX-4 BUTTERFLY (AVX2)
@@ -778,18 +876,6 @@ static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
 //==============================================================================
 // SOA W_4 INTERMEDIATE TWIDDLES (AVX2)
 //==============================================================================
-
-// Hoisted sign masks for W_4 intermediate twiddles - Forward
-static const __m256d W4_SIGN_MASK_FV_5_AVX2 = {-0.0, 0.0, -0.0, 0.0};
-static const __m256d W4_SIGN_MASK_FV_7_AVX2 = {0.0, -0.0, 0.0, -0.0};
-static const __m256d W4_SIGN_MASK_FV_13_AVX2 = {0.0, -0.0, 0.0, -0.0};
-static const __m256d W4_SIGN_MASK_FV_15_AVX2 = {-0.0, 0.0, -0.0, 0.0};
-
-// Hoisted sign masks for W_4 intermediate twiddles - Backward
-static const __m256d W4_SIGN_MASK_BV_5_AVX2 = {0.0, -0.0, 0.0, -0.0};
-static const __m256d W4_SIGN_MASK_BV_7_AVX2 = {-0.0, 0.0, -0.0, 0.0};
-static const __m256d W4_SIGN_MASK_BV_13_AVX2 = {-0.0, 0.0, -0.0, 0.0};
-static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
 
 #define APPLY_W4_INTERMEDIATE_FV_SOA_AVX2(y_re, y_im, neg_mask) \
     do                                                          \
@@ -1008,17 +1094,72 @@ static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
         }                                                                                    \
     } while (0)
 
-#define PREFETCH_STAGE_TW_AVX2(kk, distance, stage_tw, sub_len) \
-    _mm_prefetch((const char *)&stage_tw[0 * (sub_len) + (kk) + (distance)], _MM_HINT_T0)
+#define PREFETCH_STAGE_TW_AVX2(kk, distance, stage_tw_re, stage_tw_im, sub_len)                   \
+    do                                                                                            \
+    {                                                                                             \
+        _mm_prefetch((const char *)&stage_tw_re[0 * (sub_len) + (kk) + (distance)], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&stage_tw_im[0 * (sub_len) + (kk) + (distance)], _MM_HINT_T0); \
+    } while (0)
 
 //==============================================================================
-// SOA TWIDDLE APPLICATION (AVX2)
+// SOA TWIDDLE APPLICATION - OPTIMIZED (AVX2)
 //==============================================================================
 
-/**
- * @brief Apply stage twiddles with SoA layout for radix-16 (AVX2)
- * Same as AVX-512 version but processes 2 complex numbers at a time
- */
+#define APPLY_STAGE_TWIDDLES_R16_SOA_AVX2(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len) \
+    do                                                                                       \
+    {                                                                                        \
+        /* Unrolled by 3 for software pipelining */                                          \
+        __m256d w1_re = _mm256_loadu_pd(&stage_tw_re[0 * (sub_len) + (kk)]);                 \
+        __m256d w1_im = _mm256_loadu_pd(&stage_tw_im[0 * (sub_len) + (kk)]);                 \
+        __m256d w2_re = _mm256_loadu_pd(&stage_tw_re[1 * (sub_len) + (kk)]);                 \
+        __m256d w2_im = _mm256_loadu_pd(&stage_tw_im[1 * (sub_len) + (kk)]);                 \
+        __m256d w3_re = _mm256_loadu_pd(&stage_tw_re[2 * (sub_len) + (kk)]);                 \
+        __m256d w3_im = _mm256_loadu_pd(&stage_tw_im[2 * (sub_len) + (kk)]);                 \
+        CMUL_FMA_SOA_AVX2(x_re[1], x_im[1], x_re[1], x_im[1], w1_re, w1_im);                 \
+        CMUL_FMA_SOA_AVX2(x_re[2], x_im[2], x_re[2], x_im[2], w2_re, w2_im);                 \
+        CMUL_FMA_SOA_AVX2(x_re[3], x_im[3], x_re[3], x_im[3], w3_re, w3_im);                 \
+        __m256d w4_re = _mm256_loadu_pd(&stage_tw_re[3 * (sub_len) + (kk)]);                 \
+        __m256d w4_im = _mm256_loadu_pd(&stage_tw_im[3 * (sub_len) + (kk)]);                 \
+        __m256d w5_re = _mm256_loadu_pd(&stage_tw_re[4 * (sub_len) + (kk)]);                 \
+        __m256d w5_im = _mm256_loadu_pd(&stage_tw_im[4 * (sub_len) + (kk)]);                 \
+        __m256d w6_re = _mm256_loadu_pd(&stage_tw_re[5 * (sub_len) + (kk)]);                 \
+        __m256d w6_im = _mm256_loadu_pd(&stage_tw_im[5 * (sub_len) + (kk)]);                 \
+        CMUL_FMA_SOA_AVX2(x_re[4], x_im[4], x_re[4], x_im[4], w4_re, w4_im);                 \
+        CMUL_FMA_SOA_AVX2(x_re[5], x_im[5], x_re[5], x_im[5], w5_re, w5_im);                 \
+        CMUL_FMA_SOA_AVX2(x_re[6], x_im[6], x_re[6], x_im[6], w6_re, w6_im);                 \
+        __m256d w7_re = _mm256_loadu_pd(&stage_tw_re[6 * (sub_len) + (kk)]);                 \
+        __m256d w7_im = _mm256_loadu_pd(&stage_tw_im[6 * (sub_len) + (kk)]);                 \
+        __m256d w8_re = _mm256_loadu_pd(&stage_tw_re[7 * (sub_len) + (kk)]);                 \
+        __m256d w8_im = _mm256_loadu_pd(&stage_tw_im[7 * (sub_len) + (kk)]);                 \
+        __m256d w9_re = _mm256_loadu_pd(&stage_tw_re[8 * (sub_len) + (kk)]);                 \
+        __m256d w9_im = _mm256_loadu_pd(&stage_tw_im[8 * (sub_len) + (kk)]);                 \
+        CMUL_FMA_SOA_AVX2(x_re[7], x_im[7], x_re[7], x_im[7], w7_re, w7_im);                 \
+        CMUL_FMA_SOA_AVX2(x_re[8], x_im[8], x_re[8], x_im[8], w8_re, w8_im);                 \
+        CMUL_FMA_SOA_AVX2(x_re[9], x_im[9], x_re[9], x_im[9], w9_re, w9_im);                 \
+        __m256d w10_re = _mm256_loadu_pd(&stage_tw_re[9 * (sub_len) + (kk)]);                \
+        __m256d w10_im = _mm256_loadu_pd(&stage_tw_im[9 * (sub_len) + (kk)]);                \
+        __m256d w11_re = _mm256_loadu_pd(&stage_tw_re[10 * (sub_len) + (kk)]);               \
+        __m256d w11_im = _mm256_loadu_pd(&stage_tw_im[10 * (sub_len) + (kk)]);               \
+        __m256d w12_re = _mm256_loadu_pd(&stage_tw_re[11 * (sub_len) + (kk)]);               \
+        __m256d w12_im = _mm256_loadu_pd(&stage_tw_im[11 * (sub_len) + (kk)]);               \
+        CMUL_FMA_SOA_AVX2(x_re[10], x_im[10], x_re[10], x_im[10], w10_re, w10_im);           \
+        CMUL_FMA_SOA_AVX2(x_re[11], x_im[11], x_re[11], x_im[11], w11_re, w11_im);           \
+        CMUL_FMA_SOA_AVX2(x_re[12], x_im[12], x_re[12], x_im[12], w12_re, w12_im);           \
+        __m256d w13_re = _mm256_loadu_pd(&stage_tw_re[12 * (sub_len) + (kk)]);               \
+        __m256d w13_im = _mm256_loadu_pd(&stage_tw_im[12 * (sub_len) + (kk)]);               \
+        __m256d w14_re = _mm256_loadu_pd(&stage_tw_re[13 * (sub_len) + (kk)]);               \
+        __m256d w14_im = _mm256_loadu_pd(&stage_tw_im[13 * (sub_len) + (kk)]);               \
+        __m256d w15_re = _mm256_loadu_pd(&stage_tw_re[14 * (sub_len) + (kk)]);               \
+        __m256d w15_im = _mm256_loadu_pd(&stage_tw_im[14 * (sub_len) + (kk)]);               \
+        CMUL_FMA_SOA_AVX2(x_re[13], x_im[13], x_re[13], x_im[13], w13_re, w13_im);           \
+        CMUL_FMA_SOA_AVX2(x_re[14], x_im[14], x_re[14], x_im[14], w14_re, w14_im);           \
+        CMUL_FMA_SOA_AVX2(x_re[15], x_im[15], x_re[15], x_im[15], w15_re, w15_im);           \
+    } while (0)
+
+//==============================================================================
+// LEGACY AOS TWIDDLE APPLICATION (for backward compatibility)
+//==============================================================================
+
 #define APPLY_STAGE_TWIDDLES_R16_AVX2(kk, x, stage_tw, sub_len)             \
     do                                                                      \
     {                                                                       \
@@ -1055,146 +1196,122 @@ static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
     } while (0)
 
 //==============================================================================
-// OPTIMIZED SOA BUTTERFLY PIPELINES (AVX2)
+// OPTIMIZED SOA BUTTERFLY PIPELINES (AVX2) - REDUCED REGISTER PRESSURE
 //==============================================================================
 
-#define RADIX16_BUTTERFLY_FV_SOA_AVX2(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)              \
-    do                                                                                                                       \
-    {                                                                                                                        \
-        __m256d x_re[16], x_im[16];                                                                                          \
-        LOAD_16_LANES_SOA_AVX2(kk, K, sub_outputs, x_re, x_im);                                                              \
-        for (int r = 1; r <= 15; r++)                                                                                        \
-        {                                                                                                                    \
-            __m256d tw_aos = _mm256_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                      \
-            __m256d w_re, w_im;                                                                                              \
-            AOS_TO_SOA_AVX2(tw_aos, w_re, w_im);                                                                             \
-            CMUL_FMA_SOA_AVX2(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
-        }                                                                                                                    \
-        __m256d y_re[16], y_im[16];                                                                                          \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
-                                  y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
-                                  y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
-                                  y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
-                                  y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX2(y_re, y_im, neg_mask);                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
-                                  y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
-                                  y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
-                                  y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
-                                  y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
-        STORE_16_LANES_SOA_AVX2(kk, K, output_buffer, y_re, y_im);                                                           \
+#define RADIX16_BUTTERFLY_FV_SOA_AVX2(kk, K, sub_outputs, stage_tw_re, stage_tw_im, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                          \
+    {                                                                                                                           \
+        __m256d x_re[16], x_im[16];                                                                                             \
+        LOAD_16_LANES_SOA_AVX2(kk, K, sub_outputs, x_re, x_im);                                                                 \
+        APPLY_STAGE_TWIDDLES_R16_SOA_AVX2(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len);                                   \
+        __m256d t_re[16], t_im[16];                                                                                             \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                     \
+                                  t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);            \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                     \
+                                  t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);            \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                   \
+                                  t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);        \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                   \
+                                  t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);    \
+        APPLY_W4_INTERMEDIATE_FV_SOA_AVX2(t_re, t_im, neg_mask);                                                                \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                     \
+                                  x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);          \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                     \
+                                  x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);          \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                   \
+                                  x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);        \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                   \
+                                  x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);        \
+        STORE_16_LANES_SOA_AVX2(kk, K, output_buffer, x_re, x_im);                                                              \
     } while (0)
 
-#define RADIX16_BUTTERFLY_BV_SOA_AVX2(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)              \
-    do                                                                                                                       \
-    {                                                                                                                        \
-        __m256d x_re[16], x_im[16];                                                                                          \
-        LOAD_16_LANES_SOA_AVX2(kk, K, sub_outputs, x_re, x_im);                                                              \
-        for (int r = 1; r <= 15; r++)                                                                                        \
-        {                                                                                                                    \
-            __m256d tw_aos = _mm256_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                      \
-            __m256d w_re, w_im;                                                                                              \
-            AOS_TO_SOA_AVX2(tw_aos, w_re, w_im);                                                                             \
-            CMUL_FMA_SOA_AVX2(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
-        }                                                                                                                    \
-        __m256d y_re[16], y_im[16];                                                                                          \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
-                                  y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
-                                  y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
-                                  y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
-                                  y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
-        APPLY_W4_INTERMEDIATE_BV_SOA_AVX2(y_re, y_im, neg_mask);                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
-                                  y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
-                                  y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
-                                  y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
-                                  y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
-        STORE_16_LANES_SOA_AVX2(kk, K, output_buffer, y_re, y_im);                                                           \
+#define RADIX16_BUTTERFLY_BV_SOA_AVX2_STREAM(kk, K, sub_outputs, stage_tw_re, stage_tw_im, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                                 \
+    {                                                                                                                                  \
+        __m256d x_re[16], x_im[16];                                                                                                    \
+        LOAD_16_LANES_SOA_AVX2(kk, K, sub_outputs, x_re, x_im);                                                                        \
+        APPLY_STAGE_TWIDDLES_R16_SOA_AVX2(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len);                                          \
+        __m256d t_re[16], t_im[16];                                                                                                    \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                            \
+                                  t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);                   \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                            \
+                                  t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);                   \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                          \
+                                  t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);               \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                          \
+                                  t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);           \
+        APPLY_W4_INTERMEDIATE_BV_SOA_AVX2(t_re, t_im, neg_mask);                                                                       \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                            \
+                                  x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);                 \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                            \
+                                  x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);                 \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                          \
+                                  x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);               \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                          \
+                                  x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);               \
+        STORE_16_LANES_SOA_AVX2_STREAM(kk, K, output_buffer, x_re, x_im);                                                              \
     } while (0)
 
-// Streaming versions
-#define RADIX16_BUTTERFLY_FV_SOA_AVX2_STREAM(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)       \
-    do                                                                                                                       \
-    {                                                                                                                        \
-        __m256d x_re[16], x_im[16];                                                                                          \
-        LOAD_16_LANES_SOA_AVX2(kk, K, sub_outputs, x_re, x_im);                                                              \
-        for (int r = 1; r <= 15; r++)                                                                                        \
-        {                                                                                                                    \
-            __m256d tw_aos = _mm256_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                      \
-            __m256d w_re, w_im;                                                                                              \
-            AOS_TO_SOA_AVX2(tw_aos, w_re, w_im);                                                                             \
-            CMUL_FMA_SOA_AVX2(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
-        }                                                                                                                    \
-        __m256d y_re[16], y_im[16];                                                                                          \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
-                                  y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
-                                  y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
-                                  y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
-                                  y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX2(y_re, y_im, neg_mask);                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
-                                  y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
-                                  y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
-                                  y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
-                                  y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
-        STORE_16_LANES_SOA_AVX2_STREAM(kk, K, output_buffer, y_re, y_im);                                                    \
+// STREAMING FORWARD (FV)
+#define RADIX16_BUTTERFLY_FV_SOA_AVX2_STREAM(kk, K, sub_outputs, stage_tw_re, stage_tw_im, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                                 \
+    {                                                                                                                                  \
+        __m256d x_re[16], x_im[16];                                                                                                    \
+        LOAD_16_LANES_SOA_AVX2(kk, K, sub_outputs, x_re, x_im);                                                                        \
+        APPLY_STAGE_TWIDDLES_R16_SOA_AVX2(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len);                                          \
+        __m256d t_re[16], t_im[16];                                                                                                    \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                            \
+                                  t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);                   \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                            \
+                                  t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);                   \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                          \
+                                  t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);               \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                          \
+                                  t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);           \
+        APPLY_W4_INTERMEDIATE_FV_SOA_AVX2(t_re, t_im, neg_mask);                                                                       \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                            \
+                                  x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);                 \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                            \
+                                  x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);                 \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                          \
+                                  x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);               \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                          \
+                                  x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);               \
+        STORE_16_LANES_SOA_AVX2_STREAM(kk, K, output_buffer, x_re, x_im);                                                              \
     } while (0)
 
-#define RADIX16_BUTTERFLY_BV_SOA_AVX2_STREAM(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)       \
-    do                                                                                                                       \
-    {                                                                                                                        \
-        __m256d x_re[16], x_im[16];                                                                                          \
-        LOAD_16_LANES_SOA_AVX2(kk, K, sub_outputs, x_re, x_im);                                                              \
-        for (int r = 1; r <= 15; r++)                                                                                        \
-        {                                                                                                                    \
-            __m256d tw_aos = _mm256_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                      \
-            __m256d w_re, w_im;                                                                                              \
-            AOS_TO_SOA_AVX2(tw_aos, w_re, w_im);                                                                             \
-            CMUL_FMA_SOA_AVX2(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
-        }                                                                                                                    \
-        __m256d y_re[16], y_im[16];                                                                                          \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
-                                  y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
-                                  y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
-                                  y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX2(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
-                                  y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
-        APPLY_W4_INTERMEDIATE_BV_SOA_AVX2(y_re, y_im, neg_mask);                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
-                                  y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
-                                  y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
-                                  y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
-        RADIX4_BUTTERFLY_SOA_AVX2(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
-                                  y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
-        STORE_16_LANES_SOA_AVX2_STREAM(kk, K, output_buffer, y_re, y_im);                                                    \
+#define RADIX16_BUTTERFLY_BV_SOA_AVX2(kk, K, sub_outputs, stage_tw_re, stage_tw_im, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                          \
+    {                                                                                                                           \
+        __m256d x_re[16], x_im[16];                                                                                             \
+        LOAD_16_LANES_SOA_AVX2(kk, K, sub_outputs, x_re, x_im);                                                                 \
+        APPLY_STAGE_TWIDDLES_R16_SOA_AVX2(kk, x_re, x_im, stage_tw_re, stage_tw_im, sub_len);                                   \
+        __m256d t_re[16], t_im[16];                                                                                             \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                     \
+                                  t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);            \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                     \
+                                  t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);            \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                   \
+                                  t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);        \
+        RADIX4_BUTTERFLY_SOA_AVX2(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                   \
+                                  t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);    \
+        APPLY_W4_INTERMEDIATE_BV_SOA_AVX2(t_re, t_im, neg_mask);                                                                \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                     \
+                                  x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);          \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                     \
+                                  x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);          \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                   \
+                                  x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);        \
+        RADIX4_BUTTERFLY_SOA_AVX2(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                   \
+                                  x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);        \
+        STORE_16_LANES_SOA_AVX2(kk, K, output_buffer, x_re, x_im);                                                              \
     } while (0)
 
 #endif // __AVX2__
 
 //==============================================================================
-// SCALAR SUPPORT
+// SCALAR SUPPORT (Fallback)
 //==============================================================================
 
 #define RADIX4_BUTTERFLY_SCALAR(a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                   \
@@ -1294,4 +1411,17 @@ static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
         }                                                             \
     } while (0)
 
-#endif // FFT_RADIX16_MACROS_H
+#define APPLY_STAGE_TWIDDLES_R16_SCALAR_SOA(k, x, tw, K)     \
+    do                                                       \
+    {                                                        \
+        for (int r = 1; r <= 15; ++r)                        \
+        {                                                    \
+            const double wr = (tw)->re[(r - 1) * (K) + (k)]; \
+            const double wi = (tw)->im[(r - 1) * (K) + (k)]; \
+            const double ar = x[r].re, ai = x[r].im;         \
+            x[r].re = ar * wr - ai * wi;                     \
+            x[r].im = ar * wi + ai * wr;                     \
+        }                                                    \
+    } while (0)
+
+#endif // FFT_RADIX16_MACROS

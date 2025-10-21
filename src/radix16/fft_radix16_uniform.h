@@ -1,7 +1,7 @@
 #ifndef FFT_RADIX16_H
 #define FFT_RADIX16_H
 
-#include "highspeedFFT.h"
+#include "../fft_plan/fft_planning_types.h"
 
 
 /**
@@ -353,13 +353,13 @@
 void fft_radix16_bv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
+    const fft_twiddles_soa *restrict stage_tw,
     int sub_len);
 
-void fft_radix16_fv(
+void fft_radix16_bv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
+    const fft_twiddles_soa *restrict stage_tw,
     int sub_len);
 
 #endif // FFT_RADIX3_H
