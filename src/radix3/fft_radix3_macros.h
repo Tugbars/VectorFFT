@@ -66,7 +66,6 @@ alignas(32) static const double ROT_MASK_INV_AVX2_DATA[4] = {
 #define ROT_MASK_INV_AVX2 (_mm256_load_pd(ROT_MASK_INV_AVX2_DATA))
 #endif
 
-
 //==============================================================================
 // AVX-512 SUPPORT
 //==============================================================================
@@ -243,6 +242,52 @@ alignas(32) static const double ROT_MASK_INV_AVX2_DATA[4] = {
         RADIX3_ASSEMBLE_OUTPUTS_AVX512(a, sum, common, scaled_rot, y0, y1, y2); \
                                                                                 \
         store_macro(kk, K, output_buffer, y0, y1, y2);                          \
+    } while (0)
+
+// Masked pipeline variant for partial butterfly counts (e.g., K=3)
+#define RADIX3_PIPELINE_4_AVX512_MASKED(kk, K, sub_outputs, stage_tw, output_buffer, \
+                                        v_half, v_sqrt3_2, rot_mask, mask)           \
+    do                                                                               \
+    {                                                                                \
+        __m512d a, b, c;                                                             \
+        LOAD_3_LANES_AVX512(kk, K, sub_outputs, a, b, c);                            \
+                                                                                     \
+        __m512d tw_b, tw_c;                                                          \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, b, c, stage_tw, tw_b, tw_c);                 \
+                                                                                     \
+        __m512d sum, dif, common;                                                    \
+        RADIX3_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, sum, dif, common, v_half);       \
+                                                                                     \
+        __m512d scaled_rot;                                                          \
+        RADIX3_ROTATE_AVX512(dif, scaled_rot, v_sqrt3_2, rot_mask);                  \
+                                                                                     \
+        __m512d y0, y1, y2;                                                          \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX512(a, sum, common, scaled_rot, y0, y1, y2);      \
+                                                                                     \
+        STORE_3_LANES_AVX512_MASKED(kk, K, output_buffer, y0, y1, y2, mask);         \
+    } while (0)
+
+// Masked pipeline variant for partial butterfly counts (e.g., K=3)
+#define RADIX3_PIPELINE_4_AVX512_MASKED(kk, K, sub_outputs, stage_tw, output_buffer, \
+                                        v_half, v_sqrt3_2, rot_mask, mask)           \
+    do                                                                               \
+    {                                                                                \
+        __m512d a, b, c;                                                             \
+        LOAD_3_LANES_AVX512(kk, K, sub_outputs, a, b, c);                            \
+                                                                                     \
+        __m512d tw_b, tw_c;                                                          \
+        APPLY_STAGE_TWIDDLES_AVX512(kk, b, c, stage_tw, tw_b, tw_c);                 \
+                                                                                     \
+        __m512d sum, dif, common;                                                    \
+        RADIX3_BUTTERFLY_CORE_AVX512(a, tw_b, tw_c, sum, dif, common, v_half);       \
+                                                                                     \
+        __m512d scaled_rot;                                                          \
+        RADIX3_ROTATE_AVX512(dif, scaled_rot, v_sqrt3_2, rot_mask);                  \
+                                                                                     \
+        __m512d y0, y1, y2;                                                          \
+        RADIX3_ASSEMBLE_OUTPUTS_AVX512(a, sum, common, scaled_rot, y0, y1, y2);      \
+                                                                                     \
+        STORE_3_LANES_AVX512_MASKED(kk, K, output_buffer, y0, y1, y2, mask);         \
     } while (0)
 
 // Instantiate specific versions
@@ -445,6 +490,13 @@ alignas(32) static const double ROT_MASK_INV_AVX2_DATA[4] = {
 
 #ifdef __SSE2__
 
+// Hoisted rotation masks for SSE2
+alignas(16) static const double ROT_MASK_FWD_SSE2_DATA[2] = {0.0, -0.0};
+alignas(16) static const double ROT_MASK_INV_SSE2_DATA[2] = {-0.0, 0.0};
+
+#define ROT_MASK_FWD_SSE2 (_mm_load_pd(ROT_MASK_FWD_SSE2_DATA))
+#define ROT_MASK_INV_SSE2 (_mm_load_pd(ROT_MASK_INV_SSE2_DATA))
+
 #define CMUL_SSE2(out, a, w)                                             \
     do                                                                   \
     {                                                                    \
@@ -457,39 +509,39 @@ alignas(32) static const double ROT_MASK_INV_AVX2_DATA[4] = {
         (out) = _mm_unpacklo_pd(re, im);                                 \
     } while (0)
 
-#define RADIX3_PIPELINE_1_SSE2(k, K, sub_outputs, stage_tw, output_buffer,                \
-                               c_half, s_sqrt3_2, rot_sign)                               \
-    do                                                                                    \
-    {                                                                                     \
-        __m128d a = LOADU_SSE2(&sub_outputs[k].re);                                       \
-        __m128d b = LOADU_SSE2(&sub_outputs[(k) + K].re);                                 \
-        __m128d c = LOADU_SSE2(&sub_outputs[(k) + 2 * K].re);                             \
-                                                                                          \
-        __m128d w1 = LOADU_SSE2(&stage_tw[(k) * 2].re);                                   \
-        __m128d w2 = LOADU_SSE2(&stage_tw[(k) * 2 + 1].re);                               \
-                                                                                          \
-        __m128d tw_b, tw_c;                                                               \
-        CMUL_SSE2(tw_b, b, w1);                                                           \
-        CMUL_SSE2(tw_c, c, w2);                                                           \
-                                                                                          \
-        __m128d v_half = _mm_set1_pd(c_half);                                             \
-        __m128d sum = _mm_add_pd(tw_b, tw_c);                                             \
-        __m128d dif = _mm_sub_pd(tw_b, tw_c);                                             \
-        __m128d common = _mm_add_pd(a, _mm_mul_pd(v_half, sum));                          \
-                                                                                          \
-        __m128d dif_swp = _mm_shuffle_pd(dif, dif, 0x1);                                  \
-        __m128d rot90_re = _mm_mul_pd(_mm_set1_pd(rot_sign), _mm_unpackhi_pd(dif, dif));  \
-        __m128d rot90_im = _mm_mul_pd(_mm_set1_pd(-rot_sign), _mm_unpacklo_pd(dif, dif)); \
-        __m128d rot90 = _mm_unpacklo_pd(rot90_re, rot90_im);                              \
-        __m128d scaled_rot = _mm_mul_pd(rot90, _mm_set1_pd(s_sqrt3_2));                   \
-                                                                                          \
-        __m128d y0 = _mm_add_pd(a, sum);                                                  \
-        __m128d y1 = _mm_add_pd(common, scaled_rot);                                      \
-        __m128d y2 = _mm_sub_pd(common, scaled_rot);                                      \
-                                                                                          \
-        STOREU_SSE2(&output_buffer[k].re, y0);                                            \
-        STOREU_SSE2(&output_buffer[(k) + K].re, y1);                                      \
-        STOREU_SSE2(&output_buffer[(k) + 2 * K].re, y2);                                  \
+#define RADIX3_PIPELINE_1_SSE2(k, K, sub_outputs, stage_tw, output_buffer, \
+                               c_half, s_sqrt3_2, rot_mask)                \
+    do                                                                     \
+    {                                                                      \
+        __m128d a = LOADU_SSE2(&sub_outputs[k].re);                        \
+        __m128d b = LOADU_SSE2(&sub_outputs[(k) + K].re);                  \
+        __m128d c = LOADU_SSE2(&sub_outputs[(k) + 2 * K].re);              \
+                                                                           \
+        __m128d w1 = LOADU_SSE2(&stage_tw[(k) * 2].re);                    \
+        __m128d w2 = LOADU_SSE2(&stage_tw[(k) * 2 + 1].re);                \
+                                                                           \
+        __m128d tw_b, tw_c;                                                \
+        CMUL_SSE2(tw_b, b, w1);                                            \
+        CMUL_SSE2(tw_c, c, w2);                                            \
+                                                                           \
+        __m128d v_half = _mm_set1_pd(c_half);                              \
+        __m128d v_sqrt3_2 = _mm_set1_pd(s_sqrt3_2);                        \
+        __m128d sum = _mm_add_pd(tw_b, tw_c);                              \
+        __m128d dif = _mm_sub_pd(tw_b, tw_c);                              \
+        __m128d common = _mm_add_pd(a, _mm_mul_pd(v_half, sum));           \
+                                                                           \
+        /* Rotation: same logic as AVX - shuffle, XOR, multiply */         \
+        __m128d dif_swp = _mm_shuffle_pd(dif, dif, 0x1); /* [im, re] */    \
+        __m128d rot90 = _mm_xor_pd(dif_swp, rot_mask);                     \
+        __m128d scaled_rot = _mm_mul_pd(rot90, v_sqrt3_2);                 \
+                                                                           \
+        __m128d y0 = _mm_add_pd(a, sum);                                   \
+        __m128d y1 = _mm_add_pd(common, scaled_rot);                       \
+        __m128d y2 = _mm_sub_pd(common, scaled_rot);                       \
+                                                                           \
+        STOREU_SSE2(&output_buffer[k].re, y0);                             \
+        STOREU_SSE2(&output_buffer[(k) + K].re, y1);                       \
+        STOREU_SSE2(&output_buffer[(k) + 2 * K].re, y2);                   \
     } while (0)
 
 #endif // __SSE2__

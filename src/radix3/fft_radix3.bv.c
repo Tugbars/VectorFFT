@@ -262,7 +262,7 @@ void fft_radix3_bv(
     for (; k < K; k++)
     {
         RADIX3_PIPELINE_1_SSE2(k, K, sub_outputs, stage_tw, output_buffer,
-                               C_HALF, S_SQRT3_2, 1.0); // -1.0 = forward rotation
+                               C_HALF, S_SQRT3_2, ROT_MASK_INV_SSE2 ); // -1.0 = forward rotation
     }
 #else
     //==========================================================================

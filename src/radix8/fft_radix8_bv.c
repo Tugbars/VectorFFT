@@ -10,11 +10,6 @@
 //   ✅ Alignment hints for better codegen
 //   ✅ Lowered streaming threshold (2048 vs 4096)
 //
-// EXPECTED PERFORMANCE:
-//   - AVX-512: ~12-15 cycles/butterfly (50-60% faster than old version)
-//   - AVX2:    ~18-20 cycles/butterfly (20-30% faster)
-//   - Scalar:  ~40 cycles/butterfly
-//
 
 #include "fft_radix8_uniform.h"
 #include "simd_math.h"

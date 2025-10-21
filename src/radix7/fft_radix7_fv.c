@@ -16,7 +16,7 @@
 // - Separate code paths for streaming vs normal stores
 //
 
-#include "fft_radix7.h"
+#include "fft_radix7_uniform.h"
 #include "simd_math.h"
 #include "fft_radix7_macros.h"
 

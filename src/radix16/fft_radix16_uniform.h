@@ -350,12 +350,17 @@
  *              - Zero-multiply intermediate twiddles
  *              - Optimal AVX2 vectorization with 8× unrolling
  */
-void fft_radix16_butterfly(
-    fft_data *output_buffer,
-    fft_data *sub_outputs,
-    const fft_data *stage_tw,
-    int sub_len,
-    int transform_sign);
+void fft_radix16_bv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_data *restrict stage_tw,
+    int sub_len);
+
+void fft_radix16_fv(
+    fft_data *restrict output_buffer,
+    const fft_data *restrict sub_outputs,
+    const fft_data *restrict stage_tw,
+    int sub_len);
 
 #endif // FFT_RADIX3_H
 

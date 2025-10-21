@@ -53,22 +53,46 @@
 #define W4_BV_3_IM (-1.0)
 
 //==============================================================================
-// AVX-512 SUPPORT
+// AVX-512 SUPPORT - FULLY OPTIMIZED
 //==============================================================================
 
 #ifdef __AVX512F__
 
-// Hoisted sign masks for W_4 intermediate twiddles - Forward
-static const __m512d W4_SIGN_MASK_FV_5 = {-0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0};
-static const __m512d W4_SIGN_MASK_FV_7 = {0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0};
-static const __m512d W4_SIGN_MASK_FV_13 = {0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0};
-static const __m512d W4_SIGN_MASK_FV_15 = {-0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0};
+//==============================================================================
+// CONFIGURATION & TUNING PARAMETERS
+//==============================================================================
 
-// Hoisted sign masks for W_4 intermediate twiddles - Backward
-static const __m512d W4_SIGN_MASK_BV_5 = {0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0};
-static const __m512d W4_SIGN_MASK_BV_7 = {-0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0};
-static const __m512d W4_SIGN_MASK_BV_13 = {-0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0};
-static const __m512d W4_SIGN_MASK_BV_15 = {0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0, -0.0};
+#define K_TILE_R16_AVX512 1024
+#define PREFETCH_DISTANCE_AVX512 16
+
+//==============================================================================
+// AoS ↔ SoA CONVERSION
+//==============================================================================
+
+#define AOS_TO_SOA_AVX512(aos, re, im)       \
+    do                                       \
+    {                                        \
+        (re) = _mm512_unpacklo_pd(aos, aos); \
+        (im) = _mm512_unpackhi_pd(aos, aos); \
+    } while (0)
+
+#define SOA_TO_AOS_AVX512(re, im, aos) \
+    (aos) = _mm512_unpacklo_pd(re, im)
+
+//==============================================================================
+// SOA COMPLEX ARITHMETIC
+//==============================================================================
+
+#define CMUL_FMA_SOA_AVX512(out_re, out_im, a_re, a_im, w_re, w_im)        \
+    do                                                                     \
+    {                                                                      \
+        (out_re) = _mm512_fmsub_pd(a_re, w_re, _mm512_mul_pd(a_im, w_im)); \
+        (out_im) = _mm512_fmadd_pd(a_re, w_im, _mm512_mul_pd(a_im, w_re)); \
+    } while (0)
+
+//==============================================================================
+// LEGACY AOS COMPLEX MULTIPLY (for backward compatibility)
+//==============================================================================
 
 #define CMUL_FMA_AOS_AVX512(out, a, w)                               \
     do                                                               \
@@ -82,6 +106,38 @@ static const __m512d W4_SIGN_MASK_BV_15 = {0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0,
         (out) = _mm512_unpacklo_pd(re, im);                          \
     } while (0)
 
+//==============================================================================
+// SOA RADIX-4 BUTTERFLY
+//==============================================================================
+
+#define RADIX4_BUTTERFLY_SOA_AVX512(a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                        \
+                                    y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, rot_sign_mask) \
+    do                                                                                                     \
+    {                                                                                                      \
+        __m512d sumBD_re = _mm512_add_pd(b_re, d_re);                                                      \
+        __m512d sumBD_im = _mm512_add_pd(b_im, d_im);                                                      \
+        __m512d difBD_re = _mm512_sub_pd(b_re, d_re);                                                      \
+        __m512d difBD_im = _mm512_sub_pd(b_im, d_im);                                                      \
+        __m512d sumAC_re = _mm512_add_pd(a_re, c_re);                                                      \
+        __m512d sumAC_im = _mm512_add_pd(a_im, c_im);                                                      \
+        __m512d difAC_re = _mm512_sub_pd(a_re, c_re);                                                      \
+        __m512d difAC_im = _mm512_sub_pd(a_im, c_im);                                                      \
+        y0_re = _mm512_add_pd(sumAC_re, sumBD_re);                                                         \
+        y0_im = _mm512_add_pd(sumAC_im, sumBD_im);                                                         \
+        y2_re = _mm512_sub_pd(sumAC_re, sumBD_re);                                                         \
+        y2_im = _mm512_sub_pd(sumAC_im, sumBD_im);                                                         \
+        __m512d rot_re = _mm512_xor_pd(difBD_im, rot_sign_mask);                                           \
+        __m512d rot_im = _mm512_xor_pd(_mm512_sub_pd(_mm512_setzero_pd(), difBD_re), rot_sign_mask);       \
+        y1_re = _mm512_sub_pd(difAC_re, rot_re);                                                           \
+        y1_im = _mm512_sub_pd(difAC_im, rot_im);                                                           \
+        y3_re = _mm512_add_pd(difAC_re, rot_re);                                                           \
+        y3_im = _mm512_add_pd(difAC_im, rot_im);                                                           \
+    } while (0)
+
+//==============================================================================
+// LEGACY AOS RADIX-4 BUTTERFLY (for backward compatibility)
+//==============================================================================
+
 #define RADIX4_BUTTERFLY_AVX512(a, b, c, d, y0, y1, y2, y3, rot_mask) \
     do                                                                \
     {                                                                 \
@@ -89,161 +145,188 @@ static const __m512d W4_SIGN_MASK_BV_15 = {0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0,
         __m512d difBD = _mm512_sub_pd(b, d);                          \
         __m512d sumAC = _mm512_add_pd(a, c);                          \
         __m512d difAC = _mm512_sub_pd(a, c);                          \
-                                                                      \
         y0 = _mm512_add_pd(sumAC, sumBD);                             \
         y2 = _mm512_sub_pd(sumAC, sumBD);                             \
-                                                                      \
         __m512d dif_bd_swp = _mm512_permute_pd(difBD, 0b01010101);    \
         __m512d dif_bd_rot = _mm512_xor_pd(dif_bd_swp, rot_mask);     \
-                                                                      \
         y1 = _mm512_sub_pd(difAC, dif_bd_rot);                        \
         y3 = _mm512_add_pd(difAC, dif_bd_rot);                        \
     } while (0)
 
 //==============================================================================
-// OPTIMIZED W_4 INTERMEDIATE TWIDDLES - AVX-512 (with hoisted masks)
+// SOA W_4 INTERMEDIATE TWIDDLES
 //==============================================================================
 
-#define APPLY_W4_INTERMEDIATE_FV_AVX512_HOISTED(y, neg_mask)  \
-    do                                                        \
-    {                                                         \
-        /* m=1: W_4^j for j=1,2,3 = {-i, -1, +i} */           \
-        {                                                     \
-            __m512d y5_swp = _mm512_permute_pd(y[5], 0x55);   \
-            y[5] = _mm512_xor_pd(y5_swp, W4_SIGN_MASK_FV_5);  \
-            y[6] = _mm512_xor_pd(y[6], neg_mask);             \
-            __m512d y7_swp = _mm512_permute_pd(y[7], 0x55);   \
-            y[7] = _mm512_xor_pd(y7_swp, W4_SIGN_MASK_FV_7);  \
-        }                                                     \
-        /* m=2: W_4^{2j} for j=1,2,3 = {-1, 1, -1} */         \
-        {                                                     \
-            y[9] = _mm512_xor_pd(y[9], neg_mask);             \
-            y[11] = _mm512_xor_pd(y[11], neg_mask);           \
-        }                                                     \
-        /* m=3: W_4^{3j} for j=1,2,3 = {+i, -1, -i} */        \
-        {                                                     \
-            __m512d y13_swp = _mm512_permute_pd(y[13], 0x55); \
+#define APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(y_re, y_im, neg_mask) \
+    do                                                            \
+    {                                                             \
+        /* m=1: W_4^{j} for j=1,2,3 = {-i, -1, +i} */             \
+        {                                                         \
+            __m512d tmp_re = y_re[5];                             \
+            y_re[5] = y_im[5];                                    \
+            y_im[5] = _mm512_xor_pd(tmp_re, neg_mask);            \
+            y_re[6] = _mm512_xor_pd(y_re[6], neg_mask);           \
+            y_im[6] = _mm512_xor_pd(y_im[6], neg_mask);           \
+            tmp_re = y_re[7];                                     \
+            y_re[7] = _mm512_xor_pd(y_im[7], neg_mask);           \
+            y_im[7] = tmp_re;                                     \
+        }                                                         \
+        /* m=2: W_4^{2j} for j=1,2,3 = {-1, +1, -1} */            \
+        {                                                         \
+            y_re[9] = _mm512_xor_pd(y_re[9], neg_mask);           \
+            y_im[9] = _mm512_xor_pd(y_im[9], neg_mask);           \
+            y_re[11] = _mm512_xor_pd(y_re[11], neg_mask);         \
+            y_im[11] = _mm512_xor_pd(y_im[11], neg_mask);         \
+        }                                                         \
+        /* m=3: W_4^{3j} for j=1,2,3 = {+i, -1, -i} */            \
+        {                                                         \
+            __m512d tmp_re = y_re[13];                            \
+            y_re[13] = _mm512_xor_pd(y_im[13], neg_mask);         \
+            y_im[13] = tmp_re;                                    \
+            y_re[14] = _mm512_xor_pd(y_re[14], neg_mask);         \
+            y_im[14] = _mm512_xor_pd(y_im[14], neg_mask);         \
+            tmp_re = y_re[15];                                    \
+            y_re[15] = y_im[15];                                  \
+            y_im[15] = _mm512_xor_pd(tmp_re, neg_mask);           \
+        }                                                         \
+    } while (0)
+
+#define APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(y_re, y_im, neg_mask) \
+    do                                                            \
+    {                                                             \
+        /* m=1: W_4^{j} for j=1,2,3 = {+i, -1, -i} */             \
+        {                                                         \
+            __m512d tmp_re = y_re[5];                             \
+            y_re[5] = _mm512_xor_pd(y_im[5], neg_mask);           \
+            y_im[5] = tmp_re;                                     \
+            y_re[6] = _mm512_xor_pd(y_re[6], neg_mask);           \
+            y_im[6] = _mm512_xor_pd(y_im[6], neg_mask);           \
+            tmp_re = y_re[7];                                     \
+            y_re[7] = y_im[7];                                    \
+            y_im[7] = _mm512_xor_pd(tmp_re, neg_mask);            \
+        }                                                         \
+        /* m=2: W_4^{2j} for j=1,2,3 = {-1, +1, -1} */            \
+        {                                                         \
+            y_re[9] = _mm512_xor_pd(y_re[9], neg_mask);           \
+            y_im[9] = _mm512_xor_pd(y_im[9], neg_mask);           \
+            y_re[11] = _mm512_xor_pd(y_re[11], neg_mask);         \
+            y_im[11] = _mm512_xor_pd(y_im[11], neg_mask);         \
+        }                                                         \
+        /* m=3: W_4^{3j} for j=1,2,3 = {-i, -1, +i} */            \
+        {                                                         \
+            __m512d tmp_re = y_re[13];                            \
+            y_re[13] = y_im[13];                                  \
+            y_im[13] = _mm512_xor_pd(tmp_re, neg_mask);           \
+            y_re[14] = _mm512_xor_pd(y_re[14], neg_mask);         \
+            y_im[14] = _mm512_xor_pd(y_im[14], neg_mask);         \
+            tmp_re = y_re[15];                                    \
+            y_re[15] = _mm512_xor_pd(y_im[15], neg_mask);         \
+            y_im[15] = tmp_re;                                    \
+        }                                                         \
+    } while (0)
+
+//==============================================================================
+// LEGACY AOS W_4 INTERMEDIATE TWIDDLES (for backward compatibility)
+//==============================================================================
+
+#define APPLY_W4_INTERMEDIATE_FV_AVX512_HOISTED(y, neg_mask)    \
+    do                                                          \
+    {                                                           \
+        {                                                       \
+            __m512d y5_swp = _mm512_permute_pd(y[5], 0x55);     \
+            y[5] = _mm512_xor_pd(y5_swp, W4_SIGN_MASK_FV_5);    \
+            y[6] = _mm512_xor_pd(y[6], neg_mask);               \
+            __m512d y7_swp = _mm512_permute_pd(y[7], 0x55);     \
+            y[7] = _mm512_xor_pd(y7_swp, W4_SIGN_MASK_FV_7);    \
+        }                                                       \
+        {                                                       \
+            y[9] = _mm512_xor_pd(y[9], neg_mask);               \
+            y[11] = _mm512_xor_pd(y[11], neg_mask);             \
+        }                                                       \
+        {                                                       \
+            __m512d y13_swp = _mm512_permute_pd(y[13], 0x55);   \
             y[13] = _mm512_xor_pd(y13_swp, W4_SIGN_MASK_FV_13); \
-            y[14] = _mm512_xor_pd(y[14], neg_mask);           \
-            __m512d y15_swp = _mm512_permute_pd(y[15], 0x55); \
+            y[14] = _mm512_xor_pd(y[14], neg_mask);             \
+            __m512d y15_swp = _mm512_permute_pd(y[15], 0x55);   \
             y[15] = _mm512_xor_pd(y15_swp, W4_SIGN_MASK_FV_15); \
-        }                                                     \
+        }                                                       \
     } while (0)
 
-#define APPLY_W4_INTERMEDIATE_BV_AVX512_HOISTED(y, neg_mask)  \
-    do                                                        \
-    {                                                         \
-        /* m=1: W_4^j for j=1,2,3 = {+i, -1, -i} */           \
-        {                                                     \
-            __m512d y5_swp = _mm512_permute_pd(y[5], 0x55);   \
-            y[5] = _mm512_xor_pd(y5_swp, W4_SIGN_MASK_BV_5);  \
-            y[6] = _mm512_xor_pd(y[6], neg_mask);             \
-            __m512d y7_swp = _mm512_permute_pd(y[7], 0x55);   \
-            y[7] = _mm512_xor_pd(y7_swp, W4_SIGN_MASK_BV_7);  \
-        }                                                     \
-        /* m=2: W_4^{2j} for j=1,2,3 = {-1, 1, -1} */         \
-        {                                                     \
-            y[9] = _mm512_xor_pd(y[9], neg_mask);             \
-            y[11] = _mm512_xor_pd(y[11], neg_mask);           \
-        }                                                     \
-        /* m=3: W_4^{3j} for j=1,2,3 = {-i, -1, +i} */        \
-        {                                                     \
-            __m512d y13_swp = _mm512_permute_pd(y[13], 0x55); \
+#define APPLY_W4_INTERMEDIATE_BV_AVX512_HOISTED(y, neg_mask)    \
+    do                                                          \
+    {                                                           \
+        {                                                       \
+            __m512d y5_swp = _mm512_permute_pd(y[5], 0x55);     \
+            y[5] = _mm512_xor_pd(y5_swp, W4_SIGN_MASK_BV_5);    \
+            y[6] = _mm512_xor_pd(y[6], neg_mask);               \
+            __m512d y7_swp = _mm512_permute_pd(y[7], 0x55);     \
+            y[7] = _mm512_xor_pd(y7_swp, W4_SIGN_MASK_BV_7);    \
+        }                                                       \
+        {                                                       \
+            y[9] = _mm512_xor_pd(y[9], neg_mask);               \
+            y[11] = _mm512_xor_pd(y[11], neg_mask);             \
+        }                                                       \
+        {                                                       \
+            __m512d y13_swp = _mm512_permute_pd(y[13], 0x55);   \
             y[13] = _mm512_xor_pd(y13_swp, W4_SIGN_MASK_BV_13); \
-            y[14] = _mm512_xor_pd(y[14], neg_mask);           \
-            __m512d y15_swp = _mm512_permute_pd(y[15], 0x55); \
+            y[14] = _mm512_xor_pd(y[14], neg_mask);             \
+            __m512d y15_swp = _mm512_permute_pd(y[15], 0x55);   \
             y[15] = _mm512_xor_pd(y15_swp, W4_SIGN_MASK_BV_15); \
-        }                                                     \
+        }                                                       \
     } while (0)
 
 //==============================================================================
-// FULLY UNROLLED TWIDDLE APPLICATION - AVX-512
+// LOAD & STORE HELPERS
 //==============================================================================
 
-#define APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw)               \
-    do                                                                 \
-    {                                                                  \
-        __m512d w1 = load4_aos(&stage_tw[(kk) * 15 + 0],               \
-                               &stage_tw[(kk + 1) * 15 + 0],           \
-                               &stage_tw[(kk + 2) * 15 + 0],           \
-                               &stage_tw[(kk + 3) * 15 + 0]);          \
-        __m512d w2 = load4_aos(&stage_tw[(kk) * 15 + 1],               \
-                               &stage_tw[(kk + 1) * 15 + 1],           \
-                               &stage_tw[(kk + 2) * 15 + 1],           \
-                               &stage_tw[(kk + 3) * 15 + 1]);          \
-        __m512d w3 = load4_aos(&stage_tw[(kk) * 15 + 2],               \
-                               &stage_tw[(kk + 1) * 15 + 2],           \
-                               &stage_tw[(kk + 2) * 15 + 2],           \
-                               &stage_tw[(kk + 3) * 15 + 2]);          \
-        __m512d w4 = load4_aos(&stage_tw[(kk) * 15 + 3],               \
-                               &stage_tw[(kk + 1) * 15 + 3],           \
-                               &stage_tw[(kk + 2) * 15 + 3],           \
-                               &stage_tw[(kk + 3) * 15 + 3]);          \
-        __m512d w5 = load4_aos(&stage_tw[(kk) * 15 + 4],               \
-                               &stage_tw[(kk + 1) * 15 + 4],           \
-                               &stage_tw[(kk + 2) * 15 + 4],           \
-                               &stage_tw[(kk + 3) * 15 + 4]);          \
-        __m512d w6 = load4_aos(&stage_tw[(kk) * 15 + 5],               \
-                               &stage_tw[(kk + 1) * 15 + 5],           \
-                               &stage_tw[(kk + 2) * 15 + 5],           \
-                               &stage_tw[(kk + 3) * 15 + 5]);          \
-        __m512d w7 = load4_aos(&stage_tw[(kk) * 15 + 6],               \
-                               &stage_tw[(kk + 1) * 15 + 6],           \
-                               &stage_tw[(kk + 2) * 15 + 6],           \
-                               &stage_tw[(kk + 3) * 15 + 6]);          \
-        __m512d w8 = load4_aos(&stage_tw[(kk) * 15 + 7],               \
-                               &stage_tw[(kk + 1) * 15 + 7],           \
-                               &stage_tw[(kk + 2) * 15 + 7],           \
-                               &stage_tw[(kk + 3) * 15 + 7]);          \
-        __m512d w9 = load4_aos(&stage_tw[(kk) * 15 + 8],               \
-                               &stage_tw[(kk + 1) * 15 + 8],           \
-                               &stage_tw[(kk + 2) * 15 + 8],           \
-                               &stage_tw[(kk + 3) * 15 + 8]);          \
-        __m512d w10 = load4_aos(&stage_tw[(kk) * 15 + 9],              \
-                                &stage_tw[(kk + 1) * 15 + 9],          \
-                                &stage_tw[(kk + 2) * 15 + 9],          \
-                                &stage_tw[(kk + 3) * 15 + 9]);         \
-        __m512d w11 = load4_aos(&stage_tw[(kk) * 15 + 10],             \
-                                &stage_tw[(kk + 1) * 15 + 10],         \
-                                &stage_tw[(kk + 2) * 15 + 10],         \
-                                &stage_tw[(kk + 3) * 15 + 10]);        \
-        __m512d w12 = load4_aos(&stage_tw[(kk) * 15 + 11],             \
-                                &stage_tw[(kk + 1) * 15 + 11],         \
-                                &stage_tw[(kk + 2) * 15 + 11],         \
-                                &stage_tw[(kk + 3) * 15 + 11]);        \
-        __m512d w13 = load4_aos(&stage_tw[(kk) * 15 + 12],             \
-                                &stage_tw[(kk + 1) * 15 + 12],         \
-                                &stage_tw[(kk + 2) * 15 + 12],         \
-                                &stage_tw[(kk + 3) * 15 + 12]);        \
-        __m512d w14 = load4_aos(&stage_tw[(kk) * 15 + 13],             \
-                                &stage_tw[(kk + 1) * 15 + 13],         \
-                                &stage_tw[(kk + 2) * 15 + 13],         \
-                                &stage_tw[(kk + 3) * 15 + 13]);        \
-        __m512d w15 = load4_aos(&stage_tw[(kk) * 15 + 14],             \
-                                &stage_tw[(kk + 1) * 15 + 14],         \
-                                &stage_tw[(kk + 2) * 15 + 14],         \
-                                &stage_tw[(kk + 3) * 15 + 14]);        \
-                                                                       \
-        CMUL_FMA_AOS_AVX512(x[1], x[1], w1);                            \
-        CMUL_FMA_AOS_AVX512(x[2], x[2], w2);                            \
-        CMUL_FMA_AOS_AVX512(x[3], x[3], w3);                            \
-        CMUL_FMA_AOS_AVX512(x[4], x[4], w4);                            \
-        CMUL_FMA_AOS_AVX512(x[5], x[5], w5);                            \
-        CMUL_FMA_AOS_AVX512(x[6], x[6], w6);                            \
-        CMUL_FMA_AOS_AVX512(x[7], x[7], w7);                            \
-        CMUL_FMA_AOS_AVX512(x[8], x[8], w8);                            \
-        CMUL_FMA_AOS_AVX512(x[9], x[9], w9);                            \
-        CMUL_FMA_AOS_AVX512(x[10], x[10], w10);                         \
-        CMUL_FMA_AOS_AVX512(x[11], x[11], w11);                         \
-        CMUL_FMA_AOS_AVX512(x[12], x[12], w12);                         \
-        CMUL_FMA_AOS_AVX512(x[13], x[13], w13);                         \
-        CMUL_FMA_AOS_AVX512(x[14], x[14], w14);                         \
-        CMUL_FMA_AOS_AVX512(x[15], x[15], w15);                         \
+#define LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im)        \
+    do                                                                  \
+    {                                                                   \
+        for (int lane = 0; lane < 16; lane++)                           \
+        {                                                               \
+            __m512d aos = load4_aos(&sub_outputs[(kk) + lane * K],      \
+                                    &sub_outputs[(kk) + 1 + lane * K],  \
+                                    &sub_outputs[(kk) + 2 + lane * K],  \
+                                    &sub_outputs[(kk) + 3 + lane * K]); \
+            AOS_TO_SOA_AVX512(aos, x_re[lane], x_im[lane]);             \
+        }                                                               \
     } while (0)
 
-#define PREFETCH_STAGE_TW_AVX512(kk, distance, stage_tw) \
-    _mm_prefetch((const char*)&stage_tw[((kk) + (distance)) * 15], _MM_HINT_T0)
+#define STORE_16_LANES_SOA_AVX512(kk, K, output_buffer, y_re, y_im)      \
+    do                                                                   \
+    {                                                                    \
+        for (int m = 0; m < 4; m++)                                      \
+        {                                                                \
+            __m512d aos0, aos4, aos8, aos12;                             \
+            SOA_TO_AOS_AVX512(y_re[m], y_im[m], aos0);                   \
+            SOA_TO_AOS_AVX512(y_re[m + 4], y_im[m + 4], aos4);           \
+            SOA_TO_AOS_AVX512(y_re[m + 8], y_im[m + 8], aos8);           \
+            SOA_TO_AOS_AVX512(y_re[m + 12], y_im[m + 12], aos12);        \
+            STOREU_PD512(&output_buffer[(kk) + m * K].re, aos0);         \
+            STOREU_PD512(&output_buffer[(kk) + (m + 4) * K].re, aos4);   \
+            STOREU_PD512(&output_buffer[(kk) + (m + 8) * K].re, aos8);   \
+            STOREU_PD512(&output_buffer[(kk) + (m + 12) * K].re, aos12); \
+        }                                                                \
+    } while (0)
 
+#define STORE_16_LANES_SOA_AVX512_STREAM(kk, K, output_buffer, y_re, y_im)   \
+    do                                                                       \
+    {                                                                        \
+        for (int m = 0; m < 4; m++)                                          \
+        {                                                                    \
+            __m512d aos0, aos4, aos8, aos12;                                 \
+            SOA_TO_AOS_AVX512(y_re[m], y_im[m], aos0);                       \
+            SOA_TO_AOS_AVX512(y_re[m + 4], y_im[m + 4], aos4);               \
+            SOA_TO_AOS_AVX512(y_re[m + 8], y_im[m + 8], aos8);               \
+            SOA_TO_AOS_AVX512(y_re[m + 12], y_im[m + 12], aos12);            \
+            _mm512_stream_pd(&output_buffer[(kk) + m * K].re, aos0);         \
+            _mm512_stream_pd(&output_buffer[(kk) + (m + 4) * K].re, aos4);   \
+            _mm512_stream_pd(&output_buffer[(kk) + (m + 8) * K].re, aos8);   \
+            _mm512_stream_pd(&output_buffer[(kk) + (m + 12) * K].re, aos12); \
+        }                                                                    \
+    } while (0)
+
+// Legacy AoS versions (for backward compatibility)
 #define LOAD_16_LANES_AVX512(kk, K, sub_outputs, x)                 \
     do                                                              \
     {                                                               \
@@ -280,7 +363,9 @@ static const __m512d W4_SIGN_MASK_BV_15 = {0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0,
         }                                                                        \
     } while (0)
 
-#define PREFETCH_L1_AVX512 16
+//==============================================================================
+// PREFETCHING
+//==============================================================================
 
 #define PREFETCH_16_LANES_AVX512(k, K, distance, sub_outputs, hint)                          \
     do                                                                                       \
@@ -294,120 +379,286 @@ static const __m512d W4_SIGN_MASK_BV_15 = {0.0, -0.0, 0.0, -0.0, 0.0, -0.0, 0.0,
         }                                                                                    \
     } while (0)
 
-#define RADIX16_PIPELINE_4_FV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer, rot_mask, neg_mask) \
-    do                                                                                                \
-    {                                                                                                 \
-        __m512d x[16];                                                                                \
-        LOAD_16_LANES_AVX512(kk, K, sub_outputs, x);                                                  \
-        APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw);                                             \
-                                                                                                      \
-        __m512d y[16];                                                                                \
-        RADIX4_BUTTERFLY_AVX512(x[0], x[4], x[8], x[12], y[0], y[1], y[2], y[3], rot_mask);           \
-        RADIX4_BUTTERFLY_AVX512(x[1], x[5], x[9], x[13], y[4], y[5], y[6], y[7], rot_mask);           \
-        RADIX4_BUTTERFLY_AVX512(x[2], x[6], x[10], x[14], y[8], y[9], y[10], y[11], rot_mask);        \
-        RADIX4_BUTTERFLY_AVX512(x[3], x[7], x[11], x[15], y[12], y[13], y[14], y[15], rot_mask);      \
-                                                                                                      \
-        APPLY_W4_INTERMEDIATE_FV_AVX512_HOISTED(y, neg_mask);                                         \
-                                                                                                      \
-        __m512d temp[4];                                                                              \
-        for (int m = 0; m < 4; m++)                                                                   \
-        {                                                                                             \
-            RADIX4_BUTTERFLY_AVX512(y[m], y[m + 4], y[m + 8], y[m + 12],                              \
-                                    temp[0], temp[1], temp[2], temp[3], rot_mask);                    \
-            y[m] = temp[0];                                                                           \
-            y[m + 4] = temp[1];                                                                       \
-            y[m + 8] = temp[2];                                                                       \
-            y[m + 12] = temp[3];                                                                      \
-        }                                                                                             \
-                                                                                                      \
-        STORE_16_LANES_AVX512(kk, K, output_buffer, y);                                               \
+#define PREFETCH_STAGE_TW_AVX512(kk, distance, stage_tw, sub_len) \
+    _mm_prefetch((const char *)&stage_tw[0 * (sub_len) + (kk) + (distance)], _MM_HINT_T0)
+
+//==============================================================================
+// TWIDDLE APPLICATION HELPERS
+//==============================================================================
+
+#define APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw, sub_len)           \
+    do                                                                      \
+    {                                                                       \
+        __m512d w1 = _mm512_loadu_pd(&stage_tw[0 * (sub_len) + (kk)].re);   \
+        __m512d w2 = _mm512_loadu_pd(&stage_tw[1 * (sub_len) + (kk)].re);   \
+        __m512d w3 = _mm512_loadu_pd(&stage_tw[2 * (sub_len) + (kk)].re);   \
+        __m512d w4 = _mm512_loadu_pd(&stage_tw[3 * (sub_len) + (kk)].re);   \
+        __m512d w5 = _mm512_loadu_pd(&stage_tw[4 * (sub_len) + (kk)].re);   \
+        __m512d w6 = _mm512_loadu_pd(&stage_tw[5 * (sub_len) + (kk)].re);   \
+        __m512d w7 = _mm512_loadu_pd(&stage_tw[6 * (sub_len) + (kk)].re);   \
+        __m512d w8 = _mm512_loadu_pd(&stage_tw[7 * (sub_len) + (kk)].re);   \
+        __m512d w9 = _mm512_loadu_pd(&stage_tw[8 * (sub_len) + (kk)].re);   \
+        __m512d w10 = _mm512_loadu_pd(&stage_tw[9 * (sub_len) + (kk)].re);  \
+        __m512d w11 = _mm512_loadu_pd(&stage_tw[10 * (sub_len) + (kk)].re); \
+        __m512d w12 = _mm512_loadu_pd(&stage_tw[11 * (sub_len) + (kk)].re); \
+        __m512d w13 = _mm512_loadu_pd(&stage_tw[12 * (sub_len) + (kk)].re); \
+        __m512d w14 = _mm512_loadu_pd(&stage_tw[13 * (sub_len) + (kk)].re); \
+        __m512d w15 = _mm512_loadu_pd(&stage_tw[14 * (sub_len) + (kk)].re); \
+        CMUL_FMA_AOS_AVX512(x[1], x[1], w1);                                \
+        CMUL_FMA_AOS_AVX512(x[2], x[2], w2);                                \
+        CMUL_FMA_AOS_AVX512(x[3], x[3], w3);                                \
+        CMUL_FMA_AOS_AVX512(x[4], x[4], w4);                                \
+        CMUL_FMA_AOS_AVX512(x[5], x[5], w5);                                \
+        CMUL_FMA_AOS_AVX512(x[6], x[6], w6);                                \
+        CMUL_FMA_AOS_AVX512(x[7], x[7], w7);                                \
+        CMUL_FMA_AOS_AVX512(x[8], x[8], w8);                                \
+        CMUL_FMA_AOS_AVX512(x[9], x[9], w9);                                \
+        CMUL_FMA_AOS_AVX512(x[10], x[10], w10);                             \
+        CMUL_FMA_AOS_AVX512(x[11], x[11], w11);                             \
+        CMUL_FMA_AOS_AVX512(x[12], x[12], w12);                             \
+        CMUL_FMA_AOS_AVX512(x[13], x[13], w13);                             \
+        CMUL_FMA_AOS_AVX512(x[14], x[14], w14);                             \
+        CMUL_FMA_AOS_AVX512(x[15], x[15], w15);                             \
     } while (0)
 
-#define RADIX16_PIPELINE_4_BV_AVX512(kk, K, sub_outputs, stage_tw, output_buffer, rot_mask, neg_mask) \
-    do                                                                                                \
-    {                                                                                                 \
-        __m512d x[16];                                                                                \
-        LOAD_16_LANES_AVX512(kk, K, sub_outputs, x);                                                  \
-        APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw);                                             \
-                                                                                                      \
-        __m512d y[16];                                                                                \
-        RADIX4_BUTTERFLY_AVX512(x[0], x[4], x[8], x[12], y[0], y[1], y[2], y[3], rot_mask);           \
-        RADIX4_BUTTERFLY_AVX512(x[1], x[5], x[9], x[13], y[4], y[5], y[6], y[7], rot_mask);           \
-        RADIX4_BUTTERFLY_AVX512(x[2], x[6], x[10], x[14], y[8], y[9], y[10], y[11], rot_mask);        \
-        RADIX4_BUTTERFLY_AVX512(x[3], x[7], x[11], x[15], y[12], y[13], y[14], y[15], rot_mask);      \
-                                                                                                      \
-        APPLY_W4_INTERMEDIATE_BV_AVX512_HOISTED(y, neg_mask);                                         \
-                                                                                                      \
-        __m512d temp[4];                                                                              \
-        for (int m = 0; m < 4; m++)                                                                   \
-        {                                                                                             \
-            RADIX4_BUTTERFLY_AVX512(y[m], y[m + 4], y[m + 8], y[m + 12],                              \
-                                    temp[0], temp[1], temp[2], temp[3], rot_mask);                    \
-            y[m] = temp[0];                                                                           \
-            y[m + 4] = temp[1];                                                                       \
-            y[m + 8] = temp[2];                                                                       \
-            y[m + 12] = temp[3];                                                                      \
-        }                                                                                             \
-                                                                                                      \
-        STORE_16_LANES_AVX512(kk, K, output_buffer, y);                                               \
+//==============================================================================
+// OPTIMIZED SOA BUTTERFLY PIPELINE
+//==============================================================================
+
+#define RADIX16_BUTTERFLY_FV_SOA_AVX512(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)              \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        __m512d x_re[16], x_im[16];                                                                                            \
+        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                              \
+        for (int r = 1; r <= 15; r++)                                                                                          \
+        {                                                                                                                      \
+            __m512d tw_aos = _mm512_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                        \
+            __m512d w_re, w_im;                                                                                                \
+            AOS_TO_SOA_AVX512(tw_aos, w_re, w_im);                                                                             \
+            CMUL_FMA_SOA_AVX512(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
+        }                                                                                                                      \
+        __m512d y_re[16], y_im[16];                                                                                            \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
+                                    y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
+                                    y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
+                                    y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
+                                    y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
+        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(y_re, y_im, neg_mask);                                                             \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
+                                    y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
+                                    y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
+                                    y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
+                                    y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
+        STORE_16_LANES_SOA_AVX512(kk, K, output_buffer, y_re, y_im);                                                           \
     } while (0)
 
-#define RADIX16_PIPELINE_4_FV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer, rot_mask, neg_mask) \
-    do                                                                                                       \
-    {                                                                                                        \
-        __m512d x[16];                                                                                       \
-        LOAD_16_LANES_AVX512(kk, K, sub_outputs, x);                                                         \
-        APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw);                                                    \
-                                                                                                             \
-        __m512d y[16];                                                                                       \
-        RADIX4_BUTTERFLY_AVX512(x[0], x[4], x[8], x[12], y[0], y[1], y[2], y[3], rot_mask);                  \
-        RADIX4_BUTTERFLY_AVX512(x[1], x[5], x[9], x[13], y[4], y[5], y[6], y[7], rot_mask);                  \
-        RADIX4_BUTTERFLY_AVX512(x[2], x[6], x[10], x[14], y[8], y[9], y[10], y[11], rot_mask);               \
-        RADIX4_BUTTERFLY_AVX512(x[3], x[7], x[11], x[15], y[12], y[13], y[14], y[15], rot_mask);             \
-                                                                                                             \
-        APPLY_W4_INTERMEDIATE_FV_AVX512_HOISTED(y, neg_mask);                                                \
-                                                                                                             \
-        __m512d temp[4];                                                                                     \
-        for (int m = 0; m < 4; m++)                                                                          \
-        {                                                                                                    \
-            RADIX4_BUTTERFLY_AVX512(y[m], y[m + 4], y[m + 8], y[m + 12],                                     \
-                                    temp[0], temp[1], temp[2], temp[3], rot_mask);                           \
-            y[m] = temp[0];                                                                                  \
-            y[m + 4] = temp[1];                                                                              \
-            y[m + 8] = temp[2];                                                                              \
-            y[m + 12] = temp[3];                                                                             \
-        }                                                                                                    \
-                                                                                                             \
-        STORE_16_LANES_AVX512_STREAM(kk, K, output_buffer, y);                                               \
+#define RADIX16_BUTTERFLY_BV_SOA_AVX512(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)              \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        __m512d x_re[16], x_im[16];                                                                                            \
+        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                              \
+        for (int r = 1; r <= 15; r++)                                                                                          \
+        {                                                                                                                      \
+            __m512d tw_aos = _mm512_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                        \
+            __m512d w_re, w_im;                                                                                                \
+            AOS_TO_SOA_AVX512(tw_aos, w_re, w_im);                                                                             \
+            CMUL_FMA_SOA_AVX512(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
+        }                                                                                                                      \
+        __m512d y_re[16], y_im[16];                                                                                            \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
+                                    y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
+                                    y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
+                                    y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
+                                    y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
+        APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(y_re, y_im, neg_mask);                                                             \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
+                                    y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
+                                    y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
+                                    y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
+                                    y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
+        STORE_16_LANES_SOA_AVX512(kk, K, output_buffer, y_re, y_im);                                                           \
     } while (0)
 
-#define RADIX16_PIPELINE_4_BV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, output_buffer, rot_mask, neg_mask) \
-    do                                                                                                       \
-    {                                                                                                        \
-        __m512d x[16];                                                                                       \
-        LOAD_16_LANES_AVX512(kk, K, sub_outputs, x);                                                         \
-        APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw);                                                    \
-                                                                                                             \
-        __m512d y[16];                                                                                       \
-        RADIX4_BUTTERFLY_AVX512(x[0], x[4], x[8], x[12], y[0], y[1], y[2], y[3], rot_mask);                  \
-        RADIX4_BUTTERFLY_AVX512(x[1], x[5], x[9], x[13], y[4], y[5], y[6], y[7], rot_mask);                  \
-        RADIX4_BUTTERFLY_AVX512(x[2], x[6], x[10], x[14], y[8], y[9], y[10], y[11], rot_mask);               \
-        RADIX4_BUTTERFLY_AVX512(x[3], x[7], x[11], x[15], y[12], y[13], y[14], y[15], rot_mask);             \
-                                                                                                             \
-        APPLY_W4_INTERMEDIATE_BV_AVX512_HOISTED(y, neg_mask);                                                \
-                                                                                                             \
-        __m512d temp[4];                                                                                     \
-        for (int m = 0; m < 4; m++)                                                                          \
-        {                                                                                                    \
-            RADIX4_BUTTERFLY_AVX512(y[m], y[m + 4], y[m + 8], y[m + 12],                                     \
-                                    temp[0], temp[1], temp[2], temp[3], rot_mask);                           \
-            y[m] = temp[0];                                                                                  \
-            y[m + 4] = temp[1];                                                                              \
-            y[m + 8] = temp[2];                                                                              \
-            y[m + 12] = temp[3];                                                                             \
-        }                                                                                                    \
-                                                                                                             \
-        STORE_16_LANES_AVX512_STREAM(kk, K, output_buffer, y);                                               \
+#define RADIX16_BUTTERFLY_FV_SOA_AVX512_STREAM(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)       \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        __m512d x_re[16], x_im[16];                                                                                            \
+        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                              \
+        for (int r = 1; r <= 15; r++)                                                                                          \
+        {                                                                                                                      \
+            __m512d tw_aos = _mm512_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                        \
+            __m512d w_re, w_im;                                                                                                \
+            AOS_TO_SOA_AVX512(tw_aos, w_re, w_im);                                                                             \
+            CMUL_FMA_SOA_AVX512(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
+        }                                                                                                                      \
+        __m512d y_re[16], y_im[16];                                                                                            \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
+                                    y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
+                                    y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
+                                    y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
+                                    y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
+        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(y_re, y_im, neg_mask);                                                             \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
+                                    y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
+                                    y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
+                                    y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
+                                    y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
+        STORE_16_LANES_SOA_AVX512_STREAM(kk, K, output_buffer, y_re, y_im);                                                    \
+    } while (0)
+
+#define RADIX16_BUTTERFLY_BV_SOA_AVX512_STREAM(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask)       \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        __m512d x_re[16], x_im[16];                                                                                            \
+        LOAD_16_LANES_SOA_AVX512(kk, K, sub_outputs, x_re, x_im);                                                              \
+        for (int r = 1; r <= 15; r++)                                                                                          \
+        {                                                                                                                      \
+            __m512d tw_aos = _mm512_loadu_pd(&stage_tw[(r - 1) * (sub_len) + (kk)].re);                                        \
+            __m512d w_re, w_im;                                                                                                \
+            AOS_TO_SOA_AVX512(tw_aos, w_re, w_im);                                                                             \
+            CMUL_FMA_SOA_AVX512(x_re[r], x_im[r], x_re[r], x_im[r], w_re, w_im);                                               \
+        }                                                                                                                      \
+        __m512d y_re[16], y_im[16];                                                                                            \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                  \
+                                    y_re[0], y_im[0], y_re[1], y_im[1], y_re[2], y_im[2], y_re[3], y_im[3], rot_mask);         \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                  \
+                                    y_re[4], y_im[4], y_re[5], y_im[5], y_re[6], y_im[6], y_re[7], y_im[7], rot_mask);         \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                \
+                                    y_re[8], y_im[8], y_re[9], y_im[9], y_re[10], y_im[10], y_re[11], y_im[11], rot_mask);     \
+        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                \
+                                    y_re[12], y_im[12], y_re[13], y_im[13], y_re[14], y_im[14], y_re[15], y_im[15], rot_mask); \
+        APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(y_re, y_im, neg_mask);                                                             \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12],                  \
+                                    y_re[0], y_im[0], y_re[4], y_im[4], y_re[8], y_im[8], y_re[12], y_im[12], rot_mask);       \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13],                  \
+                                    y_re[1], y_im[1], y_re[5], y_im[5], y_re[9], y_im[9], y_re[13], y_im[13], rot_mask);       \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14],                \
+                                    y_re[2], y_im[2], y_re[6], y_im[6], y_re[10], y_im[10], y_re[14], y_im[14], rot_mask);     \
+        RADIX4_BUTTERFLY_SOA_AVX512(y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15],                \
+                                    y_re[3], y_im[3], y_re[7], y_im[7], y_re[11], y_im[11], y_re[15], y_im[15], rot_mask);     \
+        STORE_16_LANES_SOA_AVX512_STREAM(kk, K, output_buffer, y_re, y_im);                                                    \
+    } while (0)
+
+//==============================================================================
+// LEGACY AOS PIPELINE MACROS (for backward compatibility)
+//==============================================================================
+
+#define RADIX16_PIPELINE_4_FV_AVX512(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                         \
+    {                                                                                                          \
+        __m512d x[16];                                                                                         \
+        LOAD_16_LANES_AVX512(kk, K, sub_outputs, x);                                                           \
+        APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw, sub_len);                                             \
+        __m512d y[16];                                                                                         \
+        RADIX4_BUTTERFLY_AVX512(x[0], x[4], x[8], x[12], y[0], y[1], y[2], y[3], rot_mask);                    \
+        RADIX4_BUTTERFLY_AVX512(x[1], x[5], x[9], x[13], y[4], y[5], y[6], y[7], rot_mask);                    \
+        RADIX4_BUTTERFLY_AVX512(x[2], x[6], x[10], x[14], y[8], y[9], y[10], y[11], rot_mask);                 \
+        RADIX4_BUTTERFLY_AVX512(x[3], x[7], x[11], x[15], y[12], y[13], y[14], y[15], rot_mask);               \
+        APPLY_W4_INTERMEDIATE_FV_AVX512_HOISTED(y, neg_mask);                                                  \
+        __m512d temp[4];                                                                                       \
+        for (int m = 0; m < 4; m++)                                                                            \
+        {                                                                                                      \
+            RADIX4_BUTTERFLY_AVX512(y[m], y[m + 4], y[m + 8], y[m + 12],                                       \
+                                    temp[0], temp[1], temp[2], temp[3], rot_mask);                             \
+            y[m] = temp[0];                                                                                    \
+            y[m + 4] = temp[1];                                                                                \
+            y[m + 8] = temp[2];                                                                                \
+            y[m + 12] = temp[3];                                                                               \
+        }                                                                                                      \
+        STORE_16_LANES_AVX512(kk, K, output_buffer, y);                                                        \
+    } while (0)
+
+#define RADIX16_PIPELINE_4_BV_AVX512(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                         \
+    {                                                                                                          \
+        __m512d x[16];                                                                                         \
+        LOAD_16_LANES_AVX512(kk, K, sub_outputs, x);                                                           \
+        APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw, sub_len);                                             \
+        __m512d y[16];                                                                                         \
+        RADIX4_BUTTERFLY_AVX512(x[0], x[4], x[8], x[12], y[0], y[1], y[2], y[3], rot_mask);                    \
+        RADIX4_BUTTERFLY_AVX512(x[1], x[5], x[9], x[13], y[4], y[5], y[6], y[7], rot_mask);                    \
+        RADIX4_BUTTERFLY_AVX512(x[2], x[6], x[10], x[14], y[8], y[9], y[10], y[11], rot_mask);                 \
+        RADIX4_BUTTERFLY_AVX512(x[3], x[7], x[11], x[15], y[12], y[13], y[14], y[15], rot_mask);               \
+        APPLY_W4_INTERMEDIATE_BV_AVX512_HOISTED(y, neg_mask);                                                  \
+        __m512d temp[4];                                                                                       \
+        for (int m = 0; m < 4; m++)                                                                            \
+        {                                                                                                      \
+            RADIX4_BUTTERFLY_AVX512(y[m], y[m + 4], y[m + 8], y[m + 12],                                       \
+                                    temp[0], temp[1], temp[2], temp[3], rot_mask);                             \
+            y[m] = temp[0];                                                                                    \
+            y[m + 4] = temp[1];                                                                                \
+            y[m + 8] = temp[2];                                                                                \
+            y[m + 12] = temp[3];                                                                               \
+        }                                                                                                      \
+        STORE_16_LANES_AVX512(kk, K, output_buffer, y);                                                        \
+    } while (0)
+
+#define RADIX16_PIPELINE_4_FV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                \
+    {                                                                                                                 \
+        __m512d x[16];                                                                                                \
+        LOAD_16_LANES_AVX512(kk, K, sub_outputs, x);                                                                  \
+        APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw, sub_len);                                                    \
+        __m512d y[16];                                                                                                \
+        RADIX4_BUTTERFLY_AVX512(x[0], x[4], x[8], x[12], y[0], y[1], y[2], y[3], rot_mask);                           \
+        RADIX4_BUTTERFLY_AVX512(x[1], x[5], x[9], x[13], y[4], y[5], y[6], y[7], rot_mask);                           \
+        RADIX4_BUTTERFLY_AVX512(x[2], x[6], x[10], x[14], y[8], y[9], y[10], y[11], rot_mask);                        \
+        RADIX4_BUTTERFLY_AVX512(x[3], x[7], x[11], x[15], y[12], y[13], y[14], y[15], rot_mask);                      \
+        APPLY_W4_INTERMEDIATE_FV_AVX512_HOISTED(y, neg_mask);                                                         \
+        __m512d temp[4];                                                                                              \
+        for (int m = 0; m < 4; m++)                                                                                   \
+        {                                                                                                             \
+            RADIX4_BUTTERFLY_AVX512(y[m], y[m + 4], y[m + 8], y[m + 12],                                              \
+                                    temp[0], temp[1], temp[2], temp[3], rot_mask);                                    \
+            y[m] = temp[0];                                                                                           \
+            y[m + 4] = temp[1];                                                                                       \
+            y[m + 8] = temp[2];                                                                                       \
+            y[m + 12] = temp[3];                                                                                      \
+        }                                                                                                             \
+        STORE_16_LANES_AVX512_STREAM(kk, K, output_buffer, y);                                                        \
+    } while (0)
+
+#define RADIX16_PIPELINE_4_BV_AVX512_STREAM(kk, K, sub_outputs, stage_tw, sub_len, output_buffer, rot_mask, neg_mask) \
+    do                                                                                                                \
+    {                                                                                                                 \
+        __m512d x[16];                                                                                                \
+        LOAD_16_LANES_AVX512(kk, K, sub_outputs, x);                                                                  \
+        APPLY_STAGE_TWIDDLES_R16_AVX512(kk, x, stage_tw, sub_len);                                                    \
+        __m512d y[16];                                                                                                \
+        RADIX4_BUTTERFLY_AVX512(x[0], x[4], x[8], x[12], y[0], y[1], y[2], y[3], rot_mask);                           \
+        RADIX4_BUTTERFLY_AVX512(x[1], x[5], x[9], x[13], y[4], y[5], y[6], y[7], rot_mask);                           \
+        RADIX4_BUTTERFLY_AVX512(x[2], x[6], x[10], x[14], y[8], y[9], y[10], y[11], rot_mask);                        \
+        RADIX4_BUTTERFLY_AVX512(x[3], x[7], x[11], x[15], y[12], y[13], y[14], y[15], rot_mask);                      \
+        APPLY_W4_INTERMEDIATE_BV_AVX512_HOISTED(y, neg_mask);                                                         \
+        __m512d temp[4];                                                                                              \
+        for (int m = 0; m < 4; m++)                                                                                   \
+        {                                                                                                             \
+            RADIX4_BUTTERFLY_AVX512(y[m], y[m + 4], y[m + 8], y[m + 12],                                              \
+                                    temp[0], temp[1], temp[2], temp[3], rot_mask);                                    \
+            y[m] = temp[0];                                                                                           \
+            y[m + 4] = temp[1];                                                                                       \
+            y[m + 8] = temp[2];                                                                                       \
+            y[m + 12] = temp[3];                                                                                      \
+        }                                                                                                             \
+        STORE_16_LANES_AVX512_STREAM(kk, K, output_buffer, y);                                                        \
     } while (0)
 
 #endif // __AVX512F__
@@ -460,105 +711,105 @@ static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
         y3 = _mm256_add_pd(difAC, dif_bd_rot);                      \
     } while (0)
 
-#define APPLY_W4_INTERMEDIATE_FV_AVX2_HOISTED(y, neg_mask)        \
-    do                                                            \
-    {                                                             \
-        {                                                         \
-            __m256d y5_swp = _mm256_permute_pd(y[5], 0x5);        \
-            y[5] = _mm256_xor_pd(y5_swp, W4_SIGN_MASK_FV_5_AVX2); \
-            y[6] = _mm256_xor_pd(y[6], neg_mask);                 \
-            __m256d y7_swp = _mm256_permute_pd(y[7], 0x5);        \
-            y[7] = _mm256_xor_pd(y7_swp, W4_SIGN_MASK_FV_7_AVX2); \
-        }                                                         \
-        {                                                         \
-            y[9] = _mm256_xor_pd(y[9], neg_mask);                 \
-            y[11] = _mm256_xor_pd(y[11], neg_mask);               \
-        }                                                         \
-        {                                                         \
-            __m256d y13_swp = _mm256_permute_pd(y[13], 0x5);      \
+#define APPLY_W4_INTERMEDIATE_FV_AVX2_HOISTED(y, neg_mask)           \
+    do                                                               \
+    {                                                                \
+        {                                                            \
+            __m256d y5_swp = _mm256_permute_pd(y[5], 0x5);           \
+            y[5] = _mm256_xor_pd(y5_swp, W4_SIGN_MASK_FV_5_AVX2);    \
+            y[6] = _mm256_xor_pd(y[6], neg_mask);                    \
+            __m256d y7_swp = _mm256_permute_pd(y[7], 0x5);           \
+            y[7] = _mm256_xor_pd(y7_swp, W4_SIGN_MASK_FV_7_AVX2);    \
+        }                                                            \
+        {                                                            \
+            y[9] = _mm256_xor_pd(y[9], neg_mask);                    \
+            y[11] = _mm256_xor_pd(y[11], neg_mask);                  \
+        }                                                            \
+        {                                                            \
+            __m256d y13_swp = _mm256_permute_pd(y[13], 0x5);         \
             y[13] = _mm256_xor_pd(y13_swp, W4_SIGN_MASK_FV_13_AVX2); \
-            y[14] = _mm256_xor_pd(y[14], neg_mask);               \
-            __m256d y15_swp = _mm256_permute_pd(y[15], 0x5);      \
+            y[14] = _mm256_xor_pd(y[14], neg_mask);                  \
+            __m256d y15_swp = _mm256_permute_pd(y[15], 0x5);         \
             y[15] = _mm256_xor_pd(y15_swp, W4_SIGN_MASK_FV_15_AVX2); \
-        }                                                         \
+        }                                                            \
     } while (0)
 
-#define APPLY_W4_INTERMEDIATE_BV_AVX2_HOISTED(y, neg_mask)        \
-    do                                                            \
-    {                                                             \
-        {                                                         \
-            __m256d y5_swp = _mm256_permute_pd(y[5], 0x5);        \
-            y[5] = _mm256_xor_pd(y5_swp, W4_SIGN_MASK_BV_5_AVX2); \
-            y[6] = _mm256_xor_pd(y[6], neg_mask);                 \
-            __m256d y7_swp = _mm256_permute_pd(y[7], 0x5);        \
-            y[7] = _mm256_xor_pd(y7_swp, W4_SIGN_MASK_BV_7_AVX2); \
-        }                                                         \
-        {                                                         \
-            y[9] = _mm256_xor_pd(y[9], neg_mask);                 \
-            y[11] = _mm256_xor_pd(y[11], neg_mask);               \
-        }                                                         \
-        {                                                         \
-            __m256d y13_swp = _mm256_permute_pd(y[13], 0x5);      \
+#define APPLY_W4_INTERMEDIATE_BV_AVX2_HOISTED(y, neg_mask)           \
+    do                                                               \
+    {                                                                \
+        {                                                            \
+            __m256d y5_swp = _mm256_permute_pd(y[5], 0x5);           \
+            y[5] = _mm256_xor_pd(y5_swp, W4_SIGN_MASK_BV_5_AVX2);    \
+            y[6] = _mm256_xor_pd(y[6], neg_mask);                    \
+            __m256d y7_swp = _mm256_permute_pd(y[7], 0x5);           \
+            y[7] = _mm256_xor_pd(y7_swp, W4_SIGN_MASK_BV_7_AVX2);    \
+        }                                                            \
+        {                                                            \
+            y[9] = _mm256_xor_pd(y[9], neg_mask);                    \
+            y[11] = _mm256_xor_pd(y[11], neg_mask);                  \
+        }                                                            \
+        {                                                            \
+            __m256d y13_swp = _mm256_permute_pd(y[13], 0x5);         \
             y[13] = _mm256_xor_pd(y13_swp, W4_SIGN_MASK_BV_13_AVX2); \
-            y[14] = _mm256_xor_pd(y[14], neg_mask);               \
-            __m256d y15_swp = _mm256_permute_pd(y[15], 0x5);      \
+            y[14] = _mm256_xor_pd(y[14], neg_mask);                  \
+            __m256d y15_swp = _mm256_permute_pd(y[15], 0x5);         \
             y[15] = _mm256_xor_pd(y15_swp, W4_SIGN_MASK_BV_15_AVX2); \
-        }                                                         \
+        }                                                            \
     } while (0)
 
-#define APPLY_STAGE_TWIDDLES_R16_AVX2(kk, x, stage_tw)                     \
-    do                                                                     \
-    {                                                                      \
-        __m256d w1 = load2_aos(&stage_tw[(kk) * 15 + 0],                   \
-                               &stage_tw[(kk + 1) * 15 + 0]);              \
-        __m256d w2 = load2_aos(&stage_tw[(kk) * 15 + 1],                   \
-                               &stage_tw[(kk + 1) * 15 + 1]);              \
-        __m256d w3 = load2_aos(&stage_tw[(kk) * 15 + 2],                   \
-                               &stage_tw[(kk + 1) * 15 + 2]);              \
-        __m256d w4 = load2_aos(&stage_tw[(kk) * 15 + 3],                   \
-                               &stage_tw[(kk + 1) * 15 + 3]);              \
-        __m256d w5 = load2_aos(&stage_tw[(kk) * 15 + 4],                   \
-                               &stage_tw[(kk + 1) * 15 + 4]);              \
-        __m256d w6 = load2_aos(&stage_tw[(kk) * 15 + 5],                   \
-                               &stage_tw[(kk + 1) * 15 + 5]);              \
-        __m256d w7 = load2_aos(&stage_tw[(kk) * 15 + 6],                   \
-                               &stage_tw[(kk + 1) * 15 + 6]);              \
-        __m256d w8 = load2_aos(&stage_tw[(kk) * 15 + 7],                   \
-                               &stage_tw[(kk + 1) * 15 + 7]);              \
-        __m256d w9 = load2_aos(&stage_tw[(kk) * 15 + 8],                   \
-                               &stage_tw[(kk + 1) * 15 + 8]);              \
-        __m256d w10 = load2_aos(&stage_tw[(kk) * 15 + 9],                  \
-                                &stage_tw[(kk + 1) * 15 + 9]);             \
-        __m256d w11 = load2_aos(&stage_tw[(kk) * 15 + 10],                 \
-                                &stage_tw[(kk + 1) * 15 + 10]);            \
-        __m256d w12 = load2_aos(&stage_tw[(kk) * 15 + 11],                 \
-                                &stage_tw[(kk + 1) * 15 + 11]);            \
-        __m256d w13 = load2_aos(&stage_tw[(kk) * 15 + 12],                 \
-                                &stage_tw[(kk + 1) * 15 + 12]);            \
-        __m256d w14 = load2_aos(&stage_tw[(kk) * 15 + 13],                 \
-                                &stage_tw[(kk + 1) * 15 + 13]);            \
-        __m256d w15 = load2_aos(&stage_tw[(kk) * 15 + 14],                 \
-                                &stage_tw[(kk + 1) * 15 + 14]);            \
-                                                                           \
-        CMUL_FMA_AOS(x[1], x[1], w1);                                       \
-        CMUL_FMA_AOS(x[2], x[2], w2);                                       \
-        CMUL_FMA_AOS(x[3], x[3], w3);                                       \
-        CMUL_FMA_AOS(x[4], x[4], w4);                                       \
-        CMUL_FMA_AOS(x[5], x[5], w5);                                       \
-        CMUL_FMA_AOS(x[6], x[6], w6);                                       \
-        CMUL_FMA_AOS(x[7], x[7], w7);                                       \
-        CMUL_FMA_AOS(x[8], x[8], w8);                                       \
-        CMUL_FMA_AOS(x[9], x[9], w9);                                       \
-        CMUL_FMA_AOS(x[10], x[10], w10);                                    \
-        CMUL_FMA_AOS(x[11], x[11], w11);                                    \
-        CMUL_FMA_AOS(x[12], x[12], w12);                                    \
-        CMUL_FMA_AOS(x[13], x[13], w13);                                    \
-        CMUL_FMA_AOS(x[14], x[14], w14);                                    \
-        CMUL_FMA_AOS(x[15], x[15], w15);                                    \
+#define APPLY_STAGE_TWIDDLES_R16_AVX2(kk, x, stage_tw)          \
+    do                                                          \
+    {                                                           \
+        __m256d w1 = load2_aos(&stage_tw[(kk) * 15 + 0],        \
+                               &stage_tw[(kk + 1) * 15 + 0]);   \
+        __m256d w2 = load2_aos(&stage_tw[(kk) * 15 + 1],        \
+                               &stage_tw[(kk + 1) * 15 + 1]);   \
+        __m256d w3 = load2_aos(&stage_tw[(kk) * 15 + 2],        \
+                               &stage_tw[(kk + 1) * 15 + 2]);   \
+        __m256d w4 = load2_aos(&stage_tw[(kk) * 15 + 3],        \
+                               &stage_tw[(kk + 1) * 15 + 3]);   \
+        __m256d w5 = load2_aos(&stage_tw[(kk) * 15 + 4],        \
+                               &stage_tw[(kk + 1) * 15 + 4]);   \
+        __m256d w6 = load2_aos(&stage_tw[(kk) * 15 + 5],        \
+                               &stage_tw[(kk + 1) * 15 + 5]);   \
+        __m256d w7 = load2_aos(&stage_tw[(kk) * 15 + 6],        \
+                               &stage_tw[(kk + 1) * 15 + 6]);   \
+        __m256d w8 = load2_aos(&stage_tw[(kk) * 15 + 7],        \
+                               &stage_tw[(kk + 1) * 15 + 7]);   \
+        __m256d w9 = load2_aos(&stage_tw[(kk) * 15 + 8],        \
+                               &stage_tw[(kk + 1) * 15 + 8]);   \
+        __m256d w10 = load2_aos(&stage_tw[(kk) * 15 + 9],       \
+                                &stage_tw[(kk + 1) * 15 + 9]);  \
+        __m256d w11 = load2_aos(&stage_tw[(kk) * 15 + 10],      \
+                                &stage_tw[(kk + 1) * 15 + 10]); \
+        __m256d w12 = load2_aos(&stage_tw[(kk) * 15 + 11],      \
+                                &stage_tw[(kk + 1) * 15 + 11]); \
+        __m256d w13 = load2_aos(&stage_tw[(kk) * 15 + 12],      \
+                                &stage_tw[(kk + 1) * 15 + 12]); \
+        __m256d w14 = load2_aos(&stage_tw[(kk) * 15 + 13],      \
+                                &stage_tw[(kk + 1) * 15 + 13]); \
+        __m256d w15 = load2_aos(&stage_tw[(kk) * 15 + 14],      \
+                                &stage_tw[(kk + 1) * 15 + 14]); \
+                                                                \
+        CMUL_FMA_AOS(x[1], x[1], w1);                           \
+        CMUL_FMA_AOS(x[2], x[2], w2);                           \
+        CMUL_FMA_AOS(x[3], x[3], w3);                           \
+        CMUL_FMA_AOS(x[4], x[4], w4);                           \
+        CMUL_FMA_AOS(x[5], x[5], w5);                           \
+        CMUL_FMA_AOS(x[6], x[6], w6);                           \
+        CMUL_FMA_AOS(x[7], x[7], w7);                           \
+        CMUL_FMA_AOS(x[8], x[8], w8);                           \
+        CMUL_FMA_AOS(x[9], x[9], w9);                           \
+        CMUL_FMA_AOS(x[10], x[10], w10);                        \
+        CMUL_FMA_AOS(x[11], x[11], w11);                        \
+        CMUL_FMA_AOS(x[12], x[12], w12);                        \
+        CMUL_FMA_AOS(x[13], x[13], w13);                        \
+        CMUL_FMA_AOS(x[14], x[14], w14);                        \
+        CMUL_FMA_AOS(x[15], x[15], w15);                        \
     } while (0)
 
 #define PREFETCH_STAGE_TW_AVX2(kk, distance, stage_tw) \
-    _mm_prefetch((const char*)&stage_tw[((kk) + (distance)) * 15], _MM_HINT_T0)
+    _mm_prefetch((const char *)&stage_tw[((kk) + (distance)) * 15], _MM_HINT_T0)
 
 #define LOAD_16_LANES_AVX2(kk, K, sub_outputs, x)                                                  \
     do                                                                                             \
@@ -617,23 +868,15 @@ static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
                                 y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, rot_sign) \
     do                                                                                            \
     {                                                                                             \
-        double sumBD_re = b_re + d_re;                                                            \
-        double sumBD_im = b_im + d_im;                                                            \
-        double difBD_re = b_re - d_re;                                                            \
-        double difBD_im = b_im - d_im;                                                            \
-        double sumAC_re = a_re + c_re;                                                            \
-        double sumAC_im = a_im + c_im;                                                            \
-        double difAC_re = a_re - c_re;                                                            \
-        double difAC_im = a_im - c_im;                                                            \
-                                                                                                  \
+        double sumBD_re = b_re + d_re, sumBD_im = b_im + d_im;                                    \
+        double difBD_re = b_re - d_re, difBD_im = b_im - d_im;                                    \
+        double sumAC_re = a_re + c_re, sumAC_im = a_im + c_im;                                    \
+        double difAC_re = a_re - c_re, difAC_im = a_im - c_im;                                    \
         y0_re = sumAC_re + sumBD_re;                                                              \
         y0_im = sumAC_im + sumBD_im;                                                              \
         y2_re = sumAC_re - sumBD_re;                                                              \
         y2_im = sumAC_im - sumBD_im;                                                              \
-                                                                                                  \
-        double rot_re = (rot_sign) * difBD_im;                                                    \
-        double rot_im = (rot_sign) * (-difBD_re);                                                 \
-                                                                                                  \
+        double rot_re = (rot_sign) * difBD_im, rot_im = (rot_sign) * (-difBD_re);                 \
         y1_re = difAC_re - rot_re;                                                                \
         y1_im = difAC_im - rot_im;                                                                \
         y3_re = difAC_re + rot_re;                                                                \
@@ -706,16 +949,16 @@ static const __m256d W4_SIGN_MASK_BV_15_AVX2 = {0.0, -0.0, 0.0, -0.0};
         }                                      \
     } while (0)
 
-#define APPLY_STAGE_TWIDDLES_R16_SCALAR(k, x, stage_tw)                \
-    do                                                                 \
-    {                                                                  \
-        const fft_data *w_ptr = &stage_tw[(k) * 15];                   \
-        for (int j = 1; j <= 15; j++)                                  \
-        {                                                              \
-            fft_data a = x[j];                                         \
-            x[j].re = a.re * w_ptr[j - 1].re - a.im * w_ptr[j - 1].im; \
-            x[j].im = a.re * w_ptr[j - 1].im + a.im * w_ptr[j - 1].re; \
-        }                                                              \
+#define APPLY_STAGE_TWIDDLES_R16_SCALAR(k, x, stage_tw, sub_len)      \
+    do                                                                \
+    {                                                                 \
+        for (int r = 1; r <= 15; r++)                                 \
+        {                                                             \
+            const fft_data *w = &stage_tw[(r - 1) * (sub_len) + (k)]; \
+            fft_data a = x[r];                                        \
+            x[r].re = a.re * w->re - a.im * w->im;                    \
+            x[r].im = a.re * w->im + a.im * w->re;                    \
+        }                                                             \
     } while (0)
 
 #endif // FFT_RADIX16_MACROS_H
