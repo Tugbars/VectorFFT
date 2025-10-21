@@ -24,7 +24,7 @@
 //   - Everything else IDENTICAL
 //
 
-#include "fft_radix5.h"
+#include "fft_radix5_uniform.h"
 #include "simd_math.h"
 #include "fft_radix5_macros.h"
 
@@ -113,3 +113,62 @@ void fft_radix5_bv(
         RADIX5_BUTTERFLY_BV_AVX2(a, tw_b, tw_c, tw_d, tw_e, y0, y1, y2, y3, y4);
         
         //====================================================================
+        //======================================================================
+        // Store results
+        //======================================================================
+        if (use_streaming)
+        {
+            STORE_5_LANES_AVX2_STREAM(k, K, output_buffer, y0, y1, y2, y3, y4);
+        }
+        else
+        {
+            STORE_5_LANES_AVX2(k, K, output_buffer, y0, y1, y2, y3, y4);
+        }
+    }
+
+    if (use_streaming)
+    {
+        _mm_sfence();
+    }
+
+#endif // __AVX2__
+
+    //==========================================================================
+    // SCALAR TAIL: Process remaining single butterflies
+    //==========================================================================
+    for (; k < K; k++)
+    {
+        //======================================================================
+        // Load input lanes
+        //======================================================================
+        fft_data a = sub_outputs[k];
+        fft_data b = sub_outputs[k + K];
+        fft_data c = sub_outputs[k + 2 * K];
+        fft_data d = sub_outputs[k + 3 * K];
+        fft_data e = sub_outputs[k + 4 * K];
+
+        //======================================================================
+        // Apply precomputed SoA twiddles
+        //======================================================================
+        fft_data tw_b, tw_c, tw_d, tw_e;
+        APPLY_STAGE_TWIDDLES_SCALAR_SOA_R5(k, K, b, c, d, e, stage_tw,
+                                           tw_b, tw_c, tw_d, tw_e);
+
+        //======================================================================
+        // Radix-5 butterfly computation (FORWARD)
+        //======================================================================
+        fft_data y0, y1, y2, y3, y4;
+        RADIX5_BUTTERFLY_BV_SCALAR(a, tw_b.re, tw_b.im, tw_c.re, tw_c.im,
+                                   tw_d.re, tw_d.im, tw_e.re, tw_e.im,
+                                   y0, y1, y2, y3, y4);
+
+        //======================================================================
+        // Store results
+        //======================================================================
+        output_buffer[k] = y0;
+        output_buffer[k + K] = y1;
+        output_buffer[k + 2 * K] = y2;
+        output_buffer[k + 3 * K] = y3;
+        output_buffer[k + 4 * K] = y4;
+    }
+}
