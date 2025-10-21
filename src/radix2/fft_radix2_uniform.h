@@ -50,4 +50,5 @@ void fft_radix2_fv(
 #endif // FFT_RADIX2_H
 
 
-// 1000.
+// 1500. 
+// 14000
