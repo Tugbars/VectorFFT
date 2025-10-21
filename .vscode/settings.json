@@ -19,6 +19,13 @@
         "fft_radix32_uniform.h": "c",
         "fft_radix11_macros.h": "c",
         "fft_radix2.h": "c",
-        "fft_radix2_macros.h": "c"
+        "fft_radix2_macros.h": "c",
+        "bit": "c",
+        "compare": "c",
+        "cstddef": "c",
+        "string": "c",
+        "optional": "c",
+        "memory": "c",
+        "new": "c"
     }
 }

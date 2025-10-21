@@ -2,6 +2,8 @@
 #define FFT_RADIX2_H
 
 #include "highspeedFFT.h"
+#include "../fft_plan/fft_planning_types.h"
+
 
 /**
  * @brief Optimized radix-2 FFT butterfly operation with SIMD acceleration
@@ -38,14 +40,14 @@
 void fft_radix2_bv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
+    const fft_twiddles_soa *restrict stage_tw,  
     int sub_len);
 
 void fft_radix2_fv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
-    int sub_len)
+    const fft_twiddles_soa *restrict stage_tw,  
+    int sub_len);
 
 #endif // FFT_RADIX2_H
 

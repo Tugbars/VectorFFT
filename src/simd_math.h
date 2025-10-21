@@ -4,6 +4,20 @@
 #include "simd_utils.h"
 #include "fft_types.h"
 
+static ALWAYS_INLINE __m512d cmul_avx512_soa(
+    __m512d data,   // AoS: [re0,im0,re1,im1,re2,im2,re3,im3]
+    __m512d tw_re,  // SoA: [re0,re1,re2,re3,re4,re5,re6,re7]
+    __m512d tw_im); // SoA: [im0,im1,im2,im3,im4,im5,im6,im7]
+
+static ALWAYS_INLINE __m256d cmul_avx2_soa(
+    __m256d data,  // AoS: [re0,im0,re1,im1]
+    __m256d tw_re, // SoA: [re0,re1,re2,re3]
+    __m256d tw_im);
+
+static ALWAYS_INLINE __m128d cmul_sse2_soa(
+    __m128d data,         // AoS: [re,im]
+    __m128d tw_re_scalar, // Broadcasted: [re,re]
+    __m128d tw_im_scalar);
 //==============================================================================
 // AVX-512 Complex Operations (4 complex numbers at once)
 //==============================================================================
