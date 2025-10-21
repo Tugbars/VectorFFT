@@ -1,7 +1,7 @@
 #ifndef FFT_RADIX7_H
 #define FFT_RADIX7_H
 
-#include "highspeedFFT.h"
+#include "../fft_plan/fft_planning_types.h"
 
 /**
  * @brief Radix-7 FFT butterfly using Rader's Algorithm for prime-length DFTs
