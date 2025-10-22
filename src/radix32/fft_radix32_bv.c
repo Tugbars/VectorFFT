@@ -1,10 +1,10 @@
 //==============================================================================
-// fft_radix32_bv.c - Inverse Radix-32 Butterfly (AVX-512 + AVX2 + Scalar)
+// fft_radix32_bv.c - Inverse Radix-32 Butterfly (Split-Form Optimized)
 //==============================================================================
 
 #include "fft_radix32_uniform.h"
 #include "simd_math.h"
-#include "fft_radix32_macros.h"
+#include "fft_radix32_macros_avx512_optimized.h"
 
 // Non-temporal store threshold
 #define STREAM_THRESHOLD 8192
@@ -16,7 +16,7 @@
 void fft_radix32_bv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
+    const TwiddleSoA *restrict stage_tw,
     int sub_len)
 {
     const int K = sub_len;
@@ -25,13 +25,14 @@ void fft_radix32_bv(
 #ifdef __AVX512F__
     //==========================================================================
     // AVX-512 PATH: 4 BUTTERFLIES PER ITERATION (128 COMPLEX VALUES!)
+    // SPLIT-FORM OPTIMIZED: Zero-shuffle twiddles + minimal data movement
     //==========================================================================
 
     const int use_streaming = (K >= STREAM_THRESHOLD);
 
     if (use_streaming)
     {
-        // Streaming store version
+        // Streaming store version (large transforms)
         for (; k + 3 < K; k += 4)
         {
             // Prefetch ahead
@@ -47,7 +48,7 @@ void fft_radix32_bv(
     }
     else
     {
-        // Regular store version
+        // Regular store version (normal-sized transforms)
         for (; k + 3 < K; k += 4)
         {
             // Prefetch ahead
@@ -66,6 +67,7 @@ void fft_radix32_bv(
 #ifdef __AVX2__
     //==========================================================================
     // AVX2 PATH: 16X UNROLL (2 BUTTERFLIES PER ITERATION)
+    // NOTE: This still uses AoS macros - split-form AVX2 macros not yet ported
     //==========================================================================
 
     const int use_streaming = (K >= STREAM_THRESHOLD);
@@ -100,7 +102,7 @@ void fft_radix32_bv(
                 }
             }
 
-            // First radix-4 layer (INVERSE ROTATION)
+            // First radix-4 layer (INVERSE)
             for (int g = 0; g < 8; ++g)
             {
                 for (int b = 0; b < 8; ++b)
@@ -136,7 +138,7 @@ void fft_radix32_bv(
 
                 for (int b = 0; b < 8; ++b)
                 {
-                    // Even radix-4 (INVERSE ROTATION)
+                    // Even radix-4 (INVERSE)
                     __m256d sumBD_e, difBD_e, sumAC_e, difAC_e;
                     RADIX4_BUTTERFLY_CORE_R32(x[base + 2][b], x[base + 6][b],
                                               x[base + 4][b], x[base][b],
@@ -149,7 +151,7 @@ void fft_radix32_bv(
                     RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_e, sumBD_e, difAC_e, rot_e,
                                                 e0, e1, e2, e3);
 
-                    // Odd radix-4 (INVERSE ROTATION)
+                    // Odd radix-4 (INVERSE)
                     __m256d sumBD_o, difBD_o, sumAC_o, difAC_o;
                     RADIX4_BUTTERFLY_CORE_R32(x[base + 3][b], x[base + 7][b],
                                               x[base + 5][b], x[base + 1][b],
@@ -221,7 +223,7 @@ void fft_radix32_bv(
                 }
             }
 
-            // First radix-4 layer (INVERSE ROTATION)
+            // First radix-4 layer (INVERSE)
             for (int g = 0; g < 8; ++g)
             {
                 for (int b = 0; b < 8; ++b)
@@ -257,7 +259,7 @@ void fft_radix32_bv(
 
                 for (int b = 0; b < 8; ++b)
                 {
-                    // Even radix-4 (INVERSE ROTATION)
+                    // Even radix-4 (INVERSE)
                     __m256d sumBD_e, difBD_e, sumAC_e, difAC_e;
                     RADIX4_BUTTERFLY_CORE_R32(x[base + 2][b], x[base + 6][b],
                                               x[base + 4][b], x[base][b],
@@ -270,7 +272,7 @@ void fft_radix32_bv(
                     RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_e, sumBD_e, difAC_e, rot_e,
                                                 e0, e1, e2, e3);
 
-                    // Odd radix-4 (INVERSE ROTATION)
+                    // Odd radix-4 (INVERSE)
                     __m256d sumBD_o, difBD_o, sumAC_o, difAC_o;
                     RADIX4_BUTTERFLY_CORE_R32(x[base + 3][b], x[base + 7][b],
                                               x[base + 5][b], x[base + 1][b],
