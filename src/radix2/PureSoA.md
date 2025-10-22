@@ -1,11 +1,11 @@
-# True End-to-End SoA Implementation - Complete Package (ALL BUGS FIXED!)
+# True End-to-End SoA Implementation - Complete Package 
 
 ### Shuffle Count (1024-point FFT, 10 stages)
 
 | Architecture | Shuffles/Butterfly | Total Shuffles | Reduction |
 |--------------|-------------------|----------------|-----------|
-| **Old (yours)** | 20 (2 per stage) | 20,480 | - |
-| **New (this)** | 2 (boundaries) | 2,048 | **90%** |
+| **Old **       | 20 (2 per stage) | 20,480 | - |
+| **New (this)** | 2 (boundaries)   | 2,048   | **90%** |
 
 ### Expected Real-World Speedup
 
