@@ -1,10 +1,10 @@
 //==============================================================================
-// fft_radix32_fv.c - Forward Radix-32 Butterfly (AVX-512 + AVX2 + Scalar)
+// fft_radix32_fv.c - Forward Radix-32 Butterfly (Split-Form Optimized)
 //==============================================================================
 
 #include "fft_radix32_uniform.h"
 #include "simd_math.h"
-#include "fft_radix32_macros.h"
+#include "fft_radix32_macros_avx512_optimized.h"
 
 // Non-temporal store threshold
 #define STREAM_THRESHOLD 8192
@@ -16,7 +16,7 @@
 void fft_radix32_fv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_data *restrict stage_tw,
+    const TwiddleSoA *restrict stage_tw,
     int sub_len)
 {
     const int K = sub_len;
@@ -25,13 +25,14 @@ void fft_radix32_fv(
 #ifdef __AVX512F__
     //==========================================================================
     // AVX-512 PATH: 4 BUTTERFLIES PER ITERATION (128 COMPLEX VALUES!)
+    // SPLIT-FORM OPTIMIZED: Zero-shuffle twiddles + minimal data movement
     //==========================================================================
 
     const int use_streaming = (K >= STREAM_THRESHOLD);
 
     if (use_streaming)
     {
-        // Streaming store version
+        // Streaming store version (large transforms)
         for (; k + 3 < K; k += 4)
         {
             // Prefetch ahead
@@ -40,14 +41,14 @@ void fft_radix32_fv(
             PREFETCH_32_LANES_R32_AVX512(k, K, PREFETCH_L2_R32_AVX512,
                                          sub_outputs, stage_tw, _MM_HINT_T1);
 
-            // Process 4 butterflies with streaming stores
+            // Process 4 butterflies with streaming stores (FORWARD)
             RADIX32_PIPELINE_4_FV_AVX512_STREAM(k, K, sub_outputs, stage_tw, output_buffer);
         }
         _mm_sfence();
     }
     else
     {
-        // Regular store version
+        // Regular store version (normal-sized transforms)
         for (; k + 3 < K; k += 4)
         {
             // Prefetch ahead
@@ -56,7 +57,7 @@ void fft_radix32_fv(
             PREFETCH_32_LANES_R32_AVX512(k, K, PREFETCH_L2_R32_AVX512,
                                          sub_outputs, stage_tw, _MM_HINT_T1);
 
-            // Process 4 butterflies with regular stores
+            // Process 4 butterflies with regular stores (FORWARD)
             RADIX32_PIPELINE_4_FV_AVX512(k, K, sub_outputs, stage_tw, output_buffer);
         }
     }
@@ -66,6 +67,7 @@ void fft_radix32_fv(
 #ifdef __AVX2__
     //==========================================================================
     // AVX2 PATH: 16X UNROLL (2 BUTTERFLIES PER ITERATION)
+    // NOTE: This still uses AoS macros - split-form AVX2 macros not yet ported
     //==========================================================================
 
     const int use_streaming = (K >= STREAM_THRESHOLD);
@@ -100,7 +102,7 @@ void fft_radix32_fv(
                 }
             }
 
-            // First radix-4 layer
+            // First radix-4 layer (FORWARD)
             for (int g = 0; g < 8; ++g)
             {
                 for (int b = 0; b < 8; ++b)
@@ -123,7 +125,7 @@ void fft_radix32_fv(
                 }
             }
 
-            // Apply W_32 twiddles
+            // Apply W_32 twiddles (FORWARD)
             for (int b = 0; b < 8; ++b)
             {
                 APPLY_W32_TWIDDLES_FV_AVX2(x);
@@ -136,7 +138,7 @@ void fft_radix32_fv(
 
                 for (int b = 0; b < 8; ++b)
                 {
-                    // Even radix-4
+                    // Even radix-4 (FORWARD)
                     __m256d sumBD_e, difBD_e, sumAC_e, difAC_e;
                     RADIX4_BUTTERFLY_CORE_R32(x[base + 2][b], x[base + 6][b],
                                               x[base + 4][b], x[base][b],
@@ -149,7 +151,7 @@ void fft_radix32_fv(
                     RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_e, sumBD_e, difAC_e, rot_e,
                                                 e0, e1, e2, e3);
 
-                    // Odd radix-4
+                    // Odd radix-4 (FORWARD)
                     __m256d sumBD_o, difBD_o, sumAC_o, difAC_o;
                     RADIX4_BUTTERFLY_CORE_R32(x[base + 3][b], x[base + 7][b],
                                               x[base + 5][b], x[base + 1][b],
@@ -162,7 +164,7 @@ void fft_radix32_fv(
                     RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_o, sumBD_o, difAC_o, rot_o,
                                                 o0, o1, o2, o3);
 
-                    // Apply W_8
+                    // Apply W_8 (FORWARD)
                     APPLY_W8_TWIDDLES_FV_AVX2(o1, o2, o3);
 
                     // Combine
@@ -221,7 +223,7 @@ void fft_radix32_fv(
                 }
             }
 
-            // First radix-4 layer
+            // First radix-4 layer (FORWARD)
             for (int g = 0; g < 8; ++g)
             {
                 for (int b = 0; b < 8; ++b)
@@ -244,7 +246,7 @@ void fft_radix32_fv(
                 }
             }
 
-            // Apply W_32 twiddles
+            // Apply W_32 twiddles (FORWARD)
             for (int b = 0; b < 8; ++b)
             {
                 APPLY_W32_TWIDDLES_FV_AVX2(x);
@@ -257,7 +259,7 @@ void fft_radix32_fv(
 
                 for (int b = 0; b < 8; ++b)
                 {
-                    // Even radix-4
+                    // Even radix-4 (FORWARD)
                     __m256d sumBD_e, difBD_e, sumAC_e, difAC_e;
                     RADIX4_BUTTERFLY_CORE_R32(x[base + 2][b], x[base + 6][b],
                                               x[base + 4][b], x[base][b],
@@ -270,7 +272,7 @@ void fft_radix32_fv(
                     RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_e, sumBD_e, difAC_e, rot_e,
                                                 e0, e1, e2, e3);
 
-                    // Odd radix-4
+                    // Odd radix-4 (FORWARD)
                     __m256d sumBD_o, difBD_o, sumAC_o, difAC_o;
                     RADIX4_BUTTERFLY_CORE_R32(x[base + 3][b], x[base + 7][b],
                                               x[base + 5][b], x[base + 1][b],
@@ -283,7 +285,7 @@ void fft_radix32_fv(
                     RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_o, sumBD_o, difAC_o, rot_o,
                                                 o0, o1, o2, o3);
 
-                    // Apply W_8
+                    // Apply W_8 (FORWARD)
                     APPLY_W8_TWIDDLES_FV_AVX2(o1, o2, o3);
 
                     // Combine
@@ -413,12 +415,13 @@ void fft_radix32_fv(
             RADIX4_BUTTERFLY_SCALAR_FV_R32(x[g], x[g + 8], x[g + 16], x[g + 24]);
         }
 
+        // Apply W_32 twiddles (FORWARD - negative sign)
         for (int g = 0; g < 8; ++g)
         {
             for (int j = 1; j <= 3; ++j)
             {
                 int idx = g + 8 * j;
-                double angle = -2.0 * 3.14159265358979323846 * (double)(j * g) / 32.0;
+                double angle = -2.0 * 3.14159265358979323846 * (double)(j * g) / 32.0; // NEGATIVE
                 double tw_re = cos(angle);
                 double tw_im = sin(angle);
                 double xr = x[idx].re, xi = x[idx].im;
