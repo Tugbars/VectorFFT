@@ -184,28 +184,28 @@
  * @param[out] y3_re, y3_im Output at k+3K
  * @param[in] sign_mask Sign flip mask for negation
  */
-#define RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im, \
+#define RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im,              \
                                               y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, sign_mask) \
-    do                                                                                               \
-    {                                                                                                \
-        __m512d sumBD_re = _mm512_add_pd(tB_re, tD_re);                                              \
-        __m512d sumBD_im = _mm512_add_pd(tB_im, tD_im);                                              \
-        __m512d difBD_re = _mm512_sub_pd(tB_re, tD_re);                                              \
-        __m512d difBD_im = _mm512_sub_pd(tB_im, tD_im);                                              \
-        __m512d sumAC_re = _mm512_add_pd(a_re, tC_re);                                               \
-        __m512d sumAC_im = _mm512_add_pd(a_im, tC_im);                                               \
-        __m512d difAC_re = _mm512_sub_pd(a_re, tC_re);                                               \
-        __m512d difAC_im = _mm512_sub_pd(a_im, tC_im);                                               \
-        __m512d rot_re = difBD_im;                                                                   \
-        __m512d rot_im = _mm512_xor_pd(difBD_re, sign_mask);                                         \
-        y0_re = _mm512_add_pd(sumAC_re, sumBD_re);                                                   \
-        y0_im = _mm512_add_pd(sumAC_im, sumBD_im);                                                   \
-        y2_re = _mm512_sub_pd(sumAC_re, sumBD_re);                                                   \
-        y2_im = _mm512_sub_pd(sumAC_im, sumBD_im);                                                   \
-        y1_re = _mm512_sub_pd(difAC_re, rot_re);                                                     \
-        y1_im = _mm512_sub_pd(difAC_im, rot_im);                                                     \
-        y3_re = _mm512_add_pd(difAC_re, rot_re);                                                     \
-        y3_im = _mm512_add_pd(difAC_im, rot_im);                                                     \
+    do                                                                                                           \
+    {                                                                                                            \
+        __m512d sumBD_re = _mm512_add_pd(tB_re, tD_re);                                                          \
+        __m512d sumBD_im = _mm512_add_pd(tB_im, tD_im);                                                          \
+        __m512d difBD_re = _mm512_sub_pd(tB_re, tD_re);                                                          \
+        __m512d difBD_im = _mm512_sub_pd(tB_im, tD_im);                                                          \
+        __m512d sumAC_re = _mm512_add_pd(a_re, tC_re);                                                           \
+        __m512d sumAC_im = _mm512_add_pd(a_im, tC_im);                                                           \
+        __m512d difAC_re = _mm512_sub_pd(a_re, tC_re);                                                           \
+        __m512d difAC_im = _mm512_sub_pd(a_im, tC_im);                                                           \
+        __m512d rot_re = difBD_im;                                                                               \
+        __m512d rot_im = _mm512_xor_pd(difBD_re, sign_mask);                                                     \
+        y0_re = _mm512_add_pd(sumAC_re, sumBD_re);                                                               \
+        y0_im = _mm512_add_pd(sumAC_im, sumBD_im);                                                               \
+        y2_re = _mm512_sub_pd(sumAC_re, sumBD_re);                                                               \
+        y2_im = _mm512_sub_pd(sumAC_im, sumBD_im);                                                               \
+        y1_re = _mm512_sub_pd(difAC_re, rot_re);                                                                 \
+        y1_im = _mm512_sub_pd(difAC_im, rot_im);                                                                 \
+        y3_re = _mm512_add_pd(difAC_re, rot_re);                                                                 \
+        y3_im = _mm512_add_pd(difAC_im, rot_im);                                                                 \
     } while (0)
 
 /**
@@ -215,28 +215,28 @@
  * Same as forward but with opposite rotation: multiply by +i instead of -i
  * rot = (-difBD.im, difBD.re)  // multiply by +i
  */
-#define RADIX4_BUTTERFLY_NATIVE_SOA_BV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im, \
+#define RADIX4_BUTTERFLY_NATIVE_SOA_BV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im,              \
                                               y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, sign_mask) \
-    do                                                                                               \
-    {                                                                                                \
-        __m512d sumBD_re = _mm512_add_pd(tB_re, tD_re);                                              \
-        __m512d sumBD_im = _mm512_add_pd(tB_im, tD_im);                                              \
-        __m512d difBD_re = _mm512_sub_pd(tB_re, tD_re);                                              \
-        __m512d difBD_im = _mm512_sub_pd(tB_im, tD_im);                                              \
-        __m512d sumAC_re = _mm512_add_pd(a_re, tC_re);                                               \
-        __m512d sumAC_im = _mm512_add_pd(a_im, tC_im);                                               \
-        __m512d difAC_re = _mm512_sub_pd(a_re, tC_re);                                               \
-        __m512d difAC_im = _mm512_sub_pd(a_im, tC_im);                                               \
-        __m512d rot_re = _mm512_xor_pd(difBD_im, sign_mask);                                         \
-        __m512d rot_im = difBD_re;                                                                   \
-        y0_re = _mm512_add_pd(sumAC_re, sumBD_re);                                                   \
-        y0_im = _mm512_add_pd(sumAC_im, sumBD_im);                                                   \
-        y2_re = _mm512_sub_pd(sumAC_re, sumBD_re);                                                   \
-        y2_im = _mm512_sub_pd(sumAC_im, sumBD_im);                                                   \
-        y1_re = _mm512_sub_pd(difAC_re, rot_re);                                                     \
-        y1_im = _mm512_sub_pd(difAC_im, rot_im);                                                     \
-        y3_re = _mm512_add_pd(difAC_re, rot_re);                                                     \
-        y3_im = _mm512_add_pd(difAC_im, rot_im);                                                     \
+    do                                                                                                           \
+    {                                                                                                            \
+        __m512d sumBD_re = _mm512_add_pd(tB_re, tD_re);                                                          \
+        __m512d sumBD_im = _mm512_add_pd(tB_im, tD_im);                                                          \
+        __m512d difBD_re = _mm512_sub_pd(tB_re, tD_re);                                                          \
+        __m512d difBD_im = _mm512_sub_pd(tB_im, tD_im);                                                          \
+        __m512d sumAC_re = _mm512_add_pd(a_re, tC_re);                                                           \
+        __m512d sumAC_im = _mm512_add_pd(a_im, tC_im);                                                           \
+        __m512d difAC_re = _mm512_sub_pd(a_re, tC_re);                                                           \
+        __m512d difAC_im = _mm512_sub_pd(a_im, tC_im);                                                           \
+        __m512d rot_re = _mm512_xor_pd(difBD_im, sign_mask);                                                     \
+        __m512d rot_im = difBD_re;                                                                               \
+        y0_re = _mm512_add_pd(sumAC_re, sumBD_re);                                                               \
+        y0_im = _mm512_add_pd(sumAC_im, sumBD_im);                                                               \
+        y2_re = _mm512_sub_pd(sumAC_re, sumBD_re);                                                               \
+        y2_im = _mm512_sub_pd(sumAC_im, sumBD_im);                                                               \
+        y1_re = _mm512_sub_pd(difAC_re, rot_re);                                                                 \
+        y1_im = _mm512_sub_pd(difAC_im, rot_im);                                                                 \
+        y3_re = _mm512_add_pd(difAC_re, rot_re);                                                                 \
+        y3_im = _mm512_add_pd(difAC_im, rot_im);                                                                 \
     } while (0)
 #endif
 
@@ -244,55 +244,55 @@
 /**
  * @brief Radix-4 butterfly - Forward transform - NATIVE SoA (AVX2)
  */
-#define RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im, \
+#define RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im,              \
                                             y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, sign_mask) \
-    do                                                                                             \
-    {                                                                                              \
-        __m256d sumBD_re = _mm256_add_pd(tB_re, tD_re);                                            \
-        __m256d sumBD_im = _mm256_add_pd(tB_im, tD_im);                                            \
-        __m256d difBD_re = _mm256_sub_pd(tB_re, tD_re);                                            \
-        __m256d difBD_im = _mm256_sub_pd(tB_im, tD_im);                                            \
-        __m256d sumAC_re = _mm256_add_pd(a_re, tC_re);                                             \
-        __m256d sumAC_im = _mm256_add_pd(a_im, tC_im);                                             \
-        __m256d difAC_re = _mm256_sub_pd(a_re, tC_re);                                             \
-        __m256d difAC_im = _mm256_sub_pd(a_im, tC_im);                                             \
-        __m256d rot_re = difBD_im;                                                                 \
-        __m256d rot_im = _mm256_xor_pd(difBD_re, sign_mask);                                       \
-        y0_re = _mm256_add_pd(sumAC_re, sumBD_re);                                                 \
-        y0_im = _mm256_add_pd(sumAC_im, sumBD_im);                                                 \
-        y2_re = _mm256_sub_pd(sumAC_re, sumBD_re);                                                 \
-        y2_im = _mm256_sub_pd(sumAC_im, sumBD_im);                                                 \
-        y1_re = _mm256_sub_pd(difAC_re, rot_re);                                                   \
-        y1_im = _mm256_sub_pd(difAC_im, rot_im);                                                   \
-        y3_re = _mm256_add_pd(difAC_re, rot_re);                                                   \
-        y3_im = _mm256_add_pd(difAC_im, rot_im);                                                   \
+    do                                                                                                         \
+    {                                                                                                          \
+        __m256d sumBD_re = _mm256_add_pd(tB_re, tD_re);                                                        \
+        __m256d sumBD_im = _mm256_add_pd(tB_im, tD_im);                                                        \
+        __m256d difBD_re = _mm256_sub_pd(tB_re, tD_re);                                                        \
+        __m256d difBD_im = _mm256_sub_pd(tB_im, tD_im);                                                        \
+        __m256d sumAC_re = _mm256_add_pd(a_re, tC_re);                                                         \
+        __m256d sumAC_im = _mm256_add_pd(a_im, tC_im);                                                         \
+        __m256d difAC_re = _mm256_sub_pd(a_re, tC_re);                                                         \
+        __m256d difAC_im = _mm256_sub_pd(a_im, tC_im);                                                         \
+        __m256d rot_re = difBD_im;                                                                             \
+        __m256d rot_im = _mm256_xor_pd(difBD_re, sign_mask);                                                   \
+        y0_re = _mm256_add_pd(sumAC_re, sumBD_re);                                                             \
+        y0_im = _mm256_add_pd(sumAC_im, sumBD_im);                                                             \
+        y2_re = _mm256_sub_pd(sumAC_re, sumBD_re);                                                             \
+        y2_im = _mm256_sub_pd(sumAC_im, sumBD_im);                                                             \
+        y1_re = _mm256_sub_pd(difAC_re, rot_re);                                                               \
+        y1_im = _mm256_sub_pd(difAC_im, rot_im);                                                               \
+        y3_re = _mm256_add_pd(difAC_re, rot_re);                                                               \
+        y3_im = _mm256_add_pd(difAC_im, rot_im);                                                               \
     } while (0)
 
 /**
  * @brief Radix-4 butterfly - Backward transform - NATIVE SoA (AVX2)
  */
-#define RADIX4_BUTTERFLY_NATIVE_SOA_BV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im, \
+#define RADIX4_BUTTERFLY_NATIVE_SOA_BV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im,              \
                                             y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, sign_mask) \
-    do                                                                                             \
-    {                                                                                              \
-        __m256d sumBD_re = _mm256_add_pd(tB_re, tD_re);                                            \
-        __m256d sumBD_im = _mm256_add_pd(tB_im, tD_im);                                            \
-        __m256d difBD_re = _mm256_sub_pd(tB_re, tD_re);                                            \
-        __m256d difBD_im = _mm256_sub_pd(tB_im, tD_im);                                            \
-        __m256d sumAC_re = _mm256_add_pd(a_re, tC_re);                                             \
-        __m256d sumAC_im = _mm256_add_pd(a_im, tC_im);                                             \
-        __m256d difAC_re = _mm256_sub_pd(a_re, tC_re);                                             \
-        __m256d difAC_im = _mm256_sub_pd(a_im, tC_im);                                             \
-        __m256d rot_re = _mm256_xor_pd(difBD_im, sign_mask);                                       \
-        __m256d rot_im = difBD_re;                                                                 \
-        y0_re = _mm256_add_pd(sumAC_re, sumBD_re);                                                 \
-        y0_im = _mm256_add_pd(sumAC_im, sumBD_im);                                                 \
-        y2_re = _mm256_sub_pd(sumAC_re, sumBD_re);                                                 \
-        y2_im = _mm256_sub_pd(sumAC_im, sumBD_im);                                                 \
-        y1_re = _mm256_sub_pd(difAC_re, rot_re);                                                   \
-        y1_im = _mm256_sub_pd(difAC_im, rot_im);                                                   \
-        y3_re = _mm256_add_pd(difAC_re, rot_re);                                                   \
-        y3_im = _mm256_add_pd(difAC_im, rot_im);                                                   \
+    do                                                                                                         \
+    {                                                                                                          \
+        __m256d sumBD_re = _mm256_add_pd(tB_re, tD_re);                                                        \
+        __m256d sumBD_im = _mm256_add_pd(tB_im, tD_im);                                                        \
+        __m256d difBD_re = _mm256_sub_pd(tB_re, tD_re);                                                        \
+        __m256d difBD_im = _mm256_sub_pd(tB_im, tD_im);                                                        \
+        __m256d sumAC_re = _mm256_add_pd(a_re, tC_re);                                                         \
+        __m256d sumAC_im = _mm256_add_pd(a_im, tC_im);                                                         \
+        __m256d difAC_re = _mm256_sub_pd(a_re, tC_re);                                                         \
+        __m256d difAC_im = _mm256_sub_pd(a_im, tC_im);                                                         \
+        __m256d rot_re = _mm256_xor_pd(difBD_im, sign_mask);                                                   \
+        __m256d rot_im = difBD_re;                                                                             \
+        y0_re = _mm256_add_pd(sumAC_re, sumBD_re);                                                             \
+        y0_im = _mm256_add_pd(sumAC_im, sumBD_im);                                                             \
+        y2_re = _mm256_sub_pd(sumAC_re, sumBD_re);                                                             \
+        y2_im = _mm256_sub_pd(sumAC_im, sumBD_im);                                                             \
+        y1_re = _mm256_sub_pd(difAC_re, rot_re);                                                               \
+        y1_im = _mm256_sub_pd(difAC_im, rot_im);                                                               \
+        y3_re = _mm256_add_pd(difAC_re, rot_re);                                                               \
+        y3_im = _mm256_add_pd(difAC_im, rot_im);                                                               \
     } while (0)
 #endif
 
@@ -300,55 +300,55 @@
 /**
  * @brief Radix-4 butterfly - Forward transform - NATIVE SoA (SSE2)
  */
-#define RADIX4_BUTTERFLY_NATIVE_SOA_FV_SSE2(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im, \
+#define RADIX4_BUTTERFLY_NATIVE_SOA_FV_SSE2(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im,              \
                                             y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, sign_mask) \
-    do                                                                                             \
-    {                                                                                              \
-        __m128d sumBD_re = _mm_add_pd(tB_re, tD_re);                                               \
-        __m128d sumBD_im = _mm_add_pd(tB_im, tD_im);                                               \
-        __m128d difBD_re = _mm_sub_pd(tB_re, tD_re);                                               \
-        __m128d difBD_im = _mm_sub_pd(tB_im, tD_im);                                               \
-        __m128d sumAC_re = _mm_add_pd(a_re, tC_re);                                                \
-        __m128d sumAC_im = _mm_add_pd(a_im, tC_im);                                                \
-        __m128d difAC_re = _mm_sub_pd(a_re, tC_re);                                                \
-        __m128d difAC_im = _mm_add_pd(a_im, tC_im);                                                \
-        __m128d rot_re = difBD_im;                                                                 \
-        __m128d rot_im = _mm_xor_pd(difBD_re, sign_mask);                                          \
-        y0_re = _mm_add_pd(sumAC_re, sumBD_re);                                                    \
-        y0_im = _mm_add_pd(sumAC_im, sumBD_im);                                                    \
-        y2_re = _mm_sub_pd(sumAC_re, sumBD_re);                                                    \
-        y2_im = _mm_sub_pd(sumAC_im, sumBD_im);                                                    \
-        y1_re = _mm_sub_pd(difAC_re, rot_re);                                                      \
-        y1_im = _mm_sub_pd(difAC_im, rot_im);                                                      \
-        y3_re = _mm_add_pd(difAC_re, rot_re);                                                      \
-        y3_im = _mm_add_pd(difAC_im, rot_im);                                                      \
+    do                                                                                                         \
+    {                                                                                                          \
+        __m128d sumBD_re = _mm_add_pd(tB_re, tD_re);                                                           \
+        __m128d sumBD_im = _mm_add_pd(tB_im, tD_im);                                                           \
+        __m128d difBD_re = _mm_sub_pd(tB_re, tD_re);                                                           \
+        __m128d difBD_im = _mm_sub_pd(tB_im, tD_im);                                                           \
+        __m128d sumAC_re = _mm_add_pd(a_re, tC_re);                                                            \
+        __m128d sumAC_im = _mm_add_pd(a_im, tC_im);                                                            \
+        __m128d difAC_re = _mm_sub_pd(a_re, tC_re);                                                            \
+        __m128d difAC_im = _mm_add_pd(a_im, tC_im);                                                            \
+        __m128d rot_re = difBD_im;                                                                             \
+        __m128d rot_im = _mm_xor_pd(difBD_re, sign_mask);                                                      \
+        y0_re = _mm_add_pd(sumAC_re, sumBD_re);                                                                \
+        y0_im = _mm_add_pd(sumAC_im, sumBD_im);                                                                \
+        y2_re = _mm_sub_pd(sumAC_re, sumBD_re);                                                                \
+        y2_im = _mm_sub_pd(sumAC_im, sumBD_im);                                                                \
+        y1_re = _mm_sub_pd(difAC_re, rot_re);                                                                  \
+        y1_im = _mm_sub_pd(difAC_im, rot_im);                                                                  \
+        y3_re = _mm_add_pd(difAC_re, rot_re);                                                                  \
+        y3_im = _mm_add_pd(difAC_im, rot_im);                                                                  \
     } while (0)
 
 /**
  * @brief Radix-4 butterfly - Backward transform - NATIVE SoA (SSE2)
  */
-#define RADIX4_BUTTERFLY_NATIVE_SOA_BV_SSE2(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im, \
+#define RADIX4_BUTTERFLY_NATIVE_SOA_BV_SSE2(a_re, a_im, tB_re, tB_im, tC_re, tC_im, tD_re, tD_im,              \
                                             y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, sign_mask) \
-    do                                                                                             \
-    {                                                                                              \
-        __m128d sumBD_re = _mm_add_pd(tB_re, tD_re);                                               \
-        __m128d sumBD_im = _mm_add_pd(tB_im, tD_im);                                               \
-        __m128d difBD_re = _mm_sub_pd(tB_re, tD_re);                                               \
-        __m128d difBD_im = _mm_sub_pd(tB_im, tD_im);                                               \
-        __m128d sumAC_re = _mm_add_pd(a_re, tC_re);                                                \
-        __m128d sumAC_im = _mm_add_pd(a_im, tC_im);                                                \
-        __m128d difAC_re = _mm_sub_pd(a_re, tC_re);                                                \
-        __m128d difAC_im = _mm_sub_pd(a_im, tC_im);                                                \
-        __m128d rot_re = _mm_xor_pd(difBD_im, sign_mask);                                          \
-        __m128d rot_im = difBD_re;                                                                 \
-        y0_re = _mm_add_pd(sumAC_re, sumBD_re);                                                    \
-        y0_im = _mm_add_pd(sumAC_im, sumBD_im);                                                    \
-        y2_re = _mm_sub_pd(sumAC_re, sumBD_re);                                                    \
-        y2_im = _mm_sub_pd(sumAC_im, sumBD_im);                                                    \
-        y1_re = _mm_sub_pd(difAC_re, rot_re);                                                      \
-        y1_im = _mm_sub_pd(difAC_im, rot_im);                                                      \
-        y3_re = _mm_add_pd(difAC_re, rot_re);                                                      \
-        y3_im = _mm_add_pd(difAC_im, rot_im);                                                      \
+    do                                                                                                         \
+    {                                                                                                          \
+        __m128d sumBD_re = _mm_add_pd(tB_re, tD_re);                                                           \
+        __m128d sumBD_im = _mm_add_pd(tB_im, tD_im);                                                           \
+        __m128d difBD_re = _mm_sub_pd(tB_re, tD_re);                                                           \
+        __m128d difBD_im = _mm_sub_pd(tB_im, tD_im);                                                           \
+        __m128d sumAC_re = _mm_add_pd(a_re, tC_re);                                                            \
+        __m128d sumAC_im = _mm_add_pd(a_im, tC_im);                                                            \
+        __m128d difAC_re = _mm_sub_pd(a_re, tC_re);                                                            \
+        __m128d difAC_im = _mm_sub_pd(a_im, tC_im);                                                            \
+        __m128d rot_re = _mm_xor_pd(difBD_im, sign_mask);                                                      \
+        __m128d rot_im = difBD_re;                                                                             \
+        y0_re = _mm_add_pd(sumAC_re, sumBD_re);                                                                \
+        y0_im = _mm_add_pd(sumAC_im, sumBD_im);                                                                \
+        y2_re = _mm_sub_pd(sumAC_re, sumBD_re);                                                                \
+        y2_im = _mm_sub_pd(sumAC_im, sumBD_im);                                                                \
+        y1_re = _mm_sub_pd(difAC_re, rot_re);                                                                  \
+        y1_im = _mm_sub_pd(difAC_im, rot_im);                                                                  \
+        y3_re = _mm_add_pd(difAC_re, rot_re);                                                                  \
+        y3_im = _mm_add_pd(difAC_im, rot_im);                                                                  \
     } while (0)
 #endif
 
@@ -408,7 +408,7 @@
  *
  * @details
  * ⚡⚡⚡ ZERO SHUFFLE VERSION!
- * 
+ *
  * Processes 4 butterflies in parallel using AVX-512:
  * - Each butterfly reads from 4 lanes: k, k+K, k+2K, k+3K
  * - Vector width = 8 doubles = 4 complex values
@@ -428,83 +428,125 @@
  * @param[out] out_im Output imaginary array (SoA)
  * @param[in] tw Stage twiddle factors (SoA format)
  * @param[in] sign_mask Sign flip mask
+ * @param[in] prefetch_dist Prefetch distance (0 to disable)
+ * @param[in] k_end End of range (for prefetch bounds check)
  */
-#define RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512(k, K, in_re, in_im, out_re, out_im, tw, sign_mask) \
-    do                                                                                            \
-    {                                                                                             \
-        /* Load 4 butterflies worth of data (no split!) */                                       \
-        __m512d a_re = LOAD_RE_AVX512(&in_re[k]);                                                 \
-        __m512d a_im = LOAD_IM_AVX512(&in_im[k]);                                                 \
-        __m512d b_re = LOAD_RE_AVX512(&in_re[(k) + (K)]);                                         \
-        __m512d b_im = LOAD_IM_AVX512(&in_im[(k) + (K)]);                                         \
-        __m512d c_re = LOAD_RE_AVX512(&in_re[(k) + 2 * (K)]);                                     \
-        __m512d c_im = LOAD_IM_AVX512(&in_im[(k) + 2 * (K)]);                                     \
-        __m512d d_re = LOAD_RE_AVX512(&in_re[(k) + 3 * (K)]);                                     \
-        __m512d d_im = LOAD_IM_AVX512(&in_im[(k) + 3 * (K)]);                                     \
-        /* Load twiddles (already SoA) */                                                         \
-        __m512d w1_re = _mm512_loadu_pd(&tw->re[0 * (K) + (k)]);                                  \
-        __m512d w1_im = _mm512_loadu_pd(&tw->im[0 * (K) + (k)]);                                  \
-        __m512d w2_re = _mm512_loadu_pd(&tw->re[1 * (K) + (k)]);                                  \
-        __m512d w2_im = _mm512_loadu_pd(&tw->im[1 * (K) + (k)]);                                  \
-        __m512d w3_re = _mm512_loadu_pd(&tw->re[2 * (K) + (k)]);                                  \
-        __m512d w3_im = _mm512_loadu_pd(&tw->im[2 * (K) + (k)]);                                  \
-        /* Twiddle multiply (no split/join!) */                                                   \
-        __m512d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                         \
-        CMUL_NATIVE_SOA_AVX512(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                           \
-        CMUL_NATIVE_SOA_AVX512(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                           \
-        CMUL_NATIVE_SOA_AVX512(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                           \
-        /* Butterfly computation (no split/join!) */                                              \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                           \
-        RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im,             \
-                                              tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,           \
-                                              y2_re, y2_im, y3_re, y3_im, sign_mask);             \
-        /* Store results (no join!) */                                                            \
-        STORE_RE_AVX512(&out_re[k], y0_re);                                                       \
-        STORE_IM_AVX512(&out_im[k], y0_im);                                                       \
-        STORE_RE_AVX512(&out_re[(k) + (K)], y1_re);                                               \
-        STORE_IM_AVX512(&out_im[(k) + (K)], y1_im);                                               \
-        STORE_RE_AVX512(&out_re[(k) + 2 * (K)], y2_re);                                           \
-        STORE_IM_AVX512(&out_im[(k) + 2 * (K)], y2_im);                                           \
-        STORE_RE_AVX512(&out_re[(k) + 3 * (K)], y3_re);                                           \
-        STORE_IM_AVX512(&out_im[(k) + 3 * (K)], y3_im);                                           \
+#define RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512(k, K, in_re, in_im, out_re, out_im, tw, sign_mask, prefetch_dist, k_end) \
+    do                                                                                                                  \
+    {                                                                                                                   \
+        /* Software prefetch for next iteration (hide memory latency) */                                                \
+        if ((prefetch_dist) > 0 && (k) + (prefetch_dist) + 3 < (k_end))                                                 \
+        {                                                                                                               \
+            int pk = (k) + (prefetch_dist);                                                                             \
+            _mm_prefetch((const char *)&in_re[pk], _MM_HINT_T0);                                                        \
+            _mm_prefetch((const char *)&in_im[pk], _MM_HINT_T0);                                                        \
+            _mm_prefetch((const char *)&in_re[pk + (K)], _MM_HINT_T0);                                                  \
+            _mm_prefetch((const char *)&in_im[pk + (K)], _MM_HINT_T0);                                                  \
+            _mm_prefetch((const char *)&in_re[pk + 2 * (K)], _MM_HINT_T0);                                              \
+            _mm_prefetch((const char *)&in_im[pk + 2 * (K)], _MM_HINT_T0);                                              \
+            _mm_prefetch((const char *)&in_re[pk + 3 * (K)], _MM_HINT_T0);                                              \
+            _mm_prefetch((const char *)&in_im[pk + 3 * (K)], _MM_HINT_T0);                                              \
+            _mm_prefetch((const char *)&tw->re[0 * (K) + pk], _MM_HINT_T0);                                             \
+            _mm_prefetch((const char *)&tw->im[0 * (K) + pk], _MM_HINT_T0);                                             \
+            _mm_prefetch((const char *)&tw->re[1 * (K) + pk], _MM_HINT_T0);                                             \
+            _mm_prefetch((const char *)&tw->im[1 * (K) + pk], _MM_HINT_T0);                                             \
+            _mm_prefetch((const char *)&tw->re[2 * (K) + pk], _MM_HINT_T0);                                             \
+            _mm_prefetch((const char *)&tw->im[2 * (K) + pk], _MM_HINT_T0);                                             \
+        }                                                                                                               \
+        /* Load 4 butterflies worth of data (no split!) */                                                              \
+        __m512d a_re = LOAD_RE_AVX512(&in_re[k]);                                                                       \
+        __m512d a_im = LOAD_IM_AVX512(&in_im[k]);                                                                       \
+        __m512d b_re = LOAD_RE_AVX512(&in_re[(k) + (K)]);                                                               \
+        __m512d b_im = LOAD_IM_AVX512(&in_im[(k) + (K)]);                                                               \
+        __m512d c_re = LOAD_RE_AVX512(&in_re[(k) + 2 * (K)]);                                                           \
+        __m512d c_im = LOAD_IM_AVX512(&in_im[(k) + 2 * (K)]);                                                           \
+        __m512d d_re = LOAD_RE_AVX512(&in_re[(k) + 3 * (K)]);                                                           \
+        __m512d d_im = LOAD_IM_AVX512(&in_im[(k) + 3 * (K)]);                                                           \
+        /* Load twiddles (already SoA) */                                                                               \
+        __m512d w1_re = _mm512_loadu_pd(&tw->re[0 * (K) + (k)]);                                                        \
+        __m512d w1_im = _mm512_loadu_pd(&tw->im[0 * (K) + (k)]);                                                        \
+        __m512d w2_re = _mm512_loadu_pd(&tw->re[1 * (K) + (k)]);                                                        \
+        __m512d w2_im = _mm512_loadu_pd(&tw->im[1 * (K) + (k)]);                                                        \
+        __m512d w3_re = _mm512_loadu_pd(&tw->re[2 * (K) + (k)]);                                                        \
+        __m512d w3_im = _mm512_loadu_pd(&tw->im[2 * (K) + (k)]);                                                        \
+        /* Twiddle multiply (no split/join!) */                                                                         \
+        __m512d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                                               \
+        CMUL_NATIVE_SOA_AVX512(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                                                 \
+        CMUL_NATIVE_SOA_AVX512(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                                                 \
+        CMUL_NATIVE_SOA_AVX512(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                                                 \
+        /* Butterfly computation (no split/join!) */                                                                    \
+        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                                                 \
+        RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im,                                   \
+                                              tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,                                 \
+                                              y2_re, y2_im, y3_re, y3_im, sign_mask);                                   \
+        /* Store results (no join!) */                                                                                  \
+        STORE_RE_AVX512(&out_re[k], y0_re);                                                                             \
+        STORE_IM_AVX512(&out_im[k], y0_im);                                                                             \
+        STORE_RE_AVX512(&out_re[(k) + (K)], y1_re);                                                                     \
+        STORE_IM_AVX512(&out_im[(k) + (K)], y1_im);                                                                     \
+        STORE_RE_AVX512(&out_re[(k) + 2 * (K)], y2_re);                                                                 \
+        STORE_IM_AVX512(&out_im[(k) + 2 * (K)], y2_im);                                                                 \
+        STORE_RE_AVX512(&out_re[(k) + 3 * (K)], y3_re);                                                                 \
+        STORE_IM_AVX512(&out_im[(k) + 3 * (K)], y3_im);                                                                 \
     } while (0)
 
 /**
  * @brief Process 4 radix-4 butterflies with streaming stores - Forward - NATIVE SoA
+ *
+ * @note Uses _MM_HINT_NTA for prefetch since we're streaming (won't reuse data)
  */
-#define RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512_STREAM(k, K, in_re, in_im, out_re, out_im, tw, sign_mask) \
-    do                                                                                            \
-    {                                                                                             \
-        __m512d a_re = LOAD_RE_AVX512(&in_re[k]);                                                 \
-        __m512d a_im = LOAD_IM_AVX512(&in_im[k]);                                                 \
-        __m512d b_re = LOAD_RE_AVX512(&in_re[(k) + (K)]);                                         \
-        __m512d b_im = LOAD_IM_AVX512(&in_im[(k) + (K)]);                                         \
-        __m512d c_re = LOAD_RE_AVX512(&in_re[(k) + 2 * (K)]);                                     \
-        __m512d c_im = LOAD_IM_AVX512(&in_im[(k) + 2 * (K)]);                                     \
-        __m512d d_re = LOAD_RE_AVX512(&in_re[(k) + 3 * (K)]);                                     \
-        __m512d d_im = LOAD_IM_AVX512(&in_im[(k) + 3 * (K)]);                                     \
-        __m512d w1_re = _mm512_loadu_pd(&tw->re[0 * (K) + (k)]);                                  \
-        __m512d w1_im = _mm512_loadu_pd(&tw->im[0 * (K) + (k)]);                                  \
-        __m512d w2_re = _mm512_loadu_pd(&tw->re[1 * (K) + (k)]);                                  \
-        __m512d w2_im = _mm512_loadu_pd(&tw->im[1 * (K) + (k)]);                                  \
-        __m512d w3_re = _mm512_loadu_pd(&tw->re[2 * (K) + (k)]);                                  \
-        __m512d w3_im = _mm512_loadu_pd(&tw->im[2 * (K) + (k)]);                                  \
-        __m512d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                         \
-        CMUL_NATIVE_SOA_AVX512(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                           \
-        CMUL_NATIVE_SOA_AVX512(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                           \
-        CMUL_NATIVE_SOA_AVX512(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                           \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                           \
-        RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im,             \
-                                              tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,           \
-                                              y2_re, y2_im, y3_re, y3_im, sign_mask);             \
-        STREAM_RE_AVX512(&out_re[k], y0_re);                                                      \
-        STREAM_IM_AVX512(&out_im[k], y0_im);                                                      \
-        STREAM_RE_AVX512(&out_re[(k) + (K)], y1_re);                                              \
-        STREAM_IM_AVX512(&out_im[(k) + (K)], y1_im);                                              \
-        STREAM_RE_AVX512(&out_re[(k) + 2 * (K)], y2_re);                                          \
-        STREAM_IM_AVX512(&out_im[(k) + 2 * (K)], y2_im);                                          \
-        STREAM_RE_AVX512(&out_re[(k) + 3 * (K)], y3_re);                                          \
-        STREAM_IM_AVX512(&out_im[(k) + 3 * (K)], y3_im);                                          \
+#define RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512_STREAM(k, K, in_re, in_im, out_re, out_im, tw, sign_mask, prefetch_dist, k_end) \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        /* Software prefetch with NTA hint (streaming - data won't be reused) */                                               \
+        if ((prefetch_dist) > 0 && (k) + (prefetch_dist) + 3 < (k_end))                                                        \
+        {                                                                                                                      \
+            int pk = (k) + (prefetch_dist);                                                                                    \
+            _mm_prefetch((const char *)&in_re[pk], _MM_HINT_NTA);                                                              \
+            _mm_prefetch((const char *)&in_im[pk], _MM_HINT_NTA);                                                              \
+            _mm_prefetch((const char *)&in_re[pk + (K)], _MM_HINT_NTA);                                                        \
+            _mm_prefetch((const char *)&in_im[pk + (K)], _MM_HINT_NTA);                                                        \
+            _mm_prefetch((const char *)&in_re[pk + 2 * (K)], _MM_HINT_NTA);                                                    \
+            _mm_prefetch((const char *)&in_im[pk + 2 * (K)], _MM_HINT_NTA);                                                    \
+            _mm_prefetch((const char *)&in_re[pk + 3 * (K)], _MM_HINT_NTA);                                                    \
+            _mm_prefetch((const char *)&in_im[pk + 3 * (K)], _MM_HINT_NTA);                                                    \
+            _mm_prefetch((const char *)&tw->re[0 * (K) + pk], _MM_HINT_T0);                                                    \
+            _mm_prefetch((const char *)&tw->im[0 * (K) + pk], _MM_HINT_T0);                                                    \
+            _mm_prefetch((const char *)&tw->re[1 * (K) + pk], _MM_HINT_T0);                                                    \
+            _mm_prefetch((const char *)&tw->im[1 * (K) + pk], _MM_HINT_T0);                                                    \
+            _mm_prefetch((const char *)&tw->re[2 * (K) + pk], _MM_HINT_T0);                                                    \
+            _mm_prefetch((const char *)&tw->im[2 * (K) + pk], _MM_HINT_T0);                                                    \
+        }                                                                                                                      \
+        __m512d a_re = LOAD_RE_AVX512(&in_re[k]);                                                                              \
+        __m512d a_im = LOAD_IM_AVX512(&in_im[k]);                                                                              \
+        __m512d b_re = LOAD_RE_AVX512(&in_re[(k) + (K)]);                                                                      \
+        __m512d b_im = LOAD_IM_AVX512(&in_im[(k) + (K)]);                                                                      \
+        __m512d c_re = LOAD_RE_AVX512(&in_re[(k) + 2 * (K)]);                                                                  \
+        __m512d c_im = LOAD_IM_AVX512(&in_im[(k) + 2 * (K)]);                                                                  \
+        __m512d d_re = LOAD_RE_AVX512(&in_re[(k) + 3 * (K)]);                                                                  \
+        __m512d d_im = LOAD_IM_AVX512(&in_im[(k) + 3 * (K)]);                                                                  \
+        __m512d w1_re = _mm512_loadu_pd(&tw->re[0 * (K) + (k)]);                                                               \
+        __m512d w1_im = _mm512_loadu_pd(&tw->im[0 * (K) + (k)]);                                                               \
+        __m512d w2_re = _mm512_loadu_pd(&tw->re[1 * (K) + (k)]);                                                               \
+        __m512d w2_im = _mm512_loadu_pd(&tw->im[1 * (K) + (k)]);                                                               \
+        __m512d w3_re = _mm512_loadu_pd(&tw->re[2 * (K) + (k)]);                                                               \
+        __m512d w3_im = _mm512_loadu_pd(&tw->im[2 * (K) + (k)]);                                                               \
+        __m512d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                                                      \
+        CMUL_NATIVE_SOA_AVX512(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                                                        \
+        CMUL_NATIVE_SOA_AVX512(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                                                        \
+        CMUL_NATIVE_SOA_AVX512(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                                                        \
+        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                                                        \
+        RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im,                                          \
+                                              tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,                                        \
+                                              y2_re, y2_im, y3_re, y3_im, sign_mask);                                          \
+        STREAM_RE_AVX512(&out_re[k], y0_re);                                                                                   \
+        STREAM_IM_AVX512(&out_im[k], y0_im);                                                                                   \
+        STREAM_RE_AVX512(&out_re[(k) + (K)], y1_re);                                                                           \
+        STREAM_IM_AVX512(&out_im[(k) + (K)], y1_im);                                                                           \
+        STREAM_RE_AVX512(&out_re[(k) + 2 * (K)], y2_re);                                                                       \
+        STREAM_IM_AVX512(&out_im[(k) + 2 * (K)], y2_im);                                                                       \
+        STREAM_RE_AVX512(&out_re[(k) + 3 * (K)], y3_re);                                                                       \
+        STREAM_IM_AVX512(&out_im[(k) + 3 * (K)], y3_im);                                                                       \
     } while (0)
 
 // Backward versions
@@ -544,38 +586,38 @@
     } while (0)
 
 #define RADIX4_PIPELINE_4_NATIVE_SOA_BV_AVX512_STREAM(k, K, in_re, in_im, out_re, out_im, tw, sign_mask) \
-    do                                                                                            \
-    {                                                                                             \
-        __m512d a_re = LOAD_RE_AVX512(&in_re[k]);                                                 \
-        __m512d a_im = LOAD_IM_AVX512(&in_im[k]);                                                 \
-        __m512d b_re = LOAD_RE_AVX512(&in_re[(k) + (K)]);                                         \
-        __m512d b_im = LOAD_IM_AVX512(&in_im[(k) + (K)]);                                         \
-        __m512d c_re = LOAD_RE_AVX512(&in_re[(k) + 2 * (K)]);                                     \
-        __m512d c_im = LOAD_IM_AVX512(&in_im[(k) + 2 * (K)]);                                     \
-        __m512d d_re = LOAD_RE_AVX512(&in_re[(k) + 3 * (K)]);                                     \
-        __m512d d_im = LOAD_IM_AVX512(&in_im[(k) + 3 * (K)]);                                     \
-        __m512d w1_re = _mm512_loadu_pd(&tw->re[0 * (K) + (k)]);                                  \
-        __m512d w1_im = _mm512_loadu_pd(&tw->im[0 * (K) + (k)]);                                  \
-        __m512d w2_re = _mm512_loadu_pd(&tw->re[1 * (K) + (k)]);                                  \
-        __m512d w2_im = _mm512_loadu_pd(&tw->im[1 * (K) + (k)]);                                  \
-        __m512d w3_re = _mm512_loadu_pd(&tw->re[2 * (K) + (k)]);                                  \
-        __m512d w3_im = _mm512_loadu_pd(&tw->im[2 * (K) + (k)]);                                  \
-        __m512d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                         \
-        CMUL_NATIVE_SOA_AVX512(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                           \
-        CMUL_NATIVE_SOA_AVX512(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                           \
-        CMUL_NATIVE_SOA_AVX512(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                           \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                           \
-        RADIX4_BUTTERFLY_NATIVE_SOA_BV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im,             \
-                                              tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,           \
-                                              y2_re, y2_im, y3_re, y3_im, sign_mask);             \
-        STREAM_RE_AVX512(&out_re[k], y0_re);                                                      \
-        STREAM_IM_AVX512(&out_im[k], y0_im);                                                      \
-        STREAM_RE_AVX512(&out_re[(k) + (K)], y1_re);                                              \
-        STREAM_IM_AVX512(&out_im[(k) + (K)], y1_im);                                              \
-        STREAM_RE_AVX512(&out_re[(k) + 2 * (K)], y2_re);                                          \
-        STREAM_IM_AVX512(&out_im[(k) + 2 * (K)], y2_im);                                          \
-        STREAM_RE_AVX512(&out_re[(k) + 3 * (K)], y3_re);                                          \
-        STREAM_IM_AVX512(&out_im[(k) + 3 * (K)], y3_im);                                          \
+    do                                                                                                   \
+    {                                                                                                    \
+        __m512d a_re = LOAD_RE_AVX512(&in_re[k]);                                                        \
+        __m512d a_im = LOAD_IM_AVX512(&in_im[k]);                                                        \
+        __m512d b_re = LOAD_RE_AVX512(&in_re[(k) + (K)]);                                                \
+        __m512d b_im = LOAD_IM_AVX512(&in_im[(k) + (K)]);                                                \
+        __m512d c_re = LOAD_RE_AVX512(&in_re[(k) + 2 * (K)]);                                            \
+        __m512d c_im = LOAD_IM_AVX512(&in_im[(k) + 2 * (K)]);                                            \
+        __m512d d_re = LOAD_RE_AVX512(&in_re[(k) + 3 * (K)]);                                            \
+        __m512d d_im = LOAD_IM_AVX512(&in_im[(k) + 3 * (K)]);                                            \
+        __m512d w1_re = _mm512_loadu_pd(&tw->re[0 * (K) + (k)]);                                         \
+        __m512d w1_im = _mm512_loadu_pd(&tw->im[0 * (K) + (k)]);                                         \
+        __m512d w2_re = _mm512_loadu_pd(&tw->re[1 * (K) + (k)]);                                         \
+        __m512d w2_im = _mm512_loadu_pd(&tw->im[1 * (K) + (k)]);                                         \
+        __m512d w3_re = _mm512_loadu_pd(&tw->re[2 * (K) + (k)]);                                         \
+        __m512d w3_im = _mm512_loadu_pd(&tw->im[2 * (K) + (k)]);                                         \
+        __m512d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                                \
+        CMUL_NATIVE_SOA_AVX512(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                                  \
+        CMUL_NATIVE_SOA_AVX512(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                                  \
+        CMUL_NATIVE_SOA_AVX512(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                                  \
+        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                                  \
+        RADIX4_BUTTERFLY_NATIVE_SOA_BV_AVX512(a_re, a_im, tB_re, tB_im, tC_re, tC_im,                    \
+                                              tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,                  \
+                                              y2_re, y2_im, y3_re, y3_im, sign_mask);                    \
+        STREAM_RE_AVX512(&out_re[k], y0_re);                                                             \
+        STREAM_IM_AVX512(&out_im[k], y0_im);                                                             \
+        STREAM_RE_AVX512(&out_re[(k) + (K)], y1_re);                                                     \
+        STREAM_IM_AVX512(&out_im[(k) + (K)], y1_im);                                                     \
+        STREAM_RE_AVX512(&out_re[(k) + 2 * (K)], y2_re);                                                 \
+        STREAM_IM_AVX512(&out_im[(k) + 2 * (K)], y2_im);                                                 \
+        STREAM_RE_AVX512(&out_re[(k) + 3 * (K)], y3_re);                                                 \
+        STREAM_IM_AVX512(&out_im[(k) + 3 * (K)], y3_im);                                                 \
     } while (0)
 #endif // __AVX512F__
 
@@ -590,74 +632,87 @@
  * AVX2 vector width = 4 doubles = 2 complex values
  * So we process butterflies at k and k+1
  */
-#define RADIX4_PIPELINE_2_NATIVE_SOA_FV_AVX2(k, K, in_re, in_im, out_re, out_im, tw, sign_mask) \
-    do                                                                                          \
-    {                                                                                           \
-        __m256d a_re = LOAD_RE_AVX2(&in_re[k]);                                                 \
-        __m256d a_im = LOAD_IM_AVX2(&in_im[k]);                                                 \
-        __m256d b_re = LOAD_RE_AVX2(&in_re[(k) + (K)]);                                         \
-        __m256d b_im = LOAD_IM_AVX2(&in_im[(k) + (K)]);                                         \
-        __m256d c_re = LOAD_RE_AVX2(&in_re[(k) + 2 * (K)]);                                     \
-        __m256d c_im = LOAD_IM_AVX2(&in_im[(k) + 2 * (K)]);                                     \
-        __m256d d_re = LOAD_RE_AVX2(&in_re[(k) + 3 * (K)]);                                     \
-        __m256d d_im = LOAD_IM_AVX2(&in_im[(k) + 3 * (K)]);                                     \
-        __m256d w1_re = _mm256_loadu_pd(&tw->re[0 * (K) + (k)]);                                \
-        __m256d w1_im = _mm256_loadu_pd(&tw->im[0 * (K) + (k)]);                                \
-        __m256d w2_re = _mm256_loadu_pd(&tw->re[1 * (K) + (k)]);                                \
-        __m256d w2_im = _mm256_loadu_pd(&tw->im[1 * (K) + (k)]);                                \
-        __m256d w3_re = _mm256_loadu_pd(&tw->re[2 * (K) + (k)]);                                \
-        __m256d w3_im = _mm256_loadu_pd(&tw->im[2 * (K) + (k)]);                                \
-        __m256d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                       \
-        CMUL_NATIVE_SOA_AVX2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                           \
-        CMUL_NATIVE_SOA_AVX2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                           \
-        CMUL_NATIVE_SOA_AVX2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                           \
-        __m256d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                         \
-        RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,             \
-                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,           \
-                                            y2_re, y2_im, y3_re, y3_im, sign_mask);             \
-        STORE_RE_AVX2(&out_re[k], y0_re);                                                       \
-        STORE_IM_AVX2(&out_im[k], y0_im);                                                       \
-        STORE_RE_AVX2(&out_re[(k) + (K)], y1_re);                                               \
-        STORE_IM_AVX2(&out_im[(k) + (K)], y1_im);                                               \
-        STORE_RE_AVX2(&out_re[(k) + 2 * (K)], y2_re);                                           \
-        STORE_IM_AVX2(&out_im[(k) + 2 * (K)], y2_im);                                           \
-        STORE_RE_AVX2(&out_re[(k) + 3 * (K)], y3_re);                                           \
-        STORE_IM_AVX2(&out_im[(k) + 3 * (K)], y3_im);                                           \
+#define RADIX4_PIPELINE_2_NATIVE_SOA_FV_AVX2(k, K, in_re, in_im, out_re, out_im, tw, sign_mask, prefetch_dist, k_end) \
+    do                                                                                                                \
+    {                                                                                                                 \
+        /* Software prefetch for next iteration */                                                                    \
+        if ((prefetch_dist) > 0 && (k) + (prefetch_dist) + 1 < (k_end))                                               \
+        {                                                                                                             \
+            int pk = (k) + (prefetch_dist);                                                                           \
+            _mm_prefetch((const char *)&in_re[pk], _MM_HINT_T0);                                                      \
+            _mm_prefetch((const char *)&in_im[pk], _MM_HINT_T0);                                                      \
+            _mm_prefetch((const char *)&in_re[pk + (K)], _MM_HINT_T0);                                                \
+            _mm_prefetch((const char *)&in_im[pk + (K)], _MM_HINT_T0);                                                \
+            _mm_prefetch((const char *)&in_re[pk + 2 * (K)], _MM_HINT_T0);                                            \
+            _mm_prefetch((const char *)&in_im[pk + 2 * (K)], _MM_HINT_T0);                                            \
+            _mm_prefetch((const char *)&in_re[pk + 3 * (K)], _MM_HINT_T0);                                            \
+            _mm_prefetch((const char *)&in_im[pk + 3 * (K)], _MM_HINT_T0);                                            \
+        }                                                                                                             \
+        __m256d a_re = LOAD_RE_AVX2(&in_re[k]);                                                                       \
+        __m256d a_im = LOAD_IM_AVX2(&in_im[k]);                                                                       \
+        __m256d b_re = LOAD_RE_AVX2(&in_re[(k) + (K)]);                                                               \
+        __m256d b_im = LOAD_IM_AVX2(&in_im[(k) + (K)]);                                                               \
+        __m256d c_re = LOAD_RE_AVX2(&in_re[(k) + 2 * (K)]);                                                           \
+        __m256d c_im = LOAD_IM_AVX2(&in_im[(k) + 2 * (K)]);                                                           \
+        __m256d d_re = LOAD_RE_AVX2(&in_re[(k) + 3 * (K)]);                                                           \
+        __m256d d_im = LOAD_IM_AVX2(&in_im[(k) + 3 * (K)]);                                                           \
+        __m256d w1_re = _mm256_loadu_pd(&tw->re[0 * (K) + (k)]);                                                      \
+        __m256d w1_im = _mm256_loadu_pd(&tw->im[0 * (K) + (k)]);                                                      \
+        __m256d w2_re = _mm256_loadu_pd(&tw->re[1 * (K) + (k)]);                                                      \
+        __m256d w2_im = _mm256_loadu_pd(&tw->im[1 * (K) + (k)]);                                                      \
+        __m256d w3_re = _mm256_loadu_pd(&tw->re[2 * (K) + (k)]);                                                      \
+        __m256d w3_im = _mm256_loadu_pd(&tw->im[2 * (K) + (k)]);                                                      \
+        __m256d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                                             \
+        CMUL_NATIVE_SOA_AVX2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                                                 \
+        CMUL_NATIVE_SOA_AVX2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                                                 \
+        CMUL_NATIVE_SOA_AVX2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                                                 \
+        __m256d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                                               \
+        RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,                                   \
+                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,                                 \
+                                            y2_re, y2_im, y3_re, y3_im, sign_mask);                                   \
+        STORE_RE_AVX2(&out_re[k], y0_re);                                                                             \
+        STORE_IM_AVX2(&out_im[k], y0_im);                                                                             \
+        STORE_RE_AVX2(&out_re[(k) + (K)], y1_re);                                                                     \
+        STORE_IM_AVX2(&out_im[(k) + (K)], y1_im);                                                                     \
+        STORE_RE_AVX2(&out_re[(k) + 2 * (K)], y2_re);                                                                 \
+        STORE_IM_AVX2(&out_im[(k) + 2 * (K)], y2_im);                                                                 \
+        STORE_RE_AVX2(&out_re[(k) + 3 * (K)], y3_re);                                                                 \
+        STORE_IM_AVX2(&out_im[(k) + 3 * (K)], y3_im);                                                                 \
     } while (0)
 
 #define RADIX4_PIPELINE_2_NATIVE_SOA_FV_AVX2_STREAM(k, K, in_re, in_im, out_re, out_im, tw, sign_mask) \
-    do                                                                                          \
-    {                                                                                           \
-        __m256d a_re = LOAD_RE_AVX2(&in_re[k]);                                                 \
-        __m256d a_im = LOAD_IM_AVX2(&in_im[k]);                                                 \
-        __m256d b_re = LOAD_RE_AVX2(&in_re[(k) + (K)]);                                         \
-        __m256d b_im = LOAD_IM_AVX2(&in_im[(k) + (K)]);                                         \
-        __m256d c_re = LOAD_RE_AVX2(&in_re[(k) + 2 * (K)]);                                     \
-        __m256d c_im = LOAD_IM_AVX2(&in_im[(k) + 2 * (K)]);                                     \
-        __m256d d_re = LOAD_RE_AVX2(&in_re[(k) + 3 * (K)]);                                     \
-        __m256d d_im = LOAD_IM_AVX2(&in_im[(k) + 3 * (K)]);                                     \
-        __m256d w1_re = _mm256_loadu_pd(&tw->re[0 * (K) + (k)]);                                \
-        __m256d w1_im = _mm256_loadu_pd(&tw->im[0 * (K) + (k)]);                                \
-        __m256d w2_re = _mm256_loadu_pd(&tw->re[1 * (K) + (k)]);                                \
-        __m256d w2_im = _mm256_loadu_pd(&tw->im[1 * (K) + (k)]);                                \
-        __m256d w3_re = _mm256_loadu_pd(&tw->re[2 * (K) + (k)]);                                \
-        __m256d w3_im = _mm256_loadu_pd(&tw->im[2 * (K) + (k)]);                                \
-        __m256d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                       \
-        CMUL_NATIVE_SOA_AVX2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                           \
-        CMUL_NATIVE_SOA_AVX2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                           \
-        CMUL_NATIVE_SOA_AVX2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                           \
-        __m256d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                         \
-        RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,             \
-                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,           \
-                                            y2_re, y2_im, y3_re, y3_im, sign_mask);             \
-        STREAM_RE_AVX2(&out_re[k], y0_re);                                                      \
-        STREAM_IM_AVX2(&out_im[k], y0_im);                                                      \
-        STREAM_RE_AVX2(&out_re[(k) + (K)], y1_re);                                              \
-        STREAM_IM_AVX2(&out_im[(k) + (K)], y1_im);                                              \
-        STREAM_RE_AVX2(&out_re[(k) + 2 * (K)], y2_re);                                          \
-        STREAM_IM_AVX2(&out_im[(k) + 2 * (K)], y2_im);                                          \
-        STREAM_RE_AVX2(&out_re[(k) + 3 * (K)], y3_re);                                          \
-        STREAM_IM_AVX2(&out_im[(k) + 3 * (K)], y3_im);                                          \
+    do                                                                                                 \
+    {                                                                                                  \
+        __m256d a_re = LOAD_RE_AVX2(&in_re[k]);                                                        \
+        __m256d a_im = LOAD_IM_AVX2(&in_im[k]);                                                        \
+        __m256d b_re = LOAD_RE_AVX2(&in_re[(k) + (K)]);                                                \
+        __m256d b_im = LOAD_IM_AVX2(&in_im[(k) + (K)]);                                                \
+        __m256d c_re = LOAD_RE_AVX2(&in_re[(k) + 2 * (K)]);                                            \
+        __m256d c_im = LOAD_IM_AVX2(&in_im[(k) + 2 * (K)]);                                            \
+        __m256d d_re = LOAD_RE_AVX2(&in_re[(k) + 3 * (K)]);                                            \
+        __m256d d_im = LOAD_IM_AVX2(&in_im[(k) + 3 * (K)]);                                            \
+        __m256d w1_re = _mm256_loadu_pd(&tw->re[0 * (K) + (k)]);                                       \
+        __m256d w1_im = _mm256_loadu_pd(&tw->im[0 * (K) + (k)]);                                       \
+        __m256d w2_re = _mm256_loadu_pd(&tw->re[1 * (K) + (k)]);                                       \
+        __m256d w2_im = _mm256_loadu_pd(&tw->im[1 * (K) + (k)]);                                       \
+        __m256d w3_re = _mm256_loadu_pd(&tw->re[2 * (K) + (k)]);                                       \
+        __m256d w3_im = _mm256_loadu_pd(&tw->im[2 * (K) + (k)]);                                       \
+        __m256d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                              \
+        CMUL_NATIVE_SOA_AVX2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                                  \
+        CMUL_NATIVE_SOA_AVX2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                                  \
+        CMUL_NATIVE_SOA_AVX2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                                  \
+        __m256d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                                \
+        RADIX4_BUTTERFLY_NATIVE_SOA_FV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,                    \
+                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,                  \
+                                            y2_re, y2_im, y3_re, y3_im, sign_mask);                    \
+        STREAM_RE_AVX2(&out_re[k], y0_re);                                                             \
+        STREAM_IM_AVX2(&out_im[k], y0_im);                                                             \
+        STREAM_RE_AVX2(&out_re[(k) + (K)], y1_re);                                                     \
+        STREAM_IM_AVX2(&out_im[(k) + (K)], y1_im);                                                     \
+        STREAM_RE_AVX2(&out_re[(k) + 2 * (K)], y2_re);                                                 \
+        STREAM_IM_AVX2(&out_im[(k) + 2 * (K)], y2_im);                                                 \
+        STREAM_RE_AVX2(&out_re[(k) + 3 * (K)], y3_re);                                                 \
+        STREAM_IM_AVX2(&out_im[(k) + 3 * (K)], y3_im);                                                 \
     } while (0)
 
 // Backward versions
@@ -697,38 +752,38 @@
     } while (0)
 
 #define RADIX4_PIPELINE_2_NATIVE_SOA_BV_AVX2_STREAM(k, K, in_re, in_im, out_re, out_im, tw, sign_mask) \
-    do                                                                                          \
-    {                                                                                           \
-        __m256d a_re = LOAD_RE_AVX2(&in_re[k]);                                                 \
-        __m256d a_im = LOAD_IM_AVX2(&in_im[k]);                                                 \
-        __m256d b_re = LOAD_RE_AVX2(&in_re[(k) + (K)]);                                         \
-        __m256d b_im = LOAD_IM_AVX2(&in_im[(k) + (K)]);                                         \
-        __m256d c_re = LOAD_RE_AVX2(&in_re[(k) + 2 * (K)]);                                     \
-        __m256d c_im = LOAD_IM_AVX2(&in_im[(k) + 2 * (K)]);                                     \
-        __m256d d_re = LOAD_RE_AVX2(&in_re[(k) + 3 * (K)]);                                     \
-        __m256d d_im = LOAD_IM_AVX2(&in_im[(k) + 3 * (K)]);                                     \
-        __m256d w1_re = _mm256_loadu_pd(&tw->re[0 * (K) + (k)]);                                \
-        __m256d w1_im = _mm256_loadu_pd(&tw->im[0 * (K) + (k)]);                                \
-        __m256d w2_re = _mm256_loadu_pd(&tw->re[1 * (K) + (k)]);                                \
-        __m256d w2_im = _mm256_loadu_pd(&tw->im[1 * (K) + (k)]);                                \
-        __m256d w3_re = _mm256_loadu_pd(&tw->re[2 * (K) + (k)]);                                \
-        __m256d w3_im = _mm256_loadu_pd(&tw->im[2 * (K) + (k)]);                                \
-        __m256d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                       \
-        CMUL_NATIVE_SOA_AVX2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                           \
-        CMUL_NATIVE_SOA_AVX2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                           \
-        CMUL_NATIVE_SOA_AVX2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                           \
-        __m256d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                         \
-        RADIX4_BUTTERFLY_NATIVE_SOA_BV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,             \
-                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,           \
-                                            y2_re, y2_im, y3_re, y3_im, sign_mask);             \
-        STREAM_RE_AVX2(&out_re[k], y0_re);                                                      \
-        STREAM_IM_AVX2(&out_im[k], y0_im);                                                      \
-        STREAM_RE_AVX2(&out_re[(k) + (K)], y1_re);                                              \
-        STREAM_IM_AVX2(&out_im[(k) + (K)], y1_im);                                              \
-        STREAM_RE_AVX2(&out_re[(k) + 2 * (K)], y2_re);                                          \
-        STREAM_IM_AVX2(&out_im[(k) + 2 * (K)], y2_im);                                          \
-        STREAM_RE_AVX2(&out_re[(k) + 3 * (K)], y3_re);                                          \
-        STREAM_IM_AVX2(&out_im[(k) + 3 * (K)], y3_im);                                          \
+    do                                                                                                 \
+    {                                                                                                  \
+        __m256d a_re = LOAD_RE_AVX2(&in_re[k]);                                                        \
+        __m256d a_im = LOAD_IM_AVX2(&in_im[k]);                                                        \
+        __m256d b_re = LOAD_RE_AVX2(&in_re[(k) + (K)]);                                                \
+        __m256d b_im = LOAD_IM_AVX2(&in_im[(k) + (K)]);                                                \
+        __m256d c_re = LOAD_RE_AVX2(&in_re[(k) + 2 * (K)]);                                            \
+        __m256d c_im = LOAD_IM_AVX2(&in_im[(k) + 2 * (K)]);                                            \
+        __m256d d_re = LOAD_RE_AVX2(&in_re[(k) + 3 * (K)]);                                            \
+        __m256d d_im = LOAD_IM_AVX2(&in_im[(k) + 3 * (K)]);                                            \
+        __m256d w1_re = _mm256_loadu_pd(&tw->re[0 * (K) + (k)]);                                       \
+        __m256d w1_im = _mm256_loadu_pd(&tw->im[0 * (K) + (k)]);                                       \
+        __m256d w2_re = _mm256_loadu_pd(&tw->re[1 * (K) + (k)]);                                       \
+        __m256d w2_im = _mm256_loadu_pd(&tw->im[1 * (K) + (k)]);                                       \
+        __m256d w3_re = _mm256_loadu_pd(&tw->re[2 * (K) + (k)]);                                       \
+        __m256d w3_im = _mm256_loadu_pd(&tw->im[2 * (K) + (k)]);                                       \
+        __m256d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                              \
+        CMUL_NATIVE_SOA_AVX2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                                  \
+        CMUL_NATIVE_SOA_AVX2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                                  \
+        CMUL_NATIVE_SOA_AVX2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                                  \
+        __m256d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                                \
+        RADIX4_BUTTERFLY_NATIVE_SOA_BV_AVX2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,                    \
+                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,                  \
+                                            y2_re, y2_im, y3_re, y3_im, sign_mask);                    \
+        STREAM_RE_AVX2(&out_re[k], y0_re);                                                             \
+        STREAM_IM_AVX2(&out_im[k], y0_im);                                                             \
+        STREAM_RE_AVX2(&out_re[(k) + (K)], y1_re);                                                     \
+        STREAM_IM_AVX2(&out_im[(k) + (K)], y1_im);                                                     \
+        STREAM_RE_AVX2(&out_re[(k) + 2 * (K)], y2_re);                                                 \
+        STREAM_IM_AVX2(&out_im[(k) + 2 * (K)], y2_im);                                                 \
+        STREAM_RE_AVX2(&out_re[(k) + 3 * (K)], y3_re);                                                 \
+        STREAM_IM_AVX2(&out_im[(k) + 3 * (K)], y3_im);                                                 \
     } while (0)
 #endif // __AVX2__
 
@@ -779,38 +834,38 @@
     } while (0)
 
 #define RADIX4_PIPELINE_1_NATIVE_SOA_FV_SSE2_STREAM(k, K, in_re, in_im, out_re, out_im, tw, sign_mask) \
-    do                                                                                          \
-    {                                                                                           \
-        __m128d a_re = LOAD_RE_SSE2(&in_re[k]);                                                 \
-        __m128d a_im = LOAD_IM_SSE2(&in_im[k]);                                                 \
-        __m128d b_re = LOAD_RE_SSE2(&in_re[(k) + (K)]);                                         \
-        __m128d b_im = LOAD_IM_SSE2(&in_im[(k) + (K)]);                                         \
-        __m128d c_re = LOAD_RE_SSE2(&in_re[(k) + 2 * (K)]);                                     \
-        __m128d c_im = LOAD_IM_SSE2(&in_im[(k) + 2 * (K)]);                                     \
-        __m128d d_re = LOAD_RE_SSE2(&in_re[(k) + 3 * (K)]);                                     \
-        __m128d d_im = LOAD_IM_SSE2(&in_im[(k) + 3 * (K)]);                                     \
-        __m128d w1_re = _mm_loadu_pd(&tw->re[0 * (K) + (k)]);                                   \
-        __m128d w1_im = _mm_loadu_pd(&tw->im[0 * (K) + (k)]);                                   \
-        __m128d w2_re = _mm_loadu_pd(&tw->re[1 * (K) + (k)]);                                   \
-        __m128d w2_im = _mm_loadu_pd(&tw->im[1 * (K) + (k)]);                                   \
-        __m128d w3_re = _mm_loadu_pd(&tw->re[2 * (K) + (k)]);                                   \
-        __m128d w3_im = _mm_loadu_pd(&tw->im[2 * (K) + (k)]);                                   \
-        __m128d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                       \
-        CMUL_NATIVE_SOA_SSE2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                           \
-        CMUL_NATIVE_SOA_SSE2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                           \
-        CMUL_NATIVE_SOA_SSE2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                           \
-        __m128d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                         \
-        RADIX4_BUTTERFLY_NATIVE_SOA_FV_SSE2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,             \
-                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,           \
-                                            y2_re, y2_im, y3_re, y3_im, sign_mask);             \
-        STREAM_RE_SSE2(&out_re[k], y0_re);                                                      \
-        STREAM_IM_SSE2(&out_im[k], y0_im);                                                      \
-        STREAM_RE_SSE2(&out_re[(k) + (K)], y1_re);                                              \
-        STREAM_IM_SSE2(&out_im[(k) + (K)], y1_im);                                              \
-        STREAM_RE_SSE2(&out_re[(k) + 2 * (K)], y2_re);                                          \
-        STREAM_IM_SSE2(&out_im[(k) + 2 * (K)], y2_im);                                          \
-        STREAM_RE_SSE2(&out_re[(k) + 3 * (K)], y3_re);                                          \
-        STREAM_IM_SSE2(&out_im[(k) + 3 * (K)], y3_im);                                          \
+    do                                                                                                 \
+    {                                                                                                  \
+        __m128d a_re = LOAD_RE_SSE2(&in_re[k]);                                                        \
+        __m128d a_im = LOAD_IM_SSE2(&in_im[k]);                                                        \
+        __m128d b_re = LOAD_RE_SSE2(&in_re[(k) + (K)]);                                                \
+        __m128d b_im = LOAD_IM_SSE2(&in_im[(k) + (K)]);                                                \
+        __m128d c_re = LOAD_RE_SSE2(&in_re[(k) + 2 * (K)]);                                            \
+        __m128d c_im = LOAD_IM_SSE2(&in_im[(k) + 2 * (K)]);                                            \
+        __m128d d_re = LOAD_RE_SSE2(&in_re[(k) + 3 * (K)]);                                            \
+        __m128d d_im = LOAD_IM_SSE2(&in_im[(k) + 3 * (K)]);                                            \
+        __m128d w1_re = _mm_loadu_pd(&tw->re[0 * (K) + (k)]);                                          \
+        __m128d w1_im = _mm_loadu_pd(&tw->im[0 * (K) + (k)]);                                          \
+        __m128d w2_re = _mm_loadu_pd(&tw->re[1 * (K) + (k)]);                                          \
+        __m128d w2_im = _mm_loadu_pd(&tw->im[1 * (K) + (k)]);                                          \
+        __m128d w3_re = _mm_loadu_pd(&tw->re[2 * (K) + (k)]);                                          \
+        __m128d w3_im = _mm_loadu_pd(&tw->im[2 * (K) + (k)]);                                          \
+        __m128d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                              \
+        CMUL_NATIVE_SOA_SSE2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                                  \
+        CMUL_NATIVE_SOA_SSE2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                                  \
+        CMUL_NATIVE_SOA_SSE2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                                  \
+        __m128d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                                \
+        RADIX4_BUTTERFLY_NATIVE_SOA_FV_SSE2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,                    \
+                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,                  \
+                                            y2_re, y2_im, y3_re, y3_im, sign_mask);                    \
+        STREAM_RE_SSE2(&out_re[k], y0_re);                                                             \
+        STREAM_IM_SSE2(&out_im[k], y0_im);                                                             \
+        STREAM_RE_SSE2(&out_re[(k) + (K)], y1_re);                                                     \
+        STREAM_IM_SSE2(&out_im[(k) + (K)], y1_im);                                                     \
+        STREAM_RE_SSE2(&out_re[(k) + 2 * (K)], y2_re);                                                 \
+        STREAM_IM_SSE2(&out_im[(k) + 2 * (K)], y2_im);                                                 \
+        STREAM_RE_SSE2(&out_re[(k) + 3 * (K)], y3_re);                                                 \
+        STREAM_IM_SSE2(&out_im[(k) + 3 * (K)], y3_im);                                                 \
     } while (0)
 
 // Backward versions
@@ -850,38 +905,38 @@
     } while (0)
 
 #define RADIX4_PIPELINE_1_NATIVE_SOA_BV_SSE2_STREAM(k, K, in_re, in_im, out_re, out_im, tw, sign_mask) \
-    do                                                                                          \
-    {                                                                                           \
-        __m128d a_re = LOAD_RE_SSE2(&in_re[k]);                                                 \
-        __m128d a_im = LOAD_IM_SSE2(&in_im[k]);                                                 \
-        __m128d b_re = LOAD_RE_SSE2(&in_re[(k) + (K)]);                                         \
-        __m128d b_im = LOAD_IM_SSE2(&in_im[(k) + (K)]);                                         \
-        __m128d c_re = LOAD_RE_SSE2(&in_re[(k) + 2 * (K)]);                                     \
-        __m128d c_im = LOAD_IM_SSE2(&in_im[(k) + 2 * (K)]);                                     \
-        __m128d d_re = LOAD_RE_SSE2(&in_re[(k) + 3 * (K)]);                                     \
-        __m128d d_im = LOAD_IM_SSE2(&in_im[(k) + 3 * (K)]);                                     \
-        __m128d w1_re = _mm_loadu_pd(&tw->re[0 * (K) + (k)]);                                   \
-        __m128d w1_im = _mm_loadu_pd(&tw->im[0 * (K) + (k)]);                                   \
-        __m128d w2_re = _mm_loadu_pd(&tw->re[1 * (K) + (k)]);                                   \
-        __m128d w2_im = _mm_loadu_pd(&tw->im[1 * (K) + (k)]);                                   \
-        __m128d w3_re = _mm_loadu_pd(&tw->re[2 * (K) + (k)]);                                   \
-        __m128d w3_im = _mm_loadu_pd(&tw->im[2 * (K) + (k)]);                                   \
-        __m128d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                       \
-        CMUL_NATIVE_SOA_SSE2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                           \
-        CMUL_NATIVE_SOA_SSE2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                           \
-        CMUL_NATIVE_SOA_SSE2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                           \
-        __m128d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                         \
-        RADIX4_BUTTERFLY_NATIVE_SOA_BV_SSE2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,             \
-                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,           \
-                                            y2_re, y2_im, y3_re, y3_im, sign_mask);             \
-        STREAM_RE_SSE2(&out_re[k], y0_re);                                                      \
-        STREAM_IM_SSE2(&out_im[k], y0_im);                                                      \
-        STREAM_RE_SSE2(&out_re[(k) + (K)], y1_re);                                              \
-        STREAM_IM_SSE2(&out_im[(k) + (K)], y1_im);                                              \
-        STREAM_RE_SSE2(&out_re[(k) + 2 * (K)], y2_re);                                          \
-        STREAM_IM_SSE2(&out_im[(k) + 2 * (K)], y2_im);                                          \
-        STREAM_RE_SSE2(&out_re[(k) + 3 * (K)], y3_re);                                          \
-        STREAM_IM_SSE2(&out_im[(k) + 3 * (K)], y3_im);                                          \
+    do                                                                                                 \
+    {                                                                                                  \
+        __m128d a_re = LOAD_RE_SSE2(&in_re[k]);                                                        \
+        __m128d a_im = LOAD_IM_SSE2(&in_im[k]);                                                        \
+        __m128d b_re = LOAD_RE_SSE2(&in_re[(k) + (K)]);                                                \
+        __m128d b_im = LOAD_IM_SSE2(&in_im[(k) + (K)]);                                                \
+        __m128d c_re = LOAD_RE_SSE2(&in_re[(k) + 2 * (K)]);                                            \
+        __m128d c_im = LOAD_IM_SSE2(&in_im[(k) + 2 * (K)]);                                            \
+        __m128d d_re = LOAD_RE_SSE2(&in_re[(k) + 3 * (K)]);                                            \
+        __m128d d_im = LOAD_IM_SSE2(&in_im[(k) + 3 * (K)]);                                            \
+        __m128d w1_re = _mm_loadu_pd(&tw->re[0 * (K) + (k)]);                                          \
+        __m128d w1_im = _mm_loadu_pd(&tw->im[0 * (K) + (k)]);                                          \
+        __m128d w2_re = _mm_loadu_pd(&tw->re[1 * (K) + (k)]);                                          \
+        __m128d w2_im = _mm_loadu_pd(&tw->im[1 * (K) + (k)]);                                          \
+        __m128d w3_re = _mm_loadu_pd(&tw->re[2 * (K) + (k)]);                                          \
+        __m128d w3_im = _mm_loadu_pd(&tw->im[2 * (K) + (k)]);                                          \
+        __m128d tB_re, tB_im, tC_re, tC_im, tD_re, tD_im;                                              \
+        CMUL_NATIVE_SOA_SSE2(b_re, b_im, w1_re, w1_im, tB_re, tB_im);                                  \
+        CMUL_NATIVE_SOA_SSE2(c_re, c_im, w2_re, w2_im, tC_re, tC_im);                                  \
+        CMUL_NATIVE_SOA_SSE2(d_re, d_im, w3_re, w3_im, tD_re, tD_im);                                  \
+        __m128d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                                \
+        RADIX4_BUTTERFLY_NATIVE_SOA_BV_SSE2(a_re, a_im, tB_re, tB_im, tC_re, tC_im,                    \
+                                            tD_re, tD_im, y0_re, y0_im, y1_re, y1_im,                  \
+                                            y2_re, y2_im, y3_re, y3_im, sign_mask);                    \
+        STREAM_RE_SSE2(&out_re[k], y0_re);                                                             \
+        STREAM_IM_SSE2(&out_im[k], y0_im);                                                             \
+        STREAM_RE_SSE2(&out_re[(k) + (K)], y1_re);                                                     \
+        STREAM_IM_SSE2(&out_im[(k) + (K)], y1_im);                                                     \
+        STREAM_RE_SSE2(&out_re[(k) + 2 * (K)], y2_re);                                                 \
+        STREAM_IM_SSE2(&out_im[(k) + 2 * (K)], y2_im);                                                 \
+        STREAM_RE_SSE2(&out_re[(k) + 3 * (K)], y3_re);                                                 \
+        STREAM_IM_SSE2(&out_im[(k) + 3 * (K)], y3_im);                                                 \
     } while (0)
 #endif // __SSE2__
 
@@ -904,90 +959,90 @@
  * @param[out] out_im Output imaginary array
  * @param[in] tw Stage twiddle factors (SoA)
  */
-#define RADIX4_PIPELINE_1_NATIVE_SOA_FV_SCALAR(k, K, in_re, in_im, out_re, out_im, tw)          \
-    do                                                                                          \
-    {                                                                                           \
-        double a_re = in_re[k];                                                                 \
-        double a_im = in_im[k];                                                                 \
-        double b_re = in_re[(k) + (K)];                                                         \
-        double b_im = in_im[(k) + (K)];                                                         \
-        double c_re = in_re[(k) + 2 * (K)];                                                     \
-        double c_im = in_im[(k) + 2 * (K)];                                                     \
-        double d_re = in_re[(k) + 3 * (K)];                                                     \
-        double d_im = in_im[(k) + 3 * (K)];                                                     \
-        double w1_re = tw->re[0 * (K) + (k)];                                                   \
-        double w1_im = tw->im[0 * (K) + (k)];                                                   \
-        double w2_re = tw->re[1 * (K) + (k)];                                                   \
-        double w2_im = tw->im[1 * (K) + (k)];                                                   \
-        double w3_re = tw->re[2 * (K) + (k)];                                                   \
-        double w3_im = tw->im[2 * (K) + (k)];                                                   \
-        double tB_re = b_re * w1_re - b_im * w1_im;                                             \
-        double tB_im = b_re * w1_im + b_im * w1_re;                                             \
-        double tC_re = c_re * w2_re - c_im * w2_im;                                             \
-        double tC_im = c_re * w2_im + c_im * w2_re;                                             \
-        double tD_re = d_re * w3_re - d_im * w3_im;                                             \
-        double tD_im = d_re * w3_im + d_im * w3_re;                                             \
-        double sumBD_re = tB_re + tD_re;                                                        \
-        double sumBD_im = tB_im + tD_im;                                                        \
-        double difBD_re = tB_re - tD_re;                                                        \
-        double difBD_im = tB_im - tD_im;                                                        \
-        double sumAC_re = a_re + tC_re;                                                         \
-        double sumAC_im = a_im + tC_im;                                                         \
-        double difAC_re = a_re - tC_re;                                                         \
-        double difAC_im = a_im - tC_im;                                                         \
-        double rot_re = difBD_im;                                                               \
-        double rot_im = -difBD_re;                                                              \
-        out_re[k] = sumAC_re + sumBD_re;                                                        \
-        out_im[k] = sumAC_im + sumBD_im;                                                        \
-        out_re[(k) + (K)] = difAC_re - rot_re;                                                  \
-        out_im[(k) + (K)] = difAC_im - rot_im;                                                  \
-        out_re[(k) + 2 * (K)] = sumAC_re - sumBD_re;                                            \
-        out_im[(k) + 2 * (K)] = sumAC_im - sumBD_im;                                            \
-        out_re[(k) + 3 * (K)] = difAC_re + rot_re;                                              \
-        out_im[(k) + 3 * (K)] = difAC_im + rot_im;                                              \
+#define RADIX4_PIPELINE_1_NATIVE_SOA_FV_SCALAR(k, K, in_re, in_im, out_re, out_im, tw) \
+    do                                                                                 \
+    {                                                                                  \
+        double a_re = in_re[k];                                                        \
+        double a_im = in_im[k];                                                        \
+        double b_re = in_re[(k) + (K)];                                                \
+        double b_im = in_im[(k) + (K)];                                                \
+        double c_re = in_re[(k) + 2 * (K)];                                            \
+        double c_im = in_im[(k) + 2 * (K)];                                            \
+        double d_re = in_re[(k) + 3 * (K)];                                            \
+        double d_im = in_im[(k) + 3 * (K)];                                            \
+        double w1_re = tw->re[0 * (K) + (k)];                                          \
+        double w1_im = tw->im[0 * (K) + (k)];                                          \
+        double w2_re = tw->re[1 * (K) + (k)];                                          \
+        double w2_im = tw->im[1 * (K) + (k)];                                          \
+        double w3_re = tw->re[2 * (K) + (k)];                                          \
+        double w3_im = tw->im[2 * (K) + (k)];                                          \
+        double tB_re = b_re * w1_re - b_im * w1_im;                                    \
+        double tB_im = b_re * w1_im + b_im * w1_re;                                    \
+        double tC_re = c_re * w2_re - c_im * w2_im;                                    \
+        double tC_im = c_re * w2_im + c_im * w2_re;                                    \
+        double tD_re = d_re * w3_re - d_im * w3_im;                                    \
+        double tD_im = d_re * w3_im + d_im * w3_re;                                    \
+        double sumBD_re = tB_re + tD_re;                                               \
+        double sumBD_im = tB_im + tD_im;                                               \
+        double difBD_re = tB_re - tD_re;                                               \
+        double difBD_im = tB_im - tD_im;                                               \
+        double sumAC_re = a_re + tC_re;                                                \
+        double sumAC_im = a_im + tC_im;                                                \
+        double difAC_re = a_re - tC_re;                                                \
+        double difAC_im = a_im - tC_im;                                                \
+        double rot_re = difBD_im;                                                      \
+        double rot_im = -difBD_re;                                                     \
+        out_re[k] = sumAC_re + sumBD_re;                                               \
+        out_im[k] = sumAC_im + sumBD_im;                                               \
+        out_re[(k) + (K)] = difAC_re - rot_re;                                         \
+        out_im[(k) + (K)] = difAC_im - rot_im;                                         \
+        out_re[(k) + 2 * (K)] = sumAC_re - sumBD_re;                                   \
+        out_im[(k) + 2 * (K)] = sumAC_im - sumBD_im;                                   \
+        out_re[(k) + 3 * (K)] = difAC_re + rot_re;                                     \
+        out_im[(k) + 3 * (K)] = difAC_im + rot_im;                                     \
     } while (0)
 
-#define RADIX4_PIPELINE_1_NATIVE_SOA_BV_SCALAR(k, K, in_re, in_im, out_re, out_im, tw)          \
-    do                                                                                          \
-    {                                                                                           \
-        double a_re = in_re[k];                                                                 \
-        double a_im = in_im[k];                                                                 \
-        double b_re = in_re[(k) + (K)];                                                         \
-        double b_im = in_im[(k) + (K)];                                                         \
-        double c_re = in_re[(k) + 2 * (K)];                                                     \
-        double c_im = in_im[(k) + 2 * (K)];                                                     \
-        double d_re = in_re[(k) + 3 * (K)];                                                     \
-        double d_im = in_im[(k) + 3 * (K)];                                                     \
-        double w1_re = tw->re[0 * (K) + (k)];                                                   \
-        double w1_im = tw->im[0 * (K) + (k)];                                                   \
-        double w2_re = tw->re[1 * (K) + (k)];                                                   \
-        double w2_im = tw->im[1 * (K) + (k)];                                                   \
-        double w3_re = tw->re[2 * (K) + (k)];                                                   \
-        double w3_im = tw->im[2 * (K) + (k)];                                                   \
-        double tB_re = b_re * w1_re - b_im * w1_im;                                             \
-        double tB_im = b_re * w1_im + b_im * w1_re;                                             \
-        double tC_re = c_re * w2_re - c_im * w2_im;                                             \
-        double tC_im = c_re * w2_im + c_im * w2_re;                                             \
-        double tD_re = d_re * w3_re - d_im * w3_im;                                             \
-        double tD_im = d_re * w3_im + d_im * w3_re;                                             \
-        double sumBD_re = tB_re + tD_re;                                                        \
-        double sumBD_im = tB_im + tD_im;                                                        \
-        double difBD_re = tB_re - tD_re;                                                        \
-        double difBD_im = tB_im - tD_im;                                                        \
-        double sumAC_re = a_re + tC_re;                                                         \
-        double sumAC_im = a_im + tC_im;                                                         \
-        double difAC_re = a_re - tC_re;                                                         \
-        double difAC_im = a_im - tC_im;                                                         \
-        double rot_re = -difBD_im;                                                              \
-        double rot_im = difBD_re;                                                               \
-        out_re[k] = sumAC_re + sumBD_re;                                                        \
-        out_im[k] = sumAC_im + sumBD_im;                                                        \
-        out_re[(k) + (K)] = difAC_re - rot_re;                                                  \
-        out_im[(k) + (K)] = difAC_im - rot_im;                                                  \
-        out_re[(k) + 2 * (K)] = sumAC_re - sumBD_re;                                            \
-        out_im[(k) + 2 * (K)] = sumAC_im - sumBD_im;                                            \
-        out_re[(k) + 3 * (K)] = difAC_re + rot_re;                                              \
-        out_im[(k) + 3 * (K)] = difAC_im + rot_im;                                              \
+#define RADIX4_PIPELINE_1_NATIVE_SOA_BV_SCALAR(k, K, in_re, in_im, out_re, out_im, tw) \
+    do                                                                                 \
+    {                                                                                  \
+        double a_re = in_re[k];                                                        \
+        double a_im = in_im[k];                                                        \
+        double b_re = in_re[(k) + (K)];                                                \
+        double b_im = in_im[(k) + (K)];                                                \
+        double c_re = in_re[(k) + 2 * (K)];                                            \
+        double c_im = in_im[(k) + 2 * (K)];                                            \
+        double d_re = in_re[(k) + 3 * (K)];                                            \
+        double d_im = in_im[(k) + 3 * (K)];                                            \
+        double w1_re = tw->re[0 * (K) + (k)];                                          \
+        double w1_im = tw->im[0 * (K) + (k)];                                          \
+        double w2_re = tw->re[1 * (K) + (k)];                                          \
+        double w2_im = tw->im[1 * (K) + (k)];                                          \
+        double w3_re = tw->re[2 * (K) + (k)];                                          \
+        double w3_im = tw->im[2 * (K) + (k)];                                          \
+        double tB_re = b_re * w1_re - b_im * w1_im;                                    \
+        double tB_im = b_re * w1_im + b_im * w1_re;                                    \
+        double tC_re = c_re * w2_re - c_im * w2_im;                                    \
+        double tC_im = c_re * w2_im + c_im * w2_re;                                    \
+        double tD_re = d_re * w3_re - d_im * w3_im;                                    \
+        double tD_im = d_re * w3_im + d_im * w3_re;                                    \
+        double sumBD_re = tB_re + tD_re;                                               \
+        double sumBD_im = tB_im + tD_im;                                               \
+        double difBD_re = tB_re - tD_re;                                               \
+        double difBD_im = tB_im - tD_im;                                               \
+        double sumAC_re = a_re + tC_re;                                                \
+        double sumAC_im = a_im + tC_im;                                                \
+        double difAC_re = a_re - tC_re;                                                \
+        double difAC_im = a_im - tC_im;                                                \
+        double rot_re = -difBD_im;                                                     \
+        double rot_im = difBD_re;                                                      \
+        out_re[k] = sumAC_re + sumBD_re;                                               \
+        out_im[k] = sumAC_im + sumBD_im;                                               \
+        out_re[(k) + (K)] = difAC_re - rot_re;                                         \
+        out_im[(k) + (K)] = difAC_im - rot_im;                                         \
+        out_re[(k) + 2 * (K)] = sumAC_re - sumBD_re;                                   \
+        out_im[(k) + 2 * (K)] = sumAC_im - sumBD_im;                                   \
+        out_re[(k) + 3 * (K)] = difAC_re + rot_re;                                     \
+        out_im[(k) + 3 * (K)] = difAC_im + rot_im;                                     \
     } while (0)
 
 #endif // FFT_RADIX4_MACROS_TRUE_SOA_H
