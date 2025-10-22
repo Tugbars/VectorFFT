@@ -27,6 +27,7 @@
         "optional": "c",
         "memory": "c",
         "new": "c",
-        "iterator": "c"
+        "iterator": "c",
+        "fft_radix2_uniform.h": "c"
     }
 }
