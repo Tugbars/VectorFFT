@@ -813,11 +813,186 @@ is OK      Split/Join!
 
 ---
 
-**Report prepared by**: Claude (Anthropic)  
+**Report prepared by**: Tugbars
 **Date**: October 22, 2025  
 **Version**: 1.0  
 **License**: Public Domain
 
 ---
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                          ┃
+┃              SPLIT-ONCE, JOIN-ONCE: ONE-PAGE SUMMARY                    ┃
+┃          The Single Most Important SIMD FFT Optimization                ┃
+┃                                                                          ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-*"The best optimizations are the ones that make other optimizations possible."*
+═══════════════════════════════════════════════════════════════════════════
+THE PROBLEM
+═══════════════════════════════════════════════════════════════════════════
+
+Memory stores complex numbers as:     [re₀ im₀ re₁ im₁ re₂ im₂ ...] (AoS)
+SIMD computation needs:               [re₀ re₀ re₁ re₁ ...] separate from
+                                      [im₀ im₀ im₁ im₁ ...] (Split form)
+
+Naive solution: Shuffle continuously between formats
+                └─► 384+ shuffles per radix-32 butterfly!
+                └─► Shuffles INTERLEAVED with computation (pipeline stalls!)
+
+═══════════════════════════════════════════════════════════════════════════
+THE SOLUTION
+═══════════════════════════════════════════════════════════════════════════
+
+Split-Once, Join-Once Pattern:
+
+    LOAD → SPLIT → [COMPUTE... ALL IN SPLIT FORM ...] → JOIN → STORE
+           └────►  NO SHUFFLES IN THIS SECTION!  ◄────┘
+
+Key Insight: Shuffles at BOUNDARIES overlap with memory latency (free!)
+             Shuffles in MIDDLE block arithmetic operations (expensive!)
+
+═══════════════════════════════════════════════════════════════════════════
+DIRECT IMPACT
+═══════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────┬──────────────┬─────────────────┬──────────────┐
+│ Metric              │ Naive AoS    │ Split-Once      │ Improvement  │
+├─────────────────────┼──────────────┼─────────────────┼──────────────┤
+│ Shuffles/butterfly  │ ~436         │ ~3              │ 99.3% ↓      │
+│ Pipeline stalls     │ Constant     │ Minimal         │ Dramatic ↓   │
+│ Latency             │ 150 cycles   │ 128 cycles      │ 17% ↓        │
+│ Throughput          │ 0.67 bf/cyc  │ 0.78 bf/cyc     │ 17% ↑        │
+└─────────────────────┴──────────────┴─────────────────┴──────────────┘
+
+Direct performance gain: 10-15%
+
+═══════════════════════════════════════════════════════════════════════════
+THE CASCADE EFFECT (Why it's "The Real Hero")
+═══════════════════════════════════════════════════════════════════════════
+
+Split-once ENABLES other optimizations that wouldn't be possible otherwise:
+
+┌────────────────────────────────────────────────────────────────────────┐
+│ 1. Zero-Shuffle SoA Twiddle Loads                        +5-8%         │
+│    ─────────────────────────────────                                   │
+│    Split-form removes need for AoS twiddles                            │
+│    → Can use Structure-of-Arrays format                                │
+│    → Direct load, no shuffle needed                                    │
+│    → Eliminates 62 shuffles per butterfly                              │
+│                                                                         │
+│ 2. Parallel P0/P1 Port Execution                         +5-8%         │
+│    ────────────────────────────────                                    │
+│    No shuffle dependencies blocking arithmetic                         │
+│    → MUL operations can execute on different ports simultaneously      │
+│    → Latency: 11 cycles → 7 cycles                                     │
+│    → Throughput: 2× MUL per cycle                                      │
+│                                                                         │
+│ 3. Better Compiler Optimization                          +5-10%        │
+│    ───────────────────────────────                                     │
+│    Clean data flow without shuffle barriers                            │
+│    → Aggressive loop unrolling                                         │
+│    → Better register allocation                                        │
+│    → Fewer spills to stack                                             │
+│                                                                         │
+│ 4. Improved Cache Behavior                               +2-5%         │
+│    ──────────────────────────                                          │
+│    Block processing becomes natural                                    │
+│    → Data stays hot in cache                                           │
+│    → Better prefetcher prediction                                      │
+│    → Amortized conversion cost                                         │
+└────────────────────────────────────────────────────────────────────────┘
+
+Cascade effect: Additional 20-30% gain!
+
+═══════════════════════════════════════════════════════════════════════════
+TOTAL IMPACT
+═══════════════════════════════════════════════════════════════════════════
+
+    Direct gain:    10-15%    ┐
+    Cascade gains:  20-30%    ├──► TOTAL: 30-45% faster than naive
+    ────────────────────      ┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Radix-32 Butterfly Performance Breakdown:                               │
+│                                                                          │
+│   Naive baseline         ████████████████████ 150 cycles                │
+│   + Split-once           ████████████████▓    128 cycles  (-15%)        │
+│   + SoA twiddles         ███████████████▓     120 cycles  (-20%)        │
+│   + P0/P1 optimization   ██████████████       112 cycles  (-25%)        │
+│   + All optimizations    █████████████        105 cycles  (-30%)        │
+│                                                                          │
+│   Notice: Each optimization builds on split-once foundation!            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════
+CODE EXAMPLE: THE PATTERN
+═══════════════════════════════════════════════════════════════════════════
+
+❌ NAIVE (Bad):
+   for each operation:
+       aos_data → split → compute → join → aos_data
+                  └──► 3 shuffles PER OPERATION! ◄──┘
+
+✅ SPLIT-ONCE (Good):
+   aos_data → split                    (2 shuffles - ONCE)
+   
+   operation_1(split_data)             (0 shuffles)
+   operation_2(split_data)             (0 shuffles)
+   operation_3(split_data)             (0 shuffles)
+   ...
+   operation_N(split_data)             (0 shuffles)
+   
+   split_data → join → aos_data        (1 shuffle - ONCE)
+   
+   Total: 3 shuffles for N operations!
+
+═══════════════════════════════════════════════════════════════════════════
+WHEN TO USE THIS PATTERN
+═══════════════════════════════════════════════════════════════════════════
+
+✓ SIMD FFT implementations (any radix)
+✓ Complex number-heavy DSP algorithms
+✓ Signal processing with repeated operations
+✓ Matrix operations with complex values
+✓ Anywhere format conversion happens repeatedly
+
+═══════════════════════════════════════════════════════════════════════════
+THE FUNDAMENTAL PRINCIPLE
+═══════════════════════════════════════════════════════════════════════════
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                       ┃
+┃  "The best optimizations aren't just faster—                         ┃
+┃   they make OTHER optimizations possible."                           ┃
+┃                                                                       ┃
+┃  Split-once, join-once doesn't just eliminate shuffles.              ┃
+┃  It creates an ARCHITECTURE that enables a cascade of                ┃
+┃  additional optimizations that wouldn't be possible otherwise.       ┃
+┃                                                                       ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+═══════════════════════════════════════════════════════════════════════════
+DESIGN RULES
+═══════════════════════════════════════════════════════════════════════════
+
+1. Split at LOAD boundaries  ✓
+2. Join at STORE boundaries  ✓
+3. Never split/join in computation middle  ✗
+4. Keep data format consistent within hot path  ✓
+5. Choose data layout for COMPUTATION, not intuition  ✓
+
+═══════════════════════════════════════════════════════════════════════════
+BOTTOM LINE
+═══════════════════════════════════════════════════════════════════════════
+
+Individual micro-optimizations:           +2-3% each
+Split-once, join-once:                    +10-15% direct
+                                          +20-30% cascade
+                                          ═══════════════
+                                          +30-45% TOTAL
+
+It's not just an optimization—it's the FOUNDATION that makes all other
+optimizations possible. That's why it's "the real hero."
+
+═══════════════════════════════════════════════════════════════════════════
+
+For full technical details, see: SPLIT_ONCE_JOIN_ONCE_REPORT.md
