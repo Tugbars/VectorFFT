@@ -969,45 +969,50 @@ fft_object fft_init(int N, fft_direction_t direction)
         stage->N_stage = N_stage;
         stage->sub_len = sub_len;
         
-        // ──────────────────────────────────────────────────────────────────
-        // Twiddle Manager: Compute Cooley-Tukey stage twiddles
+         // ──────────────────────────────────────────────────────────────────
+        // Twiddle Manager: Compute Cooley-Tukey stage twiddles (SoA)
         // ──────────────────────────────────────────────────────────────────
         
-        stage->stage_tw = compute_stage_twiddles(N_stage, radix, direction);
+        stage->stage_tw = compute_stage_twiddles_soa(N_stage, radix, direction);
         
         if (!stage->stage_tw) {
-            FFT_LOG_ERROR("Failed to compute twiddles for stage %d (radix=%d)", i, radix);
+            FFT_LOG_ERROR("Failed to compute SoA twiddles for stage %d (radix=%d)", i, radix);
             free_fft(plan);
             return NULL;
         }
         
-        FFT_LOG_DEBUG("  Stage %d: radix=%d, N=%d, sub_len=%d, twiddles=%d",
+        FFT_LOG_DEBUG("  Stage %d: radix=%d, N=%d, sub_len=%d, twiddles=%d (SoA)",
                i, radix, N_stage, sub_len, (radix - 1) * sub_len);
 
+        //✅ NEW CODE (SoA version):
         // ──────────────────────────────────────────────────────────────────
-        // DFT Kernel Twiddles: For general radix fallback (optional)
+        // DFT Kernel Twiddles: For general radix fallback (optional, SoA)
         // ──────────────────────────────────────────────────────────────────
         
         // Only compute for radices that will use general radix fallback
-        // (Not strictly needed for recursive CT with specialized butterflies)
         int needs_dft_kernel = !has_radix_implementation(radix);
         
         if (needs_dft_kernel) {
-            stage->dft_kernel_tw = compute_dft_kernel_twiddles(radix, direction);
+            stage->dft_kernel_tw = compute_dft_kernel_twiddles_soa(radix, direction);
             
             if (!stage->dft_kernel_tw) {
-                FFT_LOG_ERROR("Failed to compute DFT kernel twiddles for radix %d", radix);
+                FFT_LOG_ERROR("Failed to compute SoA DFT kernel twiddles for radix %d", radix);
                 free_fft(plan);
                 return NULL;
             }
             
-            FFT_LOG_DEBUG("    → DFT kernel: radix=%d, twiddles=%d", radix, radix);
+            FFT_LOG_DEBUG("    → DFT kernel: radix=%d, twiddles=%d (SoA)", radix, radix);
         } else {
             stage->dft_kernel_tw = NULL;  // Not needed for specialized radices
         }
         
         // ──────────────────────────────────────────────────────────────────
         // Rader Manager: Fetch convolution twiddles for prime radices
+        // ──────────────────────────────────────────────────────────────────
+        
+        // ✅ NEW CODE (SoA version - NO CAST NEEDED!):
+        // ──────────────────────────────────────────────────────────────────
+        // Rader Manager: Fetch convolution twiddles for prime radices (SoA)
         // ──────────────────────────────────────────────────────────────────
         
         if (radix >= 7 && radix <= 67) {
@@ -1019,15 +1024,16 @@ fft_object fft_init(int N, fft_direction_t direction)
                            radix == 53 || radix == 59 || radix == 61 || radix == 67);
             
             if (is_prime) {
-                stage->rader_tw = (fft_data*)get_rader_twiddles(radix, direction);
+                // ⚡ CHANGED: No cast needed, get_rader_twiddles() returns fft_twiddles_soa*
+                stage->rader_tw = get_rader_twiddles_soa(radix, direction);
                 
                 if (!stage->rader_tw) {
-                    FFT_LOG_ERROR("Failed to get Rader twiddles for prime %d", radix);
+                    FFT_LOG_ERROR("Failed to get SoA Rader twiddles for prime %d", radix);
                     free_fft(plan);
                     return NULL;
                 }
                 
-                FFT_LOG_DEBUG("    → Rader: prime=%d, conv_twiddles=%d", radix, radix - 1);
+                FFT_LOG_DEBUG("    → Rader: prime=%d, conv_twiddles=%d (SoA)", radix, radix - 1);
             } else {
                 stage->rader_tw = NULL;
             }
@@ -1077,14 +1083,14 @@ void free_fft(fft_object plan)
     
     if (plan->strategy != FFT_EXEC_BLUESTEIN) {
         for (int i = 0; i < plan->num_stages; i++) {
-            // Free stage twiddles (always allocated for CT path)
+            // ⚡ CHANGED: Free SoA stage twiddles
             if (plan->stages[i].stage_tw) {
-                free_stage_twiddles(plan->stages[i].stage_tw);
+                free_stage_twiddles_soa(plan->stages[i].stage_tw);
             }
             
-            // Free DFT kernel twiddles (only if allocated)
+            // ⚡ CHANGED: Free SoA DFT kernel twiddles
             if (plan->stages[i].dft_kernel_tw) {
-                free_dft_kernel_twiddles(plan->stages[i].dft_kernel_tw);
+                free_dft_kernel_twiddles_soa(plan->stages[i].dft_kernel_tw);
             }
             
             // Note: stages[i].rader_tw is NOT freed (borrowed from global cache)
@@ -1092,7 +1098,7 @@ void free_fft(fft_object plan)
     }
     
     // ──────────────────────────────────────────────────────────────────
-    // Free Bluestein resources (if applicable)
+    // Free Bluestein resources (unchanged)
     // ──────────────────────────────────────────────────────────────────
     
     if (plan->strategy == FFT_EXEC_BLUESTEIN) {

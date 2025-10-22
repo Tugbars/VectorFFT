@@ -2,6 +2,12 @@
 // fft_radix16_bv.c - Inverse Radix-16 Butterfly (SOA VERSION - FULLY OPTIMIZED)
 //==============================================================================
 
+#include "fft_radix16_uniform.h"
+#include "simd_math.h"
+#include "fft_radix16_macros.h"
+
+#define PREFETCH_DISTANCE_AVX2 16
+
 /**
  * @brief Ultra-optimized inverse radix-16 butterfly (SoA version)
  * 
@@ -82,11 +88,11 @@ void fft_radix16_bv(
     const double *stage_tw_re = stage_tw->re;
     const double *stage_tw_im = stage_tw->im;
 
-    for (; k + 1 < K; k += 2)
+   for (; k + 3 < K; k += 2)
     {
         // Prefetch next iteration
-        PREFETCH_16_LANES(k, K, PREFETCH_L1, sub_outputs, _MM_HINT_T0);
-        PREFETCH_STAGE_TW_AVX2(k, PREFETCH_L1, stage_tw_re, stage_tw_im, sub_len);
+        PREFETCH_16_LANES(k, K, PREFETCH_DISTANCE_AVX2, sub_outputs, _MM_HINT_T0);
+        PREFETCH_STAGE_TW_AVX2(k, PREFETCH_DISTANCE_AVX2, stage_tw_re, stage_tw_im, sub_len);
         
         if (use_streaming)
         {
@@ -125,7 +131,7 @@ void fft_radix16_bv(
         //======================================================================
         // Apply precomputed SoA twiddles (15 multiplications)
         //======================================================================
-        APPLY_STAGE_TWIDDLES_R16_SCALAR(k, x, stage_tw, sub_len);
+        APPLY_STAGE_TWIDDLES_R16_SCALAR_SOA(k, x, stage_tw, sub_len);
         
         //======================================================================
         // First radix-4 stage: 4 groups of 4

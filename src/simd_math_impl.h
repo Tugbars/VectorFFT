@@ -1,5 +1,86 @@
 #include "simd_math.h"  // ✅ Gets fft_types.h and declarations
 
+
+#ifdef __AVX512F__
+/**
+ * @brief Complex multiply with SoA twiddles (AVX-512)
+ * 
+ * data: [re0,im0,re1,im1,re2,im2,re3,im3] (AoS)
+ * tw_re: [tw_re0,tw_re1,tw_re2,tw_re3,tw_re4,tw_re5,tw_re6,tw_re7] (SoA)
+ * tw_im: [tw_im0,tw_im1,tw_im2,tw_im3,tw_im4,tw_im5,tw_im6,tw_im7] (SoA)
+ * 
+ * Returns: [result_re0,result_im0,...,result_re3,result_im3] (AoS)
+ */
+static __always_inline __m512d cmul_avx512_soa(
+    __m512d data,      // AoS: [re0,im0,re1,im1,re2,im2,re3,im3]
+    __m512d tw_re,     // SoA: [re0,re1,re2,re3,re4,re5,re6,re7]
+    __m512d tw_im)     // SoA: [im0,im1,im2,im3,im4,im5,im6,im7]
+{
+    // Unpack data into separate re/im
+    __m512d data_re = _mm512_permute_pd(data, 0x00);  // [re0,re0,re1,re1,re2,re2,re3,re3]
+    __m512d data_im = _mm512_permute_pd(data, 0xFF);  // [im0,im0,im1,im1,im2,im2,im3,im3]
+    
+    // Complex multiply: (a+bi)*(c+di) = (ac-bd) + (ad+bc)i
+    __m512d ac = _mm512_mul_pd(data_re, tw_re);
+    __m512d bd = _mm512_mul_pd(data_im, tw_im);
+    __m512d ad = _mm512_mul_pd(data_re, tw_im);
+    __m512d bc = _mm512_mul_pd(data_im, tw_re);
+    
+    __m512d real = _mm512_sub_pd(ac, bd);
+    __m512d imag = _mm512_add_pd(ad, bc);
+    
+    // Interleave back to AoS
+    return _mm512_unpacklo_pd(real, imag);
+}
+#endif
+
+#ifdef __AVX2__
+/**
+ * @brief Complex multiply with SoA twiddles (AVX2)
+ */
+static __always_inline __m256d cmul_avx2_soa(
+    __m256d data,      // AoS: [re0,im0,re1,im1]
+    __m256d tw_re,     // SoA: [re0,re1,re2,re3]
+    __m256d tw_im)     // SoA: [im0,im1,im2,im3]
+{
+    __m256d data_re = _mm256_permute_pd(data, 0x0);  // [re0,re0,re1,re1]
+    __m256d data_im = _mm256_permute_pd(data, 0xF);  // [im0,im0,im1,im1]
+    
+    __m256d ac = _mm256_mul_pd(data_re, tw_re);
+    __m256d bd = _mm256_mul_pd(data_im, tw_im);
+    __m256d ad = _mm256_mul_pd(data_re, tw_im);
+    __m256d bc = _mm256_mul_pd(data_im, tw_re);
+    
+    __m256d real = _mm256_sub_pd(ac, bd);
+    __m256d imag = _mm256_add_pd(ad, bc);
+    
+    return _mm256_unpacklo_pd(real, imag);
+}
+#endif
+
+/**
+ * @brief Complex multiply with SoA twiddles (SSE2)
+ * tw_re and tw_im are broadcasted scalars
+ */
+static __always_inline __m128d cmul_sse2_soa(
+    __m128d data,           // AoS: [re,im]
+    __m128d tw_re_scalar,   // Broadcasted: [re,re]
+    __m128d tw_im_scalar)   // Broadcasted: [im,im]
+{
+    __m128d data_re = _mm_unpacklo_pd(data, data);  // [re,re]
+    __m128d data_im = _mm_unpackhi_pd(data, data);  // [im,im]
+    
+    __m128d ac = _mm_mul_pd(data_re, tw_re_scalar);
+    __m128d bd = _mm_mul_pd(data_im, tw_im_scalar);
+    __m128d ad = _mm_mul_pd(data_re, tw_im_scalar);
+    __m128d bc = _mm_mul_pd(data_im, tw_re_scalar);
+    
+    __m128d real = _mm_sub_pd(ac, bd);
+    __m128d imag = _mm_add_pd(ad, bc);
+    
+    return _mm_unpacklo_pd(real, imag);
+}
+
 //==============================================================================
 // AVX-512 Complex Operations (4 complex numbers at once)
 //==============================================================================

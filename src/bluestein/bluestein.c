@@ -146,7 +146,6 @@
 //==============================================================================
 
 #include "bluestein.h"
-#include "fft.h"
 #include "simd_math.h"
 #include <stdlib.h>
 #include <string.h>

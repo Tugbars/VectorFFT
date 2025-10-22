@@ -10,7 +10,7 @@
  * (AVX512, AVX2, SSE2) with scalar fallbacks. Both FFT-based and direct
  * convolution methods are supported.
  * 
- * @author Your Name
+ * @author Tugbars
  * @date 2025
  */
 

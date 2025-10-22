@@ -30,29 +30,29 @@
 
 /**
  * @brief Inverse radix-5 butterfly (SoA version)
- * 
+ *
  * Processes K radix-5 butterflies using geometric DFT algorithm.
- * 
+ *
  * @param output_buffer Output array (5*K complex values, stride K)
  * @param sub_outputs   Input array (5*K complex values, stride K)
  * @param stage_tw      Precomputed SoA twiddles (4 blocks of K, inverse sign)
  * @param sub_len       Number of butterflies to process (K)
- * 
+ *
  * @note Twiddles are SoA: tw->re[j*K + k], tw->im[j*K + k] for j=0..3
  */
 void fft_radix5_bv(
     fft_data *restrict output_buffer,
     const fft_data *restrict sub_outputs,
-    const fft_twiddles_soa *restrict stage_tw,  // ✅ SOA SIGNATURE
+    const fft_twiddles_soa *restrict stage_tw, // ✅ SOA SIGNATURE
     int sub_len)
 {
     // Alignment hints for better codegen
     output_buffer = __builtin_assume_aligned(output_buffer, 32);
     sub_outputs = __builtin_assume_aligned(sub_outputs, 32);
-    
+
     const int K = sub_len;
     int k = 0;
-    
+
     // Streaming threshold: use non-temporal stores for large K
     const int use_streaming = (K >= 4096);
 
@@ -60,58 +60,62 @@ void fft_radix5_bv(
     //==========================================================================
     // AVX-512 PATH: Process 4 butterflies at a time
     //==========================================================================
-    
+
     for (; k + 3 < K; k += 4)
     {
         // Multi-level prefetching
         PREFETCH_5_LANES_AVX512_SOA(k, K, PREFETCH_L1_R5_AVX512, sub_outputs, stage_tw, _MM_HINT_T0);
         PREFETCH_5_LANES_AVX512_SOA(k, K, PREFETCH_L2_R5_AVX512, sub_outputs, stage_tw, _MM_HINT_T1);
         PREFETCH_5_LANES_AVX512_SOA(k, K, PREFETCH_L3_R5_AVX512, sub_outputs, stage_tw, _MM_HINT_T2);
-        
-        if (use_streaming) {
+
+        if (use_streaming)
+        {
             RADIX5_PIPELINE_4_BV_AVX512_STREAM_SOA(k, K, sub_outputs, stage_tw, output_buffer);
-        } else {
+        }
+        else
+        {
             RADIX5_PIPELINE_4_BV_AVX512_SOA(k, K, sub_outputs, stage_tw, output_buffer);
         }
     }
-    
-    if (use_streaming) {
+
+    if (use_streaming)
+    {
         _mm_sfence();
     }
-    
+
 #endif // __AVX512F__
 
 #ifdef __AVX2__
     //==========================================================================
     // AVX2 PATH: Process 2 butterflies at a time
     //==========================================================================
-    
+
     for (; k + 1 < K; k += 2)
     {
         // Multi-level prefetching
         PREFETCH_5_LANES_R5_AVX2_SOA(k, K, PREFETCH_L1_R5, sub_outputs, stage_tw, _MM_HINT_T0);
         PREFETCH_5_LANES_R5_AVX2_SOA(k, K, PREFETCH_L2_R5, sub_outputs, stage_tw, _MM_HINT_T1);
         PREFETCH_5_LANES_R5_AVX2_SOA(k, K, PREFETCH_L3_R5, sub_outputs, stage_tw, _MM_HINT_T2);
-        
+
         //======================================================================
         // Load 5 lanes for 2 butterflies
         //======================================================================
         __m256d a, b, c, d, e;
         LOAD_5_LANES_AVX2(k, K, sub_outputs, a, b, c, d, e);
-        
+
         //======================================================================
         // Apply precomputed SoA twiddles
         //======================================================================
         __m256d tw_b, tw_c, tw_d, tw_e;
         APPLY_STAGE_TWIDDLES_R5_AVX2_SOA(k, K, b, c, d, e, stage_tw,
                                          tw_b, tw_c, tw_d, tw_e);
-        
+
         //======================================================================
         // Radix-5 butterfly computation (INVERSE)
         //======================================================================
         __m256d y0, y1, y2, y3, y4;
         RADIX5_BUTTERFLY_BV_AVX2(a, tw_b, tw_c, tw_d, tw_e, y0, y1, y2, y3, y4);
-        
+
         //====================================================================
         //======================================================================
         // Store results

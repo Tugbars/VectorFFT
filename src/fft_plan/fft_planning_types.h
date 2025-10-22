@@ -483,9 +483,9 @@ typedef enum {
  */
 typedef enum {
     FFT_EXEC_INPLACE_BITREV,    ///< Bit-reversal Cooley-Tukey (N = 2^k only, 0 workspace)
-    FFT_EXEC_STOCKHAM,          ///< Stockham auto-sort (any composite N, 1N workspace)
-    FFT_EXEC_BLUESTEIN,         ///< Bluestein chirp-z (arbitrary N, 3M workspace where M = 2^⌈log₂(2N-1)⌉)
-    FFT_EXEC_OUT_OF_PLACE       ///< Generic out-of-place (reserved for future use)
+    FFT_EXEC_RECURSIVE_CT,      ///< Recursive Cooley-Tukey (any factorizable N, 2N workspace)
+    FFT_EXEC_BLUESTEIN,         ///< Bluestein chirp-z (arbitrary N, 3M workspace)
+    FFT_EXEC_OUT_OF_PLACE       ///< Generic out-of-place (reserved)
 } fft_exec_strategy_t;
 
 //==============================================================================

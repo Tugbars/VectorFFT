@@ -133,18 +133,20 @@ static int fft_exec_inplace_bitrev_internal(fft_object plan, fft_data *data)
             return -1;
         }
 
-        const fft_data *twiddles = s->stage_tw;
+        const fft_twiddles_soa *twiddles = s->stage_tw;  // ✅ Correct type
         const int num_groups = N / (2 * distance);
 
-        // SoA layout: For radix-2, tw[0*distance + k] = W^k
-        // Since radix-2 has only r=1, the layout is just tw[k]
         for (int group = 0; group < num_groups; group++)
         {
             for (int k = 0; k < distance; k++)
             {
                 int idx = group * 2 * distance + k;
-                // SoA indexing: tw[k] (no r-offset since radix=2 has only one twiddle per k)
-                fft_data W = twiddles[k];
+                
+                // ✅ Construct AoS twiddle from SoA storage
+                fft_data W;
+                W.re = twiddles->re[k];
+                W.im = twiddles->im[k];
+                
                 butterfly_radix2_inplace(data, idx, distance, W);
             }
         }

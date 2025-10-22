@@ -20,7 +20,7 @@
 //   - Algorithm is otherwise IDENTICAL
 //
 
-#include "fft_radix2.h"
+#include "fft_radix2_uniform.h"
 #include "fft_radix2_macros.h"
 
 /**

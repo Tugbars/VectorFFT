@@ -42,7 +42,7 @@
  * Currently: 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67
  * Extendable: Add to g_primitive_roots[] database
  *
- * @author Your Name
+ * @author Tugbars
  * @date 2025
  * @version 2.0 (SoA migration)
  */

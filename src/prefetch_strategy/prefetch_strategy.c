@@ -28,7 +28,7 @@
  *                 prefetch_strategy.c throttle_enhanced.c adaptive_tuning.c
  *             Uses all advanced features
  * 
- * @author Your Name
+ * @author Tugbars
  * @date 2025
  */
 /*

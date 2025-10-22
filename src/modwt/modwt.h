@@ -11,7 +11,7 @@
  * include aggressive loop unrolling, FMA usage, prefetching, and efficient
  * AoS (Array-of-Structures) memory layouts.
  * 
- * @author [Your Name]
+ * @author Tugbars
  * @date [Date]
  * @version 2.0.0 (SIMD-Optimized)
  * 

@@ -118,7 +118,7 @@
  * free_stage_twiddles_soa(tw);
  * ```
  *
- * @author Your Name
+ * @author Tugbars
  * @date 2025
  * @version 2.0 (Pure SoA)
  */
