@@ -644,237 +644,265 @@ static __always_inline __m512d join_ri_avx512(__m512d re, __m512d im)
 #endif // __AVX512F__
 
 //==============================================================================
-// COMPLETE RADIX-32 BUTTERFLY - AVX-512 FORWARD
+// COMPLETE RADIX-32 BUTTERFLY - AVX-512 FORWARD (v2 - Improved Pipelining)
 //==============================================================================
 
-#define RADIX32_FORWARD_BUTTERFLY_AVX512(kk, K, sub_outputs, stage_tw, output_buffer)                \
-  do                                                                                                 \
-  {                                                                                                  \
-    PREFETCH_32_LANES_R32_AVX512(kk, K, PREFETCH_L1_R32_AVX512, sub_outputs, stage_tw, _MM_HINT_T0); \
-    PREFETCH_32_LANES_R32_AVX512(kk, K, PREFETCH_L2_R32_AVX512, sub_outputs, stage_tw, _MM_HINT_T1); \
-                                                                                                     \
-    __m512d x_re[32][4], x_im[32][4];                                                                \
-                                                                                                     \
-    for (int b = 0; b < 4; ++b)                                                                      \
-    {                                                                                                \
-      int k = kk + b;                                                                                \
-      for (int lane = 0; lane < 32; ++lane)                                                          \
-      {                                                                                              \
-        LOAD_4_COMPLEX_SPLIT_AVX512(&sub_outputs[k + lane * K],                                      \
-                                    x_re[lane][b], x_im[lane][b]);                                   \
-      }                                                                                              \
-    }                                                                                                \
-                                                                                                     \
-    for (int lane = 1; lane < 32; ++lane)                                                            \
-    {                                                                                                \
-      for (int b = 0; b < 4; ++b)                                                                    \
-      {                                                                                              \
-        __m512d tw_re, tw_im;                                                                        \
-        APPLY_STAGE_TWIDDLE_R32_AVX512_SOA(kk + b, x_re[lane][b], x_im[lane][b],                     \
-                                           stage_tw, K, lane, tw_re, tw_im);                         \
-        x_re[lane][b] = tw_re;                                                                       \
-        x_im[lane][b] = tw_im;                                                                       \
-      }                                                                                              \
-    }                                                                                                \
-                                                                                                     \
-    for (int g = 0; g < 8; ++g)                                                                      \
-    {                                                                                                \
-      for (int b = 0; b < 4; ++b)                                                                    \
-      {                                                                                              \
-        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX512(                                                       \
-            x_re[g][b], x_im[g][b],                                                                  \
-            x_re[g + 8][b], x_im[g + 8][b],                                                          \
-            x_re[g + 16][b], x_im[g + 16][b],                                                        \
-            x_re[g + 24][b], x_im[g + 24][b]);                                                       \
-      }                                                                                              \
-    }                                                                                                \
-                                                                                                     \
-    for (int b = 0; b < 4; ++b)                                                                      \
-    {                                                                                                \
-      APPLY_W32_TWIDDLES_BV_AVX512_SPLIT(x_re, x_im, b);                                             \
-    }                                                                                                \
-                                                                                                     \
-    for (int octave = 0; octave < 4; ++octave)                                                       \
-    {                                                                                                \
-      int base = 8 * octave;                                                                         \
-                                                                                                     \
-      for (int b = 0; b < 4; ++b)                                                                    \
-      {                                                                                              \
-        __m512d e0_re = x_re[base + 0][b], e0_im = x_im[base + 0][b];                                \
-        __m512d e2_re = x_re[base + 2][b], e2_im = x_im[base + 2][b];                                \
-        __m512d e4_re = x_re[base + 4][b], e4_im = x_im[base + 4][b];                                \
-        __m512d e6_re = x_re[base + 6][b], e6_im = x_im[base + 6][b];                                \
-                                                                                                     \
-        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX512(e0_re, e0_im, e2_re, e2_im,                            \
-                                              e4_re, e4_im, e6_re, e6_im);                           \
-                                                                                                     \
-        __m512d o1_re = x_re[base + 1][b], o1_im = x_im[base + 1][b];                                \
-        __m512d o3_re = x_re[base + 3][b], o3_im = x_im[base + 3][b];                                \
-        __m512d o5_re = x_re[base + 5][b], o5_im = x_im[base + 5][b];                                \
-        __m512d o7_re = x_re[base + 7][b], o7_im = x_im[base + 7][b];                                \
-                                                                                                     \
-        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX512(o1_re, o1_im, o3_re, o3_im,                            \
-                                              o5_re, o5_im, o7_re, o7_im);                           \
-                                                                                                     \
-        APPLY_W8_TWIDDLES_BV_AVX512_SPLIT(o1_re, o1_im, o3_re, o3_im, o5_re, o5_im);                 \
-                                                                                                     \
-        RADIX8_COMBINE_SPLIT_AVX512(                                                                 \
-            e0_re, e0_im, e2_re, e2_im, e4_re, e4_im, e6_re, e6_im,                                  \
-            o1_re, o1_im, o3_re, o3_im, o5_re, o5_im, o7_re, o7_im,                                  \
-            x_re[base + 0][b], x_im[base + 0][b],                                                    \
-            x_re[base + 1][b], x_im[base + 1][b],                                                    \
-            x_re[base + 2][b], x_im[base + 2][b],                                                    \
-            x_re[base + 3][b], x_im[base + 3][b],                                                    \
-            x_re[base + 4][b], x_im[base + 4][b],                                                    \
-            x_re[base + 5][b], x_im[base + 5][b],                                                    \
-            x_re[base + 6][b], x_im[base + 6][b],                                                    \
-            x_re[base + 7][b], x_im[base + 7][b]);                                                   \
-      }                                                                                              \
-    }                                                                                                \
-                                                                                                     \
-    const int use_streaming = (K >= 256);                                                            \
-                                                                                                     \
-    for (int g = 0; g < 8; ++g)                                                                      \
-    {                                                                                                \
-      for (int j = 0; j < 4; ++j)                                                                    \
-      {                                                                                              \
-        int out_lane = g * 4 + j;                                                                    \
-                                                                                                     \
-        for (int b = 0; b < 4; ++b)                                                                  \
-        {                                                                                            \
-          int k = kk + b;                                                                            \
-          if (use_streaming)                                                                         \
-          {                                                                                          \
-            STORE_4_COMPLEX_SPLIT_AVX512_STREAM(                                                     \
-                &output_buffer[k + out_lane * K],                                                    \
-                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                             \
-          }                                                                                          \
-          else                                                                                       \
-          {                                                                                          \
-            STORE_4_COMPLEX_SPLIT_AVX512(                                                            \
-                &output_buffer[k + out_lane * K],                                                    \
-                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                             \
-          }                                                                                          \
-        }                                                                                            \
-      }                                                                                              \
-    }                                                                                                \
+#define RADIX32_FORWARD_BUTTERFLY_AVX512(kk, K, sub_outputs, stage_tw, output_buffer)       \
+  do                                                                                        \
+  {                                                                                         \
+    /* v2: Tighter prefetch window for better pipelining */                                 \
+    const int PF_DISTANCE = 12;                                                             \
+    if (kk + PF_DISTANCE < K)                                                               \
+    {                                                                                       \
+      PREFETCH_32_LANES_R32_AVX512(kk, K, PF_DISTANCE, sub_outputs, stage_tw, _MM_HINT_T0); \
+    }                                                                                       \
+                                                                                            \
+    __m512d x_re[32][4], x_im[32][4];                                                       \
+                                                                                            \
+    /* v2: Interleaved loads in batches for better instruction scheduling */                \
+    for (int batch = 0; batch < 4; ++batch)                                                 \
+    {                                                                                       \
+      int lane_start = batch * 8;                                                           \
+      int lane_end = lane_start + 8;                                                        \
+      for (int b = 0; b < 4; ++b)                                                           \
+      {                                                                                     \
+        int k = kk + b;                                                                     \
+        for (int lane = lane_start; lane < lane_end; ++lane)                                \
+        {                                                                                   \
+          LOAD_4_COMPLEX_SPLIT_AVX512(&sub_outputs[k + lane * K],                           \
+                                      x_re[lane][b], x_im[lane][b]);                        \
+        }                                                                                   \
+      }                                                                                     \
+    }                                                                                       \
+                                                                                            \
+    /* v2: Grouped twiddle application for better ILP */                                    \
+    for (int lane_group = 1; lane_group < 32; lane_group += 4)                              \
+    {                                                                                       \
+      for (int lane = lane_group; lane < lane_group + 4 && lane < 32; ++lane)               \
+      {                                                                                     \
+        for (int b = 0; b < 4; ++b)                                                         \
+        {                                                                                   \
+          __m512d tw_re, tw_im;                                                             \
+          APPLY_STAGE_TWIDDLE_R32_AVX512_SOA(kk + b, x_re[lane][b], x_im[lane][b],          \
+                                             stage_tw, K, lane, tw_re, tw_im);              \
+          x_re[lane][b] = tw_re;                                                            \
+          x_im[lane][b] = tw_im;                                                            \
+        }                                                                                   \
+      }                                                                                     \
+    }                                                                                       \
+                                                                                            \
+    for (int g = 0; g < 8; ++g)                                                             \
+    {                                                                                       \
+      for (int b = 0; b < 4; ++b)                                                           \
+      {                                                                                     \
+        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX512(                                              \
+            x_re[g][b], x_im[g][b],                                                         \
+            x_re[g + 8][b], x_im[g + 8][b],                                                 \
+            x_re[g + 16][b], x_im[g + 16][b],                                               \
+            x_re[g + 24][b], x_im[g + 24][b]);                                              \
+      }                                                                                     \
+    }                                                                                       \
+                                                                                            \
+    for (int b = 0; b < 4; ++b)                                                             \
+    {                                                                                       \
+      APPLY_W32_TWIDDLES_BV_AVX512_SPLIT(x_re, x_im, b);                                    \
+    }                                                                                       \
+                                                                                            \
+    for (int octave = 0; octave < 4; ++octave)                                              \
+    {                                                                                       \
+      int base = 8 * octave;                                                                \
+                                                                                            \
+      for (int b = 0; b < 4; ++b)                                                           \
+      {                                                                                     \
+        __m512d e0_re = x_re[base + 0][b], e0_im = x_im[base + 0][b];                       \
+        __m512d e2_re = x_re[base + 2][b], e2_im = x_im[base + 2][b];                       \
+        __m512d e4_re = x_re[base + 4][b], e4_im = x_im[base + 4][b];                       \
+        __m512d e6_re = x_re[base + 6][b], e6_im = x_im[base + 6][b];                       \
+                                                                                            \
+        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX512(e0_re, e0_im, e2_re, e2_im,                   \
+                                              e4_re, e4_im, e6_re, e6_im);                  \
+                                                                                            \
+        __m512d o1_re = x_re[base + 1][b], o1_im = x_im[base + 1][b];                       \
+        __m512d o3_re = x_re[base + 3][b], o3_im = x_im[base + 3][b];                       \
+        __m512d o5_re = x_re[base + 5][b], o5_im = x_im[base + 5][b];                       \
+        __m512d o7_re = x_re[base + 7][b], o7_im = x_im[base + 7][b];                       \
+                                                                                            \
+        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX512(o1_re, o1_im, o3_re, o3_im,                   \
+                                              o5_re, o5_im, o7_re, o7_im);                  \
+                                                                                            \
+        APPLY_W8_TWIDDLES_BV_AVX512_SPLIT(o1_re, o1_im, o3_re, o3_im, o5_re, o5_im);        \
+                                                                                            \
+        RADIX8_COMBINE_SPLIT_AVX512(                                                        \
+            e0_re, e0_im, e2_re, e2_im, e4_re, e4_im, e6_re, e6_im,                         \
+            o1_re, o1_im, o3_re, o3_im, o5_re, o5_im, o7_re, o7_im,                         \
+            x_re[base + 0][b], x_im[base + 0][b],                                           \
+            x_re[base + 1][b], x_im[base + 1][b],                                           \
+            x_re[base + 2][b], x_im[base + 2][b],                                           \
+            x_re[base + 3][b], x_im[base + 3][b],                                           \
+            x_re[base + 4][b], x_im[base + 4][b],                                           \
+            x_re[base + 5][b], x_im[base + 5][b],                                           \
+            x_re[base + 6][b], x_im[base + 6][b],                                           \
+            x_re[base + 7][b], x_im[base + 7][b]);                                          \
+      }                                                                                     \
+    }                                                                                       \
+                                                                                            \
+    const int use_streaming = (K >= 256);                                                   \
+                                                                                            \
+    for (int g = 0; g < 8; ++g)                                                             \
+    {                                                                                       \
+      for (int j = 0; j < 4; ++j)                                                           \
+      {                                                                                     \
+        int out_lane = g * 4 + j;                                                           \
+                                                                                            \
+        for (int b = 0; b < 4; ++b)                                                         \
+        {                                                                                   \
+          int k = kk + b;                                                                   \
+          if (use_streaming)                                                                \
+          {                                                                                 \
+            STORE_4_COMPLEX_SPLIT_AVX512_STREAM(                                            \
+                &output_buffer[k + out_lane * K],                                           \
+                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                    \
+          }                                                                                 \
+          else                                                                              \
+          {                                                                                 \
+            STORE_4_COMPLEX_SPLIT_AVX512(                                                   \
+                &output_buffer[k + out_lane * K],                                           \
+                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                    \
+          }                                                                                 \
+        }                                                                                   \
+      }                                                                                     \
+    }                                                                                       \
   } while (0)
 
 //==============================================================================
-// COMPLETE RADIX-32 BUTTERFLY - AVX-512 INVERSE
+// COMPLETE RADIX-32 BUTTERFLY - AVX-512 INVERSE (v2 - Improved Pipelining)
 //==============================================================================
 
-#define RADIX32_INVERSE_BUTTERFLY_AVX512(kk, K, sub_outputs, stage_tw, output_buffer)                \
-  do                                                                                                 \
-  {                                                                                                  \
-    PREFETCH_32_LANES_R32_AVX512(kk, K, PREFETCH_L1_R32_AVX512, sub_outputs, stage_tw, _MM_HINT_T0); \
-    PREFETCH_32_LANES_R32_AVX512(kk, K, PREFETCH_L2_R32_AVX512, sub_outputs, stage_tw, _MM_HINT_T1); \
-                                                                                                     \
-    __m512d x_re[32][4], x_im[32][4];                                                                \
-                                                                                                     \
-    for (int b = 0; b < 4; ++b)                                                                      \
-    {                                                                                                \
-      int k = kk + b;                                                                                \
-      for (int lane = 0; lane < 32; ++lane)                                                          \
-      {                                                                                              \
-        LOAD_4_COMPLEX_SPLIT_AVX512(&sub_outputs[k + lane * K],                                      \
-                                    x_re[lane][b], x_im[lane][b]);                                   \
-      }                                                                                              \
-    }                                                                                                \
-                                                                                                     \
-    for (int lane = 1; lane < 32; ++lane)                                                            \
-    {                                                                                                \
-      for (int b = 0; b < 4; ++b)                                                                    \
-      {                                                                                              \
-        __m512d tw_re, tw_im;                                                                        \
-        APPLY_STAGE_TWIDDLE_R32_AVX512_SOA(kk + b, x_re[lane][b], x_im[lane][b],                     \
-                                           stage_tw, K, lane, tw_re, tw_im);                         \
-        x_re[lane][b] = tw_re;                                                                       \
-        x_im[lane][b] = tw_im;                                                                       \
-      }                                                                                              \
-    }                                                                                                \
-                                                                                                     \
-    for (int g = 0; g < 8; ++g)                                                                      \
-    {                                                                                                \
-      for (int b = 0; b < 4; ++b)                                                                    \
-      {                                                                                              \
-        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX512(                                                       \
-            x_re[g][b], x_im[g][b],                                                                  \
-            x_re[g + 8][b], x_im[g + 8][b],                                                          \
-            x_re[g + 16][b], x_im[g + 16][b],                                                        \
-            x_re[g + 24][b], x_im[g + 24][b]);                                                       \
-      }                                                                                              \
-    }                                                                                                \
-                                                                                                     \
-    for (int b = 0; b < 4; ++b)                                                                      \
-    {                                                                                                \
-      APPLY_W32_TWIDDLES_BV_AVX512_SPLIT(x_re, x_im, b);                                             \
-    }                                                                                                \
-                                                                                                     \
-    for (int octave = 0; octave < 4; ++octave)                                                       \
-    {                                                                                                \
-      int base = 8 * octave;                                                                         \
-                                                                                                     \
-      for (int b = 0; b < 4; ++b)                                                                    \
-      {                                                                                              \
-        __m512d e0_re = x_re[base + 0][b], e0_im = x_im[base + 0][b];                                \
-        __m512d e2_re = x_re[base + 2][b], e2_im = x_im[base + 2][b];                                \
-        __m512d e4_re = x_re[base + 4][b], e4_im = x_im[base + 4][b];                                \
-        __m512d e6_re = x_re[base + 6][b], e6_im = x_im[base + 6][b];                                \
-                                                                                                     \
-        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX512(e0_re, e0_im, e2_re, e2_im,                            \
-                                              e4_re, e4_im, e6_re, e6_im);                           \
-                                                                                                     \
-        __m512d o1_re = x_re[base + 1][b], o1_im = x_im[base + 1][b];                                \
-        __m512d o3_re = x_re[base + 3][b], o3_im = x_im[base + 3][b];                                \
-        __m512d o5_re = x_re[base + 5][b], o5_im = x_im[base + 5][b];                                \
-        __m512d o7_re = x_re[base + 7][b], o7_im = x_im[base + 7][b];                                \
-                                                                                                     \
-        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX512(o1_re, o1_im, o3_re, o3_im,                            \
-                                              o5_re, o5_im, o7_re, o7_im);                           \
-                                                                                                     \
-        APPLY_W8_TWIDDLES_BV_AVX512_SPLIT(o1_re, o1_im, o3_re, o3_im, o5_re, o5_im);                 \
-                                                                                                     \
-        RADIX8_COMBINE_SPLIT_AVX512(                                                                 \
-            e0_re, e0_im, e2_re, e2_im, e4_re, e4_im, e6_re, e6_im,                                  \
-            o1_re, o1_im, o3_re, o3_im, o5_re, o5_im, o7_re, o7_im,                                  \
-            x_re[base + 0][b], x_im[base + 0][b],                                                    \
-            x_re[base + 1][b], x_im[base + 1][b],                                                    \
-            x_re[base + 2][b], x_im[base + 2][b],                                                    \
-            x_re[base + 3][b], x_im[base + 3][b],                                                    \
-            x_re[base + 4][b], x_im[base + 4][b],                                                    \
-            x_re[base + 5][b], x_im[base + 5][b],                                                    \
-            x_re[base + 6][b], x_im[base + 6][b],                                                    \
-            x_re[base + 7][b], x_im[base + 7][b]);                                                   \
-      }                                                                                              \
-    }                                                                                                \
-                                                                                                     \
-    const int use_streaming = (K >= 256);                                                            \
-                                                                                                     \
-    for (int g = 0; g < 8; ++g)                                                                      \
-    {                                                                                                \
-      for (int j = 0; j < 4; ++j)                                                                    \
-      {                                                                                              \
-        int out_lane = g * 4 + j;                                                                    \
-                                                                                                     \
-        for (int b = 0; b < 4; ++b)                                                                  \
-        {                                                                                            \
-          int k = kk + b;                                                                            \
-          if (use_streaming)                                                                         \
-          {                                                                                          \
-            STORE_4_COMPLEX_SPLIT_AVX512_STREAM(                                                     \
-                &output_buffer[k + out_lane * K],                                                    \
-                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                             \
-          }                                                                                          \
-          else                                                                                       \
-          {                                                                                          \
-            STORE_4_COMPLEX_SPLIT_AVX512(                                                            \
-                &output_buffer[k + out_lane * K],                                                    \
-                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                             \
-          }                                                                                          \
-        }                                                                                            \
-      }                                                                                              \
-    }                                                                                                \
+#define RADIX32_INVERSE_BUTTERFLY_AVX512(kk, K, sub_outputs, stage_tw, output_buffer)       \
+  do                                                                                        \
+  {                                                                                         \
+    /* v2: Tighter prefetch window */                                                       \
+    const int PF_DISTANCE = 12;                                                             \
+    if (kk + PF_DISTANCE < K)                                                               \
+    {                                                                                       \
+      PREFETCH_32_LANES_R32_AVX512(kk, K, PF_DISTANCE, sub_outputs, stage_tw, _MM_HINT_T0); \
+    }                                                                                       \
+                                                                                            \
+    __m512d x_re[32][4], x_im[32][4];                                                       \
+                                                                                            \
+    /* v2: Interleaved loads in batches */                                                  \
+    for (int batch = 0; batch < 4; ++batch)                                                 \
+    {                                                                                       \
+      int lane_start = batch * 8;                                                           \
+      int lane_end = lane_start + 8;                                                        \
+      for (int b = 0; b < 4; ++b)                                                           \
+      {                                                                                     \
+        int k = kk + b;                                                                     \
+        for (int lane = lane_start; lane < lane_end; ++lane)                                \
+        {                                                                                   \
+          LOAD_4_COMPLEX_SPLIT_AVX512(&sub_outputs[k + lane * K],                           \
+                                      x_re[lane][b], x_im[lane][b]);                        \
+        }                                                                                   \
+      }                                                                                     \
+    }                                                                                       \
+                                                                                            \
+    /* v2: Grouped twiddle application */                                                   \
+    for (int lane_group = 1; lane_group < 32; lane_group += 4)                              \
+    {                                                                                       \
+      for (int lane = lane_group; lane < lane_group + 4 && lane < 32; ++lane)               \
+      {                                                                                     \
+        for (int b = 0; b < 4; ++b)                                                         \
+        {                                                                                   \
+          __m512d tw_re, tw_im;                                                             \
+          APPLY_STAGE_TWIDDLE_R32_AVX512_SOA(kk + b, x_re[lane][b], x_im[lane][b],          \
+                                             stage_tw, K, lane, tw_re, tw_im);              \
+          x_re[lane][b] = tw_re;                                                            \
+          x_im[lane][b] = tw_im;                                                            \
+        }                                                                                   \
+      }                                                                                     \
+    }                                                                                       \
+                                                                                            \
+    for (int g = 0; g < 8; ++g)                                                             \
+    {                                                                                       \
+      for (int b = 0; b < 4; ++b)                                                           \
+      {                                                                                     \
+        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX512(                                              \
+            x_re[g][b], x_im[g][b],                                                         \
+            x_re[g + 8][b], x_im[g + 8][b],                                                 \
+            x_re[g + 16][b], x_im[g + 16][b],                                               \
+            x_re[g + 24][b], x_im[g + 24][b]);                                              \
+      }                                                                                     \
+    }                                                                                       \
+                                                                                            \
+    for (int b = 0; b < 4; ++b)                                                             \
+    {                                                                                       \
+      APPLY_W32_TWIDDLES_BV_AVX512_SPLIT(x_re, x_im, b);                                    \
+    }                                                                                       \
+                                                                                            \
+    for (int octave = 0; octave < 4; ++octave)                                              \
+    {                                                                                       \
+      int base = 8 * octave;                                                                \
+                                                                                            \
+      for (int b = 0; b < 4; ++b)                                                           \
+      {                                                                                     \
+        __m512d e0_re = x_re[base + 0][b], e0_im = x_im[base + 0][b];                       \
+        __m512d e2_re = x_re[base + 2][b], e2_im = x_im[base + 2][b];                       \
+        __m512d e4_re = x_re[base + 4][b], e4_im = x_im[base + 4][b];                       \
+        __m512d e6_re = x_re[base + 6][b], e6_im = x_im[base + 6][b];                       \
+                                                                                            \
+        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX512(e0_re, e0_im, e2_re, e2_im,                   \
+                                              e4_re, e4_im, e6_re, e6_im);                  \
+                                                                                            \
+        __m512d o1_re = x_re[base + 1][b], o1_im = x_im[base + 1][b];                       \
+        __m512d o3_re = x_re[base + 3][b], o3_im = x_im[base + 3][b];                       \
+        __m512d o5_re = x_re[base + 5][b], o5_im = x_im[base + 5][b];                       \
+        __m512d o7_re = x_re[base + 7][b], o7_im = x_im[base + 7][b];                       \
+                                                                                            \
+        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX512(o1_re, o1_im, o3_re, o3_im,                   \
+                                              o5_re, o5_im, o7_re, o7_im);                  \
+                                                                                            \
+        APPLY_W8_TWIDDLES_BV_AVX512_SPLIT(o1_re, o1_im, o3_re, o3_im, o5_re, o5_im);        \
+                                                                                            \
+        RADIX8_COMBINE_SPLIT_AVX512(                                                        \
+            e0_re, e0_im, e2_re, e2_im, e4_re, e4_im, e6_re, e6_im,                         \
+            o1_re, o1_im, o3_re, o3_im, o5_re, o5_im, o7_re, o7_im,                         \
+            x_re[base + 0][b], x_im[base + 0][b],                                           \
+            x_re[base + 1][b], x_im[base + 1][b],                                           \
+            x_re[base + 2][b], x_im[base + 2][b],                                           \
+            x_re[base + 3][b], x_im[base + 3][b],                                           \
+            x_re[base + 4][b], x_im[base + 4][b],                                           \
+            x_re[base + 5][b], x_im[base + 5][b],                                           \
+            x_re[base + 6][b], x_im[base + 6][b],                                           \
+            x_re[base + 7][b], x_im[base + 7][b]);                                          \
+      }                                                                                     \
+    }                                                                                       \
+                                                                                            \
+    const int use_streaming = (K >= 256);                                                   \
+                                                                                            \
+    for (int g = 0; g < 8; ++g)                                                             \
+    {                                                                                       \
+      for (int j = 0; j < 4; ++j)                                                           \
+      {                                                                                     \
+        int out_lane = g * 4 + j;                                                           \
+                                                                                            \
+        for (int b = 0; b < 4; ++b)                                                         \
+        {                                                                                   \
+          int k = kk + b;                                                                   \
+          if (use_streaming)                                                                \
+          {                                                                                 \
+            STORE_4_COMPLEX_SPLIT_AVX512_STREAM(                                            \
+                &output_buffer[k + out_lane * K],                                           \
+                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                    \
+          }                                                                                 \
+          else                                                                              \
+          {                                                                                 \
+            STORE_4_COMPLEX_SPLIT_AVX512(                                                   \
+                &output_buffer[k + out_lane * K],                                           \
+                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                    \
+          }                                                                                 \
+        }                                                                                   \
+      }                                                                                     \
+    }                                                                                       \
   } while (0)
 
 //==============================================================================
@@ -1364,237 +1392,265 @@ static __always_inline __m256d join_ri_avx2(__m256d re, __m256d im)
 #endif // __AVX2__
 
 //==============================================================================
-// COMPLETE RADIX-32 BUTTERFLY - AVX2 FORWARD
+// COMPLETE RADIX-32 BUTTERFLY - AVX2 FORWARD (v2 - Improved Pipelining)
 //==============================================================================
 
-#define RADIX32_FORWARD_BUTTERFLY_AVX2(kk, K, sub_outputs, stage_tw, output_buffer)              \
-  do                                                                                             \
-  {                                                                                              \
-    PREFETCH_32_LANES_R32_AVX2(kk, K, PREFETCH_L1_R32_AVX2, sub_outputs, stage_tw, _MM_HINT_T0); \
-    PREFETCH_32_LANES_R32_AVX2(kk, K, PREFETCH_L2_R32_AVX2, sub_outputs, stage_tw, _MM_HINT_T1); \
-                                                                                                 \
-    __m256d x_re[32][2], x_im[32][2];                                                            \
-                                                                                                 \
-    for (int b = 0; b < 2; ++b)                                                                  \
-    {                                                                                            \
-      int k = kk + b;                                                                            \
-      for (int lane = 0; lane < 32; ++lane)                                                      \
-      {                                                                                          \
-        LOAD_2_COMPLEX_SPLIT_AVX2(&sub_outputs[k + lane * K],                                    \
-                                  x_re[lane][b], x_im[lane][b]);                                 \
-      }                                                                                          \
-    }                                                                                            \
-                                                                                                 \
-    for (int lane = 1; lane < 32; ++lane)                                                        \
-    {                                                                                            \
-      for (int b = 0; b < 2; ++b)                                                                \
-      {                                                                                          \
-        __m256d tw_re, tw_im;                                                                    \
-        APPLY_STAGE_TWIDDLE_R32_AVX2_SOA(kk + b, x_re[lane][b], x_im[lane][b],                   \
-                                         stage_tw, K, lane, tw_re, tw_im);                       \
-        x_re[lane][b] = tw_re;                                                                   \
-        x_im[lane][b] = tw_im;                                                                   \
-      }                                                                                          \
-    }                                                                                            \
-                                                                                                 \
-    for (int g = 0; g < 8; ++g)                                                                  \
-    {                                                                                            \
-      for (int b = 0; b < 2; ++b)                                                                \
-      {                                                                                          \
-        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX2(                                                     \
-            x_re[g][b], x_im[g][b],                                                              \
-            x_re[g + 8][b], x_im[g + 8][b],                                                      \
-            x_re[g + 16][b], x_im[g + 16][b],                                                    \
-            x_re[g + 24][b], x_im[g + 24][b]);                                                   \
-      }                                                                                          \
-    }                                                                                            \
-                                                                                                 \
-    for (int b = 0; b < 2; ++b)                                                                  \
-    {                                                                                            \
-      APPLY_W32_TWIDDLES_BV_AVX2_SPLIT(x_re, x_im, b);                                           \
-    }                                                                                            \
-                                                                                                 \
-    for (int octave = 0; octave < 4; ++octave)                                                   \
-    {                                                                                            \
-      int base = 8 * octave;                                                                     \
-                                                                                                 \
-      for (int b = 0; b < 2; ++b)                                                                \
-      {                                                                                          \
-        __m256d e0_re = x_re[base + 0][b], e0_im = x_im[base + 0][b];                            \
-        __m256d e2_re = x_re[base + 2][b], e2_im = x_im[base + 2][b];                            \
-        __m256d e4_re = x_re[base + 4][b], e4_im = x_im[base + 4][b];                            \
-        __m256d e6_re = x_re[base + 6][b], e6_im = x_im[base + 6][b];                            \
-                                                                                                 \
-        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX2(e0_re, e0_im, e2_re, e2_im,                          \
-                                            e4_re, e4_im, e6_re, e6_im);                         \
-                                                                                                 \
-        __m256d o1_re = x_re[base + 1][b], o1_im = x_im[base + 1][b];                            \
-        __m256d o3_re = x_re[base + 3][b], o3_im = x_im[base + 3][b];                            \
-        __m256d o5_re = x_re[base + 5][b], o5_im = x_im[base + 5][b];                            \
-        __m256d o7_re = x_re[base + 7][b], o7_im = x_im[base + 7][b];                            \
-                                                                                                 \
-        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX2(o1_re, o1_im, o3_re, o3_im,                          \
-                                            o5_re, o5_im, o7_re, o7_im);                         \
-                                                                                                 \
-        APPLY_W8_TWIDDLES_BV_AVX2_SPLIT(o1_re, o1_im, o3_re, o3_im, o5_re, o5_im);               \
-                                                                                                 \
-        RADIX8_COMBINE_SPLIT_AVX2(                                                               \
-            e0_re, e0_im, e2_re, e2_im, e4_re, e4_im, e6_re, e6_im,                              \
-            o1_re, o1_im, o3_re, o3_im, o5_re, o5_im, o7_re, o7_im,                              \
-            x_re[base + 0][b], x_im[base + 0][b],                                                \
-            x_re[base + 1][b], x_im[base + 1][b],                                                \
-            x_re[base + 2][b], x_im[base + 2][b],                                                \
-            x_re[base + 3][b], x_im[base + 3][b],                                                \
-            x_re[base + 4][b], x_im[base + 4][b],                                                \
-            x_re[base + 5][b], x_im[base + 5][b],                                                \
-            x_re[base + 6][b], x_im[base + 6][b],                                                \
-            x_re[base + 7][b], x_im[base + 7][b]);                                               \
-      }                                                                                          \
-    }                                                                                            \
-                                                                                                 \
-    const int use_streaming = (K >= 256);                                                        \
-                                                                                                 \
-    for (int g = 0; g < 8; ++g)                                                                  \
-    {                                                                                            \
-      for (int j = 0; j < 4; ++j)                                                                \
-      {                                                                                          \
-        int out_lane = g * 4 + j;                                                                \
-                                                                                                 \
-        for (int b = 0; b < 2; ++b)                                                              \
-        {                                                                                        \
-          int k = kk + b;                                                                        \
-          if (use_streaming)                                                                     \
-          {                                                                                      \
-            STORE_2_COMPLEX_SPLIT_AVX2_STREAM(                                                   \
-                &output_buffer[k + out_lane * K],                                                \
-                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                         \
-          }                                                                                      \
-          else                                                                                   \
-          {                                                                                      \
-            STORE_2_COMPLEX_SPLIT_AVX2(                                                          \
-                &output_buffer[k + out_lane * K],                                                \
-                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                         \
-          }                                                                                      \
-        }                                                                                        \
-      }                                                                                          \
-    }                                                                                            \
+#define RADIX32_FORWARD_BUTTERFLY_AVX2(kk, K, sub_outputs, stage_tw, output_buffer)       \
+  do                                                                                      \
+  {                                                                                       \
+    /* v2: Tighter prefetch window (smaller for AVX2) */                                  \
+    const int PF_DISTANCE = 8;                                                            \
+    if (kk + PF_DISTANCE < K)                                                             \
+    {                                                                                     \
+      PREFETCH_32_LANES_R32_AVX2(kk, K, PF_DISTANCE, sub_outputs, stage_tw, _MM_HINT_T0); \
+    }                                                                                     \
+                                                                                          \
+    __m256d x_re[32][2], x_im[32][2];                                                     \
+                                                                                          \
+    /* v2: Interleaved loads in batches */                                                \
+    for (int batch = 0; batch < 4; ++batch)                                               \
+    {                                                                                     \
+      int lane_start = batch * 8;                                                         \
+      int lane_end = lane_start + 8;                                                      \
+      for (int b = 0; b < 2; ++b)                                                         \
+      {                                                                                   \
+        int k = kk + b;                                                                   \
+        for (int lane = lane_start; lane < lane_end; ++lane)                              \
+        {                                                                                 \
+          LOAD_2_COMPLEX_SPLIT_AVX2(&sub_outputs[k + lane * K],                           \
+                                    x_re[lane][b], x_im[lane][b]);                        \
+        }                                                                                 \
+      }                                                                                   \
+    }                                                                                     \
+                                                                                          \
+    /* v2: Grouped twiddle application */                                                 \
+    for (int lane_group = 1; lane_group < 32; lane_group += 4)                            \
+    {                                                                                     \
+      for (int lane = lane_group; lane < lane_group + 4 && lane < 32; ++lane)             \
+      {                                                                                   \
+        for (int b = 0; b < 2; ++b)                                                       \
+        {                                                                                 \
+          __m256d tw_re, tw_im;                                                           \
+          APPLY_STAGE_TWIDDLE_R32_AVX2_SOA(kk + b, x_re[lane][b], x_im[lane][b],          \
+                                           stage_tw, K, lane, tw_re, tw_im);              \
+          x_re[lane][b] = tw_re;                                                          \
+          x_im[lane][b] = tw_im;                                                          \
+        }                                                                                 \
+      }                                                                                   \
+    }                                                                                     \
+                                                                                          \
+    for (int g = 0; g < 8; ++g)                                                           \
+    {                                                                                     \
+      for (int b = 0; b < 2; ++b)                                                         \
+      {                                                                                   \
+        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX2(                                              \
+            x_re[g][b], x_im[g][b],                                                       \
+            x_re[g + 8][b], x_im[g + 8][b],                                               \
+            x_re[g + 16][b], x_im[g + 16][b],                                             \
+            x_re[g + 24][b], x_im[g + 24][b]);                                            \
+      }                                                                                   \
+    }                                                                                     \
+                                                                                          \
+    for (int b = 0; b < 2; ++b)                                                           \
+    {                                                                                     \
+      APPLY_W32_TWIDDLES_BV_AVX2_SPLIT(x_re, x_im, b);                                    \
+    }                                                                                     \
+                                                                                          \
+    for (int octave = 0; octave < 4; ++octave)                                            \
+    {                                                                                     \
+      int base = 8 * octave;                                                              \
+                                                                                          \
+      for (int b = 0; b < 2; ++b)                                                         \
+      {                                                                                   \
+        __m256d e0_re = x_re[base + 0][b], e0_im = x_im[base + 0][b];                     \
+        __m256d e2_re = x_re[base + 2][b], e2_im = x_im[base + 2][b];                     \
+        __m256d e4_re = x_re[base + 4][b], e4_im = x_im[base + 4][b];                     \
+        __m256d e6_re = x_re[base + 6][b], e6_im = x_im[base + 6][b];                     \
+                                                                                          \
+        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX2(e0_re, e0_im, e2_re, e2_im,                   \
+                                            e4_re, e4_im, e6_re, e6_im);                  \
+                                                                                          \
+        __m256d o1_re = x_re[base + 1][b], o1_im = x_im[base + 1][b];                     \
+        __m256d o3_re = x_re[base + 3][b], o3_im = x_im[base + 3][b];                     \
+        __m256d o5_re = x_re[base + 5][b], o5_im = x_im[base + 5][b];                     \
+        __m256d o7_re = x_re[base + 7][b], o7_im = x_im[base + 7][b];                     \
+                                                                                          \
+        RADIX4_BUTTERFLY_FORWARD_SPLIT_AVX2(o1_re, o1_im, o3_re, o3_im,                   \
+                                            o5_re, o5_im, o7_re, o7_im);                  \
+                                                                                          \
+        APPLY_W8_TWIDDLES_BV_AVX2_SPLIT(o1_re, o1_im, o3_re, o3_im, o5_re, o5_im);        \
+                                                                                          \
+        RADIX8_COMBINE_SPLIT_AVX2(                                                        \
+            e0_re, e0_im, e2_re, e2_im, e4_re, e4_im, e6_re, e6_im,                       \
+            o1_re, o1_im, o3_re, o3_im, o5_re, o5_im, o7_re, o7_im,                       \
+            x_re[base + 0][b], x_im[base + 0][b],                                         \
+            x_re[base + 1][b], x_im[base + 1][b],                                         \
+            x_re[base + 2][b], x_im[base + 2][b],                                         \
+            x_re[base + 3][b], x_im[base + 3][b],                                         \
+            x_re[base + 4][b], x_im[base + 4][b],                                         \
+            x_re[base + 5][b], x_im[base + 5][b],                                         \
+            x_re[base + 6][b], x_im[base + 6][b],                                         \
+            x_re[base + 7][b], x_im[base + 7][b]);                                        \
+      }                                                                                   \
+    }                                                                                     \
+                                                                                          \
+    const int use_streaming = (K >= 256);                                                 \
+                                                                                          \
+    for (int g = 0; g < 8; ++g)                                                           \
+    {                                                                                     \
+      for (int j = 0; j < 4; ++j)                                                         \
+      {                                                                                   \
+        int out_lane = g * 4 + j;                                                         \
+                                                                                          \
+        for (int b = 0; b < 2; ++b)                                                       \
+        {                                                                                 \
+          int k = kk + b;                                                                 \
+          if (use_streaming)                                                              \
+          {                                                                               \
+            STORE_2_COMPLEX_SPLIT_AVX2_STREAM(                                            \
+                &output_buffer[k + out_lane * K],                                         \
+                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                  \
+          }                                                                               \
+          else                                                                            \
+          {                                                                               \
+            STORE_2_COMPLEX_SPLIT_AVX2(                                                   \
+                &output_buffer[k + out_lane * K],                                         \
+                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                  \
+          }                                                                               \
+        }                                                                                 \
+      }                                                                                   \
+    }                                                                                     \
   } while (0)
 
 //==============================================================================
-// COMPLETE RADIX-32 BUTTERFLY - AVX2 INVERSE
+// COMPLETE RADIX-32 BUTTERFLY - AVX2 INVERSE (v2 - Improved Pipelining)
 //==============================================================================
 
-#define RADIX32_INVERSE_BUTTERFLY_AVX2(kk, K, sub_outputs, stage_tw, output_buffer)              \
-  do                                                                                             \
-  {                                                                                              \
-    PREFETCH_32_LANES_R32_AVX2(kk, K, PREFETCH_L1_R32_AVX2, sub_outputs, stage_tw, _MM_HINT_T0); \
-    PREFETCH_32_LANES_R32_AVX2(kk, K, PREFETCH_L2_R32_AVX2, sub_outputs, stage_tw, _MM_HINT_T1); \
-                                                                                                 \
-    __m256d x_re[32][2], x_im[32][2];                                                            \
-                                                                                                 \
-    for (int b = 0; b < 2; ++b)                                                                  \
-    {                                                                                            \
-      int k = kk + b;                                                                            \
-      for (int lane = 0; lane < 32; ++lane)                                                      \
-      {                                                                                          \
-        LOAD_2_COMPLEX_SPLIT_AVX2(&sub_outputs[k + lane * K],                                    \
-                                  x_re[lane][b], x_im[lane][b]);                                 \
-      }                                                                                          \
-    }                                                                                            \
-                                                                                                 \
-    for (int lane = 1; lane < 32; ++lane)                                                        \
-    {                                                                                            \
-      for (int b = 0; b < 2; ++b)                                                                \
-      {                                                                                          \
-        __m256d tw_re, tw_im;                                                                    \
-        APPLY_STAGE_TWIDDLE_R32_AVX2_SOA(kk + b, x_re[lane][b], x_im[lane][b],                   \
-                                         stage_tw, K, lane, tw_re, tw_im);                       \
-        x_re[lane][b] = tw_re;                                                                   \
-        x_im[lane][b] = tw_im;                                                                   \
-      }                                                                                          \
-    }                                                                                            \
-                                                                                                 \
-    for (int g = 0; g < 8; ++g)                                                                  \
-    {                                                                                            \
-      for (int b = 0; b < 2; ++b)                                                                \
-      {                                                                                          \
-        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX2(                                                     \
-            x_re[g][b], x_im[g][b],                                                              \
-            x_re[g + 8][b], x_im[g + 8][b],                                                      \
-            x_re[g + 16][b], x_im[g + 16][b],                                                    \
-            x_re[g + 24][b], x_im[g + 24][b]);                                                   \
-      }                                                                                          \
-    }                                                                                            \
-                                                                                                 \
-    for (int b = 0; b < 2; ++b)                                                                  \
-    {                                                                                            \
-      APPLY_W32_TWIDDLES_BV_AVX2_SPLIT(x_re, x_im, b);                                           \
-    }                                                                                            \
-                                                                                                 \
-    for (int octave = 0; octave < 4; ++octave)                                                   \
-    {                                                                                            \
-      int base = 8 * octave;                                                                     \
-                                                                                                 \
-      for (int b = 0; b < 2; ++b)                                                                \
-      {                                                                                          \
-        __m256d e0_re = x_re[base + 0][b], e0_im = x_im[base + 0][b];                            \
-        __m256d e2_re = x_re[base + 2][b], e2_im = x_im[base + 2][b];                            \
-        __m256d e4_re = x_re[base + 4][b], e4_im = x_im[base + 4][b];                            \
-        __m256d e6_re = x_re[base + 6][b], e6_im = x_im[base + 6][b];                            \
-                                                                                                 \
-        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX2(e0_re, e0_im, e2_re, e2_im,                          \
-                                            e4_re, e4_im, e6_re, e6_im);                         \
-                                                                                                 \
-        __m256d o1_re = x_re[base + 1][b], o1_im = x_im[base + 1][b];                            \
-        __m256d o3_re = x_re[base + 3][b], o3_im = x_im[base + 3][b];                            \
-        __m256d o5_re = x_re[base + 5][b], o5_im = x_im[base + 5][b];                            \
-        __m256d o7_re = x_re[base + 7][b], o7_im = x_im[base + 7][b];                            \
-                                                                                                 \
-        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX2(o1_re, o1_im, o3_re, o3_im,                          \
-                                            o5_re, o5_im, o7_re, o7_im);                         \
-                                                                                                 \
-        APPLY_W8_TWIDDLES_BV_AVX2_SPLIT(o1_re, o1_im, o3_re, o3_im, o5_re, o5_im);               \
-                                                                                                 \
-        RADIX8_COMBINE_SPLIT_AVX2(                                                               \
-            e0_re, e0_im, e2_re, e2_im, e4_re, e4_im, e6_re, e6_im,                              \
-            o1_re, o1_im, o3_re, o3_im, o5_re, o5_im, o7_re, o7_im,                              \
-            x_re[base + 0][b], x_im[base + 0][b],                                                \
-            x_re[base + 1][b], x_im[base + 1][b],                                                \
-            x_re[base + 2][b], x_im[base + 2][b],                                                \
-            x_re[base + 3][b], x_im[base + 3][b],                                                \
-            x_re[base + 4][b], x_im[base + 4][b],                                                \
-            x_re[base + 5][b], x_im[base + 5][b],                                                \
-            x_re[base + 6][b], x_im[base + 6][b],                                                \
-            x_re[base + 7][b], x_im[base + 7][b]);                                               \
-      }                                                                                          \
-    }                                                                                            \
-                                                                                                 \
-    const int use_streaming = (K >= 256);                                                        \
-                                                                                                 \
-    for (int g = 0; g < 8; ++g)                                                                  \
-    {                                                                                            \
-      for (int j = 0; j < 4; ++j)                                                                \
-      {                                                                                          \
-        int out_lane = g * 4 + j;                                                                \
-                                                                                                 \
-        for (int b = 0; b < 2; ++b)                                                              \
-        {                                                                                        \
-          int k = kk + b;                                                                        \
-          if (use_streaming)                                                                     \
-          {                                                                                      \
-            STORE_2_COMPLEX_SPLIT_AVX2_STREAM(                                                   \
-                &output_buffer[k + out_lane * K],                                                \
-                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                         \
-          }                                                                                      \
-          else                                                                                   \
-          {                                                                                      \
-            STORE_2_COMPLEX_SPLIT_AVX2(                                                          \
-                &output_buffer[k + out_lane * K],                                                \
-                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                         \
-          }                                                                                      \
-        }                                                                                        \
-      }                                                                                          \
-    }                                                                                            \
+#define RADIX32_INVERSE_BUTTERFLY_AVX2(kk, K, sub_outputs, stage_tw, output_buffer)       \
+  do                                                                                      \
+  {                                                                                       \
+    /* v2: Tighter prefetch window */                                                     \
+    const int PF_DISTANCE = 8;                                                            \
+    if (kk + PF_DISTANCE < K)                                                             \
+    {                                                                                     \
+      PREFETCH_32_LANES_R32_AVX2(kk, K, PF_DISTANCE, sub_outputs, stage_tw, _MM_HINT_T0); \
+    }                                                                                     \
+                                                                                          \
+    __m256d x_re[32][2], x_im[32][2];                                                     \
+                                                                                          \
+    /* v2: Interleaved loads in batches */                                                \
+    for (int batch = 0; batch < 4; ++batch)                                               \
+    {                                                                                     \
+      int lane_start = batch * 8;                                                         \
+      int lane_end = lane_start + 8;                                                      \
+      for (int b = 0; b < 2; ++b)                                                         \
+      {                                                                                   \
+        int k = kk + b;                                                                   \
+        for (int lane = lane_start; lane < lane_end; ++lane)                              \
+        {                                                                                 \
+          LOAD_2_COMPLEX_SPLIT_AVX2(&sub_outputs[k + lane * K],                           \
+                                    x_re[lane][b], x_im[lane][b]);                        \
+        }                                                                                 \
+      }                                                                                   \
+    }                                                                                     \
+                                                                                          \
+    /* v2: Grouped twiddle application */                                                 \
+    for (int lane_group = 1; lane_group < 32; lane_group += 4)                            \
+    {                                                                                     \
+      for (int lane = lane_group; lane < lane_group + 4 && lane < 32; ++lane)             \
+      {                                                                                   \
+        for (int b = 0; b < 2; ++b)                                                       \
+        {                                                                                 \
+          __m256d tw_re, tw_im;                                                           \
+          APPLY_STAGE_TWIDDLE_R32_AVX2_SOA(kk + b, x_re[lane][b], x_im[lane][b],          \
+                                           stage_tw, K, lane, tw_re, tw_im);              \
+          x_re[lane][b] = tw_re;                                                          \
+          x_im[lane][b] = tw_im;                                                          \
+        }                                                                                 \
+      }                                                                                   \
+    }                                                                                     \
+                                                                                          \
+    for (int g = 0; g < 8; ++g)                                                           \
+    {                                                                                     \
+      for (int b = 0; b < 2; ++b)                                                         \
+      {                                                                                   \
+        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX2(                                              \
+            x_re[g][b], x_im[g][b],                                                       \
+            x_re[g + 8][b], x_im[g + 8][b],                                               \
+            x_re[g + 16][b], x_im[g + 16][b],                                             \
+            x_re[g + 24][b], x_im[g + 24][b]);                                            \
+      }                                                                                   \
+    }                                                                                     \
+                                                                                          \
+    for (int b = 0; b < 2; ++b)                                                           \
+    {                                                                                     \
+      APPLY_W32_TWIDDLES_BV_AVX2_SPLIT(x_re, x_im, b);                                    \
+    }                                                                                     \
+                                                                                          \
+    for (int octave = 0; octave < 4; ++octave)                                            \
+    {                                                                                     \
+      int base = 8 * octave;                                                              \
+                                                                                          \
+      for (int b = 0; b < 2; ++b)                                                         \
+      {                                                                                   \
+        __m256d e0_re = x_re[base + 0][b], e0_im = x_im[base + 0][b];                     \
+        __m256d e2_re = x_re[base + 2][b], e2_im = x_im[base + 2][b];                     \
+        __m256d e4_re = x_re[base + 4][b], e4_im = x_im[base + 4][b];                     \
+        __m256d e6_re = x_re[base + 6][b], e6_im = x_im[base + 6][b];                     \
+                                                                                          \
+        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX2(e0_re, e0_im, e2_re, e2_im,                   \
+                                            e4_re, e4_im, e6_re, e6_im);                  \
+                                                                                          \
+        __m256d o1_re = x_re[base + 1][b], o1_im = x_im[base + 1][b];                     \
+        __m256d o3_re = x_re[base + 3][b], o3_im = x_im[base + 3][b];                     \
+        __m256d o5_re = x_re[base + 5][b], o5_im = x_im[base + 5][b];                     \
+        __m256d o7_re = x_re[base + 7][b], o7_im = x_im[base + 7][b];                     \
+                                                                                          \
+        RADIX4_BUTTERFLY_INVERSE_SPLIT_AVX2(o1_re, o1_im, o3_re, o3_im,                   \
+                                            o5_re, o5_im, o7_re, o7_im);                  \
+                                                                                          \
+        APPLY_W8_TWIDDLES_BV_AVX2_SPLIT(o1_re, o1_im, o3_re, o3_im, o5_re, o5_im);        \
+                                                                                          \
+        RADIX8_COMBINE_SPLIT_AVX2(                                                        \
+            e0_re, e0_im, e2_re, e2_im, e4_re, e4_im, e6_re, e6_im,                       \
+            o1_re, o1_im, o3_re, o3_im, o5_re, o5_im, o7_re, o7_im,                       \
+            x_re[base + 0][b], x_im[base + 0][b],                                         \
+            x_re[base + 1][b], x_im[base + 1][b],                                         \
+            x_re[base + 2][b], x_im[base + 2][b],                                         \
+            x_re[base + 3][b], x_im[base + 3][b],                                         \
+            x_re[base + 4][b], x_im[base + 4][b],                                         \
+            x_re[base + 5][b], x_im[base + 5][b],                                         \
+            x_re[base + 6][b], x_im[base + 6][b],                                         \
+            x_re[base + 7][b], x_im[base + 7][b]);                                        \
+      }                                                                                   \
+    }                                                                                     \
+                                                                                          \
+    const int use_streaming = (K >= 256);                                                 \
+                                                                                          \
+    for (int g = 0; g < 8; ++g)                                                           \
+    {                                                                                     \
+      for (int j = 0; j < 4; ++j)                                                         \
+      {                                                                                   \
+        int out_lane = g * 4 + j;                                                         \
+                                                                                          \
+        for (int b = 0; b < 2; ++b)                                                       \
+        {                                                                                 \
+          int k = kk + b;                                                                 \
+          if (use_streaming)                                                              \
+          {                                                                               \
+            STORE_2_COMPLEX_SPLIT_AVX2_STREAM(                                            \
+                &output_buffer[k + out_lane * K],                                         \
+                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                  \
+          }                                                                               \
+          else                                                                            \
+          {                                                                               \
+            STORE_2_COMPLEX_SPLIT_AVX2(                                                   \
+                &output_buffer[k + out_lane * K],                                         \
+                x_re[j * 8 + g][b], x_im[j * 8 + g][b]);                                  \
+          }                                                                               \
+        }                                                                                 \
+      }                                                                                   \
+    }                                                                                     \
   } while (0)
 
 #endif // __AVX2__
