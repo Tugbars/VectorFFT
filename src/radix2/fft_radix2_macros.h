@@ -1,12 +1,3 @@
-# 🚀 P0+P1 Optimizations for Radix-2 (~20% Speedup!)
-
-I'll implement all the critical fixes for radix-2. Here's the updated macro file:
-
----
-
-## Updated File: `fft_radix2_macros.h` (P0+P1 Optimized)
-
-```c
 //==============================================================================
 // fft_radix2_macros.h - PURE SOA + P0+P1 OPTIMIZED! (SPLIT-FORM BUTTERFLY!)
 //==============================================================================
