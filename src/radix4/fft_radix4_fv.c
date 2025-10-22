@@ -1,9 +1,9 @@
 /**
- * @file fft_radix4_bv_native_soa.c
- * @brief TRUE END-TO-END SoA Radix-4 FFT Implementation - BACKWARD (INVERSE)
+ * @file fft_radix4_fv_native_soa.c
+ * @brief TRUE END-TO-END SoA Radix-4 FFT Implementation - FORWARD
  * 
  * @details
- * This module implements a native Structure-of-Arrays (SoA) radix-4 FFT (backward/inverse)
+ * This module implements a native Structure-of-Arrays (SoA) radix-4 FFT (forward)
  * that eliminates split/join operations at stage boundaries, achieving significant
  * performance improvements over traditional Array-of-Structures approaches.
  * 
@@ -29,8 +29,8 @@
  * @date 2025
  */
 
-#include "fft_radix4.h"
-#include "fft_radix4_macros_true_soa.h"
+#include "fft_radix4_uniform.h"
+#include "fft_radix4_macros.h"
 #include "simd_math.h"
 
 #include <immintrin.h>  // For SIMD intrinsics and memory fences
@@ -131,11 +131,11 @@ static inline int check_nt_env_override(void)
 }
 
 //==============================================================================
-// HELPER: Process a Range of Butterflies (Native SoA) - BACKWARD
+// HELPER: Process a Range of Butterflies (Native SoA) - FORWARD
 //==============================================================================
 
 /**
- * @brief Process radix-4 butterflies in range [k_start, k_end) - NATIVE SoA - BACKWARD
+ * @brief Process radix-4 butterflies in range [k_start, k_end) - NATIVE SoA - FORWARD
  * 
  * @details
  * ⚡⚡⚡ CRITICAL: NO SPLIT/JOIN OPERATIONS!
@@ -145,7 +145,7 @@ static inline int check_nt_env_override(void)
  *   - Compute: butterfly in split form
  *   - Store: out_re[k], out_im[k] (direct, no conversion!)
  */
-static void radix4_process_range_native_soa_bv(
+static void radix4_process_range_native_soa_fv(
     double *restrict out_re,
     double *restrict out_im,
     const double *restrict in_re,
@@ -158,7 +158,7 @@ static void radix4_process_range_native_soa_bv(
 {
     int k = k_start;
 
-    // Sign mask for backward transform
+    // Sign mask for forward transform
 #ifdef __AVX512F__
     const __m512d SIGN512 = _mm512_set1_pd(-0.0);
 #endif
@@ -169,63 +169,120 @@ static void radix4_process_range_native_soa_bv(
     const __m128d SIGN128 = _mm_set1_pd(-0.0);
 #endif
 
+    // Prefetch distance tuned for radix-4's strided access pattern
+    const int prefetch_dist = RADIX4_PREFETCH_DISTANCE;
+
 #ifdef __AVX512F__
-    // AVX-512: Process 4 butterflies per iteration
+    // AVX-512: Process 8 butterflies per iteration (double-pumped for ILP)
+    if (use_streaming)
+    {
+        for (; k + 7 < k_end; k += 8)
+        {
+            RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN512, prefetch_dist, k_end);
+            RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512_STREAM(k + 4, K, in_re, in_im, out_re, out_im, stage_tw, SIGN512, prefetch_dist, k_end);
+        }
+    }
+    else
+    {
+        for (; k + 7 < k_end; k += 8)
+        {
+            RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN512, prefetch_dist, k_end);
+            RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512(k + 4, K, in_re, in_im, out_re, out_im, stage_tw, SIGN512, prefetch_dist, k_end);
+        }
+    }
+    
+    // Cleanup: Process remaining 4-butterfly group
     if (use_streaming)
     {
         for (; k + 3 < k_end; k += 4)
         {
-            RADIX4_PIPELINE_4_NATIVE_SOA_BV_AVX512_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN512);
+            RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN512, 0, k_end);
         }
     }
     else
     {
         for (; k + 3 < k_end; k += 4)
         {
-            RADIX4_PIPELINE_4_NATIVE_SOA_BV_AVX512(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN512);
+            RADIX4_PIPELINE_4_NATIVE_SOA_FV_AVX512(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN512, 0, k_end);
         }
     }
 #endif
 
 #ifdef __AVX2__
-    // AVX2: Process 2 butterflies per iteration
+    // AVX2: Process 4 butterflies per iteration (double-pumped for ILP)
+    if (use_streaming)
+    {
+        for (; k + 3 < k_end; k += 4)
+        {
+            RADIX4_PIPELINE_2_NATIVE_SOA_FV_AVX2_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN256, prefetch_dist, k_end);
+            RADIX4_PIPELINE_2_NATIVE_SOA_FV_AVX2_STREAM(k + 2, K, in_re, in_im, out_re, out_im, stage_tw, SIGN256, prefetch_dist, k_end);
+        }
+    }
+    else
+    {
+        for (; k + 3 < k_end; k += 4)
+        {
+            RADIX4_PIPELINE_2_NATIVE_SOA_FV_AVX2(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN256, prefetch_dist, k_end);
+            RADIX4_PIPELINE_2_NATIVE_SOA_FV_AVX2(k + 2, K, in_re, in_im, out_re, out_im, stage_tw, SIGN256, prefetch_dist, k_end);
+        }
+    }
+    
+    // Cleanup: Process remaining 2-butterfly group
     if (use_streaming)
     {
         for (; k + 1 < k_end; k += 2)
         {
-            RADIX4_PIPELINE_2_NATIVE_SOA_BV_AVX2_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN256);
+            RADIX4_PIPELINE_2_NATIVE_SOA_FV_AVX2_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN256, 0, k_end);
         }
     }
     else
     {
         for (; k + 1 < k_end; k += 2)
         {
-            RADIX4_PIPELINE_2_NATIVE_SOA_BV_AVX2(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN256);
+            RADIX4_PIPELINE_2_NATIVE_SOA_FV_AVX2(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN256, 0, k_end);
         }
     }
 #endif
 
 #ifdef __SSE2__
-    // SSE2: Process 1 butterfly per iteration
+    // ⚡ SSE2: Process 2 butterflies per iteration (DOUBLE-PUMPED for ILP!)
+    if (use_streaming)
+    {
+        for (; k + 1 < k_end; k += 2)
+        {
+            RADIX4_PIPELINE_1_NATIVE_SOA_FV_SSE2_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN128, prefetch_dist, k_end);
+            RADIX4_PIPELINE_1_NATIVE_SOA_FV_SSE2_STREAM(k + 1, K, in_re, in_im, out_re, out_im, stage_tw, SIGN128, prefetch_dist, k_end);
+        }
+    }
+    else
+    {
+        for (; k + 1 < k_end; k += 2)
+        {
+            RADIX4_PIPELINE_1_NATIVE_SOA_FV_SSE2(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN128, prefetch_dist, k_end);
+            RADIX4_PIPELINE_1_NATIVE_SOA_FV_SSE2(k + 1, K, in_re, in_im, out_re, out_im, stage_tw, SIGN128, prefetch_dist, k_end);
+        }
+    }
+    
+    // Cleanup: Process remaining single butterfly (no prefetch in tail)
     if (use_streaming)
     {
         for (; k < k_end; k++)
         {
-            RADIX4_PIPELINE_1_NATIVE_SOA_BV_SSE2_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN128);
+            RADIX4_PIPELINE_1_NATIVE_SOA_FV_SSE2_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN128, 0, k_end);
         }
     }
     else
     {
         for (; k < k_end; k++)
         {
-            RADIX4_PIPELINE_1_NATIVE_SOA_BV_SSE2(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN128);
+            RADIX4_PIPELINE_1_NATIVE_SOA_FV_SSE2(k, K, in_re, in_im, out_re, out_im, stage_tw, SIGN128, 0, k_end);
         }
     }
 #else
-    // Scalar fallback
+    // Scalar fallback (no prefetch, no double-pump)
     for (; k < k_end; k++)
     {
-        RADIX4_PIPELINE_1_NATIVE_SOA_BV_SCALAR(k, K, in_re, in_im, out_re, out_im, stage_tw);
+        RADIX4_PIPELINE_1_NATIVE_SOA_FV_SCALAR(k, K, in_re, in_im, out_re, out_im, stage_tw);
     }
 #endif
 
@@ -237,11 +294,11 @@ static void radix4_process_range_native_soa_bv(
 }
 
 //==============================================================================
-// MAIN FUNCTION: Radix-4 Backward Transform - NATIVE SoA
+// MAIN FUNCTION: Radix-4 Forward Transform - NATIVE SoA
 //==============================================================================
 
 /**
- * @brief Execute one stage of radix-4 FFT - NATIVE SoA - BACKWARD (INVERSE)
+ * @brief Execute one stage of radix-4 FFT - NATIVE SoA - FORWARD
  * 
  * @details
  * ⚡⚡⚡ ZERO SHUFFLE VERSION!
@@ -271,16 +328,16 @@ static void radix4_process_range_native_soa_bv(
  *   // Process all stages in SoA (ping-pong buffers)
  *   for (int stage = 0; stage < num_stages; stage++) {
  *       if (stage % 2 == 0)
- *           fft_radix4_bv_native_soa(buf_b_re, buf_b_im, buf_a_re, buf_a_im, tw[stage], K[stage]);
+ *           fft_radix4_fv_native_soa(buf_b_re, buf_b_im, buf_a_re, buf_a_im, tw[stage], K[stage]);
  *       else
- *           fft_radix4_bv_native_soa(buf_a_re, buf_a_im, buf_b_re, buf_b_im, tw[stage], K[stage]);
+ *           fft_radix4_fv_native_soa(buf_a_re, buf_a_im, buf_b_re, buf_b_im, tw[stage], K[stage]);
  *   }
  *   
  *   // Convert output once
  *   fft_soa_to_aos(final_re, final_im, output, N);
  * @endcode
  */
-void fft_radix4_bv_native_soa(
+void fft_radix4_fv_native_soa(
     double *restrict out_re,
     double *restrict out_im,
     const double *restrict in_re,
@@ -378,7 +435,7 @@ void fft_radix4_bv_native_soa(
     // For radix-4, we process butterflies at indices k ∈ [0, K)
     // Each butterfly accesses 4 lanes: k, k+K, k+2K, k+3K
     
-    radix4_process_range_native_soa_bv(
+    radix4_process_range_native_soa_fv(
         out_re, out_im,
         in_re, in_im,
         stage_tw,
