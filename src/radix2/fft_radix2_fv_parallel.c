@@ -52,6 +52,7 @@
 #include <immintrin.h>  // For SIMD intrinsics and memory fences
 #include <assert.h>     // For in-place safety checks
 #include <stdint.h>     // For uintptr_t (alignment checks)
+#include <stdlib.h>     // For getenv (environment variable)
 
 //==============================================================================
 // CONFIGURATION
@@ -88,12 +89,16 @@
  */
 #if defined(__AVX512F__)
     #define REQUIRED_ALIGNMENT 64
+    #define VECTOR_WIDTH 8  ///< Doubles per SIMD vector (AVX-512)
 #elif defined(__AVX2__) || defined(__AVX__)
     #define REQUIRED_ALIGNMENT 32
+    #define VECTOR_WIDTH 4  ///< Doubles per SIMD vector (AVX2)
 #elif defined(__SSE2__)
     #define REQUIRED_ALIGNMENT 16
+    #define VECTOR_WIDTH 2  ///< Doubles per SIMD vector (SSE2)
 #else
     #define REQUIRED_ALIGNMENT 8
+    #define VECTOR_WIDTH 1  ///< Scalar (no SIMD)
 #endif
 
 /**
@@ -116,6 +121,49 @@
  * @details Avoid NT overhead for very small writes (< ~32 KB per array)
  */
 #define NT_MIN_HALF 4096
+
+//==============================================================================
+// HELPER: Environment Variable Parsing
+//==============================================================================
+
+/**
+ * @brief Check for FFT_NT environment variable override
+ * 
+ * @details
+ * Allows runtime control of non-temporal stores:
+ *   - FFT_NT=0: Force NT stores OFF (always use normal stores)
+ *   - FFT_NT=1: Force NT stores ON (if alignment allows)
+ *   - Not set or other: Use automatic heuristic
+ * 
+ * @return 0 = force off, 1 = force on, -1 = use heuristic
+ */
+static inline int check_nt_env_override(void)
+{
+    static int cached_value = -2;  // -2 = not yet checked
+    
+    if (cached_value == -2)
+    {
+        const char *env = getenv("FFT_NT");
+        if (env == NULL)
+        {
+            cached_value = -1;  // Use heuristic
+        }
+        else if (env[0] == '0')
+        {
+            cached_value = 0;   // Force off
+        }
+        else if (env[0] == '1')
+        {
+            cached_value = 1;   // Force on
+        }
+        else
+        {
+            cached_value = -1;  // Unknown value, use heuristic
+        }
+    }
+    
+    return cached_value;
+}
 
 //==============================================================================
 // HELPER: Process a Range of Butterflies (Native SoA)
@@ -164,6 +212,28 @@ static void radix2_process_range_native_soa(
     int use_streaming)
 {
     int k = k_start;
+    
+    //==========================================================================
+    // ALIGNMENT PEELING (for non-temporal stores)
+    //==========================================================================
+    // If NT stores are enabled, peel scalar iterations until output addresses
+    // are vector-aligned. This ensures every _mm*_stream_pd hits a naturally
+    // aligned address and doesn't straddle cache lines.
+    
+    if (use_streaming)
+    {
+        const size_t vec_align = VECTOR_WIDTH * sizeof(double);
+        
+        // Peel until both out_re[k] and out_im[k] are vector-aligned
+        while (k < k_end && 
+               ((((uintptr_t)&out_re[k]) % vec_align) != 0 ||
+                (((uintptr_t)&out_im[k]) % vec_align) != 0))
+        {
+            RADIX2_PIPELINE_1_NATIVE_SOA_SCALAR(k, in_re, in_im, out_re, out_im,
+                                                stage_tw, half);
+            k++;
+        }
+    }
     
     //==========================================================================
     // AVX-512 Path (8 complex values = 8 butterflies per iteration)
@@ -445,34 +515,61 @@ void fft_radix2_fv_native_soa(
     }
 
     //==========================================================================
-    // NON-TEMPORAL STORE HEURISTIC (simple per-call threshold)
+    // NON-TEMPORAL STORE HEURISTIC (safe with fallback)
     //==========================================================================
-    // Enable NT stores if:
-    //   1. Execution is out-of-place (in != out)
-    //   2. Per-stage write footprint > 70% of LLC
-    //   3. half >= 4096 (avoid NT overhead for small writes)
+    // Enable NT stores based on:
+    //   1. Environment variable FFT_NT (0=off, 1=on, unset=heuristic)
+    //   2. Execution is out-of-place (in != out)
+    //   3. Per-stage write footprint > 70% of LLC
+    //   4. half >= 4096 (avoid NT overhead for small writes)
+    //   5. Output buffers are properly aligned (runtime check with fallback)
     // 
     // Per-stage writes: 2 arrays (re, im) × half elements × sizeof(double)
     // No cross-call hysteresis needed: half shrinks monotonically in radix-2,
     // so we cross threshold once and stay disabled.
     
+    int nt_env_override = check_nt_env_override();
+    
     const size_t write_footprint = 2ull * half * sizeof(double);
     const int is_out_of_place = (in_re != out_re) && (in_im != out_im);
-    const int use_streaming = is_out_of_place && 
-                             (half >= NT_MIN_HALF) &&
-                             (write_footprint > (size_t)(NT_THRESHOLD * LLC_BYTES));
     
-    // If NT stores enabled, verify proper alignment for current SIMD level
-    if (use_streaming)
+    int use_streaming = 0;
+    
+    if (nt_env_override == 0)
     {
-        assert(((uintptr_t)out_re % REQUIRED_ALIGNMENT) == 0 && 
-               "out_re must be properly aligned for non-temporal stores");
-        assert(((uintptr_t)out_im % REQUIRED_ALIGNMENT) == 0 && 
-               "out_im must be properly aligned for non-temporal stores");
+        // FFT_NT=0: Force off
+        use_streaming = 0;
+    }
+    else if (nt_env_override == 1)
+    {
+        // FFT_NT=1: Force on (if out-of-place and aligned)
+        use_streaming = is_out_of_place;
+    }
+    else
+    {
+        // FFT_NT not set or invalid: Use automatic heuristic
+        use_streaming = is_out_of_place && 
+                       (half >= NT_MIN_HALF) &&
+                       (write_footprint > (size_t)(NT_THRESHOLD * LLC_BYTES));
     }
     
-    // Verify twiddle alignment (user confirmed these are always aligned)
-    // Twiddles should match SIMD alignment for optimal performance
+    // ⚡ CRITICAL: Runtime alignment check with fallback
+    // Don't rely on assert (it's a no-op in release builds)
+    // If misaligned, downgrade to normal stores instead of crashing
+    if (use_streaming)
+    {
+        uintptr_t r0 = (uintptr_t)&out_re[0];
+        uintptr_t i0 = (uintptr_t)&out_im[0];
+        
+        if ((r0 % REQUIRED_ALIGNMENT) != 0 || (i0 % REQUIRED_ALIGNMENT) != 0)
+        {
+            // Misaligned: fallback to normal stores
+            use_streaming = 0;
+        }
+    }
+    
+    // Verify twiddle alignment (these should always be aligned)
+    // Keep assertions for twiddles since user confirmed they're always aligned
     assert(((uintptr_t)stage_tw->re % REQUIRED_ALIGNMENT) == 0 && 
            "stage_tw->re must be properly aligned for SIMD");
     assert(((uintptr_t)stage_tw->im % REQUIRED_ALIGNMENT) == 0 && 
