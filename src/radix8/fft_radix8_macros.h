@@ -1806,7 +1806,7 @@
  * - Large (256K-2M):    +30-45%
  * - Huge (>2M):         +40-55%
  *
- * @section crown_jewel_benefit CROWN JEWEL OPTIMIZATION BENEFIT
+ * @section fused
  *
  * The fused radix-4 + W_8 twiddle application provides additional benefits:
  * - Eliminates 3 intermediate stores and reloads per butterfly
@@ -1826,5 +1826,4 @@
  * ✅ Complete SIMD coverage (AVX-512, AVX2, SSE2, scalar)
  * ✅ Split-radix 2×(4,4) decomposition
  *
- * TOTAL EXPECTED IMPROVEMENT: 35-60% faster than split-form radix-8!
  */
