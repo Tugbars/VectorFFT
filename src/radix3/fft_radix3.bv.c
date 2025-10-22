@@ -10,8 +10,8 @@
  * @date 2025
  */
 
-#include "fft_radix3_uniform.h"
-#include "fft_radix3_macros.h"
+#include "fft_radix3.h"
+#include "fft_radix3_macros_true_soa.h"
 
 #include <immintrin.h>
 #include <assert.h>
@@ -190,9 +190,19 @@ static void radix3_process_range_native_soa_bv(
 #endif
 
     // Scalar fallback
-    for (; k < k_end; k++)
+    if (use_streaming)
     {
-        RADIX3_PIPELINE_1_NATIVE_SOA_BV_SCALAR(k, K, in_re, in_im, out_re, out_im, stage_tw);
+        for (; k < k_end; k++)
+        {
+            RADIX3_PIPELINE_1_NATIVE_SOA_BV_SCALAR_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, 0, k_end);
+        }
+    }
+    else
+    {
+        for (; k < k_end; k++)
+        {
+            RADIX3_PIPELINE_1_NATIVE_SOA_BV_SCALAR(k, K, in_re, in_im, out_re, out_im, stage_tw);
+        }
     }
 
     if (use_streaming)

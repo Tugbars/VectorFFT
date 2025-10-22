@@ -1,32 +1,32 @@
 /**
  * @file fft_radix3_fv_native_soa.c
  * @brief TRUE END-TO-END SoA Radix-3 FFT Implementation - FORWARD
- * 
+ *
  * @details
  * Native SoA radix-3 FFT that eliminates split/join at stage boundaries.
- * 
+ *
  * PERFORMANCE IMPACT:
  * ===================
  * For a 729-point FFT (6 radix-3 stages):
  *   OLD: 36 shuffles (6 per butterfly × 6 stages)
  *   NEW: 2 shuffles (split once, join once)
  *   REDUCTION: 94% shuffle elimination!
- * 
+ *
  * Expected speedup: 25-40% for large FFTs
- * 
+ *
  * RADIX-3 SPECIFICS:
  * - 3 inputs per butterfly (k, k+K, k+2K)
  * - 2 twiddle multiplies (W^k, W^2k)
  * - 3 outputs per butterfly
  * - Constants: -1/2 and √3/2
- * 
+ *
  * @author FFT Optimization Team
  * @version 1.0 (Native SoA)
  * @date 2025
  */
 
-#include "fft_radix3_uniform.h"
-#include "fft_radix3_macros.h"
+#include "fft_radix3.h"
+#include "fft_radix3_macros_true_soa.h"
 
 #include <immintrin.h>
 #include <assert.h>
@@ -38,21 +38,21 @@
 //==============================================================================
 
 #if defined(__AVX512F__)
-    #define REQUIRED_ALIGNMENT 64
-    #define VECTOR_WIDTH 8
+#define REQUIRED_ALIGNMENT 64
+#define VECTOR_WIDTH 8
 #elif defined(__AVX2__) || defined(__AVX__)
-    #define REQUIRED_ALIGNMENT 32
-    #define VECTOR_WIDTH 4
+#define REQUIRED_ALIGNMENT 32
+#define VECTOR_WIDTH 4
 #elif defined(__SSE2__)
-    #define REQUIRED_ALIGNMENT 16
-    #define VECTOR_WIDTH 2
+#define REQUIRED_ALIGNMENT 16
+#define VECTOR_WIDTH 2
 #else
-    #define REQUIRED_ALIGNMENT 8
-    #define VECTOR_WIDTH 1
+#define REQUIRED_ALIGNMENT 8
+#define VECTOR_WIDTH 1
 #endif
 
 #ifndef LLC_BYTES
-    #define LLC_BYTES (8 * 1024 * 1024)
+#define LLC_BYTES (8 * 1024 * 1024)
 #endif
 
 #define NT_THRESHOLD 0.7
@@ -65,7 +65,7 @@
 static inline int check_nt_env_override(void)
 {
     static int cached_value = -2;
-    
+
     if (cached_value == -2)
     {
         const char *env = getenv("FFT_NT");
@@ -78,7 +78,7 @@ static inline int check_nt_env_override(void)
         else
             cached_value = -1;
     }
-    
+
     return cached_value;
 }
 
@@ -118,7 +118,7 @@ static void radix3_process_range_native_soa_fv(
             RADIX3_PIPELINE_4_NATIVE_SOA_FV_AVX512(k + 4, K, in_re, in_im, out_re, out_im, stage_tw, prefetch_dist, k_end);
         }
     }
-    
+
     // Cleanup: 4-butterfly group
     if (use_streaming)
     {
@@ -154,7 +154,7 @@ static void radix3_process_range_native_soa_fv(
             RADIX3_PIPELINE_2_NATIVE_SOA_FV_AVX2(k + 2, K, in_re, in_im, out_re, out_im, stage_tw, prefetch_dist, k_end);
         }
     }
-    
+
     // Cleanup: 2-butterfly group
     if (use_streaming)
     {
@@ -190,7 +190,7 @@ static void radix3_process_range_native_soa_fv(
             RADIX3_PIPELINE_1_NATIVE_SOA_FV_SSE2(k + 1, K, in_re, in_im, out_re, out_im, stage_tw, prefetch_dist, k_end);
         }
     }
-    
+
     // Cleanup: 1-butterfly tail
     if (use_streaming)
     {
@@ -209,9 +209,19 @@ static void radix3_process_range_native_soa_fv(
 #endif
 
     // Scalar fallback
-    for (; k < k_end; k++)
+    if (use_streaming)
     {
-        RADIX3_PIPELINE_1_NATIVE_SOA_FV_SCALAR(k, K, in_re, in_im, out_re, out_im, stage_tw);
+        for (; k < k_end; k++)
+        {
+            RADIX3_PIPELINE_1_NATIVE_SOA_FV_SCALAR_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, 0, k_end);
+        }
+    }
+    else
+    {
+        for (; k < k_end; k++)
+        {
+            RADIX3_PIPELINE_1_NATIVE_SOA_FV_SCALAR(k, K, in_re, in_im, out_re, out_im, stage_tw);
+        }
     }
 
     if (use_streaming)
@@ -226,24 +236,24 @@ static void radix3_process_range_native_soa_fv(
 
 /**
  * @brief Execute one stage of radix-3 FFT - NATIVE SoA - FORWARD
- * 
+ *
  * @details
  * ⚡⚡⚡ ZERO SHUFFLE VERSION!
- * 
+ *
  * Radix-3 butterfly has 3 inputs/outputs and 2 twiddle multiplies.
  * Data remains in SoA format throughout - no split/join in hot path!
- * 
+ *
  * @param[out] out_re Output real array (SoA)
  * @param[out] out_im Output imaginary array (SoA)
  * @param[in] in_re Input real array (SoA)
  * @param[in] in_im Input imaginary array (SoA)
  * @param[in] stage_tw Stage twiddle factors (SoA format: W^k and W^2k)
  * @param[in] K Sub-transform length (N/3 for this stage)
- * 
+ *
  * @pre out_re != in_re && out_im != in_im (out-of-place required)
  * @pre K > 0
  * @pre All pointers non-NULL
- * 
+ *
  * @note This function does NOT perform AoS↔SoA conversion.
  *       Use fft_aos_to_soa() at input and fft_soa_to_aos() at output.
  */
@@ -271,28 +281,28 @@ void fft_radix3_fv_native_soa(
     int nt_env_override = check_nt_env_override();
     const size_t write_footprint = 3ull * 2ull * K * sizeof(double);
     const int is_out_of_place = (in_re != out_re) && (in_im != out_im);
-    
+
     int use_streaming = 0;
-    
+
     if (nt_env_override == 0)
         use_streaming = 0;
     else if (nt_env_override == 1)
         use_streaming = is_out_of_place;
     else
-        use_streaming = is_out_of_place && 
-                       (K >= NT_MIN_K) &&
-                       (write_footprint > (size_t)(NT_THRESHOLD * LLC_BYTES));
-    
+        use_streaming = is_out_of_place &&
+                        (K >= NT_MIN_K) &&
+                        (write_footprint > (size_t)(NT_THRESHOLD * LLC_BYTES));
+
     // Runtime alignment check with fallback
     if (use_streaming)
     {
         uintptr_t r0 = (uintptr_t)&out_re[0];
         uintptr_t i0 = (uintptr_t)&out_im[0];
-        
+
         if ((r0 % REQUIRED_ALIGNMENT) != 0 || (i0 % REQUIRED_ALIGNMENT) != 0)
             use_streaming = 0;
     }
-    
+
     // Verify twiddle alignment
     assert(((uintptr_t)stage_tw->re % REQUIRED_ALIGNMENT) == 0);
     assert(((uintptr_t)stage_tw->im % REQUIRED_ALIGNMENT) == 0);
@@ -303,8 +313,7 @@ void fft_radix3_fv_native_soa(
         in_re, in_im,
         stage_tw,
         K,
-        0,      // k_start
-        K,      // k_end
-        use_streaming
-    );
+        0, // k_start
+        K, // k_end
+        use_streaming);
 }

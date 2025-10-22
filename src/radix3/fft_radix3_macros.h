@@ -906,6 +906,15 @@
     } while (0)
 
 /**
+ * @brief Scalar radix-3 butterfly - Forward - NATIVE SoA (streaming variant)
+ *
+ * Note: Scalar operations can't use streaming stores, but we define this
+ * for API completeness. It's functionally identical to the non-streaming version.
+ */
+#define RADIX3_PIPELINE_1_NATIVE_SOA_FV_SCALAR_STREAM(k, K, in_re, in_im, out_re, out_im, tw, prefetch_dist, k_end) \
+    RADIX3_PIPELINE_1_NATIVE_SOA_FV_SCALAR(k, K, in_re, in_im, out_re, out_im, tw)
+
+/**
  * @brief Scalar radix-3 butterfly - Backward - NATIVE SoA
  */
 #define RADIX3_PIPELINE_1_NATIVE_SOA_BV_SCALAR(k, K, in_re, in_im, out_re, out_im, tw) \
@@ -931,8 +940,8 @@
         double dif_im = tB_im - tC_im;                                                 \
         double common_re = a_re + C_HALF * sum_re;                                     \
         double common_im = a_im + C_HALF * sum_im;                                     \
-        double rot_re = -S_SQRT3_2 * dif_im;                                           \
-        double rot_im = S_SQRT3_2 * dif_re;                                            \
+        double rot_re = -S_SQRT3_2 * dif_im; /* Backward: sign flip! */                \
+        double rot_im = S_SQRT3_2 * dif_re;  /* Backward: sign flip! */                \
         out_re[k] = a_re + sum_re;                                                     \
         out_im[k] = a_im + sum_im;                                                     \
         out_re[(k) + (K)] = common_re + rot_re;                                        \
@@ -940,5 +949,14 @@
         out_re[(k) + 2 * (K)] = common_re - rot_re;                                    \
         out_im[(k) + 2 * (K)] = common_im - rot_im;                                    \
     } while (0)
+
+/**
+ * @brief Scalar radix-3 butterfly - Backward - NATIVE SoA (streaming variant)
+ *
+ * Note: Scalar operations can't use streaming stores, but we define this
+ * for API completeness. It's functionally identical to the non-streaming version.
+ */
+#define RADIX3_PIPELINE_1_NATIVE_SOA_BV_SCALAR_STREAM(k, K, in_re, in_im, out_re, out_im, tw, prefetch_dist, k_end) \
+    RADIX3_PIPELINE_1_NATIVE_SOA_BV_SCALAR(k, K, in_re, in_im, out_re, out_im, tw)
 
 #endif // FFT_RADIX3_MACROS_TRUE_SOA_H
