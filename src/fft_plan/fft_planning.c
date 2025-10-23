@@ -43,6 +43,7 @@
 
 #include "fft_planning_types.h"
 #include "fft_twiddles.h"
+#include "fft_twiddles_planner_api.h"  
 #include "fft_rader_plans.h"
 #include "../bluestein/bluestein.h"
 #include <stdlib.h>
@@ -969,39 +970,39 @@ fft_object fft_init(int N, fft_direction_t direction)
         stage->N_stage = N_stage;
         stage->sub_len = sub_len;
         
-         // ──────────────────────────────────────────────────────────────────
-        // Twiddle Manager: Compute Cooley-Tukey stage twiddles (SoA)
         // ──────────────────────────────────────────────────────────────────
-        
-        stage->stage_tw = compute_stage_twiddles_soa(N_stage, radix, direction);
-        
+        // Twiddle Manager: Get cached stage twiddles (materialized handle)
+        // ──────────────────────────────────────────────────────────────────
+
+        stage->stage_tw = get_stage_twiddles(N_stage, radix, direction);
+
         if (!stage->stage_tw) {
-            FFT_LOG_ERROR("Failed to compute SoA twiddles for stage %d (radix=%d)", i, radix);
+            FFT_LOG_ERROR("Failed to get stage twiddles for stage %d (radix=%d)", i, radix);
             free_fft(plan);
             return NULL;
         }
-        
-        FFT_LOG_DEBUG("  Stage %d: radix=%d, N=%d, sub_len=%d, twiddles=%d (SoA)",
-               i, radix, N_stage, sub_len, (radix - 1) * sub_len);
 
-        //✅ NEW CODE (SoA version):
+        FFT_LOG_DEBUG("  Stage %d: radix=%d, N=%d, sub_len=%d, twiddles=%d (handle cached, ref=%d)",
+            i, radix, N_stage, sub_len, (radix - 1) * sub_len, stage->stage_tw->refcount);
+
         // ──────────────────────────────────────────────────────────────────
-        // DFT Kernel Twiddles: For general radix fallback (optional, SoA)
+        // DFT Kernel Twiddles: For general radix fallback (cached handle)
         // ──────────────────────────────────────────────────────────────────
-        
-        // Only compute for radices that will use general radix fallback
+
+        // Only get for radices that will use general radix fallback
         int needs_dft_kernel = !has_radix_implementation(radix);
-        
+
         if (needs_dft_kernel) {
-            stage->dft_kernel_tw = compute_dft_kernel_twiddles_soa(radix, direction);
+            stage->dft_kernel_tw = get_dft_kernel_twiddles(radix, direction);
             
             if (!stage->dft_kernel_tw) {
-                FFT_LOG_ERROR("Failed to compute SoA DFT kernel twiddles for radix %d", radix);
+                FFT_LOG_ERROR("Failed to get DFT kernel twiddles for radix %d", radix);
                 free_fft(plan);
                 return NULL;
             }
             
-            FFT_LOG_DEBUG("    → DFT kernel: radix=%d, twiddles=%d (SoA)", radix, radix);
+            FFT_LOG_DEBUG("    → DFT kernel: radix=%d, twiddles=%d (handle cached)", 
+                        radix, radix * radix);
         } else {
             stage->dft_kernel_tw = NULL;  // Not needed for specialized radices
         }
@@ -1080,23 +1081,31 @@ void free_fft(fft_object plan)
     // ──────────────────────────────────────────────────────────────────
     // Free Cooley-Tukey stage resources (ONLY if not Bluestein)
     // ──────────────────────────────────────────────────────────────────
-    
-    if (plan->strategy != FFT_EXEC_BLUESTEIN) {
-        for (int i = 0; i < plan->num_stages; i++) {
-            // ⚡ CHANGED: Free SoA stage twiddles
-            if (plan->stages[i].stage_tw) {
-                free_stage_twiddles_soa(plan->stages[i].stage_tw);
+
+    if (plan->strategy != FFT_EXEC_BLUESTEIN)
+    {
+        for (int i = 0; i < plan->num_stages; i++)
+        {
+            // Release stage twiddles (decrements refcount, cache manages lifetime)
+            if (plan->stages[i].stage_tw)
+            {
+                twiddle_destroy(plan->stages[i].stage_tw);
             }
-            
-            // ⚡ CHANGED: Free SoA DFT kernel twiddles
-            if (plan->stages[i].dft_kernel_tw) {
-                free_dft_kernel_twiddles_soa(plan->stages[i].dft_kernel_tw);
+
+            // Release DFT kernel twiddles (decrements refcount)
+            if (plan->stages[i].dft_kernel_tw)
+            {
+                twiddle_destroy(plan->stages[i].dft_kernel_tw);
             }
-            
-            // Note: stages[i].rader_tw is NOT freed (borrowed from global cache)
+
+            // Release Rader twiddles (decrements refcount)
+            if (plan->stages[i].rader_tw)
+            {
+                twiddle_destroy(plan->stages[i].rader_tw);
+            }
         }
     }
-    
+
     // ──────────────────────────────────────────────────────────────────
     // Free Bluestein resources (unchanged)
     // ──────────────────────────────────────────────────────────────────

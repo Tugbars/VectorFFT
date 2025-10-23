@@ -133,7 +133,15 @@ static int fft_exec_inplace_bitrev_internal(fft_object plan, fft_data *data)
             return -1;
         }
 
-        const fft_twiddles_soa *twiddles = s->stage_tw;  // ✅ Correct type
+        // Create view from handle (stack-allocated, zero overhead)
+        fft_twiddles_soa_view tw_view;
+        if (twiddle_get_soa_view(s->stage_tw, &tw_view) != 0)
+        {
+            printf("Failed to get twiddle view\n");
+            return -1;
+        }
+        const fft_twiddles_soa_view *twiddles = &tw_view;
+
         const int num_groups = N / (2 * distance);
 
         for (int group = 0; group < num_groups; group++)
@@ -287,6 +295,45 @@ static void fft_recursive_ct_internal(
 
     fft_data *sub_out = workspace;
 
+    // ══════════════════════════════════════════════════════════════════════
+    // NEW: Create SoA views from handles (stack-allocated, zero overhead)
+    // ══════════════════════════════════════════════════════════════════════
+
+    // Stage twiddles (always present)
+    fft_twiddles_soa_view stage_view;
+    if (twiddle_get_soa_view(stage->stage_tw, &stage_view) != 0)
+    {
+        printf("Failed to get stage twiddle view\n");
+        return;
+    }
+    const fft_twiddles_soa_view *tw = &stage_view;
+
+    // Rader twiddles (for prime radices ≥7)
+    fft_twiddles_soa_view rader_view;
+    const fft_twiddles_soa_view *rader_tw = NULL;
+    if (stage->rader_tw)
+    {
+        if (twiddle_get_soa_view(stage->rader_tw, &rader_view) != 0)
+        {
+            printf("Failed to get Rader twiddle view\n");
+            return;
+        }
+        rader_tw = &rader_view;
+    }
+
+    // DFT kernel twiddles (for general radix fallback)
+    fft_twiddles_soa_view kernel_view;
+    const fft_twiddles_soa_view *kernel_tw = NULL;
+    if (stage->dft_kernel_tw)
+    {
+        if (twiddle_get_soa_view(stage->dft_kernel_tw, &kernel_view) != 0)
+        {
+            printf("Failed to get DFT kernel view\n");
+            return;
+        }
+        kernel_tw = &kernel_view;
+    }
+
     // Recursively compute sub-DFTs (strided, no copying)
     for (int i = 0; i < radix; i++)
     {
@@ -305,7 +352,6 @@ static void fft_recursive_ct_internal(
     // CRITICAL: All butterfly functions now expect sub_N as last parameter!
     //==========================================================================
 
-    const fft_data *tw = stage->stage_tw;
     int is_forward = (plan->direction == FFT_FORWARD);
 
     switch (radix)
@@ -345,9 +391,10 @@ static void fft_recursive_ct_internal(
     case 7:
         // radix7_fv/bv(output, input, twiddles, sub_len)
         if (is_forward)
-            fft_radix7_fv(out, sub_out, tw, sub_N);
+            fft_radix7_fv(out, sub_out, tw, rader_tw, sub_N);  // Add rader_tw if signature needs it
+
         else
-            fft_radix7_bv(out, sub_out, tw, sub_N);
+            fft_radix7_fv(out, sub_out, tw, rader_tw, sub_N);  // Add rader_tw if signature needs it
         break;
 
     case 8:
@@ -392,11 +439,12 @@ static void fft_recursive_ct_internal(
         // general_radix_fv/bv(output, input, stage_tw, kernel_tw, radix, sub_len)
         if (is_forward)
         {
-            fft_general_radix_fv(out, sub_out, tw, stage->dft_kernel_tw, radix, sub_N);
+            fft_general_radix_fv(out, sub_out, tw, kernel_tw, radix, sub_N); // twiddle strategy changed, general mixed radix fallback needs to be refactored to accommodate the changes. 
         }
         else
         {
-            fft_general_radix_bv(out, sub_out, tw, stage->dft_kernel_tw, radix, sub_N);
+            fft_general_radix_bv(out, sub_out, tw, kernel_tw, radix, sub_N);
+
         }
         break;
     }
