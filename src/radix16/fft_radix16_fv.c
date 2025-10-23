@@ -9,7 +9,7 @@
  * PERFORMANCE CHARACTERISTICS:
  * ============================
  * - AVX-512: ~20-25 cycles/butterfly (4 complex/iteration)
- * - AVX2:    ~30-35 cycles/butterfly (2 complex/iteration) 
+ * - AVX2:    ~30-35 cycles/butterfly (2 complex/iteration)
  * - SSE2:    ~45-55 cycles/butterfly (1 complex/iteration)
  * - Scalar:  ~80-100 cycles/butterfly (1 complex/iteration)
  *
@@ -40,41 +40,41 @@
 #include <omp.h>
 #endif
 
-#include <stdint.h>  // For uintptr_t (alignment checks)
-#include <assert.h>  // For alignment assertions
+#include <stdint.h> // For uintptr_t (alignment checks)
+#include <assert.h> // For alignment assertions
 
 //==============================================================================
 // CONFIGURATION
 //==============================================================================
 
 // Prefetch distances (empirically tuned)
-#define PREFETCH_DISTANCE_AVX512 16  // 16 iterations ahead
-#define PREFETCH_DISTANCE_AVX2   16  // 16 iterations ahead
-#define PREFETCH_DISTANCE_SSE2   8   // 8 iterations ahead
+#define PREFETCH_DISTANCE_AVX512 16 // 16 iterations ahead
+#define PREFETCH_DISTANCE_AVX2 16   // 16 iterations ahead
+#define PREFETCH_DISTANCE_SSE2 8    // 8 iterations ahead
 
 // Streaming threshold: use non-temporal stores for K >= threshold
 #define STREAM_THRESHOLD_R16 4096
 
 // Parallel threshold: use multithreading for K >= threshold
 #if defined(__AVX512F__)
-    #define PARALLEL_THRESHOLD_R16 512   // ~8K complex values
+#define PARALLEL_THRESHOLD_R16 512 // ~8K complex values
 #elif defined(__AVX2__)
-    #define PARALLEL_THRESHOLD_R16 1024  // ~16K complex values
+#define PARALLEL_THRESHOLD_R16 1024 // ~16K complex values
 #elif defined(__SSE2__)
-    #define PARALLEL_THRESHOLD_R16 2048  // ~32K complex values
+#define PARALLEL_THRESHOLD_R16 2048 // ~32K complex values
 #else
-    #define PARALLEL_THRESHOLD_R16 4096  // ~64K complex values
+#define PARALLEL_THRESHOLD_R16 4096 // ~64K complex values
 #endif
 
 // Required alignment based on SIMD instruction set
 #if defined(__AVX512F__)
-    #define REQUIRED_ALIGNMENT 64  // AVX-512: 64-byte alignment
+#define REQUIRED_ALIGNMENT 64 // AVX-512: 64-byte alignment
 #elif defined(__AVX2__) || defined(__AVX__)
-    #define REQUIRED_ALIGNMENT 32  // AVX2/AVX: 32-byte alignment
+#define REQUIRED_ALIGNMENT 32 // AVX2/AVX: 32-byte alignment
 #elif defined(__SSE2__)
-    #define REQUIRED_ALIGNMENT 16  // SSE2: 16-byte alignment
+#define REQUIRED_ALIGNMENT 16 // SSE2: 16-byte alignment
 #else
-    #define REQUIRED_ALIGNMENT 8   // Scalar: natural double alignment
+#define REQUIRED_ALIGNMENT 8 // Scalar: natural double alignment
 #endif
 
 // Cache line size in bytes (typical for x86-64)
@@ -84,7 +84,7 @@
 #define COMPLEX_PER_CACHE_LINE (CACHE_LINE_BYTES / (2 * sizeof(double)))
 
 // Chunk size for parallel processing (multiple of cache lines to reduce false sharing)
-#define PARALLEL_CHUNK_SIZE_R16 (COMPLEX_PER_CACHE_LINE * 8)  // 32 complex values
+#define PARALLEL_CHUNK_SIZE_R16 (COMPLEX_PER_CACHE_LINE * 8) // 32 complex values
 
 //==============================================================================
 // HELPER: Process a Range of Butterflies (Native SoA)
@@ -92,18 +92,18 @@
 
 /**
  * @brief Process radix-16 butterflies in range [k_start, k_end) - NATIVE SoA
- * 
+ *
  * @details
  * ⚡⚡⚡ CRITICAL: NO SPLIT/JOIN OPERATIONS!
- * 
+ *
  * Data flow:
  *   - Load: in_re[k + j*K], in_im[k + j*K] for j=0..15 (direct, no conversion!)
  *   - Compute: radix-16 butterfly in split form
  *   - Store: out_re[k + j*K], out_im[k + j*K] for j=0..15 (direct, no conversion!)
- * 
+ *
  * This function processes a contiguous range of butterfly indices, applying
  * the optimal SIMD path for the target architecture.
- * 
+ *
  * @param[out] out_re Output real array
  * @param[out] out_im Output imaginary array
  * @param[in] in_re Input real array
@@ -125,6 +125,12 @@ static void radix16_process_range_native_soa(
     int k_end,
     int use_streaming)
 {
+    // Alignment hints for optimal codegen (based on actual SIMD level)
+    out_re = __builtin_assume_aligned(out_re, REQUIRED_ALIGNMENT);
+    out_im = __builtin_assume_aligned(out_im, REQUIRED_ALIGNMENT);
+    in_re = __builtin_assume_aligned(in_re, REQUIRED_ALIGNMENT);
+    in_im = __builtin_assume_aligned(in_im, REQUIRED_ALIGNMENT);
+
     int k = k_start;
     const int k_end_local = k_end;
 
@@ -134,7 +140,7 @@ static void radix16_process_range_native_soa(
     //==========================================================================
 
     // Sign mask for forward transform (-i rotation)
-    const __m512d SIGN512 = _mm512_set1_pd(-0.0);  // Negative for forward
+    const __m512d SIGN512 = _mm512_set1_pd(-0.0); // Negative for forward
 
     const __m512d rot_mask = _mm512_set_pd(-0.0, 0.0, -0.0, 0.0,
                                            -0.0, 0.0, -0.0, 0.0);
@@ -164,7 +170,7 @@ static void radix16_process_range_native_soa(
     //==========================================================================
 
     // Sign mask for forward transform (-i rotation)
-    const __m256d SIGN256 = _mm256_set1_pd(-0.0);  // Negative for forward
+    const __m256d SIGN256 = _mm256_set1_pd(-0.0); // Negative for forward
 
     const __m256d rot_mask = _mm256_set_pd(-0.0, 0.0, -0.0, 0.0);
     const __m256d neg_mask = SIGN256;
@@ -191,7 +197,7 @@ static void radix16_process_range_native_soa(
     //==========================================================================
 
     // Sign mask for forward transform (-i rotation)
-    const __m128d SIGN128 = _mm_set1_pd(-0.0);  // Negative for forward
+    const __m128d SIGN128 = _mm_set1_pd(-0.0); // Negative for forward
 
     const double rot_sign = -1.0;
 
@@ -216,6 +222,7 @@ static void radix16_process_range_native_soa(
     // SCALAR FALLBACK: Process 1 complex value at a time
     //==========================================================================
 
+    // Rotation sign for forward transform (-i rotation)
     const double rot_sign = -1.0;
 
     for (; k < k_end_local; k++)
@@ -224,38 +231,31 @@ static void radix16_process_range_native_soa(
             k, K, in_re, in_im, out_re, out_im, stage_tw, rot_sign);
     }
 
-#endif
-
-    // Memory fence after streaming stores (if used)
-    if (use_streaming)
-    {
-        _mm_sfence();
-    }
+#endif // SIMD selection
 }
 
 #ifdef _OPENMP
+//==============================================================================
+// PARALLEL DISPATCH HELPER
+//==============================================================================
+
 /**
- * @brief Parallel dispatcher for radix-16 butterflies
- * 
+ * @brief Parallel dispatch for large K using OpenMP
+ *
  * @details
- * Distributes work across OpenMP threads using static scheduling with
- * cache-line-aware chunk sizes to minimize false sharing.
- * 
- * Each thread:
- *   1. Processes its assigned range of k values
- *   2. Issues memory fence after streaming stores
- *   3. No synchronization needed (disjoint memory regions)
- * 
+ * Distributes work across threads with cache-line-aware chunking to minimize
+ * false sharing. Each thread processes a disjoint region of memory.
+ *
  * @param[out] out_re Output real array
  * @param[out] out_im Output imaginary array
  * @param[in] in_re Input real array
  * @param[in] in_im Input imaginary array
- * @param[in] stage_tw SoA twiddle factors
- * @param[in] K Number of butterflies
- * @param[in] k_start Starting butterfly index
- * @param[in] k_end Ending butterfly index
- * @param[in] use_streaming Use streaming stores
- * @param[in] num_threads Number of OpenMP threads to use
+ * @param[in] stage_tw SoA twiddle factors for this stage
+ * @param[in] K Number of butterflies in full stage
+ * @param[in] k_start Starting butterfly index (inclusive)
+ * @param[in] k_end Ending butterfly index (exclusive)
+ * @param[in] use_streaming Use streaming stores for large K
+ * @param[in] num_threads Number of threads to use
  */
 static void radix16_parallel_dispatch_native_soa(
     double *restrict out_re,
@@ -270,22 +270,22 @@ static void radix16_parallel_dispatch_native_soa(
     int num_threads)
 {
     omp_set_num_threads(num_threads);
-    
-    #pragma omp parallel
+
+#pragma omp parallel
     {
         const int tid = omp_get_thread_num();
         const int nthreads = omp_get_num_threads();
-        
+
         // Compute per-thread range with cache-line-aware chunking
         const int total_work = k_end - k_start;
         const int chunk_base = total_work / nthreads;
         const int remainder = total_work % nthreads;
-        
+
         // Threads with tid < remainder get one extra iteration
         const int my_start = k_start + tid * chunk_base + (tid < remainder ? tid : remainder);
         const int my_count = chunk_base + (tid < remainder ? 1 : 0);
         const int my_end = my_start + my_count;
-        
+
         if (my_count > 0)
         {
             radix16_process_range_native_soa(
@@ -357,6 +357,8 @@ void fft_radix16_fv_native_soa(
            "in_re must be properly aligned for SIMD");
     assert(((uintptr_t)in_im % REQUIRED_ALIGNMENT) == 0 &&
            "in_im must be properly aligned for SIMD");
+
+    // Verify twiddle alignment (these should always be aligned)
     assert(((uintptr_t)stage_tw->re % REQUIRED_ALIGNMENT) == 0 &&
            "stage_tw->re must be properly aligned for SIMD");
     assert(((uintptr_t)stage_tw->im % REQUIRED_ALIGNMENT) == 0 &&
@@ -387,7 +389,7 @@ void fft_radix16_fv_native_soa(
         return;
     }
 #else
-    (void)num_threads;  // Suppress unused parameter warning
+    (void)num_threads; // Suppress unused parameter warning
 #endif
 
     // Single-threaded path (or K too small for parallelization)

@@ -644,6 +644,232 @@
         STORE_16_LANES_SOA_AVX2_STREAM(k, K, out_re, out_im, x_re, x_im);                                                                    \
     } while (0)
 
+    //==============================================================================
+// 4x UNROLLED PIPELINE MACROS - Process 8 butterflies per iteration
+//==============================================================================
+
+/**
+ * @brief 4x unrolled forward transform - regular stores
+ * @details Processes 8 butterflies per iteration (k += 8)
+ * Maximum instruction-level parallelism for AVX2
+ */
+#define RADIX16_PIPELINE_8_FV_NATIVE_SOA_AVX2(k, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask, prefetch_dist, k_end) \
+    do                                                                                                                                  \
+    {                                                                                                                                   \
+        /* Process 4 groups of 2 butterflies each */                                                                                   \
+        __m256d x_re[4][16], x_im[4][16], t_re[4][16], t_im[4][16];                                                                    \
+                                                                                                                                        \
+        /* Load and apply stage twiddles for all 4 groups */                                                                           \
+        _Pragma("GCC unroll 4")                                                                                                        \
+        for (int g = 0; g < 4; g++)                                                                                                    \
+        {                                                                                                                               \
+            int kg = (k) + g * 2;                                                                                                       \
+            PREFETCH_16_LANES_SOA_AVX2(kg, K, prefetch_dist, in_re, in_im, k_end);                                                     \
+            PREFETCH_STAGE_TW_SOA_AVX2(kg, prefetch_dist, stage_tw, K, k_end);                                                         \
+            LOAD_16_LANES_SOA_AVX2(kg, K, in_re, in_im, x_re[g], x_im[g]);                                                             \
+            APPLY_STAGE_TWIDDLES_R16_SOA_AVX2(kg, x_re[g], x_im[g], stage_tw, K);                                                      \
+        }                                                                                                                               \
+                                                                                                                                        \
+        /* First radix-4 stage for all 4 groups */                                                                                     \
+        _Pragma("GCC unroll 4")                                                                                                        \
+        for (int g = 0; g < 4; g++)                                                                                                    \
+        {                                                                                                                               \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][0], x_im[g][0], x_re[g][4], x_im[g][4], x_re[g][8], x_im[g][8], x_re[g][12], x_im[g][12], \
+                                      t_re[g][0], t_im[g][0], t_re[g][1], t_im[g][1], t_re[g][2], t_im[g][2], t_re[g][3], t_im[g][3], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][1], x_im[g][1], x_re[g][5], x_im[g][5], x_re[g][9], x_im[g][9], x_re[g][13], x_im[g][13], \
+                                      t_re[g][4], t_im[g][4], t_re[g][5], t_im[g][5], t_re[g][6], t_im[g][6], t_re[g][7], t_im[g][7], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][2], x_im[g][2], x_re[g][6], x_im[g][6], x_re[g][10], x_im[g][10], x_re[g][14], x_im[g][14], \
+                                      t_re[g][8], t_im[g][8], t_re[g][9], t_im[g][9], t_re[g][10], t_im[g][10], t_re[g][11], t_im[g][11], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][3], x_im[g][3], x_re[g][7], x_im[g][7], x_re[g][11], x_im[g][11], x_re[g][15], x_im[g][15], \
+                                      t_re[g][12], t_im[g][12], t_re[g][13], t_im[g][13], t_re[g][14], t_im[g][14], t_re[g][15], t_im[g][15], rot_mask); \
+            APPLY_W4_INTERMEDIATE_FV_SOA_AVX2(t_re[g], t_im[g], neg_mask);                                                              \
+        }                                                                                                                               \
+                                                                                                                                        \
+        /* Second radix-4 stage for all 4 groups */                                                                                    \
+        _Pragma("GCC unroll 4")                                                                                                        \
+        for (int g = 0; g < 4; g++)                                                                                                    \
+        {                                                                                                                               \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][0], t_im[g][0], t_re[g][4], t_im[g][4], t_re[g][8], t_im[g][8], t_re[g][12], t_im[g][12], \
+                                      x_re[g][0], x_im[g][0], x_re[g][4], x_im[g][4], x_re[g][8], x_im[g][8], x_re[g][12], x_im[g][12], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][1], t_im[g][1], t_re[g][5], t_im[g][5], t_re[g][9], t_im[g][9], t_re[g][13], t_im[g][13], \
+                                      x_re[g][1], x_im[g][1], x_re[g][5], x_im[g][5], x_re[g][9], x_im[g][9], x_re[g][13], x_im[g][13], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][2], t_im[g][2], t_re[g][6], t_im[g][6], t_re[g][10], t_im[g][10], t_re[g][14], t_im[g][14], \
+                                      x_re[g][2], x_im[g][2], x_re[g][6], x_im[g][6], x_re[g][10], x_im[g][10], x_re[g][14], x_im[g][14], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][3], t_im[g][3], t_re[g][7], t_im[g][7], t_re[g][11], t_im[g][11], t_re[g][15], t_im[g][15], \
+                                      x_re[g][3], x_im[g][3], x_re[g][7], x_im[g][7], x_re[g][11], x_im[g][11], x_re[g][15], x_im[g][15], rot_mask); \
+        }                                                                                                                               \
+                                                                                                                                        \
+        /* Store all 4 groups */                                                                                                       \
+        _Pragma("GCC unroll 4")                                                                                                        \
+        for (int g = 0; g < 4; g++)                                                                                                    \
+        {                                                                                                                               \
+            STORE_16_LANES_SOA_AVX2((k) + g * 2, K, out_re, out_im, x_re[g], x_im[g]);                                                \
+        }                                                                                                                               \
+    } while (0)
+
+/**
+ * @brief 4x unrolled backward transform - regular stores
+ */
+#define RADIX16_PIPELINE_8_BV_NATIVE_SOA_AVX2(k, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask, prefetch_dist, k_end) \
+    do                                                                                                                                  \
+    {                                                                                                                                   \
+        /* Process 4 groups of 2 butterflies each */                                                                                   \
+        __m256d x_re[4][16], x_im[4][16], t_re[4][16], t_im[4][16];                                                                    \
+                                                                                                                                        \
+        /* Load and apply stage twiddles for all 4 groups */                                                                           \
+        _Pragma("GCC unroll 4")                                                                                                        \
+        for (int g = 0; g < 4; g++)                                                                                                    \
+        {                                                                                                                               \
+            int kg = (k) + g * 2;                                                                                                       \
+            PREFETCH_16_LANES_SOA_AVX2(kg, K, prefetch_dist, in_re, in_im, k_end);                                                     \
+            PREFETCH_STAGE_TW_SOA_AVX2(kg, prefetch_dist, stage_tw, K, k_end);                                                         \
+            LOAD_16_LANES_SOA_AVX2(kg, K, in_re, in_im, x_re[g], x_im[g]);                                                             \
+            APPLY_STAGE_TWIDDLES_R16_SOA_AVX2(kg, x_re[g], x_im[g], stage_tw, K);                                                      \
+        }                                                                                                                               \
+                                                                                                                                        \
+        /* First radix-4 stage for all 4 groups */                                                                                     \
+        _Pragma("GCC unroll 4")                                                                                                        \
+        for (int g = 0; g < 4; g++)                                                                                                    \
+        {                                                                                                                               \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][0], x_im[g][0], x_re[g][4], x_im[g][4], x_re[g][8], x_im[g][8], x_re[g][12], x_im[g][12], \
+                                      t_re[g][0], t_im[g][0], t_re[g][1], t_im[g][1], t_re[g][2], t_im[g][2], t_re[g][3], t_im[g][3], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][1], x_im[g][1], x_re[g][5], x_im[g][5], x_re[g][9], x_im[g][9], x_re[g][13], x_im[g][13], \
+                                      t_re[g][4], t_im[g][4], t_re[g][5], t_im[g][5], t_re[g][6], t_im[g][6], t_re[g][7], t_im[g][7], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][2], x_im[g][2], x_re[g][6], x_im[g][6], x_re[g][10], x_im[g][10], x_re[g][14], x_im[g][14], \
+                                      t_re[g][8], t_im[g][8], t_re[g][9], t_im[g][9], t_re[g][10], t_im[g][10], t_re[g][11], t_im[g][11], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][3], x_im[g][3], x_re[g][7], x_im[g][7], x_re[g][11], x_im[g][11], x_re[g][15], x_im[g][15], \
+                                      t_re[g][12], t_im[g][12], t_re[g][13], t_im[g][13], t_re[g][14], t_im[g][14], t_re[g][15], t_im[g][15], rot_mask); \
+            APPLY_W4_INTERMEDIATE_BV_SOA_AVX2(t_re[g], t_im[g], neg_mask);                                                              \
+        }                                                                                                                               \
+                                                                                                                                        \
+        /* Second radix-4 stage for all 4 groups */                                                                                    \
+        _Pragma("GCC unroll 4")                                                                                                        \
+        for (int g = 0; g < 4; g++)                                                                                                    \
+        {                                                                                                                               \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][0], t_im[g][0], t_re[g][4], t_im[g][4], t_re[g][8], t_im[g][8], t_re[g][12], t_im[g][12], \
+                                      x_re[g][0], x_im[g][0], x_re[g][4], x_im[g][4], x_re[g][8], x_im[g][8], x_re[g][12], x_im[g][12], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][1], t_im[g][1], t_re[g][5], t_im[g][5], t_re[g][9], t_im[g][9], t_re[g][13], t_im[g][13], \
+                                      x_re[g][1], x_im[g][1], x_re[g][5], x_im[g][5], x_re[g][9], x_im[g][9], x_re[g][13], x_im[g][13], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][2], t_im[g][2], t_re[g][6], t_im[g][6], t_re[g][10], t_im[g][10], t_re[g][14], t_im[g][14], \
+                                      x_re[g][2], x_im[g][2], x_re[g][6], x_im[g][6], x_re[g][10], x_im[g][10], x_re[g][14], x_im[g][14], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][3], t_im[g][3], t_re[g][7], t_im[g][7], t_re[g][11], t_im[g][11], t_re[g][15], t_im[g][15], \
+                                      x_re[g][3], x_im[g][3], x_re[g][7], x_im[g][7], x_re[g][11], x_im[g][11], x_re[g][15], x_im[g][15], rot_mask); \
+        }                                                                                                                               \
+                                                                                                                                        \
+        /* Store all 4 groups */                                                                                                       \
+        _Pragma("GCC unroll 4")                                                                                                        \
+        for (int g = 0; g < 4; g++)                                                                                                    \
+        {                                                                                                                               \
+            STORE_16_LANES_SOA_AVX2((k) + g * 2, K, out_re, out_im, x_re[g], x_im[g]);                                                \
+        }                                                                                                                               \
+    } while (0)
+
+/**
+ * @brief 4x unrolled forward transform - streaming stores
+ */
+#define RADIX16_PIPELINE_8_FV_NATIVE_SOA_AVX2_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask, prefetch_dist, k_end) \
+    do                                                                                                                                          \
+    {                                                                                                                                           \
+        /* Process 4 groups of 2 butterflies each with streaming stores */                                                                     \
+        __m256d x_re[4][16], x_im[4][16], t_re[4][16], t_im[4][16];                                                                            \
+                                                                                                                                                \
+        _Pragma("GCC unroll 4")                                                                                                                \
+        for (int g = 0; g < 4; g++)                                                                                                            \
+        {                                                                                                                                       \
+            int kg = (k) + g * 2;                                                                                                               \
+            PREFETCH_16_LANES_SOA_AVX2(kg, K, prefetch_dist, in_re, in_im, k_end);                                                             \
+            PREFETCH_STAGE_TW_SOA_AVX2(kg, prefetch_dist, stage_tw, K, k_end);                                                                 \
+            LOAD_16_LANES_SOA_AVX2(kg, K, in_re, in_im, x_re[g], x_im[g]);                                                                     \
+            APPLY_STAGE_TWIDDLES_R16_SOA_AVX2(kg, x_re[g], x_im[g], stage_tw, K);                                                              \
+        }                                                                                                                                       \
+                                                                                                                                                \
+        _Pragma("GCC unroll 4")                                                                                                                \
+        for (int g = 0; g < 4; g++)                                                                                                            \
+        {                                                                                                                                       \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][0], x_im[g][0], x_re[g][4], x_im[g][4], x_re[g][8], x_im[g][8], x_re[g][12], x_im[g][12],       \
+                                      t_re[g][0], t_im[g][0], t_re[g][1], t_im[g][1], t_re[g][2], t_im[g][2], t_re[g][3], t_im[g][3], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][1], x_im[g][1], x_re[g][5], x_im[g][5], x_re[g][9], x_im[g][9], x_re[g][13], x_im[g][13],       \
+                                      t_re[g][4], t_im[g][4], t_re[g][5], t_im[g][5], t_re[g][6], t_im[g][6], t_re[g][7], t_im[g][7], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][2], x_im[g][2], x_re[g][6], x_im[g][6], x_re[g][10], x_im[g][10], x_re[g][14], x_im[g][14],     \
+                                      t_re[g][8], t_im[g][8], t_re[g][9], t_im[g][9], t_re[g][10], t_im[g][10], t_re[g][11], t_im[g][11], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][3], x_im[g][3], x_re[g][7], x_im[g][7], x_re[g][11], x_im[g][11], x_re[g][15], x_im[g][15],     \
+                                      t_re[g][12], t_im[g][12], t_re[g][13], t_im[g][13], t_re[g][14], t_im[g][14], t_re[g][15], t_im[g][15], rot_mask); \
+            APPLY_W4_INTERMEDIATE_FV_SOA_AVX2(t_re[g], t_im[g], neg_mask);                                                                      \
+        }                                                                                                                                       \
+                                                                                                                                                \
+        _Pragma("GCC unroll 4")                                                                                                                \
+        for (int g = 0; g < 4; g++)                                                                                                            \
+        {                                                                                                                                       \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][0], t_im[g][0], t_re[g][4], t_im[g][4], t_re[g][8], t_im[g][8], t_re[g][12], t_im[g][12],       \
+                                      x_re[g][0], x_im[g][0], x_re[g][4], x_im[g][4], x_re[g][8], x_im[g][8], x_re[g][12], x_im[g][12], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][1], t_im[g][1], t_re[g][5], t_im[g][5], t_re[g][9], t_im[g][9], t_re[g][13], t_im[g][13],       \
+                                      x_re[g][1], x_im[g][1], x_re[g][5], x_im[g][5], x_re[g][9], x_im[g][9], x_re[g][13], x_im[g][13], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][2], t_im[g][2], t_re[g][6], t_im[g][6], t_re[g][10], t_im[g][10], t_re[g][14], t_im[g][14],     \
+                                      x_re[g][2], x_im[g][2], x_re[g][6], x_im[g][6], x_re[g][10], x_im[g][10], x_re[g][14], x_im[g][14], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][3], t_im[g][3], t_re[g][7], t_im[g][7], t_re[g][11], t_im[g][11], t_re[g][15], t_im[g][15],     \
+                                      x_re[g][3], x_im[g][3], x_re[g][7], x_im[g][7], x_re[g][11], x_im[g][11], x_re[g][15], x_im[g][15], rot_mask); \
+        }                                                                                                                                       \
+                                                                                                                                                \
+        _Pragma("GCC unroll 4")                                                                                                                \
+        for (int g = 0; g < 4; g++)                                                                                                            \
+        {                                                                                                                                       \
+            STORE_16_LANES_SOA_AVX2_STREAM((k) + g * 2, K, out_re, out_im, x_re[g], x_im[g]);                                                 \
+        }                                                                                                                                       \
+    } while (0)
+
+/**
+ * @brief 4x unrolled backward transform - streaming stores
+ */
+#define RADIX16_PIPELINE_8_BV_NATIVE_SOA_AVX2_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask, prefetch_dist, k_end) \
+    do                                                                                                                                          \
+    {                                                                                                                                           \
+        /* Process 4 groups of 2 butterflies each with streaming stores */                                                                     \
+        __m256d x_re[4][16], x_im[4][16], t_re[4][16], t_im[4][16];                                                                            \
+                                                                                                                                                \
+        _Pragma("GCC unroll 4")                                                                                                                \
+        for (int g = 0; g < 4; g++)                                                                                                            \
+        {                                                                                                                                       \
+            int kg = (k) + g * 2;                                                                                                               \
+            PREFETCH_16_LANES_SOA_AVX2(kg, K, prefetch_dist, in_re, in_im, k_end);                                                             \
+            PREFETCH_STAGE_TW_SOA_AVX2(kg, prefetch_dist, stage_tw, K, k_end);                                                                 \
+            LOAD_16_LANES_SOA_AVX2(kg, K, in_re, in_im, x_re[g], x_im[g]);                                                                     \
+            APPLY_STAGE_TWIDDLES_R16_SOA_AVX2(kg, x_re[g], x_im[g], stage_tw, K);                                                              \
+        }                                                                                                                                       \
+                                                                                                                                                \
+        _Pragma("GCC unroll 4")                                                                                                                \
+        for (int g = 0; g < 4; g++)                                                                                                            \
+        {                                                                                                                                       \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][0], x_im[g][0], x_re[g][4], x_im[g][4], x_re[g][8], x_im[g][8], x_re[g][12], x_im[g][12],       \
+                                      t_re[g][0], t_im[g][0], t_re[g][1], t_im[g][1], t_re[g][2], t_im[g][2], t_re[g][3], t_im[g][3], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][1], x_im[g][1], x_re[g][5], x_im[g][5], x_re[g][9], x_im[g][9], x_re[g][13], x_im[g][13],       \
+                                      t_re[g][4], t_im[g][4], t_re[g][5], t_im[g][5], t_re[g][6], t_im[g][6], t_re[g][7], t_im[g][7], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][2], x_im[g][2], x_re[g][6], x_im[g][6], x_re[g][10], x_im[g][10], x_re[g][14], x_im[g][14],     \
+                                      t_re[g][8], t_im[g][8], t_re[g][9], t_im[g][9], t_re[g][10], t_im[g][10], t_re[g][11], t_im[g][11], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(x_re[g][3], x_im[g][3], x_re[g][7], x_im[g][7], x_re[g][11], x_im[g][11], x_re[g][15], x_im[g][15],     \
+                                      t_re[g][12], t_im[g][12], t_re[g][13], t_im[g][13], t_re[g][14], t_im[g][14], t_re[g][15], t_im[g][15], rot_mask); \
+            APPLY_W4_INTERMEDIATE_BV_SOA_AVX2(t_re[g], t_im[g], neg_mask);                                                                      \
+        }                                                                                                                                       \
+                                                                                                                                                \
+        _Pragma("GCC unroll 4")                                                                                                                \
+        for (int g = 0; g < 4; g++)                                                                                                            \
+        {                                                                                                                                       \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][0], t_im[g][0], t_re[g][4], t_im[g][4], t_re[g][8], t_im[g][8], t_re[g][12], t_im[g][12],       \
+                                      x_re[g][0], x_im[g][0], x_re[g][4], x_im[g][4], x_re[g][8], x_im[g][8], x_re[g][12], x_im[g][12], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][1], t_im[g][1], t_re[g][5], t_im[g][5], t_re[g][9], t_im[g][9], t_re[g][13], t_im[g][13],       \
+                                      x_re[g][1], x_im[g][1], x_re[g][5], x_im[g][5], x_re[g][9], x_im[g][9], x_re[g][13], x_im[g][13], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][2], t_im[g][2], t_re[g][6], t_im[g][6], t_re[g][10], t_im[g][10], t_re[g][14], t_im[g][14],     \
+                                      x_re[g][2], x_im[g][2], x_re[g][6], x_im[g][6], x_re[g][10], x_im[g][10], x_re[g][14], x_im[g][14], rot_mask); \
+            RADIX4_BUTTERFLY_SOA_AVX2(t_re[g][3], t_im[g][3], t_re[g][7], t_im[g][7], t_re[g][11], t_im[g][11], t_re[g][15], t_im[g][15],     \
+                                      x_re[g][3], x_im[g][3], x_re[g][7], x_im[g][7], x_re[g][11], x_im[g][11], x_re[g][15], x_im[g][15], rot_mask); \
+        }                                                                                                                                       \
+                                                                                                                                                \
+        _Pragma("GCC unroll 4")                                                                                                                \
+        for (int g = 0; g < 4; g++)                                                                                                            \
+        {                                                                                                                                       \
+            STORE_16_LANES_SOA_AVX2_STREAM((k) + g * 2, K, out_re, out_im, x_re[g], x_im[g]);                                                 \
+        }                                                                                                                                       \
+    } while (0)
+
 #endif // __AVX2__
 
 //==============================================================================
