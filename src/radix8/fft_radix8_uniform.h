@@ -260,6 +260,6 @@ void fft_radix8_fv(
     const fft_twiddles_soa *restrict stage_tw,  // ✅ SOA SIGNATURE
     int sub_len);
 
-#endif // FFT_RADIX3_H
+#endif // FFT_RADIX8_H
 
 // 3200

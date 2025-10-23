@@ -37,9 +37,8 @@
  */
 
 #include "fft_radix8_uniform.h"
-#include "fft_radix8_macros_true_soa.h"
-#include "fft_radix8_macros_true_soa_part2.h"
-#include "fft_radix8_macros_true_soa_part3.h"
+#include "fft_radix8_macros.h"
+
 #include "simd_math.h"
 
 #include <immintrin.h> // For SIMD intrinsics and memory fences

@@ -29,6 +29,7 @@
         "new": "c",
         "iterator": "c",
         "fft_radix2_uniform.h": "c",
-        "fft_radix3_uniform.h": "c"
+        "fft_radix3_uniform.h": "c",
+        "assert.h": "c"
     }
 }
