@@ -701,6 +701,11 @@ twiddle_handle_t *twiddle_create_explicit(
     handle->refcount = 1;
     handle->hash = compute_hash(n, radix, direction);
 
+    handle->materialized_re = NULL;
+    handle->materialized_im = NULL;
+    handle->materialized_count = 0;
+    handle->owns_materialized = 0;
+
     int success = 0;
     if (strategy == TWID_SIMPLE)
     {
@@ -725,30 +730,40 @@ twiddle_handle_t *twiddle_create_explicit(
 
 void twiddle_destroy(twiddle_handle_t *handle)
 {
-    if (!handle)
-        return;
-
+    if (!handle) return;
+    
     handle->refcount--;
-
-    if (handle->refcount == 0)
-    {
+    
+    if (handle->refcount == 0) {
         // Remove from cache
         cache_remove(handle);
-
-        // Free twiddle data
-        if (handle->strategy == TWID_SIMPLE)
-        {
-            destroy_simple_twiddles(handle);
+        
+        // ══════════════════════════════════════════════════════════════
+        // ⚡ NEW: Free materialized SoA arrays if we own them
+        // ══════════════════════════════════════════════════════════════
+        if (handle->owns_materialized) {
+            if (handle->materialized_re) {
+                aligned_free(handle->materialized_re);
+                handle->materialized_re = NULL;
+            }
+            if (handle->materialized_im) {
+                aligned_free(handle->materialized_im);
+                handle->materialized_im = NULL;
+            }
         }
-        else if (handle->strategy == TWID_FACTORED)
-        {
+        // Note: If owns_materialized == 0, these are borrowed pointers
+        // (e.g., from data.simple.re) and will be freed by destroy_simple_twiddles
+        
+        // Free twiddle data (existing code - unchanged)
+        if (handle->strategy == TWID_SIMPLE) {
+            destroy_simple_twiddles(handle);
+        } else if (handle->strategy == TWID_FACTORED) {
             destroy_factored_twiddles(handle);
         }
-
+        
         free(handle);
     }
 }
-
 //==============================================================================
 // SIMD LOAD FUNCTIONS
 //==============================================================================

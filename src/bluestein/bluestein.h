@@ -118,6 +118,26 @@ size_t bluestein_get_scratch_size(int N);
  */
 int bluestein_get_padded_size(int N);
 
+
+//==============================================================================
+// DIAGNOSTIC & CACHE UTILITIES (optional)
+//==============================================================================
+
+/**
+ * @brief Print comparison of power-of-2 vs adaptive padding
+ * 
+ * Outputs table showing size savings for various N values
+ */
+void bluestein_print_size_comparison(void);
+
+/**
+ * @brief Clear all cached Bluestein plans
+ * 
+ * Frees memory from global plan cache
+ * @warning NOT thread-safe
+ */
+void bluestein_clear_cache(void);
+
 #endif // BLUESTEIN_H
 
 // 1500

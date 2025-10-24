@@ -1,0 +1,52 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../fftw-3.3.10"
+		}
+	],
+	"settings": {
+		"astyle.astylerc": "",
+		"files.associations": {
+			".fantomasignore": "ignore",
+			"highspeedfft.h": "c",
+			"limits": "c",
+			"functional": "c",
+			"random": "c",
+			"immintrin.h": "c",
+			"pthread.h": "c",
+			"charconv": "c",
+			"xmemory": "c",
+			"simd_math.h": "c",
+			"system_error": "c",
+			"fft_radix8_macros.h": "c",
+			"fft_radix16_macros.h": "c",
+			"fft_radix13_macros.h": "c",
+			"fft_radix32.h": "c",
+			"fft_radix32_uniform.h": "c",
+			"fft_radix11_macros.h": "c",
+			"fft_radix2.h": "c",
+			"fft_radix2_macros.h": "c",
+			"bit": "c",
+			"compare": "c",
+			"cstddef": "c",
+			"string": "c",
+			"optional": "c",
+			"memory": "c",
+			"new": "c",
+			"iterator": "c",
+			"fft_radix2_uniform.h": "c",
+			"fft_radix3_uniform.h": "c",
+			"assert.h": "c",
+			"xiosbase": "c",
+			"fft_twiddles_hybrid.h": "c",
+			"format": "cpp",
+			"initializer_list": "cpp",
+			"vector": "cpp",
+			"xstring": "cpp",
+			"xutility": "cpp"
+		}
+	}
+}

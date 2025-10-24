@@ -1026,7 +1026,7 @@ fft_object fft_init(int N, fft_direction_t direction)
             
             if (is_prime) {
                 // ⚡ CHANGED: No cast needed, get_rader_twiddles() returns fft_twiddles_soa*
-                stage->rader_tw = get_rader_twiddles_soa(radix, direction);
+                stage->rader_tw = get_rader_twiddles(radix, direction);
                 
                 if (!stage->rader_tw) {
                     FFT_LOG_ERROR("Failed to get SoA Rader twiddles for prime %d", radix);

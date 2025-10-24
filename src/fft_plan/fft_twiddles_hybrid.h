@@ -108,20 +108,53 @@ typedef struct {
  * @brief Unified twiddle handle
  */
 typedef struct twiddle_handle {
+    // ══════════════════════════════════════════════════════════════════
+    // Existing fields (keep all of these)
+    // ══════════════════════════════════════════════════════════════════
     twiddle_strategy_t strategy;
     fft_direction_t direction;
-    int n;            ///< Size
-    int radix;        ///< Butterfly radix
-    int refcount;     ///< Reference count for caching
+    int n;
+    int radix;
+    int refcount;
+    uint64_t hash;
+    struct twiddle_handle *next;
     
     union {
-        fft_twiddles_soa simple;      ///< Simple full table
-        twiddle_factored_t factored;  ///< Factored tables
+        twiddle_simple_t simple;
+        twiddle_factored_t factored;
     } data;
     
-    // Cache management
-    uint64_t hash;
-    struct twiddle_handle *next;  ///< For hash table chaining
+    // ══════════════════════════════════════════════════════════════════
+    // ⚡ NEW: Materialized SoA arrays for execution (Approach 1)
+    // ══════════════════════════════════════════════════════════════════
+    
+    /**
+     * @brief Materialized SoA arrays for zero-overhead execution
+     * 
+     * These arrays are populated by twiddle_materialize() at planning time
+     * and provide O(1) access for butterfly kernels via twiddle_get_soa_view().
+     * 
+     * **Lifecycle:**
+     * - Allocated: First call to twiddle_materialize() or get_stage_twiddles()
+     * - Used: Every execution (twiddle_get_soa_view creates lightweight view)
+     * - Freed: When handle refcount reaches 0 (in twiddle_destroy)
+     * 
+     * **Special handling by strategy:**
+     * - TWID_SIMPLE: materialized_re/im point to data.simple.re/im (zero-copy)
+     *                owns_materialized = 0 (don't free, borrowed pointers)
+     * 
+     * - TWID_FACTORED: materialized_re/im are separate allocations with full
+     *                  reconstructed twiddles, owns_materialized = 1 (must free)
+     * 
+     * **Memory cost:**
+     * For stage twiddles: (radix-1) * sub_len * 2 * sizeof(double)
+     * Example: radix=4, N=1024 → sub_len=256 → 3*256*16 = 12KB
+     */
+    double *materialized_re;    ///< Real parts (NULL until materialized)
+    double *materialized_im;    ///< Imaginary parts (NULL until materialized)
+    int materialized_count;     ///< Number of twiddles (0 if not materialized)
+    int owns_materialized;      ///< 1 = allocated (free on destroy), 0 = borrowed (don't free)
+    
 } twiddle_handle_t;
 
 //==============================================================================
