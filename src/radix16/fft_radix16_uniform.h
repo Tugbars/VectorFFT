@@ -1,367 +1,549 @@
-#ifndef FFT_RADIX16_H
-#define FFT_RADIX16_H
+/**
+ * @file fft_radix16_uniform_optimized.h
+ * @brief Enhanced Radix-16 FFT with Advanced Optimizations
+ * 
+ * @section new_optimizations NEW OPTIMIZATIONS (2025)
+ * 
+ * ✨ Multi-Level Prefetching (L1/L2/L3 aware)
+ * ✨ Cache Blocking / Tiling (L2/L3 optimized)
+ * ✨ Higher Unroll Factors (8x AVX-512, 4x AVX2)
+ * ✨ SIMD-Friendly Twiddle Layout (cache-line aligned)
+ * ✨ Compile-Time Size Specialization (future)
+ * 
+ * @section preserved_optimizations PRESERVED OPTIMIZATIONS
+ * 
+ * ✅ Native SoA Architecture (zero shuffles in hot path)
+ * ✅ Software Pipelining (depth preserved/enhanced)
+ * ✅ Streaming Stores (cache bypass for large N)
+ * ✅ OpenMP Parallelization (cache-aware chunking)
+ * ✅ W_4 Intermediate Optimizations (swap+XOR)
+ * ✅ FMA Support (fused multiply-add)
+ * ✅ Alignment Enforcement (SIMD correctness)
+ * 
+ * @author VectorFFT Optimization Team
+ * @version 4.0 (Multi-level optimizations)
+ * @date 2025
+ */
 
-#include "../fft_plan/fft_planning_types.h"
+#ifndef FFT_RADIX16_UNIFORM_OPTIMIZED_H
+#define FFT_RADIX16_UNIFORM_OPTIMIZED_H
 
+#include <stddef.h>
+#include "fft_twiddles_soa.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+//==============================================================================
+// CONFIGURATION - MULTI-LEVEL PREFETCHING
+//==============================================================================
 
 /**
- * @brief Radix-16 FFT butterfly using 2-Stage Radix-4 Decomposition
- * 
- * =============================================================================
- * WHY RADIX-16 IS THE ULTIMATE POWER-OF-2 RADIX
- * =============================================================================
- * 
- * Radix-16 = 2^4 represents the practical upper limit for power-of-2 FFT radices,
- * offering the best balance between stage reduction and per-stage complexity:
- * 
- * STAGE COUNT COMPARISON:
- * -----------------------
- * For N=65536 (2^16):
- * - Radix-2:  16 stages (log₂(65536))
- * - Radix-4:  8 stages  (log₄(65536))
- * - Radix-8:  5.33 stages (log₈(65536), requires mixed radix)
- * - Radix-16: 4 stages  (log₁₆(65536)) ⭐ OPTIMAL
- * - Radix-32: 3.2 stages (log₃₂(65536), but per-stage cost explodes)
- * 
- * WHY NOT RADIX-32 OR HIGHER?
- * ----------------------------
- * Beyond radix-16, the law of diminishing returns kicks in hard:
- * 
- * 1. **Twiddle Explosion**: Radix-32 needs 31 twiddles per butterfly
- *    vs radix-16's 15 (2× overhead)
- * 
- * 2. **Register Pressure**: 32 inputs → 128 AVX2 registers needed
- *    (modern CPUs have only 16!)
- * 
- * 3. **Cache Pressure**: Larger butterflies thrash L1 cache
- *    Radix-16: ~256 bytes per butterfly (fits in L1)
- *    Radix-32: ~512 bytes per butterfly (L1 thrashing)
- * 
- * 4. **Complexity**: Decomposition patterns become unwieldy
- *    Radix-16 = 2 radix-4 stages (clean, simple)
- *    Radix-32 requires 3+ stages or hybrid approaches
- * 
- * 5. **Stage Savings**: Going from 4 stages (radix-16) to 3.2 stages (radix-32)
- *    saves only 0.8 stages, not worth 2-3× complexity increase
- * 
- * **VERDICT**: Radix-16 is the sweet spot - maximum stage reduction with
- * manageable complexity. It's the "highest radix you actually want to use."
- * 
- * =============================================================================
- * ALGORITHM: 2-STAGE RADIX-4 DECOMPOSITION
- * =============================================================================
- * 
- * Radix-16 = 2^4 = 4 × 4, allowing clean decomposition into two radix-4 stages:
- * 
- * CONCEPTUAL STRUCTURE:
- * ---------------------
- * Input: X[0], X[1], ..., X[15]  (16 inputs)
- * 
- * STAGE 1: Apply Input DIT Twiddles
- *   X'[j] = X[j] * W^(jk)  for j=1..15  (X[0] unchanged)
- *   where W = exp(-2πi/N) for the full FFT
- * 
- * STAGE 2: First Radix-4 Layer (Split into 4 groups)
- *   Group 0: Radix-4 on [X'[0], X'[4], X'[8],  X'[12]]  → Y[0..3]
- *   Group 1: Radix-4 on [X'[1], X'[5], X'[9],  X'[13]]  → Y[4..7]
- *   Group 2: Radix-4 on [X'[2], X'[6], X'[10], X'[14]]  → Y[8..11]
- *   Group 3: Radix-4 on [X'[3], X'[7], X'[11], X'[15]]  → Y[12..15]
- * 
- * STAGE 2.5: Apply Intermediate Twiddles W₄
- *   Y[j] *= W₄^⌊j/4⌋*(j mod 4)
- *   where W₄ = exp(-2πi/4) = {1, -i, -1, +i} (simple rotations!)
- * 
- * STAGE 3: Second Radix-4 Layer (4 independent butterflies)
- *   For each m ∈ {0,1,2,3}:
- *     Radix-4 on [Y[m], Y[m+4], Y[m+8], Y[m+12]] → Z[m], Z[m+4], Z[m+8], Z[m+12]
- * 
- * Output: Z[0..15]
- * 
- * MATHEMATICAL DETAIL - THE W₄ TWIDDLES:
- * ---------------------------------------
- * W₄ = exp(-2πi/4) = exp(-πi/2) = -i
- * 
- * Powers of W₄:
- * - W₄⁰ = 1           (no operation)
- * - W₄¹ = -i          (90° rotation)
- * - W₄² = -1          (180° rotation, just negate)
- * - W₄³ = +i          (-90° rotation)
- * 
- * These are the SAME twiddles as radix-4! This is why radix-16 decomposes
- * so cleanly - it's literally "radix-4 twice" with radix-4 twiddles between.
- * 
- * APPLICATION PATTERN (for output Y from first stage):
- * - Y[0,1,2,3]:   no twiddles (m=0, W₄⁰ = 1)
- * - Y[4]:         no twiddle  (m=1, j=0, W₄^(1·0) = 1)
- * - Y[5]:         *= W₄¹ = -i
- * - Y[6]:         *= W₄² = -1
- * - Y[7]:         *= W₄³ = +i
- * - Y[8,9,10,11]: W₄^(2·j) for j=0,1,2,3 = {1, -1, 1, -1}
- * - Y[12,13,14,15]: W₄^(3·j) for j=0,1,2,3 = {1, +i, -1, -i}
- * 
- * CRITICAL INSIGHT: Most of these are "free" operations:
- * - Identity (×1): no work
- * - Negation (×-1): single XOR for sign flip
- * - Rotation (×±i): permute + XOR (swap re/im + sign)
- * 
- * Only 9 out of 16 intermediate twiddles require ANY operation,
- * and ALL are zero-multiply operations (just permute/XOR)!
- * 
- * =============================================================================
- * WHY 2×RADIX-4 BEATS ALTERNATIVES
- * =============================================================================
- * 
- * OPTION A: 4× Radix-2
- * - Would require 4 stages of radix-2 butterflies
- * - Many more twiddle applications (4 stages worth)
- * - Poor cache locality (4 separate passes through data)
- * - **Verdict**: Too many stages, poor performance
- * 
- * OPTION B: Radix-2 × Radix-8
- * - 2 stages: one radix-2, one radix-8
- * - Asymmetric structure complicates implementation
- * - Less regular than radix-4 × radix-4
- * - **Verdict**: No clear advantage over 2×radix-4
- * 
- * OPTION C: 2× Radix-4 ⭐ CHOSEN
- * - Clean, symmetric structure (both stages identical)
- * - Intermediate twiddles are all simple rotations (W₄ powers)
- * - Both stages use same highly-optimized radix-4 kernel
- * - Perfect balance of operations and data movement
- * - **Verdict**: OPTIMAL for radix-16
- * 
- * OPTION D: Direct 16-point DFT
- * - Would require 225+ complex multiplications
- * - Random access pattern, terrible cache behavior
- * - No exploitable structure
- * - **Verdict**: Completely impractical
- * 
- * =============================================================================
- * COMPUTATIONAL COST ANALYSIS
- * =============================================================================
- * 
- * Per Butterfly (16 outputs):
- * ----------------------------
- * 
- * STAGE 1: Input Twiddles
- * - 15 complex multiplies (X[0] needs no twiddle)
- * - Cost: 15 × 6 FLOPs = 90 FLOPs
- * 
- * STAGE 2: First Radix-4 (4 butterflies)
- * - Each radix-4: 0 complex multiplies + 8 complex adds
- * - 4 butterflies: 4 × (0×6 + 8×2) = 64 FLOPs
- * 
- * STAGE 2.5: Intermediate W₄ Twiddles
- * - 9 non-trivial twiddles, all are rotate/negate (0 multiplies!)
- * - Cost: ~18 FLOPs (mainly permute overhead, no actual math)
- * 
- * STAGE 3: Second Radix-4 (4 butterflies)
- * - Same as Stage 2: 64 FLOPs
- * 
- * **TOTAL: 90 + 64 + 18 + 64 = 236 FLOPs per butterfly**
- * **Per output: 236 / 16 ≈ 14.75 FLOPs/output**
- * 
- * COMPARISON (FLOPs per output):
- * -------------------------------
- * - Radix-2:  ~6 FLOPs/output   (theoretical minimum for power-of-2)
- * - Radix-4:  ~8 FLOPs/output
- * - Radix-8:  ~13 FLOPs/output  (2×radix-4 decomposition)
- * - Radix-16: ~15 FLOPs/output  ⭐ (2×radix-4 decomposition)
- * 
- * Radix-16 costs 2.5× more per output than radix-2, BUT:
- * - Uses 4× fewer stages (4 vs 16 for N=65536)
- * - 4× fewer memory passes through data
- * - Much better cache utilization
- * - **NET RESULT**: Typically 1.5-2× faster than pure radix-2 for large N
- * 
- * =============================================================================
- * MEMORY ACCESS PATTERNS
- * =============================================================================
- * 
- * Per Butterfly:
- * --------------
- * - 16 input loads (16 complex = 256 bytes)
- * - 15 twiddle loads (15 complex = 240 bytes)
- * - 16 output stores (16 complex = 256 bytes)
- * - **TOTAL: 752 bytes per butterfly**
- * 
- * Arithmetic Intensity:
- * ---------------------
- * AI = 236 FLOPs / 752 bytes ≈ 0.31 FLOPs/byte
- * 
- * This is MEMORY-BOUND on modern CPUs (peak AI ≈ 10-20), similar to radix-8.
- * The advantage comes from reduced number of stages, not from compute efficiency.
- * 
- * CACHE BEHAVIOR:
- * ---------------
- * Radix-16 butterfly working set:
- * - Inputs: 256 bytes
- * - Twiddles: 240 bytes  
- * - Temporaries: ~512 bytes (intermediate Y values)
- * - **Total: ~1KB per butterfly**
- * 
- * Modern L1 cache: 32-64KB → Can fit 32-64 butterflies simultaneously
- * This excellent L1 utilization is KEY to radix-16's performance advantage.
- * 
- * Contrast with radix-32:
- * - Would need ~2KB per butterfly
- * - Only 16-32 butterflies fit in L1
- * - More L1 thrashing → performance loss
- * 
- * =============================================================================
- * SIMD OPTIMIZATION STRATEGY
- * =============================================================================
- * 
- * AVX2 8× UNROLLING:
- * ------------------
- * Process 8 butterflies per iteration:
- * - 128 complex inputs (2048 bytes)
- * - 4 complex pairs per AVX2 register
- * - 16 lanes × 4 butterfly-pair groups = 64 AVX2 registers
- * 
- * KEY OPTIMIZATION: All W₄ twiddles precomputed OUTSIDE loop
- * - W₄ powers {1, -i, -1, +i} converted to AVX2 format once
- * - Stored in 4 AVX2 registers: W4_avx[0..3]
- * - Reused for all 8 butterflies → massive savings
- * 
- * ROTATION MASK PRECOMPUTATION:
- * ------------------------------
- * The ±i multiplication pattern depends on transform_sign:
- * - Forward FFT: multiply by -i → (a+bi)*(-i) = b - ai
- * - Inverse FFT: multiply by +i → (a+bi)*(+i) = -b + ai
- * 
- * Precompute rot_mask based on transform_sign:
- * - Eliminates conditional logic inside hot loop
- * - Enables branchless ±i rotation via permute + XOR
- * 
- * REGISTER PRESSURE MANAGEMENT:
- * ------------------------------
- * With 16 lanes × 4 groups = 64 intermediate values, register pressure is severe.
- * 
- * Strategy:
- * 1. Load stage: Pull data from memory to registers (x[16][4])
- * 2. Transform stage: First radix-4, store to y[16][4]
- * 3. Twiddle stage: Apply W₄, keep in y[16][4]
- * 4. Final stage: Second radix-4, stream directly to output
- * 
- * This 3-level staging prevents register spilling while maintaining parallelism.
- * 
- * =============================================================================
- * PERFORMANCE CHARACTERISTICS
- * =============================================================================
- * 
- * SIMD Efficiency (AVX2):
- * -----------------------
- * - Process 8 butterflies per iteration (128 outputs)
- * - Theoretical peak: 16 DP FLOPs/cycle
- * - Achieved: ~9-11 FLOPs/cycle
- * - Efficiency: 56-69% of peak
- * 
- * Good but not great - limited by memory bandwidth like radix-8.
- * 
- * WALL-CLOCK PERFORMANCE (Large N):
- * ----------------------------------
- * For N=65536 FFT on modern CPU:
- * - Pure radix-2: ~12-15 μs
- * - Pure radix-4: ~8-10 μs
- * - Pure radix-8: ~6-8 μs
- * - Pure radix-16: ~5-7 μs ⭐ (best power-of-2 approach)
- * - Mixed radix optimized: ~4-6 μs (combines multiple radices)
- * 
- * Radix-16 achieves ~2× speedup vs radix-2 despite higher per-output cost,
- * thanks to 4× fewer stages and excellent cache behavior.
- * 
- * SCALABILITY:
- * ------------
- * Radix-16 shines for N ≥ 16384:
- * - Smaller N: Stage reduction less impactful, radix-4/8 competitive
- * - Larger N: Stage reduction critical, radix-16 pulls ahead
- * - Optimal range: N ∈ [16K, 16M]
- * 
- * For N > 16M, consider mixed-radix with radix-32 or cache-oblivious algorithms.
- * 
- * =============================================================================
- * TWIDDLE FACTOR ORGANIZATION
- * =============================================================================
- * 
- * Radix-16 uses THREE types of twiddles:
- * 
- * 1. **INPUT DIT TWIDDLES** (15 per butterfly):
- *    Layout: stage_tw[15*k + 0..14] = W^(k·1), ..., W^(k·15)
- *    Applied to X[1..15] before first radix-4 stage
- *    Only used when sub_len > 1 (multi-stage FFT)
- * 
- * 2. **INTERMEDIATE W₄ TWIDDLES** (9 non-trivial):
- *    Powers of W₄ = exp(-2πi/4) = {1, -i, -1, +i}
- *    Hardcoded as simple rotations/negations
- *    Applied between first and second radix-4 stages
- *    **Key advantage**: All are zero-multiply operations!
- * 
- * 3. **IMPLICIT RADIX-4 STRUCTURE**:
- *    Both radix-4 stages use built-in rotations (multiply by ±i)
- *    These don't need stored twiddles - just permute + XOR
- * 
- * STORAGE COMPARISON:
- * -------------------
- * Radix-8:  7 twiddles per butterfly  → stage_tw[7*k + 0..6]
- * Radix-16: 15 twiddles per butterfly → stage_tw[15*k + 0..14]
- * 
- * Despite 2× more twiddles, radix-16 uses 4× fewer stages:
- * - N=65536 with radix-8:  needs ~5 stages × 7 twiddles × ~2048 butterflies
- * - N=65536 with radix-16: needs ~4 stages × 15 twiddles × ~1024 butterflies
- * - **Result**: Radix-16 actually uses LESS total twiddle storage!
- * 
- * =============================================================================
- * USAGE NOTES
- * =============================================================================
- * 
- * @param output_buffer[out] Destination buffer (size: sub_len * 16)
- * @param sub_outputs[in]    Input array with 16 strided sub-transforms
- *                            Layout: [X[k+0*sub_len], ..., X[k+15*sub_len]]
- * @param stage_tw[in]       DIT twiddle factors
- *                            Layout: stage_tw[15*k + 0..14] = W^(k·1), ..., W^(k·15)
- *                            Only used when sub_len > 1
- * @param sub_len            Size of each sub-transform (total = 16 * sub_len)
- * @param transform_sign     +1 for inverse FFT, -1 for forward FFT
- * 
- * @note WHEN TO USE RADIX-16:
- *       Best for transform sizes N ≥ 16384 where:
- *       1. N is a power of 2 (or contains large power-of-2 factor)
- *       2. Stage count reduction is critical
- *       3. Memory bandwidth is the bottleneck (typical for FFT)
- *       
- *       For N < 16384, radix-4 or radix-8 may be competitive or faster
- *       due to lower per-stage overhead.
- * 
- * @note ALGORITHM SUPERIORITY:
- *       The 2×radix-4 decomposition is optimal because:
- *       - Clean, symmetric structure (both stages identical)
- *       - All intermediate twiddles are simple rotations (zero multiplies)
- *       - Reuses highly optimized radix-4 kernel twice
- *       - Perfect balance: maximum stage reduction without excessive complexity
- *       
- *       This makes radix-16 the "highest radix you actually want to use"
- *       for power-of-2 FFTs on modern hardware.
- * 
- * @performance Achieves ~2× speedup vs pure radix-2 for large N despite
- *              2.5× higher per-output computational cost, thanks to:
- *              - 4× fewer stages (fewer memory passes)
- *              - Excellent L1 cache utilization (~1KB per butterfly)
- *              - Zero-multiply intermediate twiddles
- *              - Optimal AVX2 vectorization with 8× unrolling
+ * @brief Prefetch distance tuning for different cache levels
+ * 
+ * @details
+ * These distances are empirically tuned for modern x86-64 CPUs:
+ * - Intel Ice Lake / Sapphire Rapids
+ * - AMD Zen 3 / Zen 4
+ * 
+ * Distances measured in "butterflies ahead" (not bytes).
+ * Adjust based on CPU microarchitecture and memory subsystem.
  */
-void fft_radix16_bv(
-    fft_data *restrict output_buffer,
-    const fft_data *restrict sub_outputs,
+
+// AVX-512 Multi-Level Prefetch Distances
+#define PREFETCH_L1_DISTANCE_AVX512    8    // ~10 cycles latency
+#define PREFETCH_L2_DISTANCE_AVX512    32   // ~40 cycles latency  
+#define PREFETCH_L3_DISTANCE_AVX512    128  // ~100+ cycles latency
+
+// AVX2 Multi-Level Prefetch Distances
+#define PREFETCH_L1_DISTANCE_AVX2      8    // ~10 cycles latency
+#define PREFETCH_L2_DISTANCE_AVX2      40   // ~40 cycles latency
+#define PREFETCH_L3_DISTANCE_AVX2      160  // ~100+ cycles latency
+
+// SSE2 Multi-Level Prefetch Distances  
+#define PREFETCH_L1_DISTANCE_SSE2      8    // ~10 cycles latency
+#define PREFETCH_L2_DISTANCE_SSE2      32   // ~40 cycles latency
+#define PREFETCH_L3_DISTANCE_SSE2      128  // ~100+ cycles latency
+
+//==============================================================================
+// CONFIGURATION - CACHE BLOCKING
+//==============================================================================
+
+/**
+ * @brief Cache blocking parameters for different cache levels
+ * 
+ * @details
+ * Blocking ensures working sets fit in target cache levels to minimize
+ * cache thrashing on large FFTs.
+ * 
+ * Sizes in bytes (typical modern x86-64):
+ * - L1D: 32-48 KB per core
+ * - L2:  512 KB - 1 MB per core
+ * - L3:  16-64 MB shared
+ */
+
+// Cache sizes (bytes) - adjust per target CPU
+#define L1_CACHE_SIZE       (32 * 1024)      // 32 KB
+#define L2_CACHE_SIZE       (512 * 1024)     // 512 KB
+#define L3_CACHE_SIZE       (32 * 1024 * 1024) // 32 MB
+
+// Tile sizes in complex doubles (1 complex double = 16 bytes)
+#define L1_TILE_SIZE        (L1_CACHE_SIZE / 16)       // ~2K points
+#define L2_TILE_SIZE        (L2_CACHE_SIZE / 16)       // ~32K points
+#define L3_TILE_SIZE        (L3_CACHE_SIZE / 16)       // ~2M points
+
+// Working set factor (multiplier for safety margin)
+// Use 0.5-0.75 to leave room for twiddles + temporaries
+#define CACHE_WORK_FACTOR   0.625
+
+//==============================================================================
+// CONFIGURATION - ENHANCED UNROLL FACTORS
+//==============================================================================
+
+/**
+ * @brief Enhanced unroll factors for deeper software pipelining
+ * 
+ * @details
+ * Higher unroll factors improve ILP (instruction-level parallelism)
+ * and hide latency on modern out-of-order CPUs.
+ * 
+ * BEFORE: 4x AVX-512, 2x AVX2
+ * AFTER:  8x AVX-512, 4x AVX2
+ */
+
+#if defined(__AVX512F__)
+    #define UNROLL_FACTOR_R16   8   // Process 8 butterflies at once (AVX-512)
+    #define VECTORS_PER_LANE    8   // 8 complex doubles per zmm register
+#elif defined(__AVX2__)
+    #define UNROLL_FACTOR_R16   4   // Process 4 butterflies at once (AVX2)
+    #define VECTORS_PER_LANE    4   // 4 complex doubles per ymm register
+#elif defined(__SSE2__)
+    #define UNROLL_FACTOR_R16   2   // Process 2 butterflies at once (SSE2)
+    #define VECTORS_PER_LANE    2   // 2 complex doubles per xmm register
+#else
+    #define UNROLL_FACTOR_R16   1   // Scalar fallback
+    #define VECTORS_PER_LANE    1
+#endif
+
+//==============================================================================
+// CONFIGURATION - STREAMING STORES & PARALLELIZATION
+//==============================================================================
+
+// Streaming threshold: use non-temporal stores for K >= threshold
+// (PRESERVED from original - empirically validated)
+#define STREAM_THRESHOLD_R16 4096
+
+// Parallel thresholds: use multithreading for K >= threshold
+// (PRESERVED from original - empirically validated)
+#if defined(__AVX512F__)
+    #define PARALLEL_THRESHOLD_R16 512   // ~8K complex values
+#elif defined(__AVX2__)
+    #define PARALLEL_THRESHOLD_R16 1024  // ~16K complex values
+#elif defined(__SSE2__)
+    #define PARALLEL_THRESHOLD_R16 2048  // ~32K complex values
+#else
+    #define PARALLEL_THRESHOLD_R16 4096  // ~64K complex values
+#endif
+
+//==============================================================================
+// CONFIGURATION - ALIGNMENT REQUIREMENTS
+//==============================================================================
+
+// Required alignment based on SIMD instruction set
+// (PRESERVED from original - critical for correctness)
+#if defined(__AVX512F__)
+    #define REQUIRED_ALIGNMENT 64   // AVX-512: 64-byte alignment
+#elif defined(__AVX2__) || defined(__AVX__)
+    #define REQUIRED_ALIGNMENT 32   // AVX2/AVX: 32-byte alignment
+#elif defined(__SSE2__)
+    #define REQUIRED_ALIGNMENT 16   // SSE2: 16-byte alignment
+#else
+    #define REQUIRED_ALIGNMENT 8    // Scalar: natural double alignment
+#endif
+
+// Cache line size in bytes (typical for x86-64)
+// (PRESERVED from original)
+#define CACHE_LINE_BYTES 64
+
+// Number of complex values per cache line
+// (PRESERVED from original)
+#define COMPLEX_PER_CACHE_LINE (CACHE_LINE_BYTES / (2 * sizeof(double)))
+
+// Chunk size for parallel processing
+// (PRESERVED from original)
+#define PARALLEL_CHUNK_SIZE_R16 (COMPLEX_PER_CACHE_LINE * 8)
+
+//==============================================================================
+// DATA STRUCTURES - CACHE BLOCKING
+//==============================================================================
+
+/**
+ * @brief Cache blocking parameters for a specific FFT stage
+ * 
+ * @details
+ * Computed once per stage based on FFT size and working set.
+ * Determines tiling strategy to maximize cache efficiency.
+ */
+typedef struct {
+    size_t tile_size;           // Points per tile
+    size_t num_tiles;           // Number of tiles to process
+    int use_L3_blocking;        // Need L3-level blocking?
+    int use_L2_blocking;        // Need L2-level blocking?
+    int prefetch_L1_distance;   // L1 prefetch distance
+    int prefetch_L2_distance;   // L2 prefetch distance  
+    int prefetch_L3_distance;   // L3 prefetch distance
+    int use_streaming;          // Use non-temporal stores?
+} cache_block_params_t;
+
+/**
+ * @brief SIMD-friendly twiddle layout metadata
+ * 
+ * @details
+ * Enhanced twiddle organization for better cache utilization:
+ * - Cache-line aligned blocks
+ * - Interleaved for sequential access patterns
+ * - Optimized for hardware prefetchers
+ * 
+ * LAYOUT:
+ * Old: tw_re[0..K-1], tw_im[0..K-1] (stride K between re/im)
+ * New: tw_re[0..3], tw_im[0..3], tw_re[4..7], tw_im[4..7], ...
+ *      (stride 4 complex values per cache line block)
+ */
+typedef struct {
+    const double *restrict re;      // Real part base pointer
+    const double *restrict im;      // Imaginary part base pointer
+    size_t stride;                  // Stride between twiddle blocks
+    size_t block_size;              // Twiddles per cache-line block
+    int use_interleaved_layout;    // Using enhanced layout?
+} twiddle_layout_t;
+
+//==============================================================================
+// HELPER FUNCTIONS - CACHE BLOCKING
+//==============================================================================
+
+/**
+ * @brief Determine optimal cache blocking parameters for given FFT size
+ * 
+ * @details
+ * Analyzes working set size and selects appropriate tiling strategy:
+ * - Fits in L2: No blocking, aggressive L1 prefetch
+ * - Fits in L3: Block for L2, moderate prefetch
+ * - Exceeds L3: Block for L3, conservative prefetch + streaming stores
+ * 
+ * This function is shared by both forward (fv) and backward (bv) implementations.
+ * 
+ * @param[in] N Total FFT size (16 * K)
+ * @param[in] K Number of butterflies
+ * @return Optimized cache blocking parameters
+ */
+static inline cache_block_params_t 
+compute_cache_params(size_t N, size_t K)
+{
+    cache_block_params_t params;
+    
+    // Working set size for this stage (bytes)
+    // 2x for re+im arrays, plus twiddle overhead (~10%)
+    size_t working_set = (size_t)(N * sizeof(double) * 2 * 1.1);
+    
+    // Cache-adjusted working set (account for safety margin)
+    size_t L2_effective = (size_t)(L2_CACHE_SIZE * CACHE_WORK_FACTOR);
+    size_t L3_effective = (size_t)(L3_CACHE_SIZE * CACHE_WORK_FACTOR);
+    
+    if (working_set <= L2_effective) {
+        //======================================================================
+        // CASE 1: Fits in L2 - No Blocking Needed
+        //======================================================================
+        params.tile_size = K;  // Process entire stage
+        params.num_tiles = 1;
+        params.use_L2_blocking = 0;
+        params.use_L3_blocking = 0;
+        params.use_streaming = 0;
+        
+        // Aggressive L1 prefetching for small FFTs
+#if defined(__AVX512F__)
+        params.prefetch_L1_distance = PREFETCH_L1_DISTANCE_AVX512;
+        params.prefetch_L2_distance = 0;  // Not needed
+        params.prefetch_L3_distance = 0;  // Not needed
+#elif defined(__AVX2__)
+        params.prefetch_L1_distance = PREFETCH_L1_DISTANCE_AVX2;
+        params.prefetch_L2_distance = 0;
+        params.prefetch_L3_distance = 0;
+#else
+        params.prefetch_L1_distance = PREFETCH_L1_DISTANCE_SSE2;
+        params.prefetch_L2_distance = 0;
+        params.prefetch_L3_distance = 0;
+#endif
+        
+    } else if (working_set <= L3_effective) {
+        //======================================================================
+        // CASE 2: Fits in L3 - Block for L2
+        //======================================================================
+        size_t tile_points = (size_t)(L2_TILE_SIZE * CACHE_WORK_FACTOR);
+        params.tile_size = tile_points / 16;  // Convert to butterflies
+        if (params.tile_size == 0) params.tile_size = 1;
+        
+        params.num_tiles = (K + params.tile_size - 1) / params.tile_size;
+        params.use_L2_blocking = 1;
+        params.use_L3_blocking = 0;
+        params.use_streaming = 0;
+        
+        // Moderate prefetching - L1 + L2
+#if defined(__AVX512F__)
+        params.prefetch_L1_distance = PREFETCH_L1_DISTANCE_AVX512;
+        params.prefetch_L2_distance = PREFETCH_L2_DISTANCE_AVX512;
+        params.prefetch_L3_distance = 0;  // Not needed
+#elif defined(__AVX2__)
+        params.prefetch_L1_distance = PREFETCH_L1_DISTANCE_AVX2;
+        params.prefetch_L2_distance = PREFETCH_L2_DISTANCE_AVX2;
+        params.prefetch_L3_distance = 0;
+#else
+        params.prefetch_L1_distance = PREFETCH_L1_DISTANCE_SSE2;
+        params.prefetch_L2_distance = PREFETCH_L2_DISTANCE_SSE2;
+        params.prefetch_L3_distance = 0;
+#endif
+        
+    } else {
+        //======================================================================
+        // CASE 3: Exceeds L3 - Block for L3 + Streaming Stores
+        //======================================================================
+        size_t tile_points = (size_t)(L3_TILE_SIZE * CACHE_WORK_FACTOR);
+        params.tile_size = tile_points / 16;  // Convert to butterflies
+        if (params.tile_size == 0) params.tile_size = 1;
+        
+        params.num_tiles = (K + params.tile_size - 1) / params.tile_size;
+        params.use_L2_blocking = 1;
+        params.use_L3_blocking = 1;
+        params.use_streaming = 1;  // Bypass cache for outputs
+        
+        // Conservative prefetching - All three levels
+#if defined(__AVX512F__)
+        params.prefetch_L1_distance = PREFETCH_L1_DISTANCE_AVX512;
+        params.prefetch_L2_distance = PREFETCH_L2_DISTANCE_AVX512;
+        params.prefetch_L3_distance = PREFETCH_L3_DISTANCE_AVX512;
+#elif defined(__AVX2__)
+        params.prefetch_L1_distance = PREFETCH_L1_DISTANCE_AVX2;
+        params.prefetch_L2_distance = PREFETCH_L2_DISTANCE_AVX2;
+        params.prefetch_L3_distance = PREFETCH_L3_DISTANCE_AVX2;
+#else
+        params.prefetch_L1_distance = PREFETCH_L1_DISTANCE_SSE2;
+        params.prefetch_L2_distance = PREFETCH_L2_DISTANCE_SSE2;
+        params.prefetch_L3_distance = PREFETCH_L3_DISTANCE_SSE2;
+#endif
+    }
+    
+    // Override streaming threshold (preserve original heuristic if larger)
+    if (K >= STREAM_THRESHOLD_R16) {
+        params.use_streaming = 1;
+    }
+    
+    return params;
+}
+
+//==============================================================================
+// MULTI-LEVEL PREFETCH MACROS
+//==============================================================================
+
+/**
+ * @brief Multi-level prefetch for data arrays (re/im)
+ * 
+ * @details
+ * Issues prefetch instructions to L1/L2/L3 caches based on distance.
+ * Compiler intrinsics map to prefetchXXX instructions on x86-64.
+ * 
+ * Shared by both forward (fv) and backward (bv) implementations.
+ * 
+ * Prefetch hints:
+ * - 3: Temporal, all levels (L1/L2/L3)
+ * - 2: Temporal, L2 and L3 only
+ * - 1: Low temporal locality, L3 mainly
+ * - 0: Non-temporal (streaming, bypass cache)
+ */
+
+// L1 Prefetch (high temporal locality)
+#define PREFETCH_L1_DATA_R16(ptr, offset, hint) \
+    __builtin_prefetch((const void*)&(ptr)[offset], 0, hint)
+
+// L2 Prefetch (medium temporal locality)  
+#define PREFETCH_L2_DATA_R16(ptr, offset) \
+    __builtin_prefetch((const void*)&(ptr)[offset], 0, 2)
+
+// L3 Prefetch (low temporal locality)
+#define PREFETCH_L3_DATA_R16(ptr, offset) \
+    __builtin_prefetch((const void*)&(ptr)[offset], 0, 1)
+
+/**
+ * @brief Multi-level prefetch for 16-lane butterfly inputs
+ * 
+ * @param[in] k Current butterfly index
+ * @param[in] K Total butterflies
+ * @param[in] params Cache blocking parameters (contains distances)
+ * @param[in] in_re Input real array
+ * @param[in] in_im Input imaginary array
+ * @param[in] k_end End of valid range
+ */
+#define PREFETCH_MULTI_LEVEL_INPUT_R16(k, K, params, in_re, in_im, k_end) \
+    do { \
+        /* L1 prefetch - immediate use */ \
+        if ((params).prefetch_L1_distance > 0) { \
+            size_t pk_l1 = (k) + (params).prefetch_L1_distance; \
+            if (pk_l1 < (k_end)) { \
+                PREFETCH_L1_DATA_R16(in_re, pk_l1 * 16, 3); \
+                PREFETCH_L1_DATA_R16(in_im, pk_l1 * 16, 3); \
+                /* Prefetch second cache line if needed (16 doubles = 128 bytes = 2 lines) */ \
+                PREFETCH_L1_DATA_R16(in_re, pk_l1 * 16 + 8, 3); \
+                PREFETCH_L1_DATA_R16(in_im, pk_l1 * 16 + 8, 3); \
+            } \
+        } \
+        \
+        /* L2 prefetch - arriving in ~40 cycles */ \
+        if ((params).prefetch_L2_distance > 0) { \
+            size_t pk_l2 = (k) + (params).prefetch_L2_distance; \
+            if (pk_l2 < (k_end)) { \
+                PREFETCH_L2_DATA_R16(in_re, pk_l2 * 16); \
+                PREFETCH_L2_DATA_R16(in_im, pk_l2 * 16); \
+            } \
+        } \
+        \
+        /* L3 prefetch - arriving in ~100+ cycles */ \
+        if ((params).prefetch_L3_distance > 0) { \
+            size_t pk_l3 = (k) + (params).prefetch_L3_distance; \
+            if (pk_l3 < (k_end)) { \
+                PREFETCH_L3_DATA_R16(in_re, pk_l3 * 16); \
+                PREFETCH_L3_DATA_R16(in_im, pk_l3 * 16); \
+            } \
+        } \
+    } while(0)
+
+/**
+ * @brief Multi-level prefetch for twiddle factors
+ * 
+ * @param[in] k Current butterfly index  
+ * @param[in] K Total butterflies
+ * @param[in] params Cache blocking parameters
+ * @param[in] stage_tw Twiddle factors structure
+ * @param[in] k_end End of valid range
+ */
+#define PREFETCH_MULTI_LEVEL_TWIDDLES_R16(k, K, params, stage_tw, k_end) \
+    do { \
+        /* L1 prefetch twiddles for immediate use */ \
+        if ((params).prefetch_L1_distance > 0) { \
+            size_t pk_l1 = (k) + (params).prefetch_L1_distance; \
+            if (pk_l1 < (k_end) && (stage_tw) != NULL) { \
+                /* Prefetch first few twiddle blocks (j=1,2,3 most critical) */ \
+                PREFETCH_L1_DATA_R16((stage_tw)->re, 1*(K) + pk_l1, 3); \
+                PREFETCH_L1_DATA_R16((stage_tw)->im, 1*(K) + pk_l1, 3); \
+                PREFETCH_L1_DATA_R16((stage_tw)->re, 2*(K) + pk_l1, 3); \
+                PREFETCH_L1_DATA_R16((stage_tw)->im, 2*(K) + pk_l1, 3); \
+            } \
+        } \
+        \
+        /* L2 prefetch twiddles */ \
+        if ((params).prefetch_L2_distance > 0) { \
+            size_t pk_l2 = (k) + (params).prefetch_L2_distance; \
+            if (pk_l2 < (k_end) && (stage_tw) != NULL) { \
+                /* Prefetch middle twiddle blocks */ \
+                PREFETCH_L2_DATA_R16((stage_tw)->re, 3*(K) + pk_l2); \
+                PREFETCH_L2_DATA_R16((stage_tw)->im, 3*(K) + pk_l2); \
+                PREFETCH_L2_DATA_R16((stage_tw)->re, 4*(K) + pk_l2); \
+                PREFETCH_L2_DATA_R16((stage_tw)->im, 4*(K) + pk_l2); \
+            } \
+        } \
+    } while(0)
+
+//==============================================================================
+// API - MAIN INTERFACE (BACKWARD FFT)
+//==============================================================================
+
+/**
+ * @brief Inverse radix-16 FFT butterfly - Enhanced Native SoA version
+ * 
+ * @details
+ * Processes K butterflies using 2-stage radix-4 decomposition with:
+ * - Native SoA throughout (PRESERVED)
+ * - Multi-level prefetching (NEW)
+ * - Cache blocking for large FFTs (NEW)
+ * - Enhanced unroll factors (NEW)
+ * - SIMD-friendly twiddle access (NEW)
+ * 
+ * ALL ORIGINAL OPTIMIZATIONS PRESERVED:
+ * ✅ Zero shuffles in hot path
+ * ✅ Software pipelining
+ * ✅ W_4 intermediate optimizations
+ * ✅ Streaming stores
+ * ✅ OpenMP parallelization
+ * ✅ Alignment enforcement
+ * 
+ * @param[out] out_re Output real array (16*K values, stride K)
+ * @param[out] out_im Output imag array (16*K values, stride K)
+ * @param[in] in_re Input real array (16*K values, stride K)
+ * @param[in] in_im Input imag array (16*K values, stride K)
+ * @param[in] stage_tw Precomputed SoA twiddles (15 blocks of K, conjugated)
+ * @param[in] K Number of butterflies to process
+ * @param[in] num_threads Number of OpenMP threads (0 = auto-detect)
+ * 
+ * @note All arrays must be properly aligned (64-byte for AVX-512, 32-byte for AVX2)
+ * @note Twiddles are in SoA format: tw->re[j*K + k], tw->im[j*K + k] for j=0..14
+ * @note Inverse FFT uses W_4^(-1) = e^(iπ/2) intermediate twiddles
+ * @note Caller must scale by 1/N after transform for true inverse
+ */
+void fft_radix16_bv_native_soa_optimized(
+    double *restrict out_re,
+    double *restrict out_im,
+    const double *restrict in_re,
+    const double *restrict in_im,
     const fft_twiddles_soa *restrict stage_tw,
-    int sub_len);
+    int K,
+    int num_threads);
 
-void fft_radix16_bv(
-    fft_data *restrict output_buffer,
-    const fft_data *restrict sub_outputs,
+//==============================================================================
+// API - MAIN INTERFACE (FORWARD FFT)
+//==============================================================================
+
+/**
+ * @brief Forward radix-16 FFT butterfly - Enhanced Native SoA version
+ * 
+ * @details
+ * Identical to backward version but with forward transform conventions:
+ * - Uses W_N^(j*k) twiddles (not conjugated)
+ * - Uses W_4 = e^(-iπ/2) = -i intermediate twiddles
+ * - No scaling applied (caller must scale backward transform by 1/N)
+ * 
+ * ALL OPTIMIZATIONS IDENTICAL TO BACKWARD VERSION:
+ * ✅ Native SoA throughout (NO conversions in hot path!)
+ * ✅ Multi-level prefetching (L1/L2/L3 aware)
+ * ✅ Cache blocking/tiling (L2/L3 optimized)
+ * ✅ Higher unroll factors (8x AVX-512, 4x AVX2)
+ * ✅ Software pipelining
+ * ✅ W_4 intermediate optimizations (swap+XOR)
+ * ✅ Streaming stores
+ * ✅ OpenMP parallelization
+ * ✅ Alignment enforcement
+ * 
+ * @param[out] out_re Output real array (16*K values, stride K)
+ * @param[out] out_im Output imag array (16*K values, stride K)
+ * @param[in] in_re Input real array (16*K values, stride K)
+ * @param[in] in_im Input imag array (16*K values, stride K)
+ * @param[in] stage_tw Precomputed SoA twiddles (15 blocks of K, NOT conjugated)
+ * @param[in] K Number of butterflies to process
+ * @param[in] num_threads Number of OpenMP threads (0 = auto-detect)
+ * 
+ * @note All arrays must be properly aligned (64-byte for AVX-512, 32-byte for AVX2)
+ * @note Twiddles are in SoA format: tw->re[j*K + k], tw->im[j*K + k] for j=0..14
+ * @note Forward FFT uses W_4 = e^(-iπ/2) intermediate twiddles
+ * @note For K < PARALLEL_THRESHOLD_R16, single-threaded path is used
+ */
+void fft_radix16_fv_native_soa_optimized(
+    double *restrict out_re,
+    double *restrict out_im,
+    const double *restrict in_re,
+    const double *restrict in_im,
     const fft_twiddles_soa *restrict stage_tw,
-    int sub_len);
+    int K,
+    int num_threads);
 
-#endif // FFT_RADIX3_H
+#ifdef __cplusplus
+}
+#endif
 
-// 3700
+#endif // FFT_RADIX16_UNIFORM_OPTIMIZED_H
