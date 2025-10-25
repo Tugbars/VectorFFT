@@ -1,5 +1,5 @@
 /**
- * @file fft_radix2_fv_native_soa.c
+ * @file fft_radix2_fv.c
  * @brief TRUE END-TO-END SoA Radix-2 FFT Implementation
  * 
  * @details
@@ -7,50 +7,16 @@
  * eliminates split/join operations at stage boundaries, achieving significant
  * performance improvements over traditional Array-of-Structures approaches.
  * 
- * ARCHITECTURAL REVOLUTION:
- * =========================
- * This is the NATIVE SoA version that eliminates split/join at stage boundaries.
- * 
- * KEY DIFFERENCES FROM TRADITIONAL ARCHITECTURE:
- * 1. Accepts separate re[] and im[] arrays (not fft_data*)
- * 2. Returns separate re[] and im[] arrays (not fft_data*)
- * 3. NO split/join operations in the hot path
- * 4. All intermediate stages stay in SoA form
- * 
- * PERFORMANCE IMPACT:
- * ===================
- * For a 1024-point FFT (10 stages):
- *   OLD: 20 shuffles per butterfly (2 per stage × 10 stages)
- *   NEW: 0 shuffles per butterfly in this function
- *   SPEEDUP: ~20-30% faster for large FFTs!
- * 
- * USAGE:
- * ======
- * This function is called by the high-level API after converting user data
- * to SoA. The conversion cost is amortized across all stages.
- * 
- * Example call chain:
- * @code
- *   User: fft_exec_dft(plan, fft_data *in, fft_data *out)
- *     ↓ Converts once: aos_to_soa(in, temp_re, temp_im)
- *     ↓ Calls this function for ALL stages with SoA buffers
- *     ↓ Converts once: soa_to_aos(temp_re, temp_im, out)
- * @endcode
- * 
- * @author FFT Optimization Team
- * @version 2.0 (Native SoA with bug fixes)
+ * @author Tugbars
+ * @version 2.2 (Optimized with N/8 paths and aligned loads)
  * @date 2025
  */
 
 #include "fft_radix2_uniform.h"
 #include "fft_radix2_macros.h"
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
-#include <immintrin.h>  // For SIMD intrinsics and memory fences
-#include <assert.h>     // For in-place safety checks
+#include <immintrin.h>  // For SIMD intrinsics
+#include <assert.h>     // For assertions
 #include <stdint.h>     // For uintptr_t (alignment checks)
 #include <stdlib.h>     // For getenv (environment variable)
 
@@ -58,26 +24,8 @@
 // CONFIGURATION
 //==============================================================================
 
-/// SIMD-dependent parallel threshold for workload distribution
-#if defined(__AVX512F__)
-    #define PARALLEL_THRESHOLD 2048
-#elif defined(__AVX2__)
-    #define PARALLEL_THRESHOLD 4096
-#elif defined(__SSE2__)
-    #define PARALLEL_THRESHOLD 8192
-#else
-    #define PARALLEL_THRESHOLD 16384
-#endif
-
 /// Cache line size in bytes (typical for x86-64)
 #define CACHE_LINE_BYTES 64
-
-/// Number of doubles per cache line
-#define DOUBLES_PER_CACHE_LINE (CACHE_LINE_BYTES / sizeof(double))
-
-/// Chunk size for parallel processing (multiple of cache line)
-/// Larger chunks reduce false sharing and amortize boundary overhead
-#define PARALLEL_CHUNK_SIZE (DOUBLES_PER_CACHE_LINE * 8)  // 64 complex values
 
 /**
  * @brief Required alignment based on SIMD instruction set
@@ -172,9 +120,6 @@ static inline int check_nt_env_override(void)
 /**
  * @brief Process radix-2 butterflies in range [k_start, k_end) - NATIVE SoA
  * 
- * @details
- * ⚡⚡⚡ CRITICAL: NO SPLIT/JOIN OPERATIONS!
- * 
  * Data flow:
  *   - Load: in_re[k], in_im[k] (direct, no conversion!)
  *   - Compute: butterfly in split form
@@ -211,22 +156,29 @@ static void radix2_process_range_native_soa(
     int k_end,
     int use_streaming)
 {
+    // Prefetch distance for software prefetching
+    const int prefetch_dist = RADIX2_PREFETCH_DISTANCE;
+    
     int k = k_start;
     
     //==========================================================================
     // ALIGNMENT PEELING (for non-temporal stores)
     //==========================================================================
-    // If NT stores are enabled, peel scalar iterations until output addresses
-    // are vector-aligned. This ensures every _mm*_stream_pd hits a naturally
-    // aligned address and doesn't straddle cache lines.
+    // If NT stores are enabled, peel scalar iterations until both output AND
+    // input addresses are vector-aligned. This ensures:
+    // 1. Every _mm*_stream_pd hits naturally aligned addresses
+    // 2. All aligned input loads in STREAM macros work correctly
+    // 3. No cache-line straddling for loads or stores
     
     if (use_streaming)
     {
         const size_t vec_align = VECTOR_WIDTH * sizeof(double);
         
-        // Peel until both out_re[k] and out_im[k] are vector-aligned
+        // Peel until ALL of {in_re[k], in_im[k], out_re[k], out_im[k]} are aligned
         while (k < k_end && 
-               ((((uintptr_t)&out_re[k]) % vec_align) != 0 ||
+               ((((uintptr_t)&in_re[k]) % vec_align) != 0 ||
+                (((uintptr_t)&in_im[k]) % vec_align) != 0 ||
+                (((uintptr_t)&out_re[k]) % vec_align) != 0 ||
                 (((uintptr_t)&out_im[k]) % vec_align) != 0))
         {
             RADIX2_PIPELINE_1_NATIVE_SOA_SCALAR(k, in_re, in_im, out_re, out_im,
@@ -355,145 +307,12 @@ static void radix2_process_range_native_soa(
     }
 }
 
-/**
- * PERFORMANCE ANALYSIS
- * ====================
- * 
- * Loop Unrolling 2× Benefits:
- * - Reduces loop counter updates: 50% fewer iterations
- * - Reduces branch instructions: 50% fewer loop exits
- * - Better instruction cache utilization
- * - Allows compiler to schedule independent operations in parallel
- * - Typical gain: 3-5% on modern CPUs
- * 
- * Double-Pumping Benefits:
- * - Two independent butterfly chains per iteration
- * - CPU can execute both in parallel (out-of-order execution)
- * - Memory loads for pipeline 1 can start while pipeline 0 computes
- * - Hides memory latency (critical for large N)
- * - Keeps both vector ALUs busy
- * - Typical gain: 5-7% when memory-bound, 2-3% when cache-resident
- * 
- * Why This Works:
- * - Modern CPUs have 2-4 execution ports for SIMD ops
- * - Memory latency: ~4-5 cycles (L1), ~12 cycles (L2), ~40+ cycles (L3)
- * - FMA latency: ~4-5 cycles
- * - By interleaving two pipelines, we overlap compute with memory ops
- * 
- * Measured Performance (AVX-512, 8192-point FFT):
- * - Baseline (single pipeline):     ~1.8 cycles/butterfly
- * - With 2× unrolling:              ~1.7 cycles/butterfly (-5.6%)
- * - With unrolling + double-pump:   ~1.6 cycles/butterfly (-11.1%)
- * 
- * Trade-offs:
- * - Code size increases (~2× for unrolled loops)
- * - Instruction cache pressure (minimal impact)
- * - Slightly more complex cleanup logic
- * - Worth it: YES, for 8-10% speedup with minimal complexity
- */
-
-
-//==============================================================================
-// PARALLEL DISPATCH (Native SoA) - FIXED!
-//==============================================================================
-
-#ifdef _OPENMP
-/**
- * @brief Dispatch butterflies to multiple threads - NATIVE SoA (CORRECTED!)
- * 
- * @details
- * ⚠️  CRITICAL FIXES APPLIED:
- * 1. Uses parallel for instead of manual chunking (no gaps/overlaps!)
- * 2. Chunks are cache-line aligned to prevent false sharing
- * 3. Removed illegal barrier outside parallel region
- * 4. Per-thread sfence for NT stores (inside parallel region)
- * 
- * CHUNK SIZE CALCULATION:
- * - Cache line holds: 64 bytes / 8 bytes = 8 doubles
- * - Use CHUNK = 64 complex values (8×8) for good amortization
- * - Larger chunks reduce boundary overhead and false sharing
- * 
- * SCHEDULING STRATEGY:
- * - Static schedule with coarse chunks (PARALLEL_CHUNK_SIZE)
- * - Each iteration is already one coarse block (k += PARALLEL_CHUNK_SIZE)
- * - Naturally hands out contiguous blocks with minimal overhead
- * - `nowait` is safe: parallel region ends immediately after, providing implicit barrier
- * 
- * FALSE SHARING MITIGATION:
- * - Static schedule with coarse chunks minimizes boundary contention
- * - Even if k is aligned, k+half may not be → accept this overhead
- * - For zero false sharing, consider padding between lower/upper halves
- * 
- * CORRECTNESS GUARANTEES:
- * - No gaps: OpenMP parallel for partitions [k_start, k_end) completely
- * - No overlaps: Each iteration processes non-overlapping k values
- * - Thread-safe: Each thread writes to disjoint memory regions
- * - Min-guard ensures non-multiples of chunk size are covered
- * 
- * @param[out] out_re Output real array
- * @param[out] out_im Output imaginary array
- * @param[in] in_re Input real array
- * @param[in] in_im Input imaginary array
- * @param[in] stage_tw SoA twiddle factors
- * @param[in] half Transform half-size
- * @param[in] k_start Starting butterfly index
- * @param[in] k_end Ending butterfly index
- * @param[in] use_streaming Use streaming stores
- * @param[in] num_threads Number of threads to use
- * 
- * @pre num_threads > 0
- * @pre k_end - k_start >= PARALLEL_THRESHOLD (caller's responsibility)
- */
-static void radix2_parallel_dispatch_native_soa(
-    double *restrict out_re,
-    double *restrict out_im,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    const fft_twiddles_soa *restrict stage_tw,
-    int half,
-    int k_start,
-    int k_end,
-    int use_streaming,
-    int num_threads)
-{
-    // Use OpenMP parallel for with static scheduling and coarse chunks
-    // This avoids manual range partitioning bugs (gaps/overlaps)
-    #pragma omp parallel num_threads(num_threads)
-    {
-        #pragma omp for schedule(static, PARALLEL_CHUNK_SIZE) nowait
-        for (int k = k_start; k < k_end; k += PARALLEL_CHUNK_SIZE)
-        {
-            int kend = (k + PARALLEL_CHUNK_SIZE < k_end) ? 
-                       (k + PARALLEL_CHUNK_SIZE) : k_end;
-            
-            radix2_process_range_native_soa(
-                out_re, out_im, in_re, in_im,
-                stage_tw, half, k, kend, use_streaming);
-        }
-        
-        // ⚠️  CRITICAL FIX: If using streaming stores, issue sfence per thread
-        // BEFORE leaving parallel region (not after!)
-        if (use_streaming)
-        {
-            _mm_sfence();  // Ensure NT stores visible before thread exits
-        }
-    }
-    // ⚠️  REMOVED: No barrier or mfence here!
-    // The end of the parallel region already implies a barrier.
-}
-#endif
-
 //==============================================================================
 // MAIN FUNCTION: Radix-2 DIF Butterfly - NATIVE SoA
 //==============================================================================
 
 /**
  * @brief Radix-2 DIF butterfly - NATIVE SoA (ZERO SHUFFLE IN HOT PATH!)
- * 
- * @details
- * ⚡⚡⚡ REVOLUTIONARY DIFFERENCE:
- * This function accepts and returns SEPARATE re[] and im[] arrays.
- * NO split/join operations anywhere in this function!
  * 
  * ALGORITHM:
  * @code
@@ -510,94 +329,42 @@ static void radix2_parallel_dispatch_native_soa(
  *   - Output: out_re[0..N-1], out_im[0..N-1] (separate arrays)
  *   - Twiddles: stage_tw->re[0..half-1], stage_tw->im[0..half-1] (SoA)
  * 
- * PERFORMANCE:
- *   This function contributes ZERO shuffles to the FFT!
- *   All conversions happen at API boundaries, not here.
- * 
- * THREAD SAFETY:
- *   Thread-safe for disjoint output regions.
- *   NOT thread-safe for overlapping outputs.
- * 
  * @param[out] out_re Output real array (N elements)
  * @param[out] out_im Output imaginary array (N elements)
  * @param[in] in_re Input real array (N elements)
  * @param[in] in_im Input imaginary array (N elements)
  * @param[in] stage_tw Stage twiddles (SoA format)
  * @param[in] half Transform half-size (N/2)
- * @param[in] num_threads Number of threads (0 = auto-detect, 1 = sequential)
  * 
- * @pre out_re != NULL && out_im != NULL
- * @pre in_re != NULL && in_im != NULL
- * @pre stage_tw != NULL
- * @pre half > 0
- * @pre out_re != in_re && out_im != in_im (in-place NOT supported)
  * @pre Output buffers aligned to REQUIRED_ALIGNMENT (SIMD-dependent):
  *      - AVX-512: 64-byte alignment
  *      - AVX2: 32-byte alignment
  *      - SSE2: 16-byte alignment
  * @pre Twiddle factors aligned to REQUIRED_ALIGNMENT
  * 
- * @warning IN-PLACE EXECUTION NOT SUPPORTED
- *          This function requires separate input/output buffers to avoid
- *          read-after-write hazards in parallel execution.
  * 
- * @note For multi-stage FFTs, use ping-pong buffers between stages:
- * @code
- *   // Allocate with proper alignment for your SIMD level
- *   // AVX-512: 64 bytes, AVX2: 32 bytes, SSE2: 16 bytes
- *   #if defined(__AVX512F__)
- *       const size_t align = 64;
- *   #elif defined(__AVX2__) || defined(__AVX__)
- *       const size_t align = 32;
- *   #else
- *       const size_t align = 16;
- *   #endif
- *   
- *   double *buf_a_re = aligned_alloc(align, N * sizeof(double));
- *   double *buf_a_im = aligned_alloc(align, N * sizeof(double));
- *   double *buf_b_re = aligned_alloc(align, N * sizeof(double));
- *   double *buf_b_im = aligned_alloc(align, N * sizeof(double));
- *   
- *   for (int stage = 0; stage < num_stages; stage++) {
- *       if (stage % 2 == 0)
- *           fft_radix2_fv_native_soa(buf_b_re, buf_b_im, buf_a_re, buf_a_im, ...);
- *       else
- *           fft_radix2_fv_native_soa(buf_a_re, buf_a_im, buf_b_re, buf_b_im, ...);
- *   }
- * @endcode
  */
-void fft_radix2_fv_native_soa(
+void fft_radix2_fv(
     double *restrict out_re,
     double *restrict out_im,
     const double *restrict in_re,
     const double *restrict in_im,
     const fft_twiddles_soa *restrict stage_tw,
-    int half,
-    int num_threads)
+    int half)
 {
     //==========================================================================
-    // SANITY CHECKS
+    // ALIGNMENT HINTS (GCC/Clang optimization)
     //==========================================================================
+    // Tell the compiler that pointers are aligned, enabling better code generation
     
-    if (!out_re || !out_im || !in_re || !in_im || !stage_tw || half <= 0)
-    {
-        return;
-    }
-
-    //==========================================================================
-    // ⚠️  CRITICAL FIX: IN-PLACE NOT SUPPORTED
-    //==========================================================================
-    // In-place execution would cause read-after-write hazards:
-    // Thread A writes out[k] while Thread B reads in[k] (same memory!)
-    // 
-    // Since we already use ping-pong buffers between stages, require out-of-place.
-    
-    if (in_re == out_re || in_im == out_im)
-    {
-        // In debug builds, assert; in release, silently return
-        assert(0 && "In-place execution not supported - use separate buffers!");
-        return;
-    }
+#if defined(__GNUC__) || defined(__clang__)
+    in_re  = (const double*)__builtin_assume_aligned(in_re,  REQUIRED_ALIGNMENT);
+    in_im  = (const double*)__builtin_assume_aligned(in_im,  REQUIRED_ALIGNMENT);
+    out_re = (double*)__builtin_assume_aligned(out_re, REQUIRED_ALIGNMENT);
+    out_im = (double*)__builtin_assume_aligned(out_im, REQUIRED_ALIGNMENT);
+    stage_tw->re = (const double*)__builtin_assume_aligned(stage_tw->re, REQUIRED_ALIGNMENT);
+    stage_tw->im = (const double*)__builtin_assume_aligned(stage_tw->im, REQUIRED_ALIGNMENT);
+#endif
 
     //==========================================================================
     // NON-TEMPORAL STORE HEURISTIC (safe with fallback)
@@ -661,13 +428,23 @@ void fft_radix2_fv_native_soa(
            "stage_tw->im must be properly aligned for SIMD");
     
     //==========================================================================
-    // DETERMINE k=N/4 SPECIAL CASE
+    // DETERMINE k=N/4, k=N/8, k=3N/8 SPECIAL CASES
     //==========================================================================
     
     int k_quarter = 0;
+    int k_eighth = 0;
+    int k_3eighth = 0;
+    
     if ((half & (half - 1)) == 0)  // Power of 2
     {
-        k_quarter = half / 2;
+        k_quarter = half / 2;  // N/4
+        
+        // N/8 and 3N/8 only exist when N is divisible by 8 (i.e., half divisible by 4)
+        if ((half & 3) == 0)
+        {
+            k_eighth = half >> 2;       // N/8
+            k_3eighth = (3 * half) >> 2;  // 3N/8
+        }
     }
 
     //==========================================================================
@@ -675,7 +452,18 @@ void fft_radix2_fv_native_soa(
     //==========================================================================
     // ⚠️  Only ONE butterfly at k=0 - scalar is fine
     
-    RADIX2_K0_NATIVE_SOA_SCALAR(in_re, in_im, out_re, out_im, half);
+    radix2_k0_native_soa_scalar(in_re, in_im, out_re, out_im, half);
+
+    //==========================================================================
+    // SPECIAL CASE: k=N/8 (W = √2/2 - i√2/2, optimized multiply)
+    //==========================================================================
+    // ⚠️  Only ONE butterfly at k=N/8 - scalar is fine
+    
+    if (k_eighth > 0 && k_eighth < half)
+    {
+        radix2_k_eighth_native_soa_scalar(in_re, in_im, out_re, out_im, 
+                                          k_eighth, half, +1);
+    }
 
     //==========================================================================
     // SPECIAL CASE: k=N/4 (W[N/4] = -i, specialized rotation)
@@ -684,87 +472,83 @@ void fft_radix2_fv_native_soa(
     
     if (k_quarter > 0 && k_quarter < half)
     {
-        RADIX2_K_QUARTER_NATIVE_SOA_SCALAR(in_re, in_im, out_re, out_im, k_quarter, half);
+        radix2_k_quarter_native_soa_scalar(in_re, in_im, out_re, out_im, 
+                                           k_quarter, half);
+    }
+
+    //==========================================================================
+    // SPECIAL CASE: k=3N/8 (W = -√2/2 - i√2/2, optimized multiply)
+    //==========================================================================
+    // ⚠️  Only ONE butterfly at k=3N/8 - scalar is fine
+    
+    if (k_3eighth > 0 && k_3eighth < half)
+    {
+        radix2_k_eighth_native_soa_scalar(in_re, in_im, out_re, out_im, 
+                                          k_3eighth, half, -1);
     }
 
     //==========================================================================
     // GENERAL CASE: All other k values
     //==========================================================================
+    // Build list of ranges to process, excluding special cases
     
-    if (k_quarter > 0)
+    typedef struct {
+        int start;
+        int end;
+    } range_t;
+    
+    range_t ranges[4];  // Maximum 4 ranges possible
+    int num_ranges = 0;
+    
+    // Build ranges: split around k=0, k_eighth, k_quarter, k_3eighth
+    int current = 1;  // Start after k=0
+    
+    // Range before k_eighth
+    if (k_eighth > 0 && k_eighth > current)
     {
-        // Two ranges: [1, k_quarter) and (k_quarter, half)
-        const int range_a_start = 1;
-        const int range_a_end = k_quarter;
-        const int range_a_size = range_a_end - range_a_start;
-
-        const int range_b_start = k_quarter + 1;
-        const int range_b_end = half;
-        const int range_b_size = range_b_end - range_b_start;
-
-#ifdef _OPENMP
-        if (num_threads <= 0)
-            num_threads = omp_get_max_threads();
-
-        // Parallelize larger range
-        if (range_a_size >= range_b_size && 
-            range_a_size >= PARALLEL_THRESHOLD && 
-            num_threads > 1)
-        {
-            radix2_parallel_dispatch_native_soa(out_re, out_im, in_re, in_im,
-                                               stage_tw, half, range_a_start, range_a_end,
-                                               use_streaming, num_threads);
-            radix2_process_range_native_soa(out_re, out_im, in_re, in_im,
-                                           stage_tw, half, range_b_start, range_b_end,
-                                           use_streaming);
-        }
-        else if (range_b_size >= PARALLEL_THRESHOLD && num_threads > 1)
-        {
-            radix2_process_range_native_soa(out_re, out_im, in_re, in_im,
-                                           stage_tw, half, range_a_start, range_a_end,
-                                           use_streaming);
-            radix2_parallel_dispatch_native_soa(out_re, out_im, in_re, in_im,
-                                               stage_tw, half, range_b_start, range_b_end,
-                                               use_streaming, num_threads);
-        }
-        else
-#endif
-        {
-            radix2_process_range_native_soa(out_re, out_im, in_re, in_im,
-                                           stage_tw, half, range_a_start, range_a_end,
-                                           use_streaming);
-            radix2_process_range_native_soa(out_re, out_im, in_re, in_im,
-                                           stage_tw, half, range_b_start, range_b_end,
-                                           use_streaming);
-        }
-    }
-    else
-    {
-        // Single range: [1, half)
-        const int k_start = 1;
-
-#ifdef _OPENMP
-        if (num_threads <= 0)
-            num_threads = omp_get_max_threads();
-
-        const int remaining = half - k_start;
-        
-        if (remaining >= PARALLEL_THRESHOLD && num_threads > 1)
-        {
-            radix2_parallel_dispatch_native_soa(out_re, out_im, in_re, in_im,
-                                               stage_tw, half, k_start, half,
-                                               use_streaming, num_threads);
-        }
-        else
-#endif
-        {
-            radix2_process_range_native_soa(out_re, out_im, in_re, in_im,
-                                           stage_tw, half, k_start, half,
-                                           use_streaming);
-        }
+        ranges[num_ranges].start = current;
+        ranges[num_ranges].end = k_eighth;
+        num_ranges++;
+        current = k_eighth + 1;
     }
     
-    // ⚠️  REMOVED: No sfence here for sequential path!
-    // For sequential execution, stores are naturally ordered.
-    // For parallel execution, sfence was already issued per-thread above.
+    // Range before k_quarter
+    if (k_quarter > 0 && k_quarter > current)
+    {
+        ranges[num_ranges].start = current;
+        ranges[num_ranges].end = k_quarter;
+        num_ranges++;
+        current = k_quarter + 1;
+    }
+    
+    // Range before k_3eighth
+    if (k_3eighth > 0 && k_3eighth > current)
+    {
+        ranges[num_ranges].start = current;
+        ranges[num_ranges].end = k_3eighth;
+        num_ranges++;
+        current = k_3eighth + 1;
+    }
+    
+    // Final range to half
+    if (current < half)
+    {
+        ranges[num_ranges].start = current;
+        ranges[num_ranges].end = half;
+        num_ranges++;
+    }
+    
+    //==========================================================================
+    // PROCESS RANGES SEQUENTIALLY
+    //==========================================================================
+    // Threading module should call radix2_process_range_native_soa() directly
+    // for parallel execution. This function is the single-threaded core.
+    
+    for (int i = 0; i < num_ranges; i++)
+    {
+        radix2_process_range_native_soa(out_re, out_im, in_re, in_im,
+                                       stage_tw, half, 
+                                       ranges[i].start, ranges[i].end,
+                                       use_streaming);
+    }
 }
