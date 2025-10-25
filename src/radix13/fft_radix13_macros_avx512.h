@@ -2078,4 +2078,4 @@ typedef struct
  */
 
 #endif // __AVX512F__
-#endif // FFT_RADIX13_BUTTERFLY_AVX512_PART3_H
+#endif // FFT_RADIX13_BUTTERFLY_AVX512_
