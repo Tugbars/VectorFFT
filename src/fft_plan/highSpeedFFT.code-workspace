@@ -46,7 +46,8 @@
 			"initializer_list": "cpp",
 			"vector": "cpp",
 			"xstring": "cpp",
-			"xutility": "cpp"
+			"xutility": "cpp",
+			"plan-guru-dft-c2r.h": "c"
 		}
 	}
 }
