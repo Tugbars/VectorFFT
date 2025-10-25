@@ -83,40 +83,60 @@ broadcast_radix11_consts_sse2(void)
  * Prefetch input data and stage twiddles to L1/L2 cache.
  * Uses _MM_HINT_T0 for temporal locality (data will be reused).
  */
-#define PREFETCH_11_LANES_R11_SSE2_SOA(k, K, in_re, in_im, stage_tw, sub_len) \
-    do                                                                        \
-    {                                                                         \
-        if ((k) + R11_PREFETCH_DISTANCE < (K))                                \
-        {                                                                     \
-            int pk = (k) + R11_PREFETCH_DISTANCE;                             \
-            _mm_prefetch((const char *)&in_re[pk + 0 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 0 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 1 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 1 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 2 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 2 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 3 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 3 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 4 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 4 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 5 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 5 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 6 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 6 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 7 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 7 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 8 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 8 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 9 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_im[pk + 9 * K], _MM_HINT_T0);      \
-            _mm_prefetch((const char *)&in_re[pk + 10 * K], _MM_HINT_T0);     \
-            _mm_prefetch((const char *)&in_im[pk + 10 * K], _MM_HINT_T0);     \
-            if ((sub_len) > 1)                                                \
-            {                                                                 \
-                _mm_prefetch((const char *)&stage_tw->re[pk], _MM_HINT_T0);   \
-                _mm_prefetch((const char *)&stage_tw->im[pk], _MM_HINT_T0);   \
-            }                                                                 \
-        }                                                                     \
+#define PREFETCH_11_LANES_R11_SSE2_SOA(k, K, in_re, in_im, stage_tw, sub_len)       \
+    do                                                                              \
+    {                                                                               \
+        if ((k) + R11_PREFETCH_DISTANCE < (K))                                      \
+        {                                                                           \
+            int pk = (k) + R11_PREFETCH_DISTANCE;                                   \
+            /* Prefetch input data for all 11 lanes */                              \
+            _mm_prefetch((const char *)&in_re[pk + 0 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 0 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 1 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 1 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 2 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 2 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 3 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 3 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 4 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 4 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 5 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 5 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 6 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 6 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 7 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 7 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 8 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 8 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 9 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_im[pk + 9 * K], _MM_HINT_T0);            \
+            _mm_prefetch((const char *)&in_re[pk + 10 * K], _MM_HINT_T0);           \
+            _mm_prefetch((const char *)&in_im[pk + 10 * K], _MM_HINT_T0);           \
+            /* Prefetch stage twiddles for all 10 lanes (skip lane 0 = DC) */       \
+            if ((sub_len) > 1)                                                      \
+            {                                                                       \
+                _mm_prefetch((const char *)&stage_tw->re[0 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[0 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->re[1 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[1 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->re[2 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[2 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->re[3 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[3 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->re[4 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[4 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->re[5 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[5 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->re[6 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[6 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->re[7 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[7 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->re[8 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[8 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->re[9 * K + pk], _MM_HINT_T0); \
+                _mm_prefetch((const char *)&stage_tw->im[9 * K + pk], _MM_HINT_T0); \
+            }                                                                       \
+        }                                                                           \
     } while (0)
 
 //==============================================================================
@@ -138,154 +158,228 @@ broadcast_radix11_consts_sse2(void)
  *   x0: [r0, i0]
  *   x1: [r1, i1]
  *   ... (11 total registers for 11 complex lanes)
+ *
+ * BEFORE: Used _mm_loadu_pd which loaded 2 doubles, only used first one
+ * AFTER:  Uses _mm_load_sd to load exactly 1 double per lane
+ *
+ * Benefit: No wasted loads, no risk of reading past array bounds
  */
 #define LOAD_11_LANES_SSE2_NATIVE_SOA(k, K, in_re, in_im,                          \
                                       x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10) \
     do                                                                             \
     {                                                                              \
-        __m128d re0 = _mm_loadu_pd(&in_re[k + 0 * K]);                             \
-        __m128d im0 = _mm_loadu_pd(&in_im[k + 0 * K]);                             \
-        __m128d re1 = _mm_loadu_pd(&in_re[k + 1 * K]);                             \
-        __m128d im1 = _mm_loadu_pd(&in_im[k + 1 * K]);                             \
-        __m128d re2 = _mm_loadu_pd(&in_re[k + 2 * K]);                             \
-        __m128d im2 = _mm_loadu_pd(&in_im[k + 2 * K]);                             \
-        __m128d re3 = _mm_loadu_pd(&in_re[k + 3 * K]);                             \
-        __m128d im3 = _mm_loadu_pd(&in_im[k + 3 * K]);                             \
-        __m128d re4 = _mm_loadu_pd(&in_re[k + 4 * K]);                             \
-        __m128d im4 = _mm_loadu_pd(&in_im[k + 4 * K]);                             \
-        __m128d re5 = _mm_loadu_pd(&in_re[k + 5 * K]);                             \
-        __m128d im5 = _mm_loadu_pd(&in_im[k + 5 * K]);                             \
-        __m128d re6 = _mm_loadu_pd(&in_re[k + 6 * K]);                             \
-        __m128d im6 = _mm_loadu_pd(&in_im[k + 6 * K]);                             \
-        __m128d re7 = _mm_loadu_pd(&in_re[k + 7 * K]);                             \
-        __m128d im7 = _mm_loadu_pd(&in_im[k + 7 * K]);                             \
-        __m128d re8 = _mm_loadu_pd(&in_re[k + 8 * K]);                             \
-        __m128d im8 = _mm_loadu_pd(&in_im[k + 8 * K]);                             \
-        __m128d re9 = _mm_loadu_pd(&in_re[k + 9 * K]);                             \
-        __m128d im9 = _mm_loadu_pd(&in_im[k + 9 * K]);                             \
-        __m128d re10 = _mm_loadu_pd(&in_re[k + 10 * K]);                           \
-        __m128d im10 = _mm_loadu_pd(&in_im[k + 10 * K]);                           \
-        x0 = _mm_unpacklo_pd(re0, im0);                                            \
-        x1 = _mm_unpacklo_pd(re1, im1);                                            \
-        x2 = _mm_unpacklo_pd(re2, im2);                                            \
-        x3 = _mm_unpacklo_pd(re3, im3);                                            \
-        x4 = _mm_unpacklo_pd(re4, im4);                                            \
-        x5 = _mm_unpacklo_pd(re5, im5);                                            \
-        x6 = _mm_unpacklo_pd(re6, im6);                                            \
-        x7 = _mm_unpacklo_pd(re7, im7);                                            \
-        x8 = _mm_unpacklo_pd(re8, im8);                                            \
-        x9 = _mm_unpacklo_pd(re9, im9);                                            \
-        x10 = _mm_unpacklo_pd(re10, im10);                                         \
+        __m128d re, im;                                                            \
+        re = _mm_load_sd(&in_re[(k) + 0 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 0 * (K)]);                                   \
+        x0 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 1 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 1 * (K)]);                                   \
+        x1 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 2 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 2 * (K)]);                                   \
+        x2 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 3 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 3 * (K)]);                                   \
+        x3 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 4 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 4 * (K)]);                                   \
+        x4 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 5 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 5 * (K)]);                                   \
+        x5 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 6 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 6 * (K)]);                                   \
+        x6 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 7 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 7 * (K)]);                                   \
+        x7 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 8 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 8 * (K)]);                                   \
+        x8 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 9 * (K)]);                                   \
+        im = _mm_load_sd(&in_im[(k) + 9 * (K)]);                                   \
+        x9 = _mm_unpacklo_pd(re, im);                                              \
+        re = _mm_load_sd(&in_re[(k) + 10 * (K)]);                                  \
+        im = _mm_load_sd(&in_im[(k) + 10 * (K)]);                                  \
+        x10 = _mm_unpacklo_pd(re, im);                                             \
     } while (0)
 
 /**
  * @brief Store 11 lanes to SoA buffers - SSE2 (normal stores)
+ *
+ * BEFORE: Used _mm_storeu_pd which wrote 2 doubles, corrupting adjacent data
+ * AFTER:  Uses _mm_store_sd to write exactly 1 double per lane
+ *
+ * This was causing silent data corruption where each store would overwrite
+ * the next element in the array!
  */
 #define STORE_11_LANES_SSE2_NATIVE_SOA(k, K, out_re, out_im,                        \
                                        y0, y1, y2, y3, y4, y5, y6, y7, y8, y9, y10) \
     do                                                                              \
     {                                                                               \
-        __m128d re0, im0, re1, im1, re2, im2, re3, im3, re4, im4, re5, im5;         \
-        __m128d re6, im6, re7, im7, re8, im8, re9, im9, re10, im10;                 \
-        re0 = _mm_shuffle_pd(y0, y0, 0x0);                                          \
-        im0 = _mm_shuffle_pd(y0, y0, 0x3);                                          \
-        re1 = _mm_shuffle_pd(y1, y1, 0x0);                                          \
-        im1 = _mm_shuffle_pd(y1, y1, 0x3);                                          \
-        re2 = _mm_shuffle_pd(y2, y2, 0x0);                                          \
-        im2 = _mm_shuffle_pd(y2, y2, 0x3);                                          \
-        re3 = _mm_shuffle_pd(y3, y3, 0x0);                                          \
-        im3 = _mm_shuffle_pd(y3, y3, 0x3);                                          \
-        re4 = _mm_shuffle_pd(y4, y4, 0x0);                                          \
-        im4 = _mm_shuffle_pd(y4, y4, 0x3);                                          \
-        re5 = _mm_shuffle_pd(y5, y5, 0x0);                                          \
-        im5 = _mm_shuffle_pd(y5, y5, 0x3);                                          \
-        re6 = _mm_shuffle_pd(y6, y6, 0x0);                                          \
-        im6 = _mm_shuffle_pd(y6, y6, 0x3);                                          \
-        re7 = _mm_shuffle_pd(y7, y7, 0x0);                                          \
-        im7 = _mm_shuffle_pd(y7, y7, 0x3);                                          \
-        re8 = _mm_shuffle_pd(y8, y8, 0x0);                                          \
-        im8 = _mm_shuffle_pd(y8, y8, 0x3);                                          \
-        re9 = _mm_shuffle_pd(y9, y9, 0x0);                                          \
-        im9 = _mm_shuffle_pd(y9, y9, 0x3);                                          \
-        re10 = _mm_shuffle_pd(y10, y10, 0x0);                                       \
-        im10 = _mm_shuffle_pd(y10, y10, 0x3);                                       \
-        _mm_storeu_pd(&out_re[k + 0 * K], re0);                                     \
-        _mm_storeu_pd(&out_im[k + 0 * K], im0);                                     \
-        _mm_storeu_pd(&out_re[k + 1 * K], re1);                                     \
-        _mm_storeu_pd(&out_im[k + 1 * K], im1);                                     \
-        _mm_storeu_pd(&out_re[k + 2 * K], re2);                                     \
-        _mm_storeu_pd(&out_im[k + 2 * K], im2);                                     \
-        _mm_storeu_pd(&out_re[k + 3 * K], re3);                                     \
-        _mm_storeu_pd(&out_im[k + 3 * K], im3);                                     \
-        _mm_storeu_pd(&out_re[k + 4 * K], re4);                                     \
-        _mm_storeu_pd(&out_im[k + 4 * K], im4);                                     \
-        _mm_storeu_pd(&out_re[k + 5 * K], re5);                                     \
-        _mm_storeu_pd(&out_im[k + 5 * K], im5);                                     \
-        _mm_storeu_pd(&out_re[k + 6 * K], re6);                                     \
-        _mm_storeu_pd(&out_im[k + 6 * K], im6);                                     \
-        _mm_storeu_pd(&out_re[k + 7 * K], re7);                                     \
-        _mm_storeu_pd(&out_im[k + 7 * K], im7);                                     \
-        _mm_storeu_pd(&out_re[k + 8 * K], re8);                                     \
-        _mm_storeu_pd(&out_im[k + 8 * K], im8);                                     \
-        _mm_storeu_pd(&out_re[k + 9 * K], re9);                                     \
-        _mm_storeu_pd(&out_im[k + 9 * K], im9);                                     \
-        _mm_storeu_pd(&out_re[k + 10 * K], re10);                                   \
-        _mm_storeu_pd(&out_im[k + 10 * K], im10);                                   \
+        __m128d re, im;                                                             \
+        re = _mm_shuffle_pd(y0, y0, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 0 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y0, y0, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 0 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y1, y1, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 1 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y1, y1, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 1 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y2, y2, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 2 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y2, y2, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 2 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y3, y3, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 3 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y3, y3, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 3 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y4, y4, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 4 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y4, y4, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 4 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y5, y5, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 5 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y5, y5, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 5 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y6, y6, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 6 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y6, y6, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 6 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y7, y7, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 7 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y7, y7, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 7 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y8, y8, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 8 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y8, y8, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 8 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y9, y9, 0x0);                                           \
+        _mm_store_sd(&out_re[(k) + 9 * (K)], re);                                   \
+        im = _mm_shuffle_pd(y9, y9, 0x3);                                           \
+        _mm_store_sd(&out_im[(k) + 9 * (K)], im);                                   \
+        re = _mm_shuffle_pd(y10, y10, 0x0);                                         \
+        _mm_store_sd(&out_re[(k) + 10 * (K)], re);                                  \
+        im = _mm_shuffle_pd(y10, y10, 0x3);                                         \
+        _mm_store_sd(&out_im[(k) + 10 * (K)], im);                                  \
     } while (0)
 
 /**
  * @brief Store 11 lanes to SoA buffers - SSE2 (streaming/non-temporal stores)
+ * BEFORE: Used _mm_stream_pd which wrote 2 doubles, corrupting adjacent data
+ * AFTER:  Uses _mm_stream_sd to write exactly 1 double per lane
+ *
+ * Note: _mm_stream_sd may not be available on all SSE2 implementations.
+ * If it's not available, you can use _mm_store_sd + _mm_sfence instead.
  */
 #define STORE_11_LANES_SSE2_STREAM_NATIVE_SOA(k, K, out_re, out_im,                        \
                                               y0, y1, y2, y3, y4, y5, y6, y7, y8, y9, y10) \
     do                                                                                     \
     {                                                                                      \
-        __m128d re0, im0, re1, im1, re2, im2, re3, im3, re4, im4, re5, im5;                \
-        __m128d re6, im6, re7, im7, re8, im8, re9, im9, re10, im10;                        \
-        re0 = _mm_shuffle_pd(y0, y0, 0x0);                                                 \
-        im0 = _mm_shuffle_pd(y0, y0, 0x3);                                                 \
-        re1 = _mm_shuffle_pd(y1, y1, 0x0);                                                 \
-        im1 = _mm_shuffle_pd(y1, y1, 0x3);                                                 \
-        re2 = _mm_shuffle_pd(y2, y2, 0x0);                                                 \
-        im2 = _mm_shuffle_pd(y2, y2, 0x3);                                                 \
-        re3 = _mm_shuffle_pd(y3, y3, 0x0);                                                 \
-        im3 = _mm_shuffle_pd(y3, y3, 0x3);                                                 \
-        re4 = _mm_shuffle_pd(y4, y4, 0x0);                                                 \
-        im4 = _mm_shuffle_pd(y4, y4, 0x3);                                                 \
-        re5 = _mm_shuffle_pd(y5, y5, 0x0);                                                 \
-        im5 = _mm_shuffle_pd(y5, y5, 0x3);                                                 \
-        re6 = _mm_shuffle_pd(y6, y6, 0x0);                                                 \
-        im6 = _mm_shuffle_pd(y6, y6, 0x3);                                                 \
-        re7 = _mm_shuffle_pd(y7, y7, 0x0);                                                 \
-        im7 = _mm_shuffle_pd(y7, y7, 0x3);                                                 \
-        re8 = _mm_shuffle_pd(y8, y8, 0x0);                                                 \
-        im8 = _mm_shuffle_pd(y8, y8, 0x3);                                                 \
-        re9 = _mm_shuffle_pd(y9, y9, 0x0);                                                 \
-        im9 = _mm_shuffle_pd(y9, y9, 0x3);                                                 \
-        re10 = _mm_shuffle_pd(y10, y10, 0x0);                                              \
-        im10 = _mm_shuffle_pd(y10, y10, 0x3);                                              \
-        _mm_stream_pd(&out_re[k + 0 * K], re0);                                            \
-        _mm_stream_pd(&out_im[k + 0 * K], im0);                                            \
-        _mm_stream_pd(&out_re[k + 1 * K], re1);                                            \
-        _mm_stream_pd(&out_im[k + 1 * K], im1);                                            \
-        _mm_stream_pd(&out_re[k + 2 * K], re2);                                            \
-        _mm_stream_pd(&out_im[k + 2 * K], im2);                                            \
-        _mm_stream_pd(&out_re[k + 3 * K], re3);                                            \
-        _mm_stream_pd(&out_im[k + 3 * K], im3);                                            \
-        _mm_stream_pd(&out_re[k + 4 * K], re4);                                            \
-        _mm_stream_pd(&out_im[k + 4 * K], im4);                                            \
-        _mm_stream_pd(&out_re[k + 5 * K], re5);                                            \
-        _mm_stream_pd(&out_im[k + 5 * K], im5);                                            \
-        _mm_stream_pd(&out_re[k + 6 * K], re6);                                            \
-        _mm_stream_pd(&out_im[k + 6 * K], im6);                                            \
-        _mm_stream_pd(&out_re[k + 7 * K], re7);                                            \
-        _mm_stream_pd(&out_im[k + 7 * K], im7);                                            \
-        _mm_stream_pd(&out_re[k + 8 * K], re8);                                            \
-        _mm_stream_pd(&out_im[k + 8 * K], im8);                                            \
-        _mm_stream_pd(&out_re[k + 9 * K], re9);                                            \
-        _mm_stream_pd(&out_im[k + 9 * K], im9);                                            \
-        _mm_stream_pd(&out_re[k + 10 * K], re10);                                          \
-        _mm_stream_pd(&out_im[k + 10 * K], im10);                                          \
+        __m128d re, im;                                                                    \
+        re = _mm_shuffle_pd(y0, y0, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 0 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y0, y0, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 0 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y1, y1, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 1 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y1, y1, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 1 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y2, y2, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 2 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y2, y2, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 2 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y3, y3, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 3 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y3, y3, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 3 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y4, y4, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 4 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y4, y4, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 4 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y5, y5, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 5 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y5, y5, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 5 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y6, y6, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 6 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y6, y6, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 6 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y7, y7, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 7 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y7, y7, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 7 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y8, y8, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 8 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y8, y8, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 8 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y9, y9, 0x0);                                                  \
+        _mm_stream_sd(&out_re[(k) + 9 * (K)], re);                                         \
+        im = _mm_shuffle_pd(y9, y9, 0x3);                                                  \
+        _mm_stream_sd(&out_im[(k) + 9 * (K)], im);                                         \
+        re = _mm_shuffle_pd(y10, y10, 0x0);                                                \
+        _mm_stream_sd(&out_re[(k) + 10 * (K)], re);                                        \
+        im = _mm_shuffle_pd(y10, y10, 0x3);                                                \
+        _mm_stream_sd(&out_im[(k) + 10 * (K)], im);                                        \
+    } while (0)
+
+/* ============================================================================
+ * Alternative: STREAMING STORE with regular stores + fence
+ * ============================================================================
+ *
+ * If _mm_stream_sd is not available, use this version instead.
+ * It uses regular stores followed by a fence for write-combining behavior.
+ */
+#define STORE_11_LANES_SSE2_STREAM_FALLBACK_NATIVE_SOA(k, K, out_re, out_im,                        \
+                                                       y0, y1, y2, y3, y4, y5, y6, y7, y8, y9, y10) \
+    do                                                                                              \
+    {                                                                                               \
+        __m128d re, im;                                                                             \
+        re = _mm_shuffle_pd(y0, y0, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 0 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y0, y0, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 0 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y1, y1, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 1 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y1, y1, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 1 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y2, y2, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 2 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y2, y2, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 2 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y3, y3, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 3 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y3, y3, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 3 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y4, y4, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 4 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y4, y4, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 4 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y5, y5, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 5 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y5, y5, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 5 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y6, y6, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 6 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y6, y6, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 6 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y7, y7, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 7 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y7, y7, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 7 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y8, y8, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 8 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y8, y8, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 8 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y9, y9, 0x0);                                                           \
+        _mm_store_sd(&out_re[(k) + 9 * (K)], re);                                                   \
+        im = _mm_shuffle_pd(y9, y9, 0x3);                                                           \
+        _mm_store_sd(&out_im[(k) + 9 * (K)], im);                                                   \
+        re = _mm_shuffle_pd(y10, y10, 0x0);                                                         \
+        _mm_store_sd(&out_re[(k) + 10 * (K)], re);                                                  \
+        im = _mm_shuffle_pd(y10, y10, 0x3);                                                         \
+        _mm_store_sd(&out_im[(k) + 10 * (K)], im);                                                  \
+        _mm_sfence();                                                                               \
     } while (0)
 
 //==============================================================================
@@ -311,80 +405,80 @@ broadcast_radix11_consts_sse2(void)
         {                                                                        \
             __m128d w_re, w_im, x_re, x_im, tmp_re, tmp_im;                      \
             /* Lane 1 */                                                         \
-            w_re = _mm_loadu_pd(&stage_tw->re[0 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[0 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[0 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[0 * K + k]);                        \
             x_re = _mm_shuffle_pd(x1, x1, 0x0);                                  \
             x_im = _mm_shuffle_pd(x1, x1, 0x3);                                  \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
             tmp_im = _mm_add_pd(_mm_mul_pd(x_re, w_im), _mm_mul_pd(x_im, w_re)); \
             x1 = _mm_unpacklo_pd(tmp_re, tmp_im);                                \
             /* Lane 2 */                                                         \
-            w_re = _mm_loadu_pd(&stage_tw->re[1 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[1 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[1 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[1 * K + k]);                        \
             x_re = _mm_shuffle_pd(x2, x2, 0x0);                                  \
             x_im = _mm_shuffle_pd(x2, x2, 0x3);                                  \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
             tmp_im = _mm_add_pd(_mm_mul_pd(x_re, w_im), _mm_mul_pd(x_im, w_re)); \
             x2 = _mm_unpacklo_pd(tmp_re, tmp_im);                                \
             /* Lane 3 */                                                         \
-            w_re = _mm_loadu_pd(&stage_tw->re[2 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[2 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[2 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[2 * K + k]);                        \
             x_re = _mm_shuffle_pd(x3, x3, 0x0);                                  \
             x_im = _mm_shuffle_pd(x3, x3, 0x3);                                  \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
             tmp_im = _mm_add_pd(_mm_mul_pd(x_re, w_im), _mm_mul_pd(x_im, w_re)); \
             x3 = _mm_unpacklo_pd(tmp_re, tmp_im);                                \
             /* Lane 4 */                                                         \
-            w_re = _mm_loadu_pd(&stage_tw->re[3 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[3 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[3 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[3 * K + k]);                        \
             x_re = _mm_shuffle_pd(x4, x4, 0x0);                                  \
             x_im = _mm_shuffle_pd(x4, x4, 0x3);                                  \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
             tmp_im = _mm_add_pd(_mm_mul_pd(x_re, w_im), _mm_mul_pd(x_im, w_re)); \
             x4 = _mm_unpacklo_pd(tmp_re, tmp_im);                                \
             /* Lane 5 */                                                         \
-            w_re = _mm_loadu_pd(&stage_tw->re[4 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[4 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[4 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[4 * K + k]);                        \
             x_re = _mm_shuffle_pd(x5, x5, 0x0);                                  \
             x_im = _mm_shuffle_pd(x5, x5, 0x3);                                  \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
             tmp_im = _mm_add_pd(_mm_mul_pd(x_re, w_im), _mm_mul_pd(x_im, w_re)); \
             x5 = _mm_unpacklo_pd(tmp_re, tmp_im);                                \
             /* Lane 6 */                                                         \
-            w_re = _mm_loadu_pd(&stage_tw->re[5 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[5 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[5 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[5 * K + k]);                        \
             x_re = _mm_shuffle_pd(x6, x6, 0x0);                                  \
             x_im = _mm_shuffle_pd(x6, x6, 0x3);                                  \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
             tmp_im = _mm_add_pd(_mm_mul_pd(x_re, w_im), _mm_mul_pd(x_im, w_re)); \
             x6 = _mm_unpacklo_pd(tmp_re, tmp_im);                                \
             /* Lane 7 */                                                         \
-            w_re = _mm_loadu_pd(&stage_tw->re[6 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[6 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[6 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[6 * K + k]);                        \
             x_re = _mm_shuffle_pd(x7, x7, 0x0);                                  \
             x_im = _mm_shuffle_pd(x7, x7, 0x3);                                  \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
             tmp_im = _mm_add_pd(_mm_mul_pd(x_re, w_im), _mm_mul_pd(x_im, w_re)); \
             x7 = _mm_unpacklo_pd(tmp_re, tmp_im);                                \
             /* Lane 8 */                                                         \
-            w_re = _mm_loadu_pd(&stage_tw->re[7 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[7 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[7 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[7 * K + k]);                        \
             x_re = _mm_shuffle_pd(x8, x8, 0x0);                                  \
             x_im = _mm_shuffle_pd(x8, x8, 0x3);                                  \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
             tmp_im = _mm_add_pd(_mm_mul_pd(x_re, w_im), _mm_mul_pd(x_im, w_re)); \
             x8 = _mm_unpacklo_pd(tmp_re, tmp_im);                                \
             /* Lane 9 */                                                         \
-            w_re = _mm_loadu_pd(&stage_tw->re[8 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[8 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[8 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[8 * K + k]);                        \
             x_re = _mm_shuffle_pd(x9, x9, 0x0);                                  \
             x_im = _mm_shuffle_pd(x9, x9, 0x3);                                  \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
             tmp_im = _mm_add_pd(_mm_mul_pd(x_re, w_im), _mm_mul_pd(x_im, w_re)); \
             x9 = _mm_unpacklo_pd(tmp_re, tmp_im);                                \
             /* Lane 10 */                                                        \
-            w_re = _mm_loadu_pd(&stage_tw->re[9 * K + k]);                       \
-            w_im = _mm_loadu_pd(&stage_tw->im[9 * K + k]);                       \
+            w_re = _mm_load_sd(&stage_tw->re[9 * K + k]);                        \
+            w_im = _mm_load_sd(&stage_tw->im[9 * K + k]);                        \
             x_re = _mm_shuffle_pd(x10, x10, 0x0);                                \
             x_im = _mm_shuffle_pd(x10, x10, 0x3);                                \
             tmp_re = _mm_sub_pd(_mm_mul_pd(x_re, w_re), _mm_mul_pd(x_im, w_im)); \
