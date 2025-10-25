@@ -304,6 +304,8 @@ static inline __m512i get_deinterleave_idx_im(void)
 /**
  * @brief Load 11 lanes from SoA buffers - FULL 8-LANE VERSION
  * @details Processes BOTH lo (lanes 0-3) and hi (lanes 4-7)
+ *
+ * CRITICAL: Assigns directly to output parameters to avoid name collision
  */
 #define LOAD_11_LANES_AVX512_NATIVE_SOA_FULL(k, K, in_re, in_im,                       \
                                              x0_lo, x0_hi, x1_lo, x1_hi, x2_lo, x2_hi, \
@@ -334,57 +336,39 @@ static inline __m512i get_deinterleave_idx_im(void)
         __m512d im9 = _mm512_loadu_pd(&in_im[k + 9 * K]);                              \
         __m512d re10 = _mm512_loadu_pd(&in_re[k + 10 * K]);                            \
         __m512d im10 = _mm512_loadu_pd(&in_im[k + 10 * K]);                            \
-        /* Interleave into complex pairs */                                            \
-        __m512d y0_lo = _mm512_unpacklo_pd(re0, im0);                                  \
-        __m512d y0_hi = _mm512_unpackhi_pd(re0, im0);                                  \
-        __m512d y1_lo = _mm512_unpacklo_pd(re1, im1);                                  \
-        __m512d y1_hi = _mm512_unpackhi_pd(re1, im1);                                  \
-        __m512d y2_lo = _mm512_unpacklo_pd(re2, im2);                                  \
-        __m512d y2_hi = _mm512_unpackhi_pd(re2, im2);                                  \
-        __m512d y3_lo = _mm512_unpacklo_pd(re3, im3);                                  \
-        __m512d y3_hi = _mm512_unpackhi_pd(re3, im3);                                  \
-        __m512d y4_lo = _mm512_unpacklo_pd(re4, im4);                                  \
-        __m512d y4_hi = _mm512_unpackhi_pd(re4, im4);                                  \
-        __m512d y5_lo = _mm512_unpacklo_pd(re5, im5);                                  \
-        __m512d y5_hi = _mm512_unpackhi_pd(re5, im5);                                  \
-        __m512d y6_lo = _mm512_unpacklo_pd(re6, im6);                                  \
-        __m512d y6_hi = _mm512_unpackhi_pd(re6, im6);                                  \
-        __m512d y7_lo = _mm512_unpacklo_pd(re7, im7);                                  \
-        __m512d y7_hi = _mm512_unpackhi_pd(re7, im7);                                  \
-        __m512d y8_lo = _mm512_unpacklo_pd(re8, im8);                                  \
-        __m512d y8_hi = _mm512_unpackhi_pd(re8, im8);                                  \
-        __m512d y9_lo = _mm512_unpacklo_pd(re9, im9);                                  \
-        __m512d y9_hi = _mm512_unpackhi_pd(re9, im9);                                  \
-        __m512d y10_lo = _mm512_unpacklo_pd(re10, im10);                               \
-        __m512d y10_hi = _mm512_unpackhi_pd(re10, im10);                               \
-        /* Assign outputs */                                                           \
-        x0_lo = y0_lo;                                                                 \
-        x0_hi = y0_hi;                                                                 \
-        x1_lo = y1_lo;                                                                 \
-        x1_hi = y1_hi;                                                                 \
-        x2_lo = y2_lo;                                                                 \
-        x2_hi = y2_hi;                                                                 \
-        x3_lo = y3_lo;                                                                 \
-        x3_hi = y3_hi;                                                                 \
-        x4_lo = y4_lo;                                                                 \
-        x4_hi = y4_hi;                                                                 \
-        x5_lo = y5_lo;                                                                 \
-        x5_hi = y5_hi;                                                                 \
-        x6_lo = y6_lo;                                                                 \
-        x6_hi = y6_hi;                                                                 \
-        x7_lo = y7_lo;                                                                 \
-        x7_hi = y7_hi;                                                                 \
-        x8_lo = y8_lo;                                                                 \
-        x8_hi = y8_hi;                                                                 \
-        x9_lo = y9_lo;                                                                 \
-        x9_hi = y9_hi;                                                                 \
-        x10_lo = y10_lo;                                                               \
-        x10_hi = y10_hi;                                                               \
+        /* Interleave and assign directly to outputs (no temp variables) */            \
+        x0_lo = _mm512_unpacklo_pd(re0, im0);                                          \
+        x0_hi = _mm512_unpackhi_pd(re0, im0);                                          \
+        x1_lo = _mm512_unpacklo_pd(re1, im1);                                          \
+        x1_hi = _mm512_unpackhi_pd(re1, im1);                                          \
+        x2_lo = _mm512_unpacklo_pd(re2, im2);                                          \
+        x2_hi = _mm512_unpackhi_pd(re2, im2);                                          \
+        x3_lo = _mm512_unpacklo_pd(re3, im3);                                          \
+        x3_hi = _mm512_unpackhi_pd(re3, im3);                                          \
+        x4_lo = _mm512_unpacklo_pd(re4, im4);                                          \
+        x4_hi = _mm512_unpackhi_pd(re4, im4);                                          \
+        x5_lo = _mm512_unpacklo_pd(re5, im5);                                          \
+        x5_hi = _mm512_unpackhi_pd(re5, im5);                                          \
+        x6_lo = _mm512_unpacklo_pd(re6, im6);                                          \
+        x6_hi = _mm512_unpackhi_pd(re6, im6);                                          \
+        x7_lo = _mm512_unpacklo_pd(re7, im7);                                          \
+        x7_hi = _mm512_unpackhi_pd(re7, im7);                                          \
+        x8_lo = _mm512_unpacklo_pd(re8, im8);                                          \
+        x8_hi = _mm512_unpackhi_pd(re8, im8);                                          \
+        x9_lo = _mm512_unpacklo_pd(re9, im9);                                          \
+        x9_hi = _mm512_unpackhi_pd(re9, im9);                                          \
+        x10_lo = _mm512_unpacklo_pd(re10, im10);                                       \
+        x10_hi = _mm512_unpackhi_pd(re10, im10);                                       \
     } while (0)
 
 /**
  * @brief Load 11 lanes with masking for tail - MASKED VERSION
  * @details Zeros invalid lanes to prevent processing garbage
+ *
+ * CRITICAL: Single mask applied uniformly to all 11 rows
+ * - remaining: number of complex elements (0..7)
+ * - mask applies to double lanes in each vector, not complex pairs
+ * - Same mask used for ALL re/im loads across all 11 rows
  */
 #define LOAD_11_LANES_AVX512_NATIVE_SOA_MASKED(k, K, remaining, in_re, in_im,            \
                                                x0_lo, x0_hi, x1_lo, x1_hi, x2_lo, x2_hi, \
@@ -393,78 +377,52 @@ static inline __m512i get_deinterleave_idx_im(void)
                                                x9_lo, x9_hi, x10_lo, x10_hi)             \
     do                                                                                   \
     {                                                                                    \
-        size_t lo_count = (remaining < 4) ? remaining : 4;                               \
-        size_t hi_count = (remaining > 4) ? (remaining - 4) : 0;                         \
-        __mmask8 mask_lo = (__mmask8)((1U << (2 * lo_count)) - 1);                       \
-        __mmask8 mask_hi = (__mmask8)((1U << (2 * hi_count)) - 1);                       \
-        __m512d re0 = _mm512_maskz_loadu_pd(mask_lo, &in_re[k + 0 * K]);                 \
-        __m512d im0 = _mm512_maskz_loadu_pd(mask_lo, &in_im[k + 0 * K]);                 \
-        __m512d re1 = _mm512_maskz_loadu_pd(mask_lo, &in_re[k + 1 * K]);                 \
-        __m512d im1 = _mm512_maskz_loadu_pd(mask_lo, &in_im[k + 1 * K]);                 \
-        __m512d re2 = _mm512_maskz_loadu_pd(mask_lo, &in_re[k + 2 * K]);                 \
-        __m512d im2 = _mm512_maskz_loadu_pd(mask_lo, &in_im[k + 2 * K]);                 \
-        __m512d re3 = _mm512_maskz_loadu_pd(mask_lo, &in_re[k + 3 * K]);                 \
-        __m512d im3 = _mm512_maskz_loadu_pd(mask_lo, &in_im[k + 3 * K]);                 \
-        __m512d re4 = _mm512_maskz_loadu_pd(mask_lo, &in_re[k + 4 * K]);                 \
-        __m512d im4 = _mm512_maskz_loadu_pd(mask_lo, &in_im[k + 4 * K]);                 \
-        __m512d re5 = _mm512_maskz_loadu_pd(mask_lo, &in_re[k + 5 * K]);                 \
-        __m512d im5 = _mm512_maskz_loadu_pd(mask_lo, &in_im[k + 5 * K]);                 \
-        __m512d re6 = _mm512_maskz_loadu_pd(mask_hi, &in_re[k + 6 * K]);                 \
-        __m512d im6 = _mm512_maskz_loadu_pd(mask_hi, &in_im[k + 6 * K]);                 \
-        __m512d re7 = _mm512_maskz_loadu_pd(mask_hi, &in_re[k + 7 * K]);                 \
-        __m512d im7 = _mm512_maskz_loadu_pd(mask_hi, &in_im[k + 7 * K]);                 \
-        __m512d re8 = _mm512_maskz_loadu_pd(mask_hi, &in_re[k + 8 * K]);                 \
-        __m512d im8 = _mm512_maskz_loadu_pd(mask_hi, &in_im[k + 8 * K]);                 \
-        __m512d re9 = _mm512_maskz_loadu_pd(mask_hi, &in_re[k + 9 * K]);                 \
-        __m512d im9 = _mm512_maskz_loadu_pd(mask_hi, &in_im[k + 9 * K]);                 \
-        __m512d re10 = _mm512_maskz_loadu_pd(mask_hi, &in_re[k + 10 * K]);               \
-        __m512d im10 = _mm512_maskz_loadu_pd(mask_hi, &in_im[k + 10 * K]);               \
+        __mmask8 mask = (__mmask8)((remaining >= 8) ? 0xFFu : ((1u << remaining) - 1u)); \
+        __m512d re0 = _mm512_maskz_loadu_pd(mask, &in_re[k + 0 * K]);                    \
+        __m512d im0 = _mm512_maskz_loadu_pd(mask, &in_im[k + 0 * K]);                    \
+        __m512d re1 = _mm512_maskz_loadu_pd(mask, &in_re[k + 1 * K]);                    \
+        __m512d im1 = _mm512_maskz_loadu_pd(mask, &in_im[k + 1 * K]);                    \
+        __m512d re2 = _mm512_maskz_loadu_pd(mask, &in_re[k + 2 * K]);                    \
+        __m512d im2 = _mm512_maskz_loadu_pd(mask, &in_im[k + 2 * K]);                    \
+        __m512d re3 = _mm512_maskz_loadu_pd(mask, &in_re[k + 3 * K]);                    \
+        __m512d im3 = _mm512_maskz_loadu_pd(mask, &in_im[k + 3 * K]);                    \
+        __m512d re4 = _mm512_maskz_loadu_pd(mask, &in_re[k + 4 * K]);                    \
+        __m512d im4 = _mm512_maskz_loadu_pd(mask, &in_im[k + 4 * K]);                    \
+        __m512d re5 = _mm512_maskz_loadu_pd(mask, &in_re[k + 5 * K]);                    \
+        __m512d im5 = _mm512_maskz_loadu_pd(mask, &in_im[k + 5 * K]);                    \
+        __m512d re6 = _mm512_maskz_loadu_pd(mask, &in_re[k + 6 * K]);                    \
+        __m512d im6 = _mm512_maskz_loadu_pd(mask, &in_im[k + 6 * K]);                    \
+        __m512d re7 = _mm512_maskz_loadu_pd(mask, &in_re[k + 7 * K]);                    \
+        __m512d im7 = _mm512_maskz_loadu_pd(mask, &in_im[k + 7 * K]);                    \
+        __m512d re8 = _mm512_maskz_loadu_pd(mask, &in_re[k + 8 * K]);                    \
+        __m512d im8 = _mm512_maskz_loadu_pd(mask, &in_im[k + 8 * K]);                    \
+        __m512d re9 = _mm512_maskz_loadu_pd(mask, &in_re[k + 9 * K]);                    \
+        __m512d im9 = _mm512_maskz_loadu_pd(mask, &in_im[k + 9 * K]);                    \
+        __m512d re10 = _mm512_maskz_loadu_pd(mask, &in_re[k + 10 * K]);                  \
+        __m512d im10 = _mm512_maskz_loadu_pd(mask, &in_im[k + 10 * K]);                  \
         /* Interleave into complex pairs */                                              \
-        __m512d y0_lo = _mm512_unpacklo_pd(re0, im0);                                    \
-        __m512d y0_hi = _mm512_unpackhi_pd(re0, im0);                                    \
-        __m512d y1_lo = _mm512_unpacklo_pd(re1, im1);                                    \
-        __m512d y1_hi = _mm512_unpackhi_pd(re1, im1);                                    \
-        __m512d y2_lo = _mm512_unpacklo_pd(re2, im2);                                    \
-        __m512d y2_hi = _mm512_unpackhi_pd(re2, im2);                                    \
-        __m512d y3_lo = _mm512_unpacklo_pd(re3, im3);                                    \
-        __m512d y3_hi = _mm512_unpackhi_pd(re3, im3);                                    \
-        __m512d y4_lo = _mm512_unpacklo_pd(re4, im4);                                    \
-        __m512d y4_hi = _mm512_unpackhi_pd(re4, im4);                                    \
-        __m512d y5_lo = _mm512_unpacklo_pd(re5, im5);                                    \
-        __m512d y5_hi = _mm512_unpackhi_pd(re5, im5);                                    \
-        __m512d y6_lo = _mm512_unpacklo_pd(re6, im6);                                    \
-        __m512d y6_hi = _mm512_unpackhi_pd(re6, im6);                                    \
-        __m512d y7_lo = _mm512_unpacklo_pd(re7, im7);                                    \
-        __m512d y7_hi = _mm512_unpackhi_pd(re7, im7);                                    \
-        __m512d y8_lo = _mm512_unpacklo_pd(re8, im8);                                    \
-        __m512d y8_hi = _mm512_unpackhi_pd(re8, im8);                                    \
-        __m512d y9_lo = _mm512_unpacklo_pd(re9, im9);                                    \
-        __m512d y9_hi = _mm512_unpackhi_pd(re9, im9);                                    \
-        __m512d y10_lo = _mm512_unpacklo_pd(re10, im10);                                 \
-        __m512d y10_hi = _mm512_unpackhi_pd(re10, im10);                                 \
-        /* Assign outputs */                                                             \
-        x0_lo = y0_lo;                                                                   \
-        x0_hi = y0_hi;                                                                   \
-        x1_lo = y1_lo;                                                                   \
-        x1_hi = y1_hi;                                                                   \
-        x2_lo = y2_lo;                                                                   \
-        x2_hi = y2_hi;                                                                   \
-        x3_lo = y3_lo;                                                                   \
-        x3_hi = y3_hi;                                                                   \
-        x4_lo = y4_lo;                                                                   \
-        x4_hi = y4_hi;                                                                   \
-        x5_lo = y5_lo;                                                                   \
-        x5_hi = y5_hi;                                                                   \
-        x6_lo = y6_lo;                                                                   \
-        x6_hi = y6_hi;                                                                   \
-        x7_lo = y7_lo;                                                                   \
-        x7_hi = y7_hi;                                                                   \
-        x8_lo = y8_lo;                                                                   \
-        x8_hi = y8_hi;                                                                   \
-        x9_lo = y9_lo;                                                                   \
-        x9_hi = y9_hi;                                                                   \
-        x10_lo = y10_lo;                                                                 \
-        x10_hi = y10_hi;                                                                 \
+        x0_lo = _mm512_unpacklo_pd(re0, im0);                                            \
+        x0_hi = _mm512_unpackhi_pd(re0, im0);                                            \
+        x1_lo = _mm512_unpacklo_pd(re1, im1);                                            \
+        x1_hi = _mm512_unpackhi_pd(re1, im1);                                            \
+        x2_lo = _mm512_unpacklo_pd(re2, im2);                                            \
+        x2_hi = _mm512_unpackhi_pd(re2, im2);                                            \
+        x3_lo = _mm512_unpacklo_pd(re3, im3);                                            \
+        x3_hi = _mm512_unpackhi_pd(re3, im3);                                            \
+        x4_lo = _mm512_unpacklo_pd(re4, im4);                                            \
+        x4_hi = _mm512_unpackhi_pd(re4, im4);                                            \
+        x5_lo = _mm512_unpacklo_pd(re5, im5);                                            \
+        x5_hi = _mm512_unpackhi_pd(re5, im5);                                            \
+        x6_lo = _mm512_unpacklo_pd(re6, im6);                                            \
+        x6_hi = _mm512_unpackhi_pd(re6, im6);                                            \
+        x7_lo = _mm512_unpacklo_pd(re7, im7);                                            \
+        x7_hi = _mm512_unpackhi_pd(re7, im7);                                            \
+        x8_lo = _mm512_unpacklo_pd(re8, im8);                                            \
+        x8_hi = _mm512_unpackhi_pd(re8, im8);                                            \
+        x9_lo = _mm512_unpacklo_pd(re9, im9);                                            \
+        x9_hi = _mm512_unpackhi_pd(re9, im9);                                            \
+        x10_lo = _mm512_unpacklo_pd(re10, im10);                                         \
+        x10_hi = _mm512_unpackhi_pd(re10, im10);                                         \
     } while (0)
 
 //==============================================================================
@@ -534,6 +492,11 @@ static inline __m512i get_deinterleave_idx_im(void)
 
 /**
  * @brief Store 11 lanes with masking for tail - MASKED VERSION
+ *
+ * CRITICAL: Single mask applied uniformly to all 11 rows
+ * - remaining: number of complex elements (0..7)
+ * - mask applies to double lanes in each vector
+ * - Same mask used for ALL re/im stores across all 11 rows
  */
 #define STORE_11_LANES_AVX512_NATIVE_SOA_MASKED(k, K, remaining, out_re, out_im,          \
                                                 y0_lo, y0_hi, y1_lo, y1_hi, y2_lo, y2_hi, \
@@ -542,10 +505,7 @@ static inline __m512i get_deinterleave_idx_im(void)
                                                 y9_lo, y9_hi, y10_lo, y10_hi)             \
     do                                                                                    \
     {                                                                                     \
-        size_t lo_count = (remaining < 4) ? remaining : 4;                                \
-        size_t hi_count = (remaining > 4) ? (remaining - 4) : 0;                          \
-        __mmask8 mask_lo = (__mmask8)((1U << (2 * lo_count)) - 1);                        \
-        __mmask8 mask_hi = (__mmask8)((1U << (2 * hi_count)) - 1);                        \
+        __mmask8 mask = (__mmask8)((remaining >= 8) ? 0xFFu : ((1u << remaining) - 1u));  \
         __m512i idx_re = get_deinterleave_idx_re();                                       \
         __m512i idx_im = get_deinterleave_idx_im();                                       \
         /* De-interleave */                                                               \
@@ -571,29 +531,29 @@ static inline __m512i get_deinterleave_idx_im(void)
         __m512d im9 = _mm512_permutex2var_pd(y9_lo, idx_im, y9_hi);                       \
         __m512d re10 = _mm512_permutex2var_pd(y10_lo, idx_re, y10_hi);                    \
         __m512d im10 = _mm512_permutex2var_pd(y10_lo, idx_im, y10_hi);                    \
-        /* Masked stores */                                                               \
-        _mm512_mask_storeu_pd(&out_re[k + 0 * K], mask_lo, re0);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 0 * K], mask_lo, im0);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 1 * K], mask_lo, re1);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 1 * K], mask_lo, im1);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 2 * K], mask_lo, re2);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 2 * K], mask_lo, im2);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 3 * K], mask_lo, re3);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 3 * K], mask_lo, im3);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 4 * K], mask_lo, re4);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 4 * K], mask_lo, im4);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 5 * K], mask_lo, re5);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 5 * K], mask_lo, im5);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 6 * K], mask_hi, re6);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 6 * K], mask_hi, im6);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 7 * K], mask_hi, re7);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 7 * K], mask_hi, im7);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 8 * K], mask_hi, re8);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 8 * K], mask_hi, im8);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 9 * K], mask_hi, re9);                          \
-        _mm512_mask_storeu_pd(&out_im[k + 9 * K], mask_hi, im9);                          \
-        _mm512_mask_storeu_pd(&out_re[k + 10 * K], mask_hi, re10);                        \
-        _mm512_mask_storeu_pd(&out_im[k + 10 * K], mask_hi, im10);                        \
+        /* Masked stores - same mask for all rows */                                      \
+        _mm512_mask_storeu_pd(&out_re[k + 0 * K], mask, re0);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 0 * K], mask, im0);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 1 * K], mask, re1);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 1 * K], mask, im1);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 2 * K], mask, re2);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 2 * K], mask, im2);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 3 * K], mask, re3);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 3 * K], mask, im3);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 4 * K], mask, re4);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 4 * K], mask, im4);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 5 * K], mask, re5);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 5 * K], mask, im5);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 6 * K], mask, re6);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 6 * K], mask, im6);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 7 * K], mask, re7);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 7 * K], mask, im7);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 8 * K], mask, re8);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 8 * K], mask, im8);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 9 * K], mask, re9);                             \
+        _mm512_mask_storeu_pd(&out_im[k + 9 * K], mask, im9);                             \
+        _mm512_mask_storeu_pd(&out_re[k + 10 * K], mask, re10);                           \
+        _mm512_mask_storeu_pd(&out_im[k + 10 * K], mask, im10);                           \
     } while (0)
 
 //==============================================================================
