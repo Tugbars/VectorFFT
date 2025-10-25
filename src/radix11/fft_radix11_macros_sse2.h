@@ -654,6 +654,81 @@ broadcast_radix11_consts_sse2(void)
  *
  * rot_out = +i * (s1*s0 + s2*s1 + s3*s2 + s4*s3 + s5*s4)
  */
+#define RADIX11_IMAG_PAIR1_FV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
+    do                                                                         \
+    {                                                                          \
+        __m128d base = _mm_add_pd(_mm_mul_pd(K.s1, s0), _mm_mul_pd(K.s2, s1)); \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s3, s2));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s4, s3));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s5, s4));                         \
+        /* Rotate by -i: (re,im) -> (im,-re) */                                \
+        rot_out = _mm_shuffle_pd(base, base, 0x1); /* swap lanes */            \
+        __m128d sign = _mm_set_pd(1.0, -1.0);      /* negate low lane */       \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR2_FV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
+    do                                                                         \
+    {                                                                          \
+        __m128d base = _mm_add_pd(_mm_mul_pd(K.s2, s0), _mm_mul_pd(K.s4, s1)); \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s5, s2));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s3, s3));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s1, s4));                         \
+        rot_out = _mm_shuffle_pd(base, base, 0x1);                             \
+        __m128d sign = _mm_set_pd(1.0, -1.0);                                  \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR3_FV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
+    do                                                                         \
+    {                                                                          \
+        __m128d base = _mm_add_pd(_mm_mul_pd(K.s3, s0), _mm_mul_pd(K.s5, s1)); \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s2, s2));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s1, s3));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s4, s4));                         \
+        rot_out = _mm_shuffle_pd(base, base, 0x1);                             \
+        __m128d sign = _mm_set_pd(1.0, -1.0);                                  \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR4_FV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
+    do                                                                         \
+    {                                                                          \
+        __m128d base = _mm_add_pd(_mm_mul_pd(K.s4, s0), _mm_mul_pd(K.s3, s1)); \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s1, s2));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s5, s3));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s2, s4));                         \
+        rot_out = _mm_shuffle_pd(base, base, 0x1);                             \
+        __m128d sign = _mm_set_pd(1.0, -1.0);                                  \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR5_FV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
+    do                                                                         \
+    {                                                                          \
+        __m128d base = _mm_add_pd(_mm_mul_pd(K.s5, s0), _mm_mul_pd(K.s1, s1)); \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s4, s2));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s2, s3));                         \
+        base = _mm_add_pd(base, _mm_mul_pd(K.s3, s4));                         \
+        rot_out = _mm_shuffle_pd(base, base, 0x1);                             \
+        __m128d sign = _mm_set_pd(1.0, -1.0);                                  \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
+    } while (0)
+
+//==============================================================================
+// IMAGINARY PARTS (ROTATIONS) - INVERSE FFT
+//==============================================================================
+
+/**
+ * @brief Compute imaginary parts for INVERSE FFT (multiply by +i)
+ *
+ * @details
+ * For inverse FFT, we rotate by +i, which means:
+ *   (a + bi) * (+i) = -b + ai
+ *   rot_re = -base_im
+ *   rot_im = +base_re
+ */
+
 #define RADIX11_IMAG_PAIR1_BV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
     do                                                                         \
     {                                                                          \
@@ -661,7 +736,10 @@ broadcast_radix11_consts_sse2(void)
         base = _mm_add_pd(base, _mm_mul_pd(K.s3, s2));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s4, s3));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s5, s4));                         \
-        rot_out = rot_pos_i_sse2(base);                                        \
+        /* Rotate by +i: (re,im) -> (-im,re) */                                \
+        rot_out = _mm_shuffle_pd(base, base, 0x1); /* swap lanes */            \
+        __m128d sign = _mm_set_pd(-1.0, 1.0);      /* negate high lane */      \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
     } while (0)
 
 #define RADIX11_IMAG_PAIR2_BV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
@@ -671,7 +749,9 @@ broadcast_radix11_consts_sse2(void)
         base = _mm_add_pd(base, _mm_mul_pd(K.s5, s2));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s3, s3));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s1, s4));                         \
-        rot_out = rot_pos_i_sse2(base);                                        \
+        rot_out = _mm_shuffle_pd(base, base, 0x1);                             \
+        __m128d sign = _mm_set_pd(-1.0, 1.0);                                  \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
     } while (0)
 
 #define RADIX11_IMAG_PAIR3_BV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
@@ -681,7 +761,9 @@ broadcast_radix11_consts_sse2(void)
         base = _mm_add_pd(base, _mm_mul_pd(K.s2, s2));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s1, s3));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s4, s4));                         \
-        rot_out = rot_pos_i_sse2(base);                                        \
+        rot_out = _mm_shuffle_pd(base, base, 0x1);                             \
+        __m128d sign = _mm_set_pd(-1.0, 1.0);                                  \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
     } while (0)
 
 #define RADIX11_IMAG_PAIR4_BV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
@@ -691,7 +773,9 @@ broadcast_radix11_consts_sse2(void)
         base = _mm_add_pd(base, _mm_mul_pd(K.s1, s2));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s5, s3));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s2, s4));                         \
-        rot_out = rot_pos_i_sse2(base);                                        \
+        rot_out = _mm_shuffle_pd(base, base, 0x1);                             \
+        __m128d sign = _mm_set_pd(-1.0, 1.0);                                  \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
     } while (0)
 
 #define RADIX11_IMAG_PAIR5_BV_SSE2(s0, s1, s2, s3, s4, K, rot_out)             \
@@ -701,7 +785,9 @@ broadcast_radix11_consts_sse2(void)
         base = _mm_add_pd(base, _mm_mul_pd(K.s4, s2));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s2, s3));                         \
         base = _mm_add_pd(base, _mm_mul_pd(K.s3, s4));                         \
-        rot_out = rot_pos_i_sse2(base);                                        \
+        rot_out = _mm_shuffle_pd(base, base, 0x1);                             \
+        __m128d sign = _mm_set_pd(-1.0, 1.0);                                  \
+        rot_out = _mm_mul_pd(rot_out, sign);                                   \
     } while (0)
 
 //==============================================================================
@@ -882,11 +968,277 @@ broadcast_radix11_consts_sse2(void)
                                               y0, y1, y2, y3, y4, y5, y6, y7, y8, y9, y10); \
     } while (0)
 
+/**
+ * @brief Complete radix-11 butterfly for FORWARD FFT - SSE2
+ *
+ * @details
+ * Uses forward rotation (-i multiplication) for imaginary parts.
+ */
+#define RADIX11_BUTTERFLY_FV_SSE2(                                      \
+    x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10,                        \
+    y0, y1, y2, y3, y4, y5, y6, y7, y8, y9, y10, K)                     \
+    do                                                                  \
+    {                                                                   \
+        /* Form 5 symmetric pairs */                                    \
+        __m128d t0 = _mm_add_pd(x1, x10);                               \
+        __m128d t1 = _mm_add_pd(x2, x9);                                \
+        __m128d t2 = _mm_add_pd(x3, x8);                                \
+        __m128d t3 = _mm_add_pd(x4, x7);                                \
+        __m128d t4 = _mm_add_pd(x5, x6);                                \
+        __m128d s0 = _mm_sub_pd(x1, x10);                               \
+        __m128d s1 = _mm_sub_pd(x2, x9);                                \
+        __m128d s2 = _mm_sub_pd(x3, x8);                                \
+        __m128d s3 = _mm_sub_pd(x4, x7);                                \
+        __m128d s4 = _mm_sub_pd(x5, x6);                                \
+        /* DC component */                                              \
+        __m128d sum_t = _mm_add_pd(_mm_add_pd(t0, t1),                  \
+                                   _mm_add_pd(_mm_add_pd(t2, t3), t4)); \
+        y0 = _mm_add_pd(x0, sum_t);                                     \
+        /* Real parts of 5 pairs */                                     \
+        __m128d real1, real2, real3, real4, real5;                      \
+        RADIX11_REAL_PAIR1_SSE2(x0, t0, t1, t2, t3, t4, K, real1);      \
+        RADIX11_REAL_PAIR2_SSE2(x0, t0, t1, t2, t3, t4, K, real2);      \
+        RADIX11_REAL_PAIR3_SSE2(x0, t0, t1, t2, t3, t4, K, real3);      \
+        RADIX11_REAL_PAIR4_SSE2(x0, t0, t1, t2, t3, t4, K, real4);      \
+        RADIX11_REAL_PAIR5_SSE2(x0, t0, t1, t2, t3, t4, K, real5);      \
+        /* Imaginary parts (FORWARD: -i rotation) */                    \
+        __m128d rot1, rot2, rot3, rot4, rot5;                           \
+        RADIX11_IMAG_PAIR1_FV_SSE2(s0, s1, s2, s3, s4, K, rot1);        \
+        RADIX11_IMAG_PAIR2_FV_SSE2(s0, s1, s2, s3, s4, K, rot2);        \
+        RADIX11_IMAG_PAIR3_FV_SSE2(s0, s1, s2, s3, s4, K, rot3);        \
+        RADIX11_IMAG_PAIR4_FV_SSE2(s0, s1, s2, s3, s4, K, rot4);        \
+        RADIX11_IMAG_PAIR5_FV_SSE2(s0, s1, s2, s3, s4, K, rot5);        \
+        /* Assemble outputs */                                          \
+        y1 = _mm_add_pd(real1, rot1);                                   \
+        y10 = _mm_sub_pd(real1, rot1);                                  \
+        y2 = _mm_add_pd(real2, rot2);                                   \
+        y9 = _mm_sub_pd(real2, rot2);                                   \
+        y3 = _mm_add_pd(real3, rot3);                                   \
+        y8 = _mm_sub_pd(real3, rot3);                                   \
+        y4 = _mm_add_pd(real4, rot4);                                   \
+        y7 = _mm_sub_pd(real4, rot4);                                   \
+        y5 = _mm_add_pd(real5, rot5);                                   \
+        y6 = _mm_sub_pd(real5, rot5);                                   \
+    } while (0)
+
+//==============================================================================
+// COMPLETE BUTTERFLY - INVERSE FFT (SSE2)
+//==============================================================================
+
+/**
+ * @brief Complete radix-11 butterfly for INVERSE FFT - SSE2
+ *
+ * @details
+ * Uses inverse rotation (+i multiplication) for imaginary parts.
+ */
+#define RADIX11_BUTTERFLY_BV_SSE2(                                      \
+    x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10,                        \
+    y0, y1, y2, y3, y4, y5, y6, y7, y8, y9, y10, K)                     \
+    do                                                                  \
+    {                                                                   \
+        /* Form 5 symmetric pairs */                                    \
+        __m128d t0 = _mm_add_pd(x1, x10);                               \
+        __m128d t1 = _mm_add_pd(x2, x9);                                \
+        __m128d t2 = _mm_add_pd(x3, x8);                                \
+        __m128d t3 = _mm_add_pd(x4, x7);                                \
+        __m128d t4 = _mm_add_pd(x5, x6);                                \
+        __m128d s0 = _mm_sub_pd(x1, x10);                               \
+        __m128d s1 = _mm_sub_pd(x2, x9);                                \
+        __m128d s2 = _mm_sub_pd(x3, x8);                                \
+        __m128d s3 = _mm_sub_pd(x4, x7);                                \
+        __m128d s4 = _mm_sub_pd(x5, x6);                                \
+        /* DC component */                                              \
+        __m128d sum_t = _mm_add_pd(_mm_add_pd(t0, t1),                  \
+                                   _mm_add_pd(_mm_add_pd(t2, t3), t4)); \
+        y0 = _mm_add_pd(x0, sum_t);                                     \
+        /* Real parts of 5 pairs */                                     \
+        __m128d real1, real2, real3, real4, real5;                      \
+        RADIX11_REAL_PAIR1_SSE2(x0, t0, t1, t2, t3, t4, K, real1);      \
+        RADIX11_REAL_PAIR2_SSE2(x0, t0, t1, t2, t3, t4, K, real2);      \
+        RADIX11_REAL_PAIR3_SSE2(x0, t0, t1, t2, t3, t4, K, real3);      \
+        RADIX11_REAL_PAIR4_SSE2(x0, t0, t1, t2, t3, t4, K, real4);      \
+        RADIX11_REAL_PAIR5_SSE2(x0, t0, t1, t2, t3, t4, K, real5);      \
+        /* Imaginary parts (INVERSE: +i rotation) */                    \
+        __m128d rot1, rot2, rot3, rot4, rot5;                           \
+        RADIX11_IMAG_PAIR1_BV_SSE2(s0, s1, s2, s3, s4, K, rot1);        \
+        RADIX11_IMAG_PAIR2_BV_SSE2(s0, s1, s2, s3, s4, K, rot2);        \
+        RADIX11_IMAG_PAIR3_BV_SSE2(s0, s1, s2, s3, s4, K, rot3);        \
+        RADIX11_IMAG_PAIR4_BV_SSE2(s0, s1, s2, s3, s4, K, rot4);        \
+        RADIX11_IMAG_PAIR5_BV_SSE2(s0, s1, s2, s3, s4, K, rot5);        \
+        /* Assemble outputs */                                          \
+        y1 = _mm_add_pd(real1, rot1);                                   \
+        y10 = _mm_sub_pd(real1, rot1);                                  \
+        y2 = _mm_add_pd(real2, rot2);                                   \
+        y9 = _mm_sub_pd(real2, rot2);                                   \
+        y3 = _mm_add_pd(real3, rot3);                                   \
+        y8 = _mm_sub_pd(real3, rot3);                                   \
+        y4 = _mm_add_pd(real4, rot4);                                   \
+        y7 = _mm_sub_pd(real4, rot4);                                   \
+        y5 = _mm_add_pd(real5, rot5);                                   \
+        y6 = _mm_sub_pd(real5, rot5);                                   \
+    } while (0)
+
 #endif // __SSE2__
 
 //==============================================================================
 // SCALAR FALLBACK - NATIVE SoA
 //==============================================================================
+
+//==============================================================================
+// IMAGINARY PARTS (ROTATIONS) - SCALAR FORWARD FFT
+//==============================================================================
+
+/**
+ * @brief Compute imaginary parts for FORWARD FFT (multiply by -i) - Scalar
+ *
+ * @details
+ * For forward FFT, we rotate by -i:
+ *   rot_re = +base_im
+ *   rot_im = -base_re
+ */
+
+#define RADIX11_IMAG_PAIR1_FV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_1 * s0_re + S11_2 * s1_re + S11_3 * s2_re + \
+                         S11_4 * s3_re + S11_5 * s4_re;                  \
+        double base_im = S11_1 * s0_im + S11_2 * s1_im + S11_3 * s2_im + \
+                         S11_4 * s3_im + S11_5 * s4_im;                  \
+        rot_re = base_im;  /* FORWARD: +im */                            \
+        rot_im = -base_re; /* FORWARD: -re */                            \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR2_FV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_2 * s0_re + S11_4 * s1_re + S11_5 * s2_re + \
+                         S11_3 * s3_re + S11_1 * s4_re;                  \
+        double base_im = S11_2 * s0_im + S11_4 * s1_im + S11_5 * s2_im + \
+                         S11_3 * s3_im + S11_1 * s4_im;                  \
+        rot_re = base_im;                                                \
+        rot_im = -base_re;                                               \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR3_FV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_3 * s0_re + S11_5 * s1_re + S11_2 * s2_re + \
+                         S11_1 * s3_re + S11_4 * s4_re;                  \
+        double base_im = S11_3 * s0_im + S11_5 * s1_im + S11_2 * s2_im + \
+                         S11_1 * s3_im + S11_4 * s4_im;                  \
+        rot_re = base_im;                                                \
+        rot_im = -base_re;                                               \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR4_FV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_4 * s0_re + S11_3 * s1_re + S11_1 * s2_re + \
+                         S11_5 * s3_re + S11_2 * s4_re;                  \
+        double base_im = S11_4 * s0_im + S11_3 * s1_im + S11_1 * s2_im + \
+                         S11_5 * s3_im + S11_2 * s4_im;                  \
+        rot_re = base_im;                                                \
+        rot_im = -base_re;                                               \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR5_FV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_5 * s0_re + S11_1 * s1_re + S11_4 * s2_re + \
+                         S11_2 * s3_re + S11_3 * s4_re;                  \
+        double base_im = S11_5 * s0_im + S11_1 * s1_im + S11_4 * s2_im + \
+                         S11_2 * s3_im + S11_3 * s4_im;                  \
+        rot_re = base_im;                                                \
+        rot_im = -base_re;                                               \
+    } while (0)
+
+//==============================================================================
+// IMAGINARY PARTS (ROTATIONS) - SCALAR INVERSE FFT
+//==============================================================================
+
+/**
+ * @brief Compute imaginary parts for INVERSE FFT (multiply by +i) - Scalar
+ *
+ * @details
+ * For inverse FFT, we rotate by +i:
+ *   rot_re = -base_im
+ *   rot_im = +base_re
+ */
+
+#define RADIX11_IMAG_PAIR1_BV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_1 * s0_re + S11_2 * s1_re + S11_3 * s2_re + \
+                         S11_4 * s3_re + S11_5 * s4_re;                  \
+        double base_im = S11_1 * s0_im + S11_2 * s1_im + S11_3 * s2_im + \
+                         S11_4 * s3_im + S11_5 * s4_im;                  \
+        rot_re = -base_im; /* INVERSE: -im */                            \
+        rot_im = base_re;  /* INVERSE: +re */                            \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR2_BV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_2 * s0_re + S11_4 * s1_re + S11_5 * s2_re + \
+                         S11_3 * s3_re + S11_1 * s4_re;                  \
+        double base_im = S11_2 * s0_im + S11_4 * s1_im + S11_5 * s2_im + \
+                         S11_3 * s3_im + S11_1 * s4_im;                  \
+        rot_re = -base_im;                                               \
+        rot_im = base_re;                                                \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR3_BV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_3 * s0_re + S11_5 * s1_re + S11_2 * s2_re + \
+                         S11_1 * s3_re + S11_4 * s4_re;                  \
+        double base_im = S11_3 * s0_im + S11_5 * s1_im + S11_2 * s2_im + \
+                         S11_1 * s3_im + S11_4 * s4_im;                  \
+        rot_re = -base_im;                                               \
+        rot_im = base_re;                                                \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR4_BV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_4 * s0_re + S11_3 * s1_re + S11_1 * s2_re + \
+                         S11_5 * s3_re + S11_2 * s4_re;                  \
+        double base_im = S11_4 * s0_im + S11_3 * s1_im + S11_1 * s2_im + \
+                         S11_5 * s3_im + S11_2 * s4_im;                  \
+        rot_re = -base_im;                                               \
+        rot_im = base_re;                                                \
+    } while (0)
+
+#define RADIX11_IMAG_PAIR5_BV_SCALAR(s0_re, s0_im, s1_re, s1_im,         \
+                                     s2_re, s2_im, s3_re, s3_im,         \
+                                     s4_re, s4_im, rot_re, rot_im)       \
+    do                                                                   \
+    {                                                                    \
+        double base_re = S11_5 * s0_re + S11_1 * s1_re + S11_4 * s2_re + \
+                         S11_2 * s3_re + S11_3 * s4_re;                  \
+        double base_im = S11_5 * s0_im + S11_1 * s1_im + S11_4 * s2_im + \
+                         S11_2 * s3_im + S11_3 * s4_im;                  \
+        rot_re = -base_im;                                               \
+        rot_im = base_re;                                                \
+    } while (0)
 
 /**
  * @brief Scalar radix-11 butterfly - NATIVE SoA
@@ -1023,3 +1375,66 @@ broadcast_radix11_consts_sse2(void)
     } while (0)
 
 #endif // FFT_RADIX11_MACROS_TRUE_SOA_SSE2_SCALAR_H
+
+/*
+
+🔧 Issues to fix
+
+Macro name collision (critical):
+In the “ALL 5 IMAGINARY PAIRS – INVERSE (SSE2)” block you accidentally redefined the FV names. E.g.:
+
+#define RADIX11_IMAG_PAIR1_FV_SSE2(...)  
+
+
+Those five should be ..._BV_... (backward), or you’ll silently override the forward versions.
+
+Two FV implementations mixed:
+Earlier FV pair macros use rot_neg_i_sse2(base). Later you added FV macros using shuffle+sign. Pick one style (both are fine), but don’t keep two different definitions with the same names.
+
+✅ Minimal patch
+
+Rename the inverse pair macros to *_BV_SSE2:
+
+#define RADIX11_IMAG_PAIR1_BV_SSE2(s0, s1, s2, s3, s4, K, rot_out) \
+do {                                                                \
+    __m128d base = _mm_add_pd(_mm_mul_pd(K.s1, s0), _mm_mul_pd(K.s2, s1)); \
+    base = _mm_add_pd(base, _mm_mul_pd(K.s3, s2));                  \
+    base = _mm_add_pd(base, _mm_mul_pd(K.s4, s3));                  \
+    base = _mm_add_pd(base, _mm_mul_pd(K.s5, s4));                  \
+    rot_out = _mm_shuffle_pd(base, base, 0x1);     \
+    __m128d sign = _mm_set_pd(-1.0, 1.0);          \
+    rot_out = _mm_mul_pd(rot_out, sign);                            \
+} while (0)
+
+
+…and similarly rename PAIR2..PAIR5.
+
+If you keep the shuffle+sign approach for FV too, make sure the FV macros stay named *_FV_* and not overridden.
+
+🧽 Small enhancements (optional)
+
+Avoid rebuilding sign masks each call: extend your constants bundle and init once:
+
+typedef struct {
+  __m128d c1,c2,c3,c4,c5, s1,s2,s3,s4,s5;
+  __m128d neg_i_sign; 
+  __m128d pos_i_sign; 
+} radix11_consts_sse2;
+
+static inline __attribute__((always_inline))
+radix11_consts_sse2 broadcast_radix11_consts_sse2(void) {
+  return (radix11_consts_sse2){
+    .c1=_mm_set1_pd(C11_1), .c2=_mm_set1_pd(C11_2), .c3=_mm_set1_pd(C11_3),
+    .c4=_mm_set1_pd(C11_4), .c5=_mm_set1_pd(C11_5),
+    .s1=_mm_set1_pd(S11_1), .s2=_mm_set1_pd(S11_2), .s3=_mm_set1_pd(S11_3),
+    .s4=_mm_set1_pd(S11_4), .s5=_mm_set1_pd(S11_5),
+    .neg_i_sign=_mm_set_pd( 1.0, -1.0),
+    .pos_i_sign=_mm_set_pd(-1.0,  1.0)
+  };
+}
+
+
+Then use K.neg_i_sign / K.pos_i_sign instead of _mm_set_pd(...) in each pair macro.
+
+If rot_neg_i_sse2 / rot_pos_i_sse2 are already in simd_math.h, you can keep the earlier, shorter FV/BV pair macros that call them, and delete the shuffle+sign duplicates. (Under the hood they should be doing the same shuffle+sign.)
+*/
