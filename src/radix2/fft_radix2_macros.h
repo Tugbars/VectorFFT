@@ -7,49 +7,6 @@
  * operate entirely in Structure-of-Arrays (SoA) format without any split/join
  * operations in the computational hot path.
  *
- * CRITICAL ARCHITECTURAL CHANGE:
- * ================================
- * This version works with NATIVE SoA buffers throughout the entire FFT pipeline.
- * Split/join operations are ONLY at the user-facing API boundaries, not at
- * every stage boundary.
- *
- * @section old_vs_new OLD vs NEW ARCHITECTURE
- *
- * OLD ARCHITECTURE (what we had):
- * @code
- *   Stage 1: Load AoS → Split → Compute → Join → Store AoS
- *            ↓ (AoS buffer)
- *   Stage 2: Load AoS → Split → Compute → Join → Store AoS
- *            ↓ (AoS buffer)
- *   Total shuffles for N-stage FFT: 2N shuffles per butterfly
- * @endcode
- *
- * NEW ARCHITECTURE (this file):
- * @code
- *   Input AoS → Split ONCE
- *               ↓ (SoA buffers: re[], im[])
- *   Stage 1:    Load SoA → Compute → Store SoA (ZERO SHUFFLE!)
- *               ↓ (SoA buffer)
- *   Stage 2:    Load SoA → Compute → Store SoA (ZERO SHUFFLE!)
- *               ↓ (SoA buffer)
- *   Join ONCE → Output AoS
- *   Total shuffles for N-stage FFT: 2 shuffles per butterfly (90% reduction!)
- * @endcode
- *
- * @section perf_impact PERFORMANCE IMPACT
- *
- * - 1024-pt FFT (10 stages): 20 shuffles → 2 shuffles = 10× reduction!
- * - Expected speedup: +15-30% depending on FFT size
- * - Larger FFTs benefit more (more stages = more savings)
- *
- * @section memory_layout MEMORY LAYOUT
- *
- * - Input:  double in_re[N], in_im[N]   (separate arrays, already split)
- * - Output: double out_re[N], out_im[N] (separate arrays, stay split)
- * - Twiddles: fft_twiddles_soa (re[], im[] - already SoA)
- *
- * NO INTERMEDIATE CONVERSIONS!
- *
  * @author FFT Optimization Team
  * @version 2.2 (Optimized with N/8 paths and aligned loads)
  * @date 2025
@@ -66,8 +23,7 @@
 #ifndef FFT_RADIX2_MACROS_TRUE_SOA_H
 #define FFT_RADIX2_MACROS_TRUE_SOA_H
 
-#include "fft_radix2.h"
-#include "simd_math.h"
+#include "fft_radix2_uniform.h"
 
 //==============================================================================
 // CONFIGURATION
@@ -953,62 +909,3 @@ static inline void radix2_k_eighth_native_soa_scalar(
 
 #endif // FFT_RADIX2_MACROS_TRUE_SOA_H
 
-//==============================================================================
-// PERFORMANCE SUMMARY - TRUE END-TO-END SoA
-//==============================================================================
-
-/**
- * @page perf_summary Performance Summary
- *
- * @section shuffle_elimination SHUFFLE ELIMINATION BREAKDOWN
- *
- * <b>OLD ARCHITECTURE (per butterfly, per stage):</b>
- *   - 1 split at load (2 shuffles: extract re, extract im)
- *   - 1 join at store (1 shuffle: interleave re/im)
- *   - Total: 2 shuffles per butterfly per stage
- *
- * <b>NEW ARCHITECTURE (per butterfly, entire FFT):</b>
- *   - 1 split at INPUT boundary (amortized across all stages)
- *   - 1 join at OUTPUT boundary (amortized across all stages)
- *   - Intermediate stages: 0 shuffles!
- *   - Total: ~2 shuffles per butterfly total (amortized)
- *
- * @section savings_table SAVINGS BY FFT SIZE
- *
- * <table>
- * <tr><th>FFT Size</th><th>Stages</th><th>Old Shuffles</th><th>New Shuffles</th><th>Reduction</th></tr>
- * <tr><td>64-pt</td><td>6</td><td>12</td><td>2</td><td>83%</td></tr>
- * <tr><td>256-pt</td><td>8</td><td>16</td><td>2</td><td>88%</td></tr>
- * <tr><td>1024-pt</td><td>10</td><td>20</td><td>2</td><td>90%</td></tr>
- * <tr><td>16K-pt</td><td>14</td><td>28</td><td>2</td><td>93%</td></tr>
- * <tr><td>1M-pt</td><td>20</td><td>40</td><td>2</td><td>95%</td></tr>
- * </table>
- *
- * @section optimizations_v22 OPTIMIZATIONS IN v2.2
- *
- * <b>NEW OPTIMIZATIONS:</b>
- * 1. N/8 and 3N/8 constant-twiddle fast paths (4 muls → 2 muls)
- * 2. Aligned loads for twiddles (movapd vs movupd saves 1 uop)
- * 3. Input alignment peeling for NT mode (all aligned loads/stores)
- * 4. FMA pairing optimized for port pressure (dual-issue friendly)
- * 5. Prefetch hints: T1 for twiddles, T0 for outputs
- * 6. AVX-512 can use masked tail (branchless cleanup)
- *
- * @section expected_speedup EXPECTED OVERALL FFT SPEEDUP
- *
- * - Small (64-256):     +5-10%
- * - Medium (1K-16K):    +15-25%
- * - Large (64K-1M):     +25-35%
- * - Huge (>1M):         +30-40%
- *
- * @section combined_opts COMBINED WITH PREVIOUS OPTIMIZATIONS
- *
- * 1. SoA twiddles:           +2-3%
- * 2. Split-form butterfly:   +10-15% (within stage)
- * 3. Streaming stores:       +3-5%
- * 4. TRUE END-TO-END SoA:    +15-35% (this file!)
- * 5. N/8 fast paths:         +1-2%
- * 6. Aligned twiddle loads:  +0.5-1%
- *
- * <b>TOTAL SPEEDUP VS NAIVE:    ~2.5-3.5× for large FFTs!</b>
- */

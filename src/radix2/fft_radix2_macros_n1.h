@@ -41,8 +41,7 @@
 #ifndef FFT_RADIX2_MACROS_N1_SOA_H
 #define FFT_RADIX2_MACROS_N1_SOA_H
 
-#include "fft_radix2.h"
-#include "simd_math.h"
+#include "fft_radix2_uniform.h"
 
 //==============================================================================
 // CONFIGURATION
@@ -103,7 +102,7 @@
  * @brief Radix-2 n1 butterfly - NATIVE SoA form (AVX2, NO TWIDDLE)
  *
  * @details
- * ⚡⚡⚡ ULTRA-FAST: NO complex multiply, just pure add/sub!
+ * ULTRA-FAST: NO complex multiply, just pure add/sub!
  *
  * @param[in] e_re Even real parts (__m256d)
  * @param[in] e_im Even imag parts (__m256d)
@@ -131,7 +130,7 @@
  * @brief Radix-2 n1 butterfly - NATIVE SoA form (SSE2, NO TWIDDLE)
  *
  * @details
- * ⚡⚡⚡ ULTRA-FAST: NO complex multiply, just pure add/sub!
+ * ULTRA-FAST: NO complex multiply, just pure add/sub!
  *
  * @param[in] e_re Even real parts (__m128d)
  * @param[in] e_im Even imag parts (__m128d)
@@ -534,64 +533,3 @@
     } while (0)
 
 #endif // FFT_RADIX2_MACROS_N1_SOA_H
-
-//==============================================================================
-// PERFORMANCE SUMMARY - n1 (NO TWIDDLE) vs STANDARD
-//==============================================================================
-
-/**
- * @page n1_perf_summary n1 Performance Summary
- *
- * @section n1_vs_standard n1 (NO TWIDDLE) vs STANDARD COMPARISON
- *
- * <b>STANDARD BUTTERFLY (with twiddles):</b>
- *   - Twiddle loads: 2 vector loads (w_re, w_im)
- *   - Complex multiply: 4 FMAs (or 6 ops without FMA)
- *   - Butterfly add/sub: 4 adds/subs
- *   - Total: 2 loads + 4 FMAs + 4 adds/subs = 10 operations
- *
- * <b>n1 BUTTERFLY (twiddle-less):</b>
- *   - Twiddle loads: 0 (no twiddles!)
- *   - Complex multiply: 0 (W=1, no rotation!)
- *   - Butterfly add/sub: 4 adds/subs
- *   - Total: 4 adds/subs = 4 operations
- *
- * @section n1_savings OPERATIONS SAVED
- *
- * Per butterfly:
- *   - Eliminated: 2 loads + 4 FMAs + 0 adds = 6 operations
- *   - Reduction: 60% fewer operations!
- *
- * @section n1_use_cases TYPICAL USE CASES
- *
- * 1. **First stage of radix-2 FFT**
- *    - half = N/2
- *    - All W[k] = 1 (no rotation needed)
- *    - Processes N/2 butterflies
- *    - Speedup: ~50-60% faster than standard
- *
- * 2. **Small standalone FFTs**
- *    - N <= 64 where twiddle precomputation overhead not worth it
- *    - Use n1 path for entire transform
- *
- * 3. **Mixed-radix final stage**
- *    - Last radix-2 pass in split-radix or mixed-radix FFT
- *    - Geometric constants hardcoded (W=1)
- *
- * @section n1_measurements MEASURED PERFORMANCE
- *
- * First stage of 8192-point FFT (AVX-512, 4096 butterflies):
- *   - Standard path: ~1.6 cycles/butterfly
- *   - n1 path: ~0.7 cycles/butterfly
- *   - Speedup: 2.3× faster!
- *
- * @section n1_implementation IMPLEMENTATION NOTES
- *
- * The n1 variants follow the same structure as standard butterflies:
- *   - Same memory layout (SoA)
- *   - Same prefetch strategy
- *   - Same alignment requirements
- *   - Same NT store support
- *
- * Only difference: removed twiddle loads and complex multiply.
- */
