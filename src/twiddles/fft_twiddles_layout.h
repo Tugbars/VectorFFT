@@ -30,7 +30,8 @@
 /**
  * @brief Twiddle memory layout strategies
  */
-typedef enum {
+typedef enum
+{
     /**
      * @brief STRIDED layout (default, current implementation)
      *
@@ -49,7 +50,7 @@ typedef enum {
     /**
      * @brief BLOCKED layout (SIMD-width blocks)
      *
-     * Memory: [W1[0..W-1], W2[0..W-1], ..., W(R-1)[0..W-1], 
+     * Memory: [W1[0..W-1], W2[0..W-1], ..., W(R-1)[0..W-1],
      *          W1[W..2W-1], W2[W..2W-1], ...]
      * where W = SIMD width (4 for AVX2 double, 8 for AVX-512 double)
      *
@@ -94,33 +95,35 @@ typedef enum {
 /**
  * @brief SIMD architecture target
  */
-typedef enum {
-    SIMD_ARCH_SCALAR,   // No SIMD (width = 1)
-    SIMD_ARCH_SSE2,     // width = 2 (double)
-    SIMD_ARCH_AVX2,     // width = 4 (double)
-    SIMD_ARCH_AVX512    // width = 8 (double)
+typedef enum
+{
+    SIMD_ARCH_SCALAR, // No SIMD (width = 1)
+    SIMD_ARCH_SSE2,   // width = 2 (double)
+    SIMD_ARCH_AVX2,   // width = 4 (double)
+    SIMD_ARCH_AVX512  // width = 8 (double)
 } simd_arch_t;
 
 /**
  * @brief Layout descriptor for materialized twiddles
  */
-typedef struct {
-    twiddle_layout_type_t type;    // Layout strategy
-    simd_arch_t simd_arch;          // Target SIMD architecture
-    int simd_width;                 // Elements per SIMD register (computed)
-    int block_size;                 // Size of one block (bytes)
-    int num_blocks;                 // Total number of blocks
-    size_t total_size;              // Total allocation size (bytes)
-    
+typedef struct
+{
+    twiddle_layout_type_t type; // Layout strategy
+    simd_arch_t simd_arch;      // Target SIMD architecture
+    int simd_width;             // Elements per SIMD register (computed)
+    int block_size;             // Size of one block (bytes)
+    int num_blocks;             // Total number of blocks
+    size_t total_size;          // Total allocation size (bytes)
+
     // Radix-specific metadata
-    int radix;                      // FFT radix
-    int num_twiddle_factors;        // radix - 1
-    int butterflies_per_stage;      // K = N_stage / radix
-    
+    int radix;                 // FFT radix
+    int num_twiddle_factors;   // radix - 1
+    int butterflies_per_stage; // K = N_stage / radix
+
     // Precomputed layout metadata
-    int has_precomputed;            // 1 if includes precomputed products
-    int precompute_offset;          // Offset to precomputed section
-    
+    int has_precomputed;   // 1 if includes precomputed products
+    int precompute_offset; // Offset to precomputed section
+
 } twiddle_layout_desc_t;
 
 //==============================================================================
@@ -134,17 +137,17 @@ typedef struct {
  *
  * typedef struct twiddle_handle {
  *     // ... existing fields (strategy, direction, n, radix, etc.) ...
- *     
+ *
  *     // Materialized SoA arrays
  *     double *materialized_re;
  *     double *materialized_im;
  *     int materialized_count;
  *     int owns_materialized;
- *     
+ *
  *     // *** ADD THESE NEW FIELDS: ***
  *     twiddle_layout_desc_t layout_desc;    // Layout metadata
  *     void *layout_specific_data;           // Opaque pointer for layout-specific structs
- *     
+ *
  * } twiddle_handle_t;
  */
 
@@ -158,10 +161,11 @@ typedef struct {
  * Each block stores all 15 twiddle factors for SIMD_WIDTH=4 butterflies.
  * Total: 15 factors × 2 components × 4 doubles = 240 bytes = 3.75 cache lines
  */
-typedef struct {
+typedef struct
+{
     // Storage: [W1_re, W1_im, W2_re, W2_im, ..., W15_re, W15_im]
     // where each is a __m256d (4 doubles)
-    double tw_data[15][2][4];  // [factor_idx][re=0,im=1][lane]
+    double tw_data[15][2][4]; // [factor_idx][re=0,im=1][lane]
 } __attribute__((aligned(64))) radix16_twiddle_block_avx2_t;
 
 /**
@@ -170,8 +174,9 @@ typedef struct {
  * Each block stores all 15 twiddle factors for SIMD_WIDTH=8 butterflies.
  * Total: 15 factors × 2 components × 8 doubles = 480 bytes = 7.5 cache lines
  */
-typedef struct {
-    double tw_data[15][2][8];  // [factor_idx][re=0,im=1][lane]
+typedef struct
+{
+    double tw_data[15][2][8]; // [factor_idx][re=0,im=1][lane]
 } __attribute__((aligned(64))) radix16_twiddle_block_avx512_t;
 
 /**
@@ -179,14 +184,15 @@ typedef struct {
  *
  * Includes both stage twiddles AND W_4 intermediate products
  */
-typedef struct {
+typedef struct
+{
     // Stage twiddles: W_N^(s*k) for s=1..15
-    double stage1[15][2][4];    // [factor_idx][re=0,im=1][lane]
-    
+    double stage1[15][2][4]; // [factor_idx][re=0,im=1][lane]
+
     // Precomputed products: W_4^j × W_N^(s*k) for j=1,2,3 and s=4,8,12
     // (reduces 12 complex multiplies to loads)
-    double w4_products[3][3][2][4];  // [w4_idx][factor_group][re=0,im=1][lane]
-    
+    double w4_products[3][3][2][4]; // [w4_idx][factor_group][re=0,im=1][lane]
+
 } __attribute__((aligned(64))) radix16_precomputed_block_avx2_t;
 
 //==============================================================================
@@ -214,12 +220,18 @@ twiddle_layout_type_t choose_optimal_layout(
  */
 static inline int get_simd_width(simd_arch_t arch)
 {
-    switch (arch) {
-        case SIMD_ARCH_SCALAR: return 1;
-        case SIMD_ARCH_SSE2:   return 2;
-        case SIMD_ARCH_AVX2:   return 4;
-        case SIMD_ARCH_AVX512: return 8;
-        default: return 1;
+    switch (arch)
+    {
+    case SIMD_ARCH_SCALAR:
+        return 1;
+    case SIMD_ARCH_SSE2:
+        return 2;
+    case SIMD_ARCH_AVX2:
+        return 4;
+    case SIMD_ARCH_AVX512:
+        return 8;
+    default:
+        return 1;
     }
 }
 
@@ -267,11 +279,15 @@ int twiddle_materialize_auto(
 static inline const radix16_twiddle_block_avx2_t *
 get_radix16_block_avx2(const twiddle_handle_t *handle, int block_idx)
 {
-    if (!handle || !handle->materialized_re) return NULL;
-    if (handle->layout_desc.type != TWIDDLE_LAYOUT_BLOCKED) return NULL;
-    if (handle->layout_desc.radix != 16) return NULL;
-    if (handle->layout_desc.simd_arch != SIMD_ARCH_AVX2) return NULL;
-    
+    if (!handle || !handle->materialized_re)
+        return NULL;
+    if (handle->layout_desc.type != TWIDDLE_LAYOUT_BLOCKED)
+        return NULL;
+    if (handle->layout_desc.radix != 16)
+        return NULL;
+    if (handle->layout_desc.simd_arch != SIMD_ARCH_AVX2)
+        return NULL;
+
     return ((const radix16_twiddle_block_avx2_t *)handle->layout_specific_data) + block_idx;
 }
 
@@ -281,11 +297,15 @@ get_radix16_block_avx2(const twiddle_handle_t *handle, int block_idx)
 static inline const radix16_twiddle_block_avx512_t *
 get_radix16_block_avx512(const twiddle_handle_t *handle, int block_idx)
 {
-    if (!handle || !handle->materialized_re) return NULL;
-    if (handle->layout_desc.type != TWIDDLE_LAYOUT_BLOCKED) return NULL;
-    if (handle->layout_desc.radix != 16) return NULL;
-    if (handle->layout_desc.simd_arch != SIMD_ARCH_AVX512) return NULL;
-    
+    if (!handle || !handle->materialized_re)
+        return NULL;
+    if (handle->layout_desc.type != TWIDDLE_LAYOUT_BLOCKED)
+        return NULL;
+    if (handle->layout_desc.radix != 16)
+        return NULL;
+    if (handle->layout_desc.simd_arch != SIMD_ARCH_AVX512)
+        return NULL;
+
     return ((const radix16_twiddle_block_avx512_t *)handle->layout_specific_data) + block_idx;
 }
 
@@ -295,11 +315,15 @@ get_radix16_block_avx512(const twiddle_handle_t *handle, int block_idx)
 static inline const radix16_precomputed_block_avx2_t *
 get_radix16_precomputed_avx2(const twiddle_handle_t *handle, int block_idx)
 {
-    if (!handle || !handle->materialized_re) return NULL;
-    if (handle->layout_desc.type != TWIDDLE_LAYOUT_PRECOMPUTED) return NULL;
-    if (handle->layout_desc.radix != 16) return NULL;
-    if (handle->layout_desc.simd_arch != SIMD_ARCH_AVX2) return NULL;
-    
+    if (!handle || !handle->materialized_re)
+        return NULL;
+    if (handle->layout_desc.type != TWIDDLE_LAYOUT_PRECOMPUTED)
+        return NULL;
+    if (handle->layout_desc.radix != 16)
+        return NULL;
+    if (handle->layout_desc.simd_arch != SIMD_ARCH_AVX2)
+        return NULL;
+
     return ((const radix16_precomputed_block_avx2_t *)handle->layout_specific_data) + block_idx;
 }
 

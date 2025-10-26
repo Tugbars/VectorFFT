@@ -686,25 +686,6 @@ Your streaming store design is **excellent** because it:
 4. **Simple to implement**: One intrinsic change
 5. **Significant benefit**: 30%+ speedup for large transforms
 
-### 10.4 Classification
-
-| Criterion | Rating | Notes |
-|-----------|--------|-------|
-| **Performance impact** | ⭐⭐⭐⭐⭐ | 30%+ for large FFTs |
-| **Complexity** | ⭐⭐⭐⭐⭐ | Trivial implementation |
-| **Importance** | ⭐⭐⭐⭐ | Critical for large transforms |
-| **Visibility** | ⭐⭐⭐ | Easy to overlook |
-
-**Verdict**: This is a **Tier-1 optimization** for large FFT performance.
-
-### 10.5 Key Takeaways
-
-1. **Streaming stores bypass cache** - Use for write-once data
-2. **Cache pollution is real** - Large writes evict useful data
-3. **Threshold matters** - Must tune for your workload
-4. **Dual-mode design** - Provides flexibility without complexity
-5. **Always test both** - Verify correctness and performance
-
 ---
 
 ## Appendix: Quick Reference
