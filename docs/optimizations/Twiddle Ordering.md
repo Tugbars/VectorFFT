@@ -1019,8 +1019,4 @@ The 4-5% performance gap is negligible compared to the massive simplification in
 
 ---
 
-**Report Status:** Final  
-**Approval:** Engineering Review Board  
-**Distribution:** Public
-
-END OF REPORT
+Author: Tugbars
