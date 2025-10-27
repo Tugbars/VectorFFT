@@ -61,10 +61,10 @@
 //==============================================================================
 
 #define TWIDDLE_BLOCK_OFFSET_R3_AVX2(k) (((k) >> 2) << 4) // (k/4)*16
-#define TW_W1_RE_OFFSET 0                                  // W^1 real
-#define TW_W1_IM_OFFSET 4                                  // W^1 imag
-#define TW_W2_RE_OFFSET 8                                  // W^2 real
-#define TW_W2_IM_OFFSET 12                                 // W^2 imag
+#define TW_W1_RE_OFFSET 0                                 // W^1 real
+#define TW_W1_IM_OFFSET 4                                 // W^1 imag
+#define TW_W2_RE_OFFSET 8                                 // W^2 real
+#define TW_W2_IM_OFFSET 12                                // W^2 imag
 
 //==============================================================================
 // LOAD/STORE MACROS
@@ -415,10 +415,10 @@ FORCE_INLINE void radix3_butterfly_avx2_fv_tail(
     for (size_t i = 0; i < count; ++i)
     {
         size_t k = k_start + i;
-        
+
         // BLOCKED LAYOUT indexing: (k/4)*16 + lane_offset
-        size_t block = ((k >> 2) << 4);  // (k/4)*16
-        size_t lane = (k & 3);           // 0..3 within the block
+        size_t block = ((k >> 2) << 4); // (k/4)*16
+        size_t lane = (k & 3);          // 0..3 within the block
 
         // Load inputs
         double a_re = in_re[k];
@@ -429,10 +429,10 @@ FORCE_INLINE void radix3_butterfly_avx2_fv_tail(
         double c_im = in_im[k + 2 * K];
 
         // Load twiddles from blocked layout
-        double w1_re = tw[block + 0 + lane];   // W1_re block
-        double w1_im = tw[block + 4 + lane];   // W1_im block
-        double w2_re = tw[block + 8 + lane];   // W2_re block
-        double w2_im = tw[block + 12 + lane];  // W2_im block
+        double w1_re = tw[block + 0 + lane];  // W1_re block
+        double w1_im = tw[block + 4 + lane];  // W1_im block
+        double w2_re = tw[block + 8 + lane];  // W2_re block
+        double w2_im = tw[block + 12 + lane]; // W2_im block
 
         // Complex multiply
         double tB_re = b_re * w1_re - b_im * w1_im;
@@ -479,10 +479,10 @@ FORCE_INLINE void radix3_butterfly_avx2_bv_tail(
     for (size_t i = 0; i < count; ++i)
     {
         size_t k = k_start + i;
-        
+
         // BLOCKED LAYOUT indexing: (k/4)*16 + lane_offset
-        size_t block = ((k >> 2) << 4);  // (k/4)*16
-        size_t lane = (k & 3);           // 0..3 within the block
+        size_t block = ((k >> 2) << 4); // (k/4)*16
+        size_t lane = (k & 3);          // 0..3 within the block
 
         // Load inputs
         double a_re = in_re[k];
@@ -493,10 +493,10 @@ FORCE_INLINE void radix3_butterfly_avx2_bv_tail(
         double c_im = in_im[k + 2 * K];
 
         // Load twiddles from blocked layout
-        double w1_re = tw[block + 0 + lane];   // W1_re block
-        double w1_im = tw[block + 4 + lane];   // W1_im block
-        double w2_re = tw[block + 8 + lane];   // W2_re block
-        double w2_im = tw[block + 12 + lane];  // W2_im block
+        double w1_re = tw[block + 0 + lane];  // W1_re block
+        double w1_im = tw[block + 4 + lane];  // W1_im block
+        double w2_re = tw[block + 8 + lane];  // W2_re block
+        double w2_im = tw[block + 12 + lane]; // W2_im block
 
         // Complex multiply
         double tB_re = b_re * w1_re - b_im * w1_im;
@@ -510,7 +510,7 @@ FORCE_INLINE void radix3_butterfly_avx2_bv_tail(
         double dif_re = tB_re - tC_re;
         double dif_im = tB_im - tC_im;
 
-        double rot_re = -s_sqrt3_2 * dif_im;  // Sign flipped for backward
+        double rot_re = -s_sqrt3_2 * dif_im; // Sign flipped for backward
         double rot_im = s_sqrt3_2 * dif_re;
         double common_re = a_re + c_half * sum_re;
         double common_im = a_im + c_half * sum_im;

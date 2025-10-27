@@ -472,7 +472,7 @@ FORCE_INLINE void fft_radix4_backward_stage_scalar(
 
 /**
  * @brief Alternative unified scalar butterfly (matches your existing API)
- * 
+ *
  * This is for compatibility with the existing scalar functions in fft_radix4.h
  */
 FORCE_INLINE void radix4_butterfly_optimized_scalar_fv(
