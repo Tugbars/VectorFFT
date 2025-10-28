@@ -112,6 +112,7 @@ typedef enum {
 typedef enum {
     FFT_EXEC_INPLACE_BITREV,    ///< Bit-reversal Cooley-Tukey (N = 2^k only, 0 workspace)
     FFT_EXEC_RECURSIVE_CT,      ///< Recursive Cooley-Tukey (any factorizable N, 2N workspace)
+     FFT_EXEC_FOURSTEP,         
     FFT_EXEC_BLUESTEIN,         ///< Bluestein chirp-z (arbitrary N, 3M workspace)
     FFT_EXEC_OUT_OF_PLACE       ///< Generic out-of-place (reserved)
 } fft_exec_strategy_t;
@@ -189,6 +190,9 @@ typedef struct {
     
 } stage_descriptor;
 
+typedef struct fft_fourstep_data fft_fourstep_data_t;
+
+
 //==============================================================================
 // FFT PLAN - Everything pre-computed at planning time
 //==============================================================================
@@ -228,6 +232,8 @@ typedef struct fft_plan_struct {
     int num_stages;                      ///< Number of decomposition stages (0 for Bluestein)
     int factors[MAX_FFT_STAGES];         ///< Radix sequence [r₀, r₁, ..., rₖ] where N = r₀×r₁×...×rₖ
     stage_descriptor stages[MAX_FFT_STAGES]; ///< Per-stage twiddles and metadata
+
+     fft_fourstep_data_t *fourstep;
     
     // ─────────────────────────────────────────────────────────────────────
     // Bluestein algorithm data (used if strategy == BLUESTEIN)
@@ -248,6 +254,7 @@ typedef struct fft_plan_struct {
         bluestein_plan_inverse *bluestein_inv;  ///< Inverse Bluestein plan (active if direction == FFT_INVERSE)
         void *bluestein_generic;                ///< Generic pointer for NULL checks
     };
+    
     
 } fft_plan;
 
