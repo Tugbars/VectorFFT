@@ -11,7 +11,7 @@
  *   * k=N/8:  W[N/8] = (√2/2, -√2/2) (2 muls instead of 4)
  *   * k=3N/8: W[3N/8] = (-√2/2, -√2/2) (2 muls instead of 4)
  *
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 3.0 (Separated architecture)
  * @date 2025
  */

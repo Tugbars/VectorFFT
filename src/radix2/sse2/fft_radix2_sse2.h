@@ -11,7 +11,7 @@
  * - 2× unrolling for improved ILP
  * - Baseline x86-64 support (all processors have SSE2)
  *
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 3.0 (Separated architecture)
  * @date 2025
  */

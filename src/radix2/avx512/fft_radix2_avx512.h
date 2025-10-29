@@ -12,7 +12,7 @@
  * - 2× and 4× unrolling for maximum ILP
  * - Software pipelining to hide load latency
  *
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 3.0 (Separated architecture, added 4× unroll and software pipelining)
  * @date 2025
  */

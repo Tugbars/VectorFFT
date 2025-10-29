@@ -12,7 +12,7 @@
  * - Dual 512-bit FMA ports fully utilized
  * - 4× unrolling for maximum ILP
  *
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 3.0 (Separated architecture, twiddle-less variant)
  * @date 2025
  */

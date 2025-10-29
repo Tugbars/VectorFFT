@@ -185,7 +185,7 @@ The algorithm **never explicitly checks cache sizes**, yet achieves optimal cach
 if (N > 65536 && is_power_of_2(N)) {
     use_four_step();
 } else {
-    use_recursive_ct();  // Your existing path
+    use_recursive_ct();  
 }
 ```
 
@@ -345,7 +345,7 @@ But with massive stride = 4.7M cache misses!
 
 **Key difference**: Four-step does slightly more operations (5.8M vs 4.7M) but with **100× fewer cache misses** because all accesses are sequential or L1-resident.
 
-### Integration with Your Code
+### Integration 
 
 ```c
 // In fft_planner.c, add new strategy:
@@ -515,7 +515,7 @@ For N=4096, stride=8:
 
 ## Tier 3: Small-N (N ≤ 256) - Current Implementation
 
-For N ≤ 256, your current recursive CT is already optimal:
+For N ≤ 256, the current recursive CT is already optimal:
 - Entire working set (256 complex = 4 KB) fits in L1 cache
 - Deep recursion doesn't matter (max 8 levels for N=256)
 - Base case butterflies are highly optimized with SIMD
@@ -688,7 +688,7 @@ int fft_exec_dft(fft_object plan, ...) {
 
 ## Expected Performance Gains
 
-### Baseline: Your Current Implementation
+### Baseline: Current Implementation
 ```
 N=4096:   60% of FFTW  (small, fits in cache)
 N=16384:  45% of FFTW  (cache thrashing starts)
@@ -783,64 +783,6 @@ Yet it's optimal because:
    - Some level fits in L3 → L3 hits
 
 **This is automatic**! No tuning needed beyond tile_size (L1 only).
-
----
-
-## Summary: Design Principles
-
-1. **Preserve your existing butterflies** - they're good, don't rewrite
-2. **Add cache awareness at the strategy level** - plan, then execute
-3. **Three-tier approach** - different algorithms for different N ranges
-4. **Transpose is a dividing operation** - reorganizes memory for locality
-5. **Incremental improvement** - each phase independently valuable
-6. **Memory-neutral** - reuse workspace, no extra allocation
-7. **Tunable** - cache sizes, block sizes, radix costs all configurable
-8. **Cache-oblivious where possible** - recursive algorithms adapt automatically
-
----
-
-## The Key Insight
-
-**Cache-oblivious FFT isn't about fancy algorithms** - it's about:
-
-1. **Processing data in cache-sized chunks** 
-   - Small enough to stay hot in cache
-   - Large enough to amortize overhead
-
-2. **Minimizing stride** 
-   - Sequential access = cache hits
-   - Strided access = cache misses
-   - Transpose converts strided → sequential
-
-3. **Transpose as a fundamental operation**
-   - Not just mathematical rearrangement
-   - Memory reorganization tool
-   - Enables cache-friendly decomposition
-   - **Dividing mechanism** for large problems
-
-Your current recursive structure is fine - you just need:
-- **Blocking** for medium N (keep working set in L1)
-- **Four-step + transpose** for large N (divide into L1-sized pieces)
-
----
-
-## Technical References
-
-**Core Algorithms**:
-- Bailey, D.H. (1990). "FFTs in External or Hierarchical Memory" - Four-step algorithm
-- Frigo & Johnson (2005). "The Design and Implementation of FFTW3" - Cache-oblivious recursion
-- Van Loan (1992). "Computational Frameworks for the Fast Fourier Transform" - Transpose-based algorithms
-- Frigo et al. (1999). "Cache-Oblivious Algorithms" - Theoretical foundation
-
-**Cache-Oblivious Techniques**:
-- Recursive blocking: O(N²/B + N²/√ZB) cache misses for N×N transpose (optimal)
-- Four-step decomposition: Reduces stride from N to √N, quadratic improvement in locality
-- Tile size = √(cache_size / (2 × element_size)) for optimal two-tile swapping
-
-**Implementation Guidance**:
-- FFTW source code (fftw3.3.10): `kernel/transpose.c`, `dft/indirect.c`
-- Intel Math Kernel Library (MKL) documentation: FFT cache optimization strategies
-- Working transpose implementation: See `main.c` in project outputs
 
 ---
 

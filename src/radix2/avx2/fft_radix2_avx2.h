@@ -11,7 +11,7 @@
  * - 2× unrolling for improved ILP
  * - Fallback to non-FMA for pre-Haswell (rare but supported)
  *
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 3.0 (Separated architecture)
  * @date 2025
  */

@@ -66,41 +66,6 @@ static void bit_reverse_permutation(fft_data *data, int N)
 }
 
 //==============================================================================
-// IN-PLACE RADIX-2 BUTTERFLY
-//==============================================================================
-
-/**
- * @brief Single radix-2 butterfly in-place
- *
- * Computes:
- *   out[i]          = a + b * twiddle
- *   out[i+distance] = a - b * twiddle
- *
- * where a = data[i], b = data[i+distance]
- */
-static inline void butterfly_radix2_inplace(
-    fft_data *data,
-    int idx,
-    int distance,
-    fft_data twiddle)
-{
-    fft_data a = data[idx];
-    fft_data b = data[idx + distance];
-
-    // Complex multiply: b * twiddle
-    fft_data temp;
-    temp.re = b.re * twiddle.re - b.im * twiddle.im;
-    temp.im = b.re * twiddle.im + b.im * twiddle.re;
-
-    // Butterfly
-    data[idx].re = a.re + temp.re;
-    data[idx].im = a.im + temp.im;
-
-    data[idx + distance].re = a.re - temp.re;
-    data[idx + distance].im = a.im - temp.im;
-}
-
-//==============================================================================
 // MAIN EXECUTION
 //==============================================================================
 
