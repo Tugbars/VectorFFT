@@ -6,7 +6,7 @@
  * Provides a consistent API for radix-8 transforms across all SIMD levels.
  * Supports both hybrid blocked twiddle system and twiddle-less (N1) variants.
  *
- * @author Tugbars
+ * @author VectorFFT Team
  * @version 3.1
  * @date 2025
  */
@@ -19,6 +19,18 @@
 #ifdef __cplusplus
 extern "C"
 {
+#endif
+
+//==============================================================================
+// CONFIGURATION
+//==============================================================================
+
+/**
+ * @def RADIX8_BLOCKED4_THRESHOLD
+ * @brief K threshold for BLOCKED4 vs BLOCKED2
+ */
+#ifndef RADIX8_BLOCKED4_THRESHOLD
+#define RADIX8_BLOCKED4_THRESHOLD 256
 #endif
 
     //==============================================================================
@@ -58,6 +70,22 @@ extern "C"
         RADIX8_TW_BLOCKED4, ///< Use BLOCKED4 mode (K ≤ 256)
         RADIX8_TW_BLOCKED2  ///< Use BLOCKED2 mode (K > 256)
     } radix8_twiddle_mode_t;
+
+    //==============================================================================
+    // PLANNING HELPER
+    //==============================================================================
+
+    /**
+     * @brief Choose twiddle mode based on K
+     *
+     * @param K Transform eighth-size
+     * @return RADIX8_TW_BLOCKED4 if K ≤ 256, else RADIX8_TW_BLOCKED2
+     */
+    static inline radix8_twiddle_mode_t
+    radix8_choose_twiddle_mode(size_t K)
+    {
+        return (K <= RADIX8_BLOCKED4_THRESHOLD) ? RADIX8_TW_BLOCKED4 : RADIX8_TW_BLOCKED2;
+    }
 
     //==============================================================================
     // FORWARD FFT (WITH TWIDDLES)
