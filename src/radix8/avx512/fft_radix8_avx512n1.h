@@ -98,16 +98,16 @@
 #define C8_CONSTANT 0.7071067811865475244008443621048490392848359376887
 
 // Forward transform twiddles: W_8^k = exp(-2πik/8)
-#define W8_FV_1_RE C8_CONSTANT         // W_8^1 real
-#define W8_FV_1_IM (-C8_CONSTANT)      // W_8^1 imag
-#define W8_FV_3_RE (-C8_CONSTANT)      // W_8^3 real
-#define W8_FV_3_IM (-C8_CONSTANT)      // W_8^3 imag
+#define W8_FV_1_RE C8_CONSTANT    // W_8^1 real
+#define W8_FV_1_IM (-C8_CONSTANT) // W_8^1 imag
+#define W8_FV_3_RE (-C8_CONSTANT) // W_8^3 real
+#define W8_FV_3_IM (-C8_CONSTANT) // W_8^3 imag
 
 // Backward transform twiddles: W_8^(-k) = exp(+2πik/8)
-#define W8_BV_1_RE C8_CONSTANT         // W_8^(-1) real
-#define W8_BV_1_IM C8_CONSTANT         // W_8^(-1) imag
-#define W8_BV_3_RE (-C8_CONSTANT)      // W_8^(-3) real
-#define W8_BV_3_IM C8_CONSTANT         // W_8^(-3) imag
+#define W8_BV_1_RE C8_CONSTANT    // W_8^(-1) real
+#define W8_BV_1_IM C8_CONSTANT    // W_8^(-1) imag
+#define W8_BV_3_RE (-C8_CONSTANT) // W_8^(-3) real
+#define W8_BV_3_IM C8_CONSTANT    // W_8^(-3) imag
 
 //==============================================================================
 // CORE PRIMITIVES (PRESERVED EXACTLY FROM ORIGINAL)
@@ -123,8 +123,8 @@ FORCE_INLINE void
 cmul_v512(__m512d ar, __m512d ai, __m512d br, __m512d bi,
           __m512d *RESTRICT tr, __m512d *RESTRICT ti)
 {
-    *tr = _mm512_fmsub_pd(ar, br, _mm512_mul_pd(ai, bi));  // ar*br - ai*bi
-    *ti = _mm512_fmadd_pd(ar, bi, _mm512_mul_pd(ai, br));  // ar*bi + ai*br
+    *tr = _mm512_fmsub_pd(ar, br, _mm512_mul_pd(ai, bi)); // ar*br - ai*bi
+    *ti = _mm512_fmadd_pd(ar, bi, _mm512_mul_pd(ai, br)); // ar*bi + ai*br
 }
 
 /**
@@ -156,11 +156,11 @@ radix4_core_avx512(
     // Stage 2: Combine with W_4 twiddles (rotation by ±i)
     *y0_re = _mm512_add_pd(t0_re, t2_re);
     *y0_im = _mm512_add_pd(t0_im, t2_im);
-    *y1_re = _mm512_sub_pd(t1_re, _mm512_xor_pd(t3_im, sign_mask));  // t1 - sign*i*t3
+    *y1_re = _mm512_sub_pd(t1_re, _mm512_xor_pd(t3_im, sign_mask)); // t1 - sign*i*t3
     *y1_im = _mm512_add_pd(t1_im, _mm512_xor_pd(t3_re, sign_mask));
     *y2_re = _mm512_sub_pd(t0_re, t2_re);
     *y2_im = _mm512_sub_pd(t0_im, t2_im);
-    *y3_re = _mm512_add_pd(t1_re, _mm512_xor_pd(t3_im, sign_mask));  // t1 + sign*i*t3
+    *y3_re = _mm512_add_pd(t1_re, _mm512_xor_pd(t3_im, sign_mask)); // t1 + sign*i*t3
     *y3_im = _mm512_sub_pd(t1_im, _mm512_xor_pd(t3_re, sign_mask));
 }
 
@@ -376,3 +376,366 @@ radix8_n1_butterfly_forward_avx512_nt(
     _mm512_stream_pd(&out_re_aligned[k + 7 * K], _mm512_sub_pd(e3_re, o3_re));
     _mm512_stream_pd(&out_im_aligned[k + 7 * K], _mm512_sub_pd(e3_im, o3_im));
 }
+
+/**
+ * @brief Single N=1 radix-8 butterfly - BACKWARD - Regular stores
+ * @note Backward = conjugate twiddles (IFFT direction)
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix8_n1_butterfly_backward_avx512(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    __m512d W8_1_re, __m512d W8_1_im,
+    __m512d W8_3_re, __m512d W8_3_im,
+    __m512d sign_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+
+    // Load 8 complex inputs
+    __m512d x0_re = _mm512_load_pd(&in_re_aligned[k + 0 * K]);
+    __m512d x0_im = _mm512_load_pd(&in_im_aligned[k + 0 * K]);
+    __m512d x1_re = _mm512_load_pd(&in_re_aligned[k + 1 * K]);
+    __m512d x1_im = _mm512_load_pd(&in_im_aligned[k + 1 * K]);
+    __m512d x2_re = _mm512_load_pd(&in_re_aligned[k + 2 * K]);
+    __m512d x2_im = _mm512_load_pd(&in_im_aligned[k + 2 * K]);
+    __m512d x3_re = _mm512_load_pd(&in_re_aligned[k + 3 * K]);
+    __m512d x3_im = _mm512_load_pd(&in_im_aligned[k + 3 * K]);
+    __m512d x4_re = _mm512_load_pd(&in_re_aligned[k + 4 * K]);
+    __m512d x4_im = _mm512_load_pd(&in_im_aligned[k + 4 * K]);
+    __m512d x5_re = _mm512_load_pd(&in_re_aligned[k + 5 * K]);
+    __m512d x5_im = _mm512_load_pd(&in_im_aligned[k + 5 * K]);
+    __m512d x6_re = _mm512_load_pd(&in_re_aligned[k + 6 * K]);
+    __m512d x6_im = _mm512_load_pd(&in_im_aligned[k + 6 * K]);
+    __m512d x7_re = _mm512_load_pd(&in_re_aligned[k + 7 * K]);
+    __m512d x7_im = _mm512_load_pd(&in_im_aligned[k + 7 * K]);
+
+    // Negate sign_mask for backward transform (flip rotation direction)
+    const __m512d neg_zero = _mm512_set1_pd(-0.0);
+    __m512d neg_sign = _mm512_xor_pd(sign_mask, neg_zero);
+
+    // First radix-4: even-indexed inputs (with negated sign)
+    __m512d e0_re, e0_im, e1_re, e1_im, e2_re, e2_im, e3_re, e3_im;
+    radix4_core_avx512(x0_re, x0_im, x2_re, x2_im, x4_re, x4_im, x6_re, x6_im,
+                       &e0_re, &e0_im, &e1_re, &e1_im, &e2_re, &e2_im, &e3_re, &e3_im,
+                       neg_sign);
+
+    // Second radix-4: odd-indexed inputs (with negated sign)
+    __m512d o0_re, o0_im, o1_re, o1_im, o2_re, o2_im, o3_re, o3_im;
+    radix4_core_avx512(x1_re, x1_im, x3_re, x3_im, x5_re, x5_im, x7_re, x7_im,
+                       &o0_re, &o0_im, &o1_re, &o1_im, &o2_re, &o2_im, &o3_re, &o3_im,
+                       neg_sign);
+
+    // Apply conjugate W_8 twiddles to odd outputs
+    apply_w8_twiddles_backward_avx512(&o1_re, &o1_im, &o2_re, &o2_im, &o3_re, &o3_im,
+                                      W8_1_re, W8_1_im, W8_3_re, W8_3_im);
+
+    // Final combination
+    _mm512_store_pd(&out_re_aligned[k + 0 * K], _mm512_add_pd(e0_re, o0_re));
+    _mm512_store_pd(&out_im_aligned[k + 0 * K], _mm512_add_pd(e0_im, o0_im));
+    _mm512_store_pd(&out_re_aligned[k + 1 * K], _mm512_add_pd(e1_re, o1_re));
+    _mm512_store_pd(&out_im_aligned[k + 1 * K], _mm512_add_pd(e1_im, o1_im));
+    _mm512_store_pd(&out_re_aligned[k + 2 * K], _mm512_add_pd(e2_re, o2_re));
+    _mm512_store_pd(&out_im_aligned[k + 2 * K], _mm512_add_pd(e2_im, o2_im));
+    _mm512_store_pd(&out_re_aligned[k + 3 * K], _mm512_add_pd(e3_re, o3_re));
+    _mm512_store_pd(&out_im_aligned[k + 3 * K], _mm512_add_pd(e3_im, o3_im));
+    _mm512_store_pd(&out_re_aligned[k + 4 * K], _mm512_sub_pd(e0_re, o0_re));
+    _mm512_store_pd(&out_im_aligned[k + 4 * K], _mm512_sub_pd(e0_im, o0_im));
+    _mm512_store_pd(&out_re_aligned[k + 5 * K], _mm512_sub_pd(e1_re, o1_re));
+    _mm512_store_pd(&out_im_aligned[k + 5 * K], _mm512_sub_pd(e1_im, o1_im));
+    _mm512_store_pd(&out_re_aligned[k + 6 * K], _mm512_sub_pd(e2_re, o2_re));
+    _mm512_store_pd(&out_im_aligned[k + 6 * K], _mm512_sub_pd(e2_im, o2_im));
+    _mm512_store_pd(&out_re_aligned[k + 7 * K], _mm512_sub_pd(e3_re, o3_re));
+    _mm512_store_pd(&out_im_aligned[k + 7 * K], _mm512_sub_pd(e3_im, o3_im));
+}
+
+/**
+ * @brief Single N=1 radix-8 butterfly - BACKWARD - NT stores
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix8_n1_butterfly_backward_avx512_nt(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    __m512d W8_1_re, __m512d W8_1_im,
+    __m512d W8_3_re, __m512d W8_3_im,
+    __m512d sign_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+
+    // Load 8 complex inputs
+    __m512d x0_re = _mm512_load_pd(&in_re_aligned[k + 0 * K]);
+    __m512d x0_im = _mm512_load_pd(&in_im_aligned[k + 0 * K]);
+    __m512d x1_re = _mm512_load_pd(&in_re_aligned[k + 1 * K]);
+    __m512d x1_im = _mm512_load_pd(&in_im_aligned[k + 1 * K]);
+    __m512d x2_re = _mm512_load_pd(&in_re_aligned[k + 2 * K]);
+    __m512d x2_im = _mm512_load_pd(&in_im_aligned[k + 2 * K]);
+    __m512d x3_re = _mm512_load_pd(&in_re_aligned[k + 3 * K]);
+    __m512d x3_im = _mm512_load_pd(&in_im_aligned[k + 3 * K]);
+    __m512d x4_re = _mm512_load_pd(&in_re_aligned[k + 4 * K]);
+    __m512d x4_im = _mm512_load_pd(&in_im_aligned[k + 4 * K]);
+    __m512d x5_re = _mm512_load_pd(&in_re_aligned[k + 5 * K]);
+    __m512d x5_im = _mm512_load_pd(&in_im_aligned[k + 5 * K]);
+    __m512d x6_re = _mm512_load_pd(&in_re_aligned[k + 6 * K]);
+    __m512d x6_im = _mm512_load_pd(&in_im_aligned[k + 6 * K]);
+    __m512d x7_re = _mm512_load_pd(&in_re_aligned[k + 7 * K]);
+    __m512d x7_im = _mm512_load_pd(&in_im_aligned[k + 7 * K]);
+
+    // Negate sign_mask for backward transform
+    const __m512d neg_zero = _mm512_set1_pd(-0.0);
+    __m512d neg_sign = _mm512_xor_pd(sign_mask, neg_zero);
+
+    // First radix-4: even-indexed inputs
+    __m512d e0_re, e0_im, e1_re, e1_im, e2_re, e2_im, e3_re, e3_im;
+    radix4_core_avx512(x0_re, x0_im, x2_re, x2_im, x4_re, x4_im, x6_re, x6_im,
+                       &e0_re, &e0_im, &e1_re, &e1_im, &e2_re, &e2_im, &e3_re, &e3_im,
+                       neg_sign);
+
+    // Second radix-4: odd-indexed inputs
+    __m512d o0_re, o0_im, o1_re, o1_im, o2_re, o2_im, o3_re, o3_im;
+    radix4_core_avx512(x1_re, x1_im, x3_re, x3_im, x5_re, x5_im, x7_re, x7_im,
+                       &o0_re, &o0_im, &o1_re, &o1_im, &o2_re, &o2_im, &o3_re, &o3_im,
+                       neg_sign);
+
+    // Apply conjugate W_8 twiddles
+    apply_w8_twiddles_backward_avx512(&o1_re, &o1_im, &o2_re, &o2_im, &o3_re, &o3_im,
+                                      W8_1_re, W8_1_im, W8_3_re, W8_3_im);
+
+    // Final combination with NON-TEMPORAL stores
+    _mm512_stream_pd(&out_re_aligned[k + 0 * K], _mm512_add_pd(e0_re, o0_re));
+    _mm512_stream_pd(&out_im_aligned[k + 0 * K], _mm512_add_pd(e0_im, o0_im));
+    _mm512_stream_pd(&out_re_aligned[k + 1 * K], _mm512_add_pd(e1_re, o1_re));
+    _mm512_stream_pd(&out_im_aligned[k + 1 * K], _mm512_add_pd(e1_im, o1_im));
+    _mm512_stream_pd(&out_re_aligned[k + 2 * K], _mm512_add_pd(e2_re, o2_re));
+    _mm512_stream_pd(&out_im_aligned[k + 2 * K], _mm512_add_pd(e2_im, o2_im));
+    _mm512_stream_pd(&out_re_aligned[k + 3 * K], _mm512_add_pd(e3_re, o3_re));
+    _mm512_stream_pd(&out_im_aligned[k + 3 * K], _mm512_add_pd(e3_im, o3_im));
+    _mm512_stream_pd(&out_re_aligned[k + 4 * K], _mm512_sub_pd(e0_re, o0_re));
+    _mm512_stream_pd(&out_im_aligned[k + 4 * K], _mm512_sub_pd(e0_im, o0_im));
+    _mm512_stream_pd(&out_re_aligned[k + 5 * K], _mm512_sub_pd(e1_re, o1_re));
+    _mm512_stream_pd(&out_im_aligned[k + 5 * K], _mm512_sub_pd(e1_im, o1_im));
+    _mm512_stream_pd(&out_re_aligned[k + 6 * K], _mm512_sub_pd(e2_re, o2_re));
+    _mm512_stream_pd(&out_im_aligned[k + 6 * K], _mm512_sub_pd(e2_im, o2_im));
+    _mm512_stream_pd(&out_re_aligned[k + 7 * K], _mm512_sub_pd(e3_re, o3_re));
+    _mm512_stream_pd(&out_im_aligned[k + 7 * K], _mm512_sub_pd(e3_im, o3_im));
+}
+
+//==============================================================================
+// STAGE DRIVERS WITH ALL OPTIMIZATIONS
+//==============================================================================
+
+/**
+ * @brief N=1 radix-8 stage driver - FORWARD transform
+ *
+ * @details
+ * ALL OPTIMIZATIONS PRESERVED:
+ * ✅ U=2 software pipelining (prefetch k+8+56 ahead)
+ * ✅ Adaptive NT stores (>256KB working set)
+ * ✅ Hoisted constants (computed once outside loop)
+ * ✅ Prefetch tuning (56 doubles for AVX-512/Skylake-SP)
+ * ✅ Tight loop with minimal overhead
+ * ✅ 64-byte alignment for optimal AVX-512 performance
+ *
+ * @param K Number of parallel butterflies (must be multiple of 8)
+ * @param in_re Input real part (length 8*K, SoA layout)
+ * @param in_im Input imag part (length 8*K, SoA layout)
+ * @param out_re Output real part (length 8*K, SoA layout)
+ * @param out_im Output imag part (length 8*K, SoA layout)
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix8_n1_forward_avx512(
+    size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im)
+{
+    // Assert K % 8 == 0 (AVX-512 vector width = 8 doubles)
+    assert((K & 7) == 0 && "K must be multiple of 8 for AVX-512");
+
+    // Hoist constants ONCE per stage (critical optimization)
+    const __m512d W8_1_re = _mm512_set1_pd(W8_FV_1_RE);
+    const __m512d W8_1_im = _mm512_set1_pd(W8_FV_1_IM);
+    const __m512d W8_3_re = _mm512_set1_pd(W8_FV_3_RE);
+    const __m512d W8_3_im = _mm512_set1_pd(W8_FV_3_IM);
+    const __m512d sign_mask = _mm512_set1_pd(-0.0);
+
+    const size_t prefetch_dist = RADIX8_N1_PREFETCH_DISTANCE_AVX512;
+
+    // Adaptive NT store decision (>256KB working set)
+    const size_t total_elements = K * 8 * 2; // K butterflies × 8 points × 2 (re+im)
+    const size_t total_bytes = total_elements * sizeof(double);
+    const int use_nt_stores = (total_bytes >= (RADIX8_N1_STREAM_THRESHOLD_KB_AVX512 * 1024)) &&
+                              (((uintptr_t)out_re & 63) == 0) && // Check 64-byte alignment
+                              (((uintptr_t)out_im & 63) == 0);
+
+    if (use_nt_stores)
+    {
+        // Large transforms: NT stores to bypass cache
+        for (size_t k = 0; k < K; k += 8)
+        {
+            // U=2 software pipelining: prefetch NEXT iteration's data
+            if (k + 8 + prefetch_dist < K)
+            {
+                // Prefetch 8 input blocks (x0...x7 for next iteration)
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 0 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 0 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 1 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 1 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 2 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 2 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 3 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 3 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 4 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 4 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 5 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 5 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 6 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 6 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 7 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 7 * K], _MM_HINT_T0);
+                // Note: NO twiddle prefetch in N=1 (that's the whole point!)
+            }
+
+            radix8_n1_butterfly_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                  W8_1_re, W8_1_im, W8_3_re, W8_3_im,
+                                                  sign_mask);
+        }
+        _mm_sfence(); // Required after streaming stores
+    }
+    else
+    {
+        // Small transforms: regular stores with U=2 pipelining
+        for (size_t k = 0; k < K; k += 8)
+        {
+            // U=2: prefetch next iteration
+            if (k + 8 + prefetch_dist < K)
+            {
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 0 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 0 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 1 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 1 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 2 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 2 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 3 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 3 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 4 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 4 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 5 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 5 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 6 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 6 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 7 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 7 * K], _MM_HINT_T0);
+            }
+
+            radix8_n1_butterfly_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                               W8_1_re, W8_1_im, W8_3_re, W8_3_im,
+                                               sign_mask);
+        }
+    }
+}
+
+/**
+ * @brief N=1 radix-8 stage driver - BACKWARD transform (IFFT direction)
+ *
+ * @details
+ * ALL OPTIMIZATIONS PRESERVED (identical to forward, but conjugate twiddles)
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix8_n1_backward_avx512(
+    size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im)
+{
+    assert((K & 7) == 0 && "K must be multiple of 8 for AVX-512");
+
+    // Hoist constants (BACKWARD twiddles - conjugates of forward)
+    const __m512d W8_1_re = _mm512_set1_pd(W8_BV_1_RE);
+    const __m512d W8_1_im = _mm512_set1_pd(W8_BV_1_IM);
+    const __m512d W8_3_re = _mm512_set1_pd(W8_BV_3_RE);
+    const __m512d W8_3_im = _mm512_set1_pd(W8_BV_3_IM);
+    const __m512d sign_mask = _mm512_set1_pd(-0.0);
+
+    const size_t prefetch_dist = RADIX8_N1_PREFETCH_DISTANCE_AVX512;
+
+    // Adaptive NT store decision
+    const size_t total_elements = K * 8 * 2;
+    const size_t total_bytes = total_elements * sizeof(double);
+    const int use_nt_stores = (total_bytes >= (RADIX8_N1_STREAM_THRESHOLD_KB_AVX512 * 1024)) &&
+                              (((uintptr_t)out_re & 63) == 0) &&
+                              (((uintptr_t)out_im & 63) == 0);
+
+    if (use_nt_stores)
+    {
+        // Large transforms: NT stores
+        for (size_t k = 0; k < K; k += 8)
+        {
+            // U=2 software pipelining
+            if (k + 8 + prefetch_dist < K)
+            {
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 0 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 0 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 1 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 1 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 2 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 2 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 3 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 3 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 4 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 4 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 5 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 5 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 6 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 6 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 7 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 7 * K], _MM_HINT_T0);
+            }
+
+            radix8_n1_butterfly_backward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                   W8_1_re, W8_1_im, W8_3_re, W8_3_im,
+                                                   sign_mask);
+        }
+        _mm_sfence();
+    }
+    else
+    {
+        // Small transforms: regular stores
+        for (size_t k = 0; k < K; k += 8)
+        {
+            if (k + 8 + prefetch_dist < K)
+            {
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 0 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 0 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 1 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 1 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 2 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 2 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 3 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 3 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 4 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 4 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 5 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 5 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 6 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 6 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[k + 8 + prefetch_dist + 7 * K], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[k + 8 + prefetch_dist + 7 * K], _MM_HINT_T0);
+            }
+
+            radix8_n1_butterfly_backward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                                W8_1_re, W8_1_im, W8_3_re, W8_3_im,
+                                                sign_mask);
+        }
+    }
+}
+
+#endif // FFT_RADIX8_AVX512_N1_H
