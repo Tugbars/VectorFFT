@@ -2177,9 +2177,9 @@ radix16_stage_dit_backward_blocked4_avx512(
                 else
                 {
                     // No recurrence - direct loads
-                    radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                    radix16_butterfly_blocked4_backward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
                                                                  stage_tw, rot_sign_mask, neg_mask);
-                    radix16_butterfly_blocked4_forward_avx512_nt(k + 8, K, in_re, in_im, out_re, out_im,
+                    radix16_butterfly_blocked4_backward_avx512_nt(k + 8, K, in_re, in_im, out_re, out_im,
                                                                  stage_tw, rot_sign_mask, neg_mask);
                 }
             }
@@ -2213,7 +2213,7 @@ radix16_stage_dit_backward_blocked4_avx512(
                 }
                 else
                 {
-                    radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                    radix16_butterfly_blocked4_backward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
                                                                  stage_tw, rot_sign_mask, neg_mask);
                 }
             }
@@ -2368,9 +2368,9 @@ radix16_stage_dit_backward_blocked4_avx512(
                 else
                 {
                     // No recurrence
-                    radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                    radix16_butterfly_blocked4_backward_avx512(k, K, in_re, in_im, out_re, out_im,
                                                               stage_tw, rot_sign_mask, neg_mask);
-                    radix16_butterfly_blocked4_forward_avx512(k + 8, K, in_re, in_im, out_re, out_im,
+                    radix16_butterfly_blocked4_backward_avx512(k + 8, K, in_re, in_im, out_re, out_im,
                                                               stage_tw, rot_sign_mask, neg_mask);
                 }
             }
@@ -2425,7 +2425,7 @@ radix16_stage_dit_backward_blocked4_avx512(
                 }
                 else
                 {
-                    radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                    radix16_butterfly_blocked4_backward_avx512(k, K, in_re, in_im, out_re, out_im,
                                                               stage_tw, rot_sign_mask, neg_mask);
                 }
             }
