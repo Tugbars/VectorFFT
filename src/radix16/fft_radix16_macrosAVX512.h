@@ -487,54 +487,65 @@ apply_stage_twiddles_blocked8_avx512(
         W_im[r] = _mm512_load_pd(&im_base[r * K + k]);
     }
     
-    // Interleaved order: r = 1,5,9,13 (first group)
-    __m512d t1r, t1i, t5r, t5i, t9r, t9i, t13r, t13i;
-    cmul_fma_soa_avx512(x_re[1], x_im[1], W_re[0], W_im[0], &t1r, &t1i);
-    cmul_fma_soa_avx512(x_re[5], x_im[5], W_re[4], W_im[4], &t5r, &t5i);
-    cmul_fma_soa_avx512(x_re[9], x_im[9], _mm512_xor_pd(W_re[0], sign_mask), 
-                        _mm512_xor_pd(W_im[0], sign_mask), &t9r, &t9i);  // W9=-W1
-    cmul_fma_soa_avx512(x_re[13], x_im[13], _mm512_xor_pd(W_re[4], sign_mask),
-                        _mm512_xor_pd(W_im[4], sign_mask), &t13r, &t13i);  // W13=-W5
-    x_re[1] = t1r; x_im[1] = t1i;
-    x_re[5] = t5r; x_im[5] = t5i;
-    x_re[9] = t9r; x_im[9] = t9i;
-    x_re[13] = t13r; x_im[13] = t13i;
+    // Pre-negate once: NW = -W (for indices 9..15)
+    __m512d NW_re[8], NW_im[8];
+    for (int r = 0; r < 8; r++)
+    {
+        NW_re[r] = _mm512_xor_pd(W_re[r], sign_mask);
+        NW_im[r] = _mm512_xor_pd(W_im[r], sign_mask);
+    }
     
-    // r = 2,6,10,14
-    __m512d t2r, t2i, t6r, t6i, t10r, t10i, t14r, t14i;
-    cmul_fma_soa_avx512(x_re[2], x_im[2], W_re[1], W_im[1], &t2r, &t2i);
-    cmul_fma_soa_avx512(x_re[6], x_im[6], W_re[5], W_im[5], &t6r, &t6i);
-    cmul_fma_soa_avx512(x_re[10], x_im[10], _mm512_xor_pd(W_re[1], sign_mask),
-                        _mm512_xor_pd(W_im[1], sign_mask), &t10r, &t10i);  // W10=-W2
-    cmul_fma_soa_avx512(x_re[14], x_im[14], _mm512_xor_pd(W_re[5], sign_mask),
-                        _mm512_xor_pd(W_im[5], sign_mask), &t14r, &t14i);  // W14=-W6
-    x_re[2] = t2r; x_im[2] = t2i;
-    x_re[6] = t6r; x_im[6] = t6i;
-    x_re[10] = t10r; x_im[10] = t10i;
-    x_re[14] = t14r; x_im[14] = t14i;
+    // Interleaved order with reused temps (Opt #8)
+    __m512d tr, ti;
     
-    // r = 3,7,11,15
-    __m512d t3r, t3i, t7r, t7i, t11r, t11i, t15r, t15i;
-    cmul_fma_soa_avx512(x_re[3], x_im[3], W_re[2], W_im[2], &t3r, &t3i);
-    cmul_fma_soa_avx512(x_re[7], x_im[7], W_re[6], W_im[6], &t7r, &t7i);
-    cmul_fma_soa_avx512(x_re[11], x_im[11], _mm512_xor_pd(W_re[2], sign_mask),
-                        _mm512_xor_pd(W_im[2], sign_mask), &t11r, &t11i);  // W11=-W3
-    cmul_fma_soa_avx512(x_re[15], x_im[15], _mm512_xor_pd(W_re[6], sign_mask),
-                        _mm512_xor_pd(W_im[6], sign_mask), &t15r, &t15i);  // W15=-W7
-    x_re[3] = t3r; x_im[3] = t3i;
-    x_re[7] = t7r; x_im[7] = t7i;
-    x_re[11] = t11r; x_im[11] = t11i;
-    x_re[15] = t15r; x_im[15] = t15i;
+    // Group 1: r = 1,5,9,13
+    cmul_fma_soa_avx512(x_re[1], x_im[1], W_re[0], W_im[0], &tr, &ti);
+    x_re[1] = tr; x_im[1] = ti;
     
-    // r = 4,8,12
-    __m512d t4r, t4i, t8r, t8i, t12r, t12i;
-    cmul_fma_soa_avx512(x_re[4], x_im[4], W_re[3], W_im[3], &t4r, &t4i);
-    cmul_fma_soa_avx512(x_re[8], x_im[8], W_re[7], W_im[7], &t8r, &t8i);
-    cmul_fma_soa_avx512(x_re[12], x_im[12], _mm512_xor_pd(W_re[3], sign_mask),
-                        _mm512_xor_pd(W_im[3], sign_mask), &t12r, &t12i);  // W12=-W4
-    x_re[4] = t4r; x_im[4] = t4i;
-    x_re[8] = t8r; x_im[8] = t8i;
-    x_re[12] = t12r; x_im[12] = t12i;
+    cmul_fma_soa_avx512(x_re[5], x_im[5], W_re[4], W_im[4], &tr, &ti);
+    x_re[5] = tr; x_im[5] = ti;
+    
+    cmul_fma_soa_avx512(x_re[9], x_im[9], NW_re[0], NW_im[0], &tr, &ti);  // Use -W1
+    x_re[9] = tr; x_im[9] = ti;
+    
+    cmul_fma_soa_avx512(x_re[13], x_im[13], NW_re[4], NW_im[4], &tr, &ti);  // Use -W5
+    x_re[13] = tr; x_im[13] = ti;
+    
+    // Group 2: r = 2,6,10,14
+    cmul_fma_soa_avx512(x_re[2], x_im[2], W_re[1], W_im[1], &tr, &ti);
+    x_re[2] = tr; x_im[2] = ti;
+    
+    cmul_fma_soa_avx512(x_re[6], x_im[6], W_re[5], W_im[5], &tr, &ti);
+    x_re[6] = tr; x_im[6] = ti;
+    
+    cmul_fma_soa_avx512(x_re[10], x_im[10], NW_re[1], NW_im[1], &tr, &ti);  // Use -W2
+    x_re[10] = tr; x_im[10] = ti;
+    
+    cmul_fma_soa_avx512(x_re[14], x_im[14], NW_re[5], NW_im[5], &tr, &ti);  // Use -W6
+    x_re[14] = tr; x_im[14] = ti;
+    
+    // Group 3: r = 3,7,11,15
+    cmul_fma_soa_avx512(x_re[3], x_im[3], W_re[2], W_im[2], &tr, &ti);
+    x_re[3] = tr; x_im[3] = ti;
+    
+    cmul_fma_soa_avx512(x_re[7], x_im[7], W_re[6], W_im[6], &tr, &ti);
+    x_re[7] = tr; x_im[7] = ti;
+    
+    cmul_fma_soa_avx512(x_re[11], x_im[11], NW_re[2], NW_im[2], &tr, &ti);  // Use -W3
+    x_re[11] = tr; x_im[11] = ti;
+    
+    cmul_fma_soa_avx512(x_re[15], x_im[15], NW_re[6], NW_im[6], &tr, &ti);  // Use -W7
+    x_re[15] = tr; x_im[15] = ti;
+    
+    // Group 4: r = 4,8,12
+    cmul_fma_soa_avx512(x_re[4], x_im[4], W_re[3], W_im[3], &tr, &ti);
+    x_re[4] = tr; x_im[4] = ti;
+    
+    cmul_fma_soa_avx512(x_re[8], x_im[8], W_re[7], W_im[7], &tr, &ti);
+    x_re[8] = tr; x_im[8] = ti;
+    
+    cmul_fma_soa_avx512(x_re[12], x_im[12], NW_re[3], NW_im[3], &tr, &ti);  // Use -W4
+    x_re[12] = tr; x_im[12] = ti;
 }
 
 //==============================================================================
@@ -574,54 +585,73 @@ apply_stage_twiddles_blocked4_avx512(
     cmul_fma_soa_avx512(W3r, W3i, W4r, W4i, &W7r, &W7i);  // W7 = W3×W4
     csquare_fma_soa_avx512(W4r, W4i, &W8r, &W8i);         // W8 = W4²
     
-    // Interleaved order: r = 1,5,9,13
-    __m512d t1r, t1i, t5r, t5i, t9r, t9i, t13r, t13i;
-    cmul_fma_soa_avx512(x_re[1], x_im[1], W1r, W1i, &t1r, &t1i);
-    cmul_fma_soa_avx512(x_re[5], x_im[5], W5r, W5i, &t5r, &t5i);
-    cmul_fma_soa_avx512(x_re[9], x_im[9], _mm512_xor_pd(W1r, sign_mask),
-                        _mm512_xor_pd(W1i, sign_mask), &t9r, &t9i);   // W9=-W1
-    cmul_fma_soa_avx512(x_re[13], x_im[13], _mm512_xor_pd(W5r, sign_mask),
-                        _mm512_xor_pd(W5i, sign_mask), &t13r, &t13i); // W13=-W5
-    x_re[1] = t1r; x_im[1] = t1i;
-    x_re[5] = t5r; x_im[5] = t5i;
-    x_re[9] = t9r; x_im[9] = t9i;
-    x_re[13] = t13r; x_im[13] = t13i;
+    // Pre-negate W1..W8 once for indices 9..15
+    __m512d NW1r = _mm512_xor_pd(W1r, sign_mask);
+    __m512d NW1i = _mm512_xor_pd(W1i, sign_mask);
+    __m512d NW2r = _mm512_xor_pd(W2r, sign_mask);
+    __m512d NW2i = _mm512_xor_pd(W2i, sign_mask);
+    __m512d NW3r = _mm512_xor_pd(W3r, sign_mask);
+    __m512d NW3i = _mm512_xor_pd(W3i, sign_mask);
+    __m512d NW4r = _mm512_xor_pd(W4r, sign_mask);
+    __m512d NW4i = _mm512_xor_pd(W4i, sign_mask);
+    __m512d NW5r = _mm512_xor_pd(W5r, sign_mask);
+    __m512d NW5i = _mm512_xor_pd(W5i, sign_mask);
+    __m512d NW6r = _mm512_xor_pd(W6r, sign_mask);
+    __m512d NW6i = _mm512_xor_pd(W6i, sign_mask);
+    __m512d NW7r = _mm512_xor_pd(W7r, sign_mask);
+    __m512d NW7i = _mm512_xor_pd(W7i, sign_mask);
     
-    // r = 2,6,10,14
-    __m512d t2r, t2i, t6r, t6i, t10r, t10i, t14r, t14i;
-    cmul_fma_soa_avx512(x_re[2], x_im[2], W2r, W2i, &t2r, &t2i);
-    cmul_fma_soa_avx512(x_re[6], x_im[6], W6r, W6i, &t6r, &t6i);
-    cmul_fma_soa_avx512(x_re[10], x_im[10], _mm512_xor_pd(W2r, sign_mask),
-                        _mm512_xor_pd(W2i, sign_mask), &t10r, &t10i);  // W10=-W2
-    cmul_fma_soa_avx512(x_re[14], x_im[14], _mm512_xor_pd(W6r, sign_mask),
-                        _mm512_xor_pd(W6i, sign_mask), &t14r, &t14i);  // W14=-W6
-    x_re[2] = t2r; x_im[2] = t2i;
-    x_re[6] = t6r; x_im[6] = t6i;
-    x_re[10] = t10r; x_im[10] = t10i;
-    x_re[14] = t14r; x_im[14] = t14i;
+    // Interleaved order with reused temps (Opt #8)
+    __m512d tr, ti;
     
-    // r = 3,7,11,15
-    __m512d t3r, t3i, t7r, t7i, t11r, t11i, t15r, t15i;
-    cmul_fma_soa_avx512(x_re[3], x_im[3], W3r, W3i, &t3r, &t3i);
-    cmul_fma_soa_avx512(x_re[7], x_im[7], W7r, W7i, &t7r, &t7i);
-    cmul_fma_soa_avx512(x_re[11], x_im[11], _mm512_xor_pd(W3r, sign_mask),
-                        _mm512_xor_pd(W3i, sign_mask), &t11r, &t11i);  // W11=-W3
-    cmul_fma_soa_avx512(x_re[15], x_im[15], _mm512_xor_pd(W7r, sign_mask),
-                        _mm512_xor_pd(W7i, sign_mask), &t15r, &t15i);  // W15=-W7
-    x_re[3] = t3r; x_im[3] = t3i;
-    x_re[7] = t7r; x_im[7] = t7i;
-    x_re[11] = t11r; x_im[11] = t11i;
-    x_re[15] = t15r; x_im[15] = t15i;
+    // Group 1: r = 1,5,9,13
+    cmul_fma_soa_avx512(x_re[1], x_im[1], W1r, W1i, &tr, &ti);
+    x_re[1] = tr; x_im[1] = ti;
     
-    // r = 4,8,12
-    __m512d t4r, t4i, t8r, t8i, t12r, t12i;
-    cmul_fma_soa_avx512(x_re[4], x_im[4], W4r, W4i, &t4r, &t4i);
-    cmul_fma_soa_avx512(x_re[8], x_im[8], W8r, W8i, &t8r, &t8i);
-    cmul_fma_soa_avx512(x_re[12], x_im[12], _mm512_xor_pd(W4r, sign_mask),
-                        _mm512_xor_pd(W4i, sign_mask), &t12r, &t12i);  // W12=-W4
-    x_re[4] = t4r; x_im[4] = t4i;
-    x_re[8] = t8r; x_im[8] = t8i;
-    x_re[12] = t12r; x_im[12] = t12i;
+    cmul_fma_soa_avx512(x_re[5], x_im[5], W5r, W5i, &tr, &ti);
+    x_re[5] = tr; x_im[5] = ti;
+    
+    cmul_fma_soa_avx512(x_re[9], x_im[9], NW1r, NW1i, &tr, &ti);
+    x_re[9] = tr; x_im[9] = ti;
+    
+    cmul_fma_soa_avx512(x_re[13], x_im[13], NW5r, NW5i, &tr, &ti);
+    x_re[13] = tr; x_im[13] = ti;
+    
+    // Group 2: r = 2,6,10,14
+    cmul_fma_soa_avx512(x_re[2], x_im[2], W2r, W2i, &tr, &ti);
+    x_re[2] = tr; x_im[2] = ti;
+    
+    cmul_fma_soa_avx512(x_re[6], x_im[6], W6r, W6i, &tr, &ti);
+    x_re[6] = tr; x_im[6] = ti;
+    
+    cmul_fma_soa_avx512(x_re[10], x_im[10], NW2r, NW2i, &tr, &ti);
+    x_re[10] = tr; x_im[10] = ti;
+    
+    cmul_fma_soa_avx512(x_re[14], x_im[14], NW6r, NW6i, &tr, &ti);
+    x_re[14] = tr; x_im[14] = ti;
+    
+    // Group 3: r = 3,7,11,15
+    cmul_fma_soa_avx512(x_re[3], x_im[3], W3r, W3i, &tr, &ti);
+    x_re[3] = tr; x_im[3] = ti;
+    
+    cmul_fma_soa_avx512(x_re[7], x_im[7], W7r, W7i, &tr, &ti);
+    x_re[7] = tr; x_im[7] = ti;
+    
+    cmul_fma_soa_avx512(x_re[11], x_im[11], NW3r, NW3i, &tr, &ti);
+    x_re[11] = tr; x_im[11] = ti;
+    
+    cmul_fma_soa_avx512(x_re[15], x_im[15], NW7r, NW7i, &tr, &ti);
+    x_re[15] = tr; x_im[15] = ti;
+    
+    // Group 4: r = 4,8,12
+    cmul_fma_soa_avx512(x_re[4], x_im[4], W4r, W4i, &tr, &ti);
+    x_re[4] = tr; x_im[4] = ti;
+    
+    cmul_fma_soa_avx512(x_re[8], x_im[8], W8r, W8i, &tr, &ti);
+    x_re[8] = tr; x_im[8] = ti;
+    
+    cmul_fma_soa_avx512(x_re[12], x_im[12], NW4r, NW4i, &tr, &ti);
+    x_re[12] = tr; x_im[12] = ti;
 }
 
 //==============================================================================
