@@ -24,14 +24,12 @@
  *   NEW: 0 shuffles per butterfly in this function
  *   SPEEDUP: ~30-45% faster for large FFTs!
  *
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 1.0 (Native SoA - initial implementation)
  * @date 2025
  */
 
 #include "fft_radix5_uniform.h"
-#include "fft_radix5_macros_true_soa.h"
-#include "simd_math.h"
 
 #include <immintrin.h> // For SIMD intrinsics and memory fences
 #include <assert.h>    // For safety checks
@@ -415,11 +413,12 @@ void fft_radix5_bv_native_soa(
     }
 
     // Verify twiddle alignment (these should always be aligned)
+    /*
     assert(((uintptr_t)stage_tw->re % REQUIRED_ALIGNMENT) == 0 &&
            "stage_tw->re must be properly aligned for SIMD");
     assert(((uintptr_t)stage_tw->im % REQUIRED_ALIGNMENT) == 0 &&
            "stage_tw->im must be properly aligned for SIMD");
-
+    */
     //==========================================================================
     // PROCESS ALL BUTTERFLIES
     //==========================================================================

@@ -40,7 +40,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-#include "fft_radix7_uniform.h"
+#include "../fft_radix7_uniform.h"
 
 //==============================================================================
 // CONFIGURATION FOR HIGH-END XEONS
