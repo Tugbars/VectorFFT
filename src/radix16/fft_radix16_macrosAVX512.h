@@ -1,105 +1,158 @@
 /**
- * @file fft_radix16_macros_true_soa_avx512.h
- * @brief TRUE END-TO-END SoA Radix-16 Butterfly Macros - AVX-512 ONLY
+ * @file fft_radix16_avx512_native_soa.h
+ * @brief Production Radix-16 AVX-512 Native SoA - ALL OPTIMIZATIONS
  *
  * @details
- * This header provides AVX-512 macro implementations for radix-16 FFT butterflies
- * that operate entirely in Structure-of-Arrays (SoA) format without any split/join
- * operations in the computational hot path.
+ * NATIVE SOA ARCHITECTURE:
+ * ========================
+ * - Zero shuffles in hot path (split/join only at API boundaries)
+ * - Direct loads from separate re[]/im[] arrays
+ * - 2-stage radix-4 decomposition (Cooley-Tukey)
+ * - W_4 intermediate twiddles via XOR optimizations
  *
- * CRITICAL ARCHITECTURAL CHANGE:
- * ================================
- * This version works with NATIVE SoA buffers throughout the entire FFT pipeline.
- * Split/join operations are ONLY at the user-facing API boundaries, not at
- * every stage boundary.
+ * BLOCKED TWIDDLE SYSTEM:
+ * =======================
+ * - BLOCKED8: K ≤ 512 (15 blocks, twiddles fit in L1+L2)
+ *   * Load W1..W8 (8 blocks)
+ *   * W9=-W1, W10=-W2, ..., W15=-W7 (sign flips only)
+ *   * 47% bandwidth savings vs full storage
  *
- * @section algorithm RADIX-16 ALGORITHM
+ * - BLOCKED4: K > 512 (twiddles stream from L3/DRAM)
+ *   * Load W1..W4 (4 blocks)
+ *   * Derive W5=W1×W4, W6=W2×W4, W7=W3×W4, W8=W4² (FMA)
+ *   * W9..W15 via negation
+ *   * 73% bandwidth savings
  *
- * 2-stage radix-4 decomposition with optimizations:
- *   1. Apply input twiddles W_N^(j*k) for j=1..15
- *   2. First radix-4 stage (4 groups of 4)
- *   3. Apply W_4 intermediate twiddles (optimized: ±i and -1 as XOR)
- *   4. Second radix-4 stage (in-place to reduce register pressure)
+ * K-TILING:
+ * =========
+ * - Tile size Tk=64 (tunable)
+ * - Outer loop over tiles to keep twiddles hot in L1
+ * - Critical for radix-16: 15 blocks × K × 16 bytes
  *
- * @section optimizations OPTIMIZATIONS (ALL PRESERVED!)
+ * TWIDDLE RECURRENCE:
+ * ===================
+ * - For K > 4096: tile-local recurrence with periodic refresh
+ * - Refresh at each tile boundary (every 64 steps)
+ * - Advance: w ← w × δw within tile
+ * - Accuracy: <1e-14 relative error
  *
- * ✅ Native SoA Architecture (90% shuffle elimination!)
- * ✅ Hoisted W_4 constants outside loops
- * ✅ W_4^1 = ±i as swap + XOR (not full multiply)
- * ✅ W_4^2 = -1 as XOR only (not full multiply)
- * ✅ In-place 2nd stage (reduces register pressure)
- * ✅ Software prefetching (single-level)
- * ✅ Alignment hints support
- * ✅ Hoisted sign masks for W_4 intermediate twiddles
- * ✅ Fully unrolled twiddle application (15 iterations)
- * ✅ Software pipelined twiddle application (3-way unroll)
- * ✅ Reduced register pressure (≤24 zmm live)
- * ✅ Streaming store support
- * ✅ FMA support
- *
- * @section perf_impact PERFORMANCE IMPACT FOR RADIX-16
- *
- * Radix-16 processes stages 4 at a time, so:
- * - 4096-pt FFT: log₁₆(4096) = 3 stages
- * - OLD: 3 stages × 2 shuffles/stage = 6 shuffles per butterfly
- * - NEW: 0 shuffles per butterfly in hot path
- * - REDUCTION: 100% shuffle elimination in hot path!
- *
- * Expected speedup over split-form radix-16:
- * - Small FFTs (256-4K):   +15-20%
- * - Medium FFTs (16K-256K): +25-35%
- * - Large FFTs (1M-16M):    +35-50%
- *
- * @section memory_layout MEMORY LAYOUT
- *
- * - Input:  double in_re[N], in_im[N]   (separate arrays, already split)
- * - Output: double out_re[N], out_im[N] (separate arrays, stay split)
- * - Twiddles: fft_twiddles_soa (re[], im[] - already SoA)
- *   - For radix-16, twiddles are organized as: [W1[K], W2[K], ..., W15[K]]
- *
- * NO INTERMEDIATE CONVERSIONS IN HOT PATH!
+ * OPTIMIZATIONS:
+ * ==============
+ * ✅ U=2 software pipelining (load next while computing current)
+ * ✅ Interleaved cmul order (break FMA dependency chains)
+ * ✅ Adaptive NT stores (>256KB working set)
+ * ✅ Prefetch tuning (32 doubles for SPR)
+ * ✅ Hoisted constants (W_4, sign masks)
+ * ✅ Alignment hints (ASSUME_ALIGNED)
+ * ✅ Masked tail handling (K % 8 != 0)
+ * ✅ Target attributes (explicit AVX-512 FMA)
  *
  * @author FFT Optimization Team
- * @version 3.0 (Native SoA - refactored to match radix-8 standards)
+ * @version 4.0 (Native SoA + K-tiling + Recurrence)
  * @date 2025
  */
 
-#ifndef FFT_RADIX16_MACROS_TRUE_SOA_AVX512_H
-#define FFT_RADIX16_MACROS_TRUE_SOA_AVX512_H
+#ifndef FFT_RADIX16_AVX512_NATIVE_SOA_H
+#define FFT_RADIX16_AVX512_NATIVE_SOA_H
 
-#include "simd_math.h"
+#include <immintrin.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <assert.h>
+#include <stdbool.h>
+
+//==============================================================================
+// COMPILER PORTABILITY
+//==============================================================================
+
+#ifdef _MSC_VER
+#define FORCE_INLINE static __forceinline
+#define RESTRICT __restrict
+#define ASSUME_ALIGNED(ptr, alignment) (ptr)
+#define TARGET_AVX512_FMA
+#elif defined(__GNUC__) || defined(__clang__)
+#define FORCE_INLINE static inline __attribute__((always_inline))
+#define RESTRICT __restrict__
+#define ASSUME_ALIGNED(ptr, alignment) __builtin_assume_aligned(ptr, alignment)
+#define TARGET_AVX512_FMA __attribute__((target("avx512f,avx512dq,fma")))
+#else
+#define FORCE_INLINE static inline
+#define RESTRICT
+#define ASSUME_ALIGNED(ptr, alignment) (ptr)
+#define TARGET_AVX512_FMA
+#endif
 
 //==============================================================================
 // CONFIGURATION
 //==============================================================================
 
 /**
- * @def RADIX16_STREAM_THRESHOLD
- * @brief Threshold for enabling non-temporal stores
+ * @def RADIX16_BLOCKED8_THRESHOLD
+ * @brief K threshold for BLOCKED8 vs BLOCKED4
  */
-#define RADIX16_STREAM_THRESHOLD 1024
+#ifndef RADIX16_BLOCKED8_THRESHOLD
+#define RADIX16_BLOCKED8_THRESHOLD 512
+#endif
+
+/**
+ * @def RADIX16_STREAM_THRESHOLD_KB
+ * @brief NT store threshold (in KB)
+ */
+#ifndef RADIX16_STREAM_THRESHOLD_KB
+#define RADIX16_STREAM_THRESHOLD_KB 256
+#endif
 
 /**
  * @def RADIX16_PREFETCH_DISTANCE
- * @brief Software prefetch lead distance (in elements)
+ * @brief Prefetch distance for Xeon SPR (32 doubles)
  */
 #ifndef RADIX16_PREFETCH_DISTANCE
-#define RADIX16_PREFETCH_DISTANCE 16
+#define RADIX16_PREFETCH_DISTANCE 32
+#endif
+
+/**
+ * @def RADIX16_TILE_SIZE
+ * @brief K-loop tile size (64 doubles)
+ */
+#ifndef RADIX16_TILE_SIZE
+#define RADIX16_TILE_SIZE 64
+#endif
+
+/**
+ * @def RADIX16_RECURRENCE_THRESHOLD
+ * @brief K threshold for enabling twiddle recurrence
+ */
+#ifndef RADIX16_RECURRENCE_THRESHOLD
+#define RADIX16_RECURRENCE_THRESHOLD 4096
 #endif
 
 //==============================================================================
-// W_4 GEOMETRIC CONSTANTS (PRESERVED FROM ORIGINAL!)
+// TWIDDLE STRUCTURES
 //==============================================================================
 
-/**
- * @section w4_forward FORWARD W_4 TWIDDLES
- *
- * W_4 = e^(-2πi/4) = e^(-πi/2)
- * W_4^0 = (1, 0)
- * W_4^1 = (0, -1)
- * W_4^2 = (-1, 0)
- * W_4^3 = (0, 1)
- */
+typedef struct
+{
+    const double *RESTRICT re;  // [8 * K]
+    const double *RESTRICT im;  // [8 * K]
+} radix16_stage_twiddles_blocked8_t;
+
+typedef struct
+{
+    const double *RESTRICT re;  // [4 * K]
+    const double *RESTRICT im;  // [4 * K]
+} radix16_stage_twiddles_blocked4_t;
+
+typedef enum
+{
+    RADIX16_TW_BLOCKED8,
+    RADIX16_TW_BLOCKED4
+} radix16_twiddle_mode_t;
+
+//==============================================================================
+// W_4 GEOMETRIC CONSTANTS (INTERMEDIATE TWIDDLES)
+//==============================================================================
+
+// Forward W_4 = e^(-2πi/4) = e^(-πi/2)
 #define W4_FV_0_RE 1.0
 #define W4_FV_0_IM 0.0
 #define W4_FV_1_RE 0.0
@@ -109,15 +162,7 @@
 #define W4_FV_3_RE 0.0
 #define W4_FV_3_IM 1.0
 
-/**
- * @section w4_backward BACKWARD (INVERSE) W_4 TWIDDLES
- *
- * W_4^(-1) = e^(2πi/4) = e^(πi/2)
- * W_4^(-0) = (1, 0)
- * W_4^(-1) = (0, 1)
- * W_4^(-2) = (-1, 0)
- * W_4^(-3) = (0, -1)
- */
+// Backward W_4^(-1) = e^(2πi/4) = e^(πi/2)
 #define W4_BV_0_RE 1.0
 #define W4_BV_0_IM 0.0
 #define W4_BV_1_RE 0.0
@@ -128,863 +173,1534 @@
 #define W4_BV_3_IM (-1.0)
 
 //==============================================================================
-// AVX-512 SUPPORT - FULLY OPTIMIZED
+// PLANNING HELPER
 //==============================================================================
 
-#ifdef __AVX512F__
+FORCE_INLINE radix16_twiddle_mode_t
+radix16_choose_twiddle_mode(size_t K)
+{
+    return (K <= RADIX16_BLOCKED8_THRESHOLD) ? RADIX16_TW_BLOCKED8 : RADIX16_TW_BLOCKED4;
+}
+
+FORCE_INLINE bool
+radix16_should_use_recurrence(size_t K)
+{
+    return (K > RADIX16_RECURRENCE_THRESHOLD);
+}
 
 //==============================================================================
-// COMPLEX MULTIPLY - NATIVE SoA (NO SPLIT/JOIN NEEDED!)
+// CORE PRIMITIVES
 //==============================================================================
 
 /**
- * @brief Complex multiply - NATIVE SoA form (AVX-512)
- *
- * @details
- * ⚡⚡ CRITICAL: Data is ALREADY in split form from memory!
- * No split operation needed - direct loads from separate re/im arrays!
- *
- * Computes: (ar + i*ai) * (wr + i*wi) = (ar*wr - ai*wi) + i*(ar*wi + ai*wr)
- *
- * @param[out] out_re Output real parts (__m512d)
- * @param[out] out_im Output imag parts (__m512d)
- * @param[in] a_re Input real parts (__m512d)
- * @param[in] a_im Input imag parts (__m512d)
- * @param[in] w_re Twiddle real parts (__m512d)
- * @param[in] w_im Twiddle imag parts (__m512d)
+ * @brief Complex multiply - Native SoA (FMA)
  */
-#if defined(__FMA__)
-#define CMUL_FMA_SOA_AVX512(out_re, out_im, a_re, a_im, w_re, w_im)        \
-    do                                                                     \
-    {                                                                      \
-        (out_re) = _mm512_fmsub_pd(a_re, w_re, _mm512_mul_pd(a_im, w_im)); \
-        (out_im) = _mm512_fmadd_pd(a_re, w_im, _mm512_mul_pd(a_im, w_re)); \
-    } while (0)
-#else
-#define CMUL_FMA_SOA_AVX512(out_re, out_im, a_re, a_im, w_re, w_im)                     \
-    do                                                                                  \
-    {                                                                                   \
-        (out_re) = _mm512_sub_pd(_mm512_mul_pd(a_re, w_re), _mm512_mul_pd(a_im, w_im)); \
-        (out_im) = _mm512_add_pd(_mm512_mul_pd(a_re, w_im), _mm512_mul_pd(a_im, w_re)); \
-    } while (0)
-#endif
-
-//==============================================================================
-// SOA RADIX-4 BUTTERFLY (PRESERVED FROM ORIGINAL!)
-//==============================================================================
+TARGET_AVX512_FMA
+FORCE_INLINE void
+cmul_fma_soa_avx512(__m512d ar, __m512d ai, __m512d br, __m512d bi,
+                    __m512d *RESTRICT tr, __m512d *RESTRICT ti)
+{
+    *tr = _mm512_fmsub_pd(ar, br, _mm512_mul_pd(ai, bi));
+    *ti = _mm512_fmadd_pd(ar, bi, _mm512_mul_pd(ai, br));
+}
 
 /**
- * @brief Radix-4 butterfly in SoA form - AVX-512
+ * @brief Complex square - Native SoA (FMA)
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+csquare_fma_soa_avx512(__m512d wr, __m512d wi,
+                       __m512d *RESTRICT tr, __m512d *RESTRICT ti)
+{
+    __m512d wr2 = _mm512_mul_pd(wr, wr);
+    __m512d wi2 = _mm512_mul_pd(wi, wi);
+    __m512d t = _mm512_mul_pd(wr, wi);
+    *tr = _mm512_sub_pd(wr2, wi2);
+    *ti = _mm512_add_pd(t, t);
+}
+
+/**
+ * @brief Radix-4 butterfly - Native SoA
  *
- * @details
- * Classic radix-4 DIT butterfly with rotation by ±i controlled by rot_sign_mask.
- * All operations in native SoA form - no shuffles!
- *
- * Standard radix-4 butterfly:
+ * Standard DIT radix-4:
  *   y0 = (a+c) + (b+d)
  *   y1 = (a-c) - rot_sign*i*(b-d)
  *   y2 = (a+c) - (b+d)
  *   y3 = (a-c) + rot_sign*i*(b-d)
- *
- * Where rot_sign = -1 for forward, +1 for backward
  */
-#define RADIX4_BUTTERFLY_SOA_AVX512(a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                        \
-                                    y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im, rot_sign_mask) \
-    do                                                                                                     \
-    {                                                                                                      \
-        __m512d sumBD_re = _mm512_add_pd(b_re, d_re);                                                      \
-        __m512d sumBD_im = _mm512_add_pd(b_im, d_im);                                                      \
-        __m512d difBD_re = _mm512_sub_pd(b_re, d_re);                                                      \
-        __m512d difBD_im = _mm512_sub_pd(b_im, d_im);                                                      \
-        __m512d sumAC_re = _mm512_add_pd(a_re, c_re);                                                      \
-        __m512d sumAC_im = _mm512_add_pd(a_im, c_im);                                                      \
-        __m512d difAC_re = _mm512_sub_pd(a_re, c_re);                                                      \
-        __m512d difAC_im = _mm512_sub_pd(a_im, c_im);                                                      \
-        y0_re = _mm512_add_pd(sumAC_re, sumBD_re);                                                         \
-        y0_im = _mm512_add_pd(sumAC_im, sumBD_im);                                                         \
-        y2_re = _mm512_sub_pd(sumAC_re, sumBD_re);                                                         \
-        y2_im = _mm512_sub_pd(sumAC_im, sumBD_im);                                                         \
-        __m512d rot_re = _mm512_xor_pd(difBD_im, rot_sign_mask);                                           \
-        __m512d rot_im = _mm512_xor_pd(_mm512_sub_pd(_mm512_setzero_pd(), difBD_re), rot_sign_mask);       \
-        y1_re = _mm512_sub_pd(difAC_re, rot_re);                                                           \
-        y1_im = _mm512_sub_pd(difAC_im, rot_im);                                                           \
-        y3_re = _mm512_add_pd(difAC_re, rot_re);                                                           \
-        y3_im = _mm512_add_pd(difAC_im, rot_im);                                                           \
-    } while (0)
-
-//==============================================================================
-// SOA W_4 INTERMEDIATE TWIDDLES (PRESERVED FROM ORIGINAL!)
-//==============================================================================
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix4_butterfly_soa_avx512(
+    __m512d a_re, __m512d a_im, __m512d b_re, __m512d b_im,
+    __m512d c_re, __m512d c_im, __m512d d_re, __m512d d_im,
+    __m512d *RESTRICT y0_re, __m512d *RESTRICT y0_im,
+    __m512d *RESTRICT y1_re, __m512d *RESTRICT y1_im,
+    __m512d *RESTRICT y2_re, __m512d *RESTRICT y2_im,
+    __m512d *RESTRICT y3_re, __m512d *RESTRICT y3_im,
+    __m512d rot_sign_mask)
+{
+    __m512d sumBD_re = _mm512_add_pd(b_re, d_re);
+    __m512d sumBD_im = _mm512_add_pd(b_im, d_im);
+    __m512d difBD_re = _mm512_sub_pd(b_re, d_re);
+    __m512d difBD_im = _mm512_sub_pd(b_im, d_im);
+    
+    __m512d sumAC_re = _mm512_add_pd(a_re, c_re);
+    __m512d sumAC_im = _mm512_add_pd(a_im, c_im);
+    __m512d difAC_re = _mm512_sub_pd(a_re, c_re);
+    __m512d difAC_im = _mm512_sub_pd(a_im, c_im);
+    
+    *y0_re = _mm512_add_pd(sumAC_re, sumBD_re);
+    *y0_im = _mm512_add_pd(sumAC_im, sumBD_im);
+    *y2_re = _mm512_sub_pd(sumAC_re, sumBD_re);
+    *y2_im = _mm512_sub_pd(sumAC_im, sumBD_im);
+    
+    // Rotation by ±i: (b-d) × (±i) = ∓(b-d).im ± i*(b-d).re
+    __m512d zero = _mm512_setzero_pd();
+    __m512d rot_re = _mm512_xor_pd(difBD_im, rot_sign_mask);
+    __m512d rot_im = _mm512_xor_pd(_mm512_sub_pd(zero, difBD_re), rot_sign_mask);
+    
+    *y1_re = _mm512_sub_pd(difAC_re, rot_re);
+    *y1_im = _mm512_sub_pd(difAC_im, rot_im);
+    *y3_re = _mm512_add_pd(difAC_re, rot_re);
+    *y3_im = _mm512_add_pd(difAC_im, rot_im);
+}
 
 /**
- * @brief Apply W_4 intermediate twiddles - FORWARD - SoA form
+ * @brief Apply W_4 intermediate twiddles - Forward
  *
- * @details
- * Applies W_4^k twiddles efficiently using swap+XOR for ±i and XOR-only for -1.
- * This is a KEY OPTIMIZATION that avoids full complex multiplies!
- *
- * Pattern for forward FFT (W_4 = e^(-iπ/2)):
- *   m=1: W_4^{j} for j=1,2,3 = {-i, -1, +i}
- *   m=2: W_4^{2j} for j=1,2,3 = {-1, +1, -1}
- *   m=3: W_4^{3j} for j=1,2,3 = {+i, -1, -i}
+ * Applies {-i, -1, +i} patterns via XOR optimizations
+ * Modifies y[5..15] in-place
  */
-#define APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(y_re, y_im, neg_mask) \
-    do                                                            \
-    {                                                             \
-        /* m=1: W_4^{j} for j=1,2,3 = {-i, -1, +i} */             \
-        {                                                         \
-            __m512d tmp_re = y_re[5];                             \
-            y_re[5] = y_im[5];                                    \
-            y_im[5] = _mm512_xor_pd(tmp_re, neg_mask);            \
-            y_re[6] = _mm512_xor_pd(y_re[6], neg_mask);           \
-            y_im[6] = _mm512_xor_pd(y_im[6], neg_mask);           \
-            tmp_re = y_re[7];                                     \
-            y_re[7] = _mm512_xor_pd(y_im[7], neg_mask);           \
-            y_im[7] = tmp_re;                                     \
-        }                                                         \
-        /* m=2: W_4^{2j} for j=1,2,3 = {-1, +1, -1} */            \
-        {                                                         \
-            y_re[9] = _mm512_xor_pd(y_re[9], neg_mask);           \
-            y_im[9] = _mm512_xor_pd(y_im[9], neg_mask);           \
-            y_re[11] = _mm512_xor_pd(y_re[11], neg_mask);         \
-            y_im[11] = _mm512_xor_pd(y_im[11], neg_mask);         \
-        }                                                         \
-        /* m=3: W_4^{3j} for j=1,2,3 = {+i, -1, -i} */            \
-        {                                                         \
-            __m512d tmp_re = y_re[13];                            \
-            y_re[13] = _mm512_xor_pd(y_im[13], neg_mask);         \
-            y_im[13] = tmp_re;                                    \
-            y_re[14] = _mm512_xor_pd(y_re[14], neg_mask);         \
-            y_im[14] = _mm512_xor_pd(y_im[14], neg_mask);         \
-            tmp_re = y_re[15];                                    \
-            y_re[15] = y_im[15];                                  \
-            y_im[15] = _mm512_xor_pd(tmp_re, neg_mask);           \
-        }                                                         \
-    } while (0)
+TARGET_AVX512_FMA
+FORCE_INLINE void
+apply_w4_intermediate_fv_soa_avx512(__m512d y_re[16], __m512d y_im[16],
+                                    __m512d neg_mask)
+{
+    // m=1: W_4^{j} for j=1,2,3 = {-i, -1, +i}
+    {
+        __m512d tmp_re = y_re[5];
+        y_re[5] = y_im[5];
+        y_im[5] = _mm512_xor_pd(tmp_re, neg_mask);
+        
+        y_re[6] = _mm512_xor_pd(y_re[6], neg_mask);
+        y_im[6] = _mm512_xor_pd(y_im[6], neg_mask);
+        
+        tmp_re = y_re[7];
+        y_re[7] = _mm512_xor_pd(y_im[7], neg_mask);
+        y_im[7] = tmp_re;
+    }
+    
+    // m=2: W_4^{2j} for j=1,2,3 = {-1, +1, -1}
+    {
+        y_re[9] = _mm512_xor_pd(y_re[9], neg_mask);
+        y_im[9] = _mm512_xor_pd(y_im[9], neg_mask);
+        // y[10] unchanged (W_4^4 = +1)
+        y_re[11] = _mm512_xor_pd(y_re[11], neg_mask);
+        y_im[11] = _mm512_xor_pd(y_im[11], neg_mask);
+    }
+    
+    // m=3: W_4^{3j} for j=1,2,3 = {+i, -1, -i}
+    {
+        __m512d tmp_re = y_re[13];
+        y_re[13] = _mm512_xor_pd(y_im[13], neg_mask);
+        y_im[13] = tmp_re;
+        
+        y_re[14] = _mm512_xor_pd(y_re[14], neg_mask);
+        y_im[14] = _mm512_xor_pd(y_im[14], neg_mask);
+        
+        tmp_re = y_re[15];
+        y_re[15] = y_im[15];
+        y_im[15] = _mm512_xor_pd(tmp_re, neg_mask);
+    }
+}
 
 /**
- * @brief Apply W_4 intermediate twiddles - BACKWARD - SoA form
- *
- * @details
- * Pattern for backward (inverse) FFT (W_4^(-1) = e^(iπ/2)):
- *   m=1: W_4^{-j} for j=1,2,3 = {+i, -1, -i}
- *   m=2: W_4^{-2j} for j=1,2,3 = {-1, +1, -1}
- *   m=3: W_4^{-3j} for j=1,2,3 = {-i, -1, +i}
+ * @brief Apply W_4 intermediate twiddles - Backward
  */
-#define APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(y_re, y_im, neg_mask) \
-    do                                                            \
-    {                                                             \
-        /* m=1: W_4^{j} for j=1,2,3 = {+i, -1, -i} */             \
-        {                                                         \
-            __m512d tmp_re = y_re[5];                             \
-            y_re[5] = _mm512_xor_pd(y_im[5], neg_mask);           \
-            y_im[5] = tmp_re;                                     \
-            y_re[6] = _mm512_xor_pd(y_re[6], neg_mask);           \
-            y_im[6] = _mm512_xor_pd(y_im[6], neg_mask);           \
-            tmp_re = y_re[7];                                     \
-            y_re[7] = y_im[7];                                    \
-            y_im[7] = _mm512_xor_pd(tmp_re, neg_mask);            \
-        }                                                         \
-        /* m=2: W_4^{2j} for j=1,2,3 = {-1, +1, -1} */            \
-        {                                                         \
-            y_re[9] = _mm512_xor_pd(y_re[9], neg_mask);           \
-            y_im[9] = _mm512_xor_pd(y_im[9], neg_mask);           \
-            y_re[11] = _mm512_xor_pd(y_re[11], neg_mask);         \
-            y_im[11] = _mm512_xor_pd(y_im[11], neg_mask);         \
-        }                                                         \
-        /* m=3: W_4^{3j} for j=1,2,3 = {-i, -1, +i} */            \
-        {                                                         \
-            __m512d tmp_re = y_re[13];                            \
-            y_re[13] = y_im[13];                                  \
-            y_im[13] = _mm512_xor_pd(tmp_re, neg_mask);           \
-            y_re[14] = _mm512_xor_pd(y_re[14], neg_mask);         \
-            y_im[14] = _mm512_xor_pd(y_im[14], neg_mask);         \
-            tmp_re = y_re[15];                                    \
-            y_re[15] = _mm512_xor_pd(y_im[15], neg_mask);         \
-            y_im[15] = tmp_re;                                    \
-        }                                                         \
-    } while (0)
+TARGET_AVX512_FMA
+FORCE_INLINE void
+apply_w4_intermediate_bv_soa_avx512(__m512d y_re[16], __m512d y_im[16],
+                                    __m512d neg_mask)
+{
+    // m=1: W_4^{-j} for j=1,2,3 = {+i, -1, -i}
+    {
+        __m512d tmp_re = y_re[5];
+        y_re[5] = _mm512_xor_pd(y_im[5], neg_mask);
+        y_im[5] = tmp_re;
+        
+        y_re[6] = _mm512_xor_pd(y_re[6], neg_mask);
+        y_im[6] = _mm512_xor_pd(y_im[6], neg_mask);
+        
+        tmp_re = y_re[7];
+        y_re[7] = y_im[7];
+        y_im[7] = _mm512_xor_pd(tmp_re, neg_mask);
+    }
+    
+    // m=2: W_4^{-2j} for j=1,2,3 = {-1, +1, -1} (same as forward)
+    {
+        y_re[9] = _mm512_xor_pd(y_re[9], neg_mask);
+        y_im[9] = _mm512_xor_pd(y_im[9], neg_mask);
+        y_re[11] = _mm512_xor_pd(y_re[11], neg_mask);
+        y_im[11] = _mm512_xor_pd(y_im[11], neg_mask);
+    }
+    
+    // m=3: W_4^{-3j} for j=1,2,3 = {-i, -1, +i}
+    {
+        __m512d tmp_re = y_re[13];
+        y_re[13] = y_im[13];
+        y_im[13] = _mm512_xor_pd(tmp_re, neg_mask);
+        
+        y_re[14] = _mm512_xor_pd(y_re[14], neg_mask);
+        y_im[14] = _mm512_xor_pd(y_im[14], neg_mask);
+        
+        tmp_re = y_re[15];
+        y_re[15] = _mm512_xor_pd(y_im[15], neg_mask);
+        y_im[15] = tmp_re;
+    }
+}
 
 //==============================================================================
-// LOAD & STORE HELPERS - NATIVE SoA (NO CONVERSIONS!)
-//==============================================================================
-
-/**
- * @brief Load 16 lanes directly from native SoA input arrays
- *
- * @details
- * ⚡⚡⚡ ZERO SHUFFLE VERSION!
- * Loads data DIRECTLY from separate re/im arrays with no conversion.
- * Each lane loads 4 complex values (8 doubles) into one AVX-512 register.
- *
- * Memory layout:
- *   in_re: [k, k+K, k+2K, ..., k+15K]
- *   in_im: [k, k+K, k+2K, ..., k+15K]
- */
-#define LOAD_16_LANES_SOA_AVX512(k, K, in_re, in_im, x_re, x_im) \
-    do                                                           \
-    {                                                            \
-        x_re[0] = _mm512_load_pd(&in_re[(k) + 0 * (K)]);         \
-        x_im[0] = _mm512_load_pd(&in_im[(k) + 0 * (K)]);         \
-        x_re[1] = _mm512_load_pd(&in_re[(k) + 1 * (K)]);         \
-        x_im[1] = _mm512_load_pd(&in_im[(k) + 1 * (K)]);         \
-        x_re[2] = _mm512_load_pd(&in_re[(k) + 2 * (K)]);         \
-        x_im[2] = _mm512_load_pd(&in_im[(k) + 2 * (K)]);         \
-        x_re[3] = _mm512_load_pd(&in_re[(k) + 3 * (K)]);         \
-        x_im[3] = _mm512_load_pd(&in_im[(k) + 3 * (K)]);         \
-        x_re[4] = _mm512_load_pd(&in_re[(k) + 4 * (K)]);         \
-        x_im[4] = _mm512_load_pd(&in_im[(k) + 4 * (K)]);         \
-        x_re[5] = _mm512_load_pd(&in_re[(k) + 5 * (K)]);         \
-        x_im[5] = _mm512_load_pd(&in_im[(k) + 5 * (K)]);         \
-        x_re[6] = _mm512_load_pd(&in_re[(k) + 6 * (K)]);         \
-        x_im[6] = _mm512_load_pd(&in_im[(k) + 6 * (K)]);         \
-        x_re[7] = _mm512_load_pd(&in_re[(k) + 7 * (K)]);         \
-        x_im[7] = _mm512_load_pd(&in_im[(k) + 7 * (K)]);         \
-        x_re[8] = _mm512_load_pd(&in_re[(k) + 8 * (K)]);         \
-        x_im[8] = _mm512_load_pd(&in_im[(k) + 8 * (K)]);         \
-        x_re[9] = _mm512_load_pd(&in_re[(k) + 9 * (K)]);         \
-        x_im[9] = _mm512_load_pd(&in_im[(k) + 9 * (K)]);         \
-        x_re[10] = _mm512_load_pd(&in_re[(k) + 10 * (K)]);       \
-        x_im[10] = _mm512_load_pd(&in_im[(k) + 10 * (K)]);       \
-        x_re[11] = _mm512_load_pd(&in_re[(k) + 11 * (K)]);       \
-        x_im[11] = _mm512_load_pd(&in_im[(k) + 11 * (K)]);       \
-        x_re[12] = _mm512_load_pd(&in_re[(k) + 12 * (K)]);       \
-        x_im[12] = _mm512_load_pd(&in_im[(k) + 12 * (K)]);       \
-        x_re[13] = _mm512_load_pd(&in_re[(k) + 13 * (K)]);       \
-        x_im[13] = _mm512_load_pd(&in_im[(k) + 13 * (K)]);       \
-        x_re[14] = _mm512_load_pd(&in_re[(k) + 14 * (K)]);       \
-        x_im[14] = _mm512_load_pd(&in_im[(k) + 14 * (K)]);       \
-        x_re[15] = _mm512_load_pd(&in_re[(k) + 15 * (K)]);       \
-        x_im[15] = _mm512_load_pd(&in_im[(k) + 15 * (K)]);       \
-    } while (0)
-
-/**
- * @brief Store 16 lanes directly to native SoA output arrays
- *
- * @details
- * ⚡⚡⚡ ZERO SHUFFLE VERSION!
- * Stores data DIRECTLY to separate re/im arrays with no conversion.
- * Regular cache-friendly stores.
- */
-#define STORE_16_LANES_SOA_AVX512(k, K, out_re, out_im, y_re, y_im) \
-    do                                                              \
-    {                                                               \
-        _mm512_store_pd(&out_re[(k) + 0 * (K)], y_re[0]);           \
-        _mm512_store_pd(&out_im[(k) + 0 * (K)], y_im[0]);           \
-        _mm512_store_pd(&out_re[(k) + 1 * (K)], y_re[1]);           \
-        _mm512_store_pd(&out_im[(k) + 1 * (K)], y_im[1]);           \
-        _mm512_store_pd(&out_re[(k) + 2 * (K)], y_re[2]);           \
-        _mm512_store_pd(&out_im[(k) + 2 * (K)], y_im[2]);           \
-        _mm512_store_pd(&out_re[(k) + 3 * (K)], y_re[3]);           \
-        _mm512_store_pd(&out_im[(k) + 3 * (K)], y_im[3]);           \
-        _mm512_store_pd(&out_re[(k) + 4 * (K)], y_re[4]);           \
-        _mm512_store_pd(&out_im[(k) + 4 * (K)], y_im[4]);           \
-        _mm512_store_pd(&out_re[(k) + 5 * (K)], y_re[5]);           \
-        _mm512_store_pd(&out_im[(k) + 5 * (K)], y_im[5]);           \
-        _mm512_store_pd(&out_re[(k) + 6 * (K)], y_re[6]);           \
-        _mm512_store_pd(&out_im[(k) + 6 * (K)], y_im[6]);           \
-        _mm512_store_pd(&out_re[(k) + 7 * (K)], y_re[7]);           \
-        _mm512_store_pd(&out_im[(k) + 7 * (K)], y_im[7]);           \
-        _mm512_store_pd(&out_re[(k) + 8 * (K)], y_re[8]);           \
-        _mm512_store_pd(&out_im[(k) + 8 * (K)], y_im[8]);           \
-        _mm512_store_pd(&out_re[(k) + 9 * (K)], y_re[9]);           \
-        _mm512_store_pd(&out_im[(k) + 9 * (K)], y_im[9]);           \
-        _mm512_store_pd(&out_re[(k) + 10 * (K)], y_re[10]);         \
-        _mm512_store_pd(&out_im[(k) + 10 * (K)], y_im[10]);         \
-        _mm512_store_pd(&out_re[(k) + 11 * (K)], y_re[11]);         \
-        _mm512_store_pd(&out_im[(k) + 11 * (K)], y_im[11]);         \
-        _mm512_store_pd(&out_re[(k) + 12 * (K)], y_re[12]);         \
-        _mm512_store_pd(&out_im[(k) + 12 * (K)], y_im[12]);         \
-        _mm512_store_pd(&out_re[(k) + 13 * (K)], y_re[13]);         \
-        _mm512_store_pd(&out_im[(k) + 13 * (K)], y_im[13]);         \
-        _mm512_store_pd(&out_re[(k) + 14 * (K)], y_re[14]);         \
-        _mm512_store_pd(&out_im[(k) + 14 * (K)], y_im[14]);         \
-        _mm512_store_pd(&out_re[(k) + 15 * (K)], y_re[15]);         \
-        _mm512_store_pd(&out_im[(k) + 15 * (K)], y_im[15]);         \
-    } while (0)
-
-/**
- * @brief Store 16 lanes using non-temporal (streaming) stores
- *
- * @details
- * Cache bypass for large transforms. Use only when write footprint
- * exceeds ~70% of LLC size.
- */
-#define STORE_16_LANES_SOA_AVX512_STREAM(k, K, out_re, out_im, y_re, y_im) \
-    do                                                                     \
-    {                                                                      \
-        _mm512_stream_pd(&out_re[(k) + 0 * (K)], y_re[0]);                 \
-        _mm512_stream_pd(&out_im[(k) + 0 * (K)], y_im[0]);                 \
-        _mm512_stream_pd(&out_re[(k) + 1 * (K)], y_re[1]);                 \
-        _mm512_stream_pd(&out_im[(k) + 1 * (K)], y_im[1]);                 \
-        _mm512_stream_pd(&out_re[(k) + 2 * (K)], y_re[2]);                 \
-        _mm512_stream_pd(&out_im[(k) + 2 * (K)], y_im[2]);                 \
-        _mm512_stream_pd(&out_re[(k) + 3 * (K)], y_re[3]);                 \
-        _mm512_stream_pd(&out_im[(k) + 3 * (K)], y_im[3]);                 \
-        _mm512_stream_pd(&out_re[(k) + 4 * (K)], y_re[4]);                 \
-        _mm512_stream_pd(&out_im[(k) + 4 * (K)], y_im[4]);                 \
-        _mm512_stream_pd(&out_re[(k) + 5 * (K)], y_re[5]);                 \
-        _mm512_stream_pd(&out_im[(k) + 5 * (K)], y_im[5]);                 \
-        _mm512_stream_pd(&out_re[(k) + 6 * (K)], y_re[6]);                 \
-        _mm512_stream_pd(&out_im[(k) + 6 * (K)], y_im[6]);                 \
-        _mm512_stream_pd(&out_re[(k) + 7 * (K)], y_re[7]);                 \
-        _mm512_stream_pd(&out_im[(k) + 7 * (K)], y_im[7]);                 \
-        _mm512_stream_pd(&out_re[(k) + 8 * (K)], y_re[8]);                 \
-        _mm512_stream_pd(&out_im[(k) + 8 * (K)], y_im[8]);                 \
-        _mm512_stream_pd(&out_re[(k) + 9 * (K)], y_re[9]);                 \
-        _mm512_stream_pd(&out_im[(k) + 9 * (K)], y_im[9]);                 \
-        _mm512_stream_pd(&out_re[(k) + 10 * (K)], y_re[10]);               \
-        _mm512_stream_pd(&out_im[(k) + 10 * (K)], y_im[10]);               \
-        _mm512_stream_pd(&out_re[(k) + 11 * (K)], y_re[11]);               \
-        _mm512_stream_pd(&out_im[(k) + 11 * (K)], y_im[11]);               \
-        _mm512_stream_pd(&out_re[(k) + 12 * (K)], y_re[12]);               \
-        _mm512_stream_pd(&out_im[(k) + 12 * (K)], y_im[12]);               \
-        _mm512_stream_pd(&out_re[(k) + 13 * (K)], y_re[13]);               \
-        _mm512_stream_pd(&out_im[(k) + 13 * (K)], y_im[13]);               \
-        _mm512_stream_pd(&out_re[(k) + 14 * (K)], y_re[14]);               \
-        _mm512_stream_pd(&out_im[(k) + 14 * (K)], y_im[14]);               \
-        _mm512_stream_pd(&out_re[(k) + 15 * (K)], y_re[15]);               \
-        _mm512_stream_pd(&out_im[(k) + 15 * (K)], y_im[15]);               \
-    } while (0)
-
-//==============================================================================
-// PREFETCHING (PRESERVED FROM ORIGINAL!)
+// LOAD/STORE - NATIVE SOA (ZERO SHUFFLES!)
 //==============================================================================
 
 /**
- * @brief Prefetch 16 input lanes ahead
+ * @brief Load 16 lanes from native SoA arrays
  */
-#define PREFETCH_16_LANES_SOA_AVX512(k, K, distance, in_re, in_im, k_end)                 \
-    do                                                                                    \
-    {                                                                                     \
-        if ((k) + (distance) < (k_end))                                                   \
-        {                                                                                 \
-            _mm_prefetch((const char *)&in_re[(k) + (distance) + 0 * (K)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&in_im[(k) + (distance) + 0 * (K)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&in_re[(k) + (distance) + 4 * (K)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&in_im[(k) + (distance) + 4 * (K)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&in_re[(k) + (distance) + 8 * (K)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&in_im[(k) + (distance) + 8 * (K)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&in_re[(k) + (distance) + 12 * (K)], _MM_HINT_T0); \
-            _mm_prefetch((const char *)&in_im[(k) + (distance) + 12 * (K)], _MM_HINT_T0); \
-        }                                                                                 \
-    } while (0)
+TARGET_AVX512_FMA
+FORCE_INLINE void
+load_16_lanes_soa_avx512(size_t k, size_t K,
+                         const double *RESTRICT in_re, const double *RESTRICT in_im,
+                         __m512d x_re[16], __m512d x_im[16])
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    
+    for (int r = 0; r < 16; r++)
+    {
+        x_re[r] = _mm512_load_pd(&in_re_aligned[k + r * K]);
+        x_im[r] = _mm512_load_pd(&in_im_aligned[k + r * K]);
+    }
+}
 
 /**
- * @brief Prefetch twiddle factors ahead
+ * @brief Load 16 lanes with mask (tail handling)
  */
-#define PREFETCH_STAGE_TW_SOA_AVX512(k, distance, stage_tw, K, k_end)                            \
-    do                                                                                           \
-    {                                                                                            \
-        if ((k) + (distance) < (k_end))                                                          \
-        {                                                                                        \
-            _mm_prefetch((const char *)&stage_tw->re[0 * (K) + (k) + (distance)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&stage_tw->im[0 * (K) + (k) + (distance)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&stage_tw->re[7 * (K) + (k) + (distance)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&stage_tw->im[7 * (K) + (k) + (distance)], _MM_HINT_T0);  \
-            _mm_prefetch((const char *)&stage_tw->re[14 * (K) + (k) + (distance)], _MM_HINT_T0); \
-            _mm_prefetch((const char *)&stage_tw->im[14 * (K) + (k) + (distance)], _MM_HINT_T0); \
-        }                                                                                        \
-    } while (0)
-
-//==============================================================================
-// SOA TWIDDLE APPLICATION - SOFTWARE PIPELINED (PRESERVED!)
-//==============================================================================
+TARGET_AVX512_FMA
+FORCE_INLINE void
+load_16_lanes_soa_avx512_masked(size_t k, size_t K, __mmask8 mask,
+                                 const double *RESTRICT in_re, const double *RESTRICT in_im,
+                                 __m512d x_re[16], __m512d x_im[16])
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    
+    for (int r = 0; r < 16; r++)
+    {
+        x_re[r] = _mm512_maskz_load_pd(mask, &in_re_aligned[k + r * K]);
+        x_im[r] = _mm512_maskz_load_pd(mask, &in_im_aligned[k + r * K]);
+    }
+}
 
 /**
- * @brief Apply stage twiddles with 3-way unrolled software pipelining
- *
- * @details
- * ⚡⚡ KEY OPTIMIZATION: Software pipelined in triplets!
- * Loads 3 twiddle pairs ahead to hide memory latency.
- * This gives ~2-4% speedup by overlapping loads with computation.
- *
- * Pattern:
- *   Load w1, w2, w3
- *   Compute x1*w1, x2*w2, x3*w3
- *   Load w4, w5, w6
- *   ...
+ * @brief Store 16 lanes to native SoA arrays
  */
-#define APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(k, x_re, x_im, stage_tw, K)              \
-    do                                                                               \
-    {                                                                                \
-        /* r=1,2,3 - first triplet */                                                \
-        __m512d w1_re = _mm512_load_pd(&stage_tw->re[0 * (K) + (k)]);                \
-        __m512d w1_im = _mm512_load_pd(&stage_tw->im[0 * (K) + (k)]);                \
-        __m512d w2_re = _mm512_load_pd(&stage_tw->re[1 * (K) + (k)]);                \
-        __m512d w2_im = _mm512_load_pd(&stage_tw->im[1 * (K) + (k)]);                \
-        __m512d w3_re = _mm512_load_pd(&stage_tw->re[2 * (K) + (k)]);                \
-        __m512d w3_im = _mm512_load_pd(&stage_tw->im[2 * (K) + (k)]);                \
-        CMUL_FMA_SOA_AVX512(x_re[1], x_im[1], x_re[1], x_im[1], w1_re, w1_im);       \
-        CMUL_FMA_SOA_AVX512(x_re[2], x_im[2], x_re[2], x_im[2], w2_re, w2_im);       \
-        CMUL_FMA_SOA_AVX512(x_re[3], x_im[3], x_re[3], x_im[3], w3_re, w3_im);       \
-        /* r=4,5,6 */                                                                \
-        __m512d w4_re = _mm512_load_pd(&stage_tw->re[3 * (K) + (k)]);                \
-        __m512d w4_im = _mm512_load_pd(&stage_tw->im[3 * (K) + (k)]);                \
-        __m512d w5_re = _mm512_load_pd(&stage_tw->re[4 * (K) + (k)]);                \
-        __m512d w5_im = _mm512_load_pd(&stage_tw->im[4 * (K) + (k)]);                \
-        __m512d w6_re = _mm512_load_pd(&stage_tw->re[5 * (K) + (k)]);                \
-        __m512d w6_im = _mm512_load_pd(&stage_tw->im[5 * (K) + (k)]);                \
-        CMUL_FMA_SOA_AVX512(x_re[4], x_im[4], x_re[4], x_im[4], w4_re, w4_im);       \
-        CMUL_FMA_SOA_AVX512(x_re[5], x_im[5], x_re[5], x_im[5], w5_re, w5_im);       \
-        CMUL_FMA_SOA_AVX512(x_re[6], x_im[6], x_re[6], x_im[6], w6_re, w6_im);       \
-        /* r=7,8,9 */                                                                \
-        __m512d w7_re = _mm512_load_pd(&stage_tw->re[6 * (K) + (k)]);                \
-        __m512d w7_im = _mm512_load_pd(&stage_tw->im[6 * (K) + (k)]);                \
-        __m512d w8_re = _mm512_load_pd(&stage_tw->re[7 * (K) + (k)]);                \
-        __m512d w8_im = _mm512_load_pd(&stage_tw->im[7 * (K) + (k)]);                \
-        __m512d w9_re = _mm512_load_pd(&stage_tw->re[8 * (K) + (k)]);                \
-        __m512d w9_im = _mm512_load_pd(&stage_tw->im[8 * (K) + (k)]);                \
-        CMUL_FMA_SOA_AVX512(x_re[7], x_im[7], x_re[7], x_im[7], w7_re, w7_im);       \
-        CMUL_FMA_SOA_AVX512(x_re[8], x_im[8], x_re[8], x_im[8], w8_re, w8_im);       \
-        CMUL_FMA_SOA_AVX512(x_re[9], x_im[9], x_re[9], x_im[9], w9_re, w9_im);       \
-        /* r=10,11,12 */                                                             \
-        __m512d w10_re = _mm512_load_pd(&stage_tw->re[9 * (K) + (k)]);               \
-        __m512d w10_im = _mm512_load_pd(&stage_tw->im[9 * (K) + (k)]);               \
-        __m512d w11_re = _mm512_load_pd(&stage_tw->re[10 * (K) + (k)]);              \
-        __m512d w11_im = _mm512_load_pd(&stage_tw->im[10 * (K) + (k)]);              \
-        __m512d w12_re = _mm512_load_pd(&stage_tw->re[11 * (K) + (k)]);              \
-        __m512d w12_im = _mm512_load_pd(&stage_tw->im[11 * (K) + (k)]);              \
-        CMUL_FMA_SOA_AVX512(x_re[10], x_im[10], x_re[10], x_im[10], w10_re, w10_im); \
-        CMUL_FMA_SOA_AVX512(x_re[11], x_im[11], x_re[11], x_im[11], w11_re, w11_im); \
-        CMUL_FMA_SOA_AVX512(x_re[12], x_im[12], x_re[12], x_im[12], w12_re, w12_im); \
-        /* r=13,14,15 */                                                             \
-        __m512d w13_re = _mm512_load_pd(&stage_tw->re[12 * (K) + (k)]);              \
-        __m512d w13_im = _mm512_load_pd(&stage_tw->im[12 * (K) + (k)]);              \
-        __m512d w14_re = _mm512_load_pd(&stage_tw->re[13 * (K) + (k)]);              \
-        __m512d w14_im = _mm512_load_pd(&stage_tw->im[13 * (K) + (k)]);              \
-        __m512d w15_re = _mm512_load_pd(&stage_tw->re[14 * (K) + (k)]);              \
-        __m512d w15_im = _mm512_load_pd(&stage_tw->im[14 * (K) + (k)]);              \
-        CMUL_FMA_SOA_AVX512(x_re[13], x_im[13], x_re[13], x_im[13], w13_re, w13_im); \
-        CMUL_FMA_SOA_AVX512(x_re[14], x_im[14], x_re[14], x_im[14], w14_re, w14_im); \
-        CMUL_FMA_SOA_AVX512(x_re[15], x_im[15], x_re[15], x_im[15], w15_re, w15_im); \
-    } while (0)
+TARGET_AVX512_FMA
+FORCE_INLINE void
+store_16_lanes_soa_avx512(size_t k, size_t K,
+                          double *RESTRICT out_re, double *RESTRICT out_im,
+                          const __m512d y_re[16], const __m512d y_im[16])
+{
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    for (int r = 0; r < 16; r++)
+    {
+        _mm512_store_pd(&out_re_aligned[k + r * K], y_re[r]);
+        _mm512_store_pd(&out_im_aligned[k + r * K], y_im[r]);
+    }
+}
+
+/**
+ * @brief Store 16 lanes with mask (tail handling)
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+store_16_lanes_soa_avx512_masked(size_t k, size_t K, __mmask8 mask,
+                                  double *RESTRICT out_re, double *RESTRICT out_im,
+                                  const __m512d y_re[16], const __m512d y_im[16])
+{
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    for (int r = 0; r < 16; r++)
+    {
+        _mm512_mask_store_pd(&out_re_aligned[k + r * K], mask, y_re[r]);
+        _mm512_mask_store_pd(&out_im_aligned[k + r * K], mask, y_im[r]);
+    }
+}
+
+/**
+ * @brief Store 16 lanes using non-temporal stores
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+store_16_lanes_soa_avx512_stream(size_t k, size_t K,
+                                  double *RESTRICT out_re, double *RESTRICT out_im,
+                                  const __m512d y_re[16], const __m512d y_im[16])
+{
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    for (int r = 0; r < 16; r++)
+    {
+        _mm512_stream_pd(&out_re_aligned[k + r * K], y_re[r]);
+        _mm512_stream_pd(&out_im_aligned[k + r * K], y_im[r]);
+    }
+}
 
 //==============================================================================
-// OPTIMIZED SOA BUTTERFLY PIPELINE (REDUCED REGISTER PRESSURE - PRESERVED!)
-// Strategy: Load → Twiddle → 1st radix-4 → W4 twiddles → 2nd radix-4 → Store
-// Peak live: ~20-24 zmm (avoiding spills)
+// BLOCKED8: APPLY STAGE TWIDDLES (INTERLEAVED ORDER!)
 //==============================================================================
 
 /**
- * @brief Complete radix-16 butterfly - FORWARD - Native SoA - AVX-512
+ * @brief Apply stage twiddles - BLOCKED8 - Interleaved order
  *
- * @details
- * ⚡⚡⚡ ZERO SHUFFLE VERSION!
- * Full radix-16 butterfly with all optimizations preserved:
- *   - Direct SoA loads/stores (no conversions!)
- *   - Software pipelined twiddle application
- *   - Optimized W_4 intermediate twiddles (swap+XOR)
- *   - In-place 2nd stage (reduced register pressure)
- *   - Regular cache-friendly stores
+ * Interleaved order breaks FMA dependency chains:
+ * [1,5,9,13, 2,6,10,14, 3,7,11,15, 4,8,12]
  */
-#define RADIX16_PIPELINE_4_FV_NATIVE_SOA_AVX512(k, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask, prefetch_dist, k_end) \
-    do                                                                                                                                  \
-    {                                                                                                                                   \
-        PREFETCH_16_LANES_SOA_AVX512(k, K, prefetch_dist, in_re, in_im, k_end);                                                         \
-        PREFETCH_STAGE_TW_SOA_AVX512(k, prefetch_dist, stage_tw, K, k_end);                                                             \
-        __m512d x_re[16], x_im[16];                                                                                                     \
-        LOAD_16_LANES_SOA_AVX512(k, K, in_re, in_im, x_re, x_im);                                                                       \
-        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(k, x_re, x_im, stage_tw, K);                                                                \
-        __m512d t_re[16], t_im[16];                                                                                                     \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                           \
-                                    t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                           \
-                                    t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                         \
-                                    t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);              \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                         \
-                                    t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);          \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(t_re, t_im, neg_mask);                                                                      \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                           \
-                                    x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);                \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                           \
-                                    x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);                \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                         \
-                                    x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);              \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                         \
-                                    x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);              \
-        STORE_16_LANES_SOA_AVX512(k, K, out_re, out_im, x_re, x_im);                                                                    \
-    } while (0)
-
-/**
- * @brief Complete radix-16 butterfly - BACKWARD - Native SoA - AVX-512
- */
-#define RADIX16_PIPELINE_4_BV_NATIVE_SOA_AVX512(k, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask, prefetch_dist, k_end) \
-    do                                                                                                                                  \
-    {                                                                                                                                   \
-        PREFETCH_16_LANES_SOA_AVX512(k, K, prefetch_dist, in_re, in_im, k_end);                                                         \
-        PREFETCH_STAGE_TW_SOA_AVX512(k, prefetch_dist, stage_tw, K, k_end);                                                             \
-        __m512d x_re[16], x_im[16];                                                                                                     \
-        LOAD_16_LANES_SOA_AVX512(k, K, in_re, in_im, x_re, x_im);                                                                       \
-        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(k, x_re, x_im, stage_tw, K);                                                                \
-        __m512d t_re[16], t_im[16];                                                                                                     \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                           \
-                                    t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                           \
-                                    t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                         \
-                                    t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);              \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                         \
-                                    t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);          \
-        APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(t_re, t_im, neg_mask);                                                                      \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                           \
-                                    x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);                \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                           \
-                                    x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);                \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                         \
-                                    x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);              \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                         \
-                                    x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);              \
-        STORE_16_LANES_SOA_AVX512(k, K, out_re, out_im, x_re, x_im);                                                                    \
-    } while (0)
-
-/**
- * @brief Streaming (non-temporal) version - FORWARD
- */
-#define RADIX16_PIPELINE_4_FV_NATIVE_SOA_AVX512_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask, prefetch_dist, k_end) \
-    do                                                                                                                                         \
-    {                                                                                                                                          \
-        PREFETCH_16_LANES_SOA_AVX512(k, K, prefetch_dist, in_re, in_im, k_end);                                                                \
-        PREFETCH_STAGE_TW_SOA_AVX512(k, prefetch_dist, stage_tw, K, k_end);                                                                    \
-        __m512d x_re[16], x_im[16];                                                                                                            \
-        LOAD_16_LANES_SOA_AVX512(k, K, in_re, in_im, x_re, x_im);                                                                              \
-        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(k, x_re, x_im, stage_tw, K);                                                                       \
-        __m512d t_re[16], t_im[16];                                                                                                            \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                                  \
-                                    t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);                         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                                  \
-                                    t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);                         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                                \
-                                    t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);                     \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                                \
-                                    t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);                 \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(t_re, t_im, neg_mask);                                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                                  \
-                                    x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);                       \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                                  \
-                                    x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);                       \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                                \
-                                    x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);                     \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                                \
-                                    x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);                     \
-        STORE_16_LANES_SOA_AVX512_STREAM(k, K, out_re, out_im, x_re, x_im);                                                                    \
-    } while (0)
-
-/**
- * @brief Streaming (non-temporal) version - BACKWARD
- */
-#define RADIX16_PIPELINE_4_BV_NATIVE_SOA_AVX512_STREAM(k, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask, prefetch_dist, k_end) \
-    do                                                                                                                                         \
-    {                                                                                                                                          \
-        PREFETCH_16_LANES_SOA_AVX512(k, K, prefetch_dist, in_re, in_im, k_end);                                                                \
-        PREFETCH_STAGE_TW_SOA_AVX512(k, prefetch_dist, stage_tw, K, k_end);                                                                    \
-        __m512d x_re[16], x_im[16];                                                                                                            \
-        LOAD_16_LANES_SOA_AVX512(k, K, in_re, in_im, x_re, x_im);                                                                              \
-        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(k, x_re, x_im, stage_tw, K);                                                                       \
-        __m512d t_re[16], t_im[16];                                                                                                            \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],                                  \
-                                    t_re[0], t_im[0], t_re[1], t_im[1], t_re[2], t_im[2], t_re[3], t_im[3], rot_mask);                         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],                                  \
-                                    t_re[4], t_im[4], t_re[5], t_im[5], t_re[6], t_im[6], t_re[7], t_im[7], rot_mask);                         \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],                                \
-                                    t_re[8], t_im[8], t_re[9], t_im[9], t_re[10], t_im[10], t_re[11], t_im[11], rot_mask);                     \
-        RADIX4_BUTTERFLY_SOA_AVX512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],                                \
-                                    t_re[12], t_im[12], t_re[13], t_im[13], t_re[14], t_im[14], t_re[15], t_im[15], rot_mask);                 \
-        APPLY_W4_INTERMEDIATE_BV_SOA_AVX512(t_re, t_im, neg_mask);                                                                             \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],                                  \
-                                    x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12], rot_mask);                       \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],                                  \
-                                    x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13], rot_mask);                       \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],                                \
-                                    x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14], rot_mask);                     \
-        RADIX4_BUTTERFLY_SOA_AVX512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],                                \
-                                    x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15], rot_mask);                     \
-        STORE_16_LANES_SOA_AVX512_STREAM(k, K, out_re, out_im, x_re, x_im);                                                                    \
-    } while (0)
-
-/*******************************************************************************
- * RADIX-16 PIPELINE - UNROLL BY 2 (OPTIMIZED)
- ******************************************************************************/
-
-/**
- * RADIX-16 Two-way Unrolled Pipeline (Forward Transform, Cached Stores)
- *
- * Processes two butterflies (k and k+KU) in lock-step for optimal register reuse.
- *
- * PERFORMANCE NOTES:
- * - Keeps ~44 zmm registers live (22 per butterfly): within safe limits
- * - Interleaves loads/twiddles of u=1 with computation of u=0 for latency hiding
- * - Expected speedup: +3-7% over single unroll
- *
- * PARAMETERS:
- * @param k            Base index for first butterfly
- * @param KU           Unroll stride (typically 1)
- * @param K            Stride between consecutive elements
- * @param in_re        Input real array (SoA)
- * @param in_im        Input imaginary array (SoA)
- * @param out_re       Output real array (SoA)
- * @param out_im       Output imaginary array (SoA)
- * @param stage_tw     Stage twiddle factors
- * @param rot_mask     Rotation control mask (for 90-degree rotations)
- * @param neg_mask     Negation mask (sign bit flip)
- * @param prefetch_dist Prefetch distance (2-4 iterations ahead)
- * @param k_end        End bound for prefetch checks
- */
-#define RADIX16_PIPELINE_4_FV_NATIVE_SOA_AVX512_U2(                                                   \
-    k, KU, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask,                             \
-    prefetch_dist, k_end)                                                                             \
-    do                                                                                                \
-    {                                                                                                 \
-        int k0 = (k);                                                                                 \
-        int k1 = (k) + (KU);                                                                          \
-        /* Prefetch next tiles for both butterflies */                                                \
-        PREFETCH_16_LANES_SOA_AVX512(k0, K, prefetch_dist, in_re, in_im, k_end);                      \
-        PREFETCH_STAGE_TW_SOA_AVX512(k0, prefetch_dist, stage_tw, K, k_end);                          \
-        PREFETCH_16_LANES_SOA_AVX512(k1, K, prefetch_dist, in_re, in_im, k_end);                      \
-        PREFETCH_STAGE_TW_SOA_AVX512(k1, prefetch_dist, stage_tw, K, k_end);                          \
-                                                                                                      \
-        /* === STREAM u=0: Load, Twiddle, Stage1 === */                                               \
-        __m512d x0_re[16], x0_im[16];                                                                 \
-        LOAD_16_LANES_SOA_AVX512(k0, K, in_re, in_im, x0_re, x0_im);                                  \
-        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(k0, x0_re, x0_im, stage_tw, K);                           \
-        __m512d t0_re[16], t0_im[16];                                                                 \
-        RADIX4_BUTTERFLY_SOA_AVX512(x0_re[0], x0_im[0], x0_re[4], x0_im[4],                           \
-                                    x0_re[8], x0_im[8], x0_re[12], x0_im[12],                         \
-                                    t0_re[0], t0_im[0], t0_re[1], t0_im[1], t0_re[2], t0_im[2],       \
-                                    t0_re[3], t0_im[3], rot_mask);                                    \
-        RADIX4_BUTTERFLY_SOA_AVX512(x0_re[1], x0_im[1], x0_re[5], x0_im[5],                           \
-                                    x0_re[9], x0_im[9], x0_re[13], x0_im[13],                         \
-                                    t0_re[4], t0_im[4], t0_re[5], t0_im[5], t0_re[6], t0_im[6],       \
-                                    t0_re[7], t0_im[7], rot_mask);                                    \
-        RADIX4_BUTTERFLY_SOA_AVX512(x0_re[2], x0_im[2], x0_re[6], x0_im[6],                           \
-                                    x0_re[10], x0_im[10], x0_re[14], x0_im[14],                       \
-                                    t0_re[8], t0_im[8], t0_re[9], t0_im[9], t0_re[10], t0_im[10],     \
-                                    t0_re[11], t0_im[11], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(x0_re[3], x0_im[3], x0_re[7], x0_im[7],                           \
-                                    x0_re[11], x0_im[11], x0_re[15], x0_im[15],                       \
-                                    t0_re[12], t0_im[12], t0_re[13], t0_im[13], t0_re[14], t0_im[14], \
-                                    t0_re[15], t0_im[15], rot_mask);                                  \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(t0_re, t0_im, neg_mask);                                  \
-                                                                                                      \
-        /* Load and twiddle u=1 while t0 is in registers (latency overlap) */                         \
-        __m512d x1_re[16], x1_im[16];                                                                 \
-        LOAD_16_LANES_SOA_AVX512(k1, K, in_re, in_im, x1_re, x1_im);                                  \
-        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(k1, x1_re, x1_im, stage_tw, K);                           \
-                                                                                                      \
-        /* === STREAM u=0: Stage2, Store === */                                                       \
-        RADIX4_BUTTERFLY_SOA_AVX512(t0_re[0], t0_im[0], t0_re[4], t0_im[4],                           \
-                                    t0_re[8], t0_im[8], t0_re[12], t0_im[12],                         \
-                                    x0_re[0], x0_im[0], x0_re[4], x0_im[4], x0_re[8], x0_im[8],       \
-                                    x0_re[12], x0_im[12], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t0_re[1], t0_im[1], t0_re[5], t0_im[5],                           \
-                                    t0_re[9], t0_im[9], t0_re[13], t0_im[13],                         \
-                                    x0_re[1], x0_im[1], x0_re[5], x0_im[5], x0_re[9], x0_im[9],       \
-                                    x0_re[13], x0_im[13], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t0_re[2], t0_im[2], t0_re[6], t0_im[6],                           \
-                                    t0_re[10], t0_im[10], t0_re[14], t0_im[14],                       \
-                                    x0_re[2], x0_im[2], x0_re[6], x0_im[6], x0_re[10], x0_im[10],     \
-                                    x0_re[14], x0_im[14], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t0_re[3], t0_im[3], t0_re[7], t0_im[7],                           \
-                                    t0_re[11], t0_im[11], t0_re[15], t0_im[15],                       \
-                                    x0_re[3], x0_im[3], x0_re[7], x0_im[7], x0_re[11], x0_im[11],     \
-                                    x0_re[15], x0_im[15], rot_mask);                                  \
-        STORE_16_LANES_SOA_AVX512(k0, K, out_re, out_im, x0_re, x0_im);                               \
-                                                                                                      \
-        /* === STREAM u=1: Stage1, W4, Stage2, Store === */                                           \
-        __m512d t1_re[16], t1_im[16];                                                                 \
-        RADIX4_BUTTERFLY_SOA_AVX512(x1_re[0], x1_im[0], x1_re[4], x1_im[4],                           \
-                                    x1_re[8], x1_im[8], x1_re[12], x1_im[12],                         \
-                                    t1_re[0], t1_im[0], t1_re[1], t1_im[1], t1_re[2], t1_im[2],       \
-                                    t1_re[3], t1_im[3], rot_mask);                                    \
-        RADIX4_BUTTERFLY_SOA_AVX512(x1_re[1], x1_im[1], x1_re[5], x1_im[5],                           \
-                                    x1_re[9], x1_im[9], x1_re[13], x1_im[13],                         \
-                                    t1_re[4], t1_im[4], t1_re[5], t1_im[5], t1_re[6], t1_im[6],       \
-                                    t1_re[7], t1_im[7], rot_mask);                                    \
-        RADIX4_BUTTERFLY_SOA_AVX512(x1_re[2], x1_im[2], x1_re[6], x1_im[6],                           \
-                                    x1_re[10], x1_im[10], x1_re[14], x1_im[14],                       \
-                                    t1_re[8], t1_im[8], t1_re[9], t1_im[9], t1_re[10], t1_im[10],     \
-                                    t1_re[11], t1_im[11], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(x1_re[3], x1_im[3], x1_re[7], x1_im[7],                           \
-                                    x1_re[11], x1_im[11], x1_re[15], x1_im[15],                       \
-                                    t1_re[12], t1_im[12], t1_re[13], t1_im[13], t1_re[14], t1_im[14], \
-                                    t1_re[15], t1_im[15], rot_mask);                                  \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(t1_re, t1_im, neg_mask);                                  \
-                                                                                                      \
-        RADIX4_BUTTERFLY_SOA_AVX512(t1_re[0], t1_im[0], t1_re[4], t1_im[4],                           \
-                                    t1_re[8], t1_im[8], t1_re[12], t1_im[12],                         \
-                                    x1_re[0], x1_im[0], x1_re[4], x1_im[4], x1_re[8], x1_im[8],       \
-                                    x1_re[12], x1_im[12], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t1_re[1], t1_im[1], t1_re[5], t1_im[5],                           \
-                                    t1_re[9], t1_im[9], t1_re[13], t1_im[13],                         \
-                                    x1_re[1], x1_im[1], x1_re[5], x1_im[5], x1_re[9], x1_im[9],       \
-                                    x1_re[13], x1_im[13], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t1_re[2], t1_im[2], t1_re[6], t1_im[6],                           \
-                                    t1_re[10], t1_im[10], t1_re[14], t1_im[14],                       \
-                                    x1_re[2], x1_im[2], x1_re[6], x1_im[6], x1_re[10], x1_im[10],     \
-                                    x1_re[14], x1_im[14], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t1_re[3], t1_im[3], t1_re[7], t1_im[7],                           \
-                                    t1_re[11], t1_im[11], t1_re[15], t1_im[15],                       \
-                                    x1_re[3], x1_im[3], x1_re[7], x1_im[7], x1_re[11], x1_im[11],     \
-                                    x1_re[15], x1_im[15], rot_mask);                                  \
-        STORE_16_LANES_SOA_AVX512(k1, K, out_re, out_im, x1_re, x1_im);                               \
-    } while (0)
-
-/**
- * RADIX-16 Two-way Unrolled Pipeline (Streaming Stores)
- *
- * Identical to U2 version but uses non-temporal stores.
- * Use for large transforms (> L3 cache) where output won't be immediately reused.
- */
-#define RADIX16_PIPELINE_4_FV_NATIVE_SOA_AVX512_U2_STREAM(                                            \
-    k, KU, K, in_re, in_im, out_re, out_im, stage_tw, rot_mask, neg_mask,                             \
-    prefetch_dist, k_end)                                                                             \
-    do                                                                                                \
-    {                                                                                                 \
-        int k0 = (k);                                                                                 \
-        int k1 = (k) + (KU);                                                                          \
-        PREFETCH_16_LANES_SOA_AVX512(k0, K, prefetch_dist, in_re, in_im, k_end);                      \
-        PREFETCH_STAGE_TW_SOA_AVX512(k0, prefetch_dist, stage_tw, K, k_end);                          \
-        PREFETCH_16_LANES_SOA_AVX512(k1, K, prefetch_dist, in_re, in_im, k_end);                      \
-        PREFETCH_STAGE_TW_SOA_AVX512(k1, prefetch_dist, stage_tw, K, k_end);                          \
-                                                                                                      \
-        __m512d x0_re[16], x0_im[16];                                                                 \
-        LOAD_16_LANES_SOA_AVX512(k0, K, in_re, in_im, x0_re, x0_im);                                  \
-        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(k0, x0_re, x0_im, stage_tw, K);                           \
-        __m512d t0_re[16], t0_im[16];                                                                 \
-        RADIX4_BUTTERFLY_SOA_AVX512(x0_re[0], x0_im[0], x0_re[4], x0_im[4],                           \
-                                    x0_re[8], x0_im[8], x0_re[12], x0_im[12],                         \
-                                    t0_re[0], t0_im[0], t0_re[1], t0_im[1], t0_re[2], t0_im[2],       \
-                                    t0_re[3], t0_im[3], rot_mask);                                    \
-        RADIX4_BUTTERFLY_SOA_AVX512(x0_re[1], x0_im[1], x0_re[5], x0_im[5],                           \
-                                    x0_re[9], x0_im[9], x0_re[13], x0_im[13],                         \
-                                    t0_re[4], t0_im[4], t0_re[5], t0_im[5], t0_re[6], t0_im[6],       \
-                                    t0_re[7], t0_im[7], rot_mask);                                    \
-        RADIX4_BUTTERFLY_SOA_AVX512(x0_re[2], x0_im[2], x0_re[6], x0_im[6],                           \
-                                    x0_re[10], x0_im[10], x0_re[14], x0_im[14],                       \
-                                    t0_re[8], t0_im[8], t0_re[9], t0_im[9], t0_re[10], t0_im[10],     \
-                                    t0_re[11], t0_im[11], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(x0_re[3], x0_im[3], x0_re[7], x0_im[7],                           \
-                                    x0_re[11], x0_im[11], x0_re[15], x0_im[15],                       \
-                                    t0_re[12], t0_im[12], t0_re[13], t0_im[13], t0_re[14], t0_im[14], \
-                                    t0_re[15], t0_im[15], rot_mask);                                  \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(t0_re, t0_im, neg_mask);                                  \
-                                                                                                      \
-        __m512d x1_re[16], x1_im[16];                                                                 \
-        LOAD_16_LANES_SOA_AVX512(k1, K, in_re, in_im, x1_re, x1_im);                                  \
-        APPLY_STAGE_TWIDDLES_R16_SOA_AVX512(k1, x1_re, x1_im, stage_tw, K);                           \
-                                                                                                      \
-        RADIX4_BUTTERFLY_SOA_AVX512(t0_re[0], t0_im[0], t0_re[4], t0_im[4],                           \
-                                    t0_re[8], t0_im[8], t0_re[12], t0_im[12],                         \
-                                    x0_re[0], x0_im[0], x0_re[4], x0_im[4], x0_re[8], x0_im[8],       \
-                                    x0_re[12], x0_im[12], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t0_re[1], t0_im[1], t0_re[5], t0_im[5],                           \
-                                    t0_re[9], t0_im[9], t0_re[13], t0_im[13],                         \
-                                    x0_re[1], x0_im[1], x0_re[5], x0_im[5], x0_re[9], x0_im[9],       \
-                                    x0_re[13], x0_im[13], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t0_re[2], t0_im[2], t0_re[6], t0_im[6],                           \
-                                    t0_re[10], t0_im[10], t0_re[14], t0_im[14],                       \
-                                    x0_re[2], x0_im[2], x0_re[6], x0_im[6], x0_re[10], x0_im[10],     \
-                                    x0_re[14], x0_im[14], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t0_re[3], t0_im[3], t0_re[7], t0_im[7],                           \
-                                    t0_re[11], t0_im[11], t0_re[15], t0_im[15],                       \
-                                    x0_re[3], x0_im[3], x0_re[7], x0_im[7], x0_re[11], x0_im[11],     \
-                                    x0_re[15], x0_im[15], rot_mask);                                  \
-        STORE_16_LANES_SOA_AVX512_STREAM(k0, K, out_re, out_im, x0_re, x0_im);                        \
-                                                                                                      \
-        __m512d t1_re[16], t1_im[16];                                                                 \
-        RADIX4_BUTTERFLY_SOA_AVX512(x1_re[0], x1_im[0], x1_re[4], x1_im[4],                           \
-                                    x1_re[8], x1_im[8], x1_re[12], x1_im[12],                         \
-                                    t1_re[0], t1_im[0], t1_re[1], t1_im[1], t1_re[2], t1_im[2],       \
-                                    t1_re[3], t1_im[3], rot_mask);                                    \
-        RADIX4_BUTTERFLY_SOA_AVX512(x1_re[1], x1_im[1], x1_re[5], x1_im[5],                           \
-                                    x1_re[9], x1_im[9], x1_re[13], x1_im[13],                         \
-                                    t1_re[4], t1_im[4], t1_re[5], t1_im[5], t1_re[6], t1_im[6],       \
-                                    t1_re[7], t1_im[7], rot_mask);                                    \
-        RADIX4_BUTTERFLY_SOA_AVX512(x1_re[2], x1_im[2], x1_re[6], x1_im[6],                           \
-                                    x1_re[10], x1_im[10], x1_re[14], x1_im[14],                       \
-                                    t1_re[8], t1_im[8], t1_re[9], t1_im[9], t1_re[10], t1_im[10],     \
-                                    t1_re[11], t1_im[11], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(x1_re[3], x1_im[3], x1_re[7], x1_im[7],                           \
-                                    x1_re[11], x1_im[11], x1_re[15], x1_im[15],                       \
-                                    t1_re[12], t1_im[12], t1_re[13], t1_im[13], t1_re[14], t1_im[14], \
-                                    t1_re[15], t1_im[15], rot_mask);                                  \
-        APPLY_W4_INTERMEDIATE_FV_SOA_AVX512(t1_re, t1_im, neg_mask);                                  \
-                                                                                                      \
-        RADIX4_BUTTERFLY_SOA_AVX512(t1_re[0], t1_im[0], t1_re[4], t1_im[4],                           \
-                                    t1_re[8], t1_im[8], t1_re[12], t1_im[12],                         \
-                                    x1_re[0], x1_im[0], x1_re[4], x1_im[4], x1_re[8], x1_im[8],       \
-                                    x1_re[12], x1_im[12], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t1_re[1], t1_im[1], t1_re[5], t1_im[5],                           \
-                                    t1_re[9], t1_im[9], t1_re[13], t1_im[13],                         \
-                                    x1_re[1], x1_im[1], x1_re[5], x1_im[5], x1_re[9], x1_im[9],       \
-                                    x1_re[13], x1_im[13], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t1_re[2], t1_im[2], t1_re[6], t1_im[6],                           \
-                                    t1_re[10], t1_im[10], t1_re[14], t1_im[14],                       \
-                                    x1_re[2], x1_im[2], x1_re[6], x1_im[6], x1_re[10], x1_im[10],     \
-                                    x1_re[14], x1_im[14], rot_mask);                                  \
-        RADIX4_BUTTERFLY_SOA_AVX512(t1_re[3], t1_im[3], t1_re[7], t1_im[7],                           \
-                                    t1_re[11], t1_im[11], t1_re[15], t1_im[15],                       \
-                                    x1_re[3], x1_im[3], x1_re[7], x1_im[7], x1_re[11], x1_im[11],     \
-                                    x1_re[15], x1_im[15], rot_mask);                                  \
-        STORE_16_LANES_SOA_AVX512_STREAM(k1, K, out_re, out_im, x1_re, x1_im);                        \
-    } while (0)
-
-#endif // __AVX512F__
+TARGET_AVX512_FMA
+FORCE_INLINE void
+apply_stage_twiddles_blocked8_avx512(
+    size_t k, size_t K,
+    __m512d x_re[16], __m512d x_im[16],
+    const radix16_stage_twiddles_blocked8_t *RESTRICT stage_tw,
+    __m512d sign_mask)
+{
+    const double *re_base = ASSUME_ALIGNED(stage_tw->re, 64);
+    const double *im_base = ASSUME_ALIGNED(stage_tw->im, 64);
+    
+    // Load W1..W8
+    __m512d W_re[8], W_im[8];
+    for (int r = 0; r < 8; r++)
+    {
+        W_re[r] = _mm512_load_pd(&re_base[r * K + k]);
+        W_im[r] = _mm512_load_pd(&im_base[r * K + k]);
+    }
+    
+    // Interleaved order: r = 1,5,9,13 (first group)
+    __m512d t1r, t1i, t5r, t5i, t9r, t9i, t13r, t13i;
+    cmul_fma_soa_avx512(x_re[1], x_im[1], W_re[0], W_im[0], &t1r, &t1i);
+    cmul_fma_soa_avx512(x_re[5], x_im[5], W_re[4], W_im[4], &t5r, &t5i);
+    cmul_fma_soa_avx512(x_re[9], x_im[9], _mm512_xor_pd(W_re[0], sign_mask), 
+                        _mm512_xor_pd(W_im[0], sign_mask), &t9r, &t9i);  // W9=-W1
+    cmul_fma_soa_avx512(x_re[13], x_im[13], _mm512_xor_pd(W_re[4], sign_mask),
+                        _mm512_xor_pd(W_im[4], sign_mask), &t13r, &t13i);  // W13=-W5
+    x_re[1] = t1r; x_im[1] = t1i;
+    x_re[5] = t5r; x_im[5] = t5i;
+    x_re[9] = t9r; x_im[9] = t9i;
+    x_re[13] = t13r; x_im[13] = t13i;
+    
+    // r = 2,6,10,14
+    __m512d t2r, t2i, t6r, t6i, t10r, t10i, t14r, t14i;
+    cmul_fma_soa_avx512(x_re[2], x_im[2], W_re[1], W_im[1], &t2r, &t2i);
+    cmul_fma_soa_avx512(x_re[6], x_im[6], W_re[5], W_im[5], &t6r, &t6i);
+    cmul_fma_soa_avx512(x_re[10], x_im[10], _mm512_xor_pd(W_re[1], sign_mask),
+                        _mm512_xor_pd(W_im[1], sign_mask), &t10r, &t10i);  // W10=-W2
+    cmul_fma_soa_avx512(x_re[14], x_im[14], _mm512_xor_pd(W_re[5], sign_mask),
+                        _mm512_xor_pd(W_im[5], sign_mask), &t14r, &t14i);  // W14=-W6
+    x_re[2] = t2r; x_im[2] = t2i;
+    x_re[6] = t6r; x_im[6] = t6i;
+    x_re[10] = t10r; x_im[10] = t10i;
+    x_re[14] = t14r; x_im[14] = t14i;
+    
+    // r = 3,7,11,15
+    __m512d t3r, t3i, t7r, t7i, t11r, t11i, t15r, t15i;
+    cmul_fma_soa_avx512(x_re[3], x_im[3], W_re[2], W_im[2], &t3r, &t3i);
+    cmul_fma_soa_avx512(x_re[7], x_im[7], W_re[6], W_im[6], &t7r, &t7i);
+    cmul_fma_soa_avx512(x_re[11], x_im[11], _mm512_xor_pd(W_re[2], sign_mask),
+                        _mm512_xor_pd(W_im[2], sign_mask), &t11r, &t11i);  // W11=-W3
+    cmul_fma_soa_avx512(x_re[15], x_im[15], _mm512_xor_pd(W_re[6], sign_mask),
+                        _mm512_xor_pd(W_im[6], sign_mask), &t15r, &t15i);  // W15=-W7
+    x_re[3] = t3r; x_im[3] = t3i;
+    x_re[7] = t7r; x_im[7] = t7i;
+    x_re[11] = t11r; x_im[11] = t11i;
+    x_re[15] = t15r; x_im[15] = t15i;
+    
+    // r = 4,8,12
+    __m512d t4r, t4i, t8r, t8i, t12r, t12i;
+    cmul_fma_soa_avx512(x_re[4], x_im[4], W_re[3], W_im[3], &t4r, &t4i);
+    cmul_fma_soa_avx512(x_re[8], x_im[8], W_re[7], W_im[7], &t8r, &t8i);
+    cmul_fma_soa_avx512(x_re[12], x_im[12], _mm512_xor_pd(W_re[3], sign_mask),
+                        _mm512_xor_pd(W_im[3], sign_mask), &t12r, &t12i);  // W12=-W4
+    x_re[4] = t4r; x_im[4] = t4i;
+    x_re[8] = t8r; x_im[8] = t8i;
+    x_re[12] = t12r; x_im[12] = t12i;
+}
 
 //==============================================================================
-// PERFORMANCE SUMMARY - TRUE END-TO-END SoA FOR RADIX-16 AVX-512
+// BLOCKED4: APPLY STAGE TWIDDLES (INTERLEAVED ORDER!)
 //==============================================================================
 
 /**
- * @page radix16_perf_summary Radix-16 AVX-512 Performance Summary
+ * @brief Apply stage twiddles - BLOCKED4 - Interleaved order
  *
- * @section shuffle_elimination SHUFFLE ELIMINATION FOR RADIX-16
- *
- * <b>OLD SPLIT-FORM ARCHITECTURE (per butterfly, per stage):</b>
- *   - 1 split at load for each of 16 inputs (16 shuffle operations)
- *   - 1 join at store for each of 16 outputs (16 shuffle operations)
- *   - Total: ~2 shuffles per input/output pair = 32 shuffles per stage
- *
- * <b>NEW NATIVE SoA ARCHITECTURE (per butterfly, entire FFT):</b>
- *   - 0 splits in hot path (data already in SoA!)
- *   - 0 joins in hot path (data stays in SoA!)
- *   - Conversion only at API boundaries
- *   - Total: ~0 shuffles per butterfly in hot path
- *
- * @section radix16_savings SAVINGS BY FFT SIZE (RADIX-16)
- *
- * Radix-16 processes log₁₆(N) stages:
- *
- * <table>
- * <tr><th>FFT Size</th><th>Stages</th><th>Old Shuffles</th><th>New Shuffles</th><th>Reduction</th></tr>
- * <tr><td>4096-pt</td><td>3</td><td>96</td><td>0</td><td>100%</td></tr>
- * <tr><td>64K-pt</td><td>4</td><td>128</td><td>0</td><td>100%</td></tr>
- * <tr><td>1M-pt</td><td>5</td><td>160</td><td>0</td><td>100%</td></tr>
- * <tr><td>16M-pt</td><td>6</td><td>192</td><td>0</td><td>100%</td></tr>
- * </table>
- *
- * @section radix16_speedup EXPECTED OVERALL SPEEDUP
- *
- * Compared to split-form radix-16:
- * - Small (256-4K):      +15-20%
- * - Medium (16K-256K):   +25-35%
- * - Large (1M-16M):      +35-50%
- * - Huge (>16M):         +45-60%
- *
- * @section all_optimizations ALL OPTIMIZATIONS PRESERVED
- *
- * ✅ Native SoA architecture (100% shuffle elimination in hot path!)
- * ✅ Software pipelined twiddle application (3-way unroll)
- * ✅ Optimized W_4 intermediate twiddles (swap+XOR)
- * ✅ In-place 2nd stage (reduced register pressure)
- * ✅ Software prefetching (data + twiddles)
- * ✅ Streaming stores (cache bypass for large N)
- * ✅ Complete SIMD coverage
- * ✅ 2-stage radix-4 decomposition
- * ✅ FMA support
- *
- * TOTAL EXPECTED IMPROVEMENT: 40-65% faster than split-form radix-16!
+ * Load W1..W4, derive W5..W8 via products, then W9..W15 via negation
  */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+apply_stage_twiddles_blocked4_avx512(
+    size_t k, size_t K,
+    __m512d x_re[16], __m512d x_im[16],
+    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
+    __m512d sign_mask)
+{
+    const double *re_base = ASSUME_ALIGNED(stage_tw->re, 64);
+    const double *im_base = ASSUME_ALIGNED(stage_tw->im, 64);
+    
+    // Load W1..W4
+    __m512d W1r = _mm512_load_pd(&re_base[0 * K + k]);
+    __m512d W1i = _mm512_load_pd(&im_base[0 * K + k]);
+    __m512d W2r = _mm512_load_pd(&re_base[1 * K + k]);
+    __m512d W2i = _mm512_load_pd(&im_base[1 * K + k]);
+    __m512d W3r = _mm512_load_pd(&re_base[2 * K + k]);
+    __m512d W3i = _mm512_load_pd(&im_base[2 * K + k]);
+    __m512d W4r = _mm512_load_pd(&re_base[3 * K + k]);
+    __m512d W4i = _mm512_load_pd(&im_base[3 * K + k]);
+    
+    // Derive W5..W8
+    __m512d W5r, W5i, W6r, W6i, W7r, W7i, W8r, W8i;
+    cmul_fma_soa_avx512(W1r, W1i, W4r, W4i, &W5r, &W5i);  // W5 = W1×W4
+    cmul_fma_soa_avx512(W2r, W2i, W4r, W4i, &W6r, &W6i);  // W6 = W2×W4
+    cmul_fma_soa_avx512(W3r, W3i, W4r, W4i, &W7r, &W7i);  // W7 = W3×W4
+    csquare_fma_soa_avx512(W4r, W4i, &W8r, &W8i);         // W8 = W4²
+    
+    // Interleaved order: r = 1,5,9,13
+    __m512d t1r, t1i, t5r, t5i, t9r, t9i, t13r, t13i;
+    cmul_fma_soa_avx512(x_re[1], x_im[1], W1r, W1i, &t1r, &t1i);
+    cmul_fma_soa_avx512(x_re[5], x_im[5], W5r, W5i, &t5r, &t5i);
+    cmul_fma_soa_avx512(x_re[9], x_im[9], _mm512_xor_pd(W1r, sign_mask),
+                        _mm512_xor_pd(W1i, sign_mask), &t9r, &t9i);   // W9=-W1
+    cmul_fma_soa_avx512(x_re[13], x_im[13], _mm512_xor_pd(W5r, sign_mask),
+                        _mm512_xor_pd(W5i, sign_mask), &t13r, &t13i); // W13=-W5
+    x_re[1] = t1r; x_im[1] = t1i;
+    x_re[5] = t5r; x_im[5] = t5i;
+    x_re[9] = t9r; x_im[9] = t9i;
+    x_re[13] = t13r; x_im[13] = t13i;
+    
+    // r = 2,6,10,14
+    __m512d t2r, t2i, t6r, t6i, t10r, t10i, t14r, t14i;
+    cmul_fma_soa_avx512(x_re[2], x_im[2], W2r, W2i, &t2r, &t2i);
+    cmul_fma_soa_avx512(x_re[6], x_im[6], W6r, W6i, &t6r, &t6i);
+    cmul_fma_soa_avx512(x_re[10], x_im[10], _mm512_xor_pd(W2r, sign_mask),
+                        _mm512_xor_pd(W2i, sign_mask), &t10r, &t10i);  // W10=-W2
+    cmul_fma_soa_avx512(x_re[14], x_im[14], _mm512_xor_pd(W6r, sign_mask),
+                        _mm512_xor_pd(W6i, sign_mask), &t14r, &t14i);  // W14=-W6
+    x_re[2] = t2r; x_im[2] = t2i;
+    x_re[6] = t6r; x_im[6] = t6i;
+    x_re[10] = t10r; x_im[10] = t10i;
+    x_re[14] = t14r; x_im[14] = t14i;
+    
+    // r = 3,7,11,15
+    __m512d t3r, t3i, t7r, t7i, t11r, t11i, t15r, t15i;
+    cmul_fma_soa_avx512(x_re[3], x_im[3], W3r, W3i, &t3r, &t3i);
+    cmul_fma_soa_avx512(x_re[7], x_im[7], W7r, W7i, &t7r, &t7i);
+    cmul_fma_soa_avx512(x_re[11], x_im[11], _mm512_xor_pd(W3r, sign_mask),
+                        _mm512_xor_pd(W3i, sign_mask), &t11r, &t11i);  // W11=-W3
+    cmul_fma_soa_avx512(x_re[15], x_im[15], _mm512_xor_pd(W7r, sign_mask),
+                        _mm512_xor_pd(W7i, sign_mask), &t15r, &t15i);  // W15=-W7
+    x_re[3] = t3r; x_im[3] = t3i;
+    x_re[7] = t7r; x_im[7] = t7i;
+    x_re[11] = t11r; x_im[11] = t11i;
+    x_re[15] = t15r; x_im[15] = t15i;
+    
+    // r = 4,8,12
+    __m512d t4r, t4i, t8r, t8i, t12r, t12i;
+    cmul_fma_soa_avx512(x_re[4], x_im[4], W4r, W4i, &t4r, &t4i);
+    cmul_fma_soa_avx512(x_re[8], x_im[8], W8r, W8i, &t8r, &t8i);
+    cmul_fma_soa_avx512(x_re[12], x_im[12], _mm512_xor_pd(W4r, sign_mask),
+                        _mm512_xor_pd(W4i, sign_mask), &t12r, &t12i);  // W12=-W4
+    x_re[4] = t4r; x_im[4] = t4i;
+    x_re[8] = t8r; x_im[8] = t8i;
+    x_re[12] = t12r; x_im[12] = t12i;
+}
 
-#endif // FFT_RADIX16_MACROS_TRUE_SOA_AVX512_H
+//==============================================================================
+// TWIDDLE RECURRENCE (TILE-LOCAL WITH REFRESH)
+//==============================================================================
+
+/**
+ * @brief Apply stage twiddles with tile-local recurrence
+ *
+ * For large K: load accurate twiddles at tile start, then advance
+ * using w ← w × δw within the tile
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+apply_stage_twiddles_recur_avx512(
+    size_t k, size_t k_tile_start, bool is_tile_start,
+    __m512d x_re[16], __m512d x_im[16],
+    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
+    __m512d w_state_re[15], __m512d w_state_im[15],  // In/out: twiddle state
+    const __m512d delta_w_re[15], const __m512d delta_w_im[15],  // Phase increments
+    __m512d sign_mask)
+{
+    if (is_tile_start)
+    {
+        // REFRESH: Load accurate twiddles from memory
+        const double *re_base = ASSUME_ALIGNED(stage_tw->re, 64);
+        const double *im_base = ASSUME_ALIGNED(stage_tw->im, 64);
+        
+        // Load W1..W4
+        __m512d W1r = _mm512_load_pd(&re_base[0 * stage_tw->K + k]);
+        __m512d W1i = _mm512_load_pd(&im_base[0 * stage_tw->K + k]);
+        __m512d W2r = _mm512_load_pd(&re_base[1 * stage_tw->K + k]);
+        __m512d W2i = _mm512_load_pd(&im_base[1 * stage_tw->K + k]);
+        __m512d W3r = _mm512_load_pd(&re_base[2 * stage_tw->K + k]);
+        __m512d W3i = _mm512_load_pd(&im_base[2 * stage_tw->K + k]);
+        __m512d W4r = _mm512_load_pd(&re_base[3 * stage_tw->K + k]);
+        __m512d W4i = _mm512_load_pd(&im_base[3 * stage_tw->K + k]);
+        
+        // Derive W5..W8
+        __m512d W5r, W5i, W6r, W6i, W7r, W7i, W8r, W8i;
+        cmul_fma_soa_avx512(W1r, W1i, W4r, W4i, &W5r, &W5i);
+        cmul_fma_soa_avx512(W2r, W2i, W4r, W4i, &W6r, &W6i);
+        cmul_fma_soa_avx512(W3r, W3i, W4r, W4i, &W7r, &W7i);
+        csquare_fma_soa_avx512(W4r, W4i, &W8r, &W8i);
+        
+        // Store to state
+        w_state_re[0] = W1r; w_state_im[0] = W1i;
+        w_state_re[1] = W2r; w_state_im[1] = W2i;
+        w_state_re[2] = W3r; w_state_im[2] = W3i;
+        w_state_re[3] = W4r; w_state_im[3] = W4i;
+        w_state_re[4] = W5r; w_state_im[4] = W5i;
+        w_state_re[5] = W6r; w_state_im[5] = W6i;
+        w_state_re[6] = W7r; w_state_im[6] = W7i;
+        w_state_re[7] = W8r; w_state_im[7] = W8i;
+        
+        // W9..W15 = -W1..-W7
+        for (int r = 0; r < 7; r++)
+        {
+            w_state_re[8 + r] = _mm512_xor_pd(w_state_re[r], sign_mask);
+            w_state_im[8 + r] = _mm512_xor_pd(w_state_im[r], sign_mask);
+        }
+    }
+    
+    // Apply current twiddles (interleaved order)
+    // r = 1,5,9,13
+    __m512d t1r, t1i, t5r, t5i, t9r, t9i, t13r, t13i;
+    cmul_fma_soa_avx512(x_re[1], x_im[1], w_state_re[0], w_state_im[0], &t1r, &t1i);
+    cmul_fma_soa_avx512(x_re[5], x_im[5], w_state_re[4], w_state_im[4], &t5r, &t5i);
+    cmul_fma_soa_avx512(x_re[9], x_im[9], w_state_re[8], w_state_im[8], &t9r, &t9i);
+    cmul_fma_soa_avx512(x_re[13], x_im[13], w_state_re[12], w_state_im[12], &t13r, &t13i);
+    x_re[1] = t1r; x_im[1] = t1i;
+    x_re[5] = t5r; x_im[5] = t5i;
+    x_re[9] = t9r; x_im[9] = t9i;
+    x_re[13] = t13r; x_im[13] = t13i;
+    
+    // r = 2,6,10,14
+    __m512d t2r, t2i, t6r, t6i, t10r, t10i, t14r, t14i;
+    cmul_fma_soa_avx512(x_re[2], x_im[2], w_state_re[1], w_state_im[1], &t2r, &t2i);
+    cmul_fma_soa_avx512(x_re[6], x_im[6], w_state_re[5], w_state_im[5], &t6r, &t6i);
+    cmul_fma_soa_avx512(x_re[10], x_im[10], w_state_re[9], w_state_im[9], &t10r, &t10i);
+    cmul_fma_soa_avx512(x_re[14], x_im[14], w_state_re[13], w_state_im[13], &t14r, &t14i);
+    x_re[2] = t2r; x_im[2] = t2i;
+    x_re[6] = t6r; x_im[6] = t6i;
+    x_re[10] = t10r; x_im[10] = t10i;
+    x_re[14] = t14r; x_im[14] = t14i;
+    
+    // r = 3,7,11,15
+    __m512d t3r, t3i, t7r, t7i, t11r, t11i, t15r, t15i;
+    cmul_fma_soa_avx512(x_re[3], x_im[3], w_state_re[2], w_state_im[2], &t3r, &t3i);
+    cmul_fma_soa_avx512(x_re[7], x_im[7], w_state_re[6], w_state_im[6], &t7r, &t7i);
+    cmul_fma_soa_avx512(x_re[11], x_im[11], w_state_re[10], w_state_im[10], &t11r, &t11i);
+    cmul_fma_soa_avx512(x_re[15], x_im[15], w_state_re[14], w_state_im[14], &t15r, &t15i);
+    x_re[3] = t3r; x_im[3] = t3i;
+    x_re[7] = t7r; x_im[7] = t7i;
+    x_re[11] = t11r; x_im[11] = t11i;
+    x_re[15] = t15r; x_im[15] = t15i;
+    
+    // r = 4,8,12
+    __m512d t4r, t4i, t8r, t8i, t12r, t12i;
+    cmul_fma_soa_avx512(x_re[4], x_im[4], w_state_re[3], w_state_im[3], &t4r, &t4i);
+    cmul_fma_soa_avx512(x_re[8], x_im[8], w_state_re[7], w_state_im[7], &t8r, &t8i);
+    cmul_fma_soa_avx512(x_re[12], x_im[12], w_state_re[11], w_state_im[11], &t12r, &t12i);
+    x_re[4] = t4r; x_im[4] = t4i;
+    x_re[8] = t8r; x_im[8] = t8i;
+    x_re[12] = t12r; x_im[12] = t12i;
+    
+    // ADVANCE: w ← w × δw (for next iteration within tile)
+    for (int r = 0; r < 15; r++)
+    {
+        __m512d w_new_re, w_new_im;
+        cmul_fma_soa_avx512(w_state_re[r], w_state_im[r],
+                            delta_w_re[r], delta_w_im[r],
+                            &w_new_re, &w_new_im);
+        w_state_re[r] = w_new_re;
+        w_state_im[r] = w_new_im;
+    }
+}
+
+//==============================================================================
+// SINGLE BUTTERFLY - BLOCKED8 - FORWARD
+//==============================================================================
+
+/**
+ * @brief Complete radix-16 butterfly - BLOCKED8 - Forward
+ *
+ * Sequence: Load → Twiddles → 1st radix-4 stage → W_4 → 2nd radix-4 stage → Store
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_butterfly_blocked8_forward_avx512(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked8_t *RESTRICT stage_tw,
+    __m512d rot_sign_mask, __m512d neg_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    // Load 16 lanes
+    __m512d x_re[16], x_im[16];
+    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+    
+    // Apply stage twiddles (x[0] unchanged)
+    apply_stage_twiddles_blocked8_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+    
+    // First radix-4 stage: 4 groups of 4
+    __m512d t_re[16], t_im[16];
+    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                rot_sign_mask);
+    
+    // Apply W_4 intermediate twiddles
+    apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+    
+    // Second radix-4 stage: 4 groups of 4 (reuse x arrays)
+    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                rot_sign_mask);
+    
+    // Store 16 lanes
+    store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+}
+
+/**
+ * @brief Complete radix-16 butterfly - BLOCKED8 - Forward - NT stores
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_butterfly_blocked8_forward_avx512_nt(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked8_t *RESTRICT stage_tw,
+    __m512d rot_sign_mask, __m512d neg_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    __m512d x_re[16], x_im[16];
+    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+    
+    apply_stage_twiddles_blocked8_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+    
+    __m512d t_re[16], t_im[16];
+    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                rot_sign_mask);
+    
+    apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+    
+    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                rot_sign_mask);
+    
+    // Non-temporal stores
+    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+}
+
+//==============================================================================
+// SINGLE BUTTERFLY - BLOCKED4 - FORWARD
+//==============================================================================
+
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_butterfly_blocked4_forward_avx512(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
+    __m512d rot_sign_mask, __m512d neg_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    __m512d x_re[16], x_im[16];
+    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+    
+    apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+    
+    __m512d t_re[16], t_im[16];
+    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                rot_sign_mask);
+    
+    apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+    
+    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                rot_sign_mask);
+    
+    store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+}
+
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_butterfly_blocked4_forward_avx512_nt(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
+    __m512d rot_sign_mask, __m512d neg_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    __m512d x_re[16], x_im[16];
+    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+    
+    apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+    
+    __m512d t_re[16], t_im[16];
+    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                rot_sign_mask);
+    
+    apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+    
+    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                rot_sign_mask);
+    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                rot_sign_mask);
+    
+    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+}
+
+//==============================================================================
+// BACKWARD BUTTERFLIES (BLOCKED8 + BLOCKED4)
+//==============================================================================
+
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_butterfly_blocked8_backward_avx512(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked8_t *RESTRICT stage_tw,
+    __m512d rot_sign_mask, __m512d neg_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    __m512d x_re[16], x_im[16];
+    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+    
+    apply_stage_twiddles_blocked8_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+    
+    // Negate rot_sign_mask for backward transform
+    const __m512d neg_zero = _mm512_set1_pd(-0.0);
+    __m512d neg_rot_sign = _mm512_xor_pd(rot_sign_mask, neg_zero);
+    
+    __m512d t_re[16], t_im[16];
+    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                neg_rot_sign);
+    
+    apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
+    
+    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                neg_rot_sign);
+    
+    store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+}
+
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_butterfly_blocked8_backward_avx512_nt(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked8_t *RESTRICT stage_tw,
+    __m512d rot_sign_mask, __m512d neg_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    __m512d x_re[16], x_im[16];
+    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+    
+    apply_stage_twiddles_blocked8_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+    
+    const __m512d neg_zero = _mm512_set1_pd(-0.0);
+    __m512d neg_rot_sign = _mm512_xor_pd(rot_sign_mask, neg_zero);
+    
+    __m512d t_re[16], t_im[16];
+    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                neg_rot_sign);
+    
+    apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
+    
+    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                neg_rot_sign);
+    
+    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+}
+
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_butterfly_blocked4_backward_avx512(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
+    __m512d rot_sign_mask, __m512d neg_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    __m512d x_re[16], x_im[16];
+    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+    
+    apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+    
+    const __m512d neg_zero = _mm512_set1_pd(-0.0);
+    __m512d neg_rot_sign = _mm512_xor_pd(rot_sign_mask, neg_zero);
+    
+    __m512d t_re[16], t_im[16];
+    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                neg_rot_sign);
+    
+    apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
+    
+    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                neg_rot_sign);
+    
+    store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+}
+
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_butterfly_blocked4_backward_avx512_nt(
+    size_t k, size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
+    __m512d rot_sign_mask, __m512d neg_mask)
+{
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    
+    __m512d x_re[16], x_im[16];
+    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+    
+    apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+    
+    const __m512d neg_zero = _mm512_set1_pd(-0.0);
+    __m512d neg_rot_sign = _mm512_xor_pd(rot_sign_mask, neg_zero);
+    
+    __m512d t_re[16], t_im[16];
+    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                neg_rot_sign);
+    
+    apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
+    
+    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                neg_rot_sign);
+    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                neg_rot_sign);
+    
+    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+}
+
+//==============================================================================
+// STAGE DRIVERS WITH K-TILING + U=2 + PREFETCH + NT STORES
+//==============================================================================
+
+/**
+ * @brief BLOCKED8 Forward - WITH ALL OPTIMIZATIONS
+ *
+ * ✅ K-tiling (Tk=64) for L1 cache optimization
+ * ✅ U=2 software pipelining (overlapped loads/compute)
+ * ✅ Interleaved cmul order (breaks FMA dependency chains)
+ * ✅ Adaptive NT stores (>256KB working set)
+ * ✅ Prefetch tuning (32 doubles ahead for SPR)
+ * ✅ Hoisted constants (rot_sign, neg_mask)
+ * ✅ Masked tail handling (K % 8 != 0)
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_stage_dit_forward_blocked8_avx512(
+    size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked8_t *RESTRICT stage_tw)
+{
+    // Hoist constants ONCE per stage
+    const __m512d rot_sign_mask = _mm512_set1_pd(-0.0);  // Forward: -i rotation
+    const __m512d neg_mask = _mm512_set1_pd(-0.0);
+    
+    const size_t prefetch_dist = RADIX16_PREFETCH_DISTANCE;
+    const size_t tile_size = RADIX16_TILE_SIZE;
+    
+    // NT store decision
+    const size_t total_elements = K * 16 * 2;
+    const size_t total_bytes = total_elements * sizeof(double);
+    const int use_nt_stores = (total_bytes >= (RADIX16_STREAM_THRESHOLD_KB * 1024)) &&
+                              (((uintptr_t)out_re & 63) == 0) &&
+                              (((uintptr_t)out_im & 63) == 0);
+    
+    // K-tiling outer loop
+    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
+    {
+        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
+        
+        if (use_nt_stores)
+        {
+            // U=2 unrolling with NT stores
+            size_t k;
+            for (k = k_tile; k + 16 <= k_end; k += 16)
+            {
+                // Prefetch for next iteration (k and k+8)
+                if (k + 16 + prefetch_dist < k_end)
+                {
+                    // Prefetch inputs (16 lanes each)
+                    for (int r = 0; r < 16; r++)
+                    {
+                        _mm_prefetch((const char *)&in_re[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                        _mm_prefetch((const char *)&in_im[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                    }
+                    // Prefetch twiddles (8 blocks for BLOCKED8)
+                    for (int b = 0; b < 8; b++)
+                    {
+                        _mm_prefetch((const char *)&stage_tw->re[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                        _mm_prefetch((const char *)&stage_tw->im[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                    }
+                }
+                
+                // Process k and k+8 in parallel
+                radix16_butterfly_blocked8_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                             stage_tw, rot_sign_mask, neg_mask);
+                radix16_butterfly_blocked8_forward_avx512_nt(k + 8, K, in_re, in_im, out_re, out_im,
+                                                             stage_tw, rot_sign_mask, neg_mask);
+            }
+            
+            // Tail handling (if K % 16 != 0 within tile)
+            for (; k + 8 <= k_end; k += 8)
+            {
+                radix16_butterfly_blocked8_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                             stage_tw, rot_sign_mask, neg_mask);
+            }
+            
+            // Final tail with mask (if K % 8 != 0)
+            if (k < k_end)
+            {
+                size_t remaining = k_end - k;
+                __mmask8 mask = (__mmask8)((1U << remaining) - 1U);
+                
+                const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                
+                __m512d x_re[16], x_im[16];
+                load_16_lanes_soa_avx512_masked(k, K, mask, in_re_aligned, in_im_aligned, x_re, x_im);
+                
+                apply_stage_twiddles_blocked8_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                
+                __m512d t_re[16], t_im[16];
+                radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                            &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                            &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                            &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                            &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                            rot_sign_mask);
+                
+                apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+                
+                radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                            &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                            &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                            &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                            &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                            rot_sign_mask);
+                
+                store_16_lanes_soa_avx512_masked(k, K, mask, out_re_aligned, out_im_aligned, x_re, x_im);
+            }
+            
+        }
+        else
+        {
+            // U=2 unrolling with regular stores
+            size_t k;
+            for (k = k_tile; k + 16 <= k_end; k += 16)
+            {
+                // Prefetch for next iteration
+                if (k + 16 + prefetch_dist < k_end)
+                {
+                    for (int r = 0; r < 16; r++)
+                    {
+                        _mm_prefetch((const char *)&in_re[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                        _mm_prefetch((const char *)&in_im[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                    }
+                    for (int b = 0; b < 8; b++)
+                    {
+                        _mm_prefetch((const char *)&stage_tw->re[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                        _mm_prefetch((const char *)&stage_tw->im[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                    }
+                }
+                
+                radix16_butterfly_blocked8_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                                          stage_tw, rot_sign_mask, neg_mask);
+                radix16_butterfly_blocked8_forward_avx512(k + 8, K, in_re, in_im, out_re, out_im,
+                                                          stage_tw, rot_sign_mask, neg_mask);
+            }
+            
+            // Tail handling
+            for (; k + 8 <= k_end; k += 8)
+            {
+                radix16_butterfly_blocked8_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                                          stage_tw, rot_sign_mask, neg_mask);
+            }
+            
+            // Final tail with mask
+            if (k < k_end)
+            {
+                size_t remaining = k_end - k;
+                __mmask8 mask = (__mmask8)((1U << remaining) - 1U);
+                
+                const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                
+                __m512d x_re[16], x_im[16];
+                load_16_lanes_soa_avx512_masked(k, K, mask, in_re_aligned, in_im_aligned, x_re, x_im);
+                
+                apply_stage_twiddles_blocked8_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                
+                __m512d t_re[16], t_im[16];
+                radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                            &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                            &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                            &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                            &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                            rot_sign_mask);
+                
+                apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+                
+                radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                            &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                            &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                            &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                            &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                            rot_sign_mask);
+                
+                store_16_lanes_soa_avx512_masked(k, K, mask, out_re_aligned, out_im_aligned, x_re, x_im);
+            }
+        }
+    }
+    
+    if (use_nt_stores)
+    {
+        _mm_sfence();  // Required after streaming stores
+    }
+}
+
+/**
+ * @brief BLOCKED4 Forward - WITH ALL OPTIMIZATIONS + TWIDDLE RECURRENCE
+ */
+TARGET_AVX512_FMA
+FORCE_INLINE void
+radix16_stage_dit_forward_blocked4_avx512(
+    size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
+    bool use_recurrence,
+    const __m512d *RESTRICT delta_w_re,  // [15] for recurrence
+    const __m512d *RESTRICT delta_w_im)  // [15] for recurrence
+{
+    const __m512d rot_sign_mask = _mm512_set1_pd(-0.0);
+    const __m512d neg_mask = _mm512_set1_pd(-0.0);
+    
+    const size_t prefetch_dist = RADIX16_PREFETCH_DISTANCE;
+    const size_t tile_size = RADIX16_TILE_SIZE;
+    
+    const size_t total_elements = K * 16 * 2;
+    const size_t total_bytes = total_elements * sizeof(double);
+    const int use_nt_stores = (total_bytes >= (RADIX16_STREAM_THRESHOLD_KB * 1024)) &&
+                              (((uintptr_t)out_re & 63) == 0) &&
+                              (((uintptr_t)out_im & 63) == 0);
+    
+    // Twiddle recurrence state
+    __m512d w_state_re[15], w_state_im[15];
+    
+    // K-tiling outer loop
+    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
+    {
+        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
+        
+        if (use_nt_stores)
+        {
+            size_t k;
+            for (k = k_tile; k + 16 <= k_end; k += 16)
+            {
+                if (k + 16 + prefetch_dist < k_end)
+                {
+                    for (int r = 0; r < 16; r++)
+                    {
+                        _mm_prefetch((const char *)&in_re[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                        _mm_prefetch((const char *)&in_im[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                    }
+                    if (!use_recurrence)
+                    {
+                        // Prefetch twiddles (4 blocks for BLOCKED4)
+                        for (int b = 0; b < 4; b++)
+                        {
+                            _mm_prefetch((const char *)&stage_tw->re[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                            _mm_prefetch((const char *)&stage_tw->im[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                        }
+                    }
+                }
+                
+                if (use_recurrence)
+                {
+                    // Use tile-local recurrence (refresh at tile start)
+                    bool is_tile_start = (k == k_tile);
+                    
+                    // First butterfly at k
+                    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                    
+                    __m512d x_re[16], x_im[16];
+                    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k, k_tile, is_tile_start, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    __m512d t_re[16], t_im[16];
+                    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                                rot_sign_mask);
+                    
+                    apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                                rot_sign_mask);
+                    
+                    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                    
+                    // Second butterfly at k+8 (recurrence already advanced)
+                    load_16_lanes_soa_avx512(k + 8, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k + 8, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                                rot_sign_mask);
+                    
+                    apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                                rot_sign_mask);
+                    
+                    store_16_lanes_soa_avx512_stream(k + 8, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                }
+                else
+                {
+                    // Direct loads (no recurrence)
+                    radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                                 stage_tw, rot_sign_mask, neg_mask);
+                    radix16_butterfly_blocked4_forward_avx512_nt(k + 8, K, in_re, in_im, out_re, out_im,
+                                                                 stage_tw, rot_sign_mask, neg_mask);
+                }
+            }
+            
+            // Tail handling (similar pattern as BLOCKED8)
+            for (; k + 8 <= k_end; k += 8)
+            {
+                radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                             stage_tw, rot_sign_mask, neg_mask);
+            }
+            
+            if (k < k_end)
+            {
+                size_t remaining = k_end - k;
+                __mmask8 mask = (__mmask8)((1U << remaining) - 1U);
+                
+                const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                
+                __m512d x_re[16], x_im[16];
+                load_16_lanes_soa_avx512_masked(k, K, mask, in_re_aligned, in_im_aligned, x_re, x_im);
+                
+                apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                
+                __m512d t_re[16], t_im[16];
+                radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                            &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                            &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                            &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                            &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                            rot_sign_mask);
+                
+                apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+                
+                radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                            &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                            &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                            &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                            &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                            rot_sign_mask);
+                
+                store_16_lanes_soa_avx512_masked(k, K, mask, out_re_aligned, out_im_aligned, x_re, x_im);
+            }
+        }
+        else
+        {
+            // Regular stores (similar structure, just call non-NT functions)
+            size_t k;
+            for (k = k_tile; k + 16 <= k_end; k += 16)
+            {
+                if (k + 16 + prefetch_dist < k_end)
+                {
+                    for (int r = 0; r < 16; r++)
+                    {
+                        _mm_prefetch((const char *)&in_re[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                        _mm_prefetch((const char *)&in_im[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                    }
+                    if (!use_recurrence)
+                    {
+                        for (int b = 0; b < 4; b++)
+                        {
+                            _mm_prefetch((const char *)&stage_tw->re[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                            _mm_prefetch((const char *)&stage_tw->im[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                        }
+                    }
+                }
+                
+                radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                                          stage_tw, rot_sign_mask, neg_mask);
+                radix16_butterfly_blocked4_forward_avx512(k + 8, K, in_re, in_im, out_re, out_im,
+                                                          stage_tw, rot_sign_mask, neg_mask);
+            }
+            
+            for (; k + 8 <= k_end; k += 8)
+            {
+                radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                                          stage_tw, rot_sign_mask, neg_mask);
+            }
+            
+            if (k < k_end)
+            {
+                // Same masked tail as NT version
+                size_t remaining = k_end - k;
+                __mmask8 mask = (__mmask8)((1U << remaining) - 1U);
+                
+                const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                
+                __m512d x_re[16], x_im[16];
+                load_16_lanes_soa_avx512_masked(k, K, mask, in_re_aligned, in_im_aligned, x_re, x_im);
+                
+                apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                
+                __m512d t_re[16], t_im[16];
+                radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                            &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                            &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                            &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                            &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                            rot_sign_mask);
+                
+                apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+                
+                radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                            &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                            &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                            &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                            rot_sign_mask);
+                radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                            &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                            rot_sign_mask);
+                
+                store_16_lanes_soa_avx512_masked(k, K, mask, out_re_aligned, out_im_aligned, x_re, x_im);
+            }
+        }
+    }
+    
+    if (use_nt_stores)
+    {
+        _mm_sfence();
+    }
+    
+}
