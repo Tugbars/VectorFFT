@@ -2082,6 +2082,8 @@ radix16_stage_dit_backward_blocked4_avx512(
 {
     const __m512d rot_sign_mask = _mm512_set1_pd(-0.0);
     const __m512d neg_mask = _mm512_set1_pd(-0.0);
+
+    const __m512d pos_rot_sign = _mm512_xor_pd(rot_sign_mask, rot_sign_mask);
     
     const size_t prefetch_dist = RADIX16_PREFETCH_DISTANCE;
     const size_t tile_size = RADIX16_TILE_SIZE;
@@ -2150,14 +2152,14 @@ radix16_stage_dit_backward_blocked4_avx512(
                     __m512d t_re[16], t_im[16];
                     radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
                                                 &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     // ... (remaining 3 radix4 calls)
                     
                     apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
                     
                     radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
                                                 &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     // ... (remaining 3 radix4 calls)
                     
                     store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
@@ -2178,9 +2180,9 @@ radix16_stage_dit_backward_blocked4_avx512(
                 {
                     // No recurrence - direct loads
                     radix16_butterfly_blocked4_backward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
-                                                                 stage_tw, rot_sign_mask, neg_mask);
+                                                                 stage_tw, pos_rot_sign, neg_mask);
                     radix16_butterfly_blocked4_backward_avx512_nt(k + 8, K, in_re, in_im, out_re, out_im,
-                                                                 stage_tw, rot_sign_mask, neg_mask);
+                                                                 stage_tw, pos_rot_sign, neg_mask);
                 }
             }
             
@@ -2214,7 +2216,7 @@ radix16_stage_dit_backward_blocked4_avx512(
                 else
                 {
                     radix16_butterfly_blocked4_backward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
-                                                                 stage_tw, rot_sign_mask, neg_mask);
+                                                                 stage_tw, pos_rot_sign, neg_mask);
                 }
             }
             
@@ -2300,31 +2302,31 @@ radix16_stage_dit_backward_blocked4_avx512(
                     __m512d t_re[16], t_im[16];
                     radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
                                                 &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
                                                 &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
                                                 &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
                                                 &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     
                     apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
                     
                     radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
                                                 &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
                                                 &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
                                                 &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
                                                 &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     
                     store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
                     
@@ -2337,31 +2339,31 @@ radix16_stage_dit_backward_blocked4_avx512(
                     
                     radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
                                                 &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
                                                 &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
                                                 &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
                                                 &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     
                     apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
                     
                     radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
                                                 &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
                                                 &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
                                                 &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
                                                 &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     
                     store_16_lanes_soa_avx512(k + 8, K, out_re_aligned, out_im_aligned, x_re, x_im);
                 }
@@ -2369,9 +2371,9 @@ radix16_stage_dit_backward_blocked4_avx512(
                 {
                     // No recurrence
                     radix16_butterfly_blocked4_backward_avx512(k, K, in_re, in_im, out_re, out_im,
-                                                              stage_tw, rot_sign_mask, neg_mask);
+                                                              stage_tw, pos_rot_sign, neg_mask);
                     radix16_butterfly_blocked4_backward_avx512(k + 8, K, in_re, in_im, out_re, out_im,
-                                                              stage_tw, rot_sign_mask, neg_mask);
+                                                              stage_tw, pos_rot_sign, neg_mask);
                 }
             }
             
@@ -2395,38 +2397,38 @@ radix16_stage_dit_backward_blocked4_avx512(
                     __m512d t_re[16], t_im[16];
                     radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
                                                 &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
                                                 &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
                                                 &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
                                                 &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     
                     apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
                     
                     radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
                                                 &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
                                                 &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
                                                 &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
                                                 &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
-                                                rot_sign_mask);
+                                                pos_rot_sign);
                     
                     store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
                 }
                 else
                 {
                     radix16_butterfly_blocked4_backward_avx512(k, K, in_re, in_im, out_re, out_im,
-                                                              stage_tw, rot_sign_mask, neg_mask);
+                                                              stage_tw, pos_rot_sign, neg_mask);
                 }
             }
             
@@ -2458,31 +2460,31 @@ radix16_stage_dit_backward_blocked4_avx512(
                 __m512d t_re[16], t_im[16];
                 radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
                                             &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
-                                            rot_sign_mask);
+                                            pos_rot_sign);
                 radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
                                             &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
-                                            rot_sign_mask);
+                                            pos_rot_sign);
                 radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
                                             &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
-                                            rot_sign_mask);
+                                            pos_rot_sign);
                 radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
                                             &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
-                                            rot_sign_mask);
+                                            pos_rot_sign);
                 
                 apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
                 
                 radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
                                             &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
-                                            rot_sign_mask);
+                                            pos_rot_sign);
                 radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
                                             &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
-                                            rot_sign_mask);
+                                            pos_rot_sign);
                 radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
                                             &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
-                                            rot_sign_mask);
+                                            pos_rot_sign);
                 radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
                                             &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
-                                            rot_sign_mask);
+                                            pos_rot_sign);
                 
                 store_16_lanes_soa_avx512_masked(k, K, mask, out_re_aligned, out_im_aligned, x_re, x_im);
             }
