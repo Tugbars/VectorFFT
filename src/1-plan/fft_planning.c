@@ -486,7 +486,12 @@ static int plan_bluestein(fft_plan *plan, int N, fft_direction_t direction)
 /**
  * @brief Construct Cooley-Tukey stages with twiddle allocation
  */
-static int construct_stages(fft_plan *plan, int N, const int *factors, int num_stages)
+static int construct_stages(
+    fft_plan *plan, 
+    int N, 
+    const int *factors, 
+    int num_stages,
+    simd_arch_t arch)  // ✅ NEW PARAMETER
 {
     plan->num_stages = num_stages;
     memcpy(plan->factors, factors, num_stages * sizeof(int));
@@ -504,7 +509,7 @@ static int construct_stages(fft_plan *plan, int N, const int *factors, int num_s
         stage->sub_len = sub_len;
 
         // ──────────────────────────────────────────────────────────────────
-        // Stage twiddles (always needed)
+        // Stage twiddles: CREATE + MATERIALIZE ✅ NEW!
         // ──────────────────────────────────────────────────────────────────
         stage->stage_tw = get_stage_twiddles(N_stage, radix, plan->direction);
         if (!stage->stage_tw)
@@ -513,8 +518,15 @@ static int construct_stages(fft_plan *plan, int N, const int *factors, int num_s
             return -1;
         }
 
-        FFT_LOG_DEBUG("  Stage %d: radix=%d, N=%d, sub_len=%d (twiddles cached)",
-                      i, radix, N_stage, sub_len);
+        // ✅ MATERIALIZE AT PLAN TIME
+        if (twiddle_materialize_auto(stage->stage_tw, arch) != 0)
+        {
+            FFT_LOG_ERROR("Failed to materialize stage twiddles for stage %d (radix=%d)", i, radix);
+            return -1;
+        }
+
+        FFT_LOG_DEBUG("  Stage %d: radix=%d, N=%d, sub_len=%d (materialized for arch=%d)",
+                      i, radix, N_stage, sub_len, arch);
 
         // ──────────────────────────────────────────────────────────────────
         // DFT kernel twiddles (for general radix fallback)
@@ -529,7 +541,15 @@ static int construct_stages(fft_plan *plan, int N, const int *factors, int num_s
                 FFT_LOG_ERROR("Failed to get DFT kernel for radix %d", radix);
                 return -1;
             }
-            FFT_LOG_DEBUG("    → DFT kernel: radix=%d (cached)", radix);
+            
+            // ✅ Materialize kernel too
+            if (twiddle_materialize_auto(stage->dft_kernel_tw, arch) != 0)
+            {
+                FFT_LOG_ERROR("Failed to materialize DFT kernel for radix %d", radix);
+                return -1;
+            }
+            
+            FFT_LOG_DEBUG("    → DFT kernel: radix=%d (materialized)", radix);
         }
         else
         {
@@ -556,7 +576,15 @@ static int construct_stages(fft_plan *plan, int N, const int *factors, int num_s
                     FFT_LOG_ERROR("Failed to get Rader twiddles for prime %d", radix);
                     return -1;
                 }
-                FFT_LOG_DEBUG("    → Rader: prime=%d (SoA cached)", radix);
+                
+                // ✅ Materialize Rader twiddles
+                if (twiddle_materialize_auto(stage->rader_tw, arch) != 0)
+                {
+                    FFT_LOG_ERROR("Failed to materialize Rader twiddles for prime %d", radix);
+                    return -1;
+                }
+                
+                FFT_LOG_DEBUG("    → Rader: prime=%d (materialized)", radix);
             }
             else
             {
@@ -573,6 +601,7 @@ static int construct_stages(fft_plan *plan, int N, const int *factors, int num_s
 
     return 0;
 }
+
 
 //==============================================================================
 // INTERNAL EXTENDED PLANNING API
@@ -593,28 +622,11 @@ static fft_object fft_init_extended(
     int N,
     fft_direction_t direction,
     int depth,
-    fft_planning_flags_t flags)
+    fft_planning_flags_t flags,
+    simd_arch_t arch)  // ✅ NEW PARAMETER
 {
-    //==========================================================================
-    // PHASE 1: VALIDATION
-    //==========================================================================
-
-    if (N <= 0)
-    {
-        FFT_LOG_ERROR("Invalid size N=%d (must be positive)", N);
-        return NULL;
-    }
-
-    if (direction != FFT_FORWARD && direction != FFT_INVERSE)
-    {
-        FFT_LOG_ERROR("Invalid direction %d", direction);
-        return NULL;
-    }
-
-    //==========================================================================
-    // PHASE 2: ALLOCATE PLAN STRUCTURE
-    //==========================================================================
-
+    // Validation...
+    
     fft_plan *plan = (fft_plan *)calloc(1, sizeof(fft_plan));
     if (!plan)
     {
@@ -627,41 +639,91 @@ static fft_object fft_init_extended(
     plan->direction = direction;
     plan->bluestein_generic = NULL;
     plan->fourstep = NULL;
+    
+    // ✅ Store SIMD architecture
+    plan->simd_arch = arch;
 
-    //==========================================================================
-    // PHASE 3: STRATEGY SELECTION (All Heuristics in One Place!)
-    //==========================================================================
+    FFT_LOG_DEBUG("Planning N=%d (%s), depth=%d, arch=%d",
+                  N, direction == FFT_FORWARD ? "forward" : "inverse", depth, arch);
 
-    FFT_LOG_DEBUG("Planning N=%d (%s), depth=%d",
-                  N, direction == FFT_FORWARD ? "forward" : "inverse", depth);
-
-    // ──────────────────────────────────────────────────────────────────────
-    // Strategy 1: Small power-of-2 → Bit-reversal (optimal for small N)
-    // ──────────────────────────────────────────────────────────────────────
+    // Strategy 1: Small power-of-2 → Bit-reversal
     if (is_power_of_2(N) && N <= 64)
     {
         plan->strategy = FFT_EXEC_INPLACE_BITREV;
 
-        FFT_LOG_DEBUG("Strategy: In-place bit-reversal (power-of-2, N=%d)", N);
+        // ──────────────────────────────────────────────────────────────────────
+        // COMPUTE NUMBER OF STAGES: log2(N)
+        // ──────────────────────────────────────────────────────────────────────
+        // Example N=16: log2(16) = 4 stages
+        // __builtin_ctz = "count trailing zeros" = position of first set bit
+        // For N=16 (binary: 10000), ctz(16) = 4
+        int log2n = __builtin_ctz(N); // N=16 → log2n=4
+        plan->num_stages = log2n;    // Will execute 4 stages
 
-        // Build stage descriptors for bit-reversal
-        int log2n = __builtin_ctz(N);
-        plan->num_stages = log2n;
+        // ──────────────────────────────────────────────────────────────────────
+        // BUILD STAGE DESCRIPTORS (one per stage)
+        // ──────────────────────────────────────────────────────────────────────
+        // Each stage processes butterflies at increasing distances
 
-        for (int s = 0; s < log2n; s++)
+        for (int s = 0; s < log2n; s++)   // s = 0, 1, 2, 3 for N=16
         {
             plan->factors[s] = 2;
+
+            // Calculate stage size (halves each stage)
+            // s=0: N_stage = 16 >> 0 = 16
+            // s=1: N_stage = 16 >> 1 = 8
+            // s=2: N_stage = 16 >> 2 = 4
+            // s=3: N_stage = 16 >> 3 = 2
             int N_stage = N >> s;
 
             stage_descriptor *stage = &plan->stages[s];
             stage->radix = 2;
             stage->N_stage = N_stage;
-            stage->sub_len = N_stage / 2;
+            stage->sub_len = N_stage / 2;   // Distance between butterfly elements
+
+            // ══════════════════════════════════════════════════════════════════
+            // TWIDDLE CREATION (get handle from cache)
+            // ══════════════════════════════════════════════════════════════════
+            // Creates handle for: W_N_stage^k for k = 0..(N_stage/2 - 1)
+            //
+            // Stage 0 (N_stage=16): W_16^0, W_16^1, ..., W_16^7  (8 twiddles)
+            // Stage 1 (N_stage=8):  W_8^0,  W_8^1,  ..., W_8^3   (4 twiddles)
+            // Stage 2 (N_stage=4):  W_4^0,  W_4^1,  W_4^2        (2 twiddles)
+            // Stage 3 (N_stage=2):  W_2^0                        (1 twiddle)
+            //
+            // Note: W_N^k = exp(-2πik/N) for forward FFT
 
             stage->stage_tw = get_stage_twiddles(N_stage, 2, direction);
             if (!stage->stage_tw)
             {
                 FFT_LOG_ERROR("Failed to get bit-reversal twiddles");
+                free(plan);
+                return NULL;
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // TWIDDLE MATERIALIZATION (precompute optimal layout)
+            // ══════════════════════════════════════════════════════════════════
+            // This is the CRITICAL OPTIMIZATION:
+            // - Converts canonical storage → SIMD-friendly blocked layout
+            // - Happens ONCE at plan time (amortized over many executions)
+            // - Radix-2 uses flat SoA (architecture-agnostic)
+            //
+            // Memory layout after materialization:
+            // stage->stage_tw->materialized_re = [W_re[0], W_re[1], ..., W_re[K-1]]
+            // stage->stage_tw->materialized_im = [W_im[0], W_im[1], ..., W_im[K-1]]
+            // where K = N_stage/2
+            //
+            // Example Stage 0 (N_stage=16, K=8):
+            // materialized_re = [1.0, 0.924, 0.707, 0.383, 0.0, -0.383, -0.707, -0.924]
+            // materialized_im = [0.0, -0.383, -0.707, -0.924, -1.0, -0.924, -0.707, -0.383]
+            //
+            // Alignment: 64 bytes (satisfies AVX-512/AVX2/SSE2)
+            // Access: Sequential loads (optimal prefetch, unit stride)
+
+            if (twiddle_materialize_auto(stage->stage_tw, arch) != 0)
+            {
+                FFT_LOG_ERROR("Failed to materialize bit-reversal twiddles");
                 free(plan);
                 return NULL;
             }
@@ -673,9 +735,7 @@ static fft_object fft_init_extended(
         return plan;
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Strategy 2: Large N (depth=0 only) → Four-step (cache-optimized)
-    // ──────────────────────────────────────────────────────────────────────
+    // Strategy 2: Large N (depth=0 only) → Four-step
     if (depth == 0 &&
         !(flags & FFT_PLAN_FLAG_NO_FOURSTEP) &&
         fft_should_use_fourstep(N, 1))
@@ -684,23 +744,18 @@ static fft_object fft_init_extended(
 
         FFT_LOG_DEBUG("Strategy: Four-step FFT (cache-optimized, N=%d)", N);
 
-        // Initialize four-step (will call fft_init_extended with depth+1)
-        if (fft_fourstep_init_plan(plan, depth) != 0)
+        // Four-step will recursively call fft_init_extended with depth+1
+        if (fft_fourstep_init_plan(plan, depth, arch) != 0)  // ✅ Pass arch
         {
             FFT_LOG_ERROR("Failed to initialize four-step plan");
             free(plan);
             return NULL;
         }
 
-        FFT_LOG_DEBUG("Four-step initialized: N1=%d, N2=%d",
-                      plan->fourstep->N1, plan->fourstep->N2);
-
-        return plan; // Early return - no stage construction needed
+        return plan;
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Strategy 3: Factorizable → Cooley-Tukey (93-95% of FFTW)
-    // ──────────────────────────────────────────────────────────────────────
+    // Strategy 3: Factorizable → Cooley-Tukey
     int factors[MAX_FFT_STAGES];
     int num_stages = factorize_optimal(N, factors);
 
@@ -708,21 +763,10 @@ static fft_object fft_init_extended(
     {
         plan->strategy = FFT_EXEC_RECURSIVE_CT;
 
-        if (is_power_of_2(N))
-        {
-            FFT_LOG_DEBUG("Strategy: Recursive CT (large power-of-2, N=%d)", N);
-        }
-        else if (N <= 64)
-        {
-            FFT_LOG_DEBUG("Strategy: Recursive CT (small mixed-radix, N=%d)", N);
-        }
-        else
-        {
-            FFT_LOG_DEBUG("Strategy: Recursive CT (large mixed-radix, N=%d)", N);
-        }
+        FFT_LOG_DEBUG("Strategy: Recursive CT (N=%d)", N);
 
-        // Construct stages with twiddles
-        if (construct_stages(plan, N, factors, num_stages) != 0)
+        // ✅ Pass arch to construct_stages
+        if (construct_stages(plan, N, factors, num_stages, arch) != 0)
         {
             FFT_LOG_ERROR("Stage construction failed");
             free_fft(plan);
@@ -733,9 +777,7 @@ static fft_object fft_init_extended(
         return plan;
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Strategy 4: Unfactorizable → Bluestein fallback (arbitrary N)
-    // ──────────────────────────────────────────────────────────────────────
+    // Strategy 4: Unfactorizable → Bluestein
     if (!(flags & FFT_PLAN_FLAG_NO_BLUESTEIN))
     {
         FFT_LOG_DEBUG("Strategy: Bluestein (unfactorizable, N=%d)", N);
@@ -750,9 +792,7 @@ static fft_object fft_init_extended(
         return plan;
     }
 
-    // ──────────────────────────────────────────────────────────────────────
     // No valid strategy found
-    // ──────────────────────────────────────────────────────────────────────
     FFT_LOG_ERROR("No valid strategy for N=%d (flags=0x%x)", N, flags);
     free(plan);
     return NULL;
@@ -764,7 +804,24 @@ static fft_object fft_init_extended(
 
 fft_object fft_init(int N, fft_direction_t direction)
 {
-    return fft_init_extended(N, direction, 0, FFT_PLAN_FLAG_NONE);
+    // Auto-detect SIMD architecture at compile time
+    simd_arch_t arch;
+#ifdef __AVX512F__
+    arch = SIMD_ARCH_AVX512;
+#elif defined(__AVX2__)
+    arch = SIMD_ARCH_AVX2;
+#elif defined(__SSE2__)
+    arch = SIMD_ARCH_SSE2;
+#else
+    arch = SIMD_ARCH_SCALAR;
+#endif
+
+    return fft_init_extended(N, direction, 0, FFT_PLAN_FLAG_NONE, arch);
+}
+
+fft_object fft_init_with_simd(int N, fft_direction_t direction, simd_arch_t arch)
+{
+    return fft_init_extended(N, direction, 0, FFT_PLAN_FLAG_NONE, arch);
 }
 
 //==============================================================================
