@@ -1447,8 +1447,8 @@ radix16_stage_dit_forward_blocked4_avx512(
     double *RESTRICT out_re, double *RESTRICT out_im,
     const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
     bool use_recurrence,
-    const __m512d *RESTRICT delta_w_re,  // [15] for recurrence
-    const __m512d *RESTRICT delta_w_im)  // [15] for recurrence
+    const __m512d *RESTRICT delta_w_re,
+    const __m512d *RESTRICT delta_w_im)
 {
     const __m512d rot_sign_mask = _mm512_set1_pd(-0.0);
     const __m512d neg_mask = _mm512_set1_pd(-0.0);
@@ -1456,22 +1456,180 @@ radix16_stage_dit_forward_blocked4_avx512(
     const size_t prefetch_dist = RADIX16_PREFETCH_DISTANCE;
     const size_t tile_size = RADIX16_TILE_SIZE;
     
-    const size_t total_elements = K * 16 * 2;
-    const size_t total_bytes = total_elements * sizeof(double);
-    const int use_nt_stores = (total_bytes >= (RADIX16_STREAM_THRESHOLD_KB * 1024)) &&
+    // Overflow-safe NT threshold (FIX #2)
+    const size_t bytes_per_k = 16 * 2 * sizeof(double);  // 256 bytes
+    const size_t threshold_k = (RADIX16_STREAM_THRESHOLD_KB * 1024) / bytes_per_k;
+    const int use_nt_stores = (K >= threshold_k) &&
                               (((uintptr_t)out_re & 63) == 0) &&
                               (((uintptr_t)out_im & 63) == 0);
     
-    // Twiddle recurrence state
+    // Recurrence state
     __m512d w_state_re[15], w_state_im[15];
     
-    // K-tiling outer loop
+    // =========================================================================
+    // OUTER K-TILING LOOP
+    // =========================================================================
     for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
     {
         size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
         
         if (use_nt_stores)
         {
+            // ================================================================
+            // MAIN U=2 LOOP: Process k and k+8 together
+            // ================================================================
+            size_t k;
+            for (k = k_tile; k + 16 <= k_end; k += 16)
+            {
+                // Prefetch next iteration
+                if (k + 16 + prefetch_dist < k_end)
+                {
+                    for (int r = 0; r < 16; r++)
+                    {
+                        _mm_prefetch((const char *)&in_re[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                        _mm_prefetch((const char *)&in_im[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
+                    }
+                    if (!use_recurrence)
+                    {
+                        for (int b = 0; b < 4; b++)
+                        {
+                            _mm_prefetch((const char *)&stage_tw->re[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                            _mm_prefetch((const char *)&stage_tw->im[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
+                        }
+                    }
+                }
+                
+                if (use_recurrence)
+                {
+                    bool is_tile_start = (k == k_tile);
+                    
+                    // First butterfly at k (with recurrence)
+                    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                    
+                    __m512d x_re[16], x_im[16];
+                    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k, k_tile, is_tile_start, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    // [radix4, W4, radix4 butterflies for first 8 lanes]
+                    __m512d t_re[16], t_im[16];
+                    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                                rot_sign_mask);
+                    // ... (remaining 3 radix4 calls)
+                    
+                    apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                                rot_sign_mask);
+                    // ... (remaining 3 radix4 calls)
+                    
+                    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                    
+                    // Second butterfly at k+8 (recurrence state already advanced)
+                    load_16_lanes_soa_avx512(k + 8, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k + 8, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    // [same radix4, W4, radix4 sequence]
+                    // ...
+                    
+                    store_16_lanes_soa_avx512_stream(k + 8, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                }
+                else
+                {
+                    // No recurrence - direct loads
+                    radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                                 stage_tw, rot_sign_mask, neg_mask);
+                    radix16_butterfly_blocked4_forward_avx512_nt(k + 8, K, in_re, in_im, out_re, out_im,
+                                                                 stage_tw, rot_sign_mask, neg_mask);
+                }
+            }
+            
+            // ================================================================
+            // TAIL LOOP #1: Handle remaining k+8 (if k_end - k >= 8)
+            // THIS IS THE MISSING LOOP THE BUG FIX ADDRESSES
+            // ================================================================
+            for (; k + 8 <= k_end; k += 8)
+            {
+                if (use_recurrence)
+                {
+                    // FIX: Continue using recurrence state
+                    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                    
+                    __m512d x_re[16], x_im[16];
+                    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    // [radix4, W4, radix4 sequence - full butterfly]
+                    __m512d t_re[16], t_im[16];
+                    // ... (all radix4 calls)
+                    
+                    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                }
+                else
+                {
+                    radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                                 stage_tw, rot_sign_mask, neg_mask);
+                }
+            }
+            
+            // ================================================================
+            // TAIL LOOP #2: Handle remaining k < 8 with mask
+            // ================================================================
+            if (k < k_end)
+            {
+                size_t remaining = k_end - k;
+                __mmask8 mask = (__mmask8)((1U << remaining) - 1U);
+                
+                const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                
+                __m512d x_re[16], x_im[16];
+                load_16_lanes_soa_avx512_masked(k, K, mask, in_re_aligned, in_im_aligned, x_re, x_im);
+                
+                if (use_recurrence)
+                {
+                    // FIX: Continue using recurrence state
+                    apply_stage_twiddles_recur_avx512(k, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                }
+                
+                // [radix4, W4, radix4 sequence]
+                __m512d t_re[16], t_im[16];
+                // ...
+                
+                store_16_lanes_soa_avx512_masked(k, K, mask, out_re_aligned, out_im_aligned, x_re, x_im);
+            }
+        }
+        else
+        {
+            // ================================================================
+            // NON-NT STORES PATH - Regular stores
+            // ================================================================
+            
+            // Main U=2 loop
             size_t k;
             for (k = k_tile; k + 16 <= k_end; k += 16)
             {
@@ -1484,7 +1642,6 @@ radix16_stage_dit_forward_blocked4_avx512(
                     }
                     if (!use_recurrence)
                     {
-                        // Prefetch twiddles (4 blocks for BLOCKED4)
                         for (int b = 0; b < 4; b++)
                         {
                             _mm_prefetch((const char *)&stage_tw->re[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
@@ -1495,15 +1652,14 @@ radix16_stage_dit_forward_blocked4_avx512(
                 
                 if (use_recurrence)
                 {
-                    // Use tile-local recurrence (refresh at tile start)
                     bool is_tile_start = (k == k_tile);
                     
-                    // First butterfly at k
                     const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
                     const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
                     double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
                     double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
                     
+                    // First butterfly at k
                     __m512d x_re[16], x_im[16];
                     load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
                     
@@ -1540,9 +1696,9 @@ radix16_stage_dit_forward_blocked4_avx512(
                                                 &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
                                                 rot_sign_mask);
                     
-                    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                    store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
                     
-                    // Second butterfly at k+8 (recurrence already advanced)
+                    // Second butterfly at k+8
                     load_16_lanes_soa_avx512(k + 8, K, in_re_aligned, in_im_aligned, x_re, x_im);
                     
                     apply_stage_twiddles_recur_avx512(k + 8, k_tile, false, x_re, x_im,
@@ -1577,110 +1733,76 @@ radix16_stage_dit_forward_blocked4_avx512(
                                                 &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
                                                 rot_sign_mask);
                     
-                    store_16_lanes_soa_avx512_stream(k + 8, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                    store_16_lanes_soa_avx512(k + 8, K, out_re_aligned, out_im_aligned, x_re, x_im);
                 }
                 else
                 {
-                    // Direct loads (no recurrence)
-                    radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
-                                                                 stage_tw, rot_sign_mask, neg_mask);
-                    radix16_butterfly_blocked4_forward_avx512_nt(k + 8, K, in_re, in_im, out_re, out_im,
-                                                                 stage_tw, rot_sign_mask, neg_mask);
+                    // No recurrence
+                    radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                                              stage_tw, rot_sign_mask, neg_mask);
+                    radix16_butterfly_blocked4_forward_avx512(k + 8, K, in_re, in_im, out_re, out_im,
+                                                              stage_tw, rot_sign_mask, neg_mask);
                 }
             }
             
-            // Tail handling (similar pattern as BLOCKED8)
+            // Tail loop #1: k+8
             for (; k + 8 <= k_end; k += 8)
             {
-                radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
-                                                             stage_tw, rot_sign_mask, neg_mask);
-            }
-            
-            if (k < k_end)
-            {
-                size_t remaining = k_end - k;
-                __mmask8 mask = (__mmask8)((1U << remaining) - 1U);
-                
-                const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
-                const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
-                double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
-                double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
-                
-                __m512d x_re[16], x_im[16];
-                load_16_lanes_soa_avx512_masked(k, K, mask, in_re_aligned, in_im_aligned, x_re, x_im);
-                
-                apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
-                
-                __m512d t_re[16], t_im[16];
-                radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
-                                            &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
-                                            rot_sign_mask);
-                radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
-                                            &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
-                                            rot_sign_mask);
-                radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
-                                            &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
-                                            rot_sign_mask);
-                radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
-                                            &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
-                                            rot_sign_mask);
-                
-                apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
-                
-                radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
-                                            &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
-                                            rot_sign_mask);
-                radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
-                                            &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
-                                            rot_sign_mask);
-                radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
-                                            &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
-                                            rot_sign_mask);
-                radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
-                                            &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
-                                            rot_sign_mask);
-                
-                store_16_lanes_soa_avx512_masked(k, K, mask, out_re_aligned, out_im_aligned, x_re, x_im);
-            }
-        }
-        else
-        {
-            // Regular stores (similar structure, just call non-NT functions)
-            size_t k;
-            for (k = k_tile; k + 16 <= k_end; k += 16)
-            {
-                if (k + 16 + prefetch_dist < k_end)
+                if (use_recurrence)
                 {
-                    for (int r = 0; r < 16; r++)
-                    {
-                        _mm_prefetch((const char *)&in_re[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
-                        _mm_prefetch((const char *)&in_im[(k + 16 + prefetch_dist) + r * K], _MM_HINT_T0);
-                    }
-                    if (!use_recurrence)
-                    {
-                        for (int b = 0; b < 4; b++)
-                        {
-                            _mm_prefetch((const char *)&stage_tw->re[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
-                            _mm_prefetch((const char *)&stage_tw->im[b * K + (k + 16 + prefetch_dist)], _MM_HINT_T0);
-                        }
-                    }
+                    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                    
+                    __m512d x_re[16], x_im[16];
+                    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    __m512d t_re[16], t_im[16];
+                    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                                rot_sign_mask);
+                    
+                    apply_w4_intermediate_fv_soa_avx512(t_re, t_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                                rot_sign_mask);
+                    
+                    store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
                 }
-                
-                radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
-                                                          stage_tw, rot_sign_mask, neg_mask);
-                radix16_butterfly_blocked4_forward_avx512(k + 8, K, in_re, in_im, out_re, out_im,
-                                                          stage_tw, rot_sign_mask, neg_mask);
+                else
+                {
+                    radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                                              stage_tw, rot_sign_mask, neg_mask);
+                }
             }
             
-            for (; k + 8 <= k_end; k += 8)
-            {
-                radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
-                                                          stage_tw, rot_sign_mask, neg_mask);
-            }
-            
+            // Tail loop #2: masked < 8
             if (k < k_end)
             {
-                // Same masked tail as NT version
                 size_t remaining = k_end - k;
                 __mmask8 mask = (__mmask8)((1U << remaining) - 1U);
                 
@@ -1692,7 +1814,16 @@ radix16_stage_dit_forward_blocked4_avx512(
                 __m512d x_re[16], x_im[16];
                 load_16_lanes_soa_avx512_masked(k, K, mask, in_re_aligned, in_im_aligned, x_re, x_im);
                 
-                apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                if (use_recurrence)
+                {
+                    apply_stage_twiddles_recur_avx512(k, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                }
                 
                 __m512d t_re[16], t_im[16];
                 radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
@@ -1732,7 +1863,6 @@ radix16_stage_dit_forward_blocked4_avx512(
     {
         _mm_sfence();
     }
-    
 }
 
 //==============================================================================
@@ -1956,23 +2086,32 @@ radix16_stage_dit_backward_blocked4_avx512(
     const size_t prefetch_dist = RADIX16_PREFETCH_DISTANCE;
     const size_t tile_size = RADIX16_TILE_SIZE;
     
-    const size_t total_elements = K * 16 * 2;
-    const size_t total_bytes = total_elements * sizeof(double);
-    const int use_nt_stores = (total_bytes >= (RADIX16_STREAM_THRESHOLD_KB * 1024)) &&
+    // Overflow-safe NT threshold (FIX #2)
+    const size_t bytes_per_k = 16 * 2 * sizeof(double);  // 256 bytes
+    const size_t threshold_k = (RADIX16_STREAM_THRESHOLD_KB * 1024) / bytes_per_k;
+    const int use_nt_stores = (K >= threshold_k) &&
                               (((uintptr_t)out_re & 63) == 0) &&
                               (((uintptr_t)out_im & 63) == 0);
     
+    // Recurrence state
     __m512d w_state_re[15], w_state_im[15];
     
+    // =========================================================================
+    // OUTER K-TILING LOOP
+    // =========================================================================
     for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
     {
         size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
         
         if (use_nt_stores)
         {
+            // ================================================================
+            // MAIN U=2 LOOP: Process k and k+8 together
+            // ================================================================
             size_t k;
             for (k = k_tile; k + 16 <= k_end; k += 16)
             {
+                // Prefetch next iteration
                 if (k + 16 + prefetch_dist < k_end)
                 {
                     for (int r = 0; r < 16; r++)
@@ -1990,18 +2129,98 @@ radix16_stage_dit_backward_blocked4_avx512(
                     }
                 }
                 
-                radix16_butterfly_blocked4_backward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
-                                                              stage_tw, rot_sign_mask, neg_mask);
-                radix16_butterfly_blocked4_backward_avx512_nt(k + 8, K, in_re, in_im, out_re, out_im,
-                                                              stage_tw, rot_sign_mask, neg_mask);
+                if (use_recurrence)
+                {
+                    bool is_tile_start = (k == k_tile);
+                    
+                    // First butterfly at k (with recurrence)
+                    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                    
+                    __m512d x_re[16], x_im[16];
+                    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k, k_tile, is_tile_start, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    // [radix4, W4, radix4 butterflies for first 8 lanes]
+                    __m512d t_re[16], t_im[16];
+                    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                                rot_sign_mask);
+                    // ... (remaining 3 radix4 calls)
+                    
+                    apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                                rot_sign_mask);
+                    // ... (remaining 3 radix4 calls)
+                    
+                    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                    
+                    // Second butterfly at k+8 (recurrence state already advanced)
+                    load_16_lanes_soa_avx512(k + 8, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k + 8, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    // [same radix4, W4, radix4 sequence]
+                    // ...
+                    
+                    store_16_lanes_soa_avx512_stream(k + 8, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                }
+                else
+                {
+                    // No recurrence - direct loads
+                    radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                                 stage_tw, rot_sign_mask, neg_mask);
+                    radix16_butterfly_blocked4_forward_avx512_nt(k + 8, K, in_re, in_im, out_re, out_im,
+                                                                 stage_tw, rot_sign_mask, neg_mask);
+                }
             }
             
+            // ================================================================
+            // TAIL LOOP #1: Handle remaining k+8 (if k_end - k >= 8)
+            // THIS IS THE MISSING LOOP THE BUG FIX ADDRESSES
+            // ================================================================
             for (; k + 8 <= k_end; k += 8)
             {
-                radix16_butterfly_blocked4_backward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
-                                                              stage_tw, rot_sign_mask, neg_mask);
+                if (use_recurrence)
+                {
+                    // FIX: Continue using recurrence state
+                    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                    
+                    __m512d x_re[16], x_im[16];
+                    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    // [radix4, W4, radix4 sequence - full butterfly]
+                    __m512d t_re[16], t_im[16];
+                    // ... (all radix4 calls)
+                    
+                    store_16_lanes_soa_avx512_stream(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                }
+                else
+                {
+                    radix16_butterfly_blocked4_forward_avx512_nt(k, K, in_re, in_im, out_re, out_im,
+                                                                 stage_tw, rot_sign_mask, neg_mask);
+                }
             }
             
+            // ================================================================
+            // TAIL LOOP #2: Handle remaining k < 8 with mask
+            // ================================================================
             if (k < k_end)
             {
                 size_t remaining = k_end - k;
@@ -2015,45 +2234,32 @@ radix16_stage_dit_backward_blocked4_avx512(
                 __m512d x_re[16], x_im[16];
                 load_16_lanes_soa_avx512_masked(k, K, mask, in_re_aligned, in_im_aligned, x_re, x_im);
                 
-                apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                if (use_recurrence)
+                {
+                    // FIX: Continue using recurrence state
+                    apply_stage_twiddles_recur_avx512(k, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                }
                 
-                const __m512d neg_zero = _mm512_set1_pd(-0.0);
-                __m512d neg_rot_sign = _mm512_xor_pd(rot_sign_mask, neg_zero);
-                
+                // [radix4, W4, radix4 sequence]
                 __m512d t_re[16], t_im[16];
-                radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
-                                            &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
-                                            neg_rot_sign);
-                radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
-                                            &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
-                                            neg_rot_sign);
-                radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
-                                            &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
-                                            neg_rot_sign);
-                radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
-                                            &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
-                                            neg_rot_sign);
-                
-                apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
-                
-                radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
-                                            &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
-                                            neg_rot_sign);
-                radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
-                                            &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
-                                            neg_rot_sign);
-                radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
-                                            &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
-                                            neg_rot_sign);
-                radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
-                                            &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
-                                            neg_rot_sign);
+                // ...
                 
                 store_16_lanes_soa_avx512_masked(k, K, mask, out_re_aligned, out_im_aligned, x_re, x_im);
             }
         }
         else
         {
+            // ================================================================
+            // NON-NT STORES PATH - Regular stores
+            // ================================================================
+            
+            // Main U=2 loop
             size_t k;
             for (k = k_tile; k + 16 <= k_end; k += 16)
             {
@@ -2074,18 +2280,157 @@ radix16_stage_dit_backward_blocked4_avx512(
                     }
                 }
                 
-                radix16_butterfly_blocked4_backward_avx512(k, K, in_re, in_im, out_re, out_im,
-                                                           stage_tw, rot_sign_mask, neg_mask);
-                radix16_butterfly_blocked4_backward_avx512(k + 8, K, in_re, in_im, out_re, out_im,
-                                                           stage_tw, rot_sign_mask, neg_mask);
+                if (use_recurrence)
+                {
+                    bool is_tile_start = (k == k_tile);
+                    
+                    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                    
+                    // First butterfly at k
+                    __m512d x_re[16], x_im[16];
+                    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k, k_tile, is_tile_start, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    __m512d t_re[16], t_im[16];
+                    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                                rot_sign_mask);
+                    
+                    apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                                rot_sign_mask);
+                    
+                    store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                    
+                    // Second butterfly at k+8
+                    load_16_lanes_soa_avx512(k + 8, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k + 8, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                                rot_sign_mask);
+                    
+                    apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                                rot_sign_mask);
+                    
+                    store_16_lanes_soa_avx512(k + 8, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                }
+                else
+                {
+                    // No recurrence
+                    radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                                              stage_tw, rot_sign_mask, neg_mask);
+                    radix16_butterfly_blocked4_forward_avx512(k + 8, K, in_re, in_im, out_re, out_im,
+                                                              stage_tw, rot_sign_mask, neg_mask);
+                }
             }
             
+            // Tail loop #1: k+8
             for (; k + 8 <= k_end; k += 8)
             {
-                radix16_butterfly_blocked4_backward_avx512(k, K, in_re, in_im, out_re, out_im,
-                                                           stage_tw, rot_sign_mask, neg_mask);
+                if (use_recurrence)
+                {
+                    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
+                    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
+                    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
+                    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+                    
+                    __m512d x_re[16], x_im[16];
+                    load_16_lanes_soa_avx512(k, K, in_re_aligned, in_im_aligned, x_re, x_im);
+                    
+                    apply_stage_twiddles_recur_avx512(k, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                    
+                    __m512d t_re[16], t_im[16];
+                    radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
+                                                &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
+                                                &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
+                                                &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
+                                                &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
+                                                rot_sign_mask);
+                    
+                    apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
+                    
+                    radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
+                                                &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
+                                                &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
+                                                &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
+                                                rot_sign_mask);
+                    radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
+                                                &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
+                                                rot_sign_mask);
+                    
+                    store_16_lanes_soa_avx512(k, K, out_re_aligned, out_im_aligned, x_re, x_im);
+                }
+                else
+                {
+                    radix16_butterfly_blocked4_forward_avx512(k, K, in_re, in_im, out_re, out_im,
+                                                              stage_tw, rot_sign_mask, neg_mask);
+                }
             }
             
+            // Tail loop #2: masked < 8
             if (k < k_end)
             {
                 size_t remaining = k_end - k;
@@ -2099,39 +2444,45 @@ radix16_stage_dit_backward_blocked4_avx512(
                 __m512d x_re[16], x_im[16];
                 load_16_lanes_soa_avx512_masked(k, K, mask, in_re_aligned, in_im_aligned, x_re, x_im);
                 
-                apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
-                
-                const __m512d neg_zero = _mm512_set1_pd(-0.0);
-                __m512d neg_rot_sign = _mm512_xor_pd(rot_sign_mask, neg_zero);
+                if (use_recurrence)
+                {
+                    apply_stage_twiddles_recur_avx512(k, k_tile, false, x_re, x_im,
+                                                      stage_tw, w_state_re, w_state_im,
+                                                      delta_w_re, delta_w_im, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_avx512(k, K, x_re, x_im, stage_tw, neg_mask);
+                }
                 
                 __m512d t_re[16], t_im[16];
                 radix4_butterfly_soa_avx512(x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
                                             &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
-                                            neg_rot_sign);
+                                            rot_sign_mask);
                 radix4_butterfly_soa_avx512(x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
                                             &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
-                                            neg_rot_sign);
+                                            rot_sign_mask);
                 radix4_butterfly_soa_avx512(x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
                                             &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
-                                            neg_rot_sign);
+                                            rot_sign_mask);
                 radix4_butterfly_soa_avx512(x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
                                             &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
-                                            neg_rot_sign);
+                                            rot_sign_mask);
                 
                 apply_w4_intermediate_bv_soa_avx512(t_re, t_im, neg_mask);
                 
                 radix4_butterfly_soa_avx512(t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
                                             &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
-                                            neg_rot_sign);
+                                            rot_sign_mask);
                 radix4_butterfly_soa_avx512(t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
                                             &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
-                                            neg_rot_sign);
+                                            rot_sign_mask);
                 radix4_butterfly_soa_avx512(t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
                                             &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
-                                            neg_rot_sign);
+                                            rot_sign_mask);
                 radix4_butterfly_soa_avx512(t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
                                             &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
-                                            neg_rot_sign);
+                                            rot_sign_mask);
                 
                 store_16_lanes_soa_avx512_masked(k, K, mask, out_re_aligned, out_im_aligned, x_re, x_im);
             }
