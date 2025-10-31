@@ -29,15 +29,15 @@
     #include "fft_radix32_avx2_native_soa.h"
 #endif
 
-#include "fft_radix32_scalar_native_soa.h"
+#include "fft_radix32_uniform.h"
 
 // N1 implementations (FUTURE)
 #ifdef __AVX512F__
-    // #include "fft_radix32_avx512_n1.h"  // TODO
+    #include "fft_radix32_avx512n1.h"  // N1 implementation ✓
 #endif
 
 #ifdef __AVX2__
-    // #include "fft_radix32_avx2_n1.h"    // TODO
+    #include "fft_radix32_avx2n1.h"    // N1 implementation ✓
 #endif
 
 // #include "fft_radix32_scalar_n1.h"      // TODO
