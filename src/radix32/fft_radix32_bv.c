@@ -29,15 +29,15 @@
     #include "fft_radix32_avx2_native_soa.h"
 #endif
 
-#include "fft_radix32_scalar_native_soa.h"
+#include "fft_radix32_uniform.h"
 
 // N1 implementations (FUTURE)
 #ifdef __AVX512F__
-    // #include "fft_radix32_avx512_n1.h"  // TODO
+    #include "fft_radix32_avx512n1.h"  // N1 implementation ✓
 #endif
 
 #ifdef __AVX2__
-    // #include "fft_radix32_avx2_n1.h"    // TODO
+    #include "fft_radix32_avx2n1.h"    // N1 implementation ✓
 #endif
 
 // #include "fft_radix32_scalar_n1.h"      // TODO
@@ -162,18 +162,33 @@ static void radix32_process_range_native_soa_bv_n1(
     int k_start,
     int k_end)
 {
-    (void)out_re;
-    (void)out_im;
-    (void)in_re;
-    (void)in_im;
-    (void)K;
     (void)N;
-    (void)k_start;
-    (void)k_end;
     
-    // TODO: Implement N1 variant (no twiddles)
-    // This is for first-stage optimization where all twiddles = 1+0i
-    assert(0 && "fft_radix32_bv_n1 not yet implemented");
+    int range_K = k_end - k_start;
+    
+    const double *in_re_range = in_re + k_start;
+    const double *in_im_range = in_im + k_start;
+    double *out_re_range = out_re + k_start;
+    double *out_im_range = out_im + k_start;
+    
+#ifdef __AVX512F__
+    radix32_stage_dit_backward_n1_soa_avx512(range_K,
+                                             in_re_range, in_im_range,
+                                             out_re_range, out_im_range);
+    return;
+#endif
+    
+#ifdef __AVX2__
+    radix32_stage_dit_backward_n1_soa_avx2(range_K,
+                                           in_re_range, in_im_range,
+                                           out_re_range, out_im_range);
+    return;
+#endif
+    
+    // Scalar fallback (IMPLEMENTED!)
+    radix32_stage_dit_backward_n1_soa_scalar(range_K,
+                                             in_re_range, in_im_range,
+                                             out_re_range, out_im_range);
 }
 
 //==============================================================================
