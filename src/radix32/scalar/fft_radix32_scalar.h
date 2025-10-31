@@ -1693,3 +1693,968 @@ radix32_stage_dit_forward_blocked4_merge_scalar(
 #endif
     }
 }
+
+//==============================================================================
+// COMPLETE STAGE DRIVERS: BACKWARD (BLOCKED8, SCALAR)
+//==============================================================================
+
+/**
+ * @brief Radix-32 DIT Backward Stage - BLOCKED8 Merge (SCALAR)
+ *
+ * SCALAR ADAPTATIONS:
+ * - Main loop: k += 4 (process k, k+1, k+2, k+3 for U=4 ILP)
+ * - Tail loop: k += 1 (scalar handles any remainder naturally)
+ * - Prefetch distance: 64 doubles (was 16 for AVX-2)
+ */
+TARGET_FMA
+FORCE_INLINE void
+radix32_stage_dit_backward_blocked8_merge_scalar(
+    size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix32_stage_twiddles_scalar_t *RESTRICT stage_tw)
+{
+    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE_SCALAR;
+    const size_t tile_size = RADIX32_TILE_SIZE_SCALAR;
+
+    const bool use_nt_stores = radix32_should_use_nt_stores_scalar(K, out_re, out_im);
+
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
+
+    const void *radix16_tw = stage_tw->radix16_tw_opaque;
+    const radix16_twiddle_mode_scalar_t r16_mode = stage_tw->radix16_mode;
+    const radix32_merge_twiddles_blocked8_scalar_t *merge_tw =
+        (const radix32_merge_twiddles_blocked8_scalar_t *)stage_tw->merge_tw_opaque;
+
+    const radix16_stage_twiddles_blocked8_scalar_t *tw16b8 =
+        (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+            ? (const radix16_stage_twiddles_blocked8_scalar_t *)radix16_tw
+            : NULL;
+    const radix16_stage_twiddles_blocked4_scalar_t *tw16b4 =
+        (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+            ? (const radix16_stage_twiddles_blocked4_scalar_t *)radix16_tw
+            : NULL;
+
+    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
+    {
+        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
+
+        size_t k;
+        for (k = k_tile; k + 4 <= k_end; k += 4)
+        {
+            size_t k_next = k + 4 + prefetch_dist;
+            if (k_next < k_end)
+            {
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    RADIX16_PREFETCH_NEXT_BLOCKED8_SCALAR(k_next, k_end, K,
+                                                          in_re_aligned, in_im_aligned, tw16b8);
+                }
+                else
+                {
+                    RADIX16_PREFETCH_NEXT_BLOCKED4_SCALAR(k_next, k_end, K,
+                                                          in_re_aligned, in_im_aligned, tw16b4);
+                }
+
+                RADIX32_PREFETCH_MERGE_BLOCKED8_SCALAR(k_next, k_end, K,
+                                                       in_re_aligned, in_im_aligned, merge_tw);
+            }
+
+            // ==================== PROCESS k (1st of 4) ====================
+            {
+                double even_re[16], even_im[16];
+                load_16_lanes_soa_scalar(k, K, in_re_aligned, in_im_aligned,
+                                         even_re, even_im);
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    apply_stage_twiddles_blocked8_scalar(k, K, even_re, even_im,
+                                                         tw16b8);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_scalar(k, K, even_re, even_im,
+                                                         tw16b4);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+                double odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = in_re_aligned[k + (r + 16) * K];
+                    odd_im[r] = in_im_aligned[k + (r + 16) * K];
+                }
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    apply_stage_twiddles_blocked8_scalar(k, K, odd_re, odd_im,
+                                                         tw16b8);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_scalar(k, K, odd_re, odd_im,
+                                                         tw16b4);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+                apply_merge_twiddles_blocked8_scalar(k, K, odd_re, odd_im,
+                                                     merge_tw);
+
+                double y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im,
+                                                    y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_scalar_stream(k, K, out_re_aligned, out_im_aligned,
+                                                     y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_scalar(k, K, out_re_aligned, out_im_aligned,
+                                              y_re, y_im);
+                }
+            }
+
+            // ==================== PROCESS k+1 (2nd of 4) ====================
+            {
+                double even_re[16], even_im[16];
+                load_16_lanes_soa_scalar(k + 1, K, in_re_aligned, in_im_aligned,
+                                         even_re, even_im);
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 1, K, even_re, even_im,
+                                                         tw16b8);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 1, K, even_re, even_im,
+                                                         tw16b4);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+                double odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = in_re_aligned[k + 1 + (r + 16) * K];
+                    odd_im[r] = in_im_aligned[k + 1 + (r + 16) * K];
+                }
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 1, K, odd_re, odd_im,
+                                                         tw16b8);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 1, K, odd_re, odd_im,
+                                                         tw16b4);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+                apply_merge_twiddles_blocked8_scalar(k + 1, K, odd_re, odd_im,
+                                                     merge_tw);
+
+                double y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im,
+                                                    y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_scalar_stream(k + 1, K, out_re_aligned,
+                                                     out_im_aligned, y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_scalar(k + 1, K, out_re_aligned, out_im_aligned,
+                                              y_re, y_im);
+                }
+            }
+
+            // ==================== PROCESS k+2 (3rd of 4) ====================
+            {
+                double even_re[16], even_im[16];
+                load_16_lanes_soa_scalar(k + 2, K, in_re_aligned, in_im_aligned,
+                                         even_re, even_im);
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 2, K, even_re, even_im,
+                                                         tw16b8);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 2, K, even_re, even_im,
+                                                         tw16b4);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+                double odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = in_re_aligned[k + 2 + (r + 16) * K];
+                    odd_im[r] = in_im_aligned[k + 2 + (r + 16) * K];
+                }
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 2, K, odd_re, odd_im,
+                                                         tw16b8);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 2, K, odd_re, odd_im,
+                                                         tw16b4);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+                apply_merge_twiddles_blocked8_scalar(k + 2, K, odd_re, odd_im,
+                                                     merge_tw);
+
+                double y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im,
+                                                    y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_scalar_stream(k + 2, K, out_re_aligned,
+                                                     out_im_aligned, y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_scalar(k + 2, K, out_re_aligned, out_im_aligned,
+                                              y_re, y_im);
+                }
+            }
+
+            // ==================== PROCESS k+3 (4th of 4) ====================
+            {
+                double even_re[16], even_im[16];
+                load_16_lanes_soa_scalar(k + 3, K, in_re_aligned, in_im_aligned,
+                                         even_re, even_im);
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 3, K, even_re, even_im,
+                                                         tw16b8);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 3, K, even_re, even_im,
+                                                         tw16b4);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+                double odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = in_re_aligned[k + 3 + (r + 16) * K];
+                    odd_im[r] = in_im_aligned[k + 3 + (r + 16) * K];
+                }
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 3, K, odd_re, odd_im,
+                                                         tw16b8);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 3, K, odd_re, odd_im,
+                                                         tw16b4);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+                apply_merge_twiddles_blocked8_scalar(k + 3, K, odd_re, odd_im,
+                                                     merge_tw);
+
+                double y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im,
+                                                    y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_scalar_stream(k + 3, K, out_re_aligned,
+                                                     out_im_aligned, y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_scalar(k + 3, K, out_re_aligned, out_im_aligned,
+                                              y_re, y_im);
+                }
+            }
+        }
+
+        for (; k < k_end; k++)
+        {
+            double even_re[16], even_im[16];
+            load_16_lanes_soa_scalar(k, K, in_re_aligned, in_im_aligned, even_re, even_im);
+
+            if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+            {
+                apply_stage_twiddles_blocked8_scalar(k, K, even_re, even_im, tw16b8);
+            }
+            else
+            {
+                apply_stage_twiddles_blocked4_scalar(k, K, even_re, even_im, tw16b4);
+            }
+            radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+            double odd_re[16], odd_im[16];
+            for (int r = 0; r < 16; r++)
+            {
+                odd_re[r] = in_re_aligned[k + (r + 16) * K];
+                odd_im[r] = in_im_aligned[k + (r + 16) * K];
+            }
+
+            if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+            {
+                apply_stage_twiddles_blocked8_scalar(k, K, odd_re, odd_im, tw16b8);
+            }
+            else
+            {
+                apply_stage_twiddles_blocked4_scalar(k, K, odd_re, odd_im, tw16b4);
+            }
+            radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+            apply_merge_twiddles_blocked8_scalar(k, K, odd_re, odd_im, merge_tw);
+
+            double y_re[32], y_im[32];
+            radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im, y_re, y_im);
+
+            if (use_nt_stores)
+            {
+                store_32_lanes_soa_scalar_stream(k, K, out_re_aligned, out_im_aligned,
+                                                 y_re, y_im);
+            }
+            else
+            {
+                store_32_lanes_soa_scalar(k, K, out_re_aligned, out_im_aligned, y_re, y_im);
+            }
+        }
+    }
+
+    if (use_nt_stores)
+    {
+#if defined(__GNUC__) || defined(__clang__)
+        __asm__ __volatile__("sfence" ::: "memory");
+#elif defined(_MSC_VER)
+        _mm_sfence();
+#endif
+    }
+}
+
+//==============================================================================
+// COMPLETE STAGE DRIVERS: BACKWARD (BLOCKED4 WITH RECURRENCE, SCALAR)
+//==============================================================================
+
+/**
+ * @brief Radix-32 DIT Backward Stage - BLOCKED4 Merge (SCALAR WITH R16 RECURRENCE)
+ *
+ * CRITICAL FEATURES:
+ * - Detects radix-16 recurrence mode
+ * - Maintains separate walker state for even/odd halves
+ * - Branches on r16_recur in twiddle application
+ * 
+ * SCALAR ADAPTATIONS:
+ * - Main loop: k += 4, U=4 with k, k+1, k+2, k+3
+ * - Tail loop: k += 1 (no masking needed)
+ * - Prefetch: 64 doubles ahead
+ */
+TARGET_FMA
+FORCE_INLINE void
+radix32_stage_dit_backward_blocked4_merge_scalar(
+    size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix32_stage_twiddles_scalar_t *RESTRICT stage_tw,
+    bool use_merge_recurrence,
+    const double *RESTRICT merge_delta_w_re,
+    const double *RESTRICT merge_delta_w_im)
+{
+    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE_SCALAR;
+    const size_t tile_size = RADIX32_TILE_SIZE_SCALAR;
+
+    const bool use_nt_stores = radix32_should_use_nt_stores_scalar(K, out_re, out_im);
+
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
+
+    const void *radix16_tw = stage_tw->radix16_tw_opaque;
+    const radix16_twiddle_mode_scalar_t r16_mode = stage_tw->radix16_mode;
+    const radix32_merge_twiddles_blocked4_scalar_t *merge_tw =
+        (const radix32_merge_twiddles_blocked4_scalar_t *)stage_tw->merge_tw_opaque;
+
+    const radix16_stage_twiddles_blocked8_scalar_t *tw16b8 =
+        (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+            ? (const radix16_stage_twiddles_blocked8_scalar_t *)radix16_tw
+            : NULL;
+    const radix16_stage_twiddles_blocked4_scalar_t *tw16b4 =
+        (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+            ? (const radix16_stage_twiddles_blocked4_scalar_t *)radix16_tw
+            : NULL;
+
+    bool r16_recur = (r16_mode == RADIX16_TW_BLOCKED4_SCALAR) && tw16b4->recurrence_enabled;
+
+    double merge_w_state_re[16], merge_w_state_im[16];
+    
+    // CRITICAL: [16] elements - planner sets delta_w[15] to safe value
+    double r16_w_even_re[16], r16_w_even_im[16];
+    double r16_w_odd_re[16], r16_w_odd_im[16];
+
+    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
+    {
+        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
+
+        size_t k;
+        for (k = k_tile; k + 4 <= k_end; k += 4)
+        {
+            size_t k_next = k + 4 + prefetch_dist;
+            if (k_next < k_end)
+            {
+                if (r16_mode == RADIX16_TW_BLOCKED8_SCALAR)
+                {
+                    RADIX16_PREFETCH_NEXT_BLOCKED8_SCALAR(k_next, k_end, K,
+                                                          in_re_aligned, in_im_aligned, tw16b8);
+                }
+                else if (r16_recur)
+                {
+                    RADIX16_PREFETCH_NEXT_RECURRENCE_SCALAR(k_next, k_end, K,
+                                                            in_re_aligned, in_im_aligned);
+                }
+                else
+                {
+                    RADIX16_PREFETCH_NEXT_BLOCKED4_SCALAR(k_next, k_end, K,
+                                                          in_re_aligned, in_im_aligned, tw16b4);
+                }
+
+                if (use_merge_recurrence)
+                {
+                    RADIX32_PREFETCH_MERGE_RECURRENCE_SCALAR(k_next, k_end, K,
+                                                             in_re_aligned, in_im_aligned);
+                }
+                else
+                {
+                    RADIX32_PREFETCH_MERGE_BLOCKED4_SCALAR(k_next, k_end, K,
+                                                           in_re_aligned, in_im_aligned, merge_tw);
+                }
+            }
+
+            bool is_tile_start = (k == k_tile);
+
+            // ==================== PROCESS k (1st of 4) ====================
+            {
+                double even_re[16], even_im[16];
+                load_16_lanes_soa_scalar(k, K, in_re_aligned, in_im_aligned,
+                                         even_re, even_im);
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_scalar(k, k_tile, is_tile_start,
+                                                      even_re, even_im, tw16b4,
+                                                      r16_w_even_re, r16_w_even_im,
+                                                      tw16b4->delta_w_re, tw16b4->delta_w_im);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+                {
+                    apply_stage_twiddles_blocked4_scalar(k, K, even_re, even_im,
+                                                         tw16b4);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_scalar(k, K, even_re, even_im,
+                                                         tw16b8);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+                double odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = in_re_aligned[k + (r + 16) * K];
+                    odd_im[r] = in_im_aligned[k + (r + 16) * K];
+                }
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_scalar(k, k_tile, is_tile_start,
+                                                      odd_re, odd_im, tw16b4,
+                                                      r16_w_odd_re, r16_w_odd_im,
+                                                      tw16b4->delta_w_re, tw16b4->delta_w_im);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+                {
+                    apply_stage_twiddles_blocked4_scalar(k, K, odd_re, odd_im,
+                                                         tw16b4);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_scalar(k, K, odd_re, odd_im,
+                                                         tw16b8);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+                if (use_merge_recurrence)
+                {
+                    apply_merge_twiddles_recur_scalar(k, k_tile, is_tile_start,
+                                                      odd_re, odd_im, merge_tw,
+                                                      merge_w_state_re, merge_w_state_im,
+                                                      merge_delta_w_re, merge_delta_w_im);
+                }
+                else
+                {
+                    apply_merge_twiddles_blocked4_scalar(k, K, odd_re, odd_im,
+                                                         merge_tw);
+                }
+
+                double y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im,
+                                                    y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_scalar_stream(k, K, out_re_aligned, out_im_aligned,
+                                                     y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_scalar(k, K, out_re_aligned, out_im_aligned,
+                                              y_re, y_im);
+                }
+            }
+
+            // ==================== PROCESS k+1 (2nd of 4) ====================
+            {
+                double even_re[16], even_im[16];
+                load_16_lanes_soa_scalar(k + 1, K, in_re_aligned, in_im_aligned,
+                                         even_re, even_im);
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_scalar(k + 1, k_tile, false,
+                                                      even_re, even_im, tw16b4,
+                                                      r16_w_even_re, r16_w_even_im,
+                                                      tw16b4->delta_w_re, tw16b4->delta_w_im);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 1, K, even_re, even_im,
+                                                         tw16b4);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 1, K, even_re, even_im,
+                                                         tw16b8);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+                double odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = in_re_aligned[k + 1 + (r + 16) * K];
+                    odd_im[r] = in_im_aligned[k + 1 + (r + 16) * K];
+                }
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_scalar(k + 1, k_tile, false,
+                                                      odd_re, odd_im, tw16b4,
+                                                      r16_w_odd_re, r16_w_odd_im,
+                                                      tw16b4->delta_w_re, tw16b4->delta_w_im);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 1, K, odd_re, odd_im,
+                                                         tw16b4);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 1, K, odd_re, odd_im,
+                                                         tw16b8);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+                if (use_merge_recurrence)
+                {
+                    apply_merge_twiddles_recur_scalar(k + 1, k_tile, false,
+                                                      odd_re, odd_im, merge_tw,
+                                                      merge_w_state_re, merge_w_state_im,
+                                                      merge_delta_w_re, merge_delta_w_im);
+                }
+                else
+                {
+                    apply_merge_twiddles_blocked4_scalar(k + 1, K, odd_re, odd_im,
+                                                         merge_tw);
+                }
+
+                double y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im,
+                                                    y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_scalar_stream(k + 1, K, out_re_aligned,
+                                                     out_im_aligned, y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_scalar(k + 1, K, out_re_aligned, out_im_aligned,
+                                              y_re, y_im);
+                }
+            }
+
+            // ==================== PROCESS k+2 (3rd of 4) ====================
+            {
+                double even_re[16], even_im[16];
+                load_16_lanes_soa_scalar(k + 2, K, in_re_aligned, in_im_aligned,
+                                         even_re, even_im);
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_scalar(k + 2, k_tile, false,
+                                                      even_re, even_im, tw16b4,
+                                                      r16_w_even_re, r16_w_even_im,
+                                                      tw16b4->delta_w_re, tw16b4->delta_w_im);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 2, K, even_re, even_im,
+                                                         tw16b4);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 2, K, even_re, even_im,
+                                                         tw16b8);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+                double odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = in_re_aligned[k + 2 + (r + 16) * K];
+                    odd_im[r] = in_im_aligned[k + 2 + (r + 16) * K];
+                }
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_scalar(k + 2, k_tile, false,
+                                                      odd_re, odd_im, tw16b4,
+                                                      r16_w_odd_re, r16_w_odd_im,
+                                                      tw16b4->delta_w_re, tw16b4->delta_w_im);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 2, K, odd_re, odd_im,
+                                                         tw16b4);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 2, K, odd_re, odd_im,
+                                                         tw16b8);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+                if (use_merge_recurrence)
+                {
+                    apply_merge_twiddles_recur_scalar(k + 2, k_tile, false,
+                                                      odd_re, odd_im, merge_tw,
+                                                      merge_w_state_re, merge_w_state_im,
+                                                      merge_delta_w_re, merge_delta_w_im);
+                }
+                else
+                {
+                    apply_merge_twiddles_blocked4_scalar(k + 2, K, odd_re, odd_im,
+                                                         merge_tw);
+                }
+
+                double y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im,
+                                                    y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_scalar_stream(k + 2, K, out_re_aligned,
+                                                     out_im_aligned, y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_scalar(k + 2, K, out_re_aligned, out_im_aligned,
+                                              y_re, y_im);
+                }
+            }
+
+            // ==================== PROCESS k+3 (4th of 4) ====================
+            {
+                double even_re[16], even_im[16];
+                load_16_lanes_soa_scalar(k + 3, K, in_re_aligned, in_im_aligned,
+                                         even_re, even_im);
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_scalar(k + 3, k_tile, false,
+                                                      even_re, even_im, tw16b4,
+                                                      r16_w_even_re, r16_w_even_im,
+                                                      tw16b4->delta_w_re, tw16b4->delta_w_im);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 3, K, even_re, even_im,
+                                                         tw16b4);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 3, K, even_re, even_im,
+                                                         tw16b8);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+                double odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = in_re_aligned[k + 3 + (r + 16) * K];
+                    odd_im[r] = in_im_aligned[k + 3 + (r + 16) * K];
+                }
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_scalar(k + 3, k_tile, false,
+                                                      odd_re, odd_im, tw16b4,
+                                                      r16_w_odd_re, r16_w_odd_im,
+                                                      tw16b4->delta_w_re, tw16b4->delta_w_im);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+                {
+                    apply_stage_twiddles_blocked4_scalar(k + 3, K, odd_re, odd_im,
+                                                         tw16b4);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_scalar(k + 3, K, odd_re, odd_im,
+                                                         tw16b8);
+                }
+                radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+                if (use_merge_recurrence)
+                {
+                    apply_merge_twiddles_recur_scalar(k + 3, k_tile, false,
+                                                      odd_re, odd_im, merge_tw,
+                                                      merge_w_state_re, merge_w_state_im,
+                                                      merge_delta_w_re, merge_delta_w_im);
+                }
+                else
+                {
+                    apply_merge_twiddles_blocked4_scalar(k + 3, K, odd_re, odd_im,
+                                                         merge_tw);
+                }
+
+                double y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im,
+                                                    y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_scalar_stream(k + 3, K, out_re_aligned,
+                                                     out_im_aligned, y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_scalar(k + 3, K, out_re_aligned, out_im_aligned,
+                                              y_re, y_im);
+                }
+            }
+        }
+
+        for (; k < k_end; k++)
+        {
+            double even_re[16], even_im[16];
+            load_16_lanes_soa_scalar(k, K, in_re_aligned, in_im_aligned, even_re, even_im);
+
+            if (r16_recur)
+            {
+                apply_stage_twiddles_recur_scalar(k, k_tile, false,
+                                                  even_re, even_im, tw16b4,
+                                                  r16_w_even_re, r16_w_even_im,
+                                                  tw16b4->delta_w_re, tw16b4->delta_w_im);
+            }
+            else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+            {
+                apply_stage_twiddles_blocked4_scalar(k, K, even_re, even_im, tw16b4);
+            }
+            else
+            {
+                apply_stage_twiddles_blocked8_scalar(k, K, even_re, even_im, tw16b8);
+            }
+            radix16_complete_butterfly_backward_soa_scalar(even_re, even_im);
+
+            double odd_re[16], odd_im[16];
+            for (int r = 0; r < 16; r++)
+            {
+                odd_re[r] = in_re_aligned[k + (r + 16) * K];
+                odd_im[r] = in_im_aligned[k + (r + 16) * K];
+            }
+
+            if (r16_recur)
+            {
+                apply_stage_twiddles_recur_scalar(k, k_tile, false,
+                                                  odd_re, odd_im, tw16b4,
+                                                  r16_w_odd_re, r16_w_odd_im,
+                                                  tw16b4->delta_w_re, tw16b4->delta_w_im);
+            }
+            else if (r16_mode == RADIX16_TW_BLOCKED4_SCALAR)
+            {
+                apply_stage_twiddles_blocked4_scalar(k, K, odd_re, odd_im, tw16b4);
+            }
+            else
+            {
+                apply_stage_twiddles_blocked8_scalar(k, K, odd_re, odd_im, tw16b8);
+            }
+            radix16_complete_butterfly_backward_soa_scalar(odd_re, odd_im);
+
+            if (use_merge_recurrence)
+            {
+                apply_merge_twiddles_recur_scalar(k, k_tile, false, odd_re, odd_im,
+                                                  merge_tw, merge_w_state_re, merge_w_state_im,
+                                                  merge_delta_w_re, merge_delta_w_im);
+            }
+            else
+            {
+                apply_merge_twiddles_blocked4_scalar(k, K, odd_re, odd_im, merge_tw);
+            }
+
+            double y_re[32], y_im[32];
+            radix2_butterfly_combine_soa_scalar(even_re, even_im, odd_re, odd_im, y_re, y_im);
+
+            if (use_nt_stores)
+            {
+                store_32_lanes_soa_scalar_stream(k, K, out_re_aligned, out_im_aligned,
+                                                 y_re, y_im);
+            }
+            else
+            {
+                store_32_lanes_soa_scalar(k, K, out_re_aligned, out_im_aligned, y_re, y_im);
+            }
+        }
+    }
+
+    if (use_nt_stores)
+    {
+#if defined(__GNUC__) || defined(__clang__)
+        __asm__ __volatile__("sfence" ::: "memory");
+#elif defined(_MSC_VER)
+        _mm_sfence();
+#endif
+    }
+}
+
+//==============================================================================
+// PUBLIC API (SCALAR)
+//==============================================================================
+
+/**
+ * @brief Radix-32 DIT Forward Stage - Public API (SCALAR)
+ *
+ * @param K Number of k-indices per radix lane
+ * @param in_re Input real part (SoA: [32][K])
+ * @param in_im Input imaginary part (SoA: [32][K])
+ * @param out_re Output real part (SoA: [32][K])
+ * @param out_im Output imaginary part (SoA: [32][K])
+ * @param stage_tw_opaque Opaque pointer to radix32_stage_twiddles_scalar_t
+ *
+ * @note Twiddle structures should be prepared during planning phase:
+ *       - radix16_tw: Stage twiddles for both radix-16 sub-FFTs
+ *       - merge_tw: W₃₂^m twiddles for combining even/odd halves
+ *       - delta_w: Phase increments for recurrence (if enabled)
+ *
+ * CRITICAL PLANNER REQUIREMENTS:
+ * - Radix-16 delta_w[16]: indices 0..14 for W₁..W₁₅, index 15 = identity
+ * - Merge delta_w[16]: index 0 = identity (W₀), indices 1..15 for W₁..W₁₅
+ */
+TARGET_FMA
+void radix32_stage_dit_forward_soa_scalar(
+    size_t K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const void *RESTRICT stage_tw_opaque)
+{
+    const radix32_stage_twiddles_scalar_t *stage_tw =
+        (const radix32_stage_twiddles_scalar_t *)stage_tw_opaque;
+
+    if (stage_tw->merge_mode == RADIX32_MERGE_TW_BLOCKED8_SCALAR)
+    {
+        radix32_stage_dit_forward_blocked8_merge_scalar(
+            K, in_re, in_im, out_re, out_im, stage_tw);
+    }
+    else // RADIX32_MERGE_TW_BLOCKED4_SCALAR
+    {
+        const radix32_merge_twiddles_blocked4_scalar_t *merge_tw =
+            (const radix32_merge_twiddles_blocked4_scalar_t *)stage_tw->merge_tw_opaque;
+
+        if (merge_tw->recurrence_enabled)
+        {
+            radix32_stage_dit_forward_blocked4_merge_scalar(
+                K, in_re, in_im, out_re, out_im,
+                stage_tw, true, merge_tw->delta_w_re, merge_tw->delta_w_im);
+        }
+        else
+        {
+            radix32_stage_dit_forward_blocked4_merge_scalar(
+                K, in_re, in_im, out_re, out_im,
+                stage_tw, false, NULL, NULL);
+        }
+    }
+}
+
+/**
+ * @brief Radix-32 DIT Backward Stage - Public API (SCALAR)
+ *
+ * @param K Number of k-indices per radix lane
+ * @param in_re Input real part (SoA: [32][K])
+ * @param in_im Input imaginary part (SoA: [32][K])
+ * @param out_re Output real part (SoA: [32][K])
+ * @param out_im Output imaginary part (SoA: [32][K])
+ * @param stage_tw_opaque Opaque pointer to radix32_stage_twiddles_scalar_t
+ */
+TARGET_FMA
+void radix32_stage_dit_backward_soa_scalar(
+    size_t K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const void *RESTRICT stage_tw_opaque)
+{
+    const radix32_stage_twiddles_scalar_t *stage_tw =
+        (const radix32_stage_twiddles_scalar_t *)stage_tw_opaque;
+
+    if (stage_tw->merge_mode == RADIX32_MERGE_TW_BLOCKED8_SCALAR)
+    {
+        radix32_stage_dit_backward_blocked8_merge_scalar(
+            K, in_re, in_im, out_re, out_im, stage_tw);
+    }
+    else // RADIX32_MERGE_TW_BLOCKED4_SCALAR
+    {
+        const radix32_merge_twiddles_blocked4_scalar_t *merge_tw =
+            (const radix32_merge_twiddles_blocked4_scalar_t *)stage_tw->merge_tw_opaque;
+
+        if (merge_tw->recurrence_enabled)
+        {
+            radix32_stage_dit_backward_blocked4_merge_scalar(
+                K, in_re, in_im, out_re, out_im,
+                stage_tw, true, merge_tw->delta_w_re, merge_tw->delta_w_im);
+        }
+        else
+        {
+            radix32_stage_dit_backward_blocked4_merge_scalar(
+                K, in_re, in_im, out_re, out_im,
+                stage_tw, false, NULL, NULL);
+        }
+    }
+}
+
+#endif // FFT_RADIX32_SCALAR_NATIVE_SOA_H
