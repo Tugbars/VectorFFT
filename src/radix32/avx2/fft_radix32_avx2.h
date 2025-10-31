@@ -1446,14 +1446,22 @@ radix32_stage_dit_forward_blocked8_merge_avx2(
 //==============================================================================
 
 /**
- * @brief Radix-32 DIT Forward Stage - BLOCKED4 Merge (AVX-2 CORRECTED WITH R16 RECURRENCE)
+ * @brief Radix-32 DIT Forward Stage - BLOCKED4 Merge (AVX-2 CORRECTED)
  *
- * CRITICAL FEATURES:
- * - Detects radix-16 recurrence mode
- * - Maintains separate walker state for even/odd halves
- * - Prefetches radix-16 inputs appropriately
- * - Branches on r16_recur in twiddle application
- * 
+ * CRITICAL PLANNER REQUIREMENTS:
+ * ================================
+ * 1. Radix-16 delta_w arrays must have 16 elements (indices 0..15)
+ *    - delta_w[15] should be set to identity (1+0i) or safe value
+ *    - Butterfly advances all 16 mechanically
+ *
+ * 2. Merge delta_w arrays must have 16 elements (indices 0..15)
+ *    - delta_w[0] MUST be identity (1+0i) to keep W₀ stationary
+ *    - Butterfly advances all 16 mechanically, including W₀
+ *
+ * BUFFER SIZING:
+ * - r16_w_even/odd: [16] elements (was [15] - BUG FIXED)
+ * - merge_w_state: [16] elements (correct)
+ *
  * AVX-2 ADAPTATIONS:
  * - Main loop: k += 8, U=2 with k and k+4
  * - Tail loop: k += 4, then masked
@@ -1503,9 +1511,10 @@ radix32_stage_dit_forward_blocked4_merge_avx2(
     // Merge recurrence state
     __m256d merge_w_state_re[16], merge_w_state_im[16];
 
-    // CRITICAL: Radix-16 recurrence state (separate for even/odd halves)
-    __m256d r16_w_even_re[15], r16_w_even_im[15]; // For r=0..15
-    __m256d r16_w_odd_re[15], r16_w_odd_im[15];   // For r=16..31
+    // CRITICAL FIX: Radix-16 recurrence state - [16] elements (was [15])
+    // Planner must set delta_w[15] to safe value (identity recommended)
+    __m256d r16_w_even_re[16], r16_w_even_im[16]; // For r=0..15
+    __m256d r16_w_odd_re[16], r16_w_odd_im[16];   // For r=16..31
 
     // K-TILING OUTER LOOP
     for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
@@ -2077,17 +2086,15 @@ radix32_stage_dit_backward_blocked8_merge_avx2(
 //==============================================================================
 
 /**
- * @brief Radix-32 DIT Backward Stage - BLOCKED4 Merge (AVX-2 CORRECTED WITH R16 RECURRENCE)
+ * @brief Radix-32 DIT Backward Stage - BLOCKED4 Merge (AVX-2 CORRECTED)
  *
- * CRITICAL FEATURES:
- * - Detects radix-16 recurrence mode
- * - Maintains separate walker state for even/odd halves
- * - Branches on r16_recur in twiddle application
- * 
- * AVX-2 ADAPTATIONS:
- * - Main loop: k += 8, U=2 with k and k+4
- * - Tail loop: k += 4, then masked
- * - Prefetch: 16 doubles ahead
+ * CRITICAL PLANNER REQUIREMENTS:
+ * ================================
+ * Same as forward - see documentation above.
+ *
+ * BUFFER SIZING:
+ * - r16_w_even/odd: [16] elements (was [15] - BUG FIXED)
+ * - merge_w_state: [16] elements (correct)
  */
 TARGET_AVX2_FMA
 FORCE_INLINE void
@@ -2130,8 +2137,10 @@ radix32_stage_dit_backward_blocked4_merge_avx2(
     bool r16_recur = (r16_mode == RADIX16_TW_BLOCKED4_AVX2) && tw16b4->recurrence_enabled;
 
     __m256d merge_w_state_re[16], merge_w_state_im[16];
-    __m256d r16_w_even_re[15], r16_w_even_im[15];
-    __m256d r16_w_odd_re[15], r16_w_odd_im[15];
+    
+    // CRITICAL FIX: [16] elements (was [15])
+    __m256d r16_w_even_re[16], r16_w_even_im[16];
+    __m256d r16_w_odd_re[16], r16_w_odd_im[16];
 
     for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
     {
@@ -2534,3 +2543,56 @@ void radix32_stage_dit_backward_soa_avx2(
 }
 
 #endif // FFT_RADIX32_AVX2_NATIVE_SOA_H
+
+/**
+ * CRITICAL PLANNER REQUIREMENTS FOR RADIX-32 AVX-2
+ * ==================================================
+ * 
+ * The butterfly code uses mechanical iteration over all twiddle array elements.
+ * The planner MUST ensure mathematical correctness by setting arrays properly.
+ * 
+ * 1. RADIX-16 RECURRENCE (stage_tw->radix16_tw_opaque when BLOCKED4):
+ *    -----------------------------------------------------------------
+ *    radix16_stage_twiddles_blocked4_avx2_t must have:
+ *    
+ *    - delta_w_re[16], delta_w_im[16]  (16 elements, NOT 15)
+ *    - Indices 0..14: Phase increments for W₁..W₁₅
+ *    - Index 15: MUST be set to identity (1+0i) or any safe value
+ *                (this slot is never mathematically used, but butterfly
+ *                 mechanically advances all 16 slots to avoid branching)
+ * 
+ * 2. RADIX-32 MERGE RECURRENCE (stage_tw->merge_tw_opaque when BLOCKED4):
+ *    -----------------------------------------------------------------------
+ *    radix32_merge_twiddles_blocked4_avx2_t must have:
+ *    
+ *    - delta_w_re[16], delta_w_im[16]
+ *    - Index 0: MUST be identity (1+0i) to keep W₀ = 1+0i stationary
+ *    - Indices 1..15: Phase increments for W₁..W₁₅
+ * 
+ * 3. WHY THIS DESIGN:
+ *    ----------------
+ *    - Butterfly code is purely mechanical (no special cases, no branches)
+ *    - Planner handles all mathematical invariants
+ *    - Clean separation of concerns
+ *    - Easier to verify correctness at planning time
+ * 
+ * 4. EXAMPLE PLANNER CODE:
+ *    ---------------------
+ *    // Radix-16 delta_w (15 active + 1 padding):
+ *    for (int r = 0; r < 15; r++) {
+ *        double phase = 2.0 * M_PI * (r + 1) / (N / stage_radix);
+ *        tw->delta_w_re[r] = _mm256_set1_pd(cos(phase));
+ *        tw->delta_w_im[r] = _mm256_set1_pd(sin(phase));
+ *    }
+ *    tw->delta_w_re[15] = _mm256_set1_pd(1.0);  // Padding (identity)
+ *    tw->delta_w_im[15] = _mm256_setzero_pd();
+ * 
+ *    // Radix-32 merge delta_w (W₀ stationary + 15 active):
+ *    tw->delta_w_re[0] = _mm256_set1_pd(1.0);   // W₀ stays 1+0i
+ *    tw->delta_w_im[0] = _mm256_setzero_pd();
+ *    for (int r = 1; r < 16; r++) {
+ *        double phase = 2.0 * M_PI * r / 32;
+ *        tw->delta_w_re[r] = _mm256_set1_pd(cos(phase));
+ *        tw->delta_w_im[r] = _mm256_set1_pd(sin(phase));
+ *    }
+ */
