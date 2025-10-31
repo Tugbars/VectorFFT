@@ -11,7 +11,7 @@
  * =============
  * The bridge is a THIN ADAPTER that reads from the reorganization system
  * and packages data for butterfly consumption. It handles:
- * 
+ *
  * 1. Threshold-based layout selection (BLOCKED8 vs BLOCKED4)
  * 2. Pointer extraction from materialized arrays
  * 3. Delta_w extraction from layout_specific_data (for recurrence)
@@ -27,9 +27,9 @@
  * // Execution phase (AVX-512):
  * radix16_stage_twiddles_blocked8_t tw_b8;
  * radix16_stage_twiddles_blocked4_avx512_t tw_b4;
- * 
+ *
  * int mode = radix16_prepare_twiddles_avx512(tw, &tw_b8, &tw_b4);
- * 
+ *
  * if (mode == RADIX16_TW_BLOCKED8) {
  *     radix16_stage_dit_forward_avx512(..., &tw_b8, mode);
  * } else {
@@ -64,8 +64,8 @@
 // THRESHOLDS (Must match reorganization.c)
 //==============================================================================
 
-#define RADIX16_BLOCKED8_THRESHOLD 512      // K ≤ 512: use BLOCKED8
-#define RADIX16_RECURRENCE_THRESHOLD 4096   // K > 4096: enable recurrence
+#define RADIX16_BLOCKED8_THRESHOLD 512    // K ≤ 512: use BLOCKED8
+#define RADIX16_RECURRENCE_THRESHOLD 4096 // K > 4096: enable recurrence
 
 //==============================================================================
 // BUTTERFLY STRUCTURE DEFINITIONS
@@ -73,7 +73,7 @@
 
 /**
  * @brief BLOCKED8 twiddles for radix-16 (K ≤ 512)
- * 
+ *
  * Memory layout: [W1..W8[0..K-1]]
  * Simple flat pointers - butterflies use direct indexing
  */
@@ -85,7 +85,7 @@ typedef struct
 
 /**
  * @brief BLOCKED4 twiddles for radix-16 AVX-512 (K > 512)
- * 
+ *
  * Memory layout: [W1..W4[0..K-1]]
  * Includes optional delta_w for recurrence-based twiddle computation
  */
@@ -134,8 +134,8 @@ typedef struct
  */
 typedef enum
 {
-    RADIX16_TW_BLOCKED8,  ///< 8 twiddles stored, derive 7 at runtime
-    RADIX16_TW_BLOCKED4   ///< 4 twiddles stored, derive 11 at runtime
+    RADIX16_TW_BLOCKED8, ///< 8 twiddles stored, derive 7 at runtime
+    RADIX16_TW_BLOCKED4  ///< 4 twiddles stored, derive 11 at runtime
 } radix16_twiddle_mode_t;
 
 //==============================================================================
@@ -144,7 +144,7 @@ typedef enum
 
 /**
  * @brief Layout-specific data for BLOCKED4 with recurrence
- * 
+ *
  * @details
  * This structure is stored in handle->layout_specific_data when
  * BLOCKED4 layout with recurrence is materialized. The bridge extracts
@@ -153,7 +153,7 @@ typedef enum
 #ifdef __AVX512F__
 typedef struct
 {
-    __m512d delta_w_re[15];  ///< exp(-2πi × s / N) for s=1..15 (AVX-512)
+    __m512d delta_w_re[15]; ///< exp(-2πi × s / N) for s=1..15 (AVX-512)
     __m512d delta_w_im[15];
 } radix16_blocked4_recurrence_data_avx512_t;
 #endif
@@ -161,14 +161,14 @@ typedef struct
 #ifdef __AVX2__
 typedef struct
 {
-    __m256d delta_w_re[15];  ///< exp(-2πi × s / N) for s=1..15 (AVX2)
+    __m256d delta_w_re[15]; ///< exp(-2πi × s / N) for s=1..15 (AVX2)
     __m256d delta_w_im[15];
 } radix16_blocked4_recurrence_data_avx2_t;
 #endif
 
 typedef struct
 {
-    double delta_w_re[15];  ///< exp(-2πi × s / N) for s=1..15 (scalar)
+    double delta_w_re[15]; ///< exp(-2πi × s / N) for s=1..15 (scalar)
     double delta_w_im[15];
 } radix16_blocked4_recurrence_data_scalar_t;
 

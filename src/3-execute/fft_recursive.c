@@ -321,19 +321,63 @@ static void fft_recursive_internal(
         return;   // No more stages to process
     }
 
+    //==========================================================================
+    // RECURSIVE CASE: Cooley-Tukey Decomposition
+    //==========================================================================
+
+     
+    // ──────────────────────────────────────────────────────────────────────
+    // STEP 1: Extract stage information
+    // ──────────────────────────────────────────────────────────────────────
+    // Example at Level 0 (factor_idx=0):
+    // radix = 8     (decompose into 8 sub-problems)
+    // sub_N = 33    (each sub-problem has size 264/8 = 33)
+
     const int radix = plan->factors[factor_idx];
     const int sub_N = N / radix;
     stage_descriptor *stage = &plan->stages[factor_idx];
 
-    fft_data *sub_out = workspace;
+    fft_data *sub_out = workspace;  // Temporary buffer for sub-FFT results
 
-    // Get twiddle views
+    // ──────────────────────────────────────────────────────────────────────
+    // STEP 2: Get materialized twiddle pointers (ZERO OVERHEAD!)
+    // ──────────────────────────────────────────────────────────────────────
+    // At planning time, we materialized twiddles in optimal layout
+    // Now we just get pointers to pre-computed memory
+    //
+    // For Stage 0 (N=264, radix=8):
+    // stage->stage_tw points to handle with:
+    //   - materialized_re: [W1[0..32], W2[0..32], ..., W7[0..32]]
+    //   - materialized_im: [W1[0..32], W2[0..32], ..., W7[0..32]]
+    //   - 231 complex twiddles total (7 factors × 33 butterflies)
+    //   - Layout: BLOCKED4 (optimized for AVX2/AVX-512)
+    //   - Alignment: 64 bytes (works for all SIMD widths)
+
     fft_twiddles_soa_view stage_view;
     if (twiddle_get_soa_view(stage->stage_tw, &stage_view) != 0)
     {
         return;
     }
     const fft_twiddles_soa_view *tw = &stage_view;
+
+    // stage_view now contains:
+    // - .re: pointer to real parts (materialized_re)
+    // - .im: pointer to imaginary parts (materialized_im)
+    // - .count: number of twiddles (231 for Stage 0)
+    //
+    // Butterfly will access: tw->re[k], tw->im[k] (direct pointer loads!)
+
+    // ──────────────────────────────────────────────────────────────────────
+    // STEP 2b: Get Rader twiddles if needed (for prime radices ≥7)
+    // ──────────────────────────────────────────────────────────────────────
+    // Rader's algorithm converts prime-radix DFT into circular convolution
+    // Only needed for Stage 2 (radix=11, which is prime)
+    //
+    // For radix=11:
+    // - Primitive root: g=2 (smallest generator mod 11)
+    // - Input permutation: [0, 1, 2, 4, 8, 5, 10, 9, 7, 3, 6]
+    // - Convolution twiddles: W_11^(perm[i]) for i=0..9
+    // - Pre-computed at planning time, just get pointer
 
     fft_twiddles_soa_view rader_view;
     const fft_twiddles_soa_view *rader_tw = NULL;
@@ -345,20 +389,88 @@ static void fft_recursive_internal(
         }
     }
 
-    // Recursively compute sub-DFTs (cache-oblivious!)
+     // ══════════════════════════════════════════════════════════════════════
+    // STEP 3: RECURSIVE DECOMPOSITION - Compute sub-FFTs
+    // ══════════════════════════════════════════════════════════════════════
+    // Classic Cooley-Tukey: DFT_N = Radix butterfly over (radix × DFT_sub_N)
+    //
+    // For Level 0 (N=264, radix=8, sub_N=33):
+    // Compute 8 independent FFTs of size 33 each
+    //
+    // Input layout (stride=1, contiguous):
+    // [in[0], in[1], ..., in[7], in[8], in[9], ..., in[263]]
+    //  ^^^^           ^^^^        ^^^^           ^^^^
+    //  sub-FFT 0      sub-FFT 1   sub-FFT 2      sub-FFT 7
+    //
+    // Each sub-FFT takes every 8th element starting from different offsets:
+    // - Sub-FFT 0: in[0], in[8],  in[16], ..., in[256] (33 elements, stride=8)
+    // - Sub-FFT 1: in[1], in[9],  in[17], ..., in[257] (33 elements, stride=8)
+    // - ...
+    // - Sub-FFT 7: in[7], in[15], in[23], ..., in[263] (33 elements, stride=8)
+    //
+    // Output layout (contiguous in workspace):
+    // sub_out[0..32]   ← Results of sub-FFT 0
+    // sub_out[33..65]  ← Results of sub-FFT 1
+    // ...
+    // sub_out[231..263] ← Results of sub-FFT 7
     for (int i = 0; i < radix; i++)
     {
+
+        // ══════════════════════════════════════════════════════════════════
+        // RECURSIVE CALL for sub-FFT i
+        // ══════════════════════════════════════════════════════════════════
+        // Arguments:
+        // - out: sub_out + i*33 (33 elements starting at offset i*33)
+        // - in: in + i*1 (every 8th element starting from offset i)
+        // - N: 33 (sub-problem size)
+        // - stride: 1*8 = 8 (new stride = old_stride × radix)
+        // - factor_idx: 1 (move to next stage)
+        //
+        // This will recursively decompose 33 = 3 × 11:
+        // → Call radix-3 butterfly over 3 sub-FFTs of size 11
+        // → Call radix-11 butterfly over 11 sub-FFTs of size 1
+
         fft_recursive_internal(
-            sub_out + i * sub_N,
-            in + i * stride,
+            sub_out + i * sub_N,   // Output: contiguous block in workspace
+            in + i * stride,       // Input: strided access (every 8th element)
             plan,
-            sub_N,
-            stride * radix,
-            factor_idx + 1,
-            workspace + N);
+            sub_N,                 // Reduced size: 33
+            stride * radix,        // Increased stride: 8
+            factor_idx + 1,        // Next stage: 1
+            workspace + N);        // Fresh workspace (offset by N)
     }
 
-    // Apply butterfly with twiddles
+     // ══════════════════════════════════════════════════════════════════════
+    // At this point: All 8 sub-FFTs of size 33 are computed!
+    // ══════════════════════════════════════════════════════════════════════
+    // sub_out contains:
+    // [FFT_33(sub0), FFT_33(sub1), ..., FFT_33(sub7)]  (264 elements total)
+    //
+    // Each FFT_33(subi) is itself computed recursively:
+    // - Radix-3 decomposition: 3 sub-FFTs of size 11
+    // - Radix-11 decomposition: 11 sub-FFTs of size 1 (base case)
+    // - Rader's algorithm applied for radix-11 butterfly
+    
+    // ══════════════════════════════════════════════════════════════════════
+    // STEP 4: COMBINE RESULTS - Apply radix butterfly with twiddles
+    // ══════════════════════════════════════════════════════════════════════
+    // Classic Cooley-Tukey combination step:
+    // Output[k] = Σ(i=0..radix-1) sub_out[i*sub_N + k] × W_N^(i*k)
+    //
+    // For radix=8, sub_N=33:
+    // - Process 33 butterflies (k=0..32)
+    // - Each butterfly combines 8 elements (one from each sub-FFT)
+    // - Twiddles: W_264^(i*k) for i=1..7 (i=0 is implicit, W^0=1)
+    //
+    // Memory access pattern (SIMD-friendly!):
+    // Butterfly k reads:
+    //   sub_out[k], sub_out[33+k], sub_out[66+k], ..., sub_out[231+k]
+    //   ↑ stride=33, sequential within each butterfly
+    //
+    // Twiddle access pattern (OPTIMAL!):
+    //   tw->re[block_offset + k], tw->im[block_offset + k]
+    //   ↑ BLOCKED layout: All 7 twiddles for butterfly k are contiguous!
+    //   ↑ Materialized at plan time, aligned, ready for SIMD loads
     switch (radix)
     {
     case 2:

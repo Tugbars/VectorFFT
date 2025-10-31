@@ -54,7 +54,7 @@
  * - Loop structures remain inline for optimal codegen
  * - ~1000 line reduction while maintaining identical performance
  *
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 5.0 (Refactored, all optimizations preserved)
  * @date 2025
  */
@@ -113,25 +113,24 @@
 #define RADIX16_RECURRENCE_THRESHOLD 4096
 #endif
 
-
 //==============================================================================
 // TWIDDLE STRUCTURES (UPDATED WITH RECURRENCE SUPPORT)
 //==============================================================================
 
 typedef struct
 {
-    const double *RESTRICT re;  // [8 * K]
-    const double *RESTRICT im;  // [8 * K]
+    const double *RESTRICT re; // [8 * K]
+    const double *RESTRICT im; // [8 * K]
 } radix16_stage_twiddles_blocked8_t;
 
 typedef struct
 {
-    const double *RESTRICT re;       // [4 * K]
-    const double *RESTRICT im;       // [4 * K]
-    __m512d delta_w_re[15];          // Phase increments for recurrence (if enabled)
-    __m512d delta_w_im[15];          // Phase increments for recurrence (if enabled)
-    size_t K;                        // K value for this stage
-    bool recurrence_enabled;         // Whether to use twiddle walking
+    const double *RESTRICT re; // [4 * K]
+    const double *RESTRICT im; // [4 * K]
+    __m512d delta_w_re[15];    // Phase increments for recurrence (if enabled)
+    __m512d delta_w_im[15];    // Phase increments for recurrence (if enabled)
+    size_t K;                  // K value for this stage
+    bool recurrence_enabled;   // Whether to use twiddle walking
 } radix16_stage_twiddles_blocked4_t;
 
 typedef enum
@@ -139,7 +138,6 @@ typedef enum
     RADIX16_TW_BLOCKED8,
     RADIX16_TW_BLOCKED4
 } radix16_twiddle_mode_t;
-
 
 //==============================================================================
 // W_4 GEOMETRIC CONSTANTS
@@ -1704,7 +1702,7 @@ radix16_stage_dit_backward_blocked4_avx512(
 
 /**
  * @brief Radix-16 DIT Forward Stage - Public API
- * 
+ *
  * NOTE: delta_w phase increments should be computed during planning phase
  *       and stored in the twiddle structure
  */
@@ -1720,15 +1718,15 @@ void radix16_stage_dit_forward_soa_avx512(
 {
     if (mode == RADIX16_TW_BLOCKED8)
     {
-        const radix16_stage_twiddles_blocked8_t *stage_tw = 
+        const radix16_stage_twiddles_blocked8_t *stage_tw =
             (const radix16_stage_twiddles_blocked8_t *)stage_tw_opaque;
         radix16_stage_dit_forward_blocked8_avx512(K, in_re, in_im, out_re, out_im, stage_tw);
     }
-    else  // RADIX16_TW_BLOCKED4
+    else // RADIX16_TW_BLOCKED4
     {
-        const radix16_stage_twiddles_blocked4_t *stage_tw = 
+        const radix16_stage_twiddles_blocked4_t *stage_tw =
             (const radix16_stage_twiddles_blocked4_t *)stage_tw_opaque;
-        
+
         // Use recurrence if enabled by planner
         if (stage_tw->recurrence_enabled)
         {
@@ -1760,15 +1758,15 @@ void radix16_stage_dit_backward_soa_avx512(
 {
     if (mode == RADIX16_TW_BLOCKED8)
     {
-        const radix16_stage_twiddles_blocked8_t *stage_tw = 
+        const radix16_stage_twiddles_blocked8_t *stage_tw =
             (const radix16_stage_twiddles_blocked8_t *)stage_tw_opaque;
         radix16_stage_dit_backward_blocked8_avx512(K, in_re, in_im, out_re, out_im, stage_tw);
     }
-    else  // RADIX16_TW_BLOCKED4
+    else // RADIX16_TW_BLOCKED4
     {
-        const radix16_stage_twiddles_blocked4_t *stage_tw = 
+        const radix16_stage_twiddles_blocked4_t *stage_tw =
             (const radix16_stage_twiddles_blocked4_t *)stage_tw_opaque;
-        
+
         if (stage_tw->recurrence_enabled)
         {
             radix16_stage_dit_backward_blocked4_avx512(

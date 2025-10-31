@@ -68,7 +68,7 @@
 #include <math.h>
 
 #ifdef __x86_64__
-#include <immintrin.h>  // For prefetch, NT stores, FMA
+#include <immintrin.h> // For prefetch, NT stores, FMA
 #endif
 
 //==============================================================================
@@ -112,7 +112,7 @@
 #endif
 
 #ifndef RADIX16_PREFETCH_DISTANCE
-#define RADIX16_PREFETCH_DISTANCE 64  // Larger for scalar (more iterations ahead)
+#define RADIX16_PREFETCH_DISTANCE 64 // Larger for scalar (more iterations ahead)
 #endif
 
 #ifndef RADIX16_TILE_SIZE
@@ -223,8 +223,8 @@ FORCE_INLINE void
 cmul_fma_scalar(double ar, double ai, double br, double bi,
                 double *RESTRICT tr, double *RESTRICT ti)
 {
-    *tr = FMA(ar, br, -ai * bi);  // ar*br - ai*bi
-    *ti = FMA(ar, bi, ai * br);   // ar*bi + ai*br
+    *tr = FMA(ar, br, -ai * bi); // ar*br - ai*bi
+    *ti = FMA(ar, bi, ai * br);  // ar*bi + ai*br
 }
 
 /**
@@ -395,42 +395,42 @@ apply_w4_intermediate_bv_scalar(double x_re[16], double x_im[16])
  * @brief Prefetch inputs + twiddles for BLOCKED8
  */
 #define RADIX16_PREFETCH_NEXT_BLOCKED8_SCALAR(k_next, k_limit, K, in_re, in_im, stage_tw) \
-    do                                                                                     \
-    {                                                                                      \
-        if ((k_next) < (k_limit))                                                          \
-        {                                                                                  \
-            for (int _r = 0; _r < 16; _r++)                                                \
-            {                                                                              \
-                RADIX16_PREFETCH(&(in_re)[(k_next) + _r * (K)]);                           \
-                RADIX16_PREFETCH(&(in_im)[(k_next) + _r * (K)]);                           \
-            }                                                                              \
-            for (int _b = 0; _b < 8; _b++)                                                 \
-            {                                                                              \
-                RADIX16_PREFETCH(&(stage_tw)->re[_b * (K) + (k_next)]);                    \
-                RADIX16_PREFETCH(&(stage_tw)->im[_b * (K) + (k_next)]);                    \
-            }                                                                              \
-        }                                                                                  \
+    do                                                                                    \
+    {                                                                                     \
+        if ((k_next) < (k_limit))                                                         \
+        {                                                                                 \
+            for (int _r = 0; _r < 16; _r++)                                               \
+            {                                                                             \
+                RADIX16_PREFETCH(&(in_re)[(k_next) + _r * (K)]);                          \
+                RADIX16_PREFETCH(&(in_im)[(k_next) + _r * (K)]);                          \
+            }                                                                             \
+            for (int _b = 0; _b < 8; _b++)                                                \
+            {                                                                             \
+                RADIX16_PREFETCH(&(stage_tw)->re[_b * (K) + (k_next)]);                   \
+                RADIX16_PREFETCH(&(stage_tw)->im[_b * (K) + (k_next)]);                   \
+            }                                                                             \
+        }                                                                                 \
     } while (0)
 
 /**
  * @brief Prefetch inputs + twiddles for BLOCKED4
  */
 #define RADIX16_PREFETCH_NEXT_BLOCKED4_SCALAR(k_next, k_limit, K, in_re, in_im, stage_tw) \
-    do                                                                                     \
-    {                                                                                      \
-        if ((k_next) < (k_limit))                                                          \
-        {                                                                                  \
-            for (int _r = 0; _r < 16; _r++)                                                \
-            {                                                                              \
-                RADIX16_PREFETCH(&(in_re)[(k_next) + _r * (K)]);                           \
-                RADIX16_PREFETCH(&(in_im)[(k_next) + _r * (K)]);                           \
-            }                                                                              \
-            for (int _b = 0; _b < 4; _b++)                                                 \
-            {                                                                              \
-                RADIX16_PREFETCH(&(stage_tw)->re[_b * (K) + (k_next)]);                    \
-                RADIX16_PREFETCH(&(stage_tw)->im[_b * (K) + (k_next)]);                    \
-            }                                                                              \
-        }                                                                                  \
+    do                                                                                    \
+    {                                                                                     \
+        if ((k_next) < (k_limit))                                                         \
+        {                                                                                 \
+            for (int _r = 0; _r < 16; _r++)                                               \
+            {                                                                             \
+                RADIX16_PREFETCH(&(in_re)[(k_next) + _r * (K)]);                          \
+                RADIX16_PREFETCH(&(in_im)[(k_next) + _r * (K)]);                          \
+            }                                                                             \
+            for (int _b = 0; _b < 4; _b++)                                                \
+            {                                                                             \
+                RADIX16_PREFETCH(&(stage_tw)->re[_b * (K) + (k_next)]);                   \
+                RADIX16_PREFETCH(&(stage_tw)->im[_b * (K) + (k_next)]);                   \
+            }                                                                             \
+        }                                                                                 \
     } while (0)
 
 /**
@@ -457,13 +457,13 @@ apply_w4_intermediate_bv_scalar(double x_re[16], double x_im[16])
 FORCE_INLINE void
 nt_store_pd(double *addr, double val)
 {
-    _mm_stream_pd(addr, _mm_set_pd(val, val));  // Store val to addr[0], junk to addr[1]
+    _mm_stream_pd(addr, _mm_set_pd(val, val)); // Store val to addr[0], junk to addr[1]
 }
 #else
 FORCE_INLINE void
 nt_store_pd(double *addr, double val)
 {
-    *addr = val;  // Fallback to regular store
+    *addr = val; // Fallback to regular store
 }
 #endif
 
@@ -871,7 +871,7 @@ radix16_complete_butterfly_forward_scalar(
     double x_re[16], double x_im[16])
 {
     double t_re[16], t_im[16];
-    const double rot_sign = -1.0;  // Forward: -i
+    const double rot_sign = -1.0; // Forward: -i
 
     radix16_stage1_4x_radix4_scalar(x_re, x_im, t_re, t_im, rot_sign);
     apply_w4_intermediate_fv_scalar(t_re, t_im);
@@ -884,7 +884,7 @@ radix16_complete_butterfly_backward_scalar(
     double x_re[16], double x_im[16])
 {
     double t_re[16], t_im[16];
-    const double rot_sign = 1.0;  // Backward: +i
+    const double rot_sign = 1.0; // Backward: +i
 
     radix16_stage1_4x_radix4_scalar(x_re, x_im, t_re, t_im, rot_sign);
     apply_w4_intermediate_bv_scalar(t_re, t_im);

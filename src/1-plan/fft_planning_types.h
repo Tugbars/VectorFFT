@@ -224,6 +224,8 @@ typedef struct fft_plan_struct {
     fft_direction_t direction; ///< Transform direction (fixed at plan time)
     
     fft_exec_strategy_t strategy; ///< Execution algorithm selected by planner
+
+    simd_arch_t simd_arch;
     
     // ─────────────────────────────────────────────────────────────────────
     // Cooley-Tukey decomposition data (used if strategy != BLUESTEIN)

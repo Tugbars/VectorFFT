@@ -588,13 +588,14 @@ int fft_fourstep_init_plan(fft_object plan, int parent_depth)
         return -1;
     }
 
-    if (twiddle_materialize(plan->fourstep->twiddles_2d) != 0)
+    // ✅ Materialize 2D twiddles with specified architecture
+    if (twiddle_materialize_auto(plan->fourstep->twiddles_2d, arch) != 0)
     {
         twiddle_destroy(plan->fourstep->twiddles_2d);
-        free_fft(plan->fourstep->plan_N1);
-        free_fft(plan->fourstep->plan_N2);
+        // Cleanup...
         return -1;
     }
+
 
 // Create 2D-specific blocked layout for SIMD
 #ifdef __AVX512F__
