@@ -1820,3 +1820,717 @@ radix32_stage_dit_forward_blocked4_merge_avx2(
         _mm_sfence();
     }
 }
+
+//==============================================================================
+// COMPLETE STAGE DRIVERS: BACKWARD (BLOCKED8)
+//==============================================================================
+
+/**
+ * @brief Radix-32 DIT Backward Stage - BLOCKED8 Merge (AVX-2)
+ *
+ * AVX-2 ADAPTATIONS:
+ * - Main loop: k += 8 (was 16)
+ * - U=2 pipelining: process k and k+4 (was k+8)
+ * - Tail loop: k += 4 (was 8)
+ * - Prefetch distance: 16 doubles (was 32)
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void
+radix32_stage_dit_backward_blocked8_merge_avx2(
+    size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix32_stage_twiddles_avx2_t *RESTRICT stage_tw)
+{
+    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);
+    const __m256d neg_mask = _mm256_set1_pd(-0.0);
+
+    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE;
+    const size_t tile_size = RADIX32_TILE_SIZE;
+
+    const bool use_nt_stores = radix32_should_use_nt_stores_avx2(K, out_re, out_im);
+
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
+
+    const void *radix16_tw = stage_tw->radix16_tw_opaque;
+    const radix16_twiddle_mode_avx2_t r16_mode = stage_tw->radix16_mode;
+    const radix32_merge_twiddles_blocked8_avx2_t *merge_tw =
+        (const radix32_merge_twiddles_blocked8_avx2_t *)stage_tw->merge_tw_opaque;
+
+    const radix16_stage_twiddles_blocked8_avx2_t *tw16b8 =
+        (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+            ? (const radix16_stage_twiddles_blocked8_avx2_t *)radix16_tw
+            : NULL;
+    const radix16_stage_twiddles_blocked4_avx2_t *tw16b4 =
+        (r16_mode == RADIX16_TW_BLOCKED4_AVX2)
+            ? (const radix16_stage_twiddles_blocked4_avx2_t *)radix16_tw
+            : NULL;
+
+    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
+    {
+        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
+
+        size_t k;
+        for (k = k_tile; k + 8 <= k_end; k += 8)
+        {
+            size_t k_next = k + 8 + prefetch_dist;
+            if (k_next < k_end)
+            {
+                // Prefetch radix-16
+                if (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+                {
+                    RADIX16_PREFETCH_NEXT_BLOCKED8_AVX2(k_next, k_end, K,
+                                                        in_re_aligned, in_im_aligned, tw16b8);
+                }
+                else
+                {
+                    RADIX16_PREFETCH_NEXT_BLOCKED4_AVX2(k_next, k_end, K,
+                                                        in_re_aligned, in_im_aligned, tw16b4);
+                }
+
+                // Prefetch merge
+                RADIX32_PREFETCH_MERGE_BLOCKED8_AVX2(k_next, k_end, K,
+                                                     in_re_aligned, in_im_aligned, merge_tw);
+            }
+
+            {
+                __m256d even_re[16], even_im[16];
+                load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned,
+                                       even_re, even_im);
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+                {
+                    apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im,
+                                                       tw16b8, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im,
+                                                       tw16b4, neg_mask);
+                }
+                radix16_complete_butterfly_backward_soa_avx2(even_re, even_im,
+                                                             rot_sign_mask, neg_mask);
+
+                __m256d odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
+                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
+                }
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+                {
+                    apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im,
+                                                       tw16b8, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im,
+                                                       tw16b4, neg_mask);
+                }
+                radix16_complete_butterfly_backward_soa_avx2(odd_re, odd_im,
+                                                             rot_sign_mask, neg_mask);
+
+                apply_merge_twiddles_blocked8_avx2(k, K, odd_re, odd_im,
+                                                   merge_tw, neg_mask);
+
+                __m256d y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
+                                                  y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
+                                                   y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned,
+                                            y_re, y_im);
+                }
+            }
+
+            {
+                __m256d even_re[16], even_im[16];
+                load_16_lanes_soa_avx2(k + 4, K, in_re_aligned, in_im_aligned,
+                                       even_re, even_im);
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+                {
+                    apply_stage_twiddles_blocked8_avx2(k + 4, K, even_re, even_im,
+                                                       tw16b8, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_avx2(k + 4, K, even_re, even_im,
+                                                       tw16b4, neg_mask);
+                }
+                radix16_complete_butterfly_backward_soa_avx2(even_re, even_im,
+                                                             rot_sign_mask, neg_mask);
+
+                __m256d odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + 4 + (r + 16) * K]);
+                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + 4 + (r + 16) * K]);
+                }
+
+                if (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+                {
+                    apply_stage_twiddles_blocked8_avx2(k + 4, K, odd_re, odd_im,
+                                                       tw16b8, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked4_avx2(k + 4, K, odd_re, odd_im,
+                                                       tw16b4, neg_mask);
+                }
+                radix16_complete_butterfly_backward_soa_avx2(odd_re, odd_im,
+                                                             rot_sign_mask, neg_mask);
+
+                apply_merge_twiddles_blocked8_avx2(k + 4, K, odd_re, odd_im,
+                                                   merge_tw, neg_mask);
+
+                __m256d y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
+                                                  y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_avx2_stream(k + 4, K, out_re_aligned,
+                                                   out_im_aligned, y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_avx2(k + 4, K, out_re_aligned, out_im_aligned,
+                                            y_re, y_im);
+                }
+            }
+        }
+
+        for (; k + 4 <= k_end; k += 4)
+        {
+            __m256d even_re[16], even_im[16];
+            load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned, even_re, even_im);
+
+            if (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+            {
+                apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16b8, neg_mask);
+            }
+            else
+            {
+                apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16b4, neg_mask);
+            }
+            radix16_complete_butterfly_backward_soa_avx2(even_re, even_im,
+                                                         rot_sign_mask, neg_mask);
+
+            __m256d odd_re[16], odd_im[16];
+            for (int r = 0; r < 16; r++)
+            {
+                odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
+                odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
+            }
+
+            if (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+            {
+                apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16b8, neg_mask);
+            }
+            else
+            {
+                apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16b4, neg_mask);
+            }
+            radix16_complete_butterfly_backward_soa_avx2(odd_re, odd_im,
+                                                         rot_sign_mask, neg_mask);
+
+            apply_merge_twiddles_blocked8_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
+
+            __m256d y_re[32], y_im[32];
+            radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
+
+            if (use_nt_stores)
+            {
+                store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
+                                               y_re, y_im);
+            }
+            else
+            {
+                store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned, y_re, y_im);
+            }
+        }
+
+        radix32_process_tail_masked_blocked8_backward_avx2(
+            k, k_end, K, in_re_aligned, in_im_aligned, out_re_aligned, out_im_aligned,
+            radix16_tw, r16_mode, merge_tw, neg_mask);
+    }
+
+    if (use_nt_stores)
+    {
+        _mm_sfence();
+    }
+}
+
+//==============================================================================
+// COMPLETE STAGE DRIVERS: BACKWARD (BLOCKED4 WITH RECURRENCE)
+//==============================================================================
+
+/**
+ * @brief Radix-32 DIT Backward Stage - BLOCKED4 Merge (AVX-2 CORRECTED WITH R16 RECURRENCE)
+ *
+ * CRITICAL FEATURES:
+ * - Detects radix-16 recurrence mode
+ * - Maintains separate walker state for even/odd halves
+ * - Branches on r16_recur in twiddle application
+ * 
+ * AVX-2 ADAPTATIONS:
+ * - Main loop: k += 8, U=2 with k and k+4
+ * - Tail loop: k += 4, then masked
+ * - Prefetch: 16 doubles ahead
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void
+radix32_stage_dit_backward_blocked4_merge_avx2(
+    size_t K,
+    const double *RESTRICT in_re, const double *RESTRICT in_im,
+    double *RESTRICT out_re, double *RESTRICT out_im,
+    const radix32_stage_twiddles_avx2_t *RESTRICT stage_tw,
+    bool use_merge_recurrence,
+    const __m256d *RESTRICT merge_delta_w_re,
+    const __m256d *RESTRICT merge_delta_w_im)
+{
+    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);
+    const __m256d neg_mask = _mm256_set1_pd(-0.0);
+
+    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE;
+    const size_t tile_size = RADIX32_TILE_SIZE;
+
+    const bool use_nt_stores = radix32_should_use_nt_stores_avx2(K, out_re, out_im);
+
+    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
+    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
+    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
+    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
+
+    const void *radix16_tw = stage_tw->radix16_tw_opaque;
+    const radix16_twiddle_mode_avx2_t r16_mode = stage_tw->radix16_mode;
+    const radix32_merge_twiddles_blocked4_avx2_t *merge_tw =
+        (const radix32_merge_twiddles_blocked4_avx2_t *)stage_tw->merge_tw_opaque;
+
+    const radix16_stage_twiddles_blocked8_avx2_t *tw16b8 =
+        (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+            ? (const radix16_stage_twiddles_blocked8_avx2_t *)radix16_tw
+            : NULL;
+    const radix16_stage_twiddles_blocked4_avx2_t *tw16b4 =
+        (r16_mode == RADIX16_TW_BLOCKED4_AVX2)
+            ? (const radix16_stage_twiddles_blocked4_avx2_t *)radix16_tw
+            : NULL;
+
+    bool r16_recur = (r16_mode == RADIX16_TW_BLOCKED4_AVX2) && tw16b4->recurrence_enabled;
+
+    __m256d merge_w_state_re[16], merge_w_state_im[16];
+    __m256d r16_w_even_re[15], r16_w_even_im[15];
+    __m256d r16_w_odd_re[15], r16_w_odd_im[15];
+
+    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
+    {
+        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
+
+        size_t k;
+        for (k = k_tile; k + 8 <= k_end; k += 8)
+        {
+            size_t k_next = k + 8 + prefetch_dist;
+            if (k_next < k_end)
+            {
+                if (r16_mode == RADIX16_TW_BLOCKED8_AVX2)
+                {
+                    RADIX16_PREFETCH_NEXT_BLOCKED8_AVX2(k_next, k_end, K,
+                                                        in_re_aligned, in_im_aligned, tw16b8);
+                }
+                else if (r16_recur)
+                {
+                    RADIX16_PREFETCH_NEXT_RECURRENCE_AVX2(k_next, k_end, K,
+                                                          in_re_aligned, in_im_aligned);
+                }
+                else
+                {
+                    RADIX16_PREFETCH_NEXT_BLOCKED4_AVX2(k_next, k_end, K,
+                                                        in_re_aligned, in_im_aligned, tw16b4);
+                }
+
+                if (use_merge_recurrence)
+                {
+                    RADIX32_PREFETCH_MERGE_RECURRENCE_AVX2(k_next, k_end, K,
+                                                           in_re_aligned, in_im_aligned);
+                }
+                else
+                {
+                    RADIX32_PREFETCH_MERGE_BLOCKED4_AVX2(k_next, k_end, K,
+                                                         in_re_aligned, in_im_aligned, merge_tw);
+                }
+            }
+
+            bool is_tile_start = (k == k_tile);
+
+            {
+                __m256d even_re[16], even_im[16];
+                load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned,
+                                       even_re, even_im);
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_avx2(k, k_tile, is_tile_start,
+                                                    even_re, even_im, tw16b4,
+                                                    r16_w_even_re, r16_w_even_im,
+                                                    tw16b4->delta_w_re, tw16b4->delta_w_im,
+                                                    neg_mask);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_AVX2)
+                {
+                    apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im,
+                                                       tw16b4, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im,
+                                                       tw16b8, neg_mask);
+                }
+                radix16_complete_butterfly_backward_soa_avx2(even_re, even_im,
+                                                             rot_sign_mask, neg_mask);
+
+                __m256d odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
+                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
+                }
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_avx2(k, k_tile, is_tile_start,
+                                                    odd_re, odd_im, tw16b4,
+                                                    r16_w_odd_re, r16_w_odd_im,
+                                                    tw16b4->delta_w_re, tw16b4->delta_w_im,
+                                                    neg_mask);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_AVX2)
+                {
+                    apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im,
+                                                       tw16b4, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im,
+                                                       tw16b8, neg_mask);
+                }
+                radix16_complete_butterfly_backward_soa_avx2(odd_re, odd_im,
+                                                             rot_sign_mask, neg_mask);
+
+                if (use_merge_recurrence)
+                {
+                    apply_merge_twiddles_recur_avx2(k, k_tile, is_tile_start,
+                                                    odd_re, odd_im, merge_tw,
+                                                    merge_w_state_re, merge_w_state_im,
+                                                    merge_delta_w_re, merge_delta_w_im,
+                                                    neg_mask);
+                }
+                else
+                {
+                    apply_merge_twiddles_blocked4_avx2(k, K, odd_re, odd_im,
+                                                       merge_tw, neg_mask);
+                }
+
+                __m256d y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
+                                                  y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
+                                                   y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned,
+                                            y_re, y_im);
+                }
+            }
+
+            {
+                __m256d even_re[16], even_im[16];
+                load_16_lanes_soa_avx2(k + 4, K, in_re_aligned, in_im_aligned,
+                                       even_re, even_im);
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_avx2(k + 4, k_tile, false,
+                                                    even_re, even_im, tw16b4,
+                                                    r16_w_even_re, r16_w_even_im,
+                                                    tw16b4->delta_w_re, tw16b4->delta_w_im,
+                                                    neg_mask);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_AVX2)
+                {
+                    apply_stage_twiddles_blocked4_avx2(k + 4, K, even_re, even_im,
+                                                       tw16b4, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_avx2(k + 4, K, even_re, even_im,
+                                                       tw16b8, neg_mask);
+                }
+                radix16_complete_butterfly_backward_soa_avx2(even_re, even_im,
+                                                             rot_sign_mask, neg_mask);
+
+                __m256d odd_re[16], odd_im[16];
+                for (int r = 0; r < 16; r++)
+                {
+                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + 4 + (r + 16) * K]);
+                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + 4 + (r + 16) * K]);
+                }
+
+                if (r16_recur)
+                {
+                    apply_stage_twiddles_recur_avx2(k + 4, k_tile, false,
+                                                    odd_re, odd_im, tw16b4,
+                                                    r16_w_odd_re, r16_w_odd_im,
+                                                    tw16b4->delta_w_re, tw16b4->delta_w_im,
+                                                    neg_mask);
+                }
+                else if (r16_mode == RADIX16_TW_BLOCKED4_AVX2)
+                {
+                    apply_stage_twiddles_blocked4_avx2(k + 4, K, odd_re, odd_im,
+                                                       tw16b4, neg_mask);
+                }
+                else
+                {
+                    apply_stage_twiddles_blocked8_avx2(k + 4, K, odd_re, odd_im,
+                                                       tw16b8, neg_mask);
+                }
+                radix16_complete_butterfly_backward_soa_avx2(odd_re, odd_im,
+                                                             rot_sign_mask, neg_mask);
+
+                if (use_merge_recurrence)
+                {
+                    apply_merge_twiddles_recur_avx2(k + 4, k_tile, false,
+                                                    odd_re, odd_im, merge_tw,
+                                                    merge_w_state_re, merge_w_state_im,
+                                                    merge_delta_w_re, merge_delta_w_im,
+                                                    neg_mask);
+                }
+                else
+                {
+                    apply_merge_twiddles_blocked4_avx2(k + 4, K, odd_re, odd_im,
+                                                       merge_tw, neg_mask);
+                }
+
+                __m256d y_re[32], y_im[32];
+                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
+                                                  y_re, y_im);
+
+                if (use_nt_stores)
+                {
+                    store_32_lanes_soa_avx2_stream(k + 4, K, out_re_aligned,
+                                                   out_im_aligned, y_re, y_im);
+                }
+                else
+                {
+                    store_32_lanes_soa_avx2(k + 4, K, out_re_aligned, out_im_aligned,
+                                            y_re, y_im);
+                }
+            }
+        }
+
+        for (; k + 4 <= k_end; k += 4)
+        {
+            __m256d even_re[16], even_im[16];
+            load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned, even_re, even_im);
+
+            if (r16_recur)
+            {
+                apply_stage_twiddles_recur_avx2(k, k_tile, false,
+                                                even_re, even_im, tw16b4,
+                                                r16_w_even_re, r16_w_even_im,
+                                                tw16b4->delta_w_re, tw16b4->delta_w_im,
+                                                neg_mask);
+            }
+            else if (r16_mode == RADIX16_TW_BLOCKED4_AVX2)
+            {
+                apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16b4, neg_mask);
+            }
+            else
+            {
+                apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16b8, neg_mask);
+            }
+            radix16_complete_butterfly_backward_soa_avx2(even_re, even_im,
+                                                         rot_sign_mask, neg_mask);
+
+            __m256d odd_re[16], odd_im[16];
+            for (int r = 0; r < 16; r++)
+            {
+                odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
+                odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
+            }
+
+            if (r16_recur)
+            {
+                apply_stage_twiddles_recur_avx2(k, k_tile, false,
+                                                odd_re, odd_im, tw16b4,
+                                                r16_w_odd_re, r16_w_odd_im,
+                                                tw16b4->delta_w_re, tw16b4->delta_w_im,
+                                                neg_mask);
+            }
+            else if (r16_mode == RADIX16_TW_BLOCKED4_AVX2)
+            {
+                apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16b4, neg_mask);
+            }
+            else
+            {
+                apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16b8, neg_mask);
+            }
+            radix16_complete_butterfly_backward_soa_avx2(odd_re, odd_im,
+                                                         rot_sign_mask, neg_mask);
+
+            if (use_merge_recurrence)
+            {
+                apply_merge_twiddles_recur_avx2(k, k_tile, false, odd_re, odd_im,
+                                                merge_tw, merge_w_state_re, merge_w_state_im,
+                                                merge_delta_w_re, merge_delta_w_im, neg_mask);
+            }
+            else
+            {
+                apply_merge_twiddles_blocked4_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
+            }
+
+            __m256d y_re[32], y_im[32];
+            radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
+
+            if (use_nt_stores)
+            {
+                store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
+                                               y_re, y_im);
+            }
+            else
+            {
+                store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned, y_re, y_im);
+            }
+        }
+
+        radix32_process_tail_masked_blocked4_backward_avx2(
+            k, k_end, K, k_tile, in_re_aligned, in_im_aligned, out_re_aligned, out_im_aligned,
+            radix16_tw, r16_mode, merge_tw, use_merge_recurrence,
+            merge_w_state_re, merge_w_state_im, merge_delta_w_re, merge_delta_w_im,
+            neg_mask);
+    }
+
+    if (use_nt_stores)
+    {
+        _mm_sfence();
+    }
+}
+
+//==============================================================================
+// PUBLIC API
+//==============================================================================
+
+/**
+ * @brief Radix-32 DIT Forward Stage - Public API (AVX-2)
+ *
+ * @param K Number of k-indices per radix lane
+ * @param in_re Input real part (SoA: [32][K])
+ * @param in_im Input imaginary part (SoA: [32][K])
+ * @param out_re Output real part (SoA: [32][K])
+ * @param out_im Output imaginary part (SoA: [32][K])
+ * @param stage_tw_opaque Opaque pointer to radix32_stage_twiddles_avx2_t
+ *
+ * @note Twiddle structures should be prepared during planning phase:
+ *       - radix16_tw: Stage twiddles for both radix-16 sub-FFTs
+ *       - merge_tw: W₃₂^m twiddles for combining even/odd halves
+ *       - delta_w: Phase increments for recurrence (if enabled)
+ */
+TARGET_AVX2_FMA
+void radix32_stage_dit_forward_soa_avx2(
+    size_t K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const void *RESTRICT stage_tw_opaque)
+{
+    const radix32_stage_twiddles_avx2_t *stage_tw =
+        (const radix32_stage_twiddles_avx2_t *)stage_tw_opaque;
+
+    if (stage_tw->merge_mode == RADIX32_MERGE_TW_BLOCKED8_AVX2)
+    {
+        radix32_stage_dit_forward_blocked8_merge_avx2(
+            K, in_re, in_im, out_re, out_im, stage_tw);
+    }
+    else // RADIX32_MERGE_TW_BLOCKED4_AVX2
+    {
+        const radix32_merge_twiddles_blocked4_avx2_t *merge_tw =
+            (const radix32_merge_twiddles_blocked4_avx2_t *)stage_tw->merge_tw_opaque;
+
+        if (merge_tw->recurrence_enabled)
+        {
+            radix32_stage_dit_forward_blocked4_merge_avx2(
+                K, in_re, in_im, out_re, out_im,
+                stage_tw, true, merge_tw->delta_w_re, merge_tw->delta_w_im);
+        }
+        else
+        {
+            radix32_stage_dit_forward_blocked4_merge_avx2(
+                K, in_re, in_im, out_re, out_im,
+                stage_tw, false, NULL, NULL);
+        }
+    }
+}
+
+/**
+ * @brief Radix-32 DIT Backward Stage - Public API (AVX-2)
+ *
+ * @param K Number of k-indices per radix lane
+ * @param in_re Input real part (SoA: [32][K])
+ * @param in_im Input imaginary part (SoA: [32][K])
+ * @param out_re Output real part (SoA: [32][K])
+ * @param out_im Output imaginary part (SoA: [32][K])
+ * @param stage_tw_opaque Opaque pointer to radix32_stage_twiddles_avx2_t
+ */
+TARGET_AVX2_FMA
+void radix32_stage_dit_backward_soa_avx2(
+    size_t K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const void *RESTRICT stage_tw_opaque)
+{
+    const radix32_stage_twiddles_avx2_t *stage_tw =
+        (const radix32_stage_twiddles_avx2_t *)stage_tw_opaque;
+
+    if (stage_tw->merge_mode == RADIX32_MERGE_TW_BLOCKED8_AVX2)
+    {
+        radix32_stage_dit_backward_blocked8_merge_avx2(
+            K, in_re, in_im, out_re, out_im, stage_tw);
+    }
+    else // RADIX32_MERGE_TW_BLOCKED4_AVX2
+    {
+        const radix32_merge_twiddles_blocked4_avx2_t *merge_tw =
+            (const radix32_merge_twiddles_blocked4_avx2_t *)stage_tw->merge_tw_opaque;
+
+        if (merge_tw->recurrence_enabled)
+        {
+            radix32_stage_dit_backward_blocked4_merge_avx2(
+                K, in_re, in_im, out_re, out_im,
+                stage_tw, true, merge_tw->delta_w_re, merge_tw->delta_w_im);
+        }
+        else
+        {
+            radix32_stage_dit_backward_blocked4_merge_avx2(
+                K, in_re, in_im, out_re, out_im,
+                stage_tw, false, NULL, NULL);
+        }
+    }
+}
+
+#endif // FFT_RADIX32_AVX2_NATIVE_SOA_H
