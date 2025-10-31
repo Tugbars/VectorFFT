@@ -105,7 +105,6 @@
 
 #define RADIX4_BLOCKED3_THRESHOLD 512
 #define RADIX5_BLOCKED4_THRESHOLD 512 // NEW: Same strategy as radix-4
-#define RADIX8_BLOCKED4_THRESHOLD 256
 
 //==============================================================================
 // LAYOUT SELECTION
@@ -638,124 +637,6 @@ static int materialize_radix4_blocked2_avx2(twiddle_handle_t *handle)
     handle->layout_desc.total_size = total_size * 2;
     handle->layout_desc.radix = 4;
     handle->layout_desc.num_twiddle_factors = 3;
-    handle->layout_desc.butterflies_per_stage = K;
-    handle->layout_desc.has_precomputed = 0;
-
-    handle->layout_specific_data = NULL;
-
-    return 0;
-}
-
-//==============================================================================
-// RADIX-5 BLOCKED4 LAYOUT (K ≤ 512) - AVX-512
-//==============================================================================
-
-static int materialize_radix5_blocked4_avx512(twiddle_handle_t *handle)
-{
-    const int RADIX = 5;
-    int K = handle->n / RADIX;
-
-    assert(K <= RADIX5_BLOCKED4_THRESHOLD);
-
-    size_t total_size = 4 * K * sizeof(double);
-
-    double *re_data = (double *)aligned_alloc(64, total_size);
-    double *im_data = (double *)aligned_alloc(64, total_size);
-
-    if (!re_data || !im_data)
-    {
-        aligned_free(re_data);
-        aligned_free(im_data);
-        return -1;
-    }
-
-    // Read W^1, W^2, W^3, W^4 from canonical storage
-    for (int s = 1; s <= 4; s++)
-    {
-        int block_offset = (s - 1) * K;
-
-        for (int k = 0; k < K; k++)
-        {
-            double tw_re, tw_im;
-            twiddle_get(handle, s, k, &tw_re, &tw_im);
-
-            re_data[block_offset + k] = tw_re;
-            im_data[block_offset + k] = tw_im;
-        }
-    }
-
-    handle->materialized_re = re_data;
-    handle->materialized_im = im_data;
-    handle->materialized_count = 4 * K;
-    handle->owns_materialized = 1;
-
-    handle->layout_desc.type = TWIDDLE_LAYOUT_BLOCKED;
-    handle->layout_desc.simd_arch = SIMD_ARCH_AVX512;
-    handle->layout_desc.simd_width = 8;
-    handle->layout_desc.block_size = K * sizeof(double);
-    handle->layout_desc.num_blocks = 4;
-    handle->layout_desc.total_size = total_size * 2;
-    handle->layout_desc.radix = 5;
-    handle->layout_desc.num_twiddle_factors = 4;
-    handle->layout_desc.butterflies_per_stage = K;
-    handle->layout_desc.has_precomputed = 0;
-
-    handle->layout_specific_data = NULL;
-
-    return 0;
-}
-
-//==============================================================================
-// RADIX-5 BLOCKED2 LAYOUT (K > 512) - AVX-512
-//==============================================================================
-
-static int materialize_radix5_blocked2_avx512(twiddle_handle_t *handle)
-{
-    const int RADIX = 5;
-    int K = handle->n / RADIX;
-
-    assert(K > RADIX5_BLOCKED4_THRESHOLD);
-
-    size_t total_size = 2 * K * sizeof(double);
-
-    double *re_data = (double *)aligned_alloc(64, total_size);
-    double *im_data = (double *)aligned_alloc(64, total_size);
-
-    if (!re_data || !im_data)
-    {
-        aligned_free(re_data);
-        aligned_free(im_data);
-        return -1;
-    }
-
-    // Read W^1, W^2 only (W^3, W^4 will be derived at runtime)
-    for (int s = 1; s <= 2; s++)
-    {
-        int block_offset = (s - 1) * K;
-
-        for (int k = 0; k < K; k++)
-        {
-            double tw_re, tw_im;
-            twiddle_get(handle, s, k, &tw_re, &tw_im);
-
-            re_data[block_offset + k] = tw_re;
-            im_data[block_offset + k] = tw_im;
-        }
-    }
-
-    handle->materialized_re = re_data;
-    handle->materialized_im = im_data;
-    handle->materialized_count = 2 * K;
-    handle->owns_materialized = 1;
-
-    handle->layout_desc.type = TWIDDLE_LAYOUT_BLOCKED;
-    handle->layout_desc.simd_arch = SIMD_ARCH_AVX512;
-    handle->layout_desc.simd_width = 8;
-    handle->layout_desc.block_size = K * sizeof(double);
-    handle->layout_desc.num_blocks = 2;
-    handle->layout_desc.total_size = total_size * 2;
-    handle->layout_desc.radix = 5;
-    handle->layout_desc.num_twiddle_factors = 4; // Total (even though storing 2)
     handle->layout_desc.butterflies_per_stage = K;
     handle->layout_desc.has_precomputed = 0;
 
@@ -1648,13 +1529,33 @@ int twiddle_materialize_with_layout(
         return 0;
     }
 
-    // Clean up old layout if present
-    if (handle->layout_specific_data)
-    {
+     // ═══════════════════════════════════════════════════════════════
+    // CLEAN UP ALL PREVIOUS MATERIALIZATIONS
+    // ═══════════════════════════════════════════════════════════════
+    
+    // Type 1: SoA arrays (radix-2/3/4/5/8 use this)
+    if (handle->owns_materialized) {
+        if (handle->materialized_re) {
+            aligned_free(handle->materialized_re);
+            handle->materialized_re = NULL;
+        }
+        if (handle->materialized_im) {
+            aligned_free(handle->materialized_im);
+            handle->materialized_im = NULL;
+        }
+        handle->materialized_count = 0;
+    }
+    
+    // Type 2: Block structures (radix-16 uses this)
+    if (handle->layout_specific_data) {
         aligned_free(handle->layout_specific_data);
         handle->layout_specific_data = NULL;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    
+    // Reset ownership flag
+    handle->owns_materialized = 0;
     int result = -1;
 
     if (layout == TWIDDLE_LAYOUT_BLOCKED)
@@ -1702,7 +1603,7 @@ int twiddle_materialize_with_layout(
         //==================================================================
         // RADIX-4 DISPATCH (NEW)
         //==================================================================
-        if (handle->radix == 4)
+        else if (handle->radix == 4)
         {
             int K = handle->n / handle->radix;
 

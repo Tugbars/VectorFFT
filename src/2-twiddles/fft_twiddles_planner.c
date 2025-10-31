@@ -15,12 +15,13 @@ twiddle_handle_t *get_stage_twiddles(
     int radix,
     fft_direction_t direction)
 {
-    twiddle_handle_t *handle = twiddle_create(N_stage, radix, direction, TWID_AUTO);
+    // Use 3-parameter version (auto-selects SIMPLE/FACTORED)
+    twiddle_handle_t *handle = twiddle_create(N_stage, radix, direction);
     if (!handle) {
         return NULL;
     }
     
-    // Use reorganization system with auto-selection
+    // Materialize with auto layout selection
     if (twiddle_materialize_auto(handle, SIMD_ARCH_AUTO) != 0) {
         twiddle_destroy(handle);
         return NULL;
@@ -33,7 +34,9 @@ twiddle_handle_t *get_dft_kernel_twiddles(
     int radix,
     fft_direction_t direction)
 {
-    twiddle_handle_t *handle = twiddle_create(radix * radix, radix, direction, TWID_SIMPLE);
+    // For small DFT kernels, explicitly request SIMPLE strategy
+    twiddle_handle_t *handle = twiddle_create_explicit(
+        radix * radix, radix, direction, TWID_SIMPLE);
     if (!handle) {
         return NULL;
     }
