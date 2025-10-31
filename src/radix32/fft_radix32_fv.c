@@ -1,463 +1,306 @@
-//==============================================================================
-// fft_radix32_fv.c - Forward Radix-32 Butterfly (Split-Form Optimized)
-//==============================================================================
+/**
+ * @file fft_radix32_fv.c
+ * @brief Native SoA Radix-32 FFT Implementation - Forward (fv)
+ * 
+ * @details
+ * This module implements native SoA radix-32 forward FFT with:
+ * - Standard twiddle version (fft_radix32_fv)
+ * - Twiddle-less n1 version (fft_radix32_fv_n1) for first stage [FUTURE]
+ * 
+ * Architecture: 2×16 Cooley-Tukey decomposition with merge
+ * 
+ * @author VectorFFT Team
+ * @version 1.0 (2×16 Cooley-Tukey)
+ * @date 2025
+ */
 
 #include "fft_radix32_uniform.h"
-#include "simd_math.h"
-#include "fft_radix32_macros_avx512_optimized.h"
+#include <immintrin.h>
+#include <assert.h>
+#include <stdint.h>
+#include <stdlib.h>
 
-// Non-temporal store threshold
-#define STREAM_THRESHOLD 8192
-
-//==============================================================================
-// FORWARD RADIX-32 BUTTERFLY - Main Function
-//==============================================================================
-
-void fft_radix32_fv(
-    fft_data *restrict output_buffer,
-    const fft_data *restrict sub_outputs,
-    const TwiddleSoA *restrict stage_tw,
-    int sub_len)
-{
-    const int K = sub_len;
-    int k = 0;
-
+// Architecture-specific implementations
 #ifdef __AVX512F__
-    //==========================================================================
-    // AVX-512 PATH: 4 BUTTERFLIES PER ITERATION (128 COMPLEX VALUES!)
-    // SPLIT-FORM OPTIMIZED: Zero-shuffle twiddles + minimal data movement
-    //==========================================================================
-
-    const int use_streaming = (K >= STREAM_THRESHOLD);
-
-    if (use_streaming)
-    {
-        // Streaming store version (large transforms)
-        for (; k + 3 < K; k += 4)
-        {
-            // Prefetch ahead
-            PREFETCH_32_LANES_R32_AVX512(k, K, PREFETCH_L1_R32_AVX512,
-                                         sub_outputs, stage_tw, _MM_HINT_T0);
-            PREFETCH_32_LANES_R32_AVX512(k, K, PREFETCH_L2_R32_AVX512,
-                                         sub_outputs, stage_tw, _MM_HINT_T1);
-
-            // Process 4 butterflies with streaming stores (FORWARD)
-            RADIX32_PIPELINE_4_FV_AVX512_STREAM(k, K, sub_outputs, stage_tw, output_buffer);
-        }
-        _mm_sfence();
-    }
-    else
-    {
-        // Regular store version (normal-sized transforms)
-        for (; k + 3 < K; k += 4)
-        {
-            // Prefetch ahead
-            PREFETCH_32_LANES_R32_AVX512(k, K, PREFETCH_L1_R32_AVX512,
-                                         sub_outputs, stage_tw, _MM_HINT_T0);
-            PREFETCH_32_LANES_R32_AVX512(k, K, PREFETCH_L2_R32_AVX512,
-                                         sub_outputs, stage_tw, _MM_HINT_T1);
-
-            // Process 4 butterflies with regular stores (FORWARD)
-            RADIX32_PIPELINE_4_FV_AVX512(k, K, sub_outputs, stage_tw, output_buffer);
-        }
-    }
-
-#endif // __AVX512F__
+    #include "fft_radix32_avx512_native_soa.h"
+#endif
 
 #ifdef __AVX2__
-    //==========================================================================
-    // AVX2 PATH: 16X UNROLL (2 BUTTERFLIES PER ITERATION)
-    // NOTE: This still uses AoS macros - split-form AVX2 macros not yet ported
-    //==========================================================================
+    #include "fft_radix32_avx2_native_soa.h"
+#endif
 
-    const int use_streaming = (K >= STREAM_THRESHOLD);
+#include "fft_radix32_scalar_native_soa.h"
 
-    if (use_streaming)
+// N1 implementations (FUTURE)
+#ifdef __AVX512F__
+    // #include "fft_radix32_avx512_n1.h"  // TODO
+#endif
+
+#ifdef __AVX2__
+    // #include "fft_radix32_avx2_n1.h"    // TODO
+#endif
+
+// #include "fft_radix32_scalar_n1.h"      // TODO
+
+//==============================================================================
+// CONFIGURATION
+//==============================================================================
+
+#define CACHE_LINE_BYTES 64
+
+#if defined(__AVX512F__)
+    #define REQUIRED_ALIGNMENT 64
+    #define VECTOR_WIDTH 8
+#elif defined(__AVX2__) || defined(__AVX__)
+    #define REQUIRED_ALIGNMENT 32
+    #define VECTOR_WIDTH 4
+#else
+    #define REQUIRED_ALIGNMENT 8
+    #define VECTOR_WIDTH 1
+#endif
+
+#ifndef LLC_BYTES
+    #define LLC_BYTES (8 * 1024 * 1024)
+#endif
+
+#define NT_THRESHOLD 0.7
+#define NT_MIN_K 4096
+
+//==============================================================================
+// HELPER: Environment Variable Parsing
+//==============================================================================
+
+static inline int check_nt_env_override(void)
+{
+    static int cached_value = -2;
+    
+    if (cached_value == -2)
     {
-        // Streaming store version
-        for (; k + 15 < K; k += 16)
+        const char *env = getenv("FFT_NT");
+        if (env == NULL)
         {
-            // Prefetch
-            PREFETCH_32_LANES_R32(k, K, PREFETCH_L1_R32, sub_outputs, _MM_HINT_T0);
-            PREFETCH_32_LANES_R32(k, K, PREFETCH_L2_R32, sub_outputs, _MM_HINT_T1);
-            PREFETCH_32_LANES_R32(k, K, PREFETCH_L3_R32, sub_outputs, _MM_HINT_T2);
-
-            // Load and apply stage twiddles
-            __m256d x[32][8];
-
-            for (int b = 0; b < 8; ++b)
-            {
-                x[0][b] = LOAD_2_COMPLEX_R32(&sub_outputs[k + 2 * b],
-                                             &sub_outputs[k + 2 * b + 1]);
-            }
-
-            for (int lane = 1; lane < 32; ++lane)
-            {
-                for (int b = 0; b < 8; ++b)
-                {
-                    int kk = k + 2 * b;
-                    __m256d d = LOAD_2_COMPLEX_R32(&sub_outputs[kk + lane * K],
-                                                   &sub_outputs[kk + 1 + lane * K]);
-                    APPLY_STAGE_TWIDDLE_R32(kk, d, stage_tw, lane, x[lane][b]);
-                }
-            }
-
-            // First radix-4 layer (FORWARD)
-            for (int g = 0; g < 8; ++g)
-            {
-                for (int b = 0; b < 8; ++b)
-                {
-                    __m256d sumCH, difCH, sumAE, difAE;
-                    RADIX4_BUTTERFLY_CORE_R32(x[g + 8][b], x[g + 24][b],
-                                              x[g + 16][b], x[g][b],
-                                              sumCH, difCH, sumAE, difAE);
-
-                    __m256d rot;
-                    RADIX4_ROTATE_FORWARD_R32(difCH, rot);
-
-                    __m256d y0, y1, y2, y3;
-                    RADIX4_ASSEMBLE_OUTPUTS_R32(sumAE, sumCH, difAE, rot, y0, y1, y2, y3);
-
-                    x[g][b] = y0;
-                    x[g + 8][b] = y1;
-                    x[g + 16][b] = y2;
-                    x[g + 24][b] = y3;
-                }
-            }
-
-            // Apply W_32 twiddles (FORWARD)
-            for (int b = 0; b < 8; ++b)
-            {
-                APPLY_W32_TWIDDLES_FV_AVX2(x);
-            }
-
-            // Radix-8 octaves
-            for (int octave = 0; octave < 4; ++octave)
-            {
-                const int base = 8 * octave;
-
-                for (int b = 0; b < 8; ++b)
-                {
-                    // Even radix-4 (FORWARD)
-                    __m256d sumBD_e, difBD_e, sumAC_e, difAC_e;
-                    RADIX4_BUTTERFLY_CORE_R32(x[base + 2][b], x[base + 6][b],
-                                              x[base + 4][b], x[base][b],
-                                              sumBD_e, difBD_e, sumAC_e, difAC_e);
-
-                    __m256d rot_e;
-                    RADIX4_ROTATE_FORWARD_R32(difBD_e, rot_e);
-
-                    __m256d e0, e1, e2, e3;
-                    RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_e, sumBD_e, difAC_e, rot_e,
-                                                e0, e1, e2, e3);
-
-                    // Odd radix-4 (FORWARD)
-                    __m256d sumBD_o, difBD_o, sumAC_o, difAC_o;
-                    RADIX4_BUTTERFLY_CORE_R32(x[base + 3][b], x[base + 7][b],
-                                              x[base + 5][b], x[base + 1][b],
-                                              sumBD_o, difBD_o, sumAC_o, difAC_o);
-
-                    __m256d rot_o;
-                    RADIX4_ROTATE_FORWARD_R32(difBD_o, rot_o);
-
-                    __m256d o0, o1, o2, o3;
-                    RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_o, sumBD_o, difAC_o, rot_o,
-                                                o0, o1, o2, o3);
-
-                    // Apply W_8 (FORWARD)
-                    APPLY_W8_TWIDDLES_FV_AVX2(o1, o2, o3);
-
-                    // Combine
-                    RADIX8_COMBINE_R32(e0, e1, e2, e3, o0, o1, o2, o3,
-                                       x[base][b], x[base + 1][b], x[base + 2][b], x[base + 3][b],
-                                       x[base + 4][b], x[base + 5][b], x[base + 6][b], x[base + 7][b]);
-                }
-            }
-
-            // Store with streaming
-            for (int g = 0; g < 8; ++g)
-            {
-                for (int j = 0; j < 4; ++j)
-                {
-                    const int input_idx = j * 8 + g;
-                    const int output_idx = g * 4 + j;
-
-                    for (int b = 0; b < 8; ++b)
-                    {
-                        STORE_2_COMPLEX_R32_STREAM(
-                            &output_buffer[k + 2 * b + output_idx * K],
-                            x[input_idx][b]);
-                    }
-                }
-            }
+            cached_value = -1;
         }
-        _mm_sfence();
+        else if (env[0] == '0')
+        {
+            cached_value = 0;
+        }
+        else if (env[0] == '1')
+        {
+            cached_value = 1;
+        }
+        else
+        {
+            cached_value = -1;
+        }
+    }
+    
+    return cached_value;
+}
+
+//==============================================================================
+// HELPER: Process Range (Native SoA) - WITH TWIDDLES - FORWARD
+//==============================================================================
+
+static void radix32_process_range_native_soa_fv(
+    double *restrict out_re,
+    double *restrict out_im,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    const void *restrict stage_tw_opaque,
+    int K,
+    int N,
+    int k_start,
+    int k_end,
+    int use_streaming)
+{
+    (void)use_streaming; // Handled internally by architecture-specific code
+    (void)N;             // Used for heuristics
+    
+    int range_K = k_end - k_start;
+    
+    // Adjust pointers to range
+    const double *in_re_range = in_re + k_start;
+    const double *in_im_range = in_im + k_start;
+    double *out_re_range = out_re + k_start;
+    double *out_im_range = out_im + k_start;
+    
+#ifdef __AVX512F__
+    radix32_stage_dit_forward_soa_avx512(range_K,
+                                         in_re_range, in_im_range,
+                                         out_re_range, out_im_range,
+                                         stage_tw_opaque);
+    return;
+#endif
+    
+#ifdef __AVX2__
+    radix32_stage_dit_forward_soa_avx2(range_K,
+                                       in_re_range, in_im_range,
+                                       out_re_range, out_im_range,
+                                       stage_tw_opaque);
+    return;
+#endif
+    
+    // Scalar fallback
+    radix32_stage_dit_forward_soa_scalar(range_K,
+                                         in_re_range, in_im_range,
+                                         out_re_range, out_im_range,
+                                         stage_tw_opaque);
+}
+
+//==============================================================================
+// HELPER: Process Range (Native SoA) - NO TWIDDLES (N1) - FORWARD [STUB]
+//==============================================================================
+
+static void radix32_process_range_native_soa_fv_n1(
+    double *restrict out_re,
+    double *restrict out_im,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    int K,
+    int N,
+    int k_start,
+    int k_end)
+{
+    (void)out_re;
+    (void)out_im;
+    (void)in_re;
+    (void)in_im;
+    (void)K;
+    (void)N;
+    (void)k_start;
+    (void)k_end;
+    
+    // TODO: Implement N1 variant (no twiddles)
+    // This is for first-stage optimization where all twiddles = 1+0i
+    assert(0 && "fft_radix32_fv_n1 not yet implemented");
+}
+
+//==============================================================================
+// MAIN FUNCTION: Radix-32 DIT Forward - NATIVE SoA - WITH TWIDDLES
+//==============================================================================
+
+/**
+ * @brief Radix-32 DIT forward butterfly - NATIVE SoA - WITH TWIDDLES
+ * 
+ * @details
+ * Implements 2×16 Cooley-Tukey decomposition:
+ * 1. Two radix-16 sub-FFTs (even/odd indices)
+ * 2. Apply merge twiddles W₃₂^m to odd half
+ * 3. Radix-2 combine
+ * 
+ * Supports BLOCKED8/BLOCKED4 twiddle modes with optional recurrence.
+ * 
+ * @param[out] out_re Output real array (N elements, N=32K)
+ * @param[out] out_im Output imaginary array (N elements)
+ * @param[in] in_re Input real array (N elements)
+ * @param[in] in_im Input imaginary array (N elements)
+ * @param[in] stage_tw_opaque Opaque pointer to radix32_stage_twiddles_*
+ * @param[in] K Transform size / 32
+ */
+void fft_radix32_fv(
+    double *restrict out_re,
+    double *restrict out_im,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    const void *restrict stage_tw_opaque,
+    int K)
+{
+    const int N = 32 * K;
+    
+    // Apply alignment hints
+#if defined(__GNUC__) || defined(__clang__)
+    in_re  = (const double*)__builtin_assume_aligned(in_re,  REQUIRED_ALIGNMENT);
+    in_im  = (const double*)__builtin_assume_aligned(in_im,  REQUIRED_ALIGNMENT);
+    out_re = (double*)__builtin_assume_aligned(out_re, REQUIRED_ALIGNMENT);
+    out_im = (double*)__builtin_assume_aligned(out_im, REQUIRED_ALIGNMENT);
+#endif
+    
+    // Check environment override for NT stores
+    int nt_env_override = check_nt_env_override();
+    
+    // Calculate working set size
+    const size_t write_footprint = 32ull * K * sizeof(double);
+    const int is_out_of_place = (in_re != out_re) && (in_im != out_im);
+    
+    // Determine if we should use NT stores
+    int use_streaming = 0;
+    
+    if (nt_env_override == 0)
+    {
+        use_streaming = 0;
+    }
+    else if (nt_env_override == 1)
+    {
+        use_streaming = is_out_of_place;
     }
     else
     {
-        // Regular store version
-        for (; k + 15 < K; k += 16)
-        {
-            // Prefetch
-            PREFETCH_32_LANES_R32(k, K, PREFETCH_L1_R32, sub_outputs, _MM_HINT_T0);
-            PREFETCH_32_LANES_R32(k, K, PREFETCH_L2_R32, sub_outputs, _MM_HINT_T1);
-            PREFETCH_32_LANES_R32(k, K, PREFETCH_L3_R32, sub_outputs, _MM_HINT_T2);
-
-            // Load and apply stage twiddles
-            __m256d x[32][8];
-
-            for (int b = 0; b < 8; ++b)
-            {
-                x[0][b] = LOAD_2_COMPLEX_R32(&sub_outputs[k + 2 * b],
-                                             &sub_outputs[k + 2 * b + 1]);
-            }
-
-            for (int lane = 1; lane < 32; ++lane)
-            {
-                for (int b = 0; b < 8; ++b)
-                {
-                    int kk = k + 2 * b;
-                    __m256d d = LOAD_2_COMPLEX_R32(&sub_outputs[kk + lane * K],
-                                                   &sub_outputs[kk + 1 + lane * K]);
-                    APPLY_STAGE_TWIDDLE_R32(kk, d, stage_tw, lane, x[lane][b]);
-                }
-            }
-
-            // First radix-4 layer (FORWARD)
-            for (int g = 0; g < 8; ++g)
-            {
-                for (int b = 0; b < 8; ++b)
-                {
-                    __m256d sumCH, difCH, sumAE, difAE;
-                    RADIX4_BUTTERFLY_CORE_R32(x[g + 8][b], x[g + 24][b],
-                                              x[g + 16][b], x[g][b],
-                                              sumCH, difCH, sumAE, difAE);
-
-                    __m256d rot;
-                    RADIX4_ROTATE_FORWARD_R32(difCH, rot);
-
-                    __m256d y0, y1, y2, y3;
-                    RADIX4_ASSEMBLE_OUTPUTS_R32(sumAE, sumCH, difAE, rot, y0, y1, y2, y3);
-
-                    x[g][b] = y0;
-                    x[g + 8][b] = y1;
-                    x[g + 16][b] = y2;
-                    x[g + 24][b] = y3;
-                }
-            }
-
-            // Apply W_32 twiddles (FORWARD)
-            for (int b = 0; b < 8; ++b)
-            {
-                APPLY_W32_TWIDDLES_FV_AVX2(x);
-            }
-
-            // Radix-8 octaves
-            for (int octave = 0; octave < 4; ++octave)
-            {
-                const int base = 8 * octave;
-
-                for (int b = 0; b < 8; ++b)
-                {
-                    // Even radix-4 (FORWARD)
-                    __m256d sumBD_e, difBD_e, sumAC_e, difAC_e;
-                    RADIX4_BUTTERFLY_CORE_R32(x[base + 2][b], x[base + 6][b],
-                                              x[base + 4][b], x[base][b],
-                                              sumBD_e, difBD_e, sumAC_e, difAC_e);
-
-                    __m256d rot_e;
-                    RADIX4_ROTATE_FORWARD_R32(difBD_e, rot_e);
-
-                    __m256d e0, e1, e2, e3;
-                    RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_e, sumBD_e, difAC_e, rot_e,
-                                                e0, e1, e2, e3);
-
-                    // Odd radix-4 (FORWARD)
-                    __m256d sumBD_o, difBD_o, sumAC_o, difAC_o;
-                    RADIX4_BUTTERFLY_CORE_R32(x[base + 3][b], x[base + 7][b],
-                                              x[base + 5][b], x[base + 1][b],
-                                              sumBD_o, difBD_o, sumAC_o, difAC_o);
-
-                    __m256d rot_o;
-                    RADIX4_ROTATE_FORWARD_R32(difBD_o, rot_o);
-
-                    __m256d o0, o1, o2, o3;
-                    RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_o, sumBD_o, difAC_o, rot_o,
-                                                o0, o1, o2, o3);
-
-                    // Apply W_8 (FORWARD)
-                    APPLY_W8_TWIDDLES_FV_AVX2(o1, o2, o3);
-
-                    // Combine
-                    RADIX8_COMBINE_R32(e0, e1, e2, e3, o0, o1, o2, o3,
-                                       x[base][b], x[base + 1][b], x[base + 2][b], x[base + 3][b],
-                                       x[base + 4][b], x[base + 5][b], x[base + 6][b], x[base + 7][b]);
-                }
-            }
-
-            // Store regular
-            for (int g = 0; g < 8; ++g)
-            {
-                for (int j = 0; j < 4; ++j)
-                {
-                    const int input_idx = j * 8 + g;
-                    const int output_idx = g * 4 + j;
-
-                    for (int b = 0; b < 8; ++b)
-                    {
-                        STORE_2_COMPLEX_R32(
-                            &output_buffer[k + 2 * b + output_idx * K],
-                            x[input_idx][b]);
-                    }
-                }
-            }
-        }
+        use_streaming = is_out_of_place &&
+                       (K >= NT_MIN_K) &&
+                       (write_footprint > (size_t)(NT_THRESHOLD * LLC_BYTES));
     }
-
-    //==========================================================================
-    // CLEANUP: 2X UNROLL
-    //==========================================================================
-    for (; k + 1 < K; k += 2)
+    
+    // Verify alignment for NT stores
+    if (use_streaming)
     {
-        __m256d x[32];
-
-        x[0] = LOAD_2_COMPLEX_R32(&sub_outputs[k], &sub_outputs[k + 1]);
-
-        for (int lane = 1; lane < 32; ++lane)
+        uintptr_t r0 = (uintptr_t)&out_re[0];
+        uintptr_t i0 = (uintptr_t)&out_im[0];
+        
+        if ((r0 % REQUIRED_ALIGNMENT) != 0 || (i0 % REQUIRED_ALIGNMENT) != 0)
         {
-            __m256d d = LOAD_2_COMPLEX_R32(&sub_outputs[k + lane * K],
-                                           &sub_outputs[k + lane * K + 1]);
-            APPLY_STAGE_TWIDDLE_R32(k, d, stage_tw, lane, x[lane]);
-        }
-
-        for (int g = 0; g < 8; ++g)
-        {
-            __m256d sumCH, difCH, sumAE, difAE;
-            RADIX4_BUTTERFLY_CORE_R32(x[g + 8], x[g + 24], x[g + 16], x[g],
-                                      sumCH, difCH, sumAE, difAE);
-
-            __m256d rot;
-            RADIX4_ROTATE_FORWARD_R32(difCH, rot);
-
-            RADIX4_ASSEMBLE_OUTPUTS_R32(sumAE, sumCH, difAE, rot,
-                                        x[g], x[g + 8], x[g + 16], x[g + 24]);
-        }
-
-        {
-            int b = 0;
-            APPLY_W32_TWIDDLES_FV_AVX2(x);
-        }
-
-        for (int octave = 0; octave < 4; ++octave)
-        {
-            const int base = 8 * octave;
-
-            __m256d sumBD_e, difBD_e, sumAC_e, difAC_e;
-            RADIX4_BUTTERFLY_CORE_R32(x[base + 2], x[base + 6], x[base + 4], x[base],
-                                      sumBD_e, difBD_e, sumAC_e, difAC_e);
-
-            __m256d rot_e;
-            RADIX4_ROTATE_FORWARD_R32(difBD_e, rot_e);
-
-            __m256d e0, e1, e2, e3;
-            RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_e, sumBD_e, difAC_e, rot_e, e0, e1, e2, e3);
-
-            __m256d sumBD_o, difBD_o, sumAC_o, difAC_o;
-            RADIX4_BUTTERFLY_CORE_R32(x[base + 3], x[base + 7], x[base + 5], x[base + 1],
-                                      sumBD_o, difBD_o, sumAC_o, difAC_o);
-
-            __m256d rot_o;
-            RADIX4_ROTATE_FORWARD_R32(difBD_o, rot_o);
-
-            __m256d o0, o1, o2, o3;
-            RADIX4_ASSEMBLE_OUTPUTS_R32(sumAC_o, sumBD_o, difAC_o, rot_o, o0, o1, o2, o3);
-
-            APPLY_W8_TWIDDLES_FV_AVX2(o1, o2, o3);
-
-            RADIX8_COMBINE_R32(e0, e1, e2, e3, o0, o1, o2, o3,
-                               x[base], x[base + 1], x[base + 2], x[base + 3],
-                               x[base + 4], x[base + 5], x[base + 6], x[base + 7]);
-        }
-
-        for (int g = 0; g < 8; ++g)
-        {
-            for (int j = 0; j < 4; ++j)
-            {
-                STORE_2_COMPLEX_R32(&output_buffer[k + (g * 4 + j) * K], x[j * 8 + g]);
-            }
+            use_streaming = 0;
         }
     }
+    
+    // Verify twiddle alignment (critical for SIMD)
+    // Note: Actual validation depends on architecture-specific structure
+    // This is a placeholder - real validation happens in implementation
+    (void)stage_tw_opaque; // Suppress unused warning if no validation
+    
+    // Process full range
+    radix32_process_range_native_soa_fv(out_re, out_im, in_re, in_im,
+                                        stage_tw_opaque, K, N, 0, K,
+                                        use_streaming);
+}
 
-#endif // __AVX2__
+//==============================================================================
+// MAIN FUNCTION: Radix-32 DIT Forward - NATIVE SoA - NO TWIDDLES (N1) [STUB]
+//==============================================================================
 
-    //==========================================================================
-    // SCALAR TAIL
-    //==========================================================================
-    for (; k < K; ++k)
-    {
-        fft_data x[32];
-
-        for (int lane = 0; lane < 32; ++lane)
-        {
-            x[lane] = sub_outputs[k + lane * K];
-        }
-
-        for (int lane = 1; lane < 32; ++lane)
-        {
-            const fft_data *tw = &stage_tw[k * 31 + (lane - 1)];
-            double xr = x[lane].re, xi = x[lane].im;
-            x[lane].re = xr * tw->re - xi * tw->im;
-            x[lane].im = xr * tw->im + xi * tw->re;
-        }
-
-        for (int g = 0; g < 8; ++g)
-        {
-            RADIX4_BUTTERFLY_SCALAR_FV_R32(x[g], x[g + 8], x[g + 16], x[g + 24]);
-        }
-
-        // Apply W_32 twiddles (FORWARD - negative sign)
-        for (int g = 0; g < 8; ++g)
-        {
-            for (int j = 1; j <= 3; ++j)
-            {
-                int idx = g + 8 * j;
-                double angle = -2.0 * 3.14159265358979323846 * (double)(j * g) / 32.0; // NEGATIVE
-                double tw_re = cos(angle);
-                double tw_im = sin(angle);
-                double xr = x[idx].re, xi = x[idx].im;
-                x[idx].re = xr * tw_re - xi * tw_im;
-                x[idx].im = xr * tw_im + xi * tw_re;
-            }
-        }
-
-        for (int octave = 0; octave < 4; ++octave)
-        {
-            int base = 8 * octave;
-
-            RADIX4_BUTTERFLY_SCALAR_FV_R32(x[base], x[base + 2], x[base + 4], x[base + 6]);
-            RADIX4_BUTTERFLY_SCALAR_FV_R32(x[base + 1], x[base + 3], x[base + 5], x[base + 7]);
-
-            fft_data o[4] = {x[base + 1], x[base + 3], x[base + 5], x[base + 7]};
-            APPLY_W8_TWIDDLES_FV_SCALAR(o);
-
-            fft_data e[4] = {x[base], x[base + 2], x[base + 4], x[base + 6]};
-
-            x[base] = (fft_data){e[0].re + o[0].re, e[0].im + o[0].im};
-            x[base + 4] = (fft_data){e[0].re - o[0].re, e[0].im - o[0].im};
-            x[base + 1] = (fft_data){e[1].re + o[1].re, e[1].im + o[1].im};
-            x[base + 5] = (fft_data){e[1].re - o[1].re, e[1].im - o[1].im};
-            x[base + 2] = (fft_data){e[2].re + o[2].re, e[2].im + o[2].im};
-            x[base + 6] = (fft_data){e[2].re - o[2].re, e[2].im - o[2].im};
-            x[base + 3] = (fft_data){e[3].re + o[3].re, e[3].im + o[3].im};
-            x[base + 7] = (fft_data){e[3].re - o[3].re, e[3].im - o[3].im};
-        }
-
-        for (int g = 0; g < 8; ++g)
-        {
-            for (int j = 0; j < 4; ++j)
-            {
-                output_buffer[k + (g * 4 + j) * K] = x[j * 8 + g];
-            }
-        }
-    }
+/**
+ * @brief Radix-32 DIT forward butterfly - NATIVE SoA - NO TWIDDLES (n1)
+ * 
+ * @details
+ * Twiddle-less variant for first radix-32 stage or when all twiddles = 1+0i.
+ * Expected to be 40-60% faster than standard version.
+ * 
+ * NOT YET IMPLEMENTED - this is a placeholder for future optimization.
+ * 
+ * @param[out] out_re Output real array (N elements, N=32K)
+ * @param[out] out_im Output imaginary array (N elements)
+ * @param[in] in_re Input real array (N elements)
+ * @param[in] in_im Input imaginary array (N elements)
+ * @param[in] K Transform size / 32
+ */
+void fft_radix32_fv_n1(
+    double *restrict out_re,
+    double *restrict out_im,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    int K)
+{
+    const int N = 32 * K;
+    
+    // Apply alignment hints
+#if defined(__GNUC__) || defined(__clang__)
+    in_re  = (const double*)__builtin_assume_aligned(in_re,  REQUIRED_ALIGNMENT);
+    in_im  = (const double*)__builtin_assume_aligned(in_im,  REQUIRED_ALIGNMENT);
+    out_re = (double*)__builtin_assume_aligned(out_re, REQUIRED_ALIGNMENT);
+    out_im = (double*)__builtin_assume_aligned(out_im, REQUIRED_ALIGNMENT);
+#endif
+    
+    // Process full range (no twiddles)
+    radix32_process_range_native_soa_fv_n1(out_re, out_im, in_re, in_im,
+                                           K, N, 0, K);
 }
