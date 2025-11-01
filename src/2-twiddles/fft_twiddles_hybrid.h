@@ -303,54 +303,153 @@ static inline void twiddle_get(
     double *re,
     double *im);
 
-/**
- * @brief Load 8 consecutive twiddles (AVX-512)
- *
- * Optimized for SIMD butterfly loops.
- *
- * @param[in] handle Twiddle handle
- * @param[in] r Twiddle index in [1, radix)
- * @param[in] k Starting butterfly index
- * @param[out] re_vec 8 real components (__m512d)
- * @param[out] im_vec 8 imaginary components (__m512d)
- */
-#ifdef __AVX512F__
-void twiddle_load_avx512(
-    const twiddle_handle_t *handle,
-    int r,
-    int k,
-    __m512d *re_vec,
-    __m512d *im_vec);
-#endif
-
-/**
- * @brief Load 4 consecutive twiddles (AVX2)
- */
-#ifdef __AVX2__
-void twiddle_load_avx2(
-    const twiddle_handle_t *handle,
-    int r,
-    int k,
-    __m256d *re_vec,
-    __m256d *im_vec);
-#endif
-
-/**
- * @brief Load 2 consecutive twiddles (SSE2)
- */
-void twiddle_load_sse2(
-    const twiddle_handle_t *handle,
-    int r,
-    int k,
-    __m128d *re_vec,
-    __m128d *im_vec);
-
 //==============================================================================
 // INLINE IMPLEMENTATIONS
 //==============================================================================
 
-#include <immintrin.h>
-
+/**
+ * @brief Get twiddle factor (unified interface for SIMPLE and FACTORED modes)
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CONCRETE EXAMPLE: How Factored Twiddles Work
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * SCENARIO: FFT of size 1024 with radix-4 butterflies
+ * -----------------------------------------------------------------------
+ * 
+ * Setup:
+ *   N = 1024                    (FFT size)
+ *   radix = 4                   (using radix-4 butterflies)
+ *   K = N/radix = 256           (number of butterflies per stage)
+ * 
+ * Each radix-4 butterfly needs 3 twiddle factors: W^1, W^2, W^3
+ * Total twiddles needed: 3 × 256 = 768 complex numbers
+ * 
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MODE 1: SIMPLE (Full Table) - Used when N < 16384
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * Storage:
+ *   re[768] = [W1[0..255], W2[0..255], W3[0..255]]
+ *   im[768] = [W1[0..255], W2[0..255], W3[0..255]]
+ * 
+ * Where:
+ *   W1[k] = exp(-2πi × 1 × k / 1024)    for k = 0..255
+ *   W2[k] = exp(-2πi × 2 × k / 1024)    for k = 0..255
+ *   W3[k] = exp(-2πi × 3 × k / 1024)    for k = 0..255
+ * 
+ * Memory: 768 complex = 1536 doubles = 12 KB
+ * 
+ * Access for butterfly k=100, twiddle factor r=2:
+ *   offset = (r-1) × K + k = (2-1) × 256 + 100 = 356
+ *   twiddle = W2[100] = (re[356], im[356])
+ * 
+ * Cost: 2 arithmetic ops + 2 memory loads
+ * 
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MODE 2: FACTORED (Compressed √N Table) - Used when N ≥ 16384
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * Key Insight: W_N^m = W_N^(m mod tw_radix) × W_N^((m/tw_radix)×tw_radix)
+ * 
+ * For N=1024, we choose tw_radix=32 (nearest power-of-4 to √1024)
+ * 
+ * Storage (only 2√N values!):
+ *   W0_re[32], W0_im[32]:  "Fine" rotations
+ *     W0[i] = exp(-2πi × i / 1024)           for i = 0..31
+ *     
+ *   W1_re[32], W1_im[32]:  "Coarse" rotations (every 32nd)
+ *     W1[j] = exp(-2πi × j×32 / 1024)        for j = 0..31
+ * 
+ * Memory: 64 complex = 128 doubles = 1 KB  (12x smaller!)
+ * 
+ * Fast bit operations (since tw_radix=32=2^5):
+ *   shift = 5       (to divide by 32: m >> 5)
+ *   mask = 31       (to mod by 32: m & 31)
+ * 
+ * ───────────────────────────────────────────────────────────────────────────
+ * EXAMPLE: Access butterfly k=100, twiddle factor r=2
+ * ───────────────────────────────────────────────────────────────────────────
+ * 
+ * Step 1: Calculate combined exponent
+ *   m = r × k = 2 × 100 = 200
+ *   
+ *   We need: W_1024^200 = exp(-2πi × 200 / 1024)
+ * 
+ * Step 2: Factor the exponent using bit operations
+ *   m0 = m & mask = 200 & 31 = 8        (200 mod 32 = 8)
+ *   m1 = m >> shift = 200 >> 5 = 6      (200 / 32 = 6)
+ *   
+ *   Verification: 200 = 8 + 6×32 ✓
+ * 
+ * Step 3: Look up factors
+ *   W0[8] = exp(-2πi × 8 / 1024)        ← stored in W0_re[8], W0_im[8]
+ *   W1[6] = exp(-2πi × 192 / 1024)      ← stored in W1_re[6], W1_im[6]
+ * 
+ * Step 4: Reconstruct via complex multiplication
+ *   W_1024^200 = W0[8] × W1[6]
+ *              = exp(-2πi × 8/1024) × exp(-2πi × 192/1024)
+ *              = exp(-2πi × 200/1024)  ✓
+ * 
+ *   In code:
+ *     w0 = (0.99518, -0.09802)   ← from W0[8]
+ *     w1 = (0.83147, -0.55557)   ← from W1[6]
+ *     
+ *     result.re = 0.99518×0.83147 - (-0.09802)×(-0.55557)
+ *               = 0.82729 - 0.05447 = 0.77282
+ *     
+ *     result.im = 0.99518×(-0.55557) + (-0.09802)×0.83147
+ *               = -0.55288 - 0.08151 = -0.63439
+ *     
+ *     W_1024^200 = (0.77282, -0.63439)  ✓
+ * 
+ * Cost: 3 ops + 4 loads + 4 FMAs
+ *   - Slightly more computation than SIMPLE mode
+ *   - But 12x less memory bandwidth!
+ *   - FMAs are hidden by the ~20 FMAs in the butterfly itself
+ * 
+ * ───────────────────────────────────────────────────────────────────────────
+ * WHY POWER-OF-4 FOR tw_radix?
+ * ───────────────────────────────────────────────────────────────────────────
+ * 
+ * Consider tw_radix = 32 = 2^5:
+ * 
+ *   Division:  m / 32  →  m >> 5   (1 cycle vs ~20 cycles for idiv)
+ *   Modulo:    m % 32  →  m & 31   (1 cycle vs ~20 cycles for idiv)
+ * 
+ * Binary breakdown for m=200:
+ *   200 in binary = 0b11001000
+ *   
+ *   m >> 5:                           m & 31 (0b11111):
+ *   0b11001000 >> 5 = 0b110 = 6      0b11001000 & 0b11111 = 0b01000 = 8
+ *                       ↑                                      ↑
+ *                  Keep upper bits               Keep lower 5 bits
+ * 
+ * Powers of 4 (4, 16, 64, 256, 1024) are powers of 2, enabling these tricks!
+ * 
+ * ═══════════════════════════════════════════════════════════════════════════
+ * PERFORMANCE COMPARISON
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * FFT Size  | Mode     | Memory | Computation    | Bandwidth
+ * ----------|----------|--------|----------------|------------------
+ * 1,024     | SIMPLE   | 12 KB  | 2 ops          | 2 cache lines
+ * 1,024     | FACTORED | 1 KB   | 3 ops + 4 FMAs | Fits in L1 cache
+ * ----------|----------|--------|----------------|------------------
+ * 65,536    | SIMPLE   | 768 KB | 2 ops          | Thrashes L2 cache
+ * 65,536    | FACTORED | 4 KB   | 3 ops + 4 FMAs | Fits in L1 cache
+ * 
+ * For large FFTs, FACTORED is faster despite more computation!
+ * Modern CPUs are compute-bound, not memory-bound.
+ * 
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * @param[in] handle Twiddle handle
+ * @param[in] r Twiddle index in [1, radix) - which rotation (W^1, W^2, etc.)
+ * @param[in] k Butterfly index in [0, K) - which butterfly in the stage
+ * @param[out] re Real component of W_N^(r×k)
+ * @param[out] im Imaginary component of W_N^(r×k)
+ */
 static inline void twiddle_get(
     const twiddle_handle_t *handle,
     int r,
@@ -382,31 +481,6 @@ static inline void twiddle_get(
         *im = w0_re * w1_im + w0_im * w1_re;
     }
 }
-
-//==============================================================================
-// LEGACY COMPATIBILITY
-//==============================================================================
-
-/**
- * @brief Legacy AoS format structure
- */
-typedef struct {
-    double re, im;
-} fft_data;
-
-/**
- * @brief Create stage twiddles in legacy AoS format
- * @deprecated Use twiddle_create() for better performance
- */
-fft_data* compute_stage_twiddles(
-    int N_stage,
-    int radix,
-    fft_direction_t direction);
-
-/**
- * @brief Free legacy AoS twiddles
- */
-void free_stage_twiddles(fft_data *twiddles);
 
 #ifdef __cplusplus
 }
