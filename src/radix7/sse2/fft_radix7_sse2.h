@@ -27,7 +27,7 @@
  * - 16 XMM registers
  * - 2 loads + 1 store per cycle (same as AVX2)
  *
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 4.0 (SSE2 TRUE SoA + U2)
  * @date 2025
  */

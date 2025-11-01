@@ -18,7 +18,7 @@
  * - Automatic hybrid mode: N1 for [0, threshold), general for [threshold, half)
  * - All SIMD architectures supported
  *
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 3.1 (Added N1 integration and hybrid mode)
  * @date 2025
  */

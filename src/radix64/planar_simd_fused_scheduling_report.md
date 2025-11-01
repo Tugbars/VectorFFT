@@ -135,7 +135,7 @@ It trades code simplicity for significant real-world speed gains — often the l
 
 **In short:**  
 > Keep it planar, keep it in registers, and fuse as much math as you can before touching memory.
-
+ 
 ---
 
 ## 11. References

@@ -60,7 +60,7 @@
  * @note Total latency: ~4 cycles (4 add/sub on ports 0/5)
  */
 static inline __attribute__((always_inline))
-void radix2_butterfly_twiddleless_avx512(
+void radix2_butterfly_n1_avx512(
     __m512d e_re, __m512d e_im,
     __m512d o_re, __m512d o_im,
     __m512d *y0_re, __m512d *y0_im,
@@ -81,7 +81,7 @@ void radix2_butterfly_twiddleless_avx512(
  * @brief Process 8 butterflies WITHOUT twiddles (regular stores)
  */
 static inline __attribute__((always_inline))
-void radix2_pipeline_8_avx512_twiddleless(
+void radix2_pipeline_8_avx512_n1(
     int k,
     const double *restrict in_re,
     const double *restrict in_im,
@@ -104,7 +104,7 @@ void radix2_pipeline_8_avx512_twiddleless(
     const __m512d o_im = _mm512_loadu_pd(&in_im[k + half]);
     
     __m512d y0_re, y0_im, y1_re, y1_im;
-    radix2_butterfly_twiddleless_avx512(e_re, e_im, o_re, o_im,
+    radix2_butterfly_n1_avx512(e_re, e_im, o_re, o_im,
                                         &y0_re, &y0_im, &y1_re, &y1_im);
     
     _mm512_storeu_pd(&out_re[k], y0_re);
@@ -117,7 +117,7 @@ void radix2_pipeline_8_avx512_twiddleless(
  * @brief Process 8 butterflies WITHOUT twiddles (aligned loads/stores)
  */
 static inline __attribute__((always_inline))
-void radix2_pipeline_8_avx512_twiddleless_aligned(
+void radix2_pipeline_8_avx512_n1_aligned(
     int k,
     const double *restrict in_re,
     const double *restrict in_im,
@@ -140,7 +140,7 @@ void radix2_pipeline_8_avx512_twiddleless_aligned(
     const __m512d o_im = _mm512_load_pd(&in_im[k + half]);
     
     __m512d y0_re, y0_im, y1_re, y1_im;
-    radix2_butterfly_twiddleless_avx512(e_re, e_im, o_re, o_im,
+    radix2_butterfly_n1_avx512(e_re, e_im, o_re, o_im,
                                         &y0_re, &y0_im, &y1_re, &y1_im);
     
     _mm512_store_pd(&out_re[k], y0_re);
@@ -153,7 +153,7 @@ void radix2_pipeline_8_avx512_twiddleless_aligned(
  * @brief Process 8 butterflies WITHOUT twiddles (streaming stores)
  */
 static inline __attribute__((always_inline))
-void radix2_pipeline_8_avx512_twiddleless_stream(
+void radix2_pipeline_8_avx512_n1_stream(
     int k,
     const double *restrict in_re,
     const double *restrict in_im,
@@ -176,7 +176,7 @@ void radix2_pipeline_8_avx512_twiddleless_stream(
     const __m512d o_im = _mm512_load_pd(&in_im[k + half]);
     
     __m512d y0_re, y0_im, y1_re, y1_im;
-    radix2_butterfly_twiddleless_avx512(e_re, e_im, o_re, o_im,
+    radix2_butterfly_n1_avx512(e_re, e_im, o_re, o_im,
                                         &y0_re, &y0_im, &y1_re, &y1_im);
     
     _mm512_stream_pd(&out_re[k], y0_re);
@@ -193,7 +193,7 @@ void radix2_pipeline_8_avx512_twiddleless_stream(
  * @brief Process 16 butterflies WITHOUT twiddles (2× unroll, regular stores)
  */
 static inline __attribute__((always_inline))
-void radix2_pipeline_16_avx512_twiddleless_unroll2(
+void radix2_pipeline_16_avx512_n1_unroll2(
     int k,
     const double *restrict in_re,
     const double *restrict in_im,
@@ -210,15 +210,15 @@ void radix2_pipeline_16_avx512_twiddleless_unroll2(
         _mm_prefetch((char*)&in_im[k + half + prefetch_dist], _MM_HINT_T0);
     }
     
-    radix2_pipeline_8_avx512_twiddleless(k, in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless(k + 8, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1(k, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1(k + 8, in_re, in_im, out_re, out_im, half, 0);
 }
 
 /**
  * @brief Process 16 butterflies WITHOUT twiddles (2× unroll, aligned)
  */
 static inline __attribute__((always_inline))
-void radix2_pipeline_16_avx512_twiddleless_unroll2_aligned(
+void radix2_pipeline_16_avx512_n1_unroll2_aligned(
     int k,
     const double *restrict in_re,
     const double *restrict in_im,
@@ -235,15 +235,15 @@ void radix2_pipeline_16_avx512_twiddleless_unroll2_aligned(
         _mm_prefetch((char*)&in_im[k + half + prefetch_dist], _MM_HINT_T0);
     }
     
-    radix2_pipeline_8_avx512_twiddleless_aligned(k, in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless_aligned(k + 8, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_aligned(k, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_aligned(k + 8, in_re, in_im, out_re, out_im, half, 0);
 }
 
 /**
  * @brief Process 16 butterflies WITHOUT twiddles (2× unroll, streaming)
  */
 static inline __attribute__((always_inline))
-void radix2_pipeline_16_avx512_twiddleless_unroll2_stream(
+void radix2_pipeline_16_avx512_n1_unroll2_stream(
     int k,
     const double *restrict in_re,
     const double *restrict in_im,
@@ -260,8 +260,8 @@ void radix2_pipeline_16_avx512_twiddleless_unroll2_stream(
         _mm_prefetch((char*)&in_im[k + half + prefetch_dist], _MM_HINT_T0);
     }
     
-    radix2_pipeline_8_avx512_twiddleless_stream(k, in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless_stream(k + 8, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_stream(k, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_stream(k + 8, in_re, in_im, out_re, out_im, half, 0);
 }
 
 //==============================================================================
@@ -271,8 +271,6 @@ void radix2_pipeline_16_avx512_twiddleless_unroll2_stream(
 /**
  * @brief Process 32 butterflies WITHOUT twiddles (4× unroll) - NEW!
  *
- * @details
- * ⚡⚡⚡ MAXIMUM PERFORMANCE for high-end Intel!
  *
  * 4× unrolling with twiddle-less butterflies combines two major optimizations:
  * 1. No complex multiply (3× speedup)
@@ -282,7 +280,7 @@ void radix2_pipeline_16_avx512_twiddleless_unroll2_stream(
  * Ideal use case: First stage of large FFT (N >= 2^16)
  */
 static inline __attribute__((always_inline))
-void radix2_pipeline_32_avx512_twiddleless_unroll4(
+void radix2_pipeline_32_avx512_n1_unroll4(
     int k,
     const double *restrict in_re,
     const double *restrict in_im,
@@ -303,17 +301,17 @@ void radix2_pipeline_32_avx512_twiddleless_unroll4(
     }
     
     // Pipeline 0-3: four independent streams
-    radix2_pipeline_8_avx512_twiddleless(k,      in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless(k + 8,  in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless(k + 16, in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless(k + 24, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1(k,      in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1(k + 8,  in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1(k + 16, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1(k + 24, in_re, in_im, out_re, out_im, half, 0);
 }
 
 /**
  * @brief Process 32 butterflies WITHOUT twiddles (4× unroll, aligned)
  */
 static inline __attribute__((always_inline))
-void radix2_pipeline_32_avx512_twiddleless_unroll4_aligned(
+void radix2_pipeline_32_avx512_n1_unroll4_aligned(
     int k,
     const double *restrict in_re,
     const double *restrict in_im,
@@ -332,17 +330,17 @@ void radix2_pipeline_32_avx512_twiddleless_unroll4_aligned(
         _mm_prefetch((char*)&in_im[k + prefetch_dist + 16], _MM_HINT_T0);
     }
     
-    radix2_pipeline_8_avx512_twiddleless_aligned(k,      in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless_aligned(k + 8,  in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless_aligned(k + 16, in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless_aligned(k + 24, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_aligned(k,      in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_aligned(k + 8,  in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_aligned(k + 16, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_aligned(k + 24, in_re, in_im, out_re, out_im, half, 0);
 }
 
 /**
  * @brief Process 32 butterflies WITHOUT twiddles (4× unroll, streaming)
  */
 static inline __attribute__((always_inline))
-void radix2_pipeline_32_avx512_twiddleless_unroll4_stream(
+void radix2_pipeline_32_avx512_n1_unroll4_stream(
     int k,
     const double *restrict in_re,
     const double *restrict in_im,
@@ -361,10 +359,10 @@ void radix2_pipeline_32_avx512_twiddleless_unroll4_stream(
         _mm_prefetch((char*)&in_im[k + prefetch_dist + 16], _MM_HINT_T0);
     }
     
-    radix2_pipeline_8_avx512_twiddleless_stream(k,      in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless_stream(k + 8,  in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless_stream(k + 16, in_re, in_im, out_re, out_im, half, 0);
-    radix2_pipeline_8_avx512_twiddleless_stream(k + 24, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_stream(k,      in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_stream(k + 8,  in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_stream(k + 16, in_re, in_im, out_re, out_im, half, 0);
+    radix2_pipeline_8_avx512_n1_stream(k + 24, in_re, in_im, out_re, out_im, half, 0);
 }
 
 #endif // __AVX512F__

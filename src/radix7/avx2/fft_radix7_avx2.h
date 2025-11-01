@@ -210,9 +210,9 @@ __attribute__((always_inline)) static inline void load_7_lanes_avx2_soa(
 /**
  * @brief Store 7 lanes to SoA buffers - 4-WIDE ALIGNED (FASTEST!)
  * @details
- * ⚡⚡⚡ NEW: Direct 256-bit stores (4 doubles), no deinterleave!
- * ⚡⚡⚡ NEW: Aligned stores (0.5-cycle throughput)
- * ⚡⚡⚡ NEW: TRUE SoA - re/im already separate, just write!
+ * Direct 256-bit stores (4 doubles), no deinterleave!
+ * Aligned stores (0.5-cycle throughput)
+ * TRUE SoA - re/im already separate, just write!
  *
  * Memory layout (SoA, aligned):
  *   out_re[r*K + k]: [re[k], re[k+1], re[k+2], re[k+3]]  ← CONTIGUOUS + ALIGNED!
@@ -353,8 +353,8 @@ __attribute__((always_inline)) static inline void prefetch_7_lanes_avx2_soa(
 /**
  * @brief Apply stage twiddles to 6 of the 7 lanes (x0 unchanged)
  * @details
- * ⚡⚡⚡ CRITICAL: Unit-stride loads replace gathers (10→3 cycle latency!)
- * ⚡⚡⚡ NEW: Twiddles are blocked+SoA, so tw->re[r*K+k..k+3] is contiguous
+ * CRITICAL: Unit-stride loads replace gathers (10→3 cycle latency!)
+ * NEW: Twiddles are blocked+SoA, so tw->re[r*K+k..k+3] is contiguous
  *
  * OLD approach (SLOW):
  *   __m128i idx = _mm_setr_epi64x(k, k+1);
