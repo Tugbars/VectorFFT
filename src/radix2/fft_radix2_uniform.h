@@ -20,7 +20,7 @@
  * 5. Non-temporal (streaming) stores for large N to reduce cache pollution
  * 6. Zero-shuffle SoA layout - pure arithmetic, no data rearrangement
  * 
- * @author FFT Optimization Team
+ * @author Tugbars
  * @version 3.1 (Unified architecture with N1 integration)
  * @date 2025
  */
@@ -140,3 +140,36 @@ void fft_radix2_bv_n1(
 //==============================================================================
 // CAPABILITY QUERY FUNCTIONS
 //==============================================================================
+
+/**
+ * @brief Query available SIMD capabilities
+ * 
+ * @return String describing current SIMD support level
+ * 
+ * Example outputs:
+ * - "AVX-512F (8×double, 4× unroll, N1 support)"
+ * - "AVX2 (4×double, 2× unroll, FMA, N1 support)"
+ * - "SSE2 (2×double, 2× unroll, N1 support)"
+ */
+const char *radix2_get_simd_capabilities(void);
+
+/**
+ * @brief Get required buffer alignment for optimal performance
+ * 
+ * @return Alignment in bytes (16 for SSE2, 32 for AVX2, 64 for AVX-512)
+ * 
+ * @note Use this for allocating buffers with posix_memalign or aligned_alloc
+ * @note Streaming stores REQUIRE aligned buffers
+ */
+size_t radix2_get_alignment_requirement(void);
+
+/**
+ * @brief Get SIMD vector width
+ * 
+ * @return Number of doubles per SIMD vector (2/4/8 for SSE2/AVX2/AVX-512)
+ * 
+ * @note Useful for sizing work blocks and understanding parallelism level
+ */
+int radix2_get_vector_width(void);
+
+#endif // FFT_RADIX2_H
