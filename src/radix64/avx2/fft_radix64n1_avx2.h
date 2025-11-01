@@ -318,8 +318,8 @@ radix8_n1_butterfly_inline_backward_avx2(
 TARGET_AVX2
 FORCE_INLINE void
 apply_w64_merge_twiddles_forward_avx2(
-    __m256d x1_re[8], __m256d x1_im[8], // Sub-FFT 1 output
-    __m256d x2_re[8], __m256d x2_im[8], // Sub-FFT 2 output
+    __m256d x1_re[8], __m256d x1_im[8],
+    __m256d x2_re[8], __m256d x2_im[8],
     __m256d x3_re[8], __m256d x3_im[8],
     __m256d x4_re[8], __m256d x4_im[8],
     __m256d x5_re[8], __m256d x5_im[8],
@@ -333,65 +333,88 @@ apply_w64_merge_twiddles_forward_avx2(
     const __m256d W64_6_re, const __m256d W64_6_im,
     const __m256d W64_7_re, const __m256d W64_7_im)
 {
+    const __m256d C8 = _mm256_set1_pd(C8_CONSTANT);
     __m256d tmp_re, tmp_im;
 
-    // x1 *= W64^1
+    // x1 *= W64^1 - GENERIC
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x1_re[i], x1_im[i], W64_1_re, W64_1_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x1_im[i], W64_1_re);
+        __m256d t1 = _mm256_mul_pd(x1_im[i], W64_1_im);
+        tmp_re = _mm256_fmsub_pd(x1_re[i], W64_1_re, t1);
+        tmp_im = _mm256_fmadd_pd(x1_re[i], W64_1_im, t0);
         x1_re[i] = tmp_re;
         x1_im[i] = tmp_im;
     }
 
-    // x2 *= W64^2 (= W₈^1, reused!)
+    // x2 *= W64^2 = W₈^1 - OPTIMIZED PATH
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x2_re[i], x2_im[i], W64_2_re, W64_2_im, &tmp_re, &tmp_im);
-        x2_re[i] = tmp_re;
-        x2_im[i] = tmp_im;
+        __m256d sum = _mm256_add_pd(x2_re[i], x2_im[i]);
+        __m256d diff = _mm256_sub_pd(x2_im[i], x2_re[i]);
+        x2_re[i] = _mm256_mul_pd(sum, C8);
+        x2_im[i] = _mm256_mul_pd(diff, C8);
     }
 
-    // x3 *= W64^3
+    // x3 *= W64^3 - GENERIC
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x3_re[i], x3_im[i], W64_3_re, W64_3_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x3_im[i], W64_3_re);
+        __m256d t1 = _mm256_mul_pd(x3_im[i], W64_3_im);
+        tmp_re = _mm256_fmsub_pd(x3_re[i], W64_3_re, t1);
+        tmp_im = _mm256_fmadd_pd(x3_re[i], W64_3_im, t0);
         x3_re[i] = tmp_re;
         x3_im[i] = tmp_im;
     }
 
-    // x4 *= W64^4
+    // x4 *= W64^4 - GENERIC
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x4_re[i], x4_im[i], W64_4_re, W64_4_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x4_im[i], W64_4_re);
+        __m256d t1 = _mm256_mul_pd(x4_im[i], W64_4_im);
+        tmp_re = _mm256_fmsub_pd(x4_re[i], W64_4_re, t1);
+        tmp_im = _mm256_fmadd_pd(x4_re[i], W64_4_im, t0);
         x4_re[i] = tmp_re;
         x4_im[i] = tmp_im;
     }
 
-    // x5 *= W64^5
+    // x5 *= W64^5 - GENERIC
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x5_re[i], x5_im[i], W64_5_re, W64_5_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x5_im[i], W64_5_re);
+        __m256d t1 = _mm256_mul_pd(x5_im[i], W64_5_im);
+        tmp_re = _mm256_fmsub_pd(x5_re[i], W64_5_re, t1);
+        tmp_im = _mm256_fmadd_pd(x5_re[i], W64_5_im, t0);
         x5_re[i] = tmp_re;
         x5_im[i] = tmp_im;
     }
 
-    // x6 *= W64^6
+    // x6 *= W64^6 - GENERIC
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x6_re[i], x6_im[i], W64_6_re, W64_6_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x6_im[i], W64_6_re);
+        __m256d t1 = _mm256_mul_pd(x6_im[i], W64_6_im);
+        tmp_re = _mm256_fmsub_pd(x6_re[i], W64_6_re, t1);
+        tmp_im = _mm256_fmadd_pd(x6_re[i], W64_6_im, t0);
         x6_re[i] = tmp_re;
         x6_im[i] = tmp_im;
     }
 
-    // x7 *= W64^7
+    // x7 *= W64^7 - GENERIC
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x7_re[i], x7_im[i], W64_7_re, W64_7_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x7_im[i], W64_7_re);
+        __m256d t1 = _mm256_mul_pd(x7_im[i], W64_7_im);
+        tmp_re = _mm256_fmsub_pd(x7_re[i], W64_7_re, t1);
+        tmp_im = _mm256_fmadd_pd(x7_re[i], W64_7_im, t0);
         x7_re[i] = tmp_re;
         x7_im[i] = tmp_im;
     }
 }
 
+/**
+ * @brief Apply W₆₄ merge twiddles - OPTIMIZED (backward, AVX-2)
+ */
 TARGET_AVX2
 FORCE_INLINE void
 apply_w64_merge_twiddles_backward_avx2(
@@ -410,54 +433,77 @@ apply_w64_merge_twiddles_backward_avx2(
     const __m256d W64_6_re, const __m256d W64_6_im,
     const __m256d W64_7_re, const __m256d W64_7_im)
 {
+    const __m256d C8 = _mm256_set1_pd(C8_CONSTANT);
     __m256d tmp_re, tmp_im;
 
-    // Conjugate twiddles (same real, negated imaginary)
+    // x1 *= W64^(-1) - GENERIC
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x1_re[i], x1_im[i], W64_1_re, W64_1_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x1_im[i], W64_1_re);
+        __m256d t1 = _mm256_mul_pd(x1_im[i], W64_1_im);
+        tmp_re = _mm256_fmsub_pd(x1_re[i], W64_1_re, t1);
+        tmp_im = _mm256_fmadd_pd(x1_re[i], W64_1_im, t0);
         x1_re[i] = tmp_re;
         x1_im[i] = tmp_im;
     }
 
+    // x2 *= W64^(-2) = W₈^(-1) - OPTIMIZED PATH
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x2_re[i], x2_im[i], W64_2_re, W64_2_im, &tmp_re, &tmp_im);
-        x2_re[i] = tmp_re;
-        x2_im[i] = tmp_im;
+        __m256d diff = _mm256_sub_pd(x2_re[i], x2_im[i]);
+        __m256d sum = _mm256_add_pd(x2_re[i], x2_im[i]);
+        x2_re[i] = _mm256_mul_pd(diff, C8);
+        x2_im[i] = _mm256_mul_pd(sum, C8);
     }
 
+    // x3 *= W64^(-3) - GENERIC
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x3_re[i], x3_im[i], W64_3_re, W64_3_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x3_im[i], W64_3_re);
+        __m256d t1 = _mm256_mul_pd(x3_im[i], W64_3_im);
+        tmp_re = _mm256_fmsub_pd(x3_re[i], W64_3_re, t1);
+        tmp_im = _mm256_fmadd_pd(x3_re[i], W64_3_im, t0);
         x3_re[i] = tmp_re;
         x3_im[i] = tmp_im;
     }
 
+    // x4..x7 - GENERIC (same pattern)
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x4_re[i], x4_im[i], W64_4_re, W64_4_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x4_im[i], W64_4_re);
+        __m256d t1 = _mm256_mul_pd(x4_im[i], W64_4_im);
+        tmp_re = _mm256_fmsub_pd(x4_re[i], W64_4_re, t1);
+        tmp_im = _mm256_fmadd_pd(x4_re[i], W64_4_im, t0);
         x4_re[i] = tmp_re;
         x4_im[i] = tmp_im;
     }
 
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x5_re[i], x5_im[i], W64_5_re, W64_5_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x5_im[i], W64_5_re);
+        __m256d t1 = _mm256_mul_pd(x5_im[i], W64_5_im);
+        tmp_re = _mm256_fmsub_pd(x5_re[i], W64_5_re, t1);
+        tmp_im = _mm256_fmadd_pd(x5_re[i], W64_5_im, t0);
         x5_re[i] = tmp_re;
         x5_im[i] = tmp_im;
     }
 
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x6_re[i], x6_im[i], W64_6_re, W64_6_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x6_im[i], W64_6_re);
+        __m256d t1 = _mm256_mul_pd(x6_im[i], W64_6_im);
+        tmp_re = _mm256_fmsub_pd(x6_re[i], W64_6_re, t1);
+        tmp_im = _mm256_fmadd_pd(x6_re[i], W64_6_im, t0);
         x6_re[i] = tmp_re;
         x6_im[i] = tmp_im;
     }
 
     for (int i = 0; i < 8; i++)
     {
-        cmul_v256(x7_re[i], x7_im[i], W64_7_re, W64_7_im, &tmp_re, &tmp_im);
+        __m256d t0 = _mm256_mul_pd(x7_im[i], W64_7_re);
+        __m256d t1 = _mm256_mul_pd(x7_im[i], W64_7_im);
+        tmp_re = _mm256_fmsub_pd(x7_re[i], W64_7_re, t1);
+        tmp_im = _mm256_fmadd_pd(x7_re[i], W64_7_im, t0);
         x7_re[i] = tmp_re;
         x7_im[i] = tmp_im;
     }
