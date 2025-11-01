@@ -27,6 +27,7 @@
 #define FFT_RADIX2_OPTIMIZED_H
 
 #include <stdint.h> // For uintptr_t (alignment checks)
+#include <immintrin.h> // For _mm_sfence()
 #include "fft_radix2_uniform.h"
 
 //==============================================================================
@@ -524,69 +525,49 @@ static inline __attribute__((always_inline)) void _process_range_simd(
 //==============================================================================
 
 /**
- * @brief Process butterflies using optimal SIMD path for current architecture
+ * @brief Radix-2 FFT butterfly - WITH TWIDDLES - Standard version
  *
  * @details
- * This is the main entry point for butterfly processing. It automatically
- * dispatches to the fastest implementation available on the current CPU.
+ * Standard radix-2 DIT butterfly with twiddle factors for general FFT stages.
+ * Automatically dispatches to fastest SIMD implementation and handles streaming
+ * stores for large N.
  *
- * The function processes butterflies in phases:
- * 1. N1 (twiddle-less) range [0, n1_threshold) - ~3× faster
- * 2. Special cases (k=N/4, N/8, 3N/8) - optimized scalar
- * 3. Bulk processing with optimal SIMD and unrolling
- * 4. Cleanup remaining butterflies
+ * Algorithm:
+ * @code
+ *   Y[k]       = X_even[k] + W^k * X_odd[k]
+ *   Y[k+half]  = X_even[k] - W^k * X_odd[k]
+ * @endcode
  *
  * @param[out] out_re Output real array (N elements)
  * @param[out] out_im Output imaginary array (N elements)
  * @param[in] in_re Input real array (N elements)
  * @param[in] in_im Input imaginary array (N elements)
- * @param[in] stage_tw Stage twiddle factors (SoA format)
+ * @param[in] stage_tw Precomputed twiddle factors W^k for k=0..half-1
  * @param[in] half Transform half-size (N/2)
- * @param[in] use_streaming Use non-temporal stores for large N
- * @param[in] n1_threshold Number of butterflies to process without twiddles
- *                         (0 = no N1 optimization, typical: 4-16)
  *
- * @note Arrays must be aligned to RADIX2_ALIGNMENT bytes
- * @note Out-of-place only (in != out)
- * @note If use_streaming=1, caller MUST call RADIX2_NT_STAGE_FENCE() after
- *       this function to ensure all non-temporal stores complete
- * @note n1_threshold should be chosen based on how many twiddles are close to 1
- *       (typically 4-16 for first stage, 0 for other stages)
+ * @note For first stage where all twiddles ≈ 1, use fft_radix2_bv_n1() instead
+ * @see fft_radix2_bv_n1() - Twiddle-less variant (~3× faster for W=1 cases)
  */
-static inline void radix2_process_butterflies_optimal(
+void fft_radix2_bv(
     double *restrict out_re,
     double *restrict out_im,
     const double *restrict in_re,
     const double *restrict in_im,
     const fft_twiddles_soa *restrict stage_tw,
-    int half,
-    int use_streaming,
-    int n1_threshold)
+    int half)
 {
     const int prefetch_dist = RADIX2_PREFETCH_DISTANCE;
+    const int N = half * 2;
+    
+    // Automatic streaming decision based on working set size
+    const size_t working_set_bytes = (size_t)N * 4 * sizeof(double);
+    const int use_streaming = (working_set_bytes > (8 * 1024 * 1024));
+    
     int k = 0;
 
-    // Phase 1: N1 (twiddle-less) butterflies for [0, n1_threshold)
-    if (n1_threshold > 0 && n1_threshold <= half)
-    {
-        // Special case: k=0 is always W=1, handle it first
-        radix2_k0_scalar(in_re, in_im, out_re, out_im, half);
-        k = 1;
-        
-        // Process remaining N1 range
-        if (k < n1_threshold)
-        {
-            _process_range_simd_n1(k, n1_threshold, in_re, in_im,
-                                   out_re, out_im, half, use_streaming, prefetch_dist);
-            k = n1_threshold;
-        }
-    }
-    else
-    {
-        // No N1 optimization, start with k=0 as special case
-        radix2_k0_scalar(in_re, in_im, out_re, out_im, half);
-        k = 1;
-    }
+    // Phase 1: Special case k=0 (W=1, no twiddle multiply)
+    radix2_k0_scalar(in_re, in_im, out_re, out_im, half);
+    k = 1;
 
     // Determine special case indices (only process if beyond N1 threshold)
     int k_quarter = 0;
@@ -647,6 +628,76 @@ static inline void radix2_process_butterflies_optimal(
     }
 
 #undef PROCESS_RANGE
+
+    // Memory fence if streaming stores were used
+    if (use_streaming)
+    {
+        _mm_sfence();
+    }
+}
+
+//==============================================================================
+// TWIDDLE-LESS VARIANT: fft_radix2_bv_n1()
+//==============================================================================
+
+/**
+ * @brief Radix-2 FFT butterfly - NO TWIDDLES - First stage optimization
+ *
+ * @details
+ * Twiddle-less variant for first radix-2 stage or Stockham auto-sort where
+ * all twiddles W=1. This is ~3× faster than standard version due to:
+ * - No twiddle loads (saves 2 memory accesses per butterfly)
+ * - No complex multiplies (saves 4 FMAs per butterfly)
+ * - Reduced register pressure
+ *
+ * Algorithm (simplified):
+ * @code
+ *   Y[k]      = X_even[k] + X_odd[k]    // No twiddle multiply!
+ *   Y[k+half] = X_even[k] - X_odd[k]
+ * @endcode
+ *
+ * USAGE:
+ * @code
+ * // First radix-2 stage (all twiddles = 1)
+ * fft_radix2_bv_n1(out_re, out_im, in_re, in_im, half);
+ * 
+ * // Subsequent stages (need twiddles)
+ * fft_radix2_bv(out_re, out_im, in_re, in_im, stage_tw, half);
+ * @endcode
+ *
+ * @param[out] out_re Output real array (N elements)
+ * @param[out] out_im Output imaginary array (N elements)
+ * @param[in] in_re Input real array (N elements)
+ * @param[in] in_im Input imaginary array (N elements)
+ * @param[in] half Transform half-size (N/2)
+ *
+ * @note NO stage_tw parameter - this variant assumes all W=1
+ * @note ~3× faster than fft_radix2_bv() when applicable
+ * @see fft_radix2_bv() - Standard version with twiddles
+ */
+void fft_radix2_bv_n1(
+    double *restrict out_re,
+    double *restrict out_im,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    int half)
+{
+    const int prefetch_dist = RADIX2_PREFETCH_DISTANCE;
+    const int N = half * 2;
+    
+    // Automatic streaming decision
+    const size_t working_set_bytes = (size_t)N * 4 * sizeof(double);
+    const int use_streaming = (working_set_bytes > (8 * 1024 * 1024));
+    
+    // Process entire range with N1 (twiddle-less) variant
+    _process_range_simd_n1(0, half, in_re, in_im,
+                           out_re, out_im, half, use_streaming, prefetch_dist);
+    
+    // Memory fence if streaming stores were used
+    if (use_streaming)
+    {
+        _mm_sfence();
+    }
 }
 
 //==============================================================================
