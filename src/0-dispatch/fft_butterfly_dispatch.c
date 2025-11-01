@@ -27,140 +27,6 @@
 #include <stdlib.h> // For malloc/free in wrappers
 
 //==============================================================================
-// RADIX-2 WRAPPERS (Interleaved → SoA Adapter)
-//==============================================================================
-
-/**
- * @brief Radix-2 is SPECIAL - still uses interleaved format
- *
- * We need adapter wrappers to convert SoA → interleaved → SoA
- * This is unavoidable overhead, but radix-2 is rarely used for direct dispatch
- * (usually used in iterative bit-reversal)
- */
-static void radix2_fv_soa_wrapper(
-    double *restrict out_re,
-    double *restrict out_im,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    const fft_twiddles_soa *restrict stage_tw,
-    int K)
-{
-    // Allocate temporary interleaved buffers
-    const int N = 2 * K;
-    fft_data *temp_in = (fft_data *)malloc(N * sizeof(fft_data));
-    fft_data *temp_out = (fft_data *)malloc(N * sizeof(fft_data));
-
-    // Interleave input
-    for (int i = 0; i < N; i++)
-    {
-        temp_in[i].re = in_re[i];
-        temp_in[i].im = in_im[i];
-    }
-
-    // Call radix-2 butterfly (uses fft_data*)
-    fft_radix2_fv(temp_out, temp_in, stage_tw, K);
-
-    // Deinterleave output
-    for (int i = 0; i < N; i++)
-    {
-        out_re[i] = temp_out[i].re;
-        out_im[i] = temp_out[i].im;
-    }
-
-    free(temp_in);
-    free(temp_out);
-}
-
-static void radix2_bv_soa_wrapper(
-    double *restrict out_re,
-    double *restrict out_im,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    const fft_twiddles_soa *restrict stage_tw,
-    int K)
-{
-    const int N = 2 * K;
-    fft_data *temp_in = (fft_data *)malloc(N * sizeof(fft_data));
-    fft_data *temp_out = (fft_data *)malloc(N * sizeof(fft_data));
-
-    for (int i = 0; i < N; i++)
-    {
-        temp_in[i].re = in_re[i];
-        temp_in[i].im = in_im[i];
-    }
-
-    fft_radix2_bv(temp_out, temp_in, stage_tw, K);
-
-    for (int i = 0; i < N; i++)
-    {
-        out_re[i] = temp_out[i].re;
-        out_im[i] = temp_out[i].im;
-    }
-
-    free(temp_in);
-    free(temp_out);
-}
-
-// Radix-2 N1 wrappers (no twiddles)
-static void radix2_fn1_soa_wrapper(
-    double *restrict out_re,
-    double *restrict out_im,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    int K)
-{
-    const int N = 2 * K;
-    fft_data *temp_in = (fft_data *)malloc(N * sizeof(fft_data));
-    fft_data *temp_out = (fft_data *)malloc(N * sizeof(fft_data));
-
-    for (int i = 0; i < N; i++)
-    {
-        temp_in[i].re = in_re[i];
-        temp_in[i].im = in_im[i];
-    }
-
-    fft_radix2_fv(temp_out, temp_in, NULL, K); // NULL = no twiddles
-
-    for (int i = 0; i < N; i++)
-    {
-        out_re[i] = temp_out[i].re;
-        out_im[i] = temp_out[i].im;
-    }
-
-    free(temp_in);
-    free(temp_out);
-}
-
-static void radix2_bn1_soa_wrapper(
-    double *restrict out_re,
-    double *restrict out_im,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    int K)
-{
-    const int N = 2 * K;
-    fft_data *temp_in = (fft_data *)malloc(N * sizeof(fft_data));
-    fft_data *temp_out = (fft_data *)malloc(N * sizeof(fft_data));
-
-    for (int i = 0; i < N; i++)
-    {
-        temp_in[i].re = in_re[i];
-        temp_in[i].im = in_im[i];
-    }
-
-    fft_radix2_bv(temp_out, temp_in, NULL, K);
-
-    for (int i = 0; i < N; i++)
-    {
-        out_re[i] = temp_out[i].re;
-        out_im[i] = temp_out[i].im;
-    }
-
-    free(temp_in);
-    free(temp_out);
-}
-
-//==============================================================================
 // RADIX-7 WRAPPERS (Rader's Algorithm - Extra Parameters)
 //==============================================================================
 
@@ -183,8 +49,11 @@ static void radix7_fv_wrapper(
     // For dispatcher, pass NULL for rader_tw (stage twiddles include everything)
     // sub_len = K (single butterfly of size 7K)
     // num_threads = 0 (use default)
-    fft_radix7_fv_native_soa(out_re, out_im, in_re, in_im,
-                             stage_tw, NULL, K, K, 0);
+      fft_radix7_fv_native_soa(K, in_re, in_im,
+                             stage->stage_tw,
+                             stage->rader_tw, // ← From stage
+                             out_re, out_im,
+                             stage->sub_len); // ← From stage
 }
 
 static void radix7_bv_wrapper(
@@ -192,11 +61,15 @@ static void radix7_bv_wrapper(
     double *restrict out_im,
     const double *restrict in_re,
     const double *restrict in_im,
-    const fft_twiddles_soa *restrict stage_tw,
+    const stage_descriptor *restrict stage,
     int K)
 {
-    fft_radix7_bv_native_soa(out_re, out_im, in_re, in_im,
-                             stage_tw, NULL, K, K, 0);
+    // Extract radix-7 parameters from stage
+    fft_radix7_bv_native_soa(K, in_re, in_im,
+                             stage->stage_tw,
+                             stage->rader_tw, // ← From stage
+                             out_re, out_im,
+                             stage->sub_len); // ← From stage
 }
 
 // Radix-7 N1 (no twiddles)

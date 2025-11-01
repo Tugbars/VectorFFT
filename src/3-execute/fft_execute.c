@@ -1,580 +1,298 @@
 /**
- * @file fft_recursive.c
- * @brief Cache-oblivious recursive Cooley-Tukey FFT
- *
- * @details
- * This implements FFTW-style recursive decomposition with:
- * - Automatic cache adaptation (cache-oblivious)
- * - Mixed-radix factorization (2,3,4,5,7,8,11,13,16,32)
- * - Stride-triggered buffering (eliminates cache line waste)
- * - Adaptive base case (tuned to L1 cache size)
- * - Updated for new SoA butterfly APIs
- *
- * **API UPDATES:**
- * - Radix-2: Still uses fft_data* (interleaved)
- * - Radix-3+: Use separate double *re, *im arrays (SoA)
- * - Radix-8: Hybrid BLOCKED4/BLOCKED2 twiddle system
- * - Radix-32: Opaque twiddle pointers
- *
- * **Performance:**
- * - 93-95% of FFTW without codelets
- * - Optimal for 64 < N < 256K
- * - Automatically adapts to L1/L2/L3 hierarchy
+
+fft_exec_strategy_t choose_strategy(int N, int stride) {
+    //==========================================================================
+    // STEP 1: Check if N is highly composite (product of small primes ≤ 13)
+    //==========================================================================
+    bool is_composite = can_factor_into_small_primes(N);
+    
+    if (is_composite) {
+        // ──────────────────────────────────────────────────────────
+        // PATH A: Composite N → Use direct methods
+        // ──────────────────────────────────────────────────────────
+        
+        if (N <= 64 && is_power_of_2(N)) {
+            return FFT_EXEC_INPLACE_BITREV;  // Fastest for tiny N
+        }
+        
+        if (N < 262144) {  // N < 256K
+            return FFT_EXEC_RECURSIVE_CT;    // Cache-oblivious (FFTW-style)
+        }
+        
+        if (fft_should_use_fourstep(N, stride)) {
+            return FFT_EXEC_FOURSTEP;        // Explicit blocking for large N
+        }
+        
+        return FFT_EXEC_RECURSIVE_CT;        // Default
+    }
+    else {
+        // ──────────────────────────────────────────────────────────
+        // PATH B: Prime or large prime factors → Must use Bluestein
+        // ──────────────────────────────────────────────────────────
+        return FFT_EXEC_BLUESTEIN;
+    }
+}
+
+
+
+bool can_factor_into_small_primes(int N) {
+    int remaining = N;
+    
+    // Try dividing by radices we support: 2,3,4,5,7,8,11,13,16,32
+    int radices[] = {2, 3, 5, 7, 11, 13};
+    
+    for (int i = 0; i < 6; i++) {
+        while (remaining % radices[i] == 0) {
+            remaining /= radices[i];
+        }
+    }
+    
+    // If remaining == 1, N is fully factorizable
+    // If remaining > 13, has large prime factor → need Bluestein
+    return (remaining == 1);
+}
+```
+
+## Empirical Performance Chart
+```
+Performance (lower is better) vs N:
+═══════════════════════════════════════════════════════════════════
+
+Time (µs)
+    │
+10000├─────────────────────────────────────────────────────────────
+     │                                           ╱ Bluestein (prime N)
+     │                                      ╱╱╱╱
+     │                                 ╱╱╱╱
+ 1000├──────────────────────────╱╱╱╱╱─────────────────────────────
+     │                     ╱╱╱╱    ╲ Four-step
+     │                ╱╱╱╱          ╲ (composite N ≥ 256K)
+     │           ╱╱╱╱                ╲
+  100├──────╱╱╱╱─────────────────────╲────────────────────────────
+     │  ╱╱╱╱  ╲ Recursive                ╲
+     │╱╱     ╲ (composite 64 < N < 256K)  ╲
+   10├╲──────╲─────────────────────────────╲──────────────────────
+     │ ╲ Bit-reversal                       ╲
+     │  ╲ (composite N ≤ 64)                 ╲
+    1├───╲──────────────────────────────────────────────────────────
+     └────┼────┼────┼────┼────┼────┼────┼────┼────┼────┼────┼────► N
+         64   256   1K   4K  16K  64K 256K   1M   4M  16M  64M
+
+
+─── Composite N (optimal methods)
+╱╱╱ Prime N (Bluestein fallback, 3-5× slower)
  */
 
 #include "fft_execute_internal.h"
-#include "../1-plan/fft_planning_types.h"
-#include "../2-twiddles/fft_twiddles_planner.h"
+#include "fft_planning_types.h"
+#include "fft_planning.h"
+#include "fft_normalize.h"
+#include "../bluestein/bluestein.h"
+#include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 //==============================================================================
-// CACHE-AWARE UTILITIES
+// LEGACY COMPATIBILITY (NO WORKSPACE)
 //==============================================================================
 
 /**
- * @brief Get L1 cache size (architecture-specific)
+ * @brief Execute FFT without workspace (limited use)
+ *
+ * @deprecated Use fft_exec_dft() with workspace for better performance
  */
-size_t fft_get_l1_cache_size(void)
+int fft_exec(fft_object plan, const fft_data *input, fft_data *output)
 {
-#if defined(__x86_64__) || defined(_M_X64)
-    return 32 * 1024; // x86: typically 32KB
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    return 64 * 1024; // ARM: often 64-128KB
-#else
-    return 32 * 1024; // Conservative default
-#endif
-}
-
-/**
- * @brief Get optimal base case size
- */
-int fft_get_optimal_base_case(void)
-{
-    static int cached_base_case = 0;
-
-    if (cached_base_case == 0)
+    if (!plan || !input || !output)
     {
-        size_t L1 = fft_get_l1_cache_size();
-
-        // Want: 3 * N * sizeof(fft_data) < L1/2
-        // Factor 3: input + output + twiddles
-        int max_N = (L1 / 2) / (3 * sizeof(fft_data));
-
-        // Round to power-of-2 ≤ max_N, cap at 128
-        cached_base_case = 16;
-        while (cached_base_case * 2 <= max_N && cached_base_case < 128)
-        {
-            cached_base_case *= 2;
-        }
+        return -1;
     }
 
-    return cached_base_case;
-}
+    switch (plan->strategy)
+    {
+    case FFT_EXEC_INPLACE_BITREV:
+        // No workspace needed
+        return fft_exec_bitrev_strategy(plan, input, output);
 
-//==============================================================================
-// BASE CASE BUTTERFLIES
-//==============================================================================
+    case FFT_EXEC_RECURSIVE_CT:
+    {
+        // Allocate workspace on-the-fly
+        size_t ws_size = fft_get_workspace_size(plan);
+        fft_data *workspace = (fft_data *)malloc(ws_size * sizeof(fft_data));
+        if (!workspace)
+            return -1;
 
-/**
- * @brief Execute base case FFT (N ≤ 128)
- *
- * @param out Output buffer (contiguous)
- * @param in Input buffer (may be strided)
- * @param N Size (power-of-2 or small prime)
- * @param stride Input stride
- * @param is_forward Direction
- * @return 0 on success, -1 if not supported
- */
-static int execute_base_case(
-    fft_data *out,
-    const fft_data *in,
-    int N,
-    int stride,
-    int is_forward)
-{
-    // Gather to contiguous buffer (interleaved format)
-    fft_data temp[128]; // Stack allocation (fast!)
+        int result = fft_exec_recursive_strategy(plan, input, output, workspace);
+        free(workspace);
+        return result;
+    }
 
-    if (N > 128)
+    case FFT_EXEC_BLUESTEIN:
+    case FFT_EXEC_FOURSTEP:
+        fprintf(stderr, "ERROR: Strategy requires workspace, use fft_exec_dft()\n");
         return -1;
 
-    for (int i = 0; i < N; i++)
-    {
-        temp[i] = in[i * stride];
-    }
-
-    // Dispatch to optimized butterfly
-    switch (N)
-    {
-    case 2:
-        // Radix-2 still uses interleaved format
-        if (is_forward)
-            fft_radix2_fv(out, temp, NULL, 1);
-        else
-            fft_radix2_bv(out, temp, NULL, 1);
-        return 0;
-
-    case 3:
-    case 4:
-    case 5:
-    case 7:
-    case 8:
-    case 11:
-    case 13:
-    case 16:
-    case 32:
-    {
-        // These radices use SoA format - need to deinterleave
-        double temp_re[128], temp_im[128];
-        double out_re[128], out_im[128];
-        
-        for (int i = 0; i < N; i++)
-        {
-            temp_re[i] = temp[i].re;
-            temp_im[i] = temp[i].im;
-        }
-
-        // Call appropriate butterfly
-        if (N == 3)
-        {
-            if (is_forward)
-                fft_radix3_fv(out_re, out_im, temp_re, temp_im, NULL, 1);
-            else
-                fft_radix3_bv(out_re, out_im, temp_re, temp_im, NULL, 1);
-        }
-        else if (N == 4)
-        {
-            // Use N1 variant (no twiddles for base case)
-            if (is_forward)
-                fft_radix4_fv_n1(out_re, out_im, temp_re, temp_im, 1);
-            else
-                fft_radix4_bv_n1(out_re, out_im, temp_re, temp_im, 1);
-        }
-        else if (N == 5)
-        {
-            if (is_forward)
-                fft_radix5_fv(out_re, out_im, temp_re, temp_im, NULL, 1);
-            else
-                fft_radix5_bv(out_re, out_im, temp_re, temp_im, NULL, 1);
-        }
-        else if (N == 7)
-        {
-            if (is_forward)
-                fft_radix7_fv(out_re, out_im, temp_re, temp_im, NULL, NULL, 1);
-            else
-                fft_radix7_bv(out_re, out_im, temp_re, temp_im, NULL, NULL, 1);
-        }
-        else if (N == 8)
-        {
-            // Use N1 variant (no twiddles for base case)
-            if (is_forward)
-                fft_radix8_fv_n1(out_re, out_im, temp_re, temp_im, 1);
-            else
-                fft_radix8_bv_n1(out_re, out_im, temp_re, temp_im, 1);
-        }
-        else if (N == 11)
-        {
-            if (is_forward)
-                fft_radix11_fv(out_re, out_im, temp_re, temp_im, NULL, 1);
-            else
-                fft_radix11_bv(out_re, out_im, temp_re, temp_im, NULL, 1);
-        }
-        else if (N == 13)
-        {
-            if (is_forward)
-                fft_radix13_fv(out_re, out_im, temp_re, temp_im, NULL, 1);
-            else
-                fft_radix13_bv(out_re, out_im, temp_re, temp_im, NULL, 1);
-        }
-        else if (N == 16)
-        {
-            if (is_forward)
-                fft_radix16_fv(out_re, out_im, temp_re, temp_im, NULL, 1);
-            else
-                fft_radix16_bv(out_re, out_im, temp_re, temp_im, NULL, 1);
-        }
-        else if (N == 32)
-        {
-            // Use N1 variant (no twiddles for base case)
-            if (is_forward)
-                fft_radix32_fv_n1(out_re, out_im, temp_re, temp_im, 1);
-            else
-                fft_radix32_bv_n1(out_re, out_im, temp_re, temp_im, 1);
-        }
-
-        // Interleave results back
-        for (int i = 0; i < N; i++)
-        {
-            out[i].re = out_re[i];
-            out[i].im = out_im[i];
-        }
-        return 0;
-    }
-
     default:
-        return -1; // Not supported
+        return -1;
     }
 }
 
-//==============================================================================
-// RECURSIVE KERNEL
-//==============================================================================
-
 /**
- * @brief Cache-oblivious recursive FFT (internal)
- *
- * @param out Output buffer (contiguous)
- * @param in Input buffer (stride may vary)
- * @param plan FFT plan
- * @param N Current problem size
- * @param stride Current stride
- * @param factor_idx Current factor index
- * @param workspace Working buffer
+ * @brief Execute in-place FFT (small power-of-2 only)
  */
-static void fft_recursive_internal(
-    fft_data *out,
-    const fft_data *in,
-    fft_object plan,
-    int N,
-    int stride,
-    int factor_idx,
-    fft_data *workspace)
+int fft_exec_inplace(fft_object plan, fft_data *data)
 {
-    const int is_forward = (plan->direction == FFT_FORWARD);
-
-    //==========================================================================
-    // CHECK 1: BASE CASE (Small N fits in L1 cache)
-    //==========================================================================
-    const int base_case = fft_get_optimal_base_case();
-
-    if (N <= base_case)
+    if (!plan || !data)
     {
-        execute_base_case(out, in, N, stride, is_forward);
-        return;
+        return -1;
     }
 
-    //==========================================================================
-    // CHECK 2: STRIDE OPTIMIZATION (Poor cache behavior detection)
-    //==========================================================================
-    const int STRIDE_THRESHOLD = 8;
-
-    if (stride >= STRIDE_THRESHOLD)
+    if (plan->strategy != FFT_EXEC_INPLACE_BITREV)
     {
-        // Copy to contiguous workspace
-        for (int i = 0; i < N; i++)
-        {
-            workspace[i] = in[i * stride];
-        }
-
-        // Recurse with stride=1 (optimal cache behavior!)
-        fft_recursive_internal(out, workspace, plan, N, 1, factor_idx, workspace + N);
-        return;
+        fprintf(stderr, "ERROR: Plan does not support in-place execution\n");
+        return -1;
     }
 
-    //==========================================================================
-    // CHECK 3: RECURSION TERMINATION (Reached end of factorization)
-    //==========================================================================
-    if (factor_idx >= plan->num_stages)
-    {
-        return;
-    }
-
-    //==========================================================================
-    // RECURSIVE CASE: Cooley-Tukey Decomposition
-    //==========================================================================
-
-    const int radix = plan->factors[factor_idx];
-    const int sub_N = N / radix;
-    stage_descriptor *stage = &plan->stages[factor_idx];
-
-    fft_data *sub_out = workspace;
-
-    // Get materialized twiddle pointers
-    fft_twiddles_soa_view stage_view;
-    if (twiddle_get_soa_view(stage->stage_tw, &stage_view) != 0)
-    {
-        return;
-    }
-    const fft_twiddles_soa_view *tw = &stage_view;
-
-    // Get Rader twiddles if needed (for prime radices ≥7)
-    fft_twiddles_soa_view rader_view;
-    const fft_twiddles_soa_view *rader_tw = NULL;
-    if (stage->rader_tw)
-    {
-        if (twiddle_get_soa_view(stage->rader_tw, &rader_view) == 0)
-        {
-            rader_tw = &rader_view;
-        }
-    }
-
-    //==========================================================================
-    // STEP 3: RECURSIVE DECOMPOSITION - Compute sub-FFTs
-    //==========================================================================
-    for (int i = 0; i < radix; i++)
-    {
-        fft_recursive_internal(
-            sub_out + i * sub_N,
-            in + i * stride,
-            plan,
-            sub_N,
-            stride * radix,
-            factor_idx + 1,
-            workspace + N);
-    }
-
-    //==========================================================================
-    // STEP 4: COMBINE RESULTS - Apply radix butterfly with twiddles
-    //==========================================================================
-    // Need to deinterleave workspace for SoA butterflies (radix 3+)
-    
-    switch (radix)
-    {
-    case 2:
-        // Radix-2 still uses interleaved format
-        if (is_forward)
-            fft_radix2_fv(out, sub_out, tw, sub_N);
-        else
-            fft_radix2_bv(out, sub_out, tw, sub_N);
-        break;
-
-    case 3:
-    case 4:
-    case 5:
-    case 11:
-    case 13:
-    case 16:
-    {
-        // These need SoA format - deinterleave sub_out
-        double *sub_re = (double*)malloc(N * sizeof(double));
-        double *sub_im = (double*)malloc(N * sizeof(double));
-        double *out_re = (double*)malloc(N * sizeof(double));
-        double *out_im = (double*)malloc(N * sizeof(double));
-
-        for (int i = 0; i < N; i++)
-        {
-            sub_re[i] = sub_out[i].re;
-            sub_im[i] = sub_out[i].im;
-        }
-
-        // Call appropriate butterfly (native SoA versions)
-        if (radix == 3)
-        {
-            if (is_forward)
-                fft_radix3_fv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-            else
-                fft_radix3_bv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-        }
-        else if (radix == 4)
-        {
-            if (is_forward)
-                fft_radix4_fv(out_re, out_im, sub_re, sub_im, tw, sub_N);
-            else
-                fft_radix4_bv(out_re, out_im, sub_re, sub_im, tw, sub_N);
-        }
-        else if (radix == 5)
-        {
-            if (is_forward)
-                fft_radix5_fv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-            else
-                fft_radix5_bv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-        }
-        else if (radix == 11)
-        {
-            if (is_forward)
-                fft_radix11_fv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-            else
-                fft_radix11_bv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-        }
-        else if (radix == 13)
-        {
-            if (is_forward)
-                fft_radix13_fv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-            else
-                fft_radix13_bv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-        }
-        else if (radix == 16)
-        {
-            if (is_forward)
-                fft_radix16_fv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-            else
-                fft_radix16_bv_native_soa(out_re, out_im, sub_re, sub_im, tw, sub_N);
-        }
-
-        // Interleave results back
-        for (int i = 0; i < N; i++)
-        {
-            out[i].re = out_re[i];
-            out[i].im = out_im[i];
-        }
-
-        free(sub_re);
-        free(sub_im);
-        free(out_re);
-        free(out_im);
-        break;
-    }
-
-    case 7:
-    {
-        // Radix-7 uses Rader's algorithm with special parameters
-        double *sub_re = (double*)malloc(N * sizeof(double));
-        double *sub_im = (double*)malloc(N * sizeof(double));
-        double *out_re = (double*)malloc(N * sizeof(double));
-        double *out_im = (double*)malloc(N * sizeof(double));
-
-        for (int i = 0; i < N; i++)
-        {
-            sub_re[i] = sub_out[i].re;
-            sub_im[i] = sub_out[i].im;
-        }
-
-        // Radix-7 requires: K, sub_len, and num_threads (0 = default)
-        if (is_forward)
-            fft_radix7_fv_native_soa(out_re, out_im, sub_re, sub_im, 
-                                     tw, rader_tw, sub_N, sub_N, 0);
-        else
-            fft_radix7_bv_native_soa(out_re, out_im, sub_re, sub_im, 
-                                     tw, rader_tw, sub_N, sub_N, 0);
-
-        // Interleave results back
-        for (int i = 0; i < N; i++)
-        {
-            out[i].re = out_re[i];
-            out[i].im = out_im[i];
-        }
-
-        free(sub_re);
-        free(sub_im);
-        free(out_re);
-        free(out_im);
-        break;
-    }
-
-    case 8:
-    {
-        // Radix-8 uses hybrid BLOCKED4/BLOCKED2 system
-        double *sub_re = (double*)malloc(N * sizeof(double));
-        double *sub_im = (double*)malloc(N * sizeof(double));
-        double *out_re = (double*)malloc(N * sizeof(double));
-        double *out_im = (double*)malloc(N * sizeof(double));
-
-        for (int i = 0; i < N; i++)
-        {
-            sub_re[i] = sub_out[i].re;
-            sub_im[i] = sub_out[i].im;
-        }
-
-        // Determine which twiddle mode to use based on sub_N
-        if (sub_N <= 256)
-        {
-            // Use BLOCKED4 mode
-            radix8_stage_twiddles_blocked4_t tw_blocked4;
-            tw_blocked4.re = tw->re;
-            tw_blocked4.im = tw->im;
-
-            if (is_forward)
-                fft_radix8_fv(out_re, out_im, sub_re, sub_im, &tw_blocked4, NULL, sub_N);
-            else
-                fft_radix8_bv(out_re, out_im, sub_re, sub_im, &tw_blocked4, NULL, sub_N);
-        }
-        else
-        {
-            // Use BLOCKED2 mode
-            radix8_stage_twiddles_blocked2_t tw_blocked2;
-            tw_blocked2.re = tw->re;
-            tw_blocked2.im = tw->im;
-
-            if (is_forward)
-                fft_radix8_fv(out_re, out_im, sub_re, sub_im, NULL, &tw_blocked2, sub_N);
-            else
-                fft_radix8_bv(out_re, out_im, sub_re, sub_im, NULL, &tw_blocked2, sub_N);
-        }
-
-        // Interleave results back
-        for (int i = 0; i < N; i++)
-        {
-            out[i].re = out_re[i];
-            out[i].im = out_im[i];
-        }
-
-        free(sub_re);
-        free(sub_im);
-        free(out_re);
-        free(out_im);
-        break;
-    }
-
-    case 32:
-    {
-        // Radix-32 uses opaque twiddle pointer
-        double *sub_re = (double*)malloc(N * sizeof(double));
-        double *sub_im = (double*)malloc(N * sizeof(double));
-        double *out_re = (double*)malloc(N * sizeof(double));
-        double *out_im = (double*)malloc(N * sizeof(double));
-
-        for (int i = 0; i < N; i++)
-        {
-            sub_re[i] = sub_out[i].re;
-            sub_im[i] = sub_out[i].im;
-        }
-
-        // Cast twiddles to opaque pointer (fft_twiddles_soa_view is compatible)
-        const void *tw_opaque = (const void*)tw;
-
-        if (is_forward)
-            fft_radix32_fv(out_re, out_im, sub_re, sub_im, tw_opaque, sub_N);
-        else
-            fft_radix32_bv(out_re, out_im, sub_re, sub_im, tw_opaque, sub_N);
-
-        // Interleave results back
-        for (int i = 0; i < N; i++)
-        {
-            out[i].re = out_re[i];
-            out[i].im = out_im[i];
-        }
-
-        free(sub_re);
-        free(sub_im);
-        free(out_re);
-        free(out_im);
-        break;
-    }
-
-    default:
-        // General radix fallback (if implemented)
-        // This would need to be implemented for other radices
-        break;
-    }
+    return fft_exec_bitrev_strategy(plan, data, data);
 }
 
+//==============================================================================
+// PRIMARY EXECUTION API
+//==============================================================================
+
 /**
- * @brief Execute FFT using cache-oblivious recursive strategy
+ * @brief Execute FFT without normalization (main API)
  */
-int fft_exec_recursive_strategy(
+int fft_exec_dft(
     fft_object plan,
     const fft_data *input,
     fft_data *output,
     fft_data *workspace)
 {
-    if (!plan || !input || !output || !workspace)
+    if (!plan || !input || !output)
     {
         return -1;
     }
 
-    if (plan->strategy != FFT_EXEC_RECURSIVE_CT)
+    switch (plan->strategy)
+    {
+    case FFT_EXEC_INPLACE_BITREV:
+        // Bit-reversal: No workspace needed
+        return fft_exec_bitrev_strategy(plan, input, output);
+
+    case FFT_EXEC_RECURSIVE_CT:
+        // Cache-oblivious recursion
+        if (!workspace)
+        {
+            fprintf(stderr, "ERROR: Recursive strategy requires workspace\n");
+            return -1;
+        }
+        return fft_exec_recursive_strategy(plan, input, output, workspace);
+
+    case FFT_EXEC_FOURSTEP:
+        // Four-step with explicit blocking
+        if (!workspace)
+        {
+            fprintf(stderr, "ERROR: Four-step requires workspace\n");
+            return -1;
+        }
+        return fft_exec_fourstep(plan, input, output, workspace);
+
+    case FFT_EXEC_BLUESTEIN:
+        // Bluestein for arbitrary sizes
+        if (!workspace)
+        {
+            fprintf(stderr, "ERROR: Bluestein requires workspace\n");
+            return -1;
+        }
+
+        size_t scratch_size = bluestein_get_scratch_size(plan->n_input);
+
+        if (plan->direction == FFT_FORWARD)
+        {
+            return bluestein_exec_forward(
+                plan->bluestein_fwd, input, output, workspace, scratch_size);
+        }
+        else
+        {
+            return bluestein_exec_inverse(
+                plan->bluestein_inv, input, output, workspace, scratch_size);
+        }
+
+    default:
+        fprintf(stderr, "ERROR: Unknown execution strategy: %d\n", plan->strategy);
+        return -1;
+    }
+}
+
+/**
+ * @brief Execute FFT with automatic normalization
+ */
+int fft_exec_normalized(
+    fft_object plan,
+    const fft_data *input,
+    fft_data *output,
+    fft_data *workspace)
+{
+    int result = fft_exec_dft(plan, input, output, workspace);
+    if (result != 0)
+        return result;
+
+    // Apply 1/N normalization on inverse only
+    if (plan->direction == FFT_INVERSE)
+    {
+        FFT_NORMALIZE_INVERSE(output, plan->n_fft);
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Round-trip test (forward + inverse with normalization)
+ */
+int fft_roundtrip_normalized(
+    fft_object fwd_plan,
+    fft_object inv_plan,
+    const fft_data *input,
+    fft_data *output,
+    fft_data *workspace)
+{
+    if (!fwd_plan || !inv_plan || !input || !output)
     {
         return -1;
     }
 
-    fft_recursive_internal(
-        output,
-        input,
-        plan,
-        plan->n_fft,
-        1,
-        0,
-        workspace);
+    if (fwd_plan->n_fft != inv_plan->n_fft)
+    {
+        fprintf(stderr, "ERROR: Plan size mismatch\n");
+        return -1;
+    }
 
+    const int N = fwd_plan->n_fft;
+
+    fft_data *freq = (fft_data *)malloc(N * sizeof(fft_data));
+    if (!freq)
+        return -1;
+
+    // Forward FFT
+    int result = fft_exec_dft(fwd_plan, input, freq, workspace);
+    if (result != 0)
+    {
+        free(freq);
+        return result;
+    }
+
+    // Inverse FFT
+    result = fft_exec_dft(inv_plan, freq, output, workspace);
+    if (result != 0)
+    {
+        free(freq);
+        return result;
+    }
+
+    // Normalize
+    FFT_NORMALIZE_INVERSE(output, N);
+
+    free(freq);
     return 0;
 }

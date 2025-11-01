@@ -1344,6 +1344,99 @@ static int materialize_radix16_blocked_avx512(twiddle_handle_t *handle)
 }
 #endif // __AVX512F__
 
+
+static int materialize_radix16_blocked_avx2(twiddle_handle_t *handle)
+{
+    const int RADIX = 16;
+    const int SIMD_WIDTH = 4;
+    int K = handle->n / RADIX;
+    int num_blocks = (K + SIMD_WIDTH - 1) / SIMD_WIDTH;
+
+    // ═══════════════════════════════════════════════════════════════
+    // 1. CREATE BLOCKED LAYOUT (for optimized butterfly access)
+    // ═══════════════════════════════════════════════════════════════
+    
+    size_t block_alloc_size = num_blocks * sizeof(radix16_twiddle_block_avx2_t);
+    radix16_twiddle_block_avx2_t *blocks =
+        (radix16_twiddle_block_avx2_t *)aligned_alloc(64, block_alloc_size);
+
+    if (!blocks) {
+        return -1;
+    }
+    memset(blocks, 0, block_alloc_size);
+
+    // Reorganization: Transform from strided to blocked
+    for (int block_idx = 0; block_idx < num_blocks; block_idx++) {
+        int k_base = block_idx * SIMD_WIDTH;
+        for (int s = 1; s <= 15; s++) {
+            for (int lane = 0; lane < SIMD_WIDTH; lane++) {
+                int k = k_base + lane;
+                if (k < K) {
+                    double tw_re, tw_im;
+                    twiddle_get(handle, s, k, &tw_re, &tw_im);
+                    blocks[block_idx].tw_data[s - 1][0][lane] = tw_re;
+                    blocks[block_idx].tw_data[s - 1][1][lane] = tw_im;
+                } else {
+                    blocks[block_idx].tw_data[s - 1][0][lane] = 0.0;
+                    blocks[block_idx].tw_data[s - 1][1][lane] = 0.0;
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 2. ALSO CREATE FLAT SoA VIEW (for generic API access)
+    // ═══════════════════════════════════════════════════════════════
+    
+    int total_twiddles = 15 * K;  // 15 twiddle factors, K butterflies each
+    size_t soa_size = total_twiddles * sizeof(double);
+    
+    double *re_data = (double *)aligned_alloc(64, soa_size);
+    double *im_data = (double *)aligned_alloc(64, soa_size);
+    
+    if (!re_data || !im_data) {
+        aligned_free(re_data);
+        aligned_free(im_data);
+        aligned_free(blocks);
+        return -1;
+    }
+    
+    // Populate flat SoA arrays: [W1[0..K-1], W2[0..K-1], ..., W15[0..K-1]]
+    for (int s = 1; s <= 15; s++) {
+        int block_offset = (s - 1) * K;
+        for (int k = 0; k < K; k++) {
+            double tw_re, tw_im;
+            twiddle_get(handle, s, k, &tw_re, &tw_im);
+            re_data[block_offset + k] = tw_re;
+            im_data[block_offset + k] = tw_im;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 3. STORE BOTH REPRESENTATIONS
+    // ═══════════════════════════════════════════════════════════════
+    
+    handle->layout_specific_data = blocks;  // Optimized blocked layout
+    handle->materialized_re = re_data;      // Generic SoA view
+    handle->materialized_im = im_data;      // Generic SoA view
+    handle->materialized_count = total_twiddles;
+    handle->owns_materialized = 1;
+
+    handle->layout_desc.type = TWIDDLE_LAYOUT_BLOCKED;
+    handle->layout_desc.simd_arch = SIMD_ARCH_AVX2;
+    handle->layout_desc.simd_width = SIMD_WIDTH;
+    handle->layout_desc.block_size = sizeof(radix16_twiddle_block_avx2_t);
+    handle->layout_desc.num_blocks = num_blocks;
+    handle->layout_desc.total_size = block_alloc_size + (soa_size * 2);  // Both layouts
+    handle->layout_desc.radix = RADIX;
+    handle->layout_desc.num_twiddle_factors = 15;
+    handle->layout_desc.butterflies_per_stage = K;
+    handle->layout_desc.has_precomputed = 0;
+    handle->layout_desc.precompute_offset = 0;
+
+    return 0;
+}
+
 //==============================================================================
 // RADIX-16 PRECOMPUTED LAYOUT (AVX2)
 //==============================================================================
