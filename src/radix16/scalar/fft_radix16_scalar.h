@@ -1,1489 +1,1176 @@
 /**
- * @file fft_radix16_scalar_native_soa.h
- * @brief Production Radix-16 Scalar Native SoA - ALL APPLICABLE OPTIMIZATIONS PRESERVED
+ * @file fft_radix16_scalar.h
+ * @brief Radix-16 DIT (SoA, double) – Production Scalar with Cache-Aware Tiling
  *
- * @details
- * NATIVE SOA ARCHITECTURE:
- * ========================
- * - Direct access to separate re[]/im[] arrays
- * - 2-stage radix-4 decomposition (Cooley-Tukey)
- * - W_4 intermediate twiddles via sign flips
+ * Design goals:
+ * - Uniform API matching SIMD implementations (no hints, separate functions)
+ * - Cache-aware tiling for large K (L2-targeted)
+ * - Scalar-appropriate loop structure (U=2, U=4 for N=1)
+ * - Pointer bumping, minimal address recomputation
+ * - Clean separation of N=1 vs general twiddle paths
  *
- * BLOCKED TWIDDLE SYSTEM:
- * =======================
- * - BLOCKED8: K ≤ 512 (15 blocks, twiddles fit in L1+L2)
- *   * Load W1..W8 (8 blocks)
- *   * W9=-W1, W10=-W2, ..., W15=-W7 (sign flips only)
- *   * 47% bandwidth savings vs full storage
+ * Public API (matches SIMD convention):
+ *  - radix16_stage_blocked8_forward_scalar(...)
+ *  - radix16_stage_blocked8_backward_scalar(...)
+ *  - radix16_stage_blocked4_forward_scalar(...)
+ *  - radix16_stage_blocked4_backward_scalar(...)
+ *  - radix16_stage_n1_forward_scalar(...)
+ *  - radix16_stage_n1_backward_scalar(...)
  *
- * - BLOCKED4: K > 512 (twiddles stream from L3/DRAM)
- *   * Load W1..W4 (4 blocks)
- *   * Derive W5=W1×W4, W6=W2×W4, W7=W3×W4, W8=W4² (FMA)
- *   * W9..W15 via negation
- *   * 73% bandwidth savings
- *
- * K-TILING:
- * =========
- * - Tile size Tk=64 (tunable for L1 cache)
- * - Outer loop over tiles to keep twiddles hot
- * - Critical for radix-16: 15 blocks × K × 16 bytes
- *
- * TWIDDLE RECURRENCE:
- * ===================
- * - For K > 4096: tile-local recurrence with periodic refresh
- * - Refresh at each tile boundary (every 64 steps)
- * - Advance: w ← w × δw within tile
- * - Accuracy: <1e-14 relative error
- *
- * OPTIMIZATIONS (ALL PRESERVED FROM SIMD VERSION):
- * =================================================
- * ✅ U=4 software pipelining (deeper than SIMD due to register pressure)
- * ✅ Interleaved cmul order (break dependency chains, enable ILP)
- * ✅ Adaptive NT stores (>256KB working set)
- * ✅ Prefetch tuning (64 doubles for scalar)
- * ✅ Hoisted constants (W_4, sign values)
- * ✅ Alignment hints (ASSUME_ALIGNED)
- * ✅ Loop unrolling (explicit for better codegen)
- * ✅ FMA instructions (via compiler intrinsics)
- *
- * SCALAR ADAPTATIONS:
- * ===================
- * - Process one complex number per iteration
- * - Deeper software pipelining (U=4) to hide latency
- * - Explicit loop unrolling for better instruction scheduling
- * - FMA via __builtin_fma or hardware instructions
- * - No masking overhead - simple remainder loop
- *
- * @author FFT Optimization Team
- * @version 5.0-Scalar (All optimizations preserved)
- * @date 2025
+ * © 2025 MIT-style
  */
 
-#ifndef FFT_RADIX16_SCALAR_NATIVE_SOA_H
-#define FFT_RADIX16_SCALAR_NATIVE_SOA_H
+#ifndef FFT_RADIX16_SCALAR_H
+#define FFT_RADIX16_SCALAR_H
 
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
-
-#ifdef __x86_64__
-#include <immintrin.h> // For prefetch, NT stores, FMA
-#endif
+#include <assert.h>
+#include <xmmintrin.h> // FTZ
+#include <pmmintrin.h> // DAZ
 
 //==============================================================================
-// COMPILER PORTABILITY
+// PORTABILITY
 //==============================================================================
-
-#ifdef _MSC_VER
+#if defined(_MSC_VER)
 #define FORCE_INLINE static __forceinline
 #define RESTRICT __restrict
-#define ASSUME_ALIGNED(ptr, alignment) (ptr)
-#define TARGET_FMA
+#define ASSUME_ALIGNED(p, a) (p)
+#define ALIGNAS(n) __declspec(align(n))
 #elif defined(__GNUC__) || defined(__clang__)
 #define FORCE_INLINE static inline __attribute__((always_inline))
 #define RESTRICT __restrict__
-#define ASSUME_ALIGNED(ptr, alignment) __builtin_assume_aligned(ptr, alignment)
-#define TARGET_FMA __attribute__((target("fma")))
+#define ASSUME_ALIGNED(p, a) __builtin_assume_aligned((p), (a))
+#define ALIGNAS(n) __attribute__((aligned(n)))
 #else
 #define FORCE_INLINE static inline
 #define RESTRICT
-#define ASSUME_ALIGNED(ptr, alignment) (ptr)
-#define TARGET_FMA
-#endif
-
-// FMA intrinsic selection
-#if defined(__FMA__)
-#define FMA(a, b, c) __builtin_fma((a), (b), (c))
-#else
-#define FMA(a, b, c) ((a) * (b) + (c))
+#define ASSUME_ALIGNED(p, a) (p)
+#define ALIGNAS(n)
 #endif
 
 //==============================================================================
-// CONFIGURATION (PRESERVED)
+// CONFIGURATION
 //==============================================================================
 
-#ifndef RADIX16_BLOCKED8_THRESHOLD
-#define RADIX16_BLOCKED8_THRESHOLD 512
+// Threshold for choosing BLOCKED8 vs BLOCKED4
+#ifndef RADIX16_SCALAR_BLOCKED8_THRESHOLD
+#define RADIX16_SCALAR_BLOCKED8_THRESHOLD 512
 #endif
 
-#ifndef RADIX16_STREAM_THRESHOLD_KB
-#define RADIX16_STREAM_THRESHOLD_KB 256
+// Enable tiling for K larger than this
+#ifndef RADIX16_SCALAR_TILING_THRESHOLD
+#define RADIX16_SCALAR_TILING_THRESHOLD 1024
 #endif
 
-#ifndef RADIX16_PREFETCH_DISTANCE
-#define RADIX16_PREFETCH_DISTANCE 64 // Larger for scalar (more iterations ahead)
+// N=1 unroll factor (2 or 4)
+#ifndef RADIX16_SCALAR_N1_UNROLL
+#define RADIX16_SCALAR_N1_UNROLL 2
 #endif
 
-#ifndef RADIX16_TILE_SIZE
-#define RADIX16_TILE_SIZE 64
-#endif
-
-#ifndef RADIX16_RECURRENCE_THRESHOLD
-#define RADIX16_RECURRENCE_THRESHOLD 4096
-#endif
-
-// Software pipelining depth (U=4 for scalar)
-#ifndef RADIX16_SCALAR_UNROLL
-#define RADIX16_SCALAR_UNROLL 4
+// Enable recurrence for BLOCKED4 when K exceeds this
+#ifndef RADIX16_SCALAR_RECURRENCE_THRESHOLD
+#define RADIX16_SCALAR_RECURRENCE_THRESHOLD 4096
 #endif
 
 //==============================================================================
-// TWIDDLE STRUCTURES (ADAPTED FOR SCALAR)
+// TWIDDLE STRUCTURES (must match SIMD convention)
 //==============================================================================
 
 typedef struct
 {
-    const double *RESTRICT re; // [8 * K]
-    const double *RESTRICT im; // [8 * K]
+    const double *RESTRICT re; //!< [8*K]
+    const double *RESTRICT im; //!< [8*K]
 } radix16_stage_twiddles_blocked8_t;
 
 typedef struct
 {
-    const double *RESTRICT re; // [4 * K]
-    const double *RESTRICT im; // [4 * K]
-    // Scalar delta_w (phase increments for recurrence)
+    const double *RESTRICT re; //!< [4*K]
+    const double *RESTRICT im; //!< [4*K]
+    ALIGNAS(64)
     double delta_w_re[15];
+    ALIGNAS(64)
     double delta_w_im[15];
     size_t K;
     bool recurrence_enabled;
 } radix16_stage_twiddles_blocked4_t;
 
-typedef enum
+//==============================================================================
+// FTZ/DAZ INITIALIZATION
+//==============================================================================
+
+#ifdef __cplusplus
+#include <atomic>
+static std::atomic<bool> g_ftz_daz_init_scalar(false);
+#else
+#include <stdatomic.h>
+static atomic_bool g_ftz_daz_init_scalar = ATOMIC_VAR_INIT(false);
+#endif
+
+FORCE_INLINE void radix16_set_ftz_daz_scalar(void)
 {
-    RADIX16_TW_BLOCKED8,
-    RADIX16_TW_BLOCKED4
-} radix16_twiddle_mode_t;
-
-//==============================================================================
-// W_4 GEOMETRIC CONSTANTS (UNCHANGED)
-//==============================================================================
-
-#define W4_FV_0_RE 1.0
-#define W4_FV_0_IM 0.0
-#define W4_FV_1_RE 0.0
-#define W4_FV_1_IM (-1.0)
-#define W4_FV_2_RE (-1.0)
-#define W4_FV_2_IM 0.0
-#define W4_FV_3_RE 0.0
-#define W4_FV_3_IM 1.0
-
-#define W4_BV_0_RE 1.0
-#define W4_BV_0_IM 0.0
-#define W4_BV_1_RE 0.0
-#define W4_BV_1_IM 1.0
-#define W4_BV_2_RE (-1.0)
-#define W4_BV_2_IM 0.0
-#define W4_BV_3_RE 0.0
-#define W4_BV_3_IM (-1.0)
-
-//==============================================================================
-// PLANNING HELPERS (PRESERVED)
-//==============================================================================
-
-FORCE_INLINE radix16_twiddle_mode_t
-radix16_choose_twiddle_mode_scalar(size_t K)
-{
-    return (K <= RADIX16_BLOCKED8_THRESHOLD) ? RADIX16_TW_BLOCKED8 : RADIX16_TW_BLOCKED4;
+    bool expected = false;
+#ifdef __cplusplus
+    if (g_ftz_daz_init_scalar.compare_exchange_strong(expected, true))
+    {
+#else
+    if (atomic_compare_exchange_strong(&g_ftz_daz_init_scalar, &expected, true))
+    {
+#endif
+        _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+        _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+    }
 }
 
-FORCE_INLINE bool
-radix16_should_use_recurrence_scalar(size_t K)
+//==============================================================================
+// CACHE DETECTION
+//==============================================================================
+
+/**
+ * @brief Detect L2 cache size (portable CPUID wrapper)
+ */
+FORCE_INLINE size_t radix16_scalar_detect_l2_cache(void)
 {
-    return (K > RADIX16_RECURRENCE_THRESHOLD);
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    int regs[4];
+    __cpuidex(regs, 0x80000000, 0);
+    if ((unsigned)regs[0] >= 0x80000006)
+    {
+        __cpuidex(regs, 0x80000006, 0);
+        unsigned l2_kb = (unsigned)((regs[2] >> 16) & 0xFFFF);
+        if (l2_kb)
+            return (size_t)l2_kb * 1024;
+    }
+    return 1 << 20;
+#elif (defined(__x86_64__) || defined(__i386__)) && (defined(__GNUC__) || defined(__clang__))
+#include <cpuid.h>
+    unsigned eax, ebx, ecx, edx;
+    if (__get_cpuid_max(0x80000000, 0) >= 0x80000006)
+    {
+        __cpuid_count(0x80000006, 0, eax, ebx, ecx, edx);
+        unsigned l2_kb = (ecx >> 16) & 0xFFFFu;
+        if (l2_kb)
+            return (size_t)l2_kb * 1024;
+    }
+    return 1 << 20;
+#else
+    return 1 << 20; // conservative default
+#endif
 }
 
 /**
- * @brief NT Store Decision (Overflow-Safe)
+ * @brief Choose tile size based on L2 cache and K
+ *
+ * Strategy: Keep working set (input + output + twiddles) within L2
+ * Working set = 16 rows × tile_k × 8 bytes × 2 (re+im) + twiddles
+ *             = 256 × tile_k + twiddle_bytes
  */
-FORCE_INLINE bool
-radix16_should_use_nt_stores_scalar(
+FORCE_INLINE size_t radix16_scalar_choose_tile_size(
     size_t K,
-    const void *out_re,
-    const void *out_im)
+    bool blocked8,
+    bool in_place)
 {
-    const size_t bytes_per_k = 16 * 2 * sizeof(double); // 256 bytes
-    const size_t threshold_k = (RADIX16_STREAM_THRESHOLD_KB * 1024) / bytes_per_k;
+    if (K <= RADIX16_SCALAR_TILING_THRESHOLD)
+        return K;
 
-    return (K >= threshold_k) &&
-           (((uintptr_t)out_re & 63) == 0) &&
-           (((uintptr_t)out_im & 63) == 0);
+    size_t l2_bytes = radix16_scalar_detect_l2_cache();
+    size_t usable = (size_t)(l2_bytes * 0.65); // ✅ Reasonable headroom
+
+    // ✅ Correct accounting
+    const size_t bytes_per_col_in = 16 * 8 * 2;                 // 256
+    const size_t bytes_per_col_out = in_place ? 0 : 16 * 8 * 2; // 0 or 256
+    const size_t bytes_per_col_tw = (blocked8 ? 8 : 4) * 8 * 2; // 128 or 64
+
+    const size_t per_k = bytes_per_col_in + bytes_per_col_out + bytes_per_col_tw;
+    size_t tile_k = usable / (per_k ? per_k : 1);
+
+    // ✅ Better clamping range
+    if (tile_k < 128)
+        tile_k = 128;
+    if (tile_k > 4096)
+        tile_k = 4096; // Higher upper bound
+    tile_k = (tile_k / 4) * 4;
+    if (tile_k > K)
+        tile_k = K;
+    return tile_k;
 }
 
 //==============================================================================
-// CORE PRIMITIVES (SCALAR)
+// COMPLEX ARITHMETIC
 //==============================================================================
 
-/**
- * @brief Complex multiplication with FMA
- * (ar + i*ai) * (br + i*bi) = (ar*br - ai*bi) + i*(ar*bi + ai*br)
- */
-TARGET_FMA
-FORCE_INLINE void
-cmul_fma_scalar(double ar, double ai, double br, double bi,
-                double *RESTRICT tr, double *RESTRICT ti)
+typedef struct
 {
-    *tr = FMA(ar, br, -ai * bi); // ar*br - ai*bi
-    *ti = FMA(ar, bi, ai * br);  // ar*bi + ai*br
+    double re, im;
+} cplx;
+
+FORCE_INLINE void cmul(double ar, double ai, double br, double bi,
+                       double *RESTRICT pr, double *RESTRICT pi)
+{
+    *pr = ar * br - ai * bi;
+    *pi = ar * bi + ai * br;
 }
 
-/**
- * @brief Complex square with FMA
- * (wr + i*wi)² = (wr² - wi²) + i*(2*wr*wi)
- */
-TARGET_FMA
-FORCE_INLINE void
-csquare_fma_scalar(double wr, double wi,
-                   double *RESTRICT tr, double *RESTRICT ti)
+FORCE_INLINE void csquare(double xr, double xi,
+                          double *RESTRICT pr, double *RESTRICT pi)
 {
-    double wr2 = wr * wr;
-    double wi2 = wi * wi;
-    *tr = wr2 - wi2;
-    *ti = 2.0 * wr * wi;
-}
-
-/**
- * @brief Radix-4 butterfly (scalar)
- * Classic Cooley-Tukey radix-4 DIT decomposition
- */
-TARGET_FMA
-FORCE_INLINE void
-radix4_butterfly_scalar(
-    double a_re, double a_im, double b_re, double b_im,
-    double c_re, double c_im, double d_re, double d_im,
-    double *RESTRICT y0_re, double *RESTRICT y0_im,
-    double *RESTRICT y1_re, double *RESTRICT y1_im,
-    double *RESTRICT y2_re, double *RESTRICT y2_im,
-    double *RESTRICT y3_re, double *RESTRICT y3_im,
-    double rot_sign)
-{
-    double sumBD_re = b_re + d_re;
-    double sumBD_im = b_im + d_im;
-    double difBD_re = b_re - d_re;
-    double difBD_im = b_im - d_im;
-
-    double sumAC_re = a_re + c_re;
-    double sumAC_im = a_im + c_im;
-    double difAC_re = a_re - c_re;
-    double difAC_im = a_im - c_im;
-
-    *y0_re = sumAC_re + sumBD_re;
-    *y0_im = sumAC_im + sumBD_im;
-    *y2_re = sumAC_re - sumBD_re;
-    *y2_im = sumAC_im - sumBD_im;
-
-    // Rotation by ±i: multiply (difBD_re + i*difBD_im) by ±i
-    // ±i * (x + iy) = ∓y + ix
-    double rot_re = rot_sign * difBD_im;
-    double rot_im = rot_sign * (-difBD_re);
-
-    *y1_re = difAC_re - rot_re;
-    *y1_im = difAC_im - rot_im;
-    *y3_re = difAC_re + rot_re;
-    *y3_im = difAC_im + rot_im;
-}
-
-/**
- * @brief Apply W_4 intermediate twiddles - Forward
- * Optimized via sign flips and swaps (no multiplications!)
- */
-TARGET_FMA
-FORCE_INLINE void
-apply_w4_intermediate_fv_scalar(double x_re[16], double x_im[16])
-{
-    // r=5: W4^5 = W4^1 = -i → multiply by -i: (x + iy)*(-i) = y - ix
-    {
-        double tmp = x_re[5];
-        x_re[5] = x_im[5];
-        x_im[5] = -tmp;
-    }
-
-    // r=6: W4^6 = W4^2 = -1 → negate
-    x_re[6] = -x_re[6];
-    x_im[6] = -x_im[6];
-
-    // r=7: W4^7 = W4^3 = i → multiply by i: (x + iy)*i = -y + ix
-    {
-        double tmp = x_re[7];
-        x_re[7] = -x_im[7];
-        x_im[7] = tmp;
-    }
-
-    // r=9: W4^9 = W4^1 = -i (same as r=5, but in second radix-4 block)
-    x_re[9] = -x_re[9];
-    x_im[9] = -x_im[9];
-
-    // r=11: W4^11 = W4^3 = i (same as r=7, but negated)
-    x_re[11] = -x_re[11];
-    x_im[11] = -x_im[11];
-
-    // r=13: W4^13 = W4^1 = -i
-    {
-        double tmp = x_re[13];
-        x_re[13] = -x_im[13];
-        x_im[13] = tmp;
-    }
-
-    // r=14: W4^14 = W4^2 = -1
-    x_re[14] = -x_re[14];
-    x_im[14] = -x_im[14];
-
-    // r=15: W4^15 = W4^3 = i
-    {
-        double tmp = x_re[15];
-        x_re[15] = x_im[15];
-        x_im[15] = -tmp;
-    }
-}
-
-/**
- * @brief Apply W_4 intermediate twiddles - Backward
- */
-TARGET_FMA
-FORCE_INLINE void
-apply_w4_intermediate_bv_scalar(double x_re[16], double x_im[16])
-{
-    // Backward: conjugate of forward (flip signs on imaginary rotations)
-    {
-        double tmp = x_re[5];
-        x_re[5] = -x_im[5];
-        x_im[5] = tmp;
-    }
-
-    x_re[6] = -x_re[6];
-    x_im[6] = -x_im[6];
-
-    {
-        double tmp = x_re[7];
-        x_re[7] = x_im[7];
-        x_im[7] = -tmp;
-    }
-
-    x_re[9] = -x_re[9];
-    x_im[9] = -x_im[9];
-
-    x_re[11] = -x_re[11];
-    x_im[11] = -x_im[11];
-
-    {
-        double tmp = x_re[13];
-        x_re[13] = x_im[13];
-        x_im[13] = -tmp;
-    }
-
-    x_re[14] = -x_re[14];
-    x_im[14] = -x_im[14];
-
-    {
-        double tmp = x_re[15];
-        x_re[15] = -x_im[15];
-        x_im[15] = tmp;
-    }
+    *pr = xr * xr - xi * xi;
+    *pi = (xr * xi) * 2.0;
 }
 
 //==============================================================================
-// PREFETCH MACROS (PRESERVED)
+// RADIX-4 BUTTERFLY
 //==============================================================================
 
-#ifdef __x86_64__
-#define RADIX16_PREFETCH(addr) _mm_prefetch((const char *)(addr), _MM_HINT_T0)
-#else
-#define RADIX16_PREFETCH(addr) ((void)0)
-#endif
-
-/**
- * @brief Prefetch inputs + twiddles for BLOCKED8
- */
-#define RADIX16_PREFETCH_NEXT_BLOCKED8_SCALAR(k_next, k_limit, K, in_re, in_im, stage_tw) \
-    do                                                                                    \
-    {                                                                                     \
-        if ((k_next) < (k_limit))                                                         \
-        {                                                                                 \
-            for (int _r = 0; _r < 16; _r++)                                               \
-            {                                                                             \
-                RADIX16_PREFETCH(&(in_re)[(k_next) + _r * (K)]);                          \
-                RADIX16_PREFETCH(&(in_im)[(k_next) + _r * (K)]);                          \
-            }                                                                             \
-            for (int _b = 0; _b < 8; _b++)                                                \
-            {                                                                             \
-                RADIX16_PREFETCH(&(stage_tw)->re[_b * (K) + (k_next)]);                   \
-                RADIX16_PREFETCH(&(stage_tw)->im[_b * (K) + (k_next)]);                   \
-            }                                                                             \
-        }                                                                                 \
-    } while (0)
-
-/**
- * @brief Prefetch inputs + twiddles for BLOCKED4
- */
-#define RADIX16_PREFETCH_NEXT_BLOCKED4_SCALAR(k_next, k_limit, K, in_re, in_im, stage_tw) \
-    do                                                                                    \
-    {                                                                                     \
-        if ((k_next) < (k_limit))                                                         \
-        {                                                                                 \
-            for (int _r = 0; _r < 16; _r++)                                               \
-            {                                                                             \
-                RADIX16_PREFETCH(&(in_re)[(k_next) + _r * (K)]);                          \
-                RADIX16_PREFETCH(&(in_im)[(k_next) + _r * (K)]);                          \
-            }                                                                             \
-            for (int _b = 0; _b < 4; _b++)                                                \
-            {                                                                             \
-                RADIX16_PREFETCH(&(stage_tw)->re[_b * (K) + (k_next)]);                   \
-                RADIX16_PREFETCH(&(stage_tw)->im[_b * (K) + (k_next)]);                   \
-            }                                                                             \
-        }                                                                                 \
-    } while (0)
-
-/**
- * @brief Prefetch inputs only (for recurrence mode)
- */
-#define RADIX16_PREFETCH_NEXT_RECURRENCE_SCALAR(k_next, k_limit, K, in_re, in_im) \
-    do                                                                            \
-    {                                                                             \
-        if ((k_next) < (k_limit))                                                 \
-        {                                                                         \
-            for (int _r = 0; _r < 16; _r++)                                       \
-            {                                                                     \
-                RADIX16_PREFETCH(&(in_re)[(k_next) + _r * (K)]);                  \
-                RADIX16_PREFETCH(&(in_im)[(k_next) + _r * (K)]);                  \
-            }                                                                     \
-        }                                                                         \
-    } while (0)
-
-//==============================================================================
-// NON-TEMPORAL STORES (SCALAR)
-//==============================================================================
-
-#ifdef __x86_64__
-FORCE_INLINE void
-nt_store_pd(double *addr, double val)
+FORCE_INLINE void radix4_bfly(
+    const cplx a, const cplx b, const cplx c, const cplx d,
+    cplx *y0, cplx *y1, cplx *y2, cplx *y3,
+    int rot_sign)
 {
-    _mm_stream_pd(addr, _mm_set_pd(val, val)); // Store val to addr[0], junk to addr[1]
+    // Sums/diffs
+    const double sumACr = a.re + c.re;
+    const double sumACi = a.im + c.im;
+    const double sumBDr = b.re + d.re;
+    const double sumBDi = b.im + d.im;
+
+    const double difACr = a.re - c.re;
+    const double difACi = a.im - c.im;
+    const double difBDr = b.re - d.re;
+    const double difBDi = b.im - d.im;
+
+    // DC and Nyquist
+    y0->re = sumACr + sumBDr;
+    y0->im = sumACi + sumBDi;
+    y2->re = sumACr - sumBDr;
+    y2->im = sumACi - sumBDi;
+
+    // 90-degree rotations
+    double rot_r, rot_i;
+    if (rot_sign > 0)
+    { // +j (forward)
+        rot_r = -difBDi;
+        rot_i = difBDr;
+    }
+    else
+    { // -j (backward)
+        rot_r = difBDi;
+        rot_i = -difBDr;
+    }
+
+    y1->re = difACr - rot_r;
+    y1->im = difACi - rot_i;
+    y3->re = difACr + rot_r;
+    y3->im = difACi + rot_i;
 }
-#else
-FORCE_INLINE void
-nt_store_pd(double *addr, double val)
+
+//==============================================================================
+// W4 INTERMEDIATE TWIDDLES
+//==============================================================================
+
+FORCE_INLINE void apply_w4_intermediate_forward(cplx y[16])
 {
-    *addr = val; // Fallback to regular store
+    double tr;
+
+    // Row 5: multiply by j
+    tr = y[5].re;
+    y[5].re = y[5].im;
+    y[5].im = -tr;
+
+    // Row 6: multiply by -1
+    y[6].re = -y[6].re;
+    y[6].im = -y[6].im;
+
+    // Row 7: multiply by -j
+    tr = y[7].re;
+    y[7].re = -y[7].im;
+    y[7].im = tr;
+
+    // Rows 9, 11: multiply by -1
+    y[9].re = -y[9].re;
+    y[9].im = -y[9].im;
+    y[11].re = -y[11].re;
+    y[11].im = -y[11].im;
+
+    // Row 13: multiply by -j
+    tr = y[13].re;
+    y[13].re = -y[13].im;
+    y[13].im = tr;
+
+    // Row 14: multiply by -1
+    y[14].re = -y[14].re;
+    y[14].im = -y[14].im;
+
+    // Row 15: multiply by j
+    tr = y[15].re;
+    y[15].re = y[15].im;
+    y[15].im = -tr;
 }
-#endif
+
+FORCE_INLINE void apply_w4_intermediate_backward(cplx y[16])
+{
+    double tr;
+
+    // Row 5: multiply by -j
+    tr = y[5].re;
+    y[5].re = -y[5].im;
+    y[5].im = tr;
+
+    // Row 6: multiply by -1
+    y[6].re = -y[6].re;
+    y[6].im = -y[6].im;
+
+    // Row 7: multiply by j
+    tr = y[7].re;
+    y[7].re = y[7].im;
+    y[7].im = -tr;
+
+    // Rows 9, 11: multiply by -1
+    y[9].re = -y[9].re;
+    y[9].im = -y[9].im;
+    y[11].re = -y[11].re;
+    y[11].im = -y[11].im;
+
+    // Row 13: multiply by j
+    tr = y[13].re;
+    y[13].re = y[13].im;
+    y[13].im = -tr;
+
+    // Row 14: multiply by -1
+    y[14].re = -y[14].re;
+    y[14].im = -y[14].im;
+
+    // Row 15: multiply by -j
+    tr = y[15].re;
+    y[15].re = -y[15].im;
+    y[15].im = tr;
+}
 
 //==============================================================================
-// BLOCKED8: APPLY STAGE TWIDDLES (PRESERVED - Interleaved Order)
+// COMPLETE RADIX-16 BUTTERFLY
 //==============================================================================
 
-TARGET_FMA
-FORCE_INLINE void
-apply_stage_twiddles_blocked8_scalar(
+FORCE_INLINE void radix16_butterfly_forward(const cplx x[16], cplx y[16])
+{
+    // Stage 1: 4 radix-4 butterflies
+    for (int g = 0; g < 4; ++g)
+    {
+        const cplx a = x[g + 0];
+        const cplx b = x[g + 4];
+        const cplx c = x[g + 8];
+        const cplx d = x[g + 12];
+
+        cplx t0, t1, t2, t3;
+        radix4_bfly(a, b, c, d, &t0, &t1, &t2, &t3, +1);
+
+        y[g * 4 + 0] = t0;
+        y[g * 4 + 1] = t1;
+        y[g * 4 + 2] = t2;
+        y[g * 4 + 3] = t3;
+    }
+
+    // W4 intermediate twiddles
+    apply_w4_intermediate_forward(y);
+
+    // Stage 2: 4 radix-4 butterflies
+    cplx z[16];
+    for (int g = 0; g < 4; ++g)
+    {
+        const cplx a = y[g * 4 + 0];
+        const cplx b = y[g * 4 + 1];
+        const cplx c = y[g * 4 + 2];
+        const cplx d = y[g * 4 + 3];
+
+        radix4_bfly(a, b, c, d, &z[g * 4 + 0], &z[g * 4 + 1], &z[g * 4 + 2], &z[g * 4 + 3], +1);
+    }
+
+    // Copy back
+    for (int i = 0; i < 16; ++i)
+        y[i] = z[i];
+}
+
+FORCE_INLINE void radix16_butterfly_backward(const cplx x[16], cplx y[16])
+{
+    // Stage 1
+    for (int g = 0; g < 4; ++g)
+    {
+        const cplx a = x[g + 0];
+        const cplx b = x[g + 4];
+        const cplx c = x[g + 8];
+        const cplx d = x[g + 12];
+
+        cplx t0, t1, t2, t3;
+        radix4_bfly(a, b, c, d, &t0, &t1, &t2, &t3, -1);
+
+        y[g * 4 + 0] = t0;
+        y[g * 4 + 1] = t1;
+        y[g * 4 + 2] = t2;
+        y[g * 4 + 3] = t3;
+    }
+
+    apply_w4_intermediate_backward(y);
+
+    // Stage 2
+    cplx z[16];
+    for (int g = 0; g < 4; ++g)
+    {
+        const cplx a = y[g * 4 + 0];
+        const cplx b = y[g * 4 + 1];
+        const cplx c = y[g * 4 + 2];
+        const cplx d = y[g * 4 + 3];
+
+        radix4_bfly(a, b, c, d, &z[g * 4 + 0], &z[g * 4 + 1], &z[g * 4 + 2], &z[g * 4 + 3], -1);
+    }
+
+    for (int i = 0; i < 16; ++i)
+        y[i] = z[i];
+}
+
+//==============================================================================
+// SoA LOAD/STORE HELPERS
+//==============================================================================
+
+typedef struct
+{
+    const double *RESTRICT r[16];
+    const double *RESTRICT i[16];
+} soa_ptrs_ro;
+
+typedef struct
+{
+    double *RESTRICT r[16];
+    double *RESTRICT i[16];
+} soa_ptrs_rw;
+
+FORCE_INLINE void make_soa_ptrs_ro(
+    soa_ptrs_ro *p,
+    const double *RESTRICT re,
+    const double *RESTRICT im,
+    size_t K)
+{
+    for (int r = 0; r < 16; ++r)
+    {
+        p->r[r] = re + (size_t)r * K;
+        p->i[r] = im + (size_t)r * K;
+    }
+}
+
+FORCE_INLINE void make_soa_ptrs_rw(
+    soa_ptrs_rw *p,
+    double *RESTRICT re,
+    double *RESTRICT im,
+    size_t K)
+{
+    for (int r = 0; r < 16; ++r)
+    {
+        p->r[r] = re + (size_t)r * K;
+        p->i[r] = im + (size_t)r * K;
+    }
+}
+
+FORCE_INLINE void load_16(const soa_ptrs_ro *p, size_t k, cplx v[16])
+{
+    for (int r = 0; r < 16; ++r)
+    {
+        v[r].re = p->r[r][k];
+        v[r].im = p->i[r][k];
+    }
+}
+
+FORCE_INLINE void store_16(soa_ptrs_rw *p, size_t k, const cplx v[16])
+{
+    for (int r = 0; r < 16; ++r)
+    {
+        p->r[r][k] = v[r].re;
+        p->i[r][k] = v[r].im;
+    }
+}
+
+//==============================================================================
+// TWIDDLE APPLICATION - BLOCKED8
+//==============================================================================
+
+FORCE_INLINE void apply_twiddles_blocked8(
     size_t k, size_t K,
-    double x_re[16], double x_im[16],
-    const radix16_stage_twiddles_blocked8_t *RESTRICT stage_tw)
+    cplx v[16],
+    const radix16_stage_twiddles_blocked8_t *RESTRICT tw)
 {
-    const double *re_base = ASSUME_ALIGNED(stage_tw->re, 64);
-    const double *im_base = ASSUME_ALIGNED(stage_tw->im, 64);
+    const double *RESTRICT re = ASSUME_ALIGNED(tw->re, 64);
+    const double *RESTRICT im = ASSUME_ALIGNED(tw->im, 64);
 
-    // Load W1..W8
-    double W_re[8], W_im[8];
-    for (int r = 0; r < 8; r++)
-    {
-        W_re[r] = re_base[r * K + k];
-        W_im[r] = im_base[r * K + k];
-    }
+    cplx t;
 
-    // Compute -W1..-W8 (for W9..W16)
-    double NW_re[8], NW_im[8];
-    for (int r = 0; r < 8; r++)
-    {
-        NW_re[r] = -W_re[r];
-        NW_im[r] = -W_im[r];
-    }
+    // W1 (positive and negative)
+    cmul(v[1].re, v[1].im, re[0 * K + k], im[0 * K + k], &t.re, &t.im);
+    v[1] = t;
+    cmul(v[9].re, v[9].im, -re[0 * K + k], -im[0 * K + k], &t.re, &t.im);
+    v[9] = t;
 
-    double tr, ti;
+    // W2
+    cmul(v[2].re, v[2].im, re[1 * K + k], im[1 * K + k], &t.re, &t.im);
+    v[2] = t;
+    cmul(v[10].re, v[10].im, -re[1 * K + k], -im[1 * K + k], &t.re, &t.im);
+    v[10] = t;
 
-    // INTERLEAVED ORDER - breaks dependency chains, enables ILP
-    cmul_fma_scalar(x_re[1], x_im[1], W_re[0], W_im[0], &tr, &ti);
-    x_re[1] = tr;
-    x_im[1] = ti;
+    // W3
+    cmul(v[3].re, v[3].im, re[2 * K + k], im[2 * K + k], &t.re, &t.im);
+    v[3] = t;
+    cmul(v[11].re, v[11].im, -re[2 * K + k], -im[2 * K + k], &t.re, &t.im);
+    v[11] = t;
 
-    cmul_fma_scalar(x_re[5], x_im[5], W_re[4], W_im[4], &tr, &ti);
-    x_re[5] = tr;
-    x_im[5] = ti;
+    // W4
+    cmul(v[4].re, v[4].im, re[3 * K + k], im[3 * K + k], &t.re, &t.im);
+    v[4] = t;
+    cmul(v[12].re, v[12].im, -re[3 * K + k], -im[3 * K + k], &t.re, &t.im);
+    v[12] = t;
 
-    cmul_fma_scalar(x_re[9], x_im[9], NW_re[0], NW_im[0], &tr, &ti);
-    x_re[9] = tr;
-    x_im[9] = ti;
+    // W5
+    cmul(v[5].re, v[5].im, re[4 * K + k], im[4 * K + k], &t.re, &t.im);
+    v[5] = t;
+    cmul(v[13].re, v[13].im, -re[4 * K + k], -im[4 * K + k], &t.re, &t.im);
+    v[13] = t;
 
-    cmul_fma_scalar(x_re[13], x_im[13], NW_re[4], NW_im[4], &tr, &ti);
-    x_re[13] = tr;
-    x_im[13] = ti;
+    // W6
+    cmul(v[6].re, v[6].im, re[5 * K + k], im[5 * K + k], &t.re, &t.im);
+    v[6] = t;
+    cmul(v[14].re, v[14].im, -re[5 * K + k], -im[5 * K + k], &t.re, &t.im);
+    v[14] = t;
 
-    cmul_fma_scalar(x_re[2], x_im[2], W_re[1], W_im[1], &tr, &ti);
-    x_re[2] = tr;
-    x_im[2] = ti;
+    // W7
+    cmul(v[7].re, v[7].im, re[6 * K + k], im[6 * K + k], &t.re, &t.im);
+    v[7] = t;
+    cmul(v[15].re, v[15].im, -re[6 * K + k], -im[6 * K + k], &t.re, &t.im);
+    v[15] = t;
 
-    cmul_fma_scalar(x_re[6], x_im[6], W_re[5], W_im[5], &tr, &ti);
-    x_re[6] = tr;
-    x_im[6] = ti;
-
-    cmul_fma_scalar(x_re[10], x_im[10], NW_re[1], NW_im[1], &tr, &ti);
-    x_re[10] = tr;
-    x_im[10] = ti;
-
-    cmul_fma_scalar(x_re[14], x_im[14], NW_re[5], NW_im[5], &tr, &ti);
-    x_re[14] = tr;
-    x_im[14] = ti;
-
-    cmul_fma_scalar(x_re[3], x_im[3], W_re[2], W_im[2], &tr, &ti);
-    x_re[3] = tr;
-    x_im[3] = ti;
-
-    cmul_fma_scalar(x_re[7], x_im[7], W_re[6], W_im[6], &tr, &ti);
-    x_re[7] = tr;
-    x_im[7] = ti;
-
-    cmul_fma_scalar(x_re[11], x_im[11], NW_re[2], NW_im[2], &tr, &ti);
-    x_re[11] = tr;
-    x_im[11] = ti;
-
-    cmul_fma_scalar(x_re[15], x_im[15], NW_re[6], NW_im[6], &tr, &ti);
-    x_re[15] = tr;
-    x_im[15] = ti;
-
-    cmul_fma_scalar(x_re[4], x_im[4], W_re[3], W_im[3], &tr, &ti);
-    x_re[4] = tr;
-    x_im[4] = ti;
-
-    cmul_fma_scalar(x_re[8], x_im[8], W_re[7], W_im[7], &tr, &ti);
-    x_re[8] = tr;
-    x_im[8] = ti;
-
-    cmul_fma_scalar(x_re[12], x_im[12], NW_re[3], NW_im[3], &tr, &ti);
-    x_re[12] = tr;
-    x_im[12] = ti;
+    // W8
+    cmul(v[8].re, v[8].im, re[7 * K + k], im[7 * K + k], &t.re, &t.im);
+    v[8] = t;
 }
 
 //==============================================================================
-// BLOCKED4: APPLY STAGE TWIDDLES (PRESERVED - Interleaved Order)
+// TWIDDLE APPLICATION - BLOCKED4
 //==============================================================================
 
-TARGET_FMA
-FORCE_INLINE void
-apply_stage_twiddles_blocked4_scalar(
+FORCE_INLINE void apply_twiddles_blocked4(
     size_t k, size_t K,
-    double x_re[16], double x_im[16],
-    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw)
+    cplx v[16],
+    const radix16_stage_twiddles_blocked4_t *RESTRICT tw)
 {
-    const double *re_base = ASSUME_ALIGNED(stage_tw->re, 64);
-    const double *im_base = ASSUME_ALIGNED(stage_tw->im, 64);
+    const double *RESTRICT re = ASSUME_ALIGNED(tw->re, 64);
+    const double *RESTRICT im = ASSUME_ALIGNED(tw->im, 64);
 
-    double W1r = re_base[0 * K + k];
-    double W1i = im_base[0 * K + k];
-    double W2r = re_base[1 * K + k];
-    double W2i = im_base[1 * K + k];
-    double W3r = re_base[2 * K + k];
-    double W3i = im_base[2 * K + k];
-    double W4r = re_base[3 * K + k];
-    double W4i = im_base[3 * K + k];
+    // Load W1..W4
+    double W1r = re[0 * K + k], W1i = im[0 * K + k];
+    double W2r = re[1 * K + k], W2i = im[1 * K + k];
+    double W3r = re[2 * K + k], W3i = im[2 * K + k];
+    double W4r = re[3 * K + k], W4i = im[3 * K + k];
+
+    // Derive W5..W8
+    double W5r, W5i, W6r, W6i, W7r, W7i, W8r, W8i;
+    cmul(W1r, W1i, W4r, W4i, &W5r, &W5i);
+    cmul(W2r, W2i, W4r, W4i, &W6r, &W6i);
+    cmul(W3r, W3i, W4r, W4i, &W7r, &W7i);
+    csquare(W4r, W4i, &W8r, &W8i);
+
+    cplx t;
+
+    // Apply all twiddles
+    cmul(v[1].re, v[1].im, W1r, W1i, &t.re, &t.im);
+    v[1] = t;
+    cmul(v[2].re, v[2].im, W2r, W2i, &t.re, &t.im);
+    v[2] = t;
+    cmul(v[3].re, v[3].im, W3r, W3i, &t.re, &t.im);
+    v[3] = t;
+    cmul(v[4].re, v[4].im, W4r, W4i, &t.re, &t.im);
+    v[4] = t;
+    cmul(v[5].re, v[5].im, W5r, W5i, &t.re, &t.im);
+    v[5] = t;
+    cmul(v[6].re, v[6].im, W6r, W6i, &t.re, &t.im);
+    v[6] = t;
+    cmul(v[7].re, v[7].im, W7r, W7i, &t.re, &t.im);
+    v[7] = t;
+    cmul(v[8].re, v[8].im, W8r, W8i, &t.re, &t.im);
+    v[8] = t;
+
+    // Negative twiddles
+    cmul(v[9].re, v[9].im, -W1r, -W1i, &t.re, &t.im);
+    v[9] = t;
+    cmul(v[10].re, v[10].im, -W2r, -W2i, &t.re, &t.im);
+    v[10] = t;
+    cmul(v[11].re, v[11].im, -W3r, -W3i, &t.re, &t.im);
+    v[11] = t;
+    cmul(v[12].re, v[12].im, -W4r, -W4i, &t.re, &t.im);
+    v[12] = t;
+    cmul(v[13].re, v[13].im, -W5r, -W5i, &t.re, &t.im);
+    v[13] = t;
+    cmul(v[14].re, v[14].im, -W6r, -W6i, &t.re, &t.im);
+    v[14] = t;
+    cmul(v[15].re, v[15].im, -W7r, -W7i, &t.re, &t.im);
+    v[15] = t;
+}
+
+//==============================================================================
+// RECURRENCE INFRASTRUCTURE
+//==============================================================================
+
+FORCE_INLINE void recurrence_init(
+    size_t k, size_t K,
+    const radix16_stage_twiddles_blocked4_t *RESTRICT tw,
+    cplx state[15])
+{
+    const double *RESTRICT re = ASSUME_ALIGNED(tw->re, 64);
+    const double *RESTRICT im = ASSUME_ALIGNED(tw->im, 64);
+
+    double W1r = re[0 * K + k], W1i = im[0 * K + k];
+    double W2r = re[1 * K + k], W2i = im[1 * K + k];
+    double W3r = re[2 * K + k], W3i = im[2 * K + k];
+    double W4r = re[3 * K + k], W4i = im[3 * K + k];
 
     double W5r, W5i, W6r, W6i, W7r, W7i, W8r, W8i;
-    cmul_fma_scalar(W1r, W1i, W4r, W4i, &W5r, &W5i);
-    cmul_fma_scalar(W2r, W2i, W4r, W4i, &W6r, &W6i);
-    cmul_fma_scalar(W3r, W3i, W4r, W4i, &W7r, &W7i);
-    csquare_fma_scalar(W4r, W4i, &W8r, &W8i);
+    cmul(W1r, W1i, W4r, W4i, &W5r, &W5i);
+    cmul(W2r, W2i, W4r, W4i, &W6r, &W6i);
+    cmul(W3r, W3i, W4r, W4i, &W7r, &W7i);
+    csquare(W4r, W4i, &W8r, &W8i);
 
-    double NW1r = -W1r, NW1i = -W1i;
-    double NW2r = -W2r, NW2i = -W2i;
-    double NW3r = -W3r, NW3i = -W3i;
-    double NW4r = -W4r, NW4i = -W4i;
-    double NW5r = -W5r, NW5i = -W5i;
-    double NW6r = -W6r, NW6i = -W6i;
-    double NW7r = -W7r, NW7i = -W7i;
+    // Store W1..W8
+    state[0] = (cplx){W1r, W1i};
+    state[1] = (cplx){W2r, W2i};
+    state[2] = (cplx){W3r, W3i};
+    state[3] = (cplx){W4r, W4i};
+    state[4] = (cplx){W5r, W5i};
+    state[5] = (cplx){W6r, W6i};
+    state[6] = (cplx){W7r, W7i};
+    state[7] = (cplx){W8r, W8i};
 
-    double tr, ti;
-
-    // INTERLEAVED ORDER
-    cmul_fma_scalar(x_re[1], x_im[1], W1r, W1i, &tr, &ti);
-    x_re[1] = tr;
-    x_im[1] = ti;
-
-    cmul_fma_scalar(x_re[5], x_im[5], W5r, W5i, &tr, &ti);
-    x_re[5] = tr;
-    x_im[5] = ti;
-
-    cmul_fma_scalar(x_re[9], x_im[9], NW1r, NW1i, &tr, &ti);
-    x_re[9] = tr;
-    x_im[9] = ti;
-
-    cmul_fma_scalar(x_re[13], x_im[13], NW5r, NW5i, &tr, &ti);
-    x_re[13] = tr;
-    x_im[13] = ti;
-
-    cmul_fma_scalar(x_re[2], x_im[2], W2r, W2i, &tr, &ti);
-    x_re[2] = tr;
-    x_im[2] = ti;
-
-    cmul_fma_scalar(x_re[6], x_im[6], W6r, W6i, &tr, &ti);
-    x_re[6] = tr;
-    x_im[6] = ti;
-
-    cmul_fma_scalar(x_re[10], x_im[10], NW2r, NW2i, &tr, &ti);
-    x_re[10] = tr;
-    x_im[10] = ti;
-
-    cmul_fma_scalar(x_re[14], x_im[14], NW6r, NW6i, &tr, &ti);
-    x_re[14] = tr;
-    x_im[14] = ti;
-
-    cmul_fma_scalar(x_re[3], x_im[3], W3r, W3i, &tr, &ti);
-    x_re[3] = tr;
-    x_im[3] = ti;
-
-    cmul_fma_scalar(x_re[7], x_im[7], W7r, W7i, &tr, &ti);
-    x_re[7] = tr;
-    x_im[7] = ti;
-
-    cmul_fma_scalar(x_re[11], x_im[11], NW3r, NW3i, &tr, &ti);
-    x_re[11] = tr;
-    x_im[11] = ti;
-
-    cmul_fma_scalar(x_re[15], x_im[15], NW7r, NW7i, &tr, &ti);
-    x_re[15] = tr;
-    x_im[15] = ti;
-
-    cmul_fma_scalar(x_re[4], x_im[4], W4r, W4i, &tr, &ti);
-    x_re[4] = tr;
-    x_im[4] = ti;
-
-    cmul_fma_scalar(x_re[8], x_im[8], W8r, W8i, &tr, &ti);
-    x_re[8] = tr;
-    x_im[8] = ti;
-
-    cmul_fma_scalar(x_re[12], x_im[12], NW4r, NW4i, &tr, &ti);
-    x_re[12] = tr;
-    x_im[12] = ti;
-}
-
-//==============================================================================
-// TWIDDLE RECURRENCE (PRESERVED)
-//==============================================================================
-
-TARGET_FMA
-FORCE_INLINE void
-radix16_init_recurrence_state_scalar(
-    size_t k, size_t K,
-    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
-    double w_state_re[15], double w_state_im[15])
-{
-    const double *re_base = ASSUME_ALIGNED(stage_tw->re, 64);
-    const double *im_base = ASSUME_ALIGNED(stage_tw->im, 64);
-
-    double W1r = re_base[0 * K + k];
-    double W1i = im_base[0 * K + k];
-    double W2r = re_base[1 * K + k];
-    double W2i = im_base[1 * K + k];
-    double W3r = re_base[2 * K + k];
-    double W3i = im_base[2 * K + k];
-    double W4r = re_base[3 * K + k];
-    double W4i = im_base[3 * K + k];
-
-    double W5r, W5i, W6r, W6i, W7r, W7i, W8r, W8i;
-    cmul_fma_scalar(W1r, W1i, W4r, W4i, &W5r, &W5i);
-    cmul_fma_scalar(W2r, W2i, W4r, W4i, &W6r, &W6i);
-    cmul_fma_scalar(W3r, W3i, W4r, W4i, &W7r, &W7i);
-    csquare_fma_scalar(W4r, W4i, &W8r, &W8i);
-
-    w_state_re[0] = W1r;
-    w_state_im[0] = W1i;
-    w_state_re[1] = W2r;
-    w_state_im[1] = W2i;
-    w_state_re[2] = W3r;
-    w_state_im[2] = W3i;
-    w_state_re[3] = W4r;
-    w_state_im[3] = W4i;
-    w_state_re[4] = W5r;
-    w_state_im[4] = W5i;
-    w_state_re[5] = W6r;
-    w_state_im[5] = W6i;
-    w_state_re[6] = W7r;
-    w_state_im[6] = W7i;
-    w_state_re[7] = W8r;
-    w_state_im[7] = W8i;
-
-    for (int r = 0; r < 7; r++)
+    // Store -W1..-W7
+    for (int i = 0; i < 7; ++i)
     {
-        w_state_re[8 + r] = -w_state_re[r];
-        w_state_im[8 + r] = -w_state_im[r];
+        state[8 + i].re = -state[i].re;
+        state[8 + i].im = -state[i].im;
     }
 }
 
-TARGET_FMA
-FORCE_INLINE void
-apply_stage_twiddles_recur_scalar(
-    size_t k, size_t k_tile_start, bool is_tile_start,
-    double x_re[16], double x_im[16],
-    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
-    double w_state_re[15], double w_state_im[15],
-    const double delta_w_re[15], const double delta_w_im[15])
+FORCE_INLINE void recurrence_advance2(
+    cplx state[15],
+    const double delta_re[15],
+    const double delta_im[15],
+    int j0, int j1)
+{
+    cplx t0, t1;
+    cmul(state[j0].re, state[j0].im, delta_re[j0], delta_im[j0], &t0.re, &t0.im);
+    cmul(state[j1].re, state[j1].im, delta_re[j1], delta_im[j1], &t1.re, &t1.im);
+    state[j0] = t0;
+    state[j1] = t1;
+}
+
+FORCE_INLINE void apply_twiddles_recurrence(
+    size_t k, bool is_tile_start,
+    cplx v[16],
+    const radix16_stage_twiddles_blocked4_t *RESTRICT tw,
+    cplx state[15])
 {
     if (is_tile_start)
     {
-        radix16_init_recurrence_state_scalar(k, stage_tw->K, stage_tw,
-                                             w_state_re, w_state_im);
+        recurrence_init(k, tw->K, tw, state);
     }
 
-    double tr, ti;
+    // Apply current state
+    cplx t;
+    cmul(v[1].re, v[1].im, state[0].re, state[0].im, &t.re, &t.im);
+    v[1] = t;
+    cmul(v[2].re, v[2].im, state[1].re, state[1].im, &t.re, &t.im);
+    v[2] = t;
+    cmul(v[3].re, v[3].im, state[2].re, state[2].im, &t.re, &t.im);
+    v[3] = t;
+    cmul(v[4].re, v[4].im, state[3].re, state[3].im, &t.re, &t.im);
+    v[4] = t;
+    cmul(v[5].re, v[5].im, state[4].re, state[4].im, &t.re, &t.im);
+    v[5] = t;
+    cmul(v[6].re, v[6].im, state[5].re, state[5].im, &t.re, &t.im);
+    v[6] = t;
+    cmul(v[7].re, v[7].im, state[6].re, state[6].im, &t.re, &t.im);
+    v[7] = t;
+    cmul(v[8].re, v[8].im, state[7].re, state[7].im, &t.re, &t.im);
+    v[8] = t;
+    cmul(v[9].re, v[9].im, state[8].re, state[8].im, &t.re, &t.im);
+    v[9] = t;
+    cmul(v[10].re, v[10].im, state[9].re, state[9].im, &t.re, &t.im);
+    v[10] = t;
+    cmul(v[11].re, v[11].im, state[10].re, state[10].im, &t.re, &t.im);
+    v[11] = t;
+    cmul(v[12].re, v[12].im, state[11].re, state[11].im, &t.re, &t.im);
+    v[12] = t;
+    cmul(v[13].re, v[13].im, state[12].re, state[12].im, &t.re, &t.im);
+    v[13] = t;
+    cmul(v[14].re, v[14].im, state[13].re, state[13].im, &t.re, &t.im);
+    v[14] = t;
+    cmul(v[15].re, v[15].im, state[14].re, state[14].im, &t.re, &t.im);
+    v[15] = t;
 
-    // Apply current twiddles (interleaved order)
-    cmul_fma_scalar(x_re[1], x_im[1], w_state_re[0], w_state_im[0], &tr, &ti);
-    x_re[1] = tr;
-    x_im[1] = ti;
+    // 2-way advance (optimal for scalar)
+    const double *dRe = tw->delta_w_re;
+    const double *dIm = tw->delta_w_im;
 
-    cmul_fma_scalar(x_re[5], x_im[5], w_state_re[4], w_state_im[4], &tr, &ti);
-    x_re[5] = tr;
-    x_im[5] = ti;
+    recurrence_advance2(state, dRe, dIm, 0, 4);
+    recurrence_advance2(state, dRe, dIm, 8, 12);
+    recurrence_advance2(state, dRe, dIm, 1, 5);
+    recurrence_advance2(state, dRe, dIm, 9, 13);
+    recurrence_advance2(state, dRe, dIm, 2, 6);
+    recurrence_advance2(state, dRe, dIm, 10, 14);
+    recurrence_advance2(state, dRe, dIm, 3, 7);
 
-    cmul_fma_scalar(x_re[9], x_im[9], w_state_re[8], w_state_im[8], &tr, &ti);
-    x_re[9] = tr;
-    x_im[9] = ti;
+    // Single advance for 11
+    cplx tmp;
+    cmul(state[11].re, state[11].im, dRe[11], dIm[11], &tmp.re, &tmp.im);
+    state[11] = tmp;
+}
 
-    cmul_fma_scalar(x_re[13], x_im[13], w_state_re[12], w_state_im[12], &tr, &ti);
-    x_re[13] = tr;
-    x_im[13] = ti;
+//==============================================================================
+// STAGE DRIVERS - N=1 (NO TWIDDLES)
+//==============================================================================
 
-    cmul_fma_scalar(x_re[2], x_im[2], w_state_re[1], w_state_im[1], &tr, &ti);
-    x_re[2] = tr;
-    x_im[2] = ti;
+FORCE_INLINE void stage_n1_forward_scalar_impl(
+    int K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im)
+{
+    soa_ptrs_ro pin;
+    soa_ptrs_rw pout;
 
-    cmul_fma_scalar(x_re[6], x_im[6], w_state_re[5], w_state_im[5], &tr, &ti);
-    x_re[6] = tr;
-    x_im[6] = ti;
+    make_soa_ptrs_ro(&pin, ASSUME_ALIGNED(in_re, 64), ASSUME_ALIGNED(in_im, 64), K);
+    make_soa_ptrs_rw(&pout, ASSUME_ALIGNED(out_re, 64), ASSUME_ALIGNED(out_im, 64), K);
 
-    cmul_fma_scalar(x_re[10], x_im[10], w_state_re[9], w_state_im[9], &tr, &ti);
-    x_re[10] = tr;
-    x_im[10] = ti;
+    size_t k = 0;
 
-    cmul_fma_scalar(x_re[14], x_im[14], w_state_re[13], w_state_im[13], &tr, &ti);
-    x_re[14] = tr;
-    x_im[14] = ti;
-
-    cmul_fma_scalar(x_re[3], x_im[3], w_state_re[2], w_state_im[2], &tr, &ti);
-    x_re[3] = tr;
-    x_im[3] = ti;
-
-    cmul_fma_scalar(x_re[7], x_im[7], w_state_re[6], w_state_im[6], &tr, &ti);
-    x_re[7] = tr;
-    x_im[7] = ti;
-
-    cmul_fma_scalar(x_re[11], x_im[11], w_state_re[10], w_state_im[10], &tr, &ti);
-    x_re[11] = tr;
-    x_im[11] = ti;
-
-    cmul_fma_scalar(x_re[15], x_im[15], w_state_re[14], w_state_im[14], &tr, &ti);
-    x_re[15] = tr;
-    x_im[15] = ti;
-
-    cmul_fma_scalar(x_re[4], x_im[4], w_state_re[3], w_state_im[3], &tr, &ti);
-    x_re[4] = tr;
-    x_im[4] = ti;
-
-    cmul_fma_scalar(x_re[8], x_im[8], w_state_re[7], w_state_im[7], &tr, &ti);
-    x_re[8] = tr;
-    x_im[8] = ti;
-
-    cmul_fma_scalar(x_re[12], x_im[12], w_state_re[11], w_state_im[11], &tr, &ti);
-    x_re[12] = tr;
-    x_im[12] = ti;
-
-    // ADVANCE: w ← w × δw
-    for (int r = 0; r < 15; r++)
+#if RADIX16_SCALAR_N1_UNROLL == 4
+    for (; k + 4 <= (size_t)K; k += 4)
     {
-        double w_new_re, w_new_im;
-        cmul_fma_scalar(w_state_re[r], w_state_im[r],
-                        delta_w_re[r], delta_w_im[r],
-                        &w_new_re, &w_new_im);
-        w_state_re[r] = w_new_re;
-        w_state_im[r] = w_new_im;
+        cplx x[16], y[16];
+
+        load_16(&pin, k + 0, x);
+        radix16_butterfly_forward(x, y);
+        store_16(&pout, k + 0, y);
+        load_16(&pin, k + 1, x);
+        radix16_butterfly_forward(x, y);
+        store_16(&pout, k + 1, y);
+        load_16(&pin, k + 2, x);
+        radix16_butterfly_forward(x, y);
+        store_16(&pout, k + 2, y);
+        load_16(&pin, k + 3, x);
+        radix16_butterfly_forward(x, y);
+        store_16(&pout, k + 3, y);
     }
-}
-
-//==============================================================================
-// RADIX-16 BUTTERFLY COMPOSITION (PRESERVED)
-//==============================================================================
-
-TARGET_FMA
-FORCE_INLINE void
-radix16_stage1_4x_radix4_scalar(
-    const double x_re[16], const double x_im[16],
-    double t_re[16], double t_im[16],
-    double rot_sign)
-{
-    radix4_butterfly_scalar(
-        x_re[0], x_im[0], x_re[4], x_im[4], x_re[8], x_im[8], x_re[12], x_im[12],
-        &t_re[0], &t_im[0], &t_re[1], &t_im[1], &t_re[2], &t_im[2], &t_re[3], &t_im[3],
-        rot_sign);
-
-    radix4_butterfly_scalar(
-        x_re[1], x_im[1], x_re[5], x_im[5], x_re[9], x_im[9], x_re[13], x_im[13],
-        &t_re[4], &t_im[4], &t_re[5], &t_im[5], &t_re[6], &t_im[6], &t_re[7], &t_im[7],
-        rot_sign);
-
-    radix4_butterfly_scalar(
-        x_re[2], x_im[2], x_re[6], x_im[6], x_re[10], x_im[10], x_re[14], x_im[14],
-        &t_re[8], &t_im[8], &t_re[9], &t_im[9], &t_re[10], &t_im[10], &t_re[11], &t_im[11],
-        rot_sign);
-
-    radix4_butterfly_scalar(
-        x_re[3], x_im[3], x_re[7], x_im[7], x_re[11], x_im[11], x_re[15], x_im[15],
-        &t_re[12], &t_im[12], &t_re[13], &t_im[13], &t_re[14], &t_im[14], &t_re[15], &t_im[15],
-        rot_sign);
-}
-
-TARGET_FMA
-FORCE_INLINE void
-radix16_stage2_4x_radix4_scalar(
-    const double t_re[16], const double t_im[16],
-    double x_re[16], double x_im[16],
-    double rot_sign)
-{
-    radix4_butterfly_scalar(
-        t_re[0], t_im[0], t_re[4], t_im[4], t_re[8], t_im[8], t_re[12], t_im[12],
-        &x_re[0], &x_im[0], &x_re[4], &x_im[4], &x_re[8], &x_im[8], &x_re[12], &x_im[12],
-        rot_sign);
-
-    radix4_butterfly_scalar(
-        t_re[1], t_im[1], t_re[5], t_im[5], t_re[9], t_im[9], t_re[13], t_im[13],
-        &x_re[1], &x_im[1], &x_re[5], &x_im[5], &x_re[9], &x_im[9], &x_re[13], &x_im[13],
-        rot_sign);
-
-    radix4_butterfly_scalar(
-        t_re[2], t_im[2], t_re[6], t_im[6], t_re[10], t_im[10], t_re[14], t_im[14],
-        &x_re[2], &x_im[2], &x_re[6], &x_im[6], &x_re[10], &x_im[10], &x_re[14], &x_im[14],
-        rot_sign);
-
-    radix4_butterfly_scalar(
-        t_re[3], t_im[3], t_re[7], t_im[7], t_re[11], t_im[11], t_re[15], t_im[15],
-        &x_re[3], &x_im[3], &x_re[7], &x_im[7], &x_re[11], &x_im[11], &x_re[15], &x_im[15],
-        rot_sign);
-}
-
-TARGET_FMA
-FORCE_INLINE void
-radix16_complete_butterfly_forward_scalar(
-    double x_re[16], double x_im[16])
-{
-    double t_re[16], t_im[16];
-    const double rot_sign = -1.0; // Forward: -i
-
-    radix16_stage1_4x_radix4_scalar(x_re, x_im, t_re, t_im, rot_sign);
-    apply_w4_intermediate_fv_scalar(t_re, t_im);
-    radix16_stage2_4x_radix4_scalar(t_re, t_im, x_re, x_im, rot_sign);
-}
-
-TARGET_FMA
-FORCE_INLINE void
-radix16_complete_butterfly_backward_scalar(
-    double x_re[16], double x_im[16])
-{
-    double t_re[16], t_im[16];
-    const double rot_sign = 1.0; // Backward: +i
-
-    radix16_stage1_4x_radix4_scalar(x_re, x_im, t_re, t_im, rot_sign);
-    apply_w4_intermediate_bv_scalar(t_re, t_im);
-    radix16_stage2_4x_radix4_scalar(t_re, t_im, x_re, x_im, rot_sign);
-}
-
-//==============================================================================
-// COMPLETE STAGE DRIVERS - ALL OPTIMIZATIONS PRESERVED
-//==============================================================================
-
-/**
- * @brief BLOCKED8 Forward - WITH ALL OPTIMIZATIONS
- *
- * PRESERVED OPTIMIZATIONS:
- * - K-tiling (Tk=64) for L1 cache optimization
- * - U=4 software pipelining (deeper than SIMD, enables ILP)
- * - Interleaved cmul order in twiddle application
- * - Adaptive NT stores (>256KB working set)
- * - Prefetch tuning (64 doubles ahead for scalar)
- * - Hoisted constants
- * - Explicit loop for simple tail handling
- */
-TARGET_FMA
-FORCE_INLINE void
-radix16_stage_dit_forward_blocked8_scalar(
-    size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix16_stage_twiddles_blocked8_t *RESTRICT stage_tw)
-{
-    const size_t prefetch_dist = RADIX16_PREFETCH_DISTANCE;
-    const size_t tile_size = RADIX16_TILE_SIZE;
-    const size_t unroll = RADIX16_SCALAR_UNROLL;
-
-    const bool use_nt_stores = radix16_should_use_nt_stores_scalar(K, out_re, out_im);
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
-
-    // K-TILING OUTER LOOP
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
-    {
-        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
-
-        // MAIN U=4 LOOP: Process 4 butterflies in parallel
-        size_t k;
-        for (k = k_tile; k + unroll <= k_end; k += unroll)
-        {
-            // Prefetch next iteration
-            size_t k_next = k + unroll + prefetch_dist;
-            RADIX16_PREFETCH_NEXT_BLOCKED8_SCALAR(k_next, k_end, K, in_re_aligned, in_im_aligned, stage_tw);
-
-            // Process U=4 butterflies (explicit unroll for ILP)
-            for (size_t u = 0; u < unroll; u++)
-            {
-                size_t kk = k + u;
-                double x_re[16], x_im[16];
-
-                // Load
-                for (int r = 0; r < 16; r++)
-                {
-                    x_re[r] = in_re_aligned[kk + r * K];
-                    x_im[r] = in_im_aligned[kk + r * K];
-                }
-
-                // Transform
-                apply_stage_twiddles_blocked8_scalar(kk, K, x_re, x_im, stage_tw);
-                radix16_complete_butterfly_forward_scalar(x_re, x_im);
-
-                // Store
-                if (use_nt_stores)
-                {
-                    for (int r = 0; r < 16; r++)
-                    {
-                        nt_store_pd(&out_re_aligned[kk + r * K], x_re[r]);
-                        nt_store_pd(&out_im_aligned[kk + r * K], x_im[r]);
-                    }
-                }
-                else
-                {
-                    for (int r = 0; r < 16; r++)
-                    {
-                        out_re_aligned[kk + r * K] = x_re[r];
-                        out_im_aligned[kk + r * K] = x_im[r];
-                    }
-                }
-            }
-        }
-
-        // TAIL LOOP: Handle remaining k
-        for (; k < k_end; k++)
-        {
-            double x_re[16], x_im[16];
-
-            for (int r = 0; r < 16; r++)
-            {
-                x_re[r] = in_re_aligned[k + r * K];
-                x_im[r] = in_im_aligned[k + r * K];
-            }
-
-            apply_stage_twiddles_blocked8_scalar(k, K, x_re, x_im, stage_tw);
-            radix16_complete_butterfly_forward_scalar(x_re, x_im);
-
-            if (use_nt_stores)
-            {
-                for (int r = 0; r < 16; r++)
-                {
-                    nt_store_pd(&out_re_aligned[k + r * K], x_re[r]);
-                    nt_store_pd(&out_im_aligned[k + r * K], x_im[r]);
-                }
-            }
-            else
-            {
-                for (int r = 0; r < 16; r++)
-                {
-                    out_re_aligned[k + r * K] = x_re[r];
-                    out_im_aligned[k + r * K] = x_im[r];
-                }
-            }
-        }
-    }
-
-    if (use_nt_stores)
-    {
-#ifdef __x86_64__
-        _mm_sfence();
 #endif
+
+    for (; k + 2 <= (size_t)K; k += 2)
+    {
+        cplx x[16], y[16];
+
+        load_16(&pin, k + 0, x);
+        radix16_butterfly_forward(x, y);
+        store_16(&pout, k + 0, y);
+        load_16(&pin, k + 1, x);
+        radix16_butterfly_forward(x, y);
+        store_16(&pout, k + 1, y);
+    }
+
+    if (k < (size_t)K)
+    {
+        cplx x[16], y[16];
+        load_16(&pin, k, x);
+        radix16_butterfly_forward(x, y);
+        store_16(&pout, k, y);
     }
 }
 
-/**
- * @brief BLOCKED8 Backward - WITH ALL OPTIMIZATIONS
- */
-TARGET_FMA
-FORCE_INLINE void
-radix16_stage_dit_backward_blocked8_scalar(
-    size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix16_stage_twiddles_blocked8_t *RESTRICT stage_tw)
+FORCE_INLINE void stage_n1_backward_scalar_impl(
+    int K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im)
 {
-    const size_t prefetch_dist = RADIX16_PREFETCH_DISTANCE;
-    const size_t tile_size = RADIX16_TILE_SIZE;
-    const size_t unroll = RADIX16_SCALAR_UNROLL;
+    soa_ptrs_ro pin;
+    soa_ptrs_rw pout;
 
-    const bool use_nt_stores = radix16_should_use_nt_stores_scalar(K, out_re, out_im);
+    make_soa_ptrs_ro(&pin, ASSUME_ALIGNED(in_re, 64), ASSUME_ALIGNED(in_im, 64), K);
+    make_soa_ptrs_rw(&pout, ASSUME_ALIGNED(out_re, 64), ASSUME_ALIGNED(out_im, 64), K);
 
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
+    size_t k = 0;
 
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
+#if RADIX16_SCALAR_N1_UNROLL == 4
+    for (; k + 4 <= (size_t)K; k += 4)
     {
-        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
+        cplx x[16], y[16];
 
-        size_t k;
-        for (k = k_tile; k + unroll <= k_end; k += unroll)
-        {
-            size_t k_next = k + unroll + prefetch_dist;
-            RADIX16_PREFETCH_NEXT_BLOCKED8_SCALAR(k_next, k_end, K, in_re_aligned, in_im_aligned, stage_tw);
-
-            for (size_t u = 0; u < unroll; u++)
-            {
-                size_t kk = k + u;
-                double x_re[16], x_im[16];
-
-                for (int r = 0; r < 16; r++)
-                {
-                    x_re[r] = in_re_aligned[kk + r * K];
-                    x_im[r] = in_im_aligned[kk + r * K];
-                }
-
-                apply_stage_twiddles_blocked8_scalar(kk, K, x_re, x_im, stage_tw);
-                radix16_complete_butterfly_backward_scalar(x_re, x_im);
-
-                if (use_nt_stores)
-                {
-                    for (int r = 0; r < 16; r++)
-                    {
-                        nt_store_pd(&out_re_aligned[kk + r * K], x_re[r]);
-                        nt_store_pd(&out_im_aligned[kk + r * K], x_im[r]);
-                    }
-                }
-                else
-                {
-                    for (int r = 0; r < 16; r++)
-                    {
-                        out_re_aligned[kk + r * K] = x_re[r];
-                        out_im_aligned[kk + r * K] = x_im[r];
-                    }
-                }
-            }
-        }
-
-        for (; k < k_end; k++)
-        {
-            double x_re[16], x_im[16];
-
-            for (int r = 0; r < 16; r++)
-            {
-                x_re[r] = in_re_aligned[k + r * K];
-                x_im[r] = in_im_aligned[k + r * K];
-            }
-
-            apply_stage_twiddles_blocked8_scalar(k, K, x_re, x_im, stage_tw);
-            radix16_complete_butterfly_backward_scalar(x_re, x_im);
-
-            if (use_nt_stores)
-            {
-                for (int r = 0; r < 16; r++)
-                {
-                    nt_store_pd(&out_re_aligned[k + r * K], x_re[r]);
-                    nt_store_pd(&out_im_aligned[k + r * K], x_im[r]);
-                }
-            }
-            else
-            {
-                for (int r = 0; r < 16; r++)
-                {
-                    out_re_aligned[k + r * K] = x_re[r];
-                    out_im_aligned[k + r * K] = x_im[r];
-                }
-            }
-        }
+        load_16(&pin, k + 0, x);
+        radix16_butterfly_backward(x, y);
+        store_16(&pout, k + 0, y);
+        load_16(&pin, k + 1, x);
+        radix16_butterfly_backward(x, y);
+        store_16(&pout, k + 1, y);
+        load_16(&pin, k + 2, x);
+        radix16_butterfly_backward(x, y);
+        store_16(&pout, k + 2, y);
+        load_16(&pin, k + 3, x);
+        radix16_butterfly_backward(x, y);
+        store_16(&pout, k + 3, y);
     }
-
-    if (use_nt_stores)
-    {
-#ifdef __x86_64__
-        _mm_sfence();
 #endif
-    }
-}
 
-/**
- * @brief BLOCKED4 Forward - WITH ALL OPTIMIZATIONS + TWIDDLE RECURRENCE
- */
-TARGET_FMA
-FORCE_INLINE void
-radix16_stage_dit_forward_blocked4_scalar(
-    size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
-    bool use_recurrence,
-    const double *RESTRICT delta_w_re,
-    const double *RESTRICT delta_w_im)
-{
-    const size_t prefetch_dist = RADIX16_PREFETCH_DISTANCE;
-    const size_t tile_size = RADIX16_TILE_SIZE;
-    const size_t unroll = RADIX16_SCALAR_UNROLL;
-
-    const bool use_nt_stores = radix16_should_use_nt_stores_scalar(K, out_re, out_im);
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
-
-    double w_state_re[15], w_state_im[15];
-
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
+    for (; k + 2 <= (size_t)K; k += 2)
     {
-        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
+        cplx x[16], y[16];
 
-        size_t k;
-        for (k = k_tile; k + unroll <= k_end; k += unroll)
-        {
-            size_t k_next = k + unroll + prefetch_dist;
-            if (use_recurrence)
-            {
-                RADIX16_PREFETCH_NEXT_RECURRENCE_SCALAR(k_next, k_end, K, in_re_aligned, in_im_aligned);
-            }
-            else
-            {
-                RADIX16_PREFETCH_NEXT_BLOCKED4_SCALAR(k_next, k_end, K, in_re_aligned, in_im_aligned, stage_tw);
-            }
-
-            for (size_t u = 0; u < unroll; u++)
-            {
-                size_t kk = k + u;
-                bool is_tile_start = (kk == k_tile);
-
-                double x_re[16], x_im[16];
-
-                for (int r = 0; r < 16; r++)
-                {
-                    x_re[r] = in_re_aligned[kk + r * K];
-                    x_im[r] = in_im_aligned[kk + r * K];
-                }
-
-                if (use_recurrence)
-                {
-                    apply_stage_twiddles_recur_scalar(kk, k_tile, is_tile_start, x_re, x_im,
-                                                      stage_tw, w_state_re, w_state_im,
-                                                      delta_w_re, delta_w_im);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked4_scalar(kk, K, x_re, x_im, stage_tw);
-                }
-
-                radix16_complete_butterfly_forward_scalar(x_re, x_im);
-
-                if (use_nt_stores)
-                {
-                    for (int r = 0; r < 16; r++)
-                    {
-                        nt_store_pd(&out_re_aligned[kk + r * K], x_re[r]);
-                        nt_store_pd(&out_im_aligned[kk + r * K], x_im[r]);
-                    }
-                }
-                else
-                {
-                    for (int r = 0; r < 16; r++)
-                    {
-                        out_re_aligned[kk + r * K] = x_re[r];
-                        out_im_aligned[kk + r * K] = x_im[r];
-                    }
-                }
-            }
-        }
-
-        for (; k < k_end; k++)
-        {
-            bool is_tile_start = (k == k_tile);
-
-            double x_re[16], x_im[16];
-
-            for (int r = 0; r < 16; r++)
-            {
-                x_re[r] = in_re_aligned[k + r * K];
-                x_im[r] = in_im_aligned[k + r * K];
-            }
-
-            if (use_recurrence)
-            {
-                apply_stage_twiddles_recur_scalar(k, k_tile, is_tile_start, x_re, x_im,
-                                                  stage_tw, w_state_re, w_state_im,
-                                                  delta_w_re, delta_w_im);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked4_scalar(k, K, x_re, x_im, stage_tw);
-            }
-
-            radix16_complete_butterfly_forward_scalar(x_re, x_im);
-
-            if (use_nt_stores)
-            {
-                for (int r = 0; r < 16; r++)
-                {
-                    nt_store_pd(&out_re_aligned[k + r * K], x_re[r]);
-                    nt_store_pd(&out_im_aligned[k + r * K], x_im[r]);
-                }
-            }
-            else
-            {
-                for (int r = 0; r < 16; r++)
-                {
-                    out_re_aligned[k + r * K] = x_re[r];
-                    out_im_aligned[k + r * K] = x_im[r];
-                }
-            }
-        }
+        load_16(&pin, k + 0, x);
+        radix16_butterfly_backward(x, y);
+        store_16(&pout, k + 0, y);
+        load_16(&pin, k + 1, x);
+        radix16_butterfly_backward(x, y);
+        store_16(&pout, k + 1, y);
     }
 
-    if (use_nt_stores)
+    if (k < (size_t)K)
     {
-#ifdef __x86_64__
-        _mm_sfence();
-#endif
-    }
-}
-
-/**
- * @brief BLOCKED4 Backward - WITH ALL OPTIMIZATIONS + TWIDDLE RECURRENCE
- */
-TARGET_FMA
-FORCE_INLINE void
-radix16_stage_dit_backward_blocked4_scalar(
-    size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix16_stage_twiddles_blocked4_t *RESTRICT stage_tw,
-    bool use_recurrence,
-    const double *RESTRICT delta_w_re,
-    const double *RESTRICT delta_w_im)
-{
-    const size_t prefetch_dist = RADIX16_PREFETCH_DISTANCE;
-    const size_t tile_size = RADIX16_TILE_SIZE;
-    const size_t unroll = RADIX16_SCALAR_UNROLL;
-
-    const bool use_nt_stores = radix16_should_use_nt_stores_scalar(K, out_re, out_im);
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 64);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 64);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 64);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 64);
-
-    double w_state_re[15], w_state_im[15];
-
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
-    {
-        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
-
-        size_t k;
-        for (k = k_tile; k + unroll <= k_end; k += unroll)
-        {
-            size_t k_next = k + unroll + prefetch_dist;
-            if (use_recurrence)
-            {
-                RADIX16_PREFETCH_NEXT_RECURRENCE_SCALAR(k_next, k_end, K, in_re_aligned, in_im_aligned);
-            }
-            else
-            {
-                RADIX16_PREFETCH_NEXT_BLOCKED4_SCALAR(k_next, k_end, K, in_re_aligned, in_im_aligned, stage_tw);
-            }
-
-            for (size_t u = 0; u < unroll; u++)
-            {
-                size_t kk = k + u;
-                bool is_tile_start = (kk == k_tile);
-
-                double x_re[16], x_im[16];
-
-                for (int r = 0; r < 16; r++)
-                {
-                    x_re[r] = in_re_aligned[kk + r * K];
-                    x_im[r] = in_im_aligned[kk + r * K];
-                }
-
-                if (use_recurrence)
-                {
-                    apply_stage_twiddles_recur_scalar(kk, k_tile, is_tile_start, x_re, x_im,
-                                                      stage_tw, w_state_re, w_state_im,
-                                                      delta_w_re, delta_w_im);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked4_scalar(kk, K, x_re, x_im, stage_tw);
-                }
-
-                radix16_complete_butterfly_backward_scalar(x_re, x_im);
-
-                if (use_nt_stores)
-                {
-                    for (int r = 0; r < 16; r++)
-                    {
-                        nt_store_pd(&out_re_aligned[kk + r * K], x_re[r]);
-                        nt_store_pd(&out_im_aligned[kk + r * K], x_im[r]);
-                    }
-                }
-                else
-                {
-                    for (int r = 0; r < 16; r++)
-                    {
-                        out_re_aligned[kk + r * K] = x_re[r];
-                        out_im_aligned[kk + r * K] = x_im[r];
-                    }
-                }
-            }
-        }
-
-        for (; k < k_end; k++)
-        {
-            bool is_tile_start = (k == k_tile);
-
-            double x_re[16], x_im[16];
-
-            for (int r = 0; r < 16; r++)
-            {
-                x_re[r] = in_re_aligned[k + r * K];
-                x_im[r] = in_im_aligned[k + r * K];
-            }
-
-            if (use_recurrence)
-            {
-                apply_stage_twiddles_recur_scalar(k, k_tile, is_tile_start, x_re, x_im,
-                                                  stage_tw, w_state_re, w_state_im,
-                                                  delta_w_re, delta_w_im);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked4_scalar(k, K, x_re, x_im, stage_tw);
-            }
-
-            radix16_complete_butterfly_backward_scalar(x_re, x_im);
-
-            if (use_nt_stores)
-            {
-                for (int r = 0; r < 16; r++)
-                {
-                    nt_store_pd(&out_re_aligned[k + r * K], x_re[r]);
-                    nt_store_pd(&out_im_aligned[k + r * K], x_im[r]);
-                }
-            }
-            else
-            {
-                for (int r = 0; r < 16; r++)
-                {
-                    out_re_aligned[k + r * K] = x_re[r];
-                    out_im_aligned[k + r * K] = x_im[r];
-                }
-            }
-        }
-    }
-
-    if (use_nt_stores)
-    {
-#ifdef __x86_64__
-        _mm_sfence();
-#endif
+        cplx x[16], y[16];
+        load_16(&pin, k, x);
+        radix16_butterfly_backward(x, y);
+        store_16(&pout, k, y);
     }
 }
 
 //==============================================================================
-// PUBLIC API
+// STAGE DRIVERS - BLOCKED8 (WITH TILING)
 //==============================================================================
 
-/**
- * @brief Radix-16 DIT Forward Stage - Public API (Scalar)
- */
-TARGET_FMA
-void radix16_stage_dit_forward_soa_scalar(
-    size_t K,
+FORCE_INLINE void stage_blocked8_forward_scalar_impl(
+    int K,
     const double *RESTRICT in_re,
     const double *RESTRICT in_im,
     double *RESTRICT out_re,
     double *RESTRICT out_im,
-    const void *RESTRICT stage_tw_opaque,
-    radix16_twiddle_mode_t mode)
+    const radix16_stage_twiddles_blocked8_t *RESTRICT tw)
 {
-    if (mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *stage_tw =
-            (const radix16_stage_twiddles_blocked8_t *)stage_tw_opaque;
-        radix16_stage_dit_forward_blocked8_scalar(K, in_re, in_im, out_re, out_im, stage_tw);
-    }
-    else // RADIX16_TW_BLOCKED4
-    {
-        const radix16_stage_twiddles_blocked4_t *stage_tw =
-            (const radix16_stage_twiddles_blocked4_t *)stage_tw_opaque;
+    soa_ptrs_ro pin;
+    soa_ptrs_rw pout;
 
-        if (stage_tw->recurrence_enabled)
+    make_soa_ptrs_ro(&pin, ASSUME_ALIGNED(in_re, 64), ASSUME_ALIGNED(in_im, 64), K);
+    make_soa_ptrs_rw(&pout, ASSUME_ALIGNED(out_re, 64), ASSUME_ALIGNED(out_im, 64), K);
+
+    bool in_place = (in_re == out_re); // ✅ Detect in-place
+    size_t tile_size = radix16_scalar_choose_tile_size(K, true, in_place);
+
+    for (size_t k_tile = 0; k_tile < (size_t)K; k_tile += tile_size)
+    {
+        size_t k_end = k_tile + tile_size;
+        if (k_end > (size_t)K)
+            k_end = K;
+
+        size_t k = k_tile;
+
+        // U=2 main loop
+        for (; k + 2 <= k_end; k += 2)
         {
-            radix16_stage_dit_forward_blocked4_scalar(
-                K, in_re, in_im, out_re, out_im,
-                stage_tw, true, stage_tw->delta_w_re, stage_tw->delta_w_im);
+            cplx v[16], y[16];
+
+            load_16(&pin, k + 0, v);
+            apply_twiddles_blocked8(k + 0, K, v, tw);
+            radix16_butterfly_forward(v, y);
+            store_16(&pout, k + 0, y);
+
+            load_16(&pin, k + 1, v);
+            apply_twiddles_blocked8(k + 1, K, v, tw);
+            radix16_butterfly_forward(v, y);
+            store_16(&pout, k + 1, y);
         }
-        else
+
+        // Tail
+        if (k < k_end)
         {
-            radix16_stage_dit_forward_blocked4_scalar(
-                K, in_re, in_im, out_re, out_im,
-                stage_tw, false, NULL, NULL);
+            cplx v[16], y[16];
+            load_16(&pin, k, v);
+            apply_twiddles_blocked8(k, K, v, tw);
+            radix16_butterfly_forward(v, y);
+            store_16(&pout, k, y);
         }
     }
 }
 
-/**
- * @brief Radix-16 DIT Backward Stage - Public API (Scalar)
- */
-TARGET_FMA
-void radix16_stage_dit_backward_soa_scalar(
-    size_t K,
+FORCE_INLINE void stage_blocked8_backward_scalar_impl(
+    int K,
     const double *RESTRICT in_re,
     const double *RESTRICT in_im,
     double *RESTRICT out_re,
     double *RESTRICT out_im,
-    const void *RESTRICT stage_tw_opaque,
-    radix16_twiddle_mode_t mode)
+    const radix16_stage_twiddles_blocked8_t *RESTRICT tw)
 {
-    if (mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *stage_tw =
-            (const radix16_stage_twiddles_blocked8_t *)stage_tw_opaque;
-        radix16_stage_dit_backward_blocked8_scalar(K, in_re, in_im, out_re, out_im, stage_tw);
-    }
-    else // RADIX16_TW_BLOCKED4
-    {
-        const radix16_stage_twiddles_blocked4_t *stage_tw =
-            (const radix16_stage_twiddles_blocked4_t *)stage_tw_opaque;
+    soa_ptrs_ro pin;
+    soa_ptrs_rw pout;
 
-        if (stage_tw->recurrence_enabled)
+    make_soa_ptrs_ro(&pin, ASSUME_ALIGNED(in_re, 64), ASSUME_ALIGNED(in_im, 64), K);
+    make_soa_ptrs_rw(&pout, ASSUME_ALIGNED(out_re, 64), ASSUME_ALIGNED(out_im, 64), K);
+
+    size_t tile_size = radix16_scalar_choose_tile_size(K);
+
+    for (size_t k_tile = 0; k_tile < (size_t)K; k_tile += tile_size)
+    {
+        size_t k_end = k_tile + tile_size;
+        if (k_end > (size_t)K)
+            k_end = K;
+
+        size_t k = k_tile;
+
+        for (; k + 2 <= k_end; k += 2)
         {
-            radix16_stage_dit_backward_blocked4_scalar(
-                K, in_re, in_im, out_re, out_im,
-                stage_tw, true, stage_tw->delta_w_re, stage_tw->delta_w_im);
+            cplx v[16], y[16];
+
+            load_16(&pin, k + 0, v);
+            apply_twiddles_blocked8(k + 0, K, v, tw);
+            radix16_butterfly_backward(v, y);
+            store_16(&pout, k + 0, y);
+
+            load_16(&pin, k + 1, v);
+            apply_twiddles_blocked8(k + 1, K, v, tw);
+            radix16_butterfly_backward(v, y);
+            store_16(&pout, k + 1, y);
         }
-        else
+
+        if (k < k_end)
         {
-            radix16_stage_dit_backward_blocked4_scalar(
-                K, in_re, in_im, out_re, out_im,
-                stage_tw, false, NULL, NULL);
+            cplx v[16], y[16];
+            load_16(&pin, k, v);
+            apply_twiddles_blocked8(k, K, v, tw);
+            radix16_butterfly_backward(v, y);
+            store_16(&pout, k, y);
         }
     }
 }
 
-#endif // FFT_RADIX16_SCALAR_NATIVE_SOA_H
+//==============================================================================
+// STAGE DRIVERS - BLOCKED4 (WITH RECURRENCE AND TILING)
+//==============================================================================
+
+FORCE_INLINE void stage_blocked4_forward_scalar_impl(
+    int K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked4_t *RESTRICT tw)
+{
+    soa_ptrs_ro pin;
+    soa_ptrs_rw pout;
+
+    make_soa_ptrs_ro(&pin, ASSUME_ALIGNED(in_re, 64), ASSUME_ALIGNED(in_im, 64), K);
+    make_soa_ptrs_rw(&pout, ASSUME_ALIGNED(out_re, 64), ASSUME_ALIGNED(out_im, 64), K);
+
+    bool use_recurrence = tw->recurrence_enabled;
+    bool in_place = (in_re == out_re);
+    size_t tile_size = radix16_scalar_choose_tile_size(K, false, in_place);
+
+    cplx state[15]; // Recurrence state
+
+    for (size_t k_tile = 0; k_tile < (size_t)K; k_tile += tile_size)
+    {
+        size_t k_end = k_tile + tile_size;
+        if (k_end > (size_t)K)
+            k_end = K;
+
+        size_t k = k_tile;
+
+        for (; k + 2 <= k_end; k += 2)
+        {
+            cplx v[16], y[16];
+
+            // First iteration
+            load_16(&pin, k + 0, v);
+            if (use_recurrence)
+            {
+                apply_twiddles_recurrence(k + 0, (k == k_tile), v, tw, state);
+            }
+            else
+            {
+                apply_twiddles_blocked4(k + 0, K, v, tw);
+            }
+            radix16_butterfly_forward(v, y);
+            store_16(&pout, k + 0, y);
+
+            // Second iteration
+            load_16(&pin, k + 1, v);
+            if (use_recurrence)
+            {
+                apply_twiddles_recurrence(k + 1, false, v, tw, state);
+            }
+            else
+            {
+                apply_twiddles_blocked4(k + 1, K, v, tw);
+            }
+            radix16_butterfly_forward(v, y);
+            store_16(&pout, k + 1, y);
+        }
+
+        if (k < k_end)
+        {
+            cplx v[16], y[16];
+            load_16(&pin, k, v);
+            if (use_recurrence)
+            {
+                apply_twiddles_recurrence(k, (k == k_tile), v, tw, state);
+            }
+            else
+            {
+                apply_twiddles_blocked4(k, K, v, tw);
+            }
+            radix16_butterfly_forward(v, y);
+            store_16(&pout, k, y);
+        }
+    }
+}
+
+FORCE_INLINE void stage_blocked4_backward_scalar_impl(
+    int K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const radix16_stage_twiddles_blocked4_t *RESTRICT tw)
+{
+    soa_ptrs_ro pin;
+    soa_ptrs_rw pout;
+
+    make_soa_ptrs_ro(&pin, ASSUME_ALIGNED(in_re, 64), ASSUME_ALIGNED(in_im, 64), K);
+    make_soa_ptrs_rw(&pout, ASSUME_ALIGNED(out_re, 64), ASSUME_ALIGNED(out_im, 64), K);
+
+    bool use_recurrence = tw->recurrence_enabled;
+    size_t tile_size = radix16_scalar_choose_tile_size(K);
+
+    cplx state[15];
+
+    for (size_t k_tile = 0; k_tile < (size_t)K; k_tile += tile_size)
+    {
+        size_t k_end = k_tile + tile_size;
+        if (k_end > (size_t)K)
+            k_end = K;
+
+        size_t k = k_tile;
+
+        for (; k + 2 <= k_end; k += 2)
+        {
+            cplx v[16], y[16];
+
+            load_16(&pin, k + 0, v);
+            if (use_recurrence)
+            {
+                apply_twiddles_recurrence(k + 0, (k == k_tile), v, tw, state);
+            }
+            else
+            {
+                apply_twiddles_blocked4(k + 0, K, v, tw);
+            }
+            radix16_butterfly_backward(v, y);
+            store_16(&pout, k + 0, y);
+
+            load_16(&pin, k + 1, v);
+            if (use_recurrence)
+            {
+                apply_twiddles_recurrence(k + 1, false, v, tw, state);
+            }
+            else
+            {
+                apply_twiddles_blocked4(k + 1, K, v, tw);
+            }
+            radix16_butterfly_backward(v, y);
+            store_16(&pout, k + 1, y);
+        }
+
+        if (k < k_end)
+        {
+            cplx v[16], y[16];
+            load_16(&pin, k, v);
+            if (use_recurrence)
+            {
+                apply_twiddles_recurrence(k, (k == k_tile), v, tw, state);
+            }
+            else
+            {
+                apply_twiddles_blocked4(k, K, v, tw);
+            }
+            radix16_butterfly_backward(v, y);
+            store_16(&pout, k, y);
+        }
+    }
+}
+
+//==============================================================================
+// PUBLIC API (UNIFORM - MATCHES SIMD CONVENTION)
+//==============================================================================
+
+// BLOCKED8 implementations
+void radix16_stage_blocked8_forward_scalar(
+    int K,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    double *restrict out_re,
+    double *restrict out_im,
+    const radix16_stage_twiddles_blocked8_t *restrict stage_tw)
+{
+    radix16_set_ftz_daz_scalar();
+    stage_blocked8_forward_scalar_impl(K, in_re, in_im, out_re, out_im, stage_tw);
+}
+
+void radix16_stage_blocked8_backward_scalar(
+    int K,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    double *restrict out_re,
+    double *restrict out_im,
+    const radix16_stage_twiddles_blocked8_t *restrict stage_tw)
+{
+    radix16_set_ftz_daz_scalar();
+    stage_blocked8_backward_scalar_impl(K, in_re, in_im, out_re, out_im, stage_tw);
+}
+
+// BLOCKED4 implementations
+void radix16_stage_blocked4_forward_scalar(
+    int K,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    double *restrict out_re,
+    double *restrict out_im,
+    const radix16_stage_twiddles_blocked4_t *restrict stage_tw)
+{
+    radix16_set_ftz_daz_scalar();
+    stage_blocked4_forward_scalar_impl(K, in_re, in_im, out_re, out_im, stage_tw);
+}
+
+void radix16_stage_blocked4_backward_scalar(
+    int K,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    double *restrict out_re,
+    double *restrict out_im,
+    const radix16_stage_twiddles_blocked4_t *restrict stage_tw)
+{
+    radix16_set_ftz_daz_scalar();
+    stage_blocked4_backward_scalar_impl(K, in_re, in_im, out_re, out_im, stage_tw);
+}
+
+// N=1 declarations (implemented in fft_radix16_scalar_n1.h)
+void radix16_stage_n1_forward_scalar(
+    int K,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    double *restrict out_re,
+    double *restrict out_im);
+
+void radix16_stage_n1_backward_scalar(
+    int K,
+    const double *restrict in_re,
+    const double *restrict in_im,
+    double *restrict out_re,
+    double *restrict out_im);
+
+#endif /* FFT_RADIX16_SCALAR_H */
