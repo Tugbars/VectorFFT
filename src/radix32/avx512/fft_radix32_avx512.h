@@ -90,157 +90,6 @@
 #define RADIX32_PREFETCH_DISTANCE 128 // Cache lines ahead to prefetch
 
 //==============================================================================
-// PASS 1 (RADIX-8) TWIDDLE CONFIGURATION
-//==============================================================================
-
-#define RADIX32_BLOCKED16_THRESHOLD 128
-#define RADIX32_BLOCKED8_THRESHOLD 1024
-#define RADIX32_BLOCKED4_THRESHOLD 4096
-
-typedef enum
-{
-    RADIX32_PASS1_BLOCKED16, ///< K ≤ 128: 16 twiddles stored directly
-    RADIX32_PASS1_BLOCKED8,  ///< K ≤ 1024: 8 stored, 8 precomputed per tile
-    RADIX32_PASS1_BLOCKED4,  ///< K ≤ 4096: 4 stored, Gray-code derivation
-    RADIX32_PASS1_RECURRENCE ///< K > 4096: delta_w walking
-} radix32_pass1_twiddle_mode_t;
-
-//==============================================================================
-// TRIVIAL TWIDDLE CLASSIFICATION
-//==============================================================================
-
-/**
- * @brief Twiddle type for specialized fast paths
- *
- * Enables dispatch to optimized code for common twiddle values:
- * - IDENTITY: W = 1 (no-op)
- * - PLUS_I: W = i (swap + sign: (a+ib)×i = -b+ia)
- * - MINUS_I: W = -i (swap + opposite signs)
- * - MINUS_ONE: W = -1 (negate both components)
- * - W8_CONST: W = exp(-πi/4) = √2/2(1-i) (radix-8 constant)
- * - GENERIC: Full complex multiply required
- */
-typedef enum
-{
-    TWIDDLE_IDENTITY,
-    TWIDDLE_PLUS_I,
-    TWIDDLE_MINUS_I,
-    TWIDDLE_MINUS_ONE,
-    TWIDDLE_W8_CONST,
-    TWIDDLE_GENERIC
-} twiddle_type_t;
-
-/**
- * @brief Radix-8 twiddle dispatch table for 4 groups × 8 stages
- *
- * Maps (group, stage) → twiddle_type for Pass 1 radix-8 butterflies
- *
- * Group g, stage s uses twiddle W_32^(s×g):
- * - Group 0: W^0 = 1 (all IDENTITY)
- * - Group 1, stage 4: W^4 = exp(-πi/4) (W8_CONST)
- * - Group 2, stage 4: W^8 = i (PLUS_I)
- * - Others: GENERIC complex multiply
- *
- * This table eliminates ~30% of complex multiplies in Pass 1.
- */
-static const twiddle_type_t radix8_twiddle_dispatch[4][8] = {
-    // Group 0: All identity (W^(s×0) = 1)
-    {TWIDDLE_IDENTITY, TWIDDLE_IDENTITY, TWIDDLE_IDENTITY, TWIDDLE_IDENTITY,
-     TWIDDLE_IDENTITY, TWIDDLE_IDENTITY, TWIDDLE_IDENTITY, TWIDDLE_IDENTITY},
-
-    // Group 1: W^(s×1) = W^s
-    // Stage 4: W^4 = exp(-πi/4) = √2/2(1-i)
-    {TWIDDLE_IDENTITY, TWIDDLE_GENERIC, TWIDDLE_GENERIC, TWIDDLE_GENERIC,
-     TWIDDLE_W8_CONST, TWIDDLE_GENERIC, TWIDDLE_GENERIC, TWIDDLE_GENERIC},
-
-    // Group 2: W^(s×2)
-    // Stage 4: W^8 = exp(-πi/2) = i
-    {TWIDDLE_IDENTITY, TWIDDLE_GENERIC, TWIDDLE_GENERIC, TWIDDLE_GENERIC,
-     TWIDDLE_PLUS_I, TWIDDLE_GENERIC, TWIDDLE_GENERIC, TWIDDLE_GENERIC},
-
-    // Group 3: W^(s×3)
-    {TWIDDLE_IDENTITY, TWIDDLE_GENERIC, TWIDDLE_GENERIC, TWIDDLE_GENERIC,
-     TWIDDLE_GENERIC, TWIDDLE_GENERIC, TWIDDLE_GENERIC, TWIDDLE_GENERIC}};
-
-//==============================================================================
-// PASS 1 TWIDDLE STRUCTURES
-//==============================================================================
-
-typedef struct
-{
-    const double *RESTRICT re; ///< [16 * K] blocked: W1..W16
-    const double *RESTRICT im;
-} radix32_pass1_blocked16_t;
-
-/**
- * @brief BLOCKED8 with per-tile precomputation
- *
- * Storage: [8 * K] blocked: W1..W8
- * Runtime: For each tile, precompute W9..W16 = W1..W8 × W8[tile]
- */
-typedef struct
-{
-    const double *RESTRICT re; ///< [8 * K] base twiddles
-    const double *RESTRICT im;
-} radix32_pass1_blocked8_t;
-
-/**
- * @brief BLOCKED4 with Gray-code derivation
- *
- * Storage: [4 * K] blocked: W1, W2, W4, W8
- * Runtime: Gray-code walk (1 mul/step avg)
- */
-typedef struct
-{
-    const double *RESTRICT re; ///< [4 * K] base twiddles
-    const double *RESTRICT im;
-} radix32_pass1_blocked4_t;
-
-/**
- * @brief RECURRENCE with walking twiddles
- *
- * Storage: [1 * K] seed: W1 only
- * Runtime: w[k+1] = w[k] × delta_w, refresh periodically
- */
-typedef struct
-{
-    const double *RESTRICT re; ///< [1 * K] seed twiddle W1
-    const double *RESTRICT im;
-
-    ALIGNAS(64)
-    __m512d delta_w_re[31]; ///< Phase increments for s=1..31
-    ALIGNAS(64)
-    __m512d delta_w_im[31];
-
-    size_t refresh_interval; ///< Iterations before refresh (64-256)
-} radix32_pass1_recurrence_t;
-
-//==============================================================================
-// PASS 1 UNIFIED PLAN
-//==============================================================================
-
-typedef struct
-{
-    radix32_pass1_twiddle_mode_t mode;
-    size_t K;
-
-    union
-    {
-        radix32_pass1_blocked16_t blocked16;
-        radix32_pass1_blocked8_t blocked8;
-        radix32_pass1_blocked4_t blocked4;
-        radix32_pass1_recurrence_t recurrence;
-    } tw;
-
-    // W8 geometric constant (used in trivial dispatch)
-    // W8 = exp(-πi/4) = √2/2 (1 - i)
-    ALIGNAS(64)
-    __m512d w8_const_re; ///< Broadcast √2/2
-    ALIGNAS(64)
-    __m512d w8_const_im; ///< Broadcast -√2/2
-} radix32_pass1_plan_t;
-
-//==============================================================================
 // PASS 2 (CROSS-GROUP) GEOMETRIC CONSTANTS
 //==============================================================================
 
@@ -313,7 +162,6 @@ typedef struct
     size_t K;         ///< Butterflies per radix-32 stage (K = N/32)
     size_t tile_size; ///< Samples per tile (64 for normal, 32 for small K)
 
-    radix32_pass1_plan_t pass1; ///< Radix-8 stage twiddles
     radix32_pass2_plan_t pass2; ///< Cross-group geometric constants
 
     // Execution hints
@@ -325,103 +173,6 @@ typedef struct
 //==============================================================================
 // PLANNING FUNCTIONS
 //==============================================================================
-
-/**
- * @brief Select Pass 1 twiddle mode based on K
- */
-static inline radix32_pass1_twiddle_mode_t
-radix32_choose_pass1_mode(size_t K)
-{
-    if (K <= RADIX32_BLOCKED16_THRESHOLD)
-        return RADIX32_PASS1_BLOCKED16;
-    if (K <= RADIX32_BLOCKED8_THRESHOLD)
-        return RADIX32_PASS1_BLOCKED8;
-    if (K <= RADIX32_BLOCKED4_THRESHOLD)
-        return RADIX32_PASS1_BLOCKED4;
-    return RADIX32_PASS1_RECURRENCE;
-}
-
-/**
- * @brief Initialize Pass 1 twiddle plan from reorganization system
- *
- * Handles all twiddle modes, sets up geometric constants
- *
- * @param handle Twiddle handle from reorganization (radix=8 stage)
- * @param plan Output: Pass 1 plan
- * @return 0 on success, -1 on error
- */
-static inline int radix32_prepare_pass1_plan(
-    const void *handle,
-    radix32_pass1_plan_t *plan)
-{
-    // Type-cast handle (minimal coupling to reorganization system)
-    const struct
-    {
-        int radix;
-        size_t butterflies_per_stage;
-        const double *materialized_re;
-        const double *materialized_im;
-        void *layout_specific_data;
-    } *h = (const void *)handle;
-
-    if (!h || h->radix != 8 || !h->materialized_re || !h->materialized_im || !plan)
-        return -1;
-
-    plan->K = h->butterflies_per_stage;
-    plan->mode = radix32_choose_pass1_mode(plan->K);
-
-    // Initialize W8 geometric constant (√2/2 (1-i))
-    const double w8_re_scalar = 0.70710678118654752440084436210485;  // √2/2
-    const double w8_im_scalar = -0.70710678118654752440084436210485; // -√2/2
-    plan->w8_const_re = _mm512_set1_pd(w8_re_scalar);
-    plan->w8_const_im = _mm512_set1_pd(w8_im_scalar);
-
-    switch (plan->mode)
-    {
-    case RADIX32_PASS1_BLOCKED16:
-        plan->tw.blocked16.re = h->materialized_re;
-        plan->tw.blocked16.im = h->materialized_im;
-        break;
-
-    case RADIX32_PASS1_BLOCKED8:
-        plan->tw.blocked8.re = h->materialized_re;
-        plan->tw.blocked8.im = h->materialized_im;
-        break;
-
-    case RADIX32_PASS1_BLOCKED4:
-        plan->tw.blocked4.re = h->materialized_re;
-        plan->tw.blocked4.im = h->materialized_im;
-        break;
-
-    case RADIX32_PASS1_RECURRENCE:
-        plan->tw.recurrence.re = h->materialized_re;
-        plan->tw.recurrence.im = h->materialized_im;
-
-        if (h->layout_specific_data)
-        {
-            typedef struct
-            {
-                __m512d delta_w_re[31];
-                __m512d delta_w_im[31];
-            } recurrence_data_t;
-
-            const recurrence_data_t *rd = (const recurrence_data_t *)h->layout_specific_data;
-            for (int i = 0; i < 31; i++)
-            {
-                plan->tw.recurrence.delta_w_re[i] = rd->delta_w_re[i];
-                plan->tw.recurrence.delta_w_im[i] = rd->delta_w_im[i];
-            }
-            plan->tw.recurrence.refresh_interval = 128;
-        }
-        else
-        {
-            return -1;
-        }
-        break;
-    }
-
-    return 0;
-}
 
 /**
  * @brief Initialize Pass 2 geometric constants
@@ -558,10 +309,6 @@ static inline int radix32_create_plan(
     plan->use_nt_stores = (K > RADIX32_NT_THRESHOLD);
     plan->use_prefetch = (K > 256);
     plan->prefetch_dist = RADIX32_PREFETCH_DISTANCE;
-
-    // Initialize Pass 1 (radix-8 twiddles)
-    if (radix32_prepare_pass1_plan(handle_pass1, &plan->pass1) != 0)
-        return -1;
 
     // Initialize Pass 2 (geometric constants)
     if (radix32_prepare_pass2_plan(&plan->pass2, is_forward) != 0)
@@ -918,234 +665,6 @@ FORCE_INLINE void cmul_avx512(
     *result_im = _mm512_fmadd_pd(a_re, b_im, _mm512_mul_pd(a_im, b_re));
 }
 
-/**
- * @brief In-place complex multiply: (a + ib) ← (a + ib) × (c + id)
- */
-TARGET_AVX512
-FORCE_INLINE void cmul_inplace_avx512(
-    __m512d *RESTRICT a_re, __m512d *RESTRICT a_im,
-    __m512d b_re, __m512d b_im)
-{
-    __m512d tmp_re = _mm512_fmsub_pd(*a_re, b_re, _mm512_mul_pd(*a_im, b_im));
-    __m512d tmp_im = _mm512_fmadd_pd(*a_re, b_im, _mm512_mul_pd(*a_im, b_re));
-    *a_re = tmp_re;
-    *a_im = tmp_im;
-}
-
-/**
- * @brief Multiply by i: (a + ib) × i = -b + ia
- *
- * FAST PATH: Just swap and negate (no FMAs needed).
- */
-TARGET_AVX512
-FORCE_INLINE void cmul_by_i_avx512(
-    __m512d a_re, __m512d a_im,
-    __m512d *RESTRICT result_re,
-    __m512d *RESTRICT result_im)
-{
-    const __m512d sign_mask = _mm512_set1_pd(-0.0);
-    *result_re = _mm512_xor_pd(a_im, sign_mask); // -a_im
-    *result_im = a_re;                           // +a_re
-}
-
-/**
- * @brief Multiply by -i: (a + ib) × (-i) = b - ia
- */
-TARGET_AVX512
-FORCE_INLINE void cmul_by_minus_i_avx512(
-    __m512d a_re, __m512d a_im,
-    __m512d *RESTRICT result_re,
-    __m512d *RESTRICT result_im)
-{
-    const __m512d sign_mask = _mm512_set1_pd(-0.0);
-    *result_re = a_im;                           // +a_im
-    *result_im = _mm512_xor_pd(a_re, sign_mask); // -a_re
-}
-
-/**
- * @brief Multiply by -1: (a + ib) × (-1) = -a - ib
- */
-TARGET_AVX512
-FORCE_INLINE void cmul_by_minus_one_avx512(
-    __m512d a_re, __m512d a_im,
-    __m512d *RESTRICT result_re,
-    __m512d *RESTRICT result_im)
-{
-    const __m512d sign_mask = _mm512_set1_pd(-0.0);
-    *result_re = _mm512_xor_pd(a_re, sign_mask);
-    *result_im = _mm512_xor_pd(a_im, sign_mask);
-}
-
-/**
- * @brief Trivial twiddle dispatcher
- *
- * Applies twiddle based on type classification (fast paths for common values).
- *
- * @param type Twiddle type (IDENTITY, PLUS_I, etc.)
- * @param data_re Input/output real
- * @param data_im Input/output imag
- * @param w_re Twiddle real (used only for GENERIC and W8_CONST)
- * @param w_im Twiddle imag (used only for GENERIC and W8_CONST)
- * @param w8_const_re Broadcast W8 real (√2/2)
- * @param w8_const_im Broadcast W8 imag (-√2/2)
- */
-TARGET_AVX512
-FORCE_INLINE void apply_twiddle_classified_avx512(
-    twiddle_type_t type,
-    __m512d *RESTRICT data_re,
-    __m512d *RESTRICT data_im,
-    __m512d w_re,
-    __m512d w_im,
-    __m512d w8_const_re,
-    __m512d w8_const_im)
-{
-    switch (type)
-    {
-    case TWIDDLE_IDENTITY:
-        // No-op: data unchanged
-        break;
-
-    case TWIDDLE_PLUS_I:
-    {
-        // Multiply by i: (a+ib) × i = -b + ia
-        __m512d tmp_re, tmp_im;
-        cmul_by_i_avx512(*data_re, *data_im, &tmp_re, &tmp_im);
-        *data_re = tmp_re;
-        *data_im = tmp_im;
-        break;
-    }
-
-    case TWIDDLE_MINUS_I:
-    {
-        // Multiply by -i: (a+ib) × (-i) = b - ia
-        __m512d tmp_re, tmp_im;
-        cmul_by_minus_i_avx512(*data_re, *data_im, &tmp_re, &tmp_im);
-        *data_re = tmp_re;
-        *data_im = tmp_im;
-        break;
-    }
-
-    case TWIDDLE_MINUS_ONE:
-    {
-        // Multiply by -1: (a+ib) × (-1) = -a - ib
-        __m512d tmp_re, tmp_im;
-        cmul_by_minus_one_avx512(*data_re, *data_im, &tmp_re, &tmp_im);
-        *data_re = tmp_re;
-        *data_im = tmp_im;
-        break;
-    }
-
-    case TWIDDLE_W8_CONST:
-    {
-        // Multiply by W8 = √2/2(1-i) using precomputed broadcast
-        cmul_inplace_avx512(data_re, data_im, w8_const_re, w8_const_im);
-        break;
-    }
-
-    case TWIDDLE_GENERIC:
-    {
-        // Full complex multiply
-        cmul_inplace_avx512(data_re, data_im, w_re, w_im);
-        break;
-    }
-    }
-}
-
-//==============================================================================
-// FIX #2: MINI-RECURRENCE IMPLEMENTATION (COMPLETE)
-//==============================================================================
-
-/**
- * @brief Compute w^1, w^2, w^3 from seed twiddle w via mini-recurrence
- *
- * Given: w = exp(-j*2π*m/32) as (w_re, w_im)
- * Compute: w^1 = w, w^2 = w*w, w^3 = w^2*w
- *
- * Uses 2 FMAs for w^2 (complex square) + 2 FMAs for w^3 = 4 FMAs total
- * vs. 6 FMAs for three independent complex muls
- *
- * @param w_re Seed twiddle real
- * @param w_im Seed twiddle imag
- * @param w1_re Output: w^1 real (just copy of w_re)
- * @param w1_im Output: w^1 imag (just copy of w_im)
- * @param w2_re Output: w^2 real
- * @param w2_im Output: w^2 imag
- * @param w3_re Output: w^3 real
- * @param w3_im Output: w^3 imag
- */
-TARGET_AVX512
-FORCE_INLINE void cross_twiddle_powers3(
-    __m512d w_re, __m512d w_im,
-    __m512d *RESTRICT w1_re, __m512d *RESTRICT w1_im,
-    __m512d *RESTRICT w2_re, __m512d *RESTRICT w2_im,
-    __m512d *RESTRICT w3_re, __m512d *RESTRICT w3_im)
-{
-    // w^1 = w (trivial copy)
-    *w1_re = w_re;
-    *w1_im = w_im;
-
-    // w^2 = w * w (complex square via FMA)
-    // Re(w^2) = w_re^2 - w_im^2
-    // Im(w^2) = 2 * w_re * w_im
-    __m512d w2r = _mm512_fmsub_pd(w_re, w_re, _mm512_mul_pd(w_im, w_im));
-    __m512d w2i = _mm512_fmadd_pd(w_re, w_im, _mm512_mul_pd(w_im, w_re)); // 2*Re*Im
-
-    *w2_re = w2r;
-    *w2_im = w2i;
-
-    // w^3 = w^2 * w (complex multiply via FMA)
-    // Re(w^3) = w2_re * w_re - w2_im * w_im
-    // Im(w^3) = w2_re * w_im + w2_im * w_re
-    *w3_re = _mm512_fmsub_pd(w2r, w_re, _mm512_mul_pd(w2i, w_im));
-    *w3_im = _mm512_fmadd_pd(w2r, w_im, _mm512_mul_pd(w2i, w_re));
-}
-
-//==============================================================================
-// FIX #3: TAIL HANDLING HELPERS (COMPLETE)
-//==============================================================================
-
-/**
- * @brief Masked load for tail handling
- *
- * Loads up to 7 elements safely with masking
- */
-TARGET_AVX512
-FORCE_INLINE __m512d masked_load_tail(const double *ptr, size_t tail)
-{
-    if (tail >= 8)
-    {
-        return _mm512_loadu_pd(ptr);
-    }
-    else if (tail > 0)
-    {
-        const __mmask8 mask = (__mmask8)((1u << tail) - 1u);
-        return _mm512_maskz_loadu_pd(mask, ptr);
-    }
-    else
-    {
-        return _mm512_setzero_pd();
-    }
-}
-
-/**
- * @brief Masked store for tail handling
- *
- * Stores up to 7 elements safely with masking
- */
-TARGET_AVX512
-FORCE_INLINE void masked_store_tail(double *ptr, __m512d value, size_t tail)
-{
-    if (tail >= 8)
-    {
-        _mm512_storeu_pd(ptr, value);
-    }
-    else if (tail > 0)
-    {
-        const __mmask8 mask = (__mmask8)((1u << tail) - 1u);
-        _mm512_mask_storeu_pd(ptr, mask, value);
-    }
-}
-
 //==============================================================================
 // OPTIMIZATION #2: Helpers for ±j rotations (reduces live ranges)
 //==============================================================================
@@ -1438,6 +957,33 @@ FORCE_INLINE void radix8_compute_t4567_avx512(
 }
 
 /**
+ * @brief Emit pair (0,4) from t0..t3 - Backward (W8^0 = 1, identity)
+ * IDENTICAL to forward version (W8^0* = W8^0 = 1)
+ */
+TARGET_AVX512
+FORCE_INLINE void radix8_emit_pair_04_from_t0123_backward_avx512(
+    __m512d t0_re, __m512d t0_im,
+    __m512d t1_re, __m512d t1_im,
+    __m512d t2_re, __m512d t2_im,
+    __m512d t3_re, __m512d t3_im,
+    __m512d *RESTRICT y0_re, __m512d *RESTRICT y0_im,
+    __m512d *RESTRICT y4_re, __m512d *RESTRICT y4_im)
+{
+    // Stage 2: Only u0, u1
+    __m512d u0_re = _mm512_add_pd(t0_re, t2_re);
+    __m512d u0_im = _mm512_add_pd(t0_im, t2_im);
+
+    __m512d u1_re = _mm512_add_pd(t1_re, t3_re);
+    __m512d u1_im = _mm512_add_pd(t1_im, t3_im);
+
+    // Stage 3: Final butterfly (W8^0 = 1, identity - same for forward/backward)
+    *y0_re = _mm512_add_pd(u0_re, u1_re);
+    *y0_im = _mm512_add_pd(u0_im, u1_im);
+    *y4_re = _mm512_sub_pd(u0_re, u1_re);
+    *y4_im = _mm512_sub_pd(u0_im, u1_im);
+}
+
+/**
  * @brief Emit pair (1, 5) - Backward FFT (CORRECTED)
  *
  * W8^1 = √2/2(1+i): z × W8^1 = √2/2[(a-b) + j(a+b)]
@@ -1583,6 +1129,36 @@ FORCE_INLINE void radix8_emit_pair_37_backward_avx512(
     *y7_re = _mm512_sub_pd(u6_re, u7_tw_re);
     *y7_im = _mm512_sub_pd(u6_im, u7_tw_im);
 }
+
+/**
+ * @brief Emit pair (2,6) from t0..t3 - Backward (W8^2 = +j)
+ */
+TARGET_AVX512
+FORCE_INLINE void radix8_emit_pair_26_from_t0123_backward_avx512(
+    __m512d t0_re, __m512d t0_im,
+    __m512d t1_re, __m512d t1_im,
+    __m512d t2_re, __m512d t2_im,
+    __m512d t3_re, __m512d t3_im,
+    __m512d *RESTRICT y2_re, __m512d *RESTRICT y2_im,
+    __m512d *RESTRICT y6_re, __m512d *RESTRICT y6_im,
+    __m512d sign_mask)
+{
+    __m512d u2_re = _mm512_sub_pd(t0_re, t2_re);
+    __m512d u2_im = _mm512_sub_pd(t0_im, t2_im);
+    
+    __m512d u3_re = _mm512_sub_pd(t1_re, t3_re);
+    __m512d u3_im = _mm512_sub_pd(t1_im, t3_im);
+
+    __m512d u3_tw_re, u3_tw_im;
+    rot_pos_j(u3_re, u3_im, sign_mask, &u3_tw_re, &u3_tw_im);
+
+    *y2_re = _mm512_add_pd(u2_re, u3_tw_re);
+    *y2_im = _mm512_add_pd(u2_im, u3_tw_im);
+    *y6_re = _mm512_sub_pd(u2_re, u3_tw_re);
+    *y6_im = _mm512_sub_pd(u2_im, u3_tw_im);
+}
+
+
 
 /**
  * @brief Emit pair (1,5) from t4..t7 - Backward (CORRECTED)
@@ -2425,7 +2001,6 @@ FORCE_INLINE void radix32_fused_butterfly_forward_avx512(
     double *RESTRICT tile_out_re,
     double *RESTRICT tile_out_im,
     size_t tile_size,
-    const radix32_pass1_plan_t *RESTRICT pass1_plan,
     const radix32_pass2_plan_t *RESTRICT pass2_plan)
 {
     // Hoist constants (single computation per butterfly call)
@@ -2905,7 +2480,6 @@ FORCE_INLINE void radix32_fused_butterfly_backward_avx512(
     double *RESTRICT tile_out_re,
     double *RESTRICT tile_out_im,
     size_t tile_size,
-    const radix32_pass1_plan_t *RESTRICT pass1_plan,
     const radix32_pass2_plan_t *RESTRICT pass2_plan)
 {
     // Hoist constants
@@ -3599,7 +3173,6 @@ void radix32_execute_forward_avx512(
     const double *RESTRICT in_im,
     double *RESTRICT out_re,
     double *RESTRICT out_im,
-    const radix32_pass1_plan_t *RESTRICT pass1_plan,
     const radix32_pass2_plan_t *RESTRICT pass2_plan)
 {
     assert((K & 7) == 0 && "K must be multiple of 8");
@@ -3634,7 +3207,7 @@ void radix32_execute_forward_avx512(
         radix32_fused_butterfly_forward_avx512(
             workspace.input_re, workspace.input_im,
             workspace.output_re, workspace.output_im,
-            current_tile_size, pass1_plan, pass2_plan);
+            current_tile_size, pass2_plan);
 
         //======================================================================
         // SCATTER: Tile-local layout → Stripe layout
@@ -3664,7 +3237,6 @@ void radix32_execute_backward_avx512(
     const double *RESTRICT in_im,
     double *RESTRICT out_re,
     double *RESTRICT out_im,
-    const radix32_pass1_plan_t *RESTRICT pass1_plan,
     const radix32_pass2_plan_t *RESTRICT pass2_plan)
 {
     assert((K & 7) == 0 && "K must be multiple of 8");
@@ -3692,7 +3264,7 @@ void radix32_execute_backward_avx512(
         radix32_fused_butterfly_backward_avx512(
             workspace.input_re, workspace.input_im,
             workspace.output_re, workspace.output_im,
-            current_tile_size, pass1_plan, pass2_plan);
+            current_tile_size, pass2_plan);
 
         // SCATTER
         if (use_nt)
