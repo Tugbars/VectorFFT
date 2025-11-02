@@ -2348,6 +2348,43 @@ FORCE_INLINE void radix4_butterfly_core_bv_avx512(
         store_masked(&tile_out_im[(STRIPE + 24) * tile_size + k], MASK, y3_im);                          \
     } while (0)
 
+
+//==============================================================================
+// ENHANCED PREFETCH MACROS
+//==============================================================================
+
+/**
+ * @brief Prefetch next k-iteration inputs (distance = 8)
+ * Fetch data that will be needed 8 doubles later
+ */
+#define PREFETCH_NEXT_K_ITERATION(STRIPE, K_OFFSET) \
+    do { \
+        _mm_prefetch((const char *)&tile_in_re[(STRIPE) * tile_size + k + (K_OFFSET)], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&tile_in_im[(STRIPE) * tile_size + k + (K_OFFSET)], _MM_HINT_T0); \
+    } while(0)
+
+/**
+ * @brief Prefetch output cache lines that will be written
+ * Use T1 hint (L2 cache) to avoid L1 pollution
+ */
+#define PREFETCH_OUTPUT_STRIPES(STRIPE_BASE, K_OFFSET) \
+    do { \
+        _mm_prefetch((const char *)&tile_out_re[(STRIPE_BASE + 0) * tile_size + k + (K_OFFSET)], _MM_HINT_T1); \
+        _mm_prefetch((const char *)&tile_out_re[(STRIPE_BASE + 8) * tile_size + k + (K_OFFSET)], _MM_HINT_T1); \
+        _mm_prefetch((const char *)&tile_out_re[(STRIPE_BASE + 16) * tile_size + k + (K_OFFSET)], _MM_HINT_T1); \
+        _mm_prefetch((const char *)&tile_out_re[(STRIPE_BASE + 24) * tile_size + k + (K_OFFSET)], _MM_HINT_T1); \
+    } while(0)
+
+/**
+ * @brief Non-temporal prefetch for streaming access patterns
+ * Use NTA hint when data won't be reused
+ */
+#define PREFETCH_STREAMING_INPUT(STRIPE) \
+    do { \
+        _mm_prefetch((const char *)&tile_in_re[(STRIPE) * tile_size + k + 64], _MM_HINT_NTA); \
+        _mm_prefetch((const char *)&tile_in_im[(STRIPE) * tile_size + k + 64], _MM_HINT_NTA); \
+    } while(0)
+
 //==============================================================================
 // COMPLETE RADIX-32 FUSED BUTTERFLY - FORWARD FFT
 //==============================================================================
@@ -2447,6 +2484,28 @@ FORCE_INLINE void radix32_fused_butterfly_forward_avx512(
 
     for (; k < k_main; k += 8)
     {
+        //==========================================================================
+        // PREFETCH STRATEGY (before any computation)
+        //==========================================================================
+
+        // Prefetch next k-iteration (all groups A, B, C, D)
+        if (k + 16 < k_main)
+        {
+            PREFETCH_NEXT_K_ITERATION(0, 16);  // Group A
+            PREFETCH_NEXT_K_ITERATION(8, 16);  // Group B
+            PREFETCH_NEXT_K_ITERATION(16, 16); // Group C
+            PREFETCH_NEXT_K_ITERATION(24, 16); // Group D
+        }
+
+        // Prefetch output buffers for positions 0, 1, 2, 3
+        if (k + 8 < tile_size)
+        {
+            PREFETCH_OUTPUT_STRIPES(0, 8); // Position 0
+            PREFETCH_OUTPUT_STRIPES(4, 8); // Position 4
+            PREFETCH_OUTPUT_STRIPES(2, 8); // Position 2
+            PREFETCH_OUTPUT_STRIPES(6, 8); // Position 6
+        }
+
         // Output arrays for 4 groups × 2 pairs = 8 positions
         // Indexed as: [0]=pos0, [1]=pos4, [2]=pos2, [3]=pos6, [4]=pos1, [5]=pos5, [6]=pos3, [7]=pos7
         __m512d A_re[8], A_im[8];
@@ -2463,12 +2522,21 @@ FORCE_INLINE void radix32_fused_butterfly_forward_avx512(
         //----------------------------------------------------------------------
         __m512d xa0_re = load_aligned(&tile_in_re[0 * tile_size + k]);
         __m512d xa0_im = load_aligned(&tile_in_im[0 * tile_size + k]);
+
+        // Prefetch group B stripe 1 while loading A stripe 0
+        _mm_prefetch((const char *)&tile_in_re[9 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[9 * tile_size + k], _MM_HINT_T0);
+
         __m512d xa1_re = load_aligned(&tile_in_re[1 * tile_size + k]);
         __m512d xa1_im = load_aligned(&tile_in_im[1 * tile_size + k]);
-
+        
         // SOFTWARE PIPELINING: Issue first loads for group B while loading A
         __m512d xb0_re = load_aligned(&tile_in_re[8 * tile_size + k]);
         __m512d xb0_im = load_aligned(&tile_in_im[8 * tile_size + k]);
+
+        // Continue loading A with more B prefetches
+        _mm_prefetch((const char *)&tile_in_re[10 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[10 * tile_size + k], _MM_HINT_T0);
 
         __m512d xa2_re = load_aligned(&tile_in_re[2 * tile_size + k]);
         __m512d xa2_im = load_aligned(&tile_in_im[2 * tile_size + k]);
@@ -2520,22 +2588,32 @@ FORCE_INLINE void radix32_fused_butterfly_forward_avx512(
                 sign_mask, sqrt2_2);
         }
 
-        //----------------------------------------------------------------------
+           //----------------------------------------------------------------------
         // GROUP B: Continue loading (already started xb0 during A)
         //----------------------------------------------------------------------
         __m512d xb1_re = load_aligned(&tile_in_re[9 * tile_size + k]);
         __m512d xb1_im = load_aligned(&tile_in_im[9 * tile_size + k]);
 
-        // SOFTWARE PIPELINING: Prefetch group C
+        // SOFTWARE PIPELINING: Prefetch group C while loading B
         _mm_prefetch((const char *)&tile_in_re[16 * tile_size + k], _MM_HINT_T0);
         _mm_prefetch((const char *)&tile_in_im[16 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_re[17 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[17 * tile_size + k], _MM_HINT_T0);
 
         __m512d xb2_re = load_aligned(&tile_in_re[10 * tile_size + k]);
         __m512d xb2_im = load_aligned(&tile_in_im[10 * tile_size + k]);
+        
+        _mm_prefetch((const char *)&tile_in_re[18 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[18 * tile_size + k], _MM_HINT_T0);
+        
         __m512d xb3_re = load_aligned(&tile_in_re[11 * tile_size + k]);
         __m512d xb3_im = load_aligned(&tile_in_im[11 * tile_size + k]);
         __m512d xb4_re = load_aligned(&tile_in_re[12 * tile_size + k]);
         __m512d xb4_im = load_aligned(&tile_in_im[12 * tile_size + k]);
+        
+        _mm_prefetch((const char *)&tile_in_re[19 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[19 * tile_size + k], _MM_HINT_T0);
+        
         __m512d xb5_re = load_aligned(&tile_in_re[13 * tile_size + k]);
         __m512d xb5_im = load_aligned(&tile_in_im[13 * tile_size + k]);
         __m512d xb6_re = load_aligned(&tile_in_re[14 * tile_size + k]);
@@ -2580,28 +2658,42 @@ FORCE_INLINE void radix32_fused_butterfly_forward_avx512(
                 sign_mask, sqrt2_2);
         }
 
-        //----------------------------------------------------------------------
-        // GROUP C: Load inputs
+         //----------------------------------------------------------------------
+        // GROUP C: Load inputs (prefetches already issued during B)
         //----------------------------------------------------------------------
         __m512d xc0_re = load_aligned(&tile_in_re[16 * tile_size + k]);
         __m512d xc0_im = load_aligned(&tile_in_im[16 * tile_size + k]);
         __m512d xc1_re = load_aligned(&tile_in_re[17 * tile_size + k]);
         __m512d xc1_im = load_aligned(&tile_in_im[17 * tile_size + k]);
 
-        // SOFTWARE PIPELINING: Prefetch group D
+        // SOFTWARE PIPELINING: Prefetch group D while loading C
         _mm_prefetch((const char *)&tile_in_re[24 * tile_size + k], _MM_HINT_T0);
         _mm_prefetch((const char *)&tile_in_im[24 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_re[25 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[25 * tile_size + k], _MM_HINT_T0);
 
         __m512d xc2_re = load_aligned(&tile_in_re[18 * tile_size + k]);
         __m512d xc2_im = load_aligned(&tile_in_im[18 * tile_size + k]);
+        
+        _mm_prefetch((const char *)&tile_in_re[26 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[26 * tile_size + k], _MM_HINT_T0);
+        
         __m512d xc3_re = load_aligned(&tile_in_re[19 * tile_size + k]);
         __m512d xc3_im = load_aligned(&tile_in_im[19 * tile_size + k]);
         __m512d xc4_re = load_aligned(&tile_in_re[20 * tile_size + k]);
         __m512d xc4_im = load_aligned(&tile_in_im[20 * tile_size + k]);
+        
+        _mm_prefetch((const char *)&tile_in_re[27 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[27 * tile_size + k], _MM_HINT_T0);
+        
         __m512d xc5_re = load_aligned(&tile_in_re[21 * tile_size + k]);
         __m512d xc5_im = load_aligned(&tile_in_im[21 * tile_size + k]);
         __m512d xc6_re = load_aligned(&tile_in_re[22 * tile_size + k]);
         __m512d xc6_im = load_aligned(&tile_in_im[22 * tile_size + k]);
+        
+        _mm_prefetch((const char *)&tile_in_re[28 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[28 * tile_size + k], _MM_HINT_T0);
+        
         __m512d xc7_re = load_aligned(&tile_in_re[23 * tile_size + k]);
         __m512d xc7_im = load_aligned(&tile_in_im[23 * tile_size + k]);
 
@@ -2643,16 +2735,32 @@ FORCE_INLINE void radix32_fused_butterfly_forward_avx512(
         }
 
         //----------------------------------------------------------------------
-        // GROUP D: Load inputs
+        // GROUP D: Load inputs (prefetches already issued during C)
         //----------------------------------------------------------------------
         __m512d xd0_re = load_aligned(&tile_in_re[24 * tile_size + k]);
         __m512d xd0_im = load_aligned(&tile_in_im[24 * tile_size + k]);
         __m512d xd1_re = load_aligned(&tile_in_re[25 * tile_size + k]);
         __m512d xd1_im = load_aligned(&tile_in_im[25 * tile_size + k]);
+        
+        // Prefetch remaining output stripes for positions 4,5,6,7
+        if (k + 8 < tile_size)
+        {
+            PREFETCH_OUTPUT_STRIPES(1, 8); // Position 1
+            PREFETCH_OUTPUT_STRIPES(5, 8); // Position 5
+        }
+        
         __m512d xd2_re = load_aligned(&tile_in_re[26 * tile_size + k]);
         __m512d xd2_im = load_aligned(&tile_in_im[26 * tile_size + k]);
         __m512d xd3_re = load_aligned(&tile_in_re[27 * tile_size + k]);
         __m512d xd3_im = load_aligned(&tile_in_im[27 * tile_size + k]);
+        
+        // Continue output prefetches
+        if (k + 8 < tile_size)
+        {
+            PREFETCH_OUTPUT_STRIPES(3, 8); // Position 3
+            PREFETCH_OUTPUT_STRIPES(7, 8); // Position 7
+        }
+        
         __m512d xd4_re = load_aligned(&tile_in_re[28 * tile_size + k]);
         __m512d xd4_im = load_aligned(&tile_in_im[28 * tile_size + k]);
         __m512d xd5_re = load_aligned(&tile_in_re[29 * tile_size + k]);
@@ -2854,6 +2962,29 @@ FORCE_INLINE void radix32_fused_butterfly_backward_avx512(
 
     for (; k < k_main; k += 8)
     {
+
+        //==========================================================================
+        // PREFETCH STRATEGY (before any computation)
+        //==========================================================================
+
+        // Prefetch next k-iteration (all groups A, B, C, D)
+        if (k + 16 < k_main)
+        {
+            PREFETCH_NEXT_K_ITERATION(0, 16);  // Group A
+            PREFETCH_NEXT_K_ITERATION(8, 16);  // Group B
+            PREFETCH_NEXT_K_ITERATION(16, 16); // Group C
+            PREFETCH_NEXT_K_ITERATION(24, 16); // Group D
+        }
+
+        // Prefetch output buffers for positions 0, 1, 2, 3
+        if (k + 8 < tile_size)
+        {
+            PREFETCH_OUTPUT_STRIPES(0, 8); // Position 0
+            PREFETCH_OUTPUT_STRIPES(4, 8); // Position 4
+            PREFETCH_OUTPUT_STRIPES(2, 8); // Position 2
+            PREFETCH_OUTPUT_STRIPES(6, 8); // Position 6
+        }
+
         __m512d A_re[8], A_im[8];
         __m512d B_re[8], B_im[8];
         __m512d C_re[8], C_im[8];
@@ -2863,17 +2994,26 @@ FORCE_INLINE void radix32_fused_butterfly_backward_avx512(
         // PHASE 1: RADIX-8 PAIR EMITTERS (BACKWARD - TWO-WAVE ARCHITECTURE)
         //======================================================================
 
-        //----------------------------------------------------------------------
+         //----------------------------------------------------------------------
         // GROUP A: Load inputs with software pipelining
         //----------------------------------------------------------------------
         __m512d xa0_re = load_aligned(&tile_in_re[0 * tile_size + k]);
         __m512d xa0_im = load_aligned(&tile_in_im[0 * tile_size + k]);
+
+        // Prefetch group B stripe 1 while loading A stripe 0
+        _mm_prefetch((const char *)&tile_in_re[9 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[9 * tile_size + k], _MM_HINT_T0);
+
         __m512d xa1_re = load_aligned(&tile_in_re[1 * tile_size + k]);
         __m512d xa1_im = load_aligned(&tile_in_im[1 * tile_size + k]);
 
         // SOFTWARE PIPELINING: Start loading group B
         __m512d xb0_re = load_aligned(&tile_in_re[8 * tile_size + k]);
         __m512d xb0_im = load_aligned(&tile_in_im[8 * tile_size + k]);
+
+        // Continue loading A with more B prefetches
+        _mm_prefetch((const char *)&tile_in_re[10 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[10 * tile_size + k], _MM_HINT_T0);
 
         __m512d xa2_re = load_aligned(&tile_in_re[2 * tile_size + k]);
         __m512d xa2_im = load_aligned(&tile_in_im[2 * tile_size + k]);
@@ -2925,22 +3065,32 @@ FORCE_INLINE void radix32_fused_butterfly_backward_avx512(
                 sign_mask, sqrt2_2);
         }
 
-        //----------------------------------------------------------------------
+       //----------------------------------------------------------------------
         // GROUP B: Continue loading
         //----------------------------------------------------------------------
         __m512d xb1_re = load_aligned(&tile_in_re[9 * tile_size + k]);
         __m512d xb1_im = load_aligned(&tile_in_im[9 * tile_size + k]);
 
-        // SOFTWARE PIPELINING: Prefetch group C
+        // SOFTWARE PIPELINING: Prefetch group C while loading B
         _mm_prefetch((const char *)&tile_in_re[16 * tile_size + k], _MM_HINT_T0);
         _mm_prefetch((const char *)&tile_in_im[16 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_re[17 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[17 * tile_size + k], _MM_HINT_T0);
 
         __m512d xb2_re = load_aligned(&tile_in_re[10 * tile_size + k]);
         __m512d xb2_im = load_aligned(&tile_in_im[10 * tile_size + k]);
+
+        _mm_prefetch((const char *)&tile_in_re[18 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[18 * tile_size + k], _MM_HINT_T0);
+
         __m512d xb3_re = load_aligned(&tile_in_re[11 * tile_size + k]);
         __m512d xb3_im = load_aligned(&tile_in_im[11 * tile_size + k]);
         __m512d xb4_re = load_aligned(&tile_in_re[12 * tile_size + k]);
         __m512d xb4_im = load_aligned(&tile_in_im[12 * tile_size + k]);
+
+        _mm_prefetch((const char *)&tile_in_re[19 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[19 * tile_size + k], _MM_HINT_T0);
+
         __m512d xb5_re = load_aligned(&tile_in_re[13 * tile_size + k]);
         __m512d xb5_im = load_aligned(&tile_in_im[13 * tile_size + k]);
         __m512d xb6_re = load_aligned(&tile_in_re[14 * tile_size + k]);
@@ -2986,29 +3136,44 @@ FORCE_INLINE void radix32_fused_butterfly_backward_avx512(
         }
 
         //----------------------------------------------------------------------
-        // GROUP C: Load inputs
+        // GROUP C: Load inputs (prefetches already issued during B)
         //----------------------------------------------------------------------
         __m512d xc0_re = load_aligned(&tile_in_re[16 * tile_size + k]);
         __m512d xc0_im = load_aligned(&tile_in_im[16 * tile_size + k]);
         __m512d xc1_re = load_aligned(&tile_in_re[17 * tile_size + k]);
         __m512d xc1_im = load_aligned(&tile_in_im[17 * tile_size + k]);
 
-        // SOFTWARE PIPELINING: Prefetch group D
+        // SOFTWARE PIPELINING: Prefetch group D while loading C
         _mm_prefetch((const char *)&tile_in_re[24 * tile_size + k], _MM_HINT_T0);
         _mm_prefetch((const char *)&tile_in_im[24 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_re[25 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[25 * tile_size + k], _MM_HINT_T0);
 
         __m512d xc2_re = load_aligned(&tile_in_re[18 * tile_size + k]);
         __m512d xc2_im = load_aligned(&tile_in_im[18 * tile_size + k]);
+
+        _mm_prefetch((const char *)&tile_in_re[26 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[26 * tile_size + k], _MM_HINT_T0);
+
         __m512d xc3_re = load_aligned(&tile_in_re[19 * tile_size + k]);
         __m512d xc3_im = load_aligned(&tile_in_im[19 * tile_size + k]);
         __m512d xc4_re = load_aligned(&tile_in_re[20 * tile_size + k]);
         __m512d xc4_im = load_aligned(&tile_in_im[20 * tile_size + k]);
+
+        _mm_prefetch((const char *)&tile_in_re[27 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[27 * tile_size + k], _MM_HINT_T0);
+
         __m512d xc5_re = load_aligned(&tile_in_re[21 * tile_size + k]);
         __m512d xc5_im = load_aligned(&tile_in_im[21 * tile_size + k]);
         __m512d xc6_re = load_aligned(&tile_in_re[22 * tile_size + k]);
         __m512d xc6_im = load_aligned(&tile_in_im[22 * tile_size + k]);
+
+        _mm_prefetch((const char *)&tile_in_re[28 * tile_size + k], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tile_in_im[28 * tile_size + k], _MM_HINT_T0);
+
         __m512d xc7_re = load_aligned(&tile_in_re[23 * tile_size + k]);
         __m512d xc7_im = load_aligned(&tile_in_im[23 * tile_size + k]);
+
 
         // Even wave
         {
@@ -3048,24 +3213,31 @@ FORCE_INLINE void radix32_fused_butterfly_backward_avx512(
         }
 
         //----------------------------------------------------------------------
-        // GROUP D: Load inputs
+        // GROUP D: Load inputs (prefetches already issued during C)
         //----------------------------------------------------------------------
         __m512d xd0_re = load_aligned(&tile_in_re[24 * tile_size + k]);
         __m512d xd0_im = load_aligned(&tile_in_im[24 * tile_size + k]);
         __m512d xd1_re = load_aligned(&tile_in_re[25 * tile_size + k]);
         __m512d xd1_im = load_aligned(&tile_in_im[25 * tile_size + k]);
+
+        // Prefetch remaining output stripes for positions 4,5,6,7
+        if (k + 8 < tile_size)
+        {
+            PREFETCH_OUTPUT_STRIPES(1, 8); // Position 1
+            PREFETCH_OUTPUT_STRIPES(5, 8); // Position 5
+        }
+
         __m512d xd2_re = load_aligned(&tile_in_re[26 * tile_size + k]);
         __m512d xd2_im = load_aligned(&tile_in_im[26 * tile_size + k]);
         __m512d xd3_re = load_aligned(&tile_in_re[27 * tile_size + k]);
         __m512d xd3_im = load_aligned(&tile_in_im[27 * tile_size + k]);
-        __m512d xd4_re = load_aligned(&tile_in_re[28 * tile_size + k]);
-        __m512d xd4_im = load_aligned(&tile_in_im[28 * tile_size + k]);
-        __m512d xd5_re = load_aligned(&tile_in_re[29 * tile_size + k]);
-        __m512d xd5_im = load_aligned(&tile_in_im[29 * tile_size + k]);
-        __m512d xd6_re = load_aligned(&tile_in_re[30 * tile_size + k]);
-        __m512d xd6_im = load_aligned(&tile_in_im[30 * tile_size + k]);
-        __m512d xd7_re = load_aligned(&tile_in_re[31 * tile_size + k]);
-        __m512d xd7_im = load_aligned(&tile_in_im[31 * tile_size + k]);
+
+        // Continue output prefetches
+        if (k + 8 < tile_size)
+        {
+            PREFETCH_OUTPUT_STRIPES(3, 8); // Position 3
+            PREFETCH_OUTPUT_STRIPES(7, 8); // Position 7
+        }
 
         // Even wave
         {
