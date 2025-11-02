@@ -993,7 +993,9 @@ FORCE_INLINE void store_16_lanes_soa_avx2_stream(
 
 /**
  * @brief Optional cache line flush after NT stores
- * FIX: Only call clflushopt if CPU supports it
+ * Flushes ALL 16 SoA rows for each 64B line across K.
+ * Uses CLFLUSHOPT when available, falls back to CLFLUSH otherwise.
+ * Always issues a post-flush SFENCE to ensure global visibility.
  */
 FORCE_INLINE void radix16_flush_output_cache_lines_avx2(
     size_t K,
@@ -1001,27 +1003,40 @@ FORCE_INLINE void radix16_flush_output_cache_lines_avx2(
     const double *out_im,
     bool should_flush)
 {
-    if (!should_flush)
+    if (!should_flush || K == 0 || !out_re || !out_im)
         return;
-
-    // FIX: Gate on CPUID support
-    static int has_clflush = -1; // -1 = unknown, 0 = no, 1 = yes
-    if (has_clflush < 0)
+    // Detect once: whether CLFLUSHOPT is supported
+    static int has_clflushopt_cached = -1; // -1 = unknown, 0 = no, 1 = yes
+    if (has_clflushopt_cached < 0)
     {
-        has_clflush = radix16_has_clflushopt() ? 1 : 0;
+        has_clflushopt_cached = radix16_has_clflushopt() ? 1 : 0;
     }
-
-    if (has_clflush == 0)
-        return;
-
-    // Flush every cache line (64 bytes = 8 doubles)
-    for (size_t k = 0; k < K; k += 8)
+    // 64-byte cache lines => 8 doubles per line
+    // SoA addressing: element (r,k) is at base[k + r*K]
+    if (has_clflushopt_cached)
     {
-        for (int r = 0; r < 16; r += 8)
+        for (size_t k = 0; k < K; k += 8)
         {
-            _mm_clflushopt((const void *)&out_re[k + r * K]);
-            _mm_clflushopt((const void *)&out_im[k + r * K]);
+            for (int r = 0; r < 16; r++)
+            {
+                _mm_clflushopt((const void *)&out_re[k + (size_t)r * K]);
+                _mm_clflushopt((const void *)&out_im[k + (size_t)r * K]);
+            }
         }
+        _mm_sfence(); // ensure all clflushopt ops are completed
+    }
+    else
+    {
+        // Fallback: CLFLUSH (older CPUs)
+        for (size_t k = 0; k < K; k += 8)
+        {
+            for (int r = 0; r < 16; r++)
+            {
+                _mm_clflush((const void *)&out_re[k + (size_t)r * K]);
+                _mm_clflush((const void *)&out_im[k + (size_t)r * K]);
+            }
+        }
+        _mm_sfence(); // complete flushes before returning
     }
 }
 
@@ -1318,7 +1333,7 @@ FORCE_INLINE void radix16_init_recurrence_state_avx2(
  * @brief Apply stage twiddles with recurrence + ADVANCE
  * OPT #10 - Deltas in registers (passed by caller once per tile)
  * OPT #21 - Unrolled advance loop for ILP
- * FIX: Removed unused k_tile_start parameter
+ * FIX: 4-way unroll balances ILP with register pressure (8 YMM vs 30)
  */
 TARGET_AVX2_FMA
 FORCE_INLINE void apply_stage_twiddles_recur_avx2(
@@ -1330,7 +1345,6 @@ FORCE_INLINE void apply_stage_twiddles_recur_avx2(
 {
     if (is_tile_start)
     {
-        // REFRESH: Load accurate twiddles at tile boundary
         radix16_init_recurrence_state_avx2(k, stage_tw->K, stage_tw,
                                            w_state_re, w_state_im);
     }
@@ -1398,30 +1412,44 @@ FORCE_INLINE void apply_stage_twiddles_recur_avx2(
     x_re[12] = tr;
     x_im[12] = ti;
 
-    // OPT #21 - ADVANCE: Unrolled for ILP (all 15 multiplications independent!)
-    __m256d new_re[15], new_im[15];
+    // OPT #21 - ADVANCE: 4-way unrolled for optimal ILP + register pressure balance
+    // 15 twiddles = 3 iterations of 4-way + tail of 3
 
-    cmul_fma_soa_avx2(w_state_re[0], w_state_im[0], delta_w_re[0], delta_w_im[0], &new_re[0], &new_im[0]);
-    cmul_fma_soa_avx2(w_state_re[1], w_state_im[1], delta_w_re[1], delta_w_im[1], &new_re[1], &new_im[1]);
-    cmul_fma_soa_avx2(w_state_re[2], w_state_im[2], delta_w_re[2], delta_w_im[2], &new_re[2], &new_im[2]);
-    cmul_fma_soa_avx2(w_state_re[3], w_state_im[3], delta_w_re[3], delta_w_im[3], &new_re[3], &new_im[3]);
-    cmul_fma_soa_avx2(w_state_re[4], w_state_im[4], delta_w_re[4], delta_w_im[4], &new_re[4], &new_im[4]);
-    cmul_fma_soa_avx2(w_state_re[5], w_state_im[5], delta_w_re[5], delta_w_im[5], &new_re[5], &new_im[5]);
-    cmul_fma_soa_avx2(w_state_re[6], w_state_im[6], delta_w_re[6], delta_w_im[6], &new_re[6], &new_im[6]);
-    cmul_fma_soa_avx2(w_state_re[7], w_state_im[7], delta_w_re[7], delta_w_im[7], &new_re[7], &new_im[7]);
-    cmul_fma_soa_avx2(w_state_re[8], w_state_im[8], delta_w_re[8], delta_w_im[8], &new_re[8], &new_im[8]);
-    cmul_fma_soa_avx2(w_state_re[9], w_state_im[9], delta_w_re[9], delta_w_im[9], &new_re[9], &new_im[9]);
-    cmul_fma_soa_avx2(w_state_re[10], w_state_im[10], delta_w_re[10], delta_w_im[10], &new_re[10], &new_im[10]);
-    cmul_fma_soa_avx2(w_state_re[11], w_state_im[11], delta_w_re[11], delta_w_im[11], &new_re[11], &new_im[11]);
-    cmul_fma_soa_avx2(w_state_re[12], w_state_im[12], delta_w_re[12], delta_w_im[12], &new_re[12], &new_im[12]);
-    cmul_fma_soa_avx2(w_state_re[13], w_state_im[13], delta_w_re[13], delta_w_im[13], &new_re[13], &new_im[13]);
-    cmul_fma_soa_avx2(w_state_re[14], w_state_im[14], delta_w_re[14], delta_w_im[14], &new_re[14], &new_im[14]);
-
-    // Copy back
-    for (int r = 0; r < 15; r++)
+    // Main loop: process 4 at a time (r = 0,4,8)
+    for (int r = 0; r < 12; r += 4)
     {
-        w_state_re[r] = new_re[r];
-        w_state_im[r] = new_im[r];
+        __m256d nr0, ni0, nr1, ni1, nr2, ni2, nr3, ni3;
+
+        // These 4 cmul calls are independent - scheduler can overlap them!
+        cmul_fma_soa_avx2(w_state_re[r + 0], w_state_im[r + 0], delta_w_re[r + 0], delta_w_im[r + 0], &nr0, &ni0);
+        cmul_fma_soa_avx2(w_state_re[r + 1], w_state_im[r + 1], delta_w_re[r + 1], delta_w_im[r + 1], &nr1, &ni1);
+        cmul_fma_soa_avx2(w_state_re[r + 2], w_state_im[r + 2], delta_w_re[r + 2], delta_w_im[r + 2], &nr2, &ni2);
+        cmul_fma_soa_avx2(w_state_re[r + 3], w_state_im[r + 3], delta_w_re[r + 3], delta_w_im[r + 3], &nr3, &ni3);
+
+        // Write back (compiler will optimize this)
+        w_state_re[r + 0] = nr0;
+        w_state_im[r + 0] = ni0;
+        w_state_re[r + 1] = nr1;
+        w_state_im[r + 1] = ni1;
+        w_state_re[r + 2] = nr2;
+        w_state_im[r + 2] = ni2;
+        w_state_re[r + 3] = nr3;
+        w_state_im[r + 3] = ni3;
+    }
+
+    // Tail: process remaining 3 (r = 12,13,14)
+    {
+        __m256d nr0, ni0, nr1, ni1, nr2, ni2;
+        cmul_fma_soa_avx2(w_state_re[12], w_state_im[12], delta_w_re[12], delta_w_im[12], &nr0, &ni0);
+        cmul_fma_soa_avx2(w_state_re[13], w_state_im[13], delta_w_re[13], delta_w_im[13], &nr1, &ni1);
+        cmul_fma_soa_avx2(w_state_re[14], w_state_im[14], delta_w_re[14], delta_w_im[14], &nr2, &ni2);
+
+        w_state_re[12] = nr0;
+        w_state_im[12] = ni0;
+        w_state_re[13] = nr1;
+        w_state_im[13] = ni1;
+        w_state_re[14] = nr2;
+        w_state_im[14] = ni2;
     }
 }
 
@@ -2447,7 +2475,7 @@ FORCE_INLINE void radix16_stage_dit_backward_small_k_avx2(
  * OPT #24 - Fast path for small K
  */
 TARGET_AVX2_FMA
-void radix16_stage_dit_forward_soa_avx2_optimized(
+void radix16_stage_dit_forward_avx2(
     size_t K,
     const double *RESTRICT in_re,
     const double *RESTRICT in_im,
@@ -2497,7 +2525,7 @@ void radix16_stage_dit_forward_soa_avx2_optimized(
  * @brief Backward transform
  */
 TARGET_AVX2_FMA
-void radix16_stage_dit_backward_soa_avx2_optimized(
+void radix16_stage_dit_backward_avx2(
     size_t K,
     const double *RESTRICT in_re,
     const double *RESTRICT in_im,

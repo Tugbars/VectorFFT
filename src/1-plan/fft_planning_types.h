@@ -163,30 +163,16 @@ typedef fft_plan* fft_object;
 typedef struct {
     int prime;                 ///< Prime radix (7, 11, 13, 17, 19, 23, ..., 67)
     
-    // ═══════════════════════════════════════════════════════════════════
-    // ⚡ UPDATED: Convolution twiddles now use pure SoA
-    // ═══════════════════════════════════════════════════════════════════
     
     /**
      * @brief Forward convolution twiddles in SoA format
      * 
-     * **Old:** fft_data *conv_tw_fwd [P-1 elements, AoS]
-     * **New:** fft_twiddles_soa *conv_tw_fwd (pure SoA)
-     * 
-     * Layout: tw->re[q] = real(exp(-2πi × perm_out[q] / P))
-     *         tw->im[q] = imag(exp(-2πi × perm_out[q] / P))
-     * where q ∈ [0, P-2]
      */
     fft_twiddles_soa *conv_tw_fwd;  // ⚡ CHANGED from fft_data*
     
     /**
      * @brief Inverse convolution twiddles in SoA format
      * 
-     * **Old:** fft_data *conv_tw_inv [P-1 elements, AoS]
-     * **New:** fft_twiddles_soa *conv_tw_inv (pure SoA)
-     * 
-     * Layout: tw->re[q] = real(exp(+2πi × perm_out[q] / P))
-     *         tw->im[q] = imag(exp(+2πi × perm_out[q] / P))
      */
     fft_twiddles_soa *conv_tw_inv;  // ⚡ CHANGED from fft_data*
     

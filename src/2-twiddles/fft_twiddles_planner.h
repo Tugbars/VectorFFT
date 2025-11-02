@@ -10,28 +10,6 @@
  * Real work happens in:
  * - fft_twiddles_hybrid.c     (canonical storage)
  * - fft_twiddles_reorganization.c (blocked layout materialization)
- * 
- * **Usage Pattern:**
- * ```c
- * // Get stage twiddles (auto-materializes with optimal layout)
- * twiddle_handle_t *tw = get_stage_twiddles(N, radix, FFT_FORWARD);
- * 
- * // Use directly for radix-2/4/5 (raw pointers):
- * const double *w1_re = tw->materialized_re;
- * const double *w1_im = tw->materialized_im;
- * 
- * // Or use view helper for radix-2:
- * fft_twiddles_soa_view view;
- * twiddle_get_soa_view(tw, &view);
- * radix2_stage(..., &view);
- * 
- * // Or use bridge for radix-8/16:
- * radix8_stage_twiddles_blocked4_t stage_tw;
- * radix8_prepare_twiddles_avx512(tw, &stage_tw);
- * 
- * // Cleanup
- * twiddle_destroy(tw);
- * ```
  */
 
 #ifndef FFT_TWIDDLES_PLANNER_API_H
