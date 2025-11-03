@@ -94,64 +94,46 @@
 // PASS 2 (CROSS-GROUP) GEOMETRIC CONSTANTS
 //==============================================================================
 
-/**
- * @brief Cross-group twiddle constants for 8 positions
- *
- * After radix-8 on groups A,B,C,D, position m combines:
- *   [A_m, B_m × W_32^m, C_m × W_32^(2m), D_m × W_32^(3m)]
- *
- * For power-of-2 positions, these map to geometric constants:
- * - Position 1: W_32, W_32², W_32³ (generic, but constant in k)
- * - Position 2: W_16, W_16², W_16³
- * - Position 4: W_8, W_8², W_8³ (i, -1, W_8*)
- *
- * For positions 3,5,6,7: Compute W, W², W³ via mini-recurrence
- */
 typedef struct
 {
     // Position 0: Identity (no twiddles needed)
 
     // Position 1: W_32^g for g=1,2,3
-    ALIGNAS(64)
-    __m512d pos1_w1_re, pos1_w1_im; ///< W_32
-    ALIGNAS(64)
-    __m512d pos1_w2_re, pos1_w2_im; ///< W_32²
-    ALIGNAS(64)
-    __m512d pos1_w3_re, pos1_w3_im; ///< W_32³
+    ALIGNAS(64) __m512d pos1_w1_re, pos1_w1_im;
+    ALIGNAS(64) __m512d pos1_w2_re, pos1_w2_im;
+    ALIGNAS(64) __m512d pos1_w3_re, pos1_w3_im;
 
     // Position 2: W_16^g for g=1,2,3
-    ALIGNAS(64)
-    __m512d pos2_w1_re, pos2_w1_im; ///< W_16
-    ALIGNAS(64)
-    __m512d pos2_w2_re, pos2_w2_im; ///< W_16²
-    ALIGNAS(64)
-    __m512d pos2_w3_re, pos2_w3_im; ///< W_16³
+    ALIGNAS(64) __m512d pos2_w1_re, pos2_w1_im;
+    ALIGNAS(64) __m512d pos2_w2_re, pos2_w2_im;
+    ALIGNAS(64) __m512d pos2_w3_re, pos2_w3_im;
 
-    // Position 3: W_32^3, W_32^6, W_32^9 (mini-recurrence base)
-    ALIGNAS(64)
-    __m512d pos3_w_re, pos3_w_im; ///< W_32^3 (seed for W², W³)
+    // Position 3: W_32^3, W_32^6, W_32^9 - NOW PRECOMPUTED ✅
+    ALIGNAS(64) __m512d pos3_w1_re, pos3_w1_im;
+    ALIGNAS(64) __m512d pos3_w2_re, pos3_w2_im;
+    ALIGNAS(64) __m512d pos3_w3_re, pos3_w3_im;
 
     // Position 4: W_8^g for g=1,2,3
-    ALIGNAS(64)
-    __m512d pos4_w1_re, pos4_w1_im; ///< W_8 = √2/2(1-i)
-    ALIGNAS(64)
-    __m512d pos4_w2_re, pos4_w2_im; ///< W_8² = i
-    ALIGNAS(64)
-    __m512d pos4_w3_re, pos4_w3_im; ///< W_8³
+    ALIGNAS(64) __m512d pos4_w1_re, pos4_w1_im;
+    ALIGNAS(64) __m512d pos4_w2_re, pos4_w2_im;
+    ALIGNAS(64) __m512d pos4_w3_re, pos4_w3_im;
 
-    // Position 5: W_32^5 (seed)
-    ALIGNAS(64)
-    __m512d pos5_w_re, pos5_w_im;
+    // Position 5: W_32^5, W_32^10, W_32^15 - NOW PRECOMPUTED ✅
+    ALIGNAS(64) __m512d pos5_w1_re, pos5_w1_im;
+    ALIGNAS(64) __m512d pos5_w2_re, pos5_w2_im;
+    ALIGNAS(64) __m512d pos5_w3_re, pos5_w3_im;
 
-    // Position 6: W_32^6 (seed)
-    ALIGNAS(64)
-    __m512d pos6_w_re, pos6_w_im;
+    // Position 6: W_32^6, W_32^12, W_32^18 - NOW PRECOMPUTED ✅
+    ALIGNAS(64) __m512d pos6_w1_re, pos6_w1_im;
+    ALIGNAS(64) __m512d pos6_w2_re, pos6_w2_im;
+    ALIGNAS(64) __m512d pos6_w3_re, pos6_w3_im;
 
-    // Position 7: W_32^7 (seed)
-    ALIGNAS(64)
-    __m512d pos7_w_re, pos7_w_im;
+    // Position 7: W_32^7, W_32^14, W_32^21 - NOW PRECOMPUTED ✅
+    ALIGNAS(64) __m512d pos7_w1_re, pos7_w1_im;
+    ALIGNAS(64) __m512d pos7_w2_re, pos7_w2_im;
+    ALIGNAS(64) __m512d pos7_w3_re, pos7_w3_im;
 
-    bool is_forward; ///< True: forward FFT, False: inverse (conjugate twiddles)
+    bool is_forward;
 } radix32_pass2_plan_t;
 
 //==============================================================================
@@ -193,24 +175,22 @@ static inline int radix32_prepare_pass2_plan(
         return -1;
 
     plan->is_forward = is_forward;
-    const double sign = is_forward ? 1.0 : -1.0; // Conjugate for IFFT
+    const double sign = is_forward ? 1.0 : -1.0;
 
-    // Mathematical constants
     const double PI = 3.14159265358979323846;
-    const double SQRT2_2 = 0.70710678118654752440084436210485; // √2/2
 
     //==========================================================================
     // POSITION 1: W_32, W_32², W_32³
     //==========================================================================
-    double angle1 = -sign * 2.0 * PI / 32.0; // -2π/32
+    double angle1 = -sign * 2.0 * PI / 32.0;
     plan->pos1_w1_re = _mm512_set1_pd(cos(angle1));
     plan->pos1_w1_im = _mm512_set1_pd(sin(angle1));
 
-    double angle2 = -sign * 4.0 * PI / 32.0; // -2π/16
+    double angle2 = -sign * 4.0 * PI / 32.0;
     plan->pos1_w2_re = _mm512_set1_pd(cos(angle2));
     plan->pos1_w2_im = _mm512_set1_pd(sin(angle2));
 
-    double angle3 = -sign * 6.0 * PI / 32.0; // -3π/16
+    double angle3 = -sign * 6.0 * PI / 32.0;
     plan->pos1_w3_re = _mm512_set1_pd(cos(angle3));
     plan->pos1_w3_im = _mm512_set1_pd(sin(angle3));
 
@@ -230,23 +210,27 @@ static inline int radix32_prepare_pass2_plan(
     plan->pos2_w3_im = _mm512_set1_pd(sin(angle_w16_3));
 
     //==========================================================================
-    // POSITION 3: W_32^3 (seed for mini-recurrence)
+    // POSITION 3: W_32^3, W_32^6, W_32^9 - PRECOMPUTE ALL THREE ✅
     //==========================================================================
-    double angle_p3 = -sign * 3.0 * 2.0 * PI / 32.0;
-    plan->pos3_w_re = _mm512_set1_pd(cos(angle_p3));
-    plan->pos3_w_im = _mm512_set1_pd(sin(angle_p3));
+    {
+        double angle_p3 = -sign * 3.0 * 2.0 * PI / 32.0;
+        __m512d seed_re = _mm512_set1_pd(cos(angle_p3));
+        __m512d seed_im = _mm512_set1_pd(sin(angle_p3));
+        
+        cross_twiddle_powers3_optimized(
+            seed_re, seed_im,
+            &plan->pos3_w1_re, &plan->pos3_w1_im,
+            &plan->pos3_w2_re, &plan->pos3_w2_im,
+            &plan->pos3_w3_re, &plan->pos3_w3_im);
+    }
 
     //==========================================================================
     // POSITION 4: W_32^4, W_32^8, W_32^12 = W_8^1, W_8^2, W_8^3
-    // CORRECTED: Use angle computation to match convention of other positions
     //==========================================================================
     {
-        // Position 4 corresponds to k = 4, 8, 12 in W_32^k
-        // Following your convention: angle = -sign * 2π * k / 32
-
-        double angle_4 = -sign * 2.0 * PI * 4.0 / 32.0;   // -sign * π/4
-        double angle_8 = -sign * 2.0 * PI * 8.0 / 32.0;   // -sign * π/2
-        double angle_12 = -sign * 2.0 * PI * 12.0 / 32.0; // -sign * 3π/4
+        double angle_4 = -sign * 2.0 * PI * 4.0 / 32.0;
+        double angle_8 = -sign * 2.0 * PI * 8.0 / 32.0;
+        double angle_12 = -sign * 2.0 * PI * 12.0 / 32.0;
 
         plan->pos4_w1_re = _mm512_set1_pd(cos(angle_4));
         plan->pos4_w1_im = _mm512_set1_pd(sin(angle_4));
@@ -259,19 +243,49 @@ static inline int radix32_prepare_pass2_plan(
     }
 
     //==========================================================================
-    // POSITIONS 5, 6, 7: Seeds for mini-recurrence
+    // POSITION 5: W_32^5, W_32^10, W_32^15 - PRECOMPUTE ALL THREE ✅
     //==========================================================================
-    double angle_p5 = -sign * 5.0 * 2.0 * PI / 32.0;
-    plan->pos5_w_re = _mm512_set1_pd(cos(angle_p5));
-    plan->pos5_w_im = _mm512_set1_pd(sin(angle_p5));
+    {
+        double angle_p5 = -sign * 5.0 * 2.0 * PI / 32.0;
+        __m512d seed_re = _mm512_set1_pd(cos(angle_p5));
+        __m512d seed_im = _mm512_set1_pd(sin(angle_p5));
+        
+        cross_twiddle_powers3_optimized(
+            seed_re, seed_im,
+            &plan->pos5_w1_re, &plan->pos5_w1_im,
+            &plan->pos5_w2_re, &plan->pos5_w2_im,
+            &plan->pos5_w3_re, &plan->pos5_w3_im);
+    }
 
-    double angle_p6 = -sign * 6.0 * 2.0 * PI / 32.0;
-    plan->pos6_w_re = _mm512_set1_pd(cos(angle_p6));
-    plan->pos6_w_im = _mm512_set1_pd(sin(angle_p6));
+    //==========================================================================
+    // POSITION 6: W_32^6, W_32^12, W_32^18 - PRECOMPUTE ALL THREE ✅
+    //==========================================================================
+    {
+        double angle_p6 = -sign * 6.0 * 2.0 * PI / 32.0;
+        __m512d seed_re = _mm512_set1_pd(cos(angle_p6));
+        __m512d seed_im = _mm512_set1_pd(sin(angle_p6));
+        
+        cross_twiddle_powers3_optimized(
+            seed_re, seed_im,
+            &plan->pos6_w1_re, &plan->pos6_w1_im,
+            &plan->pos6_w2_re, &plan->pos6_w2_im,
+            &plan->pos6_w3_re, &plan->pos6_w3_im);
+    }
 
-    double angle_p7 = -sign * 7.0 * 2.0 * PI / 32.0;
-    plan->pos7_w_re = _mm512_set1_pd(cos(angle_p7));
-    plan->pos7_w_im = _mm512_set1_pd(sin(angle_p7));
+    //==========================================================================
+    // POSITION 7: W_32^7, W_32^14, W_32^21 - PRECOMPUTE ALL THREE ✅
+    //==========================================================================
+    {
+        double angle_p7 = -sign * 7.0 * 2.0 * PI / 32.0;
+        __m512d seed_re = _mm512_set1_pd(cos(angle_p7));
+        __m512d seed_im = _mm512_set1_pd(sin(angle_p7));
+        
+        cross_twiddle_powers3_optimized(
+            seed_re, seed_im,
+            &plan->pos7_w1_re, &plan->pos7_w1_im,
+            &plan->pos7_w2_re, &plan->pos7_w2_im,
+            &plan->pos7_w3_re, &plan->pos7_w3_im);
+    }
 
     return 0;
 }
@@ -316,6 +330,37 @@ static inline int radix32_create_plan(
         return -1;
 
     return 0;
+}
+
+//==============================================================================
+// STREAMING STORE HELPERS
+//==============================================================================
+
+/**
+ * @brief Conditional streaming store (full vector)
+ */
+TARGET_AVX512
+FORCE_INLINE void store8_pd(double *dst, __m512d v, bool use_nt)
+{
+    if (use_nt) {
+        _mm512_stream_pd(dst, v);
+    } else {
+        _mm512_store_pd(dst, v);
+    }
+}
+
+/**
+ * @brief Conditional streaming store (masked)
+ * Note: Only stream if mask is full (0xFF), otherwise regular masked store
+ */
+TARGET_AVX512
+FORCE_INLINE void mask_store8_pd(double *dst, __mmask8 mask, __m512d v, bool use_nt)
+{
+    if (use_nt && mask == 0xFF) {
+        _mm512_stream_pd(dst, v);
+    } else {
+        _mm512_mask_store_pd(dst, mask, v);
+    }
 }
 
 //==============================================================================
@@ -916,90 +961,112 @@ FORCE_INLINE void radix4_butterfly_core_bv_avx512(
 }
 
 //==============================================================================
-// HELPER FUNCTIONS - ALL FORCE-INLINED
+// HOISTED ADDRESS HELPER FUNCTIONS
 //==============================================================================
 
 /**
- * @brief Load 8 stripes (one group) with strided access
+ * @brief Load 8 stripes (one group) with precomputed base pointers
+ * 
+ * @param bases_re Array of 8 base pointers for real part
+ * @param bases_im Array of 8 base pointers for imag part
+ * @param k Index into each stripe
+ * @param x_re Output: 8 real vectors
+ * @param x_im Output: 8 imag vectors
  */
 TARGET_AVX512
-FORCE_INLINE void load_group_strided(
-    const double *RESTRICT stripe_re,
-    const double *RESTRICT stripe_im,
-    size_t group_offset,
-    size_t stride,
+FORCE_INLINE void load_group_hoisted(
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
-    __m512d *RESTRICT x_re, // [8] output
-    __m512d *RESTRICT x_im) // [8] output
+    __m512d *RESTRICT x_re,
+    __m512d *RESTRICT x_im)
 {
-    x_re[0] = _mm512_load_pd(&stripe_re[(group_offset + 0) * stride + k]);
-    x_im[0] = _mm512_load_pd(&stripe_im[(group_offset + 0) * stride + k]);
-    x_re[1] = _mm512_load_pd(&stripe_re[(group_offset + 1) * stride + k]);
-    x_im[1] = _mm512_load_pd(&stripe_im[(group_offset + 1) * stride + k]);
-    x_re[2] = _mm512_load_pd(&stripe_re[(group_offset + 2) * stride + k]);
-    x_im[2] = _mm512_load_pd(&stripe_im[(group_offset + 2) * stride + k]);
-    x_re[3] = _mm512_load_pd(&stripe_re[(group_offset + 3) * stride + k]);
-    x_im[3] = _mm512_load_pd(&stripe_im[(group_offset + 3) * stride + k]);
-    x_re[4] = _mm512_load_pd(&stripe_re[(group_offset + 4) * stride + k]);
-    x_im[4] = _mm512_load_pd(&stripe_im[(group_offset + 4) * stride + k]);
-    x_re[5] = _mm512_load_pd(&stripe_re[(group_offset + 5) * stride + k]);
-    x_im[5] = _mm512_load_pd(&stripe_im[(group_offset + 5) * stride + k]);
-    x_re[6] = _mm512_load_pd(&stripe_re[(group_offset + 6) * stride + k]);
-    x_im[6] = _mm512_load_pd(&stripe_im[(group_offset + 6) * stride + k]);
-    x_re[7] = _mm512_load_pd(&stripe_re[(group_offset + 7) * stride + k]);
-    x_im[7] = _mm512_load_pd(&stripe_im[(group_offset + 7) * stride + k]);
+    x_re[0] = _mm512_load_pd(&bases_re[0][k]);
+    x_im[0] = _mm512_load_pd(&bases_im[0][k]);
+    x_re[1] = _mm512_load_pd(&bases_re[1][k]);
+    x_im[1] = _mm512_load_pd(&bases_im[1][k]);
+    x_re[2] = _mm512_load_pd(&bases_re[2][k]);
+    x_im[2] = _mm512_load_pd(&bases_im[2][k]);
+    x_re[3] = _mm512_load_pd(&bases_re[3][k]);
+    x_im[3] = _mm512_load_pd(&bases_im[3][k]);
+    x_re[4] = _mm512_load_pd(&bases_re[4][k]);
+    x_im[4] = _mm512_load_pd(&bases_im[4][k]);
+    x_re[5] = _mm512_load_pd(&bases_re[5][k]);
+    x_im[5] = _mm512_load_pd(&bases_im[5][k]);
+    x_re[6] = _mm512_load_pd(&bases_re[6][k]);
+    x_im[6] = _mm512_load_pd(&bases_im[6][k]);
+    x_re[7] = _mm512_load_pd(&bases_re[7][k]);
+    x_im[7] = _mm512_load_pd(&bases_im[7][k]);
 }
 
 /**
- * @brief Load group with mask (tail handling)
+ * @brief Load group with mask (tail handling) using precomputed bases
  */
 TARGET_AVX512
-FORCE_INLINE void load_group_strided_masked(
-    const double *RESTRICT stripe_re,
-    const double *RESTRICT stripe_im,
-    size_t group_offset,
-    size_t stride,
+FORCE_INLINE void load_group_hoisted_masked(
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __mmask8 mask,
-    __m512d *RESTRICT x_re, // [8] output
-    __m512d *RESTRICT x_im) // [8] output
+    __m512d *RESTRICT x_re,
+    __m512d *RESTRICT x_im)
 {
-    x_re[0] = _mm512_maskz_load_pd(mask, &stripe_re[(group_offset + 0) * stride + k]);
-    x_im[0] = _mm512_maskz_load_pd(mask, &stripe_im[(group_offset + 0) * stride + k]);
-    x_re[1] = _mm512_maskz_load_pd(mask, &stripe_re[(group_offset + 1) * stride + k]);
-    x_im[1] = _mm512_maskz_load_pd(mask, &stripe_im[(group_offset + 1) * stride + k]);
-    x_re[2] = _mm512_maskz_load_pd(mask, &stripe_re[(group_offset + 2) * stride + k]);
-    x_im[2] = _mm512_maskz_load_pd(mask, &stripe_im[(group_offset + 2) * stride + k]);
-    x_re[3] = _mm512_maskz_load_pd(mask, &stripe_re[(group_offset + 3) * stride + k]);
-    x_im[3] = _mm512_maskz_load_pd(mask, &stripe_im[(group_offset + 3) * stride + k]);
-    x_re[4] = _mm512_maskz_load_pd(mask, &stripe_re[(group_offset + 4) * stride + k]);
-    x_im[4] = _mm512_maskz_load_pd(mask, &stripe_im[(group_offset + 4) * stride + k]);
-    x_re[5] = _mm512_maskz_load_pd(mask, &stripe_re[(group_offset + 5) * stride + k]);
-    x_im[5] = _mm512_maskz_load_pd(mask, &stripe_im[(group_offset + 5) * stride + k]);
-    x_re[6] = _mm512_maskz_load_pd(mask, &stripe_re[(group_offset + 6) * stride + k]);
-    x_im[6] = _mm512_maskz_load_pd(mask, &stripe_im[(group_offset + 6) * stride + k]);
-    x_re[7] = _mm512_maskz_load_pd(mask, &stripe_re[(group_offset + 7) * stride + k]);
-    x_im[7] = _mm512_maskz_load_pd(mask, &stripe_im[(group_offset + 7) * stride + k]);
+    x_re[0] = _mm512_maskz_load_pd(mask, &bases_re[0][k]);
+    x_im[0] = _mm512_maskz_load_pd(mask, &bases_im[0][k]);
+    x_re[1] = _mm512_maskz_load_pd(mask, &bases_re[1][k]);
+    x_im[1] = _mm512_maskz_load_pd(mask, &bases_im[1][k]);
+    x_re[2] = _mm512_maskz_load_pd(mask, &bases_re[2][k]);
+    x_im[2] = _mm512_maskz_load_pd(mask, &bases_im[2][k]);
+    x_re[3] = _mm512_maskz_load_pd(mask, &bases_re[3][k]);
+    x_im[3] = _mm512_maskz_load_pd(mask, &bases_im[3][k]);
+    x_re[4] = _mm512_maskz_load_pd(mask, &bases_re[4][k]);
+    x_im[4] = _mm512_maskz_load_pd(mask, &bases_im[4][k]);
+    x_re[5] = _mm512_maskz_load_pd(mask, &bases_re[5][k]);
+    x_im[5] = _mm512_maskz_load_pd(mask, &bases_im[5][k]);
+    x_re[6] = _mm512_maskz_load_pd(mask, &bases_re[6][k]);
+    x_im[6] = _mm512_maskz_load_pd(mask, &bases_im[6][k]);
+    x_re[7] = _mm512_maskz_load_pd(mask, &bases_re[7][k]);
+    x_im[7] = _mm512_maskz_load_pd(mask, &bases_im[7][k]);
 }
 
 /**
- * @brief Prefetch one group (selective stripes)
+ * @brief Prefetch one group (selective stripes) using precomputed bases
  */
 TARGET_AVX512
-FORCE_INLINE void prefetch_group_strided(
-    const double *RESTRICT stripe_re,
-    const double *RESTRICT stripe_im,
-    size_t group_offset,
-    size_t stride,
+FORCE_INLINE void prefetch_group_hoisted(
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k_offset)
 {
-    _mm_prefetch((const char *)&stripe_re[(group_offset + 0) * stride + k_offset], _MM_HINT_T0);
-    _mm_prefetch((const char *)&stripe_im[(group_offset + 0) * stride + k_offset], _MM_HINT_T0);
-    _mm_prefetch((const char *)&stripe_re[(group_offset + 1) * stride + k_offset], _MM_HINT_T0);
-    _mm_prefetch((const char *)&stripe_im[(group_offset + 1) * stride + k_offset], _MM_HINT_T0);
-    _mm_prefetch((const char *)&stripe_re[(group_offset + 4) * stride + k_offset], _MM_HINT_T0);
-    _mm_prefetch((const char *)&stripe_im[(group_offset + 4) * stride + k_offset], _MM_HINT_T0);
+    _mm_prefetch((const char *)&bases_re[0][k_offset], _MM_HINT_T0);
+    _mm_prefetch((const char *)&bases_im[0][k_offset], _MM_HINT_T0);
+    _mm_prefetch((const char *)&bases_re[1][k_offset], _MM_HINT_T0);
+    _mm_prefetch((const char *)&bases_im[1][k_offset], _MM_HINT_T0);
+    _mm_prefetch((const char *)&bases_re[4][k_offset], _MM_HINT_T0);
+    _mm_prefetch((const char *)&bases_im[4][k_offset], _MM_HINT_T0);
 }
+
+/**
+ * @brief Prefetch into L2 cache (far ahead) using precomputed bases
+ */
+TARGET_AVX512
+FORCE_INLINE void prefetch_group_hoisted_L2(
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
+    size_t k_offset)
+{
+    _mm_prefetch((const char *)&bases_re[0][k_offset], _MM_HINT_T1);
+    _mm_prefetch((const char *)&bases_im[0][k_offset], _MM_HINT_T1);
+    _mm_prefetch((const char *)&bases_re[1][k_offset], _MM_HINT_T1);
+    _mm_prefetch((const char *)&bases_im[1][k_offset], _MM_HINT_T1);
+    _mm_prefetch((const char *)&bases_re[4][k_offset], _MM_HINT_T1);
+    _mm_prefetch((const char *)&bases_im[4][k_offset], _MM_HINT_T1);
+}
+
+
+//==============================================================================
+// HELPER FUNCTIONS - ALL FORCE-INLINED
+//==============================================================================
 
 /**
  * @brief Process one radix-8 group (even + odd waves)
@@ -1495,30 +1562,9 @@ FORCE_INLINE void radix32_apply_stage_twiddles_backward_avx512(
 }
 
 //==============================================================================
-// MAIN BUTTERFLY - ULTRA-COMPACT WITH FUNCTIONS
+// UPDATED BUTTERFLY - SAME NAME, HOISTED ADDRESSES
 //==============================================================================
 
-//==============================================================================
-// DOUBLE-BUFFERED BUTTERFLY - PHASE 2
-//==============================================================================
-
-//==============================================================================
-// CORRECTED FORWARD BUTTERFLY - WITH DOUBLE BUFFERING (PHASE 2)
-//==============================================================================
-
-/**
- * @brief Radix-32 butterfly FORWARD with all optimizations and bug fixes
- *
- * PHASE 2 OPTIMIZATIONS:
- * - Process 16 butterflies per iteration (k += 16)
- * - Interleaved computation for better ILP
- * - Adaptive two-level prefetching
- *
- * BUG FIXES:
- * - Position-4 uses A_re[4] (not A_re[1])
- * - Each position 0-7 called exactly once with correct twiddles
- * - No duplicate position calls
- */
 TARGET_AVX512
 void radix32_butterfly_strided_forward_avx512(
     double *RESTRICT stripe_re,
@@ -1527,6 +1573,98 @@ void radix32_butterfly_strided_forward_avx512(
     size_t stride,
     const radix32_pass2_plan_t *RESTRICT pass2_plan)
 {
+    //==========================================================================
+    // HOIST BASE ADDRESSES - Eliminate IMUL from hot path
+    //==========================================================================
+    
+    // Group A (stripes 0-7)
+    double * RESTRICT const grpA_re[8] = {
+        &stripe_re[0 * stride],
+        &stripe_re[1 * stride],
+        &stripe_re[2 * stride],
+        &stripe_re[3 * stride],
+        &stripe_re[4 * stride],
+        &stripe_re[5 * stride],
+        &stripe_re[6 * stride],
+        &stripe_re[7 * stride]
+    };
+    double * RESTRICT const grpA_im[8] = {
+        &stripe_im[0 * stride],
+        &stripe_im[1 * stride],
+        &stripe_im[2 * stride],
+        &stripe_im[3 * stride],
+        &stripe_im[4 * stride],
+        &stripe_im[5 * stride],
+        &stripe_im[6 * stride],
+        &stripe_im[7 * stride]
+    };
+    
+    // Group B (stripes 8-15)
+    double * RESTRICT const grpB_re[8] = {
+        &stripe_re[8 * stride],
+        &stripe_re[9 * stride],
+        &stripe_re[10 * stride],
+        &stripe_re[11 * stride],
+        &stripe_re[12 * stride],
+        &stripe_re[13 * stride],
+        &stripe_re[14 * stride],
+        &stripe_re[15 * stride]
+    };
+    double * RESTRICT const grpB_im[8] = {
+        &stripe_im[8 * stride],
+        &stripe_im[9 * stride],
+        &stripe_im[10 * stride],
+        &stripe_im[11 * stride],
+        &stripe_im[12 * stride],
+        &stripe_im[13 * stride],
+        &stripe_im[14 * stride],
+        &stripe_im[15 * stride]
+    };
+    
+    // Group C (stripes 16-23)
+    double * RESTRICT const grpC_re[8] = {
+        &stripe_re[16 * stride],
+        &stripe_re[17 * stride],
+        &stripe_re[18 * stride],
+        &stripe_re[19 * stride],
+        &stripe_re[20 * stride],
+        &stripe_re[21 * stride],
+        &stripe_re[22 * stride],
+        &stripe_re[23 * stride]
+    };
+    double * RESTRICT const grpC_im[8] = {
+        &stripe_im[16 * stride],
+        &stripe_im[17 * stride],
+        &stripe_im[18 * stride],
+        &stripe_im[19 * stride],
+        &stripe_im[20 * stride],
+        &stripe_im[21 * stride],
+        &stripe_im[22 * stride],
+        &stripe_im[23 * stride]
+    };
+    
+    // Group D (stripes 24-31)
+    double * RESTRICT const grpD_re[8] = {
+        &stripe_re[24 * stride],
+        &stripe_re[25 * stride],
+        &stripe_re[26 * stride],
+        &stripe_re[27 * stride],
+        &stripe_re[28 * stride],
+        &stripe_re[29 * stride],
+        &stripe_re[30 * stride],
+        &stripe_re[31 * stride]
+    };
+    double * RESTRICT const grpD_im[8] = {
+        &stripe_im[24 * stride],
+        &stripe_im[25 * stride],
+        &stripe_im[26 * stride],
+        &stripe_im[27 * stride],
+        &stripe_im[28 * stride],
+        &stripe_im[29 * stride],
+        &stripe_im[30 * stride],
+        &stripe_im[31 * stride]
+    };
+
     // Hoist constants
     const __m512d sign_mask = _mm512_set1_pd(-0.0);
     const __m512d sqrt2_2 = _mm512_set1_pd(0.70710678118654752440);
@@ -1546,28 +1684,36 @@ void radix32_butterfly_strided_forward_avx512(
     const __m512d pos2_w3_re = pass2_plan->pos2_w3_re;
     const __m512d pos2_w3_im = pass2_plan->pos2_w3_im;
 
-    __m512d pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos3_w_re, pass2_plan->pos3_w_im,
-                                    &pos3_w1_re, &pos3_w1_im, &pos3_w2_re, &pos3_w2_im,
-                                    &pos3_w3_re, &pos3_w3_im);
+    const __m512d pos3_w1_re = pass2_plan->pos3_w1_re;
+    const __m512d pos3_w1_im = pass2_plan->pos3_w1_im;
+    const __m512d pos3_w2_re = pass2_plan->pos3_w2_re;
+    const __m512d pos3_w2_im = pass2_plan->pos3_w2_im;
+    const __m512d pos3_w3_re = pass2_plan->pos3_w3_re;
+    const __m512d pos3_w3_im = pass2_plan->pos3_w3_im;
 
-    __m512d pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos5_w_re, pass2_plan->pos5_w_im,
-                                    &pos5_w1_re, &pos5_w1_im, &pos5_w2_re, &pos5_w2_im,
-                                    &pos5_w3_re, &pos5_w3_im);
+    const __m512d pos5_w1_re = pass2_plan->pos5_w1_re;
+    const __m512d pos5_w1_im = pass2_plan->pos5_w1_im;
+    const __m512d pos5_w2_re = pass2_plan->pos5_w2_re;
+    const __m512d pos5_w2_im = pass2_plan->pos5_w2_im;
+    const __m512d pos5_w3_re = pass2_plan->pos5_w3_re;
+    const __m512d pos5_w3_im = pass2_plan->pos5_w3_im;
 
-    __m512d pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos6_w_re, pass2_plan->pos6_w_im,
-                                    &pos6_w1_re, &pos6_w1_im, &pos6_w2_re, &pos6_w2_im,
-                                    &pos6_w3_re, &pos6_w3_im);
+    const __m512d pos6_w1_re = pass2_plan->pos6_w1_re;
+    const __m512d pos6_w1_im = pass2_plan->pos6_w1_im;
+    const __m512d pos6_w2_re = pass2_plan->pos6_w2_re;
+    const __m512d pos6_w2_im = pass2_plan->pos6_w2_im;
+    const __m512d pos6_w3_re = pass2_plan->pos6_w3_re;
+    const __m512d pos6_w3_im = pass2_plan->pos6_w3_im;
 
-    __m512d pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos7_w_re, pass2_plan->pos7_w_im,
-                                    &pos7_w1_re, &pos7_w1_im, &pos7_w2_re, &pos7_w2_im,
-                                    &pos7_w3_re, &pos7_w3_im);
+    const __m512d pos7_w1_re = pass2_plan->pos7_w1_re;
+    const __m512d pos7_w1_im = pass2_plan->pos7_w1_im;
+    const __m512d pos7_w2_re = pass2_plan->pos7_w2_re;
+    const __m512d pos7_w2_im = pass2_plan->pos7_w2_im;
+    const __m512d pos7_w3_re = pass2_plan->pos7_w3_re;
+    const __m512d pos7_w3_im = pass2_plan->pos7_w3_im;
 
     //==========================================================================
-    // MAIN LOOP: Double-buffered (k += 16) - PHASE 2
+    // MAIN LOOP: Double-buffered (k += 16)
     //==========================================================================
 
     size_t k = 0;
@@ -1576,23 +1722,21 @@ void radix32_butterfly_strided_forward_avx512(
 
     for (; k < k_main16; k += 16)
     {
-        // PHASE 1: Adaptive two-level prefetch
+        // Adaptive two-level prefetch
         if (k + 64 < k_main16)
         {
-            // L2 prefetch (far ahead)
-            prefetch_group_strided_L2(stripe_re, stripe_im, 0, stride, k + 64);
-            prefetch_group_strided_L2(stripe_re, stripe_im, 8, stride, k + 64);
-            prefetch_group_strided_L2(stripe_re, stripe_im, 16, stride, k + 64);
-            prefetch_group_strided_L2(stripe_re, stripe_im, 24, stride, k + 64);
+            prefetch_group_hoisted_L2(grpA_re, grpA_im, k + 64);
+            prefetch_group_hoisted_L2(grpB_re, grpB_im, k + 64);
+            prefetch_group_hoisted_L2(grpC_re, grpC_im, k + 64);
+            prefetch_group_hoisted_L2(grpD_re, grpD_im, k + 64);
         }
 
         if (k + 16 < k_main16)
         {
-            // L1 prefetch (near)
-            prefetch_group_strided(stripe_re, stripe_im, 0, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 8, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 16, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 24, stride, k + 16);
+            prefetch_group_hoisted(grpA_re, grpA_im, k + 16);
+            prefetch_group_hoisted(grpB_re, grpB_im, k + 16);
+            prefetch_group_hoisted(grpC_re, grpC_im, k + 16);
+            prefetch_group_hoisted(grpD_re, grpD_im, k + 16);
         }
 
         // Set 0: k+0..k+7
@@ -1608,129 +1752,113 @@ void radix32_butterfly_strided_forward_avx512(
         // LOAD AND PROCESS: Set 0 (k+0..k+7)
         //======================================================================
 
-        load_group_strided(stripe_re, stripe_im, 0, stride, k, x_re, x_im);
+        load_group_hoisted(grpA_re, grpA_im, k, x_re, x_im);
         process_radix8_group(x_re, x_im, A_re_0, A_im_0, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 8, stride, k, x_re, x_im);
+        load_group_hoisted(grpB_re, grpB_im, k, x_re, x_im);
         process_radix8_group(x_re, x_im, B_re_0, B_im_0, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 16, stride, k, x_re, x_im);
+        load_group_hoisted(grpC_re, grpC_im, k, x_re, x_im);
         process_radix8_group(x_re, x_im, C_re_0, C_im_0, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 24, stride, k, x_re, x_im);
+        load_group_hoisted(grpD_re, grpD_im, k, x_re, x_im);
         process_radix8_group(x_re, x_im, D_re_0, D_im_0, sign_mask, sqrt2_2);
 
         //======================================================================
-        // LOAD AND PROCESS: Set 1 (k+8..k+15) - INTERLEAVED
+        // LOAD AND PROCESS: Set 1 (k+8..k+15)
         //======================================================================
 
-        load_group_strided(stripe_re, stripe_im, 0, stride, k + 8, x_re, x_im);
+        load_group_hoisted(grpA_re, grpA_im, k + 8, x_re, x_im);
         process_radix8_group(x_re, x_im, A_re_1, A_im_1, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 8, stride, k + 8, x_re, x_im);
+        load_group_hoisted(grpB_re, grpB_im, k + 8, x_re, x_im);
         process_radix8_group(x_re, x_im, B_re_1, B_im_1, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 16, stride, k + 8, x_re, x_im);
+        load_group_hoisted(grpC_re, grpC_im, k + 8, x_re, x_im);
         process_radix8_group(x_re, x_im, C_re_1, C_im_1, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 24, stride, k + 8, x_re, x_im);
+        load_group_hoisted(grpD_re, grpD_im, k + 8, x_re, x_im);
         process_radix8_group(x_re, x_im, D_re_1, D_im_1, sign_mask, sqrt2_2);
 
         //======================================================================
-        // CROSS-GROUP RADIX-4: Set 0 (k+0..k+7) - CORRECTED MAPPING
+        // CROSS-GROUP RADIX-4: Set 0 (k+0..k+7)
         //======================================================================
 
-        // Position 0: Identity (no twiddles) → stripe 0
         radix32_position_identity_strided(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             0, 0, stripe_re, stripe_im, stride, k, sign_mask);
 
-        // Position 1: Twiddled with pos1 → stripe 1
         radix32_position_twiddled_strided(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             1, 1, stripe_re, stripe_im, stride, k, sign_mask,
             pos1_w1_re, pos1_w1_im, pos1_w2_re, pos1_w2_im, pos1_w3_re, pos1_w3_im);
 
-        // Position 2: Twiddled with pos2 → stripe 2
         radix32_position_twiddled_strided(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             2, 2, stripe_re, stripe_im, stride, k, sign_mask,
             pos2_w1_re, pos2_w1_im, pos2_w2_re, pos2_w2_im, pos2_w3_re, pos2_w3_im);
 
-        // Position 3: Twiddled with pos3 → stripe 3
         radix32_position_twiddled_strided(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             3, 3, stripe_re, stripe_im, stride, k, sign_mask,
             pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im);
 
-        // Position 4: Fast-path W8 twiddles → stripe 4
         radix32_position4_fast_forward_strided(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             4, stripe_re, stripe_im, stride, k, sign_mask, sqrt2_2);
 
-        // Position 5: Twiddled with pos5 → stripe 5
         radix32_position_twiddled_strided(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             5, 5, stripe_re, stripe_im, stride, k, sign_mask,
             pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im);
 
-        // Position 6: Twiddled with pos6 → stripe 6
         radix32_position_twiddled_strided(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             6, 6, stripe_re, stripe_im, stride, k, sign_mask,
             pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im);
 
-        // Position 7: Twiddled with pos7 → stripe 7
         radix32_position_twiddled_strided(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             7, 7, stripe_re, stripe_im, stride, k, sign_mask,
             pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im);
 
         //======================================================================
-        // CROSS-GROUP RADIX-4: Set 1 (k+8..k+15) - CORRECTED MAPPING
+        // CROSS-GROUP RADIX-4: Set 1 (k+8..k+15)
         //======================================================================
 
-        // Position 0: Identity → stripe 0
         radix32_position_identity_strided(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             0, 0, stripe_re, stripe_im, stride, k + 8, sign_mask);
 
-        // Position 1: Twiddled with pos1 → stripe 1
         radix32_position_twiddled_strided(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             1, 1, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos1_w1_re, pos1_w1_im, pos1_w2_re, pos1_w2_im, pos1_w3_re, pos1_w3_im);
 
-        // Position 2: Twiddled with pos2 → stripe 2
         radix32_position_twiddled_strided(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             2, 2, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos2_w1_re, pos2_w1_im, pos2_w2_re, pos2_w2_im, pos2_w3_re, pos2_w3_im);
 
-        // Position 3: Twiddled with pos3 → stripe 3
         radix32_position_twiddled_strided(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             3, 3, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im);
 
-        // Position 4: Fast-path → stripe 4
         radix32_position4_fast_forward_strided(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             4, stripe_re, stripe_im, stride, k + 8, sign_mask, sqrt2_2);
 
-        // Position 5: Twiddled with pos5 → stripe 5
         radix32_position_twiddled_strided(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             5, 5, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im);
 
-        // Position 6: Twiddled with pos6 → stripe 6
         radix32_position_twiddled_strided(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             6, 6, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im);
 
-        // Position 7: Twiddled with pos7 → stripe 7
         radix32_position_twiddled_strided(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             7, 7, stripe_re, stripe_im, stride, k + 8, sign_mask,
@@ -1745,31 +1873,27 @@ void radix32_butterfly_strided_forward_avx512(
     {
         if (k + 16 < k_main8)
         {
-            prefetch_group_strided(stripe_re, stripe_im, 0, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 8, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 16, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 24, stride, k + 16);
+            prefetch_group_hoisted(grpA_re, grpA_im, k + 16);
+            prefetch_group_hoisted(grpB_re, grpB_im, k + 16);
+            prefetch_group_hoisted(grpC_re, grpC_im, k + 16);
+            prefetch_group_hoisted(grpD_re, grpD_im, k + 16);
         }
 
         __m512d A_re[8], A_im[8], B_re[8], B_im[8];
         __m512d C_re[8], C_im[8], D_re[8], D_im[8];
         __m512d x_re[8], x_im[8];
 
-        load_group_strided(stripe_re, stripe_im, 0, stride, k, x_re, x_im);
+        load_group_hoisted(grpA_re, grpA_im, k, x_re, x_im);
         process_radix8_group(x_re, x_im, A_re, A_im, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 8, stride, k, x_re, x_im);
+        load_group_hoisted(grpB_re, grpB_im, k, x_re, x_im);
         process_radix8_group(x_re, x_im, B_re, B_im, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 16, stride, k, x_re, x_im);
+        load_group_hoisted(grpC_re, grpC_im, k, x_re, x_im);
         process_radix8_group(x_re, x_im, C_re, C_im, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 24, stride, k, x_re, x_im);
+        load_group_hoisted(grpD_re, grpD_im, k, x_re, x_im);
         process_radix8_group(x_re, x_im, D_re, D_im, sign_mask, sqrt2_2);
-
-        //======================================================================
-        // CROSS-GROUP: CORRECTED MAPPING (same as double-buffered)
-        //======================================================================
 
         radix32_position_identity_strided(
             A_re, A_im, B_re, B_im, C_re, C_im, D_re, D_im,
@@ -1823,21 +1947,17 @@ void radix32_butterfly_strided_forward_avx512(
         __m512d C_re[8], C_im[8], D_re[8], D_im[8];
         __m512d x_re[8], x_im[8];
 
-        load_group_strided_masked(stripe_re, stripe_im, 0, stride, k, mask, x_re, x_im);
+        load_group_hoisted_masked(grpA_re, grpA_im, k, mask, x_re, x_im);
         process_radix8_group(x_re, x_im, A_re, A_im, sign_mask, sqrt2_2);
 
-        load_group_strided_masked(stripe_re, stripe_im, 8, stride, k, mask, x_re, x_im);
+        load_group_hoisted_masked(grpB_re, grpB_im, k, mask, x_re, x_im);
         process_radix8_group(x_re, x_im, B_re, B_im, sign_mask, sqrt2_2);
 
-        load_group_strided_masked(stripe_re, stripe_im, 16, stride, k, mask, x_re, x_im);
+        load_group_hoisted_masked(grpC_re, grpC_im, k, mask, x_re, x_im);
         process_radix8_group(x_re, x_im, C_re, C_im, sign_mask, sqrt2_2);
 
-        load_group_strided_masked(stripe_re, stripe_im, 24, stride, k, mask, x_re, x_im);
+        load_group_hoisted_masked(grpD_re, grpD_im, k, mask, x_re, x_im);
         process_radix8_group(x_re, x_im, D_re, D_im, sign_mask, sqrt2_2);
-
-        //======================================================================
-        // CROSS-GROUP WITH MASKS: CORRECTED MAPPING
-        //======================================================================
 
         radix32_position_identity_strided_masked(
             A_re, A_im, B_re, B_im, C_re, C_im, D_re, D_im,
@@ -1877,29 +1997,6 @@ void radix32_butterfly_strided_forward_avx512(
             7, 7, stripe_re, stripe_im, stride, k, sign_mask,
             pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im, mask);
     }
-}
-
-//==============================================================================
-// ADDITIONAL PREFETCH HELPERS
-//==============================================================================
-
-/**
- * @brief Prefetch into L2 cache (far ahead)
- */
-TARGET_AVX512
-FORCE_INLINE void prefetch_group_strided_L2(
-    const double *RESTRICT stripe_re,
-    const double *RESTRICT stripe_im,
-    size_t group_offset,
-    size_t stride,
-    size_t k_offset)
-{
-    _mm_prefetch((const char *)&stripe_re[(group_offset + 0) * stride + k_offset], _MM_HINT_T1);
-    _mm_prefetch((const char *)&stripe_im[(group_offset + 0) * stride + k_offset], _MM_HINT_T1);
-    _mm_prefetch((const char *)&stripe_re[(group_offset + 1) * stride + k_offset], _MM_HINT_T1);
-    _mm_prefetch((const char *)&stripe_im[(group_offset + 1) * stride + k_offset], _MM_HINT_T1);
-    _mm_prefetch((const char *)&stripe_re[(group_offset + 4) * stride + k_offset], _MM_HINT_T1);
-    _mm_prefetch((const char *)&stripe_im[(group_offset + 4) * stride + k_offset], _MM_HINT_T1);
 }
 
 //==============================================================================
@@ -2272,26 +2369,23 @@ FORCE_INLINE void radix32_position_twiddled_strided_backward_masked(
 }
 
 //==============================================================================
-// MAIN BUTTERFLY - BACKWARD
-//==============================================================================
-
-//==============================================================================
-// CORRECTED BACKWARD BUTTERFLY - WITH DOUBLE BUFFERING (PHASE 2)
+// UPDATED BACKWARD BUTTERFLY WITH HOISTED ADDRESSES
 //==============================================================================
 
 /**
- * @brief Radix-32 butterfly BACKWARD with all optimizations and bug fixes
+ * @brief Radix-32 butterfly BACKWARD with hoisted address computation
  *
- * PHASE 2 OPTIMIZATIONS:
- * - Process 16 butterflies per iteration (k += 16)
- * - Interleaved computation for better ILP
+ * OPTIMIZATIONS:
+ * - Hoisted base addresses (eliminates IMUL from hot path)
+ * - Double-buffered processing (k += 16)
  * - Adaptive two-level prefetching
+ * - Uses backward-specific radix-8 and radix-4 cores
  *
- * BUG FIXES:
- * - Uses backward position functions (call radix4_butterfly_core_bv_avx512)
- * - Position-4 uses A_re[4] (not A_re[1])
- * - Each position 0-7 called exactly once with correct twiddles
- * - No duplicate position calls
+ * @param stripe_re Real part [32 stripes][stride]
+ * @param stripe_im Imag part [32 stripes][stride]
+ * @param count Number of butterflies (must be multiple of 8)
+ * @param stride Stride between samples in same stripe
+ * @param pass2_plan Geometric constants (pre-conjugated for backward)
  */
 TARGET_AVX512
 void radix32_butterfly_strided_backward_avx512(
@@ -2301,6 +2395,98 @@ void radix32_butterfly_strided_backward_avx512(
     size_t stride,
     const radix32_pass2_plan_t *RESTRICT pass2_plan)
 {
+    //==========================================================================
+    // HOIST BASE ADDRESSES - Eliminate IMUL from hot path
+    //==========================================================================
+    
+    // Group A (stripes 0-7)
+    double * RESTRICT const grpA_re[8] = {
+        &stripe_re[0 * stride],
+        &stripe_re[1 * stride],
+        &stripe_re[2 * stride],
+        &stripe_re[3 * stride],
+        &stripe_re[4 * stride],
+        &stripe_re[5 * stride],
+        &stripe_re[6 * stride],
+        &stripe_re[7 * stride]
+    };
+    double * RESTRICT const grpA_im[8] = {
+        &stripe_im[0 * stride],
+        &stripe_im[1 * stride],
+        &stripe_im[2 * stride],
+        &stripe_im[3 * stride],
+        &stripe_im[4 * stride],
+        &stripe_im[5 * stride],
+        &stripe_im[6 * stride],
+        &stripe_im[7 * stride]
+    };
+    
+    // Group B (stripes 8-15)
+    double * RESTRICT const grpB_re[8] = {
+        &stripe_re[8 * stride],
+        &stripe_re[9 * stride],
+        &stripe_re[10 * stride],
+        &stripe_re[11 * stride],
+        &stripe_re[12 * stride],
+        &stripe_re[13 * stride],
+        &stripe_re[14 * stride],
+        &stripe_re[15 * stride]
+    };
+    double * RESTRICT const grpB_im[8] = {
+        &stripe_im[8 * stride],
+        &stripe_im[9 * stride],
+        &stripe_im[10 * stride],
+        &stripe_im[11 * stride],
+        &stripe_im[12 * stride],
+        &stripe_im[13 * stride],
+        &stripe_im[14 * stride],
+        &stripe_im[15 * stride]
+    };
+    
+    // Group C (stripes 16-23)
+    double * RESTRICT const grpC_re[8] = {
+        &stripe_re[16 * stride],
+        &stripe_re[17 * stride],
+        &stripe_re[18 * stride],
+        &stripe_re[19 * stride],
+        &stripe_re[20 * stride],
+        &stripe_re[21 * stride],
+        &stripe_re[22 * stride],
+        &stripe_re[23 * stride]
+    };
+    double * RESTRICT const grpC_im[8] = {
+        &stripe_im[16 * stride],
+        &stripe_im[17 * stride],
+        &stripe_im[18 * stride],
+        &stripe_im[19 * stride],
+        &stripe_im[20 * stride],
+        &stripe_im[21 * stride],
+        &stripe_im[22 * stride],
+        &stripe_im[23 * stride]
+    };
+    
+    // Group D (stripes 24-31)
+    double * RESTRICT const grpD_re[8] = {
+        &stripe_re[24 * stride],
+        &stripe_re[25 * stride],
+        &stripe_re[26 * stride],
+        &stripe_re[27 * stride],
+        &stripe_re[28 * stride],
+        &stripe_re[29 * stride],
+        &stripe_re[30 * stride],
+        &stripe_re[31 * stride]
+    };
+    double * RESTRICT const grpD_im[8] = {
+        &stripe_im[24 * stride],
+        &stripe_im[25 * stride],
+        &stripe_im[26 * stride],
+        &stripe_im[27 * stride],
+        &stripe_im[28 * stride],
+        &stripe_im[29 * stride],
+        &stripe_im[30 * stride],
+        &stripe_im[31 * stride]
+    };
+
     // Hoist constants
     const __m512d sign_mask = _mm512_set1_pd(-0.0);
     const __m512d sqrt2_2 = _mm512_set1_pd(0.70710678118654752440);
@@ -2320,28 +2506,36 @@ void radix32_butterfly_strided_backward_avx512(
     const __m512d pos2_w3_re = pass2_plan->pos2_w3_re;
     const __m512d pos2_w3_im = pass2_plan->pos2_w3_im;
 
-    __m512d pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos3_w_re, pass2_plan->pos3_w_im,
-                                    &pos3_w1_re, &pos3_w1_im, &pos3_w2_re, &pos3_w2_im,
-                                    &pos3_w3_re, &pos3_w3_im);
+    const __m512d pos3_w1_re = pass2_plan->pos3_w1_re;
+    const __m512d pos3_w1_im = pass2_plan->pos3_w1_im;
+    const __m512d pos3_w2_re = pass2_plan->pos3_w2_re;
+    const __m512d pos3_w2_im = pass2_plan->pos3_w2_im;
+    const __m512d pos3_w3_re = pass2_plan->pos3_w3_re;
+    const __m512d pos3_w3_im = pass2_plan->pos3_w3_im;
 
-    __m512d pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos5_w_re, pass2_plan->pos5_w_im,
-                                    &pos5_w1_re, &pos5_w1_im, &pos5_w2_re, &pos5_w2_im,
-                                    &pos5_w3_re, &pos5_w3_im);
+    const __m512d pos5_w1_re = pass2_plan->pos5_w1_re;
+    const __m512d pos5_w1_im = pass2_plan->pos5_w1_im;
+    const __m512d pos5_w2_re = pass2_plan->pos5_w2_re;
+    const __m512d pos5_w2_im = pass2_plan->pos5_w2_im;
+    const __m512d pos5_w3_re = pass2_plan->pos5_w3_re;
+    const __m512d pos5_w3_im = pass2_plan->pos5_w3_im;
 
-    __m512d pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos6_w_re, pass2_plan->pos6_w_im,
-                                    &pos6_w1_re, &pos6_w1_im, &pos6_w2_re, &pos6_w2_im,
-                                    &pos6_w3_re, &pos6_w3_im);
+    const __m512d pos6_w1_re = pass2_plan->pos6_w1_re;
+    const __m512d pos6_w1_im = pass2_plan->pos6_w1_im;
+    const __m512d pos6_w2_re = pass2_plan->pos6_w2_re;
+    const __m512d pos6_w2_im = pass2_plan->pos6_w2_im;
+    const __m512d pos6_w3_re = pass2_plan->pos6_w3_re;
+    const __m512d pos6_w3_im = pass2_plan->pos6_w3_im;
 
-    __m512d pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos7_w_re, pass2_plan->pos7_w_im,
-                                    &pos7_w1_re, &pos7_w1_im, &pos7_w2_re, &pos7_w2_im,
-                                    &pos7_w3_re, &pos7_w3_im);
+    const __m512d pos7_w1_re = pass2_plan->pos7_w1_re;
+    const __m512d pos7_w1_im = pass2_plan->pos7_w1_im;
+    const __m512d pos7_w2_re = pass2_plan->pos7_w2_re;
+    const __m512d pos7_w2_im = pass2_plan->pos7_w2_im;
+    const __m512d pos7_w3_re = pass2_plan->pos7_w3_re;
+    const __m512d pos7_w3_im = pass2_plan->pos7_w3_im;
 
     //==========================================================================
-    // MAIN LOOP: Double-buffered (k += 16) - PHASE 2 - BACKWARD
+    // MAIN LOOP: Double-buffered (k += 16) - BACKWARD
     //==========================================================================
 
     size_t k = 0;
@@ -2350,23 +2544,21 @@ void radix32_butterfly_strided_backward_avx512(
 
     for (; k < k_main16; k += 16)
     {
-        // PHASE 1: Adaptive two-level prefetch
+        // Adaptive two-level prefetch
         if (k + 64 < k_main16)
         {
-            // L2 prefetch (far ahead)
-            prefetch_group_strided_L2(stripe_re, stripe_im, 0, stride, k + 64);
-            prefetch_group_strided_L2(stripe_re, stripe_im, 8, stride, k + 64);
-            prefetch_group_strided_L2(stripe_re, stripe_im, 16, stride, k + 64);
-            prefetch_group_strided_L2(stripe_re, stripe_im, 24, stride, k + 64);
+            prefetch_group_hoisted_L2(grpA_re, grpA_im, k + 64);
+            prefetch_group_hoisted_L2(grpB_re, grpB_im, k + 64);
+            prefetch_group_hoisted_L2(grpC_re, grpC_im, k + 64);
+            prefetch_group_hoisted_L2(grpD_re, grpD_im, k + 64);
         }
 
         if (k + 16 < k_main16)
         {
-            // L1 prefetch (near)
-            prefetch_group_strided(stripe_re, stripe_im, 0, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 8, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 16, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 24, stride, k + 16);
+            prefetch_group_hoisted(grpA_re, grpA_im, k + 16);
+            prefetch_group_hoisted(grpB_re, grpB_im, k + 16);
+            prefetch_group_hoisted(grpC_re, grpC_im, k + 16);
+            prefetch_group_hoisted(grpD_re, grpD_im, k + 16);
         }
 
         // Set 0: k+0..k+7
@@ -2382,129 +2574,113 @@ void radix32_butterfly_strided_backward_avx512(
         // LOAD AND PROCESS: Set 0 (k+0..k+7) - BACKWARD
         //======================================================================
 
-        load_group_strided(stripe_re, stripe_im, 0, stride, k, x_re, x_im);
+        load_group_hoisted(grpA_re, grpA_im, k, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, A_re_0, A_im_0, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 8, stride, k, x_re, x_im);
+        load_group_hoisted(grpB_re, grpB_im, k, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, B_re_0, B_im_0, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 16, stride, k, x_re, x_im);
+        load_group_hoisted(grpC_re, grpC_im, k, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, C_re_0, C_im_0, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 24, stride, k, x_re, x_im);
+        load_group_hoisted(grpD_re, grpD_im, k, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, D_re_0, D_im_0, sign_mask, sqrt2_2);
 
         //======================================================================
         // LOAD AND PROCESS: Set 1 (k+8..k+15) - BACKWARD
         //======================================================================
 
-        load_group_strided(stripe_re, stripe_im, 0, stride, k + 8, x_re, x_im);
+        load_group_hoisted(grpA_re, grpA_im, k + 8, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, A_re_1, A_im_1, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 8, stride, k + 8, x_re, x_im);
+        load_group_hoisted(grpB_re, grpB_im, k + 8, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, B_re_1, B_im_1, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 16, stride, k + 8, x_re, x_im);
+        load_group_hoisted(grpC_re, grpC_im, k + 8, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, C_re_1, C_im_1, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 24, stride, k + 8, x_re, x_im);
+        load_group_hoisted(grpD_re, grpD_im, k + 8, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, D_re_1, D_im_1, sign_mask, sqrt2_2);
 
         //======================================================================
-        // CROSS-GROUP RADIX-4: Set 0 (k+0..k+7) - CORRECTED BACKWARD MAPPING
+        // CROSS-GROUP RADIX-4: Set 0 (k+0..k+7) - BACKWARD
         //======================================================================
 
-        // Position 0: Identity (backward version) → stripe 0
         radix32_position_identity_strided_backward(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             0, 0, stripe_re, stripe_im, stride, k, sign_mask);
 
-        // Position 1: Twiddled (backward) with pos1 → stripe 1
         radix32_position_twiddled_strided_backward(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             1, 1, stripe_re, stripe_im, stride, k, sign_mask,
             pos1_w1_re, pos1_w1_im, pos1_w2_re, pos1_w2_im, pos1_w3_re, pos1_w3_im);
 
-        // Position 2: Twiddled (backward) with pos2 → stripe 2
         radix32_position_twiddled_strided_backward(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             2, 2, stripe_re, stripe_im, stride, k, sign_mask,
             pos2_w1_re, pos2_w1_im, pos2_w2_re, pos2_w2_im, pos2_w3_re, pos2_w3_im);
 
-        // Position 3: Twiddled (backward) with pos3 → stripe 3
         radix32_position_twiddled_strided_backward(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             3, 3, stripe_re, stripe_im, stride, k, sign_mask,
             pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im);
 
-        // Position 4: Fast-path W8 (backward) → stripe 4
         radix32_position4_fast_backward_strided(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             4, stripe_re, stripe_im, stride, k, sign_mask, sqrt2_2);
 
-        // Position 5: Twiddled (backward) with pos5 → stripe 5
         radix32_position_twiddled_strided_backward(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             5, 5, stripe_re, stripe_im, stride, k, sign_mask,
             pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im);
 
-        // Position 6: Twiddled (backward) with pos6 → stripe 6
         radix32_position_twiddled_strided_backward(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             6, 6, stripe_re, stripe_im, stride, k, sign_mask,
             pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im);
 
-        // Position 7: Twiddled (backward) with pos7 → stripe 7
         radix32_position_twiddled_strided_backward(
             A_re_0, A_im_0, B_re_0, B_im_0, C_re_0, C_im_0, D_re_0, D_im_0,
             7, 7, stripe_re, stripe_im, stride, k, sign_mask,
             pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im);
 
         //======================================================================
-        // CROSS-GROUP RADIX-4: Set 1 (k+8..k+15) - CORRECTED BACKWARD MAPPING
+        // CROSS-GROUP RADIX-4: Set 1 (k+8..k+15) - BACKWARD
         //======================================================================
 
-        // Position 0: Identity (backward) → stripe 0
         radix32_position_identity_strided_backward(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             0, 0, stripe_re, stripe_im, stride, k + 8, sign_mask);
 
-        // Position 1: Twiddled (backward) with pos1 → stripe 1
         radix32_position_twiddled_strided_backward(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             1, 1, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos1_w1_re, pos1_w1_im, pos1_w2_re, pos1_w2_im, pos1_w3_re, pos1_w3_im);
 
-        // Position 2: Twiddled (backward) with pos2 → stripe 2
         radix32_position_twiddled_strided_backward(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             2, 2, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos2_w1_re, pos2_w1_im, pos2_w2_re, pos2_w2_im, pos2_w3_re, pos2_w3_im);
 
-        // Position 3: Twiddled (backward) with pos3 → stripe 3
         radix32_position_twiddled_strided_backward(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             3, 3, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im);
 
-        // Position 4: Fast-path (backward) → stripe 4
         radix32_position4_fast_backward_strided(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             4, stripe_re, stripe_im, stride, k + 8, sign_mask, sqrt2_2);
 
-        // Position 5: Twiddled (backward) with pos5 → stripe 5
         radix32_position_twiddled_strided_backward(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             5, 5, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im);
 
-        // Position 6: Twiddled (backward) with pos6 → stripe 6
         radix32_position_twiddled_strided_backward(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             6, 6, stripe_re, stripe_im, stride, k + 8, sign_mask,
             pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im);
 
-        // Position 7: Twiddled (backward) with pos7 → stripe 7
         radix32_position_twiddled_strided_backward(
             A_re_1, A_im_1, B_re_1, B_im_1, C_re_1, C_im_1, D_re_1, D_im_1,
             7, 7, stripe_re, stripe_im, stride, k + 8, sign_mask,
@@ -2519,32 +2695,27 @@ void radix32_butterfly_strided_backward_avx512(
     {
         if (k + 16 < k_main8)
         {
-            prefetch_group_strided(stripe_re, stripe_im, 0, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 8, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 16, stride, k + 16);
-            prefetch_group_strided(stripe_re, stripe_im, 24, stride, k + 16);
+            prefetch_group_hoisted(grpA_re, grpA_im, k + 16);
+            prefetch_group_hoisted(grpB_re, grpB_im, k + 16);
+            prefetch_group_hoisted(grpC_re, grpC_im, k + 16);
+            prefetch_group_hoisted(grpD_re, grpD_im, k + 16);
         }
 
         __m512d A_re[8], A_im[8], B_re[8], B_im[8];
         __m512d C_re[8], C_im[8], D_re[8], D_im[8];
         __m512d x_re[8], x_im[8];
 
-        // BACKWARD processing
-        load_group_strided(stripe_re, stripe_im, 0, stride, k, x_re, x_im);
+        load_group_hoisted(grpA_re, grpA_im, k, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, A_re, A_im, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 8, stride, k, x_re, x_im);
+        load_group_hoisted(grpB_re, grpB_im, k, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, B_re, B_im, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 16, stride, k, x_re, x_im);
+        load_group_hoisted(grpC_re, grpC_im, k, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, C_re, C_im, sign_mask, sqrt2_2);
 
-        load_group_strided(stripe_re, stripe_im, 24, stride, k, x_re, x_im);
+        load_group_hoisted(grpD_re, grpD_im, k, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, D_re, D_im, sign_mask, sqrt2_2);
-
-        //======================================================================
-        // CROSS-GROUP: CORRECTED BACKWARD MAPPING (same as double-buffered)
-        //======================================================================
 
         radix32_position_identity_strided_backward(
             A_re, A_im, B_re, B_im, C_re, C_im, D_re, D_im,
@@ -2598,22 +2769,17 @@ void radix32_butterfly_strided_backward_avx512(
         __m512d C_re[8], C_im[8], D_re[8], D_im[8];
         __m512d x_re[8], x_im[8];
 
-        // BACKWARD processing with masks
-        load_group_strided_masked(stripe_re, stripe_im, 0, stride, k, mask, x_re, x_im);
+        load_group_hoisted_masked(grpA_re, grpA_im, k, mask, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, A_re, A_im, sign_mask, sqrt2_2);
 
-        load_group_strided_masked(stripe_re, stripe_im, 8, stride, k, mask, x_re, x_im);
+        load_group_hoisted_masked(grpB_re, grpB_im, k, mask, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, B_re, B_im, sign_mask, sqrt2_2);
 
-        load_group_strided_masked(stripe_re, stripe_im, 16, stride, k, mask, x_re, x_im);
+        load_group_hoisted_masked(grpC_re, grpC_im, k, mask, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, C_re, C_im, sign_mask, sqrt2_2);
 
-        load_group_strided_masked(stripe_re, stripe_im, 24, stride, k, mask, x_re, x_im);
+        load_group_hoisted_masked(grpD_re, grpD_im, k, mask, x_re, x_im);
         process_radix8_group_backward(x_re, x_im, D_re, D_im, sign_mask, sqrt2_2);
-
-        //======================================================================
-        // CROSS-GROUP WITH MASKS: CORRECTED BACKWARD MAPPING
-        //======================================================================
 
         radix32_position_identity_strided_backward_masked(
             A_re, A_im, B_re, B_im, C_re, C_im, D_re, D_im,
