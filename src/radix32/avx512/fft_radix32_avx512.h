@@ -1132,10 +1132,8 @@ FORCE_INLINE void radix32_position_identity_strided(
     const __m512d D_re[8],
     const __m512d D_im[8],
     int pos,
-    int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask)
 {
@@ -1147,15 +1145,16 @@ FORCE_INLINE void radix32_position_identity_strided(
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_store_pd(&stripe_re[(stripe + 0) * stride + k], y0_re);
-    _mm512_store_pd(&stripe_im[(stripe + 0) * stride + k], y0_im);
-    _mm512_store_pd(&stripe_re[(stripe + 8) * stride + k], y1_re);
-    _mm512_store_pd(&stripe_im[(stripe + 8) * stride + k], y1_im);
-    _mm512_store_pd(&stripe_re[(stripe + 16) * stride + k], y2_re);
-    _mm512_store_pd(&stripe_im[(stripe + 16) * stride + k], y2_im);
-    _mm512_store_pd(&stripe_re[(stripe + 24) * stride + k], y3_re);
-    _mm512_store_pd(&stripe_im[(stripe + 24) * stride + k], y3_im);
+    _mm512_store_pd(&bases_re[0][k], y0_re);
+    _mm512_store_pd(&bases_im[0][k], y0_im);
+    _mm512_store_pd(&bases_re[8][k], y1_re);
+    _mm512_store_pd(&bases_im[8][k], y1_im);
+    _mm512_store_pd(&bases_re[16][k], y2_re);
+    _mm512_store_pd(&bases_im[16][k], y2_im);
+    _mm512_store_pd(&bases_re[24][k], y3_re);
+    _mm512_store_pd(&bases_im[24][k], y3_im);
 }
+
 
 /**
  * @brief Cross-group position - identity (masked) - FORWARD
@@ -1171,10 +1170,8 @@ FORCE_INLINE void radix32_position_identity_strided_masked(
     const __m512d D_re[8],
     const __m512d D_im[8],
     int pos,
-    int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __mmask8 mask)
@@ -1187,19 +1184,18 @@ FORCE_INLINE void radix32_position_identity_strided_masked(
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_mask_store_pd(&stripe_re[(stripe + 0) * stride + k], mask, y0_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 0) * stride + k], mask, y0_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 8) * stride + k], mask, y1_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 8) * stride + k], mask, y1_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 16) * stride + k], mask, y2_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 16) * stride + k], mask, y2_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 24) * stride + k], mask, y3_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 24) * stride + k], mask, y3_im);
+    _mm512_mask_store_pd(&bases_re[0][k], mask, y0_re);
+    _mm512_mask_store_pd(&bases_im[0][k], mask, y0_im);
+    _mm512_mask_store_pd(&bases_re[8][k], mask, y1_re);
+    _mm512_mask_store_pd(&bases_im[8][k], mask, y1_im);
+    _mm512_mask_store_pd(&bases_re[16][k], mask, y2_re);
+    _mm512_mask_store_pd(&bases_im[16][k], mask, y2_im);
+    _mm512_mask_store_pd(&bases_re[24][k], mask, y3_re);
+    _mm512_mask_store_pd(&bases_im[24][k], mask, y3_im);
 }
 
 /**
  * @brief Cross-group position-4 fast-path - FORWARD
- * CORRECTED: Uses A_re[4], not A_re[1]
  */
 TARGET_AVX512
 FORCE_INLINE void radix32_position4_fast_forward_strided(
@@ -1211,15 +1207,12 @@ FORCE_INLINE void radix32_position4_fast_forward_strided(
     const __m512d C_im[8],
     const __m512d D_re[8],
     const __m512d D_im[8],
-    int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __m512d sqrt2_2)
 {
-    // CORRECTED: Index 4, not 1!
     __m512d a_re = A_re[4], a_im = A_im[4];
     __m512d b_re = B_re[4], b_im = B_im[4];
     __m512d c_re = C_re[4], c_im = C_im[4];
@@ -1253,19 +1246,19 @@ FORCE_INLINE void radix32_position4_fast_forward_strided(
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_store_pd(&stripe_re[(stripe + 0) * stride + k], y0_re);
-    _mm512_store_pd(&stripe_im[(stripe + 0) * stride + k], y0_im);
-    _mm512_store_pd(&stripe_re[(stripe + 8) * stride + k], y1_re);
-    _mm512_store_pd(&stripe_im[(stripe + 8) * stride + k], y1_im);
-    _mm512_store_pd(&stripe_re[(stripe + 16) * stride + k], y2_re);
-    _mm512_store_pd(&stripe_im[(stripe + 16) * stride + k], y2_im);
-    _mm512_store_pd(&stripe_re[(stripe + 24) * stride + k], y3_re);
-    _mm512_store_pd(&stripe_im[(stripe + 24) * stride + k], y3_im);
+    _mm512_store_pd(&bases_re[4][k], y0_re);
+    _mm512_store_pd(&bases_im[4][k], y0_im);
+    _mm512_store_pd(&bases_re[12][k], y1_re);
+    _mm512_store_pd(&bases_im[12][k], y1_im);
+    _mm512_store_pd(&bases_re[20][k], y2_re);
+    _mm512_store_pd(&bases_im[20][k], y2_im);
+    _mm512_store_pd(&bases_re[28][k], y3_re);
+    _mm512_store_pd(&bases_im[28][k], y3_im);
 }
+
 
 /**
  * @brief Cross-group position-4 fast-path (masked) - FORWARD
- * CORRECTED: Uses A_re[4], not A_re[1]
  */
 TARGET_AVX512
 FORCE_INLINE void radix32_position4_fast_forward_strided_masked(
@@ -1277,16 +1270,13 @@ FORCE_INLINE void radix32_position4_fast_forward_strided_masked(
     const __m512d C_im[8],
     const __m512d D_re[8],
     const __m512d D_im[8],
-    int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __m512d sqrt2_2,
     __mmask8 mask)
 {
-    // CORRECTED: Index 4, not 1!
     __m512d a_re = A_re[4], a_im = A_im[4];
     __m512d b_re = B_re[4], b_im = B_im[4];
     __m512d c_re = C_re[4], c_im = C_im[4];
@@ -1320,15 +1310,16 @@ FORCE_INLINE void radix32_position4_fast_forward_strided_masked(
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_mask_store_pd(&stripe_re[(stripe + 0) * stride + k], mask, y0_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 0) * stride + k], mask, y0_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 8) * stride + k], mask, y1_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 8) * stride + k], mask, y1_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 16) * stride + k], mask, y2_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 16) * stride + k], mask, y2_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 24) * stride + k], mask, y3_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 24) * stride + k], mask, y3_im);
+    _mm512_mask_store_pd(&bases_re[4][k], mask, y0_re);
+    _mm512_mask_store_pd(&bases_im[4][k], mask, y0_im);
+    _mm512_mask_store_pd(&bases_re[12][k], mask, y1_re);
+    _mm512_mask_store_pd(&bases_im[12][k], mask, y1_im);
+    _mm512_mask_store_pd(&bases_re[20][k], mask, y2_re);
+    _mm512_mask_store_pd(&bases_im[20][k], mask, y2_im);
+    _mm512_mask_store_pd(&bases_re[28][k], mask, y3_re);
+    _mm512_mask_store_pd(&bases_im[28][k], mask, y3_im);
 }
+
 
 /**
  * @brief Cross-group position - generic twiddles - FORWARD
@@ -1345,9 +1336,8 @@ FORCE_INLINE void radix32_position_twiddled_strided(
     const __m512d D_im[8],
     int pos,
     int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __m512d w1_re, __m512d w1_im,
@@ -1370,14 +1360,14 @@ FORCE_INLINE void radix32_position_twiddled_strided(
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_store_pd(&stripe_re[(stripe + 0) * stride + k], y0_re);
-    _mm512_store_pd(&stripe_im[(stripe + 0) * stride + k], y0_im);
-    _mm512_store_pd(&stripe_re[(stripe + 8) * stride + k], y1_re);
-    _mm512_store_pd(&stripe_im[(stripe + 8) * stride + k], y1_im);
-    _mm512_store_pd(&stripe_re[(stripe + 16) * stride + k], y2_re);
-    _mm512_store_pd(&stripe_im[(stripe + 16) * stride + k], y2_im);
-    _mm512_store_pd(&stripe_re[(stripe + 24) * stride + k], y3_re);
-    _mm512_store_pd(&stripe_im[(stripe + 24) * stride + k], y3_im);
+    _mm512_store_pd(&bases_re[stripe][k], y0_re);
+    _mm512_store_pd(&bases_im[stripe][k], y0_im);
+    _mm512_store_pd(&bases_re[stripe + 8][k], y1_re);
+    _mm512_store_pd(&bases_im[stripe + 8][k], y1_im);
+    _mm512_store_pd(&bases_re[stripe + 16][k], y2_re);
+    _mm512_store_pd(&bases_im[stripe + 16][k], y2_im);
+    _mm512_store_pd(&bases_re[stripe + 24][k], y3_re);
+    _mm512_store_pd(&bases_im[stripe + 24][k], y3_im);
 }
 
 /**
@@ -1395,9 +1385,8 @@ FORCE_INLINE void radix32_position_twiddled_strided_masked(
     const __m512d D_im[8],
     int pos,
     int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __m512d w1_re, __m512d w1_im,
@@ -1421,14 +1410,14 @@ FORCE_INLINE void radix32_position_twiddled_strided_masked(
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_mask_store_pd(&stripe_re[(stripe + 0) * stride + k], mask, y0_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 0) * stride + k], mask, y0_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 8) * stride + k], mask, y1_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 8) * stride + k], mask, y1_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 16) * stride + k], mask, y2_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 16) * stride + k], mask, y2_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 24) * stride + k], mask, y3_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 24) * stride + k], mask, y3_im);
+    _mm512_mask_store_pd(&bases_re[stripe][k], mask, y0_re);
+    _mm512_mask_store_pd(&bases_im[stripe][k], mask, y0_im);
+    _mm512_mask_store_pd(&bases_re[stripe + 8][k], mask, y1_re);
+    _mm512_mask_store_pd(&bases_im[stripe + 8][k], mask, y1_im);
+    _mm512_mask_store_pd(&bases_re[stripe + 16][k], mask, y2_re);
+    _mm512_mask_store_pd(&bases_im[stripe + 16][k], mask, y2_im);
+    _mm512_mask_store_pd(&bases_re[stripe + 24][k], mask, y3_re);
+    _mm512_mask_store_pd(&bases_im[stripe + 24][k], mask, y3_im);
 }
 
 //==============================================================================
@@ -1663,6 +1652,28 @@ void radix32_butterfly_strided_forward_avx512(
         &stripe_im[29 * stride],
         &stripe_im[30 * stride],
         &stripe_im[31 * stride]
+    };
+
+    double * RESTRICT const out_re[32] = {
+        &stripe_re[0 * stride], &stripe_re[1 * stride], &stripe_re[2 * stride], &stripe_re[3 * stride],
+        &stripe_re[4 * stride], &stripe_re[5 * stride], &stripe_re[6 * stride], &stripe_re[7 * stride],
+        &stripe_re[8 * stride], &stripe_re[9 * stride], &stripe_re[10 * stride], &stripe_re[11 * stride],
+        &stripe_re[12 * stride], &stripe_re[13 * stride], &stripe_re[14 * stride], &stripe_re[15 * stride],
+        &stripe_re[16 * stride], &stripe_re[17 * stride], &stripe_re[18 * stride], &stripe_re[19 * stride],
+        &stripe_re[20 * stride], &stripe_re[21 * stride], &stripe_re[22 * stride], &stripe_re[23 * stride],
+        &stripe_re[24 * stride], &stripe_re[25 * stride], &stripe_re[26 * stride], &stripe_re[27 * stride],
+        &stripe_re[28 * stride], &stripe_re[29 * stride], &stripe_re[30 * stride], &stripe_re[31 * stride]
+    };
+
+    double * RESTRICT const out_im[32] = {
+        &stripe_im[0 * stride], &stripe_im[1 * stride], &stripe_im[2 * stride], &stripe_im[3 * stride],
+        &stripe_im[4 * stride], &stripe_im[5 * stride], &stripe_im[6 * stride], &stripe_im[7 * stride],
+        &stripe_im[8 * stride], &stripe_im[9 * stride], &stripe_im[10 * stride], &stripe_im[11 * stride],
+        &stripe_im[12 * stride], &stripe_im[13 * stride], &stripe_im[14 * stride], &stripe_im[15 * stride],
+        &stripe_im[16 * stride], &stripe_im[17 * stride], &stripe_im[18 * stride], &stripe_im[19 * stride],
+        &stripe_im[20 * stride], &stripe_im[21 * stride], &stripe_im[22 * stride], &stripe_im[23 * stride],
+        &stripe_im[24 * stride], &stripe_im[25 * stride], &stripe_im[26 * stride], &stripe_im[27 * stride],
+        &stripe_im[28 * stride], &stripe_im[29 * stride], &stripe_im[30 * stride], &stripe_im[31 * stride]
     };
 
     // Hoist constants
@@ -2068,29 +2079,27 @@ FORCE_INLINE void radix32_position_identity_strided_backward(
     const __m512d D_re[8],
     const __m512d D_im[8],
     int pos,
-    int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask)
 {
     __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;
 
-    radix4_butterfly_core_bv_avx512( // BACKWARD VERSION
+    radix4_butterfly_core_bv_avx512(
         A_re[pos], A_im[pos], B_re[pos], B_im[pos],
         C_re[pos], C_im[pos], D_re[pos], D_im[pos],
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_store_pd(&stripe_re[(stripe + 0) * stride + k], y0_re);
-    _mm512_store_pd(&stripe_im[(stripe + 0) * stride + k], y0_im);
-    _mm512_store_pd(&stripe_re[(stripe + 8) * stride + k], y1_re);
-    _mm512_store_pd(&stripe_im[(stripe + 8) * stride + k], y1_im);
-    _mm512_store_pd(&stripe_re[(stripe + 16) * stride + k], y2_re);
-    _mm512_store_pd(&stripe_im[(stripe + 16) * stride + k], y2_im);
-    _mm512_store_pd(&stripe_re[(stripe + 24) * stride + k], y3_re);
-    _mm512_store_pd(&stripe_im[(stripe + 24) * stride + k], y3_im);
+    _mm512_store_pd(&bases_re[0][k], y0_re);
+    _mm512_store_pd(&bases_im[0][k], y0_im);
+    _mm512_store_pd(&bases_re[8][k], y1_re);
+    _mm512_store_pd(&bases_im[8][k], y1_im);
+    _mm512_store_pd(&bases_re[16][k], y2_re);
+    _mm512_store_pd(&bases_im[16][k], y2_im);
+    _mm512_store_pd(&bases_re[24][k], y3_re);
+    _mm512_store_pd(&bases_im[24][k], y3_im);
 }
 
 /**
@@ -2107,35 +2116,33 @@ FORCE_INLINE void radix32_position_identity_strided_backward_masked(
     const __m512d D_re[8],
     const __m512d D_im[8],
     int pos,
-    int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __mmask8 mask)
 {
     __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;
 
-    radix4_butterfly_core_bv_avx512( // BACKWARD VERSION
+    radix4_butterfly_core_bv_avx512(
         A_re[pos], A_im[pos], B_re[pos], B_im[pos],
         C_re[pos], C_im[pos], D_re[pos], D_im[pos],
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_mask_store_pd(&stripe_re[(stripe + 0) * stride + k], mask, y0_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 0) * stride + k], mask, y0_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 8) * stride + k], mask, y1_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 8) * stride + k], mask, y1_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 16) * stride + k], mask, y2_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 16) * stride + k], mask, y2_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 24) * stride + k], mask, y3_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 24) * stride + k], mask, y3_im);
+    _mm512_mask_store_pd(&bases_re[0][k], mask, y0_re);
+    _mm512_mask_store_pd(&bases_im[0][k], mask, y0_im);
+    _mm512_mask_store_pd(&bases_re[8][k], mask, y1_re);
+    _mm512_mask_store_pd(&bases_im[8][k], mask, y1_im);
+    _mm512_mask_store_pd(&bases_re[16][k], mask, y2_re);
+    _mm512_mask_store_pd(&bases_im[16][k], mask, y2_im);
+    _mm512_mask_store_pd(&bases_re[24][k], mask, y3_re);
+    _mm512_mask_store_pd(&bases_im[24][k], mask, y3_im);
 }
+
 
 /**
  * @brief Cross-group position-4 fast-path - BACKWARD
- * CORRECTED: Uses A_re[4] and radix4_butterfly_core_bv_avx512
  */
 TARGET_AVX512
 FORCE_INLINE void radix32_position4_fast_backward_strided(
@@ -2147,15 +2154,12 @@ FORCE_INLINE void radix32_position4_fast_backward_strided(
     const __m512d C_im[8],
     const __m512d D_re[8],
     const __m512d D_im[8],
-    int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __m512d sqrt2_2)
 {
-    // CORRECTED: Index 4, not 1!
     __m512d a_re = A_re[4], a_im = A_im[4];
     __m512d b_re = B_re[4], b_im = B_im[4];
     __m512d c_re = C_re[4], c_im = C_im[4];
@@ -2184,19 +2188,19 @@ FORCE_INLINE void radix32_position4_fast_backward_strided(
 
     __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;
 
-    radix4_butterfly_core_bv_avx512( // BACKWARD VERSION
+    radix4_butterfly_core_bv_avx512(
         a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_store_pd(&stripe_re[(stripe + 0) * stride + k], y0_re);
-    _mm512_store_pd(&stripe_im[(stripe + 0) * stride + k], y0_im);
-    _mm512_store_pd(&stripe_re[(stripe + 8) * stride + k], y1_re);
-    _mm512_store_pd(&stripe_im[(stripe + 8) * stride + k], y1_im);
-    _mm512_store_pd(&stripe_re[(stripe + 16) * stride + k], y2_re);
-    _mm512_store_pd(&stripe_im[(stripe + 16) * stride + k], y2_im);
-    _mm512_store_pd(&stripe_re[(stripe + 24) * stride + k], y3_re);
-    _mm512_store_pd(&stripe_im[(stripe + 24) * stride + k], y3_im);
+    _mm512_store_pd(&bases_re[4][k], y0_re);
+    _mm512_store_pd(&bases_im[4][k], y0_im);
+    _mm512_store_pd(&bases_re[12][k], y1_re);
+    _mm512_store_pd(&bases_im[12][k], y1_im);
+    _mm512_store_pd(&bases_re[20][k], y2_re);
+    _mm512_store_pd(&bases_im[20][k], y2_im);
+    _mm512_store_pd(&bases_re[28][k], y3_re);
+    _mm512_store_pd(&bases_im[28][k], y3_im);
 }
 
 /**
@@ -2213,16 +2217,13 @@ FORCE_INLINE void radix32_position4_fast_backward_strided_masked(
     const __m512d C_im[8],
     const __m512d D_re[8],
     const __m512d D_im[8],
-    int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __m512d sqrt2_2,
     __mmask8 mask)
 {
-    // CORRECTED: Index 4, not 1!
     __m512d a_re = A_re[4], a_im = A_im[4];
     __m512d b_re = B_re[4], b_im = B_im[4];
     __m512d c_re = C_re[4], c_im = C_im[4];
@@ -2251,24 +2252,24 @@ FORCE_INLINE void radix32_position4_fast_backward_strided_masked(
 
     __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;
 
-    radix4_butterfly_core_bv_avx512( // BACKWARD VERSION
+    radix4_butterfly_core_bv_avx512(
         a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_mask_store_pd(&stripe_re[(stripe + 0) * stride + k], mask, y0_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 0) * stride + k], mask, y0_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 8) * stride + k], mask, y1_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 8) * stride + k], mask, y1_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 16) * stride + k], mask, y2_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 16) * stride + k], mask, y2_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 24) * stride + k], mask, y3_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 24) * stride + k], mask, y3_im);
+    _mm512_mask_store_pd(&bases_re[4][k], mask, y0_re);
+    _mm512_mask_store_pd(&bases_im[4][k], mask, y0_im);
+    _mm512_mask_store_pd(&bases_re[12][k], mask, y1_re);
+    _mm512_mask_store_pd(&bases_im[12][k], mask, y1_im);
+    _mm512_mask_store_pd(&bases_re[20][k], mask, y2_re);
+    _mm512_mask_store_pd(&bases_im[20][k], mask, y2_im);
+    _mm512_mask_store_pd(&bases_re[28][k], mask, y3_re);
+    _mm512_mask_store_pd(&bases_im[28][k], mask, y3_im);
 }
+
 
 /**
  * @brief Cross-group position - generic twiddles - BACKWARD
- * CORRECTED: Uses radix4_butterfly_core_bv_avx512
  */
 TARGET_AVX512
 FORCE_INLINE void radix32_position_twiddled_strided_backward(
@@ -2282,9 +2283,8 @@ FORCE_INLINE void radix32_position_twiddled_strided_backward(
     const __m512d D_im[8],
     int pos,
     int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __m512d w1_re, __m512d w1_im,
@@ -2302,20 +2302,21 @@ FORCE_INLINE void radix32_position_twiddled_strided_backward(
 
     __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;
 
-    radix4_butterfly_core_bv_avx512( // BACKWARD VERSION
+    radix4_butterfly_core_bv_avx512(
         a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_store_pd(&stripe_re[(stripe + 0) * stride + k], y0_re);
-    _mm512_store_pd(&stripe_im[(stripe + 0) * stride + k], y0_im);
-    _mm512_store_pd(&stripe_re[(stripe + 8) * stride + k], y1_re);
-    _mm512_store_pd(&stripe_im[(stripe + 8) * stride + k], y1_im);
-    _mm512_store_pd(&stripe_re[(stripe + 16) * stride + k], y2_re);
-    _mm512_store_pd(&stripe_im[(stripe + 16) * stride + k], y2_im);
-    _mm512_store_pd(&stripe_re[(stripe + 24) * stride + k], y3_re);
-    _mm512_store_pd(&stripe_im[(stripe + 24) * stride + k], y3_im);
+    _mm512_store_pd(&bases_re[stripe][k], y0_re);
+    _mm512_store_pd(&bases_im[stripe][k], y0_im);
+    _mm512_store_pd(&bases_re[stripe + 8][k], y1_re);
+    _mm512_store_pd(&bases_im[stripe + 8][k], y1_im);
+    _mm512_store_pd(&bases_re[stripe + 16][k], y2_re);
+    _mm512_store_pd(&bases_im[stripe + 16][k], y2_im);
+    _mm512_store_pd(&bases_re[stripe + 24][k], y3_re);
+    _mm512_store_pd(&bases_im[stripe + 24][k], y3_im);
 }
+
 
 /**
  * @brief Cross-group position - generic twiddles (masked) - BACKWARD
@@ -2332,9 +2333,8 @@ FORCE_INLINE void radix32_position_twiddled_strided_backward_masked(
     const __m512d D_im[8],
     int pos,
     int stripe,
-    double *RESTRICT stripe_re,
-    double *RESTRICT stripe_im,
-    size_t stride,
+    double * RESTRICT const * bases_re,
+    double * RESTRICT const * bases_im,
     size_t k,
     __m512d sign_mask,
     __m512d w1_re, __m512d w1_im,
@@ -2353,19 +2353,19 @@ FORCE_INLINE void radix32_position_twiddled_strided_backward_masked(
 
     __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;
 
-    radix4_butterfly_core_bv_avx512( // BACKWARD VERSION
+    radix4_butterfly_core_bv_avx512(
         a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
         &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
         sign_mask);
 
-    _mm512_mask_store_pd(&stripe_re[(stripe + 0) * stride + k], mask, y0_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 0) * stride + k], mask, y0_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 8) * stride + k], mask, y1_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 8) * stride + k], mask, y1_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 16) * stride + k], mask, y2_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 16) * stride + k], mask, y2_im);
-    _mm512_mask_store_pd(&stripe_re[(stripe + 24) * stride + k], mask, y3_re);
-    _mm512_mask_store_pd(&stripe_im[(stripe + 24) * stride + k], mask, y3_im);
+    _mm512_mask_store_pd(&bases_re[stripe][k], mask, y0_re);
+    _mm512_mask_store_pd(&bases_im[stripe][k], mask, y0_im);
+    _mm512_mask_store_pd(&bases_re[stripe + 8][k], mask, y1_re);
+    _mm512_mask_store_pd(&bases_im[stripe + 8][k], mask, y1_im);
+    _mm512_mask_store_pd(&bases_re[stripe + 16][k], mask, y2_re);
+    _mm512_mask_store_pd(&bases_im[stripe + 16][k], mask, y2_im);
+    _mm512_mask_store_pd(&bases_re[stripe + 24][k], mask, y3_re);
+    _mm512_mask_store_pd(&bases_im[stripe + 24][k], mask, y3_im);
 }
 
 //==============================================================================
@@ -2485,6 +2485,28 @@ void radix32_butterfly_strided_backward_avx512(
         &stripe_im[29 * stride],
         &stripe_im[30 * stride],
         &stripe_im[31 * stride]
+    };
+
+    double * RESTRICT const out_re[32] = {
+        &stripe_re[0 * stride], &stripe_re[1 * stride], &stripe_re[2 * stride], &stripe_re[3 * stride],
+        &stripe_re[4 * stride], &stripe_re[5 * stride], &stripe_re[6 * stride], &stripe_re[7 * stride],
+        &stripe_re[8 * stride], &stripe_re[9 * stride], &stripe_re[10 * stride], &stripe_re[11 * stride],
+        &stripe_re[12 * stride], &stripe_re[13 * stride], &stripe_re[14 * stride], &stripe_re[15 * stride],
+        &stripe_re[16 * stride], &stripe_re[17 * stride], &stripe_re[18 * stride], &stripe_re[19 * stride],
+        &stripe_re[20 * stride], &stripe_re[21 * stride], &stripe_re[22 * stride], &stripe_re[23 * stride],
+        &stripe_re[24 * stride], &stripe_re[25 * stride], &stripe_re[26 * stride], &stripe_re[27 * stride],
+        &stripe_re[28 * stride], &stripe_re[29 * stride], &stripe_re[30 * stride], &stripe_re[31 * stride]
+    };
+
+    double * RESTRICT const out_im[32] = {
+        &stripe_im[0 * stride], &stripe_im[1 * stride], &stripe_im[2 * stride], &stripe_im[3 * stride],
+        &stripe_im[4 * stride], &stripe_im[5 * stride], &stripe_im[6 * stride], &stripe_im[7 * stride],
+        &stripe_im[8 * stride], &stripe_im[9 * stride], &stripe_im[10 * stride], &stripe_im[11 * stride],
+        &stripe_im[12 * stride], &stripe_im[13 * stride], &stripe_im[14 * stride], &stripe_im[15 * stride],
+        &stripe_im[16 * stride], &stripe_im[17 * stride], &stripe_im[18 * stride], &stripe_im[19 * stride],
+        &stripe_im[20 * stride], &stripe_im[21 * stride], &stripe_im[22 * stride], &stripe_im[23 * stride],
+        &stripe_im[24 * stride], &stripe_im[25 * stride], &stripe_im[26 * stride], &stripe_im[27 * stride],
+        &stripe_im[28 * stride], &stripe_im[29 * stride], &stripe_im[30 * stride], &stripe_im[31 * stride]
     };
 
     // Hoist constants
