@@ -1,2632 +1,3366 @@
 /**
- * @file fft_radix32_avx2_native_soa.h
- * @brief Production Radix-32 AVX-2 Native SoA - 2×16 Cooley-Tukey + Merge
+ * @file fft_radix32_avx2.c
+ * @brief Radix-32 FFT butterfly implementation for AVX2
  *
- * @details
- * ARCHITECTURE: 2×16 COOLEY-TUKEY DECOMPOSITION
- * ==============================================
- * Radix-32 = 2 × 16 via DIT factorization:
+ * **Architecture: 4×8 Decomposition (DIT-4 → DIF-8)**
  *
- * 1. STAGE 1: Two independent radix-16 butterflies
- *    - Even indices (r=0..15)  → radix-16 transform
- *    - Odd indices  (r=16..31) → radix-16 transform
- *    - Reuses entire radix-16 kernel (all optimizations preserved!)
+ * This implements a production-quality radix-32 stage for AVX2 using a two-pass
+ * mixed-radix decomposition:
  *
- * 2. MERGE LAYER: Apply W₃₂ twiddles to odd half
- *    - 16 merge twiddles: W₃₂^m for m=0..15
- *    - Same BLOCKED8/BLOCKED4/recurrence infrastructure
- *    - Interleaved cmul order preserved
+ *   PASS 1: Radix-4 DIT (Decimation in Time)
+ *     - Processes 8 groups, each handling 4 stripes with stride 8*K
+ *     - Input:  stripes {g, g+8, g+16, g+24} for group g ∈ [0..7]
+ *     - Output: bin-major layout (bin b → temp stripe b*8+g)
+ *     - Twiddles: W_{N/4}^k (BLOCKED2: W1, W2; derives W3=W1×W2)
  *
- * 3. STAGE 2: Radix-2 butterflies (combine even/odd)
- *    - Simple complex add/subtract
- *    - Zero shuffle overhead (native SoA)
+ *   PASS 2: Radix-8 DIF (Decimation in Frequency)
+ *     - Processes 4 bins, each combining 8 groups
+ *     - Input:  bin-major temp buffer (consumes Pass 1 output as-is)
+ *     - Output: stripes 0..31 (final output)
+ *     - Twiddles: W_32^k (multi-mode: BLOCKED8/BLOCKED4/RECURRENCE)
  *
- * AVX-2 ADAPTATIONS:
- * ===================
- * ✅ 256-bit vectors (4 doubles) instead of 512-bit (8 doubles)
- * ✅ YMM registers (16 available) instead of ZMM (32 available)
- * ✅ U=2 software pipelining: k and k+4 (was k+8)
- * ✅ Loop increments: 8 main, 4 tail (was 16, 8)
- * ✅ Prefetch distance: 16 doubles (was 32)
- * ✅ Masking: Careful handling without AVX-512 mask registers
- * ✅ Same K-tiling (Tk=64), thresholds, and algorithms
+ * **Multi-Mode Twiddle System (Pass 2):**
  *
- * PRESERVED OPTIMIZATIONS FROM AVX-512:
- * =======================================
- * ✅ K-tiling (Tk=64) for L1 cache optimization
- * ✅ U=2 software pipelining (process k and k+4 together)
- * ✅ Interleaved cmul order (breaks FMA dependency chains)
- * ✅ Adaptive NT stores (>256KB working set)
- * ✅ Prefetch tuning (adjusted for AVX-2)
- * ✅ Hoisted constants (sign masks)
- * ✅ Careful tail handling (K % 4 != 0)
- * ✅ BLOCKED8/BLOCKED4 twiddle systems
- * ✅ Twiddle recurrence for large K (K > 4096)
- * ✅ All alignment hints and compiler attributes
+ *   BLOCKED8 (K ≤ 256):
+ *     - Load W1..W8 (8 blocks), derive W9..W16 via sign flip
+ *     - 50% bandwidth savings, fits in L1+L2
  *
- * MERGE TWIDDLE SYSTEM:
- * =====================
- * - BLOCKED8: K ≤ 256 (16 blocks fit in L1+L2)
- *   * Load W1..W8 (8 blocks)
- *   * W9=-W1, W10=-W2, ..., W16=-W8 (sign flips)
- *   * 50% bandwidth savings
+ *   BLOCKED4 (256 < K ≤ 4096):
+ *     - Load W1..W4 (4 blocks), derive W5..W8 via multiplication
+ *     - W5=W1×W4, W6=W2×W4, W7=W3×W4, W8=W4²
+ *     - W9..W16 via sign flip, 75% bandwidth savings
  *
- * - BLOCKED4: K > 256 (twiddles stream from L3/DRAM)
- *   * Load W1..W4 (4 blocks)
- *   * Derive W5=W1×W4, W6=W2×W4, W7=W3×W4, W8=W4²
- *   * W9..W16 via negation
- *   * 75% bandwidth savings
+ *   RECURRENCE (K > 4096):
+ *     - Tile-local stepping: W ← W × δ⁴ within 64-element tiles
+ *     - Periodic refresh at tile boundaries to limit drift
+ *     - Minimal bandwidth, stable for very large K
  *
- * - RECURRENCE: K > 4096 (twiddle walking)
- *   * Tile-local recurrence with periodic refresh
- *   * Refresh at tile boundaries (every 64 steps)
- *   * Advance: w ← w × δw within tile
+ * **Key Innovation: Bin-Major Intermediate Layout**
  *
- * @author Tugbars (AVX-2 port)
- * @version 1.0 (2×16 Cooley-Tukey, AVX-2)
- * @date 2025
+ * Pass 1 stores outputs using the mapping:
+ *   group g, bin b → temp[b*8 + g]
+ *
+ * This produces:
+ *   Bin 0 → temp[0..7]   (A[0], B[0], ..., H[0])
+ *   Bin 1 → temp[8..15]  (A[1], B[1], ..., H[1])
+ *   Bin 2 → temp[16..23] (A[2], B[2], ..., H[2])
+ *   Bin 3 → temp[24..31] (A[3], B[3], ..., H[3])
+ *
+ * Pass 2 then processes each bin with adaptive twiddle modes. No transpose required!
+ *
+ * **Performance Characteristics:**
+ *
+ *   Vector Width:   4 doubles (256-bit AVX2)
+ *   Optimization:   U=2 software pipelining, multi-mode twiddles
+ *   Memory:         Streaming stores (NT for >256KB), NTA prefetch
+ *   Register Usage: ~16 YMM peak (controlled via staged loads)
+ *   Bandwidth:      33-75% savings via BLOCKED2/4/8 + RECURRENCE
+ *
+ * **SIMD Target:**
+ *   - AVX2 + FMA (Haswell, Zen1, or newer)
+ *   - Requires: _mm256_load_pd, _mm256_store_pd, _mm256_fmadd_pd
+ *
+ * @note This matches the proven architecture from radix-32 AVX-512, adapted
+ *       for half vector width. Expected performance: 60-75% of AVX-512 version.
  */
 
-#ifndef FFT_RADIX32_AVX2_NATIVE_SOA_H
-#define FFT_RADIX32_AVX2_NATIVE_SOA_H
-
-#include <immintrin.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <assert.h>
-#include <stdbool.h>
+#include <string.h>
+#include <immintrin.h> // AVX2 intrinsics
 
-// CRITICAL: Include radix-16 AVX-2 version for reuse
-#include "fft_radix16_avx2_native_soa.h"
+#include "fft_twiddles_planner_api.h" // twiddle_handle_t, get_stage_twiddles()
 
 //==============================================================================
-// COMPILER PORTABILITY (INHERITED FROM RADIX-16)
+// COMPILER ATTRIBUTES (GCC)
 //==============================================================================
 
-#ifdef _MSC_VER
-#define FORCE_INLINE static __forceinline
-#define RESTRICT __restrict
-#define ASSUME_ALIGNED(ptr, alignment) (ptr)
-#define TARGET_AVX2_FMA
-#elif defined(__GNUC__) || defined(__clang__)
-#define FORCE_INLINE static inline __attribute__((always_inline))
-#define RESTRICT __restrict__
-#define ASSUME_ALIGNED(ptr, alignment) __builtin_assume_aligned(ptr, alignment)
+#ifndef TARGET_AVX2_FMA
 #define TARGET_AVX2_FMA __attribute__((target("avx2,fma")))
-#else
-#define FORCE_INLINE static inline
-#define RESTRICT
-#define ASSUME_ALIGNED(ptr, alignment) (ptr)
-#define TARGET_AVX2_FMA
+#endif
+
+#ifndef FORCE_INLINE
+#define FORCE_INLINE __attribute__((always_inline)) inline
+#endif
+
+#ifndef NO_UNROLL_LOOPS
+#define NO_UNROLL_LOOPS __attribute__((optimize("no-unroll-loops")))
+#endif
+
+#ifndef RESTRICT
+#define RESTRICT __restrict__
+#endif
+
+#ifndef ALIGNAS
+#define ALIGNAS(n) __attribute__((aligned(n)))
+#endif
+
+#ifndef ASSUME_ALIGNED
+#define ASSUME_ALIGNED(ptr, alignment) \
+    (__builtin_assume_aligned((ptr), (alignment)))
 #endif
 
 //==============================================================================
-// CONFIGURATION (TUNED FOR RADIX-32, AVX-2 ADJUSTED)
+// COMPILE-TIME CONFIGURATION
 //==============================================================================
 
-#ifndef RADIX32_MERGE_BLOCKED8_THRESHOLD
-#define RADIX32_MERGE_BLOCKED8_THRESHOLD 256 // 16 blocks, halve from radix-16
-#endif
-
+/**
+ * @def RADIX32_STREAM_THRESHOLD_KB
+ * @brief Threshold for using non-temporal stores (in KB)
+ */
 #ifndef RADIX32_STREAM_THRESHOLD_KB
-#define RADIX32_STREAM_THRESHOLD_KB 256 // Same as AVX-512
+#define RADIX32_STREAM_THRESHOLD_KB 256
 #endif
 
-#ifndef RADIX32_PREFETCH_DISTANCE
-#define RADIX32_PREFETCH_DISTANCE 16 // 16 doubles for AVX-2 (was 32 for AVX-512)
+/**
+ * @def RADIX32_PREFETCH_DISTANCE_DIT4
+ * @brief Prefetch distance for radix-4 DIT pass (in doubles)
+ */
+#ifndef RADIX32_PREFETCH_DISTANCE_DIT4
+#define RADIX32_PREFETCH_DISTANCE_DIT4 16
 #endif
 
-#ifndef RADIX32_TILE_SIZE
-#define RADIX32_TILE_SIZE 64 // Keep 64 - accuracy proven
+/**
+ * @def RADIX32_PREFETCH_DISTANCE_DIF8
+ * @brief Prefetch distance for radix-8 DIF pass (in doubles)
+ */
+#ifndef RADIX32_PREFETCH_DISTANCE_DIF8
+#define RADIX32_PREFETCH_DISTANCE_DIF8 16
 #endif
 
-#ifndef RADIX32_RECURRENCE_THRESHOLD
-#define RADIX32_RECURRENCE_THRESHOLD 4096 // Same as AVX-512
+/**
+ * @def RADIX32_RECURRENCE_TILE_LEN
+ * @brief Tile length for recurrence mode (in 4-wide steps)
+ */
+#ifndef RADIX32_RECURRENCE_TILE_LEN
+#define RADIX32_RECURRENCE_TILE_LEN 64
 #endif
+
+/**
+ * @brief Select adaptive prefetch distance based on K
+ * 
+ * Tuned for cache hierarchy:
+ *   Small K (≤128):   8 doubles - data hot in L1, short lead time
+ *   Medium K (≤1024): 16 doubles - balance latency/pollution
+ *   Large K (>1024):  24 doubles - hide DRAM latency
+ */
+static inline size_t pick_prefetch_dist_dif8(size_t K)
+{
+    if (K <= 128)  return 8;
+    if (K <= 1024) return 16;
+    return 24;
+}
 
 //==============================================================================
-// MERGE TWIDDLE STRUCTURES
+// COMPLEX ARITHMETIC HELPERS
 //==============================================================================
 
 /**
- * @brief Merge twiddles for radix-2 combine (BLOCKED8)
- * Stores W₃₂^m for m=1..8, derives W₉..W₁₆ via negation
+ * @brief Complex multiplication (AVX2) - Optimized dependency chains
+ * 
+ * Computes: (ar + i*ai) * (br + i*bi) = (ar*br - ai*bi) + i*(ar*bi + ai*br)
+ * 
+ * Optimization: Issue pure MULs first to break FMA dependency chains.
+ * Allows scheduler to dispatch FMAs earlier on Haswell/Skylake.
  */
-typedef struct
+TARGET_AVX2_FMA
+FORCE_INLINE void cmul_v256(
+    __m256d ar, __m256d ai,
+    __m256d br, __m256d bi,
+    __m256d *RESTRICT cr, __m256d *RESTRICT ci)
 {
-    const double *RESTRICT re; // [8 * K]
-    const double *RESTRICT im; // [8 * K]
-} radix32_merge_twiddles_blocked8_avx2_t;
+    // Issue pure MULs first (independent, can use MUL ports)
+    __m256d ai_bi = _mm256_mul_pd(ai, bi);
+    __m256d ai_br = _mm256_mul_pd(ai, br);
+    
+    // FMAs dispatch without waiting for nested MUL completion
+    *cr = _mm256_fmsub_pd(ar, br, ai_bi);  // ar*br - ai*bi
+    *ci = _mm256_fmadd_pd(ar, bi, ai_br);  // ar*bi + ai*br
+}
 
 /**
- * @brief Merge twiddles for radix-2 combine (BLOCKED4 with recurrence)
- * Stores W₃₂^m for m=1..4, derives W₅..W₁₆ via products + negation
+ * @brief Complex square (AVX2)
+ *
+ * Computes: (ar + i*ai)^2 = (ar^2 - ai^2) + i*(2*ar*ai)
+ * More efficient than cmul(a, a): 1 FMA + 2 MUL + 1 ADD = 4 ops
  */
-typedef struct
+TARGET_AVX2_FMA
+FORCE_INLINE void csquare_v256(
+    __m256d ar, __m256d ai,
+    __m256d *RESTRICT cr, __m256d *RESTRICT ci)
 {
-    const double *RESTRICT re; // [4 * K]
-    const double *RESTRICT im; // [4 * K]
-    __m256d delta_w_re[16];    // Phase increments for recurrence
-    __m256d delta_w_im[16];    // Phase increments for recurrence
-    size_t K;                  // K value for this stage
-    bool recurrence_enabled;   // Whether to use twiddle walking
-} radix32_merge_twiddles_blocked4_avx2_t;
+    *cr = _mm256_fmsub_pd(ar, ar, _mm256_mul_pd(ai, ai));
+    *ci = _mm256_add_pd(_mm256_mul_pd(ar, ai), _mm256_mul_pd(ar, ai));
+}
 
+//==============================================================================
+// MULTI-MODE TWIDDLE SYSTEM
+//==============================================================================
+
+/**
+ * @brief Twiddle computation modes
+ */
 typedef enum
 {
-    RADIX32_MERGE_TW_BLOCKED8_AVX2,
-    RADIX32_MERGE_TW_BLOCKED4_AVX2
-} radix32_merge_twiddle_mode_avx2_t;
+    TW_MODE_BLOCKED8,  ///< K ≤ 256: Load W1..W8 (50% savings)
+    TW_MODE_BLOCKED4,  ///< 256 < K ≤ 4096: Load W1..W4, derive W5..W8 (75% savings)
+    TW_MODE_RECURRENCE ///< K > 4096: Tile-local recurrence (minimal bandwidth)
+} tw_mode_t;
 
 /**
- * @brief Complete radix-32 stage twiddles (combines radix-16 + merge)
+ * @brief Select optimal twiddle mode based on K
+ */
+static inline tw_mode_t pick_tw_mode(size_t K)
+{
+    if (K <= 256)
+        return TW_MODE_BLOCKED8;
+    if (K <= 4096)
+        return TW_MODE_BLOCKED4;
+    return TW_MODE_RECURRENCE;
+}
+
+/**
+ * @brief BLOCKED8 layout: W1..W8 in memory (8 blocks of K doubles)
  */
 typedef struct
 {
-    // Radix-16 sub-FFT twiddles (reuse existing AVX-2 structures)
-    void *radix16_tw_opaque;
-    radix16_twiddle_mode_t radix16_mode;
+    const double *re[8]; ///< re[0]=W1_re, ..., re[7]=W8_re
+    const double *im[8]; ///< im[0]=W1_im, ..., im[7]=W8_im
+    size_t K;
+} tw_blocked8_t;
 
-    // Merge twiddles (W₃₂ for combining even/odd halves)
-    void *merge_tw_opaque;
-    radix32_merge_twiddle_mode_avx2_t merge_mode;
-} radix32_stage_twiddles_avx2_t;
+/**
+ * @brief BLOCKED4 layout: W1..W4 in memory, derive W5..W8 on-the-fly
+ */
+typedef struct
+{
+    const double *re[4]; ///< re[0]=W1_re, ..., re[3]=W4_re
+    const double *im[4]; ///< im[0]=W1_im, ..., im[3]=W4_im
+    size_t K;
+} tw_blocked4_t;
+
+/**
+ * @brief RECURRENCE layout: Tile-local stepping with periodic refresh
+ */
+typedef struct
+{
+    int tile_len;           ///< Tile length (typically 64 * 4 = 256 samples)
+    const double *seed_re;  ///< [8][K] seeds at tile boundaries (W1..W8)
+    const double *seed_im;  ///< [8][K] seeds at tile boundaries
+    const double *delta_re; ///< [8] per-Wj delta (δ⁴) for stepping
+    const double *delta_im; ///< [8] per-Wj delta (δ⁴) for stepping
+    size_t K;
+} tw_recurrence_t;
+
+/**
+ * @brief Multi-mode twiddle structure for radix-8 DIF
+ */
+typedef struct
+{
+    tw_mode_t mode;
+    union
+    {
+        tw_blocked8_t b8;
+        tw_blocked4_t b4;
+        tw_recurrence_t rec;
+    };
+} tw_stage8_t;
+
+/**
+ * @brief Vectorized twiddles: W1..W8 (re/im) + signbit for negation
+ */
+typedef struct
+{
+    __m256d r[8];    ///< Real parts of W1..W8
+    __m256d i[8];    ///< Imag parts of W1..W8
+    __m256d signbit; ///< Sign flip mask for deriving W9..W16
+} tw8_vecs_t;
+
+/**
+ * @brief Recurrence state: W1..W8 + deltas + tile counter
+ */
+typedef struct
+{
+    __m256d r[8], i[8];   ///< Current W1..W8
+    __m256d dr[8], di[8]; ///< Deltas per step (W ← W × δ⁴)
+    __m256d signbit;      ///< Sign flip mask
+    int left_in_tile;     ///< Steps remaining before refresh
+} rec8_vecs_t;
 
 //==============================================================================
-// PLANNING HELPERS
+// HELPER: SIGN BIT MASK
 //==============================================================================
 
-FORCE_INLINE radix32_merge_twiddle_mode_avx2_t
-radix32_choose_merge_twiddle_mode_avx2(size_t K)
+/**
+ * @brief Generate signbit mask for XOR-based negation
+ *
+ * @return YMM with all sign bits set (0x8000000000000000 for each double)
+ */
+TARGET_AVX2_FMA
+static inline __m256d signbit_pd(void)
 {
-    return (K <= RADIX32_MERGE_BLOCKED8_THRESHOLD)
-               ? RADIX32_MERGE_TW_BLOCKED8_AVX2
-               : RADIX32_MERGE_TW_BLOCKED4_AVX2;
-}
-
-FORCE_INLINE bool
-radix32_should_use_merge_recurrence_avx2(size_t K)
-{
-    return (K > RADIX32_RECURRENCE_THRESHOLD);
+    const __m256i sb = _mm256_set1_epi64x((long long)0x8000000000000000ULL);
+    return _mm256_castsi256_pd(sb);
 }
 
 /**
- * @brief NT Store Decision (same as AVX-512, overflow-safe)
+ * @def VNEG_PD
+ * @brief Negate vector via XOR with signbit (no FP ops)
  */
-FORCE_INLINE bool
-radix32_should_use_nt_stores_avx2(
+#define VNEG_PD(v, signbit) _mm256_xor_pd((v), (signbit))
+
+//==============================================================================
+// RADIX-4 DIT STRUCTURES (Pass 1 - BLOCKED2)
+//==============================================================================
+
+/**
+ * @brief Stage twiddles for radix-4 DIT - BLOCKED2 storage
+ *
+ * Stores only W1, W2 in memory; derives W3 = W1×W2 on-the-fly.
+ * Memory layout: [2 blocks][K doubles] for re and im
+ */
+typedef struct
+{
+    const double *re; ///< [2][K] - W1, W2 real parts
+    const double *im; ///< [2][K] - W1, W2 imag parts
+    size_t K;
+} radix4_dit_stage_twiddles_blocked2_t;
+
+//==============================================================================
+// RADIX-4 DIT CORE - PAIR EMITTER STRUCTURE
+//==============================================================================
+
+/**
+ * @brief Radix-4 DIT butterfly core - FORWARD
+ *
+ * Computes 4-point DFT using decimation in time.
+ * Only requires ±j rotations (no W8 constants).
+ *
+ * @param x0r,x0i Input 0 (4 doubles each)
+ * @param x1r,x1i Input 1
+ * @param x2r,x2i Input 2
+ * @param x3r,x3i Input 3
+ * @param y0r,y0i Output 0
+ * @param y1r,y1i Output 1
+ * @param y2r,y2i Output 2
+ * @param y3r,y3i Output 3
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix4_dit_core_forward_avx2(
+    __m256d x0r, __m256d x0i,
+    __m256d x1r, __m256d x1i,
+    __m256d x2r, __m256d x2i,
+    __m256d x3r, __m256d x3i,
+    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
+    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
+    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
+    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i)
+{
+    // Stage 1: Even/odd butterfly (4 adds + 4 subs)
+    __m256d t0r = _mm256_add_pd(x0r, x2r);
+    __m256d t0i = _mm256_add_pd(x0i, x2i);
+    __m256d t1r = _mm256_sub_pd(x0r, x2r);
+    __m256d t1i = _mm256_sub_pd(x0i, x2i);
+
+    __m256d t2r = _mm256_add_pd(x1r, x3r);
+    __m256d t2i = _mm256_add_pd(x1i, x3i);
+    __m256d t3r = _mm256_sub_pd(x1r, x3r);
+    __m256d t3i = _mm256_sub_pd(x1i, x3i);
+
+    // Stage 2: Final combination (4 adds + 4 subs)
+    // y0 = t0 + t2
+    *y0r = _mm256_add_pd(t0r, t2r);
+    *y0i = _mm256_add_pd(t0i, t2i);
+
+    // y1 = t1 - j*t3 = t1 + (t3_im, -t3_re)
+    *y1r = _mm256_add_pd(t1r, t3i);
+    *y1i = _mm256_sub_pd(t1i, t3r);
+
+    // y2 = t0 - t2
+    *y2r = _mm256_sub_pd(t0r, t2r);
+    *y2i = _mm256_sub_pd(t0i, t2i);
+
+    // y3 = t1 + j*t3 = t1 + (-t3_im, t3_re)
+    *y3r = _mm256_sub_pd(t1r, t3i);
+    *y3i = _mm256_add_pd(t1i, t3r);
+}
+
+/**
+ * @brief Radix-4 DIT butterfly core - BACKWARD (IFFT)
+ *
+ * Identical structure but conjugated j rotations.
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix4_dit_core_backward_avx2(
+    __m256d x0r, __m256d x0i,
+    __m256d x1r, __m256d x1i,
+    __m256d x2r, __m256d x2i,
+    __m256d x3r, __m256d x3i,
+    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
+    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
+    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
+    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i)
+{
+    // Stage 1: Even/odd butterfly
+    __m256d t0r = _mm256_add_pd(x0r, x2r);
+    __m256d t0i = _mm256_add_pd(x0i, x2i);
+    __m256d t1r = _mm256_sub_pd(x0r, x2r);
+    __m256d t1i = _mm256_sub_pd(x0i, x2i);
+
+    __m256d t2r = _mm256_add_pd(x1r, x3r);
+    __m256d t2i = _mm256_add_pd(x1i, x3i);
+    __m256d t3r = _mm256_sub_pd(x1r, x3r);
+    __m256d t3i = _mm256_sub_pd(x1i, x3i);
+
+    // Stage 2: Final combination (conjugated j rotations)
+    // y0 = t0 + t2
+    *y0r = _mm256_add_pd(t0r, t2r);
+    *y0i = _mm256_add_pd(t0i, t2i);
+
+    // y1 = t1 + j*t3 = t1 + (-t3_im, t3_re)  [conjugated: -j becomes +j]
+    *y1r = _mm256_sub_pd(t1r, t3i);
+    *y1i = _mm256_add_pd(t1i, t3r);
+
+    // y2 = t0 - t2
+    *y2r = _mm256_sub_pd(t0r, t2r);
+    *y2i = _mm256_sub_pd(t0i, t2i);
+
+    // y3 = t1 - j*t3 = t1 + (t3_im, -t3_re)  [conjugated: +j becomes -j]
+    *y3r = _mm256_add_pd(t1r, t3i);
+    *y3i = _mm256_sub_pd(t1i, t3r);
+}
+
+//==============================================================================
+// RADIX-4 DIT STAGE - STRIDED INPUT, BIN-MAJOR OUTPUT - FORWARD
+//==============================================================================
+
+/**
+ * @brief Radix-4 DIT stage with strided input and bin-major output - FORWARD
+ *
+ * Processes one group (4 stripes with stride) and writes outputs in bin-major order
+ * for seamless handoff to radix-8 DIF pass.
+ *
+ * Memory Mapping (CRITICAL):
+ *   Input:  stripes {g, g+8, g+16, g+24} with stride in_stride
+ *   Output: bin b → temp stripe (b*8 + g)
+ *
+ * Result:
+ *   Bin 0 → temp stripes 0..7   (A[0]..H[0])
+ *   Bin 1 → temp stripes 8..15  (A[1]..H[1])
+ *   Bin 2 → temp stripes 16..23 (A[2]..H[2])
+ *   Bin 3 → temp stripes 24..31 (A[3]..H[3])
+ *
+ * Optimizations:
+ * ✅ U=2 software pipelining (overlapped loads/compute)
+ * ✅ BLOCKED2 twiddle derivation (saves 33% bandwidth)
+ * ✅ NO NT stores to temp (keep hot for Pass 2)
+ * ✅ NTA prefetch for streaming
+ * ✅ Two-wave stores (control register pressure)
+ * ✅ Prefetch tuning (16 doubles for radix-4)
+ *
+ * @param K Number of samples per stripe (must be multiple of 4)
+ * @param in_re_base Start of input real (stripe g)
+ * @param in_im_base Start of input imag (stripe g)
+ * @param in_stride Stride between input stripes (in doubles, typically 8*K)
+ * @param temp_re Temporary buffer real [32 stripes][K] bin-major
+ * @param temp_im Temporary buffer imag [32 stripes][K] bin-major
+ * @param group Group index 0..7
+ * @param stage_tw Stage twiddles (BLOCKED2)
+ */
+TARGET_AVX2_FMA
+NO_UNROLL_LOOPS
+static void radix4_dit_stage_blocked2_forward_avx2_strided(
     size_t K,
-    const void *out_re,
-    const void *out_im)
+    const double *RESTRICT in_re_base,
+    const double *RESTRICT in_im_base,
+    size_t in_stride,
+    double *RESTRICT temp_re,
+    double *RESTRICT temp_im,
+    size_t group,
+    const radix4_dit_stage_twiddles_blocked2_t *RESTRICT stage_tw)
 {
-    const size_t bytes_per_k = 32 * 2 * sizeof(double); // 512 bytes (32 complex)
-    const size_t threshold_k = (RADIX32_STREAM_THRESHOLD_KB * 1024) / bytes_per_k;
+    assert((K & 3) == 0 && "K must be multiple of 4");
+    assert(K >= 8 && "K must be >= 8 for U=2 pipelining");
+    assert(group < 8 && "Group must be 0..7");
 
-    return (K >= threshold_k) &&
-           (((uintptr_t)out_re & 31) == 0) &&
-           (((uintptr_t)out_im & 31) == 0);
+    // Compute bin-major output stripe indices
+    const size_t out_stripe0 = 0 * 8 + group; // Bin 0
+    const size_t out_stripe1 = 1 * 8 + group; // Bin 1
+    const size_t out_stripe2 = 2 * 8 + group; // Bin 2
+    const size_t out_stripe3 = 3 * 8 + group; // Bin 3
+
+    // Alignment checks
+    const int in_aligned = (((uintptr_t)in_re_base | (uintptr_t)in_im_base) & 31) == 0;
+    const int out_aligned = (((uintptr_t)temp_re | (uintptr_t)temp_im) & 31) == 0;
+
+#define LDPD(p) (in_aligned ? _mm256_load_pd(p) : _mm256_loadu_pd(p))
+#define STPD(p, v) (out_aligned ? _mm256_store_pd(p, v) : _mm256_storeu_pd(p, v))
+
+    // NO NT stores to temp buffer (keep hot for Pass 2)
+    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE_DIT4;
+    const int pf_hint = _MM_HINT_T0;
+
+    const double *RESTRICT re_base = (const double *)ASSUME_ALIGNED(stage_tw->re, 32);
+    const double *RESTRICT im_base = (const double *)ASSUME_ALIGNED(stage_tw->im, 32);
+
+    //==========================================================================
+    // PROLOGUE: Load first iteration (nx prefix = "next")
+    //==========================================================================
+    __m256d nx0r = LDPD(&in_re_base[0 * in_stride]);
+    __m256d nx0i = LDPD(&in_im_base[0 * in_stride]);
+    __m256d nx1r = LDPD(&in_re_base[1 * in_stride]);
+    __m256d nx1i = LDPD(&in_im_base[1 * in_stride]);
+    __m256d nx2r = LDPD(&in_re_base[2 * in_stride]);
+    __m256d nx2i = LDPD(&in_im_base[2 * in_stride]);
+    __m256d nx3r = LDPD(&in_re_base[3 * in_stride]);
+    __m256d nx3i = LDPD(&in_im_base[3 * in_stride]);
+
+    __m256d nW1r = _mm256_load_pd(&re_base[0 * K]);
+    __m256d nW1i = _mm256_load_pd(&im_base[0 * K]);
+    __m256d nW2r = _mm256_load_pd(&re_base[1 * K]);
+    __m256d nW2i = _mm256_load_pd(&im_base[1 * K]);
+
+    //==========================================================================
+    // STEADY-STATE U=2 LOOP
+    //==========================================================================
+#pragma GCC unroll 1
+    for (size_t k = 0; k + 4 < K; k += 4)
+    {
+        //======================================================================
+        // CONSUME: Current iteration uses nx* from previous iteration
+        //======================================================================
+        __m256d x0r = nx0r, x0i = nx0i;
+        __m256d x1r = nx1r, x1i = nx1i;
+        __m256d x2r = nx2r, x2i = nx2i;
+        __m256d x3r = nx3r, x3i = nx3i;
+        __m256d W1r = nW1r, W1i = nW1i;
+        __m256d W2r = nW2r, W2i = nW2i;
+
+        const size_t kn = k + 4;
+
+        //======================================================================
+        // STAGE 1: Apply Stage Twiddles (BLOCKED2: derive W3)
+        //======================================================================
+        {
+            // Apply W1 to x1
+            __m256d tmp1r, tmp1i;
+            cmul_v256(x1r, x1i, W1r, W1i, &tmp1r, &tmp1i);
+            x1r = tmp1r;
+            x1i = tmp1i;
+
+            // Apply W2 to x2
+            __m256d tmp2r, tmp2i;
+            cmul_v256(x2r, x2i, W2r, W2i, &tmp2r, &tmp2i);
+            x2r = tmp2r;
+            x2i = tmp2i;
+
+            // Derive W3 = W1 × W2
+            __m256d W3r, W3i;
+            cmul_v256(W1r, W1i, W2r, W2i, &W3r, &W3i);
+
+            // Apply W3 to x3
+            __m256d tmp3r, tmp3i;
+            cmul_v256(x3r, x3i, W3r, W3i, &tmp3r, &tmp3i);
+            x3r = tmp3r;
+            x3i = tmp3i;
+        }
+
+        //======================================================================
+        // STAGE 2: Load Next Inputs (all 4 stripes)
+        //======================================================================
+        nx0r = LDPD(&in_re_base[0 * in_stride + kn]);
+        nx0i = LDPD(&in_im_base[0 * in_stride + kn]);
+        nx1r = LDPD(&in_re_base[1 * in_stride + kn]);
+        nx1i = LDPD(&in_im_base[1 * in_stride + kn]);
+
+        //======================================================================
+        // STAGE 3: Radix-4 DIT Butterfly
+        //======================================================================
+        __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+        radix4_dit_core_forward_avx2(
+            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i);
+
+        //======================================================================
+        // STAGE 4: Load remaining next inputs (x2, x3)
+        //======================================================================
+        nx2r = LDPD(&in_re_base[2 * in_stride + kn]);
+        nx2i = LDPD(&in_im_base[2 * in_stride + kn]);
+        nx3r = LDPD(&in_re_base[3 * in_stride + kn]);
+        nx3i = LDPD(&in_im_base[3 * in_stride + kn]);
+
+        //======================================================================
+        // STAGE 5: Store in BIN-MAJOR order (critical mapping!)
+        // Two-wave stores to control register pressure
+        //======================================================================
+        // Wave A: Bins 0, 2 (even outputs)
+        STPD(&temp_re[out_stripe0 * K + k], y0r);
+        STPD(&temp_im[out_stripe0 * K + k], y0i);
+        STPD(&temp_re[out_stripe2 * K + k], y2r);
+        STPD(&temp_im[out_stripe2 * K + k], y2i);
+
+        // Wave B: Bins 1, 3 (odd outputs)
+        STPD(&temp_re[out_stripe1 * K + k], y1r);
+        STPD(&temp_im[out_stripe1 * K + k], y1i);
+        STPD(&temp_re[out_stripe3 * K + k], y3r);
+        STPD(&temp_im[out_stripe3 * K + k], y3i);
+
+        //======================================================================
+        // STAGE 6: Load Next Twiddles (only 2 blocks for BLOCKED2)
+        //======================================================================
+        nW1r = _mm256_load_pd(&re_base[0 * K + kn]);
+        nW1i = _mm256_load_pd(&im_base[0 * K + kn]);
+        nW2r = _mm256_load_pd(&re_base[1 * K + kn]);
+        nW2i = _mm256_load_pd(&im_base[1 * K + kn]);
+
+        //======================================================================
+        // STAGE 7: Prefetch (all 4 input stripes + twiddles)
+        //======================================================================
+        if (kn + prefetch_dist < K)
+        {
+            _mm_prefetch((const char *)&in_re_base[0 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_im_base[0 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_re_base[1 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_im_base[1 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_re_base[2 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_im_base[2 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_re_base[3 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_im_base[3 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&re_base[0 * K + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&im_base[0 * K + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&re_base[1 * K + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&im_base[1 * K + kn + prefetch_dist], pf_hint);
+        }
+    }
+
+    //==========================================================================
+    // EPILOGUE: Final iteration (no next loads needed)
+    //==========================================================================
+    {
+        size_t k = K - 4;
+
+        __m256d x0r = nx0r, x0i = nx0i;
+        __m256d x1r = nx1r, x1i = nx1i;
+        __m256d x2r = nx2r, x2i = nx2i;
+        __m256d x3r = nx3r, x3i = nx3i;
+        __m256d W1r = nW1r, W1i = nW1i;
+        __m256d W2r = nW2r, W2i = nW2i;
+
+        // Apply twiddles
+        {
+            __m256d tmp1r, tmp1i;
+            cmul_v256(x1r, x1i, W1r, W1i, &tmp1r, &tmp1i);
+            x1r = tmp1r;
+            x1i = tmp1i;
+
+            __m256d tmp2r, tmp2i;
+            cmul_v256(x2r, x2i, W2r, W2i, &tmp2r, &tmp2i);
+            x2r = tmp2r;
+            x2i = tmp2i;
+
+            __m256d W3r, W3i;
+            cmul_v256(W1r, W1i, W2r, W2i, &W3r, &W3i);
+
+            __m256d tmp3r, tmp3i;
+            cmul_v256(x3r, x3i, W3r, W3i, &tmp3r, &tmp3i);
+            x3r = tmp3r;
+            x3i = tmp3i;
+        }
+
+        // Butterfly
+        __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+        radix4_dit_core_forward_avx2(
+            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i);
+
+        // Store bin-major
+        STPD(&temp_re[out_stripe0 * K + k], y0r);
+        STPD(&temp_im[out_stripe0 * K + k], y0i);
+        STPD(&temp_re[out_stripe2 * K + k], y2r);
+        STPD(&temp_im[out_stripe2 * K + k], y2i);
+        STPD(&temp_re[out_stripe1 * K + k], y1r);
+        STPD(&temp_im[out_stripe1 * K + k], y1i);
+        STPD(&temp_re[out_stripe3 * K + k], y3r);
+        STPD(&temp_im[out_stripe3 * K + k], y3i);
+    }
+
+#undef LDPD
+#undef STPD
 }
 
 //==============================================================================
-// RADIX-2 BUTTERFLY (NATIVE SOA)
+// RADIX-4 DIT STAGE - STRIDED INPUT, BIN-MAJOR OUTPUT - BACKWARD
 //==============================================================================
 
 /**
- * @brief Radix-2 butterfly for combining even/odd halves
+ * @brief Radix-4 DIT stage with strided input and bin-major output - BACKWARD
  *
- * @details After radix-16 sub-FFTs and merge twiddle application:
- *   out[m]    = even[m] + odd[m]
- *   out[m+16] = even[m] - odd[m]
- *
- * This is the final "merge" step in 2×16 Cooley-Tukey.
+ * Identical structure to forward, uses backward butterfly core.
  */
 TARGET_AVX2_FMA
-FORCE_INLINE void
-radix2_butterfly_combine_soa_avx2(
-    const __m256d even_re[16], const __m256d even_im[16],
-    const __m256d odd_re[16], const __m256d odd_im[16],
-    __m256d out_re[32], __m256d out_im[32])
+NO_UNROLL_LOOPS
+static void radix4_dit_stage_blocked2_backward_avx2_strided(
+    size_t K,
+    const double *RESTRICT in_re_base,
+    const double *RESTRICT in_im_base,
+    size_t in_stride,
+    double *RESTRICT temp_re,
+    double *RESTRICT temp_im,
+    size_t group,
+    const radix4_dit_stage_twiddles_blocked2_t *RESTRICT stage_tw)
 {
-    // First half: out[0..15] = even + odd
-    for (int m = 0; m < 16; m++)
+    assert((K & 3) == 0 && "K must be multiple of 4");
+    assert(K >= 8 && "K must be >= 8 for U=2 pipelining");
+    assert(group < 8 && "Group must be 0..7");
+
+    const size_t out_stripe0 = 0 * 8 + group;
+    const size_t out_stripe1 = 1 * 8 + group;
+    const size_t out_stripe2 = 2 * 8 + group;
+    const size_t out_stripe3 = 3 * 8 + group;
+
+    const int in_aligned = (((uintptr_t)in_re_base | (uintptr_t)in_im_base) & 31) == 0;
+    const int out_aligned = (((uintptr_t)temp_re | (uintptr_t)temp_im) & 31) == 0;
+
+#define LDPD(p) (in_aligned ? _mm256_load_pd(p) : _mm256_loadu_pd(p))
+#define STPD(p, v) (out_aligned ? _mm256_store_pd(p, v) : _mm256_storeu_pd(p, v))
+
+    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE_DIT4;
+    const int pf_hint = _MM_HINT_T0;
+
+    const double *RESTRICT re_base = (const double *)ASSUME_ALIGNED(stage_tw->re, 32);
+    const double *RESTRICT im_base = (const double *)ASSUME_ALIGNED(stage_tw->im, 32);
+
+    //==========================================================================
+    // PROLOGUE
+    //==========================================================================
+    __m256d nx0r = LDPD(&in_re_base[0 * in_stride]);
+    __m256d nx0i = LDPD(&in_im_base[0 * in_stride]);
+    __m256d nx1r = LDPD(&in_re_base[1 * in_stride]);
+    __m256d nx1i = LDPD(&in_im_base[1 * in_stride]);
+    __m256d nx2r = LDPD(&in_re_base[2 * in_stride]);
+    __m256d nx2i = LDPD(&in_im_base[2 * in_stride]);
+    __m256d nx3r = LDPD(&in_re_base[3 * in_stride]);
+    __m256d nx3i = LDPD(&in_im_base[3 * in_stride]);
+
+    __m256d nW1r = _mm256_load_pd(&re_base[0 * K]);
+    __m256d nW1i = _mm256_load_pd(&im_base[0 * K]);
+    __m256d nW2r = _mm256_load_pd(&re_base[1 * K]);
+    __m256d nW2i = _mm256_load_pd(&im_base[1 * K]);
+
+    //==========================================================================
+    // STEADY-STATE U=2 LOOP
+    //==========================================================================
+#pragma GCC unroll 1
+    for (size_t k = 0; k + 4 < K; k += 4)
     {
-        out_re[m] = _mm256_add_pd(even_re[m], odd_re[m]);
-        out_im[m] = _mm256_add_pd(even_im[m], odd_im[m]);
+        __m256d x0r = nx0r, x0i = nx0i;
+        __m256d x1r = nx1r, x1i = nx1i;
+        __m256d x2r = nx2r, x2i = nx2i;
+        __m256d x3r = nx3r, x3i = nx3i;
+        __m256d W1r = nW1r, W1i = nW1i;
+        __m256d W2r = nW2r, W2i = nW2i;
+
+        const size_t kn = k + 4;
+
+        // Apply twiddles
+        {
+            __m256d tmp1r, tmp1i;
+            cmul_v256(x1r, x1i, W1r, W1i, &tmp1r, &tmp1i);
+            x1r = tmp1r;
+            x1i = tmp1i;
+
+            __m256d tmp2r, tmp2i;
+            cmul_v256(x2r, x2i, W2r, W2i, &tmp2r, &tmp2i);
+            x2r = tmp2r;
+            x2i = tmp2i;
+
+            __m256d W3r, W3i;
+            cmul_v256(W1r, W1i, W2r, W2i, &W3r, &W3i);
+
+            __m256d tmp3r, tmp3i;
+            cmul_v256(x3r, x3i, W3r, W3i, &tmp3r, &tmp3i);
+            x3r = tmp3r;
+            x3i = tmp3i;
+        }
+
+        // Load next inputs
+        nx0r = LDPD(&in_re_base[0 * in_stride + kn]);
+        nx0i = LDPD(&in_im_base[0 * in_stride + kn]);
+        nx1r = LDPD(&in_re_base[1 * in_stride + kn]);
+        nx1i = LDPD(&in_im_base[1 * in_stride + kn]);
+
+        // Butterfly (BACKWARD)
+        __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+        radix4_dit_core_backward_avx2(
+            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i);
+
+        nx2r = LDPD(&in_re_base[2 * in_stride + kn]);
+        nx2i = LDPD(&in_im_base[2 * in_stride + kn]);
+        nx3r = LDPD(&in_re_base[3 * in_stride + kn]);
+        nx3i = LDPD(&in_im_base[3 * in_stride + kn]);
+
+        // Store bin-major
+        STPD(&temp_re[out_stripe0 * K + k], y0r);
+        STPD(&temp_im[out_stripe0 * K + k], y0i);
+        STPD(&temp_re[out_stripe2 * K + k], y2r);
+        STPD(&temp_im[out_stripe2 * K + k], y2i);
+        STPD(&temp_re[out_stripe1 * K + k], y1r);
+        STPD(&temp_im[out_stripe1 * K + k], y1i);
+        STPD(&temp_re[out_stripe3 * K + k], y3r);
+        STPD(&temp_im[out_stripe3 * K + k], y3i);
+
+        // Load next twiddles
+        nW1r = _mm256_load_pd(&re_base[0 * K + kn]);
+        nW1i = _mm256_load_pd(&im_base[0 * K + kn]);
+        nW2r = _mm256_load_pd(&re_base[1 * K + kn]);
+        nW2i = _mm256_load_pd(&im_base[1 * K + kn]);
+
+        // Prefetch
+        if (kn + prefetch_dist < K)
+        {
+            _mm_prefetch((const char *)&in_re_base[0 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_im_base[0 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_re_base[1 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_im_base[1 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_re_base[2 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_im_base[2 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_re_base[3 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_im_base[3 * in_stride + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&re_base[0 * K + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&im_base[0 * K + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&re_base[1 * K + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&im_base[1 * K + kn + prefetch_dist], pf_hint);
+        }
     }
 
-    // Second half: out[16..31] = even - odd
-    for (int m = 0; m < 16; m++)
+    //==========================================================================
+    // EPILOGUE
+    //==========================================================================
     {
-        out_re[m + 16] = _mm256_sub_pd(even_re[m], odd_re[m]);
-        out_im[m + 16] = _mm256_sub_pd(even_im[m], odd_im[m]);
+        size_t k = K - 4;
+
+        __m256d x0r = nx0r, x0i = nx0i;
+        __m256d x1r = nx1r, x1i = nx1i;
+        __m256d x2r = nx2r, x2i = nx2i;
+        __m256d x3r = nx3r, x3i = nx3i;
+        __m256d W1r = nW1r, W1i = nW1i;
+        __m256d W2r = nW2r, W2i = nW2i;
+
+        {
+            __m256d tmp1r, tmp1i;
+            cmul_v256(x1r, x1i, W1r, W1i, &tmp1r, &tmp1i);
+            x1r = tmp1r;
+            x1i = tmp1i;
+
+            __m256d tmp2r, tmp2i;
+            cmul_v256(x2r, x2i, W2r, W2i, &tmp2r, &tmp2i);
+            x2r = tmp2r;
+            x2i = tmp2i;
+
+            __m256d W3r, W3i;
+            cmul_v256(W1r, W1i, W2r, W2i, &W3r, &W3i);
+
+            __m256d tmp3r, tmp3i;
+            cmul_v256(x3r, x3i, W3r, W3i, &tmp3r, &tmp3i);
+            x3r = tmp3r;
+            x3i = tmp3i;
+        }
+
+        __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+        radix4_dit_core_backward_avx2(
+            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i);
+
+        STPD(&temp_re[out_stripe0 * K + k], y0r);
+        STPD(&temp_im[out_stripe0 * K + k], y0i);
+        STPD(&temp_re[out_stripe2 * K + k], y2r);
+        STPD(&temp_im[out_stripe2 * K + k], y2i);
+        STPD(&temp_re[out_stripe1 * K + k], y1r);
+        STPD(&temp_im[out_stripe1 * K + k], y1i);
+        STPD(&temp_re[out_stripe3 * K + k], y3r);
+        STPD(&temp_im[out_stripe3 * K + k], y3i);
     }
+
+#undef LDPD
+#undef STPD
 }
 
 //==============================================================================
-// MERGE TWIDDLES: BLOCKED8 (LOAD + DERIVE)
+// BLOCKED8 TWIDDLE LOADER
 //==============================================================================
 
 /**
- * @brief Apply merge twiddles to odd half (BLOCKED8)
+ * @brief Load W1..W8 from BLOCKED8 layout (50% bandwidth savings)
  *
- * @details Loads W₁..W₈, derives W₉..W₁₆ via negation.
- * Applies W₃₂^m twiddles in interleaved order (preserves optimization).
+ * Loads 8 blocks (W1..W8) directly from memory.
+ * Caller derives W9..W16 via: VNEG_PD(W[i], signbit)
  *
- * CRITICAL: This multiplies the odd half by merge twiddles BEFORE
- * the radix-2 butterfly. The interleaved cmul order breaks FMA
- * dependency chains exactly as in AVX-512 version.
+ * @param tw BLOCKED8 twiddle structure
+ * @param k Sample offset (multiple of 4)
+ * @param out Output vector container
  */
 TARGET_AVX2_FMA
-FORCE_INLINE void
-apply_merge_twiddles_blocked8_avx2(
-    size_t k, size_t K,
-    __m256d odd_re[16], __m256d odd_im[16],
-    const radix32_merge_twiddles_blocked8_avx2_t *RESTRICT merge_tw,
-    __m256d sign_mask)
+static FORCE_INLINE void load_tw_blocked8_k4(
+    const tw_blocked8_t *tw,
+    size_t k,
+    tw8_vecs_t *out)
 {
-    const double *re_base = ASSUME_ALIGNED(merge_tw->re, 32);
-    const double *im_base = ASSUME_ALIGNED(merge_tw->im, 32);
+    // Load all 8 blocks (W1..W8)
+    out->r[0] = _mm256_load_pd(&tw->re[0][k]);
+    out->i[0] = _mm256_load_pd(&tw->im[0][k]);
+    out->r[1] = _mm256_load_pd(&tw->re[1][k]);
+    out->i[1] = _mm256_load_pd(&tw->im[1][k]);
+    out->r[2] = _mm256_load_pd(&tw->re[2][k]);
+    out->i[2] = _mm256_load_pd(&tw->im[2][k]);
+    out->r[3] = _mm256_load_pd(&tw->re[3][k]);
+    out->i[3] = _mm256_load_pd(&tw->im[3][k]);
+    out->r[4] = _mm256_load_pd(&tw->re[4][k]);
+    out->i[4] = _mm256_load_pd(&tw->im[4][k]);
+    out->r[5] = _mm256_load_pd(&tw->re[5][k]);
+    out->i[5] = _mm256_load_pd(&tw->im[5][k]);
+    out->r[6] = _mm256_load_pd(&tw->re[6][k]);
+    out->i[6] = _mm256_load_pd(&tw->im[6][k]);
+    out->r[7] = _mm256_load_pd(&tw->re[7][k]);
+    out->i[7] = _mm256_load_pd(&tw->im[7][k]);
 
-    // Load W₁..W₈
-    __m256d W_re[8], W_im[8];
-    for (int r = 0; r < 8; r++)
-    {
-        W_re[r] = _mm256_load_pd(&re_base[r * K + k]);
-        W_im[r] = _mm256_load_pd(&im_base[r * K + k]);
-    }
-
-    // Derive W₉..W₁₆ = -W₁..-W₈
-    __m256d NW_re[8], NW_im[8];
-    for (int r = 0; r < 8; r++)
-    {
-        NW_re[r] = _mm256_xor_pd(W_re[r], sign_mask);
-        NW_im[r] = _mm256_xor_pd(W_im[r], sign_mask);
-    }
-
-    // Apply twiddles in INTERLEAVED order (critical optimization!)
-    // Pattern: preserves FMA dependency chain breaking from radix-16
-    __m256d tr, ti;
-
-    // odd[0] stays unchanged (W₃₂^0 = 1)
-
-    // Group 1: indices 1,5,9,13
-    cmul_fma_soa_avx2(odd_re[1], odd_im[1], W_re[0], W_im[0], &tr, &ti);
-    odd_re[1] = tr;
-    odd_im[1] = ti;
-
-    cmul_fma_soa_avx2(odd_re[5], odd_im[5], W_re[4], W_im[4], &tr, &ti);
-    odd_re[5] = tr;
-    odd_im[5] = ti;
-
-    cmul_fma_soa_avx2(odd_re[9], odd_im[9], NW_re[0], NW_im[0], &tr, &ti);
-    odd_re[9] = tr;
-    odd_im[9] = ti;
-
-    cmul_fma_soa_avx2(odd_re[13], odd_im[13], NW_re[4], NW_im[4], &tr, &ti);
-    odd_re[13] = tr;
-    odd_im[13] = ti;
-
-    // Group 2: indices 2,6,10,14
-    cmul_fma_soa_avx2(odd_re[2], odd_im[2], W_re[1], W_im[1], &tr, &ti);
-    odd_re[2] = tr;
-    odd_im[2] = ti;
-
-    cmul_fma_soa_avx2(odd_re[6], odd_im[6], W_re[5], W_im[5], &tr, &ti);
-    odd_re[6] = tr;
-    odd_im[6] = ti;
-
-    cmul_fma_soa_avx2(odd_re[10], odd_im[10], NW_re[1], NW_im[1], &tr, &ti);
-    odd_re[10] = tr;
-    odd_im[10] = ti;
-
-    cmul_fma_soa_avx2(odd_re[14], odd_im[14], NW_re[5], NW_im[5], &tr, &ti);
-    odd_re[14] = tr;
-    odd_im[14] = ti;
-
-    // Group 3: indices 3,7,11,15
-    cmul_fma_soa_avx2(odd_re[3], odd_im[3], W_re[2], W_im[2], &tr, &ti);
-    odd_re[3] = tr;
-    odd_im[3] = ti;
-
-    cmul_fma_soa_avx2(odd_re[7], odd_im[7], W_re[6], W_im[6], &tr, &ti);
-    odd_re[7] = tr;
-    odd_im[7] = ti;
-
-    cmul_fma_soa_avx2(odd_re[11], odd_im[11], NW_re[2], NW_im[2], &tr, &ti);
-    odd_re[11] = tr;
-    odd_im[11] = ti;
-
-    cmul_fma_soa_avx2(odd_re[15], odd_im[15], NW_re[6], NW_im[6], &tr, &ti);
-    odd_re[15] = tr;
-    odd_im[15] = ti;
-
-    // Group 4: indices 4,8,12
-    cmul_fma_soa_avx2(odd_re[4], odd_im[4], W_re[3], W_im[3], &tr, &ti);
-    odd_re[4] = tr;
-    odd_im[4] = ti;
-
-    cmul_fma_soa_avx2(odd_re[8], odd_im[8], W_re[7], W_im[7], &tr, &ti);
-    odd_re[8] = tr;
-    odd_im[8] = ti;
-
-    cmul_fma_soa_avx2(odd_re[12], odd_im[12], NW_re[3], NW_im[3], &tr, &ti);
-    odd_re[12] = tr;
-    odd_im[12] = ti;
+    out->signbit = signbit_pd();
 }
 
 //==============================================================================
-// MERGE TWIDDLES: BLOCKED4 (LOAD + DERIVE)
+// BLOCKED4 TWIDDLE LOADER + DERIVATION
 //==============================================================================
 
 /**
- * @brief Apply merge twiddles to odd half (BLOCKED4)
+ * @brief Derive W5..W8 from W1..W4 (75% bandwidth savings)
  *
- * @details Loads W₁..W₄, derives W₅..W₁₆ via products + negation.
- * Same interleaved order as BLOCKED8.
+ * Computes:
+ *   W5 = W1 × W4
+ *   W6 = W2 × W4
+ *   W7 = W3 × W4
+ *   W8 = W4²
  */
 TARGET_AVX2_FMA
-FORCE_INLINE void
-apply_merge_twiddles_blocked4_avx2(
-    size_t k, size_t K,
-    __m256d odd_re[16], __m256d odd_im[16],
-    const radix32_merge_twiddles_blocked4_avx2_t *RESTRICT merge_tw,
-    __m256d sign_mask)
+static FORCE_INLINE void derive_w5_to_w8(
+    __m256d W1r, __m256d W1i,
+    __m256d W2r, __m256d W2i,
+    __m256d W3r, __m256d W3i,
+    __m256d W4r, __m256d W4i,
+    __m256d *W5r, __m256d *W5i,
+    __m256d *W6r, __m256d *W6i,
+    __m256d *W7r, __m256d *W7i,
+    __m256d *W8r, __m256d *W8i)
 {
-    const double *re_base = ASSUME_ALIGNED(merge_tw->re, 32);
-    const double *im_base = ASSUME_ALIGNED(merge_tw->im, 32);
-
-    // Load W₁..W₄
-    __m256d W1r = _mm256_load_pd(&re_base[0 * K + k]);
-    __m256d W1i = _mm256_load_pd(&im_base[0 * K + k]);
-    __m256d W2r = _mm256_load_pd(&re_base[1 * K + k]);
-    __m256d W2i = _mm256_load_pd(&im_base[1 * K + k]);
-    __m256d W3r = _mm256_load_pd(&re_base[2 * K + k]);
-    __m256d W3i = _mm256_load_pd(&im_base[2 * K + k]);
-    __m256d W4r = _mm256_load_pd(&re_base[3 * K + k]);
-    __m256d W4i = _mm256_load_pd(&im_base[3 * K + k]);
-
-    // Derive W₅..W₈ via products
-    __m256d W5r, W5i, W6r, W6i, W7r, W7i, W8r, W8i;
-    cmul_fma_soa_avx2(W1r, W1i, W4r, W4i, &W5r, &W5i);
-    cmul_fma_soa_avx2(W2r, W2i, W4r, W4i, &W6r, &W6i);
-    cmul_fma_soa_avx2(W3r, W3i, W4r, W4i, &W7r, &W7i);
-    csquare_fma_soa_avx2(W4r, W4i, &W8r, &W8i);
-
-    // Derive W₉..W₁₆ via negation
-    __m256d NW1r = _mm256_xor_pd(W1r, sign_mask);
-    __m256d NW1i = _mm256_xor_pd(W1i, sign_mask);
-    __m256d NW2r = _mm256_xor_pd(W2r, sign_mask);
-    __m256d NW2i = _mm256_xor_pd(W2i, sign_mask);
-    __m256d NW3r = _mm256_xor_pd(W3r, sign_mask);
-    __m256d NW3i = _mm256_xor_pd(W3i, sign_mask);
-    __m256d NW4r = _mm256_xor_pd(W4r, sign_mask);
-    __m256d NW4i = _mm256_xor_pd(W4i, sign_mask);
-    __m256d NW5r = _mm256_xor_pd(W5r, sign_mask);
-    __m256d NW5i = _mm256_xor_pd(W5i, sign_mask);
-    __m256d NW6r = _mm256_xor_pd(W6r, sign_mask);
-    __m256d NW6i = _mm256_xor_pd(W6i, sign_mask);
-    __m256d NW7r = _mm256_xor_pd(W7r, sign_mask);
-    __m256d NW7i = _mm256_xor_pd(W7i, sign_mask);
-
-    // Apply in interleaved order (same pattern as BLOCKED8)
-    __m256d tr, ti;
-
-    // odd[0] unchanged
-
-    cmul_fma_soa_avx2(odd_re[1], odd_im[1], W1r, W1i, &tr, &ti);
-    odd_re[1] = tr;
-    odd_im[1] = ti;
-
-    cmul_fma_soa_avx2(odd_re[5], odd_im[5], W5r, W5i, &tr, &ti);
-    odd_re[5] = tr;
-    odd_im[5] = ti;
-
-    cmul_fma_soa_avx2(odd_re[9], odd_im[9], NW1r, NW1i, &tr, &ti);
-    odd_re[9] = tr;
-    odd_im[9] = ti;
-
-    cmul_fma_soa_avx2(odd_re[13], odd_im[13], NW5r, NW5i, &tr, &ti);
-    odd_re[13] = tr;
-    odd_im[13] = ti;
-
-    cmul_fma_soa_avx2(odd_re[2], odd_im[2], W2r, W2i, &tr, &ti);
-    odd_re[2] = tr;
-    odd_im[2] = ti;
-
-    cmul_fma_soa_avx2(odd_re[6], odd_im[6], W6r, W6i, &tr, &ti);
-    odd_re[6] = tr;
-    odd_im[6] = ti;
-
-    cmul_fma_soa_avx2(odd_re[10], odd_im[10], NW2r, NW2i, &tr, &ti);
-    odd_re[10] = tr;
-    odd_im[10] = ti;
-
-    cmul_fma_soa_avx2(odd_re[14], odd_im[14], NW6r, NW6i, &tr, &ti);
-    odd_re[14] = tr;
-    odd_im[14] = ti;
-
-    cmul_fma_soa_avx2(odd_re[3], odd_im[3], W3r, W3i, &tr, &ti);
-    odd_re[3] = tr;
-    odd_im[3] = ti;
-
-    cmul_fma_soa_avx2(odd_re[7], odd_im[7], W7r, W7i, &tr, &ti);
-    odd_re[7] = tr;
-    odd_im[7] = ti;
-
-    cmul_fma_soa_avx2(odd_re[11], odd_im[11], NW3r, NW3i, &tr, &ti);
-    odd_re[11] = tr;
-    odd_im[11] = ti;
-
-    cmul_fma_soa_avx2(odd_re[15], odd_im[15], NW7r, NW7i, &tr, &ti);
-    odd_re[15] = tr;
-    odd_im[15] = ti;
-
-    cmul_fma_soa_avx2(odd_re[4], odd_im[4], W4r, W4i, &tr, &ti);
-    odd_re[4] = tr;
-    odd_im[4] = ti;
-
-    cmul_fma_soa_avx2(odd_re[8], odd_im[8], W8r, W8i, &tr, &ti);
-    odd_re[8] = tr;
-    odd_im[8] = ti;
-
-    cmul_fma_soa_avx2(odd_re[12], odd_im[12], NW4r, NW4i, &tr, &ti);
-    odd_re[12] = tr;
-    odd_im[12] = ti;
+    cmul_v256(W1r, W1i, W4r, W4i, W5r, W5i); // W5 = W1 × W4
+    cmul_v256(W2r, W2i, W4r, W4i, W6r, W6i); // W6 = W2 × W4
+    cmul_v256(W3r, W3i, W4r, W4i, W7r, W7i); // W7 = W3 × W4
+    csquare_v256(W4r, W4i, W8r, W8i);        // W8 = W4²
 }
 
-//==============================================================================
-// MERGE TWIDDLES: RECURRENCE INITIALIZATION
-//==============================================================================
-
 /**
- * @brief Initialize merge twiddle recurrence state at tile boundary
+ * @brief Load W1..W4 from BLOCKED4 layout and derive W5..W8
  *
- * @details Loads W₁..W₄, derives W₅..W₁₆ via products + negation.
- * Identical structure to AVX-512 recurrence initialization.
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void
-radix32_init_merge_recurrence_state_avx2(
-    size_t k, size_t K,
-    const radix32_merge_twiddles_blocked4_avx2_t *RESTRICT merge_tw,
-    __m256d w_state_re[16], __m256d w_state_im[16],
-    __m256d sign_mask)
-{
-    const double *re_base = ASSUME_ALIGNED(merge_tw->re, 32);
-    const double *im_base = ASSUME_ALIGNED(merge_tw->im, 32);
-
-    // Load W₁..W₄
-    __m256d W1r = _mm256_load_pd(&re_base[0 * K + k]);
-    __m256d W1i = _mm256_load_pd(&im_base[0 * K + k]);
-    __m256d W2r = _mm256_load_pd(&re_base[1 * K + k]);
-    __m256d W2i = _mm256_load_pd(&im_base[1 * K + k]);
-    __m256d W3r = _mm256_load_pd(&re_base[2 * K + k]);
-    __m256d W3i = _mm256_load_pd(&im_base[2 * K + k]);
-    __m256d W4r = _mm256_load_pd(&re_base[3 * K + k]);
-    __m256d W4i = _mm256_load_pd(&im_base[3 * K + k]);
-
-    // Derive W₅..W₈
-    __m256d W5r, W5i, W6r, W6i, W7r, W7i, W8r, W8i;
-    cmul_fma_soa_avx2(W1r, W1i, W4r, W4i, &W5r, &W5i);
-    cmul_fma_soa_avx2(W2r, W2i, W4r, W4i, &W6r, &W6i);
-    cmul_fma_soa_avx2(W3r, W3i, W4r, W4i, &W7r, &W7i);
-    csquare_fma_soa_avx2(W4r, W4i, &W8r, &W8i);
-
-    // W₀ = 1 (identity)
-    w_state_re[0] = _mm256_set1_pd(1.0);
-    w_state_im[0] = _mm256_setzero_pd();
-
-    // Store W₁..W₈
-    w_state_re[1] = W1r;
-    w_state_im[1] = W1i;
-    w_state_re[2] = W2r;
-    w_state_im[2] = W2i;
-    w_state_re[3] = W3r;
-    w_state_im[3] = W3i;
-    w_state_re[4] = W4r;
-    w_state_im[4] = W4i;
-    w_state_re[5] = W5r;
-    w_state_im[5] = W5i;
-    w_state_re[6] = W6r;
-    w_state_im[6] = W6i;
-    w_state_re[7] = W7r;
-    w_state_im[7] = W7i;
-    w_state_re[8] = W8r;
-    w_state_im[8] = W8i;
-
-    // W₉..W₁₆ = -W₁..-W₈
-    for (int r = 1; r <= 8; r++)
-    {
-        w_state_re[8 + r] = _mm256_xor_pd(w_state_re[r], sign_mask);
-        w_state_im[8 + r] = _mm256_xor_pd(w_state_im[r], sign_mask);
-    }
-}
-
-//==============================================================================
-// MERGE TWIDDLES: RECURRENCE (APPLY + ADVANCE)
-//==============================================================================
-
-/**
- * @brief Apply merge twiddles with tile-local recurrence
+ * Loads 4 blocks, derives remaining 4 (75% bandwidth savings).
  *
- * @details Identical recurrence strategy to AVX-512:
- * - Refresh accurate twiddles at tile boundaries
- * - Advance via w ← w × δw within tile
- * - Maintains <1e-14 accuracy over 64-step tiles
+ * @param tw BLOCKED4 twiddle structure
+ * @param k Sample offset (multiple of 4)
+ * @param out Output vector container
+ */
+TARGET_AVX2_FMA
+static FORCE_INLINE void load_tw_blocked4_k4(
+    const tw_blocked4_t *tw,
+    size_t k,
+    tw8_vecs_t *out)
+{
+    // Load W1..W4
+    out->r[0] = _mm256_load_pd(&tw->re[0][k]);
+    out->i[0] = _mm256_load_pd(&tw->im[0][k]);
+    out->r[1] = _mm256_load_pd(&tw->re[1][k]);
+    out->i[1] = _mm256_load_pd(&tw->im[1][k]);
+    out->r[2] = _mm256_load_pd(&tw->re[2][k]);
+    out->i[2] = _mm256_load_pd(&tw->im[2][k]);
+    out->r[3] = _mm256_load_pd(&tw->re[3][k]);
+    out->i[3] = _mm256_load_pd(&tw->im[3][k]);
+
+    // Derive W5..W8
+    derive_w5_to_w8(
+        out->r[0], out->i[0], out->r[1], out->i[1],
+        out->r[2], out->i[2], out->r[3], out->i[3],
+        &out->r[4], &out->i[4], &out->r[5], &out->i[5],
+        &out->r[6], &out->i[6], &out->r[7], &out->i[7]);
+
+    out->signbit = signbit_pd();
+}
+
+//==============================================================================
+// RECURRENCE TWIDDLE LOADER + STEPPER
+//==============================================================================
+
+/**
+ * @brief Initialize recurrence state at tile boundary
  *
- * CRITICAL: Interleaved cmul order preserved!
+ * CRITICAL: Uses Δ = δ⁴ since k-loop advances by 4 each iteration!
+ *
+ * Strategy: Keep one base Δ = δ⁴, derive W2..W8 from W1 at tile init.
+ * This is most stable (fewer muls) and matches proven pattern.
+ *
+ * @param tw RECURRENCE twiddle structure
+ * @param k Tile start offset (aligned to tile_len and multiple of 4)
+ * @param st Recurrence state to initialize
  */
 TARGET_AVX2_FMA
-FORCE_INLINE void
-apply_merge_twiddles_recur_avx2(
-    size_t k, size_t k_tile_start, bool is_tile_start,
-    __m256d odd_re[16], __m256d odd_im[16],
-    const radix32_merge_twiddles_blocked4_avx2_t *RESTRICT merge_tw,
-    __m256d w_state_re[16], __m256d w_state_im[16],
-    const __m256d delta_w_re[16], const __m256d delta_w_im[16],
-    __m256d sign_mask)
+static FORCE_INLINE void rec8_tile_init(
+    const tw_recurrence_t *tw,
+    size_t k,
+    rec8_vecs_t *st)
 {
-    if (is_tile_start)
+    // Load base seed W1 at tile boundary
+    __m256d W1r = _mm256_load_pd(&tw->seed_re[0 * tw->K + k]);
+    __m256d W1i = _mm256_load_pd(&tw->seed_im[0 * tw->K + k]);
+
+    st->r[0] = W1r;
+    st->i[0] = W1i;
+
+    // Derive W2..W8 from W1 at tile init (once per tile, not per step)
+    // W2 = W1²
+    csquare_v256(W1r, W1i, &st->r[1], &st->i[1]);
+
+    // W3 = W1 × W2
+    cmul_v256(W1r, W1i, st->r[1], st->i[1], &st->r[2], &st->i[2]);
+
+    // W4 = W2²
+    csquare_v256(st->r[1], st->i[1], &st->r[3], &st->i[3]);
+
+    // W5 = W1 × W4
+    cmul_v256(W1r, W1i, st->r[3], st->i[3], &st->r[4], &st->i[4]);
+
+    // W6 = W2 × W4
+    cmul_v256(st->r[1], st->i[1], st->r[3], st->i[3], &st->r[5], &st->i[5]);
+
+    // W7 = W3 × W4
+    cmul_v256(st->r[2], st->i[2], st->r[3], st->i[3], &st->r[6], &st->i[6]);
+
+    // W8 = W4²
+    csquare_v256(st->r[3], st->i[3], &st->r[7], &st->i[7]);
+
+    // Load ONE base delta Δ = δ⁴ (broadcast to all lanes)
+    // CRITICAL: This is δ⁴, not δ, because k advances by 4!
+    st->dr[0] = _mm256_set1_pd(tw->delta_re[0]); // Δ_re
+    st->di[0] = _mm256_set1_pd(tw->delta_im[0]); // Δ_im
+
+    // All Wj advance with the same Δ (most stable)
+    st->dr[1] = st->dr[0];
+    st->di[1] = st->di[0];
+    st->dr[2] = st->dr[0];
+    st->di[2] = st->di[0];
+    st->dr[3] = st->dr[0];
+    st->di[3] = st->di[0];
+    st->dr[4] = st->dr[0];
+    st->di[4] = st->di[0];
+    st->dr[5] = st->dr[0];
+    st->di[5] = st->di[0];
+    st->dr[6] = st->dr[0];
+    st->di[6] = st->di[0];
+    st->dr[7] = st->dr[0];
+    st->di[7] = st->di[0];
+
+    st->signbit = signbit_pd();
+    st->left_in_tile = tw->tile_len;
+}
+
+/**
+ * @brief Advance recurrence by one 4-wide step: W ← W × Δ
+ *
+ * All W1..W8 advance with the same Δ = δ⁴ per iteration.
+ */
+TARGET_AVX2_FMA
+static FORCE_INLINE void rec8_step_advance(rec8_vecs_t *st)
+{
+    __m256d nr0, ni0, nr1, ni1, nr2, ni2, nr3, ni3;
+    __m256d nr4, ni4, nr5, ni5, nr6, ni6, nr7, ni7;
+
+    cmul_v256(st->r[0], st->i[0], st->dr[0], st->di[0], &nr0, &ni0);
+    cmul_v256(st->r[1], st->i[1], st->dr[1], st->di[1], &nr1, &ni1);
+    cmul_v256(st->r[2], st->i[2], st->dr[2], st->di[2], &nr2, &ni2);
+    cmul_v256(st->r[3], st->i[3], st->dr[3], st->di[3], &nr3, &ni3);
+    cmul_v256(st->r[4], st->i[4], st->dr[4], st->di[4], &nr4, &ni4);
+    cmul_v256(st->r[5], st->i[5], st->dr[5], st->di[5], &nr5, &ni5);
+    cmul_v256(st->r[6], st->i[6], st->dr[6], st->di[6], &nr6, &ni6);
+    cmul_v256(st->r[7], st->i[7], st->dr[7], st->di[7], &nr7, &ni7);
+
+    st->r[0] = nr0;
+    st->i[0] = ni0;
+    st->r[1] = nr1;
+    st->i[1] = ni1;
+    st->r[2] = nr2;
+    st->i[2] = ni2;
+    st->r[3] = nr3;
+    st->i[3] = ni3;
+    st->r[4] = nr4;
+    st->i[4] = ni4;
+    st->r[5] = nr5;
+    st->i[5] = ni5;
+    st->r[6] = nr6;
+    st->i[6] = ni6;
+    st->r[7] = nr7;
+    st->i[7] = ni7;
+
+    st->left_in_tile -= 4;
+}
+
+//==============================================================================
+// PREFETCH HELPERS FOR TWIDDLE MODES
+//==============================================================================
+
+/**
+ * @brief Prefetch next iteration for BLOCKED8 mode
+ */
+TARGET_AVX2_FMA
+static FORCE_INLINE void prefetch_tw_blocked8(
+    const tw_blocked8_t *tw,
+    size_t k,
+    size_t prefetch_dist)
+{
+    if (k + prefetch_dist < tw->K)
     {
-        // REFRESH: Load accurate twiddles from memory at tile boundary
-        radix32_init_merge_recurrence_state_avx2(k, merge_tw->K, merge_tw,
-                                                 w_state_re, w_state_im, sign_mask);
+        _mm_prefetch((const char *)&tw->re[0][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[0][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[1][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[1][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[2][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[2][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[3][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[3][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[4][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[4][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[5][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[5][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[6][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[6][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[7][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[7][k + prefetch_dist], _MM_HINT_T0);
     }
+}
 
-    // Apply current twiddles (interleaved order - preserves optimization!)
-    __m256d tr, ti;
-
-    // odd[0] unchanged (W₀ = 1)
-
-    // Group 1: indices 1,5,9,13
-    cmul_fma_soa_avx2(odd_re[1], odd_im[1], w_state_re[1], w_state_im[1], &tr, &ti);
-    odd_re[1] = tr;
-    odd_im[1] = ti;
-
-    cmul_fma_soa_avx2(odd_re[5], odd_im[5], w_state_re[5], w_state_im[5], &tr, &ti);
-    odd_re[5] = tr;
-    odd_im[5] = ti;
-
-    cmul_fma_soa_avx2(odd_re[9], odd_im[9], w_state_re[9], w_state_im[9], &tr, &ti);
-    odd_re[9] = tr;
-    odd_im[9] = ti;
-
-    cmul_fma_soa_avx2(odd_re[13], odd_im[13], w_state_re[13], w_state_im[13], &tr, &ti);
-    odd_re[13] = tr;
-    odd_im[13] = ti;
-
-    // Group 2: indices 2,6,10,14
-    cmul_fma_soa_avx2(odd_re[2], odd_im[2], w_state_re[2], w_state_im[2], &tr, &ti);
-    odd_re[2] = tr;
-    odd_im[2] = ti;
-
-    cmul_fma_soa_avx2(odd_re[6], odd_im[6], w_state_re[6], w_state_im[6], &tr, &ti);
-    odd_re[6] = tr;
-    odd_im[6] = ti;
-
-    cmul_fma_soa_avx2(odd_re[10], odd_im[10], w_state_re[10], w_state_im[10], &tr, &ti);
-    odd_re[10] = tr;
-    odd_im[10] = ti;
-
-    cmul_fma_soa_avx2(odd_re[14], odd_im[14], w_state_re[14], w_state_im[14], &tr, &ti);
-    odd_re[14] = tr;
-    odd_im[14] = ti;
-
-    // Group 3: indices 3,7,11,15
-    cmul_fma_soa_avx2(odd_re[3], odd_im[3], w_state_re[3], w_state_im[3], &tr, &ti);
-    odd_re[3] = tr;
-    odd_im[3] = ti;
-
-    cmul_fma_soa_avx2(odd_re[7], odd_im[7], w_state_re[7], w_state_im[7], &tr, &ti);
-    odd_re[7] = tr;
-    odd_im[7] = ti;
-
-    cmul_fma_soa_avx2(odd_re[11], odd_im[11], w_state_re[11], w_state_im[11], &tr, &ti);
-    odd_re[11] = tr;
-    odd_im[11] = ti;
-
-    cmul_fma_soa_avx2(odd_re[15], odd_im[15], w_state_re[15], w_state_im[15], &tr, &ti);
-    odd_re[15] = tr;
-    odd_im[15] = ti;
-
-    // Group 4: indices 4,8,12
-    cmul_fma_soa_avx2(odd_re[4], odd_im[4], w_state_re[4], w_state_im[4], &tr, &ti);
-    odd_re[4] = tr;
-    odd_im[4] = ti;
-
-    cmul_fma_soa_avx2(odd_re[8], odd_im[8], w_state_re[8], w_state_im[8], &tr, &ti);
-    odd_re[8] = tr;
-    odd_im[8] = ti;
-
-    cmul_fma_soa_avx2(odd_re[12], odd_im[12], w_state_re[12], w_state_im[12], &tr, &ti);
-    odd_re[12] = tr;
-    odd_im[12] = ti;
-
-    // ADVANCE: w ← w × δw (for next iteration within tile)
-    for (int r = 0; r < 16; r++)
+/**
+ * @brief Prefetch next iteration for BLOCKED4 mode
+ */
+TARGET_AVX2_FMA
+static FORCE_INLINE void prefetch_tw_blocked4(
+    const tw_blocked4_t *tw,
+    size_t k,
+    size_t prefetch_dist)
+{
+    if (k + prefetch_dist < tw->K)
     {
-        __m256d w_new_re, w_new_im;
-        cmul_fma_soa_avx2(w_state_re[r], w_state_im[r],
-                          delta_w_re[r], delta_w_im[r],
-                          &w_new_re, &w_new_im);
-        w_state_re[r] = w_new_re;
-        w_state_im[r] = w_new_im;
+        _mm_prefetch((const char *)&tw->re[0][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[0][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[1][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[1][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[2][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[2][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->re[3][k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->im[3][k + prefetch_dist], _MM_HINT_T0);
+    }
+}
+
+/**
+ * @brief Prefetch next tile seeds for RECURRENCE mode
+ */
+TARGET_AVX2_FMA
+static FORCE_INLINE void prefetch_rec8_next_tile(
+    const tw_recurrence_t *tw,
+    size_t k_next_tile)
+{
+    if (k_next_tile < tw->K)
+    {
+        _mm_prefetch((const char *)&tw->seed_re[0 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_im[0 * tw->K + k_next_tile], _MM_HINT_T0);
     }
 }
 
 //==============================================================================
-// PREFETCH MACROS FOR MERGE (GUARANTEED INLINE)
+// RADIX-8 DIF BUTTERFLY CORE - PAIR EMITTER STRUCTURE
 //==============================================================================
 
 /**
- * @brief Prefetch inputs + merge twiddles for BLOCKED8
+ * @brief Radix-8 DIF butterfly core - FORWARD
+ *
+ * Computes 8-point DFT using decimation in frequency.
+ * Uses geometric twiddle constants (W8 = e^(-i*π/4)).
+ *
+ * DIF Structure:
+ *   Stage 1: (x0±x4), (x1±x5), (x2±x6), (x3±x7)  [4 butterflies]
+ *   Stage 2: Apply geometric rotations to differences
+ *   Stage 3: Two radix-4 butterflies
+ *
+ * Outputs organized for pair emission:
+ *   Pair 1: (Y0, Y4) - DC and Nyquist/2
+ *   Pair 2: (Y1, Y5) - Low frequency pair
+ *   Pair 3: (Y2, Y6) - Mid-low frequency pair
+ *   Pair 4: (Y3, Y7) - Mid-high frequency pair
+ *
+ * @param x0r..x7r Input real parts (4 doubles each)
+ * @param x0i..x7i Input imag parts
+ * @param y0r..y7r Output real parts
+ * @param y0i..y7i Output imag parts
  */
-#define RADIX32_PREFETCH_MERGE_BLOCKED8_AVX2(k_next, k_limit, K, in_re, in_im, merge_tw) \
-    do                                                                                   \
-    {                                                                                    \
-        if ((k_next) < (k_limit))                                                        \
-        {                                                                                \
-            for (int _r = 16; _r < 32; _r++)                                             \
-            {                                                                            \
-                _mm_prefetch((const char *)&(in_re)[(k_next) + _r * (K)], _MM_HINT_T0);  \
-                _mm_prefetch((const char *)&(in_im)[(k_next) + _r * (K)], _MM_HINT_T0);  \
-            }                                                                            \
-            for (int _b = 0; _b < 8; _b++)                                               \
-            {                                                                            \
-                _mm_prefetch((const char *)&(merge_tw)->re[_b * (K) + (k_next)], _MM_HINT_T0); \
-                _mm_prefetch((const char *)&(merge_tw)->im[_b * (K) + (k_next)], _MM_HINT_T0); \
-            }                                                                            \
-        }                                                                                \
-    } while (0)
-
-/**
- * @brief Prefetch inputs + merge twiddles for BLOCKED4
- */
-#define RADIX32_PREFETCH_MERGE_BLOCKED4_AVX2(k_next, k_limit, K, in_re, in_im, merge_tw) \
-    do                                                                                   \
-    {                                                                                    \
-        if ((k_next) < (k_limit))                                                        \
-        {                                                                                \
-            for (int _r = 16; _r < 32; _r++)                                             \
-            {                                                                            \
-                _mm_prefetch((const char *)&(in_re)[(k_next) + _r * (K)], _MM_HINT_T0);  \
-                _mm_prefetch((const char *)&(in_im)[(k_next) + _r * (K)], _MM_HINT_T0);  \
-            }                                                                            \
-            for (int _b = 0; _b < 4; _b++)                                               \
-            {                                                                            \
-                _mm_prefetch((const char *)&(merge_tw)->re[_b * (K) + (k_next)], _MM_HINT_T0); \
-                _mm_prefetch((const char *)&(merge_tw)->im[_b * (K) + (k_next)], _MM_HINT_T0); \
-            }                                                                            \
-        }                                                                                \
-    } while (0)
-
-/**
- * @brief Prefetch inputs only (for recurrence mode - no twiddle loads)
- */
-#define RADIX32_PREFETCH_MERGE_RECURRENCE_AVX2(k_next, k_limit, K, in_re, in_im) \
-    do                                                                           \
-    {                                                                            \
-        if ((k_next) < (k_limit))                                                \
-        {                                                                        \
-            for (int _r = 16; _r < 32; _r++)                                     \
-            {                                                                    \
-                _mm_prefetch((const char *)&(in_re)[(k_next) + _r * (K)], _MM_HINT_T0); \
-                _mm_prefetch((const char *)&(in_im)[(k_next) + _r * (K)], _MM_HINT_T0); \
-            }                                                                    \
-        }                                                                        \
-    } while (0)
-
-//==============================================================================
-// LOAD/STORE FOR 32 LANES (AVX-2: 4 DOUBLES AT A TIME)
-//==============================================================================
-
 TARGET_AVX2_FMA
-FORCE_INLINE void
-store_32_lanes_soa_avx2(size_t k, size_t K,
-                        double *RESTRICT out_re, double *RESTRICT out_im,
-                        const __m256d y_re[32], const __m256d y_im[32])
+FORCE_INLINE void radix8_dif_core_forward_avx2(
+    __m256d x0r, __m256d x0i,
+    __m256d x1r, __m256d x1i,
+    __m256d x2r, __m256d x2i,
+    __m256d x3r, __m256d x3i,
+    __m256d x4r, __m256d x4i,
+    __m256d x5r, __m256d x5i,
+    __m256d x6r, __m256d x6i,
+    __m256d x7r, __m256d x7i,
+    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
+    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
+    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
+    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i,
+    __m256d *RESTRICT y4r, __m256d *RESTRICT y4i,
+    __m256d *RESTRICT y5r, __m256d *RESTRICT y5i,
+    __m256d *RESTRICT y6r, __m256d *RESTRICT y6i,
+    __m256d *RESTRICT y7r, __m256d *RESTRICT y7i)
 {
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
+    // W8 constant: e^(-i*π/4) = (√2/2)(1 - i)
+    const __m256d W8_RE = _mm256_set1_pd(0.70710678118654752440);  // √2/2
+    const __m256d W8_IM = _mm256_set1_pd(-0.70710678118654752440); // -√2/2
 
-    for (int r = 0; r < 32; r++)
-    {
-        _mm256_store_pd(&out_re_aligned[k + r * K], y_re[r]);
-        _mm256_store_pd(&out_im_aligned[k + r * K], y_im[r]);
-    }
+    //==========================================================================
+    // STAGE 1: Length-4 butterflies (x0±x4, x1±x5, x2±x6, x3±x7)
+    //==========================================================================
+    __m256d a0r = _mm256_add_pd(x0r, x4r);
+    __m256d a0i = _mm256_add_pd(x0i, x4i);
+    __m256d a4r = _mm256_sub_pd(x0r, x4r);
+    __m256d a4i = _mm256_sub_pd(x0i, x4i);
+
+    __m256d a1r = _mm256_add_pd(x1r, x5r);
+    __m256d a1i = _mm256_add_pd(x1i, x5i);
+    __m256d a5r = _mm256_sub_pd(x1r, x5r);
+    __m256d a5i = _mm256_sub_pd(x1i, x5i);
+
+    __m256d a2r = _mm256_add_pd(x2r, x6r);
+    __m256d a2i = _mm256_add_pd(x2i, x6i);
+    __m256d a6r = _mm256_sub_pd(x2r, x6r);
+    __m256d a6i = _mm256_sub_pd(x2i, x6i);
+
+    __m256d a3r = _mm256_add_pd(x3r, x7r);
+    __m256d a3i = _mm256_add_pd(x3i, x7i);
+    __m256d a7r = _mm256_sub_pd(x3r, x7r);
+    __m256d a7i = _mm256_sub_pd(x3i, x7i);
+
+    //==========================================================================
+    // STAGE 2: Apply geometric rotations to differences
+    //==========================================================================
+    // a4: no rotation (W^0)
+    // Already done: a4r, a4i
+
+    // a5 *= W8 = (√2/2)(1 - i)
+    __m256d b5r, b5i;
+    cmul_v256(a5r, a5i, W8_RE, W8_IM, &b5r, &b5i);
+
+    // a6 *= -j (rotate by -90°)
+    __m256d b6r = a6i;
+    __m256d b6i = _mm256_xor_pd(a6r, _mm256_set1_pd(-0.0)); // negate
+
+    // a7 *= -W8* = (√2/2)(-1 - i) = W8 rotated by -135°
+    __m256d b7r, b7i;
+    __m256d nW8_RE = _mm256_xor_pd(W8_RE, _mm256_set1_pd(-0.0)); // -√2/2
+    cmul_v256(a7r, a7i, nW8_RE, W8_IM, &b7r, &b7i);
+
+    //==========================================================================
+    // STAGE 3: Two radix-4 DIF butterflies
+    //==========================================================================
+
+    // --- Radix-4 on evens (a0, a1, a2, a3) → (y0, y2, y4, y6) ---
+    __m256d e0r = _mm256_add_pd(a0r, a2r);
+    __m256d e0i = _mm256_add_pd(a0i, a2i);
+    __m256d e1r = _mm256_sub_pd(a0r, a2r);
+    __m256d e1i = _mm256_sub_pd(a0i, a2i);
+
+    __m256d e2r = _mm256_add_pd(a1r, a3r);
+    __m256d e2i = _mm256_add_pd(a1i, a3i);
+    __m256d e3r = _mm256_sub_pd(a1r, a3r);
+    __m256d e3i = _mm256_sub_pd(a1i, a3i);
+
+    // y0 = e0 + e2
+    *y0r = _mm256_add_pd(e0r, e2r);
+    *y0i = _mm256_add_pd(e0i, e2i);
+
+    // y2 = e1 - j*e3 = e1 + (e3_im, -e3_re)
+    *y2r = _mm256_add_pd(e1r, e3i);
+    *y2i = _mm256_sub_pd(e1i, e3r);
+
+    // y4 = e0 - e2
+    *y4r = _mm256_sub_pd(e0r, e2r);
+    *y4i = _mm256_sub_pd(e0i, e2i);
+
+    // y6 = e1 + j*e3 = e1 + (-e3_im, e3_re)
+    *y6r = _mm256_sub_pd(e1r, e3i);
+    *y6i = _mm256_add_pd(e1i, e3r);
+
+    // --- Radix-4 on odds (b4, b5, b6, b7) → (y1, y3, y5, y7) ---
+    __m256d o0r = _mm256_add_pd(a4r, b6r);
+    __m256d o0i = _mm256_add_pd(a4i, b6i);
+    __m256d o1r = _mm256_sub_pd(a4r, b6r);
+    __m256d o1i = _mm256_sub_pd(a4i, b6i);
+
+    __m256d o2r = _mm256_add_pd(b5r, b7r);
+    __m256d o2i = _mm256_add_pd(b5i, b7i);
+    __m256d o3r = _mm256_sub_pd(b5r, b7r);
+    __m256d o3i = _mm256_sub_pd(b5i, b7i);
+
+    // y1 = o0 + o2
+    *y1r = _mm256_add_pd(o0r, o2r);
+    *y1i = _mm256_add_pd(o0i, o2i);
+
+    // y3 = o1 - j*o3 = o1 + (o3_im, -o3_re)
+    *y3r = _mm256_add_pd(o1r, o3i);
+    *y3i = _mm256_sub_pd(o1i, o3r);
+
+    // y5 = o0 - o2
+    *y5r = _mm256_sub_pd(o0r, o2r);
+    *y5i = _mm256_sub_pd(o0i, o2i);
+
+    // y7 = o1 + j*o3 = o1 + (-o3_im, o3_re)
+    *y7r = _mm256_sub_pd(o1r, o3i);
+    *y7i = _mm256_add_pd(o1i, o3r);
 }
 
+/**
+ * @brief Radix-8 DIF butterfly core - BACKWARD
+ *
+ * Identical structure but conjugated rotations.
+ */
 TARGET_AVX2_FMA
-FORCE_INLINE void
-store_32_lanes_soa_avx2_stream(size_t k, size_t K,
-                               double *RESTRICT out_re, double *RESTRICT out_im,
-                               const __m256d y_re[32], const __m256d y_im[32])
+FORCE_INLINE void radix8_dif_core_backward_avx2(
+    __m256d x0r, __m256d x0i,
+    __m256d x1r, __m256d x1i,
+    __m256d x2r, __m256d x2i,
+    __m256d x3r, __m256d x3i,
+    __m256d x4r, __m256d x4i,
+    __m256d x5r, __m256d x5i,
+    __m256d x6r, __m256d x6i,
+    __m256d x7r, __m256d x7i,
+    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
+    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
+    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
+    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i,
+    __m256d *RESTRICT y4r, __m256d *RESTRICT y4i,
+    __m256d *RESTRICT y5r, __m256d *RESTRICT y5i,
+    __m256d *RESTRICT y6r, __m256d *RESTRICT y6i,
+    __m256d *RESTRICT y7r, __m256d *RESTRICT y7i)
 {
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
+    // W8 conjugated: e^(i*π/4) = (√2/2)(1 + i)
+    const __m256d W8_RE = _mm256_set1_pd(0.70710678118654752440); // √2/2
+    const __m256d W8_IM = _mm256_set1_pd(0.70710678118654752440); // +√2/2 (conjugated)
 
-    for (int r = 0; r < 32; r++)
-    {
-        _mm256_stream_pd(&out_re_aligned[k + r * K], y_re[r]);
-        _mm256_stream_pd(&out_im_aligned[k + r * K], y_im[r]);
-    }
+    //==========================================================================
+    // STAGE 1: Length-4 butterflies
+    //==========================================================================
+    __m256d a0r = _mm256_add_pd(x0r, x4r);
+    __m256d a0i = _mm256_add_pd(x0i, x4i);
+    __m256d a4r = _mm256_sub_pd(x0r, x4r);
+    __m256d a4i = _mm256_sub_pd(x0i, x4i);
+
+    __m256d a1r = _mm256_add_pd(x1r, x5r);
+    __m256d a1i = _mm256_add_pd(x1i, x5i);
+    __m256d a5r = _mm256_sub_pd(x1r, x5r);
+    __m256d a5i = _mm256_sub_pd(x1i, x5i);
+
+    __m256d a2r = _mm256_add_pd(x2r, x6r);
+    __m256d a2i = _mm256_add_pd(x2i, x6i);
+    __m256d a6r = _mm256_sub_pd(x2r, x6r);
+    __m256d a6i = _mm256_sub_pd(x2i, x6i);
+
+    __m256d a3r = _mm256_add_pd(x3r, x7r);
+    __m256d a3i = _mm256_add_pd(x3i, x7i);
+    __m256d a7r = _mm256_sub_pd(x3r, x7r);
+    __m256d a7i = _mm256_sub_pd(x3i, x7i);
+
+    //==========================================================================
+    // STAGE 2: Apply conjugated geometric rotations
+    //==========================================================================
+    // a4: no rotation
+
+    // a5 *= W8* = (√2/2)(1 + i)
+    __m256d b5r, b5i;
+    cmul_v256(a5r, a5i, W8_RE, W8_IM, &b5r, &b5i);
+
+    // a6 *= +j (rotate by +90°, conjugated from -j)
+    __m256d b6r = _mm256_xor_pd(a6i, _mm256_set1_pd(-0.0)); // negate
+    __m256d b6i = a6r;
+
+    // a7 *= -W8 = (√2/2)(-1 + i)
+    __m256d nW8_RE = _mm256_xor_pd(W8_RE, _mm256_set1_pd(-0.0)); // -√2/2
+    __m256d b7r, b7i;
+    cmul_v256(a7r, a7i, nW8_RE, W8_IM, &b7r, &b7i);
+
+    //==========================================================================
+    // STAGE 3: Two radix-4 butterflies (conjugated rotations)
+    //==========================================================================
+
+    // --- Radix-4 on evens (conjugated) ---
+    __m256d e0r = _mm256_add_pd(a0r, a2r);
+    __m256d e0i = _mm256_add_pd(a0i, a2i);
+    __m256d e1r = _mm256_sub_pd(a0r, a2r);
+    __m256d e1i = _mm256_sub_pd(a0i, a2i);
+
+    __m256d e2r = _mm256_add_pd(a1r, a3r);
+    __m256d e2i = _mm256_add_pd(a1i, a3i);
+    __m256d e3r = _mm256_sub_pd(a1r, a3r);
+    __m256d e3i = _mm256_sub_pd(a1i, a3i);
+
+    *y0r = _mm256_add_pd(e0r, e2r);
+    *y0i = _mm256_add_pd(e0i, e2i);
+
+    // y2 = e1 + j*e3 (conjugated)
+    *y2r = _mm256_sub_pd(e1r, e3i);
+    *y2i = _mm256_add_pd(e1i, e3r);
+
+    *y4r = _mm256_sub_pd(e0r, e2r);
+    *y4i = _mm256_sub_pd(e0i, e2i);
+
+    // y6 = e1 - j*e3 (conjugated)
+    *y6r = _mm256_add_pd(e1r, e3i);
+    *y6i = _mm256_sub_pd(e1i, e3r);
+
+    // --- Radix-4 on odds (conjugated) ---
+    __m256d o0r = _mm256_add_pd(a4r, b6r);
+    __m256d o0i = _mm256_add_pd(a4i, b6i);
+    __m256d o1r = _mm256_sub_pd(a4r, b6r);
+    __m256d o1i = _mm256_sub_pd(a4i, b6i);
+
+    __m256d o2r = _mm256_add_pd(b5r, b7r);
+    __m256d o2i = _mm256_add_pd(b5i, b7i);
+    __m256d o3r = _mm256_sub_pd(b5r, b7r);
+    __m256d o3i = _mm256_sub_pd(b5i, b7i);
+
+    *y1r = _mm256_add_pd(o0r, o2r);
+    *y1i = _mm256_add_pd(o0i, o2i);
+
+    // y3 = o1 + j*o3 (conjugated)
+    *y3r = _mm256_sub_pd(o1r, o3i);
+    *y3i = _mm256_add_pd(o1i, o3r);
+
+    *y5r = _mm256_sub_pd(o0r, o2r);
+    *y5i = _mm256_sub_pd(o0i, o2i);
+
+    // y7 = o1 - j*o3 (conjugated)
+    *y7r = _mm256_add_pd(o1r, o3i);
+    *y7i = _mm256_sub_pd(o1i, o3r);
 }
 
 //==============================================================================
-// MASKED TAIL HANDLING (ALL VARIANTS) - AVX-2 ADAPTATION
+// PAIR EMITTERS FOR RADIX-8 DIF
 //==============================================================================
 
 /**
- * @brief Store with mask for AVX-2 (no native mask registers)
+ * @brief Emit pair (Y0, Y4) from radix-8 DIF - FORWARD
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix8_dif_emit_pair_04_forward_avx2(
+    __m256d y0r, __m256d y0i,
+    __m256d y4r, __m256d y4i,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    size_t K, size_t k)
+{
+    _mm256_store_pd(&out_re[0 * K + k], y0r);
+    _mm256_store_pd(&out_im[0 * K + k], y0i);
+    _mm256_store_pd(&out_re[4 * K + k], y4r);
+    _mm256_store_pd(&out_im[4 * K + k], y4i);
+}
+
+/**
+ * @brief Emit pair (Y1, Y5) from radix-8 DIF - FORWARD
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix8_dif_emit_pair_15_forward_avx2(
+    __m256d y1r, __m256d y1i,
+    __m256d y5r, __m256d y5i,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    size_t K, size_t k)
+{
+    _mm256_store_pd(&out_re[1 * K + k], y1r);
+    _mm256_store_pd(&out_im[1 * K + k], y1i);
+    _mm256_store_pd(&out_re[5 * K + k], y5r);
+    _mm256_store_pd(&out_im[5 * K + k], y5i);
+}
+
+/**
+ * @brief Emit pair (Y2, Y6) from radix-8 DIF - FORWARD
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix8_dif_emit_pair_26_forward_avx2(
+    __m256d y2r, __m256d y2i,
+    __m256d y6r, __m256d y6i,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    size_t K, size_t k)
+{
+    _mm256_store_pd(&out_re[2 * K + k], y2r);
+    _mm256_store_pd(&out_im[2 * K + k], y2i);
+    _mm256_store_pd(&out_re[6 * K + k], y6r);
+    _mm256_store_pd(&out_im[6 * K + k], y6i);
+}
+
+/**
+ * @brief Emit pair (Y3, Y7) from radix-8 DIF - FORWARD
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix8_dif_emit_pair_37_forward_avx2(
+    __m256d y3r, __m256d y3i,
+    __m256d y7r, __m256d y7i,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    size_t K, size_t k)
+{
+    _mm256_store_pd(&out_re[3 * K + k], y3r);
+    _mm256_store_pd(&out_im[3 * K + k], y3i);
+    _mm256_store_pd(&out_re[7 * K + k], y7r);
+    _mm256_store_pd(&out_im[7 * K + k], y7i);
+}
+
+/**
+ * @brief Emit pair (Y0, Y4) - BACKWARD
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix8_dif_emit_pair_04_backward_avx2(
+    __m256d y0r, __m256d y0i,
+    __m256d y4r, __m256d y4i,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    size_t K, size_t k)
+{
+    _mm256_store_pd(&out_re[0 * K + k], y0r);
+    _mm256_store_pd(&out_im[0 * K + k], y0i);
+    _mm256_store_pd(&out_re[4 * K + k], y4r);
+    _mm256_store_pd(&out_im[4 * K + k], y4i);
+}
+
+/**
+ * @brief Emit pair (Y1, Y5) - BACKWARD
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix8_dif_emit_pair_15_backward_avx2(
+    __m256d y1r, __m256d y1i,
+    __m256d y5r, __m256d y5i,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    size_t K, size_t k)
+{
+    _mm256_store_pd(&out_re[1 * K + k], y1r);
+    _mm256_store_pd(&out_im[1 * K + k], y1i);
+    _mm256_store_pd(&out_re[5 * K + k], y5r);
+    _mm256_store_pd(&out_im[5 * K + k], y5i);
+}
+
+/**
+ * @brief Emit pair (Y2, Y6) - BACKWARD
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix8_dif_emit_pair_26_backward_avx2(
+    __m256d y2r, __m256d y2i,
+    __m256d y6r, __m256d y6i,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    size_t K, size_t k)
+{
+    _mm256_store_pd(&out_re[2 * K + k], y2r);
+    _mm256_store_pd(&out_im[2 * K + k], y2i);
+    _mm256_store_pd(&out_re[6 * K + k], y6r);
+    _mm256_store_pd(&out_im[6 * K + k], y6i);
+}
+
+/**
+ * @brief Emit pair (Y3, Y7) - BACKWARD
+ */
+TARGET_AVX2_FMA
+FORCE_INLINE void radix8_dif_emit_pair_37_backward_avx2(
+    __m256d y3r, __m256d y3i,
+    __m256d y7r, __m256d y7i,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    size_t K, size_t k)
+{
+    _mm256_store_pd(&out_re[3 * K + k], y3r);
+    _mm256_store_pd(&out_im[3 * K + k], y3i);
+    _mm256_store_pd(&out_re[7 * K + k], y7r);
+    _mm256_store_pd(&out_im[7 * K + k], y7i);
+}
+
+//==============================================================================
+// RADIX-8 DIF STAGE WITH MULTI-MODE TWIDDLES - FORWARD
+//==============================================================================
+
+/**
+ * @brief Radix-8 DIF stage with multi-mode twiddles - FORWARD
  * 
- * @details Uses maskload/maskstore intrinsics for AVX-2.
- * Mask format: -1 (all bits set) = load/store, 0 = skip
+ * Optimizations:
+ * ✅ U=2 software pipelining (overlapped loads/compute/stores)
+ * ✅ Two-wave stores: {0,2,4,6} then {1,3,5,7} (≤16 YMM live)
+ * ✅ Multi-mode twiddles (BLOCKED8/BLOCKED4/RECURRENCE)
+ * ✅ Adaptive NT stores (>LLC/2 threshold)
+ * ✅ Adaptive prefetch distance (8/16/24 based on K)
+ * 
+ * Peak register usage: ~16 YMM (controlled via two-wave emission)
+ * 
+ * @param K Number of samples per stripe (must be multiple of 4)
+ * @param in_re Input real [8 stripes][K]
+ * @param in_im Input imag [8 stripes][K]
+ * @param out_re Output real [8 stripes][K]
+ * @param out_im Output imag [8 stripes][K]
+ * @param tw Multi-mode twiddle structure
  */
 TARGET_AVX2_FMA
-FORCE_INLINE void
-store_32_lanes_soa_avx2_masked(size_t k, size_t K, size_t remaining,
-                               double *RESTRICT out_re, double *RESTRICT out_im,
-                               const __m256d y_re[32], const __m256d y_im[32])
-{
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    // AVX-2 mask: -1 (0xFFFFFFFFFFFFFFFF) for valid lanes, 0 for invalid
-    __m256i mask;
-    if (remaining == 1)
-        mask = _mm256_setr_epi64x(-1, 0, 0, 0);
-    else if (remaining == 2)
-        mask = _mm256_setr_epi64x(-1, -1, 0, 0);
-    else if (remaining == 3)
-        mask = _mm256_setr_epi64x(-1, -1, -1, 0);
-    else // remaining == 4 (but we shouldn't hit this - handled by k+=4 loop)
-        mask = _mm256_setr_epi64x(-1, -1, -1, -1);
-
-    for (int r = 0; r < 32; r++)
-    {
-        _mm256_maskstore_pd(&out_re_aligned[k + r * K], mask, y_re[r]);
-        _mm256_maskstore_pd(&out_im_aligned[k + r * K], mask, y_im[r]);
-    }
-}
-
-/**
- * @brief Process tail with mask - BLOCKED8 Forward
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void
-radix32_process_tail_masked_blocked8_forward_avx2(
-    size_t k, size_t k_end, size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const void *RESTRICT radix16_tw, radix16_twiddle_mode_t r16_mode,
-    const radix32_merge_twiddles_blocked8_avx2_t *RESTRICT merge_tw,
-    __m256d neg_mask)
-{
-    if (k >= k_end)
-        return;
-
-    size_t remaining = k_end - k;
-    if (remaining > 4)
-        remaining = 4;
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    // Process even half (r=0..15) with radix-16
-    __m256d even_re[16], even_im[16];  // ← Only once!
-    load_16_lanes_soa_avx2_masked(k, K, remaining, in_re_aligned, in_im_aligned,
-                                  even_re, even_im);
-
-    // Apply radix-16 stage to even half
-    if (r16_mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *tw16 =
-            (const radix16_stage_twiddles_blocked8_t *)radix16_tw;
-        apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16);  // ← No neg_mask!
-    }
-    else
-    {
-        const radix16_stage_twiddles_blocked4_t *tw16 =
-            (const radix16_stage_twiddles_blocked4_t *)radix16_tw;
-        apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16);  // ← No neg_mask!
-    }
-
-    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);
-    radix16_complete_butterfly_forward_fused_soa_avx2(even_re, even_im,
-                                                       even_re, even_im,
-                                                       rot_sign_mask);
-
-    // Process odd half (r=16..31) with radix-16
-    __m256d odd_re[16], odd_im[16];
-
-    // Build mask for odd half
-    __m256i mask;
-    if (remaining == 1)
-        mask = _mm256_setr_epi64x(-1, 0, 0, 0);
-    else if (remaining == 2)
-        mask = _mm256_setr_epi64x(-1, -1, 0, 0);
-    else if (remaining == 3)
-        mask = _mm256_setr_epi64x(-1, -1, -1, 0);
-    else
-        mask = _mm256_setr_epi64x(-1, -1, -1, -1);
-
-    for (int r = 0; r < 16; r++)
-    {
-        odd_re[r] = _mm256_maskload_pd(&in_re_aligned[k + (r + 16) * K], mask);
-        odd_im[r] = _mm256_maskload_pd(&in_im_aligned[k + (r + 16) * K], mask);
-    }
-
-    if (r16_mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *tw16 =
-            (const radix16_stage_twiddles_blocked8_t *)radix16_tw;
-        apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16);  // ← No neg_mask!
-    }
-    else
-    {
-        const radix16_stage_twiddles_blocked4_t *tw16 =
-            (const radix16_stage_twiddles_blocked4_t *)radix16_tw;
-        apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16);  // ← No neg_mask!
-    }
-
-    radix16_complete_butterfly_forward_fused_soa_avx2(odd_re, odd_im,
-                                                       odd_re, odd_im,
-                                                       rot_sign_mask);
-
-    // Apply merge twiddles to odd half
-    apply_merge_twiddles_blocked8_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
-
-    // Radix-2 combine
-    __m256d y_re[32], y_im[32];
-    radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
-
-    // Store result
-    store_32_lanes_soa_avx2_masked(k, K, remaining, out_re_aligned, out_im_aligned, y_re, y_im);
-}
-
-/**
- * @brief Process tail with mask - BLOCKED8 Backward
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void
-radix32_process_tail_masked_blocked8_backward_avx2(
-    size_t k, size_t k_end, size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const void *RESTRICT radix16_tw, radix16_twiddle_mode_t r16_mode,
-    const radix32_merge_twiddles_blocked8_avx2_t *RESTRICT merge_tw,
-    __m256d neg_mask)
-{
-    if (k >= k_end)
-        return;
-
-    size_t remaining = k_end - k;
-    if (remaining > 4)
-        remaining = 4;
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);  // ← MOVED TO TOP!
-
-    // Even half
-    __m256d even_re[16], even_im[16];
-    load_16_lanes_soa_avx2_masked(k, K, remaining, in_re_aligned, in_im_aligned,
-                                  even_re, even_im);
-
-    if (r16_mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *tw16 =
-            (const radix16_stage_twiddles_blocked8_t *)radix16_tw;
-        apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16);
-    }
-    else
-    {
-        const radix16_stage_twiddles_blocked4_t *tw16 =
-            (const radix16_stage_twiddles_blocked4_t *)radix16_tw;
-        apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16);
-    }
-
-    radix16_complete_butterfly_backward_fused_soa_avx2(even_re, even_im,
-                                                        even_re, even_im,
-                                                        rot_sign_mask);
-
-    // Build mask for odd half
-    __m256i mask;
-    if (remaining == 1)
-        mask = _mm256_setr_epi64x(-1, 0, 0, 0);
-    else if (remaining == 2)
-        mask = _mm256_setr_epi64x(-1, -1, 0, 0);
-    else if (remaining == 3)
-        mask = _mm256_setr_epi64x(-1, -1, -1, 0);
-    else
-        mask = _mm256_setr_epi64x(-1, -1, -1, -1);
-
-    // Odd half
-    __m256d odd_re[16], odd_im[16];
-    for (int r = 0; r < 16; r++)
-    {
-        odd_re[r] = _mm256_maskload_pd(&in_re_aligned[k + (r + 16) * K], mask);
-        odd_im[r] = _mm256_maskload_pd(&in_im_aligned[k + (r + 16) * K], mask);
-    }
-
-    if (r16_mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *tw16 =
-            (const radix16_stage_twiddles_blocked8_t *)radix16_tw;
-        apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16);  // ← No neg_mask!
-    }
-    else
-    {
-        const radix16_stage_twiddles_blocked4_t *tw16 =
-            (const radix16_stage_twiddles_blocked4_t *)radix16_tw;
-        apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16);  // ← No neg_mask!
-    }
-
-    radix16_complete_butterfly_backward_fused_soa_avx2(odd_re, odd_im,
-                                                        odd_re, odd_im,
-                                                        rot_sign_mask);
-
-    apply_merge_twiddles_blocked8_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
-
-    __m256d y_re[32], y_im[32];
-    radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
-
-    store_32_lanes_soa_avx2_masked(k, K, remaining, out_re_aligned, out_im_aligned, y_re, y_im);
-}
-
-/**
- * @brief Process tail with mask - BLOCKED4 Forward (with optional recurrence)
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void
-radix32_process_tail_masked_blocked4_forward_avx2(
-    size_t k, size_t k_end, size_t K, size_t k_tile_start,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const void *RESTRICT radix16_tw, radix16_twiddle_mode_t r16_mode,
-    const radix32_merge_twiddles_blocked4_avx2_t *RESTRICT merge_tw,
-    bool use_merge_recurrence,
-    __m256d merge_w_state_re[16], __m256d merge_w_state_im[16],
-    const __m256d *delta_w_re, const __m256d *delta_w_im,
-    __m256d neg_mask)
-{
-    if (k >= k_end)
-        return;
-
-    size_t remaining = k_end - k;
-    if (remaining > 4)
-        remaining = 4;
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);
-
-    // Even half
-    __m256d even_re[16], even_im[16];
-    load_16_lanes_soa_avx2_masked(k, K, remaining, in_re_aligned, in_im_aligned,  // ← Changed: pass 'remaining'
-                                  even_re, even_im);
-
-    if (r16_mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *tw16 =
-            (const radix16_stage_twiddles_blocked8_t *)radix16_tw;
-        apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16);  // ← No neg_mask
-    }
-    else
-    {
-        const radix16_stage_twiddles_blocked4_t *tw16 =
-            (const radix16_stage_twiddles_blocked4_t *)radix16_tw;
-        apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16);  // ← No neg_mask
-    }
-
-    radix16_complete_butterfly_forward_fused_soa_avx2(even_re, even_im,
-                                                       even_re, even_im,
-                                                       rot_sign_mask);
-
-    // Build mask for odd half
-    __m256i mask;  // ← Moved here
-    if (remaining == 1)
-        mask = _mm256_setr_epi64x(-1, 0, 0, 0);
-    else if (remaining == 2)
-        mask = _mm256_setr_epi64x(-1, -1, 0, 0);
-    else if (remaining == 3)
-        mask = _mm256_setr_epi64x(-1, -1, -1, 0);
-    else
-        mask = _mm256_setr_epi64x(-1, -1, -1, -1);
-
-    // Odd half
-    __m256d odd_re[16], odd_im[16];
-    for (int r = 0; r < 16; r++)
-    {
-        odd_re[r] = _mm256_maskload_pd(&in_re_aligned[k + (r + 16) * K], mask);
-        odd_im[r] = _mm256_maskload_pd(&in_im_aligned[k + (r + 16) * K], mask);
-    }
-
-    if (r16_mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *tw16 =
-            (const radix16_stage_twiddles_blocked8_t *)radix16_tw;
-        apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16);  // ← No neg_mask
-    }
-    else
-    {
-        const radix16_stage_twiddles_blocked4_t *tw16 =
-            (const radix16_stage_twiddles_blocked4_t *)radix16_tw;
-        apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16);  // ← No neg_mask
-    }
-
-    radix16_complete_butterfly_forward_fused_soa_avx2(odd_re, odd_im,
-                                                       odd_re, odd_im,
-                                                       rot_sign_mask);
-
-    // Apply merge twiddles
-    if (use_merge_recurrence)
-    {
-        apply_merge_twiddles_recur_avx2(k, k_tile_start, false, odd_re, odd_im,
-                                        merge_tw, merge_w_state_re, merge_w_state_im,
-                                        delta_w_re, delta_w_im, neg_mask);
-    }
-    else
-    {
-        apply_merge_twiddles_blocked4_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
-    }
-
-    __m256d y_re[32], y_im[32];
-    radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
-
-    store_32_lanes_soa_avx2_masked(k, K, remaining, out_re_aligned, out_im_aligned, y_re, y_im);
-}
-
-/**
- * @brief Process tail with mask - BLOCKED4 Backward (with optional recurrence)
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void
-radix32_process_tail_masked_blocked4_backward_avx2(
-    size_t k, size_t k_end, size_t K, size_t k_tile_start,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const void *RESTRICT radix16_tw, radix16_twiddle_mode_t r16_mode,
-    const radix32_merge_twiddles_blocked4_avx2_t *RESTRICT merge_tw,
-    bool use_merge_recurrence,
-    __m256d merge_w_state_re[16], __m256d merge_w_state_im[16],
-    const __m256d *delta_w_re, const __m256d *delta_w_im,
-    __m256d neg_mask)
-{
-    if (k >= k_end)
-        return;
-
-    size_t remaining = k_end - k;
-    if (remaining > 4)
-        remaining = 4;
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);
-
-    // Even half
-    __m256d even_re[16], even_im[16];
-    load_16_lanes_soa_avx2_masked(k, K, remaining, in_re_aligned, in_im_aligned,  // ← Changed: pass 'remaining'
-                                  even_re, even_im);
-
-    if (r16_mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *tw16 =
-            (const radix16_stage_twiddles_blocked8_t *)radix16_tw;
-        apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16);  // ← No neg_mask
-    }
-    else
-    {
-        const radix16_stage_twiddles_blocked4_t *tw16 =
-            (const radix16_stage_twiddles_blocked4_t *)radix16_tw;
-        apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16);  // ← No neg_mask
-    }
-
-    radix16_complete_butterfly_backward_fused_soa_avx2(even_re, even_im,
-                                                        even_re, even_im,
-                                                        rot_sign_mask);
-
-    // Build mask for odd half
-    __m256i mask;  // ← Moved here
-    if (remaining == 1)
-        mask = _mm256_setr_epi64x(-1, 0, 0, 0);
-    else if (remaining == 2)
-        mask = _mm256_setr_epi64x(-1, -1, 0, 0);
-    else if (remaining == 3)
-        mask = _mm256_setr_epi64x(-1, -1, -1, 0);
-    else
-        mask = _mm256_setr_epi64x(-1, -1, -1, -1);
-
-    // Odd half
-    __m256d odd_re[16], odd_im[16];
-    for (int r = 0; r < 16; r++)
-    {
-        odd_re[r] = _mm256_maskload_pd(&in_re_aligned[k + (r + 16) * K], mask);
-        odd_im[r] = _mm256_maskload_pd(&in_im_aligned[k + (r + 16) * K], mask);
-    }
-
-    if (r16_mode == RADIX16_TW_BLOCKED8)
-    {
-        const radix16_stage_twiddles_blocked8_t *tw16 =
-            (const radix16_stage_twiddles_blocked8_t *)radix16_tw;
-        apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16);  // ← No neg_mask
-    }
-    else
-    {
-        const radix16_stage_twiddles_blocked4_t *tw16 =
-            (const radix16_stage_twiddles_blocked4_t *)radix16_tw;
-        apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16);  // ← No neg_mask
-    }
-
-    radix16_complete_butterfly_backward_fused_soa_avx2(odd_re, odd_im,
-                                                        odd_re, odd_im,
-                                                        rot_sign_mask);
-
-    // Apply merge twiddles
-    if (use_merge_recurrence)
-    {
-        apply_merge_twiddles_recur_avx2(k, k_tile_start, false, odd_re, odd_im,
-                                        merge_tw, merge_w_state_re, merge_w_state_im,
-                                        delta_w_re, delta_w_im, neg_mask);
-    }
-    else
-    {
-        apply_merge_twiddles_blocked4_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
-    }
-
-    __m256d y_re[32], y_im[32];
-    radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
-
-    store_32_lanes_soa_avx2_masked(k, K, remaining, out_re_aligned, out_im_aligned, y_re, y_im);
-}
-
-//==============================================================================
-// COMPLETE STAGE DRIVERS: FORWARD (BLOCKED8)
-//==============================================================================
-
-/**
- * @brief Radix-32 DIT Forward Stage - BLOCKED8 Merge (AVX-2 CORRECTED)
- *
- * AVX-2 ADAPTATIONS:
- * - Main loop: k += 8 (was 16)
- * - U=2 pipelining: process k and k+4 (was k+8)
- * - Tail loop: k += 4 (was 8)
- * - Prefetch distance: 16 doubles (was 32)
- * - 256-bit vectors (4 doubles) instead of 512-bit (8 doubles)
- *
- * PRESERVED OPTIMIZATIONS:
- * - K-tiling (Tk=64)
- * - U=2 software pipelining
- * - Prefetch (adjusted for AVX-2)
- * - Adaptive NT stores
- * - Masked tail handling
- * - All radix-16 optimizations inherited
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void
-radix32_stage_dit_forward_blocked8_merge_avx2(
+NO_UNROLL_LOOPS
+static void radix8_dif_stage_multimode_forward_avx2(
     size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix32_stage_twiddles_avx2_t *RESTRICT stage_tw)
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const tw_stage8_t *RESTRICT tw)
 {
-    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);
-    const __m256d neg_mask = _mm256_set1_pd(-0.0);
-
-    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE; // 16 for AVX-2
-    const size_t tile_size = RADIX32_TILE_SIZE; // 64
-
-    const bool use_nt_stores = radix32_should_use_nt_stores_avx2(K, out_re, out_im);
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    const void *radix16_tw = stage_tw->radix16_tw_opaque;
-    const radix16_twiddle_mode_t r16_mode = stage_tw->radix16_mode;
-    const radix32_merge_twiddles_blocked8_avx2_t *merge_tw =
-        (const radix32_merge_twiddles_blocked8_avx2_t *)stage_tw->merge_tw_opaque;
-
-    // Cast to specific types for branching
-    const radix16_stage_twiddles_blocked8_t  *tw16b8 =
-        (r16_mode == RADIX16_TW_BLOCKED8)
-            ? (const radix16_stage_twiddles_blocked8_t  *)radix16_tw
-            : NULL;
-    const radix16_stage_twiddles_blocked4_t  *tw16b4 =
-        (r16_mode == RADIX16_TW_BLOCKED4)
-            ? (const radix16_stage_twiddles_blocked4_t  *)radix16_tw
-            : NULL;
-
-    // K-TILING OUTER LOOP
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
-    {
-        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
-
-        // MAIN U=2 LOOP: k += 8 (process k and k+4)
-        size_t k;
-        for (k = k_tile; k + 8 <= k_end; k += 8)
-        {
-            // Prefetch next iteration (BOTH radix-16 + merge)
-            size_t k_next = k + 8 + prefetch_dist;
-            if (k_next < k_end)
-            {
-                // Prefetch even half (radix-16 inputs + twiddles)
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    RADIX16_PREFETCH_NEXT_BLOCKED8_AVX2(k_next, k_end, K,
-                                                        in_re_aligned, in_im_aligned, tw16b8);
-                }
-                else // RADIX16_TW_BLOCKED4
-                {
-                    RADIX16_PREFETCH_NEXT_BLOCKED4_AVX2(k_next, k_end, K,
-                                                        in_re_aligned, in_im_aligned, tw16b4);
-                }
-
-                // Prefetch odd half + merge twiddles
-                RADIX32_PREFETCH_MERGE_BLOCKED8_AVX2(k_next, k_end, K,
-                                                     in_re_aligned, in_im_aligned, merge_tw);
-            }
-
-            // ==================== PROCESS k ====================
-            {
-                // Even half (r=0..15): radix-16 butterfly
-                __m256d even_re[16], even_im[16];
-                load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned,
-                                       even_re, even_im);
-
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im,
-                                                       tw16b8, neg_mask);
-                }
-                else // RADIX16_TW_BLOCKED4
-                {
-                    apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im,
-                                                       tw16b4, neg_mask);
-                }
-                radix16_complete_butterfly_forward_fused_soa_avx2(even_re, even_im,
-                                                   even_re, even_im,
-                                                   rot_sign_mask);
-
-                // Odd half (r=16..31): radix-16 butterfly
-                __m256d odd_re[16], odd_im[16];
-                for (int r = 0; r < 16; r++)
-                {
-                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
-                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
-                }
-
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im,
-                                                       tw16b8, neg_mask);
-                }
-                else // RADIX16_TW_BLOCKED4
-                {
-                    apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im,
-                                                       tw16b4, neg_mask);
-                }
-                radix16_complete_butterfly_forward_fused_soa_avx2(odd_re, odd_im,
-                                                   odd_re, odd_im,
-                                                   rot_sign_mask);
-
-                // Apply merge twiddles to odd half
-                apply_merge_twiddles_blocked8_avx2(k, K, odd_re, odd_im,
-                                                   merge_tw, neg_mask);
-
-                // Radix-2 combine
-                __m256d y_re[32], y_im[32];
-                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
-                                                  y_re, y_im);
-
-                // Store
-                if (use_nt_stores)
-                {
-                    store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
-                                                   y_re, y_im);
-                }
-                else
-                {
-                    store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned,
-                                            y_re, y_im);
-                }
-            }
-
-            // ==================== PROCESS k+4 (U=2 SOFTWARE PIPELINING) ====================
-            {
-                __m256d even_re[16], even_im[16];
-                load_16_lanes_soa_avx2(k + 4, K, in_re_aligned, in_im_aligned,
-                                       even_re, even_im);
-
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    apply_stage_twiddles_blocked8_avx2(k + 4, K, even_re, even_im,
-                                                       tw16b8, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked4_avx2(k + 4, K, even_re, even_im,
-                                                       tw16b4, neg_mask);
-                }
-                radix16_complete_butterfly_forward_fused_soa_avx2(even_re, even_im,
-                                                   even_re, even_im,
-                                                   rot_sign_mask);
-
-                __m256d odd_re[16], odd_im[16];
-                for (int r = 0; r < 16; r++)
-                {
-                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + 4 + (r + 16) * K]);
-                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + 4 + (r + 16) * K]);
-                }
-
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    apply_stage_twiddles_blocked8_avx2(k + 4, K, odd_re, odd_im,
-                                                       tw16b8, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked4_avx2(k + 4, K, odd_re, odd_im,
-                                                       tw16b4, neg_mask);
-                }
-                radix16_complete_butterfly_forward_fused_soa_avx2(odd_re, odd_im,
-                                                   odd_re, odd_im,
-                                                   rot_sign_mask);
-
-                apply_merge_twiddles_blocked8_avx2(k + 4, K, odd_re, odd_im,
-                                                   merge_tw, neg_mask);
-
-                __m256d y_re[32], y_im[32];
-                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
-                                                  y_re, y_im);
-
-                if (use_nt_stores)
-                {
-                    store_32_lanes_soa_avx2_stream(k + 4, K, out_re_aligned,
-                                                   out_im_aligned, y_re, y_im);
-                }
-                else
-                {
-                    store_32_lanes_soa_avx2(k + 4, K, out_re_aligned, out_im_aligned,
-                                            y_re, y_im);
-                }
-            }
-        }
-
-        // TAIL LOOP #1: k += 4
-        for (; k + 4 <= k_end; k += 4)
-        {
-            __m256d even_re[16], even_im[16];
-            load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned, even_re, even_im);
-
-            if (r16_mode == RADIX16_TW_BLOCKED8)
-            {
-                apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16b8, neg_mask);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16b4, neg_mask);
-            }
-            radix16_complete_butterfly_forward_fused_soa_avx2(even_re, even_im,
-                                                   even_re, even_im,
-                                                   rot_sign_mask);
-
-            __m256d odd_re[16], odd_im[16];
-            for (int r = 0; r < 16; r++)
-            {
-                odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
-                odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
-            }
-
-            if (r16_mode == RADIX16_TW_BLOCKED8)
-            {
-                apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16b8, neg_mask);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16b4, neg_mask);
-            }
-            radix16_complete_butterfly_forward_fused_soa_avx2(odd_re, odd_im,
-                                                   odd_re, odd_im,
-                                                   rot_sign_mask);
-
-            apply_merge_twiddles_blocked8_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
-
-            __m256d y_re[32], y_im[32];
-            radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
-
-            if (use_nt_stores)
-            {
-                store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
-                                               y_re, y_im);
-            }
-            else
-            {
-                store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned, y_re, y_im);
-            }
-        }
-
-        // TAIL LOOP #2: Masked (K % 4 != 0)
-        radix32_process_tail_masked_blocked8_forward_avx2(
-            k, k_end, K, in_re_aligned, in_im_aligned, out_re_aligned, out_im_aligned,
-            radix16_tw, r16_mode, merge_tw, neg_mask);
-    }
-
-    if (use_nt_stores)
-    {
-        _mm_sfence();
-    }
-}
-
-//==============================================================================
-// COMPLETE STAGE DRIVERS: FORWARD (BLOCKED4 WITH RECURRENCE)
-//==============================================================================
-
-/**
- * @brief Radix-32 DIT Forward Stage - BLOCKED4 Merge (AVX-2 CORRECTED)
- *
- * CRITICAL PLANNER REQUIREMENTS:
- * ================================
- * 1. Radix-16 delta_w arrays must have 16 elements (indices 0..15)
- *    - delta_w[15] should be set to identity (1+0i) or safe value
- *    - Butterfly advances all 16 mechanically
- *
- * 2. Merge delta_w arrays must have 16 elements (indices 0..15)
- *    - delta_w[0] MUST be identity (1+0i) to keep W₀ stationary
- *    - Butterfly advances all 16 mechanically, including W₀
- *
- * BUFFER SIZING:
- * - r16_w_even/odd: [16] elements (was [15] - BUG FIXED)
- * - merge_w_state: [16] elements (correct)
- *
- * AVX-2 ADAPTATIONS:
- * - Main loop: k += 8, U=2 with k and k+4
- * - Tail loop: k += 4, then masked
- * - Prefetch: 16 doubles ahead
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void
-radix32_stage_dit_forward_blocked4_merge_avx2(
-    size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix32_stage_twiddles_avx2_t *RESTRICT stage_tw,
-    bool use_merge_recurrence,
-    const __m256d *RESTRICT merge_delta_w_re,
-    const __m256d *RESTRICT merge_delta_w_im)
-{
-    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);
-    const __m256d neg_mask = _mm256_set1_pd(-0.0);
-
-    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE;
-    const size_t tile_size = RADIX32_TILE_SIZE;
-
-    const bool use_nt_stores = radix32_should_use_nt_stores_avx2(K, out_re, out_im);
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    const void *radix16_tw = stage_tw->radix16_tw_opaque;
-    const radix16_twiddle_mode_t r16_mode = stage_tw->radix16_mode;
-    const radix32_merge_twiddles_blocked4_avx2_t *merge_tw =
-        (const radix32_merge_twiddles_blocked4_avx2_t *)stage_tw->merge_tw_opaque;
-
-    // CRITICAL: Detect radix-16 recurrence mode
-    const radix16_stage_twiddles_blocked8_t  *tw16b8 =
-        (r16_mode == RADIX16_TW_BLOCKED8)
-            ? (const radix16_stage_twiddles_blocked8_t  *)radix16_tw
-            : NULL;
-    const radix16_stage_twiddles_blocked4_t  *tw16b4 =
-        (r16_mode == RADIX16_TW_BLOCKED4)
-            ? (const radix16_stage_twiddles_blocked4_t  *)radix16_tw
-            : NULL;
-
-    bool r16_recur = (r16_mode == RADIX16_TW_BLOCKED4) && tw16b4->recurrence_enabled;
-
-    // Merge recurrence state
-    __m256d merge_w_state_re[16], merge_w_state_im[16];
-
-    // CRITICAL FIX: Radix-16 recurrence state - [16] elements (was [15])
-    // Planner must set delta_w[15] to safe value (identity recommended)
-    __m256d r16_w_even_re[16], r16_w_even_im[16]; // For r=0..15
-    __m256d r16_w_odd_re[16], r16_w_odd_im[16];   // For r=16..31
-
-    // K-TILING OUTER LOOP
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
-    {
-        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
-
-        // MAIN U=2 LOOP: k += 8
-        size_t k;
-        for (k = k_tile; k + 8 <= k_end; k += 8)
-        {
-            // Prefetch next iteration (BOTH radix-16 + merge)
-            size_t k_next = k + 8 + prefetch_dist;
-            if (k_next < k_end)
-            {
-                // Prefetch even half (radix-16)
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    RADIX16_PREFETCH_NEXT_BLOCKED8_AVX2(k_next, k_end, K,
-                                                        in_re_aligned, in_im_aligned, tw16b8);
-                }
-                else if (r16_recur)
-                {
-                    RADIX16_PREFETCH_NEXT_RECURRENCE_AVX2(k_next, k_end, K,
-                                                          in_re_aligned, in_im_aligned);
-                }
-                else
-                {
-                    RADIX16_PREFETCH_NEXT_BLOCKED4_AVX2(k_next, k_end, K,
-                                                        in_re_aligned, in_im_aligned, tw16b4);
-                }
-
-                // Prefetch merge
-                if (use_merge_recurrence)
-                {
-                    RADIX32_PREFETCH_MERGE_RECURRENCE_AVX2(k_next, k_end, K,
-                                                           in_re_aligned, in_im_aligned);
-                }
-                else
-                {
-                    RADIX32_PREFETCH_MERGE_BLOCKED4_AVX2(k_next, k_end, K,
-                                                         in_re_aligned, in_im_aligned, merge_tw);
-                }
-            }
-
-            bool is_tile_start = (k == k_tile);
-
-            // ==================== PROCESS k ====================
-            {
-                // Even half: radix-16 butterfly
-                __m256d even_re[16], even_im[16];
-                load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned,
-                                       even_re, even_im);
-
-                // CRITICAL: Branch on radix-16 recurrence mode
-                if (r16_recur)
-                {
-                    apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-                }
-                else if (r16_mode == RADIX16_TW_BLOCKED4)
-                {
-                    apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im,
-                                                       tw16b4, neg_mask);
-                }
-                else // RADIX16_TW_BLOCKED8
-                {
-                    apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im,
-                                                       tw16b8, neg_mask);
-                }
-                radix16_complete_butterfly_forward_fused_soa_avx2(even_re, even_im,
-                                                   even_re, even_im,
-                                                   rot_sign_mask);
-
-                // Odd half: radix-16 butterfly
-                __m256d odd_re[16], odd_im[16];
-                for (int r = 0; r < 16; r++)
-                {
-                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
-                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
-                }
-
-                // CRITICAL: Branch on radix-16 recurrence mode (odd half uses separate walker)
-                if (r16_recur)
-                {
-                    apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-                }
-                else if (r16_mode == RADIX16_TW_BLOCKED4)
-                {
-                    apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im,
-                                                       tw16b4, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im,
-                                                       tw16b8, neg_mask);
-                }
-                radix16_complete_butterfly_forward_fused_soa_avx2(odd_re, odd_im,
-                                                   odd_re, odd_im,
-                                                   rot_sign_mask);
-
-                // Apply merge twiddles
-                if (use_merge_recurrence)
-                {
-                    apply_merge_twiddles_recur_avx2(k, k_tile, is_tile_start,
-                                                    odd_re, odd_im, merge_tw,
-                                                    merge_w_state_re, merge_w_state_im,
-                                                    merge_delta_w_re, merge_delta_w_im,
-                                                    neg_mask);
-                }
-                else
-                {
-                    apply_merge_twiddles_blocked4_avx2(k, K, odd_re, odd_im,
-                                                       merge_tw, neg_mask);
-                }
-
-                // Radix-2 combine
-                __m256d y_re[32], y_im[32];
-                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
-                                                  y_re, y_im);
-
-                // Store
-                if (use_nt_stores)
-                {
-                    store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
-                                                   y_re, y_im);
-                }
-                else
-                {
-                    store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned,
-                                            y_re, y_im);
-                }
-            }
-
-            // ==================== PROCESS k+4 ====================
-            {
-                __m256d even_re[16], even_im[16];
-                load_16_lanes_soa_avx2(k + 4, K, in_re_aligned, in_im_aligned,
-                                       even_re, even_im);
-
-                // CRITICAL: is_tile_start = false for k+4
-                if (r16_recur)
-                {
-                    apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-                }
-                else if (r16_mode == RADIX16_TW_BLOCKED4)
-                {
-                    apply_stage_twiddles_blocked4_avx2(k + 4, K, even_re, even_im,
-                                                       tw16b4, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked8_avx2(k + 4, K, even_re, even_im,
-                                                       tw16b8, neg_mask);
-                }
-                radix16_complete_butterfly_forward_fused_soa_avx2(even_re, even_im,
-                                                   even_re, even_im,
-                                                   rot_sign_mask);
-
-                __m256d odd_re[16], odd_im[16];
-                for (int r = 0; r < 16; r++)
-                {
-                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + 4 + (r + 16) * K]);
-                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + 4 + (r + 16) * K]);
-                }
-
-                if (r16_recur)
-                {
-                    apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-                }
-                else if (r16_mode == RADIX16_TW_BLOCKED4)
-                {
-                    apply_stage_twiddles_blocked4_avx2(k + 4, K, odd_re, odd_im,
-                                                       tw16b4, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked8_avx2(k + 4, K, odd_re, odd_im,
-                                                       tw16b8, neg_mask);
-                }
-                radix16_complete_butterfly_forward_fused_soa_avx2(odd_re, odd_im,
-                                                   odd_re, odd_im,
-                                                   rot_sign_mask);
-
-                if (use_merge_recurrence)
-                {
-                    apply_merge_twiddles_recur_avx2(k + 4, k_tile, false,
-                                                    odd_re, odd_im, merge_tw,
-                                                    merge_w_state_re, merge_w_state_im,
-                                                    merge_delta_w_re, merge_delta_w_im,
-                                                    neg_mask);
-                }
-                else
-                {
-                    apply_merge_twiddles_blocked4_avx2(k + 4, K, odd_re, odd_im,
-                                                       merge_tw, neg_mask);
-                }
-
-                __m256d y_re[32], y_im[32];
-                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
-                                                  y_re, y_im);
-
-                if (use_nt_stores)
-                {
-                    store_32_lanes_soa_avx2_stream(k + 4, K, out_re_aligned,
-                                                   out_im_aligned, y_re, y_im);
-                }
-                else
-                {
-                    store_32_lanes_soa_avx2(k + 4, K, out_re_aligned, out_im_aligned,
-                                            y_re, y_im);
-                }
-            }
-        }
-
-        // TAIL LOOP #1: k += 4
-        for (; k + 4 <= k_end; k += 4)
-        {
-            __m256d even_re[16], even_im[16];
-            load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned, even_re, even_im);
-
-            if (r16_recur)
-            {
-                apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-            }
-            else if (r16_mode == RADIX16_TW_BLOCKED4)
-            {
-                apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16b4, neg_mask);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16b8, neg_mask);
-            }
-            radix16_complete_butterfly_forward_fused_soa_avx2(even_re, even_im,
-                                                   even_re, even_im,
-                                                   rot_sign_mask);
-
-            __m256d odd_re[16], odd_im[16];
-            for (int r = 0; r < 16; r++)
-            {
-                odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
-                odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
-            }
-
-            if (r16_recur)
-            {
-                apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-            }
-            else if (r16_mode == RADIX16_TW_BLOCKED4)
-            {
-                apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16b4, neg_mask);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16b8, neg_mask);
-            }
-            radix16_complete_butterfly_forward_fused_soa_avx2(odd_re, odd_im,
-                                                   odd_re, odd_im,
-                                                   rot_sign_mask);
-
-            if (use_merge_recurrence)
-            {
-                apply_merge_twiddles_recur_avx2(k, k_tile, false, odd_re, odd_im,
-                                                merge_tw, merge_w_state_re, merge_w_state_im,
-                                                merge_delta_w_re, merge_delta_w_im, neg_mask);
-            }
-            else
-            {
-                apply_merge_twiddles_blocked4_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
-            }
-
-            __m256d y_re[32], y_im[32];
-            radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
-
-            if (use_nt_stores)
-            {
-                store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
-                                               y_re, y_im);
-            }
-            else
-            {
-                store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned, y_re, y_im);
-            }
-        }
-
-        // TAIL LOOP #2: Masked
-        radix32_process_tail_masked_blocked4_forward_avx2(
-            k, k_end, K, k_tile, in_re_aligned, in_im_aligned, out_re_aligned, out_im_aligned,
-            radix16_tw, r16_mode, merge_tw, use_merge_recurrence,
-            merge_w_state_re, merge_w_state_im, merge_delta_w_re, merge_delta_w_im,
-            neg_mask);
-    }
-
-    if (use_nt_stores)
-    {
-        _mm_sfence();
-    }
-}
-
-//==============================================================================
-// COMPLETE STAGE DRIVERS: BACKWARD (BLOCKED8)
-//==============================================================================
-
-/**
- * @brief Radix-32 DIT Backward Stage - BLOCKED8 Merge (AVX-2)
- *
- * AVX-2 ADAPTATIONS:
- * - Main loop: k += 8 (was 16)
- * - U=2 pipelining: process k and k+4 (was k+8)
- * - Tail loop: k += 4 (was 8)
- * - Prefetch distance: 16 doubles (was 32)
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void
-radix32_stage_dit_backward_blocked8_merge_avx2(
-    size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix32_stage_twiddles_avx2_t *RESTRICT stage_tw)
-{
-    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);
-    const __m256d neg_mask = _mm256_set1_pd(-0.0);
-
-    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE;
-    const size_t tile_size = RADIX32_TILE_SIZE;
-
-    const bool use_nt_stores = radix32_should_use_nt_stores_avx2(K, out_re, out_im);
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    const void *radix16_tw = stage_tw->radix16_tw_opaque;
-    const radix16_twiddle_mode_t r16_mode = stage_tw->radix16_mode;
-    const radix32_merge_twiddles_blocked8_avx2_t *merge_tw =
-        (const radix32_merge_twiddles_blocked8_avx2_t *)stage_tw->merge_tw_opaque;
-
-    const radix16_stage_twiddles_blocked8_t  *tw16b8 =
-        (r16_mode == RADIX16_TW_BLOCKED8)
-            ? (const radix16_stage_twiddles_blocked8_t  *)radix16_tw
-            : NULL;
-    const radix16_stage_twiddles_blocked4_t  *tw16b4 =
-        (r16_mode == RADIX16_TW_BLOCKED4)
-            ? (const radix16_stage_twiddles_blocked4_t  *)radix16_tw
-            : NULL;
-
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
-    {
-        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
-
-        size_t k;
-        for (k = k_tile; k + 8 <= k_end; k += 8)
-        {
-            size_t k_next = k + 8 + prefetch_dist;
-            if (k_next < k_end)
-            {
-                // Prefetch radix-16
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    RADIX16_PREFETCH_NEXT_BLOCKED8_AVX2(k_next, k_end, K,
-                                                        in_re_aligned, in_im_aligned, tw16b8);
-                }
-                else
-                {
-                    RADIX16_PREFETCH_NEXT_BLOCKED4_AVX2(k_next, k_end, K,
-                                                        in_re_aligned, in_im_aligned, tw16b4);
-                }
-
-                // Prefetch merge
-                RADIX32_PREFETCH_MERGE_BLOCKED8_AVX2(k_next, k_end, K,
-                                                     in_re_aligned, in_im_aligned, merge_tw);
-            }
-
-            {
-                __m256d even_re[16], even_im[16];
-                load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned,
-                                       even_re, even_im);
-
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im,
-                                                       tw16b8, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im,
-                                                       tw16b4, neg_mask);
-                }
-                radix16_complete_butterfly_backward_fused_soa_avx2(even_re, even_im,
-                                                    even_re, even_im,
-                                                    rot_sign_mask);
-
-                __m256d odd_re[16], odd_im[16];
-                for (int r = 0; r < 16; r++)
-                {
-                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
-                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
-                }
-
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im,
-                                                       tw16b8, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im,
-                                                       tw16b4, neg_mask);
-                }
-                radix16_complete_butterfly_backward_fused_soa_avx2(odd_re, odd_im,
-                                                    odd_re, odd_im,
-                                                    rot_sign_mask);
-
-                apply_merge_twiddles_blocked8_avx2(k, K, odd_re, odd_im,
-                                                   merge_tw, neg_mask);
-
-                __m256d y_re[32], y_im[32];
-                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
-                                                  y_re, y_im);
-
-                if (use_nt_stores)
-                {
-                    store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
-                                                   y_re, y_im);
-                }
-                else
-                {
-                    store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned,
-                                            y_re, y_im);
-                }
-            }
-
-            {
-                __m256d even_re[16], even_im[16];
-                load_16_lanes_soa_avx2(k + 4, K, in_re_aligned, in_im_aligned,
-                                       even_re, even_im);
-
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    apply_stage_twiddles_blocked8_avx2(k + 4, K, even_re, even_im,
-                                                       tw16b8, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked4_avx2(k + 4, K, even_re, even_im,
-                                                       tw16b4, neg_mask);
-                }
-                radix16_complete_butterfly_backward_fused_soa_avx2(even_re, even_im,
-                                                    even_re, even_im,
-                                                    rot_sign_mask);
-                __m256d odd_re[16], odd_im[16];
-                for (int r = 0; r < 16; r++)
-                {
-                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + 4 + (r + 16) * K]);
-                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + 4 + (r + 16) * K]);
-                }
-
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    apply_stage_twiddles_blocked8_avx2(k + 4, K, odd_re, odd_im,
-                                                       tw16b8, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked4_avx2(k + 4, K, odd_re, odd_im,
-                                                       tw16b4, neg_mask);
-                }
-                radix16_complete_butterfly_backward_fused_soa_avx2(odd_re, odd_im,
-                                                    odd_re, odd_im,
-                                                    rot_sign_mask);
-
-                apply_merge_twiddles_blocked8_avx2(k + 4, K, odd_re, odd_im,
-                                                   merge_tw, neg_mask);
-
-                __m256d y_re[32], y_im[32];
-                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
-                                                  y_re, y_im);
-
-                if (use_nt_stores)
-                {
-                    store_32_lanes_soa_avx2_stream(k + 4, K, out_re_aligned,
-                                                   out_im_aligned, y_re, y_im);
-                }
-                else
-                {
-                    store_32_lanes_soa_avx2(k + 4, K, out_re_aligned, out_im_aligned,
-                                            y_re, y_im);
-                }
-            }
-        }
-
-        for (; k + 4 <= k_end; k += 4)
-        {
-            __m256d even_re[16], even_im[16];
-            load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned, even_re, even_im);
-
-            if (r16_mode == RADIX16_TW_BLOCKED8)
-            {
-                apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16b8, neg_mask);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16b4, neg_mask);
-            }
-            radix16_complete_butterfly_backward_fused_soa_avx2(even_re, even_im,
-                                                    even_re, even_im,
-                                                    rot_sign_mask);
-
-            __m256d odd_re[16], odd_im[16];
-            for (int r = 0; r < 16; r++)
-            {
-                odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
-                odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
-            }
-
-            if (r16_mode == RADIX16_TW_BLOCKED8)
-            {
-                apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16b8, neg_mask);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16b4, neg_mask);
-            }
-            radix16_complete_butterfly_backward_fused_soa_avx2(odd_re, odd_im,
-                                                    odd_re, odd_im,
-                                                    rot_sign_mask);
-
-            apply_merge_twiddles_blocked8_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
-
-            __m256d y_re[32], y_im[32];
-            radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
-
-            if (use_nt_stores)
-            {
-                store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
-                                               y_re, y_im);
-            }
-            else
-            {
-                store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned, y_re, y_im);
-            }
-        }
-
-        radix32_process_tail_masked_blocked8_backward_avx2(
-            k, k_end, K, in_re_aligned, in_im_aligned, out_re_aligned, out_im_aligned,
-            radix16_tw, r16_mode, merge_tw, neg_mask);
-    }
-
-    if (use_nt_stores)
-    {
-        _mm_sfence();
-    }
-}
-
-//==============================================================================
-// COMPLETE STAGE DRIVERS: BACKWARD (BLOCKED4 WITH RECURRENCE)
-//==============================================================================
-
-/**
- * @brief Radix-32 DIT Backward Stage - BLOCKED4 Merge (AVX-2 CORRECTED)
- *
- * CRITICAL PLANNER REQUIREMENTS:
- * ================================
- * Same as forward - see documentation above.
- *
- * BUFFER SIZING:
- * - r16_w_even/odd: [16] elements (was [15] - BUG FIXED)
- * - merge_w_state: [16] elements (correct)
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void
-radix32_stage_dit_backward_blocked4_merge_avx2(
-    size_t K,
-    const double *RESTRICT in_re, const double *RESTRICT in_im,
-    double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix32_stage_twiddles_avx2_t *RESTRICT stage_tw,
-    bool use_merge_recurrence,
-    const __m256d *RESTRICT merge_delta_w_re,
-    const __m256d *RESTRICT merge_delta_w_im)
-{
-    const __m256d rot_sign_mask = _mm256_set1_pd(-0.0);
-    const __m256d neg_mask = _mm256_set1_pd(-0.0);
-
-    const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE;
-    const size_t tile_size = RADIX32_TILE_SIZE;
-
-    const bool use_nt_stores = radix32_should_use_nt_stores_avx2(K, out_re, out_im);
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    const void *radix16_tw = stage_tw->radix16_tw_opaque;
-    const radix16_twiddle_mode_t r16_mode = stage_tw->radix16_mode;
-    const radix32_merge_twiddles_blocked4_avx2_t *merge_tw =
-        (const radix32_merge_twiddles_blocked4_avx2_t *)stage_tw->merge_tw_opaque;
-
-    const radix16_stage_twiddles_blocked8_t  *tw16b8 =
-        (r16_mode == RADIX16_TW_BLOCKED8)
-            ? (const radix16_stage_twiddles_blocked8_t  *)radix16_tw
-            : NULL;
-    const radix16_stage_twiddles_blocked4_t  *tw16b4 =
-        (r16_mode == RADIX16_TW_BLOCKED4)
-            ? (const radix16_stage_twiddles_blocked4_t  *)radix16_tw
-            : NULL;
-
-    bool r16_recur = (r16_mode == RADIX16_TW_BLOCKED4) && tw16b4->recurrence_enabled;
-
-    __m256d merge_w_state_re[16], merge_w_state_im[16];
+    const size_t step = 4;
+    const size_t prefetch_dist = pick_prefetch_dist_dif8(K);
     
-    // CRITICAL FIX: [16] elements (was [15])
-    __m256d r16_w_even_re[16], r16_w_even_im[16];
-    __m256d r16_w_odd_re[16], r16_w_odd_im[16];
-
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
+    // Adaptive NT store decision (only for final output, temp stays hot)
+    const size_t total_bytes = K * 8 * 2 * sizeof(double);
+    const int use_nt = (total_bytes >= (RADIX32_STREAM_THRESHOLD_KB * 1024));
+    
+#define ST_STREAM(p, v) (use_nt ? _mm256_stream_pd(p, v) : _mm256_store_pd(p, v))
+    
+    const __m256d signbit = signbit_pd();
+    
+    switch (tw->mode) {
+    
+    //==========================================================================
+    case TW_MODE_BLOCKED8:
+    //==========================================================================
     {
-        size_t k_end = (k_tile + tile_size < K) ? (k_tile + tile_size) : K;
-
-        size_t k;
-        for (k = k_tile; k + 8 <= k_end; k += 8)
-        {
-            size_t k_next = k + 8 + prefetch_dist;
-            if (k_next < k_end)
-            {
-                if (r16_mode == RADIX16_TW_BLOCKED8)
-                {
-                    RADIX16_PREFETCH_NEXT_BLOCKED8_AVX2(k_next, k_end, K,
-                                                        in_re_aligned, in_im_aligned, tw16b8);
-                }
-                else if (r16_recur)
-                {
-                    RADIX16_PREFETCH_NEXT_RECURRENCE_AVX2(k_next, k_end, K,
-                                                          in_re_aligned, in_im_aligned);
-                }
-                else
-                {
-                    RADIX16_PREFETCH_NEXT_BLOCKED4_AVX2(k_next, k_end, K,
-                                                        in_re_aligned, in_im_aligned, tw16b4);
-                }
-
-                if (use_merge_recurrence)
-                {
-                    RADIX32_PREFETCH_MERGE_RECURRENCE_AVX2(k_next, k_end, K,
-                                                           in_re_aligned, in_im_aligned);
-                }
-                else
-                {
-                    RADIX32_PREFETCH_MERGE_BLOCKED4_AVX2(k_next, k_end, K,
-                                                         in_re_aligned, in_im_aligned, merge_tw);
-                }
-            }
-
-            bool is_tile_start = (k == k_tile);
-
-            {
-                __m256d even_re[16], even_im[16];
-                load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned,
-                                       even_re, even_im);
-
-                if (r16_recur)
-                {
-                    apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-                }
-                else if (r16_mode == RADIX16_TW_BLOCKED4)
-                {
-                    apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im,
-                                                       tw16b4, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im,
-                                                       tw16b8, neg_mask);
-                }
-                radix16_complete_butterfly_backward_fused_soa_avx2(even_re, even_im,
-                                                    even_re, even_im,
-                                                    rot_sign_mask);
-
-                __m256d odd_re[16], odd_im[16];
-                for (int r = 0; r < 16; r++)
-                {
-                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
-                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
-                }
-
-                if (r16_recur)
-                {
-                    apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-                }
-                else if (r16_mode == RADIX16_TW_BLOCKED4)
-                {
-                    apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im,
-                                                       tw16b4, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im,
-                                                       tw16b8, neg_mask);
-                }
-                radix16_complete_butterfly_backward_fused_soa_avx2(odd_re, odd_im,
-                                                    odd_re, odd_im,
-                                                    rot_sign_mask);
-
-                if (use_merge_recurrence)
-                {
-                    apply_merge_twiddles_recur_avx2(k, k_tile, is_tile_start,
-                                                    odd_re, odd_im, merge_tw,
-                                                    merge_w_state_re, merge_w_state_im,
-                                                    merge_delta_w_re, merge_delta_w_im,
-                                                    neg_mask);
-                }
-                else
-                {
-                    apply_merge_twiddles_blocked4_avx2(k, K, odd_re, odd_im,
-                                                       merge_tw, neg_mask);
-                }
-
-                __m256d y_re[32], y_im[32];
-                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
-                                                  y_re, y_im);
-
-                if (use_nt_stores)
-                {
-                    store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
-                                                   y_re, y_im);
-                }
-                else
-                {
-                    store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned,
-                                            y_re, y_im);
-                }
-            }
-
-            {
-                __m256d even_re[16], even_im[16];
-                load_16_lanes_soa_avx2(k + 4, K, in_re_aligned, in_im_aligned,
-                                       even_re, even_im);
-
-                if (r16_recur)
-                {
-                    apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-                }
-                else if (r16_mode == RADIX16_TW_BLOCKED4)
-                {
-                    apply_stage_twiddles_blocked4_avx2(k + 4, K, even_re, even_im,
-                                                       tw16b4, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked8_avx2(k + 4, K, even_re, even_im,
-                                                       tw16b8, neg_mask);
-                }
-                radix16_complete_butterfly_backward_fused_soa_avx2(even_re, even_im,
-                                                    even_re, even_im,
-                                                    rot_sign_mask);
-
-                __m256d odd_re[16], odd_im[16];
-                for (int r = 0; r < 16; r++)
-                {
-                    odd_re[r] = _mm256_load_pd(&in_re_aligned[k + 4 + (r + 16) * K]);
-                    odd_im[r] = _mm256_load_pd(&in_im_aligned[k + 4 + (r + 16) * K]);
-                }
-
-                if (r16_recur)
-                {
-                    apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-                }
-                else if (r16_mode == RADIX16_TW_BLOCKED4)
-                {
-                    apply_stage_twiddles_blocked4_avx2(k + 4, K, odd_re, odd_im,
-                                                       tw16b4, neg_mask);
-                }
-                else
-                {
-                    apply_stage_twiddles_blocked8_avx2(k + 4, K, odd_re, odd_im,
-                                                       tw16b8, neg_mask);
-                }
-                radix16_complete_butterfly_backward_fused_soa_avx2(odd_re, odd_im,
-                                                    odd_re, odd_im,
-                                                    rot_sign_mask);
-
-                if (use_merge_recurrence)
-                {
-                    apply_merge_twiddles_recur_avx2(k + 4, k_tile, false,
-                                                    odd_re, odd_im, merge_tw,
-                                                    merge_w_state_re, merge_w_state_im,
-                                                    merge_delta_w_re, merge_delta_w_im,
-                                                    neg_mask);
-                }
-                else
-                {
-                    apply_merge_twiddles_blocked4_avx2(k + 4, K, odd_re, odd_im,
-                                                       merge_tw, neg_mask);
-                }
-
-                __m256d y_re[32], y_im[32];
-                radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im,
-                                                  y_re, y_im);
-
-                if (use_nt_stores)
-                {
-                    store_32_lanes_soa_avx2_stream(k + 4, K, out_re_aligned,
-                                                   out_im_aligned, y_re, y_im);
-                }
-                else
-                {
-                    store_32_lanes_soa_avx2(k + 4, K, out_re_aligned, out_im_aligned,
-                                            y_re, y_im);
-                }
+        const tw_blocked8_t *b8 = &tw->b8;
+        
+        if (K < 8) {
+            // Fallback: not enough iterations for U=2 pipelining
+            goto blocked8_simple;
+        }
+        
+        //======================================================================
+        // PROLOGUE: Load first iteration (nx prefix = "next")
+        //======================================================================
+        tw8_vecs_t nT;
+        load_tw_blocked8_k4(b8, 0, &nT);
+        
+        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
+        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
+        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
+        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
+        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
+        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
+        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
+        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
+        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
+        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
+        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
+        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
+        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
+        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
+        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
+        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
+        
+        //======================================================================
+        // STEADY-STATE U=2 LOOP
+        //======================================================================
+#pragma GCC unroll 1
+        for (size_t k = 0; k + 4 < K; k += step) {
+            //==================================================================
+            // CONSUME: Current iteration uses nx* from previous
+            //==================================================================
+            tw8_vecs_t T = nT;
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            const size_t kn = k + 4;
+            
+            //==================================================================
+            // STAGE 1: Apply stage twiddles (x1..x7)
+            //==================================================================
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            
+            //==================================================================
+            // STAGE 2: Load next iteration inputs (first half)
+            //==================================================================
+            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
+            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
+            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
+            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
+            
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            //==================================================================
+            // STAGE 3: Radix-8 DIF butterfly
+            //==================================================================
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_forward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            //==================================================================
+            // STAGE 4: Load next iteration inputs (second half)
+            //==================================================================
+            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
+            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
+            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
+            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
+            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
+            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
+            
+            //==================================================================
+            // STAGE 5: Store outputs - WAVE A (even: 0, 2, 4, 6)
+            //==================================================================
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            //==================================================================
+            // STAGE 6: Load remaining next inputs
+            //==================================================================
+            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
+            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
+            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
+            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
+            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
+            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
+            
+            //==================================================================
+            // STAGE 7: Store outputs - WAVE B (odd: 1, 3, 5, 7)
+            //==================================================================
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+            
+            //==================================================================
+            // STAGE 8: Load next twiddles
+            //==================================================================
+            load_tw_blocked8_k4(b8, kn, &nT);
+            
+            //==================================================================
+            // STAGE 9: Prefetch (adaptive distance)
+            //==================================================================
+            if (kn + prefetch_dist < K) {
+                prefetch_tw_blocked8(b8, kn, prefetch_dist);
+                
+                _mm_prefetch((const char *)&in_re[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[4 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[4 * K + kn + prefetch_dist], _MM_HINT_T0);
             }
         }
-
-        for (; k + 4 <= k_end; k += 4)
+        
+        //======================================================================
+        // EPILOGUE: Final iteration (no next loads)
+        //======================================================================
         {
-            __m256d even_re[16], even_im[16];
-            load_16_lanes_soa_avx2(k, K, in_re_aligned, in_im_aligned, even_re, even_im);
-
-            if (r16_recur)
-            {
-                apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-            }
-            else if (r16_mode == RADIX16_TW_BLOCKED4)
-            {
-                apply_stage_twiddles_blocked4_avx2(k, K, even_re, even_im, tw16b4, neg_mask);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked8_avx2(k, K, even_re, even_im, tw16b8, neg_mask);
-            }
-            radix16_complete_butterfly_backward_fused_soa_avx2(even_re, even_im,
-                                                    even_re, even_im,
-                                                    rot_sign_mask);
-
-            __m256d odd_re[16], odd_im[16];
-            for (int r = 0; r < 16; r++)
-            {
-                odd_re[r] = _mm256_load_pd(&in_re_aligned[k + (r + 16) * K]);
-                odd_im[r] = _mm256_load_pd(&in_im_aligned[k + (r + 16) * K]);
-            }
-
-            if (r16_recur)
-            {
-                apply_stage_twiddles_recur_avx2(k, is_tile_start,  // ← Remove k_tile!
-                                even_re, even_im, tw16b4,
-                                r16_w_even_re, r16_w_even_im,
-                                tw16b4->delta_w_re, tw16b4->delta_w_im);  // ← Remove neg_mask!
-            }
-            else if (r16_mode == RADIX16_TW_BLOCKED4)
-            {
-                apply_stage_twiddles_blocked4_avx2(k, K, odd_re, odd_im, tw16b4, neg_mask);
-            }
-            else
-            {
-                apply_stage_twiddles_blocked8_avx2(k, K, odd_re, odd_im, tw16b8, neg_mask);
-            }
-            radix16_complete_butterfly_backward_fused_soa_avx2(odd_re, odd_im,
-                                                    odd_re, odd_im,
-                                                    rot_sign_mask);
-
-            if (use_merge_recurrence)
-            {
-                apply_merge_twiddles_recur_avx2(k, k_tile, false, odd_re, odd_im,
-                                                merge_tw, merge_w_state_re, merge_w_state_im,
-                                                merge_delta_w_re, merge_delta_w_im, neg_mask);
-            }
-            else
-            {
-                apply_merge_twiddles_blocked4_avx2(k, K, odd_re, odd_im, merge_tw, neg_mask);
-            }
-
-            __m256d y_re[32], y_im[32];
-            radix2_butterfly_combine_soa_avx2(even_re, even_im, odd_re, odd_im, y_re, y_im);
-
-            if (use_nt_stores)
-            {
-                store_32_lanes_soa_avx2_stream(k, K, out_re_aligned, out_im_aligned,
-                                               y_re, y_im);
-            }
-            else
-            {
-                store_32_lanes_soa_avx2(k, K, out_re_aligned, out_im_aligned, y_re, y_im);
-            }
+            size_t k = K - 4;
+            tw8_vecs_t T = nT;
+            
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_forward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            // Two-wave stores
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
         }
-
-        radix32_process_tail_masked_blocked4_backward_avx2(
-            k, k_end, K, k_tile, in_re_aligned, in_im_aligned, out_re_aligned, out_im_aligned,
-            radix16_tw, r16_mode, merge_tw, use_merge_recurrence,
-            merge_w_state_re, merge_w_state_im, merge_delta_w_re, merge_delta_w_im,
-            neg_mask);
+        
+        goto done_blocked8;
+        
+blocked8_simple:
+        // Simple loop for K < 8 (no U=2 pipelining)
+#pragma GCC unroll 1
+        for (size_t k = 0; k < K; k += step) {
+            tw8_vecs_t T;
+            load_tw_blocked8_k4(b8, k, &T);
+            
+            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
+            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
+            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
+            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
+            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
+            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
+            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
+            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
+            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
+            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
+            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
+            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
+            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
+            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
+            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
+            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_forward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+        }
+        
+done_blocked8:
+        break;
     }
-
-    if (use_nt_stores)
+    
+    //==========================================================================
+    case TW_MODE_BLOCKED4:
+    //==========================================================================
     {
+        const tw_blocked4_t *b4 = &tw->b4;
+        
+        if (K < 8) {
+            goto blocked4_simple;
+        }
+        
+        // PROLOGUE
+        tw8_vecs_t nT;
+        load_tw_blocked4_k4(b4, 0, &nT);
+        
+        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
+        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
+        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
+        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
+        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
+        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
+        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
+        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
+        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
+        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
+        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
+        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
+        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
+        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
+        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
+        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
+        
+        // STEADY-STATE U=2 LOOP
+#pragma GCC unroll 1
+        for (size_t k = 0; k + 4 < K; k += step) {
+            tw8_vecs_t T = nT;
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            const size_t kn = k + 4;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            
+            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
+            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
+            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
+            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
+            
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_forward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
+            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
+            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
+            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
+            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
+            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
+            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
+            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
+            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
+            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
+            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+            
+            load_tw_blocked4_k4(b4, kn, &nT);
+            
+            if (kn + prefetch_dist < K) {
+                prefetch_tw_blocked4(b4, kn, prefetch_dist);
+                _mm_prefetch((const char *)&in_re[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[4 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[4 * K + kn + prefetch_dist], _MM_HINT_T0);
+            }
+        }
+        
+        // EPILOGUE
+        {
+            size_t k = K - 4;
+            tw8_vecs_t T = nT;
+            
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_forward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+        }
+        
+        goto done_blocked4;
+        
+blocked4_simple:
+#pragma GCC unroll 1
+        for (size_t k = 0; k < K; k += step) {
+            tw8_vecs_t T;
+            load_tw_blocked4_k4(b4, k, &T);
+            
+            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
+            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
+            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
+            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
+            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
+            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
+            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
+            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
+            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
+            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
+            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
+            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
+            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
+            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
+            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
+            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_forward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+        }
+        
+done_blocked4:
+        break;
+    }
+    
+    //==========================================================================
+    case TW_MODE_RECURRENCE:
+    //==========================================================================
+    {
+        const tw_recurrence_t *rec = &tw->rec;
+        const size_t tile_len = rec->tile_len;
+        rec8_vecs_t S;
+        
+        if (K < 8) {
+            goto recurrence_simple;
+        }
+        
+        // Initialize for first tile
+        rec8_tile_init(rec, 0, &S);
+        
+        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
+        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
+        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
+        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
+        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
+        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
+        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
+        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
+        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
+        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
+        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
+        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
+        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
+        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
+        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
+        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
+        
+#pragma GCC unroll 1
+        for (size_t k = 0; k + 4 < K; k += step) {
+            // Refresh at tile boundaries
+            if ((k % tile_len) == 0 && k > 0) {
+                rec8_tile_init(rec, k, &S);
+                if (k + tile_len < K) {
+                    prefetch_rec8_next_tile(rec, k + tile_len);
+                }
+            }
+            
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            const size_t kn = k + 4;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
+            
+            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
+            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
+            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
+            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
+            
+            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_forward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
+            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
+            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
+            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
+            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
+            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
+            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
+            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
+            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
+            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
+            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+            
+            rec8_step_advance(&S);
+        }
+        
+        // EPILOGUE
+        {
+            size_t k = K - 4;
+            
+            if ((k % tile_len) == 0 && k > 0) {
+                rec8_tile_init(rec, k, &S);
+            }
+            
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_forward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+        }
+        
+        goto done_recurrence;
+        
+recurrence_simple:
+#pragma GCC unroll 1
+        for (size_t k = 0; k < K; k += step) {
+            if ((k % tile_len) == 0) {
+                rec8_tile_init(rec, k, &S);
+                if (k + tile_len < K) {
+                    prefetch_rec8_next_tile(rec, k + tile_len);
+                }
+            }
+            
+            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
+            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
+            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
+            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
+            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
+            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
+            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
+            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
+            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
+            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
+            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
+            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
+            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
+            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
+            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
+            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_forward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+            
+            rec8_step_advance(&S);
+        }
+        
+done_recurrence:
+        break;
+    }
+    
+    } // end switch
+    
+    if (use_nt) {
         _mm_sfence();
     }
+    
+#undef ST_STREAM
 }
 
 //==============================================================================
-// PUBLIC API
+// RADIX-8 DIF STAGE WITH MULTI-MODE TWIDDLES - BACKWARD
 //==============================================================================
 
 /**
- * @brief Radix-32 DIT Forward Stage - Public API (AVX-2)
- *
- * @param K Number of k-indices per radix lane
- * @param in_re Input real part (SoA: [32][K])
- * @param in_im Input imaginary part (SoA: [32][K])
- * @param out_re Output real part (SoA: [32][K])
- * @param out_im Output imaginary part (SoA: [32][K])
- * @param stage_tw_opaque Opaque pointer to radix32_stage_twiddles_avx2_t
- *
- * @note Twiddle structures should be prepared during planning phase:
- *       - radix16_tw: Stage twiddles for both radix-16 sub-FFTs
- *       - merge_tw: W₃₂^m twiddles for combining even/odd halves
- *       - delta_w: Phase increments for recurrence (if enabled)
+ * @brief Radix-8 DIF stage with multi-mode twiddles - BACKWARD
+ * 
+ * Identical structure to forward, uses backward butterfly core.
+ * 
+ * Optimizations:
+ * ✅ U=2 software pipelining (overlapped loads/compute/stores)
+ * ✅ Two-wave stores: {0,2,4,6} then {1,3,5,7} (≤16 YMM live)
+ * ✅ Multi-mode twiddles (BLOCKED8/BLOCKED4/RECURRENCE)
+ * ✅ Adaptive NT stores (>LLC/2 threshold)
+ * ✅ Adaptive prefetch distance (8/16/24 based on K)
  */
 TARGET_AVX2_FMA
-void radix32_stage_dit_forward_soa_avx2(
+NO_UNROLL_LOOPS
+static void radix8_dif_stage_multimode_backward_avx2(
     size_t K,
     const double *RESTRICT in_re,
     const double *RESTRICT in_im,
     double *RESTRICT out_re,
     double *RESTRICT out_im,
-    const void *RESTRICT stage_tw_opaque)
+    const tw_stage8_t *RESTRICT tw)
 {
-    const radix32_stage_twiddles_avx2_t *stage_tw =
-        (const radix32_stage_twiddles_avx2_t *)stage_tw_opaque;
-
-    if (stage_tw->merge_mode == RADIX32_MERGE_TW_BLOCKED8_AVX2)
+    const size_t step = 4;
+    const size_t prefetch_dist = pick_prefetch_dist_dif8(K);
+    
+    const size_t total_bytes = K * 8 * 2 * sizeof(double);
+    const int use_nt = (total_bytes >= (RADIX32_STREAM_THRESHOLD_KB * 1024));
+    
+#define ST_STREAM(p, v) (use_nt ? _mm256_stream_pd(p, v) : _mm256_store_pd(p, v))
+    
+    const __m256d signbit = signbit_pd();
+    
+    switch (tw->mode) {
+    
+    //==========================================================================
+    case TW_MODE_BLOCKED8:
+    //==========================================================================
     {
-        radix32_stage_dit_forward_blocked8_merge_avx2(
-            K, in_re, in_im, out_re, out_im, stage_tw);
+        const tw_blocked8_t *b8 = &tw->b8;
+        
+        if (K < 8) {
+            goto blocked8_simple;
+        }
+        
+        //======================================================================
+        // PROLOGUE
+        //======================================================================
+        tw8_vecs_t nT;
+        load_tw_blocked8_k4(b8, 0, &nT);
+        
+        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
+        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
+        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
+        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
+        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
+        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
+        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
+        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
+        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
+        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
+        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
+        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
+        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
+        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
+        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
+        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
+        
+        //======================================================================
+        // STEADY-STATE U=2 LOOP
+        //======================================================================
+#pragma GCC unroll 1
+        for (size_t k = 0; k + 4 < K; k += step) {
+            tw8_vecs_t T = nT;
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            const size_t kn = k + 4;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            
+            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
+            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
+            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
+            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
+            
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_backward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
+            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
+            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
+            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
+            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
+            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
+            
+            // Wave A: even outputs
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
+            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
+            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
+            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
+            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
+            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
+            
+            // Wave B: odd outputs
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+            
+            load_tw_blocked8_k4(b8, kn, &nT);
+            
+            if (kn + prefetch_dist < K) {
+                prefetch_tw_blocked8(b8, kn, prefetch_dist);
+                _mm_prefetch((const char *)&in_re[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[4 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[4 * K + kn + prefetch_dist], _MM_HINT_T0);
+            }
+        }
+        
+        //======================================================================
+        // EPILOGUE
+        //======================================================================
+        {
+            size_t k = K - 4;
+            tw8_vecs_t T = nT;
+            
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_backward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+        }
+        
+        goto done_blocked8;
+        
+blocked8_simple:
+#pragma GCC unroll 1
+        for (size_t k = 0; k < K; k += step) {
+            tw8_vecs_t T;
+            load_tw_blocked8_k4(b8, k, &T);
+            
+            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
+            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
+            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
+            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
+            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
+            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
+            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
+            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
+            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
+            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
+            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
+            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
+            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
+            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
+            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
+            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_backward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+        }
+        
+done_blocked8:
+        break;
     }
-    else // RADIX32_MERGE_TW_BLOCKED4_AVX2
+    
+    //==========================================================================
+    case TW_MODE_BLOCKED4:
+    //==========================================================================
     {
-        const radix32_merge_twiddles_blocked4_avx2_t *merge_tw =
-            (const radix32_merge_twiddles_blocked4_avx2_t *)stage_tw->merge_tw_opaque;
-
-        if (merge_tw->recurrence_enabled)
-        {
-            radix32_stage_dit_forward_blocked4_merge_avx2(
-                K, in_re, in_im, out_re, out_im,
-                stage_tw, true, merge_tw->delta_w_re, merge_tw->delta_w_im);
+        const tw_blocked4_t *b4 = &tw->b4;
+        
+        if (K < 8) {
+            goto blocked4_simple;
         }
-        else
-        {
-            radix32_stage_dit_forward_blocked4_merge_avx2(
-                K, in_re, in_im, out_re, out_im,
-                stage_tw, false, NULL, NULL);
+        
+        tw8_vecs_t nT;
+        load_tw_blocked4_k4(b4, 0, &nT);
+        
+        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
+        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
+        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
+        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
+        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
+        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
+        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
+        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
+        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
+        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
+        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
+        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
+        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
+        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
+        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
+        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
+        
+#pragma GCC unroll 1
+        for (size_t k = 0; k + 4 < K; k += step) {
+            tw8_vecs_t T = nT;
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            const size_t kn = k + 4;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            
+            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
+            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
+            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
+            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
+            
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_backward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
+            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
+            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
+            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
+            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
+            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
+            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
+            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
+            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
+            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
+            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+            
+            load_tw_blocked4_k4(b4, kn, &nT);
+            
+            if (kn + prefetch_dist < K) {
+                prefetch_tw_blocked4(b4, kn, prefetch_dist);
+                _mm_prefetch((const char *)&in_re[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_re[4 * K + kn + prefetch_dist], _MM_HINT_T0);
+                _mm_prefetch((const char *)&in_im[4 * K + kn + prefetch_dist], _MM_HINT_T0);
+            }
         }
+        
+        {
+            size_t k = K - 4;
+            tw8_vecs_t T = nT;
+            
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_backward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+        }
+        
+        goto done_blocked4;
+        
+blocked4_simple:
+#pragma GCC unroll 1
+        for (size_t k = 0; k < K; k += step) {
+            tw8_vecs_t T;
+            load_tw_blocked4_k4(b4, k, &T);
+            
+            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
+            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
+            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
+            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
+            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
+            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
+            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
+            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
+            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
+            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
+            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
+            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
+            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
+            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
+            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
+            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_backward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+        }
+        
+done_blocked4:
+        break;
     }
+    
+    //==========================================================================
+    case TW_MODE_RECURRENCE:
+    //==========================================================================
+    {
+        const tw_recurrence_t *rec = &tw->rec;
+        const size_t tile_len = rec->tile_len;
+        rec8_vecs_t S;
+        
+        if (K < 8) {
+            goto recurrence_simple;
+        }
+        
+        rec8_tile_init(rec, 0, &S);
+        
+        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
+        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
+        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
+        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
+        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
+        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
+        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
+        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
+        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
+        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
+        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
+        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
+        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
+        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
+        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
+        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
+        
+#pragma GCC unroll 1
+        for (size_t k = 0; k + 4 < K; k += step) {
+            if ((k % tile_len) == 0 && k > 0) {
+                rec8_tile_init(rec, k, &S);
+                if (k + tile_len < K) {
+                    prefetch_rec8_next_tile(rec, k + tile_len);
+                }
+            }
+            
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            const size_t kn = k + 4;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
+            
+            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
+            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
+            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
+            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
+            
+            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_backward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
+            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
+            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
+            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
+            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
+            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
+            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
+            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
+            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
+            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
+            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+            
+            rec8_step_advance(&S);
+        }
+        
+        {
+            size_t k = K - 4;
+            
+            if ((k % tile_len) == 0 && k > 0) {
+                rec8_tile_init(rec, k, &S);
+            }
+            
+            __m256d x0r = nx0r, x0i = nx0i;
+            __m256d x1r = nx1r, x1i = nx1i;
+            __m256d x2r = nx2r, x2i = nx2i;
+            __m256d x3r = nx3r, x3i = nx3i;
+            __m256d x4r = nx4r, x4i = nx4i;
+            __m256d x5r = nx5r, x5i = nx5i;
+            __m256d x6r = nx6r, x6i = nx6i;
+            __m256d x7r = nx7r, x7i = nx7i;
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_backward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+        }
+        
+        goto done_recurrence;
+        
+recurrence_simple:
+#pragma GCC unroll 1
+        for (size_t k = 0; k < K; k += step) {
+            if ((k % tile_len) == 0) {
+                rec8_tile_init(rec, k, &S);
+                if (k + tile_len < K) {
+                    prefetch_rec8_next_tile(rec, k + tile_len);
+                }
+            }
+            
+            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
+            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
+            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
+            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
+            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
+            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
+            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
+            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
+            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
+            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
+            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
+            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
+            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
+            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
+            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
+            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
+            
+            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+            
+            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
+            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
+            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
+            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
+            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
+            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
+            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
+            
+            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+            
+            radix8_dif_core_backward_avx2(
+                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+            
+            ST_STREAM(&out_re[0 * K + k], y0r);
+            ST_STREAM(&out_im[0 * K + k], y0i);
+            ST_STREAM(&out_re[2 * K + k], y2r);
+            ST_STREAM(&out_im[2 * K + k], y2i);
+            ST_STREAM(&out_re[4 * K + k], y4r);
+            ST_STREAM(&out_im[4 * K + k], y4i);
+            ST_STREAM(&out_re[6 * K + k], y6r);
+            ST_STREAM(&out_im[6 * K + k], y6i);
+            
+            ST_STREAM(&out_re[1 * K + k], y1r);
+            ST_STREAM(&out_im[1 * K + k], y1i);
+            ST_STREAM(&out_re[3 * K + k], y3r);
+            ST_STREAM(&out_im[3 * K + k], y3i);
+            ST_STREAM(&out_re[5 * K + k], y5r);
+            ST_STREAM(&out_im[5 * K + k], y5i);
+            ST_STREAM(&out_re[7 * K + k], y7r);
+            ST_STREAM(&out_im[7 * K + k], y7i);
+            
+            rec8_step_advance(&S);
+        }
+        
+done_recurrence:
+        break;
+    }
+    
+    } // end switch
+    
+    if (use_nt) {
+        _mm_sfence();
+    }
+    
+#undef ST_STREAM
 }
 
+//==============================================================================
+// RADIX-8 DIF ADAPTER FOR RADIX-32 (4 BINS)
+//==============================================================================
+
 /**
- * @brief Radix-32 DIT Backward Stage - Public API (AVX-2)
+ * @brief Radix-8 DIF pass adapter for radix-32 - FORWARD
  *
- * @param K Number of k-indices per radix lane
- * @param in_re Input real part (SoA: [32][K])
- * @param in_im Input imaginary part (SoA: [32][K])
- * @param out_re Output real part (SoA: [32][K])
- * @param out_im Output imaginary part (SoA: [32][K])
- * @param stage_tw_opaque Opaque pointer to radix32_stage_twiddles_avx2_t
+ * Processes 4 bins from bin-major temp buffer.
+ * Each bin combines 8 groups using radix-8 DIF with multi-mode twiddles.
  */
 TARGET_AVX2_FMA
-void radix32_stage_dit_backward_soa_avx2(
+static void radix8_dif_pass_for_radix32_forward_avx2(
     size_t K,
     const double *RESTRICT in_re,
     const double *RESTRICT in_im,
     double *RESTRICT out_re,
     double *RESTRICT out_im,
-    const void *RESTRICT stage_tw_opaque)
+    const tw_stage8_t *RESTRICT tw)
 {
-    const radix32_stage_twiddles_avx2_t *stage_tw =
-        (const radix32_stage_twiddles_avx2_t *)stage_tw_opaque;
+    // Process bin 0: groups A[0]..H[0] → output stripes 0..7
+    radix8_dif_stage_multimode_forward_avx2(
+        K,
+        &in_re[0 * K],
+        &in_im[0 * K],
+        &out_re[0 * K],
+        &out_im[0 * K],
+        tw);
 
-    if (stage_tw->merge_mode == RADIX32_MERGE_TW_BLOCKED8_AVX2)
-    {
-        radix32_stage_dit_backward_blocked8_merge_avx2(
-            K, in_re, in_im, out_re, out_im, stage_tw);
-    }
-    else // RADIX32_MERGE_TW_BLOCKED4_AVX2
-    {
-        const radix32_merge_twiddles_blocked4_avx2_t *merge_tw =
-            (const radix32_merge_twiddles_blocked4_avx2_t *)stage_tw->merge_tw_opaque;
+    // Process bin 1: groups A[1]..H[1] → output stripes 8..15
+    radix8_dif_stage_multimode_forward_avx2(
+        K,
+        &in_re[8 * K],
+        &in_im[8 * K],
+        &out_re[8 * K],
+        &out_im[8 * K],
+        tw);
 
-        if (merge_tw->recurrence_enabled)
-        {
-            radix32_stage_dit_backward_blocked4_merge_avx2(
-                K, in_re, in_im, out_re, out_im,
-                stage_tw, true, merge_tw->delta_w_re, merge_tw->delta_w_im);
-        }
-        else
-        {
-            radix32_stage_dit_backward_blocked4_merge_avx2(
-                K, in_re, in_im, out_re, out_im,
-                stage_tw, false, NULL, NULL);
-        }
-    }
+    // Process bin 2: groups A[2]..H[2] → output stripes 16..23
+    radix8_dif_stage_multimode_forward_avx2(
+        K,
+        &in_re[16 * K],
+        &in_im[16 * K],
+        &out_re[16 * K],
+        &out_im[16 * K],
+        tw);
+
+    // Process bin 3: groups A[3]..H[3] → output stripes 24..31
+    radix8_dif_stage_multimode_forward_avx2(
+        K,
+        &in_re[24 * K],
+        &in_im[24 * K],
+        &out_re[24 * K],
+        &out_im[24 * K],
+        tw);
 }
 
-#endif // FFT_RADIX32_AVX2_NATIVE_SOA_H
+/**
+ * @brief Radix-8 DIF pass adapter - BACKWARD
+ */
+TARGET_AVX2_FMA
+static void radix8_dif_pass_for_radix32_backward_avx2(
+    size_t K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const tw_stage8_t *RESTRICT tw)
+{
+    radix8_dif_stage_multimode_backward_avx2(
+        K, &in_re[0 * K], &in_im[0 * K], &out_re[0 * K], &out_im[0 * K], tw);
+
+    radix8_dif_stage_multimode_backward_avx2(
+        K, &in_re[8 * K], &in_im[8 * K], &out_re[8 * K], &out_im[8 * K], tw);
+
+    radix8_dif_stage_multimode_backward_avx2(
+        K, &in_re[16 * K], &in_im[16 * K], &out_re[16 * K], &out_im[16 * K], tw);
+
+    radix8_dif_stage_multimode_backward_avx2(
+        K, &in_re[24 * K], &in_im[24 * K], &out_re[24 * K], &out_im[24 * K], tw);
+}
+
+//==============================================================================
+// COMPLETE RADIX-32 DRIVER - FORWARD
+//==============================================================================
 
 /**
- * CRITICAL PLANNER REQUIREMENTS FOR RADIX-32 AVX-2
- * ==================================================
- * 
- * The butterfly code uses mechanical iteration over all twiddle array elements.
- * The planner MUST ensure mathematical correctness by setting arrays properly.
- * 
- * 1. RADIX-16 RECURRENCE (stage_tw->radix16_tw_opaque when BLOCKED4):
- *    -----------------------------------------------------------------
- *    radix16_stage_twiddles_blocked4_t  must have:
- *    
- *    - delta_w_re[16], delta_w_im[16]  (16 elements, NOT 15)
- *    - Indices 0..14: Phase increments for W₁..W₁₅
- *    - Index 15: MUST be set to identity (1+0i) or any safe value
- *                (this slot is never mathematically used, but butterfly
- *                 mechanically advances all 16 slots to avoid branching)
- * 
- * 2. RADIX-32 MERGE RECURRENCE (stage_tw->merge_tw_opaque when BLOCKED4):
- *    -----------------------------------------------------------------------
- *    radix32_merge_twiddles_blocked4_avx2_t must have:
- *    
- *    - delta_w_re[16], delta_w_im[16]
- *    - Index 0: MUST be identity (1+0i) to keep W₀ = 1+0i stationary
- *    - Indices 1..15: Phase increments for W₁..W₁₅
- * 
- * 3. WHY THIS DESIGN:
- *    ----------------
- *    - Butterfly code is purely mechanical (no special cases, no branches)
- *    - Planner handles all mathematical invariants
- *    - Clean separation of concerns
- *    - Easier to verify correctness at planning time
- * 
- * 4. EXAMPLE PLANNER CODE:
- *    ---------------------
- *    // Radix-16 delta_w (15 active + 1 padding):
- *    for (int r = 0; r < 15; r++) {
- *        double phase = 2.0 * M_PI * (r + 1) / (N / stage_radix);
- *        tw->delta_w_re[r] = _mm256_set1_pd(cos(phase));
- *        tw->delta_w_im[r] = _mm256_set1_pd(sin(phase));
- *    }
- *    tw->delta_w_re[15] = _mm256_set1_pd(1.0);  // Padding (identity)
- *    tw->delta_w_im[15] = _mm256_setzero_pd();
- * 
- *    // Radix-32 merge delta_w (W₀ stationary + 15 active):
- *    tw->delta_w_re[0] = _mm256_set1_pd(1.0);   // W₀ stays 1+0i
- *    tw->delta_w_im[0] = _mm256_setzero_pd();
- *    for (int r = 1; r < 16; r++) {
- *        double phase = 2.0 * M_PI * r / 32;
- *        tw->delta_w_re[r] = _mm256_set1_pd(cos(phase));
- *        tw->delta_w_im[r] = _mm256_set1_pd(sin(phase));
- *    }
+ * @brief Radix-32 FFT stage - FORWARD (AVX2)
+ *
+ * Complete 4×8 decomposition with multi-mode twiddles.
+ *
+ * @param K Number of samples per stripe (must be multiple of 4)
+ * @param in_re Input real [32 stripes][K]
+ * @param in_im Input imag [32 stripes][K]
+ * @param out_re Output real [32 stripes][K]
+ * @param out_im Output imag [32 stripes][K]
+ * @param pass1_tw Radix-4 DIT twiddles (BLOCKED2)
+ * @param pass2_tw Radix-8 DIF twiddles (multi-mode)
+ * @param temp_re Temporary buffer real [32 stripes][K]
+ * @param temp_im Temporary buffer imag [32 stripes][K]
  */
+TARGET_AVX2_FMA
+static void radix32_stage_forward_avx2(
+    size_t K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const radix4_dit_stage_twiddles_blocked2_t *RESTRICT pass1_tw,
+    const tw_stage8_t *RESTRICT pass2_tw,
+    double *RESTRICT temp_re,
+    double *RESTRICT temp_im)
+{
+    const size_t in_stride = 8 * K;
+
+    //==========================================================================
+    // PASS 1: Radix-4 DIT on 8 groups with bin-major output
+    //==========================================================================
+    for (size_t group = 0; group < 8; group++)
+    {
+        radix4_dit_stage_blocked2_forward_avx2_strided(
+            K,
+            &in_re[group * K],
+            &in_im[group * K],
+            in_stride,
+            temp_re,
+            temp_im,
+            group,
+            pass1_tw);
+    }
+
+    //==========================================================================
+    // PASS 2: Radix-8 DIF on 4 bins with multi-mode twiddles
+    //==========================================================================
+    radix8_dif_pass_for_radix32_forward_avx2(
+        K,
+        temp_re,
+        temp_im,
+        out_re,
+        out_im,
+        pass2_tw);
+
+    _mm256_zeroupper();
+}
+
+//==============================================================================
+// COMPLETE RADIX-32 DRIVER - BACKWARD
+//==============================================================================
+
+/**
+ * @brief Radix-32 FFT stage - BACKWARD (AVX2)
+ */
+TARGET_AVX2_FMA
+static void radix32_stage_backward_avx2(
+    size_t K,
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    double *RESTRICT out_re,
+    double *RESTRICT out_im,
+    const radix4_dit_stage_twiddles_blocked2_t *RESTRICT pass1_tw,
+    const tw_stage8_t *RESTRICT pass2_tw,
+    double *RESTRICT temp_re,
+    double *RESTRICT temp_im)
+{
+    const size_t in_stride = 8 * K;
+
+    //==========================================================================
+    // PASS 1: Radix-4 DIT BACKWARD
+    //==========================================================================
+    for (size_t group = 0; group < 8; group++)
+    {
+        radix4_dit_stage_blocked2_backward_avx2_strided(
+            K,
+            &in_re[group * K],
+            &in_im[group * K],
+            in_stride,
+            temp_re,
+            temp_im,
+            group,
+            pass1_tw);
+    }
+
+    //==========================================================================
+    // PASS 2: Radix-8 DIF BACKWARD
+    //==========================================================================
+    radix8_dif_pass_for_radix32_backward_avx2(
+        K,
+        temp_re,
+        temp_im,
+        out_re,
+        out_im,
+        pass2_tw);
+
+    _mm256_zeroupper();
+}

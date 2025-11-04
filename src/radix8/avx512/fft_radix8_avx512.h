@@ -2201,3 +2201,52 @@ radix8_stage_blocked2_backward_avx512(
 }
 
 #endif // FFT_RADIX8_AVX512_BLOCKED_HYBRID_FIXED_H
+
+
+/*
+1) Reduce twiddle traffic further (in-loop recurrence)
+
+You already block to W1/W2 and derive W3/W4. You can also avoid reloading W1/W2 every k+=8 by keeping a per-iteration geometric increment:
+
+Precompute, per stage:
+
+inc1 = e^{-j*8*base_ω} for W1’s stride-8 advance
+
+inc2 = e^{-j*8*2*base_ω} for W2’s stride-8 advance
+
+Initial vectors W1_0, W2_0 for k=0
+
+In the steady loop, update in registers:
+
+W1r,W1i = cmul(W1r,W1i, inc1r,inc1i)
+
+W2r,W2i = cmul(W2r,W2i, inc2r,inc2i)
+
+Then derive W3=W1*W2 and W4=W2^2 as you do now. This turns BLOCKED2 into BLOCKED2 + recurrence, eliminating the per-iteration W1/W2 loads (you still pay the multiplies, but you save L2/L3 bandwidth and reduce L1 pressure). You already hide cmul latency with U=2; this slots in nicely.
+
+2) Complex-mul variant with fmaddsub
+
+Your cmul_v512 uses 2 FMAs + 2 MULs. A shuffle/sign approach can often lower port pressure and raise FMA utilization:
+
+Form B = [br, bi] → Bsw = permute(bi, br) and S = [ +1, −1, +1, −1, ... ]
+
+Compute:
+
+t = _mm512_mul_pd(ai, _mm512_xor_pd(Bsw, sign_mask)) // ai*[-bi, br]
+
+res = _mm512_fmaddsub_pd(ar, B, t) // [arbr − aibi, arbi + aibr]
+
+This uses a single fmaddsub + one MUL (+ a permute/xor), often better balanced on SKX/ICX because it leans on the dual FMA pipes. It’s not universally faster, but worth an A/B since your kernels are very MUL-heavy.
+
+3) Hoist loop-invariant constants for real
+
+Inside the steady loop you rebuild:
+
+SIGN_FLIP = set1(-0.0)
+
+W8_* constants
+
+Consider hoisting these once into ZMMs before the loop (you already commented on transient lifetimes; try both):
+
+If register pressure is tight at your 32-ZMM peak, keep them live across stages using callee-saved tmp or re-materialize via one set1 (which still costs a uop every iteration). Measure both; on many chips, keeping 4 extra ZMMs live is fine and removes repeated set1s.
+*/

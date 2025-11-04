@@ -2774,3 +2774,18 @@ void radix16_stage_dit_backward_avx512(
  *
  * ============================================================================
  */
+
+
+ /*
+ 5) Prefetchers: add twiddle prefetch + throttle macros
+You prefetch input/output; add an L2 prefetch for twiddle blocks at k_next. It’s cheap and helps the recurrence variant where deltas are hot.
+Wrap the prefetch distance in a per-µarch table ({skx:64, icx:64, srf:96, gnr:128}) if you have CPUID probing already. It matters at big K.
+6) Small-K path: reduce duplication and branchy tails
+The small-K forward/backward are copy-pasted with only the butterfly call differing. Use the template thunk from (2).
+When K % 8 == 0, skip calling the masked tail function to remove an extra branch and call overhead on tiny sizes.
+7) Blocked4 backward (non-recurrence) TODO
+Right now you delegate to the recurrence path. That’s correct but can be a few % off the blocked8 numbers. 
+You can mechanically port the forward non-recurrence body and just swap the butterfly call—your comments already say that. 
+It keeps planner invariants cleaner (no “slow” fallback when recurrence is off).
+ 
+ */
