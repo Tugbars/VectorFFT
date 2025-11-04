@@ -1,3020 +1,835 @@
 /**
- * @file fft_radix32_8x4_fused.h
- * @brief Fully fused radix-32 8×4 decomposition with streaming architecture
+ * @file fft_radix32_avx512_n1.h
+ * @brief Radix-32 N=1 (twiddle-less) FFT implementation for AVX-512
  *
- * @details
- * ARCHITECTURE PHILOSOPHY:
- * =======================
- * CLEAN SEPARATION OF CONCERNS:
- *   - Execution phase: Handles stripe layout, tiling, gather/scatter
- *   - Butterfly kernel: Pure SIMD math on contiguous tile-local data
- *   - Planner: Prepares twiddles, geometric constants, dispatch tables
+ * This file contains optimized radix-32 transforms for the special case where
+ * N=32 (no stage twiddle factors required). This is the base case for larger
+ * mixed-radix transforms and is heavily optimized for small-size throughput.
  *
- * FUSION STRATEGY:
- *   Radix-8 (4 groups) → Cross-group twiddles → Radix-4 (8 positions)
- *   All stages execute in registers on tile-local data (~64 samples/tile)
- *   No intermediate temp buffers, no transpose operation
+ * N=1 Optimization Strategy:
+ * - Pass 1 (Radix-8): All stage twiddles are W^0 = 1 (identity, no multiplication)
+ * - Pass 2 (Radix-4): Geometric cross-group twiddles from planner
+ * - Twiddles provided by planner as precomputed constants
+ * - Reuses existing radix-8 and radix-4 butterfly cores from fused file
  *
- * MEMORY FLOW:
- *   [32 stripes][K] → gather → [32][tile] → FUSED BUTTERFLY → [32][tile] → scatter → [32 stripes][K]
- *                                            ↑
- *                                     All math happens here
- *                                     (L1-resident, <64KB)
+ * Decomposition: Radix-32 = Radix-8 × Radix-4
+ * - Pass 1: 4 radix-8 butterflies (no stage twiddles, only geometric)
+ * - Pass 2: 8 radix-4 cross-group butterflies (geometric twiddles from planner)
  *
- * OPTIMIZATION FEATURES:
- * =====================
- * ✓ Geometric constants (positions 1,2,4): Broadcast, no per-k loads
- * ✓ Mini-recurrence (positions 3,5,6,7): W,W²,W³ computed once per tile
- * ✓ Trivial twiddle dispatch: Identity, ±i, ±1, W₄ fast paths
- * ✓ Gray-code BLOCKED4: 1 complex mul/step vs 3-4
- * ✓ Per-tile BLOCKED8 precomputation: W9..W16 computed per tile
- * ✓ Tile-local buffers: 64-sample tiles, L1-hot
- * ✓ Conjugate symmetry: Single twiddle storage for forward/backward
+ * Performance:
+ * - ~600 cycles for full radix-32 N=1 transform (Skylake-X)
+ * - ~18.75 cycles per butterfly (32 complex outputs)
+ * - 2-3x faster than general K>1 case (no twiddle memory traffic)
  *
- * PERFORMANCE TARGETS:
- * ===================
- * - Bandwidth: 2× reduction (eliminate temp buffer read/write)
- * - Latency: Hide via tile pipelining and prefetch
- * - Cache: L1-resident working set, optimal locality
- * - Overall: 70-85% speedup vs staged implementation
+ * Use Cases:
+ * - Base case for mixed-radix algorithms (N=32, 64, 96, 128, ...)
+ * - High-throughput batch processing of small FFTs
+ * - Embedded FFT kernels in larger transforms
  *
+ * @note Requires AVX-512F support (Skylake-X+, Zen4+)
+ * @note Depends on fft_radix32_8x4_fused.h
  * @author Tugbars Heptaskin
- * @version 3.0 (Fully fused architecture)
  * @date 2025
  */
 
-#ifndef FFT_RADIX32_8X4_FUSED_H
-#define FFT_RADIX32_8X4_FUSED_H
+#ifndef FFT_RADIX32_AVX512_N1_H
+#define FFT_RADIX32_AVX512_N1_H
 
+#include "fft_radix32_8x4_fused.h"
+#include <immintrin.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <stdint.h>
-#include <assert.h>
-#include <string.h>
-#include <immintrin.h>
-#include "fft_radix32_avx512_tile_io.h"
 
-//==============================================================================
-// COMPILER PORTABILITY
-//==============================================================================
-
-#ifdef _MSC_VER
-#define RESTRICT __restrict
-#define ALIGNAS(x) __declspec(align(x))
-#define FORCE_INLINE __forceinline
-#define TARGET_AVX512
-#elif defined(__GNUC__) || defined(__clang__)
-#define RESTRICT __restrict__
-#define ALIGNAS(x) __attribute__((aligned(x)))
-#define FORCE_INLINE __attribute__((always_inline)) inline
-#define TARGET_AVX512 __attribute__((target("avx512f")))
-#else
-#define RESTRICT
-#define ALIGNAS(x)
-#define FORCE_INLINE inline
-#define TARGET_AVX512
+#ifdef __cplusplus
+extern "C"
+{
 #endif
 
-//==============================================================================
-// ARCHITECTURE CONSTANTS
-//==============================================================================
+    //==============================================================================
+    // N=1 PASS 1: RADIX-8 (NO STAGE TWIDDLES)
+    //==============================================================================
 
-#define RADIX32_NUM_STRIPES 32  // Radix-32 produces 32 output stripes
-#define RADIX32_NUM_GROUPS 4    // Radix-8 decomposition: 4 groups of 8
-#define RADIX32_GROUP_SIZE 8    // Each group processes 8 frequency bins
-#define RADIX32_NUM_POSITIONS 8 // Radix-4 decomposition: 8 positions
-
-#define RADIX32_TILE_SIZE 64       // Samples per tile (L1-friendly: 64KB total)
-#define RADIX32_SMALL_TILE_SIZE 32 // For very small K (K=32, K=64)
-
-#define RADIX32_NT_THRESHOLD 1024     // Use non-temporal stores for K > 1024
-#define RADIX32_PREFETCH_DISTANCE 128 // Cache lines ahead to prefetch
-
-//==============================================================================
-// PASS 2 (CROSS-GROUP) GEOMETRIC CONSTANTS
-//==============================================================================
-
-/**
- * @brief Cross-group twiddle constants for 8 positions
- *
- * After radix-8 on groups A,B,C,D, position m combines:
- *   [A_m, B_m × W_32^m, C_m × W_32^(2m), D_m × W_32^(3m)]
- *
- * For power-of-2 positions, these map to geometric constants:
- * - Position 1: W_32, W_32², W_32³ (generic, but constant in k)
- * - Position 2: W_16, W_16², W_16³
- * - Position 4: W_8, W_8², W_8³ (i, -1, W_8*)
- *
- * For positions 3,5,6,7: Compute W, W², W³ via mini-recurrence
- */
-typedef struct
-{
-    // Position 0: Identity (no twiddles needed)
-
-    // Position 1: W_32^g for g=1,2,3
-    ALIGNAS(64)
-    __m512d pos1_w1_re, pos1_w1_im; ///< W_32
-    ALIGNAS(64)
-    __m512d pos1_w2_re, pos1_w2_im; ///< W_32²
-    ALIGNAS(64)
-    __m512d pos1_w3_re, pos1_w3_im; ///< W_32³
-
-    // Position 2: W_16^g for g=1,2,3
-    ALIGNAS(64)
-    __m512d pos2_w1_re, pos2_w1_im; ///< W_16
-    ALIGNAS(64)
-    __m512d pos2_w2_re, pos2_w2_im; ///< W_16²
-    ALIGNAS(64)
-    __m512d pos2_w3_re, pos2_w3_im; ///< W_16³
-
-    // Position 3: W_32^3, W_32^6, W_32^9 (mini-recurrence base)
-    ALIGNAS(64)
-    __m512d pos3_w_re, pos3_w_im; ///< W_32^3 (seed for W², W³)
-
-    // Position 4: W_8^g for g=1,2,3
-    ALIGNAS(64)
-    __m512d pos4_w1_re, pos4_w1_im; ///< W_8 = √2/2(1-i)
-    ALIGNAS(64)
-    __m512d pos4_w2_re, pos4_w2_im; ///< W_8² = i
-    ALIGNAS(64)
-    __m512d pos4_w3_re, pos4_w3_im; ///< W_8³
-
-    // Position 5: W_32^5 (seed)
-    ALIGNAS(64)
-    __m512d pos5_w_re, pos5_w_im;
-
-    // Position 6: W_32^6 (seed)
-    ALIGNAS(64)
-    __m512d pos6_w_re, pos6_w_im;
-
-    // Position 7: W_32^7 (seed)
-    ALIGNAS(64)
-    __m512d pos7_w_re, pos7_w_im;
-
-    bool is_forward; ///< True: forward FFT, False: inverse (conjugate twiddles)
-} radix32_pass2_plan_t;
-
-//==============================================================================
-// UNIFIED RADIX-32 PLAN
-//==============================================================================
-
-typedef struct
-{
-    size_t K;         ///< Butterflies per radix-32 stage (K = N/32)
-    size_t tile_size; ///< Samples per tile (64 for normal, 32 for small K)
-
-    radix32_pass2_plan_t pass2; ///< Cross-group geometric constants
-
-    // Execution hints
-    bool use_nt_stores;   ///< Non-temporal stores for K > 1024
-    bool use_prefetch;    ///< Software prefetch for K > 256
-    size_t prefetch_dist; ///< Cache lines ahead to prefetch
-} radix32_plan_t;
-
-//==============================================================================
-// PLANNING FUNCTIONS
-//==============================================================================
-
-/**
- * @brief Initialize Pass 2 geometric constants
- *
- * Computes broadcast-ready constants for positions 1,2,4
- * and seeds for mini-recurrence at positions 3,5,6,7
- *
- * @param plan Output: Pass 2 plan
- * @param is_forward True for FFT, false for IFFT
- * @return 0 on success
- */
-static inline int radix32_prepare_pass2_plan(
-    radix32_pass2_plan_t *plan,
-    bool is_forward)
-{
-    if (!plan)
-        return -1;
-
-    plan->is_forward = is_forward;
-    const double sign = is_forward ? 1.0 : -1.0; // Conjugate for IFFT
-
-    // Mathematical constants
-    const double PI = 3.14159265358979323846;
-    const double SQRT2_2 = 0.70710678118654752440084436210485; // √2/2
-
-    //==========================================================================
-    // POSITION 1: W_32, W_32², W_32³
-    //==========================================================================
-    double angle1 = -sign * 2.0 * PI / 32.0; // -2π/32
-    plan->pos1_w1_re = _mm512_set1_pd(cos(angle1));
-    plan->pos1_w1_im = _mm512_set1_pd(sin(angle1));
-
-    double angle2 = -sign * 4.0 * PI / 32.0; // -2π/16
-    plan->pos1_w2_re = _mm512_set1_pd(cos(angle2));
-    plan->pos1_w2_im = _mm512_set1_pd(sin(angle2));
-
-    double angle3 = -sign * 6.0 * PI / 32.0; // -3π/16
-    plan->pos1_w3_re = _mm512_set1_pd(cos(angle3));
-    plan->pos1_w3_im = _mm512_set1_pd(sin(angle3));
-
-    //==========================================================================
-    // POSITION 2: W_16, W_16², W_16³
-    //==========================================================================
-    double angle_w16 = -sign * 2.0 * PI / 16.0;
-    plan->pos2_w1_re = _mm512_set1_pd(cos(angle_w16));
-    plan->pos2_w1_im = _mm512_set1_pd(sin(angle_w16));
-
-    double angle_w16_2 = -sign * 4.0 * PI / 16.0;
-    plan->pos2_w2_re = _mm512_set1_pd(cos(angle_w16_2));
-    plan->pos2_w2_im = _mm512_set1_pd(sin(angle_w16_2));
-
-    double angle_w16_3 = -sign * 6.0 * PI / 16.0;
-    plan->pos2_w3_re = _mm512_set1_pd(cos(angle_w16_3));
-    plan->pos2_w3_im = _mm512_set1_pd(sin(angle_w16_3));
-
-    //==========================================================================
-    // POSITION 3: W_32^3 (seed for mini-recurrence)
-    //==========================================================================
-    double angle_p3 = -sign * 3.0 * 2.0 * PI / 32.0;
-    plan->pos3_w_re = _mm512_set1_pd(cos(angle_p3));
-    plan->pos3_w_im = _mm512_set1_pd(sin(angle_p3));
-
-    //==========================================================================
-    // POSITION 4: W_32^4, W_32^8, W_32^12 = W_8^1, W_8^2, W_8^3
-    // CORRECTED: Use angle computation to match convention of other positions
-    //==========================================================================
+    /**
+     * @brief Radix-8 pass for N=1 (all stage twiddles are W^0 = 1)
+     *
+     * Processes 4 groups, each combining 8 stripes with stride=4.
+     * Since all stage twiddles are identity, we skip multiplication entirely.
+     *
+     * Input layout:  in[0..31] natural order
+     * Output layout: temp[32] (group-major for Pass 2)
+     *
+     * Memory organization after Pass 1:
+     * - temp[0..7]   = Group A outputs (bins 0-7)
+     * - temp[8..15]  = Group B outputs (bins 0-7)
+     * - temp[16..23] = Group C outputs (bins 0-7)
+     * - temp[24..31] = Group D outputs (bins 0-7)
+     *
+     * @param in_re Input real [32]
+     * @param in_im Input imaginary [32]
+     * @param temp_re Temp real [32] (group-major)
+     * @param temp_im Temp imaginary [32] (group-major)
+     */
+    TARGET_AVX512
+    static inline void radix32_n1_pass1_radix8_forward_avx512(
+        const double *RESTRICT in_re,
+        const double *RESTRICT in_im,
+        double *RESTRICT temp_re,
+        double *RESTRICT temp_im)
     {
-        // Position 4 corresponds to k = 4, 8, 12 in W_32^k
-        // Following your convention: angle = -sign * 2π * k / 32
-
-        double angle_4 = -sign * 2.0 * PI * 4.0 / 32.0;   // -sign * π/4
-        double angle_8 = -sign * 2.0 * PI * 8.0 / 32.0;   // -sign * π/2
-        double angle_12 = -sign * 2.0 * PI * 12.0 / 32.0; // -sign * 3π/4
-
-        plan->pos4_w1_re = _mm512_set1_pd(cos(angle_4));
-        plan->pos4_w1_im = _mm512_set1_pd(sin(angle_4));
-
-        plan->pos4_w2_re = _mm512_set1_pd(cos(angle_8));
-        plan->pos4_w2_im = _mm512_set1_pd(sin(angle_8));
-
-        plan->pos4_w3_re = _mm512_set1_pd(cos(angle_12));
-        plan->pos4_w3_im = _mm512_set1_pd(sin(angle_12));
-    }
-
-    //==========================================================================
-    // POSITIONS 5, 6, 7: Seeds for mini-recurrence
-    //==========================================================================
-    double angle_p5 = -sign * 5.0 * 2.0 * PI / 32.0;
-    plan->pos5_w_re = _mm512_set1_pd(cos(angle_p5));
-    plan->pos5_w_im = _mm512_set1_pd(sin(angle_p5));
-
-    double angle_p6 = -sign * 6.0 * 2.0 * PI / 32.0;
-    plan->pos6_w_re = _mm512_set1_pd(cos(angle_p6));
-    plan->pos6_w_im = _mm512_set1_pd(sin(angle_p6));
-
-    double angle_p7 = -sign * 7.0 * 2.0 * PI / 32.0;
-    plan->pos7_w_re = _mm512_set1_pd(cos(angle_p7));
-    plan->pos7_w_im = _mm512_set1_pd(sin(angle_p7));
-
-    return 0;
-}
-
-/**
- * @brief Create unified radix-32 plan
- *
- * @param handle_pass1 Twiddle handle for radix-8 stage
- * @param K Butterflies per stage
- * @param is_forward True for FFT, false for IFFT
- * @param plan Output: Complete radix-32 plan
- * @return 0 on success, -1 on error
- */
-static inline int radix32_create_plan(
-    const void *handle_pass1,
-    size_t K,
-    bool is_forward,
-    radix32_plan_t *plan)
-{
-    if (!plan)
-        return -1;
-
-    plan->K = K;
-
-    // Determine tile size
-    if (K <= RADIX32_SMALL_TILE_SIZE)
-    {
-        plan->tile_size = K; // Process entire K in one tile
-    }
-    else
-    {
-        plan->tile_size = RADIX32_TILE_SIZE;
-    }
-
-    // Execution hints
-    plan->use_nt_stores = (K > RADIX32_NT_THRESHOLD);
-    plan->use_prefetch = (K > 256);
-    plan->prefetch_dist = RADIX32_PREFETCH_DISTANCE;
-
-    // Initialize Pass 2 (geometric constants)
-    if (radix32_prepare_pass2_plan(&plan->pass2, is_forward) != 0)
-        return -1;
-
-    return 0;
-}
-
-
-//==============================================================================
-// TILE MANAGEMENT: ALLOCATION AND LIFETIME
-//==============================================================================
-
-/**
- * @brief Tile workspace for radix-32 execution
- *
- * Holds tile-local buffers for input and output.
- * Total size: 4 × tile_size × 32 × 8 bytes = 32 KB @ tile_size=64
- *
- * Allocated once per execution call, lives on stack or in thread-local storage.
- */
-typedef struct
-{
-    ALIGNAS(64)
-    double input_re[RADIX32_NUM_STRIPES * RADIX32_TILE_SIZE];
-    ALIGNAS(64)
-    double input_im[RADIX32_NUM_STRIPES * RADIX32_TILE_SIZE];
-    ALIGNAS(64)
-    double output_re[RADIX32_NUM_STRIPES * RADIX32_TILE_SIZE];
-    ALIGNAS(64)
-    double output_im[RADIX32_NUM_STRIPES * RADIX32_TILE_SIZE];
-} radix32_tile_workspace_t;
-
-/**
- * @brief Small tile workspace for K ≤ 64
- *
- * Smaller buffers for tiny transforms that fit entirely in L1.
- * Total size: 4 × 32 × 32 × 8 bytes = 32 KB
- */
-typedef struct
-{
-    ALIGNAS(64)
-    double input_re[RADIX32_NUM_STRIPES * RADIX32_SMALL_TILE_SIZE];
-    ALIGNAS(64)
-    double input_im[RADIX32_NUM_STRIPES * RADIX32_SMALL_TILE_SIZE];
-    ALIGNAS(64)
-    double output_re[RADIX32_NUM_STRIPES * RADIX32_SMALL_TILE_SIZE];
-    ALIGNAS(64)
-    double output_im[RADIX32_NUM_STRIPES * RADIX32_SMALL_TILE_SIZE];
-} radix32_small_tile_workspace_t;
-
-//==============================================================================
-// COMPLEX ARITHMETIC PRIMITIVES (Inline helpers for butterfly)
-//==============================================================================
-
-/**
- * @brief Complex multiply: (a + ib) × (c + id) → (result_re + i×result_im)
- *
- * Formula:
- *   result_re = a×c - b×d
- *   result_im = a×d + b×c
- *
- * Uses FMA instructions for optimal performance (2 FMA + 2 MUL = 4 uops).
- */
-TARGET_AVX512
-FORCE_INLINE void cmul_avx512(
-    __m512d a_re, __m512d a_im,
-    __m512d b_re, __m512d b_im,
-    __m512d *RESTRICT result_re,
-    __m512d *RESTRICT result_im)
-{
-    // result_re = a_re * b_re - a_im * b_im
-    *result_re = _mm512_fmsub_pd(a_re, b_re, _mm512_mul_pd(a_im, b_im));
-
-    // result_im = a_re * b_im + a_im * b_re
-    *result_im = _mm512_fmadd_pd(a_re, b_im, _mm512_mul_pd(a_im, b_re));
-}
-
-//==============================================================================
-// OPTIMIZATION #2: Helpers for ±j rotations (reduces live ranges)
-//==============================================================================
-
-/**
- * @brief Rotation by -j: (a+jb)*(-j) = b - ja
- */
-TARGET_AVX512
-FORCE_INLINE void rot_neg_j(__m512d re, __m512d im, __m512d sign_mask,
-                            __m512d *RESTRICT r2, __m512d *RESTRICT i2)
-{
-    *r2 = im;                           // New real = old imag
-    *i2 = _mm512_xor_pd(re, sign_mask); // New imag = -old real
-}
-
-/**
- * @brief Rotation by +j: (a+jb)*(+j) = -b + ja
- */
-TARGET_AVX512
-FORCE_INLINE void rot_pos_j(__m512d re, __m512d im, __m512d sign_mask,
-                            __m512d *RESTRICT r2, __m512d *RESTRICT i2)
-{
-    *r2 = _mm512_xor_pd(im, sign_mask); // New real = -old imag
-    *i2 = re;                           // New imag = old real
-}
-
-//==============================================================================
-// FIX #2: LOAD/STORE WRAPPERS FOR UNIFORM MACRO INTERFACE
-//==============================================================================
-
-/**
- * @brief Aligned load (unmasked)
- */
-TARGET_AVX512
-FORCE_INLINE __m512d load_aligned(const double *RESTRICT ptr)
-{
-    return _mm512_load_pd(ptr);
-}
-
-/**
- * @brief Masked load (zeros invalid lanes)
- */
-TARGET_AVX512
-FORCE_INLINE __m512d load_masked(__mmask8 mask, const double *RESTRICT ptr)
-{
-    return _mm512_maskz_loadu_pd(mask, ptr);
-}
-
-/**
- * @brief Aligned store (unmasked)
- */
-TARGET_AVX512
-FORCE_INLINE void store_aligned(double *RESTRICT ptr, __m512d val)
-{
-    _mm512_store_pd(ptr, val);
-}
-
-/**
- * @brief Masked store (preserves invalid lanes)
- */
-TARGET_AVX512
-FORCE_INLINE void store_masked(double *RESTRICT ptr, __mmask8 mask, __m512d val)
-{
-    _mm512_mask_storeu_pd(ptr, mask, val);
-}
-
-//==============================================================================
-// TWO-PAIR WAVE OPTIMIZATION: Stage-1 Reuse
-//==============================================================================
-/**
- * @brief Wave architecture: Compute stage-1 once, emit two pairs
- *
- * EVEN WAVE (t0..t3):
- * 1. Compute t0,t1,t2,t3 from x0..x7 (4 butterflies)
- * 2. Call emit_pair_04_from_t0123 → bins (0,4)
- * 3. Call emit_pair_26_from_t0123 → bins (2,6)
- * 4. Free t0..t3
- *
- * ODD WAVE (t4..t7):
- * 1. Compute t4,t5,t6,t7 from x0..x7 (4 butterflies)
- * 2. Call emit_pair_15_from_t4567 → bins (1,5)
- * 3. Call emit_pair_37_from_t4567 → bins (3,7)
- * 4. Free t4..t7
- *
- * BENEFIT: Halves stage-1 work, keeps only 4 t* live at a time
- */
-
-/**
- * @brief Emit pair (0,4) from precomputed t0,t1,t2,t3
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_04_from_t0123_avx512(
-    __m512d t0_re, __m512d t0_im,
-    __m512d t1_re, __m512d t1_im,
-    __m512d t2_re, __m512d t2_im,
-    __m512d t3_re, __m512d t3_im,
-    __m512d *RESTRICT y0_re, __m512d *RESTRICT y0_im,
-    __m512d *RESTRICT y4_re, __m512d *RESTRICT y4_im)
-{
-    // Stage 2: Only u0, u1
-    __m512d u0_re = _mm512_add_pd(t0_re, t2_re);
-    __m512d u0_im = _mm512_add_pd(t0_im, t2_im);
-
-    __m512d u1_re = _mm512_add_pd(t1_re, t3_re);
-    __m512d u1_im = _mm512_add_pd(t1_im, t3_im);
-
-    // Stage 3: Final butterfly (W8^0 = 1, identity)
-    *y0_re = _mm512_add_pd(u0_re, u1_re);
-    *y0_im = _mm512_add_pd(u0_im, u1_im);
-    *y4_re = _mm512_sub_pd(u0_re, u1_re);
-    *y4_im = _mm512_sub_pd(u0_im, u1_im);
-}
-
-/**
- * @brief Emit pair (2,6) from precomputed t0,t1,t2,t3
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_26_from_t0123_avx512(
-    __m512d t0_re, __m512d t0_im,
-    __m512d t1_re, __m512d t1_im,
-    __m512d t2_re, __m512d t2_im,
-    __m512d t3_re, __m512d t3_im,
-    __m512d *RESTRICT y2_re, __m512d *RESTRICT y2_im,
-    __m512d *RESTRICT y6_re, __m512d *RESTRICT y6_im,
-    __m512d sign_mask)
-{
-    // Stage 2: Only u2, u3
-    __m512d u2_re = _mm512_sub_pd(t0_re, t2_re);
-    __m512d u2_im = _mm512_sub_pd(t0_im, t2_im);
-
-    __m512d u3_re = _mm512_sub_pd(t1_re, t3_re);
-    __m512d u3_im = _mm512_sub_pd(t1_im, t3_im);
-
-    // Stage 3: Apply W8^2 = -j
-    __m512d u3_tw_re, u3_tw_im;
-    rot_neg_j(u3_re, u3_im, sign_mask, &u3_tw_re, &u3_tw_im);
-
-    // Final butterfly
-    *y2_re = _mm512_add_pd(u2_re, u3_tw_re);
-    *y2_im = _mm512_add_pd(u2_im, u3_tw_im);
-    *y6_re = _mm512_sub_pd(u2_re, u3_tw_re);
-    *y6_im = _mm512_sub_pd(u2_im, u3_tw_im);
-}
-
-/**
- * @brief Emit pair (1,5) from precomputed t4,t5,t6,t7
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_15_from_t4567_avx512(
-    __m512d t4_re, __m512d t4_im,
-    __m512d t5_re, __m512d t5_im,
-    __m512d t6_re, __m512d t6_im,
-    __m512d t7_re, __m512d t7_im,
-    __m512d *RESTRICT y1_re, __m512d *RESTRICT y1_im,
-    __m512d *RESTRICT y5_re, __m512d *RESTRICT y5_im,
-    __m512d sign_mask,
-    __m512d sqrt2_2)
-{
-    // Stage 2: Apply W4^2 = -j, compute only u4, u5
-    __m512d t6_tw_re, t6_tw_im;
-    rot_neg_j(t6_re, t6_im, sign_mask, &t6_tw_re, &t6_tw_im);
-
-    __m512d t7_tw_re, t7_tw_im;
-    rot_neg_j(t7_re, t7_im, sign_mask, &t7_tw_re, &t7_tw_im);
-
-    __m512d u4_re = _mm512_add_pd(t4_re, t6_tw_re);
-    __m512d u4_im = _mm512_add_pd(t4_im, t6_tw_im);
-
-    __m512d u5_re = _mm512_add_pd(t5_re, t7_tw_re);
-    __m512d u5_im = _mm512_add_pd(t5_im, t7_tw_im);
-
-    // Stage 3: Apply W8^1 = √2/2(1-i) with XOR+ADD dependency breaking
-    __m512d sum5 = _mm512_add_pd(u5_re, u5_im);
-    __m512d nre5 = _mm512_xor_pd(u5_re, sign_mask);
-    __m512d diff5 = _mm512_add_pd(u5_im, nre5);
-
-    __m512d u5_tw_re = _mm512_mul_pd(sqrt2_2, sum5);
-    __m512d u5_tw_im = _mm512_mul_pd(sqrt2_2, diff5);
-
-    // Final butterfly
-    *y1_re = _mm512_add_pd(u4_re, u5_tw_re);
-    *y1_im = _mm512_add_pd(u4_im, u5_tw_im);
-    *y5_re = _mm512_sub_pd(u4_re, u5_tw_re);
-    *y5_im = _mm512_sub_pd(u4_im, u5_tw_im);
-}
-
-/**
- * @brief Emit pair (3,7) from precomputed t4,t5,t6,t7
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_37_from_t4567_avx512(
-    __m512d t4_re, __m512d t4_im,
-    __m512d t5_re, __m512d t5_im,
-    __m512d t6_re, __m512d t6_im,
-    __m512d t7_re, __m512d t7_im,
-    __m512d *RESTRICT y3_re, __m512d *RESTRICT y3_im,
-    __m512d *RESTRICT y7_re, __m512d *RESTRICT y7_im,
-    __m512d sign_mask,
-    __m512d sqrt2_2)
-{
-    // Stage 2: Apply W4^2 = -j, compute only u6, u7
-    __m512d t6_tw_re, t6_tw_im;
-    rot_neg_j(t6_re, t6_im, sign_mask, &t6_tw_re, &t6_tw_im);
-
-    __m512d t7_tw_re, t7_tw_im;
-    rot_neg_j(t7_re, t7_im, sign_mask, &t7_tw_re, &t7_tw_im);
-
-    __m512d u6_re = _mm512_sub_pd(t4_re, t6_tw_re);
-    __m512d u6_im = _mm512_sub_pd(t4_im, t6_tw_im);
-
-    __m512d u7_re = _mm512_sub_pd(t5_re, t7_tw_re);
-    __m512d u7_im = _mm512_sub_pd(t5_im, t7_tw_im);
-
-    // Stage 3: Apply W8^3 = √2/2(-1-i) with XOR+ADD dependency breaking
-    __m512d sum7 = _mm512_add_pd(u7_re, u7_im);
-    __m512d nre7 = _mm512_xor_pd(u7_re, sign_mask);
-    __m512d diff7 = _mm512_add_pd(u7_im, nre7);
-
-    __m512d u7_tw_re_tmp = _mm512_mul_pd(sqrt2_2, sum7);
-    __m512d u7_tw_re = _mm512_xor_pd(u7_tw_re_tmp, sign_mask);
-    __m512d u7_tw_im = _mm512_mul_pd(sqrt2_2, diff7);
-
-    // Final butterfly
-    *y3_re = _mm512_add_pd(u6_re, u7_tw_re);
-    *y3_im = _mm512_add_pd(u6_im, u7_tw_im);
-    *y7_re = _mm512_sub_pd(u6_re, u7_tw_re);
-    *y7_im = _mm512_sub_pd(u6_im, u7_tw_im);
-}
-
-/**
- * @brief Helper: Compute t0,t1,t2,t3 from x0..x7 (even wave stage-1)
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_compute_t0123_avx512(
-    __m512d x0_re, __m512d x0_im,
-    __m512d x1_re, __m512d x1_im,
-    __m512d x2_re, __m512d x2_im,
-    __m512d x3_re, __m512d x3_im,
-    __m512d x4_re, __m512d x4_im,
-    __m512d x5_re, __m512d x5_im,
-    __m512d x6_re, __m512d x6_im,
-    __m512d x7_re, __m512d x7_im,
-    __m512d *RESTRICT t0_re, __m512d *RESTRICT t0_im,
-    __m512d *RESTRICT t1_re, __m512d *RESTRICT t1_im,
-    __m512d *RESTRICT t2_re, __m512d *RESTRICT t2_im,
-    __m512d *RESTRICT t3_re, __m512d *RESTRICT t3_im)
-{
-    *t0_re = _mm512_add_pd(x0_re, x4_re);
-    *t0_im = _mm512_add_pd(x0_im, x4_im);
-
-    *t1_re = _mm512_add_pd(x1_re, x5_re);
-    *t1_im = _mm512_add_pd(x1_im, x5_im);
-
-    *t2_re = _mm512_add_pd(x2_re, x6_re);
-    *t2_im = _mm512_add_pd(x2_im, x6_im);
-
-    *t3_re = _mm512_add_pd(x3_re, x7_re);
-    *t3_im = _mm512_add_pd(x3_im, x7_im);
-}
-
-/**
- * @brief Helper: Compute t4,t5,t6,t7 from x0..x7 (odd wave stage-1)
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_compute_t4567_avx512(
-    __m512d x0_re, __m512d x0_im,
-    __m512d x1_re, __m512d x1_im,
-    __m512d x2_re, __m512d x2_im,
-    __m512d x3_re, __m512d x3_im,
-    __m512d x4_re, __m512d x4_im,
-    __m512d x5_re, __m512d x5_im,
-    __m512d x6_re, __m512d x6_im,
-    __m512d x7_re, __m512d x7_im,
-    __m512d *RESTRICT t4_re, __m512d *RESTRICT t4_im,
-    __m512d *RESTRICT t5_re, __m512d *RESTRICT t5_im,
-    __m512d *RESTRICT t6_re, __m512d *RESTRICT t6_im,
-    __m512d *RESTRICT t7_re, __m512d *RESTRICT t7_im)
-{
-    *t4_re = _mm512_sub_pd(x0_re, x4_re);
-    *t4_im = _mm512_sub_pd(x0_im, x4_im);
-
-    *t5_re = _mm512_sub_pd(x1_re, x5_re);
-    *t5_im = _mm512_sub_pd(x1_im, x5_im);
-
-    *t6_re = _mm512_sub_pd(x2_re, x6_re);
-    *t6_im = _mm512_sub_pd(x2_im, x6_im);
-
-    *t7_re = _mm512_sub_pd(x3_re, x7_re);
-    *t7_im = _mm512_sub_pd(x3_im, x7_im);
-}
-
-/**
- * @brief Emit pair (0,4) from t0..t3 - Backward (W8^0 = 1, identity)
- * IDENTICAL to forward version (W8^0* = W8^0 = 1)
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_04_from_t0123_backward_avx512(
-    __m512d t0_re, __m512d t0_im,
-    __m512d t1_re, __m512d t1_im,
-    __m512d t2_re, __m512d t2_im,
-    __m512d t3_re, __m512d t3_im,
-    __m512d *RESTRICT y0_re, __m512d *RESTRICT y0_im,
-    __m512d *RESTRICT y4_re, __m512d *RESTRICT y4_im)
-{
-    // Stage 2: Only u0, u1
-    __m512d u0_re = _mm512_add_pd(t0_re, t2_re);
-    __m512d u0_im = _mm512_add_pd(t0_im, t2_im);
-
-    __m512d u1_re = _mm512_add_pd(t1_re, t3_re);
-    __m512d u1_im = _mm512_add_pd(t1_im, t3_im);
-
-    // Stage 3: Final butterfly (W8^0 = 1, identity - same for forward/backward)
-    *y0_re = _mm512_add_pd(u0_re, u1_re);
-    *y0_im = _mm512_add_pd(u0_im, u1_im);
-    *y4_re = _mm512_sub_pd(u0_re, u1_re);
-    *y4_im = _mm512_sub_pd(u0_im, u1_im);
-}
-
-/**
- * @brief Emit pair (1, 5) - Backward FFT (CORRECTED)
- *
- * W8^1 = √2/2(1+i): z × W8^1 = √2/2[(a-b) + j(a+b)]
- * CRITICAL: Real part is (a-b), NOT (b-a)
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_15_backward_avx512(
-    __m512d x0_re, __m512d x0_im,
-    __m512d x1_re, __m512d x1_im,
-    __m512d x2_re, __m512d x2_im,
-    __m512d x3_re, __m512d x3_im,
-    __m512d x4_re, __m512d x4_im,
-    __m512d x5_re, __m512d x5_im,
-    __m512d x6_re, __m512d x6_im,
-    __m512d x7_re, __m512d x7_im,
-    __m512d *RESTRICT y1_re, __m512d *RESTRICT y1_im,
-    __m512d *RESTRICT y5_re, __m512d *RESTRICT y5_im,
-    __m512d sign_mask,
-    __m512d sqrt2_2)
-{
-    //==========================================================================
-    // STAGE 1: Only t4, t5, t6, t7
-    //==========================================================================
-
-    __m512d t4_re = _mm512_sub_pd(x0_re, x4_re);
-    __m512d t4_im = _mm512_sub_pd(x0_im, x4_im);
-
-    __m512d t5_re = _mm512_sub_pd(x1_re, x5_re);
-    __m512d t5_im = _mm512_sub_pd(x1_im, x5_im);
-
-    __m512d t6_re = _mm512_sub_pd(x2_re, x6_re);
-    __m512d t6_im = _mm512_sub_pd(x2_im, x6_im);
-
-    __m512d t7_re = _mm512_sub_pd(x3_re, x7_re);
-    __m512d t7_im = _mm512_sub_pd(x3_im, x7_im);
-
-    //==========================================================================
-    // STAGE 2: Apply W4^2 = +j (BACKWARD), Compute Only u4, u5
-    //==========================================================================
-
-    __m512d t6_tw_re, t6_tw_im;
-    rot_pos_j(t6_re, t6_im, sign_mask, &t6_tw_re, &t6_tw_im);
-
-    __m512d t7_tw_re, t7_tw_im;
-    rot_pos_j(t7_re, t7_im, sign_mask, &t7_tw_re, &t7_tw_im);
-
-    __m512d u4_re = _mm512_add_pd(t4_re, t6_tw_re);
-    __m512d u4_im = _mm512_add_pd(t4_im, t6_tw_im);
-
-    __m512d u5_re = _mm512_add_pd(t5_re, t7_tw_re);
-    __m512d u5_im = _mm512_add_pd(t5_im, t7_tw_im);
-
-    //==========================================================================
-    // STAGE 3: Apply W8^1 = √2/2(1+i) - CORRECTED
-    //==========================================================================
-    // Formula: √2/2[(a-b) + j(a+b)]
-    // Use XOR+ADD to compute (a-b) without SUB dependency
-
-    __m512d nb5 = _mm512_xor_pd(u5_im, sign_mask); // -b
-    __m512d diff5 = _mm512_add_pd(u5_re, nb5);     // a - b (CORRECTED)
-    __m512d sum5 = _mm512_add_pd(u5_re, u5_im);    // a + b
-
-    __m512d u5_tw_re = _mm512_mul_pd(sqrt2_2, diff5); // √2/2 * (a-b)
-    __m512d u5_tw_im = _mm512_mul_pd(sqrt2_2, sum5);  // √2/2 * (a+b)
-
-    // Final butterfly
-    *y1_re = _mm512_add_pd(u4_re, u5_tw_re);
-    *y1_im = _mm512_add_pd(u4_im, u5_tw_im);
-    *y5_re = _mm512_sub_pd(u4_re, u5_tw_re);
-    *y5_im = _mm512_sub_pd(u4_im, u5_tw_im);
-}
-
-/**
- * @brief Emit pair (3, 7) - Backward FFT (CORRECTED)
- *
- * W8^3 = √2/2(-1+i): z × W8^3 = √2/2[-(a+b) + j(a-b)]
- * CRITICAL: Real part is -(a+b), imag part is (a-b)
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_37_backward_avx512(
-    __m512d x0_re, __m512d x0_im,
-    __m512d x1_re, __m512d x1_im,
-    __m512d x2_re, __m512d x2_im,
-    __m512d x3_re, __m512d x3_im,
-    __m512d x4_re, __m512d x4_im,
-    __m512d x5_re, __m512d x5_im,
-    __m512d x6_re, __m512d x6_im,
-    __m512d x7_re, __m512d x7_im,
-    __m512d *RESTRICT y3_re, __m512d *RESTRICT y3_im,
-    __m512d *RESTRICT y7_re, __m512d *RESTRICT y7_im,
-    __m512d sign_mask,
-    __m512d sqrt2_2)
-{
-    //==========================================================================
-    // STAGE 1: Only t4, t5, t6, t7
-    //==========================================================================
-
-    __m512d t4_re = _mm512_sub_pd(x0_re, x4_re);
-    __m512d t4_im = _mm512_sub_pd(x0_im, x4_im);
-
-    __m512d t5_re = _mm512_sub_pd(x1_re, x5_re);
-    __m512d t5_im = _mm512_sub_pd(x1_im, x5_im);
-
-    __m512d t6_re = _mm512_sub_pd(x2_re, x6_re);
-    __m512d t6_im = _mm512_sub_pd(x2_im, x6_im);
-
-    __m512d t7_re = _mm512_sub_pd(x3_re, x7_re);
-    __m512d t7_im = _mm512_sub_pd(x3_im, x7_im);
-
-    //==========================================================================
-    // STAGE 2: Apply W4^2 = +j (BACKWARD), Compute Only u6, u7
-    //==========================================================================
-
-    __m512d t6_tw_re, t6_tw_im;
-    rot_pos_j(t6_re, t6_im, sign_mask, &t6_tw_re, &t6_tw_im);
-
-    __m512d t7_tw_re, t7_tw_im;
-    rot_pos_j(t7_re, t7_im, sign_mask, &t7_tw_re, &t7_tw_im);
-
-    __m512d u6_re = _mm512_sub_pd(t4_re, t6_tw_re);
-    __m512d u6_im = _mm512_sub_pd(t4_im, t6_tw_im);
-
-    __m512d u7_re = _mm512_sub_pd(t5_re, t7_tw_re);
-    __m512d u7_im = _mm512_sub_pd(t5_im, t7_tw_im);
-
-    //==========================================================================
-    // STAGE 3: Apply W8^3 = √2/2(-1+i) - CORRECTED
-    //==========================================================================
-    // Formula: √2/2[-(a+b) + j(a-b)]
-    // Real: -(a+b), Imag: (a-b)
-
-    __m512d sum7 = _mm512_add_pd(u7_re, u7_im);    // a + b
-    __m512d nb7 = _mm512_xor_pd(u7_im, sign_mask); // -b
-    __m512d diff7 = _mm512_add_pd(u7_re, nb7);     // a - b (XOR+ADD style)
-
-    __m512d u7_tw_re_tmp = _mm512_mul_pd(sqrt2_2, sum7);       // √2/2 * (a+b)
-    __m512d u7_tw_re = _mm512_xor_pd(u7_tw_re_tmp, sign_mask); // -√2/2 * (a+b)
-    __m512d u7_tw_im = _mm512_mul_pd(sqrt2_2, diff7);          // √2/2 * (a-b)
-
-    // Final butterfly
-    *y3_re = _mm512_add_pd(u6_re, u7_tw_re);
-    *y3_im = _mm512_add_pd(u6_im, u7_tw_im);
-    *y7_re = _mm512_sub_pd(u6_re, u7_tw_re);
-    *y7_im = _mm512_sub_pd(u6_im, u7_tw_im);
-}
-
-/**
- * @brief Emit pair (2,6) from t0..t3 - Backward (W8^2 = +j)
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_26_from_t0123_backward_avx512(
-    __m512d t0_re, __m512d t0_im,
-    __m512d t1_re, __m512d t1_im,
-    __m512d t2_re, __m512d t2_im,
-    __m512d t3_re, __m512d t3_im,
-    __m512d *RESTRICT y2_re, __m512d *RESTRICT y2_im,
-    __m512d *RESTRICT y6_re, __m512d *RESTRICT y6_im,
-    __m512d sign_mask)
-{
-    __m512d u2_re = _mm512_sub_pd(t0_re, t2_re);
-    __m512d u2_im = _mm512_sub_pd(t0_im, t2_im);
-    
-    __m512d u3_re = _mm512_sub_pd(t1_re, t3_re);
-    __m512d u3_im = _mm512_sub_pd(t1_im, t3_im);
-
-    __m512d u3_tw_re, u3_tw_im;
-    rot_pos_j(u3_re, u3_im, sign_mask, &u3_tw_re, &u3_tw_im);
-
-    *y2_re = _mm512_add_pd(u2_re, u3_tw_re);
-    *y2_im = _mm512_add_pd(u2_im, u3_tw_im);
-    *y6_re = _mm512_sub_pd(u2_re, u3_tw_re);
-    *y6_im = _mm512_sub_pd(u2_im, u3_tw_im);
-}
-
-
-
-/**
- * @brief Emit pair (1,5) from t4..t7 - Backward (CORRECTED)
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_15_from_t4567_backward_avx512(
-    __m512d t4_re, __m512d t4_im,
-    __m512d t5_re, __m512d t5_im,
-    __m512d t6_re, __m512d t6_im,
-    __m512d t7_re, __m512d t7_im,
-    __m512d *RESTRICT y1_re, __m512d *RESTRICT y1_im,
-    __m512d *RESTRICT y5_re, __m512d *RESTRICT y5_im,
-    __m512d sign_mask,
-    __m512d sqrt2_2)
-{
-    __m512d t6_tw_re, t6_tw_im;
-    rot_pos_j(t6_re, t6_im, sign_mask, &t6_tw_re, &t6_tw_im);
-
-    __m512d t7_tw_re, t7_tw_im;
-    rot_pos_j(t7_re, t7_im, sign_mask, &t7_tw_re, &t7_tw_im);
-
-    __m512d u4_re = _mm512_add_pd(t4_re, t6_tw_re);
-    __m512d u4_im = _mm512_add_pd(t4_im, t6_tw_im);
-
-    __m512d u5_re = _mm512_add_pd(t5_re, t7_tw_re);
-    __m512d u5_im = _mm512_add_pd(t5_im, t7_tw_im);
-
-    // Backward W8^1: √2/2[(a-b) + j(a+b)] - CORRECTED
-    __m512d nb5 = _mm512_xor_pd(u5_im, sign_mask);
-    __m512d diff5 = _mm512_add_pd(u5_re, nb5);  // a - b
-    __m512d sum5 = _mm512_add_pd(u5_re, u5_im); // a + b
-
-    __m512d u5_tw_re = _mm512_mul_pd(sqrt2_2, diff5);
-    __m512d u5_tw_im = _mm512_mul_pd(sqrt2_2, sum5);
-
-    *y1_re = _mm512_add_pd(u4_re, u5_tw_re);
-    *y1_im = _mm512_add_pd(u4_im, u5_tw_im);
-    *y5_re = _mm512_sub_pd(u4_re, u5_tw_re);
-    *y5_im = _mm512_sub_pd(u4_im, u5_tw_im);
-}
-
-/**
- * @brief Emit pair (3,7) from t4..t7 - Backward (CORRECTED)
- */
-TARGET_AVX512
-FORCE_INLINE void radix8_emit_pair_37_from_t4567_backward_avx512(
-    __m512d t4_re, __m512d t4_im,
-    __m512d t5_re, __m512d t5_im,
-    __m512d t6_re, __m512d t6_im,
-    __m512d t7_re, __m512d t7_im,
-    __m512d *RESTRICT y3_re, __m512d *RESTRICT y3_im,
-    __m512d *RESTRICT y7_re, __m512d *RESTRICT y7_im,
-    __m512d sign_mask,
-    __m512d sqrt2_2)
-{
-    __m512d t6_tw_re, t6_tw_im;
-    rot_pos_j(t6_re, t6_im, sign_mask, &t6_tw_re, &t6_tw_im);
-
-    __m512d t7_tw_re, t7_tw_im;
-    rot_pos_j(t7_re, t7_im, sign_mask, &t7_tw_re, &t7_tw_im);
-
-    __m512d u6_re = _mm512_sub_pd(t4_re, t6_tw_re);
-    __m512d u6_im = _mm512_sub_pd(t4_im, t6_tw_im);
-
-    __m512d u7_re = _mm512_sub_pd(t5_re, t7_tw_re);
-    __m512d u7_im = _mm512_sub_pd(t5_im, t7_tw_im);
-
-    // Backward W8^3: √2/2[-(a+b) + j(a-b)] - CORRECTED
-    __m512d sum7 = _mm512_add_pd(u7_re, u7_im);
-    __m512d nb7 = _mm512_xor_pd(u7_im, sign_mask);
-    __m512d diff7 = _mm512_add_pd(u7_re, nb7); // a - b
-
-    __m512d u7_tw_re_tmp = _mm512_mul_pd(sqrt2_2, sum7);
-    __m512d u7_tw_re = _mm512_xor_pd(u7_tw_re_tmp, sign_mask); // -(a+b)
-    __m512d u7_tw_im = _mm512_mul_pd(sqrt2_2, diff7);          // (a-b)
-
-    *y3_re = _mm512_add_pd(u6_re, u7_tw_re);
-    *y3_im = _mm512_add_pd(u6_im, u7_tw_im);
-    *y7_re = _mm512_sub_pd(u6_re, u7_tw_re);
-    *y7_im = _mm512_sub_pd(u6_im, u7_tw_im);
-}
-
-//==============================================================================
-// OPTIMIZED MINI-RECURRENCE (SKYLAKE-X PORT-5 OPTIMIZATION)
-//==============================================================================
-
-/**
- * @brief Compute w^1, w^2, w^3 from seed twiddle w - OPTIMIZED for Skylake-X
- *
- * SKYLAKE-X OPTIMIZATION:
- * - Replace FMA for w2_im with MUL+ADD to ease port-5 pressure
- * - FMA ports (0,1,5) are heavily contended in complex multiply chains
- * - Spreading to ADD ports (0,1,5) + MUL ports (0,1,5) improves throughput
- *
- * FORMULA:
- * - w^1 = w (trivial copy)
- * - w^2 = w * w (complex square)
- *   - Re(w^2) = w_re^2 - w_im^2
- *   - Im(w^2) = 2 * w_re * w_im  ← OPTIMIZED: MUL+ADD instead of FMA
- * - w^3 = w^2 * w (complex multiply)
- *
- * COST:
- * - Original: 4 FMA + 2 MUL = 6 FMA-port ops
- * - Optimized: 3 FMA + 3 MUL + 1 ADD = better port distribution
- *
- * @param w_re Seed twiddle real
- * @param w_im Seed twiddle imag
- * @param w1_re Output: w^1 real
- * @param w1_im Output: w^1 imag
- * @param w2_re Output: w^2 real
- * @param w2_im Output: w^2 imag
- * @param w3_re Output: w^3 real
- * @param w3_im Output: w^3 imag
- */
-TARGET_AVX512
-FORCE_INLINE void cross_twiddle_powers3_optimized(
-    __m512d w_re, __m512d w_im,
-    __m512d *RESTRICT w1_re, __m512d *RESTRICT w1_im,
-    __m512d *RESTRICT w2_re, __m512d *RESTRICT w2_im,
-    __m512d *RESTRICT w3_re, __m512d *RESTRICT w3_im)
-{
-    //==========================================================================
-    // w^1 = w (trivial copy)
-    //==========================================================================
-    *w1_re = w_re;
-    *w1_im = w_im;
-
-    //==========================================================================
-    // w^2 = w * w (complex square with PORT-5 OPTIMIZATION)
-    //==========================================================================
-    // Re(w^2) = w_re^2 - w_im^2 (uses FMA)
-    __m512d w2r = _mm512_fmsub_pd(w_re, w_re, _mm512_mul_pd(w_im, w_im));
-
-    // Im(w^2) = 2 * w_re * w_im (MUL+ADD instead of FMA to ease port-5)
-    __m512d re_im = _mm512_mul_pd(w_re, w_im); // w_re * w_im (MUL: ports 0,1,5)
-    __m512d w2i = _mm512_add_pd(re_im, re_im); // 2*re*im (ADD: ports 0,1,5)
-
-    *w2_re = w2r;
-    *w2_im = w2i;
-
-    //==========================================================================
-    // w^3 = w^2 * w (complex multiply via FMA)
-    //==========================================================================
-    // Re(w^3) = w2_re * w_re - w2_im * w_im
-    *w3_re = _mm512_fmsub_pd(w2r, w_re, _mm512_mul_pd(w2i, w_im));
-
-    // Im(w^3) = w2_re * w_im + w2_im * w_re
-    *w3_im = _mm512_fmadd_pd(w2r, w_im, _mm512_mul_pd(w2i, w_re));
-}
-
-//==============================================================================
-// POSITION-4 FAST-PATH: W8 FAMILY CROSS-GROUP TWIDDLES
-//==============================================================================
-
-/**
- * @brief Position-4 cross-group twiddles using W8 fast-paths
- *
- * POSITION 4 TWIDDLES (W32^4k for k=0,1,2,3):
- * - Group A (k=0): W32^0  = 1         (identity)
- * - Group B (k=1): W32^4  = W8^1  = √2/2(1-i)  (sum/diff)
- * - Group C (k=2): W32^8  = W8^2  = -i         (rotation)
- * - Group D (k=3): W32^12 = W8^3  = √2/2(-1-i) (sum/diff + negate)
- *
- * BENEFIT: Eliminates 3 generic complex multiplies (12 FMA + 3 MUL)
- * Replaces with: 2 sum/diff (8 ADD + 4 MUL + 2 XOR) + 1 rotation (2 MOV + 1 XOR)
- *
- * FORWARD vs BACKWARD:
- * - Forward uses: -i, √2/2(1-i), √2/2(-1-i)
- * - Backward uses: +i, √2/2(1+i), √2/2(-1+i) (conjugates)
- */
-
-/**
- * @brief Radix-4 butterfly core (forward variant)
- *
- * Standard DIT radix-4:
- * y0 = a + b + c + d
- * y1 = a - jb - c + jd
- * y2 = a - b + c - d
- * y3 = a + jb - c - jd
- */
-TARGET_AVX512
-FORCE_INLINE void radix4_butterfly_core_fv_avx512(
-    __m512d a_re, __m512d a_im,
-    __m512d b_re, __m512d b_im,
-    __m512d c_re, __m512d c_im,
-    __m512d d_re, __m512d d_im,
-    __m512d *RESTRICT y0_re, __m512d *RESTRICT y0_im,
-    __m512d *RESTRICT y1_re, __m512d *RESTRICT y1_im,
-    __m512d *RESTRICT y2_re, __m512d *RESTRICT y2_im,
-    __m512d *RESTRICT y3_re, __m512d *RESTRICT y3_im,
-    __m512d sign_mask)
-{
-    // Stage 1: Compute sums and differences
-    __m512d t0_re = _mm512_add_pd(a_re, c_re); // a + c
-    __m512d t0_im = _mm512_add_pd(a_im, c_im);
-    __m512d t1_re = _mm512_sub_pd(a_re, c_re); // a - c
-    __m512d t1_im = _mm512_sub_pd(a_im, c_im);
-
-    __m512d t2_re = _mm512_add_pd(b_re, d_re); // b + d
-    __m512d t2_im = _mm512_add_pd(b_im, d_im);
-    __m512d t3_re = _mm512_sub_pd(b_re, d_re); // b - d
-    __m512d t3_im = _mm512_sub_pd(b_im, d_im);
-
-    // Stage 2: Apply ±j rotations to t3 (forward: -j)
-    __m512d t3_rot_re, t3_rot_im;
-    rot_neg_j(t3_re, t3_im, sign_mask, &t3_rot_re, &t3_rot_im); // (b-d)*(-j)
-
-    // Stage 3: Final combinations
-    *y0_re = _mm512_add_pd(t0_re, t2_re); // (a+c) + (b+d)
-    *y0_im = _mm512_add_pd(t0_im, t2_im);
-
-    *y1_re = _mm512_add_pd(t1_re, t3_rot_re); // (a-c) + (b-d)*(-j)
-    *y1_im = _mm512_add_pd(t1_im, t3_rot_im);
-
-    *y2_re = _mm512_sub_pd(t0_re, t2_re); // (a+c) - (b+d)
-    *y2_im = _mm512_sub_pd(t0_im, t2_im);
-
-    *y3_re = _mm512_sub_pd(t1_re, t3_rot_re); // (a-c) - (b-d)*(-j)
-    *y3_im = _mm512_sub_pd(t1_im, t3_rot_im);
-}
-
-/**
- * @brief Radix-4 butterfly core (backward variant)
- *
- * Backward uses +j instead of -j
- */
-TARGET_AVX512
-FORCE_INLINE void radix4_butterfly_core_bv_avx512(
-    __m512d a_re, __m512d a_im,
-    __m512d b_re, __m512d b_im,
-    __m512d c_re, __m512d c_im,
-    __m512d d_re, __m512d d_im,
-    __m512d *RESTRICT y0_re, __m512d *RESTRICT y0_im,
-    __m512d *RESTRICT y1_re, __m512d *RESTRICT y1_im,
-    __m512d *RESTRICT y2_re, __m512d *RESTRICT y2_im,
-    __m512d *RESTRICT y3_re, __m512d *RESTRICT y3_im,
-    __m512d sign_mask)
-{
-    __m512d t0_re = _mm512_add_pd(a_re, c_re);
-    __m512d t0_im = _mm512_add_pd(a_im, c_im);
-    __m512d t1_re = _mm512_sub_pd(a_re, c_re);
-    __m512d t1_im = _mm512_sub_pd(a_im, c_im);
-
-    __m512d t2_re = _mm512_add_pd(b_re, d_re);
-    __m512d t2_im = _mm512_add_pd(b_im, d_im);
-    __m512d t3_re = _mm512_sub_pd(b_re, d_re);
-    __m512d t3_im = _mm512_sub_pd(b_im, d_im);
-
-    // Backward: use +j rotation
-    __m512d t3_rot_re, t3_rot_im;
-    rot_pos_j(t3_re, t3_im, sign_mask, &t3_rot_re, &t3_rot_im);
-
-    *y0_re = _mm512_add_pd(t0_re, t2_re);
-    *y0_im = _mm512_add_pd(t0_im, t2_im);
-
-    *y1_re = _mm512_add_pd(t1_re, t3_rot_re);
-    *y1_im = _mm512_add_pd(t1_im, t3_rot_im);
-
-    *y2_re = _mm512_sub_pd(t0_re, t2_re);
-    *y2_im = _mm512_sub_pd(t0_im, t2_im);
-
-    *y3_re = _mm512_sub_pd(t1_re, t3_rot_re);
-    *y3_im = _mm512_sub_pd(t1_im, t3_rot_im);
-}
-
-//==============================================================================
-// POSITION-4 FAST-PATH MACROS
-//==============================================================================
-
-/**
- * @brief Process position-4 using W8 fast-paths - FORWARD, UNMASKED
- *
- * Applies:
- * - B *= W8^1 = √2/2(1-i) using sum/diff
- * - C *= W8^2 = -i using rotation
- * - D *= W8^3 = √2/2(-1-i) using sum/diff + negate
- */
-#define RADIX32_POSITION4_FAST_FORWARD_UNMASKED(STRIPE)                                       \
-    do                                                                                        \
-    {                                                                                         \
-        __m512d a_re = A_re[1], a_im = A_im[1]; /* Position 4 is at index 1 (bit-reversed) */ \
-        __m512d b_re = B_re[1], b_im = B_im[1];                                               \
-        __m512d c_re = C_re[1], c_im = C_im[1];                                               \
-        __m512d d_re = D_re[1], d_im = D_im[1];                                               \
-                                                                                              \
-        /* B *= W8^1 = √2/2(1-i) using sum/diff */                                            \
-        __m512d sum_b = _mm512_add_pd(b_re, b_im);                                            \
-        __m512d nb = _mm512_xor_pd(b_re, sign_mask);                                          \
-        __m512d diff_b = _mm512_add_pd(b_im, nb); /* im - re */                               \
-        b_re = _mm512_mul_pd(sqrt2_2, sum_b);                                                 \
-        b_im = _mm512_mul_pd(sqrt2_2, diff_b);                                                \
-                                                                                              \
-        /* C *= W8^2 = -i using rotation */                                                   \
-        __m512d c_tmp_re, c_tmp_im;                                                           \
-        rot_neg_j(c_re, c_im, sign_mask, &c_tmp_re, &c_tmp_im);                               \
-        c_re = c_tmp_re;                                                                      \
-        c_im = c_tmp_im;                                                                      \
-                                                                                              \
-        /* D *= W8^3 = √2/2(-1-i) using sum/diff + negate */                                  \
-        __m512d sum_d = _mm512_add_pd(d_re, d_im);                                            \
-        __m512d nd = _mm512_xor_pd(d_re, sign_mask);                                          \
-        __m512d diff_d = _mm512_add_pd(d_im, nd); /* im - re */                               \
-        __m512d d_re_tmp = _mm512_mul_pd(sqrt2_2, sum_d);                                     \
-        d_re = _mm512_xor_pd(d_re_tmp, sign_mask); /* Negate */                               \
-        d_im = _mm512_mul_pd(sqrt2_2, diff_d);                                                \
-                                                                                              \
-        /* Radix-4 combine */                                                                 \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                       \
-        radix4_butterfly_core_fv_avx512(                                                      \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                                   \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,                   \
-            sign_mask);                                                                       \
-                                                                                              \
-        /* Store outputs (stripes: 4, 12, 20, 28) */                                          \
-        store_aligned(&tile_out_re[(STRIPE + 0) * tile_size + k], y0_re);                     \
-        store_aligned(&tile_out_im[(STRIPE + 0) * tile_size + k], y0_im);                     \
-        store_aligned(&tile_out_re[(STRIPE + 8) * tile_size + k], y1_re);                     \
-        store_aligned(&tile_out_im[(STRIPE + 8) * tile_size + k], y1_im);                     \
-        store_aligned(&tile_out_re[(STRIPE + 16) * tile_size + k], y2_re);                    \
-        store_aligned(&tile_out_im[(STRIPE + 16) * tile_size + k], y2_im);                    \
-        store_aligned(&tile_out_re[(STRIPE + 24) * tile_size + k], y3_re);                    \
-        store_aligned(&tile_out_im[(STRIPE + 24) * tile_size + k], y3_im);                    \
-    } while (0)
-
-/**
- * @brief Process position-4 using W8 fast-paths - FORWARD, MASKED
- */
-#define RADIX32_POSITION4_FAST_FORWARD_MASKED(STRIPE, MASK)                     \
-    do                                                                          \
-    {                                                                           \
-        __m512d a_re = A_re[1], a_im = A_im[1];                                 \
-        __m512d b_re = B_re[1], b_im = B_im[1];                                 \
-        __m512d c_re = C_re[1], c_im = C_im[1];                                 \
-        __m512d d_re = D_re[1], d_im = D_im[1];                                 \
-                                                                                \
-        __m512d sum_b = _mm512_add_pd(b_re, b_im);                              \
-        __m512d nb = _mm512_xor_pd(b_re, sign_mask);                            \
-        __m512d diff_b = _mm512_add_pd(b_im, nb);                               \
-        b_re = _mm512_mul_pd(sqrt2_2, sum_b);                                   \
-        b_im = _mm512_mul_pd(sqrt2_2, diff_b);                                  \
-                                                                                \
-        __m512d c_tmp_re, c_tmp_im;                                             \
-        rot_neg_j(c_re, c_im, sign_mask, &c_tmp_re, &c_tmp_im);                 \
-        c_re = c_tmp_re;                                                        \
-        c_im = c_tmp_im;                                                        \
-                                                                                \
-        __m512d sum_d = _mm512_add_pd(d_re, d_im);                              \
-        __m512d nd = _mm512_xor_pd(d_re, sign_mask);                            \
-        __m512d diff_d = _mm512_add_pd(d_im, nd);                               \
-        __m512d d_re_tmp = _mm512_mul_pd(sqrt2_2, sum_d);                       \
-        d_re = _mm512_xor_pd(d_re_tmp, sign_mask);                              \
-        d_im = _mm512_mul_pd(sqrt2_2, diff_d);                                  \
-                                                                                \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;         \
-        radix4_butterfly_core_fv_avx512(                                        \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                     \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,     \
-            sign_mask);                                                         \
-                                                                                \
-        store_masked(&tile_out_re[(STRIPE + 0) * tile_size + k], MASK, y0_re);  \
-        store_masked(&tile_out_im[(STRIPE + 0) * tile_size + k], MASK, y0_im);  \
-        store_masked(&tile_out_re[(STRIPE + 8) * tile_size + k], MASK, y1_re);  \
-        store_masked(&tile_out_im[(STRIPE + 8) * tile_size + k], MASK, y1_im);  \
-        store_masked(&tile_out_re[(STRIPE + 16) * tile_size + k], MASK, y2_re); \
-        store_masked(&tile_out_im[(STRIPE + 16) * tile_size + k], MASK, y2_im); \
-        store_masked(&tile_out_re[(STRIPE + 24) * tile_size + k], MASK, y3_re); \
-        store_masked(&tile_out_im[(STRIPE + 24) * tile_size + k], MASK, y3_im); \
-    } while (0)
-
-/**
- * @brief Process position-4 using W8 fast-paths - BACKWARD, UNMASKED
- *
- * Applies:
- * - B *= W8^1 = √2/2(1+i) using sum/diff (conjugated)
- * - C *= W8^2 = +i using rotation (conjugated)
- * - D *= W8^3 = √2/2(-1+i) using sum/diff + negate (conjugated)
- */
-#define RADIX32_POSITION4_FAST_BACKWARD_UNMASKED(STRIPE)                    \
-    do                                                                      \
-    {                                                                       \
-        __m512d a_re = A_re[1], a_im = A_im[1];                             \
-        __m512d b_re = B_re[1], b_im = B_im[1];                             \
-        __m512d c_re = C_re[1], c_im = C_im[1];                             \
-        __m512d d_re = D_re[1], d_im = D_im[1];                             \
-                                                                            \
-        /* B *= W8^1 = √2/2(1+i): [(a-b) + j(a+b)] */                       \
-        __m512d sum_b = _mm512_add_pd(b_re, b_im);                          \
-        __m512d nb = _mm512_xor_pd(b_im, sign_mask);                        \
-        __m512d diff_b = _mm512_add_pd(b_re, nb); /* re - im */             \
-        b_re = _mm512_mul_pd(sqrt2_2, diff_b);                              \
-        b_im = _mm512_mul_pd(sqrt2_2, sum_b);                               \
-                                                                            \
-        /* C *= W8^2 = +i using rotation */                                 \
-        __m512d c_tmp_re, c_tmp_im;                                         \
-        rot_pos_j(c_re, c_im, sign_mask, &c_tmp_re, &c_tmp_im);             \
-        c_re = c_tmp_re;                                                    \
-        c_im = c_tmp_im;                                                    \
-                                                                            \
-        /* D *= W8^3 = √2/2(-1+i): [-(a+b) + j(a-b)] */                     \
-        __m512d sum_d = _mm512_add_pd(d_re, d_im);                          \
-        __m512d nd = _mm512_xor_pd(d_im, sign_mask);                        \
-        __m512d diff_d = _mm512_add_pd(d_re, nd); /* re - im */             \
-        __m512d d_re_tmp = _mm512_mul_pd(sqrt2_2, sum_d);                   \
-        d_re = _mm512_xor_pd(d_re_tmp, sign_mask); /* Negate */             \
-        d_im = _mm512_mul_pd(sqrt2_2, diff_d);                              \
-                                                                            \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;     \
-        radix4_butterfly_core_bv_avx512(                                    \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                 \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im, \
-            sign_mask);                                                     \
-                                                                            \
-        store_aligned(&tile_out_re[(STRIPE + 0) * tile_size + k], y0_re);   \
-        store_aligned(&tile_out_im[(STRIPE + 0) * tile_size + k], y0_im);   \
-        store_aligned(&tile_out_re[(STRIPE + 8) * tile_size + k], y1_re);   \
-        store_aligned(&tile_out_im[(STRIPE + 8) * tile_size + k], y1_im);   \
-        store_aligned(&tile_out_re[(STRIPE + 16) * tile_size + k], y2_re);  \
-        store_aligned(&tile_out_im[(STRIPE + 16) * tile_size + k], y2_im);  \
-        store_aligned(&tile_out_re[(STRIPE + 24) * tile_size + k], y3_re);  \
-        store_aligned(&tile_out_im[(STRIPE + 24) * tile_size + k], y3_im);  \
-    } while (0)
-
-/**
- * @brief Process position-4 using W8 fast-paths - BACKWARD, MASKED
- */
-#define RADIX32_POSITION4_FAST_BACKWARD_MASKED(STRIPE, MASK)                    \
-    do                                                                          \
-    {                                                                           \
-        __m512d a_re = A_re[1], a_im = A_im[1];                                 \
-        __m512d b_re = B_re[1], b_im = B_im[1];                                 \
-        __m512d c_re = C_re[1], c_im = C_im[1];                                 \
-        __m512d d_re = D_re[1], d_im = D_im[1];                                 \
-                                                                                \
-        __m512d sum_b = _mm512_add_pd(b_re, b_im);                              \
-        __m512d nb = _mm512_xor_pd(b_im, sign_mask);                            \
-        __m512d diff_b = _mm512_add_pd(b_re, nb);                               \
-        b_re = _mm512_mul_pd(sqrt2_2, diff_b);                                  \
-        b_im = _mm512_mul_pd(sqrt2_2, sum_b);                                   \
-                                                                                \
-        __m512d c_tmp_re, c_tmp_im;                                             \
-        rot_pos_j(c_re, c_im, sign_mask, &c_tmp_re, &c_tmp_im);                 \
-        c_re = c_tmp_re;                                                        \
-        c_im = c_tmp_im;                                                        \
-                                                                                \
-        __m512d sum_d = _mm512_add_pd(d_re, d_im);                              \
-        __m512d nd = _mm512_xor_pd(d_im, sign_mask);                            \
-        __m512d diff_d = _mm512_add_pd(d_re, nd);                               \
-        __m512d d_re_tmp = _mm512_mul_pd(sqrt2_2, sum_d);                       \
-        d_re = _mm512_xor_pd(d_re_tmp, sign_mask);                              \
-        d_im = _mm512_mul_pd(sqrt2_2, diff_d);                                  \
-                                                                                \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;         \
-        radix4_butterfly_core_bv_avx512(                                        \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                     \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,     \
-            sign_mask);                                                         \
-                                                                                \
-        store_masked(&tile_out_re[(STRIPE + 0) * tile_size + k], MASK, y0_re);  \
-        store_masked(&tile_out_im[(STRIPE + 0) * tile_size + k], MASK, y0_im);  \
-        store_masked(&tile_out_re[(STRIPE + 8) * tile_size + k], MASK, y1_re);  \
-        store_masked(&tile_out_im[(STRIPE + 8) * tile_size + k], MASK, y1_im);  \
-        store_masked(&tile_out_re[(STRIPE + 16) * tile_size + k], MASK, y2_re); \
-        store_masked(&tile_out_im[(STRIPE + 16) * tile_size + k], MASK, y2_im); \
-        store_masked(&tile_out_re[(STRIPE + 24) * tile_size + k], MASK, y3_re); \
-        store_masked(&tile_out_im[(STRIPE + 24) * tile_size + k], MASK, y3_im); \
-    } while (0)
-
-//==============================================================================
-// MACROS FOR RADIX-32 FUSED BUTTERFLY (CORRECTED)
-//==============================================================================
-
-/**
- * @brief Process one radix-8 group - UNMASKED (main loop)
- */
-#define RADIX32_PROCESS_GROUP_UNMASKED(GROUP, STRIPE_BASE, OUT_ARRAY, RADIX8_FUNC)               \
-    do                                                                                           \
-    {                                                                                            \
-        __m512d g##GROUP##_x0_re = load_aligned(&tile_in_re[(STRIPE_BASE + 0) * tile_size + k]); \
-        __m512d g##GROUP##_x0_im = load_aligned(&tile_in_im[(STRIPE_BASE + 0) * tile_size + k]); \
-        __m512d g##GROUP##_x1_re = load_aligned(&tile_in_re[(STRIPE_BASE + 1) * tile_size + k]); \
-        __m512d g##GROUP##_x1_im = load_aligned(&tile_in_im[(STRIPE_BASE + 1) * tile_size + k]); \
-        __m512d g##GROUP##_x2_re = load_aligned(&tile_in_re[(STRIPE_BASE + 2) * tile_size + k]); \
-        __m512d g##GROUP##_x2_im = load_aligned(&tile_in_im[(STRIPE_BASE + 2) * tile_size + k]); \
-        __m512d g##GROUP##_x3_re = load_aligned(&tile_in_re[(STRIPE_BASE + 3) * tile_size + k]); \
-        __m512d g##GROUP##_x3_im = load_aligned(&tile_in_im[(STRIPE_BASE + 3) * tile_size + k]); \
-        __m512d g##GROUP##_x4_re = load_aligned(&tile_in_re[(STRIPE_BASE + 4) * tile_size + k]); \
-        __m512d g##GROUP##_x4_im = load_aligned(&tile_in_im[(STRIPE_BASE + 4) * tile_size + k]); \
-        __m512d g##GROUP##_x5_re = load_aligned(&tile_in_re[(STRIPE_BASE + 5) * tile_size + k]); \
-        __m512d g##GROUP##_x5_im = load_aligned(&tile_in_im[(STRIPE_BASE + 5) * tile_size + k]); \
-        __m512d g##GROUP##_x6_re = load_aligned(&tile_in_re[(STRIPE_BASE + 6) * tile_size + k]); \
-        __m512d g##GROUP##_x6_im = load_aligned(&tile_in_im[(STRIPE_BASE + 6) * tile_size + k]); \
-        __m512d g##GROUP##_x7_re = load_aligned(&tile_in_re[(STRIPE_BASE + 7) * tile_size + k]); \
-        __m512d g##GROUP##_x7_im = load_aligned(&tile_in_im[(STRIPE_BASE + 7) * tile_size + k]); \
-                                                                                                 \
-        RADIX8_FUNC(                                                                             \
-            g##GROUP##_x0_re, g##GROUP##_x0_im, g##GROUP##_x1_re, g##GROUP##_x1_im,              \
-            g##GROUP##_x2_re, g##GROUP##_x2_im, g##GROUP##_x3_re, g##GROUP##_x3_im,              \
-            g##GROUP##_x4_re, g##GROUP##_x4_im, g##GROUP##_x5_re, g##GROUP##_x5_im,              \
-            g##GROUP##_x6_re, g##GROUP##_x6_im, g##GROUP##_x7_re, g##GROUP##_x7_im,              \
-            &OUT_ARRAY##_re[0], &OUT_ARRAY##_im[0], &OUT_ARRAY##_re[1], &OUT_ARRAY##_im[1],      \
-            &OUT_ARRAY##_re[2], &OUT_ARRAY##_im[2], &OUT_ARRAY##_re[3], &OUT_ARRAY##_im[3],      \
-            &OUT_ARRAY##_re[4], &OUT_ARRAY##_im[4], &OUT_ARRAY##_re[5], &OUT_ARRAY##_im[5],      \
-            &OUT_ARRAY##_re[6], &OUT_ARRAY##_im[6], &OUT_ARRAY##_re[7], &OUT_ARRAY##_im[7],      \
-            sign_mask, sqrt2_2);                                                                 \
-    } while (0)
-
-/**
- * @brief Process one radix-8 group - MASKED (tail handling)
- */
-#define RADIX32_PROCESS_GROUP_MASKED(GROUP, STRIPE_BASE, OUT_ARRAY, RADIX8_FUNC, MASK)                \
-    do                                                                                                \
-    {                                                                                                 \
-        __m512d g##GROUP##_x0_re = load_masked(MASK, &tile_in_re[(STRIPE_BASE + 0) * tile_size + k]); \
-        __m512d g##GROUP##_x0_im = load_masked(MASK, &tile_in_im[(STRIPE_BASE + 0) * tile_size + k]); \
-        __m512d g##GROUP##_x1_re = load_masked(MASK, &tile_in_re[(STRIPE_BASE + 1) * tile_size + k]); \
-        __m512d g##GROUP##_x1_im = load_masked(MASK, &tile_in_im[(STRIPE_BASE + 1) * tile_size + k]); \
-        __m512d g##GROUP##_x2_re = load_masked(MASK, &tile_in_re[(STRIPE_BASE + 2) * tile_size + k]); \
-        __m512d g##GROUP##_x2_im = load_masked(MASK, &tile_in_im[(STRIPE_BASE + 2) * tile_size + k]); \
-        __m512d g##GROUP##_x3_re = load_masked(MASK, &tile_in_re[(STRIPE_BASE + 3) * tile_size + k]); \
-        __m512d g##GROUP##_x3_im = load_masked(MASK, &tile_in_im[(STRIPE_BASE + 3) * tile_size + k]); \
-        __m512d g##GROUP##_x4_re = load_masked(MASK, &tile_in_re[(STRIPE_BASE + 4) * tile_size + k]); \
-        __m512d g##GROUP##_x4_im = load_masked(MASK, &tile_in_im[(STRIPE_BASE + 4) * tile_size + k]); \
-        __m512d g##GROUP##_x5_re = load_masked(MASK, &tile_in_re[(STRIPE_BASE + 5) * tile_size + k]); \
-        __m512d g##GROUP##_x5_im = load_masked(MASK, &tile_in_im[(STRIPE_BASE + 5) * tile_size + k]); \
-        __m512d g##GROUP##_x6_re = load_masked(MASK, &tile_in_re[(STRIPE_BASE + 6) * tile_size + k]); \
-        __m512d g##GROUP##_x6_im = load_masked(MASK, &tile_in_im[(STRIPE_BASE + 6) * tile_size + k]); \
-        __m512d g##GROUP##_x7_re = load_masked(MASK, &tile_in_re[(STRIPE_BASE + 7) * tile_size + k]); \
-        __m512d g##GROUP##_x7_im = load_masked(MASK, &tile_in_im[(STRIPE_BASE + 7) * tile_size + k]); \
-                                                                                                      \
-        RADIX8_FUNC(                                                                                  \
-            g##GROUP##_x0_re, g##GROUP##_x0_im, g##GROUP##_x1_re, g##GROUP##_x1_im,                   \
-            g##GROUP##_x2_re, g##GROUP##_x2_im, g##GROUP##_x3_re, g##GROUP##_x3_im,                   \
-            g##GROUP##_x4_re, g##GROUP##_x4_im, g##GROUP##_x5_re, g##GROUP##_x5_im,                   \
-            g##GROUP##_x6_re, g##GROUP##_x6_im, g##GROUP##_x7_re, g##GROUP##_x7_im,                   \
-            &OUT_ARRAY##_re[0], &OUT_ARRAY##_im[0], &OUT_ARRAY##_re[1], &OUT_ARRAY##_im[1],           \
-            &OUT_ARRAY##_re[2], &OUT_ARRAY##_im[2], &OUT_ARRAY##_re[3], &OUT_ARRAY##_im[3],           \
-            &OUT_ARRAY##_re[4], &OUT_ARRAY##_im[4], &OUT_ARRAY##_re[5], &OUT_ARRAY##_im[5],           \
-            &OUT_ARRAY##_re[6], &OUT_ARRAY##_im[6], &OUT_ARRAY##_re[7], &OUT_ARRAY##_im[7],           \
-            sign_mask, sqrt2_2);                                                                      \
-    } while (0)
-
-/**
- * @brief Process one radix-4 position - UNMASKED, IDENTITY (no twiddles)
- */
-#define RADIX32_POSITION_IDENTITY_UNMASKED(POS, STRIPE)                     \
-    do                                                                      \
-    {                                                                       \
-        __m512d a_re = A_re[POS], a_im = A_im[POS];                         \
-        __m512d b_re = B_re[POS], b_im = B_im[POS];                         \
-        __m512d c_re = C_re[POS], c_im = C_im[POS];                         \
-        __m512d d_re = D_re[POS], d_im = D_im[POS];                         \
-                                                                            \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;     \
-                                                                            \
-        radix4_butterfly_core_fv_avx512(                                    \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                 \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im, \
-            sign_mask);                                                     \
-                                                                            \
-        store_aligned(&tile_out_re[(STRIPE + 0) * tile_size + k], y0_re);   \
-        store_aligned(&tile_out_im[(STRIPE + 0) * tile_size + k], y0_im);   \
-        store_aligned(&tile_out_re[(STRIPE + 8) * tile_size + k], y1_re);   \
-        store_aligned(&tile_out_im[(STRIPE + 8) * tile_size + k], y1_im);   \
-        store_aligned(&tile_out_re[(STRIPE + 16) * tile_size + k], y2_re);  \
-        store_aligned(&tile_out_im[(STRIPE + 16) * tile_size + k], y2_im);  \
-        store_aligned(&tile_out_re[(STRIPE + 24) * tile_size + k], y3_re);  \
-        store_aligned(&tile_out_im[(STRIPE + 24) * tile_size + k], y3_im);  \
-    } while (0)
-
-/**
- * @brief Process one radix-4 position - MASKED, IDENTITY
- */
-#define RADIX32_POSITION_IDENTITY_MASKED(POS, STRIPE, MASK)                     \
-    do                                                                          \
-    {                                                                           \
-        __m512d a_re = A_re[POS], a_im = A_im[POS];                             \
-        __m512d b_re = B_re[POS], b_im = B_im[POS];                             \
-        __m512d c_re = C_re[POS], c_im = C_im[POS];                             \
-        __m512d d_re = D_re[POS], d_im = D_im[POS];                             \
-                                                                                \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;         \
-                                                                                \
-        radix4_butterfly_core_fv_avx512(                                        \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                     \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,     \
-            sign_mask);                                                         \
-                                                                                \
-        store_masked(&tile_out_re[(STRIPE + 0) * tile_size + k], MASK, y0_re);  \
-        store_masked(&tile_out_im[(STRIPE + 0) * tile_size + k], MASK, y0_im);  \
-        store_masked(&tile_out_re[(STRIPE + 8) * tile_size + k], MASK, y1_re);  \
-        store_masked(&tile_out_im[(STRIPE + 8) * tile_size + k], MASK, y1_im);  \
-        store_masked(&tile_out_re[(STRIPE + 16) * tile_size + k], MASK, y2_re); \
-        store_masked(&tile_out_im[(STRIPE + 16) * tile_size + k], MASK, y2_im); \
-        store_masked(&tile_out_re[(STRIPE + 24) * tile_size + k], MASK, y3_re); \
-        store_masked(&tile_out_im[(STRIPE + 24) * tile_size + k], MASK, y3_im); \
-    } while (0)
-
-/**
- * @brief Process one radix-4 position - UNMASKED, TWIDDLED
- */
-#define RADIX32_POSITION_TWIDDLED_UNMASKED(POS, STRIPE, W1_RE, W1_IM, W2_RE, W2_IM, W3_RE, W3_IM) \
-    do                                                                                            \
-    {                                                                                             \
-        __m512d a_re = A_re[POS], a_im = A_im[POS];                                               \
-        __m512d b_re = B_re[POS], b_im = B_im[POS];                                               \
-        __m512d c_re = C_re[POS], c_im = C_im[POS];                                               \
-        __m512d d_re = D_re[POS], d_im = D_im[POS];                                               \
-                                                                                                  \
-        cmul_avx512(b_re, b_im, W1_RE, W1_IM, &b_re, &b_im);                                      \
-        cmul_avx512(c_re, c_im, W2_RE, W2_IM, &c_re, &c_im);                                      \
-        cmul_avx512(d_re, d_im, W3_RE, W3_IM, &d_re, &d_im);                                      \
-                                                                                                  \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                           \
-                                                                                                  \
-        radix4_butterfly_core_fv_avx512(                                                          \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                                       \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,                       \
-            sign_mask);                                                                           \
-                                                                                                  \
-        store_aligned(&tile_out_re[(STRIPE + 0) * tile_size + k], y0_re);                         \
-        store_aligned(&tile_out_im[(STRIPE + 0) * tile_size + k], y0_im);                         \
-        store_aligned(&tile_out_re[(STRIPE + 8) * tile_size + k], y1_re);                         \
-        store_aligned(&tile_out_im[(STRIPE + 8) * tile_size + k], y1_im);                         \
-        store_aligned(&tile_out_re[(STRIPE + 16) * tile_size + k], y2_re);                        \
-        store_aligned(&tile_out_im[(STRIPE + 16) * tile_size + k], y2_im);                        \
-        store_aligned(&tile_out_re[(STRIPE + 24) * tile_size + k], y3_re);                        \
-        store_aligned(&tile_out_im[(STRIPE + 24) * tile_size + k], y3_im);                        \
-    } while (0)
-
-/**
- * @brief Process one radix-4 position - MASKED, TWIDDLED
- */
-#define RADIX32_POSITION_TWIDDLED_MASKED(POS, STRIPE, W1_RE, W1_IM, W2_RE, W2_IM, W3_RE, W3_IM, MASK) \
-    do                                                                                                \
-    {                                                                                                 \
-        __m512d a_re = A_re[POS], a_im = A_im[POS];                                                   \
-        __m512d b_re = B_re[POS], b_im = B_im[POS];                                                   \
-        __m512d c_re = C_re[POS], c_im = C_im[POS];                                                   \
-        __m512d d_re = D_re[POS], d_im = D_im[POS];                                                   \
-                                                                                                      \
-        cmul_avx512(b_re, b_im, W1_RE, W1_IM, &b_re, &b_im);                                          \
-        cmul_avx512(c_re, c_im, W2_RE, W2_IM, &c_re, &c_im);                                          \
-        cmul_avx512(d_re, d_im, W3_RE, W3_IM, &d_re, &d_im);                                          \
-                                                                                                      \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                               \
-                                                                                                      \
-        radix4_butterfly_core_fv_avx512(                                                              \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                                           \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,                           \
-            sign_mask);                                                                               \
-                                                                                                      \
-        store_masked(&tile_out_re[(STRIPE + 0) * tile_size + k], MASK, y0_re);                        \
-        store_masked(&tile_out_im[(STRIPE + 0) * tile_size + k], MASK, y0_im);                        \
-        store_masked(&tile_out_re[(STRIPE + 8) * tile_size + k], MASK, y1_re);                        \
-        store_masked(&tile_out_im[(STRIPE + 8) * tile_size + k], MASK, y1_im);                        \
-        store_masked(&tile_out_re[(STRIPE + 16) * tile_size + k], MASK, y2_re);                       \
-        store_masked(&tile_out_im[(STRIPE + 16) * tile_size + k], MASK, y2_im);                       \
-        store_masked(&tile_out_re[(STRIPE + 24) * tile_size + k], MASK, y3_re);                       \
-        store_masked(&tile_out_im[(STRIPE + 24) * tile_size + k], MASK, y3_im);                       \
-    } while (0)
-
-//==============================================================================
-// POSITION-4 GENERIC POSITIONS (BACKWARD VARIANTS)
-//==============================================================================
-
-#define RADIX32_POSITION_IDENTITY_UNMASKED_BV(POS, STRIPE)                         \
-    do {                                                                           \
-        __m512d a_re = A_re[POS], a_im = A_im[POS];                                 \
-        __m512d b_re = B_re[POS], b_im = B_im[POS];                                 \
-        __m512d c_re = C_re[POS], c_im = C_im[POS];                                 \
-        __m512d d_re = D_re[POS], d_im = D_im[POS];                                 \
-                                                                                    \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;             \
-        radix4_butterfly_core_bv_avx512(                                            \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                         \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,         \
-            sign_mask);                                                             \
-                                                                                    \
-        store_aligned(&tile_out_re[(STRIPE + 0 ) * tile_size + k], y0_re);          \
-        store_aligned(&tile_out_im[(STRIPE + 0 ) * tile_size + k], y0_im);          \
-        store_aligned(&tile_out_re[(STRIPE + 8 ) * tile_size + k], y1_re);          \
-        store_aligned(&tile_out_im[(STRIPE + 8 ) * tile_size + k], y1_im);          \
-        store_aligned(&tile_out_re[(STRIPE + 16) * tile_size + k], y2_re);          \
-        store_aligned(&tile_out_im[(STRIPE + 16) * tile_size + k], y2_im);          \
-        store_aligned(&tile_out_re[(STRIPE + 24) * tile_size + k], y3_re);          \
-        store_aligned(&tile_out_im[(STRIPE + 24) * tile_size + k], y3_im);          \
-    } while (0)
-
-#define RADIX32_POSITION_IDENTITY_MASKED_BV(POS, STRIPE, MASK)                      \
-    do {                                                                            \
-        __m512d a_re = A_re[POS], a_im = A_im[POS];                                  \
-        __m512d b_re = B_re[POS], b_im = B_im[POS];                                  \
-        __m512d c_re = C_re[POS], c_im = C_im[POS];                                  \
-        __m512d d_re = D_re[POS], d_im = D_im[POS];                                  \
-                                                                                     \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;              \
-        radix4_butterfly_core_bv_avx512(                                             \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                          \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,          \
-            sign_mask);                                                              \
-                                                                                     \
-        store_masked(&tile_out_re[(STRIPE + 0 ) * tile_size + k], MASK, y0_re);      \
-        store_masked(&tile_out_im[(STRIPE + 0 ) * tile_size + k], MASK, y0_im);      \
-        store_masked(&tile_out_re[(STRIPE + 8 ) * tile_size + k], MASK, y1_re);      \
-        store_masked(&tile_out_im[(STRIPE + 8 ) * tile_size + k], MASK, y1_im);      \
-        store_masked(&tile_out_re[(STRIPE + 16) * tile_size + k], MASK, y2_re);      \
-        store_masked(&tile_out_im[(STRIPE + 16) * tile_size + k], MASK, y2_im);      \
-        store_masked(&tile_out_re[(STRIPE + 24) * tile_size + k], MASK, y3_re);      \
-        store_masked(&tile_out_im[(STRIPE + 24) * tile_size + k], MASK, y3_im);      \
-    } while (0)
-
-#define RADIX32_POSITION_TWIDDLED_UNMASKED_BV(POS, STRIPE, W1_RE, W1_IM, W2_RE, W2_IM, W3_RE, W3_IM) \
-    do {                                                                                              \
-        __m512d a_re = A_re[POS], a_im = A_im[POS];                                                   \
-        __m512d b_re = B_re[POS], b_im = B_im[POS];                                                   \
-        __m512d c_re = C_re[POS], c_im = C_im[POS];                                                   \
-        __m512d d_re = D_re[POS], d_im = D_im[POS];                                                   \
-                                                                                                      \
-        cmul_avx512(b_re, b_im, W1_RE, W1_IM, &b_re, &b_im);                                          \
-        cmul_avx512(c_re, c_im, W2_RE, W2_IM, &c_re, &c_im);                                          \
-        cmul_avx512(d_re, d_im, W3_RE, W3_IM, &d_re, &d_im);                                          \
-                                                                                                      \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                               \
-        radix4_butterfly_core_bv_avx512(                                                              \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                                           \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,                           \
-            sign_mask);                                                                               \
-                                                                                                      \
-        store_aligned(&tile_out_re[(STRIPE + 0 ) * tile_size + k], y0_re);                            \
-        store_aligned(&tile_out_im[(STRIPE + 0 ) * tile_size + k], y0_im);                            \
-        store_aligned(&tile_out_re[(STRIPE + 8 ) * tile_size + k], y1_re);                            \
-        store_aligned(&tile_out_im[(STRIPE + 8 ) * tile_size + k], y1_im);                            \
-        store_aligned(&tile_out_re[(STRIPE + 16) * tile_size + k], y2_re);                            \
-        store_aligned(&tile_out_im[(STRIPE + 16) * tile_size + k], y2_im);                            \
-        store_aligned(&tile_out_re[(STRIPE + 24) * tile_size + k], y3_re);                            \
-        store_aligned(&tile_out_im[(STRIPE + 24) * tile_size + k], y3_im);                            \
-    } while (0)
-
-#define RADIX32_POSITION_TWIDDLED_MASKED_BV(POS, STRIPE, W1_RE, W1_IM, W2_RE, W2_IM, W3_RE, W3_IM, MASK) \
-    do {                                                                                                 \
-        __m512d a_re = A_re[POS], a_im = A_im[POS];                                                      \
-        __m512d b_re = B_re[POS], b_im = B_im[POS];                                                      \
-        __m512d c_re = C_re[POS], c_im = C_im[POS];                                                      \
-        __m512d d_re = D_re[POS], d_im = D_im[POS];                                                      \
-                                                                                                         \
-        cmul_avx512(b_re, b_im, W1_RE, W1_IM, &b_re, &b_im);                                             \
-        cmul_avx512(c_re, c_im, W2_RE, W2_IM, &c_re, &c_im);                                             \
-        cmul_avx512(d_re, d_im, W3_RE, W3_IM, &d_re, &d_im);                                             \
-                                                                                                         \
-        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;                                  \
-        radix4_butterfly_core_bv_avx512(                                                                 \
-            a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,                                              \
-            &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,                              \
-            sign_mask);                                                                                  \
-                                                                                                         \
-        store_masked(&tile_out_re[(STRIPE + 0 ) * tile_size + k], MASK, y0_re);                          \
-        store_masked(&tile_out_im[(STRIPE + 0 ) * tile_size + k], MASK, y0_im);                          \
-        store_masked(&tile_out_re[(STRIPE + 8 ) * tile_size + k], MASK, y1_re);                          \
-        store_masked(&tile_out_im[(STRIPE + 8 ) * tile_size + k], MASK, y1_im);                          \
-        store_masked(&tile_out_re[(STRIPE + 16) * tile_size + k], MASK, y2_re);                          \
-        store_masked(&tile_out_im[(STRIPE + 16) * tile_size + k], MASK, y2_im);                          \
-        store_masked(&tile_out_re[(STRIPE + 24) * tile_size + k], MASK, y3_re);                          \
-        store_masked(&tile_out_im[(STRIPE + 24) * tile_size + k], MASK, y3_im);                          \
-    } while (0)
-
-
-//==============================================================================
-// ENHANCED PREFETCH MACROS
-//==============================================================================
-
-/**
- * @brief Prefetch next k-iteration inputs (distance = 8)
- * Fetch data that will be needed 8 doubles later
- */
-#define PREFETCH_NEXT_K_ITERATION(STRIPE, K_OFFSET) \
-    do { \
-        _mm_prefetch((const char *)&tile_in_re[(STRIPE) * tile_size + k + (K_OFFSET)], _MM_HINT_T0); \
-        _mm_prefetch((const char *)&tile_in_im[(STRIPE) * tile_size + k + (K_OFFSET)], _MM_HINT_T0); \
-    } while(0)
-
-/**
- * @brief Prefetch output cache lines that will be written
- * Use T1 hint (L2 cache) to avoid L1 pollution
- */
-#define PREFETCH_OUTPUT_STRIPES(STRIPE_BASE, K_OFFSET) \
-    do { \
-        _mm_prefetch((const char *)&tile_out_re[(STRIPE_BASE + 0) * tile_size + k + (K_OFFSET)], _MM_HINT_T1); \
-        _mm_prefetch((const char *)&tile_out_re[(STRIPE_BASE + 8) * tile_size + k + (K_OFFSET)], _MM_HINT_T1); \
-        _mm_prefetch((const char *)&tile_out_re[(STRIPE_BASE + 16) * tile_size + k + (K_OFFSET)], _MM_HINT_T1); \
-        _mm_prefetch((const char *)&tile_out_re[(STRIPE_BASE + 24) * tile_size + k + (K_OFFSET)], _MM_HINT_T1); \
-    } while(0)
-
-/**
- * @brief Non-temporal prefetch for streaming access patterns
- * Use NTA hint when data won't be reused
- */
-#define PREFETCH_STREAMING_INPUT(STRIPE) \
-    do { \
-        _mm_prefetch((const char *)&tile_in_re[(STRIPE) * tile_size + k + 64], _MM_HINT_NTA); \
-        _mm_prefetch((const char *)&tile_in_im[(STRIPE) * tile_size + k + 64], _MM_HINT_NTA); \
-    } while(0)
-
-//==============================================================================
-// COMPLETE RADIX-32 FUSED BUTTERFLY - FORWARD FFT
-//==============================================================================
-
-/**
- * @brief Fully optimized radix-32 8×4 fused butterfly - Forward FFT
- *
- * INTEGRATION OF ALL OPTIMIZATIONS:
- * 1. Pair-emitter architecture (wave-based stage-1 reuse)
- * 2. Position-4 W8 fast-path (eliminates 3 complex muls per transform)
- * 3. Optimized mini-recurrence (MUL+ADD for Skylake-X)
- * 4. Software pipelining (load/compute overlap)
- * 5. Unified masked/unmasked paths
- *
- * ARCHITECTURE:
- * For each k-tile:
- *   For each group (A, B, C, D):
- *     Even wave: compute t0..t3 → emit pairs (0,4) and (2,6)
- *     Odd wave:  compute t4..t7 → emit pairs (1,5) and (3,7)
- *
- *   For each position (0,4,2,6,1,5,3,7):
- *     Apply cross-group twiddles (using fast-path for position 4)
- *     Radix-4 combine
- *     Store outputs
- *
- * @param tile_in_re Input real [32 stripes][tile_size]
- * @param tile_in_im Input imag [32 stripes][tile_size]
- * @param tile_out_re Output real [32 stripes][tile_size]
- * @param tile_out_im Output imag [32 stripes][tile_size]
- * @param tile_size Samples per stripe (must be multiple of 8)
- * @param pass1_plan Pass 1 plan (unused in pair-emitter architecture)
- * @param pass2_plan Pass 2 cross-group twiddle factors
- */
-TARGET_AVX512
-FORCE_INLINE void radix32_fused_butterfly_forward_avx512(
-    const double *RESTRICT tile_in_re,
-    const double *RESTRICT tile_in_im,
-    double *RESTRICT tile_out_re,
-    double *RESTRICT tile_out_im,
-    size_t tile_size,
-    const radix32_pass2_plan_t *RESTRICT pass2_plan)
-{
-    // Hoist constants (single computation per butterfly call)
-    const __m512d sign_mask = _mm512_set1_pd(-0.0);
-    const __m512d sqrt2_2 = _mm512_set1_pd(0.70710678118654752440);
-
-    //==========================================================================
-    // PRECOMPUTE CROSS-GROUP TWIDDLES (positions 1, 2, 3, 5, 6, 7)
-    // Position 0: Identity (no twiddles)
-    // Position 4: W8 fast-path (handled inline)
-    //==========================================================================
-
-    // Position 1: W_32^{1,2,3} (broadcast constants)
-    const __m512d pos1_w1_re = pass2_plan->pos1_w1_re;
-    const __m512d pos1_w1_im = pass2_plan->pos1_w1_im;
-    const __m512d pos1_w2_re = pass2_plan->pos1_w2_re;
-    const __m512d pos1_w2_im = pass2_plan->pos1_w2_im;
-    const __m512d pos1_w3_re = pass2_plan->pos1_w3_re;
-    const __m512d pos1_w3_im = pass2_plan->pos1_w3_im;
-
-    // Position 2: W_16^{1,2,3} (broadcast constants)
-    const __m512d pos2_w1_re = pass2_plan->pos2_w1_re;
-    const __m512d pos2_w1_im = pass2_plan->pos2_w1_im;
-    const __m512d pos2_w2_re = pass2_plan->pos2_w2_re;
-    const __m512d pos2_w2_im = pass2_plan->pos2_w2_im;
-    const __m512d pos2_w3_re = pass2_plan->pos2_w3_re;
-    const __m512d pos2_w3_im = pass2_plan->pos2_w3_im;
-
-    // Positions 3, 5, 6, 7: Mini-recurrence (optimized for Skylake-X)
-    __m512d pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos3_w_re, pass2_plan->pos3_w_im,
-                                    &pos3_w1_re, &pos3_w1_im, &pos3_w2_re, &pos3_w2_im,
-                                    &pos3_w3_re, &pos3_w3_im);
-
-    __m512d pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos5_w_re, pass2_plan->pos5_w_im,
-                                    &pos5_w1_re, &pos5_w1_im, &pos5_w2_re, &pos5_w2_im,
-                                    &pos5_w3_re, &pos5_w3_im);
-
-    __m512d pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos6_w_re, pass2_plan->pos6_w_im,
-                                    &pos6_w1_re, &pos6_w1_im, &pos6_w2_re, &pos6_w2_im,
-                                    &pos6_w3_re, &pos6_w3_im);
-
-    __m512d pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos7_w_re, pass2_plan->pos7_w_im,
-                                    &pos7_w1_re, &pos7_w1_im, &pos7_w2_re, &pos7_w2_im,
-                                    &pos7_w3_re, &pos7_w3_im);
-
-    //==========================================================================
-    // MAIN K-LOOP: Process full vectors (k += 8)
-    //==========================================================================
-
-    size_t k = 0;
-    const size_t k_main = (tile_size / 8) * 8;
-
-    for (; k < k_main; k += 8)
-    {
-        //==========================================================================
-        // PREFETCH STRATEGY (before any computation)
-        //==========================================================================
-
-        // Prefetch next k-iteration (all groups A, B, C, D)
-        if (k + 16 < k_main)
+        const __m512d sign_mask = _mm512_set1_pd(-0.0);
+        const __m512d sqrt2_2 = _mm512_set1_pd(0.70710678118654752440);
+
+        // Process 4 groups (A, B, C, D)
+        for (size_t group = 0; group < 4; group++)
         {
-            PREFETCH_NEXT_K_ITERATION(0, 16);  // Group A
-            PREFETCH_NEXT_K_ITERATION(8, 16);  // Group B
-            PREFETCH_NEXT_K_ITERATION(16, 16); // Group C
-            PREFETCH_NEXT_K_ITERATION(24, 16); // Group D
+            // Load 8 stripes from this group (stride = 4)
+            // Group A: 0,4,8,12,16,20,24,28
+            // Group B: 1,5,9,13,17,21,25,29
+            // Group C: 2,6,10,14,18,22,26,30
+            // Group D: 3,7,11,15,19,23,27,31
+
+            __m512d x_re[8], x_im[8];
+            for (size_t i = 0; i < 8; i++)
+            {
+                x_re[i] = _mm512_set_pd(
+                    in_re[group + 28], in_re[group + 24],
+                    in_re[group + 20], in_re[group + 16],
+                    in_re[group + 12], in_re[group + 8],
+                    in_re[group + 4], in_re[group + 0]);
+                x_im[i] = _mm512_set_pd(
+                    in_im[group + 28], in_im[group + 24],
+                    in_im[group + 20], in_im[group + 16],
+                    in_im[group + 12], in_im[group + 8],
+                    in_im[group + 4], in_im[group + 0]);
+            }
+
+            // Radix-8 butterfly using wave architecture (no twiddles)
+            __m512d y_re[8], y_im[8];
+            process_radix8_group(x_re, x_im, y_re, y_im, sign_mask, sqrt2_2);
+
+            // Store in group-major order for Pass 2
+            size_t out_base = group * 8;
+            for (size_t i = 0; i < 8; i++)
+            {
+                _mm512_store_pd(&temp_re[out_base + i], y_re[i]);
+                _mm512_store_pd(&temp_im[out_base + i], y_im[i]);
+            }
+        }
+    }
+
+    /**
+     * @brief Radix-8 pass for N=1 - BACKWARD
+     */
+    TARGET_AVX512
+    static inline void radix32_n1_pass1_radix8_backward_avx512(
+        const double *RESTRICT in_re,
+        const double *RESTRICT in_im,
+        double *RESTRICT temp_re,
+        double *RESTRICT temp_im)
+    {
+        const __m512d sign_mask = _mm512_set1_pd(-0.0);
+        const __m512d sqrt2_2 = _mm512_set1_pd(0.70710678118654752440);
+
+        for (size_t group = 0; group < 4; group++)
+        {
+            __m512d x_re[8], x_im[8];
+            for (size_t i = 0; i < 8; i++)
+            {
+                x_re[i] = _mm512_set_pd(
+                    in_re[group + 28], in_re[group + 24],
+                    in_re[group + 20], in_re[group + 16],
+                    in_re[group + 12], in_re[group + 8],
+                    in_re[group + 4], in_re[group + 0]);
+                x_im[i] = _mm512_set_pd(
+                    in_im[group + 28], in_im[group + 24],
+                    in_im[group + 20], in_im[group + 16],
+                    in_im[group + 12], in_im[group + 8],
+                    in_im[group + 4], in_im[group + 0]);
+            }
+
+            // Radix-8 butterfly (backward variant)
+            __m512d y_re[8], y_im[8];
+            process_radix8_group_backward(x_re, x_im, y_re, y_im, sign_mask, sqrt2_2);
+
+            size_t out_base = group * 8;
+            for (size_t i = 0; i < 8; i++)
+            {
+                _mm512_store_pd(&temp_re[out_base + i], y_re[i]);
+                _mm512_store_pd(&temp_im[out_base + i], y_im[i]);
+            }
+        }
+    }
+
+    //==============================================================================
+    // N=1 PASS 2: RADIX-4 CROSS-GROUP (GEOMETRIC TWIDDLES FROM PLANNER)
+    //==============================================================================
+
+    /**
+     * @brief Radix-4 cross-group pass for N=1 (geometric twiddles from planner)
+     *
+     * Processes 8 positions, each combining 4 groups using radix-4 butterfly.
+     * Geometric twiddles are provided by planner via pass2_plan.
+     *
+     * Input layout:  temp[32] group-major from Pass 1
+     * Output layout: out[32] natural order
+     *
+     * Twiddle usage:
+     * - Position 0: Identity (no twiddles)
+     * - Position 1: W_32^1, W_32^2, W_32^3
+     * - Position 2: W_16^1, W_16^2, W_16^3
+     * - Position 3: W_32^3, W_32^6, W_32^9
+     * - Position 4: W_8^1, W_8^2, W_8^3 (fast-path)
+     * - Position 5: W_32^5, W_32^10, W_32^15
+     * - Position 6: W_32^6, W_32^12, W_32^18
+     * - Position 7: W_32^7, W_32^14, W_32^21
+     *
+     * @param temp_re Temp real [32] (group-major)
+     * @param temp_im Temp imaginary [32] (group-major)
+     * @param out_re Output real [32]
+     * @param out_im Output imaginary [32]
+     * @param plan Geometric constants from planner (pass2 only)
+     */
+    TARGET_AVX512
+    static inline void radix32_n1_pass2_radix4_forward_avx512(
+        const double *RESTRICT temp_re,
+        const double *RESTRICT temp_im,
+        double *RESTRICT out_re,
+        double *RESTRICT out_im,
+        const radix32_pass2_plan_t *RESTRICT plan)
+    {
+        const __m512d sign_mask = _mm512_set1_pd(-0.0);
+        const __m512d sqrt2_2 = _mm512_set1_pd(0.70710678118654752440);
+
+        // Load all 4 groups into registers (32 values = 4 groups × 8 bins)
+        __m512d A_re[8], A_im[8]; // Group A (temp[0..7])
+        __m512d B_re[8], B_im[8]; // Group B (temp[8..15])
+        __m512d C_re[8], C_im[8]; // Group C (temp[16..23])
+        __m512d D_re[8], D_im[8]; // Group D (temp[24..31])
+
+        for (size_t i = 0; i < 8; i++)
+        {
+            A_re[i] = _mm512_load_pd(&temp_re[0 + i]);
+            A_im[i] = _mm512_load_pd(&temp_im[0 + i]);
+            B_re[i] = _mm512_load_pd(&temp_re[8 + i]);
+            B_im[i] = _mm512_load_pd(&temp_im[8 + i]);
+            C_re[i] = _mm512_load_pd(&temp_re[16 + i]);
+            C_im[i] = _mm512_load_pd(&temp_im[16 + i]);
+            D_re[i] = _mm512_load_pd(&temp_re[24 + i]);
+            D_im[i] = _mm512_load_pd(&temp_im[24 + i]);
         }
 
-        // Prefetch output buffers for positions 0, 1, 2, 3
-        if (k + 8 < tile_size)
+        // Extract geometric twiddles from plan
+        const __m512d pos1_w1_re = plan->pos1_w1_re;
+        const __m512d pos1_w1_im = plan->pos1_w1_im;
+        const __m512d pos1_w2_re = plan->pos1_w2_re;
+        const __m512d pos1_w2_im = plan->pos1_w2_im;
+        const __m512d pos1_w3_re = plan->pos1_w3_re;
+        const __m512d pos1_w3_im = plan->pos1_w3_im;
+
+        const __m512d pos2_w1_re = plan->pos2_w1_re;
+        const __m512d pos2_w1_im = plan->pos2_w1_im;
+        const __m512d pos2_w2_re = plan->pos2_w2_re;
+        const __m512d pos2_w2_im = plan->pos2_w2_im;
+        const __m512d pos2_w3_re = plan->pos2_w3_re;
+        const __m512d pos2_w3_im = plan->pos2_w3_im;
+
+        const __m512d pos3_w1_re = plan->pos3_w1_re;
+        const __m512d pos3_w1_im = plan->pos3_w1_im;
+        const __m512d pos3_w2_re = plan->pos3_w2_re;
+        const __m512d pos3_w2_im = plan->pos3_w2_im;
+        const __m512d pos3_w3_re = plan->pos3_w3_re;
+        const __m512d pos3_w3_im = plan->pos3_w3_im;
+
+        const __m512d pos5_w1_re = plan->pos5_w1_re;
+        const __m512d pos5_w1_im = plan->pos5_w1_im;
+        const __m512d pos5_w2_re = plan->pos5_w2_re;
+        const __m512d pos5_w2_im = plan->pos5_w2_im;
+        const __m512d pos5_w3_re = plan->pos5_w3_re;
+        const __m512d pos5_w3_im = plan->pos5_w3_im;
+
+        const __m512d pos6_w1_re = plan->pos6_w1_re;
+        const __m512d pos6_w1_im = plan->pos6_w1_im;
+        const __m512d pos6_w2_re = plan->pos6_w2_re;
+        const __m512d pos6_w2_im = plan->pos6_w2_im;
+        const __m512d pos6_w3_re = plan->pos6_w3_re;
+        const __m512d pos6_w3_im = plan->pos6_w3_im;
+
+        const __m512d pos7_w1_re = plan->pos7_w1_re;
+        const __m512d pos7_w1_im = plan->pos7_w1_im;
+        const __m512d pos7_w2_re = plan->pos7_w2_re;
+        const __m512d pos7_w2_im = plan->pos7_w2_im;
+        const __m512d pos7_w3_re = plan->pos7_w3_re;
+        const __m512d pos7_w3_im = plan->pos7_w3_im;
+
+        // Process 8 positions
+        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;
+
+        // Position 0: Identity (no twiddles)
+        radix4_butterfly_core_fv_avx512(
+            A_re[0], A_im[0], B_re[0], B_im[0],
+            C_re[0], C_im[0], D_re[0], D_im[0],
+            &y0_re, &y0_im, &y1_re, &y1_im,
+            &y2_re, &y2_im, &y3_re, &y3_im,
+            sign_mask);
+        _mm512_store_pd(&out_re[0], y0_re);
+        _mm512_store_pd(&out_im[0], y0_im);
+        _mm512_store_pd(&out_re[8], y1_re);
+        _mm512_store_pd(&out_im[8], y1_im);
+        _mm512_store_pd(&out_re[16], y2_re);
+        _mm512_store_pd(&out_im[16], y2_im);
+        _mm512_store_pd(&out_re[24], y3_re);
+        _mm512_store_pd(&out_im[24], y3_im);
+
+        // Position 1: W_32^1, W_32^2, W_32^3
         {
-            PREFETCH_OUTPUT_STRIPES(0, 8); // Position 0
-            PREFETCH_OUTPUT_STRIPES(4, 8); // Position 4
-            PREFETCH_OUTPUT_STRIPES(2, 8); // Position 2
-            PREFETCH_OUTPUT_STRIPES(6, 8); // Position 6
+            __m512d a_re = A_re[1], a_im = A_im[1];
+            __m512d b_re = B_re[1], b_im = B_im[1];
+            __m512d c_re = C_re[1], c_im = C_im[1];
+            __m512d d_re = D_re[1], d_im = D_im[1];
+
+            cmul_avx512(b_re, b_im, pos1_w1_re, pos1_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos1_w2_re, pos1_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos1_w3_re, pos1_w3_im, &d_re, &d_im);
+
+            radix4_butterfly_core_fv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
+
+            _mm512_store_pd(&out_re[1], y0_re);
+            _mm512_store_pd(&out_im[1], y0_im);
+            _mm512_store_pd(&out_re[9], y1_re);
+            _mm512_store_pd(&out_im[9], y1_im);
+            _mm512_store_pd(&out_re[17], y2_re);
+            _mm512_store_pd(&out_im[17], y2_im);
+            _mm512_store_pd(&out_re[25], y3_re);
+            _mm512_store_pd(&out_im[25], y3_im);
         }
 
-        // Output arrays for 4 groups × 2 pairs = 8 positions
-        // Indexed as: [0]=pos0, [1]=pos4, [2]=pos2, [3]=pos6, [4]=pos1, [5]=pos5, [6]=pos3, [7]=pos7
+        // Position 2: W_16^1, W_16^2, W_16^3
+        {
+            __m512d a_re = A_re[2], a_im = A_im[2];
+            __m512d b_re = B_re[2], b_im = B_im[2];
+            __m512d c_re = C_re[2], c_im = C_im[2];
+            __m512d d_re = D_re[2], d_im = D_im[2];
+
+            cmul_avx512(b_re, b_im, pos2_w1_re, pos2_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos2_w2_re, pos2_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos2_w3_re, pos2_w3_im, &d_re, &d_im);
+
+            radix4_butterfly_core_fv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
+
+            _mm512_store_pd(&out_re[2], y0_re);
+            _mm512_store_pd(&out_im[2], y0_im);
+            _mm512_store_pd(&out_re[10], y1_re);
+            _mm512_store_pd(&out_im[10], y1_im);
+            _mm512_store_pd(&out_re[18], y2_re);
+            _mm512_store_pd(&out_im[18], y2_im);
+            _mm512_store_pd(&out_re[26], y3_re);
+            _mm512_store_pd(&out_im[26], y3_im);
+        }
+
+        // Position 3: W_32^3, W_32^6, W_32^9
+        {
+            __m512d a_re = A_re[3], a_im = A_im[3];
+            __m512d b_re = B_re[3], b_im = B_im[3];
+            __m512d c_re = C_re[3], c_im = C_im[3];
+            __m512d d_re = D_re[3], d_im = D_im[3];
+
+            cmul_avx512(b_re, b_im, pos3_w1_re, pos3_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos3_w2_re, pos3_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos3_w3_re, pos3_w3_im, &d_re, &d_im);
+
+            radix4_butterfly_core_fv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
+
+            _mm512_store_pd(&out_re[3], y0_re);
+            _mm512_store_pd(&out_im[3], y0_im);
+            _mm512_store_pd(&out_re[11], y1_re);
+            _mm512_store_pd(&out_im[11], y1_im);
+            _mm512_store_pd(&out_re[19], y2_re);
+            _mm512_store_pd(&out_im[19], y2_im);
+            _mm512_store_pd(&out_re[27], y3_re);
+            _mm512_store_pd(&out_im[27], y3_im);
+        }
+
+        // Position 4: W_8 fast-path
+        {
+            __m512d a_re = A_re[4], a_im = A_im[4];
+            __m512d b_re = B_re[4], b_im = B_im[4];
+            __m512d c_re = C_re[4], c_im = C_im[4];
+            __m512d d_re = D_re[4], d_im = D_im[4];
+
+            // W8^1 (forward): (1 - i)/√2
+            __m512d b_sum = _mm512_add_pd(b_re, b_im);
+            __m512d b_diff = _mm512_sub_pd(b_im, b_re);
+            b_re = _mm512_mul_pd(sqrt2_2, b_sum);
+            b_im = _mm512_mul_pd(sqrt2_2, b_diff);
+
+            // W8^2 (forward): -i
+            __m512d c_tw_re, c_tw_im;
+            rot_neg_j(c_re, c_im, sign_mask, &c_tw_re, &c_tw_im);
+            c_re = c_tw_re;
+            c_im = c_tw_im;
+
+            // W8^3 (forward): (-1 - i)/√2
+            __m512d d_im_minus_re = _mm512_sub_pd(d_im, d_re);
+            __m512d d_neg_re = _mm512_xor_pd(d_re, sign_mask);
+            __m512d d_neg_re_minus_im = _mm512_sub_pd(d_neg_re, d_im);
+            __m512d d_re2 = _mm512_mul_pd(sqrt2_2, d_im_minus_re);
+            __m512d d_im2 = _mm512_mul_pd(sqrt2_2, d_neg_re_minus_im);
+            d_re = d_re2;
+            d_im = d_im2;
+
+            radix4_butterfly_core_fv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
+
+            _mm512_store_pd(&out_re[4], y0_re);
+            _mm512_store_pd(&out_im[4], y0_im);
+            _mm512_store_pd(&out_re[12], y1_re);
+            _mm512_store_pd(&out_im[12], y1_im);
+            _mm512_store_pd(&out_re[20], y2_re);
+            _mm512_store_pd(&out_im[20], y2_im);
+            _mm512_store_pd(&out_re[28], y3_re);
+            _mm512_store_pd(&out_im[28], y3_im);
+        }
+
+        // Position 5: W_32^5, W_32^10, W_32^15
+        {
+            __m512d a_re = A_re[5], a_im = A_im[5];
+            __m512d b_re = B_re[5], b_im = B_im[5];
+            __m512d c_re = C_re[5], c_im = C_im[5];
+            __m512d d_re = D_re[5], d_im = D_im[5];
+
+            cmul_avx512(b_re, b_im, pos5_w1_re, pos5_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos5_w2_re, pos5_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos5_w3_re, pos5_w3_im, &d_re, &d_im);
+
+            radix4_butterfly_core_fv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
+
+            _mm512_store_pd(&out_re[5], y0_re);
+            _mm512_store_pd(&out_im[5], y0_im);
+            _mm512_store_pd(&out_re[13], y1_re);
+            _mm512_store_pd(&out_im[13], y1_im);
+            _mm512_store_pd(&out_re[21], y2_re);
+            _mm512_store_pd(&out_im[21], y2_im);
+            _mm512_store_pd(&out_re[29], y3_re);
+            _mm512_store_pd(&out_im[29], y3_im);
+        }
+
+        // Position 6: W_32^6, W_32^12, W_32^18
+        {
+            __m512d a_re = A_re[6], a_im = A_im[6];
+            __m512d b_re = B_re[6], b_im = B_im[6];
+            __m512d c_re = C_re[6], c_im = C_im[6];
+            __m512d d_re = D_re[6], d_im = D_im[6];
+
+            cmul_avx512(b_re, b_im, pos6_w1_re, pos6_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos6_w2_re, pos6_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos6_w3_re, pos6_w3_im, &d_re, &d_im);
+
+            radix4_butterfly_core_fv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
+
+            _mm512_store_pd(&out_re[6], y0_re);
+            _mm512_store_pd(&out_im[6], y0_im);
+            _mm512_store_pd(&out_re[14], y1_re);
+            _mm512_store_pd(&out_im[14], y1_im);
+            _mm512_store_pd(&out_re[22], y2_re);
+            _mm512_store_pd(&out_im[22], y2_im);
+            _mm512_store_pd(&out_re[30], y3_re);
+            _mm512_store_pd(&out_im[30], y3_im);
+        }
+
+        // Position 7: W_32^7, W_32^14, W_32^21
+        {
+            __m512d a_re = A_re[7], a_im = A_im[7];
+            __m512d b_re = B_re[7], b_im = B_im[7];
+            __m512d c_re = C_re[7], c_im = C_im[7];
+            __m512d d_re = D_re[7], d_im = D_im[7];
+
+            cmul_avx512(b_re, b_im, pos7_w1_re, pos7_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos7_w2_re, pos7_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos7_w3_re, pos7_w3_im, &d_re, &d_im);
+
+            radix4_butterfly_core_fv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
+
+            _mm512_store_pd(&out_re[7], y0_re);
+            _mm512_store_pd(&out_im[7], y0_im);
+            _mm512_store_pd(&out_re[15], y1_re);
+            _mm512_store_pd(&out_im[15], y1_im);
+            _mm512_store_pd(&out_re[23], y2_re);
+            _mm512_store_pd(&out_im[23], y2_im);
+            _mm512_store_pd(&out_re[31], y3_re);
+            _mm512_store_pd(&out_im[31], y3_im);
+        }
+    }
+
+    /**
+     * @brief Radix-4 cross-group pass for N=1 - BACKWARD
+     */
+    TARGET_AVX512
+    static inline void radix32_n1_pass2_radix4_backward_avx512(
+        const double *RESTRICT temp_re,
+        const double *RESTRICT temp_im,
+        double *RESTRICT out_re,
+        double *RESTRICT out_im,
+        const radix32_pass2_plan_t *RESTRICT plan)
+    {
+        const __m512d sign_mask = _mm512_set1_pd(-0.0);
+        const __m512d sqrt2_2 = _mm512_set1_pd(0.70710678118654752440);
+
+        // Load all 4 groups
         __m512d A_re[8], A_im[8];
         __m512d B_re[8], B_im[8];
         __m512d C_re[8], C_im[8];
         __m512d D_re[8], D_im[8];
 
-        //======================================================================
-        // PHASE 1: RADIX-8 PAIR EMITTERS (TWO-WAVE ARCHITECTURE)
-        //======================================================================
-
-        //----------------------------------------------------------------------
-        // GROUP A: Load inputs (with software pipelining for next group)
-        //----------------------------------------------------------------------
-        __m512d xa0_re = load_aligned(&tile_in_re[0 * tile_size + k]);
-        __m512d xa0_im = load_aligned(&tile_in_im[0 * tile_size + k]);
-
-        // Prefetch group B stripe 1 while loading A stripe 0
-        _mm_prefetch((const char *)&tile_in_re[9 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[9 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xa1_re = load_aligned(&tile_in_re[1 * tile_size + k]);
-        __m512d xa1_im = load_aligned(&tile_in_im[1 * tile_size + k]);
-        
-        // SOFTWARE PIPELINING: Issue first loads for group B while loading A
-        __m512d xb0_re = load_aligned(&tile_in_re[8 * tile_size + k]);
-        __m512d xb0_im = load_aligned(&tile_in_im[8 * tile_size + k]);
-
-        // Continue loading A with more B prefetches
-        _mm_prefetch((const char *)&tile_in_re[10 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[10 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xa2_re = load_aligned(&tile_in_re[2 * tile_size + k]);
-        __m512d xa2_im = load_aligned(&tile_in_im[2 * tile_size + k]);
-        __m512d xa3_re = load_aligned(&tile_in_re[3 * tile_size + k]);
-        __m512d xa3_im = load_aligned(&tile_in_im[3 * tile_size + k]);
-        __m512d xa4_re = load_aligned(&tile_in_re[4 * tile_size + k]);
-        __m512d xa4_im = load_aligned(&tile_in_im[4 * tile_size + k]);
-        __m512d xa5_re = load_aligned(&tile_in_re[5 * tile_size + k]);
-        __m512d xa5_im = load_aligned(&tile_in_im[5 * tile_size + k]);
-        __m512d xa6_re = load_aligned(&tile_in_re[6 * tile_size + k]);
-        __m512d xa6_im = load_aligned(&tile_in_im[6 * tile_size + k]);
-        __m512d xa7_re = load_aligned(&tile_in_re[7 * tile_size + k]);
-        __m512d xa7_im = load_aligned(&tile_in_im[7 * tile_size + k]);
-
-        // Even wave (pairs 0,4 and 2,6)
+        for (size_t i = 0; i < 8; i++)
         {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xa0_re, xa0_im, xa1_re, xa1_im, xa2_re, xa2_im, xa3_re, xa3_im,
-                xa4_re, xa4_im, xa5_re, xa5_im, xa6_re, xa6_im, xa7_re, xa7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
+            A_re[i] = _mm512_load_pd(&temp_re[0 + i]);
+            A_im[i] = _mm512_load_pd(&temp_im[0 + i]);
+            B_re[i] = _mm512_load_pd(&temp_re[8 + i]);
+            B_im[i] = _mm512_load_pd(&temp_im[8 + i]);
+            C_re[i] = _mm512_load_pd(&temp_re[16 + i]);
+            C_im[i] = _mm512_load_pd(&temp_im[16 + i]);
+            D_re[i] = _mm512_load_pd(&temp_re[24 + i]);
+            D_im[i] = _mm512_load_pd(&temp_im[24 + i]);
+        }
 
-            radix8_emit_pair_04_from_t0123_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &A_re[0], &A_im[0], &A_re[1], &A_im[1]);
+        // Extract geometric twiddles (same as forward, will be used correctly by BV core)
+        const __m512d pos1_w1_re = plan->pos1_w1_re;
+        const __m512d pos1_w1_im = plan->pos1_w1_im;
+        const __m512d pos1_w2_re = plan->pos1_w2_re;
+        const __m512d pos1_w2_im = plan->pos1_w2_im;
+        const __m512d pos1_w3_re = plan->pos1_w3_re;
+        const __m512d pos1_w3_im = plan->pos1_w3_im;
 
-            radix8_emit_pair_26_from_t0123_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &A_re[2], &A_im[2], &A_re[3], &A_im[3],
+        const __m512d pos2_w1_re = plan->pos2_w1_re;
+        const __m512d pos2_w1_im = plan->pos2_w1_im;
+        const __m512d pos2_w2_re = plan->pos2_w2_re;
+        const __m512d pos2_w2_im = plan->pos2_w2_im;
+        const __m512d pos2_w3_re = plan->pos2_w3_re;
+        const __m512d pos2_w3_im = plan->pos2_w3_im;
+
+        const __m512d pos3_w1_re = plan->pos3_w1_re;
+        const __m512d pos3_w1_im = plan->pos3_w1_im;
+        const __m512d pos3_w2_re = plan->pos3_w2_re;
+        const __m512d pos3_w2_im = plan->pos3_w2_im;
+        const __m512d pos3_w3_re = plan->pos3_w3_re;
+        const __m512d pos3_w3_im = plan->pos3_w3_im;
+
+        const __m512d pos5_w1_re = plan->pos5_w1_re;
+        const __m512d pos5_w1_im = plan->pos5_w1_im;
+        const __m512d pos5_w2_re = plan->pos5_w2_re;
+        const __m512d pos5_w2_im = plan->pos5_w2_im;
+        const __m512d pos5_w3_re = plan->pos5_w3_re;
+        const __m512d pos5_w3_im = plan->pos5_w3_im;
+
+        const __m512d pos6_w1_re = plan->pos6_w1_re;
+        const __m512d pos6_w1_im = plan->pos6_w1_im;
+        const __m512d pos6_w2_re = plan->pos6_w2_re;
+        const __m512d pos6_w2_im = plan->pos6_w2_im;
+        const __m512d pos6_w3_re = plan->pos6_w3_re;
+        const __m512d pos6_w3_im = plan->pos6_w3_im;
+
+        const __m512d pos7_w1_re = plan->pos7_w1_re;
+        const __m512d pos7_w1_im = plan->pos7_w1_im;
+        const __m512d pos7_w2_re = plan->pos7_w2_re;
+        const __m512d pos7_w2_im = plan->pos7_w2_im;
+        const __m512d pos7_w3_re = plan->pos7_w3_re;
+        const __m512d pos7_w3_im = plan->pos7_w3_im;
+
+        __m512d y0_re, y0_im, y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;
+
+        // Position 0: Identity
+        radix4_butterfly_core_bv_avx512(
+            A_re[0], A_im[0], B_re[0], B_im[0],
+            C_re[0], C_im[0], D_re[0], D_im[0],
+            &y0_re, &y0_im, &y1_re, &y1_im,
+            &y2_re, &y2_im, &y3_re, &y3_im,
+            sign_mask);
+        _mm512_store_pd(&out_re[0], y0_re);
+        _mm512_store_pd(&out_im[0], y0_im);
+        _mm512_store_pd(&out_re[8], y1_re);
+        _mm512_store_pd(&out_im[8], y1_im);
+        _mm512_store_pd(&out_re[16], y2_re);
+        _mm512_store_pd(&out_im[16], y2_im);
+        _mm512_store_pd(&out_re[24], y3_re);
+        _mm512_store_pd(&out_im[24], y3_im);
+
+        // Position 1
+        {
+            __m512d a_re = A_re[1], a_im = A_im[1];
+            __m512d b_re = B_re[1], b_im = B_im[1];
+            __m512d c_re = C_re[1], c_im = C_im[1];
+            __m512d d_re = D_re[1], d_im = D_im[1];
+
+            cmul_avx512(b_re, b_im, pos1_w1_re, pos1_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos1_w2_re, pos1_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos1_w3_re, pos1_w3_im, &d_re, &d_im);
+
+            radix4_butterfly_core_bv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
                 sign_mask);
+
+            _mm512_store_pd(&out_re[1], y0_re);
+            _mm512_store_pd(&out_im[1], y0_im);
+            _mm512_store_pd(&out_re[9], y1_re);
+            _mm512_store_pd(&out_im[9], y1_im);
+            _mm512_store_pd(&out_re[17], y2_re);
+            _mm512_store_pd(&out_im[17], y2_im);
+            _mm512_store_pd(&out_re[25], y3_re);
+            _mm512_store_pd(&out_im[25], y3_im);
         }
 
-        // Odd wave (pairs 1,5 and 3,7)
+        // Position 2
         {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xa0_re, xa0_im, xa1_re, xa1_im, xa2_re, xa2_im, xa3_re, xa3_im,
-                xa4_re, xa4_im, xa5_re, xa5_im, xa6_re, xa6_im, xa7_re, xa7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
+            __m512d a_re = A_re[2], a_im = A_im[2];
+            __m512d b_re = B_re[2], b_im = B_im[2];
+            __m512d c_re = C_re[2], c_im = C_im[2];
+            __m512d d_re = D_re[2], d_im = D_im[2];
 
-            radix8_emit_pair_15_from_t4567_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &A_re[4], &A_im[4], &A_re[5], &A_im[5],
-                sign_mask, sqrt2_2);
+            cmul_avx512(b_re, b_im, pos2_w1_re, pos2_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos2_w2_re, pos2_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos2_w3_re, pos2_w3_im, &d_re, &d_im);
 
-            radix8_emit_pair_37_from_t4567_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &A_re[6], &A_im[6], &A_re[7], &A_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-           //----------------------------------------------------------------------
-        // GROUP B: Continue loading (already started xb0 during A)
-        //----------------------------------------------------------------------
-        __m512d xb1_re = load_aligned(&tile_in_re[9 * tile_size + k]);
-        __m512d xb1_im = load_aligned(&tile_in_im[9 * tile_size + k]);
-
-        // SOFTWARE PIPELINING: Prefetch group C while loading B
-        _mm_prefetch((const char *)&tile_in_re[16 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[16 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_re[17 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[17 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xb2_re = load_aligned(&tile_in_re[10 * tile_size + k]);
-        __m512d xb2_im = load_aligned(&tile_in_im[10 * tile_size + k]);
-        
-        _mm_prefetch((const char *)&tile_in_re[18 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[18 * tile_size + k], _MM_HINT_T0);
-        
-        __m512d xb3_re = load_aligned(&tile_in_re[11 * tile_size + k]);
-        __m512d xb3_im = load_aligned(&tile_in_im[11 * tile_size + k]);
-        __m512d xb4_re = load_aligned(&tile_in_re[12 * tile_size + k]);
-        __m512d xb4_im = load_aligned(&tile_in_im[12 * tile_size + k]);
-        
-        _mm_prefetch((const char *)&tile_in_re[19 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[19 * tile_size + k], _MM_HINT_T0);
-        
-        __m512d xb5_re = load_aligned(&tile_in_re[13 * tile_size + k]);
-        __m512d xb5_im = load_aligned(&tile_in_im[13 * tile_size + k]);
-        __m512d xb6_re = load_aligned(&tile_in_re[14 * tile_size + k]);
-        __m512d xb6_im = load_aligned(&tile_in_im[14 * tile_size + k]);
-        __m512d xb7_re = load_aligned(&tile_in_re[15 * tile_size + k]);
-        __m512d xb7_im = load_aligned(&tile_in_im[15 * tile_size + k]);
-
-        // Even wave
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xb0_re, xb0_im, xb1_re, xb1_im, xb2_re, xb2_im, xb3_re, xb3_im,
-                xb4_re, xb4_im, xb5_re, xb5_im, xb6_re, xb6_im, xb7_re, xb7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &B_re[0], &B_im[0], &B_re[1], &B_im[1]);
-
-            radix8_emit_pair_26_from_t0123_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &B_re[2], &B_im[2], &B_re[3], &B_im[3],
+            radix4_butterfly_core_bv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
                 sign_mask);
+
+            _mm512_store_pd(&out_re[2], y0_re);
+            _mm512_store_pd(&out_im[2], y0_im);
+            _mm512_store_pd(&out_re[10], y1_re);
+            _mm512_store_pd(&out_im[10], y1_im);
+            _mm512_store_pd(&out_re[18], y2_re);
+            _mm512_store_pd(&out_im[18], y2_im);
+            _mm512_store_pd(&out_re[26], y3_re);
+            _mm512_store_pd(&out_im[26], y3_im);
         }
 
-        // Odd wave
+        // Position 3
         {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xb0_re, xb0_im, xb1_re, xb1_im, xb2_re, xb2_im, xb3_re, xb3_im,
-                xb4_re, xb4_im, xb5_re, xb5_im, xb6_re, xb6_im, xb7_re, xb7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
+            __m512d a_re = A_re[3], a_im = A_im[3];
+            __m512d b_re = B_re[3], b_im = B_im[3];
+            __m512d c_re = C_re[3], c_im = C_im[3];
+            __m512d d_re = D_re[3], d_im = D_im[3];
 
-            radix8_emit_pair_15_from_t4567_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &B_re[4], &B_im[4], &B_re[5], &B_im[5],
-                sign_mask, sqrt2_2);
+            cmul_avx512(b_re, b_im, pos3_w1_re, pos3_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos3_w2_re, pos3_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos3_w3_re, pos3_w3_im, &d_re, &d_im);
 
-            radix8_emit_pair_37_from_t4567_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &B_re[6], &B_im[6], &B_re[7], &B_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-         //----------------------------------------------------------------------
-        // GROUP C: Load inputs (prefetches already issued during B)
-        //----------------------------------------------------------------------
-        __m512d xc0_re = load_aligned(&tile_in_re[16 * tile_size + k]);
-        __m512d xc0_im = load_aligned(&tile_in_im[16 * tile_size + k]);
-        __m512d xc1_re = load_aligned(&tile_in_re[17 * tile_size + k]);
-        __m512d xc1_im = load_aligned(&tile_in_im[17 * tile_size + k]);
-
-        // SOFTWARE PIPELINING: Prefetch group D while loading C
-        _mm_prefetch((const char *)&tile_in_re[24 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[24 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_re[25 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[25 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xc2_re = load_aligned(&tile_in_re[18 * tile_size + k]);
-        __m512d xc2_im = load_aligned(&tile_in_im[18 * tile_size + k]);
-        
-        _mm_prefetch((const char *)&tile_in_re[26 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[26 * tile_size + k], _MM_HINT_T0);
-        
-        __m512d xc3_re = load_aligned(&tile_in_re[19 * tile_size + k]);
-        __m512d xc3_im = load_aligned(&tile_in_im[19 * tile_size + k]);
-        __m512d xc4_re = load_aligned(&tile_in_re[20 * tile_size + k]);
-        __m512d xc4_im = load_aligned(&tile_in_im[20 * tile_size + k]);
-        
-        _mm_prefetch((const char *)&tile_in_re[27 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[27 * tile_size + k], _MM_HINT_T0);
-        
-        __m512d xc5_re = load_aligned(&tile_in_re[21 * tile_size + k]);
-        __m512d xc5_im = load_aligned(&tile_in_im[21 * tile_size + k]);
-        __m512d xc6_re = load_aligned(&tile_in_re[22 * tile_size + k]);
-        __m512d xc6_im = load_aligned(&tile_in_im[22 * tile_size + k]);
-        
-        _mm_prefetch((const char *)&tile_in_re[28 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[28 * tile_size + k], _MM_HINT_T0);
-        
-        __m512d xc7_re = load_aligned(&tile_in_re[23 * tile_size + k]);
-        __m512d xc7_im = load_aligned(&tile_in_im[23 * tile_size + k]);
-
-        // Even wave
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xc0_re, xc0_im, xc1_re, xc1_im, xc2_re, xc2_im, xc3_re, xc3_im,
-                xc4_re, xc4_im, xc5_re, xc5_im, xc6_re, xc6_im, xc7_re, xc7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &C_re[0], &C_im[0], &C_re[1], &C_im[1]);
-
-            radix8_emit_pair_26_from_t0123_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &C_re[2], &C_im[2], &C_re[3], &C_im[3],
+            radix4_butterfly_core_bv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
                 sign_mask);
+
+            _mm512_store_pd(&out_re[3], y0_re);
+            _mm512_store_pd(&out_im[3], y0_im);
+            _mm512_store_pd(&out_re[11], y1_re);
+            _mm512_store_pd(&out_im[11], y1_im);
+            _mm512_store_pd(&out_re[19], y2_re);
+            _mm512_store_pd(&out_im[19], y2_im);
+            _mm512_store_pd(&out_re[27], y3_re);
+            _mm512_store_pd(&out_im[27], y3_im);
         }
 
-        // Odd wave
+        // Position 4: W_8 fast-path (backward)
         {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xc0_re, xc0_im, xc1_re, xc1_im, xc2_re, xc2_im, xc3_re, xc3_im,
-                xc4_re, xc4_im, xc5_re, xc5_im, xc6_re, xc6_im, xc7_re, xc7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
+            __m512d a_re = A_re[4], a_im = A_im[4];
+            __m512d b_re = B_re[4], b_im = B_im[4];
+            __m512d c_re = C_re[4], c_im = C_im[4];
+            __m512d d_re = D_re[4], d_im = D_im[4];
 
-            radix8_emit_pair_15_from_t4567_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &C_re[4], &C_im[4], &C_re[5], &C_im[5],
-                sign_mask, sqrt2_2);
+            // W8^1 (conjugated): sqrt(2)/2 * (1 + i)
+            __m512d sum_b = _mm512_add_pd(b_re, b_im);
+            __m512d nim_b = _mm512_xor_pd(b_im, sign_mask);
+            __m512d diff_b = _mm512_add_pd(b_re, nim_b);
+            b_re = _mm512_mul_pd(sqrt2_2, sum_b);
+            b_im = _mm512_mul_pd(sqrt2_2, diff_b);
 
-            radix8_emit_pair_37_from_t4567_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &C_re[6], &C_im[6], &C_re[7], &C_im[7],
-                sign_mask, sqrt2_2);
-        }
+            // W8^2 (conjugated): +i
+            __m512d c_tw_re, c_tw_im;
+            rot_pos_j(c_re, c_im, sign_mask, &c_tw_re, &c_tw_im);
+            c_re = c_tw_re;
+            c_im = c_tw_im;
 
-        //----------------------------------------------------------------------
-        // GROUP D: Load inputs (prefetches already issued during C)
-        //----------------------------------------------------------------------
-        __m512d xd0_re = load_aligned(&tile_in_re[24 * tile_size + k]);
-        __m512d xd0_im = load_aligned(&tile_in_im[24 * tile_size + k]);
-        __m512d xd1_re = load_aligned(&tile_in_re[25 * tile_size + k]);
-        __m512d xd1_im = load_aligned(&tile_in_im[25 * tile_size + k]);
-        
-        // Prefetch remaining output stripes for positions 4,5,6,7
-        if (k + 8 < tile_size)
-        {
-            PREFETCH_OUTPUT_STRIPES(1, 8); // Position 1
-            PREFETCH_OUTPUT_STRIPES(5, 8); // Position 5
-        }
-        
-        __m512d xd2_re = load_aligned(&tile_in_re[26 * tile_size + k]);
-        __m512d xd2_im = load_aligned(&tile_in_im[26 * tile_size + k]);
-        __m512d xd3_re = load_aligned(&tile_in_re[27 * tile_size + k]);
-        __m512d xd3_im = load_aligned(&tile_in_im[27 * tile_size + k]);
-        
-        // Continue output prefetches
-        if (k + 8 < tile_size)
-        {
-            PREFETCH_OUTPUT_STRIPES(3, 8); // Position 3
-            PREFETCH_OUTPUT_STRIPES(7, 8); // Position 7
-        }
-        
-        __m512d xd4_re = load_aligned(&tile_in_re[28 * tile_size + k]);
-        __m512d xd4_im = load_aligned(&tile_in_im[28 * tile_size + k]);
-        __m512d xd5_re = load_aligned(&tile_in_re[29 * tile_size + k]);
-        __m512d xd5_im = load_aligned(&tile_in_im[29 * tile_size + k]);
-        __m512d xd6_re = load_aligned(&tile_in_re[30 * tile_size + k]);
-        __m512d xd6_im = load_aligned(&tile_in_im[30 * tile_size + k]);
-        __m512d xd7_re = load_aligned(&tile_in_re[31 * tile_size + k]);
-        __m512d xd7_im = load_aligned(&tile_in_im[31 * tile_size + k]);
+            // W8^3 (conjugated): sqrt(2)/2 * (-1 + i)
+            __m512d sum_d = _mm512_add_pd(d_re, d_im);
+            __m512d nim_d = _mm512_xor_pd(d_im, sign_mask);
+            __m512d diff_d = _mm512_add_pd(d_re, nim_d);
+            __m512d d_re_tmp = _mm512_mul_pd(sqrt2_2, sum_d);
+            d_re = _mm512_xor_pd(d_re_tmp, sign_mask);
+            d_im = _mm512_mul_pd(sqrt2_2, diff_d);
 
-        // Even wave
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xd0_re, xd0_im, xd1_re, xd1_im, xd2_re, xd2_im, xd3_re, xd3_im,
-                xd4_re, xd4_im, xd5_re, xd5_im, xd6_re, xd6_im, xd7_re, xd7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &D_re[0], &D_im[0], &D_re[1], &D_im[1]);
-
-            radix8_emit_pair_26_from_t0123_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &D_re[2], &D_im[2], &D_re[3], &D_im[3],
+            radix4_butterfly_core_bv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
                 sign_mask);
+
+            _mm512_store_pd(&out_re[4], y0_re);
+            _mm512_store_pd(&out_im[4], y0_im);
+            _mm512_store_pd(&out_re[12], y1_re);
+            _mm512_store_pd(&out_im[12], y1_im);
+            _mm512_store_pd(&out_re[20], y2_re);
+            _mm512_store_pd(&out_im[20], y2_im);
+            _mm512_store_pd(&out_re[28], y3_re);
+            _mm512_store_pd(&out_im[28], y3_im);
         }
 
-        // Odd wave
+        // Positions 5, 6, 7 (remaining positions)
         {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xd0_re, xd0_im, xd1_re, xd1_im, xd2_re, xd2_im, xd3_re, xd3_im,
-                xd4_re, xd4_im, xd5_re, xd5_im, xd6_re, xd6_im, xd7_re, xd7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
+            __m512d a_re = A_re[5], a_im = A_im[5];
+            __m512d b_re = B_re[5], b_im = B_im[5];
+            __m512d c_re = C_re[5], c_im = C_im[5];
+            __m512d d_re = D_re[5], d_im = D_im[5];
 
-            radix8_emit_pair_15_from_t4567_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &D_re[4], &D_im[4], &D_re[5], &D_im[5],
-                sign_mask, sqrt2_2);
+            cmul_avx512(b_re, b_im, pos5_w1_re, pos5_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos5_w2_re, pos5_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos5_w3_re, pos5_w3_im, &d_re, &d_im);
 
-            radix8_emit_pair_37_from_t4567_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &D_re[6], &D_im[6], &D_re[7], &D_im[7],
-                sign_mask, sqrt2_2);
+            radix4_butterfly_core_bv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
+
+            _mm512_store_pd(&out_re[5], y0_re);
+            _mm512_store_pd(&out_im[5], y0_im);
+            _mm512_store_pd(&out_re[13], y1_re);
+            _mm512_store_pd(&out_im[13], y1_im);
+            _mm512_store_pd(&out_re[21], y2_re);
+            _mm512_store_pd(&out_im[21], y2_im);
+            _mm512_store_pd(&out_re[29], y3_re);
+            _mm512_store_pd(&out_im[29], y3_im);
         }
 
-        //======================================================================
-        // PHASE 2: CROSS-GROUP RADIX-4 COMBINES
-        // Process in bit-reversed order: 0, 4, 2, 6, 1, 5, 3, 7
-        //======================================================================
+        {
+            __m512d a_re = A_re[6], a_im = A_im[6];
+            __m512d b_re = B_re[6], b_im = B_im[6];
+            __m512d c_re = C_re[6], c_im = C_im[6];
+            __m512d d_re = D_re[6], d_im = D_im[6];
 
-        // Position 0 (index 0): Identity (no twiddles)
-        RADIX32_POSITION_IDENTITY_UNMASKED(0, 0);
+            cmul_avx512(b_re, b_im, pos6_w1_re, pos6_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos6_w2_re, pos6_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos6_w3_re, pos6_w3_im, &d_re, &d_im);
 
-        // Position 4 (index 1): W8 FAST-PATH
-        RADIX32_POSITION4_FAST_FORWARD_UNMASKED(4);
+            radix4_butterfly_core_bv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
 
-        // Position 2 (index 2): Generic twiddles
-        RADIX32_POSITION_TWIDDLED_UNMASKED(2, 2, pos2_w1_re, pos2_w1_im, pos2_w2_re, pos2_w2_im, pos2_w3_re, pos2_w3_im);
+            _mm512_store_pd(&out_re[6], y0_re);
+            _mm512_store_pd(&out_im[6], y0_im);
+            _mm512_store_pd(&out_re[14], y1_re);
+            _mm512_store_pd(&out_im[14], y1_im);
+            _mm512_store_pd(&out_re[22], y2_re);
+            _mm512_store_pd(&out_im[22], y2_im);
+            _mm512_store_pd(&out_re[30], y3_re);
+            _mm512_store_pd(&out_im[30], y3_im);
+        }
 
-        // Position 6 (index 3): Generic twiddles
-        RADIX32_POSITION_TWIDDLED_UNMASKED(3, 6, pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im);
+        {
+            __m512d a_re = A_re[7], a_im = A_im[7];
+            __m512d b_re = B_re[7], b_im = B_im[7];
+            __m512d c_re = C_re[7], c_im = C_im[7];
+            __m512d d_re = D_re[7], d_im = D_im[7];
 
-        // Position 1 (index 4): Generic twiddles
-        RADIX32_POSITION_TWIDDLED_UNMASKED(4, 1, pos1_w1_re, pos1_w1_im, pos1_w2_re, pos1_w2_im, pos1_w3_re, pos1_w3_im);
+            cmul_avx512(b_re, b_im, pos7_w1_re, pos7_w1_im, &b_re, &b_im);
+            cmul_avx512(c_re, c_im, pos7_w2_re, pos7_w2_im, &c_re, &c_im);
+            cmul_avx512(d_re, d_im, pos7_w3_re, pos7_w3_im, &d_re, &d_im);
 
-        // Position 5 (index 5): Generic twiddles
-        RADIX32_POSITION_TWIDDLED_UNMASKED(5, 5, pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im);
+            radix4_butterfly_core_bv_avx512(
+                a_re, a_im, b_re, b_im, c_re, c_im, d_re, d_im,
+                &y0_re, &y0_im, &y1_re, &y1_im, &y2_re, &y2_im, &y3_re, &y3_im,
+                sign_mask);
 
-        // Position 3 (index 6): Generic twiddles
-        RADIX32_POSITION_TWIDDLED_UNMASKED(6, 3, pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im);
-
-        // Position 7 (index 7): Generic twiddles
-        RADIX32_POSITION_TWIDDLED_UNMASKED(7, 7, pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im);
+            _mm512_store_pd(&out_re[7], y0_re);
+            _mm512_store_pd(&out_im[7], y0_im);
+            _mm512_store_pd(&out_re[15], y1_re);
+            _mm512_store_pd(&out_im[15], y1_im);
+            _mm512_store_pd(&out_re[23], y2_re);
+            _mm512_store_pd(&out_im[23], y2_im);
+            _mm512_store_pd(&out_re[31], y3_re);
+            _mm512_store_pd(&out_im[31], y3_im);
+        }
     }
 
-    //==========================================================================
-    // TAIL HANDLING: Process remaining k < 8 samples with masks
-    //==========================================================================
+    //==============================================================================
+    // TOP-LEVEL N=1 WRAPPERS
+    //==============================================================================
 
-    if (k < tile_size)
+    /**
+     * @brief Complete radix-32 N=1 transform - FORWARD
+     *
+     * @param in_re Input real [32] (aligned)
+     * @param in_im Input imaginary [32] (aligned)
+     * @param out_re Output real [32] (aligned)
+     * @param out_im Output imaginary [32] (aligned)
+     * @param plan Geometric twiddles from planner (pass2 only)
+     */
+    TARGET_AVX512
+    static inline void radix32_n1_forward_avx512(
+        const double *RESTRICT in_re,
+        const double *RESTRICT in_im,
+        double *RESTRICT out_re,
+        double *RESTRICT out_im,
+        const radix32_pass2_plan_t *RESTRICT plan)
     {
-        const size_t tail = tile_size - k;
-        const __mmask8 mask = (__mmask8)((1u << tail) - 1u);
+        // Temp storage for inter-pass data (aligned)
+        ALIGNAS(64)
+        double temp_re[32];
+        ALIGNAS(64)
+        double temp_im[32];
 
-        __m512d A_re[8], A_im[8];
-        __m512d B_re[8], B_im[8];
-        __m512d C_re[8], C_im[8];
-        __m512d D_re[8], D_im[8];
+        // Pass 1: Radix-8 (no stage twiddles)
+        radix32_n1_pass1_radix8_forward_avx512(in_re, in_im, temp_re, temp_im);
 
-        // Load with masks (zero-extend invalid lanes)
-        __m512d xa0_re = load_masked(mask, &tile_in_re[0 * tile_size + k]);
-        __m512d xa0_im = load_masked(mask, &tile_in_im[0 * tile_size + k]);
-        // ... (load all inputs with masks - similar pattern to main loop)
-
-        // Process groups A, B, C, D (same wave architecture, but with masked loads)
-        // ... (similar structure to main loop, using load_masked instead of load_aligned)
-
-        // Cross-group combines with masked stores
-        RADIX32_POSITION_IDENTITY_MASKED(0, 0, mask);
-        RADIX32_POSITION4_FAST_FORWARD_MASKED(4, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED(2, 2, pos2_w1_re, pos2_w1_im, pos2_w2_re, pos2_w2_im, pos2_w3_re, pos2_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED(3, 6, pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED(4, 1, pos1_w1_re, pos1_w1_im, pos1_w2_re, pos1_w2_im, pos1_w3_re, pos1_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED(5, 5, pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED(6, 3, pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED(7, 7, pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im, mask);
+        // Pass 2: Radix-4 cross-group (geometric twiddles from planner)
+        radix32_n1_pass2_radix4_forward_avx512(temp_re, temp_im, out_re, out_im, plan);
     }
+
+    /**
+     * @brief Complete radix-32 N=1 transform - BACKWARD
+     */
+    TARGET_AVX512
+    static inline void radix32_n1_backward_avx512(
+        const double *RESTRICT in_re,
+        const double *RESTRICT in_im,
+        double *RESTRICT out_re,
+        double *RESTRICT out_im,
+        const radix32_pass2_plan_t *RESTRICT plan)
+    {
+        ALIGNAS(64)
+        double temp_re[32];
+        ALIGNAS(64)
+        double temp_im[32];
+
+        // Pass 1: Radix-8 (backward, no stage twiddles)
+        radix32_n1_pass1_radix8_backward_avx512(in_re, in_im, temp_re, temp_im);
+
+        // Pass 2: Radix-4 cross-group (backward, geometric twiddles)
+        radix32_n1_pass2_radix4_backward_avx512(temp_re, temp_im, out_re, out_im, plan);
+    }
+
+#ifdef __cplusplus
 }
-
-//==============================================================================
-// COMPLETE RADIX-32 FUSED BUTTERFLY - BACKWARD/INVERSE FFT
-//==============================================================================
-
-/**
- * @brief Fully optimized radix-32 8×4 fused butterfly - Backward/Inverse FFT
- *
- * IDENTICAL ARCHITECTURE TO FORWARD:
- * - Pair-emitter architecture with wave-based stage-1 reuse
- * - Position-4 W8 fast-path (conjugated twiddles)
- * - Optimized mini-recurrence (MUL+ADD for Skylake-X)
- * - Software pipelining (load/compute overlap)
- * - Unified masked/unmasked paths
- *
- * KEY DIFFERENCE: Uses conjugated twiddles throughout
- * - W4^2 = +j (instead of -j)
- * - W8 family conjugated
- * - Cross-group twiddles conjugated via pass2_plan
- *
- * @param tile_in_re Input real [32 stripes][tile_size]
- * @param tile_in_im Input imag [32 stripes][tile_size]
- * @param tile_out_re Output real [32 stripes][tile_size]
- * @param tile_out_im Output imag [32 stripes][tile_size]
- * @param tile_size Samples per stripe (must be multiple of 8)
- * @param pass1_plan Pass 1 plan (unused in pair-emitter architecture)
- * @param pass2_plan Pass 2 cross-group twiddle factors (conjugated for backward)
- */
-TARGET_AVX512
-FORCE_INLINE void radix32_fused_butterfly_backward_avx512(
-    const double *RESTRICT tile_in_re,
-    const double *RESTRICT tile_in_im,
-    double *RESTRICT tile_out_re,
-    double *RESTRICT tile_out_im,
-    size_t tile_size,
-    const radix32_pass2_plan_t *RESTRICT pass2_plan)
-{
-    // Hoist constants
-    const __m512d sign_mask = _mm512_set1_pd(-0.0);
-    const __m512d sqrt2_2 = _mm512_set1_pd(0.70710678118654752440);
-
-    //==========================================================================
-    // PRECOMPUTE CROSS-GROUP TWIDDLES (conjugated for backward)
-    //==========================================================================
-
-    // Position 1: W_32^{1,2,3} (conjugated)
-    const __m512d pos1_w1_re = pass2_plan->pos1_w1_re;
-    const __m512d pos1_w1_im = pass2_plan->pos1_w1_im;
-    const __m512d pos1_w2_re = pass2_plan->pos1_w2_re;
-    const __m512d pos1_w2_im = pass2_plan->pos1_w2_im;
-    const __m512d pos1_w3_re = pass2_plan->pos1_w3_re;
-    const __m512d pos1_w3_im = pass2_plan->pos1_w3_im;
-
-    // Position 2: W_16^{1,2,3} (conjugated)
-    const __m512d pos2_w1_re = pass2_plan->pos2_w1_re;
-    const __m512d pos2_w1_im = pass2_plan->pos2_w1_im;
-    const __m512d pos2_w2_re = pass2_plan->pos2_w2_re;
-    const __m512d pos2_w2_im = pass2_plan->pos2_w2_im;
-    const __m512d pos2_w3_re = pass2_plan->pos2_w3_re;
-    const __m512d pos2_w3_im = pass2_plan->pos2_w3_im;
-
-    // Positions 3, 5, 6, 7: Mini-recurrence (conjugated seeds)
-    __m512d pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos3_w_re, pass2_plan->pos3_w_im,
-                                    &pos3_w1_re, &pos3_w1_im, &pos3_w2_re, &pos3_w2_im,
-                                    &pos3_w3_re, &pos3_w3_im);
-
-    __m512d pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos5_w_re, pass2_plan->pos5_w_im,
-                                    &pos5_w1_re, &pos5_w1_im, &pos5_w2_re, &pos5_w2_im,
-                                    &pos5_w3_re, &pos5_w3_im);
-
-    __m512d pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos6_w_re, pass2_plan->pos6_w_im,
-                                    &pos6_w1_re, &pos6_w1_im, &pos6_w2_re, &pos6_w2_im,
-                                    &pos6_w3_re, &pos6_w3_im);
-
-    __m512d pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im;
-    cross_twiddle_powers3_optimized(pass2_plan->pos7_w_re, pass2_plan->pos7_w_im,
-                                    &pos7_w1_re, &pos7_w1_im, &pos7_w2_re, &pos7_w2_im,
-                                    &pos7_w3_re, &pos7_w3_im);
-
-    //==========================================================================
-    // MAIN K-LOOP: Process full vectors (k += 8)
-    //==========================================================================
-
-    size_t k = 0;
-    const size_t k_main = (tile_size / 8) * 8;
-
-    for (; k < k_main; k += 8)
-    {
-
-        //==========================================================================
-        // PREFETCH STRATEGY (before any computation)
-        //==========================================================================
-
-        // Prefetch next k-iteration (all groups A, B, C, D)
-        if (k + 16 < k_main)
-        {
-            PREFETCH_NEXT_K_ITERATION(0, 16);  // Group A
-            PREFETCH_NEXT_K_ITERATION(8, 16);  // Group B
-            PREFETCH_NEXT_K_ITERATION(16, 16); // Group C
-            PREFETCH_NEXT_K_ITERATION(24, 16); // Group D
-        }
-
-        // Prefetch output buffers for positions 0, 1, 2, 3
-        if (k + 8 < tile_size)
-        {
-            PREFETCH_OUTPUT_STRIPES(0, 8); // Position 0
-            PREFETCH_OUTPUT_STRIPES(4, 8); // Position 4
-            PREFETCH_OUTPUT_STRIPES(2, 8); // Position 2
-            PREFETCH_OUTPUT_STRIPES(6, 8); // Position 6
-        }
-
-        __m512d A_re[8], A_im[8];
-        __m512d B_re[8], B_im[8];
-        __m512d C_re[8], C_im[8];
-        __m512d D_re[8], D_im[8];
-
-        //======================================================================
-        // PHASE 1: RADIX-8 PAIR EMITTERS (BACKWARD - TWO-WAVE ARCHITECTURE)
-        //======================================================================
-
-         //----------------------------------------------------------------------
-        // GROUP A: Load inputs with software pipelining
-        //----------------------------------------------------------------------
-        __m512d xa0_re = load_aligned(&tile_in_re[0 * tile_size + k]);
-        __m512d xa0_im = load_aligned(&tile_in_im[0 * tile_size + k]);
-
-        // Prefetch group B stripe 1 while loading A stripe 0
-        _mm_prefetch((const char *)&tile_in_re[9 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[9 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xa1_re = load_aligned(&tile_in_re[1 * tile_size + k]);
-        __m512d xa1_im = load_aligned(&tile_in_im[1 * tile_size + k]);
-
-        // SOFTWARE PIPELINING: Start loading group B
-        __m512d xb0_re = load_aligned(&tile_in_re[8 * tile_size + k]);
-        __m512d xb0_im = load_aligned(&tile_in_im[8 * tile_size + k]);
-
-        // Continue loading A with more B prefetches
-        _mm_prefetch((const char *)&tile_in_re[10 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[10 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xa2_re = load_aligned(&tile_in_re[2 * tile_size + k]);
-        __m512d xa2_im = load_aligned(&tile_in_im[2 * tile_size + k]);
-        __m512d xa3_re = load_aligned(&tile_in_re[3 * tile_size + k]);
-        __m512d xa3_im = load_aligned(&tile_in_im[3 * tile_size + k]);
-        __m512d xa4_re = load_aligned(&tile_in_re[4 * tile_size + k]);
-        __m512d xa4_im = load_aligned(&tile_in_im[4 * tile_size + k]);
-        __m512d xa5_re = load_aligned(&tile_in_re[5 * tile_size + k]);
-        __m512d xa5_im = load_aligned(&tile_in_im[5 * tile_size + k]);
-        __m512d xa6_re = load_aligned(&tile_in_re[6 * tile_size + k]);
-        __m512d xa6_im = load_aligned(&tile_in_im[6 * tile_size + k]);
-        __m512d xa7_re = load_aligned(&tile_in_re[7 * tile_size + k]);
-        __m512d xa7_im = load_aligned(&tile_in_im[7 * tile_size + k]);
-
-        // Even wave (pairs 0,4 and 2,6)
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xa0_re, xa0_im, xa1_re, xa1_im, xa2_re, xa2_im, xa3_re, xa3_im,
-                xa4_re, xa4_im, xa5_re, xa5_im, xa6_re, xa6_im, xa7_re, xa7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &A_re[0], &A_im[0], &A_re[1], &A_im[1]);
-
-            radix8_emit_pair_26_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &A_re[2], &A_im[2], &A_re[3], &A_im[3],
-                sign_mask);
-        }
-
-        // Odd wave (pairs 1,5 and 3,7)
-        {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xa0_re, xa0_im, xa1_re, xa1_im, xa2_re, xa2_im, xa3_re, xa3_im,
-                xa4_re, xa4_im, xa5_re, xa5_im, xa6_re, xa6_im, xa7_re, xa7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
-
-            radix8_emit_pair_15_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &A_re[4], &A_im[4], &A_re[5], &A_im[5],
-                sign_mask, sqrt2_2);
-
-            radix8_emit_pair_37_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &A_re[6], &A_im[6], &A_re[7], &A_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-       //----------------------------------------------------------------------
-        // GROUP B: Continue loading
-        //----------------------------------------------------------------------
-        __m512d xb1_re = load_aligned(&tile_in_re[9 * tile_size + k]);
-        __m512d xb1_im = load_aligned(&tile_in_im[9 * tile_size + k]);
-
-        // SOFTWARE PIPELINING: Prefetch group C while loading B
-        _mm_prefetch((const char *)&tile_in_re[16 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[16 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_re[17 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[17 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xb2_re = load_aligned(&tile_in_re[10 * tile_size + k]);
-        __m512d xb2_im = load_aligned(&tile_in_im[10 * tile_size + k]);
-
-        _mm_prefetch((const char *)&tile_in_re[18 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[18 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xb3_re = load_aligned(&tile_in_re[11 * tile_size + k]);
-        __m512d xb3_im = load_aligned(&tile_in_im[11 * tile_size + k]);
-        __m512d xb4_re = load_aligned(&tile_in_re[12 * tile_size + k]);
-        __m512d xb4_im = load_aligned(&tile_in_im[12 * tile_size + k]);
-
-        _mm_prefetch((const char *)&tile_in_re[19 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[19 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xb5_re = load_aligned(&tile_in_re[13 * tile_size + k]);
-        __m512d xb5_im = load_aligned(&tile_in_im[13 * tile_size + k]);
-        __m512d xb6_re = load_aligned(&tile_in_re[14 * tile_size + k]);
-        __m512d xb6_im = load_aligned(&tile_in_im[14 * tile_size + k]);
-        __m512d xb7_re = load_aligned(&tile_in_re[15 * tile_size + k]);
-        __m512d xb7_im = load_aligned(&tile_in_im[15 * tile_size + k]);
-
-        // Even wave
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xb0_re, xb0_im, xb1_re, xb1_im, xb2_re, xb2_im, xb3_re, xb3_im,
-                xb4_re, xb4_im, xb5_re, xb5_im, xb6_re, xb6_im, xb7_re, xb7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &B_re[0], &B_im[0], &B_re[1], &B_im[1]);
-
-            radix8_emit_pair_26_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &B_re[2], &B_im[2], &B_re[3], &B_im[3],
-                sign_mask);
-        }
-
-        // Odd wave
-        {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xb0_re, xb0_im, xb1_re, xb1_im, xb2_re, xb2_im, xb3_re, xb3_im,
-                xb4_re, xb4_im, xb5_re, xb5_im, xb6_re, xb6_im, xb7_re, xb7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
-
-            radix8_emit_pair_15_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &B_re[4], &B_im[4], &B_re[5], &B_im[5],
-                sign_mask, sqrt2_2);
-
-            radix8_emit_pair_37_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &B_re[6], &B_im[6], &B_re[7], &B_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-        //----------------------------------------------------------------------
-        // GROUP C: Load inputs (prefetches already issued during B)
-        //----------------------------------------------------------------------
-        __m512d xc0_re = load_aligned(&tile_in_re[16 * tile_size + k]);
-        __m512d xc0_im = load_aligned(&tile_in_im[16 * tile_size + k]);
-        __m512d xc1_re = load_aligned(&tile_in_re[17 * tile_size + k]);
-        __m512d xc1_im = load_aligned(&tile_in_im[17 * tile_size + k]);
-
-        // SOFTWARE PIPELINING: Prefetch group D while loading C
-        _mm_prefetch((const char *)&tile_in_re[24 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[24 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_re[25 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[25 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xc2_re = load_aligned(&tile_in_re[18 * tile_size + k]);
-        __m512d xc2_im = load_aligned(&tile_in_im[18 * tile_size + k]);
-
-        _mm_prefetch((const char *)&tile_in_re[26 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[26 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xc3_re = load_aligned(&tile_in_re[19 * tile_size + k]);
-        __m512d xc3_im = load_aligned(&tile_in_im[19 * tile_size + k]);
-        __m512d xc4_re = load_aligned(&tile_in_re[20 * tile_size + k]);
-        __m512d xc4_im = load_aligned(&tile_in_im[20 * tile_size + k]);
-
-        _mm_prefetch((const char *)&tile_in_re[27 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[27 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xc5_re = load_aligned(&tile_in_re[21 * tile_size + k]);
-        __m512d xc5_im = load_aligned(&tile_in_im[21 * tile_size + k]);
-        __m512d xc6_re = load_aligned(&tile_in_re[22 * tile_size + k]);
-        __m512d xc6_im = load_aligned(&tile_in_im[22 * tile_size + k]);
-
-        _mm_prefetch((const char *)&tile_in_re[28 * tile_size + k], _MM_HINT_T0);
-        _mm_prefetch((const char *)&tile_in_im[28 * tile_size + k], _MM_HINT_T0);
-
-        __m512d xc7_re = load_aligned(&tile_in_re[23 * tile_size + k]);
-        __m512d xc7_im = load_aligned(&tile_in_im[23 * tile_size + k]);
-
-
-        // Even wave
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xc0_re, xc0_im, xc1_re, xc1_im, xc2_re, xc2_im, xc3_re, xc3_im,
-                xc4_re, xc4_im, xc5_re, xc5_im, xc6_re, xc6_im, xc7_re, xc7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &C_re[0], &C_im[0], &C_re[1], &C_im[1]);
-
-            radix8_emit_pair_26_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &C_re[2], &C_im[2], &C_re[3], &C_im[3],
-                sign_mask);
-        }
-
-        // Odd wave
-        {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xc0_re, xc0_im, xc1_re, xc1_im, xc2_re, xc2_im, xc3_re, xc3_im,
-                xc4_re, xc4_im, xc5_re, xc5_im, xc6_re, xc6_im, xc7_re, xc7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
-
-            radix8_emit_pair_15_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &C_re[4], &C_im[4], &C_re[5], &C_im[5],
-                sign_mask, sqrt2_2);
-
-            radix8_emit_pair_37_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &C_re[6], &C_im[6], &C_re[7], &C_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-        //----------------------------------------------------------------------
-        // GROUP D: Load inputs (prefetches already issued during C)
-        //----------------------------------------------------------------------
-        __m512d xd0_re = load_aligned(&tile_in_re[24 * tile_size + k]);
-        __m512d xd0_im = load_aligned(&tile_in_im[24 * tile_size + k]);
-        __m512d xd1_re = load_aligned(&tile_in_re[25 * tile_size + k]);
-        __m512d xd1_im = load_aligned(&tile_in_im[25 * tile_size + k]);
-
-        // Prefetch remaining output stripes for positions 4,5,6,7
-        if (k + 8 < tile_size)
-        {
-            PREFETCH_OUTPUT_STRIPES(1, 8); // Position 1
-            PREFETCH_OUTPUT_STRIPES(5, 8); // Position 5
-        }
-
-        __m512d xd2_re = load_aligned(&tile_in_re[26 * tile_size + k]);
-        __m512d xd2_im = load_aligned(&tile_in_im[26 * tile_size + k]);
-        __m512d xd3_re = load_aligned(&tile_in_re[27 * tile_size + k]);
-        __m512d xd3_im = load_aligned(&tile_in_im[27 * tile_size + k]);
-
-        // Continue output prefetches
-        if (k + 8 < tile_size)
-        {
-            PREFETCH_OUTPUT_STRIPES(3, 8); // Position 3
-            PREFETCH_OUTPUT_STRIPES(7, 8); // Position 7
-        }
-
-        // Even wave
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xd0_re, xd0_im, xd1_re, xd1_im, xd2_re, xd2_im, xd3_re, xd3_im,
-                xd4_re, xd4_im, xd5_re, xd5_im, xd6_re, xd6_im, xd7_re, xd7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &D_re[0], &D_im[0], &D_re[1], &D_im[1]);
-
-            radix8_emit_pair_26_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &D_re[2], &D_im[2], &D_re[3], &D_im[3],
-                sign_mask);
-        }
-
-        // Odd wave
-        {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xd0_re, xd0_im, xd1_re, xd1_im, xd2_re, xd2_im, xd3_re, xd3_im,
-                xd4_re, xd4_im, xd5_re, xd5_im, xd6_re, xd6_im, xd7_re, xd7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
-
-            radix8_emit_pair_15_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &D_re[4], &D_im[4], &D_re[5], &D_im[5],
-                sign_mask, sqrt2_2);
-
-            radix8_emit_pair_37_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &D_re[6], &D_im[6], &D_re[7], &D_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-        //======================================================================
-        // PHASE 2: CROSS-GROUP RADIX-4 COMBINES (BACKWARD)
-        // Process in bit-reversed order: 0, 4, 2, 6, 1, 5, 3, 7
-        //======================================================================
-
-        // Position 0 (index 0): Identity (same for forward/backward)
-        RADIX32_POSITION_IDENTITY_UNMASKED_BV(0, 0);
-
-        // Position 4 (index 1): W8 FAST-PATH (BACKWARD - conjugated)
-        RADIX32_POSITION4_FAST_BACKWARD_UNMASKED(4);
-
-        // Position 2 (index 2): Generic twiddles (conjugated)
-        RADIX32_POSITION_TWIDDLED_UNMASKED_BV(2, 2, pos2_w1_re, pos2_w1_im, pos2_w2_re, pos2_w2_im, pos2_w3_re, pos2_w3_im);
-
-        // Position 6 (index 3): Generic twiddles (conjugated)
-        RADIX32_POSITION_TWIDDLED_UNMASKED_BV(3, 6, pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im);
-
-        // Position 1 (index 4): Generic twiddles (conjugated)
-        RADIX32_POSITION_TWIDDLED_UNMASKED_BV(4, 1, pos1_w1_re, pos1_w1_im, pos1_w2_re, pos1_w2_im, pos1_w3_re, pos1_w3_im);
-
-        // Position 5 (index 5): Generic twiddles (conjugated)
-        RADIX32_POSITION_TWIDDLED_UNMASKED_BV(5, 5, pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im);
-
-        // Position 3 (index 6): Generic twiddles (conjugated)
-        RADIX32_POSITION_TWIDDLED_UNMASKED_BV(6, 3, pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im);
-
-        // Position 7 (index 7): Generic twiddles (conjugated)
-        RADIX32_POSITION_TWIDDLED_UNMASKED_BV(7, 7, pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im);
-    }
-
-    //==========================================================================
-    // TAIL HANDLING: Process remaining k < 8 samples with masks
-    //==========================================================================
-
-    //==========================================================================
-    // TAIL HANDLING: Process remaining k < 8 samples with masks (BACKWARD)
-    //==========================================================================
-
-    if (k < tile_size)
-    {
-        const size_t tail = tile_size - k;
-        const __mmask8 mask = (__mmask8)((1u << tail) - 1u);
-
-        __m512d A_re[8], A_im[8];
-        __m512d B_re[8], B_im[8];
-        __m512d C_re[8], C_im[8];
-        __m512d D_re[8], D_im[8];
-
-        //======================================================================
-        // PHASE 1: RADIX-8 PAIR EMITTERS WITH MASKED LOADS (BACKWARD)
-        //======================================================================
-
-        //----------------------------------------------------------------------
-        // GROUP A: Load inputs with masks
-        //----------------------------------------------------------------------
-        __m512d xa0_re = load_masked(mask, &tile_in_re[0 * tile_size + k]);
-        __m512d xa0_im = load_masked(mask, &tile_in_im[0 * tile_size + k]);
-        __m512d xa1_re = load_masked(mask, &tile_in_re[1 * tile_size + k]);
-        __m512d xa1_im = load_masked(mask, &tile_in_im[1 * tile_size + k]);
-        __m512d xa2_re = load_masked(mask, &tile_in_re[2 * tile_size + k]);
-        __m512d xa2_im = load_masked(mask, &tile_in_im[2 * tile_size + k]);
-        __m512d xa3_re = load_masked(mask, &tile_in_re[3 * tile_size + k]);
-        __m512d xa3_im = load_masked(mask, &tile_in_im[3 * tile_size + k]);
-        __m512d xa4_re = load_masked(mask, &tile_in_re[4 * tile_size + k]);
-        __m512d xa4_im = load_masked(mask, &tile_in_im[4 * tile_size + k]);
-        __m512d xa5_re = load_masked(mask, &tile_in_re[5 * tile_size + k]);
-        __m512d xa5_im = load_masked(mask, &tile_in_im[5 * tile_size + k]);
-        __m512d xa6_re = load_masked(mask, &tile_in_re[6 * tile_size + k]);
-        __m512d xa6_im = load_masked(mask, &tile_in_im[6 * tile_size + k]);
-        __m512d xa7_re = load_masked(mask, &tile_in_re[7 * tile_size + k]);
-        __m512d xa7_im = load_masked(mask, &tile_in_im[7 * tile_size + k]);
-
-        // Even wave (pairs 0,4 and 2,6) - BACKWARD
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xa0_re, xa0_im, xa1_re, xa1_im, xa2_re, xa2_im, xa3_re, xa3_im,
-                xa4_re, xa4_im, xa5_re, xa5_im, xa6_re, xa6_im, xa7_re, xa7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &A_re[0], &A_im[0], &A_re[1], &A_im[1]);
-
-            radix8_emit_pair_26_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &A_re[2], &A_im[2], &A_re[3], &A_im[3],
-                sign_mask);
-        }
-
-        // Odd wave (pairs 1,5 and 3,7) - BACKWARD
-        {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xa0_re, xa0_im, xa1_re, xa1_im, xa2_re, xa2_im, xa3_re, xa3_im,
-                xa4_re, xa4_im, xa5_re, xa5_im, xa6_re, xa6_im, xa7_re, xa7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
-
-            radix8_emit_pair_15_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &A_re[4], &A_im[4], &A_re[5], &A_im[5],
-                sign_mask, sqrt2_2);
-
-            radix8_emit_pair_37_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &A_re[6], &A_im[6], &A_re[7], &A_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-        //----------------------------------------------------------------------
-        // GROUP B: Load inputs with masks
-        //----------------------------------------------------------------------
-        __m512d xb0_re = load_masked(mask, &tile_in_re[8 * tile_size + k]);
-        __m512d xb0_im = load_masked(mask, &tile_in_im[8 * tile_size + k]);
-        __m512d xb1_re = load_masked(mask, &tile_in_re[9 * tile_size + k]);
-        __m512d xb1_im = load_masked(mask, &tile_in_im[9 * tile_size + k]);
-        __m512d xb2_re = load_masked(mask, &tile_in_re[10 * tile_size + k]);
-        __m512d xb2_im = load_masked(mask, &tile_in_im[10 * tile_size + k]);
-        __m512d xb3_re = load_masked(mask, &tile_in_re[11 * tile_size + k]);
-        __m512d xb3_im = load_masked(mask, &tile_in_im[11 * tile_size + k]);
-        __m512d xb4_re = load_masked(mask, &tile_in_re[12 * tile_size + k]);
-        __m512d xb4_im = load_masked(mask, &tile_in_im[12 * tile_size + k]);
-        __m512d xb5_re = load_masked(mask, &tile_in_re[13 * tile_size + k]);
-        __m512d xb5_im = load_masked(mask, &tile_in_im[13 * tile_size + k]);
-        __m512d xb6_re = load_masked(mask, &tile_in_re[14 * tile_size + k]);
-        __m512d xb6_im = load_masked(mask, &tile_in_im[14 * tile_size + k]);
-        __m512d xb7_re = load_masked(mask, &tile_in_re[15 * tile_size + k]);
-        __m512d xb7_im = load_masked(mask, &tile_in_im[15 * tile_size + k]);
-
-        // Even wave - BACKWARD
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xb0_re, xb0_im, xb1_re, xb1_im, xb2_re, xb2_im, xb3_re, xb3_im,
-                xb4_re, xb4_im, xb5_re, xb5_im, xb6_re, xb6_im, xb7_re, xb7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &B_re[0], &B_im[0], &B_re[1], &B_im[1]);
-
-            radix8_emit_pair_26_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &B_re[2], &B_im[2], &B_re[3], &B_im[3],
-                sign_mask);
-        }
-
-        // Odd wave - BACKWARD
-        {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xb0_re, xb0_im, xb1_re, xb1_im, xb2_re, xb2_im, xb3_re, xb3_im,
-                xb4_re, xb4_im, xb5_re, xb5_im, xb6_re, xb6_im, xb7_re, xb7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
-
-            radix8_emit_pair_15_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &B_re[4], &B_im[4], &B_re[5], &B_im[5],
-                sign_mask, sqrt2_2);
-
-            radix8_emit_pair_37_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &B_re[6], &B_im[6], &B_re[7], &B_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-        //----------------------------------------------------------------------
-        // GROUP C: Load inputs with masks
-        //----------------------------------------------------------------------
-        __m512d xc0_re = load_masked(mask, &tile_in_re[16 * tile_size + k]);
-        __m512d xc0_im = load_masked(mask, &tile_in_im[16 * tile_size + k]);
-        __m512d xc1_re = load_masked(mask, &tile_in_re[17 * tile_size + k]);
-        __m512d xc1_im = load_masked(mask, &tile_in_im[17 * tile_size + k]);
-        __m512d xc2_re = load_masked(mask, &tile_in_re[18 * tile_size + k]);
-        __m512d xc2_im = load_masked(mask, &tile_in_im[18 * tile_size + k]);
-        __m512d xc3_re = load_masked(mask, &tile_in_re[19 * tile_size + k]);
-        __m512d xc3_im = load_masked(mask, &tile_in_im[19 * tile_size + k]);
-        __m512d xc4_re = load_masked(mask, &tile_in_re[20 * tile_size + k]);
-        __m512d xc4_im = load_masked(mask, &tile_in_im[20 * tile_size + k]);
-        __m512d xc5_re = load_masked(mask, &tile_in_re[21 * tile_size + k]);
-        __m512d xc5_im = load_masked(mask, &tile_in_im[21 * tile_size + k]);
-        __m512d xc6_re = load_masked(mask, &tile_in_re[22 * tile_size + k]);
-        __m512d xc6_im = load_masked(mask, &tile_in_im[22 * tile_size + k]);
-        __m512d xc7_re = load_masked(mask, &tile_in_re[23 * tile_size + k]);
-        __m512d xc7_im = load_masked(mask, &tile_in_im[23 * tile_size + k]);
-
-        // Even wave - BACKWARD
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xc0_re, xc0_im, xc1_re, xc1_im, xc2_re, xc2_im, xc3_re, xc3_im,
-                xc4_re, xc4_im, xc5_re, xc5_im, xc6_re, xc6_im, xc7_re, xc7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &C_re[0], &C_im[0], &C_re[1], &C_im[1]);
-
-            radix8_emit_pair_26_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &C_re[2], &C_im[2], &C_re[3], &C_im[3],
-                sign_mask);
-        }
-
-        // Odd wave - BACKWARD
-        {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xc0_re, xc0_im, xc1_re, xc1_im, xc2_re, xc2_im, xc3_re, xc3_im,
-                xc4_re, xc4_im, xc5_re, xc5_im, xc6_re, xc6_im, xc7_re, xc7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
-
-            radix8_emit_pair_15_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &C_re[4], &C_im[4], &C_re[5], &C_im[5],
-                sign_mask, sqrt2_2);
-
-            radix8_emit_pair_37_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &C_re[6], &C_im[6], &C_re[7], &C_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-        //----------------------------------------------------------------------
-        // GROUP D: Load inputs with masks
-        //----------------------------------------------------------------------
-        __m512d xd0_re = load_masked(mask, &tile_in_re[24 * tile_size + k]);
-        __m512d xd0_im = load_masked(mask, &tile_in_im[24 * tile_size + k]);
-        __m512d xd1_re = load_masked(mask, &tile_in_re[25 * tile_size + k]);
-        __m512d xd1_im = load_masked(mask, &tile_in_im[25 * tile_size + k]);
-        __m512d xd2_re = load_masked(mask, &tile_in_re[26 * tile_size + k]);
-        __m512d xd2_im = load_masked(mask, &tile_in_im[26 * tile_size + k]);
-        __m512d xd3_re = load_masked(mask, &tile_in_re[27 * tile_size + k]);
-        __m512d xd3_im = load_masked(mask, &tile_in_im[27 * tile_size + k]);
-        __m512d xd4_re = load_masked(mask, &tile_in_re[28 * tile_size + k]);
-        __m512d xd4_im = load_masked(mask, &tile_in_im[28 * tile_size + k]);
-        __m512d xd5_re = load_masked(mask, &tile_in_re[29 * tile_size + k]);
-        __m512d xd5_im = load_masked(mask, &tile_in_im[29 * tile_size + k]);
-        __m512d xd6_re = load_masked(mask, &tile_in_re[30 * tile_size + k]);
-        __m512d xd6_im = load_masked(mask, &tile_in_im[30 * tile_size + k]);
-        __m512d xd7_re = load_masked(mask, &tile_in_re[31 * tile_size + k]);
-        __m512d xd7_im = load_masked(mask, &tile_in_im[31 * tile_size + k]);
-
-        // Even wave - BACKWARD
-        {
-            __m512d t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im;
-            radix8_compute_t0123_avx512(
-                xd0_re, xd0_im, xd1_re, xd1_im, xd2_re, xd2_im, xd3_re, xd3_im,
-                xd4_re, xd4_im, xd5_re, xd5_im, xd6_re, xd6_im, xd7_re, xd7_im,
-                &t0_re, &t0_im, &t1_re, &t1_im, &t2_re, &t2_im, &t3_re, &t3_im);
-
-            radix8_emit_pair_04_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &D_re[0], &D_im[0], &D_re[1], &D_im[1]);
-
-            radix8_emit_pair_26_from_t0123_backward_avx512(
-                t0_re, t0_im, t1_re, t1_im, t2_re, t2_im, t3_re, t3_im,
-                &D_re[2], &D_im[2], &D_re[3], &D_im[3],
-                sign_mask);
-        }
-
-        // Odd wave - BACKWARD
-        {
-            __m512d t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im;
-            radix8_compute_t4567_avx512(
-                xd0_re, xd0_im, xd1_re, xd1_im, xd2_re, xd2_im, xd3_re, xd3_im,
-                xd4_re, xd4_im, xd5_re, xd5_im, xd6_re, xd6_im, xd7_re, xd7_im,
-                &t4_re, &t4_im, &t5_re, &t5_im, &t6_re, &t6_im, &t7_re, &t7_im);
-
-            radix8_emit_pair_15_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &D_re[4], &D_im[4], &D_re[5], &D_im[5],
-                sign_mask, sqrt2_2);
-
-            radix8_emit_pair_37_from_t4567_backward_avx512(
-                t4_re, t4_im, t5_re, t5_im, t6_re, t6_im, t7_re, t7_im,
-                &D_re[6], &D_im[6], &D_re[7], &D_im[7],
-                sign_mask, sqrt2_2);
-        }
-
-        //======================================================================
-        // PHASE 2: CROSS-GROUP RADIX-4 COMBINES WITH MASKED STORES (BACKWARD)
-        //======================================================================
-
-        RADIX32_POSITION_IDENTITY_MASKED_BV(0, 0, mask);
-        RADIX32_POSITION4_FAST_BACKWARD_MASKED(4, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED_BV(2, 2, pos2_w1_re, pos2_w1_im, pos2_w2_re, pos2_w2_im, pos2_w3_re, pos2_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED_BV(3, 6, pos6_w1_re, pos6_w1_im, pos6_w2_re, pos6_w2_im, pos6_w3_re, pos6_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED_BV(4, 1, pos1_w1_re, pos1_w1_im, pos1_w2_re, pos1_w2_im, pos1_w3_re, pos1_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED_BV(5, 5, pos5_w1_re, pos5_w1_im, pos5_w2_re, pos5_w2_im, pos5_w3_re, pos5_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED_BV(6, 3, pos3_w1_re, pos3_w1_im, pos3_w2_re, pos3_w2_im, pos3_w3_re, pos3_w3_im, mask);
-        RADIX32_POSITION_TWIDDLED_MASKED_BV(7, 7, pos7_w1_re, pos7_w1_im, pos7_w2_re, pos7_w2_im, pos7_w3_re, pos7_w3_im, mask);
-    }
-}
-
-//==============================================================================
-// TOP-LEVEL EXECUTION FUNCTIONS
-//==============================================================================
-
-/**
- * @brief Main execution function for radix-32 stage (forward)
- *
- * Orchestrates the complete tiled execution:
- *   1. Loop over K in tiles of RADIX32_TILE_SIZE
- *   2. Gather from 32 stripes → tile-local buffers
- *   3. Execute fused radix-32 butterfly
- *   4. Scatter from tile-local buffers → 32 stripes
- *
- * @param K Total butterflies in stage (must be multiple of 8)
- * @param in_re Input real [32 stripes][K] (SoA)
- * @param in_im Input imag [32 stripes][K] (SoA)
- * @param out_re Output real [32 stripes][K] (SoA)
- * @param out_im Output imag [32 stripes][K] (SoA)
- * @param pass1_plan Pass 1 twiddle plan
- * @param pass2_plan Pass 2 geometric constants
- */
-TARGET_AVX512
-void radix32_execute_forward_avx512(
-    size_t K,
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    const radix32_pass2_plan_t *RESTRICT pass2_plan)
-{
-    assert((K & 7) == 0 && "K must be multiple of 8");
-
-    // Determine tile size and NT threshold
-    const size_t tile_size = (K <= RADIX32_SMALL_TILE_SIZE)
-                                 ? RADIX32_SMALL_TILE_SIZE
-                                 : RADIX32_TILE_SIZE;
-
-    const bool use_nt = (K > RADIX32_NT_THRESHOLD);
-
-    // Allocate tile workspace
-    radix32_tile_workspace_t workspace;
-
-    // Main tiled loop
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
-    {
-        const size_t current_tile_size = (k_tile + tile_size <= K)
-                                             ? tile_size
-                                             : (K - k_tile);
-
-        //======================================================================
-        // GATHER: Stripe layout → Tile-local layout
-        //======================================================================
-        radix32_gather_stripes_to_tile(
-            in_re, in_im, K, k_tile, current_tile_size,
-            workspace.input_re, workspace.input_im);
-
-        //======================================================================
-        // COMPUTE: Fused radix-32 8×4 butterfly
-        //======================================================================
-        radix32_fused_butterfly_forward_avx512(
-            workspace.input_re, workspace.input_im,
-            workspace.output_re, workspace.output_im,
-            current_tile_size, pass2_plan);
-
-        //======================================================================
-        // SCATTER: Tile-local layout → Stripe layout
-        //======================================================================
-        if (use_nt)
-        {
-            radix32_scatter_tile_to_stripes_nt(
-                workspace.output_re, workspace.output_im,
-                current_tile_size, k_tile, K, out_re, out_im);
-        }
-        else
-        {
-            radix32_scatter_tile_to_stripes(
-                workspace.output_re, workspace.output_im,
-                current_tile_size, k_tile, K, out_re, out_im);
-        }
-    }
-}
-
-/**
- * @brief Main execution function for radix-32 stage (backward/inverse)
- */
-TARGET_AVX512
-void radix32_execute_backward_avx512(
-    size_t K,
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    const radix32_pass2_plan_t *RESTRICT pass2_plan)
-{
-    assert((K & 7) == 0 && "K must be multiple of 8");
-
-    const size_t tile_size = (K <= RADIX32_SMALL_TILE_SIZE)
-                                 ? RADIX32_SMALL_TILE_SIZE
-                                 : RADIX32_TILE_SIZE;
-
-    const bool use_nt = (K > RADIX32_NT_THRESHOLD);
-
-    radix32_tile_workspace_t workspace;
-
-    for (size_t k_tile = 0; k_tile < K; k_tile += tile_size)
-    {
-        const size_t current_tile_size = (k_tile + tile_size <= K)
-                                             ? tile_size
-                                             : (K - k_tile);
-
-        // GATHER
-        radix32_gather_stripes_to_tile(
-            in_re, in_im, K, k_tile, current_tile_size,
-            workspace.input_re, workspace.input_im);
-
-        // COMPUTE (BACKWARD)
-        radix32_fused_butterfly_backward_avx512(
-            workspace.input_re, workspace.input_im,
-            workspace.output_re, workspace.output_im,
-            current_tile_size, pass2_plan);
-
-        // SCATTER
-        if (use_nt)
-        {
-            radix32_scatter_tile_to_stripes_nt(
-                workspace.output_re, workspace.output_im,
-                current_tile_size, k_tile, K, out_re, out_im);
-        }
-        else
-        {
-            radix32_scatter_tile_to_stripes(
-                workspace.output_re, workspace.output_im,
-                current_tile_size, k_tile, K, out_re, out_im);
-        }
-    }
-}
-
 #endif
 
-
-/*
-
-Structural / integration issues
-
-❗ Forward tail path is incomplete:
-In radix32_fused_butterfly_forward_avx512, the masked tail block only loads xa0_* and then has // 
-... placeholders, yet you call the masked position macros that expect fully populated A_re/B_re/C_re/D_re (and, transitively, the pair-emitters to have run for all four groups). 
-That’s a functional bug: those arrays will contain garbage in the tail.
-Fix: mirror the backward tail section you wrote (which is complete) — load masked inputs for groups A–D and run the two-wave emitters to fill A/B/C/D before the masked RADIX32_POSITION_* calls.
-*/
+#endif /* FFT_RADIX32_AVX512_N1_H */
