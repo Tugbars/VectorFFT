@@ -2658,3 +2658,82 @@ void radix32_stage_dit_backward_soa_scalar(
 }
 
 #endif // FFT_RADIX32_SCALAR_NATIVE_SOA_H
+
+
+/*
+
+🚨 Correctness: W9..W16 are not -W1..-W8
+
+For N = 32, the roots satisfy:
+
+W32^(m+8) = W32^m * W32^8 (multiply by e^{-jπ/4})
+
+W32^(m+16) = -W32^m
+
+Your BLOCKED8 path loads W1..W8 then does:
+
+// Derive W9..W16 = -W1..-W8
+NW[r] = -W[r];
+
+
+and then uses those for indices 9, 13, 10, 14, 11, 15, 12 (etc). That gives you W17..W24, not W9..W16. Same issue in BLOCKED4 (you derive W5..W8 correctly via products, but then set W9..W16 by negation).
+
+Minimal fix (BLOCKED8)
+
+Compute W8 once and build W9..W16 = W8 * W1..W8:
+
+// After loading W1..W8:
+double W8r, W8i;
+// W8 = W4^2 if you have W4, or just load from table as the 8th element.
+// In BLOCKED8 you already loaded W[7] as W8 (1-based), so:
+W8r = W_re[7]; W8i = W_im[7];
+
+double A_re[8], A_im[8];   // W1..W8
+double B_re[8], B_im[8];   // W9..W16 = W8 * W1..W8
+for (int r = 0; r < 8; ++r) { A_re[r] = W_re[r]; A_im[r] = W_im[r]; }
+for (int r = 0; r < 8; ++r) {
+    cmul_fma_scalar(A_re[r], A_im[r], W8r, W8i, &B_re[r], &B_im[r]);
+}
+// Then use:
+//   indices 1,5,9,13 → A[0], A[4], B[0], B[4]
+//   indices 2,6,10,14 → A[1], A[5], B[1], B[5]
+//   indices 3,7,11,15 → A[2], A[6], B[2], B[6]
+//   indices 4,8,12    → A[3], A[7], B[3]
+
+Minimal fix (BLOCKED4)
+
+You already compute W5..W8 via W4 products and W8 = W4². Build W9..W16 via W8 * {W1..W8} (not negation):
+
+// After W1..W4 and W5..W8 and W8 done:
+double V_re[8] = { W1r,W2r,W3r,W4r,W5r,W6r,W7r,W8r };
+double V_im[8] = { W1i,W2i,W3i,W4i,W5i,W6i,W7i,W8i };
+double U_re[8], U_im[8]; // W9..W16
+for (int r = 0; r < 8; ++r) {
+    cmul_fma_scalar(V_re[r], V_im[r], W8r, W8i, &U_re[r], &U_im[r]);
+}
+// Use A = V for 1..8, B = U for 9..16 in the same interleaved pattern.
+
+Recurrence path
+
+radix32_init_merge_recurrence_state_scalar() currently sets W9..W16 = -W1..-W8. Replace that with W9..W16 = W8 * W1..W8 (after you’ve computed W8), and keep negation only if you ever need W17..W32.
+
+
+FMA/Intrinsic nits
+
+cmul_fma_scalar/csquare_fma_scalar build and tear down SSE scalars every call:
+
+That’s a lot of _mm_set_sd traffic. On scalar builds, fma() from <math.h> (or just plain a*b±c with -ffp-contract=fast) usually wins and is cleaner.
+
+Consider two variants:
+
+#if HAS_FMA
+  *cr = fma(ar, br, -(ai*bi));   // cr = ar*br - ai*bi
+  *ci = fma(ar, bi,  (ai*br));
+#else
+  *cr = ar*br - ai*bi;
+  *ci = ar*bi + ai*br;
+#endif
+
+
+TARGET_FMA on scalar functions is fine, but you don’t need SSE intrinsics to get scalar FMA codegen.
+*/
