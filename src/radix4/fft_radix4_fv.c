@@ -9,6 +9,9 @@
  * @date 2025
  */
 
+// Add at top of file:
+#include "vfft_compat.h"
+
 #include "fft_radix4_uniform.h"
 #include "avx2/fft_radix4_avx2.h"
 #include "scalar/fft_radix4_scalar.h"
@@ -17,6 +20,7 @@
     #include "avx512/fft_radix4_avx512n1.h"
     #include "avx512/fft_radix4_avx512.h"
 #endif
+
 
 #include "avx2/fft_radix4_avx2n1.h"
 
@@ -51,7 +55,8 @@ static inline int check_nt_env_override(void)
     
     if (cached_value == -2)
     {
-        const char *env = getenv("FFT_NT");
+        const char *env = vfft_getenv("FFT_NT");
+
         if (env == NULL)
             cached_value = -1;
         else if (env[0] == '0')
@@ -121,7 +126,7 @@ static void radix4_process_range_native_soa_fv(
         tw_local.re = stage_tw->re + k_start;
         tw_local.im = stage_tw->im + k_start;
         
-        radix4_stage_baseptr_fv_scalar(N, range_K, a_re, a_im,
+        radix4_stage_baseptr_fv_scalar((size_t)N, (size_t)range_K, a_re, a_im,
                                        out_re + k_start, out_im + k_start,
                                        &tw_local);
     }
@@ -185,7 +190,7 @@ void fft_radix4_fv(
     (void)tw_re_a; (void)tw_im_a;
 #endif
     int nt_env = check_nt_env_override();
-    const size_t wfp = 4ull * K * sizeof(double);
+    const size_t wfp = (size_t)4 * (size_t)K * sizeof(double);
     const int oop = (in_re != out_re) && (in_im != out_im);
     int use_nt = 0;
     if (nt_env == 0) use_nt = 0;

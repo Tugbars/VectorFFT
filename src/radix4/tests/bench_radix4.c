@@ -56,18 +56,17 @@ extern void fft_radix4_bv_n1(
 
 static inline uint64_t rdtsc(void)
 {
-#if defined(__x86_64__) || defined(_M_X64)
+#if defined(_MSC_VER) || defined(__INTEL_LLVM_COMPILER)
+    return __rdtsc();
+#elif defined(__x86_64__) || defined(_M_X64)
     unsigned lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return ((uint64_t)hi << 32) | lo;
-#elif defined(_M_X64) && defined(_MSC_VER)
-    return __rdtsc();
 #elif defined(__aarch64__)
     uint64_t val;
     __asm__ volatile("mrs %0, cntvct_el0" : "=r"(val));
     return val;
 #else
-    /* Fallback: use portable timer, convert ns → fake ticks */
     return (uint64_t)vfft_now_ns();
 #endif
 }

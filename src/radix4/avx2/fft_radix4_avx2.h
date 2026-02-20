@@ -1,6 +1,6 @@
 /**
  * @file fft_radix4_avx2_tw.h
- * @brief AVX2 Radix-4 Twiddle Stage - Simple Loop + Prefetch
+ * @brief AVX2 Radix-4 Twiddle Stage - L1-Blocked Loop + Prefetch
  *
  * @details
  * WHY NO U=2 PIPELINING:
@@ -16,8 +16,17 @@
  *   sign_mask                            → 1 ymm (hoisted)
  *   Total: ~13 ymm peak, fits in 16 with 3 spare for compiler scheduling
  *
+ * CACHE BLOCKING (v2):
+ *   For K > L1_BLOCK_K_THRESHOLD, the main loop is tiled into blocks of
+ *   RADIX4_TW_AVX2_L1_BLOCK doubles. Within each block the working set is:
+ *     B doubles × (4 in_re + 4 in_im + 3 tw_re + 3 tw_im + 4 out_re + 4 out_im)
+ *     = B × 22 × 8 bytes
+ *   With B=256: 256 × 22 × 8 = 44KB → fits in 48KB Raptor Lake L1d.
+ *   With B=512: 512 × 22 × 8 = 88KB → fits in L2, good for larger L1.
+ *
  * OPTIMIZATIONS:
  *   ✅ Base pointer precomputation
+ *   ✅ L1 cache blocking for K > threshold
  *   ✅ Software prefetch (NTA for data, T0 for twiddles)
  *   ✅ FMA complex multiply (_mm256_fmsub_pd / _mm256_fmadd_pd)
  *   ✅ Scalar tail for K % 4 != 0
@@ -26,7 +35,7 @@
  *   ✅ Forward + Backward via X-macro
  *
  * @author VectorFFT Team
- * @version 1.0
+ * @version 2.0
  * @date 2025
  */
 
@@ -62,11 +71,28 @@
 #endif
 
 #ifndef RADIX4_TW_AVX2_STREAM_THRESHOLD
-  #define RADIX4_TW_AVX2_STREAM_THRESHOLD 8192  /* N threshold for NT stores */
+  #define RADIX4_TW_AVX2_STREAM_THRESHOLD 32768  /* N threshold for NT stores (was 8192) */
 #endif
 
 #ifndef RADIX4_DERIVE_W3_AVX2
   #define RADIX4_DERIVE_W3_AVX2 0               /* 0=load W3, 1=compute W3=W1*W2 */
+#endif
+
+/* L1 cache blocking: tile size in doubles (per stream).
+ * Total working set per block = BLOCK × 22 streams × 8 bytes.
+ *   256 → 44KB  (fits 48KB L1d on Raptor Lake / Golden Cove)
+ *   384 → 67KB  (fits L1d on Zen4 with 32KB, pushes to L2)
+ *   512 → 88KB  (L2-resident, good if L1 is smaller)
+ *
+ * Must be multiple of 4 (AVX2 processes 4 doubles per iteration). */
+#ifndef RADIX4_TW_AVX2_L1_BLOCK
+  #define RADIX4_TW_AVX2_L1_BLOCK 256
+#endif
+
+/* Only apply blocking when K exceeds this threshold.
+ * Below this, the full sweep fits in L1 anyway. */
+#ifndef RADIX4_TW_AVX2_L1_BLOCK_K_THRESHOLD
+  #define RADIX4_TW_AVX2_L1_BLOCK_K_THRESHOLD 512
 #endif
 
 #ifdef __AVX2__
@@ -232,33 +258,23 @@ FORCE_INLINE_2TW void prefetch_tw_avx2(
     const double *RESTRICT_2TW w2r, const double *RESTRICT_2TW w2i,
     size_t pk)
 {
-    PF_NTA_2TW(&a_re[pk]); PF_NTA_2TW(&a_im[pk]);
-    PF_NTA_2TW(&b_re[pk]); PF_NTA_2TW(&b_im[pk]);
-    PF_NTA_2TW(&c_re[pk]); PF_NTA_2TW(&c_im[pk]);
-    PF_NTA_2TW(&d_re[pk]); PF_NTA_2TW(&d_im[pk]);
-    PF_T0_2TW(&w1r[pk]);   PF_T0_2TW(&w1i[pk]);
-    PF_T0_2TW(&w2r[pk]);   PF_T0_2TW(&w2i[pk]);
+    PF_T0_2TW(&a_re[pk]); PF_T0_2TW(&a_im[pk]);
+    PF_T0_2TW(&b_re[pk]); PF_T0_2TW(&b_im[pk]);
+    PF_T0_2TW(&c_re[pk]); PF_T0_2TW(&c_im[pk]);
+    PF_T0_2TW(&d_re[pk]); PF_T0_2TW(&d_im[pk]);
+    PF_T0_2TW(&w1r[pk]);  PF_T0_2TW(&w1i[pk]);
+    PF_T0_2TW(&w2r[pk]);  PF_T0_2TW(&w2i[pk]);
 }
 
 /*==========================================================================
- * MAIN STAGE LOOP — SIMPLE + PREFETCH
- *
- * Register budget per iteration (peak liveness):
- *   8 data loads (a,b,c,d × re,im)        → 8 ymm, freed as cmul consumes them
- *   6 twiddle loads (w1,w2,w3 × re,im)    → loaded into freed data regs
- *   6 cmul temps (tB,tC,tD × re,im)       → overwrite data+twiddle regs
- *   butterfly: 6 sums/difs + 2 rot        → reuse cmul regs
- *   sign_mask                              → 1 ymm (hoisted, pinned)
- *   ─────────────────────────────────
- *   Peak: ~13 ymm live simultaneously     → fits in 16 with 3 spare
- *
- * The key insight is that b_re/b_im are consumed by cmul(B*W1) before
- * we need to load w2r/w2i, so the compiler can reuse those registers.
- * Similarly, after cmul produces tB, the w1 registers are dead.
+ * INNER KERNEL: processes a contiguous range [k_start, k_end) with AVX2.
+ * k_end - k_start must be a multiple of 4, and k_end <= K.
+ * Scalar tail is handled separately by the caller.
  *========================================================================*/
 
-#define DEFINE_TW_STAGE_AVX2(DIR, dir_tag)                                     \
-FORCE_INLINE_2TW void radix4_tw_stage_##dir_tag##_avx2(                        \
+#define DEFINE_TW_INNER_AVX2(DIR, dir_tag)                                     \
+FORCE_INLINE_2TW void radix4_tw_inner_##dir_tag##_avx2(                        \
+    size_t k_start, size_t k_end,                                              \
     size_t K,                                                                  \
     const double *RESTRICT_2TW a_re, const double *RESTRICT_2TW a_im,         \
     const double *RESTRICT_2TW b_re, const double *RESTRICT_2TW b_im,         \
@@ -273,14 +289,13 @@ FORCE_INLINE_2TW void radix4_tw_stage_##dir_tag##_avx2(                        \
     const double *RESTRICT_2TW w3r, const double *RESTRICT_2TW w3i,           \
     __m256d sign_mask, bool do_stream)                                         \
 {                                                                              \
-    const size_t K4 = (K / 4) * 4;                                             \
     const int pfd = RADIX4_TW_AVX2_PREFETCH_DISTANCE;                          \
                                                                                \
-    for (size_t k = 0; k < K4; k += 4)                                         \
+    for (size_t k = k_start; k < k_end; k += 4)                               \
     {                                                                          \
-        /* Prefetch */                                                         \
+        /* Prefetch within this block */                                       \
         {                                                                      \
-            size_t pk = k + pfd;                                               \
+            size_t pk = k + (size_t)pfd;                                       \
             if (pk < K)                                                        \
                 prefetch_tw_avx2(a_re,a_im,b_re,b_im,c_re,c_im,d_re,d_im,    \
                                  w1r,w1i,w2r,w2i, pk);                         \
@@ -301,19 +316,14 @@ FORCE_INLINE_2TW void radix4_tw_stage_##dir_tag##_avx2(                        \
         __m256d tw1i = _mm256_loadu_pd(&w1i[k]);                               \
         __m256d tBr, tBi;                                                      \
         cmul_avx2_tw(br, bi, tw1r, tw1i, &tBr, &tBi);                         \
-        /* br,bi,tw1r,tw1i now dead — 4 regs freed */                          \
                                                                                \
         __m256d tw2r = _mm256_loadu_pd(&w2r[k]);                               \
         __m256d tw2i = _mm256_loadu_pd(&w2i[k]);                               \
         __m256d tCr, tCi;                                                      \
         cmul_avx2_tw(cr, ci, tw2r, tw2i, &tCr, &tCi);                         \
-        /* cr,ci,tw2r,tw2i now dead */                                         \
                                                                                \
         __m256d tw3r, tw3i;                                                    \
         if (RADIX4_DERIVE_W3_AVX2) {                                           \
-            /* Reload tw1,tw2 to derive — but they're dead. Use stored. */     \
-            /* Actually: just re-derive from the already-loaded values. */      \
-            /* We need to reload tw1/tw2 since they were consumed. */           \
             __m256d tw1r_ = _mm256_loadu_pd(&w1r[k]);                          \
             __m256d tw1i_ = _mm256_loadu_pd(&w1i[k]);                          \
             __m256d tw2r_ = _mm256_loadu_pd(&w2r[k]);                          \
@@ -325,9 +335,8 @@ FORCE_INLINE_2TW void radix4_tw_stage_##dir_tag##_avx2(                        \
         }                                                                      \
         __m256d tDr, tDi;                                                      \
         cmul_avx2_tw(dr_, di, tw3r, tw3i, &tDr, &tDi);                        \
-        /* dr_,di,tw3r,tw3i now dead */                                        \
                                                                                \
-        /* Butterfly — inputs: ar,ai,tBr,tBi,tCr,tCi,tDr,tDi (8 live) */     \
+        /* Butterfly */                                                        \
         __m256d o0r,o0i,o1r,o1i,o2r,o2i,o3r,o3i;                             \
         radix4_butterfly_tw_##dir_tag##_avx2(                                  \
             ar,ai, tBr,tBi, tCr,tCi, tDr,tDi,                                 \
@@ -346,6 +355,64 @@ FORCE_INLINE_2TW void radix4_tw_stage_##dir_tag##_avx2(                        \
             _mm256_storeu_pd(&y3_re[k],o3r); _mm256_storeu_pd(&y3_im[k],o3i); \
         }                                                                      \
     }                                                                          \
+}
+
+DEFINE_TW_INNER_AVX2(forward, fv)
+DEFINE_TW_INNER_AVX2(backward, bv)
+
+/*==========================================================================
+ * MAIN STAGE LOOP — L1-BLOCKED + PREFETCH
+ *
+ * For K <= L1_BLOCK_K_THRESHOLD: single sweep (same as v1).
+ * For K >  L1_BLOCK_K_THRESHOLD: process in blocks of L1_BLOCK doubles.
+ *   Each block touches B elements from each of 22 streams → fits in L1d.
+ *
+ * Register budget per iteration (peak liveness): ~13 ymm (unchanged).
+ *========================================================================*/
+
+#define DEFINE_TW_STAGE_AVX2(DIR, dir_tag)                                     \
+FORCE_INLINE_2TW void radix4_tw_stage_##dir_tag##_avx2(                        \
+    size_t K,                                                                  \
+    const double *RESTRICT_2TW a_re, const double *RESTRICT_2TW a_im,         \
+    const double *RESTRICT_2TW b_re, const double *RESTRICT_2TW b_im,         \
+    const double *RESTRICT_2TW c_re, const double *RESTRICT_2TW c_im,         \
+    const double *RESTRICT_2TW d_re, const double *RESTRICT_2TW d_im,         \
+    double *RESTRICT_2TW y0_re, double *RESTRICT_2TW y0_im,                   \
+    double *RESTRICT_2TW y1_re, double *RESTRICT_2TW y1_im,                   \
+    double *RESTRICT_2TW y2_re, double *RESTRICT_2TW y2_im,                   \
+    double *RESTRICT_2TW y3_re, double *RESTRICT_2TW y3_im,                   \
+    const double *RESTRICT_2TW w1r, const double *RESTRICT_2TW w1i,           \
+    const double *RESTRICT_2TW w2r, const double *RESTRICT_2TW w2i,           \
+    const double *RESTRICT_2TW w3r, const double *RESTRICT_2TW w3i,           \
+    __m256d sign_mask, bool do_stream)                                         \
+{                                                                              \
+    const size_t K4 = (K / 4) * 4;                                             \
+    const size_t BLOCK = RADIX4_TW_AVX2_L1_BLOCK;                             \
+                                                                               \
+    if (K >= RADIX4_TW_AVX2_L1_BLOCK_K_THRESHOLD)                             \
+    {                                                                          \
+        /* ── L1-blocked path ── */                                            \
+        for (size_t kb = 0; kb < K4; kb += BLOCK)                              \
+        {                                                                      \
+            size_t ke = kb + BLOCK;                                            \
+            if (ke > K4) ke = K4;                                              \
+                                                                               \
+            radix4_tw_inner_##dir_tag##_avx2(                                  \
+                kb, ke, K,                                                     \
+                a_re,a_im,b_re,b_im,c_re,c_im,d_re,d_im,                     \
+                y0_re,y0_im,y1_re,y1_im,y2_re,y2_im,y3_re,y3_im,             \
+                w1r,w1i,w2r,w2i,w3r,w3i, sign_mask, do_stream);               \
+        }                                                                      \
+    }                                                                          \
+    else                                                                       \
+    {                                                                          \
+        /* ── Small-K: single sweep (no blocking overhead) ── */               \
+        radix4_tw_inner_##dir_tag##_avx2(                                      \
+            0, K4, K,                                                          \
+            a_re,a_im,b_re,b_im,c_re,c_im,d_re,d_im,                         \
+            y0_re,y0_im,y1_re,y1_im,y2_re,y2_im,y3_re,y3_im,                 \
+            w1r,w1i,w2r,w2i,w3r,w3i, sign_mask, do_stream);                   \
+    }                                                                          \
                                                                                \
     /* Scalar tail: K % 4 != 0 */                                              \
     for (size_t k = K4; k < K; k++)                                            \
@@ -360,13 +427,6 @@ DEFINE_TW_STAGE_AVX2(backward, bv)
 
 /*==========================================================================
  * STAGE WRAPPERS
- *
- * Matches existing call convention from fft_radix4_bv.c:
- *   radix4_stage_baseptr_bv_avx2(N, K, in_re, in_im, out_re, out_im,
- *                                  tw, is_write_only, is_cold_out)
- *
- * Twiddle layout: blocked SoA
- *   tw->re[0..K-1]=W1_re, tw->re[K..2K-1]=W2_re, tw->re[2K..3K-1]=W3_re
  *========================================================================*/
 
 static inline bool is_aligned32_tw(const void *p)
@@ -386,7 +446,7 @@ FORCE_INLINE_2TW void radix4_stage_baseptr_##dir_tag##_avx2(                   \
     const double *RESTRICT_2TW tw_re = tw->re;                                 \
     const double *RESTRICT_2TW tw_im = tw->im;                                 \
                                                                                \
-    /* Input base pointers (a = in_re, b = in_re + K, etc.) */                 \
+    /* Input base pointers */                                                  \
     const double *a_re = in_re,       *a_im = in_im;                           \
     const double *b_re = in_re + K,   *b_im = in_im + K;                      \
     const double *c_re = in_re + 2*K, *c_im = in_im + 2*K;                    \
