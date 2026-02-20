@@ -60,15 +60,14 @@ if(VFFT_COMPILER STREQUAL "GCC")
 endif()
 
 # ── ISA flag sets ────────────────────────────────────────────────────────
-# These are applied per-target, not globally.
+# Applied per-target, not globally.
 
 set(VFFT_FLAGS_AVX512  -mavx512f -mfma)
 set(VFFT_FLAGS_AVX2    -mavx2 -mfma -mno-avx512f)
 set(VFFT_FLAGS_SSE2    -msse2 -mno-sse3 -mno-avx -mno-avx2 -mno-fma)
 
-# ICX: add explicit arch tuning
+# ICX: explicit arch tuning for AVX-512
 if(VFFT_COMPILER STREQUAL "ICX")
-    # Default to Skylake-AVX512 unless user overrides
     if(NOT DEFINED VFFT_ARCH)
         set(VFFT_ARCH "skylake-avx512")
     endif()
@@ -76,7 +75,7 @@ if(VFFT_COMPILER STREQUAL "ICX")
     message(STATUS "[VectorFFT] AVX-512 target arch: ${VFFT_ARCH}")
 endif()
 
-# ── ISA detection (what the build machine supports) ──────────────────────
+# ── ISA detection (what the compiler supports) ───────────────────────────
 set(VFFT_HAS_AVX512 OFF)
 set(VFFT_HAS_AVX2   OFF)
 set(VFFT_HAS_SSE2   OFF)
@@ -97,34 +96,19 @@ endif()
 
 message(STATUS "[VectorFFT] ISA support: AVX-512=${VFFT_HAS_AVX512} AVX2=${VFFT_HAS_AVX2} SSE2=${VFFT_HAS_SSE2}")
 
-# ── Helper: create a library target with specific ISA flags ──────────────
+# ── Internal: common target setup ────────────────────────────────────────
 #
-# vfft_add_isa_library(<name> <isa> <sources...>)
-#   isa: AVX512 | AVX2 | SSE2
+# _vfft_setup_target(<target> <isa> [EXTRA_INCLUDES dir1 dir2 ...])
 #
-# Example:
-#   vfft_add_isa_library(radix2_avx512 AVX512 fft_radix2_bv.c)
+# Applies flags, C standard, and include paths. Used by all public helpers.
 #
-function(vfft_add_isa_library NAME ISA)
-    set(SOURCES ${ARGN})
+function(_vfft_setup_target TARGET ISA)
+    cmake_parse_arguments(ARG "" "" "EXTRA_INCLUDES" ${ARGN})
 
-    if(ISA STREQUAL "AVX512" AND NOT VFFT_HAS_AVX512)
-        message(STATUS "[VectorFFT] Skipping ${NAME} — AVX-512 not supported")
-        return()
-    elseif(ISA STREQUAL "AVX2" AND NOT VFFT_HAS_AVX2)
-        message(STATUS "[VectorFFT] Skipping ${NAME} — AVX2 not supported")
-        return()
-    elseif(ISA STREQUAL "SSE2" AND NOT VFFT_HAS_SSE2)
-        message(STATUS "[VectorFFT] Skipping ${NAME} — SSE2 not supported")
-        return()
-    endif()
+    target_compile_options(${TARGET} PRIVATE ${VFFT_BASE_FLAGS} ${VFFT_FLAGS_${ISA}})
+    set_target_properties(${TARGET} PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
 
-    add_library(${NAME} OBJECT ${SOURCES})
-    target_compile_options(${NAME} PRIVATE ${VFFT_BASE_FLAGS} ${VFFT_FLAGS_${ISA}})
-    set_target_properties(${NAME} PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
-
-    # Include paths: public API + kernel root + ISA subdirs
-    target_include_directories(${NAME} PRIVATE
+    target_include_directories(${TARGET} PRIVATE
         ${PROJECT_SOURCE_DIR}/include/vectorfft
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/avx2
@@ -133,98 +117,139 @@ function(vfft_add_isa_library NAME ISA)
         ${CMAKE_CURRENT_SOURCE_DIR}/scalar
         ${PROJECT_SOURCE_DIR}/src/common
     )
+
+    if(ARG_EXTRA_INCLUDES)
+        target_include_directories(${TARGET} PRIVATE ${ARG_EXTRA_INCLUDES})
+    endif()
 endfunction()
 
-# ── Helper: create test executables for all supported ISAs ───────────────
+# ── Internal: check ISA availability ─────────────────────────────────────
 #
-# vfft_add_isa_tests(<base_name> <isa_list> <sources...>)
+# _vfft_check_isa(<isa> <result_var>)
 #
-# Creates: <base_name>_avx512, <base_name>_avx2, <base_name>_sse2
-# Each links against the corresponding ISA object library.
+function(_vfft_check_isa ISA RESULT_VAR)
+    set(${RESULT_VAR} ON PARENT_SCOPE)
+    if(ISA STREQUAL "AVX512" AND NOT VFFT_HAS_AVX512)
+        set(${RESULT_VAR} OFF PARENT_SCOPE)
+    elseif(ISA STREQUAL "AVX2" AND NOT VFFT_HAS_AVX2)
+        set(${RESULT_VAR} OFF PARENT_SCOPE)
+    elseif(ISA STREQUAL "SSE2" AND NOT VFFT_HAS_SSE2)
+        set(${RESULT_VAR} OFF PARENT_SCOPE)
+    endif()
+endfunction()
+
+# ===========================================================================
+# PUBLIC API
+# ===========================================================================
+
+# ── vfft_add_isa_library ─────────────────────────────────────────────────
+#
+# vfft_add_isa_library(<name> <isa> <sources...>)
+#
+# Creates an OBJECT library compiled with the given ISA flags.
+# Skips gracefully if the compiler doesn't support the ISA.
 #
 # Example:
-#   vfft_add_isa_tests(test_radix2_bv "AVX512;AVX2;SSE2"
-#       tests/test_radix2_bv.c fft_radix2_bv.c)
+#   vfft_add_isa_library(radix4_avx512 AVX512 fft_radix4_bv.c fft_radix4_fv.c)
+#
+function(vfft_add_isa_library NAME ISA)
+    _vfft_check_isa(${ISA} _available)
+    if(NOT _available)
+        message(STATUS "[VectorFFT] Skipping ${NAME} — ${ISA} not supported")
+        return()
+    endif()
+
+    add_library(${NAME} OBJECT ${ARGN})
+    _vfft_setup_target(${NAME} ${ISA})
+endfunction()
+
+# ── vfft_add_isa_tests ───────────────────────────────────────────────────
+#
+# vfft_add_isa_tests(<base_name> <isa_list> <sources...>
+#                    [LABELS label1 label2 ...]
+#                    [EXTRA_INCLUDES dir1 dir2 ...])
+#
+# Creates one test executable per ISA: <base_name>_avx512, <base_name>_avx2, ...
+# Registers each with CTest.
+#
+# LABELS:         Additional CTest labels (ISA label is always added automatically).
+#                 If omitted, only the ISA label is applied.
+# EXTRA_INCLUDES: Additional include directories (e.g. for cross-module headers).
+#
+# Examples:
+#   vfft_add_isa_tests(test_radix2_bv "AVX512;AVX2"
+#       test_radix2_bv.c ../fft_radix2_bv.c
+#       LABELS radix2)
+#
+#   vfft_add_isa_tests(test_radix4_bv "AVX512;AVX2"
+#       test_radix4_bv.c ${RADIX4_DIR}/fft_radix4_bv.c
+#       LABELS radix4
+#       EXTRA_INCLUDES ${RADIX4_DIR} ${RADIX4_DIR}/avx2 ${RADIX4_DIR}/avx512 ${RADIX4_DIR}/scalar)
 #
 function(vfft_add_isa_tests BASE_NAME ISA_LIST)
-    set(SOURCES ${ARGN})
+    cmake_parse_arguments(ARG "" "" "LABELS;EXTRA_INCLUDES" ${ARGN})
+    set(SOURCES ${ARG_UNPARSED_ARGUMENTS})
 
     foreach(ISA IN LISTS ISA_LIST)
-        string(TOLOWER ${ISA} isa_lower)
-        set(TARGET_NAME "${BASE_NAME}_${isa_lower}")
-
-        # Check ISA is available
-        if(ISA STREQUAL "AVX512" AND NOT VFFT_HAS_AVX512)
-            continue()
-        elseif(ISA STREQUAL "AVX2" AND NOT VFFT_HAS_AVX2)
-            continue()
-        elseif(ISA STREQUAL "SSE2" AND NOT VFFT_HAS_SSE2)
+        _vfft_check_isa(${ISA} _available)
+        if(NOT _available)
             continue()
         endif()
 
+        string(TOLOWER ${ISA} isa_lower)
+        set(TARGET_NAME "${BASE_NAME}_${isa_lower}")
+
         add_executable(${TARGET_NAME} ${SOURCES})
-        target_compile_options(${TARGET_NAME} PRIVATE ${VFFT_BASE_FLAGS} ${VFFT_FLAGS_${ISA}})
-        set_target_properties(${TARGET_NAME} PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
-
-        target_include_directories(${TARGET_NAME} PRIVATE
-            ${PROJECT_SOURCE_DIR}/include/vectorfft
-            ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/avx2
-            ${CMAKE_CURRENT_SOURCE_DIR}/avx512
-            ${CMAKE_CURRENT_SOURCE_DIR}/sse2
-            ${CMAKE_CURRENT_SOURCE_DIR}/scalar
-            ${PROJECT_SOURCE_DIR}/src/common
-        )
-
+        _vfft_setup_target(${TARGET_NAME} ${ISA} EXTRA_INCLUDES ${ARG_EXTRA_INCLUDES})
         target_link_libraries(${TARGET_NAME} PRIVATE m)
 
-        # Register with CTest
-        add_test(NAME ${TARGET_NAME} COMMAND ${TARGET_NAME})
-        set_tests_properties(${TARGET_NAME} PROPERTIES
-            LABELS "${isa_lower};radix2"
-        )
+        # CTest registration: ISA label always present, user labels appended
+        set(_labels ${isa_lower})
+        if(ARG_LABELS)
+            list(APPEND _labels ${ARG_LABELS})
+        endif()
 
-        message(STATUS "[VectorFFT] Test: ${TARGET_NAME}")
+        add_test(NAME ${TARGET_NAME} COMMAND ${TARGET_NAME})
+        set_tests_properties(${TARGET_NAME} PROPERTIES LABELS "${_labels}")
+
+        message(STATUS "[VectorFFT] Test: ${TARGET_NAME} [${_labels}]")
     endforeach()
 endfunction()
 
-# ── Helper: create benchmark executables ─────────────────────────────────
+# ── vfft_add_isa_benchmarks ──────────────────────────────────────────────
 #
-# Same as vfft_add_isa_tests but links FFTW3 if available, and does NOT
-# register with CTest (benchmarks are run manually).
+# vfft_add_isa_benchmarks(<base_name> <isa_list> <sources...>
+#                         [LABELS label1 label2 ...]
+#                         [EXTRA_INCLUDES dir1 dir2 ...])
+#
+# Same as vfft_add_isa_tests but:
+#   - NOT registered with CTest (run manually)
+#   - Links FFTW3 if available (for comparison benchmarks)
+#
+# Example:
+#   vfft_add_isa_benchmarks(bench_radix4 "AVX512;AVX2"
+#       bench_radix4.c ${RADIX4_DIR}/fft_radix4_fv.c ${RADIX4_DIR}/fft_radix4_bv.c
+#       LABELS radix4
+#       EXTRA_INCLUDES ${RADIX4_DIR})
 #
 function(vfft_add_isa_benchmarks BASE_NAME ISA_LIST)
-    set(SOURCES ${ARGN})
+    cmake_parse_arguments(ARG "" "" "LABELS;EXTRA_INCLUDES" ${ARGN})
+    set(SOURCES ${ARG_UNPARSED_ARGUMENTS})
 
     foreach(ISA IN LISTS ISA_LIST)
-        string(TOLOWER ${ISA} isa_lower)
-        set(TARGET_NAME "${BASE_NAME}_${isa_lower}")
-
-        if(ISA STREQUAL "AVX512" AND NOT VFFT_HAS_AVX512)
-            continue()
-        elseif(ISA STREQUAL "AVX2" AND NOT VFFT_HAS_AVX2)
-            continue()
-        elseif(ISA STREQUAL "SSE2" AND NOT VFFT_HAS_SSE2)
+        _vfft_check_isa(${ISA} _available)
+        if(NOT _available)
             continue()
         endif()
 
+        string(TOLOWER ${ISA} isa_lower)
+        set(TARGET_NAME "${BASE_NAME}_${isa_lower}")
+
         add_executable(${TARGET_NAME} ${SOURCES})
-        target_compile_options(${TARGET_NAME} PRIVATE ${VFFT_BASE_FLAGS} ${VFFT_FLAGS_${ISA}})
-        set_target_properties(${TARGET_NAME} PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
-
-        target_include_directories(${TARGET_NAME} PRIVATE
-            ${PROJECT_SOURCE_DIR}/include/vectorfft
-            ${CMAKE_CURRENT_SOURCE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/avx2
-            ${CMAKE_CURRENT_SOURCE_DIR}/avx512
-            ${CMAKE_CURRENT_SOURCE_DIR}/sse2
-            ${CMAKE_CURRENT_SOURCE_DIR}/scalar
-            ${PROJECT_SOURCE_DIR}/src/common
-        )
-
+        _vfft_setup_target(${TARGET_NAME} ${ISA} EXTRA_INCLUDES ${ARG_EXTRA_INCLUDES})
         target_link_libraries(${TARGET_NAME} PRIVATE m)
 
-        # Link FFTW3 if available (for comparison benchmarks)
+        # FFTW3 for comparison benchmarks
         if(TARGET FFTW3::fftw3)
             target_link_libraries(${TARGET_NAME} PRIVATE FFTW3::fftw3)
             target_compile_definitions(${TARGET_NAME} PRIVATE VFFT_HAS_FFTW3=1)

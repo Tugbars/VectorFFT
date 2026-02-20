@@ -19,3 +19,6 @@ set(RADIX4_SOURCES
 vfft_add_isa_library(radix4_avx512  AVX512  ${RADIX4_SOURCES})
 vfft_add_isa_library(radix4_avx2    AVX2    ${RADIX4_SOURCES})
 # vfft_add_isa_library(radix4_sse2  SSE2    ${RADIX4_SOURCES})  # TODO: SSE2 kernels
+
+# ── Tests & benchmarks ──────────────────────────────────────────────────
+add_subdirectory(tests)
