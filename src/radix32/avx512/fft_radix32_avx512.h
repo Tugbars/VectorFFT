@@ -3045,3 +3045,29 @@ FORCE_INLINE void radix32_first_stage_backward_avx512(
         pass2_plan);
 }
 #endif
+
+
+/*
+Critical Math Error: Backward W₈¹ Twiddle
+Location: radix32_position4_fast_hoisted_backward() and radix32_position4_fast_hoisted_backward_masked()
+The Issue: The real and imaginary parts are swapped when applying the conjugated twiddle W₈¹* = √2/2(1 + i).
+Mathematical Proof:
+For complex multiplication by W₈¹*:
+
+(b_re + i·b_im) × √2/2(1 + i)
+= √2/2 × (b_re + i·b_re + i·b_im - b_im)
+= √2/2 × ((b_re - b_im) + i(b_re + b_im))
+
+Expected Result:
+b_re' = (b_re - b_im) × √2/2
+b_im' = (b_re + b_im) × √2/2
+Current (Incorrect) Implementation:
+
+b_re = _mm512_mul_pd(sqrt2_2, sum_b);      // (b_re + b_im) × √2/2  ❌
+b_im = _mm512_mul_pd(sqrt2_2, diff_b);     // (b_re - b_im) × √2/2  ❌
+
+The Fix: Swap the assignments:
+
+b_re = _mm512_mul_pd(sqrt2_2, diff_b);     // (b_re - b_im) × √2/2  ✓
+b_im = _mm512_mul_pd(sqrt2_2, sum_b);      // (b_re + b_im) × √2/2  ✓
+*/

@@ -12,8 +12,14 @@
  * - 2× and 4× unrolling for maximum ILP
  * - Software pipelining to hide load latency
  *
+ * FIX v3.1: radix2_pipeline_8_avx512 twiddle loads changed from
+ *           _mm512_load_pd to _mm512_loadu_pd — k may be odd after
+ *           special-case scalar processing.
+ * FIX v3.1: radix2_pipeline_masked_avx512 twiddle loads changed from
+ *           _mm512_maskz_load_pd to _mm512_maskz_loadu_pd (same reason).
+ *
  * @author Tugbars
- * @version 3.0 (Separated architecture, added 4× unroll and software pipelining)
+ * @version 3.1 (Separated architecture, added 4× unroll and software pipelining)
  * @date 2025
  */
 
@@ -89,24 +95,12 @@
  * @brief Complex multiply - NATIVE SoA form (AVX-512)
  *
  * @details
- * ⚡⚡ CRITICAL: Data is ALREADY in split form from memory!
- * No split operation needed - direct loads from separate re/im arrays!
- *
- * Computes: (ar + i*ai) * (wr + i*wi) = (ar*wr - ai*wi) + i*(ar*wi + ai*wr)
- *
  * Uses FMA instructions for optimal performance with ordering to minimize
  * dependent chains and utilize dual FMA ports on high-end Intel:
  * - t0 = ai*wi (mul port 0 or 5)
  * - tr = ar*wr - t0 (FMA port 0 or 5, overlaps with t1)
  * - t1 = ai*wr (mul port 0 or 5, dual-issues with tr FMA)
  * - ti = ar*wi + t1 (FMA port 0 or 5)
- *
- * @param[in] ar Input real parts (__m512d, already loaded from re[] array)
- * @param[in] ai Input imag parts (__m512d, already loaded from im[] array)
- * @param[in] w_re Twiddle real parts (__m512d, SoA format)
- * @param[in] w_im Twiddle imag parts (__m512d, SoA format)
- * @param[out] tr Output real parts (__m512d)
- * @param[out] ti Output imag parts (__m512d)
  *
  * @note Requires AVX-512F support
  * @note Uses 4 FMA operations (optimal for complex multiply)
@@ -130,31 +124,6 @@ void cmul_native_soa_avx512(
 
 /**
  * @brief Radix-2 butterfly - NATIVE SoA form (AVX-512)
- *
- * @details
- * ⚡⚡ ZERO SHUFFLE VERSION - Pure arithmetic, no data rearrangement!
- *
- * Computes FFT butterfly with twiddle factor:
- * @code
- *   y0 = even + odd * W
- *   y1 = even - odd * W
- * @endcode
- *
- * All inputs are ALREADY in split form (separate re/im arrays).
- * No split or join operations needed!
- *
- * @param[in] e_re Even real parts (__m512d)
- * @param[in] e_im Even imag parts (__m512d)
- * @param[in] o_re Odd real parts (__m512d)
- * @param[in] o_im Odd imag parts (__m512d)
- * @param[in] w_re Twiddle real parts (__m512d)
- * @param[in] w_im Twiddle imag parts (__m512d)
- * @param[out] y0_re Output real parts (first half) (__m512d)
- * @param[out] y0_im Output imag parts (first half) (__m512d)
- * @param[out] y1_re Output real parts (second half) (__m512d)
- * @param[out] y1_im Output imag parts (second half) (__m512d)
- *
- * @note Requires AVX-512F support
  * @note Total latency: ~12-14 cycles (cmul + 4 add/sub)
  */
 static inline __attribute__((always_inline))
@@ -181,18 +150,8 @@ void radix2_butterfly_native_soa_avx512(
 /**
  * @brief Process 8 butterflies with prefetch (regular stores)
  *
- * @details
- * Basic building block for radix-2 FFT. Processes one AVX-512 vector worth
- * of butterflies with software prefetch hints for next iteration.
- *
- * @param[in] k Butterfly index
- * @param[in] in_re Input real array
- * @param[in] in_im Input imaginary array
- * @param[out] out_re Output real array
- * @param[out] out_im Output imaginary array
- * @param[in] stage_tw Stage twiddle factors (SoA)
- * @param[in] half Transform half-size
- * @param[in] prefetch_dist Prefetch distance in elements
+ * FIX v3.1: Twiddle loads changed to _mm512_loadu_pd (unaligned).
+ * k may be odd after special-case scalar processing (k=N/4, N/8, 3N/8).
  */
 static inline __attribute__((always_inline))
 void radix2_pipeline_8_avx512(
@@ -222,9 +181,9 @@ void radix2_pipeline_8_avx512(
     const __m512d o_re = LOAD_RE_AVX512(&in_re[k + half]);
     const __m512d o_im = LOAD_IM_AVX512(&in_im[k + half]);
     
-    // Load twiddles (aligned - always guaranteed by twiddle precomputation)
-    const __m512d w_re = _mm512_load_pd(&stage_tw->re[k]);
-    const __m512d w_im = _mm512_load_pd(&stage_tw->im[k]);
+    // FIX v3.1: unaligned twiddle loads (k may be odd after special cases)
+    const __m512d w_re = _mm512_loadu_pd(&stage_tw->re[k]);
+    const __m512d w_im = _mm512_loadu_pd(&stage_tw->im[k]);
     
     // Compute butterfly
     __m512d y0_re, y0_im, y1_re, y1_im;
@@ -241,11 +200,6 @@ void radix2_pipeline_8_avx512(
 
 /**
  * @brief Process 8 butterflies with aligned loads/stores
- *
- * @details
- * Optimized variant for aligned data. Should be used in peeled loops
- * after alignment is established.
- *
  * @note Requires input and output arrays aligned to 64-byte boundaries
  */
 static inline __attribute__((always_inline))
@@ -259,7 +213,6 @@ void radix2_pipeline_8_avx512_aligned(
     int half,
     int prefetch_dist)
 {
-    // Software prefetch for next iteration
     if (prefetch_dist > 0 && k + prefetch_dist < half)
     {
         PREFETCH_INPUT_T0_AVX512(in_re, k + prefetch_dist);
@@ -270,23 +223,19 @@ void radix2_pipeline_8_avx512_aligned(
         PREFETCH_TWIDDLE_T1_AVX512(stage_tw->im, k + prefetch_dist);
     }
     
-    // Load inputs (aligned)
     const __m512d e_re = LOAD_RE_AVX512_ALIGNED(&in_re[k]);
     const __m512d e_im = LOAD_IM_AVX512_ALIGNED(&in_im[k]);
     const __m512d o_re = LOAD_RE_AVX512_ALIGNED(&in_re[k + half]);
     const __m512d o_im = LOAD_IM_AVX512_ALIGNED(&in_im[k + half]);
     
-    // Load twiddles (aligned)
     const __m512d w_re = _mm512_load_pd(&stage_tw->re[k]);
     const __m512d w_im = _mm512_load_pd(&stage_tw->im[k]);
     
-    // Compute butterfly
     __m512d y0_re, y0_im, y1_re, y1_im;
     radix2_butterfly_native_soa_avx512(e_re, e_im, o_re, o_im,
                                        w_re, w_im,
                                        &y0_re, &y0_im, &y1_re, &y1_im);
     
-    // Store outputs (aligned)
     STORE_RE_AVX512_ALIGNED(&out_re[k], y0_re);
     STORE_IM_AVX512_ALIGNED(&out_im[k], y0_im);
     STORE_RE_AVX512_ALIGNED(&out_re[k + half], y1_re);
@@ -295,13 +244,7 @@ void radix2_pipeline_8_avx512_aligned(
 
 /**
  * @brief Process 8 butterflies with streaming stores
- *
- * @details
- * Non-temporal store variant for large N where output doesn't fit in cache.
- * NT stores bypass cache and go directly to memory.
- *
- * @note Requires aligned input and output arrays
- * @note NT stores require manual fence (_mm_sfence()) at stage boundaries
+ * @note NT stores bypass cache, require manual fence at stage boundaries
  */
 static inline __attribute__((always_inline))
 void radix2_pipeline_8_avx512_stream(
@@ -314,8 +257,6 @@ void radix2_pipeline_8_avx512_stream(
     int half,
     int prefetch_dist)
 {
-    // Software prefetch for next iteration
-    // Note: no output prefetch needed - NT stores bypass cache
     if (prefetch_dist > 0 && k + prefetch_dist < half)
     {
         PREFETCH_INPUT_T0_AVX512(in_re, k + prefetch_dist);
@@ -326,23 +267,19 @@ void radix2_pipeline_8_avx512_stream(
         PREFETCH_TWIDDLE_T1_AVX512(stage_tw->im, k + prefetch_dist);
     }
     
-    // Load inputs (aligned - required for streaming stores)
     const __m512d e_re = LOAD_RE_AVX512_ALIGNED(&in_re[k]);
     const __m512d e_im = LOAD_IM_AVX512_ALIGNED(&in_im[k]);
     const __m512d o_re = LOAD_RE_AVX512_ALIGNED(&in_re[k + half]);
     const __m512d o_im = LOAD_IM_AVX512_ALIGNED(&in_im[k + half]);
     
-    // Load twiddles (aligned)
     const __m512d w_re = _mm512_load_pd(&stage_tw->re[k]);
     const __m512d w_im = _mm512_load_pd(&stage_tw->im[k]);
     
-    // Compute butterfly
     __m512d y0_re, y0_im, y1_re, y1_im;
     radix2_butterfly_native_soa_avx512(e_re, e_im, o_re, o_im,
                                        w_re, w_im,
                                        &y0_re, &y0_im, &y1_re, &y1_im);
     
-    // Store outputs (streaming - non-temporal)
     STREAM_RE_AVX512(&out_re[k], y0_re);
     STREAM_IM_AVX512(&out_im[k], y0_im);
     STREAM_RE_AVX512(&out_re[k + half], y1_re);
@@ -355,14 +292,6 @@ void radix2_pipeline_8_avx512_stream(
 
 /**
  * @brief Process 16 butterflies (2× unroll) - regular stores
- *
- * @details
- * 2× unrolling creates two independent instruction streams that can
- * execute in parallel on dual FMA ports. This is the "baseline" unroll
- * that works well on most Intel architectures.
- *
- * Instruction-level parallelism: Pipeline 0 and Pipeline 1 are completely
- * independent and can dual-issue on ports 0 and 5.
  */
 static inline __attribute__((always_inline))
 void radix2_pipeline_16_avx512_unroll2(
@@ -375,7 +304,6 @@ void radix2_pipeline_16_avx512_unroll2(
     int half,
     int prefetch_dist)
 {
-    // Prefetch for both iterations
     if (prefetch_dist > 0 && k + prefetch_dist < half)
     {
         PREFETCH_INPUT_T0_AVX512(in_re, k + prefetch_dist);
@@ -386,11 +314,8 @@ void radix2_pipeline_16_avx512_unroll2(
         PREFETCH_TWIDDLE_T1_AVX512(stage_tw->im, k + prefetch_dist);
     }
     
-    // Pipeline 0: butterflies [k, k+7]
     radix2_pipeline_8_avx512(k, in_re, in_im, out_re, out_im,
-                             stage_tw, half, 0); // No prefetch in inner call
-    
-    // Pipeline 1: butterflies [k+8, k+15] (independent, can dual-issue)
+                             stage_tw, half, 0);
     radix2_pipeline_8_avx512(k + 8, in_re, in_im, out_re, out_im,
                              stage_tw, half, 0);
 }
@@ -456,26 +381,15 @@ void radix2_pipeline_16_avx512_unroll2_stream(
 }
 
 //==============================================================================
-// 4× UNROLLED PIPELINE: 32-BUTTERFLY (4 INDEPENDENT STREAMS) - NEW!
+// 4× UNROLLED PIPELINE: 32-BUTTERFLY (4 INDEPENDENT STREAMS)
 //==============================================================================
 
 /**
  * @brief Process 32 butterflies (4× unroll) - regular stores
  *
  * @details
- * ⚡ NEW OPTIMIZATION for high-end Intel (Skylake-X, Icelake, Sapphire Rapids)
- *
  * 4× unrolling creates four independent instruction streams that maximize
- * utilization of dual 512-bit FMA execution ports. This is optimal for
- * large N where instruction window can hold enough operations.
- *
- * Performance characteristics:
- * - Skylake-X: ~2.5× throughput vs 1× unroll
- * - Icelake: ~2.7× throughput vs 1× unroll
- * - Sapphire Rapids: ~3.0× throughput vs 1× unroll
- *
- * ILP benefit: 4 independent butterfly computations in flight simultaneously,
- * each using ~16 µops. Total ~64 µops keeps both FMA ports fully saturated.
+ * utilization of dual 512-bit FMA execution ports. Optimal for large N.
  */
 static inline __attribute__((always_inline))
 void radix2_pipeline_32_avx512_unroll4(
@@ -488,7 +402,6 @@ void radix2_pipeline_32_avx512_unroll4(
     int half,
     int prefetch_dist)
 {
-    // Extended prefetch for 4× unroll (look further ahead)
     if (prefetch_dist > 0 && k + prefetch_dist < half)
     {
         PREFETCH_INPUT_T0_AVX512(in_re, k + prefetch_dist);
@@ -497,15 +410,12 @@ void radix2_pipeline_32_avx512_unroll4(
         PREFETCH_INPUT_T0_AVX512(in_im, k + half + prefetch_dist);
         PREFETCH_TWIDDLE_T1_AVX512(stage_tw->re, k + prefetch_dist);
         PREFETCH_TWIDDLE_T1_AVX512(stage_tw->im, k + prefetch_dist);
-        
-        // Additional prefetch for wider unroll
         PREFETCH_INPUT_T0_AVX512(in_re, k + prefetch_dist + 16);
         PREFETCH_INPUT_T0_AVX512(in_im, k + prefetch_dist + 16);
         PREFETCH_TWIDDLE_T1_AVX512(stage_tw->re, k + prefetch_dist + 16);
         PREFETCH_TWIDDLE_T1_AVX512(stage_tw->im, k + prefetch_dist + 16);
     }
     
-    // Pipeline 0-3: four independent streams
     radix2_pipeline_8_avx512(k,      in_re, in_im, out_re, out_im, stage_tw, half, 0);
     radix2_pipeline_8_avx512(k + 8,  in_re, in_im, out_re, out_im, stage_tw, half, 0);
     radix2_pipeline_8_avx512(k + 16, in_re, in_im, out_re, out_im, stage_tw, half, 0);
@@ -586,19 +496,8 @@ void radix2_pipeline_32_avx512_unroll4_stream(
 
 /**
  * @brief AVX-512 masked tail processing (branchless cleanup)
- * 
- * @details
- * Processes remaining butterflies (<8) using AVX-512 masks instead of scalar cleanup.
- * Keeps the loop branchless and reduces I-cache footprint. Measurable benefit at huge N.
- * 
- * @param[in] k Butterfly index
- * @param[in] count Number of remaining butterflies (1-7)
- * @param[in] in_re Input real array
- * @param[in] in_im Input imaginary array
- * @param[out] out_re Output real array
- * @param[out] out_im Output imaginary array
- * @param[in] stage_tw Stage twiddle factors
- * @param[in] half Transform half-size
+ *
+ * FIX v3.1: Twiddle loads changed to _mm512_maskz_loadu_pd (unaligned).
  */
 static inline __attribute__((always_inline))
 void radix2_pipeline_masked_avx512(
@@ -617,8 +516,9 @@ void radix2_pipeline_masked_avx512(
     const __m512d e_im = LOAD_IM_MASK_AVX512(&in_im[k], mask);
     const __m512d o_re = LOAD_RE_MASK_AVX512(&in_re[k + half], mask);
     const __m512d o_im = LOAD_IM_MASK_AVX512(&in_im[k + half], mask);
-    const __m512d w_re = _mm512_maskz_load_pd(mask, &stage_tw->re[k]);
-    const __m512d w_im = _mm512_maskz_load_pd(mask, &stage_tw->im[k]);
+    /* FIX v3.1: _mm512_maskz_loadu_pd — k may be odd after special cases */
+    const __m512d w_re = _mm512_maskz_loadu_pd(mask, &stage_tw->re[k]);
+    const __m512d w_im = _mm512_maskz_loadu_pd(mask, &stage_tw->im[k]);
     
     __m512d y0_re, y0_im, y1_re, y1_im;
     radix2_butterfly_native_soa_avx512(e_re, e_im, o_re, o_im,

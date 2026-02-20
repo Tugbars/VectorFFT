@@ -1,5 +1,5 @@
 /**
- * @file fft_radix2_avx512_twiddleless.h
+ * @file fft_radix2_avx512n1.h
  * @brief AVX-512 Twiddle-Less Radix-2 FFT Butterflies - TRUE SoA (W=1 Optimized)
  *
  * @details
@@ -12,13 +12,15 @@
  * - Dual 512-bit FMA ports fully utilized
  * - 4× unrolling for maximum ILP
  *
+ * Renamed from fft_radix2_avx512_twiddleless.h to match _n1 convention.
+ *
  * @author Tugbars
  * @version 3.0 (Separated architecture, twiddle-less variant)
  * @date 2025
  */
 
-#ifndef FFT_RADIX2_AVX512_TWIDDLELESS_H
-#define FFT_RADIX2_AVX512_TWIDDLELESS_H
+#ifndef FFT_RADIX2_AVX512N1_H
+#define FFT_RADIX2_AVX512N1_H
 
 #ifdef __AVX512F__
 
@@ -46,15 +48,6 @@
  * - ~4 cycles latency (vs ~12 cycles for general butterfly)
  * - Can sustain 2 butterflies/cycle with dual FMA ports
  * - ~3× faster than general butterfly
- *
- * @param[in] e_re Even real parts (__m512d)
- * @param[in] e_im Even imag parts (__m512d)
- * @param[in] o_re Odd real parts (__m512d)
- * @param[in] o_im Odd imag parts (__m512d)
- * @param[out] y0_re Output real parts (first half) (__m512d)
- * @param[out] y0_im Output imag parts (first half) (__m512d)
- * @param[out] y1_re Output real parts (second half) (__m512d)
- * @param[out] y1_im Output imag parts (second half) (__m512d)
  *
  * @note Requires AVX-512F support
  * @note Total latency: ~4 cycles (4 add/sub on ports 0/5)
@@ -269,8 +262,7 @@ void radix2_pipeline_16_avx512_n1_unroll2_stream(
 //==============================================================================
 
 /**
- * @brief Process 32 butterflies WITHOUT twiddles (4× unroll) - NEW!
- *
+ * @brief Process 32 butterflies WITHOUT twiddles (4× unroll)
  *
  * 4× unrolling with twiddle-less butterflies combines two major optimizations:
  * 1. No complex multiply (3× speedup)
@@ -289,7 +281,6 @@ void radix2_pipeline_32_avx512_n1_unroll4(
     int half,
     int prefetch_dist)
 {
-    // Extended prefetch for 4× unroll
     if (prefetch_dist > 0 && k + prefetch_dist < half)
     {
         _mm_prefetch((char*)&in_re[k + prefetch_dist], _MM_HINT_T0);
@@ -300,7 +291,6 @@ void radix2_pipeline_32_avx512_n1_unroll4(
         _mm_prefetch((char*)&in_im[k + prefetch_dist + 16], _MM_HINT_T0);
     }
     
-    // Pipeline 0-3: four independent streams
     radix2_pipeline_8_avx512_n1(k,      in_re, in_im, out_re, out_im, half, 0);
     radix2_pipeline_8_avx512_n1(k + 8,  in_re, in_im, out_re, out_im, half, 0);
     radix2_pipeline_8_avx512_n1(k + 16, in_re, in_im, out_re, out_im, half, 0);
@@ -367,4 +357,4 @@ void radix2_pipeline_32_avx512_n1_unroll4_stream(
 
 #endif // __AVX512F__
 
-#endif // FFT_RADIX2_AVX512_TWIDDLELESS_H
+#endif // FFT_RADIX2_AVX512N1_H
