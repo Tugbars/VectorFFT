@@ -38,6 +38,15 @@ else()
     message(WARNING "[VectorFFT] Unknown compiler: ${CMAKE_C_COMPILER_ID}")
 endif()
 
+# ── P-core pinning (separate, top-level) ─────────────────────────────────
+option(VFFT_PIN_PCORE "Pin test/bench execution to P-core 0" ON)
+
+if(WIN32 AND VFFT_PIN_PCORE)
+    file(WRITE ${CMAKE_BINARY_DIR}/run_pinned.bat
+        "@echo off\r\nstart /B /WAIT /affinity 0x1 %*\r\n")
+    set(CMAKE_CROSSCOMPILING_EMULATOR "${CMAKE_BINARY_DIR}/run_pinned.bat" CACHE STRING "" FORCE)
+endif()
+
 # ── Base flags ───────────────────────────────────────────────────────────
 set(VFFT_C_STANDARD 11)
 
@@ -60,6 +69,7 @@ if(VFFT_WINDOWS_CLANGCL)
             /Oy-                           # Keep frame pointers (VTune)
         )
     endif()
+    
 
     # _USE_MATH_DEFINES for M_PI, etc.
     set(VFFT_BASE_DEFINITIONS _USE_MATH_DEFINES)

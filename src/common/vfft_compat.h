@@ -19,6 +19,29 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+#ifdef _WIN32
+  #include <windows.h>
+#elif defined(__linux__)
+  #define _GNU_SOURCE
+  #include <sched.h>
+#endif
+
+
+/*─── Thread affinity: pin to core 0 (P-core on hybrid CPUs) ───*/
+
+static inline void vfft_pin_thread_core0(void)
+{
+#ifdef _WIN32
+    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1);
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+#elif defined(__linux__)
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(0, &cpuset);
+    sched_setaffinity(0, sizeof(cpuset), &cpuset);
+#endif
+}
+
 /* ── Suppress MSVC CRT deprecation warnings ─────────────────────────── */
 #ifdef _MSC_VER
     #ifndef _CRT_SECURE_NO_WARNINGS

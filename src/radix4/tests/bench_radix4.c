@@ -218,6 +218,8 @@ static void scalar_bv_wrapper(double *out_re, double *out_im,
 
 int main(int argc, char **argv)
 {
+
+    vfft_pin_thread_core0();  
     int min_K = 4, max_K = 65536;
     if (argc > 1) min_K = atoi(argv[1]);
     if (argc > 2) max_K = atoi(argv[2]);
