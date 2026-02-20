@@ -17,6 +17,8 @@
  *   gcc -mavx2 -mfma -O2 -o test_roundtrip test_roundtrip.c fft_radix4_fv.c fft_radix4_bv.c -lm
  */
 
+#include "vfft_compat.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,8 +40,8 @@ extern void fft_radix4_bv_n1(double *restrict, double *restrict,
 
 static double *alloc_a(size_t n)
 {
-    double *p = NULL;
-    if (posix_memalign((void **)&p, 64, n * sizeof(double)) != 0) {
+    double *p = (double *)vfft_aligned_alloc(64, n * sizeof(double));
+    if (!p) {
         fprintf(stderr, "alloc failed\n");
         exit(1);
     }
@@ -49,9 +51,9 @@ static double *alloc_a(size_t n)
 static int test_n1(int K)
 {
     int N = 4 * K;
-    double *x_re  = alloc_a(N), *x_im  = alloc_a(N);
-    double *fwd_re = alloc_a(N), *fwd_im = alloc_a(N);
-    double *rt_re  = alloc_a(N), *rt_im  = alloc_a(N);
+    double *x_re  = alloc_a((size_t)N), *x_im  = alloc_a((size_t)N);
+    double *fwd_re = alloc_a((size_t)N), *fwd_im = alloc_a((size_t)N);
+    double *rt_re  = alloc_a((size_t)N), *rt_im  = alloc_a((size_t)N);
 
     for (int i = 0; i < N; i++) {
         x_re[i] = sin(0.7 * i + 0.1);
@@ -71,18 +73,24 @@ static int test_n1(int K)
 
     bool pass = max_err < 1e-12;
     printf("  n1       K=%5d  N=%6d  max_err=%.2e  %s\n", K, N, max_err, pass ? "PASS" : "FAIL");
-    free(x_re); free(x_im); free(fwd_re); free(fwd_im); free(rt_re); free(rt_im);
+    vfft_aligned_free(x_re);  vfft_aligned_free(x_im);
+    vfft_aligned_free(fwd_re); vfft_aligned_free(fwd_im);
+    vfft_aligned_free(rt_re);  vfft_aligned_free(rt_im);
     return pass ? 0 : 1;
 }
 
+#ifdef __GNUC__
 static int __attribute__((unused)) test_tw(int K)
+#else
+static int test_tw(int K)
+#endif
 {
     int N = 4 * K;
-    double *x_re    = alloc_a(N), *x_im    = alloc_a(N);
-    double *fwd_re   = alloc_a(N), *fwd_im   = alloc_a(N);
-    double *rt_re    = alloc_a(N), *rt_im    = alloc_a(N);
-    double *twf_re = alloc_a(3*K), *twf_im = alloc_a(3*K);
-    double *twb_re = alloc_a(3*K), *twb_im = alloc_a(3*K);
+    double *x_re    = alloc_a((size_t)N), *x_im    = alloc_a((size_t)N);
+    double *fwd_re   = alloc_a((size_t)N), *fwd_im   = alloc_a((size_t)N);
+    double *rt_re    = alloc_a((size_t)N), *rt_im    = alloc_a((size_t)N);
+    double *twf_re = alloc_a((size_t)(3*K)), *twf_im = alloc_a((size_t)(3*K));
+    double *twb_re = alloc_a((size_t)(3*K)), *twb_im = alloc_a((size_t)(3*K));
 
     for (int i = 0; i < N; i++) {
         x_re[i] = sin(0.7 * i + 0.1);
@@ -115,18 +123,21 @@ static int __attribute__((unused)) test_tw(int K)
 
     bool pass = max_err < 1e-12;
     printf("  tw       K=%5d  N=%6d  max_err=%.2e  %s\n", K, N, max_err, pass ? "PASS" : "FAIL");
-    free(x_re); free(x_im); free(fwd_re); free(fwd_im); free(rt_re); free(rt_im);
-    free(twf_re); free(twf_im); free(twb_re); free(twb_im);
+    vfft_aligned_free(x_re);   vfft_aligned_free(x_im);
+    vfft_aligned_free(fwd_re); vfft_aligned_free(fwd_im);
+    vfft_aligned_free(rt_re);  vfft_aligned_free(rt_im);
+    vfft_aligned_free(twf_re); vfft_aligned_free(twf_im);
+    vfft_aligned_free(twb_re); vfft_aligned_free(twb_im);
     return pass ? 0 : 1;
 }
 
 static int test_mixed(int K)
 {
     int N = 4 * K;
-    double *x_re  = alloc_a(N), *x_im  = alloc_a(N);
-    double *fwd_re = alloc_a(N), *fwd_im = alloc_a(N);
-    double *rt_re  = alloc_a(N), *rt_im  = alloc_a(N);
-    double *tw_re = alloc_a(3*K), *tw_im = alloc_a(3*K);
+    double *x_re  = alloc_a((size_t)N), *x_im  = alloc_a((size_t)N);
+    double *fwd_re = alloc_a((size_t)N), *fwd_im = alloc_a((size_t)N);
+    double *rt_re  = alloc_a((size_t)N), *rt_im  = alloc_a((size_t)N);
+    double *tw_re = alloc_a((size_t)(3*K)), *tw_im = alloc_a((size_t)(3*K));
 
     for (int i = 0; i < N; i++) {
         x_re[i] = sin(0.7 * i + 0.1);
@@ -168,17 +179,19 @@ static int test_mixed(int K)
     printf("  tw→n1    K=%5d  N=%6d  max_err=%.2e  %s\n", K, N, max_err, p2 ? "PASS" : "FAIL");
     if (!p2) failures++;
 
-    free(x_re); free(x_im); free(fwd_re); free(fwd_im);
-    free(rt_re); free(rt_im); free(tw_re); free(tw_im);
+    vfft_aligned_free(x_re);   vfft_aligned_free(x_im);
+    vfft_aligned_free(fwd_re); vfft_aligned_free(fwd_im);
+    vfft_aligned_free(rt_re);  vfft_aligned_free(rt_im);
+    vfft_aligned_free(tw_re);  vfft_aligned_free(tw_im);
     return failures;
 }
 
 static int test_reverse(int K)
 {
     int N = 4 * K;
-    double *x_re  = alloc_a(N), *x_im  = alloc_a(N);
-    double *bwd_re = alloc_a(N), *bwd_im = alloc_a(N);
-    double *rt_re  = alloc_a(N), *rt_im  = alloc_a(N);
+    double *x_re  = alloc_a((size_t)N), *x_im  = alloc_a((size_t)N);
+    double *bwd_re = alloc_a((size_t)N), *bwd_im = alloc_a((size_t)N);
+    double *rt_re  = alloc_a((size_t)N), *rt_im  = alloc_a((size_t)N);
 
     for (int i = 0; i < N; i++) {
         x_re[i] = sin(0.7 * i + 0.1);
@@ -197,7 +210,9 @@ static int test_reverse(int K)
     }
     bool pass = max_err < 1e-12;
     printf("  bv→fv    K=%5d  N=%6d  max_err=%.2e  %s\n", K, N, max_err, pass ? "PASS" : "FAIL");
-    free(x_re); free(x_im); free(bwd_re); free(bwd_im); free(rt_re); free(rt_im);
+    vfft_aligned_free(x_re);  vfft_aligned_free(x_im);
+    vfft_aligned_free(bwd_re); vfft_aligned_free(bwd_im);
+    vfft_aligned_free(rt_re);  vfft_aligned_free(rt_im);
     return pass ? 0 : 1;
 }
 

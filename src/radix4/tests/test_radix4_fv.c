@@ -5,6 +5,8 @@
  * Tests both n1 (twiddle-less) and twiddle paths against scalar reference.
  */
 
+#include "vfft_compat.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,8 +118,8 @@ static void ref_radix4_fv_tw(int K,
 
 static double *alloc_aligned(size_t n)
 {
-    double *p = NULL;
-    if (posix_memalign((void**)&p, 64, n * sizeof(double)) != 0)
+    double *p = (double *)vfft_aligned_alloc(64, n * sizeof(double));
+    if (!p)
     {
         fprintf(stderr, "alloc failed\n");
         exit(1);
@@ -133,12 +135,12 @@ static double *alloc_aligned(size_t n)
 static int test_n1(int K)
 {
     int N = 4 * K;
-    double *in_re  = alloc_aligned(N);
-    double *in_im  = alloc_aligned(N);
-    double *ref_re = alloc_aligned(N);
-    double *ref_im = alloc_aligned(N);
-    double *out_re = alloc_aligned(N);
-    double *out_im = alloc_aligned(N);
+    double *in_re  = alloc_aligned((size_t)N);
+    double *in_im  = alloc_aligned((size_t)N);
+    double *ref_re = alloc_aligned((size_t)N);
+    double *ref_im = alloc_aligned((size_t)N);
+    double *out_re = alloc_aligned((size_t)N);
+    double *out_im = alloc_aligned((size_t)N);
 
     /* Fill with deterministic pseudo-random */
     for (int i = 0; i < N; i++)
@@ -168,8 +170,9 @@ static int test_n1(int K)
     printf("  n1_im    K=%4d N=%5d  max_err=%.2e  %s\n",
            K, N, max_err_im, pass_im ? "PASS" : "FAIL");
 
-    free(in_re); free(in_im); free(ref_re); free(ref_im);
-    free(out_re); free(out_im);
+    vfft_aligned_free(in_re);  vfft_aligned_free(in_im);
+    vfft_aligned_free(ref_re); vfft_aligned_free(ref_im);
+    vfft_aligned_free(out_re); vfft_aligned_free(out_im);
 
     return (pass_re && pass_im) ? 0 : 1;
 }
@@ -177,15 +180,15 @@ static int test_n1(int K)
 static int test_tw(int K)
 {
     int N = 4 * K;
-    double *in_re  = alloc_aligned(N);
-    double *in_im  = alloc_aligned(N);
-    double *ref_re = alloc_aligned(N);
-    double *ref_im = alloc_aligned(N);
-    double *out_re = alloc_aligned(N);
-    double *out_im = alloc_aligned(N);
+    double *in_re  = alloc_aligned((size_t)N);
+    double *in_im  = alloc_aligned((size_t)N);
+    double *ref_re = alloc_aligned((size_t)N);
+    double *ref_im = alloc_aligned((size_t)N);
+    double *out_re = alloc_aligned((size_t)N);
+    double *out_im = alloc_aligned((size_t)N);
     /* Twiddles: 3*K for W1,W2,W3 in blocked SoA */
-    double *tw_re = alloc_aligned(3 * K);
-    double *tw_im = alloc_aligned(3 * K);
+    double *tw_re = alloc_aligned((size_t)(3 * K));
+    double *tw_im = alloc_aligned((size_t)(3 * K));
 
     /* Fill data */
     for (int i = 0; i < N; i++)
@@ -228,8 +231,10 @@ static int test_tw(int K)
     printf("  tw_im    K=%4d N=%5d  max_err=%.2e  %s\n",
            K, N, max_err_im, pass_im ? "PASS" : "FAIL");
 
-    free(in_re); free(in_im); free(ref_re); free(ref_im);
-    free(out_re); free(out_im); free(tw_re); free(tw_im);
+    vfft_aligned_free(in_re);  vfft_aligned_free(in_im);
+    vfft_aligned_free(ref_re); vfft_aligned_free(ref_im);
+    vfft_aligned_free(out_re); vfft_aligned_free(out_im);
+    vfft_aligned_free(tw_re);  vfft_aligned_free(tw_im);
 
     return (pass_re && pass_im) ? 0 : 1;
 }

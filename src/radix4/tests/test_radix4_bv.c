@@ -3,6 +3,8 @@
  * @brief Correctness tests for backward radix-4 butterflies (n1 + twiddle)
  */
 
+#include "vfft_compat.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -26,8 +28,8 @@ void fft_radix4_bv(
 
 static void *amalloc(size_t alignment, size_t size)
 {
-    void *p = NULL;
-    if (posix_memalign(&p, alignment, size) != 0) return NULL;
+    void *p = vfft_aligned_alloc(alignment, size);
+    if (!p) return NULL;
     memset(p, 0, size);
     return p;
 }
@@ -105,7 +107,9 @@ static int test_n1(int K) {
     fft_radix4_bv_n1(or_,oi,ir,ii,K);
     int f=cmp(or_,rr,N,"n1",K,1e-10);
     f|=cmp(oi,ri,N,"n1_im",K,1e-10);
-    free(ir);free(ii);free(or_);free(oi);free(rr);free(ri);
+    vfft_aligned_free(ir);  vfft_aligned_free(ii);
+    vfft_aligned_free(or_); vfft_aligned_free(oi);
+    vfft_aligned_free(rr);  vfft_aligned_free(ri);
     return f;
 }
 
@@ -127,7 +131,10 @@ static int test_tw(int K) {
     fft_radix4_bv(or_,oi,ir,ii,&tw,K);
     int f=cmp(or_,rr,N,"tw",K,1e-9);
     f|=cmp(oi,ri,N,"tw_im",K,1e-9);
-    free(ir);free(ii);free(or_);free(oi);free(rr);free(ri);free(wr);free(wi);
+    vfft_aligned_free(ir);  vfft_aligned_free(ii);
+    vfft_aligned_free(or_); vfft_aligned_free(oi);
+    vfft_aligned_free(rr);  vfft_aligned_free(ri);
+    vfft_aligned_free(wr);  vfft_aligned_free(wi);
     return f;
 }
 

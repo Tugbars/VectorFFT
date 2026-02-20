@@ -17,12 +17,16 @@
  *   gcc -mavx512f -mavx2 -mfma -O2 -o bench_radix4 bench_radix4.c fft_radix4_fv.c fft_radix4_bv.c -lm
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+
+#include "vfft_compat.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <time.h>
 #include <stdint.h>
 
 #include "fft_radix4.h"
@@ -56,14 +60,15 @@ static inline uint64_t rdtsc(void)
     unsigned lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return ((uint64_t)hi << 32) | lo;
+#elif defined(_M_X64) && defined(_MSC_VER)
+    return __rdtsc();
 #elif defined(__aarch64__)
     uint64_t val;
     __asm__ volatile("mrs %0, cntvct_el0" : "=r"(val));
     return val;
 #else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+    /* Fallback: use portable timer, convert ns → fake ticks */
+    return (uint64_t)vfft_now_ns();
 #endif
 }
 
@@ -71,8 +76,8 @@ static inline uint64_t rdtsc(void)
 
 static double *alloc_a(size_t n)
 {
-    double *p = NULL;
-    if (posix_memalign((void **)&p, 64, n * sizeof(double)) != 0) {
+    double *p = (double *)vfft_aligned_alloc(64, n * sizeof(double));
+    if (!p) {
         fprintf(stderr, "alloc failed\n");
         exit(1);
     }
@@ -95,18 +100,11 @@ static int cmp_u64(const void *a, const void *b)
     return (va > vb) - (va < vb);
 }
 
-static double get_ns(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
-
 /* ── Estimate TSC frequency ── */
 
 static double estimate_tsc_ghz(void)
 {
-    double t0 = get_ns();
+    double t0 = vfft_now_ns();
     uint64_t c0 = rdtsc();
 
     /* Spin ~50ms */
@@ -116,7 +114,7 @@ static double estimate_tsc_ghz(void)
     (void)dummy;
 
     uint64_t c1 = rdtsc();
-    double t1 = get_ns();
+    double t1 = vfft_now_ns();
 
     double dt_ns = t1 - t0;
     double dc = (double)(c1 - c0);
@@ -162,7 +160,7 @@ static bench_result bench_tw(bench_fn_tw fn, int K,
         for (int i = 0; i < inner; i++)
             fn(out_re, out_im, in_re, in_im, tw, K);
         uint64_t t1 = rdtsc();
-        samples[s] = (t1 - t0) / inner;
+        samples[s] = (t1 - t0) / (unsigned)inner;
     }
 
     qsort(samples, MAX_SAMPLES, sizeof(uint64_t), cmp_u64);
@@ -195,7 +193,7 @@ static bench_result bench_n1(bench_fn_n1 fn, int K,
         for (int i = 0; i < inner; i++)
             fn(out_re, out_im, in_re, in_im, K);
         uint64_t t1 = rdtsc();
-        samples[s] = (t1 - t0) / inner;
+        samples[s] = (t1 - t0) / (unsigned)inner;
     }
 
     qsort(samples, MAX_SAMPLES, sizeof(uint64_t), cmp_u64);
@@ -247,15 +245,15 @@ int main(int argc, char **argv)
     for (int K = min_K; K <= max_K; K *= 4)
     {
         int N = 4 * K;
-        double *in_re  = alloc_a(N);
-        double *in_im  = alloc_a(N);
-        double *out_re = alloc_a(N);
-        double *out_im = alloc_a(N);
-        double *tw_re  = alloc_a(3 * K);
-        double *tw_im  = alloc_a(3 * K);
+        double *in_re  = alloc_a((size_t)N);
+        double *in_im  = alloc_a((size_t)N);
+        double *out_re = alloc_a((size_t)N);
+        double *out_im = alloc_a((size_t)N);
+        double *tw_re  = alloc_a((size_t)(3 * K));
+        double *tw_im  = alloc_a((size_t)(3 * K));
 
-        fill_random(in_re, N, 42);
-        fill_random(in_im, N, 137);
+        fill_random(in_re, (size_t)N, 42);
+        fill_random(in_im, (size_t)N, 137);
 
         /* Generate twiddles */
         for (int k = 0; k < K; k++) {
@@ -283,8 +281,9 @@ int main(int argc, char **argv)
                r_sc_bv.median_ns,
                n1_speedup);
 
-        free(in_re); free(in_im); free(out_re); free(out_im);
-        free(tw_re); free(tw_im);
+        vfft_aligned_free(in_re);  vfft_aligned_free(in_im);
+        vfft_aligned_free(out_re); vfft_aligned_free(out_im);
+        vfft_aligned_free(tw_re);  vfft_aligned_free(tw_im);
     }
 
     printf("\n");
@@ -304,15 +303,15 @@ int main(int argc, char **argv)
     for (int K = min_K; K <= max_K; K *= 4)
     {
         int N = 4 * K;
-        double *in_re  = alloc_a(N);
-        double *in_im  = alloc_a(N);
-        double *out_re = alloc_a(N);
-        double *out_im = alloc_a(N);
-        double *tw_re  = alloc_a(3 * K);
-        double *tw_im  = alloc_a(3 * K);
+        double *in_re  = alloc_a((size_t)N);
+        double *in_im  = alloc_a((size_t)N);
+        double *out_re = alloc_a((size_t)N);
+        double *out_im = alloc_a((size_t)N);
+        double *tw_re  = alloc_a((size_t)(3 * K));
+        double *tw_im  = alloc_a((size_t)(3 * K));
 
-        fill_random(in_re, N, 42);
-        fill_random(in_im, N, 137);
+        fill_random(in_re, (size_t)N, 42);
+        fill_random(in_im, (size_t)N, 137);
 
         for (int k = 0; k < K; k++) {
             double a1 = -2.0 * M_PI * k / N;
@@ -336,8 +335,9 @@ int main(int argc, char **argv)
                r_bv_tw.median_cycles / elems, r_bv_n1.median_cycles / elems,
                r_sc_bv.median_cycles / elems);
 
-        free(in_re); free(in_im); free(out_re); free(out_im);
-        free(tw_re); free(tw_im);
+        vfft_aligned_free(in_re);  vfft_aligned_free(in_im);
+        vfft_aligned_free(out_re); vfft_aligned_free(out_im);
+        vfft_aligned_free(tw_re);  vfft_aligned_free(tw_im);
     }
 
     return 0;
