@@ -7,3 +7,5 @@
 /build/src/CMakeFiles
 build/test/test_mixedRadixFFT_standalone.exe
 /build/.cmake
+.cache/clangd/index/fft_radix4_avx512n1.h.D256B4F23E2A0985.idx
+/.cache
