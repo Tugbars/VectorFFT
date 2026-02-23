@@ -13,9 +13,22 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-#include "fft_radix8_avx512_blocked_hybrid_fixed.h"
+#include "fft_radix8_avx512_n1.h"
 
-/*============================================================================*/
+/*============================================================================
+ * PORTABLE ALIGNED ALLOCATION
+ *============================================================================*/
+#ifdef _MSC_VER
+#include <malloc.h>
+static double *alloc64(size_t n)
+{
+    double *p = (double *)_aligned_malloc(n * sizeof(double), 64);
+    if (!p) { fprintf(stderr, "alloc failed\n"); exit(1); }
+    memset(p, 0, n * sizeof(double));
+    return p;
+}
+#define ALIGNED_FREE(ptr) _aligned_free(ptr)
+#else
 static double *alloc64(size_t n)
 {
     double *p = NULL;
@@ -25,6 +38,8 @@ static double *alloc64(size_t n)
     memset(p, 0, n * sizeof(double));
     return p;
 }
+#define ALIGNED_FREE(ptr) free(ptr)
+#endif
 
 static void fill_random(double *buf, size_t n, unsigned seed)
 {
@@ -142,8 +157,8 @@ static int test_blocked4_512(int K, int direction)
     printf("  B4-512  %-3s K=%-5d N=%-6d err=%.2e tol=%.2e %s\n",
            direction==-1?"fwd":"bwd", K, N, e, tol, pass?"PASS":"*** FAIL ***");
 
-    free(in_re); free(in_im); free(avx_re); free(avx_im);
-    free(ref_re); free(ref_im); free(tw_re); free(tw_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(avx_re); ALIGNED_FREE(avx_im);
+    ALIGNED_FREE(ref_re); ALIGNED_FREE(ref_im); ALIGNED_FREE(tw_re); ALIGNED_FREE(tw_im);
     return pass;
 }
 
@@ -176,8 +191,8 @@ static int test_blocked2_512(int K, int direction)
     printf("  B2-512  %-3s K=%-5d N=%-6d err=%.2e tol=%.2e %s\n",
            direction==-1?"fwd":"bwd", K, N, e, tol, pass?"PASS":"*** FAIL ***");
 
-    free(in_re); free(in_im); free(avx_re); free(avx_im);
-    free(ref_re); free(ref_im); free(tw_re); free(tw_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(avx_re); ALIGNED_FREE(avx_im);
+    ALIGNED_FREE(ref_re); ALIGNED_FREE(ref_im); ALIGNED_FREE(tw_re); ALIGNED_FREE(tw_im);
     return pass;
 }
 
@@ -207,8 +222,8 @@ static int test_n1_512(int K, int direction)
     printf("  N1-512  %-3s K=%-5d N=%-6d err=%.2e tol=%.2e %s\n",
            direction==-1?"fwd":"bwd", K, N, e, tol, pass?"PASS":"*** FAIL ***");
 
-    free(in_re); free(in_im); free(avx_re); free(avx_im);
-    free(ref_re); free(ref_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(avx_re); ALIGNED_FREE(avx_im);
+    ALIGNED_FREE(ref_re); ALIGNED_FREE(ref_im);
     return pass;
 }
 
@@ -246,9 +261,9 @@ static int test_b4_vs_b2_512(int K, int direction)
     printf("  B4vsB2  %-3s K=%-5d N=%-6d err=%.2e tol=%.2e %s\n",
            direction==-1?"fwd":"bwd", K, N, e, tol, pass?"PASS":"*** FAIL ***");
 
-    free(in_re); free(in_im); free(b4_re); free(b4_im);
-    free(b2_re); free(b2_im);
-    free(tw4_re); free(tw4_im); free(tw2_re); free(tw2_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(b4_re); ALIGNED_FREE(b4_im);
+    ALIGNED_FREE(b2_re); ALIGNED_FREE(b2_im);
+    ALIGNED_FREE(tw4_re); ALIGNED_FREE(tw4_im); ALIGNED_FREE(tw2_re); ALIGNED_FREE(tw2_im);
     return pass;
 }
 
@@ -284,8 +299,8 @@ static int test_n1_vs_b4_unity_512(int K, int direction)
     printf("  N1vsB4  %-3s K=%-5d N=%-6d err=%.2e tol=%.2e %s\n",
            direction==-1?"fwd":"bwd", K, N, e, tol, pass?"PASS":"*** FAIL ***");
 
-    free(in_re); free(in_im); free(n1_re); free(n1_im);
-    free(b4_re); free(b4_im); free(tw_re); free(tw_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(n1_re); ALIGNED_FREE(n1_im);
+    ALIGNED_FREE(b4_re); ALIGNED_FREE(b4_im); ALIGNED_FREE(tw_re); ALIGNED_FREE(tw_im);
     return pass;
 }
 

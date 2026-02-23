@@ -26,7 +26,7 @@
 #ifndef FFT_RADIX8_AVX2_N1_H
 #define FFT_RADIX8_AVX2_N1_H
 
-#include "fft_radix8_avx2_blocked_hybrid_fixed.h"
+#include "fft_radix8_avx2.h"
 
 /* N1 prefetch distance: larger than twiddled since no twiddle loads compete */
 #ifndef RADIX8_PREFETCH_DISTANCE_AVX2_N1
@@ -41,7 +41,10 @@
  * then W8 on odd outputs, combine via add/sub.
  *============================================================================*/
 TARGET_AVX2_FMA
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_n1_forward_avx2(
     size_t K,
@@ -78,8 +81,12 @@ radix8_stage_n1_forward_avx2(
     /*======================================================================
      * STEADY-STATE U=2 LOOP
      *======================================================================*/
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 4 < K; k += 4) {
         __m256d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i;
         __m256d x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;
@@ -208,7 +215,10 @@ radix8_stage_n1_forward_avx2(
  * - Uses w8_apply_fast_backward_avx2 instead of forward
  *============================================================================*/
 TARGET_AVX2_FMA
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_n1_backward_avx2(
     size_t K,
@@ -248,8 +258,12 @@ radix8_stage_n1_backward_avx2(
     /*======================================================================
      * STEADY-STATE U=2 LOOP
      *======================================================================*/
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 4 < K; k += 4) {
         __m256d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i;
         __m256d x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;

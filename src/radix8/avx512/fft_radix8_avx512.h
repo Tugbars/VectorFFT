@@ -76,15 +76,23 @@
          else        __builtin_prefetch((addr), 0, 3); } while(0)
 
 /* Twiddle structures (same layout, 64-byte aligned) */
+#ifndef RADIX8_TWIDDLE_TYPES_DEFINED
+#define RADIX8_TWIDDLE_TYPES_DEFINED
 typedef struct {
     const double *RESTRICT re;  /* [4*K] = W1[0..K-1], W2[0..K-1], W3[0..K-1], W4[0..K-1] */
     const double *RESTRICT im;
-} radix8_stage_twiddles_blocked4_512_t;
+} radix8_stage_twiddles_blocked4_t;
 
 typedef struct {
     const double *RESTRICT re;  /* [2*K] = W1[0..K-1], W2[0..K-1] */
     const double *RESTRICT im;
-} radix8_stage_twiddles_blocked2_512_t;
+} radix8_stage_twiddles_blocked2_t;
+
+typedef enum {
+    RADIX8_TW_BLOCKED4,
+    RADIX8_TW_BLOCKED2
+} radix8_twiddle_mode_t;
+#endif
 
 /*============================================================================
  * AVX-512 COMPLEX ARITHMETIC PRIMITIVES
@@ -199,13 +207,16 @@ w8_apply_fast_backward_avx512(__m512d *o1r, __m512d *o1i,
  * U=2 software pipelining, two-wave stores.
  *============================================================================*/
 TARGET_AVX512
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_blocked4_forward_avx512(
     size_t K,
     const double *RESTRICT in_re, const double *RESTRICT in_im,
     double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix8_stage_twiddles_blocked4_512_t *RESTRICT stage_tw)
+    const radix8_stage_twiddles_blocked4_t *RESTRICT stage_tw)
 {
     assert((K & 7) == 0 && "K must be multiple of 8 for AVX-512");
     assert(K >= 16 && "K must be >= 16 for U=2 pipelining");
@@ -241,8 +252,12 @@ radix8_stage_blocked4_forward_avx512(
     __m512d nW4r=_mm512_load_pd(&re_base[3*K]), nW4i=_mm512_load_pd(&im_base[3*K]);
 
     /* STEADY-STATE U=2 LOOP */
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 8 < K; k += 8) {
         __m512d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i;
         __m512d x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;
@@ -388,13 +403,16 @@ radix8_stage_blocked4_forward_avx512(
  * BLOCKED4 BACKWARD (AVX-512)
  *============================================================================*/
 TARGET_AVX512
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_blocked4_backward_avx512(
     size_t K,
     const double *RESTRICT in_re, const double *RESTRICT in_im,
     double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix8_stage_twiddles_blocked4_512_t *RESTRICT stage_tw)
+    const radix8_stage_twiddles_blocked4_t *RESTRICT stage_tw)
 {
     assert((K & 7) == 0 && "K must be multiple of 8 for AVX-512");
     assert(K >= 16 && "K must be >= 16 for U=2 pipelining");
@@ -431,8 +449,12 @@ radix8_stage_blocked4_backward_avx512(
     __m512d nW4r=_mm512_load_pd(&re_base[3*K]), nW4i=_mm512_load_pd(&im_base[3*K]);
 
     /* STEADY-STATE */
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 8 < K; k += 8) {
         __m512d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i;
         __m512d x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;
@@ -558,13 +580,16 @@ radix8_stage_blocked4_backward_avx512(
  * Load W1, W2; derive W3=W1·W2, W4=W2², W5=W1·W4, W6=W2·W4, W7=W3·W4
  *============================================================================*/
 TARGET_AVX512
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_blocked2_forward_avx512(
     size_t K,
     const double *RESTRICT in_re, const double *RESTRICT in_im,
     double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix8_stage_twiddles_blocked2_512_t *RESTRICT stage_tw)
+    const radix8_stage_twiddles_blocked2_t *RESTRICT stage_tw)
 {
     assert((K & 7) == 0 && "K must be multiple of 8 for AVX-512");
     assert(K >= 16 && "K must be >= 16 for U=2 pipelining");
@@ -598,8 +623,12 @@ radix8_stage_blocked2_forward_avx512(
     __m512d nW2r=_mm512_load_pd(&re_base[1*K]), nW2i=_mm512_load_pd(&im_base[1*K]);
 
     /* STEADY-STATE */
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 8 < K; k += 8) {
         __m512d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i;
         __m512d x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;
@@ -722,13 +751,16 @@ radix8_stage_blocked2_forward_avx512(
  * BLOCKED2 BACKWARD (AVX-512)
  *============================================================================*/
 TARGET_AVX512
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_blocked2_backward_avx512(
     size_t K,
     const double *RESTRICT in_re, const double *RESTRICT in_im,
     double *RESTRICT out_re, double *RESTRICT out_im,
-    const radix8_stage_twiddles_blocked2_512_t *RESTRICT stage_tw)
+    const radix8_stage_twiddles_blocked2_t *RESTRICT stage_tw)
 {
     assert((K & 7) == 0 && "K must be multiple of 8 for AVX-512");
     assert(K >= 16 && "K must be >= 16 for U=2 pipelining");
@@ -763,8 +795,12 @@ radix8_stage_blocked2_backward_avx512(
     __m512d nW2r=_mm512_load_pd(&re_base[1*K]), nW2i=_mm512_load_pd(&im_base[1*K]);
 
     /* STEADY-STATE */
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 8 < K; k += 8) {
         __m512d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i;
         __m512d x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;

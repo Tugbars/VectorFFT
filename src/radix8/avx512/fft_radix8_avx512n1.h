@@ -21,13 +21,16 @@
 #ifndef FFT_RADIX8_AVX512_N1_H
 #define FFT_RADIX8_AVX512_N1_H
 
-#include "fft_radix8_avx512_blocked_hybrid_fixed.h"
+#include "fft_radix8_avx512.h"
 
 /*============================================================================
  * N1 FORWARD (AVX-512) - Twiddle-less first/last stage
  *============================================================================*/
 TARGET_AVX512
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_n1_forward_avx512(
     size_t K,
@@ -59,8 +62,12 @@ radix8_stage_n1_forward_avx512(
     __m512d nx6r=LD(&in_re[6*K]), nx6i=LD(&in_im[6*K]);
     __m512d nx7r=LD(&in_re[7*K]), nx7i=LD(&in_im[7*K]);
 
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 8 < K; k += 8) {
         __m512d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i;
         __m512d x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;
@@ -148,7 +155,10 @@ radix8_stage_n1_forward_avx512(
  * N1 BACKWARD (AVX-512) - Twiddle-less first/last stage
  *============================================================================*/
 TARGET_AVX512
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_n1_backward_avx512(
     size_t K,
@@ -182,8 +192,12 @@ radix8_stage_n1_backward_avx512(
     __m512d nx6r=LD(&in_re[6*K]), nx6i=LD(&in_im[6*K]);
     __m512d nx7r=LD(&in_re[7*K]), nx7i=LD(&in_im[7*K]);
 
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 8 < K; k += 8) {
         __m512d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i;
         __m512d x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;

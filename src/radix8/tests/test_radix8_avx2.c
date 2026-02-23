@@ -33,6 +33,20 @@
 
 #define M_2PI 6.283185307179586476925286766559005768394
 
+/*============================================================================
+ * PORTABLE ALIGNED ALLOCATION
+ *============================================================================*/
+#ifdef _MSC_VER
+#include <malloc.h>
+static void *alloc_aligned(size_t n_doubles)
+{
+    void *p = _aligned_malloc(n_doubles * sizeof(double), 32);
+    if (!p) { fprintf(stderr, "alloc_aligned failed for %zu doubles\n", n_doubles); exit(1); }
+    memset(p, 0, n_doubles * sizeof(double));
+    return p;
+}
+#define ALIGNED_FREE(ptr) _aligned_free(ptr)
+#else
 static void *alloc_aligned(size_t n_doubles)
 {
     void *p = NULL;
@@ -43,6 +57,8 @@ static void *alloc_aligned(size_t n_doubles)
     memset(p, 0, n_doubles * sizeof(double));
     return p;
 }
+#define ALIGNED_FREE(ptr) free(ptr)
+#endif
 
 static void fill_random(double *buf, int n, unsigned seed)
 {
@@ -268,8 +284,8 @@ static int test_blocked4_forward(int K)
         }
     }
 
-    free(in_re); free(in_im); free(out_re); free(out_im);
-    free(ref_re); free(ref_im); free(tw_re); free(tw_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(out_re); ALIGNED_FREE(out_im);
+    ALIGNED_FREE(ref_re); ALIGNED_FREE(ref_im); ALIGNED_FREE(tw_re); ALIGNED_FREE(tw_im);
     return pass;
 }
 
@@ -320,8 +336,8 @@ static int test_blocked4_backward(int K)
         }
     }
 
-    free(in_re); free(in_im); free(out_re); free(out_im);
-    free(ref_re); free(ref_im); free(tw_re); free(tw_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(out_re); ALIGNED_FREE(out_im);
+    ALIGNED_FREE(ref_re); ALIGNED_FREE(ref_im); ALIGNED_FREE(tw_re); ALIGNED_FREE(tw_im);
     return pass;
 }
 
@@ -358,8 +374,8 @@ static int test_blocked2_forward(int K)
     printf("  BLOCKED2 fwd  K=%-5d N=%-6d max_err=%.2e tol=%.2e %s\n",
            K, N, err, tol, pass ? "PASS" : "*** FAIL ***");
 
-    free(in_re); free(in_im); free(out_re); free(out_im);
-    free(ref_re); free(ref_im); free(tw_re); free(tw_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(out_re); ALIGNED_FREE(out_im);
+    ALIGNED_FREE(ref_re); ALIGNED_FREE(ref_im); ALIGNED_FREE(tw_re); ALIGNED_FREE(tw_im);
     return pass;
 }
 
@@ -396,91 +412,60 @@ static int test_blocked2_backward(int K)
     printf("  BLOCKED2 bwd  K=%-5d N=%-6d max_err=%.2e tol=%.2e %s\n",
            K, N, err, tol, pass ? "PASS" : "*** FAIL ***");
 
-    free(in_re); free(in_im); free(out_re); free(out_im);
-    free(ref_re); free(ref_im); free(tw_re); free(tw_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(out_re); ALIGNED_FREE(out_im);
+    ALIGNED_FREE(ref_re); ALIGNED_FREE(ref_im); ALIGNED_FREE(tw_re); ALIGNED_FREE(tw_im);
     return pass;
 }
 
 /*============================================================================
- * TEST: ROUND-TRIP (forward→backward should give input×N)
+ * TEST: BLOCKED4 vs BLOCKED2 cross-validation
+ * Both modes should produce identical results for the same K.
  *============================================================================*/
 
-static int test_roundtrip_blocked4(int K)
+static int test_blocked4_vs_blocked2(int K, int direction)
 {
     const int N = 8 * K;
-    double *in_re   = alloc_aligned(N);
-    double *in_im   = alloc_aligned(N);
-    double *mid_re  = alloc_aligned(N);
-    double *mid_im  = alloc_aligned(N);
-    double *out_re  = alloc_aligned(N);
-    double *out_im  = alloc_aligned(N);
-    double *tw_fwd_re = alloc_aligned(4 * K);
-    double *tw_fwd_im = alloc_aligned(4 * K);
-    double *tw_bwd_re = alloc_aligned(4 * K);
-    double *tw_bwd_im = alloc_aligned(4 * K);
+    double *in_re  = alloc_aligned(N);
+    double *in_im  = alloc_aligned(N);
+    double *b4_re  = alloc_aligned(N);
+    double *b4_im  = alloc_aligned(N);
+    double *b2_re  = alloc_aligned(N);
+    double *b2_im  = alloc_aligned(N);
+    double *tw4_re = alloc_aligned(4 * K);
+    double *tw4_im = alloc_aligned(4 * K);
+    double *tw2_re = alloc_aligned(2 * K);
+    double *tw2_im = alloc_aligned(2 * K);
 
-    fill_random(in_re, N, 777);
-    fill_random(in_im, N, 888);
+    fill_random(in_re, N, 555 + K);
+    fill_random(in_im, N, 666 + K);
 
-    /* Forward */
-    init_twiddles_blocked4(tw_fwd_re, tw_fwd_im, K, -1);
-    radix8_stage_twiddles_blocked4_t tw_fwd = { .re = tw_fwd_re, .im = tw_fwd_im };
-    radix8_stage_blocked4_forward_avx2((size_t)K, in_re, in_im, mid_re, mid_im, &tw_fwd);
+    init_twiddles_blocked4(tw4_re, tw4_im, K, direction);
+    init_twiddles_blocked2(tw2_re, tw2_im, K, direction);
 
-    /* Backward */
-    init_twiddles_blocked4(tw_bwd_re, tw_bwd_im, K, +1);
-    radix8_stage_twiddles_blocked4_t tw_bwd = { .re = tw_bwd_re, .im = tw_bwd_im };
-    radix8_stage_blocked4_backward_avx2((size_t)K, mid_re, mid_im, out_re, out_im, &tw_bwd);
+    radix8_stage_twiddles_blocked4_t tw4 = { .re = tw4_re, .im = tw4_im };
+    radix8_stage_twiddles_blocked2_t tw2 = { .re = tw2_re, .im = tw2_im };
 
-    /* out should be in * N (for single-stage DFT→IDFT) */
-    /* Actually for single stage: out[k] = N * in[k] only if the stage
-       constitutes a complete DFT. For a SINGLE radix-8 stage of a larger FFT,
-       forward→backward gives back the input×8 (the radix). */
-    double max_err = 0.0;
-    for (int i = 0; i < N; i++) {
-        double er = fabs(out_re[i] / 8.0 - in_re[i]);
-        double ei = fabs(out_im[i] / 8.0 - in_im[i]);
-        double e = fmax(er, ei);
-        if (e > max_err) max_err = e;
+    if (direction == -1) {
+        radix8_stage_blocked4_forward_avx2((size_t)K, in_re, in_im, b4_re, b4_im, &tw4);
+        radix8_stage_blocked2_forward_avx2((size_t)K, in_re, in_im, b2_re, b2_im, &tw2);
+    } else {
+        radix8_stage_blocked4_backward_avx2((size_t)K, in_re, in_im, b4_re, b4_im, &tw4);
+        radix8_stage_blocked2_backward_avx2((size_t)K, in_re, in_im, b2_re, b2_im, &tw2);
     }
 
-    /* Note: the round-trip of (twiddle + 8pt DFT) → (twiddle + 8pt IDFT)
-       recovers input×8 only if the twiddle application is unitary and
-       the second twiddle is the conjugate of the first. For standard CT
-       twiddles, this should hold. */
-    double tol = 1e-10 * (1 + log2((double)N));
-    int pass = (max_err < tol);
+    double err = fmax(max_abs_error(b4_re, b2_re, N),
+                      max_abs_error(b4_im, b2_im, N));
+    /* BLOCKED2 derives W3,W4 from W1,W2 with FMA — expect slightly more error */
+    double tol = 1e-12;
+    int pass = (err < tol);
 
-    printf("  ROUNDTRIP B4  K=%-5d N=%-6d max_err=%.2e tol=%.2e %s\n",
-           K, N, max_err, tol, pass ? "PASS" : "*** FAIL ***");
+    printf("  B4vsB2 %s K=%-5d N=%-6d max_err=%.2e tol=%.2e %s\n",
+           direction == -1 ? "fwd" : "bwd", K, N, err, tol,
+           pass ? "PASS" : "*** FAIL ***");
 
-    if (!pass) {
-        /* Try without /8 scaling to see raw values */
-        double raw_err = fmax(max_abs_error(out_re, in_re, N),
-                              max_abs_error(out_im, in_im, N));
-        printf("    (raw err without /8: %.2e, raw /N: %.2e)\n",
-               raw_err,
-               fmax(max_abs_error(out_re, in_re, N) / N,
-                    max_abs_error(out_im, in_im, N) / N));
-
-        /* Check if dividing by some other factor works */
-        for (int div = 1; div <= 64; div++) {
-            double e = 0.0;
-            for (int i = 0; i < N; i++) {
-                double er = fabs(out_re[i] / (double)div - in_re[i]);
-                double ei = fabs(out_im[i] / (double)div - in_im[i]);
-                e = fmax(e, fmax(er, ei));
-            }
-            if (e < 1e-8) {
-                printf("    → Division by %d gives err=%.2e (this is the actual scale factor)\n", div, e);
-                break;
-            }
-        }
-    }
-
-    free(in_re); free(in_im); free(mid_re); free(mid_im);
-    free(out_re); free(out_im);
-    free(tw_fwd_re); free(tw_fwd_im); free(tw_bwd_re); free(tw_bwd_im);
+    ALIGNED_FREE(in_re); ALIGNED_FREE(in_im); ALIGNED_FREE(b4_re); ALIGNED_FREE(b4_im);
+    ALIGNED_FREE(b2_re); ALIGNED_FREE(b2_im);
+    ALIGNED_FREE(tw4_re); ALIGNED_FREE(tw4_im); ALIGNED_FREE(tw2_re); ALIGNED_FREE(tw2_im);
     return pass;
 }
 
@@ -530,12 +515,14 @@ int main(int argc, char **argv)
         passed += test_blocked2_backward(K_b2[i]);
     }
 
-    /* Round-trip Tests */
-    printf("\n--- Round-Trip (Forward→Backward) ---\n");
-    int K_rt[] = {8, 16, 32, 64, 128, 256};
-    for (int i = 0; i < (int)(sizeof(K_rt)/sizeof(K_rt[0])); i++) {
+    /* BLOCKED4 vs BLOCKED2 cross-validation */
+    printf("\n--- BLOCKED4 vs BLOCKED2 Cross-Validation ---\n");
+    int K_xv[] = {8, 16, 32, 64, 128, 256, 512};
+    for (int i = 0; i < (int)(sizeof(K_xv)/sizeof(K_xv[0])); i++) {
         total++;
-        passed += test_roundtrip_blocked4(K_rt[i]);
+        passed += test_blocked4_vs_blocked2(K_xv[i], -1);
+        total++;
+        passed += test_blocked4_vs_blocked2(K_xv[i], +1);
     }
 
     /* Summary */

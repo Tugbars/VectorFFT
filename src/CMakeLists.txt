@@ -5,6 +5,7 @@
 
 # ── Ready ────────────────────────────────────────────────────────────────
 add_subdirectory(radix4)
+add_subdirectory(radix8)
 
 # ── Not ready yet (uncomment when each radix is migrated) ────────────────
 # add_subdirectory(radix5)

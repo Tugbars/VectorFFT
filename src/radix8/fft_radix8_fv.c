@@ -28,22 +28,22 @@
 
 /* Blocked hybrid (B4/B2) implementations */
 #ifdef __AVX512F__
-#include "fft_radix8_avx512_blocked_hybrid_fixed.h"
+#include "fft_radix8_avx512.h"
 #endif
 
 #ifdef __AVX2__
-#include "fft_radix8_avx2_blocked_hybrid_fixed.h"
+#include "fft_radix8_avx2.h"
 #endif
 
-#include "fft_radix8_scalar_blocked_hybrid_xe_optimized.h"
+#include "fft_radix8_scalar.h"
 
 /* N1 (twiddle-less) implementations */
 #ifdef __AVX512F__
-#include "fft_radix8_avx512_n1.h"
+#include "fft_radix8_avx512n1.h"
 #endif
 
 #ifdef __AVX2__
-#include "fft_radix8_avx2_n1.h"
+#include "fft_radix8_avx2n1.h"
 #endif
 
 #include "fft_radix8_scalar_n1.h"

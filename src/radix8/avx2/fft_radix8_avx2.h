@@ -53,6 +53,8 @@
          else        __builtin_prefetch((addr), 0, 3); } while(0)
 
 /* Twiddle structures */
+#ifndef RADIX8_TWIDDLE_TYPES_DEFINED
+#define RADIX8_TWIDDLE_TYPES_DEFINED
 typedef struct {
     const double *RESTRICT re;
     const double *RESTRICT im;
@@ -67,14 +69,18 @@ typedef enum {
     RADIX8_TW_BLOCKED4,
     RADIX8_TW_BLOCKED2
 } radix8_twiddle_mode_t;
+#endif
 
 /* W8 constants */
 #define C8_CONSTANT 0.7071067811865475244008443621048490392848359376887
 
+#ifndef RADIX8_CHOOSE_MODE_DEFINED
+#define RADIX8_CHOOSE_MODE_DEFINED
 FORCE_INLINE radix8_twiddle_mode_t
 radix8_choose_twiddle_mode(size_t K) {
     return (K <= RADIX8_BLOCKED4_THRESHOLD) ? RADIX8_TW_BLOCKED4 : RADIX8_TW_BLOCKED2;
 }
+#endif /* RADIX8_CHOOSE_MODE_DEFINED */
 
 /* Core primitives */
 TARGET_AVX2_FMA FORCE_INLINE void
@@ -176,7 +182,10 @@ w8_apply_fast_backward_avx2(
  * BLOCKED4 FORWARD STAGE DRIVER (U=2 pipelining)
  *============================================================================*/
 TARGET_AVX2_FMA
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_blocked4_forward_avx2(
     size_t K,
@@ -218,8 +227,12 @@ radix8_stage_blocked4_forward_avx2(
     __m256d nW4r = _mm256_load_pd(&re_base[3*K]); __m256d nW4i = _mm256_load_pd(&im_base[3*K]);
 
     /* STEADY-STATE LOOP */
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 4 < K; k += 4) {
         __m256d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i, x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;
         __m256d x4r=nx4r,x4i=nx4i, x5r=nx5r,x5i=nx5i, x6r=nx6r,x6i=nx6i, x7r=nx7r,x7i=nx7i;
@@ -369,7 +382,10 @@ radix8_stage_blocked4_forward_avx2(
  * BLOCKED4 BACKWARD STAGE DRIVER
  *============================================================================*/
 TARGET_AVX2_FMA
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_blocked4_backward_avx2(
     size_t K,
@@ -409,8 +425,12 @@ radix8_stage_blocked4_backward_avx2(
     __m256d nW3r=_mm256_load_pd(&re_base[2*K]), nW3i=_mm256_load_pd(&im_base[2*K]);
     __m256d nW4r=_mm256_load_pd(&re_base[3*K]), nW4i=_mm256_load_pd(&im_base[3*K]);
 
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 4 < K; k += 4) {
         __m256d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i, x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;
         __m256d x4r=nx4r,x4i=nx4i, x5r=nx5r,x5i=nx5i, x6r=nx6r,x6i=nx6i, x7r=nx7r,x7i=nx7i;
@@ -549,7 +569,10 @@ radix8_stage_blocked4_backward_avx2(
  * BLOCKED2 FORWARD STAGE DRIVER
  *============================================================================*/
 TARGET_AVX2_FMA
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_blocked2_forward_avx2(
     size_t K,
@@ -587,8 +610,12 @@ radix8_stage_blocked2_forward_avx2(
     __m256d nW1r=_mm256_load_pd(&re_base[0*K]), nW1i=_mm256_load_pd(&im_base[0*K]);
     __m256d nW2r=_mm256_load_pd(&re_base[1*K]), nW2i=_mm256_load_pd(&im_base[1*K]);
 
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 4 < K; k += 4) {
         __m256d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i, x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;
         __m256d x4r=nx4r,x4i=nx4i, x5r=nx5r,x5i=nx5i, x6r=nx6r,x6i=nx6i, x7r=nx7r,x7i=nx7i;
@@ -725,7 +752,10 @@ radix8_stage_blocked2_forward_avx2(
  * BLOCKED2 BACKWARD STAGE DRIVER
  *============================================================================*/
 TARGET_AVX2_FMA
+/* no-unroll: GCC attribute, Clang/ICX use pragma inside loop */
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
 __attribute__((optimize("no-unroll-loops")))
+#endif
 static void
 radix8_stage_blocked2_backward_avx2(
     size_t K,
@@ -763,8 +793,12 @@ radix8_stage_blocked2_backward_avx2(
     __m256d nW1r=_mm256_load_pd(&re_base[0*K]), nW1i=_mm256_load_pd(&im_base[0*K]);
     __m256d nW2r=_mm256_load_pd(&re_base[1*K]), nW2i=_mm256_load_pd(&im_base[1*K]);
 
+/* Prevent unroll: GCC uses pragma GCC, Clang/ICX uses pragma clang */
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
 #pragma clang loop unroll(disable)
+#elif defined(__GNUC__)
 #pragma GCC unroll 1
+#endif
     for (size_t k = 0; k + 4 < K; k += 4) {
         __m256d x0r=nx0r,x0i=nx0i, x1r=nx1r,x1i=nx1i, x2r=nx2r,x2i=nx2i, x3r=nx3r,x3i=nx3i;
         __m256d x4r=nx4r,x4i=nx4i, x5r=nx5r,x5i=nx5i, x6r=nx6r,x6i=nx6i, x7r=nx7r,x7i=nx7i;
