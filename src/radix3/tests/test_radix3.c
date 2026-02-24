@@ -18,20 +18,20 @@
 #include <math.h>
 
 /* Include all ISA headers */
-#include "fft_radix3_scalar.h"
-#include "fft_radix3_scalar_n1.h"
+#include "scalar/fft_radix3_scalar.h"
+#include "scalar/fft_radix3_scalar_n1.h"
 
 #if defined(__AVX2__) && defined(__FMA__)
-#include "fft_radix3_avx2.h"
-#include "fft_radix3_avx2_n1.h"
+#include "avx2/fft_radix3_avx2.h"
+#include "avx2/fft_radix3_avx2_n1.h"
 #define HAVE_AVX2 1
 #else
 #define HAVE_AVX2 0
 #endif
 
 #if defined(__AVX512F__)
-#include "fft_radix3_avx512.h"
-#include "fft_radix3_avx512_n1.h"
+#include "avx512/fft_radix3_avx512.h"
+#include "avx512/fft_radix3_avx512_n1.h"
 #define HAVE_AVX512 1
 #else
 #define HAVE_AVX512 0

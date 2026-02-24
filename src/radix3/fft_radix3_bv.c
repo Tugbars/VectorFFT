@@ -1,11 +1,8 @@
 /**
- * @file fft_radix3_fv.c
- * @brief Forward Radix-3 Stage Driver — ISA Dispatch
+ * @file fft_radix3_bv.c
+ * @brief Backward Radix-3 Stage Driver — ISA Dispatch
  *
- * Compile-time ISA selection + runtime K-based fallback.
- * AVX-512 requires K ≥ 8 and K multiple of 8 for the vector path.
- * AVX2 requires K ≥ 4 and K multiple of 4 for the vector path.
- * All other K values handled by scalar (always available).
+ * Mirrors fft_radix3_fv.c with backward butterfly kernels.
  *
  * @version 1.0
  * @date 2025
@@ -13,7 +10,6 @@
 
 #include "fft_radix3.h"
 
-/* ── ISA headers (conditional) ── */
 #if defined(__AVX512F__)
 #include "avx512/fft_radix3_avx512.h"
 #include "avx512/fft_radix3_avx512_n1.h"
@@ -27,15 +23,14 @@
 #include "scalar/fft_radix3_scalar.h"
 #include "scalar/fft_radix3_scalar_n1.h"
 
-/* ── Minimum K for vector paths ── */
 #define AVX512_MIN_K  8
 #define AVX2_MIN_K    4
 
 /*============================================================================
- * FORWARD — TWIDDLED
+ * BACKWARD — TWIDDLED
  *============================================================================*/
 
-void fft_radix3_fv(
+void fft_radix3_bv(
     size_t K,
     const double *in_re,
     const double *in_im,
@@ -45,24 +40,24 @@ void fft_radix3_fv(
 {
 #if defined(__AVX512F__)
     if (K >= AVX512_MIN_K) {
-        radix3_stage_forward_avx512(K, in_re, in_im, out_re, out_im, tw);
+        radix3_stage_backward_avx512(K, in_re, in_im, out_re, out_im, tw);
         return;
     }
 #endif
 #if defined(__AVX2__) && defined(__FMA__)
     if (K >= AVX2_MIN_K) {
-        radix3_stage_forward_avx2(K, in_re, in_im, out_re, out_im, tw);
+        radix3_stage_backward_avx2(K, in_re, in_im, out_re, out_im, tw);
         return;
     }
 #endif
-    radix3_stage_forward_scalar(K, in_re, in_im, out_re, out_im, tw);
+    radix3_stage_backward_scalar(K, in_re, in_im, out_re, out_im, tw);
 }
 
 /*============================================================================
- * FORWARD — N1 (twiddle-less)
+ * BACKWARD — N1 (twiddle-less)
  *============================================================================*/
 
-void fft_radix3_fv_n1(
+void fft_radix3_bv_n1(
     size_t K,
     const double *in_re,
     const double *in_im,
@@ -71,15 +66,15 @@ void fft_radix3_fv_n1(
 {
 #if defined(__AVX512F__)
     if (K >= AVX512_MIN_K) {
-        radix3_stage_n1_forward_avx512(K, in_re, in_im, out_re, out_im);
+        radix3_stage_n1_backward_avx512(K, in_re, in_im, out_re, out_im);
         return;
     }
 #endif
 #if defined(__AVX2__) && defined(__FMA__)
     if (K >= AVX2_MIN_K) {
-        radix3_stage_n1_forward_avx2(K, in_re, in_im, out_re, out_im);
+        radix3_stage_n1_backward_avx2(K, in_re, in_im, out_re, out_im);
         return;
     }
 #endif
-    radix3_stage_n1_forward_scalar(K, in_re, in_im, out_re, out_im);
+    radix3_stage_n1_backward_scalar(K, in_re, in_im, out_re, out_im);
 }

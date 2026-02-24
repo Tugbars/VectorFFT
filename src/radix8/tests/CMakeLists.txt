@@ -13,7 +13,7 @@
 #   ctest --test-dir build --output-on-failure
 #
 ##############################################################################
-enable_testing()
+enable_testing()  # redundant when called from parent, but harmless standalone
 
 # Inherit from parent: RADIX8_RESOLVED_ISA, RADIX8_C_FLAGS, FLAGS_*
 
@@ -109,6 +109,20 @@ if(TEST_MATH_LIB)
 endif()
 
 add_test(NAME test_radix8_drivers COMMAND test_radix8_drivers)
+
+# ── Roundtrip + bench (links against library) ──────────────────────────────
+add_executable(test_radix8_roundtrip_bench test_radix8_roundtrip_bench.c)
+target_link_libraries(test_radix8_roundtrip_bench PRIVATE radix8)
+target_compile_options(test_radix8_roundtrip_bench PRIVATE ${RADIX8_C_FLAGS})
+target_include_directories(test_radix8_roundtrip_bench PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+
+if(TEST_MATH_LIB)
+    target_link_libraries(test_radix8_roundtrip_bench PRIVATE ${TEST_MATH_LIB})
+endif()
+
+add_test(NAME test_radix8_roundtrip COMMAND test_radix8_roundtrip_bench)
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 message(STATUS "Radix-8 tests enabled (ISA: ${RADIX8_RESOLVED_ISA})")

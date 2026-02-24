@@ -20,7 +20,7 @@ cmake_minimum_required(VERSION 3.16)
 project(radix3 LANGUAGES C)
 
 # ── Options ─────────────────────────────────────────────────────────────────
-option(RADIX3_BUILD_TESTS "Build radix-3 test executables" OFF)
+option(RADIX3_BUILD_TESTS "Build radix-3 test executables" ON)
 
 set(RADIX3_ISA "AUTO" CACHE STRING "Target ISA: AUTO, AVX512, AVX2, SCALAR")
 set_property(CACHE RADIX3_ISA PROPERTY STRINGS AUTO AVX512 AVX2 SCALAR)

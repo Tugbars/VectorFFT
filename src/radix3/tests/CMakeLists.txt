@@ -32,4 +32,14 @@ if(R3_TEST_MATH_LIB)
 endif()
 add_test(NAME test_radix3_drivers COMMAND test_radix3_drivers)
 
+# ── Roundtrip + bench (links against library) ──────────────────────────────
+add_executable(test_radix3_roundtrip_bench test_radix3_roundtrip_bench.c)
+target_link_libraries(test_radix3_roundtrip_bench PRIVATE radix3)
+target_compile_options(test_radix3_roundtrip_bench PRIVATE ${R3_C_FLAGS})
+target_include_directories(test_radix3_roundtrip_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(R3_TEST_MATH_LIB)
+    target_link_libraries(test_radix3_roundtrip_bench PRIVATE ${R3_TEST_MATH_LIB})
+endif()
+add_test(NAME test_radix3_roundtrip COMMAND test_radix3_roundtrip_bench)
+
 message(STATUS "Radix-3 tests enabled (ISA: ${R3_RESOLVED_ISA})")

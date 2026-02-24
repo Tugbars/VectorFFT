@@ -79,15 +79,15 @@ radix3_stage_forward_avx512(
     double       *R3Z_RESTRICT out_im,
     const radix3_stage_twiddles_t *R3Z_RESTRICT tw)
 {
-    const double *R3Z_RESTRICT a_re = (const double *)R3Z_ASSUME_ALIGNED(in_re, 64);
-    const double *R3Z_RESTRICT a_im = (const double *)R3Z_ASSUME_ALIGNED(in_im, 64);
+    const double *R3Z_RESTRICT a_re = in_re;
+    const double *R3Z_RESTRICT a_im = in_im;
     const double *R3Z_RESTRICT b_re = in_re + K;
     const double *R3Z_RESTRICT b_im = in_im + K;
     const double *R3Z_RESTRICT c_re = in_re + 2*K;
     const double *R3Z_RESTRICT c_im = in_im + 2*K;
 
-    double *R3Z_RESTRICT o0r = (double *)R3Z_ASSUME_ALIGNED(out_re, 64);
-    double *R3Z_RESTRICT o0i = (double *)R3Z_ASSUME_ALIGNED(out_im, 64);
+    double *R3Z_RESTRICT o0r = out_re;
+    double *R3Z_RESTRICT o0i = out_im;
     double *R3Z_RESTRICT o1r = out_re + K;
     double *R3Z_RESTRICT o1i = out_im + K;
     double *R3Z_RESTRICT o2r = out_re + 2*K;
@@ -201,15 +201,15 @@ radix3_stage_backward_avx512(
     double       *R3Z_RESTRICT out_im,
     const radix3_stage_twiddles_t *R3Z_RESTRICT tw)
 {
-    const double *R3Z_RESTRICT a_re = (const double *)R3Z_ASSUME_ALIGNED(in_re, 64);
-    const double *R3Z_RESTRICT a_im = (const double *)R3Z_ASSUME_ALIGNED(in_im, 64);
+    const double *R3Z_RESTRICT a_re = in_re;
+    const double *R3Z_RESTRICT a_im = in_im;
     const double *R3Z_RESTRICT b_re = in_re + K;
     const double *R3Z_RESTRICT b_im = in_im + K;
     const double *R3Z_RESTRICT c_re = in_re + 2*K;
     const double *R3Z_RESTRICT c_im = in_im + 2*K;
 
-    double *R3Z_RESTRICT o0r = (double *)R3Z_ASSUME_ALIGNED(out_re, 64);
-    double *R3Z_RESTRICT o0i = (double *)R3Z_ASSUME_ALIGNED(out_im, 64);
+    double *R3Z_RESTRICT o0r = out_re;
+    double *R3Z_RESTRICT o0i = out_im;
     double *R3Z_RESTRICT o1r = out_re + K;
     double *R3Z_RESTRICT o1i = out_im + K;
     double *R3Z_RESTRICT o2r = out_re + 2*K;
