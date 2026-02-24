@@ -6,6 +6,13 @@
  * computed via DFT6→pointwise multiply→IDFT6.  The length-6 DFT is
  * decomposed as DFT3 × DFT2 (Cooley–Tukey) with compile-time constants.
  *
+ * OPTIMIZATIONS:
+ *   P0: Round-robin convolution — interleaves mul-phase products across
+ *       3-slot waves.  Helps OoO execution fill pipeline bubbles between
+ *       dependent multiply→subtract/add pairs.
+ *   P1: Tree y0 sum — binary tree DC accumulation.  6-deep add chain → 3
+ *       levels, reducing latency from 24 to 12 cycles (4-cycle FP add).
+ *
  * Kernel constants:  DFT6(time_reverse(b_fwd)) / 6   (forward)
  *                    DFT6(time_reverse(b_bwd)) / 6   (backward)
  * where b_fwd[q] = W7^{g^q}, g = 3 (primitive root mod 7).
@@ -84,6 +91,63 @@ static inline __attribute__((always_inline)) void cmul_scalar(double ar, double 
 {
     *cr = ar * br - ai * bi;
     *ci = ar * bi + ai * br;
+}
+
+/* ================================================================== */
+/*  Round-robin pointwise multiply  (P0 optimization)                  */
+/*                                                                     */
+/*  Interleaves mul-phase of independent complex multiplies across     */
+/*  3-slot waves so OoO execution can fill pipeline bubbles between    */
+/*  dependent multiply→subtract/add pairs.                             */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) void pointwise_rr6_scalar(double *Ar, double *Ai,
+                                                                       const double *Kr, const double *Ki,
+                                                                       double *Cr, double *Ci)
+{
+    /* Wave 1: slots 0,1,2 — all products first, then combine */
+    double p0a = Ai[0] * Ki[0], p0b = Ai[0] * Kr[0];
+    double p1a = Ai[1] * Ki[1], p1b = Ai[1] * Kr[1];
+    double p2a = Ai[2] * Ki[2], p2b = Ai[2] * Kr[2];
+
+    Cr[0] = Ar[0] * Kr[0] - p0a;
+    Ci[0] = Ar[0] * Ki[0] + p0b;
+    Cr[1] = Ar[1] * Kr[1] - p1a;
+    Ci[1] = Ar[1] * Ki[1] + p1b;
+    Cr[2] = Ar[2] * Kr[2] - p2a;
+    Ci[2] = Ar[2] * Ki[2] + p2b;
+
+    /* Wave 2: slots 3,4,5 */
+    double p3a = Ai[3] * Ki[3], p3b = Ai[3] * Kr[3];
+    double p4a = Ai[4] * Ki[4], p4b = Ai[4] * Kr[4];
+    double p5a = Ai[5] * Ki[5], p5b = Ai[5] * Kr[5];
+
+    Cr[3] = Ar[3] * Kr[3] - p3a;
+    Ci[3] = Ar[3] * Ki[3] + p3b;
+    Cr[4] = Ar[4] * Kr[4] - p4a;
+    Ci[4] = Ar[4] * Ki[4] + p4b;
+    Cr[5] = Ar[5] * Kr[5] - p5a;
+    Ci[5] = Ar[5] * Ki[5] + p5b;
+}
+
+/* ================================================================== */
+/*  Tree y0 sum  (P1 optimization)                                     */
+/*                                                                     */
+/*  Binary tree reduction: 6 sequential adds → 3 levels                */
+/*    L1: a=x0+t1  b=t2+t3  c=t4+t5                                   */
+/*    L2: d=a+b    e=c+t6                                              */
+/*    L3: dc=d+e                                                       */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) double tree_y0_scalar(double x0, double t1, double t2, double t3,
+                                                                   double t4, double t5, double t6)
+{
+    double a = x0 + t1;
+    double b = t2 + t3;
+    double c = t4 + t5;
+    double d = a + b;
+    double e = c + t6;
+    return d + e;
 }
 
 /* ================================================================== */
@@ -260,9 +324,9 @@ static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_1(
         cmul_scalar(f_re[k], f_im[k], w5r, w5i, &t5r, &t5i);
         cmul_scalar(g_re[k], g_im[k], w6r, w6i, &t6r, &t6i);
 
-        /* ---- DC output: y0 = x0 + t1 + t2 + t3 + t4 + t5 + t6 ---- */
-        double dcr = x0r + t1r + t2r + t3r + t4r + t5r + t6r;
-        double dci = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
+        /* ---- DC output: tree sum (P1) ---- */
+        double dcr = tree_y0_scalar(x0r, t1r, t2r, t3r, t4r, t5r, t6r);
+        double dci = tree_y0_scalar(x0i, t1i, t2i, t3i, t4i, t5i, t6i);
         y0_re[k] = dcr;
         y0_im[k] = dci;
 
@@ -286,13 +350,9 @@ static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_1(
         double Ar[6], Ai[6];
         dft6_forward_scalar(ar, ai, Ar, Ai);
 
-        /* ---- Pointwise multiply with forward kernel ---- */
+        /* ---- Round-robin pointwise multiply (P0) ---- */
         double Cr[6], Ci[6];
-        for (int j = 0; j < 6; j++)
-        {
-            cmul_scalar(Ar[j], Ai[j], RK7_FWD_RE[j], RK7_FWD_IM[j],
-                        &Cr[j], &Ci[j]);
-        }
+        pointwise_rr6_scalar(Ar, Ai, RK7_FWD_RE, RK7_FWD_IM, Cr, Ci);
 
         /* ---- Backward DFT6 (no /6, absorbed in kernel) ---- */
         double cr[6], ci[6];
@@ -350,9 +410,9 @@ static inline __attribute__((always_inline)) void radix7_rader_bwd_scalar_1(
         double t5r = f_re[k], t5i = f_im[k];
         double t6r = g_re[k], t6i = g_im[k];
 
-        /* DC of backward DFT (before twiddle) */
-        double dcr = x0r + t1r + t2r + t3r + t4r + t5r + t6r;
-        double dci = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
+        /* DC of backward DFT (tree sum, before twiddle) */
+        double dcr = tree_y0_scalar(x0r, t1r, t2r, t3r, t4r, t5r, t6r);
+        double dci = tree_y0_scalar(x0i, t1i, t2i, t3i, t4i, t5i, t6i);
 
         /* Rader permute + backward convolution */
         double ar[6], ai[6];
@@ -373,11 +433,7 @@ static inline __attribute__((always_inline)) void radix7_rader_bwd_scalar_1(
         dft6_forward_scalar(ar, ai, Ar, Ai);
 
         double Cr[6], Ci[6];
-        for (int j = 0; j < 6; j++)
-        {
-            cmul_scalar(Ar[j], Ai[j], RK7_BWD_RE[j], RK7_BWD_IM[j],
-                        &Cr[j], &Ci[j]);
-        }
+        pointwise_rr6_scalar(Ar, Ai, RK7_BWD_RE, RK7_BWD_IM, Cr, Ci);
 
         double cr[6], ci[6];
         dft6_backward_scalar(Cr, Ci, cr, ci);
@@ -445,8 +501,8 @@ static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_N1(
         double t5r = f_re[k], t5i = f_im[k];
         double t6r = g_re[k], t6i = g_im[k];
 
-        y0_re[k] = x0r + t1r + t2r + t3r + t4r + t5r + t6r;
-        y0_im[k] = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
+        y0_re[k] = tree_y0_scalar(x0r, t1r, t2r, t3r, t4r, t5r, t6r);
+        y0_im[k] = tree_y0_scalar(x0i, t1i, t2i, t3i, t4i, t5i, t6i);
 
         double ar[6], ai[6];
         ar[0] = t1r;
@@ -466,11 +522,7 @@ static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_N1(
         dft6_forward_scalar(ar, ai, Ar, Ai);
 
         double Cr[6], Ci[6];
-        for (int j = 0; j < 6; j++)
-        {
-            cmul_scalar(Ar[j], Ai[j], RK7_FWD_RE[j], RK7_FWD_IM[j],
-                        &Cr[j], &Ci[j]);
-        }
+        pointwise_rr6_scalar(Ar, Ai, RK7_FWD_RE, RK7_FWD_IM, Cr, Ci);
 
         double cr[6], ci[6];
         dft6_backward_scalar(Cr, Ci, cr, ci);
@@ -517,8 +569,8 @@ static inline __attribute__((always_inline)) void radix7_rader_bwd_scalar_N1(
         double t5r = f_re[k], t5i = f_im[k];
         double t6r = g_re[k], t6i = g_im[k];
 
-        y0_re[k] = x0r + t1r + t2r + t3r + t4r + t5r + t6r;
-        y0_im[k] = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
+        y0_re[k] = tree_y0_scalar(x0r, t1r, t2r, t3r, t4r, t5r, t6r);
+        y0_im[k] = tree_y0_scalar(x0i, t1i, t2i, t3i, t4i, t5i, t6i);
 
         double ar[6], ai[6];
         ar[0] = t1r;
@@ -538,11 +590,7 @@ static inline __attribute__((always_inline)) void radix7_rader_bwd_scalar_N1(
         dft6_forward_scalar(ar, ai, Ar, Ai);
 
         double Cr[6], Ci[6];
-        for (int j = 0; j < 6; j++)
-        {
-            cmul_scalar(Ar[j], Ai[j], RK7_BWD_RE[j], RK7_BWD_IM[j],
-                        &Cr[j], &Ci[j]);
-        }
+        pointwise_rr6_scalar(Ar, Ai, RK7_BWD_RE, RK7_BWD_IM, Cr, Ci);
 
         double cr[6], ci[6];
         dft6_backward_scalar(Cr, Ci, cr, ci);
