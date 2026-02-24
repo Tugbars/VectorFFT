@@ -43,25 +43,29 @@
 /* ================================================================== */
 /*  WFTA constants for DFT-5                                           */
 /* ================================================================== */
-#define R5_C1    0.30901699437494742410   /* cos(2π/5) = (√5-1)/4       */
-#define R5_C2   (-0.80901699437494742410) /* cos(4π/5) = -(√5+1)/4      */
-#define R5_SIN1  0.95105651629515357212   /* sin(2π/5)                   */
-#define R5_SIN2  0.58778525229247312917   /* sin(4π/5)                   */
-#define R5_QA   (-0.25)                   /* (C1+C2)/2 = -1/4           */
-#define R5_QB    0.55901699437494742410   /* (C1-C2)/2 = √5/4           */
+#define R5_C1 0.30901699437494742410    /* cos(2π/5) = (√5-1)/4       */
+#define R5_C2 (-0.80901699437494742410) /* cos(4π/5) = -(√5+1)/4      */
+#define R5_SIN1 0.95105651629515357212  /* sin(2π/5)                   */
+#define R5_SIN2 0.58778525229247312917  /* sin(4π/5)                   */
+#define R5_QA (-0.25)                   /* (C1+C2)/2 = -1/4           */
+#define R5_QB 0.55901699437494742410    /* (C1-C2)/2 = √5/4           */
 
 /* ================================================================== */
 /*  Complex multiply helpers — 512-bit FMA                             */
 /* ================================================================== */
-#define R5_CMUL_512(ar, ai, wr, wi, tr, ti) do {                       \
-    (ti) = _mm512_fmadd_pd((ar), (wi), _mm512_mul_pd((ai), (wr)));     \
-    (tr) = _mm512_fmsub_pd((ar), (wr), _mm512_mul_pd((ai), (wi)));     \
-} while (0)
+#define R5_CMUL_512(ar, ai, wr, wi, tr, ti)                            \
+    do                                                                 \
+    {                                                                  \
+        (ti) = _mm512_fmadd_pd((ar), (wi), _mm512_mul_pd((ai), (wr))); \
+        (tr) = _mm512_fmsub_pd((ar), (wr), _mm512_mul_pd((ai), (wi))); \
+    } while (0)
 
-#define R5_CMULJ_512(ar, ai, wr, wi, tr, ti) do {                      \
-    (tr) = _mm512_fmadd_pd((ai), (wi), _mm512_mul_pd((ar), (wr)));     \
-    (ti) = _mm512_fmsub_pd((ai), (wr), _mm512_mul_pd((ar), (wi)));     \
-} while (0)
+#define R5_CMULJ_512(ar, ai, wr, wi, tr, ti)                           \
+    do                                                                 \
+    {                                                                  \
+        (tr) = _mm512_fmadd_pd((ai), (wi), _mm512_mul_pd((ar), (wr))); \
+        (ti) = _mm512_fmsub_pd((ai), (wr), _mm512_mul_pd((ar), (wi))); \
+    } while (0)
 
 /* ================================================================== */
 /*  Software prefetch — distance in doubles (64 = 512 bytes ahead)     */
@@ -73,73 +77,88 @@
 #define R5_PF(ptr, off) \
     _mm_prefetch((const char *)&(ptr)[(off) + R5_PF_DIST], _MM_HINT_T0)
 
-#define R5_PREFETCH_N1(off) do {                                        \
-    R5_PF(a_re, off); R5_PF(a_im, off);                                \
-    R5_PF(b_re, off); R5_PF(b_im, off);                                \
-    R5_PF(c_re, off); R5_PF(c_im, off);                                \
-    R5_PF(d_re, off); R5_PF(d_im, off);                                \
-    R5_PF(e_re, off); R5_PF(e_im, off);                                \
-} while (0)
+#define R5_PREFETCH_N1(off) \
+    do                      \
+    {                       \
+        R5_PF(a_re, off);   \
+        R5_PF(a_im, off);   \
+        R5_PF(b_re, off);   \
+        R5_PF(b_im, off);   \
+        R5_PF(c_re, off);   \
+        R5_PF(c_im, off);   \
+        R5_PF(d_re, off);   \
+        R5_PF(d_im, off);   \
+        R5_PF(e_re, off);   \
+        R5_PF(e_im, off);   \
+    } while (0)
 
-#define R5_PREFETCH_TW(off) do {                                        \
-    R5_PREFETCH_N1(off);                                                \
-    R5_PF(tw1_re, off); R5_PF(tw1_im, off);                            \
-    R5_PF(tw2_re, off); R5_PF(tw2_im, off);                            \
-} while (0)
+#define R5_PREFETCH_TW(off)  \
+    do                       \
+    {                        \
+        R5_PREFETCH_N1(off); \
+        R5_PF(tw1_re, off);  \
+        R5_PF(tw1_im, off);  \
+        R5_PF(tw2_re, off);  \
+        R5_PF(tw2_im, off);  \
+    } while (0)
 
 /* ================================================================== */
 /*  Load + sum/diff — full 8-wide (unmasked)                           */
 /* ================================================================== */
-#define R5_LOAD_SD_512(P, off) do {                                     \
-    P##_ar = _mm512_loadu_pd(&a_re[(off)]);                             \
-    P##_ai = _mm512_loadu_pd(&a_im[(off)]);                             \
-    {                                                                   \
-        __m512d _br = _mm512_loadu_pd(&b_re[(off)]);                    \
-        __m512d _bi = _mm512_loadu_pd(&b_im[(off)]);                    \
-        __m512d _er = _mm512_loadu_pd(&e_re[(off)]);                    \
-        __m512d _ei = _mm512_loadu_pd(&e_im[(off)]);                    \
-        P##_s1r = _mm512_add_pd(_br, _er);                             \
-        P##_s1i = _mm512_add_pd(_bi, _ei);                             \
-        P##_d1r = _mm512_sub_pd(_br, _er);                             \
-        P##_d1i = _mm512_sub_pd(_bi, _ei);                             \
-    }                                                                   \
-    {                                                                   \
-        __m512d _cr = _mm512_loadu_pd(&c_re[(off)]);                    \
-        __m512d _ci = _mm512_loadu_pd(&c_im[(off)]);                    \
-        __m512d _dr = _mm512_loadu_pd(&d_re[(off)]);                    \
-        __m512d _di = _mm512_loadu_pd(&d_im[(off)]);                    \
-        P##_s2r = _mm512_add_pd(_cr, _dr);                             \
-        P##_s2i = _mm512_add_pd(_ci, _di);                             \
-        P##_d2r = _mm512_sub_pd(_cr, _dr);                             \
-        P##_d2i = _mm512_sub_pd(_ci, _di);                             \
-    }                                                                   \
-} while (0)
+#define R5_LOAD_SD_512(P, off)                           \
+    do                                                   \
+    {                                                    \
+        P##_ar = _mm512_loadu_pd(&a_re[(off)]);          \
+        P##_ai = _mm512_loadu_pd(&a_im[(off)]);          \
+        {                                                \
+            __m512d _br = _mm512_loadu_pd(&b_re[(off)]); \
+            __m512d _bi = _mm512_loadu_pd(&b_im[(off)]); \
+            __m512d _er = _mm512_loadu_pd(&e_re[(off)]); \
+            __m512d _ei = _mm512_loadu_pd(&e_im[(off)]); \
+            P##_s1r = _mm512_add_pd(_br, _er);           \
+            P##_s1i = _mm512_add_pd(_bi, _ei);           \
+            P##_d1r = _mm512_sub_pd(_br, _er);           \
+            P##_d1i = _mm512_sub_pd(_bi, _ei);           \
+        }                                                \
+        {                                                \
+            __m512d _cr = _mm512_loadu_pd(&c_re[(off)]); \
+            __m512d _ci = _mm512_loadu_pd(&c_im[(off)]); \
+            __m512d _dr = _mm512_loadu_pd(&d_re[(off)]); \
+            __m512d _di = _mm512_loadu_pd(&d_im[(off)]); \
+            P##_s2r = _mm512_add_pd(_cr, _dr);           \
+            P##_s2i = _mm512_add_pd(_ci, _di);           \
+            P##_d2r = _mm512_sub_pd(_cr, _dr);           \
+            P##_d2i = _mm512_sub_pd(_ci, _di);           \
+        }                                                \
+    } while (0)
 
 /* Load + sum/diff — masked (1..7 valid lanes, rest zeroed) */
-#define R5_LOAD_SD_512M(P, off, mask) do {                              \
-    P##_ar = _mm512_maskz_loadu_pd((mask), &a_re[(off)]);              \
-    P##_ai = _mm512_maskz_loadu_pd((mask), &a_im[(off)]);              \
-    {                                                                   \
-        __m512d _br = _mm512_maskz_loadu_pd((mask), &b_re[(off)]);     \
-        __m512d _bi = _mm512_maskz_loadu_pd((mask), &b_im[(off)]);     \
-        __m512d _er = _mm512_maskz_loadu_pd((mask), &e_re[(off)]);     \
-        __m512d _ei = _mm512_maskz_loadu_pd((mask), &e_im[(off)]);     \
-        P##_s1r = _mm512_add_pd(_br, _er);                             \
-        P##_s1i = _mm512_add_pd(_bi, _ei);                             \
-        P##_d1r = _mm512_sub_pd(_br, _er);                             \
-        P##_d1i = _mm512_sub_pd(_bi, _ei);                             \
-    }                                                                   \
-    {                                                                   \
-        __m512d _cr = _mm512_maskz_loadu_pd((mask), &c_re[(off)]);     \
-        __m512d _ci = _mm512_maskz_loadu_pd((mask), &c_im[(off)]);     \
-        __m512d _dr = _mm512_maskz_loadu_pd((mask), &d_re[(off)]);     \
-        __m512d _di = _mm512_maskz_loadu_pd((mask), &d_im[(off)]);     \
-        P##_s2r = _mm512_add_pd(_cr, _dr);                             \
-        P##_s2i = _mm512_add_pd(_ci, _di);                             \
-        P##_d2r = _mm512_sub_pd(_cr, _dr);                             \
-        P##_d2i = _mm512_sub_pd(_ci, _di);                             \
-    }                                                                   \
-} while (0)
+#define R5_LOAD_SD_512M(P, off, mask)                                  \
+    do                                                                 \
+    {                                                                  \
+        P##_ar = _mm512_maskz_loadu_pd((mask), &a_re[(off)]);          \
+        P##_ai = _mm512_maskz_loadu_pd((mask), &a_im[(off)]);          \
+        {                                                              \
+            __m512d _br = _mm512_maskz_loadu_pd((mask), &b_re[(off)]); \
+            __m512d _bi = _mm512_maskz_loadu_pd((mask), &b_im[(off)]); \
+            __m512d _er = _mm512_maskz_loadu_pd((mask), &e_re[(off)]); \
+            __m512d _ei = _mm512_maskz_loadu_pd((mask), &e_im[(off)]); \
+            P##_s1r = _mm512_add_pd(_br, _er);                         \
+            P##_s1i = _mm512_add_pd(_bi, _ei);                         \
+            P##_d1r = _mm512_sub_pd(_br, _er);                         \
+            P##_d1i = _mm512_sub_pd(_bi, _ei);                         \
+        }                                                              \
+        {                                                              \
+            __m512d _cr = _mm512_maskz_loadu_pd((mask), &c_re[(off)]); \
+            __m512d _ci = _mm512_maskz_loadu_pd((mask), &c_im[(off)]); \
+            __m512d _dr = _mm512_maskz_loadu_pd((mask), &d_re[(off)]); \
+            __m512d _di = _mm512_maskz_loadu_pd((mask), &d_im[(off)]); \
+            P##_s2r = _mm512_add_pd(_cr, _dr);                         \
+            P##_s2i = _mm512_add_pd(_ci, _di);                         \
+            P##_d2r = _mm512_sub_pd(_cr, _dr);                         \
+            P##_d2i = _mm512_sub_pd(_ci, _di);                         \
+        }                                                              \
+    } while (0)
 
 /* ================================================================== */
 /*  Cosine chain — stores y0, produces t1/t2                           */
@@ -147,268 +166,321 @@
 /*  Entry: 10 (ar,ai,s1×2,d1×2,s2×2,d2×2)                            */
 /*  Exit:   8 (d1×2,d2×2,t1×2,t2×2)                                   */
 /* ================================================================== */
-#define R5_COSINE_CHAIN_512(P, off) do {                                \
-    __m512d P##_Ar = _mm512_add_pd(P##_s1r, P##_s2r);                  \
-    __m512d P##_Ai = _mm512_add_pd(P##_s1i, P##_s2i);                  \
-    _mm512_storeu_pd(&y0_re[(off)], _mm512_add_pd(P##_ar, P##_Ar));    \
-    _mm512_storeu_pd(&y0_im[(off)], _mm512_add_pd(P##_ai, P##_Ai));    \
-    __m512d P##_Br = _mm512_sub_pd(P##_s1r, P##_s2r);                  \
-    __m512d P##_Bi = _mm512_sub_pd(P##_s1i, P##_s2i);                  \
-    __m512d P##_comr = _mm512_fmadd_pd(vQA, P##_Ar, P##_ar);           \
-    __m512d P##_comi = _mm512_fmadd_pd(vQA, P##_Ai, P##_ai);           \
-    __m512d P##_mbr = _mm512_mul_pd(vQB, P##_Br);                      \
-    __m512d P##_mbi = _mm512_mul_pd(vQB, P##_Bi);                      \
-    P##_t1r = _mm512_add_pd(P##_comr, P##_mbr);                        \
-    P##_t1i = _mm512_add_pd(P##_comi, P##_mbi);                        \
-    P##_t2r = _mm512_sub_pd(P##_comr, P##_mbr);                        \
-    P##_t2i = _mm512_sub_pd(P##_comi, P##_mbi);                        \
-} while (0)
+#define R5_COSINE_CHAIN_512(P, off)                                     \
+    do                                                                  \
+    {                                                                   \
+        __m512d P##_Ar = _mm512_add_pd(P##_s1r, P##_s2r);               \
+        __m512d P##_Ai = _mm512_add_pd(P##_s1i, P##_s2i);               \
+        _mm512_storeu_pd(&y0_re[(off)], _mm512_add_pd(P##_ar, P##_Ar)); \
+        _mm512_storeu_pd(&y0_im[(off)], _mm512_add_pd(P##_ai, P##_Ai)); \
+        __m512d P##_Br = _mm512_sub_pd(P##_s1r, P##_s2r);               \
+        __m512d P##_Bi = _mm512_sub_pd(P##_s1i, P##_s2i);               \
+        __m512d P##_comr = _mm512_fmadd_pd(vQA, P##_Ar, P##_ar);        \
+        __m512d P##_comi = _mm512_fmadd_pd(vQA, P##_Ai, P##_ai);        \
+        __m512d P##_mbr = _mm512_mul_pd(vQB, P##_Br);                   \
+        __m512d P##_mbi = _mm512_mul_pd(vQB, P##_Bi);                   \
+        P##_t1r = _mm512_add_pd(P##_comr, P##_mbr);                     \
+        P##_t1i = _mm512_add_pd(P##_comi, P##_mbi);                     \
+        P##_t2r = _mm512_sub_pd(P##_comr, P##_mbr);                     \
+        P##_t2i = _mm512_sub_pd(P##_comi, P##_mbi);                     \
+    } while (0)
 
 /* Cosine chain — masked y0 stores */
-#define R5_COSINE_CHAIN_512M(P, off, mask) do {                         \
-    __m512d P##_Ar = _mm512_add_pd(P##_s1r, P##_s2r);                  \
-    __m512d P##_Ai = _mm512_add_pd(P##_s1i, P##_s2i);                  \
-    _mm512_mask_storeu_pd(&y0_re[(off)], (mask),                        \
-                          _mm512_add_pd(P##_ar, P##_Ar));               \
-    _mm512_mask_storeu_pd(&y0_im[(off)], (mask),                        \
-                          _mm512_add_pd(P##_ai, P##_Ai));               \
-    __m512d P##_Br = _mm512_sub_pd(P##_s1r, P##_s2r);                  \
-    __m512d P##_Bi = _mm512_sub_pd(P##_s1i, P##_s2i);                  \
-    __m512d P##_comr = _mm512_fmadd_pd(vQA, P##_Ar, P##_ar);           \
-    __m512d P##_comi = _mm512_fmadd_pd(vQA, P##_Ai, P##_ai);           \
-    __m512d P##_mbr = _mm512_mul_pd(vQB, P##_Br);                      \
-    __m512d P##_mbi = _mm512_mul_pd(vQB, P##_Bi);                      \
-    P##_t1r = _mm512_add_pd(P##_comr, P##_mbr);                        \
-    P##_t1i = _mm512_add_pd(P##_comi, P##_mbi);                        \
-    P##_t2r = _mm512_sub_pd(P##_comr, P##_mbr);                        \
-    P##_t2i = _mm512_sub_pd(P##_comi, P##_mbi);                        \
-} while (0)
+#define R5_COSINE_CHAIN_512M(P, off, mask)                       \
+    do                                                           \
+    {                                                            \
+        __m512d P##_Ar = _mm512_add_pd(P##_s1r, P##_s2r);        \
+        __m512d P##_Ai = _mm512_add_pd(P##_s1i, P##_s2i);        \
+        _mm512_mask_storeu_pd(&y0_re[(off)], (mask),             \
+                              _mm512_add_pd(P##_ar, P##_Ar));    \
+        _mm512_mask_storeu_pd(&y0_im[(off)], (mask),             \
+                              _mm512_add_pd(P##_ai, P##_Ai));    \
+        __m512d P##_Br = _mm512_sub_pd(P##_s1r, P##_s2r);        \
+        __m512d P##_Bi = _mm512_sub_pd(P##_s1i, P##_s2i);        \
+        __m512d P##_comr = _mm512_fmadd_pd(vQA, P##_Ar, P##_ar); \
+        __m512d P##_comi = _mm512_fmadd_pd(vQA, P##_Ai, P##_ai); \
+        __m512d P##_mbr = _mm512_mul_pd(vQB, P##_Br);            \
+        __m512d P##_mbi = _mm512_mul_pd(vQB, P##_Bi);            \
+        P##_t1r = _mm512_add_pd(P##_comr, P##_mbr);              \
+        P##_t1i = _mm512_add_pd(P##_comi, P##_mbi);              \
+        P##_t2r = _mm512_sub_pd(P##_comr, P##_mbr);              \
+        P##_t2i = _mm512_sub_pd(P##_comi, P##_mbi);              \
+    } while (0)
 
 /* ================================================================== */
 /*  Sine chain — register-only, no masked variant needed               */
 /*  Uses hoisted vS1, vS2                                              */
 /* ================================================================== */
-#define R5_SINE_CHAIN_512(P) do {                                       \
-    P##_v1r = _mm512_fmadd_pd(vS1, P##_d1r,                            \
-                _mm512_mul_pd(vS2, P##_d2r));                           \
-    P##_v1i = _mm512_fmadd_pd(vS1, P##_d1i,                            \
-                _mm512_mul_pd(vS2, P##_d2i));                           \
-    P##_v2r = _mm512_fmsub_pd(vS2, P##_d1r,                            \
-                _mm512_mul_pd(vS1, P##_d2r));                           \
-    P##_v2i = _mm512_fmsub_pd(vS2, P##_d1i,                            \
-                _mm512_mul_pd(vS1, P##_d2i));                           \
-} while (0)
+#define R5_SINE_CHAIN_512(P)                                    \
+    do                                                          \
+    {                                                           \
+        P##_v1r = _mm512_fmadd_pd(vS1, P##_d1r,                 \
+                                  _mm512_mul_pd(vS2, P##_d2r)); \
+        P##_v1i = _mm512_fmadd_pd(vS1, P##_d1i,                 \
+                                  _mm512_mul_pd(vS2, P##_d2i)); \
+        P##_v2r = _mm512_fmsub_pd(vS2, P##_d1r,                 \
+                                  _mm512_mul_pd(vS1, P##_d2r)); \
+        P##_v2i = _mm512_fmsub_pd(vS2, P##_d1i,                 \
+                                  _mm512_mul_pd(vS1, P##_d2i)); \
+    } while (0)
 
 /* ================================================================== */
 /*  Split stores — unmasked and masked variants                        */
 /* ================================================================== */
-#define R5_STORE_14_FWD_512(P, off) do {                                \
-    _mm512_storeu_pd(&y1_re[(off)], _mm512_add_pd(P##_t1r, P##_v1i));  \
-    _mm512_storeu_pd(&y1_im[(off)], _mm512_sub_pd(P##_t1i, P##_v1r));  \
-    _mm512_storeu_pd(&y4_re[(off)], _mm512_sub_pd(P##_t1r, P##_v1i));  \
-    _mm512_storeu_pd(&y4_im[(off)], _mm512_add_pd(P##_t1i, P##_v1r));  \
-} while (0)
-#define R5_STORE_23_FWD_512(P, off) do {                                \
-    _mm512_storeu_pd(&y2_re[(off)], _mm512_add_pd(P##_t2r, P##_v2i));  \
-    _mm512_storeu_pd(&y2_im[(off)], _mm512_sub_pd(P##_t2i, P##_v2r));  \
-    _mm512_storeu_pd(&y3_re[(off)], _mm512_sub_pd(P##_t2r, P##_v2i));  \
-    _mm512_storeu_pd(&y3_im[(off)], _mm512_add_pd(P##_t2i, P##_v2r));  \
-} while (0)
-#define R5_STORE_14_BWD_512(P, off) do {                                \
-    _mm512_storeu_pd(&y1_re[(off)], _mm512_sub_pd(P##_t1r, P##_v1i));  \
-    _mm512_storeu_pd(&y1_im[(off)], _mm512_add_pd(P##_t1i, P##_v1r));  \
-    _mm512_storeu_pd(&y4_re[(off)], _mm512_add_pd(P##_t1r, P##_v1i));  \
-    _mm512_storeu_pd(&y4_im[(off)], _mm512_sub_pd(P##_t1i, P##_v1r));  \
-} while (0)
-#define R5_STORE_23_BWD_512(P, off) do {                                \
-    _mm512_storeu_pd(&y2_re[(off)], _mm512_sub_pd(P##_t2r, P##_v2i));  \
-    _mm512_storeu_pd(&y2_im[(off)], _mm512_add_pd(P##_t2i, P##_v2r));  \
-    _mm512_storeu_pd(&y3_re[(off)], _mm512_add_pd(P##_t2r, P##_v2i));  \
-    _mm512_storeu_pd(&y3_im[(off)], _mm512_sub_pd(P##_t2i, P##_v2r));  \
-} while (0)
+#define R5_STORE_14_FWD_512(P, off)                                       \
+    do                                                                    \
+    {                                                                     \
+        _mm512_storeu_pd(&y1_re[(off)], _mm512_add_pd(P##_t1r, P##_v1i)); \
+        _mm512_storeu_pd(&y1_im[(off)], _mm512_sub_pd(P##_t1i, P##_v1r)); \
+        _mm512_storeu_pd(&y4_re[(off)], _mm512_sub_pd(P##_t1r, P##_v1i)); \
+        _mm512_storeu_pd(&y4_im[(off)], _mm512_add_pd(P##_t1i, P##_v1r)); \
+    } while (0)
+#define R5_STORE_23_FWD_512(P, off)                                       \
+    do                                                                    \
+    {                                                                     \
+        _mm512_storeu_pd(&y2_re[(off)], _mm512_add_pd(P##_t2r, P##_v2i)); \
+        _mm512_storeu_pd(&y2_im[(off)], _mm512_sub_pd(P##_t2i, P##_v2r)); \
+        _mm512_storeu_pd(&y3_re[(off)], _mm512_sub_pd(P##_t2r, P##_v2i)); \
+        _mm512_storeu_pd(&y3_im[(off)], _mm512_add_pd(P##_t2i, P##_v2r)); \
+    } while (0)
+#define R5_STORE_14_BWD_512(P, off)                                       \
+    do                                                                    \
+    {                                                                     \
+        _mm512_storeu_pd(&y1_re[(off)], _mm512_sub_pd(P##_t1r, P##_v1i)); \
+        _mm512_storeu_pd(&y1_im[(off)], _mm512_add_pd(P##_t1i, P##_v1r)); \
+        _mm512_storeu_pd(&y4_re[(off)], _mm512_add_pd(P##_t1r, P##_v1i)); \
+        _mm512_storeu_pd(&y4_im[(off)], _mm512_sub_pd(P##_t1i, P##_v1r)); \
+    } while (0)
+#define R5_STORE_23_BWD_512(P, off)                                       \
+    do                                                                    \
+    {                                                                     \
+        _mm512_storeu_pd(&y2_re[(off)], _mm512_sub_pd(P##_t2r, P##_v2i)); \
+        _mm512_storeu_pd(&y2_im[(off)], _mm512_add_pd(P##_t2i, P##_v2r)); \
+        _mm512_storeu_pd(&y3_re[(off)], _mm512_add_pd(P##_t2r, P##_v2i)); \
+        _mm512_storeu_pd(&y3_im[(off)], _mm512_sub_pd(P##_t2i, P##_v2r)); \
+    } while (0)
 
 /* Masked store variants */
-#define R5_STORE_14_FWD_512M(P, off, mask) do {                         \
-    _mm512_mask_storeu_pd(&y1_re[(off)], (mask),                        \
-                          _mm512_add_pd(P##_t1r, P##_v1i));             \
-    _mm512_mask_storeu_pd(&y1_im[(off)], (mask),                        \
-                          _mm512_sub_pd(P##_t1i, P##_v1r));             \
-    _mm512_mask_storeu_pd(&y4_re[(off)], (mask),                        \
-                          _mm512_sub_pd(P##_t1r, P##_v1i));             \
-    _mm512_mask_storeu_pd(&y4_im[(off)], (mask),                        \
-                          _mm512_add_pd(P##_t1i, P##_v1r));             \
-} while (0)
-#define R5_STORE_23_FWD_512M(P, off, mask) do {                         \
-    _mm512_mask_storeu_pd(&y2_re[(off)], (mask),                        \
-                          _mm512_add_pd(P##_t2r, P##_v2i));             \
-    _mm512_mask_storeu_pd(&y2_im[(off)], (mask),                        \
-                          _mm512_sub_pd(P##_t2i, P##_v2r));             \
-    _mm512_mask_storeu_pd(&y3_re[(off)], (mask),                        \
-                          _mm512_sub_pd(P##_t2r, P##_v2i));             \
-    _mm512_mask_storeu_pd(&y3_im[(off)], (mask),                        \
-                          _mm512_add_pd(P##_t2i, P##_v2r));             \
-} while (0)
-#define R5_STORE_14_BWD_512M(P, off, mask) do {                         \
-    _mm512_mask_storeu_pd(&y1_re[(off)], (mask),                        \
-                          _mm512_sub_pd(P##_t1r, P##_v1i));             \
-    _mm512_mask_storeu_pd(&y1_im[(off)], (mask),                        \
-                          _mm512_add_pd(P##_t1i, P##_v1r));             \
-    _mm512_mask_storeu_pd(&y4_re[(off)], (mask),                        \
-                          _mm512_add_pd(P##_t1r, P##_v1i));             \
-    _mm512_mask_storeu_pd(&y4_im[(off)], (mask),                        \
-                          _mm512_sub_pd(P##_t1i, P##_v1r));             \
-} while (0)
-#define R5_STORE_23_BWD_512M(P, off, mask) do {                         \
-    _mm512_mask_storeu_pd(&y2_re[(off)], (mask),                        \
-                          _mm512_sub_pd(P##_t2r, P##_v2i));             \
-    _mm512_mask_storeu_pd(&y2_im[(off)], (mask),                        \
-                          _mm512_add_pd(P##_t2i, P##_v2r));             \
-    _mm512_mask_storeu_pd(&y3_re[(off)], (mask),                        \
-                          _mm512_add_pd(P##_t2r, P##_v2i));             \
-    _mm512_mask_storeu_pd(&y3_im[(off)], (mask),                        \
-                          _mm512_sub_pd(P##_t2i, P##_v2r));             \
-} while (0)
+#define R5_STORE_14_FWD_512M(P, off, mask)                      \
+    do                                                          \
+    {                                                           \
+        _mm512_mask_storeu_pd(&y1_re[(off)], (mask),            \
+                              _mm512_add_pd(P##_t1r, P##_v1i)); \
+        _mm512_mask_storeu_pd(&y1_im[(off)], (mask),            \
+                              _mm512_sub_pd(P##_t1i, P##_v1r)); \
+        _mm512_mask_storeu_pd(&y4_re[(off)], (mask),            \
+                              _mm512_sub_pd(P##_t1r, P##_v1i)); \
+        _mm512_mask_storeu_pd(&y4_im[(off)], (mask),            \
+                              _mm512_add_pd(P##_t1i, P##_v1r)); \
+    } while (0)
+#define R5_STORE_23_FWD_512M(P, off, mask)                      \
+    do                                                          \
+    {                                                           \
+        _mm512_mask_storeu_pd(&y2_re[(off)], (mask),            \
+                              _mm512_add_pd(P##_t2r, P##_v2i)); \
+        _mm512_mask_storeu_pd(&y2_im[(off)], (mask),            \
+                              _mm512_sub_pd(P##_t2i, P##_v2r)); \
+        _mm512_mask_storeu_pd(&y3_re[(off)], (mask),            \
+                              _mm512_sub_pd(P##_t2r, P##_v2i)); \
+        _mm512_mask_storeu_pd(&y3_im[(off)], (mask),            \
+                              _mm512_add_pd(P##_t2i, P##_v2r)); \
+    } while (0)
+#define R5_STORE_14_BWD_512M(P, off, mask)                      \
+    do                                                          \
+    {                                                           \
+        _mm512_mask_storeu_pd(&y1_re[(off)], (mask),            \
+                              _mm512_sub_pd(P##_t1r, P##_v1i)); \
+        _mm512_mask_storeu_pd(&y1_im[(off)], (mask),            \
+                              _mm512_add_pd(P##_t1i, P##_v1r)); \
+        _mm512_mask_storeu_pd(&y4_re[(off)], (mask),            \
+                              _mm512_add_pd(P##_t1r, P##_v1i)); \
+        _mm512_mask_storeu_pd(&y4_im[(off)], (mask),            \
+                              _mm512_sub_pd(P##_t1i, P##_v1r)); \
+    } while (0)
+#define R5_STORE_23_BWD_512M(P, off, mask)                      \
+    do                                                          \
+    {                                                           \
+        _mm512_mask_storeu_pd(&y2_re[(off)], (mask),            \
+                              _mm512_sub_pd(P##_t2r, P##_v2i)); \
+        _mm512_mask_storeu_pd(&y2_im[(off)], (mask),            \
+                              _mm512_add_pd(P##_t2i, P##_v2r)); \
+        _mm512_mask_storeu_pd(&y3_re[(off)], (mask),            \
+                              _mm512_add_pd(P##_t2r, P##_v2i)); \
+        _mm512_mask_storeu_pd(&y3_im[(off)], (mask),            \
+                              _mm512_sub_pd(P##_t2i, P##_v2r)); \
+    } while (0)
 
 /* ================================================================== */
 /*  Twiddle load macros — full, partial-BE, deferred-CD, masked        */
 /* ================================================================== */
 
 /* Full twiddle + s/d: load W1,W2, derive W3,W4, apply to b,c,d,e */
-#define R5_LOAD_TW_SD_512(P, off) do {                                  \
-    P##_ar = _mm512_loadu_pd(&a_re[(off)]);                             \
-    P##_ai = _mm512_loadu_pd(&a_im[(off)]);                             \
-    {                                                                   \
-        __m512d _w1r = _mm512_loadu_pd(&tw1_re[(off)]);                 \
-        __m512d _w1i = _mm512_loadu_pd(&tw1_im[(off)]);                 \
-        __m512d _w2r = _mm512_loadu_pd(&tw2_re[(off)]);                 \
-        __m512d _w2i = _mm512_loadu_pd(&tw2_im[(off)]);                 \
-        __m512d _tbr, _tbi;                                             \
-        { __m512d _br = _mm512_loadu_pd(&b_re[(off)]);                  \
-          __m512d _bi = _mm512_loadu_pd(&b_im[(off)]);                  \
-          R5_CMUL_512(_br, _bi, _w1r, _w1i, _tbr, _tbi); }             \
-        __m512d _tdr, _tdi;                                             \
-        { __m512d _w3r, _w3i;                                           \
-          R5_CMUL_512(_w1r, _w1i, _w2r, _w2i, _w3r, _w3i);            \
-          __m512d _dr = _mm512_loadu_pd(&d_re[(off)]);                  \
-          __m512d _di = _mm512_loadu_pd(&d_im[(off)]);                  \
-          R5_CMUL_512(_dr, _di, _w3r, _w3i, _tdr, _tdi); }             \
-        __m512d _tcr, _tci;                                             \
-        { __m512d _cr = _mm512_loadu_pd(&c_re[(off)]);                  \
-          __m512d _ci = _mm512_loadu_pd(&c_im[(off)]);                  \
-          R5_CMUL_512(_cr, _ci, _w2r, _w2i, _tcr, _tci); }             \
-        __m512d _ter, _tei;                                             \
-        { __m512d _w4r, _w4i;                                           \
-          R5_CMUL_512(_w2r, _w2i, _w2r, _w2i, _w4r, _w4i);            \
-          __m512d _er = _mm512_loadu_pd(&e_re[(off)]);                  \
-          __m512d _ei = _mm512_loadu_pd(&e_im[(off)]);                  \
-          R5_CMUL_512(_er, _ei, _w4r, _w4i, _ter, _tei); }             \
-        P##_s1r = _mm512_add_pd(_tbr, _ter);                           \
-        P##_s1i = _mm512_add_pd(_tbi, _tei);                           \
-        P##_d1r = _mm512_sub_pd(_tbr, _ter);                           \
-        P##_d1i = _mm512_sub_pd(_tbi, _tei);                           \
-        P##_s2r = _mm512_add_pd(_tcr, _tdr);                           \
-        P##_s2i = _mm512_add_pd(_tci, _tdi);                           \
-        P##_d2r = _mm512_sub_pd(_tcr, _tdr);                           \
-        P##_d2i = _mm512_sub_pd(_tci, _tdi);                           \
-    }                                                                   \
-} while (0)
+#define R5_LOAD_TW_SD_512(P, off)                                \
+    do                                                           \
+    {                                                            \
+        P##_ar = _mm512_loadu_pd(&a_re[(off)]);                  \
+        P##_ai = _mm512_loadu_pd(&a_im[(off)]);                  \
+        {                                                        \
+            __m512d _w1r = _mm512_loadu_pd(&tw1_re[(off)]);      \
+            __m512d _w1i = _mm512_loadu_pd(&tw1_im[(off)]);      \
+            __m512d _w2r = _mm512_loadu_pd(&tw2_re[(off)]);      \
+            __m512d _w2i = _mm512_loadu_pd(&tw2_im[(off)]);      \
+            __m512d _tbr, _tbi;                                  \
+            {                                                    \
+                __m512d _br = _mm512_loadu_pd(&b_re[(off)]);     \
+                __m512d _bi = _mm512_loadu_pd(&b_im[(off)]);     \
+                R5_CMUL_512(_br, _bi, _w1r, _w1i, _tbr, _tbi);   \
+            }                                                    \
+            __m512d _tdr, _tdi;                                  \
+            {                                                    \
+                __m512d _w3r, _w3i;                              \
+                R5_CMUL_512(_w1r, _w1i, _w2r, _w2i, _w3r, _w3i); \
+                __m512d _dr = _mm512_loadu_pd(&d_re[(off)]);     \
+                __m512d _di = _mm512_loadu_pd(&d_im[(off)]);     \
+                R5_CMUL_512(_dr, _di, _w3r, _w3i, _tdr, _tdi);   \
+            }                                                    \
+            __m512d _tcr, _tci;                                  \
+            {                                                    \
+                __m512d _cr = _mm512_loadu_pd(&c_re[(off)]);     \
+                __m512d _ci = _mm512_loadu_pd(&c_im[(off)]);     \
+                R5_CMUL_512(_cr, _ci, _w2r, _w2i, _tcr, _tci);   \
+            }                                                    \
+            __m512d _ter, _tei;                                  \
+            {                                                    \
+                __m512d _w4r, _w4i;                              \
+                R5_CMUL_512(_w2r, _w2i, _w2r, _w2i, _w4r, _w4i); \
+                __m512d _er = _mm512_loadu_pd(&e_re[(off)]);     \
+                __m512d _ei = _mm512_loadu_pd(&e_im[(off)]);     \
+                R5_CMUL_512(_er, _ei, _w4r, _w4i, _ter, _tei);   \
+            }                                                    \
+            P##_s1r = _mm512_add_pd(_tbr, _ter);                 \
+            P##_s1i = _mm512_add_pd(_tbi, _tei);                 \
+            P##_d1r = _mm512_sub_pd(_tbr, _ter);                 \
+            P##_d1i = _mm512_sub_pd(_tbi, _tei);                 \
+            P##_s2r = _mm512_add_pd(_tcr, _tdr);                 \
+            P##_s2i = _mm512_add_pd(_tci, _tdi);                 \
+            P##_d2r = _mm512_sub_pd(_tcr, _tdr);                 \
+            P##_d2i = _mm512_sub_pd(_tci, _tdi);                 \
+        }                                                        \
+    } while (0)
 
 /* Full twiddle + s/d — masked */
-#define R5_LOAD_TW_SD_512M(P, off, mask) do {                           \
-    P##_ar = _mm512_maskz_loadu_pd((mask), &a_re[(off)]);              \
-    P##_ai = _mm512_maskz_loadu_pd((mask), &a_im[(off)]);              \
-    {                                                                   \
-        __m512d _w1r = _mm512_maskz_loadu_pd((mask), &tw1_re[(off)]);  \
-        __m512d _w1i = _mm512_maskz_loadu_pd((mask), &tw1_im[(off)]);  \
-        __m512d _w2r = _mm512_maskz_loadu_pd((mask), &tw2_re[(off)]);  \
-        __m512d _w2i = _mm512_maskz_loadu_pd((mask), &tw2_im[(off)]);  \
-        __m512d _tbr, _tbi;                                             \
-        { __m512d _br = _mm512_maskz_loadu_pd((mask), &b_re[(off)]);   \
-          __m512d _bi = _mm512_maskz_loadu_pd((mask), &b_im[(off)]);   \
-          R5_CMUL_512(_br, _bi, _w1r, _w1i, _tbr, _tbi); }             \
-        __m512d _tdr, _tdi;                                             \
-        { __m512d _w3r, _w3i;                                           \
-          R5_CMUL_512(_w1r, _w1i, _w2r, _w2i, _w3r, _w3i);            \
-          __m512d _dr = _mm512_maskz_loadu_pd((mask), &d_re[(off)]);   \
-          __m512d _di = _mm512_maskz_loadu_pd((mask), &d_im[(off)]);   \
-          R5_CMUL_512(_dr, _di, _w3r, _w3i, _tdr, _tdi); }             \
-        __m512d _tcr, _tci;                                             \
-        { __m512d _cr = _mm512_maskz_loadu_pd((mask), &c_re[(off)]);   \
-          __m512d _ci = _mm512_maskz_loadu_pd((mask), &c_im[(off)]);   \
-          R5_CMUL_512(_cr, _ci, _w2r, _w2i, _tcr, _tci); }             \
-        __m512d _ter, _tei;                                             \
-        { __m512d _w4r, _w4i;                                           \
-          R5_CMUL_512(_w2r, _w2i, _w2r, _w2i, _w4r, _w4i);            \
-          __m512d _er = _mm512_maskz_loadu_pd((mask), &e_re[(off)]);   \
-          __m512d _ei = _mm512_maskz_loadu_pd((mask), &e_im[(off)]);   \
-          R5_CMUL_512(_er, _ei, _w4r, _w4i, _ter, _tei); }             \
-        P##_s1r = _mm512_add_pd(_tbr, _ter);                           \
-        P##_s1i = _mm512_add_pd(_tbi, _tei);                           \
-        P##_d1r = _mm512_sub_pd(_tbr, _ter);                           \
-        P##_d1i = _mm512_sub_pd(_tbi, _tei);                           \
-        P##_s2r = _mm512_add_pd(_tcr, _tdr);                           \
-        P##_s2i = _mm512_add_pd(_tci, _tdi);                           \
-        P##_d2r = _mm512_sub_pd(_tcr, _tdr);                           \
-        P##_d2i = _mm512_sub_pd(_tci, _tdi);                           \
-    }                                                                   \
-} while (0)
+#define R5_LOAD_TW_SD_512M(P, off, mask)                                   \
+    do                                                                     \
+    {                                                                      \
+        P##_ar = _mm512_maskz_loadu_pd((mask), &a_re[(off)]);              \
+        P##_ai = _mm512_maskz_loadu_pd((mask), &a_im[(off)]);              \
+        {                                                                  \
+            __m512d _w1r = _mm512_maskz_loadu_pd((mask), &tw1_re[(off)]);  \
+            __m512d _w1i = _mm512_maskz_loadu_pd((mask), &tw1_im[(off)]);  \
+            __m512d _w2r = _mm512_maskz_loadu_pd((mask), &tw2_re[(off)]);  \
+            __m512d _w2i = _mm512_maskz_loadu_pd((mask), &tw2_im[(off)]);  \
+            __m512d _tbr, _tbi;                                            \
+            {                                                              \
+                __m512d _br = _mm512_maskz_loadu_pd((mask), &b_re[(off)]); \
+                __m512d _bi = _mm512_maskz_loadu_pd((mask), &b_im[(off)]); \
+                R5_CMUL_512(_br, _bi, _w1r, _w1i, _tbr, _tbi);             \
+            }                                                              \
+            __m512d _tdr, _tdi;                                            \
+            {                                                              \
+                __m512d _w3r, _w3i;                                        \
+                R5_CMUL_512(_w1r, _w1i, _w2r, _w2i, _w3r, _w3i);           \
+                __m512d _dr = _mm512_maskz_loadu_pd((mask), &d_re[(off)]); \
+                __m512d _di = _mm512_maskz_loadu_pd((mask), &d_im[(off)]); \
+                R5_CMUL_512(_dr, _di, _w3r, _w3i, _tdr, _tdi);             \
+            }                                                              \
+            __m512d _tcr, _tci;                                            \
+            {                                                              \
+                __m512d _cr = _mm512_maskz_loadu_pd((mask), &c_re[(off)]); \
+                __m512d _ci = _mm512_maskz_loadu_pd((mask), &c_im[(off)]); \
+                R5_CMUL_512(_cr, _ci, _w2r, _w2i, _tcr, _tci);             \
+            }                                                              \
+            __m512d _ter, _tei;                                            \
+            {                                                              \
+                __m512d _w4r, _w4i;                                        \
+                R5_CMUL_512(_w2r, _w2i, _w2r, _w2i, _w4r, _w4i);           \
+                __m512d _er = _mm512_maskz_loadu_pd((mask), &e_re[(off)]); \
+                __m512d _ei = _mm512_maskz_loadu_pd((mask), &e_im[(off)]); \
+                R5_CMUL_512(_er, _ei, _w4r, _w4i, _ter, _tei);             \
+            }                                                              \
+            P##_s1r = _mm512_add_pd(_tbr, _ter);                           \
+            P##_s1i = _mm512_add_pd(_tbi, _tei);                           \
+            P##_d1r = _mm512_sub_pd(_tbr, _ter);                           \
+            P##_d1i = _mm512_sub_pd(_tbi, _tei);                           \
+            P##_s2r = _mm512_add_pd(_tcr, _tdr);                           \
+            P##_s2i = _mm512_add_pd(_tci, _tdi);                           \
+            P##_d2r = _mm512_sub_pd(_tcr, _tdr);                           \
+            P##_d2i = _mm512_sub_pd(_tci, _tdi);                           \
+        }                                                                  \
+    } while (0)
 
 /* Partial twiddle: only b,e → s1,d1 (for U=2 phase 2) */
-#define R5_LOAD_TW_SD_PARTIAL_BE_512(P, off) do {                       \
-    P##_ar = _mm512_loadu_pd(&a_re[(off)]);                             \
-    P##_ai = _mm512_loadu_pd(&a_im[(off)]);                             \
-    {                                                                   \
-        __m512d _w1r = _mm512_loadu_pd(&tw1_re[(off)]);                 \
-        __m512d _w1i = _mm512_loadu_pd(&tw1_im[(off)]);                 \
-        __m512d _w2r = _mm512_loadu_pd(&tw2_re[(off)]);                 \
-        __m512d _w2i = _mm512_loadu_pd(&tw2_im[(off)]);                 \
-        __m512d _tbr, _tbi;                                             \
-        { __m512d _br = _mm512_loadu_pd(&b_re[(off)]);                  \
-          __m512d _bi = _mm512_loadu_pd(&b_im[(off)]);                  \
-          R5_CMUL_512(_br, _bi, _w1r, _w1i, _tbr, _tbi); }             \
-        __m512d _ter, _tei;                                             \
-        { __m512d _w4r, _w4i;                                           \
-          R5_CMUL_512(_w2r, _w2i, _w2r, _w2i, _w4r, _w4i);            \
-          __m512d _er = _mm512_loadu_pd(&e_re[(off)]);                  \
-          __m512d _ei = _mm512_loadu_pd(&e_im[(off)]);                  \
-          R5_CMUL_512(_er, _ei, _w4r, _w4i, _ter, _tei); }             \
-        P##_s1r = _mm512_add_pd(_tbr, _ter);                           \
-        P##_s1i = _mm512_add_pd(_tbi, _tei);                           \
-        P##_d1r = _mm512_sub_pd(_tbr, _ter);                           \
-        P##_d1i = _mm512_sub_pd(_tbi, _tei);                           \
-    }                                                                   \
-} while (0)
+#define R5_LOAD_TW_SD_PARTIAL_BE_512(P, off)                     \
+    do                                                           \
+    {                                                            \
+        P##_ar = _mm512_loadu_pd(&a_re[(off)]);                  \
+        P##_ai = _mm512_loadu_pd(&a_im[(off)]);                  \
+        {                                                        \
+            __m512d _w1r = _mm512_loadu_pd(&tw1_re[(off)]);      \
+            __m512d _w1i = _mm512_loadu_pd(&tw1_im[(off)]);      \
+            __m512d _w2r = _mm512_loadu_pd(&tw2_re[(off)]);      \
+            __m512d _w2i = _mm512_loadu_pd(&tw2_im[(off)]);      \
+            __m512d _tbr, _tbi;                                  \
+            {                                                    \
+                __m512d _br = _mm512_loadu_pd(&b_re[(off)]);     \
+                __m512d _bi = _mm512_loadu_pd(&b_im[(off)]);     \
+                R5_CMUL_512(_br, _bi, _w1r, _w1i, _tbr, _tbi);   \
+            }                                                    \
+            __m512d _ter, _tei;                                  \
+            {                                                    \
+                __m512d _w4r, _w4i;                              \
+                R5_CMUL_512(_w2r, _w2i, _w2r, _w2i, _w4r, _w4i); \
+                __m512d _er = _mm512_loadu_pd(&e_re[(off)]);     \
+                __m512d _ei = _mm512_loadu_pd(&e_im[(off)]);     \
+                R5_CMUL_512(_er, _ei, _w4r, _w4i, _ter, _tei);   \
+            }                                                    \
+            P##_s1r = _mm512_add_pd(_tbr, _ter);                 \
+            P##_s1i = _mm512_add_pd(_tbi, _tei);                 \
+            P##_d1r = _mm512_sub_pd(_tbr, _ter);                 \
+            P##_d1i = _mm512_sub_pd(_tbi, _tei);                 \
+        }                                                        \
+    } while (0)
 
 /* Deferred twiddle: c,d → s2,d2 (for U=2 phase 4, reloads W1,W2) */
-#define R5_LOAD_TW_SD_DEFERRED_CD_512(P, off) do {                     \
-    {                                                                   \
-        __m512d _w1r = _mm512_loadu_pd(&tw1_re[(off)]);                 \
-        __m512d _w1i = _mm512_loadu_pd(&tw1_im[(off)]);                 \
-        __m512d _w2r = _mm512_loadu_pd(&tw2_re[(off)]);                 \
-        __m512d _w2i = _mm512_loadu_pd(&tw2_im[(off)]);                 \
-        __m512d _tdr, _tdi;                                             \
-        { __m512d _w3r, _w3i;                                           \
-          R5_CMUL_512(_w1r, _w1i, _w2r, _w2i, _w3r, _w3i);            \
-          __m512d _dr = _mm512_loadu_pd(&d_re[(off)]);                  \
-          __m512d _di = _mm512_loadu_pd(&d_im[(off)]);                  \
-          R5_CMUL_512(_dr, _di, _w3r, _w3i, _tdr, _tdi); }             \
-        __m512d _tcr, _tci;                                             \
-        { __m512d _cr = _mm512_loadu_pd(&c_re[(off)]);                  \
-          __m512d _ci = _mm512_loadu_pd(&c_im[(off)]);                  \
-          R5_CMUL_512(_cr, _ci, _w2r, _w2i, _tcr, _tci); }             \
-        P##_s2r = _mm512_add_pd(_tcr, _tdr);                           \
-        P##_s2i = _mm512_add_pd(_tci, _tdi);                           \
-        P##_d2r = _mm512_sub_pd(_tcr, _tdr);                           \
-        P##_d2i = _mm512_sub_pd(_tci, _tdi);                           \
-    }                                                                   \
-} while (0)
+#define R5_LOAD_TW_SD_DEFERRED_CD_512(P, off)                    \
+    do                                                           \
+    {                                                            \
+        {                                                        \
+            __m512d _w1r = _mm512_loadu_pd(&tw1_re[(off)]);      \
+            __m512d _w1i = _mm512_loadu_pd(&tw1_im[(off)]);      \
+            __m512d _w2r = _mm512_loadu_pd(&tw2_re[(off)]);      \
+            __m512d _w2i = _mm512_loadu_pd(&tw2_im[(off)]);      \
+            __m512d _tdr, _tdi;                                  \
+            {                                                    \
+                __m512d _w3r, _w3i;                              \
+                R5_CMUL_512(_w1r, _w1i, _w2r, _w2i, _w3r, _w3i); \
+                __m512d _dr = _mm512_loadu_pd(&d_re[(off)]);     \
+                __m512d _di = _mm512_loadu_pd(&d_im[(off)]);     \
+                R5_CMUL_512(_dr, _di, _w3r, _w3i, _tdr, _tdi);   \
+            }                                                    \
+            __m512d _tcr, _tci;                                  \
+            {                                                    \
+                __m512d _cr = _mm512_loadu_pd(&c_re[(off)]);     \
+                __m512d _ci = _mm512_loadu_pd(&c_im[(off)]);     \
+                R5_CMUL_512(_cr, _ci, _w2r, _w2i, _tcr, _tci);   \
+            }                                                    \
+            P##_s2r = _mm512_add_pd(_tcr, _tdr);                 \
+            P##_s2i = _mm512_add_pd(_tci, _tdi);                 \
+            P##_d2r = _mm512_sub_pd(_tcr, _tdr);                 \
+            P##_d2i = _mm512_sub_pd(_tci, _tdi);                 \
+        }                                                        \
+    } while (0)
 
 /* ================================================================== */
 /*  Forward N1 — no twiddles, U=2 pipeline + masked tail               */
 /* ================================================================== */
 
-R5_BUTTERFLY_API __attribute__((target("avx512f")))
-void radix5_wfta_fwd_avx512_N1(
+R5_BUTTERFLY_API __attribute__((target("avx512f"))) void radix5_wfta_fwd_avx512_N1(
     const double *restrict a_re, const double *restrict a_im,
     const double *restrict b_re, const double *restrict b_im,
     const double *restrict c_re, const double *restrict c_im,
@@ -429,7 +501,8 @@ void radix5_wfta_fwd_avx512_N1(
     int k = 0;
 
     /* ── U=2 main loop: 16 elements per iteration ── */
-    for (; k + 15 < K; k += 16) {
+    for (; k + 15 < K; k += 16)
+    {
         R5_PREFETCH_N1(k);
 
         /* Phase 1: A full load + cosine → A=8 */
@@ -485,7 +558,8 @@ void radix5_wfta_fwd_avx512_N1(
     }
 
     /* ── U=1 cleanup (at most one full 8-wide iteration) ── */
-    if (k + 7 < K) {
+    if (k + 7 < K)
+    {
         __m512d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
         __m512d A_s2r, A_s2i, A_d2r, A_d2i;
         __m512d A_t1r, A_t1i, A_t2r, A_t2i;
@@ -499,7 +573,8 @@ void radix5_wfta_fwd_avx512_N1(
     }
 
     /* ── Masked tail (1..7 elements) ── */
-    if (k < K) {
+    if (k < K)
+    {
         __mmask8 mask = (__mmask8)((1u << (K - k)) - 1);
         __m512d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
         __m512d A_s2r, A_s2i, A_d2r, A_d2i;
@@ -517,8 +592,7 @@ void radix5_wfta_fwd_avx512_N1(
 /*  Backward N1 — no twiddles, U=2 pipeline + masked tail              */
 /* ================================================================== */
 
-R5_BUTTERFLY_API __attribute__((target("avx512f")))
-void radix5_wfta_bwd_avx512_N1(
+R5_BUTTERFLY_API __attribute__((target("avx512f"))) void radix5_wfta_bwd_avx512_N1(
     const double *restrict a_re, const double *restrict a_im,
     const double *restrict b_re, const double *restrict b_im,
     const double *restrict c_re, const double *restrict c_im,
@@ -538,7 +612,8 @@ void radix5_wfta_bwd_avx512_N1(
 
     int k = 0;
 
-    for (; k + 15 < K; k += 16) {
+    for (; k + 15 < K; k += 16)
+    {
         R5_PREFETCH_N1(k);
 
         __m512d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
@@ -555,8 +630,10 @@ void radix5_wfta_bwd_avx512_N1(
             __m512d _bi = _mm512_loadu_pd(&b_im[k + 8]);
             __m512d _er = _mm512_loadu_pd(&e_re[k + 8]);
             __m512d _ei = _mm512_loadu_pd(&e_im[k + 8]);
-            B_s1r = _mm512_add_pd(_br, _er);  B_s1i = _mm512_add_pd(_bi, _ei);
-            B_d1r = _mm512_sub_pd(_br, _er);  B_d1i = _mm512_sub_pd(_bi, _ei);
+            B_s1r = _mm512_add_pd(_br, _er);
+            B_s1i = _mm512_add_pd(_bi, _ei);
+            B_d1r = _mm512_sub_pd(_br, _er);
+            B_d1i = _mm512_sub_pd(_bi, _ei);
         }
 
         __m512d A_v1r, A_v1i, A_v2r, A_v2i;
@@ -569,8 +646,10 @@ void radix5_wfta_bwd_avx512_N1(
             __m512d _ci = _mm512_loadu_pd(&c_im[k + 8]);
             __m512d _dr = _mm512_loadu_pd(&d_re[k + 8]);
             __m512d _di = _mm512_loadu_pd(&d_im[k + 8]);
-            B_s2r = _mm512_add_pd(_cr, _dr);  B_s2i = _mm512_add_pd(_ci, _di);
-            B_d2r = _mm512_sub_pd(_cr, _dr);  B_d2i = _mm512_sub_pd(_ci, _di);
+            B_s2r = _mm512_add_pd(_cr, _dr);
+            B_s2i = _mm512_add_pd(_ci, _di);
+            B_d2r = _mm512_sub_pd(_cr, _dr);
+            B_d2i = _mm512_sub_pd(_ci, _di);
         }
 
         R5_STORE_23_BWD_512(A, k);
@@ -583,7 +662,8 @@ void radix5_wfta_bwd_avx512_N1(
         R5_STORE_23_BWD_512(B, k + 8);
     }
 
-    if (k + 7 < K) {
+    if (k + 7 < K)
+    {
         __m512d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
         __m512d A_s2r, A_s2i, A_d2r, A_d2i;
         __m512d A_t1r, A_t1i, A_t2r, A_t2i;
@@ -596,7 +676,8 @@ void radix5_wfta_bwd_avx512_N1(
         k += 8;
     }
 
-    if (k < K) {
+    if (k < K)
+    {
         __mmask8 mask = (__mmask8)((1u << (K - k)) - 1);
         __m512d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
         __m512d A_s2r, A_s2i, A_d2r, A_d2i;
@@ -614,8 +695,7 @@ void radix5_wfta_bwd_avx512_N1(
 /*  Forward twiddled — BLOCKED2, U=2 + masked tail                     */
 /* ================================================================== */
 
-R5_BUTTERFLY_API __attribute__((target("avx512f")))
-void radix5_wfta_fwd_avx512(
+R5_BUTTERFLY_API __attribute__((target("avx512f"))) void radix5_wfta_fwd_avx512(
     const double *restrict a_re, const double *restrict a_im,
     const double *restrict b_re, const double *restrict b_im,
     const double *restrict c_re, const double *restrict c_im,
@@ -637,7 +717,8 @@ void radix5_wfta_fwd_avx512(
 
     int k = 0;
 
-    for (; k + 15 < K; k += 16) {
+    for (; k + 15 < K; k += 16)
+    {
         R5_PREFETCH_TW(k);
 
         /* A: full twiddle + s/d + cosine → A=8 */
@@ -673,7 +754,8 @@ void radix5_wfta_fwd_avx512(
     }
 
     /* U=1 cleanup */
-    if (k + 7 < K) {
+    if (k + 7 < K)
+    {
         __m512d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
         __m512d A_s2r, A_s2i, A_d2r, A_d2i;
         __m512d A_t1r, A_t1i, A_t2r, A_t2i;
@@ -687,7 +769,8 @@ void radix5_wfta_fwd_avx512(
     }
 
     /* Masked tail */
-    if (k < K) {
+    if (k < K)
+    {
         __mmask8 mask = (__mmask8)((1u << (K - k)) - 1);
         __m512d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
         __m512d A_s2r, A_s2i, A_d2r, A_d2i;
@@ -714,8 +797,7 @@ void radix5_wfta_fwd_avx512(
 /*    B: IDFT-5 + post-conj-twiddle solo                              */
 /* ================================================================== */
 
-R5_BUTTERFLY_API __attribute__((target("avx512f")))
-void radix5_wfta_bwd_avx512(
+R5_BUTTERFLY_API __attribute__((target("avx512f"))) void radix5_wfta_bwd_avx512(
     const double *restrict a_re, const double *restrict a_im,
     const double *restrict b_re, const double *restrict b_im,
     const double *restrict c_re, const double *restrict c_im,
@@ -737,7 +819,8 @@ void radix5_wfta_bwd_avx512(
 
     int k = 0;
 
-    for (; k + 15 < K; k += 16) {
+    for (; k + 15 < K; k += 16)
+    {
         R5_PREFETCH_TW(k);
 
         /* ═══ A: IDFT-5 core → raw r1..r4 ═══ */
@@ -745,7 +828,7 @@ void radix5_wfta_bwd_avx512(
         __m512d A_s2r, A_s2i, A_d2r, A_d2i;
         __m512d A_t1r, A_t1i, A_t2r, A_t2i;
         R5_LOAD_SD_512(A, k);
-        R5_COSINE_CHAIN_512(A, k);     /* stores y0 (DC, no twiddle) */
+        R5_COSINE_CHAIN_512(A, k); /* stores y0 (DC, no twiddle) */
 
         __m512d A_v1r, A_v1i, A_v2r, A_v2i;
         R5_SINE_CHAIN_512(A);
@@ -776,8 +859,10 @@ void radix5_wfta_bwd_avx512(
             __m512d _bi = _mm512_loadu_pd(&b_im[k + 8]);
             __m512d _er = _mm512_loadu_pd(&e_re[k + 8]);
             __m512d _ei = _mm512_loadu_pd(&e_im[k + 8]);
-            B_s1r = _mm512_add_pd(_br, _er);  B_s1i = _mm512_add_pd(_bi, _ei);
-            B_d1r = _mm512_sub_pd(_br, _er);  B_d1i = _mm512_sub_pd(_bi, _ei);
+            B_s1r = _mm512_add_pd(_br, _er);
+            B_s1i = _mm512_add_pd(_bi, _ei);
+            B_d1r = _mm512_sub_pd(_br, _er);
+            B_d1i = _mm512_sub_pd(_bi, _ei);
         }
         /* A=12, B=6 → 18+4 = 22 total ✓ */
 
@@ -805,8 +890,10 @@ void radix5_wfta_bwd_avx512(
             __m512d _ci = _mm512_loadu_pd(&c_im[k + 8]);
             __m512d _dr = _mm512_loadu_pd(&d_re[k + 8]);
             __m512d _di = _mm512_loadu_pd(&d_im[k + 8]);
-            B_s2r = _mm512_add_pd(_cr, _dr);  B_s2i = _mm512_add_pd(_ci, _di);
-            B_d2r = _mm512_sub_pd(_cr, _dr);  B_d2i = _mm512_sub_pd(_ci, _di);
+            B_s2r = _mm512_add_pd(_cr, _dr);
+            B_s2i = _mm512_add_pd(_ci, _di);
+            B_d2r = _mm512_sub_pd(_cr, _dr);
+            B_d2i = _mm512_sub_pd(_ci, _di);
         }
         /* A=6, B=10 → 20 total */
 
@@ -876,7 +963,8 @@ void radix5_wfta_bwd_avx512(
     }
 
     /* ── U=1 cleanup ── */
-    if (k + 7 < K) {
+    if (k + 7 < K)
+    {
         __m512d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
         __m512d A_s2r, A_s2i, A_d2r, A_d2i;
         __m512d A_t1r, A_t1i, A_t2r, A_t2i;
@@ -900,35 +988,44 @@ void radix5_wfta_bwd_avx512(
         __m512d w2r = _mm512_loadu_pd(&tw2_re[k]);
         __m512d w2i = _mm512_loadu_pd(&tw2_im[k]);
 
-        { __m512d o1r, o1i;
-          R5_CMULJ_512(r1r, r1i, w1r, w1i, o1r, o1i);
-          _mm512_storeu_pd(&y1_re[k], o1r);
-          _mm512_storeu_pd(&y1_im[k], o1i); }
+        {
+            __m512d o1r, o1i;
+            R5_CMULJ_512(r1r, r1i, w1r, w1i, o1r, o1i);
+            _mm512_storeu_pd(&y1_re[k], o1r);
+            _mm512_storeu_pd(&y1_im[k], o1i);
+        }
 
-        { __m512d w3r, w3i;
-          R5_CMUL_512(w1r, w1i, w2r, w2i, w3r, w3i);
-          __m512d o3r, o3i;
-          R5_CMULJ_512(r3r, r3i, w3r, w3i, o3r, o3i);
-          _mm512_storeu_pd(&y3_re[k], o3r);
-          _mm512_storeu_pd(&y3_im[k], o3i); }
+        {
+            __m512d w3r, w3i;
+            R5_CMUL_512(w1r, w1i, w2r, w2i, w3r, w3i);
+            __m512d o3r, o3i;
+            R5_CMULJ_512(r3r, r3i, w3r, w3i, o3r, o3i);
+            _mm512_storeu_pd(&y3_re[k], o3r);
+            _mm512_storeu_pd(&y3_im[k], o3i);
+        }
 
-        { __m512d o2r, o2i;
-          R5_CMULJ_512(r2r, r2i, w2r, w2i, o2r, o2i);
-          _mm512_storeu_pd(&y2_re[k], o2r);
-          _mm512_storeu_pd(&y2_im[k], o2i); }
+        {
+            __m512d o2r, o2i;
+            R5_CMULJ_512(r2r, r2i, w2r, w2i, o2r, o2i);
+            _mm512_storeu_pd(&y2_re[k], o2r);
+            _mm512_storeu_pd(&y2_im[k], o2i);
+        }
 
-        { __m512d w4r, w4i;
-          R5_CMUL_512(w2r, w2i, w2r, w2i, w4r, w4i);
-          __m512d o4r, o4i;
-          R5_CMULJ_512(r4r, r4i, w4r, w4i, o4r, o4i);
-          _mm512_storeu_pd(&y4_re[k], o4r);
-          _mm512_storeu_pd(&y4_im[k], o4i); }
+        {
+            __m512d w4r, w4i;
+            R5_CMUL_512(w2r, w2i, w2r, w2i, w4r, w4i);
+            __m512d o4r, o4i;
+            R5_CMULJ_512(r4r, r4i, w4r, w4i, o4r, o4i);
+            _mm512_storeu_pd(&y4_re[k], o4r);
+            _mm512_storeu_pd(&y4_im[k], o4i);
+        }
 
         k += 8;
     }
 
     /* ── Masked tail ── */
-    if (k < K) {
+    if (k < K)
+    {
         __mmask8 mask = (__mmask8)((1u << (K - k)) - 1);
 
         __m512d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
@@ -954,29 +1051,37 @@ void radix5_wfta_bwd_avx512(
         __m512d w2r = _mm512_maskz_loadu_pd(mask, &tw2_re[k]);
         __m512d w2i = _mm512_maskz_loadu_pd(mask, &tw2_im[k]);
 
-        { __m512d o1r, o1i;
-          R5_CMULJ_512(r1r, r1i, w1r, w1i, o1r, o1i);
-          _mm512_mask_storeu_pd(&y1_re[k], mask, o1r);
-          _mm512_mask_storeu_pd(&y1_im[k], mask, o1i); }
+        {
+            __m512d o1r, o1i;
+            R5_CMULJ_512(r1r, r1i, w1r, w1i, o1r, o1i);
+            _mm512_mask_storeu_pd(&y1_re[k], mask, o1r);
+            _mm512_mask_storeu_pd(&y1_im[k], mask, o1i);
+        }
 
-        { __m512d w3r, w3i;
-          R5_CMUL_512(w1r, w1i, w2r, w2i, w3r, w3i);
-          __m512d o3r, o3i;
-          R5_CMULJ_512(r3r, r3i, w3r, w3i, o3r, o3i);
-          _mm512_mask_storeu_pd(&y3_re[k], mask, o3r);
-          _mm512_mask_storeu_pd(&y3_im[k], mask, o3i); }
+        {
+            __m512d w3r, w3i;
+            R5_CMUL_512(w1r, w1i, w2r, w2i, w3r, w3i);
+            __m512d o3r, o3i;
+            R5_CMULJ_512(r3r, r3i, w3r, w3i, o3r, o3i);
+            _mm512_mask_storeu_pd(&y3_re[k], mask, o3r);
+            _mm512_mask_storeu_pd(&y3_im[k], mask, o3i);
+        }
 
-        { __m512d o2r, o2i;
-          R5_CMULJ_512(r2r, r2i, w2r, w2i, o2r, o2i);
-          _mm512_mask_storeu_pd(&y2_re[k], mask, o2r);
-          _mm512_mask_storeu_pd(&y2_im[k], mask, o2i); }
+        {
+            __m512d o2r, o2i;
+            R5_CMULJ_512(r2r, r2i, w2r, w2i, o2r, o2i);
+            _mm512_mask_storeu_pd(&y2_re[k], mask, o2r);
+            _mm512_mask_storeu_pd(&y2_im[k], mask, o2i);
+        }
 
-        { __m512d w4r, w4i;
-          R5_CMUL_512(w2r, w2i, w2r, w2i, w4r, w4i);
-          __m512d o4r, o4i;
-          R5_CMULJ_512(r4r, r4i, w4r, w4i, o4r, o4i);
-          _mm512_mask_storeu_pd(&y4_re[k], mask, o4r);
-          _mm512_mask_storeu_pd(&y4_im[k], mask, o4i); }
+        {
+            __m512d w4r, w4i;
+            R5_CMUL_512(w2r, w2i, w2r, w2i, w4r, w4i);
+            __m512d o4r, o4i;
+            R5_CMULJ_512(r4r, r4i, w4r, w4i, o4r, o4i);
+            _mm512_mask_storeu_pd(&y4_re[k], mask, o4r);
+            _mm512_mask_storeu_pd(&y4_im[k], mask, o4i);
+        }
     }
 }
 

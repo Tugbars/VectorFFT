@@ -31,6 +31,7 @@
 #define FFT_RADIX5_AVX2_H
 
 #include <immintrin.h>
+#include "avx2_tail_mask.h"
 
 #ifndef R5_BUTTERFLY_API
 #define R5_BUTTERFLY_API static inline __attribute__((always_inline))
@@ -258,6 +259,163 @@ static inline void r5_scalar_core_bwd(
     } while (0)
 
 /* ================================================================== */
+/*  AVX2 MASKED variants — for tail handling (1..3 elements)           */
+/*  Uses _mm256_maskload_pd / _mm256_maskstore_pd from avx2_tail_mask.h*/
+/* ================================================================== */
+
+/* Masked load + s/d */
+#define R5_LOAD_SD_M(P, off, mask)                                \
+    do                                                            \
+    {                                                             \
+        P##_ar = AVX2_MASKLOAD_PD(&a_re[(off)], (mask));          \
+        P##_ai = AVX2_MASKLOAD_PD(&a_im[(off)], (mask));          \
+        {                                                         \
+            __m256d _br = AVX2_MASKLOAD_PD(&b_re[(off)], (mask)); \
+            __m256d _bi = AVX2_MASKLOAD_PD(&b_im[(off)], (mask)); \
+            __m256d _er = AVX2_MASKLOAD_PD(&e_re[(off)], (mask)); \
+            __m256d _ei = AVX2_MASKLOAD_PD(&e_im[(off)], (mask)); \
+            P##_s1r = _mm256_add_pd(_br, _er);                    \
+            P##_s1i = _mm256_add_pd(_bi, _ei);                    \
+            P##_d1r = _mm256_sub_pd(_br, _er);                    \
+            P##_d1i = _mm256_sub_pd(_bi, _ei);                    \
+        }                                                         \
+        {                                                         \
+            __m256d _cr = AVX2_MASKLOAD_PD(&c_re[(off)], (mask)); \
+            __m256d _ci = AVX2_MASKLOAD_PD(&c_im[(off)], (mask)); \
+            __m256d _dr = AVX2_MASKLOAD_PD(&d_re[(off)], (mask)); \
+            __m256d _di = AVX2_MASKLOAD_PD(&d_im[(off)], (mask)); \
+            P##_s2r = _mm256_add_pd(_cr, _dr);                    \
+            P##_s2i = _mm256_add_pd(_ci, _di);                    \
+            P##_d2r = _mm256_sub_pd(_cr, _dr);                    \
+            P##_d2i = _mm256_sub_pd(_ci, _di);                    \
+        }                                                         \
+    } while (0)
+
+/* Cosine chain — masked y0 stores */
+#define R5_COSINE_CHAIN_M(P, off, mask)                                      \
+    do                                                                       \
+    {                                                                        \
+        __m256d P##_Ar = _mm256_add_pd(P##_s1r, P##_s2r);                    \
+        __m256d P##_Ai = _mm256_add_pd(P##_s1i, P##_s2i);                    \
+        AVX2_MASKSTORE_PD(&y0_re[(off)], (mask),                             \
+                          _mm256_add_pd(P##_ar, P##_Ar));                    \
+        AVX2_MASKSTORE_PD(&y0_im[(off)], (mask),                             \
+                          _mm256_add_pd(P##_ai, P##_Ai));                    \
+        __m256d P##_Br = _mm256_sub_pd(P##_s1r, P##_s2r);                    \
+        __m256d P##_Bi = _mm256_sub_pd(P##_s1i, P##_s2i);                    \
+        __m256d P##_comr = _mm256_fmadd_pd(R5_BCAST(R5_QA), P##_Ar, P##_ar); \
+        __m256d P##_comi = _mm256_fmadd_pd(R5_BCAST(R5_QA), P##_Ai, P##_ai); \
+        __m256d P##_mbr = _mm256_mul_pd(R5_BCAST(R5_QB), P##_Br);            \
+        __m256d P##_mbi = _mm256_mul_pd(R5_BCAST(R5_QB), P##_Bi);            \
+        P##_t1r = _mm256_add_pd(P##_comr, P##_mbr);                          \
+        P##_t1i = _mm256_add_pd(P##_comi, P##_mbi);                          \
+        P##_t2r = _mm256_sub_pd(P##_comr, P##_mbr);                          \
+        P##_t2i = _mm256_sub_pd(P##_comi, P##_mbi);                          \
+    } while (0)
+
+/* Masked stores — forward */
+#define R5_STORE_14_FWD_M(P, off, mask)                     \
+    do                                                      \
+    {                                                       \
+        AVX2_MASKSTORE_PD(&y1_re[(off)], (mask),            \
+                          _mm256_add_pd(P##_t1r, P##_v1i)); \
+        AVX2_MASKSTORE_PD(&y1_im[(off)], (mask),            \
+                          _mm256_sub_pd(P##_t1i, P##_v1r)); \
+        AVX2_MASKSTORE_PD(&y4_re[(off)], (mask),            \
+                          _mm256_sub_pd(P##_t1r, P##_v1i)); \
+        AVX2_MASKSTORE_PD(&y4_im[(off)], (mask),            \
+                          _mm256_add_pd(P##_t1i, P##_v1r)); \
+    } while (0)
+#define R5_STORE_23_FWD_M(P, off, mask)                     \
+    do                                                      \
+    {                                                       \
+        AVX2_MASKSTORE_PD(&y2_re[(off)], (mask),            \
+                          _mm256_add_pd(P##_t2r, P##_v2i)); \
+        AVX2_MASKSTORE_PD(&y2_im[(off)], (mask),            \
+                          _mm256_sub_pd(P##_t2i, P##_v2r)); \
+        AVX2_MASKSTORE_PD(&y3_re[(off)], (mask),            \
+                          _mm256_sub_pd(P##_t2r, P##_v2i)); \
+        AVX2_MASKSTORE_PD(&y3_im[(off)], (mask),            \
+                          _mm256_add_pd(P##_t2i, P##_v2r)); \
+    } while (0)
+
+/* Masked stores — backward */
+#define R5_STORE_14_BWD_M(P, off, mask)                     \
+    do                                                      \
+    {                                                       \
+        AVX2_MASKSTORE_PD(&y1_re[(off)], (mask),            \
+                          _mm256_sub_pd(P##_t1r, P##_v1i)); \
+        AVX2_MASKSTORE_PD(&y1_im[(off)], (mask),            \
+                          _mm256_add_pd(P##_t1i, P##_v1r)); \
+        AVX2_MASKSTORE_PD(&y4_re[(off)], (mask),            \
+                          _mm256_add_pd(P##_t1r, P##_v1i)); \
+        AVX2_MASKSTORE_PD(&y4_im[(off)], (mask),            \
+                          _mm256_sub_pd(P##_t1i, P##_v1r)); \
+    } while (0)
+#define R5_STORE_23_BWD_M(P, off, mask)                     \
+    do                                                      \
+    {                                                       \
+        AVX2_MASKSTORE_PD(&y2_re[(off)], (mask),            \
+                          _mm256_sub_pd(P##_t2r, P##_v2i)); \
+        AVX2_MASKSTORE_PD(&y2_im[(off)], (mask),            \
+                          _mm256_add_pd(P##_t2i, P##_v2r)); \
+        AVX2_MASKSTORE_PD(&y3_re[(off)], (mask),            \
+                          _mm256_add_pd(P##_t2r, P##_v2i)); \
+        AVX2_MASKSTORE_PD(&y3_im[(off)], (mask),            \
+                          _mm256_sub_pd(P##_t2i, P##_v2r)); \
+    } while (0)
+
+/* Masked full twiddle + s/d */
+#define R5_LOAD_TW_SD_M(P, off, mask)                                 \
+    do                                                                \
+    {                                                                 \
+        P##_ar = AVX2_MASKLOAD_PD(&a_re[(off)], (mask));              \
+        P##_ai = AVX2_MASKLOAD_PD(&a_im[(off)], (mask));              \
+        {                                                             \
+            __m256d _w1r = AVX2_MASKLOAD_PD(&tw1_re[(off)], (mask));  \
+            __m256d _w1i = AVX2_MASKLOAD_PD(&tw1_im[(off)], (mask));  \
+            __m256d _w2r = AVX2_MASKLOAD_PD(&tw2_re[(off)], (mask));  \
+            __m256d _w2i = AVX2_MASKLOAD_PD(&tw2_im[(off)], (mask));  \
+            __m256d _tbr, _tbi;                                       \
+            {                                                         \
+                __m256d _br = AVX2_MASKLOAD_PD(&b_re[(off)], (mask)); \
+                __m256d _bi = AVX2_MASKLOAD_PD(&b_im[(off)], (mask)); \
+                R5_CMUL(_br, _bi, _w1r, _w1i, _tbr, _tbi);            \
+            }                                                         \
+            __m256d _tdr, _tdi;                                       \
+            {                                                         \
+                __m256d _w3r, _w3i;                                   \
+                R5_CMUL(_w1r, _w1i, _w2r, _w2i, _w3r, _w3i);          \
+                __m256d _dr = AVX2_MASKLOAD_PD(&d_re[(off)], (mask)); \
+                __m256d _di = AVX2_MASKLOAD_PD(&d_im[(off)], (mask)); \
+                R5_CMUL(_dr, _di, _w3r, _w3i, _tdr, _tdi);            \
+            }                                                         \
+            __m256d _tcr, _tci;                                       \
+            {                                                         \
+                __m256d _cr = AVX2_MASKLOAD_PD(&c_re[(off)], (mask)); \
+                __m256d _ci = AVX2_MASKLOAD_PD(&c_im[(off)], (mask)); \
+                R5_CMUL(_cr, _ci, _w2r, _w2i, _tcr, _tci);            \
+            }                                                         \
+            __m256d _ter, _tei;                                       \
+            {                                                         \
+                __m256d _w4r, _w4i;                                   \
+                R5_CMUL(_w2r, _w2i, _w2r, _w2i, _w4r, _w4i);          \
+                __m256d _er = AVX2_MASKLOAD_PD(&e_re[(off)], (mask)); \
+                __m256d _ei = AVX2_MASKLOAD_PD(&e_im[(off)], (mask)); \
+                R5_CMUL(_er, _ei, _w4r, _w4i, _ter, _tei);            \
+            }                                                         \
+            P##_s1r = _mm256_add_pd(_tbr, _ter);                      \
+            P##_s1i = _mm256_add_pd(_tbi, _tei);                      \
+            P##_d1r = _mm256_sub_pd(_tbr, _ter);                      \
+            P##_d1i = _mm256_sub_pd(_tbi, _tei);                      \
+            P##_s2r = _mm256_add_pd(_tcr, _tdr);                      \
+            P##_s2i = _mm256_add_pd(_tci, _tdi);                      \
+            P##_d2r = _mm256_sub_pd(_tcr, _tdr);                      \
+            P##_d2i = _mm256_sub_pd(_tci, _tdi);                      \
+        }                                                             \
+    } while (0)
+
+/* ================================================================== */
 /*  Forward N1 — no twiddles, U=2 pipeline                             */
 /* ================================================================== */
 
@@ -352,15 +510,19 @@ R5_BUTTERFLY_API __attribute__((target("avx2,fma"))) void radix5_wfta_fwd_avx2_N
         k += 4;
     }
 
-    /* ── Scalar tail ── */
-    for (; k < K; k++)
+    /* ── Masked tail (1..3 elements) ── */
+    if (k < K)
     {
-        r5_scalar_core_fwd(a_re[k], a_im[k], b_re[k], b_im[k],
-                           c_re[k], c_im[k], d_re[k], d_im[k],
-                           e_re[k], e_im[k],
-                           &y0_re[k], &y0_im[k], &y1_re[k], &y1_im[k],
-                           &y2_re[k], &y2_im[k], &y3_re[k], &y3_im[k],
-                           &y4_re[k], &y4_im[k]);
+        __m256i tmask = avx2_tail_mask(K - k);
+        __m256d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
+        __m256d A_s2r, A_s2i, A_d2r, A_d2i;
+        __m256d A_t1r, A_t1i, A_t2r, A_t2i;
+        R5_LOAD_SD_M(A, k, tmask);
+        R5_COSINE_CHAIN_M(A, k, tmask);
+        __m256d A_v1r, A_v1i, A_v2r, A_v2i;
+        R5_SINE_CHAIN(A);
+        R5_STORE_14_FWD_M(A, k, tmask);
+        R5_STORE_23_FWD_M(A, k, tmask);
     }
 }
 
@@ -446,14 +608,18 @@ R5_BUTTERFLY_API __attribute__((target("avx2,fma"))) void radix5_wfta_bwd_avx2_N
         k += 4;
     }
 
-    for (; k < K; k++)
+    if (k < K)
     {
-        r5_scalar_core_bwd(a_re[k], a_im[k], b_re[k], b_im[k],
-                           c_re[k], c_im[k], d_re[k], d_im[k],
-                           e_re[k], e_im[k],
-                           &y0_re[k], &y0_im[k], &y1_re[k], &y1_im[k],
-                           &y2_re[k], &y2_im[k], &y3_re[k], &y3_im[k],
-                           &y4_re[k], &y4_im[k]);
+        __m256i tmask = avx2_tail_mask(K - k);
+        __m256d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
+        __m256d A_s2r, A_s2i, A_d2r, A_d2i;
+        __m256d A_t1r, A_t1i, A_t2r, A_t2i;
+        R5_LOAD_SD_M(A, k, tmask);
+        R5_COSINE_CHAIN_M(A, k, tmask);
+        __m256d A_v1r, A_v1i, A_v2r, A_v2i;
+        R5_SINE_CHAIN(A);
+        R5_STORE_14_BWD_M(A, k, tmask);
+        R5_STORE_23_BWD_M(A, k, tmask);
     }
 }
 
@@ -658,22 +824,19 @@ R5_BUTTERFLY_API __attribute__((target("avx2,fma"))) void radix5_wfta_fwd_avx2(
         R5_STORE_23_FWD(A, k);
     }
 
-    /* Scalar tail */
-    for (; k < K; k++)
+    /* Masked tail */
+    if (k < K)
     {
-        double tbr, tbi, tcr, tci, tdr, tdi, ter, tei;
-        double w3r, w3i, w4r, w4i;
-        r5_scalar_cmul(tw1_re[k], tw1_im[k], tw2_re[k], tw2_im[k], &w3r, &w3i);
-        r5_scalar_cmul(tw2_re[k], tw2_im[k], tw2_re[k], tw2_im[k], &w4r, &w4i);
-        r5_scalar_cmul(b_re[k], b_im[k], tw1_re[k], tw1_im[k], &tbr, &tbi);
-        r5_scalar_cmul(c_re[k], c_im[k], tw2_re[k], tw2_im[k], &tcr, &tci);
-        r5_scalar_cmul(d_re[k], d_im[k], w3r, w3i, &tdr, &tdi);
-        r5_scalar_cmul(e_re[k], e_im[k], w4r, w4i, &ter, &tei);
-        r5_scalar_core_fwd(a_re[k], a_im[k], tbr, tbi, tcr, tci,
-                           tdr, tdi, ter, tei,
-                           &y0_re[k], &y0_im[k], &y1_re[k], &y1_im[k],
-                           &y2_re[k], &y2_im[k], &y3_re[k], &y3_im[k],
-                           &y4_re[k], &y4_im[k]);
+        __m256i tmask = avx2_tail_mask(K - k);
+        __m256d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
+        __m256d A_s2r, A_s2i, A_d2r, A_d2i;
+        __m256d A_t1r, A_t1i, A_t2r, A_t2i;
+        R5_LOAD_TW_SD_M(A, k, tmask);
+        R5_COSINE_CHAIN_M(A, k, tmask);
+        __m256d A_v1r, A_v1i, A_v2r, A_v2i;
+        R5_SINE_CHAIN(A);
+        R5_STORE_14_FWD_M(A, k, tmask);
+        R5_STORE_23_FWD_M(A, k, tmask);
     }
 }
 
@@ -865,26 +1028,68 @@ R5_BUTTERFLY_API __attribute__((target("avx2,fma"))) void radix5_wfta_bwd_avx2(
         _mm256_storeu_pd(&y4_im[k], o4i);
     }
 
-    /* Scalar tail */
-    for (; k < K; k++)
+    /* Masked tail */
+    if (k < K)
     {
-        double r0r, r0i, r1r, r1i, r2r, r2i, r3r, r3i, r4r, r4i;
-        r5_scalar_core_bwd(a_re[k], a_im[k], b_re[k], b_im[k],
-                           c_re[k], c_im[k], d_re[k], d_im[k],
-                           e_re[k], e_im[k],
-                           &r0r, &r0i, &r1r, &r1i, &r2r, &r2i,
-                           &r3r, &r3i, &r4r, &r4i);
+        __m256i tmask = avx2_tail_mask(K - k);
 
-        double w3r, w3i, w4r, w4i;
-        r5_scalar_cmul(tw1_re[k], tw1_im[k], tw2_re[k], tw2_im[k], &w3r, &w3i);
-        r5_scalar_cmul(tw2_re[k], tw2_im[k], tw2_re[k], tw2_im[k], &w4r, &w4i);
+        /* IDFT-5 core (masked loads, register-only compute) */
+        __m256d A_ar, A_ai, A_s1r, A_s1i, A_d1r, A_d1i;
+        __m256d A_s2r, A_s2i, A_d2r, A_d2i;
+        __m256d A_t1r, A_t1i, A_t2r, A_t2i;
+        R5_LOAD_SD_M(A, k, tmask);
+        R5_COSINE_CHAIN_M(A, k, tmask); /* masked y0 store */
 
-        y0_re[k] = r0r;
-        y0_im[k] = r0i;
-        r5_scalar_cmulj(r1r, r1i, tw1_re[k], tw1_im[k], &y1_re[k], &y1_im[k]);
-        r5_scalar_cmulj(r2r, r2i, tw2_re[k], tw2_im[k], &y2_re[k], &y2_im[k]);
-        r5_scalar_cmulj(r3r, r3i, w3r, w3i, &y3_re[k], &y3_im[k]);
-        r5_scalar_cmulj(r4r, r4i, w4r, w4i, &y4_re[k], &y4_im[k]);
+        __m256d A_v1r, A_v1i, A_v2r, A_v2i;
+        R5_SINE_CHAIN(A);
+
+        /* Backward +i → raw IDFT outputs */
+        __m256d r1r = _mm256_sub_pd(A_t1r, A_v1i);
+        __m256d r1i = _mm256_add_pd(A_t1i, A_v1r);
+        __m256d r4r = _mm256_add_pd(A_t1r, A_v1i);
+        __m256d r4i = _mm256_sub_pd(A_t1i, A_v1r);
+        __m256d r2r = _mm256_sub_pd(A_t2r, A_v2i);
+        __m256d r2i = _mm256_add_pd(A_t2i, A_v2r);
+        __m256d r3r = _mm256_add_pd(A_t2r, A_v2i);
+        __m256d r3i = _mm256_sub_pd(A_t2i, A_v2r);
+
+        /* Post-conj-twiddle (masked load twiddles, masked stores) */
+        __m256d w1r = AVX2_MASKLOAD_PD(&tw1_re[k], tmask);
+        __m256d w1i = AVX2_MASKLOAD_PD(&tw1_im[k], tmask);
+        __m256d w2r = AVX2_MASKLOAD_PD(&tw2_re[k], tmask);
+        __m256d w2i = AVX2_MASKLOAD_PD(&tw2_im[k], tmask);
+
+        {
+            __m256d o1r, o1i;
+            R5_CMULJ(r1r, r1i, w1r, w1i, o1r, o1i);
+            AVX2_MASKSTORE_PD(&y1_re[k], tmask, o1r);
+            AVX2_MASKSTORE_PD(&y1_im[k], tmask, o1i);
+        }
+
+        {
+            __m256d w3r, w3i;
+            R5_CMUL(w1r, w1i, w2r, w2i, w3r, w3i);
+            __m256d o3r, o3i;
+            R5_CMULJ(r3r, r3i, w3r, w3i, o3r, o3i);
+            AVX2_MASKSTORE_PD(&y3_re[k], tmask, o3r);
+            AVX2_MASKSTORE_PD(&y3_im[k], tmask, o3i);
+        }
+
+        {
+            __m256d o2r, o2i;
+            R5_CMULJ(r2r, r2i, w2r, w2i, o2r, o2i);
+            AVX2_MASKSTORE_PD(&y2_re[k], tmask, o2r);
+            AVX2_MASKSTORE_PD(&y2_im[k], tmask, o2i);
+        }
+
+        {
+            __m256d w4r, w4i;
+            R5_CMUL(w2r, w2i, w2r, w2i, w4r, w4i);
+            __m256d o4r, o4i;
+            R5_CMULJ(r4r, r4i, w4r, w4i, o4r, o4i);
+            AVX2_MASKSTORE_PD(&y4_re[k], tmask, o4r);
+            AVX2_MASKSTORE_PD(&y4_im[k], tmask, o4i);
+        }
     }
 }
 
