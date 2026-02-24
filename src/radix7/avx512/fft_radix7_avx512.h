@@ -1,1208 +1,1615 @@
 /**
- * @file fft_radix7_avx512.h
- * @brief AVX-512 Radix-7 Rader Butterfly - TRUE END-TO-END SoA with U2 Pipeline
+ * @file  fft_radix7_avx512.h
+ * @brief Radix-7 FFT butterfly using Rader's algorithm — AVX-512 (8-wide, U2)
  *
- * @details
  * ARCHITECTURAL REVOLUTION - Generation 3:
  * ===========================================
- * ✅ TRUE SoA-in-register: re/im stay separate throughout (no interleave/deinterleave!)
- * ✅ Unit-stride loads: killed gathers for stage twiddles (10→3 cycle latency)
- * ✅ 8-wide processing: full 512-bit loads (8 doubles), not 4-wide with inserts
- * ✅ U2 pipeline: dual butterflies (k, k+8) for saturating dual FMA ports
- * ✅ Aligned loads/stores: guaranteed alignment, drop all unaligned variants
- * ✅ Active prefetching: T0 for inputs, T1 for large stage twiddles
- * ✅ NT stores: sophisticated LLC-aware heuristic with proper fencing
+ * TRUE SoA-in-register: re/im stay separate throughout
+ * Unit-stride loads: killed gathers for stage twiddles
+ * 8-wide processing: full 512-bit loads (8 doubles)
+ * U2 pipeline: dual butterflies (k, k+8) saturating dual FMA ports
+ * Aligned loads/stores: guaranteed alignment
  *
- * ALL RADIX-7 OPTIMIZATIONS PRESERVED:
- * =====================================
- * ✅✅ P0: Pre-split Rader broadcasts (8-10% gain, 12 shuffles removed!)
- * ✅✅ P0: Round-robin convolution schedule (10-15% gain, maximized ILP!)
- * ✅✅ P1: Tree y0 sum (1-2% gain, reduced add latency!)
- * ✅ FMA instructions for all complex multiply
- * ✅ Rader permutations: input [1,3,2,6,4,5], output [1,5,4,6,2,3]
- * ✅ 6-point cyclic convolution with generator g=3
+ * ALL RADIX-7 OPTIMIZATIONS:
+ * ===========================
+ * P0: Pre-split Rader broadcasts — kernel as aligned double[8] octets
+ * P0: Round-robin convolution — 2-wave interleaved FMA schedule
+ * P0: U2 shared kernel loads — A and B butterflies share kernel octets
+ * P1: Tree y0 sum — binary tree DC accumulation (3 levels vs 6)
  *
- * TARGET: High-end Xeons (Sapphire Rapids, Emerald Rapids, Ice Lake-SP)
- * - 2× 512-bit FMA units (dual-issue)
- * - 32 ZMM registers
- * - 2 loads + 1 store per cycle
+ * Register budget (32 ZMM on AVX-512):
+ *   U=2 pointwise (tightest point):
+ *     12 ZMM: A's s0-s5 (re+im)
+ *     12 ZMM: B's s0-s5 (re+im)
+ *      6 ZMM: kernel loads (shared, per wave)
+ *      2 ZMM: temporaries
+ *     = 32 at peak — fits exactly.
  *
- * @author FFT Optimization Team
- * @version 4.0 (AVX-512 TRUE SoA + U2)
- * @date 2025
+ *   U=2 DFT6 overlap:
+ *     12 ZMM: first butterfly's DFT6 working set
+ *     12 ZMM: second butterfly's DFT6 working set
+ *      2 ZMM: DFT3 constants (shared)
+ *      4 ZMM: W6 twiddle constants (shared)
+ *      2 ZMM: temporaries
+ *     = 32 — tight, x0 reloaded from L1 after Rader phase.
+ *
+ * TARGET: High-end Xeons with 2x 512-bit FMA units, 32 ZMM regs
  */
 
 #ifndef FFT_RADIX7_AVX512_H
 #define FFT_RADIX7_AVX512_H
 
+#if defined(__AVX512F__)
 #include <immintrin.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
 
-#include "../fft_radix7_uniform.h"
+#define R7_512_VW 8  /* vector width: doubles per ZMM */
+#define R7_512_U2 16 /* U=2 stride: 2 × VW           */
 
-//==============================================================================
-// CONFIGURATION FOR HIGH-END XEONS
-//==============================================================================
+/* ================================================================== */
+/*  Pre-split constant octets  (P0: aligned loads, ports 2/3)          */
+/* ================================================================== */
 
-/// Required alignment (64 bytes for AVX-512)
-#define R7_AVX512_ALIGNMENT 64
+#define R7Q8(name, v)                                          \
+    static const double __attribute__((aligned(64))) name[8] = \
+        {v, v, v, v, v, v, v, v}
 
-/// Vector width: 8 doubles per ZMM register
-#define R7_AVX512_WIDTH 8
+/* DFT3 */
+R7Q8(R7_C3_Q8, -0.5);
+R7Q8(R7_S3_Q8, 0.86602540378443864676);
 
-/// U2 pipeline: process 2 butterflies simultaneously
-#define R7_AVX512_U2_WIDTH (2 * R7_AVX512_WIDTH)  // 16 elements per iteration
+/* W6 forward twiddles */
+R7Q8(R7_W61R_Q8, 0.5);
+R7Q8(R7_W61I_Q8, -0.86602540378443864676);
+R7Q8(R7_W62R_Q8, -0.5);
+R7Q8(R7_W62I_Q8, -0.86602540378443864676);
 
-/// Prefetch distance (in elements) - tuned for Xeon
-#define R7_AVX512_PREFETCH_DISTANCE 64
+/* W6 backward (conjugate) twiddles */
+R7Q8(R7_W61I_N_Q8, 0.86602540378443864676);
+R7Q8(R7_W62I_N_Q8, 0.86602540378443864676);
 
-/// Non-temporal store threshold (fraction of LLC)
-#define R7_AVX512_NT_THRESHOLD 0.7
+/* Forward Rader kernel — 12 octets */
+R7Q8(RK7_FR0, -1.66666666666666657415e-01);
+R7Q8(RK7_FR1, +4.06688893057589595514e-01);
+R7Q8(RK7_FR2, +3.95078234262700001000e-01);
+R7Q8(RK7_FR3, +1.85037170770859413132e-17);
+R7Q8(RK7_FR4, +3.95078234262699945489e-01);
+R7Q8(RK7_FR5, -4.06688893057589151425e-01);
+R7Q8(RK7_FI0, -9.25185853854297065662e-18);
+R7Q8(RK7_FI1, -1.70436465311965518188e-01);
+R7Q8(RK7_FI2, -1.95851048647464526242e-01);
+R7Q8(RK7_FI3, -4.40958551844098212147e-01);
+R7Q8(RK7_FI4, +1.95851048647464942576e-01);
+R7Q8(RK7_FI5, -1.70436465311965684721e-01);
 
-/// Minimum K for enabling non-temporal stores
-#define R7_AVX512_NT_MIN_K 4096
+/* Backward Rader kernel — 12 octets */
+R7Q8(RK7_BR0, -1.66666666666666657415e-01);
+R7Q8(RK7_BR1, -4.06688893057589595514e-01);
+R7Q8(RK7_BR2, +3.95078234262700167534e-01);
+R7Q8(RK7_BR3, +9.25185853854297158106e-17);
+R7Q8(RK7_BR4, +3.95078234262700223045e-01);
+R7Q8(RK7_BR5, +4.06688893057589540003e-01);
+R7Q8(RK7_BI0, +9.25185853854297065662e-18);
+R7Q8(RK7_BI1, +1.70436465311965656966e-01);
+R7Q8(RK7_BI2, -1.95851048647464304198e-01);
+R7Q8(RK7_BI3, +4.40958551844098767258e-01);
+R7Q8(RK7_BI4, +1.95851048647464359709e-01);
+R7Q8(RK7_BI5, +1.70436465311965323899e-01);
 
-/// LLC size in bytes (conservative default: 8 MB per core)
-#ifndef R7_AVX512_LLC_BYTES
-#define R7_AVX512_LLC_BYTES (8 * 1024 * 1024)
+#undef R7Q8
+
+/* Scalar kernel arrays — for scalar tail */
+static const double RK7S_FWD_RE[6] = {
+    -1.66666666666666657415e-01, +4.06688893057589595514e-01,
+    +3.95078234262700001000e-01, +1.85037170770859413132e-17,
+    +3.95078234262699945489e-01, -4.06688893057589151425e-01};
+static const double RK7S_FWD_IM[6] = {
+    -9.25185853854297065662e-18, -1.70436465311965518188e-01,
+    -1.95851048647464526242e-01, -4.40958551844098212147e-01,
+    +1.95851048647464942576e-01, -1.70436465311965684721e-01};
+static const double RK7S_BWD_RE[6] = {
+    -1.66666666666666657415e-01, -4.06688893057589595514e-01,
+    +3.95078234262700167534e-01, +9.25185853854297158106e-17,
+    +3.95078234262700223045e-01, +4.06688893057589540003e-01};
+static const double RK7S_BWD_IM[6] = {
+    +9.25185853854297065662e-18, +1.70436465311965656966e-01,
+    -1.95851048647464304198e-01, +4.40958551844098767258e-01,
+    +1.95851048647464359709e-01, +1.70436465311965323899e-01};
+
+/* ================================================================== */
+/*  AVX-512 complex multiply (FMA)                                     */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) void cmul_512(__m512d ar, __m512d ai, __m512d wr, __m512d wi,
+                                                           __m512d *cr, __m512d *ci)
+{
+    __m512d t0 = _mm512_mul_pd(ai, wi);
+    *cr = _mm512_fmsub_pd(ar, wr, t0);
+    __m512d t1 = _mm512_mul_pd(ai, wr);
+    *ci = _mm512_fmadd_pd(ar, wi, t1);
+}
+
+/* ================================================================== */
+/*  DFT6 forward — single butterfly, ZMM                               */
+/* ================================================================== */
+
+#define DFT6_FWD_512(x0r, x0i, x1r, x1i, x2r, x2i,                              \
+                     x3r, x3i, x4r, x4i, x5r, x5i)                              \
+    do                                                                          \
+    {                                                                           \
+        __m512d vC3 = _mm512_load_pd(R7_C3_Q8);                                 \
+        __m512d vS3 = _mm512_load_pd(R7_S3_Q8);                                 \
+        __m512d se_r = _mm512_add_pd(x2r, x4r), se_i = _mm512_add_pd(x2i, x4i); \
+        __m512d de_r = _mm512_sub_pd(x2r, x4r), de_i = _mm512_sub_pd(x2i, x4i); \
+        __m512d E0r = _mm512_add_pd(x0r, se_r), E0i = _mm512_add_pd(x0i, se_i); \
+        __m512d be_r = _mm512_fmadd_pd(vC3, se_r, x0r);                         \
+        __m512d be_i = _mm512_fmadd_pd(vC3, se_i, x0i);                         \
+        __m512d E1r = _mm512_fmadd_pd(vS3, de_i, be_r);                         \
+        __m512d E1i = _mm512_fnmadd_pd(vS3, de_r, be_i);                        \
+        __m512d E2r = _mm512_fnmadd_pd(vS3, de_i, be_r);                        \
+        __m512d E2i = _mm512_fmadd_pd(vS3, de_r, be_i);                         \
+        __m512d so_r = _mm512_add_pd(x3r, x5r), so_i = _mm512_add_pd(x3i, x5i); \
+        __m512d do_r = _mm512_sub_pd(x3r, x5r), do_i = _mm512_sub_pd(x3i, x5i); \
+        __m512d O0r = _mm512_add_pd(x1r, so_r), O0i = _mm512_add_pd(x1i, so_i); \
+        __m512d bo_r = _mm512_fmadd_pd(vC3, so_r, x1r);                         \
+        __m512d bo_i = _mm512_fmadd_pd(vC3, so_i, x1i);                         \
+        __m512d O1r = _mm512_fmadd_pd(vS3, do_i, bo_r);                         \
+        __m512d O1i = _mm512_fnmadd_pd(vS3, do_r, bo_i);                        \
+        __m512d O2r = _mm512_fnmadd_pd(vS3, do_i, bo_r);                        \
+        __m512d O2i = _mm512_fmadd_pd(vS3, do_r, bo_i);                         \
+        x0r = _mm512_add_pd(E0r, O0r);                                          \
+        x0i = _mm512_add_pd(E0i, O0i);                                          \
+        x3r = _mm512_sub_pd(E0r, O0r);                                          \
+        x3i = _mm512_sub_pd(E0i, O0i);                                          \
+        {                                                                       \
+            __m512d W1r = _mm512_load_pd(R7_W61R_Q8);                           \
+            __m512d W1i = _mm512_load_pd(R7_W61I_Q8);                           \
+            __m512d T1r, T1i;                                                   \
+            cmul_512(O1r, O1i, W1r, W1i, &T1r, &T1i);                           \
+            x1r = _mm512_add_pd(E1r, T1r);                                      \
+            x1i = _mm512_add_pd(E1i, T1i);                                      \
+            x4r = _mm512_sub_pd(E1r, T1r);                                      \
+            x4i = _mm512_sub_pd(E1i, T1i);                                      \
+        }                                                                       \
+        {                                                                       \
+            __m512d W2r = _mm512_load_pd(R7_W62R_Q8);                           \
+            __m512d W2i = _mm512_load_pd(R7_W62I_Q8);                           \
+            __m512d T2r, T2i;                                                   \
+            cmul_512(O2r, O2i, W2r, W2i, &T2r, &T2i);                           \
+            x2r = _mm512_add_pd(E2r, T2r);                                      \
+            x2i = _mm512_add_pd(E2i, T2i);                                      \
+            x5r = _mm512_sub_pd(E2r, T2r);                                      \
+            x5i = _mm512_sub_pd(E2i, T2i);                                      \
+        }                                                                       \
+    } while (0)
+
+/* ================================================================== */
+/*  DFT6 backward — conjugate twiddles                                 */
+/* ================================================================== */
+
+#define DFT6_BWD_512(x0r, x0i, x1r, x1i, x2r, x2i,                              \
+                     x3r, x3i, x4r, x4i, x5r, x5i)                              \
+    do                                                                          \
+    {                                                                           \
+        __m512d vC3 = _mm512_load_pd(R7_C3_Q8);                                 \
+        __m512d vS3 = _mm512_load_pd(R7_S3_Q8);                                 \
+        __m512d se_r = _mm512_add_pd(x2r, x4r), se_i = _mm512_add_pd(x2i, x4i); \
+        __m512d de_r = _mm512_sub_pd(x2r, x4r), de_i = _mm512_sub_pd(x2i, x4i); \
+        __m512d E0r = _mm512_add_pd(x0r, se_r), E0i = _mm512_add_pd(x0i, se_i); \
+        __m512d be_r = _mm512_fmadd_pd(vC3, se_r, x0r);                         \
+        __m512d be_i = _mm512_fmadd_pd(vC3, se_i, x0i);                         \
+        __m512d E1r = _mm512_fnmadd_pd(vS3, de_i, be_r);                        \
+        __m512d E1i = _mm512_fmadd_pd(vS3, de_r, be_i);                         \
+        __m512d E2r = _mm512_fmadd_pd(vS3, de_i, be_r);                         \
+        __m512d E2i = _mm512_fnmadd_pd(vS3, de_r, be_i);                        \
+        __m512d so_r = _mm512_add_pd(x3r, x5r), so_i = _mm512_add_pd(x3i, x5i); \
+        __m512d do_r = _mm512_sub_pd(x3r, x5r), do_i = _mm512_sub_pd(x3i, x5i); \
+        __m512d O0r = _mm512_add_pd(x1r, so_r), O0i = _mm512_add_pd(x1i, so_i); \
+        __m512d bo_r = _mm512_fmadd_pd(vC3, so_r, x1r);                         \
+        __m512d bo_i = _mm512_fmadd_pd(vC3, so_i, x1i);                         \
+        __m512d O1r = _mm512_fnmadd_pd(vS3, do_i, bo_r);                        \
+        __m512d O1i = _mm512_fmadd_pd(vS3, do_r, bo_i);                         \
+        __m512d O2r = _mm512_fmadd_pd(vS3, do_i, bo_r);                         \
+        __m512d O2i = _mm512_fnmadd_pd(vS3, do_r, bo_i);                        \
+        x0r = _mm512_add_pd(E0r, O0r);                                          \
+        x0i = _mm512_add_pd(E0i, O0i);                                          \
+        x3r = _mm512_sub_pd(E0r, O0r);                                          \
+        x3i = _mm512_sub_pd(E0i, O0i);                                          \
+        {                                                                       \
+            __m512d W1r = _mm512_load_pd(R7_W61R_Q8);                           \
+            __m512d W1i = _mm512_load_pd(R7_W61I_N_Q8);                         \
+            __m512d T1r, T1i;                                                   \
+            cmul_512(O1r, O1i, W1r, W1i, &T1r, &T1i);                           \
+            x1r = _mm512_add_pd(E1r, T1r);                                      \
+            x1i = _mm512_add_pd(E1i, T1i);                                      \
+            x4r = _mm512_sub_pd(E1r, T1r);                                      \
+            x4i = _mm512_sub_pd(E1i, T1i);                                      \
+        }                                                                       \
+        {                                                                       \
+            __m512d W2r = _mm512_load_pd(R7_W62R_Q8);                           \
+            __m512d W2i = _mm512_load_pd(R7_W62I_N_Q8);                         \
+            __m512d T2r, T2i;                                                   \
+            cmul_512(O2r, O2i, W2r, W2i, &T2r, &T2i);                           \
+            x2r = _mm512_add_pd(E2r, T2r);                                      \
+            x2i = _mm512_add_pd(E2i, T2i);                                      \
+            x5r = _mm512_sub_pd(E2r, T2r);                                      \
+            x5i = _mm512_sub_pd(E2i, T2i);                                      \
+        }                                                                       \
+    } while (0)
+
+/* ================================================================== */
+/*  Round-robin pointwise — U=1 (single butterfly)                     */
+/* ================================================================== */
+
+#define PW_RR6_512(s0r, s0i, s1r, s1i, s2r, s2i,                              \
+                   s3r, s3i, s4r, s4i, s5r, s5i,                              \
+                   KR0, KI0, KR1, KI1, KR2, KI2,                              \
+                   KR3, KI3, KR4, KI4, KR5, KI5)                              \
+    do                                                                        \
+    {                                                                         \
+        __m512d k0r = _mm512_load_pd(KR0), k0i = _mm512_load_pd(KI0);         \
+        __m512d k1r = _mm512_load_pd(KR1), k1i = _mm512_load_pd(KI1);         \
+        __m512d k2r = _mm512_load_pd(KR2), k2i = _mm512_load_pd(KI2);         \
+        __m512d p0a = _mm512_mul_pd(s0i, k0i), p0b = _mm512_mul_pd(s0i, k0r); \
+        __m512d p1a = _mm512_mul_pd(s1i, k1i), p1b = _mm512_mul_pd(s1i, k1r); \
+        __m512d p2a = _mm512_mul_pd(s2i, k2i), p2b = _mm512_mul_pd(s2i, k2r); \
+        __m512d r0r = _mm512_fmsub_pd(s0r, k0r, p0a);                         \
+        __m512d r0i = _mm512_fmadd_pd(s0r, k0i, p0b);                         \
+        __m512d r1r = _mm512_fmsub_pd(s1r, k1r, p1a);                         \
+        __m512d r1i = _mm512_fmadd_pd(s1r, k1i, p1b);                         \
+        __m512d r2r = _mm512_fmsub_pd(s2r, k2r, p2a);                         \
+        __m512d r2i = _mm512_fmadd_pd(s2r, k2i, p2b);                         \
+        s0r = r0r;                                                            \
+        s0i = r0i;                                                            \
+        s1r = r1r;                                                            \
+        s1i = r1i;                                                            \
+        s2r = r2r;                                                            \
+        s2i = r2i;                                                            \
+        __m512d k3r = _mm512_load_pd(KR3), k3i = _mm512_load_pd(KI3);         \
+        __m512d k4r = _mm512_load_pd(KR4), k4i = _mm512_load_pd(KI4);         \
+        __m512d k5r = _mm512_load_pd(KR5), k5i = _mm512_load_pd(KI5);         \
+        __m512d p3a = _mm512_mul_pd(s3i, k3i), p3b = _mm512_mul_pd(s3i, k3r); \
+        __m512d p4a = _mm512_mul_pd(s4i, k4i), p4b = _mm512_mul_pd(s4i, k4r); \
+        __m512d p5a = _mm512_mul_pd(s5i, k5i), p5b = _mm512_mul_pd(s5i, k5r); \
+        __m512d r3r = _mm512_fmsub_pd(s3r, k3r, p3a);                         \
+        __m512d r3i = _mm512_fmadd_pd(s3r, k3i, p3b);                         \
+        __m512d r4r = _mm512_fmsub_pd(s4r, k4r, p4a);                         \
+        __m512d r4i = _mm512_fmadd_pd(s4r, k4i, p4b);                         \
+        __m512d r5r = _mm512_fmsub_pd(s5r, k5r, p5a);                         \
+        __m512d r5i = _mm512_fmadd_pd(s5r, k5i, p5b);                         \
+        s3r = r3r;                                                            \
+        s3i = r3i;                                                            \
+        s4r = r4r;                                                            \
+        s4i = r4i;                                                            \
+        s5r = r5r;                                                            \
+        s5i = r5i;                                                            \
+    } while (0)
+
+/* ================================================================== */
+/*  Round-robin pointwise — U=2 (dual butterfly, shared kernel loads)  */
+/*                                                                     */
+/*  A (k) and B (k+8) share all 12 kernel loads.                      */
+/*  Within each wave, A products interleave with B products:           */
+/*    A.mul→B.mul→A.fma→B.fma maximizes ILP across both FMA ports.    */
+/*                                                                     */
+/*  Register peak: 12(A) + 12(B) + 6(kernel) + 2(temps) = 32         */
+/* ================================================================== */
+
+#define PW_RR6_U2(a0r, a0i, a1r, a1i, a2r, a2i, a3r, a3i, a4r, a4i, a5r, a5i,   \
+                  b0r, b0i, b1r, b1i, b2r, b2i, b3r, b3i, b4r, b4i, b5r, b5i,   \
+                  KR0, KI0, KR1, KI1, KR2, KI2,                                 \
+                  KR3, KI3, KR4, KI4, KR5, KI5)                                 \
+    do                                                                          \
+    {                                                                           \
+        /* Wave 1: slots 0,1,2 — shared kernel loads */                         \
+        __m512d k0r = _mm512_load_pd(KR0), k0i = _mm512_load_pd(KI0);           \
+        __m512d k1r = _mm512_load_pd(KR1), k1i = _mm512_load_pd(KI1);           \
+        __m512d k2r = _mm512_load_pd(KR2), k2i = _mm512_load_pd(KI2);           \
+        /* A mul phase */                                                       \
+        __m512d ap0a = _mm512_mul_pd(a0i, k0i), ap0b = _mm512_mul_pd(a0i, k0r); \
+        __m512d ap1a = _mm512_mul_pd(a1i, k1i), ap1b = _mm512_mul_pd(a1i, k1r); \
+        __m512d ap2a = _mm512_mul_pd(a2i, k2i), ap2b = _mm512_mul_pd(a2i, k2r); \
+        /* B mul phase (interleaved — fills A's FMA latency bubbles) */         \
+        __m512d bp0a = _mm512_mul_pd(b0i, k0i), bp0b = _mm512_mul_pd(b0i, k0r); \
+        __m512d bp1a = _mm512_mul_pd(b1i, k1i), bp1b = _mm512_mul_pd(b1i, k1r); \
+        __m512d bp2a = _mm512_mul_pd(b2i, k2i), bp2b = _mm512_mul_pd(b2i, k2r); \
+        /* A FMA phase */                                                       \
+        a0r = _mm512_fmsub_pd(a0r, k0r, ap0a);                                  \
+        a0i = _mm512_fmadd_pd(a0i, k0i, ap0b);                                  \
+        /* ^^^ WRONG: a0i was consumed by mul above, now overwritten.           \
+         * Fix: use saved ar for FMA, compute into temps. */                    \
+        (void)0;                                                                \
+    } while (0)
+
+/* The approach above has a hazard — we need ar alive for ci=ar*ki+ai*kr
+ * but ar gets clobbered by cr=ar*kr-ai*ki.  The round-robin fixes this
+ * by computing all products BEFORE any writeback.  Rewrite: */
+
+#undef PW_RR6_U2
+
+#define PW_RR6_U2(a0r, a0i, a1r, a1i, a2r, a2i, a3r, a3i, a4r, a4i, a5r, a5i,   \
+                  b0r, b0i, b1r, b1i, b2r, b2i, b3r, b3i, b4r, b4i, b5r, b5i,   \
+                  KR0, KI0, KR1, KI1, KR2, KI2,                                 \
+                  KR3, KI3, KR4, KI4, KR5, KI5)                                 \
+    do                                                                          \
+    {                                                                           \
+        /* ---- Wave 1: slots 0,1,2 ---- */                                     \
+        __m512d k0r = _mm512_load_pd(KR0), k0i = _mm512_load_pd(KI0);           \
+        __m512d k1r = _mm512_load_pd(KR1), k1i = _mm512_load_pd(KI1);           \
+        __m512d k2r = _mm512_load_pd(KR2), k2i = _mm512_load_pd(KI2);           \
+        /* A: ai*wi, ai*wr (inputs only, no overwrite) */                       \
+        __m512d ap0a = _mm512_mul_pd(a0i, k0i), ap0b = _mm512_mul_pd(a0i, k0r); \
+        __m512d ap1a = _mm512_mul_pd(a1i, k1i), ap1b = _mm512_mul_pd(a1i, k1r); \
+        __m512d ap2a = _mm512_mul_pd(a2i, k2i), ap2b = _mm512_mul_pd(a2i, k2r); \
+        /* B: ai*wi, ai*wr */                                                   \
+        __m512d bp0a = _mm512_mul_pd(b0i, k0i), bp0b = _mm512_mul_pd(b0i, k0r); \
+        __m512d bp1a = _mm512_mul_pd(b1i, k1i), bp1b = _mm512_mul_pd(b1i, k1r); \
+        __m512d bp2a = _mm512_mul_pd(b2i, k2i), bp2b = _mm512_mul_pd(b2i, k2r); \
+        /* A: ar*wr-ai*wi, ar*wi+ai*wr → temps, then writeback */               \
+        {                                                                       \
+            __m512d t0r = _mm512_fmsub_pd(a0r, k0r, ap0a);                      \
+            __m512d t0i = _mm512_fmadd_pd(a0r, k0i, ap0b);                      \
+            __m512d t1r = _mm512_fmsub_pd(a1r, k1r, ap1a);                      \
+            __m512d t1i = _mm512_fmadd_pd(a1r, k1i, ap1b);                      \
+            __m512d t2r = _mm512_fmsub_pd(a2r, k2r, ap2a);                      \
+            __m512d t2i = _mm512_fmadd_pd(a2r, k2i, ap2b);                      \
+            a0r = t0r;                                                          \
+            a0i = t0i;                                                          \
+            a1r = t1r;                                                          \
+            a1i = t1i;                                                          \
+            a2r = t2r;                                                          \
+            a2i = t2i;                                                          \
+        }                                                                       \
+        /* B: same */                                                           \
+        {                                                                       \
+            __m512d t0r = _mm512_fmsub_pd(b0r, k0r, bp0a);                      \
+            __m512d t0i = _mm512_fmadd_pd(b0r, k0i, bp0b);                      \
+            __m512d t1r = _mm512_fmsub_pd(b1r, k1r, bp1a);                      \
+            __m512d t1i = _mm512_fmadd_pd(b1r, k1i, bp1b);                      \
+            __m512d t2r = _mm512_fmsub_pd(b2r, k2r, bp2a);                      \
+            __m512d t2i = _mm512_fmadd_pd(b2r, k2i, bp2b);                      \
+            b0r = t0r;                                                          \
+            b0i = t0i;                                                          \
+            b1r = t1r;                                                          \
+            b1i = t1i;                                                          \
+            b2r = t2r;                                                          \
+            b2i = t2i;                                                          \
+        }                                                                       \
+        /* ---- Wave 2: slots 3,4,5 ---- */                                     \
+        __m512d k3r = _mm512_load_pd(KR3), k3i = _mm512_load_pd(KI3);           \
+        __m512d k4r = _mm512_load_pd(KR4), k4i = _mm512_load_pd(KI4);           \
+        __m512d k5r = _mm512_load_pd(KR5), k5i = _mm512_load_pd(KI5);           \
+        __m512d ap3a = _mm512_mul_pd(a3i, k3i), ap3b = _mm512_mul_pd(a3i, k3r); \
+        __m512d ap4a = _mm512_mul_pd(a4i, k4i), ap4b = _mm512_mul_pd(a4i, k4r); \
+        __m512d ap5a = _mm512_mul_pd(a5i, k5i), ap5b = _mm512_mul_pd(a5i, k5r); \
+        __m512d bp3a = _mm512_mul_pd(b3i, k3i), bp3b = _mm512_mul_pd(b3i, k3r); \
+        __m512d bp4a = _mm512_mul_pd(b4i, k4i), bp4b = _mm512_mul_pd(b4i, k4r); \
+        __m512d bp5a = _mm512_mul_pd(b5i, k5i), bp5b = _mm512_mul_pd(b5i, k5r); \
+        {                                                                       \
+            __m512d t3r = _mm512_fmsub_pd(a3r, k3r, ap3a);                      \
+            __m512d t3i = _mm512_fmadd_pd(a3r, k3i, ap3b);                      \
+            __m512d t4r = _mm512_fmsub_pd(a4r, k4r, ap4a);                      \
+            __m512d t4i = _mm512_fmadd_pd(a4r, k4i, ap4b);                      \
+            __m512d t5r = _mm512_fmsub_pd(a5r, k5r, ap5a);                      \
+            __m512d t5i = _mm512_fmadd_pd(a5r, k5i, ap5b);                      \
+            a3r = t3r;                                                          \
+            a3i = t3i;                                                          \
+            a4r = t4r;                                                          \
+            a4i = t4i;                                                          \
+            a5r = t5r;                                                          \
+            a5i = t5i;                                                          \
+        }                                                                       \
+        {                                                                       \
+            __m512d t3r = _mm512_fmsub_pd(b3r, k3r, bp3a);                      \
+            __m512d t3i = _mm512_fmadd_pd(b3r, k3i, bp3b);                      \
+            __m512d t4r = _mm512_fmsub_pd(b4r, k4r, bp4a);                      \
+            __m512d t4i = _mm512_fmadd_pd(b4r, k4i, bp4b);                      \
+            __m512d t5r = _mm512_fmsub_pd(b5r, k5r, bp5a);                      \
+            __m512d t5i = _mm512_fmadd_pd(b5r, k5i, bp5b);                      \
+            b3r = t3r;                                                          \
+            b3i = t3i;                                                          \
+            b4r = t4r;                                                          \
+            b4i = t4i;                                                          \
+            b5r = t5r;                                                          \
+            b5i = t5i;                                                          \
+        }                                                                       \
+    } while (0)
+
+/* ================================================================== */
+/*  Tree y0 sum — ZMM version                                         */
+/* ================================================================== */
+
+#define TREE_Y0_512(x0, t1, t2, t3, t4, t5, t6, out) \
+    do                                               \
+    {                                                \
+        __m512d _a = _mm512_add_pd(x0, t1);          \
+        __m512d _b = _mm512_add_pd(t2, t3);          \
+        __m512d _c = _mm512_add_pd(t4, t5);          \
+        __m512d _d = _mm512_add_pd(_a, _b);          \
+        __m512d _e = _mm512_add_pd(_c, t6);          \
+        out = _mm512_add_pd(_d, _e);                 \
+    } while (0)
+
+/* ================================================================== */
+/*  Forward butterfly — AVX-512, U=2, BLOCKED3 twiddles                */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) __attribute__((target("avx512f"))) void radix7_rader_fwd_avx512(
+    const double *restrict a_re, const double *restrict a_im,
+    const double *restrict b_re, const double *restrict b_im,
+    const double *restrict c_re, const double *restrict c_im,
+    const double *restrict d_re, const double *restrict d_im,
+    const double *restrict e_re, const double *restrict e_im,
+    const double *restrict f_re, const double *restrict f_im,
+    const double *restrict g_re, const double *restrict g_im,
+    double *restrict y0_re, double *restrict y0_im,
+    double *restrict y1_re, double *restrict y1_im,
+    double *restrict y2_re, double *restrict y2_im,
+    double *restrict y3_re, double *restrict y3_im,
+    double *restrict y4_re, double *restrict y4_im,
+    double *restrict y5_re, double *restrict y5_im,
+    double *restrict y6_re, double *restrict y6_im,
+    const double *restrict tw1_re, const double *restrict tw1_im,
+    const double *restrict tw2_re, const double *restrict tw2_im,
+    const double *restrict tw3_re, const double *restrict tw3_im,
+    int K)
+{
+    int k = 0;
+
+    /* ================================================================ */
+    /*  U=2 body: 16 k-values per iteration  (k and k+8)               */
+    /* ================================================================ */
+
+    for (; k + R7_512_U2 <= K; k += R7_512_U2)
+    {
+
+        /* ---- Load x[0] for A (k) and B (k+8) ---- */
+        __m512d ax0r = _mm512_load_pd(&a_re[k]);
+        __m512d ax0i = _mm512_load_pd(&a_im[k]);
+        __m512d bx0r = _mm512_load_pd(&a_re[k + R7_512_VW]);
+        __m512d bx0i = _mm512_load_pd(&a_im[k + R7_512_VW]);
+
+        /* ---- Load raw inputs for A and B ---- */
+        __m512d axbr = _mm512_load_pd(&b_re[k]), axbi = _mm512_load_pd(&b_im[k]);
+        __m512d axcr = _mm512_load_pd(&c_re[k]), axci = _mm512_load_pd(&c_im[k]);
+        __m512d axdr = _mm512_load_pd(&d_re[k]), axdi = _mm512_load_pd(&d_im[k]);
+        __m512d axer = _mm512_load_pd(&e_re[k]), axei = _mm512_load_pd(&e_im[k]);
+        __m512d axfr = _mm512_load_pd(&f_re[k]), axfi = _mm512_load_pd(&f_im[k]);
+        __m512d axgr = _mm512_load_pd(&g_re[k]), axgi = _mm512_load_pd(&g_im[k]);
+
+        __m512d bxbr = _mm512_load_pd(&b_re[k + R7_512_VW]), bxbi = _mm512_load_pd(&b_im[k + R7_512_VW]);
+        __m512d bxcr = _mm512_load_pd(&c_re[k + R7_512_VW]), bxci = _mm512_load_pd(&c_im[k + R7_512_VW]);
+        __m512d bxdr = _mm512_load_pd(&d_re[k + R7_512_VW]), bxdi = _mm512_load_pd(&d_im[k + R7_512_VW]);
+        __m512d bxer = _mm512_load_pd(&e_re[k + R7_512_VW]), bxei = _mm512_load_pd(&e_im[k + R7_512_VW]);
+        __m512d bxfr = _mm512_load_pd(&f_re[k + R7_512_VW]), bxfi = _mm512_load_pd(&f_im[k + R7_512_VW]);
+        __m512d bxgr = _mm512_load_pd(&g_re[k + R7_512_VW]), bxgi = _mm512_load_pd(&g_im[k + R7_512_VW]);
+
+        /* ---- Load twiddles for A and B ---- */
+        __m512d aw1r = _mm512_load_pd(&tw1_re[k]), aw1i = _mm512_load_pd(&tw1_im[k]);
+        __m512d aw2r = _mm512_load_pd(&tw2_re[k]), aw2i = _mm512_load_pd(&tw2_im[k]);
+        __m512d aw3r = _mm512_load_pd(&tw3_re[k]), aw3i = _mm512_load_pd(&tw3_im[k]);
+        __m512d bw1r = _mm512_load_pd(&tw1_re[k + R7_512_VW]), bw1i = _mm512_load_pd(&tw1_im[k + R7_512_VW]);
+        __m512d bw2r = _mm512_load_pd(&tw2_re[k + R7_512_VW]), bw2i = _mm512_load_pd(&tw2_im[k + R7_512_VW]);
+        __m512d bw3r = _mm512_load_pd(&tw3_re[k + R7_512_VW]), bw3i = _mm512_load_pd(&tw3_im[k + R7_512_VW]);
+
+        /* ---- Apply twiddles: interleave A and B for ILP ---- */
+        __m512d at1r, at1i, at2r, at2i, at3r, at3i;
+        __m512d bt1r, bt1i, bt2r, bt2i, bt3r, bt3i;
+        cmul_512(axbr, axbi, aw1r, aw1i, &at1r, &at1i);
+        cmul_512(bxbr, bxbi, bw1r, bw1i, &bt1r, &bt1i);
+        cmul_512(axcr, axci, aw2r, aw2i, &at2r, &at2i);
+        cmul_512(bxcr, bxci, bw2r, bw2i, &bt2r, &bt2i);
+        cmul_512(axdr, axdi, aw3r, aw3i, &at3r, &at3i);
+        cmul_512(bxdr, bxdi, bw3r, bw3i, &bt3r, &bt3i);
+
+        /* Derive W4-W6 */
+        __m512d aw4r, aw4i, aw5r, aw5i, aw6r, aw6i;
+        __m512d bw4r, bw4i, bw5r, bw5i, bw6r, bw6i;
+        cmul_512(aw1r, aw1i, aw3r, aw3i, &aw4r, &aw4i);
+        cmul_512(bw1r, bw1i, bw3r, bw3i, &bw4r, &bw4i);
+        cmul_512(aw2r, aw2i, aw3r, aw3i, &aw5r, &aw5i);
+        cmul_512(bw2r, bw2i, bw3r, bw3i, &bw5r, &bw5i);
+        cmul_512(aw3r, aw3i, aw3r, aw3i, &aw6r, &aw6i);
+        cmul_512(bw3r, bw3i, bw3r, bw3i, &bw6r, &bw6i);
+
+        __m512d at4r, at4i, at5r, at5i, at6r, at6i;
+        __m512d bt4r, bt4i, bt5r, bt5i, bt6r, bt6i;
+        cmul_512(axer, axei, aw4r, aw4i, &at4r, &at4i);
+        cmul_512(bxer, bxei, bw4r, bw4i, &bt4r, &bt4i);
+        cmul_512(axfr, axfi, aw5r, aw5i, &at5r, &at5i);
+        cmul_512(bxfr, bxfi, bw5r, bw5i, &bt5r, &bt5i);
+        cmul_512(axgr, axgi, aw6r, aw6i, &at6r, &at6i);
+        cmul_512(bxgr, bxgi, bw6r, bw6i, &bt6r, &bt6i);
+
+        /* ---- DC: tree sum, store early to free x0 regs ---- */
+        __m512d adc_r, adc_i, bdc_r, bdc_i;
+        TREE_Y0_512(ax0r, at1r, at2r, at3r, at4r, at5r, at6r, adc_r);
+        TREE_Y0_512(ax0i, at1i, at2i, at3i, at4i, at5i, at6i, adc_i);
+        TREE_Y0_512(bx0r, bt1r, bt2r, bt3r, bt4r, bt5r, bt6r, bdc_r);
+        TREE_Y0_512(bx0i, bt1i, bt2i, bt3i, bt4i, bt5i, bt6i, bdc_i);
+        _mm512_store_pd(&y0_re[k], adc_r);
+        _mm512_store_pd(&y0_im[k], adc_i);
+        _mm512_store_pd(&y0_re[k + R7_512_VW], bdc_r);
+        _mm512_store_pd(&y0_im[k + R7_512_VW], bdc_i);
+
+        /* ---- Rader permute: {1,3,2,6,4,5} ---- */
+        __m512d as0r = at1r, as0i = at1i, as1r = at3r, as1i = at3i;
+        __m512d as2r = at2r, as2i = at2i, as3r = at6r, as3i = at6i;
+        __m512d as4r = at4r, as4i = at4i, as5r = at5r, as5i = at5i;
+
+        __m512d bs0r = bt1r, bs0i = bt1i, bs1r = bt3r, bs1i = bt3i;
+        __m512d bs2r = bt2r, bs2i = bt2i, bs3r = bt6r, bs3i = bt6i;
+        __m512d bs4r = bt4r, bs4i = bt4i, bs5r = bt5r, bs5i = bt5i;
+
+        /* ---- DFT6 forward: A then B (compiler interleaves) ---- */
+        DFT6_FWD_512(as0r, as0i, as1r, as1i, as2r, as2i,
+                     as3r, as3i, as4r, as4i, as5r, as5i);
+        DFT6_FWD_512(bs0r, bs0i, bs1r, bs1i, bs2r, bs2i,
+                     bs3r, bs3i, bs4r, bs4i, bs5r, bs5i);
+
+        /* ---- U=2 pointwise multiply (shared kernel loads) ---- */
+        PW_RR6_U2(as0r, as0i, as1r, as1i, as2r, as2i,
+                  as3r, as3i, as4r, as4i, as5r, as5i,
+                  bs0r, bs0i, bs1r, bs1i, bs2r, bs2i,
+                  bs3r, bs3i, bs4r, bs4i, bs5r, bs5i,
+                  RK7_FR0, RK7_FI0, RK7_FR1, RK7_FI1, RK7_FR2, RK7_FI2,
+                  RK7_FR3, RK7_FI3, RK7_FR4, RK7_FI4, RK7_FR5, RK7_FI5);
+
+        /* ---- DFT6 backward: A then B ---- */
+        DFT6_BWD_512(as0r, as0i, as1r, as1i, as2r, as2i,
+                     as3r, as3i, as4r, as4i, as5r, as5i);
+        DFT6_BWD_512(bs0r, bs0i, bs1r, bs1i, bs2r, bs2i,
+                     bs3r, bs3i, bs4r, bs4i, bs5r, bs5i);
+
+        /* ---- Reload x0 from L1 (freed after DC store) ---- */
+        ax0r = _mm512_load_pd(&a_re[k]);
+        ax0i = _mm512_load_pd(&a_im[k]);
+        bx0r = _mm512_load_pd(&a_re[k + R7_512_VW]);
+        bx0i = _mm512_load_pd(&a_im[k + R7_512_VW]);
+
+        /* ---- Output un-permute + store: inv_perm = {1,5,4,6,2,3} ---- */
+        _mm512_store_pd(&y1_re[k], _mm512_add_pd(ax0r, as0r));
+        _mm512_store_pd(&y1_im[k], _mm512_add_pd(ax0i, as0i));
+        _mm512_store_pd(&y5_re[k], _mm512_add_pd(ax0r, as1r));
+        _mm512_store_pd(&y5_im[k], _mm512_add_pd(ax0i, as1i));
+        _mm512_store_pd(&y4_re[k], _mm512_add_pd(ax0r, as2r));
+        _mm512_store_pd(&y4_im[k], _mm512_add_pd(ax0i, as2i));
+        _mm512_store_pd(&y6_re[k], _mm512_add_pd(ax0r, as3r));
+        _mm512_store_pd(&y6_im[k], _mm512_add_pd(ax0i, as3i));
+        _mm512_store_pd(&y2_re[k], _mm512_add_pd(ax0r, as4r));
+        _mm512_store_pd(&y2_im[k], _mm512_add_pd(ax0i, as4i));
+        _mm512_store_pd(&y3_re[k], _mm512_add_pd(ax0r, as5r));
+        _mm512_store_pd(&y3_im[k], _mm512_add_pd(ax0i, as5i));
+
+        _mm512_store_pd(&y1_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs0r));
+        _mm512_store_pd(&y1_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs0i));
+        _mm512_store_pd(&y5_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs1r));
+        _mm512_store_pd(&y5_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs1i));
+        _mm512_store_pd(&y4_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs2r));
+        _mm512_store_pd(&y4_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs2i));
+        _mm512_store_pd(&y6_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs3r));
+        _mm512_store_pd(&y6_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs3i));
+        _mm512_store_pd(&y2_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs4r));
+        _mm512_store_pd(&y2_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs4i));
+        _mm512_store_pd(&y3_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs5r));
+        _mm512_store_pd(&y3_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs5i));
+    }
+
+    /* ================================================================ */
+    /*  U=1 remainder: 8 k-values                                       */
+    /* ================================================================ */
+
+    for (; k + R7_512_VW <= K; k += R7_512_VW)
+    {
+        __m512d x0r = _mm512_load_pd(&a_re[k]), x0i = _mm512_load_pd(&a_im[k]);
+        __m512d xbr = _mm512_load_pd(&b_re[k]), xbi = _mm512_load_pd(&b_im[k]);
+        __m512d xcr = _mm512_load_pd(&c_re[k]), xci = _mm512_load_pd(&c_im[k]);
+        __m512d xdr = _mm512_load_pd(&d_re[k]), xdi = _mm512_load_pd(&d_im[k]);
+        __m512d xer = _mm512_load_pd(&e_re[k]), xei = _mm512_load_pd(&e_im[k]);
+        __m512d xfr = _mm512_load_pd(&f_re[k]), xfi = _mm512_load_pd(&f_im[k]);
+        __m512d xgr = _mm512_load_pd(&g_re[k]), xgi = _mm512_load_pd(&g_im[k]);
+
+        __m512d w1r = _mm512_load_pd(&tw1_re[k]), w1i = _mm512_load_pd(&tw1_im[k]);
+        __m512d w2r = _mm512_load_pd(&tw2_re[k]), w2i = _mm512_load_pd(&tw2_im[k]);
+        __m512d w3r = _mm512_load_pd(&tw3_re[k]), w3i = _mm512_load_pd(&tw3_im[k]);
+
+        __m512d t1r, t1i, t2r, t2i, t3r, t3i;
+        cmul_512(xbr, xbi, w1r, w1i, &t1r, &t1i);
+        cmul_512(xcr, xci, w2r, w2i, &t2r, &t2i);
+        cmul_512(xdr, xdi, w3r, w3i, &t3r, &t3i);
+        __m512d w4r, w4i, w5r, w5i, w6r, w6i;
+        cmul_512(w1r, w1i, w3r, w3i, &w4r, &w4i);
+        cmul_512(w2r, w2i, w3r, w3i, &w5r, &w5i);
+        cmul_512(w3r, w3i, w3r, w3i, &w6r, &w6i);
+        __m512d t4r, t4i, t5r, t5i, t6r, t6i;
+        cmul_512(xer, xei, w4r, w4i, &t4r, &t4i);
+        cmul_512(xfr, xfi, w5r, w5i, &t5r, &t5i);
+        cmul_512(xgr, xgi, w6r, w6i, &t6r, &t6i);
+
+        __m512d dcr, dci;
+        TREE_Y0_512(x0r, t1r, t2r, t3r, t4r, t5r, t6r, dcr);
+        TREE_Y0_512(x0i, t1i, t2i, t3i, t4i, t5i, t6i, dci);
+        _mm512_store_pd(&y0_re[k], dcr);
+        _mm512_store_pd(&y0_im[k], dci);
+
+        __m512d s0r = t1r, s0i = t1i, s1r = t3r, s1i = t3i;
+        __m512d s2r = t2r, s2i = t2i, s3r = t6r, s3i = t6i;
+        __m512d s4r = t4r, s4i = t4i, s5r = t5r, s5i = t5i;
+        DFT6_FWD_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+        PW_RR6_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i,
+                   RK7_FR0, RK7_FI0, RK7_FR1, RK7_FI1, RK7_FR2, RK7_FI2,
+                   RK7_FR3, RK7_FI3, RK7_FR4, RK7_FI4, RK7_FR5, RK7_FI5);
+        DFT6_BWD_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+
+        x0r = _mm512_load_pd(&a_re[k]);
+        x0i = _mm512_load_pd(&a_im[k]);
+        _mm512_store_pd(&y1_re[k], _mm512_add_pd(x0r, s0r));
+        _mm512_store_pd(&y1_im[k], _mm512_add_pd(x0i, s0i));
+        _mm512_store_pd(&y5_re[k], _mm512_add_pd(x0r, s1r));
+        _mm512_store_pd(&y5_im[k], _mm512_add_pd(x0i, s1i));
+        _mm512_store_pd(&y4_re[k], _mm512_add_pd(x0r, s2r));
+        _mm512_store_pd(&y4_im[k], _mm512_add_pd(x0i, s2i));
+        _mm512_store_pd(&y6_re[k], _mm512_add_pd(x0r, s3r));
+        _mm512_store_pd(&y6_im[k], _mm512_add_pd(x0i, s3i));
+        _mm512_store_pd(&y2_re[k], _mm512_add_pd(x0r, s4r));
+        _mm512_store_pd(&y2_im[k], _mm512_add_pd(x0i, s4i));
+        _mm512_store_pd(&y3_re[k], _mm512_add_pd(x0r, s5r));
+        _mm512_store_pd(&y3_im[k], _mm512_add_pd(x0i, s5i));
+    }
+
+    /* Scalar tail for k % 8 remainder */
+    for (; k < K; k++)
+    {
+        double x0r_ = a_re[k], x0i_ = a_im[k];
+        double _w1r = tw1_re[k], _w1i = tw1_im[k], _w2r = tw2_re[k], _w2i = tw2_im[k];
+        double _w3r = tw3_re[k], _w3i = tw3_im[k];
+        double _t1r = b_re[k] * _w1r - b_im[k] * _w1i, _t1i = b_re[k] * _w1i + b_im[k] * _w1r;
+        double _t2r = c_re[k] * _w2r - c_im[k] * _w2i, _t2i = c_re[k] * _w2i + c_im[k] * _w2r;
+        double _t3r = d_re[k] * _w3r - d_im[k] * _w3i, _t3i = d_re[k] * _w3i + d_im[k] * _w3r;
+        double _w4r = _w1r * _w3r - _w1i * _w3i, _w4i = _w1r * _w3i + _w1i * _w3r;
+        double _w5r = _w2r * _w3r - _w2i * _w3i, _w5i = _w2r * _w3i + _w2i * _w3r;
+        double _w6r = _w3r * _w3r - _w3i * _w3i, _w6i = 2.0 * _w3r * _w3i;
+        double _t4r = e_re[k] * _w4r - e_im[k] * _w4i, _t4i = e_re[k] * _w4i + e_im[k] * _w4r;
+        double _t5r = f_re[k] * _w5r - f_im[k] * _w5i, _t5i = f_re[k] * _w5i + f_im[k] * _w5r;
+        double _t6r = g_re[k] * _w6r - g_im[k] * _w6i, _t6i = g_re[k] * _w6i + g_im[k] * _w6r;
+        y0_re[k] = x0r_ + _t1r + _t2r + _t3r + _t4r + _t5r + _t6r;
+        y0_im[k] = x0i_ + _t1i + _t2i + _t3i + _t4i + _t5i + _t6i;
+        double ar[6] = {_t1r, _t3r, _t2r, _t6r, _t4r, _t5r};
+        double ai[6] = {_t1i, _t3i, _t2i, _t6i, _t4i, _t5i};
+        double Ar[6], Ai[6], Cr[6], Ci[6], cr[6], ci[6];
+        {
+            double s1 = ar[2] + ar[4], s2 = ai[2] + ai[4], d1 = ar[2] - ar[4], d2 = ai[2] - ai[4];
+            double E0r = ar[0] + s1, E0i = ai[0] + s2, br = ar[0] - 0.5 * s1, bi = ai[0] - 0.5 * s2;
+            double E1r = br + 0.86602540378443864676 * d2, E1i = bi - 0.86602540378443864676 * d1;
+            double E2r = br - 0.86602540378443864676 * d2, E2i = bi + 0.86602540378443864676 * d1;
+            double s3 = ar[3] + ar[5], s4 = ai[3] + ai[5], d3 = ar[3] - ar[5], d4 = ai[3] - ai[5];
+            double O0r = ar[1] + s3, O0i = ai[1] + s4, br2 = ar[1] - 0.5 * s3, bi2 = ai[1] - 0.5 * s4;
+            double O1r = br2 + 0.86602540378443864676 * d4, O1i = bi2 - 0.86602540378443864676 * d3;
+            double O2r = br2 - 0.86602540378443864676 * d4, O2i = bi2 + 0.86602540378443864676 * d3;
+            Ar[0] = E0r + O0r;
+            Ai[0] = E0i + O0i;
+            Ar[3] = E0r - O0r;
+            Ai[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 + O1i * 0.86602540378443864676;
+            double T1i_ = O1r * (-0.86602540378443864676) + O1i * 0.5;
+            Ar[1] = E1r + T1r_;
+            Ai[1] = E1i + T1i_;
+            Ar[4] = E1r - T1r_;
+            Ai[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) + O2i * 0.86602540378443864676;
+            double T2i_ = O2r * (-0.86602540378443864676) + O2i * (-0.5);
+            Ar[2] = E2r + T2r_;
+            Ai[2] = E2i + T2i_;
+            Ar[5] = E2r - T2r_;
+            Ai[5] = E2i - T2i_;
+        }
+        for (int j = 0; j < 6; j++)
+        {
+            Cr[j] = Ar[j] * RK7S_FWD_RE[j] - Ai[j] * RK7S_FWD_IM[j];
+            Ci[j] = Ar[j] * RK7S_FWD_IM[j] + Ai[j] * RK7S_FWD_RE[j];
+        }
+        {
+            double s1 = Cr[2] + Cr[4], s2 = Ci[2] + Ci[4], d1 = Cr[2] - Cr[4], d2 = Ci[2] - Ci[4];
+            double E0r = Cr[0] + s1, E0i = Ci[0] + s2, br = Cr[0] - 0.5 * s1, bi = Ci[0] - 0.5 * s2;
+            double E1r = br - 0.86602540378443864676 * d2, E1i = bi + 0.86602540378443864676 * d1;
+            double E2r = br + 0.86602540378443864676 * d2, E2i = bi - 0.86602540378443864676 * d1;
+            double s3 = Cr[3] + Cr[5], s4 = Ci[3] + Ci[5], d3 = Cr[3] - Cr[5], d4 = Ci[3] - Ci[5];
+            double O0r = Cr[1] + s3, O0i = Ci[1] + s4, br2 = Cr[1] - 0.5 * s3, bi2 = Ci[1] - 0.5 * s4;
+            double O1r = br2 - 0.86602540378443864676 * d4, O1i = bi2 + 0.86602540378443864676 * d3;
+            double O2r = br2 + 0.86602540378443864676 * d4, O2i = bi2 - 0.86602540378443864676 * d3;
+            cr[0] = E0r + O0r;
+            ci[0] = E0i + O0i;
+            cr[3] = E0r - O0r;
+            ci[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 - O1i * 0.86602540378443864676;
+            double T1i_ = O1r * 0.86602540378443864676 + O1i * 0.5;
+            cr[1] = E1r + T1r_;
+            ci[1] = E1i + T1i_;
+            cr[4] = E1r - T1r_;
+            ci[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) - O2i * 0.86602540378443864676;
+            double T2i_ = O2r * 0.86602540378443864676 + O2i * (-0.5);
+            cr[2] = E2r + T2r_;
+            ci[2] = E2i + T2i_;
+            cr[5] = E2r - T2r_;
+            ci[5] = E2i - T2i_;
+        }
+        y1_re[k] = x0r_ + cr[0];
+        y1_im[k] = x0i_ + ci[0];
+        y5_re[k] = x0r_ + cr[1];
+        y5_im[k] = x0i_ + ci[1];
+        y4_re[k] = x0r_ + cr[2];
+        y4_im[k] = x0i_ + ci[2];
+        y6_re[k] = x0r_ + cr[3];
+        y6_im[k] = x0i_ + ci[3];
+        y2_re[k] = x0r_ + cr[4];
+        y2_im[k] = x0i_ + ci[4];
+        y3_re[k] = x0r_ + cr[5];
+        y3_im[k] = x0i_ + ci[5];
+    }
+}
+
+/* ================================================================== */
+/*  Backward butterfly — AVX-512, U=2                                  */
+/*  Rader IDFT on raw inputs, then conj twiddle outputs                */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) __attribute__((target("avx512f"))) void radix7_rader_bwd_avx512(
+    const double *restrict a_re, const double *restrict a_im,
+    const double *restrict b_re, const double *restrict b_im,
+    const double *restrict c_re, const double *restrict c_im,
+    const double *restrict d_re, const double *restrict d_im,
+    const double *restrict e_re, const double *restrict e_im,
+    const double *restrict f_re, const double *restrict f_im,
+    const double *restrict g_re, const double *restrict g_im,
+    double *restrict y0_re, double *restrict y0_im,
+    double *restrict y1_re, double *restrict y1_im,
+    double *restrict y2_re, double *restrict y2_im,
+    double *restrict y3_re, double *restrict y3_im,
+    double *restrict y4_re, double *restrict y4_im,
+    double *restrict y5_re, double *restrict y5_im,
+    double *restrict y6_re, double *restrict y6_im,
+    const double *restrict tw1_re, const double *restrict tw1_im,
+    const double *restrict tw2_re, const double *restrict tw2_im,
+    const double *restrict tw3_re, const double *restrict tw3_im,
+    int K)
+{
+    int k = 0;
+    const __m512d vzero = _mm512_setzero_pd();
+
+    /* U=2 body */
+    for (; k + R7_512_U2 <= K; k += R7_512_U2)
+    {
+
+        /* Load raw inputs (no twiddle for backward Rader) */
+        __m512d ax0r = _mm512_load_pd(&a_re[k]), ax0i = _mm512_load_pd(&a_im[k]);
+        __m512d at1r = _mm512_load_pd(&b_re[k]), at1i = _mm512_load_pd(&b_im[k]);
+        __m512d at2r = _mm512_load_pd(&c_re[k]), at2i = _mm512_load_pd(&c_im[k]);
+        __m512d at3r = _mm512_load_pd(&d_re[k]), at3i = _mm512_load_pd(&d_im[k]);
+        __m512d at4r = _mm512_load_pd(&e_re[k]), at4i = _mm512_load_pd(&e_im[k]);
+        __m512d at5r = _mm512_load_pd(&f_re[k]), at5i = _mm512_load_pd(&f_im[k]);
+        __m512d at6r = _mm512_load_pd(&g_re[k]), at6i = _mm512_load_pd(&g_im[k]);
+
+        __m512d bx0r = _mm512_load_pd(&a_re[k + R7_512_VW]), bx0i = _mm512_load_pd(&a_im[k + R7_512_VW]);
+        __m512d bt1r = _mm512_load_pd(&b_re[k + R7_512_VW]), bt1i = _mm512_load_pd(&b_im[k + R7_512_VW]);
+        __m512d bt2r = _mm512_load_pd(&c_re[k + R7_512_VW]), bt2i = _mm512_load_pd(&c_im[k + R7_512_VW]);
+        __m512d bt3r = _mm512_load_pd(&d_re[k + R7_512_VW]), bt3i = _mm512_load_pd(&d_im[k + R7_512_VW]);
+        __m512d bt4r = _mm512_load_pd(&e_re[k + R7_512_VW]), bt4i = _mm512_load_pd(&e_im[k + R7_512_VW]);
+        __m512d bt5r = _mm512_load_pd(&f_re[k + R7_512_VW]), bt5i = _mm512_load_pd(&f_im[k + R7_512_VW]);
+        __m512d bt6r = _mm512_load_pd(&g_re[k + R7_512_VW]), bt6i = _mm512_load_pd(&g_im[k + R7_512_VW]);
+
+        /* DC tree sum, store early */
+        __m512d adc_r, adc_i, bdc_r, bdc_i;
+        TREE_Y0_512(ax0r, at1r, at2r, at3r, at4r, at5r, at6r, adc_r);
+        TREE_Y0_512(ax0i, at1i, at2i, at3i, at4i, at5i, at6i, adc_i);
+        TREE_Y0_512(bx0r, bt1r, bt2r, bt3r, bt4r, bt5r, bt6r, bdc_r);
+        TREE_Y0_512(bx0i, bt1i, bt2i, bt3i, bt4i, bt5i, bt6i, bdc_i);
+        _mm512_store_pd(&y0_re[k], adc_r);
+        _mm512_store_pd(&y0_im[k], adc_i);
+        _mm512_store_pd(&y0_re[k + R7_512_VW], bdc_r);
+        _mm512_store_pd(&y0_im[k + R7_512_VW], bdc_i);
+
+        /* Rader permute */
+        __m512d as0r = at1r, as0i = at1i, as1r = at3r, as1i = at3i;
+        __m512d as2r = at2r, as2i = at2i, as3r = at6r, as3i = at6i;
+        __m512d as4r = at4r, as4i = at4i, as5r = at5r, as5i = at5i;
+        __m512d bs0r = bt1r, bs0i = bt1i, bs1r = bt3r, bs1i = bt3i;
+        __m512d bs2r = bt2r, bs2i = bt2i, bs3r = bt6r, bs3i = bt6i;
+        __m512d bs4r = bt4r, bs4i = bt4i, bs5r = bt5r, bs5i = bt5i;
+
+        /* DFT6 fwd → pointwise (U2 shared) → DFT6 bwd */
+        DFT6_FWD_512(as0r, as0i, as1r, as1i, as2r, as2i, as3r, as3i, as4r, as4i, as5r, as5i);
+        DFT6_FWD_512(bs0r, bs0i, bs1r, bs1i, bs2r, bs2i, bs3r, bs3i, bs4r, bs4i, bs5r, bs5i);
+
+        PW_RR6_U2(as0r, as0i, as1r, as1i, as2r, as2i, as3r, as3i, as4r, as4i, as5r, as5i,
+                  bs0r, bs0i, bs1r, bs1i, bs2r, bs2i, bs3r, bs3i, bs4r, bs4i, bs5r, bs5i,
+                  RK7_BR0, RK7_BI0, RK7_BR1, RK7_BI1, RK7_BR2, RK7_BI2,
+                  RK7_BR3, RK7_BI3, RK7_BR4, RK7_BI4, RK7_BR5, RK7_BI5);
+
+        DFT6_BWD_512(as0r, as0i, as1r, as1i, as2r, as2i, as3r, as3i, as4r, as4i, as5r, as5i);
+        DFT6_BWD_512(bs0r, bs0i, bs1r, bs1i, bs2r, bs2i, bs3r, bs3i, bs4r, bs4i, bs5r, bs5i);
+
+        /* Reload x0 for output addition */
+        ax0r = _mm512_load_pd(&a_re[k]);
+        ax0i = _mm512_load_pd(&a_im[k]);
+        bx0r = _mm512_load_pd(&a_re[k + R7_512_VW]);
+        bx0i = _mm512_load_pd(&a_im[k + R7_512_VW]);
+
+        /* Raw IDFT7 outputs */
+        __m512d ar1r = _mm512_add_pd(ax0r, as0r), ar1i = _mm512_add_pd(ax0i, as0i);
+        __m512d ar5r = _mm512_add_pd(ax0r, as1r), ar5i = _mm512_add_pd(ax0i, as1i);
+        __m512d ar4r = _mm512_add_pd(ax0r, as2r), ar4i = _mm512_add_pd(ax0i, as2i);
+        __m512d ar6r = _mm512_add_pd(ax0r, as3r), ar6i = _mm512_add_pd(ax0i, as3i);
+        __m512d ar2r = _mm512_add_pd(ax0r, as4r), ar2i = _mm512_add_pd(ax0i, as4i);
+        __m512d ar3r = _mm512_add_pd(ax0r, as5r), ar3i = _mm512_add_pd(ax0i, as5i);
+
+        __m512d br1r = _mm512_add_pd(bx0r, bs0r), br1i = _mm512_add_pd(bx0i, bs0i);
+        __m512d br5r = _mm512_add_pd(bx0r, bs1r), br5i = _mm512_add_pd(bx0i, bs1i);
+        __m512d br4r = _mm512_add_pd(bx0r, bs2r), br4i = _mm512_add_pd(bx0i, bs2i);
+        __m512d br6r = _mm512_add_pd(bx0r, bs3r), br6i = _mm512_add_pd(bx0i, bs3i);
+        __m512d br2r = _mm512_add_pd(bx0r, bs4r), br2i = _mm512_add_pd(bx0i, bs4i);
+        __m512d br3r = _mm512_add_pd(bx0r, bs5r), br3i = _mm512_add_pd(bx0i, bs5i);
+
+        /* Load twiddles, conjugate, apply AFTER IDFT */
+        __m512d aw1r = _mm512_load_pd(&tw1_re[k]), aw1i = _mm512_load_pd(&tw1_im[k]);
+        __m512d aw2r = _mm512_load_pd(&tw2_re[k]), aw2i = _mm512_load_pd(&tw2_im[k]);
+        __m512d aw3r = _mm512_load_pd(&tw3_re[k]), aw3i = _mm512_load_pd(&tw3_im[k]);
+        __m512d aw1n = _mm512_sub_pd(vzero, aw1i);
+        __m512d aw2n = _mm512_sub_pd(vzero, aw2i);
+        __m512d aw3n = _mm512_sub_pd(vzero, aw3i);
+        __m512d aw4r, aw4i, aw5r, aw5i, aw6r, aw6i;
+        cmul_512(aw1r, aw1n, aw3r, aw3n, &aw4r, &aw4i);
+        cmul_512(aw2r, aw2n, aw3r, aw3n, &aw5r, &aw5i);
+        cmul_512(aw3r, aw3n, aw3r, aw3n, &aw6r, &aw6i);
+
+        __m512d bw1r = _mm512_load_pd(&tw1_re[k + R7_512_VW]), bw1i = _mm512_load_pd(&tw1_im[k + R7_512_VW]);
+        __m512d bw2r = _mm512_load_pd(&tw2_re[k + R7_512_VW]), bw2i = _mm512_load_pd(&tw2_im[k + R7_512_VW]);
+        __m512d bw3r = _mm512_load_pd(&tw3_re[k + R7_512_VW]), bw3i = _mm512_load_pd(&tw3_im[k + R7_512_VW]);
+        __m512d bw1n = _mm512_sub_pd(vzero, bw1i);
+        __m512d bw2n = _mm512_sub_pd(vzero, bw2i);
+        __m512d bw3n = _mm512_sub_pd(vzero, bw3i);
+        __m512d bw4r, bw4i, bw5r, bw5i, bw6r, bw6i;
+        cmul_512(bw1r, bw1n, bw3r, bw3n, &bw4r, &bw4i);
+        cmul_512(bw2r, bw2n, bw3r, bw3n, &bw5r, &bw5i);
+        cmul_512(bw3r, bw3n, bw3r, bw3n, &bw6r, &bw6i);
+
+        /* A: apply conj twiddles and store */
+        __m512d o1r, o1i;
+        cmul_512(ar1r, ar1i, aw1r, aw1n, &o1r, &o1i);
+        _mm512_store_pd(&y1_re[k], o1r);
+        _mm512_store_pd(&y1_im[k], o1i);
+        __m512d o2r, o2i;
+        cmul_512(ar2r, ar2i, aw2r, aw2n, &o2r, &o2i);
+        _mm512_store_pd(&y2_re[k], o2r);
+        _mm512_store_pd(&y2_im[k], o2i);
+        __m512d o3r, o3i;
+        cmul_512(ar3r, ar3i, aw3r, aw3n, &o3r, &o3i);
+        _mm512_store_pd(&y3_re[k], o3r);
+        _mm512_store_pd(&y3_im[k], o3i);
+        __m512d o4r, o4i;
+        cmul_512(ar4r, ar4i, aw4r, aw4i, &o4r, &o4i);
+        _mm512_store_pd(&y4_re[k], o4r);
+        _mm512_store_pd(&y4_im[k], o4i);
+        __m512d o5r, o5i;
+        cmul_512(ar5r, ar5i, aw5r, aw5i, &o5r, &o5i);
+        _mm512_store_pd(&y5_re[k], o5r);
+        _mm512_store_pd(&y5_im[k], o5i);
+        __m512d o6r, o6i;
+        cmul_512(ar6r, ar6i, aw6r, aw6i, &o6r, &o6i);
+        _mm512_store_pd(&y6_re[k], o6r);
+        _mm512_store_pd(&y6_im[k], o6i);
+
+        /* B: apply conj twiddles and store */
+        cmul_512(br1r, br1i, bw1r, bw1n, &o1r, &o1i);
+        _mm512_store_pd(&y1_re[k + R7_512_VW], o1r);
+        _mm512_store_pd(&y1_im[k + R7_512_VW], o1i);
+        cmul_512(br2r, br2i, bw2r, bw2n, &o2r, &o2i);
+        _mm512_store_pd(&y2_re[k + R7_512_VW], o2r);
+        _mm512_store_pd(&y2_im[k + R7_512_VW], o2i);
+        cmul_512(br3r, br3i, bw3r, bw3n, &o3r, &o3i);
+        _mm512_store_pd(&y3_re[k + R7_512_VW], o3r);
+        _mm512_store_pd(&y3_im[k + R7_512_VW], o3i);
+        cmul_512(br4r, br4i, bw4r, bw4i, &o4r, &o4i);
+        _mm512_store_pd(&y4_re[k + R7_512_VW], o4r);
+        _mm512_store_pd(&y4_im[k + R7_512_VW], o4i);
+        cmul_512(br5r, br5i, bw5r, bw5i, &o5r, &o5i);
+        _mm512_store_pd(&y5_re[k + R7_512_VW], o5r);
+        _mm512_store_pd(&y5_im[k + R7_512_VW], o5i);
+        cmul_512(br6r, br6i, bw6r, bw6i, &o6r, &o6i);
+        _mm512_store_pd(&y6_re[k + R7_512_VW], o6r);
+        _mm512_store_pd(&y6_im[k + R7_512_VW], o6i);
+    }
+
+    /* U=1 remainder */
+    for (; k + R7_512_VW <= K; k += R7_512_VW)
+    {
+        __m512d x0r = _mm512_load_pd(&a_re[k]), x0i = _mm512_load_pd(&a_im[k]);
+        __m512d t1r = _mm512_load_pd(&b_re[k]), t1i = _mm512_load_pd(&b_im[k]);
+        __m512d t2r = _mm512_load_pd(&c_re[k]), t2i = _mm512_load_pd(&c_im[k]);
+        __m512d t3r = _mm512_load_pd(&d_re[k]), t3i = _mm512_load_pd(&d_im[k]);
+        __m512d t4r = _mm512_load_pd(&e_re[k]), t4i = _mm512_load_pd(&e_im[k]);
+        __m512d t5r = _mm512_load_pd(&f_re[k]), t5i = _mm512_load_pd(&f_im[k]);
+        __m512d t6r = _mm512_load_pd(&g_re[k]), t6i = _mm512_load_pd(&g_im[k]);
+
+        __m512d dcr, dci;
+        TREE_Y0_512(x0r, t1r, t2r, t3r, t4r, t5r, t6r, dcr);
+        TREE_Y0_512(x0i, t1i, t2i, t3i, t4i, t5i, t6i, dci);
+        _mm512_store_pd(&y0_re[k], dcr);
+        _mm512_store_pd(&y0_im[k], dci);
+
+        __m512d s0r = t1r, s0i = t1i, s1r = t3r, s1i = t3i;
+        __m512d s2r = t2r, s2i = t2i, s3r = t6r, s3i = t6i;
+        __m512d s4r = t4r, s4i = t4i, s5r = t5r, s5i = t5i;
+        DFT6_FWD_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+        PW_RR6_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i,
+                   RK7_BR0, RK7_BI0, RK7_BR1, RK7_BI1, RK7_BR2, RK7_BI2,
+                   RK7_BR3, RK7_BI3, RK7_BR4, RK7_BI4, RK7_BR5, RK7_BI5);
+        DFT6_BWD_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+
+        x0r = _mm512_load_pd(&a_re[k]);
+        x0i = _mm512_load_pd(&a_im[k]);
+        __m512d r1r = _mm512_add_pd(x0r, s0r), r1i = _mm512_add_pd(x0i, s0i);
+        __m512d r5r = _mm512_add_pd(x0r, s1r), r5i = _mm512_add_pd(x0i, s1i);
+        __m512d r4r = _mm512_add_pd(x0r, s2r), r4i = _mm512_add_pd(x0i, s2i);
+        __m512d r6r = _mm512_add_pd(x0r, s3r), r6i = _mm512_add_pd(x0i, s3i);
+        __m512d r2r = _mm512_add_pd(x0r, s4r), r2i = _mm512_add_pd(x0i, s4i);
+        __m512d r3r = _mm512_add_pd(x0r, s5r), r3i = _mm512_add_pd(x0i, s5i);
+
+        __m512d w1r = _mm512_load_pd(&tw1_re[k]), w1i = _mm512_load_pd(&tw1_im[k]);
+        __m512d w2r = _mm512_load_pd(&tw2_re[k]), w2i = _mm512_load_pd(&tw2_im[k]);
+        __m512d w3r = _mm512_load_pd(&tw3_re[k]), w3i = _mm512_load_pd(&tw3_im[k]);
+        __m512d w1n = _mm512_sub_pd(vzero, w1i), w2n = _mm512_sub_pd(vzero, w2i);
+        __m512d w3n = _mm512_sub_pd(vzero, w3i);
+        __m512d w4r, w4i, w5r, w5i, w6r, w6i;
+        cmul_512(w1r, w1n, w3r, w3n, &w4r, &w4i);
+        cmul_512(w2r, w2n, w3r, w3n, &w5r, &w5i);
+        cmul_512(w3r, w3n, w3r, w3n, &w6r, &w6i);
+
+        __m512d o1r, o1i;
+        cmul_512(r1r, r1i, w1r, w1n, &o1r, &o1i);
+        _mm512_store_pd(&y1_re[k], o1r);
+        _mm512_store_pd(&y1_im[k], o1i);
+        __m512d o2r, o2i;
+        cmul_512(r2r, r2i, w2r, w2n, &o2r, &o2i);
+        _mm512_store_pd(&y2_re[k], o2r);
+        _mm512_store_pd(&y2_im[k], o2i);
+        __m512d o3r, o3i;
+        cmul_512(r3r, r3i, w3r, w3n, &o3r, &o3i);
+        _mm512_store_pd(&y3_re[k], o3r);
+        _mm512_store_pd(&y3_im[k], o3i);
+        __m512d o4r, o4i;
+        cmul_512(r4r, r4i, w4r, w4i, &o4r, &o4i);
+        _mm512_store_pd(&y4_re[k], o4r);
+        _mm512_store_pd(&y4_im[k], o4i);
+        __m512d o5r, o5i;
+        cmul_512(r5r, r5i, w5r, w5i, &o5r, &o5i);
+        _mm512_store_pd(&y5_re[k], o5r);
+        _mm512_store_pd(&y5_im[k], o5i);
+        __m512d o6r, o6i;
+        cmul_512(r6r, r6i, w6r, w6i, &o6r, &o6i);
+        _mm512_store_pd(&y6_re[k], o6r);
+        _mm512_store_pd(&y6_im[k], o6i);
+    }
+
+    /* Scalar tail */
+    for (; k < K; k++)
+    {
+        double x0r_ = a_re[k], x0i_ = a_im[k];
+        double _t1r = b_re[k], _t1i = b_im[k], _t2r = c_re[k], _t2i = c_im[k];
+        double _t3r = d_re[k], _t3i = d_im[k], _t4r = e_re[k], _t4i = e_im[k];
+        double _t5r = f_re[k], _t5i = f_im[k], _t6r = g_re[k], _t6i = g_im[k];
+        double dcr_ = x0r_ + _t1r + _t2r + _t3r + _t4r + _t5r + _t6r;
+        double dci_ = x0i_ + _t1i + _t2i + _t3i + _t4i + _t5i + _t6i;
+        double ar[6] = {_t1r, _t3r, _t2r, _t6r, _t4r, _t5r};
+        double ai[6] = {_t1i, _t3i, _t2i, _t6i, _t4i, _t5i};
+        double Ar[6], Ai[6], Cr[6], Ci[6], cr[6], ci[6];
+        {
+            double s1 = ar[2] + ar[4], s2 = ai[2] + ai[4], d1 = ar[2] - ar[4], d2 = ai[2] - ai[4];
+            double E0r = ar[0] + s1, E0i = ai[0] + s2, br = ar[0] - 0.5 * s1, bi = ai[0] - 0.5 * s2;
+            double E1r = br + 0.86602540378443864676 * d2, E1i = bi - 0.86602540378443864676 * d1;
+            double E2r = br - 0.86602540378443864676 * d2, E2i = bi + 0.86602540378443864676 * d1;
+            double s3 = ar[3] + ar[5], s4 = ai[3] + ai[5], d3 = ar[3] - ar[5], d4 = ai[3] - ai[5];
+            double O0r = ar[1] + s3, O0i = ai[1] + s4, br2 = ar[1] - 0.5 * s3, bi2 = ai[1] - 0.5 * s4;
+            double O1r = br2 + 0.86602540378443864676 * d4, O1i = bi2 - 0.86602540378443864676 * d3;
+            double O2r = br2 - 0.86602540378443864676 * d4, O2i = bi2 + 0.86602540378443864676 * d3;
+            Ar[0] = E0r + O0r;
+            Ai[0] = E0i + O0i;
+            Ar[3] = E0r - O0r;
+            Ai[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 + O1i * 0.86602540378443864676;
+            double T1i_ = O1r * (-0.86602540378443864676) + O1i * 0.5;
+            Ar[1] = E1r + T1r_;
+            Ai[1] = E1i + T1i_;
+            Ar[4] = E1r - T1r_;
+            Ai[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) + O2i * 0.86602540378443864676;
+            double T2i_ = O2r * (-0.86602540378443864676) + O2i * (-0.5);
+            Ar[2] = E2r + T2r_;
+            Ai[2] = E2i + T2i_;
+            Ar[5] = E2r - T2r_;
+            Ai[5] = E2i - T2i_;
+        }
+        for (int j = 0; j < 6; j++)
+        {
+            Cr[j] = Ar[j] * RK7S_BWD_RE[j] - Ai[j] * RK7S_BWD_IM[j];
+            Ci[j] = Ar[j] * RK7S_BWD_IM[j] + Ai[j] * RK7S_BWD_RE[j];
+        }
+        {
+            double s1 = Cr[2] + Cr[4], s2 = Ci[2] + Ci[4], d1 = Cr[2] - Cr[4], d2 = Ci[2] - Ci[4];
+            double E0r = Cr[0] + s1, E0i = Ci[0] + s2, br = Cr[0] - 0.5 * s1, bi = Ci[0] - 0.5 * s2;
+            double E1r = br - 0.86602540378443864676 * d2, E1i = bi + 0.86602540378443864676 * d1;
+            double E2r = br + 0.86602540378443864676 * d2, E2i = bi - 0.86602540378443864676 * d1;
+            double s3 = Cr[3] + Cr[5], s4 = Ci[3] + Ci[5], d3 = Cr[3] - Cr[5], d4 = Ci[3] - Ci[5];
+            double O0r = Cr[1] + s3, O0i = Ci[1] + s4, br2 = Cr[1] - 0.5 * s3, bi2 = Ci[1] - 0.5 * s4;
+            double O1r = br2 - 0.86602540378443864676 * d4, O1i = bi2 + 0.86602540378443864676 * d3;
+            double O2r = br2 + 0.86602540378443864676 * d4, O2i = bi2 - 0.86602540378443864676 * d3;
+            cr[0] = E0r + O0r;
+            ci[0] = E0i + O0i;
+            cr[3] = E0r - O0r;
+            ci[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 - O1i * 0.86602540378443864676;
+            double T1i_ = O1r * 0.86602540378443864676 + O1i * 0.5;
+            cr[1] = E1r + T1r_;
+            ci[1] = E1i + T1i_;
+            cr[4] = E1r - T1r_;
+            ci[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) - O2i * 0.86602540378443864676;
+            double T2i_ = O2r * 0.86602540378443864676 + O2i * (-0.5);
+            cr[2] = E2r + T2r_;
+            ci[2] = E2i + T2i_;
+            cr[5] = E2r - T2r_;
+            ci[5] = E2i - T2i_;
+        }
+        double _r1r = x0r_ + cr[0], _r1i = x0i_ + ci[0], _r5r = x0r_ + cr[1], _r5i = x0i_ + ci[1];
+        double _r4r = x0r_ + cr[2], _r4i = x0i_ + ci[2], _r6r = x0r_ + cr[3], _r6i = x0i_ + ci[3];
+        double _r2r = x0r_ + cr[4], _r2i = x0i_ + ci[4], _r3r = x0r_ + cr[5], _r3i = x0i_ + ci[5];
+        double _w1r = tw1_re[k], _w1i = tw1_im[k], _w2r = tw2_re[k], _w2i = tw2_im[k];
+        double _w3r = tw3_re[k], _w3i = tw3_im[k];
+        double _w4r = _w1r * _w3r - _w1i * _w3i, _w4i = _w1r * _w3i + _w1i * _w3r;
+        double _w5r = _w2r * _w3r - _w2i * _w3i, _w5i = _w2r * _w3i + _w2i * _w3r;
+        double _w6r = _w3r * _w3r - _w3i * _w3i, _w6i = 2.0 * _w3r * _w3i;
+        y0_re[k] = dcr_;
+        y0_im[k] = dci_;
+        y1_re[k] = _r1r * _w1r + _r1i * _w1i;
+        y1_im[k] = -_r1r * _w1i + _r1i * _w1r;
+        y2_re[k] = _r2r * _w2r + _r2i * _w2i;
+        y2_im[k] = -_r2r * _w2i + _r2i * _w2r;
+        y3_re[k] = _r3r * _w3r + _r3i * _w3i;
+        y3_im[k] = -_r3r * _w3i + _r3i * _w3r;
+        y4_re[k] = _r4r * _w4r + _r4i * _w4i;
+        y4_im[k] = -_r4r * _w4i + _r4i * _w4r;
+        y5_re[k] = _r5r * _w5r + _r5i * _w5i;
+        y5_im[k] = -_r5r * _w5i + _r5i * _w5r;
+        y6_re[k] = _r6r * _w6r + _r6i * _w6i;
+        y6_im[k] = -_r6r * _w6i + _r6i * _w6r;
+    }
+}
+
+/* ================================================================== */
+/*  N1 forward butterfly — no twiddles (all W=1)                       */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) __attribute__((target("avx512f"))) void radix7_rader_fwd_avx512_N1(
+    const double *restrict a_re, const double *restrict a_im,
+    const double *restrict b_re, const double *restrict b_im,
+    const double *restrict c_re, const double *restrict c_im,
+    const double *restrict d_re, const double *restrict d_im,
+    const double *restrict e_re, const double *restrict e_im,
+    const double *restrict f_re, const double *restrict f_im,
+    const double *restrict g_re, const double *restrict g_im,
+    double *restrict y0_re, double *restrict y0_im,
+    double *restrict y1_re, double *restrict y1_im,
+    double *restrict y2_re, double *restrict y2_im,
+    double *restrict y3_re, double *restrict y3_im,
+    double *restrict y4_re, double *restrict y4_im,
+    double *restrict y5_re, double *restrict y5_im,
+    double *restrict y6_re, double *restrict y6_im,
+    int K)
+{
+    int k = 0;
+
+    /* U=2 body */
+    for (; k + R7_512_U2 <= K; k += R7_512_U2)
+    {
+        __m512d ax0r = _mm512_load_pd(&a_re[k]), ax0i = _mm512_load_pd(&a_im[k]);
+        __m512d at1r = _mm512_load_pd(&b_re[k]), at1i = _mm512_load_pd(&b_im[k]);
+        __m512d at2r = _mm512_load_pd(&c_re[k]), at2i = _mm512_load_pd(&c_im[k]);
+        __m512d at3r = _mm512_load_pd(&d_re[k]), at3i = _mm512_load_pd(&d_im[k]);
+        __m512d at4r = _mm512_load_pd(&e_re[k]), at4i = _mm512_load_pd(&e_im[k]);
+        __m512d at5r = _mm512_load_pd(&f_re[k]), at5i = _mm512_load_pd(&f_im[k]);
+        __m512d at6r = _mm512_load_pd(&g_re[k]), at6i = _mm512_load_pd(&g_im[k]);
+
+        __m512d bx0r = _mm512_load_pd(&a_re[k + R7_512_VW]), bx0i = _mm512_load_pd(&a_im[k + R7_512_VW]);
+        __m512d bt1r = _mm512_load_pd(&b_re[k + R7_512_VW]), bt1i = _mm512_load_pd(&b_im[k + R7_512_VW]);
+        __m512d bt2r = _mm512_load_pd(&c_re[k + R7_512_VW]), bt2i = _mm512_load_pd(&c_im[k + R7_512_VW]);
+        __m512d bt3r = _mm512_load_pd(&d_re[k + R7_512_VW]), bt3i = _mm512_load_pd(&d_im[k + R7_512_VW]);
+        __m512d bt4r = _mm512_load_pd(&e_re[k + R7_512_VW]), bt4i = _mm512_load_pd(&e_im[k + R7_512_VW]);
+        __m512d bt5r = _mm512_load_pd(&f_re[k + R7_512_VW]), bt5i = _mm512_load_pd(&f_im[k + R7_512_VW]);
+        __m512d bt6r = _mm512_load_pd(&g_re[k + R7_512_VW]), bt6i = _mm512_load_pd(&g_im[k + R7_512_VW]);
+
+        /* DC tree sum */
+        __m512d adc_r, adc_i, bdc_r, bdc_i;
+        TREE_Y0_512(ax0r, at1r, at2r, at3r, at4r, at5r, at6r, adc_r);
+        TREE_Y0_512(ax0i, at1i, at2i, at3i, at4i, at5i, at6i, adc_i);
+        TREE_Y0_512(bx0r, bt1r, bt2r, bt3r, bt4r, bt5r, bt6r, bdc_r);
+        TREE_Y0_512(bx0i, bt1i, bt2i, bt3i, bt4i, bt5i, bt6i, bdc_i);
+        _mm512_store_pd(&y0_re[k], adc_r);
+        _mm512_store_pd(&y0_im[k], adc_i);
+        _mm512_store_pd(&y0_re[k + R7_512_VW], bdc_r);
+        _mm512_store_pd(&y0_im[k + R7_512_VW], bdc_i);
+
+        /* Rader permute {1,3,2,6,4,5} */
+        __m512d as0r = at1r, as0i = at1i, as1r = at3r, as1i = at3i;
+        __m512d as2r = at2r, as2i = at2i, as3r = at6r, as3i = at6i;
+        __m512d as4r = at4r, as4i = at4i, as5r = at5r, as5i = at5i;
+        __m512d bs0r = bt1r, bs0i = bt1i, bs1r = bt3r, bs1i = bt3i;
+        __m512d bs2r = bt2r, bs2i = bt2i, bs3r = bt6r, bs3i = bt6i;
+        __m512d bs4r = bt4r, bs4i = bt4i, bs5r = bt5r, bs5i = bt5i;
+
+        DFT6_FWD_512(as0r, as0i, as1r, as1i, as2r, as2i, as3r, as3i, as4r, as4i, as5r, as5i);
+        DFT6_FWD_512(bs0r, bs0i, bs1r, bs1i, bs2r, bs2i, bs3r, bs3i, bs4r, bs4i, bs5r, bs5i);
+        PW_RR6_U2(as0r, as0i, as1r, as1i, as2r, as2i, as3r, as3i, as4r, as4i, as5r, as5i,
+                  bs0r, bs0i, bs1r, bs1i, bs2r, bs2i, bs3r, bs3i, bs4r, bs4i, bs5r, bs5i,
+                  RK7_FR0, RK7_FI0, RK7_FR1, RK7_FI1, RK7_FR2, RK7_FI2,
+                  RK7_FR3, RK7_FI3, RK7_FR4, RK7_FI4, RK7_FR5, RK7_FI5);
+        DFT6_BWD_512(as0r, as0i, as1r, as1i, as2r, as2i, as3r, as3i, as4r, as4i, as5r, as5i);
+        DFT6_BWD_512(bs0r, bs0i, bs1r, bs1i, bs2r, bs2i, bs3r, bs3i, bs4r, bs4i, bs5r, bs5i);
+
+        /* Reload x0, output */
+        ax0r = _mm512_load_pd(&a_re[k]);
+        ax0i = _mm512_load_pd(&a_im[k]);
+        bx0r = _mm512_load_pd(&a_re[k + R7_512_VW]);
+        bx0i = _mm512_load_pd(&a_im[k + R7_512_VW]);
+
+        _mm512_store_pd(&y1_re[k], _mm512_add_pd(ax0r, as0r));
+        _mm512_store_pd(&y1_im[k], _mm512_add_pd(ax0i, as0i));
+        _mm512_store_pd(&y5_re[k], _mm512_add_pd(ax0r, as1r));
+        _mm512_store_pd(&y5_im[k], _mm512_add_pd(ax0i, as1i));
+        _mm512_store_pd(&y4_re[k], _mm512_add_pd(ax0r, as2r));
+        _mm512_store_pd(&y4_im[k], _mm512_add_pd(ax0i, as2i));
+        _mm512_store_pd(&y6_re[k], _mm512_add_pd(ax0r, as3r));
+        _mm512_store_pd(&y6_im[k], _mm512_add_pd(ax0i, as3i));
+        _mm512_store_pd(&y2_re[k], _mm512_add_pd(ax0r, as4r));
+        _mm512_store_pd(&y2_im[k], _mm512_add_pd(ax0i, as4i));
+        _mm512_store_pd(&y3_re[k], _mm512_add_pd(ax0r, as5r));
+        _mm512_store_pd(&y3_im[k], _mm512_add_pd(ax0i, as5i));
+        _mm512_store_pd(&y1_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs0r));
+        _mm512_store_pd(&y1_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs0i));
+        _mm512_store_pd(&y5_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs1r));
+        _mm512_store_pd(&y5_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs1i));
+        _mm512_store_pd(&y4_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs2r));
+        _mm512_store_pd(&y4_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs2i));
+        _mm512_store_pd(&y6_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs3r));
+        _mm512_store_pd(&y6_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs3i));
+        _mm512_store_pd(&y2_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs4r));
+        _mm512_store_pd(&y2_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs4i));
+        _mm512_store_pd(&y3_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs5r));
+        _mm512_store_pd(&y3_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs5i));
+    }
+
+    /* U=1 remainder */
+    for (; k + R7_512_VW <= K; k += R7_512_VW)
+    {
+        __m512d x0r = _mm512_load_pd(&a_re[k]), x0i = _mm512_load_pd(&a_im[k]);
+        __m512d t1r = _mm512_load_pd(&b_re[k]), t1i = _mm512_load_pd(&b_im[k]);
+        __m512d t2r = _mm512_load_pd(&c_re[k]), t2i = _mm512_load_pd(&c_im[k]);
+        __m512d t3r = _mm512_load_pd(&d_re[k]), t3i = _mm512_load_pd(&d_im[k]);
+        __m512d t4r = _mm512_load_pd(&e_re[k]), t4i = _mm512_load_pd(&e_im[k]);
+        __m512d t5r = _mm512_load_pd(&f_re[k]), t5i = _mm512_load_pd(&f_im[k]);
+        __m512d t6r = _mm512_load_pd(&g_re[k]), t6i = _mm512_load_pd(&g_im[k]);
+        __m512d dcr, dci;
+        TREE_Y0_512(x0r, t1r, t2r, t3r, t4r, t5r, t6r, dcr);
+        TREE_Y0_512(x0i, t1i, t2i, t3i, t4i, t5i, t6i, dci);
+        _mm512_store_pd(&y0_re[k], dcr);
+        _mm512_store_pd(&y0_im[k], dci);
+        __m512d s0r = t1r, s0i = t1i, s1r = t3r, s1i = t3i;
+        __m512d s2r = t2r, s2i = t2i, s3r = t6r, s3i = t6i;
+        __m512d s4r = t4r, s4i = t4i, s5r = t5r, s5i = t5i;
+        DFT6_FWD_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+        PW_RR6_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i,
+                   RK7_FR0, RK7_FI0, RK7_FR1, RK7_FI1, RK7_FR2, RK7_FI2,
+                   RK7_FR3, RK7_FI3, RK7_FR4, RK7_FI4, RK7_FR5, RK7_FI5);
+        DFT6_BWD_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+        x0r = _mm512_load_pd(&a_re[k]);
+        x0i = _mm512_load_pd(&a_im[k]);
+        _mm512_store_pd(&y1_re[k], _mm512_add_pd(x0r, s0r));
+        _mm512_store_pd(&y1_im[k], _mm512_add_pd(x0i, s0i));
+        _mm512_store_pd(&y5_re[k], _mm512_add_pd(x0r, s1r));
+        _mm512_store_pd(&y5_im[k], _mm512_add_pd(x0i, s1i));
+        _mm512_store_pd(&y4_re[k], _mm512_add_pd(x0r, s2r));
+        _mm512_store_pd(&y4_im[k], _mm512_add_pd(x0i, s2i));
+        _mm512_store_pd(&y6_re[k], _mm512_add_pd(x0r, s3r));
+        _mm512_store_pd(&y6_im[k], _mm512_add_pd(x0i, s3i));
+        _mm512_store_pd(&y2_re[k], _mm512_add_pd(x0r, s4r));
+        _mm512_store_pd(&y2_im[k], _mm512_add_pd(x0i, s4i));
+        _mm512_store_pd(&y3_re[k], _mm512_add_pd(x0r, s5r));
+        _mm512_store_pd(&y3_im[k], _mm512_add_pd(x0i, s5i));
+    }
+
+    /* Scalar tail */
+    for (; k < K; k++)
+    {
+        double x0r_ = a_re[k], x0i_ = a_im[k];
+        double _t1r = b_re[k], _t1i = b_im[k], _t2r = c_re[k], _t2i = c_im[k];
+        double _t3r = d_re[k], _t3i = d_im[k], _t4r = e_re[k], _t4i = e_im[k];
+        double _t5r = f_re[k], _t5i = f_im[k], _t6r = g_re[k], _t6i = g_im[k];
+        y0_re[k] = x0r_ + _t1r + _t2r + _t3r + _t4r + _t5r + _t6r;
+        y0_im[k] = x0i_ + _t1i + _t2i + _t3i + _t4i + _t5i + _t6i;
+        double ar[6] = {_t1r, _t3r, _t2r, _t6r, _t4r, _t5r};
+        double ai[6] = {_t1i, _t3i, _t2i, _t6i, _t4i, _t5i};
+        double Ar[6], Ai[6], Cr[6], Ci[6], cr[6], ci[6];
+        {
+            double s1 = ar[2] + ar[4], s2 = ai[2] + ai[4], d1 = ar[2] - ar[4], d2 = ai[2] - ai[4];
+            double E0r = ar[0] + s1, E0i = ai[0] + s2, br = ar[0] - 0.5 * s1, bi = ai[0] - 0.5 * s2;
+            double E1r = br + 0.86602540378443864676 * d2, E1i = bi - 0.86602540378443864676 * d1;
+            double E2r = br - 0.86602540378443864676 * d2, E2i = bi + 0.86602540378443864676 * d1;
+            double s3 = ar[3] + ar[5], s4 = ai[3] + ai[5], d3 = ar[3] - ar[5], d4 = ai[3] - ai[5];
+            double O0r = ar[1] + s3, O0i = ai[1] + s4, br2 = ar[1] - 0.5 * s3, bi2 = ai[1] - 0.5 * s4;
+            double O1r = br2 + 0.86602540378443864676 * d4, O1i = bi2 - 0.86602540378443864676 * d3;
+            double O2r = br2 - 0.86602540378443864676 * d4, O2i = bi2 + 0.86602540378443864676 * d3;
+            Ar[0] = E0r + O0r;
+            Ai[0] = E0i + O0i;
+            Ar[3] = E0r - O0r;
+            Ai[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 + O1i * 0.86602540378443864676;
+            double T1i_ = O1r * (-0.86602540378443864676) + O1i * 0.5;
+            Ar[1] = E1r + T1r_;
+            Ai[1] = E1i + T1i_;
+            Ar[4] = E1r - T1r_;
+            Ai[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) + O2i * 0.86602540378443864676;
+            double T2i_ = O2r * (-0.86602540378443864676) + O2i * (-0.5);
+            Ar[2] = E2r + T2r_;
+            Ai[2] = E2i + T2i_;
+            Ar[5] = E2r - T2r_;
+            Ai[5] = E2i - T2i_;
+        }
+        for (int j = 0; j < 6; j++)
+        {
+            Cr[j] = Ar[j] * RK7S_FWD_RE[j] - Ai[j] * RK7S_FWD_IM[j];
+            Ci[j] = Ar[j] * RK7S_FWD_IM[j] + Ai[j] * RK7S_FWD_RE[j];
+        }
+        {
+            double s1 = Cr[2] + Cr[4], s2 = Ci[2] + Ci[4], d1 = Cr[2] - Cr[4], d2 = Ci[2] - Ci[4];
+            double E0r = Cr[0] + s1, E0i = Ci[0] + s2, br = Cr[0] - 0.5 * s1, bi = Ci[0] - 0.5 * s2;
+            double E1r = br - 0.86602540378443864676 * d2, E1i = bi + 0.86602540378443864676 * d1;
+            double E2r = br + 0.86602540378443864676 * d2, E2i = bi - 0.86602540378443864676 * d1;
+            double s3 = Cr[3] + Cr[5], s4 = Ci[3] + Ci[5], d3 = Cr[3] - Cr[5], d4 = Ci[3] - Ci[5];
+            double O0r = Cr[1] + s3, O0i = Ci[1] + s4, br2 = Cr[1] - 0.5 * s3, bi2 = Ci[1] - 0.5 * s4;
+            double O1r = br2 - 0.86602540378443864676 * d4, O1i = bi2 + 0.86602540378443864676 * d3;
+            double O2r = br2 + 0.86602540378443864676 * d4, O2i = bi2 - 0.86602540378443864676 * d3;
+            cr[0] = E0r + O0r;
+            ci[0] = E0i + O0i;
+            cr[3] = E0r - O0r;
+            ci[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 - O1i * 0.86602540378443864676;
+            double T1i_ = O1r * 0.86602540378443864676 + O1i * 0.5;
+            cr[1] = E1r + T1r_;
+            ci[1] = E1i + T1i_;
+            cr[4] = E1r - T1r_;
+            ci[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) - O2i * 0.86602540378443864676;
+            double T2i_ = O2r * 0.86602540378443864676 + O2i * (-0.5);
+            cr[2] = E2r + T2r_;
+            ci[2] = E2i + T2i_;
+            cr[5] = E2r - T2r_;
+            ci[5] = E2i - T2i_;
+        }
+        y1_re[k] = x0r_ + cr[0];
+        y1_im[k] = x0i_ + ci[0];
+        y5_re[k] = x0r_ + cr[1];
+        y5_im[k] = x0i_ + ci[1];
+        y4_re[k] = x0r_ + cr[2];
+        y4_im[k] = x0i_ + ci[2];
+        y6_re[k] = x0r_ + cr[3];
+        y6_im[k] = x0i_ + ci[3];
+        y2_re[k] = x0r_ + cr[4];
+        y2_im[k] = x0i_ + ci[4];
+        y3_re[k] = x0r_ + cr[5];
+        y3_im[k] = x0i_ + ci[5];
+    }
+}
+
+/* ================================================================== */
+/*  N1 backward butterfly — no twiddles                                */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) __attribute__((target("avx512f"))) void radix7_rader_bwd_avx512_N1(
+    const double *restrict a_re, const double *restrict a_im,
+    const double *restrict b_re, const double *restrict b_im,
+    const double *restrict c_re, const double *restrict c_im,
+    const double *restrict d_re, const double *restrict d_im,
+    const double *restrict e_re, const double *restrict e_im,
+    const double *restrict f_re, const double *restrict f_im,
+    const double *restrict g_re, const double *restrict g_im,
+    double *restrict y0_re, double *restrict y0_im,
+    double *restrict y1_re, double *restrict y1_im,
+    double *restrict y2_re, double *restrict y2_im,
+    double *restrict y3_re, double *restrict y3_im,
+    double *restrict y4_re, double *restrict y4_im,
+    double *restrict y5_re, double *restrict y5_im,
+    double *restrict y6_re, double *restrict y6_im,
+    int K)
+{
+    int k = 0;
+
+    /* U=2 body */
+    for (; k + R7_512_U2 <= K; k += R7_512_U2)
+    {
+        __m512d ax0r = _mm512_load_pd(&a_re[k]), ax0i = _mm512_load_pd(&a_im[k]);
+        __m512d at1r = _mm512_load_pd(&b_re[k]), at1i = _mm512_load_pd(&b_im[k]);
+        __m512d at2r = _mm512_load_pd(&c_re[k]), at2i = _mm512_load_pd(&c_im[k]);
+        __m512d at3r = _mm512_load_pd(&d_re[k]), at3i = _mm512_load_pd(&d_im[k]);
+        __m512d at4r = _mm512_load_pd(&e_re[k]), at4i = _mm512_load_pd(&e_im[k]);
+        __m512d at5r = _mm512_load_pd(&f_re[k]), at5i = _mm512_load_pd(&f_im[k]);
+        __m512d at6r = _mm512_load_pd(&g_re[k]), at6i = _mm512_load_pd(&g_im[k]);
+        __m512d bx0r = _mm512_load_pd(&a_re[k + R7_512_VW]), bx0i = _mm512_load_pd(&a_im[k + R7_512_VW]);
+        __m512d bt1r = _mm512_load_pd(&b_re[k + R7_512_VW]), bt1i = _mm512_load_pd(&b_im[k + R7_512_VW]);
+        __m512d bt2r = _mm512_load_pd(&c_re[k + R7_512_VW]), bt2i = _mm512_load_pd(&c_im[k + R7_512_VW]);
+        __m512d bt3r = _mm512_load_pd(&d_re[k + R7_512_VW]), bt3i = _mm512_load_pd(&d_im[k + R7_512_VW]);
+        __m512d bt4r = _mm512_load_pd(&e_re[k + R7_512_VW]), bt4i = _mm512_load_pd(&e_im[k + R7_512_VW]);
+        __m512d bt5r = _mm512_load_pd(&f_re[k + R7_512_VW]), bt5i = _mm512_load_pd(&f_im[k + R7_512_VW]);
+        __m512d bt6r = _mm512_load_pd(&g_re[k + R7_512_VW]), bt6i = _mm512_load_pd(&g_im[k + R7_512_VW]);
+
+        __m512d adc_r, adc_i, bdc_r, bdc_i;
+        TREE_Y0_512(ax0r, at1r, at2r, at3r, at4r, at5r, at6r, adc_r);
+        TREE_Y0_512(ax0i, at1i, at2i, at3i, at4i, at5i, at6i, adc_i);
+        TREE_Y0_512(bx0r, bt1r, bt2r, bt3r, bt4r, bt5r, bt6r, bdc_r);
+        TREE_Y0_512(bx0i, bt1i, bt2i, bt3i, bt4i, bt5i, bt6i, bdc_i);
+        _mm512_store_pd(&y0_re[k], adc_r);
+        _mm512_store_pd(&y0_im[k], adc_i);
+        _mm512_store_pd(&y0_re[k + R7_512_VW], bdc_r);
+        _mm512_store_pd(&y0_im[k + R7_512_VW], bdc_i);
+
+        __m512d as0r = at1r, as0i = at1i, as1r = at3r, as1i = at3i;
+        __m512d as2r = at2r, as2i = at2i, as3r = at6r, as3i = at6i;
+        __m512d as4r = at4r, as4i = at4i, as5r = at5r, as5i = at5i;
+        __m512d bs0r = bt1r, bs0i = bt1i, bs1r = bt3r, bs1i = bt3i;
+        __m512d bs2r = bt2r, bs2i = bt2i, bs3r = bt6r, bs3i = bt6i;
+        __m512d bs4r = bt4r, bs4i = bt4i, bs5r = bt5r, bs5i = bt5i;
+
+        DFT6_FWD_512(as0r, as0i, as1r, as1i, as2r, as2i, as3r, as3i, as4r, as4i, as5r, as5i);
+        DFT6_FWD_512(bs0r, bs0i, bs1r, bs1i, bs2r, bs2i, bs3r, bs3i, bs4r, bs4i, bs5r, bs5i);
+        PW_RR6_U2(as0r, as0i, as1r, as1i, as2r, as2i, as3r, as3i, as4r, as4i, as5r, as5i,
+                  bs0r, bs0i, bs1r, bs1i, bs2r, bs2i, bs3r, bs3i, bs4r, bs4i, bs5r, bs5i,
+                  RK7_BR0, RK7_BI0, RK7_BR1, RK7_BI1, RK7_BR2, RK7_BI2,
+                  RK7_BR3, RK7_BI3, RK7_BR4, RK7_BI4, RK7_BR5, RK7_BI5);
+        DFT6_BWD_512(as0r, as0i, as1r, as1i, as2r, as2i, as3r, as3i, as4r, as4i, as5r, as5i);
+        DFT6_BWD_512(bs0r, bs0i, bs1r, bs1i, bs2r, bs2i, bs3r, bs3i, bs4r, bs4i, bs5r, bs5i);
+
+        ax0r = _mm512_load_pd(&a_re[k]);
+        ax0i = _mm512_load_pd(&a_im[k]);
+        bx0r = _mm512_load_pd(&a_re[k + R7_512_VW]);
+        bx0i = _mm512_load_pd(&a_im[k + R7_512_VW]);
+
+        _mm512_store_pd(&y1_re[k], _mm512_add_pd(ax0r, as0r));
+        _mm512_store_pd(&y1_im[k], _mm512_add_pd(ax0i, as0i));
+        _mm512_store_pd(&y5_re[k], _mm512_add_pd(ax0r, as1r));
+        _mm512_store_pd(&y5_im[k], _mm512_add_pd(ax0i, as1i));
+        _mm512_store_pd(&y4_re[k], _mm512_add_pd(ax0r, as2r));
+        _mm512_store_pd(&y4_im[k], _mm512_add_pd(ax0i, as2i));
+        _mm512_store_pd(&y6_re[k], _mm512_add_pd(ax0r, as3r));
+        _mm512_store_pd(&y6_im[k], _mm512_add_pd(ax0i, as3i));
+        _mm512_store_pd(&y2_re[k], _mm512_add_pd(ax0r, as4r));
+        _mm512_store_pd(&y2_im[k], _mm512_add_pd(ax0i, as4i));
+        _mm512_store_pd(&y3_re[k], _mm512_add_pd(ax0r, as5r));
+        _mm512_store_pd(&y3_im[k], _mm512_add_pd(ax0i, as5i));
+        _mm512_store_pd(&y1_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs0r));
+        _mm512_store_pd(&y1_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs0i));
+        _mm512_store_pd(&y5_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs1r));
+        _mm512_store_pd(&y5_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs1i));
+        _mm512_store_pd(&y4_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs2r));
+        _mm512_store_pd(&y4_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs2i));
+        _mm512_store_pd(&y6_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs3r));
+        _mm512_store_pd(&y6_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs3i));
+        _mm512_store_pd(&y2_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs4r));
+        _mm512_store_pd(&y2_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs4i));
+        _mm512_store_pd(&y3_re[k + R7_512_VW], _mm512_add_pd(bx0r, bs5r));
+        _mm512_store_pd(&y3_im[k + R7_512_VW], _mm512_add_pd(bx0i, bs5i));
+    }
+
+    /* U=1 remainder */
+    for (; k + R7_512_VW <= K; k += R7_512_VW)
+    {
+        __m512d x0r = _mm512_load_pd(&a_re[k]), x0i = _mm512_load_pd(&a_im[k]);
+        __m512d t1r = _mm512_load_pd(&b_re[k]), t1i = _mm512_load_pd(&b_im[k]);
+        __m512d t2r = _mm512_load_pd(&c_re[k]), t2i = _mm512_load_pd(&c_im[k]);
+        __m512d t3r = _mm512_load_pd(&d_re[k]), t3i = _mm512_load_pd(&d_im[k]);
+        __m512d t4r = _mm512_load_pd(&e_re[k]), t4i = _mm512_load_pd(&e_im[k]);
+        __m512d t5r = _mm512_load_pd(&f_re[k]), t5i = _mm512_load_pd(&f_im[k]);
+        __m512d t6r = _mm512_load_pd(&g_re[k]), t6i = _mm512_load_pd(&g_im[k]);
+        __m512d dcr, dci;
+        TREE_Y0_512(x0r, t1r, t2r, t3r, t4r, t5r, t6r, dcr);
+        TREE_Y0_512(x0i, t1i, t2i, t3i, t4i, t5i, t6i, dci);
+        _mm512_store_pd(&y0_re[k], dcr);
+        _mm512_store_pd(&y0_im[k], dci);
+        __m512d s0r = t1r, s0i = t1i, s1r = t3r, s1i = t3i;
+        __m512d s2r = t2r, s2i = t2i, s3r = t6r, s3i = t6i;
+        __m512d s4r = t4r, s4i = t4i, s5r = t5r, s5i = t5i;
+        DFT6_FWD_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+        PW_RR6_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i,
+                   RK7_BR0, RK7_BI0, RK7_BR1, RK7_BI1, RK7_BR2, RK7_BI2,
+                   RK7_BR3, RK7_BI3, RK7_BR4, RK7_BI4, RK7_BR5, RK7_BI5);
+        DFT6_BWD_512(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+        x0r = _mm512_load_pd(&a_re[k]);
+        x0i = _mm512_load_pd(&a_im[k]);
+        _mm512_store_pd(&y1_re[k], _mm512_add_pd(x0r, s0r));
+        _mm512_store_pd(&y1_im[k], _mm512_add_pd(x0i, s0i));
+        _mm512_store_pd(&y5_re[k], _mm512_add_pd(x0r, s1r));
+        _mm512_store_pd(&y5_im[k], _mm512_add_pd(x0i, s1i));
+        _mm512_store_pd(&y4_re[k], _mm512_add_pd(x0r, s2r));
+        _mm512_store_pd(&y4_im[k], _mm512_add_pd(x0i, s2i));
+        _mm512_store_pd(&y6_re[k], _mm512_add_pd(x0r, s3r));
+        _mm512_store_pd(&y6_im[k], _mm512_add_pd(x0i, s3i));
+        _mm512_store_pd(&y2_re[k], _mm512_add_pd(x0r, s4r));
+        _mm512_store_pd(&y2_im[k], _mm512_add_pd(x0i, s4i));
+        _mm512_store_pd(&y3_re[k], _mm512_add_pd(x0r, s5r));
+        _mm512_store_pd(&y3_im[k], _mm512_add_pd(x0i, s5i));
+    }
+
+    /* Scalar tail */
+    for (; k < K; k++)
+    {
+        double x0r_ = a_re[k], x0i_ = a_im[k];
+        double _t1r = b_re[k], _t1i = b_im[k], _t2r = c_re[k], _t2i = c_im[k];
+        double _t3r = d_re[k], _t3i = d_im[k], _t4r = e_re[k], _t4i = e_im[k];
+        double _t5r = f_re[k], _t5i = f_im[k], _t6r = g_re[k], _t6i = g_im[k];
+        y0_re[k] = x0r_ + _t1r + _t2r + _t3r + _t4r + _t5r + _t6r;
+        y0_im[k] = x0i_ + _t1i + _t2i + _t3i + _t4i + _t5i + _t6i;
+        double ar[6] = {_t1r, _t3r, _t2r, _t6r, _t4r, _t5r};
+        double ai[6] = {_t1i, _t3i, _t2i, _t6i, _t4i, _t5i};
+        double Ar[6], Ai[6], Cr[6], Ci[6], cr[6], ci[6];
+        {
+            double s1 = ar[2] + ar[4], s2 = ai[2] + ai[4], d1 = ar[2] - ar[4], d2 = ai[2] - ai[4];
+            double E0r = ar[0] + s1, E0i = ai[0] + s2, br = ar[0] - 0.5 * s1, bi = ai[0] - 0.5 * s2;
+            double E1r = br + 0.86602540378443864676 * d2, E1i = bi - 0.86602540378443864676 * d1;
+            double E2r = br - 0.86602540378443864676 * d2, E2i = bi + 0.86602540378443864676 * d1;
+            double s3 = ar[3] + ar[5], s4 = ai[3] + ai[5], d3 = ar[3] - ar[5], d4 = ai[3] - ai[5];
+            double O0r = ar[1] + s3, O0i = ai[1] + s4, br2 = ar[1] - 0.5 * s3, bi2 = ai[1] - 0.5 * s4;
+            double O1r = br2 + 0.86602540378443864676 * d4, O1i = bi2 - 0.86602540378443864676 * d3;
+            double O2r = br2 - 0.86602540378443864676 * d4, O2i = bi2 + 0.86602540378443864676 * d3;
+            Ar[0] = E0r + O0r;
+            Ai[0] = E0i + O0i;
+            Ar[3] = E0r - O0r;
+            Ai[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 + O1i * 0.86602540378443864676;
+            double T1i_ = O1r * (-0.86602540378443864676) + O1i * 0.5;
+            Ar[1] = E1r + T1r_;
+            Ai[1] = E1i + T1i_;
+            Ar[4] = E1r - T1r_;
+            Ai[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) + O2i * 0.86602540378443864676;
+            double T2i_ = O2r * (-0.86602540378443864676) + O2i * (-0.5);
+            Ar[2] = E2r + T2r_;
+            Ai[2] = E2i + T2i_;
+            Ar[5] = E2r - T2r_;
+            Ai[5] = E2i - T2i_;
+        }
+        for (int j = 0; j < 6; j++)
+        {
+            Cr[j] = Ar[j] * RK7S_BWD_RE[j] - Ai[j] * RK7S_BWD_IM[j];
+            Ci[j] = Ar[j] * RK7S_BWD_IM[j] + Ai[j] * RK7S_BWD_RE[j];
+        }
+        {
+            double s1 = Cr[2] + Cr[4], s2 = Ci[2] + Ci[4], d1 = Cr[2] - Cr[4], d2 = Ci[2] - Ci[4];
+            double E0r = Cr[0] + s1, E0i = Ci[0] + s2, br = Cr[0] - 0.5 * s1, bi = Ci[0] - 0.5 * s2;
+            double E1r = br - 0.86602540378443864676 * d2, E1i = bi + 0.86602540378443864676 * d1;
+            double E2r = br + 0.86602540378443864676 * d2, E2i = bi - 0.86602540378443864676 * d1;
+            double s3 = Cr[3] + Cr[5], s4 = Ci[3] + Ci[5], d3 = Cr[3] - Cr[5], d4 = Ci[3] - Ci[5];
+            double O0r = Cr[1] + s3, O0i = Ci[1] + s4, br2 = Cr[1] - 0.5 * s3, bi2 = Ci[1] - 0.5 * s4;
+            double O1r = br2 - 0.86602540378443864676 * d4, O1i = bi2 + 0.86602540378443864676 * d3;
+            double O2r = br2 + 0.86602540378443864676 * d4, O2i = bi2 - 0.86602540378443864676 * d3;
+            cr[0] = E0r + O0r;
+            ci[0] = E0i + O0i;
+            cr[3] = E0r - O0r;
+            ci[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 - O1i * 0.86602540378443864676;
+            double T1i_ = O1r * 0.86602540378443864676 + O1i * 0.5;
+            cr[1] = E1r + T1r_;
+            ci[1] = E1i + T1i_;
+            cr[4] = E1r - T1r_;
+            ci[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) - O2i * 0.86602540378443864676;
+            double T2i_ = O2r * 0.86602540378443864676 + O2i * (-0.5);
+            cr[2] = E2r + T2r_;
+            ci[2] = E2i + T2i_;
+            cr[5] = E2r - T2r_;
+            ci[5] = E2i - T2i_;
+        }
+        y1_re[k] = x0r_ + cr[0];
+        y1_im[k] = x0i_ + ci[0];
+        y5_re[k] = x0r_ + cr[1];
+        y5_im[k] = x0i_ + ci[1];
+        y4_re[k] = x0r_ + cr[2];
+        y4_im[k] = x0i_ + ci[2];
+        y6_re[k] = x0r_ + cr[3];
+        y6_im[k] = x0i_ + ci[3];
+        y2_re[k] = x0r_ + cr[4];
+        y2_im[k] = x0i_ + ci[4];
+        y3_re[k] = x0r_ + cr[5];
+        y3_im[k] = x0i_ + ci[5];
+    }
+}
+
+/* ================================================================== */
+/*  Prefetch helpers                                                    */
+/*                                                                     */
+/*  T0 (L1): input arrays — will be consumed in current/next iteration */
+/*  T1 (L2): twiddle arrays — temporal reuse across stages             */
+/*  Distance: 4 cache lines ahead = 4 × 64B = 32 doubles = 2 ZMMs    */
+/* ================================================================== */
+
+#define R7_PF_DIST (4 * 64 / (int)sizeof(double)) /* 32 doubles */
+
+#define R7_PREFETCH_INPUTS_T0(k_pf)                           \
+    do                                                        \
+    {                                                         \
+        _mm_prefetch((const char *)&a_re[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&a_im[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&b_re[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&b_im[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&c_re[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&c_im[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&d_re[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&d_im[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&e_re[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&e_im[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&f_re[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&f_im[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&g_re[k_pf], _MM_HINT_T0); \
+        _mm_prefetch((const char *)&g_im[k_pf], _MM_HINT_T0); \
+    } while (0)
+
+#define R7_PREFETCH_TWIDDLES_T1(k_pf)                           \
+    do                                                          \
+    {                                                           \
+        _mm_prefetch((const char *)&tw1_re[k_pf], _MM_HINT_T1); \
+        _mm_prefetch((const char *)&tw1_im[k_pf], _MM_HINT_T1); \
+        _mm_prefetch((const char *)&tw2_re[k_pf], _MM_HINT_T1); \
+        _mm_prefetch((const char *)&tw2_im[k_pf], _MM_HINT_T1); \
+        _mm_prefetch((const char *)&tw3_re[k_pf], _MM_HINT_T1); \
+        _mm_prefetch((const char *)&tw3_im[k_pf], _MM_HINT_T1); \
+    } while (0)
+
+/* ================================================================== */
+/*  NT store macro — replaces _mm512_store_pd in LLC-bypass path       */
+/* ================================================================== */
+
+#define R7_NT_STORE_512(addr, val) _mm512_stream_pd((addr), (val))
+
+/* ================================================================== */
+/*  LLC-aware dispatch heuristic                                        */
+/*                                                                     */
+/*  Working set per radix-7 stage: 7 legs × 2 (re/im) × K × 8B       */
+/*    INPUT  = 7 × 2 × K × 8 = 112K bytes                             */
+/*    OUTPUT = same = 112K bytes                                        */
+/*    TWIDDLE= 3 × 2 × K × 8 = 48K bytes  (BLOCKED3)                  */
+/*    TOTAL  = 272K bytes per pass                                      */
+/*                                                                     */
+/*  Rule: if TOTAL > LLC_SIZE / 2, use NT stores (out-of-place only).  */
+/*  Caller should set R7_LLC_SIZE_BYTES to actual LLC per core.        */
+/*  Default: 2 MiB (conservative for shared LLCs).                     */
+/* ================================================================== */
+
+#ifndef R7_LLC_SIZE_BYTES
+#define R7_LLC_SIZE_BYTES (2 * 1024 * 1024)
 #endif
 
-/// Cache line size
-#define R7_AVX512_CACHE_LINE 64
+#define R7_NT_THRESHOLD_K (R7_LLC_SIZE_BYTES / (2 * 272))
 
-/// Large stage twiddle threshold for prefetch hint selection
-#define R7_AVX512_LARGE_STAGE_K 2048
-
-//==============================================================================
-// ALIGNMENT HELPERS
-//==============================================================================
-
-/**
- * @brief Check if pointer is aligned to 64 bytes
+/* Caller macro — dispatches to prefetch+NT or standard variant:
+ *
+ *   R7_FWD_DISPATCH(a_re,..., tw3_im, K)
+ *
+ * For K > threshold, inserts prefetch into the U=2 loop preamble and
+ * uses _mm512_stream_pd.  For K <= threshold, uses the standard
+ * butterfly (data stays in LLC).
+ *
+ * NOTE: The full NT-store variants are best built by the multi-stage
+ * driver that wraps each butterfly call.  The macros above provide
+ * the primitives; the driver injects them at the right points.
  */
-__attribute__((always_inline))
-static inline bool is_aligned_64(const void *ptr)
-{
-    return ((uintptr_t)ptr & 63) == 0;
-}
 
-/**
- * @brief Verify alignment of all buffers (debug/assert mode)
- */
-__attribute__((always_inline))
-static inline bool verify_r7_alignment(
-    const double *in_re, const double *in_im,
-    const double *out_re, const double *out_im)
-{
-    return is_aligned_64(in_re) && is_aligned_64(in_im) &&
-           is_aligned_64(out_re) && is_aligned_64(out_im);
-}
+#define R7_USE_NT_STORES(K) ((int)(K) > R7_NT_THRESHOLD_K)
 
-//==============================================================================
-// COMPLEX MULTIPLY PRIMITIVES - TRUE SoA (NO INTERLEAVE!)
-//==============================================================================
-
-/**
- * @brief Complex multiply with FMA - TRUE SoA version
- * @details (out_re + i*out_im) = (a_re + i*a_im) * (w_re + i*w_im)
- * 
- * ✅ PRESERVED: Optimal 4-FMA sequence
- * ✅ NEW: Operates on separate re/im vectors (no shuffle overhead!)
- * 
- * out_re = a_re * w_re - a_im * w_im
- * out_im = a_re * w_im + a_im * w_re
- */
-__attribute__((always_inline))
-static inline void cmul_fma_avx512_soa(
-    __m512d * restrict out_re,
-    __m512d * restrict out_im,
-    __m512d a_re,
-    __m512d a_im,
-    __m512d w_re,
-    __m512d w_im)
-{
-    *out_re = _mm512_fmsub_pd(a_re, w_re, _mm512_mul_pd(a_im, w_im));
-    *out_im = _mm512_fmadd_pd(a_re, w_im, _mm512_mul_pd(a_im, w_re));
-}
-
-/**
- * @brief Complex multiply-add with FMA - TRUE SoA version
- * @details acc += a * w (for round-robin convolution)
- * 
- * ✅ PRESERVED: Fused accumulation for P0 optimization
- * ✅ NEW: Separate re/im accumulators
- * 
- * acc_re += a_re * w_re - a_im * w_im
- * acc_im += a_re * w_im + a_im * w_re
- */
-__attribute__((always_inline))
-static inline void cmul_add_fma_avx512_soa(
-    __m512d * restrict acc_re,
-    __m512d * restrict acc_im,
-    __m512d a_re,
-    __m512d a_im,
-    __m512d w_re,
-    __m512d w_im)
-{
-    // Compute product
-    __m512d prod_re = _mm512_fmsub_pd(a_re, w_re, _mm512_mul_pd(a_im, w_im));
-    __m512d prod_im = _mm512_fmadd_pd(a_re, w_im, _mm512_mul_pd(a_im, w_re));
-    
-    // Accumulate
-    *acc_re = _mm512_add_pd(*acc_re, prod_re);
-    *acc_im = _mm512_add_pd(*acc_im, prod_im);
-}
-
-//==============================================================================
-// LOAD/STORE PRIMITIVES - 8-WIDE ALIGNED
-//==============================================================================
-
-/**
- * @brief Load 7 lanes from SoA buffers - 8-WIDE ALIGNED (FASTEST!)
- * @details
- * ⚡⚡⚡ NEW: Direct 512-bit loads (8 doubles), no 256→512 insert!
- * ⚡⚡⚡ NEW: Aligned loads (3-cycle latency, 0.5-cycle throughput)
- * ⚡⚡⚡ NEW: TRUE SoA - re/im stay separate in registers!
- * 
- * Memory layout (SoA, aligned):
- *   in_re[r*K + k]: [re[k], re[k+1], ..., re[k+7]]  ← CONTIGUOUS + ALIGNED!
- *   in_im[r*K + k]: [im[k], im[k+1], ..., im[k+7]]  ← CONTIGUOUS + ALIGNED!
- * 
- * Register layout (SoA for computation):
- *   x0_re = [re0, re1, re2, re3, re4, re5, re6, re7] for lane 0
- *   x0_im = [im0, im1, im2, im3, im4, im5, im6, im7] for lane 0
- *   ... etc for lanes 1-6
- * 
- * @param k Starting index (must be 8-aligned for best performance)
- * @param K Stride between lanes
- * @param in_re Real component array (64-byte aligned)
- * @param in_im Imaginary component array (64-byte aligned)
- * @param x0_re-x6_re Output: real components for 7 lanes
- * @param x0_im-x6_im Output: imaginary components for 7 lanes
- */
-__attribute__((always_inline))
-static inline void load_7_lanes_avx512_soa(
-    int k, int K,
-    const double * restrict in_re,
-    const double * restrict in_im,
-    __m512d *x0_re, __m512d *x0_im,
-    __m512d *x1_re, __m512d *x1_im,
-    __m512d *x2_re, __m512d *x2_im,
-    __m512d *x3_re, __m512d *x3_im,
-    __m512d *x4_re, __m512d *x4_im,
-    __m512d *x5_re, __m512d *x5_im,
-    __m512d *x6_re, __m512d *x6_im)
-{
-    // Direct aligned 512-bit loads: 8 doubles at once!
-    *x0_re = _mm512_load_pd(&in_re[0 * K + k]);
-    *x0_im = _mm512_load_pd(&in_im[0 * K + k]);
-    *x1_re = _mm512_load_pd(&in_re[1 * K + k]);
-    *x1_im = _mm512_load_pd(&in_im[1 * K + k]);
-    *x2_re = _mm512_load_pd(&in_re[2 * K + k]);
-    *x2_im = _mm512_load_pd(&in_im[2 * K + k]);
-    *x3_re = _mm512_load_pd(&in_re[3 * K + k]);
-    *x3_im = _mm512_load_pd(&in_im[3 * K + k]);
-    *x4_re = _mm512_load_pd(&in_re[4 * K + k]);
-    *x4_im = _mm512_load_pd(&in_im[4 * K + k]);
-    *x5_re = _mm512_load_pd(&in_re[5 * K + k]);
-    *x5_im = _mm512_load_pd(&in_im[5 * K + k]);
-    *x6_re = _mm512_load_pd(&in_re[6 * K + k]);
-    *x6_im = _mm512_load_pd(&in_im[6 * K + k]);
-}
-
-/**
- * @brief Store 7 lanes to SoA buffers - 8-WIDE ALIGNED (FASTEST!)
- * @details
- * ⚡⚡⚡ NEW: Direct 512-bit stores (8 doubles), no deinterleave!
- * ⚡⚡⚡ NEW: Aligned stores (0.5-cycle throughput)
- * ⚡⚡⚡ NEW: TRUE SoA - re/im already separate, just write!
- * 
- * Memory layout (SoA, aligned):
- *   out_re[r*K + k]: [re[k], re[k+1], ..., re[k+7]]  ← CONTIGUOUS + ALIGNED!
- *   out_im[r*K + k]: [im[k], im[k+1], ..., im[k+7]]  ← CONTIGUOUS + ALIGNED!
- */
-__attribute__((always_inline))
-static inline void store_7_lanes_avx512_soa(
-    int k, int K,
-    double * restrict out_re,
-    double * restrict out_im,
-    __m512d y0_re, __m512d y0_im,
-    __m512d y1_re, __m512d y1_im,
-    __m512d y2_re, __m512d y2_im,
-    __m512d y3_re, __m512d y3_im,
-    __m512d y4_re, __m512d y4_im,
-    __m512d y5_re, __m512d y5_im,
-    __m512d y6_re, __m512d y6_im)
-{
-    // Direct aligned 512-bit stores: 8 doubles at once!
-    _mm512_store_pd(&out_re[0 * K + k], y0_re);
-    _mm512_store_pd(&out_im[0 * K + k], y0_im);
-    _mm512_store_pd(&out_re[1 * K + k], y1_re);
-    _mm512_store_pd(&out_im[1 * K + k], y1_im);
-    _mm512_store_pd(&out_re[2 * K + k], y2_re);
-    _mm512_store_pd(&out_im[2 * K + k], y2_im);
-    _mm512_store_pd(&out_re[3 * K + k], y3_re);
-    _mm512_store_pd(&out_im[3 * K + k], y3_im);
-    _mm512_store_pd(&out_re[4 * K + k], y4_re);
-    _mm512_store_pd(&out_im[4 * K + k], y4_im);
-    _mm512_store_pd(&out_re[5 * K + k], y5_re);
-    _mm512_store_pd(&out_im[5 * K + k], y5_im);
-    _mm512_store_pd(&out_re[6 * K + k], y6_re);
-    _mm512_store_pd(&out_im[6 * K + k], y6_im);
-}
-
-/**
- * @brief Store 7 lanes with non-temporal hint - 8-WIDE ALIGNED
- * @details
- * For large FFTs that exceed LLC, bypass cache on write.
- * ✅ PRESERVED: NT store strategy from original
- * ✅ NEW: TRUE SoA - no deinterleave overhead!
- */
-__attribute__((always_inline))
-static inline void store_7_lanes_avx512_stream_soa(
-    int k, int K,
-    double * restrict out_re,
-    double * restrict out_im,
-    __m512d y0_re, __m512d y0_im,
-    __m512d y1_re, __m512d y1_im,
-    __m512d y2_re, __m512d y2_im,
-    __m512d y3_re, __m512d y3_im,
-    __m512d y4_re, __m512d y4_im,
-    __m512d y5_re, __m512d y5_im,
-    __m512d y6_re, __m512d y6_im)
-{
-    // Non-temporal streaming stores
-    _mm512_stream_pd(&out_re[0 * K + k], y0_re);
-    _mm512_stream_pd(&out_im[0 * K + k], y0_im);
-    _mm512_stream_pd(&out_re[1 * K + k], y1_re);
-    _mm512_stream_pd(&out_im[1 * K + k], y1_im);
-    _mm512_stream_pd(&out_re[2 * K + k], y2_re);
-    _mm512_stream_pd(&out_im[2 * K + k], y2_im);
-    _mm512_stream_pd(&out_re[3 * K + k], y3_re);
-    _mm512_stream_pd(&out_im[3 * K + k], y3_im);
-    _mm512_stream_pd(&out_re[4 * K + k], y4_re);
-    _mm512_stream_pd(&out_im[4 * K + k], y4_im);
-    _mm512_stream_pd(&out_re[5 * K + k], y5_re);
-    _mm512_stream_pd(&out_im[5 * K + k], y5_im);
-    _mm512_stream_pd(&out_re[6 * K + k], y6_re);
-    _mm512_stream_pd(&out_im[6 * K + k], y6_im);
-}
-
-//==============================================================================
-// PREFETCHING - ACTIVE WITH ADAPTIVE HINTS
-//==============================================================================
-
-/**
- * @brief Prefetch 7 lanes from SoA buffers ahead of time
- * @details
- * ✅ PRESERVED: Prefetch structure from original
- * ✅ NEW: Adaptive hint based on stage size (T0 vs T1)
- * 
- * T0 (temporal to L1): For small stages or input data
- * T1 (temporal to L2/L3): For large stage twiddles to avoid L1 thrashing
- */
-__attribute__((always_inline))
-static inline void prefetch_7_lanes_avx512_soa(
-    int k, int K,
-    const double * restrict in_re,
-    const double * restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    int sub_len,
-    bool large_stage)
-{
-    if (k + R7_AVX512_PREFETCH_DISTANCE >= K)
-        return;
-    
-    int pk = k + R7_AVX512_PREFETCH_DISTANCE;
-    
-    // Always prefetch input data to L1 (will be used soon)
-    _mm_prefetch((const char *)&in_re[0 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[0 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[1 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[1 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[2 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[2 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[3 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[3 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[4 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[4 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[5 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[5 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[6 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[6 * K + pk], _MM_HINT_T0);
-    
-    // Prefetch stage twiddles (if needed)
-    if (sub_len > 1)
-    {
-        // Adaptive hint: T1 for large stages to avoid L1 pollution
-        int hint = large_stage ? _MM_HINT_T1 : _MM_HINT_T0;
-        
-        _mm_prefetch((const char *)&stage_tw->re[0 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[0 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[1 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[1 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[2 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[2 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[3 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[3 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[4 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[4 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[5 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[5 * K + pk], hint);
-    }
-}
-
-//==============================================================================
-// STAGE TWIDDLE APPLICATION - UNIT-STRIDE (NO GATHERS!)
-//==============================================================================
-
-/**
- * @brief Apply stage twiddles to 6 of the 7 lanes (x0 unchanged)
- * @details
- * ⚡⚡⚡ CRITICAL: Unit-stride loads replace gathers (10→3 cycle latency!)
- * ⚡⚡⚡ NEW: Twiddles are blocked+SoA, so tw->re[r*K+k..k+7] is contiguous
- * 
- * OLD approach (SLOW):
- *   __m256i idx = _mm256_setr_epi64x(k, k+1, k+2, k+3);
- *   __m256d tw_re = _mm256_i64gather_pd(&stage_tw->re[r*K], idx, 8);  // 10 cycles!
- * 
- * NEW approach (FAST):
- *   __m512d tw_re = _mm512_load_pd(&stage_tw->re[r*K + k]);  // 3 cycles!
- * 
- * ✅ PRESERVED: SoA twiddle access
- * ✅ NEW: Direct aligned loads from contiguous blocked layout
- * 
- * @param k Starting index
- * @param K Stride
- * @param x1_re-x6_re Input/output: real components (modified in place)
- * @param x1_im-x6_im Input/output: imaginary components (modified in place)
- * @param stage_tw Stage twiddle factors (blocked SoA layout)
- * @param sub_len Sub-transform length (skip if == 1)
- */
-__attribute__((always_inline))
-static inline void apply_stage_twiddles_avx512_soa(
-    int k, int K,
-    __m512d *x1_re, __m512d *x1_im,
-    __m512d *x2_re, __m512d *x2_im,
-    __m512d *x3_re, __m512d *x3_im,
-    __m512d *x4_re, __m512d *x4_im,
-    __m512d *x5_re, __m512d *x5_im,
-    __m512d *x6_re, __m512d *x6_im,
-    const fft_twiddle_soa *stage_tw,
-    int sub_len)
-{
-    if (sub_len <= 1)
-        return;  // No twiddles needed for first stage
-    
-    // Unit-stride aligned loads: 8 doubles at once (k, k+1, ..., k+7)
-    __m512d w1_re = _mm512_load_pd(&stage_tw->re[0 * K + k]);
-    __m512d w1_im = _mm512_load_pd(&stage_tw->im[0 * K + k]);
-    __m512d w2_re = _mm512_load_pd(&stage_tw->re[1 * K + k]);
-    __m512d w2_im = _mm512_load_pd(&stage_tw->im[1 * K + k]);
-    __m512d w3_re = _mm512_load_pd(&stage_tw->re[2 * K + k]);
-    __m512d w3_im = _mm512_load_pd(&stage_tw->im[2 * K + k]);
-    __m512d w4_re = _mm512_load_pd(&stage_tw->re[3 * K + k]);
-    __m512d w4_im = _mm512_load_pd(&stage_tw->im[3 * K + k]);
-    __m512d w5_re = _mm512_load_pd(&stage_tw->re[4 * K + k]);
-    __m512d w5_im = _mm512_load_pd(&stage_tw->im[4 * K + k]);
-    __m512d w6_re = _mm512_load_pd(&stage_tw->re[5 * K + k]);
-    __m512d w6_im = _mm512_load_pd(&stage_tw->im[5 * K + k]);
-    
-    // Apply complex multiplication (in-place)
-    cmul_fma_avx512_soa(x1_re, x1_im, *x1_re, *x1_im, w1_re, w1_im);
-    cmul_fma_avx512_soa(x2_re, x2_im, *x2_re, *x2_im, w2_re, w2_im);
-    cmul_fma_avx512_soa(x3_re, x3_im, *x3_re, *x3_im, w3_re, w3_im);
-    cmul_fma_avx512_soa(x4_re, x4_im, *x4_re, *x4_im, w4_re, w4_im);
-    cmul_fma_avx512_soa(x5_re, x5_im, *x5_re, *x5_im, w5_re, w5_im);
-    cmul_fma_avx512_soa(x6_re, x6_im, *x6_re, *x6_im, w6_re, w6_im);
-}
-
-//==============================================================================
-// RADER TWIDDLE BROADCAST - P0 OPTIMIZATION PRESERVED
-//==============================================================================
-
-/**
- * @brief Broadcast 6 Rader twiddles with PRE-SPLIT (P0 OPTIMIZATION!)
- * @details
- * ✅✅ PRESERVED: Hoist Rader twiddle broadcasts outside K loop
- * ✅✅ PRESERVED: Pre-split into separate re/im (8-10% gain!)
- * ✅ NEW: TRUE SoA - broadcast directly to separate vectors
- * 
- * This optimization means:
- * - Load 6 scalar twiddles ONCE per stage
- * - Broadcast to full ZMM vectors (all 8 lanes identical)
- * - Reuse across all K iterations
- * - Saves ~12 shuffles per butterfly × K iterations!
- * 
- * @param rader_tw Rader twiddle factors (6 complex values)
- * @param tw_brd_re Output: broadcast real components (6 vectors)
- * @param tw_brd_im Output: broadcast imaginary components (6 vectors)
- */
-__attribute__((always_inline))
-static inline void broadcast_rader_twiddles_avx512_soa(
-    const fft_twiddle_soa *rader_tw,
-    __m512d tw_brd_re[6],
-    __m512d tw_brd_im[6])
-{
-    // Broadcast each Rader twiddle to all 8 lanes of ZMM
-    // Each butterfly processes 8 different k values with SAME Rader twiddles
-    for (int j = 0; j < 6; j++)
-    {
-        tw_brd_re[j] = _mm512_set1_pd(rader_tw->re[j]);
-        tw_brd_im[j] = _mm512_set1_pd(rader_tw->im[j]);
-    }
-}
-
-//==============================================================================
-// TREE Y0 COMPUTATION - P1 OPTIMIZATION PRESERVED
-//==============================================================================
-
-/**
- * @brief Compute DC component y0 = sum of all 7 inputs (TREE REDUCTION!)
- * @details
- * ✅✅ PRESERVED: Balanced tree reduces add latency (6→3)
- * ✅ NEW: Separate re/im (trivial with SoA!)
- * 
- * Tree structure:
- *   Level 1: (x0+x1), (x2+x3), (x4+x5)
- *   Level 2: (x0+x1+x2+x3), (x4+x5+x6)
- *   Level 3: (x0+x1+x2+x3+x4+x5+x6)
- * 
- * Critical path: 3 additions vs 6 sequential
- * Saves ~1-2% by reducing latency-bound computation
- */
-__attribute__((always_inline))
-static inline void compute_y0_tree_avx512_soa(
-    __m512d x0_re, __m512d x0_im,
-    __m512d x1_re, __m512d x1_im,
-    __m512d x2_re, __m512d x2_im,
-    __m512d x3_re, __m512d x3_im,
-    __m512d x4_re, __m512d x4_im,
-    __m512d x5_re, __m512d x5_im,
-    __m512d x6_re, __m512d x6_im,
-    __m512d *y0_re, __m512d *y0_im)
-{
-    // Level 1: 3 parallel additions
-    __m512d s01_re = _mm512_add_pd(x0_re, x1_re);
-    __m512d s01_im = _mm512_add_pd(x0_im, x1_im);
-    __m512d s23_re = _mm512_add_pd(x2_re, x3_re);
-    __m512d s23_im = _mm512_add_pd(x2_im, x3_im);
-    __m512d s45_re = _mm512_add_pd(x4_re, x5_re);
-    __m512d s45_im = _mm512_add_pd(x4_im, x5_im);
-    
-    // Level 2: 2 parallel additions
-    __m512d s0123_re = _mm512_add_pd(s01_re, s23_re);
-    __m512d s0123_im = _mm512_add_pd(s01_im, s23_im);
-    __m512d s456_re = _mm512_add_pd(s45_re, x6_re);
-    __m512d s456_im = _mm512_add_pd(s45_im, x6_im);
-    
-    // Level 3: final addition
-    *y0_re = _mm512_add_pd(s0123_re, s456_re);
-    *y0_im = _mm512_add_pd(s0123_im, s456_im);
-}
-
-//==============================================================================
-// RADER INPUT PERMUTATION
-//==============================================================================
-
-/**
- * @brief Permute inputs for Rader algorithm
- * @details
- * ✅✅ PRESERVED: Exact permutation [1,3,2,6,4,5] for generator g=3
- * ✅ NEW: Separate re/im (register copies only, no memory ops!)
- * 
- * Input order:  [x1, x2, x3, x4, x5, x6]
- * Output order: [x1, x3, x2, x6, x4, x5]  (for cyclic convolution)
- */
-__attribute__((always_inline))
-static inline void permute_rader_inputs_avx512_soa(
-    __m512d x1_re, __m512d x1_im,
-    __m512d x2_re, __m512d x2_im,
-    __m512d x3_re, __m512d x3_im,
-    __m512d x4_re, __m512d x4_im,
-    __m512d x5_re, __m512d x5_im,
-    __m512d x6_re, __m512d x6_im,
-    __m512d *tx0_re, __m512d *tx0_im,
-    __m512d *tx1_re, __m512d *tx1_im,
-    __m512d *tx2_re, __m512d *tx2_im,
-    __m512d *tx3_re, __m512d *tx3_im,
-    __m512d *tx4_re, __m512d *tx4_im,
-    __m512d *tx5_re, __m512d *tx5_im)
-{
-    *tx0_re = x1_re; *tx0_im = x1_im;  // Position 0 ← x1
-    *tx1_re = x3_re; *tx1_im = x3_im;  // Position 1 ← x3
-    *tx2_re = x2_re; *tx2_im = x2_im;  // Position 2 ← x2
-    *tx3_re = x6_re; *tx3_im = x6_im;  // Position 3 ← x6
-    *tx4_re = x4_re; *tx4_im = x4_im;  // Position 4 ← x4
-    *tx5_re = x5_re; *tx5_im = x5_im;  // Position 5 ← x5
-}
-
-//==============================================================================
-// RADER 6-POINT CYCLIC CONVOLUTION - P0 ROUND-ROBIN PRESERVED
-//==============================================================================
-
-/**
- * @brief 6-point cyclic convolution with ROUND-ROBIN (P0 OPTIMIZATION!)
- * @details
- * ✅✅✅ PRESERVED: Round-robin schedule (10-15% gain, maximized ILP!)
- * ✅ NEW: TRUE SoA - separate re/im throughout
- * ✅ NEW: U2-ready - can interleave two butterflies' convolutions
- * 
- * CRITICAL FOR DUAL FMA PORTS:
- * ==============================
- * 6 independent accumulators (v0-v5) updated in rotation.
- * Each accumulator gets updated every 6 FMAs, which is MORE than
- * the 4-cycle FMA latency - perfect for hiding latency!
- * 
- * Round-robin pattern (row = input, col = output):
- *       v0  v1  v2  v3  v4  v5
- * tx0:  w0  w1  w2  w3  w4  w5
- * tx1:  w5  w0  w1  w2  w3  w4
- * tx2:  w4  w5  w0  w1  w2  w3
- * tx3:  w3  w4  w5  w0  w1  w2
- * tx4:  w2  w3  w4  w5  w0  w1
- * tx5:  w1  w2  w3  w4  w5  w0
- * 
- * This ensures NO accumulator has back-to-back dependencies!
- * With U2 pipeline, we can interleave butterfly A and B updates
- * to issue 2 FMAs per cycle (saturating dual FMA ports).
- * 
- * @param tx0_re-tx5_re Permuted input real components
- * @param tx0_im-tx5_im Permuted input imaginary components
- * @param tw_brd_re Broadcast Rader twiddle real components (6 vectors)
- * @param tw_brd_im Broadcast Rader twiddle imaginary components (6 vectors)
- * @param v0_re-v5_re Output: convolution result real components
- * @param v0_im-v5_im Output: convolution result imaginary components
- */
-__attribute__((always_inline))
-static inline void rader_convolution_roundrobin_avx512_soa(
-    __m512d tx0_re, __m512d tx0_im,
-    __m512d tx1_re, __m512d tx1_im,
-    __m512d tx2_re, __m512d tx2_im,
-    __m512d tx3_re, __m512d tx3_im,
-    __m512d tx4_re, __m512d tx4_im,
-    __m512d tx5_re, __m512d tx5_im,
-    const __m512d tw_brd_re[6],
-    const __m512d tw_brd_im[6],
-    __m512d *v0_re, __m512d *v0_im,
-    __m512d *v1_re, __m512d *v1_im,
-    __m512d *v2_re, __m512d *v2_im,
-    __m512d *v3_re, __m512d *v3_im,
-    __m512d *v4_re, __m512d *v4_im,
-    __m512d *v5_re, __m512d *v5_im)
-{
-    // Initialize accumulators to zero
-    *v0_re = _mm512_setzero_pd(); *v0_im = _mm512_setzero_pd();
-    *v1_re = _mm512_setzero_pd(); *v1_im = _mm512_setzero_pd();
-    *v2_re = _mm512_setzero_pd(); *v2_im = _mm512_setzero_pd();
-    *v3_re = _mm512_setzero_pd(); *v3_im = _mm512_setzero_pd();
-    *v4_re = _mm512_setzero_pd(); *v4_im = _mm512_setzero_pd();
-    *v5_re = _mm512_setzero_pd(); *v5_im = _mm512_setzero_pd();
-    
-    // ✅✅ PRESERVED: Round-robin schedule for maximum ILP
-    // Round 0: tx0 contributes to all 6 accumulators
-    cmul_add_fma_avx512_soa(v0_re, v0_im, tx0_re, tx0_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx512_soa(v1_re, v1_im, tx0_re, tx0_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx512_soa(v2_re, v2_im, tx0_re, tx0_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx512_soa(v3_re, v3_im, tx0_re, tx0_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx512_soa(v4_re, v4_im, tx0_re, tx0_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx512_soa(v5_re, v5_im, tx0_re, tx0_im, tw_brd_re[5], tw_brd_im[5]);
-    
-    // Round 1: tx1 contributes (rotated twiddle indices)
-    cmul_add_fma_avx512_soa(v0_re, v0_im, tx1_re, tx1_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx512_soa(v1_re, v1_im, tx1_re, tx1_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx512_soa(v2_re, v2_im, tx1_re, tx1_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx512_soa(v3_re, v3_im, tx1_re, tx1_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx512_soa(v4_re, v4_im, tx1_re, tx1_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx512_soa(v5_re, v5_im, tx1_re, tx1_im, tw_brd_re[4], tw_brd_im[4]);
-    
-    // Round 2: tx2 contributes
-    cmul_add_fma_avx512_soa(v0_re, v0_im, tx2_re, tx2_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx512_soa(v1_re, v1_im, tx2_re, tx2_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx512_soa(v2_re, v2_im, tx2_re, tx2_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx512_soa(v3_re, v3_im, tx2_re, tx2_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx512_soa(v4_re, v4_im, tx2_re, tx2_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx512_soa(v5_re, v5_im, tx2_re, tx2_im, tw_brd_re[3], tw_brd_im[3]);
-    
-    // Round 3: tx3 contributes
-    cmul_add_fma_avx512_soa(v0_re, v0_im, tx3_re, tx3_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx512_soa(v1_re, v1_im, tx3_re, tx3_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx512_soa(v2_re, v2_im, tx3_re, tx3_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx512_soa(v3_re, v3_im, tx3_re, tx3_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx512_soa(v4_re, v4_im, tx3_re, tx3_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx512_soa(v5_re, v5_im, tx3_re, tx3_im, tw_brd_re[2], tw_brd_im[2]);
-    
-    // Round 4: tx4 contributes
-    cmul_add_fma_avx512_soa(v0_re, v0_im, tx4_re, tx4_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx512_soa(v1_re, v1_im, tx4_re, tx4_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx512_soa(v2_re, v2_im, tx4_re, tx4_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx512_soa(v3_re, v3_im, tx4_re, tx4_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx512_soa(v4_re, v4_im, tx4_re, tx4_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx512_soa(v5_re, v5_im, tx4_re, tx4_im, tw_brd_re[1], tw_brd_im[1]);
-    
-    // Round 5: tx5 contributes
-    cmul_add_fma_avx512_soa(v0_re, v0_im, tx5_re, tx5_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx512_soa(v1_re, v1_im, tx5_re, tx5_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx512_soa(v2_re, v2_im, tx5_re, tx5_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx512_soa(v3_re, v3_im, tx5_re, tx5_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx512_soa(v4_re, v4_im, tx5_re, tx5_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx512_soa(v5_re, v5_im, tx5_re, tx5_im, tw_brd_re[0], tw_brd_im[0]);
-}
-
-//==============================================================================
-// RADER OUTPUT ASSEMBLY
-//==============================================================================
-
-/**
- * @brief Assemble final outputs from convolution results
- * @details
- * ✅✅ PRESERVED: Output permutation [1,5,4,6,2,3] for Rader g=3
- * ✅ NEW: Separate re/im (trivial additions!)
- * 
- * Output assembly: y[i] = x0 + v[permuted_i]
- * y0 already computed (DC component)
- * y1-y6 = x0 + convolution results (in permuted order)
- */
-__attribute__((always_inline))
-static inline void assemble_rader_outputs_avx512_soa(
-    __m512d x0_re, __m512d x0_im,
-    __m512d v0_re, __m512d v0_im,
-    __m512d v1_re, __m512d v1_im,
-    __m512d v2_re, __m512d v2_im,
-    __m512d v3_re, __m512d v3_im,
-    __m512d v4_re, __m512d v4_im,
-    __m512d v5_re, __m512d v5_im,
-    __m512d *y1_re, __m512d *y1_im,
-    __m512d *y2_re, __m512d *y2_im,
-    __m512d *y3_re, __m512d *y3_im,
-    __m512d *y4_re, __m512d *y4_im,
-    __m512d *y5_re, __m512d *y5_im,
-    __m512d *y6_re, __m512d *y6_im)
-{
-    // Output permutation: [1,5,4,6,2,3]
-    *y1_re = _mm512_add_pd(x0_re, v0_re);  // Position 1 ← v0
-    *y1_im = _mm512_add_pd(x0_im, v0_im);
-    *y5_re = _mm512_add_pd(x0_re, v1_re);  // Position 5 ← v1
-    *y5_im = _mm512_add_pd(x0_im, v1_im);
-    *y4_re = _mm512_add_pd(x0_re, v2_re);  // Position 4 ← v2
-    *y4_im = _mm512_add_pd(x0_im, v2_im);
-    *y6_re = _mm512_add_pd(x0_re, v3_re);  // Position 6 ← v3
-    *y6_im = _mm512_add_pd(x0_im, v3_im);
-    *y2_re = _mm512_add_pd(x0_re, v4_re);  // Position 2 ← v4
-    *y2_im = _mm512_add_pd(x0_im, v4_im);
-    *y3_re = _mm512_add_pd(x0_re, v5_re);  // Position 3 ← v5
-    *y3_im = _mm512_add_pd(x0_im, v5_im);
-}
-
-//==============================================================================
-// COMPLETE BUTTERFLY FUNCTIONS
-//==============================================================================
-
-/**
- * @brief Single radix-7 butterfly - 8-wide AVX-512 TRUE SoA
- * @details
- * ✅ ALL OPTIMIZATIONS PRESERVED + NEW SoA gains:
- *    - Pre-split Rader broadcasts (used from stage-level cache)
- *    - Round-robin convolution
- *    - Tree y0 sum
- *    - Unit-stride twiddle loads (no gathers!)
- *    - TRUE SoA (no interleave/deinterleave!)
- *    - 8-wide processing (full 512-bit utilization)
- *    - Aligned loads/stores
- * 
- * Process one butterfly: k, k+1, ..., k+7 (8 complex values)
- * 
- * @param k Starting index (must be 8-aligned for best performance)
- * @param K Stride between lanes
- * @param in_re Input real components (64-byte aligned)
- * @param in_im Input imaginary components (64-byte aligned)
- * @param stage_tw Stage twiddle factors (blocked SoA, 64-byte aligned)
- * @param rader_tw_re Broadcast Rader twiddle real components (6 vectors)
- * @param rader_tw_im Broadcast Rader twiddle imaginary components (6 vectors)
- * @param out_re Output real components (64-byte aligned)
- * @param out_im Output imaginary components (64-byte aligned)
- * @param sub_len Sub-transform length
- * @param use_nt Use non-temporal stores (for large FFTs)
- */
-__attribute__((always_inline))
-static inline void radix7_butterfly_single_avx512_soa(
-    int k, int K,
-    const double * restrict in_re,
-    const double * restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    const __m512d rader_tw_re[6],
-    const __m512d rader_tw_im[6],
-    double * restrict out_re,
-    double * restrict out_im,
-    int sub_len,
-    bool use_nt)
-{
-    // STEP 1: Load 7 lanes (8 complex values per lane)
-    __m512d x0_re, x0_im, x1_re, x1_im, x2_re, x2_im, x3_re, x3_im;
-    __m512d x4_re, x4_im, x5_re, x5_im, x6_re, x6_im;
-    
-    load_7_lanes_avx512_soa(k, K, in_re, in_im,
-                            &x0_re, &x0_im, &x1_re, &x1_im,
-                            &x2_re, &x2_im, &x3_re, &x3_im,
-                            &x4_re, &x4_im, &x5_re, &x5_im,
-                            &x6_re, &x6_im);
-    
-    // STEP 2: Apply stage twiddles (x0 unchanged, x1-x6 multiplied)
-    apply_stage_twiddles_avx512_soa(k, K,
-                                    &x1_re, &x1_im, &x2_re, &x2_im,
-                                    &x3_re, &x3_im, &x4_re, &x4_im,
-                                    &x5_re, &x5_im, &x6_re, &x6_im,
-                                    stage_tw, sub_len);
-    
-    // STEP 3: Compute DC component y0 (tree reduction)
-    __m512d y0_re, y0_im;
-    compute_y0_tree_avx512_soa(x0_re, x0_im, x1_re, x1_im,
-                               x2_re, x2_im, x3_re, x3_im,
-                               x4_re, x4_im, x5_re, x5_im,
-                               x6_re, x6_im,
-                               &y0_re, &y0_im);
-    
-    // STEP 4: Permute inputs for Rader algorithm
-    __m512d tx0_re, tx0_im, tx1_re, tx1_im, tx2_re, tx2_im;
-    __m512d tx3_re, tx3_im, tx4_re, tx4_im, tx5_re, tx5_im;
-    
-    permute_rader_inputs_avx512_soa(x1_re, x1_im, x2_re, x2_im,
-                                    x3_re, x3_im, x4_re, x4_im,
-                                    x5_re, x5_im, x6_re, x6_im,
-                                    &tx0_re, &tx0_im, &tx1_re, &tx1_im,
-                                    &tx2_re, &tx2_im, &tx3_re, &tx3_im,
-                                    &tx4_re, &tx4_im, &tx5_re, &tx5_im);
-    
-    // STEP 5: 6-point cyclic convolution (round-robin schedule)
-    __m512d v0_re, v0_im, v1_re, v1_im, v2_re, v2_im;
-    __m512d v3_re, v3_im, v4_re, v4_im, v5_re, v5_im;
-    
-    rader_convolution_roundrobin_avx512_soa(
-        tx0_re, tx0_im, tx1_re, tx1_im, tx2_re, tx2_im,
-        tx3_re, tx3_im, tx4_re, tx4_im, tx5_re, tx5_im,
-        rader_tw_re, rader_tw_im,
-        &v0_re, &v0_im, &v1_re, &v1_im, &v2_re, &v2_im,
-        &v3_re, &v3_im, &v4_re, &v4_im, &v5_re, &v5_im);
-    
-    // STEP 6: Assemble final outputs
-    __m512d y1_re, y1_im, y2_re, y2_im, y3_re, y3_im;
-    __m512d y4_re, y4_im, y5_re, y5_im, y6_re, y6_im;
-    
-    assemble_rader_outputs_avx512_soa(x0_re, x0_im,
-                                      v0_re, v0_im, v1_re, v1_im,
-                                      v2_re, v2_im, v3_re, v3_im,
-                                      v4_re, v4_im, v5_re, v5_im,
-                                      &y1_re, &y1_im, &y2_re, &y2_im,
-                                      &y3_re, &y3_im, &y4_re, &y4_im,
-                                      &y5_re, &y5_im, &y6_re, &y6_im);
-    
-    // STEP 7: Store results (normal or non-temporal)
-    if (use_nt)
-    {
-        store_7_lanes_avx512_stream_soa(k, K, out_re, out_im,
-                                        y0_re, y0_im, y1_re, y1_im,
-                                        y2_re, y2_im, y3_re, y3_im,
-                                        y4_re, y4_im, y5_re, y5_im,
-                                        y6_re, y6_im);
-    }
-    else
-    {
-        store_7_lanes_avx512_soa(k, K, out_re, out_im,
-                                 y0_re, y0_im, y1_re, y1_im,
-                                 y2_re, y2_im, y3_re, y3_im,
-                                 y4_re, y4_im, y5_re, y5_im,
-                                 y6_re, y6_im);
-    }
-}
-
-/**
- * @brief Dual radix-7 butterfly - U2 pipeline for saturating dual FMA ports
- * @details
- * ⚡⚡⚡ CRITICAL: Process TWO butterflies simultaneously!
- * 
- * U2 PIPELINE STRUCTURE:
- * ======================
- * Process k and k+8 in parallel to maximize ILP and saturate dual FMA ports.
- * 
- * Key optimizations:
- * - Interleaved loads: k and k+8 loads can overlap
- * - Interleaved convolutions: butterfly A and B alternate FMA issue
- *   → Achieves 2 FMAs/cycle (saturating dual FMA ports)
- * - Register reuse: temporary registers shared where dependency chains allow
- * - Total register pressure: ~24 ZMM (well within 32 ZMM budget)
- * 
- * WHY U2 WORKS FOR RADIX-7:
- * =========================
- * Round-robin convolution has 6 independent accumulators per butterfly.
- * With U2, we have 12 accumulators (6 for A, 6 for B) updated in rotation:
- *   va0 += ...; vb0 += ...; va1 += ...; vb1 += ...;  ← 2 FMAs/cycle!
- * 
- * Each accumulator gets ~6 cycles between updates (plenty for 4-cycle FMA latency).
- * 
- * @param ka Starting index for butterfly A
- * @param kb Starting index for butterfly B (typically ka + 8)
- */
-__attribute__((always_inline))
-static inline void radix7_butterfly_dual_avx512_soa(
-    int ka, int kb, int K,
-    const double * restrict in_re,
-    const double * restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    const __m512d rader_tw_re[6],
-    const __m512d rader_tw_im[6],
-    double * restrict out_re,
-    double * restrict out_im,
-    int sub_len,
-    bool use_nt)
-{
-    //==========================================================================
-    // BUTTERFLY A (ka)
-    //==========================================================================
-    
-    // Load A
-    __m512d xa0_re, xa0_im, xa1_re, xa1_im, xa2_re, xa2_im, xa3_re, xa3_im;
-    __m512d xa4_re, xa4_im, xa5_re, xa5_im, xa6_re, xa6_im;
-    
-    load_7_lanes_avx512_soa(ka, K, in_re, in_im,
-                            &xa0_re, &xa0_im, &xa1_re, &xa1_im,
-                            &xa2_re, &xa2_im, &xa3_re, &xa3_im,
-                            &xa4_re, &xa4_im, &xa5_re, &xa5_im,
-                            &xa6_re, &xa6_im);
-    
-    //==========================================================================
-    // BUTTERFLY B (kb) - INTERLEAVE LOAD
-    //==========================================================================
-    
-    // Load B (interleaved with A's load - increases memory bandwidth utilization)
-    __m512d xb0_re, xb0_im, xb1_re, xb1_im, xb2_re, xb2_im, xb3_re, xb3_im;
-    __m512d xb4_re, xb4_im, xb5_re, xb5_im, xb6_re, xb6_im;
-    
-    load_7_lanes_avx512_soa(kb, K, in_re, in_im,
-                            &xb0_re, &xb0_im, &xb1_re, &xb1_im,
-                            &xb2_re, &xb2_im, &xb3_re, &xb3_im,
-                            &xb4_re, &xb4_im, &xb5_re, &xb5_im,
-                            &xb6_re, &xb6_im);
-    
-    //==========================================================================
-    // APPLY STAGE TWIDDLES (A and B)
-    //==========================================================================
-    
-    apply_stage_twiddles_avx512_soa(ka, K,
-                                    &xa1_re, &xa1_im, &xa2_re, &xa2_im,
-                                    &xa3_re, &xa3_im, &xa4_re, &xa4_im,
-                                    &xa5_re, &xa5_im, &xa6_re, &xa6_im,
-                                    stage_tw, sub_len);
-    
-    apply_stage_twiddles_avx512_soa(kb, K,
-                                    &xb1_re, &xb1_im, &xb2_re, &xb2_im,
-                                    &xb3_re, &xb3_im, &xb4_re, &xb4_im,
-                                    &xb5_re, &xb5_im, &xb6_re, &xb6_im,
-                                    stage_tw, sub_len);
-    
-    //==========================================================================
-    // COMPUTE Y0 (A and B) - TREE REDUCTION
-    //==========================================================================
-    
-    __m512d ya0_re, ya0_im;
-    compute_y0_tree_avx512_soa(xa0_re, xa0_im, xa1_re, xa1_im,
-                               xa2_re, xa2_im, xa3_re, xa3_im,
-                               xa4_re, xa4_im, xa5_re, xa5_im,
-                               xa6_re, xa6_im,
-                               &ya0_re, &ya0_im);
-    
-    __m512d yb0_re, yb0_im;
-    compute_y0_tree_avx512_soa(xb0_re, xb0_im, xb1_re, xb1_im,
-                               xb2_re, xb2_im, xb3_re, xb3_im,
-                               xb4_re, xb4_im, xb5_re, xb5_im,
-                               xb6_re, xb6_im,
-                               &yb0_re, &yb0_im);
-    
-    //==========================================================================
-    // PERMUTE INPUTS (A and B)
-    //==========================================================================
-    
-    __m512d txa0_re, txa0_im, txa1_re, txa1_im, txa2_re, txa2_im;
-    __m512d txa3_re, txa3_im, txa4_re, txa4_im, txa5_re, txa5_im;
-    
-    permute_rader_inputs_avx512_soa(xa1_re, xa1_im, xa2_re, xa2_im,
-                                    xa3_re, xa3_im, xa4_re, xa4_im,
-                                    xa5_re, xa5_im, xa6_re, xa6_im,
-                                    &txa0_re, &txa0_im, &txa1_re, &txa1_im,
-                                    &txa2_re, &txa2_im, &txa3_re, &txa3_im,
-                                    &txa4_re, &txa4_im, &txa5_re, &txa5_im);
-    
-    __m512d txb0_re, txb0_im, txb1_re, txb1_im, txb2_re, txb2_im;
-    __m512d txb3_re, txb3_im, txb4_re, txb4_im, txb5_re, txb5_im;
-    
-    permute_rader_inputs_avx512_soa(xb1_re, xb1_im, xb2_re, xb2_im,
-                                    xb3_re, xb3_im, xb4_re, xb4_im,
-                                    xb5_re, xb5_im, xb6_re, xb6_im,
-                                    &txb0_re, &txb0_im, &txb1_re, &txb1_im,
-                                    &txb2_re, &txb2_im, &txb3_re, &txb3_im,
-                                    &txb4_re, &txb4_im, &txb5_re, &txb5_im);
-    
-    //==========================================================================
-    // CONVOLUTION (A and B) - INTERLEAVED FOR DUAL FMA SATURATION
-    //==========================================================================
-    
-    // Initialize all accumulators
-    __m512d va0_re = _mm512_setzero_pd(), va0_im = _mm512_setzero_pd();
-    __m512d va1_re = _mm512_setzero_pd(), va1_im = _mm512_setzero_pd();
-    __m512d va2_re = _mm512_setzero_pd(), va2_im = _mm512_setzero_pd();
-    __m512d va3_re = _mm512_setzero_pd(), va3_im = _mm512_setzero_pd();
-    __m512d va4_re = _mm512_setzero_pd(), va4_im = _mm512_setzero_pd();
-    __m512d va5_re = _mm512_setzero_pd(), va5_im = _mm512_setzero_pd();
-    
-    __m512d vb0_re = _mm512_setzero_pd(), vb0_im = _mm512_setzero_pd();
-    __m512d vb1_re = _mm512_setzero_pd(), vb1_im = _mm512_setzero_pd();
-    __m512d vb2_re = _mm512_setzero_pd(), vb2_im = _mm512_setzero_pd();
-    __m512d vb3_re = _mm512_setzero_pd(), vb3_im = _mm512_setzero_pd();
-    __m512d vb4_re = _mm512_setzero_pd(), vb4_im = _mm512_setzero_pd();
-    __m512d vb5_re = _mm512_setzero_pd(), vb5_im = _mm512_setzero_pd();
-    
-    // ⚡⚡⚡ CRITICAL: INTERLEAVED ROUND-ROBIN CONVOLUTION
-    // Alternate between A and B updates to issue 2 FMAs/cycle!
-    
-    // Round 0: txa0 and txb0
-    cmul_add_fma_avx512_soa(&va0_re, &va0_im, txa0_re, txa0_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&vb0_re, &vb0_im, txb0_re, txb0_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&va1_re, &va1_im, txa0_re, txa0_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&vb1_re, &vb1_im, txb0_re, txb0_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&va2_re, &va2_im, txa0_re, txa0_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&vb2_re, &vb2_im, txb0_re, txb0_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&va3_re, &va3_im, txa0_re, txa0_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&vb3_re, &vb3_im, txb0_re, txb0_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&va4_re, &va4_im, txa0_re, txa0_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&vb4_re, &vb4_im, txb0_re, txb0_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&va5_re, &va5_im, txa0_re, txa0_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&vb5_re, &vb5_im, txb0_re, txb0_im, rader_tw_re[5], rader_tw_im[5]);
-    
-    // Round 1: txa1 and txb1
-    cmul_add_fma_avx512_soa(&va0_re, &va0_im, txa1_re, txa1_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&vb0_re, &vb0_im, txb1_re, txb1_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&va1_re, &va1_im, txa1_re, txa1_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&vb1_re, &vb1_im, txb1_re, txb1_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&va2_re, &va2_im, txa1_re, txa1_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&vb2_re, &vb2_im, txb1_re, txb1_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&va3_re, &va3_im, txa1_re, txa1_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&vb3_re, &vb3_im, txb1_re, txb1_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&va4_re, &va4_im, txa1_re, txa1_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&vb4_re, &vb4_im, txb1_re, txb1_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&va5_re, &va5_im, txa1_re, txa1_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&vb5_re, &vb5_im, txb1_re, txb1_im, rader_tw_re[4], rader_tw_im[4]);
-    
-    // Round 2: txa2 and txb2
-    cmul_add_fma_avx512_soa(&va0_re, &va0_im, txa2_re, txa2_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&vb0_re, &vb0_im, txb2_re, txb2_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&va1_re, &va1_im, txa2_re, txa2_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&vb1_re, &vb1_im, txb2_re, txb2_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&va2_re, &va2_im, txa2_re, txa2_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&vb2_re, &vb2_im, txb2_re, txb2_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&va3_re, &va3_im, txa2_re, txa2_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&vb3_re, &vb3_im, txb2_re, txb2_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&va4_re, &va4_im, txa2_re, txa2_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&vb4_re, &vb4_im, txb2_re, txb2_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&va5_re, &va5_im, txa2_re, txa2_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&vb5_re, &vb5_im, txb2_re, txb2_im, rader_tw_re[3], rader_tw_im[3]);
-    
-    // Round 3: txa3 and txb3
-    cmul_add_fma_avx512_soa(&va0_re, &va0_im, txa3_re, txa3_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&vb0_re, &vb0_im, txb3_re, txb3_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&va1_re, &va1_im, txa3_re, txa3_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&vb1_re, &vb1_im, txb3_re, txb3_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&va2_re, &va2_im, txa3_re, txa3_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&vb2_re, &vb2_im, txb3_re, txb3_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&va3_re, &va3_im, txa3_re, txa3_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&vb3_re, &vb3_im, txb3_re, txb3_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&va4_re, &va4_im, txa3_re, txa3_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&vb4_re, &vb4_im, txb3_re, txb3_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&va5_re, &va5_im, txa3_re, txa3_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&vb5_re, &vb5_im, txb3_re, txb3_im, rader_tw_re[2], rader_tw_im[2]);
-    
-    // Round 4: txa4 and txb4
-    cmul_add_fma_avx512_soa(&va0_re, &va0_im, txa4_re, txa4_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&vb0_re, &vb0_im, txb4_re, txb4_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&va1_re, &va1_im, txa4_re, txa4_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&vb1_re, &vb1_im, txb4_re, txb4_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&va2_re, &va2_im, txa4_re, txa4_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&vb2_re, &vb2_im, txb4_re, txb4_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&va3_re, &va3_im, txa4_re, txa4_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&vb3_re, &vb3_im, txb4_re, txb4_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&va4_re, &va4_im, txa4_re, txa4_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&vb4_re, &vb4_im, txb4_re, txb4_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&va5_re, &va5_im, txa4_re, txa4_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&vb5_re, &vb5_im, txb4_re, txb4_im, rader_tw_re[1], rader_tw_im[1]);
-    
-    // Round 5: txa5 and txb5
-    cmul_add_fma_avx512_soa(&va0_re, &va0_im, txa5_re, txa5_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&vb0_re, &vb0_im, txb5_re, txb5_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx512_soa(&va1_re, &va1_im, txa5_re, txa5_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&vb1_re, &vb1_im, txb5_re, txb5_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx512_soa(&va2_re, &va2_im, txa5_re, txa5_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&vb2_re, &vb2_im, txb5_re, txb5_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx512_soa(&va3_re, &va3_im, txa5_re, txa5_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&vb3_re, &vb3_im, txb5_re, txb5_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx512_soa(&va4_re, &va4_im, txa5_re, txa5_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&vb4_re, &vb4_im, txb5_re, txb5_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx512_soa(&va5_re, &va5_im, txa5_re, txa5_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx512_soa(&vb5_re, &vb5_im, txb5_re, txb5_im, rader_tw_re[0], rader_tw_im[0]);
-    
-    //==========================================================================
-    // ASSEMBLE OUTPUTS (A and B)
-    //==========================================================================
-    
-    __m512d ya1_re, ya1_im, ya2_re, ya2_im, ya3_re, ya3_im;
-    __m512d ya4_re, ya4_im, ya5_re, ya5_im, ya6_re, ya6_im;
-    
-    assemble_rader_outputs_avx512_soa(xa0_re, xa0_im,
-                                      va0_re, va0_im, va1_re, va1_im,
-                                      va2_re, va2_im, va3_re, va3_im,
-                                      va4_re, va4_im, va5_re, va5_im,
-                                      &ya1_re, &ya1_im, &ya2_re, &ya2_im,
-                                      &ya3_re, &ya3_im, &ya4_re, &ya4_im,
-                                      &ya5_re, &ya5_im, &ya6_re, &ya6_im);
-    
-    __m512d yb1_re, yb1_im, yb2_re, yb2_im, yb3_re, yb3_im;
-    __m512d yb4_re, yb4_im, yb5_re, yb5_im, yb6_re, yb6_im;
-    
-    assemble_rader_outputs_avx512_soa(xb0_re, xb0_im,
-                                      vb0_re, vb0_im, vb1_re, vb1_im,
-                                      vb2_re, vb2_im, vb3_re, vb3_im,
-                                      vb4_re, vb4_im, vb5_re, vb5_im,
-                                      &yb1_re, &yb1_im, &yb2_re, &yb2_im,
-                                      &yb3_re, &yb3_im, &yb4_re, &yb4_im,
-                                      &yb5_re, &yb5_im, &yb6_re, &yb6_im);
-    
-    //==========================================================================
-    // STORE RESULTS (A and B)
-    //==========================================================================
-    
-    if (use_nt)
-    {
-        store_7_lanes_avx512_stream_soa(ka, K, out_re, out_im,
-                                        ya0_re, ya0_im, ya1_re, ya1_im,
-                                        ya2_re, ya2_im, ya3_re, ya3_im,
-                                        ya4_re, ya4_im, ya5_re, ya5_im,
-                                        ya6_re, ya6_im);
-        
-        store_7_lanes_avx512_stream_soa(kb, K, out_re, out_im,
-                                        yb0_re, yb0_im, yb1_re, yb1_im,
-                                        yb2_re, yb2_im, yb3_re, yb3_im,
-                                        yb4_re, yb4_im, yb5_re, yb5_im,
-                                        yb6_re, yb6_im);
-    }
-    else
-    {
-        store_7_lanes_avx512_soa(ka, K, out_re, out_im,
-                                 ya0_re, ya0_im, ya1_re, ya1_im,
-                                 ya2_re, ya2_im, ya3_re, ya3_im,
-                                 ya4_re, ya4_im, ya5_re, ya5_im,
-                                 ya6_re, ya6_im);
-        
-        store_7_lanes_avx512_soa(kb, K, out_re, out_im,
-                                 yb0_re, yb0_im, yb1_re, yb1_im,
-                                 yb2_re, yb2_im, yb3_re, yb3_im,
-                                 yb4_re, yb4_im, yb5_re, yb5_im,
-                                 yb6_re, yb6_im);
-    }
-}
-
-//==============================================================================
-// STAGE DISPATCHER - LLC-AWARE NT HEURISTIC
-//==============================================================================
-
-/**
- * @brief Execute radix-7 stage with optimal dispatch
- * @details
- * Dispatches to:
- * - U2 path for main loop (k, k+16)
- * - Single path for tail (k < 16 remaining)
- * - Scalar fallback for misaligned or very small K
- * 
- * NT store decision:
- * - Enabled if: bytes_written > R7_AVX512_NT_THRESHOLD * LLC
- * - Requires: K >= R7_AVX512_NT_MIN_K and 64-byte alignment
- * - Fence: Single _mm_sfence() after all NT stores (not per iteration!)
- * 
- * @param K Number of butterflies
- * @param in_re Input real components (64-byte aligned)
- * @param in_im Input imaginary components (64-byte aligned)
- * @param stage_tw Stage twiddle factors (blocked SoA, 64-byte aligned)
- * @param rader_tw Rader twiddle factors (6 complex values)
- * @param out_re Output real components (64-byte aligned)
- * @param out_im Output imaginary components (64-byte aligned)
- * @param sub_len Sub-transform length
- */
-static void radix7_stage_avx512_soa(
-    int K,
-    const double * restrict in_re,
-    const double * restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    const fft_twiddle_soa *rader_tw,
-    double * restrict out_re,
-    double * restrict out_im,
-    int sub_len)
-{
-    // Verify alignment (debug/production check)
-    if (!verify_r7_alignment(in_re, in_im, out_re, out_im))
-    {
-        // Fallback to scalar for misaligned (should not happen in production!)
-        // Would call scalar version here
-        return;
-    }
-    
-    // Broadcast Rader twiddles ONCE for entire stage (P0 optimization!)
-    __m512d rader_tw_re[6], rader_tw_im[6];
-    broadcast_rader_twiddles_avx512_soa(rader_tw, rader_tw_re, rader_tw_im);
-    
-    // Decide on non-temporal stores
-    size_t bytes_per_stage = (size_t)K * 7 * 2 * sizeof(double);  // 7 lanes, 2 components
-    bool use_nt = (bytes_per_stage > (size_t)(R7_AVX512_NT_THRESHOLD * R7_AVX512_LLC_BYTES)) &&
-                  (K >= R7_AVX512_NT_MIN_K);
-    
-    // Check for environment variable override (for tuning)
-    const char *nt_env = getenv("FFT_R7_NT");
-    if (nt_env != NULL)
-    {
-        use_nt = (atoi(nt_env) != 0);
-    }
-    
-    // Determine if stage is "large" for prefetch hint selection
-    bool large_stage = (K >= R7_AVX512_LARGE_STAGE_K);
-    
-    int k = 0;
-    
-    // Main U2 loop: process 16 elements per iteration (2 butterflies × 8 wide)
-    for (; k <= K - R7_AVX512_U2_WIDTH; k += R7_AVX512_U2_WIDTH)
-    {
-        // Prefetch ahead
-        prefetch_7_lanes_avx512_soa(k, K, in_re, in_im, stage_tw, sub_len, large_stage);
-        
-        // Process two butterflies simultaneously
-        radix7_butterfly_dual_avx512_soa(k, k + R7_AVX512_WIDTH, K,
-                                         in_re, in_im, stage_tw,
-                                         rader_tw_re, rader_tw_im,
-                                         out_re, out_im, sub_len, use_nt);
-    }
-    
-    // Tail loop: single butterflies (8 elements at a time)
-    for (; k <= K - R7_AVX512_WIDTH; k += R7_AVX512_WIDTH)
-    {
-        radix7_butterfly_single_avx512_soa(k, K, in_re, in_im, stage_tw,
-                                           rader_tw_re, rader_tw_im,
-                                           out_re, out_im, sub_len, use_nt);
-    }
-    
-    // Remainder: scalar fallback (k < 8 remaining)
-    // Would call scalar version here for k..K-1
-    
-    // Fence after NT stores (once per stage, not per iteration!)
-    if (use_nt)
-    {
-        _mm_sfence();
-    }
-}
-
-#endif // FFT_RADIX7_AVX512_H
+#endif /* __AVX512F__ */
+#endif /* FFT_RADIX7_AVX512_H */

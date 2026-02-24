@@ -33,15 +33,15 @@
 /*   →  1  5  4  6  2  3                */
 
 /* DFT3 constants */
-#define R7_C3   (-0.5)                          /* cos(2π/3)   */
-#define R7_S3   (0.86602540378443864676)        /* sin(2π/3)   */
+#define R7_C3 (-0.5)                   /* cos(2π/3)   */
+#define R7_S3 (0.86602540378443864676) /* sin(2π/3)   */
 
 /* DFT6 inter-stage twiddles (W6^k) */
 /* W6^1 = ( 0.5, -√3/2)  W6^2 = (-0.5, -√3/2) */
-#define R7_W6_1_RE  (0.5)
-#define R7_W6_1_IM  (-0.86602540378443864676)
-#define R7_W6_2_RE  (-0.5)
-#define R7_W6_2_IM  (-0.86602540378443864676)
+#define R7_W6_1_RE (0.5)
+#define R7_W6_1_IM (-0.86602540378443864676)
+#define R7_W6_2_RE (-0.5)
+#define R7_W6_2_IM (-0.86602540378443864676)
 
 /* Forward Rader kernel: DFT6(time_reverse(b_fwd)) / 6 */
 static const double RK7_FWD_RE[6] = {
@@ -50,16 +50,14 @@ static const double RK7_FWD_RE[6] = {
     +3.95078234262700001000e-01,
     +1.85037170770859413132e-17,
     +3.95078234262699945489e-01,
-    -4.06688893057589151425e-01
-};
+    -4.06688893057589151425e-01};
 static const double RK7_FWD_IM[6] = {
     -9.25185853854297065662e-18,
     -1.70436465311965518188e-01,
     -1.95851048647464526242e-01,
     -4.40958551844098212147e-01,
     +1.95851048647464942576e-01,
-    -1.70436465311965684721e-01
-};
+    -1.70436465311965684721e-01};
 
 /* Backward Rader kernel: DFT6(time_reverse(b_bwd)) / 6 */
 static const double RK7_BWD_RE[6] = {
@@ -68,24 +66,21 @@ static const double RK7_BWD_RE[6] = {
     +3.95078234262700167534e-01,
     +9.25185853854297158106e-17,
     +3.95078234262700223045e-01,
-    +4.06688893057589540003e-01
-};
+    +4.06688893057589540003e-01};
 static const double RK7_BWD_IM[6] = {
     +9.25185853854297065662e-18,
     +1.70436465311965656966e-01,
     -1.95851048647464304198e-01,
     +4.40958551844098767258e-01,
     +1.95851048647464359709e-01,
-    +1.70436465311965323899e-01
-};
+    +1.70436465311965323899e-01};
 
 /* ================================================================== */
 /*  Scalar complex multiply                                            */
 /* ================================================================== */
 
-static inline __attribute__((always_inline))
-void cmul_scalar(double ar, double ai, double br, double bi,
-                 double *cr, double *ci)
+static inline __attribute__((always_inline)) void cmul_scalar(double ar, double ai, double br, double bi,
+                                                              double *cr, double *ci)
 {
     *cr = ar * br - ai * bi;
     *ci = ar * bi + ai * br;
@@ -100,13 +95,12 @@ void cmul_scalar(double ar, double ai, double br, double bi,
 /*            X[k+3] = E[k] - W6^k · O[k]                            */
 /* ================================================================== */
 
-static inline __attribute__((always_inline))
-void dft6_forward_scalar(const double xr[6], const double xi[6],
-                         double Xr[6], double Xi[6])
+static inline __attribute__((always_inline)) void dft6_forward_scalar(const double xr[6], const double xi[6],
+                                                                      double Xr[6], double Xi[6])
 {
     /* --- DFT3 on even indices (0,2,4) → E[0..2] --- */
-    double se_r = xr[2] + xr[4],  se_i = xi[2] + xi[4];
-    double de_r = xr[2] - xr[4],  de_i = xi[2] - xi[4];
+    double se_r = xr[2] + xr[4], se_i = xi[2] + xi[4];
+    double de_r = xr[2] - xr[4], de_i = xi[2] - xi[4];
 
     double E0r = xr[0] + se_r;
     double E0i = xi[0] + se_i;
@@ -119,8 +113,8 @@ void dft6_forward_scalar(const double xr[6], const double xi[6],
     double E2i = base_ei + R7_S3 * de_r;
 
     /* --- DFT3 on odd indices (1,3,5) → O[0..2] --- */
-    double so_r = xr[3] + xr[5],  so_i = xi[3] + xi[5];
-    double do_r = xr[3] - xr[5],  do_i = xi[3] - xi[5];
+    double so_r = xr[3] + xr[5], so_i = xi[3] + xi[5];
+    double do_r = xr[3] - xr[5], do_i = xi[3] - xi[5];
 
     double O0r = xr[1] + so_r;
     double O0i = xi[1] + so_i;
@@ -133,33 +127,38 @@ void dft6_forward_scalar(const double xr[6], const double xi[6],
 
     /* --- DFT2 recombination with W6 twiddles --- */
     /* k=0: W6^0 = 1 */
-    Xr[0] = E0r + O0r;  Xi[0] = E0i + O0i;
-    Xr[3] = E0r - O0r;  Xi[3] = E0i - O0i;
+    Xr[0] = E0r + O0r;
+    Xi[0] = E0i + O0i;
+    Xr[3] = E0r - O0r;
+    Xi[3] = E0i - O0i;
 
     /* k=1: W6^1 = (0.5, -S3) */
     double T1r, T1i;
     cmul_scalar(O1r, O1i, R7_W6_1_RE, R7_W6_1_IM, &T1r, &T1i);
-    Xr[1] = E1r + T1r;  Xi[1] = E1i + T1i;
-    Xr[4] = E1r - T1r;  Xi[4] = E1i - T1i;
+    Xr[1] = E1r + T1r;
+    Xi[1] = E1i + T1i;
+    Xr[4] = E1r - T1r;
+    Xi[4] = E1i - T1i;
 
     /* k=2: W6^2 = (-0.5, -S3) */
     double T2r, T2i;
     cmul_scalar(O2r, O2i, R7_W6_2_RE, R7_W6_2_IM, &T2r, &T2i);
-    Xr[2] = E2r + T2r;  Xi[2] = E2i + T2i;
-    Xr[5] = E2r - T2r;  Xi[5] = E2i - T2i;
+    Xr[2] = E2r + T2r;
+    Xi[2] = E2i + T2i;
+    Xr[5] = E2r - T2r;
+    Xi[5] = E2i - T2i;
 }
 
 /* ================================================================== */
 /*  Inline DFT6 (backward):  same structure, conjugate twiddles        */
 /* ================================================================== */
 
-static inline __attribute__((always_inline))
-void dft6_backward_scalar(const double xr[6], const double xi[6],
-                          double Xr[6], double Xi[6])
+static inline __attribute__((always_inline)) void dft6_backward_scalar(const double xr[6], const double xi[6],
+                                                                       double Xr[6], double Xi[6])
 {
     /* --- DFT3 backward on even indices (sign flip on cross-term) --- */
-    double se_r = xr[2] + xr[4],  se_i = xi[2] + xi[4];
-    double de_r = xr[2] - xr[4],  de_i = xi[2] - xi[4];
+    double se_r = xr[2] + xr[4], se_i = xi[2] + xi[4];
+    double de_r = xr[2] - xr[4], de_i = xi[2] - xi[4];
 
     double E0r = xr[0] + se_r;
     double E0i = xi[0] + se_i;
@@ -172,8 +171,8 @@ void dft6_backward_scalar(const double xr[6], const double xi[6],
     double E2i = base_ei - R7_S3 * de_r;
 
     /* --- DFT3 backward on odd indices --- */
-    double so_r = xr[3] + xr[5],  so_i = xi[3] + xi[5];
-    double do_r = xr[3] - xr[5],  do_i = xi[3] - xi[5];
+    double so_r = xr[3] + xr[5], so_i = xi[3] + xi[5];
+    double do_r = xr[3] - xr[5], do_i = xi[3] - xi[5];
 
     double O0r = xr[1] + so_r;
     double O0i = xi[1] + so_i;
@@ -185,20 +184,26 @@ void dft6_backward_scalar(const double xr[6], const double xi[6],
     double O2i = base_oi - R7_S3 * do_r;
 
     /* --- DFT2 with conjugate W6 twiddles --- */
-    Xr[0] = E0r + O0r;  Xi[0] = E0i + O0i;
-    Xr[3] = E0r - O0r;  Xi[3] = E0i - O0i;
+    Xr[0] = E0r + O0r;
+    Xi[0] = E0i + O0i;
+    Xr[3] = E0r - O0r;
+    Xi[3] = E0i - O0i;
 
     /* W6_bwd^1 = (0.5, +S3) */
     double T1r, T1i;
     cmul_scalar(O1r, O1i, R7_W6_1_RE, -R7_W6_1_IM, &T1r, &T1i);
-    Xr[1] = E1r + T1r;  Xi[1] = E1i + T1i;
-    Xr[4] = E1r - T1r;  Xi[4] = E1i - T1i;
+    Xr[1] = E1r + T1r;
+    Xi[1] = E1i + T1i;
+    Xr[4] = E1r - T1r;
+    Xi[4] = E1i - T1i;
 
     /* W6_bwd^2 = (-0.5, +S3) */
     double T2r, T2i;
     cmul_scalar(O2r, O2i, R7_W6_2_RE, -R7_W6_2_IM, &T2r, &T2i);
-    Xr[2] = E2r + T2r;  Xi[2] = E2i + T2i;
-    Xr[5] = E2r - T2r;  Xi[5] = E2i - T2i;
+    Xr[2] = E2r + T2r;
+    Xi[2] = E2i + T2i;
+    Xr[5] = E2r - T2r;
+    Xi[5] = E2i - T2i;
 }
 
 /* ================================================================== */
@@ -208,15 +213,14 @@ void dft6_backward_scalar(const double xr[6], const double xi[6],
 /*  Input/output: base-pointer + k indexing, stride implicit.          */
 /* ================================================================== */
 
-static inline __attribute__((always_inline))
-void radix7_rader_fwd_scalar_1(
-    const double *a_re, const double *a_im,   /* x0 */
-    const double *b_re, const double *b_im,   /* x1 */
-    const double *c_re, const double *c_im,   /* x2 */
-    const double *d_re, const double *d_im,   /* x3 */
-    const double *e_re, const double *e_im,   /* x4 */
-    const double *f_re, const double *f_im,   /* x5 */
-    const double *g_re, const double *g_im,   /* x6 */
+static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_1(
+    const double *a_re, const double *a_im, /* x0 */
+    const double *b_re, const double *b_im, /* x1 */
+    const double *c_re, const double *c_im, /* x2 */
+    const double *d_re, const double *d_im, /* x3 */
+    const double *e_re, const double *e_im, /* x4 */
+    const double *f_re, const double *f_im, /* x5 */
+    const double *g_re, const double *g_im, /* x6 */
     double *y0_re, double *y0_im,
     double *y1_re, double *y1_im,
     double *y2_re, double *y2_im,
@@ -229,7 +233,8 @@ void radix7_rader_fwd_scalar_1(
     const double *tw3_re, const double *tw3_im,
     int K)
 {
-    for (int k = 0; k < K; k++) {
+    for (int k = 0; k < K; k++)
+    {
         /* ---- Load x[0] ---- */
         double x0r = a_re[k], x0i = a_im[k];
 
@@ -264,12 +269,18 @@ void radix7_rader_fwd_scalar_1(
         /* ---- Rader input permutation: a[q] = t[perm[q]] ---- */
         /* perm = {1, 3, 2, 6, 4, 5} */
         double ar[6], ai[6];
-        ar[0] = t1r;  ai[0] = t1i;   /* t[1] */
-        ar[1] = t3r;  ai[1] = t3i;   /* t[3] */
-        ar[2] = t2r;  ai[2] = t2i;   /* t[2] */
-        ar[3] = t6r;  ai[3] = t6i;   /* t[6] */
-        ar[4] = t4r;  ai[4] = t4i;   /* t[4] */
-        ar[5] = t5r;  ai[5] = t5i;   /* t[5] */
+        ar[0] = t1r;
+        ai[0] = t1i; /* t[1] */
+        ar[1] = t3r;
+        ai[1] = t3i; /* t[3] */
+        ar[2] = t2r;
+        ai[2] = t2i; /* t[2] */
+        ar[3] = t6r;
+        ai[3] = t6i; /* t[6] */
+        ar[4] = t4r;
+        ai[4] = t4i; /* t[4] */
+        ar[5] = t5r;
+        ai[5] = t5i; /* t[5] */
 
         /* ---- Forward DFT6 ---- */
         double Ar[6], Ai[6];
@@ -277,7 +288,8 @@ void radix7_rader_fwd_scalar_1(
 
         /* ---- Pointwise multiply with forward kernel ---- */
         double Cr[6], Ci[6];
-        for (int j = 0; j < 6; j++) {
+        for (int j = 0; j < 6; j++)
+        {
             cmul_scalar(Ar[j], Ai[j], RK7_FWD_RE[j], RK7_FWD_IM[j],
                         &Cr[j], &Ci[j]);
         }
@@ -288,12 +300,18 @@ void radix7_rader_fwd_scalar_1(
 
         /* ---- Output un-permute: Y[inv_perm[s]] = x0 + c[s] ---- */
         /* inv_perm = {1, 5, 4, 6, 2, 3} */
-        y1_re[k] = x0r + cr[0];  y1_im[k] = x0i + ci[0];  /* s=0 → m=1 */
-        y5_re[k] = x0r + cr[1];  y5_im[k] = x0i + ci[1];  /* s=1 → m=5 */
-        y4_re[k] = x0r + cr[2];  y4_im[k] = x0i + ci[2];  /* s=2 → m=4 */
-        y6_re[k] = x0r + cr[3];  y6_im[k] = x0i + ci[3];  /* s=3 → m=6 */
-        y2_re[k] = x0r + cr[4];  y2_im[k] = x0i + ci[4];  /* s=4 → m=2 */
-        y3_re[k] = x0r + cr[5];  y3_im[k] = x0i + ci[5];  /* s=5 → m=3 */
+        y1_re[k] = x0r + cr[0];
+        y1_im[k] = x0i + ci[0]; /* s=0 → m=1 */
+        y5_re[k] = x0r + cr[1];
+        y5_im[k] = x0i + ci[1]; /* s=1 → m=5 */
+        y4_re[k] = x0r + cr[2];
+        y4_im[k] = x0i + ci[2]; /* s=2 → m=4 */
+        y6_re[k] = x0r + cr[3];
+        y6_im[k] = x0i + ci[3]; /* s=3 → m=6 */
+        y2_re[k] = x0r + cr[4];
+        y2_im[k] = x0i + ci[4]; /* s=4 → m=2 */
+        y3_re[k] = x0r + cr[5];
+        y3_im[k] = x0i + ci[5]; /* s=5 → m=3 */
     }
 }
 
@@ -301,8 +319,7 @@ void radix7_rader_fwd_scalar_1(
 /*  Rader radix-7 butterfly — scalar, backward, with twiddles          */
 /* ================================================================== */
 
-static inline __attribute__((always_inline))
-void radix7_rader_bwd_scalar_1(
+static inline __attribute__((always_inline)) void radix7_rader_bwd_scalar_1(
     const double *a_re, const double *a_im,
     const double *b_re, const double *b_im,
     const double *c_re, const double *c_im,
@@ -322,7 +339,8 @@ void radix7_rader_bwd_scalar_1(
     const double *tw3_re, const double *tw3_im,
     int K)
 {
-    for (int k = 0; k < K; k++) {
+    for (int k = 0; k < K; k++)
+    {
         /* ---- Step 1: Backward Rader on raw inputs (no twiddle) ---- */
         double x0r = a_re[k], x0i = a_im[k];
         double t1r = b_re[k], t1i = b_im[k];
@@ -338,18 +356,25 @@ void radix7_rader_bwd_scalar_1(
 
         /* Rader permute + backward convolution */
         double ar[6], ai[6];
-        ar[0] = t1r;  ai[0] = t1i;
-        ar[1] = t3r;  ai[1] = t3i;
-        ar[2] = t2r;  ai[2] = t2i;
-        ar[3] = t6r;  ai[3] = t6i;
-        ar[4] = t4r;  ai[4] = t4i;
-        ar[5] = t5r;  ai[5] = t5i;
+        ar[0] = t1r;
+        ai[0] = t1i;
+        ar[1] = t3r;
+        ai[1] = t3i;
+        ar[2] = t2r;
+        ai[2] = t2i;
+        ar[3] = t6r;
+        ai[3] = t6i;
+        ar[4] = t4r;
+        ai[4] = t4i;
+        ar[5] = t5r;
+        ai[5] = t5i;
 
         double Ar[6], Ai[6];
         dft6_forward_scalar(ar, ai, Ar, Ai);
 
         double Cr[6], Ci[6];
-        for (int j = 0; j < 6; j++) {
+        for (int j = 0; j < 6; j++)
+        {
             cmul_scalar(Ar[j], Ai[j], RK7_BWD_RE[j], RK7_BWD_IM[j],
                         &Cr[j], &Ci[j]);
         }
@@ -359,13 +384,13 @@ void radix7_rader_bwd_scalar_1(
 
         /* Raw IDFT7 outputs (before twiddle) */
         /* inv_perm = {1,5,4,6,2,3} */
-        double r0r = dcr,          r0i = dci;
-        double r1r = x0r + cr[0],  r1i = x0i + ci[0];  /* m=1 */
-        double r5r = x0r + cr[1],  r5i = x0i + ci[1];  /* m=5 */
-        double r4r = x0r + cr[2],  r4i = x0i + ci[2];  /* m=4 */
-        double r6r = x0r + cr[3],  r6i = x0i + ci[3];  /* m=6 */
-        double r2r = x0r + cr[4],  r2i = x0i + ci[4];  /* m=2 */
-        double r3r = x0r + cr[5],  r3i = x0i + ci[5];  /* m=3 */
+        double r0r = dcr, r0i = dci;
+        double r1r = x0r + cr[0], r1i = x0i + ci[0]; /* m=1 */
+        double r5r = x0r + cr[1], r5i = x0i + ci[1]; /* m=5 */
+        double r4r = x0r + cr[2], r4i = x0i + ci[2]; /* m=4 */
+        double r6r = x0r + cr[3], r6i = x0i + ci[3]; /* m=6 */
+        double r2r = x0r + cr[4], r2i = x0i + ci[4]; /* m=2 */
+        double r3r = x0r + cr[5], r3i = x0i + ci[5]; /* m=3 */
 
         /* ---- Step 2: Apply conj twiddles AFTER IDFT ---- */
         /* W0=1, W1, W2, W3, W4=W1·W3, W5=W2·W3, W6=W3² */
@@ -378,7 +403,8 @@ void radix7_rader_bwd_scalar_1(
         cmul_scalar(w2r, w2i, w3r, w3i, &w5r, &w5i);
         cmul_scalar(w3r, w3i, w3r, w3i, &w6r, &w6i);
 
-        y0_re[k] = r0r;  y0_im[k] = r0i;  /* W0=1, no multiply */
+        y0_re[k] = r0r;
+        y0_im[k] = r0i; /* W0=1, no multiply */
         cmul_scalar(r1r, r1i, w1r, -w1i, &y1_re[k], &y1_im[k]);
         cmul_scalar(r2r, r2i, w2r, -w2i, &y2_re[k], &y2_im[k]);
         cmul_scalar(r3r, r3i, w3r, -w3i, &y3_re[k], &y3_im[k]);
@@ -392,8 +418,7 @@ void radix7_rader_bwd_scalar_1(
 /*  N1 variants — no twiddles (K=1 stage, all twiddles = 1)            */
 /* ================================================================== */
 
-static inline __attribute__((always_inline))
-void radix7_rader_fwd_scalar_N1(
+static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_N1(
     const double *a_re, const double *a_im,
     const double *b_re, const double *b_im,
     const double *c_re, const double *c_im,
@@ -410,7 +435,8 @@ void radix7_rader_fwd_scalar_N1(
     double *y6_re, double *y6_im,
     int K)
 {
-    for (int k = 0; k < K; k++) {
+    for (int k = 0; k < K; k++)
+    {
         double x0r = a_re[k], x0i = a_im[k];
         double t1r = b_re[k], t1i = b_im[k];
         double t2r = c_re[k], t2i = c_im[k];
@@ -423,18 +449,25 @@ void radix7_rader_fwd_scalar_N1(
         y0_im[k] = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
 
         double ar[6], ai[6];
-        ar[0] = t1r;  ai[0] = t1i;
-        ar[1] = t3r;  ai[1] = t3i;
-        ar[2] = t2r;  ai[2] = t2i;
-        ar[3] = t6r;  ai[3] = t6i;
-        ar[4] = t4r;  ai[4] = t4i;
-        ar[5] = t5r;  ai[5] = t5i;
+        ar[0] = t1r;
+        ai[0] = t1i;
+        ar[1] = t3r;
+        ai[1] = t3i;
+        ar[2] = t2r;
+        ai[2] = t2i;
+        ar[3] = t6r;
+        ai[3] = t6i;
+        ar[4] = t4r;
+        ai[4] = t4i;
+        ar[5] = t5r;
+        ai[5] = t5i;
 
         double Ar[6], Ai[6];
         dft6_forward_scalar(ar, ai, Ar, Ai);
 
         double Cr[6], Ci[6];
-        for (int j = 0; j < 6; j++) {
+        for (int j = 0; j < 6; j++)
+        {
             cmul_scalar(Ar[j], Ai[j], RK7_FWD_RE[j], RK7_FWD_IM[j],
                         &Cr[j], &Ci[j]);
         }
@@ -442,17 +475,22 @@ void radix7_rader_fwd_scalar_N1(
         double cr[6], ci[6];
         dft6_backward_scalar(Cr, Ci, cr, ci);
 
-        y1_re[k] = x0r + cr[0];  y1_im[k] = x0i + ci[0];
-        y5_re[k] = x0r + cr[1];  y5_im[k] = x0i + ci[1];
-        y4_re[k] = x0r + cr[2];  y4_im[k] = x0i + ci[2];
-        y6_re[k] = x0r + cr[3];  y6_im[k] = x0i + ci[3];
-        y2_re[k] = x0r + cr[4];  y2_im[k] = x0i + ci[4];
-        y3_re[k] = x0r + cr[5];  y3_im[k] = x0i + ci[5];
+        y1_re[k] = x0r + cr[0];
+        y1_im[k] = x0i + ci[0];
+        y5_re[k] = x0r + cr[1];
+        y5_im[k] = x0i + ci[1];
+        y4_re[k] = x0r + cr[2];
+        y4_im[k] = x0i + ci[2];
+        y6_re[k] = x0r + cr[3];
+        y6_im[k] = x0i + ci[3];
+        y2_re[k] = x0r + cr[4];
+        y2_im[k] = x0i + ci[4];
+        y3_re[k] = x0r + cr[5];
+        y3_im[k] = x0i + ci[5];
     }
 }
 
-static inline __attribute__((always_inline))
-void radix7_rader_bwd_scalar_N1(
+static inline __attribute__((always_inline)) void radix7_rader_bwd_scalar_N1(
     const double *a_re, const double *a_im,
     const double *b_re, const double *b_im,
     const double *c_re, const double *c_im,
@@ -469,7 +507,8 @@ void radix7_rader_bwd_scalar_N1(
     double *y6_re, double *y6_im,
     int K)
 {
-    for (int k = 0; k < K; k++) {
+    for (int k = 0; k < K; k++)
+    {
         double x0r = a_re[k], x0i = a_im[k];
         double t1r = b_re[k], t1i = b_im[k];
         double t2r = c_re[k], t2i = c_im[k];
@@ -482,18 +521,25 @@ void radix7_rader_bwd_scalar_N1(
         y0_im[k] = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
 
         double ar[6], ai[6];
-        ar[0] = t1r;  ai[0] = t1i;
-        ar[1] = t3r;  ai[1] = t3i;
-        ar[2] = t2r;  ai[2] = t2i;
-        ar[3] = t6r;  ai[3] = t6i;
-        ar[4] = t4r;  ai[4] = t4i;
-        ar[5] = t5r;  ai[5] = t5i;
+        ar[0] = t1r;
+        ai[0] = t1i;
+        ar[1] = t3r;
+        ai[1] = t3i;
+        ar[2] = t2r;
+        ai[2] = t2i;
+        ar[3] = t6r;
+        ai[3] = t6i;
+        ar[4] = t4r;
+        ai[4] = t4i;
+        ar[5] = t5r;
+        ai[5] = t5i;
 
         double Ar[6], Ai[6];
         dft6_forward_scalar(ar, ai, Ar, Ai);
 
         double Cr[6], Ci[6];
-        for (int j = 0; j < 6; j++) {
+        for (int j = 0; j < 6; j++)
+        {
             cmul_scalar(Ar[j], Ai[j], RK7_BWD_RE[j], RK7_BWD_IM[j],
                         &Cr[j], &Ci[j]);
         }
@@ -501,12 +547,18 @@ void radix7_rader_bwd_scalar_N1(
         double cr[6], ci[6];
         dft6_backward_scalar(Cr, Ci, cr, ci);
 
-        y1_re[k] = x0r + cr[0];  y1_im[k] = x0i + ci[0];
-        y5_re[k] = x0r + cr[1];  y5_im[k] = x0i + ci[1];
-        y4_re[k] = x0r + cr[2];  y4_im[k] = x0i + ci[2];
-        y6_re[k] = x0r + cr[3];  y6_im[k] = x0i + ci[3];
-        y2_re[k] = x0r + cr[4];  y2_im[k] = x0i + ci[4];
-        y3_re[k] = x0r + cr[5];  y3_im[k] = x0i + ci[5];
+        y1_re[k] = x0r + cr[0];
+        y1_im[k] = x0i + ci[0];
+        y5_re[k] = x0r + cr[1];
+        y5_im[k] = x0i + ci[1];
+        y4_re[k] = x0r + cr[2];
+        y4_im[k] = x0i + ci[2];
+        y6_re[k] = x0r + cr[3];
+        y6_im[k] = x0i + ci[3];
+        y2_re[k] = x0r + cr[4];
+        y2_im[k] = x0i + ci[4];
+        y3_re[k] = x0r + cr[5];
+        y3_im[k] = x0i + ci[5];
     }
 }
 
