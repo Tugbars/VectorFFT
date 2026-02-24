@@ -102,8 +102,6 @@ target_include_directories(radix3
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../common>
 )
 
-target_include_directories(test_radix3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
-
 target_compile_options(radix3 PRIVATE ${R3_C_FLAGS})
 
 if(NOT MSVC)

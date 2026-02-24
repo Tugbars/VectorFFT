@@ -13,10 +13,16 @@ if(NOT MSVC)
     find_library(R3_TEST_MATH_LIB m)
 endif()
 
+# Common include path (for vfft_compat.h)
+set(R3_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+
 # ── Standalone header test (always built, uses resolved ISA) ────────────────
 add_executable(test_radix3 test_radix3.c)
 target_compile_options(test_radix3 PRIVATE ${R3_C_FLAGS})
-target_include_directories(test_radix3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(test_radix3 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${R3_COMMON_DIR}
+)
 if(R3_TEST_MATH_LIB)
     target_link_libraries(test_radix3 PRIVATE ${R3_TEST_MATH_LIB})
 endif()
@@ -26,7 +32,10 @@ add_test(NAME test_radix3 COMMAND test_radix3)
 add_executable(test_radix3_drivers test_radix3_drivers.c)
 target_link_libraries(test_radix3_drivers PRIVATE radix3)
 target_compile_options(test_radix3_drivers PRIVATE ${R3_C_FLAGS})
-target_include_directories(test_radix3_drivers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(test_radix3_drivers PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${R3_COMMON_DIR}
+)
 if(R3_TEST_MATH_LIB)
     target_link_libraries(test_radix3_drivers PRIVATE ${R3_TEST_MATH_LIB})
 endif()
@@ -36,7 +45,10 @@ add_test(NAME test_radix3_drivers COMMAND test_radix3_drivers)
 add_executable(test_radix3_roundtrip_bench test_radix3_roundtrip_bench.c)
 target_link_libraries(test_radix3_roundtrip_bench PRIVATE radix3)
 target_compile_options(test_radix3_roundtrip_bench PRIVATE ${R3_C_FLAGS})
-target_include_directories(test_radix3_roundtrip_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(test_radix3_roundtrip_bench PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${R3_COMMON_DIR}
+)
 if(R3_TEST_MATH_LIB)
     target_link_libraries(test_radix3_roundtrip_bench PRIVATE ${R3_TEST_MATH_LIB})
 endif()
