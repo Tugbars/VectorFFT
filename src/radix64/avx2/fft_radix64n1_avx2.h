@@ -2,6 +2,7 @@
  * @file fft_radix64_avx2_n1.h
  * @brief Radix-64 N1 (Twiddle-less) AVX2 - 8×8 Cooley-Tukey [U=4 OPTIMIZED]
  *
+ * ✅ 4-wide vectors (4 doubles per YMM)
  * @details
  * CLEAN REBUILD - Follows scalar implementation exactly
  * U=4 OPTIMIZATION - m-stripmined for minimal register pressure
@@ -22,7 +23,6 @@
  *
  * AVX2 OPTIMIZATIONS:
  * ====================
- * ✅ 4-wide vectors (4 doubles per YMM)
  * ✅ 16 YMM registers (tight constraint!)
  * ✅ Main loop: k += 16 (U=4 with m-stripmining)
  * ✅ Register pressure optimized: ~14 YMM peak (fits in 16)
