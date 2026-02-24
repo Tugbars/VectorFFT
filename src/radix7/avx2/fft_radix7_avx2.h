@@ -1,1195 +1,862 @@
 /**
- * @file fft_radix7_avx2.h
- * @brief AVX2 Radix-7 Rader Butterfly - TRUE END-TO-END SoA with U2 Pipeline
+ * @file  fft_radix7_avx2.h
+ * @brief Radix-7 FFT butterfly using Rader's algorithm — AVX2 (4-wide)
  *
- * @details
- * ARCHITECTURAL REVOLUTION - Generation 3 (AVX2 Edition):
- * ===========================================================
- * ✅ TRUE SoA-in-register: re/im stay separate throughout (no interleave/deinterleave!)
- * ✅ Unit-stride loads: killed gathers for stage twiddles (10→3 cycle latency)
- * ✅ 4-wide processing: full 256-bit loads (4 doubles), not 2-wide with inserts
- * ✅ U2 pipeline: dual butterflies (k, k+4) for saturating dual FMA ports
- * ✅ Aligned loads/stores: guaranteed alignment, drop all unaligned variants
- * ✅ Active prefetching: T0 for inputs, T1 for large stage twiddles
- * ✅ NT stores: sophisticated LLC-aware heuristic with proper fencing
+ * OPTIMIZATIONS:
+ *   P0: Pre-split Rader broadcasts — kernel constants as aligned double[4]
+ *       quads.  _mm256_load_pd (ports 2/3) replaces broadcast_sd (port 5).
+ *       Frees port 5 for DFT6 shuffle work.  (~8-10% gain)
  *
- * ALL RADIX-7 OPTIMIZATIONS PRESERVED:
- * =====================================
- * ✅✅ P0: Pre-split Rader broadcasts (8-10% gain, 12 shuffles removed!)
- * ✅✅ P0: Round-robin convolution schedule (10-15% gain, maximized ILP!)
- * ✅✅ P1: Tree y0 sum (1-2% gain, reduced add latency!)
- * ✅ FMA instructions for all complex multiply
- * ✅ Rader permutations: input [1,3,2,6,4,5], output [1,5,4,6,2,3]
- * ✅ 6-point cyclic convolution with generator g=3
+ *   P0: Round-robin convolution — interleaves mul phases of independent
+ *       complex multiplies across 3-slot waves.  Saturates both FMA ports,
+ *       eliminates 2-cycle stalls between dependent pairs.  (~10-15% gain)
  *
- * TARGET: Modern x86-64 CPUs with AVX2+FMA (Haswell and later)
- * - 2× 256-bit FMA units (dual-issue on recent CPUs)
- * - 16 YMM registers (tighter than AVX-512!)
- * - 2 loads + 1 store per cycle
+ *   P1: Tree y0 sum — binary tree DC accumulation.  6-deep add chain → 3
+ *       levels.  (~1-2% gain)
  *
- * @author FFT Optimization Team
- * @version 4.0 (AVX2 TRUE SoA + U2)
- * @date 2025
+ * Register budget (16 YMM on AVX2):
+ *   12 DFT6 working set + 2 x0 + 2 temps = 16 at peak.
+ *   No U=2 pipeline (needs ~24 YMM → AVX-512 only).
  */
 
 #ifndef FFT_RADIX7_AVX2_H
 #define FFT_RADIX7_AVX2_H
 
+#ifdef __AVX2__
 #include <immintrin.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
 
-#include "../fft_radix7_uniform.h"
+#define R7_AVX2_VW 4
 
-//==============================================================================
-// CONFIGURATION FOR AVX2 PROCESSORS
-//==============================================================================
+/* ================================================================== */
+/*  Pre-split constant quads  (P0: load via p2/3 not broadcast p5)     */
+/* ================================================================== */
 
-/// Required alignment (32 bytes for AVX2)
-#define R7_AVX2_ALIGNMENT 32
+#define R7Q(name, v) \
+    static const double __attribute__((aligned(32))) name[4] = {v, v, v, v}
 
-/// Vector width: 4 doubles per YMM register
-#define R7_AVX2_WIDTH 4
+/* DFT3 */
+R7Q(R7_C3_Q, -0.5);
+R7Q(R7_S3_Q, 0.86602540378443864676);
 
-/// U2 pipeline: process 2 butterflies simultaneously
-#define R7_AVX2_U2_WIDTH (2 * R7_AVX2_WIDTH) // 8 elements per iteration
+/* W6 forward twiddles */
+R7Q(R7_W61R_Q, 0.5);
+R7Q(R7_W61I_Q, -0.86602540378443864676);
+R7Q(R7_W62R_Q, -0.5);
+R7Q(R7_W62I_Q, -0.86602540378443864676);
 
-/// Prefetch distance (in elements) - tuned for modern CPUs
-#define R7_AVX2_PREFETCH_DISTANCE 64
+/* W6 backward (conjugate) twiddles */
+R7Q(R7_W61I_NEG_Q, 0.86602540378443864676);
+R7Q(R7_W62I_NEG_Q, 0.86602540378443864676);
 
-/// Non-temporal store threshold (fraction of LLC)
-#define R7_AVX2_NT_THRESHOLD 0.7
+/* Forward Rader kernel: DFT6(time_reverse(b_fwd))/6 — 12 quads */
+R7Q(RK7_FR0, -1.66666666666666657415e-01);
+R7Q(RK7_FR1, +4.06688893057589595514e-01);
+R7Q(RK7_FR2, +3.95078234262700001000e-01);
+R7Q(RK7_FR3, +1.85037170770859413132e-17);
+R7Q(RK7_FR4, +3.95078234262699945489e-01);
+R7Q(RK7_FR5, -4.06688893057589151425e-01);
+R7Q(RK7_FI0, -9.25185853854297065662e-18);
+R7Q(RK7_FI1, -1.70436465311965518188e-01);
+R7Q(RK7_FI2, -1.95851048647464526242e-01);
+R7Q(RK7_FI3, -4.40958551844098212147e-01);
+R7Q(RK7_FI4, +1.95851048647464942576e-01);
+R7Q(RK7_FI5, -1.70436465311965684721e-01);
 
-/// Minimum K for enabling non-temporal stores
-#define R7_AVX2_NT_MIN_K 4096
+/* Backward Rader kernel: DFT6(time_reverse(b_bwd))/6 — 12 quads */
+R7Q(RK7_BR0, -1.66666666666666657415e-01);
+R7Q(RK7_BR1, -4.06688893057589595514e-01);
+R7Q(RK7_BR2, +3.95078234262700167534e-01);
+R7Q(RK7_BR3, +9.25185853854297158106e-17);
+R7Q(RK7_BR4, +3.95078234262700223045e-01);
+R7Q(RK7_BR5, +4.06688893057589540003e-01);
+R7Q(RK7_BI0, +9.25185853854297065662e-18);
+R7Q(RK7_BI1, +1.70436465311965656966e-01);
+R7Q(RK7_BI2, -1.95851048647464304198e-01);
+R7Q(RK7_BI3, +4.40958551844098767258e-01);
+R7Q(RK7_BI4, +1.95851048647464359709e-01);
+R7Q(RK7_BI5, +1.70436465311965323899e-01);
 
-/// LLC size in bytes (conservative default: 8 MB per core)
-#ifndef R7_AVX2_LLC_BYTES
-#define R7_AVX2_LLC_BYTES (8 * 1024 * 1024)
+#undef R7Q
+
+/* Scalar kernel arrays — for scalar tail fallbacks */
+static const double RK7A_FWD_RE[6] = {
+    -1.66666666666666657415e-01, +4.06688893057589595514e-01,
+    +3.95078234262700001000e-01, +1.85037170770859413132e-17,
+    +3.95078234262699945489e-01, -4.06688893057589151425e-01};
+static const double RK7A_FWD_IM[6] = {
+    -9.25185853854297065662e-18, -1.70436465311965518188e-01,
+    -1.95851048647464526242e-01, -4.40958551844098212147e-01,
+    +1.95851048647464942576e-01, -1.70436465311965684721e-01};
+static const double RK7A_BWD_RE[6] = {
+    -1.66666666666666657415e-01, -4.06688893057589595514e-01,
+    +3.95078234262700167534e-01, +9.25185853854297158106e-17,
+    +3.95078234262700223045e-01, +4.06688893057589540003e-01};
+static const double RK7A_BWD_IM[6] = {
+    +9.25185853854297065662e-18, +1.70436465311965656966e-01,
+    -1.95851048647464304198e-01, +4.40958551844098767258e-01,
+    +1.95851048647464359709e-01, +1.70436465311965323899e-01};
+
+/* ================================================================== */
+/*  AVX2 complex multiply (FMA)                                        */
+/* ================================================================== */
+
+#if defined(__FMA__)
+static inline __attribute__((always_inline)) void cmul_avx2_r7(__m256d ar, __m256d ai, __m256d wr, __m256d wi,
+                                                               __m256d *cr, __m256d *ci)
+{
+    __m256d t0 = _mm256_mul_pd(ai, wi);
+    *cr = _mm256_fmsub_pd(ar, wr, t0);
+    __m256d t1 = _mm256_mul_pd(ai, wr);
+    *ci = _mm256_fmadd_pd(ar, wi, t1);
+}
+#else
+static inline __attribute__((always_inline)) void cmul_avx2_r7(__m256d ar, __m256d ai, __m256d wr, __m256d wi,
+                                                               __m256d *cr, __m256d *ci)
+{
+    *cr = _mm256_sub_pd(_mm256_mul_pd(ar, wr), _mm256_mul_pd(ai, wi));
+    *ci = _mm256_add_pd(_mm256_mul_pd(ar, wi), _mm256_mul_pd(ai, wr));
+}
 #endif
 
-/// Cache line size
-#define R7_AVX2_CACHE_LINE 64
+/* ================================================================== */
+/*  DFT6 forward — pre-split constant loads                            */
+/* ================================================================== */
 
-/// Large stage twiddle threshold for prefetch hint selection
-#define R7_AVX2_LARGE_STAGE_K 2048
+#define DFT6_FWD_AVX2(x0r, x0i, x1r, x1i, x2r, x2i,         \
+                      x3r, x3i, x4r, x4i, x5r, x5i)         \
+    do                                                      \
+    {                                                       \
+        __m256d vC3 = _mm256_load_pd(R7_C3_Q);              \
+        __m256d vS3 = _mm256_load_pd(R7_S3_Q);              \
+        __m256d se_r = _mm256_add_pd(x2r, x4r);             \
+        __m256d se_i = _mm256_add_pd(x2i, x4i);             \
+        __m256d de_r = _mm256_sub_pd(x2r, x4r);             \
+        __m256d de_i = _mm256_sub_pd(x2i, x4i);             \
+        __m256d E0r = _mm256_add_pd(x0r, se_r);             \
+        __m256d E0i = _mm256_add_pd(x0i, se_i);             \
+        __m256d be_r = _mm256_fmadd_pd(vC3, se_r, x0r);     \
+        __m256d be_i = _mm256_fmadd_pd(vC3, se_i, x0i);     \
+        __m256d E1r = _mm256_fmadd_pd(vS3, de_i, be_r);     \
+        __m256d E1i = _mm256_fnmadd_pd(vS3, de_r, be_i);    \
+        __m256d E2r = _mm256_fnmadd_pd(vS3, de_i, be_r);    \
+        __m256d E2i = _mm256_fmadd_pd(vS3, de_r, be_i);     \
+        __m256d so_r = _mm256_add_pd(x3r, x5r);             \
+        __m256d so_i = _mm256_add_pd(x3i, x5i);             \
+        __m256d do_r = _mm256_sub_pd(x3r, x5r);             \
+        __m256d do_i = _mm256_sub_pd(x3i, x5i);             \
+        __m256d O0r = _mm256_add_pd(x1r, so_r);             \
+        __m256d O0i = _mm256_add_pd(x1i, so_i);             \
+        __m256d bo_r = _mm256_fmadd_pd(vC3, so_r, x1r);     \
+        __m256d bo_i = _mm256_fmadd_pd(vC3, so_i, x1i);     \
+        __m256d O1r = _mm256_fmadd_pd(vS3, do_i, bo_r);     \
+        __m256d O1i = _mm256_fnmadd_pd(vS3, do_r, bo_i);    \
+        __m256d O2r = _mm256_fnmadd_pd(vS3, do_i, bo_r);    \
+        __m256d O2i = _mm256_fmadd_pd(vS3, do_r, bo_i);     \
+        x0r = _mm256_add_pd(E0r, O0r);                      \
+        x0i = _mm256_add_pd(E0i, O0i);                      \
+        x3r = _mm256_sub_pd(E0r, O0r);                      \
+        x3i = _mm256_sub_pd(E0i, O0i);                      \
+        {                                                   \
+            __m256d vW1r = _mm256_load_pd(R7_W61R_Q);       \
+            __m256d vW1i = _mm256_load_pd(R7_W61I_Q);       \
+            __m256d T1r, T1i;                               \
+            cmul_avx2_r7(O1r, O1i, vW1r, vW1i, &T1r, &T1i); \
+            x1r = _mm256_add_pd(E1r, T1r);                  \
+            x1i = _mm256_add_pd(E1i, T1i);                  \
+            x4r = _mm256_sub_pd(E1r, T1r);                  \
+            x4i = _mm256_sub_pd(E1i, T1i);                  \
+        }                                                   \
+        {                                                   \
+            __m256d vW2r = _mm256_load_pd(R7_W62R_Q);       \
+            __m256d vW2i = _mm256_load_pd(R7_W62I_Q);       \
+            __m256d T2r, T2i;                               \
+            cmul_avx2_r7(O2r, O2i, vW2r, vW2i, &T2r, &T2i); \
+            x2r = _mm256_add_pd(E2r, T2r);                  \
+            x2i = _mm256_add_pd(E2i, T2i);                  \
+            x5r = _mm256_sub_pd(E2r, T2r);                  \
+            x5i = _mm256_sub_pd(E2i, T2i);                  \
+        }                                                   \
+    } while (0)
 
-//==============================================================================
-// ALIGNMENT HELPERS
-//==============================================================================
+/* ================================================================== */
+/*  DFT6 backward — conjugate twiddles, pre-split loads                */
+/* ================================================================== */
 
-/**
- * @brief Check if pointer is aligned to 32 bytes
- */
-__attribute__((always_inline)) static inline bool is_aligned_32(const void *ptr)
+#define DFT6_BWD_AVX2(x0r, x0i, x1r, x1i, x2r, x2i,         \
+                      x3r, x3i, x4r, x4i, x5r, x5i)         \
+    do                                                      \
+    {                                                       \
+        __m256d vC3 = _mm256_load_pd(R7_C3_Q);              \
+        __m256d vS3 = _mm256_load_pd(R7_S3_Q);              \
+        __m256d se_r = _mm256_add_pd(x2r, x4r);             \
+        __m256d se_i = _mm256_add_pd(x2i, x4i);             \
+        __m256d de_r = _mm256_sub_pd(x2r, x4r);             \
+        __m256d de_i = _mm256_sub_pd(x2i, x4i);             \
+        __m256d E0r = _mm256_add_pd(x0r, se_r);             \
+        __m256d E0i = _mm256_add_pd(x0i, se_i);             \
+        __m256d be_r = _mm256_fmadd_pd(vC3, se_r, x0r);     \
+        __m256d be_i = _mm256_fmadd_pd(vC3, se_i, x0i);     \
+        __m256d E1r = _mm256_fnmadd_pd(vS3, de_i, be_r);    \
+        __m256d E1i = _mm256_fmadd_pd(vS3, de_r, be_i);     \
+        __m256d E2r = _mm256_fmadd_pd(vS3, de_i, be_r);     \
+        __m256d E2i = _mm256_fnmadd_pd(vS3, de_r, be_i);    \
+        __m256d so_r = _mm256_add_pd(x3r, x5r);             \
+        __m256d so_i = _mm256_add_pd(x3i, x5i);             \
+        __m256d do_r = _mm256_sub_pd(x3r, x5r);             \
+        __m256d do_i = _mm256_sub_pd(x3i, x5i);             \
+        __m256d O0r = _mm256_add_pd(x1r, so_r);             \
+        __m256d O0i = _mm256_add_pd(x1i, so_i);             \
+        __m256d bo_r = _mm256_fmadd_pd(vC3, so_r, x1r);     \
+        __m256d bo_i = _mm256_fmadd_pd(vC3, so_i, x1i);     \
+        __m256d O1r = _mm256_fnmadd_pd(vS3, do_i, bo_r);    \
+        __m256d O1i = _mm256_fmadd_pd(vS3, do_r, bo_i);     \
+        __m256d O2r = _mm256_fmadd_pd(vS3, do_i, bo_r);     \
+        __m256d O2i = _mm256_fnmadd_pd(vS3, do_r, bo_i);    \
+        x0r = _mm256_add_pd(E0r, O0r);                      \
+        x0i = _mm256_add_pd(E0i, O0i);                      \
+        x3r = _mm256_sub_pd(E0r, O0r);                      \
+        x3i = _mm256_sub_pd(E0i, O0i);                      \
+        {                                                   \
+            __m256d vW1r = _mm256_load_pd(R7_W61R_Q);       \
+            __m256d vW1i = _mm256_load_pd(R7_W61I_NEG_Q);   \
+            __m256d T1r, T1i;                               \
+            cmul_avx2_r7(O1r, O1i, vW1r, vW1i, &T1r, &T1i); \
+            x1r = _mm256_add_pd(E1r, T1r);                  \
+            x1i = _mm256_add_pd(E1i, T1i);                  \
+            x4r = _mm256_sub_pd(E1r, T1r);                  \
+            x4i = _mm256_sub_pd(E1i, T1i);                  \
+        }                                                   \
+        {                                                   \
+            __m256d vW2r = _mm256_load_pd(R7_W62R_Q);       \
+            __m256d vW2i = _mm256_load_pd(R7_W62I_NEG_Q);   \
+            __m256d T2r, T2i;                               \
+            cmul_avx2_r7(O2r, O2i, vW2r, vW2i, &T2r, &T2i); \
+            x2r = _mm256_add_pd(E2r, T2r);                  \
+            x2i = _mm256_add_pd(E2i, T2i);                  \
+            x5r = _mm256_sub_pd(E2r, T2r);                  \
+            x5i = _mm256_sub_pd(E2i, T2i);                  \
+        }                                                   \
+    } while (0)
+
+/* ================================================================== */
+/*  Round-robin pointwise multiply  (P0: interleaved FMA schedule)     */
+/*                                                                     */
+/*  Wave 1 (slots 0,1,2): all mul_pd first, then all fmsub/fmadd      */
+/*  Wave 2 (slots 3,4,5): same                                        */
+/*  Within each wave, independent ops fill FMA pipeline bubbles.       */
+/* ================================================================== */
+
+#define POINTWISE_RR6(s0r, s0i, s1r, s1i, s2r, s2i,                           \
+                      s3r, s3i, s4r, s4i, s5r, s5i,                           \
+                      KR0, KI0, KR1, KI1, KR2, KI2,                           \
+                      KR3, KI3, KR4, KI4, KR5, KI5)                           \
+    do                                                                        \
+    {                                                                         \
+        /* Wave 1: load kernels */                                            \
+        __m256d k0r = _mm256_load_pd(KR0), k0i = _mm256_load_pd(KI0);         \
+        __m256d k1r = _mm256_load_pd(KR1), k1i = _mm256_load_pd(KI1);         \
+        __m256d k2r = _mm256_load_pd(KR2), k2i = _mm256_load_pd(KI2);         \
+        /* Mul phase: ai*wi and ai*wr for slots 0,1,2 */                      \
+        __m256d p0a = _mm256_mul_pd(s0i, k0i), p0b = _mm256_mul_pd(s0i, k0r); \
+        __m256d p1a = _mm256_mul_pd(s1i, k1i), p1b = _mm256_mul_pd(s1i, k1r); \
+        __m256d p2a = _mm256_mul_pd(s2i, k2i), p2b = _mm256_mul_pd(s2i, k2r); \
+        /* FMA phase: cr=ar*wr-ai*wi, ci=ar*wi+ai*wr */                       \
+        __m256d r0r = _mm256_fmsub_pd(s0r, k0r, p0a);                         \
+        __m256d r0i = _mm256_fmadd_pd(s0r, k0i, p0b);                         \
+        __m256d r1r = _mm256_fmsub_pd(s1r, k1r, p1a);                         \
+        __m256d r1i = _mm256_fmadd_pd(s1r, k1i, p1b);                         \
+        __m256d r2r = _mm256_fmsub_pd(s2r, k2r, p2a);                         \
+        __m256d r2i = _mm256_fmadd_pd(s2r, k2i, p2b);                         \
+        s0r = r0r;                                                            \
+        s0i = r0i;                                                            \
+        s1r = r1r;                                                            \
+        s1i = r1i;                                                            \
+        s2r = r2r;                                                            \
+        s2i = r2i;                                                            \
+        /* Wave 2: load kernels */                                            \
+        __m256d k3r = _mm256_load_pd(KR3), k3i = _mm256_load_pd(KI3);         \
+        __m256d k4r = _mm256_load_pd(KR4), k4i = _mm256_load_pd(KI4);         \
+        __m256d k5r = _mm256_load_pd(KR5), k5i = _mm256_load_pd(KI5);         \
+        __m256d p3a = _mm256_mul_pd(s3i, k3i), p3b = _mm256_mul_pd(s3i, k3r); \
+        __m256d p4a = _mm256_mul_pd(s4i, k4i), p4b = _mm256_mul_pd(s4i, k4r); \
+        __m256d p5a = _mm256_mul_pd(s5i, k5i), p5b = _mm256_mul_pd(s5i, k5r); \
+        __m256d r3r = _mm256_fmsub_pd(s3r, k3r, p3a);                         \
+        __m256d r3i = _mm256_fmadd_pd(s3r, k3i, p3b);                         \
+        __m256d r4r = _mm256_fmsub_pd(s4r, k4r, p4a);                         \
+        __m256d r4i = _mm256_fmadd_pd(s4r, k4i, p4b);                         \
+        __m256d r5r = _mm256_fmsub_pd(s5r, k5r, p5a);                         \
+        __m256d r5i = _mm256_fmadd_pd(s5r, k5i, p5b);                         \
+        s3r = r3r;                                                            \
+        s3i = r3i;                                                            \
+        s4r = r4r;                                                            \
+        s4i = r4i;                                                            \
+        s5r = r5r;                                                            \
+        s5i = r5i;                                                            \
+    } while (0)
+
+/* ================================================================== */
+/*  Tree y0 sum  (P1: 6-deep chain → 3 levels)                        */
+/* ================================================================== */
+
+#define TREE_Y0(x0, t1, t2, t3, t4, t5, t6, out) \
+    do                                           \
+    {                                            \
+        __m256d _a = _mm256_add_pd(x0, t1);      \
+        __m256d _b = _mm256_add_pd(t2, t3);      \
+        __m256d _c = _mm256_add_pd(t4, t5);      \
+        __m256d _d = _mm256_add_pd(_a, _b);      \
+        __m256d _e = _mm256_add_pd(_c, t6);      \
+        out = _mm256_add_pd(_d, _e);             \
+    } while (0)
+
+/* ================================================================== */
+/*  Forward butterfly — AVX2, BLOCKED3 twiddles, all optimizations     */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) __attribute__((target("avx2,fma"))) void radix7_rader_fwd_avx2(
+    const double *restrict a_re, const double *restrict a_im,
+    const double *restrict b_re, const double *restrict b_im,
+    const double *restrict c_re, const double *restrict c_im,
+    const double *restrict d_re, const double *restrict d_im,
+    const double *restrict e_re, const double *restrict e_im,
+    const double *restrict f_re, const double *restrict f_im,
+    const double *restrict g_re, const double *restrict g_im,
+    double *restrict y0_re, double *restrict y0_im,
+    double *restrict y1_re, double *restrict y1_im,
+    double *restrict y2_re, double *restrict y2_im,
+    double *restrict y3_re, double *restrict y3_im,
+    double *restrict y4_re, double *restrict y4_im,
+    double *restrict y5_re, double *restrict y5_im,
+    double *restrict y6_re, double *restrict y6_im,
+    const double *restrict tw1_re, const double *restrict tw1_im,
+    const double *restrict tw2_re, const double *restrict tw2_im,
+    const double *restrict tw3_re, const double *restrict tw3_im,
+    int K)
 {
-    return ((uintptr_t)ptr & 31) == 0;
-}
-
-/**
- * @brief Verify alignment of all buffers (debug/assert mode)
- */
-__attribute__((always_inline)) static inline bool verify_r7_avx2_alignment(
-    const double *in_re, const double *in_im,
-    const double *out_re, const double *out_im)
-{
-    return is_aligned_32(in_re) && is_aligned_32(in_im) &&
-           is_aligned_32(out_re) && is_aligned_32(out_im);
-}
-
-//==============================================================================
-// COMPLEX MULTIPLY PRIMITIVES - TRUE SoA (NO INTERLEAVE!)
-//==============================================================================
-
-/**
- * @brief Complex multiply with FMA - TRUE SoA version
- * @details (out_re + i*out_im) = (a_re + i*a_im) * (w_re + i*w_im)
- *
- * ✅ PRESERVED: Optimal 4-FMA sequence
- * ✅ NEW: Operates on separate re/im vectors (no shuffle overhead!)
- *
- * out_re = a_re * w_re - a_im * w_im
- * out_im = a_re * w_im + a_im * w_re
- */
-__attribute__((always_inline)) static inline void cmul_fma_avx2_soa(
-    __m256d *restrict out_re,
-    __m256d *restrict out_im,
-    __m256d a_re,
-    __m256d a_im,
-    __m256d w_re,
-    __m256d w_im)
-{
-    *out_re = _mm256_fmsub_pd(a_re, w_re, _mm256_mul_pd(a_im, w_im));
-    *out_im = _mm256_fmadd_pd(a_re, w_im, _mm256_mul_pd(a_im, w_re));
-}
-
-/**
- * @brief Complex multiply-add with FMA - TRUE SoA version
- * @details acc += a * w (for round-robin convolution)
- *
- * ✅ PRESERVED: Fused accumulation for P0 optimization
- * ✅ NEW: Separate re/im accumulators
- *
- * acc_re += a_re * w_re - a_im * w_im
- * acc_im += a_re * w_im + a_im * w_re
- */
-__attribute__((always_inline)) static inline void cmul_add_fma_avx2_soa(
-    __m256d *restrict acc_re,
-    __m256d *restrict acc_im,
-    __m256d a_re,
-    __m256d a_im,
-    __m256d w_re,
-    __m256d w_im)
-{
-    // Compute product
-    __m256d prod_re = _mm256_fmsub_pd(a_re, w_re, _mm256_mul_pd(a_im, w_im));
-    __m256d prod_im = _mm256_fmadd_pd(a_re, w_im, _mm256_mul_pd(a_im, w_re));
-
-    // Accumulate
-    *acc_re = _mm256_add_pd(*acc_re, prod_re);
-    *acc_im = _mm256_add_pd(*acc_im, prod_im);
-}
-
-//==============================================================================
-// LOAD/STORE PRIMITIVES - 4-WIDE ALIGNED
-//==============================================================================
-
-/**
- * @brief Load 7 lanes from SoA buffers - 4-WIDE ALIGNED (FASTEST!)
- * @details
- * ⚡⚡⚡ NEW: Direct 256-bit loads (4 doubles), no 128→256 insert!
- * ⚡⚡⚡ NEW: Aligned loads (3-cycle latency, 0.5-cycle throughput)
- * ⚡⚡⚡ NEW: TRUE SoA - re/im stay separate in registers!
- *
- * Memory layout (SoA, aligned):
- *   in_re[r*K + k]: [re[k], re[k+1], re[k+2], re[k+3]]  ← CONTIGUOUS + ALIGNED!
- *   in_im[r*K + k]: [im[k], im[k+1], im[k+2], im[k+3]]  ← CONTIGUOUS + ALIGNED!
- *
- * Register layout (SoA for computation):
- *   x0_re = [re0, re1, re2, re3] for lane 0
- *   x0_im = [im0, im1, im2, im3] for lane 0
- *   ... etc for lanes 1-6
- *
- * @param k Starting index (must be 4-aligned for best performance)
- * @param K Stride between lanes
- * @param in_re Real component array (32-byte aligned)
- * @param in_im Imaginary component array (32-byte aligned)
- * @param x0_re-x6_re Output: real components for 7 lanes
- * @param x0_im-x6_im Output: imaginary components for 7 lanes
- */
-__attribute__((always_inline)) static inline void load_7_lanes_avx2_soa(
-    int k, int K,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    __m256d *x0_re, __m256d *x0_im,
-    __m256d *x1_re, __m256d *x1_im,
-    __m256d *x2_re, __m256d *x2_im,
-    __m256d *x3_re, __m256d *x3_im,
-    __m256d *x4_re, __m256d *x4_im,
-    __m256d *x5_re, __m256d *x5_im,
-    __m256d *x6_re, __m256d *x6_im)
-{
-    // Direct aligned 256-bit loads: 4 doubles at once!
-    *x0_re = _mm256_load_pd(&in_re[0 * K + k]);
-    *x0_im = _mm256_load_pd(&in_im[0 * K + k]);
-    *x1_re = _mm256_load_pd(&in_re[1 * K + k]);
-    *x1_im = _mm256_load_pd(&in_im[1 * K + k]);
-    *x2_re = _mm256_load_pd(&in_re[2 * K + k]);
-    *x2_im = _mm256_load_pd(&in_im[2 * K + k]);
-    *x3_re = _mm256_load_pd(&in_re[3 * K + k]);
-    *x3_im = _mm256_load_pd(&in_im[3 * K + k]);
-    *x4_re = _mm256_load_pd(&in_re[4 * K + k]);
-    *x4_im = _mm256_load_pd(&in_im[4 * K + k]);
-    *x5_re = _mm256_load_pd(&in_re[5 * K + k]);
-    *x5_im = _mm256_load_pd(&in_im[5 * K + k]);
-    *x6_re = _mm256_load_pd(&in_re[6 * K + k]);
-    *x6_im = _mm256_load_pd(&in_im[6 * K + k]);
-}
-
-/**
- * @brief Store 7 lanes to SoA buffers - 4-WIDE ALIGNED (FASTEST!)
- * @details
- * Direct 256-bit stores (4 doubles), no deinterleave!
- * Aligned stores (0.5-cycle throughput)
- * TRUE SoA - re/im already separate, just write!
- *
- * Memory layout (SoA, aligned):
- *   out_re[r*K + k]: [re[k], re[k+1], re[k+2], re[k+3]]  ← CONTIGUOUS + ALIGNED!
- *   out_im[r*K + k]: [im[k], im[k+1], im[k+2], im[k+3]]  ← CONTIGUOUS + ALIGNED!
- */
-__attribute__((always_inline)) static inline void store_7_lanes_avx2_soa(
-    int k, int K,
-    double *restrict out_re,
-    double *restrict out_im,
-    __m256d y0_re, __m256d y0_im,
-    __m256d y1_re, __m256d y1_im,
-    __m256d y2_re, __m256d y2_im,
-    __m256d y3_re, __m256d y3_im,
-    __m256d y4_re, __m256d y4_im,
-    __m256d y5_re, __m256d y5_im,
-    __m256d y6_re, __m256d y6_im)
-{
-    // Direct aligned 256-bit stores: 4 doubles at once!
-    _mm256_store_pd(&out_re[0 * K + k], y0_re);
-    _mm256_store_pd(&out_im[0 * K + k], y0_im);
-    _mm256_store_pd(&out_re[1 * K + k], y1_re);
-    _mm256_store_pd(&out_im[1 * K + k], y1_im);
-    _mm256_store_pd(&out_re[2 * K + k], y2_re);
-    _mm256_store_pd(&out_im[2 * K + k], y2_im);
-    _mm256_store_pd(&out_re[3 * K + k], y3_re);
-    _mm256_store_pd(&out_im[3 * K + k], y3_im);
-    _mm256_store_pd(&out_re[4 * K + k], y4_re);
-    _mm256_store_pd(&out_im[4 * K + k], y4_im);
-    _mm256_store_pd(&out_re[5 * K + k], y5_re);
-    _mm256_store_pd(&out_im[5 * K + k], y5_im);
-    _mm256_store_pd(&out_re[6 * K + k], y6_re);
-    _mm256_store_pd(&out_im[6 * K + k], y6_im);
-}
-
-/**
- * @brief Store 7 lanes with non-temporal hint - 4-WIDE ALIGNED
- * @details
- * For large FFTs that exceed LLC, bypass cache on write.
- * ✅ PRESERVED: NT store strategy from original
- * ✅ NEW: TRUE SoA - no deinterleave overhead!
- */
-__attribute__((always_inline)) static inline void store_7_lanes_avx2_stream_soa(
-    int k, int K,
-    double *restrict out_re,
-    double *restrict out_im,
-    __m256d y0_re, __m256d y0_im,
-    __m256d y1_re, __m256d y1_im,
-    __m256d y2_re, __m256d y2_im,
-    __m256d y3_re, __m256d y3_im,
-    __m256d y4_re, __m256d y4_im,
-    __m256d y5_re, __m256d y5_im,
-    __m256d y6_re, __m256d y6_im)
-{
-    // Non-temporal streaming stores
-    _mm256_stream_pd(&out_re[0 * K + k], y0_re);
-    _mm256_stream_pd(&out_im[0 * K + k], y0_im);
-    _mm256_stream_pd(&out_re[1 * K + k], y1_re);
-    _mm256_stream_pd(&out_im[1 * K + k], y1_im);
-    _mm256_stream_pd(&out_re[2 * K + k], y2_re);
-    _mm256_stream_pd(&out_im[2 * K + k], y2_im);
-    _mm256_stream_pd(&out_re[3 * K + k], y3_re);
-    _mm256_stream_pd(&out_im[3 * K + k], y3_im);
-    _mm256_stream_pd(&out_re[4 * K + k], y4_re);
-    _mm256_stream_pd(&out_im[4 * K + k], y4_im);
-    _mm256_stream_pd(&out_re[5 * K + k], y5_re);
-    _mm256_stream_pd(&out_im[5 * K + k], y5_im);
-    _mm256_stream_pd(&out_re[6 * K + k], y6_re);
-    _mm256_stream_pd(&out_im[6 * K + k], y6_im);
-}
-
-//==============================================================================
-// PREFETCHING - ACTIVE WITH ADAPTIVE HINTS
-//==============================================================================
-
-/**
- * @brief Prefetch 7 lanes from SoA buffers ahead of time
- * @details
- * ✅ PRESERVED: Prefetch structure from original
- * ✅ NEW: Adaptive hint based on stage size (T0 vs T1)
- *
- * T0 (temporal to L1): For small stages or input data
- * T1 (temporal to L2/L3): For large stage twiddles to avoid L1 thrashing
- */
-__attribute__((always_inline)) static inline void prefetch_7_lanes_avx2_soa(
-    int k, int K,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    int sub_len,
-    bool large_stage)
-{
-    if (k + R7_AVX2_PREFETCH_DISTANCE >= K)
-        return;
-
-    int pk = k + R7_AVX2_PREFETCH_DISTANCE;
-
-    // Always prefetch input data to L1 (will be used soon)
-    _mm_prefetch((const char *)&in_re[0 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[0 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[1 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[1 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[2 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[2 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[3 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[3 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[4 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[4 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[5 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[5 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_re[6 * K + pk], _MM_HINT_T0);
-    _mm_prefetch((const char *)&in_im[6 * K + pk], _MM_HINT_T0);
-
-    // Prefetch stage twiddles (if needed)
-    if (sub_len > 1)
-    {
-        // Adaptive hint: T1 for large stages to avoid L1 pollution
-        int hint = large_stage ? _MM_HINT_T1 : _MM_HINT_T0;
-
-        _mm_prefetch((const char *)&stage_tw->re[0 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[0 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[1 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[1 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[2 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[2 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[3 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[3 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[4 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[4 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->re[5 * K + pk], hint);
-        _mm_prefetch((const char *)&stage_tw->im[5 * K + pk], hint);
-    }
-}
-
-//==============================================================================
-// STAGE TWIDDLE APPLICATION - UNIT-STRIDE (NO GATHERS!)
-//==============================================================================
-
-/**
- * @brief Apply stage twiddles to 6 of the 7 lanes (x0 unchanged)
- * @details
- * CRITICAL: Unit-stride loads replace gathers (10→3 cycle latency!)
- * NEW: Twiddles are blocked+SoA, so tw->re[r*K+k..k+3] is contiguous
- *
- * OLD approach (SLOW):
- *   __m128i idx = _mm_setr_epi64x(k, k+1);
- *   __m128d tw_re = _mm_i64gather_pd(&stage_tw->re[r*K], idx, 8);  // 10 cycles!
- *
- * NEW approach (FAST):
- *   __m256d tw_re = _mm256_load_pd(&stage_tw->re[r*K + k]);  // 3 cycles!
- *
- * ✅ PRESERVED: SoA twiddle access
- * ✅ NEW: Direct aligned loads from contiguous blocked layout
- *
- * @param k Starting index
- * @param K Stride
- * @param x1_re-x6_re Input/output: real components (modified in place)
- * @param x1_im-x6_im Input/output: imaginary components (modified in place)
- * @param stage_tw Stage twiddle factors (blocked SoA layout)
- * @param sub_len Sub-transform length (skip if == 1)
- */
-__attribute__((always_inline)) static inline void apply_stage_twiddles_avx2_soa(
-    int k, int K,
-    __m256d *x1_re, __m256d *x1_im,
-    __m256d *x2_re, __m256d *x2_im,
-    __m256d *x3_re, __m256d *x3_im,
-    __m256d *x4_re, __m256d *x4_im,
-    __m256d *x5_re, __m256d *x5_im,
-    __m256d *x6_re, __m256d *x6_im,
-    const fft_twiddle_soa *stage_tw,
-    int sub_len)
-{
-    if (sub_len <= 1)
-        return; // No twiddles needed for first stage
-
-    // Unit-stride aligned loads: 4 doubles at once (k, k+1, k+2, k+3)
-    __m256d w1_re = _mm256_load_pd(&stage_tw->re[0 * K + k]);
-    __m256d w1_im = _mm256_load_pd(&stage_tw->im[0 * K + k]);
-    __m256d w2_re = _mm256_load_pd(&stage_tw->re[1 * K + k]);
-    __m256d w2_im = _mm256_load_pd(&stage_tw->im[1 * K + k]);
-    __m256d w3_re = _mm256_load_pd(&stage_tw->re[2 * K + k]);
-    __m256d w3_im = _mm256_load_pd(&stage_tw->im[2 * K + k]);
-    __m256d w4_re = _mm256_load_pd(&stage_tw->re[3 * K + k]);
-    __m256d w4_im = _mm256_load_pd(&stage_tw->im[3 * K + k]);
-    __m256d w5_re = _mm256_load_pd(&stage_tw->re[4 * K + k]);
-    __m256d w5_im = _mm256_load_pd(&stage_tw->im[4 * K + k]);
-    __m256d w6_re = _mm256_load_pd(&stage_tw->re[5 * K + k]);
-    __m256d w6_im = _mm256_load_pd(&stage_tw->im[5 * K + k]);
-
-    // Apply complex multiplication (in-place)
-    cmul_fma_avx2_soa(x1_re, x1_im, *x1_re, *x1_im, w1_re, w1_im);
-    cmul_fma_avx2_soa(x2_re, x2_im, *x2_re, *x2_im, w2_re, w2_im);
-    cmul_fma_avx2_soa(x3_re, x3_im, *x3_re, *x3_im, w3_re, w3_im);
-    cmul_fma_avx2_soa(x4_re, x4_im, *x4_re, *x4_im, w4_re, w4_im);
-    cmul_fma_avx2_soa(x5_re, x5_im, *x5_re, *x5_im, w5_re, w5_im);
-    cmul_fma_avx2_soa(x6_re, x6_im, *x6_re, *x6_im, w6_re, w6_im);
-}
-
-//==============================================================================
-// RADER TWIDDLE BROADCAST - P0 OPTIMIZATION PRESERVED
-//==============================================================================
-
-/**
- * @brief Broadcast 6 Rader twiddles with PRE-SPLIT (P0 OPTIMIZATION!)
- * @details
- * ✅✅ PRESERVED: Hoist Rader twiddle broadcasts outside K loop
- * ✅✅ PRESERVED: Pre-split into separate re/im (8-10% gain!)
- * ✅ NEW: TRUE SoA - broadcast directly to separate vectors
- *
- * This optimization means:
- * - Load 6 scalar twiddles ONCE per stage
- * - Broadcast to full YMM vectors (all 4 lanes identical)
- * - Reuse across all K iterations
- * - Saves ~12 shuffles per butterfly × K iterations!
- *
- * @param rader_tw Rader twiddle factors (6 complex values)
- * @param tw_brd_re Output: broadcast real components (6 vectors)
- * @param tw_brd_im Output: broadcast imaginary components (6 vectors)
- */
-__attribute__((always_inline)) static inline void broadcast_rader_twiddles_avx2_soa(
-    const fft_twiddle_soa *rader_tw,
-    __m256d tw_brd_re[6],
-    __m256d tw_brd_im[6])
-{
-    // Broadcast each Rader twiddle to all 4 lanes of YMM
-    // Each butterfly processes 4 different k values with SAME Rader twiddles
-    for (int j = 0; j < 6; j++)
-    {
-        tw_brd_re[j] = _mm256_set1_pd(rader_tw->re[j]);
-        tw_brd_im[j] = _mm256_set1_pd(rader_tw->im[j]);
-    }
-}
-
-//==============================================================================
-// TREE Y0 COMPUTATION - P1 OPTIMIZATION PRESERVED
-//==============================================================================
-
-/**
- * @brief Compute DC component y0 = sum of all 7 inputs (TREE REDUCTION!)
- * @details
- * ✅✅ PRESERVED: Balanced tree reduces add latency (6→3)
- * ✅ NEW: Separate re/im (trivial with SoA!)
- *
- * Tree structure:
- *   Level 1: (x0+x1), (x2+x3), (x4+x5)
- *   Level 2: (x0+x1+x2+x3), (x4+x5+x6)
- *   Level 3: (x0+x1+x2+x3+x4+x5+x6)
- *
- * Critical path: 3 additions vs 6 sequential
- * Saves ~1-2% by reducing latency-bound computation
- */
-__attribute__((always_inline)) static inline void compute_y0_tree_avx2_soa(
-    __m256d x0_re, __m256d x0_im,
-    __m256d x1_re, __m256d x1_im,
-    __m256d x2_re, __m256d x2_im,
-    __m256d x3_re, __m256d x3_im,
-    __m256d x4_re, __m256d x4_im,
-    __m256d x5_re, __m256d x5_im,
-    __m256d x6_re, __m256d x6_im,
-    __m256d *y0_re, __m256d *y0_im)
-{
-    // Level 1: 3 parallel additions
-    __m256d s01_re = _mm256_add_pd(x0_re, x1_re);
-    __m256d s01_im = _mm256_add_pd(x0_im, x1_im);
-    __m256d s23_re = _mm256_add_pd(x2_re, x3_re);
-    __m256d s23_im = _mm256_add_pd(x2_im, x3_im);
-    __m256d s45_re = _mm256_add_pd(x4_re, x5_re);
-    __m256d s45_im = _mm256_add_pd(x4_im, x5_im);
-
-    // Level 2: 2 parallel additions
-    __m256d s0123_re = _mm256_add_pd(s01_re, s23_re);
-    __m256d s0123_im = _mm256_add_pd(s01_im, s23_im);
-    __m256d s456_re = _mm256_add_pd(s45_re, x6_re);
-    __m256d s456_im = _mm256_add_pd(s45_im, x6_im);
-
-    // Level 3: final addition
-    *y0_re = _mm256_add_pd(s0123_re, s456_re);
-    *y0_im = _mm256_add_pd(s0123_im, s456_im);
-}
-
-//==============================================================================
-// RADER INPUT PERMUTATION
-//==============================================================================
-
-/**
- * @brief Permute inputs for Rader algorithm
- * @details
- * ✅✅ PRESERVED: Exact permutation [1,3,2,6,4,5] for generator g=3
- * ✅ NEW: Separate re/im (register copies only, no memory ops!)
- *
- * Input order:  [x1, x2, x3, x4, x5, x6]
- * Output order: [x1, x3, x2, x6, x4, x5]  (for cyclic convolution)
- */
-__attribute__((always_inline)) static inline void permute_rader_inputs_avx2_soa(
-    __m256d x1_re, __m256d x1_im,
-    __m256d x2_re, __m256d x2_im,
-    __m256d x3_re, __m256d x3_im,
-    __m256d x4_re, __m256d x4_im,
-    __m256d x5_re, __m256d x5_im,
-    __m256d x6_re, __m256d x6_im,
-    __m256d *tx0_re, __m256d *tx0_im,
-    __m256d *tx1_re, __m256d *tx1_im,
-    __m256d *tx2_re, __m256d *tx2_im,
-    __m256d *tx3_re, __m256d *tx3_im,
-    __m256d *tx4_re, __m256d *tx4_im,
-    __m256d *tx5_re, __m256d *tx5_im)
-{
-    *tx0_re = x1_re;
-    *tx0_im = x1_im; // Position 0 ← x1
-    *tx1_re = x3_re;
-    *tx1_im = x3_im; // Position 1 ← x3
-    *tx2_re = x2_re;
-    *tx2_im = x2_im; // Position 2 ← x2
-    *tx3_re = x6_re;
-    *tx3_im = x6_im; // Position 3 ← x6
-    *tx4_re = x4_re;
-    *tx4_im = x4_im; // Position 4 ← x4
-    *tx5_re = x5_re;
-    *tx5_im = x5_im; // Position 5 ← x5
-}
-
-//==============================================================================
-// RADER 6-POINT CYCLIC CONVOLUTION - P0 ROUND-ROBIN PRESERVED
-//==============================================================================
-
-/**
- * @brief 6-point cyclic convolution with ROUND-ROBIN (P0 OPTIMIZATION!)
- * @details
- * ✅✅✅ PRESERVED: Round-robin schedule (10-15% gain, maximized ILP!)
- * ✅ NEW: TRUE SoA - separate re/im throughout
- * ✅ NEW: U2-ready - can interleave two butterflies' convolutions
- *
- * CRITICAL FOR DUAL FMA PORTS:
- * ==============================
- * 6 independent accumulators (v0-v5) updated in rotation.
- * Each accumulator gets updated every 6 FMAs, which is MORE than
- * the 4-cycle FMA latency - perfect for hiding latency!
- *
- * Round-robin pattern (row = input, col = output):
- *       v0  v1  v2  v3  v4  v5
- * tx0:  w0  w1  w2  w3  w4  w5
- * tx1:  w5  w0  w1  w2  w3  w4
- * tx2:  w4  w5  w0  w1  w2  w3
- * tx3:  w3  w4  w5  w0  w1  w2
- * tx4:  w2  w3  w4  w5  w0  w1
- * tx5:  w1  w2  w3  w4  w5  w0
- *
- * This ensures NO accumulator has back-to-back dependencies!
- * With U2 pipeline, we can interleave butterfly A and B updates
- * to issue 2 FMAs per cycle (saturating dual FMA ports).
- *
- * @param tx0_re-tx5_re Permuted input real components
- * @param tx0_im-tx5_im Permuted input imaginary components
- * @param tw_brd_re Broadcast Rader twiddle real components (6 vectors)
- * @param tw_brd_im Broadcast Rader twiddle imaginary components (6 vectors)
- * @param v0_re-v5_re Output: convolution result real components
- * @param v0_im-v5_im Output: convolution result imaginary components
- */
-__attribute__((always_inline)) static inline void rader_convolution_roundrobin_avx2_soa(
-    __m256d tx0_re, __m256d tx0_im,
-    __m256d tx1_re, __m256d tx1_im,
-    __m256d tx2_re, __m256d tx2_im,
-    __m256d tx3_re, __m256d tx3_im,
-    __m256d tx4_re, __m256d tx4_im,
-    __m256d tx5_re, __m256d tx5_im,
-    const __m256d tw_brd_re[6],
-    const __m256d tw_brd_im[6],
-    __m256d *v0_re, __m256d *v0_im,
-    __m256d *v1_re, __m256d *v1_im,
-    __m256d *v2_re, __m256d *v2_im,
-    __m256d *v3_re, __m256d *v3_im,
-    __m256d *v4_re, __m256d *v4_im,
-    __m256d *v5_re, __m256d *v5_im)
-{
-    // Initialize accumulators to zero
-    *v0_re = _mm256_setzero_pd();
-    *v0_im = _mm256_setzero_pd();
-    *v1_re = _mm256_setzero_pd();
-    *v1_im = _mm256_setzero_pd();
-    *v2_re = _mm256_setzero_pd();
-    *v2_im = _mm256_setzero_pd();
-    *v3_re = _mm256_setzero_pd();
-    *v3_im = _mm256_setzero_pd();
-    *v4_re = _mm256_setzero_pd();
-    *v4_im = _mm256_setzero_pd();
-    *v5_re = _mm256_setzero_pd();
-    *v5_im = _mm256_setzero_pd();
-
-    // ✅✅ PRESERVED: Round-robin schedule for maximum ILP
-    // Round 0: tx0 contributes to all 6 accumulators
-    cmul_add_fma_avx2_soa(v0_re, v0_im, tx0_re, tx0_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx2_soa(v1_re, v1_im, tx0_re, tx0_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx2_soa(v2_re, v2_im, tx0_re, tx0_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx2_soa(v3_re, v3_im, tx0_re, tx0_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx2_soa(v4_re, v4_im, tx0_re, tx0_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx2_soa(v5_re, v5_im, tx0_re, tx0_im, tw_brd_re[5], tw_brd_im[5]);
-
-    // Round 1: tx1 contributes (rotated twiddle indices)
-    cmul_add_fma_avx2_soa(v0_re, v0_im, tx1_re, tx1_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx2_soa(v1_re, v1_im, tx1_re, tx1_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx2_soa(v2_re, v2_im, tx1_re, tx1_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx2_soa(v3_re, v3_im, tx1_re, tx1_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx2_soa(v4_re, v4_im, tx1_re, tx1_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx2_soa(v5_re, v5_im, tx1_re, tx1_im, tw_brd_re[4], tw_brd_im[4]);
-
-    // Round 2: tx2 contributes
-    cmul_add_fma_avx2_soa(v0_re, v0_im, tx2_re, tx2_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx2_soa(v1_re, v1_im, tx2_re, tx2_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx2_soa(v2_re, v2_im, tx2_re, tx2_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx2_soa(v3_re, v3_im, tx2_re, tx2_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx2_soa(v4_re, v4_im, tx2_re, tx2_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx2_soa(v5_re, v5_im, tx2_re, tx2_im, tw_brd_re[3], tw_brd_im[3]);
-
-    // Round 3: tx3 contributes
-    cmul_add_fma_avx2_soa(v0_re, v0_im, tx3_re, tx3_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx2_soa(v1_re, v1_im, tx3_re, tx3_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx2_soa(v2_re, v2_im, tx3_re, tx3_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx2_soa(v3_re, v3_im, tx3_re, tx3_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx2_soa(v4_re, v4_im, tx3_re, tx3_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx2_soa(v5_re, v5_im, tx3_re, tx3_im, tw_brd_re[2], tw_brd_im[2]);
-
-    // Round 4: tx4 contributes
-    cmul_add_fma_avx2_soa(v0_re, v0_im, tx4_re, tx4_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx2_soa(v1_re, v1_im, tx4_re, tx4_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx2_soa(v2_re, v2_im, tx4_re, tx4_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx2_soa(v3_re, v3_im, tx4_re, tx4_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx2_soa(v4_re, v4_im, tx4_re, tx4_im, tw_brd_re[0], tw_brd_im[0]);
-    cmul_add_fma_avx2_soa(v5_re, v5_im, tx4_re, tx4_im, tw_brd_re[1], tw_brd_im[1]);
-
-    // Round 5: tx5 contributes
-    cmul_add_fma_avx2_soa(v0_re, v0_im, tx5_re, tx5_im, tw_brd_re[1], tw_brd_im[1]);
-    cmul_add_fma_avx2_soa(v1_re, v1_im, tx5_re, tx5_im, tw_brd_re[2], tw_brd_im[2]);
-    cmul_add_fma_avx2_soa(v2_re, v2_im, tx5_re, tx5_im, tw_brd_re[3], tw_brd_im[3]);
-    cmul_add_fma_avx2_soa(v3_re, v3_im, tx5_re, tx5_im, tw_brd_re[4], tw_brd_im[4]);
-    cmul_add_fma_avx2_soa(v4_re, v4_im, tx5_re, tx5_im, tw_brd_re[5], tw_brd_im[5]);
-    cmul_add_fma_avx2_soa(v5_re, v5_im, tx5_re, tx5_im, tw_brd_re[0], tw_brd_im[0]);
-}
-
-//==============================================================================
-// RADER OUTPUT ASSEMBLY
-//==============================================================================
-
-/**
- * @brief Assemble final outputs from convolution results
- * @details
- * ✅✅ PRESERVED: Output permutation [1,5,4,6,2,3] for Rader g=3
- * ✅ NEW: Separate re/im (trivial additions!)
- *
- * Output assembly: y[i] = x0 + v[permuted_i]
- * y0 already computed (DC component)
- * y1-y6 = x0 + convolution results (in permuted order)
- */
-__attribute__((always_inline)) static inline void assemble_rader_outputs_avx2_soa(
-    __m256d x0_re, __m256d x0_im,
-    __m256d v0_re, __m256d v0_im,
-    __m256d v1_re, __m256d v1_im,
-    __m256d v2_re, __m256d v2_im,
-    __m256d v3_re, __m256d v3_im,
-    __m256d v4_re, __m256d v4_im,
-    __m256d v5_re, __m256d v5_im,
-    __m256d *y1_re, __m256d *y1_im,
-    __m256d *y2_re, __m256d *y2_im,
-    __m256d *y3_re, __m256d *y3_im,
-    __m256d *y4_re, __m256d *y4_im,
-    __m256d *y5_re, __m256d *y5_im,
-    __m256d *y6_re, __m256d *y6_im)
-{
-    // Output permutation: [1,5,4,6,2,3]
-    *y1_re = _mm256_add_pd(x0_re, v0_re); // Position 1 ← v0
-    *y1_im = _mm256_add_pd(x0_im, v0_im);
-    *y5_re = _mm256_add_pd(x0_re, v1_re); // Position 5 ← v1
-    *y5_im = _mm256_add_pd(x0_im, v1_im);
-    *y4_re = _mm256_add_pd(x0_re, v2_re); // Position 4 ← v2
-    *y4_im = _mm256_add_pd(x0_im, v2_im);
-    *y6_re = _mm256_add_pd(x0_re, v3_re); // Position 6 ← v3
-    *y6_im = _mm256_add_pd(x0_im, v3_im);
-    *y2_re = _mm256_add_pd(x0_re, v4_re); // Position 2 ← v4
-    *y2_im = _mm256_add_pd(x0_im, v4_im);
-    *y3_re = _mm256_add_pd(x0_re, v5_re); // Position 3 ← v5
-    *y3_im = _mm256_add_pd(x0_im, v5_im);
-}
-
-//==============================================================================
-// COMPLETE BUTTERFLY FUNCTIONS
-//==============================================================================
-
-/**
- * @brief Single radix-7 butterfly - 4-wide AVX2 TRUE SoA
- * @details
- * ✅ ALL OPTIMIZATIONS PRESERVED + NEW SoA gains:
- *    - Pre-split Rader broadcasts (used from stage-level cache)
- *    - Round-robin convolution
- *    - Tree y0 sum
- *    - Unit-stride twiddle loads (no gathers!)
- *    - TRUE SoA (no interleave/deinterleave!)
- *    - 4-wide processing (full 256-bit utilization)
- *    - Aligned loads/stores
- *    - Store-time adds (frees 6 YMM registers!)
- *
- * Process one butterfly: k, k+1, k+2, k+3 (4 complex values)
- *
- * @param k Starting index (must be 4-aligned for best performance)
- * @param K Stride between lanes
- * @param in_re Input real components (32-byte aligned)
- * @param in_im Input imaginary components (32-byte aligned)
- * @param stage_tw Stage twiddle factors (blocked SoA, 32-byte aligned)
- * @param rader_tw_re Broadcast Rader twiddle real components (6 vectors)
- * @param rader_tw_im Broadcast Rader twiddle imaginary components (6 vectors)
- * @param out_re Output real components (32-byte aligned)
- * @param out_im Output imaginary components (32-byte aligned)
- * @param sub_len Sub-transform length
- * @param use_nt Use non-temporal stores (for large FFTs)
- */
-__attribute__((always_inline)) static inline void radix7_butterfly_single_avx2_soa(
-    int k, int K,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    const __m256d rader_tw_re[6],
-    const __m256d rader_tw_im[6],
-    double *restrict out_re,
-    double *restrict out_im,
-    int sub_len,
-    bool use_nt)
-{
-    // STEP 1: Load 7 lanes (4 complex values per lane)
-    __m256d x0_re, x0_im, x1_re, x1_im, x2_re, x2_im, x3_re, x3_im;
-    __m256d x4_re, x4_im, x5_re, x5_im, x6_re, x6_im;
-
-    load_7_lanes_avx2_soa(k, K, in_re, in_im,
-                          &x0_re, &x0_im, &x1_re, &x1_im,
-                          &x2_re, &x2_im, &x3_re, &x3_im,
-                          &x4_re, &x4_im, &x5_re, &x5_im,
-                          &x6_re, &x6_im);
-
-    // STEP 2: Apply stage twiddles (x0 unchanged, x1-x6 multiplied)
-    apply_stage_twiddles_avx2_soa(k, K,
-                                  &x1_re, &x1_im, &x2_re, &x2_im,
-                                  &x3_re, &x3_im, &x4_re, &x4_im,
-                                  &x5_re, &x5_im, &x6_re, &x6_im,
-                                  stage_tw, sub_len);
-
-    // STEP 3: Compute DC component y0 (tree reduction)
-    __m256d y0_re, y0_im;
-    compute_y0_tree_avx2_soa(x0_re, x0_im, x1_re, x1_im,
-                             x2_re, x2_im, x3_re, x3_im,
-                             x4_re, x4_im, x5_re, x5_im,
-                             x6_re, x6_im,
-                             &y0_re, &y0_im);
-
-    // STEP 4: Permute inputs for Rader algorithm
-    __m256d tx0_re, tx0_im, tx1_re, tx1_im, tx2_re, tx2_im;
-    __m256d tx3_re, tx3_im, tx4_re, tx4_im, tx5_re, tx5_im;
-
-    permute_rader_inputs_avx2_soa(x1_re, x1_im, x2_re, x2_im,
-                                  x3_re, x3_im, x4_re, x4_im,
-                                  x5_re, x5_im, x6_re, x6_im,
-                                  &tx0_re, &tx0_im, &tx1_re, &tx1_im,
-                                  &tx2_re, &tx2_im, &tx3_re, &tx3_im,
-                                  &tx4_re, &tx4_im, &tx5_re, &tx5_im);
-
-    // STEP 5: 6-point cyclic convolution (round-robin schedule)
-    __m256d v0_re, v0_im, v1_re, v1_im, v2_re, v2_im;
-    __m256d v3_re, v3_im, v4_re, v4_im, v5_re, v5_im;
-
-    rader_convolution_roundrobin_avx2_soa(
-        tx0_re, tx0_im, tx1_re, tx1_im, tx2_re, tx2_im,
-        tx3_re, tx3_im, tx4_re, tx4_im, tx5_re, tx5_im,
-        rader_tw_re, rader_tw_im,
-        &v0_re, &v0_im, &v1_re, &v1_im, &v2_re, &v2_im,
-        &v3_re, &v3_im, &v4_re, &v4_im, &v5_re, &v5_im);
-
-    // STEP 6 & 7: Assemble outputs at store-time (CRITICAL: frees 6 YMM!)
-    // Output permutation: [1,5,4,6,2,3] from convolution results v[0,1,2,3,4,5]
-    // Do adds inline with store to avoid materializing y1-y6
-    if (use_nt)
-    {
-        store_7_lanes_avx2_stream_soa(k, K, out_re, out_im,
-                                      y0_re, y0_im,
-                                      _mm256_add_pd(x0_re, v0_re), _mm256_add_pd(x0_im, v0_im),  // y1
-                                      _mm256_add_pd(x0_re, v4_re), _mm256_add_pd(x0_im, v4_im),  // y2
-                                      _mm256_add_pd(x0_re, v5_re), _mm256_add_pd(x0_im, v5_im),  // y3
-                                      _mm256_add_pd(x0_re, v2_re), _mm256_add_pd(x0_im, v2_im),  // y4
-                                      _mm256_add_pd(x0_re, v1_re), _mm256_add_pd(x0_im, v1_im),  // y5
-                                      _mm256_add_pd(x0_re, v3_re), _mm256_add_pd(x0_im, v3_im)); // y6
-    }
-    else
-    {
-        store_7_lanes_avx2_soa(k, K, out_re, out_im,
-                               y0_re, y0_im,
-                               _mm256_add_pd(x0_re, v0_re), _mm256_add_pd(x0_im, v0_im),  // y1
-                               _mm256_add_pd(x0_re, v4_re), _mm256_add_pd(x0_im, v4_im),  // y2
-                               _mm256_add_pd(x0_re, v5_re), _mm256_add_pd(x0_im, v5_im),  // y3
-                               _mm256_add_pd(x0_re, v2_re), _mm256_add_pd(x0_im, v2_im),  // y4
-                               _mm256_add_pd(x0_re, v1_re), _mm256_add_pd(x0_im, v1_im),  // y5
-                               _mm256_add_pd(x0_re, v3_re), _mm256_add_pd(x0_im, v3_im)); // y6
-    }
-}
-
-/**
- * @brief Dual radix-7 butterfly - U2 pipeline for saturating dual FMA ports
- * @details
- * ⚡⚡⚡ CRITICAL: Process TWO butterflies simultaneously!
- *
- * U2 PIPELINE STRUCTURE (AVX2 ADAPTATION):
- * =========================================
- * Process k and k+4 in parallel to maximize ILP and saturate dual FMA ports.
- *
- * Key optimizations:
- * - Interleaved loads: k and k+4 loads can overlap
- * - Interleaved convolutions: butterfly A and B alternate FMA issue
- *   → Achieves 2 FMAs/cycle (saturating dual FMA ports)
- * - Register reuse: temporary registers shared where dependency chains allow
- * - Store-time adds: no ya1-ya6, yb1-yb6 temporaries (frees 12 YMM!)
- * - Total register pressure: ~14 YMM (well within 16 YMM budget)
- *
- * WHY U2 WORKS FOR RADIX-7 (AVX2):
- * =================================
- * Round-robin convolution has 6 independent accumulators per butterfly.
- * With U2, we have 12 accumulators (6 for A, 6 for B) updated in rotation:
- *   va0 += ...; vb0 += ...; va1 += ...; vb1 += ...;  ← 2 FMAs/cycle!
- *
- * Each accumulator gets ~6 cycles between updates (plenty for 4-cycle FMA latency).
- *
- * @param ka Starting index for butterfly A
- * @param kb Starting index for butterfly B (typically ka + 4)
- */
-__attribute__((always_inline)) static inline void radix7_butterfly_dual_avx2_soa(
-    int ka, int kb, int K,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    const __m256d rader_tw_re[6],
-    const __m256d rader_tw_im[6],
-    double *restrict out_re,
-    double *restrict out_im,
-    int sub_len,
-    bool use_nt)
-{
-    //==========================================================================
-    // BUTTERFLY A (ka)
-    //==========================================================================
-
-    // Load A
-    __m256d xa0_re, xa0_im, xa1_re, xa1_im, xa2_re, xa2_im, xa3_re, xa3_im;
-    __m256d xa4_re, xa4_im, xa5_re, xa5_im, xa6_re, xa6_im;
-
-    load_7_lanes_avx2_soa(ka, K, in_re, in_im,
-                          &xa0_re, &xa0_im, &xa1_re, &xa1_im,
-                          &xa2_re, &xa2_im, &xa3_re, &xa3_im,
-                          &xa4_re, &xa4_im, &xa5_re, &xa5_im,
-                          &xa6_re, &xa6_im);
-
-    //==========================================================================
-    // BUTTERFLY B (kb) - INTERLEAVE LOAD
-    //==========================================================================
-
-    // Load B (interleaved with A's load - increases memory bandwidth utilization)
-    __m256d xb0_re, xb0_im, xb1_re, xb1_im, xb2_re, xb2_im, xb3_re, xb3_im;
-    __m256d xb4_re, xb4_im, xb5_re, xb5_im, xb6_re, xb6_im;
-
-    load_7_lanes_avx2_soa(kb, K, in_re, in_im,
-                          &xb0_re, &xb0_im, &xb1_re, &xb1_im,
-                          &xb2_re, &xb2_im, &xb3_re, &xb3_im,
-                          &xb4_re, &xb4_im, &xb5_re, &xb5_im,
-                          &xb6_re, &xb6_im);
-
-    //==========================================================================
-    // APPLY STAGE TWIDDLES (A and B)
-    //==========================================================================
-
-    apply_stage_twiddles_avx2_soa(ka, K,
-                                  &xa1_re, &xa1_im, &xa2_re, &xa2_im,
-                                  &xa3_re, &xa3_im, &xa4_re, &xa4_im,
-                                  &xa5_re, &xa5_im, &xa6_re, &xa6_im,
-                                  stage_tw, sub_len);
-
-    apply_stage_twiddles_avx2_soa(kb, K,
-                                  &xb1_re, &xb1_im, &xb2_re, &xb2_im,
-                                  &xb3_re, &xb3_im, &xb4_re, &xb4_im,
-                                  &xb5_re, &xb5_im, &xb6_re, &xb6_im,
-                                  stage_tw, sub_len);
-
-    //==========================================================================
-    // COMPUTE Y0 (A and B) - TREE REDUCTION
-    //==========================================================================
-
-    __m256d ya0_re, ya0_im;
-    compute_y0_tree_avx2_soa(xa0_re, xa0_im, xa1_re, xa1_im,
-                             xa2_re, xa2_im, xa3_re, xa3_im,
-                             xa4_re, xa4_im, xa5_re, xa5_im,
-                             xa6_re, xa6_im,
-                             &ya0_re, &ya0_im);
-
-    __m256d yb0_re, yb0_im;
-    compute_y0_tree_avx2_soa(xb0_re, xb0_im, xb1_re, xb1_im,
-                             xb2_re, xb2_im, xb3_re, xb3_im,
-                             xb4_re, xb4_im, xb5_re, xb5_im,
-                             xb6_re, xb6_im,
-                             &yb0_re, &yb0_im);
-
-    //==========================================================================
-    // PERMUTE INPUTS (A and B)
-    //==========================================================================
-
-    __m256d txa0_re, txa0_im, txa1_re, txa1_im, txa2_re, txa2_im;
-    __m256d txa3_re, txa3_im, txa4_re, txa4_im, txa5_re, txa5_im;
-
-    permute_rader_inputs_avx2_soa(xa1_re, xa1_im, xa2_re, xa2_im,
-                                  xa3_re, xa3_im, xa4_re, xa4_im,
-                                  xa5_re, xa5_im, xa6_re, xa6_im,
-                                  &txa0_re, &txa0_im, &txa1_re, &txa1_im,
-                                  &txa2_re, &txa2_im, &txa3_re, &txa3_im,
-                                  &txa4_re, &txa4_im, &txa5_re, &txa5_im);
-
-    __m256d txb0_re, txb0_im, txb1_re, txb1_im, txb2_re, txb2_im;
-    __m256d txb3_re, txb3_im, txb4_re, txb4_im, txb5_re, txb5_im;
-
-    permute_rader_inputs_avx2_soa(xb1_re, xb1_im, xb2_re, xb2_im,
-                                  xb3_re, xb3_im, xb4_re, xb4_im,
-                                  xb5_re, xb5_im, xb6_re, xb6_im,
-                                  &txb0_re, &txb0_im, &txb1_re, &txb1_im,
-                                  &txb2_re, &txb2_im, &txb3_re, &txb3_im,
-                                  &txb4_re, &txb4_im, &txb5_re, &txb5_im);
-
-    //==========================================================================
-    // CONVOLUTION (A and B) - INTERLEAVED FOR DUAL FMA SATURATION
-    //==========================================================================
-
-    // Initialize all accumulators
-    __m256d va0_re = _mm256_setzero_pd(), va0_im = _mm256_setzero_pd();
-    __m256d va1_re = _mm256_setzero_pd(), va1_im = _mm256_setzero_pd();
-    __m256d va2_re = _mm256_setzero_pd(), va2_im = _mm256_setzero_pd();
-    __m256d va3_re = _mm256_setzero_pd(), va3_im = _mm256_setzero_pd();
-    __m256d va4_re = _mm256_setzero_pd(), va4_im = _mm256_setzero_pd();
-    __m256d va5_re = _mm256_setzero_pd(), va5_im = _mm256_setzero_pd();
-
-    __m256d vb0_re = _mm256_setzero_pd(), vb0_im = _mm256_setzero_pd();
-    __m256d vb1_re = _mm256_setzero_pd(), vb1_im = _mm256_setzero_pd();
-    __m256d vb2_re = _mm256_setzero_pd(), vb2_im = _mm256_setzero_pd();
-    __m256d vb3_re = _mm256_setzero_pd(), vb3_im = _mm256_setzero_pd();
-    __m256d vb4_re = _mm256_setzero_pd(), vb4_im = _mm256_setzero_pd();
-    __m256d vb5_re = _mm256_setzero_pd(), vb5_im = _mm256_setzero_pd();
-
-    // ⚡⚡⚡ CRITICAL: INTERLEAVED ROUND-ROBIN CONVOLUTION
-    // Alternate between A and B updates to issue 2 FMAs/cycle!
-
-    // Round 0: txa0 and txb0
-    cmul_add_fma_avx2_soa(&va0_re, &va0_im, txa0_re, txa0_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&vb0_re, &vb0_im, txb0_re, txb0_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&va1_re, &va1_im, txa0_re, txa0_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&vb1_re, &vb1_im, txb0_re, txb0_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&va2_re, &va2_im, txa0_re, txa0_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&vb2_re, &vb2_im, txb0_re, txb0_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&va3_re, &va3_im, txa0_re, txa0_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&vb3_re, &vb3_im, txb0_re, txb0_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&va4_re, &va4_im, txa0_re, txa0_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&vb4_re, &vb4_im, txb0_re, txb0_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&va5_re, &va5_im, txa0_re, txa0_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&vb5_re, &vb5_im, txb0_re, txb0_im, rader_tw_re[5], rader_tw_im[5]);
-
-    // Round 1: txa1 and txb1
-    cmul_add_fma_avx2_soa(&va0_re, &va0_im, txa1_re, txa1_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&vb0_re, &vb0_im, txb1_re, txb1_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&va1_re, &va1_im, txa1_re, txa1_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&vb1_re, &vb1_im, txb1_re, txb1_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&va2_re, &va2_im, txa1_re, txa1_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&vb2_re, &vb2_im, txb1_re, txb1_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&va3_re, &va3_im, txa1_re, txa1_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&vb3_re, &vb3_im, txb1_re, txb1_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&va4_re, &va4_im, txa1_re, txa1_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&vb4_re, &vb4_im, txb1_re, txb1_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&va5_re, &va5_im, txa1_re, txa1_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&vb5_re, &vb5_im, txb1_re, txb1_im, rader_tw_re[4], rader_tw_im[4]);
-
-    // Round 2: txa2 and txb2
-    cmul_add_fma_avx2_soa(&va0_re, &va0_im, txa2_re, txa2_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&vb0_re, &vb0_im, txb2_re, txb2_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&va1_re, &va1_im, txa2_re, txa2_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&vb1_re, &vb1_im, txb2_re, txb2_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&va2_re, &va2_im, txa2_re, txa2_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&vb2_re, &vb2_im, txb2_re, txb2_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&va3_re, &va3_im, txa2_re, txa2_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&vb3_re, &vb3_im, txb2_re, txb2_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&va4_re, &va4_im, txa2_re, txa2_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&vb4_re, &vb4_im, txb2_re, txb2_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&va5_re, &va5_im, txa2_re, txa2_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&vb5_re, &vb5_im, txb2_re, txb2_im, rader_tw_re[3], rader_tw_im[3]);
-
-    // Round 3: txa3 and txb3
-    cmul_add_fma_avx2_soa(&va0_re, &va0_im, txa3_re, txa3_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&vb0_re, &vb0_im, txb3_re, txb3_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&va1_re, &va1_im, txa3_re, txa3_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&vb1_re, &vb1_im, txb3_re, txb3_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&va2_re, &va2_im, txa3_re, txa3_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&vb2_re, &vb2_im, txb3_re, txb3_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&va3_re, &va3_im, txa3_re, txa3_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&vb3_re, &vb3_im, txb3_re, txb3_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&va4_re, &va4_im, txa3_re, txa3_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&vb4_re, &vb4_im, txb3_re, txb3_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&va5_re, &va5_im, txa3_re, txa3_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&vb5_re, &vb5_im, txb3_re, txb3_im, rader_tw_re[2], rader_tw_im[2]);
-
-    // Round 4: txa4 and txb4
-    cmul_add_fma_avx2_soa(&va0_re, &va0_im, txa4_re, txa4_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&vb0_re, &vb0_im, txb4_re, txb4_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&va1_re, &va1_im, txa4_re, txa4_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&vb1_re, &vb1_im, txb4_re, txb4_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&va2_re, &va2_im, txa4_re, txa4_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&vb2_re, &vb2_im, txb4_re, txb4_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&va3_re, &va3_im, txa4_re, txa4_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&vb3_re, &vb3_im, txb4_re, txb4_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&va4_re, &va4_im, txa4_re, txa4_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&vb4_re, &vb4_im, txb4_re, txb4_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&va5_re, &va5_im, txa4_re, txa4_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&vb5_re, &vb5_im, txb4_re, txb4_im, rader_tw_re[1], rader_tw_im[1]);
-
-    // Round 5: txa5 and txb5
-    cmul_add_fma_avx2_soa(&va0_re, &va0_im, txa5_re, txa5_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&vb0_re, &vb0_im, txb5_re, txb5_im, rader_tw_re[1], rader_tw_im[1]);
-    cmul_add_fma_avx2_soa(&va1_re, &va1_im, txa5_re, txa5_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&vb1_re, &vb1_im, txb5_re, txb5_im, rader_tw_re[2], rader_tw_im[2]);
-    cmul_add_fma_avx2_soa(&va2_re, &va2_im, txa5_re, txa5_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&vb2_re, &vb2_im, txb5_re, txb5_im, rader_tw_re[3], rader_tw_im[3]);
-    cmul_add_fma_avx2_soa(&va3_re, &va3_im, txa5_re, txa5_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&vb3_re, &vb3_im, txb5_re, txb5_im, rader_tw_re[4], rader_tw_im[4]);
-    cmul_add_fma_avx2_soa(&va4_re, &va4_im, txa5_re, txa5_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&vb4_re, &vb4_im, txb5_re, txb5_im, rader_tw_re[5], rader_tw_im[5]);
-    cmul_add_fma_avx2_soa(&va5_re, &va5_im, txa5_re, txa5_im, rader_tw_re[0], rader_tw_im[0]);
-    cmul_add_fma_avx2_soa(&vb5_re, &vb5_im, txb5_re, txb5_im, rader_tw_re[0], rader_tw_im[0]);
-
-    //==========================================================================
-    // ASSEMBLE OUTPUTS (A and B) + STORE - INLINE ADDS!
-    //==========================================================================
-
-    // Output permutation: [1,5,4,6,2,3] from v[0,1,2,3,4,5]
-    // Do adds inline to avoid materializing ya1-ya6 and yb1-yb6 (frees 12 YMM!)
-
-    if (use_nt)
-    {
-        // Butterfly A
-        store_7_lanes_avx2_stream_soa(ka, K, out_re, out_im,
-                                      ya0_re, ya0_im,
-                                      _mm256_add_pd(xa0_re, va0_re), _mm256_add_pd(xa0_im, va0_im),  // ya1
-                                      _mm256_add_pd(xa0_re, va4_re), _mm256_add_pd(xa0_im, va4_im),  // ya2
-                                      _mm256_add_pd(xa0_re, va5_re), _mm256_add_pd(xa0_im, va5_im),  // ya3
-                                      _mm256_add_pd(xa0_re, va2_re), _mm256_add_pd(xa0_im, va2_im),  // ya4
-                                      _mm256_add_pd(xa0_re, va1_re), _mm256_add_pd(xa0_im, va1_im),  // ya5
-                                      _mm256_add_pd(xa0_re, va3_re), _mm256_add_pd(xa0_im, va3_im)); // ya6
-
-        // Butterfly B
-        store_7_lanes_avx2_stream_soa(kb, K, out_re, out_im,
-                                      yb0_re, yb0_im,
-                                      _mm256_add_pd(xb0_re, vb0_re), _mm256_add_pd(xb0_im, vb0_im),  // yb1
-                                      _mm256_add_pd(xb0_re, vb4_re), _mm256_add_pd(xb0_im, vb4_im),  // yb2
-                                      _mm256_add_pd(xb0_re, vb5_re), _mm256_add_pd(xb0_im, vb5_im),  // yb3
-                                      _mm256_add_pd(xb0_re, vb2_re), _mm256_add_pd(xb0_im, vb2_im),  // yb4
-                                      _mm256_add_pd(xb0_re, vb1_re), _mm256_add_pd(xb0_im, vb1_im),  // yb5
-                                      _mm256_add_pd(xb0_re, vb3_re), _mm256_add_pd(xb0_im, vb3_im)); // yb6
-    }
-    else
-    {
-        // Butterfly A
-        store_7_lanes_avx2_soa(ka, K, out_re, out_im,
-                               ya0_re, ya0_im,
-                               _mm256_add_pd(xa0_re, va0_re), _mm256_add_pd(xa0_im, va0_im),  // ya1
-                               _mm256_add_pd(xa0_re, va4_re), _mm256_add_pd(xa0_im, va4_im),  // ya2
-                               _mm256_add_pd(xa0_re, va5_re), _mm256_add_pd(xa0_im, va5_im),  // ya3
-                               _mm256_add_pd(xa0_re, va2_re), _mm256_add_pd(xa0_im, va2_im),  // ya4
-                               _mm256_add_pd(xa0_re, va1_re), _mm256_add_pd(xa0_im, va1_im),  // ya5
-                               _mm256_add_pd(xa0_re, va3_re), _mm256_add_pd(xa0_im, va3_im)); // ya6
-
-        // Butterfly B
-        store_7_lanes_avx2_soa(kb, K, out_re, out_im,
-                               yb0_re, yb0_im,
-                               _mm256_add_pd(xb0_re, vb0_re), _mm256_add_pd(xb0_im, vb0_im),  // yb1
-                               _mm256_add_pd(xb0_re, vb4_re), _mm256_add_pd(xb0_im, vb4_im),  // yb2
-                               _mm256_add_pd(xb0_re, vb5_re), _mm256_add_pd(xb0_im, vb5_im),  // yb3
-                               _mm256_add_pd(xb0_re, vb2_re), _mm256_add_pd(xb0_im, vb2_im),  // yb4
-                               _mm256_add_pd(xb0_re, vb1_re), _mm256_add_pd(xb0_im, vb1_im),  // yb5
-                               _mm256_add_pd(xb0_re, vb3_re), _mm256_add_pd(xb0_im, vb3_im)); // yb6
-    }
-}
-
-//==============================================================================
-// STAGE DISPATCHER - LLC-AWARE NT HEURISTIC
-//==============================================================================
-
-/**
- * @brief Execute radix-7 stage with optimal dispatch
- * @details
- * Dispatches to:
- * - U2 path for main loop (k, k+8)
- * - Single path for tail (k < 8 remaining)
- * - Scalar fallback for misaligned or very small K
- *
- * NT store decision:
- * - Enabled if: bytes_written > R7_AVX2_NT_THRESHOLD * LLC
- * - Requires: K >= R7_AVX2_NT_MIN_K and 32-byte alignment
- * - Fence: Single _mm_sfence() after all NT stores (not per iteration!)
- *
- * @param K Number of butterflies
- * @param in_re Input real components (32-byte aligned)
- * @param in_im Input imaginary components (32-byte aligned)
- * @param stage_tw Stage twiddle factors (blocked SoA, 32-byte aligned)
- * @param rader_tw Rader twiddle factors (6 complex values)
- * @param out_re Output real components (32-byte aligned)
- * @param out_im Output imaginary components (32-byte aligned)
- * @param sub_len Sub-transform length
- */
-static void radix7_stage_avx2_soa(
-    int K,
-    const double *restrict in_re,
-    const double *restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    const fft_twiddle_soa *rader_tw,
-    double *restrict out_re,
-    double *restrict out_im,
-    int sub_len)
-{
-    // Verify alignment (debug/production check)
-    if (!verify_r7_avx2_alignment(in_re, in_im, out_re, out_im))
-    {
-        // Fallback to scalar for misaligned (should not happen in production!)
-        // Would call scalar version here
-        return;
-    }
-
-    // Broadcast Rader twiddles ONCE for entire stage (P0 optimization!)
-    __m256d rader_tw_re[6], rader_tw_im[6];
-    broadcast_rader_twiddles_avx2_soa(rader_tw, rader_tw_re, rader_tw_im);
-
-    // Decide on non-temporal stores
-    size_t bytes_per_stage = (size_t)K * 7 * 2 * sizeof(double); // 7 lanes, 2 components
-    bool use_nt = (bytes_per_stage > (size_t)(R7_AVX2_NT_THRESHOLD * R7_AVX2_LLC_BYTES)) &&
-                  (K >= R7_AVX2_NT_MIN_K);
-
-    // Check for environment variable override (for tuning)
-    const char *nt_env = getenv("FFT_R7_NT");
-    if (nt_env != NULL)
-    {
-        use_nt = (atoi(nt_env) != 0);
-    }
-
-    // Determine if stage is "large" for prefetch hint selection
-    bool large_stage = (K >= R7_AVX2_LARGE_STAGE_K);
-
     int k = 0;
-
-    // Main U2 loop: process 8 elements per iteration (2 butterflies × 4 wide)
-    for (; k <= K - R7_AVX2_U2_WIDTH; k += R7_AVX2_U2_WIDTH)
+    for (; k + R7_AVX2_VW <= K; k += R7_AVX2_VW)
     {
-        // Prefetch ahead
-        prefetch_7_lanes_avx2_soa(k, K, in_re, in_im, stage_tw, sub_len, large_stage);
+        __m256d x0r = _mm256_loadu_pd(&a_re[k]);
+        __m256d x0i = _mm256_loadu_pd(&a_im[k]);
+        __m256d xb_r = _mm256_loadu_pd(&b_re[k]);
+        __m256d xb_i = _mm256_loadu_pd(&b_im[k]);
+        __m256d xc_r = _mm256_loadu_pd(&c_re[k]);
+        __m256d xc_i = _mm256_loadu_pd(&c_im[k]);
+        __m256d xd_r = _mm256_loadu_pd(&d_re[k]);
+        __m256d xd_i = _mm256_loadu_pd(&d_im[k]);
+        __m256d xe_r = _mm256_loadu_pd(&e_re[k]);
+        __m256d xe_i = _mm256_loadu_pd(&e_im[k]);
+        __m256d xf_r = _mm256_loadu_pd(&f_re[k]);
+        __m256d xf_i = _mm256_loadu_pd(&f_im[k]);
+        __m256d xg_r = _mm256_loadu_pd(&g_re[k]);
+        __m256d xg_i = _mm256_loadu_pd(&g_im[k]);
 
-        // Process two butterflies simultaneously
-        radix7_butterfly_dual_avx2_soa(k, k + R7_AVX2_WIDTH, K,
-                                       in_re, in_im, stage_tw,
-                                       rader_tw_re, rader_tw_im,
-                                       out_re, out_im, sub_len, use_nt);
+        __m256d w1r = _mm256_loadu_pd(&tw1_re[k]);
+        __m256d w1i = _mm256_loadu_pd(&tw1_im[k]);
+        __m256d w2r = _mm256_loadu_pd(&tw2_re[k]);
+        __m256d w2i = _mm256_loadu_pd(&tw2_im[k]);
+        __m256d w3r = _mm256_loadu_pd(&tw3_re[k]);
+        __m256d w3i = _mm256_loadu_pd(&tw3_im[k]);
+
+        __m256d t1r, t1i, t2r, t2i, t3r, t3i;
+        cmul_avx2_r7(xb_r, xb_i, w1r, w1i, &t1r, &t1i);
+        cmul_avx2_r7(xc_r, xc_i, w2r, w2i, &t2r, &t2i);
+        cmul_avx2_r7(xd_r, xd_i, w3r, w3i, &t3r, &t3i);
+
+        __m256d w4r, w4i, w5r, w5i, w6r, w6i;
+        cmul_avx2_r7(w1r, w1i, w3r, w3i, &w4r, &w4i);
+        cmul_avx2_r7(w2r, w2i, w3r, w3i, &w5r, &w5i);
+        cmul_avx2_r7(w3r, w3i, w3r, w3i, &w6r, &w6i);
+
+        __m256d t4r, t4i, t5r, t5i, t6r, t6i;
+        cmul_avx2_r7(xe_r, xe_i, w4r, w4i, &t4r, &t4i);
+        cmul_avx2_r7(xf_r, xf_i, w5r, w5i, &t5r, &t5i);
+        cmul_avx2_r7(xg_r, xg_i, w6r, w6i, &t6r, &t6i);
+
+        /* DC: tree sum (P1) */
+        __m256d dc_r, dc_i;
+        TREE_Y0(x0r, t1r, t2r, t3r, t4r, t5r, t6r, dc_r);
+        TREE_Y0(x0i, t1i, t2i, t3i, t4i, t5i, t6i, dc_i);
+        _mm256_storeu_pd(&y0_re[k], dc_r);
+        _mm256_storeu_pd(&y0_im[k], dc_i);
+
+        /* Rader input permute: {1,3,2,6,4,5} */
+        __m256d s0r = t1r, s0i = t1i, s1r = t3r, s1i = t3i;
+        __m256d s2r = t2r, s2i = t2i, s3r = t6r, s3i = t6i;
+        __m256d s4r = t4r, s4i = t4i, s5r = t5r, s5i = t5i;
+
+        DFT6_FWD_AVX2(s0r, s0i, s1r, s1i, s2r, s2i,
+                      s3r, s3i, s4r, s4i, s5r, s5i);
+
+        POINTWISE_RR6(s0r, s0i, s1r, s1i, s2r, s2i,
+                      s3r, s3i, s4r, s4i, s5r, s5i,
+                      RK7_FR0, RK7_FI0, RK7_FR1, RK7_FI1,
+                      RK7_FR2, RK7_FI2, RK7_FR3, RK7_FI3,
+                      RK7_FR4, RK7_FI4, RK7_FR5, RK7_FI5);
+
+        DFT6_BWD_AVX2(s0r, s0i, s1r, s1i, s2r, s2i,
+                      s3r, s3i, s4r, s4i, s5r, s5i);
+
+        /* inv_perm = {1,5,4,6,2,3} */
+        _mm256_storeu_pd(&y1_re[k], _mm256_add_pd(x0r, s0r));
+        _mm256_storeu_pd(&y1_im[k], _mm256_add_pd(x0i, s0i));
+        _mm256_storeu_pd(&y5_re[k], _mm256_add_pd(x0r, s1r));
+        _mm256_storeu_pd(&y5_im[k], _mm256_add_pd(x0i, s1i));
+        _mm256_storeu_pd(&y4_re[k], _mm256_add_pd(x0r, s2r));
+        _mm256_storeu_pd(&y4_im[k], _mm256_add_pd(x0i, s2i));
+        _mm256_storeu_pd(&y6_re[k], _mm256_add_pd(x0r, s3r));
+        _mm256_storeu_pd(&y6_im[k], _mm256_add_pd(x0i, s3i));
+        _mm256_storeu_pd(&y2_re[k], _mm256_add_pd(x0r, s4r));
+        _mm256_storeu_pd(&y2_im[k], _mm256_add_pd(x0i, s4i));
+        _mm256_storeu_pd(&y3_re[k], _mm256_add_pd(x0r, s5r));
+        _mm256_storeu_pd(&y3_im[k], _mm256_add_pd(x0i, s5i));
     }
-
-    // Tail loop: single butterflies (4 elements at a time)
-    for (; k <= K - R7_AVX2_WIDTH; k += R7_AVX2_WIDTH)
+    /* Scalar tail */
+    for (; k < K; k++)
     {
-        radix7_butterfly_single_avx2_soa(k, K, in_re, in_im, stage_tw,
-                                         rader_tw_re, rader_tw_im,
-                                         out_re, out_im, sub_len, use_nt);
-    }
-
-    // Remainder: scalar fallback (k < 4 remaining)
-    // Would call scalar version here for k..K-1
-
-    // Fence after NT stores (once per stage, not per iteration!)
-    if (use_nt)
-    {
-        _mm_sfence();
+        double x0r_ = a_re[k], x0i_ = a_im[k];
+        double _w1r = tw1_re[k], _w1i = tw1_im[k];
+        double _w2r = tw2_re[k], _w2i = tw2_im[k];
+        double _w3r = tw3_re[k], _w3i = tw3_im[k];
+        double _t1r = b_re[k] * _w1r - b_im[k] * _w1i, _t1i = b_re[k] * _w1i + b_im[k] * _w1r;
+        double _t2r = c_re[k] * _w2r - c_im[k] * _w2i, _t2i = c_re[k] * _w2i + c_im[k] * _w2r;
+        double _t3r = d_re[k] * _w3r - d_im[k] * _w3i, _t3i = d_re[k] * _w3i + d_im[k] * _w3r;
+        double _w4r = _w1r * _w3r - _w1i * _w3i, _w4i = _w1r * _w3i + _w1i * _w3r;
+        double _w5r = _w2r * _w3r - _w2i * _w3i, _w5i = _w2r * _w3i + _w2i * _w3r;
+        double _w6r = _w3r * _w3r - _w3i * _w3i, _w6i = 2.0 * _w3r * _w3i;
+        double _t4r = e_re[k] * _w4r - e_im[k] * _w4i, _t4i = e_re[k] * _w4i + e_im[k] * _w4r;
+        double _t5r = f_re[k] * _w5r - f_im[k] * _w5i, _t5i = f_re[k] * _w5i + f_im[k] * _w5r;
+        double _t6r = g_re[k] * _w6r - g_im[k] * _w6i, _t6i = g_re[k] * _w6i + g_im[k] * _w6r;
+        y0_re[k] = x0r_ + _t1r + _t2r + _t3r + _t4r + _t5r + _t6r;
+        y0_im[k] = x0i_ + _t1i + _t2i + _t3i + _t4i + _t5i + _t6i;
+        double ar[6] = {_t1r, _t3r, _t2r, _t6r, _t4r, _t5r};
+        double ai[6] = {_t1i, _t3i, _t2i, _t6i, _t4i, _t5i};
+        double Ar[6], Ai[6], Cr[6], Ci[6], cr[6], ci[6];
+        /* Fwd DFT6 scalar */
+        {
+            double s1 = ar[2] + ar[4], s2 = ai[2] + ai[4], d1 = ar[2] - ar[4], d2 = ai[2] - ai[4];
+            double E0r = ar[0] + s1, E0i = ai[0] + s2, br = ar[0] - 0.5 * s1, bi = ai[0] - 0.5 * s2;
+            double E1r = br + 0.86602540378443864676 * d2, E1i = bi - 0.86602540378443864676 * d1;
+            double E2r = br - 0.86602540378443864676 * d2, E2i = bi + 0.86602540378443864676 * d1;
+            double s3 = ar[3] + ar[5], s4 = ai[3] + ai[5], d3 = ar[3] - ar[5], d4 = ai[3] - ai[5];
+            double O0r = ar[1] + s3, O0i = ai[1] + s4, br2 = ar[1] - 0.5 * s3, bi2 = ai[1] - 0.5 * s4;
+            double O1r = br2 + 0.86602540378443864676 * d4, O1i = bi2 - 0.86602540378443864676 * d3;
+            double O2r = br2 - 0.86602540378443864676 * d4, O2i = bi2 + 0.86602540378443864676 * d3;
+            Ar[0] = E0r + O0r;
+            Ai[0] = E0i + O0i;
+            Ar[3] = E0r - O0r;
+            Ai[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 + O1i * 0.86602540378443864676;
+            double T1i_ = O1r * (-0.86602540378443864676) + O1i * 0.5;
+            Ar[1] = E1r + T1r_;
+            Ai[1] = E1i + T1i_;
+            Ar[4] = E1r - T1r_;
+            Ai[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) + O2i * 0.86602540378443864676;
+            double T2i_ = O2r * (-0.86602540378443864676) + O2i * (-0.5);
+            Ar[2] = E2r + T2r_;
+            Ai[2] = E2i + T2i_;
+            Ar[5] = E2r - T2r_;
+            Ai[5] = E2i - T2i_;
+        }
+        for (int j = 0; j < 6; j++)
+        {
+            Cr[j] = Ar[j] * RK7A_FWD_RE[j] - Ai[j] * RK7A_FWD_IM[j];
+            Ci[j] = Ar[j] * RK7A_FWD_IM[j] + Ai[j] * RK7A_FWD_RE[j];
+        }
+        /* Bwd DFT6 scalar */
+        {
+            double s1 = Cr[2] + Cr[4], s2 = Ci[2] + Ci[4], d1 = Cr[2] - Cr[4], d2 = Ci[2] - Ci[4];
+            double E0r = Cr[0] + s1, E0i = Ci[0] + s2, br = Cr[0] - 0.5 * s1, bi = Ci[0] - 0.5 * s2;
+            double E1r = br - 0.86602540378443864676 * d2, E1i = bi + 0.86602540378443864676 * d1;
+            double E2r = br + 0.86602540378443864676 * d2, E2i = bi - 0.86602540378443864676 * d1;
+            double s3 = Cr[3] + Cr[5], s4 = Ci[3] + Ci[5], d3 = Cr[3] - Cr[5], d4 = Ci[3] - Ci[5];
+            double O0r = Cr[1] + s3, O0i = Ci[1] + s4, br2 = Cr[1] - 0.5 * s3, bi2 = Ci[1] - 0.5 * s4;
+            double O1r = br2 - 0.86602540378443864676 * d4, O1i = bi2 + 0.86602540378443864676 * d3;
+            double O2r = br2 + 0.86602540378443864676 * d4, O2i = bi2 - 0.86602540378443864676 * d3;
+            cr[0] = E0r + O0r;
+            ci[0] = E0i + O0i;
+            cr[3] = E0r - O0r;
+            ci[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 - O1i * 0.86602540378443864676;
+            double T1i_ = O1r * 0.86602540378443864676 + O1i * 0.5;
+            cr[1] = E1r + T1r_;
+            ci[1] = E1i + T1i_;
+            cr[4] = E1r - T1r_;
+            ci[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) - O2i * 0.86602540378443864676;
+            double T2i_ = O2r * 0.86602540378443864676 + O2i * (-0.5);
+            cr[2] = E2r + T2r_;
+            ci[2] = E2i + T2i_;
+            cr[5] = E2r - T2r_;
+            ci[5] = E2i - T2i_;
+        }
+        y1_re[k] = x0r_ + cr[0];
+        y1_im[k] = x0i_ + ci[0];
+        y5_re[k] = x0r_ + cr[1];
+        y5_im[k] = x0i_ + ci[1];
+        y4_re[k] = x0r_ + cr[2];
+        y4_im[k] = x0i_ + ci[2];
+        y6_re[k] = x0r_ + cr[3];
+        y6_im[k] = x0i_ + ci[3];
+        y2_re[k] = x0r_ + cr[4];
+        y2_im[k] = x0i_ + ci[4];
+        y3_re[k] = x0r_ + cr[5];
+        y3_im[k] = x0i_ + ci[5];
     }
 }
 
-#endif // FFT_RADIX7_AVX2_H
+/* ================================================================== */
+/*  Backward butterfly — Rader IDFT then conj twiddle outputs          */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) __attribute__((target("avx2,fma"))) void radix7_rader_bwd_avx2(
+    const double *restrict a_re, const double *restrict a_im,
+    const double *restrict b_re, const double *restrict b_im,
+    const double *restrict c_re, const double *restrict c_im,
+    const double *restrict d_re, const double *restrict d_im,
+    const double *restrict e_re, const double *restrict e_im,
+    const double *restrict f_re, const double *restrict f_im,
+    const double *restrict g_re, const double *restrict g_im,
+    double *restrict y0_re, double *restrict y0_im,
+    double *restrict y1_re, double *restrict y1_im,
+    double *restrict y2_re, double *restrict y2_im,
+    double *restrict y3_re, double *restrict y3_im,
+    double *restrict y4_re, double *restrict y4_im,
+    double *restrict y5_re, double *restrict y5_im,
+    double *restrict y6_re, double *restrict y6_im,
+    const double *restrict tw1_re, const double *restrict tw1_im,
+    const double *restrict tw2_re, const double *restrict tw2_im,
+    const double *restrict tw3_re, const double *restrict tw3_im,
+    int K)
+{
+    int k = 0;
+    for (; k + R7_AVX2_VW <= K; k += R7_AVX2_VW)
+    {
+        __m256d x0r = _mm256_loadu_pd(&a_re[k]);
+        __m256d x0i = _mm256_loadu_pd(&a_im[k]);
+        __m256d t1r = _mm256_loadu_pd(&b_re[k]);
+        __m256d t1i = _mm256_loadu_pd(&b_im[k]);
+        __m256d t2r = _mm256_loadu_pd(&c_re[k]);
+        __m256d t2i = _mm256_loadu_pd(&c_im[k]);
+        __m256d t3r = _mm256_loadu_pd(&d_re[k]);
+        __m256d t3i = _mm256_loadu_pd(&d_im[k]);
+        __m256d t4r = _mm256_loadu_pd(&e_re[k]);
+        __m256d t4i = _mm256_loadu_pd(&e_im[k]);
+        __m256d t5r = _mm256_loadu_pd(&f_re[k]);
+        __m256d t5i = _mm256_loadu_pd(&f_im[k]);
+        __m256d t6r = _mm256_loadu_pd(&g_re[k]);
+        __m256d t6i = _mm256_loadu_pd(&g_im[k]);
+
+        __m256d dc_r, dc_i;
+        TREE_Y0(x0r, t1r, t2r, t3r, t4r, t5r, t6r, dc_r);
+        TREE_Y0(x0i, t1i, t2i, t3i, t4i, t5i, t6i, dc_i);
+
+        __m256d s0r = t1r, s0i = t1i, s1r = t3r, s1i = t3i;
+        __m256d s2r = t2r, s2i = t2i, s3r = t6r, s3i = t6i;
+        __m256d s4r = t4r, s4i = t4i, s5r = t5r, s5i = t5i;
+
+        DFT6_FWD_AVX2(s0r, s0i, s1r, s1i, s2r, s2i,
+                      s3r, s3i, s4r, s4i, s5r, s5i);
+
+        POINTWISE_RR6(s0r, s0i, s1r, s1i, s2r, s2i,
+                      s3r, s3i, s4r, s4i, s5r, s5i,
+                      RK7_BR0, RK7_BI0, RK7_BR1, RK7_BI1,
+                      RK7_BR2, RK7_BI2, RK7_BR3, RK7_BI3,
+                      RK7_BR4, RK7_BI4, RK7_BR5, RK7_BI5);
+
+        DFT6_BWD_AVX2(s0r, s0i, s1r, s1i, s2r, s2i,
+                      s3r, s3i, s4r, s4i, s5r, s5i);
+
+        /* Raw IDFT7 outputs (before twiddle) */
+        __m256d r1r = _mm256_add_pd(x0r, s0r), r1i = _mm256_add_pd(x0i, s0i);
+        __m256d r5r = _mm256_add_pd(x0r, s1r), r5i = _mm256_add_pd(x0i, s1i);
+        __m256d r4r = _mm256_add_pd(x0r, s2r), r4i = _mm256_add_pd(x0i, s2i);
+        __m256d r6r = _mm256_add_pd(x0r, s3r), r6i = _mm256_add_pd(x0i, s3i);
+        __m256d r2r = _mm256_add_pd(x0r, s4r), r2i = _mm256_add_pd(x0i, s4i);
+        __m256d r3r = _mm256_add_pd(x0r, s5r), r3i = _mm256_add_pd(x0i, s5i);
+
+        /* Apply conj twiddles AFTER IDFT */
+        __m256d w1r = _mm256_loadu_pd(&tw1_re[k]);
+        __m256d w1i = _mm256_loadu_pd(&tw1_im[k]);
+        __m256d w2r = _mm256_loadu_pd(&tw2_re[k]);
+        __m256d w2i = _mm256_loadu_pd(&tw2_im[k]);
+        __m256d w3r = _mm256_loadu_pd(&tw3_re[k]);
+        __m256d w3i = _mm256_loadu_pd(&tw3_im[k]);
+        __m256d sb = _mm256_set1_pd(-0.0);
+        __m256d w1n = _mm256_xor_pd(w1i, sb);
+        __m256d w2n = _mm256_xor_pd(w2i, sb);
+        __m256d w3n = _mm256_xor_pd(w3i, sb);
+        __m256d w4r, w4i, w5r, w5i, w6r, w6i;
+        cmul_avx2_r7(w1r, w1n, w3r, w3n, &w4r, &w4i);
+        cmul_avx2_r7(w2r, w2n, w3r, w3n, &w5r, &w5i);
+        cmul_avx2_r7(w3r, w3n, w3r, w3n, &w6r, &w6i);
+
+        _mm256_storeu_pd(&y0_re[k], dc_r);
+        _mm256_storeu_pd(&y0_im[k], dc_i);
+        __m256d o1r, o1i;
+        cmul_avx2_r7(r1r, r1i, w1r, w1n, &o1r, &o1i);
+        _mm256_storeu_pd(&y1_re[k], o1r);
+        _mm256_storeu_pd(&y1_im[k], o1i);
+        __m256d o2r, o2i;
+        cmul_avx2_r7(r2r, r2i, w2r, w2n, &o2r, &o2i);
+        _mm256_storeu_pd(&y2_re[k], o2r);
+        _mm256_storeu_pd(&y2_im[k], o2i);
+        __m256d o3r, o3i;
+        cmul_avx2_r7(r3r, r3i, w3r, w3n, &o3r, &o3i);
+        _mm256_storeu_pd(&y3_re[k], o3r);
+        _mm256_storeu_pd(&y3_im[k], o3i);
+        __m256d o4r, o4i;
+        cmul_avx2_r7(r4r, r4i, w4r, w4i, &o4r, &o4i);
+        _mm256_storeu_pd(&y4_re[k], o4r);
+        _mm256_storeu_pd(&y4_im[k], o4i);
+        __m256d o5r, o5i;
+        cmul_avx2_r7(r5r, r5i, w5r, w5i, &o5r, &o5i);
+        _mm256_storeu_pd(&y5_re[k], o5r);
+        _mm256_storeu_pd(&y5_im[k], o5i);
+        __m256d o6r, o6i;
+        cmul_avx2_r7(r6r, r6i, w6r, w6i, &o6r, &o6i);
+        _mm256_storeu_pd(&y6_re[k], o6r);
+        _mm256_storeu_pd(&y6_im[k], o6i);
+    }
+    /* Scalar tail */
+    for (; k < K; k++)
+    {
+        double x0r_ = a_re[k], x0i_ = a_im[k];
+        double _t1r = b_re[k], _t1i = b_im[k], _t2r = c_re[k], _t2i = c_im[k];
+        double _t3r = d_re[k], _t3i = d_im[k], _t4r = e_re[k], _t4i = e_im[k];
+        double _t5r = f_re[k], _t5i = f_im[k], _t6r = g_re[k], _t6i = g_im[k];
+        double dcr_ = x0r_ + _t1r + _t2r + _t3r + _t4r + _t5r + _t6r;
+        double dci_ = x0i_ + _t1i + _t2i + _t3i + _t4i + _t5i + _t6i;
+        double ar[6] = {_t1r, _t3r, _t2r, _t6r, _t4r, _t5r};
+        double ai[6] = {_t1i, _t3i, _t2i, _t6i, _t4i, _t5i};
+        double Ar[6], Ai[6], Cr[6], Ci[6], cr[6], ci[6];
+        {
+            double s1 = ar[2] + ar[4], s2 = ai[2] + ai[4], d1 = ar[2] - ar[4], d2 = ai[2] - ai[4];
+            double E0r = ar[0] + s1, E0i = ai[0] + s2, br = ar[0] - 0.5 * s1, bi = ai[0] - 0.5 * s2;
+            double E1r = br + 0.86602540378443864676 * d2, E1i = bi - 0.86602540378443864676 * d1;
+            double E2r = br - 0.86602540378443864676 * d2, E2i = bi + 0.86602540378443864676 * d1;
+            double s3 = ar[3] + ar[5], s4 = ai[3] + ai[5], d3 = ar[3] - ar[5], d4 = ai[3] - ai[5];
+            double O0r = ar[1] + s3, O0i = ai[1] + s4, br2 = ar[1] - 0.5 * s3, bi2 = ai[1] - 0.5 * s4;
+            double O1r = br2 + 0.86602540378443864676 * d4, O1i = bi2 - 0.86602540378443864676 * d3;
+            double O2r = br2 - 0.86602540378443864676 * d4, O2i = bi2 + 0.86602540378443864676 * d3;
+            Ar[0] = E0r + O0r;
+            Ai[0] = E0i + O0i;
+            Ar[3] = E0r - O0r;
+            Ai[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 + O1i * 0.86602540378443864676;
+            double T1i_ = O1r * (-0.86602540378443864676) + O1i * 0.5;
+            Ar[1] = E1r + T1r_;
+            Ai[1] = E1i + T1i_;
+            Ar[4] = E1r - T1r_;
+            Ai[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) + O2i * 0.86602540378443864676;
+            double T2i_ = O2r * (-0.86602540378443864676) + O2i * (-0.5);
+            Ar[2] = E2r + T2r_;
+            Ai[2] = E2i + T2i_;
+            Ar[5] = E2r - T2r_;
+            Ai[5] = E2i - T2i_;
+        }
+        for (int j = 0; j < 6; j++)
+        {
+            Cr[j] = Ar[j] * RK7A_BWD_RE[j] - Ai[j] * RK7A_BWD_IM[j];
+            Ci[j] = Ar[j] * RK7A_BWD_IM[j] + Ai[j] * RK7A_BWD_RE[j];
+        }
+        {
+            double s1 = Cr[2] + Cr[4], s2 = Ci[2] + Ci[4], d1 = Cr[2] - Cr[4], d2 = Ci[2] - Ci[4];
+            double E0r = Cr[0] + s1, E0i = Ci[0] + s2, br = Cr[0] - 0.5 * s1, bi = Ci[0] - 0.5 * s2;
+            double E1r = br - 0.86602540378443864676 * d2, E1i = bi + 0.86602540378443864676 * d1;
+            double E2r = br + 0.86602540378443864676 * d2, E2i = bi - 0.86602540378443864676 * d1;
+            double s3 = Cr[3] + Cr[5], s4 = Ci[3] + Ci[5], d3 = Cr[3] - Cr[5], d4 = Ci[3] - Ci[5];
+            double O0r = Cr[1] + s3, O0i = Ci[1] + s4, br2 = Cr[1] - 0.5 * s3, bi2 = Ci[1] - 0.5 * s4;
+            double O1r = br2 - 0.86602540378443864676 * d4, O1i = bi2 + 0.86602540378443864676 * d3;
+            double O2r = br2 + 0.86602540378443864676 * d4, O2i = bi2 - 0.86602540378443864676 * d3;
+            cr[0] = E0r + O0r;
+            ci[0] = E0i + O0i;
+            cr[3] = E0r - O0r;
+            ci[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 - O1i * 0.86602540378443864676;
+            double T1i_ = O1r * 0.86602540378443864676 + O1i * 0.5;
+            cr[1] = E1r + T1r_;
+            ci[1] = E1i + T1i_;
+            cr[4] = E1r - T1r_;
+            ci[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) - O2i * 0.86602540378443864676;
+            double T2i_ = O2r * 0.86602540378443864676 + O2i * (-0.5);
+            cr[2] = E2r + T2r_;
+            ci[2] = E2i + T2i_;
+            cr[5] = E2r - T2r_;
+            ci[5] = E2i - T2i_;
+        }
+        double _r1r = x0r_ + cr[0], _r1i = x0i_ + ci[0], _r5r = x0r_ + cr[1], _r5i = x0i_ + ci[1];
+        double _r4r = x0r_ + cr[2], _r4i = x0i_ + ci[2], _r6r = x0r_ + cr[3], _r6i = x0i_ + ci[3];
+        double _r2r = x0r_ + cr[4], _r2i = x0i_ + ci[4], _r3r = x0r_ + cr[5], _r3i = x0i_ + ci[5];
+        double _w1r = tw1_re[k], _w1i = tw1_im[k];
+        double _w2r = tw2_re[k], _w2i = tw2_im[k];
+        double _w3r = tw3_re[k], _w3i = tw3_im[k];
+        double _w4r = _w1r * _w3r - _w1i * _w3i, _w4i = _w1r * _w3i + _w1i * _w3r;
+        double _w5r = _w2r * _w3r - _w2i * _w3i, _w5i = _w2r * _w3i + _w2i * _w3r;
+        double _w6r = _w3r * _w3r - _w3i * _w3i, _w6i = 2.0 * _w3r * _w3i;
+        y0_re[k] = dcr_;
+        y0_im[k] = dci_;
+        y1_re[k] = _r1r * _w1r + _r1i * _w1i;
+        y1_im[k] = -_r1r * _w1i + _r1i * _w1r;
+        y2_re[k] = _r2r * _w2r + _r2i * _w2i;
+        y2_im[k] = -_r2r * _w2i + _r2i * _w2r;
+        y3_re[k] = _r3r * _w3r + _r3i * _w3i;
+        y3_im[k] = -_r3r * _w3i + _r3i * _w3r;
+        y4_re[k] = _r4r * _w4r + _r4i * _w4i;
+        y4_im[k] = -_r4r * _w4i + _r4i * _w4r;
+        y5_re[k] = _r5r * _w5r + _r5i * _w5i;
+        y5_im[k] = -_r5r * _w5i + _r5i * _w5r;
+        y6_re[k] = _r6r * _w6r + _r6i * _w6i;
+        y6_im[k] = -_r6r * _w6i + _r6i * _w6r;
+    }
+}
+
+/* ================================================================== */
+/*  N1 forward — no twiddles                                           */
+/* ================================================================== */
+
+static inline __attribute__((always_inline)) __attribute__((target("avx2,fma"))) void radix7_rader_fwd_avx2_N1(
+    const double *restrict a_re, const double *restrict a_im,
+    const double *restrict b_re, const double *restrict b_im,
+    const double *restrict c_re, const double *restrict c_im,
+    const double *restrict d_re, const double *restrict d_im,
+    const double *restrict e_re, const double *restrict e_im,
+    const double *restrict f_re, const double *restrict f_im,
+    const double *restrict g_re, const double *restrict g_im,
+    double *restrict y0_re, double *restrict y0_im,
+    double *restrict y1_re, double *restrict y1_im,
+    double *restrict y2_re, double *restrict y2_im,
+    double *restrict y3_re, double *restrict y3_im,
+    double *restrict y4_re, double *restrict y4_im,
+    double *restrict y5_re, double *restrict y5_im,
+    double *restrict y6_re, double *restrict y6_im,
+    int K)
+{
+    int k = 0;
+    for (; k + R7_AVX2_VW <= K; k += R7_AVX2_VW)
+    {
+        __m256d x0r = _mm256_loadu_pd(&a_re[k]), x0i = _mm256_loadu_pd(&a_im[k]);
+        __m256d t1r = _mm256_loadu_pd(&b_re[k]), t1i = _mm256_loadu_pd(&b_im[k]);
+        __m256d t2r = _mm256_loadu_pd(&c_re[k]), t2i = _mm256_loadu_pd(&c_im[k]);
+        __m256d t3r = _mm256_loadu_pd(&d_re[k]), t3i = _mm256_loadu_pd(&d_im[k]);
+        __m256d t4r = _mm256_loadu_pd(&e_re[k]), t4i = _mm256_loadu_pd(&e_im[k]);
+        __m256d t5r = _mm256_loadu_pd(&f_re[k]), t5i = _mm256_loadu_pd(&f_im[k]);
+        __m256d t6r = _mm256_loadu_pd(&g_re[k]), t6i = _mm256_loadu_pd(&g_im[k]);
+
+        __m256d dc_r, dc_i;
+        TREE_Y0(x0r, t1r, t2r, t3r, t4r, t5r, t6r, dc_r);
+        TREE_Y0(x0i, t1i, t2i, t3i, t4i, t5i, t6i, dc_i);
+        _mm256_storeu_pd(&y0_re[k], dc_r);
+        _mm256_storeu_pd(&y0_im[k], dc_i);
+
+        __m256d s0r = t1r, s0i = t1i, s1r = t3r, s1i = t3i;
+        __m256d s2r = t2r, s2i = t2i, s3r = t6r, s3i = t6i;
+        __m256d s4r = t4r, s4i = t4i, s5r = t5r, s5i = t5i;
+
+        DFT6_FWD_AVX2(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+        POINTWISE_RR6(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i,
+                      RK7_FR0, RK7_FI0, RK7_FR1, RK7_FI1, RK7_FR2, RK7_FI2,
+                      RK7_FR3, RK7_FI3, RK7_FR4, RK7_FI4, RK7_FR5, RK7_FI5);
+        DFT6_BWD_AVX2(s0r, s0i, s1r, s1i, s2r, s2i, s3r, s3i, s4r, s4i, s5r, s5i);
+
+        _mm256_storeu_pd(&y1_re[k], _mm256_add_pd(x0r, s0r));
+        _mm256_storeu_pd(&y1_im[k], _mm256_add_pd(x0i, s0i));
+        _mm256_storeu_pd(&y5_re[k], _mm256_add_pd(x0r, s1r));
+        _mm256_storeu_pd(&y5_im[k], _mm256_add_pd(x0i, s1i));
+        _mm256_storeu_pd(&y4_re[k], _mm256_add_pd(x0r, s2r));
+        _mm256_storeu_pd(&y4_im[k], _mm256_add_pd(x0i, s2i));
+        _mm256_storeu_pd(&y6_re[k], _mm256_add_pd(x0r, s3r));
+        _mm256_storeu_pd(&y6_im[k], _mm256_add_pd(x0i, s3i));
+        _mm256_storeu_pd(&y2_re[k], _mm256_add_pd(x0r, s4r));
+        _mm256_storeu_pd(&y2_im[k], _mm256_add_pd(x0i, s4i));
+        _mm256_storeu_pd(&y3_re[k], _mm256_add_pd(x0r, s5r));
+        _mm256_storeu_pd(&y3_im[k], _mm256_add_pd(x0i, s5i));
+    }
+    for (; k < K; k++)
+    {
+        double x0r_ = a_re[k], x0i_ = a_im[k];
+        double _t1r = b_re[k], _t1i = b_im[k], _t2r = c_re[k], _t2i = c_im[k];
+        double _t3r = d_re[k], _t3i = d_im[k], _t4r = e_re[k], _t4i = e_im[k];
+        double _t5r = f_re[k], _t5i = f_im[k], _t6r = g_re[k], _t6i = g_im[k];
+        y0_re[k] = x0r_ + _t1r + _t2r + _t3r + _t4r + _t5r + _t6r;
+        y0_im[k] = x0i_ + _t1i + _t2i + _t3i + _t4i + _t5i + _t6i;
+        double ar[6] = {_t1r, _t3r, _t2r, _t6r, _t4r, _t5r};
+        double ai[6] = {_t1i, _t3i, _t2i, _t6i, _t4i, _t5i};
+        double Xr[6], Xi[6], Cr[6], Ci[6], cr[6], ci[6];
+        {
+            double s1 = ar[2] + ar[4], s2 = ai[2] + ai[4], d1 = ar[2] - ar[4], d2 = ai[2] - ai[4];
+            double E0r = ar[0] + s1, E0i = ai[0] + s2, br = ar[0] - 0.5 * s1, bi = ai[0] - 0.5 * s2;
+            double E1r = br + 0.86602540378443864676 * d2, E1i = bi - 0.86602540378443864676 * d1;
+            double E2r = br - 0.86602540378443864676 * d2, E2i = bi + 0.86602540378443864676 * d1;
+            double s3 = ar[3] + ar[5], s4 = ai[3] + ai[5], d3 = ar[3] - ar[5], d4 = ai[3] - ai[5];
+            double O0r = ar[1] + s3, O0i = ai[1] + s4, br2 = ar[1] - 0.5 * s3, bi2 = ai[1] - 0.5 * s4;
+            double O1r = br2 + 0.86602540378443864676 * d4, O1i = bi2 - 0.86602540378443864676 * d3;
+            double O2r = br2 - 0.86602540378443864676 * d4, O2i = bi2 + 0.86602540378443864676 * d3;
+            Xr[0] = E0r + O0r;
+            Xi[0] = E0i + O0i;
+            Xr[3] = E0r - O0r;
+            Xi[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 + O1i * 0.86602540378443864676;
+            double T1i_ = O1r * (-0.86602540378443864676) + O1i * 0.5;
+            Xr[1] = E1r + T1r_;
+            Xi[1] = E1i + T1i_;
+            Xr[4] = E1r - T1r_;
+            Xi[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) + O2i * 0.86602540378443864676;
+            double T2i_ = O2r * (-0.86602540378443864676) + O2i * (-0.5);
+            Xr[2] = E2r + T2r_;
+            Xi[2] = E2i + T2i_;
+            Xr[5] = E2r - T2r_;
+            Xi[5] = E2i - T2i_;
+        }
+        for (int j = 0; j < 6; j++)
+        {
+            Cr[j] = Xr[j] * RK7A_FWD_RE[j] - Xi[j] * RK7A_FWD_IM[j];
+            Ci[j] = Xr[j] * RK7A_FWD_IM[j] + Xi[j] * RK7A_FWD_RE[j];
+        }
+        {
+            double s1 = Cr[2] + Cr[4], s2 = Ci[2] + Ci[4], d1 = Cr[2] - Cr[4], d2 = Ci[2] - Ci[4];
+            double E0r = Cr[0] + s1, E0i = Ci[0] + s2, br = Cr[0] - 0.5 * s1, bi = Ci[0] - 0.5 * s2;
+            double E1r = br - 0.86602540378443864676 * d2, E1i = bi + 0.86602540378443864676 * d1;
+            double E2r = br + 0.86602540378443864676 * d2, E2i = bi - 0.86602540378443864676 * d1;
+            double s3 = Cr[3] + Cr[5], s4 = Ci[3] + Ci[5], d3 = Cr[3] - Cr[5], d4 = Ci[3] - Ci[5];
+            double O0r = Cr[1] + s3, O0i = Ci[1] + s4, br2 = Cr[1] - 0.5 * s3, bi2 = Ci[1] - 0.5 * s4;
+            double O1r = br2 - 0.86602540378443864676 * d4, O1i = bi2 + 0.86602540378443864676 * d3;
+            double O2r = br2 + 0.86602540378443864676 * d4, O2i = bi2 - 0.86602540378443864676 * d3;
+            cr[0] = E0r + O0r;
+            ci[0] = E0i + O0i;
+            cr[3] = E0r - O0r;
+            ci[3] = E0i - O0i;
+            double T1r_ = O1r * 0.5 - O1i * 0.86602540378443864676;
+            double T1i_ = O1r * 0.86602540378443864676 + O1i * 0.5;
+            cr[1] = E1r + T1r_;
+            ci[1] = E1i + T1i_;
+            cr[4] = E1r - T1r_;
+            ci[4] = E1i - T1i_;
+            double T2r_ = O2r * (-0.5) - O2i * 0.86602540378443864676;
+            double T2i_ = O2r * 0.86602540378443864676 + O2i * (-0.5);
+            cr[2] = E2r + T2r_;
+            ci[2] = E2i + T2i_;
+            cr[5] = E2r - T2r_;
+            ci[5] = E2i - T2i_;
+        }
+        y1_re[k] = x0r_ + cr[0];
+        y1_im[k] = x0i_ + ci[0];
+        y5_re[k] = x0r_ + cr[1];
+        y5_im[k] = x0i_ + ci[1];
+        y4_re[k] = x0r_ + cr[2];
+        y4_im[k] = x0i_ + ci[2];
+        y6_re[k] = x0r_ + cr[3];
+        y6_im[k] = x0i_ + ci[3];
+        y2_re[k] = x0r_ + cr[4];
+        y2_im[k] = x0i_ + ci[4];
+        y3_re[k] = x0r_ + cr[5];
+        y3_im[k] = x0i_ + ci[5];
+    }
+}
+
+#endif /* __AVX2__ */
+#endif /* FFT_RADIX7_AVX2_H */

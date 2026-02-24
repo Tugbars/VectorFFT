@@ -1,686 +1,513 @@
 /**
- * @file fft_radix7_scalar.h
- * @brief Scalar Radix-7 Rader Butterfly - Fallback and Remainder Handler
+ * @file  fft_radix7_scalar.h
+ * @brief Radix-7 FFT butterfly using Rader's algorithm — scalar fallback
  *
- * @details
- * SCALAR FALLBACK - Generation 3:
- * ================================
- * ✅ TRUE SoA: re/im stay separate throughout
- * ✅ Handles misaligned data
- * ✅ Handles remainder elements after vectorized loops
- * ✅ Works for any K value (including K=1)
- * ✅ No SIMD dependencies
+ * Rader converts the prime-7 DFT into a length-6 cyclic convolution,
+ * computed via DFT6→pointwise multiply→IDFT6.  The length-6 DFT is
+ * decomposed as DFT3 × DFT2 (Cooley–Tukey) with compile-time constants.
  *
- * ALL RADIX-7 ALGORITHMIC OPTIMIZATIONS PRESERVED:
- * =================================================
- * ✅✅ P0: Pre-split Rader broadcasts (load once per K-loop iteration)
- * ✅✅ P0: Round-robin convolution schedule (maximizes ILP for compiler)
- * ✅✅ P1: Tree y0 sum (helps compiler optimize)
- * ✅ Standard double arithmetic
- * ✅ Rader permutations: input [1,3,2,6,4,5], output [1,5,4,6,2,3]
- * ✅ 6-point cyclic convolution with generator g=3
+ * Kernel constants:  DFT6(time_reverse(b_fwd)) / 6   (forward)
+ *                    DFT6(time_reverse(b_bwd)) / 6   (backward)
+ * where b_fwd[q] = W7^{g^q}, g = 3 (primitive root mod 7).
+ * The /6 normalization is absorbed into the kernel so the inverse DFT6
+ * in the convolution needs no separate scaling.
  *
- * USE CASES:
- * ==========
- * - Fallback for misaligned buffers
- * - Remainder loop after SSE2/AVX2 vectorization
- * - Very small K values where overhead exceeds benefit
- * - Platforms without SIMD support
- * - Reference implementation for testing
- *
- * @author FFT Optimization Team
- * @version 4.0 (Scalar with algorithmic optimizations)
- * @date 2025
+ * Twiddle layout: BLOCKED3 — stores W1,W2,W3; derives W4=W1·W3,
+ *                 W5=W2·W3, W6=W3².  N1 variant for K=1 (no twiddles).
  */
 
 #ifndef FFT_RADIX7_SCALAR_H
 #define FFT_RADIX7_SCALAR_H
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
+#include <math.h>
 
-#include "../fft_radix7_uniform.h"
+/* ================================================================== */
+/*  Compile-time constants                                             */
+/* ================================================================== */
 
-//==============================================================================
-// SCALAR CONFIGURATION
-//==============================================================================
+/* Rader permutation:  g^q mod 7, g = 3 */
+/*   q: 0  1  2  3  4  5                */
+/*   →  1  3  2  6  4  5                */
+/* Inverse: g^{-s} mod 7, g^{-1} = 5    */
+/*   s: 0  1  2  3  4  5                */
+/*   →  1  5  4  6  2  3                */
 
-/// Scalar processes 1 element at a time
-#define R7_SCALAR_WIDTH 1
+/* DFT3 constants */
+#define R7_C3   (-0.5)                          /* cos(2π/3)   */
+#define R7_S3   (0.86602540378443864676)        /* sin(2π/3)   */
 
-/// Prefetch distance (same as SIMD versions for consistency)
-#define R7_SCALAR_PREFETCH_DISTANCE 64
+/* DFT6 inter-stage twiddles (W6^k) */
+/* W6^1 = ( 0.5, -√3/2)  W6^2 = (-0.5, -√3/2) */
+#define R7_W6_1_RE  (0.5)
+#define R7_W6_1_IM  (-0.86602540378443864676)
+#define R7_W6_2_RE  (-0.5)
+#define R7_W6_2_IM  (-0.86602540378443864676)
 
-/// Non-temporal store threshold (scalar typically doesn't use NT stores)
-#define R7_SCALAR_NT_THRESHOLD 0.9
+/* Forward Rader kernel: DFT6(time_reverse(b_fwd)) / 6 */
+static const double RK7_FWD_RE[6] = {
+    -1.66666666666666657415e-01,
+    +4.06688893057589595514e-01,
+    +3.95078234262700001000e-01,
+    +1.85037170770859413132e-17,
+    +3.95078234262699945489e-01,
+    -4.06688893057589151425e-01
+};
+static const double RK7_FWD_IM[6] = {
+    -9.25185853854297065662e-18,
+    -1.70436465311965518188e-01,
+    -1.95851048647464526242e-01,
+    -4.40958551844098212147e-01,
+    +1.95851048647464942576e-01,
+    -1.70436465311965684721e-01
+};
 
-/// Minimum K for enabling non-temporal stores
-#define R7_SCALAR_NT_MIN_K 8192
+/* Backward Rader kernel: DFT6(time_reverse(b_bwd)) / 6 */
+static const double RK7_BWD_RE[6] = {
+    -1.66666666666666657415e-01,
+    -4.06688893057589595514e-01,
+    +3.95078234262700167534e-01,
+    +9.25185853854297158106e-17,
+    +3.95078234262700223045e-01,
+    +4.06688893057589540003e-01
+};
+static const double RK7_BWD_IM[6] = {
+    +9.25185853854297065662e-18,
+    +1.70436465311965656966e-01,
+    -1.95851048647464304198e-01,
+    +4.40958551844098767258e-01,
+    +1.95851048647464359709e-01,
+    +1.70436465311965323899e-01
+};
 
-//==============================================================================
-// COMPLEX MULTIPLY PRIMITIVES - SCALAR
-//==============================================================================
+/* ================================================================== */
+/*  Scalar complex multiply                                            */
+/* ================================================================== */
 
-/**
- * @brief Complex multiply - scalar version
- * @details (out_re + i*out_im) = (a_re + i*a_im) * (w_re + i*w_im)
- * 
- * ✅ PRESERVED: Optimal 4-mul, 1-add, 1-sub sequence
- * ✅ Standard double arithmetic
- * 
- * out_re = a_re * w_re - a_im * w_im
- * out_im = a_re * w_im + a_im * w_re
- */
-__attribute__((always_inline))
-static inline void cmul_scalar(
-    double * restrict out_re,
-    double * restrict out_im,
-    double a_re,
-    double a_im,
-    double w_re,
-    double w_im)
+static inline __attribute__((always_inline))
+void cmul_scalar(double ar, double ai, double br, double bi,
+                 double *cr, double *ci)
 {
-    double prod1 = a_re * w_re;
-    double prod2 = a_im * w_im;
-    double prod3 = a_re * w_im;
-    double prod4 = a_im * w_re;
-    
-    *out_re = prod1 - prod2;
-    *out_im = prod3 + prod4;
+    *cr = ar * br - ai * bi;
+    *ci = ar * bi + ai * br;
 }
 
-/**
- * @brief Complex multiply-add - scalar version
- * @details acc += a * w (for round-robin convolution)
- * 
- * ✅ PRESERVED: Accumulation pattern for P0 optimization
- * 
- * acc_re += a_re * w_re - a_im * w_im
- * acc_im += a_re * w_im + a_im * w_re
- */
-__attribute__((always_inline))
-static inline void cmul_add_scalar(
-    double * restrict acc_re,
-    double * restrict acc_im,
-    double a_re,
-    double a_im,
-    double w_re,
-    double w_im)
+/* ================================================================== */
+/*  Inline DFT6 (forward):  DFT3 × DFT2  Cooley–Tukey DIT            */
+/*                                                                     */
+/*  Stage 1:  E[k] = DFT3(x[0], x[2], x[4])   k = 0,1,2             */
+/*            O[k] = DFT3(x[1], x[3], x[5])   k = 0,1,2             */
+/*  Stage 2:  X[k]   = E[k] + W6^k · O[k]                            */
+/*            X[k+3] = E[k] - W6^k · O[k]                            */
+/* ================================================================== */
+
+static inline __attribute__((always_inline))
+void dft6_forward_scalar(const double xr[6], const double xi[6],
+                         double Xr[6], double Xi[6])
 {
-    double prod1 = a_re * w_re;
-    double prod2 = a_im * w_im;
-    double prod3 = a_re * w_im;
-    double prod4 = a_im * w_re;
-    
-    *acc_re += (prod1 - prod2);
-    *acc_im += (prod3 + prod4);
+    /* --- DFT3 on even indices (0,2,4) → E[0..2] --- */
+    double se_r = xr[2] + xr[4],  se_i = xi[2] + xi[4];
+    double de_r = xr[2] - xr[4],  de_i = xi[2] - xi[4];
+
+    double E0r = xr[0] + se_r;
+    double E0i = xi[0] + se_i;
+    double base_er = xr[0] + R7_C3 * se_r;
+    double base_ei = xi[0] + R7_C3 * se_i;
+    /* forward: -i * S3 * d → re += S3*d_im, im -= S3*d_re */
+    double E1r = base_er + R7_S3 * de_i;
+    double E1i = base_ei - R7_S3 * de_r;
+    double E2r = base_er - R7_S3 * de_i;
+    double E2i = base_ei + R7_S3 * de_r;
+
+    /* --- DFT3 on odd indices (1,3,5) → O[0..2] --- */
+    double so_r = xr[3] + xr[5],  so_i = xi[3] + xi[5];
+    double do_r = xr[3] - xr[5],  do_i = xi[3] - xi[5];
+
+    double O0r = xr[1] + so_r;
+    double O0i = xi[1] + so_i;
+    double base_or = xr[1] + R7_C3 * so_r;
+    double base_oi = xi[1] + R7_C3 * so_i;
+    double O1r = base_or + R7_S3 * do_i;
+    double O1i = base_oi - R7_S3 * do_r;
+    double O2r = base_or - R7_S3 * do_i;
+    double O2i = base_oi + R7_S3 * do_r;
+
+    /* --- DFT2 recombination with W6 twiddles --- */
+    /* k=0: W6^0 = 1 */
+    Xr[0] = E0r + O0r;  Xi[0] = E0i + O0i;
+    Xr[3] = E0r - O0r;  Xi[3] = E0i - O0i;
+
+    /* k=1: W6^1 = (0.5, -S3) */
+    double T1r, T1i;
+    cmul_scalar(O1r, O1i, R7_W6_1_RE, R7_W6_1_IM, &T1r, &T1i);
+    Xr[1] = E1r + T1r;  Xi[1] = E1i + T1i;
+    Xr[4] = E1r - T1r;  Xi[4] = E1i - T1i;
+
+    /* k=2: W6^2 = (-0.5, -S3) */
+    double T2r, T2i;
+    cmul_scalar(O2r, O2i, R7_W6_2_RE, R7_W6_2_IM, &T2r, &T2i);
+    Xr[2] = E2r + T2r;  Xi[2] = E2i + T2i;
+    Xr[5] = E2r - T2r;  Xi[5] = E2i - T2i;
 }
 
-//==============================================================================
-// LOAD/STORE PRIMITIVES - SCALAR
-//==============================================================================
+/* ================================================================== */
+/*  Inline DFT6 (backward):  same structure, conjugate twiddles        */
+/* ================================================================== */
 
-/**
- * @brief Load 7 lanes from SoA buffers - scalar (handles any alignment)
- * @details
- * ✅ Works with any alignment
- * ✅ TRUE SoA - re/im stay separate
- * 
- * @param k Starting index
- * @param K Stride between lanes
- * @param in_re Real component array
- * @param in_im Imaginary component array
- * @param x0_re-x6_re Output: real components for 7 lanes
- * @param x0_im-x6_im Output: imaginary components for 7 lanes
- */
-__attribute__((always_inline))
-static inline void load_7_lanes_scalar(
-    int k, int K,
-    const double * restrict in_re,
-    const double * restrict in_im,
-    double *x0_re, double *x0_im,
-    double *x1_re, double *x1_im,
-    double *x2_re, double *x2_im,
-    double *x3_re, double *x3_im,
-    double *x4_re, double *x4_im,
-    double *x5_re, double *x5_im,
-    double *x6_re, double *x6_im)
+static inline __attribute__((always_inline))
+void dft6_backward_scalar(const double xr[6], const double xi[6],
+                          double Xr[6], double Xi[6])
 {
-    *x0_re = in_re[0 * K + k];
-    *x0_im = in_im[0 * K + k];
-    *x1_re = in_re[1 * K + k];
-    *x1_im = in_im[1 * K + k];
-    *x2_re = in_re[2 * K + k];
-    *x2_im = in_im[2 * K + k];
-    *x3_re = in_re[3 * K + k];
-    *x3_im = in_im[3 * K + k];
-    *x4_re = in_re[4 * K + k];
-    *x4_im = in_im[4 * K + k];
-    *x5_re = in_re[5 * K + k];
-    *x5_im = in_im[5 * K + k];
-    *x6_re = in_re[6 * K + k];
-    *x6_im = in_im[6 * K + k];
+    /* --- DFT3 backward on even indices (sign flip on cross-term) --- */
+    double se_r = xr[2] + xr[4],  se_i = xi[2] + xi[4];
+    double de_r = xr[2] - xr[4],  de_i = xi[2] - xi[4];
+
+    double E0r = xr[0] + se_r;
+    double E0i = xi[0] + se_i;
+    double base_er = xr[0] + R7_C3 * se_r;
+    double base_ei = xi[0] + R7_C3 * se_i;
+    /* backward: +i * S3 * d → re -= S3*d_im, im += S3*d_re */
+    double E1r = base_er - R7_S3 * de_i;
+    double E1i = base_ei + R7_S3 * de_r;
+    double E2r = base_er + R7_S3 * de_i;
+    double E2i = base_ei - R7_S3 * de_r;
+
+    /* --- DFT3 backward on odd indices --- */
+    double so_r = xr[3] + xr[5],  so_i = xi[3] + xi[5];
+    double do_r = xr[3] - xr[5],  do_i = xi[3] - xi[5];
+
+    double O0r = xr[1] + so_r;
+    double O0i = xi[1] + so_i;
+    double base_or = xr[1] + R7_C3 * so_r;
+    double base_oi = xi[1] + R7_C3 * so_i;
+    double O1r = base_or - R7_S3 * do_i;
+    double O1i = base_oi + R7_S3 * do_r;
+    double O2r = base_or + R7_S3 * do_i;
+    double O2i = base_oi - R7_S3 * do_r;
+
+    /* --- DFT2 with conjugate W6 twiddles --- */
+    Xr[0] = E0r + O0r;  Xi[0] = E0i + O0i;
+    Xr[3] = E0r - O0r;  Xi[3] = E0i - O0i;
+
+    /* W6_bwd^1 = (0.5, +S3) */
+    double T1r, T1i;
+    cmul_scalar(O1r, O1i, R7_W6_1_RE, -R7_W6_1_IM, &T1r, &T1i);
+    Xr[1] = E1r + T1r;  Xi[1] = E1i + T1i;
+    Xr[4] = E1r - T1r;  Xi[4] = E1i - T1i;
+
+    /* W6_bwd^2 = (-0.5, +S3) */
+    double T2r, T2i;
+    cmul_scalar(O2r, O2i, R7_W6_2_RE, -R7_W6_2_IM, &T2r, &T2i);
+    Xr[2] = E2r + T2r;  Xi[2] = E2i + T2i;
+    Xr[5] = E2r - T2r;  Xi[5] = E2i - T2i;
 }
 
-/**
- * @brief Store 7 lanes to SoA buffers - scalar (handles any alignment)
- * @details
- * ✅ Works with any alignment
- * ✅ TRUE SoA - re/im already separate
- */
-__attribute__((always_inline))
-static inline void store_7_lanes_scalar(
-    int k, int K,
-    double * restrict out_re,
-    double * restrict out_im,
-    double y0_re, double y0_im,
-    double y1_re, double y1_im,
-    double y2_re, double y2_im,
-    double y3_re, double y3_im,
-    double y4_re, double y4_im,
-    double y5_re, double y5_im,
-    double y6_re, double y6_im)
+/* ================================================================== */
+/*  Rader radix-7 butterfly — scalar, forward, with twiddles           */
+/*                                                                     */
+/*  BLOCKED3 twiddles: W1,W2,W3 stored; W4=W1·W3, W5=W2·W3, W6=W3²  */
+/*  Input/output: base-pointer + k indexing, stride implicit.          */
+/* ================================================================== */
+
+static inline __attribute__((always_inline))
+void radix7_rader_fwd_scalar_1(
+    const double *a_re, const double *a_im,   /* x0 */
+    const double *b_re, const double *b_im,   /* x1 */
+    const double *c_re, const double *c_im,   /* x2 */
+    const double *d_re, const double *d_im,   /* x3 */
+    const double *e_re, const double *e_im,   /* x4 */
+    const double *f_re, const double *f_im,   /* x5 */
+    const double *g_re, const double *g_im,   /* x6 */
+    double *y0_re, double *y0_im,
+    double *y1_re, double *y1_im,
+    double *y2_re, double *y2_im,
+    double *y3_re, double *y3_im,
+    double *y4_re, double *y4_im,
+    double *y5_re, double *y5_im,
+    double *y6_re, double *y6_im,
+    const double *tw1_re, const double *tw1_im,
+    const double *tw2_re, const double *tw2_im,
+    const double *tw3_re, const double *tw3_im,
+    int K)
 {
-    out_re[0 * K + k] = y0_re;
-    out_im[0 * K + k] = y0_im;
-    out_re[1 * K + k] = y1_re;
-    out_im[1 * K + k] = y1_im;
-    out_re[2 * K + k] = y2_re;
-    out_im[2 * K + k] = y2_im;
-    out_re[3 * K + k] = y3_re;
-    out_im[3 * K + k] = y3_im;
-    out_re[4 * K + k] = y4_re;
-    out_im[4 * K + k] = y4_im;
-    out_re[5 * K + k] = y5_re;
-    out_im[5 * K + k] = y5_im;
-    out_re[6 * K + k] = y6_re;
-    out_im[6 * K + k] = y6_im;
-}
+    for (int k = 0; k < K; k++) {
+        /* ---- Load x[0] ---- */
+        double x0r = a_re[k], x0i = a_im[k];
 
-//==============================================================================
-// STAGE TWIDDLE APPLICATION - SCALAR
-//==============================================================================
+        /* ---- Load & twiddle x[1..6] ---- */
+        double t1r, t1i, t2r, t2i, t3r, t3i;
+        double t4r, t4i, t5r, t5i, t6r, t6i;
 
-/**
- * @brief Apply stage twiddles to 6 of the 7 lanes (x0 unchanged)
- * @details
- * ✅ PRESERVED: Same twiddle application pattern
- * ✅ SoA twiddle access
- * 
- * @param k Starting index
- * @param K Stride
- * @param x1_re-x6_re Input/output: real components (modified in place)
- * @param x1_im-x6_im Input/output: imaginary components (modified in place)
- * @param stage_tw Stage twiddle factors (SoA layout)
- * @param sub_len Sub-transform length (skip if == 1)
- */
-__attribute__((always_inline))
-static inline void apply_stage_twiddles_scalar(
-    int k, int K,
-    double *x1_re, double *x1_im,
-    double *x2_re, double *x2_im,
-    double *x3_re, double *x3_im,
-    double *x4_re, double *x4_im,
-    double *x5_re, double *x5_im,
-    double *x6_re, double *x6_im,
-    const fft_twiddle_soa *stage_tw,
-    int sub_len)
-{
-    if (sub_len <= 1)
-        return;  // No twiddles needed for first stage
-    
-    // Load twiddles
-    double w1_re = stage_tw->re[0 * K + k];
-    double w1_im = stage_tw->im[0 * K + k];
-    double w2_re = stage_tw->re[1 * K + k];
-    double w2_im = stage_tw->im[1 * K + k];
-    double w3_re = stage_tw->re[2 * K + k];
-    double w3_im = stage_tw->im[2 * K + k];
-    double w4_re = stage_tw->re[3 * K + k];
-    double w4_im = stage_tw->im[3 * K + k];
-    double w5_re = stage_tw->re[4 * K + k];
-    double w5_im = stage_tw->im[4 * K + k];
-    double w6_re = stage_tw->re[5 * K + k];
-    double w6_im = stage_tw->im[5 * K + k];
-    
-    // Apply complex multiplication (in-place)
-    double tmp_re, tmp_im;
-    
-    cmul_scalar(&tmp_re, &tmp_im, *x1_re, *x1_im, w1_re, w1_im);
-    *x1_re = tmp_re; *x1_im = tmp_im;
-    
-    cmul_scalar(&tmp_re, &tmp_im, *x2_re, *x2_im, w2_re, w2_im);
-    *x2_re = tmp_re; *x2_im = tmp_im;
-    
-    cmul_scalar(&tmp_re, &tmp_im, *x3_re, *x3_im, w3_re, w3_im);
-    *x3_re = tmp_re; *x3_im = tmp_im;
-    
-    cmul_scalar(&tmp_re, &tmp_im, *x4_re, *x4_im, w4_re, w4_im);
-    *x4_re = tmp_re; *x4_im = tmp_im;
-    
-    cmul_scalar(&tmp_re, &tmp_im, *x5_re, *x5_im, w5_re, w5_im);
-    *x5_re = tmp_re; *x5_im = tmp_im;
-    
-    cmul_scalar(&tmp_re, &tmp_im, *x6_re, *x6_im, w6_re, w6_im);
-    *x6_re = tmp_re; *x6_im = tmp_im;
-}
+        double w1r = tw1_re[k], w1i = tw1_im[k];
+        double w2r = tw2_re[k], w2i = tw2_im[k];
+        double w3r = tw3_re[k], w3i = tw3_im[k];
 
-//==============================================================================
-// TREE Y0 COMPUTATION - P1 OPTIMIZATION PRESERVED
-//==============================================================================
+        cmul_scalar(b_re[k], b_im[k], w1r, w1i, &t1r, &t1i);
+        cmul_scalar(c_re[k], c_im[k], w2r, w2i, &t2r, &t2i);
+        cmul_scalar(d_re[k], d_im[k], w3r, w3i, &t3r, &t3i);
 
-/**
- * @brief Compute DC component y0 = sum of all 7 inputs (TREE REDUCTION!)
- * @details
- * ✅✅ PRESERVED: Balanced tree reduces dependency chain
- * ✅ Helps compiler optimize even in scalar code
- * 
- * Tree structure:
- *   Level 1: (x0+x1), (x2+x3), (x4+x5)
- *   Level 2: (x0+x1+x2+x3), (x4+x5+x6)
- *   Level 3: (x0+x1+x2+x3+x4+x5+x6)
- * 
- * Critical path: 3 additions vs 6 sequential
- */
-__attribute__((always_inline))
-static inline void compute_y0_tree_scalar(
-    double x0_re, double x0_im,
-    double x1_re, double x1_im,
-    double x2_re, double x2_im,
-    double x3_re, double x3_im,
-    double x4_re, double x4_im,
-    double x5_re, double x5_im,
-    double x6_re, double x6_im,
-    double *y0_re, double *y0_im)
-{
-    // Level 1: 3 parallel additions
-    double s01_re = x0_re + x1_re;
-    double s01_im = x0_im + x1_im;
-    double s23_re = x2_re + x3_re;
-    double s23_im = x2_im + x3_im;
-    double s45_re = x4_re + x5_re;
-    double s45_im = x4_im + x5_im;
-    
-    // Level 2: 2 parallel additions
-    double s0123_re = s01_re + s23_re;
-    double s0123_im = s01_im + s23_im;
-    double s456_re = s45_re + x6_re;
-    double s456_im = s45_im + x6_im;
-    
-    // Level 3: final addition
-    *y0_re = s0123_re + s456_re;
-    *y0_im = s0123_im + s456_im;
-}
+        /* Derive W4=W1·W3, W5=W2·W3, W6=W3² */
+        double w4r, w4i, w5r, w5i, w6r, w6i;
+        cmul_scalar(w1r, w1i, w3r, w3i, &w4r, &w4i);
+        cmul_scalar(w2r, w2i, w3r, w3i, &w5r, &w5i);
+        cmul_scalar(w3r, w3i, w3r, w3i, &w6r, &w6i);
 
-//==============================================================================
-// RADER INPUT PERMUTATION
-//==============================================================================
+        cmul_scalar(e_re[k], e_im[k], w4r, w4i, &t4r, &t4i);
+        cmul_scalar(f_re[k], f_im[k], w5r, w5i, &t5r, &t5i);
+        cmul_scalar(g_re[k], g_im[k], w6r, w6i, &t6r, &t6i);
 
-/**
- * @brief Permute inputs for Rader algorithm
- * @details
- * ✅✅ PRESERVED: Exact permutation [1,3,2,6,4,5] for generator g=3
- * 
- * Input order:  [x1, x2, x3, x4, x5, x6]
- * Output order: [x1, x3, x2, x6, x4, x5]  (for cyclic convolution)
- */
-__attribute__((always_inline))
-static inline void permute_rader_inputs_scalar(
-    double x1_re, double x1_im,
-    double x2_re, double x2_im,
-    double x3_re, double x3_im,
-    double x4_re, double x4_im,
-    double x5_re, double x5_im,
-    double x6_re, double x6_im,
-    double *tx0_re, double *tx0_im,
-    double *tx1_re, double *tx1_im,
-    double *tx2_re, double *tx2_im,
-    double *tx3_re, double *tx3_im,
-    double *tx4_re, double *tx4_im,
-    double *tx5_re, double *tx5_im)
-{
-    *tx0_re = x1_re; *tx0_im = x1_im;  // Position 0 ← x1
-    *tx1_re = x3_re; *tx1_im = x3_im;  // Position 1 ← x3
-    *tx2_re = x2_re; *tx2_im = x2_im;  // Position 2 ← x2
-    *tx3_re = x6_re; *tx3_im = x6_im;  // Position 3 ← x6
-    *tx4_re = x4_re; *tx4_im = x4_im;  // Position 4 ← x4
-    *tx5_re = x5_re; *tx5_im = x5_im;  // Position 5 ← x5
-}
+        /* ---- DC output: y0 = x0 + t1 + t2 + t3 + t4 + t5 + t6 ---- */
+        double dcr = x0r + t1r + t2r + t3r + t4r + t5r + t6r;
+        double dci = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
+        y0_re[k] = dcr;
+        y0_im[k] = dci;
 
-//==============================================================================
-// RADER 6-POINT CYCLIC CONVOLUTION - P0 ROUND-ROBIN PRESERVED
-//==============================================================================
+        /* ---- Rader input permutation: a[q] = t[perm[q]] ---- */
+        /* perm = {1, 3, 2, 6, 4, 5} */
+        double ar[6], ai[6];
+        ar[0] = t1r;  ai[0] = t1i;   /* t[1] */
+        ar[1] = t3r;  ai[1] = t3i;   /* t[3] */
+        ar[2] = t2r;  ai[2] = t2i;   /* t[2] */
+        ar[3] = t6r;  ai[3] = t6i;   /* t[6] */
+        ar[4] = t4r;  ai[4] = t4i;   /* t[4] */
+        ar[5] = t5r;  ai[5] = t5i;   /* t[5] */
 
-/**
- * @brief 6-point cyclic convolution with ROUND-ROBIN (P0 OPTIMIZATION!)
- * @details
- * ✅✅✅ PRESERVED: Round-robin schedule for maximum ILP
- * ✅ Helps compiler optimize instruction scheduling
- * 
- * Round-robin pattern (row = input, col = output):
- *       v0  v1  v2  v3  v4  v5
- * tx0:  w0  w1  w2  w3  w4  w5
- * tx1:  w5  w0  w1  w2  w3  w4
- * tx2:  w4  w5  w0  w1  w2  w3
- * tx3:  w3  w4  w5  w0  w1  w2
- * tx4:  w2  w3  w4  w5  w0  w1
- * tx5:  w1  w2  w3  w4  w5  w0
- * 
- * This ensures NO accumulator has back-to-back dependencies!
- * 
- * @param tx0_re-tx5_re Permuted input real components
- * @param tx0_im-tx5_im Permuted input imaginary components
- * @param rader_tw Rader twiddle factors (6 complex values, pre-loaded)
- * @param v0_re-v5_re Output: convolution result real components
- * @param v0_im-v5_im Output: convolution result imaginary components
- */
-__attribute__((always_inline))
-static inline void rader_convolution_roundrobin_scalar(
-    double tx0_re, double tx0_im,
-    double tx1_re, double tx1_im,
-    double tx2_re, double tx2_im,
-    double tx3_re, double tx3_im,
-    double tx4_re, double tx4_im,
-    double tx5_re, double tx5_im,
-    const fft_twiddle_soa *rader_tw,
-    double *v0_re, double *v0_im,
-    double *v1_re, double *v1_im,
-    double *v2_re, double *v2_im,
-    double *v3_re, double *v3_im,
-    double *v4_re, double *v4_im,
-    double *v5_re, double *v5_im)
-{
-    // Pre-load Rader twiddles (P0 optimization: load once, use many times)
-    double tw0_re = rader_tw->re[0], tw0_im = rader_tw->im[0];
-    double tw1_re = rader_tw->re[1], tw1_im = rader_tw->im[1];
-    double tw2_re = rader_tw->re[2], tw2_im = rader_tw->im[2];
-    double tw3_re = rader_tw->re[3], tw3_im = rader_tw->im[3];
-    double tw4_re = rader_tw->re[4], tw4_im = rader_tw->im[4];
-    double tw5_re = rader_tw->re[5], tw5_im = rader_tw->im[5];
-    
-    // Initialize accumulators to zero
-    *v0_re = 0.0; *v0_im = 0.0;
-    *v1_re = 0.0; *v1_im = 0.0;
-    *v2_re = 0.0; *v2_im = 0.0;
-    *v3_re = 0.0; *v3_im = 0.0;
-    *v4_re = 0.0; *v4_im = 0.0;
-    *v5_re = 0.0; *v5_im = 0.0;
-    
-    // ✅✅ PRESERVED: Round-robin schedule for maximum ILP
-    // Round 0: tx0 contributes to all 6 accumulators
-    cmul_add_scalar(v0_re, v0_im, tx0_re, tx0_im, tw0_re, tw0_im);
-    cmul_add_scalar(v1_re, v1_im, tx0_re, tx0_im, tw1_re, tw1_im);
-    cmul_add_scalar(v2_re, v2_im, tx0_re, tx0_im, tw2_re, tw2_im);
-    cmul_add_scalar(v3_re, v3_im, tx0_re, tx0_im, tw3_re, tw3_im);
-    cmul_add_scalar(v4_re, v4_im, tx0_re, tx0_im, tw4_re, tw4_im);
-    cmul_add_scalar(v5_re, v5_im, tx0_re, tx0_im, tw5_re, tw5_im);
-    
-    // Round 1: tx1 contributes (rotated twiddle indices)
-    cmul_add_scalar(v0_re, v0_im, tx1_re, tx1_im, tw5_re, tw5_im);
-    cmul_add_scalar(v1_re, v1_im, tx1_re, tx1_im, tw0_re, tw0_im);
-    cmul_add_scalar(v2_re, v2_im, tx1_re, tx1_im, tw1_re, tw1_im);
-    cmul_add_scalar(v3_re, v3_im, tx1_re, tx1_im, tw2_re, tw2_im);
-    cmul_add_scalar(v4_re, v4_im, tx1_re, tx1_im, tw3_re, tw3_im);
-    cmul_add_scalar(v5_re, v5_im, tx1_re, tx1_im, tw4_re, tw4_im);
-    
-    // Round 2: tx2 contributes
-    cmul_add_scalar(v0_re, v0_im, tx2_re, tx2_im, tw4_re, tw4_im);
-    cmul_add_scalar(v1_re, v1_im, tx2_re, tx2_im, tw5_re, tw5_im);
-    cmul_add_scalar(v2_re, v2_im, tx2_re, tx2_im, tw0_re, tw0_im);
-    cmul_add_scalar(v3_re, v3_im, tx2_re, tx2_im, tw1_re, tw1_im);
-    cmul_add_scalar(v4_re, v4_im, tx2_re, tx2_im, tw2_re, tw2_im);
-    cmul_add_scalar(v5_re, v5_im, tx2_re, tx2_im, tw3_re, tw3_im);
-    
-    // Round 3: tx3 contributes
-    cmul_add_scalar(v0_re, v0_im, tx3_re, tx3_im, tw3_re, tw3_im);
-    cmul_add_scalar(v1_re, v1_im, tx3_re, tx3_im, tw4_re, tw4_im);
-    cmul_add_scalar(v2_re, v2_im, tx3_re, tx3_im, tw5_re, tw5_im);
-    cmul_add_scalar(v3_re, v3_im, tx3_re, tx3_im, tw0_re, tw0_im);
-    cmul_add_scalar(v4_re, v4_im, tx3_re, tx3_im, tw1_re, tw1_im);
-    cmul_add_scalar(v5_re, v5_im, tx3_re, tx3_im, tw2_re, tw2_im);
-    
-    // Round 4: tx4 contributes
-    cmul_add_scalar(v0_re, v0_im, tx4_re, tx4_im, tw2_re, tw2_im);
-    cmul_add_scalar(v1_re, v1_im, tx4_re, tx4_im, tw3_re, tw3_im);
-    cmul_add_scalar(v2_re, v2_im, tx4_re, tx4_im, tw4_re, tw4_im);
-    cmul_add_scalar(v3_re, v3_im, tx4_re, tx4_im, tw5_re, tw5_im);
-    cmul_add_scalar(v4_re, v4_im, tx4_re, tx4_im, tw0_re, tw0_im);
-    cmul_add_scalar(v5_re, v5_im, tx4_re, tx4_im, tw1_re, tw1_im);
-    
-    // Round 5: tx5 contributes
-    cmul_add_scalar(v0_re, v0_im, tx5_re, tx5_im, tw1_re, tw1_im);
-    cmul_add_scalar(v1_re, v1_im, tx5_re, tx5_im, tw2_re, tw2_im);
-    cmul_add_scalar(v2_re, v2_im, tx5_re, tx5_im, tw3_re, tw3_im);
-    cmul_add_scalar(v3_re, v3_im, tx5_re, tx5_im, tw4_re, tw4_im);
-    cmul_add_scalar(v4_re, v4_im, tx5_re, tx5_im, tw5_re, tw5_im);
-    cmul_add_scalar(v5_re, v5_im, tx5_re, tx5_im, tw0_re, tw0_im);
-}
+        /* ---- Forward DFT6 ---- */
+        double Ar[6], Ai[6];
+        dft6_forward_scalar(ar, ai, Ar, Ai);
 
-//==============================================================================
-// COMPLETE BUTTERFLY FUNCTION
-//==============================================================================
+        /* ---- Pointwise multiply with forward kernel ---- */
+        double Cr[6], Ci[6];
+        for (int j = 0; j < 6; j++) {
+            cmul_scalar(Ar[j], Ai[j], RK7_FWD_RE[j], RK7_FWD_IM[j],
+                        &Cr[j], &Ci[j]);
+        }
 
-/**
- * @brief Single radix-7 butterfly - scalar
- * @details
- * ✅ ALL ALGORITHMIC OPTIMIZATIONS PRESERVED:
- *    - Pre-loaded Rader twiddles (P0 optimization)
- *    - Round-robin convolution (P0 optimization)
- *    - Tree y0 sum (P1 optimization)
- *    - Rader permutations
- *    - TRUE SoA architecture
- * 
- * Process one butterfly: single element
- * Handles any alignment, any K value
- * 
- * @param k Index
- * @param K Stride between lanes
- * @param in_re Input real components
- * @param in_im Input imaginary components
- * @param stage_tw Stage twiddle factors (SoA layout)
- * @param rader_tw Rader twiddle factors (6 complex values)
- * @param out_re Output real components
- * @param out_im Output imaginary components
- * @param sub_len Sub-transform length
- */
-__attribute__((always_inline))
-static inline void radix7_butterfly_scalar(
-    int k, int K,
-    const double * restrict in_re,
-    const double * restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    const fft_twiddle_soa *rader_tw,
-    double * restrict out_re,
-    double * restrict out_im,
-    int sub_len)
-{
-    // STEP 1: Load 7 lanes (1 element per lane)
-    double x0_re, x0_im, x1_re, x1_im, x2_re, x2_im, x3_re, x3_im;
-    double x4_re, x4_im, x5_re, x5_im, x6_re, x6_im;
-    
-    load_7_lanes_scalar(k, K, in_re, in_im,
-                        &x0_re, &x0_im, &x1_re, &x1_im,
-                        &x2_re, &x2_im, &x3_re, &x3_im,
-                        &x4_re, &x4_im, &x5_re, &x5_im,
-                        &x6_re, &x6_im);
-    
-    // STEP 2: Apply stage twiddles (x0 unchanged, x1-x6 multiplied)
-    apply_stage_twiddles_scalar(k, K,
-                                &x1_re, &x1_im, &x2_re, &x2_im,
-                                &x3_re, &x3_im, &x4_re, &x4_im,
-                                &x5_re, &x5_im, &x6_re, &x6_im,
-                                stage_tw, sub_len);
-    
-    // STEP 3: Compute DC component y0 (tree reduction)
-    double y0_re, y0_im;
-    compute_y0_tree_scalar(x0_re, x0_im, x1_re, x1_im,
-                           x2_re, x2_im, x3_re, x3_im,
-                           x4_re, x4_im, x5_re, x5_im,
-                           x6_re, x6_im,
-                           &y0_re, &y0_im);
-    
-    // STEP 4: Permute inputs for Rader algorithm
-    double tx0_re, tx0_im, tx1_re, tx1_im, tx2_re, tx2_im;
-    double tx3_re, tx3_im, tx4_re, tx4_im, tx5_re, tx5_im;
-    
-    permute_rader_inputs_scalar(x1_re, x1_im, x2_re, x2_im,
-                                x3_re, x3_im, x4_re, x4_im,
-                                x5_re, x5_im, x6_re, x6_im,
-                                &tx0_re, &tx0_im, &tx1_re, &tx1_im,
-                                &tx2_re, &tx2_im, &tx3_re, &tx3_im,
-                                &tx4_re, &tx4_im, &tx5_re, &tx5_im);
-    
-    // STEP 5: 6-point cyclic convolution (round-robin schedule)
-    double v0_re, v0_im, v1_re, v1_im, v2_re, v2_im;
-    double v3_re, v3_im, v4_re, v4_im, v5_re, v5_im;
-    
-    rader_convolution_roundrobin_scalar(
-        tx0_re, tx0_im, tx1_re, tx1_im, tx2_re, tx2_im,
-        tx3_re, tx3_im, tx4_re, tx4_im, tx5_re, tx5_im,
-        rader_tw,
-        &v0_re, &v0_im, &v1_re, &v1_im, &v2_re, &v2_im,
-        &v3_re, &v3_im, &v4_re, &v4_im, &v5_re, &v5_im);
-    
-    // STEP 6: Assemble outputs with permutation [1,5,4,6,2,3]
-    double y1_re = x0_re + v0_re;  // Position 1 ← v0
-    double y1_im = x0_im + v0_im;
-    double y2_re = x0_re + v4_re;  // Position 2 ← v4
-    double y2_im = x0_im + v4_im;
-    double y3_re = x0_re + v5_re;  // Position 3 ← v5
-    double y3_im = x0_im + v5_im;
-    double y4_re = x0_re + v2_re;  // Position 4 ← v2
-    double y4_im = x0_im + v2_im;
-    double y5_re = x0_re + v1_re;  // Position 5 ← v1
-    double y5_im = x0_im + v1_im;
-    double y6_re = x0_re + v3_re;  // Position 6 ← v3
-    double y6_im = x0_im + v3_im;
-    
-    // STEP 7: Store results
-    store_7_lanes_scalar(k, K, out_re, out_im,
-                         y0_re, y0_im, y1_re, y1_im,
-                         y2_re, y2_im, y3_re, y3_im,
-                         y4_re, y4_im, y5_re, y5_im,
-                         y6_re, y6_im);
-}
+        /* ---- Backward DFT6 (no /6, absorbed in kernel) ---- */
+        double cr[6], ci[6];
+        dft6_backward_scalar(Cr, Ci, cr, ci);
 
-//==============================================================================
-// STAGE FUNCTION - SCALAR LOOP
-//==============================================================================
-
-/**
- * @brief Execute radix-7 stage - scalar version
- * @details
- * Processes all K butterflies using scalar arithmetic.
- * Use cases:
- * - Fallback for misaligned buffers
- * - Remainder loop after SIMD vectorization
- * - Very small K values
- * - Platforms without SIMD
- * 
- * @param K Number of butterflies
- * @param in_re Input real components
- * @param in_im Input imaginary components
- * @param stage_tw Stage twiddle factors (SoA layout)
- * @param rader_tw Rader twiddle factors (6 complex values)
- * @param out_re Output real components
- * @param out_im Output imaginary components
- * @param sub_len Sub-transform length
- */
-static void radix7_stage_scalar(
-    int K,
-    const double * restrict in_re,
-    const double * restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    const fft_twiddle_soa *rader_tw,
-    double * restrict out_re,
-    double * restrict out_im,
-    int sub_len)
-{
-    // Simple loop: process one butterfly at a time
-    for (int k = 0; k < K; k++)
-    {
-        radix7_butterfly_scalar(k, K, in_re, in_im, stage_tw, rader_tw,
-                                out_re, out_im, sub_len);
+        /* ---- Output un-permute: Y[inv_perm[s]] = x0 + c[s] ---- */
+        /* inv_perm = {1, 5, 4, 6, 2, 3} */
+        y1_re[k] = x0r + cr[0];  y1_im[k] = x0i + ci[0];  /* s=0 → m=1 */
+        y5_re[k] = x0r + cr[1];  y5_im[k] = x0i + ci[1];  /* s=1 → m=5 */
+        y4_re[k] = x0r + cr[2];  y4_im[k] = x0i + ci[2];  /* s=2 → m=4 */
+        y6_re[k] = x0r + cr[3];  y6_im[k] = x0i + ci[3];  /* s=3 → m=6 */
+        y2_re[k] = x0r + cr[4];  y2_im[k] = x0i + ci[4];  /* s=4 → m=2 */
+        y3_re[k] = x0r + cr[5];  y3_im[k] = x0i + ci[5];  /* s=5 → m=3 */
     }
 }
 
-//==============================================================================
-// UNIFIED DISPATCHER WITH SIMD FALLBACK
-//==============================================================================
+/* ================================================================== */
+/*  Rader radix-7 butterfly — scalar, backward, with twiddles          */
+/* ================================================================== */
 
-/**
- * @brief Unified radix-7 stage dispatcher
- * @details
- * Intelligently selects the best implementation:
- * 1. AVX2 path (if available and aligned) - 4-wide
- * 2. SSE2 path (if available and aligned) - 2-wide
- * 3. Scalar fallback (always works) - 1-wide
- * 
- * Also handles remainder elements after vectorized loops.
- */
-static void radix7_stage_auto(
-    int K,
-    const double * restrict in_re,
-    const double * restrict in_im,
-    const fft_twiddle_soa *stage_tw,
-    const fft_twiddle_soa *rader_tw,
-    double * restrict out_re,
-    double * restrict out_im,
-    int sub_len)
+static inline __attribute__((always_inline))
+void radix7_rader_bwd_scalar_1(
+    const double *a_re, const double *a_im,
+    const double *b_re, const double *b_im,
+    const double *c_re, const double *c_im,
+    const double *d_re, const double *d_im,
+    const double *e_re, const double *e_im,
+    const double *f_re, const double *f_im,
+    const double *g_re, const double *g_im,
+    double *y0_re, double *y0_im,
+    double *y1_re, double *y1_im,
+    double *y2_re, double *y2_im,
+    double *y3_re, double *y3_im,
+    double *y4_re, double *y4_im,
+    double *y5_re, double *y5_im,
+    double *y6_re, double *y6_im,
+    const double *tw1_re, const double *tw1_im,
+    const double *tw2_re, const double *tw2_im,
+    const double *tw3_re, const double *tw3_im,
+    int K)
 {
-#ifdef __AVX2__
-    // AVX2 path available
-    if (is_aligned_32(in_re) && is_aligned_32(in_im) &&
-        is_aligned_32(out_re) && is_aligned_32(out_im) &&
-        K >= R7_AVX2_WIDTH)
-    {
-        // Use AVX2 for main part
-        int k_vec = (K / R7_AVX2_WIDTH) * R7_AVX2_WIDTH;
-        if (k_vec > 0)
-        {
-            // Call AVX2 stage function (would be implemented in fft_radix7_avx2.h)
-            // radix7_stage_avx2_soa(k_vec, in_re, in_im, stage_tw, rader_tw,
-            //                       out_re, out_im, sub_len);
-        }
-        
-        // Scalar fallback for remainder
-        for (int k = k_vec; k < K; k++)
-        {
-            radix7_butterfly_scalar(k, K, in_re, in_im, stage_tw, rader_tw,
-                                    out_re, out_im, sub_len);
-        }
-        return;
-    }
-#endif
+    for (int k = 0; k < K; k++) {
+        /* ---- Step 1: Backward Rader on raw inputs (no twiddle) ---- */
+        double x0r = a_re[k], x0i = a_im[k];
+        double t1r = b_re[k], t1i = b_im[k];
+        double t2r = c_re[k], t2i = c_im[k];
+        double t3r = d_re[k], t3i = d_im[k];
+        double t4r = e_re[k], t4i = e_im[k];
+        double t5r = f_re[k], t5i = f_im[k];
+        double t6r = g_re[k], t6i = g_im[k];
 
-#ifdef __SSE2__
-    // SSE2 path available
-    if (is_aligned_16(in_re) && is_aligned_16(in_im) &&
-        is_aligned_16(out_re) && is_aligned_16(out_im) &&
-        K >= R7_SSE2_WIDTH)
-    {
-        // Use SSE2 for main part
-        int k_vec = (K / R7_SSE2_WIDTH) * R7_SSE2_WIDTH;
-        if (k_vec > 0)
-        {
-            radix7_stage_sse2_soa(k_vec, in_re, in_im, stage_tw, rader_tw,
-                                  out_re, out_im, sub_len);
-        }
-        
-        // Scalar fallback for remainder
-        for (int k = k_vec; k < K; k++)
-        {
-            radix7_butterfly_scalar(k, K, in_re, in_im, stage_tw, rader_tw,
-                                    out_re, out_im, sub_len);
-        }
-        return;
-    }
-#endif
+        /* DC of backward DFT (before twiddle) */
+        double dcr = x0r + t1r + t2r + t3r + t4r + t5r + t6r;
+        double dci = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
 
-    // Scalar fallback for everything
-    radix7_stage_scalar(K, in_re, in_im, stage_tw, rader_tw,
-                        out_re, out_im, sub_len);
+        /* Rader permute + backward convolution */
+        double ar[6], ai[6];
+        ar[0] = t1r;  ai[0] = t1i;
+        ar[1] = t3r;  ai[1] = t3i;
+        ar[2] = t2r;  ai[2] = t2i;
+        ar[3] = t6r;  ai[3] = t6i;
+        ar[4] = t4r;  ai[4] = t4i;
+        ar[5] = t5r;  ai[5] = t5i;
+
+        double Ar[6], Ai[6];
+        dft6_forward_scalar(ar, ai, Ar, Ai);
+
+        double Cr[6], Ci[6];
+        for (int j = 0; j < 6; j++) {
+            cmul_scalar(Ar[j], Ai[j], RK7_BWD_RE[j], RK7_BWD_IM[j],
+                        &Cr[j], &Ci[j]);
+        }
+
+        double cr[6], ci[6];
+        dft6_backward_scalar(Cr, Ci, cr, ci);
+
+        /* Raw IDFT7 outputs (before twiddle) */
+        /* inv_perm = {1,5,4,6,2,3} */
+        double r0r = dcr,          r0i = dci;
+        double r1r = x0r + cr[0],  r1i = x0i + ci[0];  /* m=1 */
+        double r5r = x0r + cr[1],  r5i = x0i + ci[1];  /* m=5 */
+        double r4r = x0r + cr[2],  r4i = x0i + ci[2];  /* m=4 */
+        double r6r = x0r + cr[3],  r6i = x0i + ci[3];  /* m=6 */
+        double r2r = x0r + cr[4],  r2i = x0i + ci[4];  /* m=2 */
+        double r3r = x0r + cr[5],  r3i = x0i + ci[5];  /* m=3 */
+
+        /* ---- Step 2: Apply conj twiddles AFTER IDFT ---- */
+        /* W0=1, W1, W2, W3, W4=W1·W3, W5=W2·W3, W6=W3² */
+        double w1r = tw1_re[k], w1i = tw1_im[k];
+        double w2r = tw2_re[k], w2i = tw2_im[k];
+        double w3r = tw3_re[k], w3i = tw3_im[k];
+
+        double w4r, w4i, w5r, w5i, w6r, w6i;
+        cmul_scalar(w1r, w1i, w3r, w3i, &w4r, &w4i);
+        cmul_scalar(w2r, w2i, w3r, w3i, &w5r, &w5i);
+        cmul_scalar(w3r, w3i, w3r, w3i, &w6r, &w6i);
+
+        y0_re[k] = r0r;  y0_im[k] = r0i;  /* W0=1, no multiply */
+        cmul_scalar(r1r, r1i, w1r, -w1i, &y1_re[k], &y1_im[k]);
+        cmul_scalar(r2r, r2i, w2r, -w2i, &y2_re[k], &y2_im[k]);
+        cmul_scalar(r3r, r3i, w3r, -w3i, &y3_re[k], &y3_im[k]);
+        cmul_scalar(r4r, r4i, w4r, -w4i, &y4_re[k], &y4_im[k]);
+        cmul_scalar(r5r, r5i, w5r, -w5i, &y5_re[k], &y5_im[k]);
+        cmul_scalar(r6r, r6i, w6r, -w6i, &y6_re[k], &y6_im[k]);
+    }
 }
 
-#endif // FFT_RADIX7_SCALAR_H
+/* ================================================================== */
+/*  N1 variants — no twiddles (K=1 stage, all twiddles = 1)            */
+/* ================================================================== */
+
+static inline __attribute__((always_inline))
+void radix7_rader_fwd_scalar_N1(
+    const double *a_re, const double *a_im,
+    const double *b_re, const double *b_im,
+    const double *c_re, const double *c_im,
+    const double *d_re, const double *d_im,
+    const double *e_re, const double *e_im,
+    const double *f_re, const double *f_im,
+    const double *g_re, const double *g_im,
+    double *y0_re, double *y0_im,
+    double *y1_re, double *y1_im,
+    double *y2_re, double *y2_im,
+    double *y3_re, double *y3_im,
+    double *y4_re, double *y4_im,
+    double *y5_re, double *y5_im,
+    double *y6_re, double *y6_im,
+    int K)
+{
+    for (int k = 0; k < K; k++) {
+        double x0r = a_re[k], x0i = a_im[k];
+        double t1r = b_re[k], t1i = b_im[k];
+        double t2r = c_re[k], t2i = c_im[k];
+        double t3r = d_re[k], t3i = d_im[k];
+        double t4r = e_re[k], t4i = e_im[k];
+        double t5r = f_re[k], t5i = f_im[k];
+        double t6r = g_re[k], t6i = g_im[k];
+
+        y0_re[k] = x0r + t1r + t2r + t3r + t4r + t5r + t6r;
+        y0_im[k] = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
+
+        double ar[6], ai[6];
+        ar[0] = t1r;  ai[0] = t1i;
+        ar[1] = t3r;  ai[1] = t3i;
+        ar[2] = t2r;  ai[2] = t2i;
+        ar[3] = t6r;  ai[3] = t6i;
+        ar[4] = t4r;  ai[4] = t4i;
+        ar[5] = t5r;  ai[5] = t5i;
+
+        double Ar[6], Ai[6];
+        dft6_forward_scalar(ar, ai, Ar, Ai);
+
+        double Cr[6], Ci[6];
+        for (int j = 0; j < 6; j++) {
+            cmul_scalar(Ar[j], Ai[j], RK7_FWD_RE[j], RK7_FWD_IM[j],
+                        &Cr[j], &Ci[j]);
+        }
+
+        double cr[6], ci[6];
+        dft6_backward_scalar(Cr, Ci, cr, ci);
+
+        y1_re[k] = x0r + cr[0];  y1_im[k] = x0i + ci[0];
+        y5_re[k] = x0r + cr[1];  y5_im[k] = x0i + ci[1];
+        y4_re[k] = x0r + cr[2];  y4_im[k] = x0i + ci[2];
+        y6_re[k] = x0r + cr[3];  y6_im[k] = x0i + ci[3];
+        y2_re[k] = x0r + cr[4];  y2_im[k] = x0i + ci[4];
+        y3_re[k] = x0r + cr[5];  y3_im[k] = x0i + ci[5];
+    }
+}
+
+static inline __attribute__((always_inline))
+void radix7_rader_bwd_scalar_N1(
+    const double *a_re, const double *a_im,
+    const double *b_re, const double *b_im,
+    const double *c_re, const double *c_im,
+    const double *d_re, const double *d_im,
+    const double *e_re, const double *e_im,
+    const double *f_re, const double *f_im,
+    const double *g_re, const double *g_im,
+    double *y0_re, double *y0_im,
+    double *y1_re, double *y1_im,
+    double *y2_re, double *y2_im,
+    double *y3_re, double *y3_im,
+    double *y4_re, double *y4_im,
+    double *y5_re, double *y5_im,
+    double *y6_re, double *y6_im,
+    int K)
+{
+    for (int k = 0; k < K; k++) {
+        double x0r = a_re[k], x0i = a_im[k];
+        double t1r = b_re[k], t1i = b_im[k];
+        double t2r = c_re[k], t2i = c_im[k];
+        double t3r = d_re[k], t3i = d_im[k];
+        double t4r = e_re[k], t4i = e_im[k];
+        double t5r = f_re[k], t5i = f_im[k];
+        double t6r = g_re[k], t6i = g_im[k];
+
+        y0_re[k] = x0r + t1r + t2r + t3r + t4r + t5r + t6r;
+        y0_im[k] = x0i + t1i + t2i + t3i + t4i + t5i + t6i;
+
+        double ar[6], ai[6];
+        ar[0] = t1r;  ai[0] = t1i;
+        ar[1] = t3r;  ai[1] = t3i;
+        ar[2] = t2r;  ai[2] = t2i;
+        ar[3] = t6r;  ai[3] = t6i;
+        ar[4] = t4r;  ai[4] = t4i;
+        ar[5] = t5r;  ai[5] = t5i;
+
+        double Ar[6], Ai[6];
+        dft6_forward_scalar(ar, ai, Ar, Ai);
+
+        double Cr[6], Ci[6];
+        for (int j = 0; j < 6; j++) {
+            cmul_scalar(Ar[j], Ai[j], RK7_BWD_RE[j], RK7_BWD_IM[j],
+                        &Cr[j], &Ci[j]);
+        }
+
+        double cr[6], ci[6];
+        dft6_backward_scalar(Cr, Ci, cr, ci);
+
+        y1_re[k] = x0r + cr[0];  y1_im[k] = x0i + ci[0];
+        y5_re[k] = x0r + cr[1];  y5_im[k] = x0i + ci[1];
+        y4_re[k] = x0r + cr[2];  y4_im[k] = x0i + ci[2];
+        y6_re[k] = x0r + cr[3];  y6_im[k] = x0i + ci[3];
+        y2_re[k] = x0r + cr[4];  y2_im[k] = x0i + ci[4];
+        y3_re[k] = x0r + cr[5];  y3_im[k] = x0i + ci[5];
+    }
+}
+
+#endif /* FFT_RADIX7_SCALAR_H */
