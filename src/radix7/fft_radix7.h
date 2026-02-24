@@ -109,24 +109,44 @@ extern "C"
     /*  CPUID detection                                                    */
     /* ================================================================== */
 
-#if defined(__GNUC__) || defined(__clang__)
-#include <cpuid.h>
+#if defined(_MSC_VER) || (defined(_WIN32) && (defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)))
+/* MSVC or ICX on Windows */
+#include <intrin.h>
 
     static inline int fft_r7_cpu_has_avx2(void)
     {
-        unsigned a, b, c, d;
-        if (!__get_cpuid_count(7, 0, &a, &b, &c, &d))
-            return 0;
-        return (b >> 5) & 1;
+        int info[4];
+        __cpuidex(info, 7, 0);
+        return (info[1] >> 5) & 1; /* EBX bit 5 */
     }
 
     static inline int fft_r7_cpu_has_avx512f(void)
     {
-        unsigned a, b, c, d;
-        if (!__get_cpuid_count(7, 0, &a, &b, &c, &d))
-            return 0;
-        return (b >> 16) & 1;
+        int info[4];
+        __cpuidex(info, 7, 0);
+        return (info[1] >> 16) & 1; /* EBX bit 16 */
     }
+
+#elif defined(__GNUC__) || defined(__clang__)
+/* GCC, Clang, ICX on Linux */
+#include <cpuid.h>
+
+static inline int fft_r7_cpu_has_avx2(void)
+{
+    unsigned a, b, c, d;
+    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d))
+        return 0;
+    return (b >> 5) & 1;
+}
+
+static inline int fft_r7_cpu_has_avx512f(void)
+{
+    unsigned a, b, c, d;
+    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d))
+        return 0;
+    return (b >> 16) & 1;
+}
+
 #else
 static inline int fft_r7_cpu_has_avx2(void) { return 0; }
 static inline int fft_r7_cpu_has_avx512f(void) { return 0; }

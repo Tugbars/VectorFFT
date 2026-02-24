@@ -19,10 +19,10 @@
 /*
  * GCC -O3 -ftree-loop-vectorize can miscompile these stage loops when
  * inlined butterfly calls use restrict-qualified parameters in-place.
- * Force O2 here — the hot code is in the hand-vectorized butterfly headers,
- * so this has zero performance impact.
+ * The R7_PRAGMA_NO_AUTOVEC macro handles this portably (no-op on ICX/Clang).
  */
-#pragma GCC optimize("O2","no-tree-loop-vectorize")
+#include "fft_r7_platform.h"
+R7_PRAGMA_NO_AUTOVEC
 
 #include "fft_radix7.h"
 
@@ -57,46 +57,51 @@ void fft_radix7_visit_forward(
 {
     const int full_size = 7 * K;
 
-    if (tw1_re == NULL) {
+    if (tw1_re == NULL)
+    {
         /* Stage 0: K=1, N1 butterfly, 7 adjacent elements per group */
-        for (int g = 0; g < num_groups; g++) {
+        for (int g = 0; g < num_groups; g++)
+        {
             int b = g * 7;
             vt->fwd_n1(
-                &re[b+0], &im[b+0],
-                &re[b+1], &im[b+1],
-                &re[b+2], &im[b+2],
-                &re[b+3], &im[b+3],
-                &re[b+4], &im[b+4],
-                &re[b+5], &im[b+5],
-                &re[b+6], &im[b+6],
-                &re[b+0], &im[b+0],
-                &re[b+1], &im[b+1],
-                &re[b+2], &im[b+2],
-                &re[b+3], &im[b+3],
-                &re[b+4], &im[b+4],
-                &re[b+5], &im[b+5],
-                &re[b+6], &im[b+6],
+                &re[b + 0], &im[b + 0],
+                &re[b + 1], &im[b + 1],
+                &re[b + 2], &im[b + 2],
+                &re[b + 3], &im[b + 3],
+                &re[b + 4], &im[b + 4],
+                &re[b + 5], &im[b + 5],
+                &re[b + 6], &im[b + 6],
+                &re[b + 0], &im[b + 0],
+                &re[b + 1], &im[b + 1],
+                &re[b + 2], &im[b + 2],
+                &re[b + 3], &im[b + 3],
+                &re[b + 4], &im[b + 4],
+                &re[b + 5], &im[b + 5],
+                &re[b + 6], &im[b + 6],
                 1);
         }
-    } else {
+    }
+    else
+    {
         /* Stage s > 0: twiddled butterfly, K contiguous per leg */
-        for (int g = 0; g < num_groups; g++) {
+        for (int g = 0; g < num_groups; g++)
+        {
             int b = g * full_size;
             vt->fwd_tw(
-                &re[b + 0*K], &im[b + 0*K],
-                &re[b + 1*K], &im[b + 1*K],
-                &re[b + 2*K], &im[b + 2*K],
-                &re[b + 3*K], &im[b + 3*K],
-                &re[b + 4*K], &im[b + 4*K],
-                &re[b + 5*K], &im[b + 5*K],
-                &re[b + 6*K], &im[b + 6*K],
-                &re[b + 0*K], &im[b + 0*K],
-                &re[b + 1*K], &im[b + 1*K],
-                &re[b + 2*K], &im[b + 2*K],
-                &re[b + 3*K], &im[b + 3*K],
-                &re[b + 4*K], &im[b + 4*K],
-                &re[b + 5*K], &im[b + 5*K],
-                &re[b + 6*K], &im[b + 6*K],
+                &re[b + 0 * K], &im[b + 0 * K],
+                &re[b + 1 * K], &im[b + 1 * K],
+                &re[b + 2 * K], &im[b + 2 * K],
+                &re[b + 3 * K], &im[b + 3 * K],
+                &re[b + 4 * K], &im[b + 4 * K],
+                &re[b + 5 * K], &im[b + 5 * K],
+                &re[b + 6 * K], &im[b + 6 * K],
+                &re[b + 0 * K], &im[b + 0 * K],
+                &re[b + 1 * K], &im[b + 1 * K],
+                &re[b + 2 * K], &im[b + 2 * K],
+                &re[b + 3 * K], &im[b + 3 * K],
+                &re[b + 4 * K], &im[b + 4 * K],
+                &re[b + 5 * K], &im[b + 5 * K],
+                &re[b + 6 * K], &im[b + 6 * K],
                 tw1_re, tw1_im,
                 tw2_re, tw2_im,
                 tw3_re, tw3_im,

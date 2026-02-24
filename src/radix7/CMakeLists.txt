@@ -41,7 +41,14 @@ add_library(fft_radix7 STATIC
 
 target_include_directories(fft_radix7 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_options(fft_radix7 PRIVATE ${R7_SIMD_FLAGS})
-target_link_libraries(fft_radix7 PUBLIC m)
+
+# Math library: built into CRT on Windows, need -lm on Unix
+if(NOT WIN32)
+    target_link_libraries(fft_radix7 PUBLIC m)
+    set(R7_MATH_LIB "m" CACHE INTERNAL "math library")
+else()
+    set(R7_MATH_LIB ""  CACHE INTERNAL "math library (none on Windows)")
+endif()
 
 # Export to parent scope / cache so tests and other subdirs can use them
 set(R7_SIMD_FLAGS  "${R7_SIMD_FLAGS}"  CACHE INTERNAL "radix7 SIMD flags")
