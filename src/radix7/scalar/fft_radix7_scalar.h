@@ -26,6 +26,11 @@
 #ifndef FFT_RADIX7_SCALAR_H
 #define FFT_RADIX7_SCALAR_H
 
+/* Linkage control: override to empty for library builds */
+#ifndef R7_BUTTERFLY_API
+#define R7_BUTTERFLY_API static inline __attribute__((always_inline))
+#endif
+
 #include <math.h>
 
 /* ================================================================== */
@@ -277,7 +282,8 @@ static inline __attribute__((always_inline)) void dft6_backward_scalar(const dou
 /*  Input/output: base-pointer + k indexing, stride implicit.          */
 /* ================================================================== */
 
-static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_1(
+R7_BUTTERFLY_API
+void radix7_rader_fwd_scalar_1(
     const double *a_re, const double *a_im, /* x0 */
     const double *b_re, const double *b_im, /* x1 */
     const double *c_re, const double *c_im, /* x2 */
@@ -379,7 +385,8 @@ static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_1(
 /*  Rader radix-7 butterfly — scalar, backward, with twiddles          */
 /* ================================================================== */
 
-static inline __attribute__((always_inline)) void radix7_rader_bwd_scalar_1(
+R7_BUTTERFLY_API
+void radix7_rader_bwd_scalar_1(
     const double *a_re, const double *a_im,
     const double *b_re, const double *b_im,
     const double *c_re, const double *c_im,
@@ -474,7 +481,8 @@ static inline __attribute__((always_inline)) void radix7_rader_bwd_scalar_1(
 /*  N1 variants — no twiddles (K=1 stage, all twiddles = 1)            */
 /* ================================================================== */
 
-static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_N1(
+R7_BUTTERFLY_API
+void radix7_rader_fwd_scalar_N1(
     const double *a_re, const double *a_im,
     const double *b_re, const double *b_im,
     const double *c_re, const double *c_im,
@@ -542,7 +550,8 @@ static inline __attribute__((always_inline)) void radix7_rader_fwd_scalar_N1(
     }
 }
 
-static inline __attribute__((always_inline)) void radix7_rader_bwd_scalar_N1(
+R7_BUTTERFLY_API
+void radix7_rader_bwd_scalar_N1(
     const double *a_re, const double *a_im,
     const double *b_re, const double *b_im,
     const double *c_re, const double *c_im,

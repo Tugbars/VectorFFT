@@ -22,6 +22,10 @@
 #ifndef FFT_RADIX7_AVX2_H
 #define FFT_RADIX7_AVX2_H
 
+#ifndef R7_BUTTERFLY_API
+#define R7_BUTTERFLY_API static inline __attribute__((always_inline))
+#endif
+
 #ifdef __AVX2__
 #include <immintrin.h>
 
@@ -253,9 +257,9 @@ static inline __attribute__((always_inline)) void cmul_avx2_r7(__m256d ar, __m25
     do                                                                        \
     {                                                                         \
         /* Wave 1: load kernels */                                            \
-        __m256d k0r = _mm256_load_pd(KR0), k0i = _mm256_load_pd(KI0);         \
-        __m256d k1r = _mm256_load_pd(KR1), k1i = _mm256_load_pd(KI1);         \
-        __m256d k2r = _mm256_load_pd(KR2), k2i = _mm256_load_pd(KI2);         \
+        __m256d k0r = _mm256_loadu_pd(KR0), k0i = _mm256_loadu_pd(KI0);       \
+        __m256d k1r = _mm256_loadu_pd(KR1), k1i = _mm256_loadu_pd(KI1);       \
+        __m256d k2r = _mm256_loadu_pd(KR2), k2i = _mm256_loadu_pd(KI2);       \
         /* Mul phase: ai*wi and ai*wr for slots 0,1,2 */                      \
         __m256d p0a = _mm256_mul_pd(s0i, k0i), p0b = _mm256_mul_pd(s0i, k0r); \
         __m256d p1a = _mm256_mul_pd(s1i, k1i), p1b = _mm256_mul_pd(s1i, k1r); \
@@ -274,9 +278,9 @@ static inline __attribute__((always_inline)) void cmul_avx2_r7(__m256d ar, __m25
         s2r = r2r;                                                            \
         s2i = r2i;                                                            \
         /* Wave 2: load kernels */                                            \
-        __m256d k3r = _mm256_load_pd(KR3), k3i = _mm256_load_pd(KI3);         \
-        __m256d k4r = _mm256_load_pd(KR4), k4i = _mm256_load_pd(KI4);         \
-        __m256d k5r = _mm256_load_pd(KR5), k5i = _mm256_load_pd(KI5);         \
+        __m256d k3r = _mm256_loadu_pd(KR3), k3i = _mm256_loadu_pd(KI3);       \
+        __m256d k4r = _mm256_loadu_pd(KR4), k4i = _mm256_loadu_pd(KI4);       \
+        __m256d k5r = _mm256_loadu_pd(KR5), k5i = _mm256_loadu_pd(KI5);       \
         __m256d p3a = _mm256_mul_pd(s3i, k3i), p3b = _mm256_mul_pd(s3i, k3r); \
         __m256d p4a = _mm256_mul_pd(s4i, k4i), p4b = _mm256_mul_pd(s4i, k4r); \
         __m256d p5a = _mm256_mul_pd(s5i, k5i), p5b = _mm256_mul_pd(s5i, k5r); \
@@ -313,7 +317,7 @@ static inline __attribute__((always_inline)) void cmul_avx2_r7(__m256d ar, __m25
 /*  Forward butterfly — AVX2, BLOCKED3 twiddles, all optimizations     */
 /* ================================================================== */
 
-static inline __attribute__((always_inline)) __attribute__((target("avx2,fma"))) void radix7_rader_fwd_avx2(
+R7_BUTTERFLY_API __attribute__((target("avx2,fma"))) void radix7_rader_fwd_avx2(
     const double *restrict a_re, const double *restrict a_im,
     const double *restrict b_re, const double *restrict b_im,
     const double *restrict c_re, const double *restrict c_im,
@@ -510,7 +514,7 @@ static inline __attribute__((always_inline)) __attribute__((target("avx2,fma")))
 /*  Backward butterfly — Rader IDFT then conj twiddle outputs          */
 /* ================================================================== */
 
-static inline __attribute__((always_inline)) __attribute__((target("avx2,fma"))) void radix7_rader_bwd_avx2(
+R7_BUTTERFLY_API __attribute__((target("avx2,fma"))) void radix7_rader_bwd_avx2(
     const double *restrict a_re, const double *restrict a_im,
     const double *restrict b_re, const double *restrict b_im,
     const double *restrict c_re, const double *restrict c_im,
@@ -718,7 +722,7 @@ static inline __attribute__((always_inline)) __attribute__((target("avx2,fma")))
 /*  N1 forward — no twiddles                                           */
 /* ================================================================== */
 
-static inline __attribute__((always_inline)) __attribute__((target("avx2,fma"))) void radix7_rader_fwd_avx2_N1(
+R7_BUTTERFLY_API __attribute__((target("avx2,fma"))) void radix7_rader_fwd_avx2_N1(
     const double *restrict a_re, const double *restrict a_im,
     const double *restrict b_re, const double *restrict b_im,
     const double *restrict c_re, const double *restrict c_im,

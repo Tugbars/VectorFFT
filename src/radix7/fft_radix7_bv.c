@@ -15,7 +15,7 @@
 
 #pragma GCC optimize("O2","no-tree-loop-vectorize")
 
-#include "fft_radix7_uniform.h"
+#include "fft_radix7.h"
 
 void fft_radix7_visit_backward(
     const fft_r7_vtable_t *vt,

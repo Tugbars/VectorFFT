@@ -24,7 +24,7 @@
  */
 #pragma GCC optimize("O2","no-tree-loop-vectorize")
 
-#include "fft_radix7_uniform.h"
+#include "fft_radix7.h"
 
 /*
  * Include butterfly implementations here.
