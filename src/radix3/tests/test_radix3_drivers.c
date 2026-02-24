@@ -11,6 +11,7 @@
 #include <string.h>
 #include <math.h>
 #include "fft_radix3.h"
+#include "vfft_compat.h"   
 
 /*============================================================================
  * PORTABLE ALIGNED ALLOCATION

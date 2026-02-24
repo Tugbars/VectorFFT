@@ -20,6 +20,7 @@
 /* Include all ISA headers */
 #include "scalar/fft_radix3_scalar.h"
 #include "scalar/fft_radix3_scalar_n1.h"
+#include "vfft_compat.h"   
 
 #if defined(__AVX2__) && defined(__FMA__)
 #include "avx2/fft_radix3_avx2.h"

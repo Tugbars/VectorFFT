@@ -19,7 +19,9 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include "vfft_compat.h"   
 #include "fft_radix3.h"
+
 
 /* ---- Aligned alloc ---- */
 #ifdef _MSC_VER
@@ -64,7 +66,8 @@ static inline unsigned long long rdtsc_end(void) { return 0; }
 
 static inline double get_ns(void) {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    double t = vfft_now_ns() * 1e-9;  // vfft_now_ns returns nanoseconds
+
     return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
 }
 
