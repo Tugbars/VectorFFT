@@ -28,9 +28,6 @@
 #ifndef RADIX32_FIRST_STAGE_AVX512_H
 #define RADIX32_FIRST_STAGE_AVX512_H
 
-// Include main header for all pair-emitter functions and helpers
-#include "radix32_fused_avx512.h"
-
 //==============================================================================
 // FIRST-STAGE POSITION MACROS (IDENTITY TWIDDLES)
 //==============================================================================

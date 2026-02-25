@@ -1,623 +1,533 @@
 /**
- * @file fft_radix16_avx2_n16.h
- * @brief Radix-16 N=16 (Twiddle-less) First Stage - AVX2 Optimized
+ * @file fft_radix16_avx2_butterfly.h
+ * @brief Twiddle-less Radix-16 AVX2 SoA Butterfly - Pure DFT-16 Kernel
  *
  * @details
- * ARCHITECTURE:
- * - First FFT stage (N=16 butterflies, no twiddles required)
- * - Reuses optimized butterfly kernels from twiddle-version
- * - Native SoA: separate re[] and im[] arrays
- * - 4-way SIMD parallelization for optimal throughput
+ * This is the standalone radix-16 butterfly extracted from the full stage
+ * implementation. It performs ONLY the DFT-16 decomposition (4-group
+ * radix-4 x radix-4 fusion) with NO stage twiddle application.
  *
- * PERFORMANCE VARIANTS:
- * - Single butterfly:  ~28 cycles (replicates 4× to use full SIMD)
- * - Parallel-4 gather: ~25 cycles/butterfly (AVX2 gather intrinsics)
- * - Parallel-4 interleaved: ~22 cycles/butterfly (BEST - pure vector ops)
- * - Batch mode: Automatic 4-way chunking for N/16 butterflies
+ * Use cases:
+ *   - First stage of an FFT (no twiddles needed for first radix-16 pass)
+ *   - Testing the butterfly in isolation
+ *   - Building block for custom FFT pipelines
  *
- * RECOMMENDED API:
- * - radix16_n16_dit_forward_batch_avx2() for general use
- * - radix16_n16_dit_forward_parallel4_interleaved_avx2() for max performance
+ * SoA memory layout:
+ *   Input:  in_re[r * K + k], in_im[r * K + k]  for r=0..15, k=0..K-1
+ *   Output: out_re[m * K + k], out_im[m * K + k] for m=0..15, k=0..K-1
  *
- * @version 1.0-OPTIMIZED
+ * Alignment requirements:
+ *   - K must be a multiple of 4
+ *   - All pointers must be 32-byte aligned
+ *
+ * @version 1.0
  * @date 2025
  */
 
-#ifndef FFT_RADIX16_AVX2_N16_H
-#define FFT_RADIX16_AVX2_N16_H
+#ifndef FFT_RADIX16_AVX2_BUTTERFLY_H
+#define FFT_RADIX16_AVX2_BUTTERFLY_H
 
-#include "fft_radix16_avx2_native_soa_optimized.h"
+#include <immintrin.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <assert.h>
+#include <stdbool.h>
 
-//==============================================================================
-// SINGLE BUTTERFLY (USES FULL SIMD VIA REPLICATION)
-//==============================================================================
+/* ============================================================================
+ * COMPILER PORTABILITY
+ * ========================================================================= */
 
-/**
- * @brief N=16 Forward Transform - Single Butterfly
- *
- * Transforms 16 consecutive complex numbers (first FFT stage, twiddle-less)
- *
- * Strategy: Replicates input 4× and calls parallel-4 kernel to avoid wasting
- * 3 SIMD lanes. More efficient than broadcast+extract for single butterflies.
- *
- * @param in_re  [16] Input real parts
- * @param in_im  [16] Input imaginary parts
- * @param out_re [16] Output real parts
- * @param out_im [16] Output imaginary parts
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_forward_avx2(
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im)
+#ifdef _MSC_VER
+  #define R16B_FORCE_INLINE static __forceinline
+  #define R16B_RESTRICT     __restrict
+  #define R16B_ASSUME_ALIGNED(ptr, alignment) (ptr)
+  #define R16B_TARGET_AVX2_FMA
+  #define R16B_NOINLINE     static
+#elif defined(__GNUC__) || defined(__clang__)
+  #define R16B_FORCE_INLINE static inline __attribute__((always_inline))
+  #define R16B_RESTRICT     __restrict__
+  #define R16B_ASSUME_ALIGNED(ptr, alignment) \
+      (__typeof__(ptr))__builtin_assume_aligned(ptr, alignment)
+  #define R16B_TARGET_AVX2_FMA __attribute__((target("avx2,fma")))
+  #define R16B_NOINLINE     static __attribute__((noinline))
+#else
+  #define R16B_FORCE_INLINE static inline
+  #define R16B_RESTRICT
+  #define R16B_ASSUME_ALIGNED(ptr, alignment) (ptr)
+  #define R16B_TARGET_AVX2_FMA
+  #define R16B_NOINLINE     static
+#endif
+
+/* ============================================================================
+ * CONSTANT MASKS
+ * ========================================================================= */
+
+R16B_FORCE_INLINE __m256d r16b_neg_mask(void)
 {
-    radix16_set_ftz_daz();
+    return _mm256_set1_pd(-0.0);
+}
 
-    ALIGNAS(32)
-    double tmp_in_re[64];
-    ALIGNAS(32)
-    double tmp_in_im[64];
-    ALIGNAS(32)
-    double tmp_out_re[64];
-    ALIGNAS(32)
-    double tmp_out_im[64];
+R16B_FORCE_INLINE __m256d r16b_rot_sign_fwd(void)
+{
+    return _mm256_set1_pd(-0.0);
+}
 
-    // Replicate input 4× to fill SIMD lanes
-    for (int r = 0; r < 16; r++)
+R16B_FORCE_INLINE __m256d r16b_rot_sign_bwd(void)
+{
+    return _mm256_setzero_pd();
+}
+
+/* ============================================================================
+ * TAIL MASK
+ * ========================================================================= */
+
+R16B_FORCE_INLINE __m256i r16b_tail_mask(size_t remaining)
+{
+    switch (remaining)
     {
-        tmp_in_re[0 + r] = in_re[r];
-        tmp_in_re[16 + r] = in_re[r];
-        tmp_in_re[32 + r] = in_re[r];
-        tmp_in_re[48 + r] = in_re[r];
-
-        tmp_in_im[0 + r] = in_im[r];
-        tmp_in_im[16 + r] = in_im[r];
-        tmp_in_im[32 + r] = in_im[r];
-        tmp_in_im[48 + r] = in_im[r];
-    }
-
-    // Forward declare parallel-4 function
-    extern void radix16_n16_dit_forward_parallel4_avx2(
-        const double *, const double *, double *, double *);
-
-    radix16_n16_dit_forward_parallel4_avx2(
-        tmp_in_re, tmp_in_im, tmp_out_re, tmp_out_im);
-
-    // Extract first butterfly result
-    for (int r = 0; r < 16; r++)
-    {
-        out_re[r] = tmp_out_re[r];
-        out_im[r] = tmp_out_im[r];
+    case 1:  return _mm256_setr_epi64x(-1LL, 0, 0, 0);
+    case 2:  return _mm256_setr_epi64x(-1LL, -1LL, 0, 0);
+    case 3:  return _mm256_setr_epi64x(-1LL, -1LL, -1LL, 0);
+    default: return _mm256_setzero_si256();
     }
 }
 
-/**
- * @brief N=16 Backward Transform - Single Butterfly
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_backward_avx2(
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im)
+/* ============================================================================
+ * CORE: RADIX-4 BUTTERFLY
+ * ========================================================================= */
+
+R16B_TARGET_AVX2_FMA
+R16B_FORCE_INLINE void r16b_radix4(
+    __m256d a_re, __m256d a_im, __m256d b_re, __m256d b_im,
+    __m256d c_re, __m256d c_im, __m256d d_re, __m256d d_im,
+    __m256d *R16B_RESTRICT y0_re, __m256d *R16B_RESTRICT y0_im,
+    __m256d *R16B_RESTRICT y1_re, __m256d *R16B_RESTRICT y1_im,
+    __m256d *R16B_RESTRICT y2_re, __m256d *R16B_RESTRICT y2_im,
+    __m256d *R16B_RESTRICT y3_re, __m256d *R16B_RESTRICT y3_im,
+    __m256d rot_sign_mask, __m256d neg_mask)
 {
-    radix16_set_ftz_daz();
+    __m256d sumBD_re = _mm256_add_pd(b_re, d_re);
+    __m256d sumAC_re = _mm256_add_pd(a_re, c_re);
+    __m256d sumBD_im = _mm256_add_pd(b_im, d_im);
+    __m256d sumAC_im = _mm256_add_pd(a_im, c_im);
 
-    ALIGNAS(32)
-    double tmp_in_re[64];
-    ALIGNAS(32)
-    double tmp_in_im[64];
-    ALIGNAS(32)
-    double tmp_out_re[64];
-    ALIGNAS(32)
-    double tmp_out_im[64];
+    __m256d difBD_re = _mm256_sub_pd(b_re, d_re);
+    __m256d difAC_re = _mm256_sub_pd(a_re, c_re);
+    __m256d difBD_im = _mm256_sub_pd(b_im, d_im);
+    __m256d difAC_im = _mm256_sub_pd(a_im, c_im);
 
-    for (int r = 0; r < 16; r++)
+    *y0_re = _mm256_add_pd(sumAC_re, sumBD_re);
+    *y0_im = _mm256_add_pd(sumAC_im, sumBD_im);
+    *y2_re = _mm256_sub_pd(sumAC_re, sumBD_re);
+    *y2_im = _mm256_sub_pd(sumAC_im, sumBD_im);
+
+    __m256d rot_re = _mm256_xor_pd(difBD_im, rot_sign_mask);
+    __m256d rot_im = _mm256_xor_pd(_mm256_xor_pd(difBD_re, neg_mask),
+                                   rot_sign_mask);
+
+    *y1_re = _mm256_sub_pd(difAC_re, rot_re);
+    *y1_im = _mm256_sub_pd(difAC_im, rot_im);
+    *y3_re = _mm256_add_pd(difAC_re, rot_re);
+    *y3_im = _mm256_add_pd(difAC_im, rot_im);
+}
+
+/* ============================================================================
+ * CORE: 4-GROUP RADIX-16 BUTTERFLY (FORWARD)
+ *
+ * Processes one of 4 groups through two-stage radix-4 with W4 intermediates.
+ * Input indices: group_id, group_id+4, group_id+8, group_id+12
+ * Output indices: group_id*4 .. group_id*4+3
+ * ========================================================================= */
+
+R16B_TARGET_AVX2_FMA
+R16B_FORCE_INLINE void r16b_group_forward(
+    int group_id,
+    const __m256d x_re[16], const __m256d x_im[16],
+    __m256d y_re[16], __m256d y_im[16],
+    __m256d rot_sign, __m256d neg)
+{
+    __m256d xr[4], xi[4];
+    xr[0] = x_re[group_id + 0];   xi[0] = x_im[group_id + 0];
+    xr[1] = x_re[group_id + 4];   xi[1] = x_im[group_id + 4];
+    xr[2] = x_re[group_id + 8];   xi[2] = x_im[group_id + 8];
+    xr[3] = x_re[group_id + 12];  xi[3] = x_im[group_id + 12];
+
+    /* Stage 1 */
+    __m256d tr[4], ti[4];
+    r16b_radix4(xr[0], xi[0], xr[1], xi[1],
+                xr[2], xi[2], xr[3], xi[3],
+                &tr[0], &ti[0], &tr[1], &ti[1],
+                &tr[2], &ti[2], &tr[3], &ti[3],
+                rot_sign, neg);
+
+    /* W4 intermediate twiddles */
+    if (group_id == 1)
     {
-        tmp_in_re[0 + r] = in_re[r];
-        tmp_in_re[16 + r] = in_re[r];
-        tmp_in_re[32 + r] = in_re[r];
-        tmp_in_re[48 + r] = in_re[r];
+        /* [1, -j, -1, j] */
+        __m256d tmp = tr[1];
+        tr[1] = ti[1];
+        ti[1] = _mm256_xor_pd(tmp, neg);
 
-        tmp_in_im[0 + r] = in_im[r];
-        tmp_in_im[16 + r] = in_im[r];
-        tmp_in_im[32 + r] = in_im[r];
-        tmp_in_im[48 + r] = in_im[r];
+        tr[2] = _mm256_xor_pd(tr[2], neg);
+        ti[2] = _mm256_xor_pd(ti[2], neg);
+
+        tmp = tr[3];
+        tr[3] = _mm256_xor_pd(ti[3], neg);
+        ti[3] = tmp;
+    }
+    else if (group_id == 2)
+    {
+        tr[0] = _mm256_xor_pd(tr[0], neg);
+        ti[0] = _mm256_xor_pd(ti[0], neg);
+
+        __m256d tmp = tr[1];
+        tr[1] = _mm256_xor_pd(ti[1], neg);
+        ti[1] = tmp;
+
+        tmp = tr[3];
+        tr[3] = ti[3];
+        ti[3] = _mm256_xor_pd(tmp, neg);
+    }
+    else if (group_id == 3)
+    {
+        __m256d tmp = tr[0];
+        tr[0] = _mm256_xor_pd(ti[0], neg);
+        ti[0] = tmp;
+
+        tmp = tr[2];
+        tr[2] = ti[2];
+        ti[2] = _mm256_xor_pd(tmp, neg);
+
+        tr[3] = _mm256_xor_pd(tr[3], neg);
+        ti[3] = _mm256_xor_pd(ti[3], neg);
     }
 
-    extern void radix16_n16_dit_backward_parallel4_avx2(
-        const double *, const double *, double *, double *);
+    /* Stage 2 */
+    __m256d yr[4], yi[4];
+    r16b_radix4(tr[0], ti[0], tr[1], ti[1],
+                tr[2], ti[2], tr[3], ti[3],
+                &yr[0], &yi[0], &yr[1], &yi[1],
+                &yr[2], &yi[2], &yr[3], &yi[3],
+                rot_sign, neg);
 
-    radix16_n16_dit_backward_parallel4_avx2(
-        tmp_in_re, tmp_in_im, tmp_out_re, tmp_out_im);
+    int base = group_id * 4;
+    y_re[base + 0] = yr[0];  y_im[base + 0] = yi[0];
+    y_re[base + 1] = yr[1];  y_im[base + 1] = yi[1];
+    y_re[base + 2] = yr[2];  y_im[base + 2] = yi[2];
+    y_re[base + 3] = yr[3];  y_im[base + 3] = yi[3];
+}
 
-    for (int r = 0; r < 16; r++)
+/* ============================================================================
+ * CORE: 4-GROUP RADIX-16 BUTTERFLY (BACKWARD / INVERSE)
+ * ========================================================================= */
+
+R16B_TARGET_AVX2_FMA
+R16B_FORCE_INLINE void r16b_group_backward(
+    int group_id,
+    const __m256d x_re[16], const __m256d x_im[16],
+    __m256d y_re[16], __m256d y_im[16],
+    __m256d rot_sign, __m256d neg)
+{
+    __m256d xr[4], xi[4];
+    xr[0] = x_re[group_id + 0];   xi[0] = x_im[group_id + 0];
+    xr[1] = x_re[group_id + 4];   xi[1] = x_im[group_id + 4];
+    xr[2] = x_re[group_id + 8];   xi[2] = x_im[group_id + 8];
+    xr[3] = x_re[group_id + 12];  xi[3] = x_im[group_id + 12];
+
+    __m256d tr[4], ti[4];
+    r16b_radix4(xr[0], xi[0], xr[1], xi[1],
+                xr[2], xi[2], xr[3], xi[3],
+                &tr[0], &ti[0], &tr[1], &ti[1],
+                &tr[2], &ti[2], &tr[3], &ti[3],
+                rot_sign, neg);
+
+    /* W4 intermediate twiddles (conjugated for backward) */
+    if (group_id == 1)
     {
-        out_re[r] = tmp_out_re[r];
-        out_im[r] = tmp_out_im[r];
+        /* [1, j, -1, -j] */
+        __m256d tmp = tr[1];
+        tr[1] = _mm256_xor_pd(ti[1], neg);
+        ti[1] = tmp;
+
+        tr[2] = _mm256_xor_pd(tr[2], neg);
+        ti[2] = _mm256_xor_pd(ti[2], neg);
+
+        tmp = tr[3];
+        tr[3] = ti[3];
+        ti[3] = _mm256_xor_pd(tmp, neg);
+    }
+    else if (group_id == 2)
+    {
+        tr[0] = _mm256_xor_pd(tr[0], neg);
+        ti[0] = _mm256_xor_pd(ti[0], neg);
+
+        __m256d tmp = tr[1];
+        tr[1] = ti[1];
+        ti[1] = _mm256_xor_pd(tmp, neg);
+
+        tmp = tr[3];
+        tr[3] = _mm256_xor_pd(ti[3], neg);
+        ti[3] = tmp;
+    }
+    else if (group_id == 3)
+    {
+        __m256d tmp = tr[0];
+        tr[0] = ti[0];
+        ti[0] = _mm256_xor_pd(tmp, neg);
+
+        tmp = tr[2];
+        tr[2] = _mm256_xor_pd(ti[2], neg);
+        ti[2] = tmp;
+
+        tr[3] = _mm256_xor_pd(tr[3], neg);
+        ti[3] = _mm256_xor_pd(ti[3], neg);
+    }
+
+    __m256d yr[4], yi[4];
+    r16b_radix4(tr[0], ti[0], tr[1], ti[1],
+                tr[2], ti[2], tr[3], ti[3],
+                &yr[0], &yi[0], &yr[1], &yi[1],
+                &yr[2], &yi[2], &yr[3], &yi[3],
+                rot_sign, neg);
+
+    int base = group_id * 4;
+    y_re[base + 0] = yr[0];  y_im[base + 0] = yi[0];
+    y_re[base + 1] = yr[1];  y_im[base + 1] = yi[1];
+    y_re[base + 2] = yr[2];  y_im[base + 2] = yi[2];
+    y_re[base + 3] = yr[3];  y_im[base + 3] = yi[3];
+}
+
+/* ============================================================================
+ * COMPLETE BUTTERFLY (REGISTER-LEVEL)
+ * ========================================================================= */
+
+R16B_TARGET_AVX2_FMA
+R16B_FORCE_INLINE void r16b_butterfly_forward(
+    __m256d x_re[16], __m256d x_im[16],
+    __m256d y_re[16], __m256d y_im[16])
+{
+    const __m256d rot = r16b_rot_sign_fwd();
+    const __m256d neg = r16b_neg_mask();
+    for (int g = 0; g < 4; g++)
+        r16b_group_forward(g, x_re, x_im, y_re, y_im, rot, neg);
+}
+
+R16B_TARGET_AVX2_FMA
+R16B_FORCE_INLINE void r16b_butterfly_backward(
+    __m256d x_re[16], __m256d x_im[16],
+    __m256d y_re[16], __m256d y_im[16])
+{
+    const __m256d rot = r16b_rot_sign_bwd();
+    const __m256d neg = r16b_neg_mask();
+    for (int g = 0; g < 4; g++)
+        r16b_group_backward(g, x_re, x_im, y_re, y_im, rot, neg);
+}
+
+/* ============================================================================
+ * LOAD / STORE HELPERS
+ * ========================================================================= */
+
+R16B_TARGET_AVX2_FMA
+R16B_FORCE_INLINE void r16b_load(
+    size_t k, size_t K,
+    const double *R16B_RESTRICT in_re, const double *R16B_RESTRICT in_im,
+    __m256d x_re[16], __m256d x_im[16])
+{
+    const double *re = R16B_ASSUME_ALIGNED(in_re, 32);
+    const double *im = R16B_ASSUME_ALIGNED(in_im, 32);
+    for (int r = 0; r < 8; r++)
+    {
+        x_re[r]     = _mm256_load_pd(&re[k + r * K]);
+        x_re[r + 8] = _mm256_load_pd(&re[k + (r + 8) * K]);
+        x_im[r]     = _mm256_load_pd(&im[k + r * K]);
+        x_im[r + 8] = _mm256_load_pd(&im[k + (r + 8) * K]);
     }
 }
 
-//==============================================================================
-// PARALLEL-4 WITH AVX2 GATHER (GOOD PERFORMANCE)
-//==============================================================================
-
-/**
- * @brief N=16 Forward - 4 Parallel Butterflies (AVX2 gather)
- *
- * Processes 64 complex numbers as 4 parallel N=16 butterflies
- * Uses AVX2 gather intrinsics - faster than scalar loads
- *
- * Input layout (sequential): [bf0[16], bf1[16], bf2[16], bf3[16]]
- *
- * @param in_re  [64] Real parts (4 butterflies × 16 points)
- * @param in_im  [64] Imaginary parts
- * @param out_re [64] Output real parts
- * @param out_im [64] Output imaginary parts
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_forward_parallel4_avx2(
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im)
+R16B_TARGET_AVX2_FMA
+R16B_FORCE_INLINE void r16b_load_masked(
+    size_t k, size_t K, size_t remaining,
+    const double *R16B_RESTRICT in_re, const double *R16B_RESTRICT in_im,
+    __m256d x_re[16], __m256d x_im[16])
 {
-    radix16_set_ftz_daz();
-
-    const __m256d rot_sign_mask = kRotSignFwd;
-    __m256d x_re[16], x_im[16];
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-
-    // AVX2 gather: collect point i from 4 butterflies (stride 16)
-    const __m256i gather_idx = _mm256_setr_epi64x(0, 16, 32, 48);
-
-    for (int r = 0; r < 16; r++)
+    const double *re = R16B_ASSUME_ALIGNED(in_re, 32);
+    const double *im = R16B_ASSUME_ALIGNED(in_im, 32);
+    __m256i mask = r16b_tail_mask(remaining);
+    for (int r = 0; r < 8; r++)
     {
-        x_re[r] = _mm256_i64gather_pd(in_re_aligned + r, gather_idx, 8);
-        x_im[r] = _mm256_i64gather_pd(in_im_aligned + r, gather_idx, 8);
-    }
-
-    // Reuse: Full radix-16 butterfly (4 butterflies in parallel)
-    __m256d y_re[16], y_im[16];
-    radix16_complete_butterfly_forward_fused_soa_avx2(
-        x_re, x_im, y_re, y_im, rot_sign_mask);
-
-    // Scatter: distribute point i to 4 butterflies
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    for (int r = 0; r < 16; r++)
-    {
-        ALIGNAS(32)
-        double re_vals[4];
-        ALIGNAS(32)
-        double im_vals[4];
-
-        _mm256_store_pd(re_vals, y_re[r]);
-        _mm256_store_pd(im_vals, y_im[r]);
-
-        out_re_aligned[0 + r] = re_vals[0];
-        out_re_aligned[16 + r] = re_vals[1];
-        out_re_aligned[32 + r] = re_vals[2];
-        out_re_aligned[48 + r] = re_vals[3];
-
-        out_im_aligned[0 + r] = im_vals[0];
-        out_im_aligned[16 + r] = im_vals[1];
-        out_im_aligned[32 + r] = im_vals[2];
-        out_im_aligned[48 + r] = im_vals[3];
+        x_re[r]     = _mm256_maskload_pd(&re[k + r * K], mask);
+        x_re[r + 8] = _mm256_maskload_pd(&re[k + (r + 8) * K], mask);
+        x_im[r]     = _mm256_maskload_pd(&im[k + r * K], mask);
+        x_im[r + 8] = _mm256_maskload_pd(&im[k + (r + 8) * K], mask);
     }
 }
 
-/**
- * @brief N=16 Backward - 4 Parallel Butterflies (AVX2 gather)
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_backward_parallel4_avx2(
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im)
+R16B_TARGET_AVX2_FMA
+R16B_FORCE_INLINE void r16b_store(
+    size_t k, size_t K,
+    double *R16B_RESTRICT out_re, double *R16B_RESTRICT out_im,
+    const __m256d y_re[16], const __m256d y_im[16])
 {
-    radix16_set_ftz_daz();
-
-    const __m256d rot_sign_mask = kRotSignBwd;
-    __m256d x_re[16], x_im[16];
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-
-    const __m256i gather_idx = _mm256_setr_epi64x(0, 16, 32, 48);
-
-    for (int r = 0; r < 16; r++)
+    double *re = R16B_ASSUME_ALIGNED(out_re, 32);
+    double *im = R16B_ASSUME_ALIGNED(out_im, 32);
+    for (int r = 0; r < 8; r++)
     {
-        x_re[r] = _mm256_i64gather_pd(in_re_aligned + r, gather_idx, 8);
-        x_im[r] = _mm256_i64gather_pd(in_im_aligned + r, gather_idx, 8);
-    }
-
-    __m256d y_re[16], y_im[16];
-    radix16_complete_butterfly_backward_fused_soa_avx2(
-        x_re, x_im, y_re, y_im, rot_sign_mask);
-
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    for (int r = 0; r < 16; r++)
-    {
-        ALIGNAS(32)
-        double re_vals[4];
-        ALIGNAS(32)
-        double im_vals[4];
-
-        _mm256_store_pd(re_vals, y_re[r]);
-        _mm256_store_pd(im_vals, y_im[r]);
-
-        out_re_aligned[0 + r] = re_vals[0];
-        out_re_aligned[16 + r] = re_vals[1];
-        out_re_aligned[32 + r] = re_vals[2];
-        out_re_aligned[48 + r] = re_vals[3];
-
-        out_im_aligned[0 + r] = im_vals[0];
-        out_im_aligned[16 + r] = im_vals[1];
-        out_im_aligned[32 + r] = im_vals[2];
-        out_im_aligned[48 + r] = im_vals[3];
+        _mm256_store_pd(&re[k + r * K], y_re[r]);
+        _mm256_store_pd(&re[k + (r + 8) * K], y_re[r + 8]);
+        _mm256_store_pd(&im[k + r * K], y_im[r]);
+        _mm256_store_pd(&im[k + (r + 8) * K], y_im[r + 8]);
     }
 }
 
-//==============================================================================
-// PARALLEL-4 WITH POINT-INTERLEAVED LAYOUT (BEST PERFORMANCE)
-//==============================================================================
-
-/**
- * @brief N=16 Forward - 4 Parallel (Point-Interleaved Layout)
- *
- * BEST PERFORMANCE: Zero gather/scatter overhead
- *
- * Input layout (point-interleaved): For each point i=0..15:
- *   [bf0[i], bf1[i], bf2[i], bf3[i]] stored contiguously
- *
- * Example:
- *   in_re[0..3]:   point 0 from 4 butterflies
- *   in_re[4..7]:   point 1 from 4 butterflies
- *   in_re[60..63]: point 15 from 4 butterflies
- *
- * ~2× faster than gather-based variant (pure aligned vector loads/stores)
- *
- * @param in_re  [64] Point-interleaved real parts
- * @param in_im  [64] Point-interleaved imaginary parts
- * @param out_re [64] Point-interleaved output real parts
- * @param out_im [64] Point-interleaved output imaginary parts
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_forward_parallel4_interleaved_avx2(
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im)
+R16B_TARGET_AVX2_FMA
+R16B_FORCE_INLINE void r16b_store_masked(
+    size_t k, size_t K, size_t remaining,
+    double *R16B_RESTRICT out_re, double *R16B_RESTRICT out_im,
+    const __m256d y_re[16], const __m256d y_im[16])
 {
-    radix16_set_ftz_daz();
-
-    const __m256d rot_sign_mask = kRotSignFwd;
-    __m256d x_re[16], x_im[16];
-
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-
-    // Direct aligned vector loads (zero overhead!)
-    for (int r = 0; r < 16; r++)
+    double *re = R16B_ASSUME_ALIGNED(out_re, 32);
+    double *im = R16B_ASSUME_ALIGNED(out_im, 32);
+    __m256i mask = r16b_tail_mask(remaining);
+    for (int r = 0; r < 8; r++)
     {
-        x_re[r] = _mm256_load_pd(&in_re_aligned[r * 4]);
-        x_im[r] = _mm256_load_pd(&in_im_aligned[r * 4]);
-    }
-
-    __m256d y_re[16], y_im[16];
-    radix16_complete_butterfly_forward_fused_soa_avx2(
-        x_re, x_im, y_re, y_im, rot_sign_mask);
-
-    // Direct aligned vector stores (zero overhead!)
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    for (int r = 0; r < 16; r++)
-    {
-        _mm256_store_pd(&out_re_aligned[r * 4], y_re[r]);
-        _mm256_store_pd(&out_im_aligned[r * 4], y_im[r]);
+        _mm256_maskstore_pd(&re[k + r * K], mask, y_re[r]);
+        _mm256_maskstore_pd(&re[k + (r + 8) * K], mask, y_re[r + 8]);
+        _mm256_maskstore_pd(&im[k + r * K], mask, y_im[r]);
+        _mm256_maskstore_pd(&im[k + (r + 8) * K], mask, y_im[r + 8]);
     }
 }
 
-/**
- * @brief N=16 Backward - 4 Parallel (Point-Interleaved Layout)
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_backward_parallel4_interleaved_avx2(
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im)
+/* ============================================================================
+ * PUBLIC API: TWIDDLE-FREE RADIX-16 BUTTERFLY
+ *
+ * Applies a DFT-16 (or IDFT-16) independently to each of the K "columns"
+ * in SoA layout. No stage twiddles, no twiddle tables needed.
+ *
+ * Supports in-place (out == in) and out-of-place operation.
+ *
+ * PRECONDITIONS:
+ *   - K must be a multiple of 4
+ *   - All pointers must be 32-byte aligned
+ * ========================================================================= */
+
+R16B_TARGET_AVX2_FMA
+R16B_NOINLINE void radix16_butterfly_forward_avx2(
+    size_t K,
+    const double *R16B_RESTRICT in_re,
+    const double *R16B_RESTRICT in_im,
+    double *R16B_RESTRICT out_re,
+    double *R16B_RESTRICT out_im)
 {
-    radix16_set_ftz_daz();
+    assert(K % 4 == 0 && "K must be a multiple of 4");
+    assert(((uintptr_t)in_re  & 31) == 0);
+    assert(((uintptr_t)in_im  & 31) == 0);
+    assert(((uintptr_t)out_re & 31) == 0);
+    assert(((uintptr_t)out_im & 31) == 0);
 
-    const __m256d rot_sign_mask = kRotSignBwd;
-    __m256d x_re[16], x_im[16];
+    const __m256d rot = r16b_rot_sign_fwd();
+    const __m256d neg = r16b_neg_mask();
 
-    const double *in_re_aligned = ASSUME_ALIGNED(in_re, 32);
-    const double *in_im_aligned = ASSUME_ALIGNED(in_im, 32);
-
-    for (int r = 0; r < 16; r++)
+    size_t k;
+    for (k = 0; k + 8 <= K; k += 8)
     {
-        x_re[r] = _mm256_load_pd(&in_re_aligned[r * 4]);
-        x_im[r] = _mm256_load_pd(&in_im_aligned[r * 4]);
+        __m256d x0_re[16], x0_im[16], x1_re[16], x1_im[16];
+        __m256d y0_re[16], y0_im[16], y1_re[16], y1_im[16];
+
+        r16b_load(k,     K, in_re, in_im, x0_re, x0_im);
+        r16b_load(k + 4, K, in_re, in_im, x1_re, x1_im);
+
+        for (int g = 0; g < 4; g++)
+        {
+            r16b_group_forward(g, x0_re, x0_im, y0_re, y0_im, rot, neg);
+            r16b_group_forward(g, x1_re, x1_im, y1_re, y1_im, rot, neg);
+        }
+
+        r16b_store(k,     K, out_re, out_im, y0_re, y0_im);
+        r16b_store(k + 4, K, out_re, out_im, y1_re, y1_im);
     }
 
-    __m256d y_re[16], y_im[16];
-    radix16_complete_butterfly_backward_fused_soa_avx2(
-        x_re, x_im, y_re, y_im, rot_sign_mask);
-
-    double *out_re_aligned = ASSUME_ALIGNED(out_re, 32);
-    double *out_im_aligned = ASSUME_ALIGNED(out_im, 32);
-
-    for (int r = 0; r < 16; r++)
+    for (; k + 4 <= K; k += 4)
     {
-        _mm256_store_pd(&out_re_aligned[r * 4], y_re[r]);
-        _mm256_store_pd(&out_im_aligned[r * 4], y_im[r]);
+        __m256d x_re[16], x_im[16], y_re[16], y_im[16];
+        r16b_load(k, K, in_re, in_im, x_re, x_im);
+
+        for (int g = 0; g < 4; g++)
+            r16b_group_forward(g, x_re, x_im, y_re, y_im, rot, neg);
+
+        r16b_store(k, K, out_re, out_im, y_re, y_im);
+    }
+
+    /* Masked tail (K not divisible by 4 - technically asserted out,
+       but handle gracefully in release builds) */
+    if (k < K)
+    {
+        __m256d x_re[16], x_im[16], y_re[16], y_im[16];
+        r16b_load_masked(k, K, K - k, in_re, in_im, x_re, x_im);
+
+        for (int g = 0; g < 4; g++)
+            r16b_group_forward(g, x_re, x_im, y_re, y_im, rot, neg);
+
+        r16b_store_masked(k, K, K - k, out_re, out_im, y_re, y_im);
     }
 }
 
-//==============================================================================
-// TRANSPOSE HELPERS (FOR CONVERTING TO/FROM INTERLEAVED LAYOUT)
-//==============================================================================
-
-/**
- * @brief Transpose 4 butterflies: sequential → point-interleaved
- *
- * Cheap conversion (128 scalar ops) that enables the fastest kernel
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_transpose_4bf_to_interleaved(
-    const double *RESTRICT seq_re, const double *RESTRICT seq_im,
-    double *RESTRICT interleaved_re, double *RESTRICT interleaved_im)
+R16B_TARGET_AVX2_FMA
+R16B_NOINLINE void radix16_butterfly_backward_avx2(
+    size_t K,
+    const double *R16B_RESTRICT in_re,
+    const double *R16B_RESTRICT in_im,
+    double *R16B_RESTRICT out_re,
+    double *R16B_RESTRICT out_im)
 {
-    for (int r = 0; r < 16; r++)
-    {
-        interleaved_re[r * 4 + 0] = seq_re[0 + r];
-        interleaved_re[r * 4 + 1] = seq_re[16 + r];
-        interleaved_re[r * 4 + 2] = seq_re[32 + r];
-        interleaved_re[r * 4 + 3] = seq_re[48 + r];
+    assert(K % 4 == 0 && "K must be a multiple of 4");
+    assert(((uintptr_t)in_re  & 31) == 0);
+    assert(((uintptr_t)in_im  & 31) == 0);
+    assert(((uintptr_t)out_re & 31) == 0);
+    assert(((uintptr_t)out_im & 31) == 0);
 
-        interleaved_im[r * 4 + 0] = seq_im[0 + r];
-        interleaved_im[r * 4 + 1] = seq_im[16 + r];
-        interleaved_im[r * 4 + 2] = seq_im[32 + r];
-        interleaved_im[r * 4 + 3] = seq_im[48 + r];
+    const __m256d rot = r16b_rot_sign_bwd();
+    const __m256d neg = r16b_neg_mask();
+
+    size_t k;
+    for (k = 0; k + 8 <= K; k += 8)
+    {
+        __m256d x0_re[16], x0_im[16], x1_re[16], x1_im[16];
+        __m256d y0_re[16], y0_im[16], y1_re[16], y1_im[16];
+
+        r16b_load(k,     K, in_re, in_im, x0_re, x0_im);
+        r16b_load(k + 4, K, in_re, in_im, x1_re, x1_im);
+
+        for (int g = 0; g < 4; g++)
+        {
+            r16b_group_backward(g, x0_re, x0_im, y0_re, y0_im, rot, neg);
+            r16b_group_backward(g, x1_re, x1_im, y1_re, y1_im, rot, neg);
+        }
+
+        r16b_store(k,     K, out_re, out_im, y0_re, y0_im);
+        r16b_store(k + 4, K, out_re, out_im, y1_re, y1_im);
+    }
+
+    for (; k + 4 <= K; k += 4)
+    {
+        __m256d x_re[16], x_im[16], y_re[16], y_im[16];
+        r16b_load(k, K, in_re, in_im, x_re, x_im);
+
+        for (int g = 0; g < 4; g++)
+            r16b_group_backward(g, x_re, x_im, y_re, y_im, rot, neg);
+
+        r16b_store(k, K, out_re, out_im, y_re, y_im);
+    }
+
+    if (k < K)
+    {
+        __m256d x_re[16], x_im[16], y_re[16], y_im[16];
+        r16b_load_masked(k, K, K - k, in_re, in_im, x_re, x_im);
+
+        for (int g = 0; g < 4; g++)
+            r16b_group_backward(g, x_re, x_im, y_re, y_im, rot, neg);
+
+        r16b_store_masked(k, K, K - k, out_re, out_im, y_re, y_im);
     }
 }
 
-/**
- * @brief Transpose 4 butterflies: point-interleaved → sequential
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_transpose_interleaved_to_4bf(
-    const double *RESTRICT interleaved_re, const double *RESTRICT interleaved_im,
-    double *RESTRICT seq_re, double *RESTRICT seq_im)
-{
-    for (int r = 0; r < 16; r++)
-    {
-        seq_re[0 + r] = interleaved_re[r * 4 + 0];
-        seq_re[16 + r] = interleaved_re[r * 4 + 1];
-        seq_re[32 + r] = interleaved_re[r * 4 + 2];
-        seq_re[48 + r] = interleaved_re[r * 4 + 3];
-
-        seq_im[0 + r] = interleaved_im[r * 4 + 0];
-        seq_im[16 + r] = interleaved_im[r * 4 + 1];
-        seq_im[32 + r] = interleaved_im[r * 4 + 2];
-        seq_im[48 + r] = interleaved_im[r * 4 + 3];
-    }
-}
-
-//==============================================================================
-// BATCH MODE (HIGH-LEVEL API)
-//==============================================================================
-
-/**
- * @brief Batch N=16 Forward Transform (First FFT Stage)
- *
- * Processes N/16 butterflies efficiently using 4-way SIMD
- * Recommended for general use
- *
- * @param N Total complex points (must be multiple of 16)
- * @param in_re  [N] Input real parts
- * @param in_im  [N] Input imaginary parts
- * @param out_re [N] Output real parts
- * @param out_im [N] Output imaginary parts
- *
- * Example: N=1024 → 64 butterflies (16 parallel-4 calls) ≈ 1600 cycles
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_forward_batch_avx2(
-    size_t N,
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im)
-{
-    radix16_set_ftz_daz();
-
-    assert(N % 16 == 0 && "N must be multiple of 16");
-
-    const size_t num_butterflies = N / 16;
-
-    // Process 4 butterflies at a time (SIMD-efficient)
-    size_t i;
-    for (i = 0; i + 4 <= num_butterflies; i += 4)
-    {
-        const size_t offset = i * 16;
-        radix16_n16_dit_forward_parallel4_avx2(
-            &in_re[offset], &in_im[offset],
-            &out_re[offset], &out_im[offset]);
-    }
-
-    // Tail: remaining butterflies
-    for (; i < num_butterflies; i++)
-    {
-        const size_t offset = i * 16;
-        radix16_n16_dit_forward_avx2(
-            &in_re[offset], &in_im[offset],
-            &out_re[offset], &out_im[offset]);
-    }
-}
-
-/**
- * @brief Batch N=16 Backward Transform (First IFFT Stage)
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_backward_batch_avx2(
-    size_t N,
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im)
-{
-    radix16_set_ftz_daz();
-
-    assert(N % 16 == 0 && "N must be multiple of 16");
-
-    const size_t num_butterflies = N / 16;
-
-    size_t i;
-    for (i = 0; i + 4 <= num_butterflies; i += 4)
-    {
-        const size_t offset = i * 16;
-        radix16_n16_dit_backward_parallel4_avx2(
-            &in_re[offset], &in_im[offset],
-            &out_re[offset], &out_im[offset]);
-    }
-
-    for (; i < num_butterflies; i++)
-    {
-        const size_t offset = i * 16;
-        radix16_n16_dit_backward_avx2(
-            &in_re[offset], &in_im[offset],
-            &out_re[offset], &out_im[offset]);
-    }
-}
-
-//==============================================================================
-// IN-PLACE VARIANTS
-//==============================================================================
-
-/**
- * @brief In-place N=16 Forward - Single Butterfly
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_forward_inplace_avx2(
-    double *RESTRICT re,
-    double *RESTRICT im)
-{
-    ALIGNAS(32)
-    double tmp_re[16];
-    ALIGNAS(32)
-    double tmp_im[16];
-
-    radix16_n16_dit_forward_avx2(re, im, tmp_re, tmp_im);
-
-    for (int i = 0; i < 16; i++)
-    {
-        re[i] = tmp_re[i];
-        im[i] = tmp_im[i];
-    }
-}
-
-/**
- * @brief In-place N=16 Backward - Single Butterfly
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_backward_inplace_avx2(
-    double *RESTRICT re,
-    double *RESTRICT im)
-{
-    ALIGNAS(32)
-    double tmp_re[16];
-    ALIGNAS(32)
-    double tmp_im[16];
-
-    radix16_n16_dit_backward_avx2(re, im, tmp_re, tmp_im);
-
-    for (int i = 0; i < 16; i++)
-    {
-        re[i] = tmp_re[i];
-        im[i] = tmp_im[i];
-    }
-}
-
-/**
- * @brief In-place N=16 Forward Batch
- *
- * @note Requires scratch buffers of size N
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_forward_batch_inplace_avx2(
-    size_t N,
-    double *RESTRICT re,
-    double *RESTRICT im,
-    double *RESTRICT scratch_re,
-    double *RESTRICT scratch_im)
-{
-    radix16_n16_dit_forward_batch_avx2(N, re, im, scratch_re, scratch_im);
-
-    for (size_t i = 0; i < N; i++)
-    {
-        re[i] = scratch_re[i];
-        im[i] = scratch_im[i];
-    }
-}
-
-/**
- * @brief In-place N=16 Backward Batch
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix16_n16_dit_backward_batch_inplace_avx2(
-    size_t N,
-    double *RESTRICT re,
-    double *RESTRICT im,
-    double *RESTRICT scratch_re,
-    double *RESTRICT scratch_im)
-{
-    radix16_n16_dit_backward_batch_avx2(N, re, im, scratch_re, scratch_im);
-
-    for (size_t i = 0; i < N; i++)
-    {
-        re[i] = scratch_re[i];
-        im[i] = scratch_im[i];
-    }
-}
-
-#endif // FFT_RADIX16_AVX2_N16_H
-
-/*
- * ============================================================================
- * USAGE EXAMPLES
- * ============================================================================
- *
- * Standard batch mode (recommended):
- *   radix16_n16_dit_forward_batch_avx2(1024, in_re, in_im, out_re, out_im);
- *
- * Maximum performance (if you can arrange point-interleaved data):
- *   radix16_n16_dit_forward_parallel4_interleaved_avx2(re, im, out_re, out_im);
- *
- * Single butterfly (for testing):
- *   radix16_n16_dit_forward_avx2(re, im, out_re, out_im);
- *
- * ============================================================================
- * PERFORMANCE SUMMARY
- * ============================================================================
- *
- * Single butterfly:             ~28 cycles (replicates 4×)
- * Parallel-4 (gather):          ~25 cycles/butterfly
- * Parallel-4 (interleaved):     ~22 cycles/butterfly (BEST)
- * Batch N=1024:                 ~1600 cycles (64 butterflies)
- *
- * Speedup vs scalar:            ~4× (SIMD parallelization)
- *
- * ============================================================================
- */
+#endif /* FFT_RADIX16_AVX2_BUTTERFLY_H */
