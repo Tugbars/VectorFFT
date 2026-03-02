@@ -1,5 +1,8 @@
+#ifndef FFT_RADIX32_AVX2_H
+#define FFT_RADIX32_AVX2_H
+
 /**
- * @file fft_radix32_avx2.c
+ * @file fft_radix32_avx2.h
  * @brief Radix-32 FFT butterfly implementation for AVX2
  *
  * **Architecture: 4×8 Decomposition (DIT-4 → DIF-8)**
@@ -149,8 +152,10 @@
  */
 static inline size_t pick_prefetch_dist_dif8(size_t K)
 {
-    if (K <= 128)  return 8;
-    if (K <= 1024) return 16;
+    if (K <= 128)
+        return 8;
+    if (K <= 1024)
+        return 16;
     return 24;
 }
 
@@ -177,8 +182,8 @@ FORCE_INLINE void cmul_v256(
     __m256d ai_br = _mm256_mul_pd(ai, br);
 
     // FMAs dispatch without waiting for nested MUL completion
-    *cr = _mm256_fmsub_pd(ar, br, ai_bi);  // ar*br - ai*bi
-    *ci = _mm256_fmadd_pd(ar, bi, ai_br);  // ar*bi + ai*br
+    *cr = _mm256_fmsub_pd(ar, br, ai_bi); // ar*br - ai*bi
+    *ci = _mm256_fmadd_pd(ar, bi, ai_br); // ar*bi + ai*br
 }
 
 /**
@@ -194,7 +199,7 @@ FORCE_INLINE void csquare_v256(
 {
     __m256d ar_ai = _mm256_mul_pd(ar, ai);
     *cr = _mm256_fmsub_pd(ar, ar, _mm256_mul_pd(ai, ai));
-    *ci = _mm256_add_pd(ar_ai, ar_ai);  // 2*ar*ai
+    *ci = _mm256_add_pd(ar_ai, ar_ai); // 2*ar*ai
 }
 
 //==============================================================================
@@ -1080,14 +1085,22 @@ static FORCE_INLINE void rec8_step_advance(rec8_vecs_t *st)
     cmul_v256(st->r[6], st->i[6], st->dr[6], st->di[6], &nr6, &ni6);
     cmul_v256(st->r[7], st->i[7], st->dr[7], st->di[7], &nr7, &ni7);
 
-    st->r[0] = nr0; st->i[0] = ni0;
-    st->r[1] = nr1; st->i[1] = ni1;
-    st->r[2] = nr2; st->i[2] = ni2;
-    st->r[3] = nr3; st->i[3] = ni3;
-    st->r[4] = nr4; st->i[4] = ni4;
-    st->r[5] = nr5; st->i[5] = ni5;
-    st->r[6] = nr6; st->i[6] = ni6;
-    st->r[7] = nr7; st->i[7] = ni7;
+    st->r[0] = nr0;
+    st->i[0] = ni0;
+    st->r[1] = nr1;
+    st->i[1] = ni1;
+    st->r[2] = nr2;
+    st->i[2] = ni2;
+    st->r[3] = nr3;
+    st->i[3] = ni3;
+    st->r[4] = nr4;
+    st->i[4] = ni4;
+    st->r[5] = nr5;
+    st->i[5] = ni5;
+    st->r[6] = nr6;
+    st->i[6] = ni6;
+    st->r[7] = nr7;
+    st->i[7] = ni7;
 }
 
 //==============================================================================
@@ -1587,29 +1600,30 @@ static FORCE_INLINE void dif8_twiddle_and_butterfly_backward(
  * Controls register pressure to ≤16 YMM by releasing even outputs
  * before the odd wave needs its registers.
  */
-#define DIF8_STORE_TWO_WAVE(ST_FN, out_re, out_im, K, k,       \
-                            y0r, y0i, y1r, y1i, y2r, y2i,      \
-                            y3r, y3i, y4r, y4i, y5r, y5i,      \
-                            y6r, y6i, y7r, y7i)                 \
-    do {                                                        \
-        /* Wave A: even outputs */                              \
-        ST_FN(&(out_re)[0 * (K) + (k)], y0r);                  \
-        ST_FN(&(out_im)[0 * (K) + (k)], y0i);                  \
-        ST_FN(&(out_re)[2 * (K) + (k)], y2r);                  \
-        ST_FN(&(out_im)[2 * (K) + (k)], y2i);                  \
-        ST_FN(&(out_re)[4 * (K) + (k)], y4r);                  \
-        ST_FN(&(out_im)[4 * (K) + (k)], y4i);                  \
-        ST_FN(&(out_re)[6 * (K) + (k)], y6r);                  \
-        ST_FN(&(out_im)[6 * (K) + (k)], y6i);                  \
-        /* Wave B: odd outputs */                               \
-        ST_FN(&(out_re)[1 * (K) + (k)], y1r);                  \
-        ST_FN(&(out_im)[1 * (K) + (k)], y1i);                  \
-        ST_FN(&(out_re)[3 * (K) + (k)], y3r);                  \
-        ST_FN(&(out_im)[3 * (K) + (k)], y3i);                  \
-        ST_FN(&(out_re)[5 * (K) + (k)], y5r);                  \
-        ST_FN(&(out_im)[5 * (K) + (k)], y5i);                  \
-        ST_FN(&(out_re)[7 * (K) + (k)], y7r);                  \
-        ST_FN(&(out_im)[7 * (K) + (k)], y7i);                  \
+#define DIF8_STORE_TWO_WAVE(ST_FN, out_re, out_im, K, k,  \
+                            y0r, y0i, y1r, y1i, y2r, y2i, \
+                            y3r, y3i, y4r, y4i, y5r, y5i, \
+                            y6r, y6i, y7r, y7i)           \
+    do                                                    \
+    {                                                     \
+        /* Wave A: even outputs */                        \
+        ST_FN(&(out_re)[0 * (K) + (k)], y0r);             \
+        ST_FN(&(out_im)[0 * (K) + (k)], y0i);             \
+        ST_FN(&(out_re)[2 * (K) + (k)], y2r);             \
+        ST_FN(&(out_im)[2 * (K) + (k)], y2i);             \
+        ST_FN(&(out_re)[4 * (K) + (k)], y4r);             \
+        ST_FN(&(out_im)[4 * (K) + (k)], y4i);             \
+        ST_FN(&(out_re)[6 * (K) + (k)], y6r);             \
+        ST_FN(&(out_im)[6 * (K) + (k)], y6i);             \
+        /* Wave B: odd outputs */                         \
+        ST_FN(&(out_re)[1 * (K) + (k)], y1r);             \
+        ST_FN(&(out_im)[1 * (K) + (k)], y1i);             \
+        ST_FN(&(out_re)[3 * (K) + (k)], y3r);             \
+        ST_FN(&(out_im)[3 * (K) + (k)], y3i);             \
+        ST_FN(&(out_re)[5 * (K) + (k)], y5r);             \
+        ST_FN(&(out_im)[5 * (K) + (k)], y5i);             \
+        ST_FN(&(out_re)[7 * (K) + (k)], y7r);             \
+        ST_FN(&(out_im)[7 * (K) + (k)], y7i);             \
     } while (0)
 
 //==============================================================================
@@ -1619,27 +1633,28 @@ static FORCE_INLINE void dif8_twiddle_and_butterfly_backward(
 /**
  * @brief Load 8 input stripes at offset k
  */
-#define DIF8_LOAD_INPUTS(in_re, in_im, K, k,                   \
-                         x0r, x0i, x1r, x1i, x2r, x2i,        \
-                         x3r, x3i, x4r, x4i, x5r, x5i,        \
-                         x6r, x6i, x7r, x7i)                   \
-    do {                                                        \
-        x0r = _mm256_load_pd(&(in_re)[0 * (K) + (k)]);         \
-        x0i = _mm256_load_pd(&(in_im)[0 * (K) + (k)]);         \
-        x1r = _mm256_load_pd(&(in_re)[1 * (K) + (k)]);         \
-        x1i = _mm256_load_pd(&(in_im)[1 * (K) + (k)]);         \
-        x2r = _mm256_load_pd(&(in_re)[2 * (K) + (k)]);         \
-        x2i = _mm256_load_pd(&(in_im)[2 * (K) + (k)]);         \
-        x3r = _mm256_load_pd(&(in_re)[3 * (K) + (k)]);         \
-        x3i = _mm256_load_pd(&(in_im)[3 * (K) + (k)]);         \
-        x4r = _mm256_load_pd(&(in_re)[4 * (K) + (k)]);         \
-        x4i = _mm256_load_pd(&(in_im)[4 * (K) + (k)]);         \
-        x5r = _mm256_load_pd(&(in_re)[5 * (K) + (k)]);         \
-        x5i = _mm256_load_pd(&(in_im)[5 * (K) + (k)]);         \
-        x6r = _mm256_load_pd(&(in_re)[6 * (K) + (k)]);         \
-        x6i = _mm256_load_pd(&(in_im)[6 * (K) + (k)]);         \
-        x7r = _mm256_load_pd(&(in_re)[7 * (K) + (k)]);         \
-        x7i = _mm256_load_pd(&(in_im)[7 * (K) + (k)]);         \
+#define DIF8_LOAD_INPUTS(in_re, in_im, K, k,           \
+                         x0r, x0i, x1r, x1i, x2r, x2i, \
+                         x3r, x3i, x4r, x4i, x5r, x5i, \
+                         x6r, x6i, x7r, x7i)           \
+    do                                                 \
+    {                                                  \
+        x0r = _mm256_load_pd(&(in_re)[0 * (K) + (k)]); \
+        x0i = _mm256_load_pd(&(in_im)[0 * (K) + (k)]); \
+        x1r = _mm256_load_pd(&(in_re)[1 * (K) + (k)]); \
+        x1i = _mm256_load_pd(&(in_im)[1 * (K) + (k)]); \
+        x2r = _mm256_load_pd(&(in_re)[2 * (K) + (k)]); \
+        x2i = _mm256_load_pd(&(in_im)[2 * (K) + (k)]); \
+        x3r = _mm256_load_pd(&(in_re)[3 * (K) + (k)]); \
+        x3i = _mm256_load_pd(&(in_im)[3 * (K) + (k)]); \
+        x4r = _mm256_load_pd(&(in_re)[4 * (K) + (k)]); \
+        x4i = _mm256_load_pd(&(in_im)[4 * (K) + (k)]); \
+        x5r = _mm256_load_pd(&(in_re)[5 * (K) + (k)]); \
+        x5i = _mm256_load_pd(&(in_im)[5 * (K) + (k)]); \
+        x6r = _mm256_load_pd(&(in_re)[6 * (K) + (k)]); \
+        x6i = _mm256_load_pd(&(in_im)[6 * (K) + (k)]); \
+        x7r = _mm256_load_pd(&(in_re)[7 * (K) + (k)]); \
+        x7i = _mm256_load_pd(&(in_im)[7 * (K) + (k)]); \
     } while (0)
 
 //==============================================================================
@@ -1683,26 +1698,154 @@ static void radix8_dif_stage_multimode_avx2(
     // Note: using direct branching instead of fptr to preserve inlining
     // through FORCE_INLINE. The direction branch is outside the hot loop.
 
-    switch (tw->mode) {
+    switch (tw->mode)
+    {
 
     //==========================================================================
     case TW_MODE_BLOCKED8:
-    //==========================================================================
-    {
-        const tw_blocked8_t *b8 = &tw->b8;
+        //==========================================================================
+        {
+            const tw_blocked8_t *b8 = &tw->b8;
 
-        if (K < 8) {
-            // Simple loop for K < 8 (no U=2 pipelining)
+            if (K < 8)
+            {
+                // Simple loop for K < 8 (no U=2 pipelining)
 #pragma GCC unroll 1
-            for (size_t k = 0; k < K; k += step) {
-                tw8_vecs_t T;
-                load_tw_blocked8_k4(b8, k, &T);
+                for (size_t k = 0; k < K; k += step)
+                {
+                    tw8_vecs_t T;
+                    load_tw_blocked8_k4(b8, k, &T);
 
-                __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
-                __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
-                DIF8_LOAD_INPUTS(in_re, in_im, K, k,
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i);
+                    __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
+                    __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
+                    DIF8_LOAD_INPUTS(in_re, in_im, K, k,
+                                     x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                                     x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i);
+
+                    __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                    __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                    if (direction == 0)
+                        dif8_twiddle_and_butterfly_forward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            T.r, T.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                    else
+                        dif8_twiddle_and_butterfly_backward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            T.r, T.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                    if (use_nt)
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                    else
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                }
+                break;
+            }
+
+            //======================================================================
+            // PROLOGUE: Load first iteration
+            //======================================================================
+            tw8_vecs_t nT;
+            load_tw_blocked8_k4(b8, 0, &nT);
+
+            __m256d nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i;
+            __m256d nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i;
+            DIF8_LOAD_INPUTS(in_re, in_im, K, 0,
+                             nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                             nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+            //======================================================================
+            // STEADY-STATE U=2 LOOP
+            //======================================================================
+#pragma GCC unroll 1
+            for (size_t k = 0; k + 4 < K; k += step)
+            {
+                tw8_vecs_t T = nT;
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                const size_t kn = k + 4;
+
+                // Twiddle + butterfly
+                __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                if (direction == 0)
+                    dif8_twiddle_and_butterfly_forward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                else
+                    dif8_twiddle_and_butterfly_backward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                // Load next inputs
+                DIF8_LOAD_INPUTS(in_re, in_im, K, kn,
+                                 nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                                 nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+                // Two-wave stores
+                if (use_nt)
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+
+                // Load next twiddles
+                load_tw_blocked8_k4(b8, kn, &nT);
+
+                // Prefetch: twiddles + all 8 input streams
+                prefetch_tw_blocked8(b8, kn, prefetch_dist);
+                prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
+            }
+
+            //======================================================================
+            // EPILOGUE: Final iteration
+            //======================================================================
+            {
+                size_t k = K - 4;
+                tw8_vecs_t T = nT;
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
 
                 __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
                 __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
@@ -1722,154 +1865,101 @@ static void radix8_dif_stage_multimode_avx2(
                         &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
                         &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
 
-                if (use_nt) {
+                if (use_nt)
+                {
                     DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
-                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-                } else {
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
                     DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
-                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
                 }
             }
             break;
         }
-
-        //======================================================================
-        // PROLOGUE: Load first iteration
-        //======================================================================
-        tw8_vecs_t nT;
-        load_tw_blocked8_k4(b8, 0, &nT);
-
-        __m256d nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i;
-        __m256d nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i;
-        DIF8_LOAD_INPUTS(in_re, in_im, K, 0,
-            nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
-            nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
-
-        //======================================================================
-        // STEADY-STATE U=2 LOOP
-        //======================================================================
-#pragma GCC unroll 1
-        for (size_t k = 0; k + 4 < K; k += step) {
-            tw8_vecs_t T = nT;
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-
-            const size_t kn = k + 4;
-
-            // Twiddle + butterfly
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-
-            if (direction == 0)
-                dif8_twiddle_and_butterfly_forward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    T.r, T.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            else
-                dif8_twiddle_and_butterfly_backward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    T.r, T.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-
-            // Load next inputs
-            DIF8_LOAD_INPUTS(in_re, in_im, K, kn,
-                nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
-                nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
-
-            // Two-wave stores
-            if (use_nt) {
-                DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            } else {
-                DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            }
-
-            // Load next twiddles
-            load_tw_blocked8_k4(b8, kn, &nT);
-
-            // Prefetch: twiddles + all 8 input streams
-            prefetch_tw_blocked8(b8, kn, prefetch_dist);
-            prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
-        }
-
-        //======================================================================
-        // EPILOGUE: Final iteration
-        //======================================================================
-        {
-            size_t k = K - 4;
-            tw8_vecs_t T = nT;
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-
-            if (direction == 0)
-                dif8_twiddle_and_butterfly_forward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    T.r, T.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            else
-                dif8_twiddle_and_butterfly_backward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    T.r, T.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-
-            if (use_nt) {
-                DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            } else {
-                DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            }
-        }
-        break;
-    }
 
     //==========================================================================
     case TW_MODE_BLOCKED4:
-    //==========================================================================
-    {
-        const tw_blocked4_t *b4 = &tw->b4;
+        //==========================================================================
+        {
+            const tw_blocked4_t *b4 = &tw->b4;
 
-        if (K < 8) {
+            if (K < 8)
+            {
 #pragma GCC unroll 1
-            for (size_t k = 0; k < K; k += step) {
-                tw8_vecs_t T;
-                load_tw_blocked4_k4(b4, k, &T);
+                for (size_t k = 0; k < K; k += step)
+                {
+                    tw8_vecs_t T;
+                    load_tw_blocked4_k4(b4, k, &T);
 
-                __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
-                __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
-                DIF8_LOAD_INPUTS(in_re, in_im, K, k,
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i);
+                    __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
+                    __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
+                    DIF8_LOAD_INPUTS(in_re, in_im, K, k,
+                                     x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                                     x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i);
+
+                    __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                    __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                    if (direction == 0)
+                        dif8_twiddle_and_butterfly_forward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            T.r, T.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                    else
+                        dif8_twiddle_and_butterfly_backward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            T.r, T.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                    if (use_nt)
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                    else
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                }
+                break;
+            }
+
+            // PROLOGUE
+            tw8_vecs_t nT;
+            load_tw_blocked4_k4(b4, 0, &nT);
+
+            __m256d nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i;
+            __m256d nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i;
+            DIF8_LOAD_INPUTS(in_re, in_im, K, 0,
+                             nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                             nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+            // STEADY-STATE U=2 LOOP
+#pragma GCC unroll 1
+            for (size_t k = 0; k + 4 < K; k += step)
+            {
+                tw8_vecs_t T = nT;
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                const size_t kn = k + 4;
 
                 __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
                 __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
@@ -1889,148 +1979,168 @@ static void radix8_dif_stage_multimode_avx2(
                         &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
                         &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
 
-                if (use_nt) {
+                DIF8_LOAD_INPUTS(in_re, in_im, K, kn,
+                                 nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                                 nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+                if (use_nt)
+                {
                     DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
-                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-                } else {
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
                     DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
-                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+
+                load_tw_blocked4_k4(b4, kn, &nT);
+
+                prefetch_tw_blocked4(b4, kn, prefetch_dist);
+                prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
+            }
+
+            // EPILOGUE
+            {
+                size_t k = K - 4;
+                tw8_vecs_t T = nT;
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                if (direction == 0)
+                    dif8_twiddle_and_butterfly_forward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                else
+                    dif8_twiddle_and_butterfly_backward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                if (use_nt)
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
                 }
             }
             break;
         }
 
-        // PROLOGUE
-        tw8_vecs_t nT;
-        load_tw_blocked4_k4(b4, 0, &nT);
-
-        __m256d nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i;
-        __m256d nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i;
-        DIF8_LOAD_INPUTS(in_re, in_im, K, 0,
-            nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
-            nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
-
-        // STEADY-STATE U=2 LOOP
-#pragma GCC unroll 1
-        for (size_t k = 0; k + 4 < K; k += step) {
-            tw8_vecs_t T = nT;
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-
-            const size_t kn = k + 4;
-
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-
-            if (direction == 0)
-                dif8_twiddle_and_butterfly_forward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    T.r, T.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            else
-                dif8_twiddle_and_butterfly_backward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    T.r, T.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-
-            DIF8_LOAD_INPUTS(in_re, in_im, K, kn,
-                nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
-                nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
-
-            if (use_nt) {
-                DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            } else {
-                DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            }
-
-            load_tw_blocked4_k4(b4, kn, &nT);
-
-            prefetch_tw_blocked4(b4, kn, prefetch_dist);
-            prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
-        }
-
-        // EPILOGUE
-        {
-            size_t k = K - 4;
-            tw8_vecs_t T = nT;
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-
-            if (direction == 0)
-                dif8_twiddle_and_butterfly_forward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    T.r, T.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            else
-                dif8_twiddle_and_butterfly_backward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    T.r, T.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-
-            if (use_nt) {
-                DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            } else {
-                DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            }
-        }
-        break;
-    }
-
     //==========================================================================
     case TW_MODE_RECURRENCE:
-    //==========================================================================
-    {
-        const tw_recurrence_t *rec = &tw->rec;
-        const size_t tile_len = rec->tile_len;
-        rec8_vecs_t S;
+        //==========================================================================
+        {
+            const tw_recurrence_t *rec = &tw->rec;
+            const size_t tile_len = rec->tile_len;
+            rec8_vecs_t S;
 
-        if (K < 8) {
+            if (K < 8)
+            {
 #pragma GCC unroll 1
-            for (size_t k = 0; k < K; k += step) {
-                if ((k % tile_len) == 0) {
+                for (size_t k = 0; k < K; k += step)
+                {
+                    if ((k % tile_len) == 0)
+                    {
+                        rec8_tile_init(rec, k, &S);
+                        if (k + tile_len < K)
+                            prefetch_rec8_next_tile(rec, k + tile_len);
+                    }
+
+                    __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
+                    __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
+                    DIF8_LOAD_INPUTS(in_re, in_im, K, k,
+                                     x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                                     x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i);
+
+                    __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                    __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                    if (direction == 0)
+                        dif8_twiddle_and_butterfly_forward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            S.r, S.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                    else
+                        dif8_twiddle_and_butterfly_backward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            S.r, S.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                    if (use_nt)
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                    else
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+
+                    rec8_step_advance(&S);
+                }
+                break;
+            }
+
+            // Initialize for first tile
+            rec8_tile_init(rec, 0, &S);
+
+            __m256d nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i;
+            __m256d nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i;
+            DIF8_LOAD_INPUTS(in_re, in_im, K, 0,
+                             nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                             nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+#pragma GCC unroll 1
+            for (size_t k = 0; k + 4 < K; k += step)
+            {
+                // Refresh at tile boundaries
+                if ((k % tile_len) == 0 && k > 0)
+                {
                     rec8_tile_init(rec, k, &S);
                     if (k + tile_len < K)
                         prefetch_rec8_next_tile(rec, k + tile_len);
                 }
 
-                __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
-                __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
-                DIF8_LOAD_INPUTS(in_re, in_im, K, k,
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i);
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                const size_t kn = k + 4;
 
                 __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
                 __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
@@ -2050,140 +2160,85 @@ static void radix8_dif_stage_multimode_avx2(
                         &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
                         &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
 
-                if (use_nt) {
+                // Load next inputs
+                DIF8_LOAD_INPUTS(in_re, in_im, K, kn,
+                                 nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                                 nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+                // Two-wave stores
+                if (use_nt)
+                {
                     DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
-                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-                } else {
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
                     DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
-                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
                 }
 
                 rec8_step_advance(&S);
+
+                // Prefetch all 8 input streams
+                prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
+            }
+
+            // EPILOGUE
+            {
+                size_t k = K - 4;
+
+                if ((k % tile_len) == 0 && k > 0)
+                    rec8_tile_init(rec, k, &S);
+
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                if (direction == 0)
+                    dif8_twiddle_and_butterfly_forward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        S.r, S.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                else
+                    dif8_twiddle_and_butterfly_backward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        S.r, S.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                if (use_nt)
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
             }
             break;
         }
 
-        // Initialize for first tile
-        rec8_tile_init(rec, 0, &S);
-
-        __m256d nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i;
-        __m256d nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i;
-        DIF8_LOAD_INPUTS(in_re, in_im, K, 0,
-            nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
-            nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
-
-#pragma GCC unroll 1
-        for (size_t k = 0; k + 4 < K; k += step) {
-            // Refresh at tile boundaries
-            if ((k % tile_len) == 0 && k > 0) {
-                rec8_tile_init(rec, k, &S);
-                if (k + tile_len < K)
-                    prefetch_rec8_next_tile(rec, k + tile_len);
-            }
-
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-
-            const size_t kn = k + 4;
-
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-
-            if (direction == 0)
-                dif8_twiddle_and_butterfly_forward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    S.r, S.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            else
-                dif8_twiddle_and_butterfly_backward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    S.r, S.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-
-            // Load next inputs
-            DIF8_LOAD_INPUTS(in_re, in_im, K, kn,
-                nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
-                nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
-
-            // Two-wave stores
-            if (use_nt) {
-                DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            } else {
-                DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            }
-
-            rec8_step_advance(&S);
-
-            // Prefetch all 8 input streams
-            prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
-        }
-
-        // EPILOGUE
-        {
-            size_t k = K - 4;
-
-            if ((k % tile_len) == 0 && k > 0)
-                rec8_tile_init(rec, k, &S);
-
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-
-            if (direction == 0)
-                dif8_twiddle_and_butterfly_forward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    S.r, S.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            else
-                dif8_twiddle_and_butterfly_backward(
-                    x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
-                    x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
-                    S.r, S.i,
-                    &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                    &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-
-            if (use_nt) {
-                DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            } else {
-                DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
-                    y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
-                    y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
-            }
-        }
-        break;
-    }
-
     } // end switch
 
-    if (use_nt) {
+    if (use_nt)
+    {
         _mm_sfence();
     }
 }
@@ -2334,3 +2389,5 @@ static void radix32_stage_backward_avx2(
 
     _mm256_zeroupper();
 }
+
+#endif /* FFT_RADIX32_AVX2_H */
