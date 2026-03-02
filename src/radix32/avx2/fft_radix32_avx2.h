@@ -1264,9 +1264,8 @@ FORCE_INLINE void radix8_dif_core_forward_avx2(
     __m256d *RESTRICT y6r, __m256d *RESTRICT y6i,
     __m256d *RESTRICT y7r, __m256d *RESTRICT y7i)
 {
-    // W8 constant: e^(-i*π/4) = (√2/2)(1 - i)
-    const __m256d W8_RE = _mm256_set1_pd(0.70710678118654752440);  // √2/2
-    const __m256d W8_IM = _mm256_set1_pd(-0.70710678118654752440); // -√2/2
+    // W8 constant: c = √2/2
+    const __m256d W8_C = _mm256_set1_pd(0.70710678118654752440);
 
     //==========================================================================
     // STAGE 1: Length-4 butterflies (x0±x4, x1±x5, x2±x6, x3±x7)
@@ -1297,18 +1296,18 @@ FORCE_INLINE void radix8_dif_core_forward_avx2(
     // a4: no rotation (W^0)
     // Already done: a4r, a4i
 
-    // a5 *= W8 = (√2/2)(1 - i)
-    __m256d b5r, b5i;
-    cmul_v256(a5r, a5i, W8_RE, W8_IM, &b5r, &b5i);
+    // a5 *= W8 = c(1 - j): Re = c·(r+i), Im = c·(i-r)
+    __m256d b5r = _mm256_mul_pd(W8_C, _mm256_add_pd(a5r, a5i));
+    __m256d b5i = _mm256_mul_pd(W8_C, _mm256_sub_pd(a5i, a5r));
 
     // a6 *= -j (rotate by -90°)
     __m256d b6r = a6i;
-    __m256d b6i = _mm256_xor_pd(a6r, _mm256_set1_pd(-0.0)); // negate
+    __m256d b6i = _mm256_xor_pd(a6r, signbit_pd());
 
-    // a7 *= -W8* = (√2/2)(-1 - i) = W8 rotated by -135°
-    __m256d b7r, b7i;
-    __m256d nW8_RE = _mm256_xor_pd(W8_RE, _mm256_set1_pd(-0.0)); // -√2/2
-    cmul_v256(a7r, a7i, nW8_RE, W8_IM, &b7r, &b7i);
+    // a7 *= W8³ = -c(1 + j): Re = c·(i-r), Im = -c·(r+i)
+    __m256d b7r = _mm256_mul_pd(W8_C, _mm256_sub_pd(a7i, a7r));
+    __m256d b7i = _mm256_xor_pd(_mm256_mul_pd(W8_C, _mm256_add_pd(a7r, a7i)),
+                                signbit_pd());
 
     //==========================================================================
     // STAGE 3: Two radix-4 DIF butterflies
@@ -1397,9 +1396,8 @@ FORCE_INLINE void radix8_dif_core_backward_avx2(
     __m256d *RESTRICT y6r, __m256d *RESTRICT y6i,
     __m256d *RESTRICT y7r, __m256d *RESTRICT y7i)
 {
-    // W8 conjugated: e^(i*π/4) = (√2/2)(1 + i)
-    const __m256d W8_RE = _mm256_set1_pd(0.70710678118654752440); // √2/2
-    const __m256d W8_IM = _mm256_set1_pd(0.70710678118654752440); // +√2/2 (conjugated)
+    // W8 constant: c = √2/2
+    const __m256d W8_C = _mm256_set1_pd(0.70710678118654752440);
 
     //==========================================================================
     // STAGE 1: Length-4 butterflies
@@ -1429,18 +1427,18 @@ FORCE_INLINE void radix8_dif_core_backward_avx2(
     //==========================================================================
     // a4: no rotation
 
-    // a5 *= W8* = (√2/2)(1 + i)
-    __m256d b5r, b5i;
-    cmul_v256(a5r, a5i, W8_RE, W8_IM, &b5r, &b5i);
+    // a5 *= W8* = c(1 + j): Re = c·(r-i), Im = c·(r+i)
+    __m256d b5r = _mm256_mul_pd(W8_C, _mm256_sub_pd(a5r, a5i));
+    __m256d b5i = _mm256_mul_pd(W8_C, _mm256_add_pd(a5r, a5i));
 
     // a6 *= +j (rotate by +90°, conjugated from -j)
-    __m256d b6r = _mm256_xor_pd(a6i, _mm256_set1_pd(-0.0)); // negate
+    __m256d b6r = _mm256_xor_pd(a6i, signbit_pd());
     __m256d b6i = a6r;
 
-    // a7 *= -W8 = (√2/2)(-1 + i)
-    __m256d nW8_RE = _mm256_xor_pd(W8_RE, _mm256_set1_pd(-0.0)); // -√2/2
-    __m256d b7r, b7i;
-    cmul_v256(a7r, a7i, nW8_RE, W8_IM, &b7r, &b7i);
+    // a7 *= c(-1 + j): Re = -c·(r+i), Im = c·(r-i)
+    __m256d b7r = _mm256_xor_pd(_mm256_mul_pd(W8_C, _mm256_add_pd(a7r, a7i)),
+                                signbit_pd());
+    __m256d b7i = _mm256_mul_pd(W8_C, _mm256_sub_pd(a7r, a7i));
 
     //==========================================================================
     // STAGE 3: Two radix-4 butterflies (conjugated rotations)
@@ -1835,20 +1833,17 @@ static FORCE_INLINE void dif8_fused_fwd_blocked8(
     //==================================================================
     // Wave B: W8 rotations on diffs, odd DIF-4 → store
     //==================================================================
-    const __m256d W8R = _mm256_set1_pd(0.70710678118654752440);
+    const __m256d W8_C = _mm256_set1_pd(0.70710678118654752440); // √2/2
     const __m256d SIGN = signbit_pd();
-    const __m256d nW8R = _mm256_xor_pd(W8R, SIGN); // -√2/2
-    const __m256d W8I = nW8R;                      // -√2/2 (forward)
 
     // d0: no rotation (W8^0 = 1)
 
-    // d1 *= W8 = (√2/2)(1 - j)
+    // d1 *= W8 = c(1 - j): Re = c·(r+i), Im = c·(i-r)
     {
-        __m256d ai_bi = _mm256_mul_pd(d1i, W8I);
-        __m256d ai_br = _mm256_mul_pd(d1i, W8R);
-        __m256d nr = _mm256_fmsub_pd(d1r, W8R, ai_bi);
-        d1i = _mm256_fmadd_pd(d1r, W8I, ai_br);
-        d1r = nr;
+        __m256d sum = _mm256_add_pd(d1r, d1i);
+        __m256d diff = _mm256_sub_pd(d1i, d1r);
+        d1r = _mm256_mul_pd(W8_C, sum);
+        d1i = _mm256_mul_pd(W8_C, diff);
     }
 
     // d2 *= -j → (im, -re)
@@ -1858,15 +1853,14 @@ static FORCE_INLINE void dif8_fused_fwd_blocked8(
         d2i = _mm256_xor_pd(tmp, SIGN);
     }
 
-    // d3 *= W8^3 = (-√2/2)(1 + j) → cmul with (-√2/2, -√2/2)
+    // d3 *= W8³ = -c(1 + j): Re = c·(i-r), Im = -c·(r+i)
     {
-        __m256d ai_bi = _mm256_mul_pd(d3i, W8I);
-        __m256d ai_br = _mm256_mul_pd(d3i, nW8R);
-        __m256d nr = _mm256_fmsub_pd(d3r, nW8R, ai_bi);
-        d3i = _mm256_fmadd_pd(d3r, W8I, ai_br);
-        d3r = nr;
+        __m256d sum = _mm256_add_pd(d3r, d3i);
+        __m256d diff = _mm256_sub_pd(d3i, d3r);
+        d3r = _mm256_mul_pd(W8_C, diff);
+        d3i = _mm256_xor_pd(_mm256_mul_pd(W8_C, sum), SIGN);
     }
-    // Live: d0,d1,d2,d3 = 8 + constants ~2 = 10 YMM
+    // Live: d0,d1,d2,d3 = 8 + W8_C,SIGN = 10 YMM
 
     // Odd DIF-4 on {d0, d1, d2, d3}
     __m256d o0r = _mm256_add_pd(d0r, d2r);
@@ -1996,20 +1990,17 @@ static FORCE_INLINE void dif8_fused_bwd_blocked8(
     //==================================================================
     // Wave B: Conjugated W8 rotations + odd DIF-4
     //==================================================================
-    const __m256d W8R = _mm256_set1_pd(0.70710678118654752440);
+    const __m256d W8_C = _mm256_set1_pd(0.70710678118654752440);
     const __m256d SIGN = signbit_pd();
-    const __m256d nW8R = _mm256_xor_pd(W8R, SIGN); // -√2/2
-    const __m256d W8I = W8R;                       // +√2/2 (backward conjugated)
 
     // d0: no rotation
 
-    // d1 *= W8* = (√2/2)(1 + j)
+    // d1 *= W8* = c(1 + j): Re = c·(r-i), Im = c·(r+i)
     {
-        __m256d ai_bi = _mm256_mul_pd(d1i, W8I);
-        __m256d ai_br = _mm256_mul_pd(d1i, W8R);
-        __m256d nr = _mm256_fmsub_pd(d1r, W8R, ai_bi);
-        d1i = _mm256_fmadd_pd(d1r, W8I, ai_br);
-        d1r = nr;
+        __m256d diff = _mm256_sub_pd(d1r, d1i);
+        __m256d sum = _mm256_add_pd(d1r, d1i);
+        d1r = _mm256_mul_pd(W8_C, diff);
+        d1i = _mm256_mul_pd(W8_C, sum);
     }
 
     // d2 *= +j → (-im, re) (backward conjugated)
@@ -2019,13 +2010,12 @@ static FORCE_INLINE void dif8_fused_bwd_blocked8(
         d2i = tmp;
     }
 
-    // d3 *= -(W8) = (-√2/2)(1 - j) → cmul with (-√2/2, +√2/2)
+    // d3 *= c(-1 + j): Re = -c·(r+i), Im = c·(r-i)
     {
-        __m256d ai_bi = _mm256_mul_pd(d3i, W8I);
-        __m256d ai_br = _mm256_mul_pd(d3i, nW8R);
-        __m256d nr = _mm256_fmsub_pd(d3r, nW8R, ai_bi);
-        d3i = _mm256_fmadd_pd(d3r, W8I, ai_br);
-        d3r = nr;
+        __m256d sum = _mm256_add_pd(d3r, d3i);
+        __m256d diff = _mm256_sub_pd(d3r, d3i);
+        d3r = _mm256_xor_pd(_mm256_mul_pd(W8_C, sum), SIGN);
+        d3i = _mm256_mul_pd(W8_C, diff);
     }
 
     // Odd DIF-4 (conjugated)
@@ -2175,18 +2165,15 @@ static FORCE_INLINE void dif8_fused_fwd_blocked4(
     //==================================================================
     // Wave B: W8 rotations on diffs, odd DIF-4
     //==================================================================
-    const __m256d W8R = _mm256_set1_pd(0.70710678118654752440);
+    const __m256d W8_C = _mm256_set1_pd(0.70710678118654752440);
     const __m256d SIGN = signbit_pd();
-    const __m256d nW8R = _mm256_xor_pd(W8R, SIGN);
-    const __m256d W8I = nW8R; // -√2/2 (forward)
 
-    // d1 *= W8
+    // d1 *= W8 = c(1 - j): Re = c·(r+i), Im = c·(i-r)
     {
-        __m256d ai_bi = _mm256_mul_pd(d1i, W8I);
-        __m256d ai_br = _mm256_mul_pd(d1i, W8R);
-        __m256d nr = _mm256_fmsub_pd(d1r, W8R, ai_bi);
-        d1i = _mm256_fmadd_pd(d1r, W8I, ai_br);
-        d1r = nr;
+        __m256d sum = _mm256_add_pd(d1r, d1i);
+        __m256d diff = _mm256_sub_pd(d1i, d1r);
+        d1r = _mm256_mul_pd(W8_C, sum);
+        d1i = _mm256_mul_pd(W8_C, diff);
     }
 
     // d2 *= -j
@@ -2196,13 +2183,12 @@ static FORCE_INLINE void dif8_fused_fwd_blocked4(
         d2i = _mm256_xor_pd(tmp, SIGN);
     }
 
-    // d3 *= W8^3
+    // d3 *= W8³ = -c(1 + j): Re = c·(i-r), Im = -c·(r+i)
     {
-        __m256d ai_bi = _mm256_mul_pd(d3i, W8I);
-        __m256d ai_br = _mm256_mul_pd(d3i, nW8R);
-        __m256d nr = _mm256_fmsub_pd(d3r, nW8R, ai_bi);
-        d3i = _mm256_fmadd_pd(d3r, W8I, ai_br);
-        d3r = nr;
+        __m256d sum = _mm256_add_pd(d3r, d3i);
+        __m256d diff = _mm256_sub_pd(d3i, d3r);
+        d3r = _mm256_mul_pd(W8_C, diff);
+        d3i = _mm256_xor_pd(_mm256_mul_pd(W8_C, sum), SIGN);
     }
 
     __m256d o0r = _mm256_add_pd(d0r, d2r);
@@ -2320,18 +2306,15 @@ static FORCE_INLINE void dif8_fused_bwd_blocked4(
     DIF8_STORE_V(use_nt, &out_im[6 * K + k], _mm256_sub_pd(e1i, e3r));
 
     // Wave B: Conjugated W8 rotations + odd DIF-4
-    const __m256d W8R = _mm256_set1_pd(0.70710678118654752440);
+    const __m256d W8_C = _mm256_set1_pd(0.70710678118654752440);
     const __m256d SIGN = signbit_pd();
-    const __m256d nW8R = _mm256_xor_pd(W8R, SIGN);
-    const __m256d W8I = W8R; // +√2/2 (backward conjugated)
 
-    // d1 *= W8*
+    // d1 *= W8* = c(1 + j): Re = c·(r-i), Im = c·(r+i)
     {
-        __m256d ai_bi = _mm256_mul_pd(d1i, W8I);
-        __m256d ai_br = _mm256_mul_pd(d1i, W8R);
-        __m256d nr = _mm256_fmsub_pd(d1r, W8R, ai_bi);
-        d1i = _mm256_fmadd_pd(d1r, W8I, ai_br);
-        d1r = nr;
+        __m256d diff = _mm256_sub_pd(d1r, d1i);
+        __m256d sum = _mm256_add_pd(d1r, d1i);
+        d1r = _mm256_mul_pd(W8_C, diff);
+        d1i = _mm256_mul_pd(W8_C, sum);
     }
 
     // d2 *= +j (backward)
@@ -2341,13 +2324,12 @@ static FORCE_INLINE void dif8_fused_bwd_blocked4(
         d2i = tmp;
     }
 
-    // d3 *= -(W8) conjugated
+    // d3 *= c(-1 + j): Re = -c·(r+i), Im = c·(r-i)
     {
-        __m256d ai_bi = _mm256_mul_pd(d3i, W8I);
-        __m256d ai_br = _mm256_mul_pd(d3i, nW8R);
-        __m256d nr = _mm256_fmsub_pd(d3r, nW8R, ai_bi);
-        d3i = _mm256_fmadd_pd(d3r, W8I, ai_br);
-        d3r = nr;
+        __m256d sum = _mm256_add_pd(d3r, d3i);
+        __m256d diff = _mm256_sub_pd(d3r, d3i);
+        d3r = _mm256_xor_pd(_mm256_mul_pd(W8_C, sum), SIGN);
+        d3i = _mm256_mul_pd(W8_C, diff);
     }
 
     __m256d o0r = _mm256_add_pd(d0r, d2r);
@@ -2427,8 +2409,11 @@ static void radix8_dif_stage_multimode_avx2(
                 {
                     dif8_fused_fwd_blocked8(in_re, in_im, K, k, b8,
                                             out_re, out_im, use_nt);
-                    prefetch_dif8_inputs(in_re, in_im, K, k, prefetch_dist);
-                    prefetch_tw_blocked8(b8, k, prefetch_dist);
+                    if ((k & 7) == 0)
+                    {
+                        prefetch_dif8_inputs(in_re, in_im, K, k, prefetch_dist);
+                        prefetch_tw_blocked8(b8, k, prefetch_dist);
+                    }
                 }
             }
             else
@@ -2438,8 +2423,11 @@ static void radix8_dif_stage_multimode_avx2(
                 {
                     dif8_fused_bwd_blocked8(in_re, in_im, K, k, b8,
                                             out_re, out_im, use_nt);
-                    prefetch_dif8_inputs(in_re, in_im, K, k, prefetch_dist);
-                    prefetch_tw_blocked8(b8, k, prefetch_dist);
+                    if ((k & 7) == 0)
+                    {
+                        prefetch_dif8_inputs(in_re, in_im, K, k, prefetch_dist);
+                        prefetch_tw_blocked8(b8, k, prefetch_dist);
+                    }
                 }
             }
             break;
@@ -2458,8 +2446,11 @@ static void radix8_dif_stage_multimode_avx2(
                 {
                     dif8_fused_fwd_blocked4(in_re, in_im, K, k, b4,
                                             out_re, out_im, use_nt);
-                    prefetch_dif8_inputs(in_re, in_im, K, k, prefetch_dist);
-                    prefetch_tw_blocked4(b4, k, prefetch_dist);
+                    if ((k & 7) == 0)
+                    {
+                        prefetch_dif8_inputs(in_re, in_im, K, k, prefetch_dist);
+                        prefetch_tw_blocked4(b4, k, prefetch_dist);
+                    }
                 }
             }
             else
@@ -2469,8 +2460,11 @@ static void radix8_dif_stage_multimode_avx2(
                 {
                     dif8_fused_bwd_blocked4(in_re, in_im, K, k, b4,
                                             out_re, out_im, use_nt);
-                    prefetch_dif8_inputs(in_re, in_im, K, k, prefetch_dist);
-                    prefetch_tw_blocked4(b4, k, prefetch_dist);
+                    if ((k & 7) == 0)
+                    {
+                        prefetch_dif8_inputs(in_re, in_im, K, k, prefetch_dist);
+                        prefetch_tw_blocked4(b4, k, prefetch_dist);
+                    }
                 }
             }
             break;
@@ -2608,8 +2602,9 @@ static void radix8_dif_stage_multimode_avx2(
 
                 rec8_step_advance(&S);
 
-                // Prefetch all 8 input streams
-                prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
+                // Prefetch all 8 input streams (once per cache line)
+                if ((kn & 7) == 0)
+                    prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
             }
 
             // EPILOGUE
