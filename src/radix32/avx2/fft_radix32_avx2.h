@@ -1,5 +1,8 @@
+#ifndef FFT_RADIX32_AVX2_H
+#define FFT_RADIX32_AVX2_H
+
 /**
- * @file fft_radix32_avx2.c
+ * @file fft_radix32_avx2.h
  * @brief Radix-32 FFT butterfly implementation for AVX2
  *
  * **Architecture: 4×8 Decomposition (DIT-4 → DIF-8)**
@@ -22,17 +25,19 @@
  * **Multi-Mode Twiddle System (Pass 2):**
  *
  *   BLOCKED8 (K ≤ 256):
- *     - Load W1..W8 (8 blocks), derive W9..W16 via sign flip
- *     - 50% bandwidth savings, fits in L1+L2
+ *     - Load W1..W7 (7 blocks), direct application
+ *     - Fits in L1+L2
  *
  *   BLOCKED4 (256 < K ≤ 4096):
- *     - Load W1..W4 (4 blocks), derive W5..W8 via multiplication
- *     - W5=W1×W4, W6=W2×W4, W7=W3×W4, W8=W4²
- *     - W9..W16 via sign flip, 75% bandwidth savings
+ *     - Load W1..W4 (4 blocks), derive W5..W7 via multiplication
+ *     - W5=W1×W4, W6=W2×W4, W7=W3×W4
+ *     - 43% bandwidth savings vs BLOCKED8
  *
  *   RECURRENCE (K > 4096):
- *     - Tile-local stepping: W ← W × δ⁴ within 64-element tiles
- *     - Periodic refresh at tile boundaries to limit drift
+ *     - Tile-local stepping: Wj ← Wj × δj⁴ within tiles
+ *     - Per-j deltas for correct frequency-dependent stepping
+ *     - All 8 seeds loaded at tile boundaries for numerical stability
+ *     - Periodic refresh to limit drift
  *     - Minimal bandwidth, stable for very large K
  *
  * **Key Innovation: Bin-Major Intermediate Layout**
@@ -54,7 +59,7 @@
  *   Optimization:   U=2 software pipelining, multi-mode twiddles
  *   Memory:         Streaming stores (NT for >256KB), NTA prefetch
  *   Register Usage: ~16 YMM peak (controlled via staged loads)
- *   Bandwidth:      33-75% savings via BLOCKED2/4/8 + RECURRENCE
+ *   Bandwidth:      43-75% savings via BLOCKED4/8 + RECURRENCE
  *
  * **SIMD Target:**
  *   - AVX2 + FMA (Haswell, Zen1, or newer)
@@ -139,7 +144,7 @@
 
 /**
  * @brief Select adaptive prefetch distance based on K
- * 
+ *
  * Tuned for cache hierarchy:
  *   Small K (≤128):   8 doubles - data hot in L1, short lead time
  *   Medium K (≤1024): 16 doubles - balance latency/pollution
@@ -147,8 +152,10 @@
  */
 static inline size_t pick_prefetch_dist_dif8(size_t K)
 {
-    if (K <= 128)  return 8;
-    if (K <= 1024) return 16;
+    if (K <= 128)
+        return 8;
+    if (K <= 1024)
+        return 16;
     return 24;
 }
 
@@ -158,9 +165,9 @@ static inline size_t pick_prefetch_dist_dif8(size_t K)
 
 /**
  * @brief Complex multiplication (AVX2) - Optimized dependency chains
- * 
+ *
  * Computes: (ar + i*ai) * (br + i*bi) = (ar*br - ai*bi) + i*(ar*bi + ai*br)
- * 
+ *
  * Optimization: Issue pure MULs first to break FMA dependency chains.
  * Allows scheduler to dispatch FMAs earlier on Haswell/Skylake.
  */
@@ -173,25 +180,26 @@ FORCE_INLINE void cmul_v256(
     // Issue pure MULs first (independent, can use MUL ports)
     __m256d ai_bi = _mm256_mul_pd(ai, bi);
     __m256d ai_br = _mm256_mul_pd(ai, br);
-    
+
     // FMAs dispatch without waiting for nested MUL completion
-    *cr = _mm256_fmsub_pd(ar, br, ai_bi);  // ar*br - ai*bi
-    *ci = _mm256_fmadd_pd(ar, bi, ai_br);  // ar*bi + ai*br
+    *cr = _mm256_fmsub_pd(ar, br, ai_bi); // ar*br - ai*bi
+    *ci = _mm256_fmadd_pd(ar, bi, ai_br); // ar*bi + ai*br
 }
 
 /**
  * @brief Complex square (AVX2)
  *
  * Computes: (ar + i*ai)^2 = (ar^2 - ai^2) + i*(2*ar*ai)
- * More efficient than cmul(a, a): 1 FMA + 2 MUL + 1 ADD = 4 ops
+ * More efficient than cmul(a, a): 1 FMA + 1 MUL + 1 ADD = 3 ops
  */
 TARGET_AVX2_FMA
 FORCE_INLINE void csquare_v256(
     __m256d ar, __m256d ai,
     __m256d *RESTRICT cr, __m256d *RESTRICT ci)
 {
+    __m256d ar_ai = _mm256_mul_pd(ar, ai);
     *cr = _mm256_fmsub_pd(ar, ar, _mm256_mul_pd(ai, ai));
-    *ci = _mm256_add_pd(_mm256_mul_pd(ar, ai), _mm256_mul_pd(ar, ai));
+    *ci = _mm256_add_pd(ar_ai, ar_ai); // 2*ar*ai
 }
 
 //==============================================================================
@@ -203,8 +211,8 @@ FORCE_INLINE void csquare_v256(
  */
 typedef enum
 {
-    TW_MODE_BLOCKED8,  ///< K ≤ 256: Load W1..W8 (50% savings)
-    TW_MODE_BLOCKED4,  ///< 256 < K ≤ 4096: Load W1..W4, derive W5..W8 (75% savings)
+    TW_MODE_BLOCKED8,  ///< K ≤ 256: Load W1..W7 directly
+    TW_MODE_BLOCKED4,  ///< 256 < K ≤ 4096: Load W1..W4, derive W5..W7 (43% savings)
     TW_MODE_RECURRENCE ///< K > 4096: Tile-local recurrence (minimal bandwidth)
 } tw_mode_t;
 
@@ -242,14 +250,17 @@ typedef struct
 
 /**
  * @brief RECURRENCE layout: Tile-local stepping with periodic refresh
+ *
+ * Seed layout: [8][K] — all 8 Wj seeds at each tile boundary
+ * Delta layout: [8] — per-j δ⁴ values (frequency-dependent stepping)
  */
 typedef struct
 {
     int tile_len;           ///< Tile length (typically 64 * 4 = 256 samples)
     const double *seed_re;  ///< [8][K] seeds at tile boundaries (W1..W8)
     const double *seed_im;  ///< [8][K] seeds at tile boundaries
-    const double *delta_re; ///< [8] per-Wj delta (δ⁴) for stepping
-    const double *delta_im; ///< [8] per-Wj delta (δ⁴) for stepping
+    const double *delta_re; ///< [8] per-Wj delta (δj⁴) for stepping
+    const double *delta_im; ///< [8] per-Wj delta (δj⁴) for stepping
     size_t K;
 } tw_recurrence_t;
 
@@ -268,24 +279,27 @@ typedef struct
 } tw_stage8_t;
 
 /**
- * @brief Vectorized twiddles: W1..W8 (re/im) + signbit for negation
+ * @brief Vectorized twiddles: W1..W8 (re/im)
+ *
+ * Used by BLOCKED8 and BLOCKED4 loaders. Only W1..W7 (indices 0..6)
+ * are applied as stage twiddles (x0 is untwidded).
  */
 typedef struct
 {
-    __m256d r[8];    ///< Real parts of W1..W8
-    __m256d i[8];    ///< Imag parts of W1..W8
-    __m256d signbit; ///< Sign flip mask for deriving W9..W16
+    __m256d r[8]; ///< Real parts of W1..W8
+    __m256d i[8]; ///< Imag parts of W1..W8
 } tw8_vecs_t;
 
 /**
- * @brief Recurrence state: W1..W8 + deltas + tile counter
+ * @brief Recurrence state: W1..W8 + per-j deltas
+ *
+ * Each Wj advances with its own δj⁴ since twiddle frequencies differ:
+ *   Wj(k+4) = Wj(k) · δj⁴  where δj = W_{8K}^j
  */
 typedef struct
 {
     __m256d r[8], i[8];   ///< Current W1..W8
-    __m256d dr[8], di[8]; ///< Deltas per step (W ← W × δ⁴)
-    __m256d signbit;      ///< Sign flip mask
-    int left_in_tile;     ///< Steps remaining before refresh
+    __m256d dr[8], di[8]; ///< Per-j deltas: δj⁴ for each Wj
 } rec8_vecs_t;
 
 //==============================================================================
@@ -892,10 +906,11 @@ static void radix4_dit_stage_blocked2_backward_avx2_strided(
 //==============================================================================
 
 /**
- * @brief Load W1..W8 from BLOCKED8 layout (50% bandwidth savings)
+ * @brief Load W1..W8 from BLOCKED8 layout
  *
  * Loads 8 blocks (W1..W8) directly from memory.
- * Caller derives W9..W16 via: VNEG_PD(W[i], signbit)
+ * Only W1..W7 (indices 0..6) are applied as stage twiddles;
+ * W8 (index 7) is loaded for BLOCKED4 derivation compatibility.
  *
  * @param tw BLOCKED8 twiddle structure
  * @param k Sample offset (multiple of 4)
@@ -924,8 +939,6 @@ static FORCE_INLINE void load_tw_blocked8_k4(
     out->i[6] = _mm256_load_pd(&tw->im[6][k]);
     out->r[7] = _mm256_load_pd(&tw->re[7][k]);
     out->i[7] = _mm256_load_pd(&tw->im[7][k]);
-
-    out->signbit = signbit_pd();
 }
 
 //==============================================================================
@@ -933,7 +946,7 @@ static FORCE_INLINE void load_tw_blocked8_k4(
 //==============================================================================
 
 /**
- * @brief Derive W5..W8 from W1..W4 (75% bandwidth savings)
+ * @brief Derive W5..W8 from W1..W4 (43% bandwidth savings)
  *
  * Computes:
  *   W5 = W1 × W4
@@ -961,7 +974,7 @@ static FORCE_INLINE void derive_w5_to_w8(
 /**
  * @brief Load W1..W4 from BLOCKED4 layout and derive W5..W8
  *
- * Loads 4 blocks, derives remaining 4 (75% bandwidth savings).
+ * Loads 4 blocks, derives remaining 4 (43% bandwidth savings for W1..W7).
  *
  * @param tw BLOCKED4 twiddle structure
  * @param k Sample offset (multiple of 4)
@@ -989,8 +1002,6 @@ static FORCE_INLINE void load_tw_blocked4_k4(
         out->r[2], out->i[2], out->r[3], out->i[3],
         &out->r[4], &out->i[4], &out->r[5], &out->i[5],
         &out->r[6], &out->i[6], &out->r[7], &out->i[7]);
-
-    out->signbit = signbit_pd();
 }
 
 //==============================================================================
@@ -1000,10 +1011,11 @@ static FORCE_INLINE void load_tw_blocked4_k4(
 /**
  * @brief Initialize recurrence state at tile boundary
  *
- * CRITICAL: Uses Δ = δ⁴ since k-loop advances by 4 each iteration!
+ * Loads all 8 seeds (W1..W8) directly from precomputed tile-boundary
+ * values for maximum numerical stability. Uses per-j deltas δj⁴ since
+ * each Wj advances at a different frequency:
  *
- * Strategy: Keep one base Δ = δ⁴, derive W2..W8 from W1 at tile init.
- * This is most stable (fewer muls) and matches proven pattern.
+ *   Wj(k+4) = Wj(k) · δj⁴   where δj = exp(-2πi·j / (32·K))
  *
  * @param tw RECURRENCE twiddle structure
  * @param k Tile start offset (aligned to tile_len and multiple of 4)
@@ -1015,64 +1027,48 @@ static FORCE_INLINE void rec8_tile_init(
     size_t k,
     rec8_vecs_t *st)
 {
-    // Load base seed W1 at tile boundary
-    __m256d W1r = _mm256_load_pd(&tw->seed_re[0 * tw->K + k]);
-    __m256d W1i = _mm256_load_pd(&tw->seed_im[0 * tw->K + k]);
+    // Load all 8 seeds at tile boundary (avoids cumulative derivation error)
+    st->r[0] = _mm256_load_pd(&tw->seed_re[0 * tw->K + k]);
+    st->i[0] = _mm256_load_pd(&tw->seed_im[0 * tw->K + k]);
+    st->r[1] = _mm256_load_pd(&tw->seed_re[1 * tw->K + k]);
+    st->i[1] = _mm256_load_pd(&tw->seed_im[1 * tw->K + k]);
+    st->r[2] = _mm256_load_pd(&tw->seed_re[2 * tw->K + k]);
+    st->i[2] = _mm256_load_pd(&tw->seed_im[2 * tw->K + k]);
+    st->r[3] = _mm256_load_pd(&tw->seed_re[3 * tw->K + k]);
+    st->i[3] = _mm256_load_pd(&tw->seed_im[3 * tw->K + k]);
+    st->r[4] = _mm256_load_pd(&tw->seed_re[4 * tw->K + k]);
+    st->i[4] = _mm256_load_pd(&tw->seed_im[4 * tw->K + k]);
+    st->r[5] = _mm256_load_pd(&tw->seed_re[5 * tw->K + k]);
+    st->i[5] = _mm256_load_pd(&tw->seed_im[5 * tw->K + k]);
+    st->r[6] = _mm256_load_pd(&tw->seed_re[6 * tw->K + k]);
+    st->i[6] = _mm256_load_pd(&tw->seed_im[6 * tw->K + k]);
+    st->r[7] = _mm256_load_pd(&tw->seed_re[7 * tw->K + k]);
+    st->i[7] = _mm256_load_pd(&tw->seed_im[7 * tw->K + k]);
 
-    st->r[0] = W1r;
-    st->i[0] = W1i;
-
-    // Derive W2..W8 from W1 at tile init (once per tile, not per step)
-    // W2 = W1²
-    csquare_v256(W1r, W1i, &st->r[1], &st->i[1]);
-
-    // W3 = W1 × W2
-    cmul_v256(W1r, W1i, st->r[1], st->i[1], &st->r[2], &st->i[2]);
-
-    // W4 = W2²
-    csquare_v256(st->r[1], st->i[1], &st->r[3], &st->i[3]);
-
-    // W5 = W1 × W4
-    cmul_v256(W1r, W1i, st->r[3], st->i[3], &st->r[4], &st->i[4]);
-
-    // W6 = W2 × W4
-    cmul_v256(st->r[1], st->i[1], st->r[3], st->i[3], &st->r[5], &st->i[5]);
-
-    // W7 = W3 × W4
-    cmul_v256(st->r[2], st->i[2], st->r[3], st->i[3], &st->r[6], &st->i[6]);
-
-    // W8 = W4²
-    csquare_v256(st->r[3], st->i[3], &st->r[7], &st->i[7]);
-
-    // Load ONE base delta Δ = δ⁴ (broadcast to all lanes)
-    // CRITICAL: This is δ⁴, not δ, because k advances by 4!
-    st->dr[0] = _mm256_set1_pd(tw->delta_re[0]); // Δ_re
-    st->di[0] = _mm256_set1_pd(tw->delta_im[0]); // Δ_im
-
-    // All Wj advance with the same Δ (most stable)
-    st->dr[1] = st->dr[0];
-    st->di[1] = st->di[0];
-    st->dr[2] = st->dr[0];
-    st->di[2] = st->di[0];
-    st->dr[3] = st->dr[0];
-    st->di[3] = st->di[0];
-    st->dr[4] = st->dr[0];
-    st->di[4] = st->di[0];
-    st->dr[5] = st->dr[0];
-    st->di[5] = st->di[0];
-    st->dr[6] = st->dr[0];
-    st->di[6] = st->di[0];
-    st->dr[7] = st->dr[0];
-    st->di[7] = st->di[0];
-
-    st->signbit = signbit_pd();
-    st->left_in_tile = tw->tile_len;
+    // Load per-j deltas: δj⁴ differs for each twiddle frequency j
+    // Wj(k) steps at rate proportional to j, so δ₁⁴ ≠ δ₂⁴ ≠ ... ≠ δ₈⁴
+    st->dr[0] = _mm256_set1_pd(tw->delta_re[0]);
+    st->di[0] = _mm256_set1_pd(tw->delta_im[0]);
+    st->dr[1] = _mm256_set1_pd(tw->delta_re[1]);
+    st->di[1] = _mm256_set1_pd(tw->delta_im[1]);
+    st->dr[2] = _mm256_set1_pd(tw->delta_re[2]);
+    st->di[2] = _mm256_set1_pd(tw->delta_im[2]);
+    st->dr[3] = _mm256_set1_pd(tw->delta_re[3]);
+    st->di[3] = _mm256_set1_pd(tw->delta_im[3]);
+    st->dr[4] = _mm256_set1_pd(tw->delta_re[4]);
+    st->di[4] = _mm256_set1_pd(tw->delta_im[4]);
+    st->dr[5] = _mm256_set1_pd(tw->delta_re[5]);
+    st->di[5] = _mm256_set1_pd(tw->delta_im[5]);
+    st->dr[6] = _mm256_set1_pd(tw->delta_re[6]);
+    st->di[6] = _mm256_set1_pd(tw->delta_im[6]);
+    st->dr[7] = _mm256_set1_pd(tw->delta_re[7]);
+    st->di[7] = _mm256_set1_pd(tw->delta_im[7]);
 }
 
 /**
- * @brief Advance recurrence by one 4-wide step: W ← W × Δ
+ * @brief Advance recurrence by one 4-wide step: Wj ← Wj × δj⁴
  *
- * All W1..W8 advance with the same Δ = δ⁴ per iteration.
+ * Each Wj advances with its own per-j delta for correct frequency stepping.
  */
 TARGET_AVX2_FMA
 static FORCE_INLINE void rec8_step_advance(rec8_vecs_t *st)
@@ -1105,12 +1101,10 @@ static FORCE_INLINE void rec8_step_advance(rec8_vecs_t *st)
     st->i[6] = ni6;
     st->r[7] = nr7;
     st->i[7] = ni7;
-
-    st->left_in_tile -= 4;
 }
 
 //==============================================================================
-// PREFETCH HELPERS FOR TWIDDLE MODES
+// PREFETCH HELPERS
 //==============================================================================
 
 /**
@@ -1175,13 +1169,64 @@ static FORCE_INLINE void prefetch_rec8_next_tile(
 {
     if (k_next_tile < tw->K)
     {
+        // Prefetch all 8 seed blocks at next tile boundary
         _mm_prefetch((const char *)&tw->seed_re[0 * tw->K + k_next_tile], _MM_HINT_T0);
         _mm_prefetch((const char *)&tw->seed_im[0 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_re[1 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_im[1 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_re[2 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_im[2 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_re[3 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_im[3 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_re[4 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_im[4 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_re[5 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_im[5 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_re[6 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_im[6 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_re[7 * tw->K + k_next_tile], _MM_HINT_T0);
+        _mm_prefetch((const char *)&tw->seed_im[7 * tw->K + k_next_tile], _MM_HINT_T0);
+    }
+}
+
+/**
+ * @brief Prefetch all 8 DIF input streams (full coverage)
+ *
+ * Covers all 8 input stripes for the radix-8 DIF stage.
+ * Prevents L1 misses on streams 1-3, 5-7 that the original
+ * sparse prefetch (streams 0, 4 only) would miss for large K.
+ */
+TARGET_AVX2_FMA
+static FORCE_INLINE void prefetch_dif8_inputs(
+    const double *RESTRICT in_re,
+    const double *RESTRICT in_im,
+    size_t K,
+    size_t k,
+    size_t prefetch_dist)
+{
+    if (k + prefetch_dist < K)
+    {
+        _mm_prefetch((const char *)&in_re[0 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_im[0 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_re[1 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_im[1 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_re[2 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_im[2 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_re[3 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_im[3 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_re[4 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_im[4 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_re[5 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_im[5 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_re[6 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_im[6 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_re[7 * K + k + prefetch_dist], _MM_HINT_T0);
+        _mm_prefetch((const char *)&in_im[7 * K + k + prefetch_dist], _MM_HINT_T0);
     }
 }
 
 //==============================================================================
-// RADIX-8 DIF BUTTERFLY CORE - PAIR EMITTER STRUCTURE
+// RADIX-8 DIF BUTTERFLY CORE - FORWARD
 //==============================================================================
 
 /**
@@ -1194,12 +1239,6 @@ static FORCE_INLINE void prefetch_rec8_next_tile(
  *   Stage 1: (x0±x4), (x1±x5), (x2±x6), (x3±x7)  [4 butterflies]
  *   Stage 2: Apply geometric rotations to differences
  *   Stage 3: Two radix-4 butterflies
- *
- * Outputs organized for pair emission:
- *   Pair 1: (Y0, Y4) - DC and Nyquist/2
- *   Pair 2: (Y1, Y5) - Low frequency pair
- *   Pair 3: (Y2, Y6) - Mid-low frequency pair
- *   Pair 4: (Y3, Y7) - Mid-high frequency pair
  *
  * @param x0r..x7r Input real parts (4 doubles each)
  * @param x0i..x7i Input imag parts
@@ -1330,6 +1369,10 @@ FORCE_INLINE void radix8_dif_core_forward_avx2(
     *y7i = _mm256_add_pd(o1i, o3r);
 }
 
+//==============================================================================
+// RADIX-8 DIF BUTTERFLY CORE - BACKWARD
+//==============================================================================
+
 /**
  * @brief Radix-8 DIF butterfly core - BACKWARD
  *
@@ -1455,1719 +1498,749 @@ FORCE_INLINE void radix8_dif_core_backward_avx2(
 }
 
 //==============================================================================
-// PAIR EMITTERS FOR RADIX-8 DIF
+// DIF8 INNER LOOP BODY (shared across all twiddle modes)
 //==============================================================================
 
 /**
- * @brief Emit pair (Y0, Y4) from radix-8 DIF - FORWARD
+ * @brief Apply 7 stage twiddles and compute radix-8 DIF butterfly - FORWARD
+ *
+ * Applies twiddles W1..W7 (from tw.r[0..6], tw.i[0..6]) to inputs x1..x7,
+ * then runs the radix-8 DIF core. x0 is untwidded.
+ *
+ * Factored out to eliminate code duplication across BLOCKED8/BLOCKED4/RECURRENCE.
  */
 TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_emit_pair_04_forward_avx2(
-    __m256d y0r, __m256d y0i,
-    __m256d y4r, __m256d y4i,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    size_t K, size_t k)
+static FORCE_INLINE void dif8_twiddle_and_butterfly_forward(
+    __m256d x0r, __m256d x0i,
+    __m256d x1r, __m256d x1i,
+    __m256d x2r, __m256d x2i,
+    __m256d x3r, __m256d x3i,
+    __m256d x4r, __m256d x4i,
+    __m256d x5r, __m256d x5i,
+    __m256d x6r, __m256d x6i,
+    __m256d x7r, __m256d x7i,
+    const __m256d *RESTRICT tw_r,
+    const __m256d *RESTRICT tw_i,
+    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
+    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
+    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
+    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i,
+    __m256d *RESTRICT y4r, __m256d *RESTRICT y4i,
+    __m256d *RESTRICT y5r, __m256d *RESTRICT y5i,
+    __m256d *RESTRICT y6r, __m256d *RESTRICT y6i,
+    __m256d *RESTRICT y7r, __m256d *RESTRICT y7i)
 {
-    _mm256_store_pd(&out_re[0 * K + k], y0r);
-    _mm256_store_pd(&out_im[0 * K + k], y0i);
-    _mm256_store_pd(&out_re[4 * K + k], y4r);
-    _mm256_store_pd(&out_im[4 * K + k], y4i);
+    __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+    __m256d t5r, t5i, t6r, t6i, t7r, t7i;
+
+    cmul_v256(x1r, x1i, tw_r[0], tw_i[0], &t1r, &t1i);
+    cmul_v256(x2r, x2i, tw_r[1], tw_i[1], &t2r, &t2i);
+    cmul_v256(x3r, x3i, tw_r[2], tw_i[2], &t3r, &t3i);
+    cmul_v256(x4r, x4i, tw_r[3], tw_i[3], &t4r, &t4i);
+    cmul_v256(x5r, x5i, tw_r[4], tw_i[4], &t5r, &t5i);
+    cmul_v256(x6r, x6i, tw_r[5], tw_i[5], &t6r, &t6i);
+    cmul_v256(x7r, x7i, tw_r[6], tw_i[6], &t7r, &t7i);
+
+    radix8_dif_core_forward_avx2(
+        x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+        t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
 }
 
 /**
- * @brief Emit pair (Y1, Y5) from radix-8 DIF - FORWARD
+ * @brief Apply 7 stage twiddles and compute radix-8 DIF butterfly - BACKWARD
  */
 TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_emit_pair_15_forward_avx2(
-    __m256d y1r, __m256d y1i,
-    __m256d y5r, __m256d y5i,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    size_t K, size_t k)
+static FORCE_INLINE void dif8_twiddle_and_butterfly_backward(
+    __m256d x0r, __m256d x0i,
+    __m256d x1r, __m256d x1i,
+    __m256d x2r, __m256d x2i,
+    __m256d x3r, __m256d x3i,
+    __m256d x4r, __m256d x4i,
+    __m256d x5r, __m256d x5i,
+    __m256d x6r, __m256d x6i,
+    __m256d x7r, __m256d x7i,
+    const __m256d *RESTRICT tw_r,
+    const __m256d *RESTRICT tw_i,
+    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
+    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
+    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
+    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i,
+    __m256d *RESTRICT y4r, __m256d *RESTRICT y4i,
+    __m256d *RESTRICT y5r, __m256d *RESTRICT y5i,
+    __m256d *RESTRICT y6r, __m256d *RESTRICT y6i,
+    __m256d *RESTRICT y7r, __m256d *RESTRICT y7i)
 {
-    _mm256_store_pd(&out_re[1 * K + k], y1r);
-    _mm256_store_pd(&out_im[1 * K + k], y1i);
-    _mm256_store_pd(&out_re[5 * K + k], y5r);
-    _mm256_store_pd(&out_im[5 * K + k], y5i);
-}
+    __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
+    __m256d t5r, t5i, t6r, t6i, t7r, t7i;
 
-/**
- * @brief Emit pair (Y2, Y6) from radix-8 DIF - FORWARD
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_emit_pair_26_forward_avx2(
-    __m256d y2r, __m256d y2i,
-    __m256d y6r, __m256d y6i,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    size_t K, size_t k)
-{
-    _mm256_store_pd(&out_re[2 * K + k], y2r);
-    _mm256_store_pd(&out_im[2 * K + k], y2i);
-    _mm256_store_pd(&out_re[6 * K + k], y6r);
-    _mm256_store_pd(&out_im[6 * K + k], y6i);
-}
+    cmul_v256(x1r, x1i, tw_r[0], tw_i[0], &t1r, &t1i);
+    cmul_v256(x2r, x2i, tw_r[1], tw_i[1], &t2r, &t2i);
+    cmul_v256(x3r, x3i, tw_r[2], tw_i[2], &t3r, &t3i);
+    cmul_v256(x4r, x4i, tw_r[3], tw_i[3], &t4r, &t4i);
+    cmul_v256(x5r, x5i, tw_r[4], tw_i[4], &t5r, &t5i);
+    cmul_v256(x6r, x6i, tw_r[5], tw_i[5], &t6r, &t6i);
+    cmul_v256(x7r, x7i, tw_r[6], tw_i[6], &t7r, &t7i);
 
-/**
- * @brief Emit pair (Y3, Y7) from radix-8 DIF - FORWARD
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_emit_pair_37_forward_avx2(
-    __m256d y3r, __m256d y3i,
-    __m256d y7r, __m256d y7i,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    size_t K, size_t k)
-{
-    _mm256_store_pd(&out_re[3 * K + k], y3r);
-    _mm256_store_pd(&out_im[3 * K + k], y3i);
-    _mm256_store_pd(&out_re[7 * K + k], y7r);
-    _mm256_store_pd(&out_im[7 * K + k], y7i);
-}
-
-/**
- * @brief Emit pair (Y0, Y4) - BACKWARD
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_emit_pair_04_backward_avx2(
-    __m256d y0r, __m256d y0i,
-    __m256d y4r, __m256d y4i,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    size_t K, size_t k)
-{
-    _mm256_store_pd(&out_re[0 * K + k], y0r);
-    _mm256_store_pd(&out_im[0 * K + k], y0i);
-    _mm256_store_pd(&out_re[4 * K + k], y4r);
-    _mm256_store_pd(&out_im[4 * K + k], y4i);
-}
-
-/**
- * @brief Emit pair (Y1, Y5) - BACKWARD
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_emit_pair_15_backward_avx2(
-    __m256d y1r, __m256d y1i,
-    __m256d y5r, __m256d y5i,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    size_t K, size_t k)
-{
-    _mm256_store_pd(&out_re[1 * K + k], y1r);
-    _mm256_store_pd(&out_im[1 * K + k], y1i);
-    _mm256_store_pd(&out_re[5 * K + k], y5r);
-    _mm256_store_pd(&out_im[5 * K + k], y5i);
-}
-
-/**
- * @brief Emit pair (Y2, Y6) - BACKWARD
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_emit_pair_26_backward_avx2(
-    __m256d y2r, __m256d y2i,
-    __m256d y6r, __m256d y6i,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    size_t K, size_t k)
-{
-    _mm256_store_pd(&out_re[2 * K + k], y2r);
-    _mm256_store_pd(&out_im[2 * K + k], y2i);
-    _mm256_store_pd(&out_re[6 * K + k], y6r);
-    _mm256_store_pd(&out_im[6 * K + k], y6i);
-}
-
-/**
- * @brief Emit pair (Y3, Y7) - BACKWARD
- */
-TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_emit_pair_37_backward_avx2(
-    __m256d y3r, __m256d y3i,
-    __m256d y7r, __m256d y7i,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    size_t K, size_t k)
-{
-    _mm256_store_pd(&out_re[3 * K + k], y3r);
-    _mm256_store_pd(&out_im[3 * K + k], y3i);
-    _mm256_store_pd(&out_re[7 * K + k], y7r);
-    _mm256_store_pd(&out_im[7 * K + k], y7i);
+    radix8_dif_core_backward_avx2(
+        x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
+        t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
+        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
 }
 
 //==============================================================================
-// RADIX-8 DIF STAGE WITH MULTI-MODE TWIDDLES - FORWARD
+// DIF8 STORE HELPERS (two-wave emission)
 //==============================================================================
 
 /**
- * @brief Radix-8 DIF stage with multi-mode twiddles - FORWARD
- * 
- * Optimizations:
+ * @brief Two-wave store: even stripes {0,2,4,6} then odd {1,3,5,7}
+ *
+ * Controls register pressure to ≤16 YMM by releasing even outputs
+ * before the odd wave needs its registers.
+ */
+#define DIF8_STORE_TWO_WAVE(ST_FN, out_re, out_im, K, k,  \
+                            y0r, y0i, y1r, y1i, y2r, y2i, \
+                            y3r, y3i, y4r, y4i, y5r, y5i, \
+                            y6r, y6i, y7r, y7i)           \
+    do                                                    \
+    {                                                     \
+        /* Wave A: even outputs */                        \
+        ST_FN(&(out_re)[0 * (K) + (k)], y0r);             \
+        ST_FN(&(out_im)[0 * (K) + (k)], y0i);             \
+        ST_FN(&(out_re)[2 * (K) + (k)], y2r);             \
+        ST_FN(&(out_im)[2 * (K) + (k)], y2i);             \
+        ST_FN(&(out_re)[4 * (K) + (k)], y4r);             \
+        ST_FN(&(out_im)[4 * (K) + (k)], y4i);             \
+        ST_FN(&(out_re)[6 * (K) + (k)], y6r);             \
+        ST_FN(&(out_im)[6 * (K) + (k)], y6i);             \
+        /* Wave B: odd outputs */                         \
+        ST_FN(&(out_re)[1 * (K) + (k)], y1r);             \
+        ST_FN(&(out_im)[1 * (K) + (k)], y1i);             \
+        ST_FN(&(out_re)[3 * (K) + (k)], y3r);             \
+        ST_FN(&(out_im)[3 * (K) + (k)], y3i);             \
+        ST_FN(&(out_re)[5 * (K) + (k)], y5r);             \
+        ST_FN(&(out_im)[5 * (K) + (k)], y5i);             \
+        ST_FN(&(out_re)[7 * (K) + (k)], y7r);             \
+        ST_FN(&(out_im)[7 * (K) + (k)], y7i);             \
+    } while (0)
+
+//==============================================================================
+// DIF8 INPUT LOADER (8 stripes)
+//==============================================================================
+
+/**
+ * @brief Load 8 input stripes at offset k
+ */
+#define DIF8_LOAD_INPUTS(in_re, in_im, K, k,           \
+                         x0r, x0i, x1r, x1i, x2r, x2i, \
+                         x3r, x3i, x4r, x4i, x5r, x5i, \
+                         x6r, x6i, x7r, x7i)           \
+    do                                                 \
+    {                                                  \
+        x0r = _mm256_load_pd(&(in_re)[0 * (K) + (k)]); \
+        x0i = _mm256_load_pd(&(in_im)[0 * (K) + (k)]); \
+        x1r = _mm256_load_pd(&(in_re)[1 * (K) + (k)]); \
+        x1i = _mm256_load_pd(&(in_im)[1 * (K) + (k)]); \
+        x2r = _mm256_load_pd(&(in_re)[2 * (K) + (k)]); \
+        x2i = _mm256_load_pd(&(in_im)[2 * (K) + (k)]); \
+        x3r = _mm256_load_pd(&(in_re)[3 * (K) + (k)]); \
+        x3i = _mm256_load_pd(&(in_im)[3 * (K) + (k)]); \
+        x4r = _mm256_load_pd(&(in_re)[4 * (K) + (k)]); \
+        x4i = _mm256_load_pd(&(in_im)[4 * (K) + (k)]); \
+        x5r = _mm256_load_pd(&(in_re)[5 * (K) + (k)]); \
+        x5i = _mm256_load_pd(&(in_im)[5 * (K) + (k)]); \
+        x6r = _mm256_load_pd(&(in_re)[6 * (K) + (k)]); \
+        x6i = _mm256_load_pd(&(in_im)[6 * (K) + (k)]); \
+        x7r = _mm256_load_pd(&(in_re)[7 * (K) + (k)]); \
+        x7i = _mm256_load_pd(&(in_im)[7 * (K) + (k)]); \
+    } while (0)
+
+//==============================================================================
+// RADIX-8 DIF STAGE - GENERIC TEMPLATE (reduces forward/backward duplication)
+//==============================================================================
+
+/**
+ * @brief Radix-8 DIF stage with multi-mode twiddles — parameterized direction
+ *
+ * Optimizations preserved:
  * ✅ U=2 software pipelining (overlapped loads/compute/stores)
  * ✅ Two-wave stores: {0,2,4,6} then {1,3,5,7} (≤16 YMM live)
  * ✅ Multi-mode twiddles (BLOCKED8/BLOCKED4/RECURRENCE)
  * ✅ Adaptive NT stores (>LLC/2 threshold)
  * ✅ Adaptive prefetch distance (8/16/24 based on K)
- * 
+ * ✅ Full 8-stream input prefetch (was 2-stream, now covers all)
+ *
  * Peak register usage: ~16 YMM (controlled via two-wave emission)
- * 
- * @param K Number of samples per stripe (must be multiple of 4)
- * @param in_re Input real [8 stripes][K]
- * @param in_im Input imag [8 stripes][K]
- * @param out_re Output real [8 stripes][K]
- * @param out_im Output imag [8 stripes][K]
- * @param tw Multi-mode twiddle structure
+ *
+ * @param direction 0 = forward, 1 = backward
  */
 TARGET_AVX2_FMA
 NO_UNROLL_LOOPS
-static void radix8_dif_stage_multimode_forward_avx2(
+static void radix8_dif_stage_multimode_avx2(
     size_t K,
     const double *RESTRICT in_re,
     const double *RESTRICT in_im,
     double *RESTRICT out_re,
     double *RESTRICT out_im,
-    const tw_stage8_t *RESTRICT tw)
+    const tw_stage8_t *RESTRICT tw,
+    int direction)
 {
     const size_t step = 4;
     const size_t prefetch_dist = pick_prefetch_dist_dif8(K);
-    
+
     // Adaptive NT store decision (only for final output, temp stays hot)
     const size_t total_bytes = K * 8 * 2 * sizeof(double);
     const int use_nt = (total_bytes >= (RADIX32_STREAM_THRESHOLD_KB * 1024));
-    
-#define ST_STREAM(p, v) (use_nt ? _mm256_stream_pd(p, v) : _mm256_store_pd(p, v))
-    
-    const __m256d signbit = signbit_pd();
-    
-    switch (tw->mode) {
-    
+
+    // Function pointer for twiddle+butterfly (forward or backward)
+    // Note: using direct branching instead of fptr to preserve inlining
+    // through FORCE_INLINE. The direction branch is outside the hot loop.
+
+    switch (tw->mode)
+    {
+
     //==========================================================================
     case TW_MODE_BLOCKED8:
-    //==========================================================================
-    {
-        const tw_blocked8_t *b8 = &tw->b8;
-        
-        if (K < 8) {
-            // Fallback: not enough iterations for U=2 pipelining
-            goto blocked8_simple;
-        }
-        
-        //======================================================================
-        // PROLOGUE: Load first iteration (nx prefix = "next")
-        //======================================================================
-        tw8_vecs_t nT;
-        load_tw_blocked8_k4(b8, 0, &nT);
-        
-        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
-        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
-        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
-        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
-        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
-        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
-        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
-        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
-        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
-        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
-        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
-        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
-        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
-        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
-        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
-        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
-        
-        //======================================================================
-        // STEADY-STATE U=2 LOOP
-        //======================================================================
-#pragma GCC unroll 1
-        for (size_t k = 0; k + 4 < K; k += step) {
-            //==================================================================
-            // CONSUME: Current iteration uses nx* from previous
-            //==================================================================
-            tw8_vecs_t T = nT;
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            const size_t kn = k + 4;
-            
-            //==================================================================
-            // STAGE 1: Apply stage twiddles (x1..x7)
-            //==================================================================
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            
-            //==================================================================
-            // STAGE 2: Load next iteration inputs (first half)
-            //==================================================================
-            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
-            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
-            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
-            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
-            
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            //==================================================================
-            // STAGE 3: Radix-8 DIF butterfly
-            //==================================================================
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_forward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            //==================================================================
-            // STAGE 4: Load next iteration inputs (second half)
-            //==================================================================
-            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
-            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
-            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
-            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
-            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
-            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
-            
-            //==================================================================
-            // STAGE 5: Store outputs - WAVE A (even: 0, 2, 4, 6)
-            //==================================================================
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            //==================================================================
-            // STAGE 6: Load remaining next inputs
-            //==================================================================
-            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
-            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
-            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
-            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
-            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
-            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
-            
-            //==================================================================
-            // STAGE 7: Store outputs - WAVE B (odd: 1, 3, 5, 7)
-            //==================================================================
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-            
-            //==================================================================
-            // STAGE 8: Load next twiddles
-            //==================================================================
-            load_tw_blocked8_k4(b8, kn, &nT);
-            
-            //==================================================================
-            // STAGE 9: Prefetch (adaptive distance)
-            //==================================================================
-            if (kn + prefetch_dist < K) {
-                prefetch_tw_blocked8(b8, kn, prefetch_dist);
-                
-                _mm_prefetch((const char *)&in_re[0 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_im[0 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_re[4 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_im[4 * K + kn + prefetch_dist], _MM_HINT_T0);
-            }
-        }
-        
-        //======================================================================
-        // EPILOGUE: Final iteration (no next loads)
-        //======================================================================
+        //==========================================================================
         {
-            size_t k = K - 4;
-            tw8_vecs_t T = nT;
-            
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_forward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            // Two-wave stores
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-        }
-        
-        goto done_blocked8;
-        
-blocked8_simple:
-        // Simple loop for K < 8 (no U=2 pipelining)
+            const tw_blocked8_t *b8 = &tw->b8;
+
+            if (K < 8)
+            {
+                // Simple loop for K < 8 (no U=2 pipelining)
 #pragma GCC unroll 1
-        for (size_t k = 0; k < K; k += step) {
-            tw8_vecs_t T;
-            load_tw_blocked8_k4(b8, k, &T);
-            
-            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
-            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
-            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
-            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
-            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
-            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
-            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
-            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
-            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
-            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
-            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
-            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
-            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
-            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
-            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
-            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_forward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
+                for (size_t k = 0; k < K; k += step)
+                {
+                    tw8_vecs_t T;
+                    load_tw_blocked8_k4(b8, k, &T);
+
+                    __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
+                    __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
+                    DIF8_LOAD_INPUTS(in_re, in_im, K, k,
+                                     x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                                     x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i);
+
+                    __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                    __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                    if (direction == 0)
+                        dif8_twiddle_and_butterfly_forward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            T.r, T.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                    else
+                        dif8_twiddle_and_butterfly_backward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            T.r, T.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                    if (use_nt)
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                    else
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                }
+                break;
+            }
+
+            //======================================================================
+            // PROLOGUE: Load first iteration
+            //======================================================================
+            tw8_vecs_t nT;
+            load_tw_blocked8_k4(b8, 0, &nT);
+
+            __m256d nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i;
+            __m256d nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i;
+            DIF8_LOAD_INPUTS(in_re, in_im, K, 0,
+                             nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                             nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+            //======================================================================
+            // STEADY-STATE U=2 LOOP
+            //======================================================================
+#pragma GCC unroll 1
+            for (size_t k = 0; k + 4 < K; k += step)
+            {
+                tw8_vecs_t T = nT;
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                const size_t kn = k + 4;
+
+                // Twiddle + butterfly
+                __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                if (direction == 0)
+                    dif8_twiddle_and_butterfly_forward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                else
+                    dif8_twiddle_and_butterfly_backward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                // Load next inputs
+                DIF8_LOAD_INPUTS(in_re, in_im, K, kn,
+                                 nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                                 nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+                // Two-wave stores
+                if (use_nt)
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+
+                // Load next twiddles
+                load_tw_blocked8_k4(b8, kn, &nT);
+
+                // Prefetch: twiddles + all 8 input streams
+                prefetch_tw_blocked8(b8, kn, prefetch_dist);
+                prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
+            }
+
+            //======================================================================
+            // EPILOGUE: Final iteration
+            //======================================================================
+            {
+                size_t k = K - 4;
+                tw8_vecs_t T = nT;
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                if (direction == 0)
+                    dif8_twiddle_and_butterfly_forward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                else
+                    dif8_twiddle_and_butterfly_backward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                if (use_nt)
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+            }
+            break;
         }
-        
-done_blocked8:
-        break;
-    }
-    
+
     //==========================================================================
     case TW_MODE_BLOCKED4:
-    //==========================================================================
-    {
-        const tw_blocked4_t *b4 = &tw->b4;
-        
-        if (K < 8) {
-            goto blocked4_simple;
-        }
-        
-        // PROLOGUE
-        tw8_vecs_t nT;
-        load_tw_blocked4_k4(b4, 0, &nT);
-        
-        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
-        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
-        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
-        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
-        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
-        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
-        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
-        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
-        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
-        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
-        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
-        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
-        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
-        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
-        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
-        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
-        
-        // STEADY-STATE U=2 LOOP
-#pragma GCC unroll 1
-        for (size_t k = 0; k + 4 < K; k += step) {
-            tw8_vecs_t T = nT;
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            const size_t kn = k + 4;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            
-            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
-            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
-            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
-            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
-            
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_forward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
-            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
-            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
-            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
-            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
-            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
-            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
-            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
-            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
-            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
-            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-            
-            load_tw_blocked4_k4(b4, kn, &nT);
-            
-            if (kn + prefetch_dist < K) {
-                prefetch_tw_blocked4(b4, kn, prefetch_dist);
-                _mm_prefetch((const char *)&in_re[0 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_im[0 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_re[4 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_im[4 * K + kn + prefetch_dist], _MM_HINT_T0);
-            }
-        }
-        
-        // EPILOGUE
+        //==========================================================================
         {
-            size_t k = K - 4;
-            tw8_vecs_t T = nT;
-            
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_forward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-        }
-        
-        goto done_blocked4;
-        
-blocked4_simple:
+            const tw_blocked4_t *b4 = &tw->b4;
+
+            if (K < 8)
+            {
 #pragma GCC unroll 1
-        for (size_t k = 0; k < K; k += step) {
-            tw8_vecs_t T;
-            load_tw_blocked4_k4(b4, k, &T);
-            
-            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
-            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
-            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
-            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
-            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
-            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
-            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
-            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
-            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
-            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
-            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
-            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
-            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
-            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
-            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
-            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_forward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
+                for (size_t k = 0; k < K; k += step)
+                {
+                    tw8_vecs_t T;
+                    load_tw_blocked4_k4(b4, k, &T);
+
+                    __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
+                    __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
+                    DIF8_LOAD_INPUTS(in_re, in_im, K, k,
+                                     x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                                     x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i);
+
+                    __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                    __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                    if (direction == 0)
+                        dif8_twiddle_and_butterfly_forward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            T.r, T.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                    else
+                        dif8_twiddle_and_butterfly_backward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            T.r, T.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                    if (use_nt)
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                    else
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                }
+                break;
+            }
+
+            // PROLOGUE
+            tw8_vecs_t nT;
+            load_tw_blocked4_k4(b4, 0, &nT);
+
+            __m256d nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i;
+            __m256d nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i;
+            DIF8_LOAD_INPUTS(in_re, in_im, K, 0,
+                             nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                             nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+            // STEADY-STATE U=2 LOOP
+#pragma GCC unroll 1
+            for (size_t k = 0; k + 4 < K; k += step)
+            {
+                tw8_vecs_t T = nT;
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                const size_t kn = k + 4;
+
+                __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                if (direction == 0)
+                    dif8_twiddle_and_butterfly_forward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                else
+                    dif8_twiddle_and_butterfly_backward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                DIF8_LOAD_INPUTS(in_re, in_im, K, kn,
+                                 nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                                 nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+                if (use_nt)
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+
+                load_tw_blocked4_k4(b4, kn, &nT);
+
+                prefetch_tw_blocked4(b4, kn, prefetch_dist);
+                prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
+            }
+
+            // EPILOGUE
+            {
+                size_t k = K - 4;
+                tw8_vecs_t T = nT;
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                if (direction == 0)
+                    dif8_twiddle_and_butterfly_forward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                else
+                    dif8_twiddle_and_butterfly_backward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        T.r, T.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                if (use_nt)
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+            }
+            break;
         }
-        
-done_blocked4:
-        break;
-    }
-    
+
     //==========================================================================
     case TW_MODE_RECURRENCE:
-    //==========================================================================
-    {
-        const tw_recurrence_t *rec = &tw->rec;
-        const size_t tile_len = rec->tile_len;
-        rec8_vecs_t S;
-        
-        if (K < 8) {
-            goto recurrence_simple;
-        }
-        
-        // Initialize for first tile
-        rec8_tile_init(rec, 0, &S);
-        
-        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
-        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
-        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
-        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
-        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
-        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
-        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
-        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
-        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
-        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
-        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
-        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
-        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
-        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
-        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
-        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
-        
-#pragma GCC unroll 1
-        for (size_t k = 0; k + 4 < K; k += step) {
-            // Refresh at tile boundaries
-            if ((k % tile_len) == 0 && k > 0) {
-                rec8_tile_init(rec, k, &S);
-                if (k + tile_len < K) {
-                    prefetch_rec8_next_tile(rec, k + tile_len);
-                }
-            }
-            
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            const size_t kn = k + 4;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
-            
-            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
-            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
-            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
-            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
-            
-            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_forward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
-            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
-            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
-            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
-            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
-            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
-            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
-            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
-            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
-            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
-            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-            
-            rec8_step_advance(&S);
-        }
-        
-        // EPILOGUE
+        //==========================================================================
         {
-            size_t k = K - 4;
-            
-            if ((k % tile_len) == 0 && k > 0) {
-                rec8_tile_init(rec, k, &S);
-            }
-            
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_forward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-        }
-        
-        goto done_recurrence;
-        
-recurrence_simple:
+            const tw_recurrence_t *rec = &tw->rec;
+            const size_t tile_len = rec->tile_len;
+            rec8_vecs_t S;
+
+            if (K < 8)
+            {
 #pragma GCC unroll 1
-        for (size_t k = 0; k < K; k += step) {
-            if ((k % tile_len) == 0) {
-                rec8_tile_init(rec, k, &S);
-                if (k + tile_len < K) {
-                    prefetch_rec8_next_tile(rec, k + tile_len);
+                for (size_t k = 0; k < K; k += step)
+                {
+                    if ((k % tile_len) == 0)
+                    {
+                        rec8_tile_init(rec, k, &S);
+                        if (k + tile_len < K)
+                            prefetch_rec8_next_tile(rec, k + tile_len);
+                    }
+
+                    __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
+                    __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
+                    DIF8_LOAD_INPUTS(in_re, in_im, K, k,
+                                     x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                                     x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i);
+
+                    __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                    __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                    if (direction == 0)
+                        dif8_twiddle_and_butterfly_forward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            S.r, S.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                    else
+                        dif8_twiddle_and_butterfly_backward(
+                            x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                            x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                            S.r, S.i,
+                            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                            &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                    if (use_nt)
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+                    else
+                    {
+                        DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                            y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                            y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                    }
+
+                    rec8_step_advance(&S);
+                }
+                break;
+            }
+
+            // Initialize for first tile
+            rec8_tile_init(rec, 0, &S);
+
+            __m256d nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i;
+            __m256d nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i;
+            DIF8_LOAD_INPUTS(in_re, in_im, K, 0,
+                             nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                             nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+#pragma GCC unroll 1
+            for (size_t k = 0; k + 4 < K; k += step)
+            {
+                // Refresh at tile boundaries
+                if ((k % tile_len) == 0 && k > 0)
+                {
+                    rec8_tile_init(rec, k, &S);
+                    if (k + tile_len < K)
+                        prefetch_rec8_next_tile(rec, k + tile_len);
+                }
+
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                const size_t kn = k + 4;
+
+                __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                if (direction == 0)
+                    dif8_twiddle_and_butterfly_forward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        S.r, S.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                else
+                    dif8_twiddle_and_butterfly_backward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        S.r, S.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                // Load next inputs
+                DIF8_LOAD_INPUTS(in_re, in_im, K, kn,
+                                 nx0r, nx0i, nx1r, nx1i, nx2r, nx2i, nx3r, nx3i,
+                                 nx4r, nx4i, nx5r, nx5i, nx6r, nx6i, nx7r, nx7i);
+
+                // Two-wave stores
+                if (use_nt)
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+
+                rec8_step_advance(&S);
+
+                // Prefetch all 8 input streams
+                prefetch_dif8_inputs(in_re, in_im, K, kn, prefetch_dist);
+            }
+
+            // EPILOGUE
+            {
+                size_t k = K - 4;
+
+                if ((k % tile_len) == 0 && k > 0)
+                    rec8_tile_init(rec, k, &S);
+
+                __m256d x0r = nx0r, x0i = nx0i;
+                __m256d x1r = nx1r, x1i = nx1i;
+                __m256d x2r = nx2r, x2i = nx2i;
+                __m256d x3r = nx3r, x3i = nx3i;
+                __m256d x4r = nx4r, x4i = nx4i;
+                __m256d x5r = nx5r, x5i = nx5i;
+                __m256d x6r = nx6r, x6i = nx6i;
+                __m256d x7r = nx7r, x7i = nx7i;
+
+                __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
+                __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
+
+                if (direction == 0)
+                    dif8_twiddle_and_butterfly_forward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        S.r, S.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+                else
+                    dif8_twiddle_and_butterfly_backward(
+                        x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i,
+                        x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i,
+                        S.r, S.i,
+                        &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
+                        &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
+
+                if (use_nt)
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_stream_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
+                }
+                else
+                {
+                    DIF8_STORE_TWO_WAVE(_mm256_store_pd, out_re, out_im, K, k,
+                                        y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
+                                        y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
                 }
             }
-            
-            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
-            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
-            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
-            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
-            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
-            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
-            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
-            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
-            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
-            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
-            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
-            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
-            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
-            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
-            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
-            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_forward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-            
-            rec8_step_advance(&S);
+            break;
         }
-        
-done_recurrence:
-        break;
-    }
-    
+
     } // end switch
-    
-    if (use_nt) {
+
+    if (use_nt)
+    {
         _mm_sfence();
     }
-    
-#undef ST_STREAM
-}
-
-//==============================================================================
-// RADIX-8 DIF STAGE WITH MULTI-MODE TWIDDLES - BACKWARD
-//==============================================================================
-
-/**
- * @brief Radix-8 DIF stage with multi-mode twiddles - BACKWARD
- * 
- * Identical structure to forward, uses backward butterfly core.
- * 
- * Optimizations:
- * ✅ U=2 software pipelining (overlapped loads/compute/stores)
- * ✅ Two-wave stores: {0,2,4,6} then {1,3,5,7} (≤16 YMM live)
- * ✅ Multi-mode twiddles (BLOCKED8/BLOCKED4/RECURRENCE)
- * ✅ Adaptive NT stores (>LLC/2 threshold)
- * ✅ Adaptive prefetch distance (8/16/24 based on K)
- */
-TARGET_AVX2_FMA
-NO_UNROLL_LOOPS
-static void radix8_dif_stage_multimode_backward_avx2(
-    size_t K,
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    const tw_stage8_t *RESTRICT tw)
-{
-    const size_t step = 4;
-    const size_t prefetch_dist = pick_prefetch_dist_dif8(K);
-    
-    const size_t total_bytes = K * 8 * 2 * sizeof(double);
-    const int use_nt = (total_bytes >= (RADIX32_STREAM_THRESHOLD_KB * 1024));
-    
-#define ST_STREAM(p, v) (use_nt ? _mm256_stream_pd(p, v) : _mm256_store_pd(p, v))
-    
-    const __m256d signbit = signbit_pd();
-    
-    switch (tw->mode) {
-    
-    //==========================================================================
-    case TW_MODE_BLOCKED8:
-    //==========================================================================
-    {
-        const tw_blocked8_t *b8 = &tw->b8;
-        
-        if (K < 8) {
-            goto blocked8_simple;
-        }
-        
-        //======================================================================
-        // PROLOGUE
-        //======================================================================
-        tw8_vecs_t nT;
-        load_tw_blocked8_k4(b8, 0, &nT);
-        
-        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
-        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
-        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
-        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
-        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
-        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
-        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
-        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
-        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
-        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
-        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
-        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
-        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
-        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
-        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
-        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
-        
-        //======================================================================
-        // STEADY-STATE U=2 LOOP
-        //======================================================================
-#pragma GCC unroll 1
-        for (size_t k = 0; k + 4 < K; k += step) {
-            tw8_vecs_t T = nT;
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            const size_t kn = k + 4;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            
-            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
-            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
-            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
-            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
-            
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_backward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
-            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
-            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
-            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
-            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
-            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
-            
-            // Wave A: even outputs
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
-            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
-            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
-            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
-            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
-            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
-            
-            // Wave B: odd outputs
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-            
-            load_tw_blocked8_k4(b8, kn, &nT);
-            
-            if (kn + prefetch_dist < K) {
-                prefetch_tw_blocked8(b8, kn, prefetch_dist);
-                _mm_prefetch((const char *)&in_re[0 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_im[0 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_re[4 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_im[4 * K + kn + prefetch_dist], _MM_HINT_T0);
-            }
-        }
-        
-        //======================================================================
-        // EPILOGUE
-        //======================================================================
-        {
-            size_t k = K - 4;
-            tw8_vecs_t T = nT;
-            
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_backward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-        }
-        
-        goto done_blocked8;
-        
-blocked8_simple:
-#pragma GCC unroll 1
-        for (size_t k = 0; k < K; k += step) {
-            tw8_vecs_t T;
-            load_tw_blocked8_k4(b8, k, &T);
-            
-            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
-            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
-            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
-            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
-            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
-            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
-            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
-            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
-            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
-            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
-            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
-            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
-            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
-            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
-            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
-            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_backward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-        }
-        
-done_blocked8:
-        break;
-    }
-    
-    //==========================================================================
-    case TW_MODE_BLOCKED4:
-    //==========================================================================
-    {
-        const tw_blocked4_t *b4 = &tw->b4;
-        
-        if (K < 8) {
-            goto blocked4_simple;
-        }
-        
-        tw8_vecs_t nT;
-        load_tw_blocked4_k4(b4, 0, &nT);
-        
-        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
-        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
-        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
-        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
-        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
-        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
-        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
-        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
-        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
-        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
-        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
-        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
-        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
-        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
-        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
-        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
-        
-#pragma GCC unroll 1
-        for (size_t k = 0; k + 4 < K; k += step) {
-            tw8_vecs_t T = nT;
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            const size_t kn = k + 4;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            
-            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
-            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
-            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
-            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
-            
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_backward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
-            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
-            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
-            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
-            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
-            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
-            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
-            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
-            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
-            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
-            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-            
-            load_tw_blocked4_k4(b4, kn, &nT);
-            
-            if (kn + prefetch_dist < K) {
-                prefetch_tw_blocked4(b4, kn, prefetch_dist);
-                _mm_prefetch((const char *)&in_re[0 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_im[0 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_re[4 * K + kn + prefetch_dist], _MM_HINT_T0);
-                _mm_prefetch((const char *)&in_im[4 * K + kn + prefetch_dist], _MM_HINT_T0);
-            }
-        }
-        
-        {
-            size_t k = K - 4;
-            tw8_vecs_t T = nT;
-            
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_backward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-        }
-        
-        goto done_blocked4;
-        
-blocked4_simple:
-#pragma GCC unroll 1
-        for (size_t k = 0; k < K; k += step) {
-            tw8_vecs_t T;
-            load_tw_blocked4_k4(b4, k, &T);
-            
-            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
-            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
-            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
-            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
-            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
-            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
-            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
-            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
-            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
-            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
-            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
-            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
-            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
-            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
-            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
-            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, T.r[0], T.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, T.r[1], T.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, T.r[2], T.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, T.r[3], T.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, T.r[4], T.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, T.r[5], T.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, T.r[6], T.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_backward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-        }
-        
-done_blocked4:
-        break;
-    }
-    
-    //==========================================================================
-    case TW_MODE_RECURRENCE:
-    //==========================================================================
-    {
-        const tw_recurrence_t *rec = &tw->rec;
-        const size_t tile_len = rec->tile_len;
-        rec8_vecs_t S;
-        
-        if (K < 8) {
-            goto recurrence_simple;
-        }
-        
-        rec8_tile_init(rec, 0, &S);
-        
-        __m256d nx0r = _mm256_load_pd(&in_re[0 * K]);
-        __m256d nx0i = _mm256_load_pd(&in_im[0 * K]);
-        __m256d nx1r = _mm256_load_pd(&in_re[1 * K]);
-        __m256d nx1i = _mm256_load_pd(&in_im[1 * K]);
-        __m256d nx2r = _mm256_load_pd(&in_re[2 * K]);
-        __m256d nx2i = _mm256_load_pd(&in_im[2 * K]);
-        __m256d nx3r = _mm256_load_pd(&in_re[3 * K]);
-        __m256d nx3i = _mm256_load_pd(&in_im[3 * K]);
-        __m256d nx4r = _mm256_load_pd(&in_re[4 * K]);
-        __m256d nx4i = _mm256_load_pd(&in_im[4 * K]);
-        __m256d nx5r = _mm256_load_pd(&in_re[5 * K]);
-        __m256d nx5i = _mm256_load_pd(&in_im[5 * K]);
-        __m256d nx6r = _mm256_load_pd(&in_re[6 * K]);
-        __m256d nx6i = _mm256_load_pd(&in_im[6 * K]);
-        __m256d nx7r = _mm256_load_pd(&in_re[7 * K]);
-        __m256d nx7i = _mm256_load_pd(&in_im[7 * K]);
-        
-#pragma GCC unroll 1
-        for (size_t k = 0; k + 4 < K; k += step) {
-            if ((k % tile_len) == 0 && k > 0) {
-                rec8_tile_init(rec, k, &S);
-                if (k + tile_len < K) {
-                    prefetch_rec8_next_tile(rec, k + tile_len);
-                }
-            }
-            
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            const size_t kn = k + 4;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
-            
-            nx0r = _mm256_load_pd(&in_re[0 * K + kn]);
-            nx0i = _mm256_load_pd(&in_im[0 * K + kn]);
-            nx1r = _mm256_load_pd(&in_re[1 * K + kn]);
-            nx1i = _mm256_load_pd(&in_im[1 * K + kn]);
-            
-            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_backward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            nx2r = _mm256_load_pd(&in_re[2 * K + kn]);
-            nx2i = _mm256_load_pd(&in_im[2 * K + kn]);
-            nx3r = _mm256_load_pd(&in_re[3 * K + kn]);
-            nx3i = _mm256_load_pd(&in_im[3 * K + kn]);
-            nx4r = _mm256_load_pd(&in_re[4 * K + kn]);
-            nx4i = _mm256_load_pd(&in_im[4 * K + kn]);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            nx5r = _mm256_load_pd(&in_re[5 * K + kn]);
-            nx5i = _mm256_load_pd(&in_im[5 * K + kn]);
-            nx6r = _mm256_load_pd(&in_re[6 * K + kn]);
-            nx6i = _mm256_load_pd(&in_im[6 * K + kn]);
-            nx7r = _mm256_load_pd(&in_re[7 * K + kn]);
-            nx7i = _mm256_load_pd(&in_im[7 * K + kn]);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-            
-            rec8_step_advance(&S);
-        }
-        
-        {
-            size_t k = K - 4;
-            
-            if ((k % tile_len) == 0 && k > 0) {
-                rec8_tile_init(rec, k, &S);
-            }
-            
-            __m256d x0r = nx0r, x0i = nx0i;
-            __m256d x1r = nx1r, x1i = nx1i;
-            __m256d x2r = nx2r, x2i = nx2i;
-            __m256d x3r = nx3r, x3i = nx3i;
-            __m256d x4r = nx4r, x4i = nx4i;
-            __m256d x5r = nx5r, x5i = nx5i;
-            __m256d x6r = nx6r, x6i = nx6i;
-            __m256d x7r = nx7r, x7i = nx7i;
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_backward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-        }
-        
-        goto done_recurrence;
-        
-recurrence_simple:
-#pragma GCC unroll 1
-        for (size_t k = 0; k < K; k += step) {
-            if ((k % tile_len) == 0) {
-                rec8_tile_init(rec, k, &S);
-                if (k + tile_len < K) {
-                    prefetch_rec8_next_tile(rec, k + tile_len);
-                }
-            }
-            
-            __m256d x0r = _mm256_load_pd(&in_re[0 * K + k]);
-            __m256d x0i = _mm256_load_pd(&in_im[0 * K + k]);
-            __m256d x1r = _mm256_load_pd(&in_re[1 * K + k]);
-            __m256d x1i = _mm256_load_pd(&in_im[1 * K + k]);
-            __m256d x2r = _mm256_load_pd(&in_re[2 * K + k]);
-            __m256d x2i = _mm256_load_pd(&in_im[2 * K + k]);
-            __m256d x3r = _mm256_load_pd(&in_re[3 * K + k]);
-            __m256d x3i = _mm256_load_pd(&in_im[3 * K + k]);
-            __m256d x4r = _mm256_load_pd(&in_re[4 * K + k]);
-            __m256d x4i = _mm256_load_pd(&in_im[4 * K + k]);
-            __m256d x5r = _mm256_load_pd(&in_re[5 * K + k]);
-            __m256d x5i = _mm256_load_pd(&in_im[5 * K + k]);
-            __m256d x6r = _mm256_load_pd(&in_re[6 * K + k]);
-            __m256d x6i = _mm256_load_pd(&in_im[6 * K + k]);
-            __m256d x7r = _mm256_load_pd(&in_re[7 * K + k]);
-            __m256d x7i = _mm256_load_pd(&in_im[7 * K + k]);
-            
-            __m256d t1r, t1i, t2r, t2i, t3r, t3i, t4r, t4i;
-            __m256d t5r, t5i, t6r, t6i, t7r, t7i;
-            
-            cmul_v256(x1r, x1i, S.r[0], S.i[0], &t1r, &t1i);
-            cmul_v256(x2r, x2i, S.r[1], S.i[1], &t2r, &t2i);
-            cmul_v256(x3r, x3i, S.r[2], S.i[2], &t3r, &t3i);
-            cmul_v256(x4r, x4i, S.r[3], S.i[3], &t4r, &t4i);
-            cmul_v256(x5r, x5i, S.r[4], S.i[4], &t5r, &t5i);
-            cmul_v256(x6r, x6i, S.r[5], S.i[5], &t6r, &t6i);
-            cmul_v256(x7r, x7i, S.r[6], S.i[6], &t7r, &t7i);
-            
-            __m256d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-            __m256d y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i;
-            
-            radix8_dif_core_backward_avx2(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                t4r, t4i, t5r, t5i, t6r, t6i, t7r, t7i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
-                &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
-            
-            ST_STREAM(&out_re[0 * K + k], y0r);
-            ST_STREAM(&out_im[0 * K + k], y0i);
-            ST_STREAM(&out_re[2 * K + k], y2r);
-            ST_STREAM(&out_im[2 * K + k], y2i);
-            ST_STREAM(&out_re[4 * K + k], y4r);
-            ST_STREAM(&out_im[4 * K + k], y4i);
-            ST_STREAM(&out_re[6 * K + k], y6r);
-            ST_STREAM(&out_im[6 * K + k], y6i);
-            
-            ST_STREAM(&out_re[1 * K + k], y1r);
-            ST_STREAM(&out_im[1 * K + k], y1i);
-            ST_STREAM(&out_re[3 * K + k], y3r);
-            ST_STREAM(&out_im[3 * K + k], y3i);
-            ST_STREAM(&out_re[5 * K + k], y5r);
-            ST_STREAM(&out_im[5 * K + k], y5i);
-            ST_STREAM(&out_re[7 * K + k], y7r);
-            ST_STREAM(&out_im[7 * K + k], y7i);
-            
-            rec8_step_advance(&S);
-        }
-        
-done_recurrence:
-        break;
-    }
-    
-    } // end switch
-    
-    if (use_nt) {
-        _mm_sfence();
-    }
-    
-#undef ST_STREAM
 }
 
 //==============================================================================
@@ -3175,80 +2248,42 @@ done_recurrence:
 //==============================================================================
 
 /**
- * @brief Radix-8 DIF pass adapter for radix-32 - FORWARD
+ * @brief Radix-8 DIF pass adapter for radix-32
  *
  * Processes 4 bins from bin-major temp buffer.
  * Each bin combines 8 groups using radix-8 DIF with multi-mode twiddles.
+ *
+ * @param direction 0 = forward, 1 = backward
  */
 TARGET_AVX2_FMA
-static void radix8_dif_pass_for_radix32_forward_avx2(
+static void radix8_dif_pass_for_radix32_avx2(
     size_t K,
     const double *RESTRICT in_re,
     const double *RESTRICT in_im,
     double *RESTRICT out_re,
     double *RESTRICT out_im,
-    const tw_stage8_t *RESTRICT tw)
+    const tw_stage8_t *RESTRICT tw,
+    int direction)
 {
     // Process bin 0: groups A[0]..H[0] → output stripes 0..7
-    radix8_dif_stage_multimode_forward_avx2(
-        K,
-        &in_re[0 * K],
-        &in_im[0 * K],
-        &out_re[0 * K],
-        &out_im[0 * K],
-        tw);
+    radix8_dif_stage_multimode_avx2(
+        K, &in_re[0 * K], &in_im[0 * K],
+        &out_re[0 * K], &out_im[0 * K], tw, direction);
 
     // Process bin 1: groups A[1]..H[1] → output stripes 8..15
-    radix8_dif_stage_multimode_forward_avx2(
-        K,
-        &in_re[8 * K],
-        &in_im[8 * K],
-        &out_re[8 * K],
-        &out_im[8 * K],
-        tw);
+    radix8_dif_stage_multimode_avx2(
+        K, &in_re[8 * K], &in_im[8 * K],
+        &out_re[8 * K], &out_im[8 * K], tw, direction);
 
     // Process bin 2: groups A[2]..H[2] → output stripes 16..23
-    radix8_dif_stage_multimode_forward_avx2(
-        K,
-        &in_re[16 * K],
-        &in_im[16 * K],
-        &out_re[16 * K],
-        &out_im[16 * K],
-        tw);
+    radix8_dif_stage_multimode_avx2(
+        K, &in_re[16 * K], &in_im[16 * K],
+        &out_re[16 * K], &out_im[16 * K], tw, direction);
 
     // Process bin 3: groups A[3]..H[3] → output stripes 24..31
-    radix8_dif_stage_multimode_forward_avx2(
-        K,
-        &in_re[24 * K],
-        &in_im[24 * K],
-        &out_re[24 * K],
-        &out_im[24 * K],
-        tw);
-}
-
-/**
- * @brief Radix-8 DIF pass adapter - BACKWARD
- */
-TARGET_AVX2_FMA
-static void radix8_dif_pass_for_radix32_backward_avx2(
-    size_t K,
-    const double *RESTRICT in_re,
-    const double *RESTRICT in_im,
-    double *RESTRICT out_re,
-    double *RESTRICT out_im,
-    const tw_stage8_t *RESTRICT tw)
-{
-    radix8_dif_stage_multimode_backward_avx2(
-        K, &in_re[0 * K], &in_im[0 * K], &out_re[0 * K], &out_im[0 * K], tw);
-
-    radix8_dif_stage_multimode_backward_avx2(
-        K, &in_re[8 * K], &in_im[8 * K], &out_re[8 * K], &out_im[8 * K], tw);
-
-    radix8_dif_stage_multimode_backward_avx2(
-        K, &in_re[16 * K], &in_im[16 * K], &out_re[16 * K], &out_im[16 * K], tw);
-
-    radix8_dif_stage_multimode_backward_avx2(
-        K, &in_re[24 * K], &in_im[24 * K], &out_re[24 * K], &out_im[24 * K], tw);
+    radix8_dif_stage_multimode_avx2(
+        K, &in_re[24 * K], &in_im[24 * K],
+        &out_re[24 * K], &out_im[24 * K], tw, direction);
 }
 
 //==============================================================================
@@ -3303,13 +2338,8 @@ static void radix32_stage_forward_avx2(
     //==========================================================================
     // PASS 2: Radix-8 DIF on 4 bins with multi-mode twiddles
     //==========================================================================
-    radix8_dif_pass_for_radix32_forward_avx2(
-        K,
-        temp_re,
-        temp_im,
-        out_re,
-        out_im,
-        pass2_tw);
+    radix8_dif_pass_for_radix32_avx2(
+        K, temp_re, temp_im, out_re, out_im, pass2_tw, 0 /* forward */);
 
     _mm256_zeroupper();
 }
@@ -3354,13 +2384,10 @@ static void radix32_stage_backward_avx2(
     //==========================================================================
     // PASS 2: Radix-8 DIF BACKWARD
     //==========================================================================
-    radix8_dif_pass_for_radix32_backward_avx2(
-        K,
-        temp_re,
-        temp_im,
-        out_re,
-        out_im,
-        pass2_tw);
+    radix8_dif_pass_for_radix32_avx2(
+        K, temp_re, temp_im, out_re, out_im, pass2_tw, 1 /* backward */);
 
     _mm256_zeroupper();
 }
+
+#endif /* FFT_RADIX32_AVX2_H */
