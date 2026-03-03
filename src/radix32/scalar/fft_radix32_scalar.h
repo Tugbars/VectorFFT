@@ -1,44 +1,44 @@
-, /**
-   * @file fft_radix32_scalar.h
-   * @brief Production Radix-32 SCALAR — Fused Single-Pass 4×8 with Micro-Buffer
-   *
-   * ARCHITECTURE: FUSED SINGLE-PASS 4×8 DECOMPOSITION
-   * ==================================================
-   * Identical mathematical decomposition to the AVX2 two-pass 4×8, but fused
-   * into a single pass using a 512-byte stack micro-buffer (32 complex doubles).
-   *
-   * Per k-index:
-   *   Pass 1: 8 × radix-4 DIT → micro-buffer[32]   (all L1 stack, 0 spills)
-   *   Pass 2: 4 × fused DIF-8 ← micro-buffer[32]    (peak 16 regs, 0-2 spills)
-   *
-   * KEY ADVANTAGES OVER 2×16 ARCHITECTURE:
-   *   ✅ No radix-16 butterfly (would force 32+ values onto stack)
-   *   ✅ Both sub-passes fit in 16 scalar registers
-   *   ✅ Single-pass: no K-dependent temp buffer (temp is 512 bytes, always L1)
-   *   ✅ ~128 L1 stack ops/point vs ~350 for 2×16
-   *   ✅ Eliminates merge twiddle machinery entirely
-   *
-   * KEY ADVANTAGES OVER TWO-PASS 4×8:
-   *   ✅ No K-dependent temp buffer (avoids L2/LLC for large K)
-   *   ✅ Single-pass: 32K input loads + 32K output stores (half the traffic)
-   *   ✅ Clean API: no temp_re/temp_im parameters
-   *
-   * SCALAR DESIGN DECISIONS:
-   *   ✅ U=1 loop: OoO engine hides latency, no software pipelining needed
-   *   ✅ Memory-operand cmul: twiddles loaded on-demand, zero register overhead
-   *   ✅ W8 algebraic trick: 1 constant vs 2-3, lower latency on Zen
-   *   ✅ Prefetch throttle: k & 7 (once per 64-byte cache line)
-   *   ✅ #pragma GCC unroll 1: prevents register-pressure-destroying unrolling
-   *
-   * TWIDDLE COMPATIBILITY:
-   *   Shares twiddle structures with AVX2 version:
-   *   - radix4_dit_stage_twiddles_blocked2_t (Pass 1)
-   *   - tw_stage8_t / tw_blocked8_t / tw_blocked4_t (Pass 2)
-   *   RECURRENCE mode needs scalar-specific delta (step-1 vs step-4).
-   *
-   * @author Tugbars (scalar architecture by Claude)
-   * @date 2025
-   */
+/**
+ * @file fft_radix32_scalar.h
+ * @brief Production Radix-32 SCALAR — Fused Single-Pass 4×8 with Micro-Buffer
+ *
+ * ARCHITECTURE: FUSED SINGLE-PASS 4×8 DECOMPOSITION
+ * ==================================================
+ * Identical mathematical decomposition to the AVX2 two-pass 4×8, but fused
+ * into a single pass using a 512-byte stack micro-buffer (32 complex doubles).
+ *
+ * Per k-index:
+ *   Pass 1: 8 × radix-4 DIT → micro-buffer[32]   (all L1 stack, 0 spills)
+ *   Pass 2: 4 × fused DIF-8 ← micro-buffer[32]    (peak 16 regs, 0-2 spills)
+ *
+ * KEY ADVANTAGES OVER 2×16 ARCHITECTURE:
+ *   ✅ No radix-16 butterfly (would force 32+ values onto stack)
+ *   ✅ Both sub-passes fit in 16 scalar registers
+ *   ✅ Single-pass: no K-dependent temp buffer (temp is 512 bytes, always L1)
+ *   ✅ ~128 L1 stack ops/point vs ~350 for 2×16
+ *   ✅ Eliminates merge twiddle machinery entirely
+ *
+ * KEY ADVANTAGES OVER TWO-PASS 4×8:
+ *   ✅ No K-dependent temp buffer (avoids L2/LLC for large K)
+ *   ✅ Single-pass: 32K input loads + 32K output stores (half the traffic)
+ *   ✅ Clean API: no temp_re/temp_im parameters
+ *
+ * SCALAR DESIGN DECISIONS:
+ *   ✅ U=1 loop: OoO engine hides latency, no software pipelining needed
+ *   ✅ Memory-operand cmul: twiddles loaded on-demand, zero register overhead
+ *   ✅ W8 algebraic trick: 1 constant vs 2-3, lower latency on Zen
+ *   ✅ Prefetch throttle: k & 7 (once per 64-byte cache line)
+ *   ✅ #pragma GCC unroll 1: prevents register-pressure-destroying unrolling
+ *
+ * TWIDDLE COMPATIBILITY:
+ *   Shares twiddle structures with AVX2 version:
+ *   - radix4_dit_stage_twiddles_blocked2_t (Pass 1)
+ *   - tw_stage8_t / tw_blocked8_t / tw_blocked4_t (Pass 2)
+ *   RECURRENCE mode needs scalar-specific delta (step-1 vs step-4).
+ *
+ * @author Tugbars (scalar architecture by Claude)
+ * @date 2025
+ */
 
 #ifndef FFT_RADIX32_SCALAR_H
 #define FFT_RADIX32_SCALAR_H
@@ -48,17 +48,8 @@
 #include <stdint.h>
 
 /* Shared types: twiddle structs, tw_mode_t, pick_tw_mode() */
+/* Also pulls in fft_radix32_platform.h: FORCE_INLINE, RESTRICT, TARGET_*, etc. */
 #include "../avx2/fft_radix32_avx2.h"
-
-/*==========================================================================
- * COMPILER ATTRIBUTES
- *=========================================================================*/
-
-#ifndef TARGET_FMA
-#define TARGET_FMA __attribute__((target("fma")))
-#endif
-
-/* Reuse FORCE_INLINE, RESTRICT, NO_UNROLL_LOOPS, ASSUME_ALIGNED from AVX2 hdr */
 
 /*==========================================================================
  * CONFIGURATION
@@ -72,20 +63,20 @@
 #define RADIX32_SCALAR_REC_TILE_LEN 256
 #endif
 
-    /*==========================================================================
-     * SCALAR RECURRENCE TWIDDLE STRUCTURE
-     *
-     * Scalar steps by 1 (vs AVX2's step-by-4), so needs δj¹ instead of δj⁴.
-     * Seeds share the same [8][K] layout as AVX2: seed_re[j * K + k_tile_start]
-     * gives the exact Wj value at that position, loaded as a single double.
-     *
-     * Delta relationship:
-     *   δj¹ = exp(-2πi·j / (8·K))        (scalar step-1)
-     *   δj⁴ = exp(-2πi·j·4 / (8·K))      (AVX2 step-4)
-     *   δj⁴ = (δj¹)⁴
-     *=========================================================================*/
+/*==========================================================================
+ * SCALAR RECURRENCE TWIDDLE STRUCTURE
+ *
+ * Scalar steps by 1 (vs AVX2's step-by-4), so needs δj¹ instead of δj⁴.
+ * Seeds share the same [8][K] layout as AVX2: seed_re[j * K + k_tile_start]
+ * gives the exact Wj value at that position, loaded as a single double.
+ *
+ * Delta relationship:
+ *   δj¹ = exp(-2πi·j / (8·K))        (scalar step-1)
+ *   δj⁴ = exp(-2πi·j·4 / (8·K))      (AVX2 step-4)
+ *   δj⁴ = (δj¹)⁴
+ *=========================================================================*/
 
-    typedef struct
+typedef struct
 {
     int tile_len;          ///< Tile length in scalar samples (e.g. 256)
     const double *seed_re; ///< [8][K] seeds at tile boundaries (shared w/ AVX2)
@@ -1001,8 +992,8 @@ static void radix32_stage_forward_scalar(
                 size_t k_next = k + (size_t)rec_tile_len;
                 for (int j = 0; j < 8; j++)
                 {
-                    __builtin_prefetch(&rec_tw->seed_re[j * K + k_next], 0, 3);
-                    __builtin_prefetch(&rec_tw->seed_im[j * K + k_next], 0, 3);
+                    R32_PREFETCH(&rec_tw->seed_re[j * K + k_next], 0, 3);
+                    R32_PREFETCH(&rec_tw->seed_im[j * K + k_next], 0, 3);
                 }
             }
         }
@@ -1120,29 +1111,29 @@ static void radix32_stage_forward_scalar(
             {
                 for (size_t s = 0; s < 32; s += 8)
                 {
-                    __builtin_prefetch(&in_re[s * K + kpf], 0, 3);
-                    __builtin_prefetch(&in_im[s * K + kpf], 0, 3);
+                    R32_PREFETCH(&in_re[s * K + kpf], 0, 3);
+                    R32_PREFETCH(&in_im[s * K + kpf], 0, 3);
                 }
 
-                __builtin_prefetch(&p1_re[0 * K + kpf], 0, 3);
-                __builtin_prefetch(&p1_im[0 * K + kpf], 0, 3);
-                __builtin_prefetch(&p1_re[1 * K + kpf], 0, 3);
-                __builtin_prefetch(&p1_im[1 * K + kpf], 0, 3);
+                R32_PREFETCH(&p1_re[0 * K + kpf], 0, 3);
+                R32_PREFETCH(&p1_im[0 * K + kpf], 0, 3);
+                R32_PREFETCH(&p1_re[1 * K + kpf], 0, 3);
+                R32_PREFETCH(&p1_im[1 * K + kpf], 0, 3);
 
                 if (mode == TW_MODE_BLOCKED8)
                 {
                     for (int j = 0; j < 7; j++)
                     {
-                        __builtin_prefetch(&b8->re[j][kpf], 0, 3);
-                        __builtin_prefetch(&b8->im[j][kpf], 0, 3);
+                        R32_PREFETCH(&b8->re[j][kpf], 0, 3);
+                        R32_PREFETCH(&b8->im[j][kpf], 0, 3);
                     }
                 }
                 else if (mode == TW_MODE_BLOCKED4)
                 {
                     for (int j = 0; j < 4; j++)
                     {
-                        __builtin_prefetch(&b4->re[j][kpf], 0, 3);
-                        __builtin_prefetch(&b4->im[j][kpf], 0, 3);
+                        R32_PREFETCH(&b4->re[j][kpf], 0, 3);
+                        R32_PREFETCH(&b4->im[j][kpf], 0, 3);
                     }
                 }
                 /* RECURRENCE: no twiddle prefetch needed — deltas are
@@ -1197,8 +1188,8 @@ static void radix32_stage_backward_scalar(
                 size_t k_next = k + (size_t)rec_tile_len;
                 for (int j = 0; j < 8; j++)
                 {
-                    __builtin_prefetch(&rec_tw->seed_re[j * K + k_next], 0, 3);
-                    __builtin_prefetch(&rec_tw->seed_im[j * K + k_next], 0, 3);
+                    R32_PREFETCH(&rec_tw->seed_re[j * K + k_next], 0, 3);
+                    R32_PREFETCH(&rec_tw->seed_im[j * K + k_next], 0, 3);
                 }
             }
         }
@@ -1297,28 +1288,28 @@ static void radix32_stage_backward_scalar(
             {
                 for (size_t s = 0; s < 32; s += 8)
                 {
-                    __builtin_prefetch(&in_re[s * K + kpf], 0, 3);
-                    __builtin_prefetch(&in_im[s * K + kpf], 0, 3);
+                    R32_PREFETCH(&in_re[s * K + kpf], 0, 3);
+                    R32_PREFETCH(&in_im[s * K + kpf], 0, 3);
                 }
-                __builtin_prefetch(&p1_re[0 * K + kpf], 0, 3);
-                __builtin_prefetch(&p1_im[0 * K + kpf], 0, 3);
-                __builtin_prefetch(&p1_re[1 * K + kpf], 0, 3);
-                __builtin_prefetch(&p1_im[1 * K + kpf], 0, 3);
+                R32_PREFETCH(&p1_re[0 * K + kpf], 0, 3);
+                R32_PREFETCH(&p1_im[0 * K + kpf], 0, 3);
+                R32_PREFETCH(&p1_re[1 * K + kpf], 0, 3);
+                R32_PREFETCH(&p1_im[1 * K + kpf], 0, 3);
 
                 if (mode == TW_MODE_BLOCKED8)
                 {
                     for (int j = 0; j < 7; j++)
                     {
-                        __builtin_prefetch(&b8->re[j][kpf], 0, 3);
-                        __builtin_prefetch(&b8->im[j][kpf], 0, 3);
+                        R32_PREFETCH(&b8->re[j][kpf], 0, 3);
+                        R32_PREFETCH(&b8->im[j][kpf], 0, 3);
                     }
                 }
                 else if (mode == TW_MODE_BLOCKED4)
                 {
                     for (int j = 0; j < 4; j++)
                     {
-                        __builtin_prefetch(&b4->re[j][kpf], 0, 3);
-                        __builtin_prefetch(&b4->im[j][kpf], 0, 3);
+                        R32_PREFETCH(&b4->re[j][kpf], 0, 3);
+                        R32_PREFETCH(&b4->im[j][kpf], 0, 3);
                     }
                 }
             }

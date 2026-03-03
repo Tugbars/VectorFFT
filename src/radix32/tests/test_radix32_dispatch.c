@@ -17,6 +17,8 @@
 #include <string.h>
 #include <math.h>
 
+#include "../fft_radix32_platform.h"
+
 /* Uniform header for types, ISA detection, effective_isa */
 #include "fft_radix32_uniform.h"
 
@@ -74,10 +76,9 @@ extern void radix32_backward_force_scalar(
 
 static double *aa(size_t n)
 {
-    void *p = NULL;
-    posix_memalign(&p, 64, n * sizeof(double));
+    double *p = (double *)r32_aligned_alloc(64, n * sizeof(double));
     memset(p, 0, n * sizeof(double));
-    return (double *)p;
+    return p;
 }
 
 static void fill_rand(double *buf, size_t n, unsigned seed)
@@ -145,8 +146,8 @@ static void tw_init(size_t K, tw_mode_t mode, tw_ctx_t *t)
 
 static void tw_free(tw_ctx_t *t)
 {
-    free(t->p1r); free(t->p1i);
-    for (int j = 0; j < 8; j++) { free(t->p2r[j]); free(t->p2i[j]); }
+    r32_aligned_free(t->p1r); r32_aligned_free(t->p1i);
+    for (int j = 0; j < 8; j++) { r32_aligned_free(t->p2r[j]); r32_aligned_free(t->p2i[j]); }
 }
 
 /*==========================================================================
@@ -180,9 +181,9 @@ static int test_3way_fwd(size_t K)
            K, e_s2, e_s5, e_25, pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    free(ir); free(ii); free(sr); free(si);
-    free(a2r); free(a2i); free(a5r); free(a5i);
-    free(tr); free(ti);
+    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(sr); r32_aligned_free(si);
+    r32_aligned_free(a2r); r32_aligned_free(a2i); r32_aligned_free(a5r); r32_aligned_free(a5i);
+    r32_aligned_free(tr); r32_aligned_free(ti);
     return pass;
 }
 
@@ -217,9 +218,9 @@ static int test_3way_bwd(size_t K)
            K, e_s2, e_s5, e_25, pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    free(ir); free(ii); free(sr); free(si);
-    free(a2r); free(a2i); free(a5r); free(a5i);
-    free(tr); free(ti);
+    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(sr); r32_aligned_free(si);
+    r32_aligned_free(a2r); r32_aligned_free(a2i); r32_aligned_free(a5r); r32_aligned_free(a5i);
+    r32_aligned_free(tr); r32_aligned_free(ti);
     return pass;
 }
 
@@ -251,7 +252,7 @@ static int test_dispatch_isa(size_t K, tw_mode_t mode,
            pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    free(ir); free(ii); free(or_); free(oi); free(tr); free(ti);
+    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(or_); r32_aligned_free(oi); r32_aligned_free(tr); r32_aligned_free(ti);
     return pass;
 }
 
@@ -297,8 +298,8 @@ static int test_auto_vs_forced(size_t K, int direction)
            err, pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    free(ir); free(ii); free(ar); free(ai); free(fr); free(fi);
-    free(t1r); free(t1i); free(t2r); free(t2i);
+    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(ar); r32_aligned_free(ai); r32_aligned_free(fr); r32_aligned_free(fi);
+    r32_aligned_free(t1r); r32_aligned_free(t1i); r32_aligned_free(t2r); r32_aligned_free(t2i);
     return pass;
 }
 
@@ -333,8 +334,8 @@ static int test_blocked4(size_t K)
            err, pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    free(ir); free(ii); free(ar); free(ai); free(sr); free(si);
-    free(tr); free(ti);
+    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(ar); r32_aligned_free(ai); r32_aligned_free(sr); r32_aligned_free(si);
+    r32_aligned_free(tr); r32_aligned_free(ti);
     return pass;
 }
 

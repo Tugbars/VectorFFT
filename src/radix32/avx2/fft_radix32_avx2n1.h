@@ -19,219 +19,10 @@
  * @note Reuses butterfly cores from fft_radix32_avx2.c
  */
 
-#include <stddef.h>
-#include <stdint.h>
-#include <immintrin.h>
-
-#ifndef TARGET_AVX2_FMA
-#define TARGET_AVX2_FMA __attribute__((target("avx2,fma")))
-#endif
-#ifndef FORCE_INLINE
-#define FORCE_INLINE __attribute__((always_inline)) inline
-#endif
-#ifndef RESTRICT
-#define RESTRICT __restrict__
-#endif
-#ifndef ALIGNAS
-#define ALIGNAS(n) __attribute__((aligned(n)))
-#endif
-
-/*==========================================================================
- * COMPLEX ARITHMETIC
- *=========================================================================*/
-
-TARGET_AVX2_FMA
-FORCE_INLINE void cmul_v256(
-    __m256d ar, __m256d ai, __m256d br, __m256d bi,
-    __m256d *RESTRICT cr, __m256d *RESTRICT ci)
-{
-    __m256d ai_bi = _mm256_mul_pd(ai, bi);
-    __m256d ai_br = _mm256_mul_pd(ai, br);
-    *cr = _mm256_fmsub_pd(ar, br, ai_bi);
-    *ci = _mm256_fmadd_pd(ar, bi, ai_br);
-}
-
-/*==========================================================================
- * RADIX-4 DIT CORES
- *=========================================================================*/
-
-TARGET_AVX2_FMA
-FORCE_INLINE void radix4_dit_core_forward_avx2(
-    __m256d x0r, __m256d x0i, __m256d x1r, __m256d x1i,
-    __m256d x2r, __m256d x2i, __m256d x3r, __m256d x3i,
-    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
-    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
-    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
-    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i)
-{
-    __m256d t0r = _mm256_add_pd(x0r, x2r), t0i = _mm256_add_pd(x0i, x2i);
-    __m256d t1r = _mm256_sub_pd(x0r, x2r), t1i = _mm256_sub_pd(x0i, x2i);
-    __m256d t2r = _mm256_add_pd(x1r, x3r), t2i = _mm256_add_pd(x1i, x3i);
-    __m256d t3r = _mm256_sub_pd(x1r, x3r), t3i = _mm256_sub_pd(x1i, x3i);
-    *y0r = _mm256_add_pd(t0r, t2r);
-    *y0i = _mm256_add_pd(t0i, t2i);
-    *y1r = _mm256_add_pd(t1r, t3i);
-    *y1i = _mm256_sub_pd(t1i, t3r);
-    *y2r = _mm256_sub_pd(t0r, t2r);
-    *y2i = _mm256_sub_pd(t0i, t2i);
-    *y3r = _mm256_sub_pd(t1r, t3i);
-    *y3i = _mm256_add_pd(t1i, t3r);
-}
-
-TARGET_AVX2_FMA
-FORCE_INLINE void radix4_dit_core_backward_avx2(
-    __m256d x0r, __m256d x0i, __m256d x1r, __m256d x1i,
-    __m256d x2r, __m256d x2i, __m256d x3r, __m256d x3i,
-    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
-    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
-    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
-    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i)
-{
-    __m256d t0r = _mm256_add_pd(x0r, x2r), t0i = _mm256_add_pd(x0i, x2i);
-    __m256d t1r = _mm256_sub_pd(x0r, x2r), t1i = _mm256_sub_pd(x0i, x2i);
-    __m256d t2r = _mm256_add_pd(x1r, x3r), t2i = _mm256_add_pd(x1i, x3i);
-    __m256d t3r = _mm256_sub_pd(x1r, x3r), t3i = _mm256_sub_pd(x1i, x3i);
-    *y0r = _mm256_add_pd(t0r, t2r);
-    *y0i = _mm256_add_pd(t0i, t2i);
-    *y1r = _mm256_sub_pd(t1r, t3i);
-    *y1i = _mm256_add_pd(t1i, t3r);
-    *y2r = _mm256_sub_pd(t0r, t2r);
-    *y2i = _mm256_sub_pd(t0i, t2i);
-    *y3r = _mm256_add_pd(t1r, t3i);
-    *y3i = _mm256_sub_pd(t1i, t3r);
-}
-
-/*==========================================================================
- * RADIX-8 DIF CORES
- *=========================================================================*/
-
-TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_core_forward_avx2(
-    __m256d x0r, __m256d x0i, __m256d x1r, __m256d x1i,
-    __m256d x2r, __m256d x2i, __m256d x3r, __m256d x3i,
-    __m256d x4r, __m256d x4i, __m256d x5r, __m256d x5i,
-    __m256d x6r, __m256d x6i, __m256d x7r, __m256d x7i,
-    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
-    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
-    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
-    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i,
-    __m256d *RESTRICT y4r, __m256d *RESTRICT y4i,
-    __m256d *RESTRICT y5r, __m256d *RESTRICT y5i,
-    __m256d *RESTRICT y6r, __m256d *RESTRICT y6i,
-    __m256d *RESTRICT y7r, __m256d *RESTRICT y7i)
-{
-    const __m256d W8r = _mm256_set1_pd(0.70710678118654752440);
-    const __m256d W8i = _mm256_set1_pd(-0.70710678118654752440);
-    const __m256d NEG = _mm256_set1_pd(-0.0);
-
-    __m256d a0r = _mm256_add_pd(x0r, x4r), a0i = _mm256_add_pd(x0i, x4i);
-    __m256d a4r = _mm256_sub_pd(x0r, x4r), a4i = _mm256_sub_pd(x0i, x4i);
-    __m256d a1r = _mm256_add_pd(x1r, x5r), a1i = _mm256_add_pd(x1i, x5i);
-    __m256d a5r = _mm256_sub_pd(x1r, x5r), a5i = _mm256_sub_pd(x1i, x5i);
-    __m256d a2r = _mm256_add_pd(x2r, x6r), a2i = _mm256_add_pd(x2i, x6i);
-    __m256d a6r = _mm256_sub_pd(x2r, x6r), a6i = _mm256_sub_pd(x2i, x6i);
-    __m256d a3r = _mm256_add_pd(x3r, x7r), a3i = _mm256_add_pd(x3i, x7i);
-    __m256d a7r = _mm256_sub_pd(x3r, x7r), a7i = _mm256_sub_pd(x3i, x7i);
-
-    __m256d b5r, b5i;
-    cmul_v256(a5r, a5i, W8r, W8i, &b5r, &b5i);
-    __m256d b6r = a6i, b6i = _mm256_xor_pd(a6r, NEG);
-    __m256d nW8 = _mm256_xor_pd(W8r, NEG);
-    __m256d b7r, b7i;
-    cmul_v256(a7r, a7i, nW8, W8i, &b7r, &b7i);
-
-    __m256d e0r = _mm256_add_pd(a0r, a2r), e0i = _mm256_add_pd(a0i, a2i);
-    __m256d e1r = _mm256_sub_pd(a0r, a2r), e1i = _mm256_sub_pd(a0i, a2i);
-    __m256d e2r = _mm256_add_pd(a1r, a3r), e2i = _mm256_add_pd(a1i, a3i);
-    __m256d e3r = _mm256_sub_pd(a1r, a3r), e3i = _mm256_sub_pd(a1i, a3i);
-
-    *y0r = _mm256_add_pd(e0r, e2r);
-    *y0i = _mm256_add_pd(e0i, e2i);
-    *y2r = _mm256_add_pd(e1r, e3i);
-    *y2i = _mm256_sub_pd(e1i, e3r);
-    *y4r = _mm256_sub_pd(e0r, e2r);
-    *y4i = _mm256_sub_pd(e0i, e2i);
-    *y6r = _mm256_sub_pd(e1r, e3i);
-    *y6i = _mm256_add_pd(e1i, e3r);
-
-    __m256d o0r = _mm256_add_pd(a4r, b6r), o0i = _mm256_add_pd(a4i, b6i);
-    __m256d o1r = _mm256_sub_pd(a4r, b6r), o1i = _mm256_sub_pd(a4i, b6i);
-    __m256d o2r = _mm256_add_pd(b5r, b7r), o2i = _mm256_add_pd(b5i, b7i);
-    __m256d o3r = _mm256_sub_pd(b5r, b7r), o3i = _mm256_sub_pd(b5i, b7i);
-
-    *y1r = _mm256_add_pd(o0r, o2r);
-    *y1i = _mm256_add_pd(o0i, o2i);
-    *y3r = _mm256_add_pd(o1r, o3i);
-    *y3i = _mm256_sub_pd(o1i, o3r);
-    *y5r = _mm256_sub_pd(o0r, o2r);
-    *y5i = _mm256_sub_pd(o0i, o2i);
-    *y7r = _mm256_sub_pd(o1r, o3i);
-    *y7i = _mm256_add_pd(o1i, o3r);
-}
-
-TARGET_AVX2_FMA
-FORCE_INLINE void radix8_dif_core_backward_avx2(
-    __m256d x0r, __m256d x0i, __m256d x1r, __m256d x1i,
-    __m256d x2r, __m256d x2i, __m256d x3r, __m256d x3i,
-    __m256d x4r, __m256d x4i, __m256d x5r, __m256d x5i,
-    __m256d x6r, __m256d x6i, __m256d x7r, __m256d x7i,
-    __m256d *RESTRICT y0r, __m256d *RESTRICT y0i,
-    __m256d *RESTRICT y1r, __m256d *RESTRICT y1i,
-    __m256d *RESTRICT y2r, __m256d *RESTRICT y2i,
-    __m256d *RESTRICT y3r, __m256d *RESTRICT y3i,
-    __m256d *RESTRICT y4r, __m256d *RESTRICT y4i,
-    __m256d *RESTRICT y5r, __m256d *RESTRICT y5i,
-    __m256d *RESTRICT y6r, __m256d *RESTRICT y6i,
-    __m256d *RESTRICT y7r, __m256d *RESTRICT y7i)
-{
-    const __m256d W8r = _mm256_set1_pd(0.70710678118654752440);
-    const __m256d W8i = _mm256_set1_pd(0.70710678118654752440); /* conjugated */
-    const __m256d NEG = _mm256_set1_pd(-0.0);
-
-    __m256d a0r = _mm256_add_pd(x0r, x4r), a0i = _mm256_add_pd(x0i, x4i);
-    __m256d a4r = _mm256_sub_pd(x0r, x4r), a4i = _mm256_sub_pd(x0i, x4i);
-    __m256d a1r = _mm256_add_pd(x1r, x5r), a1i = _mm256_add_pd(x1i, x5i);
-    __m256d a5r = _mm256_sub_pd(x1r, x5r), a5i = _mm256_sub_pd(x1i, x5i);
-    __m256d a2r = _mm256_add_pd(x2r, x6r), a2i = _mm256_add_pd(x2i, x6i);
-    __m256d a6r = _mm256_sub_pd(x2r, x6r), a6i = _mm256_sub_pd(x2i, x6i);
-    __m256d a3r = _mm256_add_pd(x3r, x7r), a3i = _mm256_add_pd(x3i, x7i);
-    __m256d a7r = _mm256_sub_pd(x3r, x7r), a7i = _mm256_sub_pd(x3i, x7i);
-
-    __m256d b5r, b5i;
-    cmul_v256(a5r, a5i, W8r, W8i, &b5r, &b5i);
-    __m256d b6r = _mm256_xor_pd(a6i, NEG), b6i = a6r;
-    __m256d nW8 = _mm256_xor_pd(W8r, NEG);
-    __m256d b7r, b7i;
-    cmul_v256(a7r, a7i, nW8, W8i, &b7r, &b7i);
-
-    __m256d e0r = _mm256_add_pd(a0r, a2r), e0i = _mm256_add_pd(a0i, a2i);
-    __m256d e1r = _mm256_sub_pd(a0r, a2r), e1i = _mm256_sub_pd(a0i, a2i);
-    __m256d e2r = _mm256_add_pd(a1r, a3r), e2i = _mm256_add_pd(a1i, a3i);
-    __m256d e3r = _mm256_sub_pd(a1r, a3r), e3i = _mm256_sub_pd(a1i, a3i);
-
-    *y0r = _mm256_add_pd(e0r, e2r);
-    *y0i = _mm256_add_pd(e0i, e2i);
-    *y2r = _mm256_sub_pd(e1r, e3i);
-    *y2i = _mm256_add_pd(e1i, e3r);
-    *y4r = _mm256_sub_pd(e0r, e2r);
-    *y4i = _mm256_sub_pd(e0i, e2i);
-    *y6r = _mm256_add_pd(e1r, e3i);
-    *y6i = _mm256_sub_pd(e1i, e3r);
-
-    __m256d o0r = _mm256_add_pd(a4r, b6r), o0i = _mm256_add_pd(a4i, b6i);
-    __m256d o1r = _mm256_sub_pd(a4r, b6r), o1i = _mm256_sub_pd(a4i, b6i);
-    __m256d o2r = _mm256_add_pd(b5r, b7r), o2i = _mm256_add_pd(b5i, b7i);
-    __m256d o3r = _mm256_sub_pd(b5r, b7r), o3i = _mm256_sub_pd(b5i, b7i);
-
-    *y1r = _mm256_add_pd(o0r, o2r);
-    *y1i = _mm256_add_pd(o0i, o2i);
-    *y3r = _mm256_sub_pd(o1r, o3i);
-    *y3i = _mm256_add_pd(o1i, o3r);
-    *y5r = _mm256_sub_pd(o0r, o2r);
-    *y5i = _mm256_sub_pd(o0i, o2i);
-    *y7r = _mm256_add_pd(o1r, o3i);
-    *y7i = _mm256_sub_pd(o1i, o3r);
-}
+/* Pull in shared butterfly cores: cmul_v256, radix4_dit_core_{fwd,bwd},
+ * radix8_dif_core_{fwd,bwd}, signbit_pd, all macros/types.
+ * The main header's include guard prevents double-inclusion. */
+#include "fft_radix32_avx2.h"
 
 /*==========================================================================
  * W_32 CONSTANTS
@@ -316,27 +107,31 @@ rot_pos_j(__m256d xr, __m256d xi, __m256d *yr, __m256d *yi)
  * STORE 8 OUTPUTS FOR A BIN
  *=========================================================================*/
 
-#define STORE_BIN(out_re, out_im, os, base,                   \
-                  y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,     \
-                  y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i)     \
-    do                                                        \
-    {                                                         \
-        _mm256_store_pd(&(out_re)[((base) + 0) * (os)], y0r); \
-        _mm256_store_pd(&(out_im)[((base) + 0) * (os)], y0i); \
-        _mm256_store_pd(&(out_re)[((base) + 1) * (os)], y1r); \
-        _mm256_store_pd(&(out_im)[((base) + 1) * (os)], y1i); \
-        _mm256_store_pd(&(out_re)[((base) + 2) * (os)], y2r); \
-        _mm256_store_pd(&(out_im)[((base) + 2) * (os)], y2i); \
-        _mm256_store_pd(&(out_re)[((base) + 3) * (os)], y3r); \
-        _mm256_store_pd(&(out_im)[((base) + 3) * (os)], y3i); \
-        _mm256_store_pd(&(out_re)[((base) + 4) * (os)], y4r); \
-        _mm256_store_pd(&(out_im)[((base) + 4) * (os)], y4i); \
-        _mm256_store_pd(&(out_re)[((base) + 5) * (os)], y5r); \
-        _mm256_store_pd(&(out_im)[((base) + 5) * (os)], y5i); \
-        _mm256_store_pd(&(out_re)[((base) + 6) * (os)], y6r); \
-        _mm256_store_pd(&(out_im)[((base) + 6) * (os)], y6i); \
-        _mm256_store_pd(&(out_re)[((base) + 7) * (os)], y7r); \
-        _mm256_store_pd(&(out_im)[((base) + 7) * (os)], y7i); \
+/*
+ * Output permutation: k = bin + 4·d  (d = DIF output index 0..7)
+ * This interleaves the 4 bin groups into natural DFT order.
+ */
+#define STORE_BIN(out_re, out_im, os, bin,                       \
+                  y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,        \
+                  y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i)        \
+    do                                                           \
+    {                                                            \
+        _mm256_store_pd(&(out_re)[((bin) + 0 * 4) * (os)], y0r); \
+        _mm256_store_pd(&(out_im)[((bin) + 0 * 4) * (os)], y0i); \
+        _mm256_store_pd(&(out_re)[((bin) + 1 * 4) * (os)], y1r); \
+        _mm256_store_pd(&(out_im)[((bin) + 1 * 4) * (os)], y1i); \
+        _mm256_store_pd(&(out_re)[((bin) + 2 * 4) * (os)], y2r); \
+        _mm256_store_pd(&(out_im)[((bin) + 2 * 4) * (os)], y2i); \
+        _mm256_store_pd(&(out_re)[((bin) + 3 * 4) * (os)], y3r); \
+        _mm256_store_pd(&(out_im)[((bin) + 3 * 4) * (os)], y3i); \
+        _mm256_store_pd(&(out_re)[((bin) + 4 * 4) * (os)], y4r); \
+        _mm256_store_pd(&(out_im)[((bin) + 4 * 4) * (os)], y4i); \
+        _mm256_store_pd(&(out_re)[((bin) + 5 * 4) * (os)], y5r); \
+        _mm256_store_pd(&(out_im)[((bin) + 5 * 4) * (os)], y5i); \
+        _mm256_store_pd(&(out_re)[((bin) + 6 * 4) * (os)], y6r); \
+        _mm256_store_pd(&(out_im)[((bin) + 6 * 4) * (os)], y6i); \
+        _mm256_store_pd(&(out_re)[((bin) + 7 * 4) * (os)], y7r); \
+        _mm256_store_pd(&(out_im)[((bin) + 7 * 4) * (os)], y7i); \
     } while (0)
 
 /*==========================================================================
@@ -418,7 +213,7 @@ n1_bin1_fwd(const double *tr, const double *ti,
         &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
         &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
 
-    STORE_BIN(or_, oi, os, 8,
+    STORE_BIN(or_, oi, os, 1,
               y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
               y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
 }
@@ -458,7 +253,7 @@ n1_bin2_fwd(const double *tr, const double *ti,
         &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
         &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
 
-    STORE_BIN(or_, oi, os, 16,
+    STORE_BIN(or_, oi, os, 2,
               y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
               y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
 }
@@ -499,7 +294,7 @@ n1_bin3_fwd(const double *tr, const double *ti,
         &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
         &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
 
-    STORE_BIN(or_, oi, os, 24,
+    STORE_BIN(or_, oi, os, 3,
               y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
               y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
 }
@@ -558,7 +353,7 @@ n1_bin1_bwd(const double *tr, const double *ti,
         &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
         &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
 
-    STORE_BIN(or_, oi, os, 8,
+    STORE_BIN(or_, oi, os, 1,
               y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
               y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
 }
@@ -589,7 +384,7 @@ n1_bin2_bwd(const double *tr, const double *ti,
         &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
         &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
 
-    STORE_BIN(or_, oi, os, 16,
+    STORE_BIN(or_, oi, os, 2,
               y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
               y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
 }
@@ -620,7 +415,7 @@ n1_bin3_bwd(const double *tr, const double *ti,
         &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i,
         &y4r, &y4i, &y5r, &y5i, &y6r, &y6i, &y7r, &y7i);
 
-    STORE_BIN(or_, oi, os, 24,
+    STORE_BIN(or_, oi, os, 3,
               y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i,
               y4r, y4i, y5r, y5i, y6r, y6i, y7r, y7i);
 }

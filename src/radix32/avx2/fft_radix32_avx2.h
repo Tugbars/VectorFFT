@@ -77,34 +77,8 @@
 
 #include "fft_twiddles_planner_api.h" // twiddle_handle_t, get_stage_twiddles()
 
-//==============================================================================
-// COMPILER ATTRIBUTES (GCC)
-//==============================================================================
-
-#ifndef TARGET_AVX2_FMA
-#define TARGET_AVX2_FMA __attribute__((target("avx2,fma")))
-#endif
-
-#ifndef FORCE_INLINE
-#define FORCE_INLINE __attribute__((always_inline)) inline
-#endif
-
-#ifndef NO_UNROLL_LOOPS
-#define NO_UNROLL_LOOPS __attribute__((optimize("no-unroll-loops")))
-#endif
-
-#ifndef RESTRICT
-#define RESTRICT __restrict__
-#endif
-
-#ifndef ALIGNAS
-#define ALIGNAS(n) __attribute__((aligned(n)))
-#endif
-
-#ifndef ASSUME_ALIGNED
-#define ASSUME_ALIGNED(ptr, alignment) \
-    (__builtin_assume_aligned((ptr), (alignment)))
-#endif
+/* Cross-platform macros: FORCE_INLINE, RESTRICT, TARGET_AVX2_FMA, etc. */
+#include "../fft_radix32_platform.h"
 
 //==============================================================================
 // COMPILE-TIME CONFIGURATION

@@ -24,14 +24,25 @@
  *   # or via cmake: cmake --build . --target bench_radix32_pass2
  */
 
-#define _GNU_SOURCE
+/* CPU affinity (Linux only — optional for pinning) */
+#if defined(__linux__)
+#  ifndef _GNU_SOURCE
+#    define _GNU_SOURCE
+#  endif
+#  include <sched.h>
+#  define R32_HAS_SCHED_AFFINITY 1
+#else
+#  define R32_HAS_SCHED_AFFINITY 0
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <time.h>
-#include <sched.h>
 #include <immintrin.h>
+
+#define R32_NEED_TIMER
+#include "../fft_radix32_platform.h"
 
 #include "fft_radix32_avx2.h"
 
@@ -58,6 +69,10 @@
 
 static inline uint64_t rdtsc_fenced(void)
 {
+#if R32_MSVC
+    _mm_lfence();
+    return __rdtsc();
+#else
     unsigned int lo, hi;
     __asm__ __volatile__(
         "lfence\n\t"
@@ -66,13 +81,12 @@ static inline uint64_t rdtsc_fenced(void)
         :
         : "memory");
     return ((uint64_t)hi << 32) | lo;
+#endif
 }
 
 static inline double now_ns(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
+    return r32_timer_sec() * 1e9;
 }
 
 /*==========================================================================
@@ -119,13 +133,13 @@ static bench_result_t compute_stats(uint64_t *cyc, double *ns, size_t n)
 
 static double *alloc_aligned(size_t count)
 {
-    void *p = NULL;
-    if (posix_memalign(&p, 64, count * sizeof(double)) != 0) {
-        fprintf(stderr, "FATAL: posix_memalign(%zu) failed\n", count);
+    double *p = (double *)r32_aligned_alloc(64, count * sizeof(double));
+    if (!p) {
+        fprintf(stderr, "FATAL: r32_aligned_alloc(%zu) failed\n", count);
         exit(1);
     }
     memset(p, 0, count * sizeof(double));
-    return (double *)p;
+    return p;
 }
 
 /*==========================================================================
@@ -294,13 +308,13 @@ static void setup_recurrence(pass2_tw_t *tw, size_t K)
 static void teardown_tw(pass2_tw_t *tw)
 {
     for (int j = 0; j < 8; j++) {
-        free(tw->p2_re[j]);
-        free(tw->p2_im[j]);
+        r32_aligned_free(tw->p2_re[j]);
+        r32_aligned_free(tw->p2_im[j]);
     }
-    free(tw->seed_re);
-    free(tw->seed_im);
-    free(tw->delta_re);
-    free(tw->delta_im);
+    r32_aligned_free(tw->seed_re);
+    r32_aligned_free(tw->seed_im);
+    r32_aligned_free(tw->delta_re);
+    r32_aligned_free(tw->delta_im);
 }
 
 /*==========================================================================
@@ -411,8 +425,8 @@ static void bench_pass2(size_t K)
            (unsigned long)bwd.median_cyc, bwd_cpp, bwd.median_ns,
            (unsigned long)bwd.p10_cyc, (unsigned long)bwd.p90_cyc);
 
-    free(in_re); free(in_im);
-    free(out_re); free(out_im);
+    r32_aligned_free(in_re); r32_aligned_free(in_im);
+    r32_aligned_free(out_re); r32_aligned_free(out_im);
     teardown_tw(&tw);
 }
 
@@ -520,10 +534,10 @@ static void bench_full_stage(size_t K)
            (unsigned long)bwd.median_cyc, bwd_cpp, bwd.median_ns,
            (unsigned long)bwd.p10_cyc, (unsigned long)bwd.p90_cyc);
 
-    free(in_re);  free(in_im);
-    free(out_re); free(out_im);
-    free(temp_re); free(temp_im);
-    free(p1_re);  free(p1_im);
+    r32_aligned_free(in_re);  r32_aligned_free(in_im);
+    r32_aligned_free(out_re); r32_aligned_free(out_im);
+    r32_aligned_free(temp_re); r32_aligned_free(temp_im);
+    r32_aligned_free(p1_re);  r32_aligned_free(p1_im);
     teardown_tw(&p2);
 }
 
@@ -553,10 +567,12 @@ static double estimate_freq_ghz(void)
 int main(int argc, char **argv)
 {
     /* Try to pin to core 0 for stability (non-fatal if fails) */
+#if R32_HAS_SCHED_AFFINITY
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(0, &cpuset);
     sched_setaffinity(0, sizeof(cpuset), &cpuset);
+#endif
 
     double freq_ghz = estimate_freq_ghz();
 
