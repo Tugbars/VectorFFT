@@ -40,114 +40,277 @@
 #include "fft_radix32_avx2.h"
 
 /*==========================================================================
- * PASS 1: RADIX-4 DIT — STRIDED INPUT, BIN-MAJOR OUTPUT (AVX-512)
+ * PASS 1: WAVE A/B STORE MACROS (AVX-512, radix-4)
  *
- * Processes one group (4 stripes at stride 8*K) through:
- *   1. Load 4 inputs from strided layout
- *   2. Apply BLOCKED2 twiddles (W1, W2 from memory; W3 = W1×W2 derived)
- *   3. Radix-4 DIT butterfly
- *   4. Store to bin-major temp: bin b → temp stripe (b*8 + group)
- *
- * Simple sequential k-loop at step=8. No pipelining.
- *
- * Register usage: ~14 ZMM peak
- *   4 inputs (x0..x3 re+im) = 8 ZMM
- *   2 twiddles (W1,W2 re+im) = 4 ZMM  (W3 derived in scratch)
- *   4 outputs (y0..y3 re+im) = reuse input slots
- *   scratch for cmul = 2 ZMM
+ * Split two-wave stores for U=2 interleaving, same pattern as pass 2.
+ * Wave A: even bins {y0, y2} → frees 4 ZMM
+ * Wave B: odd bins  {y1, y3} → frees 4 ZMM
  *=========================================================================*/
 
-TARGET_AVX512
-static void radix4_dit_pass1_avx512(
-    size_t K,
-    const double *RESTRICT in_re_base,
-    const double *RESTRICT in_im_base,
-    size_t in_stride,
-    double *RESTRICT temp_re,
-    double *RESTRICT temp_im,
-    size_t group,
-    const radix4_dit_stage_twiddles_blocked2_t *RESTRICT stage_tw,
-    int direction)
-{
-    assert((K & 7) == 0 && "K must be multiple of 8 for AVX-512");
-    assert(group < 8);
+#define DIT4_STORE_WAVE_A_512(temp_re, temp_im, K, k, s0, s2,   \
+                               y0r, y0i, y2r, y2i)               \
+    do {                                                          \
+        _mm512_store_pd(&(temp_re)[(s0) * (K) + (k)], y0r);      \
+        _mm512_store_pd(&(temp_im)[(s0) * (K) + (k)], y0i);      \
+        _mm512_store_pd(&(temp_re)[(s2) * (K) + (k)], y2r);      \
+        _mm512_store_pd(&(temp_im)[(s2) * (K) + (k)], y2i);      \
+    } while (0)
 
-    const size_t step = 8;
+#define DIT4_STORE_WAVE_B_512(temp_re, temp_im, K, k, s1, s3,   \
+                               y1r, y1i, y3r, y3i)               \
+    do {                                                          \
+        _mm512_store_pd(&(temp_re)[(s1) * (K) + (k)], y1r);      \
+        _mm512_store_pd(&(temp_im)[(s1) * (K) + (k)], y1i);      \
+        _mm512_store_pd(&(temp_re)[(s3) * (K) + (k)], y3r);      \
+        _mm512_store_pd(&(temp_im)[(s3) * (K) + (k)], y3i);      \
+    } while (0)
 
-    /* Bin-major output stripe indices */
-    const size_t s0 = 0 * 8 + group;  /* Bin 0 */
-    const size_t s1 = 1 * 8 + group;  /* Bin 1 */
-    const size_t s2 = 2 * 8 + group;  /* Bin 2 */
-    const size_t s3 = 3 * 8 + group;  /* Bin 3 */
+/*==========================================================================
+ * PASS 1 LOAD + TWIDDLE-APPLY MACRO
+ *
+ * Shared between forward/backward — twiddle application is identical,
+ * only the butterfly direction differs.
+ *
+ * Loads 4 strided inputs, applies BLOCKED2 twiddles (W1, W2 from memory,
+ * W3 = W1×W2 derived), produces t0=x0 (untwidded), t1, t2, t3.
+ *=========================================================================*/
 
-    const double *RESTRICT tw_re = stage_tw->re;
-    const double *RESTRICT tw_im = stage_tw->im;
+#define PASS1_LOAD_AND_TWIDDLE_512(                                         \
+    in_re_base, in_im_base, in_stride, tw_re, tw_im, K, k,                 \
+    t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i)                               \
+    do {                                                                    \
+        /* Load 4 strided inputs */                                         \
+        t0r = _mm512_load_pd(&(in_re_base)[0 * (in_stride) + (k)]);        \
+        t0i = _mm512_load_pd(&(in_im_base)[0 * (in_stride) + (k)]);        \
+        __m512d _x1r = _mm512_load_pd(&(in_re_base)[1 * (in_stride) + (k)]);\
+        __m512d _x1i = _mm512_load_pd(&(in_im_base)[1 * (in_stride) + (k)]);\
+        __m512d _x2r = _mm512_load_pd(&(in_re_base)[2 * (in_stride) + (k)]);\
+        __m512d _x2i = _mm512_load_pd(&(in_im_base)[2 * (in_stride) + (k)]);\
+        __m512d _x3r = _mm512_load_pd(&(in_re_base)[3 * (in_stride) + (k)]);\
+        __m512d _x3i = _mm512_load_pd(&(in_im_base)[3 * (in_stride) + (k)]);\
+                                                                            \
+        /* Load W1, W2 (sequential — HW prefetcher handles these) */        \
+        __m512d _W1r = _mm512_load_pd(&(tw_re)[0 * (K) + (k)]);            \
+        __m512d _W1i = _mm512_load_pd(&(tw_im)[0 * (K) + (k)]);            \
+        __m512d _W2r = _mm512_load_pd(&(tw_re)[1 * (K) + (k)]);            \
+        __m512d _W2i = _mm512_load_pd(&(tw_im)[1 * (K) + (k)]);            \
+                                                                            \
+        /* x1 *= W1 */                                                      \
+        cmul_v512(_x1r, _x1i, _W1r, _W1i, &(t1r), &(t1i));                \
+        /* x2 *= W2 */                                                      \
+        cmul_v512(_x2r, _x2i, _W2r, _W2i, &(t2r), &(t2i));                \
+        /* W3 = W1 × W2 (derived), then x3 *= W3 */                        \
+        __m512d _W3r, _W3i;                                                 \
+        cmul_v512(_W1r, _W1i, _W2r, _W2i, &_W3r, &_W3i);                  \
+        cmul_v512(_x3r, _x3i, _W3r, _W3i, &(t3r), &(t3i));                \
+    } while (0)
 
-    for (size_t k = 0; k < K; k += step)
-    {
-        /*==================================================================
-         * Load 4 inputs from strided layout
-         *================================================================*/
-        __m512d x0r = _mm512_load_pd(&in_re_base[0 * in_stride + k]);
-        __m512d x0i = _mm512_load_pd(&in_im_base[0 * in_stride + k]);
-        __m512d x1r = _mm512_load_pd(&in_re_base[1 * in_stride + k]);
-        __m512d x1i = _mm512_load_pd(&in_im_base[1 * in_stride + k]);
-        __m512d x2r = _mm512_load_pd(&in_re_base[2 * in_stride + k]);
-        __m512d x2i = _mm512_load_pd(&in_im_base[2 * in_stride + k]);
-        __m512d x3r = _mm512_load_pd(&in_re_base[3 * in_stride + k]);
-        __m512d x3i = _mm512_load_pd(&in_im_base[3 * in_stride + k]);
+/*==========================================================================
+ * PASS 1 INPUT PREFETCH MACRO
+ *
+ * Prefetch next iteration's 4 strided inputs into L2 (locality=2).
+ * Stride = 8*K, so consecutive loads jump by thousands of bytes —
+ * hardware prefetcher can't track these. Explicit prefetch is critical.
+ *=========================================================================*/
 
-        /*==================================================================
-         * Apply BLOCKED2 twiddles: W1, W2 from memory; W3 = W1×W2
-         *================================================================*/
-        __m512d W1r = _mm512_load_pd(&tw_re[0 * K + k]);
-        __m512d W1i = _mm512_load_pd(&tw_im[0 * K + k]);
-        __m512d W2r = _mm512_load_pd(&tw_re[1 * K + k]);
-        __m512d W2i = _mm512_load_pd(&tw_im[1 * K + k]);
+#define PASS1_PREFETCH_INPUTS_512(in_re_base, in_im_base, in_stride, k)    \
+    do {                                                                    \
+        R32_PREFETCH(&(in_re_base)[0 * (in_stride) + (k)], 0, 2);          \
+        R32_PREFETCH(&(in_im_base)[0 * (in_stride) + (k)], 0, 2);          \
+        R32_PREFETCH(&(in_re_base)[1 * (in_stride) + (k)], 0, 2);          \
+        R32_PREFETCH(&(in_im_base)[1 * (in_stride) + (k)], 0, 2);          \
+        R32_PREFETCH(&(in_re_base)[2 * (in_stride) + (k)], 0, 2);          \
+        R32_PREFETCH(&(in_im_base)[2 * (in_stride) + (k)], 0, 2);          \
+        R32_PREFETCH(&(in_re_base)[3 * (in_stride) + (k)], 0, 2);          \
+        R32_PREFETCH(&(in_im_base)[3 * (in_stride) + (k)], 0, 2);          \
+    } while (0)
 
-        /* x1 *= W1 */
-        __m512d t1r, t1i;
-        cmul_v512(x1r, x1i, W1r, W1i, &t1r, &t1i);
+/*==========================================================================
+ * PASS 1: GENERATOR MACRO
+ *
+ * Generates both U=1 (K=8 fallback) and U=2 (K≥16 pipelined) variants
+ * for a given direction. The ONLY difference between forward and backward
+ * is the butterfly function call — everything else (loads, twiddles,
+ * stores, prefetches) is identical.
+ *
+ * This avoids duplicating ~100 lines of U=2 pipelining logic.
+ *
+ * U=2 register budget (pass 1):
+ *   Steady-state peak at step 5 (wave A stored, next inputs loading):
+ *     4 ZMM — y1,y3 re+im (awaiting wave B)
+ *     8 ZMM — nx0..nx3 re+im (next inputs)
+ *    ────────
+ *    12 ZMM peak, 20 spare
+ *
+ *   Full breakdown per step:
+ *     1. CONSUME:  12 ZMM (x0..x3 + W1,W2 → renamed from next)
+ *     2. TWIDDLE:  ~14 ZMM (intermediates reuse input/twiddle slots)
+ *     3. BUTTERFLY: 8 ZMM (y0..y3 re+im, inputs dead)
+ *     4. WAVE A:    4 ZMM (y1,y3 remain)
+ *     5. LOAD NX:  12 ZMM (4 + 8)  ◄── PEAK
+ *     6. WAVE B:    8 ZMM (nx only)
+ *
+ *=========================================================================*/
 
-        /* x2 *= W2 */
-        __m512d t2r, t2i;
-        cmul_v512(x2r, x2i, W2r, W2i, &t2r, &t2i);
-
-        /* W3 = W1 × W2 (derived), then x3 *= W3 */
-        __m512d W3r, W3i;
-        cmul_v512(W1r, W1i, W2r, W2i, &W3r, &W3i);
-        __m512d t3r, t3i;
-        cmul_v512(x3r, x3i, W3r, W3i, &t3r, &t3i);
-
-        /*==================================================================
-         * Radix-4 DIT butterfly
-         *================================================================*/
-        __m512d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;
-
-        if (direction == 0) {
-            radix4_dit_core_forward_avx512(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i);
-        } else {
-            radix4_dit_core_backward_avx512(
-                x0r, x0i, t1r, t1i, t2r, t2i, t3r, t3i,
-                &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i);
-        }
-
-        /*==================================================================
-         * Store bin-major: two-wave (even bins 0,2 then odd bins 1,3)
-         *================================================================*/
-        _mm512_store_pd(&temp_re[s0 * K + k], y0r);
-        _mm512_store_pd(&temp_im[s0 * K + k], y0i);
-        _mm512_store_pd(&temp_re[s2 * K + k], y2r);
-        _mm512_store_pd(&temp_im[s2 * K + k], y2i);
-
-        _mm512_store_pd(&temp_re[s1 * K + k], y1r);
-        _mm512_store_pd(&temp_im[s1 * K + k], y1i);
-        _mm512_store_pd(&temp_re[s3 * K + k], y3r);
-        _mm512_store_pd(&temp_im[s3 * K + k], y3i);
-    }
+#define DEFINE_PASS1_FUNCTIONS(DIR_SUFFIX, BUTTERFLY_FN)                     \
+                                                                            \
+/* ── U=1 fallback (K=8, single iteration) ────────────────────────── */    \
+TARGET_AVX512                                                               \
+static void radix4_dit_pass1_##DIR_SUFFIX##_avx512(                         \
+    size_t K,                                                               \
+    const double *RESTRICT in_re_base,                                      \
+    const double *RESTRICT in_im_base,                                      \
+    size_t in_stride,                                                       \
+    double *RESTRICT temp_re,                                               \
+    double *RESTRICT temp_im,                                               \
+    size_t group,                                                           \
+    const radix4_dit_stage_twiddles_blocked2_t *RESTRICT stage_tw)          \
+{                                                                           \
+    assert((K & 7) == 0 && "K must be multiple of 8 for AVX-512");          \
+    assert(group < 8);                                                      \
+                                                                            \
+    const size_t step = 8;                                                  \
+    const size_t s0 = 0 * 8 + group;                                        \
+    const size_t s1 = 1 * 8 + group;                                        \
+    const size_t s2 = 2 * 8 + group;                                        \
+    const size_t s3 = 3 * 8 + group;                                        \
+                                                                            \
+    const double *RESTRICT tw_re = stage_tw->re;                            \
+    const double *RESTRICT tw_im = stage_tw->im;                            \
+                                                                            \
+    for (size_t k = 0; k < K; k += step)                                    \
+    {                                                                       \
+        __m512d t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;                    \
+                                                                            \
+        PASS1_LOAD_AND_TWIDDLE_512(                                         \
+            in_re_base, in_im_base, in_stride, tw_re, tw_im, K, k,         \
+            t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i);                       \
+                                                                            \
+        __m512d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;                    \
+        BUTTERFLY_FN(                                                       \
+            t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i,                        \
+            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i);              \
+                                                                            \
+        _mm512_store_pd(&temp_re[s0 * K + k], y0r);                         \
+        _mm512_store_pd(&temp_im[s0 * K + k], y0i);                         \
+        _mm512_store_pd(&temp_re[s2 * K + k], y2r);                         \
+        _mm512_store_pd(&temp_im[s2 * K + k], y2i);                         \
+        _mm512_store_pd(&temp_re[s1 * K + k], y1r);                         \
+        _mm512_store_pd(&temp_im[s1 * K + k], y1i);                         \
+        _mm512_store_pd(&temp_re[s3 * K + k], y3r);                         \
+        _mm512_store_pd(&temp_im[s3 * K + k], y3i);                         \
+    }                                                                       \
+}                                                                           \
+                                                                            \
+/* ── U=2 pipelined (K≥16, ≥2 iterations) ────────────────────────── */    \
+TARGET_AVX512                                                               \
+NO_UNROLL_LOOPS                                                             \
+static void radix4_dit_pass1_##DIR_SUFFIX##_u2_avx512(                      \
+    size_t K,                                                               \
+    const double *RESTRICT in_re_base,                                      \
+    const double *RESTRICT in_im_base,                                      \
+    size_t in_stride,                                                       \
+    double *RESTRICT temp_re,                                               \
+    double *RESTRICT temp_im,                                               \
+    size_t group,                                                           \
+    const radix4_dit_stage_twiddles_blocked2_t *RESTRICT stage_tw)          \
+{                                                                           \
+    assert((K & 7) == 0 && "K must be multiple of 8 for AVX-512");          \
+    assert(K >= 16 && "K must be >= 16 for U=2 (need 2+ iterations)");      \
+    assert(group < 8);                                                      \
+                                                                            \
+    const size_t step = 8;                                                  \
+    const size_t s0 = 0 * 8 + group;                                        \
+    const size_t s1 = 1 * 8 + group;                                        \
+    const size_t s2 = 2 * 8 + group;                                        \
+    const size_t s3 = 3 * 8 + group;                                        \
+                                                                            \
+    const double *RESTRICT tw_re = stage_tw->re;                            \
+    const double *RESTRICT tw_im = stage_tw->im;                            \
+                                                                            \
+    /*==================================================================    \
+     * PROLOGUE: Load first iteration + prefetch next strided inputs        \
+     *================================================================*/    \
+    __m512d nt0r, nt0i, nt1r, nt1i, nt2r, nt2i, nt3r, nt3i;                \
+                                                                            \
+    PASS1_LOAD_AND_TWIDDLE_512(                                             \
+        in_re_base, in_im_base, in_stride, tw_re, tw_im, K, 0,             \
+        nt0r, nt0i, nt1r, nt1i, nt2r, nt2i, nt3r, nt3i);                   \
+                                                                            \
+    /* Prefetch 2nd iteration's strided inputs (HW can't predict stride) */ \
+    PASS1_PREFETCH_INPUTS_512(in_re_base, in_im_base, in_stride, step);     \
+                                                                            \
+    /*==================================================================    \
+     * STEADY-STATE: U=2 pipelined loop                                     \
+     *================================================================*/    \
+    _Pragma("GCC unroll 1")                                                 \
+    for (size_t k = 0; k + step < K; k += step)                             \
+    {                                                                       \
+        const size_t kn = k + step;                                         \
+                                                                            \
+        /* 1. CONSUME: next → current (register rename, 0 cost) */          \
+        __m512d t0r = nt0r, t0i = nt0i;                                     \
+        __m512d t1r = nt1r, t1i = nt1i;                                     \
+        __m512d t2r = nt2r, t2i = nt2i;                                     \
+        __m512d t3r = nt3r, t3i = nt3i;                                     \
+        /* Live: 8 ZMM (t0..t3 re+im) */                                   \
+                                                                            \
+        /* 2. BUTTERFLY */                                                  \
+        __m512d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;                    \
+        BUTTERFLY_FN(                                                       \
+            t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i,                        \
+            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i);              \
+        /* Live: 8 ZMM (y0..y3 re+im), inputs dead */                      \
+                                                                            \
+        /* 3. WAVE A: store even bins y0, y2 → frees 4 ZMM */              \
+        DIT4_STORE_WAVE_A_512(temp_re, temp_im, K, k, s0, s2,              \
+            y0r, y0i, y2r, y2i);                                            \
+        /* Live: 4 ZMM (y1,y3 re+im) */                                    \
+                                                                            \
+        /* 4. ►► U=2 INTERLEAVE: load+twiddle next iteration ◄◄  */        \
+        /*    Strided loads issue while odd stores drain store buffer */     \
+        PASS1_LOAD_AND_TWIDDLE_512(                                         \
+            in_re_base, in_im_base, in_stride, tw_re, tw_im, K, kn,        \
+            nt0r, nt0i, nt1r, nt1i, nt2r, nt2i, nt3r, nt3i);               \
+        /* Live: 4 (y1,y3) + 8 (nt0..nt3) = 12 ZMM ← PEAK */             \
+                                                                            \
+        /* 5. WAVE B: store odd bins y1, y3 → frees 4 ZMM */               \
+        DIT4_STORE_WAVE_B_512(temp_re, temp_im, K, k, s1, s3,              \
+            y1r, y1i, y3r, y3i);                                            \
+        /* Live: 8 ZMM (nt0..nt3) */                                       \
+                                                                            \
+        /* 6. Prefetch strided inputs 2 steps ahead */                      \
+        if (kn + step < K) {                                                \
+            PASS1_PREFETCH_INPUTS_512(in_re_base, in_im_base,               \
+                                      in_stride, kn + step);                \
+        }                                                                   \
+    }                                                                       \
+                                                                            \
+    /*==================================================================    \
+     * EPILOGUE: final iteration — compute + store, no next loads           \
+     *================================================================*/    \
+    {                                                                       \
+        const size_t k = K - step;                                          \
+                                                                            \
+        __m512d y0r, y0i, y1r, y1i, y2r, y2i, y3r, y3i;                    \
+        BUTTERFLY_FN(                                                       \
+            nt0r, nt0i, nt1r, nt1i, nt2r, nt2i, nt3r, nt3i,                \
+            &y0r, &y0i, &y1r, &y1i, &y2r, &y2i, &y3r, &y3i);              \
+                                                                            \
+        _mm512_store_pd(&temp_re[s0 * K + k], y0r);                         \
+        _mm512_store_pd(&temp_im[s0 * K + k], y0i);                         \
+        _mm512_store_pd(&temp_re[s2 * K + k], y2r);                         \
+        _mm512_store_pd(&temp_im[s2 * K + k], y2i);                         \
+        _mm512_store_pd(&temp_re[s1 * K + k], y1r);                         \
+        _mm512_store_pd(&temp_im[s1 * K + k], y1i);                         \
+        _mm512_store_pd(&temp_re[s3 * K + k], y3r);                         \
+        _mm512_store_pd(&temp_im[s3 * K + k], y3i);                         \
+    }                                                                       \
 }
+
+/* ── Instantiate forward and backward variants ─────────────────────── */
+DEFINE_PASS1_FUNCTIONS(forward,  radix4_dit_core_forward_avx512)
+DEFINE_PASS1_FUNCTIONS(backward, radix4_dit_core_backward_avx512)
 
 /*==========================================================================
  * WAVE A/B STORE MACROS (AVX-512)
@@ -450,12 +613,15 @@ static void radix8_dif_pass2_all_bins_avx512(
     }
 }
 
+
 /*==========================================================================
- * TOP-LEVEL RADIX-32 DRIVER (AVX-512, U=1, BLOCKED8)
+ * TOP-LEVEL RADIX-32 DRIVER (AVX-512, BLOCKED8)
  *
- * Complete 4×8 decomposition:
- *   Pass 1: 8 groups × radix-4 DIT (strided → bin-major temp)
- *   Pass 2: 4 bins × radix-8 DIF (temp → output)
+ * Complete 4x8 decomposition:
+ *   Pass 1: 8 groups x radix-4 DIT (strided -> bin-major temp)
+ *           Split forward/backward, U=2 for K>=16, U=1 fallback for K=8
+ *   Pass 2: 4 bins x radix-8 DIF (temp -> output)
+ *           U=2 for K>=16, U=1 fallback for K=8
  *
  * @param K         Samples per stripe (multiple of 8)
  * @param in_re     Input real [32 stripes][K], 64-byte aligned
@@ -483,19 +649,26 @@ static void radix32_stage_forward_avx512(
     const size_t in_stride = 8 * K;
 
     /*==================================================================
-     * PASS 1: Radix-4 DIT on 8 groups
+     * PASS 1: Radix-4 DIT on 8 groups (forward, U=2 when possible)
      *================================================================*/
+    void (*pass1_fn)(size_t, const double*, const double*, size_t,
+                     double*, double*, size_t,
+                     const radix4_dit_stage_twiddles_blocked2_t*);
+
+    if (K >= 16)
+        pass1_fn = radix4_dit_pass1_forward_u2_avx512;
+    else
+        pass1_fn = radix4_dit_pass1_forward_avx512;
+
     for (size_t group = 0; group < 8; group++)
     {
-        radix4_dit_pass1_avx512(
-            K,
-            &in_re[group * K],
-            &in_im[group * K],
-            in_stride,
-            temp_re, temp_im,
-            group,
-            pass1_tw,
-            0 /* forward */);
+        pass1_fn(K,
+                 &in_re[group * K],
+                 &in_im[group * K],
+                 in_stride,
+                 temp_re, temp_im,
+                 group,
+                 pass1_tw);
     }
 
     /*==================================================================
@@ -519,17 +692,24 @@ static void radix32_stage_backward_avx512(
 {
     const size_t in_stride = 8 * K;
 
+    void (*pass1_fn)(size_t, const double*, const double*, size_t,
+                     double*, double*, size_t,
+                     const radix4_dit_stage_twiddles_blocked2_t*);
+
+    if (K >= 16)
+        pass1_fn = radix4_dit_pass1_backward_u2_avx512;
+    else
+        pass1_fn = radix4_dit_pass1_backward_avx512;
+
     for (size_t group = 0; group < 8; group++)
     {
-        radix4_dit_pass1_avx512(
-            K,
-            &in_re[group * K],
-            &in_im[group * K],
-            in_stride,
-            temp_re, temp_im,
-            group,
-            pass1_tw,
-            1 /* backward */);
+        pass1_fn(K,
+                 &in_re[group * K],
+                 &in_im[group * K],
+                 in_stride,
+                 temp_re, temp_im,
+                 group,
+                 pass1_tw);
     }
 
     radix8_dif_pass2_all_bins_avx512(

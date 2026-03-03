@@ -85,8 +85,8 @@ static FORCE_INLINE void cmul_v512(
     __m512d ai_br = _mm512_mul_pd(ai, br);
 
     /* FMAs wait for their respective MUL result only */
-    *cr = _mm512_fmsub_pd(ar, br, ai_bi);  /* ar*br - ai*bi */
-    *ci = _mm512_fmadd_pd(ar, bi, ai_br);  /* ar*bi + ai*br */
+    *cr = _mm512_fmsub_pd(ar, br, ai_bi); /* ar*br - ai*bi */
+    *ci = _mm512_fmadd_pd(ar, bi, ai_br); /* ar*bi + ai*br */
 }
 
 /**
@@ -131,7 +131,7 @@ static FORCE_INLINE void csquare_v512(
 {
     __m512d ar_ai = _mm512_mul_pd(ar, ai);
     *cr = _mm512_fmsub_pd(ar, ar, _mm512_mul_pd(ai, ai));
-    *ci = _mm512_add_pd(ar_ai, ar_ai);  /* 2·ar·ai */
+    *ci = _mm512_add_pd(ar_ai, ar_ai); /* 2·ar·ai */
 }
 
 /*==========================================================================
@@ -571,10 +571,10 @@ static FORCE_INLINE void derive_w5_to_w8_512(
     __m512d *RESTRICT W7r, __m512d *RESTRICT W7i,
     __m512d *RESTRICT W8r, __m512d *RESTRICT W8i)
 {
-    cmul_v512(W1r, W1i, W4r, W4i, W5r, W5i);  /* W5 = W1 × W4 */
-    cmul_v512(W2r, W2i, W4r, W4i, W6r, W6i);  /* W6 = W2 × W4 */
-    cmul_v512(W3r, W3i, W4r, W4i, W7r, W7i);  /* W7 = W3 × W4 */
-    csquare_v512(W4r, W4i, W8r, W8i);          /* W8 = W4²      */
+    cmul_v512(W1r, W1i, W4r, W4i, W5r, W5i); /* W5 = W1 × W4 */
+    cmul_v512(W2r, W2i, W4r, W4i, W6r, W6i); /* W6 = W2 × W4 */
+    cmul_v512(W3r, W3i, W4r, W4i, W7r, W7i); /* W7 = W3 × W4 */
+    csquare_v512(W4r, W4i, W8r, W8i);        /* W8 = W4²      */
 }
 
 /*==========================================================================
@@ -729,52 +729,54 @@ static FORCE_INLINE void dif8_twiddle_and_butterfly_backward_avx512(
  * wave B stores y1,y3,y5,y7.
  *=========================================================================*/
 
-#define DIF8_LOAD_INPUTS_512(in_re, in_im, K, k,                    \
-                              x0r, x0i, x1r, x1i, x2r, x2i,        \
-                              x3r, x3i, x4r, x4i, x5r, x5i,        \
-                              x6r, x6i, x7r, x7i)                   \
-    do {                                                             \
-        x0r = _mm512_load_pd(&(in_re)[0 * (K) + (k)]);              \
-        x0i = _mm512_load_pd(&(in_im)[0 * (K) + (k)]);              \
-        x1r = _mm512_load_pd(&(in_re)[1 * (K) + (k)]);              \
-        x1i = _mm512_load_pd(&(in_im)[1 * (K) + (k)]);              \
-        x2r = _mm512_load_pd(&(in_re)[2 * (K) + (k)]);              \
-        x2i = _mm512_load_pd(&(in_im)[2 * (K) + (k)]);              \
-        x3r = _mm512_load_pd(&(in_re)[3 * (K) + (k)]);              \
-        x3i = _mm512_load_pd(&(in_im)[3 * (K) + (k)]);              \
-        x4r = _mm512_load_pd(&(in_re)[4 * (K) + (k)]);              \
-        x4i = _mm512_load_pd(&(in_im)[4 * (K) + (k)]);              \
-        x5r = _mm512_load_pd(&(in_re)[5 * (K) + (k)]);              \
-        x5i = _mm512_load_pd(&(in_im)[5 * (K) + (k)]);              \
-        x6r = _mm512_load_pd(&(in_re)[6 * (K) + (k)]);              \
-        x6i = _mm512_load_pd(&(in_im)[6 * (K) + (k)]);              \
-        x7r = _mm512_load_pd(&(in_re)[7 * (K) + (k)]);              \
-        x7i = _mm512_load_pd(&(in_im)[7 * (K) + (k)]);              \
+#define DIF8_LOAD_INPUTS_512(in_re, in_im, K, k,           \
+                             x0r, x0i, x1r, x1i, x2r, x2i, \
+                             x3r, x3i, x4r, x4i, x5r, x5i, \
+                             x6r, x6i, x7r, x7i)           \
+    do                                                     \
+    {                                                      \
+        x0r = _mm512_load_pd(&(in_re)[0 * (K) + (k)]);     \
+        x0i = _mm512_load_pd(&(in_im)[0 * (K) + (k)]);     \
+        x1r = _mm512_load_pd(&(in_re)[1 * (K) + (k)]);     \
+        x1i = _mm512_load_pd(&(in_im)[1 * (K) + (k)]);     \
+        x2r = _mm512_load_pd(&(in_re)[2 * (K) + (k)]);     \
+        x2i = _mm512_load_pd(&(in_im)[2 * (K) + (k)]);     \
+        x3r = _mm512_load_pd(&(in_re)[3 * (K) + (k)]);     \
+        x3i = _mm512_load_pd(&(in_im)[3 * (K) + (k)]);     \
+        x4r = _mm512_load_pd(&(in_re)[4 * (K) + (k)]);     \
+        x4i = _mm512_load_pd(&(in_im)[4 * (K) + (k)]);     \
+        x5r = _mm512_load_pd(&(in_re)[5 * (K) + (k)]);     \
+        x5i = _mm512_load_pd(&(in_im)[5 * (K) + (k)]);     \
+        x6r = _mm512_load_pd(&(in_re)[6 * (K) + (k)]);     \
+        x6i = _mm512_load_pd(&(in_im)[6 * (K) + (k)]);     \
+        x7r = _mm512_load_pd(&(in_re)[7 * (K) + (k)]);     \
+        x7i = _mm512_load_pd(&(in_im)[7 * (K) + (k)]);     \
     } while (0)
 
-#define DIF8_STORE_TWO_WAVE_512(ST_FN, out_re, out_im, K, k,        \
-                                 y0r, y0i, y1r, y1i, y2r, y2i,      \
-                                 y3r, y3i, y4r, y4i, y5r, y5i,      \
-                                 y6r, y6i, y7r, y7i)                 \
-    do {                                                             \
-        /* Wave A: even outputs (frees 8 ZMM) */                     \
-        ST_FN(&(out_re)[0 * (K) + (k)], y0r);                       \
-        ST_FN(&(out_im)[0 * (K) + (k)], y0i);                       \
-        ST_FN(&(out_re)[2 * (K) + (k)], y2r);                       \
-        ST_FN(&(out_im)[2 * (K) + (k)], y2i);                       \
-        ST_FN(&(out_re)[4 * (K) + (k)], y4r);                       \
-        ST_FN(&(out_im)[4 * (K) + (k)], y4i);                       \
-        ST_FN(&(out_re)[6 * (K) + (k)], y6r);                       \
-        ST_FN(&(out_im)[6 * (K) + (k)], y6i);                       \
-        /* Wave B: odd outputs */                                    \
-        ST_FN(&(out_re)[1 * (K) + (k)], y1r);                       \
-        ST_FN(&(out_im)[1 * (K) + (k)], y1i);                       \
-        ST_FN(&(out_re)[3 * (K) + (k)], y3r);                       \
-        ST_FN(&(out_im)[3 * (K) + (k)], y3i);                       \
-        ST_FN(&(out_re)[5 * (K) + (k)], y5r);                       \
-        ST_FN(&(out_im)[5 * (K) + (k)], y5i);                       \
-        ST_FN(&(out_re)[7 * (K) + (k)], y7r);                       \
-        ST_FN(&(out_im)[7 * (K) + (k)], y7i);                       \
+#define DIF8_STORE_TWO_WAVE_512(ST_FN, out_re, out_im, K, k,  \
+                                y0r, y0i, y1r, y1i, y2r, y2i, \
+                                y3r, y3i, y4r, y4i, y5r, y5i, \
+                                y6r, y6i, y7r, y7i)           \
+    do                                                        \
+    {                                                         \
+        /* Wave A: even outputs (frees 8 ZMM) */              \
+        ST_FN(&(out_re)[0 * (K) + (k)], y0r);                 \
+        ST_FN(&(out_im)[0 * (K) + (k)], y0i);                 \
+        ST_FN(&(out_re)[2 * (K) + (k)], y2r);                 \
+        ST_FN(&(out_im)[2 * (K) + (k)], y2i);                 \
+        ST_FN(&(out_re)[4 * (K) + (k)], y4r);                 \
+        ST_FN(&(out_im)[4 * (K) + (k)], y4i);                 \
+        ST_FN(&(out_re)[6 * (K) + (k)], y6r);                 \
+        ST_FN(&(out_im)[6 * (K) + (k)], y6i);                 \
+        /* Wave B: odd outputs */                             \
+        ST_FN(&(out_re)[1 * (K) + (k)], y1r);                 \
+        ST_FN(&(out_im)[1 * (K) + (k)], y1i);                 \
+        ST_FN(&(out_re)[3 * (K) + (k)], y3r);                 \
+        ST_FN(&(out_im)[3 * (K) + (k)], y3i);                 \
+        ST_FN(&(out_re)[5 * (K) + (k)], y5r);                 \
+        ST_FN(&(out_im)[5 * (K) + (k)], y5i);                 \
+        ST_FN(&(out_re)[7 * (K) + (k)], y7r);                 \
+        ST_FN(&(out_im)[7 * (K) + (k)], y7i);                 \
     } while (0)
 
 #endif /* FFT_RADIX32_AVX512_CORE_H */
