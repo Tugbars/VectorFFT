@@ -487,7 +487,6 @@ static void radix4_dit_stage_blocked2_forward_avx2_strided(
 
     // NO NT stores to temp buffer (keep hot for Pass 2)
     const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE_DIT4;
-    const int pf_hint = _MM_HINT_T0;
 
     const double *RESTRICT re_base = (const double *)ASSUME_ALIGNED(stage_tw->re, 32);
     const double *RESTRICT im_base = (const double *)ASSUME_ALIGNED(stage_tw->im, 32);
@@ -607,18 +606,18 @@ static void radix4_dit_stage_blocked2_forward_avx2_strided(
         //======================================================================
         if (kn + prefetch_dist < K)
         {
-            _mm_prefetch((const char *)&in_re_base[0 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_im_base[0 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_re_base[1 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_im_base[1 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_re_base[2 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_im_base[2 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_re_base[3 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_im_base[3 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&re_base[0 * K + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&im_base[0 * K + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&re_base[1 * K + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&im_base[1 * K + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_re_base[0 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_im_base[0 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_re_base[1 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_im_base[1 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_re_base[2 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_im_base[2 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_re_base[3 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_im_base[3 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&re_base[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&im_base[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&re_base[1 * K + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&im_base[1 * K + kn + prefetch_dist], _MM_HINT_T0);
         }
     }
 
@@ -714,7 +713,6 @@ static void radix4_dit_stage_blocked2_backward_avx2_strided(
 #define STPD(p, v) (out_aligned ? _mm256_store_pd(p, v) : _mm256_storeu_pd(p, v))
 
     const size_t prefetch_dist = RADIX32_PREFETCH_DISTANCE_DIT4;
-    const int pf_hint = _MM_HINT_T0;
 
     const double *RESTRICT re_base = (const double *)ASSUME_ALIGNED(stage_tw->re, 32);
     const double *RESTRICT im_base = (const double *)ASSUME_ALIGNED(stage_tw->im, 32);
@@ -808,18 +806,18 @@ static void radix4_dit_stage_blocked2_backward_avx2_strided(
         // Prefetch
         if (kn + prefetch_dist < K)
         {
-            _mm_prefetch((const char *)&in_re_base[0 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_im_base[0 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_re_base[1 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_im_base[1 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_re_base[2 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_im_base[2 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_re_base[3 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&in_im_base[3 * in_stride + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&re_base[0 * K + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&im_base[0 * K + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&re_base[1 * K + kn + prefetch_dist], pf_hint);
-            _mm_prefetch((const char *)&im_base[1 * K + kn + prefetch_dist], pf_hint);
+            _mm_prefetch((const char *)&in_re_base[0 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_im_base[0 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_re_base[1 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_im_base[1 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_re_base[2 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_im_base[2 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_re_base[3 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&in_im_base[3 * in_stride + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&re_base[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&im_base[0 * K + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&re_base[1 * K + kn + prefetch_dist], _MM_HINT_T0);
+            _mm_prefetch((const char *)&im_base[1 * K + kn + prefetch_dist], _MM_HINT_T0);
         }
     }
 
