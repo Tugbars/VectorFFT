@@ -29,6 +29,12 @@ add_test(
     COMMAND bench_radix32_avx2
 )
 # ============================================================================
+# Pass-2 isolation + full-stage bench (all twiddle modes)
+# ============================================================================
+add_executable(bench_radix32_pass2 bench_radix32_pass2.c)
+target_link_libraries(bench_radix32_pass2 PRIVATE radix32_avx2 m)
+target_compile_options(bench_radix32_pass2 PRIVATE ${RADIX32_TEST_FLAGS})
+# ============================================================================
 # GTest: n1 codelet roundtrip
 # ============================================================================
 add_executable(test_radix32_n1_roundtrip test_radix32_n1_roundtrip.cpp)
