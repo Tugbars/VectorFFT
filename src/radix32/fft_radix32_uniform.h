@@ -155,7 +155,7 @@ static inline const char *radix32_isa_name(radix32_isa_level_t level)
  *   effective = min(hardware_isa, constraints(K, twiddle_mode))
  *
  * Downgrades:
- *   AVX-512 → AVX2:  K%8!=0 || K<16 || mode!=BLOCKED8
+ *   AVX-512 → AVX2:  K%8!=0 || K<16 || mode==RECURRENCE
  *   AVX2 → Scalar:   K%4!=0 || K<8
  *=========================================================================*/
 
@@ -164,7 +164,8 @@ static inline radix32_isa_level_t effective_isa(size_t K, tw_mode_t mode)
     radix32_isa_level_t hw = detect_isa_level();
 
     if (hw >= ISA_AVX512) {
-        if ((K & 7) == 0 && K >= 16 && mode == TW_MODE_BLOCKED8)
+        if ((K & 7) == 0 && K >= 16 &&
+            (mode == TW_MODE_BLOCKED8 || mode == TW_MODE_BLOCKED4))
             return ISA_AVX512;
         hw = ISA_AVX2;
     }

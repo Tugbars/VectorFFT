@@ -45,30 +45,30 @@ extern radix32_isa_level_t radix32_backward(
     double *RESTRICT temp_re, double *RESTRICT temp_im);
 
 extern void radix32_forward_force_avx512(
-    size_t, const double*, const double*, double*, double*,
-    const radix4_dit_stage_twiddles_blocked2_t*,
-    const tw_stage8_t*, double*, double*);
+    size_t, const double *, const double *, double *, double *,
+    const radix4_dit_stage_twiddles_blocked2_t *,
+    const tw_stage8_t *, double *, double *);
 extern void radix32_forward_force_avx2(
-    size_t, const double*, const double*, double*, double*,
-    const radix4_dit_stage_twiddles_blocked2_t*,
-    const tw_stage8_t*, double*, double*);
+    size_t, const double *, const double *, double *, double *,
+    const radix4_dit_stage_twiddles_blocked2_t *,
+    const tw_stage8_t *, double *, double *);
 extern void radix32_forward_force_scalar(
-    size_t, const double*, const double*, double*, double*,
-    const radix4_dit_stage_twiddles_blocked2_t*,
-    const tw_stage8_t*, const tw_recurrence_scalar_t*);
+    size_t, const double *, const double *, double *, double *,
+    const radix4_dit_stage_twiddles_blocked2_t *,
+    const tw_stage8_t *, const tw_recurrence_scalar_t *);
 
 extern void radix32_backward_force_avx512(
-    size_t, const double*, const double*, double*, double*,
-    const radix4_dit_stage_twiddles_blocked2_t*,
-    const tw_stage8_t*, double*, double*);
+    size_t, const double *, const double *, double *, double *,
+    const radix4_dit_stage_twiddles_blocked2_t *,
+    const tw_stage8_t *, double *, double *);
 extern void radix32_backward_force_avx2(
-    size_t, const double*, const double*, double*, double*,
-    const radix4_dit_stage_twiddles_blocked2_t*,
-    const tw_stage8_t*, double*, double*);
+    size_t, const double *, const double *, double *, double *,
+    const radix4_dit_stage_twiddles_blocked2_t *,
+    const tw_stage8_t *, double *, double *);
 extern void radix32_backward_force_scalar(
-    size_t, const double*, const double*, double*, double*,
-    const radix4_dit_stage_twiddles_blocked2_t*,
-    const tw_stage8_t*, const tw_recurrence_scalar_t*);
+    size_t, const double *, const double *, double *, double *,
+    const radix4_dit_stage_twiddles_blocked2_t *,
+    const tw_stage8_t *, const tw_recurrence_scalar_t *);
 
 /*==========================================================================
  * Helpers
@@ -83,7 +83,8 @@ static double *aa(size_t n)
 
 static void fill_rand(double *buf, size_t n, unsigned seed)
 {
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++)
+    {
         seed = seed * 1103515245 + 12345;
         buf[i] = ((double)(seed >> 16) / 32768.0) - 1.0;
     }
@@ -92,9 +93,11 @@ static void fill_rand(double *buf, size_t n, unsigned seed)
 static double max_err(const double *a, const double *b, size_t n)
 {
     double mx = 0;
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++)
+    {
         double e = fabs(a[i] - b[i]);
-        if (e > mx) mx = e;
+        if (e > mx)
+            mx = e;
     }
     return mx;
 }
@@ -103,7 +106,8 @@ static double max_err(const double *a, const double *b, size_t n)
  * Twiddle generation
  *=========================================================================*/
 
-typedef struct {
+typedef struct
+{
     double *p1r, *p1i, *p2r[8], *p2i[8];
     radix4_dit_stage_twiddles_blocked2_t p1;
     tw_stage8_t p2;
@@ -111,34 +115,49 @@ typedef struct {
 
 static void tw_init(size_t K, tw_mode_t mode, tw_ctx_t *t)
 {
-    t->p1r = aa(2 * K); t->p1i = aa(2 * K);
-    for (size_t k = 0; k < K; k++) {
+    t->p1r = aa(2 * K);
+    t->p1i = aa(2 * K);
+    for (size_t k = 0; k < K; k++)
+    {
         double a = -2.0 * M_PI * (double)k / (32.0 * (double)K);
-        t->p1r[k] = cos(a);      t->p1i[k] = sin(a);
-        t->p1r[K+k] = cos(2*a);  t->p1i[K+k] = sin(2*a);
+        t->p1r[k] = cos(a);
+        t->p1i[k] = sin(a);
+        t->p1r[K + k] = cos(2 * a);
+        t->p1i[K + k] = sin(2 * a);
     }
     t->p1 = (radix4_dit_stage_twiddles_blocked2_t){
         .re = t->p1r, .im = t->p1i, .K = K};
 
-    for (int j = 0; j < 8; j++) {
-        t->p2r[j] = aa(K); t->p2i[j] = aa(K);
-        double base = -2.0 * M_PI * (double)(j+1) / (8.0 * (double)K);
-        for (size_t k = 0; k < K; k++) {
+    for (int j = 0; j < 8; j++)
+    {
+        t->p2r[j] = aa(K);
+        t->p2i[j] = aa(K);
+        double base = -2.0 * M_PI * (double)(j + 1) / (8.0 * (double)K);
+        for (size_t k = 0; k < K; k++)
+        {
             double a = base * (double)k;
-            t->p2r[j][k] = cos(a); t->p2i[j][k] = sin(a);
+            t->p2r[j][k] = cos(a);
+            t->p2i[j][k] = sin(a);
         }
     }
 
-    if (mode == TW_MODE_BLOCKED8) {
+    if (mode == TW_MODE_BLOCKED8)
+    {
         t->p2.mode = TW_MODE_BLOCKED8;
-        for (int j = 0; j < 8; j++) {
-            t->p2.b8.re[j] = t->p2r[j]; t->p2.b8.im[j] = t->p2i[j];
+        for (int j = 0; j < 8; j++)
+        {
+            t->p2.b8.re[j] = t->p2r[j];
+            t->p2.b8.im[j] = t->p2i[j];
         }
         t->p2.b8.K = K;
-    } else {
+    }
+    else
+    {
         t->p2.mode = TW_MODE_BLOCKED4;
-        for (int j = 0; j < 4; j++) {
-            t->p2.b4.re[j] = t->p2r[j]; t->p2.b4.im[j] = t->p2i[j];
+        for (int j = 0; j < 4; j++)
+        {
+            t->p2.b4.re[j] = t->p2r[j];
+            t->p2.b4.im[j] = t->p2i[j];
         }
         t->p2.b4.K = K;
     }
@@ -146,8 +165,13 @@ static void tw_init(size_t K, tw_mode_t mode, tw_ctx_t *t)
 
 static void tw_free(tw_ctx_t *t)
 {
-    r32_aligned_free(t->p1r); r32_aligned_free(t->p1i);
-    for (int j = 0; j < 8; j++) { r32_aligned_free(t->p2r[j]); r32_aligned_free(t->p2i[j]); }
+    r32_aligned_free(t->p1r);
+    r32_aligned_free(t->p1i);
+    for (int j = 0; j < 8; j++)
+    {
+        r32_aligned_free(t->p2r[j]);
+        r32_aligned_free(t->p2i[j]);
+    }
 }
 
 /*==========================================================================
@@ -181,9 +205,16 @@ static int test_3way_fwd(size_t K)
            K, e_s2, e_s5, e_25, pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(sr); r32_aligned_free(si);
-    r32_aligned_free(a2r); r32_aligned_free(a2i); r32_aligned_free(a5r); r32_aligned_free(a5i);
-    r32_aligned_free(tr); r32_aligned_free(ti);
+    r32_aligned_free(ir);
+    r32_aligned_free(ii);
+    r32_aligned_free(sr);
+    r32_aligned_free(si);
+    r32_aligned_free(a2r);
+    r32_aligned_free(a2i);
+    r32_aligned_free(a5r);
+    r32_aligned_free(a5i);
+    r32_aligned_free(tr);
+    r32_aligned_free(ti);
     return pass;
 }
 
@@ -218,9 +249,16 @@ static int test_3way_bwd(size_t K)
            K, e_s2, e_s5, e_25, pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(sr); r32_aligned_free(si);
-    r32_aligned_free(a2r); r32_aligned_free(a2i); r32_aligned_free(a5r); r32_aligned_free(a5i);
-    r32_aligned_free(tr); r32_aligned_free(ti);
+    r32_aligned_free(ir);
+    r32_aligned_free(ii);
+    r32_aligned_free(sr);
+    r32_aligned_free(si);
+    r32_aligned_free(a2r);
+    r32_aligned_free(a2i);
+    r32_aligned_free(a5r);
+    r32_aligned_free(a5i);
+    r32_aligned_free(tr);
+    r32_aligned_free(ti);
     return pass;
 }
 
@@ -229,7 +267,7 @@ static int test_3way_bwd(size_t K)
  *=========================================================================*/
 
 static int test_dispatch_isa(size_t K, tw_mode_t mode,
-                              radix32_isa_level_t expected)
+                             radix32_isa_level_t expected)
 {
     const size_t n = 32 * K;
     double *ir = aa(n), *ii = aa(n);
@@ -252,7 +290,12 @@ static int test_dispatch_isa(size_t K, tw_mode_t mode,
            pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(or_); r32_aligned_free(oi); r32_aligned_free(tr); r32_aligned_free(ti);
+    r32_aligned_free(ir);
+    r32_aligned_free(ii);
+    r32_aligned_free(or_);
+    r32_aligned_free(oi);
+    r32_aligned_free(tr);
+    r32_aligned_free(ti);
     return pass;
 }
 
@@ -275,19 +318,36 @@ static int test_auto_vs_forced(size_t K, int direction)
     tw_init(K, TW_MODE_BLOCKED8, &tw);
 
     radix32_isa_level_t isa;
-    if (direction == 0) {
+    if (direction == 0)
+    {
         isa = radix32_forward(K, ir, ii, ar, ai, &tw.p1, &tw.p2, NULL, t1r, t1i);
-        switch (isa) {
-            case ISA_AVX512: radix32_forward_force_avx512(K, ir, ii, fr, fi, &tw.p1, &tw.p2, t2r, t2i); break;
-            case ISA_AVX2:   radix32_forward_force_avx2(K, ir, ii, fr, fi, &tw.p1, &tw.p2, t2r, t2i); break;
-            default:         radix32_forward_force_scalar(K, ir, ii, fr, fi, &tw.p1, &tw.p2, NULL); break;
+        switch (isa)
+        {
+        case ISA_AVX512:
+            radix32_forward_force_avx512(K, ir, ii, fr, fi, &tw.p1, &tw.p2, t2r, t2i);
+            break;
+        case ISA_AVX2:
+            radix32_forward_force_avx2(K, ir, ii, fr, fi, &tw.p1, &tw.p2, t2r, t2i);
+            break;
+        default:
+            radix32_forward_force_scalar(K, ir, ii, fr, fi, &tw.p1, &tw.p2, NULL);
+            break;
         }
-    } else {
+    }
+    else
+    {
         isa = radix32_backward(K, ir, ii, ar, ai, &tw.p1, &tw.p2, NULL, t1r, t1i);
-        switch (isa) {
-            case ISA_AVX512: radix32_backward_force_avx512(K, ir, ii, fr, fi, &tw.p1, &tw.p2, t2r, t2i); break;
-            case ISA_AVX2:   radix32_backward_force_avx2(K, ir, ii, fr, fi, &tw.p1, &tw.p2, t2r, t2i); break;
-            default:         radix32_backward_force_scalar(K, ir, ii, fr, fi, &tw.p1, &tw.p2, NULL); break;
+        switch (isa)
+        {
+        case ISA_AVX512:
+            radix32_backward_force_avx512(K, ir, ii, fr, fi, &tw.p1, &tw.p2, t2r, t2i);
+            break;
+        case ISA_AVX2:
+            radix32_backward_force_avx2(K, ir, ii, fr, fi, &tw.p1, &tw.p2, t2r, t2i);
+            break;
+        default:
+            radix32_backward_force_scalar(K, ir, ii, fr, fi, &tw.p1, &tw.p2, NULL);
+            break;
         }
     }
 
@@ -298,13 +358,21 @@ static int test_auto_vs_forced(size_t K, int direction)
            err, pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(ar); r32_aligned_free(ai); r32_aligned_free(fr); r32_aligned_free(fi);
-    r32_aligned_free(t1r); r32_aligned_free(t1i); r32_aligned_free(t2r); r32_aligned_free(t2i);
+    r32_aligned_free(ir);
+    r32_aligned_free(ii);
+    r32_aligned_free(ar);
+    r32_aligned_free(ai);
+    r32_aligned_free(fr);
+    r32_aligned_free(fi);
+    r32_aligned_free(t1r);
+    r32_aligned_free(t1i);
+    r32_aligned_free(t2r);
+    r32_aligned_free(t2i);
     return pass;
 }
 
 /*==========================================================================
- * TEST 5: BLOCKED4 downgrade — not AVX-512, matches scalar
+ * TEST 5: BLOCKED4 via AVX-512 — correctness vs scalar
  *=========================================================================*/
 
 static int test_blocked4(size_t K)
@@ -325,17 +393,41 @@ static int test_blocked4(size_t K)
     radix32_forward_force_scalar(K, ir, ii, sr, si, &tw.p1, &tw.p2, NULL);
 
     double err = fmax(max_err(sr, ar, n), max_err(si, ai, n));
-    int isa_ok = (isa != ISA_AVX512);
     int val_ok = (err < 1e-12);
+
+    /* On AVX-512 hw with K%8==0 && K>=16, BLOCKED4 now hits AVX-512 */
+    int isa_ok;
+    const char *expect_str;
+    if ((K & 7) == 0 && K >= 16 && radix32_get_isa_level() >= ISA_AVX512)
+    {
+        isa_ok = (isa == ISA_AVX512);
+        expect_str = "AVX-512";
+    }
+    else if ((K & 3) == 0 && K >= 8)
+    {
+        isa_ok = (isa == ISA_AVX2);
+        expect_str = "AVX2";
+    }
+    else
+    {
+        isa_ok = (isa == ISA_SCALAR);
+        expect_str = "scalar";
+    }
     int pass = isa_ok && val_ok;
 
-    printf("  BLOCKED4 K=%-5zu isa=%-8s (!=512:%s) err=%.1e  %s\n",
-           K, radix32_isa_name(isa), isa_ok ? "ok" : "WRONG",
+    printf("  BLOCKED4 K=%-5zu isa=%-8s (exp=%s:%s) err=%.1e  %s\n",
+           K, radix32_isa_name(isa), expect_str, isa_ok ? "ok" : "WRONG",
            err, pass ? "PASS" : "FAIL");
 
     tw_free(&tw);
-    r32_aligned_free(ir); r32_aligned_free(ii); r32_aligned_free(ar); r32_aligned_free(ai); r32_aligned_free(sr); r32_aligned_free(si);
-    r32_aligned_free(tr); r32_aligned_free(ti);
+    r32_aligned_free(ir);
+    r32_aligned_free(ii);
+    r32_aligned_free(ar);
+    r32_aligned_free(ai);
+    r32_aligned_free(sr);
+    r32_aligned_free(si);
+    r32_aligned_free(tr);
+    r32_aligned_free(ti);
     return pass;
 }
 
@@ -357,31 +449,54 @@ int main(void)
     const int nK = 5;
 
     printf("── Three-way forward: AVX-512 ≡ AVX2 ≡ scalar ──\n");
-    for (int i = 0; i < nK; i++) { total++; passed += test_3way_fwd(Ks[i]); }
+    for (int i = 0; i < nK; i++)
+    {
+        total++;
+        passed += test_3way_fwd(Ks[i]);
+    }
 
     printf("\n── Three-way backward: AVX-512 ≡ AVX2 ≡ scalar ──\n");
-    for (int i = 0; i < nK; i++) { total++; passed += test_3way_bwd(Ks[i]); }
+    for (int i = 0; i < nK; i++)
+    {
+        total++;
+        passed += test_3way_bwd(Ks[i]);
+    }
 
     printf("\n── Auto-dispatch ISA selection ──\n");
-    if (hw >= ISA_AVX512) {
-        total++; passed += test_dispatch_isa(64, TW_MODE_BLOCKED8, ISA_AVX512);
-        total++; passed += test_dispatch_isa(256, TW_MODE_BLOCKED8, ISA_AVX512);
+    if (hw >= ISA_AVX512)
+    {
+        total++;
+        passed += test_dispatch_isa(64, TW_MODE_BLOCKED8, ISA_AVX512);
+        total++;
+        passed += test_dispatch_isa(256, TW_MODE_BLOCKED8, ISA_AVX512);
+        total++;
+        passed += test_dispatch_isa(64, TW_MODE_BLOCKED4, ISA_AVX512);
+        total++;
+        passed += test_dispatch_isa(512, TW_MODE_BLOCKED4, ISA_AVX512);
     }
-    if (hw >= ISA_AVX2) {
-        total++; passed += test_dispatch_isa(64, TW_MODE_BLOCKED4, ISA_AVX2);
-        total++; passed += test_dispatch_isa(8, TW_MODE_BLOCKED8, ISA_AVX2);
+    if (hw >= ISA_AVX2)
+    {
+        total++;
+        passed += test_dispatch_isa(8, TW_MODE_BLOCKED8, ISA_AVX2);
     }
 
     printf("\n── Auto ≡ forced (bit-exact) ──\n");
-    for (int i = 0; i < nK; i++) {
-        total++; passed += test_auto_vs_forced(Ks[i], 0);
-        total++; passed += test_auto_vs_forced(Ks[i], 1);
+    for (int i = 0; i < nK; i++)
+    {
+        total++;
+        passed += test_auto_vs_forced(Ks[i], 0);
+        total++;
+        passed += test_auto_vs_forced(Ks[i], 1);
     }
 
-    printf("\n── BLOCKED4 downgrade ──\n");
+    printf("\n── BLOCKED4 via AVX-512 ──\n");
     {
-        size_t b4K[] = {16, 64, 256};
-        for (int i = 0; i < 3; i++) { total++; passed += test_blocked4(b4K[i]); }
+        size_t b4K[] = {16, 64, 256, 512, 1024, 4096};
+        for (int i = 0; i < 6; i++)
+        {
+            total++;
+            passed += test_blocked4(b4K[i]);
+        }
     }
 
     printf("\n══════════════════════════════════════════\n");

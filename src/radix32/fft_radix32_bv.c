@@ -46,15 +46,15 @@ radix32_isa_level_t radix32_backward(
 {
     const radix32_isa_level_t isa = effective_isa(K, pass2_tw->mode);
 
-    switch (isa) {
+    switch (isa)
+    {
 
     case ISA_AVX512:
         assert(temp_re != NULL && temp_im != NULL &&
                "AVX-512 path requires temp buffers");
-        assert(pass2_tw->mode == TW_MODE_BLOCKED8);
-        radix32_stage_backward_avx512(
+        radix32_stage_backward_avx512_multi(
             K, in_re, in_im, out_re, out_im,
-            pass1_tw, &pass2_tw->b8, temp_re, temp_im);
+            pass1_tw, pass2_tw, temp_re, temp_im);
         break;
 
     case ISA_AVX2:
@@ -93,10 +93,12 @@ void radix32_backward_force_avx512(
     double *RESTRICT temp_re,
     double *RESTRICT temp_im)
 {
-    assert((K & 7) == 0 && K >= 16 && pass2_tw->mode == TW_MODE_BLOCKED8);
-    radix32_stage_backward_avx512(
+    assert((K & 7) == 0 && K >= 16 &&
+           (pass2_tw->mode == TW_MODE_BLOCKED8 ||
+            pass2_tw->mode == TW_MODE_BLOCKED4));
+    radix32_stage_backward_avx512_multi(
         K, in_re, in_im, out_re, out_im,
-        pass1_tw, &pass2_tw->b8, temp_re, temp_im);
+        pass1_tw, pass2_tw, temp_re, temp_im);
 }
 
 void radix32_backward_force_avx2(
