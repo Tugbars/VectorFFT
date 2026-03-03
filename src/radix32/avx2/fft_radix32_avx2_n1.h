@@ -484,11 +484,11 @@ void fft_radix32_n1_forward_avx2(
     const size_t is = in_stride;
     const size_t os = out_stride;
 
-    /* Stack temp: 32 stripes × 4 doubles = 128 per component, L1-resident */
-    ALIGNAS(32)
-    double tmp_re[128];
-    ALIGNAS(32)
-    double tmp_im[128];
+    /* Heap temp: 32 stripes × 4 doubles = 128 per component.
+     * Windows only guarantees 16-byte stack alignment; AVX2 vmovapd
+     * needs 32. Heap allocation via r32_aligned_alloc is safe. */
+    double *tmp_re = (double *)r32_aligned_alloc(32, 128 * sizeof(double));
+    double *tmp_im = (double *)r32_aligned_alloc(32, 128 * sizeof(double));
 
     /* PASS 1: Radix-4 DIT on 8 groups (no stage twiddles) */
     PASS1_GROUP(0, forward);
@@ -506,6 +506,8 @@ void fft_radix32_n1_forward_avx2(
     n1_bin2_fwd(tmp_re, tmp_im, out_re, out_im, os);
     n1_bin3_fwd(tmp_re, tmp_im, out_re, out_im, os);
 
+    r32_aligned_free(tmp_re);
+    r32_aligned_free(tmp_im);
     _mm256_zeroupper();
 }
 
@@ -524,10 +526,8 @@ void fft_radix32_n1_backward_avx2(
     const size_t is = in_stride;
     const size_t os = out_stride;
 
-    ALIGNAS(32)
-    double tmp_re[128];
-    ALIGNAS(32)
-    double tmp_im[128];
+    double *tmp_re = (double *)r32_aligned_alloc(32, 128 * sizeof(double));
+    double *tmp_im = (double *)r32_aligned_alloc(32, 128 * sizeof(double));
 
     /* PASS 1: Radix-4 DIT BACKWARD */
     PASS1_GROUP(0, backward);
@@ -545,6 +545,8 @@ void fft_radix32_n1_backward_avx2(
     n1_bin2_bwd(tmp_re, tmp_im, out_re, out_im, os);
     n1_bin3_bwd(tmp_re, tmp_im, out_re, out_im, os);
 
+    r32_aligned_free(tmp_re);
+    r32_aligned_free(tmp_im);
     _mm256_zeroupper();
 }
 
