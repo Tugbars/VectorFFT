@@ -1,233 +1,260 @@
-cmake_minimum_required(VERSION 3.20)
-project(radix32 LANGUAGES C CXX)
-
 # ============================================================================
-# Compiler detection — ICX preferred, GCC/Clang supported
+# src/radix32/CMakeLists.txt
+# VectorFFT -- Radix-32 FFT stage (4x8 decomposition)
+#
+# Layout:
+#   radix32/
+#     fft_radix32_fv.c         Forward dispatch (AVX-512 -> AVX2 -> scalar)
+#     fft_radix32_bv.c         Backward dispatch
+#     fft_radix32_uniform.h    ISA detection + backend includes
+#     fft_radix32_platform.h   Compiler abstraction (TARGET_AVX512, etc.)
+#     fft_radix32_dispatch.h   Dispatch logic
+#     avx512/                  AVX-512 kernels (header-only)
+#     avx2/                    AVX2 kernels (header-only)
+#     scalar/                  Scalar kernels (header-only)
+#     tests/                   Unit tests + benchmarks
+#
+# The backends (avx512/, avx2/, scalar/) are header-only. All code is
+# inlined into the two dispatch TUs (fv.c, bv.c) which compile with the
+# highest available ISA flags. Runtime CPUID gates actual code paths.
 # ============================================================================
-set(RADIX32_IS_ICX   FALSE)
-set(RADIX32_IS_GCC   FALSE)
-set(RADIX32_IS_CLANG FALSE)
 
-if(CMAKE_C_COMPILER_ID MATCHES "IntelLLVM")
-    set(RADIX32_IS_ICX TRUE)
-    message(STATUS "radix32: Intel ICX detected (${CMAKE_C_COMPILER_VERSION})")
-elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    set(RADIX32_IS_GCC TRUE)
-    message(STATUS "radix32: GCC detected (${CMAKE_C_COMPILER_VERSION})")
-elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
-    set(RADIX32_IS_CLANG TRUE)
-    message(STATUS "radix32: Clang detected (${CMAKE_C_COMPILER_VERSION})")
+# =========================================================================
+# LIBRARY: radix-32 dispatch drivers
+# =========================================================================
+#
+# Uses the highest available ISA. The dispatch TUs include ALL backend
+# headers via fft_radix32_uniform.h. Per-function TARGET_AVX512 /
+# TARGET_AVX2_FMA attributes control codegen; the file-level ISA flag
+# just needs to cover the highest tier so the compiler accepts the
+# intrinsic headers.
+#
+# Preference: AVX-512 > AVX2 > skip
+
+if(VFFT_HAS_AVX512)
+    vfft_add_isa_library(vfft_radix32 AVX512
+        fft_radix32_fv.c
+        fft_radix32_bv.c
+    )
+    set(_R32_ISA AVX512)
+elseif(VFFT_HAS_AVX2)
+    # Without AVX-512 compiler support, the AVX-512 backend #ifdef's out.
+    # Dispatch falls through to AVX2 -> scalar at runtime.
+    vfft_add_isa_library(vfft_radix32 AVX2
+        fft_radix32_fv.c
+        fft_radix32_bv.c
+    )
+    set(_R32_ISA AVX2)
 else()
-    message(WARNING
-        "radix32: Untested compiler '${CMAKE_C_COMPILER_ID}'. "
-        "ICX, GCC, or Clang recommended.")
+    message(WARNING "[VectorFFT] radix32: no SIMD ISA available -- skipping")
+    return()
 endif()
 
-# ============================================================================
-# Options
-# ============================================================================
-option(RADIX32_BUILD_TESTS    "Build unit tests and benchmarks"            ON)
-option(RADIX32_BUILD_AVX512   "Build AVX-512 codelet (requires AVX-512)"   OFF)
-option(RADIX32_BUILD_SSE2     "Build SSE2 codelet"                         OFF)
-option(RADIX32_BUILD_DRIVERS  "Build forward/backward driver objects"       OFF)
-option(RADIX32_OPT_REPORT     "Enable ICX optimization reports"            OFF)
+message(STATUS "[VectorFFT] radix32: dispatch at ${_R32_ISA}")
 
-# ============================================================================
-# Global settings
-# ============================================================================
-set(CMAKE_C_STANDARD   11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Default to Release if not specified
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
-endif()
+# =========================================================================
+# TESTS
+# =========================================================================
+if(VFFT_BUILD_TESTS)
 
-# ============================================================================
-# ISA detection helpers
-#
-# ICX: -x flag selects exact µarch (e.g. -xCORE-AVX2, -xCORE-AVX512)
-#      -ax adds runtime dispatch path alongside baseline
-#      -march=native works but -x gives tighter codegen on known targets
-# GCC: -march=native or explicit -mavx2 -mfma
-# ============================================================================
+    # -- Enable C++ (needed for GTest roundtrip suites) --------------------
+    # The root project may be C-only; enable CXX here so .cpp sources and
+    # GTest can compile without forcing LANGUAGES CXX on the whole tree.
+    enable_language(CXX)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Base warning flags shared across all compilers
-set(RADIX32_WARN_FLAGS
-    -Wall -Wextra -Wpedantic
-    -Wno-unused-parameter
-    -Wno-unused-function
-)
+    # -- GTest (for C++ roundtrip suites) ---------------------------------
+    if(NOT TARGET GTest::gtest_main)
+        include(FetchContent)
+        FetchContent_Declare(
+            googletest
+            GIT_REPOSITORY https://github.com/google/googletest.git
+            GIT_TAG        v1.15.2
+        )
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
-# ICX opt-report (generates .optrpt files alongside objects)
-set(RADIX32_ICX_OPT_REPORT_FLAGS "")
-if(RADIX32_IS_ICX AND RADIX32_OPT_REPORT)
-    set(RADIX32_ICX_OPT_REPORT_FLAGS -qopt-report=5 -qopt-report-phase=vec,loop)
-    message(STATUS "radix32: ICX optimization reports enabled")
-endif()
-
-# ============================================================================
-# INTERFACE LIBRARY: radix32_avx2  (header-only)
-#
-# Consumers get: -I avx2/  + ISA flags for AVX2+FMA
-# ============================================================================
-add_library(radix32_avx2 INTERFACE)
-
-target_include_directories(radix32_avx2 INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/avx2>
-    $<INSTALL_INTERFACE:include/radix32/avx2>
-)
-
-if(RADIX32_IS_ICX)
-    # -xCORE-AVX2 implies FMA, BMI2, POPCNT — tighter than -mavx2 -mfma
-    target_compile_options(radix32_avx2 INTERFACE -xCORE-AVX2)
-else()
-    target_compile_options(radix32_avx2 INTERFACE -mavx2 -mfma)
-endif()
-
-# ============================================================================
-# INTERFACE LIBRARY: radix32_scalar  (header-only)
-#
-# Depends on avx2 for shared twiddle structs (tw_stage8_t, tw_mode_t, etc.)
-# Only needs FMA for scalar vfmadd/vfmsub instructions — inherited from avx2.
-# ============================================================================
-add_library(radix32_scalar INTERFACE)
-
-target_include_directories(radix32_scalar INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/scalar>
-    $<INSTALL_INTERFACE:include/radix32/scalar>
-)
-
-target_link_libraries(radix32_scalar INTERFACE radix32_avx2)
-
-# ============================================================================
-# INTERFACE LIBRARY: radix32_avx512  (header-only, optional)
-# ============================================================================
-if(RADIX32_BUILD_AVX512)
-    add_library(radix32_avx512 INTERFACE)
-
-    target_include_directories(radix32_avx512 INTERFACE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/avx512>
-        $<INSTALL_INTERFACE:include/radix32/avx512>
-    )
-
-    if(RADIX32_IS_ICX)
-        # -xCORE-AVX512 = SKX baseline (512-bit FMA, no VNNI/BF16)
-        # For ICX/SPR with AVX512-IFMA etc: -xICELAKE-SERVER or -xSAPPHIRERAPIDS
-        target_compile_options(radix32_avx512 INTERFACE -xCORE-AVX512)
-    else()
-        target_compile_options(radix32_avx512 INTERFACE
-            -mavx512f -mavx512dq -mavx512vl -mfma)
-    endif()
-
-    target_link_libraries(radix32_avx512 INTERFACE radix32_avx2)
-    message(STATUS "radix32: AVX-512 codelet enabled")
-endif()
-
-# ============================================================================
-# INTERFACE LIBRARY: radix32_sse2  (header-only, optional)
-# ============================================================================
-if(RADIX32_BUILD_SSE2)
-    add_library(radix32_sse2 INTERFACE)
-
-    target_include_directories(radix32_sse2 INTERFACE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sse2>
-        $<INSTALL_INTERFACE:include/radix32/sse2>
-    )
-
-    if(RADIX32_IS_ICX)
-        target_compile_options(radix32_sse2 INTERFACE -xSSE4.2)
-    else()
-        target_compile_options(radix32_sse2 INTERFACE -msse2 -msse4.2)
-    endif()
-
-    message(STATUS "radix32: SSE2 codelet enabled")
-endif()
-
-# ============================================================================
-# STATIC LIBRARY: radix32  (compiled drivers, optional)
-#
-# Root-level fft_radix32_fv.c / fft_radix32_bv.c / fft_radix32_uniform.h
-# These contain the dispatch logic that selects AVX2/AVX512/scalar.
-# Enable with -DRADIX32_BUILD_DRIVERS=ON once drivers are implemented.
-# ============================================================================
-if(RADIX32_BUILD_DRIVERS)
-    set(RADIX32_DRIVER_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/fft_radix32_fv.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/fft_radix32_bv.c
-    )
-
-    foreach(_src IN LISTS RADIX32_DRIVER_SOURCES)
-        if(NOT EXISTS "${_src}")
-            message(FATAL_ERROR
-                "radix32: Driver source '${_src}' not found.\n"
-                "  Disable with -DRADIX32_BUILD_DRIVERS=OFF")
+        # ICX (clang-cl) on Windows: GTest builds with -WX and triggers
+        # -Wcharacter-conversion inside gtest-printers.h (char16_t->char32_t).
+        # Suppress for GTest TUs only.
+        if(VFFT_COMPILER STREQUAL "ICX" AND WIN32)
+            set(_r32_saved_cxx "${CMAKE_CXX_FLAGS}")
+            string(APPEND CMAKE_CXX_FLAGS " -Wno-character-conversion")
         endif()
-    endforeach()
 
-    add_library(radix32 STATIC ${RADIX32_DRIVER_SOURCES})
+        FetchContent_MakeAvailable(googletest)
 
-    target_include_directories(radix32 PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-        $<INSTALL_INTERFACE:include/radix32>
-    )
-
-    target_link_libraries(radix32 PUBLIC radix32_avx2 radix32_scalar)
-
-    if(RADIX32_BUILD_AVX512)
-        target_link_libraries(radix32 PUBLIC radix32_avx512)
+        if(VFFT_COMPILER STREQUAL "ICX" AND WIN32)
+            set(CMAKE_CXX_FLAGS "${_r32_saved_cxx}")
+        endif()
     endif()
 
-    target_compile_options(radix32 PRIVATE
-        ${RADIX32_WARN_FLAGS}
-        ${RADIX32_ICX_OPT_REPORT_FLAGS}
-        $<$<CONFIG:Release>:-O2>
-        $<$<CONFIG:RelWithDebInfo>:-O2 -g>
-    )
+    # -- Helper: C test ---------------------------------------------------
+    #
+    # All radix32 tests compile at the driver's ISA level because
+    # fft_radix32_uniform.h (included by most tests) pulls in all backends.
+    #
+    # NEEDS_DISPATCH  link against dispatch objects (radix32_forward() etc.)
 
-    if(RADIX32_IS_ICX)
-        target_compile_options(radix32 PRIVATE -ipo)
+    function(_r32_add_c_test NAME SOURCE)
+        cmake_parse_arguments(ARG "NEEDS_DISPATCH" "" "" ${ARGN})
+
+        add_executable(${NAME} tests/${SOURCE})
+        _vfft_setup_target(${NAME} ${_R32_ISA})
+
+        if(ARG_NEEDS_DISPATCH)
+            target_link_libraries(${NAME} PRIVATE
+                $<TARGET_OBJECTS:vfft_radix32>)
+        endif()
+
+        if(NOT WIN32)
+            target_link_libraries(${NAME} PRIVATE m)
+        endif()
+
+        add_test(NAME ${NAME} COMMAND ${NAME})
+        set_tests_properties(${NAME} PROPERTIES LABELS "radix32")
+        message(STATUS "[VectorFFT] Test: ${NAME}")
+    endfunction()
+
+    # -- Helper: C++ GTest ------------------------------------------------
+
+    function(_r32_add_gtest NAME SOURCE)
+        cmake_parse_arguments(ARG "NEEDS_DISPATCH" "" "" ${ARGN})
+
+        add_executable(${NAME} tests/${SOURCE})
+        _vfft_setup_target(${NAME} ${_R32_ISA})
+
+        # _vfft_setup_target sets C_STANDARD; GTest needs CXX_STANDARD too
+        set_target_properties(${NAME} PROPERTIES CXX_STANDARD 17)
+
+        target_link_libraries(${NAME} PRIVATE GTest::gtest_main)
+
+        if(ARG_NEEDS_DISPATCH)
+            target_link_libraries(${NAME} PRIVATE
+                $<TARGET_OBJECTS:vfft_radix32>)
+        endif()
+
+        if(NOT WIN32)
+            target_link_libraries(${NAME} PRIVATE m)
+        endif()
+
+        # Suppress C-header pedantic warnings in C++ (int literal in
+        # _mm_prefetch, compound literals in twiddle macros)
+        target_compile_options(${NAME} PRIVATE
+            $<$<COMPILE_LANG_AND_ID:CXX,GNU>:-fpermissive -Wno-pedantic>
+            $<$<COMPILE_LANG_AND_ID:CXX,IntelLLVM>:-Wno-pedantic>
+            $<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wno-pedantic>
+        )
+
+        include(GoogleTest)
+        gtest_discover_tests(${NAME} TEST_PREFIX "${NAME}/")
+        message(STATUS "[VectorFFT] GTest: ${NAME}")
+    endfunction()
+
+    # -- C unit tests -----------------------------------------------------
+
+    # Scalar codelet (BLOCKED8 + BLOCKED4 + RECURRENCE)
+    _r32_add_c_test(vfft_radix32_test_scalar  test_radix32_scalar.c)
+
+    # AVX2 codelet
+    _r32_add_c_test(vfft_radix32_test_avx2    test_radix32_avx2.c)
+
+    # AVX-512 core butterflies + full driver (pass1 U=2, pass2 U=2)
+    if(VFFT_HAS_AVX512)
+        _r32_add_c_test(vfft_radix32_test_avx512_core
+            test_radix32_avx512_core.c)
+        _r32_add_c_test(vfft_radix32_test_avx512_driver
+            test_radix32_avx512_driver.c)
     endif()
 
-    message(STATUS "radix32: Driver library enabled")
-endif()
+    # N=1 codelet (scalar + AVX-512 cross-ISA agreement, Parseval)
+    _r32_add_c_test(vfft_radix32_test_n1  test_radix32_n1.c)
 
-# ============================================================================
-# Tests
-# ============================================================================
-if(RADIX32_BUILD_TESTS)
-    enable_testing()
+    # Dispatch (three-way ISA agreement, constraint downgrades)
+    _r32_add_c_test(vfft_radix32_test_dispatch
+        test_radix32_dispatch.c  NEEDS_DISPATCH)
 
-    include(FetchContent)
-    FetchContent_Declare(
-        googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG        v1.14.0
-    )
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googletest)
+    # -- C++ GTest roundtrip suites ---------------------------------------
 
-    add_subdirectory(tests)
-endif()
+    # N=1: backward(forward(x)) = 32*x
+    _r32_add_gtest(vfft_radix32_test_n1_roundtrip
+        test_radix32_n1_roundtrip.cpp)
 
-# ============================================================================
-# Summary
-# ============================================================================
-message(STATUS "")
-message(STATUS "  radix32 configuration")
-message(STATUS "  ---------------------")
-message(STATUS "  Compiler:     ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
-message(STATUS "  Build type:   ${CMAKE_BUILD_TYPE}")
-message(STATUS "  AVX2 codelet: ON  (always)")
-message(STATUS "  Scalar:       ON  (always)")
-message(STATUS "  AVX-512:      ${RADIX32_BUILD_AVX512}")
-message(STATUS "  SSE2:         ${RADIX32_BUILD_SSE2}")
-message(STATUS "  Drivers:      ${RADIX32_BUILD_DRIVERS}")
-message(STATUS "  Tests:        ${RADIX32_BUILD_TESTS}")
-if(RADIX32_IS_ICX)
-    message(STATUS "  Opt reports:  ${RADIX32_OPT_REPORT}")
-endif()
-message(STATUS "")
+    # Twiddle: 130+ parameterized (K x mode x ISA)
+    _r32_add_gtest(vfft_radix32_test_twiddle_roundtrip
+        test_radix32_twiddle_roundtrip.cpp)
+
+endif()  # VFFT_BUILD_TESTS
+
+
+# =========================================================================
+# BENCHMARKS
+# =========================================================================
+if(VFFT_BUILD_BENCHMARKS)
+
+    # -- FFTW discovery (for comparison benchmark) ------------------------
+    #
+    # Prefer FFTW3::fftw3 from parent. If unavailable, try pkg-config,
+    # then raw find_library as final fallback.
+    if(NOT TARGET FFTW3::fftw3)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(_r32_fftw3 QUIET IMPORTED_TARGET fftw3)
+            if(_r32_fftw3_FOUND)
+                add_library(FFTW3::fftw3 ALIAS PkgConfig::_r32_fftw3)
+            endif()
+        endif()
+    endif()
+
+    if(NOT TARGET FFTW3::fftw3)
+        find_library(_R32_FFTW3_LIB fftw3)
+        find_path(_R32_FFTW3_INC fftw3.h)
+        if(_R32_FFTW3_LIB AND _R32_FFTW3_INC)
+            add_library(FFTW3::fftw3 IMPORTED INTERFACE)
+            set_target_properties(FFTW3::fftw3 PROPERTIES
+                INTERFACE_LINK_LIBRARIES "${_R32_FFTW3_LIB}"
+                INTERFACE_INCLUDE_DIRECTORIES "${_R32_FFTW3_INC}"
+            )
+        endif()
+    endif()
+
+    # -- Helper: benchmark ------------------------------------------------
+
+    function(_r32_add_bench NAME SOURCE)
+        cmake_parse_arguments(ARG "NEEDS_DISPATCH;NEEDS_FFTW" "" "" ${ARGN})
+
+        if(ARG_NEEDS_FFTW AND NOT TARGET FFTW3::fftw3)
+            message(STATUS "[VectorFFT] Skipping ${NAME} -- FFTW3 not found")
+            return()
+        endif()
+
+        add_executable(${NAME} tests/${SOURCE})
+        _vfft_setup_target(${NAME} ${_R32_ISA})
+
+        if(ARG_NEEDS_DISPATCH)
+            target_link_libraries(${NAME} PRIVATE
+                $<TARGET_OBJECTS:vfft_radix32>)
+        endif()
+
+        if(ARG_NEEDS_FFTW)
+            target_link_libraries(${NAME} PRIVATE FFTW3::fftw3)
+            target_compile_definitions(${NAME} PRIVATE VFFT_HAS_FFTW3=1)
+        endif()
+
+        if(NOT WIN32)
+            target_link_libraries(${NAME} PRIVATE m)
+        endif()
+
+        message(STATUS "[VectorFFT] Bench: ${NAME}")
+    endfunction()
+
+    # -- Internal micro-benchmarks ----------------------------------------
+    _r32_add_bench(vfft_radix32_bench_avx2   bench_radix32_avx2.c)
+    _r32_add_bench(vfft_radix32_bench_pass2  bench_radix32_pass2.c)
+
+    # -- FFTW comparison --------------------------------------------------
+    _r32_add_bench(vfft_radix32_bench_vs_fftw  bench_radix32_vs_fftw.c
+        NEEDS_DISPATCH  NEEDS_FFTW)
+
+endif()  # VFFT_BUILD_BENCHMARKS

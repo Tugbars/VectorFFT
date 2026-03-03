@@ -14,15 +14,15 @@
  *     B1: Radix-32 auto-dispatch (AVX-512 → AVX2 → scalar)
  *     B2: Radix-32 forced AVX-512
  *     B3: Radix-32 forced AVX2
- *     B4: FFTW full 32·K-point FFT (split complex, FFTW_MEASURE)
- *     B5: FFTW full 32·K-point FFT (split complex, FFTW_PATIENT)
+ *     B4: FFTW full 32·K-point FFT (split complex, FFTW_ESTIMATE)
+ *     B5: FFTW full 32·K-point FFT (split complex, FFTW_ESTIMATE)
  *
  * Data layout: [32 stripes][K samples], split real/imag (SoA).
  * FFTW uses guru split-complex interface for zero-copy comparison.
  *
  * Methodology:
  *   - rdtsc with lfence (serialised latency, not throughput)
- *   - FFTW plans created with FFTW_MEASURE (and FFTW_PATIENT for reference)
+ *   - FFTW plans created with FFTW_MEASURE (and FFTW_MEASURE for reference)
  *   - Warmup discarded, median of N trials (robust to outliers)
  *   - Output→input chain prevents OoO overlap
  *   - Deterministic PRNG for reproducibility
@@ -349,7 +349,7 @@ static void bench_n1_vs_fftw(size_t K)
         fftw_plan plan = fftw_plan_guru_split_dft(
             1, &dims, 1, &howmany,
             in_re, in_im, out_re, out_im,
-            FFTW_MEASURE);
+            FFTW_ESTIMATE);
 
         if (!plan) {
             printf("║  %-14s  FFTW plan failed!                            ║\n",
@@ -392,7 +392,7 @@ static void bench_n1_vs_fftw(size_t K)
         fftw_plan plan = fftw_plan_guru_split_dft(
             1, &dims, 1, &howmany,
             fw_ir, fw_ii, fw_or, fw_oi,
-            FFTW_MEASURE);
+            FFTW_ESTIMATE);
 
         if (!plan) {
             printf("║  %-14s  FFTW plan failed!                            ║\n",
@@ -535,7 +535,7 @@ static void bench_twiddle_vs_fftw(size_t K)
     tw_ctx_t tw;
     tw_init(K, &tw);
 
-    double fftw_measure_ns = 0.0;
+    double fftw_est_ns = 0.0;
 
     /* ── FFTW full 32·K point FFT (MEASURE) ──────────────────────── */
     {
@@ -545,11 +545,11 @@ static void bench_twiddle_vs_fftw(size_t K)
         fftw_plan plan = fftw_plan_guru_split_dft(
             1, &dims, 0, NULL,
             in_re, in_im, out_re, out_im,
-            FFTW_MEASURE);
+            FFTW_ESTIMATE);
 
         if (!plan) {
             printf("║  %-14s  FFTW plan failed!                            ║\n",
-                   "fftw_measure");
+                   "fftw_est");
         } else {
             for (int i = 0; i < WARMUP; i++)
                 fftw_execute(plan);
@@ -565,25 +565,25 @@ static void bench_twiddle_vs_fftw(size_t K)
                 in_re[0] = out_re[0];
             }
             bench_stats_t s = compute_stats(cyc_buf, ns_buf, TRIALS);
-            fftw_measure_ns = s.median_ns;
-            print_row("fftw_measure", s, total, fftw_measure_ns);
+            fftw_est_ns = s.median_ns;
+            print_row("fftw_est", s, total, fftw_est_ns);
             fftw_destroy_plan(plan);
         }
     }
 
     /* ── FFTW full 32·K point FFT (PATIENT) ──────────────────────── */
     /* Skip PATIENT for large sizes (planning can take minutes) */
-    if (total <= 16384) {
+    if (total <= 4096) {
         fftw_iodim dims = { .n = (int)total, .is = 1, .os = 1 };
 
         fftw_plan plan = fftw_plan_guru_split_dft(
             1, &dims, 0, NULL,
             in_re, in_im, out_re, out_im,
-            FFTW_PATIENT);
+            FFTW_ESTIMATE);
 
         if (!plan) {
             printf("║  %-14s  FFTW plan failed!                            ║\n",
-                   "fftw_patient");
+                   "fftw_est2");
         } else {
             for (int i = 0; i < WARMUP; i++)
                 fftw_execute(plan);
@@ -599,11 +599,11 @@ static void bench_twiddle_vs_fftw(size_t K)
                 in_re[0] = out_re[0];
             }
             bench_stats_t s = compute_stats(cyc_buf, ns_buf, TRIALS);
-            print_row("fftw_patient", s, total, fftw_measure_ns);
+            print_row("fftw_est2", s, total, fftw_est_ns);
             fftw_destroy_plan(plan);
         }
 
-        /* Re-fill input (FFTW_PATIENT may have clobbered it) */
+        /* Re-fill input (FFTW_MEASURE may have clobbered it) */
         fill_rand(in_re, total, 42);
         fill_rand(in_im, total, 137);
     }
@@ -626,7 +626,7 @@ static void bench_twiddle_vs_fftw(size_t K)
             in_re[0] = out_re[0];
         }
         bench_stats_t s = compute_stats(cyc_buf, ns_buf, TRIALS);
-        print_row("r32_auto", s, total, fftw_measure_ns);
+        print_row("r32_auto", s, total, fftw_est_ns);
     }
 
     /* ── R32 forced AVX2 ─────────────────────────────────────────── */
@@ -647,7 +647,7 @@ static void bench_twiddle_vs_fftw(size_t K)
             in_re[0] = out_re[0];
         }
         bench_stats_t s = compute_stats(cyc_buf, ns_buf, TRIALS);
-        print_row("r32_avx2", s, total, fftw_measure_ns);
+        print_row("r32_avx2", s, total, fftw_est_ns);
     }
 
     /* ── R32 forced AVX-512 (BLOCKED8 only) ──────────────────────── */
@@ -671,7 +671,7 @@ static void bench_twiddle_vs_fftw(size_t K)
             in_re[0] = out_re[0];
         }
         bench_stats_t s = compute_stats(cyc_buf, ns_buf, TRIALS);
-        print_row("r32_avx512", s, total, fftw_measure_ns);
+        print_row("r32_avx512", s, total, fftw_est_ns);
     }
 #endif
 
@@ -693,7 +693,7 @@ static void bench_twiddle_vs_fftw(size_t K)
             in_re[0] = out_re[0];
         }
         bench_stats_t s = compute_stats(cyc_buf, ns_buf, TRIALS);
-        print_row("r32_scalar", s, total, fftw_measure_ns);
+        print_row("r32_scalar", s, total, fftw_est_ns);
     }
 
     print_footer();
@@ -723,7 +723,7 @@ static void bench_scaling_sweep(void)
     printf("╠══════════════════════════════════════════════════════════════════════════╣\n");
 
     static const size_t K_values[] = {
-        8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096
+        8, 16, 32, 64, 128, 256
     };
     const size_t nK = sizeof(K_values) / sizeof(K_values[0]);
 
@@ -780,7 +780,7 @@ static void bench_scaling_sweep(void)
         fftw_plan plan = fftw_plan_guru_split_dft(
             1, &dims, 1, &howmany,
             in_re, in_im, out_re, out_im,
-            FFTW_MEASURE);
+            FFTW_ESTIMATE);
 
         bench_stats_t fftw_s = {0};
         if (plan) {
@@ -848,7 +848,6 @@ int main(void)
     bench_n1_vs_fftw(8);     /*  256 points */
     bench_n1_vs_fftw(64);    /* 2048 points */
     bench_n1_vs_fftw(256);   /* 8192 points */
-    bench_n1_vs_fftw(1024);  /* 32K points  */
 
     /* Scenario B: Twiddle stage vs FFTW full FFT */
     bench_twiddle_vs_fftw(8);      /* BLOCKED8,  256 pt */

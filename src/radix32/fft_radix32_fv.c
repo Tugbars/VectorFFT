@@ -46,7 +46,8 @@ radix32_isa_level_t radix32_forward(
 {
     const radix32_isa_level_t isa = effective_isa(K, pass2_tw->mode);
 
-    switch (isa) {
+    switch (isa)
+    {
 
     case ISA_AVX512:
         assert(temp_re != NULL && temp_im != NULL &&

@@ -19,6 +19,10 @@
 #include <stdlib.h>
 #include <assert.h>
 
+#ifdef _WIN32
+#  include <malloc.h>   /* _aligned_malloc, _aligned_free */
+#endif
+
 /*==========================================================================
  * COMPILER DETECTION
  *=========================================================================*/
@@ -186,7 +190,9 @@ static inline void *r32_aligned_alloc(size_t alignment, size_t size)
     assert(alignment > 0 && (alignment & (alignment - 1)) == 0);
     if (size == 0) size = alignment; /* avoid zero-size UB */
 
-#if R32_MSVC
+#if defined(_WIN32)
+    /* Windows CRT: _aligned_malloc works for MSVC, ICX, and clang-cl.
+     * ICX on Windows uses the MSVC CRT which lacks aligned_alloc(). */
     return _aligned_malloc(size, alignment);
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && !defined(__APPLE__)
     /* C11 aligned_alloc requires size to be multiple of alignment */
@@ -202,7 +208,7 @@ static inline void *r32_aligned_alloc(size_t alignment, size_t size)
 
 static inline void r32_aligned_free(void *ptr)
 {
-#if R32_MSVC
+#if defined(_WIN32)
     _aligned_free(ptr);
 #else
     free(ptr);
