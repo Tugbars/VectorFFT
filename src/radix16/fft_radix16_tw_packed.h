@@ -21,9 +21,11 @@
  * REQUIRES
  * ═══════════════════════════════════════════════════════════════════
  *
- * Include the twiddled kernel header(s) BEFORE this header:
- *   #include "fft_radix16_avx2_tw.h"
- *   #include "fft_radix16_avx512_tw.h"
+ * Include the kernel header(s) BEFORE this header:
+ *   #include "fft_radix16_scalar_n1_gen.h"  (for N1 scalar drivers)
+ *   #include "fft_radix16_avx2_n1_gen.h"    (for N1 AVX2 drivers)
+ *   #include "fft_radix16_avx2_tw.h"        (for twiddled AVX2 drivers)
+ *   #include "fft_radix16_avx512_tw.h"      (for twiddled AVX-512 drivers)
  */
 
 #ifndef FFT_RADIX16_TW_PACKED_H
@@ -208,6 +210,66 @@ static inline void r16_tw_packed_bwd_avx512(
 }
 
 #endif /* __AVX512F__ */
+
+/* ═══════════════════════════════════════════════════════════════
+ * N1 PACKED SUPER-BLOCK DRIVERS
+ *
+ * Same repack, no twiddle tables. Calls N1 kernel at K=T per block.
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void r16_n1_packed_fwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t bs = 16 * T;
+    for (size_t b = 0; b < nb; b++)
+        radix16_n1_dit_kernel_fwd_scalar(
+            in_re + b*bs, in_im + b*bs, out_re + b*bs, out_im + b*bs, T);
+}
+
+static inline void r16_n1_packed_bwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t bs = 16 * T;
+    for (size_t b = 0; b < nb; b++)
+        radix16_n1_dit_kernel_bwd_scalar(
+            in_re + b*bs, in_im + b*bs, out_re + b*bs, out_im + b*bs, T);
+}
+
+#ifdef __AVX2__
+
+__attribute__((target("avx2,fma")))
+static inline void r16_n1_packed_fwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t bs = 16 * T;
+    for (size_t b = 0; b < nb; b++)
+        radix16_n1_dit_kernel_fwd_avx2(
+            in_re + b*bs, in_im + b*bs, out_re + b*bs, out_im + b*bs, T);
+}
+
+__attribute__((target("avx2,fma")))
+static inline void r16_n1_packed_bwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t bs = 16 * T;
+    for (size_t b = 0; b < nb; b++)
+        radix16_n1_dit_kernel_bwd_avx2(
+            in_re + b*bs, in_im + b*bs, out_re + b*bs, out_im + b*bs, T);
+}
+
+#endif /* __AVX2__ */
 
 /* ═══════════════════════════════════════════════════════════════
  * OPTIMAL BLOCK SIZE
