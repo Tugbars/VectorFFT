@@ -2,26 +2,10 @@
  * test_radix64_unified.c — Test + benchmark for DFT-64 N1 unified header
  * Exercises all three ISAs via the unified dispatch API.
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
+#include "vfft_test_utils.h"
 #include <assert.h>
 #include <stdint.h>
-#include <time.h>
 #include <fftw3.h>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-static void *aligned_alloc_64(size_t size) {
-    void *p = NULL;
-    posix_memalign(&p, 64, size);
-    memset(p, 0, size);
-    return p;
-}
-#define aa(n) (double*)aligned_alloc_64((n)*sizeof(double))
 
 /* The unified header — pulls in driver + all ISA kernels */
 #include "fft_radix64_n1.h"
@@ -44,27 +28,6 @@ static void naive_dft64(int direction, size_t K, size_t k,
     }
 }
 
-static void fill_rand(double *p, size_t n, unsigned seed) {
-    srand(seed);
-    for (size_t i = 0; i < n; i++)
-        p[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
-}
-
-static double max_abs(const double *p, size_t n) {
-    double m = 0;
-    for (size_t i = 0; i < n; i++) {
-        double a = fabs(p[i]);
-        if (a > m) m = a;
-    }
-    return m;
-}
-
-static double get_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
-
 static const char *isa_for_K(size_t K) {
 #ifdef __AVX512F__
     if (K >= 8 && (K & 7) == 0) return "avx512";
@@ -76,7 +39,7 @@ static const char *isa_for_K(size_t K) {
 /* ── Unified forward vs naive ── */
 static int test_fwd(size_t K) {
     const size_t N = 64 * K;
-    double *ir=aa(N), *ii=aa(N), *gr=aa(N), *gi=aa(N), *nr=aa(N), *ni=aa(N);
+    double *ir=aa64(N), *ii=aa64(N), *gr=aa64(N), *gi=aa64(N), *nr=aa64(N), *ni=aa64(N);
     fill_rand(ir, N, 10000+(unsigned)K);
     fill_rand(ii, N, 20000+(unsigned)K);
 
@@ -93,14 +56,15 @@ static int test_fwd(size_t K) {
     double rel = (mag > 0) ? err / mag : err;
     int pass = (rel < 5e-13);
     printf("  fwd K=%-4zu [%-6s]  rel=%.2e  %s\n", K, isa_for_K(K), rel, pass?"PASS":"FAIL");
-    free(ir);free(ii);free(gr);free(gi);free(nr);free(ni);
+    r32_aligned_free(ir);r32_aligned_free(ii);r32_aligned_free(gr);
+    r32_aligned_free(gi);r32_aligned_free(nr);r32_aligned_free(ni);
     return pass;
 }
 
 /* ── Unified backward vs naive ── */
 static int test_bwd(size_t K) {
     const size_t N = 64 * K;
-    double *ir=aa(N), *ii=aa(N), *gr=aa(N), *gi=aa(N), *nr=aa(N), *ni=aa(N);
+    double *ir=aa64(N), *ii=aa64(N), *gr=aa64(N), *gi=aa64(N), *nr=aa64(N), *ni=aa64(N);
     fill_rand(ir, N, 30000+(unsigned)K);
     fill_rand(ii, N, 40000+(unsigned)K);
 
@@ -117,14 +81,15 @@ static int test_bwd(size_t K) {
     double rel = (mag > 0) ? err / mag : err;
     int pass = (rel < 5e-13);
     printf("  bwd K=%-4zu [%-6s]  rel=%.2e  %s\n", K, isa_for_K(K), rel, pass?"PASS":"FAIL");
-    free(ir);free(ii);free(gr);free(gi);free(nr);free(ni);
+    r32_aligned_free(ir);r32_aligned_free(ii);r32_aligned_free(gr);
+    r32_aligned_free(gi);r32_aligned_free(nr);r32_aligned_free(ni);
     return pass;
 }
 
 /* ── Roundtrip ── */
 static int test_roundtrip(size_t K) {
     const size_t N = 64 * K;
-    double *ir=aa(N), *ii=aa(N), *fr=aa(N), *fi=aa(N), *br=aa(N), *bi=aa(N);
+    double *ir=aa64(N), *ii=aa64(N), *fr=aa64(N), *fi=aa64(N), *br=aa64(N), *bi=aa64(N);
     fill_rand(ir, N, 50000+(unsigned)K);
     fill_rand(ii, N, 60000+(unsigned)K);
 
@@ -140,15 +105,16 @@ static int test_roundtrip(size_t K) {
     double rel = (mag > 0) ? err / (64.0*mag) : err;
     int pass = (rel < 1e-13);
     printf("  rt  K=%-4zu  rel=%.2e  %s\n", K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii);free(fr);free(fi);free(br);free(bi);
+    r32_aligned_free(ir);r32_aligned_free(ii);r32_aligned_free(fr);
+    r32_aligned_free(fi);r32_aligned_free(br);r32_aligned_free(bi);
     return pass;
 }
 
 /* ── Cross-ISA: all three produce same results ── */
 static int test_cross_isa(size_t K) {
     const size_t N = 64 * K;
-    double *ir=aa(N), *ii=aa(N);
-    double *sr=aa(N), *si=aa(N), *ar=aa(N), *ai=aa(N), *zr=aa(N), *zi=aa(N);
+    double *ir=aa64(N), *ii=aa64(N);
+    double *sr=aa64(N), *si=aa64(N), *ar=aa64(N), *ai=aa64(N), *zr=aa64(N), *zi=aa64(N);
     fill_rand(ir, N, 70000+(unsigned)K);
     fill_rand(ii, N, 71000+(unsigned)K);
 
@@ -170,20 +136,21 @@ static int test_cross_isa(size_t K) {
     int pass = (err_sa < 1e-13) && (err_sz < 1e-13);
 
 #ifdef __AVX512F__
-    printf("  cross K=%-4zu  S↔A=%.2e  S↔Z=%.2e  %s\n",
+    printf("  cross K=%-4zu  S<->A=%.2e  S<->Z=%.2e  %s\n",
            K, err_sa, err_sz, pass ? "PASS" : "FAIL");
 #else
-    printf("  cross K=%-4zu  S↔A=%.2e  %s\n",
+    printf("  cross K=%-4zu  S<->A=%.2e  %s\n",
            K, err_sa, pass ? "PASS" : "FAIL");
 #endif
-    free(ir);free(ii);free(sr);free(si);free(ar);free(ai);free(zr);free(zi);
+    r32_aligned_free(ir);r32_aligned_free(ii);r32_aligned_free(sr);r32_aligned_free(si);
+    r32_aligned_free(ar);r32_aligned_free(ai);r32_aligned_free(zr);r32_aligned_free(zi);
     return pass;
 }
 
 /* ── Benchmark ── */
 static void run_bench(size_t K, int warmup, int trials) {
     const size_t N = 64 * K;
-    double *ir=aa(N), *ii=aa(N), *or_=aa(N), *oi=aa(N);
+    double *ir=aa64(N), *ii=aa64(N), *or_=aa64(N), *oi=aa64(N);
     fill_rand(ir, N, 80000+(unsigned)K);
     fill_rand(ii, N, 90000+(unsigned)K);
 
@@ -224,40 +191,42 @@ static void run_bench(size_t K, int warmup, int trials) {
     fftw_destroy_plan(plan);
     fftw_free(fin);
     fftw_free(fout);
-    free(ir);free(ii);free(or_);free(oi);
+    r32_aligned_free(ir);r32_aligned_free(ii);r32_aligned_free(or_);r32_aligned_free(oi);
 }
 
 int main(void) {
-    printf("╔══════════════════════════════════════════════════════════════╗\n");
-    printf("║  DFT-64 N1 — Unified Header Test (Scalar + AVX2 + AVX512) ║\n");
-    printf("╚══════════════════════════════════════════════════════════════╝\n\n");
+    R32_REQUIRE_AVX2();
+
+    printf("====================================================================\n");
+    printf("  DFT-64 N1 — Unified Header Test (Scalar + AVX2 + AVX512)\n");
+    printf("====================================================================\n\n");
 
     int passed = 0, total = 0;
 
-    printf("── Forward (all dispatch paths) ──\n");
+    printf("-- Forward (all dispatch paths) --\n");
     { size_t Ks[] = {1, 2, 3, 4, 5, 7, 8, 12, 16, 24, 32, 64};
       for (int i = 0; i < 12; i++) { total++; passed += test_fwd(Ks[i]); } }
 
-    printf("\n── Backward ──\n");
+    printf("\n-- Backward --\n");
     { size_t Ks[] = {1, 3, 4, 8, 16, 32};
       for (int i = 0; i < 6; i++) { total++; passed += test_bwd(Ks[i]); } }
 
-    printf("\n── Roundtrip ──\n");
+    printf("\n-- Roundtrip --\n");
     { size_t Ks[] = {1, 2, 4, 8, 16, 32, 64};
       for (int i = 0; i < 7; i++) { total++; passed += test_roundtrip(Ks[i]); } }
 
-    printf("\n── Cross-ISA consistency ──\n");
+    printf("\n-- Cross-ISA consistency --\n");
     { size_t Ks[] = {8, 16, 32, 64};
       for (int i = 0; i < 4; i++) { total++; passed += test_cross_isa(Ks[i]); } }
 
-    printf("\n══════════════════════════════════════════\n");
+    printf("\n======================================\n");
     printf("  %d/%d passed  %s\n", passed, total,
-           passed==total ? "✓ ALL PASSED" : "✗ FAILURES");
-    printf("══════════════════════════════════════════\n");
+           passed==total ? "ALL PASSED" : "FAILURES");
+    printf("======================================\n");
 
     if (passed != total) return 1;
 
-    printf("\n── Benchmark: unified vs FFTW (ns, fwd) ──\n");
+    printf("\n-- Benchmark: unified vs FFTW (ns, fwd) --\n");
     run_bench(1,    500, 3000);
     run_bench(3,    500, 3000);
     run_bench(4,    500, 3000);

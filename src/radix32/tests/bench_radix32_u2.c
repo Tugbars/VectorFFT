@@ -171,6 +171,7 @@ static void run_bench(size_t K, int warm, int trials) {
 }
 
 int main(void) {
+    R32_REQUIRE_AVX512();
     printf("====================================================================\n");
     printf("  DFT-32 AVX-512 N1: U=1 + U=2 pipelining (n1_u2.h)\n");
     printf("====================================================================\n\n");

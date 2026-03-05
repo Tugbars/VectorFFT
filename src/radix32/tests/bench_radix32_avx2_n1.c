@@ -127,6 +127,7 @@ static void run_bench(size_t K, int warm, int trials) {
 }
 
 int main(void) {
+    R32_REQUIRE_AVX2();
     printf("====================================================================\n");
     printf("  DFT-32 AVX2 N1 (twiddle-less) vs FFTW\n");
     printf("  k-step=4, 16 YMM, 8×4 decomposition, zero twiddle loads\n");

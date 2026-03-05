@@ -14,10 +14,12 @@
 #include <time.h>
 #include <fftw3.h>
 
+#include "vfft_test_utils.h"
 #include "fft_radix32_platform.h"
 #include "fft_radix8_avx512.h"
 #include "fft_radix64_avx512_n1.h"
 #include "fft_radix64_avx512_n1_gen_driver.h"
+
 
 /*==========================================================================*/
 

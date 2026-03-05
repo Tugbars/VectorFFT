@@ -278,6 +278,7 @@ static void run_bench(size_t K, int warm, int trials) {
 }
 
 int main(void) {
+    R32_REQUIRE_AVX512();
     printf("====================================================================\n");
     printf("  DFT-32 AVX-512 TWIDDLED: UNIFIED DISPATCH TEST + BENCHMARK\n");
     printf("====================================================================\n");
