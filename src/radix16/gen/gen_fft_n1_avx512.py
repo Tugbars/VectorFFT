@@ -370,6 +370,77 @@ def collect_twiddles(N, N1, N2):
 # Kernel generation
 # ──────────────────────────────────────────────────────────────────
 
+def emit_kernel_n16_spill_free(em, direction, tw_set):
+    """Special-case N=16 on AVX-512: all 16 complex in 32 ZMM. Zero spills.
+
+    32 ZMM registers hold 16 complex values exactly.
+    Load all 16 → radix-16 in-place → store all 16.
+    The compiler keeps butterfly temps in the same registers.
+    """
+    N = 16
+    dir_label = direction
+
+    em.lines.append(f"static TARGET_AVX512 void")
+    em.lines.append(f"radix{N}_n1_dit_kernel_{dir_label}_avx512(")
+    em.lines.append(f"    const double *RESTRICT in_re, const double *RESTRICT in_im,")
+    em.lines.append(f"    double *RESTRICT out_re, double *RESTRICT out_im,")
+    em.lines.append(f"    size_t K)")
+    em.lines.append(f"{{")
+
+    em.indent = 1
+    em.spill_count = 0
+    em.reload_count = 0
+
+    em.emit("const __m512d sign_flip = _mm512_set1_pd(-0.0);")
+    em.emit("const __m512d sqrt2_inv = _mm512_set1_pd(0.70710678118654752440);")
+    em.blank()
+
+    # All 16 complex values — 32 ZMM
+    for i in range(0, 16, 4):
+        chunk = min(4, 16 - i)
+        parts = [f"x{i+j}_re, x{i+j}_im" for j in range(chunk)]
+        em.emit(f"__m512d {', '.join(parts)};")
+    em.blank()
+
+    # Hoisted twiddle broadcasts (W₁₆ only for N=16)
+    if tw_set:
+        em.comment(f"Pre-broadcast W₁₆ constants [{dir_label}]")
+        for (e, tN) in sorted(tw_set):
+            label = wN_label(e, tN)
+            em.emit(f"const __m512d tw_{label}_re = _mm512_set1_pd({label}_re);")
+            em.emit(f"const __m512d tw_{label}_im = _mm512_set1_pd({label}_im);")
+        em.blank()
+
+    em.emit("for (size_t k = 0; k < K; k += 8) {")
+    em.indent += 1
+
+    # Load all 16 inputs
+    em.comment("Load all 16 inputs — 32 ZMM, zero spills")
+    for n in range(16):
+        em.emit_load_input(f"x{n}", n)
+    em.blank()
+
+    # Radix-16 in-place
+    xvars = [f"x{i}" for i in range(16)]
+    em.emit_butterfly(16, xvars, direction, "radix-16 in-place, no spill")
+    em.blank()
+
+    # Store outputs with permutation.
+    # After emit_radix16 (4×4), output X[k] is in var x[(k%4)*4 + k//4].
+    em.comment("Store — output X[k] is in x[(k%4)*4 + k//4] after 4×4 radix-16")
+    for k in range(16):
+        var_idx = (k % 4) * 4 + (k // 4)
+        em.emit_store_output(f"x{var_idx}", k)
+    em.blank()
+
+    em.indent -= 1
+    em.emit("} /* end k-loop */")
+    em.lines.append("}")
+    em.lines.append("")
+
+    return em.spill_count, em.reload_count
+
+
 def emit_kernel(em, direction, N, N1, N2, tw_set):
     """Emit one kernel function (fwd or bwd) for DFT-N using N1×N2."""
     dir_label = direction
@@ -521,6 +592,9 @@ def generate(N):
     em.lines.append(f"#endif")
     em.lines.append(f"")
     
+    # Note: spill-free N=16 (emit_kernel_n16_spill_free) was tested but the
+    # spill-based 2-pass version is 10-30% faster due to better register
+    # allocation — explicit spills give the compiler free scratch ZMMs.
     fwd_s, fwd_r = emit_kernel(em, 'fwd', N, N1, N2, tw_set)
     bwd_s, bwd_r = emit_kernel(em, 'bwd', N, N1, N2, tw_set)
     
