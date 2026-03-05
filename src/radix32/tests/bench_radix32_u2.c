@@ -8,37 +8,9 @@
  * Production headers tested:
  *   fft_radix32_avx512_n1_u2.h  (U1 + U2 × fwd + bwd = 4 kernels)
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <time.h>
+#include "radix32_test_utils.h"
 #include <fftw3.h>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-static void *aa(size_t n) {
-    void *p = NULL;
-    if (posix_memalign(&p, 64, n * sizeof(double)) != 0) abort();
-    memset(p, 0, n * sizeof(double));
-    return p;
-}
-static void fill_rand(double *p, size_t n, unsigned s) {
-    srand(s);
-    for (size_t i = 0; i < n; i++) p[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
-}
-static double max_abs(const double *p, size_t n) {
-    double m = 0;
-    for (size_t i = 0; i < n; i++) { double a = fabs(p[i]); if (a > m) m = a; }
-    return m;
-}
-static double get_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
 
 /* ═══════════════════════════════════════════════════════════════ */
 #include "fft_radix32_avx512_n1_u2.h"
@@ -85,8 +57,8 @@ typedef void (*kern_fn)(const double*, const double*, double*, double*, size_t);
 /* ── Forward vs naive ── */
 static int test_fwd(const char *lbl, kern_fn fn, size_t K) {
     size_t N = 32 * K;
-    double *ir = aa(N), *ii_ = aa(N), *gr = aa(N), *gi = aa(N);
-    double *nr = aa(N), *ni = aa(N);
+    double *ir = aa64(N), *ii_ = aa64(N), *gr = aa64(N), *gi = aa64(N);
+    double *nr = aa64(N), *ni = aa64(N);
     fill_rand(ir, N, 1000+(unsigned)K); fill_rand(ii_, N, 2000+(unsigned)K);
     fn(ir, ii_, gr, gi, K);
     naive_dft32_fwd(K, ir, ii_, nr, ni);
@@ -99,14 +71,14 @@ static int test_fwd(const char *lbl, kern_fn fn, size_t K) {
     double rel = mag > 0 ? err / mag : err;
     int pass = rel < 5e-14;
     printf("  %-5s fwd K=%-5zu  rel=%.2e  %s\n", lbl, K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(gr);free(gi);free(nr);free(ni);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(gr);r32_aligned_free(gi);r32_aligned_free(nr);r32_aligned_free(ni);
     return pass;
 }
 
 /* ── Roundtrip: fwd → bwd → scale ── */
 static int test_rt(const char *lbl, kern_fn fwd, kern_fn bwd, size_t K) {
     size_t N = 32 * K;
-    double *ir = aa(N), *ii_ = aa(N), *mr = aa(N), *mi = aa(N), *rr = aa(N), *ri = aa(N);
+    double *ir = aa64(N), *ii_ = aa64(N), *mr = aa64(N), *mi = aa64(N), *rr = aa64(N), *ri = aa64(N);
     fill_rand(ir, N, 3000+(unsigned)K); fill_rand(ii_, N, 4000+(unsigned)K);
     fwd(ir, ii_, mr, mi, K);
     bwd(mr, mi, rr, ri, K);
@@ -120,15 +92,15 @@ static int test_rt(const char *lbl, kern_fn fwd, kern_fn bwd, size_t K) {
     double rel = mag > 0 ? err / mag : err;
     int pass = rel < 5e-15;
     printf("  %-5s rt  K=%-5zu  rel=%.2e  %s\n", lbl, K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(mr);free(mi);free(rr);free(ri);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(mr);r32_aligned_free(mi);r32_aligned_free(rr);r32_aligned_free(ri);
     return pass;
 }
 
 /* ── Cross: U1 ↔ U2 (should be bit-exact: same algorithm, different pipelining) ── */
 static int test_cross(size_t K) {
     size_t N = 32 * K;
-    double *ir = aa(N), *ii_ = aa(N);
-    double *ar = aa(N), *ai = aa(N), *br = aa(N), *bi = aa(N);
+    double *ir = aa64(N), *ii_ = aa64(N);
+    double *ar = aa64(N), *ai = aa64(N), *br = aa64(N), *bi = aa64(N);
     fill_rand(ir, N, 5000+(unsigned)K); fill_rand(ii_, N, 6000+(unsigned)K);
     radix32_n1_dit_kernel_fwd_avx512_u1(ir, ii_, ar, ai, K);
     radix32_n1_dit_kernel_fwd_avx512_u2(ir, ii_, br, bi, K);
@@ -140,7 +112,7 @@ static int test_cross(size_t K) {
     int pass = (err == 0.0);
     printf("  U1<->U2  K=%-5zu  maxdiff=%.2e  %s%s\n",
            K, err, pass?"PASS":"FAIL", pass?" (bit-exact)":"");
-    free(ir);free(ii_);free(ar);free(ai);free(br);free(bi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(ar);r32_aligned_free(ai);r32_aligned_free(br);r32_aligned_free(bi);
     return pass;
 }
 
@@ -148,7 +120,7 @@ static int test_cross(size_t K) {
 __attribute__((target("avx512f,avx512dq,fma")))
 static void run_bench(size_t K, int warm, int trials) {
     size_t N = 32 * K;
-    double *ir = aa(N), *ii_ = aa(N), *or_ = aa(N), *oi = aa(N);
+    double *ir = aa64(N), *ii_ = aa64(N), *or_ = aa64(N), *oi = aa64(N);
     fill_rand(ir, N, 9000+(unsigned)K); fill_rand(ii_, N, 9500+(unsigned)K);
 
     /* FFTW */
@@ -195,7 +167,7 @@ static void run_bench(size_t K, int warm, int trials) {
     printf("\n");
 
     fftw_destroy_plan(plan); fftw_free(fin); fftw_free(fout);
-    free(ir);free(ii_);free(or_);free(oi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(or_);r32_aligned_free(oi);
 }
 
 int main(void) {

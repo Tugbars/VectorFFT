@@ -1,37 +1,9 @@
 /*
  * bench_radix32_avx2_n1.c — AVX2 N1 (twiddle-less) DFT-32 vs FFTW
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <time.h>
+#include "radix32_test_utils.h"
 #include <fftw3.h>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-static void *aa(size_t n) {
-    void *p = NULL;
-    if (posix_memalign(&p, 32, n * sizeof(double)) != 0) abort();
-    memset(p, 0, n * sizeof(double));
-    return p;
-}
-static void fill_rand(double *p, size_t n, unsigned s) {
-    srand(s);
-    for (size_t i = 0; i < n; i++) p[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
-}
-static double max_abs(const double *p, size_t n) {
-    double m = 0;
-    for (size_t i = 0; i < n; i++) { double a = fabs(p[i]); if (a > m) m = a; }
-    return m;
-}
-static double get_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
 
 /* ═══════════════════════════════════════════════════════════════ */
 #undef  R32AN_LD
@@ -61,8 +33,8 @@ static void naive_dft32_fwd(size_t K,
 
 static int test_fwd(size_t K) {
     size_t N = 32 * K;
-    double *ir = aa(N), *ii_ = aa(N), *gr = aa(N), *gi = aa(N);
-    double *nr = aa(N), *ni = aa(N);
+    double *ir = aa32(N), *ii_ = aa32(N), *gr = aa32(N), *gi = aa32(N);
+    double *nr = aa32(N), *ni = aa32(N);
     fill_rand(ir, N, 1000+(unsigned)K); fill_rand(ii_, N, 2000+(unsigned)K);
     radix32_n1_dit_kernel_fwd_avx2(ir, ii_, gr, gi, K);
     naive_dft32_fwd(K, ir, ii_, nr, ni);
@@ -75,14 +47,14 @@ static int test_fwd(size_t K) {
     double rel = mag > 0 ? err / mag : err;
     int pass = rel < 5e-14;
     printf("  fwd K=%-5zu  rel=%.2e  %s\n", K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(gr);free(gi);free(nr);free(ni);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(gr);r32_aligned_free(gi);r32_aligned_free(nr);r32_aligned_free(ni);
     return pass;
 }
 
 static int test_roundtrip(size_t K) {
     size_t N = 32 * K;
-    double *ir = aa(N), *ii_ = aa(N), *mr = aa(N), *mi = aa(N);
-    double *rr = aa(N), *ri = aa(N);
+    double *ir = aa32(N), *ii_ = aa32(N), *mr = aa32(N), *mi = aa32(N);
+    double *rr = aa32(N), *ri = aa32(N);
     fill_rand(ir, N, 3000+(unsigned)K); fill_rand(ii_, N, 4000+(unsigned)K);
     radix32_n1_dit_kernel_fwd_avx2(ir, ii_, mr, mi, K);
     radix32_n1_dit_kernel_bwd_avx2(mr, mi, rr, ri, K);
@@ -96,13 +68,13 @@ static int test_roundtrip(size_t K) {
     double rel = mag > 0 ? err / mag : err;
     int pass = rel < 5e-15;
     printf("  rt  K=%-5zu  rel=%.2e  %s\n", K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(mr);free(mi);free(rr);free(ri);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(mr);r32_aligned_free(mi);r32_aligned_free(rr);r32_aligned_free(ri);
     return pass;
 }
 
 static int test_parseval(size_t K) {
     size_t N = 32 * K;
-    double *ir = aa(N), *ii_ = aa(N), *or_ = aa(N), *oi = aa(N);
+    double *ir = aa32(N), *ii_ = aa32(N), *or_ = aa32(N), *oi = aa32(N);
     fill_rand(ir, N, 7000+(unsigned)K); fill_rand(ii_, N, 8000+(unsigned)K);
     radix32_n1_dit_kernel_fwd_avx2(ir, ii_, or_, oi, K);
     double e_in = 0, e_out = 0;
@@ -114,14 +86,14 @@ static int test_parseval(size_t K) {
     double err = fabs(ratio - 1.0);
     int pass = err < 1e-12;
     printf("  parseval K=%-5zu  ratio=%.14f  err=%.2e  %s\n", K, ratio, err, pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(or_);free(oi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(or_);r32_aligned_free(oi);
     return pass;
 }
 
 __attribute__((target("avx2,fma")))
 static void run_bench(size_t K, int warm, int trials) {
     size_t N = 32 * K;
-    double *ir = aa(N), *ii_ = aa(N), *or_ = aa(N), *oi = aa(N);
+    double *ir = aa32(N), *ii_ = aa32(N), *or_ = aa32(N), *oi = aa32(N);
     fill_rand(ir, N, 9000+(unsigned)K); fill_rand(ii_, N, 9500+(unsigned)K);
 
     fftw_complex *fin = fftw_alloc_complex(N), *fout = fftw_alloc_complex(N);
@@ -151,7 +123,7 @@ static void run_bench(size_t K, int warm, int trials) {
     printf("  K=%-5zu  FFTW=%7.0f  N1=%7.0f  N1/FFTW=%5.2fx\n", K, bfw, ns, bfw/ns);
 
     fftw_destroy_plan(plan); fftw_free(fin); fftw_free(fout);
-    free(ir);free(ii_);free(or_);free(oi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(or_);r32_aligned_free(oi);
 }
 
 int main(void) {

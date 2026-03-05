@@ -1,37 +1,9 @@
 /*
  * bench_radix32_scalar_gen.c — Scalar generated N1 + tw vs FFTW
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <time.h>
+#include "radix32_test_utils.h"
 #include <fftw3.h>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-static void *aa(size_t n) {
-    void *p = NULL;
-    if (posix_memalign(&p, 64, n * sizeof(double)) != 0) abort();
-    memset(p, 0, n * sizeof(double));
-    return p;
-}
-static void fill_rand(double *p, size_t n, unsigned s) {
-    srand(s);
-    for (size_t i = 0; i < n; i++) p[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
-}
-static double max_abs(const double *p, size_t n) {
-    double m = 0;
-    for (size_t i = 0; i < n; i++) { double a = fabs(p[i]); if (a > m) m = a; }
-    return m;
-}
-static double get_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
 
 #include "fft_radix32_scalar_gen.h"
 
@@ -86,7 +58,7 @@ static void naive_tw_dft32_fwd(size_t K, size_t k,
 /* N1 fwd vs naive */
 static int test_n1_fwd(size_t K) {
     size_t N=32*K;
-    double *ir=aa(N),*ii_=aa(N),*gr=aa(N),*gi=aa(N),*nr=aa(N),*ni=aa(N);
+    double *ir=aa64(N),*ii_=aa64(N),*gr=aa64(N),*gi=aa64(N),*nr=aa64(N),*ni=aa64(N);
     fill_rand(ir,N,1000+(unsigned)K); fill_rand(ii_,N,2000+(unsigned)K);
     radix32_n1_dit_kernel_fwd_scalar(ir,ii_,gr,gi,K);
     naive_dft32_fwd(K,ir,ii_,nr,ni);
@@ -96,14 +68,14 @@ static int test_n1_fwd(size_t K) {
     double rel=mag>0?err/mag:err;
     int pass=rel<5e-14;
     printf("  N1 fwd K=%-5zu rel=%.2e  %s\n",K,rel,pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(gr);free(gi);free(nr);free(ni);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(gr);r32_aligned_free(gi);r32_aligned_free(nr);r32_aligned_free(ni);
     return pass;
 }
 
 /* N1 roundtrip */
 static int test_n1_rt(size_t K) {
     size_t N=32*K;
-    double *ir=aa(N),*ii_=aa(N),*mr=aa(N),*mi=aa(N),*rr=aa(N),*ri=aa(N);
+    double *ir=aa64(N),*ii_=aa64(N),*mr=aa64(N),*mi=aa64(N),*rr=aa64(N),*ri=aa64(N);
     fill_rand(ir,N,3000+(unsigned)K); fill_rand(ii_,N,4000+(unsigned)K);
     radix32_n1_dit_kernel_fwd_scalar(ir,ii_,mr,mi,K);
     radix32_n1_dit_kernel_bwd_scalar(mr,mi,rr,ri,K);
@@ -114,15 +86,15 @@ static int test_n1_rt(size_t K) {
     double rel=mag>0?err/mag:err;
     int pass=rel<5e-15;
     printf("  N1 rt  K=%-5zu rel=%.2e  %s\n",K,rel,pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(mr);free(mi);free(rr);free(ri);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(mr);r32_aligned_free(mi);r32_aligned_free(rr);r32_aligned_free(ri);
     return pass;
 }
 
 /* Tw fwd vs naive */
 static int test_tw_fwd(size_t K) {
     size_t N=32*K;
-    double *ir=aa(N),*ii_=aa(N),*gr=aa(N),*gi=aa(N),*nr=aa(N),*ni=aa(N);
-    double *ftwr=aa(31*K),*ftwi=aa(31*K);
+    double *ir=aa64(N),*ii_=aa64(N),*gr=aa64(N),*gi=aa64(N),*nr=aa64(N),*ni=aa64(N);
+    double *ftwr=aa64(31*K),*ftwi=aa64(31*K);
     fill_rand(ir,N,5000+(unsigned)K); fill_rand(ii_,N,6000+(unsigned)K);
     build_flat_tw(K,-1,ftwr,ftwi);
     radix32_tw_flat_dit_kernel_fwd_scalar(ir,ii_,gr,gi,ftwr,ftwi,K);
@@ -133,14 +105,14 @@ static int test_tw_fwd(size_t K) {
     double rel=mag>0?err/mag:err;
     int pass=rel<5e-13;
     printf("  TW fwd K=%-5zu rel=%.2e  %s\n",K,rel,pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(gr);free(gi);free(nr);free(ni);free(ftwr);free(ftwi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(gr);r32_aligned_free(gi);r32_aligned_free(nr);r32_aligned_free(ni);r32_aligned_free(ftwr);r32_aligned_free(ftwi);
     return pass;
 }
 
 /* Parseval */
 static int test_parseval(size_t K) {
     size_t N=32*K;
-    double *ir=aa(N),*ii_=aa(N),*or_=aa(N),*oi=aa(N);
+    double *ir=aa64(N),*ii_=aa64(N),*or_=aa64(N),*oi=aa64(N);
     fill_rand(ir,N,7000+(unsigned)K); fill_rand(ii_,N,8000+(unsigned)K);
     radix32_n1_dit_kernel_fwd_scalar(ir,ii_,or_,oi,K);
     double e_in=0,e_out=0;
@@ -149,14 +121,14 @@ static int test_parseval(size_t K) {
     double err=fabs(ratio-1.0);
     int pass=err<1e-12;
     printf("  parseval K=%-5zu ratio=%.14f err=%.2e  %s\n",K,ratio,err,pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(or_);free(oi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(or_);r32_aligned_free(oi);
     return pass;
 }
 
 /* Benchmark */
 static void run_bench(size_t K, int warm, int trials) {
     size_t N=32*K;
-    double *ir=aa(N),*ii_=aa(N),*or_=aa(N),*oi=aa(N);
+    double *ir=aa64(N),*ii_=aa64(N),*or_=aa64(N),*oi=aa64(N);
     fill_rand(ir,N,9000+(unsigned)K); fill_rand(ii_,N,9500+(unsigned)K);
 
     /* FFTW */
@@ -181,7 +153,7 @@ static void run_bench(size_t K, int warm, int trials) {
     printf("  K=%-5zu  FFTW=%7.0f  N1=%7.0f  N1/FFTW=%5.2fx\n",K,bfw,ns_n1,bfw/ns_n1);
 
     fftw_destroy_plan(plan);fftw_free(fin);fftw_free(fout);
-    free(ir);free(ii_);free(or_);free(oi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(or_);r32_aligned_free(oi);
 }
 
 int main(void) {

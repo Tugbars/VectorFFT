@@ -4,37 +4,9 @@
  * Comprehensive test + benchmark for unified twiddled DFT-32 dispatch.
  * Tests both packed (production) and strided (fallback) paths.
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <time.h>
+#include "radix32_test_utils.h"
 #include <fftw3.h>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-static void *aa64(size_t n) {
-    void *p = NULL;
-    if (posix_memalign(&p, 64, n * sizeof(double)) != 0) abort();
-    memset(p, 0, n * sizeof(double));
-    return p;
-}
-static void fill_rand(double *p, size_t n, unsigned s) {
-    srand(s);
-    for (size_t i = 0; i < n; i++) p[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
-}
-static double max_abs(const double *p, size_t n) {
-    double m = 0;
-    for (size_t i = 0; i < n; i++) { double a = fabs(p[i]); if (a > m) m = a; }
-    return m;
-}
-static double get_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
 
 /* ═══════════════════════════════════════════════════════════════ */
 #include "fft_radix32_avx512_tw_unified.h"
@@ -103,9 +75,9 @@ static int test_packed(size_t K) {
     int pass = rel < 5e-13;
     printf("  packed fwd K=%-5zu T=%-3zu rel=%.2e  %s\n", K, T, rel, pass?"PASS":"FAIL");
 
-    free(ir);free(ii_);free(nr);free(ni);
-    free(ftwr);free(ftwi);free(ptwr);free(ptwi);
-    free(pir);free(pii);free(por);free(poi);free(sor);free(soi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(nr);r32_aligned_free(ni);
+    r32_aligned_free(ftwr);r32_aligned_free(ftwi);r32_aligned_free(ptwr);r32_aligned_free(ptwi);
+    r32_aligned_free(pir);r32_aligned_free(pii);r32_aligned_free(por);r32_aligned_free(poi);r32_aligned_free(sor);r32_aligned_free(soi);
     return pass;
 }
 
@@ -140,8 +112,8 @@ static int test_strided(size_t K) {
                        K < R32_NT_THRESH     ? "ladder" : "lad+NT";
     printf("  strided fwd K=%-5zu [%-6s] rel=%.2e  %s\n", K, path, rel, pass?"PASS":"FAIL");
 
-    free(ir);free(ii_);free(or_);free(oi);free(nr);free(ni);
-    free(ftwr);free(ftwi);free(btwr);free(btwi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(or_);r32_aligned_free(oi);r32_aligned_free(nr);r32_aligned_free(ni);
+    r32_aligned_free(ftwr);r32_aligned_free(ftwi);r32_aligned_free(btwr);r32_aligned_free(btwi);
     return pass;
 }
 
@@ -185,9 +157,9 @@ static int test_cross(size_t K) {
            K, T, rel, pass?"PASS":"FAIL",
            (K < R32_LADDER_THRESH && err == 0.0) ? " (bit-exact)" : "");
 
-    free(ir);free(ii_);free(sr);free(si);
-    free(ftwr);free(ftwi);free(btwr);free(btwi);free(ptwr);free(ptwi);
-    free(pir);free(pii);free(por);free(poi);free(pr);free(pi_);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(sr);r32_aligned_free(si);
+    r32_aligned_free(ftwr);r32_aligned_free(ftwi);r32_aligned_free(btwr);r32_aligned_free(btwi);r32_aligned_free(ptwr);r32_aligned_free(ptwi);
+    r32_aligned_free(pir);r32_aligned_free(pii);r32_aligned_free(por);r32_aligned_free(poi);r32_aligned_free(pr);r32_aligned_free(pi_);
     return pass;
 }
 
@@ -232,10 +204,10 @@ static int test_roundtrip(size_t K) {
     int pass = rel < 5e-14;
     printf("  roundtrip K=%-5zu T=%-3zu rel=%.2e  %s\n", K, T, rel, pass?"PASS":"FAIL");
 
-    free(ir);free(ii_);free(rr);free(ri);
-    free(ftwr_f);free(ftwi_f);free(ftwr_b);free(ftwi_b);
-    free(ptwr_f);free(ptwi_f);free(ptwr_b);free(ptwi_b);
-    free(pir);free(pii);free(pmid);free(pmidi);free(por);free(poi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(rr);r32_aligned_free(ri);
+    r32_aligned_free(ftwr_f);r32_aligned_free(ftwi_f);r32_aligned_free(ftwr_b);r32_aligned_free(ftwi_b);
+    r32_aligned_free(ptwr_f);r32_aligned_free(ptwi_f);r32_aligned_free(ptwr_b);r32_aligned_free(ptwi_b);
+    r32_aligned_free(pir);r32_aligned_free(pii);r32_aligned_free(pmid);r32_aligned_free(pmidi);r32_aligned_free(por);r32_aligned_free(poi);
     return pass;
 }
 
@@ -299,10 +271,10 @@ static void run_bench(size_t K, int warm, int trials) {
            K, T, bfw, ns_pk, bfw/ns_pk, ns_st, bfw/ns_st, st_path);
 
     fftw_destroy_plan(plan); fftw_free(fin); fftw_free(fout);
-    free(ir);free(ii_);free(or_);free(oi);
-    free(ftwr);free(ftwi);free(btwr);free(btwi);
-    free(ptwr);free(ptwi);
-    free(pir);free(pii);free(por);free(poi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(or_);r32_aligned_free(oi);
+    r32_aligned_free(ftwr);r32_aligned_free(ftwi);r32_aligned_free(btwr);r32_aligned_free(btwi);
+    r32_aligned_free(ptwr);r32_aligned_free(ptwi);
+    r32_aligned_free(pir);r32_aligned_free(pii);r32_aligned_free(por);r32_aligned_free(poi);
 }
 
 int main(void) {

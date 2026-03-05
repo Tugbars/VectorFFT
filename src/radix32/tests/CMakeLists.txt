@@ -80,7 +80,8 @@ endif()
 function(r32_add_test name source)
     add_executable(${name} ${source})
 
-    # Include paths: tests/ dir + all backend dirs via radix32 interface
+    # Include paths: tests/ dir (for radix32_test_utils.h) + all backend dirs via radix32
+    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(${name} PRIVATE radix32)
 
     # FFTW
@@ -90,7 +91,7 @@ function(r32_add_test name source)
         target_include_directories(${name} PRIVATE ${FFTW3_INCLUDE_DIRS})
         target_link_libraries(${name} PRIVATE ${FFTW3_LIBRARIES})
     endif()
-    if(NOT R32_IS_MSVC)
+    if(NOT WIN32)
         target_link_libraries(${name} PRIVATE m)
     endif()
 
