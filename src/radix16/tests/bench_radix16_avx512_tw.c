@@ -1,32 +1,8 @@
 /*
  * bench_radix16_avx512_tw.c — Radix-16 twiddled AVX-512 vs FFTW
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <time.h>
+#include "vfft_test_utils.h"
 #include <fftw3.h>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-static void *aa(size_t n) {
-    void *p = NULL; posix_memalign(&p, 64, n * sizeof(double));
-    memset(p, 0, n * sizeof(double)); return p;
-}
-static void fill_rand(double *p, size_t n, unsigned s) {
-    srand(s); for (size_t i = 0; i < n; i++) p[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
-}
-static double max_abs(const double *p, size_t n) {
-    double m = 0; for (size_t i = 0; i < n; i++) { double a = fabs(p[i]); if (a > m) m = a; }
-    return m;
-}
-static double get_ns(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
 
 #undef  R16L_LD
 #undef  R16L_ST
@@ -74,9 +50,9 @@ static void naive_tw_dft16_fwd(size_t K, size_t k,
 
 static int test_tw_fwd(size_t K) {
     size_t N = 16 * K;
-    double *ir = aa(N), *ii_ = aa(N), *or_ = aa(N), *oi = aa(N);
-    double *nr = aa(N), *ni = aa(N);
-    double *ftwr = aa(15*K), *ftwi = aa(15*K);
+    double *ir = aa64(N), *ii_ = aa64(N), *or_ = aa64(N), *oi = aa64(N);
+    double *nr = aa64(N), *ni = aa64(N);
+    double *ftwr = aa64(15*K), *ftwi = aa64(15*K);
     fill_rand(ir, N, 1000+(unsigned)K);
     fill_rand(ii_, N, 2000+(unsigned)K);
     build_flat_tw(K, -1, ftwr, ftwi);
@@ -94,16 +70,16 @@ static int test_tw_fwd(size_t K) {
     double rel = mag > 0 ? err / mag : err;
     int pass = rel < 5e-13;
     printf("  tw fwd K=%-5zu rel=%.2e  %s\n", K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(or_);free(oi);free(nr);free(ni);free(ftwr);free(ftwi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(or_);r32_aligned_free(oi);r32_aligned_free(nr);r32_aligned_free(ni);r32_aligned_free(ftwr);r32_aligned_free(ftwi);
     return pass;
 }
 
 static int test_roundtrip(size_t K) {
     size_t N = 16 * K;
-    double *ir = aa(N), *ii_ = aa(N);
-    double *fr = aa(N), *fi = aa(N), *br = aa(N), *bi = aa(N);
-    double *ftwr = aa(15*K), *ftwi = aa(15*K);
-    double *btwr = aa(15*K), *btwi = aa(15*K);
+    double *ir = aa64(N), *ii_ = aa64(N);
+    double *fr = aa64(N), *fi = aa64(N), *br = aa64(N), *bi = aa64(N);
+    double *ftwr = aa64(15*K), *ftwi = aa64(15*K);
+    double *btwr = aa64(15*K), *btwi = aa64(15*K);
     fill_rand(ir, N, 3000+(unsigned)K);
     fill_rand(ii_, N, 4000+(unsigned)K);
     build_flat_tw(K, -1, ftwr, ftwi);
@@ -123,16 +99,16 @@ static int test_roundtrip(size_t K) {
     double rel = mag > 0 ? err / mag : err;
     int pass = rel < 5e-14;
     printf("  tw rt  K=%-5zu rel=%.2e  %s\n", K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii_);free(fr);free(fi);free(br);free(bi);
-    free(ftwr);free(ftwi);free(btwr);free(btwi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(fr);r32_aligned_free(fi);r32_aligned_free(br);r32_aligned_free(bi);
+    r32_aligned_free(ftwr);r32_aligned_free(ftwi);r32_aligned_free(btwr);r32_aligned_free(btwi);
     return pass;
 }
 
 __attribute__((target("avx512f,avx512dq,fma")))
 static void run_bench(size_t K, int warm, int trials) {
     size_t N = 16 * K;
-    double *ir = aa(N), *ii_ = aa(N), *or_ = aa(N), *oi = aa(N);
-    double *ftwr = aa(15*K), *ftwi = aa(15*K);
+    double *ir = aa64(N), *ii_ = aa64(N), *or_ = aa64(N), *oi = aa64(N);
+    double *ftwr = aa64(15*K), *ftwi = aa64(15*K);
     fill_rand(ir, N, 9000+(unsigned)K);
     fill_rand(ii_, N, 9500+(unsigned)K);
     build_flat_tw(K, -1, ftwr, ftwi);
@@ -177,10 +153,11 @@ static void run_bench(size_t K, int warm, int trials) {
            K, bfw, ns_n1, bfw/ns_n1, ns_tw, bfw/ns_tw, ns_tw/ns_n1);
 
     fftw_destroy_plan(plan); fftw_free(fin); fftw_free(fout);
-    free(ir);free(ii_);free(or_);free(oi);free(ftwr);free(ftwi);
+    r32_aligned_free(ir);r32_aligned_free(ii_);r32_aligned_free(or_);r32_aligned_free(oi);r32_aligned_free(ftwr);r32_aligned_free(ftwi);
 }
 
 int main(void) {
+    R32_REQUIRE_AVX512();
     printf("====================================================================\n");
     printf("  DFT-16 AVX-512: flat twiddled + N1 vs FFTW\n");
     printf("  15 ext twiddle loads/k-step, 32 L1 spill ops, 3 internal W₁₆\n");

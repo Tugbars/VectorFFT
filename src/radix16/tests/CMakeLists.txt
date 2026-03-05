@@ -61,11 +61,22 @@ else()
 endif()
 
 # ── Helper: add a radix16 test ────────────────────────────────────────────
-function(r16_add_test name source isa_flags)
+function(r16_add_test name source isa_flags isa_level)
     add_executable(${name} ${source})
 
-    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(${name} PRIVATE radix16)
+    target_include_directories(${name} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
+    )
+
+    # Link only the ISA targets needed — avoids inheriting AVX-512 flags on AVX2 tests
+    target_link_libraries(${name} PRIVATE radix16_scalar)
+    if(isa_level STREQUAL "avx2" OR isa_level STREQUAL "avx512")
+        target_link_libraries(${name} PRIVATE radix16_avx2)
+    endif()
+    if(isa_level STREQUAL "avx512" AND R16_BUILD_AVX512)
+        target_link_libraries(${name} PRIVATE radix16_avx512)
+    endif()
 
     # FFTW
     if(TARGET FFTW3::fftw3)
@@ -93,22 +104,22 @@ endfunction()
 
 r16_add_test(bench_radix16_avx2_n1
     ${CMAKE_CURRENT_SOURCE_DIR}/bench_radix16_avx2_n1.c
-    "${R16_TEST_AVX2_FLAGS}")
+    "${R16_TEST_AVX2_FLAGS}" "avx2")
 
 r16_add_test(bench_radix16_avx2_n1_packed
     ${CMAKE_CURRENT_SOURCE_DIR}/bench_radix16_avx2_n1_packed.c
-    "${R16_TEST_AVX2_FLAGS}")
+    "${R16_TEST_AVX2_FLAGS}" "avx2")
 
 r16_add_test(bench_radix16_avx2_tw_packed
     ${CMAKE_CURRENT_SOURCE_DIR}/bench_radix16_avx2_tw_packed.c
-    "${R16_TEST_AVX2_FLAGS}")
+    "${R16_TEST_AVX2_FLAGS}" "avx2")
 
 # ── AVX-512 tests (conditional) ──────────────────────────────────────────
 
 if(R16_BUILD_AVX512)
     r16_add_test(bench_radix16_avx512_tw
         ${CMAKE_CURRENT_SOURCE_DIR}/bench_radix16_avx512_tw.c
-        "${R16_TEST_AVX512_FLAGS}")
+        "${R16_TEST_AVX512_FLAGS}" "avx512")
 endif()
 
 # ── Summary ───────────────────────────────────────────────────────────────

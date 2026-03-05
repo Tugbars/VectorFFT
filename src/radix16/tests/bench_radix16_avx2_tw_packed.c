@@ -15,6 +15,8 @@
 #endif
 #endif
 
+#include "fft_radix16_scalar_n1_gen.h"
+#include "fft_radix16_avx2_n1_gen.h"
 #include "fft_radix16_avx2_tw.h"
 #include "fft_radix16_tw_packed.h"
 
