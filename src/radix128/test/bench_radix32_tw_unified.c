@@ -4,6 +4,7 @@
  * Comprehensive test + benchmark for unified twiddled DFT-32 dispatch.
  * Tests both packed (production) and strided (fallback) paths.
  */
+#include "vfft_test_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

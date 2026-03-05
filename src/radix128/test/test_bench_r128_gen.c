@@ -1,6 +1,7 @@
 /*
  * test_bench_r128_gen.c — Test + benchmark for generated DFT-128 N1 kernel
  */
+#include "vfft_test_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

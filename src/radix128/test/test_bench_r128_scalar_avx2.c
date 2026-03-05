@@ -2,27 +2,14 @@
  * test_bench_r128_scalar_avx2.c — Test + benchmark for generated DFT-128
  * Covers both scalar and AVX2 backends.
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
+#include "vfft_test_utils.h"
 #include <assert.h>
 #include <stdint.h>
-#include <time.h>
 #include <fftw3.h>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
+#ifndef RESTRICT
 #define RESTRICT __restrict__
-
-static void *aligned_alloc_64(size_t size) {
-    void *p = NULL;
-    posix_memalign(&p, 64, size);
-    return p;
-}
-#define aa(n) (double*)aligned_alloc_64((n)*sizeof(double))
+#endif
 
 /* Include generated kernels */
 #include "fft_radix128_scalar_n1_gen.h"
@@ -48,28 +35,6 @@ static void naive_dft128(int direction, size_t K, size_t k,
     }
 }
 
-/* ── Utils ── */
-static void fill_rand(double *p, size_t n, unsigned seed) {
-    srand(seed);
-    for (size_t i = 0; i < n; i++)
-        p[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
-}
-
-static double max_abs(const double *p, size_t n) {
-    double m = 0;
-    for (size_t i = 0; i < n; i++) {
-        double a = fabs(p[i]);
-        if (a > m) m = a;
-    }
-    return m;
-}
-
-static double get_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
-
 /* ── Correctness tests ── */
 
 static int test_fwd(const char *label,
@@ -77,7 +42,7 @@ static int test_fwd(const char *label,
     size_t K)
 {
     const size_t N = 128 * K;
-    double *ir=aa(N), *ii=aa(N), *gr=aa(N), *gi=aa(N), *nr=aa(N), *ni=aa(N);
+    double *ir=aa64(N), *ii=aa64(N), *gr=aa64(N), *gi=aa64(N), *nr=aa64(N), *ni=aa64(N);
     fill_rand(ir, N, 10000+(unsigned)K);
     fill_rand(ii, N, 20000+(unsigned)K);
 
@@ -95,7 +60,8 @@ static int test_fwd(const char *label,
     int pass = (rel < 5e-13);
 
     printf("  %-8s fwd K=%-4zu  rel=%.2e  %s\n", label, K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii);free(gr);free(gi);free(nr);free(ni);
+    r32_aligned_free(ir);r32_aligned_free(ii);r32_aligned_free(gr);
+    r32_aligned_free(gi);r32_aligned_free(nr);r32_aligned_free(ni);
     return pass;
 }
 
@@ -104,7 +70,7 @@ static int test_bwd(const char *label,
     size_t K)
 {
     const size_t N = 128 * K;
-    double *ir=aa(N), *ii=aa(N), *gr=aa(N), *gi=aa(N), *nr=aa(N), *ni=aa(N);
+    double *ir=aa64(N), *ii=aa64(N), *gr=aa64(N), *gi=aa64(N), *nr=aa64(N), *ni=aa64(N);
     fill_rand(ir, N, 30000+(unsigned)K);
     fill_rand(ii, N, 40000+(unsigned)K);
 
@@ -122,7 +88,8 @@ static int test_bwd(const char *label,
     int pass = (rel < 5e-13);
 
     printf("  %-8s bwd K=%-4zu  rel=%.2e  %s\n", label, K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii);free(gr);free(gi);free(nr);free(ni);
+    r32_aligned_free(ir);r32_aligned_free(ii);r32_aligned_free(gr);
+    r32_aligned_free(gi);r32_aligned_free(nr);r32_aligned_free(ni);
     return pass;
 }
 
@@ -132,7 +99,7 @@ static int test_roundtrip(const char *label,
     size_t K)
 {
     const size_t N = 128 * K;
-    double *ir=aa(N), *ii=aa(N), *fr=aa(N), *fi=aa(N), *br=aa(N), *bi=aa(N);
+    double *ir=aa64(N), *ii=aa64(N), *fr=aa64(N), *fi=aa64(N), *br=aa64(N), *bi=aa64(N);
     fill_rand(ir, N, 50000+(unsigned)K);
     fill_rand(ii, N, 60000+(unsigned)K);
 
@@ -149,16 +116,17 @@ static int test_roundtrip(const char *label,
     int pass = (rel < 1e-13);
 
     printf("  %-8s rt  K=%-4zu  rel=%.2e  %s\n", label, K, rel, pass?"PASS":"FAIL");
-    free(ir);free(ii);free(fr);free(fi);free(br);free(bi);
+    r32_aligned_free(ir);r32_aligned_free(ii);r32_aligned_free(fr);
+    r32_aligned_free(fi);r32_aligned_free(br);r32_aligned_free(bi);
     return pass;
 }
 
-/* ── Cross-ISA: scalar vs avx2 bit-exact comparison ── */
+/* ── Cross-ISA: scalar vs avx2 ── */
 
 static int test_cross_isa(size_t K) {
     const size_t N = 128 * K;
-    double *ir=aa(N), *ii=aa(N);
-    double *sr=aa(N), *si=aa(N), *ar=aa(N), *ai=aa(N);
+    double *ir=aa64(N), *ii=aa64(N);
+    double *sr=aa64(N), *si=aa64(N), *ar=aa64(N), *ai=aa64(N);
     fill_rand(ir, N, 70000+(unsigned)K);
     fill_rand(ii, N, 71000+(unsigned)K);
 
@@ -170,15 +138,17 @@ static int test_cross_isa(size_t K) {
         double e = fmax(fabs(sr[i]-ar[i]), fabs(si[i]-ai[i]));
         if (e > err) err = e;
     }
-    int pass = (err == 0.0);  /* should be bit-exact */
+    int pass = (err == 0.0);
 
     printf("  cross    fwd K=%-4zu  maxdiff=%.2e  %s\n", K, err,
            pass ? "BIT-EXACT" : (err < 1e-14 ? "PASS (near)" : "FAIL"));
-    free(ir);free(ii);free(sr);free(si);free(ar);free(ai);
+    r32_aligned_free(ir);r32_aligned_free(ii);
+    r32_aligned_free(sr);r32_aligned_free(si);
+    r32_aligned_free(ar);r32_aligned_free(ai);
     return pass || (err < 1e-14);
 }
 
-/* ── Wrappers for uniform calling convention ── */
+/* ── Wrappers ── */
 
 static void wrap_scalar_fwd(const double *ir, const double *ii,
                             double *or_, double *oi, size_t K) {
@@ -218,11 +188,10 @@ static double bench_kern(kern_fn fn, size_t K,
 
 static void run_bench(size_t K, int warmup, int trials) {
     const size_t N = 128 * K;
-    double *ir=aa(N), *ii=aa(N), *or_=aa(N), *oi=aa(N);
+    double *ir=aa64(N), *ii=aa64(N), *or_=aa64(N), *oi=aa64(N);
     fill_rand(ir, N, 80000+(unsigned)K);
     fill_rand(ii, N, 90000+(unsigned)K);
 
-    /* FFTW */
     fftw_complex *fftw_in  = fftw_alloc_complex(N);
     fftw_complex *fftw_out = fftw_alloc_complex(N);
     for (size_t k = 0; k < K; k++)
@@ -255,59 +224,54 @@ static void run_bench(size_t K, int warmup, int trials) {
     fftw_destroy_plan(plan);
     fftw_free(fftw_in);
     fftw_free(fftw_out);
-    free(ir);free(ii);free(or_);free(oi);
+    r32_aligned_free(ir);r32_aligned_free(ii);r32_aligned_free(or_);r32_aligned_free(oi);
 }
 
 int main(void) {
-    printf("╔══════════════════════════════════════════════════════════════╗\n");
-    printf("║  DFT-128 N1 — Scalar + AVX2 Generated Kernels             ║\n");
-    printf("╚══════════════════════════════════════════════════════════════╝\n\n");
+    R32_REQUIRE_AVX2();
+
+    printf("====================================================================\n");
+    printf("  DFT-128 N1 — Scalar + AVX2 Generated Kernels\n");
+    printf("====================================================================\n\n");
 
     int passed = 0, total = 0;
 
-    /* ── Scalar correctness ── */
-    printf("── Scalar forward ──\n");
+    printf("-- Scalar forward --\n");
     { size_t Ks[] = {1, 2, 3, 7, 8, 16};
       for (int i = 0; i < 6; i++) { total++; passed += test_fwd("scalar", wrap_scalar_fwd, Ks[i]); } }
 
-    printf("\n── Scalar backward ──\n");
+    printf("\n-- Scalar backward --\n");
     { size_t Ks[] = {1, 2, 8};
       for (int i = 0; i < 3; i++) { total++; passed += test_bwd("scalar", wrap_scalar_bwd, Ks[i]); } }
 
-    printf("\n── Scalar roundtrip ──\n");
+    printf("\n-- Scalar roundtrip --\n");
     { size_t Ks[] = {1, 4, 8, 16};
       for (int i = 0; i < 4; i++) { total++; passed += test_roundtrip("scalar", wrap_scalar_fwd, wrap_scalar_bwd, Ks[i]); } }
 
-    /* ── AVX2 correctness ── */
-    printf("\n── AVX2 forward ──\n");
+    printf("\n-- AVX2 forward --\n");
     { size_t Ks[] = {4, 8, 16, 32};
       for (int i = 0; i < 4; i++) { total++; passed += test_fwd("avx2", wrap_avx2_fwd, Ks[i]); } }
 
-    printf("\n── AVX2 backward ──\n");
+    printf("\n-- AVX2 backward --\n");
     { size_t Ks[] = {4, 8, 16};
       for (int i = 0; i < 3; i++) { total++; passed += test_bwd("avx2", wrap_avx2_bwd, Ks[i]); } }
 
-    printf("\n── AVX2 roundtrip ──\n");
+    printf("\n-- AVX2 roundtrip --\n");
     { size_t Ks[] = {4, 8, 32, 64};
       for (int i = 0; i < 4; i++) { total++; passed += test_roundtrip("avx2", wrap_avx2_fwd, wrap_avx2_bwd, Ks[i]); } }
 
-    /* ── Cross-ISA ── */
-    printf("\n── Cross-ISA (scalar vs AVX2) ──\n");
+    printf("\n-- Cross-ISA (scalar vs AVX2) --\n");
     { size_t Ks[] = {4, 8, 16};
       for (int i = 0; i < 3; i++) { total++; passed += test_cross_isa(Ks[i]); } }
 
-    printf("\n══════════════════════════════════════════\n");
+    printf("\n======================================\n");
     printf("  %d/%d passed  %s\n", passed, total,
-           passed==total ? "✓ ALL PASSED" : "✗ FAILURES");
-    printf("══════════════════════════════════════════\n");
+           passed==total ? "ALL PASSED" : "FAILURES");
+    printf("======================================\n");
 
     if (passed != total) return 1;
 
-    /* ── Benchmarks ── */
-    printf("\n── Benchmark: Scalar vs AVX2 vs FFTW (ns, fwd) ──\n");
-    printf("  %-7s  %-8s  %-8s  %-8s  %-7s  %-7s  %s\n",
-           "K", "FFTW", "Scalar", "AVX2", "S/FFTW", "A/FFTW", "A/S");
-
+    printf("\n-- Benchmark: Scalar vs AVX2 vs FFTW (ns, fwd) --\n");
     run_bench(1,    500, 3000);
     run_bench(4,    500, 3000);
     run_bench(8,    500, 2000);

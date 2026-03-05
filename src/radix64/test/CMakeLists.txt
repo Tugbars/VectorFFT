@@ -77,4 +77,4 @@ endfunction()
 # ── Test executable ──
 add_radix64_test(test_radix64_unified
     test_radix64_unified.c
-    avx512)
+    avx2) #change to avx512 for testing avx512 kernels. 
