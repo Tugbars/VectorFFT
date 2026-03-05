@@ -1,9 +1,9 @@
 /**
- * @file radix32_test_utils.h
- * @brief Cross-platform helpers for radix-32 tests (Windows + Linux)
+ * @file vfft_test_utils.h
+ * @brief Cross-platform test helpers for VectorFFT (Windows + Linux)
  */
-#ifndef RADIX32_TEST_UTILS_H
-#define RADIX32_TEST_UTILS_H
+#ifndef VFFT_TEST_UTILS_H
+#define VFFT_TEST_UTILS_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -165,4 +165,4 @@ static int r32_has_avx2(void) {
 } while(0)
 #endif
 
-#endif /* RADIX32_TEST_UTILS_H */
+#endif /* VFFT_TEST_UTILS_H */
