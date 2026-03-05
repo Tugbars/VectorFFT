@@ -5,6 +5,15 @@
 
 cmake_minimum_required(VERSION 3.16)
 
+# Auto-detect vcpkg if present in project root
+if(EXISTS "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        CACHE STRING "Vcpkg toolchain file")
+    message(STATUS "vcpkg toolchain: ${CMAKE_TOOLCHAIN_FILE}")
+else()
+    message(WARNING "vcpkg not found at ${CMAKE_SOURCE_DIR}/vcpkg/")
+endif()
+
 project(VectorFFT
     VERSION   1.0.0
     LANGUAGES C

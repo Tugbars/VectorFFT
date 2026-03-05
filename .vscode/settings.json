@@ -1,4 +1,7 @@
 {
+    "cmake.configureArgs": [
+        "-DVCPKG_TARGET_TRIPLET=x64-windows"
+    ],
     "astyle.astylerc": "",
     "files.associations": {
         ".fantomasignore": "ignore",
