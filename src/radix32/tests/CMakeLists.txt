@@ -1,128 +1,108 @@
 # ============================================================================
-# radix32/tests/CMakeLists.txt
+# VectorFFT — radix32/tests
 #
-# Each test is a standalone C executable that benchmarks against FFTW.
-# All tests include fft_radix32_dispatch.h (top-level cross-ISA header).
+# Correctness tests and performance benchmarks for radix-32 codelets.
 #
 # Tests:
-#   bench_radix32_scalar_gen    — scalar N1 + tw vs naive + FFTW
-#   bench_radix32_avx2_n1      — AVX2 N1 vs naive + FFTW
-#   bench_radix32_tw_unified   — AVX-512 twiddled unified dispatch vs FFTW
-#   bench_radix32_u2           — AVX-512 N1 U1+U2 vs naive + FFTW
+#   test_radix32_dispatch_{isa}   — Full dispatch: all ISA paths, fwd+bwd+roundtrip
+#   test_radix32_scalar           — Scalar-only: tw + notw correctness
+#
+# Benchmarks (require FFTW3):
+#   bench_radix32_avx512_tw_{isa} — Twiddled AVX-512 (flat+ladder) vs FFTW
+#   bench_radix32_avx2_tw_{isa}   — Twiddled AVX2 flat vs FFTW
+#   bench_radix32_notw_{isa}      — Twiddle-less AVX-512+AVX2 vs FFTW
 # ============================================================================
 
-# ── Find FFTW ──────────────────────────────────────────────────────────────
-# 1. CMake config mode (vcpkg, manual installs with CMake configs)
-# 2. pkg-config (Linux system packages)
-# 3. Manual search (fallback)
+# ── Include paths for radix32 headers ────────────────────────────────────
+# Tests live in radix32/tests/ but headers are in radix32/{avx512,avx2,scalar}/
+set(R32_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set(R32_INCLUDE_DIRS
+    ${R32_ROOT}             # fft_radix32_dispatch.h
+    ${R32_ROOT}/avx512      # fft_radix32_avx512_*.h
+    ${R32_ROOT}/avx2        # fft_radix32_avx2_*.h
+    ${R32_ROOT}/scalar      # fft_radix32_scalar_*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}  # radix32_test_utils.h
+)
 
-find_package(FFTW3 CONFIG QUIET)
-if(FFTW3_FOUND OR TARGET FFTW3::fftw3)
-    set(FFTW3_FOUND TRUE)
-    if(TARGET FFTW3::fftw3)
-        set(FFTW3_LIBRARIES FFTW3::fftw3)
-    endif()
-    message(STATUS "radix32/tests: FFTW3 found via CMake config")
-else()
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(FFTW3 QUIET fftw3)
-        if(FFTW3_FOUND)
-            message(STATUS "radix32/tests: FFTW3 found via pkg-config")
-        endif()
-    endif()
-endif()
+# ══════════════════════════════════════════════════════════════════════════
+# CORRECTNESS TESTS
+# ══════════════════════════════════════════════════════════════════════════
 
-if(NOT FFTW3_FOUND)
-    find_library(FFTW3_LIB NAMES fftw3 libfftw3-3)
-    find_path(FFTW3_INC NAMES fftw3.h)
-    if(FFTW3_LIB AND FFTW3_INC)
-        set(FFTW3_FOUND TRUE)
-        set(FFTW3_LIBRARIES ${FFTW3_LIB})
-        set(FFTW3_INCLUDE_DIRS ${FFTW3_INC})
-        message(STATUS "radix32/tests: FFTW3 found via manual search")
-    endif()
-endif()
+# ── test_dispatch: exercises all dispatch paths (needs highest ISA) ──────
+#    Compiled with AVX-512 flags: enables __AVX512F__ and __AVX2__ both,
+#    so all #ifdef branches in dispatch.h are active.
+#    On AVX2-only systems, falls back to AVX2 + scalar paths only.
 
-if(NOT FFTW3_FOUND)
-    message(WARNING "radix32/tests: FFTW3 not found — tests will not be built.\n"
-                    "  Install: apt install libfftw3-dev  (Linux)\n"
-                    "           brew install fftw          (macOS)\n"
-                    "           vcpkg install fftw3        (Windows)")
-    return()
-endif()
-
-message(STATUS "radix32/tests: FFTW3 found")
-
-# ── Highest ISA flags for test TUs ────────────────────────────────────────
-# Tests include dispatch.h which conditionally includes all backends.
-# The TU must compile with the highest ISA so all headers parse.
-set(R32_TEST_ISA_FLAGS "")
-if(R32_BUILD_AVX512)
-    if(R32_IS_ICX)
-        set(R32_TEST_ISA_FLAGS -x${R32_ICX_AVX512_ARCH})
-    elseif(R32_IS_MSVC)
-        set(R32_TEST_ISA_FLAGS /arch:AVX512)
-    else()
-        set(R32_TEST_ISA_FLAGS -mavx512f -mavx512dq -mavx2 -mfma)
-    endif()
-else()
-    if(R32_IS_ICX)
-        set(R32_TEST_ISA_FLAGS -x${R32_ICX_AVX2_ARCH})
-    elseif(R32_IS_MSVC)
-        set(R32_TEST_ISA_FLAGS /arch:AVX2)
-    else()
-        set(R32_TEST_ISA_FLAGS -mavx2 -mfma)
-    endif()
-endif()
-
-# ── Helper: add a radix32 test ────────────────────────────────────────────
-function(r32_add_test name source)
-    add_executable(${name} ${source})
-
-    # Include paths: tests/ dir (for radix32_test_utils.h) + all backend dirs via radix32
-    target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(${name} PRIVATE radix32)
-
-    # FFTW
-    if(TARGET FFTW3::fftw3)
-        target_link_libraries(${name} PRIVATE FFTW3::fftw3)
-    else()
-        target_include_directories(${name} PRIVATE ${FFTW3_INCLUDE_DIRS})
-        target_link_libraries(${name} PRIVATE ${FFTW3_LIBRARIES})
-    endif()
-    if(NOT WIN32)
-        target_link_libraries(${name} PRIVATE m)
-    endif()
-
-    # ISA + warning flags
-    target_compile_options(${name} PRIVATE
-        ${R32_TEST_ISA_FLAGS}
-        ${R32_WARN}
-        $<$<NOT:$<BOOL:${R32_IS_MSVC}>>:-O2>
-        $<$<BOOL:${R32_IS_MSVC}>:/O2>
+if(VFFT_HAS_AVX512)
+    vfft_add_isa_tests(test_radix32_dispatch "AVX512"
+        test_dispatch.c
+        LABELS radix32 correctness
+        EXTRA_INCLUDES ${R32_INCLUDE_DIRS}
     )
-
-    add_test(NAME ${name} COMMAND ${name})
-endfunction()
-
-# ── Tests ─────────────────────────────────────────────────────────────────
-
-r32_add_test(bench_radix32_scalar_gen
-    ${CMAKE_CURRENT_SOURCE_DIR}/bench_radix32_scalar_gen.c)
-
-r32_add_test(bench_radix32_avx2_n1
-    ${CMAKE_CURRENT_SOURCE_DIR}/bench_radix32_avx2_n1.c)
-
-if(R32_BUILD_AVX512)
-    r32_add_test(bench_radix32_tw_unified
-        ${CMAKE_CURRENT_SOURCE_DIR}/bench_radix32_tw_unified.c)
-
-    r32_add_test(bench_radix32_u2
-        ${CMAKE_CURRENT_SOURCE_DIR}/bench_radix32_u2.c)
+elseif(VFFT_HAS_AVX2)
+    vfft_add_isa_tests(test_radix32_dispatch "AVX2"
+        test_dispatch.c
+        LABELS radix32 correctness
+        EXTRA_INCLUDES ${R32_INCLUDE_DIRS}
+    )
 endif()
 
-# ── Summary ───────────────────────────────────────────────────────────────
-get_property(_tests DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY TESTS)
-list(LENGTH _tests _n)
-message(STATUS "radix32/tests: ${_n} test(s) registered")
+# ── test_scalar: no SIMD required, portable baseline ────────────────────
+add_executable(test_radix32_scalar test_scalar.c)
+target_compile_options(test_radix32_scalar PRIVATE ${VFFT_BASE_FLAGS})
+set_target_properties(test_radix32_scalar PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
+target_include_directories(test_radix32_scalar PRIVATE ${R32_INCLUDE_DIRS})
+if(VFFT_BASE_DEFINITIONS)
+    target_compile_definitions(test_radix32_scalar PRIVATE ${VFFT_BASE_DEFINITIONS})
+endif()
+if(NOT WIN32)
+    target_link_libraries(test_radix32_scalar PRIVATE m)
+endif()
+
+add_test(NAME test_radix32_scalar COMMAND test_radix32_scalar)
+set_tests_properties(test_radix32_scalar PROPERTIES LABELS "scalar;radix32;correctness")
+message(STATUS "[VectorFFT] Test: test_radix32_scalar [scalar;radix32;correctness]")
+
+# ══════════════════════════════════════════════════════════════════════════
+# BENCHMARKS (require FFTW3)
+# ══════════════════════════════════════════════════════════════════════════
+
+if(VFFT_BUILD_BENCHMARKS)
+
+    # ── AVX-512 twiddled vs FFTW ─────────────────────────────────────────
+    if(VFFT_HAS_AVX512)
+        vfft_add_isa_benchmarks(bench_radix32_avx512_tw "AVX512"
+            bench_avx512_tw_vs_fftw.c
+            LABELS radix32 benchmark twiddled
+            EXTRA_INCLUDES ${R32_INCLUDE_DIRS}
+        )
+    endif()
+
+    # ── AVX2 twiddled vs FFTW ────────────────────────────────────────────
+    #    Compiled with -mavx2 -mfma -mno-avx512f so FFTW comparison is
+    #    AVX2 VecFFT vs FFTW's best (which may use AVX-512 internally).
+    if(VFFT_HAS_AVX2)
+        vfft_add_isa_benchmarks(bench_radix32_avx2_tw "AVX2"
+            bench_avx2_tw_vs_fftw.c
+            LABELS radix32 benchmark twiddled
+            EXTRA_INCLUDES ${R32_INCLUDE_DIRS}
+        )
+    endif()
+
+    # ── Twiddle-less (AVX-512 + AVX2 + FFTW, all in one binary) ─────────
+    #    Compiled with AVX-512 flags to enable both ISA codepaths.
+    if(VFFT_HAS_AVX512)
+        vfft_add_isa_benchmarks(bench_radix32_notw "AVX512"
+            bench_notw_vs_fftw.c
+            LABELS radix32 benchmark notw
+            EXTRA_INCLUDES ${R32_INCLUDE_DIRS}
+        )
+    elseif(VFFT_HAS_AVX2)
+        vfft_add_isa_benchmarks(bench_radix32_notw "AVX2"
+            bench_notw_vs_fftw.c
+            LABELS radix32 benchmark notw
+            EXTRA_INCLUDES ${R32_INCLUDE_DIRS}
+        )
+    endif()
+
+endif()
