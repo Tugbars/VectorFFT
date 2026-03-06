@@ -265,6 +265,133 @@ static inline void radix3_tw_packed_bwd(
 }
 
 /* ═══════════════════════════════════════════════════════════════
+ * PACKED DISPATCH — notw
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void radix3_notw_packed_fwd(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t bs = 3 * T;
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (T == 8) {
+        for (size_t b = 0; b < nb; b++)
+            radix3_notw_dit_kernel_fwd_avx512(
+                in_re + b*bs, in_im + b*bs,
+                out_re + b*bs, out_im + b*bs, T);
+        return;
+    }
+#endif
+#ifdef __AVX2__
+    if (T == 4) {
+        for (size_t b = 0; b < nb; b++)
+            radix3_notw_dit_kernel_fwd_avx2(
+                in_re + b*bs, in_im + b*bs,
+                out_re + b*bs, out_im + b*bs, T);
+        return;
+    }
+#endif
+    for (size_t b = 0; b < nb; b++)
+        radix3_notw_dit_kernel_fwd_scalar(
+            in_re + b*bs, in_im + b*bs,
+            out_re + b*bs, out_im + b*bs, T);
+}
+
+static inline void radix3_notw_packed_bwd(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t bs = 3 * T;
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (T == 8) {
+        for (size_t b = 0; b < nb; b++)
+            radix3_notw_dit_kernel_bwd_avx512(
+                in_re + b*bs, in_im + b*bs,
+                out_re + b*bs, out_im + b*bs, T);
+        return;
+    }
+#endif
+#ifdef __AVX2__
+    if (T == 4) {
+        for (size_t b = 0; b < nb; b++)
+            radix3_notw_dit_kernel_bwd_avx2(
+                in_re + b*bs, in_im + b*bs,
+                out_re + b*bs, out_im + b*bs, T);
+        return;
+    }
+#endif
+    for (size_t b = 0; b < nb; b++)
+        radix3_notw_dit_kernel_bwd_scalar(
+            in_re + b*bs, in_im + b*bs,
+            out_re + b*bs, out_im + b*bs, T);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * K-FIRST ALIASES (consistent with radix7/radix32 API)
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void radix3_tw_forward(
+    size_t K,
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im)
+{ radix3_tw_fwd(in_re, in_im, out_re, out_im, tw_re, tw_im, K); }
+
+static inline void radix3_tw_backward(
+    size_t K,
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im)
+{ radix3_tw_bwd(in_re, in_im, out_re, out_im, tw_re, tw_im, K); }
+
+static inline void radix3_notw_forward(
+    size_t K,
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im)
+{ radix3_notw_fwd(in_re, in_im, out_re, out_im, K); }
+
+static inline void radix3_notw_backward(
+    size_t K,
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im)
+{ radix3_notw_bwd(in_re, in_im, out_re, out_im, K); }
+
+/* ═══════════════════════════════════════════════════════════════
+ * ISA DETECTION & NAMING
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifndef VFFT_ISA_LEVEL_DEFINED
+#define VFFT_ISA_LEVEL_DEFINED
+typedef enum {
+    VFFT_ISA_SCALAR = 0,
+    VFFT_ISA_AVX2   = 1,
+    VFFT_ISA_AVX512 = 2
+} vfft_isa_level_t;
+#endif
+
+static inline vfft_isa_level_t radix3_effective_isa(size_t K) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) return VFFT_ISA_AVX512;
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) return VFFT_ISA_AVX2;
+#endif
+    return VFFT_ISA_SCALAR;
+}
+
+static inline const char *radix3_isa_name(vfft_isa_level_t isa) {
+    switch (isa) {
+        case VFFT_ISA_AVX512: return "AVX512";
+        case VFFT_ISA_AVX2:   return "AVX2";
+        default:               return "scalar";
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
  * PLANNER HELPERS
  * ═══════════════════════════════════════════════════════════════ */
 
