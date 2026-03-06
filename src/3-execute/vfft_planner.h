@@ -41,6 +41,31 @@
 #include <math.h>
 #include <stdio.h>
 
+/* ═══════════════════════════════════════════════════════════════
+ * PLATFORM COMPAT
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifdef _WIN32
+#include <malloc.h>
+static inline void *vfft_aligned_alloc(size_t align, size_t size)
+{
+    return _aligned_malloc(size, align);
+}
+static inline void vfft_aligned_free(void *p)
+{
+    _aligned_free(p);
+}
+#else
+static inline void *vfft_aligned_alloc(size_t align, size_t size)
+{
+    return aligned_alloc(align, size);
+}
+static inline void vfft_aligned_free(void *p)
+{
+    free(p);
+}
+#endif
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -50,10 +75,10 @@
  * ═══════════════════════════════════════════════════════════════ */
 
 typedef void (*vfft_codelet_fn)(
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im,
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im,
     size_t K);
 
 /* ═══════════════════════════════════════════════════════════════
@@ -64,32 +89,37 @@ typedef void (*vfft_codelet_fn)(
  * ═══════════════════════════════════════════════════════════════ */
 
 static void vfft_naive_dft(
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im,
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im,
     size_t K, size_t R)
 {
-    for (size_t k = 0; k < K; k++) {
-        for (size_t m = 0; m < R; m++) {
+    for (size_t k = 0; k < K; k++)
+    {
+        for (size_t m = 0; m < R; m++)
+        {
             double sr = 0, si = 0;
-            for (size_t n = 0; n < R; n++) {
+            for (size_t n = 0; n < R; n++)
+            {
                 double a = -2.0 * M_PI * (double)m * (double)n / (double)R;
-                sr += in_re[n*K+k]*cos(a) - in_im[n*K+k]*sin(a);
-                si += in_re[n*K+k]*sin(a) + in_im[n*K+k]*cos(a);
+                sr += in_re[n * K + k] * cos(a) - in_im[n * K + k] * sin(a);
+                si += in_re[n * K + k] * sin(a) + in_im[n * K + k] * cos(a);
             }
-            out_re[m*K+k] = sr;
-            out_im[m*K+k] = si;
+            out_re[m * K + k] = sr;
+            out_im[m * K + k] = si;
         }
     }
 }
 
 /* Macro to generate a naive codelet wrapper for a specific radix */
-#define VFFT_NAIVE_CODELET(R) \
-static void vfft_naive_r##R( \
-    const double *in_re, const double *in_im, \
-    double *out_re, double *out_im, size_t K) \
-{ vfft_naive_dft(in_re, in_im, out_re, out_im, K, R); }
+#define VFFT_NAIVE_CODELET(R)                               \
+    static void vfft_naive_r##R(                            \
+        const double *in_re, const double *in_im,           \
+        double *out_re, double *out_im, size_t K)           \
+    {                                                       \
+        vfft_naive_dft(in_re, in_im, out_re, out_im, K, R); \
+    }
 
 VFFT_NAIVE_CODELET(2)
 VFFT_NAIVE_CODELET(3)
@@ -122,32 +152,33 @@ VFFT_NAIVE_CODELET(128)
 #define VFFT_MAX_RADIX 256
 #define VFFT_MAX_STAGES 32
 
-typedef struct {
-    vfft_codelet_fn fwd[VFFT_MAX_RADIX];  /* forward codelets by radix */
-    vfft_codelet_fn bwd[VFFT_MAX_RADIX];  /* backward codelets by radix */
+typedef struct
+{
+    vfft_codelet_fn fwd[VFFT_MAX_RADIX]; /* forward codelets by radix */
+    vfft_codelet_fn bwd[VFFT_MAX_RADIX]; /* backward codelets by radix */
 } vfft_codelet_registry;
 
 static void vfft_registry_init_naive(vfft_codelet_registry *reg)
 {
     memset(reg, 0, sizeof(*reg));
     /* Register naive fallbacks for all supported radixes */
-    reg->fwd[2]   = vfft_naive_r2;
-    reg->fwd[3]   = vfft_naive_r3;
-    reg->fwd[4]   = vfft_naive_r4;
-    reg->fwd[5]   = vfft_naive_r5;
-    reg->fwd[6]   = vfft_naive_r6;
-    reg->fwd[7]   = vfft_naive_r7;
-    reg->fwd[8]   = vfft_naive_r8;
-    reg->fwd[9]   = vfft_naive_r9;
-    reg->fwd[10]  = vfft_naive_r10;
-    reg->fwd[11]  = vfft_naive_r11;
-    reg->fwd[13]  = vfft_naive_r13;
-    reg->fwd[16]  = vfft_naive_r16;
-    reg->fwd[17]  = vfft_naive_r17;
-    reg->fwd[19]  = vfft_naive_r19;
-    reg->fwd[23]  = vfft_naive_r23;
-    reg->fwd[32]  = vfft_naive_r32;
-    reg->fwd[64]  = vfft_naive_r64;
+    reg->fwd[2] = vfft_naive_r2;
+    reg->fwd[3] = vfft_naive_r3;
+    reg->fwd[4] = vfft_naive_r4;
+    reg->fwd[5] = vfft_naive_r5;
+    reg->fwd[6] = vfft_naive_r6;
+    reg->fwd[7] = vfft_naive_r7;
+    reg->fwd[8] = vfft_naive_r8;
+    reg->fwd[9] = vfft_naive_r9;
+    reg->fwd[10] = vfft_naive_r10;
+    reg->fwd[11] = vfft_naive_r11;
+    reg->fwd[13] = vfft_naive_r13;
+    reg->fwd[16] = vfft_naive_r16;
+    reg->fwd[17] = vfft_naive_r17;
+    reg->fwd[19] = vfft_naive_r19;
+    reg->fwd[23] = vfft_naive_r23;
+    reg->fwd[32] = vfft_naive_r32;
+    reg->fwd[64] = vfft_naive_r64;
     reg->fwd[128] = vfft_naive_r128;
     /* Backward: naive DFT with +sign. For now, reuse forward
      * (caller should conjugate input/output). Will be replaced
@@ -156,9 +187,10 @@ static void vfft_registry_init_naive(vfft_codelet_registry *reg)
 
 /* Register an optimized codelet for a specific radix */
 static inline void vfft_registry_set(vfft_codelet_registry *reg,
-    size_t radix, vfft_codelet_fn fwd, vfft_codelet_fn bwd)
+                                     size_t radix, vfft_codelet_fn fwd, vfft_codelet_fn bwd)
 {
-    if (radix < VFFT_MAX_RADIX) {
+    if (radix < VFFT_MAX_RADIX)
+    {
         reg->fwd[radix] = fwd;
         reg->bwd[radix] = bwd;
     }
@@ -181,31 +213,36 @@ static inline void vfft_registry_set(vfft_codelet_registry *reg,
  * Power-of-2 radixes first (better SIMD), then primes. */
 static const size_t VFFT_SUPPORTED_RADIXES[] = {
     128, 64, 32, 16, 8, 4, 2,    /* powers of 2 */
-    9, 10, 6,                      /* small composites */
-    23, 19, 17, 13, 11, 7, 5, 3,  /* primes (large to small) */
-    0  /* sentinel */
+    9, 10, 6,                    /* small composites */
+    23, 19, 17, 13, 11, 7, 5, 3, /* primes (large to small) */
+    0                            /* sentinel */
 };
 
-typedef struct {
+typedef struct
+{
     size_t factors[VFFT_MAX_STAGES];
     size_t nfactors;
-    int    uses_bluestein;  /* 1 if any factor needs Bluestein */
+    int uses_bluestein;                        /* 1 if any factor needs Bluestein */
     size_t bluestein_factors[VFFT_MAX_STAGES]; /* which factors use it */
 } vfft_factorization;
 
 static int vfft_factorize(size_t N, const vfft_codelet_registry *reg,
-                           vfft_factorization *fact)
+                          vfft_factorization *fact)
 {
     memset(fact, 0, sizeof(*fact));
     size_t remaining = N;
 
-    while (remaining > 1) {
-        if (fact->nfactors >= VFFT_MAX_STAGES) return -1; /* too many stages */
+    while (remaining > 1)
+    {
+        if (fact->nfactors >= VFFT_MAX_STAGES)
+            return -1; /* too many stages */
 
         int found = 0;
         /* Try each supported radix, largest first */
-        for (const size_t *r = VFFT_SUPPORTED_RADIXES; *r; r++) {
-            if (*r <= remaining && (remaining % *r) == 0 && reg->fwd[*r]) {
+        for (const size_t *r = VFFT_SUPPORTED_RADIXES; *r; r++)
+        {
+            if (*r <= remaining && (remaining % *r) == 0 && reg->fwd[*r])
+            {
                 fact->factors[fact->nfactors++] = *r;
                 remaining /= *r;
                 found = 1;
@@ -213,15 +250,20 @@ static int vfft_factorize(size_t N, const vfft_codelet_registry *reg,
             }
         }
 
-        if (!found) {
+        if (!found)
+        {
             /* remaining is a prime > max supported radix, or unsupported.
              * Use Bluestein for this factor. */
-            if (remaining > 1) {
+            if (remaining > 1)
+            {
                 /* Check if remaining itself is a supported radix */
-                if (remaining < VFFT_MAX_RADIX && reg->fwd[remaining]) {
+                if (remaining < VFFT_MAX_RADIX && reg->fwd[remaining])
+                {
                     fact->factors[fact->nfactors++] = remaining;
                     remaining = 1;
-                } else {
+                }
+                else
+                {
                     /* Must use Bluestein */
                     fact->bluestein_factors[fact->nfactors] = 1;
                     fact->uses_bluestein = 1;
@@ -244,7 +286,8 @@ static int vfft_factorize(size_t N, const vfft_codelet_registry *reg,
      * puts the largest power-of-2 first. We need to REVERSE the array
      * so that the largest is innermost (factors[0]).
      */
-    for (size_t i = 0; i < fact->nfactors / 2; i++) {
+    for (size_t i = 0; i < fact->nfactors / 2; i++)
+    {
         size_t j = fact->nfactors - 1 - i;
         size_t tmp = fact->factors[i];
         fact->factors[i] = fact->factors[j];
@@ -262,11 +305,12 @@ static int vfft_factorize(size_t N, const vfft_codelet_registry *reg,
  * PLAN STRUCTURE
  * ═══════════════════════════════════════════════════════════════ */
 
-typedef struct {
-    size_t radix;          /* DFT size for this stage */
-    size_t K;              /* stride = product of all inner radixes */
-    size_t N_remaining;    /* product of this radix × all outer radixes */
-    vfft_codelet_fn fwd;   /* codelet function pointer */
+typedef struct
+{
+    size_t radix;        /* DFT size for this stage */
+    size_t K;            /* stride = product of all inner radixes */
+    size_t N_remaining;  /* product of this radix × all outer radixes */
+    vfft_codelet_fn fwd; /* codelet function pointer */
     vfft_codelet_fn bwd;
 
     /* Twiddle table for this stage (NULL for innermost stage).
@@ -275,13 +319,14 @@ typedef struct {
     double *tw_re;
     double *tw_im;
 
-    int is_bluestein;      /* 1 if this stage uses Bluestein */
-    void *bluestein_plan;  /* opaque Bluestein plan if needed */
+    int is_bluestein;     /* 1 if this stage uses Bluestein */
+    void *bluestein_plan; /* opaque Bluestein plan if needed */
 } vfft_stage;
 
-typedef struct {
-    size_t N;                          /* total transform size */
-    size_t nstages;                    /* number of stages */
+typedef struct
+{
+    size_t N;       /* total transform size */
+    size_t nstages; /* number of stages */
     vfft_stage stages[VFFT_MAX_STAGES];
 
     /* Digit-reversal permutation table.
@@ -307,11 +352,13 @@ static void vfft_build_twiddles(
     double *tw_re, double *tw_im,
     size_t R, size_t K, size_t N)
 {
-    for (size_t n = 1; n < R; n++) {
-        for (size_t k = 0; k < K; k++) {
+    for (size_t n = 1; n < R; n++)
+    {
+        for (size_t k = 0; k < K; k++)
+        {
             double phase = -2.0 * M_PI * (double)n * (double)k / (double)N;
-            tw_re[(n-1)*K + k] = cos(phase);
-            tw_im[(n-1)*K + k] = sin(phase);
+            tw_re[(n - 1) * K + k] = cos(phase);
+            tw_im[(n - 1) * K + k] = sin(phase);
         }
     }
 }
@@ -327,44 +374,50 @@ static void vfft_build_twiddles(
  * ═══════════════════════════════════════════════════════════════ */
 
 static void vfft_apply_twiddles(
-    double * __restrict__ re,
-    double * __restrict__ im,
-    const double * __restrict__ tw_re,
-    const double * __restrict__ tw_im,
+    double *__restrict__ re,
+    double *__restrict__ im,
+    const double *__restrict__ tw_re,
+    const double *__restrict__ tw_im,
     size_t R, size_t K)
 {
     /* n=0 untouched */
-    for (size_t n = 1; n < R; n++) {
-        const double *wr = tw_re + (n-1)*K;
-        const double *wi = tw_im + (n-1)*K;
-        double *xr = re + n*K;
-        double *xi = im + n*K;
-        for (size_t k = 0; k < K; k++) {
+    for (size_t n = 1; n < R; n++)
+    {
+        const double *wr = tw_re + (n - 1) * K;
+        const double *wi = tw_im + (n - 1) * K;
+        double *xr = re + n * K;
+        double *xi = im + n * K;
+        for (size_t k = 0; k < K; k++)
+        {
             double a = xr[k], b = xi[k];
-            xr[k] = a*wr[k] - b*wi[k];
-            xi[k] = a*wi[k] + b*wr[k];
+            xr[k] = a * wr[k] - b * wi[k];
+            xi[k] = a * wi[k] + b * wr[k];
         }
     }
 }
 
-#ifdef __AVX512F__
+#if defined(__AVX512F__) || defined(__AVX2__)
 #include <immintrin.h>
+#endif
 
-__attribute__((target("avx512f,fma")))
-static void vfft_apply_twiddles_avx512(
-    double * __restrict__ re,
-    double * __restrict__ im,
-    const double * __restrict__ tw_re,
-    const double * __restrict__ tw_im,
+#ifdef __AVX512F__
+
+__attribute__((target("avx512f,fma"))) static void vfft_apply_twiddles_avx512(
+    double *__restrict__ re,
+    double *__restrict__ im,
+    const double *__restrict__ tw_re,
+    const double *__restrict__ tw_im,
     size_t R, size_t K)
 {
-    for (size_t n = 1; n < R; n++) {
-        const double *wr = tw_re + (n-1)*K;
-        const double *wi = tw_im + (n-1)*K;
-        double *xr = re + n*K;
-        double *xi = im + n*K;
+    for (size_t n = 1; n < R; n++)
+    {
+        const double *wr = tw_re + (n - 1) * K;
+        const double *wi = tw_im + (n - 1) * K;
+        double *xr = re + n * K;
+        double *xi = im + n * K;
         size_t k = 0;
-        for (; k + 8 <= K; k += 8) {
+        for (; k + 8 <= K; k += 8)
+        {
             __m512d a = _mm512_load_pd(&xr[k]);
             __m512d b = _mm512_load_pd(&xi[k]);
             __m512d w_r = _mm512_load_pd(&wr[k]);
@@ -372,31 +425,33 @@ static void vfft_apply_twiddles_avx512(
             _mm512_store_pd(&xr[k], _mm512_fmsub_pd(a, w_r, _mm512_mul_pd(b, w_i)));
             _mm512_store_pd(&xi[k], _mm512_fmadd_pd(a, w_i, _mm512_mul_pd(b, w_r)));
         }
-        for (; k < K; k++) {
+        for (; k < K; k++)
+        {
             double a = xr[k], b = xi[k];
-            xr[k] = a*wr[k] - b*wi[k];
-            xi[k] = a*wi[k] + b*wr[k];
+            xr[k] = a * wr[k] - b * wi[k];
+            xi[k] = a * wi[k] + b * wr[k];
         }
     }
 }
 #endif
 
 #ifdef __AVX2__
-__attribute__((target("avx2,fma")))
-static void vfft_apply_twiddles_avx2(
-    double * __restrict__ re,
-    double * __restrict__ im,
-    const double * __restrict__ tw_re,
-    const double * __restrict__ tw_im,
+__attribute__((target("avx2,fma"))) static void vfft_apply_twiddles_avx2(
+    double *__restrict__ re,
+    double *__restrict__ im,
+    const double *__restrict__ tw_re,
+    const double *__restrict__ tw_im,
     size_t R, size_t K)
 {
-    for (size_t n = 1; n < R; n++) {
-        const double *wr = tw_re + (n-1)*K;
-        const double *wi = tw_im + (n-1)*K;
-        double *xr = re + n*K;
-        double *xi = im + n*K;
+    for (size_t n = 1; n < R; n++)
+    {
+        const double *wr = tw_re + (n - 1) * K;
+        const double *wi = tw_im + (n - 1) * K;
+        double *xr = re + n * K;
+        double *xi = im + n * K;
         size_t k = 0;
-        for (; k + 4 <= K; k += 4) {
+        for (; k + 4 <= K; k += 4)
+        {
             __m256d a = _mm256_load_pd(&xr[k]);
             __m256d b = _mm256_load_pd(&xi[k]);
             __m256d w_r = _mm256_load_pd(&wr[k]);
@@ -404,10 +459,11 @@ static void vfft_apply_twiddles_avx2(
             _mm256_store_pd(&xr[k], _mm256_fmsub_pd(a, w_r, _mm256_mul_pd(b, w_i)));
             _mm256_store_pd(&xi[k], _mm256_fmadd_pd(a, w_i, _mm256_mul_pd(b, w_r)));
         }
-        for (; k < K; k++) {
+        for (; k < K; k++)
+        {
             double a = xr[k], b = xi[k];
-            xr[k] = a*wr[k] - b*wi[k];
-            xi[k] = a*wi[k] + b*wr[k];
+            xr[k] = a * wr[k] - b * wi[k];
+            xi[k] = a * wi[k] + b * wr[k];
         }
     }
 }
@@ -419,10 +475,18 @@ static void vfft_apply_twiddles_dispatch(
     size_t R, size_t K)
 {
 #ifdef __AVX512F__
-    if (K >= 8 && (K & 7) == 0) { vfft_apply_twiddles_avx512(re, im, tw_re, tw_im, R, K); return; }
+    if (K >= 8 && (K & 7) == 0)
+    {
+        vfft_apply_twiddles_avx512(re, im, tw_re, tw_im, R, K);
+        return;
+    }
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0) { vfft_apply_twiddles_avx2(re, im, tw_re, tw_im, R, K); return; }
+    if (K >= 4 && (K & 3) == 0)
+    {
+        vfft_apply_twiddles_avx2(re, im, tw_re, tw_im, R, K);
+        return;
+    }
 #endif
     vfft_apply_twiddles(re, im, tw_re, tw_im, R, K);
 }
@@ -447,18 +511,21 @@ static size_t *vfft_build_perm(const size_t *radixes, size_t nstages, size_t N)
 {
     size_t *perm = (size_t *)malloc(N * sizeof(size_t));
 
-    for (size_t i = 0; i < N; i++) {
+    for (size_t i = 0; i < N; i++)
+    {
         /* Extract mixed-radix digits in forward order (inner to outer) */
         size_t tmp = i;
         size_t digits[VFFT_MAX_STAGES];
-        for (size_t s = 0; s < nstages; s++) {
+        for (size_t s = 0; s < nstages; s++)
+        {
             digits[s] = tmp % radixes[s];
             tmp /= radixes[s];
         }
         /* Reconstruct in reversed order (outer to inner) */
         size_t j = 0;
         size_t weight = 1;
-        for (int s = (int)nstages - 1; s >= 0; s--) {
+        for (int s = (int)nstages - 1; s >= 0; s--)
+        {
             j += digits[s] * weight;
             weight *= radixes[s];
         }
@@ -469,13 +536,14 @@ static size_t *vfft_build_perm(const size_t *radixes, size_t nstages, size_t N)
 
 /* Apply permutation: out[perm[i]] = in[i] */
 static void vfft_apply_perm(
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im,
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im,
     const size_t *perm, size_t N)
 {
-    for (size_t i = 0; i < N; i++) {
+    for (size_t i = 0; i < N; i++)
+    {
         out_re[perm[i]] = in_re[i];
         out_im[perm[i]] = in_im[i];
     }
@@ -487,21 +555,25 @@ static void vfft_apply_perm(
 
 static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
 {
-    if (N == 0) return NULL;
+    if (N == 0)
+        return NULL;
 
     vfft_plan *plan = (vfft_plan *)calloc(1, sizeof(*plan));
-    if (!plan) return NULL;
+    if (!plan)
+        return NULL;
     plan->N = N;
 
     /* Special case: N=1 */
-    if (N == 1) {
+    if (N == 1)
+    {
         plan->nstages = 0;
         return plan;
     }
 
     /* Factorize */
     vfft_factorization fact;
-    if (vfft_factorize(N, reg, &fact) != 0) {
+    if (vfft_factorize(N, reg, &fact) != 0)
+    {
         free(plan);
         return NULL;
     }
@@ -522,19 +594,23 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
      *   Total twiddle entries: (R_s - 1) × N/R_s.
      */
     size_t stride = 1;
-    for (size_t s = 0; s < fact.nfactors; s++) {
+    for (size_t s = 0; s < fact.nfactors; s++)
+    {
         vfft_stage *st = &plan->stages[s];
         st->radix = fact.factors[s];
-        st->K = stride;  /* stride = product of factors[0..s-1] */
+        st->K = stride; /* stride = product of factors[0..s-1] */
         st->N_remaining = N / st->radix;
         st->is_bluestein = fact.bluestein_factors[s];
 
-        if (st->is_bluestein) {
+        if (st->is_bluestein)
+        {
             /* TODO: wire up Bluestein plan here.
              * For now, use naive codelet as placeholder. */
             st->fwd = NULL;
             st->bwd = NULL;
-        } else {
+        }
+        else
+        {
             st->fwd = reg->fwd[st->radix];
             st->bwd = reg->bwd[st->radix];
         }
@@ -547,49 +623,55 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
          * where accumulated = stride (after *= R above).
          * k=1..R-1, inner=0..K-1
          * inner=0 always gives twiddle=1.0 (stored for SIMD alignment). */
-        if (st->K > 1) {
+        if (st->K > 1)
+        {
             size_t R = st->radix;
             size_t K = st->K;
-            size_t accumulated = stride;  /* = K * R */
+            size_t accumulated = stride; /* = K * R */
             size_t tw_size = (R - 1) * K;
-            st->tw_re = (double *)aligned_alloc(64, tw_size * sizeof(double));
-            st->tw_im = (double *)aligned_alloc(64, tw_size * sizeof(double));
-            for (size_t k = 1; k < R; k++) {
-                for (size_t inner = 0; inner < K; inner++) {
+            st->tw_re = (double *)vfft_aligned_alloc(64, tw_size * sizeof(double));
+            st->tw_im = (double *)vfft_aligned_alloc(64, tw_size * sizeof(double));
+            for (size_t k = 1; k < R; k++)
+            {
+                for (size_t inner = 0; inner < K; inner++)
+                {
                     double phase = -2.0 * M_PI * (double)k * (double)inner / (double)accumulated;
-                    st->tw_re[(k-1)*K + inner] = cos(phase);
-                    st->tw_im[(k-1)*K + inner] = sin(phase);
+                    st->tw_re[(k - 1) * K + inner] = cos(phase);
+                    st->tw_im[(k - 1) * K + inner] = sin(phase);
                 }
             }
         }
     }
 
     /* Digit-reversal permutation */
-    if (fact.nfactors > 1) {
+    if (fact.nfactors > 1)
+    {
         plan->perm = vfft_build_perm(fact.factors, fact.nfactors, N);
     }
 
     /* Scratch buffers */
-    plan->buf_a_re = (double *)aligned_alloc(64, N * sizeof(double));
-    plan->buf_a_im = (double *)aligned_alloc(64, N * sizeof(double));
-    plan->buf_b_re = (double *)aligned_alloc(64, N * sizeof(double));
-    plan->buf_b_im = (double *)aligned_alloc(64, N * sizeof(double));
+    plan->buf_a_re = (double *)vfft_aligned_alloc(64, N * sizeof(double));
+    plan->buf_a_im = (double *)vfft_aligned_alloc(64, N * sizeof(double));
+    plan->buf_b_re = (double *)vfft_aligned_alloc(64, N * sizeof(double));
+    plan->buf_b_im = (double *)vfft_aligned_alloc(64, N * sizeof(double));
 
     return plan;
 }
 
 static void vfft_plan_destroy(vfft_plan *plan)
 {
-    if (!plan) return;
-    for (size_t s = 0; s < plan->nstages; s++) {
-        free(plan->stages[s].tw_re);
-        free(plan->stages[s].tw_im);
+    if (!plan)
+        return;
+    for (size_t s = 0; s < plan->nstages; s++)
+    {
+        vfft_aligned_free(plan->stages[s].tw_re);
+        vfft_aligned_free(plan->stages[s].tw_im);
     }
     free(plan->perm);
-    free(plan->buf_a_re);
-    free(plan->buf_a_im);
-    free(plan->buf_b_re);
-    free(plan->buf_b_im);
+    vfft_aligned_free(plan->buf_a_re);
+    vfft_aligned_free(plan->buf_a_im);
+    vfft_aligned_free(plan->buf_b_re);
+    vfft_aligned_free(plan->buf_b_im);
     free(plan);
 }
 
@@ -618,19 +700,25 @@ static void vfft_plan_destroy(vfft_plan *plan)
 
 static void vfft_execute_fwd(
     const vfft_plan *plan,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im)
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im)
 {
     const size_t N = plan->N;
     const size_t S = plan->nstages;
 
-    if (N <= 1) {
-        if (N == 1) { out_re[0] = in_re[0]; out_im[0] = in_im[0]; }
+    if (N <= 1)
+    {
+        if (N == 1)
+        {
+            out_re[0] = in_re[0];
+            out_im[0] = in_im[0];
+        }
         return;
     }
-    if (S == 1) {
+    if (S == 1)
+    {
         plan->stages[0].fwd(in_re, in_im, out_re, out_im, 1);
         return;
     }
@@ -654,18 +742,20 @@ static void vfft_execute_fwd(
 
     double *work_re = plan->buf_a_re;
     double *work_im = plan->buf_a_im;
-    double *tmp_re  = plan->buf_b_re;
-    double *tmp_im  = plan->buf_b_im;
+    double *tmp_re = plan->buf_b_re;
+    double *tmp_im = plan->buf_b_im;
 
     memcpy(work_re, in_re, N * sizeof(double));
     memcpy(work_im, in_im, N * sizeof(double));
 
-    for (int s = (int)S - 1; s >= 0; s--) {
+    for (int s = (int)S - 1; s >= 0; s--)
+    {
         const size_t R = plan->stages[s].radix;
         const size_t K = plan->stages[s].K;
         const size_t n_outer = N / (R * K);
 
-        for (size_t g = 0; g < n_outer; g++) {
+        for (size_t g = 0; g < n_outer; g++)
+        {
             size_t base_offset = g * R * K;
 
             /* Call codelet: DFT-R with stride K, K independent transforms */
@@ -679,7 +769,8 @@ static void vfft_execute_fwd(
             /* Apply twiddle from precomputed table.
              * tw[(k-1)*K + inner] = W_{accumulated}^{k·inner}
              * The dispatch function handles AVX-512/AVX2/scalar based on K. */
-            if (K > 1 && plan->stages[s].tw_re) {
+            if (K > 1 && plan->stages[s].tw_re)
+            {
                 vfft_apply_twiddles_dispatch(
                     tmp_re + base_offset,
                     tmp_im + base_offset,
@@ -695,12 +786,16 @@ static void vfft_execute_fwd(
     }
 
     /* Digit-reversal permutation */
-    if (plan->perm) {
-        for (size_t i = 0; i < N; i++) {
+    if (plan->perm)
+    {
+        for (size_t i = 0; i < N; i++)
+        {
             out_re[plan->perm[i]] = work_re[i];
             out_im[plan->perm[i]] = work_im[i];
         }
-    } else {
+    }
+    else
+    {
         memcpy(out_re, work_re, N * sizeof(double));
         memcpy(out_im, work_im, N * sizeof(double));
     }
@@ -711,25 +806,27 @@ static void vfft_execute_fwd(
  *   IDFT(x) = conj(DFT(conj(x))) */
 static void vfft_execute_bwd(
     const vfft_plan *plan,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im)
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im)
 {
     const size_t N = plan->N;
     /* Conjugate input, forward DFT, conjugate output */
-    double *conj_re = (double *)aligned_alloc(64, N * sizeof(double));
-    double *conj_im = (double *)aligned_alloc(64, N * sizeof(double));
-    for (size_t i = 0; i < N; i++) {
+    double *conj_re = (double *)vfft_aligned_alloc(64, N * sizeof(double));
+    double *conj_im = (double *)vfft_aligned_alloc(64, N * sizeof(double));
+    for (size_t i = 0; i < N; i++)
+    {
         conj_re[i] = in_re[i];
         conj_im[i] = -in_im[i];
     }
     vfft_execute_fwd(plan, conj_re, conj_im, out_re, out_im);
-    for (size_t i = 0; i < N; i++) {
+    for (size_t i = 0; i < N; i++)
+    {
         out_im[i] = -out_im[i];
     }
-    free(conj_re);
-    free(conj_im);
+    vfft_aligned_free(conj_re);
+    vfft_aligned_free(conj_im);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -740,13 +837,17 @@ static void vfft_plan_print(const vfft_plan *plan)
 {
     printf("  vfft_plan: N=%zu, %zu stages\n", plan->N, plan->nstages);
     printf("  Factorization: ");
-    for (size_t s = 0; s < plan->nstages; s++) {
-        if (s > 0) printf(" × ");
+    for (size_t s = 0; s < plan->nstages; s++)
+    {
+        if (s > 0)
+            printf(" × ");
         printf("%zu", plan->stages[s].radix);
-        if (plan->stages[s].is_bluestein) printf("[BS]");
+        if (plan->stages[s].is_bluestein)
+            printf("[BS]");
     }
     printf(" (inner→outer)\n");
-    for (size_t s = 0; s < plan->nstages; s++) {
+    for (size_t s = 0; s < plan->nstages; s++)
+    {
         const vfft_stage *st = &plan->stages[s];
         printf("    stage %zu: R=%zu K=%zu %s%s\n",
                s, st->radix, st->K,

@@ -51,6 +51,16 @@
 #define FFT_BLUESTEIN_H
 
 #include <stdlib.h>
+
+/* Windows compat */
+#ifdef _WIN32
+#include <malloc.h>
+static inline void *vfft_bs_aligned_alloc(size_t align, size_t sz) { return _aligned_malloc(sz, align); }
+static inline void vfft_bs_aligned_free(void *p) { _aligned_free(p); }
+#else
+static inline void *vfft_bs_aligned_alloc(size_t align, size_t sz) { return aligned_alloc(align, sz); }
+static inline void vfft_bs_aligned_free(void *p) { free(p); }
+#endif
 #include <string.h>
 #include <math.h>
 
@@ -68,24 +78,25 @@
  * ═══════════════════════════════════════════════════════════════ */
 
 typedef void (*vfft_fft_fn)(double *re, double *im,
-                             size_t N, size_t K, int direction);
+                            size_t N, size_t K, int direction);
 
 /* ═══════════════════════════════════════════════════════════════
  * PLAN STRUCTURE
  * ═══════════════════════════════════════════════════════════════ */
 
-typedef struct {
-    size_t N;              /* original DFT size */
-    size_t M;              /* padded size (power of 2 ≥ 2N-1) */
-    double inv_M;          /* 1.0 / M for IFFT scaling */
+typedef struct
+{
+    size_t N;     /* original DFT size */
+    size_t M;     /* padded size (power of 2 ≥ 2N-1) */
+    double inv_M; /* 1.0 / M for IFFT scaling */
 
-    double *chirp_re;      /* chirp[n] = cos(πn²/N),  n=0..N-1 */
-    double *chirp_im;      /* chirp[n] = -sin(πn²/N) */
+    double *chirp_re; /* chirp[n] = cos(πn²/N),  n=0..N-1 */
+    double *chirp_im; /* chirp[n] = -sin(πn²/N) */
 
-    double *B_re;          /* FFT_M(kernel), length M */
+    double *B_re; /* FFT_M(kernel), length M */
     double *B_im;
 
-    vfft_fft_fn fft_func;  /* internal FFT (NULL = built-in) */
+    vfft_fft_fn fft_func; /* internal FFT (NULL = built-in) */
 } vfft_bluestein_plan;
 
 /* ═══════════════════════════════════════════════════════════════
@@ -97,37 +108,48 @@ typedef struct {
  * ═══════════════════════════════════════════════════════════════ */
 
 static void vfft_builtin_r2dit(double *re, double *im,
-                                size_t N, size_t K, int direction)
+                               size_t N, size_t K, int direction)
 {
     /* Process each of K independent DFTs */
-    for (size_t k = 0; k < K; k++) {
+    for (size_t k = 0; k < K; k++)
+    {
         /* Bit-reversal permutation on K-strided data */
-        for (size_t i = 1, j = 0; i < N; i++) {
+        for (size_t i = 1, j = 0; i < N; i++)
+        {
             size_t bit = N >> 1;
-            for (; j & bit; bit >>= 1) j ^= bit;
+            for (; j & bit; bit >>= 1)
+                j ^= bit;
             j ^= bit;
-            if (i < j) {
+            if (i < j)
+            {
                 double t;
-                t = re[i*K+k]; re[i*K+k] = re[j*K+k]; re[j*K+k] = t;
-                t = im[i*K+k]; im[i*K+k] = im[j*K+k]; im[j*K+k] = t;
+                t = re[i * K + k];
+                re[i * K + k] = re[j * K + k];
+                re[j * K + k] = t;
+                t = im[i * K + k];
+                im[i * K + k] = im[j * K + k];
+                im[j * K + k] = t;
             }
         }
         /* Butterfly stages */
-        for (size_t len = 2; len <= N; len <<= 1) {
+        for (size_t len = 2; len <= N; len <<= 1)
+        {
             double ang = direction * 2.0 * M_PI / (double)len;
             double wpr = cos(ang), wpi = sin(ang);
-            for (size_t i = 0; i < N; i += len) {
+            for (size_t i = 0; i < N; i += len)
+            {
                 double wr = 1.0, wi = 0.0;
-                for (size_t j = 0; j < len/2; j++) {
-                    size_t u = (i+j)*K+k, v = (i+j+len/2)*K+k;
-                    double tr = re[v]*wr - im[v]*wi;
-                    double ti = re[v]*wi + im[v]*wr;
+                for (size_t j = 0; j < len / 2; j++)
+                {
+                    size_t u = (i + j) * K + k, v = (i + j + len / 2) * K + k;
+                    double tr = re[v] * wr - im[v] * wi;
+                    double ti = re[v] * wi + im[v] * wr;
                     re[v] = re[u] - tr;
                     im[v] = im[u] - ti;
                     re[u] += tr;
                     im[u] += ti;
-                    double t = wr*wpr - wi*wpi;
-                    wi = wr*wpi + wi*wpr;
+                    double t = wr * wpr - wi * wpi;
+                    wi = wr * wpi + wi * wpr;
                     wr = t;
                 }
             }
@@ -139,9 +161,11 @@ static void vfft_builtin_r2dit(double *re, double *im,
  * HELPER: next power of 2
  * ═══════════════════════════════════════════════════════════════ */
 
-static inline size_t vfft_next_pow2(size_t n) {
+static inline size_t vfft_next_pow2(size_t n)
+{
     size_t m = 1;
-    while (m < n) m <<= 1;
+    while (m < n)
+        m <<= 1;
     return m;
 }
 
@@ -155,19 +179,21 @@ static inline size_t vfft_next_pow2(size_t n) {
 static vfft_bluestein_plan *vfft_bluestein_create(size_t N, vfft_fft_fn fft_func)
 {
     vfft_bluestein_plan *plan = (vfft_bluestein_plan *)calloc(1, sizeof(*plan));
-    if (!plan) return NULL;
+    if (!plan)
+        return NULL;
 
     plan->N = N;
-    plan->M = vfft_next_pow2(2*N - 1);
+    plan->M = vfft_next_pow2(2 * N - 1);
     plan->inv_M = 1.0 / (double)plan->M;
     plan->fft_func = fft_func;
 
     const size_t M = plan->M;
 
     /* ── Chirp table: chirp[n] = W_N^{n²/2} = e^{-iπn²/N} ── */
-    plan->chirp_re = (double *)aligned_alloc(64, N * sizeof(double));
-    plan->chirp_im = (double *)aligned_alloc(64, N * sizeof(double));
-    for (size_t n = 0; n < N; n++) {
+    plan->chirp_re = (double *)vfft_bs_aligned_alloc(64, N * sizeof(double));
+    plan->chirp_im = (double *)vfft_bs_aligned_alloc(64, N * sizeof(double));
+    for (size_t n = 0; n < N; n++)
+    {
         /* Use fmod to maintain precision for large n²:
          * πn²/N can be huge, but we only need it mod 2π. */
         double phase = fmod((double)n * (double)n, 2.0 * (double)N) * M_PI / (double)N;
@@ -186,39 +212,44 @@ static vfft_bluestein_plan *vfft_bluestein_create(size_t N, vfft_fft_fn fft_func
     double *bi = (double *)calloc(M, sizeof(double));
 
     br[0] = plan->chirp_re[0];
-    bi[0] = -plan->chirp_im[0];  /* conj */
-    for (size_t m = 1; m < N; m++) {
-        br[m]   = plan->chirp_re[m];
-        bi[m]   = -plan->chirp_im[m];
-        br[M-m] = plan->chirp_re[m];
-        bi[M-m] = -plan->chirp_im[m];
+    bi[0] = -plan->chirp_im[0]; /* conj */
+    for (size_t m = 1; m < N; m++)
+    {
+        br[m] = plan->chirp_re[m];
+        bi[m] = -plan->chirp_im[m];
+        br[M - m] = plan->chirp_re[m];
+        bi[M - m] = -plan->chirp_im[m];
     }
 
     /* B = FFT_M(b_padded) — single DFT, K=1 */
-    plan->B_re = (double *)aligned_alloc(64, M * sizeof(double));
-    plan->B_im = (double *)aligned_alloc(64, M * sizeof(double));
+    plan->B_re = (double *)vfft_bs_aligned_alloc(64, M * sizeof(double));
+    plan->B_im = (double *)vfft_bs_aligned_alloc(64, M * sizeof(double));
     memcpy(plan->B_re, br, M * sizeof(double));
     memcpy(plan->B_im, bi, M * sizeof(double));
 
-    if (fft_func) {
+    if (fft_func)
+    {
         fft_func(plan->B_re, plan->B_im, M, 1, -1);
-    } else {
+    }
+    else
+    {
         vfft_builtin_r2dit(plan->B_re, plan->B_im, M, 1, -1);
     }
 
-    free(br);
-    free(bi);
+    vfft_bs_aligned_free(br);
+    vfft_bs_aligned_free(bi);
 
     return plan;
 }
 
 static void vfft_bluestein_destroy(vfft_bluestein_plan *plan)
 {
-    if (!plan) return;
-    free(plan->chirp_re);
-    free(plan->chirp_im);
-    free(plan->B_re);
-    free(plan->B_im);
+    if (!plan)
+        return;
+    vfft_bs_aligned_free(plan->chirp_re);
+    vfft_bs_aligned_free(plan->chirp_im);
+    vfft_bs_aligned_free(plan->B_re);
+    vfft_bs_aligned_free(plan->B_im);
     free(plan);
 }
 
@@ -235,10 +266,10 @@ static void vfft_bluestein_destroy(vfft_bluestein_plan *plan)
 
 static void vfft_bluestein_fwd(
     const vfft_bluestein_plan *plan,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im,
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im,
     size_t K)
 {
     const size_t N = plan->N;
@@ -246,14 +277,14 @@ static void vfft_bluestein_fwd(
     const double inv_M = plan->inv_M;
     const double *chr = plan->chirp_re;
     const double *chi = plan->chirp_im;
-    const double *Br  = plan->B_re;
-    const double *Bi  = plan->B_im;
+    const double *Br = plan->B_re;
+    const double *Bi = plan->B_im;
 
     vfft_fft_fn fft_fn = plan->fft_func ? plan->fft_func : vfft_builtin_r2dit;
 
     /* Allocate K-strided scratch: a[m*K + k] for m=0..M-1 */
-    double *ar = (double *)aligned_alloc(64, M * K * sizeof(double));
-    double *ai = (double *)aligned_alloc(64, M * K * sizeof(double));
+    double *ar = (double *)vfft_bs_aligned_alloc(64, M * K * sizeof(double));
+    double *ai = (double *)vfft_bs_aligned_alloc(64, M * K * sizeof(double));
 
     /* ── Step 1+2: Chirp multiply + zero-pad ──
      *
@@ -266,13 +297,15 @@ static void vfft_bluestein_fwd(
     memset(ar, 0, M * K * sizeof(double));
     memset(ai, 0, M * K * sizeof(double));
 
-    for (size_t n = 0; n < N; n++) {
+    for (size_t n = 0; n < N; n++)
+    {
         const double cr = chr[n], ci = chi[n];
-        for (size_t k = 0; k < K; k++) {
-            const double xr = in_re[n*K + k];
-            const double xi = in_im[n*K + k];
-            ar[n*K + k] = xr*cr - xi*ci;
-            ai[n*K + k] = xr*ci + xi*cr;
+        for (size_t k = 0; k < K; k++)
+        {
+            const double xr = in_re[n * K + k];
+            const double xi = in_im[n * K + k];
+            ar[n * K + k] = xr * cr - xi * ci;
+            ai[n * K + k] = xr * ci + xi * cr;
         }
     }
 
@@ -283,13 +316,15 @@ static void vfft_bluestein_fwd(
      *
      * B[m] is the same for all K batches (broadcast).
      */
-    for (size_t m = 0; m < M; m++) {
+    for (size_t m = 0; m < M; m++)
+    {
         const double br = Br[m], bi = Bi[m];
-        for (size_t k = 0; k < K; k++) {
-            const double a_r = ar[m*K + k];
-            const double a_i = ai[m*K + k];
-            ar[m*K + k] = a_r*br - a_i*bi;
-            ai[m*K + k] = a_r*bi + a_i*br;
+        for (size_t k = 0; k < K; k++)
+        {
+            const double a_r = ar[m * K + k];
+            const double a_i = ai[m * K + k];
+            ar[m * K + k] = a_r * br - a_i * bi;
+            ai[m * K + k] = a_r * bi + a_i * br;
         }
     }
 
@@ -301,18 +336,20 @@ static void vfft_bluestein_fwd(
      * X[k] = chirp[k] · c[k] / M
      * Only first N outputs are valid.
      */
-    for (size_t n = 0; n < N; n++) {
+    for (size_t n = 0; n < N; n++)
+    {
         const double cr = chr[n], ci = chi[n];
-        for (size_t k = 0; k < K; k++) {
-            const double c_r = ar[n*K + k] * inv_M;
-            const double c_i = ai[n*K + k] * inv_M;
-            out_re[n*K + k] = c_r*cr - c_i*ci;
-            out_im[n*K + k] = c_r*ci + c_i*cr;
+        for (size_t k = 0; k < K; k++)
+        {
+            const double c_r = ar[n * K + k] * inv_M;
+            const double c_i = ai[n * K + k] * inv_M;
+            out_re[n * K + k] = c_r * cr - c_i * ci;
+            out_im[n * K + k] = c_r * ci + c_i * cr;
         }
     }
 
-    free(ar);
-    free(ai);
+    vfft_bs_aligned_free(ar);
+    vfft_bs_aligned_free(ai);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -327,10 +364,10 @@ static void vfft_bluestein_fwd(
 
 static void vfft_bluestein_bwd(
     const vfft_bluestein_plan *plan,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im,
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im,
     size_t K)
 {
     /* Backward = forward with swapped re↔im, then swap output.
@@ -360,67 +397,70 @@ static void vfft_bluestein_bwd(
 #include <immintrin.h>
 
 /* Chirp multiply: a[n*K+k] = x[n*K+k] * chirp[n], K divisible by 8 */
-__attribute__((target("avx512f,fma")))
-static void vfft_bluestein_chirp_avx512(
+__attribute__((target("avx512f,fma"))) static void vfft_bluestein_chirp_avx512(
     const double *xr, const double *xi,
     double *ar, double *ai,
     const double *chr, const double *chi,
     size_t N, size_t K)
 {
-    for (size_t n = 0; n < N; n++) {
+    for (size_t n = 0; n < N; n++)
+    {
         __m512d cr = _mm512_set1_pd(chr[n]);
         __m512d ci = _mm512_set1_pd(chi[n]);
-        for (size_t k = 0; k < K; k += 8) {
-            __m512d xr_v = _mm512_load_pd(&xr[n*K+k]);
-            __m512d xi_v = _mm512_load_pd(&xi[n*K+k]);
-            _mm512_store_pd(&ar[n*K+k],
-                _mm512_fmsub_pd(xr_v, cr, _mm512_mul_pd(xi_v, ci)));
-            _mm512_store_pd(&ai[n*K+k],
-                _mm512_fmadd_pd(xr_v, ci, _mm512_mul_pd(xi_v, cr)));
+        for (size_t k = 0; k < K; k += 8)
+        {
+            __m512d xr_v = _mm512_load_pd(&xr[n * K + k]);
+            __m512d xi_v = _mm512_load_pd(&xi[n * K + k]);
+            _mm512_store_pd(&ar[n * K + k],
+                            _mm512_fmsub_pd(xr_v, cr, _mm512_mul_pd(xi_v, ci)));
+            _mm512_store_pd(&ai[n * K + k],
+                            _mm512_fmadd_pd(xr_v, ci, _mm512_mul_pd(xi_v, cr)));
         }
     }
 }
 
 /* Pointwise multiply: a[m*K+k] *= B[m], K divisible by 8 */
-__attribute__((target("avx512f,fma")))
-static void vfft_bluestein_pointwise_avx512(
+__attribute__((target("avx512f,fma"))) static void vfft_bluestein_pointwise_avx512(
     double *ar, double *ai,
     const double *Br, const double *Bi,
     size_t M, size_t K)
 {
-    for (size_t m = 0; m < M; m++) {
+    for (size_t m = 0; m < M; m++)
+    {
         __m512d br = _mm512_set1_pd(Br[m]);
         __m512d bi = _mm512_set1_pd(Bi[m]);
-        for (size_t k = 0; k < K; k += 8) {
-            __m512d a_r = _mm512_load_pd(&ar[m*K+k]);
-            __m512d a_i = _mm512_load_pd(&ai[m*K+k]);
-            _mm512_store_pd(&ar[m*K+k],
-                _mm512_fmsub_pd(a_r, br, _mm512_mul_pd(a_i, bi)));
-            _mm512_store_pd(&ai[m*K+k],
-                _mm512_fmadd_pd(a_r, bi, _mm512_mul_pd(a_i, br)));
+        for (size_t k = 0; k < K; k += 8)
+        {
+            __m512d a_r = _mm512_load_pd(&ar[m * K + k]);
+            __m512d a_i = _mm512_load_pd(&ai[m * K + k]);
+            _mm512_store_pd(&ar[m * K + k],
+                            _mm512_fmsub_pd(a_r, br, _mm512_mul_pd(a_i, bi)));
+            _mm512_store_pd(&ai[m * K + k],
+                            _mm512_fmadd_pd(a_r, bi, _mm512_mul_pd(a_i, br)));
         }
     }
 }
 
 /* Final extract + chirp + scale */
-__attribute__((target("avx512f,fma")))
-static void vfft_bluestein_extract_avx512(
+__attribute__((target("avx512f,fma"))) static void vfft_bluestein_extract_avx512(
     const double *ar, const double *ai,
     double *out_re, double *out_im,
     const double *chr, const double *chi,
     double inv_M, size_t N, size_t K)
 {
     __m512d vinv = _mm512_set1_pd(inv_M);
-    for (size_t n = 0; n < N; n++) {
+    for (size_t n = 0; n < N; n++)
+    {
         __m512d cr = _mm512_set1_pd(chr[n]);
         __m512d ci = _mm512_set1_pd(chi[n]);
-        for (size_t k = 0; k < K; k += 8) {
-            __m512d c_r = _mm512_mul_pd(_mm512_load_pd(&ar[n*K+k]), vinv);
-            __m512d c_i = _mm512_mul_pd(_mm512_load_pd(&ai[n*K+k]), vinv);
-            _mm512_store_pd(&out_re[n*K+k],
-                _mm512_fmsub_pd(c_r, cr, _mm512_mul_pd(c_i, ci)));
-            _mm512_store_pd(&out_im[n*K+k],
-                _mm512_fmadd_pd(c_r, ci, _mm512_mul_pd(c_i, cr)));
+        for (size_t k = 0; k < K; k += 8)
+        {
+            __m512d c_r = _mm512_mul_pd(_mm512_load_pd(&ar[n * K + k]), vinv);
+            __m512d c_i = _mm512_mul_pd(_mm512_load_pd(&ai[n * K + k]), vinv);
+            _mm512_store_pd(&out_re[n * K + k],
+                            _mm512_fmsub_pd(c_r, cr, _mm512_mul_pd(c_i, ci)));
+            _mm512_store_pd(&out_im[n * K + k],
+                            _mm512_fmadd_pd(c_r, ci, _mm512_mul_pd(c_i, cr)));
         }
     }
 }
@@ -430,65 +470,68 @@ static void vfft_bluestein_extract_avx512(
 #ifdef __AVX2__
 #include <immintrin.h>
 
-__attribute__((target("avx2,fma")))
-static void vfft_bluestein_chirp_avx2(
+__attribute__((target("avx2,fma"))) static void vfft_bluestein_chirp_avx2(
     const double *xr, const double *xi,
     double *ar, double *ai,
     const double *chr, const double *chi,
     size_t N, size_t K)
 {
-    for (size_t n = 0; n < N; n++) {
+    for (size_t n = 0; n < N; n++)
+    {
         __m256d cr = _mm256_set1_pd(chr[n]);
         __m256d ci = _mm256_set1_pd(chi[n]);
-        for (size_t k = 0; k < K; k += 4) {
-            __m256d xr_v = _mm256_load_pd(&xr[n*K+k]);
-            __m256d xi_v = _mm256_load_pd(&xi[n*K+k]);
-            _mm256_store_pd(&ar[n*K+k],
-                _mm256_fmsub_pd(xr_v, cr, _mm256_mul_pd(xi_v, ci)));
-            _mm256_store_pd(&ai[n*K+k],
-                _mm256_fmadd_pd(xr_v, ci, _mm256_mul_pd(xi_v, cr)));
+        for (size_t k = 0; k < K; k += 4)
+        {
+            __m256d xr_v = _mm256_load_pd(&xr[n * K + k]);
+            __m256d xi_v = _mm256_load_pd(&xi[n * K + k]);
+            _mm256_store_pd(&ar[n * K + k],
+                            _mm256_fmsub_pd(xr_v, cr, _mm256_mul_pd(xi_v, ci)));
+            _mm256_store_pd(&ai[n * K + k],
+                            _mm256_fmadd_pd(xr_v, ci, _mm256_mul_pd(xi_v, cr)));
         }
     }
 }
 
-__attribute__((target("avx2,fma")))
-static void vfft_bluestein_pointwise_avx2(
+__attribute__((target("avx2,fma"))) static void vfft_bluestein_pointwise_avx2(
     double *ar, double *ai,
     const double *Br, const double *Bi,
     size_t M, size_t K)
 {
-    for (size_t m = 0; m < M; m++) {
+    for (size_t m = 0; m < M; m++)
+    {
         __m256d br = _mm256_set1_pd(Br[m]);
         __m256d bi = _mm256_set1_pd(Bi[m]);
-        for (size_t k = 0; k < K; k += 4) {
-            __m256d a_r = _mm256_load_pd(&ar[m*K+k]);
-            __m256d a_i = _mm256_load_pd(&ai[m*K+k]);
-            _mm256_store_pd(&ar[m*K+k],
-                _mm256_fmsub_pd(a_r, br, _mm256_mul_pd(a_i, bi)));
-            _mm256_store_pd(&ai[m*K+k],
-                _mm256_fmadd_pd(a_r, bi, _mm256_mul_pd(a_i, br)));
+        for (size_t k = 0; k < K; k += 4)
+        {
+            __m256d a_r = _mm256_load_pd(&ar[m * K + k]);
+            __m256d a_i = _mm256_load_pd(&ai[m * K + k]);
+            _mm256_store_pd(&ar[m * K + k],
+                            _mm256_fmsub_pd(a_r, br, _mm256_mul_pd(a_i, bi)));
+            _mm256_store_pd(&ai[m * K + k],
+                            _mm256_fmadd_pd(a_r, bi, _mm256_mul_pd(a_i, br)));
         }
     }
 }
 
-__attribute__((target("avx2,fma")))
-static void vfft_bluestein_extract_avx2(
+__attribute__((target("avx2,fma"))) static void vfft_bluestein_extract_avx2(
     const double *ar, const double *ai,
     double *out_re, double *out_im,
     const double *chr, const double *chi,
     double inv_M, size_t N, size_t K)
 {
     __m256d vinv = _mm256_set1_pd(inv_M);
-    for (size_t n = 0; n < N; n++) {
+    for (size_t n = 0; n < N; n++)
+    {
         __m256d cr = _mm256_set1_pd(chr[n]);
         __m256d ci = _mm256_set1_pd(chi[n]);
-        for (size_t k = 0; k < K; k += 4) {
-            __m256d c_r = _mm256_mul_pd(_mm256_load_pd(&ar[n*K+k]), vinv);
-            __m256d c_i = _mm256_mul_pd(_mm256_load_pd(&ai[n*K+k]), vinv);
-            _mm256_store_pd(&out_re[n*K+k],
-                _mm256_fmsub_pd(c_r, cr, _mm256_mul_pd(c_i, ci)));
-            _mm256_store_pd(&out_im[n*K+k],
-                _mm256_fmadd_pd(c_r, ci, _mm256_mul_pd(c_i, cr)));
+        for (size_t k = 0; k < K; k += 4)
+        {
+            __m256d c_r = _mm256_mul_pd(_mm256_load_pd(&ar[n * K + k]), vinv);
+            __m256d c_i = _mm256_mul_pd(_mm256_load_pd(&ai[n * K + k]), vinv);
+            _mm256_store_pd(&out_re[n * K + k],
+                            _mm256_fmsub_pd(c_r, cr, _mm256_mul_pd(c_i, ci)));
+            _mm256_store_pd(&out_im[n * K + k],
+                            _mm256_fmadd_pd(c_r, ci, _mm256_mul_pd(c_i, cr)));
         }
     }
 }
@@ -504,10 +547,10 @@ static void vfft_bluestein_extract_avx2(
 
 static void vfft_bluestein_fwd_opt(
     const vfft_bluestein_plan *plan,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im,
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im,
     size_t K)
 {
     const size_t N = plan->N;
@@ -515,13 +558,13 @@ static void vfft_bluestein_fwd_opt(
     const double inv_M = plan->inv_M;
     const double *chr = plan->chirp_re;
     const double *chi = plan->chirp_im;
-    const double *Br  = plan->B_re;
-    const double *Bi  = plan->B_im;
+    const double *Br = plan->B_re;
+    const double *Bi = plan->B_im;
 
     vfft_fft_fn fft_fn = plan->fft_func ? plan->fft_func : vfft_builtin_r2dit;
 
-    double *ar = (double *)aligned_alloc(64, M * K * sizeof(double));
-    double *ai = (double *)aligned_alloc(64, M * K * sizeof(double));
+    double *ar = (double *)vfft_bs_aligned_alloc(64, M * K * sizeof(double));
+    double *ai = (double *)vfft_bs_aligned_alloc(64, M * K * sizeof(double));
     memset(ar, 0, M * K * sizeof(double));
     memset(ai, 0, M * K * sizeof(double));
 
@@ -532,16 +575,18 @@ static void vfft_bluestein_fwd_opt(
     else
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0)
+        if (K >= 4 && (K & 3) == 0)
         vfft_bluestein_chirp_avx2(in_re, in_im, ar, ai, chr, chi, N, K);
     else
 #endif
     {
-        for (size_t n = 0; n < N; n++) {
+        for (size_t n = 0; n < N; n++)
+        {
             const double cr = chr[n], ci = chi[n];
-            for (size_t k = 0; k < K; k++) {
-                ar[n*K+k] = in_re[n*K+k]*cr - in_im[n*K+k]*ci;
-                ai[n*K+k] = in_re[n*K+k]*ci + in_im[n*K+k]*cr;
+            for (size_t k = 0; k < K; k++)
+            {
+                ar[n * K + k] = in_re[n * K + k] * cr - in_im[n * K + k] * ci;
+                ai[n * K + k] = in_re[n * K + k] * ci + in_im[n * K + k] * cr;
             }
         }
     }
@@ -556,17 +601,19 @@ static void vfft_bluestein_fwd_opt(
     else
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0)
+        if (K >= 4 && (K & 3) == 0)
         vfft_bluestein_pointwise_avx2(ar, ai, Br, Bi, M, K);
     else
 #endif
     {
-        for (size_t m = 0; m < M; m++) {
+        for (size_t m = 0; m < M; m++)
+        {
             const double br = Br[m], bi = Bi[m];
-            for (size_t k = 0; k < K; k++) {
-                const double a_r = ar[m*K+k], a_i = ai[m*K+k];
-                ar[m*K+k] = a_r*br - a_i*bi;
-                ai[m*K+k] = a_r*bi + a_i*br;
+            for (size_t k = 0; k < K; k++)
+            {
+                const double a_r = ar[m * K + k], a_i = ai[m * K + k];
+                ar[m * K + k] = a_r * br - a_i * bi;
+                ai[m * K + k] = a_r * bi + a_i * br;
             }
         }
     }
@@ -581,33 +628,35 @@ static void vfft_bluestein_fwd_opt(
     else
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0)
+        if (K >= 4 && (K & 3) == 0)
         vfft_bluestein_extract_avx2(ar, ai, out_re, out_im, chr, chi, inv_M, N, K);
     else
 #endif
     {
-        for (size_t n = 0; n < N; n++) {
+        for (size_t n = 0; n < N; n++)
+        {
             const double cr = chr[n], ci = chi[n];
-            for (size_t k = 0; k < K; k++) {
-                const double c_r = ar[n*K+k] * inv_M;
-                const double c_i = ai[n*K+k] * inv_M;
-                out_re[n*K+k] = c_r*cr - c_i*ci;
-                out_im[n*K+k] = c_r*ci + c_i*cr;
+            for (size_t k = 0; k < K; k++)
+            {
+                const double c_r = ar[n * K + k] * inv_M;
+                const double c_i = ai[n * K + k] * inv_M;
+                out_re[n * K + k] = c_r * cr - c_i * ci;
+                out_im[n * K + k] = c_r * ci + c_i * cr;
             }
         }
     }
 
-    free(ar);
-    free(ai);
+    vfft_bs_aligned_free(ar);
+    vfft_bs_aligned_free(ai);
 }
 
 /* Backward optimized */
 static void vfft_bluestein_bwd_opt(
     const vfft_bluestein_plan *plan,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im,
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im,
     size_t K)
 {
     vfft_bluestein_fwd_opt(plan, in_im, in_re, out_im, out_re, K);
