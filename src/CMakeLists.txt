@@ -19,6 +19,8 @@ add_subdirectory(radix32)
 add_subdirectory(radix64)
 add_subdirectory(radix128)
 
+add_subdirectory(3-execute)
+
 # ── Not ready yet (uncomment when each radix is migrated) ────────────────
 
 
