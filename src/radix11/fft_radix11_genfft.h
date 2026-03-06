@@ -481,6 +481,120 @@ static inline void radix11_genfft_bwd_avx512(
 #endif /* __AVX512F__ */
 
 /* ═══════════════════════════════════════════════════════════════
+ * AVX2 KERNELS (original VectorFFT SIMD adaptation)
+ *
+ * Same arithmetic as AVX-512, but 4-wide (__m256d).
+ * For systems without AVX-512 (most consumer CPUs, older Xeons).
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifdef __AVX2__
+#include <immintrin.h>
+
+__attribute__((target("avx2,fma")))
+static void radix11_genfft_fwd_avx2(
+    const double * __restrict__ ri, const double * __restrict__ ii,
+    double * __restrict__ ro, double * __restrict__ io,
+    size_t K)
+{
+    typedef __m256d V;
+    #define LD(p)    _mm256_load_pd(p)
+    #define ST(p,v)  _mm256_store_pd(p,v)
+    #define ADD      _mm256_add_pd
+    #define SUB      _mm256_sub_pd
+    #define MUL      _mm256_mul_pd
+    #define FMA      _mm256_fmadd_pd
+    #define FNM      _mm256_fnmadd_pd
+    #define FNS      _mm256_fnmsub_pd
+
+    /* ┌─────────────────────────────────────────────────────────┐
+     * │ FFTW genfft-derived: constants + FMA chain structure    │
+     * └─────────────────────────────────────────────────────────┘ */
+    const V cK0=_mm256_set1_pd(0.755749574354258283774035843972344420179717445);
+    const V cK1=_mm256_set1_pd(0.540640817455597582107635954318691695431770608);
+    const V cK2=_mm256_set1_pd(0.281732556841429697711417915346616899035777899);
+    const V cK3=_mm256_set1_pd(0.909631995354518371411715383079028460060241051);
+    const V cK4=_mm256_set1_pd(0.989821441880932732376092037776718787376519372);
+    const V cK5=_mm256_set1_pd(0.841253532831181168861811648919367717513292498);
+    const V cK6=_mm256_set1_pd(0.415415013001886425529274149229623203524004910);
+    const V cK7=_mm256_set1_pd(0.959492973614497389890368057066327699062454848);
+    const V cK8=_mm256_set1_pd(0.142314838273285140443792668616369668791051361);
+    const V cK9=_mm256_set1_pd(0.654860733945285064056925072466293553183791199);
+
+    for (size_t k = 0; k < K; k += 4) {
+        V T1,TM,T4,TG,Tk,TR,Tw,TN,T7,TK,Ta,TH,Tn,TQ,Td,TJ,Tq,TO,Tt,TP,Tg,TI;
+
+        T1=LD(&ri[0*K+k]); TM=LD(&ii[0*K+k]);
+        {V a=LD(&ri[1*K+k]),b=LD(&ri[10*K+k]); T4=ADD(a,b); TG=SUB(b,a);}
+        {V a=LD(&ii[1*K+k]),b=LD(&ii[10*K+k]); Tk=SUB(a,b); TR=ADD(a,b);}
+        {V a=LD(&ii[2*K+k]),b=LD(&ii[9*K+k]);  Tw=SUB(a,b); TN=ADD(a,b);}
+        {V a=LD(&ri[2*K+k]),b=LD(&ri[9*K+k]);  T7=ADD(a,b); TK=SUB(b,a);}
+        {V a=LD(&ri[3*K+k]),b=LD(&ri[8*K+k]);  Ta=ADD(a,b); TH=SUB(b,a);}
+        {V a=LD(&ii[3*K+k]),b=LD(&ii[8*K+k]);  Tn=SUB(a,b); TQ=ADD(a,b);}
+        {V a=LD(&ri[4*K+k]),b=LD(&ri[7*K+k]);  Td=ADD(a,b); TJ=SUB(b,a);}
+        {V a=LD(&ii[4*K+k]),b=LD(&ii[7*K+k]);  Tq=SUB(a,b); TO=ADD(a,b);}
+        {V a=LD(&ii[5*K+k]),b=LD(&ii[6*K+k]);  Tt=SUB(a,b); TP=ADD(a,b);}
+        {V a=LD(&ri[5*K+k]),b=LD(&ri[6*K+k]);  Tg=ADD(a,b); TI=SUB(b,a);}
+
+        ST(&ro[0*K+k],ADD(T1,ADD(T4,ADD(T7,ADD(Ta,ADD(Td,Tg))))));
+        ST(&io[0*K+k],ADD(TM,ADD(TR,ADD(TN,ADD(TQ,ADD(TO,TP))))));
+
+        {V Tx=SUB(ADD(FMA(cK0,Tk,MUL(cK1,Tn)),FNM(cK3,Tt,MUL(cK2,Tq))),MUL(cK4,Tw));
+         V Th=ADD(ADD(FMA(cK5,Ta,T1),FNM(cK7,Td,MUL(cK6,Tg))),FNS(cK8,T7,MUL(cK9,T4)));
+         ST(&ro[7*K+k],SUB(Th,Tx)); ST(&ro[4*K+k],ADD(Th,Tx));
+         V TZ=SUB(ADD(FMA(cK0,TG,MUL(cK1,TH)),FNM(cK3,TI,MUL(cK2,TJ))),MUL(cK4,TK));
+         V T10=ADD(ADD(FMA(cK5,TQ,TM),FNM(cK7,TO,MUL(cK6,TP))),FNS(cK8,TN,MUL(cK9,TR)));
+         ST(&io[4*K+k],ADD(TZ,T10)); ST(&io[7*K+k],SUB(T10,TZ));}
+
+        {V Tz=SUB(ADD(FMA(cK3,Tk,MUL(cK0,Tw)),FNS(cK1,Tt,MUL(cK4,Tq))),MUL(cK2,Tn));
+         V Ty=ADD(ADD(FMA(cK6,T4,T1),FNM(cK8,Td,MUL(cK5,Tg))),FNS(cK7,Ta,MUL(cK9,T7)));
+         ST(&ro[9*K+k],SUB(Ty,Tz)); ST(&ro[2*K+k],ADD(Ty,Tz));
+         V TX=SUB(ADD(FMA(cK3,TG,MUL(cK0,TK)),FNS(cK1,TI,MUL(cK4,TJ))),MUL(cK2,TH));
+         V TY=ADD(ADD(FMA(cK6,TR,TM),FNM(cK8,TO,MUL(cK5,TP))),FNS(cK7,TQ,MUL(cK9,TN)));
+         ST(&io[2*K+k],ADD(TX,TY)); ST(&io[9*K+k],SUB(TY,TX));}
+
+        {V TB=ADD(ADD(FMA(cK1,Tk,MUL(cK3,Tw)),FMA(cK4,Tn,MUL(cK0,Tq))),MUL(cK2,Tt));
+         V TA=ADD(ADD(FMA(cK5,T4,T1),FNM(cK7,Tg,MUL(cK6,T7))),FNS(cK9,Td,MUL(cK8,Ta)));
+         ST(&ro[10*K+k],SUB(TA,TB)); ST(&ro[1*K+k],ADD(TA,TB));
+         V TV=ADD(ADD(FMA(cK1,TG,MUL(cK3,TK)),FMA(cK4,TH,MUL(cK0,TJ))),MUL(cK2,TI));
+         V TW=ADD(ADD(FMA(cK5,TR,TM),FNM(cK7,TP,MUL(cK6,TN))),FNS(cK9,TO,MUL(cK8,TQ)));
+         ST(&io[1*K+k],ADD(TV,TW)); ST(&io[10*K+k],SUB(TW,TV));}
+
+        {V TD=SUB(ADD(FMA(cK4,Tk,MUL(cK1,Tq)),FNM(cK3,Tn,MUL(cK0,Tt))),MUL(cK2,Tw));
+         V TC=ADD(ADD(FMA(cK6,Ta,T1),FNM(cK9,Tg,MUL(cK5,Td))),FNS(cK7,T7,MUL(cK8,T4)));
+         ST(&ro[8*K+k],SUB(TC,TD)); ST(&ro[3*K+k],ADD(TC,TD));
+         V TT=SUB(ADD(FMA(cK4,TG,MUL(cK1,TJ)),FNM(cK3,TH,MUL(cK0,TI))),MUL(cK2,TK));
+         V TU=ADD(ADD(FMA(cK6,TQ,TM),FNM(cK9,TP,MUL(cK5,TO))),FNS(cK7,TN,MUL(cK8,TR)));
+         ST(&io[3*K+k],ADD(TT,TU)); ST(&io[8*K+k],SUB(TU,TT));}
+
+        {V TF=SUB(ADD(FMA(cK2,Tk,MUL(cK0,Tn)),FNM(cK3,Tq,MUL(cK4,Tt))),MUL(cK1,Tw));
+         V TE=ADD(ADD(FMA(cK5,T7,T1),FNM(cK8,Tg,MUL(cK6,Td))),FNS(cK9,Ta,MUL(cK7,T4)));
+         ST(&ro[6*K+k],SUB(TE,TF)); ST(&ro[5*K+k],ADD(TE,TF));
+         V TL=SUB(ADD(FMA(cK2,TG,MUL(cK0,TH)),FNM(cK3,TJ,MUL(cK4,TI))),MUL(cK1,TK));
+         V TS=ADD(ADD(FMA(cK5,TN,TM),FNM(cK8,TP,MUL(cK6,TO))),FNS(cK9,TQ,MUL(cK7,TR)));
+         ST(&io[5*K+k],ADD(TL,TS)); ST(&io[6*K+k],SUB(TS,TL));}
+    }
+    #undef LD
+    #undef ST
+    #undef ADD
+    #undef SUB
+    #undef MUL
+    #undef FMA
+    #undef FNM
+    #undef FNS
+}
+
+__attribute__((target("avx2,fma")))
+static inline void radix11_genfft_bwd_avx2(
+    const double * __restrict__ ri, const double * __restrict__ ii,
+    double * __restrict__ ro, double * __restrict__ io,
+    size_t K)
+{
+    radix11_genfft_fwd_avx2(ii, ri, io, ro, K);
+}
+
+#endif /* __AVX2__ */
+
+/* ═══════════════════════════════════════════════════════════════
  * PACKED SUPER-BLOCK DRIVERS (original VectorFFT)
  *
  * For large K, strided access (in_re[n*K + k]) causes cache misses
@@ -532,6 +646,34 @@ static inline void r11_genfft_packed_bwd_avx512(
 }
 
 #endif /* __AVX512F__ */
+
+#ifdef __AVX2__
+
+__attribute__((target("avx2,fma")))
+static inline void r11_genfft_packed_fwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t K)
+{
+    const size_t T = 4, bs = 11 * T, nb = K / T;
+    for (size_t b = 0; b < nb; b++)
+        radix11_genfft_fwd_avx2(in_re+b*bs, in_im+b*bs,
+                                  out_re+b*bs, out_im+b*bs, T);
+}
+
+__attribute__((target("avx2,fma")))
+static inline void r11_genfft_packed_bwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t K)
+{
+    const size_t T = 4, bs = 11 * T, nb = K / T;
+    for (size_t b = 0; b < nb; b++)
+        radix11_genfft_bwd_avx2(in_re+b*bs, in_im+b*bs,
+                                  out_re+b*bs, out_im+b*bs, T);
+}
+
+#endif /* __AVX2__ */
 
 /* ═══════════════════════════════════════════════════════════════
  * REPACK HELPERS (original VectorFFT)
@@ -702,5 +844,91 @@ static void r11_tw_walk_packed_fwd_avx512(
 }
 
 #endif /* __AVX512F__ */
+
+/* ═══════════════════════════════════════════════════════════════
+ * AVX2 TWIDDLED WALKING DRIVER (original VectorFFT)
+ *
+ * Same architecture as AVX-512 version, T=4 instead of T=8.
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifdef __AVX2__
+
+/** Build step twiddles for T=4 walking: step[n] = W_{11K}^{(n+1)*4} */
+static inline void r11_build_tw_step_avx2(size_t K, double *step_re, double *step_im) {
+    const size_t NN = 11*K;
+    for (int n = 0; n < 10; n++) {
+        double a = 2.0*M_PI*(double)(n+1)*4.0/(double)NN;
+        step_re[n] = cos(a);
+        step_im[n] = -sin(a);
+    }
+}
+
+__attribute__((target("avx2,fma")))
+static void r11_tw_walk_packed_fwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t K,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    const double * __restrict__ step_re, const double * __restrict__ step_im,
+    size_t R)
+{
+    typedef __m256d V;
+    const size_t T = 4, bs = 11*T, nb = K/T, NN = 11*K;
+
+    V ws_re[10], ws_im[10];
+    for (int n = 0; n < 10; n++) {
+        ws_re[n] = _mm256_set1_pd(step_re[n]);
+        ws_im[n] = _mm256_set1_pd(step_im[n]);
+    }
+
+    V wc_re[10], wc_im[10];
+    for (int n = 0; n < 10; n++) {
+        __attribute__((aligned(32))) double lr[4], li[4];
+        for (int j = 0; j < 4; j++) {
+            double a = 2.0*M_PI*(double)(n+1)*(double)j/(double)NN;
+            lr[j] = cos(a); li[j] = -sin(a);
+        }
+        wc_re[n] = _mm256_load_pd(lr);
+        wc_im[n] = _mm256_load_pd(li);
+    }
+
+    __attribute__((aligned(32))) double tw_blk_re[11*4], tw_blk_im[11*4];
+
+    for (size_t b = 0; b < nb; b++) {
+        const size_t k = b*T;
+        const double *blk_ir = in_re + b*bs, *blk_ii = in_im + b*bs;
+
+        if (R > 0 && tw_re && (k % R) == 0) {
+            for (int n = 0; n < 10; n++) {
+                wc_re[n] = _mm256_load_pd(&tw_re[n*K+k]);
+                wc_im[n] = _mm256_load_pd(&tw_im[n*K+k]);
+            }
+        }
+
+        _mm256_store_pd(&tw_blk_re[0], _mm256_load_pd(&blk_ir[0]));
+        _mm256_store_pd(&tw_blk_im[0], _mm256_load_pd(&blk_ii[0]));
+        for (int n = 0; n < 10; n++) {
+            V ir = _mm256_load_pd(&blk_ir[(n+1)*T]);
+            V ii = _mm256_load_pd(&blk_ii[(n+1)*T]);
+            _mm256_store_pd(&tw_blk_re[(n+1)*T],
+                _mm256_fmsub_pd(ir,wc_re[n],_mm256_mul_pd(ii,wc_im[n])));
+            _mm256_store_pd(&tw_blk_im[(n+1)*T],
+                _mm256_fmadd_pd(ir,wc_im[n],_mm256_mul_pd(ii,wc_re[n])));
+        }
+
+        radix11_genfft_fwd_avx2(tw_blk_re, tw_blk_im,
+                                  out_re+b*bs, out_im+b*bs, T);
+
+        for (int n = 0; n < 10; n++) {
+            V tr = wc_re[n];
+            wc_re[n] = _mm256_fmsub_pd(wc_re[n],ws_re[n],
+                                        _mm256_mul_pd(wc_im[n],ws_im[n]));
+            wc_im[n] = _mm256_fmadd_pd(tr,ws_im[n],
+                                        _mm256_mul_pd(wc_im[n],ws_re[n]));
+        }
+    }
+}
+
+#endif /* __AVX2__ */
 
 #endif /* FFT_RADIX11_GENFFT_H */
