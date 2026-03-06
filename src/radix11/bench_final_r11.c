@@ -88,7 +88,7 @@ static int verify_packed(const char *l, size_t K, size_t T,
     return p;
 }
 
-__attribute__((target("avx512f,avx512dq,fma"))) static void bench(size_t K, int warm, int trials)
+static void bench(size_t K, int warm, int trials)
 {
     size_t N = 11 * K;
     double *ir = aa64(N), *ii_ = aa64(N);
@@ -118,8 +118,11 @@ __attribute__((target("avx512f,avx512dq,fma"))) static void bench(size_t K, int 
             ns_fw = dt;
     }
 
-    /* Packed AVX-512 */
-    double ns_z = 1e18;
+    /* Best available packed */
+    double ns_best = 1e18;
+    const char *best_label = "scalar";
+
+#ifdef __AVX512F__
     {
         size_t T = 8;
         double *p1 = aa64(N), *p2 = aa64(N), *p3 = aa64(N), *p4 = aa64(N);
@@ -131,17 +134,16 @@ __attribute__((target("avx512f,avx512dq,fma"))) static void bench(size_t K, int 
             double t0 = get_ns();
             r11_genfft_packed_fwd_avx512(p1, p2, p3, p4, K);
             double dt = get_ns() - t0;
-            if (dt < ns_z)
-                ns_z = dt;
+            if (dt < ns_best)
+                ns_best = dt;
         }
+        best_label = "avx512";
         r32_aligned_free(p1);
         r32_aligned_free(p2);
         r32_aligned_free(p3);
         r32_aligned_free(p4);
     }
-
-    /* Packed AVX2 */
-    double ns_a = 1e18;
+#elif defined(__AVX2__)
     {
         size_t T = 4;
         double *p1 = aa64(N), *p2 = aa64(N), *p3 = aa64(N), *p4 = aa64(N);
@@ -153,17 +155,38 @@ __attribute__((target("avx512f,avx512dq,fma"))) static void bench(size_t K, int 
             double t0 = get_ns();
             r11_genfft_packed_fwd_avx2(p1, p2, p3, p4, K);
             double dt = get_ns() - t0;
-            if (dt < ns_a)
-                ns_a = dt;
+            if (dt < ns_best)
+                ns_best = dt;
+        }
+        best_label = "avx2";
+        r32_aligned_free(p1);
+        r32_aligned_free(p2);
+        r32_aligned_free(p3);
+        r32_aligned_free(p4);
+    }
+#else
+    {
+        double *p1 = aa64(N), *p2 = aa64(N), *p3 = aa64(N), *p4 = aa64(N);
+        r11_pack(ir, ii_, p1, p2, K, 1);
+        for (int i = 0; i < warm; i++)
+            r11_genfft_packed_fwd_scalar(p1, p2, p3, p4, K);
+        for (int t = 0; t < trials; t++)
+        {
+            double t0 = get_ns();
+            r11_genfft_packed_fwd_scalar(p1, p2, p3, p4, K);
+            double dt = get_ns() - t0;
+            if (dt < ns_best)
+                ns_best = dt;
         }
         r32_aligned_free(p1);
         r32_aligned_free(p2);
         r32_aligned_free(p3);
         r32_aligned_free(p4);
     }
+#endif
 
-    printf("  K=%-5zu  FFTW=%6.0f  Z=%6.0f(%4.2fx)  A=%6.0f(%4.2fx)\n",
-           K, ns_fw, ns_z, ns_fw / ns_z, ns_a, ns_fw / ns_a);
+    printf("  K=%-5zu  FFTW=%6.0f  %s=%6.0f  ratio=%4.2fx\n",
+           K, ns_fw, best_label, ns_best, ns_fw / ns_best);
 
     fftw_destroy_plan(plan);
     fftw_free(fin);
@@ -175,11 +198,20 @@ __attribute__((target("avx512f,avx512dq,fma"))) static void bench(size_t K, int 
 int main(void)
 {
     printf("════════════════════════════════════════════════════════════════\n");
-    printf("  VectorFFT DFT-11 — FINAL (scalar + AVX2 + AVX-512)\n");
+    printf("  VectorFFT DFT-11 — FINAL (scalar");
+#ifdef __AVX2__
+    printf(" + AVX2");
+#endif
+#ifdef __AVX512F__
+    printf(" + AVX-512");
+#endif
+    printf(")\n");
     printf("════════════════════════════════════════════════════════════════\n\n");
 
     int p = 0, t = 0;
     printf("── Correctness ──\n");
+
+    /* Scalar — always available */
     size_t Ks[] = {1, 7, 8, 64, 1024};
     for (int i = 0; i < 5; i++)
     {
@@ -191,39 +223,57 @@ int main(void)
         t++;
         p += verify("scalar bwd", Ks[i], radix11_genfft_bwd_scalar, +1);
     }
-    size_t Ka[] = {4, 8, 16, 64, 256};
-    for (int i = 0; i < 5; i++)
+
+    /* AVX2 — only if compiled with AVX2 support */
+#ifdef __AVX2__
     {
-        t++;
-        p += verify("avx2 fwd", Ka[i], radix11_genfft_fwd_avx2, -1);
+        size_t Ka[] = {4, 8, 16, 64, 256};
+        for (int i = 0; i < 5; i++)
+        {
+            t++;
+            p += verify("avx2 fwd", Ka[i], radix11_genfft_fwd_avx2, -1);
+        }
+        for (int i = 0; i < 5; i++)
+        {
+            t++;
+            p += verify("avx2 bwd", Ka[i], radix11_genfft_bwd_avx2, +1);
+        }
+        for (int i = 0; i < 5; i++)
+        {
+            t++;
+            p += verify_packed("packed avx2", Ka[i], 4, r11_genfft_packed_fwd_avx2);
+        }
     }
-    for (int i = 0; i < 5; i++)
+#else
+    printf("  (AVX2 tests skipped — not compiled with AVX2 support)\n");
+#endif
+
+    /* AVX-512 — only if compiled with AVX-512 support */
+#ifdef __AVX512F__
     {
-        t++;
-        p += verify("avx2 bwd", Ka[i], radix11_genfft_bwd_avx2, +1);
+        size_t Kz[] = {8, 16, 64, 256, 1024};
+        for (int i = 0; i < 5; i++)
+        {
+            t++;
+            p += verify("avx512 fwd", Kz[i], radix11_genfft_fwd_avx512, -1);
+        }
+        for (int i = 0; i < 5; i++)
+        {
+            t++;
+            p += verify("avx512 bwd", Kz[i], radix11_genfft_bwd_avx512, +1);
+        }
+        for (int i = 0; i < 5; i++)
+        {
+            t++;
+            p += verify_packed("packed avx512", Kz[i], 8, r11_genfft_packed_fwd_avx512);
+        }
     }
-    size_t Kz[] = {8, 16, 64, 256, 1024};
-    for (int i = 0; i < 5; i++)
-    {
-        t++;
-        p += verify("avx512 fwd", Kz[i], radix11_genfft_fwd_avx512, -1);
-    }
-    for (int i = 0; i < 5; i++)
-    {
-        t++;
-        p += verify("avx512 bwd", Kz[i], radix11_genfft_bwd_avx512, +1);
-    }
-    for (int i = 0; i < 5; i++)
-    {
-        t++;
-        p += verify_packed("packed avx2", Ka[i], 4, r11_genfft_packed_fwd_avx2);
-    }
-    for (int i = 0; i < 5; i++)
-    {
-        t++;
-        p += verify_packed("packed avx512", Kz[i], 8, r11_genfft_packed_fwd_avx512);
-    }
-    /* Cross-ISA */
+#else
+    printf("  (AVX-512 tests skipped — not compiled with AVX-512 support)\n");
+#endif
+
+    /* Cross-ISA — only if both are available */
+#if defined(__AVX2__) && defined(__AVX512F__)
     {
         size_t K = 8, N = 11 * K;
         double *ir = aa64(N), *ii_ = aa64(N), *ar = aa64(N), *ai = aa64(N), *zr = aa64(N), *zi = aa64(N);
@@ -241,7 +291,7 @@ int main(void)
         int ok = err < 1e-15;
         t++;
         p += ok;
-        printf("  %-24s K=%-5zu err=%.2e %s\n", "cross-ISA avx2↔avx512", K, err, ok ? "PASS" : "FAIL");
+        printf("  %-24s K=%-5zu err=%.2e %s\n", "cross-ISA avx2<>avx512", K, err, ok ? "PASS" : "FAIL");
         r32_aligned_free(ir);
         r32_aligned_free(ii_);
         r32_aligned_free(ar);
@@ -249,13 +299,14 @@ int main(void)
         r32_aligned_free(zr);
         r32_aligned_free(zi);
     }
+#endif
 
     printf("\n  %d/%d %s\n", p, t, p == t ? "ALL PASSED" : "FAILURES");
     if (p != t)
         return 1;
 
     printf("\n── Benchmark: packed DFT-only vs FFTW ──\n");
-    printf("  Z=AVX-512  A=AVX2  ratio>1 = faster than FFTW\n\n");
+    printf("  ratio > 1 = VectorFFT faster\n\n");
     bench(8, 500, 5000);
     bench(16, 500, 5000);
     bench(32, 500, 3000);

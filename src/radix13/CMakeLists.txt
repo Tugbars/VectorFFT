@@ -1,29 +1,89 @@
-cmake_minimum_required(VERSION 3.16)
-project(VectorFFT_Radix13 C)
-set(CMAKE_C_STANDARD 11)
+# ============================================================================
+# radix13/CMakeLists.txt
+#
+# DFT-13 genfft codelet — scalar + AVX2 + AVX-512
+# Headers: fft_radix13_genfft.h, fft_radix13_dispatch.h
+#
+# Tests:
+#   bench_final_r13 — correctness + benchmark vs FFTW
+# ============================================================================
 
-include(CheckCCompilerFlag)
-check_c_compiler_flag("-mavx512f" HAS_AVX512F)
-check_c_compiler_flag("-mavx2" HAS_AVX2)
-check_c_compiler_flag("-mfma" HAS_FMA)
-
-set(RADIX13_C_FLAGS "")
-if(HAS_AVX512F) list(APPEND RADIX13_C_FLAGS -mavx512f -mavx512dq) endif()
-if(HAS_AVX2) list(APPEND RADIX13_C_FLAGS -mavx2) endif()
-if(HAS_FMA) list(APPEND RADIX13_C_FLAGS -mfma) endif()
-
-add_library(radix13 INTERFACE)
-target_include_directories(radix13 INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(radix13 INTERFACE ${RADIX13_C_FLAGS})
-
-enable_testing()
-add_executable(test_radix13 bench_final_r13.c)
-target_link_libraries(test_radix13 radix13 m)
-target_compile_options(test_radix13 PRIVATE -O2 -Wno-unused-function)
-find_library(FFTW3_LIB fftw3)
-if(FFTW3_LIB)
-    target_link_libraries(test_radix13 ${FFTW3_LIB})
+# ── Find FFTW ──────────────────────────────────────────────────────────────
+find_package(FFTW3 CONFIG QUIET)
+if(FFTW3_FOUND OR TARGET FFTW3::fftw3)
+    set(FFTW3_FOUND TRUE)
+    if(TARGET FFTW3::fftw3)
+        set(FFTW3_LIBRARIES FFTW3::fftw3)
+    endif()
+    message(STATUS "radix13: FFTW3 found via CMake config")
+else()
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(FFTW3 QUIET fftw3)
+        if(FFTW3_FOUND)
+            message(STATUS "radix13: FFTW3 found via pkg-config")
+        endif()
+    endif()
 endif()
-add_test(NAME radix13_correctness COMMAND test_radix13)
 
-install(FILES fft_radix13_genfft.h fft_radix13_dispatch.h DESTINATION include/vectorfft)
+if(NOT FFTW3_FOUND)
+    find_library(FFTW3_LIB NAMES fftw3 libfftw3-3)
+    find_path(FFTW3_INC NAMES fftw3.h)
+    if(FFTW3_LIB AND FFTW3_INC)
+        set(FFTW3_FOUND TRUE)
+        set(FFTW3_LIBRARIES ${FFTW3_LIB})
+        set(FFTW3_INCLUDE_DIRS ${FFTW3_INC})
+        message(STATUS "radix13: FFTW3 found via manual search")
+    endif()
+endif()
+
+if(NOT FFTW3_FOUND)
+    message(WARNING "radix13: FFTW3 not found — bench will not be built.")
+    return()
+endif()
+
+# ── Highest ISA flags ─────────────────────────────────────────────────────
+set(R13_TEST_ISA_FLAGS "")
+if(VFFT_HAS_AVX512)
+    set(R13_TEST_ISA_FLAGS ${VFFT_FLAGS_AVX512})
+elseif(VFFT_HAS_AVX2)
+    set(R13_TEST_ISA_FLAGS ${VFFT_FLAGS_AVX2})
+elseif(VFFT_HAS_SSE2)
+    set(R13_TEST_ISA_FLAGS ${VFFT_FLAGS_SSE2})
+endif()
+
+# ── Bench target ──────────────────────────────────────────────────────────
+
+add_executable(bench_final_r13 bench_final_r13.c)
+
+target_compile_options(bench_final_r13 PRIVATE
+    ${VFFT_BASE_FLAGS}
+    ${R13_TEST_ISA_FLAGS}
+)
+
+set_target_properties(bench_final_r13 PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
+
+if(VFFT_BASE_DEFINITIONS)
+    target_compile_definitions(bench_final_r13 PRIVATE ${VFFT_BASE_DEFINITIONS})
+endif()
+
+target_include_directories(bench_final_r13 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/src/common
+)
+
+if(TARGET FFTW3::fftw3)
+    target_link_libraries(bench_final_r13 PRIVATE FFTW3::fftw3)
+else()
+    target_include_directories(bench_final_r13 PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_link_libraries(bench_final_r13 PRIVATE ${FFTW3_LIBRARIES})
+endif()
+
+if(NOT WIN32)
+    target_link_libraries(bench_final_r13 PRIVATE m)
+endif()
+
+add_test(NAME radix13_correctness COMMAND bench_final_r13)
+set_tests_properties(radix13_correctness PROPERTIES LABELS "radix13")
+
+message(STATUS "radix13: bench_final_r13 [ISA: ${R13_TEST_ISA_FLAGS}]")
