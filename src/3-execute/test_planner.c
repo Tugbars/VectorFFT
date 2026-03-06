@@ -12,7 +12,7 @@
 #include "vfft_planner.h"
 
 static double *aa64(size_t n) {
-    double *p = (double *)aligned_alloc(64, n * sizeof(double));
+    double *p = (double *)vfft_aligned_alloc(64, n * sizeof(double));
     memset(p, 0, n * sizeof(double));
     return p;
 }
@@ -47,7 +47,7 @@ static int test_fwd(size_t N, const vfft_codelet_registry *reg, int verbose) {
     vfft_plan *plan = vfft_plan_create(N, reg);
     if (!plan) {
         printf("  N=%-6zu PLAN CREATION FAILED\n", N);
-        free(ir);free(ii_);free(gr);free(gi);free(nr);free(ni);
+        vfft_aligned_free(ir);vfft_aligned_free(ii_);vfft_aligned_free(gr);vfft_aligned_free(gi);vfft_aligned_free(nr);vfft_aligned_free(ni);
         return 0;
     }
 
@@ -72,7 +72,7 @@ static int test_fwd(size_t N, const vfft_codelet_registry *reg, int verbose) {
            N, plan->nstages, rel, tol, pass ? "PASS" : "FAIL");
 
     vfft_plan_destroy(plan);
-    free(ir);free(ii_);free(gr);free(gi);free(nr);free(ni);
+    vfft_aligned_free(ir);vfft_aligned_free(ii_);vfft_aligned_free(gr);vfft_aligned_free(gi);vfft_aligned_free(nr);vfft_aligned_free(ni);
     return pass;
 }
 
@@ -103,7 +103,7 @@ static int test_roundtrip(size_t N, const vfft_codelet_registry *reg) {
     printf("  N=%-6zu  roundtrip  rel=%.2e  %s\n", N, rel, pass ? "PASS" : "FAIL");
 
     vfft_plan_destroy(plan);
-    free(ir);free(ii_);free(fr);free(fi);free(br);free(bi);
+    vfft_aligned_free(ir);vfft_aligned_free(ii_);vfft_aligned_free(fr);vfft_aligned_free(fi);vfft_aligned_free(br);vfft_aligned_free(bi);
     return pass;
 }
 
