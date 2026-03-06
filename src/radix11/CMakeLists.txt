@@ -63,31 +63,32 @@ if(NOT DEFINED R11_TEST_ISA_FLAGS)
     set(R11_TEST_ISA_FLAGS "")
     include(CheckCCompilerFlag)
 
-    # Check compiler identity
+    # Check compiler identity — ICX BEFORE MSVC (ICX sets MSVC=TRUE on Windows)
     set(R11_IS_MSVC FALSE)
     set(R11_IS_ICX FALSE)
-    if(MSVC)
-        set(R11_IS_MSVC TRUE)
-    endif()
     if(CMAKE_C_COMPILER_ID MATCHES "IntelLLVM")
         set(R11_IS_ICX TRUE)
+    elseif(MSVC)
+        set(R11_IS_MSVC TRUE)
     endif()
 
-    if(R11_IS_MSVC)
+    if(R11_IS_ICX)
+        # ICX supports GCC-style flags on all platforms
+        check_c_compiler_flag("-mavx512f" R11_HAS_AVX512)
+        check_c_compiler_flag("-mavx2" R11_HAS_AVX2)
+        check_c_compiler_flag("-mfma" R11_HAS_FMA)
+        if(R11_HAS_AVX512)
+            set(R11_TEST_ISA_FLAGS -mavx512f -mavx512dq -mavx2 -mfma)
+        elseif(R11_HAS_AVX2 AND R11_HAS_FMA)
+            set(R11_TEST_ISA_FLAGS -mavx2 -mfma)
+        endif()
+    elseif(R11_IS_MSVC)
         check_c_compiler_flag("/arch:AVX512" R11_HAS_AVX512)
         check_c_compiler_flag("/arch:AVX2" R11_HAS_AVX2)
         if(R11_HAS_AVX512)
             set(R11_TEST_ISA_FLAGS /arch:AVX512)
         elseif(R11_HAS_AVX2)
             set(R11_TEST_ISA_FLAGS /arch:AVX2)
-        endif()
-    elseif(R11_IS_ICX)
-        # ICX uses -x flag; inherit from parent project or use defaults
-        check_c_compiler_flag("-mavx512f" R11_HAS_AVX512)
-        if(R11_HAS_AVX512)
-            set(R11_TEST_ISA_FLAGS -mavx512f -mavx512dq -mavx2 -mfma)
-        else()
-            set(R11_TEST_ISA_FLAGS -mavx2 -mfma)
         endif()
     else()
         check_c_compiler_flag("-mavx512f" R11_HAS_AVX512)
@@ -103,6 +104,8 @@ if(NOT DEFINED R11_TEST_ISA_FLAGS)
             list(APPEND R11_TEST_ISA_FLAGS -mfma)
         endif()
     endif()
+
+    message(STATUS "radix11: compiler=${CMAKE_C_COMPILER_ID} ISA flags=${R11_TEST_ISA_FLAGS}")
 endif()
 
 # ── Tests ─────────────────────────────────────────────────────────────────
@@ -127,8 +130,8 @@ if(FFTW3_FOUND)
 
     target_compile_options(bench_final_r11 PRIVATE
         ${R11_TEST_ISA_FLAGS}
-        $<$<NOT:$<BOOL:${R11_IS_MSVC}>>:-O2 -Wno-unused-function>
         $<$<BOOL:${R11_IS_MSVC}>:/O2>
+        $<$<NOT:$<BOOL:${R11_IS_MSVC}>>:-O2 -Wno-unused-function>
     )
 
     add_test(NAME radix11_correctness COMMAND bench_final_r11)
