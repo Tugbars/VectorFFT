@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """
-gen_radix32_avx2_tw.py — Flat-twiddle DFT-32 AVX2 codegen
+gen_radix32_avx2_tw_v2.py — Flat-twiddle DFT-32 AVX2 codegen v2
 
-AVX2 port of the AVX-512 flat twiddled codelet.
-Key differences from AVX-512:
-  - 4-wide doubles (__m256d) vs 8-wide (__m512d)
-  - 16 YMM registers vs 32 ZMM → no binary ladder (needs 28 regs)
-  - k-step = 4 vs 8
-  - Spill buffer: 32×4 = 128 doubles (1KB) per re/im
+AVX2 port with v2 fused-spill improvement.
+  - 4-wide doubles (__m256d), 16 YMM registers
+  - k-step = 4, flat twiddles only (no ladder — needs 28 regs)
+  - U=1 only (U=2 needs 32+ regs)
+  - NFUSE=2: keep 2 results from last sub-FFT in s-regs
+    (NFUSE=4 would need 16 ymm at pass-2 entry → 0 free for twiddle ops)
+  - 8×4 decomposition, fwd + bwd
 
-8×4 decomposition, U=1 only, fwd + bwd.
+Register budget at pass-2 k1=0 (worst case):
+  x0..x3 re+im = 8 ymm | s1 re+im = 2 ymm | constants = 2 ymm → 12/16
+
 Flat twiddle table: tw_re[31*K], tw_im[31*K].
 """
 
 import math, sys
 
 N, N1, N2 = 32, 8, 4
+NFUSE = 2  # AVX2: 2 results kept live (saves 8 mem ops/k-step)
 
 def wN(e, tN):
     e = e % tN
@@ -48,12 +52,9 @@ class E:
     """AVX2 emitter — 4-wide doubles, 16 YMM registers."""
     def __init__(self):
         self.L=[]; self.ind=1; self.spill_c=0; self.reload_c=0
-
     def o(s,t=""): s.L.append("    "*s.ind+t)
     def c(s,t): s.o(f"/* {t} */")
     def b(s): s.L.append("")
-
-    # AVX2 intrinsics
     def add(s,a,b): return f"_mm256_add_pd({a},{b})"
     def sub(s,a,b): return f"_mm256_sub_pd({a},{b})"
     def mul(s,a,b): return f"_mm256_mul_pd({a},{b})"
@@ -64,16 +65,13 @@ class E:
     def emit_load(s,v,n,k_expr="k"):
         s.o(f"{v}_re = LD(&in_re[{n}*K+{k_expr}]);")
         s.o(f"{v}_im = LD(&in_im[{n}*K+{k_expr}]);")
-
     def emit_store(s,v,m,k_expr="k"):
         s.o(f"ST(&out_re[{m}*K+{k_expr}],{v}_re);")
         s.o(f"ST(&out_im[{m}*K+{k_expr}],{v}_im);")
-
     def emit_spill(s,v,slot):
         s.o(f"_mm256_store_pd(&spill_re[{slot}*4],{v}_re);")
         s.o(f"_mm256_store_pd(&spill_im[{slot}*4],{v}_im);")
         s.spill_c+=1
-
     def emit_reload(s,v,slot):
         s.o(f"{v}_re = _mm256_load_pd(&spill_re[{slot}*4]);")
         s.o(f"{v}_im = _mm256_load_pd(&spill_im[{slot}*4]);")
@@ -100,12 +98,9 @@ class E:
         s.o(f"  t3r={s.sub(f'{v[2]}_re',f'{v[6]}_re')}; t3i={s.sub(f'{v[2]}_im',f'{v[6]}_im')};")
         s.o(f"  e0r={s.add('t0r','t2r')}; e0i={s.add('t0i','t2i')};")
         s.o(f"  e2r={s.sub('t0r','t2r')}; e2i={s.sub('t0i','t2i')};")
-        if fwd:
-            s.o(f"  e1r={s.add('t1r','t3i')}; e1i={s.sub('t1i','t3r')};")
-            s.o(f"  e3r={s.sub('t1r','t3i')}; e3i={s.add('t1i','t3r')};")
-        else:
-            s.o(f"  e1r={s.sub('t1r','t3i')}; e1i={s.add('t1i','t3r')};")
-            s.o(f"  e3r={s.add('t1r','t3i')}; e3i={s.sub('t1i','t3r')};")
+        j_add, j_sub = ('add','sub') if fwd else ('sub','add')
+        s.o(f"  e1r={getattr(s,j_add)('t1r','t3i')}; e1i={getattr(s,j_sub)('t1i','t3r')};")
+        s.o(f"  e3r={getattr(s,j_sub)('t1r','t3i')}; e3i={getattr(s,j_add)('t1i','t3r')};")
         s.o(f"  __m256d o0r,o0i,o1r,o1i,o2r,o2i,o3r,o3i;")
         s.o(f"  t0r={s.add(f'{v[1]}_re',f'{v[5]}_re')}; t0i={s.add(f'{v[1]}_im',f'{v[5]}_im')};")
         s.o(f"  t1r={s.sub(f'{v[1]}_re',f'{v[5]}_re')}; t1i={s.sub(f'{v[1]}_im',f'{v[5]}_im')};")
@@ -113,13 +108,8 @@ class E:
         s.o(f"  t3r={s.sub(f'{v[3]}_re',f'{v[7]}_re')}; t3i={s.sub(f'{v[3]}_im',f'{v[7]}_im')};")
         s.o(f"  o0r={s.add('t0r','t2r')}; o0i={s.add('t0i','t2i')};")
         s.o(f"  o2r={s.sub('t0r','t2r')}; o2i={s.sub('t0i','t2i')};")
-        if fwd:
-            s.o(f"  o1r={s.add('t1r','t3i')}; o1i={s.sub('t1i','t3r')};")
-            s.o(f"  o3r={s.sub('t1r','t3i')}; o3i={s.add('t1i','t3r')};")
-        else:
-            s.o(f"  o1r={s.sub('t1r','t3i')}; o1i={s.add('t1i','t3r')};")
-            s.o(f"  o3r={s.add('t1r','t3i')}; o3i={s.sub('t1i','t3r')};")
-        # W8 rotations on odd-half
+        s.o(f"  o1r={getattr(s,j_add)('t1r','t3i')}; o1i={getattr(s,j_sub)('t1i','t3r')};")
+        s.o(f"  o3r={getattr(s,j_sub)('t1r','t3i')}; o3i={getattr(s,j_add)('t1i','t3r')};")
         if fwd:
             s.o(f"  t0r={s.mul(s.add('o1r','o1i'),'sqrt2_inv')};")
             s.o(f"  t0i={s.mul(s.sub('o1i','o1r'),'sqrt2_inv')};")
@@ -138,15 +128,9 @@ class E:
             s.o(f"  t0r={s.neg(s.mul(s.add('o3r','o3i'),'sqrt2_inv'))};")
             s.o(f"  t0i={s.mul(s.sub('o3r','o3i'),'sqrt2_inv')};")
             s.o(f"  o3r=t0r; o3i=t0i;")
-        # Final butterfly
-        s.o(f"  {v[0]}_re={s.add('e0r','o0r')}; {v[0]}_im={s.add('e0i','o0i')};")
-        s.o(f"  {v[4]}_re={s.sub('e0r','o0r')}; {v[4]}_im={s.sub('e0i','o0i')};")
-        s.o(f"  {v[1]}_re={s.add('e1r','o1r')}; {v[1]}_im={s.add('e1i','o1i')};")
-        s.o(f"  {v[5]}_re={s.sub('e1r','o1r')}; {v[5]}_im={s.sub('e1i','o1i')};")
-        s.o(f"  {v[2]}_re={s.add('e2r','o2r')}; {v[2]}_im={s.add('e2i','o2i')};")
-        s.o(f"  {v[6]}_re={s.sub('e2r','o2r')}; {v[6]}_im={s.sub('e2i','o2i')};")
-        s.o(f"  {v[3]}_re={s.add('e3r','o3r')}; {v[3]}_im={s.add('e3i','o3i')};")
-        s.o(f"  {v[7]}_re={s.sub('e3r','o3r')}; {v[7]}_im={s.sub('e3i','o3i')};")
+        for i,j in [(0,4),(1,5),(2,6),(3,7)]:
+            s.o(f"  {v[i]}_re={s.add(f'e{i}r',f'o{i}r')}; {v[i]}_im={s.add(f'e{i}i',f'o{i}i')};")
+            s.o(f"  {v[j]}_re={s.sub(f'e{i}r',f'o{i}r')}; {v[j]}_im={s.sub(f'e{i}i',f'o{i}i')};")
         s.o(f"}}")
 
     def emit_radix4(s,v,d,label=""):
@@ -216,22 +200,22 @@ def emit_flat_kernel(em, d, itw_set):
     em.L.append(f"    const double * __restrict__ tw_re, const double * __restrict__ tw_im,")
     em.L.append(f"    size_t K)")
     em.L.append(f"{{")
-    em.ind = 1
-    em.spill_c = 0; em.reload_c = 0
+    em.ind = 1; em.spill_c = 0; em.reload_c = 0
 
     em.o("const __m256d sign_flip = _mm256_set1_pd(-0.0);")
     em.o("const __m256d sqrt2_inv = _mm256_set1_pd(0.70710678118654752440);")
     em.b()
-    # Spill: 32 slots × 4 doubles = 128 doubles = 1KB per re/im
     em.o("__attribute__((aligned(32))) double spill_re[128];")
     em.o("__attribute__((aligned(32))) double spill_im[128];")
     em.b()
     em.o("__m256d x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
     em.o("__m256d x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;")
+    # v2: saved registers for fused last sub-FFT (NFUSE=2 on AVX2)
+    em.o(f"__m256d s0_re,s0_im,s1_re,s1_im;")
     em.b()
 
     if itw_set:
-        em.c(f"Hoisted internal W₃₂ broadcasts")
+        em.c(f"Hoisted internal W32 broadcasts")
         for (e,tN) in sorted(itw_set):
             label=wN_label(e,tN)
             em.o(f"const __m256d tw_{label}_re = _mm256_set1_pd({label}_re);")
@@ -244,9 +228,12 @@ def emit_flat_kernel(em, d, itw_set):
     xv8 = [f"x{i}" for i in range(8)]
     xv4 = [f"x{i}" for i in range(4)]
     fwd = (d == 'fwd')
+    last_n2 = N2 - 1
 
+    # PASS 1: 4 radix-8 sub-FFTs
     for n2 in range(N2):
-        em.c(f"sub-FFT n₂={n2}")
+        is_last = (n2 == last_n2)
+        em.c(f"sub-FFT n2={n2}")
         for n1 in range(N1):
             n = N2*n1 + n2
             em.emit_load(f"x{n1}", n)
@@ -261,25 +248,42 @@ def emit_flat_kernel(em, d, itw_set):
                     em.o(f"  x{n1}_re = {em.fma(f'x{n1}_re','wr',em.mul(f'x{n1}_im','wi'))};")
                     em.o(f"  x{n1}_im = {em.fms(f'x{n1}_im','wr',em.mul('tr','wi'))}; }}")
         em.b()
-        em.emit_radix8(xv8, d, f"radix-8 n₂={n2}")
-        em.b()
-        for k1 in range(N1):
-            em.emit_spill(f"x{k1}", n2*N1+k1)
+        em.emit_radix8(xv8, d, f"radix-8 n2={n2}")
         em.b()
 
-    em.c(f"PASS 2")
-    em.b()
-    for k1 in range(N1):
-        em.c(f"column k₁={k1}")
-        for n2 in range(N2):
-            em.emit_reload(f"x{n2}", n2*N1+k1)
+        # v2: last sub-FFT keeps first NFUSE results in s-regs
+        if is_last:
+            em.c(f"FUSED: save x0..x{NFUSE-1} to s-regs, spill x{NFUSE}..x{N1-1}")
+            for k1 in range(NFUSE):
+                em.o(f"s{k1}_re = x{k1}_re; s{k1}_im = x{k1}_im;")
+            for k1 in range(NFUSE, N1):
+                em.emit_spill(f"x{k1}", n2*N1+k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"x{k1}", n2*N1+k1)
         em.b()
+
+    # PASS 2: 8 radix-4 combines
+    em.c(f"PASS 2"); em.b()
+    for k1 in range(N1):
+        em.c(f"column k1={k1}")
+
+        # v2: first NFUSE columns get n2=last from saved regs
+        if k1 < NFUSE:
+            for n2 in range(last_n2):
+                em.emit_reload(f"x{n2}", n2*N1+k1)
+            em.o(f"x{last_n2}_re = s{k1}_re; x{last_n2}_im = s{k1}_im;")
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", n2*N1+k1)
+        em.b()
+
         if k1 > 0:
             for n2 in range(1,N2):
                 e=(n2*k1)%N
                 em.emit_twiddle(f"x{n2}",f"x{n2}",e,N,d)
             em.b()
-        em.emit_radix4(xv4,d,f"radix-4 k₁={k1}")
+        em.emit_radix4(xv4,d,f"radix-4 k1={k1}")
         em.b()
         for k2 in range(N2):
             em.emit_store(f"x{k2}", k1+N1*k2)
@@ -287,8 +291,7 @@ def emit_flat_kernel(em, d, itw_set):
 
     em.ind -= 1
     em.o("}")
-    em.L.append("}")
-    em.L.append("")
+    em.L.append("}"); em.L.append("")
     return em.spill_c, em.reload_c
 
 
@@ -298,12 +301,12 @@ def main():
 
     em.L.append("/**")
     em.L.append(" * @file fft_radix32_avx2_tw.h")
-    em.L.append(" * @brief DFT-32 AVX2 twiddled codelet — flat twiddles, U=1")
+    em.L.append(" * @brief DFT-32 AVX2 twiddled codelet v2 — flat twiddles, NFUSE=2")
     em.L.append(" *")
-    em.L.append(" * Flat: tw_re[31*K], tw_im[31*K] — 31 loads/k-step")
+    em.L.append(" * Flat: tw_re[31*K], tw_im[31*K]")
     em.L.append(" * k-step = 4 (AVX2, 4-wide doubles)")
-    em.L.append(" * 8×4 decomposition, stack spill 2KB")
-    em.L.append(" * Generated by gen_radix32_avx2_tw.py")
+    em.L.append(f" * 8x4 decomposition, NFUSE={NFUSE}, U=1 only")
+    em.L.append(" * Generated by gen_radix32_avx2_tw_v2.py")
     em.L.append(" */")
     em.L.append("")
     em.L.append("#ifndef FFT_RADIX32_AVX2_TW_H")
@@ -312,48 +315,35 @@ def main():
     em.L.append("#include <immintrin.h>")
     em.L.append("")
 
-    # Twiddle constants
     by_tN = {}
-    for (e,tN) in sorted(itw_set):
-        by_tN.setdefault(tN,[]).append(e)
+    for (e,tN) in sorted(itw_set): by_tN.setdefault(tN,[]).append(e)
     for tN in sorted(by_tN):
         g = f"FFT_W{tN}_TWIDDLES_DEFINED"
-        em.L.append(f"#ifndef {g}")
-        em.L.append(f"#define {g}")
+        em.L.append(f"#ifndef {g}"); em.L.append(f"#define {g}")
         for e in sorted(by_tN[tN]):
-            wr,wi=wN(e,tN)
-            l=wN_label(e,tN)
+            wr,wi=wN(e,tN); l=wN_label(e,tN)
             em.L.append(f"static const double {l}_re = {wr:.20e};")
             em.L.append(f"static const double {l}_im = {wi:.20e};")
-        em.L.append(f"#endif")
-        em.L.append("")
+        em.L.append(f"#endif"); em.L.append("")
 
-    # Load/store macros (for multi-include NT trick)
-    em.L.append("#ifndef R32A_LD")
-    em.L.append("#define R32A_LD(p) _mm256_loadu_pd(p)")
-    em.L.append("#endif")
-    em.L.append("#ifndef R32A_ST")
-    em.L.append("#define R32A_ST(p,v) _mm256_storeu_pd((p),(v))")
-    em.L.append("#endif")
-    em.L.append("#define LD R32A_LD")
-    em.L.append("#define ST R32A_ST")
-    em.L.append("")
+    em.L.append("#ifndef R32A_LD"); em.L.append("#define R32A_LD(p) _mm256_loadu_pd(p)"); em.L.append("#endif")
+    em.L.append("#ifndef R32A_ST"); em.L.append("#define R32A_ST(p,v) _mm256_storeu_pd((p),(v))"); em.L.append("#endif")
+    em.L.append("#define LD R32A_LD"); em.L.append("#define ST R32A_ST"); em.L.append("")
 
-    em.L.append("/* ══════════ FLAT TWIDDLE U=1 ══════════ */")
-    em.L.append("")
+    em.L.append("/* === FLAT U=1 (AVX2, NFUSE=2) === */"); em.L.append("")
     ff = emit_flat_kernel(em, 'fwd', itw_set)
     fb = emit_flat_kernel(em, 'bwd', itw_set)
 
-    em.L.append("#undef LD")
-    em.L.append("#undef ST")
-    em.L.append("")
+    em.L.append("#undef LD"); em.L.append("#undef ST"); em.L.append("")
     em.L.append("#endif /* FFT_RADIX32_AVX2_TW_H */")
 
     print("\n".join(em.L))
 
-    print(f"\n=== FLAT U=1 ===", file=sys.stderr)
-    print(f"  fwd: {ff[0]}sp+{ff[1]}rl={ff[0]+ff[1]} L1 ops, 31 tw loads/k-step", file=sys.stderr)
-    print(f"  bwd: {fb[0]}sp+{fb[1]}rl={fb[0]+fb[1]} L1 ops", file=sys.stderr)
+    v1_ops = 32+32  # old: 32sp + 32rl
+    v2_ops = ff[0]+ff[1]
+    print(f"\n=== AVX2 v2 STATS ===", file=sys.stderr)
+    print(f"  NFUSE={NFUSE}: {ff[0]}sp+{ff[1]}rl={v2_ops} (was {v1_ops}), saved {v1_ops - v2_ops} mem ops/k-step", file=sys.stderr)
+    print(f"  Peak reg pressure at pass-2 k1=0: 10+2*({NFUSE}-1) = {10+2*(NFUSE-1)}/16 ymm", file=sys.stderr)
     print(f"  Lines: {len(em.L)}", file=sys.stderr)
 
 if __name__ == '__main__':
