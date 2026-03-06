@@ -1,395 +1,373 @@
 /**
  * @file fft_radix32_dispatch.h
- * @brief Radix-32 cross-ISA dispatch — runtime CPU detection
+ * @brief Radix-32 cross-ISA dispatch — strided AND packed paths
  *
- * Top-level entry points for radix-32 FFT codelets. Detects CPU ISA
- * at runtime (cached on first call) and routes to the best backend.
+ * ═══════════════════════════════════════════════════════════════════
+ * TWO DISPATCH MODES
+ * ═══════════════════════════════════════════════════════════════════
  *
- *   AVX-512  →  K % 8 == 0, K ≥ 8   (8-wide, 32 ZMM, flat+ladder)
- *   AVX2     →  K % 4 == 0, K ≥ 4   (4-wide, 16 YMM, flat only)
- *   Scalar   →  any K ≥ 1            (portable fallback)
+ * 1. STRIDED (default):
+ *      radix32_tw_forward  / radix32_tw_backward
+ *      radix32_notw_forward / radix32_notw_backward
+ *    Data in stride-K layout. Routes: flat (K<=64), ladder (K>=128).
  *
- * Two codelet families:
+ * 2. PACKED (planner):
+ *      radix32_tw_packed_fwd / radix32_tw_packed_bwd
+ *    Data in packed contiguous blocks. Uses flat kernel at K=T.
+ *    Kernel alone 1.3-1.8× faster than strided.
+ *    Amortize pack/unpack across stages in multi-stage FFT.
  *
- *   notw: Twiddle-less DFT-32 (bottom-of-recursion / standalone batch).
- *     radix32_notw_forward(K, in_re, in_im, out_re, out_im)
- *     radix32_notw_backward(K, in_re, in_im, out_re, out_im)
+ * ═══════════════════════════════════════════════════════════════════
+ * STRIDED ISA ROUTING (tw)
+ * ═══════════════════════════════════════════════════════════════════
  *
- *   tw: Twiddled DFT-32 (fused inter-stage twiddle + butterfly).
- *     radix32_tw_forward(K, in_re, in_im, out_re, out_im,
- *                        flat_tw_re, flat_tw_im,
- *                        base_tw_re, base_tw_im)
- *     radix32_tw_backward(...)
+ * AVX-512: K%8==0, K>=8
+ *   K<=64:  flat twiddles
+ *   128<=K<256: ladder U1 (5 base loads, derive 31)
+ *   K>=256: ladder U2 (2 k-strips per iteration)
+ * AVX2: K%4==0, K>=4 → flat only
+ * Scalar: any K → flat only
  *
- * Data layout: split-real stride-K — in_re[n*K + k], n=0..31.
+ * ═══════════════════════════════════════════════════════════════════
+ * PACKED ROUTING
+ * ═══════════════════════════════════════════════════════════════════
  *
- * Twiddle tables (twiddled codelet only):
- *   Flat:   flat_tw_re[(n-1)*K + k] = cos(2π·n·k / (32·K))   [31*K doubles]
- *   Ladder: base_tw_re[i*K + k] = cos(2π·(2^i)·k / (32·K))   [5*K doubles]
- *     (ladder tables may be NULL for K ≤ 64 where flat is always used)
- *
- * Generated codelet headers (v2):
- *   fft_radix32_avx512_tw_ladder_v2.h  — flat + ladder U1 + ladder U2
- *   fft_radix32_avx512_notw.h          — NFUSE=8
- *   fft_radix32_avx2_tw_v2.h           — flat only, NFUSE=2
- *   fft_radix32_avx2_notw.h            — NFUSE=2
- *   fft_radix32_scalar_tw.h            — flat only, NFUSE=4
- *   fft_radix32_scalar_notw.h          — NFUSE=4
+ * Always uses flat kernel at K=T (T=8 for AVX-512, T=4 for AVX2).
+ * No ladder needed — packed layout means twiddles are local per block.
+ * Each block's 31*T twiddles = 31*8*8 = 1984 bytes — fits L1.
  */
 
 #ifndef FFT_RADIX32_DISPATCH_H
 #define FFT_RADIX32_DISPATCH_H
 
 #include <stddef.h>
-#include <stdint.h>
+
+/* ── Include kernel headers ── */
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include "avx512/fft_radix32_avx512_tw_ladder_v2.h"
+#include "avx512/fft_radix32_avx512_notw.h"
+#endif
+#if defined(__AVX2__)
+#include "avx2/fft_radix32_avx2_tw_v2.h"
+#include "avx2/fft_radix32_avx2_notw.h"
+#endif
+#include "scalar/fft_radix32_scalar_tw.h"
+#include "scalar/fft_radix32_scalar_notw.h"
 
 /* ═══════════════════════════════════════════════════════════════
- * BACKEND INCLUDES
- * ═══════════════════════════════════════════════════════════════ */
-
-/* Scalar: always available (no SIMD headers needed) */
-#include "fft_radix32_scalar_tw.h"
-#include "fft_radix32_scalar_notw.h"
-
-/* AVX2 */
-#ifdef __AVX2__
-#define R32A_LD(p)    _mm256_load_pd(p)
-#define R32A_ST(p,v)  _mm256_store_pd((p),(v))
-#define R32NA_LD(p)   _mm256_load_pd(p)
-#define R32NA_ST(p,v) _mm256_store_pd((p),(v))
-#include "fft_radix32_avx2_tw_v2.h"
-#include "fft_radix32_avx2_notw.h"
-#endif
-
-/* AVX-512 */
-#ifdef __AVX512F__
-#define R32L_LD(p)    _mm512_load_pd(p)
-#define R32L_ST(p,v)  _mm512_store_pd((p),(v))
-#define R32N5_LD(p)   _mm512_load_pd(p)
-#define R32N5_ST(p,v) _mm512_store_pd((p),(v))
-#include "fft_radix32_avx512_tw_ladder_v2.h"
-#include "fft_radix32_avx512_notw.h"
-#endif
-
-/* ═══════════════════════════════════════════════════════════════
- * ISA LEVEL + DETECTION
- *
- * Shared across radix sizes via include guards.
+ * ISA DETECTION & NAMING
  * ═══════════════════════════════════════════════════════════════ */
 
 #ifndef VFFT_ISA_LEVEL_DEFINED
 #define VFFT_ISA_LEVEL_DEFINED
 typedef enum {
-    ISA_SCALAR = 0,
-    ISA_AVX2   = 1,
-    ISA_AVX512 = 2
+    VFFT_ISA_SCALAR = 0,
+    VFFT_ISA_AVX2   = 1,
+    VFFT_ISA_AVX512 = 2
 } vfft_isa_level_t;
 #endif
 
-#ifndef VFFT_ISA_DETECT_DEFINED
-#define VFFT_ISA_DETECT_DEFINED
-
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-
-#ifdef _MSC_VER
-#include <intrin.h>
-static inline void vfft_cpuid(int leaf, int sub,
-                              uint32_t *a, uint32_t *b,
-                              uint32_t *c, uint32_t *d)
-{
-    int regs[4];
-    __cpuidex(regs, leaf, sub);
-    *a = (uint32_t)regs[0]; *b = (uint32_t)regs[1];
-    *c = (uint32_t)regs[2]; *d = (uint32_t)regs[3];
-}
-static inline uint64_t vfft_xgetbv(uint32_t idx) { return _xgetbv(idx); }
+static inline vfft_isa_level_t vfft_detect_isa(void) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    return VFFT_ISA_AVX512;
+#elif defined(__AVX2__)
+    return VFFT_ISA_AVX2;
 #else
-#include <cpuid.h>
-static inline void vfft_cpuid(int leaf, int sub,
-                              uint32_t *a, uint32_t *b,
-                              uint32_t *c, uint32_t *d)
-{
-    __cpuid_count(leaf, sub, *a, *b, *c, *d);
-}
-static inline uint64_t vfft_xgetbv(uint32_t idx)
-{
-    uint32_t lo, hi;
-    __asm__ __volatile__("xgetbv" : "=a"(lo), "=d"(hi) : "c"(idx));
-    return ((uint64_t)hi << 32) | lo;
-}
+    return VFFT_ISA_SCALAR;
 #endif
-
-static vfft_isa_level_t vfft_detect_isa(void)
-{
-    static vfft_isa_level_t cached = (vfft_isa_level_t)-1;
-    if (cached != (vfft_isa_level_t)-1)
-        return cached;
-
-    uint32_t a, b, c, d;
-
-    /* Check OSXSAVE + FMA + AVX (leaf 1, ECX bits 27/12/28) */
-    vfft_cpuid(1, 0, &a, &b, &c, &d);
-    if (!((c >> 27) & 1) || !((c >> 12) & 1) || !((c >> 28) & 1))
-        return (cached = ISA_SCALAR);
-
-    /* Check XCR0: SSE state (bit 1) + AVX state (bit 2) */
-    uint64_t xcr0 = vfft_xgetbv(0);
-    if ((xcr0 & 0x06) != 0x06)
-        return (cached = ISA_SCALAR);
-
-    /* Check AVX2 (leaf 7, EBX bit 5) */
-    vfft_cpuid(7, 0, &a, &b, &c, &d);
-    if (!((b >> 5) & 1))
-        return (cached = ISA_SCALAR);
-
-    /* Check AVX-512F (bit 16) + AVX-512DQ (bit 17) + AVX-512VL (bit 31)
-     * + XCR0 opmask/ZMM state (bits 5-7) */
-    if (((b >> 16) & 1) && ((b >> 17) & 1) && ((b >> 31) & 1) &&
-        ((xcr0 & 0xE0) == 0xE0))
-        return (cached = ISA_AVX512);
-
-    return (cached = ISA_AVX2);
 }
 
-#else /* Non-x86 */
-static vfft_isa_level_t vfft_detect_isa(void) { return ISA_SCALAR; }
-#endif
-
-#endif /* VFFT_ISA_DETECT_DEFINED */
-
-/* ═══════════════════════════════════════════════════════════════
- * EFFECTIVE ISA FOR A GIVEN K
- *
- *   AVX-512:  K % 8 == 0, K ≥ 8
- *   AVX2:     K % 4 == 0, K ≥ 4
- *   Scalar:   any K ≥ 1
- * ═══════════════════════════════════════════════════════════════ */
-
-static inline vfft_isa_level_t radix32_effective_isa(size_t K)
-{
-    vfft_isa_level_t hw = vfft_detect_isa();
-
-    if (hw >= ISA_AVX512 && (K & 7) == 0 && K >= 8)
-        return ISA_AVX512;
-    if (hw >= ISA_AVX2 && (K & 3) == 0 && K >= 4)
-        return ISA_AVX2;
-    return ISA_SCALAR;
-}
-
-static inline const char *radix32_isa_name(vfft_isa_level_t level)
-{
-    switch (level) {
-        case ISA_AVX512: return "AVX-512";
-        case ISA_AVX2:   return "AVX2";
-        case ISA_SCALAR: return "Scalar";
-        default:         return "Unknown";
-    }
-}
-
-/* ═══════════════════════════════════════════════════════════════
- * NOTW DISPATCH (twiddle-less DFT-32)
- *
- * Pure DFT-32 butterfly with no inter-stage twiddles.
- * Use as first/last stage or standalone batch.
- *
- * Data layout: stride-K — in_re[n*K + k], n=0..31
- * ═══════════════════════════════════════════════════════════════ */
-
-static inline void radix32_notw_forward(
-    size_t K,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im)
-{
-    switch (radix32_effective_isa(K)) {
-#ifdef __AVX512F__
-    case ISA_AVX512:
-        radix32_notw_dit_kernel_fwd_avx512(in_re, in_im, out_re, out_im, K);
-        return;
+static inline vfft_isa_level_t radix32_effective_isa(size_t K) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) return VFFT_ISA_AVX512;
 #endif
 #ifdef __AVX2__
-    case ISA_AVX2:
-        radix32_notw_dit_kernel_fwd_avx2(in_re, in_im, out_re, out_im, K);
-        return;
+    if (K >= 4 && (K & 3) == 0) return VFFT_ISA_AVX2;
 #endif
-    default:
-        radix32_notw_dit_kernel_fwd_scalar(in_re, in_im, out_re, out_im, K);
-        return;
-    }
+    return VFFT_ISA_SCALAR;
 }
 
-static inline void radix32_notw_backward(
-    size_t K,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im)
-{
-    switch (radix32_effective_isa(K)) {
-#ifdef __AVX512F__
-    case ISA_AVX512:
-        radix32_notw_dit_kernel_bwd_avx512(in_re, in_im, out_re, out_im, K);
-        return;
-#endif
-#ifdef __AVX2__
-    case ISA_AVX2:
-        radix32_notw_dit_kernel_bwd_avx2(in_re, in_im, out_re, out_im, K);
-        return;
-#endif
-    default:
-        radix32_notw_dit_kernel_bwd_scalar(in_re, in_im, out_re, out_im, K);
-        return;
+static inline const char *radix32_isa_name(vfft_isa_level_t isa) {
+    switch (isa) {
+        case VFFT_ISA_AVX512: return "AVX512";
+        case VFFT_ISA_AVX2:   return "AVX2";
+        default:               return "scalar";
     }
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * TWIDDLED DISPATCH (fused twiddle + DFT-32)
+ * TWIDDLE STRATEGY QUERIES
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline int radix32_needs_flat(size_t K) {
+    vfft_isa_level_t isa = radix32_effective_isa(K);
+    if (isa == VFFT_ISA_AVX512) return (K <= 64);
+    return 1;  /* AVX2 and scalar always use flat */
+}
+
+static inline int radix32_needs_ladder(size_t K) {
+    vfft_isa_level_t isa = radix32_effective_isa(K);
+    if (isa == VFFT_ISA_AVX512) return (K > 64);
+    return 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * SIMD PACK/UNPACK (AVX-512)
+ * ═══════════════════════════════════════════════════════════════ */
+
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include <immintrin.h>
+
+__attribute__((target("avx512f")))
+static inline void radix32_pack_input_avx512(
+    const double * __restrict__ src_re, const double * __restrict__ src_im,
+    double * __restrict__ dst_re, double * __restrict__ dst_im,
+    size_t K)
+{
+    const size_t nb = K >> 3;
+    for (size_t b = 0; b < nb; b++) {
+        const size_t sk = b * 8, dk = b * 256;
+        for (int n = 0; n < 32; n++) {
+            _mm512_storeu_pd(&dst_re[dk + n*8], _mm512_loadu_pd(&src_re[n*K + sk]));
+            _mm512_storeu_pd(&dst_im[dk + n*8], _mm512_loadu_pd(&src_im[n*K + sk]));
+        }
+    }
+}
+
+__attribute__((target("avx512f")))
+static inline void radix32_unpack_output_avx512(
+    const double * __restrict__ src_re, const double * __restrict__ src_im,
+    double * __restrict__ dst_re, double * __restrict__ dst_im,
+    size_t K)
+{
+    const size_t nb = K >> 3;
+    for (size_t b = 0; b < nb; b++) {
+        const size_t sk = b * 256, dk = b * 8;
+        for (int n = 0; n < 32; n++) {
+            _mm512_storeu_pd(&dst_re[n*K + dk], _mm512_loadu_pd(&src_re[sk + n*8]));
+            _mm512_storeu_pd(&dst_im[n*K + dk], _mm512_loadu_pd(&src_im[sk + n*8]));
+        }
+    }
+}
+
+__attribute__((target("avx512f")))
+static inline void radix32_pack_twiddles_avx512(
+    const double * __restrict__ src_re, const double * __restrict__ src_im,
+    double * __restrict__ dst_re, double * __restrict__ dst_im,
+    size_t K)
+{
+    const size_t nb = K >> 3;
+    for (size_t b = 0; b < nb; b++) {
+        const size_t sk = b * 8, dk = b * 248;  /* 31*8 */
+        for (int n = 0; n < 31; n++) {
+            _mm512_storeu_pd(&dst_re[dk + n*8], _mm512_loadu_pd(&src_re[n*K + sk]));
+            _mm512_storeu_pd(&dst_im[dk + n*8], _mm512_loadu_pd(&src_im[n*K + sk]));
+        }
+    }
+}
+#endif /* __AVX512F__ */
+
+/* ═══════════════════════════════════════════════════════════════
+ * STRIDED DISPATCH — twiddled
  *
- * Inter-stage twiddle multiply followed by DFT-32 butterfly.
- * Data layout: stride-K — in_re[n*K + k], n=0..31
+ * Signature: (K, in_re, in_im, out_re, out_im,
+ *             flat_tw_re, flat_tw_im, ladder_tw_re, ladder_tw_im)
  *
- * AVX-512 strategy:
- *   K ≤ 64:  flat twiddles (31 loads/k-step, table fits L1)
- *   K ≥ 128: binary ladder (5 base loads + derivation chains)
- *   Ladder variant: U1 for K < 16 or K ≥ 128, U2 for 16 ≤ K ≤ 64
- *     (U2 uses shared 32-slot spill buffer, A-complete then B-complete)
- *
- * AVX2:    flat only (ladder needs 28+ regs, only 16 available)
- * Scalar:  flat only
- *
- * base_tw_re/im may be NULL when K ≤ 64 (flat always used).
+ * Caller provides both flat and ladder twiddle tables.
+ * Dispatch picks flat vs ladder internally.
+ * ladder_tw_re/im may be NULL if radix32_needs_ladder(K) == 0.
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void radix32_tw_forward(
     size_t K,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im,
-    const double * __restrict__ flat_tw_re,
-    const double * __restrict__ flat_tw_im,
-    const double * __restrict__ base_tw_re,
-    const double * __restrict__ base_tw_im)
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ flat_tw_re, const double * __restrict__ flat_tw_im,
+    const double * __restrict__ ladder_tw_re, const double * __restrict__ ladder_tw_im)
 {
-    switch (radix32_effective_isa(K)) {
-#ifdef __AVX512F__
-    case ISA_AVX512:
-        if (K <= 64) {
-            /* Flat: table is 31*K*8 bytes, fits L1 for K ≤ 64 (15.5 KB) */
-            radix32_tw_flat_dit_kernel_fwd_avx512(
-                in_re, in_im, out_re, out_im,
-                flat_tw_re, flat_tw_im, K);
-        } else if (K >= 128 && K < 256) {
-            /* Ladder U1: 5 base loads, single k-strip per iteration */
-            radix32_tw_ladder_dit_kernel_fwd_avx512_u1(
-                in_re, in_im, out_re, out_im,
-                base_tw_re, base_tw_im, K);
-        } else {
-            /* Ladder U2: two k-strips, shared spill buffer.
-             * Also used for K ≥ 256 where U2's ILP amortizes
-             * the larger working set. Falls back to U1 if K < 16. */
-            if (K >= 16)
-                radix32_tw_ladder_dit_kernel_fwd_avx512_u2(
-                    in_re, in_im, out_re, out_im,
-                    base_tw_re, base_tw_im, K);
-            else
-                radix32_tw_ladder_dit_kernel_fwd_avx512_u1(
-                    in_re, in_im, out_re, out_im,
-                    base_tw_re, base_tw_im, K);
-        }
-        return;
-#endif
-#ifdef __AVX2__
-    case ISA_AVX2:
-        radix32_tw_flat_dit_kernel_fwd_avx2(
-            in_re, in_im, out_re, out_im,
-            flat_tw_re, flat_tw_im, K);
-        return;
-#endif
-    default:
-        radix32_tw_flat_dit_kernel_fwd_scalar(
-            in_re, in_im, out_re, out_im,
-            flat_tw_re, flat_tw_im, K);
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) {
+        if (K <= 64)
+            radix32_tw_flat_dit_kernel_fwd_avx512(in_re, in_im, out_re, out_im,
+                                                   flat_tw_re, flat_tw_im, K);
+        else if (K < 256)
+            radix32_tw_ladder_dit_kernel_fwd_avx512_u1(in_re, in_im, out_re, out_im,
+                                                        ladder_tw_re, ladder_tw_im, K);
+        else
+            radix32_tw_ladder_dit_kernel_fwd_avx512_u2(in_re, in_im, out_re, out_im,
+                                                        ladder_tw_re, ladder_tw_im, K);
         return;
     }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) {
+        radix32_tw_flat_dit_kernel_fwd_avx2(in_re, in_im, out_re, out_im,
+                                             flat_tw_re, flat_tw_im, K);
+        return;
+    }
+#endif
+    radix32_tw_flat_dit_kernel_fwd_scalar(in_re, in_im, out_re, out_im,
+                                           flat_tw_re, flat_tw_im, K);
 }
 
 static inline void radix32_tw_backward(
     size_t K,
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double * __restrict__ out_re,
-    double * __restrict__ out_im,
-    const double * __restrict__ flat_tw_re,
-    const double * __restrict__ flat_tw_im,
-    const double * __restrict__ base_tw_re,
-    const double * __restrict__ base_tw_im)
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ flat_tw_re, const double * __restrict__ flat_tw_im,
+    const double * __restrict__ ladder_tw_re, const double * __restrict__ ladder_tw_im)
 {
-    switch (radix32_effective_isa(K)) {
-#ifdef __AVX512F__
-    case ISA_AVX512:
-        if (K <= 64) {
-            radix32_tw_flat_dit_kernel_bwd_avx512(
-                in_re, in_im, out_re, out_im,
-                flat_tw_re, flat_tw_im, K);
-        } else if (K >= 128 && K < 256) {
-            radix32_tw_ladder_dit_kernel_bwd_avx512_u1(
-                in_re, in_im, out_re, out_im,
-                base_tw_re, base_tw_im, K);
-        } else {
-            if (K >= 16)
-                radix32_tw_ladder_dit_kernel_bwd_avx512_u2(
-                    in_re, in_im, out_re, out_im,
-                    base_tw_re, base_tw_im, K);
-            else
-                radix32_tw_ladder_dit_kernel_bwd_avx512_u1(
-                    in_re, in_im, out_re, out_im,
-                    base_tw_re, base_tw_im, K);
-        }
-        return;
-#endif
-#ifdef __AVX2__
-    case ISA_AVX2:
-        radix32_tw_flat_dit_kernel_bwd_avx2(
-            in_re, in_im, out_re, out_im,
-            flat_tw_re, flat_tw_im, K);
-        return;
-#endif
-    default:
-        radix32_tw_flat_dit_kernel_bwd_scalar(
-            in_re, in_im, out_re, out_im,
-            flat_tw_re, flat_tw_im, K);
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) {
+        if (K <= 64)
+            radix32_tw_flat_dit_kernel_bwd_avx512(in_re, in_im, out_re, out_im,
+                                                   flat_tw_re, flat_tw_im, K);
+        else if (K < 256)
+            radix32_tw_ladder_dit_kernel_bwd_avx512_u1(in_re, in_im, out_re, out_im,
+                                                        ladder_tw_re, ladder_tw_im, K);
+        else
+            radix32_tw_ladder_dit_kernel_bwd_avx512_u2(in_re, in_im, out_re, out_im,
+                                                        ladder_tw_re, ladder_tw_im, K);
         return;
     }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) {
+        radix32_tw_flat_dit_kernel_bwd_avx2(in_re, in_im, out_re, out_im,
+                                             flat_tw_re, flat_tw_im, K);
+        return;
+    }
+#endif
+    radix32_tw_flat_dit_kernel_bwd_scalar(in_re, in_im, out_re, out_im,
+                                           flat_tw_re, flat_tw_im, K);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * STRIDED DISPATCH — notw
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void radix32_notw_forward(
+    size_t K,
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im)
+{
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) { radix32_notw_dit_kernel_fwd_avx512(in_re, in_im, out_re, out_im, K); return; }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) { radix32_notw_dit_kernel_fwd_avx2(in_re, in_im, out_re, out_im, K); return; }
+#endif
+    radix32_notw_dit_kernel_fwd_scalar(in_re, in_im, out_re, out_im, K);
+}
+
+static inline void radix32_notw_backward(
+    size_t K,
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im)
+{
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) { radix32_notw_dit_kernel_bwd_avx512(in_re, in_im, out_re, out_im, K); return; }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) { radix32_notw_dit_kernel_bwd_avx2(in_re, in_im, out_re, out_im, K); return; }
+#endif
+    radix32_notw_dit_kernel_bwd_scalar(in_re, in_im, out_re, out_im, K);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * PACKED DISPATCH (planner — multi-stage pipeline)
+ *
+ * Always uses FLAT kernel at K=T — no ladder needed because
+ * packed twiddles are per-block (31*T doubles fits L1 for any T).
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void radix32_tw_packed_fwd(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t data_bs = 32 * T;
+    const size_t tw_bs = 31 * T;
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (T == 8) {
+        for (size_t b = 0; b < nb; b++)
+            radix32_tw_flat_dit_kernel_fwd_avx512(
+                in_re + b*data_bs, in_im + b*data_bs,
+                out_re + b*data_bs, out_im + b*data_bs,
+                tw_re + b*tw_bs, tw_im + b*tw_bs, T);
+        return;
+    }
+#endif
+#ifdef __AVX2__
+    if (T == 4) {
+        for (size_t b = 0; b < nb; b++)
+            radix32_tw_flat_dit_kernel_fwd_avx2(
+                in_re + b*data_bs, in_im + b*data_bs,
+                out_re + b*data_bs, out_im + b*data_bs,
+                tw_re + b*tw_bs, tw_im + b*tw_bs, T);
+        return;
+    }
+#endif
+    for (size_t b = 0; b < nb; b++)
+        radix32_tw_flat_dit_kernel_fwd_scalar(
+            in_re + b*data_bs, in_im + b*data_bs,
+            out_re + b*data_bs, out_im + b*data_bs,
+            tw_re + b*tw_bs, tw_im + b*tw_bs, T);
+}
+
+static inline void radix32_tw_packed_bwd(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t data_bs = 32 * T;
+    const size_t tw_bs = 31 * T;
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (T == 8) {
+        for (size_t b = 0; b < nb; b++)
+            radix32_tw_flat_dit_kernel_bwd_avx512(
+                in_re + b*data_bs, in_im + b*data_bs,
+                out_re + b*data_bs, out_im + b*data_bs,
+                tw_re + b*tw_bs, tw_im + b*tw_bs, T);
+        return;
+    }
+#endif
+#ifdef __AVX2__
+    if (T == 4) {
+        for (size_t b = 0; b < nb; b++)
+            radix32_tw_flat_dit_kernel_bwd_avx2(
+                in_re + b*data_bs, in_im + b*data_bs,
+                out_re + b*data_bs, out_im + b*data_bs,
+                tw_re + b*tw_bs, tw_im + b*tw_bs, T);
+        return;
+    }
+#endif
+    for (size_t b = 0; b < nb; b++)
+        radix32_tw_flat_dit_kernel_bwd_scalar(
+            in_re + b*data_bs, in_im + b*data_bs,
+            out_re + b*data_bs, out_im + b*data_bs,
+            tw_re + b*tw_bs, tw_im + b*tw_bs, T);
 }
 
 /* ═══════════════════════════════════════════════════════════════
  * PLANNER HELPERS
  * ═══════════════════════════════════════════════════════════════ */
 
-/** Flat twiddle table size in doubles (per re/im component). */
-static inline size_t radix32_flat_tw_size(size_t K) { return 31 * K; }
-
-/** Ladder base twiddle table size in doubles (per re/im component). */
+static inline size_t radix32_flat_tw_size(size_t K)  { return 31 * K; }
 static inline size_t radix32_ladder_tw_size(size_t K) { return 5 * K; }
+static inline size_t radix32_data_size(size_t K)     { return 32 * K; }
 
-/** Data buffer size in doubles (per re/im component). */
-static inline size_t radix32_data_size(size_t K) { return 32 * K; }
-
-/** Whether ladder twiddles are needed for this K on current hardware. */
-static inline int radix32_needs_ladder(size_t K)
-{
-    return (radix32_effective_isa(K) == ISA_AVX512) && (K > 64);
-}
-
-/** Whether flat twiddles are needed for this K on current hardware. */
-static inline int radix32_needs_flat(size_t K)
-{
-    vfft_isa_level_t isa = radix32_effective_isa(K);
-    /* AVX-512 with K > 64 uses ladder exclusively */
-    if (isa == ISA_AVX512 && K > 64) return 0;
-    /* Everything else uses flat */
+static inline size_t radix32_packed_optimal_T(size_t K) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) return 8;
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) return 4;
+#endif
     return 1;
 }
 
