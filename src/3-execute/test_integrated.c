@@ -26,11 +26,22 @@
 #include "vfft_register_codelets.h"
 
 /* ═══ Timing ═══ */
+#ifdef _WIN32
+#include <windows.h>
+static double get_ns(void) {
+    static LARGE_INTEGER freq = {0};
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return (double)t.QuadPart / (double)freq.QuadPart * 1e9;
+}
+#else
 static double get_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1e9 + ts.tv_nsec;
 }
+#endif
 
 static double *aa64(size_t n) {
     double *p = (double *)vfft_aligned_alloc(64, n * sizeof(double));
