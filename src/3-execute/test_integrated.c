@@ -33,7 +33,7 @@ static double get_ns(void) {
 }
 
 static double *aa64(size_t n) {
-    double *p = (double *)aligned_alloc(64, n * sizeof(double));
+    double *p = (double *)vfft_aligned_alloc(64, n * sizeof(double));
     memset(p, 0, n * sizeof(double));
     return p;
 }
@@ -85,7 +85,7 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg) {
            N, plan->nstages, rel, pass ? "PASS" : "FAIL");
 
     vfft_plan_destroy(plan);
-    free(ir); free(ii_); free(gr); free(gi); free(nr); free(ni);
+    vfft_aligned_free(ir); vfft_aligned_free(ii_); vfft_aligned_free(gr); vfft_aligned_free(gi); vfft_aligned_free(nr); vfft_aligned_free(ni);
     return pass;
 }
 
@@ -126,7 +126,7 @@ static void bench(size_t N, const vfft_codelet_registry *reg,
 
     vfft_plan_destroy(plan);
     fftw_destroy_plan(fp); fftw_free(fin); fftw_free(fout);
-    free(ir); free(ii_); free(or_); free(oi);
+    vfft_aligned_free(ir); vfft_aligned_free(ii_); vfft_aligned_free(or_); vfft_aligned_free(oi);
 }
 
 int main(void) {
@@ -179,7 +179,7 @@ int main(void) {
         double rel=mag>0?err/mag:err;int ok=rel<1e-10;t++;p+=ok;
         printf("  N=%-6zu  rt rel=%.2e  %s\n",N,rel,ok?"PASS":"FAIL");
         vfft_plan_destroy(plan);
-        free(ir);free(ii_);free(fr);free(fi);free(br);free(bi);
+        vfft_aligned_free(ir);vfft_aligned_free(ii_);vfft_aligned_free(fr);vfft_aligned_free(fi);vfft_aligned_free(br);vfft_aligned_free(bi);
     }
 
     printf("\n  %d/%d %s\n", p, t, p == t ? "ALL PASSED" : "FAILURES");
