@@ -9,10 +9,6 @@
 # ============================================================================
 
 # ── Find FFTW ──────────────────────────────────────────────────────────────
-# 1. CMake config mode (vcpkg, manual installs with CMake configs)
-# 2. pkg-config (Linux system packages)
-# 3. Manual search (fallback)
-
 find_package(FFTW3 CONFIG QUIET)
 if(FFTW3_FOUND OR TARGET FFTW3::fftw3)
     set(FFTW3_FOUND TRUE)
@@ -46,102 +42,55 @@ if(NOT FFTW3_FOUND)
                     "  Install: apt install libfftw3-dev  (Linux)\n"
                     "           brew install fftw          (macOS)\n"
                     "           vcpkg install fftw3        (Windows)")
+    return()
 endif()
 
-# ── Header-only library ───────────────────────────────────────────────────
+# ── Highest ISA flags for test TU ─────────────────────────────────────────
+# The bench includes dispatch.h which conditionally includes all backends.
+# The TU must compile with the highest ISA so all headers parse.
+set(R11_TEST_ISA_FLAGS "")
+if(VFFT_HAS_AVX512)
+    set(R11_TEST_ISA_FLAGS ${VFFT_FLAGS_AVX512})
+elseif(VFFT_HAS_AVX2)
+    set(R11_TEST_ISA_FLAGS ${VFFT_FLAGS_AVX2})
+elseif(VFFT_HAS_SSE2)
+    set(R11_TEST_ISA_FLAGS ${VFFT_FLAGS_SSE2})
+endif()
 
-add_library(radix11 INTERFACE)
-target_include_directories(radix11 INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-    $<INSTALL_INTERFACE:include/vectorfft>
+# ── Bench target ──────────────────────────────────────────────────────────
+
+add_executable(bench_final_r11 bench_final_r11.c)
+
+target_compile_options(bench_final_r11 PRIVATE
+    ${VFFT_BASE_FLAGS}
+    ${R11_TEST_ISA_FLAGS}
 )
 
-# ── ISA flags ─────────────────────────────────────────────────────────────
-# Inherit from parent if available, otherwise detect locally
+set_target_properties(bench_final_r11 PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
 
-if(NOT DEFINED R11_TEST_ISA_FLAGS)
-    set(R11_TEST_ISA_FLAGS "")
-    include(CheckCCompilerFlag)
-
-    # Check compiler identity — ICX BEFORE MSVC (ICX sets MSVC=TRUE on Windows)
-    set(R11_IS_MSVC FALSE)
-    set(R11_IS_ICX FALSE)
-    if(CMAKE_C_COMPILER_ID MATCHES "IntelLLVM")
-        set(R11_IS_ICX TRUE)
-    elseif(MSVC)
-        set(R11_IS_MSVC TRUE)
-    endif()
-
-    if(R11_IS_ICX)
-        # ICX supports GCC-style flags on all platforms
-        check_c_compiler_flag("-mavx512f" R11_HAS_AVX512)
-        check_c_compiler_flag("-mavx2" R11_HAS_AVX2)
-        check_c_compiler_flag("-mfma" R11_HAS_FMA)
-        if(R11_HAS_AVX512)
-            set(R11_TEST_ISA_FLAGS -mavx512f -mavx512dq -mavx2 -mfma)
-        elseif(R11_HAS_AVX2 AND R11_HAS_FMA)
-            set(R11_TEST_ISA_FLAGS -mavx2 -mfma)
-        endif()
-    elseif(R11_IS_MSVC)
-        check_c_compiler_flag("/arch:AVX512" R11_HAS_AVX512)
-        check_c_compiler_flag("/arch:AVX2" R11_HAS_AVX2)
-        if(R11_HAS_AVX512)
-            set(R11_TEST_ISA_FLAGS /arch:AVX512)
-        elseif(R11_HAS_AVX2)
-            set(R11_TEST_ISA_FLAGS /arch:AVX2)
-        endif()
-    else()
-        check_c_compiler_flag("-mavx512f" R11_HAS_AVX512)
-        check_c_compiler_flag("-mavx2" R11_HAS_AVX2)
-        check_c_compiler_flag("-mfma" R11_HAS_FMA)
-        if(R11_HAS_AVX512)
-            list(APPEND R11_TEST_ISA_FLAGS -mavx512f -mavx512dq)
-        endif()
-        if(R11_HAS_AVX2)
-            list(APPEND R11_TEST_ISA_FLAGS -mavx2)
-        endif()
-        if(R11_HAS_FMA)
-            list(APPEND R11_TEST_ISA_FLAGS -mfma)
-        endif()
-    endif()
-
-    message(STATUS "radix11: compiler=${CMAKE_C_COMPILER_ID} ISA flags=${R11_TEST_ISA_FLAGS}")
+if(VFFT_BASE_DEFINITIONS)
+    target_compile_definitions(bench_final_r11 PRIVATE ${VFFT_BASE_DEFINITIONS})
 endif()
 
-# ── Tests ─────────────────────────────────────────────────────────────────
-
-if(FFTW3_FOUND)
-    enable_testing()
-
-    add_executable(bench_final_r11 bench_final_r11.c)
-    target_include_directories(bench_final_r11 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(bench_final_r11 PRIVATE radix11)
-
-    # FFTW linkage
-    if(TARGET FFTW3::fftw3)
-        target_link_libraries(bench_final_r11 PRIVATE FFTW3::fftw3)
-    else()
-        target_include_directories(bench_final_r11 PRIVATE ${FFTW3_INCLUDE_DIRS})
-        target_link_libraries(bench_final_r11 PRIVATE ${FFTW3_LIBRARIES})
-    endif()
-    if(NOT WIN32)
-        target_link_libraries(bench_final_r11 PRIVATE m)
-    endif()
-
-    target_compile_options(bench_final_r11 PRIVATE
-        ${R11_TEST_ISA_FLAGS}
-        $<$<BOOL:${R11_IS_MSVC}>:/O2>
-        $<$<NOT:$<BOOL:${R11_IS_MSVC}>>:-O2 -Wno-unused-function>
-    )
-
-    add_test(NAME radix11_correctness COMMAND bench_final_r11)
-    message(STATUS "radix11: bench_final_r11 registered")
-endif()
-
-# ── Install ───────────────────────────────────────────────────────────────
-
-install(FILES
-    fft_radix11_genfft.h
-    fft_radix11_dispatch.h
-    DESTINATION include/vectorfft
+target_include_directories(bench_final_r11 PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/src/common
 )
+
+# FFTW linkage
+if(TARGET FFTW3::fftw3)
+    target_link_libraries(bench_final_r11 PRIVATE FFTW3::fftw3)
+else()
+    target_include_directories(bench_final_r11 PRIVATE ${FFTW3_INCLUDE_DIRS})
+    target_link_libraries(bench_final_r11 PRIVATE ${FFTW3_LIBRARIES})
+endif()
+
+if(NOT WIN32)
+    target_link_libraries(bench_final_r11 PRIVATE m)
+endif()
+
+add_test(NAME radix11_correctness COMMAND bench_final_r11)
+set_tests_properties(radix11_correctness PROPERTIES LABELS "radix11")
+
+# ── Summary ───────────────────────────────────────────────────────────────
+message(STATUS "radix11: bench_final_r11 [ISA: ${R11_TEST_ISA_FLAGS}]")
