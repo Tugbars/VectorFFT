@@ -1,64 +1,22 @@
-cmake_minimum_required(VERSION 3.16)
-project(fft_radix7 LANGUAGES C)
-
-# ──────────────────────────────────────────────────────────────────────
-#  Radix-7 Rader butterfly kernels + stage visitors
+# ============================================================================
+# VectorFFT — radix7 codelet module
 #
-#  Targets:
-#    fft_radix7  — static library (visitors + butterfly symbols)
-#
-#  Usage from parent CMake:
-#    add_subdirectory(radix7)
-#    target_link_libraries(my_planner PRIVATE fft_radix7)
-# ──────────────────────────────────────────────────────────────────────
+# Header-only: all codelets are generated .h files included by dispatch.
+# This CMakeLists creates an INTERFACE library for include paths and
+# adds the test/benchmark subdirectory.
+# ============================================================================
 
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
+add_library(vfft_radix7 INTERFACE)
 
-# ── ISA detection ────────────────────────────────────────────────────
-
-include(CheckCCompilerFlag)
-check_c_compiler_flag("-mavx2 -mfma" HAS_AVX2)
-check_c_compiler_flag("-mavx512f"    HAS_AVX512F)
-
-if(HAS_AVX512F)
-    set(R7_SIMD_FLAGS "-mavx512f;-mavx2;-mfma")
-    message(STATUS "radix7: AVX-512F + AVX2 + FMA")
-elseif(HAS_AVX2)
-    set(R7_SIMD_FLAGS "-mavx2;-mfma")
-    message(STATUS "radix7: AVX2 + FMA")
-else()
-    set(R7_SIMD_FLAGS "")
-    message(STATUS "radix7: Scalar only")
-endif()
-
-# ── Static library ───────────────────────────────────────────────────
-
-add_library(fft_radix7 STATIC
-    fft_radix7_fv.c
-    fft_radix7_bv.c
+target_include_directories(vfft_radix7 INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}            # fft_radix7_dispatch.h, fft_radix7_tw_packed.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/avx512     # fft_radix7_avx512.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/avx2       # fft_radix7_avx2.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/scalar     # fft_radix7_scalar.h
 )
 
-target_include_directories(fft_radix7 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(fft_radix7 PRIVATE ${R7_SIMD_FLAGS})
+message(STATUS "[VectorFFT] Module: radix7 (header-only)")
 
-# Math library: built into CRT on Windows, need -lm on Unix
-if(NOT WIN32)
-    target_link_libraries(fft_radix7 PUBLIC m)
-    set(R7_MATH_LIB "m" CACHE INTERNAL "math library")
-else()
-    set(R7_MATH_LIB ""  CACHE INTERNAL "math library (none on Windows)")
-endif()
-
-# Export to parent scope / cache so tests and other subdirs can use them
-set(R7_SIMD_FLAGS  "${R7_SIMD_FLAGS}"  CACHE INTERNAL "radix7 SIMD flags")
-set(R7_HAS_AVX512F "${HAS_AVX512F}"    CACHE INTERNAL "radix7 AVX-512F available")
-
-# ── Tests (optional) ────────────────────────────────────────────────
-
-option(R7_BUILD_TESTS "Build radix-7 tests and benchmarks" ON)
-
-if(R7_BUILD_TESTS)
-    enable_testing()
+if(VFFT_BUILD_TESTS OR VFFT_BUILD_BENCHMARKS)
     add_subdirectory(tests)
 endif()
