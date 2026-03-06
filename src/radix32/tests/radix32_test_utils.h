@@ -1,7 +1,11 @@
 /**
  * @file radix32_test_utils.h
- * @brief Cross-platform helpers for radix-32 tests (Windows + Linux)
+ * @brief Shared utilities for radix-32 correctness tests and benchmarks
+ *
+ * Provides: aligned allocation, scalar reference DFT-32 (twiddled + notw),
+ * twiddle table generation (flat + ladder), and max-error comparison.
  */
+
 #ifndef RADIX32_TEST_UTILS_H
 #define RADIX32_TEST_UTILS_H
 
@@ -15,154 +19,182 @@
 #endif
 
 /* ═══════════════════════════════════════════════════════════════
- * ALIGNED ALLOCATION
+ * Aligned allocation
  * ═══════════════════════════════════════════════════════════════ */
 
+static inline double *r32t_alloc(size_t n)
+{
+    double *p = NULL;
 #ifdef _WIN32
-#include <malloc.h>
-
-static void *r32_aligned_alloc(size_t alignment, size_t n_doubles) {
-    void *p = _aligned_malloc(n_doubles * sizeof(double), alignment);
-    if (!p) abort();
-    memset(p, 0, n_doubles * sizeof(double));
-    return p;
-}
-
-static void r32_aligned_free(void *p) {
-    _aligned_free(p);
-}
-
-#else /* POSIX */
-
-static void *r32_aligned_alloc(size_t alignment, size_t n_doubles) {
-    void *p = NULL;
-    if (posix_memalign(&p, alignment, n_doubles * sizeof(double)) != 0) abort();
-    memset(p, 0, n_doubles * sizeof(double));
-    return p;
-}
-
-static void r32_aligned_free(void *p) {
-    free(p);
-}
-
+    p = (double *)_aligned_malloc(n * sizeof(double), 64);
+    if (!p) { fprintf(stderr, "alloc failed\n"); exit(1); }
+#else
+    if (posix_memalign((void **)&p, 64, n * sizeof(double)) != 0) {
+        fprintf(stderr, "alloc failed\n"); exit(1);
+    }
 #endif
+    memset(p, 0, n * sizeof(double));
+    return p;
+}
 
-/* Convenience: 64-byte aligned (AVX-512 line) */
-static void *aa64(size_t n) { return r32_aligned_alloc(64, n); }
-/* Convenience: 32-byte aligned (AVX2 line) */
-static void *aa32(size_t n) { return r32_aligned_alloc(32, n); }
+static inline void r32t_free(double *p)
+{
+#ifdef _WIN32
+    _aligned_free(p);
+#else
+    free(p);
+#endif
+}
 
 /* ═══════════════════════════════════════════════════════════════
- * HIGH-RESOLUTION TIMER (nanoseconds)
+ * Scalar reference: twiddle-less DFT-32
+ *
+ * K pure DFT-32 butterflies, stride-K layout.
+ * sign = -1.0 for forward, +1.0 for backward.
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void r32t_ref_notw(const double *in_re, const double *in_im,
+                          double *out_re, double *out_im,
+                          size_t K, int fwd)
+{
+    const double sign = fwd ? -1.0 : 1.0;
+    for (size_t k = 0; k < K; k++) {
+        for (int m = 0; m < 32; m++) {
+            double sr = 0, si = 0;
+            for (int n = 0; n < 32; n++) {
+                double a = sign * 2.0 * M_PI * (double)(m * n) / 32.0;
+                double wr = cos(a), wi = sin(a);
+                sr += in_re[n*K+k] * wr - in_im[n*K+k] * wi;
+                si += in_re[n*K+k] * wi + in_im[n*K+k] * wr;
+            }
+            out_re[m*K+k] = sr;
+            out_im[m*K+k] = si;
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * Scalar reference: twiddled DFT-32
+ *
+ * Apply W_{32K}^{n·k} twiddles to inputs, then DFT-32.
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void r32t_ref_tw(const double *in_re, const double *in_im,
+                        double *out_re, double *out_im,
+                        size_t K, int fwd)
+{
+    const size_t NN = 32 * K;
+    const double sign = fwd ? -1.0 : 1.0;
+    for (size_t k = 0; k < K; k++) {
+        double xr[32], xi[32];
+        for (int n = 0; n < 32; n++) {
+            double dr = in_re[n*K+k], di = in_im[n*K+k];
+            if (n > 0) {
+                double a = sign * 2.0 * M_PI * (double)(n * k) / (double)NN;
+                double wr = cos(a), wi = sin(a);
+                double tr = dr * wr - di * wi;
+                di = dr * wi + di * wr;
+                dr = tr;
+            }
+            xr[n] = dr; xi[n] = di;
+        }
+        for (int m = 0; m < 32; m++) {
+            double sr = 0, si = 0;
+            for (int n = 0; n < 32; n++) {
+                double a = sign * 2.0 * M_PI * (double)(m * n) / 32.0;
+                double wr = cos(a), wi = sin(a);
+                sr += xr[n] * wr - xi[n] * wi;
+                si += xr[n] * wi + xi[n] * wr;
+            }
+            out_re[m*K+k] = sr;
+            out_im[m*K+k] = si;
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * Twiddle table generation
+ * ═══════════════════════════════════════════════════════════════ */
+
+/** Flat twiddle table: tw_re[(n-1)*K + k] = cos(-2π·n·k / (32·K)) */
+static void r32t_gen_flat_tw(double *tw_re, double *tw_im, size_t K)
+{
+    const size_t NN = 32 * K;
+    for (int n = 1; n < 32; n++)
+        for (size_t k = 0; k < K; k++) {
+            double a = -2.0 * M_PI * (double)(n * k) / (double)NN;
+            tw_re[(n-1)*K + k] = cos(a);
+            tw_im[(n-1)*K + k] = sin(a);
+        }
+}
+
+/** Ladder base twiddles: base[i*K+k] = W^{(2^i)·k}, i=0..4 → powers 1,2,4,8,16 */
+static void r32t_gen_ladder_tw(double *base_re, double *base_im, size_t K)
+{
+    const size_t NN = 32 * K;
+    const int pows[5] = {1, 2, 4, 8, 16};
+    for (int i = 0; i < 5; i++)
+        for (size_t k = 0; k < K; k++) {
+            double a = -2.0 * M_PI * (double)(pows[i] * k) / (double)NN;
+            base_re[i*K + k] = cos(a);
+            base_im[i*K + k] = sin(a);
+        }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * Error measurement
+ * ═══════════════════════════════════════════════════════════════ */
+
+static double r32t_maxerr(const double *a_re, const double *a_im,
+                          const double *b_re, const double *b_im, size_t n)
+{
+    double mx = 0;
+    for (size_t i = 0; i < n; i++) {
+        double dr = fabs(a_re[i] - b_re[i]);
+        double di = fabs(a_im[i] - b_im[i]);
+        if (dr > mx) mx = dr;
+        if (di > mx) mx = di;
+    }
+    return mx;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * Random input generation
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void r32t_rand_fill(double *re, double *im, size_t n, unsigned seed)
+{
+    srand(seed);
+    for (size_t i = 0; i < n; i++) {
+        re[i] = (double)rand() / RAND_MAX - 0.5;
+        im[i] = (double)rand() / RAND_MAX - 0.5;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * Timing (ns resolution)
  * ═══════════════════════════════════════════════════════════════ */
 
 #ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
 #include <windows.h>
-
-static double get_ns(void) {
-    static LARGE_INTEGER freq = {0};
-    if (freq.QuadPart == 0)
-        QueryPerformanceFrequency(&freq);
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    return (double)now.QuadPart / (double)freq.QuadPart * 1e9;
+static inline double r32t_now_ns(void)
+{
+    LARGE_INTEGER freq, cnt;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&cnt);
+    return (double)cnt.QuadPart / (double)freq.QuadPart * 1e9;
 }
-
-#else /* POSIX */
+#else
 #include <time.h>
-
-static double get_ns(void) {
+static inline double r32t_now_ns(void)
+{
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1e9 + ts.tv_nsec;
 }
-
 #endif
 
-/* ═══════════════════════════════════════════════════════════════
- * COMMON HELPERS
- * ═══════════════════════════════════════════════════════════════ */
-
-static void fill_rand(double *p, size_t n, unsigned s) {
-    srand(s);
-    for (size_t i = 0; i < n; i++)
-        p[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
-}
-
-static double max_abs(const double *p, size_t n) {
-    double m = 0;
-    for (size_t i = 0; i < n; i++) {
-        double a = fabs(p[i]);
-        if (a > m) m = a;
-    }
-    return m;
-}
-
-/* ═══════════════════════════════════════════════════════════════
- * RUNTIME ISA CHECK (for tests compiled with AVX-512 flags
- * but potentially running on AVX2-only hardware)
- * ═══════════════════════════════════════════════════════════════ */
-
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-#ifdef _MSC_VER
-#include <intrin.h>
-#else
-#include <cpuid.h>
-#endif
-
-static int r32_has_avx512(void) {
-#ifdef _MSC_VER
-    int regs[4];
-    __cpuidex(regs, 7, 0);
-    int has_avx512f = (regs[1] >> 16) & 1;
-    return has_avx512f;
-#elif defined(__GNUC__) || defined(__clang__)
-    unsigned int a, b, c, d;
-    __cpuid_count(7, 0, a, b, c, d);
-    return (b >> 16) & 1;  /* AVX-512F */
-#else
-    return 0;
-#endif
-}
-
-static int r32_has_avx2(void) {
-#ifdef _MSC_VER
-    int regs[4];
-    __cpuidex(regs, 7, 0);
-    return (regs[1] >> 5) & 1;
-#elif defined(__GNUC__) || defined(__clang__)
-    unsigned int a, b, c, d;
-    __cpuid_count(7, 0, a, b, c, d);
-    return (b >> 5) & 1;
-#else
-    return 0;
-#endif
-}
-
-#define R32_REQUIRE_AVX512() do { \
-    if (!r32_has_avx512()) { \
-        printf("SKIP: AVX-512 not available on this CPU\n"); \
-        return 0; \
-    } \
-} while(0)
-
-#define R32_REQUIRE_AVX2() do { \
-    if (!r32_has_avx2()) { \
-        printf("SKIP: AVX2 not available on this CPU\n"); \
-        return 0; \
-    } \
-} while(0)
-
-#else /* Non-x86 */
-#define R32_REQUIRE_AVX512() do { \
-    printf("SKIP: AVX-512 not available (non-x86)\n"); return 0; \
-} while(0)
-#define R32_REQUIRE_AVX2() do { \
-    printf("SKIP: AVX2 not available (non-x86)\n"); return 0; \
-} while(0)
-#endif
+/** 5·N·log2(N) real flops per complex DFT-N */
+static inline double r32t_dft32_flops(void) { return 5.0 * 32 * 5; }
 
 #endif /* RADIX32_TEST_UTILS_H */
