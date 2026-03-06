@@ -3,23 +3,41 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
-#include <time.h>
 #include <immintrin.h>
 #include <fftw3.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#define _USE_MATH_DEFINES
+#else
+#include <time.h>
+#endif
 
 #define R32A_LD(p) _mm256_load_pd(p)
 #define R32A_ST(p,v) _mm256_store_pd((p),(v))
 #include "fft_radix32_avx2_tw_v2.h"
 
 static double now_ns(void) {
+#ifdef _WIN32
+    LARGE_INTEGER freq, cnt;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&cnt);
+    return (double)cnt.QuadPart / (double)freq.QuadPart * 1e9;
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1e9 + ts.tv_nsec;
+#endif
 }
 
 static double *alloc64(size_t n) {
     double *p = NULL;
+#ifdef _WIN32
+    p = (double *)_aligned_malloc(n * sizeof(double), 64);
+    if (!p) { fprintf(stderr, "alloc failed\n"); exit(1); }
+#else
     posix_memalign((void**)&p, 64, n * sizeof(double));
+#endif
     memset(p, 0, n * sizeof(double));
     return p;
 }
