@@ -129,7 +129,7 @@ check_c_compiler_flag("-mavx2"    COMPILER_SUPPORTS_AVX2)
 check_c_compiler_flag("-msse2"    COMPILER_SUPPORTS_SSE2)
 
 if(COMPILER_SUPPORTS_AVX512)
-    set(VFFT_HAS_AVX512 ON)
+    set(VFFT_HAS_AVX512 OFF)
 endif()
 if(COMPILER_SUPPORTS_AVX2)
     set(VFFT_HAS_AVX2 ON)
