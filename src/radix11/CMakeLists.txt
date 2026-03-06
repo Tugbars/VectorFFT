@@ -1,65 +1,141 @@
-cmake_minimum_required(VERSION 3.16)
-project(VectorFFT_Radix11 C)
+# ============================================================================
+# radix11/CMakeLists.txt
+#
+# DFT-11 genfft codelet — scalar + AVX2 + AVX-512
+# Headers: fft_radix11_genfft.h, fft_radix11_dispatch.h
+#
+# Tests:
+#   bench_final_r11 — correctness (41 tests) + benchmark vs FFTW
+# ============================================================================
 
-set(CMAKE_C_STANDARD 11)
+# ── Find FFTW ──────────────────────────────────────────────────────────────
+# 1. CMake config mode (vcpkg, manual installs with CMake configs)
+# 2. pkg-config (Linux system packages)
+# 3. Manual search (fallback)
 
-# ═══════════════════════════════════════════════════════════════
-# ISA DETECTION
-# ═══════════════════════════════════════════════════════════════
-
-include(CheckCCompilerFlag)
-
-check_c_compiler_flag("-mavx512f" HAS_AVX512F)
-check_c_compiler_flag("-mavx2"    HAS_AVX2)
-check_c_compiler_flag("-mfma"     HAS_FMA)
-
-set(RADIX11_C_FLAGS "")
-if(HAS_AVX512F)
-    list(APPEND RADIX11_C_FLAGS -mavx512f -mavx512dq)
-    message(STATUS "Radix-11: AVX-512 enabled")
+find_package(FFTW3 CONFIG QUIET)
+if(FFTW3_FOUND OR TARGET FFTW3::fftw3)
+    set(FFTW3_FOUND TRUE)
+    if(TARGET FFTW3::fftw3)
+        set(FFTW3_LIBRARIES FFTW3::fftw3)
+    endif()
+    message(STATUS "radix11: FFTW3 found via CMake config")
+else()
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(FFTW3 QUIET fftw3)
+        if(FFTW3_FOUND)
+            message(STATUS "radix11: FFTW3 found via pkg-config")
+        endif()
+    endif()
 endif()
-if(HAS_AVX2)
-    list(APPEND RADIX11_C_FLAGS -mavx2)
-    message(STATUS "Radix-11: AVX2 enabled")
-endif()
-if(HAS_FMA)
-    list(APPEND RADIX11_C_FLAGS -mfma)
-    message(STATUS "Radix-11: FMA enabled")
+
+if(NOT FFTW3_FOUND)
+    find_library(FFTW3_LIB NAMES fftw3 libfftw3-3)
+    find_path(FFTW3_INC NAMES fftw3.h)
+    if(FFTW3_LIB AND FFTW3_INC)
+        set(FFTW3_FOUND TRUE)
+        set(FFTW3_LIBRARIES ${FFTW3_LIB})
+        set(FFTW3_INCLUDE_DIRS ${FFTW3_INC})
+        message(STATUS "radix11: FFTW3 found via manual search")
+    endif()
 endif()
 
-# ═══════════════════════════════════════════════════════════════
-# HEADER-ONLY LIBRARY (interface target)
-# ═══════════════════════════════════════════════════════════════
+if(NOT FFTW3_FOUND)
+    message(WARNING "radix11: FFTW3 not found — bench will not be built.\n"
+                    "  Install: apt install libfftw3-dev  (Linux)\n"
+                    "           brew install fftw          (macOS)\n"
+                    "           vcpkg install fftw3        (Windows)")
+endif()
+
+# ── Header-only library ───────────────────────────────────────────────────
 
 add_library(radix11 INTERFACE)
-target_include_directories(radix11 INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(radix11 INTERFACE ${RADIX11_C_FLAGS})
+target_include_directories(radix11 INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include/vectorfft>
+)
 
-# ═══════════════════════════════════════════════════════════════
-# TEST SUITE
-# ═══════════════════════════════════════════════════════════════
+# ── ISA flags ─────────────────────────────────────────────────────────────
+# Inherit from parent if available, otherwise detect locally
 
-enable_testing()
+if(NOT DEFINED R11_TEST_ISA_FLAGS)
+    set(R11_TEST_ISA_FLAGS "")
+    include(CheckCCompilerFlag)
 
-# Full correctness + benchmark test
-add_executable(test_radix11 bench_final_r11.c)
-target_link_libraries(test_radix11 radix11 m)
-target_compile_options(test_radix11 PRIVATE -O2 -Wno-unused-function)
+    # Check compiler identity
+    set(R11_IS_MSVC FALSE)
+    set(R11_IS_ICX FALSE)
+    if(MSVC)
+        set(R11_IS_MSVC TRUE)
+    endif()
+    if(CMAKE_C_COMPILER_ID MATCHES "IntelLLVM")
+        set(R11_IS_ICX TRUE)
+    endif()
 
-# Need FFTW for benchmarking
-find_library(FFTW3_LIB fftw3)
-if(FFTW3_LIB)
-    target_link_libraries(test_radix11 ${FFTW3_LIB})
-    message(STATUS "Radix-11: FFTW3 found for benchmarking")
-else()
-    message(WARNING "Radix-11: FFTW3 not found, benchmark will fail to link")
+    if(R11_IS_MSVC)
+        check_c_compiler_flag("/arch:AVX512" R11_HAS_AVX512)
+        check_c_compiler_flag("/arch:AVX2" R11_HAS_AVX2)
+        if(R11_HAS_AVX512)
+            set(R11_TEST_ISA_FLAGS /arch:AVX512)
+        elseif(R11_HAS_AVX2)
+            set(R11_TEST_ISA_FLAGS /arch:AVX2)
+        endif()
+    elseif(R11_IS_ICX)
+        # ICX uses -x flag; inherit from parent project or use defaults
+        check_c_compiler_flag("-mavx512f" R11_HAS_AVX512)
+        if(R11_HAS_AVX512)
+            set(R11_TEST_ISA_FLAGS -mavx512f -mavx512dq -mavx2 -mfma)
+        else()
+            set(R11_TEST_ISA_FLAGS -mavx2 -mfma)
+        endif()
+    else()
+        check_c_compiler_flag("-mavx512f" R11_HAS_AVX512)
+        check_c_compiler_flag("-mavx2" R11_HAS_AVX2)
+        check_c_compiler_flag("-mfma" R11_HAS_FMA)
+        if(R11_HAS_AVX512)
+            list(APPEND R11_TEST_ISA_FLAGS -mavx512f -mavx512dq)
+        endif()
+        if(R11_HAS_AVX2)
+            list(APPEND R11_TEST_ISA_FLAGS -mavx2)
+        endif()
+        if(R11_HAS_FMA)
+            list(APPEND R11_TEST_ISA_FLAGS -mfma)
+        endif()
+    endif()
 endif()
 
-add_test(NAME radix11_correctness COMMAND test_radix11)
+# ── Tests ─────────────────────────────────────────────────────────────────
 
-# ═══════════════════════════════════════════════════════════════
-# INSTALL
-# ═══════════════════════════════════════════════════════════════
+if(FFTW3_FOUND)
+    enable_testing()
+
+    add_executable(bench_final_r11 bench_final_r11.c)
+    target_include_directories(bench_final_r11 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(bench_final_r11 PRIVATE radix11)
+
+    # FFTW linkage
+    if(TARGET FFTW3::fftw3)
+        target_link_libraries(bench_final_r11 PRIVATE FFTW3::fftw3)
+    else()
+        target_include_directories(bench_final_r11 PRIVATE ${FFTW3_INCLUDE_DIRS})
+        target_link_libraries(bench_final_r11 PRIVATE ${FFTW3_LIBRARIES})
+    endif()
+    if(NOT WIN32)
+        target_link_libraries(bench_final_r11 PRIVATE m)
+    endif()
+
+    target_compile_options(bench_final_r11 PRIVATE
+        ${R11_TEST_ISA_FLAGS}
+        $<$<NOT:$<BOOL:${R11_IS_MSVC}>>:-O2 -Wno-unused-function>
+        $<$<BOOL:${R11_IS_MSVC}>:/O2>
+    )
+
+    add_test(NAME radix11_correctness COMMAND bench_final_r11)
+    message(STATUS "radix11: bench_final_r11 registered")
+endif()
+
+# ── Install ───────────────────────────────────────────────────────────────
 
 install(FILES
     fft_radix11_genfft.h
