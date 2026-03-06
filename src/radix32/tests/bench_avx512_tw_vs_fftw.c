@@ -18,9 +18,15 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
-#include <time.h>
 #include <immintrin.h>
 #include <fftw3.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#define _USE_MATH_DEFINES
+#else
+#include <time.h>
+#endif
 
 /* ── VectorFFT headers ── */
 /* Use aligned loads in flat kernel since we control layout */
@@ -32,16 +38,17 @@
  * Timing
  * ═══════════════════════════════════════════════════════════════ */
 
-static inline uint64_t rdtsc(void) {
-    unsigned lo, hi;
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return ((uint64_t)hi << 32) | lo;
-}
-
 static double now_ns(void) {
+#ifdef _WIN32
+    LARGE_INTEGER freq, cnt;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&cnt);
+    return (double)cnt.QuadPart / (double)freq.QuadPart * 1e9;
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1e9 + ts.tv_nsec;
+#endif
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -50,10 +57,15 @@ static double now_ns(void) {
 
 static double *alloc64(size_t n) {
     double *p = NULL;
+#ifdef _WIN32
+    p = (double *)_aligned_malloc(n * sizeof(double), 64);
+    if (!p) { fprintf(stderr, "alloc failed\n"); exit(1); }
+#else
     if (posix_memalign((void**)&p, 64, n * sizeof(double)) != 0) {
         fprintf(stderr, "alloc failed\n");
         exit(1);
     }
+#endif
     memset(p, 0, n * sizeof(double));
     return p;
 }

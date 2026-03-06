@@ -17,16 +17,38 @@
 #include <string.h>
 #include <math.h>
 
+#ifdef _WIN32
+#include <malloc.h>
+#define _USE_MATH_DEFINES
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #include "fft_radix32_dispatch.h"
 
 /* ── Aligned allocation ── */
 static double *alloc64(size_t n) {
     double *p = NULL;
+#ifdef _WIN32
+    p = (double *)_aligned_malloc(n * sizeof(double), 64);
+    if (!p) { fprintf(stderr, "alloc failed\n"); exit(1); }
+#else
     if (posix_memalign((void**)&p, 64, n * sizeof(double)) != 0) {
         fprintf(stderr, "alloc failed\n"); exit(1);
     }
+#endif
     memset(p, 0, n * sizeof(double));
     return p;
+}
+
+static void free64(double *p) {
+#ifdef _WIN32
+    _aligned_free(p);
+#else
+    free(p);
+#endif
 }
 
 /* ── Scalar reference: pure DFT-32, no twiddles ── */
@@ -145,7 +167,7 @@ static int test_notw(size_t K) {
            K, radix32_isa_name(isa), err_fwd, err_bwd,
            pass ? "PASS" : "FAIL");
 
-    free(ir); free(ii); free(or_); free(oi); free(rr); free(ri);
+    free64(ir); free64(ii); free64(or_); free64(oi); free64(rr); free64(ri);
     return pass;
 }
 
@@ -197,8 +219,8 @@ static int test_tw(size_t K) {
            K, radix32_isa_name(isa), variant, err_fwd, err_bwd,
            pass ? "PASS" : "FAIL");
 
-    free(ir); free(ii); free(or_); free(oi); free(rr); free(ri);
-    free(ftw_re); free(ftw_im); free(btw_re); free(btw_im);
+    free64(ir); free64(ii); free64(or_); free64(oi); free64(rr); free64(ri);
+    free64(ftw_re); free64(ftw_im); free64(btw_re); free64(btw_im);
     return pass;
 }
 
@@ -231,8 +253,8 @@ static int test_roundtrip(size_t K) {
            K, radix32_isa_name(radix32_effective_isa(K)), mx,
            pass ? "PASS" : "FAIL");
 
-    free(ir); free(ii); free(mid_re); free(mid_im);
-    free(out_re); free(out_im);
+    free64(ir); free64(ii); free64(mid_re); free64(mid_im);
+    free64(out_re); free64(out_im);
     return pass;
 }
 

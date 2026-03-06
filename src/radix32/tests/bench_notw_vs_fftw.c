@@ -3,27 +3,50 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
-#include <time.h>
 #include <immintrin.h>
 #include <fftw3.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#define _USE_MATH_DEFINES
+#else
+#include <time.h>
+#endif
+
 /* AVX-512 notw */
+#ifdef __AVX512F__
 #define R32N5_LD(p) _mm512_load_pd(p)
 #define R32N5_ST(p,v) _mm512_store_pd((p),(v))
 #include "fft_radix32_avx512_notw.h"
+#endif
 
 /* AVX2 notw */
+#ifdef __AVX2__
 #define R32NA_LD(p) _mm256_load_pd(p)
 #define R32NA_ST(p,v) _mm256_store_pd((p),(v))
 #include "fft_radix32_avx2_notw.h"
+#endif
 
 static double now_ns(void) {
+#ifdef _WIN32
+    LARGE_INTEGER freq, cnt;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&cnt);
+    return (double)cnt.QuadPart / (double)freq.QuadPart * 1e9;
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1e9 + ts.tv_nsec;
+#endif
 }
 static double *alloc64(size_t n) {
-    double *p=NULL; posix_memalign((void**)&p,64,n*sizeof(double));
+    double *p=NULL;
+#ifdef _WIN32
+    p = (double *)_aligned_malloc(n * sizeof(double), 64);
+    if (!p) { fprintf(stderr, "alloc failed\n"); exit(1); }
+#else
+    posix_memalign((void**)&p,64,n*sizeof(double));
+#endif
     memset(p,0,n*sizeof(double)); return p;
 }
 
@@ -64,6 +87,7 @@ static void run(size_t K, int warmup, int iters) {
     printf("  K=%-4zu  N=%-5zu\n",K,NN);
 
     /* AVX-512 notw */
+#ifdef __AVX512F__
     {
         radix32_notw_dit_kernel_fwd_avx512(ir,ii,or_,oi,K);
         double err=maxerr(rr,ri,or_,oi,NN);
@@ -74,7 +98,9 @@ static void run(size_t K, int warmup, int iters) {
         printf("  VecFFT AVX512 notw: %8.1f ns  %6.2f ns/DFT  %5.1f GF/s  err=%.2e\n",
                ns,ns/K,(K*800.0)/ns,err);
     }
+#endif
     /* AVX2 notw */
+#ifdef __AVX2__
     {
         radix32_notw_dit_kernel_fwd_avx2(ir,ii,or_,oi,K);
         double err=maxerr(rr,ri,or_,oi,NN);
@@ -85,6 +111,7 @@ static void run(size_t K, int warmup, int iters) {
         printf("  VecFFT AVX2 notw  : %8.1f ns  %6.2f ns/DFT  %5.1f GF/s  err=%.2e\n",
                ns,ns/K,(K*800.0)/ns,err);
     }
+#endif
     /* FFTW batch-32 (pure DFT-32, same workload) */
     {
         int n[]={32};
