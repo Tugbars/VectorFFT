@@ -29,6 +29,14 @@ option(VFFT_BUILD_BENCHMARKS "Build performance benchmarks"   ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(VectorFFTCompiler)
 
+# After include(VectorFFTCompiler), add:
+if(VFFT_COMPILER STREQUAL "ICX" AND WIN32)
+    get_filename_component(_icx_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+    get_filename_component(_icx_root "${_icx_bin}/.." ABSOLUTE)
+    link_directories("${_icx_root}/lib")
+    message(STATUS "[VectorFFT] Intel lib path: ${_icx_root}/lib")
+endif()
+
 # ── Source tree ──────────────────────────────────────────────────────────
 add_subdirectory(src)
 
