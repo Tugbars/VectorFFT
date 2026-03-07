@@ -248,6 +248,70 @@ static void vfft_tw_dispatch_r16_bwd(
 }
 #endif
 
+/* ═══════════════════════════════════════════════════════════════
+ * DIF TWIDDLED DISPATCH WRAPPERS
+ *
+ * Same pattern as DIT tw wrappers, but calls _dif_ kernels.
+ * DIF codelets apply twiddle AFTER butterfly (output side).
+ *
+ * Guarded on FFT_RADIXN_DIF_DISPATCH_H — only available when
+ * the DIF dispatch header is included.
+ * ═══════════════════════════════════════════════════════════════ */
+
+#define VFFT_TW_DIF_DISPATCH_WRAPPER(R, prefix)                              \
+    static void vfft_tw_dif_dispatch_r##R##_fwd(                             \
+        const double *ri, const double *ii, double *ro, double *io,          \
+        const double *twr, const double *twi, size_t K)                      \
+    {                                                                        \
+        vfft_isa_level_t isa = vfft_detect_isa();                            \
+        (void)isa;                                                           \
+        IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { prefix##_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; }) \
+        IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { prefix##_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })     \
+        prefix##_fwd_scalar(ri, ii, ro, io, twr, twi, K);                    \
+    }                                                                        \
+    static void vfft_tw_dif_dispatch_r##R##_bwd(                             \
+        const double *ri, const double *ii, double *ro, double *io,          \
+        const double *twr, const double *twi, size_t K)                      \
+    {                                                                        \
+        vfft_isa_level_t isa = vfft_detect_isa();                            \
+        (void)isa;                                                           \
+        IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { prefix##_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; }) \
+        IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { prefix##_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })     \
+        prefix##_bwd_scalar(ri, ii, ro, io, twr, twi, K);                    \
+    }
+
+/* ── Small radix DIF codelets ── */
+
+#ifdef FFT_RADIX2_DIF_DISPATCH_H
+VFFT_TW_DIF_DISPATCH_WRAPPER(2, radix2_tw_dif_kernel)
+#endif
+
+#ifdef FFT_RADIX3_DIF_DISPATCH_H
+VFFT_TW_DIF_DISPATCH_WRAPPER(3, radix3_tw_dif_kernel)
+#endif
+
+#ifdef FFT_RADIX4_DIF_DISPATCH_H
+VFFT_TW_DIF_DISPATCH_WRAPPER(4, radix4_tw_dif_kernel)
+#endif
+
+#ifdef FFT_RADIX5_DIF_DISPATCH_H
+VFFT_TW_DIF_DISPATCH_WRAPPER(5, radix5_tw_dif_kernel)
+#endif
+
+#ifdef FFT_RADIX7_DIF_DISPATCH_H
+VFFT_TW_DIF_DISPATCH_WRAPPER(7, radix7_tw_dif_kernel)
+#endif
+
+#ifdef FFT_RADIX8_DIF_DISPATCH_H
+VFFT_TW_DIF_DISPATCH_WRAPPER(8, radix8_tw_dif_kernel)
+#endif
+
+/* ── Radix-32 DIF (fused single-pass, different kernel prefix) ── */
+
+#ifdef FFT_RADIX32_DIF_DISPATCH_H
+VFFT_TW_DIF_DISPATCH_WRAPPER(32, radix32_tw_flat_dif_kernel)
+#endif
+
 /* ── N1 (notw) dispatch wrappers ── */
 
 /* ── New standalone modules ── */
@@ -407,6 +471,29 @@ static void vfft_register_all(vfft_codelet_registry *reg)
     vfft_registry_set_tw(reg, 32, vfft_tw_dispatch_r32_fwd, vfft_tw_dispatch_r32_bwd);
 #endif
 
+    /* ── DIF tw codelets (twiddle after butterfly) ── */
+#ifdef FFT_RADIX2_DIF_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 2, vfft_tw_dif_dispatch_r2_fwd, vfft_tw_dif_dispatch_r2_bwd);
+#endif
+#ifdef FFT_RADIX3_DIF_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 3, vfft_tw_dif_dispatch_r3_fwd, vfft_tw_dif_dispatch_r3_bwd);
+#endif
+#ifdef FFT_RADIX4_DIF_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 4, vfft_tw_dif_dispatch_r4_fwd, vfft_tw_dif_dispatch_r4_bwd);
+#endif
+#ifdef FFT_RADIX5_DIF_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 5, vfft_tw_dif_dispatch_r5_fwd, vfft_tw_dif_dispatch_r5_bwd);
+#endif
+#ifdef FFT_RADIX7_DIF_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 7, vfft_tw_dif_dispatch_r7_fwd, vfft_tw_dif_dispatch_r7_bwd);
+#endif
+#ifdef FFT_RADIX8_DIF_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 8, vfft_tw_dif_dispatch_r8_fwd, vfft_tw_dif_dispatch_r8_bwd);
+#endif
+#ifdef FFT_RADIX32_DIF_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 32, vfft_tw_dif_dispatch_r32_fwd, vfft_tw_dif_dispatch_r32_bwd);
+#endif
+
     /* ── Genfft prime modules ── */
 #ifdef FFT_RADIX11_GENFFT_H
     vfft_registry_set(reg, 11, vfft_dispatch_r11_fwd, vfft_dispatch_r11_bwd);
@@ -534,10 +621,11 @@ static void vfft_print_registry(const vfft_codelet_registry *reg)
                 break;
             }
 
-            printf("    R=%-3zu  fwd=%s  bwd=%s  tw=%s  %s\n", r,
+            printf("    R=%-3zu  fwd=%s  bwd=%s  tw=%s  dif=%s  %s\n", r,
                    reg->fwd[r] ? "yes" : "no ",
                    reg->bwd[r] ? "yes" : "no ",
                    reg->tw_fwd[r] ? "yes" : "no ",
+                   reg->tw_dif_bwd[r] ? "yes" : "no ",
                    kind);
         }
     }
