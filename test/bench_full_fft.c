@@ -16,21 +16,64 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 #include <fftw3.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * ISA compatibility preamble
+ *
+ * Three dispatch headers (radix7, radix32, vfft_register_codelets) each
+ * define vfft_isa_level_t and vfft_detect_isa() without a shared guard,
+ * causing redefinition errors when all are included in one TU.
+ *
+ * Fix: define the canonical enum + function here first, then redirect
+ * each header's duplicate definition to a throwaway private name via
+ * #define / #undef around that specific include.
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+#ifndef VFFT_ISA_LEVEL_DEFINED
+#define VFFT_ISA_LEVEL_DEFINED
+typedef enum {
+    VFFT_ISA_SCALAR = 0,
+    VFFT_ISA_AVX2   = 1,
+    VFFT_ISA_AVX512 = 2
+} vfft_isa_level_t;
+#endif
+
+/* Single canonical detect function — compile-time, consistent with -m flags. */
+static inline vfft_isa_level_t vfft_detect_isa(void)
+{
+#if defined(__AVX512F__)
+    return VFFT_ISA_AVX512;
+#elif defined(__AVX2__)
+    return VFFT_ISA_AVX2;
+#else
+    return VFFT_ISA_SCALAR;
+#endif
+}
+
 /* ── DIT dispatch: notw + fused twiddle ─────────────────────────────── */
 #include "fft_radix2_dispatch.h"
 #include "fft_radix3_dispatch.h"
 #include "fft_radix4_dispatch.h"
 #include "fft_radix5_dispatch.h"
+
+/* radix7 defines vfft_detect_isa without VFFT_ISA_DETECT_DEFINED guard */
+#define vfft_detect_isa _bench_detect_isa_r7
 #include "fft_radix7_dispatch.h"
+#undef vfft_detect_isa
+
 #include "fft_radix8_dispatch.h"
-#include "fft_radix16_dispatch.h"
+#include "fft_radix16_dispatch.h"   /* already guarded by VFFT_ISA_DETECT_DEFINED */
+
+/* radix32 same issue as radix7 */
+#define vfft_detect_isa _bench_detect_isa_r32
 #include "fft_radix32_dispatch.h"
+#undef vfft_detect_isa
 
 /* ── DIF dispatch: fused twiddle after butterfly ────────────────────── */
 #include "fft_radix2_dif_dispatch.h"
@@ -53,9 +96,13 @@
 #include "fft_radix64_n1.h"
 #include "fft_radix128_n1.h"
 
-/* ── Planner + registry ─────────────────────────────────────────────── */
+/* ── Planner ─────────────────────────────────────────────────────────── */
 #include "vfft_planner.h"
+
+/* register_codelets also defines vfft_detect_isa without guard */
+#define vfft_detect_isa _bench_detect_isa_reg
 #include "vfft_register_codelets.h"
+#undef vfft_detect_isa
 
 /* ═══════════════════════════════════════════════════════════════════════
  * Timing
@@ -303,7 +350,7 @@ int main(void)
         256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
 
         /* R=64 innermost (128 does not divide N)
-         *   192 = 64x3    448 = 64x7    320 = 64x5                     */
+         *   192 = 64x3    320 = 64x5    448 = 64x7                     */
         192, 320, 448,
 
         /* R=3 */
