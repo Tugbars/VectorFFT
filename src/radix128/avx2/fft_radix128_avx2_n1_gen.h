@@ -5,17 +5,12 @@
  * Derived from FFTW 3.3.10 genfft output (GPL-2.0).
  * Original: gen_notw_c.native -simd -compact -variables 4 -n 128
  * Translated from interleaved complex V to split re/im __m256d.
- *
- * 1082 adds + 330 muls per direction (identical to FFTW)
- * 194 logical variables → compiler manages register spilling
- * Zero explicit spill buffers (vs 512 extra mem ops in 2-pass)
+ * 1082 adds + 330 muls per direction, zero explicit spills.
  */
 
 #ifndef FFT_RADIX128_AVX2_N1_GEN_H
 #define FFT_RADIX128_AVX2_N1_GEN_H
-
 #include <immintrin.h>
-
 #ifndef RESTRICT
 #define RESTRICT __restrict__
 #endif
