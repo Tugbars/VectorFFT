@@ -284,53 +284,6 @@ VFFT_DISPATCH_WRAPPER(16, radix16_n1_dit_kernel)
 VFFT_DISPATCH_WRAPPER(32, radix32_notw_dit_kernel)
 #endif
 
-/* ═══════════════════════════════════════════════════════════════
- * TWIDDLED DISPATCH WRAPPERS
- *
- * Same pattern as notw wrappers, but 7-arg signature:
- *   (in_re, in_im, out_re, out_im, tw_re, tw_im, K)
- *
- * Only registered for radices with scalar tw fallback (3, 8, 32).
- * Radices without scalar tw (16) stay NULL — planner falls back
- * to notw + separate twiddle application.
- * ═══════════════════════════════════════════════════════════════ */
-
-#define VFFT_TW_DISPATCH_WRAPPER(R, prefix)                                  \
-    static void vfft_tw_dispatch_r##R##_fwd(                                 \
-        const double *ri, const double *ii, double *ro, double *io,          \
-        const double *twr, const double *twi, size_t K)                      \
-    {                                                                        \
-        vfft_isa_level_t isa = vfft_detect_isa();                            \
-        (void)isa;                                                           \
-        IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { prefix##_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; }) \
-        IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { prefix##_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })     \
-        prefix##_fwd_scalar(ri, ii, ro, io, twr, twi, K);                    \
-    }                                                                        \
-    static void vfft_tw_dispatch_r##R##_bwd(                                 \
-        const double *ri, const double *ii, double *ro, double *io,          \
-        const double *twr, const double *twi, size_t K)                      \
-    {                                                                        \
-        vfft_isa_level_t isa = vfft_detect_isa();                            \
-        (void)isa;                                                           \
-        IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { prefix##_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; }) \
-        IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { prefix##_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })     \
-        prefix##_bwd_scalar(ri, ii, ro, io, twr, twi, K);                    \
-    }
-
-#ifdef FFT_RADIX3_DISPATCH_H
-VFFT_TW_DISPATCH_WRAPPER(3, radix3_tw_dit_kernel)
-#endif
-
-#ifdef FFT_RADIX8_DISPATCH_H
-VFFT_TW_DISPATCH_WRAPPER(8, radix8_tw_dit_kernel)
-#endif
-
-/* radix-16: no scalar tw codelet exists — stays NULL */
-
-#ifdef FFT_RADIX32_DISPATCH_H
-VFFT_TW_DISPATCH_WRAPPER(32, radix32_tw_flat_dit_kernel)
-#endif
-
 /* ── Genfft prime modules ── */
 
 #ifdef FFT_RADIX11_GENFFT_H
