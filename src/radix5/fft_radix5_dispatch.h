@@ -45,6 +45,47 @@ static inline const char *radix5_isa_name(vfft_isa_level_t isa) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+ * SIMD PACK/UNPACK
+ * ═══════════════════════════════════════════════════════════════ */
+
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include <immintrin.h>
+
+__attribute__((target("avx512f")))
+static inline void radix5_pack_input_avx512(
+    const double * __restrict__ sr, const double * __restrict__ si,
+    double * __restrict__ dr, double * __restrict__ di, size_t K) {
+    for (size_t b = 0; b < K/8; b++)
+        for (size_t n = 0; n < 5; n++) {
+            _mm512_storeu_pd(&dr[b*40+n*8], _mm512_loadu_pd(&sr[n*K+b*8]));
+            _mm512_storeu_pd(&di[b*40+n*8], _mm512_loadu_pd(&si[n*K+b*8]));
+        }
+}
+
+__attribute__((target("avx512f")))
+static inline void radix5_unpack_output_avx512(
+    const double * __restrict__ sr, const double * __restrict__ si,
+    double * __restrict__ dr, double * __restrict__ di, size_t K) {
+    for (size_t b = 0; b < K/8; b++)
+        for (size_t n = 0; n < 5; n++) {
+            _mm512_storeu_pd(&dr[n*K+b*8], _mm512_loadu_pd(&sr[b*40+n*8]));
+            _mm512_storeu_pd(&di[n*K+b*8], _mm512_loadu_pd(&si[b*40+n*8]));
+        }
+}
+
+__attribute__((target("avx512f")))
+static inline void radix5_pack_twiddles_avx512(
+    const double * __restrict__ sr, const double * __restrict__ si,
+    double * __restrict__ dr, double * __restrict__ di, size_t K) {
+    for (size_t b = 0; b < K/8; b++)
+        for (size_t n = 0; n < 4; n++) {
+            _mm512_storeu_pd(&dr[b*32+n*8], _mm512_loadu_pd(&sr[n*K+b*8]));
+            _mm512_storeu_pd(&di[b*32+n*8], _mm512_loadu_pd(&si[n*K+b*8]));
+        }
+}
+#endif
+
+/* ═══════════════════════════════════════════════════════════════
  * STRIDED DISPATCH
  * ═══════════════════════════════════════════════════════════════ */
 
