@@ -309,16 +309,28 @@ static inline void r11_auto_fwd(
 
     /* Large K: pack → dispatch → unpack */
     size_t N = 11 * K;
+#ifdef _MSC_VER
+    double *pir = (double*)_aligned_malloc(N * sizeof(double), 64);
+    double *pii = (double*)_aligned_malloc(N * sizeof(double), 64);
+    double *por = (double*)_aligned_malloc(N * sizeof(double), 64);
+    double *poi = (double*)_aligned_malloc(N * sizeof(double), 64);
+#else
     double *pir = (double*)aligned_alloc(64, N * sizeof(double));
     double *pii = (double*)aligned_alloc(64, N * sizeof(double));
     double *por = (double*)aligned_alloc(64, N * sizeof(double));
     double *poi = (double*)aligned_alloc(64, N * sizeof(double));
+#endif
 
     r11_pack(in_re, in_im, pir, pii, K, T);
     r11_dispatch_packed_fwd(pir, pii, por, poi, K);
     r11_unpack(por, poi, out_re, out_im, K, T);
 
+#ifdef _MSC_VER
+    _aligned_free(pir); _aligned_free(pii);
+    _aligned_free(por); _aligned_free(poi);
+#else
     free(pir); free(pii); free(por); free(poi);
+#endif
 }
 
 #endif /* FFT_RADIX11_DISPATCH_H */

@@ -23,6 +23,8 @@
 #ifndef FFT_RADIX11_AVX512_TW_PACK_WALK_H
 #define FFT_RADIX11_AVX512_TW_PACK_WALK_H
 
+#if defined(__AVX512F__) || defined(__AVX512F)
+
 #include <stddef.h>
 #include <immintrin.h>
 #include <math.h>
@@ -50,12 +52,12 @@ static inline void radix11_walk_plan_init(
     radix11_walk_plan_t *plan, size_t K)
 {
     const size_t NN = 11 * K;
-    const int pows[2] = {1, 2};
-    for (int i = 0; i < 2; i++) {
+    const size_t pows[2] = {1, 2};
+    for (size_t i = 0; i < 2; i++) {
         double a_step = -2.0 * M_PI * (double)(pows[i] * 8) / (double)NN;
         plan->step_re[i] = cos(a_step);
         plan->step_im[i] = sin(a_step);
-        for (int j = 0; j < 8; j++) {
+        for (size_t j = 0; j < 8; j++) {
             double a = -2.0 * M_PI * (double)(pows[i] * j) / (double)NN;
             plan->init_re[i][j] = cos(a);
             plan->init_im[i][j] = sin(a);
@@ -100,14 +102,14 @@ radix11_tw_pack_walk_fwd_avx512(
 
     /* Load step broadcasts */
     __m512d stp_re[2], stp_im[2];
-    for (int i = 0; i < 2; i++) {
+    for (size_t i = 0; i < 2; i++) {
         stp_re[i] = _mm512_set1_pd(plan->step_re[i]);
         stp_im[i] = _mm512_set1_pd(plan->step_im[i]);
     }
 
     /* Initialize base accumulators */
     __m512d b_re[2], b_im[2];
-    for (int i = 0; i < 2; i++) {
+    for (size_t i = 0; i < 2; i++) {
         b_re[i] = _mm512_loadu_pd(plan->init_re[i]);
         b_im[i] = _mm512_loadu_pd(plan->init_im[i]);
     }
@@ -164,12 +166,12 @@ radix11_tw_pack_walk_fwd_avx512(
         _mm512_store_pd(&tw_blk_re[0], _mm512_load_pd(&blk_ir[0]));
         _mm512_store_pd(&tw_blk_im[0], _mm512_load_pd(&blk_ii[0]));
 
-        for (int n = 0; n < 10; n++) {
-            __m512d xr = _mm512_load_pd(&blk_ir[(n+1) * T]);
-            __m512d xi = _mm512_load_pd(&blk_ii[(n+1) * T]);
-            _mm512_store_pd(&tw_blk_re[(n+1) * T],
+        for (size_t n = 0; n < 10; n++) {
+            __m512d xr = _mm512_load_pd(&blk_ir[(n+1u) * T]);
+            __m512d xi = _mm512_load_pd(&blk_ii[(n+1u) * T]);
+            _mm512_store_pd(&tw_blk_re[(n+1u) * T],
                 R11W_CMUL_RE(xr, xi, tw_r[n], tw_i[n]));
-            _mm512_store_pd(&tw_blk_im[(n+1) * T],
+            _mm512_store_pd(&tw_blk_im[(n+1u) * T],
                 R11W_CMUL_IM(xr, xi, tw_r[n], tw_i[n]));
         }
 
@@ -178,7 +180,7 @@ radix11_tw_pack_walk_fwd_avx512(
                                   out_re + blk * bs, out_im + blk * bs, T);
 
         /* ── Walk: advance 2 bases by step ── */
-        for (int i = 0; i < 2; i++) {
+        for (size_t i = 0; i < 2; i++) {
             __m512d nr = R11W_CMUL_RE(b_re[i],b_im[i],stp_re[i],stp_im[i]);
             __m512d ni = R11W_CMUL_IM(b_re[i],b_im[i],stp_re[i],stp_im[i]);
             b_re[i] = nr;
@@ -220,13 +222,13 @@ radix11_tw_pack_walk_bwd_avx512(
     const size_t T = 8, bs = 11 * T, nb = K / T;
 
     __m512d stp_re[2], stp_im[2];
-    for (int i = 0; i < 2; i++) {
+    for (size_t i = 0; i < 2; i++) {
         stp_re[i] = _mm512_set1_pd(plan->step_re[i]);
         stp_im[i] = _mm512_set1_pd(plan->step_im[i]);
     }
 
     __m512d b_re[2], b_im[2];
-    for (int i = 0; i < 2; i++) {
+    for (size_t i = 0; i < 2; i++) {
         b_re[i] = _mm512_loadu_pd(plan->init_re[i]);
         b_im[i] = _mm512_loadu_pd(plan->init_im[i]);
     }
@@ -277,12 +279,12 @@ radix11_tw_pack_walk_bwd_avx512(
         _mm512_store_pd(&tw_blk_re[0], _mm512_load_pd(&blk_ir[0]));
         _mm512_store_pd(&tw_blk_im[0], _mm512_load_pd(&blk_ii[0]));
 
-        for (int n = 0; n < 10; n++) {
-            __m512d xr = _mm512_load_pd(&blk_ir[(n+1) * T]);
-            __m512d xi = _mm512_load_pd(&blk_ii[(n+1) * T]);
-            _mm512_store_pd(&tw_blk_re[(n+1) * T],
+        for (size_t n = 0; n < 10; n++) {
+            __m512d xr = _mm512_load_pd(&blk_ir[(n+1u) * T]);
+            __m512d xi = _mm512_load_pd(&blk_ii[(n+1u) * T]);
+            _mm512_store_pd(&tw_blk_re[(n+1u) * T],
                 R11W_CMUL_RE(xr, xi, tw_r[n], tw_i[n]));
-            _mm512_store_pd(&tw_blk_im[(n+1) * T],
+            _mm512_store_pd(&tw_blk_im[(n+1u) * T],
                 R11W_CMUL_IM(xr, xi, tw_r[n], tw_i[n]));
         }
 
@@ -291,7 +293,7 @@ radix11_tw_pack_walk_bwd_avx512(
                                   out_re + blk * bs, out_im + blk * bs, T);
 
         /* Walk (unconjugated — we conjugate per-block above) */
-        for (int i = 0; i < 2; i++) {
+        for (size_t i = 0; i < 2; i++) {
             __m512d nr = R11W_CMUL_RE(b_re[i],b_im[i],stp_re[i],stp_im[i]);
             __m512d ni = R11W_CMUL_IM(b_re[i],b_im[i],stp_re[i],stp_im[i]);
             b_re[i] = nr;
@@ -305,4 +307,5 @@ radix11_tw_pack_walk_bwd_avx512(
 #undef R11W_CSQ_RE
 #undef R11W_CSQ_IM
 
+#endif /* __AVX512F__ */
 #endif /* FFT_RADIX11_AVX512_TW_PACK_WALK_H */
