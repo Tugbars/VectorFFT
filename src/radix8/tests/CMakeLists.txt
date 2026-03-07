@@ -1,133 +1,39 @@
-##############################################################################
-# radix8/tests/ CMakeLists.txt
-#
-# Test executables for radix-8 FFT.
-#
-# Two categories:
-#   1. STANDALONE header tests — compile a single .c that #includes the
-#      ISA-specific header directly.  Only built when the ISA is available.
-#   2. DRIVER integration test — links against the radix8 library and
-#      exercises the public API at the resolved ISA level.
-#
-# All tests register with CTest:
-#   ctest --test-dir build --output-on-failure
-#
-##############################################################################
-enable_testing()  # redundant when called from parent, but harmless standalone
+set(R8_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set(R8_INCLUDE_DIRS ${R8_ROOT} ${R8_ROOT}/avx512 ${R8_ROOT}/avx2 ${R8_ROOT}/scalar ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Inherit from parent: RADIX8_RESOLVED_ISA, RADIX8_C_FLAGS, FLAGS_*
-
-# ── Math library ────────────────────────────────────────────────────────────
-if(NOT MSVC)
-    find_library(TEST_MATH_LIB m)
+set(R8_TEST_ISA_FLAGS "")
+if(VFFT_HAS_AVX512)
+    set(R8_TEST_ISA "AVX512")
+    set(R8_TEST_ISA_FLAGS -mavx512f -mavx512dq -mavx2 -mfma)
+elseif(VFFT_HAS_AVX2)
+    set(R8_TEST_ISA "AVX2")
+    set(R8_TEST_ISA_FLAGS -mavx2 -mfma)
 endif()
 
-# ── Helper: add a standalone header test ────────────────────────────────────
-#
-# standalone_test(
-#   NAME   test_radix8_avx2         # target & CTest name
-#   SOURCE test_radix8_avx2.c       # source file
-#   FLAGS  -mavx2 -mfma             # compile flags
-#   DIRS   avx2 scalar              # subdirs under radix8/ to add as includes
-# )
-#
-function(standalone_test)
-    cmake_parse_arguments(ST "" "NAME;SOURCE" "FLAGS;DIRS" ${ARGN})
-
-    add_executable(${ST_NAME} ${ST_SOURCE})
-    target_compile_options(${ST_NAME} PRIVATE ${ST_FLAGS})
-
-    # Build include dir list from subdirectory names
-    set(_inc_dirs)
-    foreach(_dir ${ST_DIRS})
-        list(APPEND _inc_dirs "${CMAKE_CURRENT_SOURCE_DIR}/../${_dir}")
-    endforeach()
-    # Always include parent (for fft_radix8.h) and scalar (always needed as fallback)
-    list(APPEND _inc_dirs "${CMAKE_CURRENT_SOURCE_DIR}/..")
-    list(APPEND _inc_dirs "${CMAKE_CURRENT_SOURCE_DIR}/../scalar")
-
-    target_include_directories(${ST_NAME} PRIVATE ${_inc_dirs})
-
-    if(TEST_MATH_LIB)
-        target_link_libraries(${ST_NAME} PRIVATE ${TEST_MATH_LIB})
+function(_r8_add_target name source)
+    cmake_parse_arguments(ARG "" "" "ISA_FLAGS" ${ARGN})
+    add_executable(${name} ${source})
+    target_include_directories(${name} PRIVATE ${R8_INCLUDE_DIRS})
+    if(ARG_ISA_FLAGS)
+        target_compile_options(${name} PRIVATE ${ARG_ISA_FLAGS})
     endif()
-
-    add_test(NAME ${ST_NAME} COMMAND ${ST_NAME})
+    target_compile_options(${name} PRIVATE ${VFFT_BASE_FLAGS})
+    set_target_properties(${name} PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
+    if(VFFT_BASE_DEFINITIONS)
+        target_compile_definitions(${name} PRIVATE ${VFFT_BASE_DEFINITIONS})
+    endif()
+    if(NOT WIN32)
+        target_link_libraries(${name} PRIVATE m)
+    endif()
+    add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
-# ── Standalone: Scalar (always built) ───────────────────────────────────────
-if(MSVC)
-    set(_scalar_flags "")
-else()
-    set(_scalar_flags "-mfma")
+if(R8_TEST_ISA)
+    _r8_add_target(test_radix8_dispatch test_radix8.c ISA_FLAGS ${R8_TEST_ISA_FLAGS})
+    set_tests_properties(test_radix8_dispatch PROPERTIES LABELS "radix8;correctness;${R8_TEST_ISA}")
+    message(STATUS "[radix8/tests] Test: test_radix8_dispatch [${R8_TEST_ISA}]")
 endif()
 
-standalone_test(
-    NAME   test_radix8_scalar
-    SOURCE test_radix8_scalar.c
-    FLAGS  ${_scalar_flags}
-    DIRS   scalar
-)
-
-# ── Standalone: AVX2 (built when AVX2 or higher available) ──────────────────
-if(RADIX8_RESOLVED_ISA STREQUAL "AVX2" OR RADIX8_RESOLVED_ISA STREQUAL "AVX512")
-    standalone_test(
-        NAME   test_radix8_avx2
-        SOURCE test_radix8_avx2.c
-        FLAGS  ${FLAGS_AVX2}
-        DIRS   avx2
-    )
-
-    standalone_test(
-        NAME   test_radix8_n1
-        SOURCE test_radix8_n1.c
-        FLAGS  ${FLAGS_AVX2}
-        DIRS   avx2
-    )
-endif()
-
-# ── Standalone: AVX-512 (built when AVX-512 available) ──────────────────────
-if(RADIX8_RESOLVED_ISA STREQUAL "AVX512")
-    standalone_test(
-        NAME   test_radix8_avx512
-        SOURCE test_radix8_avx512.c
-        FLAGS  ${FLAGS_AVX512}
-        DIRS   avx512 avx2
-    )
-endif()
-
-# ── Driver integration test (always built, uses resolved ISA) ───────────────
-add_executable(test_radix8_drivers test_radix8_drivers.c)
-target_link_libraries(test_radix8_drivers PRIVATE radix8)
-target_compile_options(test_radix8_drivers PRIVATE ${RADIX8_C_FLAGS})
-target_include_directories(test_radix8_drivers PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/..
-)
-
-if(TEST_MATH_LIB)
-    target_link_libraries(test_radix8_drivers PRIVATE ${TEST_MATH_LIB})
-endif()
-
-add_test(NAME test_radix8_drivers COMMAND test_radix8_drivers)
-
-# ── Roundtrip + bench (links against library) ──────────────────────────────
-add_executable(test_radix8_roundtrip_bench test_radix8_roundtrip_bench.c)
-target_link_libraries(test_radix8_roundtrip_bench PRIVATE radix8)
-target_compile_options(test_radix8_roundtrip_bench PRIVATE ${RADIX8_C_FLAGS})
-target_include_directories(test_radix8_roundtrip_bench PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/..
-)
-
-if(TEST_MATH_LIB)
-    target_link_libraries(test_radix8_roundtrip_bench PRIVATE ${TEST_MATH_LIB})
-endif()
-
-add_test(NAME test_radix8_roundtrip COMMAND test_radix8_roundtrip_bench)
-
-# ── Summary ─────────────────────────────────────────────────────────────────
-message(STATUS "Radix-8 tests enabled (ISA: ${RADIX8_RESOLVED_ISA})")
-
-# Count tests
 get_property(_tests DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY TESTS)
-list(LENGTH _tests _n_tests)
-message(STATUS "  ${_n_tests} test executables registered")
+list(LENGTH _tests _n)
+message(STATUS "[radix8/tests] ${_n} target(s) registered")
