@@ -1,19 +1,33 @@
 /**
  * @file fft_radix11_dispatch.h
- * @brief Runtime ISA dispatch for DFT-11 — auto-selects best kernel
+ * @brief Runtime ISA dispatch for DFT-11 — strided, packed, and pack+walk
  *
- * Detects AVX-512, AVX2, or scalar at runtime via CPUID.
- * All three ISA paths compile into one binary.
+ * Three-tier packed dispatch (consistent with radix-8/32):
+ *   K <= RADIX11_WALK_THRESHOLD: packed table (pre-packed twiddles)
+ *   K >  RADIX11_WALK_THRESHOLD: pack+walk (2 walked bases, derive 8)
  *
  * Usage:
  *   r11_dispatch_fwd(in_re, in_im, out_re, out_im, K);
  *   r11_dispatch_packed_fwd(packed_re, packed_im, out_re, out_im, K);
+ *   r11_tw_packed_auto_fwd(..., walk_plan, K, T);  // auto table vs walk
  */
 
 #ifndef FFT_RADIX11_DISPATCH_H
 #define FFT_RADIX11_DISPATCH_H
 
 #include "fft_radix11_genfft.h"
+
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include "avx512/fft_radix11_avx512_tw_pack_walk.h"
+#endif
+#if defined(__AVX2__)
+#include "avx2/fft_radix11_avx2_tw_pack_walk.h"
+#endif
+
+/* Walk threshold: use pack+walk when K > this */
+#ifndef RADIX11_WALK_THRESHOLD
+#define RADIX11_WALK_THRESHOLD 512
+#endif
 
 /* ═══════════════════════════════════════════════════════════════
  * CPUID-BASED ISA DETECTION
@@ -25,19 +39,19 @@
 static inline int r11_has_avx512f(void) {
     unsigned int eax, ebx, ecx, edx;
     if (!__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) return 0;
-    return (ebx >> 16) & 1;  /* AVX-512F = bit 16 of EBX */
+    return (ebx >> 16) & 1;
 }
 
 static inline int r11_has_avx2(void) {
     unsigned int eax, ebx, ecx, edx;
     if (!__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) return 0;
-    return (ebx >> 5) & 1;  /* AVX2 = bit 5 of EBX */
+    return (ebx >> 5) & 1;
 }
 
 static inline int r11_has_fma(void) {
     unsigned int eax, ebx, ecx, edx;
     if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) return 0;
-    return (ecx >> 12) & 1;  /* FMA = bit 12 of ECX */
+    return (ecx >> 12) & 1;
 }
 
 #elif defined(_MSC_VER)
@@ -68,7 +82,7 @@ static inline int r11_has_fma(void)     { return 0; }
 #endif
 
 /* ═══════════════════════════════════════════════════════════════
- * ISA LEVEL ENUM
+ * ISA LEVEL
  * ═══════════════════════════════════════════════════════════════ */
 
 typedef enum {
@@ -77,11 +91,9 @@ typedef enum {
     R11_ISA_AVX512 = 2
 } r11_isa_t;
 
-/** Detect best available ISA (cached after first call). */
 static inline r11_isa_t r11_detect_isa(void) {
     static r11_isa_t cached = (r11_isa_t)-1;
     if (cached != (r11_isa_t)-1) return cached;
-
     if (r11_has_avx512f() && r11_has_fma())
         cached = R11_ISA_AVX512;
     else if (r11_has_avx2() && r11_has_fma())
@@ -91,7 +103,6 @@ static inline r11_isa_t r11_detect_isa(void) {
     return cached;
 }
 
-/** SIMD width (k-step) for the detected ISA. */
 static inline size_t r11_simd_width(void) {
     switch (r11_detect_isa()) {
         case R11_ISA_AVX512: return 8;
@@ -102,9 +113,6 @@ static inline size_t r11_simd_width(void) {
 
 /* ═══════════════════════════════════════════════════════════════
  * STRIDED DISPATCH
- *
- * K must be a multiple of the SIMD width (8 for AVX-512, 4 for AVX2).
- * Falls back to scalar for any K.
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void r11_dispatch_fwd(
@@ -133,15 +141,11 @@ static inline void r11_dispatch_bwd(
     double * __restrict__ out_re, double * __restrict__ out_im,
     size_t K)
 {
-    /* Backward = forward with swapped re↔im */
     r11_dispatch_fwd(in_im, in_re, out_im, out_re, K);
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * PACKED DISPATCH
- *
- * Data must be in packed contiguous layout (use r11_pack).
- * K must be multiple of SIMD width.
+ * PACKED DISPATCH (table-based)
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void r11_dispatch_packed_fwd(
@@ -183,15 +187,104 @@ static inline void r11_dispatch_packed_bwd(
         return;
     }
 #endif
-    /* Scalar backward = forward with swap */
     r11_genfft_packed_fwd_scalar(in_im, in_re, out_im, out_re, K);
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * CONVENIENCE: AUTO PACK + DISPATCH + UNPACK
+ * PACK+WALK AUTO-DISPATCH
  *
- * For callers who have strided data but want packed performance.
- * Allocates scratch buffers on the stack for small K, heap for large.
+ * K <= RADIX11_WALK_THRESHOLD → packed table
+ * K >  RADIX11_WALK_THRESHOLD → pack+walk (zero tw table)
+ *
+ * walk_plan: void* to radix11_walk_plan_t (AVX-512) or
+ *            radix11_walk_plan_avx2_t (AVX2). NULL for table path.
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void r11_tw_packed_auto_fwd(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    const void * __restrict__ walk_plan,
+    size_t K, size_t T)
+{
+    if (K > RADIX11_WALK_THRESHOLD && walk_plan) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+        if (T == 8) {
+            radix11_tw_pack_walk_fwd_avx512(
+                in_re, in_im, out_re, out_im,
+                (const radix11_walk_plan_t *)walk_plan, K);
+            return;
+        }
+#endif
+#ifdef __AVX2__
+        if (T == 4) {
+            radix11_tw_pack_walk_fwd_avx2(
+                in_re, in_im, out_re, out_im,
+                (const radix11_walk_plan_avx2_t *)walk_plan, K);
+            return;
+        }
+#endif
+    }
+    /* Fall back to existing walk driver or packed table */
+    (void)tw_re; (void)tw_im;
+    r11_dispatch_packed_fwd(in_re, in_im, out_re, out_im, K);
+}
+
+static inline void r11_tw_packed_auto_bwd(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    const void * __restrict__ walk_plan,
+    size_t K, size_t T)
+{
+    if (K > RADIX11_WALK_THRESHOLD && walk_plan) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+        if (T == 8) {
+            radix11_tw_pack_walk_bwd_avx512(
+                in_re, in_im, out_re, out_im,
+                (const radix11_walk_plan_t *)walk_plan, K);
+            return;
+        }
+#endif
+#ifdef __AVX2__
+        if (T == 4) {
+            radix11_tw_pack_walk_bwd_avx2(
+                in_re, in_im, out_re, out_im,
+                (const radix11_walk_plan_avx2_t *)walk_plan, K);
+            return;
+        }
+#endif
+    }
+    (void)tw_re; (void)tw_im;
+    r11_dispatch_packed_bwd(in_re, in_im, out_re, out_im, K);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * PLANNER HELPERS
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline size_t r11_flat_tw_size(size_t K)  { return 10 * K; }
+static inline size_t r11_data_size(size_t K)     { return 11 * K; }
+
+/** Returns 1 if pack+walk should be used instead of packed table */
+static inline int r11_should_walk(size_t K) {
+    return (K > RADIX11_WALK_THRESHOLD) ? 1 : 0;
+}
+
+/** Packed twiddle table size. Returns 0 if walk mode (no table needed). */
+static inline size_t r11_packed_tw_size(size_t K) {
+    return r11_should_walk(K) ? 0 : 10 * K;
+}
+
+static inline size_t r11_packed_optimal_T(size_t K) {
+    r11_isa_t isa = r11_detect_isa();
+    if (isa == R11_ISA_AVX512 && K >= 8 && (K & 7) == 0) return 8;
+    if (isa >= R11_ISA_AVX2   && K >= 4 && (K & 3) == 0) return 4;
+    return 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * CONVENIENCE: AUTO PACK + DISPATCH + UNPACK
  * ═══════════════════════════════════════════════════════════════ */
 
 #include <stdlib.h>
@@ -208,7 +301,6 @@ static inline void r11_auto_fwd(
         return;
     }
 
-    size_t N = 11 * K;
     /* For K <= 128, use strided (still L1-resident) */
     if (K <= 128) {
         r11_dispatch_fwd(in_re, in_im, out_re, out_im, K);
@@ -216,6 +308,7 @@ static inline void r11_auto_fwd(
     }
 
     /* Large K: pack → dispatch → unpack */
+    size_t N = 11 * K;
     double *pir = (double*)aligned_alloc(64, N * sizeof(double));
     double *pii = (double*)aligned_alloc(64, N * sizeof(double));
     double *por = (double*)aligned_alloc(64, N * sizeof(double));
