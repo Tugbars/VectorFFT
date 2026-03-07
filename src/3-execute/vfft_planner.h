@@ -147,6 +147,7 @@ VFFT_NAIVE_CODELET(16)
 VFFT_NAIVE_CODELET(17)
 VFFT_NAIVE_CODELET(19)
 VFFT_NAIVE_CODELET(23)
+VFFT_NAIVE_CODELET(25)
 VFFT_NAIVE_CODELET(32)
 VFFT_NAIVE_CODELET(64)
 VFFT_NAIVE_CODELET(128)
@@ -180,7 +181,7 @@ static void vfft_registry_init_naive(vfft_codelet_registry *reg)
     REG_NAIVE(3) REG_NAIVE(4) REG_NAIVE(5)
         REG_NAIVE(6) REG_NAIVE(7) REG_NAIVE(8) REG_NAIVE(9)
             REG_NAIVE(10) REG_NAIVE(11) REG_NAIVE(13) REG_NAIVE(16)
-                REG_NAIVE(17) REG_NAIVE(19) REG_NAIVE(23) REG_NAIVE(32)
+                REG_NAIVE(17) REG_NAIVE(19) REG_NAIVE(23) REG_NAIVE(25) REG_NAIVE(32)
                     REG_NAIVE(64) REG_NAIVE(128)
 #undef REG_NAIVE
     /* No naive tw codelets — stages without tw codelets fall back
@@ -228,7 +229,7 @@ static inline void vfft_registry_set_tw_dif(vfft_codelet_registry *reg,
 
 static const size_t VFFT_SUPPORTED_RADIXES[] = {
     128, 64, 32, 16, 8, 4, 2,
-    9, 10, 6,
+    25, 10, 9, 6,
     23, 19, 17, 13, 11, 7, 5, 3,
     0};
 
