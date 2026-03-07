@@ -46,6 +46,25 @@
  * K > RADIX32_WALK_THRESHOLD:
  *   Flat kernel at K=T per block, twiddles derived on-the-fly from
  *   5 walking base accumulators (zero twiddle table allocation).
+ *
+ * ═══════════════════════════════════════════════════════════════════
+ * PLANNER USAGE EXAMPLE
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ *   size_t T = radix32_packed_optimal_T(K);
+ *   radix32_walk_plan_t walk_plan, *wp = NULL;
+ *   double *pk_twr = NULL, *pk_twi = NULL;
+ *
+ *   if (radix32_should_walk(K)) {
+ *       radix32_walk_plan_init(&walk_plan, K);  // 24 doubles, no table
+ *       wp = &walk_plan;
+ *   } else {
+ *       pk_twr = alloc(31*K); pk_twi = alloc(31*K);
+ *       radix32_pack_twiddles_avx512(flat_twr, flat_twi, pk_twr, pk_twi, K);
+ *   }
+ *
+ *   radix32_tw_packed_auto_fwd(pk_in_re, pk_in_im, pk_out_re, pk_out_im,
+ *                              pk_twr, pk_twi, wp, K, T);
  */
 
 #ifndef FFT_RADIX32_DISPATCH_H
@@ -62,6 +81,7 @@
 #if defined(__AVX2__)
 #include "avx2/fft_radix32_avx2_tw_v2.h"
 #include "avx2/fft_radix32_avx2_notw.h"
+#include "avx2/fft_radix32_avx2_tw_pack_walk.h"
 #endif
 #include "scalar/fft_radix32_scalar_tw.h"
 #include "scalar/fft_radix32_scalar_notw.h"
@@ -419,51 +439,74 @@ static inline void radix32_tw_packed_bwd(
  *   K > RADIX32_WALK_THRESHOLD  → pack+walk (twiddles on-the-fly)
  *
  * Data must be in packed layout for both paths.
- * For pack+walk, caller provides a radix32_walk_plan_t* instead of
- * twiddle table pointers.
+ * For pack+walk, caller provides a walk_plan (void*) initialized by
+ * radix32_walk_plan_init (AVX-512) or radix32_walk_plan_avx2_init (AVX2).
+ * Pass NULL when using packed table path.
  * ═══════════════════════════════════════════════════════════════ */
-
-#if defined(__AVX512F__) || defined(__AVX512F)
 
 static inline void radix32_tw_packed_auto_fwd(
     const double *__restrict__ in_re, const double *__restrict__ in_im,
     double *__restrict__ out_re, double *__restrict__ out_im,
     const double *__restrict__ tw_re, const double *__restrict__ tw_im,
-    const radix32_walk_plan_t *__restrict__ walk_plan,
+    const void *__restrict__ walk_plan,
     size_t K, size_t T)
 {
-    if (K > RADIX32_WALK_THRESHOLD && T == 8 && walk_plan)
+    if (K > RADIX32_WALK_THRESHOLD && walk_plan)
     {
-        radix32_tw_pack_walk_fwd_avx512(in_re, in_im, out_re, out_im,
-                                        walk_plan, K);
+#if defined(__AVX512F__) || defined(__AVX512F)
+        if (T == 8)
+        {
+            radix32_tw_pack_walk_fwd_avx512(
+                in_re, in_im, out_re, out_im,
+                (const radix32_walk_plan_t *)walk_plan, K);
+            return;
+        }
+#endif
+#ifdef __AVX2__
+        if (T == 4)
+        {
+            radix32_tw_pack_walk_fwd_avx2(
+                in_re, in_im, out_re, out_im,
+                (const radix32_walk_plan_avx2_t *)walk_plan, K);
+            return;
+        }
+#endif
     }
-    else
-    {
-        radix32_tw_packed_fwd(in_re, in_im, out_re, out_im,
-                              tw_re, tw_im, K, T);
-    }
+    radix32_tw_packed_fwd(in_re, in_im, out_re, out_im,
+                          tw_re, tw_im, K, T);
 }
 
 static inline void radix32_tw_packed_auto_bwd(
     const double *__restrict__ in_re, const double *__restrict__ in_im,
     double *__restrict__ out_re, double *__restrict__ out_im,
     const double *__restrict__ tw_re, const double *__restrict__ tw_im,
-    const radix32_walk_plan_t *__restrict__ walk_plan,
+    const void *__restrict__ walk_plan,
     size_t K, size_t T)
 {
-    if (K > RADIX32_WALK_THRESHOLD && T == 8 && walk_plan)
+    if (K > RADIX32_WALK_THRESHOLD && walk_plan)
     {
-        radix32_tw_pack_walk_bwd_avx512(in_re, in_im, out_re, out_im,
-                                        walk_plan, K);
+#if defined(__AVX512F__) || defined(__AVX512F)
+        if (T == 8)
+        {
+            radix32_tw_pack_walk_bwd_avx512(
+                in_re, in_im, out_re, out_im,
+                (const radix32_walk_plan_t *)walk_plan, K);
+            return;
+        }
+#endif
+#ifdef __AVX2__
+        if (T == 4)
+        {
+            radix32_tw_pack_walk_bwd_avx2(
+                in_re, in_im, out_re, out_im,
+                (const radix32_walk_plan_avx2_t *)walk_plan, K);
+            return;
+        }
+#endif
     }
-    else
-    {
-        radix32_tw_packed_bwd(in_re, in_im, out_re, out_im,
-                              tw_re, tw_im, K, T);
-    }
+    radix32_tw_packed_bwd(in_re, in_im, out_re, out_im,
+                          tw_re, tw_im, K, T);
 }
-
-#endif /* __AVX512F__ */
 
 /* ═══════════════════════════════════════════════════════════════
  * PACKED DISPATCH — notw
