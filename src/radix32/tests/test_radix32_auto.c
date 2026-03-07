@@ -143,7 +143,7 @@ int main(void) {
 
         /* Walk plan (only needed if walking) */
         radix32_walk_plan_t walk_plan;
-        radix32_walk_plan_t *wp = NULL;
+        void *wp = NULL;
         if (radix32_should_walk(K)) {
             radix32_walk_plan_init(&walk_plan, K);
             wp = &walk_plan;
