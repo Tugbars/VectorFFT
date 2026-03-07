@@ -1,9 +1,13 @@
 /**
  * @file fft_radix8_dispatch.h
- * @brief Radix-8 cross-ISA dispatch — strided and packed paths
+ * @brief Radix-8 cross-ISA dispatch — strided, packed, and pack+walk paths
  *
  * DFT-8 = 2×DFT-4 + W8 combine. Only 1 constant: √2/2.
  * 52 adds + 4 muls per DFT-8 — nearly zero-multiply butterfly.
+ *
+ * Three-tier packed dispatch (same pattern as radix-32):
+ *   K <= RADIX8_WALK_THRESHOLD: packed table (pre-packed twiddles)
+ *   K >  RADIX8_WALK_THRESHOLD: pack+walk (2 walked bases, derive 5)
  *
  * Twiddle table: 7*K doubles per component (n=1..7).
  * radix8_flat_tw_size(K) = 7*K
@@ -17,11 +21,18 @@
 
 #if defined(__AVX512F__) || defined(__AVX512F)
 #include "avx512/fft_radix8_avx512.h"
+#include "avx512/fft_radix8_avx512_tw_pack_walk.h"
 #endif
 #if defined(__AVX2__)
 #include "avx2/fft_radix8_avx2.h"
+#include "avx2/fft_radix8_avx2_tw_pack_walk.h"
 #endif
 #include "scalar/fft_radix8_scalar.h"
+
+/* Walk threshold: use pack+walk when K > this */
+#ifndef RADIX8_WALK_THRESHOLD
+#define RADIX8_WALK_THRESHOLD 1024
+#endif
 
 /* ═══════════════════════════════════════════════════════════════
  * ISA DETECTION
@@ -226,11 +237,86 @@ static inline void radix8_notw_packed_bwd(
 }
 
 /* ═══════════════════════════════════════════════════════════════
+ * PACK+WALK AUTO-DISPATCH
+ *
+ * K <= RADIX8_WALK_THRESHOLD → packed table
+ * K >  RADIX8_WALK_THRESHOLD → pack+walk (zero tw table)
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void radix8_tw_packed_auto_fwd(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    const void * __restrict__ walk_plan,
+    size_t K, size_t T)
+{
+    if (K > RADIX8_WALK_THRESHOLD && walk_plan) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+        if (T == 8) {
+            radix8_tw_pack_walk_fwd_avx512(
+                in_re, in_im, out_re, out_im,
+                (const radix8_walk_plan_t *)walk_plan, K);
+            return;
+        }
+#endif
+#ifdef __AVX2__
+        if (T == 4) {
+            radix8_tw_pack_walk_fwd_avx2(
+                in_re, in_im, out_re, out_im,
+                (const radix8_walk_plan_avx2_t *)walk_plan, K);
+            return;
+        }
+#endif
+    }
+    radix8_tw_packed_fwd(in_re, in_im, out_re, out_im,
+                         tw_re, tw_im, K, T);
+}
+
+static inline void radix8_tw_packed_auto_bwd(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    const void * __restrict__ walk_plan,
+    size_t K, size_t T)
+{
+    if (K > RADIX8_WALK_THRESHOLD && walk_plan) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+        if (T == 8) {
+            radix8_tw_pack_walk_bwd_avx512(
+                in_re, in_im, out_re, out_im,
+                (const radix8_walk_plan_t *)walk_plan, K);
+            return;
+        }
+#endif
+#ifdef __AVX2__
+        if (T == 4) {
+            radix8_tw_pack_walk_bwd_avx2(
+                in_re, in_im, out_re, out_im,
+                (const radix8_walk_plan_avx2_t *)walk_plan, K);
+            return;
+        }
+#endif
+    }
+    radix8_tw_packed_bwd(in_re, in_im, out_re, out_im,
+                         tw_re, tw_im, K, T);
+}
+
+/* ═══════════════════════════════════════════════════════════════
  * PLANNER HELPERS
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline size_t radix8_flat_tw_size(size_t K) { return 7 * K; }
 static inline size_t radix8_data_size(size_t K)    { return 8 * K; }
+
+/** Returns 1 if pack+walk should be used instead of packed table */
+static inline int radix8_should_walk(size_t K) {
+    return (K > RADIX8_WALK_THRESHOLD) ? 1 : 0;
+}
+
+/** Packed twiddle table size. Returns 0 if walk mode (no table needed). */
+static inline size_t radix8_packed_tw_size(size_t K) {
+    return radix8_should_walk(K) ? 0 : 7 * K;
+}
 
 static inline size_t radix8_packed_optimal_T(size_t K) {
 #if defined(__AVX512F__) || defined(__AVX512F)
