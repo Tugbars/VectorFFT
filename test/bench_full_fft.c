@@ -2,9 +2,9 @@
  * bench_full_fft.c — VectorFFT full-radix benchmark vs FFTW
  *
  * Wired radixes:
- *   R=2,3,4,5,7,8,16,32  — fused DIT tw + fused DIF tw (scalar/AVX2/AVX-512)
- *   R=11,13,17,19,23      — genfft notw (no fused tw)
- *   R=64,128              — N1-only (innermost stage, K=1)
+ *   R=2,3,4,5,7,8,10,16,25,32 — fused DIT tw + fused DIF tw (scalar/AVX2/AVX-512)
+ *   R=11,13,17,19,23           — genfft notw (no fused tw)
+ *   R=64,128                   — N1-only (innermost stage, K=1)
  *
  * Tests:
  *   1. Correctness: VectorFFT fwd vs FFTW fwd
@@ -74,6 +74,8 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 #define vfft_detect_isa _bench_detect_isa_r32
 #include "fft_radix32_dispatch.h"
 #undef vfft_detect_isa
+#include "fft_radix10_dispatch.h"
+#include "fft_radix25_dispatch.h"
 
 /* ── DIF dispatch: fused twiddle after butterfly ────────────────────── */
 #include "fft_radix2_dif_dispatch.h"
@@ -84,6 +86,8 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 #include "fft_radix8_dif_dispatch.h"
 #include "fft_radix16_dif_dispatch.h"
 #include "fft_radix32_dif_dispatch.h"
+#include "fft_radix10_dif_dispatch.h"
+#include "fft_radix25_dif_dispatch.h"
 
 /* ── Genfft primes: notw only, no fused tw ──────────────────────────── */
 #include "fft_radix11_genfft.h"
@@ -264,12 +268,16 @@ static void bench(size_t N, const vfft_codelet_registry *reg)
     }
 
     int reps;
-    if      (N <=   512) reps =  20000;
-    else if (N <=  2048) reps =  10000;
-    else if (N <=  8192) reps =   5000;
-    else if (N <= 32768) reps =   1000;
-    else if (N <= 131072) reps =    500;
-    else                 reps =    100;
+    if (N <= 512)
+        reps = 5000;
+    else if (N <= 2048)
+        reps = 2000;
+    else if (N <= 8192)
+        reps = 1000;
+    else if (N <= 32768)
+        reps = 200;
+    else
+        reps = 100;
 
     /* Warm up */
     for (int r = 0; r < 5; r++) {
@@ -327,7 +335,7 @@ int main(void)
 {
     printf("══════════════════════════════════════════════════════════════════════════════\n");
     printf("  VectorFFT Full-Radix Benchmark\n");
-    printf("  R={2,3,4,5,7,8,16,32} fused DIT+DIF  "
+    printf("  R={2,3,4,5,7,8,10,16,25,32} fused DIT+DIF  "
            "R={11,13,17,19,23} genfft  R={64,128} N1\n");
     printf("══════════════════════════════════════════════════════════════════════════════\n\n");
 
@@ -372,8 +380,14 @@ int main(void)
         /* R=19 */ 152, 1216,
         /* R=23 */ 184, 1472,
 
+        /* R=10 */
+        80, 640, 4000, 8000,
+
+        /* R=25 */
+        200, 800, 5000, 20000,
+
         /* Large mixed */
-        12000, 20000, 40000,
+        12000, 40000,
     };
     size_t nN = sizeof(test_Ns) / sizeof(test_Ns[0]);
 
