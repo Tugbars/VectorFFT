@@ -264,12 +264,12 @@ static void bench(size_t N, const vfft_codelet_registry *reg)
     }
 
     int reps;
-    if      (N <=   512) reps = 200000;
-    else if (N <=  2048) reps = 100000;
-    else if (N <=  8192) reps =  50000;
-    else if (N <= 32768) reps =  10000;
-    else if (N <= 131072) reps =  5000;
-    else                 reps =  1000;
+    if      (N <=   512) reps =  20000;
+    else if (N <=  2048) reps =   1000;
+    else if (N <=  8192) reps =   5000;
+    else if (N <= 32768) reps =   1000;
+    else if (N <= 131072) reps =    500;
+    else                 reps =    100;
 
     /* Warm up */
     for (int r = 0; r < 5; r++) {
