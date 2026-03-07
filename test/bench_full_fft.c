@@ -313,11 +313,19 @@ static void bench(size_t N, const vfft_codelet_registry *reg)
     char fact[64] = "";
     factstr(plan, fact, sizeof(fact));
 
-    printf("  N=%-6zu  %-16s  vfft_fwd=%7.0f  fftw_fwd=%7.0f  fwd_x=%.2f"
-           "  vfft_rt=%7.0f  fftw_rt=%7.0f  rt_x=%.2f\n",
+#define CLR_GREEN "\033[92m"
+#define CLR_RESET "\033[0m"
+    double fwd_x = fftw_fwd_ns / vfft_fwd_ns;
+    double rt_x  = fftw_rt_ns  / vfft_rt_ns;
+    printf("  N=%-6zu  %-16s  vfft_fwd=%7.0f  fftw_fwd=%7.0f  fwd_x=%s%.2f%s"
+           "  vfft_rt=%7.0f  fftw_rt=%7.0f  rt_x=%s%.2f%s\n",
            N, fact,
-           vfft_fwd_ns, fftw_fwd_ns, fftw_fwd_ns / vfft_fwd_ns,
-           vfft_rt_ns,  fftw_rt_ns,  fftw_rt_ns  / vfft_rt_ns);
+           vfft_fwd_ns, fftw_fwd_ns,
+           fwd_x > 1.4 ? CLR_GREEN : "", fwd_x, fwd_x > 1.4 ? CLR_RESET : "",
+           vfft_rt_ns, fftw_rt_ns,
+           rt_x  > 1.4 ? CLR_GREEN : "", rt_x,  rt_x  > 1.4 ? CLR_RESET : "");
+#undef CLR_GREEN
+#undef CLR_RESET
 
     vfft_plan_destroy(plan);
     fftw_destroy_plan(fp_fwd); fftw_destroy_plan(fp_bwd);
