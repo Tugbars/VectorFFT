@@ -235,7 +235,7 @@ static void vfft_tw_dispatch_r16_fwd(
     (void)isa;
     IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix16_tw_flat_dit_kernel_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
     IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix16_tw_flat_dit_kernel_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
-    /* No scalar tw for r16 — planner's separate twiddle fallback handles this */
+    radix16_tw_flat_dit_kernel_fwd_scalar(ri, ii, ro, io, twr, twi, K);
 }
 static void vfft_tw_dispatch_r16_bwd(
     const double *ri, const double *ii, double *ro, double *io,
@@ -245,6 +245,7 @@ static void vfft_tw_dispatch_r16_bwd(
     (void)isa;
     IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix16_tw_flat_dit_kernel_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
     IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix16_tw_flat_dit_kernel_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    radix16_tw_flat_dit_kernel_bwd_scalar(ri, ii, ro, io, twr, twi, K);
 }
 #endif
 
@@ -310,6 +311,12 @@ VFFT_TW_DIF_DISPATCH_WRAPPER(8, radix8_tw_dif_kernel)
 
 #ifdef FFT_RADIX32_DIF_DISPATCH_H
 VFFT_TW_DIF_DISPATCH_WRAPPER(32, radix32_tw_flat_dif_kernel)
+#endif
+
+/* ── Radix-16 DIF (fused single-pass, flat kernel prefix) ── */
+
+#ifdef FFT_RADIX16_DIF_DISPATCH_H
+VFFT_TW_DIF_DISPATCH_WRAPPER(16, radix16_tw_flat_dif_kernel)
 #endif
 
 /* ── N1 (notw) dispatch wrappers ── */
@@ -458,15 +465,10 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #ifdef FFT_RADIX8_DISPATCH_H
     vfft_registry_set_tw(reg, 8, vfft_tw_dispatch_r8_fwd, vfft_tw_dispatch_r8_bwd);
 #endif
-    /* radix-16 tw: SIMD-only (no scalar tw kernel).
-     * Safe: K at a r16 outer stage = product of inner radices,
-     * always SIMD-aligned in practice. If K is unaligned, the
-     * wrapper is a no-op and planner already wrote output via
-     * the notw+twiddle fallback... BUT that fallback is never
-     * reached if tw_fwd is non-NULL. So leave unregistered. */
-    /* #ifdef FFT_RADIX16_DISPATCH_H
+    /* radix-16 tw: now has scalar fallback */
+#ifdef FFT_RADIX16_DISPATCH_H
     vfft_registry_set_tw(reg, 16, vfft_tw_dispatch_r16_fwd, vfft_tw_dispatch_r16_bwd);
-    #endif */
+#endif
 #ifdef FFT_RADIX32_DISPATCH_H
     vfft_registry_set_tw(reg, 32, vfft_tw_dispatch_r32_fwd, vfft_tw_dispatch_r32_bwd);
 #endif
@@ -492,6 +494,9 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #endif
 #ifdef FFT_RADIX32_DIF_DISPATCH_H
     vfft_registry_set_tw_dif(reg, 32, vfft_tw_dif_dispatch_r32_fwd, vfft_tw_dif_dispatch_r32_bwd);
+#endif
+#ifdef FFT_RADIX16_DIF_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 16, vfft_tw_dif_dispatch_r16_fwd, vfft_tw_dif_dispatch_r16_bwd);
 #endif
 
     /* ── Genfft prime modules ── */
