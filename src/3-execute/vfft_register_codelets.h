@@ -160,6 +160,80 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
  * Guard each on the codelet header's include guard.
  * ═══════════════════════════════════════════════════════════════ */
 
+/* ── Twiddled dispatch wrapper ──
+ *
+ * Creates vfft_tw_dispatch_rR_fwd / _bwd matching vfft_tw_codelet_fn:
+ *   (in_re, in_im, out_re, out_im, tw_re, tw_im, K)
+ *
+ * For radices with scalar tw codelets, uses VFFT_TW_DISPATCH_WRAPPER.
+ * Radix-16 lacks scalar tw — handled with a special wrapper below.
+ */
+
+#define VFFT_TW_DISPATCH_WRAPPER(R, prefix)                                  \
+    static void vfft_tw_dispatch_r##R##_fwd(                                 \
+        const double *ri, const double *ii, double *ro, double *io,          \
+        const double *twr, const double *twi, size_t K)                      \
+    {                                                                        \
+        vfft_isa_level_t isa = vfft_detect_isa();                            \
+        (void)isa;                                                           \
+        IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { prefix##_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; }) \
+        IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { prefix##_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })     \
+        prefix##_fwd_scalar(ri, ii, ro, io, twr, twi, K);                    \
+    }                                                                        \
+    static void vfft_tw_dispatch_r##R##_bwd(                                 \
+        const double *ri, const double *ii, double *ro, double *io,          \
+        const double *twr, const double *twi, size_t K)                      \
+    {                                                                        \
+        vfft_isa_level_t isa = vfft_detect_isa();                            \
+        (void)isa;                                                           \
+        IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { prefix##_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; }) \
+        IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { prefix##_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })     \
+        prefix##_bwd_scalar(ri, ii, ro, io, twr, twi, K);                    \
+    }
+
+/* ── Twiddled wrappers for radices with full ISA coverage ── */
+
+#ifdef FFT_RADIX3_DISPATCH_H
+VFFT_TW_DISPATCH_WRAPPER(3, radix3_tw_dit_kernel)
+#endif
+
+#ifdef FFT_RADIX8_DISPATCH_H
+VFFT_TW_DISPATCH_WRAPPER(8, radix8_tw_dit_kernel)
+#endif
+
+#ifdef FFT_RADIX32_DISPATCH_H
+VFFT_TW_DISPATCH_WRAPPER(32, radix32_tw_flat_dit_kernel)
+#endif
+
+/* ── Radix-16 tw: no scalar tw kernel, SIMD-only ──
+ * Only dispatches for K aligned to SIMD width. The planner will
+ * fall back to notw+twiddle for unaligned K (rare in practice —
+ * K at a radix-16 stage is always a product of inner radices). */
+
+#ifdef FFT_RADIX16_DISPATCH_H
+static void vfft_tw_dispatch_r16_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix16_tw_flat_dit_kernel_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix16_tw_flat_dit_kernel_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    /* No scalar tw for r16 — planner's separate twiddle fallback handles this */
+}
+static void vfft_tw_dispatch_r16_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix16_tw_flat_dit_kernel_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix16_tw_flat_dit_kernel_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+}
+#endif
+
+/* ── N1 (notw) dispatch wrappers ── */
+
 /* ── New standalone modules ── */
 
 #ifdef FFT_RADIX2_DISPATCH_H
