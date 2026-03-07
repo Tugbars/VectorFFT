@@ -584,7 +584,7 @@ static void vfft_apply_twiddles_dispatch(
  * ═══════════════════════════════════════════════════════════════ */
 
 #ifndef VFFT_PACK_THRESHOLD
-#define VFFT_PACK_THRESHOLD 128 /* pack when K >= this (tw table > ~R*1KB) */
+#define VFFT_PACK_THRESHOLD 999999 /* pack when K >= this (tw table > ~R*1KB) */
 #endif
 
 static inline size_t vfft_detect_T(size_t K)
