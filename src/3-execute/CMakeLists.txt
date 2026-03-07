@@ -5,7 +5,7 @@
 # Headers: vfft_planner.h, vfft_register_codelets.h, fft_bluestein.h
 #
 # Tests:
-#   test_planner     — 57-point correctness (no FFTW, no codelet deps)
+#   test_planner     — correctness (no FFTW, no codelet deps)
 #   test_integrated  — optimized codelets + planner vs FFTW
 #   bench_bluestein  — Bluestein correctness + bench vs FFTW
 # ============================================================================
@@ -49,15 +49,28 @@ elseif(VFFT_HAS_SSE2)
     set(EXEC_TEST_ISA_FLAGS ${VFFT_FLAGS_SSE2})
 endif()
 
-# ── Include paths for codelet headers ─────────────────────────────────────
-# test_integrated.c includes fft_radix11_genfft.h etc.
-# These live in sibling directories under src/
+# ── Include paths for ALL codelet headers ─────────────────────────────────
+# Each radix module lives in src/radixN/ with subdirs avx512/, avx2/, scalar/
+# The dispatch headers include their ISA variants via relative paths.
 set(EXEC_CODELET_INCLUDES
+    # Standalone modules (radixN_notw_dit_kernel pattern)
+    ${PROJECT_SOURCE_DIR}/src/radix2
+    ${PROJECT_SOURCE_DIR}/src/radix3
+    ${PROJECT_SOURCE_DIR}/src/radix4
+    ${PROJECT_SOURCE_DIR}/src/radix5
+    ${PROJECT_SOURCE_DIR}/src/radix7
+    ${PROJECT_SOURCE_DIR}/src/radix8
+    ${PROJECT_SOURCE_DIR}/src/radix16
+    ${PROJECT_SOURCE_DIR}/src/radix32
+    # Genfft prime modules (radixN_genfft pattern)
     ${PROJECT_SOURCE_DIR}/src/radix11
     ${PROJECT_SOURCE_DIR}/src/radix13
     ${PROJECT_SOURCE_DIR}/src/radix17
     ${PROJECT_SOURCE_DIR}/src/radix19
     ${PROJECT_SOURCE_DIR}/src/radix23
+    # N1 large codelets
+    ${PROJECT_SOURCE_DIR}/src/radix64
+    ${PROJECT_SOURCE_DIR}/src/radix128
 )
 
 # ── Helper ────────────────────────────────────────────────────────────────
