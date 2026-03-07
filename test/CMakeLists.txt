@@ -65,7 +65,9 @@ set(BENCH_CODELET_INCLUDES
     ${PROJECT_SOURCE_DIR}/src/radix5
     ${PROJECT_SOURCE_DIR}/src/radix7
     ${PROJECT_SOURCE_DIR}/src/radix8
+    ${PROJECT_SOURCE_DIR}/src/radix10
     ${PROJECT_SOURCE_DIR}/src/radix16
+    ${PROJECT_SOURCE_DIR}/src/radix25
     ${PROJECT_SOURCE_DIR}/src/radix32
     # Genfft prime modules
     ${PROJECT_SOURCE_DIR}/src/radix11
