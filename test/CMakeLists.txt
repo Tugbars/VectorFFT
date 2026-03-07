@@ -55,7 +55,12 @@ endif()
 set(BENCH_CODELET_INCLUDES
     # DIT/DIF dispatch modules
     ${PROJECT_SOURCE_DIR}/src/radix2
+    # radix3: flat layout — dispatch.h includes "avx2/...", "scalar/...", "avx512/..."
+    # so we add both the root dir AND the ISA subdirs (shim headers forward to root)
     ${PROJECT_SOURCE_DIR}/src/radix3
+    ${PROJECT_SOURCE_DIR}/src/radix3/avx512
+    ${PROJECT_SOURCE_DIR}/src/radix3/avx2
+    ${PROJECT_SOURCE_DIR}/src/radix3/scalar
     ${PROJECT_SOURCE_DIR}/src/radix4
     ${PROJECT_SOURCE_DIR}/src/radix5
     ${PROJECT_SOURCE_DIR}/src/radix7
