@@ -1,49 +1,34 @@
-# ============================================================================
-# src/radix4/tests/CMakeLists.txt
-# Tests and benchmarks for radix-4
-# ============================================================================
+set(R4_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set(R4_INCLUDE_DIRS ${R4_ROOT} ${R4_ROOT}/avx512 ${R4_ROOT}/avx2 ${R4_ROOT}/scalar)
 
-set(RADIX4_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set(R4_TEST_ISA_FLAGS "")
+set(R4_TEST_ISA "scalar")
+if(VFFT_HAS_AVX512)
+    set(R4_TEST_ISA "AVX512")
+    set(R4_TEST_ISA_FLAGS ${VFFT_FLAGS_AVX512})
+elseif(VFFT_HAS_AVX2)
+    set(R4_TEST_ISA "AVX2")
+    set(R4_TEST_ISA_FLAGS ${VFFT_FLAGS_AVX2})
+endif()
 
-set(RADIX4_ISAS "AVX512;AVX2")
+function(_r4_add_target name source)
+    cmake_parse_arguments(ARG "" "" "ISA_FLAGS" ${ARGN})
+    add_executable(${name} ${source})
+    target_include_directories(${name} PRIVATE ${R4_INCLUDE_DIRS})
+    if(ARG_ISA_FLAGS)
+        target_compile_options(${name} PRIVATE ${ARG_ISA_FLAGS})
+    endif()
+    target_compile_options(${name} PRIVATE ${VFFT_BASE_FLAGS})
+    set_target_properties(${name} PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
+    if(VFFT_BASE_DEFINITIONS)
+        target_compile_definitions(${name} PRIVATE ${VFFT_BASE_DEFINITIONS})
+    endif()
+    if(NOT WIN32)
+        target_link_libraries(${name} PRIVATE m)
+    endif()
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
 
-set(RADIX4_INCLUDES
-    ${RADIX4_DIR}
-    ${RADIX4_DIR}/avx2
-    ${RADIX4_DIR}/avx512
-    ${RADIX4_DIR}/scalar
-)
-
-# ── Correctness tests ────────────────────────────────────────────────────
-
-vfft_add_isa_tests(test_radix4_bv "${RADIX4_ISAS}"
-    test_radix4_bv.c
-    ${RADIX4_DIR}/fft_radix4_bv.c
-    LABELS radix4
-    EXTRA_INCLUDES ${RADIX4_INCLUDES}
-)
-
-vfft_add_isa_tests(test_radix4_fv "${RADIX4_ISAS}"
-    test_radix4_fv.c
-    ${RADIX4_DIR}/fft_radix4_fv.c
-    LABELS radix4
-    EXTRA_INCLUDES ${RADIX4_INCLUDES}
-)
-
-vfft_add_isa_tests(test_roundtrip "${RADIX4_ISAS}"
-    test_roundtrip.c
-    ${RADIX4_DIR}/fft_radix4_fv.c
-    ${RADIX4_DIR}/fft_radix4_bv.c
-    LABELS radix4
-    EXTRA_INCLUDES ${RADIX4_INCLUDES}
-)
-
-# ── Benchmarks ───────────────────────────────────────────────────────────
-
-vfft_add_isa_benchmarks(bench_radix4 "${RADIX4_ISAS}"
-    bench_radix4.c
-    ${RADIX4_DIR}/fft_radix4_fv.c
-    ${RADIX4_DIR}/fft_radix4_bv.c
-    LABELS radix4
-    EXTRA_INCLUDES ${RADIX4_INCLUDES}
-)
+_r4_add_target(test_radix4_dispatch test_radix4.c ISA_FLAGS ${R4_TEST_ISA_FLAGS})
+set_tests_properties(test_radix4_dispatch PROPERTIES LABELS "radix4;correctness;${R4_TEST_ISA}")
+message(STATUS "[radix4/tests] test_radix4_dispatch [${R4_TEST_ISA}]")
