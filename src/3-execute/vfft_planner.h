@@ -164,8 +164,10 @@ typedef struct
 {
     vfft_codelet_fn fwd[VFFT_MAX_RADIX];
     vfft_codelet_fn bwd[VFFT_MAX_RADIX];
-    vfft_tw_codelet_fn tw_fwd[VFFT_MAX_RADIX];
+    vfft_tw_codelet_fn tw_fwd[VFFT_MAX_RADIX]; /* DIT: twiddle before butterfly */
     vfft_tw_codelet_fn tw_bwd[VFFT_MAX_RADIX];
+    vfft_tw_codelet_fn tw_dif_fwd[VFFT_MAX_RADIX]; /* DIF: twiddle after butterfly */
+    vfft_tw_codelet_fn tw_dif_bwd[VFFT_MAX_RADIX];
 } vfft_codelet_registry;
 
 static void vfft_registry_init_naive(vfft_codelet_registry *reg)
@@ -205,6 +207,18 @@ static inline void vfft_registry_set_tw(vfft_codelet_registry *reg,
     {
         reg->tw_fwd[radix] = tw_fwd;
         reg->tw_bwd[radix] = tw_bwd;
+    }
+}
+
+/** Register a DIF twiddled codelet (twiddle AFTER butterfly).
+ *  Used by the DIF backward executor for zero-permutation roundtrips. */
+static inline void vfft_registry_set_tw_dif(vfft_codelet_registry *reg,
+                                            size_t radix, vfft_tw_codelet_fn dif_fwd, vfft_tw_codelet_fn dif_bwd)
+{
+    if (radix < VFFT_MAX_RADIX)
+    {
+        reg->tw_dif_fwd[radix] = dif_fwd;
+        reg->tw_dif_bwd[radix] = dif_bwd;
     }
 }
 
@@ -359,8 +373,10 @@ typedef struct
     size_t N_remaining;
     vfft_codelet_fn fwd; /* notw codelet (always available) */
     vfft_codelet_fn bwd;
-    vfft_tw_codelet_fn tw_fwd; /* fused tw codelet (NULL if not available) */
+    vfft_tw_codelet_fn tw_fwd; /* DIT fused tw (NULL if not available) */
     vfft_tw_codelet_fn tw_bwd;
+    vfft_tw_codelet_fn tw_dif_fwd; /* DIF fused tw (NULL if not available) */
+    vfft_tw_codelet_fn tw_dif_bwd;
     double *tw_re;
     double *tw_im;
     int is_bluestein;
@@ -372,7 +388,8 @@ typedef struct
     size_t N;
     size_t nstages;
     vfft_stage stages[VFFT_MAX_STAGES];
-    size_t *perm;
+    size_t *perm;     /* DIT input / DIF output permutation */
+    size_t *inv_perm; /* Inverse permutation for DIF output gather */
     double *buf_a_re, *buf_a_im;
     double *buf_b_re, *buf_b_im;
 } vfft_plan;
@@ -614,6 +631,8 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
         st->bwd = reg->bwd[st->radix];
         st->tw_fwd = reg->tw_fwd[st->radix];
         st->tw_bwd = reg->tw_bwd[st->radix];
+        st->tw_dif_fwd = reg->tw_dif_fwd[st->radix];
+        st->tw_dif_bwd = reg->tw_dif_bwd[st->radix];
 
         stride *= st->radix;
 
@@ -635,7 +654,15 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
     }
 
     if (fact.nfactors > 1)
+    {
         plan->perm = vfft_build_perm(fact.factors, fact.nfactors, N);
+        /* Build inverse permutation for DIF output gather:
+         * If perm[i] = j, then inv_perm[j] = i.
+         * DIF output: out[i] = scrambled[inv_perm[i]]  (sequential write) */
+        plan->inv_perm = (size_t *)malloc(N * sizeof(size_t));
+        for (size_t i = 0; i < N; i++)
+            plan->inv_perm[plan->perm[i]] = i;
+    }
 
     plan->buf_a_re = (double *)vfft_aligned_alloc(64, N * sizeof(double));
     plan->buf_a_im = (double *)vfft_aligned_alloc(64, N * sizeof(double));
@@ -655,6 +682,7 @@ static void vfft_plan_destroy(vfft_plan *plan)
         vfft_aligned_free(plan->stages[s].tw_im);
     }
     free(plan->perm);
+    free(plan->inv_perm);
     vfft_aligned_free(plan->buf_a_re);
     vfft_aligned_free(plan->buf_a_im);
     vfft_aligned_free(plan->buf_b_re);
@@ -800,13 +828,217 @@ static void vfft_execute_fwd(
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * EXECUTION — BACKWARD
+ * EXECUTION — BACKWARD (DIT, legacy)
  *
  * v4: DIT inner-first, fused tw, zero-copy output.
- *     tw_bwd applies conjugated twiddles fused into butterfly.
+ *     Same structure as forward: input perm → stages inner→outer.
+ *     Used when DIF codelets are not available.
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void vfft_execute_bwd_dit(
+    const vfft_plan *plan,
+    const double *__restrict__ in_re, const double *__restrict__ in_im,
+    double *__restrict__ out_re, double *__restrict__ out_im)
+{
+    const size_t N = plan->N;
+    const size_t S = plan->nstages;
+
+    if (S == 1)
+    {
+        plan->stages[0].bwd(in_re, in_im, out_re, out_im, 1);
+        return;
+    }
+
+    double *src_re = plan->buf_a_re, *src_im = plan->buf_a_im;
+    double *dst_re = plan->buf_b_re, *dst_im = plan->buf_b_im;
+
+    /* DIT backward: same input permutation as forward */
+    if (plan->perm)
+    {
+        for (size_t i = 0; i < N; i++)
+        {
+            src_re[i] = in_re[plan->perm[i]];
+            src_im[i] = in_im[plan->perm[i]];
+        }
+    }
+    else
+    {
+        memcpy(src_re, in_re, N * sizeof(double));
+        memcpy(src_im, in_im, N * sizeof(double));
+    }
+
+    for (int s = 0; s < (int)S; s++)
+    {
+        const vfft_stage *st = &plan->stages[s];
+        const size_t R = st->radix;
+        const size_t K = st->K;
+        const size_t n_outer = N / (R * K);
+
+        if (s == (int)S - 1)
+        {
+            dst_re = out_re;
+            dst_im = out_im;
+        }
+
+        for (size_t g = 0; g < n_outer; g++)
+        {
+            size_t off = g * R * K;
+
+            if (K > 1 && st->tw_re && st->tw_bwd)
+            {
+                st->tw_bwd(
+                    src_re + off, src_im + off,
+                    dst_re + off, dst_im + off,
+                    st->tw_re, st->tw_im, K);
+            }
+            else if (K > 1 && st->tw_re)
+            {
+                vfft_apply_twiddles_dispatch(
+                    src_re + off, src_im + off,
+                    st->tw_re, st->tw_im,
+                    R, K, /*conjugate=*/1);
+                st->bwd(
+                    src_re + off, src_im + off,
+                    dst_re + off, dst_im + off, K);
+            }
+            else
+            {
+                st->bwd(
+                    src_re + off, src_im + off,
+                    dst_re + off, dst_im + off, K);
+            }
+        }
+
+        if (s < (int)S - 1)
+        {
+            double *t;
+            t = src_re;
+            src_re = dst_re;
+            dst_re = t;
+            t = src_im;
+            src_im = dst_im;
+            dst_im = t;
+        }
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * EXECUTION — BACKWARD (DIF)
  *
- * ── FUTURE: DIF backward (zero-permutation roundtrips) ─────────
- * See forward executor comment block for full DIF design.
+ * v5: DIF outer-first execution.
+ *     - Natural input (no permutation — takes DIT forward output directly)
+ *     - Process stages OUTER→INNER (s=S-1 down to 0)
+ *     - Butterfly BEFORE twiddle (DIF convention)
+ *     - Fused DIF tw codelets when available (single memory pass)
+ *     - Fallback: notw butterfly → separate twiddle on output
+ *     - Output inverse digit-reversal permutation (gather)
+ *
+ * Combined with DIT forward:
+ *   DIT fwd:  perm(input) → stages inner→outer → natural output
+ *   DIF bwd:  natural input → stages outer→inner → inv_perm(output)
+ *
+ * For FFT→IFFT roundtrips (convolution, EEMD, cross-correlation),
+ * the intermediate data stays in natural order — no permutation
+ * between forward output and backward input.
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void vfft_execute_bwd_dif(
+    const vfft_plan *plan,
+    const double *__restrict__ in_re, const double *__restrict__ in_im,
+    double *__restrict__ out_re, double *__restrict__ out_im)
+{
+    const size_t N = plan->N;
+    const size_t S = plan->nstages;
+
+    if (S == 1)
+    {
+        plan->stages[0].bwd(in_re, in_im, out_re, out_im, 1);
+        return;
+    }
+
+    double *src_re = plan->buf_a_re, *src_im = plan->buf_a_im;
+    double *dst_re = plan->buf_b_re, *dst_im = plan->buf_b_im;
+
+    /* DIF: natural input — no permutation */
+    memcpy(src_re, in_re, N * sizeof(double));
+    memcpy(src_im, in_im, N * sizeof(double));
+
+    /* Process outer to inner: s=S-1 (largest K) down to s=0 (K=1) */
+    for (int s = (int)S - 1; s >= 0; s--)
+    {
+        const vfft_stage *st = &plan->stages[s];
+        const size_t R = st->radix;
+        const size_t K = st->K;
+        const size_t n_outer = N / (R * K);
+
+        /* Last DIF stage (s=0): write into temp for final perm gather */
+        /* (can't write into out directly because perm is a gather) */
+
+        for (size_t g = 0; g < n_outer; g++)
+        {
+            size_t off = g * R * K;
+
+            if (K > 1 && st->tw_re && st->tw_dif_bwd)
+            {
+                /* Fused DIF: butterfly + conjugated twiddle on output */
+                st->tw_dif_bwd(
+                    src_re + off, src_im + off,
+                    dst_re + off, dst_im + off,
+                    st->tw_re, st->tw_im, K);
+            }
+            else if (K > 1 && st->tw_re)
+            {
+                /* Separate DIF: notw butterfly first, then twiddle output */
+                st->bwd(
+                    src_re + off, src_im + off,
+                    dst_re + off, dst_im + off, K);
+                vfft_apply_twiddles_dispatch(
+                    dst_re + off, dst_im + off,
+                    st->tw_re, st->tw_im,
+                    R, K, /*conjugate=*/1);
+            }
+            else
+            {
+                /* Innermost stage (K=1): no twiddles */
+                st->bwd(
+                    src_re + off, src_im + off,
+                    dst_re + off, dst_im + off, K);
+            }
+        }
+
+        /* Pointer swap */
+        double *t;
+        t = src_re;
+        src_re = dst_re;
+        dst_re = t;
+        t = src_im;
+        src_im = dst_im;
+        dst_im = t;
+    }
+
+    /* DIF: output is in digit-reversed order.
+     * Apply inverse permutation as gather (sequential write, random read).
+     * src now points to the result after all stages + swaps. */
+    if (plan->inv_perm)
+    {
+        for (size_t i = 0; i < N; i++)
+        {
+            out_re[i] = src_re[plan->inv_perm[i]];
+            out_im[i] = src_im[plan->inv_perm[i]];
+        }
+    }
+    else
+    {
+        memcpy(out_re, src_re, N * sizeof(double));
+        memcpy(out_im, src_im, N * sizeof(double));
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * EXECUTION — BACKWARD (auto-select DIT or DIF)
+ *
+ * Prefers DIF when backward codelets are available (natural input,
+ * better for roundtrips). Falls back to DIT, then to conj(fwd(conj(x))).
  * ═══════════════════════════════════════════════════════════════ */
 
 static void vfft_execute_bwd(
@@ -840,86 +1072,8 @@ static void vfft_execute_bwd(
 
     if (have_all_bwd)
     {
-        if (S == 1)
-        {
-            plan->stages[0].bwd(in_re, in_im, out_re, out_im, 1);
-            return;
-        }
-
-        double *src_re = plan->buf_a_re, *src_im = plan->buf_a_im;
-        double *dst_re = plan->buf_b_re, *dst_im = plan->buf_b_im;
-
-        /* DIT backward: same input permutation as forward */
-        if (plan->perm)
-        {
-            for (size_t i = 0; i < N; i++)
-            {
-                src_re[i] = in_re[plan->perm[i]];
-                src_im[i] = in_im[plan->perm[i]];
-            }
-        }
-        else
-        {
-            memcpy(src_re, in_re, N * sizeof(double));
-            memcpy(src_im, in_im, N * sizeof(double));
-        }
-
-        for (int s = 0; s < (int)S; s++)
-        {
-            const vfft_stage *st = &plan->stages[s];
-            const size_t R = st->radix;
-            const size_t K = st->K;
-            const size_t n_outer = N / (R * K);
-
-            /* Last stage: write directly into caller's output */
-            if (s == (int)S - 1)
-            {
-                dst_re = out_re;
-                dst_im = out_im;
-            }
-
-            for (size_t g = 0; g < n_outer; g++)
-            {
-                size_t off = g * R * K;
-
-                if (K > 1 && st->tw_re && st->tw_bwd)
-                {
-                    st->tw_bwd(
-                        src_re + off, src_im + off,
-                        dst_re + off, dst_im + off,
-                        st->tw_re, st->tw_im, K);
-                }
-                else if (K > 1 && st->tw_re)
-                {
-                    vfft_apply_twiddles_dispatch(
-                        src_re + off, src_im + off,
-                        st->tw_re, st->tw_im,
-                        R, K, /*conjugate=*/1);
-
-                    st->bwd(
-                        src_re + off, src_im + off,
-                        dst_re + off, dst_im + off, K);
-                }
-                else
-                {
-                    st->bwd(
-                        src_re + off, src_im + off,
-                        dst_re + off, dst_im + off, K);
-                }
-            }
-
-            if (s < (int)S - 1)
-            {
-                double *t;
-                t = src_re;
-                src_re = dst_re;
-                dst_re = t;
-                t = src_im;
-                src_im = dst_im;
-                dst_im = t;
-            }
-        }
-        /* Output is in out_re/out_im — zero final memcpy */
+        /* Prefer DIF for natural-input backward */
+        vfft_execute_bwd_dif(plan, in_re, in_im, out_re, out_im);
     }
     else
     {
@@ -956,12 +1110,15 @@ static void vfft_plan_print(const vfft_plan *plan)
     for (size_t s = 0; s < plan->nstages; s++)
     {
         const vfft_stage *st = &plan->stages[s];
-        printf("    stage %zu: R=%zu K=%zu %s%s%s\n",
+        printf("    stage %zu: R=%zu K=%zu %s%s%s%s\n",
                s, st->radix, st->K,
                s == 0 ? "N1" : "twiddled",
-               st->tw_fwd ? " [fused]" : "",
+               st->tw_fwd ? " [DIT-tw]" : "",
+               st->tw_dif_bwd ? " [DIF-tw]" : "",
                st->is_bluestein ? " [Bluestein]" : "");
     }
+    printf("  Forward: DIT (input perm → inner→outer → natural out)\n");
+    printf("  Backward: DIF (natural in → outer→inner → output inv_perm)\n");
 }
 
 #endif /* VFFT_PLANNER_H */
