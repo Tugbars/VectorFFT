@@ -378,8 +378,11 @@ typedef struct
     vfft_tw_codelet_fn tw_bwd;
     vfft_tw_codelet_fn tw_dif_fwd; /* DIF fused tw (NULL if not available) */
     vfft_tw_codelet_fn tw_dif_bwd;
-    double *tw_re;
+    double *tw_re; /* strided twiddle table (always built) */
     double *tw_im;
+    double *packed_tw_re; /* pre-packed twiddles (NULL if not packed) */
+    double *packed_tw_im;
+    size_t packed_T; /* SIMD block size: 8 (AVX-512), 4 (AVX2), 0 = not packed */
     int is_bluestein;
     void *bluestein_plan;
 } vfft_stage;
@@ -393,6 +396,9 @@ typedef struct
     size_t *inv_perm; /* Inverse permutation for DIF output gather */
     double *buf_a_re, *buf_a_im;
     double *buf_b_re, *buf_b_im;
+    double *pack_re, *pack_im; /* Packed scratch (max R*K across packed stages) */
+    double *pack_out_re, *pack_out_im;
+    size_t pack_scratch_size; /* Size of packed scratch in doubles */
 } vfft_plan;
 
 /* ═══════════════════════════════════════════════════════════════
@@ -565,6 +571,97 @@ static void vfft_apply_twiddles_dispatch(
 }
 
 /* ═══════════════════════════════════════════════════════════════
+ * PACKED LAYOUT — GENERIC
+ *
+ * Strided: data[n*K + k]               n=0..R-1, k=0..K-1
+ * Packed:  data[b*R*T + n*T + j]       b=block, n=0..R-1, j=0..T-1
+ *
+ * T = SIMD width (8 for AVX-512, 4 for AVX2).
+ * K must be divisible by T.
+ *
+ * Packing makes each block's R×T data contiguous in memory.
+ * Twiddles for one block = (R-1)*T doubles, always fits L1.
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifndef VFFT_PACK_THRESHOLD
+#define VFFT_PACK_THRESHOLD 128 /* pack when K >= this (tw table > ~R*1KB) */
+#endif
+
+static inline size_t vfft_detect_T(size_t K)
+{
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0)
+        return 8;
+#endif
+#if defined(__AVX2__)
+    if (K >= 4 && (K & 3) == 0)
+        return 4;
+#endif
+    return 0; /* no packing for scalar */
+}
+
+static void vfft_pack_data(
+    const double *src_re, const double *src_im,
+    double *dst_re, double *dst_im,
+    size_t R, size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    for (size_t b = 0; b < nb; b++)
+        for (size_t n = 0; n < R; n++)
+            memcpy(&dst_re[b * R * T + n * T], &src_re[n * K + b * T], T * sizeof(double));
+    for (size_t b = 0; b < nb; b++)
+        for (size_t n = 0; n < R; n++)
+            memcpy(&dst_im[b * R * T + n * T], &src_im[n * K + b * T], T * sizeof(double));
+}
+
+static void vfft_unpack_data(
+    const double *src_re, const double *src_im,
+    double *dst_re, double *dst_im,
+    size_t R, size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    for (size_t b = 0; b < nb; b++)
+        for (size_t n = 0; n < R; n++)
+            memcpy(&dst_re[n * K + b * T], &src_re[b * R * T + n * T], T * sizeof(double));
+    for (size_t b = 0; b < nb; b++)
+        for (size_t n = 0; n < R; n++)
+            memcpy(&dst_im[n * K + b * T], &src_im[b * R * T + n * T], T * sizeof(double));
+}
+
+static void vfft_pack_twiddles(
+    const double *src_re, const double *src_im,
+    double *dst_re, double *dst_im,
+    size_t R, size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t Rm1 = R - 1;
+    for (size_t b = 0; b < nb; b++)
+        for (size_t n = 0; n < Rm1; n++)
+            memcpy(&dst_re[b * Rm1 * T + n * T], &src_re[n * K + b * T], T * sizeof(double));
+    for (size_t b = 0; b < nb; b++)
+        for (size_t n = 0; n < Rm1; n++)
+            memcpy(&dst_im[b * Rm1 * T + n * T], &src_im[n * K + b * T], T * sizeof(double));
+}
+
+/* Packed block-loop driver: calls tw codelet at K=T per block.
+ * Data AND twiddles must be in packed layout. */
+static void vfft_packed_tw_loop(
+    vfft_tw_codelet_fn tw_fn,
+    const double *in_re, const double *in_im,
+    double *out_re, double *out_im,
+    const double *tw_re, const double *tw_im,
+    size_t R, size_t K, size_t T)
+{
+    const size_t nb = K / T;
+    const size_t data_block = R * T;
+    const size_t tw_block = (R - 1) * T;
+    for (size_t b = 0; b < nb; b++)
+        tw_fn(in_re + b * data_block, in_im + b * data_block,
+              out_re + b * data_block, out_im + b * data_block,
+              tw_re + b * tw_block, tw_im + b * tw_block, T);
+}
+
+/* ═══════════════════════════════════════════════════════════════
  * DIGIT-REVERSAL PERMUTATION
  * ═══════════════════════════════════════════════════════════════ */
 
@@ -657,12 +754,46 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
     if (fact.nfactors > 1)
     {
         plan->perm = vfft_build_perm(fact.factors, fact.nfactors, N);
-        /* Build inverse permutation for DIF output gather:
-         * If perm[i] = j, then inv_perm[j] = i.
-         * DIF output: out[i] = scrambled[inv_perm[i]]  (sequential write) */
         plan->inv_perm = (size_t *)malloc(N * sizeof(size_t));
         for (size_t i = 0; i < N; i++)
             plan->inv_perm[plan->perm[i]] = i;
+    }
+
+    /* Pre-pack twiddles for stages that benefit from packed layout.
+     * A stage benefits when:
+     *   - K >= VFFT_PACK_THRESHOLD (twiddle table exceeds L1)
+     *   - K is SIMD-aligned (T > 0)
+     *   - Stage has a fused tw codelet (otherwise nothing to drive) */
+    size_t max_pack_size = 0;
+    for (size_t s = 0; s < fact.nfactors; s++)
+    {
+        vfft_stage *st = &plan->stages[s];
+        size_t K = st->K, R = st->radix;
+        size_t T = vfft_detect_T(K);
+
+        if (T > 0 && K >= VFFT_PACK_THRESHOLD && st->tw_re &&
+            (st->tw_fwd || st->tw_dif_bwd))
+        {
+            size_t tw_packed_size = (R - 1) * K;
+            st->packed_tw_re = (double *)vfft_aligned_alloc(64, tw_packed_size * sizeof(double));
+            st->packed_tw_im = (double *)vfft_aligned_alloc(64, tw_packed_size * sizeof(double));
+            vfft_pack_twiddles(st->tw_re, st->tw_im,
+                               st->packed_tw_re, st->packed_tw_im, R, K, T);
+            st->packed_T = T;
+
+            if (R * K > max_pack_size)
+                max_pack_size = R * K;
+        }
+    }
+
+    /* Allocate packed scratch buffers (shared across all packed stages) */
+    if (max_pack_size > 0)
+    {
+        plan->pack_scratch_size = max_pack_size;
+        plan->pack_re = (double *)vfft_aligned_alloc(64, max_pack_size * sizeof(double));
+        plan->pack_im = (double *)vfft_aligned_alloc(64, max_pack_size * sizeof(double));
+        plan->pack_out_re = (double *)vfft_aligned_alloc(64, max_pack_size * sizeof(double));
+        plan->pack_out_im = (double *)vfft_aligned_alloc(64, max_pack_size * sizeof(double));
     }
 
     plan->buf_a_re = (double *)vfft_aligned_alloc(64, N * sizeof(double));
@@ -681,6 +812,8 @@ static void vfft_plan_destroy(vfft_plan *plan)
     {
         vfft_aligned_free(plan->stages[s].tw_re);
         vfft_aligned_free(plan->stages[s].tw_im);
+        vfft_aligned_free(plan->stages[s].packed_tw_re);
+        vfft_aligned_free(plan->stages[s].packed_tw_im);
     }
     free(plan->perm);
     free(plan->inv_perm);
@@ -688,6 +821,10 @@ static void vfft_plan_destroy(vfft_plan *plan)
     vfft_aligned_free(plan->buf_a_im);
     vfft_aligned_free(plan->buf_b_re);
     vfft_aligned_free(plan->buf_b_im);
+    vfft_aligned_free(plan->pack_re);
+    vfft_aligned_free(plan->pack_im);
+    vfft_aligned_free(plan->pack_out_re);
+    vfft_aligned_free(plan->pack_out_im);
     free(plan);
 }
 
@@ -787,7 +924,23 @@ static void vfft_execute_fwd(
         {
             size_t off = g * R * K;
 
-            if (K > 1 && st->tw_re && st->tw_fwd)
+            if (st->packed_T > 0 && st->packed_tw_re && st->tw_fwd)
+            {
+                /* PACKED PATH: pack → block-loop at K=T → unpack
+                 * Twiddles for one block fit L1, massive win at large K */
+                vfft_pack_data(
+                    src_re + off, src_im + off,
+                    plan->pack_re, plan->pack_im, R, K, st->packed_T);
+                vfft_packed_tw_loop(st->tw_fwd,
+                                    plan->pack_re, plan->pack_im,
+                                    plan->pack_out_re, plan->pack_out_im,
+                                    st->packed_tw_re, st->packed_tw_im,
+                                    R, K, st->packed_T);
+                vfft_unpack_data(
+                    plan->pack_out_re, plan->pack_out_im,
+                    dst_re + off, dst_im + off, R, K, st->packed_T);
+            }
+            else if (K > 1 && st->tw_re && st->tw_fwd)
             {
                 st->tw_fwd(
                     src_re + off, src_im + off,
@@ -979,7 +1132,22 @@ static void vfft_execute_bwd_dif(
         {
             size_t off = g * R * K;
 
-            if (K > 1 && st->tw_re && st->tw_dif_bwd)
+            if (st->packed_T > 0 && st->packed_tw_re && st->tw_dif_bwd)
+            {
+                /* PACKED DIF: pack → block-loop at K=T → unpack */
+                vfft_pack_data(
+                    src_re + off, src_im + off,
+                    plan->pack_re, plan->pack_im, R, K, st->packed_T);
+                vfft_packed_tw_loop(st->tw_dif_bwd,
+                                    plan->pack_re, plan->pack_im,
+                                    plan->pack_out_re, plan->pack_out_im,
+                                    st->packed_tw_re, st->packed_tw_im,
+                                    R, K, st->packed_T);
+                vfft_unpack_data(
+                    plan->pack_out_re, plan->pack_out_im,
+                    dst_re + off, dst_im + off, R, K, st->packed_T);
+            }
+            else if (K > 1 && st->tw_re && st->tw_dif_bwd)
             {
                 /* Fused DIF: butterfly + conjugated twiddle on output */
                 st->tw_dif_bwd(
@@ -1111,11 +1279,12 @@ static void vfft_plan_print(const vfft_plan *plan)
     for (size_t s = 0; s < plan->nstages; s++)
     {
         const vfft_stage *st = &plan->stages[s];
-        printf("    stage %zu: R=%zu K=%zu %s%s%s%s\n",
+        printf("    stage %zu: R=%zu K=%zu %s%s%s%s%s\n",
                s, st->radix, st->K,
                s == 0 ? "N1" : "twiddled",
                st->tw_fwd ? " [DIT-tw]" : "",
                st->tw_dif_bwd ? " [DIF-tw]" : "",
+               st->packed_T > 0 ? " [PACKED]" : "",
                st->is_bluestein ? " [Bluestein]" : "");
     }
     printf("  Forward: DIT (input perm → inner→outer → natural out)\n");

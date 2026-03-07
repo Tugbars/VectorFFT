@@ -15,6 +15,16 @@
 typedef enum { VFFT_ISA_SCALAR=0, VFFT_ISA_AVX2=1, VFFT_ISA_AVX512=2 } vfft_isa_level_t;
 #endif
 
+/* N1 (notw) */
+#include "scalar/fft_radix25_scalar_n1.h"
+#ifdef __AVX2__
+#include "avx2/fft_radix25_avx2_n1.h"
+#endif
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include "avx512/fft_radix25_avx512_n1.h"
+#endif
+
+/* Twiddled (DIT) */
 #include "scalar/fft_radix25_scalar_tw.h"
 #ifdef __AVX2__
 #include "avx2/fft_radix25_avx2_tw.h"
@@ -81,5 +91,53 @@ static inline void radix25_tw_backward(
 
 static inline size_t radix25_flat_tw_size(size_t K) { return 24 * K; }
 static inline size_t radix25_data_size(size_t K)    { return 25 * K; }
+
+/* ── N1 (notw) dispatch ── */
+
+static inline void radix25_n1_forward(
+    size_t K,
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im)
+{
+    switch (radix25_effective_isa(K)) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    case VFFT_ISA_AVX512:
+        radix25_n1_dit_kernel_fwd_avx512(in_re, in_im, out_re, out_im, K);
+        return;
+#endif
+#ifdef __AVX2__
+    case VFFT_ISA_AVX2:
+        radix25_n1_dit_kernel_fwd_avx2(in_re, in_im, out_re, out_im, K);
+        return;
+#endif
+    default:
+        radix25_n1_dit_kernel_fwd_scalar(in_re, in_im, out_re, out_im, K);
+        return;
+    }
+}
+
+static inline void radix25_n1_backward(
+    size_t K,
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im)
+{
+    switch (radix25_effective_isa(K)) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    case VFFT_ISA_AVX512:
+        radix25_n1_dit_kernel_bwd_avx512(in_re, in_im, out_re, out_im, K);
+        return;
+#endif
+#ifdef __AVX2__
+    case VFFT_ISA_AVX2:
+        radix25_n1_dit_kernel_bwd_avx2(in_re, in_im, out_re, out_im, K);
+        return;
+#endif
+    default:
+        radix25_n1_dit_kernel_bwd_scalar(in_re, in_im, out_re, out_im, K);
+        return;
+    }
+}
+
+/* ── Twiddled (DIT) dispatch ── */
 
 #endif /* FFT_RADIX25_DISPATCH_H */

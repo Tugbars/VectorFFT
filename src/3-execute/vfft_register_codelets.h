@@ -221,6 +221,10 @@ VFFT_TW_DISPATCH_WRAPPER(8, radix8_tw_dit_kernel)
 VFFT_TW_DISPATCH_WRAPPER(32, radix32_tw_flat_dit_kernel)
 #endif
 
+#ifdef FFT_RADIX25_DISPATCH_H
+VFFT_TW_DISPATCH_WRAPPER(25, radix25_tw_flat_dit_kernel)
+#endif
+
 /* ── Radix-16 tw: no scalar tw kernel, SIMD-only ──
  * Only dispatches for K aligned to SIMD width. The planner will
  * fall back to notw+twiddle for unaligned K (rare in practice —
@@ -319,6 +323,10 @@ VFFT_TW_DIF_DISPATCH_WRAPPER(32, radix32_tw_flat_dif_kernel)
 VFFT_TW_DIF_DISPATCH_WRAPPER(16, radix16_tw_flat_dif_kernel)
 #endif
 
+#ifdef FFT_RADIX25_DIF_DISPATCH_H
+VFFT_TW_DIF_DISPATCH_WRAPPER(25, radix25_tw_flat_dif_kernel)
+#endif
+
 /* ── N1 (notw) dispatch wrappers ── */
 
 /* ── New standalone modules ── */
@@ -353,6 +361,10 @@ VFFT_DISPATCH_WRAPPER(16, radix16_n1_dit_kernel)
 
 #ifdef FFT_RADIX32_DISPATCH_H
 VFFT_DISPATCH_WRAPPER(32, radix32_notw_dit_kernel)
+#endif
+
+#ifdef FFT_RADIX25_DISPATCH_H
+VFFT_DISPATCH_WRAPPER(25, radix25_n1_dit_kernel)
 #endif
 
 /* ── Genfft prime modules ── */
@@ -445,6 +457,9 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #ifdef FFT_RADIX32_DISPATCH_H
     vfft_registry_set(reg, 32, vfft_dispatch_r32_fwd, vfft_dispatch_r32_bwd);
 #endif
+#ifdef FFT_RADIX25_DISPATCH_H
+    vfft_registry_set(reg, 25, vfft_dispatch_r25_fwd, vfft_dispatch_r25_bwd);
+#endif
 
     /* ── Fused tw codelets (single-pass twiddle+butterfly) ── */
 #ifdef FFT_RADIX2_DISPATCH_H
@@ -472,6 +487,9 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #ifdef FFT_RADIX32_DISPATCH_H
     vfft_registry_set_tw(reg, 32, vfft_tw_dispatch_r32_fwd, vfft_tw_dispatch_r32_bwd);
 #endif
+#ifdef FFT_RADIX25_DISPATCH_H
+    vfft_registry_set_tw(reg, 25, vfft_tw_dispatch_r25_fwd, vfft_tw_dispatch_r25_bwd);
+#endif
 
     /* ── DIF tw codelets (twiddle after butterfly) ── */
 #ifdef FFT_RADIX2_DIF_DISPATCH_H
@@ -497,6 +515,9 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #endif
 #ifdef FFT_RADIX16_DIF_DISPATCH_H
     vfft_registry_set_tw_dif(reg, 16, vfft_tw_dif_dispatch_r16_fwd, vfft_tw_dif_dispatch_r16_bwd);
+#endif
+#ifdef FFT_RADIX25_DIF_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 25, vfft_tw_dif_dispatch_r25_fwd, vfft_tw_dif_dispatch_r25_bwd);
 #endif
 
     /* ── Genfft prime modules ── */
@@ -535,7 +556,7 @@ static void vfft_print_registry(const vfft_codelet_registry *reg)
     printf("  ISA: %s\n", isa_name[vfft_detect_isa()]);
     printf("  Registered codelets:\n");
 
-    size_t radixes[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 16, 17, 19, 23, 32, 64, 128};
+    size_t radixes[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 16, 17, 19, 23, 25, 32, 64, 128};
     for (size_t i = 0; i < sizeof(radixes) / sizeof(radixes[0]); i++)
     {
         size_t r = radixes[i];
@@ -609,6 +630,11 @@ static void vfft_print_registry(const vfft_codelet_registry *reg)
 #endif
 #ifdef FFT_RADIX32_DISPATCH_H
             case 32:
+                kind = "optimized";
+                break;
+#endif
+#ifdef FFT_RADIX25_DISPATCH_H
+            case 25:
                 kind = "optimized";
                 break;
 #endif
