@@ -40,6 +40,11 @@ endif()
 # ── Source tree ──────────────────────────────────────────────────────────
 add_subdirectory(src)
 
+# ── Benchmarks ───────────────────────────────────────────────────────────
+if(VFFT_BUILD_BENCHMARKS)
+    add_subdirectory(test)
+endif()
+
 # ── CTest ────────────────────────────────────────────────────────────────
 if(VFFT_BUILD_TESTS)
     enable_testing()
