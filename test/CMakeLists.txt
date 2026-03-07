@@ -73,9 +73,16 @@ set(BENCH_CODELET_INCLUDES
     ${PROJECT_SOURCE_DIR}/src/radix17
     ${PROJECT_SOURCE_DIR}/src/radix19
     ${PROJECT_SOURCE_DIR}/src/radix23
-    # N1 large codelets
+    # N1 large codelets — driver headers include ISA files flat (no subdir prefix),
+    # so the ISA subdirs must be on the search path
     ${PROJECT_SOURCE_DIR}/src/radix64
+    ${PROJECT_SOURCE_DIR}/src/radix64/scalar
+    ${PROJECT_SOURCE_DIR}/src/radix64/avx2
+    ${PROJECT_SOURCE_DIR}/src/radix64/avx512
     ${PROJECT_SOURCE_DIR}/src/radix128
+    ${PROJECT_SOURCE_DIR}/src/radix128/scalar
+    ${PROJECT_SOURCE_DIR}/src/radix128/avx2
+    ${PROJECT_SOURCE_DIR}/src/radix128/avx512
     # Planner + registry
     ${PROJECT_SOURCE_DIR}/src/3-execute
     # Common utilities
