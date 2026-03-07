@@ -193,8 +193,24 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 
 /* ── Twiddled wrappers for radices with full ISA coverage ── */
 
+#ifdef FFT_RADIX2_DISPATCH_H
+VFFT_TW_DISPATCH_WRAPPER(2, radix2_tw_dit_kernel)
+#endif
+
 #ifdef FFT_RADIX3_DISPATCH_H
 VFFT_TW_DISPATCH_WRAPPER(3, radix3_tw_dit_kernel)
+#endif
+
+#ifdef FFT_RADIX4_DISPATCH_H
+VFFT_TW_DISPATCH_WRAPPER(4, radix4_tw_dit_kernel)
+#endif
+
+#ifdef FFT_RADIX5_DISPATCH_H
+VFFT_TW_DISPATCH_WRAPPER(5, radix5_tw_dit_kernel)
+#endif
+
+#ifdef FFT_RADIX7_DISPATCH_H
+VFFT_TW_DISPATCH_WRAPPER(7, radix7_tw_dit_kernel)
 #endif
 
 #ifdef FFT_RADIX8_DISPATCH_H
@@ -407,13 +423,33 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #endif
 
     /* ── Fused tw codelets (single-pass twiddle+butterfly) ── */
+#ifdef FFT_RADIX2_DISPATCH_H
+    vfft_registry_set_tw(reg, 2, vfft_tw_dispatch_r2_fwd, vfft_tw_dispatch_r2_bwd);
+#endif
 #ifdef FFT_RADIX3_DISPATCH_H
     vfft_registry_set_tw(reg, 3, vfft_tw_dispatch_r3_fwd, vfft_tw_dispatch_r3_bwd);
+#endif
+#ifdef FFT_RADIX4_DISPATCH_H
+    vfft_registry_set_tw(reg, 4, vfft_tw_dispatch_r4_fwd, vfft_tw_dispatch_r4_bwd);
+#endif
+#ifdef FFT_RADIX5_DISPATCH_H
+    vfft_registry_set_tw(reg, 5, vfft_tw_dispatch_r5_fwd, vfft_tw_dispatch_r5_bwd);
+#endif
+#ifdef FFT_RADIX7_DISPATCH_H
+    vfft_registry_set_tw(reg, 7, vfft_tw_dispatch_r7_fwd, vfft_tw_dispatch_r7_bwd);
 #endif
 #ifdef FFT_RADIX8_DISPATCH_H
     vfft_registry_set_tw(reg, 8, vfft_tw_dispatch_r8_fwd, vfft_tw_dispatch_r8_bwd);
 #endif
-    /* radix-16: no scalar tw fallback — tw stays NULL, planner uses notw path */
+    /* radix-16 tw: SIMD-only (no scalar tw kernel).
+     * Safe: K at a r16 outer stage = product of inner radices,
+     * always SIMD-aligned in practice. If K is unaligned, the
+     * wrapper is a no-op and planner already wrote output via
+     * the notw+twiddle fallback... BUT that fallback is never
+     * reached if tw_fwd is non-NULL. So leave unregistered. */
+    /* #ifdef FFT_RADIX16_DISPATCH_H
+    vfft_registry_set_tw(reg, 16, vfft_tw_dispatch_r16_fwd, vfft_tw_dispatch_r16_bwd);
+    #endif */
 #ifdef FFT_RADIX32_DISPATCH_H
     vfft_registry_set_tw(reg, 32, vfft_tw_dispatch_r32_fwd, vfft_tw_dispatch_r32_bwd);
 #endif
