@@ -19,14 +19,14 @@ radix8_notw_dit_kernel_fwd_avx512(
     const __m512d vnc = _mm512_set1_pd(-0.707106781186547572737310929369414225220680236816);
     for (size_t k = 0; k < K; k += 8)
     {
-        const __m512d x0r = _mm512_loadu_pd(&in_re[0 * K + k]), x0i = _mm512_loadu_pd(&in_im[0 * K + k]);
-        const __m512d x1r = _mm512_loadu_pd(&in_re[1 * K + k]), x1i = _mm512_loadu_pd(&in_im[1 * K + k]);
-        const __m512d x2r = _mm512_loadu_pd(&in_re[2 * K + k]), x2i = _mm512_loadu_pd(&in_im[2 * K + k]);
-        const __m512d x3r = _mm512_loadu_pd(&in_re[3 * K + k]), x3i = _mm512_loadu_pd(&in_im[3 * K + k]);
-        const __m512d x4r = _mm512_loadu_pd(&in_re[4 * K + k]), x4i = _mm512_loadu_pd(&in_im[4 * K + k]);
-        const __m512d x5r = _mm512_loadu_pd(&in_re[5 * K + k]), x5i = _mm512_loadu_pd(&in_im[5 * K + k]);
-        const __m512d x6r = _mm512_loadu_pd(&in_re[6 * K + k]), x6i = _mm512_loadu_pd(&in_im[6 * K + k]);
-        const __m512d x7r = _mm512_loadu_pd(&in_re[7 * K + k]), x7i = _mm512_loadu_pd(&in_im[7 * K + k]);
+        const __m512d x0r = _mm512_load_pd(&in_re[0 * K + k]), x0i = _mm512_load_pd(&in_im[0 * K + k]);
+        const __m512d x1r = _mm512_load_pd(&in_re[1 * K + k]), x1i = _mm512_load_pd(&in_im[1 * K + k]);
+        const __m512d x2r = _mm512_load_pd(&in_re[2 * K + k]), x2i = _mm512_load_pd(&in_im[2 * K + k]);
+        const __m512d x3r = _mm512_load_pd(&in_re[3 * K + k]), x3i = _mm512_load_pd(&in_im[3 * K + k]);
+        const __m512d x4r = _mm512_load_pd(&in_re[4 * K + k]), x4i = _mm512_load_pd(&in_im[4 * K + k]);
+        const __m512d x5r = _mm512_load_pd(&in_re[5 * K + k]), x5i = _mm512_load_pd(&in_im[5 * K + k]);
+        const __m512d x6r = _mm512_load_pd(&in_re[6 * K + k]), x6i = _mm512_load_pd(&in_im[6 * K + k]);
+        const __m512d x7r = _mm512_load_pd(&in_re[7 * K + k]), x7i = _mm512_load_pd(&in_im[7 * K + k]);
         /* DFT-4 evens */
         const __m512d epr = _mm512_add_pd(x0r, x4r), epi = _mm512_add_pd(x0i, x4i);
         const __m512d eqr = _mm512_sub_pd(x0r, x4r), eqi = _mm512_sub_pd(x0i, x4i);
@@ -46,24 +46,24 @@ radix8_notw_dit_kernel_fwd_avx512(
         const __m512d B1r = _mm512_add_pd(oqr, osi), B1i = _mm512_sub_pd(oqi, osr);
         const __m512d B3r = _mm512_sub_pd(oqr, osi), B3i = _mm512_add_pd(oqi, osr);
         /* W8 combine */
-        _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(A0r, B0r));
-        _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(A0i, B0i));
-        _mm512_storeu_pd(&out_re[4 * K + k], _mm512_sub_pd(A0r, B0r));
-        _mm512_storeu_pd(&out_im[4 * K + k], _mm512_sub_pd(A0i, B0i));
+        _mm512_store_pd(&out_re[0 * K + k], _mm512_add_pd(A0r, B0r));
+        _mm512_store_pd(&out_im[0 * K + k], _mm512_add_pd(A0i, B0i));
+        _mm512_store_pd(&out_re[4 * K + k], _mm512_sub_pd(A0r, B0r));
+        _mm512_store_pd(&out_im[4 * K + k], _mm512_sub_pd(A0i, B0i));
         const __m512d t1r = _mm512_mul_pd(vc, _mm512_add_pd(B1r, B1i)), t1i = _mm512_mul_pd(vc, _mm512_sub_pd(B1i, B1r));
-        _mm512_storeu_pd(&out_re[1 * K + k], _mm512_add_pd(A1r, t1r));
-        _mm512_storeu_pd(&out_im[1 * K + k], _mm512_add_pd(A1i, t1i));
-        _mm512_storeu_pd(&out_re[5 * K + k], _mm512_sub_pd(A1r, t1r));
-        _mm512_storeu_pd(&out_im[5 * K + k], _mm512_sub_pd(A1i, t1i));
-        _mm512_storeu_pd(&out_re[2 * K + k], _mm512_add_pd(A2r, B2i));
-        _mm512_storeu_pd(&out_im[2 * K + k], _mm512_sub_pd(A2i, B2r));
-        _mm512_storeu_pd(&out_re[6 * K + k], _mm512_sub_pd(A2r, B2i));
-        _mm512_storeu_pd(&out_im[6 * K + k], _mm512_add_pd(A2i, B2r));
+        _mm512_store_pd(&out_re[1 * K + k], _mm512_add_pd(A1r, t1r));
+        _mm512_store_pd(&out_im[1 * K + k], _mm512_add_pd(A1i, t1i));
+        _mm512_store_pd(&out_re[5 * K + k], _mm512_sub_pd(A1r, t1r));
+        _mm512_store_pd(&out_im[5 * K + k], _mm512_sub_pd(A1i, t1i));
+        _mm512_store_pd(&out_re[2 * K + k], _mm512_add_pd(A2r, B2i));
+        _mm512_store_pd(&out_im[2 * K + k], _mm512_sub_pd(A2i, B2r));
+        _mm512_store_pd(&out_re[6 * K + k], _mm512_sub_pd(A2r, B2i));
+        _mm512_store_pd(&out_im[6 * K + k], _mm512_add_pd(A2i, B2r));
         const __m512d t3r = _mm512_mul_pd(vnc, _mm512_sub_pd(B3r, B3i)), t3i = _mm512_mul_pd(vnc, _mm512_add_pd(B3r, B3i));
-        _mm512_storeu_pd(&out_re[3 * K + k], _mm512_add_pd(A3r, t3r));
-        _mm512_storeu_pd(&out_im[3 * K + k], _mm512_add_pd(A3i, t3i));
-        _mm512_storeu_pd(&out_re[7 * K + k], _mm512_sub_pd(A3r, t3r));
-        _mm512_storeu_pd(&out_im[7 * K + k], _mm512_sub_pd(A3i, t3i));
+        _mm512_store_pd(&out_re[3 * K + k], _mm512_add_pd(A3r, t3r));
+        _mm512_store_pd(&out_im[3 * K + k], _mm512_add_pd(A3i, t3i));
+        _mm512_store_pd(&out_re[7 * K + k], _mm512_sub_pd(A3r, t3r));
+        _mm512_store_pd(&out_im[7 * K + k], _mm512_sub_pd(A3i, t3i));
     }
 }
 
@@ -77,14 +77,14 @@ radix8_notw_dit_kernel_bwd_avx512(
     const __m512d vnc = _mm512_set1_pd(-0.707106781186547572737310929369414225220680236816);
     for (size_t k = 0; k < K; k += 8)
     {
-        const __m512d x0r = _mm512_loadu_pd(&in_re[0 * K + k]), x0i = _mm512_loadu_pd(&in_im[0 * K + k]);
-        const __m512d x1r = _mm512_loadu_pd(&in_re[1 * K + k]), x1i = _mm512_loadu_pd(&in_im[1 * K + k]);
-        const __m512d x2r = _mm512_loadu_pd(&in_re[2 * K + k]), x2i = _mm512_loadu_pd(&in_im[2 * K + k]);
-        const __m512d x3r = _mm512_loadu_pd(&in_re[3 * K + k]), x3i = _mm512_loadu_pd(&in_im[3 * K + k]);
-        const __m512d x4r = _mm512_loadu_pd(&in_re[4 * K + k]), x4i = _mm512_loadu_pd(&in_im[4 * K + k]);
-        const __m512d x5r = _mm512_loadu_pd(&in_re[5 * K + k]), x5i = _mm512_loadu_pd(&in_im[5 * K + k]);
-        const __m512d x6r = _mm512_loadu_pd(&in_re[6 * K + k]), x6i = _mm512_loadu_pd(&in_im[6 * K + k]);
-        const __m512d x7r = _mm512_loadu_pd(&in_re[7 * K + k]), x7i = _mm512_loadu_pd(&in_im[7 * K + k]);
+        const __m512d x0r = _mm512_load_pd(&in_re[0 * K + k]), x0i = _mm512_load_pd(&in_im[0 * K + k]);
+        const __m512d x1r = _mm512_load_pd(&in_re[1 * K + k]), x1i = _mm512_load_pd(&in_im[1 * K + k]);
+        const __m512d x2r = _mm512_load_pd(&in_re[2 * K + k]), x2i = _mm512_load_pd(&in_im[2 * K + k]);
+        const __m512d x3r = _mm512_load_pd(&in_re[3 * K + k]), x3i = _mm512_load_pd(&in_im[3 * K + k]);
+        const __m512d x4r = _mm512_load_pd(&in_re[4 * K + k]), x4i = _mm512_load_pd(&in_im[4 * K + k]);
+        const __m512d x5r = _mm512_load_pd(&in_re[5 * K + k]), x5i = _mm512_load_pd(&in_im[5 * K + k]);
+        const __m512d x6r = _mm512_load_pd(&in_re[6 * K + k]), x6i = _mm512_load_pd(&in_im[6 * K + k]);
+        const __m512d x7r = _mm512_load_pd(&in_re[7 * K + k]), x7i = _mm512_load_pd(&in_im[7 * K + k]);
         /* DFT-4 evens */
         const __m512d epr = _mm512_add_pd(x0r, x4r), epi = _mm512_add_pd(x0i, x4i);
         const __m512d eqr = _mm512_sub_pd(x0r, x4r), eqi = _mm512_sub_pd(x0i, x4i);
@@ -104,24 +104,24 @@ radix8_notw_dit_kernel_bwd_avx512(
         const __m512d B1r = _mm512_sub_pd(oqr, osi), B1i = _mm512_add_pd(oqi, osr);
         const __m512d B3r = _mm512_add_pd(oqr, osi), B3i = _mm512_sub_pd(oqi, osr);
         /* W8 combine */
-        _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(A0r, B0r));
-        _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(A0i, B0i));
-        _mm512_storeu_pd(&out_re[4 * K + k], _mm512_sub_pd(A0r, B0r));
-        _mm512_storeu_pd(&out_im[4 * K + k], _mm512_sub_pd(A0i, B0i));
+        _mm512_store_pd(&out_re[0 * K + k], _mm512_add_pd(A0r, B0r));
+        _mm512_store_pd(&out_im[0 * K + k], _mm512_add_pd(A0i, B0i));
+        _mm512_store_pd(&out_re[4 * K + k], _mm512_sub_pd(A0r, B0r));
+        _mm512_store_pd(&out_im[4 * K + k], _mm512_sub_pd(A0i, B0i));
         const __m512d t1r = _mm512_mul_pd(vc, _mm512_sub_pd(B1r, B1i)), t1i = _mm512_mul_pd(vc, _mm512_add_pd(B1r, B1i));
-        _mm512_storeu_pd(&out_re[1 * K + k], _mm512_add_pd(A1r, t1r));
-        _mm512_storeu_pd(&out_im[1 * K + k], _mm512_add_pd(A1i, t1i));
-        _mm512_storeu_pd(&out_re[5 * K + k], _mm512_sub_pd(A1r, t1r));
-        _mm512_storeu_pd(&out_im[5 * K + k], _mm512_sub_pd(A1i, t1i));
-        _mm512_storeu_pd(&out_re[2 * K + k], _mm512_sub_pd(A2r, B2i));
-        _mm512_storeu_pd(&out_im[2 * K + k], _mm512_add_pd(A2i, B2r));
-        _mm512_storeu_pd(&out_re[6 * K + k], _mm512_add_pd(A2r, B2i));
-        _mm512_storeu_pd(&out_im[6 * K + k], _mm512_sub_pd(A2i, B2r));
+        _mm512_store_pd(&out_re[1 * K + k], _mm512_add_pd(A1r, t1r));
+        _mm512_store_pd(&out_im[1 * K + k], _mm512_add_pd(A1i, t1i));
+        _mm512_store_pd(&out_re[5 * K + k], _mm512_sub_pd(A1r, t1r));
+        _mm512_store_pd(&out_im[5 * K + k], _mm512_sub_pd(A1i, t1i));
+        _mm512_store_pd(&out_re[2 * K + k], _mm512_sub_pd(A2r, B2i));
+        _mm512_store_pd(&out_im[2 * K + k], _mm512_add_pd(A2i, B2r));
+        _mm512_store_pd(&out_re[6 * K + k], _mm512_add_pd(A2r, B2i));
+        _mm512_store_pd(&out_im[6 * K + k], _mm512_sub_pd(A2i, B2r));
         const __m512d t3r = _mm512_mul_pd(vnc, _mm512_add_pd(B3r, B3i)), t3i = _mm512_mul_pd(vc, _mm512_sub_pd(B3r, B3i));
-        _mm512_storeu_pd(&out_re[3 * K + k], _mm512_add_pd(A3r, t3r));
-        _mm512_storeu_pd(&out_im[3 * K + k], _mm512_add_pd(A3i, t3i));
-        _mm512_storeu_pd(&out_re[7 * K + k], _mm512_sub_pd(A3r, t3r));
-        _mm512_storeu_pd(&out_im[7 * K + k], _mm512_sub_pd(A3i, t3i));
+        _mm512_store_pd(&out_re[3 * K + k], _mm512_add_pd(A3r, t3r));
+        _mm512_store_pd(&out_im[3 * K + k], _mm512_add_pd(A3i, t3i));
+        _mm512_store_pd(&out_re[7 * K + k], _mm512_sub_pd(A3r, t3r));
+        _mm512_store_pd(&out_im[7 * K + k], _mm512_sub_pd(A3i, t3i));
     }
 }
 
@@ -137,9 +137,9 @@ radix8_tw_dit_kernel_fwd_avx512(
     for (size_t k = 0; k < K; k += 8)
     {
         /* Load 3 base twiddles: W^1, W^2, W^4 */
-        const __m512d tw1r = _mm512_loadu_pd(&tw_re[0 * K + k]), tw1i = _mm512_loadu_pd(&tw_im[0 * K + k]);
-        const __m512d tw2r = _mm512_loadu_pd(&tw_re[1 * K + k]), tw2i = _mm512_loadu_pd(&tw_im[1 * K + k]);
-        const __m512d tw4r = _mm512_loadu_pd(&tw_re[3 * K + k]), tw4i = _mm512_loadu_pd(&tw_im[3 * K + k]);
+        const __m512d tw1r = _mm512_load_pd(&tw_re[0 * K + k]), tw1i = _mm512_load_pd(&tw_im[0 * K + k]);
+        const __m512d tw2r = _mm512_load_pd(&tw_re[1 * K + k]), tw2i = _mm512_load_pd(&tw_im[1 * K + k]);
+        const __m512d tw4r = _mm512_load_pd(&tw_re[3 * K + k]), tw4i = _mm512_load_pd(&tw_im[3 * K + k]);
         /* Derive W^3 = W^1 × W^2 */
         const __m512d tw3r = _mm512_fmsub_pd(tw1r, tw2r, _mm512_mul_pd(tw1i, tw2i));
         const __m512d tw3i = _mm512_fmadd_pd(tw1r, tw2i, _mm512_mul_pd(tw1i, tw2r));
@@ -152,26 +152,26 @@ radix8_tw_dit_kernel_fwd_avx512(
         /* Derive W^7 = W^3 × W^4 */
         const __m512d tw7r = _mm512_fmsub_pd(tw3r, tw4r, _mm512_mul_pd(tw3i, tw4i));
         const __m512d tw7i = _mm512_fmadd_pd(tw3r, tw4i, _mm512_mul_pd(tw3i, tw4r));
-        const __m512d x0r = _mm512_loadu_pd(&in_re[k]), x0i = _mm512_loadu_pd(&in_im[k]);
-        const __m512d r1r = _mm512_loadu_pd(&in_re[1 * K + k]), r1i = _mm512_loadu_pd(&in_im[1 * K + k]);
+        const __m512d x0r = _mm512_load_pd(&in_re[k]), x0i = _mm512_load_pd(&in_im[k]);
+        const __m512d r1r = _mm512_load_pd(&in_re[1 * K + k]), r1i = _mm512_load_pd(&in_im[1 * K + k]);
         const __m512d x1r = _mm512_fmsub_pd(r1r, tw1r, _mm512_mul_pd(r1i, tw1i));
         const __m512d x1i = _mm512_fmadd_pd(r1r, tw1i, _mm512_mul_pd(r1i, tw1r));
-        const __m512d r2r = _mm512_loadu_pd(&in_re[2 * K + k]), r2i = _mm512_loadu_pd(&in_im[2 * K + k]);
+        const __m512d r2r = _mm512_load_pd(&in_re[2 * K + k]), r2i = _mm512_load_pd(&in_im[2 * K + k]);
         const __m512d x2r = _mm512_fmsub_pd(r2r, tw2r, _mm512_mul_pd(r2i, tw2i));
         const __m512d x2i = _mm512_fmadd_pd(r2r, tw2i, _mm512_mul_pd(r2i, tw2r));
-        const __m512d r3r = _mm512_loadu_pd(&in_re[3 * K + k]), r3i = _mm512_loadu_pd(&in_im[3 * K + k]);
+        const __m512d r3r = _mm512_load_pd(&in_re[3 * K + k]), r3i = _mm512_load_pd(&in_im[3 * K + k]);
         const __m512d x3r = _mm512_fmsub_pd(r3r, tw3r, _mm512_mul_pd(r3i, tw3i));
         const __m512d x3i = _mm512_fmadd_pd(r3r, tw3i, _mm512_mul_pd(r3i, tw3r));
-        const __m512d r4r = _mm512_loadu_pd(&in_re[4 * K + k]), r4i = _mm512_loadu_pd(&in_im[4 * K + k]);
+        const __m512d r4r = _mm512_load_pd(&in_re[4 * K + k]), r4i = _mm512_load_pd(&in_im[4 * K + k]);
         const __m512d x4r = _mm512_fmsub_pd(r4r, tw4r, _mm512_mul_pd(r4i, tw4i));
         const __m512d x4i = _mm512_fmadd_pd(r4r, tw4i, _mm512_mul_pd(r4i, tw4r));
-        const __m512d r5r = _mm512_loadu_pd(&in_re[5 * K + k]), r5i = _mm512_loadu_pd(&in_im[5 * K + k]);
+        const __m512d r5r = _mm512_load_pd(&in_re[5 * K + k]), r5i = _mm512_load_pd(&in_im[5 * K + k]);
         const __m512d x5r = _mm512_fmsub_pd(r5r, tw5r, _mm512_mul_pd(r5i, tw5i));
         const __m512d x5i = _mm512_fmadd_pd(r5r, tw5i, _mm512_mul_pd(r5i, tw5r));
-        const __m512d r6r = _mm512_loadu_pd(&in_re[6 * K + k]), r6i = _mm512_loadu_pd(&in_im[6 * K + k]);
+        const __m512d r6r = _mm512_load_pd(&in_re[6 * K + k]), r6i = _mm512_load_pd(&in_im[6 * K + k]);
         const __m512d x6r = _mm512_fmsub_pd(r6r, tw6r, _mm512_mul_pd(r6i, tw6i));
         const __m512d x6i = _mm512_fmadd_pd(r6r, tw6i, _mm512_mul_pd(r6i, tw6r));
-        const __m512d r7r = _mm512_loadu_pd(&in_re[7 * K + k]), r7i = _mm512_loadu_pd(&in_im[7 * K + k]);
+        const __m512d r7r = _mm512_load_pd(&in_re[7 * K + k]), r7i = _mm512_load_pd(&in_im[7 * K + k]);
         const __m512d x7r = _mm512_fmsub_pd(r7r, tw7r, _mm512_mul_pd(r7i, tw7i));
         const __m512d x7i = _mm512_fmadd_pd(r7r, tw7i, _mm512_mul_pd(r7i, tw7r));
         /* DFT-4 evens */
@@ -193,24 +193,24 @@ radix8_tw_dit_kernel_fwd_avx512(
         const __m512d B1r = _mm512_add_pd(oqr, osi), B1i = _mm512_sub_pd(oqi, osr);
         const __m512d B3r = _mm512_sub_pd(oqr, osi), B3i = _mm512_add_pd(oqi, osr);
         /* W8 combine */
-        _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(A0r, B0r));
-        _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(A0i, B0i));
-        _mm512_storeu_pd(&out_re[4 * K + k], _mm512_sub_pd(A0r, B0r));
-        _mm512_storeu_pd(&out_im[4 * K + k], _mm512_sub_pd(A0i, B0i));
+        _mm512_store_pd(&out_re[0 * K + k], _mm512_add_pd(A0r, B0r));
+        _mm512_store_pd(&out_im[0 * K + k], _mm512_add_pd(A0i, B0i));
+        _mm512_store_pd(&out_re[4 * K + k], _mm512_sub_pd(A0r, B0r));
+        _mm512_store_pd(&out_im[4 * K + k], _mm512_sub_pd(A0i, B0i));
         const __m512d t1r = _mm512_mul_pd(vc, _mm512_add_pd(B1r, B1i)), t1i = _mm512_mul_pd(vc, _mm512_sub_pd(B1i, B1r));
-        _mm512_storeu_pd(&out_re[1 * K + k], _mm512_add_pd(A1r, t1r));
-        _mm512_storeu_pd(&out_im[1 * K + k], _mm512_add_pd(A1i, t1i));
-        _mm512_storeu_pd(&out_re[5 * K + k], _mm512_sub_pd(A1r, t1r));
-        _mm512_storeu_pd(&out_im[5 * K + k], _mm512_sub_pd(A1i, t1i));
-        _mm512_storeu_pd(&out_re[2 * K + k], _mm512_add_pd(A2r, B2i));
-        _mm512_storeu_pd(&out_im[2 * K + k], _mm512_sub_pd(A2i, B2r));
-        _mm512_storeu_pd(&out_re[6 * K + k], _mm512_sub_pd(A2r, B2i));
-        _mm512_storeu_pd(&out_im[6 * K + k], _mm512_add_pd(A2i, B2r));
+        _mm512_store_pd(&out_re[1 * K + k], _mm512_add_pd(A1r, t1r));
+        _mm512_store_pd(&out_im[1 * K + k], _mm512_add_pd(A1i, t1i));
+        _mm512_store_pd(&out_re[5 * K + k], _mm512_sub_pd(A1r, t1r));
+        _mm512_store_pd(&out_im[5 * K + k], _mm512_sub_pd(A1i, t1i));
+        _mm512_store_pd(&out_re[2 * K + k], _mm512_add_pd(A2r, B2i));
+        _mm512_store_pd(&out_im[2 * K + k], _mm512_sub_pd(A2i, B2r));
+        _mm512_store_pd(&out_re[6 * K + k], _mm512_sub_pd(A2r, B2i));
+        _mm512_store_pd(&out_im[6 * K + k], _mm512_add_pd(A2i, B2r));
         const __m512d t3r = _mm512_mul_pd(vnc, _mm512_sub_pd(B3r, B3i)), t3i = _mm512_mul_pd(vnc, _mm512_add_pd(B3r, B3i));
-        _mm512_storeu_pd(&out_re[3 * K + k], _mm512_add_pd(A3r, t3r));
-        _mm512_storeu_pd(&out_im[3 * K + k], _mm512_add_pd(A3i, t3i));
-        _mm512_storeu_pd(&out_re[7 * K + k], _mm512_sub_pd(A3r, t3r));
-        _mm512_storeu_pd(&out_im[7 * K + k], _mm512_sub_pd(A3i, t3i));
+        _mm512_store_pd(&out_re[3 * K + k], _mm512_add_pd(A3r, t3r));
+        _mm512_store_pd(&out_im[3 * K + k], _mm512_add_pd(A3i, t3i));
+        _mm512_store_pd(&out_re[7 * K + k], _mm512_sub_pd(A3r, t3r));
+        _mm512_store_pd(&out_im[7 * K + k], _mm512_sub_pd(A3i, t3i));
     }
 }
 
@@ -226,9 +226,9 @@ radix8_tw_dit_kernel_bwd_avx512(
     for (size_t k = 0; k < K; k += 8)
     {
         /* Load 3 base twiddles: W^1, W^2, W^4 */
-        const __m512d tw1r = _mm512_loadu_pd(&tw_re[0 * K + k]), tw1i = _mm512_loadu_pd(&tw_im[0 * K + k]);
-        const __m512d tw2r = _mm512_loadu_pd(&tw_re[1 * K + k]), tw2i = _mm512_loadu_pd(&tw_im[1 * K + k]);
-        const __m512d tw4r = _mm512_loadu_pd(&tw_re[3 * K + k]), tw4i = _mm512_loadu_pd(&tw_im[3 * K + k]);
+        const __m512d tw1r = _mm512_load_pd(&tw_re[0 * K + k]), tw1i = _mm512_load_pd(&tw_im[0 * K + k]);
+        const __m512d tw2r = _mm512_load_pd(&tw_re[1 * K + k]), tw2i = _mm512_load_pd(&tw_im[1 * K + k]);
+        const __m512d tw4r = _mm512_load_pd(&tw_re[3 * K + k]), tw4i = _mm512_load_pd(&tw_im[3 * K + k]);
         /* Derive W^3 = W^1 × W^2 */
         const __m512d tw3r = _mm512_fmsub_pd(tw1r, tw2r, _mm512_mul_pd(tw1i, tw2i));
         const __m512d tw3i = _mm512_fmadd_pd(tw1r, tw2i, _mm512_mul_pd(tw1i, tw2r));
@@ -241,26 +241,26 @@ radix8_tw_dit_kernel_bwd_avx512(
         /* Derive W^7 = W^3 × W^4 */
         const __m512d tw7r = _mm512_fmsub_pd(tw3r, tw4r, _mm512_mul_pd(tw3i, tw4i));
         const __m512d tw7i = _mm512_fmadd_pd(tw3r, tw4i, _mm512_mul_pd(tw3i, tw4r));
-        const __m512d x0r = _mm512_loadu_pd(&in_re[k]), x0i = _mm512_loadu_pd(&in_im[k]);
-        const __m512d r1r = _mm512_loadu_pd(&in_re[1 * K + k]), r1i = _mm512_loadu_pd(&in_im[1 * K + k]);
+        const __m512d x0r = _mm512_load_pd(&in_re[k]), x0i = _mm512_load_pd(&in_im[k]);
+        const __m512d r1r = _mm512_load_pd(&in_re[1 * K + k]), r1i = _mm512_load_pd(&in_im[1 * K + k]);
         const __m512d x1r = _mm512_fmadd_pd(r1r, tw1r, _mm512_mul_pd(r1i, tw1i));
         const __m512d x1i = _mm512_fnmadd_pd(r1r, tw1i, _mm512_mul_pd(r1i, tw1r));
-        const __m512d r2r = _mm512_loadu_pd(&in_re[2 * K + k]), r2i = _mm512_loadu_pd(&in_im[2 * K + k]);
+        const __m512d r2r = _mm512_load_pd(&in_re[2 * K + k]), r2i = _mm512_load_pd(&in_im[2 * K + k]);
         const __m512d x2r = _mm512_fmadd_pd(r2r, tw2r, _mm512_mul_pd(r2i, tw2i));
         const __m512d x2i = _mm512_fnmadd_pd(r2r, tw2i, _mm512_mul_pd(r2i, tw2r));
-        const __m512d r3r = _mm512_loadu_pd(&in_re[3 * K + k]), r3i = _mm512_loadu_pd(&in_im[3 * K + k]);
+        const __m512d r3r = _mm512_load_pd(&in_re[3 * K + k]), r3i = _mm512_load_pd(&in_im[3 * K + k]);
         const __m512d x3r = _mm512_fmadd_pd(r3r, tw3r, _mm512_mul_pd(r3i, tw3i));
         const __m512d x3i = _mm512_fnmadd_pd(r3r, tw3i, _mm512_mul_pd(r3i, tw3r));
-        const __m512d r4r = _mm512_loadu_pd(&in_re[4 * K + k]), r4i = _mm512_loadu_pd(&in_im[4 * K + k]);
+        const __m512d r4r = _mm512_load_pd(&in_re[4 * K + k]), r4i = _mm512_load_pd(&in_im[4 * K + k]);
         const __m512d x4r = _mm512_fmadd_pd(r4r, tw4r, _mm512_mul_pd(r4i, tw4i));
         const __m512d x4i = _mm512_fnmadd_pd(r4r, tw4i, _mm512_mul_pd(r4i, tw4r));
-        const __m512d r5r = _mm512_loadu_pd(&in_re[5 * K + k]), r5i = _mm512_loadu_pd(&in_im[5 * K + k]);
+        const __m512d r5r = _mm512_load_pd(&in_re[5 * K + k]), r5i = _mm512_load_pd(&in_im[5 * K + k]);
         const __m512d x5r = _mm512_fmadd_pd(r5r, tw5r, _mm512_mul_pd(r5i, tw5i));
         const __m512d x5i = _mm512_fnmadd_pd(r5r, tw5i, _mm512_mul_pd(r5i, tw5r));
-        const __m512d r6r = _mm512_loadu_pd(&in_re[6 * K + k]), r6i = _mm512_loadu_pd(&in_im[6 * K + k]);
+        const __m512d r6r = _mm512_load_pd(&in_re[6 * K + k]), r6i = _mm512_load_pd(&in_im[6 * K + k]);
         const __m512d x6r = _mm512_fmadd_pd(r6r, tw6r, _mm512_mul_pd(r6i, tw6i));
         const __m512d x6i = _mm512_fnmadd_pd(r6r, tw6i, _mm512_mul_pd(r6i, tw6r));
-        const __m512d r7r = _mm512_loadu_pd(&in_re[7 * K + k]), r7i = _mm512_loadu_pd(&in_im[7 * K + k]);
+        const __m512d r7r = _mm512_load_pd(&in_re[7 * K + k]), r7i = _mm512_load_pd(&in_im[7 * K + k]);
         const __m512d x7r = _mm512_fmadd_pd(r7r, tw7r, _mm512_mul_pd(r7i, tw7i));
         const __m512d x7i = _mm512_fnmadd_pd(r7r, tw7i, _mm512_mul_pd(r7i, tw7r));
         /* DFT-4 evens */
@@ -282,24 +282,24 @@ radix8_tw_dit_kernel_bwd_avx512(
         const __m512d B1r = _mm512_sub_pd(oqr, osi), B1i = _mm512_add_pd(oqi, osr);
         const __m512d B3r = _mm512_add_pd(oqr, osi), B3i = _mm512_sub_pd(oqi, osr);
         /* W8 combine */
-        _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(A0r, B0r));
-        _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(A0i, B0i));
-        _mm512_storeu_pd(&out_re[4 * K + k], _mm512_sub_pd(A0r, B0r));
-        _mm512_storeu_pd(&out_im[4 * K + k], _mm512_sub_pd(A0i, B0i));
+        _mm512_store_pd(&out_re[0 * K + k], _mm512_add_pd(A0r, B0r));
+        _mm512_store_pd(&out_im[0 * K + k], _mm512_add_pd(A0i, B0i));
+        _mm512_store_pd(&out_re[4 * K + k], _mm512_sub_pd(A0r, B0r));
+        _mm512_store_pd(&out_im[4 * K + k], _mm512_sub_pd(A0i, B0i));
         const __m512d t1r = _mm512_mul_pd(vc, _mm512_sub_pd(B1r, B1i)), t1i = _mm512_mul_pd(vc, _mm512_add_pd(B1r, B1i));
-        _mm512_storeu_pd(&out_re[1 * K + k], _mm512_add_pd(A1r, t1r));
-        _mm512_storeu_pd(&out_im[1 * K + k], _mm512_add_pd(A1i, t1i));
-        _mm512_storeu_pd(&out_re[5 * K + k], _mm512_sub_pd(A1r, t1r));
-        _mm512_storeu_pd(&out_im[5 * K + k], _mm512_sub_pd(A1i, t1i));
-        _mm512_storeu_pd(&out_re[2 * K + k], _mm512_sub_pd(A2r, B2i));
-        _mm512_storeu_pd(&out_im[2 * K + k], _mm512_add_pd(A2i, B2r));
-        _mm512_storeu_pd(&out_re[6 * K + k], _mm512_add_pd(A2r, B2i));
-        _mm512_storeu_pd(&out_im[6 * K + k], _mm512_sub_pd(A2i, B2r));
+        _mm512_store_pd(&out_re[1 * K + k], _mm512_add_pd(A1r, t1r));
+        _mm512_store_pd(&out_im[1 * K + k], _mm512_add_pd(A1i, t1i));
+        _mm512_store_pd(&out_re[5 * K + k], _mm512_sub_pd(A1r, t1r));
+        _mm512_store_pd(&out_im[5 * K + k], _mm512_sub_pd(A1i, t1i));
+        _mm512_store_pd(&out_re[2 * K + k], _mm512_sub_pd(A2r, B2i));
+        _mm512_store_pd(&out_im[2 * K + k], _mm512_add_pd(A2i, B2r));
+        _mm512_store_pd(&out_re[6 * K + k], _mm512_add_pd(A2r, B2i));
+        _mm512_store_pd(&out_im[6 * K + k], _mm512_sub_pd(A2i, B2r));
         const __m512d t3r = _mm512_mul_pd(vnc, _mm512_add_pd(B3r, B3i)), t3i = _mm512_mul_pd(vc, _mm512_sub_pd(B3r, B3i));
-        _mm512_storeu_pd(&out_re[3 * K + k], _mm512_add_pd(A3r, t3r));
-        _mm512_storeu_pd(&out_im[3 * K + k], _mm512_add_pd(A3i, t3i));
-        _mm512_storeu_pd(&out_re[7 * K + k], _mm512_sub_pd(A3r, t3r));
-        _mm512_storeu_pd(&out_im[7 * K + k], _mm512_sub_pd(A3i, t3i));
+        _mm512_store_pd(&out_re[3 * K + k], _mm512_add_pd(A3r, t3r));
+        _mm512_store_pd(&out_im[3 * K + k], _mm512_add_pd(A3i, t3i));
+        _mm512_store_pd(&out_re[7 * K + k], _mm512_sub_pd(A3r, t3r));
+        _mm512_store_pd(&out_im[7 * K + k], _mm512_sub_pd(A3i, t3i));
     }
 }
 

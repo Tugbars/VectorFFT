@@ -74,44 +74,44 @@ radix8_tw_dif_kernel_fwd_scalar(
     *(&out_re[0 * K + k]) = Y0r;
     *(&out_im[0 * K + k]) = Y0i;
     {
-      const double tr = (Y1r * tw1r + (Y1i * tw1i));
-      const double ti = ((Y1i * tw1r) - Y1r * tw1i);
+      const double tr = (Y1r * tw1r - (Y1i * tw1i));
+      const double ti = (Y1r * tw1i + (Y1i * tw1r));
       *(&out_re[1 * K + k]) = tr;
       *(&out_im[1 * K + k]) = ti;
     }
     {
-      const double tr = (Y2r * tw2r + (Y2i * tw2i));
-      const double ti = ((Y2i * tw2r) - Y2r * tw2i);
+      const double tr = (Y2r * tw2r - (Y2i * tw2i));
+      const double ti = (Y2r * tw2i + (Y2i * tw2r));
       *(&out_re[2 * K + k]) = tr;
       *(&out_im[2 * K + k]) = ti;
     }
     {
-      const double tr = (Y3r * tw3r + (Y3i * tw3i));
-      const double ti = ((Y3i * tw3r) - Y3r * tw3i);
+      const double tr = (Y3r * tw3r - (Y3i * tw3i));
+      const double ti = (Y3r * tw3i + (Y3i * tw3r));
       *(&out_re[3 * K + k]) = tr;
       *(&out_im[3 * K + k]) = ti;
     }
     {
-      const double tr = (Y4r * tw4r + (Y4i * tw4i));
-      const double ti = ((Y4i * tw4r) - Y4r * tw4i);
+      const double tr = (Y4r * tw4r - (Y4i * tw4i));
+      const double ti = (Y4r * tw4i + (Y4i * tw4r));
       *(&out_re[4 * K + k]) = tr;
       *(&out_im[4 * K + k]) = ti;
     }
     {
-      const double tr = (Y5r * tw5r + (Y5i * tw5i));
-      const double ti = ((Y5i * tw5r) - Y5r * tw5i);
+      const double tr = (Y5r * tw5r - (Y5i * tw5i));
+      const double ti = (Y5r * tw5i + (Y5i * tw5r));
       *(&out_re[5 * K + k]) = tr;
       *(&out_im[5 * K + k]) = ti;
     }
     {
-      const double tr = (Y6r * tw6r + (Y6i * tw6i));
-      const double ti = ((Y6i * tw6r) - Y6r * tw6i);
+      const double tr = (Y6r * tw6r - (Y6i * tw6i));
+      const double ti = (Y6r * tw6i + (Y6i * tw6r));
       *(&out_re[6 * K + k]) = tr;
       *(&out_im[6 * K + k]) = ti;
     }
     {
-      const double tr = (Y7r * tw7r + (Y7i * tw7i));
-      const double ti = ((Y7i * tw7r) - Y7r * tw7i);
+      const double tr = (Y7r * tw7r - (Y7i * tw7i));
+      const double ti = (Y7r * tw7i + (Y7i * tw7r));
       *(&out_re[7 * K + k]) = tr;
       *(&out_im[7 * K + k]) = ti;
     }
@@ -185,44 +185,44 @@ radix8_tw_dif_kernel_bwd_scalar(
     *(&out_re[0 * K + k]) = Y0r;
     *(&out_im[0 * K + k]) = Y0i;
     {
-      const double tr = (Y1r * tw1r - (Y1i * tw1i));
-      const double ti = (Y1r * tw1i + (Y1i * tw1r));
+      const double tr = (Y1r * tw1r + (Y1i * tw1i));
+      const double ti = ((Y1i * tw1r) - Y1r * tw1i);
       *(&out_re[1 * K + k]) = tr;
       *(&out_im[1 * K + k]) = ti;
     }
     {
-      const double tr = (Y2r * tw2r - (Y2i * tw2i));
-      const double ti = (Y2r * tw2i + (Y2i * tw2r));
+      const double tr = (Y2r * tw2r + (Y2i * tw2i));
+      const double ti = ((Y2i * tw2r) - Y2r * tw2i);
       *(&out_re[2 * K + k]) = tr;
       *(&out_im[2 * K + k]) = ti;
     }
     {
-      const double tr = (Y3r * tw3r - (Y3i * tw3i));
-      const double ti = (Y3r * tw3i + (Y3i * tw3r));
+      const double tr = (Y3r * tw3r + (Y3i * tw3i));
+      const double ti = ((Y3i * tw3r) - Y3r * tw3i);
       *(&out_re[3 * K + k]) = tr;
       *(&out_im[3 * K + k]) = ti;
     }
     {
-      const double tr = (Y4r * tw4r - (Y4i * tw4i));
-      const double ti = (Y4r * tw4i + (Y4i * tw4r));
+      const double tr = (Y4r * tw4r + (Y4i * tw4i));
+      const double ti = ((Y4i * tw4r) - Y4r * tw4i);
       *(&out_re[4 * K + k]) = tr;
       *(&out_im[4 * K + k]) = ti;
     }
     {
-      const double tr = (Y5r * tw5r - (Y5i * tw5i));
-      const double ti = (Y5r * tw5i + (Y5i * tw5r));
+      const double tr = (Y5r * tw5r + (Y5i * tw5i));
+      const double ti = ((Y5i * tw5r) - Y5r * tw5i);
       *(&out_re[5 * K + k]) = tr;
       *(&out_im[5 * K + k]) = ti;
     }
     {
-      const double tr = (Y6r * tw6r - (Y6i * tw6i));
-      const double ti = (Y6r * tw6i + (Y6i * tw6r));
+      const double tr = (Y6r * tw6r + (Y6i * tw6i));
+      const double ti = ((Y6i * tw6r) - Y6r * tw6i);
       *(&out_re[6 * K + k]) = tr;
       *(&out_im[6 * K + k]) = ti;
     }
     {
-      const double tr = (Y7r * tw7r - (Y7i * tw7i));
-      const double ti = (Y7r * tw7i + (Y7i * tw7r));
+      const double tr = (Y7r * tw7r + (Y7i * tw7i));
+      const double ti = ((Y7i * tw7r) - Y7r * tw7i);
       *(&out_re[7 * K + k]) = tr;
       *(&out_im[7 * K + k]) = ti;
     }
