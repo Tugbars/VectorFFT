@@ -3,7 +3,8 @@
     "allow": [
       "Read(//c/vcpkg/installed/x64-windows/lib/**)",
       "Read(//c/vcpkg/installed/x64-windows/**)",
-      "Bash(vcpkg list)"
+      "Bash(vcpkg list)",
+      "Bash(chmod +x /c/Users/Tugbars/Desktop/highSpeedFFT/build.sh)"
     ]
   }
 }
