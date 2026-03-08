@@ -1,79 +1,1185 @@
 /**
- * @file fft_radix13_avx2_n1_gen.h
- * @brief AVX2 DFT-13 N1 kernels — straight-line, zero explicit spill
+ * @file fft_radix13_genfft.h
+ * @brief DFT-13 codelet — straight-line genfft kernels (scalar + AVX2 + AVX-512)
  *
- * Derived from FFTW 3.3.10 genfft output (GPL-2.0).
- * Original: gen_notw_c.native -simd -compact -variables 4 -n 13
- * Translated from interleaved complex V to split re/im __m256d.
- * 88 adds + 34 muls per direction, zero explicit spills.
+ * Arithmetic derived from FFTW 3.3.10 genfft (GPL-2.0).
+ * 88 adds + 34 muls per direction (SIMD interleaved), zero explicit spills.
+ * Constants hoisted outside k-loop. Aligned loads/stores.
  */
 
-#ifndef FFT_RADIX13_AVX2_N1_GEN_H
-#define FFT_RADIX13_AVX2_N1_GEN_H
-#include <immintrin.h>
-#ifndef RESTRICT
-#define RESTRICT __restrict__
+#ifndef FFT_RADIX13_GENFFT_H
+#define FFT_RADIX13_GENFFT_H
+
+#include <stddef.h>
+
+#ifdef _MSC_VER
+#define R13_RESTRICT __restrict
+#elif defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
+#define R13_RESTRICT __restrict__
+#else
+#define R13_RESTRICT
 #endif
 
-__attribute__((target("avx2,fma")))
-static void
-radix13_n1_dit_kernel_fwd_avx2(
-    const double * RESTRICT in_re, const double * RESTRICT in_im,
-    double * RESTRICT out_re, double * RESTRICT out_im,
+/* ═══════════════════════════════════════════════════════════════
+ * SCALAR KERNELS
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void radix13_genfft_fwd_scalar(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im,
     size_t K)
 {
-    const __m256d sign_flip = _mm256_set1_pd(-0.0);
-    for (size_t k = 0; k < K; k += 4) {
+  const double KP2_000000000 = +2.000000000000000000000000000000000000000000000;
+  const double KP083333333 = +0.083333333333333333333333333333333333333333333;
+  const double KP075902986 = +0.075902986037193865983102897245103540356428373;
+  const double KP251768516 = +0.251768516431883313623436926934233488546674281;
+  const double KP132983124 = +0.132983124607418643793760531921092974399165133;
+  const double KP258260390 = +0.258260390311744861420450644284508567852516811;
+  const double KP1_732050807 = +1.732050807568877293527446341505872366942805254;
+  const double KP300238635 = +0.300238635966332641462884626667381504676006424;
+  const double KP011599105 = +0.011599105605768290721655456654083252189827041;
+  const double KP156891391 = +0.156891391051584611046832726756003269660212636;
+  const double KP256247671 = +0.256247671582936600958684654061725059144125175;
+  const double KP174138601 = +0.174138601152135905005660794929264742616964676;
+  const double KP575140729 = +0.575140729474003121368385547455453388461001608;
+  const double KP503537032 = +0.503537032863766627246873853868466977093348562;
+  const double KP113854479 = +0.113854479055790798974654345867655310534642560;
+  const double KP265966249 = +0.265966249214837287587521063842185948798330267;
+  const double KP387390585 = +0.387390585467617292130675966426762851778775217;
+  const double KP300462606 = +0.300462606288665774426601772289207995520941381;
+  const double KP866025403 = +0.866025403784438646763723170752936183471402627;
+  const double KP500000000 = +0.500000000000000000000000000000000000000000000;
+  for (size_t k = 0; k < K; k += 1)
+  {
 
-    const __m256d KP2_000000000 = _mm256_set1_pd(+2.000000000000000000000000000000000000000000000);
-    const __m256d KP083333333 = _mm256_set1_pd(+0.083333333333333333333333333333333333333333333);
-    const __m256d KP075902986 = _mm256_set1_pd(+0.075902986037193865983102897245103540356428373);
-    const __m256d KP251768516 = _mm256_set1_pd(+0.251768516431883313623436926934233488546674281);
-    const __m256d KP132983124 = _mm256_set1_pd(+0.132983124607418643793760531921092974399165133);
-    const __m256d KP258260390 = _mm256_set1_pd(+0.258260390311744861420450644284508567852516811);
-    const __m256d KP1_732050807 = _mm256_set1_pd(+1.732050807568877293527446341505872366942805254);
-    const __m256d KP300238635 = _mm256_set1_pd(+0.300238635966332641462884626667381504676006424);
-    const __m256d KP011599105 = _mm256_set1_pd(+0.011599105605768290721655456654083252189827041);
-    const __m256d KP156891391 = _mm256_set1_pd(+0.156891391051584611046832726756003269660212636);
-    const __m256d KP256247671 = _mm256_set1_pd(+0.256247671582936600958684654061725059144125175);
-    const __m256d KP174138601 = _mm256_set1_pd(+0.174138601152135905005660794929264742616964676);
-    const __m256d KP575140729 = _mm256_set1_pd(+0.575140729474003121368385547455453388461001608);
-    const __m256d KP503537032 = _mm256_set1_pd(+0.503537032863766627246873853868466977093348562);
-    const __m256d KP113854479 = _mm256_set1_pd(+0.113854479055790798974654345867655310534642560);
-    const __m256d KP265966249 = _mm256_set1_pd(+0.265966249214837287587521063842185948798330267);
-    const __m256d KP387390585 = _mm256_set1_pd(+0.387390585467617292130675966426762851778775217);
-    const __m256d KP300462606 = _mm256_set1_pd(+0.300462606288665774426601772289207995520941381);
-    const __m256d KP866025403 = _mm256_set1_pd(+0.866025403784438646763723170752936183471402627);
-    const __m256d KP500000000 = _mm256_set1_pd(+0.500000000000000000000000000000000000000000000);
+    double TW_re, TW_im, Tb_re, Tb_im, Tm_re, Tm_im;
+    double Tu_re, Tu_im, TC_re, TC_im, TR_re, TR_im;
+    double TX_re, TX_im, TK_re, TK_im, TU_re, TU_im;
+    double Tz_re, Tz_im, TB_re, TB_im, TN_re, TN_im;
+    double TT_re, TT_im;
+    TW_re = *(&in_re[k]);
+    TW_im = *(&in_im[k]);
+    double T3_re, T3_im, TH_re, TH_im, Tl_re, Tl_im;
+    double Tw_re, Tw_im, Tp_re, Tp_im, Tg_re, Tg_im;
+    double Tv_re, Tv_im, To_re, To_im, T6_re, T6_im;
+    double Tr_re, Tr_im, T9_re, T9_im, Ts_re, Ts_im;
+    double Ta_re, Ta_im, TI_re, TI_im, T1_re, T1_im;
+    double T2_re, T2_im, Tq_re, Tq_im, Tt_re, Tt_im;
+    T1_re = *(&in_re[8 * K + k]);
+    T1_im = *(&in_im[8 * K + k]);
+    T2_re = *(&in_re[5 * K + k]);
+    T2_im = *(&in_im[5 * K + k]);
+    T3_re = (T1_re - T2_re);
+    T3_im = (T1_im - T2_im);
+    TH_re = (T1_re + T2_re);
+    TH_im = (T1_im + T2_im);
+    double Th_re, Th_im, Ti_re, Ti_im, Tj_re, Tj_im;
+    double Tk_re, Tk_im;
+    Th_re = *(&in_re[12 * K + k]);
+    Th_im = *(&in_im[12 * K + k]);
+    Ti_re = *(&in_re[10 * K + k]);
+    Ti_im = *(&in_im[10 * K + k]);
+    Tj_re = *(&in_re[4 * K + k]);
+    Tj_im = *(&in_im[4 * K + k]);
+    Tk_re = (Ti_re + Tj_re);
+    Tk_im = (Ti_im + Tj_im);
+    Tl_re = (Th_re + Tk_re);
+    Tl_im = (Th_im + Tk_im);
+    Tw_re = (Ti_re - Tj_re);
+    Tw_im = (Ti_im - Tj_im);
+    Tp_re = (Th_re - KP500000000 * Tk_re);
+    Tp_im = (Th_im - KP500000000 * Tk_im);
+    double Tc_re, Tc_im, Td_re, Td_im, Te_re, Te_im;
+    double Tf_re, Tf_im;
+    Tc_re = *(&in_re[1 * K + k]);
+    Tc_im = *(&in_im[1 * K + k]);
+    Td_re = *(&in_re[3 * K + k]);
+    Td_im = *(&in_im[3 * K + k]);
+    Te_re = *(&in_re[9 * K + k]);
+    Te_im = *(&in_im[9 * K + k]);
+    Tf_re = (Td_re + Te_re);
+    Tf_im = (Td_im + Te_im);
+    Tg_re = (Tc_re + Tf_re);
+    Tg_im = (Tc_im + Tf_im);
+    Tv_re = (Td_re - Te_re);
+    Tv_im = (Td_im - Te_im);
+    To_re = (Tc_re - KP500000000 * Tf_re);
+    To_im = (Tc_im - KP500000000 * Tf_im);
+    double T4_re, T4_im, T5_re, T5_im, T7_re, T7_im;
+    double T8_re, T8_im;
+    T4_re = *(&in_re[11 * K + k]);
+    T4_im = *(&in_im[11 * K + k]);
+    T5_re = *(&in_re[6 * K + k]);
+    T5_im = *(&in_im[6 * K + k]);
+    T6_re = (T4_re - T5_re);
+    T6_im = (T4_im - T5_im);
+    Tr_re = (T4_re + T5_re);
+    Tr_im = (T4_im + T5_im);
+    T7_re = *(&in_re[7 * K + k]);
+    T7_im = *(&in_im[7 * K + k]);
+    T8_re = *(&in_re[2 * K + k]);
+    T8_im = *(&in_im[2 * K + k]);
+    T9_re = (T7_re - T8_re);
+    T9_im = (T7_im - T8_im);
+    Ts_re = (T7_re + T8_re);
+    Ts_im = (T7_im + T8_im);
+    Ta_re = (T6_re + T9_re);
+    Ta_im = (T6_im + T9_im);
+    TI_re = (Tr_re + Ts_re);
+    TI_im = (Tr_im + Ts_im);
+    Tb_re = (T3_re + Ta_re);
+    Tb_im = (T3_im + Ta_im);
+    Tm_re = (Tg_re - Tl_re);
+    Tm_im = (Tg_im - Tl_im);
+    Tq_re = (To_re - Tp_re);
+    Tq_im = (To_im - Tp_im);
+    Tt_re = (KP866025403 * (Tr_re - Ts_re));
+    Tt_im = (KP866025403 * (Tr_im - Ts_im));
+    Tu_re = (Tq_re + Tt_re);
+    Tu_im = (Tq_im + Tt_im);
+    TC_re = (Tq_re - Tt_re);
+    TC_im = (Tq_im - Tt_im);
+    double TP_re, TP_im, TQ_re, TQ_im, TG_re, TG_im;
+    double TJ_re, TJ_im;
+    TP_re = (Tg_re + Tl_re);
+    TP_im = (Tg_im + Tl_im);
+    TQ_re = (TH_re + TI_re);
+    TQ_im = (TH_im + TI_im);
+    TR_re = (KP300462606 * (TP_re - TQ_re));
+    TR_im = (KP300462606 * (TP_im - TQ_im));
+    TX_re = (TP_re + TQ_re);
+    TX_im = (TP_im + TQ_im);
+    TG_re = (To_re + Tp_re);
+    TG_im = (To_im + Tp_im);
+    TJ_re = (TH_re - KP500000000 * TI_re);
+    TJ_im = (TH_im - KP500000000 * TI_im);
+    TK_re = (TG_re - TJ_re);
+    TK_im = (TG_im - TJ_im);
+    TU_re = (TG_re + TJ_re);
+    TU_im = (TG_im + TJ_im);
+    double Tx_re, Tx_im, Ty_re, Ty_im, TL_re, TL_im;
+    double TM_re, TM_im;
+    Tx_re = (KP866025403 * (Tv_re - Tw_re));
+    Tx_im = (KP866025403 * (Tv_im - Tw_im));
+    Ty_re = (T3_re - KP500000000 * Ta_re);
+    Ty_im = (T3_im - KP500000000 * Ta_im);
+    Tz_re = (Tx_re - Ty_re);
+    Tz_im = (Tx_im - Ty_im);
+    TB_re = (Tx_re + Ty_re);
+    TB_im = (Tx_im + Ty_im);
+    TL_re = (Tv_re + Tw_re);
+    TL_im = (Tv_im + Tw_im);
+    TM_re = (T6_re - T9_re);
+    TM_im = (T6_im - T9_im);
+    TN_re = (TL_re - TM_re);
+    TN_im = (TL_im - TM_im);
+    TT_re = (TL_re + TM_re);
+    TT_im = (TL_im + TM_im);
+    *(&out_re[k]) = (TW_re + TX_re);
+    *(&out_im[k]) = (TW_im + TX_im);
+    double T19_re, T19_im, T1n_re, T1n_im, T14_re, T14_im;
+    double T13_re, T13_im, T1f_re, T1f_im, T1k_re, T1k_im;
+    double Tn_re, Tn_im, TE_re, TE_im, T1e_re, T1e_im;
+    double T1j_re, T1j_im, TS_re, TS_im, T1m_re, T1m_im;
+    double TZ_re, TZ_im, T1c_re, T1c_im, TA_re, TA_im;
+    double TD_re, TD_im;
+    double T17_re, T17_im, T18_re, T18_im, T11_re, T11_im;
+    double T12_re, T12_im;
+    T17_re = (KP387390585 * TN_re + (KP265966249 * TK_re));
+    T17_im = (KP387390585 * TN_im + (KP265966249 * TK_im));
+    T18_re = ((KP113854479 * TT_re) - KP503537032 * TU_re);
+    T18_im = ((KP113854479 * TT_im) - KP503537032 * TU_im);
+    T19_re = (T17_re - T18_re);
+    T19_im = (T17_im - T18_im);
+    T1n_re = (T17_re + T18_re);
+    T1n_im = (T17_im + T18_im);
+    T14_re = (KP575140729 * Tm_re + (KP174138601 * Tb_re));
+    T14_im = (KP575140729 * Tm_im + (KP174138601 * Tb_im));
+    T11_re = ((KP256247671 * TC_re) - KP156891391 * TB_re);
+    T11_im = ((KP256247671 * TC_im) - KP156891391 * TB_im);
+    T12_re = (KP011599105 * Tz_re + (KP300238635 * Tu_re));
+    T12_im = (KP011599105 * Tz_im + (KP300238635 * Tu_im));
+    T13_re = (T11_re - T12_re);
+    T13_im = (T11_im - T12_im);
+    T1f_re = (T14_re + T13_re);
+    T1f_im = (T14_im + T13_im);
+    T1k_re = (KP1_732050807 * (T11_re + T12_re));
+    T1k_im = (KP1_732050807 * (T11_im + T12_im));
+    Tn_re = ((KP575140729 * Tb_re) - KP174138601 * Tm_re);
+    Tn_im = ((KP575140729 * Tb_im) - KP174138601 * Tm_im);
+    TA_re = ((KP011599105 * Tu_re) - KP300238635 * Tz_re);
+    TA_im = ((KP011599105 * Tu_im) - KP300238635 * Tz_im);
+    TD_re = (KP256247671 * TB_re + (KP156891391 * TC_re));
+    TD_im = (KP256247671 * TB_im + (KP156891391 * TC_im));
+    TE_re = (TA_re - TD_re);
+    TE_im = (TA_im - TD_im);
+    T1e_re = (KP1_732050807 * (TD_re + TA_re));
+    T1e_im = (KP1_732050807 * (TD_im + TA_im));
+    T1j_re = (Tn_re - TE_re);
+    T1j_im = (Tn_im - TE_im);
+    double TO_re, TO_im, T1b_re, T1b_im, TV_re, TV_im;
+    double TY_re, TY_im, T1a_re, T1a_im;
+    TO_re = ((KP258260390 * TK_re) - KP132983124 * TN_re);
+    TO_im = ((KP258260390 * TK_im) - KP132983124 * TN_im);
+    T1b_re = (TR_re - TO_re);
+    T1b_im = (TR_im - TO_im);
+    TV_re = (KP251768516 * TT_re + (KP075902986 * TU_re));
+    TV_im = (KP251768516 * TT_im + (KP075902986 * TU_im));
+    TY_re = (TW_re - KP083333333 * TX_re);
+    TY_im = (TW_im - KP083333333 * TX_im);
+    T1a_re = (TY_re - TV_re);
+    T1a_im = (TY_im - TV_im);
+    TS_re = (KP2_000000000 * TO_re + TR_re);
+    TS_im = (KP2_000000000 * TO_im + TR_im);
+    T1m_re = (T1b_re + T1a_re);
+    T1m_im = (T1b_im + T1a_im);
+    TZ_re = (KP2_000000000 * TV_re + TY_re);
+    TZ_im = (KP2_000000000 * TV_im + TY_im);
+    T1c_re = (T1a_re - T1b_re);
+    T1c_im = (T1a_im - T1b_im);
+    double TF_re, TF_im, T10_re, T10_im, T1l_re, T1l_im;
+    double T1o_re, T1o_im;
+    TF_re = (-(KP2_000000000 * TE_im + Tn_im));
+    TF_im = (KP2_000000000 * TE_re + Tn_re);
+    T10_re = (TS_re + TZ_re);
+    T10_im = (TS_im + TZ_im);
+    *(&out_re[1 * K + k]) = (TF_re + T10_re);
+    *(&out_im[1 * K + k]) = (TF_im + T10_im);
+    *(&out_re[12 * K + k]) = (T10_re - TF_re);
+    *(&out_im[12 * K + k]) = (T10_im - TF_im);
+    double T15_re, T15_im, T16_re, T16_im, T1p_re, T1p_im;
+    double T1q_re, T1q_im;
+    T15_re = (-(KP2_000000000 * T13_im - T14_im));
+    T15_im = (KP2_000000000 * T13_re - T14_re);
+    T16_re = (TZ_re - TS_re);
+    T16_im = (TZ_im - TS_im);
+    *(&out_re[5 * K + k]) = (T15_re + T16_re);
+    *(&out_im[5 * K + k]) = (T15_im + T16_im);
+    *(&out_re[8 * K + k]) = (T16_re - T15_re);
+    *(&out_im[8 * K + k]) = (T16_im - T15_im);
+    T1p_re = (T1n_re + T1m_re);
+    T1p_im = (T1n_im + T1m_im);
+    T1q_re = (-(T1j_im + T1k_im));
+    T1q_im = (T1j_re + T1k_re);
+    *(&out_re[4 * K + k]) = (T1p_re - T1q_re);
+    *(&out_im[4 * K + k]) = (T1p_im - T1q_im);
+    *(&out_re[9 * K + k]) = (T1q_re + T1p_re);
+    *(&out_im[9 * K + k]) = (T1q_im + T1p_im);
+    T1l_re = (-(T1j_im - T1k_im));
+    T1l_im = (T1j_re - T1k_re);
+    T1o_re = (T1m_re - T1n_re);
+    T1o_im = (T1m_im - T1n_im);
+    *(&out_re[3 * K + k]) = (T1l_re + T1o_re);
+    *(&out_im[3 * K + k]) = (T1l_im + T1o_im);
+    *(&out_re[10 * K + k]) = (T1o_re - T1l_re);
+    *(&out_im[10 * K + k]) = (T1o_im - T1l_im);
+    double T1h_re, T1h_im, T1i_re, T1i_im, T1d_re, T1d_im;
+    double T1g_re, T1g_im;
+    T1h_re = (-(T1e_im - T1f_im));
+    T1h_im = (T1e_re - T1f_re);
+    T1i_re = (T1c_re - T19_re);
+    T1i_im = (T1c_im - T19_im);
+    *(&out_re[6 * K + k]) = (T1h_re + T1i_re);
+    *(&out_im[6 * K + k]) = (T1h_im + T1i_im);
+    *(&out_re[7 * K + k]) = (T1i_re - T1h_re);
+    *(&out_im[7 * K + k]) = (T1i_im - T1h_im);
+    T1d_re = (T19_re + T1c_re);
+    T1d_im = (T19_im + T1c_im);
+    T1g_re = (-(T1e_im + T1f_im));
+    T1g_im = (T1e_re + T1f_re);
+    *(&out_re[2 * K + k]) = (T1d_re - T1g_re);
+    *(&out_im[2 * K + k]) = (T1d_im - T1g_im);
+    *(&out_re[11 * K + k]) = (T1g_re + T1d_re);
+    *(&out_im[11 * K + k]) = (T1g_im + T1d_im);
+  }
+}
+
+static void radix13_genfft_bwd_scalar(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im,
+    size_t K)
+{
+  const double KP2_000000000 = +2.000000000000000000000000000000000000000000000;
+  const double KP083333333 = +0.083333333333333333333333333333333333333333333;
+  const double KP075902986 = +0.075902986037193865983102897245103540356428373;
+  const double KP251768516 = +0.251768516431883313623436926934233488546674281;
+  const double KP132983124 = +0.132983124607418643793760531921092974399165133;
+  const double KP258260390 = +0.258260390311744861420450644284508567852516811;
+  const double KP1_732050807 = +1.732050807568877293527446341505872366942805254;
+  const double KP300238635 = +0.300238635966332641462884626667381504676006424;
+  const double KP011599105 = +0.011599105605768290721655456654083252189827041;
+  const double KP256247671 = +0.256247671582936600958684654061725059144125175;
+  const double KP156891391 = +0.156891391051584611046832726756003269660212636;
+  const double KP174138601 = +0.174138601152135905005660794929264742616964676;
+  const double KP575140729 = +0.575140729474003121368385547455453388461001608;
+  const double KP503537032 = +0.503537032863766627246873853868466977093348562;
+  const double KP113854479 = +0.113854479055790798974654345867655310534642560;
+  const double KP265966249 = +0.265966249214837287587521063842185948798330267;
+  const double KP387390585 = +0.387390585467617292130675966426762851778775217;
+  const double KP300462606 = +0.300462606288665774426601772289207995520941381;
+  const double KP866025403 = +0.866025403784438646763723170752936183471402627;
+  const double KP500000000 = +0.500000000000000000000000000000000000000000000;
+  for (size_t k = 0; k < K; k += 1)
+  {
+
+    double TW_re, TW_im, Tb_re, Tb_im, Tm_re, Tm_im;
+    double Ts_re, Ts_im, TB_re, TB_im, TR_re, TR_im;
+    double TX_re, TX_im, TK_re, TK_im, TU_re, TU_im;
+    double Tz_re, Tz_im, TC_re, TC_im, TN_re, TN_im;
+    double TT_re, TT_im;
+    TW_re = *(&in_re[k]);
+    TW_im = *(&in_im[k]);
+    double Te_re, Te_im, TH_re, TH_im, Ta_re, Ta_im;
+    double Tu_re, Tu_im, Tp_re, Tp_im, T5_re, T5_im;
+    double Tt_re, Tt_im, To_re, To_im, Th_re, Th_im;
+    double Tw_re, Tw_im, Tk_re, Tk_im, Tx_re, Tx_im;
+    double Tl_re, Tl_im, TI_re, TI_im, Tc_re, Tc_im;
+    double Td_re, Td_im, Tq_re, Tq_im, Tr_re, Tr_im;
+    Tc_re = *(&in_re[8 * K + k]);
+    Tc_im = *(&in_im[8 * K + k]);
+    Td_re = *(&in_re[5 * K + k]);
+    Td_im = *(&in_im[5 * K + k]);
+    Te_re = (Tc_re - Td_re);
+    Te_im = (Tc_im - Td_im);
+    TH_re = (Tc_re + Td_re);
+    TH_im = (Tc_im + Td_im);
+    double T6_re, T6_im, T7_re, T7_im, T8_re, T8_im;
+    double T9_re, T9_im;
+    T6_re = *(&in_re[12 * K + k]);
+    T6_im = *(&in_im[12 * K + k]);
+    T7_re = *(&in_re[10 * K + k]);
+    T7_im = *(&in_im[10 * K + k]);
+    T8_re = *(&in_re[4 * K + k]);
+    T8_im = *(&in_im[4 * K + k]);
+    T9_re = (T7_re + T8_re);
+    T9_im = (T7_im + T8_im);
+    Ta_re = (T6_re + T9_re);
+    Ta_im = (T6_im + T9_im);
+    Tu_re = (T6_re - KP500000000 * T9_re);
+    Tu_im = (T6_im - KP500000000 * T9_im);
+    Tp_re = (T7_re - T8_re);
+    Tp_im = (T7_im - T8_im);
+    double T1_re, T1_im, T2_re, T2_im, T3_re, T3_im;
+    double T4_re, T4_im;
+    T1_re = *(&in_re[1 * K + k]);
+    T1_im = *(&in_im[1 * K + k]);
+    T2_re = *(&in_re[3 * K + k]);
+    T2_im = *(&in_im[3 * K + k]);
+    T3_re = *(&in_re[9 * K + k]);
+    T3_im = *(&in_im[9 * K + k]);
+    T4_re = (T2_re + T3_re);
+    T4_im = (T2_im + T3_im);
+    T5_re = (T1_re + T4_re);
+    T5_im = (T1_im + T4_im);
+    Tt_re = (T1_re - KP500000000 * T4_re);
+    Tt_im = (T1_im - KP500000000 * T4_im);
+    To_re = (T2_re - T3_re);
+    To_im = (T2_im - T3_im);
+    double Tf_re, Tf_im, Tg_re, Tg_im, Ti_re, Ti_im;
+    double Tj_re, Tj_im;
+    Tf_re = *(&in_re[11 * K + k]);
+    Tf_im = *(&in_im[11 * K + k]);
+    Tg_re = *(&in_re[6 * K + k]);
+    Tg_im = *(&in_im[6 * K + k]);
+    Th_re = (Tf_re - Tg_re);
+    Th_im = (Tf_im - Tg_im);
+    Tw_re = (Tf_re + Tg_re);
+    Tw_im = (Tf_im + Tg_im);
+    Ti_re = *(&in_re[7 * K + k]);
+    Ti_im = *(&in_im[7 * K + k]);
+    Tj_re = *(&in_re[2 * K + k]);
+    Tj_im = *(&in_im[2 * K + k]);
+    Tk_re = (Ti_re - Tj_re);
+    Tk_im = (Ti_im - Tj_im);
+    Tx_re = (Ti_re + Tj_re);
+    Tx_im = (Ti_im + Tj_im);
+    Tl_re = (Th_re + Tk_re);
+    Tl_im = (Th_im + Tk_im);
+    TI_re = (Tw_re + Tx_re);
+    TI_im = (Tw_im + Tx_im);
+    Tb_re = (T5_re - Ta_re);
+    Tb_im = (T5_im - Ta_im);
+    Tm_re = (Te_re + Tl_re);
+    Tm_im = (Te_im + Tl_im);
+    Tq_re = (KP866025403 * (To_re - Tp_re));
+    Tq_im = (KP866025403 * (To_im - Tp_im));
+    Tr_re = (Te_re - KP500000000 * Tl_re);
+    Tr_im = (Te_im - KP500000000 * Tl_im);
+    Ts_re = (Tq_re + Tr_re);
+    Ts_im = (Tq_im + Tr_im);
+    TB_re = (Tq_re - Tr_re);
+    TB_im = (Tq_im - Tr_im);
+    double TP_re, TP_im, TQ_re, TQ_im, TG_re, TG_im;
+    double TJ_re, TJ_im;
+    TP_re = (T5_re + Ta_re);
+    TP_im = (T5_im + Ta_im);
+    TQ_re = (TH_re + TI_re);
+    TQ_im = (TH_im + TI_im);
+    TR_re = (KP300462606 * (TP_re - TQ_re));
+    TR_im = (KP300462606 * (TP_im - TQ_im));
+    TX_re = (TP_re + TQ_re);
+    TX_im = (TP_im + TQ_im);
+    TG_re = (Tt_re + Tu_re);
+    TG_im = (Tt_im + Tu_im);
+    TJ_re = (TH_re - KP500000000 * TI_re);
+    TJ_im = (TH_im - KP500000000 * TI_im);
+    TK_re = (TG_re - TJ_re);
+    TK_im = (TG_im - TJ_im);
+    TU_re = (TG_re + TJ_re);
+    TU_im = (TG_im + TJ_im);
+    double Tv_re, Tv_im, Ty_re, Ty_im, TL_re, TL_im;
+    double TM_re, TM_im;
+    Tv_re = (Tt_re - Tu_re);
+    Tv_im = (Tt_im - Tu_im);
+    Ty_re = (KP866025403 * (Tw_re - Tx_re));
+    Ty_im = (KP866025403 * (Tw_im - Tx_im));
+    Tz_re = (Tv_re - Ty_re);
+    Tz_im = (Tv_im - Ty_im);
+    TC_re = (Tv_re + Ty_re);
+    TC_im = (Tv_im + Ty_im);
+    TL_re = (To_re + Tp_re);
+    TL_im = (To_im + Tp_im);
+    TM_re = (Th_re - Tk_re);
+    TM_im = (Th_im - Tk_im);
+    TN_re = (TL_re - TM_re);
+    TN_im = (TL_im - TM_im);
+    TT_re = (TL_re + TM_re);
+    TT_im = (TL_im + TM_im);
+    *(&out_re[k]) = (TW_re + TX_re);
+    *(&out_im[k]) = (TW_im + TX_im);
+    double T1c_re, T1c_im, T1n_re, T1n_im, T11_re, T11_im;
+    double T14_re, T14_im, T17_re, T17_im, T1k_re, T1k_im;
+    double Tn_re, Tn_im, TE_re, TE_im, T18_re, T18_im;
+    double T1j_re, T1j_im, TS_re, TS_im, T1m_re, T1m_im;
+    double TZ_re, TZ_im, T1f_re, T1f_im, TA_re, TA_im;
+    double TD_re, TD_im;
+    double T1a_re, T1a_im, T1b_re, T1b_im, T12_re, T12_im;
+    double T13_re, T13_im;
+    T1a_re = (KP387390585 * TN_re + (KP265966249 * TK_re));
+    T1a_im = (KP387390585 * TN_im + (KP265966249 * TK_im));
+    T1b_re = ((KP113854479 * TT_re) - KP503537032 * TU_re);
+    T1b_im = ((KP113854479 * TT_im) - KP503537032 * TU_im);
+    T1c_re = (T1a_re - T1b_re);
+    T1c_im = (T1a_im - T1b_im);
+    T1n_re = (T1a_re + T1b_re);
+    T1n_im = (T1a_im + T1b_im);
+    T11_re = (KP575140729 * Tb_re + (KP174138601 * Tm_re));
+    T11_im = (KP575140729 * Tb_im + (KP174138601 * Tm_im));
+    T12_re = ((KP156891391 * Ts_re) - KP256247671 * Tz_re);
+    T12_im = ((KP156891391 * Ts_im) - KP256247671 * Tz_im);
+    T13_re = (KP011599105 * TB_re + (KP300238635 * TC_re));
+    T13_im = (KP011599105 * TB_im + (KP300238635 * TC_im));
+    T14_re = (T12_re + T13_re);
+    T14_im = (T12_im + T13_im);
+    T17_re = (T11_re - T14_re);
+    T17_im = (T11_im - T14_im);
+    T1k_re = (KP1_732050807 * (T12_re - T13_re));
+    T1k_im = (KP1_732050807 * (T12_im - T13_im));
+    Tn_re = ((KP174138601 * Tb_re) - KP575140729 * Tm_re);
+    Tn_im = ((KP174138601 * Tb_im) - KP575140729 * Tm_im);
+    TA_re = (KP256247671 * Ts_re + (KP156891391 * Tz_re));
+    TA_im = (KP256247671 * Ts_im + (KP156891391 * Tz_im));
+    TD_re = ((KP300238635 * TB_re) - KP011599105 * TC_re);
+    TD_im = ((KP300238635 * TB_im) - KP011599105 * TC_im);
+    TE_re = (TA_re + TD_re);
+    TE_im = (TA_im + TD_im);
+    T18_re = (KP1_732050807 * (TD_re - TA_re));
+    T18_im = (KP1_732050807 * (TD_im - TA_im));
+    T1j_re = (Tn_re - TE_re);
+    T1j_im = (Tn_im - TE_im);
+    double TO_re, TO_im, T1e_re, T1e_im, TV_re, TV_im;
+    double TY_re, TY_im, T1d_re, T1d_im;
+    TO_re = ((KP258260390 * TK_re) - KP132983124 * TN_re);
+    TO_im = ((KP258260390 * TK_im) - KP132983124 * TN_im);
+    T1e_re = (TR_re - TO_re);
+    T1e_im = (TR_im - TO_im);
+    TV_re = (KP251768516 * TT_re + (KP075902986 * TU_re));
+    TV_im = (KP251768516 * TT_im + (KP075902986 * TU_im));
+    TY_re = (TW_re - KP083333333 * TX_re);
+    TY_im = (TW_im - KP083333333 * TX_im);
+    T1d_re = (TY_re - TV_re);
+    T1d_im = (TY_im - TV_im);
+    TS_re = (KP2_000000000 * TO_re + TR_re);
+    TS_im = (KP2_000000000 * TO_im + TR_im);
+    T1m_re = (T1e_re + T1d_re);
+    T1m_im = (T1e_im + T1d_im);
+    TZ_re = (KP2_000000000 * TV_re + TY_re);
+    TZ_im = (KP2_000000000 * TV_im + TY_im);
+    T1f_re = (T1d_re - T1e_re);
+    T1f_im = (T1d_im - T1e_im);
+    double TF_re, TF_im, T10_re, T10_im, T1l_re, T1l_im;
+    double T1o_re, T1o_im;
+    TF_re = (-(KP2_000000000 * TE_im + Tn_im));
+    TF_im = (KP2_000000000 * TE_re + Tn_re);
+    T10_re = (TS_re + TZ_re);
+    T10_im = (TS_im + TZ_im);
+    *(&out_re[1 * K + k]) = (TF_re + T10_re);
+    *(&out_im[1 * K + k]) = (TF_im + T10_im);
+    *(&out_re[12 * K + k]) = (T10_re - TF_re);
+    *(&out_im[12 * K + k]) = (T10_im - TF_im);
+    double T15_re, T15_im, T16_re, T16_im, T1p_re, T1p_im;
+    double T1q_re, T1q_im;
+    T15_re = (-(KP2_000000000 * T14_im + T11_im));
+    T15_im = (KP2_000000000 * T14_re + T11_re);
+    T16_re = (TZ_re - TS_re);
+    T16_im = (TZ_im - TS_im);
+    *(&out_re[5 * K + k]) = (T15_re + T16_re);
+    *(&out_im[5 * K + k]) = (T15_im + T16_im);
+    *(&out_re[8 * K + k]) = (T16_re - T15_re);
+    *(&out_im[8 * K + k]) = (T16_im - T15_im);
+    T1p_re = (T1n_re + T1m_re);
+    T1p_im = (T1n_im + T1m_im);
+    T1q_re = (-(T1j_im + T1k_im));
+    T1q_im = (T1j_re + T1k_re);
+    *(&out_re[4 * K + k]) = (T1p_re - T1q_re);
+    *(&out_im[4 * K + k]) = (T1p_im - T1q_im);
+    *(&out_re[9 * K + k]) = (T1q_re + T1p_re);
+    *(&out_im[9 * K + k]) = (T1q_im + T1p_im);
+    T1l_re = (-(T1j_im - T1k_im));
+    T1l_im = (T1j_re - T1k_re);
+    T1o_re = (T1m_re - T1n_re);
+    T1o_im = (T1m_im - T1n_im);
+    *(&out_re[3 * K + k]) = (T1l_re + T1o_re);
+    *(&out_im[3 * K + k]) = (T1l_im + T1o_im);
+    *(&out_re[10 * K + k]) = (T1o_re - T1l_re);
+    *(&out_im[10 * K + k]) = (T1o_im - T1l_im);
+    double T1h_re, T1h_im, T1i_re, T1i_im, T19_re, T19_im;
+    double T1g_re, T1g_im;
+    T1h_re = (-(T18_im + T17_im));
+    T1h_im = (T18_re + T17_re);
+    T1i_re = (T1f_re - T1c_re);
+    T1i_im = (T1f_im - T1c_im);
+    *(&out_re[6 * K + k]) = (T1h_re + T1i_re);
+    *(&out_im[6 * K + k]) = (T1h_im + T1i_im);
+    *(&out_re[7 * K + k]) = (T1i_re - T1h_re);
+    *(&out_im[7 * K + k]) = (T1i_im - T1h_im);
+    T19_re = (-(T17_im - T18_im));
+    T19_im = (T17_re - T18_re);
+    T1g_re = (T1c_re + T1f_re);
+    T1g_im = (T1c_im + T1f_im);
+    *(&out_re[2 * K + k]) = (T19_re + T1g_re);
+    *(&out_im[2 * K + k]) = (T19_im + T1g_im);
+    *(&out_re[11 * K + k]) = (T1g_re - T19_re);
+    *(&out_im[11 * K + k]) = (T1g_im - T19_im);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * AVX-512 KERNELS
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifdef __AVX512F__
+#include <immintrin.h>
+
+__attribute__((target("avx512f,avx512dq,fma"))) static void radix13_genfft_fwd_avx512(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im,
+    size_t K)
+{
+  const __m512d sign_flip = _mm512_set1_pd(-0.0);
+  const __m512d KP2_000000000 = _mm512_set1_pd(+2.000000000000000000000000000000000000000000000);
+  const __m512d KP083333333 = _mm512_set1_pd(+0.083333333333333333333333333333333333333333333);
+  const __m512d KP075902986 = _mm512_set1_pd(+0.075902986037193865983102897245103540356428373);
+  const __m512d KP251768516 = _mm512_set1_pd(+0.251768516431883313623436926934233488546674281);
+  const __m512d KP132983124 = _mm512_set1_pd(+0.132983124607418643793760531921092974399165133);
+  const __m512d KP258260390 = _mm512_set1_pd(+0.258260390311744861420450644284508567852516811);
+  const __m512d KP1_732050807 = _mm512_set1_pd(+1.732050807568877293527446341505872366942805254);
+  const __m512d KP300238635 = _mm512_set1_pd(+0.300238635966332641462884626667381504676006424);
+  const __m512d KP011599105 = _mm512_set1_pd(+0.011599105605768290721655456654083252189827041);
+  const __m512d KP156891391 = _mm512_set1_pd(+0.156891391051584611046832726756003269660212636);
+  const __m512d KP256247671 = _mm512_set1_pd(+0.256247671582936600958684654061725059144125175);
+  const __m512d KP174138601 = _mm512_set1_pd(+0.174138601152135905005660794929264742616964676);
+  const __m512d KP575140729 = _mm512_set1_pd(+0.575140729474003121368385547455453388461001608);
+  const __m512d KP503537032 = _mm512_set1_pd(+0.503537032863766627246873853868466977093348562);
+  const __m512d KP113854479 = _mm512_set1_pd(+0.113854479055790798974654345867655310534642560);
+  const __m512d KP265966249 = _mm512_set1_pd(+0.265966249214837287587521063842185948798330267);
+  const __m512d KP387390585 = _mm512_set1_pd(+0.387390585467617292130675966426762851778775217);
+  const __m512d KP300462606 = _mm512_set1_pd(+0.300462606288665774426601772289207995520941381);
+  const __m512d KP866025403 = _mm512_set1_pd(+0.866025403784438646763723170752936183471402627);
+  const __m512d KP500000000 = _mm512_set1_pd(+0.500000000000000000000000000000000000000000000);
+  for (size_t k = 0; k < K; k += 8)
+  {
+
+    __m512d TW_re, TW_im, Tb_re, Tb_im, Tm_re, Tm_im;
+    __m512d Tu_re, Tu_im, TC_re, TC_im, TR_re, TR_im;
+    __m512d TX_re, TX_im, TK_re, TK_im, TU_re, TU_im;
+    __m512d Tz_re, Tz_im, TB_re, TB_im, TN_re, TN_im;
+    __m512d TT_re, TT_im;
+    TW_re = _mm512_load_pd(&in_re[k]);
+    TW_im = _mm512_load_pd(&in_im[k]);
+    __m512d T3_re, T3_im, TH_re, TH_im, Tl_re, Tl_im;
+    __m512d Tw_re, Tw_im, Tp_re, Tp_im, Tg_re, Tg_im;
+    __m512d Tv_re, Tv_im, To_re, To_im, T6_re, T6_im;
+    __m512d Tr_re, Tr_im, T9_re, T9_im, Ts_re, Ts_im;
+    __m512d Ta_re, Ta_im, TI_re, TI_im, T1_re, T1_im;
+    __m512d T2_re, T2_im, Tq_re, Tq_im, Tt_re, Tt_im;
+    T1_re = _mm512_load_pd(&in_re[8 * K + k]);
+    T1_im = _mm512_load_pd(&in_im[8 * K + k]);
+    T2_re = _mm512_load_pd(&in_re[5 * K + k]);
+    T2_im = _mm512_load_pd(&in_im[5 * K + k]);
+    T3_re = _mm512_sub_pd(T1_re, T2_re);
+    T3_im = _mm512_sub_pd(T1_im, T2_im);
+    TH_re = _mm512_add_pd(T1_re, T2_re);
+    TH_im = _mm512_add_pd(T1_im, T2_im);
+    __m512d Th_re, Th_im, Ti_re, Ti_im, Tj_re, Tj_im;
+    __m512d Tk_re, Tk_im;
+    Th_re = _mm512_load_pd(&in_re[12 * K + k]);
+    Th_im = _mm512_load_pd(&in_im[12 * K + k]);
+    Ti_re = _mm512_load_pd(&in_re[10 * K + k]);
+    Ti_im = _mm512_load_pd(&in_im[10 * K + k]);
+    Tj_re = _mm512_load_pd(&in_re[4 * K + k]);
+    Tj_im = _mm512_load_pd(&in_im[4 * K + k]);
+    Tk_re = _mm512_add_pd(Ti_re, Tj_re);
+    Tk_im = _mm512_add_pd(Ti_im, Tj_im);
+    Tl_re = _mm512_add_pd(Th_re, Tk_re);
+    Tl_im = _mm512_add_pd(Th_im, Tk_im);
+    Tw_re = _mm512_sub_pd(Ti_re, Tj_re);
+    Tw_im = _mm512_sub_pd(Ti_im, Tj_im);
+    Tp_re = _mm512_fnmadd_pd(KP500000000, Tk_re, Th_re);
+    Tp_im = _mm512_fnmadd_pd(KP500000000, Tk_im, Th_im);
+    __m512d Tc_re, Tc_im, Td_re, Td_im, Te_re, Te_im;
+    __m512d Tf_re, Tf_im;
+    Tc_re = _mm512_load_pd(&in_re[1 * K + k]);
+    Tc_im = _mm512_load_pd(&in_im[1 * K + k]);
+    Td_re = _mm512_load_pd(&in_re[3 * K + k]);
+    Td_im = _mm512_load_pd(&in_im[3 * K + k]);
+    Te_re = _mm512_load_pd(&in_re[9 * K + k]);
+    Te_im = _mm512_load_pd(&in_im[9 * K + k]);
+    Tf_re = _mm512_add_pd(Td_re, Te_re);
+    Tf_im = _mm512_add_pd(Td_im, Te_im);
+    Tg_re = _mm512_add_pd(Tc_re, Tf_re);
+    Tg_im = _mm512_add_pd(Tc_im, Tf_im);
+    Tv_re = _mm512_sub_pd(Td_re, Te_re);
+    Tv_im = _mm512_sub_pd(Td_im, Te_im);
+    To_re = _mm512_fnmadd_pd(KP500000000, Tf_re, Tc_re);
+    To_im = _mm512_fnmadd_pd(KP500000000, Tf_im, Tc_im);
+    __m512d T4_re, T4_im, T5_re, T5_im, T7_re, T7_im;
+    __m512d T8_re, T8_im;
+    T4_re = _mm512_load_pd(&in_re[11 * K + k]);
+    T4_im = _mm512_load_pd(&in_im[11 * K + k]);
+    T5_re = _mm512_load_pd(&in_re[6 * K + k]);
+    T5_im = _mm512_load_pd(&in_im[6 * K + k]);
+    T6_re = _mm512_sub_pd(T4_re, T5_re);
+    T6_im = _mm512_sub_pd(T4_im, T5_im);
+    Tr_re = _mm512_add_pd(T4_re, T5_re);
+    Tr_im = _mm512_add_pd(T4_im, T5_im);
+    T7_re = _mm512_load_pd(&in_re[7 * K + k]);
+    T7_im = _mm512_load_pd(&in_im[7 * K + k]);
+    T8_re = _mm512_load_pd(&in_re[2 * K + k]);
+    T8_im = _mm512_load_pd(&in_im[2 * K + k]);
+    T9_re = _mm512_sub_pd(T7_re, T8_re);
+    T9_im = _mm512_sub_pd(T7_im, T8_im);
+    Ts_re = _mm512_add_pd(T7_re, T8_re);
+    Ts_im = _mm512_add_pd(T7_im, T8_im);
+    Ta_re = _mm512_add_pd(T6_re, T9_re);
+    Ta_im = _mm512_add_pd(T6_im, T9_im);
+    TI_re = _mm512_add_pd(Tr_re, Ts_re);
+    TI_im = _mm512_add_pd(Tr_im, Ts_im);
+    Tb_re = _mm512_add_pd(T3_re, Ta_re);
+    Tb_im = _mm512_add_pd(T3_im, Ta_im);
+    Tm_re = _mm512_sub_pd(Tg_re, Tl_re);
+    Tm_im = _mm512_sub_pd(Tg_im, Tl_im);
+    Tq_re = _mm512_sub_pd(To_re, Tp_re);
+    Tq_im = _mm512_sub_pd(To_im, Tp_im);
+    Tt_re = _mm512_mul_pd(KP866025403, _mm512_sub_pd(Tr_re, Ts_re));
+    Tt_im = _mm512_mul_pd(KP866025403, _mm512_sub_pd(Tr_im, Ts_im));
+    Tu_re = _mm512_add_pd(Tq_re, Tt_re);
+    Tu_im = _mm512_add_pd(Tq_im, Tt_im);
+    TC_re = _mm512_sub_pd(Tq_re, Tt_re);
+    TC_im = _mm512_sub_pd(Tq_im, Tt_im);
+    __m512d TP_re, TP_im, TQ_re, TQ_im, TG_re, TG_im;
+    __m512d TJ_re, TJ_im;
+    TP_re = _mm512_add_pd(Tg_re, Tl_re);
+    TP_im = _mm512_add_pd(Tg_im, Tl_im);
+    TQ_re = _mm512_add_pd(TH_re, TI_re);
+    TQ_im = _mm512_add_pd(TH_im, TI_im);
+    TR_re = _mm512_mul_pd(KP300462606, _mm512_sub_pd(TP_re, TQ_re));
+    TR_im = _mm512_mul_pd(KP300462606, _mm512_sub_pd(TP_im, TQ_im));
+    TX_re = _mm512_add_pd(TP_re, TQ_re);
+    TX_im = _mm512_add_pd(TP_im, TQ_im);
+    TG_re = _mm512_add_pd(To_re, Tp_re);
+    TG_im = _mm512_add_pd(To_im, Tp_im);
+    TJ_re = _mm512_fnmadd_pd(KP500000000, TI_re, TH_re);
+    TJ_im = _mm512_fnmadd_pd(KP500000000, TI_im, TH_im);
+    TK_re = _mm512_sub_pd(TG_re, TJ_re);
+    TK_im = _mm512_sub_pd(TG_im, TJ_im);
+    TU_re = _mm512_add_pd(TG_re, TJ_re);
+    TU_im = _mm512_add_pd(TG_im, TJ_im);
+    __m512d Tx_re, Tx_im, Ty_re, Ty_im, TL_re, TL_im;
+    __m512d TM_re, TM_im;
+    Tx_re = _mm512_mul_pd(KP866025403, _mm512_sub_pd(Tv_re, Tw_re));
+    Tx_im = _mm512_mul_pd(KP866025403, _mm512_sub_pd(Tv_im, Tw_im));
+    Ty_re = _mm512_fnmadd_pd(KP500000000, Ta_re, T3_re);
+    Ty_im = _mm512_fnmadd_pd(KP500000000, Ta_im, T3_im);
+    Tz_re = _mm512_sub_pd(Tx_re, Ty_re);
+    Tz_im = _mm512_sub_pd(Tx_im, Ty_im);
+    TB_re = _mm512_add_pd(Tx_re, Ty_re);
+    TB_im = _mm512_add_pd(Tx_im, Ty_im);
+    TL_re = _mm512_add_pd(Tv_re, Tw_re);
+    TL_im = _mm512_add_pd(Tv_im, Tw_im);
+    TM_re = _mm512_sub_pd(T6_re, T9_re);
+    TM_im = _mm512_sub_pd(T6_im, T9_im);
+    TN_re = _mm512_sub_pd(TL_re, TM_re);
+    TN_im = _mm512_sub_pd(TL_im, TM_im);
+    TT_re = _mm512_add_pd(TL_re, TM_re);
+    TT_im = _mm512_add_pd(TL_im, TM_im);
+    _mm512_store_pd(&out_re[k], _mm512_add_pd(TW_re, TX_re));
+    _mm512_store_pd(&out_im[k], _mm512_add_pd(TW_im, TX_im));
+    __m512d T19_re, T19_im, T1n_re, T1n_im, T14_re, T14_im;
+    __m512d T13_re, T13_im, T1f_re, T1f_im, T1k_re, T1k_im;
+    __m512d Tn_re, Tn_im, TE_re, TE_im, T1e_re, T1e_im;
+    __m512d T1j_re, T1j_im, TS_re, TS_im, T1m_re, T1m_im;
+    __m512d TZ_re, TZ_im, T1c_re, T1c_im, TA_re, TA_im;
+    __m512d TD_re, TD_im;
+    __m512d T17_re, T17_im, T18_re, T18_im, T11_re, T11_im;
+    __m512d T12_re, T12_im;
+    T17_re = _mm512_fmadd_pd(KP387390585, TN_re, _mm512_mul_pd(KP265966249, TK_re));
+    T17_im = _mm512_fmadd_pd(KP387390585, TN_im, _mm512_mul_pd(KP265966249, TK_im));
+    T18_re = _mm512_fnmadd_pd(KP503537032, TU_re, _mm512_mul_pd(KP113854479, TT_re));
+    T18_im = _mm512_fnmadd_pd(KP503537032, TU_im, _mm512_mul_pd(KP113854479, TT_im));
+    T19_re = _mm512_sub_pd(T17_re, T18_re);
+    T19_im = _mm512_sub_pd(T17_im, T18_im);
+    T1n_re = _mm512_add_pd(T17_re, T18_re);
+    T1n_im = _mm512_add_pd(T17_im, T18_im);
+    T14_re = _mm512_fmadd_pd(KP575140729, Tm_re, _mm512_mul_pd(KP174138601, Tb_re));
+    T14_im = _mm512_fmadd_pd(KP575140729, Tm_im, _mm512_mul_pd(KP174138601, Tb_im));
+    T11_re = _mm512_fnmadd_pd(KP156891391, TB_re, _mm512_mul_pd(KP256247671, TC_re));
+    T11_im = _mm512_fnmadd_pd(KP156891391, TB_im, _mm512_mul_pd(KP256247671, TC_im));
+    T12_re = _mm512_fmadd_pd(KP011599105, Tz_re, _mm512_mul_pd(KP300238635, Tu_re));
+    T12_im = _mm512_fmadd_pd(KP011599105, Tz_im, _mm512_mul_pd(KP300238635, Tu_im));
+    T13_re = _mm512_sub_pd(T11_re, T12_re);
+    T13_im = _mm512_sub_pd(T11_im, T12_im);
+    T1f_re = _mm512_add_pd(T14_re, T13_re);
+    T1f_im = _mm512_add_pd(T14_im, T13_im);
+    T1k_re = _mm512_mul_pd(KP1_732050807, _mm512_add_pd(T11_re, T12_re));
+    T1k_im = _mm512_mul_pd(KP1_732050807, _mm512_add_pd(T11_im, T12_im));
+    Tn_re = _mm512_fnmadd_pd(KP174138601, Tm_re, _mm512_mul_pd(KP575140729, Tb_re));
+    Tn_im = _mm512_fnmadd_pd(KP174138601, Tm_im, _mm512_mul_pd(KP575140729, Tb_im));
+    TA_re = _mm512_fnmadd_pd(KP300238635, Tz_re, _mm512_mul_pd(KP011599105, Tu_re));
+    TA_im = _mm512_fnmadd_pd(KP300238635, Tz_im, _mm512_mul_pd(KP011599105, Tu_im));
+    TD_re = _mm512_fmadd_pd(KP256247671, TB_re, _mm512_mul_pd(KP156891391, TC_re));
+    TD_im = _mm512_fmadd_pd(KP256247671, TB_im, _mm512_mul_pd(KP156891391, TC_im));
+    TE_re = _mm512_sub_pd(TA_re, TD_re);
+    TE_im = _mm512_sub_pd(TA_im, TD_im);
+    T1e_re = _mm512_mul_pd(KP1_732050807, _mm512_add_pd(TD_re, TA_re));
+    T1e_im = _mm512_mul_pd(KP1_732050807, _mm512_add_pd(TD_im, TA_im));
+    T1j_re = _mm512_sub_pd(Tn_re, TE_re);
+    T1j_im = _mm512_sub_pd(Tn_im, TE_im);
+    __m512d TO_re, TO_im, T1b_re, T1b_im, TV_re, TV_im;
+    __m512d TY_re, TY_im, T1a_re, T1a_im;
+    TO_re = _mm512_fnmadd_pd(KP132983124, TN_re, _mm512_mul_pd(KP258260390, TK_re));
+    TO_im = _mm512_fnmadd_pd(KP132983124, TN_im, _mm512_mul_pd(KP258260390, TK_im));
+    T1b_re = _mm512_sub_pd(TR_re, TO_re);
+    T1b_im = _mm512_sub_pd(TR_im, TO_im);
+    TV_re = _mm512_fmadd_pd(KP251768516, TT_re, _mm512_mul_pd(KP075902986, TU_re));
+    TV_im = _mm512_fmadd_pd(KP251768516, TT_im, _mm512_mul_pd(KP075902986, TU_im));
+    TY_re = _mm512_fnmadd_pd(KP083333333, TX_re, TW_re);
+    TY_im = _mm512_fnmadd_pd(KP083333333, TX_im, TW_im);
+    T1a_re = _mm512_sub_pd(TY_re, TV_re);
+    T1a_im = _mm512_sub_pd(TY_im, TV_im);
+    TS_re = _mm512_fmadd_pd(KP2_000000000, TO_re, TR_re);
+    TS_im = _mm512_fmadd_pd(KP2_000000000, TO_im, TR_im);
+    T1m_re = _mm512_add_pd(T1b_re, T1a_re);
+    T1m_im = _mm512_add_pd(T1b_im, T1a_im);
+    TZ_re = _mm512_fmadd_pd(KP2_000000000, TV_re, TY_re);
+    TZ_im = _mm512_fmadd_pd(KP2_000000000, TV_im, TY_im);
+    T1c_re = _mm512_sub_pd(T1a_re, T1b_re);
+    T1c_im = _mm512_sub_pd(T1a_im, T1b_im);
+    __m512d TF_re, TF_im, T10_re, T10_im, T1l_re, T1l_im;
+    __m512d T1o_re, T1o_im;
+    TF_re = _mm512_xor_pd(_mm512_fmadd_pd(KP2_000000000, TE_im, Tn_im), sign_flip);
+    TF_im = _mm512_fmadd_pd(KP2_000000000, TE_re, Tn_re);
+    T10_re = _mm512_add_pd(TS_re, TZ_re);
+    T10_im = _mm512_add_pd(TS_im, TZ_im);
+    _mm512_store_pd(&out_re[1 * K + k], _mm512_add_pd(TF_re, T10_re));
+    _mm512_store_pd(&out_im[1 * K + k], _mm512_add_pd(TF_im, T10_im));
+    _mm512_store_pd(&out_re[12 * K + k], _mm512_sub_pd(T10_re, TF_re));
+    _mm512_store_pd(&out_im[12 * K + k], _mm512_sub_pd(T10_im, TF_im));
+    __m512d T15_re, T15_im, T16_re, T16_im, T1p_re, T1p_im;
+    __m512d T1q_re, T1q_im;
+    T15_re = _mm512_xor_pd(_mm512_fmsub_pd(KP2_000000000, T13_im, T14_im), sign_flip);
+    T15_im = _mm512_fmsub_pd(KP2_000000000, T13_re, T14_re);
+    T16_re = _mm512_sub_pd(TZ_re, TS_re);
+    T16_im = _mm512_sub_pd(TZ_im, TS_im);
+    _mm512_store_pd(&out_re[5 * K + k], _mm512_add_pd(T15_re, T16_re));
+    _mm512_store_pd(&out_im[5 * K + k], _mm512_add_pd(T15_im, T16_im));
+    _mm512_store_pd(&out_re[8 * K + k], _mm512_sub_pd(T16_re, T15_re));
+    _mm512_store_pd(&out_im[8 * K + k], _mm512_sub_pd(T16_im, T15_im));
+    T1p_re = _mm512_add_pd(T1n_re, T1m_re);
+    T1p_im = _mm512_add_pd(T1n_im, T1m_im);
+    T1q_re = _mm512_xor_pd(_mm512_add_pd(T1j_im, T1k_im), sign_flip);
+    T1q_im = _mm512_add_pd(T1j_re, T1k_re);
+    _mm512_store_pd(&out_re[4 * K + k], _mm512_sub_pd(T1p_re, T1q_re));
+    _mm512_store_pd(&out_im[4 * K + k], _mm512_sub_pd(T1p_im, T1q_im));
+    _mm512_store_pd(&out_re[9 * K + k], _mm512_add_pd(T1q_re, T1p_re));
+    _mm512_store_pd(&out_im[9 * K + k], _mm512_add_pd(T1q_im, T1p_im));
+    T1l_re = _mm512_xor_pd(_mm512_sub_pd(T1j_im, T1k_im), sign_flip);
+    T1l_im = _mm512_sub_pd(T1j_re, T1k_re);
+    T1o_re = _mm512_sub_pd(T1m_re, T1n_re);
+    T1o_im = _mm512_sub_pd(T1m_im, T1n_im);
+    _mm512_store_pd(&out_re[3 * K + k], _mm512_add_pd(T1l_re, T1o_re));
+    _mm512_store_pd(&out_im[3 * K + k], _mm512_add_pd(T1l_im, T1o_im));
+    _mm512_store_pd(&out_re[10 * K + k], _mm512_sub_pd(T1o_re, T1l_re));
+    _mm512_store_pd(&out_im[10 * K + k], _mm512_sub_pd(T1o_im, T1l_im));
+    __m512d T1h_re, T1h_im, T1i_re, T1i_im, T1d_re, T1d_im;
+    __m512d T1g_re, T1g_im;
+    T1h_re = _mm512_xor_pd(_mm512_sub_pd(T1e_im, T1f_im), sign_flip);
+    T1h_im = _mm512_sub_pd(T1e_re, T1f_re);
+    T1i_re = _mm512_sub_pd(T1c_re, T19_re);
+    T1i_im = _mm512_sub_pd(T1c_im, T19_im);
+    _mm512_store_pd(&out_re[6 * K + k], _mm512_add_pd(T1h_re, T1i_re));
+    _mm512_store_pd(&out_im[6 * K + k], _mm512_add_pd(T1h_im, T1i_im));
+    _mm512_store_pd(&out_re[7 * K + k], _mm512_sub_pd(T1i_re, T1h_re));
+    _mm512_store_pd(&out_im[7 * K + k], _mm512_sub_pd(T1i_im, T1h_im));
+    T1d_re = _mm512_add_pd(T19_re, T1c_re);
+    T1d_im = _mm512_add_pd(T19_im, T1c_im);
+    T1g_re = _mm512_xor_pd(_mm512_add_pd(T1e_im, T1f_im), sign_flip);
+    T1g_im = _mm512_add_pd(T1e_re, T1f_re);
+    _mm512_store_pd(&out_re[2 * K + k], _mm512_sub_pd(T1d_re, T1g_re));
+    _mm512_store_pd(&out_im[2 * K + k], _mm512_sub_pd(T1d_im, T1g_im));
+    _mm512_store_pd(&out_re[11 * K + k], _mm512_add_pd(T1g_re, T1d_re));
+    _mm512_store_pd(&out_im[11 * K + k], _mm512_add_pd(T1g_im, T1d_im));
+  }
+}
+
+__attribute__((target("avx512f,avx512dq,fma"))) static void radix13_genfft_bwd_avx512(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im,
+    size_t K)
+{
+  const __m512d sign_flip = _mm512_set1_pd(-0.0);
+  const __m512d KP2_000000000 = _mm512_set1_pd(+2.000000000000000000000000000000000000000000000);
+  const __m512d KP083333333 = _mm512_set1_pd(+0.083333333333333333333333333333333333333333333);
+  const __m512d KP075902986 = _mm512_set1_pd(+0.075902986037193865983102897245103540356428373);
+  const __m512d KP251768516 = _mm512_set1_pd(+0.251768516431883313623436926934233488546674281);
+  const __m512d KP132983124 = _mm512_set1_pd(+0.132983124607418643793760531921092974399165133);
+  const __m512d KP258260390 = _mm512_set1_pd(+0.258260390311744861420450644284508567852516811);
+  const __m512d KP1_732050807 = _mm512_set1_pd(+1.732050807568877293527446341505872366942805254);
+  const __m512d KP300238635 = _mm512_set1_pd(+0.300238635966332641462884626667381504676006424);
+  const __m512d KP011599105 = _mm512_set1_pd(+0.011599105605768290721655456654083252189827041);
+  const __m512d KP256247671 = _mm512_set1_pd(+0.256247671582936600958684654061725059144125175);
+  const __m512d KP156891391 = _mm512_set1_pd(+0.156891391051584611046832726756003269660212636);
+  const __m512d KP174138601 = _mm512_set1_pd(+0.174138601152135905005660794929264742616964676);
+  const __m512d KP575140729 = _mm512_set1_pd(+0.575140729474003121368385547455453388461001608);
+  const __m512d KP503537032 = _mm512_set1_pd(+0.503537032863766627246873853868466977093348562);
+  const __m512d KP113854479 = _mm512_set1_pd(+0.113854479055790798974654345867655310534642560);
+  const __m512d KP265966249 = _mm512_set1_pd(+0.265966249214837287587521063842185948798330267);
+  const __m512d KP387390585 = _mm512_set1_pd(+0.387390585467617292130675966426762851778775217);
+  const __m512d KP300462606 = _mm512_set1_pd(+0.300462606288665774426601772289207995520941381);
+  const __m512d KP866025403 = _mm512_set1_pd(+0.866025403784438646763723170752936183471402627);
+  const __m512d KP500000000 = _mm512_set1_pd(+0.500000000000000000000000000000000000000000000);
+  for (size_t k = 0; k < K; k += 8)
+  {
+
+    __m512d TW_re, TW_im, Tb_re, Tb_im, Tm_re, Tm_im;
+    __m512d Ts_re, Ts_im, TB_re, TB_im, TR_re, TR_im;
+    __m512d TX_re, TX_im, TK_re, TK_im, TU_re, TU_im;
+    __m512d Tz_re, Tz_im, TC_re, TC_im, TN_re, TN_im;
+    __m512d TT_re, TT_im;
+    TW_re = _mm512_load_pd(&in_re[k]);
+    TW_im = _mm512_load_pd(&in_im[k]);
+    __m512d Te_re, Te_im, TH_re, TH_im, Ta_re, Ta_im;
+    __m512d Tu_re, Tu_im, Tp_re, Tp_im, T5_re, T5_im;
+    __m512d Tt_re, Tt_im, To_re, To_im, Th_re, Th_im;
+    __m512d Tw_re, Tw_im, Tk_re, Tk_im, Tx_re, Tx_im;
+    __m512d Tl_re, Tl_im, TI_re, TI_im, Tc_re, Tc_im;
+    __m512d Td_re, Td_im, Tq_re, Tq_im, Tr_re, Tr_im;
+    Tc_re = _mm512_load_pd(&in_re[8 * K + k]);
+    Tc_im = _mm512_load_pd(&in_im[8 * K + k]);
+    Td_re = _mm512_load_pd(&in_re[5 * K + k]);
+    Td_im = _mm512_load_pd(&in_im[5 * K + k]);
+    Te_re = _mm512_sub_pd(Tc_re, Td_re);
+    Te_im = _mm512_sub_pd(Tc_im, Td_im);
+    TH_re = _mm512_add_pd(Tc_re, Td_re);
+    TH_im = _mm512_add_pd(Tc_im, Td_im);
+    __m512d T6_re, T6_im, T7_re, T7_im, T8_re, T8_im;
+    __m512d T9_re, T9_im;
+    T6_re = _mm512_load_pd(&in_re[12 * K + k]);
+    T6_im = _mm512_load_pd(&in_im[12 * K + k]);
+    T7_re = _mm512_load_pd(&in_re[10 * K + k]);
+    T7_im = _mm512_load_pd(&in_im[10 * K + k]);
+    T8_re = _mm512_load_pd(&in_re[4 * K + k]);
+    T8_im = _mm512_load_pd(&in_im[4 * K + k]);
+    T9_re = _mm512_add_pd(T7_re, T8_re);
+    T9_im = _mm512_add_pd(T7_im, T8_im);
+    Ta_re = _mm512_add_pd(T6_re, T9_re);
+    Ta_im = _mm512_add_pd(T6_im, T9_im);
+    Tu_re = _mm512_fnmadd_pd(KP500000000, T9_re, T6_re);
+    Tu_im = _mm512_fnmadd_pd(KP500000000, T9_im, T6_im);
+    Tp_re = _mm512_sub_pd(T7_re, T8_re);
+    Tp_im = _mm512_sub_pd(T7_im, T8_im);
+    __m512d T1_re, T1_im, T2_re, T2_im, T3_re, T3_im;
+    __m512d T4_re, T4_im;
+    T1_re = _mm512_load_pd(&in_re[1 * K + k]);
+    T1_im = _mm512_load_pd(&in_im[1 * K + k]);
+    T2_re = _mm512_load_pd(&in_re[3 * K + k]);
+    T2_im = _mm512_load_pd(&in_im[3 * K + k]);
+    T3_re = _mm512_load_pd(&in_re[9 * K + k]);
+    T3_im = _mm512_load_pd(&in_im[9 * K + k]);
+    T4_re = _mm512_add_pd(T2_re, T3_re);
+    T4_im = _mm512_add_pd(T2_im, T3_im);
+    T5_re = _mm512_add_pd(T1_re, T4_re);
+    T5_im = _mm512_add_pd(T1_im, T4_im);
+    Tt_re = _mm512_fnmadd_pd(KP500000000, T4_re, T1_re);
+    Tt_im = _mm512_fnmadd_pd(KP500000000, T4_im, T1_im);
+    To_re = _mm512_sub_pd(T2_re, T3_re);
+    To_im = _mm512_sub_pd(T2_im, T3_im);
+    __m512d Tf_re, Tf_im, Tg_re, Tg_im, Ti_re, Ti_im;
+    __m512d Tj_re, Tj_im;
+    Tf_re = _mm512_load_pd(&in_re[11 * K + k]);
+    Tf_im = _mm512_load_pd(&in_im[11 * K + k]);
+    Tg_re = _mm512_load_pd(&in_re[6 * K + k]);
+    Tg_im = _mm512_load_pd(&in_im[6 * K + k]);
+    Th_re = _mm512_sub_pd(Tf_re, Tg_re);
+    Th_im = _mm512_sub_pd(Tf_im, Tg_im);
+    Tw_re = _mm512_add_pd(Tf_re, Tg_re);
+    Tw_im = _mm512_add_pd(Tf_im, Tg_im);
+    Ti_re = _mm512_load_pd(&in_re[7 * K + k]);
+    Ti_im = _mm512_load_pd(&in_im[7 * K + k]);
+    Tj_re = _mm512_load_pd(&in_re[2 * K + k]);
+    Tj_im = _mm512_load_pd(&in_im[2 * K + k]);
+    Tk_re = _mm512_sub_pd(Ti_re, Tj_re);
+    Tk_im = _mm512_sub_pd(Ti_im, Tj_im);
+    Tx_re = _mm512_add_pd(Ti_re, Tj_re);
+    Tx_im = _mm512_add_pd(Ti_im, Tj_im);
+    Tl_re = _mm512_add_pd(Th_re, Tk_re);
+    Tl_im = _mm512_add_pd(Th_im, Tk_im);
+    TI_re = _mm512_add_pd(Tw_re, Tx_re);
+    TI_im = _mm512_add_pd(Tw_im, Tx_im);
+    Tb_re = _mm512_sub_pd(T5_re, Ta_re);
+    Tb_im = _mm512_sub_pd(T5_im, Ta_im);
+    Tm_re = _mm512_add_pd(Te_re, Tl_re);
+    Tm_im = _mm512_add_pd(Te_im, Tl_im);
+    Tq_re = _mm512_mul_pd(KP866025403, _mm512_sub_pd(To_re, Tp_re));
+    Tq_im = _mm512_mul_pd(KP866025403, _mm512_sub_pd(To_im, Tp_im));
+    Tr_re = _mm512_fnmadd_pd(KP500000000, Tl_re, Te_re);
+    Tr_im = _mm512_fnmadd_pd(KP500000000, Tl_im, Te_im);
+    Ts_re = _mm512_add_pd(Tq_re, Tr_re);
+    Ts_im = _mm512_add_pd(Tq_im, Tr_im);
+    TB_re = _mm512_sub_pd(Tq_re, Tr_re);
+    TB_im = _mm512_sub_pd(Tq_im, Tr_im);
+    __m512d TP_re, TP_im, TQ_re, TQ_im, TG_re, TG_im;
+    __m512d TJ_re, TJ_im;
+    TP_re = _mm512_add_pd(T5_re, Ta_re);
+    TP_im = _mm512_add_pd(T5_im, Ta_im);
+    TQ_re = _mm512_add_pd(TH_re, TI_re);
+    TQ_im = _mm512_add_pd(TH_im, TI_im);
+    TR_re = _mm512_mul_pd(KP300462606, _mm512_sub_pd(TP_re, TQ_re));
+    TR_im = _mm512_mul_pd(KP300462606, _mm512_sub_pd(TP_im, TQ_im));
+    TX_re = _mm512_add_pd(TP_re, TQ_re);
+    TX_im = _mm512_add_pd(TP_im, TQ_im);
+    TG_re = _mm512_add_pd(Tt_re, Tu_re);
+    TG_im = _mm512_add_pd(Tt_im, Tu_im);
+    TJ_re = _mm512_fnmadd_pd(KP500000000, TI_re, TH_re);
+    TJ_im = _mm512_fnmadd_pd(KP500000000, TI_im, TH_im);
+    TK_re = _mm512_sub_pd(TG_re, TJ_re);
+    TK_im = _mm512_sub_pd(TG_im, TJ_im);
+    TU_re = _mm512_add_pd(TG_re, TJ_re);
+    TU_im = _mm512_add_pd(TG_im, TJ_im);
+    __m512d Tv_re, Tv_im, Ty_re, Ty_im, TL_re, TL_im;
+    __m512d TM_re, TM_im;
+    Tv_re = _mm512_sub_pd(Tt_re, Tu_re);
+    Tv_im = _mm512_sub_pd(Tt_im, Tu_im);
+    Ty_re = _mm512_mul_pd(KP866025403, _mm512_sub_pd(Tw_re, Tx_re));
+    Ty_im = _mm512_mul_pd(KP866025403, _mm512_sub_pd(Tw_im, Tx_im));
+    Tz_re = _mm512_sub_pd(Tv_re, Ty_re);
+    Tz_im = _mm512_sub_pd(Tv_im, Ty_im);
+    TC_re = _mm512_add_pd(Tv_re, Ty_re);
+    TC_im = _mm512_add_pd(Tv_im, Ty_im);
+    TL_re = _mm512_add_pd(To_re, Tp_re);
+    TL_im = _mm512_add_pd(To_im, Tp_im);
+    TM_re = _mm512_sub_pd(Th_re, Tk_re);
+    TM_im = _mm512_sub_pd(Th_im, Tk_im);
+    TN_re = _mm512_sub_pd(TL_re, TM_re);
+    TN_im = _mm512_sub_pd(TL_im, TM_im);
+    TT_re = _mm512_add_pd(TL_re, TM_re);
+    TT_im = _mm512_add_pd(TL_im, TM_im);
+    _mm512_store_pd(&out_re[k], _mm512_add_pd(TW_re, TX_re));
+    _mm512_store_pd(&out_im[k], _mm512_add_pd(TW_im, TX_im));
+    __m512d T1c_re, T1c_im, T1n_re, T1n_im, T11_re, T11_im;
+    __m512d T14_re, T14_im, T17_re, T17_im, T1k_re, T1k_im;
+    __m512d Tn_re, Tn_im, TE_re, TE_im, T18_re, T18_im;
+    __m512d T1j_re, T1j_im, TS_re, TS_im, T1m_re, T1m_im;
+    __m512d TZ_re, TZ_im, T1f_re, T1f_im, TA_re, TA_im;
+    __m512d TD_re, TD_im;
+    __m512d T1a_re, T1a_im, T1b_re, T1b_im, T12_re, T12_im;
+    __m512d T13_re, T13_im;
+    T1a_re = _mm512_fmadd_pd(KP387390585, TN_re, _mm512_mul_pd(KP265966249, TK_re));
+    T1a_im = _mm512_fmadd_pd(KP387390585, TN_im, _mm512_mul_pd(KP265966249, TK_im));
+    T1b_re = _mm512_fnmadd_pd(KP503537032, TU_re, _mm512_mul_pd(KP113854479, TT_re));
+    T1b_im = _mm512_fnmadd_pd(KP503537032, TU_im, _mm512_mul_pd(KP113854479, TT_im));
+    T1c_re = _mm512_sub_pd(T1a_re, T1b_re);
+    T1c_im = _mm512_sub_pd(T1a_im, T1b_im);
+    T1n_re = _mm512_add_pd(T1a_re, T1b_re);
+    T1n_im = _mm512_add_pd(T1a_im, T1b_im);
+    T11_re = _mm512_fmadd_pd(KP575140729, Tb_re, _mm512_mul_pd(KP174138601, Tm_re));
+    T11_im = _mm512_fmadd_pd(KP575140729, Tb_im, _mm512_mul_pd(KP174138601, Tm_im));
+    T12_re = _mm512_fnmadd_pd(KP256247671, Tz_re, _mm512_mul_pd(KP156891391, Ts_re));
+    T12_im = _mm512_fnmadd_pd(KP256247671, Tz_im, _mm512_mul_pd(KP156891391, Ts_im));
+    T13_re = _mm512_fmadd_pd(KP011599105, TB_re, _mm512_mul_pd(KP300238635, TC_re));
+    T13_im = _mm512_fmadd_pd(KP011599105, TB_im, _mm512_mul_pd(KP300238635, TC_im));
+    T14_re = _mm512_add_pd(T12_re, T13_re);
+    T14_im = _mm512_add_pd(T12_im, T13_im);
+    T17_re = _mm512_sub_pd(T11_re, T14_re);
+    T17_im = _mm512_sub_pd(T11_im, T14_im);
+    T1k_re = _mm512_mul_pd(KP1_732050807, _mm512_sub_pd(T12_re, T13_re));
+    T1k_im = _mm512_mul_pd(KP1_732050807, _mm512_sub_pd(T12_im, T13_im));
+    Tn_re = _mm512_fnmadd_pd(KP575140729, Tm_re, _mm512_mul_pd(KP174138601, Tb_re));
+    Tn_im = _mm512_fnmadd_pd(KP575140729, Tm_im, _mm512_mul_pd(KP174138601, Tb_im));
+    TA_re = _mm512_fmadd_pd(KP256247671, Ts_re, _mm512_mul_pd(KP156891391, Tz_re));
+    TA_im = _mm512_fmadd_pd(KP256247671, Ts_im, _mm512_mul_pd(KP156891391, Tz_im));
+    TD_re = _mm512_fnmadd_pd(KP011599105, TC_re, _mm512_mul_pd(KP300238635, TB_re));
+    TD_im = _mm512_fnmadd_pd(KP011599105, TC_im, _mm512_mul_pd(KP300238635, TB_im));
+    TE_re = _mm512_add_pd(TA_re, TD_re);
+    TE_im = _mm512_add_pd(TA_im, TD_im);
+    T18_re = _mm512_mul_pd(KP1_732050807, _mm512_sub_pd(TD_re, TA_re));
+    T18_im = _mm512_mul_pd(KP1_732050807, _mm512_sub_pd(TD_im, TA_im));
+    T1j_re = _mm512_sub_pd(Tn_re, TE_re);
+    T1j_im = _mm512_sub_pd(Tn_im, TE_im);
+    __m512d TO_re, TO_im, T1e_re, T1e_im, TV_re, TV_im;
+    __m512d TY_re, TY_im, T1d_re, T1d_im;
+    TO_re = _mm512_fnmadd_pd(KP132983124, TN_re, _mm512_mul_pd(KP258260390, TK_re));
+    TO_im = _mm512_fnmadd_pd(KP132983124, TN_im, _mm512_mul_pd(KP258260390, TK_im));
+    T1e_re = _mm512_sub_pd(TR_re, TO_re);
+    T1e_im = _mm512_sub_pd(TR_im, TO_im);
+    TV_re = _mm512_fmadd_pd(KP251768516, TT_re, _mm512_mul_pd(KP075902986, TU_re));
+    TV_im = _mm512_fmadd_pd(KP251768516, TT_im, _mm512_mul_pd(KP075902986, TU_im));
+    TY_re = _mm512_fnmadd_pd(KP083333333, TX_re, TW_re);
+    TY_im = _mm512_fnmadd_pd(KP083333333, TX_im, TW_im);
+    T1d_re = _mm512_sub_pd(TY_re, TV_re);
+    T1d_im = _mm512_sub_pd(TY_im, TV_im);
+    TS_re = _mm512_fmadd_pd(KP2_000000000, TO_re, TR_re);
+    TS_im = _mm512_fmadd_pd(KP2_000000000, TO_im, TR_im);
+    T1m_re = _mm512_add_pd(T1e_re, T1d_re);
+    T1m_im = _mm512_add_pd(T1e_im, T1d_im);
+    TZ_re = _mm512_fmadd_pd(KP2_000000000, TV_re, TY_re);
+    TZ_im = _mm512_fmadd_pd(KP2_000000000, TV_im, TY_im);
+    T1f_re = _mm512_sub_pd(T1d_re, T1e_re);
+    T1f_im = _mm512_sub_pd(T1d_im, T1e_im);
+    __m512d TF_re, TF_im, T10_re, T10_im, T1l_re, T1l_im;
+    __m512d T1o_re, T1o_im;
+    TF_re = _mm512_xor_pd(_mm512_fmadd_pd(KP2_000000000, TE_im, Tn_im), sign_flip);
+    TF_im = _mm512_fmadd_pd(KP2_000000000, TE_re, Tn_re);
+    T10_re = _mm512_add_pd(TS_re, TZ_re);
+    T10_im = _mm512_add_pd(TS_im, TZ_im);
+    _mm512_store_pd(&out_re[1 * K + k], _mm512_add_pd(TF_re, T10_re));
+    _mm512_store_pd(&out_im[1 * K + k], _mm512_add_pd(TF_im, T10_im));
+    _mm512_store_pd(&out_re[12 * K + k], _mm512_sub_pd(T10_re, TF_re));
+    _mm512_store_pd(&out_im[12 * K + k], _mm512_sub_pd(T10_im, TF_im));
+    __m512d T15_re, T15_im, T16_re, T16_im, T1p_re, T1p_im;
+    __m512d T1q_re, T1q_im;
+    T15_re = _mm512_xor_pd(_mm512_fmadd_pd(KP2_000000000, T14_im, T11_im), sign_flip);
+    T15_im = _mm512_fmadd_pd(KP2_000000000, T14_re, T11_re);
+    T16_re = _mm512_sub_pd(TZ_re, TS_re);
+    T16_im = _mm512_sub_pd(TZ_im, TS_im);
+    _mm512_store_pd(&out_re[5 * K + k], _mm512_add_pd(T15_re, T16_re));
+    _mm512_store_pd(&out_im[5 * K + k], _mm512_add_pd(T15_im, T16_im));
+    _mm512_store_pd(&out_re[8 * K + k], _mm512_sub_pd(T16_re, T15_re));
+    _mm512_store_pd(&out_im[8 * K + k], _mm512_sub_pd(T16_im, T15_im));
+    T1p_re = _mm512_add_pd(T1n_re, T1m_re);
+    T1p_im = _mm512_add_pd(T1n_im, T1m_im);
+    T1q_re = _mm512_xor_pd(_mm512_add_pd(T1j_im, T1k_im), sign_flip);
+    T1q_im = _mm512_add_pd(T1j_re, T1k_re);
+    _mm512_store_pd(&out_re[4 * K + k], _mm512_sub_pd(T1p_re, T1q_re));
+    _mm512_store_pd(&out_im[4 * K + k], _mm512_sub_pd(T1p_im, T1q_im));
+    _mm512_store_pd(&out_re[9 * K + k], _mm512_add_pd(T1q_re, T1p_re));
+    _mm512_store_pd(&out_im[9 * K + k], _mm512_add_pd(T1q_im, T1p_im));
+    T1l_re = _mm512_xor_pd(_mm512_sub_pd(T1j_im, T1k_im), sign_flip);
+    T1l_im = _mm512_sub_pd(T1j_re, T1k_re);
+    T1o_re = _mm512_sub_pd(T1m_re, T1n_re);
+    T1o_im = _mm512_sub_pd(T1m_im, T1n_im);
+    _mm512_store_pd(&out_re[3 * K + k], _mm512_add_pd(T1l_re, T1o_re));
+    _mm512_store_pd(&out_im[3 * K + k], _mm512_add_pd(T1l_im, T1o_im));
+    _mm512_store_pd(&out_re[10 * K + k], _mm512_sub_pd(T1o_re, T1l_re));
+    _mm512_store_pd(&out_im[10 * K + k], _mm512_sub_pd(T1o_im, T1l_im));
+    __m512d T1h_re, T1h_im, T1i_re, T1i_im, T19_re, T19_im;
+    __m512d T1g_re, T1g_im;
+    T1h_re = _mm512_xor_pd(_mm512_add_pd(T18_im, T17_im), sign_flip);
+    T1h_im = _mm512_add_pd(T18_re, T17_re);
+    T1i_re = _mm512_sub_pd(T1f_re, T1c_re);
+    T1i_im = _mm512_sub_pd(T1f_im, T1c_im);
+    _mm512_store_pd(&out_re[6 * K + k], _mm512_add_pd(T1h_re, T1i_re));
+    _mm512_store_pd(&out_im[6 * K + k], _mm512_add_pd(T1h_im, T1i_im));
+    _mm512_store_pd(&out_re[7 * K + k], _mm512_sub_pd(T1i_re, T1h_re));
+    _mm512_store_pd(&out_im[7 * K + k], _mm512_sub_pd(T1i_im, T1h_im));
+    T19_re = _mm512_xor_pd(_mm512_sub_pd(T17_im, T18_im), sign_flip);
+    T19_im = _mm512_sub_pd(T17_re, T18_re);
+    T1g_re = _mm512_add_pd(T1c_re, T1f_re);
+    T1g_im = _mm512_add_pd(T1c_im, T1f_im);
+    _mm512_store_pd(&out_re[2 * K + k], _mm512_add_pd(T19_re, T1g_re));
+    _mm512_store_pd(&out_im[2 * K + k], _mm512_add_pd(T19_im, T1g_im));
+    _mm512_store_pd(&out_re[11 * K + k], _mm512_sub_pd(T1g_re, T19_re));
+    _mm512_store_pd(&out_im[11 * K + k], _mm512_sub_pd(T1g_im, T19_im));
+  }
+}
+
+#endif /* __AVX512F__ */
+
+/* ═══════════════════════════════════════════════════════════════
+ * AVX2 KERNELS
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifdef __AVX2__
+#include <immintrin.h>
+
+__attribute__((target("avx2,fma"))) static void radix13_genfft_fwd_avx2(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im,
+    size_t K)
+{
+  const __m256d sign_flip = _mm256_set1_pd(-0.0);
+  const __m256d KP2_000000000 = _mm256_set1_pd(+2.000000000000000000000000000000000000000000000);
+  const __m256d KP083333333 = _mm256_set1_pd(+0.083333333333333333333333333333333333333333333);
+  const __m256d KP075902986 = _mm256_set1_pd(+0.075902986037193865983102897245103540356428373);
+  const __m256d KP251768516 = _mm256_set1_pd(+0.251768516431883313623436926934233488546674281);
+  const __m256d KP132983124 = _mm256_set1_pd(+0.132983124607418643793760531921092974399165133);
+  const __m256d KP258260390 = _mm256_set1_pd(+0.258260390311744861420450644284508567852516811);
+  const __m256d KP1_732050807 = _mm256_set1_pd(+1.732050807568877293527446341505872366942805254);
+  const __m256d KP300238635 = _mm256_set1_pd(+0.300238635966332641462884626667381504676006424);
+  const __m256d KP011599105 = _mm256_set1_pd(+0.011599105605768290721655456654083252189827041);
+  const __m256d KP156891391 = _mm256_set1_pd(+0.156891391051584611046832726756003269660212636);
+  const __m256d KP256247671 = _mm256_set1_pd(+0.256247671582936600958684654061725059144125175);
+  const __m256d KP174138601 = _mm256_set1_pd(+0.174138601152135905005660794929264742616964676);
+  const __m256d KP575140729 = _mm256_set1_pd(+0.575140729474003121368385547455453388461001608);
+  const __m256d KP503537032 = _mm256_set1_pd(+0.503537032863766627246873853868466977093348562);
+  const __m256d KP113854479 = _mm256_set1_pd(+0.113854479055790798974654345867655310534642560);
+  const __m256d KP265966249 = _mm256_set1_pd(+0.265966249214837287587521063842185948798330267);
+  const __m256d KP387390585 = _mm256_set1_pd(+0.387390585467617292130675966426762851778775217);
+  const __m256d KP300462606 = _mm256_set1_pd(+0.300462606288665774426601772289207995520941381);
+  const __m256d KP866025403 = _mm256_set1_pd(+0.866025403784438646763723170752936183471402627);
+  const __m256d KP500000000 = _mm256_set1_pd(+0.500000000000000000000000000000000000000000000);
+  for (size_t k = 0; k < K; k += 4)
+  {
+
     __m256d TW_re, TW_im, Tb_re, Tb_im, Tm_re, Tm_im;
     __m256d Tu_re, Tu_im, TC_re, TC_im, TR_re, TR_im;
     __m256d TX_re, TX_im, TK_re, TK_im, TU_re, TU_im;
     __m256d Tz_re, Tz_im, TB_re, TB_im, TN_re, TN_im;
     __m256d TT_re, TT_im;
-    TW_re = _mm256_loadu_pd(&in_re[k]);
-    TW_im = _mm256_loadu_pd(&in_im[k]);
+    TW_re = _mm256_load_pd(&in_re[k]);
+    TW_im = _mm256_load_pd(&in_im[k]);
     __m256d T3_re, T3_im, TH_re, TH_im, Tl_re, Tl_im;
     __m256d Tw_re, Tw_im, Tp_re, Tp_im, Tg_re, Tg_im;
     __m256d Tv_re, Tv_im, To_re, To_im, T6_re, T6_im;
     __m256d Tr_re, Tr_im, T9_re, T9_im, Ts_re, Ts_im;
     __m256d Ta_re, Ta_im, TI_re, TI_im, T1_re, T1_im;
     __m256d T2_re, T2_im, Tq_re, Tq_im, Tt_re, Tt_im;
-    T1_re = _mm256_loadu_pd(&in_re[8 * K + k]);
-    T1_im = _mm256_loadu_pd(&in_im[8 * K + k]);
-    T2_re = _mm256_loadu_pd(&in_re[5 * K + k]);
-    T2_im = _mm256_loadu_pd(&in_im[5 * K + k]);
+    T1_re = _mm256_load_pd(&in_re[8 * K + k]);
+    T1_im = _mm256_load_pd(&in_im[8 * K + k]);
+    T2_re = _mm256_load_pd(&in_re[5 * K + k]);
+    T2_im = _mm256_load_pd(&in_im[5 * K + k]);
     T3_re = _mm256_sub_pd(T1_re, T2_re);
     T3_im = _mm256_sub_pd(T1_im, T2_im);
     TH_re = _mm256_add_pd(T1_re, T2_re);
     TH_im = _mm256_add_pd(T1_im, T2_im);
     __m256d Th_re, Th_im, Ti_re, Ti_im, Tj_re, Tj_im;
     __m256d Tk_re, Tk_im;
-    Th_re = _mm256_loadu_pd(&in_re[12 * K + k]);
-    Th_im = _mm256_loadu_pd(&in_im[12 * K + k]);
-    Ti_re = _mm256_loadu_pd(&in_re[10 * K + k]);
-    Ti_im = _mm256_loadu_pd(&in_im[10 * K + k]);
-    Tj_re = _mm256_loadu_pd(&in_re[4 * K + k]);
-    Tj_im = _mm256_loadu_pd(&in_im[4 * K + k]);
+    Th_re = _mm256_load_pd(&in_re[12 * K + k]);
+    Th_im = _mm256_load_pd(&in_im[12 * K + k]);
+    Ti_re = _mm256_load_pd(&in_re[10 * K + k]);
+    Ti_im = _mm256_load_pd(&in_im[10 * K + k]);
+    Tj_re = _mm256_load_pd(&in_re[4 * K + k]);
+    Tj_im = _mm256_load_pd(&in_im[4 * K + k]);
     Tk_re = _mm256_add_pd(Ti_re, Tj_re);
     Tk_im = _mm256_add_pd(Ti_im, Tj_im);
     Tl_re = _mm256_add_pd(Th_re, Tk_re);
@@ -84,12 +1190,12 @@ radix13_n1_dit_kernel_fwd_avx2(
     Tp_im = _mm256_fnmadd_pd(KP500000000, Tk_im, Th_im);
     __m256d Tc_re, Tc_im, Td_re, Td_im, Te_re, Te_im;
     __m256d Tf_re, Tf_im;
-    Tc_re = _mm256_loadu_pd(&in_re[1 * K + k]);
-    Tc_im = _mm256_loadu_pd(&in_im[1 * K + k]);
-    Td_re = _mm256_loadu_pd(&in_re[3 * K + k]);
-    Td_im = _mm256_loadu_pd(&in_im[3 * K + k]);
-    Te_re = _mm256_loadu_pd(&in_re[9 * K + k]);
-    Te_im = _mm256_loadu_pd(&in_im[9 * K + k]);
+    Tc_re = _mm256_load_pd(&in_re[1 * K + k]);
+    Tc_im = _mm256_load_pd(&in_im[1 * K + k]);
+    Td_re = _mm256_load_pd(&in_re[3 * K + k]);
+    Td_im = _mm256_load_pd(&in_im[3 * K + k]);
+    Te_re = _mm256_load_pd(&in_re[9 * K + k]);
+    Te_im = _mm256_load_pd(&in_im[9 * K + k]);
     Tf_re = _mm256_add_pd(Td_re, Te_re);
     Tf_im = _mm256_add_pd(Td_im, Te_im);
     Tg_re = _mm256_add_pd(Tc_re, Tf_re);
@@ -100,18 +1206,18 @@ radix13_n1_dit_kernel_fwd_avx2(
     To_im = _mm256_fnmadd_pd(KP500000000, Tf_im, Tc_im);
     __m256d T4_re, T4_im, T5_re, T5_im, T7_re, T7_im;
     __m256d T8_re, T8_im;
-    T4_re = _mm256_loadu_pd(&in_re[11 * K + k]);
-    T4_im = _mm256_loadu_pd(&in_im[11 * K + k]);
-    T5_re = _mm256_loadu_pd(&in_re[6 * K + k]);
-    T5_im = _mm256_loadu_pd(&in_im[6 * K + k]);
+    T4_re = _mm256_load_pd(&in_re[11 * K + k]);
+    T4_im = _mm256_load_pd(&in_im[11 * K + k]);
+    T5_re = _mm256_load_pd(&in_re[6 * K + k]);
+    T5_im = _mm256_load_pd(&in_im[6 * K + k]);
     T6_re = _mm256_sub_pd(T4_re, T5_re);
     T6_im = _mm256_sub_pd(T4_im, T5_im);
     Tr_re = _mm256_add_pd(T4_re, T5_re);
     Tr_im = _mm256_add_pd(T4_im, T5_im);
-    T7_re = _mm256_loadu_pd(&in_re[7 * K + k]);
-    T7_im = _mm256_loadu_pd(&in_im[7 * K + k]);
-    T8_re = _mm256_loadu_pd(&in_re[2 * K + k]);
-    T8_im = _mm256_loadu_pd(&in_im[2 * K + k]);
+    T7_re = _mm256_load_pd(&in_re[7 * K + k]);
+    T7_im = _mm256_load_pd(&in_im[7 * K + k]);
+    T8_re = _mm256_load_pd(&in_re[2 * K + k]);
+    T8_im = _mm256_load_pd(&in_im[2 * K + k]);
     T9_re = _mm256_sub_pd(T7_re, T8_re);
     T9_im = _mm256_sub_pd(T7_im, T8_im);
     Ts_re = _mm256_add_pd(T7_re, T8_re);
@@ -168,8 +1274,8 @@ radix13_n1_dit_kernel_fwd_avx2(
     TN_im = _mm256_sub_pd(TL_im, TM_im);
     TT_re = _mm256_add_pd(TL_re, TM_re);
     TT_im = _mm256_add_pd(TL_im, TM_im);
-    _mm256_storeu_pd(&out_re[k], _mm256_add_pd(TW_re, TX_re));
-    _mm256_storeu_pd(&out_im[k], _mm256_add_pd(TW_im, TX_im));
+    _mm256_store_pd(&out_re[k], _mm256_add_pd(TW_re, TX_re));
+    _mm256_store_pd(&out_im[k], _mm256_add_pd(TW_im, TX_im));
     __m256d T19_re, T19_im, T1n_re, T1n_im, T14_re, T14_im;
     __m256d T13_re, T13_im, T1f_re, T1f_im, T1k_re, T1k_im;
     __m256d Tn_re, Tn_im, TE_re, TE_im, T1e_re, T1e_im;
@@ -232,127 +1338,119 @@ radix13_n1_dit_kernel_fwd_avx2(
     T1c_im = _mm256_sub_pd(T1a_im, T1b_im);
     __m256d TF_re, TF_im, T10_re, T10_im, T1l_re, T1l_im;
     __m256d T1o_re, T1o_im;
-    { __m256d _tr = _mm256_xor_pd(_mm256_fmadd_pd(KP2_000000000, TE_im, Tn_im), sign_flip);
-      TF_re = _tr;
-      TF_im = _mm256_fmadd_pd(KP2_000000000, TE_re, Tn_re); }
+    TF_re = _mm256_xor_pd(_mm256_fmadd_pd(KP2_000000000, TE_im, Tn_im), sign_flip);
+    TF_im = _mm256_fmadd_pd(KP2_000000000, TE_re, Tn_re);
     T10_re = _mm256_add_pd(TS_re, TZ_re);
     T10_im = _mm256_add_pd(TS_im, TZ_im);
-    _mm256_storeu_pd(&out_re[1 * K + k], _mm256_add_pd(TF_re, T10_re));
-    _mm256_storeu_pd(&out_im[1 * K + k], _mm256_add_pd(TF_im, T10_im));
-    _mm256_storeu_pd(&out_re[12 * K + k], _mm256_sub_pd(T10_re, TF_re));
-    _mm256_storeu_pd(&out_im[12 * K + k], _mm256_sub_pd(T10_im, TF_im));
+    _mm256_store_pd(&out_re[1 * K + k], _mm256_add_pd(TF_re, T10_re));
+    _mm256_store_pd(&out_im[1 * K + k], _mm256_add_pd(TF_im, T10_im));
+    _mm256_store_pd(&out_re[12 * K + k], _mm256_sub_pd(T10_re, TF_re));
+    _mm256_store_pd(&out_im[12 * K + k], _mm256_sub_pd(T10_im, TF_im));
     __m256d T15_re, T15_im, T16_re, T16_im, T1p_re, T1p_im;
     __m256d T1q_re, T1q_im;
-    { __m256d _tr = _mm256_xor_pd(_mm256_fmsub_pd(KP2_000000000, T13_im, T14_im), sign_flip);
-      T15_re = _tr;
-      T15_im = _mm256_fmsub_pd(KP2_000000000, T13_re, T14_re); }
+    T15_re = _mm256_xor_pd(_mm256_fmsub_pd(KP2_000000000, T13_im, T14_im), sign_flip);
+    T15_im = _mm256_fmsub_pd(KP2_000000000, T13_re, T14_re);
     T16_re = _mm256_sub_pd(TZ_re, TS_re);
     T16_im = _mm256_sub_pd(TZ_im, TS_im);
-    _mm256_storeu_pd(&out_re[5 * K + k], _mm256_add_pd(T15_re, T16_re));
-    _mm256_storeu_pd(&out_im[5 * K + k], _mm256_add_pd(T15_im, T16_im));
-    _mm256_storeu_pd(&out_re[8 * K + k], _mm256_sub_pd(T16_re, T15_re));
-    _mm256_storeu_pd(&out_im[8 * K + k], _mm256_sub_pd(T16_im, T15_im));
+    _mm256_store_pd(&out_re[5 * K + k], _mm256_add_pd(T15_re, T16_re));
+    _mm256_store_pd(&out_im[5 * K + k], _mm256_add_pd(T15_im, T16_im));
+    _mm256_store_pd(&out_re[8 * K + k], _mm256_sub_pd(T16_re, T15_re));
+    _mm256_store_pd(&out_im[8 * K + k], _mm256_sub_pd(T16_im, T15_im));
     T1p_re = _mm256_add_pd(T1n_re, T1m_re);
     T1p_im = _mm256_add_pd(T1n_im, T1m_im);
-    { __m256d _tr = _mm256_xor_pd(_mm256_add_pd(T1j_im, T1k_im), sign_flip);
-      T1q_re = _tr;
-      T1q_im = _mm256_add_pd(T1j_re, T1k_re); }
-    _mm256_storeu_pd(&out_re[4 * K + k], _mm256_sub_pd(T1p_re, T1q_re));
-    _mm256_storeu_pd(&out_im[4 * K + k], _mm256_sub_pd(T1p_im, T1q_im));
-    _mm256_storeu_pd(&out_re[9 * K + k], _mm256_add_pd(T1q_re, T1p_re));
-    _mm256_storeu_pd(&out_im[9 * K + k], _mm256_add_pd(T1q_im, T1p_im));
-    { __m256d _tr = _mm256_xor_pd(_mm256_sub_pd(T1j_im, T1k_im), sign_flip);
-      T1l_re = _tr;
-      T1l_im = _mm256_sub_pd(T1j_re, T1k_re); }
+    T1q_re = _mm256_xor_pd(_mm256_add_pd(T1j_im, T1k_im), sign_flip);
+    T1q_im = _mm256_add_pd(T1j_re, T1k_re);
+    _mm256_store_pd(&out_re[4 * K + k], _mm256_sub_pd(T1p_re, T1q_re));
+    _mm256_store_pd(&out_im[4 * K + k], _mm256_sub_pd(T1p_im, T1q_im));
+    _mm256_store_pd(&out_re[9 * K + k], _mm256_add_pd(T1q_re, T1p_re));
+    _mm256_store_pd(&out_im[9 * K + k], _mm256_add_pd(T1q_im, T1p_im));
+    T1l_re = _mm256_xor_pd(_mm256_sub_pd(T1j_im, T1k_im), sign_flip);
+    T1l_im = _mm256_sub_pd(T1j_re, T1k_re);
     T1o_re = _mm256_sub_pd(T1m_re, T1n_re);
     T1o_im = _mm256_sub_pd(T1m_im, T1n_im);
-    _mm256_storeu_pd(&out_re[3 * K + k], _mm256_add_pd(T1l_re, T1o_re));
-    _mm256_storeu_pd(&out_im[3 * K + k], _mm256_add_pd(T1l_im, T1o_im));
-    _mm256_storeu_pd(&out_re[10 * K + k], _mm256_sub_pd(T1o_re, T1l_re));
-    _mm256_storeu_pd(&out_im[10 * K + k], _mm256_sub_pd(T1o_im, T1l_im));
+    _mm256_store_pd(&out_re[3 * K + k], _mm256_add_pd(T1l_re, T1o_re));
+    _mm256_store_pd(&out_im[3 * K + k], _mm256_add_pd(T1l_im, T1o_im));
+    _mm256_store_pd(&out_re[10 * K + k], _mm256_sub_pd(T1o_re, T1l_re));
+    _mm256_store_pd(&out_im[10 * K + k], _mm256_sub_pd(T1o_im, T1l_im));
     __m256d T1h_re, T1h_im, T1i_re, T1i_im, T1d_re, T1d_im;
     __m256d T1g_re, T1g_im;
-    { __m256d _tr = _mm256_xor_pd(_mm256_sub_pd(T1e_im, T1f_im), sign_flip);
-      T1h_re = _tr;
-      T1h_im = _mm256_sub_pd(T1e_re, T1f_re); }
+    T1h_re = _mm256_xor_pd(_mm256_sub_pd(T1e_im, T1f_im), sign_flip);
+    T1h_im = _mm256_sub_pd(T1e_re, T1f_re);
     T1i_re = _mm256_sub_pd(T1c_re, T19_re);
     T1i_im = _mm256_sub_pd(T1c_im, T19_im);
-    _mm256_storeu_pd(&out_re[6 * K + k], _mm256_add_pd(T1h_re, T1i_re));
-    _mm256_storeu_pd(&out_im[6 * K + k], _mm256_add_pd(T1h_im, T1i_im));
-    _mm256_storeu_pd(&out_re[7 * K + k], _mm256_sub_pd(T1i_re, T1h_re));
-    _mm256_storeu_pd(&out_im[7 * K + k], _mm256_sub_pd(T1i_im, T1h_im));
+    _mm256_store_pd(&out_re[6 * K + k], _mm256_add_pd(T1h_re, T1i_re));
+    _mm256_store_pd(&out_im[6 * K + k], _mm256_add_pd(T1h_im, T1i_im));
+    _mm256_store_pd(&out_re[7 * K + k], _mm256_sub_pd(T1i_re, T1h_re));
+    _mm256_store_pd(&out_im[7 * K + k], _mm256_sub_pd(T1i_im, T1h_im));
     T1d_re = _mm256_add_pd(T19_re, T1c_re);
     T1d_im = _mm256_add_pd(T19_im, T1c_im);
-    { __m256d _tr = _mm256_xor_pd(_mm256_add_pd(T1e_im, T1f_im), sign_flip);
-      T1g_re = _tr;
-      T1g_im = _mm256_add_pd(T1e_re, T1f_re); }
-    _mm256_storeu_pd(&out_re[2 * K + k], _mm256_sub_pd(T1d_re, T1g_re));
-    _mm256_storeu_pd(&out_im[2 * K + k], _mm256_sub_pd(T1d_im, T1g_im));
-    _mm256_storeu_pd(&out_re[11 * K + k], _mm256_add_pd(T1g_re, T1d_re));
-    _mm256_storeu_pd(&out_im[11 * K + k], _mm256_add_pd(T1g_im, T1d_im));
-
-    }
+    T1g_re = _mm256_xor_pd(_mm256_add_pd(T1e_im, T1f_im), sign_flip);
+    T1g_im = _mm256_add_pd(T1e_re, T1f_re);
+    _mm256_store_pd(&out_re[2 * K + k], _mm256_sub_pd(T1d_re, T1g_re));
+    _mm256_store_pd(&out_im[2 * K + k], _mm256_sub_pd(T1d_im, T1g_im));
+    _mm256_store_pd(&out_re[11 * K + k], _mm256_add_pd(T1g_re, T1d_re));
+    _mm256_store_pd(&out_im[11 * K + k], _mm256_add_pd(T1g_im, T1d_im));
+  }
 }
 
-__attribute__((target("avx2,fma")))
-static void
-radix13_n1_dit_kernel_bwd_avx2(
-    const double * RESTRICT in_re, const double * RESTRICT in_im,
-    double * RESTRICT out_re, double * RESTRICT out_im,
+__attribute__((target("avx2,fma"))) static void radix13_genfft_bwd_avx2(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im,
     size_t K)
 {
-    const __m256d sign_flip = _mm256_set1_pd(-0.0);
-    for (size_t k = 0; k < K; k += 4) {
+  const __m256d sign_flip = _mm256_set1_pd(-0.0);
+  const __m256d KP2_000000000 = _mm256_set1_pd(+2.000000000000000000000000000000000000000000000);
+  const __m256d KP083333333 = _mm256_set1_pd(+0.083333333333333333333333333333333333333333333);
+  const __m256d KP075902986 = _mm256_set1_pd(+0.075902986037193865983102897245103540356428373);
+  const __m256d KP251768516 = _mm256_set1_pd(+0.251768516431883313623436926934233488546674281);
+  const __m256d KP132983124 = _mm256_set1_pd(+0.132983124607418643793760531921092974399165133);
+  const __m256d KP258260390 = _mm256_set1_pd(+0.258260390311744861420450644284508567852516811);
+  const __m256d KP1_732050807 = _mm256_set1_pd(+1.732050807568877293527446341505872366942805254);
+  const __m256d KP300238635 = _mm256_set1_pd(+0.300238635966332641462884626667381504676006424);
+  const __m256d KP011599105 = _mm256_set1_pd(+0.011599105605768290721655456654083252189827041);
+  const __m256d KP256247671 = _mm256_set1_pd(+0.256247671582936600958684654061725059144125175);
+  const __m256d KP156891391 = _mm256_set1_pd(+0.156891391051584611046832726756003269660212636);
+  const __m256d KP174138601 = _mm256_set1_pd(+0.174138601152135905005660794929264742616964676);
+  const __m256d KP575140729 = _mm256_set1_pd(+0.575140729474003121368385547455453388461001608);
+  const __m256d KP503537032 = _mm256_set1_pd(+0.503537032863766627246873853868466977093348562);
+  const __m256d KP113854479 = _mm256_set1_pd(+0.113854479055790798974654345867655310534642560);
+  const __m256d KP265966249 = _mm256_set1_pd(+0.265966249214837287587521063842185948798330267);
+  const __m256d KP387390585 = _mm256_set1_pd(+0.387390585467617292130675966426762851778775217);
+  const __m256d KP300462606 = _mm256_set1_pd(+0.300462606288665774426601772289207995520941381);
+  const __m256d KP866025403 = _mm256_set1_pd(+0.866025403784438646763723170752936183471402627);
+  const __m256d KP500000000 = _mm256_set1_pd(+0.500000000000000000000000000000000000000000000);
+  for (size_t k = 0; k < K; k += 4)
+  {
 
-    const __m256d KP2_000000000 = _mm256_set1_pd(+2.000000000000000000000000000000000000000000000);
-    const __m256d KP083333333 = _mm256_set1_pd(+0.083333333333333333333333333333333333333333333);
-    const __m256d KP075902986 = _mm256_set1_pd(+0.075902986037193865983102897245103540356428373);
-    const __m256d KP251768516 = _mm256_set1_pd(+0.251768516431883313623436926934233488546674281);
-    const __m256d KP132983124 = _mm256_set1_pd(+0.132983124607418643793760531921092974399165133);
-    const __m256d KP258260390 = _mm256_set1_pd(+0.258260390311744861420450644284508567852516811);
-    const __m256d KP1_732050807 = _mm256_set1_pd(+1.732050807568877293527446341505872366942805254);
-    const __m256d KP300238635 = _mm256_set1_pd(+0.300238635966332641462884626667381504676006424);
-    const __m256d KP011599105 = _mm256_set1_pd(+0.011599105605768290721655456654083252189827041);
-    const __m256d KP256247671 = _mm256_set1_pd(+0.256247671582936600958684654061725059144125175);
-    const __m256d KP156891391 = _mm256_set1_pd(+0.156891391051584611046832726756003269660212636);
-    const __m256d KP174138601 = _mm256_set1_pd(+0.174138601152135905005660794929264742616964676);
-    const __m256d KP575140729 = _mm256_set1_pd(+0.575140729474003121368385547455453388461001608);
-    const __m256d KP503537032 = _mm256_set1_pd(+0.503537032863766627246873853868466977093348562);
-    const __m256d KP113854479 = _mm256_set1_pd(+0.113854479055790798974654345867655310534642560);
-    const __m256d KP265966249 = _mm256_set1_pd(+0.265966249214837287587521063842185948798330267);
-    const __m256d KP387390585 = _mm256_set1_pd(+0.387390585467617292130675966426762851778775217);
-    const __m256d KP300462606 = _mm256_set1_pd(+0.300462606288665774426601772289207995520941381);
-    const __m256d KP866025403 = _mm256_set1_pd(+0.866025403784438646763723170752936183471402627);
-    const __m256d KP500000000 = _mm256_set1_pd(+0.500000000000000000000000000000000000000000000);
     __m256d TW_re, TW_im, Tb_re, Tb_im, Tm_re, Tm_im;
     __m256d Ts_re, Ts_im, TB_re, TB_im, TR_re, TR_im;
     __m256d TX_re, TX_im, TK_re, TK_im, TU_re, TU_im;
     __m256d Tz_re, Tz_im, TC_re, TC_im, TN_re, TN_im;
     __m256d TT_re, TT_im;
-    TW_re = _mm256_loadu_pd(&in_re[k]);
-    TW_im = _mm256_loadu_pd(&in_im[k]);
+    TW_re = _mm256_load_pd(&in_re[k]);
+    TW_im = _mm256_load_pd(&in_im[k]);
     __m256d Te_re, Te_im, TH_re, TH_im, Ta_re, Ta_im;
     __m256d Tu_re, Tu_im, Tp_re, Tp_im, T5_re, T5_im;
     __m256d Tt_re, Tt_im, To_re, To_im, Th_re, Th_im;
     __m256d Tw_re, Tw_im, Tk_re, Tk_im, Tx_re, Tx_im;
     __m256d Tl_re, Tl_im, TI_re, TI_im, Tc_re, Tc_im;
     __m256d Td_re, Td_im, Tq_re, Tq_im, Tr_re, Tr_im;
-    Tc_re = _mm256_loadu_pd(&in_re[8 * K + k]);
-    Tc_im = _mm256_loadu_pd(&in_im[8 * K + k]);
-    Td_re = _mm256_loadu_pd(&in_re[5 * K + k]);
-    Td_im = _mm256_loadu_pd(&in_im[5 * K + k]);
+    Tc_re = _mm256_load_pd(&in_re[8 * K + k]);
+    Tc_im = _mm256_load_pd(&in_im[8 * K + k]);
+    Td_re = _mm256_load_pd(&in_re[5 * K + k]);
+    Td_im = _mm256_load_pd(&in_im[5 * K + k]);
     Te_re = _mm256_sub_pd(Tc_re, Td_re);
     Te_im = _mm256_sub_pd(Tc_im, Td_im);
     TH_re = _mm256_add_pd(Tc_re, Td_re);
     TH_im = _mm256_add_pd(Tc_im, Td_im);
     __m256d T6_re, T6_im, T7_re, T7_im, T8_re, T8_im;
     __m256d T9_re, T9_im;
-    T6_re = _mm256_loadu_pd(&in_re[12 * K + k]);
-    T6_im = _mm256_loadu_pd(&in_im[12 * K + k]);
-    T7_re = _mm256_loadu_pd(&in_re[10 * K + k]);
-    T7_im = _mm256_loadu_pd(&in_im[10 * K + k]);
-    T8_re = _mm256_loadu_pd(&in_re[4 * K + k]);
-    T8_im = _mm256_loadu_pd(&in_im[4 * K + k]);
+    T6_re = _mm256_load_pd(&in_re[12 * K + k]);
+    T6_im = _mm256_load_pd(&in_im[12 * K + k]);
+    T7_re = _mm256_load_pd(&in_re[10 * K + k]);
+    T7_im = _mm256_load_pd(&in_im[10 * K + k]);
+    T8_re = _mm256_load_pd(&in_re[4 * K + k]);
+    T8_im = _mm256_load_pd(&in_im[4 * K + k]);
     T9_re = _mm256_add_pd(T7_re, T8_re);
     T9_im = _mm256_add_pd(T7_im, T8_im);
     Ta_re = _mm256_add_pd(T6_re, T9_re);
@@ -363,12 +1461,12 @@ radix13_n1_dit_kernel_bwd_avx2(
     Tp_im = _mm256_sub_pd(T7_im, T8_im);
     __m256d T1_re, T1_im, T2_re, T2_im, T3_re, T3_im;
     __m256d T4_re, T4_im;
-    T1_re = _mm256_loadu_pd(&in_re[1 * K + k]);
-    T1_im = _mm256_loadu_pd(&in_im[1 * K + k]);
-    T2_re = _mm256_loadu_pd(&in_re[3 * K + k]);
-    T2_im = _mm256_loadu_pd(&in_im[3 * K + k]);
-    T3_re = _mm256_loadu_pd(&in_re[9 * K + k]);
-    T3_im = _mm256_loadu_pd(&in_im[9 * K + k]);
+    T1_re = _mm256_load_pd(&in_re[1 * K + k]);
+    T1_im = _mm256_load_pd(&in_im[1 * K + k]);
+    T2_re = _mm256_load_pd(&in_re[3 * K + k]);
+    T2_im = _mm256_load_pd(&in_im[3 * K + k]);
+    T3_re = _mm256_load_pd(&in_re[9 * K + k]);
+    T3_im = _mm256_load_pd(&in_im[9 * K + k]);
     T4_re = _mm256_add_pd(T2_re, T3_re);
     T4_im = _mm256_add_pd(T2_im, T3_im);
     T5_re = _mm256_add_pd(T1_re, T4_re);
@@ -379,18 +1477,18 @@ radix13_n1_dit_kernel_bwd_avx2(
     To_im = _mm256_sub_pd(T2_im, T3_im);
     __m256d Tf_re, Tf_im, Tg_re, Tg_im, Ti_re, Ti_im;
     __m256d Tj_re, Tj_im;
-    Tf_re = _mm256_loadu_pd(&in_re[11 * K + k]);
-    Tf_im = _mm256_loadu_pd(&in_im[11 * K + k]);
-    Tg_re = _mm256_loadu_pd(&in_re[6 * K + k]);
-    Tg_im = _mm256_loadu_pd(&in_im[6 * K + k]);
+    Tf_re = _mm256_load_pd(&in_re[11 * K + k]);
+    Tf_im = _mm256_load_pd(&in_im[11 * K + k]);
+    Tg_re = _mm256_load_pd(&in_re[6 * K + k]);
+    Tg_im = _mm256_load_pd(&in_im[6 * K + k]);
     Th_re = _mm256_sub_pd(Tf_re, Tg_re);
     Th_im = _mm256_sub_pd(Tf_im, Tg_im);
     Tw_re = _mm256_add_pd(Tf_re, Tg_re);
     Tw_im = _mm256_add_pd(Tf_im, Tg_im);
-    Ti_re = _mm256_loadu_pd(&in_re[7 * K + k]);
-    Ti_im = _mm256_loadu_pd(&in_im[7 * K + k]);
-    Tj_re = _mm256_loadu_pd(&in_re[2 * K + k]);
-    Tj_im = _mm256_loadu_pd(&in_im[2 * K + k]);
+    Ti_re = _mm256_load_pd(&in_re[7 * K + k]);
+    Ti_im = _mm256_load_pd(&in_im[7 * K + k]);
+    Tj_re = _mm256_load_pd(&in_re[2 * K + k]);
+    Tj_im = _mm256_load_pd(&in_im[2 * K + k]);
     Tk_re = _mm256_sub_pd(Ti_re, Tj_re);
     Tk_im = _mm256_sub_pd(Ti_im, Tj_im);
     Tx_re = _mm256_add_pd(Ti_re, Tj_re);
@@ -447,8 +1545,8 @@ radix13_n1_dit_kernel_bwd_avx2(
     TN_im = _mm256_sub_pd(TL_im, TM_im);
     TT_re = _mm256_add_pd(TL_re, TM_re);
     TT_im = _mm256_add_pd(TL_im, TM_im);
-    _mm256_storeu_pd(&out_re[k], _mm256_add_pd(TW_re, TX_re));
-    _mm256_storeu_pd(&out_im[k], _mm256_add_pd(TW_im, TX_im));
+    _mm256_store_pd(&out_re[k], _mm256_add_pd(TW_re, TX_re));
+    _mm256_store_pd(&out_im[k], _mm256_add_pd(TW_im, TX_im));
     __m256d T1c_re, T1c_im, T1n_re, T1n_im, T11_re, T11_im;
     __m256d T14_re, T14_im, T17_re, T17_im, T1k_re, T1k_im;
     __m256d Tn_re, Tn_im, TE_re, TE_im, T18_re, T18_im;
@@ -511,66 +1609,159 @@ radix13_n1_dit_kernel_bwd_avx2(
     T1f_im = _mm256_sub_pd(T1d_im, T1e_im);
     __m256d TF_re, TF_im, T10_re, T10_im, T1l_re, T1l_im;
     __m256d T1o_re, T1o_im;
-    { __m256d _tr = _mm256_xor_pd(_mm256_fmadd_pd(KP2_000000000, TE_im, Tn_im), sign_flip);
-      TF_re = _tr;
-      TF_im = _mm256_fmadd_pd(KP2_000000000, TE_re, Tn_re); }
+    TF_re = _mm256_xor_pd(_mm256_fmadd_pd(KP2_000000000, TE_im, Tn_im), sign_flip);
+    TF_im = _mm256_fmadd_pd(KP2_000000000, TE_re, Tn_re);
     T10_re = _mm256_add_pd(TS_re, TZ_re);
     T10_im = _mm256_add_pd(TS_im, TZ_im);
-    _mm256_storeu_pd(&out_re[1 * K + k], _mm256_add_pd(TF_re, T10_re));
-    _mm256_storeu_pd(&out_im[1 * K + k], _mm256_add_pd(TF_im, T10_im));
-    _mm256_storeu_pd(&out_re[12 * K + k], _mm256_sub_pd(T10_re, TF_re));
-    _mm256_storeu_pd(&out_im[12 * K + k], _mm256_sub_pd(T10_im, TF_im));
+    _mm256_store_pd(&out_re[1 * K + k], _mm256_add_pd(TF_re, T10_re));
+    _mm256_store_pd(&out_im[1 * K + k], _mm256_add_pd(TF_im, T10_im));
+    _mm256_store_pd(&out_re[12 * K + k], _mm256_sub_pd(T10_re, TF_re));
+    _mm256_store_pd(&out_im[12 * K + k], _mm256_sub_pd(T10_im, TF_im));
     __m256d T15_re, T15_im, T16_re, T16_im, T1p_re, T1p_im;
     __m256d T1q_re, T1q_im;
-    { __m256d _tr = _mm256_xor_pd(_mm256_fmadd_pd(KP2_000000000, T14_im, T11_im), sign_flip);
-      T15_re = _tr;
-      T15_im = _mm256_fmadd_pd(KP2_000000000, T14_re, T11_re); }
+    T15_re = _mm256_xor_pd(_mm256_fmadd_pd(KP2_000000000, T14_im, T11_im), sign_flip);
+    T15_im = _mm256_fmadd_pd(KP2_000000000, T14_re, T11_re);
     T16_re = _mm256_sub_pd(TZ_re, TS_re);
     T16_im = _mm256_sub_pd(TZ_im, TS_im);
-    _mm256_storeu_pd(&out_re[5 * K + k], _mm256_add_pd(T15_re, T16_re));
-    _mm256_storeu_pd(&out_im[5 * K + k], _mm256_add_pd(T15_im, T16_im));
-    _mm256_storeu_pd(&out_re[8 * K + k], _mm256_sub_pd(T16_re, T15_re));
-    _mm256_storeu_pd(&out_im[8 * K + k], _mm256_sub_pd(T16_im, T15_im));
+    _mm256_store_pd(&out_re[5 * K + k], _mm256_add_pd(T15_re, T16_re));
+    _mm256_store_pd(&out_im[5 * K + k], _mm256_add_pd(T15_im, T16_im));
+    _mm256_store_pd(&out_re[8 * K + k], _mm256_sub_pd(T16_re, T15_re));
+    _mm256_store_pd(&out_im[8 * K + k], _mm256_sub_pd(T16_im, T15_im));
     T1p_re = _mm256_add_pd(T1n_re, T1m_re);
     T1p_im = _mm256_add_pd(T1n_im, T1m_im);
-    { __m256d _tr = _mm256_xor_pd(_mm256_add_pd(T1j_im, T1k_im), sign_flip);
-      T1q_re = _tr;
-      T1q_im = _mm256_add_pd(T1j_re, T1k_re); }
-    _mm256_storeu_pd(&out_re[4 * K + k], _mm256_sub_pd(T1p_re, T1q_re));
-    _mm256_storeu_pd(&out_im[4 * K + k], _mm256_sub_pd(T1p_im, T1q_im));
-    _mm256_storeu_pd(&out_re[9 * K + k], _mm256_add_pd(T1q_re, T1p_re));
-    _mm256_storeu_pd(&out_im[9 * K + k], _mm256_add_pd(T1q_im, T1p_im));
-    { __m256d _tr = _mm256_xor_pd(_mm256_sub_pd(T1j_im, T1k_im), sign_flip);
-      T1l_re = _tr;
-      T1l_im = _mm256_sub_pd(T1j_re, T1k_re); }
+    T1q_re = _mm256_xor_pd(_mm256_add_pd(T1j_im, T1k_im), sign_flip);
+    T1q_im = _mm256_add_pd(T1j_re, T1k_re);
+    _mm256_store_pd(&out_re[4 * K + k], _mm256_sub_pd(T1p_re, T1q_re));
+    _mm256_store_pd(&out_im[4 * K + k], _mm256_sub_pd(T1p_im, T1q_im));
+    _mm256_store_pd(&out_re[9 * K + k], _mm256_add_pd(T1q_re, T1p_re));
+    _mm256_store_pd(&out_im[9 * K + k], _mm256_add_pd(T1q_im, T1p_im));
+    T1l_re = _mm256_xor_pd(_mm256_sub_pd(T1j_im, T1k_im), sign_flip);
+    T1l_im = _mm256_sub_pd(T1j_re, T1k_re);
     T1o_re = _mm256_sub_pd(T1m_re, T1n_re);
     T1o_im = _mm256_sub_pd(T1m_im, T1n_im);
-    _mm256_storeu_pd(&out_re[3 * K + k], _mm256_add_pd(T1l_re, T1o_re));
-    _mm256_storeu_pd(&out_im[3 * K + k], _mm256_add_pd(T1l_im, T1o_im));
-    _mm256_storeu_pd(&out_re[10 * K + k], _mm256_sub_pd(T1o_re, T1l_re));
-    _mm256_storeu_pd(&out_im[10 * K + k], _mm256_sub_pd(T1o_im, T1l_im));
+    _mm256_store_pd(&out_re[3 * K + k], _mm256_add_pd(T1l_re, T1o_re));
+    _mm256_store_pd(&out_im[3 * K + k], _mm256_add_pd(T1l_im, T1o_im));
+    _mm256_store_pd(&out_re[10 * K + k], _mm256_sub_pd(T1o_re, T1l_re));
+    _mm256_store_pd(&out_im[10 * K + k], _mm256_sub_pd(T1o_im, T1l_im));
     __m256d T1h_re, T1h_im, T1i_re, T1i_im, T19_re, T19_im;
     __m256d T1g_re, T1g_im;
-    { __m256d _tr = _mm256_xor_pd(_mm256_add_pd(T18_im, T17_im), sign_flip);
-      T1h_re = _tr;
-      T1h_im = _mm256_add_pd(T18_re, T17_re); }
+    T1h_re = _mm256_xor_pd(_mm256_add_pd(T18_im, T17_im), sign_flip);
+    T1h_im = _mm256_add_pd(T18_re, T17_re);
     T1i_re = _mm256_sub_pd(T1f_re, T1c_re);
     T1i_im = _mm256_sub_pd(T1f_im, T1c_im);
-    _mm256_storeu_pd(&out_re[6 * K + k], _mm256_add_pd(T1h_re, T1i_re));
-    _mm256_storeu_pd(&out_im[6 * K + k], _mm256_add_pd(T1h_im, T1i_im));
-    _mm256_storeu_pd(&out_re[7 * K + k], _mm256_sub_pd(T1i_re, T1h_re));
-    _mm256_storeu_pd(&out_im[7 * K + k], _mm256_sub_pd(T1i_im, T1h_im));
-    { __m256d _tr = _mm256_xor_pd(_mm256_sub_pd(T17_im, T18_im), sign_flip);
-      T19_re = _tr;
-      T19_im = _mm256_sub_pd(T17_re, T18_re); }
+    _mm256_store_pd(&out_re[6 * K + k], _mm256_add_pd(T1h_re, T1i_re));
+    _mm256_store_pd(&out_im[6 * K + k], _mm256_add_pd(T1h_im, T1i_im));
+    _mm256_store_pd(&out_re[7 * K + k], _mm256_sub_pd(T1i_re, T1h_re));
+    _mm256_store_pd(&out_im[7 * K + k], _mm256_sub_pd(T1i_im, T1h_im));
+    T19_re = _mm256_xor_pd(_mm256_sub_pd(T17_im, T18_im), sign_flip);
+    T19_im = _mm256_sub_pd(T17_re, T18_re);
     T1g_re = _mm256_add_pd(T1c_re, T1f_re);
     T1g_im = _mm256_add_pd(T1c_im, T1f_im);
-    _mm256_storeu_pd(&out_re[2 * K + k], _mm256_add_pd(T19_re, T1g_re));
-    _mm256_storeu_pd(&out_im[2 * K + k], _mm256_add_pd(T19_im, T1g_im));
-    _mm256_storeu_pd(&out_re[11 * K + k], _mm256_sub_pd(T1g_re, T19_re));
-    _mm256_storeu_pd(&out_im[11 * K + k], _mm256_sub_pd(T1g_im, T19_im));
-
-    }
+    _mm256_store_pd(&out_re[2 * K + k], _mm256_add_pd(T19_re, T1g_re));
+    _mm256_store_pd(&out_im[2 * K + k], _mm256_add_pd(T19_im, T1g_im));
+    _mm256_store_pd(&out_re[11 * K + k], _mm256_sub_pd(T1g_re, T19_re));
+    _mm256_store_pd(&out_im[11 * K + k], _mm256_sub_pd(T1g_im, T19_im));
+  }
 }
 
-#endif /* FFT_RADIX13_AVX2_N1_GEN_H */
+#endif /* __AVX2__ */
+
+/* ═══════════════════════════════════════════════════════════════
+ * PACKED SUPER-BLOCK DRIVERS
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void r13_genfft_packed_fwd_scalar(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im, size_t K)
+{
+  for (size_t b = 0; b < K; b++)
+    radix13_genfft_fwd_scalar(in_re + b * 13, in_im + b * 13,
+                              out_re + b * 13, out_im + b * 13, 1);
+}
+
+static inline void r13_genfft_packed_bwd_scalar(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im, size_t K)
+{
+  for (size_t b = 0; b < K; b++)
+    radix13_genfft_bwd_scalar(in_re + b * 13, in_im + b * 13,
+                              out_re + b * 13, out_im + b * 13, 1);
+}
+
+#ifdef __AVX512F__
+__attribute__((target("avx512f,fma"))) static inline void r13_genfft_packed_fwd_avx512(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im, size_t K)
+{
+  const size_t T = 8, bs = 13 * T, nb = K / T;
+  for (size_t b = 0; b < nb; b++)
+    radix13_genfft_fwd_avx512(in_re + b * bs, in_im + b * bs,
+                              out_re + b * bs, out_im + b * bs, T);
+}
+__attribute__((target("avx512f,fma"))) static inline void r13_genfft_packed_bwd_avx512(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im, size_t K)
+{
+  const size_t T = 8, bs = 13 * T, nb = K / T;
+  for (size_t b = 0; b < nb; b++)
+    radix13_genfft_bwd_avx512(in_re + b * bs, in_im + b * bs,
+                              out_re + b * bs, out_im + b * bs, T);
+}
+#endif /* __AVX512F__ */
+
+#ifdef __AVX2__
+__attribute__((target("avx2,fma"))) static inline void r13_genfft_packed_fwd_avx2(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im, size_t K)
+{
+  const size_t T = 4, bs = 13 * T, nb = K / T;
+  for (size_t b = 0; b < nb; b++)
+    radix13_genfft_fwd_avx2(in_re + b * bs, in_im + b * bs,
+                            out_re + b * bs, out_im + b * bs, T);
+}
+__attribute__((target("avx2,fma"))) static inline void r13_genfft_packed_bwd_avx2(
+    const double *R13_RESTRICT in_re, const double *R13_RESTRICT in_im,
+    double *R13_RESTRICT out_re, double *R13_RESTRICT out_im, size_t K)
+{
+  const size_t T = 4, bs = 13 * T, nb = K / T;
+  for (size_t b = 0; b < nb; b++)
+    radix13_genfft_bwd_avx2(in_re + b * bs, in_im + b * bs,
+                            out_re + b * bs, out_im + b * bs, T);
+}
+#endif /* __AVX2__ */
+
+/* ═══════════════════════════════════════════════════════════════
+ * REPACK HELPERS
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void r13_pack(
+    const double *R13_RESTRICT sr, const double *R13_RESTRICT si,
+    double *R13_RESTRICT dr, double *R13_RESTRICT di,
+    size_t K, size_t T)
+{
+  const size_t nb = K / T;
+  for (size_t b = 0; b < nb; b++)
+    for (size_t n = 0; n < 13; n++)
+      for (size_t j = 0; j < T; j++)
+      {
+        dr[b * 13 * T + n * T + j] = sr[n * K + b * T + j];
+        di[b * 13 * T + n * T + j] = si[n * K + b * T + j];
+      }
+}
+
+static inline void r13_unpack(
+    const double *R13_RESTRICT sr, const double *R13_RESTRICT si,
+    double *R13_RESTRICT dr, double *R13_RESTRICT di,
+    size_t K, size_t T)
+{
+  const size_t nb = K / T;
+  for (size_t b = 0; b < nb; b++)
+    for (size_t n = 0; n < 13; n++)
+      for (size_t j = 0; j < T; j++)
+      {
+        dr[n * K + b * T + j] = sr[b * 13 * T + n * T + j];
+        di[n * K + b * T + j] = si[b * 13 * T + n * T + j];
+      }
+}
+
+#endif /* FFT_RADIX13_GENFFT_H */
