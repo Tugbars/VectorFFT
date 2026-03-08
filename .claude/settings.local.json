@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/vcpkg/installed/x64-windows/lib/**)",
+      "Read(//c/vcpkg/installed/x64-windows/**)",
+      "Bash(vcpkg list)"
+    ]
+  }
+}
