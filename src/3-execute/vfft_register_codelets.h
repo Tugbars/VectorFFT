@@ -442,6 +442,26 @@ static void vfft_dispatch_r13_bwd(
     IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix13_genfft_bwd_avx2(ri,ii,ro,io,K); return; })
     radix13_genfft_bwd_scalar(ri, ii, ro, io, K);
 }
+static void vfft_tw_dispatch_r13_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix13_genfft_tw_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix13_genfft_tw_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    radix13_genfft_tw_fwd_scalar(ri, ii, ro, io, twr, twi, K);
+}
+static void vfft_tw_dif_dispatch_r13_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix13_genfft_tw_dif_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix13_genfft_tw_dif_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    radix13_genfft_tw_dif_bwd_scalar(ri, ii, ro, io, twr, twi, K);
+}
 #endif
 #ifdef FFT_RADIX17_GENFFT_H
 VFFT_DISPATCH_WRAPPER(17, radix17_genfft)
@@ -605,6 +625,8 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #endif
 #ifdef FFT_RADIX13_GENFFT_H
     vfft_registry_set(reg, 13, vfft_dispatch_r13_fwd, vfft_dispatch_r13_bwd);
+    vfft_registry_set_tw(reg, 13, vfft_tw_dispatch_r13_fwd, NULL);
+    vfft_registry_set_tw_dif(reg, 13, NULL, vfft_tw_dif_dispatch_r13_bwd);
 #endif
 #ifdef FFT_RADIX17_GENFFT_H
     vfft_registry_set(reg, 17, vfft_dispatch_r17_fwd, vfft_dispatch_r17_bwd);
