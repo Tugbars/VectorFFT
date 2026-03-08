@@ -120,3 +120,12 @@ if(NOT WIN32)
 endif()
 
 message(STATUS "test: bench_full_fft [ISA: ${BENCH_ISA_FLAGS}]")
+
+# ── diag_plan (no FFTW dep) ──────────────────────────────────────────────────
+add_executable(diag_plan diag_plan.c)
+target_compile_options(diag_plan PRIVATE ${VFFT_BASE_FLAGS} ${BENCH_ISA_FLAGS})
+set_target_properties(diag_plan PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
+if(VFFT_BASE_DEFINITIONS)
+    target_compile_definitions(diag_plan PRIVATE ${VFFT_BASE_DEFINITIONS})
+endif()
+target_include_directories(diag_plan PRIVATE ${BENCH_CODELET_INCLUDES})
