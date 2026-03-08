@@ -1,0 +1,10 @@
+{
+  "name": "vectorfft",
+  "version": "1.0.0",
+  "dependencies": [
+    {
+      "name": "fftw3",
+      "features": ["avx2", "avx"]
+    }
+  ]
+}
