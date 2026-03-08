@@ -1,9 +1,35 @@
 @echo off
 REM ==========================================================================
 REM VectorFFT — Windows build script
-REM Requires: Intel oneAPI (icx), CMake 3.16+, Ninja, Git
+REM
+REM If this script fails, here is what it does step by step:
+REM
+REM   Prerequisites:
+REM     1. Install Intel oneAPI Base Toolkit (provides icx compiler)
+REM        https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html
+REM     2. Install CMake 3.16+       https://cmake.org/download/
+REM     3. Install Git               https://git-scm.com/
+REM     4. Install Ninja:            pip install ninja
+REM        Then find where it went:  python -c "import ninja; print(ninja.BIN_DIR)"
+REM        Add that directory to your PATH.
+REM
+REM   Build steps (run from Intel oneAPI Command Prompt):
+REM     1. Clone vcpkg:              git clone https://github.com/microsoft/vcpkg.git vcpkg
+REM     2. Bootstrap it:             vcpkg\bootstrap-vcpkg.bat -disableMetrics
+REM     3. Install FFTW3 with AVX2:  vcpkg\vcpkg.exe install --triplet x64-windows
+REM        (reads vcpkg.json in project root automatically)
+REM     4. Configure:
+REM          mkdir build && cd build
+REM          cmake .. -G Ninja -DCMAKE_C_COMPILER=icx -DCMAKE_BUILD_TYPE=Release ^
+REM                -DCMAKE_PREFIX_PATH="..\vcpkg_installed\x64-windows"
+REM     5. Build:                    cmake --build . --config Release
+REM     6. Copy FFTW DLL:           copy ..\vcpkg_installed\x64-windows\bin\fftw3.dll test\
+REM     7. Run benchmark:            test\bench_full_fft.exe
 REM ==========================================================================
 setlocal enabledelayedexpansion
+
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%"
 
 echo [VectorFFT] Windows build script
 echo.
@@ -44,11 +70,11 @@ if errorlevel 1 (
 
 REM ── Bootstrap vcpkg if needed ────────────────────────────────────────────
 if not exist "vcpkg\vcpkg.exe" (
-    echo [VectorFFT] Bootstrapping vcpkg...
     if not exist "vcpkg\bootstrap-vcpkg.bat" (
-        echo [INFO] Cloning vcpkg...
+        echo [VectorFFT] Cloning vcpkg...
         git clone https://github.com/microsoft/vcpkg.git vcpkg
     )
+    echo [VectorFFT] Bootstrapping vcpkg...
     call vcpkg\bootstrap-vcpkg.bat -disableMetrics
     if errorlevel 1 (
         echo [ERROR] vcpkg bootstrap failed.
@@ -69,9 +95,12 @@ echo [VectorFFT] Configuring with CMake...
 if not exist build mkdir build
 cd build
 
+set "VCPKG_INSTALLED=%SCRIPT_DIR%vcpkg_installed\x64-windows"
+
 cmake .. -G Ninja ^
     -DCMAKE_C_COMPILER=icx ^
-    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_BUILD_TYPE=Release ^
+    -DCMAKE_PREFIX_PATH="%VCPKG_INSTALLED%"
 if errorlevel 1 (
     echo [ERROR] CMake configure failed.
     exit /b 1
@@ -86,8 +115,8 @@ if errorlevel 1 (
 )
 
 REM ── Copy FFTW DLL next to benchmarks ─────────────────────────────────────
-if exist "..\vcpkg_installed\x64-windows\bin\fftw3.dll" (
-    copy /y "..\vcpkg_installed\x64-windows\bin\fftw3.dll" test\ >nul 2>&1
+if exist "%VCPKG_INSTALLED%\bin\fftw3.dll" (
+    copy /y "%VCPKG_INSTALLED%\bin\fftw3.dll" test\ >nul 2>&1
     echo [VectorFFT] Copied fftw3.dll to build\test\
 )
 
