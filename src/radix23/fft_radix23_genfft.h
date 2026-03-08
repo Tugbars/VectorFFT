@@ -10,6 +10,13 @@
 #define FFT_RADIX23_GENFFT_H
 #include <stddef.h>
 
+#ifdef _MSC_VER
+#pragma warning(disable: 4267)  /* size_t to int */
+#elif defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#endif
+
 #define R23_K00  (+0.216852315997410162480721914470156365930086860)
 #define R23_K01  (+0.022265089345973034218816717767224663318371311)
 #define R23_K02  (+0.014277774720298297409964708386976250015601299)
@@ -897,5 +904,9 @@ static inline void r23_pack(const double*sr,const double*si,double*dr,double*di,
 static inline void r23_unpack(const double*sr,const double*si,double*dr,double*di,size_t K,size_t T)
 {for(size_t b=0;b<K/T;b++) for(int n=0;n<23;n++) for(size_t j=0;j<T;j++){
     dr[n*K+b*T+j]=sr[b*23*T+n*T+j]; di[n*K+b*T+j]=si[b*23*T+n*T+j];}}
+
+    #ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #endif /* FFT_RADIX23_GENFFT_H */

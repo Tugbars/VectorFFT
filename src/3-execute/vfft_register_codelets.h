@@ -209,8 +209,18 @@ VFFT_TW_DISPATCH_WRAPPER(4, radix4_tw_dit_kernel)
 VFFT_TW_DISPATCH_WRAPPER(5, radix5_tw_dit_kernel)
 #endif
 
+/* R=7: genfft provides DIT fwd only (no DIT bwd) */
 #ifdef FFT_RADIX7_DISPATCH_H
-VFFT_TW_DISPATCH_WRAPPER(7, radix7_tw_dit_kernel)
+static void vfft_tw_dispatch_r7_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix7_tw_dit_kernel_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix7_tw_dit_kernel_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    radix7_tw_dit_kernel_fwd_scalar(ri, ii, ro, io, twr, twi, K);
+}
 #endif
 
 #ifdef FFT_RADIX8_DISPATCH_H
@@ -307,8 +317,18 @@ VFFT_TW_DIF_DISPATCH_WRAPPER(4, radix4_tw_dif_kernel)
 VFFT_TW_DIF_DISPATCH_WRAPPER(5, radix5_tw_dif_kernel)
 #endif
 
+/* R=7: genfft provides DIF bwd only (no DIF fwd) */
 #ifdef FFT_RADIX7_DIF_DISPATCH_H
-VFFT_TW_DIF_DISPATCH_WRAPPER(7, radix7_tw_dif_kernel)
+static void vfft_tw_dif_dispatch_r7_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix7_tw_dif_kernel_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix7_tw_dif_kernel_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    radix7_tw_dif_kernel_bwd_scalar(ri, ii, ro, io, twr, twi, K);
+}
 #endif
 
 #ifdef FFT_RADIX8_DIF_DISPATCH_H
@@ -566,7 +586,7 @@ static void vfft_register_all(vfft_codelet_registry *reg)
     vfft_registry_set_tw(reg, 5, vfft_tw_dispatch_r5_fwd, vfft_tw_dispatch_r5_bwd);
 #endif
 #ifdef FFT_RADIX7_DISPATCH_H
-    vfft_registry_set_tw(reg, 7, vfft_tw_dispatch_r7_fwd, vfft_tw_dispatch_r7_bwd);
+    vfft_registry_set_tw(reg, 7, vfft_tw_dispatch_r7_fwd, NULL);
 #endif
 #ifdef FFT_RADIX8_DISPATCH_H
     vfft_registry_set_tw(reg, 8, vfft_tw_dispatch_r8_fwd, vfft_tw_dispatch_r8_bwd);
@@ -599,7 +619,7 @@ static void vfft_register_all(vfft_codelet_registry *reg)
     vfft_registry_set_tw_dif(reg, 5, vfft_tw_dif_dispatch_r5_fwd, vfft_tw_dif_dispatch_r5_bwd);
 #endif
 #ifdef FFT_RADIX7_DIF_DISPATCH_H
-    vfft_registry_set_tw_dif(reg, 7, vfft_tw_dif_dispatch_r7_fwd, vfft_tw_dif_dispatch_r7_bwd);
+    vfft_registry_set_tw_dif(reg, 7, NULL, vfft_tw_dif_dispatch_r7_bwd);
 #endif
 #ifdef FFT_RADIX8_DIF_DISPATCH_H
     vfft_registry_set_tw_dif(reg, 8, vfft_tw_dif_dispatch_r8_fwd, vfft_tw_dif_dispatch_r8_bwd);
