@@ -80,8 +80,9 @@ def cmulc_im(o, ar,ai,br,bi): return o['fnma'](ar,bi, o['mul'](ai,br))
 # ════════════════════════════════════════
 
 class Emitter:
-    def __init__(self, isa):
+    def __init__(self, isa, il=False):
         self.isa = isa
+        self.il = il
         self.cfg = isa_config(isa)
         self.o_ops = ops(isa)
         self.T = self.cfg['T']
@@ -94,12 +95,38 @@ class Emitter:
     def blank(self): self.L.append('')
 
     def load(self, v, idx):
-        self.line(f'{v}_re = {self.cfg["ld"](f"&in_re[{idx}*K+k]")};')
-        self.line(f'{v}_im = {self.cfg["ld"](f"&in_im[{idx}*K+k]")};')
+        if not self.il:
+            self.line(f'{v}_re = {self.cfg["ld"](f"&in_re[{idx}*K+k]")};')
+            self.line(f'{v}_im = {self.cfg["ld"](f"&in_im[{idx}*K+k]")};')
+        elif self.isa == 'scalar':
+            self.line(f'{v}_re = in[2*({idx}*K+k)]; {v}_im = in[2*({idx}*K+k)+1];')
+        elif self.isa == 'avx2':
+            self.line(f'{{ __m256d _lo = _mm256_load_pd(&in[2*({idx}*K+k)]);')
+            self.line(f'  __m256d _hi = _mm256_load_pd(&in[2*({idx}*K+k+2)]);')
+            self.line(f'  {v}_re = _mm256_permute4x64_pd(_mm256_shuffle_pd(_lo,_hi,0x0), 0xD8);')
+            self.line(f'  {v}_im = _mm256_permute4x64_pd(_mm256_shuffle_pd(_lo,_hi,0xF), 0xD8); }}')
+        else:  # avx512
+            self.line(f'{{ __m512d _lo = _mm512_load_pd(&in[2*({idx}*K+k)]);')
+            self.line(f'  __m512d _hi = _mm512_load_pd(&in[2*({idx}*K+k+4)]);')
+            self.line(f'  {v}_re = _mm512_permutexvar_pd(_mm512_set_epi64(7,5,3,1,6,4,2,0), _mm512_unpacklo_pd(_lo,_hi));')
+            self.line(f'  {v}_im = _mm512_permutexvar_pd(_mm512_set_epi64(7,5,3,1,6,4,2,0), _mm512_unpackhi_pd(_lo,_hi)); }}')
 
     def store(self, v, idx):
-        self.line(f'{self.cfg["st"](f"&out_re[{idx}*K+k]", f"{v}_re")}')
-        self.line(f'{self.cfg["st"](f"&out_im[{idx}*K+k]", f"{v}_im")}')
+        if not self.il:
+            self.line(f'{self.cfg["st"](f"&out_re[{idx}*K+k]", f"{v}_re")}')
+            self.line(f'{self.cfg["st"](f"&out_im[{idx}*K+k]", f"{v}_im")}')
+        elif self.isa == 'scalar':
+            self.line(f'out[2*({idx}*K+k)] = {v}_re; out[2*({idx}*K+k)+1] = {v}_im;')
+        elif self.isa == 'avx2':
+            self.line(f'{{ __m256d _rp = _mm256_permute4x64_pd({v}_re, 0xD8);')
+            self.line(f'  __m256d _ip = _mm256_permute4x64_pd({v}_im, 0xD8);')
+            self.line(f'  _mm256_store_pd(&out[2*({idx}*K+k)], _mm256_shuffle_pd(_rp,_ip,0x0));')
+            self.line(f'  _mm256_store_pd(&out[2*({idx}*K+k+2)], _mm256_shuffle_pd(_rp,_ip,0xF)); }}')
+        else:  # avx512
+            self.line(f'{{ __m512d _rp = _mm512_permutexvar_pd(_mm512_set_epi64(7,3,6,2,5,1,4,0), {v}_re);')
+            self.line(f'  __m512d _ip = _mm512_permutexvar_pd(_mm512_set_epi64(7,3,6,2,5,1,4,0), {v}_im);')
+            self.line(f'  _mm512_store_pd(&out[2*({idx}*K+k)], _mm512_unpacklo_pd(_rp,_ip));')
+            self.line(f'  _mm512_store_pd(&out[2*({idx}*K+k+4)], _mm512_unpackhi_pd(_rp,_ip)); }}')
 
     def spill(self, v, slot):
         if self.isa == 'scalar':
@@ -315,18 +342,23 @@ def emit_dif_kernel(em, fwd, itw_set):
         em.blank()
 
 
-def gen_kernel(isa, direction, mode, itw_set):
-    em = Emitter(isa)
+def gen_kernel(isa, direction, mode, itw_set, il=False):
+    em = Emitter(isa, il=il)
     fwd = direction == 'fwd'
     dit = mode == 'dit'
-    name = f'radix25_tw_flat_{"dit" if dit else "dif"}_kernel_{direction}_{isa}'
+    il_tag = '_il' if il else ''
+    name = f'radix25_tw_flat_{"dit" if dit else "dif"}_kernel_{direction}{il_tag}_{isa}'
 
     em.L = []
     if em.cfg['attr']: em.L.append(em.cfg['attr'])
     em.L.append(f'static void')
     em.L.append(f'{name}(')
-    em.L.append(f'    const double * __restrict__ in_re, const double * __restrict__ in_im,')
-    em.L.append(f'    double * __restrict__ out_re, double * __restrict__ out_im,')
+    if il:
+        em.L.append(f'    const double * __restrict__ in,')
+        em.L.append(f'    double * __restrict__ out,')
+    else:
+        em.L.append(f'    const double * __restrict__ in_re, const double * __restrict__ in_im,')
+        em.L.append(f'    double * __restrict__ out_re, double * __restrict__ out_im,')
     em.L.append(f'    const double * __restrict__ tw_re, const double * __restrict__ tw_im,')
     em.L.append(f'    size_t K)')
     em.L.append(f'{{')
@@ -374,16 +406,23 @@ def gen_kernel(isa, direction, mode, itw_set):
     return em.L
 
 
-def gen_file(isa, mode):
+def gen_file(isa, mode, il=False):
     itw_set = collect_internal_twiddles()
     ISA = isa.upper()
-    guard = f'FFT_RADIX25_{ISA}_TW_H' if mode == 'dit' else f'FFT_RADIX25_{ISA}_DIF_TW_H'
+    il_tag = '_il' if il else ''
+    if mode == 'dit':
+        guard = f'FFT_RADIX25_{ISA}{il_tag.upper()}_TW_H'
+    else:
+        guard = f'FFT_RADIX25_{ISA}{il_tag.upper()}_DIF_TW_H'
 
     L = []
     L.append(f'/**')
-    L.append(f' * @file fft_radix25_{isa}_tw.h' if mode == 'dit' else f' * @file fft_radix25_{isa}_dif_tw.h')
-    L.append(f' * @brief {ISA} {"DIT" if mode == "dit" else "DIF"} twiddled DFT-25 (5×5 CT) with log3')
-    L.append(f' * Load W^1,W^5 only — derive all 24 twiddles in registers.')
+    if mode == 'dit':
+        L.append(f' * @file fft_radix25_{isa}{il_tag}_tw.h')
+    else:
+        L.append(f' * @file fft_radix25_{isa}{il_tag}_dif_tw.h')
+    layout = 'interleaved' if il else 'split re/im'
+    L.append(f' * @brief {ISA} {"DIT" if mode == "dit" else "DIF"} twiddled DFT-25 (5×5 CT) — {layout} + log3')
     L.append(f' * Generated by gen_r25_log3.py')
     L.append(f' */')
     L.append(f'')
@@ -397,7 +436,7 @@ def gen_file(isa, mode):
     emit_twiddle_constants(L, itw_set)
 
     for d in ('fwd', 'bwd'):
-        L.extend(gen_kernel(isa, d, mode, itw_set))
+        L.extend(gen_kernel(isa, d, mode, itw_set, il=il))
 
     L.append(f'#endif /* {guard} */')
     return L
@@ -405,8 +444,9 @@ def gen_file(isa, mode):
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print("Usage: gen_r25_log3.py <scalar|avx2|avx512> <dit|dif>", file=sys.stderr)
+        print("Usage: gen_r25_log3.py <scalar|avx2|avx512> <dit|dif> [il]", file=sys.stderr)
         sys.exit(1)
     isa, mode = sys.argv[1], sys.argv[2]
-    lines = gen_file(isa, mode)
+    il = len(sys.argv) > 3 and sys.argv[3] == 'il'
+    lines = gen_file(isa, mode, il=il)
     print('\n'.join(lines))
