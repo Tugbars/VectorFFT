@@ -11,3 +11,4 @@ build/test/test_mixedRadixFFT_standalone.exe
 /.cache
 /CMakeFiles
 /vcpkg
+highSpeedFFT.code-workspace
