@@ -97,4 +97,38 @@ static inline void radix10_tw_backward(size_t K,
 static inline size_t radix10_flat_tw_size(size_t K) { return 9*K; }
 static inline size_t radix10_data_size(size_t K) { return 10*K; }
 
+/* ── Interleaved (IL) codelet includes ── */
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include "avx512/fft_radix10_avx512_il.h"
+#include "avx512/fft_radix10_avx512_il_dif_tw.h"
+#endif
+#ifdef __AVX2__
+#include "avx2/fft_radix10_avx2_il.h"
+#include "avx2/fft_radix10_avx2_il_dif_tw.h"
+#endif
+
+static inline void radix10_tw_forward_il(
+    const double *__restrict__ in, double *__restrict__ out,
+    const double *__restrict__ twr, const double *__restrict__ twi, size_t K) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) { radix10_tw_dit_kernel_fwd_il_avx512(in, out, twr, twi, K); return; }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) { radix10_tw_dit_kernel_fwd_il_avx2(in, out, twr, twi, K); return; }
+#endif
+    (void)in; (void)out; (void)twr; (void)twi; (void)K; /* no scalar IL fallback */
+}
+
+static inline void radix10_tw_dif_backward_il(
+    const double *__restrict__ in, double *__restrict__ out,
+    const double *__restrict__ twr, const double *__restrict__ twi, size_t K) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) { radix10_tw_dif_kernel_bwd_il_avx512(in, out, twr, twi, K); return; }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) { radix10_tw_dif_kernel_bwd_il_avx2(in, out, twr, twi, K); return; }
+#endif
+    (void)in; (void)out; (void)twr; (void)twi; (void)K;
+}
+
 #endif /* FFT_RADIX10_DISPATCH_H */
