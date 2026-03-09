@@ -235,6 +235,169 @@ VFFT_TW_DISPATCH_WRAPPER(32, radix32_tw_flat_dit_kernel)
 VFFT_TW_DISPATCH_WRAPPER(25, radix25_tw_flat_dit_kernel)
 #endif
 
+/* ── R=25 Interleaved tw dispatch ── */
+#ifdef FFT_RADIX25_AVX2_IL_TW_H
+static void vfft_tw_il_dispatch_r25_fwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX25_AVX512_IL_TW_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix25_tw_flat_dit_kernel_fwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix25_tw_flat_dit_kernel_fwd_il_avx2(in,out,twr,twi,K); return; })
+    radix25_tw_flat_dit_kernel_fwd_il_scalar(in, out, twr, twi, K);
+}
+#endif
+
+#ifdef FFT_RADIX25_AVX2_IL_DIF_TW_H
+static void vfft_tw_il_dif_dispatch_r25_bwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX25_AVX512_IL_DIF_TW_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix25_tw_flat_dif_kernel_bwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix25_tw_flat_dif_kernel_bwd_il_avx2(in,out,twr,twi,K); return; })
+    radix25_tw_flat_dif_kernel_bwd_il_scalar(in, out, twr, twi, K);
+}
+#endif
+
+/* ── R=5 Interleaved tw dispatch ── */
+#ifdef FFT_RADIX5_AVX2_IL_H
+static void vfft_tw_il_dispatch_r5_fwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX5_AVX512_IL_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix5_tw_dit_kernel_fwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix5_tw_dit_kernel_fwd_il_avx2(in,out,twr,twi,K); return; })
+    radix5_tw_dit_kernel_fwd_il_scalar(in, out, twr, twi, K);
+}
+#endif
+
+#ifdef FFT_RADIX5_AVX2_IL_DIF_TW_H
+static void vfft_tw_il_dif_dispatch_r5_bwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX5_AVX512_IL_DIF_TW_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix5_tw_dif_kernel_bwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix5_tw_dif_kernel_bwd_il_avx2(in,out,twr,twi,K); return; })
+    radix5_tw_dif_kernel_bwd_il_scalar(in, out, twr, twi, K);
+}
+#endif
+
+/* ── R=7 Interleaved tw dispatch ── */
+#ifdef FFT_RADIX7_AVX2_IL_H
+static void vfft_tw_il_dispatch_r7_fwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX7_AVX512_IL_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix7_tw_dit_kernel_fwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix7_tw_dit_kernel_fwd_il_avx2(in,out,twr,twi,K); return; })
+    radix7_tw_dit_kernel_fwd_il_scalar(in, out, twr, twi, K);
+}
+#endif
+
+#ifdef FFT_RADIX7_AVX2_IL_DIF_TW_H
+static void vfft_tw_il_dif_dispatch_r7_bwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX7_AVX512_IL_DIF_TW_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix7_tw_dif_kernel_bwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix7_tw_dif_kernel_bwd_il_avx2(in,out,twr,twi,K); return; })
+    radix7_tw_dif_kernel_bwd_il_scalar(in, out, twr, twi, K);
+}
+#endif
+
+/* ── R=8 Interleaved tw dispatch ── */
+#ifdef FFT_RADIX8_AVX2_IL_H
+static void vfft_tw_il_dispatch_r8_fwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX8_AVX512_IL_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix8_tw_dit_kernel_fwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix8_tw_dit_kernel_fwd_il_avx2(in,out,twr,twi,K); return; })
+    radix8_tw_dit_kernel_fwd_il_scalar(in, out, twr, twi, K);
+}
+#endif
+
+#ifdef FFT_RADIX8_AVX2_IL_DIF_TW_H
+static void vfft_tw_il_dif_dispatch_r8_bwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX8_AVX512_IL_DIF_TW_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix8_tw_dif_kernel_bwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix8_tw_dif_kernel_bwd_il_avx2(in,out,twr,twi,K); return; })
+    radix8_tw_dif_kernel_bwd_il_scalar(in, out, twr, twi, K);
+}
+#endif
+
+/* ── R=10 Interleaved tw dispatch ── */
+#ifdef FFT_RADIX10_AVX2_IL_H
+static void vfft_tw_il_dispatch_r10_fwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX10_AVX512_IL_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix10_tw_dit_kernel_fwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix10_tw_dit_kernel_fwd_il_avx2(in,out,twr,twi,K); return; })
+    (void)in;
+    (void)out;
+    (void)twr;
+    (void)twi;
+    (void)K; /* no scalar IL */
+}
+#endif
+
+#ifdef FFT_RADIX10_AVX2_IL_DIF_TW_H
+static void vfft_tw_il_dif_dispatch_r10_bwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX10_AVX512_IL_DIF_TW_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix10_tw_dif_kernel_bwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix10_tw_dif_kernel_bwd_il_avx2(in,out,twr,twi,K); return; })
+    (void)in;
+    (void)out;
+    (void)twr;
+    (void)twi;
+    (void)K;
+}
+#endif
+
 #ifdef FFT_RADIX10_DISPATCH_H
 VFFT_TW_DISPATCH_WRAPPER(10, radix10_tw_flat_dit_kernel)
 #endif
@@ -633,6 +796,65 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #ifdef FFT_RADIX25_DIF_DISPATCH_H
     vfft_registry_set_tw_dif(reg, 25, vfft_tw_dif_dispatch_r25_fwd, vfft_tw_dif_dispatch_r25_bwd);
 #endif
+
+    /* ── Interleaved (IL) tw codelets ── */
+    /* Crossover K: use IL when K >= this value.
+     * Defaults from container benchmarks; calibrator will tune per-platform. */
+#ifdef FFT_RADIX25_AVX2_IL_TW_H
+    vfft_registry_set_tw_il(reg, 25,
+                            vfft_tw_il_dispatch_r25_fwd,
+#ifdef FFT_RADIX25_AVX2_IL_DIF_TW_H
+                            vfft_tw_il_dif_dispatch_r25_bwd,
+#else
+                            NULL,
+#endif
+                            256); /* crossover K=256: IL wins at K>=256 for R=25 */
+#endif
+
+#ifdef FFT_RADIX5_AVX2_IL_H
+    vfft_registry_set_tw_il(reg, 5,
+                            vfft_tw_il_dispatch_r5_fwd,
+#ifdef FFT_RADIX5_AVX2_IL_DIF_TW_H
+                            vfft_tw_il_dif_dispatch_r5_bwd,
+#else
+                            NULL,
+#endif
+                            256); /* crossover K=256: R=5 has 10 split streams */
+#endif
+
+#ifdef FFT_RADIX7_AVX2_IL_H
+    vfft_registry_set_tw_il(reg, 7,
+                            vfft_tw_il_dispatch_r7_fwd,
+#ifdef FFT_RADIX7_AVX2_IL_DIF_TW_H
+                            vfft_tw_il_dif_dispatch_r7_bwd,
+#else
+                            NULL,
+#endif
+                            256); /* crossover K=256: R=7 has 14 split streams */
+#endif
+
+#ifdef FFT_RADIX8_AVX2_IL_H
+    vfft_registry_set_tw_il(reg, 8,
+                            vfft_tw_il_dispatch_r8_fwd,
+#ifdef FFT_RADIX8_AVX2_IL_DIF_TW_H
+                            vfft_tw_il_dif_dispatch_r8_bwd,
+#else
+                            NULL,
+#endif
+                            512); /* crossover K=512: R=8 has 16 split streams */
+#endif
+
+#ifdef FFT_RADIX10_AVX2_IL_H
+    vfft_registry_set_tw_il(reg, 10,
+                            vfft_tw_il_dispatch_r10_fwd,
+#ifdef FFT_RADIX10_AVX2_IL_DIF_TW_H
+                            vfft_tw_il_dif_dispatch_r10_bwd,
+#else
+                            NULL,
+#endif
+                            512); /* crossover K=512: R=10 has 20 split streams */
+#endif
+
 #ifdef FFT_RADIX10_DIF_DISPATCH_H
     vfft_registry_set_tw_dif(reg, 10, vfft_tw_dif_dispatch_r10_fwd, vfft_tw_dif_dispatch_r10_bwd);
 #endif
@@ -778,12 +1000,18 @@ static void vfft_print_registry(const vfft_codelet_registry *reg)
                 break;
             }
 
-            printf("    R=%-3zu  fwd=%s  bwd=%s  tw=%s  dif=%s  %s\n", r,
+            printf("    R=%-3zu  fwd=%s  bwd=%s  tw=%s  dif=%s  il=%s  %s%s\n", r,
                    reg->fwd[r] ? "yes" : "no ",
                    reg->bwd[r] ? "yes" : "no ",
                    reg->tw_fwd[r] ? "yes" : "no ",
                    reg->tw_dif_bwd[r] ? "yes" : "no ",
-                   kind);
+                   reg->tw_fwd_il[r] ? "yes" : "no ",
+                   kind,
+                   reg->tw_fwd_il[r] ? "  [IL]" : "");
+            if (reg->il_crossover_K[r] > 0)
+            {
+                printf("           IL crossover K=%zu\n", reg->il_crossover_K[r]);
+            }
         }
     }
 }
