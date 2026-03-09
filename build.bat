@@ -25,6 +25,17 @@ REM                -DCMAKE_PREFIX_PATH="..\vcpkg_installed\x64-windows"
 REM     5. Build:                    cmake --build . --config Release
 REM     6. Copy FFTW DLL:           copy ..\vcpkg_installed\x64-windows\bin\fftw3.dll test\
 REM     7. Run benchmark:            test\bench_full_fft.exe
+REM
+REM   Troubleshooting:
+REM     - "Ninja not found": Ninja may be installed but not on PATH. Known locations:
+REM         * Visual Studio:  C:\Program Files\Microsoft Visual Studio\2022\Community\
+REM                           Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe
+REM         * pip install:    python -c "import ninja; print(ninja.BIN_DIR)"
+REM       You can also pass -DCMAKE_MAKE_PROGRAM=<path-to-ninja.exe> to cmake.
+REM       WARNING: Do NOT use "setx PATH" to extend PATH — it truncates to 1024 chars
+REM       and can corrupt your PATH. Use the Windows Environment Variables GUI instead.
+REM     - "vcpkg install failed" with empty log: vcpkg.exe may be 0 bytes (corrupt).
+REM       Fix: cd vcpkg && git pull && bootstrap-vcpkg.bat -disableMetrics
 REM ==========================================================================
 setlocal enabledelayedexpansion
 
@@ -69,6 +80,8 @@ if errorlevel 1 (
 )
 
 REM ── Bootstrap vcpkg if needed ────────────────────────────────────────────
+REM Also re-bootstrap if vcpkg.exe is 0 bytes (corrupt download)
+for %%F in (vcpkg\vcpkg.exe) do if %%~zF==0 del "vcpkg\vcpkg.exe"
 if not exist "vcpkg\vcpkg.exe" (
     if not exist "vcpkg\bootstrap-vcpkg.bat" (
         echo [VectorFFT] Cloning vcpkg...

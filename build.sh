@@ -28,6 +28,13 @@
 #     5. Build:                    cmake --build . --config Release
 #     6. Run benchmark:
 #          LD_LIBRARY_PATH="../vcpkg_installed/x64-linux/lib" ./test/bench_full_fft
+#
+#   Troubleshooting:
+#     - "Ninja not found": Ninja may be installed but not on PATH.
+#       Check: pip3 show ninja / python3 -c "import ninja; print(ninja.BIN_DIR)"
+#       You can also pass -DCMAKE_MAKE_PROGRAM=<path-to-ninja> to cmake.
+#     - "vcpkg install failed" with empty log: vcpkg binary may be corrupt (0 bytes).
+#       Fix: cd vcpkg && git pull && ./bootstrap-vcpkg.sh -disableMetrics
 # ==========================================================================
 set -euo pipefail
 
@@ -72,6 +79,10 @@ if ! command -v ninja &>/dev/null; then
 fi
 
 # ── Bootstrap vcpkg if needed ──────────────────────────────────────────────
+# Re-bootstrap if vcpkg binary is 0 bytes (corrupt download)
+if [ -f "vcpkg/vcpkg" ] && [ ! -s "vcpkg/vcpkg" ]; then
+    rm -f "vcpkg/vcpkg"
+fi
 if [ ! -x "vcpkg/vcpkg" ]; then
     if [ ! -f "vcpkg/bootstrap-vcpkg.sh" ]; then
         echo "[VectorFFT] Cloning vcpkg..."
