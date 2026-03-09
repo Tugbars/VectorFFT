@@ -140,4 +140,47 @@ static inline void radix25_n1_backward(
 
 /* ── Twiddled (DIT) dispatch ── */
 
+/* ═══════════════════════════════════════════════════════════════
+ * INTERLEAVED (IL) DISPATCH
+ * ═══════════════════════════════════════════════════════════════ */
+
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include "avx512/fft_radix25_avx512_il_tw.h"
+#include "avx512/fft_radix25_avx512_il_dif_tw.h"
+#endif
+#ifdef __AVX2__
+#include "avx2/fft_radix25_avx2_il_tw.h"
+#include "avx2/fft_radix25_avx2_il_dif_tw.h"
+#endif
+#include "scalar/fft_radix25_scalar_il_tw.h"
+#include "scalar/fft_radix25_scalar_il_dif_tw.h"
+
+static inline void radix25_tw_forward_il(
+    size_t K,
+    const double * __restrict__ in, double * __restrict__ out,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im)
+{
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) { radix25_tw_flat_dit_kernel_fwd_il_avx512(in, out, tw_re, tw_im, K); return; }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) { radix25_tw_flat_dit_kernel_fwd_il_avx2(in, out, tw_re, tw_im, K); return; }
+#endif
+    radix25_tw_flat_dit_kernel_fwd_il_scalar(in, out, tw_re, tw_im, K);
+}
+
+static inline void radix25_tw_dif_backward_il(
+    size_t K,
+    const double * __restrict__ in, double * __restrict__ out,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im)
+{
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) { radix25_tw_flat_dif_kernel_bwd_il_avx512(in, out, tw_re, tw_im, K); return; }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) { radix25_tw_flat_dif_kernel_bwd_il_avx2(in, out, tw_re, tw_im, K); return; }
+#endif
+    radix25_tw_flat_dif_kernel_bwd_il_scalar(in, out, tw_re, tw_im, K);
+}
+
 #endif /* FFT_RADIX25_DISPATCH_H */
