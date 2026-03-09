@@ -247,11 +247,145 @@ static inline void vfft_registry_set_tw_il(vfft_codelet_registry *reg,
  * FACTORIZER
  * ═══════════════════════════════════════════════════════════════ */
 
-static const size_t VFFT_SUPPORTED_RADIXES[] = {
-    128, 64, 32, 16, 8, 4, 2,
-    25, 10, 9, 6,
-    23, 19, 17, 13, 11, 7, 5, 3,
-    0};
+/*
+ * Cache-aware factorizer v2 — inspired by FFTW's PATIENT plans.
+ *
+ * Key principles from FFTW benchmarking (AVX-512):
+ *   1. FFTW NEVER uses R=128 for twiddled stages
+ *   2. Workhorse radixes: R=32 (5 bits), R=16 (4 bits), R=64 (6 bits)
+ *   3. Large K stages use smaller R (fewer streams)
+ *   4. Balanced decomposition: 2 stages for k≤12, 3 for k≤18
+ *
+ * FFTW actual choices (PATIENT, AVX-512):
+ *   2^8  = 16×16       2^12 = 64×64        2^16 = 16×8×32×16
+ *   2^9  = 32×16       2^13 = 8×64×16      2^17 = 32×8×32×16
+ *   2^10 = 32×32       2^14 = 32×32×16
+ *   2^11 = 64×32       2^15 = 32×64×16
+ */
+
+/* ── Power-of-2 balanced factorization ── */
+static void vfft_factorize_pow2(size_t k, size_t *factors, size_t *nfactors,
+                                const vfft_codelet_registry *reg)
+{
+    *nfactors = 0;
+    if (k == 0)
+        return;
+
+    /* Single stage: R=2^k if we have the codelet */
+    if (k <= 7 && reg->fwd[1u << k])
+    {
+        factors[(*nfactors)++] = 1u << k;
+        return;
+    }
+
+    /* Two stages for k=8..12 (N=256..4096) — FFTW always uses 2 stages here.
+     * Split k = a + b, a ≥ b, each ≤ 6 (max R=64). */
+    if (k >= 8 && k <= 12)
+    {
+        size_t a = (k + 1) / 2;
+        size_t b = k - a;
+        size_t ra = 1u << a, rb = 1u << b;
+        if (reg->fwd[ra] && reg->fwd[rb])
+        {
+            factors[(*nfactors)++] = rb; /* outer: fewer streams at larger K */
+            factors[(*nfactors)++] = ra; /* inner: notw or small K */
+            return;
+        }
+    }
+
+    /* Three stages for k=13..18 — FFTW uses R=16 notw base + 2 upper stages. */
+    if (k >= 13 && k <= 18)
+    {
+        size_t rem = k - 4; /* after R=16 notw */
+        size_t a = (rem + 1) / 2;
+        size_t b = rem - a;
+        if (a > 6)
+        {
+            a = 6;
+            b = rem - 6;
+        }
+        if (a + b == rem && a <= 6 && b >= 3)
+        {
+            size_t ra = 1u << a, rb = 1u << b;
+            if (reg->fwd[ra] && reg->fwd[rb] && reg->fwd[16])
+            {
+                factors[(*nfactors)++] = rb; /* outer: fewest streams */
+                factors[(*nfactors)++] = ra; /* middle */
+                factors[(*nfactors)++] = 16; /* inner: notw */
+                return;
+            }
+        }
+    }
+
+    /* For k > 18: R=16 notw base + fill with R=32 + R=8/R=16 adapter */
+    {
+        size_t bits_left = k;
+        size_t stage_bits[16];
+        size_t nstages = 0;
+
+        /* Reserve R=16 for innermost notw */
+        if (bits_left >= 4 && reg->fwd[16])
+            bits_left -= 4;
+
+        while (bits_left >= 5)
+        {
+            stage_bits[nstages++] = 5;
+            bits_left -= 5;
+        }
+        if (bits_left == 4)
+        {
+            stage_bits[nstages++] = 4;
+            bits_left = 0;
+        }
+        else if (bits_left == 3)
+        {
+            stage_bits[nstages++] = 3;
+            bits_left = 0;
+        }
+        else if (bits_left == 2)
+        {
+            stage_bits[nstages++] = 2;
+            bits_left = 0;
+        }
+        else if (bits_left == 1)
+        {
+            stage_bits[nstages++] = 1;
+            bits_left = 0;
+        }
+
+        /* Add R=16 notw base */
+        if (k >= 4 && reg->fwd[16])
+            stage_bits[nstages++] = 4;
+
+        /* Convert to radixes — outer stages first (ascending stream count) */
+        for (size_t i = 0; i < nstages; i++)
+        {
+            size_t r = 1u << stage_bits[i];
+            if (!reg->fwd[r])
+            {
+                size_t b = stage_bits[i];
+                while (b > 0)
+                {
+                    size_t try_b = (b >= 5) ? 5 : b;
+                    size_t try_r = 1u << try_b;
+                    while (try_b > 0 && !reg->fwd[try_r])
+                    {
+                        try_b--;
+                        try_r = 1u << try_b;
+                    }
+                    if (try_b == 0)
+                        return;
+                    factors[(*nfactors)++] = try_r;
+                    b -= try_b;
+                }
+            }
+            else
+            {
+                factors[(*nfactors)++] = r;
+            }
+        }
+    }
+}
 
 typedef struct
 {
@@ -267,118 +401,77 @@ static int vfft_factorize(size_t N, const vfft_codelet_registry *reg,
     memset(fact, 0, sizeof(*fact));
     size_t remaining = N;
 
-    while (remaining > 1)
+    /* Phase 1: Extract non-power-of-2 factors (largest first) */
+    static const size_t NON_POW2_RADIXES[] = {
+        25, 10, 9, 6, 23, 19, 17, 13, 11, 7, 5, 3, 0};
+    size_t non_pow2[VFFT_MAX_STAGES], n_non_pow2 = 0;
+
+    for (const size_t *r = NON_POW2_RADIXES; *r; r++)
     {
-        if (fact->nfactors >= VFFT_MAX_STAGES)
-            return -1;
-
-        int found = 0;
-        for (const size_t *r = VFFT_SUPPORTED_RADIXES; *r; r++)
+        while (*r <= remaining && (remaining % *r) == 0 && reg->fwd[*r])
         {
-            if (*r <= remaining && (remaining % *r) == 0 && reg->fwd[*r])
-            {
-                fact->factors[fact->nfactors++] = *r;
-                remaining /= *r;
-                found = 1;
-                break;
-            }
-        }
-
-        if (!found)
-        {
-            if (remaining > 1)
-            {
-                if (remaining < VFFT_MAX_RADIX && reg->fwd[remaining])
-                {
-                    fact->factors[fact->nfactors++] = remaining;
-                    remaining = 1;
-                }
-                else
-                {
-                    fact->bluestein_factors[fact->nfactors] = 1;
-                    fact->uses_bluestein = 1;
-                    fact->factors[fact->nfactors++] = remaining;
-                    remaining = 1;
-                }
-            }
+            non_pow2[n_non_pow2++] = *r;
+            remaining /= *r;
+            if (n_non_pow2 >= VFFT_MAX_STAGES)
+                return -1;
         }
     }
 
-    /* Reorder for SIMD alignment:
-     *
-     * DIT inner-first means K grows as product of inner radices.
-     * If K is not SIMD-aligned, the codelet falls back to scalar.
-     *
-     * Strategy: put power-of-2 radices INNERMOST (factors[0..]).
-     * Once K is a multiple of 8 (AVX-512 width), every subsequent
-     * K = K_prev * R_next stays aligned regardless of R_next.
-     *
-     * Within each group (pow2 / non-pow2), keep largest-first
-     * to minimize total stage count.
-     *
-     * NOTE: Moving small pow2 (R=2,4) outermost was tested and LOST.
-     * Small radixes have too few FP ops per point to hide memory
-     * latency at large K. Keep non-pow2 outermost where their
-     * higher compute density amortizes strided access.
-     */
+    /* Phase 2: Factorize power-of-2 remainder */
+    size_t pow2_factors[VFFT_MAX_STAGES], n_pow2 = 0;
+
+    if (remaining > 1)
     {
-        size_t pow2[VFFT_MAX_STAGES], npow2 = 0;
-        size_t other[VFFT_MAX_STAGES], nother = 0;
-        size_t bp2[VFFT_MAX_STAGES], bother[VFFT_MAX_STAGES];
-
-        for (size_t i = 0; i < fact->nfactors; i++)
+        if ((remaining & (remaining - 1)) == 0)
         {
-            size_t r = fact->factors[i];
-            /* Check if r is a power of 2 */
-            if (r > 0 && (r & (r - 1)) == 0)
+            size_t k = 0;
             {
-                bp2[npow2] = fact->bluestein_factors[i];
-                pow2[npow2++] = r;
+                size_t tmp = remaining;
+                while (tmp > 1)
+                {
+                    k++;
+                    tmp >>= 1;
+                }
             }
-            else
-            {
-                bother[nother] = fact->bluestein_factors[i];
-                other[nother++] = r;
-            }
+            vfft_factorize_pow2(k, pow2_factors, &n_pow2, reg);
         }
-
-        /* Sort each group: largest first (descending) */
-        for (size_t i = 1; i < npow2; i++)
-            for (size_t j = i; j > 0 && pow2[j] > pow2[j - 1]; j--)
-            {
-                size_t t = pow2[j];
-                pow2[j] = pow2[j - 1];
-                pow2[j - 1] = t;
-                t = bp2[j];
-                bp2[j] = bp2[j - 1];
-                bp2[j - 1] = t;
-            }
-        for (size_t i = 1; i < nother; i++)
-            for (size_t j = i; j > 0 && other[j] > other[j - 1]; j--)
-            {
-                size_t t = other[j];
-                other[j] = other[j - 1];
-                other[j - 1] = t;
-                t = bother[j];
-                bother[j] = bother[j - 1];
-                bother[j - 1] = t;
-            }
-
-        /* Rebuild: pow2 innermost (first), then non-pow2 outer */
-        size_t idx = 0;
-        for (size_t i = 0; i < npow2; i++)
+        else if (remaining < VFFT_MAX_RADIX && reg->fwd[remaining])
         {
-            fact->factors[idx] = pow2[i];
-            fact->bluestein_factors[idx] = bp2[i];
-            idx++;
+            pow2_factors[n_pow2++] = remaining;
         }
-        for (size_t i = 0; i < nother; i++)
+        else
         {
-            fact->factors[idx] = other[i];
-            fact->bluestein_factors[idx] = bother[i];
-            idx++;
+            fact->bluestein_factors[fact->nfactors] = 1;
+            fact->uses_bluestein = 1;
+            fact->factors[fact->nfactors++] = remaining;
+            return 0;
         }
     }
+
+    /* Phase 3: Assemble — non-pow2 outermost (large K, high compute density),
+     * pow2 innermost (small K, sorted small-R-outer for fewer streams). */
+    for (size_t i = 1; i < n_pow2; i++)
+        for (size_t j = i; j > 0 && pow2_factors[j] < pow2_factors[j - 1]; j--)
+        {
+            size_t t = pow2_factors[j];
+            pow2_factors[j] = pow2_factors[j - 1];
+            pow2_factors[j - 1] = t;
+        }
+    for (size_t i = 1; i < n_non_pow2; i++)
+        for (size_t j = i; j > 0 && non_pow2[j] > non_pow2[j - 1]; j--)
+        {
+            size_t t = non_pow2[j];
+            non_pow2[j] = non_pow2[j - 1];
+            non_pow2[j - 1] = t;
+        }
+
+    if (fact->nfactors + n_pow2 + n_non_pow2 > VFFT_MAX_STAGES)
+        return -1;
+
+    for (size_t i = 0; i < n_non_pow2; i++)
+        fact->factors[fact->nfactors++] = non_pow2[i];
+    for (size_t i = 0; i < n_pow2; i++)
+        fact->factors[fact->nfactors++] = pow2_factors[i];
 
     return 0;
 }
