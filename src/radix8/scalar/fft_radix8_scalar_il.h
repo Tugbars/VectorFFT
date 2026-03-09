@@ -9,291 +9,295 @@
 
 static inline void
 radix8_notw_dit_kernel_fwd_il_scalar(
-    const double * __restrict__ in,
-    double * __restrict__ out,
+    const double *__restrict__ in,
+    double *__restrict__ out,
     size_t K)
 {
     const double vc = 0.707106781186547572737310929369414225220680236816;
     const double vnc = -0.707106781186547572737310929369414225220680236816;
-    for (size_t k = 0; k < K; k += 1) {
-        double x0r, x0i;
-        const double x0r = in[2*(0*K+k)], x0i = in[2*(0*K+k)+1];
-        double x1r, x1i;
-        const double x1r = in[2*(1*K+k)], x1i = in[2*(1*K+k)+1];
-        double x2r, x2i;
-        const double x2r = in[2*(2*K+k)], x2i = in[2*(2*K+k)+1];
-        double x3r, x3i;
-        const double x3r = in[2*(3*K+k)], x3i = in[2*(3*K+k)+1];
-        double x4r, x4i;
-        const double x4r = in[2*(4*K+k)], x4i = in[2*(4*K+k)+1];
-        double x5r, x5i;
-        const double x5r = in[2*(5*K+k)], x5i = in[2*(5*K+k)+1];
-        double x6r, x6i;
-        const double x6r = in[2*(6*K+k)], x6i = in[2*(6*K+k)+1];
-        double x7r, x7i;
-        const double x7r = in[2*(7*K+k)], x7i = in[2*(7*K+k)+1];
+    for (size_t k = 0; k < K; k += 1)
+    {
+        const double x0r = in[2 * (0 * K + k)], x0i = in[2 * (0 * K + k) + 1];
+        const double x1r = in[2 * (1 * K + k)], x1i = in[2 * (1 * K + k) + 1];
+        const double x2r = in[2 * (2 * K + k)], x2i = in[2 * (2 * K + k) + 1];
+        const double x3r = in[2 * (3 * K + k)], x3i = in[2 * (3 * K + k) + 1];
+        const double x4r = in[2 * (4 * K + k)], x4i = in[2 * (4 * K + k) + 1];
+        const double x5r = in[2 * (5 * K + k)], x5i = in[2 * (5 * K + k) + 1];
+        const double x6r = in[2 * (6 * K + k)], x6i = in[2 * (6 * K + k) + 1];
+        const double x7r = in[2 * (7 * K + k)], x7i = in[2 * (7 * K + k) + 1];
         /* DFT-4 evens */
-        const double epr = (x0r+x4r), epi = (x0i+x4i);
-        const double eqr = (x0r-x4r), eqi = (x0i-x4i);
-        const double err = (x2r+x6r), eri = (x2i+x6i);
-        const double esr = (x2r-x6r), esi = (x2i-x6i);
-        const double A0r = (epr+err), A0i = (epi+eri);
-        const double A2r = (epr-err), A2i = (epi-eri);
-        const double A1r = (eqr+esi), A1i = (eqi-esr);
-        const double A3r = (eqr-esi), A3i = (eqi+esr);
+        const double epr = (x0r + x4r), epi = (x0i + x4i);
+        const double eqr = (x0r - x4r), eqi = (x0i - x4i);
+        const double err = (x2r + x6r), eri = (x2i + x6i);
+        const double esr = (x2r - x6r), esi = (x2i - x6i);
+        const double A0r = (epr + err), A0i = (epi + eri);
+        const double A2r = (epr - err), A2i = (epi - eri);
+        const double A1r = (eqr + esi), A1i = (eqi - esr);
+        const double A3r = (eqr - esi), A3i = (eqi + esr);
         /* DFT-4 odds */
-        const double opr = (x1r+x5r), opi = (x1i+x5i);
-        const double oqr = (x1r-x5r), oqi = (x1i-x5i);
-        const double orr = (x3r+x7r), ori = (x3i+x7i);
-        const double osr = (x3r-x7r), osi = (x3i-x7i);
-        const double B0r = (opr+orr), B0i = (opi+ori);
-        const double B2r = (opr-orr), B2i = (opi-ori);
-        const double B1r = (oqr+osi), B1i = (oqi-osr);
-        const double B3r = (oqr-osi), B3i = (oqi+osr);
+        const double opr = (x1r + x5r), opi = (x1i + x5i);
+        const double oqr = (x1r - x5r), oqi = (x1i - x5i);
+        const double orr = (x3r + x7r), ori = (x3i + x7i);
+        const double osr = (x3r - x7r), osi = (x3i - x7i);
+        const double B0r = (opr + orr), B0i = (opi + ori);
+        const double B2r = (opr - orr), B2i = (opi - ori);
+        const double B1r = (oqr + osi), B1i = (oqi - osr);
+        const double B3r = (oqr - osi), B3i = (oqi + osr);
         /* W8 combine */
-        out[2*(0*K+k)] = (A0r+B0r); out[2*(0*K+k)+1] = (A0i+B0i);
-        out[2*(4*K+k)] = (A0r-B0r); out[2*(4*K+k)+1] = (A0i-B0i);
-        const double t1r = (vc*(B1r+B1i)), t1i = (vc*(B1i-B1r));
-        out[2*(1*K+k)] = (A1r+t1r); out[2*(1*K+k)+1] = (A1i+t1i);
-        out[2*(5*K+k)] = (A1r-t1r); out[2*(5*K+k)+1] = (A1i-t1i);
-        out[2*(2*K+k)] = (A2r+B2i); out[2*(2*K+k)+1] = (A2i-B2r);
-        out[2*(6*K+k)] = (A2r-B2i); out[2*(6*K+k)+1] = (A2i+B2r);
-        const double t3r = (vnc*(B3r-B3i)), t3i = (vnc*(B3r+B3i));
-        out[2*(3*K+k)] = (A3r+t3r); out[2*(3*K+k)+1] = (A3i+t3i);
-        out[2*(7*K+k)] = (A3r-t3r); out[2*(7*K+k)+1] = (A3i-t3i);
+        out[2 * (0 * K + k)] = (A0r + B0r);
+        out[2 * (0 * K + k) + 1] = (A0i + B0i);
+        out[2 * (4 * K + k)] = (A0r - B0r);
+        out[2 * (4 * K + k) + 1] = (A0i - B0i);
+        const double t1r = (vc * (B1r + B1i)), t1i = (vc * (B1i - B1r));
+        out[2 * (1 * K + k)] = (A1r + t1r);
+        out[2 * (1 * K + k) + 1] = (A1i + t1i);
+        out[2 * (5 * K + k)] = (A1r - t1r);
+        out[2 * (5 * K + k) + 1] = (A1i - t1i);
+        out[2 * (2 * K + k)] = (A2r + B2i);
+        out[2 * (2 * K + k) + 1] = (A2i - B2r);
+        out[2 * (6 * K + k)] = (A2r - B2i);
+        out[2 * (6 * K + k) + 1] = (A2i + B2r);
+        const double t3r = (vnc * (B3r - B3i)), t3i = (vnc * (B3r + B3i));
+        out[2 * (3 * K + k)] = (A3r + t3r);
+        out[2 * (3 * K + k) + 1] = (A3i + t3i);
+        out[2 * (7 * K + k)] = (A3r - t3r);
+        out[2 * (7 * K + k) + 1] = (A3i - t3i);
     }
 }
 
 static inline void
 radix8_notw_dit_kernel_bwd_il_scalar(
-    const double * __restrict__ in,
-    double * __restrict__ out,
+    const double *__restrict__ in,
+    double *__restrict__ out,
     size_t K)
 {
     const double vc = 0.707106781186547572737310929369414225220680236816;
     const double vnc = -0.707106781186547572737310929369414225220680236816;
-    for (size_t k = 0; k < K; k += 1) {
-        double x0r, x0i;
-        const double x0r = in[2*(0*K+k)], x0i = in[2*(0*K+k)+1];
-        double x1r, x1i;
-        const double x1r = in[2*(1*K+k)], x1i = in[2*(1*K+k)+1];
-        double x2r, x2i;
-        const double x2r = in[2*(2*K+k)], x2i = in[2*(2*K+k)+1];
-        double x3r, x3i;
-        const double x3r = in[2*(3*K+k)], x3i = in[2*(3*K+k)+1];
-        double x4r, x4i;
-        const double x4r = in[2*(4*K+k)], x4i = in[2*(4*K+k)+1];
-        double x5r, x5i;
-        const double x5r = in[2*(5*K+k)], x5i = in[2*(5*K+k)+1];
-        double x6r, x6i;
-        const double x6r = in[2*(6*K+k)], x6i = in[2*(6*K+k)+1];
-        double x7r, x7i;
-        const double x7r = in[2*(7*K+k)], x7i = in[2*(7*K+k)+1];
+    for (size_t k = 0; k < K; k += 1)
+    {
+        const double x0r = in[2 * (0 * K + k)], x0i = in[2 * (0 * K + k) + 1];
+        const double x1r = in[2 * (1 * K + k)], x1i = in[2 * (1 * K + k) + 1];
+        const double x2r = in[2 * (2 * K + k)], x2i = in[2 * (2 * K + k) + 1];
+        const double x3r = in[2 * (3 * K + k)], x3i = in[2 * (3 * K + k) + 1];
+        const double x4r = in[2 * (4 * K + k)], x4i = in[2 * (4 * K + k) + 1];
+        const double x5r = in[2 * (5 * K + k)], x5i = in[2 * (5 * K + k) + 1];
+        const double x6r = in[2 * (6 * K + k)], x6i = in[2 * (6 * K + k) + 1];
+        const double x7r = in[2 * (7 * K + k)], x7i = in[2 * (7 * K + k) + 1];
         /* DFT-4 evens */
-        const double epr = (x0r+x4r), epi = (x0i+x4i);
-        const double eqr = (x0r-x4r), eqi = (x0i-x4i);
-        const double err = (x2r+x6r), eri = (x2i+x6i);
-        const double esr = (x2r-x6r), esi = (x2i-x6i);
-        const double A0r = (epr+err), A0i = (epi+eri);
-        const double A2r = (epr-err), A2i = (epi-eri);
-        const double A1r = (eqr-esi), A1i = (eqi+esr);
-        const double A3r = (eqr+esi), A3i = (eqi-esr);
+        const double epr = (x0r + x4r), epi = (x0i + x4i);
+        const double eqr = (x0r - x4r), eqi = (x0i - x4i);
+        const double err = (x2r + x6r), eri = (x2i + x6i);
+        const double esr = (x2r - x6r), esi = (x2i - x6i);
+        const double A0r = (epr + err), A0i = (epi + eri);
+        const double A2r = (epr - err), A2i = (epi - eri);
+        const double A1r = (eqr - esi), A1i = (eqi + esr);
+        const double A3r = (eqr + esi), A3i = (eqi - esr);
         /* DFT-4 odds */
-        const double opr = (x1r+x5r), opi = (x1i+x5i);
-        const double oqr = (x1r-x5r), oqi = (x1i-x5i);
-        const double orr = (x3r+x7r), ori = (x3i+x7i);
-        const double osr = (x3r-x7r), osi = (x3i-x7i);
-        const double B0r = (opr+orr), B0i = (opi+ori);
-        const double B2r = (opr-orr), B2i = (opi-ori);
-        const double B1r = (oqr-osi), B1i = (oqi+osr);
-        const double B3r = (oqr+osi), B3i = (oqi-osr);
+        const double opr = (x1r + x5r), opi = (x1i + x5i);
+        const double oqr = (x1r - x5r), oqi = (x1i - x5i);
+        const double orr = (x3r + x7r), ori = (x3i + x7i);
+        const double osr = (x3r - x7r), osi = (x3i - x7i);
+        const double B0r = (opr + orr), B0i = (opi + ori);
+        const double B2r = (opr - orr), B2i = (opi - ori);
+        const double B1r = (oqr - osi), B1i = (oqi + osr);
+        const double B3r = (oqr + osi), B3i = (oqi - osr);
         /* W8 combine */
-        out[2*(0*K+k)] = (A0r+B0r); out[2*(0*K+k)+1] = (A0i+B0i);
-        out[2*(4*K+k)] = (A0r-B0r); out[2*(4*K+k)+1] = (A0i-B0i);
-        const double t1r = (vc*(B1r-B1i)), t1i = (vc*(B1r+B1i));
-        out[2*(1*K+k)] = (A1r+t1r); out[2*(1*K+k)+1] = (A1i+t1i);
-        out[2*(5*K+k)] = (A1r-t1r); out[2*(5*K+k)+1] = (A1i-t1i);
-        out[2*(2*K+k)] = (A2r-B2i); out[2*(2*K+k)+1] = (A2i+B2r);
-        out[2*(6*K+k)] = (A2r+B2i); out[2*(6*K+k)+1] = (A2i-B2r);
-        const double t3r = (vnc*(B3r+B3i)), t3i = (vc*(B3r-B3i));
-        out[2*(3*K+k)] = (A3r+t3r); out[2*(3*K+k)+1] = (A3i+t3i);
-        out[2*(7*K+k)] = (A3r-t3r); out[2*(7*K+k)+1] = (A3i-t3i);
+        out[2 * (0 * K + k)] = (A0r + B0r);
+        out[2 * (0 * K + k) + 1] = (A0i + B0i);
+        out[2 * (4 * K + k)] = (A0r - B0r);
+        out[2 * (4 * K + k) + 1] = (A0i - B0i);
+        const double t1r = (vc * (B1r - B1i)), t1i = (vc * (B1r + B1i));
+        out[2 * (1 * K + k)] = (A1r + t1r);
+        out[2 * (1 * K + k) + 1] = (A1i + t1i);
+        out[2 * (5 * K + k)] = (A1r - t1r);
+        out[2 * (5 * K + k) + 1] = (A1i - t1i);
+        out[2 * (2 * K + k)] = (A2r - B2i);
+        out[2 * (2 * K + k) + 1] = (A2i + B2r);
+        out[2 * (6 * K + k)] = (A2r + B2i);
+        out[2 * (6 * K + k) + 1] = (A2i - B2r);
+        const double t3r = (vnc * (B3r + B3i)), t3i = (vc * (B3r - B3i));
+        out[2 * (3 * K + k)] = (A3r + t3r);
+        out[2 * (3 * K + k) + 1] = (A3i + t3i);
+        out[2 * (7 * K + k)] = (A3r - t3r);
+        out[2 * (7 * K + k) + 1] = (A3i - t3i);
     }
 }
 
 static inline void
 radix8_tw_dit_kernel_fwd_il_scalar(
-    const double * __restrict__ in,
-    double * __restrict__ out,
-    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    const double *__restrict__ in,
+    double *__restrict__ out,
+    const double *__restrict__ tw_re, const double *__restrict__ tw_im,
     size_t K)
 {
     const double vc = 0.707106781186547572737310929369414225220680236816;
     const double vnc = -0.707106781186547572737310929369414225220680236816;
-    for (size_t k = 0; k < K; k += 1) {
+    for (size_t k = 0; k < K; k += 1)
+    {
         /* Load 3 base twiddles: W^1, W^2, W^4 */
-        const double tw1r = *(&tw_re[0*K+k]), tw1i = *(&tw_im[0*K+k]);
-        const double tw2r = *(&tw_re[1*K+k]), tw2i = *(&tw_im[1*K+k]);
-        const double tw4r = *(&tw_re[3*K+k]), tw4i = *(&tw_im[3*K+k]);
+        const double tw1r = *(&tw_re[0 * K + k]), tw1i = *(&tw_im[0 * K + k]);
+        const double tw2r = *(&tw_re[1 * K + k]), tw2i = *(&tw_im[1 * K + k]);
+        const double tw4r = *(&tw_re[3 * K + k]), tw4i = *(&tw_im[3 * K + k]);
         /* Derive W^3 = W^1 × W^2 */
-        const double tw3r = (tw1r*tw2r-(tw1i*tw2i));
-        const double tw3i = (tw1r*tw2i+(tw1i*tw2r));
+        const double tw3r = (tw1r * tw2r - (tw1i * tw2i));
+        const double tw3i = (tw1r * tw2i + (tw1i * tw2r));
         /* Derive W^5 = W^1 × W^4 */
-        const double tw5r = (tw1r*tw4r-(tw1i*tw4i));
-        const double tw5i = (tw1r*tw4i+(tw1i*tw4r));
+        const double tw5r = (tw1r * tw4r - (tw1i * tw4i));
+        const double tw5i = (tw1r * tw4i + (tw1i * tw4r));
         /* Derive W^6 = W^2 × W^4 */
-        const double tw6r = (tw2r*tw4r-(tw2i*tw4i));
-        const double tw6i = (tw2r*tw4i+(tw2i*tw4r));
+        const double tw6r = (tw2r * tw4r - (tw2i * tw4i));
+        const double tw6i = (tw2r * tw4i + (tw2i * tw4r));
         /* Derive W^7 = W^3 × W^4 */
-        const double tw7r = (tw3r*tw4r-(tw3i*tw4i));
-        const double tw7i = (tw3r*tw4i+(tw3i*tw4r));
-        double x0r, x0i;
-        const double x0r = in[2*(0*K+k)], x0i = in[2*(0*K+k)+1];
-        double r1r, r1i;
-        const double r1r = in[2*(1*K+k)], r1i = in[2*(1*K+k)+1];
-        const double x1r = (r1r*tw1r-(r1i*tw1i));
-        const double x1i = (r1r*tw1i+(r1i*tw1r));
-        double r2r, r2i;
-        const double r2r = in[2*(2*K+k)], r2i = in[2*(2*K+k)+1];
-        const double x2r = (r2r*tw2r-(r2i*tw2i));
-        const double x2i = (r2r*tw2i+(r2i*tw2r));
-        double r3r, r3i;
-        const double r3r = in[2*(3*K+k)], r3i = in[2*(3*K+k)+1];
-        const double x3r = (r3r*tw3r-(r3i*tw3i));
-        const double x3i = (r3r*tw3i+(r3i*tw3r));
-        double r4r, r4i;
-        const double r4r = in[2*(4*K+k)], r4i = in[2*(4*K+k)+1];
-        const double x4r = (r4r*tw4r-(r4i*tw4i));
-        const double x4i = (r4r*tw4i+(r4i*tw4r));
-        double r5r, r5i;
-        const double r5r = in[2*(5*K+k)], r5i = in[2*(5*K+k)+1];
-        const double x5r = (r5r*tw5r-(r5i*tw5i));
-        const double x5i = (r5r*tw5i+(r5i*tw5r));
-        double r6r, r6i;
-        const double r6r = in[2*(6*K+k)], r6i = in[2*(6*K+k)+1];
-        const double x6r = (r6r*tw6r-(r6i*tw6i));
-        const double x6i = (r6r*tw6i+(r6i*tw6r));
-        double r7r, r7i;
-        const double r7r = in[2*(7*K+k)], r7i = in[2*(7*K+k)+1];
-        const double x7r = (r7r*tw7r-(r7i*tw7i));
-        const double x7i = (r7r*tw7i+(r7i*tw7r));
+        const double tw7r = (tw3r * tw4r - (tw3i * tw4i));
+        const double tw7i = (tw3r * tw4i + (tw3i * tw4r));
+        const double x0r = in[2 * (0 * K + k)], x0i = in[2 * (0 * K + k) + 1];
+        const double r1r = in[2 * (1 * K + k)], r1i = in[2 * (1 * K + k) + 1];
+        const double x1r = (r1r * tw1r - (r1i * tw1i));
+        const double x1i = (r1r * tw1i + (r1i * tw1r));
+        const double r2r = in[2 * (2 * K + k)], r2i = in[2 * (2 * K + k) + 1];
+        const double x2r = (r2r * tw2r - (r2i * tw2i));
+        const double x2i = (r2r * tw2i + (r2i * tw2r));
+        const double r3r = in[2 * (3 * K + k)], r3i = in[2 * (3 * K + k) + 1];
+        const double x3r = (r3r * tw3r - (r3i * tw3i));
+        const double x3i = (r3r * tw3i + (r3i * tw3r));
+        const double r4r = in[2 * (4 * K + k)], r4i = in[2 * (4 * K + k) + 1];
+        const double x4r = (r4r * tw4r - (r4i * tw4i));
+        const double x4i = (r4r * tw4i + (r4i * tw4r));
+        const double r5r = in[2 * (5 * K + k)], r5i = in[2 * (5 * K + k) + 1];
+        const double x5r = (r5r * tw5r - (r5i * tw5i));
+        const double x5i = (r5r * tw5i + (r5i * tw5r));
+        const double r6r = in[2 * (6 * K + k)], r6i = in[2 * (6 * K + k) + 1];
+        const double x6r = (r6r * tw6r - (r6i * tw6i));
+        const double x6i = (r6r * tw6i + (r6i * tw6r));
+        const double r7r = in[2 * (7 * K + k)], r7i = in[2 * (7 * K + k) + 1];
+        const double x7r = (r7r * tw7r - (r7i * tw7i));
+        const double x7i = (r7r * tw7i + (r7i * tw7r));
         /* DFT-4 evens */
-        const double epr = (x0r+x4r), epi = (x0i+x4i);
-        const double eqr = (x0r-x4r), eqi = (x0i-x4i);
-        const double err = (x2r+x6r), eri = (x2i+x6i);
-        const double esr = (x2r-x6r), esi = (x2i-x6i);
-        const double A0r = (epr+err), A0i = (epi+eri);
-        const double A2r = (epr-err), A2i = (epi-eri);
-        const double A1r = (eqr+esi), A1i = (eqi-esr);
-        const double A3r = (eqr-esi), A3i = (eqi+esr);
+        const double epr = (x0r + x4r), epi = (x0i + x4i);
+        const double eqr = (x0r - x4r), eqi = (x0i - x4i);
+        const double err = (x2r + x6r), eri = (x2i + x6i);
+        const double esr = (x2r - x6r), esi = (x2i - x6i);
+        const double A0r = (epr + err), A0i = (epi + eri);
+        const double A2r = (epr - err), A2i = (epi - eri);
+        const double A1r = (eqr + esi), A1i = (eqi - esr);
+        const double A3r = (eqr - esi), A3i = (eqi + esr);
         /* DFT-4 odds */
-        const double opr = (x1r+x5r), opi = (x1i+x5i);
-        const double oqr = (x1r-x5r), oqi = (x1i-x5i);
-        const double orr = (x3r+x7r), ori = (x3i+x7i);
-        const double osr = (x3r-x7r), osi = (x3i-x7i);
-        const double B0r = (opr+orr), B0i = (opi+ori);
-        const double B2r = (opr-orr), B2i = (opi-ori);
-        const double B1r = (oqr+osi), B1i = (oqi-osr);
-        const double B3r = (oqr-osi), B3i = (oqi+osr);
+        const double opr = (x1r + x5r), opi = (x1i + x5i);
+        const double oqr = (x1r - x5r), oqi = (x1i - x5i);
+        const double orr = (x3r + x7r), ori = (x3i + x7i);
+        const double osr = (x3r - x7r), osi = (x3i - x7i);
+        const double B0r = (opr + orr), B0i = (opi + ori);
+        const double B2r = (opr - orr), B2i = (opi - ori);
+        const double B1r = (oqr + osi), B1i = (oqi - osr);
+        const double B3r = (oqr - osi), B3i = (oqi + osr);
         /* W8 combine */
-        out[2*(0*K+k)] = (A0r+B0r); out[2*(0*K+k)+1] = (A0i+B0i);
-        out[2*(4*K+k)] = (A0r-B0r); out[2*(4*K+k)+1] = (A0i-B0i);
-        const double t1r = (vc*(B1r+B1i)), t1i = (vc*(B1i-B1r));
-        out[2*(1*K+k)] = (A1r+t1r); out[2*(1*K+k)+1] = (A1i+t1i);
-        out[2*(5*K+k)] = (A1r-t1r); out[2*(5*K+k)+1] = (A1i-t1i);
-        out[2*(2*K+k)] = (A2r+B2i); out[2*(2*K+k)+1] = (A2i-B2r);
-        out[2*(6*K+k)] = (A2r-B2i); out[2*(6*K+k)+1] = (A2i+B2r);
-        const double t3r = (vnc*(B3r-B3i)), t3i = (vnc*(B3r+B3i));
-        out[2*(3*K+k)] = (A3r+t3r); out[2*(3*K+k)+1] = (A3i+t3i);
-        out[2*(7*K+k)] = (A3r-t3r); out[2*(7*K+k)+1] = (A3i-t3i);
+        out[2 * (0 * K + k)] = (A0r + B0r);
+        out[2 * (0 * K + k) + 1] = (A0i + B0i);
+        out[2 * (4 * K + k)] = (A0r - B0r);
+        out[2 * (4 * K + k) + 1] = (A0i - B0i);
+        const double t1r = (vc * (B1r + B1i)), t1i = (vc * (B1i - B1r));
+        out[2 * (1 * K + k)] = (A1r + t1r);
+        out[2 * (1 * K + k) + 1] = (A1i + t1i);
+        out[2 * (5 * K + k)] = (A1r - t1r);
+        out[2 * (5 * K + k) + 1] = (A1i - t1i);
+        out[2 * (2 * K + k)] = (A2r + B2i);
+        out[2 * (2 * K + k) + 1] = (A2i - B2r);
+        out[2 * (6 * K + k)] = (A2r - B2i);
+        out[2 * (6 * K + k) + 1] = (A2i + B2r);
+        const double t3r = (vnc * (B3r - B3i)), t3i = (vnc * (B3r + B3i));
+        out[2 * (3 * K + k)] = (A3r + t3r);
+        out[2 * (3 * K + k) + 1] = (A3i + t3i);
+        out[2 * (7 * K + k)] = (A3r - t3r);
+        out[2 * (7 * K + k) + 1] = (A3i - t3i);
     }
 }
 
 static inline void
 radix8_tw_dit_kernel_bwd_il_scalar(
-    const double * __restrict__ in,
-    double * __restrict__ out,
-    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    const double *__restrict__ in,
+    double *__restrict__ out,
+    const double *__restrict__ tw_re, const double *__restrict__ tw_im,
     size_t K)
 {
     const double vc = 0.707106781186547572737310929369414225220680236816;
     const double vnc = -0.707106781186547572737310929369414225220680236816;
-    for (size_t k = 0; k < K; k += 1) {
+    for (size_t k = 0; k < K; k += 1)
+    {
         /* Load 3 base twiddles: W^1, W^2, W^4 */
-        const double tw1r = *(&tw_re[0*K+k]), tw1i = *(&tw_im[0*K+k]);
-        const double tw2r = *(&tw_re[1*K+k]), tw2i = *(&tw_im[1*K+k]);
-        const double tw4r = *(&tw_re[3*K+k]), tw4i = *(&tw_im[3*K+k]);
+        const double tw1r = *(&tw_re[0 * K + k]), tw1i = *(&tw_im[0 * K + k]);
+        const double tw2r = *(&tw_re[1 * K + k]), tw2i = *(&tw_im[1 * K + k]);
+        const double tw4r = *(&tw_re[3 * K + k]), tw4i = *(&tw_im[3 * K + k]);
         /* Derive W^3 = W^1 × W^2 */
-        const double tw3r = (tw1r*tw2r-(tw1i*tw2i));
-        const double tw3i = (tw1r*tw2i+(tw1i*tw2r));
+        const double tw3r = (tw1r * tw2r - (tw1i * tw2i));
+        const double tw3i = (tw1r * tw2i + (tw1i * tw2r));
         /* Derive W^5 = W^1 × W^4 */
-        const double tw5r = (tw1r*tw4r-(tw1i*tw4i));
-        const double tw5i = (tw1r*tw4i+(tw1i*tw4r));
+        const double tw5r = (tw1r * tw4r - (tw1i * tw4i));
+        const double tw5i = (tw1r * tw4i + (tw1i * tw4r));
         /* Derive W^6 = W^2 × W^4 */
-        const double tw6r = (tw2r*tw4r-(tw2i*tw4i));
-        const double tw6i = (tw2r*tw4i+(tw2i*tw4r));
+        const double tw6r = (tw2r * tw4r - (tw2i * tw4i));
+        const double tw6i = (tw2r * tw4i + (tw2i * tw4r));
         /* Derive W^7 = W^3 × W^4 */
-        const double tw7r = (tw3r*tw4r-(tw3i*tw4i));
-        const double tw7i = (tw3r*tw4i+(tw3i*tw4r));
-        double x0r, x0i;
-        const double x0r = in[2*(0*K+k)], x0i = in[2*(0*K+k)+1];
-        double r1r, r1i;
-        const double r1r = in[2*(1*K+k)], r1i = in[2*(1*K+k)+1];
-        const double x1r = (r1r*tw1r+(r1i*tw1i));
-        const double x1i = ((r1i*tw1r)-r1r*tw1i);
-        double r2r, r2i;
-        const double r2r = in[2*(2*K+k)], r2i = in[2*(2*K+k)+1];
-        const double x2r = (r2r*tw2r+(r2i*tw2i));
-        const double x2i = ((r2i*tw2r)-r2r*tw2i);
-        double r3r, r3i;
-        const double r3r = in[2*(3*K+k)], r3i = in[2*(3*K+k)+1];
-        const double x3r = (r3r*tw3r+(r3i*tw3i));
-        const double x3i = ((r3i*tw3r)-r3r*tw3i);
-        double r4r, r4i;
-        const double r4r = in[2*(4*K+k)], r4i = in[2*(4*K+k)+1];
-        const double x4r = (r4r*tw4r+(r4i*tw4i));
-        const double x4i = ((r4i*tw4r)-r4r*tw4i);
-        double r5r, r5i;
-        const double r5r = in[2*(5*K+k)], r5i = in[2*(5*K+k)+1];
-        const double x5r = (r5r*tw5r+(r5i*tw5i));
-        const double x5i = ((r5i*tw5r)-r5r*tw5i);
-        double r6r, r6i;
-        const double r6r = in[2*(6*K+k)], r6i = in[2*(6*K+k)+1];
-        const double x6r = (r6r*tw6r+(r6i*tw6i));
-        const double x6i = ((r6i*tw6r)-r6r*tw6i);
-        double r7r, r7i;
-        const double r7r = in[2*(7*K+k)], r7i = in[2*(7*K+k)+1];
-        const double x7r = (r7r*tw7r+(r7i*tw7i));
-        const double x7i = ((r7i*tw7r)-r7r*tw7i);
+        const double tw7r = (tw3r * tw4r - (tw3i * tw4i));
+        const double tw7i = (tw3r * tw4i + (tw3i * tw4r));
+        const double x0r = in[2 * (0 * K + k)], x0i = in[2 * (0 * K + k) + 1];
+        const double r1r = in[2 * (1 * K + k)], r1i = in[2 * (1 * K + k) + 1];
+        const double x1r = (r1r * tw1r + (r1i * tw1i));
+        const double x1i = ((r1i * tw1r) - r1r * tw1i);
+        const double r2r = in[2 * (2 * K + k)], r2i = in[2 * (2 * K + k) + 1];
+        const double x2r = (r2r * tw2r + (r2i * tw2i));
+        const double x2i = ((r2i * tw2r) - r2r * tw2i);
+        const double r3r = in[2 * (3 * K + k)], r3i = in[2 * (3 * K + k) + 1];
+        const double x3r = (r3r * tw3r + (r3i * tw3i));
+        const double x3i = ((r3i * tw3r) - r3r * tw3i);
+        const double r4r = in[2 * (4 * K + k)], r4i = in[2 * (4 * K + k) + 1];
+        const double x4r = (r4r * tw4r + (r4i * tw4i));
+        const double x4i = ((r4i * tw4r) - r4r * tw4i);
+        const double r5r = in[2 * (5 * K + k)], r5i = in[2 * (5 * K + k) + 1];
+        const double x5r = (r5r * tw5r + (r5i * tw5i));
+        const double x5i = ((r5i * tw5r) - r5r * tw5i);
+        const double r6r = in[2 * (6 * K + k)], r6i = in[2 * (6 * K + k) + 1];
+        const double x6r = (r6r * tw6r + (r6i * tw6i));
+        const double x6i = ((r6i * tw6r) - r6r * tw6i);
+        const double r7r = in[2 * (7 * K + k)], r7i = in[2 * (7 * K + k) + 1];
+        const double x7r = (r7r * tw7r + (r7i * tw7i));
+        const double x7i = ((r7i * tw7r) - r7r * tw7i);
         /* DFT-4 evens */
-        const double epr = (x0r+x4r), epi = (x0i+x4i);
-        const double eqr = (x0r-x4r), eqi = (x0i-x4i);
-        const double err = (x2r+x6r), eri = (x2i+x6i);
-        const double esr = (x2r-x6r), esi = (x2i-x6i);
-        const double A0r = (epr+err), A0i = (epi+eri);
-        const double A2r = (epr-err), A2i = (epi-eri);
-        const double A1r = (eqr-esi), A1i = (eqi+esr);
-        const double A3r = (eqr+esi), A3i = (eqi-esr);
+        const double epr = (x0r + x4r), epi = (x0i + x4i);
+        const double eqr = (x0r - x4r), eqi = (x0i - x4i);
+        const double err = (x2r + x6r), eri = (x2i + x6i);
+        const double esr = (x2r - x6r), esi = (x2i - x6i);
+        const double A0r = (epr + err), A0i = (epi + eri);
+        const double A2r = (epr - err), A2i = (epi - eri);
+        const double A1r = (eqr - esi), A1i = (eqi + esr);
+        const double A3r = (eqr + esi), A3i = (eqi - esr);
         /* DFT-4 odds */
-        const double opr = (x1r+x5r), opi = (x1i+x5i);
-        const double oqr = (x1r-x5r), oqi = (x1i-x5i);
-        const double orr = (x3r+x7r), ori = (x3i+x7i);
-        const double osr = (x3r-x7r), osi = (x3i-x7i);
-        const double B0r = (opr+orr), B0i = (opi+ori);
-        const double B2r = (opr-orr), B2i = (opi-ori);
-        const double B1r = (oqr-osi), B1i = (oqi+osr);
-        const double B3r = (oqr+osi), B3i = (oqi-osr);
+        const double opr = (x1r + x5r), opi = (x1i + x5i);
+        const double oqr = (x1r - x5r), oqi = (x1i - x5i);
+        const double orr = (x3r + x7r), ori = (x3i + x7i);
+        const double osr = (x3r - x7r), osi = (x3i - x7i);
+        const double B0r = (opr + orr), B0i = (opi + ori);
+        const double B2r = (opr - orr), B2i = (opi - ori);
+        const double B1r = (oqr - osi), B1i = (oqi + osr);
+        const double B3r = (oqr + osi), B3i = (oqi - osr);
         /* W8 combine */
-        out[2*(0*K+k)] = (A0r+B0r); out[2*(0*K+k)+1] = (A0i+B0i);
-        out[2*(4*K+k)] = (A0r-B0r); out[2*(4*K+k)+1] = (A0i-B0i);
-        const double t1r = (vc*(B1r-B1i)), t1i = (vc*(B1r+B1i));
-        out[2*(1*K+k)] = (A1r+t1r); out[2*(1*K+k)+1] = (A1i+t1i);
-        out[2*(5*K+k)] = (A1r-t1r); out[2*(5*K+k)+1] = (A1i-t1i);
-        out[2*(2*K+k)] = (A2r-B2i); out[2*(2*K+k)+1] = (A2i+B2r);
-        out[2*(6*K+k)] = (A2r+B2i); out[2*(6*K+k)+1] = (A2i-B2r);
-        const double t3r = (vnc*(B3r+B3i)), t3i = (vc*(B3r-B3i));
-        out[2*(3*K+k)] = (A3r+t3r); out[2*(3*K+k)+1] = (A3i+t3i);
-        out[2*(7*K+k)] = (A3r-t3r); out[2*(7*K+k)+1] = (A3i-t3i);
+        out[2 * (0 * K + k)] = (A0r + B0r);
+        out[2 * (0 * K + k) + 1] = (A0i + B0i);
+        out[2 * (4 * K + k)] = (A0r - B0r);
+        out[2 * (4 * K + k) + 1] = (A0i - B0i);
+        const double t1r = (vc * (B1r - B1i)), t1i = (vc * (B1r + B1i));
+        out[2 * (1 * K + k)] = (A1r + t1r);
+        out[2 * (1 * K + k) + 1] = (A1i + t1i);
+        out[2 * (5 * K + k)] = (A1r - t1r);
+        out[2 * (5 * K + k) + 1] = (A1i - t1i);
+        out[2 * (2 * K + k)] = (A2r - B2i);
+        out[2 * (2 * K + k) + 1] = (A2i + B2r);
+        out[2 * (6 * K + k)] = (A2r + B2i);
+        out[2 * (6 * K + k) + 1] = (A2i - B2r);
+        const double t3r = (vnc * (B3r + B3i)), t3i = (vc * (B3r - B3i));
+        out[2 * (3 * K + k)] = (A3r + t3r);
+        out[2 * (3 * K + k) + 1] = (A3i + t3i);
+        out[2 * (7 * K + k)] = (A3r - t3r);
+        out[2 * (7 * K + k) + 1] = (A3i - t3i);
     }
 }
 
