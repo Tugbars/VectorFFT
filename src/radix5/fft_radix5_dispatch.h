@@ -206,4 +206,47 @@ static inline size_t radix5_packed_optimal_T(size_t K) {
     return 1;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+ * INTERLEAVED (IL) DISPATCH
+ * ═══════════════════════════════════════════════════════════════ */
+
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include "avx512/fft_radix5_avx512_il.h"
+#include "avx512/fft_radix5_avx512_il_dif_tw.h"
+#endif
+#ifdef __AVX2__
+#include "avx2/fft_radix5_avx2_il.h"
+#include "avx2/fft_radix5_avx2_il_dif_tw.h"
+#endif
+#include "scalar/fft_radix5_scalar_il.h"
+#include "scalar/fft_radix5_scalar_il_dif_tw.h"
+
+static inline void radix5_tw_forward_il(
+    size_t K,
+    const double * __restrict__ in, double * __restrict__ out,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im)
+{
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) { radix5_tw_dit_kernel_fwd_il_avx512(in, out, tw_re, tw_im, K); return; }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) { radix5_tw_dit_kernel_fwd_il_avx2(in, out, tw_re, tw_im, K); return; }
+#endif
+    radix5_tw_dit_kernel_fwd_il_scalar(in, out, tw_re, tw_im, K);
+}
+
+static inline void radix5_tw_dif_backward_il(
+    size_t K,
+    const double * __restrict__ in, double * __restrict__ out,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im)
+{
+#if defined(__AVX512F__) || defined(__AVX512F)
+    if (K >= 8 && (K & 7) == 0) { radix5_tw_dif_kernel_bwd_il_avx512(in, out, tw_re, tw_im, K); return; }
+#endif
+#ifdef __AVX2__
+    if (K >= 4 && (K & 3) == 0) { radix5_tw_dif_kernel_bwd_il_avx2(in, out, tw_re, tw_im, K); return; }
+#endif
+    radix5_tw_dif_kernel_bwd_il_scalar(in, out, tw_re, tw_im, K);
+}
+
 #endif /* FFT_RADIX5_DISPATCH_H */
