@@ -16,7 +16,21 @@
       "Bash(find c:/Users/Tugbars/Desktop/highSpeedFFT/build -name *.exe)",
       "Bash(find c:/Users/Tugbars/Desktop/highSpeedFFT/build -name bench_factorize* -o -name bench_full*)",
       "Bash(cmd.exe /c \"c:\\\\Users\\\\Tugbars\\\\Desktop\\\\highSpeedFFT\\\\build\\\\test\\\\bench_factorize.exe 5000 2>&1\")",
-      "Bash(cmd.exe /c \"c:\\\\Users\\\\Tugbars\\\\Desktop\\\\highSpeedFFT\\\\build\\\\test\\\\bench_factorize.exe 5000 > c:\\\\Users\\\\Tugbars\\\\Desktop\\\\highSpeedFFT\\\\build\\\\bf_out.txt 2>&1 & echo EXIT_CODE=%ERRORLEVEL%\")"
+      "Bash(cmd.exe /c \"c:\\\\Users\\\\Tugbars\\\\Desktop\\\\highSpeedFFT\\\\build\\\\test\\\\bench_factorize.exe 5000 > c:\\\\Users\\\\Tugbars\\\\Desktop\\\\highSpeedFFT\\\\build\\\\bf_out.txt 2>&1 & echo EXIT_CODE=%ERRORLEVEL%\")",
+      "Bash(./bench_factorize.exe 256)",
+      "Bash(./bench_factorize.exe 5000)",
+      "Bash(./bench_factorize.exe 1000)",
+      "Bash(./bench_factorize.exe 2000)",
+      "Bash(./bench_factorize.exe 4000)",
+      "Bash(./bench_factorize.exe 2500)",
+      "Bash(cmd.exe /c \"cmake .. 2>&1\")",
+      "Bash(cmd.exe /c \"cmake --build . --target diag_5000 2>&1\")",
+      "Bash(cmd.exe /c \"cmake .. > cmake_out.txt 2>&1\")",
+      "Bash(powershell.exe -Command \"cmake .. 2>&1 | Out-File -FilePath cmake_out.txt -Encoding utf8\")",
+      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" ..)",
+      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --build . --target diag_5000)",
+      "Bash(./diag_5000.exe)",
+      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --build . --target bench_factorize)"
     ]
   }
 }
