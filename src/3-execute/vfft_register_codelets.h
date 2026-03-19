@@ -663,16 +663,124 @@ VFFT_DISPATCH_WRAPPER(23, radix23_genfft)
  * Thin wrappers swap the argument order.
  */
 
-#ifdef FFT_RADIX64_N1_H
+#ifdef FFT_RADIX64_DISPATCH_H
 static void vfft_dispatch_r64_fwd(
     const double *ri, const double *ii, double *ro, double *io, size_t K)
 {
-    fft_radix64_n1_forward(K, ri, ii, ro, io);
+    radix64_n1_forward(K, ri, ii, ro, io);
 }
 static void vfft_dispatch_r64_bwd(
     const double *ri, const double *ii, double *ro, double *io, size_t K)
 {
-    fft_radix64_n1_backward(K, ri, ii, ro, io);
+    radix64_n1_backward(K, ri, ii, ro, io);
+}
+#endif
+
+/* ── R=64 tw dispatch (no scalar fallback — SIMD only) ── */
+#ifdef FFT_RADIX64_DISPATCH_H
+static void vfft_tw_dispatch_r64_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dit_kernel_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dit_kernel_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+}
+static void vfft_tw_dispatch_r64_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dit_kernel_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dit_kernel_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+}
+
+/* ── R=64 DIF tw dispatch ── */
+static void vfft_tw_dif_dispatch_r64_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dif_kernel_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dif_kernel_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+}
+static void vfft_tw_dif_dispatch_r64_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dif_kernel_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dif_kernel_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+}
+
+/* ── R=64 IL tw dispatch ── */
+static void vfft_tw_il_dispatch_r64_fwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX64_AVX512_IL_TW_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dit_kernel_fwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+#ifdef FFT_RADIX64_AVX2_IL_TW_H
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dit_kernel_fwd_il_avx2(in,out,twr,twi,K); return; })
+#endif
+    (void)in;
+    (void)out;
+    (void)twr;
+    (void)twi;
+    (void)K;
+}
+static void vfft_tw_il_dif_dispatch_r64_bwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX64_AVX512_IL_TW_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dif_kernel_bwd_il_avx512(in,out,twr,twi,K); return; })
+#endif
+#ifdef FFT_RADIX64_AVX2_IL_TW_H
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dif_kernel_bwd_il_avx2(in,out,twr,twi,K); return; })
+#endif
+    (void)in;
+    (void)out;
+    (void)twr;
+    (void)twi;
+    (void)K;
+}
+#endif /* FFT_RADIX64_DISPATCH_H */
+
+/* ── N1 IL dispatch wrappers (monolithic notw, native interleaved) ── */
+
+#ifdef FFT_RADIX25_DISPATCH_H
+static void vfft_n1_il_dispatch_r25_fwd(
+    const double *in, double *out, size_t K)
+{
+    radix25_n1_forward_il(K, in, out);
+}
+static void vfft_n1_il_dispatch_r25_bwd(
+    const double *in, double *out, size_t K)
+{
+    radix25_n1_backward_il(K, in, out);
+}
+#endif
+
+#ifdef FFT_RADIX64_DISPATCH_H
+static void vfft_n1_il_dispatch_r64_fwd(
+    const double *in, double *out, size_t K)
+{
+    radix64_n1_forward_il(K, in, out);
+}
+static void vfft_n1_il_dispatch_r64_bwd(
+    const double *in, double *out, size_t K)
+{
+    radix64_n1_backward_il(K, in, out);
 }
 #endif
 
@@ -810,6 +918,9 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #endif
                             256); /* crossover K=256: IL wins at K>=256 for R=25 */
 #endif
+#ifdef FFT_RADIX25_DISPATCH_H
+    vfft_registry_set_n1_il(reg, 25, vfft_n1_il_dispatch_r25_fwd, vfft_n1_il_dispatch_r25_bwd);
+#endif
 
 #ifdef FFT_RADIX5_AVX2_IL_H
     vfft_registry_set_tw_il(reg, 5,
@@ -881,8 +992,15 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #endif
 
     /* ── N1 large codelets (K-first signature → adapted) ── */
-#ifdef FFT_RADIX64_N1_H
+#ifdef FFT_RADIX64_DISPATCH_H
     vfft_registry_set(reg, 64, vfft_dispatch_r64_fwd, vfft_dispatch_r64_bwd);
+    vfft_registry_set_tw(reg, 64, vfft_tw_dispatch_r64_fwd, vfft_tw_dispatch_r64_bwd);
+    vfft_registry_set_tw_dif(reg, 64, vfft_tw_dif_dispatch_r64_fwd, vfft_tw_dif_dispatch_r64_bwd);
+    vfft_registry_set_tw_il(reg, 64,
+                            vfft_tw_il_dispatch_r64_fwd,
+                            vfft_tw_il_dif_dispatch_r64_bwd,
+                            512); /* crossover K=512: R=64 has 128 split streams */
+    vfft_registry_set_n1_il(reg, 64, vfft_n1_il_dispatch_r64_fwd, vfft_n1_il_dispatch_r64_bwd);
 #endif
 #ifdef FFT_RADIX128_N1_H
     vfft_registry_set(reg, 128, vfft_dispatch_r128_fwd, vfft_dispatch_r128_bwd);
@@ -986,9 +1104,9 @@ static void vfft_print_registry(const vfft_codelet_registry *reg)
                 kind = "optimized";
                 break;
 #endif
-#ifdef FFT_RADIX64_N1_H
+#ifdef FFT_RADIX64_DISPATCH_H
             case 64:
-                kind = "N1-gen";
+                kind = "optimized";
                 break;
 #endif
 #ifdef FFT_RADIX128_N1_H

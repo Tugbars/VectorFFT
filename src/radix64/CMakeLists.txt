@@ -18,5 +18,7 @@ target_include_directories(vfft_radix64 INTERFACE
 message(STATUS "[VectorFFT] Module: radix64 (header-only, v2 — 8x8 CT + log3 + mono N1 IL)")
 
 if(VFFT_BUILD_TESTS OR VFFT_BUILD_BENCHMARKS)
-    add_subdirectory(tests)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        add_subdirectory(tests)
+    endif()
 endif()
