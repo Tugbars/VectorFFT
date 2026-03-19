@@ -1118,7 +1118,165 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
     return plan;
 }
 
-static void vfft_plan_destroy(vfft_plan *plan)
+/* ═══════════════════════════════════════════════════════════════
+ * WISDOM-AWARE PLAN CREATION
+ *
+ * vfft_plan_create_ex checks wisdom first. If an entry exists for N,
+ * it overrides the heuristic factorizer with the benchmarked-optimal
+ * factorization. Falls back to vfft_plan_create if no wisdom entry.
+ *
+ * Wisdom factors are stored inner→outer (factors[0] has K=1),
+ * same layout as vfft_factorization.factors[].
+ *
+ * Include "vfft_wisdom.h" before "vfft_planner.h" to enable.
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifdef VFFT_WISDOM_H
+
+static vfft_plan *vfft_plan_create_ex(
+    size_t N, const vfft_codelet_registry *reg, const vfft_wisdom *wis)
+{
+    if (!wis)
+        return vfft_plan_create(N, reg);
+
+    const vfft_wisdom_entry *we = vfft_wisdom_lookup(wis, N);
+    if (!we)
+        return vfft_plan_create(N, reg);
+
+    /* Build factorization from wisdom entry */
+    vfft_factorization fact;
+    memset(&fact, 0, sizeof(fact));
+    fact.nfactors = we->nfactors;
+    memcpy(fact.factors, we->factors, we->nfactors * sizeof(size_t));
+
+    /* Verify product */
+    size_t prod = 1;
+    for (size_t i = 0; i < fact.nfactors; i++)
+        prod *= fact.factors[i];
+    if (prod != N)
+        return vfft_plan_create(N, reg); /* wisdom corrupt, fallback */
+
+    /* Create plan using these factors (same logic as vfft_plan_create) */
+    vfft_plan *plan = (vfft_plan *)calloc(1, sizeof(*plan));
+    if (!plan)
+        return NULL;
+    plan->N = N;
+
+    if (N == 1)
+    {
+        plan->nstages = 0;
+        return plan;
+    }
+
+    plan->nstages = fact.nfactors;
+
+    size_t stride = 1;
+    for (size_t s = 0; s < fact.nfactors; s++)
+    {
+        vfft_stage *st = &plan->stages[s];
+        st->radix = fact.factors[s];
+        st->K = stride;
+        st->N_remaining = N / st->radix;
+
+        st->fwd = reg->fwd[st->radix];
+        st->bwd = reg->bwd[st->radix];
+        st->tw_fwd = reg->tw_fwd[st->radix];
+        st->tw_bwd = reg->tw_bwd[st->radix];
+        st->tw_dif_fwd = reg->tw_dif_fwd[st->radix];
+        st->tw_dif_bwd = reg->tw_dif_bwd[st->radix];
+
+        if (!st->fwd)
+        {
+            free(plan);
+            return vfft_plan_create(N, reg);
+        }
+
+        /* IL codelets */
+        if (reg->tw_fwd_il[st->radix] && st->K >= reg->il_crossover_K[st->radix])
+        {
+            st->tw_fwd_il = reg->tw_fwd_il[st->radix];
+            st->tw_dif_bwd_il = reg->tw_dif_bwd_il[st->radix];
+            st->n1_fwd_il = reg->n1_fwd_il[st->radix];
+            st->n1_bwd_il = reg->n1_bwd_il[st->radix];
+            st->use_il = 1;
+        }
+
+        /* Twiddle table */
+        if (stride > 1)
+        {
+            size_t tw_size = (st->radix - 1) * stride;
+            st->tw_re = (double *)vfft_aligned_alloc(64, tw_size * sizeof(double));
+            st->tw_im = (double *)vfft_aligned_alloc(64, tw_size * sizeof(double));
+            double Nacc = (double)(st->radix * stride);
+            for (size_t n = 1; n < st->radix; n++)
+                for (size_t k = 0; k < stride; k++)
+                {
+                    double angle = -2.0 * M_PI * (double)(n * k) / Nacc;
+                    st->tw_re[(n - 1) * stride + k] = cos(angle);
+                    st->tw_im[(n - 1) * stride + k] = sin(angle);
+                }
+        }
+        stride *= st->radix;
+    }
+
+    /* Permutation */
+    {
+        size_t radixes[VFFT_MAX_STAGES];
+        for (size_t i = 0; i < fact.nfactors; i++)
+            radixes[i] = plan->stages[i].radix;
+        plan->perm = vfft_build_perm(radixes, fact.nfactors, N);
+        plan->inv_perm = (size_t *)malloc(N * sizeof(size_t));
+        for (size_t i = 0; i < N; i++)
+            plan->inv_perm[plan->perm[i]] = i;
+    }
+
+    /* Block-walk for large twiddle tables */
+    size_t max_block_size = 0;
+    for (size_t s = 0; s < fact.nfactors; s++)
+    {
+        vfft_stage *st = &plan->stages[s];
+        size_t K = st->K, R = st->radix;
+        size_t T = vfft_detect_T(K);
+        if (T > 0 && vfft_should_walk(R, K) &&
+            (st->tw_fwd || st->tw_dif_bwd))
+        {
+            st->walk = vfft_walk_create(R, K, T);
+            size_t block_sz = R * T;
+            if (block_sz > max_block_size)
+                max_block_size = block_sz;
+        }
+    }
+    if (max_block_size > 0)
+    {
+        plan->block_re = (double *)vfft_aligned_alloc(64, max_block_size * sizeof(double));
+        plan->block_im = (double *)vfft_aligned_alloc(64, max_block_size * sizeof(double));
+        plan->block_out_re = (double *)vfft_aligned_alloc(64, max_block_size * sizeof(double));
+        plan->block_out_im = (double *)vfft_aligned_alloc(64, max_block_size * sizeof(double));
+    }
+
+    /* Buffers */
+    plan->buf_a_re = (double *)vfft_aligned_alloc(64, N * sizeof(double));
+    plan->buf_a_im = (double *)vfft_aligned_alloc(64, N * sizeof(double));
+    plan->buf_b_re = (double *)vfft_aligned_alloc(64, N * sizeof(double));
+    plan->buf_b_im = (double *)vfft_aligned_alloc(64, N * sizeof(double));
+
+    plan->has_il_stages = 0;
+    for (size_t s = 0; s < fact.nfactors; s++)
+        if (plan->stages[s].use_il)
+        {
+            plan->has_il_stages = 1;
+            break;
+        }
+    if (plan->has_il_stages)
+    {
+        plan->buf_il_a = (double *)vfft_aligned_alloc(64, 2 * N * sizeof(double));
+        plan->buf_il_b = (double *)vfft_aligned_alloc(64, 2 * N * sizeof(double));
+    }
+
+    return plan;
+}
+
+#endif /* VFFT_WISDOM_H */
 {
     if (!plan)
         return;
