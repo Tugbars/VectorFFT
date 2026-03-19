@@ -182,6 +182,18 @@ static vfft_plan *make_plan(size_t N, const size_t *factors, size_t nf,
             free(p);
             return NULL;
         }
+
+        /* IL codelets — same logic as vfft_plan_create_ex */
+        if (R < VFFT_MAX_RADIX && reg->tw_fwd_il[R] &&
+            K >= reg->il_crossover_K[R])
+        {
+            st->tw_fwd_il = reg->tw_fwd_il[R];
+            st->tw_dif_bwd_il = reg->tw_dif_bwd_il[R];
+            st->n1_fwd_il = reg->n1_fwd_il[R];
+            st->n1_bwd_il = reg->n1_bwd_il[R];
+            st->use_il = 1;
+        }
+
         if (K > 1)
         {
             size_t tsz = (R - 1) * K;
@@ -198,6 +210,32 @@ static vfft_plan *make_plan(size_t N, const size_t *factors, size_t nf,
         }
         K *= R;
     }
+
+    /* Block-walk for large twiddle tables */
+    size_t max_block_size = 0;
+    for (size_t s = 0; s < nf; s++)
+    {
+        vfft_stage *st = &p->stages[s];
+        size_t sK = st->K, sR = st->radix;
+        size_t T = vfft_detect_T(sK);
+        if (T > 0 && vfft_should_walk(sR, sK) &&
+            (st->tw_fwd || st->tw_dif_bwd))
+        {
+            st->walk = vfft_walk_create(sR, sK, T);
+            size_t block_sz = sR * T;
+            if (block_sz > max_block_size)
+                max_block_size = block_sz;
+        }
+    }
+    if (max_block_size > 0)
+    {
+        p->block_re = (double *)vfft_aligned_alloc(64, max_block_size * 8);
+        p->block_im = (double *)vfft_aligned_alloc(64, max_block_size * 8);
+        p->block_out_re = (double *)vfft_aligned_alloc(64, max_block_size * 8);
+        p->block_out_im = (double *)vfft_aligned_alloc(64, max_block_size * 8);
+    }
+
+    /* Permutation */
     size_t rx[MAX_STAGES];
     for (size_t i = 0; i < nf; i++)
         rx[i] = p->stages[i].radix;
@@ -205,10 +243,27 @@ static vfft_plan *make_plan(size_t N, const size_t *factors, size_t nf,
     p->inv_perm = (size_t *)malloc(N * sizeof(size_t));
     for (size_t i = 0; i < N; i++)
         p->inv_perm[p->perm[i]] = i;
+
+    /* Buffers */
     p->buf_a_re = (double *)vfft_aligned_alloc(64, N * 8);
     p->buf_a_im = (double *)vfft_aligned_alloc(64, N * 8);
     p->buf_b_re = (double *)vfft_aligned_alloc(64, N * 8);
     p->buf_b_im = (double *)vfft_aligned_alloc(64, N * 8);
+
+    /* IL buffers */
+    p->has_il_stages = 0;
+    for (size_t s = 0; s < nf; s++)
+        if (p->stages[s].use_il)
+        {
+            p->has_il_stages = 1;
+            break;
+        }
+    if (p->has_il_stages)
+    {
+        p->buf_il_a = (double *)vfft_aligned_alloc(64, 2 * N * 8);
+        p->buf_il_b = (double *)vfft_aligned_alloc(64, 2 * N * 8);
+    }
+
     return p;
 }
 

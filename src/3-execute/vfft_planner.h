@@ -750,6 +750,18 @@ static inline size_t vfft_detect_T(size_t K)
 
 static inline int vfft_should_walk(size_t R, size_t K)
 {
+    /* Walk packs data into blocks and walks twiddles to avoid strided access.
+     * Only beneficial when R is large enough that (R-1) strided twiddle loads
+     * per k-step overwhelm the hardware prefetcher.
+     *
+     * R=2,3,4,5: 1-4 twiddle rows — prefetcher handles fine, walk overhead hurts
+     * R=7,8:     6-7 rows — borderline, depends on K
+     * R=10+:     9+ rows — walk helps at high K
+     *
+     * Conservative: require R >= 8 AND tw table > threshold.
+     * TODO: tune per-hardware via bench_factorize wisdom. */
+    if (R < 8)
+        return 0;
     size_t tw_bytes = (R - 1) * K * 2 * sizeof(double);
     return (tw_bytes > VFFT_WALK_THRESHOLD_BYTES && R <= VFFT_MAX_WALK_ARMS + 1) ? 1 : 0;
 }
@@ -1408,7 +1420,7 @@ static void vfft_execute_fwd(
             for (size_t g = 0; g < n_outer; g++)
             {
                 size_t off = g * R * K;
-                if (st->tw_fwd_il && st->tw_re)
+                if (st->tw_fwd_il)
                 {
                     st->tw_fwd_il(
                         src_il + 2 * off, dst_il + 2 * off,
@@ -1668,7 +1680,7 @@ static void vfft_execute_bwd_dif(
             for (size_t g = 0; g < n_outer; g++)
             {
                 size_t off = g * R * K;
-                if (st->tw_dif_bwd_il && st->tw_re)
+                if (st->tw_dif_bwd_il)
                 {
                     st->tw_dif_bwd_il(
                         src_il + 2 * off, dst_il + 2 * off,
