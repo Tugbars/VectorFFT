@@ -400,7 +400,7 @@ static void vfft_tw_il_dispatch_r10_fwd(
     const double *in, double *out,
     const double *twr, const double *twi, size_t K)
 {
-    radix10_tw_forward_il(K, in, out, twr, twi);
+    radix10_tw_forward_il(in, out, twr, twi, K);
 }
 #endif
 
@@ -409,7 +409,7 @@ static void vfft_tw_il_dif_dispatch_r10_bwd(
     const double *in, double *out,
     const double *twr, const double *twi, size_t K)
 {
-    radix10_tw_dif_backward_il(K, in, out, twr, twi);
+    radix10_tw_dif_backward_il(in, out, twr, twi, K);
 }
 #endif
 
@@ -1127,13 +1127,13 @@ static void vfft_tw_il_dispatch_r64_fwd(
     const double *in, double *out,
     const double *twr, const double *twi, size_t K)
 {
-    radix64_tw_forward_il(K, in, out, twr, twi);
+    radix64_tw_forward_il(in, out, twr, twi, K);
 }
 static void vfft_tw_il_dif_dispatch_r64_bwd(
     const double *in, double *out,
     const double *twr, const double *twi, size_t K)
 {
-    radix64_tw_dif_backward_il(K, in, out, twr, twi);
+    radix64_tw_dif_backward_il(in, out, twr, twi, K);
 }
 #endif /* FFT_RADIX64_DISPATCH_H */
 

@@ -37,16 +37,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef VFFT_MAX_STAGES
-#define VFFT_MAX_STAGES 8
-#endif
-
+#define VFFT_WISDOM_MAX_FACTORS 32
 #define VFFT_WISDOM_MAX_ENTRIES 1024
 
 typedef struct
 {
     size_t N;
-    size_t factors[VFFT_MAX_STAGES];
+    size_t factors[VFFT_WISDOM_MAX_FACTORS];
     size_t nfactors;
     double ns; /* benchmark time (informational, not used by planner) */
 } vfft_wisdom_entry;
@@ -156,7 +153,7 @@ static inline int vfft_wisdom_load(vfft_wisdom *w, const char *path)
             continue;
 
         /* Parse: N f1 f2 f3 ... [ns=xxx] */
-        size_t N = 0, factors[VFFT_MAX_STAGES], nf = 0;
+        size_t N = 0, factors[VFFT_WISDOM_MAX_FACTORS], nf = 0;
         double ns = 0;
 
         char *tok = strtok(line, " \t\n\r");
@@ -175,7 +172,7 @@ static inline int vfft_wisdom_load(vfft_wisdom *w, const char *path)
                     ; /* parsed */
                 break;
             }
-            if (nf < VFFT_MAX_STAGES)
+            if (nf < VFFT_WISDOM_MAX_FACTORS)
                 factors[nf++] = (size_t)atol(tok);
         }
 
