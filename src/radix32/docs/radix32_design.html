@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VectorFFT — Radix-32 Codelet Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c0e14;
+  --bg2: #12151e;
+  --bg3: #1a1e2b;
+  --fg: #c8cdd8;
+  --fg2: #8b92a3;
+  --fg3: #555d73;
+  --accent: #5eadff;
+  --avx512: #5eadff;
+  --avx2: #6ee7a0;
+  --scalar: #a0a8be;
+  --dag: #c084fc;
+  --flat: #f59e42;
+  --ladder: #f472b6;
+  --walk: #22d3ee;
+  --warn: #fbbf24;
+  --border: #252a3a;
+  --code-bg: #0a0c12;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Source Serif 4', Georgia, serif;
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+.container { max-width: 960px; margin: 0 auto; padding: 60px 32px 120px; }
+
+.hero { margin-bottom: 72px; padding-bottom: 48px; border-bottom: 1px solid var(--border); }
+.hero .tag { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); margin-bottom: 16px; }
+.hero h1 { font-size: 42px; font-weight: 700; line-height: 1.15; color: #eef0f6; margin-bottom: 20px; }
+.hero .subtitle { font-size: 18px; color: var(--fg2); max-width: 640px; }
+.hero .meta { margin-top: 24px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--fg3); display: flex; gap: 24px; flex-wrap: wrap; }
+
+section { margin-bottom: 64px; }
+h2 { font-size: 26px; font-weight: 700; color: #dfe3ed; margin-bottom: 8px; padding-top: 32px; }
+h2 .num { font-family: 'JetBrains Mono', monospace; color: var(--accent); font-size: 18px; margin-right: 10px; }
+h3 { font-size: 18px; font-weight: 600; color: #c0c6d4; margin: 32px 0 12px; }
+p { margin-bottom: 16px; max-width: 720px; }
+
+code { font-family: 'JetBrains Mono', monospace; font-size: 13px; background: var(--code-bg); padding: 2px 6px; border-radius: 3px; color: var(--accent); }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 20px 24px; overflow-x: auto; margin: 16px 0 24px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.65; color: var(--fg); }
+pre .cm { color: var(--fg3); font-style: italic; }
+pre .kw { color: var(--dag); }
+pre .fn { color: var(--avx2); }
+pre .num { color: var(--flat); }
+
+.tbl-wrap { overflow-x: auto; margin: 16px 0 28px; }
+table { width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+th { text-align: left; padding: 10px 14px; border-bottom: 2px solid var(--border); color: var(--fg2); font-weight: 500; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+td { padding: 9px 14px; border-bottom: 1px solid #1a1e28; vertical-align: top; }
+tr:hover td { background: rgba(94,173,255,0.03); }
+
+.isa { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; padding: 2px 7px; border-radius: 3px; margin-right: 4px; }
+.isa-z   { background: rgba(94,173,255,0.15); color: var(--avx512); }
+.isa-a2  { background: rgba(110,231,160,0.12); color: var(--avx2); }
+.isa-sc  { background: rgba(160,168,190,0.12); color: var(--scalar); }
+.isa-flat { background: rgba(245,158,66,0.12); color: var(--flat); }
+.isa-ldr { background: rgba(244,114,182,0.12); color: var(--ladder); }
+.isa-wlk { background: rgba(34,211,238,0.12); color: var(--walk); }
+.isa-dag { background: rgba(192,132,252,0.12); color: var(--dag); }
+
+.flow { display: flex; flex-direction: column; gap: 2px; margin: 20px 0 28px; font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.flow-row { display: flex; align-items: stretch; min-height: 40px; }
+.flow-cond { width: 220px; flex-shrink: 0; padding: 8px 14px; background: var(--bg3); border-left: 3px solid var(--fg3); display: flex; align-items: center; color: var(--fg2); }
+.flow-arrow { width: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--fg3); }
+.flow-result { flex: 1; padding: 8px 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flow-result.z   { background: rgba(94,173,255,0.06); border-left: 3px solid var(--avx512); }
+.flow-result.a2  { background: rgba(110,231,160,0.05); border-left: 3px solid var(--avx2); }
+.flow-result.sc  { background: rgba(160,168,190,0.05); border-left: 3px solid var(--scalar); }
+.flow-result.ldr { background: rgba(244,114,182,0.05); border-left: 3px solid var(--ladder); }
+.flow-result.wlk { background: rgba(34,211,238,0.05); border-left: 3px solid var(--walk); }
+
+.callout { border-left: 3px solid var(--accent); background: rgba(94,173,255,0.04); padding: 16px 20px; margin: 20px 0 24px; border-radius: 0 6px 6px 0; font-size: 14px; }
+.callout.warn { border-color: var(--warn); background: rgba(251,191,36,0.04); }
+.callout strong { color: #dfe3ed; }
+
+.bench td:nth-child(n+3) { text-align: right; }
+.bench th:nth-child(n+3) { text-align: right; }
+.bench .winner { color: var(--avx2); font-weight: 600; }
+
+.tier-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 24px 0 32px; }
+.tier-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+.tier-card h4 { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.tier-card p { font-size: 13px; color: var(--fg2); margin-bottom: 8px; max-width: none; }
+.tier-card .range { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--fg3); }
+.tier-flat h4 { color: var(--flat); }
+.tier-ldr h4 { color: var(--ladder); }
+.tier-wlk h4 { color: var(--walk); }
+
+.credits { margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--border); font-size: 14px; color: var(--fg2); }
+.credits a { color: var(--accent); text-decoration: none; }
+
+@media (max-width: 700px) {
+  .hero h1 { font-size: 28px; }
+  .tier-cards { grid-template-columns: 1fr; }
+  .flow-cond { width: 140px; font-size: 11px; }
+  pre { font-size: 11px; padding: 14px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header class="hero">
+  <div class="tag">VectorFFT Architecture Reference</div>
+  <h1>Radix-32 Codelet System</h1>
+  <p class="subtitle">
+    Three-tier twiddle strategy: flat CT at low K, binary ladder at mid K, pack+walk at high K. 4×8 Cooley-Tukey decomposition, AVX-512 + AVX2 + scalar. DIT, DIF, interleaved, and monolithic N1 paths.
+  </p>
+  <div class="meta">
+    <span>31 codelet files</span>
+    <span>39,462 lines</span>
+    <span>7 generators</span>
+    <span>3 ISA tiers</span>
+    <span>3 twiddle strategies</span>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">01</span>Three-Tier Twiddle Architecture</h2>
+
+<p>
+R=32 uses three different twiddle strategies, each optimal for a different K range. The dispatch selects automatically based on K and ISA.
+</p>
+
+<div class="tier-cards">
+  <div class="tier-card tier-flat">
+    <h4>Tier 1 — Flat</h4>
+    <p>Load all 31 twiddle elements directly from the strided table. Simple, low overhead. Wins when the table fits in L1.</p>
+    <div class="range">AVX-512: K ≤ 64 &nbsp;|&nbsp; AVX2: all K &nbsp;|&nbsp; Scalar: all K</div>
+  </div>
+  <div class="tier-card tier-ldr">
+    <h4>Tier 2 — Binary Ladder</h4>
+    <p>Load 5 power-of-2 bases (W¹,W²,W⁴,W⁸,W¹⁶), derive all 31 via binary decomposition. 5 strided loads instead of 31.</p>
+    <div class="range">AVX-512 only: 64 &lt; K &lt; 256 (U1) &nbsp;|&nbsp; K ≥ 256 (U2)</div>
+  </div>
+  <div class="tier-card tier-wlk">
+    <h4>Tier 3 — Pack+Walk</h4>
+    <p>Zero twiddle table. Pack data into contiguous blocks, compute twiddles on-the-fly from 5 walking accumulators. Eliminates both strided data and twiddle access.</p>
+    <div class="range">Planner path: K &gt; 512 (tw table &gt; 32KB)</div>
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Why three tiers?</strong> At K=8 the twiddle table is 31×8×16=4KB — L1-resident, flat is cheapest. At K=128 it's 62KB — L1 spills, ladder's 5 loads save bandwidth. At K=2048 it's 1MB — even ladder's strided loads hurt, pack+walk converts all access to sequential.
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">02</span>DIT Twiddle Dispatch</h2>
+
+<h3>Via registry (register_codelets)</h3>
+<p>
+The registry wrapper calls <code>radix32_tw_forward(K, ..., twr, twi, twr, twi)</code> — passing the flat twiddle table as both flat and ladder arguments. The ladder kernel reads the same strided layout, just picking 5 specific bases.
+</p>
+
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">AVX-512, K%8==0, K≤64</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span><span class="isa isa-flat">FLAT</span> radix32_tw_flat_dit_kernel_fwd_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">AVX-512, K%8==0, 64&lt;K&lt;256</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result ldr"><span class="isa isa-z">AVX-512</span><span class="isa isa-ldr">LADDER U1</span> radix32_tw_ladder_dit_..._u1</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">AVX-512, K%8==0, K≥256</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result ldr"><span class="isa isa-z">AVX-512</span><span class="isa isa-ldr">LADDER U2</span> radix32_tw_ladder_dit_..._u2</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">AVX2, K%4==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span><span class="isa isa-flat">FLAT</span> radix32_tw_flat_dit_kernel_fwd_avx2</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">any K</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result sc"><span class="isa isa-sc">SCALAR</span><span class="isa isa-flat">FLAT</span> radix32_tw_flat_dit_kernel_fwd_scalar</div>
+  </div>
+</div>
+
+<h3>Via planner (block-walk path)</h3>
+<p>
+When the planner detects <code>tw_table > 32KB</code>, it bypasses the registry and runs the block-walk engine: pack R×T data into contiguous scratch → call flat codelet at K=T → unpack → advance walk state. Twiddles computed on-the-fly from 5 scalar rotation pairs — zero table allocation.
+</p>
+
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">K&gt;512, tw&gt;32KB</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result wlk"><span class="isa isa-wlk">WALK</span> pack → flat(K=8) → unpack → advance walk state</div>
+  </div>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">03</span>DIF Twiddle + N1 Dispatch</h2>
+
+<h3>DIF Twiddle</h3>
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">AVX-512, K%8==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span><span class="isa isa-flat">FLAT</span> radix32_tw_flat_dif_kernel_fwd_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">AVX2, K%4==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span><span class="isa isa-flat">FLAT</span> radix32_tw_flat_dif_kernel_fwd_avx2</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">any K</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result sc"><span class="isa isa-sc">SCALAR</span><span class="isa isa-flat">FLAT</span> radix32_tw_flat_dif_kernel_fwd_scalar</div>
+  </div>
+</div>
+
+<h3>N1 (No Twiddle)</h3>
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">AVX-512, K%8==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span> radix32_notw_dit_kernel_fwd_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">AVX2, K%4==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span> radix32_notw_dit_kernel_fwd_avx2</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">any K</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result sc"><span class="isa isa-sc">SCALAR</span> radix32_notw_dit_kernel_fwd_scalar</div>
+  </div>
+</div>
+
+<h3>Interleaved Paths</h3>
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">IL DIT tw, AVX-512</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span> flat/ladder IL variants</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">IL DIT tw, AVX2</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span> flat IL variant</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">IL DIF tw bwd, AVX-512</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span> flat DIF IL variant</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">N1 mono IL, AVX-512</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span><span class="isa isa-dag">DAG</span> radix32_n1_dit_kernel_fwd_il_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">N1 mono IL, AVX2</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span><span class="isa isa-dag">DAG</span> radix32_n1_dit_kernel_fwd_il_avx2</div>
+  </div>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">04</span>Binary Ladder Twiddle Derivation</h2>
+
+<p>
+The ladder loads 5 power-of-2 bases from the twiddle table and derives all 31 elements via binary decomposition. Since 31 = 2⁵ - 1, every n ∈ [1,31] is a unique 5-bit combination of {1, 2, 4, 8, 16}. The twiddle W<sup>n</sup> is the product of bases corresponding to set bits.
+</p>
+
+<pre>
+<span class="cm">/* Load 5 bases from strided table (same layout as flat) */</span>
+b1  = load(tw[0*K+k])    <span class="cm">// W¹   (bit 0)</span>
+b2  = load(tw[1*K+k])    <span class="cm">// W²   (bit 1)</span>
+b4  = load(tw[3*K+k])    <span class="cm">// W⁴   (bit 2)</span>
+b8  = load(tw[7*K+k])    <span class="cm">// W⁸   (bit 3)</span>
+b16 = load(tw[15*K+k])   <span class="cm">// W¹⁶  (bit 4)</span>
+
+<span class="cm">/* Derive any W^n via binary tree (examples): */</span>
+W³  = b1 × b2             <span class="cm">// 3  = 1+2</span>
+W⁵  = b1 × b4             <span class="cm">// 5  = 1+4</span>
+W¹³ = b1 × b4 × b8        <span class="cm">// 13 = 1+4+8</span>
+W³¹ = b1 × b2 × b4 × b8 × b16  <span class="cm">// 31 = all bits</span>
+
+<span class="cm">/* Average: ~2.5 cmuls per element (most are 2-3 bits) */</span>
+<span class="cm">/* Total: ~80 cmuls to derive all 31 from 5 loads */</span>
+</pre>
+
+<h3>U1 vs U2 Unrolling</h3>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th>Variant</th><th>K range</th><th>k-steps per iteration</th><th>Strategy</th></tr>
+  <tr>
+    <td><span class="isa isa-ldr">U1</span></td>
+    <td>64 &lt; K &lt; 256</td>
+    <td>1</td>
+    <td>Load 5 bases, derive 31, apply to one k-block of 8 elements. Base loads amortized over 31 applications.</td>
+  </tr>
+  <tr>
+    <td><span class="isa isa-ldr">U2</span></td>
+    <td>K ≥ 256</td>
+    <td>2</td>
+    <td>Process two k-blocks per iteration. Bases loaded once, applied twice. Reduces base-load overhead by 50% and improves ILP: second block's butterflies overlap with first block's stores.</td>
+  </tr>
+</table>
+</div>
+
+<div class="callout">
+  <strong>Ladder vs flat trade-off:</strong> Flat loads 31 twiddle pairs (62 strided loads) but zero derivation math. Ladder loads 5 pairs (10 strided loads) + ~80 cmuls. At K≥128 the 52 saved cache misses (stride 128×8=1KB per miss) outweigh 80 FMA instructions.
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">05</span>Pack+Walk Engine</h2>
+
+<p>
+When K &gt; 512, the twiddle table (31×K×16 bytes) exceeds L1 cache. The planner activates block-walk mode, which eliminates the twiddle table entirely and converts all strided data access to sequential.
+</p>
+
+<h3>Walk State</h3>
+<pre>
+<span class="kw">typedef struct</span> {
+    <span class="kw">double</span> step_re[<span class="num">5</span>], step_im[<span class="num">5</span>];       <span class="cm">// scalar rotation per block advance</span>
+    <span class="kw">double</span> init_re[<span class="num">5</span>][<span class="num">8</span>], init_im[<span class="num">5</span>][<span class="num">8</span>]; <span class="cm">// initial twiddle vectors</span>
+} radix32_walk_plan_t;                       <span class="cm">// 120 doubles = 960 bytes</span>
+</pre>
+
+<p>
+The walk state stores 5 base accumulators (W¹, W², W⁴, W⁸, W¹⁶), each as a SIMD vector of T=8 values. After each block, each accumulator is rotated by its step angle. The 31 twiddles per block are derived from these 5 accumulators using the same binary decomposition as the ladder.
+</p>
+
+<h3>Per-Block Pipeline</h3>
+<pre>
+<span class="kw">for</span> (b = <span class="num">0</span>; b &lt; K/T; b++) {
+    <span class="cm">/* 1. Pack: strided → contiguous (32×T doubles, sequential writes) */</span>
+    <span class="kw">for</span> (n = <span class="num">0</span>; n &lt; <span class="num">32</span>; n++)
+        copy T doubles from in[n*K + b*T] → block[n*T];
+
+    <span class="cm">/* 2. Kernel: flat codelet at K=T (all data + twiddles in L1) */</span>
+    <span class="fn">radix32_tw_flat_dit_kernel_fwd_avx512</span>(block, block_tw, T);
+
+    <span class="cm">/* 3. Unpack: contiguous → strided output */</span>
+    <span class="kw">for</span> (n = <span class="num">0</span>; n &lt; <span class="num">32</span>; n++)
+        copy T doubles from out_block[n*T] → out[n*K + b*T];
+
+    <span class="cm">/* 4. Walk: rotate 5 accumulators by step angle */</span>
+    <span class="kw">for</span> (i = <span class="num">0</span>; i &lt; <span class="num">5</span>; i++)
+        acc[i] = cmul(acc[i], step[i]);  <span class="cm">// one cmul per base</span>
+}
+</pre>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th>Property</th><th>Flat (K=2048)</th><th>Pack+Walk (K=2048)</th></tr>
+  <tr><td>Twiddle table</td><td>31 × 2048 × 16B = <strong>992 KB</strong></td><td><strong>960 bytes</strong> (walk state)</td></tr>
+  <tr><td>Data access</td><td>32 strided loads, stride 16KB</td><td>32 sequential loads per block</td></tr>
+  <tr><td>Kernel data footprint</td><td>~1 MB (whole array)</td><td>32×8×8B = <strong>2 KB</strong> per block (L1)</td></tr>
+  <tr><td>Extra overhead</td><td>None</td><td>Pack + unpack + 5 cmul walk per block</td></tr>
+</table>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">06</span>4×8 Butterfly Structure</h2>
+
+<p>
+DFT-32 decomposes as 4 radix-8 DFTs followed by 24 internal twiddle multiplications (W32<sup>n</sup>) and then 8 radix-4 DFTs. The kernel uses 23 pre-computed W32 constants stored as <code>static const double</code>.
+</p>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th>Property</th><th>Value</th></tr>
+  <tr><td>Radix-8 butterflies</td><td>4 (on rows of the 4×8 matrix)</td></tr>
+  <tr><td>Radix-4 butterflies</td><td>8 (on columns)</td></tr>
+  <tr><td>Internal twiddle cmuls</td><td>24 (W32 between row and column passes)</td></tr>
+  <tr><td>W32 constants</td><td>23 static doubles (compiler broadcasts from memory)</td></tr>
+  <tr><td>External twiddle loads</td><td>31 (flat) or 5 (ladder) per k-step</td></tr>
+  <tr><td>Data regs (peak)</td><td>~14 YMM on AVX2 — fits 16 without split butterfly</td></tr>
+  <tr><td>Total FP ops (FMA variant)</td><td>236 add + 62 mul + 198 FMA = 496 ops</td></tr>
+</table>
+</div>
+
+<div class="callout">
+  <strong>Why no split butterfly for R=32?</strong> Unlike R=64 (which needs 16 data regs per radix-8 sub-butterfly × 8×8 structure = catastrophic pressure on 16 YMM), R=32's 4×8 structure peaks at ~14 YMM. With 23 W32 constants as memory operands (not hoisted), it fits naturally. The genfft DAG confirmed this: flat CT ties the DAG at every K for R=32.
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">07</span>Codelet Inventory</h2>
+
+<div class="tbl-wrap">
+<table>
+  <tr>
+    <th>Codelet</th>
+    <th>Scalar</th>
+    <th>AVX2</th>
+    <th>AVX-512</th>
+    <th>Direction</th>
+    <th>Strategy</th>
+  </tr>
+  <tr>
+    <td>N1 (notw)</td>
+    <td><span class="isa isa-sc">✓</span></td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-flat">4×8 CT</span></td>
+  </tr>
+  <tr>
+    <td>DIT tw flat</td>
+    <td><span class="isa isa-sc">✓</span></td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-flat">FLAT</span> 31 strided loads</td>
+  </tr>
+  <tr>
+    <td>DIT tw ladder</td>
+    <td>—</td>
+    <td>—</td>
+    <td><span class="isa isa-z">U1+U2</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-ldr">LADDER</span> 5 loads + binary tree</td>
+  </tr>
+  <tr>
+    <td>DIF tw flat</td>
+    <td><span class="isa isa-sc">✓</span></td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-flat">FLAT</span></td>
+  </tr>
+  <tr>
+    <td>IL DIT tw</td>
+    <td>—</td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">flat+ldr</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-flat">FLAT</span> / <span class="isa isa-ldr">LADDER</span></td>
+  </tr>
+  <tr>
+    <td>IL DIF tw</td>
+    <td>—</td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-flat">FLAT</span></td>
+  </tr>
+  <tr>
+    <td>N1 mono IL</td>
+    <td>—</td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-dag">DAG</span> (genfft)</td>
+  </tr>
+  <tr>
+    <td>Pack+walk</td>
+    <td>—</td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-wlk">WALK</span> (planner path)</td>
+  </tr>
+  <tr>
+    <td>DAG DIT tw</td>
+    <td><span class="isa isa-sc">✓</span></td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-dag">DAG</span> (reference, not wired)</td>
+  </tr>
+</table>
+</div>
+
+<p>
+Total: 9 codelet types × (1-3 ISAs) × (fwd + bwd) = <strong>~46 kernel functions</strong> across 31 files. The DAG tw codelets are included as a reference implementation but not wired into the dispatch — benchmarks showed flat CT ties or beats the DAG at all K values for R=32.
+</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">08</span>Benchmark — Flat vs Ladder vs FFTW</h2>
+
+<p>
+Fair codelet-to-codelet comparison: <code>fftw_plan_guru_dft</code> doing K parallel DFT-32. AVX-512 on container Xeon, GCC 13.
+</p>
+
+<div class="tbl-wrap">
+<table class="bench">
+  <tr>
+    <th>K</th>
+    <th>N</th>
+    <th>Flat (ns)</th>
+    <th>Dispatch (ns)</th>
+    <th>FFTW (ns)</th>
+    <th>Path</th>
+    <th>vs FFTW</th>
+  </tr>
+  <tr><td>8</td><td>256</td><td>118</td><td class="winner">117</td><td>161</td><td>flat</td><td class="winner">1.37×</td></tr>
+  <tr><td>32</td><td>1,024</td><td>591</td><td class="winner">597</td><td>676</td><td>flat</td><td class="winner">1.13×</td></tr>
+  <tr><td>64</td><td>2,048</td><td>1,460</td><td class="winner">1,471</td><td>2,811</td><td>flat</td><td class="winner">1.91×</td></tr>
+  <tr><td>128</td><td>4,096</td><td>3,688</td><td class="winner">3,481</td><td>7,828</td><td>ladder U1</td><td class="winner">2.25×</td></tr>
+  <tr><td>256</td><td>8,192</td><td>7,018</td><td>7,202</td><td>11,749</td><td>ladder U2</td><td class="winner">1.63×</td></tr>
+  <tr><td>512</td><td>16,384</td><td>16,751</td><td>17,661</td><td>24,474</td><td>ladder U2</td><td class="winner">1.39×</td></tr>
+  <tr><td>1024</td><td>32,768</td><td>34,792</td><td class="winner">34,740</td><td>52,822</td><td>ladder U2</td><td class="winner">1.52×</td></tr>
+  <tr><td>2048</td><td>65,536</td><td>136,121</td><td class="winner">106,239</td><td>126,255</td><td>ladder U2</td><td class="winner">1.19×</td></tr>
+</table>
+</div>
+
+<div class="callout">
+  <strong>K=2048 fix:</strong> The old wrapper passed <code>NULL</code> for ladder twiddles, crashing at K&gt;64. Fixed by passing the flat table pointer as both flat and ladder args — the ladder reads the same layout, just picks 5 specific bases. Result: 136μs → 106μs, now beats FFTW.
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">09</span>Generator Pipeline</h2>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th>Generator</th><th>Output</th></tr>
+  <tr>
+    <td><code>gen_radix32_notw.py</code></td>
+    <td>N1 split — scalar/avx2/avx512</td>
+  </tr>
+  <tr>
+    <td><code>gen_radix32_v2.py</code></td>
+    <td>AVX-512 flat + ladder (U1/U2) DIT tw</td>
+  </tr>
+  <tr>
+    <td><code>gen_radix32_avx2_tw_v2.py</code></td>
+    <td>AVX2 flat DIT tw</td>
+  </tr>
+  <tr>
+    <td><code>gen_radix32_scalar_tw.py</code></td>
+    <td>Scalar flat DIT tw</td>
+  </tr>
+  <tr>
+    <td><code>gen_radix32_dif_tw.py</code></td>
+    <td>DIF tw — scalar/avx2/avx512</td>
+  </tr>
+  <tr>
+    <td><code>gen_r32_il.py</code></td>
+    <td>IL DIT/DIF tw — avx2/avx512</td>
+  </tr>
+  <tr>
+    <td><code>translate_genfft_tw.py &lt;fftw&gt; 32 [isa]</code></td>
+    <td>DAG DIT tw (reference) — scalar/avx2/avx512</td>
+  </tr>
+</table>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">10</span>File Map</h2>
+
+<pre>
+src/radix32/
+├── fft_radix32_dispatch.h              <span class="cm"># 3-tier: flat/ladder/pack-walk</span>
+├── fft_radix32_dif_dispatch.h          <span class="cm"># DIF: flat + scalar fallback</span>
+├── scalar/
+│   ├── fft_radix32_scalar_notw.h       <span class="cm"># N1 fwd+bwd</span>
+│   ├── fft_radix32_scalar_tw.h         <span class="cm"># DIT flat fwd+bwd</span>
+│   ├── fft_radix32_scalar_dif_tw.h     <span class="cm"># DIF flat fwd+bwd</span>
+│   └── fft_radix32_scalar_tw_dag.h     <span class="cm"># DAG DIT (reference)</span>
+├── avx2/
+│   ├── fft_radix32_avx2_notw.h         <span class="cm"># N1</span>
+│   ├── fft_radix32_avx2_tw_v2.h        <span class="cm"># DIT flat</span>
+│   ├── fft_radix32_avx2_dif_tw.h       <span class="cm"># DIF flat</span>
+│   ├── fft_radix32_avx2_il_tw.h        <span class="cm"># IL DIT</span>
+│   ├── fft_radix32_avx2_il_dif_tw.h    <span class="cm"># IL DIF</span>
+│   ├── fft_radix32_avx2_n1_mono_il.h   <span class="cm"># N1 mono IL (genfft DAG)</span>
+│   ├── fft_radix32_avx2_tw_pack_walk.h <span class="cm"># pack+walk</span>
+│   └── fft_radix32_avx2_tw_dag.h       <span class="cm"># DAG DIT (reference)</span>
+├── avx512/
+│   ├── fft_radix32_avx512_notw.h           <span class="cm"># N1</span>
+│   ├── fft_radix32_avx512_tw_ladder_v2.h   <span class="cm"># DIT flat + ladder U1/U2 (6,752 lines)</span>
+│   ├── fft_radix32_avx512_dif_tw.h         <span class="cm"># DIF flat</span>
+│   ├── fft_radix32_avx512_il_tw.h          <span class="cm"># IL DIT flat + ladder (7,631 lines)</span>
+│   ├── fft_radix32_avx512_il_dif_tw.h      <span class="cm"># IL DIF flat</span>
+│   ├── fft_radix32_avx512_n1_mono_il.h     <span class="cm"># N1 mono IL (genfft DAG)</span>
+│   ├── fft_radix32_avx512_tw_pack_walk.h   <span class="cm"># pack+walk</span>
+│   └── fft_radix32_avx512_tw_dag.h         <span class="cm"># DAG DIT (reference)</span>
+└── gen/                                    <span class="cm"># 7 Python generators</span>
+</pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">11</span>Design Decisions</h2>
+
+<h3>Why three twiddle tiers instead of one?</h3>
+<p>
+A single strategy cannot be optimal across 3 orders of magnitude of K. Flat (31 direct loads) has zero derivation overhead and wins when the table fits in L1 (K≤64, table ≤ 32KB). Ladder (5 loads + 80 cmuls) trades compute for bandwidth when L1 spills (K=128-512). Pack+walk eliminates both strided data and twiddle access when even L2 is pressured (K>512), at the cost of pack/unpack memcpy.
+</p>
+
+<h3>Why is the ladder AVX-512 only?</h3>
+<p>
+The ladder derivation tree holds 5 base pairs (10 ZMM) + 2 accumulator pairs (4 ZMM) + 16 data registers + 2 constants = 32 ZMM. This exactly fills the AVX-512 register file. On AVX2 with 16 YMM, the 5 bases alone consume 10 registers, leaving only 6 for the butterfly — catastrophic spilling. AVX2 uses flat at all K; the planner's block-walk handles high-K on AVX2.
+</p>
+
+<h3>Why does the ladder use the same table as flat?</h3>
+<p>
+The flat twiddle table stores W<sup>n</sup> at <code>tw_re[(n-1)*K+k]</code>. The ladder loads <code>tw_re[0*K+k]</code> (W¹), <code>tw_re[1*K+k]</code> (W²), <code>tw_re[3*K+k]</code> (W⁴), <code>tw_re[7*K+k]</code> (W⁸), <code>tw_re[15*K+k]</code> (W¹⁶) — these are just 5 specific rows of the same table. No separate ladder table is needed. The dispatch passes <code>twr, twi</code> as both flat and ladder arguments.
+</p>
+
+<h3>Why is the DAG not wired into dispatch?</h3>
+<p>
+Benchmarks showed flat CT ties or beats the genfft DAG at every K for R=32. The 4×8 CT structure naturally fits in registers (peak ~14 YMM) with no split-butterfly overhead. The DAG's 102 stack variables offer no advantage when the structured codelet already has zero spills. The DAG files are included as reference implementations and for the <code>translate_genfft_tw.py</code> generator to be validated against a second radix.
+</p>
+
+<h3>Why does R=32 not need R=64's split butterfly?</h3>
+<p>
+R=64's 8×8 CT has an inner radix-8 that needs 16 data regs simultaneously, competing with 14 log₃ bases and 3 constants = 33 total on 16 YMM. R=32's 4×8 CT has 8 data regs per radix-8 sub-pass + 10 flat twiddle loads (sequential, not persistent) + 2 constants = ~14 peak. It fits the 16-register budget with room to spare.
+</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="credits">
+  <p>
+    <strong>N1 mono IL (genfft DAG):</strong> Matteo Frigo & Steven G. Johnson, <em>"The Design and Implementation of FFTW3"</em>, Proc. IEEE 2005.
+  </p>
+  <p>
+    <strong>Binary ladder, pack+walk engine, 4×8 CT, ISA-specific dispatch:</strong> VectorFFT project.
+  </p>
+</div>
+
+</div>
+</body>
+</html>
