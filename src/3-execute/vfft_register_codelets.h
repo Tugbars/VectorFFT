@@ -247,7 +247,19 @@ static void vfft_tw_dispatch_r32_bwd(
 #endif
 
 #ifdef FFT_RADIX25_DISPATCH_H
-VFFT_TW_DISPATCH_WRAPPER(25, radix25_tw_flat_dit_kernel)
+/* R=25 DIT tw: delegate to dispatch.h (5×5CT + scalar fallback) */
+static void vfft_tw_dispatch_r25_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix25_tw_forward(K, ri, ii, ro, io, twr, twi);
+}
+static void vfft_tw_dispatch_r25_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix25_tw_backward(K, ri, ii, ro, io, twr, twi);
+}
 #endif
 
 /* ── R=25 Interleaved tw dispatch ── */
@@ -538,7 +550,19 @@ VFFT_TW_DIF_DISPATCH_WRAPPER(16, radix16_tw_flat_dif_kernel)
 #endif
 
 #ifdef FFT_RADIX25_DIF_DISPATCH_H
-VFFT_TW_DIF_DISPATCH_WRAPPER(25, radix25_tw_flat_dif_kernel)
+/* R=25 DIF tw: delegate to dif_dispatch.h (flat + scalar fallback) */
+static void vfft_tw_dif_dispatch_r25_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix25_tw_dif_forward(K, ri, ii, ro, io, twr, twi);
+}
+static void vfft_tw_dif_dispatch_r25_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix25_tw_dif_backward(K, ri, ii, ro, io, twr, twi);
+}
 #endif
 
 #ifdef FFT_RADIX10_DIF_DISPATCH_H
@@ -592,7 +616,17 @@ static void vfft_dispatch_r32_bwd(
 #endif
 
 #ifdef FFT_RADIX25_DISPATCH_H
-VFFT_DISPATCH_WRAPPER(25, radix25_n1_dit_kernel)
+/* R=25 N1: delegate to dispatch.h (all ISAs + scalar fallback) */
+static void vfft_dispatch_r25_fwd(
+    const double *ri, const double *ii, double *ro, double *io, size_t K)
+{
+    radix25_n1_forward(K, ri, ii, ro, io);
+}
+static void vfft_dispatch_r25_bwd(
+    const double *ri, const double *ii, double *ro, double *io, size_t K)
+{
+    radix25_n1_backward(K, ri, ii, ro, io);
+}
 #endif
 
 #ifdef FFT_RADIX10_DISPATCH_H
