@@ -228,7 +228,19 @@ VFFT_TW_DISPATCH_WRAPPER(8, radix8_tw_dit_kernel)
 #endif
 
 #ifdef FFT_RADIX32_DISPATCH_H
-VFFT_TW_DISPATCH_WRAPPER(32, radix32_tw_flat_dit_kernel)
+/* R=32 DIT tw: delegate to dispatch.h (flat + ladder + scalar fallback) */
+static void vfft_tw_dispatch_r32_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix32_tw_forward(K, ri, ii, ro, io, twr, twi, NULL, NULL);
+}
+static void vfft_tw_dispatch_r32_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix32_tw_backward(K, ri, ii, ro, io, twr, twi, NULL, NULL);
+}
 #endif
 
 #ifdef FFT_RADIX25_DISPATCH_H
@@ -501,7 +513,19 @@ VFFT_TW_DIF_DISPATCH_WRAPPER(8, radix8_tw_dif_kernel)
 /* ── Radix-32 DIF (fused single-pass, different kernel prefix) ── */
 
 #ifdef FFT_RADIX32_DIF_DISPATCH_H
-VFFT_TW_DIF_DISPATCH_WRAPPER(32, radix32_tw_flat_dif_kernel)
+/* R=32 DIF tw: delegate to dif_dispatch.h (flat + scalar fallback) */
+static void vfft_tw_dif_dispatch_r32_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix32_tw_dif_forward(K, ri, ii, ro, io, twr, twi);
+}
+static void vfft_tw_dif_dispatch_r32_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix32_tw_dif_backward(K, ri, ii, ro, io, twr, twi);
+}
 #endif
 
 /* ── Radix-16 DIF (fused single-pass, flat kernel prefix) ── */
@@ -551,7 +575,17 @@ VFFT_DISPATCH_WRAPPER(16, radix16_n1_dit_kernel)
 #endif
 
 #ifdef FFT_RADIX32_DISPATCH_H
-VFFT_DISPATCH_WRAPPER(32, radix32_notw_dit_kernel)
+/* R=32 N1: delegate to dispatch.h (all ISAs + scalar fallback) */
+static void vfft_dispatch_r32_fwd(
+    const double *ri, const double *ii, double *ro, double *io, size_t K)
+{
+    radix32_notw_forward(K, ri, ii, ro, io);
+}
+static void vfft_dispatch_r32_bwd(
+    const double *ri, const double *ii, double *ro, double *io, size_t K)
+{
+    radix32_notw_backward(K, ri, ii, ro, io);
+}
 #endif
 
 #ifdef FFT_RADIX25_DISPATCH_H
@@ -744,6 +778,46 @@ static void vfft_tw_il_dif_dispatch_r64_bwd(
 }
 #endif /* FFT_RADIX64_DISPATCH_H */
 
+/* ── R=32 IL tw dispatch ── */
+#ifdef FFT_RADIX32_DISPATCH_H
+static void vfft_tw_il_dispatch_r32_fwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX32_AVX512_TW_LADDER_IL_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix32_tw_flat_dit_kernel_il_fwd_avx512(in,out,twr,twi,K); return; })
+#endif
+#ifdef FFT_RADIX32_AVX2_TW_IL_H
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix32_tw_flat_dit_kernel_il_fwd_avx2(in,out,twr,twi,K); return; })
+#endif
+    (void)in;
+    (void)out;
+    (void)twr;
+    (void)twi;
+    (void)K;
+}
+static void vfft_tw_il_dif_dispatch_r32_bwd(
+    const double *in, double *out,
+    const double *twr, const double *twi, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+#ifdef FFT_RADIX32_AVX512_DIF_TW_IL_H
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix32_tw_flat_dif_kernel_il_bwd_avx512(in,out,twr,twi,K); return; })
+#endif
+#ifdef FFT_RADIX32_AVX2_DIF_TW_IL_H
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix32_tw_flat_dif_kernel_il_bwd_avx2(in,out,twr,twi,K); return; })
+#endif
+    (void)in;
+    (void)out;
+    (void)twr;
+    (void)twi;
+    (void)K;
+}
+#endif /* FFT_RADIX32_DISPATCH_H */
+
 /* ── N1 IL dispatch wrappers (monolithic notw, native interleaved) ── */
 
 #ifdef FFT_RADIX25_DISPATCH_H
@@ -769,6 +843,32 @@ static void vfft_n1_il_dispatch_r64_bwd(
     const double *in, double *out, size_t K)
 {
     radix64_n1_backward_il(K, in, out);
+}
+#endif
+
+/* R=32 N1 IL: mono interleaved notw */
+#ifdef FFT_RADIX32_AVX512_N1_MONO_IL_H
+static void vfft_n1_il_dispatch_r32_fwd(
+    const double *in, double *out, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 4 && (K & 3) == 0) { radix32_n1_dit_kernel_fwd_il_avx512(in, out, K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 2 && (K & 1) == 0) { radix32_n1_dit_kernel_fwd_il_avx2(in, out, K); return; })
+    (void)in;
+    (void)out;
+    (void)K;
+}
+static void vfft_n1_il_dispatch_r32_bwd(
+    const double *in, double *out, size_t K)
+{
+    vfft_isa_level_t isa = vfft_detect_isa();
+    (void)isa;
+    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 4 && (K & 3) == 0) { radix32_n1_dit_kernel_bwd_il_avx512(in, out, K); return; })
+    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 2 && (K & 1) == 0) { radix32_n1_dit_kernel_bwd_il_avx2(in, out, K); return; })
+    (void)in;
+    (void)out;
+    (void)K;
 }
 #endif
 
@@ -908,6 +1008,20 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #endif
 #ifdef FFT_RADIX25_DISPATCH_H
     vfft_registry_set_n1_il(reg, 25, vfft_n1_il_dispatch_r25_fwd, vfft_n1_il_dispatch_r25_bwd);
+#endif
+
+#ifdef FFT_RADIX32_AVX2_TW_IL_H
+    vfft_registry_set_tw_il(reg, 32,
+                            vfft_tw_il_dispatch_r32_fwd,
+#ifdef FFT_RADIX32_AVX2_DIF_TW_IL_H
+                            vfft_tw_il_dif_dispatch_r32_bwd,
+#else
+                            NULL,
+#endif
+                            256); /* crossover K=256: R=32 IL */
+#endif
+#ifdef FFT_RADIX32_AVX512_N1_MONO_IL_H
+    vfft_registry_set_n1_il(reg, 32, vfft_n1_il_dispatch_r32_fwd, vfft_n1_il_dispatch_r32_bwd);
 #endif
 
 #ifdef FFT_RADIX5_AVX2_IL_H
