@@ -224,7 +224,19 @@ static void vfft_tw_dispatch_r7_fwd(
 #endif
 
 #ifdef FFT_RADIX8_DISPATCH_H
-VFFT_TW_DISPATCH_WRAPPER(8, radix8_tw_dit_kernel)
+/* R=8 DIT tw: delegate to dispatch.h (log₃ + scalar fallback for any K) */
+static void vfft_tw_dispatch_r8_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix8_tw_forward(K, ri, ii, ro, io, twr, twi);
+}
+static void vfft_tw_dispatch_r8_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix8_tw_backward(K, ri, ii, ro, io, twr, twi);
+}
 #endif
 
 #ifdef FFT_RADIX32_DISPATCH_H
@@ -356,33 +368,21 @@ static void vfft_tw_il_dif_dispatch_r7_bwd(
 #endif
 
 /* ── R=8 Interleaved tw dispatch ── */
-#ifdef FFT_RADIX8_AVX2_IL_H
+#ifdef FFT_RADIX8_DISPATCH_H
 static void vfft_tw_il_dispatch_r8_fwd(
     const double *in, double *out,
     const double *twr, const double *twi, size_t K)
 {
-    vfft_isa_level_t isa = vfft_detect_isa();
-    (void)isa;
-#ifdef FFT_RADIX8_AVX512_IL_H
-    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix8_tw_dit_kernel_fwd_il_avx512(in,out,twr,twi,K); return; })
-#endif
-    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix8_tw_dit_kernel_fwd_il_avx2(in,out,twr,twi,K); return; })
-    radix8_tw_dit_kernel_fwd_il_scalar(in, out, twr, twi, K);
+    radix8_tw_forward_il(K, in, out, twr, twi);
 }
 #endif
 
-#ifdef FFT_RADIX8_AVX2_IL_DIF_TW_H
+#ifdef FFT_RADIX8_DISPATCH_H
 static void vfft_tw_il_dif_dispatch_r8_bwd(
     const double *in, double *out,
     const double *twr, const double *twi, size_t K)
 {
-    vfft_isa_level_t isa = vfft_detect_isa();
-    (void)isa;
-#ifdef FFT_RADIX8_AVX512_IL_DIF_TW_H
-    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix8_tw_dif_kernel_bwd_il_avx512(in,out,twr,twi,K); return; })
-#endif
-    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix8_tw_dif_kernel_bwd_il_avx2(in,out,twr,twi,K); return; })
-    radix8_tw_dif_kernel_bwd_il_scalar(in, out, twr, twi, K);
+    radix8_tw_dif_backward_il(K, in, out, twr, twi);
 }
 #endif
 
@@ -522,7 +522,19 @@ static void vfft_tw_dif_dispatch_r7_bwd(
 #endif
 
 #ifdef FFT_RADIX8_DIF_DISPATCH_H
-VFFT_TW_DIF_DISPATCH_WRAPPER(8, radix8_tw_dif_kernel)
+/* R=8 DIF tw: delegate to dif_dispatch.h */
+static void vfft_tw_dif_dispatch_r8_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix8_tw_dif_forward(K, ri, ii, ro, io, twr, twi);
+}
+static void vfft_tw_dif_dispatch_r8_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix8_tw_dif_backward(K, ri, ii, ro, io, twr, twi);
+}
 #endif
 
 /* ── Radix-32 DIF (fused single-pass, different kernel prefix) ── */
@@ -594,7 +606,17 @@ VFFT_DISPATCH_WRAPPER(7, radix7_notw_dit_kernel)
 #endif
 
 #ifdef FFT_RADIX8_DISPATCH_H
-VFFT_DISPATCH_WRAPPER(8, radix8_notw_dit_kernel)
+/* R=8 N1: delegate to dispatch.h */
+static void vfft_dispatch_r8_fwd(
+    const double *ri, const double *ii, double *ro, double *io, size_t K)
+{
+    radix8_notw_forward(K, ri, ii, ro, io);
+}
+static void vfft_dispatch_r8_bwd(
+    const double *ri, const double *ii, double *ro, double *io, size_t K)
+{
+    radix8_notw_backward(K, ri, ii, ro, io);
+}
 #endif
 
 #ifdef FFT_RADIX16_DISPATCH_H
@@ -1084,14 +1106,10 @@ static void vfft_register_all(vfft_codelet_registry *reg)
                             256); /* crossover K=256: R=7 has 14 split streams */
 #endif
 
-#ifdef FFT_RADIX8_AVX2_IL_H
+#ifdef FFT_RADIX8_DISPATCH_H
     vfft_registry_set_tw_il(reg, 8,
                             vfft_tw_il_dispatch_r8_fwd,
-#ifdef FFT_RADIX8_AVX2_IL_DIF_TW_H
                             vfft_tw_il_dif_dispatch_r8_bwd,
-#else
-                            NULL,
-#endif
                             512); /* crossover K=512: R=8 has 16 split streams */
 #endif
 
