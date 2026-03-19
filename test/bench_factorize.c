@@ -257,11 +257,11 @@ static void fstr(const size_t *f, size_t n, char *b, size_t sz)
 static const size_t DEFAULT_Ns[] = {
     256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
     320, 448,
-    200, 400, 1000, 2000, 5000, 10000,
+    200, 400, 1000, 2000, 
     224, 896, 1792, 3584,
     88, 704, 5632, 104, 832, 6656, 136, 1088, 152, 1216, 184, 1472,
     80, 640, 4000, 8000,
-    800, 20000, 40000,
+    800, 
     0};
 
 int main(int argc, char **argv)
@@ -314,6 +314,18 @@ int main(int argc, char **argv)
 
     vfft_wisdom wis;
     vfft_wisdom_init(&wis);
+
+    /* Summary storage */
+    typedef struct
+    {
+        size_t N;
+        char planner_fact[64];
+        char optimal_fact[64];
+        double planner_ns;
+        double optimal_ns;
+    } summary_t;
+    summary_t summary[256];
+    size_t n_summary = 0;
 
     for (size_t ni = 0; ni < nu; ni++)
     {
@@ -435,6 +447,17 @@ int main(int argc, char **argv)
             printf("  (planner OK)");
         printf("\n\n");
 
+        /* Store for summary */
+        if (n_summary < 256)
+        {
+            summary_t *s = &summary[n_summary++];
+            s->N = N;
+            strncpy(s->planner_fact, cfact, sizeof(s->planner_fact) - 1);
+            strncpy(s->optimal_fact, bl, sizeof(s->optimal_fact) - 1);
+            s->planner_ns = cns;
+            s->optimal_ns = bns;
+        }
+
         /* Wisdom stores inner→outer (same as fact.factors[]/stages[]),
          * enum stores outer→inner (ascending). Reverse. */
         {
@@ -455,12 +478,57 @@ int main(int argc, char **argv)
     {
         printf("================================================================\n");
         printf("  Wisdom written to: %s (%zu entries)\n", wpath, wis.count);
-        printf("================================================================\n");
+        printf("================================================================\n\n");
     }
     else
     {
-        printf("  ERROR: failed to write %s\n", wpath);
+        printf("  ERROR: failed to write %s\n\n", wpath);
     }
+
+    /* ═══ Summary Table ═══ */
+    printf("================================================================\n");
+    printf("  SUMMARY: Planner vs Optimal\n");
+    printf("================================================================\n\n");
+    printf("  %-8s %-20s %9s  %-20s %9s  %7s\n",
+           "N", "planner", "plan_ns", "optimal", "opt_ns", "speedup");
+    printf("  %-8s %-20s %9s  %-20s %9s  %7s\n",
+           "--------", "--------------------", "---------",
+           "--------------------", "---------", "-------");
+
+    int n_improved = 0, n_ok = 0;
+    double worst_ratio = 1.0;
+    size_t worst_N = 0;
+
+    for (size_t i = 0; i < n_summary; i++)
+    {
+        summary_t *s = &summary[i];
+        double ratio = (s->planner_ns > 0 && s->optimal_ns > 0)
+                           ? s->planner_ns / s->optimal_ns
+                           : 1.0;
+        int improved = (ratio > 1.05);
+        if (improved)
+            n_improved++;
+        else
+            n_ok++;
+        if (ratio > worst_ratio)
+        {
+            worst_ratio = ratio;
+            worst_N = s->N;
+        }
+
+        printf("  %-8zu %-20s %9.0f  %-20s %9.0f  %s%.2fx%s%s\n",
+               s->N, s->planner_fact, s->planner_ns,
+               s->optimal_fact, s->optimal_ns,
+               improved ? "\033[93m" : "", ratio, improved ? "\033[0m" : "",
+               improved ? "  <--" : "");
+    }
+
+    printf("\n  %d/%zu sizes improved, %d already optimal\n",
+           n_improved, n_summary, n_ok);
+    if (worst_N > 0 && worst_ratio > 1.05)
+        printf("  Worst planner miss: N=%zu (%.1fx slower than optimal)\n",
+               worst_N, worst_ratio);
+    printf("\n");
 
     vfft_wisdom_destroy(&wis);
     return 0;

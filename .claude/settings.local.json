@@ -6,7 +6,17 @@
       "Bash(vcpkg list)",
       "Bash(chmod +x /c/Users/Tugbars/Desktop/highSpeedFFT/build.sh)",
       "Bash(where ninja)",
-      "Bash(c:/Users/Tugbars/Desktop/highSpeedFFT/vcpkg/vcpkg.exe version)"
+      "Bash(c:/Users/Tugbars/Desktop/highSpeedFFT/vcpkg/vcpkg.exe version)",
+      "Bash(cmake --build . --target bench_factorize)",
+      "Bash(where cmake:*)",
+      "Bash(cmd.exe /c \"where cmake\")",
+      "Bash(cmd.exe /c \"cmake --build c:\\\\Users\\\\Tugbars\\\\Desktop\\\\highSpeedFFT\\\\build --target bench_factorize 2>&1\")",
+      "Bash(ls c:/Users/Tugbars/Desktop/highSpeedFFT/build/bench_factorize*)",
+      "Bash(ls c:/Users/Tugbars/Desktop/highSpeedFFT/build/*.exe)",
+      "Bash(find c:/Users/Tugbars/Desktop/highSpeedFFT/build -name *.exe)",
+      "Bash(find c:/Users/Tugbars/Desktop/highSpeedFFT/build -name bench_factorize* -o -name bench_full*)",
+      "Bash(cmd.exe /c \"c:\\\\Users\\\\Tugbars\\\\Desktop\\\\highSpeedFFT\\\\build\\\\test\\\\bench_factorize.exe 5000 2>&1\")",
+      "Bash(cmd.exe /c \"c:\\\\Users\\\\Tugbars\\\\Desktop\\\\highSpeedFFT\\\\build\\\\test\\\\bench_factorize.exe 5000 > c:\\\\Users\\\\Tugbars\\\\Desktop\\\\highSpeedFFT\\\\build\\\\bf_out.txt 2>&1 & echo EXIT_CODE=%ERRORLEVEL%\")"
     ]
   }
 }
