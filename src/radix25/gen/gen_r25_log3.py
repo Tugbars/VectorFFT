@@ -165,14 +165,16 @@ class Emitter:
         self.line(f'const {self.T} {dst}_im = {cm[1](o, f"{src}_re",f"{src}_im",f"{tw}_re",f"{tw}_im")};')
 
     def int_tw_apply(self, v, exp, fwd):
-        """Apply internal W25 constant (broadcast)."""
+        """Apply internal W25 constant (broadcast directly from static memory).
+        [OPT 1] No hoisted vector constants — compiler folds into FMA memory operands."""
         label = wN_label(exp, N)
         o = self.o_ops
         cm = (cmul_re, cmul_im) if fwd else (cmulc_re, cmulc_im)
+        tw_r = o['set1'](f'{label}_re')
+        tw_i = o['set1'](f'{label}_im')
         self.line(f'{{ {self.T} tr = {v}_re;')
-        self.line(f'  {v}_re = {cm[0](o, f"{v}_re", f"{v}_im", f"tw_{label}_re", f"tw_{label}_im")};')
-        self.line(f'  {v}_im = {cm[1](o, "tr", f"{v}_im", f"tw_{label}_re", f"tw_{label}_im")};')
-        self.line(f'}}')
+        self.line(f'  {v}_re = {cm[0](o, f"{v}_re", f"{v}_im", tw_r, tw_i)};')
+        self.line(f'  {v}_im = {cm[1](o, "tr", f"{v}_im", tw_r, tw_i)}; }}')
 
     def radix5(self, v, fwd, label=''):
         """In-place radix-5 butterfly on v[0..4]."""
@@ -220,14 +222,14 @@ def emit_log3_derive(em):
     em.comment('Load 2 bases: W^1, W^5')
     em.line(f'const {em.T} ew1_re = {em.cfg["ld"]("&tw_re[0*K+k]")}, ew1_im = {em.cfg["ld"]("&tw_im[0*K+k]")};')
     em.line(f'const {em.T} ew5_re = {em.cfg["ld"]("&tw_re[4*K+k]")}, ew5_im = {em.cfg["ld"]("&tw_im[4*K+k]")};')
-    em.comment('Column bases: W^2, W^3, W^4')
-    em.cmul('ew2', 'ew1', 'ew1')
-    em.cmul('ew3', 'ew1', 'ew2')
-    em.cmul('ew4', 'ew1', 'ew3')
-    em.comment('Row powers: W^10, W^15, W^20')
-    em.cmul('ew10', 'ew5', 'ew5')
-    em.cmul('ew15', 'ew5', 'ew10')
-    em.cmul('ew20', 'ew5', 'ew15')
+    em.comment('Column bases: W^2, W^3, W^4 (depth-2 tree)')
+    em.cmul('ew2', 'ew1', 'ew1')   # depth 1
+    em.cmul('ew3', 'ew1', 'ew2')   # depth 2
+    em.cmul('ew4', 'ew2', 'ew2')   # depth 2 (parallel with ew3)
+    em.comment('Row powers: W^10, W^15, W^20 (depth-2 tree)')
+    em.cmul('ew10', 'ew5', 'ew5')    # depth 1
+    em.cmul('ew15', 'ew5', 'ew10')   # depth 2
+    em.cmul('ew20', 'ew10', 'ew10')  # depth 2 (parallel with ew15)
     em.blank()
 
 
@@ -264,9 +266,9 @@ def emit_dit_kernel(em, fwd, itw_set):
                     # W^n2 already derived as ew1..ew4
                     em.cmul_apply(f'x{n1}', f'ew{n2}', fwd)
                 else:
-                    # Derive W^n = W^n2 * W^(5*n1) inline
-                    em.cmul_into(f'ew{n}', f'ew{n2}', row_vars[5*n1], True)
-                    em.cmul_apply(f'x{n1}', f'ew{n}', fwd)
+                    # [OPT 3] Sequential: data × col × row (no temp register)
+                    em.cmul_apply(f'x{n1}', f'ew{n2}', fwd)
+                    em.cmul_apply(f'x{n1}', row_vars[5*n1], fwd)
         em.blank()
         em.radix5(xv, fwd, f'radix-5 n2={n2}')
         em.blank()
@@ -334,8 +336,9 @@ def emit_dif_kernel(em, fwd, itw_set):
                 elif k2 == 0:
                     em.cmul_apply(f'x{k2}', f'ew{k1}', fwd)
                 else:
-                    em.cmul_into(f'ew{m}', f'ew{k1}', row_vars[5*k2], True)
-                    em.cmul_apply(f'x{k2}', f'ew{m}', fwd)
+                    # [OPT 3] Sequential: data × col × row (no temp register)
+                    em.cmul_apply(f'x{k2}', f'ew{k1}', fwd)
+                    em.cmul_apply(f'x{k2}', row_vars[5*k2], fwd)
         em.blank()
         for k2 in range(N2):
             em.store(f'x{k2}', k1 + N1*k2)
@@ -380,14 +383,9 @@ def gen_kernel(isa, direction, mode, itw_set, il=False):
     em.line(f'const {em.T} q25 = {o["set1"]("0.25")};')
     em.blank()
 
-    # Hoisted internal W25 broadcasts
-    if itw_set:
-        em.comment(f'Internal W25 broadcasts')
-        for (e, tN) in sorted(itw_set):
-            label = wN_label(e, tN)
-            em.line(f'const {em.T} tw_{label}_re = {o["set1"](f"{label}_re")};')
-            em.line(f'const {em.T} tw_{label}_im = {o["set1"](f"{label}_im")};')
-        em.blank()
+    # [OPT 1] Internal W25 twiddles: NO hoisted broadcasts.
+    # int_tw_apply broadcasts directly from static const doubles → compiler
+    # folds into FMA memory operands ({1to8} on AVX-512, vbroadcastsd on AVX2).
 
     em.line(f'for (size_t k = 0; k < K; k += {em.W}) {{')
     em.ind += 1
