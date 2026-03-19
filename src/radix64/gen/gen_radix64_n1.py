@@ -227,6 +227,93 @@ class Emitter:
         self.emit(f"  {v[7]}_re = {self._sub('e3r', 'o3r')}; {v[7]}_im = {self._sub('e3i', 'o3i')};")
         self.emit(f"}}")
 
+    def emit_radix8_split(self, v, direction, comment_str=""):
+        """Split radix-8 for AVX2 (16 YMM). Even/odd/combine with explicit bfr/bfi spill."""
+        assert len(v) == 8
+        fwd = (direction == 'fwd')
+        T = self.isa.vtype
+        W = self.isa.width
+        P = self.isa.p
+        if comment_str:
+            self.comment(f"{comment_str} [{direction}] (split)")
+
+        # Phase 1: Even DFT-4 → spill to bfr/bfi
+        self.comment('Phase 1: Even DFT-4 → spill A0..A3')
+        self.emit(f"{{ {T} t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;")
+        self.emit(f"  t0r = {self._add(f'{v[0]}_re', f'{v[4]}_re')}; t0i = {self._add(f'{v[0]}_im', f'{v[4]}_im')};")
+        self.emit(f"  t1r = {self._sub(f'{v[0]}_re', f'{v[4]}_re')}; t1i = {self._sub(f'{v[0]}_im', f'{v[4]}_im')};")
+        self.emit(f"  t2r = {self._add(f'{v[2]}_re', f'{v[6]}_re')}; t2i = {self._add(f'{v[2]}_im', f'{v[6]}_im')};")
+        self.emit(f"  t3r = {self._sub(f'{v[2]}_re', f'{v[6]}_re')}; t3i = {self._sub(f'{v[2]}_im', f'{v[6]}_im')};")
+        self.emit(f"  {P}_store_pd(&bfr[0*{W}], {self._add('t0r','t2r')}); {P}_store_pd(&bfi[0*{W}], {self._add('t0i','t2i')});")
+        self.emit(f"  {P}_store_pd(&bfr[2*{W}], {self._sub('t0r','t2r')}); {P}_store_pd(&bfi[2*{W}], {self._sub('t0i','t2i')});")
+        if fwd:
+            self.emit(f"  {P}_store_pd(&bfr[1*{W}], {self._add('t1r','t3i')}); {P}_store_pd(&bfi[1*{W}], {self._sub('t1i','t3r')});")
+            self.emit(f"  {P}_store_pd(&bfr[3*{W}], {self._sub('t1r','t3i')}); {P}_store_pd(&bfi[3*{W}], {self._add('t1i','t3r')});")
+        else:
+            self.emit(f"  {P}_store_pd(&bfr[1*{W}], {self._sub('t1r','t3i')}); {P}_store_pd(&bfi[1*{W}], {self._add('t1i','t3r')});")
+            self.emit(f"  {P}_store_pd(&bfr[3*{W}], {self._add('t1r','t3i')}); {P}_store_pd(&bfi[3*{W}], {self._sub('t1i','t3r')});")
+        self.emit(f"}}")
+
+        # Phase 2: Odd DFT-4 + W8 twiddles
+        self.comment('Phase 2: Odd DFT-4 + W8 twiddles')
+        self.emit(f"{{ {T} o0r,o0i,o1r,o1i,o2r,o2i,o3r,o3i, t0r,t0i;")
+        self.emit(f"  t0r = {self._add(f'{v[1]}_re', f'{v[5]}_re')}; t0i = {self._add(f'{v[1]}_im', f'{v[5]}_im')};")
+        self.emit(f"  {{ {T} t1r = {self._sub(f'{v[1]}_re', f'{v[5]}_re')}, t1i = {self._sub(f'{v[1]}_im', f'{v[5]}_im')};")
+        self.emit(f"    {T} t2r = {self._add(f'{v[3]}_re', f'{v[7]}_re')}, t2i = {self._add(f'{v[3]}_im', f'{v[7]}_im')};")
+        self.emit(f"    {T} t3r = {self._sub(f'{v[3]}_re', f'{v[7]}_re')}, t3i = {self._sub(f'{v[3]}_im', f'{v[7]}_im')};")
+        self.emit(f"    o0r = {self._add('t0r', 't2r')}; o0i = {self._add('t0i', 't2i')};")
+        self.emit(f"    o2r = {self._sub('t0r', 't2r')}; o2i = {self._sub('t0i', 't2i')};")
+        if fwd:
+            self.emit(f"    o1r = {self._add('t1r', 't3i')}; o1i = {self._sub('t1i', 't3r')};")
+            self.emit(f"    o3r = {self._sub('t1r', 't3i')}; o3i = {self._add('t1i', 't3r')};")
+        else:
+            self.emit(f"    o1r = {self._sub('t1r', 't3i')}; o1i = {self._add('t1i', 't3r')};")
+            self.emit(f"    o3r = {self._add('t1r', 't3i')}; o3i = {self._sub('t1i', 't3r')};")
+        self.emit(f"  }}")
+
+        # W8 twiddles on o1, o2, o3
+        if fwd:
+            self.emit(f"  t0r = {self._mul(self._add('o1r', 'o1i'), 'sqrt2_inv')};")
+            self.emit(f"  t0i = {self._mul(self._sub('o1i', 'o1r'), 'sqrt2_inv')};")
+            self.emit(f"  o1r = t0r; o1i = t0i;")
+            self.emit(f"  t0r = o2i; t0i = {self._neg('o2r')};")
+            self.emit(f"  o2r = t0r; o2i = t0i;")
+            self.emit(f"  t0r = {self._mul(self._sub('o3i', 'o3r'), 'sqrt2_inv')};")
+            self.emit(f"  t0i = {self._neg(self._mul(self._add('o3r', 'o3i'), 'sqrt2_inv'))};")
+            self.emit(f"  o3r = t0r; o3i = t0i;")
+        else:
+            self.emit(f"  t0r = {self._mul(self._sub('o1r', 'o1i'), 'sqrt2_inv')};")
+            self.emit(f"  t0i = {self._mul(self._add('o1r', 'o1i'), 'sqrt2_inv')};")
+            self.emit(f"  o1r = t0r; o1i = t0i;")
+            self.emit(f"  t0r = {self._neg('o2i')}; t0i = o2r;")
+            self.emit(f"  o2r = t0r; o2i = t0i;")
+            self.emit(f"  t0r = {self._neg(self._mul(self._add('o3r', 'o3i'), 'sqrt2_inv'))};")
+            self.emit(f"  t0i = {self._mul(self._sub('o3r', 'o3i'), 'sqrt2_inv')};")
+            self.emit(f"  o3r = t0r; o3i = t0i;")
+
+        # Phase 3: Reload A, combine incrementally
+        self.comment('Phase 3: Reload A, combine A ± B (incremental)')
+        self.emit(f"  {{ {T} Ar = {P}_load_pd(&bfr[0*{W}]), Ai = {P}_load_pd(&bfi[0*{W}]);")
+        self.emit(f"    {v[0]}_re = {self._add('Ar', 'o0r')}; {v[0]}_im = {self._add('Ai', 'o0i')};")
+        self.emit(f"    {v[4]}_re = {self._sub('Ar', 'o0r')}; {v[4]}_im = {self._sub('Ai', 'o0i')}; }}")
+        self.emit(f"  {{ {T} Ar = {P}_load_pd(&bfr[1*{W}]), Ai = {P}_load_pd(&bfi[1*{W}]);")
+        self.emit(f"    {v[1]}_re = {self._add('Ar', 'o1r')}; {v[1]}_im = {self._add('Ai', 'o1i')};")
+        self.emit(f"    {v[5]}_re = {self._sub('Ar', 'o1r')}; {v[5]}_im = {self._sub('Ai', 'o1i')}; }}")
+        self.emit(f"  {{ {T} Ar = {P}_load_pd(&bfr[2*{W}]), Ai = {P}_load_pd(&bfi[2*{W}]);")
+        self.emit(f"    {v[2]}_re = {self._add('Ar', 'o2r')}; {v[2]}_im = {self._add('Ai', 'o2i')};")
+        self.emit(f"    {v[6]}_re = {self._sub('Ar', 'o2r')}; {v[6]}_im = {self._sub('Ai', 'o2i')}; }}")
+        self.emit(f"  {{ {T} Ar = {P}_load_pd(&bfr[3*{W}]), Ai = {P}_load_pd(&bfi[3*{W}]);")
+        self.emit(f"    {v[3]}_re = {self._add('Ar', 'o3r')}; {v[3]}_im = {self._add('Ai', 'o3i')};")
+        self.emit(f"    {v[7]}_re = {self._sub('Ar', 'o3r')}; {v[7]}_im = {self._sub('Ai', 'o3i')}; }}")
+        self.emit(f"}}")
+
+    def emit_r8(self, v, direction, comment_str=""):
+        """ISA dispatch: split for AVX2 (16 regs), monolithic for AVX-512/scalar."""
+        if self.isa.name == 'avx2':
+            self.emit_radix8_split(v, direction, comment_str)
+        else:
+            self.emit_radix8(v, direction, comment_str)
+
     # ── Twiddle emission ──
 
     def emit_twiddle(self, dst, src, e, tN, direction):
@@ -282,16 +369,21 @@ class Emitter:
                 self.emit(f"  {dst}_re = {self._mul(self._add('tr', 'ti'), 'sqrt2_inv')};")
                 self.emit(f"  {dst}_im = {self._mul(self._sub('ti', 'tr'), 'sqrt2_inv')}; }}")
         else:
-            key = (e % tN, tN)
-            self.twiddles_needed.add(key)
-            label = wN_label(e, tN)
+            # General twiddle: inline broadcast from static array (zero hoisted regs)
+            e_idx = e % tN
+            if self.isa.name == 'scalar':
+                wr = f'iw_re[{e_idx}]'
+                wi = f'iw_im[{e_idx}]'
+            else:
+                wr = f'{self.isa.p}_set1_pd(iw_re[{e_idx}])'
+                wi = f'{self.isa.p}_set1_pd(iw_im[{e_idx}])'
             self.emit(f"{{ const {T} tr = {src}_re;")
             if fwd:
-                self.emit(f"  {dst}_re = {self._fmsub(f'{src}_re', f'tw_{label}_re', self._mul(f'{src}_im', f'tw_{label}_im'))};")
-                self.emit(f"  {dst}_im = {self._fmadd('tr', f'tw_{label}_im', self._mul(f'{src}_im', f'tw_{label}_re'))}; }}")
+                self.emit(f"  {dst}_re = {self._fmsub(f'{src}_re', wr, self._mul(f'{src}_im', wi))};")
+                self.emit(f"  {dst}_im = {self._fmadd('tr', wi, self._mul(f'{src}_im', wr))}; }}")
             else:
-                self.emit(f"  {dst}_re = {self._fmadd(f'{src}_re', f'tw_{label}_re', self._mul(f'{src}_im', f'tw_{label}_im'))};")
-                self.emit(f"  {dst}_im = {self._fmsub(f'{src}_im', f'tw_{label}_re', self._mul('tr', f'tw_{label}_im'))}; }}")
+                self.emit(f"  {dst}_re = {self._fmadd(f'{src}_re', wr, self._mul(f'{src}_im', wi))};")
+                self.emit(f"  {dst}_im = {self._fmsub(f'{src}_im', wr, self._mul('tr', wi))}; }}")
 
 # ──────────────────────────────────────────────────────────────────
 # Twiddle collection for 8×8 DFT-64
@@ -342,6 +434,8 @@ def emit_kernel(em, direction, tw_set):
     else:
         em.emit(f"__attribute__((aligned({I.align}))) double spill_re[{N} * {I.width}];")
         em.emit(f"__attribute__((aligned({I.align}))) double spill_im[{N} * {I.width}];")
+    if I.name == 'avx2':
+        em.emit(f"__attribute__((aligned({I.align}))) double bfr[4 * {I.width}], bfi[4 * {I.width}];")
     em.blank()
 
     for i in range(0, N1, 4):
@@ -350,17 +444,8 @@ def emit_kernel(em, direction, tw_set):
         em.emit(f"{T} {', '.join(parts)};")
     em.blank()
 
-    if tw_set:
-        em.comment(f"Hoisted twiddle broadcasts [{direction}]")
-        for (e, tN) in sorted(tw_set):
-            label = wN_label(e, tN)
-            if I.name == 'scalar':
-                em.emit(f"const double tw_{label}_re = {label}_re;")
-                em.emit(f"const double tw_{label}_im = {label}_im;")
-            else:
-                em.emit(f"const {T} tw_{label}_re = {I.p}_set1_pd({label}_re);")
-                em.emit(f"const {T} tw_{label}_im = {I.p}_set1_pd({label}_im);")
-        em.blank()
+    # No hoisted twiddle broadcasts — inline from static arrays
+    # This keeps all 16 YMM registers free for data + butterfly temps
 
     em.emit(f"for (size_t k = 0; k < K; k += {I.k_step}) {{")
     em.indent += 1
@@ -376,7 +461,7 @@ def emit_kernel(em, direction, tw_set):
         for n1 in range(N1):
             em.emit_load_input(f"x{n1}", N2 * n1 + n2)
         em.blank()
-        em.emit_radix8(xvars, direction, f"radix-8 sub-FFT n₂={n2}")
+        em.emit_r8(xvars, direction, f"radix-8 sub-FFT n₂={n2}")
         em.blank()
         for k1 in range(N1):
             em.emit_spill(f"x{k1}", n2 * N1 + k1)
@@ -396,7 +481,7 @@ def emit_kernel(em, direction, tw_set):
                 e = (n2 * k1) % N
                 em.emit_twiddle(f"x{n2}", f"x{n2}", e, N, direction)
             em.blank()
-        em.emit_radix8(xvars, direction, f"radix-8 combine k₁={k1}")
+        em.emit_r8(xvars, direction, f"radix-8 combine k₁={k1}")
         em.blank()
         for k2 in range(N2):
             em.emit_store_output(f"x{k2}", k1 + N1 * k2)
@@ -436,21 +521,22 @@ def generate(isa_name):
         em.lines.append(f"#include <immintrin.h>")
         em.lines.append(f"")
 
-    # Twiddle constants
-    by_tN = {}
-    for (e, tN) in sorted(tw_set):
-        by_tN.setdefault(tN, []).append(e)
-    for tN in sorted(by_tN):
-        tguard = f"FFT_W{tN}_TWIDDLES_DEFINED"
-        em.lines.append(f"#ifndef {tguard}")
-        em.lines.append(f"#define {tguard}")
-        for e in sorted(by_tN[tN]):
-            wr, wi = wN(e, tN)
-            label = wN_label(e, tN)
-            em.lines.append(f"static const double {label}_re = {wr:.20e};")
-            em.lines.append(f"static const double {label}_im = {wi:.20e};")
-        em.lines.append(f"#endif /* {tguard} */")
-        em.lines.append(f"")
+    # Twiddle constants — static arrays for inline broadcast (zero hoisted registers)
+    em.lines.append(f"/* Internal W64 twiddle constants — static arrays for inline broadcast */")
+    em.lines.append(f"#ifndef FFT_W64_STATIC_ARRAYS_DEFINED")
+    em.lines.append(f"#define FFT_W64_STATIC_ARRAYS_DEFINED")
+    em.lines.append(f"static const double __attribute__((aligned(8))) iw_re[64] = {{")
+    for i in range(0, 64, 4):
+        vals = [f'{wN(j, 64)[0]:.20e}' for j in range(i, i+4)]
+        em.lines.append(f"    {', '.join(vals)},")
+    em.lines.append(f"}};")
+    em.lines.append(f"static const double __attribute__((aligned(8))) iw_im[64] = {{")
+    for i in range(0, 64, 4):
+        vals = [f'{wN(j, 64)[1]:.20e}' for j in range(i, i+4)]
+        em.lines.append(f"    {', '.join(vals)},")
+    em.lines.append(f"}};")
+    em.lines.append(f"#endif /* FFT_W64_STATIC_ARRAYS_DEFINED */")
+    em.lines.append(f"")
 
     # Load/store macros
     if isa.name == 'scalar':
