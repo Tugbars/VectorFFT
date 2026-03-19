@@ -159,7 +159,6 @@ static void factstr(const vfft_plan *plan, char *buf, size_t bufsz)
 
 static int test_correctness(size_t N, const vfft_codelet_registry *reg)
 {
-    printf("  >>> N=%zu allocating...\n", N); fflush(stdout);
     double *ir = aa64(N), *ii = aa64(N);
     double *vr = aa64(N), *vi = aa64(N);
 
@@ -169,15 +168,14 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg)
         ii[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
     }
 
-    printf("  >>> N=%zu FFTW plan...\n", N); fflush(stdout);
+    /* FFTW reference */
     fftw_complex *fin  = fftw_alloc_complex(N);
     fftw_complex *fout = fftw_alloc_complex(N);
     fftw_plan fp = fftw_plan_dft_1d((int)N, fin, fout, FFTW_FORWARD, FFTW_ESTIMATE);
     for (size_t i = 0; i < N; i++) { fin[i][0] = ir[i]; fin[i][1] = ii[i]; }
-    printf("  >>> N=%zu FFTW execute...\n", N); fflush(stdout);
     fftw_execute(fp);
 
-    printf("  >>> N=%zu VectorFFT plan_create...\n", N); fflush(stdout);
+    /* VectorFFT forward */
     vfft_plan *plan = vfft_plan_create(N, reg);
     if (!plan) {
         printf("  N=%-6zu  PLAN FAILED\n", N);
@@ -186,22 +184,9 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg)
         vfft_aligned_free(vr); vfft_aligned_free(vi);
         return 0;
     }
-
-    printf("  >>> N=%zu plan: %zu stages [", N, plan->nstages);
-    for (size_t s = 0; s < plan->nstages; s++) {
-        if (s) printf("x");
-        printf("R%zu/K%zu", plan->stages[s].radix, plan->stages[s].K);
-        if (plan->stages[s].walk) printf("[W]");
-        printf("(tw=%s,dif=%s)", 
-               plan->stages[s].tw_fwd ? "y" : "n",
-               plan->stages[s].tw_dif_bwd ? "y" : "n");
-    }
-    printf("]\n"); fflush(stdout);
-
-    printf("  >>> N=%zu execute_fwd...\n", N); fflush(stdout);
     vfft_execute_fwd(plan, ir, ii, vr, vi);
-    printf("  >>> N=%zu fwd done\n", N); fflush(stdout);
 
+    /* Forward error */
     double err = 0, mag = 0;
     for (size_t i = 0; i < N; i++) {
         double e = fmax(fabs(vr[i] - fout[i][0]), fabs(vi[i] - fout[i][1]));
@@ -212,11 +197,9 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg)
     double fwd_rel = mag > 0 ? err / mag : err;
     double tol     = 1e-12 * (1.0 + log2((double)N));
 
-    printf("  >>> N=%zu execute_bwd...\n", N); fflush(stdout);
+    /* Roundtrip */
     double *rr = aa64(N), *ri = aa64(N);
     vfft_execute_bwd(plan, vr, vi, rr, ri);
-    printf("  >>> N=%zu bwd done\n", N); fflush(stdout);
-
     double rt_err = 0;
     for (size_t i = 0; i < N; i++) {
         rr[i] /= (double)N;
@@ -228,6 +211,7 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg)
 
     int pass = (fwd_rel < tol) && (rt_rel < tol);
 
+    /* Count fused stages */
     int n_dit = 0, n_dif = 0;
     for (size_t s = 0; s < plan->nstages; s++) {
         if (plan->stages[s].tw_fwd     && plan->stages[s].K > 1) n_dit++;
