@@ -37,8 +37,23 @@ class ISA_AVX2:
     func_suffix = 'avx2'
     sign_flip_decl = 'const __m256d sign_flip = _mm256_set1_pd(-0.0);'
     sqrt2_decl = 'const __m256d sqrt2_inv = _mm256_set1_pd(0.70710678118654752440);'
+    p = '_mm256'
+    align = 32
 
-ISAS = {'scalar': ISA_Scalar, 'avx2': ISA_AVX2}
+class ISA_AVX512:
+    name = 'avx512'
+    vtype = '__m512d'
+    width = 8
+    k_step = 8
+    target_attr = '__attribute__((target("avx512f,avx512dq,fma")))'
+    macro_prefix = 'R64Z'
+    func_suffix = 'avx512'
+    sign_flip_decl = 'const __m512d sign_flip = _mm512_set1_pd(-0.0);'
+    sqrt2_decl = 'const __m512d sqrt2_inv = _mm512_set1_pd(0.70710678118654752440);'
+    p = '_mm512'
+    align = 64
+
+ISAS = {'scalar': ISA_Scalar, 'avx2': ISA_AVX2, 'avx512': ISA_AVX512}
 
 # ──────────────────────────────────────────────────────────────────
 # Twiddle helpers
@@ -91,8 +106,8 @@ class Emitter:
             self.emit(f"spill_re[{slot}] = {var}_re;")
             self.emit(f"spill_im[{slot}] = {var}_im;")
         else:
-            self.emit(f"_mm256_store_pd(&spill_re[{slot} * 4], {var}_re);")
-            self.emit(f"_mm256_store_pd(&spill_im[{slot} * 4], {var}_im);")
+            self.emit(f"{I.p}_store_pd(&spill_re[{slot} * {I.width}], {var}_re);")
+            self.emit(f"{I.p}_store_pd(&spill_im[{slot} * {I.width}], {var}_im);")
         self.spill_count += 1
 
     def emit_reload(self, var, slot):
@@ -101,8 +116,8 @@ class Emitter:
             self.emit(f"{var}_re = spill_re[{slot}];")
             self.emit(f"{var}_im = spill_im[{slot}];")
         else:
-            self.emit(f"{var}_re = _mm256_load_pd(&spill_re[{slot} * 4]);")
-            self.emit(f"{var}_im = _mm256_load_pd(&spill_im[{slot} * 4]);")
+            self.emit(f"{var}_re = {I.p}_load_pd(&spill_re[{slot} * {I.width}]);")
+            self.emit(f"{var}_im = {I.p}_load_pd(&spill_im[{slot} * {I.width}]);")
         self.reload_count += 1
 
     def emit_load_input(self, var, n):
@@ -119,27 +134,27 @@ class Emitter:
 
     def _add(self, a, b):
         if self.isa.name == 'scalar': return f"({a} + {b})"
-        return f"_mm256_add_pd({a}, {b})"
+        return f"{self.isa.p}_add_pd({a}, {b})"
 
     def _sub(self, a, b):
         if self.isa.name == 'scalar': return f"({a} - {b})"
-        return f"_mm256_sub_pd({a}, {b})"
+        return f"{self.isa.p}_sub_pd({a}, {b})"
 
     def _mul(self, a, b):
         if self.isa.name == 'scalar': return f"({a} * {b})"
-        return f"_mm256_mul_pd({a}, {b})"
+        return f"{self.isa.p}_mul_pd({a}, {b})"
 
     def _neg(self, a):
         if self.isa.name == 'scalar': return f"(-{a})"
-        return f"_mm256_xor_pd({a}, sign_flip)"
+        return f"{self.isa.p}_xor_pd({a}, sign_flip)"
 
     def _fmadd(self, a, b, c):
         if self.isa.name == 'scalar': return f"({a} * {b} + {c})"
-        return f"_mm256_fmadd_pd({a}, {b}, {c})"
+        return f"{self.isa.p}_fmadd_pd({a}, {b}, {c})"
 
     def _fmsub(self, a, b, c):
         if self.isa.name == 'scalar': return f"({a} * {b} - {c})"
-        return f"_mm256_fmsub_pd({a}, {b}, {c})"
+        return f"{self.isa.p}_fmsub_pd({a}, {b}, {c})"
 
     # ── Radix-8 butterfly ──
 
@@ -307,8 +322,8 @@ def emit_kernel(em, direction, tw_set):
     else:
         em.lines.append(f"static void")
     em.lines.append(f"radix64_n1_dit_kernel_{direction}_{I.func_suffix}(")
-    em.lines.append(f"    const double *RESTRICT in_re, const double *RESTRICT in_im,")
-    em.lines.append(f"    double *RESTRICT out_re, double *RESTRICT out_im,")
+    em.lines.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+    em.lines.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
     em.lines.append(f"    size_t K)")
     em.lines.append(f"{{")
 
@@ -325,8 +340,8 @@ def emit_kernel(em, direction, tw_set):
         em.emit(f"double spill_re[{N}];")
         em.emit(f"double spill_im[{N}];")
     else:
-        em.emit(f"ALIGNAS_32 double spill_re[{N} * 4];")
-        em.emit(f"ALIGNAS_32 double spill_im[{N} * 4];")
+        em.emit(f"__attribute__((aligned({I.align}))) double spill_re[{N} * {I.width}];")
+        em.emit(f"__attribute__((aligned({I.align}))) double spill_im[{N} * {I.width}];")
     em.blank()
 
     for i in range(0, N1, 4):
@@ -343,8 +358,8 @@ def emit_kernel(em, direction, tw_set):
                 em.emit(f"const double tw_{label}_re = {label}_re;")
                 em.emit(f"const double tw_{label}_im = {label}_im;")
             else:
-                em.emit(f"const __m256d tw_{label}_re = _mm256_set1_pd({label}_re);")
-                em.emit(f"const __m256d tw_{label}_im = _mm256_set1_pd({label}_im);")
+                em.emit(f"const {T} tw_{label}_re = {I.p}_set1_pd({label}_re);")
+                em.emit(f"const {T} tw_{label}_im = {I.p}_set1_pd({label}_im);")
         em.blank()
 
     em.emit(f"for (size_t k = 0; k < K; k += {I.k_step}) {{")
@@ -417,12 +432,8 @@ def generate(isa_name):
     em.lines.append(f"#ifndef {guard}")
     em.lines.append(f"#define {guard}")
     em.lines.append(f"")
-    if isa.name == 'avx2':
+    if isa.name in ('avx2', 'avx512'):
         em.lines.append(f"#include <immintrin.h>")
-        em.lines.append(f"")
-        em.lines.append(f"#ifndef ALIGNAS_32")
-        em.lines.append(f"#define ALIGNAS_32 __attribute__((aligned(32)))")
-        em.lines.append(f"#endif")
         em.lines.append(f"")
 
     # Twiddle constants
@@ -449,12 +460,19 @@ def generate(isa_name):
         em.lines.append(f"#ifndef {mp}_ST")
         em.lines.append(f"#define {mp}_ST(p,v) (*(p) = (v))")
         em.lines.append(f"#endif")
-    else:
+    elif isa.name == 'avx2':
         em.lines.append(f"#ifndef {mp}_LD")
         em.lines.append(f"#define {mp}_LD(p) _mm256_loadu_pd(p)")
         em.lines.append(f"#endif")
         em.lines.append(f"#ifndef {mp}_ST")
         em.lines.append(f"#define {mp}_ST(p,v) _mm256_storeu_pd((p),(v))")
+        em.lines.append(f"#endif")
+    else:  # avx512
+        em.lines.append(f"#ifndef {mp}_LD")
+        em.lines.append(f"#define {mp}_LD(p) _mm512_load_pd(p)")
+        em.lines.append(f"#endif")
+        em.lines.append(f"#ifndef {mp}_ST")
+        em.lines.append(f"#define {mp}_ST(p,v) _mm512_store_pd((p),(v))")
         em.lines.append(f"#endif")
     em.lines.append(f"")
 
