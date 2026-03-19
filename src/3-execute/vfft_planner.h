@@ -1277,6 +1277,8 @@ static vfft_plan *vfft_plan_create_ex(
 }
 
 #endif /* VFFT_WISDOM_H */
+
+static void vfft_plan_destroy(vfft_plan *plan)
 {
     if (!plan)
         return;
