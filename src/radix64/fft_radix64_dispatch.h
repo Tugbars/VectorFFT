@@ -15,7 +15,12 @@
 
 #ifndef VFFT_ISA_LEVEL_DEFINED
 #define VFFT_ISA_LEVEL_DEFINED
-typedef enum { VFFT_ISA_SCALAR=0, VFFT_ISA_AVX2=1, VFFT_ISA_AVX512=2 } vfft_isa_level_t;
+typedef enum
+{
+    VFFT_ISA_SCALAR = 0,
+    VFFT_ISA_AVX2 = 1,
+    VFFT_ISA_AVX512 = 2
+} vfft_isa_level_t;
 #endif
 
 /* ── N1 (notw) codelets ── */
@@ -56,21 +61,26 @@ typedef enum { VFFT_ISA_SCALAR=0, VFFT_ISA_AVX2=1, VFFT_ISA_AVX512=2 } vfft_isa_
 #endif
 
 /* ── ISA selection ── */
-static inline vfft_isa_level_t radix64_effective_isa(size_t K) {
+static inline vfft_isa_level_t radix64_effective_isa(size_t K)
+{
 #if defined(__AVX512F__) || defined(__AVX512F)
-    if (K >= 8 && (K & 7) == 0) return VFFT_ISA_AVX512;
+    if (K >= 8 && (K & 7) == 0)
+        return VFFT_ISA_AVX512;
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0) return VFFT_ISA_AVX2;
+    if (K >= 4 && (K & 3) == 0)
+        return VFFT_ISA_AVX2;
 #endif
     return VFFT_ISA_SCALAR;
 }
 
 /* ── N1 dispatch ── */
 static inline void radix64_n1_forward(size_t K,
-    const double *__restrict__ ir, const double *__restrict__ ii,
-    double *__restrict__ or_, double *__restrict__ oi) {
-    switch (radix64_effective_isa(K)) {
+                                      const double *__restrict__ ir, const double *__restrict__ ii,
+                                      double *__restrict__ or_, double *__restrict__ oi)
+{
+    switch (radix64_effective_isa(K))
+    {
 #if defined(__AVX512F__) || defined(__AVX512F)
     case VFFT_ISA_AVX512:
         radix64_n1_dit_kernel_fwd_avx512(ir, ii, or_, oi, K);
@@ -87,9 +97,11 @@ static inline void radix64_n1_forward(size_t K,
     }
 }
 static inline void radix64_n1_backward(size_t K,
-    const double *__restrict__ ir, const double *__restrict__ ii,
-    double *__restrict__ or_, double *__restrict__ oi) {
-    switch (radix64_effective_isa(K)) {
+                                       const double *__restrict__ ir, const double *__restrict__ ii,
+                                       double *__restrict__ or_, double *__restrict__ oi)
+{
+    switch (radix64_effective_isa(K))
+    {
 #if defined(__AVX512F__) || defined(__AVX512F)
     case VFFT_ISA_AVX512:
         radix64_n1_dit_kernel_bwd_avx512(ir, ii, or_, oi, K);
@@ -108,133 +120,187 @@ static inline void radix64_n1_backward(size_t K,
 
 /* ── DIT tw dispatch (DAG at low K, 8×8CT at high K, scalar fallback) ── */
 static inline void radix64_tw_forward(size_t K,
-    const double *__restrict__ ir, const double *__restrict__ ii,
-    double *__restrict__ or_, double *__restrict__ oi,
-    const double *__restrict__ twr, const double *__restrict__ twi) {
+                                      const double *__restrict__ ir, const double *__restrict__ ii,
+                                      double *__restrict__ or_, double *__restrict__ oi,
+                                      const double *__restrict__ twr, const double *__restrict__ twi)
+{
 #if defined(__AVX512F__) || defined(__AVX512F)
-    if (K >= 8 && (K & 7) == 0) {
+    if (K >= 8 && (K & 7) == 0)
+    {
         if (K <= RADIX64_DAG_K_THRESHOLD)
-            radix64_tw_dag_dit_fwd_avx512(ir,ii,or_,oi,twr,twi,K);
+            radix64_tw_dag_dit_fwd_avx512(ir, ii, or_, oi, twr, twi, K);
         else
-            radix64_tw_flat_dit_kernel_fwd_avx512(ir,ii,or_,oi,twr,twi,K);
-        return; }
+            radix64_tw_flat_dit_kernel_fwd_avx512(ir, ii, or_, oi, twr, twi, K);
+        return;
+    }
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0) {
+    if (K >= 4 && (K & 3) == 0)
+    {
         if (K <= RADIX64_DAG_K_THRESHOLD)
-            radix64_tw_dag_dit_fwd_avx2(ir,ii,or_,oi,twr,twi,K);
+            radix64_tw_dag_dit_fwd_avx2(ir, ii, or_, oi, twr, twi, K);
         else
-            radix64_tw_flat_dit_kernel_fwd_avx2(ir,ii,or_,oi,twr,twi,K);
-        return; }
+            radix64_tw_flat_dit_kernel_fwd_avx2(ir, ii, or_, oi, twr, twi, K);
+        return;
+    }
 #endif
     /* Scalar fallback for odd K (e.g. K=7 from N=448=7×64) */
-    radix64_tw_dag_dit_fwd_scalar(ir,ii,or_,oi,twr,twi,K);
+    radix64_tw_dag_dit_fwd_scalar(ir, ii, or_, oi, twr, twi, K);
 }
 static inline void radix64_tw_backward(size_t K,
-    const double *__restrict__ ir, const double *__restrict__ ii,
-    double *__restrict__ or_, double *__restrict__ oi,
-    const double *__restrict__ twr, const double *__restrict__ twi) {
+                                       const double *__restrict__ ir, const double *__restrict__ ii,
+                                       double *__restrict__ or_, double *__restrict__ oi,
+                                       const double *__restrict__ twr, const double *__restrict__ twi)
+{
 #if defined(__AVX512F__) || defined(__AVX512F)
-    if (K >= 8 && (K & 7) == 0) {
+    if (K >= 8 && (K & 7) == 0)
+    {
         if (K <= RADIX64_DAG_K_THRESHOLD)
-            radix64_tw_dag_dit_bwd_avx512(ir,ii,or_,oi,twr,twi,K);
+            radix64_tw_dag_dit_bwd_avx512(ir, ii, or_, oi, twr, twi, K);
         else
-            radix64_tw_flat_dit_kernel_bwd_avx512(ir,ii,or_,oi,twr,twi,K);
-        return; }
+            radix64_tw_flat_dit_kernel_bwd_avx512(ir, ii, or_, oi, twr, twi, K);
+        return;
+    }
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0) {
+    if (K >= 4 && (K & 3) == 0)
+    {
         if (K <= RADIX64_DAG_K_THRESHOLD)
-            radix64_tw_dag_dit_bwd_avx2(ir,ii,or_,oi,twr,twi,K);
+            radix64_tw_dag_dit_bwd_avx2(ir, ii, or_, oi, twr, twi, K);
         else
-            radix64_tw_flat_dit_kernel_bwd_avx2(ir,ii,or_,oi,twr,twi,K);
-        return; }
+            radix64_tw_flat_dit_kernel_bwd_avx2(ir, ii, or_, oi, twr, twi, K);
+        return;
+    }
 #endif
-    radix64_tw_dag_dit_bwd_scalar(ir,ii,or_,oi,twr,twi,K);
+    radix64_tw_dag_dit_bwd_scalar(ir, ii, or_, oi, twr, twi, K);
 }
 
 /* ── Scalar DIF fallback: N1 + post-multiply (for odd K) ── */
 static inline void radix64_tw_dif_scalar_fwd(size_t K,
-    const double *__restrict__ ir, const double *__restrict__ ii,
-    double *__restrict__ or_, double *__restrict__ oi,
-    const double *__restrict__ twr, const double *__restrict__ twi) {
+                                             const double *__restrict__ ir, const double *__restrict__ ii,
+                                             double *__restrict__ or_, double *__restrict__ oi,
+                                             const double *__restrict__ twr, const double *__restrict__ twi)
+{
     /* DIF fwd = DFT-64 then multiply outputs by W^n */
     radix64_n1_dit_kernel_fwd_scalar(ir, ii, or_, oi, K);
     for (size_t n = 1; n < 64; n++)
-        for (size_t k = 0; k < K; k++) {
-            double xr = or_[n*K+k], xi = oi[n*K+k];
-            double wr = twr[(n-1)*K+k], wi = twi[(n-1)*K+k];
-            or_[n*K+k] = xr*wr - xi*wi;
-            oi[n*K+k] = xr*wi + xi*wr;
+        for (size_t k = 0; k < K; k++)
+        {
+            double xr = or_[n * K + k], xi = oi[n * K + k];
+            double wr = twr[(n - 1) * K + k], wi = twi[(n - 1) * K + k];
+            or_[n * K + k] = xr * wr - xi * wi;
+            oi[n * K + k] = xr * wi + xi * wr;
         }
 }
 static inline void radix64_tw_dif_scalar_bwd(size_t K,
-    const double *__restrict__ ir, const double *__restrict__ ii,
-    double *__restrict__ or_, double *__restrict__ oi,
-    const double *__restrict__ twr, const double *__restrict__ twi) {
+                                             const double *__restrict__ ir, const double *__restrict__ ii,
+                                             double *__restrict__ or_, double *__restrict__ oi,
+                                             const double *__restrict__ twr, const double *__restrict__ twi)
+{
     /* DIF bwd = IDFT-64 then multiply outputs by conj(W^n) */
     radix64_n1_dit_kernel_bwd_scalar(ir, ii, or_, oi, K);
     for (size_t n = 1; n < 64; n++)
-        for (size_t k = 0; k < K; k++) {
-            double xr = or_[n*K+k], xi = oi[n*K+k];
-            double wr = twr[(n-1)*K+k], wi = twi[(n-1)*K+k];
-            or_[n*K+k] = xr*wr + xi*wi;
-            oi[n*K+k] = xi*wr - xr*wi;
+        for (size_t k = 0; k < K; k++)
+        {
+            double xr = or_[n * K + k], xi = oi[n * K + k];
+            double wr = twr[(n - 1) * K + k], wi = twi[(n - 1) * K + k];
+            or_[n * K + k] = xr * wr + xi * wi;
+            oi[n * K + k] = xi * wr - xr * wi;
         }
 }
 
 /* ── DIF tw dispatch (8×8CT SIMD, scalar N1+tw fallback) ── */
 static inline void radix64_tw_dif_forward(size_t K,
-    const double *__restrict__ ir, const double *__restrict__ ii,
-    double *__restrict__ or_, double *__restrict__ oi,
-    const double *__restrict__ twr, const double *__restrict__ twi) {
+                                          const double *__restrict__ ir, const double *__restrict__ ii,
+                                          double *__restrict__ or_, double *__restrict__ oi,
+                                          const double *__restrict__ twr, const double *__restrict__ twi)
+{
 #if defined(__AVX512F__) || defined(__AVX512F)
-    if (K >= 8 && (K & 7) == 0) {
-        radix64_tw_flat_dif_kernel_fwd_avx512(ir,ii,or_,oi,twr,twi,K); return; }
+    if (K >= 8 && (K & 7) == 0)
+    {
+        radix64_tw_flat_dif_kernel_fwd_avx512(ir, ii, or_, oi, twr, twi, K);
+        return;
+    }
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0) {
-        radix64_tw_flat_dif_kernel_fwd_avx2(ir,ii,or_,oi,twr,twi,K); return; }
+    if (K >= 4 && (K & 3) == 0)
+    {
+        radix64_tw_flat_dif_kernel_fwd_avx2(ir, ii, or_, oi, twr, twi, K);
+        return;
+    }
 #endif
-    radix64_tw_dif_scalar_fwd(K,ir,ii,or_,oi,twr,twi);
+    radix64_tw_dif_scalar_fwd(K, ir, ii, or_, oi, twr, twi);
 }
 static inline void radix64_tw_dif_backward(size_t K,
-    const double *__restrict__ ir, const double *__restrict__ ii,
-    double *__restrict__ or_, double *__restrict__ oi,
-    const double *__restrict__ twr, const double *__restrict__ twi) {
+                                           const double *__restrict__ ir, const double *__restrict__ ii,
+                                           double *__restrict__ or_, double *__restrict__ oi,
+                                           const double *__restrict__ twr, const double *__restrict__ twi)
+{
 #if defined(__AVX512F__) || defined(__AVX512F)
-    if (K >= 8 && (K & 7) == 0) {
-        radix64_tw_flat_dif_kernel_bwd_avx512(ir,ii,or_,oi,twr,twi,K); return; }
+    if (K >= 8 && (K & 7) == 0)
+    {
+        radix64_tw_flat_dif_kernel_bwd_avx512(ir, ii, or_, oi, twr, twi, K);
+        return;
+    }
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0) {
-        radix64_tw_flat_dif_kernel_bwd_avx2(ir,ii,or_,oi,twr,twi,K); return; }
+    if (K >= 4 && (K & 3) == 0)
+    {
+        radix64_tw_flat_dif_kernel_bwd_avx2(ir, ii, or_, oi, twr, twi, K);
+        return;
+    }
 #endif
-    radix64_tw_dif_scalar_bwd(K,ir,ii,or_,oi,twr,twi);
+    radix64_tw_dif_scalar_bwd(K, ir, ii, or_, oi, twr, twi);
 }
 
 /* ── IL tw dispatch ── */
 static inline void radix64_tw_forward_il(
     const double *__restrict__ in, double *__restrict__ out,
-    const double *__restrict__ twr, const double *__restrict__ twi, size_t K) {
+    const double *__restrict__ twr, const double *__restrict__ twi, size_t K)
+{
 #if defined(__AVX512F__) || defined(__AVX512F)
-    if (K >= 8 && (K & 7) == 0) { radix64_tw_flat_dit_kernel_fwd_il_avx512(in,out,twr,twi,K); return; }
+    if (K >= 8 && (K & 7) == 0)
+    {
+        radix64_tw_flat_dit_kernel_fwd_il_avx512(in, out, twr, twi, K);
+        return;
+    }
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0) { radix64_tw_flat_dit_kernel_fwd_il_avx2(in,out,twr,twi,K); return; }
+    if (K >= 4 && (K & 3) == 0)
+    {
+        radix64_tw_flat_dit_kernel_fwd_il_avx2(in, out, twr, twi, K);
+        return;
+    }
 #endif
-    (void)in;(void)out;(void)twr;(void)twi;(void)K;
+    (void)in;
+    (void)out;
+    (void)twr;
+    (void)twi;
+    (void)K;
 }
 static inline void radix64_tw_dif_backward_il(
     const double *__restrict__ in, double *__restrict__ out,
-    const double *__restrict__ twr, const double *__restrict__ twi, size_t K) {
+    const double *__restrict__ twr, const double *__restrict__ twi, size_t K)
+{
 #if defined(__AVX512F__) || defined(__AVX512F)
-    if (K >= 8 && (K & 7) == 0) { radix64_tw_flat_dif_kernel_bwd_il_avx512(in,out,twr,twi,K); return; }
+    if (K >= 8 && (K & 7) == 0)
+    {
+        radix64_tw_flat_dif_kernel_bwd_il_avx512(in, out, twr, twi, K);
+        return;
+    }
 #endif
 #ifdef __AVX2__
-    if (K >= 4 && (K & 3) == 0) { radix64_tw_flat_dif_kernel_bwd_il_avx2(in,out,twr,twi,K); return; }
+    if (K >= 4 && (K & 3) == 0)
+    {
+        radix64_tw_flat_dif_kernel_bwd_il_avx2(in, out, twr, twi, K);
+        return;
+    }
 #endif
-    (void)in;(void)out;(void)twr;(void)twi;(void)K;
+    (void)in;
+    (void)out;
+    (void)twr;
+    (void)twi;
+    (void)K;
 }
 
 /* ── Monolithic N1 native IL (translated from FFTW genfft DAG) ── */
@@ -247,31 +313,51 @@ static inline void radix64_tw_dif_backward_il(
 
 static inline void radix64_n1_forward_il(
     size_t K,
-    const double * __restrict__ in, double * __restrict__ out)
+    const double *__restrict__ in, double *__restrict__ out)
 {
 #if defined(__AVX512F__) || defined(__AVX512F)
-    if (K >= 4 && (K & 3) == 0) { radix64_n1_dit_kernel_fwd_il_avx512(in, out, K); return; }
+    if (K >= 4 && (K & 3) == 0)
+    {
+        radix64_n1_dit_kernel_fwd_il_avx512(in, out, K);
+        return;
+    }
 #endif
 #ifdef __AVX2__
-    if (K >= 2 && (K & 1) == 0) { radix64_n1_dit_kernel_fwd_il_avx2(in, out, K); return; }
+    if (K >= 2 && (K & 1) == 0)
+    {
+        radix64_n1_dit_kernel_fwd_il_avx2(in, out, K);
+        return;
+    }
 #endif
-    (void)in; (void)out; (void)K;
+    (void)in;
+    (void)out;
+    (void)K;
 }
 
 static inline void radix64_n1_backward_il(
     size_t K,
-    const double * __restrict__ in, double * __restrict__ out)
+    const double *__restrict__ in, double *__restrict__ out)
 {
 #if defined(__AVX512F__) || defined(__AVX512F)
-    if (K >= 4 && (K & 3) == 0) { radix64_n1_dit_kernel_bwd_il_avx512(in, out, K); return; }
+    if (K >= 4 && (K & 3) == 0)
+    {
+        radix64_n1_dit_kernel_bwd_il_avx512(in, out, K);
+        return;
+    }
 #endif
 #ifdef __AVX2__
-    if (K >= 2 && (K & 1) == 0) { radix64_n1_dit_kernel_bwd_il_avx2(in, out, K); return; }
+    if (K >= 2 && (K & 1) == 0)
+    {
+        radix64_n1_dit_kernel_bwd_il_avx2(in, out, K);
+        return;
+    }
 #endif
-    (void)in; (void)out; (void)K;
+    (void)in;
+    (void)out;
+    (void)K;
 }
 
-static inline size_t radix64_flat_tw_size(size_t K) { return 63*K; }
-static inline size_t radix64_data_size(size_t K) { return 64*K; }
+static inline size_t radix64_flat_tw_size(size_t K) { return 63 * K; }
+static inline size_t radix64_data_size(size_t K) { return 64 * K; }
 
 #endif /* FFT_RADIX64_DISPATCH_H */
