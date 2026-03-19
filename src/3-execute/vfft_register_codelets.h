@@ -228,18 +228,21 @@ VFFT_TW_DISPATCH_WRAPPER(8, radix8_tw_dit_kernel)
 #endif
 
 #ifdef FFT_RADIX32_DISPATCH_H
-/* R=32 DIT tw: delegate to dispatch.h (flat + ladder + scalar fallback) */
+/*
+ * R=32 DIT tw: delegate to dispatch.h (flat + ladder + scalar fallback).
+ * Ladder uses same tw table layout as flat — pass flat pointers for both.
+ */
 static void vfft_tw_dispatch_r32_fwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)
 {
-    radix32_tw_forward(K, ri, ii, ro, io, twr, twi, NULL, NULL);
+    radix32_tw_forward(K, ri, ii, ro, io, twr, twi, twr, twi);
 }
 static void vfft_tw_dispatch_r32_bwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)
 {
-    radix32_tw_backward(K, ri, ii, ro, io, twr, twi, NULL, NULL);
+    radix32_tw_backward(K, ri, ii, ro, io, twr, twi, twr, twi);
 }
 #endif
 
@@ -712,6 +715,7 @@ static void vfft_dispatch_r64_bwd(
 
 /* ── R=64 tw dispatch (delegates to dispatch.h: DAG + 8×8CT + scalar) ── */
 #ifdef FFT_RADIX64_DISPATCH_H
+/* R=64 DIT tw: delegate to dispatch.h (DAG K<=12, 8×8CT K>12, scalar fallback) */
 static void vfft_tw_dispatch_r64_fwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)

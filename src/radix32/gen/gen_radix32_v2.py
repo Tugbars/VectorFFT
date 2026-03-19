@@ -248,7 +248,7 @@ def emit_ladder_kernel(em, d, itw_set, u):
         em.o(f"__m512d {pipe}b3_re, {pipe}b3_im;")
         em.emit_cmul(f"{pipe}b3_re", f"{pipe}b3_im",
                      f"{pipe}b1_re", f"{pipe}b1_im",
-                     f"{pipe}b2_re", f"{pipe}b2_im", 'fwd')
+                     f"{pipe}b2_re", f"{pipe}b2_im", d)
         em.b()
         em.c(f"{pipe}Derived row twiddle scratch")
         em.o(f"__m512d {pipe}r3_re,{pipe}r3_im, {pipe}r5_re,{pipe}r5_im, {pipe}r6_re,{pipe}r6_im, {pipe}r7_re,{pipe}r7_im;")
@@ -270,7 +270,7 @@ def emit_ladder_kernel(em, d, itw_set, u):
                         tw_name = f"r{n1}"
                         em.emit_cmul(f"{pipe}{tw_name}_re", f"{pipe}{tw_name}_im",
                                      f"{pipe}{a_name}_re", f"{pipe}{a_name}_im",
-                                     f"{pipe}{b_name}_re", f"{pipe}{b_name}_im", 'fwd')
+                                     f"{pipe}{b_name}_re", f"{pipe}{b_name}_im", d)
                         wr, wi = f"{pipe}{tw_name}_re", f"{pipe}{tw_name}_im"
                         if keep:
                             em.o(f"{pipe}b12_re = {wr}; {pipe}b12_im = {wi};")
