@@ -73,6 +73,13 @@ typedef void (*vfft_tw_il_codelet_fn)(
     const double *__restrict__ tw_im,
     size_t K);
 
+/* N1 IL codelet: notw (no twiddle), interleaved layout.
+ * Monolithic genfft DAG — optimal for innermost stage in IL pipeline. */
+typedef void (*vfft_n1_il_codelet_fn)(
+    const double *__restrict__ in,
+    double *__restrict__ out,
+    size_t K);
+
 /* ═══════════════════════════════════════════════════════════════
  * NAIVE DFT FALLBACK
  * ═══════════════════════════════════════════════════════════════ */
@@ -171,6 +178,9 @@ typedef struct
     /* Interleaved variants (half the memory streams at large K) */
     vfft_tw_il_codelet_fn tw_fwd_il[VFFT_MAX_RADIX];
     vfft_tw_il_codelet_fn tw_dif_bwd_il[VFFT_MAX_RADIX];
+    /* N1 IL: monolithic notw for innermost stage in IL pipeline */
+    vfft_n1_il_codelet_fn n1_fwd_il[VFFT_MAX_RADIX];
+    vfft_n1_il_codelet_fn n1_bwd_il[VFFT_MAX_RADIX];
     /* Per-radix crossover K: use IL when K >= this value (0 = never) */
     size_t il_crossover_K[VFFT_MAX_RADIX];
 } vfft_codelet_registry;
@@ -240,6 +250,16 @@ static inline void vfft_registry_set_tw_il(vfft_codelet_registry *reg,
         reg->tw_fwd_il[radix] = tw_fwd_il;
         reg->tw_dif_bwd_il[radix] = tw_dif_bwd_il;
         reg->il_crossover_K[radix] = crossover_K;
+    }
+}
+
+static inline void vfft_registry_set_n1_il(vfft_codelet_registry *reg,
+                                           size_t radix, vfft_n1_il_codelet_fn fwd_il, vfft_n1_il_codelet_fn bwd_il)
+{
+    if (radix < VFFT_MAX_RADIX)
+    {
+        reg->n1_fwd_il[radix] = fwd_il;
+        reg->n1_bwd_il[radix] = bwd_il;
     }
 }
 
@@ -497,6 +517,8 @@ typedef struct
     /* Interleaved variants */
     vfft_tw_il_codelet_fn tw_fwd_il;
     vfft_tw_il_codelet_fn tw_dif_bwd_il;
+    vfft_n1_il_codelet_fn n1_fwd_il; /* monolithic notw IL */
+    vfft_n1_il_codelet_fn n1_bwd_il;
     int use_il;    /* 1 = this stage uses IL layout */
     double *tw_re; /* strided twiddle table (always built) */
     double *tw_im;
@@ -992,6 +1014,8 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
         /* Interleaved variants: use when K >= crossover */
         st->tw_fwd_il = reg->tw_fwd_il[st->radix];
         st->tw_dif_bwd_il = reg->tw_dif_bwd_il[st->radix];
+        st->n1_fwd_il = reg->n1_fwd_il[st->radix];
+        st->n1_bwd_il = reg->n1_bwd_il[st->radix];
         {
             size_t co = reg->il_crossover_K[st->radix];
             st->use_il = (co > 0 && st->K >= co && st->tw_fwd_il != NULL) ? 1 : 0;
@@ -1068,6 +1092,23 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
             break;
         }
     }
+
+    /* Propagate IL to innermost stage (s=0, K=1) if monolithic N1 IL available
+     * and the stage above (s=1) uses IL — avoids IL→split→IL transition. */
+    if (plan->has_il_stages && fact.nfactors >= 2 &&
+        plan->stages[0].n1_fwd_il && !plan->stages[0].use_il)
+    {
+        /* Check if any outer stage uses IL */
+        for (size_t s = 1; s < fact.nfactors; s++)
+        {
+            if (plan->stages[s].use_il)
+            {
+                plan->stages[0].use_il = 1;
+                break;
+            }
+        }
+    }
+
     if (plan->has_il_stages)
     {
         plan->buf_il_a = (double *)vfft_aligned_alloc(64, 2 * N * sizeof(double));
@@ -1195,7 +1236,7 @@ static void vfft_execute_fwd(
         const int is_last = (s == (int)S - 1);
 
         /* ── IL path: interleaved data, half the memory streams ── */
-        if (st->use_il && st->tw_fwd_il)
+        if (st->use_il && (st->tw_fwd_il || st->n1_fwd_il))
         {
             /* Convert split → IL if needed (one-time at transition) */
             if (!is_il)
@@ -1207,9 +1248,18 @@ static void vfft_execute_fwd(
             for (size_t g = 0; g < n_outer; g++)
             {
                 size_t off = g * R * K;
-                st->tw_fwd_il(
-                    src_il + 2 * off, dst_il + 2 * off,
-                    st->tw_re, st->tw_im, K);
+                if (st->tw_fwd_il)
+                {
+                    st->tw_fwd_il(
+                        src_il + 2 * off, dst_il + 2 * off,
+                        st->tw_re, st->tw_im, K);
+                }
+                else
+                {
+                    /* N1 IL: monolithic notw for innermost stage */
+                    st->n1_fwd_il(
+                        src_il + 2 * off, dst_il + 2 * off, K);
+                }
             }
 
             if (is_last)
@@ -1433,6 +1483,11 @@ static void vfft_execute_bwd_dif(
     memcpy(src_re, in_re, N * sizeof(double));
     memcpy(src_im, in_im, N * sizeof(double));
 
+    /* IL buffers for backward */
+    double *src_il = plan->buf_il_a;
+    double *dst_il = plan->buf_il_b;
+    int is_il = 0;
+
     /* Process outer to inner: s=S-1 (largest K) down to s=0 (K=1) */
     for (int s = (int)S - 1; s >= 0; s--)
     {
@@ -1440,6 +1495,44 @@ static void vfft_execute_bwd_dif(
         const size_t R = st->radix;
         const size_t K = st->K;
         const size_t n_outer = N / (R * K);
+
+        /* ── IL path for backward ── */
+        if (st->use_il && (st->tw_dif_bwd_il || st->n1_bwd_il))
+        {
+            if (!is_il)
+            {
+                vfft_split_to_il(src_re, src_im, src_il, N);
+                is_il = 1;
+            }
+
+            for (size_t g = 0; g < n_outer; g++)
+            {
+                size_t off = g * R * K;
+                if (st->tw_dif_bwd_il)
+                {
+                    st->tw_dif_bwd_il(
+                        src_il + 2 * off, dst_il + 2 * off,
+                        st->tw_re, st->tw_im, K);
+                }
+                else
+                {
+                    st->n1_bwd_il(
+                        src_il + 2 * off, dst_il + 2 * off, K);
+                }
+            }
+
+            double *t = src_il;
+            src_il = dst_il;
+            dst_il = t;
+            continue;
+        }
+
+        /* Convert IL → split if returning from IL stages */
+        if (is_il)
+        {
+            vfft_il_to_split(src_il, src_re, src_im, N);
+            is_il = 0;
+        }
 
         /* Last DIF stage (s=0): write into temp for final perm gather */
         /* (can't write into out directly because perm is a gather) */
@@ -1494,6 +1587,13 @@ static void vfft_execute_bwd_dif(
         t = src_im;
         src_im = dst_im;
         dst_im = t;
+    }
+
+    /* Convert IL → split if backward ended in IL mode */
+    if (is_il)
+    {
+        vfft_il_to_split(src_il, src_re, src_im, N);
+        is_il = 0;
     }
 
     /* DIF: output is in digit-reversed order.
