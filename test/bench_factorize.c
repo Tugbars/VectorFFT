@@ -183,10 +183,12 @@ static vfft_plan *make_plan(size_t N, const size_t *factors, size_t nf,
             return NULL;
         }
 
-        /* IL codelets — same logic as vfft_plan_create_ex */
+        /* IL codelets — only activate when K is SIMD-aligned.
+         * Scalar IL fallback is too slow to be useful. */
         if (R < VFFT_MAX_RADIX && reg->tw_fwd_il[R] &&
-            K >= reg->il_crossover_K[R])
-        {
+            K >= reg->il_crossover_K[R] && K > 1 &&
+            ((K & 3) == 0))
+        { /* require K divisible by 4 (AVX2 minimum) */
             st->tw_fwd_il = reg->tw_fwd_il[R];
             st->tw_dif_bwd_il = reg->tw_dif_bwd_il[R];
             st->n1_fwd_il = reg->n1_fwd_il[R];
