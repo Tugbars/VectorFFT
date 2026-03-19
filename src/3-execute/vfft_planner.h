@@ -1030,7 +1030,11 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
         st->n1_bwd_il = reg->n1_bwd_il[st->radix];
         {
             size_t co = reg->il_crossover_K[st->radix];
-            st->use_il = (co > 0 && st->K >= co && st->tw_fwd_il != NULL) ? 1 : 0;
+            /* Only activate IL when K is SIMD-aligned — scalar IL is too slow */
+            st->use_il = (co > 0 && st->K >= co && (st->K & 3) == 0 &&
+                          st->tw_fwd_il != NULL)
+                             ? 1
+                             : 0;
         }
 
         stride *= st->radix;
@@ -1203,8 +1207,9 @@ static vfft_plan *vfft_plan_create_ex(
             return vfft_plan_create(N, reg);
         }
 
-        /* IL codelets */
-        if (reg->tw_fwd_il[st->radix] && st->K >= reg->il_crossover_K[st->radix])
+        /* IL codelets — only when K is SIMD-aligned */
+        if (reg->tw_fwd_il[st->radix] && st->K >= reg->il_crossover_K[st->radix] &&
+            (st->K & 3) == 0)
         {
             st->tw_fwd_il = reg->tw_fwd_il[st->radix];
             st->tw_dif_bwd_il = reg->tw_dif_bwd_il[st->radix];
