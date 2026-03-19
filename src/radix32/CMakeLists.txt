@@ -1,24 +1,12 @@
-# ============================================================================
-# VectorFFT — radix32 codelet module
-#
-# Header-only: all codelets are generated .h files included by dispatch.
-# This CMakeLists creates an INTERFACE library for include paths and
-# adds the test/benchmark subdirectory.
-# ============================================================================
-
-# ── Interface library (header-only, carries include paths) ───────────────
 add_library(vfft_radix32 INTERFACE)
-
 target_include_directories(vfft_radix32 INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}            # fft_radix32_dispatch.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/avx512     # fft_radix32_avx512_*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/avx2       # fft_radix32_avx2_*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/scalar     # fft_radix32_scalar_*.h
-)
-
-message(STATUS "[VectorFFT] Module: radix32 (header-only)")
-
-# ── Tests + benchmarks ───────────────────────────────────────────────────
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/avx512
+    ${CMAKE_CURRENT_SOURCE_DIR}/avx2
+    ${CMAKE_CURRENT_SOURCE_DIR}/scalar)
+message(STATUS "[VectorFFT] Module: radix32 (flat CT + ladder + pack-walk + IL)")
 if(VFFT_BUILD_TESTS OR VFFT_BUILD_BENCHMARKS)
-    add_subdirectory(tests)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        add_subdirectory(tests)
+    endif()
 endif()
