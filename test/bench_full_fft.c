@@ -6,11 +6,20 @@
  *   R=11,13,17,19,23           — genfft notw (no fused tw)
  *   R=64,128                   — N1-only (innermost stage, K=1)
  *
+ * Wisdom:
+ *   If vfft_wisdom.txt exists in the working directory, optimal factorizations
+ *   from bench_factorize are used instead of the heuristic planner.
+ *   Run bench_factorize first to generate it.
+ *
  * Tests:
  *   1. Correctness: VectorFFT fwd vs FFTW fwd
  *   2. Roundtrip:   VectorFFT fwd->bwd vs identity
  *   3. Benchmark:   VectorFFT vs FFTW (ns, min-of-5, FFTW_ESTIMATE)
  */
+
+#ifdef _MSC_VER
+#define _CRT_SECURE_NO_WARNINGS
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,9 +46,10 @@
 
 #ifndef VFFT_ISA_LEVEL_DEFINED
 #define VFFT_ISA_LEVEL_DEFINED
-typedef enum {
+typedef enum
+{
     VFFT_ISA_SCALAR = 0,
-    VFFT_ISA_AVX2   = 1,
+    VFFT_ISA_AVX2 = 1,
     VFFT_ISA_AVX512 = 2
 } vfft_isa_level_t;
 #endif
@@ -68,7 +78,7 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 #undef vfft_detect_isa
 
 #include "fft_radix8_dispatch.h"
-#include "fft_radix16_dispatch.h"   /* already guarded by VFFT_ISA_DETECT_DEFINED */
+#include "fft_radix16_dispatch.h" /* already guarded by VFFT_ISA_DETECT_DEFINED */
 
 /* radix32 same issue as radix7 */
 #define vfft_detect_isa _bench_detect_isa_r32
@@ -100,7 +110,8 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 #include "fft_radix64_n1.h"
 #include "fft_radix128_n1.h"
 
-/* ── Planner ─────────────────────────────────────────────────────────── */
+/* ── Wisdom + Planner ────────────────────────────────────────────────── */
+#include "vfft_wisdom.h"
 #include "vfft_planner.h"
 
 /* register_codelets also defines vfft_detect_isa without guard */
@@ -117,7 +128,8 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 static double get_ns(void)
 {
     static LARGE_INTEGER freq = {0};
-    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    if (!freq.QuadPart)
+        QueryPerformanceFrequency(&freq);
     LARGE_INTEGER t;
     QueryPerformanceCounter(&t);
     return (double)t.QuadPart / (double)freq.QuadPart * 1e9;
@@ -146,11 +158,27 @@ static double *aa64(size_t n)
 static void factstr(const vfft_plan *plan, char *buf, size_t bufsz)
 {
     int pos = 0;
-    for (size_t s = 0; s < plan->nstages; s++) {
-        if (s) pos += snprintf(buf + pos, bufsz - (size_t)pos, "x");
+    for (size_t s = 0; s < plan->nstages; s++)
+    {
+        if (s)
+            pos += snprintf(buf + pos, bufsz - (size_t)pos, "x");
         pos += snprintf(buf + pos, bufsz - (size_t)pos, "%zu",
                         plan->stages[s].radix);
     }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Global wisdom — loaded once in main(), used by all tests
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static vfft_wisdom g_wisdom;
+static int g_has_wisdom = 0;
+
+static vfft_plan *create_plan(size_t N, const vfft_codelet_registry *reg)
+{
+    if (g_has_wisdom)
+        return vfft_plan_create_ex(N, reg, &g_wisdom);
+    return vfft_plan_create(N, reg);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -163,49 +191,64 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg)
     double *vr = aa64(N), *vi = aa64(N);
 
     srand(42 + (unsigned)N);
-    for (size_t i = 0; i < N; i++) {
+    for (size_t i = 0; i < N; i++)
+    {
         ir[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
         ii[i] = (double)rand() / RAND_MAX * 2.0 - 1.0;
     }
 
     /* FFTW reference */
-    fftw_complex *fin  = fftw_alloc_complex(N);
+    fftw_complex *fin = fftw_alloc_complex(N);
     fftw_complex *fout = fftw_alloc_complex(N);
     fftw_plan fp = fftw_plan_dft_1d((int)N, fin, fout, FFTW_FORWARD, FFTW_ESTIMATE);
-    for (size_t i = 0; i < N; i++) { fin[i][0] = ir[i]; fin[i][1] = ii[i]; }
+    for (size_t i = 0; i < N; i++)
+    {
+        fin[i][0] = ir[i];
+        fin[i][1] = ii[i];
+    }
     fftw_execute(fp);
 
     /* VectorFFT forward */
-    vfft_plan *plan = vfft_plan_create(N, reg);
-    if (!plan) {
+    vfft_plan *plan = create_plan(N, reg);
+    if (!plan)
+    {
         printf("  N=%-6zu  PLAN FAILED\n", N);
-        fftw_destroy_plan(fp); fftw_free(fin); fftw_free(fout);
-        vfft_aligned_free(ir); vfft_aligned_free(ii);
-        vfft_aligned_free(vr); vfft_aligned_free(vi);
+        fftw_destroy_plan(fp);
+        fftw_free(fin);
+        fftw_free(fout);
+        vfft_aligned_free(ir);
+        vfft_aligned_free(ii);
+        vfft_aligned_free(vr);
+        vfft_aligned_free(vi);
         return 0;
     }
     vfft_execute_fwd(plan, ir, ii, vr, vi);
 
     /* Forward error */
     double err = 0, mag = 0;
-    for (size_t i = 0; i < N; i++) {
+    for (size_t i = 0; i < N; i++)
+    {
         double e = fmax(fabs(vr[i] - fout[i][0]), fabs(vi[i] - fout[i][1]));
         double m = fmax(fabs(fout[i][0]), fabs(fout[i][1]));
-        if (e > err) err = e;
-        if (m > mag) mag = m;
+        if (e > err)
+            err = e;
+        if (m > mag)
+            mag = m;
     }
     double fwd_rel = mag > 0 ? err / mag : err;
-    double tol     = 1e-12 * (1.0 + log2((double)N));
+    double tol = 1e-12 * (1.0 + log2((double)N));
 
     /* Roundtrip */
     double *rr = aa64(N), *ri = aa64(N);
     vfft_execute_bwd(plan, vr, vi, rr, ri);
     double rt_err = 0;
-    for (size_t i = 0; i < N; i++) {
+    for (size_t i = 0; i < N; i++)
+    {
         rr[i] /= (double)N;
         ri[i] /= (double)N;
         double e = fmax(fabs(ir[i] - rr[i]), fabs(ii[i] - ri[i]));
-        if (e > rt_err) rt_err = e;
+        if (e > rt_err)
+            rt_err = e;
     }
     double rt_rel = mag > 0 ? rt_err / mag : rt_err;
 
@@ -213,9 +256,12 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg)
 
     /* Count fused stages */
     int n_dit = 0, n_dif = 0;
-    for (size_t s = 0; s < plan->nstages; s++) {
-        if (plan->stages[s].tw_fwd     && plan->stages[s].K > 1) n_dit++;
-        if (plan->stages[s].tw_dif_bwd && plan->stages[s].K > 1) n_dif++;
+    for (size_t s = 0; s < plan->nstages; s++)
+    {
+        if (plan->stages[s].tw_fwd && plan->stages[s].K > 1)
+            n_dit++;
+        if (plan->stages[s].tw_dif_bwd && plan->stages[s].K > 1)
+            n_dif++;
     }
 
     char fact[64] = "";
@@ -226,10 +272,15 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg)
            pass ? "PASS" : "FAIL");
 
     vfft_plan_destroy(plan);
-    fftw_destroy_plan(fp); fftw_free(fin); fftw_free(fout);
-    vfft_aligned_free(ir); vfft_aligned_free(ii);
-    vfft_aligned_free(vr); vfft_aligned_free(vi);
-    vfft_aligned_free(rr); vfft_aligned_free(ri);
+    fftw_destroy_plan(fp);
+    fftw_free(fin);
+    fftw_free(fout);
+    vfft_aligned_free(ir);
+    vfft_aligned_free(ii);
+    vfft_aligned_free(vr);
+    vfft_aligned_free(vi);
+    vfft_aligned_free(rr);
+    vfft_aligned_free(ri);
     return pass;
 }
 
@@ -244,26 +295,38 @@ static void bench(size_t N, const vfft_codelet_registry *reg)
     double *br = aa64(N), *bi = aa64(N);
 
     srand((unsigned)N);
-    for (size_t i = 0; i < N; i++) {
+    for (size_t i = 0; i < N; i++)
+    {
         ir[i] = (double)rand() / RAND_MAX;
         ii[i] = (double)rand() / RAND_MAX;
     }
 
-    fftw_complex *fin  = fftw_alloc_complex(N);
+    fftw_complex *fin = fftw_alloc_complex(N);
     fftw_complex *fout = fftw_alloc_complex(N);
     fftw_complex *bout = fftw_alloc_complex(N);
-    fftw_plan fp_fwd = fftw_plan_dft_1d((int)N, fin,  fout, FFTW_FORWARD,  FFTW_ESTIMATE);
+    fftw_plan fp_fwd = fftw_plan_dft_1d((int)N, fin, fout, FFTW_FORWARD, FFTW_ESTIMATE);
     fftw_plan fp_bwd = fftw_plan_dft_1d((int)N, fout, bout, FFTW_BACKWARD, FFTW_ESTIMATE);
-    for (size_t i = 0; i < N; i++) { fin[i][0] = ir[i]; fin[i][1] = ii[i]; }
+    for (size_t i = 0; i < N; i++)
+    {
+        fin[i][0] = ir[i];
+        fin[i][1] = ii[i];
+    }
 
-    vfft_plan *plan = vfft_plan_create(N, reg);
-    if (!plan) {
+    vfft_plan *plan = create_plan(N, reg);
+    if (!plan)
+    {
         printf("  N=%-6zu  PLAN FAILED\n", N);
-        fftw_destroy_plan(fp_fwd); fftw_destroy_plan(fp_bwd);
-        fftw_free(fin); fftw_free(fout); fftw_free(bout);
-        vfft_aligned_free(ir); vfft_aligned_free(ii);
-        vfft_aligned_free(vr); vfft_aligned_free(vi);
-        vfft_aligned_free(br); vfft_aligned_free(bi);
+        fftw_destroy_plan(fp_fwd);
+        fftw_destroy_plan(fp_bwd);
+        fftw_free(fin);
+        fftw_free(fout);
+        fftw_free(bout);
+        vfft_aligned_free(ir);
+        vfft_aligned_free(ii);
+        vfft_aligned_free(vr);
+        vfft_aligned_free(vi);
+        vfft_aligned_free(br);
+        vfft_aligned_free(bi);
         return;
     }
 
@@ -280,7 +343,8 @@ static void bench(size_t N, const vfft_codelet_registry *reg)
         reps = 100;
 
     /* Warm up */
-    for (int r = 0; r < 5; r++) {
+    for (int r = 0; r < 5; r++)
+    {
         vfft_execute_fwd(plan, ir, ii, vr, vi);
         vfft_execute_bwd(plan, vr, vi, br, bi);
         fftw_execute(fp_fwd);
@@ -289,24 +353,29 @@ static void bench(size_t N, const vfft_codelet_registry *reg)
 
     double t0, t1, best;
 
-#define BENCH_LOOP(var, body)                               \
-    best = 1e18;                                            \
-    for (int _trial = 0; _trial < 5; _trial++) {           \
-        t0 = get_ns();                                      \
-        for (int _r = 0; _r < reps; _r++) { body; }        \
-        t1 = get_ns();                                      \
-        double _ns = (t1 - t0) / reps;                     \
-        if (_ns < best) best = _ns;                         \
-    }                                                       \
+#define BENCH_LOOP(var, body)                  \
+    best = 1e18;                               \
+    for (int _trial = 0; _trial < 5; _trial++) \
+    {                                          \
+        t0 = get_ns();                         \
+        for (int _r = 0; _r < reps; _r++)      \
+        {                                      \
+            body;                              \
+        }                                      \
+        t1 = get_ns();                         \
+        double _ns = (t1 - t0) / reps;         \
+        if (_ns < best)                        \
+            best = _ns;                        \
+    }                                          \
     (var) = best
 
     double vfft_fwd_ns, vfft_rt_ns, fftw_fwd_ns, fftw_rt_ns;
 
     BENCH_LOOP(vfft_fwd_ns, vfft_execute_fwd(plan, ir, ii, vr, vi));
-    BENCH_LOOP(vfft_rt_ns,  vfft_execute_fwd(plan, ir, ii, vr, vi);
-                            vfft_execute_bwd(plan, vr, vi, br, bi));
+    BENCH_LOOP(vfft_rt_ns, vfft_execute_fwd(plan, ir, ii, vr, vi);
+               vfft_execute_bwd(plan, vr, vi, br, bi));
     BENCH_LOOP(fftw_fwd_ns, fftw_execute(fp_fwd));
-    BENCH_LOOP(fftw_rt_ns,  fftw_execute(fp_fwd); fftw_execute(fp_bwd));
+    BENCH_LOOP(fftw_rt_ns, fftw_execute(fp_fwd); fftw_execute(fp_bwd));
 
 #undef BENCH_LOOP
 
@@ -316,23 +385,29 @@ static void bench(size_t N, const vfft_codelet_registry *reg)
 #define CLR_GREEN "\033[92m"
 #define CLR_RESET "\033[0m"
     double fwd_x = fftw_fwd_ns / vfft_fwd_ns;
-    double rt_x  = fftw_rt_ns  / vfft_rt_ns;
+    double rt_x = fftw_rt_ns / vfft_rt_ns;
     printf("  N=%-6zu  %-16s  vfft_fwd=%7.0f  fftw_fwd=%7.0f  fwd_x=%s%.2f%s"
            "  vfft_rt=%7.0f  fftw_rt=%7.0f  rt_x=%s%.2f%s\n",
            N, fact,
            vfft_fwd_ns, fftw_fwd_ns,
            fwd_x > 1.4 ? CLR_GREEN : "", fwd_x, fwd_x > 1.4 ? CLR_RESET : "",
            vfft_rt_ns, fftw_rt_ns,
-           rt_x  > 1.4 ? CLR_GREEN : "", rt_x,  rt_x  > 1.4 ? CLR_RESET : "");
+           rt_x > 1.4 ? CLR_GREEN : "", rt_x, rt_x > 1.4 ? CLR_RESET : "");
 #undef CLR_GREEN
 #undef CLR_RESET
 
     vfft_plan_destroy(plan);
-    fftw_destroy_plan(fp_fwd); fftw_destroy_plan(fp_bwd);
-    fftw_free(fin); fftw_free(fout); fftw_free(bout);
-    vfft_aligned_free(ir); vfft_aligned_free(ii);
-    vfft_aligned_free(vr); vfft_aligned_free(vi);
-    vfft_aligned_free(br); vfft_aligned_free(bi);
+    fftw_destroy_plan(fp_fwd);
+    fftw_destroy_plan(fp_bwd);
+    fftw_free(fin);
+    fftw_free(fout);
+    fftw_free(bout);
+    vfft_aligned_free(ir);
+    vfft_aligned_free(ii);
+    vfft_aligned_free(vr);
+    vfft_aligned_free(vi);
+    vfft_aligned_free(br);
+    vfft_aligned_free(bi);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -353,6 +428,20 @@ int main(void)
     vfft_print_registry(&reg);
     printf("\n");
 
+    /* ── Load wisdom if available ── */
+    vfft_wisdom_init(&g_wisdom);
+    g_has_wisdom = (vfft_wisdom_load(&g_wisdom, "vfft_wisdom.txt") == 0);
+    if (g_has_wisdom)
+    {
+        printf("Wisdom loaded: %zu entries from vfft_wisdom.txt\n", g_wisdom.count);
+        vfft_wisdom_print(&g_wisdom);
+        printf("\n");
+    }
+    else
+    {
+        printf("No wisdom file found — using heuristic planner\n\n");
+    }
+
     static const size_t test_Ns[] = {
         /* Pure pow2 — exercises R=128,32,16,8,4,2
          *   256  = 128x2
@@ -363,30 +452,60 @@ int main(void)
          *   8192 = 128x32x2
          *  16384 = 128x32x4
          *  32768 = 128x32x8                                             */
-        256, 512, 1024, 2048, 4096, 8192, 16384, 32768,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384,
+        32768,
 
         /* R=64 innermost (128 does not divide N)
          *   320 = 64x5    448 = 64x7                                   */
-        320, 448,
+        320,
+        448,
 
         /* R=5 */
-        200, 400, 1000, 2000, 5000, 10000,
+        200,
+        400,
+        1000,
+        2000,
+        5000,
+        10000,
 
         /* R=7 */
-        224, 896, 1792, 3584,
+        224,
+        896,
+        1792,
+        3584,
 
         /* Genfft primes: N = prime * pow2 (pow2 >= 8 for SIMD K)
-         * R=11 */  88, 704, 5632,
-        /* R=13 */ 104, 832, 6656,
-        /* R=17 */ 136, 1088,
-        /* R=19 */ 152, 1216,
-        /* R=23 */ 184, 1472,
+         * R=11 */
+        88,
+        704,
+        5632,
+        /* R=13 */ 104,
+        832,
+        6656,
+        /* R=17 */ 136,
+        1088,
+        /* R=19 */ 152,
+        1216,
+        /* R=23 */ 184,
+        1472,
 
         /* R=10 */
-        80, 640, 4000, 8000,
+        80,
+        640,
+        4000,
+        8000,
 
         /* R=25 */
-        200, 800, 5000, 20000,
+        200,
+        800,
+        5000,
+        20000,
 
         /* Large mixed */
         40000,
@@ -396,14 +515,16 @@ int main(void)
     /* ── Correctness ── */
     printf("── Correctness: VectorFFT fwd vs FFTW + roundtrip ──\n\n");
     int pass = 0, total = 0;
-    for (size_t i = 0; i < nN; i++) {
+    for (size_t i = 0; i < nN; i++)
+    {
         total++;
         pass += test_correctness(test_Ns[i], &reg);
     }
     printf("\n  %d/%d %s\n\n", pass, total,
            pass == total ? "ALL PASSED" : "FAILURES ABOVE");
 
-    if (pass != total) {
+    if (pass != total)
+    {
         printf("Correctness failures — skipping benchmarks.\n");
         return 1;
     }
@@ -419,5 +540,6 @@ int main(void)
     for (size_t i = 0; i < nN; i++)
         bench(test_Ns[i], &reg);
 
+    vfft_wisdom_destroy(&g_wisdom);
     return 0;
 }
