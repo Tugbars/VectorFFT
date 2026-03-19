@@ -13,6 +13,9 @@ typedef enum { VFFT_ISA_SCALAR=0, VFFT_ISA_AVX2=1, VFFT_ISA_AVX512=2 } vfft_isa_
 #endif
 
 /* ── N1 (notw) codelets ── */
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include "avx512/fft_radix64_avx512_n1_gen.h"
+#endif
 #ifdef __AVX2__
 #include "avx2/fft_radix64_avx2_n1_gen.h"
 #endif
@@ -48,20 +51,40 @@ static inline vfft_isa_level_t radix64_effective_isa(size_t K) {
 static inline void radix64_n1_forward(size_t K,
     const double *__restrict__ ir, const double *__restrict__ ii,
     double *__restrict__ or_, double *__restrict__ oi) {
-#ifdef __AVX2__
-    radix64_n1_dit_kernel_fwd_avx2(ir, ii, or_, oi, K);
-#else
-    (void)ir;(void)ii;(void)or_;(void)oi;(void)K;
+    switch (radix64_effective_isa(K)) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    case VFFT_ISA_AVX512:
+        radix64_n1_dit_kernel_fwd_avx512(ir, ii, or_, oi, K);
+        return;
 #endif
+#ifdef __AVX2__
+    case VFFT_ISA_AVX2:
+        radix64_n1_dit_kernel_fwd_avx2(ir, ii, or_, oi, K);
+        return;
+#endif
+    default:
+        (void)ir;(void)ii;(void)or_;(void)oi;(void)K;
+        return;
+    }
 }
 static inline void radix64_n1_backward(size_t K,
     const double *__restrict__ ir, const double *__restrict__ ii,
     double *__restrict__ or_, double *__restrict__ oi) {
-#ifdef __AVX2__
-    radix64_n1_dit_kernel_bwd_avx2(ir, ii, or_, oi, K);
-#else
-    (void)ir;(void)ii;(void)or_;(void)oi;(void)K;
+    switch (radix64_effective_isa(K)) {
+#if defined(__AVX512F__) || defined(__AVX512F)
+    case VFFT_ISA_AVX512:
+        radix64_n1_dit_kernel_bwd_avx512(ir, ii, or_, oi, K);
+        return;
 #endif
+#ifdef __AVX2__
+    case VFFT_ISA_AVX2:
+        radix64_n1_dit_kernel_bwd_avx2(ir, ii, or_, oi, K);
+        return;
+#endif
+    default:
+        (void)ir;(void)ii;(void)or_;(void)oi;(void)K;
+        return;
+    }
 }
 
 /* ── DIT tw dispatch ── */
