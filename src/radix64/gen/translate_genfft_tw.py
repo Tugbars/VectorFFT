@@ -161,16 +161,24 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
     if isa == 'avx512':
         T, C, P = '__m512d', 8, '_mm512'
         attr = '__attribute__((target("avx512f,fma")))'
-    else:  # avx2
+        use_intrin = True
+    elif isa == 'avx2':
         T, C, P = '__m256d', 4, '_mm256'
         attr = '__attribute__((target("avx2,fma")))'
+        use_intrin = True
+    else:  # scalar
+        T, C, P = 'double', 1, None
+        attr = ''
+        use_intrin = False
     R = radix
     ISA_U = isa.upper()
     const_names = set(constants.keys())
 
     def bcast(arg):
-        """Wrap constant scalars in set1_pd() for vector ops."""
+        """Wrap constant scalars for vector ops (no-op for scalar)."""
         arg = arg.strip()
+        if not use_intrin:
+            return arg
         if arg in const_names:
             return f'{P}_set1_pd({arg})'
         return arg
@@ -193,7 +201,8 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
     L.append(f'#ifndef {guard}')
     L.append(f'#define {guard}')
     L.append(f'#include <stddef.h>')
-    L.append(f'#include <immintrin.h>')
+    if use_intrin:
+        L.append(f'#include <immintrin.h>')
     L.append(f'')
 
     # Constants as static doubles — shared guard for multi-ISA inclusion
@@ -206,7 +215,8 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
     L.append(f'')
 
     # Forward DIT function
-    L.append(attr)
+    if attr:
+        L.append(attr)
     L.append(f'static void')
     L.append(f'radix{R}_tw_dag_dit_fwd_{isa}(')
     L.append(f'    const double * __restrict__ in_re, const double * __restrict__ in_im,')
@@ -214,77 +224,95 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
     L.append(f'    const double * __restrict__ tw_re, const double * __restrict__ tw_im,')
     L.append(f'    size_t K)')
     L.append(f'{{')
-
-    # Variable declarations — group into lines of 4
-    all_vars = sorted(set(var_decls))
-    for i in range(0, len(all_vars), 4):
-        chunk = all_vars[i:i+4]
-        L.append(f'    {T} {", ".join(chunk)};')
-    L.append(f'')
+    # No outer variable declarations — emit type on first assignment inside loop
     L.append(f'    for (size_t k = 0; k < K; k += {C}) {{')
 
-    # Track which W indices map to which twiddle element
-    # W[2*i] = tw_re for element i+1, W[2*i+1] = tw_im for element i+1
-    # But we load VECTORS (different K positions), not broadcasts
-
     indent = '        '
+    declared = set()  # track first-use for __m256d/__m512d prefix
+
+    def decl(var):
+        """Return 'T var' on first use, just 'var' on subsequent."""
+        if var not in declared:
+            declared.add(var)
+            return f'{T} {var}'
+        return var
 
     for op in ops:
         if op[0] == 'LOAD':
             _, target, arr, idx = op
-            if arr == 'ri':
-                L.append(f'{indent}{T} {target} = {P}_load_pd(&in_re[{idx}*K+k]);')
+            if use_intrin:
+                src = f'&in_{"re" if arr=="ri" else "im"}[{idx}*K+k]'
+                L.append(f'{indent}{decl(target)} = {P}_load_pd({src});')
             else:
-                L.append(f'{indent}{T} {target} = {P}_load_pd(&in_im[{idx}*K+k]);')
+                src = f'in_{"re" if arr=="ri" else "im"}[{idx}*K+k]'
+                L.append(f'{indent}{decl(target)} = {src};')
 
         elif op[0] == 'LOAD_W':
             _, target, widx = op
-            # Split layout: tw_re[i*K+k], tw_im[i*K+k]
-            # W[2*i] → tw_re[i*K+k], W[2*i+1] → tw_im[i*K+k]
-            # Sign fix: FFTW uses +sin, our table has -sin → negate im on load
             tw_elem = widx // 2
             is_im = widx % 2
-            if is_im:
-                L.append(f'{indent}{T} {target} = {P}_xor_pd({P}_load_pd(&tw_im[{tw_elem}*K+k]), {P}_set1_pd(-0.0));')
+            if use_intrin:
+                if is_im:
+                    L.append(f'{indent}{decl(target)} = {P}_xor_pd({P}_load_pd(&tw_im[{tw_elem}*K+k]), {P}_set1_pd(-0.0));')
+                else:
+                    L.append(f'{indent}{decl(target)} = {P}_load_pd(&tw_re[{tw_elem}*K+k]);')
             else:
-                L.append(f'{indent}{T} {target} = {P}_load_pd(&tw_re[{tw_elem}*K+k]);')
+                if is_im:
+                    L.append(f'{indent}{decl(target)} = -tw_im[{tw_elem}*K+k];')
+                else:
+                    L.append(f'{indent}{decl(target)} = tw_re[{tw_elem}*K+k];')
 
         elif op[0] == 'STORE':
             _, arr, idx, expr = op
-            expr_avx = translate_expr(expr, const_names, P)
-            if arr == 'ri':
-                L.append(f'{indent}{P}_store_pd(&out_re[{idx}*K+k], {expr_avx});')
+            expr_t = translate_expr(expr, const_names, P) if use_intrin else translate_expr_scalar(expr)
+            dst = f'out_{"re" if arr=="ri" else "im"}[{idx}*K+k]'
+            if use_intrin:
+                L.append(f'{indent}{P}_store_pd(&{dst}, {expr_t});')
             else:
-                L.append(f'{indent}{P}_store_pd(&out_im[{idx}*K+k], {expr_avx});')
+                L.append(f'{indent}{dst} = {expr_t};')
 
         elif op[0] == 'FMA':
             _, target, a, b, c = op
-            L.append(f'{indent}{target} = {P}_fmadd_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
+            if use_intrin:
+                L.append(f'{indent}{decl(target)} = {P}_fmadd_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
+            else:
+                L.append(f'{indent}{decl(target)} = {a} * {b} + {c};')
 
         elif op[0] == 'FNMS':
             _, target, a, b, c = op
-            L.append(f'{indent}{target} = {P}_fnmadd_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
+            if use_intrin:
+                L.append(f'{indent}{decl(target)} = {P}_fnmadd_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
+            else:
+                L.append(f'{indent}{decl(target)} = {c} - {a} * {b};')
 
         elif op[0] == 'FMS':
             _, target, a, b, c = op
-            L.append(f'{indent}{target} = {P}_fmsub_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
+            if use_intrin:
+                L.append(f'{indent}{decl(target)} = {P}_fmsub_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
+            else:
+                L.append(f'{indent}{decl(target)} = {a} * {b} - {c};')
 
         elif op[0] == 'FNMA':
             _, target, a, b, c = op
-            L.append(f'{indent}{target} = {P}_fnmsub_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
+            if use_intrin:
+                L.append(f'{indent}{decl(target)} = {P}_fnmsub_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
+            else:
+                L.append(f'{indent}{decl(target)} = -({a} * {b}) - {c};')
 
         elif op[0] == 'BINOP':
             _, target, op_sym, lhs, rhs = op
-            if op_sym == '+':
-                L.append(f'{indent}{target} = {P}_add_pd({bcast(lhs)}, {bcast(rhs)});')
-            elif op_sym == '-':
-                L.append(f'{indent}{target} = {P}_sub_pd({bcast(lhs)}, {bcast(rhs)});')
-            elif op_sym == '*':
-                L.append(f'{indent}{target} = {P}_mul_pd({bcast(lhs)}, {bcast(rhs)});')
+            if use_intrin:
+                fn = {'+':"add",'-':"sub",'*':"mul"}[op_sym]
+                L.append(f'{indent}{decl(target)} = {P}_{fn}_pd({bcast(lhs)}, {bcast(rhs)});')
+            else:
+                L.append(f'{indent}{decl(target)} = {lhs} {op_sym} {rhs};')
 
         elif op[0] == 'NEG':
             _, target, src = op
-            L.append(f'{indent}{target} = {P}_xor_pd({src}, {P}_set1_pd(-0.0));')
+            if use_intrin:
+                L.append(f'{indent}{decl(target)} = {P}_xor_pd({src}, {P}_set1_pd(-0.0));')
+            else:
+                L.append(f'{indent}{decl(target)} = -{src};')
 
         elif op[0] == 'UNKNOWN':
             L.append(f'{indent}/* UNKNOWN: {op[1]} = {op[2]} */')
@@ -297,7 +325,8 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
     # swap(in_re↔in_im, out_re↔out_im) gives backward DFT
     L.append(f'/* DIT backward: pointer-swap trick (Frigo & Johnson).')
     L.append(f' * Swapping re↔im on input+output converts forward DFT to backward. */')
-    L.append(attr)
+    if attr:
+        L.append(attr)
     L.append(f'static inline void')
     L.append(f'radix{R}_tw_dag_dit_bwd_{isa}(')
     L.append(f'    const double * __restrict__ in_re, const double * __restrict__ in_im,')
@@ -360,16 +389,31 @@ def translate_expr(expr, const_names=set(), P='_mm512'):
     return f'/* UNTRANSLATED: {expr} */'
 
 
+def translate_expr_scalar(expr):
+    """Translate store expression to plain scalar C."""
+    expr = expr.strip()
+    m = re.match(r'FMA\(([^,]+),\s*([^,]+),\s*([^)]+)\)', expr)
+    if m: return f'{m.group(1).strip()} * {m.group(2).strip()} + {m.group(3).strip()}'
+    m = re.match(r'FNMS\(([^,]+),\s*([^,]+),\s*([^)]+)\)', expr)
+    if m: return f'{m.group(3).strip()} - {m.group(1).strip()} * {m.group(2).strip()}'
+    m = re.match(r'FMS\(([^,]+),\s*([^,]+),\s*([^)]+)\)', expr)
+    if m: return f'{m.group(1).strip()} * {m.group(2).strip()} - {m.group(3).strip()}'
+    m = re.match(r'(\w+)\s*([+\-*])\s*(\w+)', expr)
+    if m: return f'{m.group(1)} {m.group(2)} {m.group(3)}'
+    if re.match(r'^\w+$', expr): return expr
+    return f'/* UNTRANSLATED: {expr} */'
+
+
 def main():
     if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <fftw_src_dir> <radix> [avx2|avx512]", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <fftw_src_dir> <radix> [scalar|avx2|avx512]", file=sys.stderr)
         sys.exit(1)
 
     fftw_src = sys.argv[1]
     radix = int(sys.argv[2])
     isa = sys.argv[3] if len(sys.argv) > 3 else 'avx512'
-    if isa not in ('avx2', 'avx512'):
-        print(f"Unknown ISA: {isa}. Use avx2 or avx512.", file=sys.stderr)
+    if isa not in ('scalar', 'avx2', 'avx512'):
+        print(f"Unknown ISA: {isa}. Use scalar, avx2 or avx512.", file=sys.stderr)
         sys.exit(1)
 
     body = extract_fma_body(fftw_src, radix)

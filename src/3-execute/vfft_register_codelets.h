@@ -676,25 +676,19 @@ static void vfft_dispatch_r64_bwd(
 }
 #endif
 
-/* ── R=64 tw dispatch (no scalar fallback — SIMD only) ── */
+/* ── R=64 tw dispatch (delegates to dispatch.h: DAG + 8×8CT + scalar) ── */
 #ifdef FFT_RADIX64_DISPATCH_H
 static void vfft_tw_dispatch_r64_fwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)
 {
-    vfft_isa_level_t isa = vfft_detect_isa();
-    (void)isa;
-    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dit_kernel_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
-    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dit_kernel_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    radix64_tw_forward(K, ri, ii, ro, io, twr, twi);
 }
 static void vfft_tw_dispatch_r64_bwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)
 {
-    vfft_isa_level_t isa = vfft_detect_isa();
-    (void)isa;
-    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dit_kernel_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
-    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dit_kernel_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    radix64_tw_backward(K, ri, ii, ro, io, twr, twi);
 }
 
 /* ── R=64 DIF tw dispatch ── */
@@ -702,19 +696,13 @@ static void vfft_tw_dif_dispatch_r64_fwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)
 {
-    vfft_isa_level_t isa = vfft_detect_isa();
-    (void)isa;
-    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dif_kernel_fwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
-    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dif_kernel_fwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    radix64_tw_dif_forward(K, ri, ii, ro, io, twr, twi);
 }
 static void vfft_tw_dif_dispatch_r64_bwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)
 {
-    vfft_isa_level_t isa = vfft_detect_isa();
-    (void)isa;
-    IF_AVX512(if (isa == VFFT_ISA_AVX512 && K >= 8 && (K & 7) == 0) { radix64_tw_flat_dif_kernel_bwd_avx512(ri,ii,ro,io,twr,twi,K); return; })
-    IF_AVX2(if (isa >= VFFT_ISA_AVX2 && K >= 4 && (K & 3) == 0) { radix64_tw_flat_dif_kernel_bwd_avx2(ri,ii,ro,io,twr,twi,K); return; })
+    radix64_tw_dif_backward(K, ri, ii, ro, io, twr, twi);
 }
 
 /* ── R=64 IL tw dispatch ── */
