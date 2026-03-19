@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VectorFFT — Radix-64 Codelet Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c0e14;
+  --bg2: #12151e;
+  --bg3: #1a1e2b;
+  --fg: #c8cdd8;
+  --fg2: #8b92a3;
+  --fg3: #555d73;
+  --accent: #5eadff;
+  --avx512: #5eadff;
+  --avx2: #6ee7a0;
+  --scalar: #a0a8be;
+  --dag: #c084fc;
+  --ct: #f59e42;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --border: #252a3a;
+  --code-bg: #0a0c12;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Source Serif 4', Georgia, serif;
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 60px 32px 120px;
+}
+
+/* ── Header ── */
+.hero {
+  margin-bottom: 72px;
+  padding-bottom: 48px;
+  border-bottom: 1px solid var(--border);
+}
+.hero .tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 16px;
+}
+.hero h1 {
+  font-size: 42px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: #eef0f6;
+  margin-bottom: 20px;
+}
+.hero .subtitle {
+  font-size: 18px;
+  color: var(--fg2);
+  max-width: 640px;
+}
+.hero .meta {
+  margin-top: 24px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--fg3);
+  display: flex;
+  gap: 24px;
+}
+
+/* ── Sections ── */
+section { margin-bottom: 64px; }
+h2 {
+  font-size: 26px;
+  font-weight: 700;
+  color: #dfe3ed;
+  margin-bottom: 8px;
+  padding-top: 32px;
+}
+h2 .num {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--accent);
+  font-size: 18px;
+  margin-right: 10px;
+}
+h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #c0c6d4;
+  margin: 32px 0 12px;
+}
+p { margin-bottom: 16px; max-width: 720px; }
+p + p { margin-top: 0; }
+
+/* ── Code ── */
+code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px 24px;
+  overflow-x: auto;
+  margin: 16px 0 24px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--fg);
+}
+pre .kw { color: var(--dag); }
+pre .fn { color: var(--avx2); }
+pre .cm { color: var(--fg3); font-style: italic; }
+pre .num { color: var(--ct); }
+pre .str { color: var(--warn); }
+
+/* ── Tables ── */
+.tbl-wrap {
+  overflow-x: auto;
+  margin: 16px 0 28px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+}
+th {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 2px solid var(--border);
+  color: var(--fg2);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+td {
+  padding: 9px 14px;
+  border-bottom: 1px solid #1a1e28;
+  vertical-align: top;
+}
+tr:hover td { background: rgba(94,173,255,0.03); }
+
+/* ISA badges */
+.isa {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+.isa-z  { background: rgba(94,173,255,0.15); color: var(--avx512); }
+.isa-a2 { background: rgba(110,231,160,0.12); color: var(--avx2); }
+.isa-sc { background: rgba(160,168,190,0.12); color: var(--scalar); }
+.isa-dag { background: rgba(192,132,252,0.12); color: var(--dag); }
+.isa-ct  { background: rgba(245,158,66,0.12); color: var(--ct); }
+
+/* ── Flow diagrams ── */
+.flow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 20px 0 28px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.flow-row {
+  display: flex;
+  align-items: stretch;
+  min-height: 40px;
+}
+.flow-cond {
+  width: 200px;
+  flex-shrink: 0;
+  padding: 8px 14px;
+  background: var(--bg3);
+  border-left: 3px solid var(--fg3);
+  display: flex;
+  align-items: center;
+  color: var(--fg2);
+}
+.flow-arrow {
+  width: 40px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg3);
+}
+.flow-result {
+  flex: 1;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.flow-result.z  { background: rgba(94,173,255,0.06); border-left: 3px solid var(--avx512); }
+.flow-result.a2 { background: rgba(110,231,160,0.05); border-left: 3px solid var(--avx2); }
+.flow-result.sc { background: rgba(160,168,190,0.05); border-left: 3px solid var(--scalar); }
+.flow-result.dag { background: rgba(192,132,252,0.05); border-left: 3px solid var(--dag); }
+
+/* ── Callouts ── */
+.callout {
+  border-left: 3px solid var(--accent);
+  background: rgba(94,173,255,0.04);
+  padding: 16px 20px;
+  margin: 20px 0 24px;
+  border-radius: 0 6px 6px 0;
+  font-size: 14px;
+}
+.callout.warn { border-color: var(--warn); background: rgba(251,191,36,0.04); }
+.callout strong { color: #dfe3ed; }
+.callout code { font-size: 12px; }
+
+/* ── Benchmark table ── */
+.bench td:nth-child(n+3) { text-align: right; }
+.bench th:nth-child(n+3) { text-align: right; }
+.bench .winner { color: var(--avx2); font-weight: 600; }
+.bench .loser { color: var(--fg3); }
+
+/* ── Register diagrams ── */
+.reg-bar {
+  display: flex;
+  height: 28px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 8px 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+}
+.reg-bar > div {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0c0e14;
+  white-space: nowrap;
+  padding: 0 6px;
+}
+.reg-const { background: var(--avx512); }
+.reg-bases { background: var(--dag); }
+.reg-data  { background: var(--ct); }
+.reg-free  { background: var(--fg3); opacity: 0.3; }
+.reg-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--fg2);
+  margin-bottom: 4px;
+}
+
+/* ── Credits ── */
+.credits {
+  margin-top: 80px;
+  padding-top: 32px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+  color: var(--fg2);
+}
+.credits a { color: var(--accent); text-decoration: none; }
+.credits a:hover { text-decoration: underline; }
+
+/* ── Responsive ── */
+@media (max-width: 700px) {
+  .hero h1 { font-size: 28px; }
+  .flow-cond { width: 140px; font-size: 11px; }
+  pre { font-size: 11px; padding: 14px; }
+  table { font-size: 11px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<header class="hero">
+  <div class="tag">VectorFFT Architecture Reference</div>
+  <h1>Radix-64 Codelet System</h1>
+  <p class="subtitle">
+    Multi-ISA DFT-64 codelets: genfft DAG at low K, 8×8 Cooley-Tukey with log₃ twiddle derivation at high K, scalar fallback for any K. Split re/im layout, AVX2 + AVX-512 + scalar.
+  </p>
+  <div class="meta">
+    <span>20 codelet files</span>
+    <span>42,670 lines</span>
+    <span>5 generators</span>
+    <span>3 ISA tiers</span>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">01</span>Dispatch Overview</h2>
+
+<p>
+Every call enters <code>fft_radix64_dispatch.h</code> which selects the optimal codelet based on K (number of parallel DFT-64 problems), direction (fwd/bwd), and available ISA. The dispatch is a waterfall: AVX-512 → AVX2 → scalar.
+</p>
+
+<h3>DIT Twiddle — Forward</h3>
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">K≥8, K%8==0, K≤12</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result dag"><span class="isa isa-z">AVX-512</span><span class="isa isa-dag">DAG</span> radix64_tw_dag_dit_fwd_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">K≥8, K%8==0, K>12</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span><span class="isa isa-ct">8×8CT</span> radix64_tw_flat_dit_kernel_fwd_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">K≥4, K%4==0, K≤12</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result dag"><span class="isa isa-a2">AVX2</span><span class="isa isa-dag">DAG</span> radix64_tw_dag_dit_fwd_avx2</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">K≥4, K%4==0, K>12</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span><span class="isa isa-ct">8×8CT</span> radix64_tw_flat_dit_kernel_fwd_avx2</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">any K (1, 3, 7, ...)</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result sc"><span class="isa isa-sc">SCALAR</span><span class="isa isa-dag">DAG</span> radix64_tw_dag_dit_fwd_scalar</div>
+  </div>
+</div>
+
+<h3>DIT Twiddle — Backward</h3>
+<p>
+Identical routing. Backward DAG uses the pointer-swap trick (Frigo & Johnson): <code>fwd(im, re, out_im, out_re)</code> — zero extra code, the forward DAG applied to swapped re↔im produces the backward DFT.
+</p>
+
+<h3>DIF Twiddle</h3>
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">K≥8, K%8==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span><span class="isa isa-ct">8×8CT</span> radix64_tw_flat_dif_kernel_fwd_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">K≥4, K%4==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span><span class="isa isa-ct">8×8CT</span> radix64_tw_flat_dif_kernel_fwd_avx2</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">any K</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result sc"><span class="isa isa-sc">SCALAR</span> N1 + post-multiply twiddles</div>
+  </div>
+</div>
+
+<h3>N1 (No Twiddle)</h3>
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">K≥8, K%8==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span> radix64_n1_dit_kernel_fwd_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">K≥4, K%4==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span> radix64_n1_dit_kernel_fwd_avx2</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">any K (incl. K=1)</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result sc"><span class="isa isa-sc">SCALAR</span> radix64_n1_dit_kernel_fwd_scalar</div>
+  </div>
+</div>
+
+<h3>Interleaved (IL) — DIT Forward + DIF Backward</h3>
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">K≥8, K%8==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span> radix64_tw_flat_dit_kernel_fwd_il_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">K≥4, K%4==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span> radix64_tw_flat_dit_kernel_fwd_il_avx2</div>
+  </div>
+</div>
+
+<h3>N1 Mono IL (genfft DAG, Interleaved)</h3>
+<div class="flow">
+  <div class="flow-row">
+    <div class="flow-cond">K≥4, K%4==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result z"><span class="isa isa-z">AVX-512</span> radix64_n1_dit_kernel_fwd_il_avx512</div>
+  </div>
+  <div class="flow-row">
+    <div class="flow-cond">K≥2, K%2==0</div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-result a2"><span class="isa isa-a2">AVX2</span> radix64_n1_dit_kernel_fwd_il_avx2</div>
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Planner block-walk:</strong> When K > threshold (tw table > 32KB), the planner bypasses the codelet registry and runs pack → codelet(K=8) → unpack per block. The codelet sees K=8 with L1-resident data. This is transparent to the dispatch.
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">02</span>The Two Engines</h2>
+
+<h3>Engine A — genfft DAG <span class="isa isa-dag">DAG</span></h3>
+<p>
+Mathematical schedule from FFTW's genfft compiler (Frigo & Johnson, 1999/2005). The DAG is a single fused operation graph that interleaves twiddle multiplications and butterfly additions to minimize temporary variables. Our <code>translate_genfft_tw.py</code> parses the scalar FMA codelet from FFTW's <code>t1_64.c</code> and emits vectorized split-format code with native intrinsics.
+</p>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th>Property</th><th>Value</th></tr>
+  <tr><td>FMA ops per k-step</td><td>398 (259 FMA + 259 FNMS from genfft optimizer)</td></tr>
+  <tr><td>ADD/SUB/MUL ops</td><td>638</td></tr>
+  <tr><td>Data loads</td><td>128 (64 re + 64 im)</td></tr>
+  <tr><td>Twiddle loads</td><td>126 (63 re + 63 im, strided)</td></tr>
+  <tr><td>Stores</td><td>128</td></tr>
+  <tr><td>Stack variables</td><td>~190 (SSA-style, each assigned once)</td></tr>
+  <tr><td>Constants</td><td>15 (broadcast from memory)</td></tr>
+  <tr><td>Spill buffer</td><td>None — fused schedule</td></tr>
+  <tr><td>Backward</td><td>Pointer-swap trick: fwd(im,re) = bwd(re,im)</td></tr>
+</table>
+</div>
+
+<p>
+<strong>Strength:</strong> Minimum arithmetic operations. The DAG has zero intermediate spill — every value feeds directly into its consumer. At low K the twiddle table fits in L1, so the 126 strided loads are fast.
+</p>
+<p>
+<strong>Weakness:</strong> 190 live variables on 32 ZMM → compiler spills ~160 to stack. At high K, 126 strided twiddle loads (stride K×8 bytes) thrash L1. Both effects grow with K.
+</p>
+
+<h3>Engine B — 8×8 Cooley-Tukey + log₃ <span class="isa isa-ct">8×8CT</span></h3>
+<p>
+Decompose DFT-64 as 8×8: first 8 radix-8 DFTs on rows, apply W64 internal twiddles, then 8 radix-8 DFTs on columns. The 63 external twiddle bases are derived from just 2 table loads via a depth-3 multiplication tree (log₃).
+</p>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th>Property</th><th>Value</th></tr>
+  <tr><td>Radix-8 butterflies</td><td>16 (8 row + 8 column)</td></tr>
+  <tr><td>Internal twiddle cmuls</td><td>49 (W64 from static arrays)</td></tr>
+  <tr><td>External twiddle loads</td><td>2 per k-step (W¹, W⁸ from table)</td></tr>
+  <tr><td>External twiddle derivation</td><td>12 cmuls (log₃ tree → 14 bases)</td></tr>
+  <tr><td>Total FP ops</td><td>~688 (more than DAG)</td></tr>
+  <tr><td>Data regs (peak)</td><td>16 (8 re + 8 im per radix-8)</td></tr>
+  <tr><td>Spill buffer</td><td>AVX2: 128 stores + 128 loads (split butterfly)<br>AVX-512: 0 (fits in 32 ZMM)</td></tr>
+  <tr><td>Backward</td><td>Separate bwd kernel (conjugate twiddles)</td></tr>
+</table>
+</div>
+
+<p>
+<strong>Strength:</strong> Only 2 strided twiddle loads per k-step. Data access is structured: 8 elements at a time, predictable stride. Register reuse across 16 butterflies keeps pressure bounded. Scales gracefully to any K.
+</p>
+<p>
+<strong>Weakness:</strong> 36% more arithmetic ops than the DAG. The 8×8 transpose (even/odd split for AVX2) adds latency.
+</p>
+
+<div class="callout">
+  <strong>The K=12 crossover:</strong> Benchmarks show the DAG wins at K≤8 (less setup overhead, twiddles L1-resident), while 8×8CT wins at K≥16 (2 loads vs 126, structured access pattern). The threshold <code>RADIX64_DAG_K_THRESHOLD=12</code> is configurable.
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">03</span>ISA-Specific Optimizations</h2>
+
+<h3>AVX-512 (32 ZMM registers, k-step = 8)</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th>Component</th><th>Strategy</th></tr>
+  <tr><td>8×8CT butterfly</td><td><strong>Monolithic:</strong> full radix-8 in one block. 16 data + 14 bases + 3 const = 33 → fits in 32 ZMM with minor spilling</td></tr>
+  <tr><td>Log₃ bases</td><td><strong>Full:</strong> all 14 bases derived at loop top, persist in ZMM across k-iterations</td></tr>
+  <tr><td>Internal W64 tw</td><td>Static arrays, <code>set1_pd(iw_re[e])</code> — compiler folds to <code>vbroadcastsd</code> from memory</td></tr>
+  <tr><td>Negation</td><td>Float-domain <code>xor_pd(v, set1_pd(-0.0))</code> — no int↔float domain crossing</td></tr>
+  <tr><td>IL deinterleave</td><td><code>permutexvar_pd</code> (64-bit lane permute)</td></tr>
+  <tr><td>DAG codelet</td><td>~190 vars on 32 ZMM → ~160 spills, but fused schedule compensates at low K</td></tr>
+</table>
+</div>
+
+<h3>AVX2 (16 YMM registers, k-step = 4)</h3>
+<div class="tbl-wrap">
+<table>
+  <tr><th>Component</th><th>Strategy</th></tr>
+  <tr><td>8×8CT butterfly</td><td><strong>Split:</strong> Even DFT-4 → spill to <code>bfr[]/bfi[]</code> stack buffer → Odd DFT-4 + W8 → fused reload+combine. Peak 12 YMM per phase.</td></tr>
+  <tr><td>Log₃ bases</td><td><strong>Full:</strong> 14 bases = 28 YMM (dormant during butterfly phases, compiler spills to sequential stack — cheap reload)</td></tr>
+  <tr><td>Internal W64 tw</td><td>Same static arrays, <code>set1_pd</code></td></tr>
+  <tr><td>Negation</td><td>Float-domain <code>xor_pd</code></td></tr>
+  <tr><td>IL deinterleave</td><td><code>permute4x64_pd</code> + <code>unpacklo_pd</code> / <code>unpackhi_pd</code> (no magic hex immediates)</td></tr>
+  <tr><td>DAG codelet</td><td>~190 vars on 16 YMM → heavy spilling, but still wins at K≤8 due to zero-setup advantage</td></tr>
+</table>
+</div>
+
+<h3>AVX2 Register Budget — 8×8CT Split Butterfly</h3>
+
+<div class="reg-label">Phase 1: Even DFT-4 on x[0,2,4,6] — peak 8 YMM data</div>
+<div class="reg-bar">
+  <div class="reg-const" style="width:18.75%">3 const</div>
+  <div class="reg-data" style="width:50%">8 data</div>
+  <div class="reg-free" style="width:31.25%">5 free</div>
+</div>
+
+<div class="reg-label">Phase 2: Odd DFT-4 on x[1,3,5,7] + W8 — peak 12 YMM data</div>
+<div class="reg-bar">
+  <div class="reg-const" style="width:18.75%">3 const</div>
+  <div class="reg-data" style="width:75%">12 data (odd + W8 results)</div>
+  <div class="reg-free" style="width:6.25%">1</div>
+</div>
+
+<div class="reg-label">Phase 3: Reload A, fused combine — peak 12 YMM</div>
+<div class="reg-bar">
+  <div class="reg-const" style="width:18.75%">3 const</div>
+  <div class="reg-data" style="width:50%">8 B results</div>
+  <div class="reg-data" style="width:12.5%">2 A reload</div>
+  <div class="reg-free" style="width:18.75%">3 free</div>
+</div>
+
+<p style="font-size:14px;color:var(--fg2)">
+Constants: <code>sign_mask</code> + <code>vc</code> (cos π/4) + <code>vnc</code> (-cos π/4). Log₃ bases (28 YMM) are dormant during butterfly — compiler spills them to sequential stack slots (cheap linear access, not strided).
+</p>
+
+<h3>Scalar</h3>
+<p>
+Both N1 and DAG tw codelets have scalar variants generated by the same Python translators with <code>isa='scalar'</code>. The scalar DAG is the only codelet that handles arbitrary K values (K=1, K=7, K=13, etc.) — it's the universal fallback. The N1 scalar codelet uses the same 8×8 CT structure as SIMD but with <code>double</code> instead of vectors.
+</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">04</span>Log₃ Twiddle Derivation</h2>
+
+<p>
+External twiddles W<sup>n</sup> for n=1..63 are organized as an 8×8 grid: n = 8·row + col. Only W¹ and W⁸ are loaded from the table per k-step. All 14 bases are derived in-register:
+</p>
+
+<pre>
+<span class="cm">/* Load from table: 2 strided loads per k-step */</span>
+ew1 = load(tw_re[0*K+k])   <span class="cm">// W¹</span>
+ew8 = load(tw_re[7*K+k])   <span class="cm">// W⁸</span>
+
+<span class="cm">/* Column bases: W² .. W⁷ (6 cmuls) */</span>
+ew2 = ew1 × ew1             <span class="cm">// W² = (W¹)²</span>
+ew3 = ew1 × ew2             <span class="cm">// W³</span>
+ew4 = ew2 × ew2             <span class="cm">// W⁴ = (W²)²</span>
+ew5 = ew1 × ew4             <span class="cm">// W⁵</span>
+ew6 = ew3 × ew3             <span class="cm">// W⁶ = (W³)²</span>
+ew7 = ew3 × ew4             <span class="cm">// W⁷</span>
+
+<span class="cm">/* Row bases: W¹⁶ .. W⁵⁶ (6 cmuls) */</span>
+ew16 = ew8 × ew8            <span class="cm">// W¹⁶ = (W⁸)²</span>
+ew24 = ew8 × ew16           <span class="cm">// W²⁴</span>
+ew32 = ew16 × ew16          <span class="cm">// W³² = (W¹⁶)²</span>
+ew40 = ew8 × ew32           <span class="cm">// W⁴⁰</span>
+ew48 = ew24 × ew24          <span class="cm">// W⁴⁸ = (W²⁴)²</span>
+ew56 = ew24 × ew32          <span class="cm">// W⁵⁶</span>
+
+<span class="cm">/* Apply: W^n = W^col × W^(8·row) — 2 cmuls for general n */</span>
+<span class="cm">/* Special: n%8==0 → 1 cmul, n<8 → 1 cmul, n==0 → free */</span>
+</pre>
+
+<p>
+<strong>Cost:</strong> 2 table loads + 12 cmuls (derivation) + up to 2 cmuls per element (application). For the 56 non-trivial twiddle elements: ~112 cmuls total.
+</p>
+<p>
+<strong>Benefit:</strong> 2 strided memory accesses instead of 126. At K=2048 this is the difference between 2×16KB stride and 126×16KB stride — the L1 prefetcher handles 2 streams easily.
+</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">05</span>Internal W64 Twiddles</h2>
+
+<p>
+The 8×8 CT applies W64<sup>n</sup> (n=0..63) between the row and column radix-8 passes. These are compile-time constants stored in static arrays:
+</p>
+
+<pre>
+<span class="kw">static const double</span> iw_re[<span class="num">64</span>] = { <span class="num">1.0</span>, <span class="num">0.9952...</span>, ... };
+<span class="kw">static const double</span> iw_im[<span class="num">64</span>] = { <span class="num">0.0</span>, <span class="num">-0.0980...</span>, ... };
+
+<span class="cm">/* Applied as broadcast: */</span>
+__m256d wr = <span class="fn">_mm256_set1_pd</span>(iw_re[e]);   <span class="cm">// vbroadcastsd from memory</span>
+__m256d wi = <span class="fn">_mm256_set1_pd</span>(iw_im[e]);   <span class="cm">// no register hoisting needed</span>
+</pre>
+
+<p>
+Previous approach hoisted 44 <code>const __m256d</code> declarations (63 twiddle pairs) at function scope — 88 YMM live simultaneously on 16 registers. The static-array approach uses zero persistent registers: each broadcast is a single-instruction memory operand that the compiler can schedule independently.
+</p>
+
+<p>
+Special cases are handled without multiplication: W64⁰ = 1 (skip), W64¹⁶ = −j (swap+negate), W64³² = −1 (negate), W64⁴⁸ = +j (swap), W64⁸ and W64²⁴ use the √2/2 constants already in registers (<code>vc</code>, <code>vnc</code>).
+</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">06</span>Codelet Inventory</h2>
+
+<div class="tbl-wrap">
+<table>
+  <tr>
+    <th>Codelet</th>
+    <th>Scalar</th>
+    <th>AVX2</th>
+    <th>AVX-512</th>
+    <th>Direction</th>
+    <th>Engine</th>
+  </tr>
+  <tr>
+    <td>N1 split</td>
+    <td><span class="isa isa-sc">✓</span></td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-ct">8×8CT</span></td>
+  </tr>
+  <tr>
+    <td>DIT tw</td>
+    <td>—</td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-ct">8×8CT</span> + log₃</td>
+  </tr>
+  <tr>
+    <td>DIF tw</td>
+    <td>—</td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-ct">8×8CT</span> + log₃</td>
+  </tr>
+  <tr>
+    <td>DAG DIT tw</td>
+    <td><span class="isa isa-sc">✓</span></td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-dag">DAG</span> (genfft)</td>
+  </tr>
+  <tr>
+    <td>IL DIT tw</td>
+    <td>—</td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-ct">8×8CT</span> + log₃</td>
+  </tr>
+  <tr>
+    <td>IL DIF tw</td>
+    <td>—</td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-ct">8×8CT</span> + log₃</td>
+  </tr>
+  <tr>
+    <td>N1 mono IL</td>
+    <td>—</td>
+    <td><span class="isa isa-a2">✓</span></td>
+    <td><span class="isa isa-z">✓</span></td>
+    <td>fwd + bwd</td>
+    <td><span class="isa isa-dag">DAG</span> (genfft)</td>
+  </tr>
+</table>
+</div>
+
+<p>
+Total: 7 codelet types × (2-3 ISAs) × (fwd + bwd) = <strong>34 kernel functions</strong> across 20 header files.
+</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">07</span>Benchmark — Codelet vs FFTW guru</h2>
+
+<p>
+Fair comparison: <code>fftw_plan_guru_dft</code> doing K parallel DFT-64 with FFTW_MEASURE. FFTW uses interleaved layout; we use split. Both do identical mathematical work.
+</p>
+
+<div class="tbl-wrap">
+<table class="bench">
+  <tr>
+    <th>K</th>
+    <th>N</th>
+    <th>DAG (ns)</th>
+    <th>8×8CT (ns)</th>
+    <th>FFTW (ns)</th>
+    <th>Best / FFTW</th>
+  </tr>
+  <tr>
+    <td>8</td><td>512</td>
+    <td class="winner">280</td><td>309</td><td>387</td>
+    <td class="winner">1.38×</td>
+  </tr>
+  <tr>
+    <td>16</td><td>1,024</td>
+    <td>685</td><td class="winner">656</td><td>806</td>
+    <td class="winner">1.23×</td>
+  </tr>
+  <tr>
+    <td>32</td><td>2,048</td>
+    <td>1,581</td><td class="winner">1,425</td><td>1,873</td>
+    <td class="winner">1.31×</td>
+  </tr>
+  <tr>
+    <td>64</td><td>4,096</td>
+    <td>3,861</td><td class="winner">3,371</td><td>5,921</td>
+    <td class="winner">1.76×</td>
+  </tr>
+  <tr>
+    <td>128</td><td>8,192</td>
+    <td>8,613</td><td class="winner">7,634</td><td>12,128</td>
+    <td class="winner">1.59×</td>
+  </tr>
+  <tr>
+    <td>256</td><td>16,384</td>
+    <td>17,196</td><td class="winner">15,642</td><td>29,746</td>
+    <td class="winner">1.90×</td>
+  </tr>
+  <tr>
+    <td>512</td><td>32,768</td>
+    <td>45,042</td><td class="winner">40,195</td><td>60,421</td>
+    <td class="winner">1.50×</td>
+  </tr>
+</table>
+</div>
+
+<p>
+AVX-512, container Xeon (GCC 13). DAG wins at K=8; 8×8CT wins at K≥16. Both beat FFTW 1.2–1.9× across all K. Your 14900KF numbers may differ — tune <code>RADIX64_DAG_K_THRESHOLD</code>.
+</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">08</span>Generator Pipeline</h2>
+
+<div class="tbl-wrap">
+<table>
+  <tr><th>Generator</th><th>Input</th><th>Output</th></tr>
+  <tr>
+    <td><code>gen_r64_tw.py avx2|avx512</code></td>
+    <td>—</td>
+    <td>8×8CT DIT+DIF split tw (log₃ + split/mono butterfly)</td>
+  </tr>
+  <tr>
+    <td><code>gen_r64_il_tw.py avx2|avx512</code></td>
+    <td>Imports gen_r64_tw.py</td>
+    <td>8×8CT DIT+DIF interleaved tw</td>
+  </tr>
+  <tr>
+    <td><code>gen_radix64_n1.py scalar|avx2|avx512</code></td>
+    <td>—</td>
+    <td>N1 split (8×8CT, static arrays, 0 hoisted broadcasts)</td>
+  </tr>
+  <tr>
+    <td><code>translate_genfft_n1_il.py</code></td>
+    <td>FFTW n1_64.c</td>
+    <td>N1 mono IL (genfft DAG, any radix)</td>
+  </tr>
+  <tr>
+    <td><code>translate_genfft_tw.py &lt;fftw&gt; 64 scalar|avx2|avx512</code></td>
+    <td>FFTW t1_64.c</td>
+    <td>DAG DIT tw (genfft FMA, fwd+bwd pointer-swap)</td>
+  </tr>
+</table>
+</div>
+
+<p>
+All generators are deterministic — same input produces byte-identical output. The genfft translators parse FFTW's FMA scalar codelet and apply ISA post-processing (vectorization, split layout, native intrinsics, constant broadcasting). The mathematical DAG itself is unchanged from Frigo & Johnson's 2005 optimizer.
+</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">09</span>File Map</h2>
+
+<pre>
+src/radix64/
+├── fft_radix64_dispatch.h              <span class="cm"># DAG(K≤12) + 8×8CT(K>12) + scalar</span>
+├── fft_radix64_n1.h                    <span class="cm"># compat shim → dispatch.h</span>
+├── scalar/
+│   ├── fft_radix64_scalar_n1_gen.h     <span class="cm"># N1 fwd+bwd (any K incl. K=1)</span>
+│   └── fft_radix64_scalar_tw_dag.h     <span class="cm"># DAG DIT fwd+bwd (any K incl. K=7)</span>
+├── avx2/
+│   ├── fft_radix64_avx2_n1_gen.h       <span class="cm"># N1 split, k+=4</span>
+│   ├── fft_radix64_avx2_tw.h           <span class="cm"># 8×8CT DIT+DIF, log₃ + split butterfly</span>
+│   ├── fft_radix64_avx2_tw_dag.h       <span class="cm"># DAG DIT fwd+bwd, K≤12</span>
+│   ├── fft_radix64_avx2_il_tw.h        <span class="cm"># IL DIT+DIF, log₃ + split butterfly</span>
+│   └── fft_radix64_avx2_n1_mono_il.h   <span class="cm"># N1 mono IL (genfft DAG)</span>
+├── avx512/
+│   ├── fft_radix64_avx512_n1_gen.h     <span class="cm"># N1 split, k+=8</span>
+│   ├── fft_radix64_avx512_tw.h         <span class="cm"># 8×8CT DIT+DIF, log₃ + monolithic</span>
+│   ├── fft_radix64_avx512_tw_dag.h     <span class="cm"># DAG DIT fwd+bwd, K≤12</span>
+│   ├── fft_radix64_avx512_il_tw.h      <span class="cm"># IL DIT+DIF, log₃ + monolithic</span>
+│   └── fft_radix64_avx512_n1_mono_il.h <span class="cm"># N1 mono IL (genfft DAG)</span>
+└── gen/
+    ├── gen_r64_tw.py                   <span class="cm"># 8×8CT tw (ISA-specific butterfly)</span>
+    ├── gen_r64_il_tw.py                <span class="cm"># IL tw (imports gen_r64_tw.py)</span>
+    ├── gen_radix64_n1.py               <span class="cm"># N1 split (scalar/avx2/avx512)</span>
+    ├── translate_genfft_n1_il.py       <span class="cm"># N1 mono IL (any radix)</span>
+    └── translate_genfft_tw.py          <span class="cm"># DAG tw (scalar/avx2/avx512)</span>
+</pre>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section>
+<h2><span class="num">10</span>Design Decisions</h2>
+
+<h3>Why not DAG everywhere?</h3>
+<p>
+The genfft DAG has optimal operation count but 190 stack variables and 126 strided twiddle loads. At K≥16 these costs dominate: the 8×8CT's structured access pattern and register reuse across 16 butterflies wins by 10–30%. The DAG remains optimal at K≤8 where twiddles fit in L1 and setup cost matters.
+</p>
+
+<h3>Why not 8×8CT everywhere?</h3>
+<p>
+At K=8 the 8×8CT's log₃ derivation (12 cmuls) and spill buffer setup (AVX2) have fixed overhead that the DAG avoids. The DAG's fused schedule processes all 64 elements with zero setup latency.
+</p>
+
+<h3>Why split butterfly on AVX2?</h3>
+<p>
+A monolithic radix-8 butterfly needs 16 data registers simultaneously (8 re + 8 im). With log₃ bases (28 YMM dormant but in scope) and 3 constants, that's 47 YMM on 16 hardware registers — catastrophic spilling in the innermost loop. The split butterfly processes even/odd halves separately, capping peak live at 12 YMM. The compiler spills log₃ bases to sequential stack (not strided), which the prefetcher handles cheaply.
+</p>
+
+<h3>Why pointer-swap for backward DAG?</h3>
+<p>
+DFT backward = conj(DFT forward(conj(x))). For split re/im: swapping the re↔im pointers is equivalent to conjugation. This gives us the backward codelet for free — zero additional generated code, zero maintenance burden, mathematically exact.
+</p>
+
+<h3>Why scalar DAG as the universal fallback?</h3>
+<p>
+The planner may produce K values that aren't multiples of 4 or 8 (e.g. N=448 = 7×64 → stage 1 has R=64, K=7). Neither AVX2 nor AVX-512 can handle K=7. The scalar DAG processes one element per k-step and works for any K, including K=1 (N1 equivalent). This eliminates all "void fallback" paths that previously produced garbage output.
+</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="credits">
+  <p>
+    <strong>Mathematical DAG:</strong> Matteo Frigo & Steven G. Johnson, <em>"A Fast Fourier Transform Compiler"</em>, PLDI 1999; <em>"The Design and Implementation of FFTW3"</em>, Proc. IEEE 2005.
+  </p>
+  <p>
+    <strong>ISA post-processing, 8×8CT with log₃, split butterfly, register analysis:</strong> VectorFFT project.
+  </p>
+  <p>
+    Generated codelets are derived from FFTW's genfft output (GPL-licensed DAG). The ISA translation layer and 8×8CT engine are original work.
+  </p>
+</div>
+
+</div>
+</body>
+</html>
