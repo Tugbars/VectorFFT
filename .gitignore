@@ -12,3 +12,5 @@ build/test/test_mixedRadixFFT_standalone.exe
 /CMakeFiles
 /vcpkg
 highSpeedFFT.code-workspace
+/.claude
+/.vscode
