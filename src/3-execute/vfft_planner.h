@@ -1408,7 +1408,7 @@ static void vfft_execute_fwd(
             for (size_t g = 0; g < n_outer; g++)
             {
                 size_t off = g * R * K;
-                if (st->tw_fwd_il)
+                if (st->tw_fwd_il && st->tw_re)
                 {
                     st->tw_fwd_il(
                         src_il + 2 * off, dst_il + 2 * off,
@@ -1668,7 +1668,7 @@ static void vfft_execute_bwd_dif(
             for (size_t g = 0; g < n_outer; g++)
             {
                 size_t off = g * R * K;
-                if (st->tw_dif_bwd_il)
+                if (st->tw_dif_bwd_il && st->tw_re)
                 {
                     st->tw_dif_bwd_il(
                         src_il + 2 * off, dst_il + 2 * off,
