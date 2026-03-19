@@ -264,148 +264,112 @@ static inline void vfft_registry_set_n1_il(vfft_codelet_registry *reg,
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * FACTORIZER
+ * L1 DATA CACHE DETECTION
  * ═══════════════════════════════════════════════════════════════ */
 
-/*
- * Cache-aware factorizer v2 — inspired by FFTW's PATIENT plans.
- *
- * Key principles from FFTW benchmarking (AVX-512):
- *   1. FFTW NEVER uses R=128 for twiddled stages
- *   2. Workhorse radixes: R=32 (5 bits), R=16 (4 bits), R=64 (6 bits)
- *   3. Large K stages use smaller R (fewer streams)
- *   4. Balanced decomposition: 2 stages for k≤12, 3 for k≤18
- *
- * FFTW actual choices (PATIENT, AVX-512):
- *   2^8  = 16×16       2^12 = 64×64        2^16 = 16×8×32×16
- *   2^9  = 32×16       2^13 = 8×64×16      2^17 = 32×8×32×16
- *   2^10 = 32×32       2^14 = 32×32×16
- *   2^11 = 64×32       2^15 = 32×64×16
- */
+#if defined(_WIN32) && (defined(_MSC_VER) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER))
+#include <intrin.h>
+#endif
 
-/* ── Power-of-2 balanced factorization ── */
-static void vfft_factorize_pow2(size_t k, size_t *factors, size_t *nfactors,
-                                const vfft_codelet_registry *reg)
+static size_t vfft_detect_l1d_bytes(void)
 {
-    *nfactors = 0;
-    if (k == 0)
-        return;
-
-    /* Single stage: R=2^k if we have the codelet */
-    if (k <= 7 && reg->fwd[1u << k])
+#ifdef _WIN32
+    /* Windows: use GetLogicalProcessorInformation if windows.h is included,
+     * otherwise fall through to CPUID or fallback.
+     * Note: bench_full_fft.c includes <windows.h> for timing. */
+#ifdef _WINDOWS_
     {
-        factors[(*nfactors)++] = 1u << k;
-        return;
-    }
-
-    /* Two stages for k=8..12 (N=256..4096) — FFTW always uses 2 stages here.
-     * Split k = a + b, a ≥ b, each ≤ 6 (max R=64). */
-    if (k >= 8 && k <= 12)
-    {
-        size_t a = (k + 1) / 2;
-        size_t b = k - a;
-        size_t ra = 1u << a, rb = 1u << b;
-        if (reg->fwd[ra] && reg->fwd[rb])
+        DWORD len = 0;
+        GetLogicalProcessorInformation(NULL, &len);
+        if (len > 0)
         {
-            factors[(*nfactors)++] = rb; /* outer: fewer streams at larger K */
-            factors[(*nfactors)++] = ra; /* inner: notw or small K */
-            return;
-        }
-    }
-
-    /* Three stages for k=13..18 — FFTW uses R=16 notw base + 2 upper stages. */
-    if (k >= 13 && k <= 18)
-    {
-        size_t rem = k - 4; /* after R=16 notw */
-        size_t a = (rem + 1) / 2;
-        size_t b = rem - a;
-        if (a > 6)
-        {
-            a = 6;
-            b = rem - 6;
-        }
-        if (a + b == rem && a <= 6 && b >= 3)
-        {
-            size_t ra = 1u << a, rb = 1u << b;
-            if (reg->fwd[ra] && reg->fwd[rb] && reg->fwd[16])
+            SYSTEM_LOGICAL_PROCESSOR_INFORMATION *buf =
+                (SYSTEM_LOGICAL_PROCESSOR_INFORMATION *)malloc(len);
+            if (buf && GetLogicalProcessorInformation(buf, &len))
             {
-                factors[(*nfactors)++] = rb; /* outer: fewest streams */
-                factors[(*nfactors)++] = ra; /* middle */
-                factors[(*nfactors)++] = 16; /* inner: notw */
-                return;
-            }
-        }
-    }
-
-    /* For k > 18: R=16 notw base + fill with R=32 + R=8/R=16 adapter */
-    {
-        size_t bits_left = k;
-        size_t stage_bits[16];
-        size_t nstages = 0;
-
-        /* Reserve R=16 for innermost notw */
-        if (bits_left >= 4 && reg->fwd[16])
-            bits_left -= 4;
-
-        while (bits_left >= 5)
-        {
-            stage_bits[nstages++] = 5;
-            bits_left -= 5;
-        }
-        if (bits_left == 4)
-        {
-            stage_bits[nstages++] = 4;
-            bits_left = 0;
-        }
-        else if (bits_left == 3)
-        {
-            stage_bits[nstages++] = 3;
-            bits_left = 0;
-        }
-        else if (bits_left == 2)
-        {
-            stage_bits[nstages++] = 2;
-            bits_left = 0;
-        }
-        else if (bits_left == 1)
-        {
-            stage_bits[nstages++] = 1;
-            bits_left = 0;
-        }
-
-        /* Add R=16 notw base */
-        if (k >= 4 && reg->fwd[16])
-            stage_bits[nstages++] = 4;
-
-        /* Convert to radixes — outer stages first (ascending stream count) */
-        for (size_t i = 0; i < nstages; i++)
-        {
-            size_t r = 1u << stage_bits[i];
-            if (!reg->fwd[r])
-            {
-                size_t b = stage_bits[i];
-                while (b > 0)
+                DWORD count = len / sizeof(*buf);
+                for (DWORD i = 0; i < count; i++)
                 {
-                    size_t try_b = (b >= 5) ? 5 : b;
-                    size_t try_r = 1u << try_b;
-                    while (try_b > 0 && !reg->fwd[try_r])
+                    if (buf[i].Relationship == RelationCache &&
+                        buf[i].Cache.Level == 1 &&
+                        buf[i].Cache.Type == CacheData)
                     {
-                        try_b--;
-                        try_r = 1u << try_b;
+                        size_t sz = (size_t)buf[i].Cache.Size;
+                        free(buf);
+                        return sz;
                     }
-                    if (try_b == 0)
-                        return;
-                    factors[(*nfactors)++] = try_r;
-                    b -= try_b;
                 }
             }
-            else
-            {
-                factors[(*nfactors)++] = r;
-            }
+            if (buf)
+                free(buf);
         }
     }
+#endif /* _WINDOWS_ */
+    /* CPUID leaf 4 fallback for Intel/AMD (works without windows.h) */
+    {
+#if defined(_MSC_VER) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
+        int cpuinfo[4] = {0};
+        __cpuidex(cpuinfo, 4, 0);
+#elif defined(__GNUC__) || defined(__clang__)
+        int cpuinfo[4] = {0};
+        __asm__ __volatile__("cpuid" : "=a"(cpuinfo[0]), "=b"(cpuinfo[1]),
+                                       "=c"(cpuinfo[2]), "=d"(cpuinfo[3]) : "a"(4), "c"(0));
+#else
+        int cpuinfo[4] = {0};
+#endif
+        if ((cpuinfo[0] & 0x1F) != 0)
+        { /* cache type != null */
+            size_t ways = (size_t)(((unsigned)cpuinfo[1] >> 22) & 0x3FF) + 1;
+            size_t parts = (size_t)(((unsigned)cpuinfo[1] >> 12) & 0x3FF) + 1;
+            size_t line = (size_t)((unsigned)cpuinfo[1] & 0xFFF) + 1;
+            size_t sets = (size_t)(unsigned)cpuinfo[2] + 1;
+            return ways * parts * line * sets;
+        }
+    }
+#elif defined(__linux__)
+    {
+        long sz = sysconf(_SC_LEVEL1_DCACHE_SIZE);
+        if (sz > 0)
+            return (size_t)sz;
+    }
+#elif defined(__APPLE__)
+    {
+        size_t sz = 0, len = sizeof(sz);
+        if (sysctlbyname("hw.l1dcachesize", &sz, &len, NULL, 0) == 0 && sz > 0)
+            return sz;
+    }
+#endif
+    return 32 * 1024; /* conservative fallback */
 }
+
+static size_t vfft_l1d_bytes(void)
+{
+    static size_t cached = 0;
+    if (!cached)
+        cached = vfft_detect_l1d_bytes();
+    return cached;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * CACHE-AWARE FACTORIZER
+ *
+ * Greedy, one stage at a time, inner→outer.
+ *
+ * Core metric: twiddle table per stage = (R-1) × K × 16 bytes.
+ * At each step, pick the largest R whose twiddle table fits L1d:
+ *     (R-1) × K × 16 ≤ L1d  →  R ≤ L1d/(K×16) + 1
+ *
+ * This naturally creates the sandwich pattern:
+ *   K=1:    no twiddles → pick big (R=32,25,16)
+ *   K=32:   max_R ≈ 97 → R=32 fits
+ *   K=1024: max_R ≈ 4  → only R=2,3,4 fit
+ *
+ * Soft limit at 4×L1d allows walk/IL to handle overflow.
+ * R=64 reserved for K=1 with a single remaining odd factor.
+ * R=25 only at K=1; decomposed to 5×5 at higher K.
+ *
+ * factors[0]=innermost (K=1), factors[last]=outermost.
+ * ═══════════════════════════════════════════════════════════════ */
 
 typedef struct
 {
@@ -419,80 +383,114 @@ static int vfft_factorize(size_t N, const vfft_codelet_registry *reg,
                           vfft_factorization *fact)
 {
     memset(fact, 0, sizeof(*fact));
-    size_t remaining = N;
+    if (N <= 1)
+        return 0;
 
-    /* Phase 1: Extract non-power-of-2 factors (largest first) */
-    static const size_t NON_POW2_RADIXES[] = {
-        25, 10, 9, 6, 23, 19, 17, 13, 11, 7, 5, 3, 0};
-    size_t non_pow2[VFFT_MAX_STAGES], n_non_pow2 = 0;
+    const size_t l1d = vfft_l1d_bytes();
 
-    for (const size_t *r = NON_POW2_RADIXES; *r; r++)
+    /* Radixes sorted by preference: larger = more compute per stage = fewer stages */
+    static const size_t RADIXES[] = {
+        32, 25, 23, 19, 17, 16, 13, 11, 10, 8, 7, 5, 4, 3, 2, 0};
+
+    size_t remaining = N, K = 1;
+    size_t stages[VFFT_MAX_STAGES], ns = 0;
+
+    while (remaining > 1 && ns < VFFT_MAX_STAGES)
     {
-        while (*r <= remaining && (remaining % *r) == 0 && reg->fwd[*r])
+        size_t best_R = 0;
+
+        /* Special: R=64 at K=1, only for prime×64 (single remaining odd factor) */
+        if (K == 1 && remaining % 64 == 0 && reg->fwd[64])
         {
-            non_pow2[n_non_pow2++] = *r;
-            remaining /= *r;
-            if (n_non_pow2 >= VFFT_MAX_STAGES)
-                return -1;
+            size_t after = remaining / 64;
+            if (after < VFFT_MAX_RADIX && reg->fwd[after])
+                best_R = 64;
         }
-    }
 
-    /* Phase 2: Factorize power-of-2 remainder */
-    size_t pow2_factors[VFFT_MAX_STAGES], n_pow2 = 0;
-
-    if (remaining > 1)
-    {
-        if ((remaining & (remaining - 1)) == 0)
+        if (!best_R)
         {
-            size_t k = 0;
+            /* Max R from L1 constraint on twiddle table size */
+            size_t max_R_strict = (K <= 1) ? 999 : (l1d / (K * 16)) + 1;
+            size_t max_R_soft = (K <= 1) ? 999 : (4 * l1d / (K * 16)) + 1;
+
+            /* Try strict L1 fit first */
+            for (const size_t *rp = RADIXES; *rp; rp++)
             {
-                size_t tmp = remaining;
-                while (tmp > 1)
+                size_t R = *rp;
+                if (remaining % R != 0)
+                    continue;
+                if (R >= VFFT_MAX_RADIX || !reg->fwd[R])
+                    continue;
+                if (R == 25 && K > 1)
+                    continue;
+                /* SIMD alignment: pow2 R≥4 needs K%4==0, except at small N */
+                if ((R & (R - 1)) == 0 && R >= 4 && K > 1 && (K & 3) != 0 && remaining * K > 256)
+                    continue;
+                if (R > max_R_strict)
+                    continue;
+                best_R = R;
+                break;
+            }
+
+            /* Soft fallback: walk/IL handles the overflow */
+            if (!best_R)
+            {
+                for (const size_t *rp = RADIXES; *rp; rp++)
                 {
-                    k++;
-                    tmp >>= 1;
+                    size_t R = *rp;
+                    if (remaining % R != 0)
+                        continue;
+                    if (R >= VFFT_MAX_RADIX || !reg->fwd[R])
+                        continue;
+                    if (R == 25 && K > 1)
+                        continue;
+                    if ((R & (R - 1)) == 0 && R >= 4 && K > 1 && (K & 3) != 0 && remaining * K > 256)
+                        continue;
+                    if (R > max_R_soft)
+                        continue;
+                    best_R = R;
+                    break;
                 }
             }
-            vfft_factorize_pow2(k, pow2_factors, &n_pow2, reg);
+
+            /* Last resort: anything that divides */
+            if (!best_R)
+            {
+                for (const size_t *rp = RADIXES; *rp; rp++)
+                {
+                    size_t R = *rp;
+                    if (remaining % R != 0 || R >= VFFT_MAX_RADIX || !reg->fwd[R])
+                        continue;
+                    if ((R & (R - 1)) == 0 && R >= 4 && K > 1 && (K & 3) != 0 && remaining * K > 256)
+                        continue;
+                    best_R = R;
+                    break;
+                }
+            }
         }
-        else if (remaining < VFFT_MAX_RADIX && reg->fwd[remaining])
-        {
-            pow2_factors[n_pow2++] = remaining;
-        }
-        else
-        {
-            fact->bluestein_factors[fact->nfactors] = 1;
-            fact->uses_bluestein = 1;
-            fact->factors[fact->nfactors++] = remaining;
-            return 0;
-        }
+
+        if (!best_R)
+            return -1;
+
+        stages[ns++] = best_R;
+        remaining /= best_R;
+        K *= best_R;
     }
 
-    /* Phase 3: Assemble — non-pow2 outermost (large K, high compute density),
-     * pow2 innermost (small K, sorted small-R-outer for fewer streams). */
-    for (size_t i = 1; i < n_pow2; i++)
-        for (size_t j = i; j > 0 && pow2_factors[j] < pow2_factors[j - 1]; j--)
-        {
-            size_t t = pow2_factors[j];
-            pow2_factors[j] = pow2_factors[j - 1];
-            pow2_factors[j - 1] = t;
-        }
-    for (size_t i = 1; i < n_non_pow2; i++)
-        for (size_t j = i; j > 0 && non_pow2[j] > non_pow2[j - 1]; j--)
-        {
-            size_t t = non_pow2[j];
-            non_pow2[j] = non_pow2[j - 1];
-            non_pow2[j - 1] = t;
-        }
-
-    if (fact->nfactors + n_pow2 + n_non_pow2 > VFFT_MAX_STAGES)
+    if (remaining != 1)
         return -1;
 
-    for (size_t i = 0; i < n_non_pow2; i++)
-        fact->factors[fact->nfactors++] = non_pow2[i];
-    for (size_t i = 0; i < n_pow2; i++)
-        fact->factors[fact->nfactors++] = pow2_factors[i];
+    /* Verify product */
+    {
+        size_t prod = 1;
+        for (size_t i = 0; i < ns; i++)
+            prod *= stages[i];
+        if (prod != N)
+            return -1;
+    }
 
+    fact->nfactors = ns;
+    memcpy(fact->factors, stages, ns * sizeof(size_t));
     return 0;
 }
 
@@ -730,7 +728,7 @@ static void vfft_apply_twiddles_dispatch(
  * ═══════════════════════════════════════════════════════════════ */
 
 #ifndef VFFT_WALK_THRESHOLD_BYTES
-#define VFFT_WALK_THRESHOLD_BYTES (32 * 1024) /* 32KB — walk when tw table exceeds this */
+#define VFFT_WALK_THRESHOLD_BYTES (32 * 1024) /* fallback if L1 detection unavailable */
 #endif
 
 #define VFFT_MAX_WALK_ARMS 64 /* max R-1 for walk state */
@@ -752,18 +750,12 @@ static inline int vfft_should_walk(size_t R, size_t K)
 {
     /* Walk packs data into blocks and walks twiddles to avoid strided access.
      * Only beneficial when R is large enough that (R-1) strided twiddle loads
-     * per k-step overwhelm the hardware prefetcher.
-     *
-     * R=2,3,4,5: 1-4 twiddle rows — prefetcher handles fine, walk overhead hurts
-     * R=7,8:     6-7 rows — borderline, depends on K
-     * R=10+:     9+ rows — walk helps at high K
-     *
-     * Conservative: require R >= 8 AND tw table > threshold.
-     * TODO: tune per-hardware via bench_factorize wisdom. */
+     * overwhelm the hardware prefetcher (R < 8 has too few rows). */
     if (R < 8)
         return 0;
     size_t tw_bytes = (R - 1) * K * 2 * sizeof(double);
-    return (tw_bytes > VFFT_WALK_THRESHOLD_BYTES && R <= VFFT_MAX_WALK_ARMS + 1) ? 1 : 0;
+    size_t threshold = vfft_l1d_bytes() / 2; /* walk when tw exceeds half L1d */
+    return (tw_bytes > threshold && R <= VFFT_MAX_WALK_ARMS + 1) ? 1 : 0;
 }
 
 /* Walk state: current twiddle vectors + step rotation.
