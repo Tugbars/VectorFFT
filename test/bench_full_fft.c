@@ -210,6 +210,16 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg)
 
     /* VectorFFT forward */
     vfft_plan *plan = create_plan(N, reg);
+
+    if (N == 4096) {
+    printf("  [diag] N=4096 stages=%zu\n", plan->nstages);
+    for (size_t s = 0; s < plan->nstages; s++)
+        printf("    s=%zu R=%zu K=%zu il=%d walk=%p tw=%p\n",
+               s, plan->stages[s].radix, plan->stages[s].K,
+               plan->stages[s].use_il,
+               (void*)plan->stages[s].walk,
+               (void*)plan->stages[s].tw_re);
+}
     if (!plan)
     {
         printf("  N=%-6zu  PLAN FAILED\n", N);
