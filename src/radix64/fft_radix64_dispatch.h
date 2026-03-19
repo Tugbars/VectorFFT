@@ -1,7 +1,13 @@
 /**
  * @file fft_radix64_dispatch.h
  * @brief Radix-64 cross-ISA dispatch — N1, DIT tw, DIF tw, IL
- * 8×8 CT + log3 twiddles. No scalar tw fallback (SIMD-only).
+ *
+ * DIT tw: DAG codelet (genfft, Frigo/Johnson) at low K, 8×8 CT + log3 at high K.
+ * DIF tw: 8×8 CT + log3 (all K).
+ * N1: 8×8 CT (split) + genfft DAG (mono IL).
+ *
+ * AVX2: log3 + split butterfly (peak 12 YMM).
+ * AVX-512: log3 + monolithic butterfly (32 ZMM).
  */
 #ifndef FFT_RADIX64_DISPATCH_H
 #define FFT_RADIX64_DISPATCH_H
@@ -20,13 +26,24 @@ typedef enum { VFFT_ISA_SCALAR=0, VFFT_ISA_AVX2=1, VFFT_ISA_AVX512=2 } vfft_isa_
 #include "avx2/fft_radix64_avx2_n1_gen.h"
 #endif
 
-/* ── Split tw codelets (DIT + DIF in same file) ── */
+/* ── Split tw codelets (DIT + DIF, 8×8 CT + log3) ── */
 #ifdef __AVX2__
 #include "avx2/fft_radix64_avx2_tw.h"
 #endif
 #if defined(__AVX512F__) || defined(__AVX512F)
 #include "avx512/fft_radix64_avx512_tw.h"
 #endif
+
+/* ── DAG tw codelets (DIT only, genfft DAG — optimal at low K) ── */
+#ifdef __AVX2__
+#include "avx2/fft_radix64_avx2_tw_dag.h"
+#endif
+#if defined(__AVX512F__) || defined(__AVX512F)
+#include "avx512/fft_radix64_avx512_tw_dag.h"
+#endif
+
+/* K threshold: DAG wins at K≤8, 8×8CT wins at K≥16 */
+#define RADIX64_DAG_K_THRESHOLD 12
 
 /* ── IL tw codelets (DIT + DIF in same file) ── */
 #if defined(__AVX512F__) || defined(__AVX512F)
@@ -87,18 +104,26 @@ static inline void radix64_n1_backward(size_t K,
     }
 }
 
-/* ── DIT tw dispatch ── */
+/* ── DIT tw dispatch (DAG at low K, 8×8CT at high K) ── */
 static inline void radix64_tw_forward(size_t K,
     const double *__restrict__ ir, const double *__restrict__ ii,
     double *__restrict__ or_, double *__restrict__ oi,
     const double *__restrict__ twr, const double *__restrict__ twi) {
 #if defined(__AVX512F__) || defined(__AVX512F)
     if (K >= 8 && (K & 7) == 0) {
-        radix64_tw_flat_dit_kernel_fwd_avx512(ir,ii,or_,oi,twr,twi,K); return; }
+        if (K <= RADIX64_DAG_K_THRESHOLD)
+            radix64_tw_dag_dit_fwd_avx512(ir,ii,or_,oi,twr,twi,K);
+        else
+            radix64_tw_flat_dit_kernel_fwd_avx512(ir,ii,or_,oi,twr,twi,K);
+        return; }
 #endif
 #ifdef __AVX2__
     if (K >= 4 && (K & 3) == 0) {
-        radix64_tw_flat_dit_kernel_fwd_avx2(ir,ii,or_,oi,twr,twi,K); return; }
+        if (K <= RADIX64_DAG_K_THRESHOLD)
+            radix64_tw_dag_dit_fwd_avx2(ir,ii,or_,oi,twr,twi,K);
+        else
+            radix64_tw_flat_dit_kernel_fwd_avx2(ir,ii,or_,oi,twr,twi,K);
+        return; }
 #endif
     (void)ir;(void)ii;(void)or_;(void)oi;(void)twr;(void)twi;(void)K;
 }
@@ -108,16 +133,24 @@ static inline void radix64_tw_backward(size_t K,
     const double *__restrict__ twr, const double *__restrict__ twi) {
 #if defined(__AVX512F__) || defined(__AVX512F)
     if (K >= 8 && (K & 7) == 0) {
-        radix64_tw_flat_dit_kernel_bwd_avx512(ir,ii,or_,oi,twr,twi,K); return; }
+        if (K <= RADIX64_DAG_K_THRESHOLD)
+            radix64_tw_dag_dit_bwd_avx512(ir,ii,or_,oi,twr,twi,K);
+        else
+            radix64_tw_flat_dit_kernel_bwd_avx512(ir,ii,or_,oi,twr,twi,K);
+        return; }
 #endif
 #ifdef __AVX2__
     if (K >= 4 && (K & 3) == 0) {
-        radix64_tw_flat_dit_kernel_bwd_avx2(ir,ii,or_,oi,twr,twi,K); return; }
+        if (K <= RADIX64_DAG_K_THRESHOLD)
+            radix64_tw_dag_dit_bwd_avx2(ir,ii,or_,oi,twr,twi,K);
+        else
+            radix64_tw_flat_dit_kernel_bwd_avx2(ir,ii,or_,oi,twr,twi,K);
+        return; }
 #endif
     (void)ir;(void)ii;(void)or_;(void)oi;(void)twr;(void)twi;(void)K;
 }
 
-/* ── DIF tw dispatch ── */
+/* ── DIF tw dispatch (8×8CT only — no DAG DIF) ── */
 static inline void radix64_tw_dif_forward(size_t K,
     const double *__restrict__ ir, const double *__restrict__ ii,
     double *__restrict__ or_, double *__restrict__ oi,
