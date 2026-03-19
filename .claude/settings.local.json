@@ -30,7 +30,9 @@
       "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" ..)",
       "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --build . --target diag_5000)",
       "Bash(./diag_5000.exe)",
-      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --build . --target bench_factorize)"
+      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --build . --target bench_factorize)",
+      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --build . --target bench_full_fft)",
+      "Bash(timeout 120 ./bench_full_fft.exe)"
     ]
   }
 }
