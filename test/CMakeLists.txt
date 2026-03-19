@@ -91,35 +91,36 @@ set(BENCH_CODELET_INCLUDES
     ${PROJECT_SOURCE_DIR}/src/common
 )
 
+# ── Helper: create a bench target with standard flags + FFTW ─────────────────
+function(add_bench_target TARGET_NAME SOURCE_FILE)
+    add_executable(${TARGET_NAME} ${SOURCE_FILE})
+    target_compile_options(${TARGET_NAME} PRIVATE
+        ${VFFT_BASE_FLAGS}
+        ${BENCH_ISA_FLAGS}
+    )
+    set_target_properties(${TARGET_NAME} PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
+    if(VFFT_BASE_DEFINITIONS)
+        target_compile_definitions(${TARGET_NAME} PRIVATE ${VFFT_BASE_DEFINITIONS})
+    endif()
+    target_include_directories(${TARGET_NAME} PRIVATE ${BENCH_CODELET_INCLUDES})
+    if(TARGET FFTW3::fftw3)
+        target_link_libraries(${TARGET_NAME} PRIVATE FFTW3::fftw3)
+    else()
+        target_include_directories(${TARGET_NAME} PRIVATE ${FFTW3_INCLUDE_DIRS})
+        target_link_libraries(${TARGET_NAME} PRIVATE ${FFTW3_LIBRARIES})
+    endif()
+    if(NOT WIN32)
+        target_link_libraries(${TARGET_NAME} PRIVATE m)
+    endif()
+endfunction()
+
 # ── bench_full_fft ───────────────────────────────────────────────────────────
-add_executable(bench_full_fft bench_full_fft.c)
-
-target_compile_options(bench_full_fft PRIVATE
-    ${VFFT_BASE_FLAGS}
-    ${BENCH_ISA_FLAGS}
-)
-set_target_properties(bench_full_fft PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
-
-if(VFFT_BASE_DEFINITIONS)
-    target_compile_definitions(bench_full_fft PRIVATE ${VFFT_BASE_DEFINITIONS})
-endif()
-
-target_include_directories(bench_full_fft PRIVATE
-    ${BENCH_CODELET_INCLUDES}
-)
-
-if(TARGET FFTW3::fftw3)
-    target_link_libraries(bench_full_fft PRIVATE FFTW3::fftw3)
-else()
-    target_include_directories(bench_full_fft PRIVATE ${FFTW3_INCLUDE_DIRS})
-    target_link_libraries(bench_full_fft PRIVATE ${FFTW3_LIBRARIES})
-endif()
-
-if(NOT WIN32)
-    target_link_libraries(bench_full_fft PRIVATE m)
-endif()
-
+add_bench_target(bench_full_fft bench_full_fft.c)
 message(STATUS "test: bench_full_fft [ISA: ${BENCH_ISA_FLAGS}]")
+
+# ── bench_factorize — brute-force factorization search ───────────────────────
+add_bench_target(bench_factorize bench_factorize.c)
+message(STATUS "test: bench_factorize [ISA: ${BENCH_ISA_FLAGS}]")
 
 # ── diag_plan (no FFTW dep) ──────────────────────────────────────────────────
 #add_executable(diag_plan diag_plan.c)
