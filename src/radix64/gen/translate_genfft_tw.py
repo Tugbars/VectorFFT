@@ -172,11 +172,16 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
         use_intrin = False
     R = radix
     ISA_U = isa.upper()
-    const_names = set(constants.keys())
+    # Prefix constants to avoid shadowing N1 mono IL (which uses same KP names)
+    cpfx = f'R{R}D_'
+    prefixed_constants = {cpfx + name: val for name, val in constants.items()}
+    const_names = set(prefixed_constants.keys())
+    const_rename = {name: cpfx + name for name in constants}
 
     def bcast(arg):
         """Wrap constant scalars for vector ops (no-op for scalar)."""
         arg = arg.strip()
+        arg = const_rename.get(arg, arg)  # rename KP... → R64D_KP...
         if not use_intrin:
             return arg
         if arg in const_names:
@@ -205,11 +210,11 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
         L.append(f'#include <immintrin.h>')
     L.append(f'')
 
-    # Constants as static doubles — shared guard for multi-ISA inclusion
+    # Constants — prefixed to avoid shadowing mono IL's KP* locals
     L.append(f'#ifndef FFT_RADIX{R}_DAG_CONSTANTS')
     L.append(f'#define FFT_RADIX{R}_DAG_CONSTANTS')
-    L.append(f'/* genfft constants — compiler emits vbroadcastsd from memory */')
-    for name, val in sorted(constants.items()):
+    L.append(f'/* genfft constants — prefixed {cpfx} to avoid shadowing mono IL */')
+    for name, val in sorted(prefixed_constants.items()):
         L.append(f'static const double {name} = {val};')
     L.append(f'#endif')
     L.append(f'')
@@ -264,7 +269,11 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
 
         elif op[0] == 'STORE':
             _, arr, idx, expr = op
-            expr_t = translate_expr(expr, const_names, P) if use_intrin else translate_expr_scalar(expr)
+            # Rename constants in expression (KP... → R64D_KP...)
+            renamed_expr = expr
+            for orig, pref in const_rename.items():
+                renamed_expr = renamed_expr.replace(orig, pref)
+            expr_t = translate_expr(renamed_expr, const_names, P) if use_intrin else translate_expr_scalar(renamed_expr)
             dst = f'out_{"re" if arr=="ri" else "im"}[{idx}*K+k]'
             if use_intrin:
                 L.append(f'{indent}{P}_store_pd(&{dst}, {expr_t});')
@@ -276,28 +285,28 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
             if use_intrin:
                 L.append(f'{indent}{decl(target)} = {P}_fmadd_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
             else:
-                L.append(f'{indent}{decl(target)} = {a} * {b} + {c};')
+                L.append(f'{indent}{decl(target)} = {bcast(a)} * {bcast(b)} + {bcast(c)};')
 
         elif op[0] == 'FNMS':
             _, target, a, b, c = op
             if use_intrin:
                 L.append(f'{indent}{decl(target)} = {P}_fnmadd_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
             else:
-                L.append(f'{indent}{decl(target)} = {c} - {a} * {b};')
+                L.append(f'{indent}{decl(target)} = {bcast(c)} - {bcast(a)} * {bcast(b)};')
 
         elif op[0] == 'FMS':
             _, target, a, b, c = op
             if use_intrin:
                 L.append(f'{indent}{decl(target)} = {P}_fmsub_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
             else:
-                L.append(f'{indent}{decl(target)} = {a} * {b} - {c};')
+                L.append(f'{indent}{decl(target)} = {bcast(a)} * {bcast(b)} - {bcast(c)};')
 
         elif op[0] == 'FNMA':
             _, target, a, b, c = op
             if use_intrin:
                 L.append(f'{indent}{decl(target)} = {P}_fnmsub_pd({bcast(a)}, {bcast(b)}, {bcast(c)});')
             else:
-                L.append(f'{indent}{decl(target)} = -({a} * {b}) - {c};')
+                L.append(f'{indent}{decl(target)} = -({bcast(a)} * {bcast(b)}) - {bcast(c)};')
 
         elif op[0] == 'BINOP':
             _, target, op_sym, lhs, rhs = op
@@ -305,7 +314,7 @@ def emit_codelet(ops, constants, var_decls, radix, isa='avx512'):
                 fn = {'+':"add",'-':"sub",'*':"mul"}[op_sym]
                 L.append(f'{indent}{decl(target)} = {P}_{fn}_pd({bcast(lhs)}, {bcast(rhs)});')
             else:
-                L.append(f'{indent}{decl(target)} = {lhs} {op_sym} {rhs};')
+                L.append(f'{indent}{decl(target)} = {bcast(lhs)} {op_sym} {bcast(rhs)};')
 
         elif op[0] == 'NEG':
             _, target, src = op
