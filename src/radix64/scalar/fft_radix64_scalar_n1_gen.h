@@ -14,40 +14,136 @@
 #ifndef FFT_W64_STATIC_ARRAYS_DEFINED
 #define FFT_W64_STATIC_ARRAYS_DEFINED
 static const double __attribute__((aligned(8))) iw_re[64] = {
-    1.00000000000000000000e+00, 9.95184726672196928732e-01, 9.80785280403230430579e-01, 9.56940335732208824382e-01,
-    9.23879532511286738483e-01, 8.81921264348355049556e-01, 8.31469612302545235671e-01, 7.73010453362736993377e-01,
-    7.07106781186547572737e-01, 6.34393284163645487794e-01, 5.55570233019602288671e-01, 4.71396736825997808573e-01,
-    3.82683432365089837290e-01, 2.90284677254462331053e-01, 1.95090322016128331351e-01, 9.80171403295607701622e-02,
-    6.12323399573676603587e-17, -9.80171403295606452621e-02, -1.95090322016128192573e-01, -2.90284677254462164520e-01,
-    -3.82683432365089726268e-01, -4.71396736825997697551e-01, -5.55570233019601955604e-01, -6.34393284163645376772e-01,
-    -7.07106781186547461715e-01, -7.73010453362736993377e-01, -8.31469612302545346694e-01, -8.81921264348354938534e-01,
-    -9.23879532511286738483e-01, -9.56940335732208824382e-01, -9.80785280403230430579e-01, -9.95184726672196817709e-01,
-    -1.00000000000000000000e+00, -9.95184726672196928732e-01, -9.80785280403230430579e-01, -9.56940335732208935404e-01,
-    -9.23879532511286849505e-01, -8.81921264348355049556e-01, -8.31469612302545457716e-01, -7.73010453362737104399e-01,
-    -7.07106781186547683760e-01, -6.34393284163645931883e-01, -5.55570233019602177649e-01, -4.71396736825997864084e-01,
-    -3.82683432365090336891e-01, -2.90284677254462442075e-01, -1.95090322016128664417e-01, -9.80171403295604509731e-02,
-    -1.83697019872102968750e-16, 9.80171403295600901506e-02, 1.95090322016128303595e-01, 2.90284677254462053497e-01,
-    3.82683432365090003824e-01, 4.71396736825997586529e-01, 5.55570233019601844582e-01, 6.34393284163645598817e-01,
-    7.07106781186547350693e-01, 7.73010453362736660310e-01, 8.31469612302545235671e-01, 8.81921264348354827511e-01,
-    9.23879532511286516439e-01, 9.56940335732208824382e-01, 9.80785280403230319557e-01, 9.95184726672196928732e-01,
+    1.00000000000000000000e+00,
+    9.95184726672196928732e-01,
+    9.80785280403230430579e-01,
+    9.56940335732208824382e-01,
+    9.23879532511286738483e-01,
+    8.81921264348355049556e-01,
+    8.31469612302545235671e-01,
+    7.73010453362736993377e-01,
+    7.07106781186547572737e-01,
+    6.34393284163645487794e-01,
+    5.55570233019602288671e-01,
+    4.71396736825997808573e-01,
+    3.82683432365089837290e-01,
+    2.90284677254462331053e-01,
+    1.95090322016128331351e-01,
+    9.80171403295607701622e-02,
+    6.12323399573676603587e-17,
+    -9.80171403295606452621e-02,
+    -1.95090322016128192573e-01,
+    -2.90284677254462164520e-01,
+    -3.82683432365089726268e-01,
+    -4.71396736825997697551e-01,
+    -5.55570233019601955604e-01,
+    -6.34393284163645376772e-01,
+    -7.07106781186547461715e-01,
+    -7.73010453362736993377e-01,
+    -8.31469612302545346694e-01,
+    -8.81921264348354938534e-01,
+    -9.23879532511286738483e-01,
+    -9.56940335732208824382e-01,
+    -9.80785280403230430579e-01,
+    -9.95184726672196817709e-01,
+    -1.00000000000000000000e+00,
+    -9.95184726672196928732e-01,
+    -9.80785280403230430579e-01,
+    -9.56940335732208935404e-01,
+    -9.23879532511286849505e-01,
+    -8.81921264348355049556e-01,
+    -8.31469612302545457716e-01,
+    -7.73010453362737104399e-01,
+    -7.07106781186547683760e-01,
+    -6.34393284163645931883e-01,
+    -5.55570233019602177649e-01,
+    -4.71396736825997864084e-01,
+    -3.82683432365090336891e-01,
+    -2.90284677254462442075e-01,
+    -1.95090322016128664417e-01,
+    -9.80171403295604509731e-02,
+    -1.83697019872102968750e-16,
+    9.80171403295600901506e-02,
+    1.95090322016128303595e-01,
+    2.90284677254462053497e-01,
+    3.82683432365090003824e-01,
+    4.71396736825997586529e-01,
+    5.55570233019601844582e-01,
+    6.34393284163645598817e-01,
+    7.07106781186547350693e-01,
+    7.73010453362736660310e-01,
+    8.31469612302545235671e-01,
+    8.81921264348354827511e-01,
+    9.23879532511286516439e-01,
+    9.56940335732208824382e-01,
+    9.80785280403230319557e-01,
+    9.95184726672196928732e-01,
 };
 static const double __attribute__((aligned(8))) iw_im[64] = {
-    -0.00000000000000000000e+00, -9.80171403295606036288e-02, -1.95090322016128248084e-01, -2.90284677254462331053e-01,
-    -3.82683432365089781779e-01, -4.71396736825997642040e-01, -5.55570233019602177649e-01, -6.34393284163645487794e-01,
-    -7.07106781186547461715e-01, -7.73010453362736993377e-01, -8.31469612302545235671e-01, -8.81921264348354938534e-01,
-    -9.23879532511286738483e-01, -9.56940335732208935404e-01, -9.80785280403230430579e-01, -9.95184726672196817709e-01,
-    -1.00000000000000000000e+00, -9.95184726672196928732e-01, -9.80785280403230430579e-01, -9.56940335732208935404e-01,
-    -9.23879532511286738483e-01, -8.81921264348355049556e-01, -8.31469612302545457716e-01, -7.73010453362737104399e-01,
-    -7.07106781186547572737e-01, -6.34393284163645487794e-01, -5.55570233019602177649e-01, -4.71396736825997864084e-01,
-    -3.82683432365089892802e-01, -2.90284677254462386564e-01, -1.95090322016128608906e-01, -9.80171403295608256734e-02,
-    -1.22464679914735320717e-16, 9.80171403295605897510e-02, 1.95090322016128359106e-01, 2.90284677254462109008e-01,
-    3.82683432365089670757e-01, 4.71396736825997642040e-01, 5.55570233019601955604e-01, 6.34393284163645265750e-01,
-    7.07106781186547461715e-01, 7.73010453362736660310e-01, 8.31469612302545235671e-01, 8.81921264348354938534e-01,
-    9.23879532511286516439e-01, 9.56940335732208824382e-01, 9.80785280403230319557e-01, 9.95184726672196928732e-01,
-    1.00000000000000000000e+00, 9.95184726672196928732e-01, 9.80785280403230430579e-01, 9.56940335732208935404e-01,
-    9.23879532511286627461e-01, 8.81921264348355049556e-01, 8.31469612302545457716e-01, 7.73010453362736882355e-01,
-    7.07106781186547683760e-01, 6.34393284163645931883e-01, 5.55570233019602177649e-01, 4.71396736825997919595e-01,
-    3.82683432365090392402e-01, 2.90284677254462497586e-01, 1.95090322016128719929e-01, 9.80171403295605064843e-02,
+    -0.00000000000000000000e+00,
+    -9.80171403295606036288e-02,
+    -1.95090322016128248084e-01,
+    -2.90284677254462331053e-01,
+    -3.82683432365089781779e-01,
+    -4.71396736825997642040e-01,
+    -5.55570233019602177649e-01,
+    -6.34393284163645487794e-01,
+    -7.07106781186547461715e-01,
+    -7.73010453362736993377e-01,
+    -8.31469612302545235671e-01,
+    -8.81921264348354938534e-01,
+    -9.23879532511286738483e-01,
+    -9.56940335732208935404e-01,
+    -9.80785280403230430579e-01,
+    -9.95184726672196817709e-01,
+    -1.00000000000000000000e+00,
+    -9.95184726672196928732e-01,
+    -9.80785280403230430579e-01,
+    -9.56940335732208935404e-01,
+    -9.23879532511286738483e-01,
+    -8.81921264348355049556e-01,
+    -8.31469612302545457716e-01,
+    -7.73010453362737104399e-01,
+    -7.07106781186547572737e-01,
+    -6.34393284163645487794e-01,
+    -5.55570233019602177649e-01,
+    -4.71396736825997864084e-01,
+    -3.82683432365089892802e-01,
+    -2.90284677254462386564e-01,
+    -1.95090322016128608906e-01,
+    -9.80171403295608256734e-02,
+    -1.22464679914735320717e-16,
+    9.80171403295605897510e-02,
+    1.95090322016128359106e-01,
+    2.90284677254462109008e-01,
+    3.82683432365089670757e-01,
+    4.71396736825997642040e-01,
+    5.55570233019601955604e-01,
+    6.34393284163645265750e-01,
+    7.07106781186547461715e-01,
+    7.73010453362736660310e-01,
+    8.31469612302545235671e-01,
+    8.81921264348354938534e-01,
+    9.23879532511286516439e-01,
+    9.56940335732208824382e-01,
+    9.80785280403230319557e-01,
+    9.95184726672196928732e-01,
+    1.00000000000000000000e+00,
+    9.95184726672196928732e-01,
+    9.80785280403230430579e-01,
+    9.56940335732208935404e-01,
+    9.23879532511286627461e-01,
+    8.81921264348355049556e-01,
+    8.31469612302545457716e-01,
+    7.73010453362736882355e-01,
+    7.07106781186547683760e-01,
+    6.34393284163645931883e-01,
+    5.55570233019602177649e-01,
+    4.71396736825997919595e-01,
+    3.82683432365090392402e-01,
+    2.90284677254462497586e-01,
+    1.95090322016128719929e-01,
+    9.80171403295605064843e-02,
 };
 #endif /* FFT_W64_STATIC_ARRAYS_DEFINED */
 
@@ -55,2691 +151,3821 @@ static const double __attribute__((aligned(8))) iw_im[64] = {
 #define R64S_LD(p) (*(p))
 #endif
 #ifndef R64S_ST
-#define R64S_ST(p,v) (*(p) = (v))
+#define R64S_ST(p, v) (*(p) = (v))
 #endif
 
 static void
 radix64_n1_dit_kernel_fwd_scalar(
-    const double * __restrict__ in_re, const double * __restrict__ in_im,
-    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double *__restrict__ in_re, const double *__restrict__ in_im,
+    double *__restrict__ out_re, double *__restrict__ out_im,
     size_t K)
 {
-    const double sqrt2_inv = 0.70710678118654752440;
+  const double sqrt2_inv = 0.70710678118654752440;
 
-    double spill_re[64];
-    double spill_im[64];
+  double spill_re[64];
+  double spill_im[64];
 
-    double x0_re, x0_im, x1_re, x1_im, x2_re, x2_im, x3_re, x3_im;
-    double x4_re, x4_im, x5_re, x5_im, x6_re, x6_im, x7_re, x7_im;
+  double x0_re, x0_im, x1_re, x1_im, x2_re, x2_im, x3_re, x3_im;
+  double x4_re, x4_im, x5_re, x5_im, x6_re, x6_im, x7_re, x7_im;
 
-    for (size_t k = 0; k < K; k += 1) {
-        /* PASS 1: 8 radix-8 sub-FFTs [fwd] */
+  for (size_t k = 0; k < K; k += 1)
+  {
+    /* PASS 1: 8 radix-8 sub-FFTs [fwd] */
 
-        /* sub-FFT n₂=0 */
-        x0_re = R64S_LD(&in_re[0 * K + k]);
-        x0_im = R64S_LD(&in_im[0 * K + k]);
-        x1_re = R64S_LD(&in_re[8 * K + k]);
-        x1_im = R64S_LD(&in_im[8 * K + k]);
-        x2_re = R64S_LD(&in_re[16 * K + k]);
-        x2_im = R64S_LD(&in_im[16 * K + k]);
-        x3_re = R64S_LD(&in_re[24 * K + k]);
-        x3_im = R64S_LD(&in_im[24 * K + k]);
-        x4_re = R64S_LD(&in_re[32 * K + k]);
-        x4_im = R64S_LD(&in_im[32 * K + k]);
-        x5_re = R64S_LD(&in_re[40 * K + k]);
-        x5_im = R64S_LD(&in_im[40 * K + k]);
-        x6_re = R64S_LD(&in_re[48 * K + k]);
-        x6_im = R64S_LD(&in_im[48 * K + k]);
-        x7_re = R64S_LD(&in_re[56 * K + k]);
-        x7_im = R64S_LD(&in_im[56 * K + k]);
+    /* sub-FFT n₂=0 */
+    x0_re = R64S_LD(&in_re[0 * K + k]);
+    x0_im = R64S_LD(&in_im[0 * K + k]);
+    x1_re = R64S_LD(&in_re[8 * K + k]);
+    x1_im = R64S_LD(&in_im[8 * K + k]);
+    x2_re = R64S_LD(&in_re[16 * K + k]);
+    x2_im = R64S_LD(&in_im[16 * K + k]);
+    x3_re = R64S_LD(&in_re[24 * K + k]);
+    x3_im = R64S_LD(&in_im[24 * K + k]);
+    x4_re = R64S_LD(&in_re[32 * K + k]);
+    x4_im = R64S_LD(&in_im[32 * K + k]);
+    x5_re = R64S_LD(&in_re[40 * K + k]);
+    x5_im = R64S_LD(&in_im[40 * K + k]);
+    x6_re = R64S_LD(&in_re[48 * K + k]);
+    x6_im = R64S_LD(&in_im[48 * K + k]);
+    x7_re = R64S_LD(&in_re[56 * K + k]);
+    x7_im = R64S_LD(&in_im[56 * K + k]);
 
-        /* radix-8 sub-FFT n₂=0 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=0 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[0] = x0_re;
-        spill_im[0] = x0_im;
-        spill_re[1] = x1_re;
-        spill_im[1] = x1_im;
-        spill_re[2] = x2_re;
-        spill_im[2] = x2_im;
-        spill_re[3] = x3_re;
-        spill_im[3] = x3_im;
-        spill_re[4] = x4_re;
-        spill_im[4] = x4_im;
-        spill_re[5] = x5_re;
-        spill_im[5] = x5_im;
-        spill_re[6] = x6_re;
-        spill_im[6] = x6_im;
-        spill_re[7] = x7_re;
-        spill_im[7] = x7_im;
+    spill_re[0] = x0_re;
+    spill_im[0] = x0_im;
+    spill_re[1] = x1_re;
+    spill_im[1] = x1_im;
+    spill_re[2] = x2_re;
+    spill_im[2] = x2_im;
+    spill_re[3] = x3_re;
+    spill_im[3] = x3_im;
+    spill_re[4] = x4_re;
+    spill_im[4] = x4_im;
+    spill_re[5] = x5_re;
+    spill_im[5] = x5_im;
+    spill_re[6] = x6_re;
+    spill_im[6] = x6_im;
+    spill_re[7] = x7_re;
+    spill_im[7] = x7_im;
 
-        /* sub-FFT n₂=1 */
-        x0_re = R64S_LD(&in_re[1 * K + k]);
-        x0_im = R64S_LD(&in_im[1 * K + k]);
-        x1_re = R64S_LD(&in_re[9 * K + k]);
-        x1_im = R64S_LD(&in_im[9 * K + k]);
-        x2_re = R64S_LD(&in_re[17 * K + k]);
-        x2_im = R64S_LD(&in_im[17 * K + k]);
-        x3_re = R64S_LD(&in_re[25 * K + k]);
-        x3_im = R64S_LD(&in_im[25 * K + k]);
-        x4_re = R64S_LD(&in_re[33 * K + k]);
-        x4_im = R64S_LD(&in_im[33 * K + k]);
-        x5_re = R64S_LD(&in_re[41 * K + k]);
-        x5_im = R64S_LD(&in_im[41 * K + k]);
-        x6_re = R64S_LD(&in_re[49 * K + k]);
-        x6_im = R64S_LD(&in_im[49 * K + k]);
-        x7_re = R64S_LD(&in_re[57 * K + k]);
-        x7_im = R64S_LD(&in_im[57 * K + k]);
+    /* sub-FFT n₂=1 */
+    x0_re = R64S_LD(&in_re[1 * K + k]);
+    x0_im = R64S_LD(&in_im[1 * K + k]);
+    x1_re = R64S_LD(&in_re[9 * K + k]);
+    x1_im = R64S_LD(&in_im[9 * K + k]);
+    x2_re = R64S_LD(&in_re[17 * K + k]);
+    x2_im = R64S_LD(&in_im[17 * K + k]);
+    x3_re = R64S_LD(&in_re[25 * K + k]);
+    x3_im = R64S_LD(&in_im[25 * K + k]);
+    x4_re = R64S_LD(&in_re[33 * K + k]);
+    x4_im = R64S_LD(&in_im[33 * K + k]);
+    x5_re = R64S_LD(&in_re[41 * K + k]);
+    x5_im = R64S_LD(&in_im[41 * K + k]);
+    x6_re = R64S_LD(&in_re[49 * K + k]);
+    x6_im = R64S_LD(&in_im[49 * K + k]);
+    x7_re = R64S_LD(&in_re[57 * K + k]);
+    x7_im = R64S_LD(&in_im[57 * K + k]);
 
-        /* radix-8 sub-FFT n₂=1 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=1 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[8] = x0_re;
-        spill_im[8] = x0_im;
-        spill_re[9] = x1_re;
-        spill_im[9] = x1_im;
-        spill_re[10] = x2_re;
-        spill_im[10] = x2_im;
-        spill_re[11] = x3_re;
-        spill_im[11] = x3_im;
-        spill_re[12] = x4_re;
-        spill_im[12] = x4_im;
-        spill_re[13] = x5_re;
-        spill_im[13] = x5_im;
-        spill_re[14] = x6_re;
-        spill_im[14] = x6_im;
-        spill_re[15] = x7_re;
-        spill_im[15] = x7_im;
+    spill_re[8] = x0_re;
+    spill_im[8] = x0_im;
+    spill_re[9] = x1_re;
+    spill_im[9] = x1_im;
+    spill_re[10] = x2_re;
+    spill_im[10] = x2_im;
+    spill_re[11] = x3_re;
+    spill_im[11] = x3_im;
+    spill_re[12] = x4_re;
+    spill_im[12] = x4_im;
+    spill_re[13] = x5_re;
+    spill_im[13] = x5_im;
+    spill_re[14] = x6_re;
+    spill_im[14] = x6_im;
+    spill_re[15] = x7_re;
+    spill_im[15] = x7_im;
 
-        /* sub-FFT n₂=2 */
-        x0_re = R64S_LD(&in_re[2 * K + k]);
-        x0_im = R64S_LD(&in_im[2 * K + k]);
-        x1_re = R64S_LD(&in_re[10 * K + k]);
-        x1_im = R64S_LD(&in_im[10 * K + k]);
-        x2_re = R64S_LD(&in_re[18 * K + k]);
-        x2_im = R64S_LD(&in_im[18 * K + k]);
-        x3_re = R64S_LD(&in_re[26 * K + k]);
-        x3_im = R64S_LD(&in_im[26 * K + k]);
-        x4_re = R64S_LD(&in_re[34 * K + k]);
-        x4_im = R64S_LD(&in_im[34 * K + k]);
-        x5_re = R64S_LD(&in_re[42 * K + k]);
-        x5_im = R64S_LD(&in_im[42 * K + k]);
-        x6_re = R64S_LD(&in_re[50 * K + k]);
-        x6_im = R64S_LD(&in_im[50 * K + k]);
-        x7_re = R64S_LD(&in_re[58 * K + k]);
-        x7_im = R64S_LD(&in_im[58 * K + k]);
+    /* sub-FFT n₂=2 */
+    x0_re = R64S_LD(&in_re[2 * K + k]);
+    x0_im = R64S_LD(&in_im[2 * K + k]);
+    x1_re = R64S_LD(&in_re[10 * K + k]);
+    x1_im = R64S_LD(&in_im[10 * K + k]);
+    x2_re = R64S_LD(&in_re[18 * K + k]);
+    x2_im = R64S_LD(&in_im[18 * K + k]);
+    x3_re = R64S_LD(&in_re[26 * K + k]);
+    x3_im = R64S_LD(&in_im[26 * K + k]);
+    x4_re = R64S_LD(&in_re[34 * K + k]);
+    x4_im = R64S_LD(&in_im[34 * K + k]);
+    x5_re = R64S_LD(&in_re[42 * K + k]);
+    x5_im = R64S_LD(&in_im[42 * K + k]);
+    x6_re = R64S_LD(&in_re[50 * K + k]);
+    x6_im = R64S_LD(&in_im[50 * K + k]);
+    x7_re = R64S_LD(&in_re[58 * K + k]);
+    x7_im = R64S_LD(&in_im[58 * K + k]);
 
-        /* radix-8 sub-FFT n₂=2 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=2 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[16] = x0_re;
-        spill_im[16] = x0_im;
-        spill_re[17] = x1_re;
-        spill_im[17] = x1_im;
-        spill_re[18] = x2_re;
-        spill_im[18] = x2_im;
-        spill_re[19] = x3_re;
-        spill_im[19] = x3_im;
-        spill_re[20] = x4_re;
-        spill_im[20] = x4_im;
-        spill_re[21] = x5_re;
-        spill_im[21] = x5_im;
-        spill_re[22] = x6_re;
-        spill_im[22] = x6_im;
-        spill_re[23] = x7_re;
-        spill_im[23] = x7_im;
+    spill_re[16] = x0_re;
+    spill_im[16] = x0_im;
+    spill_re[17] = x1_re;
+    spill_im[17] = x1_im;
+    spill_re[18] = x2_re;
+    spill_im[18] = x2_im;
+    spill_re[19] = x3_re;
+    spill_im[19] = x3_im;
+    spill_re[20] = x4_re;
+    spill_im[20] = x4_im;
+    spill_re[21] = x5_re;
+    spill_im[21] = x5_im;
+    spill_re[22] = x6_re;
+    spill_im[22] = x6_im;
+    spill_re[23] = x7_re;
+    spill_im[23] = x7_im;
 
-        /* sub-FFT n₂=3 */
-        x0_re = R64S_LD(&in_re[3 * K + k]);
-        x0_im = R64S_LD(&in_im[3 * K + k]);
-        x1_re = R64S_LD(&in_re[11 * K + k]);
-        x1_im = R64S_LD(&in_im[11 * K + k]);
-        x2_re = R64S_LD(&in_re[19 * K + k]);
-        x2_im = R64S_LD(&in_im[19 * K + k]);
-        x3_re = R64S_LD(&in_re[27 * K + k]);
-        x3_im = R64S_LD(&in_im[27 * K + k]);
-        x4_re = R64S_LD(&in_re[35 * K + k]);
-        x4_im = R64S_LD(&in_im[35 * K + k]);
-        x5_re = R64S_LD(&in_re[43 * K + k]);
-        x5_im = R64S_LD(&in_im[43 * K + k]);
-        x6_re = R64S_LD(&in_re[51 * K + k]);
-        x6_im = R64S_LD(&in_im[51 * K + k]);
-        x7_re = R64S_LD(&in_re[59 * K + k]);
-        x7_im = R64S_LD(&in_im[59 * K + k]);
+    /* sub-FFT n₂=3 */
+    x0_re = R64S_LD(&in_re[3 * K + k]);
+    x0_im = R64S_LD(&in_im[3 * K + k]);
+    x1_re = R64S_LD(&in_re[11 * K + k]);
+    x1_im = R64S_LD(&in_im[11 * K + k]);
+    x2_re = R64S_LD(&in_re[19 * K + k]);
+    x2_im = R64S_LD(&in_im[19 * K + k]);
+    x3_re = R64S_LD(&in_re[27 * K + k]);
+    x3_im = R64S_LD(&in_im[27 * K + k]);
+    x4_re = R64S_LD(&in_re[35 * K + k]);
+    x4_im = R64S_LD(&in_im[35 * K + k]);
+    x5_re = R64S_LD(&in_re[43 * K + k]);
+    x5_im = R64S_LD(&in_im[43 * K + k]);
+    x6_re = R64S_LD(&in_re[51 * K + k]);
+    x6_im = R64S_LD(&in_im[51 * K + k]);
+    x7_re = R64S_LD(&in_re[59 * K + k]);
+    x7_im = R64S_LD(&in_im[59 * K + k]);
 
-        /* radix-8 sub-FFT n₂=3 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=3 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[24] = x0_re;
-        spill_im[24] = x0_im;
-        spill_re[25] = x1_re;
-        spill_im[25] = x1_im;
-        spill_re[26] = x2_re;
-        spill_im[26] = x2_im;
-        spill_re[27] = x3_re;
-        spill_im[27] = x3_im;
-        spill_re[28] = x4_re;
-        spill_im[28] = x4_im;
-        spill_re[29] = x5_re;
-        spill_im[29] = x5_im;
-        spill_re[30] = x6_re;
-        spill_im[30] = x6_im;
-        spill_re[31] = x7_re;
-        spill_im[31] = x7_im;
+    spill_re[24] = x0_re;
+    spill_im[24] = x0_im;
+    spill_re[25] = x1_re;
+    spill_im[25] = x1_im;
+    spill_re[26] = x2_re;
+    spill_im[26] = x2_im;
+    spill_re[27] = x3_re;
+    spill_im[27] = x3_im;
+    spill_re[28] = x4_re;
+    spill_im[28] = x4_im;
+    spill_re[29] = x5_re;
+    spill_im[29] = x5_im;
+    spill_re[30] = x6_re;
+    spill_im[30] = x6_im;
+    spill_re[31] = x7_re;
+    spill_im[31] = x7_im;
 
-        /* sub-FFT n₂=4 */
-        x0_re = R64S_LD(&in_re[4 * K + k]);
-        x0_im = R64S_LD(&in_im[4 * K + k]);
-        x1_re = R64S_LD(&in_re[12 * K + k]);
-        x1_im = R64S_LD(&in_im[12 * K + k]);
-        x2_re = R64S_LD(&in_re[20 * K + k]);
-        x2_im = R64S_LD(&in_im[20 * K + k]);
-        x3_re = R64S_LD(&in_re[28 * K + k]);
-        x3_im = R64S_LD(&in_im[28 * K + k]);
-        x4_re = R64S_LD(&in_re[36 * K + k]);
-        x4_im = R64S_LD(&in_im[36 * K + k]);
-        x5_re = R64S_LD(&in_re[44 * K + k]);
-        x5_im = R64S_LD(&in_im[44 * K + k]);
-        x6_re = R64S_LD(&in_re[52 * K + k]);
-        x6_im = R64S_LD(&in_im[52 * K + k]);
-        x7_re = R64S_LD(&in_re[60 * K + k]);
-        x7_im = R64S_LD(&in_im[60 * K + k]);
+    /* sub-FFT n₂=4 */
+    x0_re = R64S_LD(&in_re[4 * K + k]);
+    x0_im = R64S_LD(&in_im[4 * K + k]);
+    x1_re = R64S_LD(&in_re[12 * K + k]);
+    x1_im = R64S_LD(&in_im[12 * K + k]);
+    x2_re = R64S_LD(&in_re[20 * K + k]);
+    x2_im = R64S_LD(&in_im[20 * K + k]);
+    x3_re = R64S_LD(&in_re[28 * K + k]);
+    x3_im = R64S_LD(&in_im[28 * K + k]);
+    x4_re = R64S_LD(&in_re[36 * K + k]);
+    x4_im = R64S_LD(&in_im[36 * K + k]);
+    x5_re = R64S_LD(&in_re[44 * K + k]);
+    x5_im = R64S_LD(&in_im[44 * K + k]);
+    x6_re = R64S_LD(&in_re[52 * K + k]);
+    x6_im = R64S_LD(&in_im[52 * K + k]);
+    x7_re = R64S_LD(&in_re[60 * K + k]);
+    x7_im = R64S_LD(&in_im[60 * K + k]);
 
-        /* radix-8 sub-FFT n₂=4 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=4 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[32] = x0_re;
-        spill_im[32] = x0_im;
-        spill_re[33] = x1_re;
-        spill_im[33] = x1_im;
-        spill_re[34] = x2_re;
-        spill_im[34] = x2_im;
-        spill_re[35] = x3_re;
-        spill_im[35] = x3_im;
-        spill_re[36] = x4_re;
-        spill_im[36] = x4_im;
-        spill_re[37] = x5_re;
-        spill_im[37] = x5_im;
-        spill_re[38] = x6_re;
-        spill_im[38] = x6_im;
-        spill_re[39] = x7_re;
-        spill_im[39] = x7_im;
+    spill_re[32] = x0_re;
+    spill_im[32] = x0_im;
+    spill_re[33] = x1_re;
+    spill_im[33] = x1_im;
+    spill_re[34] = x2_re;
+    spill_im[34] = x2_im;
+    spill_re[35] = x3_re;
+    spill_im[35] = x3_im;
+    spill_re[36] = x4_re;
+    spill_im[36] = x4_im;
+    spill_re[37] = x5_re;
+    spill_im[37] = x5_im;
+    spill_re[38] = x6_re;
+    spill_im[38] = x6_im;
+    spill_re[39] = x7_re;
+    spill_im[39] = x7_im;
 
-        /* sub-FFT n₂=5 */
-        x0_re = R64S_LD(&in_re[5 * K + k]);
-        x0_im = R64S_LD(&in_im[5 * K + k]);
-        x1_re = R64S_LD(&in_re[13 * K + k]);
-        x1_im = R64S_LD(&in_im[13 * K + k]);
-        x2_re = R64S_LD(&in_re[21 * K + k]);
-        x2_im = R64S_LD(&in_im[21 * K + k]);
-        x3_re = R64S_LD(&in_re[29 * K + k]);
-        x3_im = R64S_LD(&in_im[29 * K + k]);
-        x4_re = R64S_LD(&in_re[37 * K + k]);
-        x4_im = R64S_LD(&in_im[37 * K + k]);
-        x5_re = R64S_LD(&in_re[45 * K + k]);
-        x5_im = R64S_LD(&in_im[45 * K + k]);
-        x6_re = R64S_LD(&in_re[53 * K + k]);
-        x6_im = R64S_LD(&in_im[53 * K + k]);
-        x7_re = R64S_LD(&in_re[61 * K + k]);
-        x7_im = R64S_LD(&in_im[61 * K + k]);
+    /* sub-FFT n₂=5 */
+    x0_re = R64S_LD(&in_re[5 * K + k]);
+    x0_im = R64S_LD(&in_im[5 * K + k]);
+    x1_re = R64S_LD(&in_re[13 * K + k]);
+    x1_im = R64S_LD(&in_im[13 * K + k]);
+    x2_re = R64S_LD(&in_re[21 * K + k]);
+    x2_im = R64S_LD(&in_im[21 * K + k]);
+    x3_re = R64S_LD(&in_re[29 * K + k]);
+    x3_im = R64S_LD(&in_im[29 * K + k]);
+    x4_re = R64S_LD(&in_re[37 * K + k]);
+    x4_im = R64S_LD(&in_im[37 * K + k]);
+    x5_re = R64S_LD(&in_re[45 * K + k]);
+    x5_im = R64S_LD(&in_im[45 * K + k]);
+    x6_re = R64S_LD(&in_re[53 * K + k]);
+    x6_im = R64S_LD(&in_im[53 * K + k]);
+    x7_re = R64S_LD(&in_re[61 * K + k]);
+    x7_im = R64S_LD(&in_im[61 * K + k]);
 
-        /* radix-8 sub-FFT n₂=5 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=5 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[40] = x0_re;
-        spill_im[40] = x0_im;
-        spill_re[41] = x1_re;
-        spill_im[41] = x1_im;
-        spill_re[42] = x2_re;
-        spill_im[42] = x2_im;
-        spill_re[43] = x3_re;
-        spill_im[43] = x3_im;
-        spill_re[44] = x4_re;
-        spill_im[44] = x4_im;
-        spill_re[45] = x5_re;
-        spill_im[45] = x5_im;
-        spill_re[46] = x6_re;
-        spill_im[46] = x6_im;
-        spill_re[47] = x7_re;
-        spill_im[47] = x7_im;
+    spill_re[40] = x0_re;
+    spill_im[40] = x0_im;
+    spill_re[41] = x1_re;
+    spill_im[41] = x1_im;
+    spill_re[42] = x2_re;
+    spill_im[42] = x2_im;
+    spill_re[43] = x3_re;
+    spill_im[43] = x3_im;
+    spill_re[44] = x4_re;
+    spill_im[44] = x4_im;
+    spill_re[45] = x5_re;
+    spill_im[45] = x5_im;
+    spill_re[46] = x6_re;
+    spill_im[46] = x6_im;
+    spill_re[47] = x7_re;
+    spill_im[47] = x7_im;
 
-        /* sub-FFT n₂=6 */
-        x0_re = R64S_LD(&in_re[6 * K + k]);
-        x0_im = R64S_LD(&in_im[6 * K + k]);
-        x1_re = R64S_LD(&in_re[14 * K + k]);
-        x1_im = R64S_LD(&in_im[14 * K + k]);
-        x2_re = R64S_LD(&in_re[22 * K + k]);
-        x2_im = R64S_LD(&in_im[22 * K + k]);
-        x3_re = R64S_LD(&in_re[30 * K + k]);
-        x3_im = R64S_LD(&in_im[30 * K + k]);
-        x4_re = R64S_LD(&in_re[38 * K + k]);
-        x4_im = R64S_LD(&in_im[38 * K + k]);
-        x5_re = R64S_LD(&in_re[46 * K + k]);
-        x5_im = R64S_LD(&in_im[46 * K + k]);
-        x6_re = R64S_LD(&in_re[54 * K + k]);
-        x6_im = R64S_LD(&in_im[54 * K + k]);
-        x7_re = R64S_LD(&in_re[62 * K + k]);
-        x7_im = R64S_LD(&in_im[62 * K + k]);
+    /* sub-FFT n₂=6 */
+    x0_re = R64S_LD(&in_re[6 * K + k]);
+    x0_im = R64S_LD(&in_im[6 * K + k]);
+    x1_re = R64S_LD(&in_re[14 * K + k]);
+    x1_im = R64S_LD(&in_im[14 * K + k]);
+    x2_re = R64S_LD(&in_re[22 * K + k]);
+    x2_im = R64S_LD(&in_im[22 * K + k]);
+    x3_re = R64S_LD(&in_re[30 * K + k]);
+    x3_im = R64S_LD(&in_im[30 * K + k]);
+    x4_re = R64S_LD(&in_re[38 * K + k]);
+    x4_im = R64S_LD(&in_im[38 * K + k]);
+    x5_re = R64S_LD(&in_re[46 * K + k]);
+    x5_im = R64S_LD(&in_im[46 * K + k]);
+    x6_re = R64S_LD(&in_re[54 * K + k]);
+    x6_im = R64S_LD(&in_im[54 * K + k]);
+    x7_re = R64S_LD(&in_re[62 * K + k]);
+    x7_im = R64S_LD(&in_im[62 * K + k]);
 
-        /* radix-8 sub-FFT n₂=6 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=6 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[48] = x0_re;
-        spill_im[48] = x0_im;
-        spill_re[49] = x1_re;
-        spill_im[49] = x1_im;
-        spill_re[50] = x2_re;
-        spill_im[50] = x2_im;
-        spill_re[51] = x3_re;
-        spill_im[51] = x3_im;
-        spill_re[52] = x4_re;
-        spill_im[52] = x4_im;
-        spill_re[53] = x5_re;
-        spill_im[53] = x5_im;
-        spill_re[54] = x6_re;
-        spill_im[54] = x6_im;
-        spill_re[55] = x7_re;
-        spill_im[55] = x7_im;
+    spill_re[48] = x0_re;
+    spill_im[48] = x0_im;
+    spill_re[49] = x1_re;
+    spill_im[49] = x1_im;
+    spill_re[50] = x2_re;
+    spill_im[50] = x2_im;
+    spill_re[51] = x3_re;
+    spill_im[51] = x3_im;
+    spill_re[52] = x4_re;
+    spill_im[52] = x4_im;
+    spill_re[53] = x5_re;
+    spill_im[53] = x5_im;
+    spill_re[54] = x6_re;
+    spill_im[54] = x6_im;
+    spill_re[55] = x7_re;
+    spill_im[55] = x7_im;
 
-        /* sub-FFT n₂=7 */
-        x0_re = R64S_LD(&in_re[7 * K + k]);
-        x0_im = R64S_LD(&in_im[7 * K + k]);
-        x1_re = R64S_LD(&in_re[15 * K + k]);
-        x1_im = R64S_LD(&in_im[15 * K + k]);
-        x2_re = R64S_LD(&in_re[23 * K + k]);
-        x2_im = R64S_LD(&in_im[23 * K + k]);
-        x3_re = R64S_LD(&in_re[31 * K + k]);
-        x3_im = R64S_LD(&in_im[31 * K + k]);
-        x4_re = R64S_LD(&in_re[39 * K + k]);
-        x4_im = R64S_LD(&in_im[39 * K + k]);
-        x5_re = R64S_LD(&in_re[47 * K + k]);
-        x5_im = R64S_LD(&in_im[47 * K + k]);
-        x6_re = R64S_LD(&in_re[55 * K + k]);
-        x6_im = R64S_LD(&in_im[55 * K + k]);
-        x7_re = R64S_LD(&in_re[63 * K + k]);
-        x7_im = R64S_LD(&in_im[63 * K + k]);
+    /* sub-FFT n₂=7 */
+    x0_re = R64S_LD(&in_re[7 * K + k]);
+    x0_im = R64S_LD(&in_im[7 * K + k]);
+    x1_re = R64S_LD(&in_re[15 * K + k]);
+    x1_im = R64S_LD(&in_im[15 * K + k]);
+    x2_re = R64S_LD(&in_re[23 * K + k]);
+    x2_im = R64S_LD(&in_im[23 * K + k]);
+    x3_re = R64S_LD(&in_re[31 * K + k]);
+    x3_im = R64S_LD(&in_im[31 * K + k]);
+    x4_re = R64S_LD(&in_re[39 * K + k]);
+    x4_im = R64S_LD(&in_im[39 * K + k]);
+    x5_re = R64S_LD(&in_re[47 * K + k]);
+    x5_im = R64S_LD(&in_im[47 * K + k]);
+    x6_re = R64S_LD(&in_re[55 * K + k]);
+    x6_im = R64S_LD(&in_im[55 * K + k]);
+    x7_re = R64S_LD(&in_re[63 * K + k]);
+    x7_im = R64S_LD(&in_im[63 * K + k]);
 
-        /* radix-8 sub-FFT n₂=7 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=7 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[56] = x0_re;
-        spill_im[56] = x0_im;
-        spill_re[57] = x1_re;
-        spill_im[57] = x1_im;
-        spill_re[58] = x2_re;
-        spill_im[58] = x2_im;
-        spill_re[59] = x3_re;
-        spill_im[59] = x3_im;
-        spill_re[60] = x4_re;
-        spill_im[60] = x4_im;
-        spill_re[61] = x5_re;
-        spill_im[61] = x5_im;
-        spill_re[62] = x6_re;
-        spill_im[62] = x6_im;
-        spill_re[63] = x7_re;
-        spill_im[63] = x7_im;
+    spill_re[56] = x0_re;
+    spill_im[56] = x0_im;
+    spill_re[57] = x1_re;
+    spill_im[57] = x1_im;
+    spill_re[58] = x2_re;
+    spill_im[58] = x2_im;
+    spill_re[59] = x3_re;
+    spill_im[59] = x3_im;
+    spill_re[60] = x4_re;
+    spill_im[60] = x4_im;
+    spill_re[61] = x5_re;
+    spill_im[61] = x5_im;
+    spill_re[62] = x6_re;
+    spill_im[62] = x6_im;
+    spill_re[63] = x7_re;
+    spill_im[63] = x7_im;
 
-        /* PASS 2: 8 radix-8 combines with W_64 twiddles [fwd] */
+    /* PASS 2: 8 radix-8 combines with W_64 twiddles [fwd] */
 
-        /* column k₁=0 */
-        x0_re = spill_re[0];
-        x0_im = spill_im[0];
-        x1_re = spill_re[8];
-        x1_im = spill_im[8];
-        x2_re = spill_re[16];
-        x2_im = spill_im[16];
-        x3_re = spill_re[24];
-        x3_im = spill_im[24];
-        x4_re = spill_re[32];
-        x4_im = spill_im[32];
-        x5_re = spill_re[40];
-        x5_im = spill_im[40];
-        x6_re = spill_re[48];
-        x6_im = spill_im[48];
-        x7_re = spill_re[56];
-        x7_im = spill_im[56];
+    /* column k₁=0 */
+    x0_re = spill_re[0];
+    x0_im = spill_im[0];
+    x1_re = spill_re[8];
+    x1_im = spill_im[8];
+    x2_re = spill_re[16];
+    x2_im = spill_im[16];
+    x3_re = spill_re[24];
+    x3_im = spill_im[24];
+    x4_re = spill_re[32];
+    x4_im = spill_im[32];
+    x5_re = spill_re[40];
+    x5_im = spill_im[40];
+    x6_re = spill_re[48];
+    x6_im = spill_im[48];
+    x7_re = spill_re[56];
+    x7_im = spill_im[56];
 
-        /* radix-8 combine k₁=0 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=0 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[0 * K + k], x0_re);
-        R64S_ST(&out_im[0 * K + k], x0_im);
-        R64S_ST(&out_re[8 * K + k], x1_re);
-        R64S_ST(&out_im[8 * K + k], x1_im);
-        R64S_ST(&out_re[16 * K + k], x2_re);
-        R64S_ST(&out_im[16 * K + k], x2_im);
-        R64S_ST(&out_re[24 * K + k], x3_re);
-        R64S_ST(&out_im[24 * K + k], x3_im);
-        R64S_ST(&out_re[32 * K + k], x4_re);
-        R64S_ST(&out_im[32 * K + k], x4_im);
-        R64S_ST(&out_re[40 * K + k], x5_re);
-        R64S_ST(&out_im[40 * K + k], x5_im);
-        R64S_ST(&out_re[48 * K + k], x6_re);
-        R64S_ST(&out_im[48 * K + k], x6_im);
-        R64S_ST(&out_re[56 * K + k], x7_re);
-        R64S_ST(&out_im[56 * K + k], x7_im);
+    R64S_ST(&out_re[0 * K + k], x0_re);
+    R64S_ST(&out_im[0 * K + k], x0_im);
+    R64S_ST(&out_re[8 * K + k], x1_re);
+    R64S_ST(&out_im[8 * K + k], x1_im);
+    R64S_ST(&out_re[16 * K + k], x2_re);
+    R64S_ST(&out_im[16 * K + k], x2_im);
+    R64S_ST(&out_re[24 * K + k], x3_re);
+    R64S_ST(&out_im[24 * K + k], x3_im);
+    R64S_ST(&out_re[32 * K + k], x4_re);
+    R64S_ST(&out_im[32 * K + k], x4_im);
+    R64S_ST(&out_re[40 * K + k], x5_re);
+    R64S_ST(&out_im[40 * K + k], x5_im);
+    R64S_ST(&out_re[48 * K + k], x6_re);
+    R64S_ST(&out_im[48 * K + k], x6_im);
+    R64S_ST(&out_re[56 * K + k], x7_re);
+    R64S_ST(&out_im[56 * K + k], x7_im);
 
-        /* column k₁=1 */
-        x0_re = spill_re[1];
-        x0_im = spill_im[1];
-        x1_re = spill_re[9];
-        x1_im = spill_im[9];
-        x2_re = spill_re[17];
-        x2_im = spill_im[17];
-        x3_re = spill_re[25];
-        x3_im = spill_im[25];
-        x4_re = spill_re[33];
-        x4_im = spill_im[33];
-        x5_re = spill_re[41];
-        x5_im = spill_im[41];
-        x6_re = spill_re[49];
-        x6_im = spill_im[49];
-        x7_re = spill_re[57];
-        x7_im = spill_im[57];
+    /* column k₁=1 */
+    x0_re = spill_re[1];
+    x0_im = spill_im[1];
+    x1_re = spill_re[9];
+    x1_im = spill_im[9];
+    x2_re = spill_re[17];
+    x2_im = spill_im[17];
+    x3_re = spill_re[25];
+    x3_im = spill_im[25];
+    x4_re = spill_re[33];
+    x4_im = spill_im[33];
+    x5_re = spill_re[41];
+    x5_im = spill_im[41];
+    x6_re = spill_re[49];
+    x6_im = spill_im[49];
+    x7_re = spill_re[57];
+    x7_im = spill_im[57];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[1] - (x1_im * iw_im[1]));
-          x1_im = (tr * iw_im[1] + (x1_im * iw_re[1])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[2] - (x2_im * iw_im[2]));
-          x2_im = (tr * iw_im[2] + (x2_im * iw_re[2])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[3] - (x3_im * iw_im[3]));
-          x3_im = (tr * iw_im[3] + (x3_im * iw_re[3])); }
-        { const double tr = x4_re;
-          x4_re = (x4_re * iw_re[4] - (x4_im * iw_im[4]));
-          x4_im = (tr * iw_im[4] + (x4_im * iw_re[4])); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[5] - (x5_im * iw_im[5]));
-          x5_im = (tr * iw_im[5] + (x5_im * iw_re[5])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[6] - (x6_im * iw_im[6]));
-          x6_im = (tr * iw_im[6] + (x6_im * iw_re[6])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[7] - (x7_im * iw_im[7]));
-          x7_im = (tr * iw_im[7] + (x7_im * iw_re[7])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[1] - (x1_im * iw_im[1]));
+      x1_im = (tr * iw_im[1] + (x1_im * iw_re[1]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[2] - (x2_im * iw_im[2]));
+      x2_im = (tr * iw_im[2] + (x2_im * iw_re[2]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[3] - (x3_im * iw_im[3]));
+      x3_im = (tr * iw_im[3] + (x3_im * iw_re[3]));
+    }
+    {
+      const double tr = x4_re;
+      x4_re = (x4_re * iw_re[4] - (x4_im * iw_im[4]));
+      x4_im = (tr * iw_im[4] + (x4_im * iw_re[4]));
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[5] - (x5_im * iw_im[5]));
+      x5_im = (tr * iw_im[5] + (x5_im * iw_re[5]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[6] - (x6_im * iw_im[6]));
+      x6_im = (tr * iw_im[6] + (x6_im * iw_re[6]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[7] - (x7_im * iw_im[7]));
+      x7_im = (tr * iw_im[7] + (x7_im * iw_re[7]));
+    }
 
-        /* radix-8 combine k₁=1 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=1 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[1 * K + k], x0_re);
-        R64S_ST(&out_im[1 * K + k], x0_im);
-        R64S_ST(&out_re[9 * K + k], x1_re);
-        R64S_ST(&out_im[9 * K + k], x1_im);
-        R64S_ST(&out_re[17 * K + k], x2_re);
-        R64S_ST(&out_im[17 * K + k], x2_im);
-        R64S_ST(&out_re[25 * K + k], x3_re);
-        R64S_ST(&out_im[25 * K + k], x3_im);
-        R64S_ST(&out_re[33 * K + k], x4_re);
-        R64S_ST(&out_im[33 * K + k], x4_im);
-        R64S_ST(&out_re[41 * K + k], x5_re);
-        R64S_ST(&out_im[41 * K + k], x5_im);
-        R64S_ST(&out_re[49 * K + k], x6_re);
-        R64S_ST(&out_im[49 * K + k], x6_im);
-        R64S_ST(&out_re[57 * K + k], x7_re);
-        R64S_ST(&out_im[57 * K + k], x7_im);
+    R64S_ST(&out_re[1 * K + k], x0_re);
+    R64S_ST(&out_im[1 * K + k], x0_im);
+    R64S_ST(&out_re[9 * K + k], x1_re);
+    R64S_ST(&out_im[9 * K + k], x1_im);
+    R64S_ST(&out_re[17 * K + k], x2_re);
+    R64S_ST(&out_im[17 * K + k], x2_im);
+    R64S_ST(&out_re[25 * K + k], x3_re);
+    R64S_ST(&out_im[25 * K + k], x3_im);
+    R64S_ST(&out_re[33 * K + k], x4_re);
+    R64S_ST(&out_im[33 * K + k], x4_im);
+    R64S_ST(&out_re[41 * K + k], x5_re);
+    R64S_ST(&out_im[41 * K + k], x5_im);
+    R64S_ST(&out_re[49 * K + k], x6_re);
+    R64S_ST(&out_im[49 * K + k], x6_im);
+    R64S_ST(&out_re[57 * K + k], x7_re);
+    R64S_ST(&out_im[57 * K + k], x7_im);
 
-        /* column k₁=2 */
-        x0_re = spill_re[2];
-        x0_im = spill_im[2];
-        x1_re = spill_re[10];
-        x1_im = spill_im[10];
-        x2_re = spill_re[18];
-        x2_im = spill_im[18];
-        x3_re = spill_re[26];
-        x3_im = spill_im[26];
-        x4_re = spill_re[34];
-        x4_im = spill_im[34];
-        x5_re = spill_re[42];
-        x5_im = spill_im[42];
-        x6_re = spill_re[50];
-        x6_im = spill_im[50];
-        x7_re = spill_re[58];
-        x7_im = spill_im[58];
+    /* column k₁=2 */
+    x0_re = spill_re[2];
+    x0_im = spill_im[2];
+    x1_re = spill_re[10];
+    x1_im = spill_im[10];
+    x2_re = spill_re[18];
+    x2_im = spill_im[18];
+    x3_re = spill_re[26];
+    x3_im = spill_im[26];
+    x4_re = spill_re[34];
+    x4_im = spill_im[34];
+    x5_re = spill_re[42];
+    x5_im = spill_im[42];
+    x6_re = spill_re[50];
+    x6_im = spill_im[50];
+    x7_re = spill_re[58];
+    x7_im = spill_im[58];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[2] - (x1_im * iw_im[2]));
-          x1_im = (tr * iw_im[2] + (x1_im * iw_re[2])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[4] - (x2_im * iw_im[4]));
-          x2_im = (tr * iw_im[4] + (x2_im * iw_re[4])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[6] - (x3_im * iw_im[6]));
-          x3_im = (tr * iw_im[6] + (x3_im * iw_re[6])); }
-        { const double tr = x4_re, ti = x4_im;
-          x4_re = ((tr + ti) * sqrt2_inv);
-          x4_im = ((ti - tr) * sqrt2_inv); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[10] - (x5_im * iw_im[10]));
-          x5_im = (tr * iw_im[10] + (x5_im * iw_re[10])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[12] - (x6_im * iw_im[12]));
-          x6_im = (tr * iw_im[12] + (x6_im * iw_re[12])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[14] - (x7_im * iw_im[14]));
-          x7_im = (tr * iw_im[14] + (x7_im * iw_re[14])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[2] - (x1_im * iw_im[2]));
+      x1_im = (tr * iw_im[2] + (x1_im * iw_re[2]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[4] - (x2_im * iw_im[4]));
+      x2_im = (tr * iw_im[4] + (x2_im * iw_re[4]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[6] - (x3_im * iw_im[6]));
+      x3_im = (tr * iw_im[6] + (x3_im * iw_re[6]));
+    }
+    {
+      const double tr = x4_re, ti = x4_im;
+      x4_re = ((tr + ti) * sqrt2_inv);
+      x4_im = ((ti - tr) * sqrt2_inv);
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[10] - (x5_im * iw_im[10]));
+      x5_im = (tr * iw_im[10] + (x5_im * iw_re[10]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[12] - (x6_im * iw_im[12]));
+      x6_im = (tr * iw_im[12] + (x6_im * iw_re[12]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[14] - (x7_im * iw_im[14]));
+      x7_im = (tr * iw_im[14] + (x7_im * iw_re[14]));
+    }
 
-        /* radix-8 combine k₁=2 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=2 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[2 * K + k], x0_re);
-        R64S_ST(&out_im[2 * K + k], x0_im);
-        R64S_ST(&out_re[10 * K + k], x1_re);
-        R64S_ST(&out_im[10 * K + k], x1_im);
-        R64S_ST(&out_re[18 * K + k], x2_re);
-        R64S_ST(&out_im[18 * K + k], x2_im);
-        R64S_ST(&out_re[26 * K + k], x3_re);
-        R64S_ST(&out_im[26 * K + k], x3_im);
-        R64S_ST(&out_re[34 * K + k], x4_re);
-        R64S_ST(&out_im[34 * K + k], x4_im);
-        R64S_ST(&out_re[42 * K + k], x5_re);
-        R64S_ST(&out_im[42 * K + k], x5_im);
-        R64S_ST(&out_re[50 * K + k], x6_re);
-        R64S_ST(&out_im[50 * K + k], x6_im);
-        R64S_ST(&out_re[58 * K + k], x7_re);
-        R64S_ST(&out_im[58 * K + k], x7_im);
+    R64S_ST(&out_re[2 * K + k], x0_re);
+    R64S_ST(&out_im[2 * K + k], x0_im);
+    R64S_ST(&out_re[10 * K + k], x1_re);
+    R64S_ST(&out_im[10 * K + k], x1_im);
+    R64S_ST(&out_re[18 * K + k], x2_re);
+    R64S_ST(&out_im[18 * K + k], x2_im);
+    R64S_ST(&out_re[26 * K + k], x3_re);
+    R64S_ST(&out_im[26 * K + k], x3_im);
+    R64S_ST(&out_re[34 * K + k], x4_re);
+    R64S_ST(&out_im[34 * K + k], x4_im);
+    R64S_ST(&out_re[42 * K + k], x5_re);
+    R64S_ST(&out_im[42 * K + k], x5_im);
+    R64S_ST(&out_re[50 * K + k], x6_re);
+    R64S_ST(&out_im[50 * K + k], x6_im);
+    R64S_ST(&out_re[58 * K + k], x7_re);
+    R64S_ST(&out_im[58 * K + k], x7_im);
 
-        /* column k₁=3 */
-        x0_re = spill_re[3];
-        x0_im = spill_im[3];
-        x1_re = spill_re[11];
-        x1_im = spill_im[11];
-        x2_re = spill_re[19];
-        x2_im = spill_im[19];
-        x3_re = spill_re[27];
-        x3_im = spill_im[27];
-        x4_re = spill_re[35];
-        x4_im = spill_im[35];
-        x5_re = spill_re[43];
-        x5_im = spill_im[43];
-        x6_re = spill_re[51];
-        x6_im = spill_im[51];
-        x7_re = spill_re[59];
-        x7_im = spill_im[59];
+    /* column k₁=3 */
+    x0_re = spill_re[3];
+    x0_im = spill_im[3];
+    x1_re = spill_re[11];
+    x1_im = spill_im[11];
+    x2_re = spill_re[19];
+    x2_im = spill_im[19];
+    x3_re = spill_re[27];
+    x3_im = spill_im[27];
+    x4_re = spill_re[35];
+    x4_im = spill_im[35];
+    x5_re = spill_re[43];
+    x5_im = spill_im[43];
+    x6_re = spill_re[51];
+    x6_im = spill_im[51];
+    x7_re = spill_re[59];
+    x7_im = spill_im[59];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[3] - (x1_im * iw_im[3]));
-          x1_im = (tr * iw_im[3] + (x1_im * iw_re[3])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[6] - (x2_im * iw_im[6]));
-          x2_im = (tr * iw_im[6] + (x2_im * iw_re[6])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[9] - (x3_im * iw_im[9]));
-          x3_im = (tr * iw_im[9] + (x3_im * iw_re[9])); }
-        { const double tr = x4_re;
-          x4_re = (x4_re * iw_re[12] - (x4_im * iw_im[12]));
-          x4_im = (tr * iw_im[12] + (x4_im * iw_re[12])); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[15] - (x5_im * iw_im[15]));
-          x5_im = (tr * iw_im[15] + (x5_im * iw_re[15])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[18] - (x6_im * iw_im[18]));
-          x6_im = (tr * iw_im[18] + (x6_im * iw_re[18])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[21] - (x7_im * iw_im[21]));
-          x7_im = (tr * iw_im[21] + (x7_im * iw_re[21])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[3] - (x1_im * iw_im[3]));
+      x1_im = (tr * iw_im[3] + (x1_im * iw_re[3]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[6] - (x2_im * iw_im[6]));
+      x2_im = (tr * iw_im[6] + (x2_im * iw_re[6]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[9] - (x3_im * iw_im[9]));
+      x3_im = (tr * iw_im[9] + (x3_im * iw_re[9]));
+    }
+    {
+      const double tr = x4_re;
+      x4_re = (x4_re * iw_re[12] - (x4_im * iw_im[12]));
+      x4_im = (tr * iw_im[12] + (x4_im * iw_re[12]));
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[15] - (x5_im * iw_im[15]));
+      x5_im = (tr * iw_im[15] + (x5_im * iw_re[15]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[18] - (x6_im * iw_im[18]));
+      x6_im = (tr * iw_im[18] + (x6_im * iw_re[18]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[21] - (x7_im * iw_im[21]));
+      x7_im = (tr * iw_im[21] + (x7_im * iw_re[21]));
+    }
 
-        /* radix-8 combine k₁=3 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=3 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[3 * K + k], x0_re);
-        R64S_ST(&out_im[3 * K + k], x0_im);
-        R64S_ST(&out_re[11 * K + k], x1_re);
-        R64S_ST(&out_im[11 * K + k], x1_im);
-        R64S_ST(&out_re[19 * K + k], x2_re);
-        R64S_ST(&out_im[19 * K + k], x2_im);
-        R64S_ST(&out_re[27 * K + k], x3_re);
-        R64S_ST(&out_im[27 * K + k], x3_im);
-        R64S_ST(&out_re[35 * K + k], x4_re);
-        R64S_ST(&out_im[35 * K + k], x4_im);
-        R64S_ST(&out_re[43 * K + k], x5_re);
-        R64S_ST(&out_im[43 * K + k], x5_im);
-        R64S_ST(&out_re[51 * K + k], x6_re);
-        R64S_ST(&out_im[51 * K + k], x6_im);
-        R64S_ST(&out_re[59 * K + k], x7_re);
-        R64S_ST(&out_im[59 * K + k], x7_im);
+    R64S_ST(&out_re[3 * K + k], x0_re);
+    R64S_ST(&out_im[3 * K + k], x0_im);
+    R64S_ST(&out_re[11 * K + k], x1_re);
+    R64S_ST(&out_im[11 * K + k], x1_im);
+    R64S_ST(&out_re[19 * K + k], x2_re);
+    R64S_ST(&out_im[19 * K + k], x2_im);
+    R64S_ST(&out_re[27 * K + k], x3_re);
+    R64S_ST(&out_im[27 * K + k], x3_im);
+    R64S_ST(&out_re[35 * K + k], x4_re);
+    R64S_ST(&out_im[35 * K + k], x4_im);
+    R64S_ST(&out_re[43 * K + k], x5_re);
+    R64S_ST(&out_im[43 * K + k], x5_im);
+    R64S_ST(&out_re[51 * K + k], x6_re);
+    R64S_ST(&out_im[51 * K + k], x6_im);
+    R64S_ST(&out_re[59 * K + k], x7_re);
+    R64S_ST(&out_im[59 * K + k], x7_im);
 
-        /* column k₁=4 */
-        x0_re = spill_re[4];
-        x0_im = spill_im[4];
-        x1_re = spill_re[12];
-        x1_im = spill_im[12];
-        x2_re = spill_re[20];
-        x2_im = spill_im[20];
-        x3_re = spill_re[28];
-        x3_im = spill_im[28];
-        x4_re = spill_re[36];
-        x4_im = spill_im[36];
-        x5_re = spill_re[44];
-        x5_im = spill_im[44];
-        x6_re = spill_re[52];
-        x6_im = spill_im[52];
-        x7_re = spill_re[60];
-        x7_im = spill_im[60];
+    /* column k₁=4 */
+    x0_re = spill_re[4];
+    x0_im = spill_im[4];
+    x1_re = spill_re[12];
+    x1_im = spill_im[12];
+    x2_re = spill_re[20];
+    x2_im = spill_im[20];
+    x3_re = spill_re[28];
+    x3_im = spill_im[28];
+    x4_re = spill_re[36];
+    x4_im = spill_im[36];
+    x5_re = spill_re[44];
+    x5_im = spill_im[44];
+    x6_re = spill_re[52];
+    x6_im = spill_im[52];
+    x7_re = spill_re[60];
+    x7_im = spill_im[60];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[4] - (x1_im * iw_im[4]));
-          x1_im = (tr * iw_im[4] + (x1_im * iw_re[4])); }
-        { const double tr = x2_re, ti = x2_im;
-          x2_re = ((tr + ti) * sqrt2_inv);
-          x2_im = ((ti - tr) * sqrt2_inv); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[12] - (x3_im * iw_im[12]));
-          x3_im = (tr * iw_im[12] + (x3_im * iw_re[12])); }
-        { const double t = x4_re; x4_re = x4_im; x4_im = (-t); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[20] - (x5_im * iw_im[20]));
-          x5_im = (tr * iw_im[20] + (x5_im * iw_re[20])); }
-        { const double tr = x6_re, ti = x6_im;
-          x6_re = ((ti - tr) * sqrt2_inv);
-          x6_im = (-((tr + ti) * sqrt2_inv)); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[28] - (x7_im * iw_im[28]));
-          x7_im = (tr * iw_im[28] + (x7_im * iw_re[28])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[4] - (x1_im * iw_im[4]));
+      x1_im = (tr * iw_im[4] + (x1_im * iw_re[4]));
+    }
+    {
+      const double tr = x2_re, ti = x2_im;
+      x2_re = ((tr + ti) * sqrt2_inv);
+      x2_im = ((ti - tr) * sqrt2_inv);
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[12] - (x3_im * iw_im[12]));
+      x3_im = (tr * iw_im[12] + (x3_im * iw_re[12]));
+    }
+    {
+      const double t = x4_re;
+      x4_re = x4_im;
+      x4_im = (-t);
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[20] - (x5_im * iw_im[20]));
+      x5_im = (tr * iw_im[20] + (x5_im * iw_re[20]));
+    }
+    {
+      const double tr = x6_re, ti = x6_im;
+      x6_re = ((ti - tr) * sqrt2_inv);
+      x6_im = (-((tr + ti) * sqrt2_inv));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[28] - (x7_im * iw_im[28]));
+      x7_im = (tr * iw_im[28] + (x7_im * iw_re[28]));
+    }
 
-        /* radix-8 combine k₁=4 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=4 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[4 * K + k], x0_re);
-        R64S_ST(&out_im[4 * K + k], x0_im);
-        R64S_ST(&out_re[12 * K + k], x1_re);
-        R64S_ST(&out_im[12 * K + k], x1_im);
-        R64S_ST(&out_re[20 * K + k], x2_re);
-        R64S_ST(&out_im[20 * K + k], x2_im);
-        R64S_ST(&out_re[28 * K + k], x3_re);
-        R64S_ST(&out_im[28 * K + k], x3_im);
-        R64S_ST(&out_re[36 * K + k], x4_re);
-        R64S_ST(&out_im[36 * K + k], x4_im);
-        R64S_ST(&out_re[44 * K + k], x5_re);
-        R64S_ST(&out_im[44 * K + k], x5_im);
-        R64S_ST(&out_re[52 * K + k], x6_re);
-        R64S_ST(&out_im[52 * K + k], x6_im);
-        R64S_ST(&out_re[60 * K + k], x7_re);
-        R64S_ST(&out_im[60 * K + k], x7_im);
+    R64S_ST(&out_re[4 * K + k], x0_re);
+    R64S_ST(&out_im[4 * K + k], x0_im);
+    R64S_ST(&out_re[12 * K + k], x1_re);
+    R64S_ST(&out_im[12 * K + k], x1_im);
+    R64S_ST(&out_re[20 * K + k], x2_re);
+    R64S_ST(&out_im[20 * K + k], x2_im);
+    R64S_ST(&out_re[28 * K + k], x3_re);
+    R64S_ST(&out_im[28 * K + k], x3_im);
+    R64S_ST(&out_re[36 * K + k], x4_re);
+    R64S_ST(&out_im[36 * K + k], x4_im);
+    R64S_ST(&out_re[44 * K + k], x5_re);
+    R64S_ST(&out_im[44 * K + k], x5_im);
+    R64S_ST(&out_re[52 * K + k], x6_re);
+    R64S_ST(&out_im[52 * K + k], x6_im);
+    R64S_ST(&out_re[60 * K + k], x7_re);
+    R64S_ST(&out_im[60 * K + k], x7_im);
 
-        /* column k₁=5 */
-        x0_re = spill_re[5];
-        x0_im = spill_im[5];
-        x1_re = spill_re[13];
-        x1_im = spill_im[13];
-        x2_re = spill_re[21];
-        x2_im = spill_im[21];
-        x3_re = spill_re[29];
-        x3_im = spill_im[29];
-        x4_re = spill_re[37];
-        x4_im = spill_im[37];
-        x5_re = spill_re[45];
-        x5_im = spill_im[45];
-        x6_re = spill_re[53];
-        x6_im = spill_im[53];
-        x7_re = spill_re[61];
-        x7_im = spill_im[61];
+    /* column k₁=5 */
+    x0_re = spill_re[5];
+    x0_im = spill_im[5];
+    x1_re = spill_re[13];
+    x1_im = spill_im[13];
+    x2_re = spill_re[21];
+    x2_im = spill_im[21];
+    x3_re = spill_re[29];
+    x3_im = spill_im[29];
+    x4_re = spill_re[37];
+    x4_im = spill_im[37];
+    x5_re = spill_re[45];
+    x5_im = spill_im[45];
+    x6_re = spill_re[53];
+    x6_im = spill_im[53];
+    x7_re = spill_re[61];
+    x7_im = spill_im[61];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[5] - (x1_im * iw_im[5]));
-          x1_im = (tr * iw_im[5] + (x1_im * iw_re[5])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[10] - (x2_im * iw_im[10]));
-          x2_im = (tr * iw_im[10] + (x2_im * iw_re[10])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[15] - (x3_im * iw_im[15]));
-          x3_im = (tr * iw_im[15] + (x3_im * iw_re[15])); }
-        { const double tr = x4_re;
-          x4_re = (x4_re * iw_re[20] - (x4_im * iw_im[20]));
-          x4_im = (tr * iw_im[20] + (x4_im * iw_re[20])); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[25] - (x5_im * iw_im[25]));
-          x5_im = (tr * iw_im[25] + (x5_im * iw_re[25])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[30] - (x6_im * iw_im[30]));
-          x6_im = (tr * iw_im[30] + (x6_im * iw_re[30])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[35] - (x7_im * iw_im[35]));
-          x7_im = (tr * iw_im[35] + (x7_im * iw_re[35])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[5] - (x1_im * iw_im[5]));
+      x1_im = (tr * iw_im[5] + (x1_im * iw_re[5]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[10] - (x2_im * iw_im[10]));
+      x2_im = (tr * iw_im[10] + (x2_im * iw_re[10]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[15] - (x3_im * iw_im[15]));
+      x3_im = (tr * iw_im[15] + (x3_im * iw_re[15]));
+    }
+    {
+      const double tr = x4_re;
+      x4_re = (x4_re * iw_re[20] - (x4_im * iw_im[20]));
+      x4_im = (tr * iw_im[20] + (x4_im * iw_re[20]));
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[25] - (x5_im * iw_im[25]));
+      x5_im = (tr * iw_im[25] + (x5_im * iw_re[25]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[30] - (x6_im * iw_im[30]));
+      x6_im = (tr * iw_im[30] + (x6_im * iw_re[30]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[35] - (x7_im * iw_im[35]));
+      x7_im = (tr * iw_im[35] + (x7_im * iw_re[35]));
+    }
 
-        /* radix-8 combine k₁=5 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=5 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[5 * K + k], x0_re);
-        R64S_ST(&out_im[5 * K + k], x0_im);
-        R64S_ST(&out_re[13 * K + k], x1_re);
-        R64S_ST(&out_im[13 * K + k], x1_im);
-        R64S_ST(&out_re[21 * K + k], x2_re);
-        R64S_ST(&out_im[21 * K + k], x2_im);
-        R64S_ST(&out_re[29 * K + k], x3_re);
-        R64S_ST(&out_im[29 * K + k], x3_im);
-        R64S_ST(&out_re[37 * K + k], x4_re);
-        R64S_ST(&out_im[37 * K + k], x4_im);
-        R64S_ST(&out_re[45 * K + k], x5_re);
-        R64S_ST(&out_im[45 * K + k], x5_im);
-        R64S_ST(&out_re[53 * K + k], x6_re);
-        R64S_ST(&out_im[53 * K + k], x6_im);
-        R64S_ST(&out_re[61 * K + k], x7_re);
-        R64S_ST(&out_im[61 * K + k], x7_im);
+    R64S_ST(&out_re[5 * K + k], x0_re);
+    R64S_ST(&out_im[5 * K + k], x0_im);
+    R64S_ST(&out_re[13 * K + k], x1_re);
+    R64S_ST(&out_im[13 * K + k], x1_im);
+    R64S_ST(&out_re[21 * K + k], x2_re);
+    R64S_ST(&out_im[21 * K + k], x2_im);
+    R64S_ST(&out_re[29 * K + k], x3_re);
+    R64S_ST(&out_im[29 * K + k], x3_im);
+    R64S_ST(&out_re[37 * K + k], x4_re);
+    R64S_ST(&out_im[37 * K + k], x4_im);
+    R64S_ST(&out_re[45 * K + k], x5_re);
+    R64S_ST(&out_im[45 * K + k], x5_im);
+    R64S_ST(&out_re[53 * K + k], x6_re);
+    R64S_ST(&out_im[53 * K + k], x6_im);
+    R64S_ST(&out_re[61 * K + k], x7_re);
+    R64S_ST(&out_im[61 * K + k], x7_im);
 
-        /* column k₁=6 */
-        x0_re = spill_re[6];
-        x0_im = spill_im[6];
-        x1_re = spill_re[14];
-        x1_im = spill_im[14];
-        x2_re = spill_re[22];
-        x2_im = spill_im[22];
-        x3_re = spill_re[30];
-        x3_im = spill_im[30];
-        x4_re = spill_re[38];
-        x4_im = spill_im[38];
-        x5_re = spill_re[46];
-        x5_im = spill_im[46];
-        x6_re = spill_re[54];
-        x6_im = spill_im[54];
-        x7_re = spill_re[62];
-        x7_im = spill_im[62];
+    /* column k₁=6 */
+    x0_re = spill_re[6];
+    x0_im = spill_im[6];
+    x1_re = spill_re[14];
+    x1_im = spill_im[14];
+    x2_re = spill_re[22];
+    x2_im = spill_im[22];
+    x3_re = spill_re[30];
+    x3_im = spill_im[30];
+    x4_re = spill_re[38];
+    x4_im = spill_im[38];
+    x5_re = spill_re[46];
+    x5_im = spill_im[46];
+    x6_re = spill_re[54];
+    x6_im = spill_im[54];
+    x7_re = spill_re[62];
+    x7_im = spill_im[62];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[6] - (x1_im * iw_im[6]));
-          x1_im = (tr * iw_im[6] + (x1_im * iw_re[6])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[12] - (x2_im * iw_im[12]));
-          x2_im = (tr * iw_im[12] + (x2_im * iw_re[12])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[18] - (x3_im * iw_im[18]));
-          x3_im = (tr * iw_im[18] + (x3_im * iw_re[18])); }
-        { const double tr = x4_re, ti = x4_im;
-          x4_re = ((ti - tr) * sqrt2_inv);
-          x4_im = (-((tr + ti) * sqrt2_inv)); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[30] - (x5_im * iw_im[30]));
-          x5_im = (tr * iw_im[30] + (x5_im * iw_re[30])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[36] - (x6_im * iw_im[36]));
-          x6_im = (tr * iw_im[36] + (x6_im * iw_re[36])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[42] - (x7_im * iw_im[42]));
-          x7_im = (tr * iw_im[42] + (x7_im * iw_re[42])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[6] - (x1_im * iw_im[6]));
+      x1_im = (tr * iw_im[6] + (x1_im * iw_re[6]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[12] - (x2_im * iw_im[12]));
+      x2_im = (tr * iw_im[12] + (x2_im * iw_re[12]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[18] - (x3_im * iw_im[18]));
+      x3_im = (tr * iw_im[18] + (x3_im * iw_re[18]));
+    }
+    {
+      const double tr = x4_re, ti = x4_im;
+      x4_re = ((ti - tr) * sqrt2_inv);
+      x4_im = (-((tr + ti) * sqrt2_inv));
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[30] - (x5_im * iw_im[30]));
+      x5_im = (tr * iw_im[30] + (x5_im * iw_re[30]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[36] - (x6_im * iw_im[36]));
+      x6_im = (tr * iw_im[36] + (x6_im * iw_re[36]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[42] - (x7_im * iw_im[42]));
+      x7_im = (tr * iw_im[42] + (x7_im * iw_re[42]));
+    }
 
-        /* radix-8 combine k₁=6 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=6 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[6 * K + k], x0_re);
-        R64S_ST(&out_im[6 * K + k], x0_im);
-        R64S_ST(&out_re[14 * K + k], x1_re);
-        R64S_ST(&out_im[14 * K + k], x1_im);
-        R64S_ST(&out_re[22 * K + k], x2_re);
-        R64S_ST(&out_im[22 * K + k], x2_im);
-        R64S_ST(&out_re[30 * K + k], x3_re);
-        R64S_ST(&out_im[30 * K + k], x3_im);
-        R64S_ST(&out_re[38 * K + k], x4_re);
-        R64S_ST(&out_im[38 * K + k], x4_im);
-        R64S_ST(&out_re[46 * K + k], x5_re);
-        R64S_ST(&out_im[46 * K + k], x5_im);
-        R64S_ST(&out_re[54 * K + k], x6_re);
-        R64S_ST(&out_im[54 * K + k], x6_im);
-        R64S_ST(&out_re[62 * K + k], x7_re);
-        R64S_ST(&out_im[62 * K + k], x7_im);
+    R64S_ST(&out_re[6 * K + k], x0_re);
+    R64S_ST(&out_im[6 * K + k], x0_im);
+    R64S_ST(&out_re[14 * K + k], x1_re);
+    R64S_ST(&out_im[14 * K + k], x1_im);
+    R64S_ST(&out_re[22 * K + k], x2_re);
+    R64S_ST(&out_im[22 * K + k], x2_im);
+    R64S_ST(&out_re[30 * K + k], x3_re);
+    R64S_ST(&out_im[30 * K + k], x3_im);
+    R64S_ST(&out_re[38 * K + k], x4_re);
+    R64S_ST(&out_im[38 * K + k], x4_im);
+    R64S_ST(&out_re[46 * K + k], x5_re);
+    R64S_ST(&out_im[46 * K + k], x5_im);
+    R64S_ST(&out_re[54 * K + k], x6_re);
+    R64S_ST(&out_im[54 * K + k], x6_im);
+    R64S_ST(&out_re[62 * K + k], x7_re);
+    R64S_ST(&out_im[62 * K + k], x7_im);
 
-        /* column k₁=7 */
-        x0_re = spill_re[7];
-        x0_im = spill_im[7];
-        x1_re = spill_re[15];
-        x1_im = spill_im[15];
-        x2_re = spill_re[23];
-        x2_im = spill_im[23];
-        x3_re = spill_re[31];
-        x3_im = spill_im[31];
-        x4_re = spill_re[39];
-        x4_im = spill_im[39];
-        x5_re = spill_re[47];
-        x5_im = spill_im[47];
-        x6_re = spill_re[55];
-        x6_im = spill_im[55];
-        x7_re = spill_re[63];
-        x7_im = spill_im[63];
+    /* column k₁=7 */
+    x0_re = spill_re[7];
+    x0_im = spill_im[7];
+    x1_re = spill_re[15];
+    x1_im = spill_im[15];
+    x2_re = spill_re[23];
+    x2_im = spill_im[23];
+    x3_re = spill_re[31];
+    x3_im = spill_im[31];
+    x4_re = spill_re[39];
+    x4_im = spill_im[39];
+    x5_re = spill_re[47];
+    x5_im = spill_im[47];
+    x6_re = spill_re[55];
+    x6_im = spill_im[55];
+    x7_re = spill_re[63];
+    x7_im = spill_im[63];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[7] - (x1_im * iw_im[7]));
-          x1_im = (tr * iw_im[7] + (x1_im * iw_re[7])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[14] - (x2_im * iw_im[14]));
-          x2_im = (tr * iw_im[14] + (x2_im * iw_re[14])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[21] - (x3_im * iw_im[21]));
-          x3_im = (tr * iw_im[21] + (x3_im * iw_re[21])); }
-        { const double tr = x4_re;
-          x4_re = (x4_re * iw_re[28] - (x4_im * iw_im[28]));
-          x4_im = (tr * iw_im[28] + (x4_im * iw_re[28])); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[35] - (x5_im * iw_im[35]));
-          x5_im = (tr * iw_im[35] + (x5_im * iw_re[35])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[42] - (x6_im * iw_im[42]));
-          x6_im = (tr * iw_im[42] + (x6_im * iw_re[42])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[49] - (x7_im * iw_im[49]));
-          x7_im = (tr * iw_im[49] + (x7_im * iw_re[49])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[7] - (x1_im * iw_im[7]));
+      x1_im = (tr * iw_im[7] + (x1_im * iw_re[7]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[14] - (x2_im * iw_im[14]));
+      x2_im = (tr * iw_im[14] + (x2_im * iw_re[14]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[21] - (x3_im * iw_im[21]));
+      x3_im = (tr * iw_im[21] + (x3_im * iw_re[21]));
+    }
+    {
+      const double tr = x4_re;
+      x4_re = (x4_re * iw_re[28] - (x4_im * iw_im[28]));
+      x4_im = (tr * iw_im[28] + (x4_im * iw_re[28]));
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[35] - (x5_im * iw_im[35]));
+      x5_im = (tr * iw_im[35] + (x5_im * iw_re[35]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[42] - (x6_im * iw_im[42]));
+      x6_im = (tr * iw_im[42] + (x6_im * iw_re[42]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[49] - (x7_im * iw_im[49]));
+      x7_im = (tr * iw_im[49] + (x7_im * iw_re[49]));
+    }
 
-        /* radix-8 combine k₁=7 [fwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r + t3i); e1i = (t1i - t3r);
-          e3r = (t1r - t3i); e3i = (t1i + t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r + t3i); o1i = (t1i - t3r);
-          o3r = (t1r - t3i); o3i = (t1i + t3r);
-          t0r = ((o1r + o1i) * sqrt2_inv);
-          t0i = ((o1i - o1r) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = o2i; t0i = (-o2r);
-          o2r = t0r; o2i = t0i;
-          t0r = ((o3i - o3r) * sqrt2_inv);
-          t0i = (-((o3r + o3i) * sqrt2_inv));
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=7 [fwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r + t3i);
+      e1i = (t1i - t3r);
+      e3r = (t1r - t3i);
+      e3i = (t1i + t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r + t3i);
+      o1i = (t1i - t3r);
+      o3r = (t1r - t3i);
+      o3i = (t1i + t3r);
+      t0r = ((o1r + o1i) * sqrt2_inv);
+      t0i = ((o1i - o1r) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = o2i;
+      t0i = (-o2r);
+      o2r = t0r;
+      o2i = t0i;
+      t0r = ((o3i - o3r) * sqrt2_inv);
+      t0i = (-((o3r + o3i) * sqrt2_inv));
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[7 * K + k], x0_re);
-        R64S_ST(&out_im[7 * K + k], x0_im);
-        R64S_ST(&out_re[15 * K + k], x1_re);
-        R64S_ST(&out_im[15 * K + k], x1_im);
-        R64S_ST(&out_re[23 * K + k], x2_re);
-        R64S_ST(&out_im[23 * K + k], x2_im);
-        R64S_ST(&out_re[31 * K + k], x3_re);
-        R64S_ST(&out_im[31 * K + k], x3_im);
-        R64S_ST(&out_re[39 * K + k], x4_re);
-        R64S_ST(&out_im[39 * K + k], x4_im);
-        R64S_ST(&out_re[47 * K + k], x5_re);
-        R64S_ST(&out_im[47 * K + k], x5_im);
-        R64S_ST(&out_re[55 * K + k], x6_re);
-        R64S_ST(&out_im[55 * K + k], x6_im);
-        R64S_ST(&out_re[63 * K + k], x7_re);
-        R64S_ST(&out_im[63 * K + k], x7_im);
+    R64S_ST(&out_re[7 * K + k], x0_re);
+    R64S_ST(&out_im[7 * K + k], x0_im);
+    R64S_ST(&out_re[15 * K + k], x1_re);
+    R64S_ST(&out_im[15 * K + k], x1_im);
+    R64S_ST(&out_re[23 * K + k], x2_re);
+    R64S_ST(&out_im[23 * K + k], x2_im);
+    R64S_ST(&out_re[31 * K + k], x3_re);
+    R64S_ST(&out_im[31 * K + k], x3_im);
+    R64S_ST(&out_re[39 * K + k], x4_re);
+    R64S_ST(&out_im[39 * K + k], x4_im);
+    R64S_ST(&out_re[47 * K + k], x5_re);
+    R64S_ST(&out_im[47 * K + k], x5_im);
+    R64S_ST(&out_re[55 * K + k], x6_re);
+    R64S_ST(&out_im[55 * K + k], x6_im);
+    R64S_ST(&out_re[63 * K + k], x7_re);
+    R64S_ST(&out_im[63 * K + k], x7_im);
 
-    } /* end k-loop */
+  } /* end k-loop */
 }
 
 static void
 radix64_n1_dit_kernel_bwd_scalar(
-    const double * __restrict__ in_re, const double * __restrict__ in_im,
-    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double *__restrict__ in_re, const double *__restrict__ in_im,
+    double *__restrict__ out_re, double *__restrict__ out_im,
     size_t K)
 {
-    const double sqrt2_inv = 0.70710678118654752440;
+  const double sqrt2_inv = 0.70710678118654752440;
 
-    double spill_re[64];
-    double spill_im[64];
+  double spill_re[64];
+  double spill_im[64];
 
-    double x0_re, x0_im, x1_re, x1_im, x2_re, x2_im, x3_re, x3_im;
-    double x4_re, x4_im, x5_re, x5_im, x6_re, x6_im, x7_re, x7_im;
+  double x0_re, x0_im, x1_re, x1_im, x2_re, x2_im, x3_re, x3_im;
+  double x4_re, x4_im, x5_re, x5_im, x6_re, x6_im, x7_re, x7_im;
 
-    for (size_t k = 0; k < K; k += 1) {
-        /* PASS 1: 8 radix-8 sub-FFTs [bwd] */
+  for (size_t k = 0; k < K; k += 1)
+  {
+    /* PASS 1: 8 radix-8 sub-FFTs [bwd] */
 
-        /* sub-FFT n₂=0 */
-        x0_re = R64S_LD(&in_re[0 * K + k]);
-        x0_im = R64S_LD(&in_im[0 * K + k]);
-        x1_re = R64S_LD(&in_re[8 * K + k]);
-        x1_im = R64S_LD(&in_im[8 * K + k]);
-        x2_re = R64S_LD(&in_re[16 * K + k]);
-        x2_im = R64S_LD(&in_im[16 * K + k]);
-        x3_re = R64S_LD(&in_re[24 * K + k]);
-        x3_im = R64S_LD(&in_im[24 * K + k]);
-        x4_re = R64S_LD(&in_re[32 * K + k]);
-        x4_im = R64S_LD(&in_im[32 * K + k]);
-        x5_re = R64S_LD(&in_re[40 * K + k]);
-        x5_im = R64S_LD(&in_im[40 * K + k]);
-        x6_re = R64S_LD(&in_re[48 * K + k]);
-        x6_im = R64S_LD(&in_im[48 * K + k]);
-        x7_re = R64S_LD(&in_re[56 * K + k]);
-        x7_im = R64S_LD(&in_im[56 * K + k]);
+    /* sub-FFT n₂=0 */
+    x0_re = R64S_LD(&in_re[0 * K + k]);
+    x0_im = R64S_LD(&in_im[0 * K + k]);
+    x1_re = R64S_LD(&in_re[8 * K + k]);
+    x1_im = R64S_LD(&in_im[8 * K + k]);
+    x2_re = R64S_LD(&in_re[16 * K + k]);
+    x2_im = R64S_LD(&in_im[16 * K + k]);
+    x3_re = R64S_LD(&in_re[24 * K + k]);
+    x3_im = R64S_LD(&in_im[24 * K + k]);
+    x4_re = R64S_LD(&in_re[32 * K + k]);
+    x4_im = R64S_LD(&in_im[32 * K + k]);
+    x5_re = R64S_LD(&in_re[40 * K + k]);
+    x5_im = R64S_LD(&in_im[40 * K + k]);
+    x6_re = R64S_LD(&in_re[48 * K + k]);
+    x6_im = R64S_LD(&in_im[48 * K + k]);
+    x7_re = R64S_LD(&in_re[56 * K + k]);
+    x7_im = R64S_LD(&in_im[56 * K + k]);
 
-        /* radix-8 sub-FFT n₂=0 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=0 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[0] = x0_re;
-        spill_im[0] = x0_im;
-        spill_re[1] = x1_re;
-        spill_im[1] = x1_im;
-        spill_re[2] = x2_re;
-        spill_im[2] = x2_im;
-        spill_re[3] = x3_re;
-        spill_im[3] = x3_im;
-        spill_re[4] = x4_re;
-        spill_im[4] = x4_im;
-        spill_re[5] = x5_re;
-        spill_im[5] = x5_im;
-        spill_re[6] = x6_re;
-        spill_im[6] = x6_im;
-        spill_re[7] = x7_re;
-        spill_im[7] = x7_im;
+    spill_re[0] = x0_re;
+    spill_im[0] = x0_im;
+    spill_re[1] = x1_re;
+    spill_im[1] = x1_im;
+    spill_re[2] = x2_re;
+    spill_im[2] = x2_im;
+    spill_re[3] = x3_re;
+    spill_im[3] = x3_im;
+    spill_re[4] = x4_re;
+    spill_im[4] = x4_im;
+    spill_re[5] = x5_re;
+    spill_im[5] = x5_im;
+    spill_re[6] = x6_re;
+    spill_im[6] = x6_im;
+    spill_re[7] = x7_re;
+    spill_im[7] = x7_im;
 
-        /* sub-FFT n₂=1 */
-        x0_re = R64S_LD(&in_re[1 * K + k]);
-        x0_im = R64S_LD(&in_im[1 * K + k]);
-        x1_re = R64S_LD(&in_re[9 * K + k]);
-        x1_im = R64S_LD(&in_im[9 * K + k]);
-        x2_re = R64S_LD(&in_re[17 * K + k]);
-        x2_im = R64S_LD(&in_im[17 * K + k]);
-        x3_re = R64S_LD(&in_re[25 * K + k]);
-        x3_im = R64S_LD(&in_im[25 * K + k]);
-        x4_re = R64S_LD(&in_re[33 * K + k]);
-        x4_im = R64S_LD(&in_im[33 * K + k]);
-        x5_re = R64S_LD(&in_re[41 * K + k]);
-        x5_im = R64S_LD(&in_im[41 * K + k]);
-        x6_re = R64S_LD(&in_re[49 * K + k]);
-        x6_im = R64S_LD(&in_im[49 * K + k]);
-        x7_re = R64S_LD(&in_re[57 * K + k]);
-        x7_im = R64S_LD(&in_im[57 * K + k]);
+    /* sub-FFT n₂=1 */
+    x0_re = R64S_LD(&in_re[1 * K + k]);
+    x0_im = R64S_LD(&in_im[1 * K + k]);
+    x1_re = R64S_LD(&in_re[9 * K + k]);
+    x1_im = R64S_LD(&in_im[9 * K + k]);
+    x2_re = R64S_LD(&in_re[17 * K + k]);
+    x2_im = R64S_LD(&in_im[17 * K + k]);
+    x3_re = R64S_LD(&in_re[25 * K + k]);
+    x3_im = R64S_LD(&in_im[25 * K + k]);
+    x4_re = R64S_LD(&in_re[33 * K + k]);
+    x4_im = R64S_LD(&in_im[33 * K + k]);
+    x5_re = R64S_LD(&in_re[41 * K + k]);
+    x5_im = R64S_LD(&in_im[41 * K + k]);
+    x6_re = R64S_LD(&in_re[49 * K + k]);
+    x6_im = R64S_LD(&in_im[49 * K + k]);
+    x7_re = R64S_LD(&in_re[57 * K + k]);
+    x7_im = R64S_LD(&in_im[57 * K + k]);
 
-        /* radix-8 sub-FFT n₂=1 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=1 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[8] = x0_re;
-        spill_im[8] = x0_im;
-        spill_re[9] = x1_re;
-        spill_im[9] = x1_im;
-        spill_re[10] = x2_re;
-        spill_im[10] = x2_im;
-        spill_re[11] = x3_re;
-        spill_im[11] = x3_im;
-        spill_re[12] = x4_re;
-        spill_im[12] = x4_im;
-        spill_re[13] = x5_re;
-        spill_im[13] = x5_im;
-        spill_re[14] = x6_re;
-        spill_im[14] = x6_im;
-        spill_re[15] = x7_re;
-        spill_im[15] = x7_im;
+    spill_re[8] = x0_re;
+    spill_im[8] = x0_im;
+    spill_re[9] = x1_re;
+    spill_im[9] = x1_im;
+    spill_re[10] = x2_re;
+    spill_im[10] = x2_im;
+    spill_re[11] = x3_re;
+    spill_im[11] = x3_im;
+    spill_re[12] = x4_re;
+    spill_im[12] = x4_im;
+    spill_re[13] = x5_re;
+    spill_im[13] = x5_im;
+    spill_re[14] = x6_re;
+    spill_im[14] = x6_im;
+    spill_re[15] = x7_re;
+    spill_im[15] = x7_im;
 
-        /* sub-FFT n₂=2 */
-        x0_re = R64S_LD(&in_re[2 * K + k]);
-        x0_im = R64S_LD(&in_im[2 * K + k]);
-        x1_re = R64S_LD(&in_re[10 * K + k]);
-        x1_im = R64S_LD(&in_im[10 * K + k]);
-        x2_re = R64S_LD(&in_re[18 * K + k]);
-        x2_im = R64S_LD(&in_im[18 * K + k]);
-        x3_re = R64S_LD(&in_re[26 * K + k]);
-        x3_im = R64S_LD(&in_im[26 * K + k]);
-        x4_re = R64S_LD(&in_re[34 * K + k]);
-        x4_im = R64S_LD(&in_im[34 * K + k]);
-        x5_re = R64S_LD(&in_re[42 * K + k]);
-        x5_im = R64S_LD(&in_im[42 * K + k]);
-        x6_re = R64S_LD(&in_re[50 * K + k]);
-        x6_im = R64S_LD(&in_im[50 * K + k]);
-        x7_re = R64S_LD(&in_re[58 * K + k]);
-        x7_im = R64S_LD(&in_im[58 * K + k]);
+    /* sub-FFT n₂=2 */
+    x0_re = R64S_LD(&in_re[2 * K + k]);
+    x0_im = R64S_LD(&in_im[2 * K + k]);
+    x1_re = R64S_LD(&in_re[10 * K + k]);
+    x1_im = R64S_LD(&in_im[10 * K + k]);
+    x2_re = R64S_LD(&in_re[18 * K + k]);
+    x2_im = R64S_LD(&in_im[18 * K + k]);
+    x3_re = R64S_LD(&in_re[26 * K + k]);
+    x3_im = R64S_LD(&in_im[26 * K + k]);
+    x4_re = R64S_LD(&in_re[34 * K + k]);
+    x4_im = R64S_LD(&in_im[34 * K + k]);
+    x5_re = R64S_LD(&in_re[42 * K + k]);
+    x5_im = R64S_LD(&in_im[42 * K + k]);
+    x6_re = R64S_LD(&in_re[50 * K + k]);
+    x6_im = R64S_LD(&in_im[50 * K + k]);
+    x7_re = R64S_LD(&in_re[58 * K + k]);
+    x7_im = R64S_LD(&in_im[58 * K + k]);
 
-        /* radix-8 sub-FFT n₂=2 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=2 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[16] = x0_re;
-        spill_im[16] = x0_im;
-        spill_re[17] = x1_re;
-        spill_im[17] = x1_im;
-        spill_re[18] = x2_re;
-        spill_im[18] = x2_im;
-        spill_re[19] = x3_re;
-        spill_im[19] = x3_im;
-        spill_re[20] = x4_re;
-        spill_im[20] = x4_im;
-        spill_re[21] = x5_re;
-        spill_im[21] = x5_im;
-        spill_re[22] = x6_re;
-        spill_im[22] = x6_im;
-        spill_re[23] = x7_re;
-        spill_im[23] = x7_im;
+    spill_re[16] = x0_re;
+    spill_im[16] = x0_im;
+    spill_re[17] = x1_re;
+    spill_im[17] = x1_im;
+    spill_re[18] = x2_re;
+    spill_im[18] = x2_im;
+    spill_re[19] = x3_re;
+    spill_im[19] = x3_im;
+    spill_re[20] = x4_re;
+    spill_im[20] = x4_im;
+    spill_re[21] = x5_re;
+    spill_im[21] = x5_im;
+    spill_re[22] = x6_re;
+    spill_im[22] = x6_im;
+    spill_re[23] = x7_re;
+    spill_im[23] = x7_im;
 
-        /* sub-FFT n₂=3 */
-        x0_re = R64S_LD(&in_re[3 * K + k]);
-        x0_im = R64S_LD(&in_im[3 * K + k]);
-        x1_re = R64S_LD(&in_re[11 * K + k]);
-        x1_im = R64S_LD(&in_im[11 * K + k]);
-        x2_re = R64S_LD(&in_re[19 * K + k]);
-        x2_im = R64S_LD(&in_im[19 * K + k]);
-        x3_re = R64S_LD(&in_re[27 * K + k]);
-        x3_im = R64S_LD(&in_im[27 * K + k]);
-        x4_re = R64S_LD(&in_re[35 * K + k]);
-        x4_im = R64S_LD(&in_im[35 * K + k]);
-        x5_re = R64S_LD(&in_re[43 * K + k]);
-        x5_im = R64S_LD(&in_im[43 * K + k]);
-        x6_re = R64S_LD(&in_re[51 * K + k]);
-        x6_im = R64S_LD(&in_im[51 * K + k]);
-        x7_re = R64S_LD(&in_re[59 * K + k]);
-        x7_im = R64S_LD(&in_im[59 * K + k]);
+    /* sub-FFT n₂=3 */
+    x0_re = R64S_LD(&in_re[3 * K + k]);
+    x0_im = R64S_LD(&in_im[3 * K + k]);
+    x1_re = R64S_LD(&in_re[11 * K + k]);
+    x1_im = R64S_LD(&in_im[11 * K + k]);
+    x2_re = R64S_LD(&in_re[19 * K + k]);
+    x2_im = R64S_LD(&in_im[19 * K + k]);
+    x3_re = R64S_LD(&in_re[27 * K + k]);
+    x3_im = R64S_LD(&in_im[27 * K + k]);
+    x4_re = R64S_LD(&in_re[35 * K + k]);
+    x4_im = R64S_LD(&in_im[35 * K + k]);
+    x5_re = R64S_LD(&in_re[43 * K + k]);
+    x5_im = R64S_LD(&in_im[43 * K + k]);
+    x6_re = R64S_LD(&in_re[51 * K + k]);
+    x6_im = R64S_LD(&in_im[51 * K + k]);
+    x7_re = R64S_LD(&in_re[59 * K + k]);
+    x7_im = R64S_LD(&in_im[59 * K + k]);
 
-        /* radix-8 sub-FFT n₂=3 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=3 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[24] = x0_re;
-        spill_im[24] = x0_im;
-        spill_re[25] = x1_re;
-        spill_im[25] = x1_im;
-        spill_re[26] = x2_re;
-        spill_im[26] = x2_im;
-        spill_re[27] = x3_re;
-        spill_im[27] = x3_im;
-        spill_re[28] = x4_re;
-        spill_im[28] = x4_im;
-        spill_re[29] = x5_re;
-        spill_im[29] = x5_im;
-        spill_re[30] = x6_re;
-        spill_im[30] = x6_im;
-        spill_re[31] = x7_re;
-        spill_im[31] = x7_im;
+    spill_re[24] = x0_re;
+    spill_im[24] = x0_im;
+    spill_re[25] = x1_re;
+    spill_im[25] = x1_im;
+    spill_re[26] = x2_re;
+    spill_im[26] = x2_im;
+    spill_re[27] = x3_re;
+    spill_im[27] = x3_im;
+    spill_re[28] = x4_re;
+    spill_im[28] = x4_im;
+    spill_re[29] = x5_re;
+    spill_im[29] = x5_im;
+    spill_re[30] = x6_re;
+    spill_im[30] = x6_im;
+    spill_re[31] = x7_re;
+    spill_im[31] = x7_im;
 
-        /* sub-FFT n₂=4 */
-        x0_re = R64S_LD(&in_re[4 * K + k]);
-        x0_im = R64S_LD(&in_im[4 * K + k]);
-        x1_re = R64S_LD(&in_re[12 * K + k]);
-        x1_im = R64S_LD(&in_im[12 * K + k]);
-        x2_re = R64S_LD(&in_re[20 * K + k]);
-        x2_im = R64S_LD(&in_im[20 * K + k]);
-        x3_re = R64S_LD(&in_re[28 * K + k]);
-        x3_im = R64S_LD(&in_im[28 * K + k]);
-        x4_re = R64S_LD(&in_re[36 * K + k]);
-        x4_im = R64S_LD(&in_im[36 * K + k]);
-        x5_re = R64S_LD(&in_re[44 * K + k]);
-        x5_im = R64S_LD(&in_im[44 * K + k]);
-        x6_re = R64S_LD(&in_re[52 * K + k]);
-        x6_im = R64S_LD(&in_im[52 * K + k]);
-        x7_re = R64S_LD(&in_re[60 * K + k]);
-        x7_im = R64S_LD(&in_im[60 * K + k]);
+    /* sub-FFT n₂=4 */
+    x0_re = R64S_LD(&in_re[4 * K + k]);
+    x0_im = R64S_LD(&in_im[4 * K + k]);
+    x1_re = R64S_LD(&in_re[12 * K + k]);
+    x1_im = R64S_LD(&in_im[12 * K + k]);
+    x2_re = R64S_LD(&in_re[20 * K + k]);
+    x2_im = R64S_LD(&in_im[20 * K + k]);
+    x3_re = R64S_LD(&in_re[28 * K + k]);
+    x3_im = R64S_LD(&in_im[28 * K + k]);
+    x4_re = R64S_LD(&in_re[36 * K + k]);
+    x4_im = R64S_LD(&in_im[36 * K + k]);
+    x5_re = R64S_LD(&in_re[44 * K + k]);
+    x5_im = R64S_LD(&in_im[44 * K + k]);
+    x6_re = R64S_LD(&in_re[52 * K + k]);
+    x6_im = R64S_LD(&in_im[52 * K + k]);
+    x7_re = R64S_LD(&in_re[60 * K + k]);
+    x7_im = R64S_LD(&in_im[60 * K + k]);
 
-        /* radix-8 sub-FFT n₂=4 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=4 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[32] = x0_re;
-        spill_im[32] = x0_im;
-        spill_re[33] = x1_re;
-        spill_im[33] = x1_im;
-        spill_re[34] = x2_re;
-        spill_im[34] = x2_im;
-        spill_re[35] = x3_re;
-        spill_im[35] = x3_im;
-        spill_re[36] = x4_re;
-        spill_im[36] = x4_im;
-        spill_re[37] = x5_re;
-        spill_im[37] = x5_im;
-        spill_re[38] = x6_re;
-        spill_im[38] = x6_im;
-        spill_re[39] = x7_re;
-        spill_im[39] = x7_im;
+    spill_re[32] = x0_re;
+    spill_im[32] = x0_im;
+    spill_re[33] = x1_re;
+    spill_im[33] = x1_im;
+    spill_re[34] = x2_re;
+    spill_im[34] = x2_im;
+    spill_re[35] = x3_re;
+    spill_im[35] = x3_im;
+    spill_re[36] = x4_re;
+    spill_im[36] = x4_im;
+    spill_re[37] = x5_re;
+    spill_im[37] = x5_im;
+    spill_re[38] = x6_re;
+    spill_im[38] = x6_im;
+    spill_re[39] = x7_re;
+    spill_im[39] = x7_im;
 
-        /* sub-FFT n₂=5 */
-        x0_re = R64S_LD(&in_re[5 * K + k]);
-        x0_im = R64S_LD(&in_im[5 * K + k]);
-        x1_re = R64S_LD(&in_re[13 * K + k]);
-        x1_im = R64S_LD(&in_im[13 * K + k]);
-        x2_re = R64S_LD(&in_re[21 * K + k]);
-        x2_im = R64S_LD(&in_im[21 * K + k]);
-        x3_re = R64S_LD(&in_re[29 * K + k]);
-        x3_im = R64S_LD(&in_im[29 * K + k]);
-        x4_re = R64S_LD(&in_re[37 * K + k]);
-        x4_im = R64S_LD(&in_im[37 * K + k]);
-        x5_re = R64S_LD(&in_re[45 * K + k]);
-        x5_im = R64S_LD(&in_im[45 * K + k]);
-        x6_re = R64S_LD(&in_re[53 * K + k]);
-        x6_im = R64S_LD(&in_im[53 * K + k]);
-        x7_re = R64S_LD(&in_re[61 * K + k]);
-        x7_im = R64S_LD(&in_im[61 * K + k]);
+    /* sub-FFT n₂=5 */
+    x0_re = R64S_LD(&in_re[5 * K + k]);
+    x0_im = R64S_LD(&in_im[5 * K + k]);
+    x1_re = R64S_LD(&in_re[13 * K + k]);
+    x1_im = R64S_LD(&in_im[13 * K + k]);
+    x2_re = R64S_LD(&in_re[21 * K + k]);
+    x2_im = R64S_LD(&in_im[21 * K + k]);
+    x3_re = R64S_LD(&in_re[29 * K + k]);
+    x3_im = R64S_LD(&in_im[29 * K + k]);
+    x4_re = R64S_LD(&in_re[37 * K + k]);
+    x4_im = R64S_LD(&in_im[37 * K + k]);
+    x5_re = R64S_LD(&in_re[45 * K + k]);
+    x5_im = R64S_LD(&in_im[45 * K + k]);
+    x6_re = R64S_LD(&in_re[53 * K + k]);
+    x6_im = R64S_LD(&in_im[53 * K + k]);
+    x7_re = R64S_LD(&in_re[61 * K + k]);
+    x7_im = R64S_LD(&in_im[61 * K + k]);
 
-        /* radix-8 sub-FFT n₂=5 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=5 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[40] = x0_re;
-        spill_im[40] = x0_im;
-        spill_re[41] = x1_re;
-        spill_im[41] = x1_im;
-        spill_re[42] = x2_re;
-        spill_im[42] = x2_im;
-        spill_re[43] = x3_re;
-        spill_im[43] = x3_im;
-        spill_re[44] = x4_re;
-        spill_im[44] = x4_im;
-        spill_re[45] = x5_re;
-        spill_im[45] = x5_im;
-        spill_re[46] = x6_re;
-        spill_im[46] = x6_im;
-        spill_re[47] = x7_re;
-        spill_im[47] = x7_im;
+    spill_re[40] = x0_re;
+    spill_im[40] = x0_im;
+    spill_re[41] = x1_re;
+    spill_im[41] = x1_im;
+    spill_re[42] = x2_re;
+    spill_im[42] = x2_im;
+    spill_re[43] = x3_re;
+    spill_im[43] = x3_im;
+    spill_re[44] = x4_re;
+    spill_im[44] = x4_im;
+    spill_re[45] = x5_re;
+    spill_im[45] = x5_im;
+    spill_re[46] = x6_re;
+    spill_im[46] = x6_im;
+    spill_re[47] = x7_re;
+    spill_im[47] = x7_im;
 
-        /* sub-FFT n₂=6 */
-        x0_re = R64S_LD(&in_re[6 * K + k]);
-        x0_im = R64S_LD(&in_im[6 * K + k]);
-        x1_re = R64S_LD(&in_re[14 * K + k]);
-        x1_im = R64S_LD(&in_im[14 * K + k]);
-        x2_re = R64S_LD(&in_re[22 * K + k]);
-        x2_im = R64S_LD(&in_im[22 * K + k]);
-        x3_re = R64S_LD(&in_re[30 * K + k]);
-        x3_im = R64S_LD(&in_im[30 * K + k]);
-        x4_re = R64S_LD(&in_re[38 * K + k]);
-        x4_im = R64S_LD(&in_im[38 * K + k]);
-        x5_re = R64S_LD(&in_re[46 * K + k]);
-        x5_im = R64S_LD(&in_im[46 * K + k]);
-        x6_re = R64S_LD(&in_re[54 * K + k]);
-        x6_im = R64S_LD(&in_im[54 * K + k]);
-        x7_re = R64S_LD(&in_re[62 * K + k]);
-        x7_im = R64S_LD(&in_im[62 * K + k]);
+    /* sub-FFT n₂=6 */
+    x0_re = R64S_LD(&in_re[6 * K + k]);
+    x0_im = R64S_LD(&in_im[6 * K + k]);
+    x1_re = R64S_LD(&in_re[14 * K + k]);
+    x1_im = R64S_LD(&in_im[14 * K + k]);
+    x2_re = R64S_LD(&in_re[22 * K + k]);
+    x2_im = R64S_LD(&in_im[22 * K + k]);
+    x3_re = R64S_LD(&in_re[30 * K + k]);
+    x3_im = R64S_LD(&in_im[30 * K + k]);
+    x4_re = R64S_LD(&in_re[38 * K + k]);
+    x4_im = R64S_LD(&in_im[38 * K + k]);
+    x5_re = R64S_LD(&in_re[46 * K + k]);
+    x5_im = R64S_LD(&in_im[46 * K + k]);
+    x6_re = R64S_LD(&in_re[54 * K + k]);
+    x6_im = R64S_LD(&in_im[54 * K + k]);
+    x7_re = R64S_LD(&in_re[62 * K + k]);
+    x7_im = R64S_LD(&in_im[62 * K + k]);
 
-        /* radix-8 sub-FFT n₂=6 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=6 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[48] = x0_re;
-        spill_im[48] = x0_im;
-        spill_re[49] = x1_re;
-        spill_im[49] = x1_im;
-        spill_re[50] = x2_re;
-        spill_im[50] = x2_im;
-        spill_re[51] = x3_re;
-        spill_im[51] = x3_im;
-        spill_re[52] = x4_re;
-        spill_im[52] = x4_im;
-        spill_re[53] = x5_re;
-        spill_im[53] = x5_im;
-        spill_re[54] = x6_re;
-        spill_im[54] = x6_im;
-        spill_re[55] = x7_re;
-        spill_im[55] = x7_im;
+    spill_re[48] = x0_re;
+    spill_im[48] = x0_im;
+    spill_re[49] = x1_re;
+    spill_im[49] = x1_im;
+    spill_re[50] = x2_re;
+    spill_im[50] = x2_im;
+    spill_re[51] = x3_re;
+    spill_im[51] = x3_im;
+    spill_re[52] = x4_re;
+    spill_im[52] = x4_im;
+    spill_re[53] = x5_re;
+    spill_im[53] = x5_im;
+    spill_re[54] = x6_re;
+    spill_im[54] = x6_im;
+    spill_re[55] = x7_re;
+    spill_im[55] = x7_im;
 
-        /* sub-FFT n₂=7 */
-        x0_re = R64S_LD(&in_re[7 * K + k]);
-        x0_im = R64S_LD(&in_im[7 * K + k]);
-        x1_re = R64S_LD(&in_re[15 * K + k]);
-        x1_im = R64S_LD(&in_im[15 * K + k]);
-        x2_re = R64S_LD(&in_re[23 * K + k]);
-        x2_im = R64S_LD(&in_im[23 * K + k]);
-        x3_re = R64S_LD(&in_re[31 * K + k]);
-        x3_im = R64S_LD(&in_im[31 * K + k]);
-        x4_re = R64S_LD(&in_re[39 * K + k]);
-        x4_im = R64S_LD(&in_im[39 * K + k]);
-        x5_re = R64S_LD(&in_re[47 * K + k]);
-        x5_im = R64S_LD(&in_im[47 * K + k]);
-        x6_re = R64S_LD(&in_re[55 * K + k]);
-        x6_im = R64S_LD(&in_im[55 * K + k]);
-        x7_re = R64S_LD(&in_re[63 * K + k]);
-        x7_im = R64S_LD(&in_im[63 * K + k]);
+    /* sub-FFT n₂=7 */
+    x0_re = R64S_LD(&in_re[7 * K + k]);
+    x0_im = R64S_LD(&in_im[7 * K + k]);
+    x1_re = R64S_LD(&in_re[15 * K + k]);
+    x1_im = R64S_LD(&in_im[15 * K + k]);
+    x2_re = R64S_LD(&in_re[23 * K + k]);
+    x2_im = R64S_LD(&in_im[23 * K + k]);
+    x3_re = R64S_LD(&in_re[31 * K + k]);
+    x3_im = R64S_LD(&in_im[31 * K + k]);
+    x4_re = R64S_LD(&in_re[39 * K + k]);
+    x4_im = R64S_LD(&in_im[39 * K + k]);
+    x5_re = R64S_LD(&in_re[47 * K + k]);
+    x5_im = R64S_LD(&in_im[47 * K + k]);
+    x6_re = R64S_LD(&in_re[55 * K + k]);
+    x6_im = R64S_LD(&in_im[55 * K + k]);
+    x7_re = R64S_LD(&in_re[63 * K + k]);
+    x7_im = R64S_LD(&in_im[63 * K + k]);
 
-        /* radix-8 sub-FFT n₂=7 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 sub-FFT n₂=7 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        spill_re[56] = x0_re;
-        spill_im[56] = x0_im;
-        spill_re[57] = x1_re;
-        spill_im[57] = x1_im;
-        spill_re[58] = x2_re;
-        spill_im[58] = x2_im;
-        spill_re[59] = x3_re;
-        spill_im[59] = x3_im;
-        spill_re[60] = x4_re;
-        spill_im[60] = x4_im;
-        spill_re[61] = x5_re;
-        spill_im[61] = x5_im;
-        spill_re[62] = x6_re;
-        spill_im[62] = x6_im;
-        spill_re[63] = x7_re;
-        spill_im[63] = x7_im;
+    spill_re[56] = x0_re;
+    spill_im[56] = x0_im;
+    spill_re[57] = x1_re;
+    spill_im[57] = x1_im;
+    spill_re[58] = x2_re;
+    spill_im[58] = x2_im;
+    spill_re[59] = x3_re;
+    spill_im[59] = x3_im;
+    spill_re[60] = x4_re;
+    spill_im[60] = x4_im;
+    spill_re[61] = x5_re;
+    spill_im[61] = x5_im;
+    spill_re[62] = x6_re;
+    spill_im[62] = x6_im;
+    spill_re[63] = x7_re;
+    spill_im[63] = x7_im;
 
-        /* PASS 2: 8 radix-8 combines with W_64 twiddles [bwd] */
+    /* PASS 2: 8 radix-8 combines with W_64 twiddles [bwd] */
 
-        /* column k₁=0 */
-        x0_re = spill_re[0];
-        x0_im = spill_im[0];
-        x1_re = spill_re[8];
-        x1_im = spill_im[8];
-        x2_re = spill_re[16];
-        x2_im = spill_im[16];
-        x3_re = spill_re[24];
-        x3_im = spill_im[24];
-        x4_re = spill_re[32];
-        x4_im = spill_im[32];
-        x5_re = spill_re[40];
-        x5_im = spill_im[40];
-        x6_re = spill_re[48];
-        x6_im = spill_im[48];
-        x7_re = spill_re[56];
-        x7_im = spill_im[56];
+    /* column k₁=0 */
+    x0_re = spill_re[0];
+    x0_im = spill_im[0];
+    x1_re = spill_re[8];
+    x1_im = spill_im[8];
+    x2_re = spill_re[16];
+    x2_im = spill_im[16];
+    x3_re = spill_re[24];
+    x3_im = spill_im[24];
+    x4_re = spill_re[32];
+    x4_im = spill_im[32];
+    x5_re = spill_re[40];
+    x5_im = spill_im[40];
+    x6_re = spill_re[48];
+    x6_im = spill_im[48];
+    x7_re = spill_re[56];
+    x7_im = spill_im[56];
 
-        /* radix-8 combine k₁=0 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=0 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[0 * K + k], x0_re);
-        R64S_ST(&out_im[0 * K + k], x0_im);
-        R64S_ST(&out_re[8 * K + k], x1_re);
-        R64S_ST(&out_im[8 * K + k], x1_im);
-        R64S_ST(&out_re[16 * K + k], x2_re);
-        R64S_ST(&out_im[16 * K + k], x2_im);
-        R64S_ST(&out_re[24 * K + k], x3_re);
-        R64S_ST(&out_im[24 * K + k], x3_im);
-        R64S_ST(&out_re[32 * K + k], x4_re);
-        R64S_ST(&out_im[32 * K + k], x4_im);
-        R64S_ST(&out_re[40 * K + k], x5_re);
-        R64S_ST(&out_im[40 * K + k], x5_im);
-        R64S_ST(&out_re[48 * K + k], x6_re);
-        R64S_ST(&out_im[48 * K + k], x6_im);
-        R64S_ST(&out_re[56 * K + k], x7_re);
-        R64S_ST(&out_im[56 * K + k], x7_im);
+    R64S_ST(&out_re[0 * K + k], x0_re);
+    R64S_ST(&out_im[0 * K + k], x0_im);
+    R64S_ST(&out_re[8 * K + k], x1_re);
+    R64S_ST(&out_im[8 * K + k], x1_im);
+    R64S_ST(&out_re[16 * K + k], x2_re);
+    R64S_ST(&out_im[16 * K + k], x2_im);
+    R64S_ST(&out_re[24 * K + k], x3_re);
+    R64S_ST(&out_im[24 * K + k], x3_im);
+    R64S_ST(&out_re[32 * K + k], x4_re);
+    R64S_ST(&out_im[32 * K + k], x4_im);
+    R64S_ST(&out_re[40 * K + k], x5_re);
+    R64S_ST(&out_im[40 * K + k], x5_im);
+    R64S_ST(&out_re[48 * K + k], x6_re);
+    R64S_ST(&out_im[48 * K + k], x6_im);
+    R64S_ST(&out_re[56 * K + k], x7_re);
+    R64S_ST(&out_im[56 * K + k], x7_im);
 
-        /* column k₁=1 */
-        x0_re = spill_re[1];
-        x0_im = spill_im[1];
-        x1_re = spill_re[9];
-        x1_im = spill_im[9];
-        x2_re = spill_re[17];
-        x2_im = spill_im[17];
-        x3_re = spill_re[25];
-        x3_im = spill_im[25];
-        x4_re = spill_re[33];
-        x4_im = spill_im[33];
-        x5_re = spill_re[41];
-        x5_im = spill_im[41];
-        x6_re = spill_re[49];
-        x6_im = spill_im[49];
-        x7_re = spill_re[57];
-        x7_im = spill_im[57];
+    /* column k₁=1 */
+    x0_re = spill_re[1];
+    x0_im = spill_im[1];
+    x1_re = spill_re[9];
+    x1_im = spill_im[9];
+    x2_re = spill_re[17];
+    x2_im = spill_im[17];
+    x3_re = spill_re[25];
+    x3_im = spill_im[25];
+    x4_re = spill_re[33];
+    x4_im = spill_im[33];
+    x5_re = spill_re[41];
+    x5_im = spill_im[41];
+    x6_re = spill_re[49];
+    x6_im = spill_im[49];
+    x7_re = spill_re[57];
+    x7_im = spill_im[57];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[1] + (x1_im * iw_im[1]));
-          x1_im = (x1_im * iw_re[1] - (tr * iw_im[1])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[2] + (x2_im * iw_im[2]));
-          x2_im = (x2_im * iw_re[2] - (tr * iw_im[2])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[3] + (x3_im * iw_im[3]));
-          x3_im = (x3_im * iw_re[3] - (tr * iw_im[3])); }
-        { const double tr = x4_re;
-          x4_re = (x4_re * iw_re[4] + (x4_im * iw_im[4]));
-          x4_im = (x4_im * iw_re[4] - (tr * iw_im[4])); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[5] + (x5_im * iw_im[5]));
-          x5_im = (x5_im * iw_re[5] - (tr * iw_im[5])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[6] + (x6_im * iw_im[6]));
-          x6_im = (x6_im * iw_re[6] - (tr * iw_im[6])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[7] + (x7_im * iw_im[7]));
-          x7_im = (x7_im * iw_re[7] - (tr * iw_im[7])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[1] + (x1_im * iw_im[1]));
+      x1_im = (x1_im * iw_re[1] - (tr * iw_im[1]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[2] + (x2_im * iw_im[2]));
+      x2_im = (x2_im * iw_re[2] - (tr * iw_im[2]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[3] + (x3_im * iw_im[3]));
+      x3_im = (x3_im * iw_re[3] - (tr * iw_im[3]));
+    }
+    {
+      const double tr = x4_re;
+      x4_re = (x4_re * iw_re[4] + (x4_im * iw_im[4]));
+      x4_im = (x4_im * iw_re[4] - (tr * iw_im[4]));
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[5] + (x5_im * iw_im[5]));
+      x5_im = (x5_im * iw_re[5] - (tr * iw_im[5]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[6] + (x6_im * iw_im[6]));
+      x6_im = (x6_im * iw_re[6] - (tr * iw_im[6]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[7] + (x7_im * iw_im[7]));
+      x7_im = (x7_im * iw_re[7] - (tr * iw_im[7]));
+    }
 
-        /* radix-8 combine k₁=1 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=1 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[1 * K + k], x0_re);
-        R64S_ST(&out_im[1 * K + k], x0_im);
-        R64S_ST(&out_re[9 * K + k], x1_re);
-        R64S_ST(&out_im[9 * K + k], x1_im);
-        R64S_ST(&out_re[17 * K + k], x2_re);
-        R64S_ST(&out_im[17 * K + k], x2_im);
-        R64S_ST(&out_re[25 * K + k], x3_re);
-        R64S_ST(&out_im[25 * K + k], x3_im);
-        R64S_ST(&out_re[33 * K + k], x4_re);
-        R64S_ST(&out_im[33 * K + k], x4_im);
-        R64S_ST(&out_re[41 * K + k], x5_re);
-        R64S_ST(&out_im[41 * K + k], x5_im);
-        R64S_ST(&out_re[49 * K + k], x6_re);
-        R64S_ST(&out_im[49 * K + k], x6_im);
-        R64S_ST(&out_re[57 * K + k], x7_re);
-        R64S_ST(&out_im[57 * K + k], x7_im);
+    R64S_ST(&out_re[1 * K + k], x0_re);
+    R64S_ST(&out_im[1 * K + k], x0_im);
+    R64S_ST(&out_re[9 * K + k], x1_re);
+    R64S_ST(&out_im[9 * K + k], x1_im);
+    R64S_ST(&out_re[17 * K + k], x2_re);
+    R64S_ST(&out_im[17 * K + k], x2_im);
+    R64S_ST(&out_re[25 * K + k], x3_re);
+    R64S_ST(&out_im[25 * K + k], x3_im);
+    R64S_ST(&out_re[33 * K + k], x4_re);
+    R64S_ST(&out_im[33 * K + k], x4_im);
+    R64S_ST(&out_re[41 * K + k], x5_re);
+    R64S_ST(&out_im[41 * K + k], x5_im);
+    R64S_ST(&out_re[49 * K + k], x6_re);
+    R64S_ST(&out_im[49 * K + k], x6_im);
+    R64S_ST(&out_re[57 * K + k], x7_re);
+    R64S_ST(&out_im[57 * K + k], x7_im);
 
-        /* column k₁=2 */
-        x0_re = spill_re[2];
-        x0_im = spill_im[2];
-        x1_re = spill_re[10];
-        x1_im = spill_im[10];
-        x2_re = spill_re[18];
-        x2_im = spill_im[18];
-        x3_re = spill_re[26];
-        x3_im = spill_im[26];
-        x4_re = spill_re[34];
-        x4_im = spill_im[34];
-        x5_re = spill_re[42];
-        x5_im = spill_im[42];
-        x6_re = spill_re[50];
-        x6_im = spill_im[50];
-        x7_re = spill_re[58];
-        x7_im = spill_im[58];
+    /* column k₁=2 */
+    x0_re = spill_re[2];
+    x0_im = spill_im[2];
+    x1_re = spill_re[10];
+    x1_im = spill_im[10];
+    x2_re = spill_re[18];
+    x2_im = spill_im[18];
+    x3_re = spill_re[26];
+    x3_im = spill_im[26];
+    x4_re = spill_re[34];
+    x4_im = spill_im[34];
+    x5_re = spill_re[42];
+    x5_im = spill_im[42];
+    x6_re = spill_re[50];
+    x6_im = spill_im[50];
+    x7_re = spill_re[58];
+    x7_im = spill_im[58];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[2] + (x1_im * iw_im[2]));
-          x1_im = (x1_im * iw_re[2] - (tr * iw_im[2])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[4] + (x2_im * iw_im[4]));
-          x2_im = (x2_im * iw_re[4] - (tr * iw_im[4])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[6] + (x3_im * iw_im[6]));
-          x3_im = (x3_im * iw_re[6] - (tr * iw_im[6])); }
-        { const double tr = x4_re, ti = x4_im;
-          x4_re = ((tr - ti) * sqrt2_inv);
-          x4_im = ((tr + ti) * sqrt2_inv); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[10] + (x5_im * iw_im[10]));
-          x5_im = (x5_im * iw_re[10] - (tr * iw_im[10])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[12] + (x6_im * iw_im[12]));
-          x6_im = (x6_im * iw_re[12] - (tr * iw_im[12])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[14] + (x7_im * iw_im[14]));
-          x7_im = (x7_im * iw_re[14] - (tr * iw_im[14])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[2] + (x1_im * iw_im[2]));
+      x1_im = (x1_im * iw_re[2] - (tr * iw_im[2]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[4] + (x2_im * iw_im[4]));
+      x2_im = (x2_im * iw_re[4] - (tr * iw_im[4]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[6] + (x3_im * iw_im[6]));
+      x3_im = (x3_im * iw_re[6] - (tr * iw_im[6]));
+    }
+    {
+      const double tr = x4_re, ti = x4_im;
+      x4_re = ((tr - ti) * sqrt2_inv);
+      x4_im = ((tr + ti) * sqrt2_inv);
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[10] + (x5_im * iw_im[10]));
+      x5_im = (x5_im * iw_re[10] - (tr * iw_im[10]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[12] + (x6_im * iw_im[12]));
+      x6_im = (x6_im * iw_re[12] - (tr * iw_im[12]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[14] + (x7_im * iw_im[14]));
+      x7_im = (x7_im * iw_re[14] - (tr * iw_im[14]));
+    }
 
-        /* radix-8 combine k₁=2 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=2 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[2 * K + k], x0_re);
-        R64S_ST(&out_im[2 * K + k], x0_im);
-        R64S_ST(&out_re[10 * K + k], x1_re);
-        R64S_ST(&out_im[10 * K + k], x1_im);
-        R64S_ST(&out_re[18 * K + k], x2_re);
-        R64S_ST(&out_im[18 * K + k], x2_im);
-        R64S_ST(&out_re[26 * K + k], x3_re);
-        R64S_ST(&out_im[26 * K + k], x3_im);
-        R64S_ST(&out_re[34 * K + k], x4_re);
-        R64S_ST(&out_im[34 * K + k], x4_im);
-        R64S_ST(&out_re[42 * K + k], x5_re);
-        R64S_ST(&out_im[42 * K + k], x5_im);
-        R64S_ST(&out_re[50 * K + k], x6_re);
-        R64S_ST(&out_im[50 * K + k], x6_im);
-        R64S_ST(&out_re[58 * K + k], x7_re);
-        R64S_ST(&out_im[58 * K + k], x7_im);
+    R64S_ST(&out_re[2 * K + k], x0_re);
+    R64S_ST(&out_im[2 * K + k], x0_im);
+    R64S_ST(&out_re[10 * K + k], x1_re);
+    R64S_ST(&out_im[10 * K + k], x1_im);
+    R64S_ST(&out_re[18 * K + k], x2_re);
+    R64S_ST(&out_im[18 * K + k], x2_im);
+    R64S_ST(&out_re[26 * K + k], x3_re);
+    R64S_ST(&out_im[26 * K + k], x3_im);
+    R64S_ST(&out_re[34 * K + k], x4_re);
+    R64S_ST(&out_im[34 * K + k], x4_im);
+    R64S_ST(&out_re[42 * K + k], x5_re);
+    R64S_ST(&out_im[42 * K + k], x5_im);
+    R64S_ST(&out_re[50 * K + k], x6_re);
+    R64S_ST(&out_im[50 * K + k], x6_im);
+    R64S_ST(&out_re[58 * K + k], x7_re);
+    R64S_ST(&out_im[58 * K + k], x7_im);
 
-        /* column k₁=3 */
-        x0_re = spill_re[3];
-        x0_im = spill_im[3];
-        x1_re = spill_re[11];
-        x1_im = spill_im[11];
-        x2_re = spill_re[19];
-        x2_im = spill_im[19];
-        x3_re = spill_re[27];
-        x3_im = spill_im[27];
-        x4_re = spill_re[35];
-        x4_im = spill_im[35];
-        x5_re = spill_re[43];
-        x5_im = spill_im[43];
-        x6_re = spill_re[51];
-        x6_im = spill_im[51];
-        x7_re = spill_re[59];
-        x7_im = spill_im[59];
+    /* column k₁=3 */
+    x0_re = spill_re[3];
+    x0_im = spill_im[3];
+    x1_re = spill_re[11];
+    x1_im = spill_im[11];
+    x2_re = spill_re[19];
+    x2_im = spill_im[19];
+    x3_re = spill_re[27];
+    x3_im = spill_im[27];
+    x4_re = spill_re[35];
+    x4_im = spill_im[35];
+    x5_re = spill_re[43];
+    x5_im = spill_im[43];
+    x6_re = spill_re[51];
+    x6_im = spill_im[51];
+    x7_re = spill_re[59];
+    x7_im = spill_im[59];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[3] + (x1_im * iw_im[3]));
-          x1_im = (x1_im * iw_re[3] - (tr * iw_im[3])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[6] + (x2_im * iw_im[6]));
-          x2_im = (x2_im * iw_re[6] - (tr * iw_im[6])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[9] + (x3_im * iw_im[9]));
-          x3_im = (x3_im * iw_re[9] - (tr * iw_im[9])); }
-        { const double tr = x4_re;
-          x4_re = (x4_re * iw_re[12] + (x4_im * iw_im[12]));
-          x4_im = (x4_im * iw_re[12] - (tr * iw_im[12])); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[15] + (x5_im * iw_im[15]));
-          x5_im = (x5_im * iw_re[15] - (tr * iw_im[15])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[18] + (x6_im * iw_im[18]));
-          x6_im = (x6_im * iw_re[18] - (tr * iw_im[18])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[21] + (x7_im * iw_im[21]));
-          x7_im = (x7_im * iw_re[21] - (tr * iw_im[21])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[3] + (x1_im * iw_im[3]));
+      x1_im = (x1_im * iw_re[3] - (tr * iw_im[3]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[6] + (x2_im * iw_im[6]));
+      x2_im = (x2_im * iw_re[6] - (tr * iw_im[6]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[9] + (x3_im * iw_im[9]));
+      x3_im = (x3_im * iw_re[9] - (tr * iw_im[9]));
+    }
+    {
+      const double tr = x4_re;
+      x4_re = (x4_re * iw_re[12] + (x4_im * iw_im[12]));
+      x4_im = (x4_im * iw_re[12] - (tr * iw_im[12]));
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[15] + (x5_im * iw_im[15]));
+      x5_im = (x5_im * iw_re[15] - (tr * iw_im[15]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[18] + (x6_im * iw_im[18]));
+      x6_im = (x6_im * iw_re[18] - (tr * iw_im[18]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[21] + (x7_im * iw_im[21]));
+      x7_im = (x7_im * iw_re[21] - (tr * iw_im[21]));
+    }
 
-        /* radix-8 combine k₁=3 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=3 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[3 * K + k], x0_re);
-        R64S_ST(&out_im[3 * K + k], x0_im);
-        R64S_ST(&out_re[11 * K + k], x1_re);
-        R64S_ST(&out_im[11 * K + k], x1_im);
-        R64S_ST(&out_re[19 * K + k], x2_re);
-        R64S_ST(&out_im[19 * K + k], x2_im);
-        R64S_ST(&out_re[27 * K + k], x3_re);
-        R64S_ST(&out_im[27 * K + k], x3_im);
-        R64S_ST(&out_re[35 * K + k], x4_re);
-        R64S_ST(&out_im[35 * K + k], x4_im);
-        R64S_ST(&out_re[43 * K + k], x5_re);
-        R64S_ST(&out_im[43 * K + k], x5_im);
-        R64S_ST(&out_re[51 * K + k], x6_re);
-        R64S_ST(&out_im[51 * K + k], x6_im);
-        R64S_ST(&out_re[59 * K + k], x7_re);
-        R64S_ST(&out_im[59 * K + k], x7_im);
+    R64S_ST(&out_re[3 * K + k], x0_re);
+    R64S_ST(&out_im[3 * K + k], x0_im);
+    R64S_ST(&out_re[11 * K + k], x1_re);
+    R64S_ST(&out_im[11 * K + k], x1_im);
+    R64S_ST(&out_re[19 * K + k], x2_re);
+    R64S_ST(&out_im[19 * K + k], x2_im);
+    R64S_ST(&out_re[27 * K + k], x3_re);
+    R64S_ST(&out_im[27 * K + k], x3_im);
+    R64S_ST(&out_re[35 * K + k], x4_re);
+    R64S_ST(&out_im[35 * K + k], x4_im);
+    R64S_ST(&out_re[43 * K + k], x5_re);
+    R64S_ST(&out_im[43 * K + k], x5_im);
+    R64S_ST(&out_re[51 * K + k], x6_re);
+    R64S_ST(&out_im[51 * K + k], x6_im);
+    R64S_ST(&out_re[59 * K + k], x7_re);
+    R64S_ST(&out_im[59 * K + k], x7_im);
 
-        /* column k₁=4 */
-        x0_re = spill_re[4];
-        x0_im = spill_im[4];
-        x1_re = spill_re[12];
-        x1_im = spill_im[12];
-        x2_re = spill_re[20];
-        x2_im = spill_im[20];
-        x3_re = spill_re[28];
-        x3_im = spill_im[28];
-        x4_re = spill_re[36];
-        x4_im = spill_im[36];
-        x5_re = spill_re[44];
-        x5_im = spill_im[44];
-        x6_re = spill_re[52];
-        x6_im = spill_im[52];
-        x7_re = spill_re[60];
-        x7_im = spill_im[60];
+    /* column k₁=4 */
+    x0_re = spill_re[4];
+    x0_im = spill_im[4];
+    x1_re = spill_re[12];
+    x1_im = spill_im[12];
+    x2_re = spill_re[20];
+    x2_im = spill_im[20];
+    x3_re = spill_re[28];
+    x3_im = spill_im[28];
+    x4_re = spill_re[36];
+    x4_im = spill_im[36];
+    x5_re = spill_re[44];
+    x5_im = spill_im[44];
+    x6_re = spill_re[52];
+    x6_im = spill_im[52];
+    x7_re = spill_re[60];
+    x7_im = spill_im[60];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[4] + (x1_im * iw_im[4]));
-          x1_im = (x1_im * iw_re[4] - (tr * iw_im[4])); }
-        { const double tr = x2_re, ti = x2_im;
-          x2_re = ((tr - ti) * sqrt2_inv);
-          x2_im = ((tr + ti) * sqrt2_inv); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[12] + (x3_im * iw_im[12]));
-          x3_im = (x3_im * iw_re[12] - (tr * iw_im[12])); }
-        { const double t = x4_re; x4_re = (-x4_im); x4_im = t; }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[20] + (x5_im * iw_im[20]));
-          x5_im = (x5_im * iw_re[20] - (tr * iw_im[20])); }
-        { const double tr = x6_re, ti = x6_im;
-          x6_re = (-((tr + ti) * sqrt2_inv));
-          x6_im = ((tr - ti) * sqrt2_inv); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[28] + (x7_im * iw_im[28]));
-          x7_im = (x7_im * iw_re[28] - (tr * iw_im[28])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[4] + (x1_im * iw_im[4]));
+      x1_im = (x1_im * iw_re[4] - (tr * iw_im[4]));
+    }
+    {
+      const double tr = x2_re, ti = x2_im;
+      x2_re = ((tr - ti) * sqrt2_inv);
+      x2_im = ((tr + ti) * sqrt2_inv);
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[12] + (x3_im * iw_im[12]));
+      x3_im = (x3_im * iw_re[12] - (tr * iw_im[12]));
+    }
+    {
+      const double t = x4_re;
+      x4_re = (-x4_im);
+      x4_im = t;
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[20] + (x5_im * iw_im[20]));
+      x5_im = (x5_im * iw_re[20] - (tr * iw_im[20]));
+    }
+    {
+      const double tr = x6_re, ti = x6_im;
+      x6_re = (-((tr + ti) * sqrt2_inv));
+      x6_im = ((tr - ti) * sqrt2_inv);
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[28] + (x7_im * iw_im[28]));
+      x7_im = (x7_im * iw_re[28] - (tr * iw_im[28]));
+    }
 
-        /* radix-8 combine k₁=4 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=4 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[4 * K + k], x0_re);
-        R64S_ST(&out_im[4 * K + k], x0_im);
-        R64S_ST(&out_re[12 * K + k], x1_re);
-        R64S_ST(&out_im[12 * K + k], x1_im);
-        R64S_ST(&out_re[20 * K + k], x2_re);
-        R64S_ST(&out_im[20 * K + k], x2_im);
-        R64S_ST(&out_re[28 * K + k], x3_re);
-        R64S_ST(&out_im[28 * K + k], x3_im);
-        R64S_ST(&out_re[36 * K + k], x4_re);
-        R64S_ST(&out_im[36 * K + k], x4_im);
-        R64S_ST(&out_re[44 * K + k], x5_re);
-        R64S_ST(&out_im[44 * K + k], x5_im);
-        R64S_ST(&out_re[52 * K + k], x6_re);
-        R64S_ST(&out_im[52 * K + k], x6_im);
-        R64S_ST(&out_re[60 * K + k], x7_re);
-        R64S_ST(&out_im[60 * K + k], x7_im);
+    R64S_ST(&out_re[4 * K + k], x0_re);
+    R64S_ST(&out_im[4 * K + k], x0_im);
+    R64S_ST(&out_re[12 * K + k], x1_re);
+    R64S_ST(&out_im[12 * K + k], x1_im);
+    R64S_ST(&out_re[20 * K + k], x2_re);
+    R64S_ST(&out_im[20 * K + k], x2_im);
+    R64S_ST(&out_re[28 * K + k], x3_re);
+    R64S_ST(&out_im[28 * K + k], x3_im);
+    R64S_ST(&out_re[36 * K + k], x4_re);
+    R64S_ST(&out_im[36 * K + k], x4_im);
+    R64S_ST(&out_re[44 * K + k], x5_re);
+    R64S_ST(&out_im[44 * K + k], x5_im);
+    R64S_ST(&out_re[52 * K + k], x6_re);
+    R64S_ST(&out_im[52 * K + k], x6_im);
+    R64S_ST(&out_re[60 * K + k], x7_re);
+    R64S_ST(&out_im[60 * K + k], x7_im);
 
-        /* column k₁=5 */
-        x0_re = spill_re[5];
-        x0_im = spill_im[5];
-        x1_re = spill_re[13];
-        x1_im = spill_im[13];
-        x2_re = spill_re[21];
-        x2_im = spill_im[21];
-        x3_re = spill_re[29];
-        x3_im = spill_im[29];
-        x4_re = spill_re[37];
-        x4_im = spill_im[37];
-        x5_re = spill_re[45];
-        x5_im = spill_im[45];
-        x6_re = spill_re[53];
-        x6_im = spill_im[53];
-        x7_re = spill_re[61];
-        x7_im = spill_im[61];
+    /* column k₁=5 */
+    x0_re = spill_re[5];
+    x0_im = spill_im[5];
+    x1_re = spill_re[13];
+    x1_im = spill_im[13];
+    x2_re = spill_re[21];
+    x2_im = spill_im[21];
+    x3_re = spill_re[29];
+    x3_im = spill_im[29];
+    x4_re = spill_re[37];
+    x4_im = spill_im[37];
+    x5_re = spill_re[45];
+    x5_im = spill_im[45];
+    x6_re = spill_re[53];
+    x6_im = spill_im[53];
+    x7_re = spill_re[61];
+    x7_im = spill_im[61];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[5] + (x1_im * iw_im[5]));
-          x1_im = (x1_im * iw_re[5] - (tr * iw_im[5])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[10] + (x2_im * iw_im[10]));
-          x2_im = (x2_im * iw_re[10] - (tr * iw_im[10])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[15] + (x3_im * iw_im[15]));
-          x3_im = (x3_im * iw_re[15] - (tr * iw_im[15])); }
-        { const double tr = x4_re;
-          x4_re = (x4_re * iw_re[20] + (x4_im * iw_im[20]));
-          x4_im = (x4_im * iw_re[20] - (tr * iw_im[20])); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[25] + (x5_im * iw_im[25]));
-          x5_im = (x5_im * iw_re[25] - (tr * iw_im[25])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[30] + (x6_im * iw_im[30]));
-          x6_im = (x6_im * iw_re[30] - (tr * iw_im[30])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[35] + (x7_im * iw_im[35]));
-          x7_im = (x7_im * iw_re[35] - (tr * iw_im[35])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[5] + (x1_im * iw_im[5]));
+      x1_im = (x1_im * iw_re[5] - (tr * iw_im[5]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[10] + (x2_im * iw_im[10]));
+      x2_im = (x2_im * iw_re[10] - (tr * iw_im[10]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[15] + (x3_im * iw_im[15]));
+      x3_im = (x3_im * iw_re[15] - (tr * iw_im[15]));
+    }
+    {
+      const double tr = x4_re;
+      x4_re = (x4_re * iw_re[20] + (x4_im * iw_im[20]));
+      x4_im = (x4_im * iw_re[20] - (tr * iw_im[20]));
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[25] + (x5_im * iw_im[25]));
+      x5_im = (x5_im * iw_re[25] - (tr * iw_im[25]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[30] + (x6_im * iw_im[30]));
+      x6_im = (x6_im * iw_re[30] - (tr * iw_im[30]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[35] + (x7_im * iw_im[35]));
+      x7_im = (x7_im * iw_re[35] - (tr * iw_im[35]));
+    }
 
-        /* radix-8 combine k₁=5 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=5 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[5 * K + k], x0_re);
-        R64S_ST(&out_im[5 * K + k], x0_im);
-        R64S_ST(&out_re[13 * K + k], x1_re);
-        R64S_ST(&out_im[13 * K + k], x1_im);
-        R64S_ST(&out_re[21 * K + k], x2_re);
-        R64S_ST(&out_im[21 * K + k], x2_im);
-        R64S_ST(&out_re[29 * K + k], x3_re);
-        R64S_ST(&out_im[29 * K + k], x3_im);
-        R64S_ST(&out_re[37 * K + k], x4_re);
-        R64S_ST(&out_im[37 * K + k], x4_im);
-        R64S_ST(&out_re[45 * K + k], x5_re);
-        R64S_ST(&out_im[45 * K + k], x5_im);
-        R64S_ST(&out_re[53 * K + k], x6_re);
-        R64S_ST(&out_im[53 * K + k], x6_im);
-        R64S_ST(&out_re[61 * K + k], x7_re);
-        R64S_ST(&out_im[61 * K + k], x7_im);
+    R64S_ST(&out_re[5 * K + k], x0_re);
+    R64S_ST(&out_im[5 * K + k], x0_im);
+    R64S_ST(&out_re[13 * K + k], x1_re);
+    R64S_ST(&out_im[13 * K + k], x1_im);
+    R64S_ST(&out_re[21 * K + k], x2_re);
+    R64S_ST(&out_im[21 * K + k], x2_im);
+    R64S_ST(&out_re[29 * K + k], x3_re);
+    R64S_ST(&out_im[29 * K + k], x3_im);
+    R64S_ST(&out_re[37 * K + k], x4_re);
+    R64S_ST(&out_im[37 * K + k], x4_im);
+    R64S_ST(&out_re[45 * K + k], x5_re);
+    R64S_ST(&out_im[45 * K + k], x5_im);
+    R64S_ST(&out_re[53 * K + k], x6_re);
+    R64S_ST(&out_im[53 * K + k], x6_im);
+    R64S_ST(&out_re[61 * K + k], x7_re);
+    R64S_ST(&out_im[61 * K + k], x7_im);
 
-        /* column k₁=6 */
-        x0_re = spill_re[6];
-        x0_im = spill_im[6];
-        x1_re = spill_re[14];
-        x1_im = spill_im[14];
-        x2_re = spill_re[22];
-        x2_im = spill_im[22];
-        x3_re = spill_re[30];
-        x3_im = spill_im[30];
-        x4_re = spill_re[38];
-        x4_im = spill_im[38];
-        x5_re = spill_re[46];
-        x5_im = spill_im[46];
-        x6_re = spill_re[54];
-        x6_im = spill_im[54];
-        x7_re = spill_re[62];
-        x7_im = spill_im[62];
+    /* column k₁=6 */
+    x0_re = spill_re[6];
+    x0_im = spill_im[6];
+    x1_re = spill_re[14];
+    x1_im = spill_im[14];
+    x2_re = spill_re[22];
+    x2_im = spill_im[22];
+    x3_re = spill_re[30];
+    x3_im = spill_im[30];
+    x4_re = spill_re[38];
+    x4_im = spill_im[38];
+    x5_re = spill_re[46];
+    x5_im = spill_im[46];
+    x6_re = spill_re[54];
+    x6_im = spill_im[54];
+    x7_re = spill_re[62];
+    x7_im = spill_im[62];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[6] + (x1_im * iw_im[6]));
-          x1_im = (x1_im * iw_re[6] - (tr * iw_im[6])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[12] + (x2_im * iw_im[12]));
-          x2_im = (x2_im * iw_re[12] - (tr * iw_im[12])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[18] + (x3_im * iw_im[18]));
-          x3_im = (x3_im * iw_re[18] - (tr * iw_im[18])); }
-        { const double tr = x4_re, ti = x4_im;
-          x4_re = (-((tr + ti) * sqrt2_inv));
-          x4_im = ((tr - ti) * sqrt2_inv); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[30] + (x5_im * iw_im[30]));
-          x5_im = (x5_im * iw_re[30] - (tr * iw_im[30])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[36] + (x6_im * iw_im[36]));
-          x6_im = (x6_im * iw_re[36] - (tr * iw_im[36])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[42] + (x7_im * iw_im[42]));
-          x7_im = (x7_im * iw_re[42] - (tr * iw_im[42])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[6] + (x1_im * iw_im[6]));
+      x1_im = (x1_im * iw_re[6] - (tr * iw_im[6]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[12] + (x2_im * iw_im[12]));
+      x2_im = (x2_im * iw_re[12] - (tr * iw_im[12]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[18] + (x3_im * iw_im[18]));
+      x3_im = (x3_im * iw_re[18] - (tr * iw_im[18]));
+    }
+    {
+      const double tr = x4_re, ti = x4_im;
+      x4_re = (-((tr + ti) * sqrt2_inv));
+      x4_im = ((tr - ti) * sqrt2_inv);
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[30] + (x5_im * iw_im[30]));
+      x5_im = (x5_im * iw_re[30] - (tr * iw_im[30]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[36] + (x6_im * iw_im[36]));
+      x6_im = (x6_im * iw_re[36] - (tr * iw_im[36]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[42] + (x7_im * iw_im[42]));
+      x7_im = (x7_im * iw_re[42] - (tr * iw_im[42]));
+    }
 
-        /* radix-8 combine k₁=6 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=6 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[6 * K + k], x0_re);
-        R64S_ST(&out_im[6 * K + k], x0_im);
-        R64S_ST(&out_re[14 * K + k], x1_re);
-        R64S_ST(&out_im[14 * K + k], x1_im);
-        R64S_ST(&out_re[22 * K + k], x2_re);
-        R64S_ST(&out_im[22 * K + k], x2_im);
-        R64S_ST(&out_re[30 * K + k], x3_re);
-        R64S_ST(&out_im[30 * K + k], x3_im);
-        R64S_ST(&out_re[38 * K + k], x4_re);
-        R64S_ST(&out_im[38 * K + k], x4_im);
-        R64S_ST(&out_re[46 * K + k], x5_re);
-        R64S_ST(&out_im[46 * K + k], x5_im);
-        R64S_ST(&out_re[54 * K + k], x6_re);
-        R64S_ST(&out_im[54 * K + k], x6_im);
-        R64S_ST(&out_re[62 * K + k], x7_re);
-        R64S_ST(&out_im[62 * K + k], x7_im);
+    R64S_ST(&out_re[6 * K + k], x0_re);
+    R64S_ST(&out_im[6 * K + k], x0_im);
+    R64S_ST(&out_re[14 * K + k], x1_re);
+    R64S_ST(&out_im[14 * K + k], x1_im);
+    R64S_ST(&out_re[22 * K + k], x2_re);
+    R64S_ST(&out_im[22 * K + k], x2_im);
+    R64S_ST(&out_re[30 * K + k], x3_re);
+    R64S_ST(&out_im[30 * K + k], x3_im);
+    R64S_ST(&out_re[38 * K + k], x4_re);
+    R64S_ST(&out_im[38 * K + k], x4_im);
+    R64S_ST(&out_re[46 * K + k], x5_re);
+    R64S_ST(&out_im[46 * K + k], x5_im);
+    R64S_ST(&out_re[54 * K + k], x6_re);
+    R64S_ST(&out_im[54 * K + k], x6_im);
+    R64S_ST(&out_re[62 * K + k], x7_re);
+    R64S_ST(&out_im[62 * K + k], x7_im);
 
-        /* column k₁=7 */
-        x0_re = spill_re[7];
-        x0_im = spill_im[7];
-        x1_re = spill_re[15];
-        x1_im = spill_im[15];
-        x2_re = spill_re[23];
-        x2_im = spill_im[23];
-        x3_re = spill_re[31];
-        x3_im = spill_im[31];
-        x4_re = spill_re[39];
-        x4_im = spill_im[39];
-        x5_re = spill_re[47];
-        x5_im = spill_im[47];
-        x6_re = spill_re[55];
-        x6_im = spill_im[55];
-        x7_re = spill_re[63];
-        x7_im = spill_im[63];
+    /* column k₁=7 */
+    x0_re = spill_re[7];
+    x0_im = spill_im[7];
+    x1_re = spill_re[15];
+    x1_im = spill_im[15];
+    x2_re = spill_re[23];
+    x2_im = spill_im[23];
+    x3_re = spill_re[31];
+    x3_im = spill_im[31];
+    x4_re = spill_re[39];
+    x4_im = spill_im[39];
+    x5_re = spill_re[47];
+    x5_im = spill_im[47];
+    x6_re = spill_re[55];
+    x6_im = spill_im[55];
+    x7_re = spill_re[63];
+    x7_im = spill_im[63];
 
-        { const double tr = x1_re;
-          x1_re = (x1_re * iw_re[7] + (x1_im * iw_im[7]));
-          x1_im = (x1_im * iw_re[7] - (tr * iw_im[7])); }
-        { const double tr = x2_re;
-          x2_re = (x2_re * iw_re[14] + (x2_im * iw_im[14]));
-          x2_im = (x2_im * iw_re[14] - (tr * iw_im[14])); }
-        { const double tr = x3_re;
-          x3_re = (x3_re * iw_re[21] + (x3_im * iw_im[21]));
-          x3_im = (x3_im * iw_re[21] - (tr * iw_im[21])); }
-        { const double tr = x4_re;
-          x4_re = (x4_re * iw_re[28] + (x4_im * iw_im[28]));
-          x4_im = (x4_im * iw_re[28] - (tr * iw_im[28])); }
-        { const double tr = x5_re;
-          x5_re = (x5_re * iw_re[35] + (x5_im * iw_im[35]));
-          x5_im = (x5_im * iw_re[35] - (tr * iw_im[35])); }
-        { const double tr = x6_re;
-          x6_re = (x6_re * iw_re[42] + (x6_im * iw_im[42]));
-          x6_im = (x6_im * iw_re[42] - (tr * iw_im[42])); }
-        { const double tr = x7_re;
-          x7_re = (x7_re * iw_re[49] + (x7_im * iw_im[49]));
-          x7_im = (x7_im * iw_re[49] - (tr * iw_im[49])); }
+    {
+      const double tr = x1_re;
+      x1_re = (x1_re * iw_re[7] + (x1_im * iw_im[7]));
+      x1_im = (x1_im * iw_re[7] - (tr * iw_im[7]));
+    }
+    {
+      const double tr = x2_re;
+      x2_re = (x2_re * iw_re[14] + (x2_im * iw_im[14]));
+      x2_im = (x2_im * iw_re[14] - (tr * iw_im[14]));
+    }
+    {
+      const double tr = x3_re;
+      x3_re = (x3_re * iw_re[21] + (x3_im * iw_im[21]));
+      x3_im = (x3_im * iw_re[21] - (tr * iw_im[21]));
+    }
+    {
+      const double tr = x4_re;
+      x4_re = (x4_re * iw_re[28] + (x4_im * iw_im[28]));
+      x4_im = (x4_im * iw_re[28] - (tr * iw_im[28]));
+    }
+    {
+      const double tr = x5_re;
+      x5_re = (x5_re * iw_re[35] + (x5_im * iw_im[35]));
+      x5_im = (x5_im * iw_re[35] - (tr * iw_im[35]));
+    }
+    {
+      const double tr = x6_re;
+      x6_re = (x6_re * iw_re[42] + (x6_im * iw_im[42]));
+      x6_im = (x6_im * iw_re[42] - (tr * iw_im[42]));
+    }
+    {
+      const double tr = x7_re;
+      x7_re = (x7_re * iw_re[49] + (x7_im * iw_im[49]));
+      x7_im = (x7_im * iw_re[49] - (tr * iw_im[49]));
+    }
 
-        /* radix-8 combine k₁=7 [bwd] */
-        { double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
-          double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
-          t0r = (x0_re + x4_re); t0i = (x0_im + x4_im);
-          t1r = (x0_re - x4_re); t1i = (x0_im - x4_im);
-          t2r = (x2_re + x6_re); t2i = (x2_im + x6_im);
-          t3r = (x2_re - x6_re); t3i = (x2_im - x6_im);
-          e0r = (t0r + t2r); e0i = (t0i + t2i);
-          e2r = (t0r - t2r); e2i = (t0i - t2i);
-          e1r = (t1r - t3i); e1i = (t1i + t3r);
-          e3r = (t1r + t3i); e3i = (t1i - t3r);
-          double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
-          t0r = (x1_re + x5_re); t0i = (x1_im + x5_im);
-          t1r = (x1_re - x5_re); t1i = (x1_im - x5_im);
-          t2r = (x3_re + x7_re); t2i = (x3_im + x7_im);
-          t3r = (x3_re - x7_re); t3i = (x3_im - x7_im);
-          o0r = (t0r + t2r); o0i = (t0i + t2i);
-          o2r = (t0r - t2r); o2i = (t0i - t2i);
-          o1r = (t1r - t3i); o1i = (t1i + t3r);
-          o3r = (t1r + t3i); o3i = (t1i - t3r);
-          t0r = ((o1r - o1i) * sqrt2_inv);
-          t0i = ((o1r + o1i) * sqrt2_inv);
-          o1r = t0r; o1i = t0i;
-          t0r = (-o2i); t0i = o2r;
-          o2r = t0r; o2i = t0i;
-          t0r = (-((o3r + o3i) * sqrt2_inv));
-          t0i = ((o3r - o3i) * sqrt2_inv);
-          o3r = t0r; o3i = t0i;
-          x0_re = (e0r + o0r); x0_im = (e0i + o0i);
-          x4_re = (e0r - o0r); x4_im = (e0i - o0i);
-          x1_re = (e1r + o1r); x1_im = (e1i + o1i);
-          x5_re = (e1r - o1r); x5_im = (e1i - o1i);
-          x2_re = (e2r + o2r); x2_im = (e2i + o2i);
-          x6_re = (e2r - o2r); x6_im = (e2i - o2i);
-          x3_re = (e3r + o3r); x3_im = (e3i + o3i);
-          x7_re = (e3r - o3r); x7_im = (e3i - o3i);
-        }
+    /* radix-8 combine k₁=7 [bwd] */
+    {
+      double e0r, e0i, e1r, e1i, e2r, e2i, e3r, e3i;
+      double t0r, t0i, t1r, t1i, t2r, t2i, t3r, t3i;
+      t0r = (x0_re + x4_re);
+      t0i = (x0_im + x4_im);
+      t1r = (x0_re - x4_re);
+      t1i = (x0_im - x4_im);
+      t2r = (x2_re + x6_re);
+      t2i = (x2_im + x6_im);
+      t3r = (x2_re - x6_re);
+      t3i = (x2_im - x6_im);
+      e0r = (t0r + t2r);
+      e0i = (t0i + t2i);
+      e2r = (t0r - t2r);
+      e2i = (t0i - t2i);
+      e1r = (t1r - t3i);
+      e1i = (t1i + t3r);
+      e3r = (t1r + t3i);
+      e3i = (t1i - t3r);
+      double o0r, o0i, o1r, o1i, o2r, o2i, o3r, o3i;
+      t0r = (x1_re + x5_re);
+      t0i = (x1_im + x5_im);
+      t1r = (x1_re - x5_re);
+      t1i = (x1_im - x5_im);
+      t2r = (x3_re + x7_re);
+      t2i = (x3_im + x7_im);
+      t3r = (x3_re - x7_re);
+      t3i = (x3_im - x7_im);
+      o0r = (t0r + t2r);
+      o0i = (t0i + t2i);
+      o2r = (t0r - t2r);
+      o2i = (t0i - t2i);
+      o1r = (t1r - t3i);
+      o1i = (t1i + t3r);
+      o3r = (t1r + t3i);
+      o3i = (t1i - t3r);
+      t0r = ((o1r - o1i) * sqrt2_inv);
+      t0i = ((o1r + o1i) * sqrt2_inv);
+      o1r = t0r;
+      o1i = t0i;
+      t0r = (-o2i);
+      t0i = o2r;
+      o2r = t0r;
+      o2i = t0i;
+      t0r = (-((o3r + o3i) * sqrt2_inv));
+      t0i = ((o3r - o3i) * sqrt2_inv);
+      o3r = t0r;
+      o3i = t0i;
+      x0_re = (e0r + o0r);
+      x0_im = (e0i + o0i);
+      x4_re = (e0r - o0r);
+      x4_im = (e0i - o0i);
+      x1_re = (e1r + o1r);
+      x1_im = (e1i + o1i);
+      x5_re = (e1r - o1r);
+      x5_im = (e1i - o1i);
+      x2_re = (e2r + o2r);
+      x2_im = (e2i + o2i);
+      x6_re = (e2r - o2r);
+      x6_im = (e2i - o2i);
+      x3_re = (e3r + o3r);
+      x3_im = (e3i + o3i);
+      x7_re = (e3r - o3r);
+      x7_im = (e3i - o3i);
+    }
 
-        R64S_ST(&out_re[7 * K + k], x0_re);
-        R64S_ST(&out_im[7 * K + k], x0_im);
-        R64S_ST(&out_re[15 * K + k], x1_re);
-        R64S_ST(&out_im[15 * K + k], x1_im);
-        R64S_ST(&out_re[23 * K + k], x2_re);
-        R64S_ST(&out_im[23 * K + k], x2_im);
-        R64S_ST(&out_re[31 * K + k], x3_re);
-        R64S_ST(&out_im[31 * K + k], x3_im);
-        R64S_ST(&out_re[39 * K + k], x4_re);
-        R64S_ST(&out_im[39 * K + k], x4_im);
-        R64S_ST(&out_re[47 * K + k], x5_re);
-        R64S_ST(&out_im[47 * K + k], x5_im);
-        R64S_ST(&out_re[55 * K + k], x6_re);
-        R64S_ST(&out_im[55 * K + k], x6_im);
-        R64S_ST(&out_re[63 * K + k], x7_re);
-        R64S_ST(&out_im[63 * K + k], x7_im);
+    R64S_ST(&out_re[7 * K + k], x0_re);
+    R64S_ST(&out_im[7 * K + k], x0_im);
+    R64S_ST(&out_re[15 * K + k], x1_re);
+    R64S_ST(&out_im[15 * K + k], x1_im);
+    R64S_ST(&out_re[23 * K + k], x2_re);
+    R64S_ST(&out_im[23 * K + k], x2_im);
+    R64S_ST(&out_re[31 * K + k], x3_re);
+    R64S_ST(&out_im[31 * K + k], x3_im);
+    R64S_ST(&out_re[39 * K + k], x4_re);
+    R64S_ST(&out_im[39 * K + k], x4_im);
+    R64S_ST(&out_re[47 * K + k], x5_re);
+    R64S_ST(&out_im[47 * K + k], x5_im);
+    R64S_ST(&out_re[55 * K + k], x6_re);
+    R64S_ST(&out_im[55 * K + k], x6_im);
+    R64S_ST(&out_re[63 * K + k], x7_re);
+    R64S_ST(&out_im[63 * K + k], x7_im);
 
-    } /* end k-loop */
+  } /* end k-loop */
 }
 
 #endif /* FFT_RADIX64_SCALAR_N1_GEN_H */
