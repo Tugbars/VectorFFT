@@ -390,9 +390,9 @@ static void bench(size_t N, const vfft_codelet_registry *reg)
            "  vfft_rt=%7.0f  fftw_rt=%7.0f  rt_x=%s%.2f%s\n",
            N, fact,
            vfft_fwd_ns, fftw_fwd_ns,
-           fwd_x > 1.4 ? CLR_GREEN : "", fwd_x, fwd_x > 1.4 ? CLR_RESET : "",
+           fwd_x > 0.9 ? CLR_GREEN : "", fwd_x, fwd_x > 0.9 ? CLR_RESET : "",
            vfft_rt_ns, fftw_rt_ns,
-           rt_x > 1.4 ? CLR_GREEN : "", rt_x, rt_x > 1.4 ? CLR_RESET : "");
+           rt_x > 0.9 ? CLR_GREEN : "", rt_x, rt_x > 0.9 ? CLR_RESET : "");
 #undef CLR_GREEN
 #undef CLR_RESET
 
