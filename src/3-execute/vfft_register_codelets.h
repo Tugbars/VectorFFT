@@ -1,7 +1,5 @@
-
- /** @brief 
- * 
- /
+/**
+ * @file vfft_register_codelets.h
  * @brief Wire all optimized VectorFFT codelets into the planner registry
  *
  * Include this AFTER vfft_planner.h and all codelet/dispatch headers.

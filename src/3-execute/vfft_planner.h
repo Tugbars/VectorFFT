@@ -1,13 +1,13 @@
 /**
- * @file vfft_planner.h
- * @brief VectorFFT multi-radix planner and execution engine (v2)
- *
- * Changes from v1:
- *   - Pointer swap instead of memcpy between stages
- *   - Backward uses plan buffers (zero allocation per call)
- *   - Backward dispatches to bwd codelets when available
- *   - Twiddle apply dispatch (AVX-512/AVX2/scalar)
- */
+   * @file vfft_planner.h
+   * @brief VectorFFT multi-radix planner and execution engine (v2)
+   *
+   * Changes from v1:
+   *   - Pointer swap instead of memcpy between stages
+   *   - Backward uses plan buffers (zero allocation per call)
+   *   - Backward dispatches to bwd codelets when available
+   *   - Twiddle apply dispatch (AVX-512/AVX2/scalar)
+   */
 
 #ifndef VFFT_PLANNER_H
 #define VFFT_PLANNER_H
@@ -23,13 +23,13 @@
 
 #ifdef _WIN32
 #include <malloc.h>
-static inline void *vfft_aligned_alloc(size_t align, size_t size)
+    static inline void *vfft_aligned_alloc(size_t align, size_t size)
 {
     return _aligned_malloc(size, align);
 }
 static inline void vfft_aligned_free(void *p) { _aligned_free(p); }
 #else
-static inline void *vfft_aligned_alloc(size_t align, size_t size)
+    static inline void *vfft_aligned_alloc(size_t align, size_t size)
 {
     void *p = NULL;
     posix_memalign(&p, align, size);
@@ -746,16 +746,36 @@ static inline size_t vfft_detect_T(size_t K)
     return 0;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+ * CALIBRATION-DRIVEN WALK + IL THRESHOLDS
+ *
+ * Global calibration loaded from vfft_calibration.txt (generated
+ * by bench_walk and bench_il). If the file doesn't exist, walk
+ * and IL are disabled — safe default.
+ * ═══════════════════════════════════════════════════════════════ */
+
+#include "vfft_calibration.h"
+
+static vfft_calibration *vfft_get_calibration(void)
+{
+    static vfft_calibration cal;
+    static int initialized = 0;
+    if (!initialized)
+    {
+        vfft_calibration_init(&cal);
+        vfft_calibration_load(&cal, "vfft_calibration.txt");
+        initialized = 1;
+    }
+    return &cal;
+}
+
 static inline int vfft_should_walk(size_t R, size_t K)
 {
-    /* Walk packs data into blocks and walks twiddles to avoid strided access.
-     * Only beneficial when R is large enough that (R-1) strided twiddle loads
-     * overwhelm the hardware prefetcher (R < 8 has too few rows). */
-    if (R < 8)
+    /* Calibration-driven: only walk when bench_walk measured it as faster.
+     * Returns 0 if no calibration file exists (safe default). */
+    if (R > VFFT_MAX_WALK_ARMS + 1)
         return 0;
-    size_t tw_bytes = (R - 1) * K * 2 * sizeof(double);
-    size_t threshold = vfft_l1d_bytes() / 2; /* walk when tw exceeds half L1d */
-    return (tw_bytes > threshold && R <= VFFT_MAX_WALK_ARMS + 1) ? 1 : 0;
+    return vfft_calibration_should_walk(vfft_get_calibration(), R, K);
 }
 
 /* Walk state: current twiddle vectors + step rotation.
@@ -1021,12 +1041,20 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
         st->n1_fwd_il = reg->n1_fwd_il[st->radix];
         st->n1_bwd_il = reg->n1_bwd_il[st->radix];
         {
-            size_t co = reg->il_crossover_K[st->radix];
-            /* Only activate IL when K is SIMD-aligned — scalar IL is too slow */
-            st->use_il = (co > 0 && st->K >= co && (st->K & 3) == 0 &&
-                          st->tw_fwd_il != NULL)
-                             ? 1
-                             : 0;
+            /* IL activation: prefer calibration data, fall back to registry */
+            const vfft_calibration *cal = vfft_get_calibration();
+            int use = 0;
+            if (cal->loaded && st->tw_fwd_il)
+            {
+                use = vfft_calibration_should_il(cal, st->radix, st->K);
+            }
+            else
+            {
+                size_t co = reg->il_crossover_K[st->radix];
+                use = (co > 0 && st->K >= co && st->tw_fwd_il != NULL) ? 1 : 0;
+            }
+            /* SIMD alignment gate: scalar IL is too slow */
+            st->use_il = (use && (st->K & 3) == 0) ? 1 : 0;
         }
 
         stride *= st->radix;
@@ -1199,15 +1227,29 @@ static vfft_plan *vfft_plan_create_ex(
             return vfft_plan_create(N, reg);
         }
 
-        /* IL codelets — only when K is SIMD-aligned */
-        if (reg->tw_fwd_il[st->radix] && st->K >= reg->il_crossover_K[st->radix] &&
-            (st->K & 3) == 0)
+        /* IL codelets — calibration-driven with SIMD alignment gate */
         {
-            st->tw_fwd_il = reg->tw_fwd_il[st->radix];
-            st->tw_dif_bwd_il = reg->tw_dif_bwd_il[st->radix];
-            st->n1_fwd_il = reg->n1_fwd_il[st->radix];
-            st->n1_bwd_il = reg->n1_bwd_il[st->radix];
-            st->use_il = 1;
+            const vfft_calibration *cal = vfft_get_calibration();
+            int use = 0;
+            if (cal->loaded && reg->tw_fwd_il[st->radix])
+            {
+                use = vfft_calibration_should_il(cal, st->radix, stride);
+            }
+            else
+            {
+                use = (reg->tw_fwd_il[st->radix] &&
+                       stride >= reg->il_crossover_K[st->radix])
+                          ? 1
+                          : 0;
+            }
+            if (use && (stride & 3) == 0)
+            {
+                st->tw_fwd_il = reg->tw_fwd_il[st->radix];
+                st->tw_dif_bwd_il = reg->tw_dif_bwd_il[st->radix];
+                st->n1_fwd_il = reg->n1_fwd_il[st->radix];
+                st->n1_bwd_il = reg->n1_bwd_il[st->radix];
+                st->use_il = 1;
+            }
         }
 
         /* Twiddle table */
