@@ -19,3 +19,4 @@ highSpeedFFT.code-workspace
 /.vscode
 /build-*
 ENGINEERING_GUIDE.md
+src/3-execute/TODO_contiguous_twiddles_r20.md
