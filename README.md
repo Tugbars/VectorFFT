@@ -68,4 +68,4 @@ Both files are read automatically at plan creation. Without them, the planner us
 
 [FFTW](http://www.fftw.org/) by Matteo Frigo and Steven G. Johnson — the gold standard. VectorFFT's prime codelets (R=17, 19, 23) are translated from FFTW's genfft output.
 
-<p align="center"><sub>VectorFFT — Because every nanosecond counts.</sub></p>
+<p align="center"><sub>VectorFFT — every nanosecond counts.</sub></p>
