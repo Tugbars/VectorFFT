@@ -39,7 +39,11 @@
       "Read(//c/ProgramData/mingw64/mingw64/bin/**)",
       "Bash(where icx:*)",
       "Bash(rm -rf build-gcc)",
-      "Bash(cmake --preset gcc-win-local)"
+      "Bash(cmake --preset gcc-win-local)",
+      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --preset gcc-win-local)",
+      "Read(//c/ProgramData/mingw64/mingw64/lib/**)",
+      "Read(//c/ProgramData/mingw64/mingw64/include/**)",
+      "Read(//c/msys64/mingw64/**)"
     ]
   }
 }
