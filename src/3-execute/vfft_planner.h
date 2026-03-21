@@ -269,6 +269,8 @@ static inline void vfft_registry_set_n1_il(vfft_codelet_registry *reg,
 
 #if defined(_WIN32) && (defined(_MSC_VER) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER))
 #include <intrin.h>
+#elif defined(__GNUC__) || defined(__clang__)
+#include <cpuid.h>
 #endif
 
 static size_t vfft_detect_l1d_bytes(void)
@@ -312,8 +314,7 @@ static size_t vfft_detect_l1d_bytes(void)
         __cpuidex(cpuinfo, 4, 0);
 #elif defined(__GNUC__) || defined(__clang__)
         int cpuinfo[4] = {0};
-        __asm__ __volatile__("cpuid" : "=a"(cpuinfo[0]), "=b"(cpuinfo[1]),
-                                       "=c"(cpuinfo[2]), "=d"(cpuinfo[3]) : "a"(4), "c"(0));
+        __cpuid_count(4, 0, cpuinfo[0], cpuinfo[1], cpuinfo[2], cpuinfo[3]);
 #else
         int cpuinfo[4] = {0};
 #endif
