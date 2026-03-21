@@ -43,7 +43,8 @@
       "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --preset gcc-win-local)",
       "Read(//c/ProgramData/mingw64/mingw64/lib/**)",
       "Read(//c/ProgramData/mingw64/mingw64/include/**)",
-      "Read(//c/msys64/mingw64/**)"
+      "Read(//c/msys64/mingw64/**)",
+      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --build build-gcc)"
     ]
   }
 }

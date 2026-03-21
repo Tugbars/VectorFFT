@@ -16,6 +16,13 @@
 #ifndef VFFT_COMPAT_H
 #define VFFT_COMPAT_H
 
+/* MinGW: enable C99 printf (%zu, %zd, etc.) before any stdio include */
+#if defined(__MINGW32__) || defined(__MINGW64__)
+  #ifndef __USE_MINGW_ANSI_STDIO
+    #define __USE_MINGW_ANSI_STDIO 1
+  #endif
+#endif
+
 #include <stddef.h>
 #include <stdlib.h>
 

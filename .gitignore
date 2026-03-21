@@ -17,7 +17,5 @@ highSpeedFFT.code-workspace
 .claude/settings.local.json
 /.claude
 /.vscode
-/build-icx
-/build-gcc
-CMakeUserPresets.json
+/build-*
 ENGINEERING_GUIDE.md
