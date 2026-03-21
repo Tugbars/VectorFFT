@@ -1,8 +1,5 @@
 {
-    "cmake.configureArgs": [
-        "-DVCPKG_TARGET_TRIPLET=x64-windows",
-        "-DCMAKE_MAKE_PROGRAM=C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe"
-    ],
+    "cmake.useCMakePresets": "always",
     "astyle.astylerc": "",
     "files.associations": {
         ".fantomasignore": "ignore",
