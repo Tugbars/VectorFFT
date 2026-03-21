@@ -19,6 +19,13 @@ project(VectorFFT
     LANGUAGES C
 )
 
+# ── Default build type (single-config generators only) ─────────────────
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        Debug Release RelWithDebInfo MinSizeRel)
+endif()
+
 # ── Build options ────────────────────────────────────────────────────────
 option(VFFT_BUILD_TESTS      "Build correctness tests"       ON)
 option(VFFT_BUILD_BENCHMARKS "Build performance benchmarks"   ON)
@@ -55,6 +62,7 @@ message(STATUS "")
 message(STATUS "╔══════════════════════════════════════════╗")
 message(STATUS "║  VectorFFT ${PROJECT_VERSION}                        ║")
 message(STATUS "╠══════════════════════════════════════════╣")
+message(STATUS "║  Build:       ${CMAKE_BUILD_TYPE}")
 message(STATUS "║  Compiler:    ${VFFT_COMPILER} (${CMAKE_C_COMPILER_VERSION})")
 message(STATUS "║  AVX-512:     ${VFFT_HAS_AVX512}")
 message(STATUS "║  AVX2:        ${VFFT_HAS_AVX2}")

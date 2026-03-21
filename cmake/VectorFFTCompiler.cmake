@@ -112,6 +112,12 @@ else()
             -fopt-info-vec-missed
             -fno-semantic-interposition
         )
+        # MinGW: force-include shim for posix_memalign + C99 printf (%zu)
+        if(VFFT_MINGW)
+            list(APPEND VFFT_BASE_FLAGS
+                -include ${PROJECT_SOURCE_DIR}/src/common/vfft_mingw_shim.h
+            )
+        endif()
     endif()
 endif()
 
