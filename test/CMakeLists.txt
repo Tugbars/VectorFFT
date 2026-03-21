@@ -130,3 +130,56 @@ message(STATUS "test: bench_factorize [ISA: ${BENCH_ISA_FLAGS}]")
 #    target_compile_definitions(diag_plan PRIVATE ${VFFT_BASE_DEFINITIONS})
 #endif()
 #target_include_directories(diag_plan PRIVATE ${BENCH_CODELET_INCLUDES})
+
+# ── Walk threshold benchmark ──
+add_executable(bench_walk bench_walk.c)
+target_include_directories(bench_walk PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/3-execute
+    ${CMAKE_SOURCE_DIR}/src/common
+    ${CMAKE_SOURCE_DIR}/src/radix2
+    ${CMAKE_SOURCE_DIR}/src/radix3
+    ${CMAKE_SOURCE_DIR}/src/radix4
+    ${CMAKE_SOURCE_DIR}/src/radix5
+    ${CMAKE_SOURCE_DIR}/src/radix7
+    ${CMAKE_SOURCE_DIR}/src/radix8
+    ${CMAKE_SOURCE_DIR}/src/radix10
+    ${CMAKE_SOURCE_DIR}/src/radix11
+    ${CMAKE_SOURCE_DIR}/src/radix13
+    ${CMAKE_SOURCE_DIR}/src/radix16
+    ${CMAKE_SOURCE_DIR}/src/radix17
+    ${CMAKE_SOURCE_DIR}/src/radix19
+    ${CMAKE_SOURCE_DIR}/src/radix23
+    ${CMAKE_SOURCE_DIR}/src/radix25
+    ${CMAKE_SOURCE_DIR}/src/radix32
+    ${CMAKE_SOURCE_DIR}/src/radix64
+    ${CMAKE_SOURCE_DIR}/src/radix128
+)
+target_link_libraries(bench_walk PRIVATE ${FFTW3_LIBRARIES})
+ 
+# ── IL crossover benchmark ──
+add_executable(bench_il bench_il.c)
+target_include_directories(bench_il PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/3-execute
+    ${CMAKE_SOURCE_DIR}/src/common
+    ${CMAKE_SOURCE_DIR}/src/radix2
+    ${CMAKE_SOURCE_DIR}/src/radix3
+    ${CMAKE_SOURCE_DIR}/src/radix4
+    ${CMAKE_SOURCE_DIR}/src/radix5
+    ${CMAKE_SOURCE_DIR}/src/radix7
+    ${CMAKE_SOURCE_DIR}/src/radix8
+    ${CMAKE_SOURCE_DIR}/src/radix10
+    ${CMAKE_SOURCE_DIR}/src/radix11
+    ${CMAKE_SOURCE_DIR}/src/radix13
+    ${CMAKE_SOURCE_DIR}/src/radix16
+    ${CMAKE_SOURCE_DIR}/src/radix17
+    ${CMAKE_SOURCE_DIR}/src/radix19
+    ${CMAKE_SOURCE_DIR}/src/radix23
+    ${CMAKE_SOURCE_DIR}/src/radix25
+    ${CMAKE_SOURCE_DIR}/src/radix32
+    ${CMAKE_SOURCE_DIR}/src/radix64
+    ${CMAKE_SOURCE_DIR}/src/radix128
+)
+target_link_libraries(bench_il PRIVATE ${FFTW3_LIBRARIES})
+
+target_compile_options(bench_walk PRIVATE /Oy- -mavx2 -mfma -mno-avx512f)
+target_compile_options(bench_il PRIVATE /Oy- -mavx2 -mfma -mno-avx512f)

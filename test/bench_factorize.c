@@ -183,17 +183,27 @@ static vfft_plan *make_plan(size_t N, const size_t *factors, size_t nf,
             return NULL;
         }
 
-        /* IL codelets — only activate when K is SIMD-aligned.
-         * Scalar IL fallback is too slow to be useful. */
-        if (R < VFFT_MAX_RADIX && reg->tw_fwd_il[R] &&
-            K >= reg->il_crossover_K[R] && K > 1 &&
-            ((K & 3) == 0))
-        { /* require K divisible by 4 (AVX2 minimum) */
-            st->tw_fwd_il = reg->tw_fwd_il[R];
-            st->tw_dif_bwd_il = reg->tw_dif_bwd_il[R];
-            st->n1_fwd_il = reg->n1_fwd_il[R];
-            st->n1_bwd_il = reg->n1_bwd_il[R];
-            st->use_il = 1;
+        /* IL codelets — calibration-driven with SIMD alignment gate */
+        if (R < VFFT_MAX_RADIX && reg->tw_fwd_il[R] && K > 1 && (K & 3) == 0)
+        {
+            const vfft_calibration *cal = vfft_get_calibration();
+            int use = 0;
+            if (cal->loaded)
+            {
+                use = vfft_calibration_should_il(cal, R, K);
+            }
+            else
+            {
+                use = (K >= reg->il_crossover_K[R]) ? 1 : 0;
+            }
+            if (use)
+            {
+                st->tw_fwd_il = reg->tw_fwd_il[R];
+                st->tw_dif_bwd_il = reg->tw_dif_bwd_il[R];
+                st->n1_fwd_il = reg->n1_fwd_il[R];
+                st->n1_bwd_il = reg->n1_bwd_il[R];
+                st->use_il = 1;
+            }
         }
 
         if (K > 1)

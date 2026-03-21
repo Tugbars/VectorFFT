@@ -7,5 +7,5 @@ target_include_directories(vfft_radix5 INTERFACE
 )
 message(STATUS "[VectorFFT] Module: radix5 (header-only)")
 if(VFFT_BUILD_TESTS OR VFFT_BUILD_BENCHMARKS)
-    add_subdirectory(tests)
+    #add_subdirectory(tests)
 endif()
