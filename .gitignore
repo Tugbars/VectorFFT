@@ -14,3 +14,6 @@ build/test/test_mixedRadixFFT_standalone.exe
 highSpeedFFT.code-workspace
 /.claude
 /.vscode
+.claude/settings.local.json
+/.claude
+/.vscode
