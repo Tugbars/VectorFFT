@@ -92,7 +92,7 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 
 /* N1 */
 #include "fft_radix64_n1.h"
-#include "fft_radix128_n1.h"
+/* R=128 not needed — N1 only, no walk capability */
 
 /* Planner (for walk state, block walk, aligned alloc) */
 #include "vfft_planner.h"
