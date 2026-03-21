@@ -109,7 +109,6 @@ else()
 
     if(VFFT_COMPILER STREQUAL "GCC")
         list(APPEND VFFT_BASE_FLAGS
-            -fopt-info-vec-missed
             -fno-semantic-interposition
         )
         # MinGW: force-include shim for posix_memalign + C99 printf (%zu)
