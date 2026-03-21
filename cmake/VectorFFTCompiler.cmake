@@ -12,6 +12,7 @@ include(CheckCCompilerFlag)
 # ── Detect compiler + platform ───────────────────────────────────────────
 set(VFFT_COMPILER "UNKNOWN")
 set(VFFT_WINDOWS_CLANGCL OFF)
+set(VFFT_MINGW OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "IntelLLVM")
     set(VFFT_COMPILER "ICX")
@@ -33,6 +34,10 @@ elseif(CMAKE_C_COMPILER_ID MATCHES "GNU")
     message(STATUS "[VectorFFT] Compiler: GCC (${CMAKE_C_COMPILER_VERSION})")
     if(CMAKE_C_COMPILER_VERSION VERSION_LESS "12.0")
         message(WARNING "[VectorFFT] GCC < 12 may produce suboptimal AVX-512 codegen")
+    endif()
+    if(WIN32)
+        set(VFFT_MINGW ON)
+        message(STATUS "[VectorFFT] Platform: Windows (MinGW)")
     endif()
 else()
     message(WARNING "[VectorFFT] Unknown compiler: ${CMAKE_C_COMPILER_ID}")
@@ -86,7 +91,12 @@ else()
         -fstrict-aliasing
     )
 
-    set(VFFT_BASE_DEFINITIONS "")
+    # MinGW still needs _USE_MATH_DEFINES for M_PI from <math.h>
+    if(VFFT_MINGW)
+        set(VFFT_BASE_DEFINITIONS _USE_MATH_DEFINES)
+    else()
+        set(VFFT_BASE_DEFINITIONS "")
+    endif()
 
     if(VFFT_COMPILER STREQUAL "ICX")
         list(APPEND VFFT_BASE_FLAGS
@@ -212,10 +222,8 @@ function(vfft_add_isa_tests BASE_NAME ISA_LIST)
         add_executable(${TARGET_NAME} ${SOURCES})
         _vfft_setup_target(${TARGET_NAME} ${ISA} EXTRA_INCLUDES ${ARG_EXTRA_INCLUDES})
 
-        # Platform-specific link libraries
-        if(WIN32)
-            # No -lm needed on Windows
-        else()
+        # Platform-specific link libraries (-lm for POSIX and MinGW)
+        if(NOT WIN32 OR VFFT_MINGW)
             target_link_libraries(${TARGET_NAME} PRIVATE m)
         endif()
 
@@ -248,9 +256,7 @@ function(vfft_add_isa_benchmarks BASE_NAME ISA_LIST)
         add_executable(${TARGET_NAME} ${SOURCES})
         _vfft_setup_target(${TARGET_NAME} ${ISA} EXTRA_INCLUDES ${ARG_EXTRA_INCLUDES})
 
-        if(WIN32)
-            # No -lm needed
-        else()
+        if(NOT WIN32 OR VFFT_MINGW)
             target_link_libraries(${TARGET_NAME} PRIVATE m)
         endif()
 

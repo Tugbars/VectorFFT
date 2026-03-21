@@ -109,7 +109,7 @@ function(add_bench_target TARGET_NAME SOURCE_FILE)
         target_include_directories(${TARGET_NAME} PRIVATE ${FFTW3_INCLUDE_DIRS})
         target_link_libraries(${TARGET_NAME} PRIVATE ${FFTW3_LIBRARIES})
     endif()
-    if(NOT WIN32)
+    if(NOT WIN32 OR VFFT_MINGW)
         target_link_libraries(${TARGET_NAME} PRIVATE m)
     endif()
 endfunction()
@@ -155,7 +155,10 @@ target_include_directories(bench_walk PRIVATE
     ${CMAKE_SOURCE_DIR}/src/radix128
 )
 target_link_libraries(bench_walk PRIVATE ${FFTW3_LIBRARIES})
- 
+if(NOT WIN32 OR VFFT_MINGW)
+    target_link_libraries(bench_walk PRIVATE m)
+endif()
+
 # ── IL crossover benchmark ──
 add_executable(bench_il bench_il.c)
 target_include_directories(bench_il PRIVATE
@@ -180,6 +183,15 @@ target_include_directories(bench_il PRIVATE
     ${CMAKE_SOURCE_DIR}/src/radix128
 )
 target_link_libraries(bench_il PRIVATE ${FFTW3_LIBRARIES})
+if(NOT WIN32 OR VFFT_MINGW)
+    target_link_libraries(bench_il PRIVATE m)
+endif()
 
-target_compile_options(bench_walk PRIVATE /Oy- -mavx2 -mfma -mno-avx512f)
-target_compile_options(bench_il PRIVATE /Oy- -mavx2 -mfma -mno-avx512f)
+# Frame-pointer + ISA flags: /Oy- is MSVC/clang-cl, -fno-omit-frame-pointer is GCC/Clang
+if(VFFT_WINDOWS_CLANGCL)
+    set(_BENCH_FRAMEPTR /Oy-)
+else()
+    set(_BENCH_FRAMEPTR -fno-omit-frame-pointer)
+endif()
+target_compile_options(bench_walk PRIVATE ${_BENCH_FRAMEPTR} -mavx2 -mfma -mno-avx512f)
+target_compile_options(bench_il   PRIVATE ${_BENCH_FRAMEPTR} -mavx2 -mfma -mno-avx512f)
