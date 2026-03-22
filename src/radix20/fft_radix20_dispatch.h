@@ -250,63 +250,55 @@ static inline void radix20_tw_dif_backward(size_t K,
     radix20_tw_dif_scalar_bwd(K, ir, ii, or_, oi, twr, twi);
 }
 
-/* ── IL tw dispatch ── */
-static inline void radix20_tw_forward_il(
+/* ── IL tw dispatch (native pre-interleaved twiddles) ── */
+static inline void radix20_tw_forward_il_native(
     const double *__restrict__ in, double *__restrict__ out,
-    const double *__restrict__ twr, const double *__restrict__ twi, size_t K)
+    const double *__restrict__ tw_il, size_t K)
 {
 #if defined(__AVX512F__) || defined(__AVX512F)
     if (K >= 4 && (K & 3) == 0)
     {
-        radix20_ct_tw_dit_kernel_fwd_il_avx512(in, out, twr, twi, K);
+        radix20_ct_tw_dit_kernel_fwd_il_avx512(in, out, tw_il, K);
         return;
     }
 #endif
 #ifdef __AVX2__
     if (K >= 2 && (K & 1) == 0)
     {
-        radix20_ct_tw_dit_kernel_fwd_il_avx2(in, out, twr, twi, K);
+        radix20_ct_tw_dit_kernel_fwd_il_avx2(in, out, tw_il, K);
         return;
     }
 #endif
     (void)in;
     (void)out;
-    (void)twr;
-    (void)twi;
+    (void)tw_il;
     (void)K;
 }
-static inline void radix20_tw_dif_backward_il(
+static inline void radix20_tw_dif_backward_il_native(
     const double *__restrict__ in, double *__restrict__ out,
-    const double *__restrict__ twr, const double *__restrict__ twi, size_t K)
+    const double *__restrict__ tw_il, size_t K)
 {
 #if defined(__AVX512F__) || defined(__AVX512F)
     if (K >= 4 && (K & 3) == 0)
     {
-        radix20_ct_tw_dif_kernel_bwd_il_avx512(in, out, twr, twi, K);
+        radix20_ct_tw_dif_kernel_bwd_il_avx512(in, out, tw_il, K);
         return;
     }
 #endif
 #ifdef __AVX2__
     if (K >= 2 && (K & 1) == 0)
     {
-        radix20_ct_tw_dif_kernel_bwd_il_avx2(in, out, twr, twi, K);
+        radix20_ct_tw_dif_kernel_bwd_il_avx2(in, out, tw_il, K);
         return;
     }
 #endif
     (void)in;
     (void)out;
-    (void)twr;
-    (void)twi;
+    (void)tw_il;
     (void)K;
 }
 
-/* ── N1 native IL (4×5 CT mono IL) ── */
-#if defined(__AVX512F__) || defined(__AVX512F)
-#include "avx512/fft_radix20_avx512_n1_mono_il.h"
-#endif
-#ifdef __AVX2__
-#include "avx2/fft_radix20_avx2_n1_mono_il.h"
-#endif
+/* ── N1 native IL — included from IL tw headers above ── */
 
 static inline void radix20_n1_forward_il(
     size_t K,
