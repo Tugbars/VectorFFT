@@ -80,6 +80,15 @@ typedef void (*vfft_n1_il_codelet_fn)(
     double *__restrict__ out,
     size_t K);
 
+/* Native IL twiddled codelet: pre-interleaved twiddles — zero permutex2var.
+ * Twiddle layout: tw_il[(m-1)*K*2 + k*2 + {0=re, 1=im}]
+ * One aligned SIMD load → VL interleaved complex twiddles, ready for vzmul. */
+typedef void (*vfft_tw_il_native_codelet_fn)(
+    const double *__restrict__ in,
+    double *__restrict__ out,
+    const double *__restrict__ tw_il,
+    size_t K);
+
 /* ═══════════════════════════════════════════════════════════════
  * NAIVE DFT FALLBACK
  * ═══════════════════════════════════════════════════════════════ */
@@ -152,6 +161,7 @@ VFFT_NAIVE_CODELET(13)
 VFFT_NAIVE_CODELET(16)
 VFFT_NAIVE_CODELET(17)
 VFFT_NAIVE_CODELET(19)
+VFFT_NAIVE_CODELET(20)
 VFFT_NAIVE_CODELET(23)
 VFFT_NAIVE_CODELET(25)
 VFFT_NAIVE_CODELET(32)
@@ -181,6 +191,9 @@ typedef struct
     /* N1 IL: monolithic notw for innermost stage in IL pipeline */
     vfft_n1_il_codelet_fn n1_fwd_il[VFFT_MAX_RADIX];
     vfft_n1_il_codelet_fn n1_bwd_il[VFFT_MAX_RADIX];
+    /* Native IL: pre-interleaved twiddles (zero permutex2var overhead) */
+    vfft_tw_il_native_codelet_fn tw_fwd_il_native[VFFT_MAX_RADIX];
+    vfft_tw_il_native_codelet_fn tw_dif_bwd_il_native[VFFT_MAX_RADIX];
     /* Per-radix crossover K: use IL when K >= this value (0 = never) */
     size_t il_crossover_K[VFFT_MAX_RADIX];
 } vfft_codelet_registry;
@@ -192,10 +205,11 @@ static void vfft_registry_init_naive(vfft_codelet_registry *reg)
     reg->fwd[R] = vfft_naive_r##R##_fwd; \
     reg->bwd[R] = vfft_naive_r##R##_bwd;
     REG_NAIVE(2)
-    REG_NAIVE(3) REG_NAIVE(4) REG_NAIVE(5)
+    REG_NAIVE(3)
+    REG_NAIVE(4) REG_NAIVE(5)
         REG_NAIVE(6) REG_NAIVE(7) REG_NAIVE(8) REG_NAIVE(9)
             REG_NAIVE(10) REG_NAIVE(11) REG_NAIVE(13) REG_NAIVE(16)
-                REG_NAIVE(17) REG_NAIVE(19) REG_NAIVE(23) REG_NAIVE(25) REG_NAIVE(32)
+                REG_NAIVE(17) REG_NAIVE(19) REG_NAIVE(20) REG_NAIVE(23) REG_NAIVE(25) REG_NAIVE(32)
                     REG_NAIVE(64) REG_NAIVE(128)
 #undef REG_NAIVE
     /* No naive tw codelets — stages without tw codelets fall back
@@ -260,6 +274,24 @@ static inline void vfft_registry_set_n1_il(vfft_codelet_registry *reg,
     {
         reg->n1_fwd_il[radix] = fwd_il;
         reg->n1_bwd_il[radix] = bwd_il;
+    }
+}
+
+/** Register native IL twiddled codelets (pre-interleaved tw_il).
+ *  These take a single tw_il pointer instead of split tw_re/tw_im.
+ *  The planner allocates and fills tw_il at plan time via vfft_repack_tw_to_il.
+ *  Preferred over hybrid IL codelets when both are registered. */
+static inline void vfft_registry_set_tw_il_native(vfft_codelet_registry *reg,
+                                                  size_t radix,
+                                                  vfft_tw_il_native_codelet_fn tw_fwd,
+                                                  vfft_tw_il_native_codelet_fn tw_dif_bwd,
+                                                  size_t crossover_K)
+{
+    if (radix < VFFT_MAX_RADIX)
+    {
+        reg->tw_fwd_il_native[radix] = tw_fwd;
+        reg->tw_dif_bwd_il_native[radix] = tw_dif_bwd;
+        reg->il_crossover_K[radix] = crossover_K;
     }
 }
 
@@ -391,7 +423,7 @@ static int vfft_factorize(size_t N, const vfft_codelet_registry *reg,
 
     /* Radixes sorted by preference: larger = more compute per stage = fewer stages */
     static const size_t RADIXES[] = {
-        32, 25, 23, 19, 17, 16, 13, 11, 10, 8, 7, 5, 4, 3, 2, 0};
+        32, 25, 23, 20, 19, 17, 16, 13, 11, 10, 8, 7, 5, 4, 3, 2, 0};
 
     size_t remaining = N, K = 1;
     size_t stages[VFFT_MAX_STAGES], ns = 0;
@@ -520,9 +552,13 @@ typedef struct
     vfft_tw_il_codelet_fn tw_dif_bwd_il;
     vfft_n1_il_codelet_fn n1_fwd_il; /* monolithic notw IL */
     vfft_n1_il_codelet_fn n1_bwd_il;
+    /* Native IL: pre-interleaved twiddles (zero permutex2var) */
+    vfft_tw_il_native_codelet_fn tw_fwd_il_native;
+    vfft_tw_il_native_codelet_fn tw_dif_bwd_il_native;
     int use_il;    /* 1 = this stage uses IL layout */
     double *tw_re; /* strided twiddle table (always built) */
     double *tw_im;
+    double *tw_il;                 /* pre-interleaved twiddle table (plan-time alloc when use_il + native) */
     struct vfft_walk_state_ *walk; /* block-walk state (NULL if not walking) */
     int is_bluestein;
     void *bluestein_plan;
@@ -710,6 +746,28 @@ static void vfft_apply_twiddles_dispatch(
         vfft_apply_twiddles_conj(re, im, tw_re, tw_im, R, K);
     else
         vfft_apply_twiddles(re, im, tw_re, tw_im, R, K);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * PRE-INTERLEAVE TWIDDLE REPACK
+ *
+ * Called once at plan time. Converts split tw_re/tw_im into
+ * interleaved tw_il for native IL codelets. Generic — any radix, any K.
+ * Layout: tw_il[(m-1)*K*2 + k*2 + 0] = re, tw_il[(m-1)*K*2 + k*2 + 1] = im
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void vfft_repack_tw_to_il(
+    const double *__restrict__ tw_re,
+    const double *__restrict__ tw_im,
+    double *__restrict__ tw_il,
+    size_t entries, size_t K)
+{
+    for (size_t m = 0; m < entries; m++)
+        for (size_t k = 0; k < K; k++)
+        {
+            tw_il[m * K * 2 + k * 2 + 0] = tw_re[m * K + k];
+            tw_il[m * K * 2 + k * 2 + 1] = tw_im[m * K + k];
+        }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1043,18 +1101,21 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
         st->tw_dif_bwd_il = reg->tw_dif_bwd_il[st->radix];
         st->n1_fwd_il = reg->n1_fwd_il[st->radix];
         st->n1_bwd_il = reg->n1_bwd_il[st->radix];
+        /* Native IL codelet pointers */
+        st->tw_fwd_il_native = reg->tw_fwd_il_native[st->radix];
+        st->tw_dif_bwd_il_native = reg->tw_dif_bwd_il_native[st->radix];
         {
             /* IL activation: prefer calibration data, fall back to registry */
             const vfft_calibration *cal = vfft_get_calibration();
             int use = 0;
-            if (cal->loaded && st->tw_fwd_il)
+            if (cal->loaded && (st->tw_fwd_il || st->tw_fwd_il_native))
             {
                 use = vfft_calibration_should_il(cal, st->radix, st->K);
             }
             else
             {
                 size_t co = reg->il_crossover_K[st->radix];
-                use = (co > 0 && st->K >= co && st->tw_fwd_il != NULL) ? 1 : 0;
+                use = (co > 0 && st->K >= co && (st->tw_fwd_il != NULL || st->tw_fwd_il_native != NULL)) ? 1 : 0;
             }
             /* SIMD alignment gate: scalar IL is too slow */
             st->use_il = (use && (st->K & 3) == 0) ? 1 : 0;
@@ -1076,6 +1137,14 @@ static vfft_plan *vfft_plan_create(size_t N, const vfft_codelet_registry *reg)
                     st->tw_re[(k - 1) * K + inner] = cos(phase);
                     st->tw_im[(k - 1) * K + inner] = sin(phase);
                 }
+
+            /* Pre-interleave twiddles at plan time for native IL codelets */
+            if (st->use_il && (st->tw_fwd_il_native || st->tw_dif_bwd_il_native))
+            {
+                size_t tw_il_size = (R - 1) * K * 2;
+                st->tw_il = (double *)vfft_aligned_alloc(64, tw_il_size * sizeof(double));
+                vfft_repack_tw_to_il(st->tw_re, st->tw_im, st->tw_il, R - 1, K);
+            }
         }
     }
 
@@ -1234,13 +1303,13 @@ static vfft_plan *vfft_plan_create_ex(
         {
             const vfft_calibration *cal = vfft_get_calibration();
             int use = 0;
-            if (cal->loaded && reg->tw_fwd_il[st->radix])
+            if (cal->loaded && (reg->tw_fwd_il[st->radix] || reg->tw_fwd_il_native[st->radix]))
             {
                 use = vfft_calibration_should_il(cal, st->radix, stride);
             }
             else
             {
-                use = (reg->tw_fwd_il[st->radix] &&
+                use = ((reg->tw_fwd_il[st->radix] || reg->tw_fwd_il_native[st->radix]) &&
                        stride >= reg->il_crossover_K[st->radix])
                           ? 1
                           : 0;
@@ -1251,6 +1320,8 @@ static vfft_plan *vfft_plan_create_ex(
                 st->tw_dif_bwd_il = reg->tw_dif_bwd_il[st->radix];
                 st->n1_fwd_il = reg->n1_fwd_il[st->radix];
                 st->n1_bwd_il = reg->n1_bwd_il[st->radix];
+                st->tw_fwd_il_native = reg->tw_fwd_il_native[st->radix];
+                st->tw_dif_bwd_il_native = reg->tw_dif_bwd_il_native[st->radix];
                 st->use_il = 1;
             }
         }
@@ -1269,6 +1340,14 @@ static vfft_plan *vfft_plan_create_ex(
                     st->tw_re[(n - 1) * stride + k] = cos(angle);
                     st->tw_im[(n - 1) * stride + k] = sin(angle);
                 }
+
+            /* Pre-interleave twiddles for native IL */
+            if (st->use_il && (st->tw_fwd_il_native || st->tw_dif_bwd_il_native))
+            {
+                size_t tw_il_size = (st->radix - 1) * stride * 2;
+                st->tw_il = (double *)vfft_aligned_alloc(64, tw_il_size * sizeof(double));
+                vfft_repack_tw_to_il(st->tw_re, st->tw_im, st->tw_il, st->radix - 1, stride);
+            }
         }
         stride *= st->radix;
     }
@@ -1340,6 +1419,7 @@ static void vfft_plan_destroy(vfft_plan *plan)
     {
         vfft_aligned_free(plan->stages[s].tw_re);
         vfft_aligned_free(plan->stages[s].tw_im);
+        vfft_aligned_free(plan->stages[s].tw_il);
         vfft_walk_destroy(plan->stages[s].walk);
     }
     free(plan->perm);
@@ -1450,7 +1530,7 @@ static void vfft_execute_fwd(
         const int is_last = (s == (int)S - 1);
 
         /* ── IL path: interleaved data, half the memory streams ── */
-        if (st->use_il && (st->tw_fwd_il || st->n1_fwd_il))
+        if (st->use_il && (st->tw_fwd_il_native || st->tw_fwd_il || st->n1_fwd_il))
         {
             /* Convert split → IL if needed (one-time at transition) */
             if (!is_il)
@@ -1462,8 +1542,16 @@ static void vfft_execute_fwd(
             for (size_t g = 0; g < n_outer; g++)
             {
                 size_t off = g * R * K;
-                if (st->tw_fwd_il)
+                if (st->tw_fwd_il_native && st->tw_il)
                 {
+                    /* Native IL: pre-interleaved twiddles, zero permutex2var */
+                    st->tw_fwd_il_native(
+                        src_il + 2 * off, dst_il + 2 * off,
+                        st->tw_il, K);
+                }
+                else if (st->tw_fwd_il)
+                {
+                    /* Legacy hybrid IL: split twiddles */
                     st->tw_fwd_il(
                         src_il + 2 * off, dst_il + 2 * off,
                         st->tw_re, st->tw_im, K);
@@ -1711,7 +1799,7 @@ static void vfft_execute_bwd_dif(
         const size_t n_outer = N / (R * K);
 
         /* ── IL path for backward ── */
-        if (st->use_il && (st->tw_dif_bwd_il || st->n1_bwd_il))
+        if (st->use_il && (st->tw_dif_bwd_il_native || st->tw_dif_bwd_il || st->n1_bwd_il))
         {
             if (!is_il)
             {
@@ -1722,8 +1810,16 @@ static void vfft_execute_bwd_dif(
             for (size_t g = 0; g < n_outer; g++)
             {
                 size_t off = g * R * K;
-                if (st->tw_dif_bwd_il)
+                if (st->tw_dif_bwd_il_native && st->tw_il)
                 {
+                    /* Native IL: pre-interleaved twiddles */
+                    st->tw_dif_bwd_il_native(
+                        src_il + 2 * off, dst_il + 2 * off,
+                        st->tw_il, K);
+                }
+                else if (st->tw_dif_bwd_il)
+                {
+                    /* Legacy hybrid IL: split twiddles */
                     st->tw_dif_bwd_il(
                         src_il + 2 * off, dst_il + 2 * off,
                         st->tw_re, st->tw_im, K);
@@ -1904,12 +2000,13 @@ static void vfft_plan_print(const vfft_plan *plan)
     for (size_t s = 0; s < plan->nstages; s++)
     {
         const vfft_stage *st = &plan->stages[s];
-        printf("    stage %zu: R=%zu K=%zu %s%s%s%s%s\n",
+        printf("    stage %zu: R=%zu K=%zu %s%s%s%s%s%s\n",
                s, st->radix, st->K,
                s == 0 ? "N1" : "twiddled",
                st->tw_fwd ? " [DIT-tw]" : "",
                st->tw_dif_bwd ? " [DIF-tw]" : "",
                st->walk ? " [WALK]" : "",
+               st->use_il ? (st->tw_il ? " [IL-native]" : " [IL-hybrid]") : "",
                st->is_bluestein ? " [Bluestein]" : "");
     }
     printf("  Forward: DIT (input perm → inner→outer → natural out)\n");

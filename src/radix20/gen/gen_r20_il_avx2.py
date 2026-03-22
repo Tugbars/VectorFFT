@@ -56,10 +56,8 @@ def vnbyi(x):
 
 
 def emit_tw_load(em, var, idx):
-    """Load from split tw_re/tw_im → interleave to IL format."""
-    em.o(f'{{ __m128d _tr=_mm_load_pd(&tw_re[{idx}*K+k]);')
-    em.o(f'  __m128d _ti=_mm_load_pd(&tw_im[{idx}*K+k]);')
-    em.o(f'  {var}=_mm256_insertf128_pd(_mm256_castpd128_pd256(_mm_unpacklo_pd(_tr,_ti)),_mm_unpackhi_pd(_tr,_ti),1); }}')
+    """Direct load from pre-interleaved tw_il table. Zero shuffle overhead."""
+    em.o(f'{var} = _mm256_load_pd(&tw_il[({idx}*K+k)*2]);')
 
 
 def emit_itw_constants(em):
@@ -207,7 +205,7 @@ def gen_kernel(mode, tw_type, direction):
     em.L.append(f'static void {fname}(')
     em.L.append(f'    const double * __restrict__ in, double * __restrict__ out,')
     if has_tw:
-        em.L.append(f'    const double * __restrict__ tw_re, const double * __restrict__ tw_im,')
+        em.L.append(f'    const double * __restrict__ tw_il,')
     em.L.append(f'    size_t K)')
     em.L.append(f'{{')
     em.ind = 1

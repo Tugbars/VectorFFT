@@ -9,7 +9,7 @@ k-step = 4, ×j via fmaddsub, complex multiply via vzmul/vzmulj.
   DFT-4: 4 ZMM data + ~4 temps = 8 ZMM/sub → pair 3 = 24 ZMM, 8 free
   DFT-5: 5 ZMM data + ~6 temps = 11 ZMM/sub → pair 2 = 22 ZMM, 10 free
 
-External twiddles: loaded from split tw_re/tw_im, interleaved on-the-fly.
+External twiddles: direct load from pre-interleaved tw_il table.
 Internal W₂₀: pre-interleaved broadcast constants.
 
 Usage: python3 gen_r20_il_avx512.py
@@ -59,15 +59,12 @@ def vnbyi(x):
 
 
 # ════════════════════════════════════════
-# IL twiddle load from split tables
+# Native IL twiddle load — direct from pre-interleaved table
 # ════════════════════════════════════════
 
 def emit_tw_load(em, var, idx):
-    """Load from split tw_re/tw_im, interleave to IL format."""
-    em.o(f'{{ __m256d _tr=_mm256_load_pd(&tw_re[{idx}*K+k]);')
-    em.o(f'  __m256d _ti=_mm256_load_pd(&tw_im[{idx}*K+k]);')
-    em.o(f'  {var}=_mm512_permutex2var_pd(_mm512_castpd256_pd512(_tr),')
-    em.o(f'    _mm512_set_epi64(11,3,10,2,9,1,8,0),_mm512_castpd256_pd512(_ti)); }}')
+    """Direct load from pre-interleaved tw_il table. Zero shuffle overhead."""
+    em.o(f'{var} = _mm512_load_pd(&tw_il[({idx}*K+k)*2]);')
 
 
 # ════════════════════════════════════════
@@ -348,7 +345,7 @@ def gen_il_dit_tw(direction):
     em.L.append(ATTR)
     em.L.append(f'static void radix20_ct_tw_dit_kernel_{direction}_il_avx512(')
     em.L.append(f'    const double * __restrict__ in, double * __restrict__ out,')
-    em.L.append(f'    const double * __restrict__ tw_re, const double * __restrict__ tw_im,')
+    em.L.append(f'    const double * __restrict__ tw_il,')
     em.L.append(f'    size_t K)')
     em.L.append(f'{{')
     em.ind = 1
@@ -382,7 +379,7 @@ def gen_il_dif_tw(direction):
     em.L.append(ATTR)
     em.L.append(f'static void radix20_ct_tw_dif_kernel_{direction}_il_avx512(')
     em.L.append(f'    const double * __restrict__ in, double * __restrict__ out,')
-    em.L.append(f'    const double * __restrict__ tw_re, const double * __restrict__ tw_im,')
+    em.L.append(f'    const double * __restrict__ tw_il,')
     em.L.append(f'    size_t K)')
     em.L.append(f'{{')
     em.ind = 1
