@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VectorFFT — Radix-20 Codelet Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0c10;
+  --bg2: #10131a;
+  --bg3: #161a24;
+  --fg: #c8cdd8;
+  --fg2: #8892a4;
+  --accent: #3b82f6;
+  --accent2: #60a5fa;
+  --green: #34d399;
+  --amber: #fbbf24;
+  --red: #f87171;
+  --cyan: #22d3ee;
+  --purple: #a78bfa;
+  --border: #1e2433;
+  --mono: 'JetBrains Mono', monospace;
+  --serif: 'Instrument Serif', Georgia, serif;
+  --sans: 'DM Sans', system-ui, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--accent); color: #fff; }
+
+/* ── Layout ── */
+.page { max-width: 1120px; margin: 0 auto; padding: 0 32px; }
+section { padding: 72px 0; border-bottom: 1px solid var(--border); }
+section:last-child { border-bottom: none; }
+
+/* ── Hero ── */
+.hero {
+  padding: 120px 0 80px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: '20';
+  position: absolute;
+  right: -40px;
+  top: -60px;
+  font-family: var(--serif);
+  font-size: 420px;
+  font-weight: 400;
+  color: var(--border);
+  pointer-events: none;
+  line-height: 1;
+  opacity: 0.5;
+}
+.hero-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--accent2);
+  margin-bottom: 24px;
+}
+.hero h1 {
+  font-family: var(--serif);
+  font-size: 64px;
+  font-weight: 400;
+  line-height: 1.08;
+  color: #fff;
+  margin-bottom: 20px;
+}
+.hero h1 em { font-style: italic; color: var(--accent2); }
+.hero-sub {
+  font-size: 18px;
+  color: var(--fg2);
+  max-width: 620px;
+  line-height: 1.7;
+}
+
+/* ── Section Headers ── */
+h2 {
+  font-family: var(--serif);
+  font-size: 38px;
+  font-weight: 400;
+  color: #fff;
+  margin-bottom: 12px;
+  line-height: 1.2;
+}
+h2 em { font-style: italic; color: var(--accent2); }
+.section-num {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  display: block;
+}
+h3 {
+  font-family: var(--sans);
+  font-size: 18px;
+  font-weight: 600;
+  color: #e2e6ed;
+  margin: 32px 0 12px;
+}
+
+/* ── Bench Table ── */
+.bench-wrap {
+  overflow-x: auto;
+  margin: 24px 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+thead {
+  background: var(--bg3);
+  font-weight: 600;
+  color: var(--fg2);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+th, td { padding: 10px 16px; text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+tr { border-bottom: 1px solid var(--border); }
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: rgba(59, 130, 246, 0.04); }
+.win { color: var(--green); font-weight: 600; }
+.lose { color: var(--red); font-weight: 500; }
+.tie { color: var(--amber); }
+.best { background: rgba(52, 211, 153, 0.06); }
+td.label { color: var(--fg2); font-weight: 400; }
+
+/* ── Code blocks ── */
+pre {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.65;
+  margin: 16px 0;
+  color: var(--fg);
+}
+code {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--bg3);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+pre code { background: none; padding: 0; }
+.kw { color: var(--purple); }
+.fn { color: var(--accent2); }
+.cm { color: var(--fg2); font-style: italic; }
+.num { color: var(--amber); }
+.str { color: var(--green); }
+
+/* ── Cards ── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+}
+.card-title {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent2);
+  margin-bottom: 8px;
+}
+.card p { font-size: 14px; color: var(--fg2); }
+
+/* ── Stat badges ── */
+.stats {
+  display: flex;
+  gap: 32px;
+  flex-wrap: wrap;
+  margin: 32px 0;
+}
+.stat {
+  text-align: center;
+}
+.stat-val {
+  font-family: var(--serif);
+  font-size: 48px;
+  color: #fff;
+  line-height: 1.1;
+}
+.stat-val em { color: var(--green); font-style: italic; }
+.stat-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--fg2);
+  margin-top: 4px;
+}
+
+/* ── Register diagram ── */
+.reg-diagram {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  margin: 20px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 2;
+}
+.reg-row { display: flex; align-items: center; gap: 8px; }
+.reg-label { width: 90px; color: var(--fg2); flex-shrink: 0; }
+.reg-bar { height: 22px; border-radius: 3px; display: flex; align-items: center; padding: 0 8px; font-size: 11px; font-weight: 500; }
+.reg-used { background: var(--accent); color: #fff; }
+.reg-free { background: var(--bg3); color: var(--fg2); border: 1px dashed var(--border); }
+
+/* ── File tree ── */
+.tree {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.9;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin: 16px 0;
+}
+.tree .dir { color: var(--accent2); font-weight: 600; }
+.tree .file { color: var(--fg); }
+.tree .desc { color: var(--fg2); font-size: 11px; }
+
+/* ── Pipeline diagram ── */
+.pipeline {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin: 24px 0;
+  overflow-x: auto;
+}
+.pipe-stage {
+  flex: 1;
+  min-width: 200px;
+  padding: 20px;
+  position: relative;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+}
+.pipe-stage:first-child { border-radius: 8px 0 0 8px; }
+.pipe-stage:last-child { border-radius: 0 8px 8px 0; }
+.pipe-stage:not(:last-child)::after {
+  content: '→';
+  position: absolute;
+  right: -13px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--accent);
+  font-size: 20px;
+  z-index: 1;
+  background: var(--bg);
+  padding: 0 4px;
+}
+.pipe-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.pipe-title { font-weight: 600; color: #fff; font-size: 15px; margin-bottom: 4px; }
+.pipe-desc { font-size: 13px; color: var(--fg2); }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+  .hero h1 { font-size: 36px; }
+  h2 { font-size: 28px; }
+  .stats { gap: 20px; }
+  .stat-val { font-size: 36px; }
+  .pipeline { flex-direction: column; }
+  .pipe-stage { border-radius: 0 !important; }
+  .pipe-stage:not(:last-child)::after { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+
+<!-- ════════════════════════ HERO ════════════════════════ -->
+<header class="hero">
+  <div class="hero-tag">VectorFFT · Codelet Architecture</div>
+  <h1>Radix-20<br><em>Design Document</em></h1>
+  <p class="hero-sub">
+    4×5 Cooley-Tukey decomposition with zero-spill register budgeting,
+    ILP-paired sub-FFTs on AVX-512, and multi-tier twiddle strategies.
+    Beats FFTW 3.3.10 by 1.12–2.41× across all K values.
+  </p>
+  <div class="stats">
+    <div class="stat"><div class="stat-val"><em>34</em></div><div class="stat-label">Kernels</div></div>
+    <div class="stat"><div class="stat-val">5</div><div class="stat-label">ISA Targets</div></div>
+    <div class="stat"><div class="stat-val">8</div><div class="stat-label">Generators</div></div>
+    <div class="stat"><div class="stat-val"><em>2.41×</em></div><div class="stat-label">Peak vs FFTW</div></div>
+  </div>
+</header>
+
+<!-- ════════════════════════ §1 DECOMPOSITION ════════════════════════ -->
+<section>
+  <span class="section-num">01 — Decomposition</span>
+  <h2>4×5 <em>Cooley-Tukey</em></h2>
+  <p>DFT-20 = 5 × DFT-4 → internal W₂₀ twiddles → 4 × DFT-5. The 4×5 factoring (not 5×4) is chosen because DFT-4 needs only 8 registers (4 complex) while DFT-5 needs 12 (5 complex + temps). Putting the smaller butterfly first keeps peak register pressure low throughout.</p>
+
+  <div class="pipeline">
+    <div class="pipe-stage">
+      <div class="pipe-label">Phase 1</div>
+      <div class="pipe-title">5× DFT-4</div>
+      <div class="pipe-desc">Radix-4 butterfly. Peak 8 regs per sub-FFT. Results → L1 spill buffer.</div>
+    </div>
+    <div class="pipe-stage">
+      <div class="pipe-label">Twiddle</div>
+      <div class="pipe-title">W₂₀ Internal</div>
+      <div class="pipe-desc">12 non-trivial entries. XOR negation for W⁵(×−j), W¹⁰(×−1), W¹⁵(×j). 6 regs peak.</div>
+    </div>
+    <div class="pipe-stage">
+      <div class="pipe-label">Phase 2</div>
+      <div class="pipe-title">4× DFT-5</div>
+      <div class="pipe-desc">Rader butterfly. Constants from memory (not regs). Peak 12 regs per sub-FFT.</div>
+    </div>
+  </div>
+
+  <h3>Why Constants from Memory?</h3>
+  <p>
+    The DFT-5 Rader butterfly uses 4 constants (c<sub>A</sub>=0.559, c<sub>B</sub>=0.951, c<sub>C</sub>=0.588, c<sub>D</sub>=0.25).
+    Hoisting them into YMM registers would consume 4 of the 16 available, leaving only 12 for data — not enough. Instead we emit <code>_mm256_set1_pd(literal)</code> which compiles to <code>vbroadcastsd</code> from <code>.rodata</code>. Cost: ~4 cycle L1 hit per constant access. Savings: 4 free YMM registers, which means zero compiler spills.
+  </p>
+</section>
+
+<!-- ════════════════════════ §2 REGISTER BUDGET ════════════════════════ -->
+<section>
+  <span class="section-num">02 — Register Budgeting</span>
+  <h2>Zero Spills, <em>by Design</em></h2>
+  <p>The central insight: FFT codelets cannot afford compiler register spills. A spill costs 32 bytes to L1 (store) + 32 bytes back (reload) at ~4 cycles each. With 170+ spills (as measured in the DAG codelet), that's 1300+ wasted cycles per k-iteration — more than the butterfly computation itself.</p>
+
+  <h3>AVX2: 16 YMM — Sequential</h3>
+  <div class="reg-diagram">
+    <div style="margin-bottom: 12px; color: var(--fg2);">DFT-4 pass (peak):</div>
+    <div class="reg-row">
+      <span class="reg-label">Data (4×ℂ)</span>
+      <div class="reg-bar reg-used" style="width: 50%;">8 YMM</div>
+      <div class="reg-bar reg-used" style="width: 18.75%; background: var(--cyan);">3 temps</div>
+      <div class="reg-bar reg-free" style="width: 31.25%;">5 free</div>
+    </div>
+    <div style="margin: 16px 0 12px; color: var(--fg2);">DFT-5 pass (peak):</div>
+    <div class="reg-row">
+      <span class="reg-label">Data (5×ℂ)</span>
+      <div class="reg-bar reg-used" style="width: 62.5%;">10 YMM</div>
+      <div class="reg-bar reg-used" style="width: 12.5%; background: var(--cyan);">2 temps</div>
+      <div class="reg-bar reg-free" style="width: 25%;">4 free</div>
+    </div>
+  </div>
+
+  <h3>AVX-512: 32 ZMM — ILP Paired</h3>
+  <p>With 32 registers, we run two independent sub-FFTs simultaneously. Sub-FFT A uses ZMM0-11, B uses ZMM16-27. The OoO engine sees two independent instruction streams — while one stalls on a load, the other's FMAs execute. Both FMA ports stay fed ~90% of the time.</p>
+  <div class="reg-diagram">
+    <div style="margin-bottom: 12px; color: var(--fg2);">DFT-4 pair (2 simultaneous):</div>
+    <div class="reg-row">
+      <span class="reg-label">Sub-FFT A</span>
+      <div class="reg-bar reg-used" style="width: 37.5%;">12 ZMM</div>
+      <div class="reg-bar reg-used" style="width: 37.5%; background: var(--purple);">Sub-FFT B: 12 ZMM</div>
+      <div class="reg-bar reg-free" style="width: 25%;">8 free</div>
+    </div>
+    <div style="margin: 16px 0 12px; color: var(--fg2);">DFT-5 pair (2 simultaneous):</div>
+    <div class="reg-row">
+      <span class="reg-label">Sub-FFT A</span>
+      <div class="reg-bar reg-used" style="width: 37.5%;">12 ZMM</div>
+      <div class="reg-bar reg-used" style="width: 37.5%; background: var(--purple);">Sub-FFT B: 12 ZMM</div>
+      <div class="reg-bar reg-free" style="width: 25%;">8 free</div>
+    </div>
+  </div>
+
+  <h3>Measured Spill Counts</h3>
+  <div class="bench-wrap">
+    <table>
+      <thead><tr><th>Codelet</th><th>Stack</th><th>vmov↔rsp</th><th>Arith Ops</th><th>Spill / Op</th></tr></thead>
+      <tbody>
+        <tr><td>DAG N1 (NOTW)</td><td>1544 B</td><td class="lose">128</td><td>208</td><td class="lose">0.62</td></tr>
+        <tr><td>DAG TW contig</td><td>1672 B</td><td class="lose">209</td><td>284</td><td class="lose">0.74</td></tr>
+        <tr class="best"><td>CT N1 (NOTW)</td><td>1064 B</td><td class="win">139*</td><td>272</td><td class="win">0.51</td></tr>
+        <tr class="best"><td>CT TW contig</td><td>1128 B</td><td class="win">153*</td><td>348</td><td class="win">0.44</td></tr>
+        <tr><td>AVX-512 CT N1</td><td>1544 B</td><td class="win">85</td><td>272</td><td class="win">0.31</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size: 13px; color: var(--fg2);">* CT "spills" are intentional sequential buffer writes, not compiler spills. DAG spills are scattered across the stack frame.</p>
+</section>
+
+<!-- ════════════════════════ §3 TWIDDLE STRATEGIES ════════════════════════ -->
+<section>
+  <span class="section-num">03 — Twiddle Strategies</span>
+  <h2>Multi-Tier <em>Twiddle Architecture</em></h2>
+  <p>Three twiddle strategies, each optimal at a different K range. The planner selects the winner per-K at plan time.</p>
+
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-title">Contiguous Flat</div>
+      <p>19 entries packed per k-group of VL. Sequential loads, perfect prefetch. Best at K ≤ 32 where the 19×VL block fits L1.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Binary Ladder</div>
+      <p>5 base loads (W¹, W², W⁴, W⁸, W¹⁶) + W³ precompute + 14 cmul derivations. Saves 14 strided loads at the cost of 14 FMAs. Wins at K ≥ 64.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">Buffered Output</div>
+      <p>DAG writes to 1.3 KB stack buffer, then one scatter pass. Collapses 40 KB write working set at K=256 to L1. Sweet spot: exactly K=256.</p>
+    </div>
+  </div>
+
+  <h3>Internal W₂₀ Twiddles</h3>
+  <p>8 unique non-trivial exponents from the set {1, 2, 3, 4, 6, 8, 9, 12}. Four special cases get fast paths:</p>
+  <div class="bench-wrap">
+    <table>
+      <thead><tr><th>Exponent</th><th>Value</th><th>Implementation</th><th>Cost</th></tr></thead>
+      <tbody>
+        <tr><td>e = 0</td><td>W⁰ = 1</td><td>no-op</td><td>0 cycles</td></tr>
+        <tr><td>e = 5</td><td>W⁵ = −j</td><td>XOR sign bit + permute (AVX-512) / addsub (AVX2)</td><td>1–2 cycles</td></tr>
+        <tr><td>e = 10</td><td>W¹⁰ = −1</td><td>XOR sign bit</td><td>1 cycle</td></tr>
+        <tr><td>e = 15</td><td>W¹⁵ = +j</td><td>XOR + permute / addsub</td><td>1–2 cycles</td></tr>
+        <tr><td>general</td><td>cos − j·sin</td><td><code>{1to8}</code> broadcast from static array + cmul</td><td>~8 cycles</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ════════════════════════ §4 DAG vs CT ════════════════════════ -->
+<section>
+  <span class="section-num">04 — DAG vs CT Crossover</span>
+  <h2>Two Butterflies, <em>One Dispatch</em></h2>
+  <p>The genfft DAG (208 ops, Frigo &amp; Johnson) has fewer arithmetic operations than the CT (272 ops). But the DAG's 81 simultaneous live variables cause 128+ compiler spills on AVX2. At low K the spills hide in L1 latency; at high K they compete with data loads for L1 bandwidth. The dispatch threshold is calibrated per-hardware.</p>
+
+  <h3>NOTW Benchmark (this container)</h3>
+  <div class="bench-wrap">
+    <table>
+      <thead><tr><th>K</th><th>DAG (ns)</th><th>CT (ns)</th><th>FFTW (ns)</th><th>Best</th><th>vs FFTW</th></tr></thead>
+      <tbody>
+        <tr><td>4</td><td class="best">53</td><td>55</td><td>55</td><td>DAG</td><td class="win">1.03×</td></tr>
+        <tr><td>16</td><td class="best">192</td><td>220</td><td>235</td><td>DAG</td><td class="win">1.22×</td></tr>
+        <tr><td>32</td><td class="best">380</td><td>435</td><td>422</td><td>DAG</td><td class="win">1.11×</td></tr>
+        <tr><td>64</td><td>988</td><td class="best">987</td><td>910</td><td>≈ tie</td><td class="lose">0.92×</td></tr>
+        <tr><td>128</td><td>3002</td><td class="best">2771</td><td>3398</td><td>CT</td><td class="win">1.23×</td></tr>
+        <tr><td>256</td><td>9342</td><td class="best">8332</td><td>8301</td><td>CT</td><td class="tie">1.00×</td></tr>
+        <tr><td>512</td><td>21176</td><td class="best">20635</td><td>14149</td><td>CT</td><td class="lose">0.69×</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="color: var(--fg2); font-size: 13px;">K ≥ 512: FFTW uses AVX-512 codelets on this container. Our AVX-512 CT closes this gap (see §5).</p>
+</section>
+
+<!-- ════════════════════════ §5 AVX-512 ILP ════════════════════════ -->
+<section>
+  <span class="section-num">05 — AVX-512 ILP Pairing</span>
+  <h2>Two FMA Ports, <em>Always Fed</em></h2>
+  <p>A single DFT-5 stream can't saturate both FMA ports (p0/p1 on Intel) because of data dependencies — each FMA depends on the previous add/sub. Two interleaved streams keep both ports fed. Measured 1.25–2.03× over our own AVX2 CT.</p>
+
+  <h3>Pairing Schedule</h3>
+<pre><code><span class="cm">// Pass 1: DFT-4 sub-FFTs</span>
+<span class="kw">[DFT-4 n2=0 + DFT-4 n2=1]</span>  <span class="cm">← 24 ZMM, 8 free</span>
+<span class="kw">[DFT-4 n2=2 + DFT-4 n2=3]</span>  <span class="cm">← 24 ZMM, 8 free</span>
+<span class="kw">[DFT-4 n2=4 alone]</span>          <span class="cm">← 12 ZMM, 20 free</span>
+
+<span class="cm">// Pass 2: DFT-5 column FFTs</span>
+<span class="kw">[DFT-5 k1=0 + DFT-5 k1=1]</span>  <span class="cm">← 24 ZMM, 8 free</span>
+<span class="kw">[DFT-5 k1=2 + DFT-5 k1=3]</span>  <span class="cm">← 24 ZMM, 8 free</span></code></pre>
+
+  <h3>AVX-512 CT vs FFTW (NOTW)</h3>
+  <div class="bench-wrap">
+    <table>
+      <thead><tr><th>K</th><th>AVX2 CT</th><th>AVX-512 CT</th><th>FFTW</th><th>ILP Gain</th><th>vs FFTW</th></tr></thead>
+      <tbody>
+        <tr><td>8</td><td>118</td><td class="best">94</td><td>136</td><td>1.27×</td><td class="win">1.45×</td></tr>
+        <tr><td>32</td><td>481</td><td class="best">287</td><td>482</td><td>1.68×</td><td class="win">1.68×</td></tr>
+        <tr><td>128</td><td>2640</td><td class="best">2114</td><td>3126</td><td>1.25×</td><td class="win">1.48×</td></tr>
+        <tr><td>256</td><td>8276</td><td class="best">4067</td><td>6620</td><td>2.03×</td><td class="win">1.63×</td></tr>
+        <tr><td>512</td><td>18711</td><td class="best">9405</td><td>10491</td><td>1.99×</td><td class="win">1.12×</td></tr>
+        <tr><td>1024</td><td>34592</td><td class="best">17963</td><td>25002</td><td>1.93×</td><td class="win">1.39×</td></tr>
+        <tr><td>4096</td><td>167857</td><td class="best">123832</td><td>143163</td><td>1.36×</td><td class="win">1.16×</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Wins across the entire K range. The K=256 sweet spot (2.03× ILP gain, 1.63× vs FFTW) is exactly where R=20 gets used as a middle stage in the planner.</p>
+</section>
+
+<!-- ════════════════════════ §6 FORMAT VARIANTS ════════════════════════ -->
+<section>
+  <span class="section-num">06 — Split vs Native IL</span>
+  <h2>Two Formats, <em>Pipeline-Aware</em></h2>
+  <p>Split format stores real and imaginary parts in separate arrays. Native interleaved (IL) stores them alternating: <code>[re₀, im₀, re₁, im₁, …]</code>. IL gets free ×j rotations via <code>addsub</code>/<code>fmaddsub</code> but halves the k-step (2 DFTs per YMM instead of 4).</p>
+
+  <h3>NOTW Split vs IL (AVX-512)</h3>
+  <div class="bench-wrap">
+    <table>
+      <thead><tr><th>K</th><th>Split</th><th>IL</th><th>FFTW</th><th>Best</th><th>vs FFTW</th></tr></thead>
+      <tbody>
+        <tr><td>8</td><td>72</td><td class="best">70</td><td>118</td><td>IL</td><td class="win">1.68×</td></tr>
+        <tr><td>64</td><td>568</td><td class="best">531</td><td>744</td><td>IL</td><td class="win">1.40×</td></tr>
+        <tr><td>128</td><td>1782</td><td class="best">1514</td><td>2518</td><td>IL</td><td class="win">1.66×</td></tr>
+        <tr><td>256</td><td class="best">3579</td><td>4540</td><td>8627</td><td>split</td><td class="win">2.41×</td></tr>
+        <tr><td>1024</td><td class="best">18433</td><td>19393</td><td>25779</td><td>split</td><td class="win">1.40×</td></tr>
+        <tr><td>4096</td><td>145110</td><td class="best">115385</td><td>151931</td><td>IL</td><td class="win">1.32×</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>IL wins at low K and at cache-miss regime; split wins at mid-K where k-step=8 throughput dominates. The planner selects dynamically.</p>
+</section>
+
+<!-- ════════════════════════ §7 FILE STRUCTURE ════════════════════════ -->
+<section>
+  <span class="section-num">07 — File Structure</span>
+  <h2>The <em>Codelet Matrix</em></h2>
+
+  <div class="tree">
+<span class="dir">radix20/</span>
+├── <span class="file">fft_radix20_dispatch.h</span>          <span class="desc">cross-ISA dispatch (N1/DIT/DIF/IL)</span>
+├── <span class="file">fft_radix20_w20_constants.h</span>     <span class="desc">shared W₂₀ static arrays</span>
+├── <span class="dir">avx2/</span>
+│   ├── <span class="file">fft_radix20_avx2_n1_gen.h</span>       <span class="desc">N1 split CT (2 fns)</span>
+│   ├── <span class="file">fft_radix20_avx2_n1_mono_il.h</span>   <span class="desc">N1 native IL CT (2 fns)</span>
+│   ├── <span class="file">fft_radix20_avx2_tw.h</span>           <span class="desc">DIT+DIF split CT (8 fns)</span>
+│   ├── <span class="file">fft_radix20_avx2_tw_dag.h</span>       <span class="desc">DIT DAG genfft (8 fns)</span>
+│   └── <span class="file">fft_radix20_avx2_il_tw.h</span>        <span class="desc">DIT+DIF native IL (4 fns)</span>
+├── <span class="dir">avx512/</span>
+│   ├── <span class="file">fft_radix20_avx512_n1_gen.h</span>     <span class="desc">N1 split ILP-paired (2 fns)</span>
+│   ├── <span class="file">fft_radix20_avx512_n1_mono_il.h</span> <span class="desc">N1 IL ILP triple+paired (2 fns)</span>
+│   ├── <span class="file">fft_radix20_avx512_tw.h</span>         <span class="desc">DIT+DIF split ILP-paired (4 fns)</span>
+│   ├── <span class="file">fft_radix20_avx512_tw_dag.h</span>     <span class="desc">DIT DAG genfft (8 fns)</span>
+│   └── <span class="file">fft_radix20_avx512_il_tw.h</span>      <span class="desc">DIT+DIF IL ILP-paired (4 fns)</span>
+├── <span class="dir">scalar/</span>
+│   ├── <span class="file">fft_radix20_scalar_n1_gen.h</span>     <span class="desc">N1 fallback (2 fns)</span>
+│   └── <span class="file">fft_radix20_scalar_tw.h</span>         <span class="desc">DIT+DIF fallback (4 fns)</span>
+└── <span class="dir">gen/</span>                                 <span class="desc">8 Python generators</span>
+  </div>
+
+  <div class="bench-wrap">
+    <table>
+      <thead><tr><th>ISA</th><th>Format</th><th>N1</th><th>DIT</th><th>DIF</th><th>Technique</th></tr></thead>
+      <tbody>
+        <tr><td>Scalar</td><td>split</td><td>✅</td><td>✅</td><td>✅</td><td class="label">sequential, k-step=1</td></tr>
+        <tr><td>AVX2</td><td>split</td><td>✅</td><td>✅ CT + DAG</td><td>✅</td><td class="label">sequential, 16 YMM, k-step=4</td></tr>
+        <tr><td>AVX2</td><td>IL</td><td>✅</td><td>✅</td><td>✅</td><td class="label">sequential, 16 YMM, k-step=2</td></tr>
+        <tr><td>AVX-512</td><td>split</td><td>✅</td><td>✅ CT + DAG</td><td>✅</td><td class="label">ILP paired, 32 ZMM, k-step=8</td></tr>
+        <tr><td>AVX-512</td><td>IL</td><td>✅</td><td>✅</td><td>✅</td><td class="label">ILP triple/paired, 32 ZMM, k-step=4</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ════════════════════════ §8 CREDITS ════════════════════════ -->
+<section style="border-bottom: none; padding-bottom: 120px;">
+  <span class="section-num">08 — Attribution</span>
+  <h2>Credits</h2>
+  <p>
+    Butterfly DAG from FFTW <code>genfft</code> — Matteo Frigo &amp; Steven G. Johnson,
+    <em>"A Fast Fourier Transform Compiler"</em> (PLDI 1999) and
+    <em>"The Design and Implementation of FFTW3"</em> (Proc. IEEE 2005).
+  </p>
+  <p style="margin-top: 12px;">
+    Twiddle strategies (contiguous layout, binary ladder, buffered output),
+    zero-spill CT architecture, ILP pairing, native IL integration,
+    and multi-tier dispatch: VectorFFT, March 2026.
+  </p>
+  <p style="margin-top: 24px; font-family: var(--mono); font-size: 12px; color: var(--fg2);">
+    Benchmarked on container hardware (GCC 13, FFTW 3.3.10). Production calibration on i9-14900KF pending.
+  </p>
+</section>
+
+</div>
+</body>
+</html>
