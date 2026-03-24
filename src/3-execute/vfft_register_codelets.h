@@ -16,6 +16,8 @@
  *   #include "fft_radix5_dispatch.h"
  *   #include "fft_radix7_dispatch.h"   // when available
  *   #include "fft_radix8_dispatch.h"
+ *   #include "fft_radix16_dispatch.h"
+ *   #include "fft_radix20_dispatch.h"
  *   #include "fft_radix32_dispatch.h"  // when available
  *
  *   // Prime genfft modules
@@ -431,10 +433,8 @@ static void vfft_tw_dispatch_r10_bwd(
 #endif
 #endif
 
-/* ── Radix-16 tw: no scalar tw kernel, SIMD-only ──
- * Only dispatches for K aligned to SIMD width. The planner will
- * fall back to notw+twiddle for unaligned K (rare in practice —
- * K at a radix-16 stage is always a product of inner radices). */
+/* ── Radix-16 tw: now has scalar fallback via new dispatch.h ──
+ * CHANGED: radix16_tw_strided_{forward,backward} → radix16_tw_{forward,backward} */
 
 #ifdef FFT_RADIX16_DISPATCH_H
 /* R=16 DIT tw: delegate to dispatch.h */
@@ -442,13 +442,13 @@ static void vfft_tw_dispatch_r16_fwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)
 {
-    radix16_tw_strided_forward(K, ri, ii, ro, io, twr, twi);
+    radix16_tw_forward(K, ri, ii, ro, io, twr, twi);
 }
 static void vfft_tw_dispatch_r16_bwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)
 {
-    radix16_tw_strided_backward(K, ri, ii, ro, io, twr, twi);
+    radix16_tw_backward(K, ri, ii, ro, io, twr, twi);
 }
 #endif
 
@@ -598,11 +598,12 @@ static void vfft_tw_dif_dispatch_r32_bwd(
 }
 #endif
 
-/* ── Radix-16 DIF (fused single-pass, flat kernel prefix) ── */
+/* ── Radix-16 DIF (fused single-pass, flat kernel prefix) ──
+ * CHANGED: guard FFT_RADIX16_DIF_DISPATCH_H → FFT_RADIX16_DISPATCH_H
+ *          (DIF now lives in the unified dispatch header) */
 
-#ifdef FFT_RADIX16_DIF_DISPATCH_H
-#ifdef FFT_RADIX16_DIF_DISPATCH_H
-/* R=16 DIF tw: delegate to dif_dispatch.h */
+#ifdef FFT_RADIX16_DISPATCH_H
+/* R=16 DIF tw: delegate to dispatch.h */
 static void vfft_tw_dif_dispatch_r16_fwd(
     const double *ri, const double *ii, double *ro, double *io,
     const double *twr, const double *twi, size_t K)
@@ -615,7 +616,6 @@ static void vfft_tw_dif_dispatch_r16_bwd(
 {
     radix16_tw_dif_backward(K, ri, ii, ro, io, twr, twi);
 }
-#endif
 #endif
 
 #ifdef FFT_RADIX25_DIF_DISPATCH_H
@@ -1277,6 +1277,114 @@ static void vfft_dispatch_r128_bwd(
 #endif
 
 /* ═══════════════════════════════════════════════════════════════
+ * R=20 DISPATCH WRAPPERS (native IL twiddle path)
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifdef FFT_RADIX20_DISPATCH_H
+
+/* ── R=20 N1 dispatch ── */
+static void vfft_dispatch_r20_fwd(
+    const double *ri, const double *ii, double *ro, double *io, size_t K)
+{
+    radix20_n1_forward(K, ri, ii, ro, io);
+}
+static void vfft_dispatch_r20_bwd(
+    const double *ri, const double *ii, double *ro, double *io, size_t K)
+{
+    radix20_n1_backward(K, ri, ii, ro, io);
+}
+
+/* ── R=20 DIT tw dispatch ── */
+static void vfft_tw_dispatch_r20_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix20_tw_forward(K, ri, ii, ro, io, twr, twi);
+}
+static void vfft_tw_dispatch_r20_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix20_tw_backward(K, ri, ii, ro, io, twr, twi);
+}
+
+/* ── R=20 DIF tw dispatch ── */
+static void vfft_tw_dif_dispatch_r20_fwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix20_tw_dif_forward(K, ri, ii, ro, io, twr, twi);
+}
+static void vfft_tw_dif_dispatch_r20_bwd(
+    const double *ri, const double *ii, double *ro, double *io,
+    const double *twr, const double *twi, size_t K)
+{
+    radix20_tw_dif_backward(K, ri, ii, ro, io, twr, twi);
+}
+
+/* ── R=20 NATIVE IL tw dispatch (pre-interleaved twiddles) ── */
+static void vfft_tw_il_native_dispatch_r20_fwd(
+    const double *in, double *out,
+    const double *tw_il, size_t K)
+{
+    radix20_tw_forward_il_native(in, out, tw_il, K);
+}
+static void vfft_tw_il_native_dif_dispatch_r20_bwd(
+    const double *in, double *out,
+    const double *tw_il, size_t K)
+{
+    radix20_tw_dif_backward_il_native(in, out, tw_il, K);
+}
+
+/* ── R=20 N1 IL dispatch ── */
+static void vfft_n1_il_dispatch_r20_fwd(
+    const double *in, double *out, size_t K)
+{
+    radix20_n1_forward_il(K, in, out);
+}
+static void vfft_n1_il_dispatch_r20_bwd(
+    const double *in, double *out, size_t K)
+{
+    radix20_n1_backward_il(K, in, out);
+}
+
+#endif /* FFT_RADIX20_DISPATCH_H */
+
+/* ═══════════════════════════════════════════════════════════════
+ * R=16 NATIVE IL DISPATCH WRAPPERS
+ * ═══════════════════════════════════════════════════════════════ */
+
+#ifdef FFT_RADIX16_DISPATCH_H
+
+/* ── R=16 NATIVE IL tw dispatch (pre-interleaved twiddles) ── */
+static void vfft_tw_il_native_dispatch_r16_fwd(
+    const double *in, double *out,
+    const double *tw_il, size_t K)
+{
+    radix16_tw_forward_il_native(in, out, tw_il, K);
+}
+static void vfft_tw_il_native_dif_dispatch_r16_bwd(
+    const double *in, double *out,
+    const double *tw_il, size_t K)
+{
+    radix16_tw_dif_backward_il_native(in, out, tw_il, K);
+}
+
+/* ── R=16 N1 IL dispatch ── */
+static void vfft_n1_il_dispatch_r16_fwd(
+    const double *in, double *out, size_t K)
+{
+    radix16_n1_forward_il(K, in, out);
+}
+static void vfft_n1_il_dispatch_r16_bwd(
+    const double *in, double *out, size_t K)
+{
+    radix16_n1_backward_il(K, in, out);
+}
+
+#endif /* FFT_RADIX16_DISPATCH_H */
+
+/* ═══════════════════════════════════════════════════════════════
  * REGISTER ALL CODELETS
  *
  * Starts with naive fallbacks, then overrides with optimized
@@ -1312,6 +1420,9 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #ifdef FFT_RADIX16_DISPATCH_H
     vfft_registry_set(reg, 16, vfft_dispatch_r16_fwd, vfft_dispatch_r16_bwd);
 #endif
+#ifdef FFT_RADIX20_DISPATCH_H
+    vfft_registry_set(reg, 20, vfft_dispatch_r20_fwd, vfft_dispatch_r20_bwd);
+#endif
 #ifdef FFT_RADIX32_DISPATCH_H
     vfft_registry_set(reg, 32, vfft_dispatch_r32_fwd, vfft_dispatch_r32_bwd);
 #endif
@@ -1345,6 +1456,9 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #ifdef FFT_RADIX16_DISPATCH_H
     vfft_registry_set_tw(reg, 16, vfft_tw_dispatch_r16_fwd, vfft_tw_dispatch_r16_bwd);
 #endif
+#ifdef FFT_RADIX20_DISPATCH_H
+    vfft_registry_set_tw(reg, 20, vfft_tw_dispatch_r20_fwd, vfft_tw_dispatch_r20_bwd);
+#endif
 #ifdef FFT_RADIX32_DISPATCH_H
     vfft_registry_set_tw(reg, 32, vfft_tw_dispatch_r32_fwd, vfft_tw_dispatch_r32_bwd);
 #endif
@@ -1377,8 +1491,11 @@ static void vfft_register_all(vfft_codelet_registry *reg)
 #ifdef FFT_RADIX32_DIF_DISPATCH_H
     vfft_registry_set_tw_dif(reg, 32, vfft_tw_dif_dispatch_r32_fwd, vfft_tw_dif_dispatch_r32_bwd);
 #endif
-#ifdef FFT_RADIX16_DIF_DISPATCH_H
+#ifdef FFT_RADIX16_DISPATCH_H
     vfft_registry_set_tw_dif(reg, 16, vfft_tw_dif_dispatch_r16_fwd, vfft_tw_dif_dispatch_r16_bwd);
+#endif
+#ifdef FFT_RADIX20_DISPATCH_H
+    vfft_registry_set_tw_dif(reg, 20, vfft_tw_dif_dispatch_r20_fwd, vfft_tw_dif_dispatch_r20_bwd);
 #endif
 #ifdef FFT_RADIX25_DIF_DISPATCH_H
     vfft_registry_set_tw_dif(reg, 25, vfft_tw_dif_dispatch_r25_fwd, vfft_tw_dif_dispatch_r25_bwd);
@@ -1447,6 +1564,23 @@ static void vfft_register_all(vfft_codelet_registry *reg)
     vfft_registry_set_tw_dif(reg, 10, vfft_tw_dif_dispatch_r10_fwd, vfft_tw_dif_dispatch_r10_bwd);
 #endif
 
+    /* ── Native IL tw (pre-interleaved twiddles — R=16, R=20) ── */
+#ifdef FFT_RADIX16_DISPATCH_H
+    vfft_registry_set_tw_il_native(reg, 16,
+                                   vfft_tw_il_native_dispatch_r16_fwd,
+                                   vfft_tw_il_native_dif_dispatch_r16_bwd,
+                                   512); /* crossover K — calibrator will tune */
+    vfft_registry_set_n1_il(reg, 16, vfft_n1_il_dispatch_r16_fwd, vfft_n1_il_dispatch_r16_bwd);
+#endif
+
+#ifdef FFT_RADIX20_DISPATCH_H
+    vfft_registry_set_tw_il_native(reg, 20,
+                                   vfft_tw_il_native_dispatch_r20_fwd,
+                                   vfft_tw_il_native_dif_dispatch_r20_bwd,
+                                   256); /* crossover K — calibrator will tune */
+    vfft_registry_set_n1_il(reg, 20, vfft_n1_il_dispatch_r20_fwd, vfft_n1_il_dispatch_r20_bwd);
+#endif
+
     /* ── Genfft prime modules ── */
 #ifdef FFT_RADIX11_GENFFT_H
     vfft_registry_set(reg, 11, vfft_dispatch_r11_fwd, vfft_dispatch_r11_bwd);
@@ -1494,7 +1628,7 @@ static void vfft_print_registry(const vfft_codelet_registry *reg)
     printf("  ISA: %s\n", isa_name[vfft_detect_isa()]);
     printf("  Registered codelets:\n");
 
-    size_t radixes[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 16, 17, 19, 23, 25, 32, 64, 128};
+    size_t radixes[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 16, 17, 19, 20, 23, 25, 32, 64, 128};
     for (size_t i = 0; i < sizeof(radixes) / sizeof(radixes[0]); i++)
     {
         size_t r = radixes[i];
@@ -1538,6 +1672,11 @@ static void vfft_print_registry(const vfft_codelet_registry *reg)
 #endif
 #ifdef FFT_RADIX16_DISPATCH_H
             case 16:
+                kind = "optimized";
+                break;
+#endif
+#ifdef FFT_RADIX20_DISPATCH_H
+            case 20:
                 kind = "optimized";
                 break;
 #endif
@@ -1600,9 +1739,10 @@ static void vfft_print_registry(const vfft_codelet_registry *reg)
                    reg->bwd[r] ? "yes" : "no ",
                    reg->tw_fwd[r] ? "yes" : "no ",
                    reg->tw_dif_bwd[r] ? "yes" : "no ",
-                   reg->tw_fwd_il[r] ? "yes" : "no ",
+                   (reg->tw_fwd_il[r] || reg->tw_fwd_il_native[r]) ? "yes" : "no ",
                    kind,
-                   reg->tw_fwd_il[r] ? "  [IL]" : "");
+                   reg->tw_fwd_il_native[r] ? "  [IL-native]" : reg->tw_fwd_il[r] ? "  [IL]"
+                                                                                  : "");
             if (reg->il_crossover_K[r] > 0)
             {
                 printf("           IL crossover K=%zu\n", reg->il_crossover_K[r]);
