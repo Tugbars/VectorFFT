@@ -2,7 +2,7 @@
 # test/CMakeLists.txt
 #
 # Full-radix benchmark: VectorFFT vs FFTW
-# Wires all radixes into the planner: R=2-8,16,32 (fused DIT+DIF),
+# Wires all radixes into the planner: R=2-8,10,16,20,25,32 (fused DIT+DIF),
 # R=11,13,17,19,23 (genfft notw), R=64,128 (N1 innermost).
 # ============================================================================
 
@@ -66,7 +66,16 @@ set(BENCH_CODELET_INCLUDES
     ${PROJECT_SOURCE_DIR}/src/radix7
     ${PROJECT_SOURCE_DIR}/src/radix8
     ${PROJECT_SOURCE_DIR}/src/radix10
+    # radix16: dispatch.h includes avx2/..., avx512/..., scalar/...
     ${PROJECT_SOURCE_DIR}/src/radix16
+    ${PROJECT_SOURCE_DIR}/src/radix16/avx512
+    ${PROJECT_SOURCE_DIR}/src/radix16/avx2
+    ${PROJECT_SOURCE_DIR}/src/radix16/scalar
+    # radix20: same folder structure
+    ${PROJECT_SOURCE_DIR}/src/radix20
+    ${PROJECT_SOURCE_DIR}/src/radix20/avx512
+    ${PROJECT_SOURCE_DIR}/src/radix20/avx2
+    ${PROJECT_SOURCE_DIR}/src/radix20/scalar
     ${PROJECT_SOURCE_DIR}/src/radix25
     ${PROJECT_SOURCE_DIR}/src/radix32
     # Genfft prime modules
@@ -146,8 +155,15 @@ target_include_directories(bench_walk PRIVATE
     ${CMAKE_SOURCE_DIR}/src/radix11
     ${CMAKE_SOURCE_DIR}/src/radix13
     ${CMAKE_SOURCE_DIR}/src/radix16
+    ${CMAKE_SOURCE_DIR}/src/radix16/avx512
+    ${CMAKE_SOURCE_DIR}/src/radix16/avx2
+    ${CMAKE_SOURCE_DIR}/src/radix16/scalar
     ${CMAKE_SOURCE_DIR}/src/radix17
     ${CMAKE_SOURCE_DIR}/src/radix19
+    ${CMAKE_SOURCE_DIR}/src/radix20
+    ${CMAKE_SOURCE_DIR}/src/radix20/avx512
+    ${CMAKE_SOURCE_DIR}/src/radix20/avx2
+    ${CMAKE_SOURCE_DIR}/src/radix20/scalar
     ${CMAKE_SOURCE_DIR}/src/radix23
     ${CMAKE_SOURCE_DIR}/src/radix25
     ${CMAKE_SOURCE_DIR}/src/radix32
@@ -174,8 +190,15 @@ target_include_directories(bench_il PRIVATE
     ${CMAKE_SOURCE_DIR}/src/radix11
     ${CMAKE_SOURCE_DIR}/src/radix13
     ${CMAKE_SOURCE_DIR}/src/radix16
+    ${CMAKE_SOURCE_DIR}/src/radix16/avx512
+    ${CMAKE_SOURCE_DIR}/src/radix16/avx2
+    ${CMAKE_SOURCE_DIR}/src/radix16/scalar
     ${CMAKE_SOURCE_DIR}/src/radix17
     ${CMAKE_SOURCE_DIR}/src/radix19
+    ${CMAKE_SOURCE_DIR}/src/radix20
+    ${CMAKE_SOURCE_DIR}/src/radix20/avx512
+    ${CMAKE_SOURCE_DIR}/src/radix20/avx2
+    ${CMAKE_SOURCE_DIR}/src/radix20/scalar
     ${CMAKE_SOURCE_DIR}/src/radix23
     ${CMAKE_SOURCE_DIR}/src/radix25
     ${CMAKE_SOURCE_DIR}/src/radix32
