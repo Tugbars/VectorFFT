@@ -77,6 +77,7 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 #undef vfft_detect_isa
 #include "fft_radix8_dispatch.h"
 #include "fft_radix16_dispatch.h"
+#include "fft_radix20_dispatch.h"
 #define vfft_detect_isa _bf_isa_r32
 #include "fft_radix32_dispatch.h"
 #undef vfft_detect_isa
@@ -88,7 +89,6 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 #include "fft_radix5_dif_dispatch.h"
 #include "fft_radix7_dif_dispatch.h"
 #include "fft_radix8_dif_dispatch.h"
-#include "fft_radix16_dif_dispatch.h"
 #include "fft_radix32_dif_dispatch.h"
 #include "fft_radix10_dif_dispatch.h"
 #include "fft_radix25_dif_dispatch.h"
@@ -118,7 +118,7 @@ typedef struct
 static fact_t g_facts[MAX_FACTS];
 static size_t g_nfacts;
 
-static const size_t RADIXES[] = {2, 3, 4, 5, 7, 8, 10, 11, 13, 16, 17, 19, 23, 25, 32, 64, 128, 0};
+static const size_t RADIXES[] = {2, 3, 4, 5, 7, 8, 10, 11, 13, 16, 17, 19, 20, 23, 25, 32, 64, 128, 0};
 
 static void enum_rec(size_t rem, size_t *f, size_t d,
                      const vfft_codelet_registry *reg, size_t minr)
@@ -183,8 +183,12 @@ static vfft_plan *make_plan(size_t N, const size_t *factors, size_t nf,
             return NULL;
         }
 
-        /* IL codelets — calibration-driven with SIMD alignment gate */
-        if (R < VFFT_MAX_RADIX && reg->tw_fwd_il[R] && K > 1 && (K & 3) == 0)
+        /* IL codelets — calibration-driven with SIMD alignment gate.
+         * Supports both legacy hybrid IL (split twiddles) and
+         * native IL (pre-interleaved twiddles — R=16, R=20). */
+        if (R < VFFT_MAX_RADIX &&
+            (reg->tw_fwd_il[R] || reg->tw_fwd_il_native[R]) &&
+            K > 1 && (K & 3) == 0)
         {
             const vfft_calibration *cal = vfft_get_calibration();
             int use = 0;
@@ -198,10 +202,14 @@ static vfft_plan *make_plan(size_t N, const size_t *factors, size_t nf,
             }
             if (use)
             {
+                /* Legacy hybrid IL */
                 st->tw_fwd_il = reg->tw_fwd_il[R];
                 st->tw_dif_bwd_il = reg->tw_dif_bwd_il[R];
                 st->n1_fwd_il = reg->n1_fwd_il[R];
                 st->n1_bwd_il = reg->n1_bwd_il[R];
+                /* Native IL (pre-interleaved tw_il) */
+                st->tw_fwd_il_native = reg->tw_fwd_il_native[R];
+                st->tw_dif_bwd_il_native = reg->tw_dif_bwd_il_native[R];
                 st->use_il = 1;
             }
         }
@@ -219,6 +227,14 @@ static vfft_plan *make_plan(size_t N, const size_t *factors, size_t nf,
                     st->tw_re[(n - 1) * K + k] = cos(a);
                     st->tw_im[(n - 1) * K + k] = sin(a);
                 }
+
+            /* Native IL: pre-interleave twiddles at plan time */
+            if (st->use_il && (st->tw_fwd_il_native || st->tw_dif_bwd_il_native))
+            {
+                size_t tw_il_size = (R - 1) * K * 2;
+                st->tw_il = (double *)vfft_aligned_alloc(64, tw_il_size * 8);
+                vfft_repack_tw_to_il(st->tw_re, st->tw_im, st->tw_il, R - 1, K);
+            }
         }
         K *= R;
     }
@@ -529,10 +545,10 @@ int main(int argc, char **argv)
          * enum stores outer→inner (ascending). Reverse. */
         {
             size_t rev[MAX_STAGES];
-            size_t nf = g_facts[bi].nfactors;
-            for (size_t i = 0; i < nf; i++)
-                rev[i] = g_facts[bi].factors[nf - 1 - i];
-            vfft_wisdom_set(&wis, N, rev, nf, bns);
+            size_t nff = g_facts[bi].nfactors;
+            for (size_t i = 0; i < nff; i++)
+                rev[i] = g_facts[bi].factors[nff - 1 - i];
+            vfft_wisdom_set(&wis, N, rev, nff, bns);
         }
         free(ans);
         vfft_aligned_free(ir);
