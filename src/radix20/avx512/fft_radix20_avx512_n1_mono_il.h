@@ -8,448 +8,494 @@
 #include <stddef.h>
 #include <immintrin.h>
 
-__attribute__((target("avx512f,avx512dq,fma")))
-static void radix20_ct_n1_kernel_fwd_il_avx512(
-    const double * __restrict__ in, double * __restrict__ out, size_t K)
+__attribute__((target("avx512f,avx512dq,fma"))) static void radix20_ct_n1_kernel_fwd_il_avx512(
+    const double *__restrict__ in, double *__restrict__ out, size_t K)
 {
-    /* Internal W₂₀ pre-interleaved constants */
-    const __m512d iw1 = _mm512_set_pd(-3.09016994374947395752e-01,9.51056516295153531182e-01,-3.09016994374947395752e-01,9.51056516295153531182e-01,-3.09016994374947395752e-01,9.51056516295153531182e-01,-3.09016994374947395752e-01,9.51056516295153531182e-01);
-    const __m512d iw2 = _mm512_set_pd(-5.87785252292473137103e-01,8.09016994374947451263e-01,-5.87785252292473137103e-01,8.09016994374947451263e-01,-5.87785252292473137103e-01,8.09016994374947451263e-01,-5.87785252292473137103e-01,8.09016994374947451263e-01);
-    const __m512d iw3 = _mm512_set_pd(-8.09016994374947451263e-01,5.87785252292473137103e-01,-8.09016994374947451263e-01,5.87785252292473137103e-01,-8.09016994374947451263e-01,5.87785252292473137103e-01,-8.09016994374947451263e-01,5.87785252292473137103e-01);
-    const __m512d iw4 = _mm512_set_pd(-9.51056516295153531182e-01,3.09016994374947451263e-01,-9.51056516295153531182e-01,3.09016994374947451263e-01,-9.51056516295153531182e-01,3.09016994374947451263e-01,-9.51056516295153531182e-01,3.09016994374947451263e-01);
-    const __m512d iw6 = _mm512_set_pd(-9.51056516295153642204e-01,-3.09016994374947340241e-01,-9.51056516295153642204e-01,-3.09016994374947340241e-01,-9.51056516295153642204e-01,-3.09016994374947340241e-01,-9.51056516295153642204e-01,-3.09016994374947340241e-01);
-    const __m512d iw8 = _mm512_set_pd(-5.87785252292473248126e-01,-8.09016994374947340241e-01,-5.87785252292473248126e-01,-8.09016994374947340241e-01,-5.87785252292473248126e-01,-8.09016994374947340241e-01,-5.87785252292473248126e-01,-8.09016994374947340241e-01);
-    const __m512d iw9 = _mm512_set_pd(-3.09016994374947506774e-01,-9.51056516295153531182e-01,-3.09016994374947506774e-01,-9.51056516295153531182e-01,-3.09016994374947506774e-01,-9.51056516295153531182e-01,-3.09016994374947506774e-01,-9.51056516295153531182e-01);
-    const __m512d iw12 = _mm512_set_pd(5.87785252292473026081e-01,-8.09016994374947562285e-01,5.87785252292473026081e-01,-8.09016994374947562285e-01,5.87785252292473026081e-01,-8.09016994374947562285e-01,5.87785252292473026081e-01,-8.09016994374947562285e-01);
+  /* Internal W₂₀ pre-interleaved constants */
+  const __m512d iw1 = _mm512_set_pd(-3.09016994374947395752e-01, 9.51056516295153531182e-01, -3.09016994374947395752e-01, 9.51056516295153531182e-01, -3.09016994374947395752e-01, 9.51056516295153531182e-01, -3.09016994374947395752e-01, 9.51056516295153531182e-01);
+  const __m512d iw2 = _mm512_set_pd(-5.87785252292473137103e-01, 8.09016994374947451263e-01, -5.87785252292473137103e-01, 8.09016994374947451263e-01, -5.87785252292473137103e-01, 8.09016994374947451263e-01, -5.87785252292473137103e-01, 8.09016994374947451263e-01);
+  const __m512d iw3 = _mm512_set_pd(-8.09016994374947451263e-01, 5.87785252292473137103e-01, -8.09016994374947451263e-01, 5.87785252292473137103e-01, -8.09016994374947451263e-01, 5.87785252292473137103e-01, -8.09016994374947451263e-01, 5.87785252292473137103e-01);
+  const __m512d iw4 = _mm512_set_pd(-9.51056516295153531182e-01, 3.09016994374947451263e-01, -9.51056516295153531182e-01, 3.09016994374947451263e-01, -9.51056516295153531182e-01, 3.09016994374947451263e-01, -9.51056516295153531182e-01, 3.09016994374947451263e-01);
+  const __m512d iw6 = _mm512_set_pd(-9.51056516295153642204e-01, -3.09016994374947340241e-01, -9.51056516295153642204e-01, -3.09016994374947340241e-01, -9.51056516295153642204e-01, -3.09016994374947340241e-01, -9.51056516295153642204e-01, -3.09016994374947340241e-01);
+  const __m512d iw8 = _mm512_set_pd(-5.87785252292473248126e-01, -8.09016994374947340241e-01, -5.87785252292473248126e-01, -8.09016994374947340241e-01, -5.87785252292473248126e-01, -8.09016994374947340241e-01, -5.87785252292473248126e-01, -8.09016994374947340241e-01);
+  const __m512d iw9 = _mm512_set_pd(-3.09016994374947506774e-01, -9.51056516295153531182e-01, -3.09016994374947506774e-01, -9.51056516295153531182e-01, -3.09016994374947506774e-01, -9.51056516295153531182e-01, -3.09016994374947506774e-01, -9.51056516295153531182e-01);
+  const __m512d iw12 = _mm512_set_pd(5.87785252292473026081e-01, -8.09016994374947562285e-01, 5.87785252292473026081e-01, -8.09016994374947562285e-01, 5.87785252292473026081e-01, -8.09016994374947562285e-01, 5.87785252292473026081e-01, -8.09016994374947562285e-01);
 
-    __attribute__((aligned(64))) double sp[160];
+  __attribute__((aligned(64))) double sp[160];
 
-    for (size_t k = 0; k < K; k += 4) {
-        /* Pass 1: 5× IL DFT-4 (triple + pair) */
-        /* IL DFT-4 TRIPLE: n2=0,1,2 (24 ZMM, 8 free) */
-        {
-        __m512d a0=_mm512_load_pd(&in[2*(0*K+k)]);
-        __m512d b0=_mm512_load_pd(&in[2*(1*K+k)]);
-        __m512d c0=_mm512_load_pd(&in[2*(2*K+k)]);
-        __m512d a1=_mm512_load_pd(&in[2*(5*K+k)]);
-        __m512d b1=_mm512_load_pd(&in[2*(6*K+k)]);
-        __m512d c1=_mm512_load_pd(&in[2*(7*K+k)]);
-        __m512d a2=_mm512_load_pd(&in[2*(10*K+k)]);
-        __m512d b2=_mm512_load_pd(&in[2*(11*K+k)]);
-        __m512d c2=_mm512_load_pd(&in[2*(12*K+k)]);
-        __m512d a3=_mm512_load_pd(&in[2*(15*K+k)]);
-        __m512d b3=_mm512_load_pd(&in[2*(16*K+k)]);
-        __m512d c3=_mm512_load_pd(&in[2*(17*K+k)]);
-        __m512d as=_mm512_add_pd(a0,a2), ad=_mm512_sub_pd(a0,a2);
-        __m512d at=_mm512_add_pd(a1,a3), au=_mm512_sub_pd(a1,a3);
-        __m512d bs=_mm512_add_pd(b0,b2), bd=_mm512_sub_pd(b0,b2);
-        __m512d bt=_mm512_add_pd(b1,b3), bu=_mm512_sub_pd(b1,b3);
-        __m512d cs=_mm512_add_pd(c0,c2), cd=_mm512_sub_pd(c0,c2);
-        __m512d ct=_mm512_add_pd(c1,c3), cu=_mm512_sub_pd(c1,c3);
-        _mm512_store_pd(&sp[0*8], _mm512_add_pd(as,at));
-        _mm512_store_pd(&sp[5*8], _mm512_add_pd(ad,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(au,0x55))));
-        _mm512_store_pd(&sp[10*8], _mm512_sub_pd(as,at));
-        _mm512_store_pd(&sp[15*8], _mm512_sub_pd(ad,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(au,0x55))));
-        _mm512_store_pd(&sp[1*8], _mm512_add_pd(bs,bt));
-        _mm512_store_pd(&sp[6*8], _mm512_add_pd(bd,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bu,0x55))));
-        _mm512_store_pd(&sp[11*8], _mm512_sub_pd(bs,bt));
-        _mm512_store_pd(&sp[16*8], _mm512_sub_pd(bd,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bu,0x55))));
-        _mm512_store_pd(&sp[2*8], _mm512_add_pd(cs,ct));
-        _mm512_store_pd(&sp[7*8], _mm512_add_pd(cd,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(cu,0x55))));
-        _mm512_store_pd(&sp[12*8], _mm512_sub_pd(cs,ct));
-        _mm512_store_pd(&sp[17*8], _mm512_sub_pd(cd,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(cu,0x55))));
-        }
-
-        /* IL DFT-4 PAIR: n2=3,4 */
-        {
-        __m512d a0=_mm512_load_pd(&in[2*(3*K+k)]);
-        __m512d b0=_mm512_load_pd(&in[2*(4*K+k)]);
-        __m512d a1=_mm512_load_pd(&in[2*(8*K+k)]);
-        __m512d b1=_mm512_load_pd(&in[2*(9*K+k)]);
-        __m512d a2=_mm512_load_pd(&in[2*(13*K+k)]);
-        __m512d b2=_mm512_load_pd(&in[2*(14*K+k)]);
-        __m512d a3=_mm512_load_pd(&in[2*(18*K+k)]);
-        __m512d b3=_mm512_load_pd(&in[2*(19*K+k)]);
-        __m512d as=_mm512_add_pd(a0,a2), ad=_mm512_sub_pd(a0,a2);
-        __m512d at=_mm512_add_pd(a1,a3), au=_mm512_sub_pd(a1,a3);
-        __m512d bs=_mm512_add_pd(b0,b2), bd=_mm512_sub_pd(b0,b2);
-        __m512d bt=_mm512_add_pd(b1,b3), bu=_mm512_sub_pd(b1,b3);
-        _mm512_store_pd(&sp[3*8], _mm512_add_pd(as,at));
-        _mm512_store_pd(&sp[8*8], _mm512_add_pd(ad,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(au,0x55))));
-        _mm512_store_pd(&sp[13*8], _mm512_sub_pd(as,at));
-        _mm512_store_pd(&sp[18*8], _mm512_sub_pd(ad,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(au,0x55))));
-        _mm512_store_pd(&sp[4*8], _mm512_add_pd(bs,bt));
-        _mm512_store_pd(&sp[9*8], _mm512_add_pd(bd,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bu,0x55))));
-        _mm512_store_pd(&sp[14*8], _mm512_sub_pd(bs,bt));
-        _mm512_store_pd(&sp[19*8], _mm512_sub_pd(bd,_mm512_fmsubadd_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bu,0x55))));
-        }
-
-        /* Internal W₂₀ twiddles (IL) */
-        { __m512d _itw6=_mm512_load_pd(&sp[6*8]);
-        _itw6 = _mm512_fmaddsub_pd(_itw6,_mm512_movedup_pd(iw1),_mm512_mul_pd(_mm512_permute_pd(_itw6,0x55),_mm512_permute_pd(iw1,0xFF)));
-          _mm512_store_pd(&sp[6*8],_itw6); }
-        { __m512d _itw7=_mm512_load_pd(&sp[7*8]);
-        _itw7 = _mm512_fmaddsub_pd(_itw7,_mm512_movedup_pd(iw2),_mm512_mul_pd(_mm512_permute_pd(_itw7,0x55),_mm512_permute_pd(iw2,0xFF)));
-          _mm512_store_pd(&sp[7*8],_itw7); }
-        { __m512d _itw8=_mm512_load_pd(&sp[8*8]);
-        _itw8 = _mm512_fmaddsub_pd(_itw8,_mm512_movedup_pd(iw3),_mm512_mul_pd(_mm512_permute_pd(_itw8,0x55),_mm512_permute_pd(iw3,0xFF)));
-          _mm512_store_pd(&sp[8*8],_itw8); }
-        { __m512d _itw9=_mm512_load_pd(&sp[9*8]);
-        _itw9 = _mm512_fmaddsub_pd(_itw9,_mm512_movedup_pd(iw4),_mm512_mul_pd(_mm512_permute_pd(_itw9,0x55),_mm512_permute_pd(iw4,0xFF)));
-          _mm512_store_pd(&sp[9*8],_itw9); }
-        { __m512d _itw11=_mm512_load_pd(&sp[11*8]);
-        _itw11 = _mm512_fmaddsub_pd(_itw11,_mm512_movedup_pd(iw2),_mm512_mul_pd(_mm512_permute_pd(_itw11,0x55),_mm512_permute_pd(iw2,0xFF)));
-          _mm512_store_pd(&sp[11*8],_itw11); }
-        { __m512d _itw12=_mm512_load_pd(&sp[12*8]);
-        _itw12 = _mm512_fmaddsub_pd(_itw12,_mm512_movedup_pd(iw4),_mm512_mul_pd(_mm512_permute_pd(_itw12,0x55),_mm512_permute_pd(iw4,0xFF)));
-          _mm512_store_pd(&sp[12*8],_itw12); }
-        { __m512d _itw13=_mm512_load_pd(&sp[13*8]);
-        _itw13 = _mm512_fmaddsub_pd(_itw13,_mm512_movedup_pd(iw6),_mm512_mul_pd(_mm512_permute_pd(_itw13,0x55),_mm512_permute_pd(iw6,0xFF)));
-          _mm512_store_pd(&sp[13*8],_itw13); }
-        { __m512d _itw14=_mm512_load_pd(&sp[14*8]);
-        _itw14 = _mm512_fmaddsub_pd(_itw14,_mm512_movedup_pd(iw8),_mm512_mul_pd(_mm512_permute_pd(_itw14,0x55),_mm512_permute_pd(iw8,0xFF)));
-          _mm512_store_pd(&sp[14*8],_itw14); }
-        { __m512d _itw16=_mm512_load_pd(&sp[16*8]);
-        _itw16 = _mm512_fmaddsub_pd(_itw16,_mm512_movedup_pd(iw3),_mm512_mul_pd(_mm512_permute_pd(_itw16,0x55),_mm512_permute_pd(iw3,0xFF)));
-          _mm512_store_pd(&sp[16*8],_itw16); }
-        { __m512d _itw17=_mm512_load_pd(&sp[17*8]);
-        _itw17 = _mm512_fmaddsub_pd(_itw17,_mm512_movedup_pd(iw6),_mm512_mul_pd(_mm512_permute_pd(_itw17,0x55),_mm512_permute_pd(iw6,0xFF)));
-          _mm512_store_pd(&sp[17*8],_itw17); }
-        { __m512d _itw18=_mm512_load_pd(&sp[18*8]);
-        _itw18 = _mm512_fmaddsub_pd(_itw18,_mm512_movedup_pd(iw9),_mm512_mul_pd(_mm512_permute_pd(_itw18,0x55),_mm512_permute_pd(iw9,0xFF)));
-          _mm512_store_pd(&sp[18*8],_itw18); }
-        { __m512d _itw19=_mm512_load_pd(&sp[19*8]);
-        _itw19 = _mm512_fmaddsub_pd(_itw19,_mm512_movedup_pd(iw12),_mm512_mul_pd(_mm512_permute_pd(_itw19,0x55),_mm512_permute_pd(iw12,0xFF)));
-          _mm512_store_pd(&sp[19*8],_itw19); }
-
-        /* Pass 2: 4× IL DFT-5 (2 pairs) */
-        /* IL DFT-5 PAIR: k1=0,1 */
-        {
-        __m512d a0=_mm512_load_pd(&sp[0*8]);
-        __m512d b0=_mm512_load_pd(&sp[5*8]);
-        __m512d a1=_mm512_load_pd(&sp[1*8]);
-        __m512d b1=_mm512_load_pd(&sp[6*8]);
-        __m512d a2=_mm512_load_pd(&sp[2*8]);
-        __m512d b2=_mm512_load_pd(&sp[7*8]);
-        __m512d a3=_mm512_load_pd(&sp[3*8]);
-        __m512d b3=_mm512_load_pd(&sp[8*8]);
-        __m512d a4=_mm512_load_pd(&sp[4*8]);
-        __m512d b4=_mm512_load_pd(&sp[9*8]);
-        __m512d as1=_mm512_add_pd(a1,a4), ad1=_mm512_sub_pd(a1,a4);
-        __m512d as2=_mm512_add_pd(a2,a3), ad2=_mm512_sub_pd(a2,a3);
-        __m512d ass=_mm512_add_pd(as1,as2);
-        __m512d bs1=_mm512_add_pd(b1,b4), bd1=_mm512_sub_pd(b1,b4);
-        __m512d bs2=_mm512_add_pd(b2,b3), bd2=_mm512_sub_pd(b2,b3);
-        __m512d bss=_mm512_add_pd(bs1,bs2);
-        __m512d ay0=_mm512_add_pd(a0,ass);
-        __m512d by0=_mm512_add_pd(b0,bss);
-        __m512d at0=_mm512_fnmadd_pd(_mm512_set1_pd(0.25),ass,a0);
-        __m512d at1=_mm512_mul_pd(_mm512_set1_pd(0.55901699437494742),_mm512_sub_pd(as1,as2));
-        __m512d ap1=_mm512_add_pd(at0,at1), ap2=_mm512_sub_pd(at0,at1);
-        __m512d aU=_mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313),ad2,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),ad1));
-        __m512d aV=_mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313),ad1,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),ad2));
-        __m512d bt0=_mm512_fnmadd_pd(_mm512_set1_pd(0.25),bss,b0);
-        __m512d bt1=_mm512_mul_pd(_mm512_set1_pd(0.55901699437494742),_mm512_sub_pd(bs1,bs2));
-        __m512d bp1=_mm512_add_pd(bt0,bt1), bp2=_mm512_sub_pd(bt0,bt1);
-        __m512d bU=_mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313),bd2,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),bd1));
-        __m512d bV=_mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313),bd1,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),bd2));
-        __m512d ao0=ay0;
-        _mm512_store_pd(&out[2*(0*K+k)],ao0);
-        __m512d ao1=_mm512_sub_pd(ap1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aU,0x55)));
-        _mm512_store_pd(&out[2*(4*K+k)],ao1);
-        __m512d ao2=_mm512_add_pd(ap2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aV,0x55)));
-        _mm512_store_pd(&out[2*(8*K+k)],ao2);
-        __m512d ao3=_mm512_sub_pd(ap2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aV,0x55)));
-        _mm512_store_pd(&out[2*(12*K+k)],ao3);
-        __m512d ao4=_mm512_add_pd(ap1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aU,0x55)));
-        _mm512_store_pd(&out[2*(16*K+k)],ao4);
-        __m512d bo0=by0;
-        _mm512_store_pd(&out[2*(1*K+k)],bo0);
-        __m512d bo1=_mm512_sub_pd(bp1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bU,0x55)));
-        _mm512_store_pd(&out[2*(5*K+k)],bo1);
-        __m512d bo2=_mm512_add_pd(bp2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bV,0x55)));
-        _mm512_store_pd(&out[2*(9*K+k)],bo2);
-        __m512d bo3=_mm512_sub_pd(bp2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bV,0x55)));
-        _mm512_store_pd(&out[2*(13*K+k)],bo3);
-        __m512d bo4=_mm512_add_pd(bp1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bU,0x55)));
-        _mm512_store_pd(&out[2*(17*K+k)],bo4);
-        }
-
-        /* IL DFT-5 PAIR: k1=2,3 */
-        {
-        __m512d a0=_mm512_load_pd(&sp[10*8]);
-        __m512d b0=_mm512_load_pd(&sp[15*8]);
-        __m512d a1=_mm512_load_pd(&sp[11*8]);
-        __m512d b1=_mm512_load_pd(&sp[16*8]);
-        __m512d a2=_mm512_load_pd(&sp[12*8]);
-        __m512d b2=_mm512_load_pd(&sp[17*8]);
-        __m512d a3=_mm512_load_pd(&sp[13*8]);
-        __m512d b3=_mm512_load_pd(&sp[18*8]);
-        __m512d a4=_mm512_load_pd(&sp[14*8]);
-        __m512d b4=_mm512_load_pd(&sp[19*8]);
-        __m512d as1=_mm512_add_pd(a1,a4), ad1=_mm512_sub_pd(a1,a4);
-        __m512d as2=_mm512_add_pd(a2,a3), ad2=_mm512_sub_pd(a2,a3);
-        __m512d ass=_mm512_add_pd(as1,as2);
-        __m512d bs1=_mm512_add_pd(b1,b4), bd1=_mm512_sub_pd(b1,b4);
-        __m512d bs2=_mm512_add_pd(b2,b3), bd2=_mm512_sub_pd(b2,b3);
-        __m512d bss=_mm512_add_pd(bs1,bs2);
-        __m512d ay0=_mm512_add_pd(a0,ass);
-        __m512d by0=_mm512_add_pd(b0,bss);
-        __m512d at0=_mm512_fnmadd_pd(_mm512_set1_pd(0.25),ass,a0);
-        __m512d at1=_mm512_mul_pd(_mm512_set1_pd(0.55901699437494742),_mm512_sub_pd(as1,as2));
-        __m512d ap1=_mm512_add_pd(at0,at1), ap2=_mm512_sub_pd(at0,at1);
-        __m512d aU=_mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313),ad2,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),ad1));
-        __m512d aV=_mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313),ad1,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),ad2));
-        __m512d bt0=_mm512_fnmadd_pd(_mm512_set1_pd(0.25),bss,b0);
-        __m512d bt1=_mm512_mul_pd(_mm512_set1_pd(0.55901699437494742),_mm512_sub_pd(bs1,bs2));
-        __m512d bp1=_mm512_add_pd(bt0,bt1), bp2=_mm512_sub_pd(bt0,bt1);
-        __m512d bU=_mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313),bd2,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),bd1));
-        __m512d bV=_mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313),bd1,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),bd2));
-        __m512d ao0=ay0;
-        _mm512_store_pd(&out[2*(2*K+k)],ao0);
-        __m512d ao1=_mm512_sub_pd(ap1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aU,0x55)));
-        _mm512_store_pd(&out[2*(6*K+k)],ao1);
-        __m512d ao2=_mm512_add_pd(ap2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aV,0x55)));
-        _mm512_store_pd(&out[2*(10*K+k)],ao2);
-        __m512d ao3=_mm512_sub_pd(ap2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aV,0x55)));
-        _mm512_store_pd(&out[2*(14*K+k)],ao3);
-        __m512d ao4=_mm512_add_pd(ap1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aU,0x55)));
-        _mm512_store_pd(&out[2*(18*K+k)],ao4);
-        __m512d bo0=by0;
-        _mm512_store_pd(&out[2*(3*K+k)],bo0);
-        __m512d bo1=_mm512_sub_pd(bp1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bU,0x55)));
-        _mm512_store_pd(&out[2*(7*K+k)],bo1);
-        __m512d bo2=_mm512_add_pd(bp2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bV,0x55)));
-        _mm512_store_pd(&out[2*(11*K+k)],bo2);
-        __m512d bo3=_mm512_sub_pd(bp2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bV,0x55)));
-        _mm512_store_pd(&out[2*(15*K+k)],bo3);
-        __m512d bo4=_mm512_add_pd(bp1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bU,0x55)));
-        _mm512_store_pd(&out[2*(19*K+k)],bo4);
-        }
-
+  for (size_t k = 0; k < K; k += 4)
+  {
+    /* Pass 1: 5× IL DFT-4 (triple + pair) */
+    /* IL DFT-4 TRIPLE: n2=0,1,2 (24 ZMM, 8 free) */
+    {
+      __m512d a0 = _mm512_load_pd(&in[2 * (0 * K + k)]);
+      __m512d b0 = _mm512_load_pd(&in[2 * (1 * K + k)]);
+      __m512d c0 = _mm512_load_pd(&in[2 * (2 * K + k)]);
+      __m512d a1 = _mm512_load_pd(&in[2 * (5 * K + k)]);
+      __m512d b1 = _mm512_load_pd(&in[2 * (6 * K + k)]);
+      __m512d c1 = _mm512_load_pd(&in[2 * (7 * K + k)]);
+      __m512d a2 = _mm512_load_pd(&in[2 * (10 * K + k)]);
+      __m512d b2 = _mm512_load_pd(&in[2 * (11 * K + k)]);
+      __m512d c2 = _mm512_load_pd(&in[2 * (12 * K + k)]);
+      __m512d a3 = _mm512_load_pd(&in[2 * (15 * K + k)]);
+      __m512d b3 = _mm512_load_pd(&in[2 * (16 * K + k)]);
+      __m512d c3 = _mm512_load_pd(&in[2 * (17 * K + k)]);
+      __m512d as = _mm512_add_pd(a0, a2), ad = _mm512_sub_pd(a0, a2);
+      __m512d at = _mm512_add_pd(a1, a3), au = _mm512_sub_pd(a1, a3);
+      __m512d bs = _mm512_add_pd(b0, b2), bd = _mm512_sub_pd(b0, b2);
+      __m512d bt = _mm512_add_pd(b1, b3), bu = _mm512_sub_pd(b1, b3);
+      __m512d cs = _mm512_add_pd(c0, c2), cd = _mm512_sub_pd(c0, c2);
+      __m512d ct = _mm512_add_pd(c1, c3), cu = _mm512_sub_pd(c1, c3);
+      _mm512_store_pd(&sp[0 * 8], _mm512_add_pd(as, at));
+      _mm512_store_pd(&sp[5 * 8], _mm512_add_pd(ad, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(au, 0x55))));
+      _mm512_store_pd(&sp[10 * 8], _mm512_sub_pd(as, at));
+      _mm512_store_pd(&sp[15 * 8], _mm512_sub_pd(ad, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(au, 0x55))));
+      _mm512_store_pd(&sp[1 * 8], _mm512_add_pd(bs, bt));
+      _mm512_store_pd(&sp[6 * 8], _mm512_add_pd(bd, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bu, 0x55))));
+      _mm512_store_pd(&sp[11 * 8], _mm512_sub_pd(bs, bt));
+      _mm512_store_pd(&sp[16 * 8], _mm512_sub_pd(bd, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bu, 0x55))));
+      _mm512_store_pd(&sp[2 * 8], _mm512_add_pd(cs, ct));
+      _mm512_store_pd(&sp[7 * 8], _mm512_add_pd(cd, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(cu, 0x55))));
+      _mm512_store_pd(&sp[12 * 8], _mm512_sub_pd(cs, ct));
+      _mm512_store_pd(&sp[17 * 8], _mm512_sub_pd(cd, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(cu, 0x55))));
     }
+
+    /* IL DFT-4 PAIR: n2=3,4 */
+    {
+      __m512d a0 = _mm512_load_pd(&in[2 * (3 * K + k)]);
+      __m512d b0 = _mm512_load_pd(&in[2 * (4 * K + k)]);
+      __m512d a1 = _mm512_load_pd(&in[2 * (8 * K + k)]);
+      __m512d b1 = _mm512_load_pd(&in[2 * (9 * K + k)]);
+      __m512d a2 = _mm512_load_pd(&in[2 * (13 * K + k)]);
+      __m512d b2 = _mm512_load_pd(&in[2 * (14 * K + k)]);
+      __m512d a3 = _mm512_load_pd(&in[2 * (18 * K + k)]);
+      __m512d b3 = _mm512_load_pd(&in[2 * (19 * K + k)]);
+      __m512d as = _mm512_add_pd(a0, a2), ad = _mm512_sub_pd(a0, a2);
+      __m512d at = _mm512_add_pd(a1, a3), au = _mm512_sub_pd(a1, a3);
+      __m512d bs = _mm512_add_pd(b0, b2), bd = _mm512_sub_pd(b0, b2);
+      __m512d bt = _mm512_add_pd(b1, b3), bu = _mm512_sub_pd(b1, b3);
+      _mm512_store_pd(&sp[3 * 8], _mm512_add_pd(as, at));
+      _mm512_store_pd(&sp[8 * 8], _mm512_add_pd(ad, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(au, 0x55))));
+      _mm512_store_pd(&sp[13 * 8], _mm512_sub_pd(as, at));
+      _mm512_store_pd(&sp[18 * 8], _mm512_sub_pd(ad, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(au, 0x55))));
+      _mm512_store_pd(&sp[4 * 8], _mm512_add_pd(bs, bt));
+      _mm512_store_pd(&sp[9 * 8], _mm512_add_pd(bd, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bu, 0x55))));
+      _mm512_store_pd(&sp[14 * 8], _mm512_sub_pd(bs, bt));
+      _mm512_store_pd(&sp[19 * 8], _mm512_sub_pd(bd, _mm512_fmsubadd_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bu, 0x55))));
+    }
+
+    /* Internal W₂₀ twiddles (IL) */
+    {
+      __m512d _itw6 = _mm512_load_pd(&sp[6 * 8]);
+      _itw6 = _mm512_fmaddsub_pd(_itw6, _mm512_movedup_pd(iw1), _mm512_mul_pd(_mm512_permute_pd(_itw6, 0x55), _mm512_permute_pd(iw1, 0xFF)));
+      _mm512_store_pd(&sp[6 * 8], _itw6);
+    }
+    {
+      __m512d _itw7 = _mm512_load_pd(&sp[7 * 8]);
+      _itw7 = _mm512_fmaddsub_pd(_itw7, _mm512_movedup_pd(iw2), _mm512_mul_pd(_mm512_permute_pd(_itw7, 0x55), _mm512_permute_pd(iw2, 0xFF)));
+      _mm512_store_pd(&sp[7 * 8], _itw7);
+    }
+    {
+      __m512d _itw8 = _mm512_load_pd(&sp[8 * 8]);
+      _itw8 = _mm512_fmaddsub_pd(_itw8, _mm512_movedup_pd(iw3), _mm512_mul_pd(_mm512_permute_pd(_itw8, 0x55), _mm512_permute_pd(iw3, 0xFF)));
+      _mm512_store_pd(&sp[8 * 8], _itw8);
+    }
+    {
+      __m512d _itw9 = _mm512_load_pd(&sp[9 * 8]);
+      _itw9 = _mm512_fmaddsub_pd(_itw9, _mm512_movedup_pd(iw4), _mm512_mul_pd(_mm512_permute_pd(_itw9, 0x55), _mm512_permute_pd(iw4, 0xFF)));
+      _mm512_store_pd(&sp[9 * 8], _itw9);
+    }
+    {
+      __m512d _itw11 = _mm512_load_pd(&sp[11 * 8]);
+      _itw11 = _mm512_fmaddsub_pd(_itw11, _mm512_movedup_pd(iw2), _mm512_mul_pd(_mm512_permute_pd(_itw11, 0x55), _mm512_permute_pd(iw2, 0xFF)));
+      _mm512_store_pd(&sp[11 * 8], _itw11);
+    }
+    {
+      __m512d _itw12 = _mm512_load_pd(&sp[12 * 8]);
+      _itw12 = _mm512_fmaddsub_pd(_itw12, _mm512_movedup_pd(iw4), _mm512_mul_pd(_mm512_permute_pd(_itw12, 0x55), _mm512_permute_pd(iw4, 0xFF)));
+      _mm512_store_pd(&sp[12 * 8], _itw12);
+    }
+    {
+      __m512d _itw13 = _mm512_load_pd(&sp[13 * 8]);
+      _itw13 = _mm512_fmaddsub_pd(_itw13, _mm512_movedup_pd(iw6), _mm512_mul_pd(_mm512_permute_pd(_itw13, 0x55), _mm512_permute_pd(iw6, 0xFF)));
+      _mm512_store_pd(&sp[13 * 8], _itw13);
+    }
+    {
+      __m512d _itw14 = _mm512_load_pd(&sp[14 * 8]);
+      _itw14 = _mm512_fmaddsub_pd(_itw14, _mm512_movedup_pd(iw8), _mm512_mul_pd(_mm512_permute_pd(_itw14, 0x55), _mm512_permute_pd(iw8, 0xFF)));
+      _mm512_store_pd(&sp[14 * 8], _itw14);
+    }
+    {
+      __m512d _itw16 = _mm512_load_pd(&sp[16 * 8]);
+      _itw16 = _mm512_fmaddsub_pd(_itw16, _mm512_movedup_pd(iw3), _mm512_mul_pd(_mm512_permute_pd(_itw16, 0x55), _mm512_permute_pd(iw3, 0xFF)));
+      _mm512_store_pd(&sp[16 * 8], _itw16);
+    }
+    {
+      __m512d _itw17 = _mm512_load_pd(&sp[17 * 8]);
+      _itw17 = _mm512_fmaddsub_pd(_itw17, _mm512_movedup_pd(iw6), _mm512_mul_pd(_mm512_permute_pd(_itw17, 0x55), _mm512_permute_pd(iw6, 0xFF)));
+      _mm512_store_pd(&sp[17 * 8], _itw17);
+    }
+    {
+      __m512d _itw18 = _mm512_load_pd(&sp[18 * 8]);
+      _itw18 = _mm512_fmaddsub_pd(_itw18, _mm512_movedup_pd(iw9), _mm512_mul_pd(_mm512_permute_pd(_itw18, 0x55), _mm512_permute_pd(iw9, 0xFF)));
+      _mm512_store_pd(&sp[18 * 8], _itw18);
+    }
+    {
+      __m512d _itw19 = _mm512_load_pd(&sp[19 * 8]);
+      _itw19 = _mm512_fmaddsub_pd(_itw19, _mm512_movedup_pd(iw12), _mm512_mul_pd(_mm512_permute_pd(_itw19, 0x55), _mm512_permute_pd(iw12, 0xFF)));
+      _mm512_store_pd(&sp[19 * 8], _itw19);
+    }
+
+    /* Pass 2: 4× IL DFT-5 (2 pairs) */
+    /* IL DFT-5 PAIR: k1=0,1 */
+    {
+      __m512d a0 = _mm512_load_pd(&sp[0 * 8]);
+      __m512d b0 = _mm512_load_pd(&sp[5 * 8]);
+      __m512d a1 = _mm512_load_pd(&sp[1 * 8]);
+      __m512d b1 = _mm512_load_pd(&sp[6 * 8]);
+      __m512d a2 = _mm512_load_pd(&sp[2 * 8]);
+      __m512d b2 = _mm512_load_pd(&sp[7 * 8]);
+      __m512d a3 = _mm512_load_pd(&sp[3 * 8]);
+      __m512d b3 = _mm512_load_pd(&sp[8 * 8]);
+      __m512d a4 = _mm512_load_pd(&sp[4 * 8]);
+      __m512d b4 = _mm512_load_pd(&sp[9 * 8]);
+      __m512d as1 = _mm512_add_pd(a1, a4), ad1 = _mm512_sub_pd(a1, a4);
+      __m512d as2 = _mm512_add_pd(a2, a3), ad2 = _mm512_sub_pd(a2, a3);
+      __m512d ass = _mm512_add_pd(as1, as2);
+      __m512d bs1 = _mm512_add_pd(b1, b4), bd1 = _mm512_sub_pd(b1, b4);
+      __m512d bs2 = _mm512_add_pd(b2, b3), bd2 = _mm512_sub_pd(b2, b3);
+      __m512d bss = _mm512_add_pd(bs1, bs2);
+      __m512d ay0 = _mm512_add_pd(a0, ass);
+      __m512d by0 = _mm512_add_pd(b0, bss);
+      __m512d at0 = _mm512_fnmadd_pd(_mm512_set1_pd(0.25), ass, a0);
+      __m512d at1 = _mm512_mul_pd(_mm512_set1_pd(0.55901699437494742), _mm512_sub_pd(as1, as2));
+      __m512d ap1 = _mm512_add_pd(at0, at1), ap2 = _mm512_sub_pd(at0, at1);
+      __m512d aU = _mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313), ad2, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), ad1));
+      __m512d aV = _mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313), ad1, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), ad2));
+      __m512d bt0 = _mm512_fnmadd_pd(_mm512_set1_pd(0.25), bss, b0);
+      __m512d bt1 = _mm512_mul_pd(_mm512_set1_pd(0.55901699437494742), _mm512_sub_pd(bs1, bs2));
+      __m512d bp1 = _mm512_add_pd(bt0, bt1), bp2 = _mm512_sub_pd(bt0, bt1);
+      __m512d bU = _mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313), bd2, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), bd1));
+      __m512d bV = _mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313), bd1, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), bd2));
+      __m512d ao0 = ay0;
+      _mm512_store_pd(&out[2 * (0 * K + k)], ao0);
+      __m512d ao1 = _mm512_sub_pd(ap1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aU, 0x55)));
+      _mm512_store_pd(&out[2 * (4 * K + k)], ao1);
+      __m512d ao2 = _mm512_add_pd(ap2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aV, 0x55)));
+      _mm512_store_pd(&out[2 * (8 * K + k)], ao2);
+      __m512d ao3 = _mm512_sub_pd(ap2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aV, 0x55)));
+      _mm512_store_pd(&out[2 * (12 * K + k)], ao3);
+      __m512d ao4 = _mm512_add_pd(ap1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aU, 0x55)));
+      _mm512_store_pd(&out[2 * (16 * K + k)], ao4);
+      __m512d bo0 = by0;
+      _mm512_store_pd(&out[2 * (1 * K + k)], bo0);
+      __m512d bo1 = _mm512_sub_pd(bp1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bU, 0x55)));
+      _mm512_store_pd(&out[2 * (5 * K + k)], bo1);
+      __m512d bo2 = _mm512_add_pd(bp2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bV, 0x55)));
+      _mm512_store_pd(&out[2 * (9 * K + k)], bo2);
+      __m512d bo3 = _mm512_sub_pd(bp2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bV, 0x55)));
+      _mm512_store_pd(&out[2 * (13 * K + k)], bo3);
+      __m512d bo4 = _mm512_add_pd(bp1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bU, 0x55)));
+      _mm512_store_pd(&out[2 * (17 * K + k)], bo4);
+    }
+
+    /* IL DFT-5 PAIR: k1=2,3 */
+    {
+      __m512d a0 = _mm512_load_pd(&sp[10 * 8]);
+      __m512d b0 = _mm512_load_pd(&sp[15 * 8]);
+      __m512d a1 = _mm512_load_pd(&sp[11 * 8]);
+      __m512d b1 = _mm512_load_pd(&sp[16 * 8]);
+      __m512d a2 = _mm512_load_pd(&sp[12 * 8]);
+      __m512d b2 = _mm512_load_pd(&sp[17 * 8]);
+      __m512d a3 = _mm512_load_pd(&sp[13 * 8]);
+      __m512d b3 = _mm512_load_pd(&sp[18 * 8]);
+      __m512d a4 = _mm512_load_pd(&sp[14 * 8]);
+      __m512d b4 = _mm512_load_pd(&sp[19 * 8]);
+      __m512d as1 = _mm512_add_pd(a1, a4), ad1 = _mm512_sub_pd(a1, a4);
+      __m512d as2 = _mm512_add_pd(a2, a3), ad2 = _mm512_sub_pd(a2, a3);
+      __m512d ass = _mm512_add_pd(as1, as2);
+      __m512d bs1 = _mm512_add_pd(b1, b4), bd1 = _mm512_sub_pd(b1, b4);
+      __m512d bs2 = _mm512_add_pd(b2, b3), bd2 = _mm512_sub_pd(b2, b3);
+      __m512d bss = _mm512_add_pd(bs1, bs2);
+      __m512d ay0 = _mm512_add_pd(a0, ass);
+      __m512d by0 = _mm512_add_pd(b0, bss);
+      __m512d at0 = _mm512_fnmadd_pd(_mm512_set1_pd(0.25), ass, a0);
+      __m512d at1 = _mm512_mul_pd(_mm512_set1_pd(0.55901699437494742), _mm512_sub_pd(as1, as2));
+      __m512d ap1 = _mm512_add_pd(at0, at1), ap2 = _mm512_sub_pd(at0, at1);
+      __m512d aU = _mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313), ad2, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), ad1));
+      __m512d aV = _mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313), ad1, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), ad2));
+      __m512d bt0 = _mm512_fnmadd_pd(_mm512_set1_pd(0.25), bss, b0);
+      __m512d bt1 = _mm512_mul_pd(_mm512_set1_pd(0.55901699437494742), _mm512_sub_pd(bs1, bs2));
+      __m512d bp1 = _mm512_add_pd(bt0, bt1), bp2 = _mm512_sub_pd(bt0, bt1);
+      __m512d bU = _mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313), bd2, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), bd1));
+      __m512d bV = _mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313), bd1, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), bd2));
+      __m512d ao0 = ay0;
+      _mm512_store_pd(&out[2 * (2 * K + k)], ao0);
+      __m512d ao1 = _mm512_sub_pd(ap1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aU, 0x55)));
+      _mm512_store_pd(&out[2 * (6 * K + k)], ao1);
+      __m512d ao2 = _mm512_add_pd(ap2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aV, 0x55)));
+      _mm512_store_pd(&out[2 * (10 * K + k)], ao2);
+      __m512d ao3 = _mm512_sub_pd(ap2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aV, 0x55)));
+      _mm512_store_pd(&out[2 * (14 * K + k)], ao3);
+      __m512d ao4 = _mm512_add_pd(ap1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aU, 0x55)));
+      _mm512_store_pd(&out[2 * (18 * K + k)], ao4);
+      __m512d bo0 = by0;
+      _mm512_store_pd(&out[2 * (3 * K + k)], bo0);
+      __m512d bo1 = _mm512_sub_pd(bp1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bU, 0x55)));
+      _mm512_store_pd(&out[2 * (7 * K + k)], bo1);
+      __m512d bo2 = _mm512_add_pd(bp2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bV, 0x55)));
+      _mm512_store_pd(&out[2 * (11 * K + k)], bo2);
+      __m512d bo3 = _mm512_sub_pd(bp2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bV, 0x55)));
+      _mm512_store_pd(&out[2 * (15 * K + k)], bo3);
+      __m512d bo4 = _mm512_add_pd(bp1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bU, 0x55)));
+      _mm512_store_pd(&out[2 * (19 * K + k)], bo4);
+    }
+  }
 }
 
-__attribute__((target("avx512f,avx512dq,fma")))
-static void radix20_ct_n1_kernel_bwd_il_avx512(
-    const double * __restrict__ in, double * __restrict__ out, size_t K)
+__attribute__((target("avx512f,avx512dq,fma"))) static void radix20_ct_n1_kernel_bwd_il_avx512(
+    const double *__restrict__ in, double *__restrict__ out, size_t K)
 {
-    /* Internal W₂₀ pre-interleaved constants */
-    const __m512d iw1 = _mm512_set_pd(-3.09016994374947395752e-01,9.51056516295153531182e-01,-3.09016994374947395752e-01,9.51056516295153531182e-01,-3.09016994374947395752e-01,9.51056516295153531182e-01,-3.09016994374947395752e-01,9.51056516295153531182e-01);
-    const __m512d iw2 = _mm512_set_pd(-5.87785252292473137103e-01,8.09016994374947451263e-01,-5.87785252292473137103e-01,8.09016994374947451263e-01,-5.87785252292473137103e-01,8.09016994374947451263e-01,-5.87785252292473137103e-01,8.09016994374947451263e-01);
-    const __m512d iw3 = _mm512_set_pd(-8.09016994374947451263e-01,5.87785252292473137103e-01,-8.09016994374947451263e-01,5.87785252292473137103e-01,-8.09016994374947451263e-01,5.87785252292473137103e-01,-8.09016994374947451263e-01,5.87785252292473137103e-01);
-    const __m512d iw4 = _mm512_set_pd(-9.51056516295153531182e-01,3.09016994374947451263e-01,-9.51056516295153531182e-01,3.09016994374947451263e-01,-9.51056516295153531182e-01,3.09016994374947451263e-01,-9.51056516295153531182e-01,3.09016994374947451263e-01);
-    const __m512d iw6 = _mm512_set_pd(-9.51056516295153642204e-01,-3.09016994374947340241e-01,-9.51056516295153642204e-01,-3.09016994374947340241e-01,-9.51056516295153642204e-01,-3.09016994374947340241e-01,-9.51056516295153642204e-01,-3.09016994374947340241e-01);
-    const __m512d iw8 = _mm512_set_pd(-5.87785252292473248126e-01,-8.09016994374947340241e-01,-5.87785252292473248126e-01,-8.09016994374947340241e-01,-5.87785252292473248126e-01,-8.09016994374947340241e-01,-5.87785252292473248126e-01,-8.09016994374947340241e-01);
-    const __m512d iw9 = _mm512_set_pd(-3.09016994374947506774e-01,-9.51056516295153531182e-01,-3.09016994374947506774e-01,-9.51056516295153531182e-01,-3.09016994374947506774e-01,-9.51056516295153531182e-01,-3.09016994374947506774e-01,-9.51056516295153531182e-01);
-    const __m512d iw12 = _mm512_set_pd(5.87785252292473026081e-01,-8.09016994374947562285e-01,5.87785252292473026081e-01,-8.09016994374947562285e-01,5.87785252292473026081e-01,-8.09016994374947562285e-01,5.87785252292473026081e-01,-8.09016994374947562285e-01);
+  /* Internal W₂₀ pre-interleaved constants */
+  const __m512d iw1 = _mm512_set_pd(-3.09016994374947395752e-01, 9.51056516295153531182e-01, -3.09016994374947395752e-01, 9.51056516295153531182e-01, -3.09016994374947395752e-01, 9.51056516295153531182e-01, -3.09016994374947395752e-01, 9.51056516295153531182e-01);
+  const __m512d iw2 = _mm512_set_pd(-5.87785252292473137103e-01, 8.09016994374947451263e-01, -5.87785252292473137103e-01, 8.09016994374947451263e-01, -5.87785252292473137103e-01, 8.09016994374947451263e-01, -5.87785252292473137103e-01, 8.09016994374947451263e-01);
+  const __m512d iw3 = _mm512_set_pd(-8.09016994374947451263e-01, 5.87785252292473137103e-01, -8.09016994374947451263e-01, 5.87785252292473137103e-01, -8.09016994374947451263e-01, 5.87785252292473137103e-01, -8.09016994374947451263e-01, 5.87785252292473137103e-01);
+  const __m512d iw4 = _mm512_set_pd(-9.51056516295153531182e-01, 3.09016994374947451263e-01, -9.51056516295153531182e-01, 3.09016994374947451263e-01, -9.51056516295153531182e-01, 3.09016994374947451263e-01, -9.51056516295153531182e-01, 3.09016994374947451263e-01);
+  const __m512d iw6 = _mm512_set_pd(-9.51056516295153642204e-01, -3.09016994374947340241e-01, -9.51056516295153642204e-01, -3.09016994374947340241e-01, -9.51056516295153642204e-01, -3.09016994374947340241e-01, -9.51056516295153642204e-01, -3.09016994374947340241e-01);
+  const __m512d iw8 = _mm512_set_pd(-5.87785252292473248126e-01, -8.09016994374947340241e-01, -5.87785252292473248126e-01, -8.09016994374947340241e-01, -5.87785252292473248126e-01, -8.09016994374947340241e-01, -5.87785252292473248126e-01, -8.09016994374947340241e-01);
+  const __m512d iw9 = _mm512_set_pd(-3.09016994374947506774e-01, -9.51056516295153531182e-01, -3.09016994374947506774e-01, -9.51056516295153531182e-01, -3.09016994374947506774e-01, -9.51056516295153531182e-01, -3.09016994374947506774e-01, -9.51056516295153531182e-01);
+  const __m512d iw12 = _mm512_set_pd(5.87785252292473026081e-01, -8.09016994374947562285e-01, 5.87785252292473026081e-01, -8.09016994374947562285e-01, 5.87785252292473026081e-01, -8.09016994374947562285e-01, 5.87785252292473026081e-01, -8.09016994374947562285e-01);
 
-    __attribute__((aligned(64))) double sp[160];
+  __attribute__((aligned(64))) double sp[160];
 
-    for (size_t k = 0; k < K; k += 4) {
-        /* Pass 1: 5× IL DFT-4 (triple + pair) */
-        /* IL DFT-4 TRIPLE: n2=0,1,2 (24 ZMM, 8 free) */
-        {
-        __m512d a0=_mm512_load_pd(&in[2*(0*K+k)]);
-        __m512d b0=_mm512_load_pd(&in[2*(1*K+k)]);
-        __m512d c0=_mm512_load_pd(&in[2*(2*K+k)]);
-        __m512d a1=_mm512_load_pd(&in[2*(5*K+k)]);
-        __m512d b1=_mm512_load_pd(&in[2*(6*K+k)]);
-        __m512d c1=_mm512_load_pd(&in[2*(7*K+k)]);
-        __m512d a2=_mm512_load_pd(&in[2*(10*K+k)]);
-        __m512d b2=_mm512_load_pd(&in[2*(11*K+k)]);
-        __m512d c2=_mm512_load_pd(&in[2*(12*K+k)]);
-        __m512d a3=_mm512_load_pd(&in[2*(15*K+k)]);
-        __m512d b3=_mm512_load_pd(&in[2*(16*K+k)]);
-        __m512d c3=_mm512_load_pd(&in[2*(17*K+k)]);
-        __m512d as=_mm512_add_pd(a0,a2), ad=_mm512_sub_pd(a0,a2);
-        __m512d at=_mm512_add_pd(a1,a3), au=_mm512_sub_pd(a1,a3);
-        __m512d bs=_mm512_add_pd(b0,b2), bd=_mm512_sub_pd(b0,b2);
-        __m512d bt=_mm512_add_pd(b1,b3), bu=_mm512_sub_pd(b1,b3);
-        __m512d cs=_mm512_add_pd(c0,c2), cd=_mm512_sub_pd(c0,c2);
-        __m512d ct=_mm512_add_pd(c1,c3), cu=_mm512_sub_pd(c1,c3);
-        _mm512_store_pd(&sp[0*8], _mm512_add_pd(as,at));
-        _mm512_store_pd(&sp[5*8], _mm512_add_pd(ad,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(au,0x55))));
-        _mm512_store_pd(&sp[10*8], _mm512_sub_pd(as,at));
-        _mm512_store_pd(&sp[15*8], _mm512_sub_pd(ad,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(au,0x55))));
-        _mm512_store_pd(&sp[1*8], _mm512_add_pd(bs,bt));
-        _mm512_store_pd(&sp[6*8], _mm512_add_pd(bd,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bu,0x55))));
-        _mm512_store_pd(&sp[11*8], _mm512_sub_pd(bs,bt));
-        _mm512_store_pd(&sp[16*8], _mm512_sub_pd(bd,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bu,0x55))));
-        _mm512_store_pd(&sp[2*8], _mm512_add_pd(cs,ct));
-        _mm512_store_pd(&sp[7*8], _mm512_add_pd(cd,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(cu,0x55))));
-        _mm512_store_pd(&sp[12*8], _mm512_sub_pd(cs,ct));
-        _mm512_store_pd(&sp[17*8], _mm512_sub_pd(cd,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(cu,0x55))));
-        }
-
-        /* IL DFT-4 PAIR: n2=3,4 */
-        {
-        __m512d a0=_mm512_load_pd(&in[2*(3*K+k)]);
-        __m512d b0=_mm512_load_pd(&in[2*(4*K+k)]);
-        __m512d a1=_mm512_load_pd(&in[2*(8*K+k)]);
-        __m512d b1=_mm512_load_pd(&in[2*(9*K+k)]);
-        __m512d a2=_mm512_load_pd(&in[2*(13*K+k)]);
-        __m512d b2=_mm512_load_pd(&in[2*(14*K+k)]);
-        __m512d a3=_mm512_load_pd(&in[2*(18*K+k)]);
-        __m512d b3=_mm512_load_pd(&in[2*(19*K+k)]);
-        __m512d as=_mm512_add_pd(a0,a2), ad=_mm512_sub_pd(a0,a2);
-        __m512d at=_mm512_add_pd(a1,a3), au=_mm512_sub_pd(a1,a3);
-        __m512d bs=_mm512_add_pd(b0,b2), bd=_mm512_sub_pd(b0,b2);
-        __m512d bt=_mm512_add_pd(b1,b3), bu=_mm512_sub_pd(b1,b3);
-        _mm512_store_pd(&sp[3*8], _mm512_add_pd(as,at));
-        _mm512_store_pd(&sp[8*8], _mm512_add_pd(ad,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(au,0x55))));
-        _mm512_store_pd(&sp[13*8], _mm512_sub_pd(as,at));
-        _mm512_store_pd(&sp[18*8], _mm512_sub_pd(ad,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(au,0x55))));
-        _mm512_store_pd(&sp[4*8], _mm512_add_pd(bs,bt));
-        _mm512_store_pd(&sp[9*8], _mm512_add_pd(bd,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bu,0x55))));
-        _mm512_store_pd(&sp[14*8], _mm512_sub_pd(bs,bt));
-        _mm512_store_pd(&sp[19*8], _mm512_sub_pd(bd,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bu,0x55))));
-        }
-
-        /* Internal W₂₀ twiddles (IL) */
-        { __m512d _itw6=_mm512_load_pd(&sp[6*8]);
-        _itw6 = _mm512_fmsubadd_pd(_itw6,_mm512_movedup_pd(iw1),_mm512_mul_pd(_mm512_permute_pd(_itw6,0x55),_mm512_permute_pd(iw1,0xFF)));
-          _mm512_store_pd(&sp[6*8],_itw6); }
-        { __m512d _itw7=_mm512_load_pd(&sp[7*8]);
-        _itw7 = _mm512_fmsubadd_pd(_itw7,_mm512_movedup_pd(iw2),_mm512_mul_pd(_mm512_permute_pd(_itw7,0x55),_mm512_permute_pd(iw2,0xFF)));
-          _mm512_store_pd(&sp[7*8],_itw7); }
-        { __m512d _itw8=_mm512_load_pd(&sp[8*8]);
-        _itw8 = _mm512_fmsubadd_pd(_itw8,_mm512_movedup_pd(iw3),_mm512_mul_pd(_mm512_permute_pd(_itw8,0x55),_mm512_permute_pd(iw3,0xFF)));
-          _mm512_store_pd(&sp[8*8],_itw8); }
-        { __m512d _itw9=_mm512_load_pd(&sp[9*8]);
-        _itw9 = _mm512_fmsubadd_pd(_itw9,_mm512_movedup_pd(iw4),_mm512_mul_pd(_mm512_permute_pd(_itw9,0x55),_mm512_permute_pd(iw4,0xFF)));
-          _mm512_store_pd(&sp[9*8],_itw9); }
-        { __m512d _itw11=_mm512_load_pd(&sp[11*8]);
-        _itw11 = _mm512_fmsubadd_pd(_itw11,_mm512_movedup_pd(iw2),_mm512_mul_pd(_mm512_permute_pd(_itw11,0x55),_mm512_permute_pd(iw2,0xFF)));
-          _mm512_store_pd(&sp[11*8],_itw11); }
-        { __m512d _itw12=_mm512_load_pd(&sp[12*8]);
-        _itw12 = _mm512_fmsubadd_pd(_itw12,_mm512_movedup_pd(iw4),_mm512_mul_pd(_mm512_permute_pd(_itw12,0x55),_mm512_permute_pd(iw4,0xFF)));
-          _mm512_store_pd(&sp[12*8],_itw12); }
-        { __m512d _itw13=_mm512_load_pd(&sp[13*8]);
-        _itw13 = _mm512_fmsubadd_pd(_itw13,_mm512_movedup_pd(iw6),_mm512_mul_pd(_mm512_permute_pd(_itw13,0x55),_mm512_permute_pd(iw6,0xFF)));
-          _mm512_store_pd(&sp[13*8],_itw13); }
-        { __m512d _itw14=_mm512_load_pd(&sp[14*8]);
-        _itw14 = _mm512_fmsubadd_pd(_itw14,_mm512_movedup_pd(iw8),_mm512_mul_pd(_mm512_permute_pd(_itw14,0x55),_mm512_permute_pd(iw8,0xFF)));
-          _mm512_store_pd(&sp[14*8],_itw14); }
-        { __m512d _itw16=_mm512_load_pd(&sp[16*8]);
-        _itw16 = _mm512_fmsubadd_pd(_itw16,_mm512_movedup_pd(iw3),_mm512_mul_pd(_mm512_permute_pd(_itw16,0x55),_mm512_permute_pd(iw3,0xFF)));
-          _mm512_store_pd(&sp[16*8],_itw16); }
-        { __m512d _itw17=_mm512_load_pd(&sp[17*8]);
-        _itw17 = _mm512_fmsubadd_pd(_itw17,_mm512_movedup_pd(iw6),_mm512_mul_pd(_mm512_permute_pd(_itw17,0x55),_mm512_permute_pd(iw6,0xFF)));
-          _mm512_store_pd(&sp[17*8],_itw17); }
-        { __m512d _itw18=_mm512_load_pd(&sp[18*8]);
-        _itw18 = _mm512_fmsubadd_pd(_itw18,_mm512_movedup_pd(iw9),_mm512_mul_pd(_mm512_permute_pd(_itw18,0x55),_mm512_permute_pd(iw9,0xFF)));
-          _mm512_store_pd(&sp[18*8],_itw18); }
-        { __m512d _itw19=_mm512_load_pd(&sp[19*8]);
-        _itw19 = _mm512_fmsubadd_pd(_itw19,_mm512_movedup_pd(iw12),_mm512_mul_pd(_mm512_permute_pd(_itw19,0x55),_mm512_permute_pd(iw12,0xFF)));
-          _mm512_store_pd(&sp[19*8],_itw19); }
-
-        /* Pass 2: 4× IL DFT-5 (2 pairs) */
-        /* IL DFT-5 PAIR: k1=0,1 */
-        {
-        __m512d a0=_mm512_load_pd(&sp[0*8]);
-        __m512d b0=_mm512_load_pd(&sp[5*8]);
-        __m512d a1=_mm512_load_pd(&sp[1*8]);
-        __m512d b1=_mm512_load_pd(&sp[6*8]);
-        __m512d a2=_mm512_load_pd(&sp[2*8]);
-        __m512d b2=_mm512_load_pd(&sp[7*8]);
-        __m512d a3=_mm512_load_pd(&sp[3*8]);
-        __m512d b3=_mm512_load_pd(&sp[8*8]);
-        __m512d a4=_mm512_load_pd(&sp[4*8]);
-        __m512d b4=_mm512_load_pd(&sp[9*8]);
-        __m512d as1=_mm512_add_pd(a1,a4), ad1=_mm512_sub_pd(a1,a4);
-        __m512d as2=_mm512_add_pd(a2,a3), ad2=_mm512_sub_pd(a2,a3);
-        __m512d ass=_mm512_add_pd(as1,as2);
-        __m512d bs1=_mm512_add_pd(b1,b4), bd1=_mm512_sub_pd(b1,b4);
-        __m512d bs2=_mm512_add_pd(b2,b3), bd2=_mm512_sub_pd(b2,b3);
-        __m512d bss=_mm512_add_pd(bs1,bs2);
-        __m512d ay0=_mm512_add_pd(a0,ass);
-        __m512d by0=_mm512_add_pd(b0,bss);
-        __m512d at0=_mm512_fnmadd_pd(_mm512_set1_pd(0.25),ass,a0);
-        __m512d at1=_mm512_mul_pd(_mm512_set1_pd(0.55901699437494742),_mm512_sub_pd(as1,as2));
-        __m512d ap1=_mm512_add_pd(at0,at1), ap2=_mm512_sub_pd(at0,at1);
-        __m512d aU=_mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313),ad2,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),ad1));
-        __m512d aV=_mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313),ad1,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),ad2));
-        __m512d bt0=_mm512_fnmadd_pd(_mm512_set1_pd(0.25),bss,b0);
-        __m512d bt1=_mm512_mul_pd(_mm512_set1_pd(0.55901699437494742),_mm512_sub_pd(bs1,bs2));
-        __m512d bp1=_mm512_add_pd(bt0,bt1), bp2=_mm512_sub_pd(bt0,bt1);
-        __m512d bU=_mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313),bd2,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),bd1));
-        __m512d bV=_mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313),bd1,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),bd2));
-        __m512d ao0=ay0;
-        _mm512_store_pd(&out[2*(0*K+k)],ao0);
-        __m512d ao1=_mm512_add_pd(ap1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aU,0x55)));
-        _mm512_store_pd(&out[2*(4*K+k)],ao1);
-        __m512d ao2=_mm512_sub_pd(ap2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aV,0x55)));
-        _mm512_store_pd(&out[2*(8*K+k)],ao2);
-        __m512d ao3=_mm512_add_pd(ap2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aV,0x55)));
-        _mm512_store_pd(&out[2*(12*K+k)],ao3);
-        __m512d ao4=_mm512_sub_pd(ap1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aU,0x55)));
-        _mm512_store_pd(&out[2*(16*K+k)],ao4);
-        __m512d bo0=by0;
-        _mm512_store_pd(&out[2*(1*K+k)],bo0);
-        __m512d bo1=_mm512_add_pd(bp1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bU,0x55)));
-        _mm512_store_pd(&out[2*(5*K+k)],bo1);
-        __m512d bo2=_mm512_sub_pd(bp2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bV,0x55)));
-        _mm512_store_pd(&out[2*(9*K+k)],bo2);
-        __m512d bo3=_mm512_add_pd(bp2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bV,0x55)));
-        _mm512_store_pd(&out[2*(13*K+k)],bo3);
-        __m512d bo4=_mm512_sub_pd(bp1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bU,0x55)));
-        _mm512_store_pd(&out[2*(17*K+k)],bo4);
-        }
-
-        /* IL DFT-5 PAIR: k1=2,3 */
-        {
-        __m512d a0=_mm512_load_pd(&sp[10*8]);
-        __m512d b0=_mm512_load_pd(&sp[15*8]);
-        __m512d a1=_mm512_load_pd(&sp[11*8]);
-        __m512d b1=_mm512_load_pd(&sp[16*8]);
-        __m512d a2=_mm512_load_pd(&sp[12*8]);
-        __m512d b2=_mm512_load_pd(&sp[17*8]);
-        __m512d a3=_mm512_load_pd(&sp[13*8]);
-        __m512d b3=_mm512_load_pd(&sp[18*8]);
-        __m512d a4=_mm512_load_pd(&sp[14*8]);
-        __m512d b4=_mm512_load_pd(&sp[19*8]);
-        __m512d as1=_mm512_add_pd(a1,a4), ad1=_mm512_sub_pd(a1,a4);
-        __m512d as2=_mm512_add_pd(a2,a3), ad2=_mm512_sub_pd(a2,a3);
-        __m512d ass=_mm512_add_pd(as1,as2);
-        __m512d bs1=_mm512_add_pd(b1,b4), bd1=_mm512_sub_pd(b1,b4);
-        __m512d bs2=_mm512_add_pd(b2,b3), bd2=_mm512_sub_pd(b2,b3);
-        __m512d bss=_mm512_add_pd(bs1,bs2);
-        __m512d ay0=_mm512_add_pd(a0,ass);
-        __m512d by0=_mm512_add_pd(b0,bss);
-        __m512d at0=_mm512_fnmadd_pd(_mm512_set1_pd(0.25),ass,a0);
-        __m512d at1=_mm512_mul_pd(_mm512_set1_pd(0.55901699437494742),_mm512_sub_pd(as1,as2));
-        __m512d ap1=_mm512_add_pd(at0,at1), ap2=_mm512_sub_pd(at0,at1);
-        __m512d aU=_mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313),ad2,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),ad1));
-        __m512d aV=_mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313),ad1,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),ad2));
-        __m512d bt0=_mm512_fnmadd_pd(_mm512_set1_pd(0.25),bss,b0);
-        __m512d bt1=_mm512_mul_pd(_mm512_set1_pd(0.55901699437494742),_mm512_sub_pd(bs1,bs2));
-        __m512d bp1=_mm512_add_pd(bt0,bt1), bp2=_mm512_sub_pd(bt0,bt1);
-        __m512d bU=_mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313),bd2,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),bd1));
-        __m512d bV=_mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313),bd1,_mm512_mul_pd(_mm512_set1_pd(0.95105651629515357),bd2));
-        __m512d ao0=ay0;
-        _mm512_store_pd(&out[2*(2*K+k)],ao0);
-        __m512d ao1=_mm512_add_pd(ap1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aU,0x55)));
-        _mm512_store_pd(&out[2*(6*K+k)],ao1);
-        __m512d ao2=_mm512_sub_pd(ap2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aV,0x55)));
-        _mm512_store_pd(&out[2*(10*K+k)],ao2);
-        __m512d ao3=_mm512_add_pd(ap2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aV,0x55)));
-        _mm512_store_pd(&out[2*(14*K+k)],ao3);
-        __m512d ao4=_mm512_sub_pd(ap1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(aU,0x55)));
-        _mm512_store_pd(&out[2*(18*K+k)],ao4);
-        __m512d bo0=by0;
-        _mm512_store_pd(&out[2*(3*K+k)],bo0);
-        __m512d bo1=_mm512_add_pd(bp1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bU,0x55)));
-        _mm512_store_pd(&out[2*(7*K+k)],bo1);
-        __m512d bo2=_mm512_sub_pd(bp2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bV,0x55)));
-        _mm512_store_pd(&out[2*(11*K+k)],bo2);
-        __m512d bo3=_mm512_add_pd(bp2,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bV,0x55)));
-        _mm512_store_pd(&out[2*(15*K+k)],bo3);
-        __m512d bo4=_mm512_sub_pd(bp1,_mm512_fmaddsub_pd(_mm512_set1_pd(1.0),_mm512_setzero_pd(),_mm512_permute_pd(bU,0x55)));
-        _mm512_store_pd(&out[2*(19*K+k)],bo4);
-        }
-
+  for (size_t k = 0; k < K; k += 4)
+  {
+    /* Pass 1: 5× IL DFT-4 (triple + pair) */
+    /* IL DFT-4 TRIPLE: n2=0,1,2 (24 ZMM, 8 free) */
+    {
+      __m512d a0 = _mm512_load_pd(&in[2 * (0 * K + k)]);
+      __m512d b0 = _mm512_load_pd(&in[2 * (1 * K + k)]);
+      __m512d c0 = _mm512_load_pd(&in[2 * (2 * K + k)]);
+      __m512d a1 = _mm512_load_pd(&in[2 * (5 * K + k)]);
+      __m512d b1 = _mm512_load_pd(&in[2 * (6 * K + k)]);
+      __m512d c1 = _mm512_load_pd(&in[2 * (7 * K + k)]);
+      __m512d a2 = _mm512_load_pd(&in[2 * (10 * K + k)]);
+      __m512d b2 = _mm512_load_pd(&in[2 * (11 * K + k)]);
+      __m512d c2 = _mm512_load_pd(&in[2 * (12 * K + k)]);
+      __m512d a3 = _mm512_load_pd(&in[2 * (15 * K + k)]);
+      __m512d b3 = _mm512_load_pd(&in[2 * (16 * K + k)]);
+      __m512d c3 = _mm512_load_pd(&in[2 * (17 * K + k)]);
+      __m512d as = _mm512_add_pd(a0, a2), ad = _mm512_sub_pd(a0, a2);
+      __m512d at = _mm512_add_pd(a1, a3), au = _mm512_sub_pd(a1, a3);
+      __m512d bs = _mm512_add_pd(b0, b2), bd = _mm512_sub_pd(b0, b2);
+      __m512d bt = _mm512_add_pd(b1, b3), bu = _mm512_sub_pd(b1, b3);
+      __m512d cs = _mm512_add_pd(c0, c2), cd = _mm512_sub_pd(c0, c2);
+      __m512d ct = _mm512_add_pd(c1, c3), cu = _mm512_sub_pd(c1, c3);
+      _mm512_store_pd(&sp[0 * 8], _mm512_add_pd(as, at));
+      _mm512_store_pd(&sp[5 * 8], _mm512_add_pd(ad, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(au, 0x55))));
+      _mm512_store_pd(&sp[10 * 8], _mm512_sub_pd(as, at));
+      _mm512_store_pd(&sp[15 * 8], _mm512_sub_pd(ad, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(au, 0x55))));
+      _mm512_store_pd(&sp[1 * 8], _mm512_add_pd(bs, bt));
+      _mm512_store_pd(&sp[6 * 8], _mm512_add_pd(bd, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bu, 0x55))));
+      _mm512_store_pd(&sp[11 * 8], _mm512_sub_pd(bs, bt));
+      _mm512_store_pd(&sp[16 * 8], _mm512_sub_pd(bd, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bu, 0x55))));
+      _mm512_store_pd(&sp[2 * 8], _mm512_add_pd(cs, ct));
+      _mm512_store_pd(&sp[7 * 8], _mm512_add_pd(cd, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(cu, 0x55))));
+      _mm512_store_pd(&sp[12 * 8], _mm512_sub_pd(cs, ct));
+      _mm512_store_pd(&sp[17 * 8], _mm512_sub_pd(cd, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(cu, 0x55))));
     }
+
+    /* IL DFT-4 PAIR: n2=3,4 */
+    {
+      __m512d a0 = _mm512_load_pd(&in[2 * (3 * K + k)]);
+      __m512d b0 = _mm512_load_pd(&in[2 * (4 * K + k)]);
+      __m512d a1 = _mm512_load_pd(&in[2 * (8 * K + k)]);
+      __m512d b1 = _mm512_load_pd(&in[2 * (9 * K + k)]);
+      __m512d a2 = _mm512_load_pd(&in[2 * (13 * K + k)]);
+      __m512d b2 = _mm512_load_pd(&in[2 * (14 * K + k)]);
+      __m512d a3 = _mm512_load_pd(&in[2 * (18 * K + k)]);
+      __m512d b3 = _mm512_load_pd(&in[2 * (19 * K + k)]);
+      __m512d as = _mm512_add_pd(a0, a2), ad = _mm512_sub_pd(a0, a2);
+      __m512d at = _mm512_add_pd(a1, a3), au = _mm512_sub_pd(a1, a3);
+      __m512d bs = _mm512_add_pd(b0, b2), bd = _mm512_sub_pd(b0, b2);
+      __m512d bt = _mm512_add_pd(b1, b3), bu = _mm512_sub_pd(b1, b3);
+      _mm512_store_pd(&sp[3 * 8], _mm512_add_pd(as, at));
+      _mm512_store_pd(&sp[8 * 8], _mm512_add_pd(ad, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(au, 0x55))));
+      _mm512_store_pd(&sp[13 * 8], _mm512_sub_pd(as, at));
+      _mm512_store_pd(&sp[18 * 8], _mm512_sub_pd(ad, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(au, 0x55))));
+      _mm512_store_pd(&sp[4 * 8], _mm512_add_pd(bs, bt));
+      _mm512_store_pd(&sp[9 * 8], _mm512_add_pd(bd, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bu, 0x55))));
+      _mm512_store_pd(&sp[14 * 8], _mm512_sub_pd(bs, bt));
+      _mm512_store_pd(&sp[19 * 8], _mm512_sub_pd(bd, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bu, 0x55))));
+    }
+
+    /* Internal W₂₀ twiddles (IL) */
+    {
+      __m512d _itw6 = _mm512_load_pd(&sp[6 * 8]);
+      _itw6 = _mm512_fmsubadd_pd(_itw6, _mm512_movedup_pd(iw1), _mm512_mul_pd(_mm512_permute_pd(_itw6, 0x55), _mm512_permute_pd(iw1, 0xFF)));
+      _mm512_store_pd(&sp[6 * 8], _itw6);
+    }
+    {
+      __m512d _itw7 = _mm512_load_pd(&sp[7 * 8]);
+      _itw7 = _mm512_fmsubadd_pd(_itw7, _mm512_movedup_pd(iw2), _mm512_mul_pd(_mm512_permute_pd(_itw7, 0x55), _mm512_permute_pd(iw2, 0xFF)));
+      _mm512_store_pd(&sp[7 * 8], _itw7);
+    }
+    {
+      __m512d _itw8 = _mm512_load_pd(&sp[8 * 8]);
+      _itw8 = _mm512_fmsubadd_pd(_itw8, _mm512_movedup_pd(iw3), _mm512_mul_pd(_mm512_permute_pd(_itw8, 0x55), _mm512_permute_pd(iw3, 0xFF)));
+      _mm512_store_pd(&sp[8 * 8], _itw8);
+    }
+    {
+      __m512d _itw9 = _mm512_load_pd(&sp[9 * 8]);
+      _itw9 = _mm512_fmsubadd_pd(_itw9, _mm512_movedup_pd(iw4), _mm512_mul_pd(_mm512_permute_pd(_itw9, 0x55), _mm512_permute_pd(iw4, 0xFF)));
+      _mm512_store_pd(&sp[9 * 8], _itw9);
+    }
+    {
+      __m512d _itw11 = _mm512_load_pd(&sp[11 * 8]);
+      _itw11 = _mm512_fmsubadd_pd(_itw11, _mm512_movedup_pd(iw2), _mm512_mul_pd(_mm512_permute_pd(_itw11, 0x55), _mm512_permute_pd(iw2, 0xFF)));
+      _mm512_store_pd(&sp[11 * 8], _itw11);
+    }
+    {
+      __m512d _itw12 = _mm512_load_pd(&sp[12 * 8]);
+      _itw12 = _mm512_fmsubadd_pd(_itw12, _mm512_movedup_pd(iw4), _mm512_mul_pd(_mm512_permute_pd(_itw12, 0x55), _mm512_permute_pd(iw4, 0xFF)));
+      _mm512_store_pd(&sp[12 * 8], _itw12);
+    }
+    {
+      __m512d _itw13 = _mm512_load_pd(&sp[13 * 8]);
+      _itw13 = _mm512_fmsubadd_pd(_itw13, _mm512_movedup_pd(iw6), _mm512_mul_pd(_mm512_permute_pd(_itw13, 0x55), _mm512_permute_pd(iw6, 0xFF)));
+      _mm512_store_pd(&sp[13 * 8], _itw13);
+    }
+    {
+      __m512d _itw14 = _mm512_load_pd(&sp[14 * 8]);
+      _itw14 = _mm512_fmsubadd_pd(_itw14, _mm512_movedup_pd(iw8), _mm512_mul_pd(_mm512_permute_pd(_itw14, 0x55), _mm512_permute_pd(iw8, 0xFF)));
+      _mm512_store_pd(&sp[14 * 8], _itw14);
+    }
+    {
+      __m512d _itw16 = _mm512_load_pd(&sp[16 * 8]);
+      _itw16 = _mm512_fmsubadd_pd(_itw16, _mm512_movedup_pd(iw3), _mm512_mul_pd(_mm512_permute_pd(_itw16, 0x55), _mm512_permute_pd(iw3, 0xFF)));
+      _mm512_store_pd(&sp[16 * 8], _itw16);
+    }
+    {
+      __m512d _itw17 = _mm512_load_pd(&sp[17 * 8]);
+      _itw17 = _mm512_fmsubadd_pd(_itw17, _mm512_movedup_pd(iw6), _mm512_mul_pd(_mm512_permute_pd(_itw17, 0x55), _mm512_permute_pd(iw6, 0xFF)));
+      _mm512_store_pd(&sp[17 * 8], _itw17);
+    }
+    {
+      __m512d _itw18 = _mm512_load_pd(&sp[18 * 8]);
+      _itw18 = _mm512_fmsubadd_pd(_itw18, _mm512_movedup_pd(iw9), _mm512_mul_pd(_mm512_permute_pd(_itw18, 0x55), _mm512_permute_pd(iw9, 0xFF)));
+      _mm512_store_pd(&sp[18 * 8], _itw18);
+    }
+    {
+      __m512d _itw19 = _mm512_load_pd(&sp[19 * 8]);
+      _itw19 = _mm512_fmsubadd_pd(_itw19, _mm512_movedup_pd(iw12), _mm512_mul_pd(_mm512_permute_pd(_itw19, 0x55), _mm512_permute_pd(iw12, 0xFF)));
+      _mm512_store_pd(&sp[19 * 8], _itw19);
+    }
+
+    /* Pass 2: 4× IL DFT-5 (2 pairs) */
+    /* IL DFT-5 PAIR: k1=0,1 */
+    {
+      __m512d a0 = _mm512_load_pd(&sp[0 * 8]);
+      __m512d b0 = _mm512_load_pd(&sp[5 * 8]);
+      __m512d a1 = _mm512_load_pd(&sp[1 * 8]);
+      __m512d b1 = _mm512_load_pd(&sp[6 * 8]);
+      __m512d a2 = _mm512_load_pd(&sp[2 * 8]);
+      __m512d b2 = _mm512_load_pd(&sp[7 * 8]);
+      __m512d a3 = _mm512_load_pd(&sp[3 * 8]);
+      __m512d b3 = _mm512_load_pd(&sp[8 * 8]);
+      __m512d a4 = _mm512_load_pd(&sp[4 * 8]);
+      __m512d b4 = _mm512_load_pd(&sp[9 * 8]);
+      __m512d as1 = _mm512_add_pd(a1, a4), ad1 = _mm512_sub_pd(a1, a4);
+      __m512d as2 = _mm512_add_pd(a2, a3), ad2 = _mm512_sub_pd(a2, a3);
+      __m512d ass = _mm512_add_pd(as1, as2);
+      __m512d bs1 = _mm512_add_pd(b1, b4), bd1 = _mm512_sub_pd(b1, b4);
+      __m512d bs2 = _mm512_add_pd(b2, b3), bd2 = _mm512_sub_pd(b2, b3);
+      __m512d bss = _mm512_add_pd(bs1, bs2);
+      __m512d ay0 = _mm512_add_pd(a0, ass);
+      __m512d by0 = _mm512_add_pd(b0, bss);
+      __m512d at0 = _mm512_fnmadd_pd(_mm512_set1_pd(0.25), ass, a0);
+      __m512d at1 = _mm512_mul_pd(_mm512_set1_pd(0.55901699437494742), _mm512_sub_pd(as1, as2));
+      __m512d ap1 = _mm512_add_pd(at0, at1), ap2 = _mm512_sub_pd(at0, at1);
+      __m512d aU = _mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313), ad2, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), ad1));
+      __m512d aV = _mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313), ad1, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), ad2));
+      __m512d bt0 = _mm512_fnmadd_pd(_mm512_set1_pd(0.25), bss, b0);
+      __m512d bt1 = _mm512_mul_pd(_mm512_set1_pd(0.55901699437494742), _mm512_sub_pd(bs1, bs2));
+      __m512d bp1 = _mm512_add_pd(bt0, bt1), bp2 = _mm512_sub_pd(bt0, bt1);
+      __m512d bU = _mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313), bd2, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), bd1));
+      __m512d bV = _mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313), bd1, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), bd2));
+      __m512d ao0 = ay0;
+      _mm512_store_pd(&out[2 * (0 * K + k)], ao0);
+      __m512d ao1 = _mm512_add_pd(ap1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aU, 0x55)));
+      _mm512_store_pd(&out[2 * (4 * K + k)], ao1);
+      __m512d ao2 = _mm512_sub_pd(ap2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aV, 0x55)));
+      _mm512_store_pd(&out[2 * (8 * K + k)], ao2);
+      __m512d ao3 = _mm512_add_pd(ap2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aV, 0x55)));
+      _mm512_store_pd(&out[2 * (12 * K + k)], ao3);
+      __m512d ao4 = _mm512_sub_pd(ap1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aU, 0x55)));
+      _mm512_store_pd(&out[2 * (16 * K + k)], ao4);
+      __m512d bo0 = by0;
+      _mm512_store_pd(&out[2 * (1 * K + k)], bo0);
+      __m512d bo1 = _mm512_add_pd(bp1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bU, 0x55)));
+      _mm512_store_pd(&out[2 * (5 * K + k)], bo1);
+      __m512d bo2 = _mm512_sub_pd(bp2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bV, 0x55)));
+      _mm512_store_pd(&out[2 * (9 * K + k)], bo2);
+      __m512d bo3 = _mm512_add_pd(bp2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bV, 0x55)));
+      _mm512_store_pd(&out[2 * (13 * K + k)], bo3);
+      __m512d bo4 = _mm512_sub_pd(bp1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bU, 0x55)));
+      _mm512_store_pd(&out[2 * (17 * K + k)], bo4);
+    }
+
+    /* IL DFT-5 PAIR: k1=2,3 */
+    {
+      __m512d a0 = _mm512_load_pd(&sp[10 * 8]);
+      __m512d b0 = _mm512_load_pd(&sp[15 * 8]);
+      __m512d a1 = _mm512_load_pd(&sp[11 * 8]);
+      __m512d b1 = _mm512_load_pd(&sp[16 * 8]);
+      __m512d a2 = _mm512_load_pd(&sp[12 * 8]);
+      __m512d b2 = _mm512_load_pd(&sp[17 * 8]);
+      __m512d a3 = _mm512_load_pd(&sp[13 * 8]);
+      __m512d b3 = _mm512_load_pd(&sp[18 * 8]);
+      __m512d a4 = _mm512_load_pd(&sp[14 * 8]);
+      __m512d b4 = _mm512_load_pd(&sp[19 * 8]);
+      __m512d as1 = _mm512_add_pd(a1, a4), ad1 = _mm512_sub_pd(a1, a4);
+      __m512d as2 = _mm512_add_pd(a2, a3), ad2 = _mm512_sub_pd(a2, a3);
+      __m512d ass = _mm512_add_pd(as1, as2);
+      __m512d bs1 = _mm512_add_pd(b1, b4), bd1 = _mm512_sub_pd(b1, b4);
+      __m512d bs2 = _mm512_add_pd(b2, b3), bd2 = _mm512_sub_pd(b2, b3);
+      __m512d bss = _mm512_add_pd(bs1, bs2);
+      __m512d ay0 = _mm512_add_pd(a0, ass);
+      __m512d by0 = _mm512_add_pd(b0, bss);
+      __m512d at0 = _mm512_fnmadd_pd(_mm512_set1_pd(0.25), ass, a0);
+      __m512d at1 = _mm512_mul_pd(_mm512_set1_pd(0.55901699437494742), _mm512_sub_pd(as1, as2));
+      __m512d ap1 = _mm512_add_pd(at0, at1), ap2 = _mm512_sub_pd(at0, at1);
+      __m512d aU = _mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313), ad2, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), ad1));
+      __m512d aV = _mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313), ad1, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), ad2));
+      __m512d bt0 = _mm512_fnmadd_pd(_mm512_set1_pd(0.25), bss, b0);
+      __m512d bt1 = _mm512_mul_pd(_mm512_set1_pd(0.55901699437494742), _mm512_sub_pd(bs1, bs2));
+      __m512d bp1 = _mm512_add_pd(bt0, bt1), bp2 = _mm512_sub_pd(bt0, bt1);
+      __m512d bU = _mm512_fmadd_pd(_mm512_set1_pd(0.58778525229247313), bd2, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), bd1));
+      __m512d bV = _mm512_fnmadd_pd(_mm512_set1_pd(0.58778525229247313), bd1, _mm512_mul_pd(_mm512_set1_pd(0.95105651629515357), bd2));
+      __m512d ao0 = ay0;
+      _mm512_store_pd(&out[2 * (2 * K + k)], ao0);
+      __m512d ao1 = _mm512_add_pd(ap1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aU, 0x55)));
+      _mm512_store_pd(&out[2 * (6 * K + k)], ao1);
+      __m512d ao2 = _mm512_sub_pd(ap2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aV, 0x55)));
+      _mm512_store_pd(&out[2 * (10 * K + k)], ao2);
+      __m512d ao3 = _mm512_add_pd(ap2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aV, 0x55)));
+      _mm512_store_pd(&out[2 * (14 * K + k)], ao3);
+      __m512d ao4 = _mm512_sub_pd(ap1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(aU, 0x55)));
+      _mm512_store_pd(&out[2 * (18 * K + k)], ao4);
+      __m512d bo0 = by0;
+      _mm512_store_pd(&out[2 * (3 * K + k)], bo0);
+      __m512d bo1 = _mm512_add_pd(bp1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bU, 0x55)));
+      _mm512_store_pd(&out[2 * (7 * K + k)], bo1);
+      __m512d bo2 = _mm512_sub_pd(bp2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bV, 0x55)));
+      _mm512_store_pd(&out[2 * (11 * K + k)], bo2);
+      __m512d bo3 = _mm512_add_pd(bp2, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bV, 0x55)));
+      _mm512_store_pd(&out[2 * (15 * K + k)], bo3);
+      __m512d bo4 = _mm512_sub_pd(bp1, _mm512_fmaddsub_pd(_mm512_set1_pd(1.0), _mm512_setzero_pd(), _mm512_permute_pd(bU, 0x55)));
+      _mm512_store_pd(&out[2 * (19 * K + k)], bo4);
+    }
+  }
 }
 
 #endif /* FFT_RADIX20_AVX512_N1_MONO_IL_H */
