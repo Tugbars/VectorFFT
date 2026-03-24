@@ -14,7 +14,7 @@
  * Tests:
  *   1. Correctness: VectorFFT fwd vs FFTW fwd
  *   2. Roundtrip:   VectorFFT fwd->bwd vs identity
- *   3. Benchmark:   VectorFFT vs FFTW (ns, min-of-5, FFTW_ESTIMATE)
+ *   3. Benchmark:   VectorFFT vs FFTW (ns, min-of-5, FFTW_MEASURE)
  */
 
 #ifdef _MSC_VER
@@ -199,7 +199,7 @@ static int test_correctness(size_t N, const vfft_codelet_registry *reg)
     /* FFTW reference */
     fftw_complex *fin = fftw_alloc_complex(N);
     fftw_complex *fout = fftw_alloc_complex(N);
-    fftw_plan fp = fftw_plan_dft_1d((int)N, fin, fout, FFTW_FORWARD, FFTW_ESTIMATE);
+    fftw_plan fp = fftw_plan_dft_1d((int)N, fin, fout, FFTW_FORWARD, FFTW_MEASURE);
     for (size_t i = 0; i < N; i++)
     {
         fin[i][0] = ir[i];
@@ -313,8 +313,8 @@ static void bench(size_t N, const vfft_codelet_registry *reg)
     fftw_complex *fin = fftw_alloc_complex(N);
     fftw_complex *fout = fftw_alloc_complex(N);
     fftw_complex *bout = fftw_alloc_complex(N);
-    fftw_plan fp_fwd = fftw_plan_dft_1d((int)N, fin, fout, FFTW_FORWARD, FFTW_ESTIMATE);
-    fftw_plan fp_bwd = fftw_plan_dft_1d((int)N, fout, bout, FFTW_BACKWARD, FFTW_ESTIMATE);
+    fftw_plan fp_fwd = fftw_plan_dft_1d((int)N, fin, fout, FFTW_FORWARD, FFTW_MEASURE);
+    fftw_plan fp_bwd = fftw_plan_dft_1d((int)N, fout, bout, FFTW_BACKWARD, FFTW_MEASURE);
     for (size_t i = 0; i < N; i++)
     {
         fin[i][0] = ir[i];
@@ -539,7 +539,7 @@ int main(void)
     }
 
     /* ── Benchmark ── */
-    printf("── Benchmark: VectorFFT vs FFTW (ns, min-of-5, FFTW_ESTIMATE) ──\n");
+    printf("── Benchmark: VectorFFT vs FFTW (ns, min-of-5, FFTW_MEASURE) ──\n");
     printf("  %-8s  %-16s  %9s  %9s  %6s  %9s  %9s  %6s\n",
            "N", "factors", "vfft_fwd", "fftw_fwd", "fwd_x",
            "vfft_rt", "fftw_rt", "rt_x");
