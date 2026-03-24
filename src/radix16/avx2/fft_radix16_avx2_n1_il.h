@@ -33,9 +33,9 @@ static void radix16_dag_n1_fwd_il_avx2(
 
     /* Sign masks for IL ×j operations */
     const __m256d sign_odd = _mm256_castsi256_pd(_mm256_set_epi64x(
-        0x8000000000000000LL, 0, 0x8000000000000000LL, 0));
+        (long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL, 0));
     const __m256d sign_even = _mm256_castsi256_pd(_mm256_set_epi64x(
-        0, 0x8000000000000000LL, 0, 0x8000000000000000LL));
+        0, (long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL));
 
     /* IL ×(+j): [re,im] → [-im,re] = permute + negate even (re positions get -im) */
     #define FMAI(B, A, D)  { __m256d jB = _mm256_xor_pd(_mm256_permute_pd(B,0x5),sign_even); D = _mm256_add_pd(A, jB); }

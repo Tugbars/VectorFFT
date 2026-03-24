@@ -28,9 +28,9 @@ static const double _r16t_KS = 0.70710678118654752440084436210484904;
 static const double _r16t_KC = 0.92387953251128675612818318939678829;
 
 /* ── IL sign masks ── */
-#define R16T_SIGN_ODD  _mm256_castsi256_pd(_mm256_set_epi64x(0x8000000000000000LL, 0, 0x8000000000000000LL, 0))
-#define R16T_SIGN_EVEN _mm256_castsi256_pd(_mm256_set_epi64x(0, 0x8000000000000000LL, 0, 0x8000000000000000LL))
-#define R16T_SIGN_ALL  _mm256_castsi256_pd(_mm256_set1_epi64x(0x8000000000000000LL))
+#define R16T_SIGN_ODD  _mm256_castsi256_pd(_mm256_set_epi64x((long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL, 0))
+#define R16T_SIGN_EVEN _mm256_castsi256_pd(_mm256_set_epi64x(0, (long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL))
+#define R16T_SIGN_ALL  _mm256_castsi256_pd(_mm256_set1_epi64x((long long)0x8000000000000000ULL))
 
 /* IL ×(+j) for forward output: [re,im]→[-im,re] = permute + negate even */
 #define R16T_FMAI(B, A, D) { __m256d jB = _mm256_xor_pd(_mm256_permute_pd(B,0x5), sign_even); D = _mm256_add_pd(A, jB); }
@@ -189,7 +189,7 @@ static void radix16_tw_dit_fwd_il_native_avx2(
         /* Load + forward external twiddle */
         __m256d x[16];
         x[0] = _mm256_load_pd(&in[(0*K)*2+off]);
-        for (int n = 1; n < 16; n++) {
+        for (size_t n = 1; n < 16; n++) {
             __m256d raw = _mm256_load_pd(&in[(n*K)*2+off]);
             __m256d tw  = _mm256_load_pd(&tw_il[((n-1)*K)*2+off]);
             R16T_IL_CMUL(raw, tw, x[n])
@@ -224,7 +224,7 @@ static void radix16_tw_dit_bwd_il_native_avx2(
 
         __m256d x[16];
         x[0] = _mm256_load_pd(&in[(0*K)*2+off]);
-        for (int n = 1; n < 16; n++) {
+        for (size_t n = 1; n < 16; n++) {
             __m256d raw = _mm256_load_pd(&in[(n*K)*2+off]);
             __m256d tw  = _mm256_load_pd(&tw_il[((n-1)*K)*2+off]);
             R16T_IL_CMUL_CONJ(raw, tw, x[n])
@@ -251,7 +251,8 @@ static void radix16_tw_dif_fwd_split_avx2(
     const __m256d KT = _mm256_set1_pd(_r16t_KT);
     const __m256d KS = _mm256_set1_pd(_r16t_KS);
     const __m256d KC = _mm256_set1_pd(_r16t_KC);
-    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x8000000000000000LL));
+    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x((long long)0x8000000000000000ULL));
+    (void)sign_mask; /* used by SP_NJ/SP_PJ macros */
 
     /* Split ×j macros for DIF output — different from IL macros */
     #define SP_NJ(yr,yi,dr,di) { dr=yi; di=_mm256_xor_pd(yr,sign_mask); }
@@ -260,7 +261,7 @@ static void radix16_tw_dif_fwd_split_avx2(
     for (size_t k = 0; k < K; k += 4) {
         /* Load 16 inputs — no twiddle (DIF) */
         __m256d xr[16], xi[16];
-        for (int n = 0; n < 16; n++) {
+        for (size_t n = 0; n < 16; n++) {
             xr[n] = _mm256_load_pd(&ir[n*K+k]);
             xi[n] = _mm256_load_pd(&ii[n*K+k]);
         }
@@ -305,7 +306,7 @@ static void radix16_tw_dif_fwd_split_avx2(
         /* Forward output + DIF twiddle on output */
         #define DIF_STORE_FWD(arm, yr, yi) { \
             if (arm == 0) { _mm256_store_pd(&or_[arm*K+k],yr); _mm256_store_pd(&oi[arm*K+k],yi); } \
-            else { __m256d dr,di; R16T_SP_CMUL(yr,yi,(arm-1)*K+k,dr,di); \
+            else { __m256d dr,di; R16T_SP_CMUL(yr,yi,((size_t)(arm)-1)*K+k,dr,di); \
                    _mm256_store_pd(&or_[arm*K+k],dr); _mm256_store_pd(&oi[arm*K+k],di); } \
         }
 
@@ -380,11 +381,12 @@ static void radix16_tw_dif_bwd_split_avx2(
     const __m256d KT = _mm256_set1_pd(_r16t_KT);
     const __m256d KS = _mm256_set1_pd(_r16t_KS);
     const __m256d KC = _mm256_set1_pd(_r16t_KC);
-    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x8000000000000000LL));
+    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x((long long)0x8000000000000000ULL));
+    (void)sign_mask; /* used by SP_NJ/SP_PJ macros */
 
     for (size_t k = 0; k < K; k += 4) {
         __m256d xr[16], xi[16];
-        for (int n = 0; n < 16; n++) {
+        for (size_t n = 0; n < 16; n++) {
             xr[n] = _mm256_load_pd(&ir[n*K+k]);
             xi[n] = _mm256_load_pd(&ii[n*K+k]);
         }
@@ -430,7 +432,7 @@ static void radix16_tw_dif_bwd_split_avx2(
          * Backward ×j in split: re'=-im, im'=re (opposite sign of forward) */
         #define DIF_BWD(arm, yr, yi) { \
             if (arm == 0) { _mm256_store_pd(&or_[arm*K+k],yr); _mm256_store_pd(&oi[arm*K+k],yi); } \
-            else { __m256d dr,di; R16T_SP_CMUL_CONJ(yr,yi,(arm-1)*K+k,dr,di); \
+            else { __m256d dr,di; R16T_SP_CMUL_CONJ(yr,yi,((size_t)(arm)-1)*K+k,dr,di); \
                    _mm256_store_pd(&or_[arm*K+k],dr); _mm256_store_pd(&oi[arm*K+k],di); } \
         }
 
@@ -507,7 +509,7 @@ static void radix16_tw_dif_fwd_il_native_avx2(
 
         /* Load 16 inputs — no twiddle (DIF) */
         __m256d x[16];
-        for (int n = 0; n < 16; n++)
+        for (size_t n = 0; n < 16; n++)
             x[n] = _mm256_load_pd(&in[(n*K)*2+off]);
 
         R16T_IL_DAG_BLOCKS(x)
@@ -515,7 +517,7 @@ static void radix16_tw_dif_fwd_il_native_avx2(
         /* Forward output + twiddle on output */
         #define DIF_STORE_IL(arm, val) { \
             if (arm == 0) { _mm256_store_pd(&out[(arm*K)*2+off], val); } \
-            else { __m256d tw = _mm256_load_pd(&tw_il[((arm-1)*K)*2+off]); \
+            else { __m256d tw = _mm256_load_pd(&tw_il[(((size_t)(arm)-1)*K)*2+off]); \
                    __m256d d; R16T_IL_CMUL(val, tw, d); \
                    _mm256_store_pd(&out[(arm*K)*2+off], d); } \
         }
@@ -544,7 +546,7 @@ static void radix16_tw_dif_bwd_il_native_avx2(
         size_t off = k * 2;
 
         __m256d x[16];
-        for (int n = 0; n < 16; n++)
+        for (size_t n = 0; n < 16; n++)
             x[n] = _mm256_load_pd(&in[(n*K)*2+off]);
 
         R16T_IL_DAG_BLOCKS(x)
@@ -552,7 +554,7 @@ static void radix16_tw_dif_bwd_il_native_avx2(
         /* Backward output + conj twiddle on output */
         #define DIF_STORE_IL_CONJ(arm, val) { \
             if (arm == 0) { _mm256_store_pd(&out[(arm*K)*2+off], val); } \
-            else { __m256d tw = _mm256_load_pd(&tw_il[((arm-1)*K)*2+off]); \
+            else { __m256d tw = _mm256_load_pd(&tw_il[(((size_t)(arm)-1)*K)*2+off]); \
                    __m256d d; R16T_IL_CMUL_CONJ(val, tw, d); \
                    _mm256_store_pd(&out[(arm*K)*2+off], d); } \
         }

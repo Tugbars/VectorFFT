@@ -35,7 +35,7 @@ static void radix16_ct_n1_bwd_avx512(
     double * __restrict__ or_, double * __restrict__ oi,
     size_t K)
 {
-    const __m512i SM = _mm512_set1_epi64(0x8000000000000000ULL);
+    const __m512i SM = _mm512_set1_epi64((long long)0x8000000000000000ULL);
     const __m512d vw1r = _mm512_set1_pd(_r16b_W1r);
     const __m512d vw1i = _mm512_set1_pd(_r16b_W1i);
     const __m512d vw3r = _mm512_set1_pd(_r16b_W3r);
@@ -170,6 +170,7 @@ static void radix16_ct_n1_bwd_il_avx512(
         0, (long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL,
         0, (long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL));
     const __m512d sign_all = _mm512_castsi512_pd(_mm512_set1_epi64((long long)0x8000000000000000ULL));
+    (void)sign_odd; /* used in TW IL variant, not N1 */
 
     const __m512d vw1_rr = _mm512_set1_pd(_r16b_W1r);
     const __m512d vw1_in = _mm512_xor_pd(_mm512_set1_pd(_r16b_W1i), sign_even);
@@ -287,7 +288,7 @@ static void radix16_ct_tw_dit_fwd_split_avx512(
     size_t K)
 {
     /* Reuse forward W16 constants from regonly header */
-    const __m512i SM = _mm512_set1_epi64(0x8000000000000000ULL);
+    const __m512i SM = _mm512_set1_epi64((long long)0x8000000000000000ULL);
     const __m512d vw1r = _mm512_set1_pd(0.92387953251128675613);
     const __m512d vw1i = _mm512_set1_pd(-0.38268343236508977173);
     const __m512d vw3r = _mm512_set1_pd(0.38268343236508977173);
@@ -388,7 +389,7 @@ static void radix16_ct_tw_dit_bwd_split_avx512(
     const double * __restrict__ tw_re, const double * __restrict__ tw_im,
     size_t K)
 {
-    const __m512i SM = _mm512_set1_epi64(0x8000000000000000ULL);
+    const __m512i SM = _mm512_set1_epi64((long long)0x8000000000000000ULL);
     const __m512d vw1r = _mm512_set1_pd(_r16b_W1r);
     const __m512d vw1i = _mm512_set1_pd(_r16b_W1i);
     const __m512d vw3r = _mm512_set1_pd(_r16b_W3r);

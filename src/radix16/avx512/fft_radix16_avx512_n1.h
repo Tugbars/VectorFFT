@@ -26,7 +26,7 @@ static void radix16_ct_n1_fwd_avx512_regonly(
     double * __restrict__ or_, double * __restrict__ oi,
     size_t K)
 {
-    const __m512i SM = _mm512_set1_epi64(0x8000000000000000ULL);
+    const __m512i SM = _mm512_set1_epi64((long long)0x8000000000000000ULL);
     const __m512d vw1r = _mm512_set1_pd(_r16_W1r);
     const __m512d vw1i = _mm512_set1_pd(_r16_W1i);
     const __m512d vw3r = _mm512_set1_pd(_r16_W3r);

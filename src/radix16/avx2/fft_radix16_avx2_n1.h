@@ -37,7 +37,7 @@ static void radix16_ct_n1_fwd_avx2(
     double * __restrict__ or_, double * __restrict__ oi,
     size_t K)
 {
-    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x8000000000000000LL));
+    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x((long long)0x8000000000000000ULL));
     const __m256d vw1r = _mm256_set1_pd(_r16a_W1r), vw1i = _mm256_set1_pd(_r16a_W1i);
     const __m256d vw3r = _mm256_set1_pd(_r16a_W3r), vw3i = _mm256_set1_pd(_r16a_W3i);
     const __m256d vs2  = _mm256_set1_pd(_r16a_S2);
@@ -157,7 +157,7 @@ static void radix16_ct_n1_bwd_avx2(
     double * __restrict__ or_, double * __restrict__ oi,
     size_t K)
 {
-    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x(0x8000000000000000LL));
+    const __m256d sign_mask = _mm256_castsi256_pd(_mm256_set1_epi64x((long long)0x8000000000000000ULL));
     const __m256d vw1r = _mm256_set1_pd(_r16a_W1rc), vw1i = _mm256_set1_pd(_r16a_W1ic);
     const __m256d vw3r = _mm256_set1_pd(_r16a_W3rc), vw3i = _mm256_set1_pd(_r16a_W3ic);
     const __m256d vs2  = _mm256_set1_pd(_r16a_S2);
@@ -253,10 +253,10 @@ static void radix16_ct_n1_fwd_il_avx2(
     size_t K)
 {
     const __m256d sign_odd = _mm256_castsi256_pd(_mm256_set_epi64x(
-        0x8000000000000000LL, 0, 0x8000000000000000LL, 0));
+        (long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL, 0));
     const __m256d sign_even = _mm256_castsi256_pd(_mm256_set_epi64x(
-        0, 0x8000000000000000LL, 0, 0x8000000000000000LL));
-    const __m256d sign_all = _mm256_castsi256_pd(_mm256_set1_epi64x(0x8000000000000000LL));
+        0, (long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL));
+    const __m256d sign_all = _mm256_castsi256_pd(_mm256_set1_epi64x((long long)0x8000000000000000ULL));
 
     const __m256d vw1_rr = _mm256_set1_pd(_r16a_W1r);
     const __m256d vw1_in = _mm256_xor_pd(_mm256_set1_pd(_r16a_W1i), sign_even);
