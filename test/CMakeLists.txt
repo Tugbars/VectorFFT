@@ -131,6 +131,19 @@ message(STATUS "test: bench_full_fft [ISA: ${BENCH_ISA_FLAGS}]")
 add_bench_target(bench_factorize bench_factorize.c)
 message(STATUS "test: bench_factorize [ISA: ${BENCH_ISA_FLAGS}]")
 
+# ── bench_r20_codelets — R=20 codelet correctness + DAG/CT crossover ─────────
+add_executable(bench_r20_codelets bench_r20_codelets.c)
+target_compile_options(bench_r20_codelets PRIVATE ${VFFT_BASE_FLAGS} ${BENCH_ISA_FLAGS})
+set_target_properties(bench_r20_codelets PROPERTIES C_STANDARD ${VFFT_C_STANDARD})
+if(VFFT_BASE_DEFINITIONS)
+    target_compile_definitions(bench_r20_codelets PRIVATE ${VFFT_BASE_DEFINITIONS})
+endif()
+target_include_directories(bench_r20_codelets PRIVATE ${BENCH_CODELET_INCLUDES})
+if(NOT WIN32 OR VFFT_MINGW)
+    target_link_libraries(bench_r20_codelets PRIVATE m)
+endif()
+message(STATUS "test: bench_r20_codelets [ISA: ${BENCH_ISA_FLAGS}]")
+
 # ── diag_plan (no FFTW dep) ──────────────────────────────────────────────────
 #add_executable(diag_plan diag_plan.c)
 #target_compile_options(diag_plan PRIVATE ${VFFT_BASE_FLAGS} ${BENCH_ISA_FLAGS})
