@@ -16,1690 +16,1573 @@ static const double R20_KP618033988 = +0.618033988749894848204586834365638117720
 static const double R20_KP951056516 = +0.951056516295153572116439333379382143405698634;
 #endif
 
-__attribute__((target("avx512f,fma"))) static void radix20_n1_dag_fwd_avx512(
-    const double *__restrict__ in_re, const double *__restrict__ in_im,
-    double *__restrict__ out_re, double *__restrict__ out_im,
+__attribute__((target("avx512f,fma")))
+static void radix20_n1_dag_fwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
     size_t K)
 {
-  for (size_t k = 0; k < K; k += 8)
-  {
-    /* Load all 20 inputs (no twiddles) */
-    __m512d xr_0 = _mm512_loadu_pd(&in_re[0 * K + k]);
-    __m512d xi_0 = _mm512_loadu_pd(&in_im[0 * K + k]);
-    __m512d xr_1 = _mm512_loadu_pd(&in_re[1 * K + k]);
-    __m512d xi_1 = _mm512_loadu_pd(&in_im[1 * K + k]);
-    __m512d xr_2 = _mm512_loadu_pd(&in_re[2 * K + k]);
-    __m512d xi_2 = _mm512_loadu_pd(&in_im[2 * K + k]);
-    __m512d xr_3 = _mm512_loadu_pd(&in_re[3 * K + k]);
-    __m512d xi_3 = _mm512_loadu_pd(&in_im[3 * K + k]);
-    __m512d xr_4 = _mm512_loadu_pd(&in_re[4 * K + k]);
-    __m512d xi_4 = _mm512_loadu_pd(&in_im[4 * K + k]);
-    __m512d xr_5 = _mm512_loadu_pd(&in_re[5 * K + k]);
-    __m512d xi_5 = _mm512_loadu_pd(&in_im[5 * K + k]);
-    __m512d xr_6 = _mm512_loadu_pd(&in_re[6 * K + k]);
-    __m512d xi_6 = _mm512_loadu_pd(&in_im[6 * K + k]);
-    __m512d xr_7 = _mm512_loadu_pd(&in_re[7 * K + k]);
-    __m512d xi_7 = _mm512_loadu_pd(&in_im[7 * K + k]);
-    __m512d xr_8 = _mm512_loadu_pd(&in_re[8 * K + k]);
-    __m512d xi_8 = _mm512_loadu_pd(&in_im[8 * K + k]);
-    __m512d xr_9 = _mm512_loadu_pd(&in_re[9 * K + k]);
-    __m512d xi_9 = _mm512_loadu_pd(&in_im[9 * K + k]);
-    __m512d xr_10 = _mm512_loadu_pd(&in_re[10 * K + k]);
-    __m512d xi_10 = _mm512_loadu_pd(&in_im[10 * K + k]);
-    __m512d xr_11 = _mm512_loadu_pd(&in_re[11 * K + k]);
-    __m512d xi_11 = _mm512_loadu_pd(&in_im[11 * K + k]);
-    __m512d xr_12 = _mm512_loadu_pd(&in_re[12 * K + k]);
-    __m512d xi_12 = _mm512_loadu_pd(&in_im[12 * K + k]);
-    __m512d xr_13 = _mm512_loadu_pd(&in_re[13 * K + k]);
-    __m512d xi_13 = _mm512_loadu_pd(&in_im[13 * K + k]);
-    __m512d xr_14 = _mm512_loadu_pd(&in_re[14 * K + k]);
-    __m512d xi_14 = _mm512_loadu_pd(&in_im[14 * K + k]);
-    __m512d xr_15 = _mm512_loadu_pd(&in_re[15 * K + k]);
-    __m512d xi_15 = _mm512_loadu_pd(&in_im[15 * K + k]);
-    __m512d xr_16 = _mm512_loadu_pd(&in_re[16 * K + k]);
-    __m512d xi_16 = _mm512_loadu_pd(&in_im[16 * K + k]);
-    __m512d xr_17 = _mm512_loadu_pd(&in_re[17 * K + k]);
-    __m512d xi_17 = _mm512_loadu_pd(&in_im[17 * K + k]);
-    __m512d xr_18 = _mm512_loadu_pd(&in_re[18 * K + k]);
-    __m512d xi_18 = _mm512_loadu_pd(&in_im[18 * K + k]);
-    __m512d xr_19 = _mm512_loadu_pd(&in_re[19 * K + k]);
-    __m512d xi_19 = _mm512_loadu_pd(&in_im[19 * K + k]);
+    for (size_t k = 0; k < K; k += 8) {
+        /* Load all 20 inputs (no twiddles) */
+        __m512d xr_0 = _mm512_loadu_pd(&in_re[0*K+k]);
+        __m512d xi_0 = _mm512_loadu_pd(&in_im[0*K+k]);
+        __m512d xr_1 = _mm512_loadu_pd(&in_re[1*K+k]);
+        __m512d xi_1 = _mm512_loadu_pd(&in_im[1*K+k]);
+        __m512d xr_2 = _mm512_loadu_pd(&in_re[2*K+k]);
+        __m512d xi_2 = _mm512_loadu_pd(&in_im[2*K+k]);
+        __m512d xr_3 = _mm512_loadu_pd(&in_re[3*K+k]);
+        __m512d xi_3 = _mm512_loadu_pd(&in_im[3*K+k]);
+        __m512d xr_4 = _mm512_loadu_pd(&in_re[4*K+k]);
+        __m512d xi_4 = _mm512_loadu_pd(&in_im[4*K+k]);
+        __m512d xr_5 = _mm512_loadu_pd(&in_re[5*K+k]);
+        __m512d xi_5 = _mm512_loadu_pd(&in_im[5*K+k]);
+        __m512d xr_6 = _mm512_loadu_pd(&in_re[6*K+k]);
+        __m512d xi_6 = _mm512_loadu_pd(&in_im[6*K+k]);
+        __m512d xr_7 = _mm512_loadu_pd(&in_re[7*K+k]);
+        __m512d xi_7 = _mm512_loadu_pd(&in_im[7*K+k]);
+        __m512d xr_8 = _mm512_loadu_pd(&in_re[8*K+k]);
+        __m512d xi_8 = _mm512_loadu_pd(&in_im[8*K+k]);
+        __m512d xr_9 = _mm512_loadu_pd(&in_re[9*K+k]);
+        __m512d xi_9 = _mm512_loadu_pd(&in_im[9*K+k]);
+        __m512d xr_10 = _mm512_loadu_pd(&in_re[10*K+k]);
+        __m512d xi_10 = _mm512_loadu_pd(&in_im[10*K+k]);
+        __m512d xr_11 = _mm512_loadu_pd(&in_re[11*K+k]);
+        __m512d xi_11 = _mm512_loadu_pd(&in_im[11*K+k]);
+        __m512d xr_12 = _mm512_loadu_pd(&in_re[12*K+k]);
+        __m512d xi_12 = _mm512_loadu_pd(&in_im[12*K+k]);
+        __m512d xr_13 = _mm512_loadu_pd(&in_re[13*K+k]);
+        __m512d xi_13 = _mm512_loadu_pd(&in_im[13*K+k]);
+        __m512d xr_14 = _mm512_loadu_pd(&in_re[14*K+k]);
+        __m512d xi_14 = _mm512_loadu_pd(&in_im[14*K+k]);
+        __m512d xr_15 = _mm512_loadu_pd(&in_re[15*K+k]);
+        __m512d xi_15 = _mm512_loadu_pd(&in_im[15*K+k]);
+        __m512d xr_16 = _mm512_loadu_pd(&in_re[16*K+k]);
+        __m512d xi_16 = _mm512_loadu_pd(&in_im[16*K+k]);
+        __m512d xr_17 = _mm512_loadu_pd(&in_re[17*K+k]);
+        __m512d xi_17 = _mm512_loadu_pd(&in_im[17*K+k]);
+        __m512d xr_18 = _mm512_loadu_pd(&in_re[18*K+k]);
+        __m512d xi_18 = _mm512_loadu_pd(&in_im[18*K+k]);
+        __m512d xr_19 = _mm512_loadu_pd(&in_re[19*K+k]);
+        __m512d xi_19 = _mm512_loadu_pd(&in_im[19*K+k]);
 
-    /* Butterfly: genfft n1_20 scalar FMA DAG (208 ops) */
-    __m512d T1 = xr_0;
-    __m512d T2 = xr_10;
-    __m512d T3 = _mm512_add_pd(T1, T2);
-    __m512d T1N = _mm512_sub_pd(T1, T2);
-    __m512d TL = xi_0;
-    __m512d TM = xi_10;
-    __m512d TN = _mm512_sub_pd(TL, TM);
-    __m512d T2L = _mm512_add_pd(TL, TM);
-    __m512d T4 = xr_5;
-    __m512d T5 = xr_15;
-    __m512d T6 = _mm512_add_pd(T4, T5);
-    __m512d TO = _mm512_sub_pd(T4, T5);
-    __m512d T1O = xi_5;
-    __m512d T1P = xi_15;
-    __m512d T1Q = _mm512_sub_pd(T1O, T1P);
-    __m512d T2M = _mm512_add_pd(T1O, T1P);
-    __m512d T7 = _mm512_sub_pd(T3, T6);
-    __m512d T2N = _mm512_sub_pd(T2L, T2M);
-    __m512d T3b = _mm512_add_pd(T2L, T2M);
-    __m512d TD = _mm512_add_pd(T3, T6);
-    __m512d TP = _mm512_sub_pd(TN, TO);
-    __m512d T1R = _mm512_sub_pd(T1N, T1Q);
-    __m512d T2f = _mm512_add_pd(T1N, T1Q);
-    __m512d T1d = _mm512_add_pd(TO, TN);
-    __m512d Tn = xr_8;
-    __m512d To = xr_18;
-    __m512d Tp = _mm512_add_pd(Tn, To);
-    __m512d T1o = _mm512_sub_pd(Tn, To);
-    __m512d T11 = xi_8;
-    __m512d T12 = xi_18;
-    __m512d T13 = _mm512_sub_pd(T11, T12);
-    __m512d T2u = _mm512_add_pd(T11, T12);
-    __m512d Tq = xr_13;
-    __m512d Tr = xr_3;
-    __m512d Ts = _mm512_add_pd(Tq, Tr);
-    __m512d T14 = _mm512_sub_pd(Tq, Tr);
-    __m512d T1p = xi_13;
-    __m512d T1q = xi_3;
-    __m512d T1r = _mm512_sub_pd(T1p, T1q);
-    __m512d T2v = _mm512_add_pd(T1p, T1q);
-    __m512d Tu = xr_12;
-    __m512d Tv = xr_2;
-    __m512d Tw = _mm512_add_pd(Tu, Tv);
-    __m512d T1t = _mm512_sub_pd(Tu, Tv);
-    __m512d T16 = xi_12;
-    __m512d T17 = xi_2;
-    __m512d T18 = _mm512_sub_pd(T16, T17);
-    __m512d T2x = _mm512_add_pd(T16, T17);
-    __m512d Tx = xr_17;
-    __m512d Ty = xr_7;
-    __m512d Tz = _mm512_add_pd(Tx, Ty);
-    __m512d T19 = _mm512_sub_pd(Tx, Ty);
-    __m512d T1u = xi_17;
-    __m512d T1v = xi_7;
-    __m512d T1w = _mm512_sub_pd(T1u, T1v);
-    __m512d T2y = _mm512_add_pd(T1u, T1v);
-    __m512d Tt = _mm512_sub_pd(Tp, Ts);
-    __m512d TA = _mm512_sub_pd(Tw, Tz);
-    __m512d TB = _mm512_add_pd(Tt, TA);
-    __m512d T2w = _mm512_sub_pd(T2u, T2v);
-    __m512d T2z = _mm512_sub_pd(T2x, T2y);
-    __m512d T2P = _mm512_add_pd(T2w, T2z);
-    __m512d T35 = _mm512_add_pd(T2u, T2v);
-    __m512d T36 = _mm512_add_pd(T2x, T2y);
-    __m512d T3d = _mm512_add_pd(T35, T36);
-    __m512d TH = _mm512_add_pd(Tp, Ts);
-    __m512d TI = _mm512_add_pd(Tw, Tz);
-    __m512d TJ = _mm512_add_pd(TH, TI);
-    __m512d T15 = _mm512_sub_pd(T13, T14);
-    __m512d T1a = _mm512_sub_pd(T18, T19);
-    __m512d T1b = _mm512_add_pd(T15, T1a);
-    __m512d T1s = _mm512_sub_pd(T1o, T1r);
-    __m512d T1x = _mm512_sub_pd(T1t, T1w);
-    __m512d T1T = _mm512_add_pd(T1s, T1x);
-    __m512d T29 = _mm512_add_pd(T1o, T1r);
-    __m512d T2a = _mm512_add_pd(T1t, T1w);
-    __m512d T2h = _mm512_add_pd(T29, T2a);
-    __m512d T1h = _mm512_add_pd(T14, T13);
-    __m512d T1i = _mm512_add_pd(T19, T18);
-    __m512d T1j = _mm512_add_pd(T1h, T1i);
-    __m512d T8 = xr_4;
-    __m512d T9 = xr_14;
-    __m512d Ta = _mm512_add_pd(T8, T9);
-    __m512d T1z = _mm512_sub_pd(T8, T9);
-    __m512d TQ = xi_4;
-    __m512d TR = xi_14;
-    __m512d TS = _mm512_sub_pd(TQ, TR);
-    __m512d T2B = _mm512_add_pd(TQ, TR);
-    __m512d Tb = xr_9;
-    __m512d Tc = xr_19;
-    __m512d Td = _mm512_add_pd(Tb, Tc);
-    __m512d TT = _mm512_sub_pd(Tb, Tc);
-    __m512d T1A = xi_9;
-    __m512d T1B = xi_19;
-    __m512d T1C = _mm512_sub_pd(T1A, T1B);
-    __m512d T2C = _mm512_add_pd(T1A, T1B);
-    __m512d Tf = xr_16;
-    __m512d Tg = xr_6;
-    __m512d Th = _mm512_add_pd(Tf, Tg);
-    __m512d T1E = _mm512_sub_pd(Tf, Tg);
-    __m512d TV = xi_16;
-    __m512d TW = xi_6;
-    __m512d TX = _mm512_sub_pd(TV, TW);
-    __m512d T2E = _mm512_add_pd(TV, TW);
-    __m512d Ti = xr_1;
-    __m512d Tj = xr_11;
-    __m512d Tk = _mm512_add_pd(Ti, Tj);
-    __m512d TY = _mm512_sub_pd(Ti, Tj);
-    __m512d T1F = xi_1;
-    __m512d T1G = xi_11;
-    __m512d T1H = _mm512_sub_pd(T1F, T1G);
-    __m512d T2F = _mm512_add_pd(T1F, T1G);
-    __m512d Te = _mm512_sub_pd(Ta, Td);
-    __m512d Tl = _mm512_sub_pd(Th, Tk);
-    __m512d Tm = _mm512_add_pd(Te, Tl);
-    __m512d T2D = _mm512_sub_pd(T2B, T2C);
-    __m512d T2G = _mm512_sub_pd(T2E, T2F);
-    __m512d T2O = _mm512_add_pd(T2D, T2G);
-    __m512d T32 = _mm512_add_pd(T2B, T2C);
-    __m512d T33 = _mm512_add_pd(T2E, T2F);
-    __m512d T3c = _mm512_add_pd(T32, T33);
-    __m512d TE = _mm512_add_pd(Ta, Td);
-    __m512d TF = _mm512_add_pd(Th, Tk);
-    __m512d TG = _mm512_add_pd(TE, TF);
-    __m512d TU = _mm512_sub_pd(TS, TT);
-    __m512d TZ = _mm512_sub_pd(TX, TY);
-    __m512d T10 = _mm512_add_pd(TU, TZ);
-    __m512d T1D = _mm512_sub_pd(T1z, T1C);
-    __m512d T1I = _mm512_sub_pd(T1E, T1H);
-    __m512d T1S = _mm512_add_pd(T1D, T1I);
-    __m512d T26 = _mm512_add_pd(T1z, T1C);
-    __m512d T27 = _mm512_add_pd(T1E, T1H);
-    __m512d T2g = _mm512_add_pd(T26, T27);
-    __m512d T1e = _mm512_add_pd(TT, TS);
-    __m512d T1f = _mm512_add_pd(TY, TX);
-    __m512d T1g = _mm512_add_pd(T1e, T1f);
-    __m512d T2s = _mm512_sub_pd(Tm, TB);
-    __m512d TC = _mm512_add_pd(Tm, TB);
-    __m512d T2r = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TC, T7);
-    __m512d T2A = _mm512_sub_pd(T2w, T2z);
-    __m512d T2H = _mm512_sub_pd(T2D, T2G);
-    __m512d T2I = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2H, T2A);
-    __m512d T2K = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2A, T2H);
-    _mm512_storeu_pd(&out_re[10 * K + k], _mm512_add_pd(T7, TC));
-    __m512d T2J = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
-    _mm512_storeu_pd(&out_re[14 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
-    _mm512_storeu_pd(&out_re[6 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
-    __m512d T2t = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
-    _mm512_storeu_pd(&out_re[2 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
-    _mm512_storeu_pd(&out_re[18 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
-    __m512d T2S = _mm512_sub_pd(T2O, T2P);
-    __m512d T2Q = _mm512_add_pd(T2O, T2P);
-    __m512d T2R = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2Q, T2N);
-    __m512d T2U = _mm512_sub_pd(Tt, TA);
-    __m512d T2V = _mm512_sub_pd(Te, Tl);
-    __m512d T2W = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2V, T2U);
-    __m512d T2Y = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2U, T2V);
-    _mm512_storeu_pd(&out_im[10 * K + k], _mm512_add_pd(T2N, T2Q));
-    __m512d T2X = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
-    _mm512_storeu_pd(&out_im[6 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
-    _mm512_storeu_pd(&out_im[14 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
-    __m512d T2T = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
-    _mm512_storeu_pd(&out_im[2 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
-    _mm512_storeu_pd(&out_im[18 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
-    __m512d T30 = _mm512_sub_pd(TG, TJ);
-    __m512d TK = _mm512_add_pd(TG, TJ);
-    __m512d T2Z = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TK, TD);
-    __m512d T34 = _mm512_sub_pd(T32, T33);
-    __m512d T37 = _mm512_sub_pd(T35, T36);
-    __m512d T38 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T37, T34);
-    __m512d T3a = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T34, T37);
-    _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(TD, TK));
-    __m512d T39 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
-    _mm512_storeu_pd(&out_re[12 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
-    _mm512_storeu_pd(&out_re[8 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
-    __m512d T31 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
-    _mm512_storeu_pd(&out_re[4 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
-    _mm512_storeu_pd(&out_re[16 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
-    __m512d T3g = _mm512_sub_pd(T3c, T3d);
-    __m512d T3e = _mm512_add_pd(T3c, T3d);
-    __m512d T3f = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T3e, T3b);
-    __m512d T3i = _mm512_sub_pd(TE, TF);
-    __m512d T3j = _mm512_sub_pd(TH, TI);
-    __m512d T3k = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T3j, T3i);
-    __m512d T3m = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T3i, T3j);
-    _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(T3b, T3e));
-    __m512d T3l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
-    _mm512_storeu_pd(&out_im[8 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
-    _mm512_storeu_pd(&out_im[12 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
-    __m512d T3h = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
-    _mm512_storeu_pd(&out_im[4 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
-    _mm512_storeu_pd(&out_im[16 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
-    __m512d T24 = _mm512_sub_pd(T10, T1b);
-    __m512d T1c = _mm512_add_pd(T10, T1b);
-    __m512d T23 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1c, TP);
-    __m512d T28 = _mm512_sub_pd(T26, T27);
-    __m512d T2b = _mm512_sub_pd(T29, T2a);
-    __m512d T2c = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2b, T28);
-    __m512d T2e = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T28, T2b);
-    _mm512_storeu_pd(&out_im[5 * K + k], _mm512_add_pd(TP, T1c));
-    __m512d T2d = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
-    _mm512_storeu_pd(&out_im[13 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
-    _mm512_storeu_pd(&out_im[17 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
-    __m512d T25 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
-    _mm512_storeu_pd(&out_im[1 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
-    _mm512_storeu_pd(&out_im[9 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
-    __m512d T2k = _mm512_sub_pd(T2g, T2h);
-    __m512d T2i = _mm512_add_pd(T2g, T2h);
-    __m512d T2j = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2i, T2f);
-    __m512d T2m = _mm512_sub_pd(TU, TZ);
-    __m512d T2n = _mm512_sub_pd(T15, T1a);
-    __m512d T2o = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2n, T2m);
-    __m512d T2q = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2m, T2n);
-    _mm512_storeu_pd(&out_re[5 * K + k], _mm512_add_pd(T2f, T2i));
-    __m512d T2p = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
-    _mm512_storeu_pd(&out_re[13 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
-    _mm512_storeu_pd(&out_re[17 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
-    __m512d T2l = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
-    _mm512_storeu_pd(&out_re[1 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
-    _mm512_storeu_pd(&out_re[9 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
-    __m512d T1m = _mm512_sub_pd(T1g, T1j);
-    __m512d T1k = _mm512_add_pd(T1g, T1j);
-    __m512d T1l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1k, T1d);
-    __m512d T1y = _mm512_sub_pd(T1s, T1x);
-    __m512d T1J = _mm512_sub_pd(T1D, T1I);
-    __m512d T1K = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1J, T1y);
-    __m512d T1M = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1y, T1J);
-    _mm512_storeu_pd(&out_im[15 * K + k], _mm512_add_pd(T1d, T1k));
-    __m512d T1L = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
-    _mm512_storeu_pd(&out_im[11 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
-    _mm512_storeu_pd(&out_im[19 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
-    __m512d T1n = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
-    _mm512_storeu_pd(&out_im[3 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
-    _mm512_storeu_pd(&out_im[7 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
-    __m512d T1W = _mm512_sub_pd(T1S, T1T);
-    __m512d T1U = _mm512_add_pd(T1S, T1T);
-    __m512d T1V = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1U, T1R);
-    __m512d T1Y = _mm512_sub_pd(T1h, T1i);
-    __m512d T1Z = _mm512_sub_pd(T1e, T1f);
-    __m512d T20 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Z, T1Y);
-    __m512d T22 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Y, T1Z);
-    _mm512_storeu_pd(&out_re[15 * K + k], _mm512_add_pd(T1R, T1U));
-    __m512d T21 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
-    _mm512_storeu_pd(&out_re[11 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
-    _mm512_storeu_pd(&out_re[19 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
-    __m512d T1X = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
-    _mm512_storeu_pd(&out_re[3 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
-    _mm512_storeu_pd(&out_re[7 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
-  }
+        /* Butterfly: genfft n1_20 scalar FMA DAG (208 ops) */
+        __m512d T1 = xr_0;
+        __m512d T2 = xr_10;
+        __m512d T3 = _mm512_add_pd(T1, T2);
+        __m512d T1N = _mm512_sub_pd(T1, T2);
+        __m512d TL = xi_0;
+        __m512d TM = xi_10;
+        __m512d TN = _mm512_sub_pd(TL, TM);
+        __m512d T2L = _mm512_add_pd(TL, TM);
+        __m512d T4 = xr_5;
+        __m512d T5 = xr_15;
+        __m512d T6 = _mm512_add_pd(T4, T5);
+        __m512d TO = _mm512_sub_pd(T4, T5);
+        __m512d T1O = xi_5;
+        __m512d T1P = xi_15;
+        __m512d T1Q = _mm512_sub_pd(T1O, T1P);
+        __m512d T2M = _mm512_add_pd(T1O, T1P);
+        __m512d T7 = _mm512_sub_pd(T3, T6);
+        __m512d T2N = _mm512_sub_pd(T2L, T2M);
+        __m512d T3b = _mm512_add_pd(T2L, T2M);
+        __m512d TD = _mm512_add_pd(T3, T6);
+        __m512d TP = _mm512_sub_pd(TN, TO);
+        __m512d T1R = _mm512_sub_pd(T1N, T1Q);
+        __m512d T2f = _mm512_add_pd(T1N, T1Q);
+        __m512d T1d = _mm512_add_pd(TO, TN);
+        __m512d Tn = xr_8;
+        __m512d To = xr_18;
+        __m512d Tp = _mm512_add_pd(Tn, To);
+        __m512d T1o = _mm512_sub_pd(Tn, To);
+        __m512d T11 = xi_8;
+        __m512d T12 = xi_18;
+        __m512d T13 = _mm512_sub_pd(T11, T12);
+        __m512d T2u = _mm512_add_pd(T11, T12);
+        __m512d Tq = xr_13;
+        __m512d Tr = xr_3;
+        __m512d Ts = _mm512_add_pd(Tq, Tr);
+        __m512d T14 = _mm512_sub_pd(Tq, Tr);
+        __m512d T1p = xi_13;
+        __m512d T1q = xi_3;
+        __m512d T1r = _mm512_sub_pd(T1p, T1q);
+        __m512d T2v = _mm512_add_pd(T1p, T1q);
+        __m512d Tu = xr_12;
+        __m512d Tv = xr_2;
+        __m512d Tw = _mm512_add_pd(Tu, Tv);
+        __m512d T1t = _mm512_sub_pd(Tu, Tv);
+        __m512d T16 = xi_12;
+        __m512d T17 = xi_2;
+        __m512d T18 = _mm512_sub_pd(T16, T17);
+        __m512d T2x = _mm512_add_pd(T16, T17);
+        __m512d Tx = xr_17;
+        __m512d Ty = xr_7;
+        __m512d Tz = _mm512_add_pd(Tx, Ty);
+        __m512d T19 = _mm512_sub_pd(Tx, Ty);
+        __m512d T1u = xi_17;
+        __m512d T1v = xi_7;
+        __m512d T1w = _mm512_sub_pd(T1u, T1v);
+        __m512d T2y = _mm512_add_pd(T1u, T1v);
+        __m512d Tt = _mm512_sub_pd(Tp, Ts);
+        __m512d TA = _mm512_sub_pd(Tw, Tz);
+        __m512d TB = _mm512_add_pd(Tt, TA);
+        __m512d T2w = _mm512_sub_pd(T2u, T2v);
+        __m512d T2z = _mm512_sub_pd(T2x, T2y);
+        __m512d T2P = _mm512_add_pd(T2w, T2z);
+        __m512d T35 = _mm512_add_pd(T2u, T2v);
+        __m512d T36 = _mm512_add_pd(T2x, T2y);
+        __m512d T3d = _mm512_add_pd(T35, T36);
+        __m512d TH = _mm512_add_pd(Tp, Ts);
+        __m512d TI = _mm512_add_pd(Tw, Tz);
+        __m512d TJ = _mm512_add_pd(TH, TI);
+        __m512d T15 = _mm512_sub_pd(T13, T14);
+        __m512d T1a = _mm512_sub_pd(T18, T19);
+        __m512d T1b = _mm512_add_pd(T15, T1a);
+        __m512d T1s = _mm512_sub_pd(T1o, T1r);
+        __m512d T1x = _mm512_sub_pd(T1t, T1w);
+        __m512d T1T = _mm512_add_pd(T1s, T1x);
+        __m512d T29 = _mm512_add_pd(T1o, T1r);
+        __m512d T2a = _mm512_add_pd(T1t, T1w);
+        __m512d T2h = _mm512_add_pd(T29, T2a);
+        __m512d T1h = _mm512_add_pd(T14, T13);
+        __m512d T1i = _mm512_add_pd(T19, T18);
+        __m512d T1j = _mm512_add_pd(T1h, T1i);
+        __m512d T8 = xr_4;
+        __m512d T9 = xr_14;
+        __m512d Ta = _mm512_add_pd(T8, T9);
+        __m512d T1z = _mm512_sub_pd(T8, T9);
+        __m512d TQ = xi_4;
+        __m512d TR = xi_14;
+        __m512d TS = _mm512_sub_pd(TQ, TR);
+        __m512d T2B = _mm512_add_pd(TQ, TR);
+        __m512d Tb = xr_9;
+        __m512d Tc = xr_19;
+        __m512d Td = _mm512_add_pd(Tb, Tc);
+        __m512d TT = _mm512_sub_pd(Tb, Tc);
+        __m512d T1A = xi_9;
+        __m512d T1B = xi_19;
+        __m512d T1C = _mm512_sub_pd(T1A, T1B);
+        __m512d T2C = _mm512_add_pd(T1A, T1B);
+        __m512d Tf = xr_16;
+        __m512d Tg = xr_6;
+        __m512d Th = _mm512_add_pd(Tf, Tg);
+        __m512d T1E = _mm512_sub_pd(Tf, Tg);
+        __m512d TV = xi_16;
+        __m512d TW = xi_6;
+        __m512d TX = _mm512_sub_pd(TV, TW);
+        __m512d T2E = _mm512_add_pd(TV, TW);
+        __m512d Ti = xr_1;
+        __m512d Tj = xr_11;
+        __m512d Tk = _mm512_add_pd(Ti, Tj);
+        __m512d TY = _mm512_sub_pd(Ti, Tj);
+        __m512d T1F = xi_1;
+        __m512d T1G = xi_11;
+        __m512d T1H = _mm512_sub_pd(T1F, T1G);
+        __m512d T2F = _mm512_add_pd(T1F, T1G);
+        __m512d Te = _mm512_sub_pd(Ta, Td);
+        __m512d Tl = _mm512_sub_pd(Th, Tk);
+        __m512d Tm = _mm512_add_pd(Te, Tl);
+        __m512d T2D = _mm512_sub_pd(T2B, T2C);
+        __m512d T2G = _mm512_sub_pd(T2E, T2F);
+        __m512d T2O = _mm512_add_pd(T2D, T2G);
+        __m512d T32 = _mm512_add_pd(T2B, T2C);
+        __m512d T33 = _mm512_add_pd(T2E, T2F);
+        __m512d T3c = _mm512_add_pd(T32, T33);
+        __m512d TE = _mm512_add_pd(Ta, Td);
+        __m512d TF = _mm512_add_pd(Th, Tk);
+        __m512d TG = _mm512_add_pd(TE, TF);
+        __m512d TU = _mm512_sub_pd(TS, TT);
+        __m512d TZ = _mm512_sub_pd(TX, TY);
+        __m512d T10 = _mm512_add_pd(TU, TZ);
+        __m512d T1D = _mm512_sub_pd(T1z, T1C);
+        __m512d T1I = _mm512_sub_pd(T1E, T1H);
+        __m512d T1S = _mm512_add_pd(T1D, T1I);
+        __m512d T26 = _mm512_add_pd(T1z, T1C);
+        __m512d T27 = _mm512_add_pd(T1E, T1H);
+        __m512d T2g = _mm512_add_pd(T26, T27);
+        __m512d T1e = _mm512_add_pd(TT, TS);
+        __m512d T1f = _mm512_add_pd(TY, TX);
+        __m512d T1g = _mm512_add_pd(T1e, T1f);
+        __m512d T2s = _mm512_sub_pd(Tm, TB);
+        __m512d TC = _mm512_add_pd(Tm, TB);
+        __m512d T2r = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TC, T7);
+        __m512d T2A = _mm512_sub_pd(T2w, T2z);
+        __m512d T2H = _mm512_sub_pd(T2D, T2G);
+        __m512d T2I = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2H, T2A);
+        __m512d T2K = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2A, T2H);
+        _mm512_storeu_pd(&out_re[10 * K + k], _mm512_add_pd(T7, TC));
+        __m512d T2J = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
+        _mm512_storeu_pd(&out_re[14 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
+        _mm512_storeu_pd(&out_re[6 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
+        __m512d T2t = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
+        _mm512_storeu_pd(&out_re[2 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
+        _mm512_storeu_pd(&out_re[18 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
+        __m512d T2S = _mm512_sub_pd(T2O, T2P);
+        __m512d T2Q = _mm512_add_pd(T2O, T2P);
+        __m512d T2R = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2Q, T2N);
+        __m512d T2U = _mm512_sub_pd(Tt, TA);
+        __m512d T2V = _mm512_sub_pd(Te, Tl);
+        __m512d T2W = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2V, T2U);
+        __m512d T2Y = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2U, T2V);
+        _mm512_storeu_pd(&out_im[10 * K + k], _mm512_add_pd(T2N, T2Q));
+        __m512d T2X = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
+        _mm512_storeu_pd(&out_im[6 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
+        _mm512_storeu_pd(&out_im[14 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
+        __m512d T2T = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
+        _mm512_storeu_pd(&out_im[2 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
+        _mm512_storeu_pd(&out_im[18 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
+        __m512d T30 = _mm512_sub_pd(TG, TJ);
+        __m512d TK = _mm512_add_pd(TG, TJ);
+        __m512d T2Z = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TK, TD);
+        __m512d T34 = _mm512_sub_pd(T32, T33);
+        __m512d T37 = _mm512_sub_pd(T35, T36);
+        __m512d T38 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T37, T34);
+        __m512d T3a = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T34, T37);
+        _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(TD, TK));
+        __m512d T39 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
+        _mm512_storeu_pd(&out_re[12 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
+        _mm512_storeu_pd(&out_re[8 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
+        __m512d T31 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
+        _mm512_storeu_pd(&out_re[4 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
+        _mm512_storeu_pd(&out_re[16 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
+        __m512d T3g = _mm512_sub_pd(T3c, T3d);
+        __m512d T3e = _mm512_add_pd(T3c, T3d);
+        __m512d T3f = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T3e, T3b);
+        __m512d T3i = _mm512_sub_pd(TE, TF);
+        __m512d T3j = _mm512_sub_pd(TH, TI);
+        __m512d T3k = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T3j, T3i);
+        __m512d T3m = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T3i, T3j);
+        _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(T3b, T3e));
+        __m512d T3l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
+        _mm512_storeu_pd(&out_im[8 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
+        _mm512_storeu_pd(&out_im[12 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
+        __m512d T3h = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
+        _mm512_storeu_pd(&out_im[4 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
+        _mm512_storeu_pd(&out_im[16 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
+        __m512d T24 = _mm512_sub_pd(T10, T1b);
+        __m512d T1c = _mm512_add_pd(T10, T1b);
+        __m512d T23 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1c, TP);
+        __m512d T28 = _mm512_sub_pd(T26, T27);
+        __m512d T2b = _mm512_sub_pd(T29, T2a);
+        __m512d T2c = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2b, T28);
+        __m512d T2e = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T28, T2b);
+        _mm512_storeu_pd(&out_im[5 * K + k], _mm512_add_pd(TP, T1c));
+        __m512d T2d = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
+        _mm512_storeu_pd(&out_im[13 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
+        _mm512_storeu_pd(&out_im[17 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
+        __m512d T25 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
+        _mm512_storeu_pd(&out_im[1 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
+        _mm512_storeu_pd(&out_im[9 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
+        __m512d T2k = _mm512_sub_pd(T2g, T2h);
+        __m512d T2i = _mm512_add_pd(T2g, T2h);
+        __m512d T2j = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2i, T2f);
+        __m512d T2m = _mm512_sub_pd(TU, TZ);
+        __m512d T2n = _mm512_sub_pd(T15, T1a);
+        __m512d T2o = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2n, T2m);
+        __m512d T2q = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2m, T2n);
+        _mm512_storeu_pd(&out_re[5 * K + k], _mm512_add_pd(T2f, T2i));
+        __m512d T2p = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
+        _mm512_storeu_pd(&out_re[13 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
+        _mm512_storeu_pd(&out_re[17 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
+        __m512d T2l = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
+        _mm512_storeu_pd(&out_re[1 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
+        _mm512_storeu_pd(&out_re[9 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
+        __m512d T1m = _mm512_sub_pd(T1g, T1j);
+        __m512d T1k = _mm512_add_pd(T1g, T1j);
+        __m512d T1l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1k, T1d);
+        __m512d T1y = _mm512_sub_pd(T1s, T1x);
+        __m512d T1J = _mm512_sub_pd(T1D, T1I);
+        __m512d T1K = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1J, T1y);
+        __m512d T1M = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1y, T1J);
+        _mm512_storeu_pd(&out_im[15 * K + k], _mm512_add_pd(T1d, T1k));
+        __m512d T1L = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
+        _mm512_storeu_pd(&out_im[11 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
+        _mm512_storeu_pd(&out_im[19 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
+        __m512d T1n = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
+        _mm512_storeu_pd(&out_im[3 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
+        _mm512_storeu_pd(&out_im[7 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
+        __m512d T1W = _mm512_sub_pd(T1S, T1T);
+        __m512d T1U = _mm512_add_pd(T1S, T1T);
+        __m512d T1V = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1U, T1R);
+        __m512d T1Y = _mm512_sub_pd(T1h, T1i);
+        __m512d T1Z = _mm512_sub_pd(T1e, T1f);
+        __m512d T20 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Z, T1Y);
+        __m512d T22 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Y, T1Z);
+        _mm512_storeu_pd(&out_re[15 * K + k], _mm512_add_pd(T1R, T1U));
+        __m512d T21 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
+        _mm512_storeu_pd(&out_re[11 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
+        _mm512_storeu_pd(&out_re[19 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
+        __m512d T1X = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
+        _mm512_storeu_pd(&out_re[3 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
+        _mm512_storeu_pd(&out_re[7 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
+    }
 }
 
 /* Backward: swap re<->im on input+output (Frigo & Johnson) */
-__attribute__((target("avx512f,fma"))) static inline void radix20_n1_dag_bwd_avx512(
-    const double *__restrict__ in_re, const double *__restrict__ in_im,
-    double *__restrict__ out_re, double *__restrict__ out_im,
+__attribute__((target("avx512f,fma")))
+static inline void radix20_n1_dag_bwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
     size_t K)
 {
-  radix20_n1_dag_fwd_avx512(in_im, in_re, out_im, out_re, K);
+    radix20_n1_dag_fwd_avx512(in_im, in_re, out_im, out_re, K);
 }
 
-__attribute__((target("avx512f,fma"))) static void radix20_tw_dag_dit_contig_fwd_avx512(
-    const double *__restrict__ in_re, const double *__restrict__ in_im,
-    double *__restrict__ out_re, double *__restrict__ out_im,
-    const double *__restrict__ tw_re, const double *__restrict__ tw_im,
+__attribute__((target("avx512f,fma")))
+static void radix20_tw_dag_dit_contig_fwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
     size_t K)
 {
-  for (size_t k = 0; k < K; k += 8)
-  {
-    /* Phase 1: Contiguous flat twiddle load+apply */
-    const size_t kg = k / 8;
-    const double *tr = &tw_re[kg * 19 * 8];
-    const double *ti = &tw_im[kg * 19 * 8];
+    for (size_t k = 0; k < K; k += 8) {
+        /* Phase 1: Contiguous flat twiddle load+apply */
+        /* contiguous layout removed — using strided tw_re/tw_im directly */
+        /* (strided: tw_re[arm*K+k]) */
+        
 
-    __m512d xr_0 = _mm512_loadu_pd(&in_re[k]);
-    __m512d xi_0 = _mm512_loadu_pd(&in_im[k]);
-    __m512d xr_1, xi_1;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[1 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[1 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[0 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[0 * 8]);
-      xr_1 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_1 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_2, xi_2;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[2 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[2 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[1 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[1 * 8]);
-      xr_2 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_2 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_3, xi_3;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[3 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[3 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[2 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[2 * 8]);
-      xr_3 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_3 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_4, xi_4;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[4 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[4 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[3 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[3 * 8]);
-      xr_4 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_4 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_5, xi_5;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[5 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[5 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[4 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[4 * 8]);
-      xr_5 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_5 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_6, xi_6;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[6 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[6 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[5 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[5 * 8]);
-      xr_6 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_6 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_7, xi_7;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[7 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[7 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[6 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[6 * 8]);
-      xr_7 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_7 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_8, xi_8;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[8 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[8 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[7 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[7 * 8]);
-      xr_8 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_8 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_9, xi_9;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[9 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[9 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[8 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[8 * 8]);
-      xr_9 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_9 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_10, xi_10;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[10 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[10 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[9 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[9 * 8]);
-      xr_10 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_10 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_11, xi_11;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[11 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[11 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[10 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[10 * 8]);
-      xr_11 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_11 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_12, xi_12;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[12 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[12 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[11 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[11 * 8]);
-      xr_12 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_12 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_13, xi_13;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[13 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[13 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[12 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[12 * 8]);
-      xr_13 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_13 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_14, xi_14;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[14 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[14 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[13 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[13 * 8]);
-      xr_14 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_14 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_15, xi_15;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[15 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[15 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[14 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[14 * 8]);
-      xr_15 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_15 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_16, xi_16;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[16 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[16 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[15 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[15 * 8]);
-      xr_16 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_16 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_17, xi_17;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[17 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[17 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[16 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[16 * 8]);
-      xr_17 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_17 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_18, xi_18;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[18 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[18 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[17 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[17 * 8]);
-      xr_18 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_18 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_19, xi_19;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[19 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[19 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[18 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[18 * 8]);
-      xr_19 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_19 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
+        __m512d xr_0 = _mm512_loadu_pd(&in_re[k]);
+        __m512d xi_0 = _mm512_loadu_pd(&in_im[k]);
+        __m512d xr_1, xi_1;
+        { __m512d dr = _mm512_loadu_pd(&in_re[1*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[1*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[0*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[0*K+k]);
+          xr_1 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_1 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_2, xi_2;
+        { __m512d dr = _mm512_loadu_pd(&in_re[2*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[2*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[1*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[1*K+k]);
+          xr_2 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_2 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_3, xi_3;
+        { __m512d dr = _mm512_loadu_pd(&in_re[3*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[3*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[2*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[2*K+k]);
+          xr_3 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_3 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_4, xi_4;
+        { __m512d dr = _mm512_loadu_pd(&in_re[4*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[4*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[3*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[3*K+k]);
+          xr_4 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_4 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_5, xi_5;
+        { __m512d dr = _mm512_loadu_pd(&in_re[5*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[5*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[4*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[4*K+k]);
+          xr_5 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_5 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_6, xi_6;
+        { __m512d dr = _mm512_loadu_pd(&in_re[6*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[6*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[5*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[5*K+k]);
+          xr_6 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_6 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_7, xi_7;
+        { __m512d dr = _mm512_loadu_pd(&in_re[7*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[7*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[6*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[6*K+k]);
+          xr_7 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_7 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_8, xi_8;
+        { __m512d dr = _mm512_loadu_pd(&in_re[8*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[8*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[7*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[7*K+k]);
+          xr_8 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_8 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_9, xi_9;
+        { __m512d dr = _mm512_loadu_pd(&in_re[9*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[9*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[8*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[8*K+k]);
+          xr_9 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_9 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_10, xi_10;
+        { __m512d dr = _mm512_loadu_pd(&in_re[10*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[10*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[9*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[9*K+k]);
+          xr_10 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_10 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_11, xi_11;
+        { __m512d dr = _mm512_loadu_pd(&in_re[11*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[11*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[10*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[10*K+k]);
+          xr_11 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_11 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_12, xi_12;
+        { __m512d dr = _mm512_loadu_pd(&in_re[12*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[12*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[11*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[11*K+k]);
+          xr_12 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_12 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_13, xi_13;
+        { __m512d dr = _mm512_loadu_pd(&in_re[13*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[13*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[12*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[12*K+k]);
+          xr_13 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_13 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_14, xi_14;
+        { __m512d dr = _mm512_loadu_pd(&in_re[14*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[14*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[13*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[13*K+k]);
+          xr_14 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_14 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_15, xi_15;
+        { __m512d dr = _mm512_loadu_pd(&in_re[15*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[15*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[14*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[14*K+k]);
+          xr_15 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_15 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_16, xi_16;
+        { __m512d dr = _mm512_loadu_pd(&in_re[16*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[16*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[15*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[15*K+k]);
+          xr_16 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_16 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_17, xi_17;
+        { __m512d dr = _mm512_loadu_pd(&in_re[17*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[17*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[16*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[16*K+k]);
+          xr_17 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_17 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_18, xi_18;
+        { __m512d dr = _mm512_loadu_pd(&in_re[18*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[18*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[17*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[17*K+k]);
+          xr_18 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_18 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_19, xi_19;
+        { __m512d dr = _mm512_loadu_pd(&in_re[19*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[19*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[18*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[18*K+k]);
+          xr_19 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_19 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
 
-    /* Phase 2: Butterfly (genfft n1_20 DAG) */
-    __m512d T1 = xr_0;
-    __m512d T2 = xr_10;
-    __m512d T3 = _mm512_add_pd(T1, T2);
-    __m512d T1N = _mm512_sub_pd(T1, T2);
-    __m512d TL = xi_0;
-    __m512d TM = xi_10;
-    __m512d TN = _mm512_sub_pd(TL, TM);
-    __m512d T2L = _mm512_add_pd(TL, TM);
-    __m512d T4 = xr_5;
-    __m512d T5 = xr_15;
-    __m512d T6 = _mm512_add_pd(T4, T5);
-    __m512d TO = _mm512_sub_pd(T4, T5);
-    __m512d T1O = xi_5;
-    __m512d T1P = xi_15;
-    __m512d T1Q = _mm512_sub_pd(T1O, T1P);
-    __m512d T2M = _mm512_add_pd(T1O, T1P);
-    __m512d T7 = _mm512_sub_pd(T3, T6);
-    __m512d T2N = _mm512_sub_pd(T2L, T2M);
-    __m512d T3b = _mm512_add_pd(T2L, T2M);
-    __m512d TD = _mm512_add_pd(T3, T6);
-    __m512d TP = _mm512_sub_pd(TN, TO);
-    __m512d T1R = _mm512_sub_pd(T1N, T1Q);
-    __m512d T2f = _mm512_add_pd(T1N, T1Q);
-    __m512d T1d = _mm512_add_pd(TO, TN);
-    __m512d Tn = xr_8;
-    __m512d To = xr_18;
-    __m512d Tp = _mm512_add_pd(Tn, To);
-    __m512d T1o = _mm512_sub_pd(Tn, To);
-    __m512d T11 = xi_8;
-    __m512d T12 = xi_18;
-    __m512d T13 = _mm512_sub_pd(T11, T12);
-    __m512d T2u = _mm512_add_pd(T11, T12);
-    __m512d Tq = xr_13;
-    __m512d Tr = xr_3;
-    __m512d Ts = _mm512_add_pd(Tq, Tr);
-    __m512d T14 = _mm512_sub_pd(Tq, Tr);
-    __m512d T1p = xi_13;
-    __m512d T1q = xi_3;
-    __m512d T1r = _mm512_sub_pd(T1p, T1q);
-    __m512d T2v = _mm512_add_pd(T1p, T1q);
-    __m512d Tu = xr_12;
-    __m512d Tv = xr_2;
-    __m512d Tw = _mm512_add_pd(Tu, Tv);
-    __m512d T1t = _mm512_sub_pd(Tu, Tv);
-    __m512d T16 = xi_12;
-    __m512d T17 = xi_2;
-    __m512d T18 = _mm512_sub_pd(T16, T17);
-    __m512d T2x = _mm512_add_pd(T16, T17);
-    __m512d Tx = xr_17;
-    __m512d Ty = xr_7;
-    __m512d Tz = _mm512_add_pd(Tx, Ty);
-    __m512d T19 = _mm512_sub_pd(Tx, Ty);
-    __m512d T1u = xi_17;
-    __m512d T1v = xi_7;
-    __m512d T1w = _mm512_sub_pd(T1u, T1v);
-    __m512d T2y = _mm512_add_pd(T1u, T1v);
-    __m512d Tt = _mm512_sub_pd(Tp, Ts);
-    __m512d TA = _mm512_sub_pd(Tw, Tz);
-    __m512d TB = _mm512_add_pd(Tt, TA);
-    __m512d T2w = _mm512_sub_pd(T2u, T2v);
-    __m512d T2z = _mm512_sub_pd(T2x, T2y);
-    __m512d T2P = _mm512_add_pd(T2w, T2z);
-    __m512d T35 = _mm512_add_pd(T2u, T2v);
-    __m512d T36 = _mm512_add_pd(T2x, T2y);
-    __m512d T3d = _mm512_add_pd(T35, T36);
-    __m512d TH = _mm512_add_pd(Tp, Ts);
-    __m512d TI = _mm512_add_pd(Tw, Tz);
-    __m512d TJ = _mm512_add_pd(TH, TI);
-    __m512d T15 = _mm512_sub_pd(T13, T14);
-    __m512d T1a = _mm512_sub_pd(T18, T19);
-    __m512d T1b = _mm512_add_pd(T15, T1a);
-    __m512d T1s = _mm512_sub_pd(T1o, T1r);
-    __m512d T1x = _mm512_sub_pd(T1t, T1w);
-    __m512d T1T = _mm512_add_pd(T1s, T1x);
-    __m512d T29 = _mm512_add_pd(T1o, T1r);
-    __m512d T2a = _mm512_add_pd(T1t, T1w);
-    __m512d T2h = _mm512_add_pd(T29, T2a);
-    __m512d T1h = _mm512_add_pd(T14, T13);
-    __m512d T1i = _mm512_add_pd(T19, T18);
-    __m512d T1j = _mm512_add_pd(T1h, T1i);
-    __m512d T8 = xr_4;
-    __m512d T9 = xr_14;
-    __m512d Ta = _mm512_add_pd(T8, T9);
-    __m512d T1z = _mm512_sub_pd(T8, T9);
-    __m512d TQ = xi_4;
-    __m512d TR = xi_14;
-    __m512d TS = _mm512_sub_pd(TQ, TR);
-    __m512d T2B = _mm512_add_pd(TQ, TR);
-    __m512d Tb = xr_9;
-    __m512d Tc = xr_19;
-    __m512d Td = _mm512_add_pd(Tb, Tc);
-    __m512d TT = _mm512_sub_pd(Tb, Tc);
-    __m512d T1A = xi_9;
-    __m512d T1B = xi_19;
-    __m512d T1C = _mm512_sub_pd(T1A, T1B);
-    __m512d T2C = _mm512_add_pd(T1A, T1B);
-    __m512d Tf = xr_16;
-    __m512d Tg = xr_6;
-    __m512d Th = _mm512_add_pd(Tf, Tg);
-    __m512d T1E = _mm512_sub_pd(Tf, Tg);
-    __m512d TV = xi_16;
-    __m512d TW = xi_6;
-    __m512d TX = _mm512_sub_pd(TV, TW);
-    __m512d T2E = _mm512_add_pd(TV, TW);
-    __m512d Ti = xr_1;
-    __m512d Tj = xr_11;
-    __m512d Tk = _mm512_add_pd(Ti, Tj);
-    __m512d TY = _mm512_sub_pd(Ti, Tj);
-    __m512d T1F = xi_1;
-    __m512d T1G = xi_11;
-    __m512d T1H = _mm512_sub_pd(T1F, T1G);
-    __m512d T2F = _mm512_add_pd(T1F, T1G);
-    __m512d Te = _mm512_sub_pd(Ta, Td);
-    __m512d Tl = _mm512_sub_pd(Th, Tk);
-    __m512d Tm = _mm512_add_pd(Te, Tl);
-    __m512d T2D = _mm512_sub_pd(T2B, T2C);
-    __m512d T2G = _mm512_sub_pd(T2E, T2F);
-    __m512d T2O = _mm512_add_pd(T2D, T2G);
-    __m512d T32 = _mm512_add_pd(T2B, T2C);
-    __m512d T33 = _mm512_add_pd(T2E, T2F);
-    __m512d T3c = _mm512_add_pd(T32, T33);
-    __m512d TE = _mm512_add_pd(Ta, Td);
-    __m512d TF = _mm512_add_pd(Th, Tk);
-    __m512d TG = _mm512_add_pd(TE, TF);
-    __m512d TU = _mm512_sub_pd(TS, TT);
-    __m512d TZ = _mm512_sub_pd(TX, TY);
-    __m512d T10 = _mm512_add_pd(TU, TZ);
-    __m512d T1D = _mm512_sub_pd(T1z, T1C);
-    __m512d T1I = _mm512_sub_pd(T1E, T1H);
-    __m512d T1S = _mm512_add_pd(T1D, T1I);
-    __m512d T26 = _mm512_add_pd(T1z, T1C);
-    __m512d T27 = _mm512_add_pd(T1E, T1H);
-    __m512d T2g = _mm512_add_pd(T26, T27);
-    __m512d T1e = _mm512_add_pd(TT, TS);
-    __m512d T1f = _mm512_add_pd(TY, TX);
-    __m512d T1g = _mm512_add_pd(T1e, T1f);
-    __m512d T2s = _mm512_sub_pd(Tm, TB);
-    __m512d TC = _mm512_add_pd(Tm, TB);
-    __m512d T2r = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TC, T7);
-    __m512d T2A = _mm512_sub_pd(T2w, T2z);
-    __m512d T2H = _mm512_sub_pd(T2D, T2G);
-    __m512d T2I = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2H, T2A);
-    __m512d T2K = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2A, T2H);
-    _mm512_storeu_pd(&out_re[10 * K + k], _mm512_add_pd(T7, TC));
-    __m512d T2J = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
-    _mm512_storeu_pd(&out_re[14 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
-    _mm512_storeu_pd(&out_re[6 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
-    __m512d T2t = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
-    _mm512_storeu_pd(&out_re[2 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
-    _mm512_storeu_pd(&out_re[18 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
-    __m512d T2S = _mm512_sub_pd(T2O, T2P);
-    __m512d T2Q = _mm512_add_pd(T2O, T2P);
-    __m512d T2R = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2Q, T2N);
-    __m512d T2U = _mm512_sub_pd(Tt, TA);
-    __m512d T2V = _mm512_sub_pd(Te, Tl);
-    __m512d T2W = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2V, T2U);
-    __m512d T2Y = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2U, T2V);
-    _mm512_storeu_pd(&out_im[10 * K + k], _mm512_add_pd(T2N, T2Q));
-    __m512d T2X = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
-    _mm512_storeu_pd(&out_im[6 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
-    _mm512_storeu_pd(&out_im[14 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
-    __m512d T2T = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
-    _mm512_storeu_pd(&out_im[2 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
-    _mm512_storeu_pd(&out_im[18 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
-    __m512d T30 = _mm512_sub_pd(TG, TJ);
-    __m512d TK = _mm512_add_pd(TG, TJ);
-    __m512d T2Z = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TK, TD);
-    __m512d T34 = _mm512_sub_pd(T32, T33);
-    __m512d T37 = _mm512_sub_pd(T35, T36);
-    __m512d T38 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T37, T34);
-    __m512d T3a = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T34, T37);
-    _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(TD, TK));
-    __m512d T39 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
-    _mm512_storeu_pd(&out_re[12 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
-    _mm512_storeu_pd(&out_re[8 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
-    __m512d T31 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
-    _mm512_storeu_pd(&out_re[4 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
-    _mm512_storeu_pd(&out_re[16 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
-    __m512d T3g = _mm512_sub_pd(T3c, T3d);
-    __m512d T3e = _mm512_add_pd(T3c, T3d);
-    __m512d T3f = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T3e, T3b);
-    __m512d T3i = _mm512_sub_pd(TE, TF);
-    __m512d T3j = _mm512_sub_pd(TH, TI);
-    __m512d T3k = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T3j, T3i);
-    __m512d T3m = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T3i, T3j);
-    _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(T3b, T3e));
-    __m512d T3l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
-    _mm512_storeu_pd(&out_im[8 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
-    _mm512_storeu_pd(&out_im[12 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
-    __m512d T3h = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
-    _mm512_storeu_pd(&out_im[4 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
-    _mm512_storeu_pd(&out_im[16 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
-    __m512d T24 = _mm512_sub_pd(T10, T1b);
-    __m512d T1c = _mm512_add_pd(T10, T1b);
-    __m512d T23 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1c, TP);
-    __m512d T28 = _mm512_sub_pd(T26, T27);
-    __m512d T2b = _mm512_sub_pd(T29, T2a);
-    __m512d T2c = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2b, T28);
-    __m512d T2e = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T28, T2b);
-    _mm512_storeu_pd(&out_im[5 * K + k], _mm512_add_pd(TP, T1c));
-    __m512d T2d = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
-    _mm512_storeu_pd(&out_im[13 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
-    _mm512_storeu_pd(&out_im[17 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
-    __m512d T25 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
-    _mm512_storeu_pd(&out_im[1 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
-    _mm512_storeu_pd(&out_im[9 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
-    __m512d T2k = _mm512_sub_pd(T2g, T2h);
-    __m512d T2i = _mm512_add_pd(T2g, T2h);
-    __m512d T2j = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2i, T2f);
-    __m512d T2m = _mm512_sub_pd(TU, TZ);
-    __m512d T2n = _mm512_sub_pd(T15, T1a);
-    __m512d T2o = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2n, T2m);
-    __m512d T2q = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2m, T2n);
-    _mm512_storeu_pd(&out_re[5 * K + k], _mm512_add_pd(T2f, T2i));
-    __m512d T2p = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
-    _mm512_storeu_pd(&out_re[13 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
-    _mm512_storeu_pd(&out_re[17 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
-    __m512d T2l = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
-    _mm512_storeu_pd(&out_re[1 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
-    _mm512_storeu_pd(&out_re[9 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
-    __m512d T1m = _mm512_sub_pd(T1g, T1j);
-    __m512d T1k = _mm512_add_pd(T1g, T1j);
-    __m512d T1l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1k, T1d);
-    __m512d T1y = _mm512_sub_pd(T1s, T1x);
-    __m512d T1J = _mm512_sub_pd(T1D, T1I);
-    __m512d T1K = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1J, T1y);
-    __m512d T1M = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1y, T1J);
-    _mm512_storeu_pd(&out_im[15 * K + k], _mm512_add_pd(T1d, T1k));
-    __m512d T1L = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
-    _mm512_storeu_pd(&out_im[11 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
-    _mm512_storeu_pd(&out_im[19 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
-    __m512d T1n = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
-    _mm512_storeu_pd(&out_im[3 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
-    _mm512_storeu_pd(&out_im[7 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
-    __m512d T1W = _mm512_sub_pd(T1S, T1T);
-    __m512d T1U = _mm512_add_pd(T1S, T1T);
-    __m512d T1V = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1U, T1R);
-    __m512d T1Y = _mm512_sub_pd(T1h, T1i);
-    __m512d T1Z = _mm512_sub_pd(T1e, T1f);
-    __m512d T20 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Z, T1Y);
-    __m512d T22 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Y, T1Z);
-    _mm512_storeu_pd(&out_re[15 * K + k], _mm512_add_pd(T1R, T1U));
-    __m512d T21 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
-    _mm512_storeu_pd(&out_re[11 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
-    _mm512_storeu_pd(&out_re[19 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
-    __m512d T1X = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
-    _mm512_storeu_pd(&out_re[3 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
-    _mm512_storeu_pd(&out_re[7 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
-  }
+        /* Phase 2: Butterfly (genfft n1_20 DAG) */
+        __m512d T1 = xr_0;
+        __m512d T2 = xr_10;
+        __m512d T3 = _mm512_add_pd(T1, T2);
+        __m512d T1N = _mm512_sub_pd(T1, T2);
+        __m512d TL = xi_0;
+        __m512d TM = xi_10;
+        __m512d TN = _mm512_sub_pd(TL, TM);
+        __m512d T2L = _mm512_add_pd(TL, TM);
+        __m512d T4 = xr_5;
+        __m512d T5 = xr_15;
+        __m512d T6 = _mm512_add_pd(T4, T5);
+        __m512d TO = _mm512_sub_pd(T4, T5);
+        __m512d T1O = xi_5;
+        __m512d T1P = xi_15;
+        __m512d T1Q = _mm512_sub_pd(T1O, T1P);
+        __m512d T2M = _mm512_add_pd(T1O, T1P);
+        __m512d T7 = _mm512_sub_pd(T3, T6);
+        __m512d T2N = _mm512_sub_pd(T2L, T2M);
+        __m512d T3b = _mm512_add_pd(T2L, T2M);
+        __m512d TD = _mm512_add_pd(T3, T6);
+        __m512d TP = _mm512_sub_pd(TN, TO);
+        __m512d T1R = _mm512_sub_pd(T1N, T1Q);
+        __m512d T2f = _mm512_add_pd(T1N, T1Q);
+        __m512d T1d = _mm512_add_pd(TO, TN);
+        __m512d Tn = xr_8;
+        __m512d To = xr_18;
+        __m512d Tp = _mm512_add_pd(Tn, To);
+        __m512d T1o = _mm512_sub_pd(Tn, To);
+        __m512d T11 = xi_8;
+        __m512d T12 = xi_18;
+        __m512d T13 = _mm512_sub_pd(T11, T12);
+        __m512d T2u = _mm512_add_pd(T11, T12);
+        __m512d Tq = xr_13;
+        __m512d Tr = xr_3;
+        __m512d Ts = _mm512_add_pd(Tq, Tr);
+        __m512d T14 = _mm512_sub_pd(Tq, Tr);
+        __m512d T1p = xi_13;
+        __m512d T1q = xi_3;
+        __m512d T1r = _mm512_sub_pd(T1p, T1q);
+        __m512d T2v = _mm512_add_pd(T1p, T1q);
+        __m512d Tu = xr_12;
+        __m512d Tv = xr_2;
+        __m512d Tw = _mm512_add_pd(Tu, Tv);
+        __m512d T1t = _mm512_sub_pd(Tu, Tv);
+        __m512d T16 = xi_12;
+        __m512d T17 = xi_2;
+        __m512d T18 = _mm512_sub_pd(T16, T17);
+        __m512d T2x = _mm512_add_pd(T16, T17);
+        __m512d Tx = xr_17;
+        __m512d Ty = xr_7;
+        __m512d Tz = _mm512_add_pd(Tx, Ty);
+        __m512d T19 = _mm512_sub_pd(Tx, Ty);
+        __m512d T1u = xi_17;
+        __m512d T1v = xi_7;
+        __m512d T1w = _mm512_sub_pd(T1u, T1v);
+        __m512d T2y = _mm512_add_pd(T1u, T1v);
+        __m512d Tt = _mm512_sub_pd(Tp, Ts);
+        __m512d TA = _mm512_sub_pd(Tw, Tz);
+        __m512d TB = _mm512_add_pd(Tt, TA);
+        __m512d T2w = _mm512_sub_pd(T2u, T2v);
+        __m512d T2z = _mm512_sub_pd(T2x, T2y);
+        __m512d T2P = _mm512_add_pd(T2w, T2z);
+        __m512d T35 = _mm512_add_pd(T2u, T2v);
+        __m512d T36 = _mm512_add_pd(T2x, T2y);
+        __m512d T3d = _mm512_add_pd(T35, T36);
+        __m512d TH = _mm512_add_pd(Tp, Ts);
+        __m512d TI = _mm512_add_pd(Tw, Tz);
+        __m512d TJ = _mm512_add_pd(TH, TI);
+        __m512d T15 = _mm512_sub_pd(T13, T14);
+        __m512d T1a = _mm512_sub_pd(T18, T19);
+        __m512d T1b = _mm512_add_pd(T15, T1a);
+        __m512d T1s = _mm512_sub_pd(T1o, T1r);
+        __m512d T1x = _mm512_sub_pd(T1t, T1w);
+        __m512d T1T = _mm512_add_pd(T1s, T1x);
+        __m512d T29 = _mm512_add_pd(T1o, T1r);
+        __m512d T2a = _mm512_add_pd(T1t, T1w);
+        __m512d T2h = _mm512_add_pd(T29, T2a);
+        __m512d T1h = _mm512_add_pd(T14, T13);
+        __m512d T1i = _mm512_add_pd(T19, T18);
+        __m512d T1j = _mm512_add_pd(T1h, T1i);
+        __m512d T8 = xr_4;
+        __m512d T9 = xr_14;
+        __m512d Ta = _mm512_add_pd(T8, T9);
+        __m512d T1z = _mm512_sub_pd(T8, T9);
+        __m512d TQ = xi_4;
+        __m512d TR = xi_14;
+        __m512d TS = _mm512_sub_pd(TQ, TR);
+        __m512d T2B = _mm512_add_pd(TQ, TR);
+        __m512d Tb = xr_9;
+        __m512d Tc = xr_19;
+        __m512d Td = _mm512_add_pd(Tb, Tc);
+        __m512d TT = _mm512_sub_pd(Tb, Tc);
+        __m512d T1A = xi_9;
+        __m512d T1B = xi_19;
+        __m512d T1C = _mm512_sub_pd(T1A, T1B);
+        __m512d T2C = _mm512_add_pd(T1A, T1B);
+        __m512d Tf = xr_16;
+        __m512d Tg = xr_6;
+        __m512d Th = _mm512_add_pd(Tf, Tg);
+        __m512d T1E = _mm512_sub_pd(Tf, Tg);
+        __m512d TV = xi_16;
+        __m512d TW = xi_6;
+        __m512d TX = _mm512_sub_pd(TV, TW);
+        __m512d T2E = _mm512_add_pd(TV, TW);
+        __m512d Ti = xr_1;
+        __m512d Tj = xr_11;
+        __m512d Tk = _mm512_add_pd(Ti, Tj);
+        __m512d TY = _mm512_sub_pd(Ti, Tj);
+        __m512d T1F = xi_1;
+        __m512d T1G = xi_11;
+        __m512d T1H = _mm512_sub_pd(T1F, T1G);
+        __m512d T2F = _mm512_add_pd(T1F, T1G);
+        __m512d Te = _mm512_sub_pd(Ta, Td);
+        __m512d Tl = _mm512_sub_pd(Th, Tk);
+        __m512d Tm = _mm512_add_pd(Te, Tl);
+        __m512d T2D = _mm512_sub_pd(T2B, T2C);
+        __m512d T2G = _mm512_sub_pd(T2E, T2F);
+        __m512d T2O = _mm512_add_pd(T2D, T2G);
+        __m512d T32 = _mm512_add_pd(T2B, T2C);
+        __m512d T33 = _mm512_add_pd(T2E, T2F);
+        __m512d T3c = _mm512_add_pd(T32, T33);
+        __m512d TE = _mm512_add_pd(Ta, Td);
+        __m512d TF = _mm512_add_pd(Th, Tk);
+        __m512d TG = _mm512_add_pd(TE, TF);
+        __m512d TU = _mm512_sub_pd(TS, TT);
+        __m512d TZ = _mm512_sub_pd(TX, TY);
+        __m512d T10 = _mm512_add_pd(TU, TZ);
+        __m512d T1D = _mm512_sub_pd(T1z, T1C);
+        __m512d T1I = _mm512_sub_pd(T1E, T1H);
+        __m512d T1S = _mm512_add_pd(T1D, T1I);
+        __m512d T26 = _mm512_add_pd(T1z, T1C);
+        __m512d T27 = _mm512_add_pd(T1E, T1H);
+        __m512d T2g = _mm512_add_pd(T26, T27);
+        __m512d T1e = _mm512_add_pd(TT, TS);
+        __m512d T1f = _mm512_add_pd(TY, TX);
+        __m512d T1g = _mm512_add_pd(T1e, T1f);
+        __m512d T2s = _mm512_sub_pd(Tm, TB);
+        __m512d TC = _mm512_add_pd(Tm, TB);
+        __m512d T2r = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TC, T7);
+        __m512d T2A = _mm512_sub_pd(T2w, T2z);
+        __m512d T2H = _mm512_sub_pd(T2D, T2G);
+        __m512d T2I = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2H, T2A);
+        __m512d T2K = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2A, T2H);
+        _mm512_storeu_pd(&out_re[10 * K + k], _mm512_add_pd(T7, TC));
+        __m512d T2J = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
+        _mm512_storeu_pd(&out_re[14 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
+        _mm512_storeu_pd(&out_re[6 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
+        __m512d T2t = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
+        _mm512_storeu_pd(&out_re[2 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
+        _mm512_storeu_pd(&out_re[18 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
+        __m512d T2S = _mm512_sub_pd(T2O, T2P);
+        __m512d T2Q = _mm512_add_pd(T2O, T2P);
+        __m512d T2R = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2Q, T2N);
+        __m512d T2U = _mm512_sub_pd(Tt, TA);
+        __m512d T2V = _mm512_sub_pd(Te, Tl);
+        __m512d T2W = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2V, T2U);
+        __m512d T2Y = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2U, T2V);
+        _mm512_storeu_pd(&out_im[10 * K + k], _mm512_add_pd(T2N, T2Q));
+        __m512d T2X = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
+        _mm512_storeu_pd(&out_im[6 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
+        _mm512_storeu_pd(&out_im[14 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
+        __m512d T2T = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
+        _mm512_storeu_pd(&out_im[2 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
+        _mm512_storeu_pd(&out_im[18 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
+        __m512d T30 = _mm512_sub_pd(TG, TJ);
+        __m512d TK = _mm512_add_pd(TG, TJ);
+        __m512d T2Z = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TK, TD);
+        __m512d T34 = _mm512_sub_pd(T32, T33);
+        __m512d T37 = _mm512_sub_pd(T35, T36);
+        __m512d T38 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T37, T34);
+        __m512d T3a = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T34, T37);
+        _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(TD, TK));
+        __m512d T39 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
+        _mm512_storeu_pd(&out_re[12 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
+        _mm512_storeu_pd(&out_re[8 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
+        __m512d T31 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
+        _mm512_storeu_pd(&out_re[4 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
+        _mm512_storeu_pd(&out_re[16 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
+        __m512d T3g = _mm512_sub_pd(T3c, T3d);
+        __m512d T3e = _mm512_add_pd(T3c, T3d);
+        __m512d T3f = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T3e, T3b);
+        __m512d T3i = _mm512_sub_pd(TE, TF);
+        __m512d T3j = _mm512_sub_pd(TH, TI);
+        __m512d T3k = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T3j, T3i);
+        __m512d T3m = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T3i, T3j);
+        _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(T3b, T3e));
+        __m512d T3l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
+        _mm512_storeu_pd(&out_im[8 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
+        _mm512_storeu_pd(&out_im[12 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
+        __m512d T3h = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
+        _mm512_storeu_pd(&out_im[4 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
+        _mm512_storeu_pd(&out_im[16 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
+        __m512d T24 = _mm512_sub_pd(T10, T1b);
+        __m512d T1c = _mm512_add_pd(T10, T1b);
+        __m512d T23 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1c, TP);
+        __m512d T28 = _mm512_sub_pd(T26, T27);
+        __m512d T2b = _mm512_sub_pd(T29, T2a);
+        __m512d T2c = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2b, T28);
+        __m512d T2e = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T28, T2b);
+        _mm512_storeu_pd(&out_im[5 * K + k], _mm512_add_pd(TP, T1c));
+        __m512d T2d = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
+        _mm512_storeu_pd(&out_im[13 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
+        _mm512_storeu_pd(&out_im[17 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
+        __m512d T25 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
+        _mm512_storeu_pd(&out_im[1 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
+        _mm512_storeu_pd(&out_im[9 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
+        __m512d T2k = _mm512_sub_pd(T2g, T2h);
+        __m512d T2i = _mm512_add_pd(T2g, T2h);
+        __m512d T2j = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2i, T2f);
+        __m512d T2m = _mm512_sub_pd(TU, TZ);
+        __m512d T2n = _mm512_sub_pd(T15, T1a);
+        __m512d T2o = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2n, T2m);
+        __m512d T2q = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2m, T2n);
+        _mm512_storeu_pd(&out_re[5 * K + k], _mm512_add_pd(T2f, T2i));
+        __m512d T2p = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
+        _mm512_storeu_pd(&out_re[13 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
+        _mm512_storeu_pd(&out_re[17 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
+        __m512d T2l = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
+        _mm512_storeu_pd(&out_re[1 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
+        _mm512_storeu_pd(&out_re[9 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
+        __m512d T1m = _mm512_sub_pd(T1g, T1j);
+        __m512d T1k = _mm512_add_pd(T1g, T1j);
+        __m512d T1l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1k, T1d);
+        __m512d T1y = _mm512_sub_pd(T1s, T1x);
+        __m512d T1J = _mm512_sub_pd(T1D, T1I);
+        __m512d T1K = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1J, T1y);
+        __m512d T1M = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1y, T1J);
+        _mm512_storeu_pd(&out_im[15 * K + k], _mm512_add_pd(T1d, T1k));
+        __m512d T1L = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
+        _mm512_storeu_pd(&out_im[11 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
+        _mm512_storeu_pd(&out_im[19 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
+        __m512d T1n = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
+        _mm512_storeu_pd(&out_im[3 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
+        _mm512_storeu_pd(&out_im[7 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
+        __m512d T1W = _mm512_sub_pd(T1S, T1T);
+        __m512d T1U = _mm512_add_pd(T1S, T1T);
+        __m512d T1V = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1U, T1R);
+        __m512d T1Y = _mm512_sub_pd(T1h, T1i);
+        __m512d T1Z = _mm512_sub_pd(T1e, T1f);
+        __m512d T20 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Z, T1Y);
+        __m512d T22 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Y, T1Z);
+        _mm512_storeu_pd(&out_re[15 * K + k], _mm512_add_pd(T1R, T1U));
+        __m512d T21 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
+        _mm512_storeu_pd(&out_re[11 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
+        _mm512_storeu_pd(&out_re[19 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
+        __m512d T1X = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
+        _mm512_storeu_pd(&out_re[3 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
+        _mm512_storeu_pd(&out_re[7 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
+    }
 }
 
 /* Backward (contig): swap re<->im (Frigo & Johnson) */
-__attribute__((target("avx512f,fma"))) static inline void radix20_tw_dag_dit_contig_bwd_avx512(
-    const double *__restrict__ in_re, const double *__restrict__ in_im,
-    double *__restrict__ out_re, double *__restrict__ out_im,
-    const double *__restrict__ tw_re, const double *__restrict__ tw_im,
+__attribute__((target("avx512f,fma")))
+static inline void radix20_tw_dag_dit_contig_bwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
     size_t K)
 {
-  radix20_tw_dag_dit_contig_fwd_avx512(in_im, in_re, out_im, out_re, tw_re, tw_im, K);
+    radix20_tw_dag_dit_contig_fwd_avx512(in_im, in_re, out_im, out_re, tw_re, tw_im, K);
 }
 
-__attribute__((target("avx512f,fma"))) static void radix20_tw_dag_dit_ladder_fwd_avx512(
-    const double *__restrict__ in_re, const double *__restrict__ in_im,
-    double *__restrict__ out_re, double *__restrict__ out_im,
-    const double *__restrict__ tw_re, const double *__restrict__ tw_im,
+__attribute__((target("avx512f,fma")))
+static void radix20_tw_dag_dit_ladder_fwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
     size_t K)
 {
-  for (size_t k = 0; k < K; k += 8)
-  {
-    /* Phase 1: Binary ladder twiddle load+apply (5 loads + 14 cmuls) */
-    __m512d xr_0 = _mm512_loadu_pd(&in_re[k]);
-    __m512d xi_0 = _mm512_loadu_pd(&in_im[k]);
+    for (size_t k = 0; k < K; k += 8) {
+        /* Phase 1: Binary ladder twiddle load+apply (5 loads + 14 cmuls) */
+        __m512d xr_0 = _mm512_loadu_pd(&in_re[k]);
+        __m512d xi_0 = _mm512_loadu_pd(&in_im[k]);
 
-    /* Load 5 ladder bases */
-    __m512d b1r = _mm512_loadu_pd(&tw_re[0 * K + k]);
-    __m512d b1i = _mm512_loadu_pd(&tw_im[0 * K + k]);
-    __m512d b2r = _mm512_loadu_pd(&tw_re[1 * K + k]);
-    __m512d b2i = _mm512_loadu_pd(&tw_im[1 * K + k]);
-    __m512d b4r = _mm512_loadu_pd(&tw_re[3 * K + k]);
-    __m512d b4i = _mm512_loadu_pd(&tw_im[3 * K + k]);
-    __m512d b8r = _mm512_loadu_pd(&tw_re[7 * K + k]);
-    __m512d b8i = _mm512_loadu_pd(&tw_im[7 * K + k]);
-    __m512d b16r = _mm512_loadu_pd(&tw_re[15 * K + k]);
-    __m512d b16i = _mm512_loadu_pd(&tw_im[15 * K + k]);
+        /* Load 5 ladder bases */
+        __m512d b1r = _mm512_loadu_pd(&tw_re[0*K+k]);
+        __m512d b1i = _mm512_loadu_pd(&tw_im[0*K+k]);
+        __m512d b2r = _mm512_loadu_pd(&tw_re[1*K+k]);
+        __m512d b2i = _mm512_loadu_pd(&tw_im[1*K+k]);
+        __m512d b4r = _mm512_loadu_pd(&tw_re[3*K+k]);
+        __m512d b4i = _mm512_loadu_pd(&tw_im[3*K+k]);
+        __m512d b8r = _mm512_loadu_pd(&tw_re[7*K+k]);
+        __m512d b8i = _mm512_loadu_pd(&tw_im[7*K+k]);
+        __m512d b16r = _mm512_loadu_pd(&tw_re[15*K+k]);
+        __m512d b16i = _mm512_loadu_pd(&tw_im[15*K+k]);
 
-    /* Precompute W^3 = W^1 * W^2 (reused for m=3,7,11,15,19) */
-    __m512d w3r = _mm512_fmsub_pd(b1r, b2r, _mm512_mul_pd(b1i, b2i));
-    __m512d w3i = _mm512_fmadd_pd(b1r, b2i, _mm512_mul_pd(b1i, b2r));
+        /* Precompute W^3 = W^1 * W^2 (reused for m=3,7,11,15,19) */
+        __m512d w3r = _mm512_fmsub_pd(b1r, b2r, _mm512_mul_pd(b1i, b2i));
+        __m512d w3i = _mm512_fmadd_pd(b1r, b2i, _mm512_mul_pd(b1i, b2r));
 
-    /* Derive twiddles + load inputs + apply */
-    __m512d xr_1, xi_1;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[1 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[1 * K + k]);
-      xr_1 = _mm512_fmsub_pd(dr, b1r, _mm512_mul_pd(di, b1i));
-      xi_1 = _mm512_fmadd_pd(dr, b1i, _mm512_mul_pd(di, b1r));
-    }
-    __m512d xr_2, xi_2;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[2 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[2 * K + k]);
-      xr_2 = _mm512_fmsub_pd(dr, b2r, _mm512_mul_pd(di, b2i));
-      xi_2 = _mm512_fmadd_pd(dr, b2i, _mm512_mul_pd(di, b2r));
-    }
-    __m512d tw3r = _mm512_fmsub_pd(b1r, b2r, _mm512_mul_pd(b1i, b2i));
-    __m512d tw3i = _mm512_fmadd_pd(b1r, b2i, _mm512_mul_pd(b1i, b2r));
-    __m512d xr_3, xi_3;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[3 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[3 * K + k]);
-      xr_3 = _mm512_fmsub_pd(dr, tw3r, _mm512_mul_pd(di, tw3i));
-      xi_3 = _mm512_fmadd_pd(dr, tw3i, _mm512_mul_pd(di, tw3r));
-    }
-    __m512d xr_4, xi_4;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[4 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[4 * K + k]);
-      xr_4 = _mm512_fmsub_pd(dr, b4r, _mm512_mul_pd(di, b4i));
-      xi_4 = _mm512_fmadd_pd(dr, b4i, _mm512_mul_pd(di, b4r));
-    }
-    __m512d tw5r = _mm512_fmsub_pd(b1r, b4r, _mm512_mul_pd(b1i, b4i));
-    __m512d tw5i = _mm512_fmadd_pd(b1r, b4i, _mm512_mul_pd(b1i, b4r));
-    __m512d xr_5, xi_5;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[5 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[5 * K + k]);
-      xr_5 = _mm512_fmsub_pd(dr, tw5r, _mm512_mul_pd(di, tw5i));
-      xi_5 = _mm512_fmadd_pd(dr, tw5i, _mm512_mul_pd(di, tw5r));
-    }
-    __m512d tw6r = _mm512_fmsub_pd(b2r, b4r, _mm512_mul_pd(b2i, b4i));
-    __m512d tw6i = _mm512_fmadd_pd(b2r, b4i, _mm512_mul_pd(b2i, b4r));
-    __m512d xr_6, xi_6;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[6 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[6 * K + k]);
-      xr_6 = _mm512_fmsub_pd(dr, tw6r, _mm512_mul_pd(di, tw6i));
-      xi_6 = _mm512_fmadd_pd(dr, tw6i, _mm512_mul_pd(di, tw6r));
-    }
-    __m512d tw7r = _mm512_fmsub_pd(w3r, b4r, _mm512_mul_pd(w3i, b4i));
-    __m512d tw7i = _mm512_fmadd_pd(w3r, b4i, _mm512_mul_pd(w3i, b4r));
-    __m512d xr_7, xi_7;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[7 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[7 * K + k]);
-      xr_7 = _mm512_fmsub_pd(dr, tw7r, _mm512_mul_pd(di, tw7i));
-      xi_7 = _mm512_fmadd_pd(dr, tw7i, _mm512_mul_pd(di, tw7r));
-    }
-    __m512d xr_8, xi_8;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[8 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[8 * K + k]);
-      xr_8 = _mm512_fmsub_pd(dr, b8r, _mm512_mul_pd(di, b8i));
-      xi_8 = _mm512_fmadd_pd(dr, b8i, _mm512_mul_pd(di, b8r));
-    }
-    __m512d tw9r = _mm512_fmsub_pd(b1r, b8r, _mm512_mul_pd(b1i, b8i));
-    __m512d tw9i = _mm512_fmadd_pd(b1r, b8i, _mm512_mul_pd(b1i, b8r));
-    __m512d xr_9, xi_9;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[9 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[9 * K + k]);
-      xr_9 = _mm512_fmsub_pd(dr, tw9r, _mm512_mul_pd(di, tw9i));
-      xi_9 = _mm512_fmadd_pd(dr, tw9i, _mm512_mul_pd(di, tw9r));
-    }
-    __m512d tw10r = _mm512_fmsub_pd(b2r, b8r, _mm512_mul_pd(b2i, b8i));
-    __m512d tw10i = _mm512_fmadd_pd(b2r, b8i, _mm512_mul_pd(b2i, b8r));
-    __m512d xr_10, xi_10;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[10 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[10 * K + k]);
-      xr_10 = _mm512_fmsub_pd(dr, tw10r, _mm512_mul_pd(di, tw10i));
-      xi_10 = _mm512_fmadd_pd(dr, tw10i, _mm512_mul_pd(di, tw10r));
-    }
-    __m512d tw11r = _mm512_fmsub_pd(w3r, b8r, _mm512_mul_pd(w3i, b8i));
-    __m512d tw11i = _mm512_fmadd_pd(w3r, b8i, _mm512_mul_pd(w3i, b8r));
-    __m512d xr_11, xi_11;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[11 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[11 * K + k]);
-      xr_11 = _mm512_fmsub_pd(dr, tw11r, _mm512_mul_pd(di, tw11i));
-      xi_11 = _mm512_fmadd_pd(dr, tw11i, _mm512_mul_pd(di, tw11r));
-    }
-    __m512d tw12r = _mm512_fmsub_pd(b4r, b8r, _mm512_mul_pd(b4i, b8i));
-    __m512d tw12i = _mm512_fmadd_pd(b4r, b8i, _mm512_mul_pd(b4i, b8r));
-    __m512d xr_12, xi_12;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[12 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[12 * K + k]);
-      xr_12 = _mm512_fmsub_pd(dr, tw12r, _mm512_mul_pd(di, tw12i));
-      xi_12 = _mm512_fmadd_pd(dr, tw12i, _mm512_mul_pd(di, tw12r));
-    }
-    __m512d tw13r, tw13i;
-    {
-      __m512d abr = _mm512_fmsub_pd(b1r, b4r, _mm512_mul_pd(b1i, b4i));
-      __m512d abi = _mm512_fmadd_pd(b1r, b4i, _mm512_mul_pd(b1i, b4r));
-      tw13r = _mm512_fmsub_pd(abr, b8r, _mm512_mul_pd(abi, b8i));
-      tw13i = _mm512_fmadd_pd(abr, b8i, _mm512_mul_pd(abi, b8r));
-    }
-    __m512d xr_13, xi_13;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[13 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[13 * K + k]);
-      xr_13 = _mm512_fmsub_pd(dr, tw13r, _mm512_mul_pd(di, tw13i));
-      xi_13 = _mm512_fmadd_pd(dr, tw13i, _mm512_mul_pd(di, tw13r));
-    }
-    __m512d tw14r, tw14i;
-    {
-      __m512d abr = _mm512_fmsub_pd(b2r, b4r, _mm512_mul_pd(b2i, b4i));
-      __m512d abi = _mm512_fmadd_pd(b2r, b4i, _mm512_mul_pd(b2i, b4r));
-      tw14r = _mm512_fmsub_pd(abr, b8r, _mm512_mul_pd(abi, b8i));
-      tw14i = _mm512_fmadd_pd(abr, b8i, _mm512_mul_pd(abi, b8r));
-    }
-    __m512d xr_14, xi_14;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[14 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[14 * K + k]);
-      xr_14 = _mm512_fmsub_pd(dr, tw14r, _mm512_mul_pd(di, tw14i));
-      xi_14 = _mm512_fmadd_pd(dr, tw14i, _mm512_mul_pd(di, tw14r));
-    }
-    __m512d tw15r, tw15i;
-    {
-      __m512d abr = _mm512_fmsub_pd(w3r, b4r, _mm512_mul_pd(w3i, b4i));
-      __m512d abi = _mm512_fmadd_pd(w3r, b4i, _mm512_mul_pd(w3i, b4r));
-      tw15r = _mm512_fmsub_pd(abr, b8r, _mm512_mul_pd(abi, b8i));
-      tw15i = _mm512_fmadd_pd(abr, b8i, _mm512_mul_pd(abi, b8r));
-    }
-    __m512d xr_15, xi_15;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[15 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[15 * K + k]);
-      xr_15 = _mm512_fmsub_pd(dr, tw15r, _mm512_mul_pd(di, tw15i));
-      xi_15 = _mm512_fmadd_pd(dr, tw15i, _mm512_mul_pd(di, tw15r));
-    }
-    __m512d xr_16, xi_16;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[16 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[16 * K + k]);
-      xr_16 = _mm512_fmsub_pd(dr, b16r, _mm512_mul_pd(di, b16i));
-      xi_16 = _mm512_fmadd_pd(dr, b16i, _mm512_mul_pd(di, b16r));
-    }
-    __m512d tw17r = _mm512_fmsub_pd(b1r, b16r, _mm512_mul_pd(b1i, b16i));
-    __m512d tw17i = _mm512_fmadd_pd(b1r, b16i, _mm512_mul_pd(b1i, b16r));
-    __m512d xr_17, xi_17;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[17 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[17 * K + k]);
-      xr_17 = _mm512_fmsub_pd(dr, tw17r, _mm512_mul_pd(di, tw17i));
-      xi_17 = _mm512_fmadd_pd(dr, tw17i, _mm512_mul_pd(di, tw17r));
-    }
-    __m512d tw18r = _mm512_fmsub_pd(b2r, b16r, _mm512_mul_pd(b2i, b16i));
-    __m512d tw18i = _mm512_fmadd_pd(b2r, b16i, _mm512_mul_pd(b2i, b16r));
-    __m512d xr_18, xi_18;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[18 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[18 * K + k]);
-      xr_18 = _mm512_fmsub_pd(dr, tw18r, _mm512_mul_pd(di, tw18i));
-      xi_18 = _mm512_fmadd_pd(dr, tw18i, _mm512_mul_pd(di, tw18r));
-    }
-    __m512d tw19r = _mm512_fmsub_pd(w3r, b16r, _mm512_mul_pd(w3i, b16i));
-    __m512d tw19i = _mm512_fmadd_pd(w3r, b16i, _mm512_mul_pd(w3i, b16r));
-    __m512d xr_19, xi_19;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[19 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[19 * K + k]);
-      xr_19 = _mm512_fmsub_pd(dr, tw19r, _mm512_mul_pd(di, tw19i));
-      xi_19 = _mm512_fmadd_pd(dr, tw19i, _mm512_mul_pd(di, tw19r));
-    }
+        /* Derive twiddles + load inputs + apply */
+        __m512d xr_1, xi_1;
+        { __m512d dr = _mm512_loadu_pd(&in_re[1*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[1*K+k]);
+          xr_1 = _mm512_fmsub_pd(dr, b1r, _mm512_mul_pd(di, b1i));
+          xi_1 = _mm512_fmadd_pd(dr, b1i, _mm512_mul_pd(di, b1r)); }
+        __m512d xr_2, xi_2;
+        { __m512d dr = _mm512_loadu_pd(&in_re[2*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[2*K+k]);
+          xr_2 = _mm512_fmsub_pd(dr, b2r, _mm512_mul_pd(di, b2i));
+          xi_2 = _mm512_fmadd_pd(dr, b2i, _mm512_mul_pd(di, b2r)); }
+        __m512d tw3r = _mm512_fmsub_pd(b1r, b2r, _mm512_mul_pd(b1i, b2i));
+        __m512d tw3i = _mm512_fmadd_pd(b1r, b2i, _mm512_mul_pd(b1i, b2r));
+        __m512d xr_3, xi_3;
+        { __m512d dr = _mm512_loadu_pd(&in_re[3*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[3*K+k]);
+          xr_3 = _mm512_fmsub_pd(dr, tw3r, _mm512_mul_pd(di, tw3i));
+          xi_3 = _mm512_fmadd_pd(dr, tw3i, _mm512_mul_pd(di, tw3r)); }
+        __m512d xr_4, xi_4;
+        { __m512d dr = _mm512_loadu_pd(&in_re[4*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[4*K+k]);
+          xr_4 = _mm512_fmsub_pd(dr, b4r, _mm512_mul_pd(di, b4i));
+          xi_4 = _mm512_fmadd_pd(dr, b4i, _mm512_mul_pd(di, b4r)); }
+        __m512d tw5r = _mm512_fmsub_pd(b1r, b4r, _mm512_mul_pd(b1i, b4i));
+        __m512d tw5i = _mm512_fmadd_pd(b1r, b4i, _mm512_mul_pd(b1i, b4r));
+        __m512d xr_5, xi_5;
+        { __m512d dr = _mm512_loadu_pd(&in_re[5*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[5*K+k]);
+          xr_5 = _mm512_fmsub_pd(dr, tw5r, _mm512_mul_pd(di, tw5i));
+          xi_5 = _mm512_fmadd_pd(dr, tw5i, _mm512_mul_pd(di, tw5r)); }
+        __m512d tw6r = _mm512_fmsub_pd(b2r, b4r, _mm512_mul_pd(b2i, b4i));
+        __m512d tw6i = _mm512_fmadd_pd(b2r, b4i, _mm512_mul_pd(b2i, b4r));
+        __m512d xr_6, xi_6;
+        { __m512d dr = _mm512_loadu_pd(&in_re[6*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[6*K+k]);
+          xr_6 = _mm512_fmsub_pd(dr, tw6r, _mm512_mul_pd(di, tw6i));
+          xi_6 = _mm512_fmadd_pd(dr, tw6i, _mm512_mul_pd(di, tw6r)); }
+        __m512d tw7r = _mm512_fmsub_pd(w3r, b4r, _mm512_mul_pd(w3i, b4i));
+        __m512d tw7i = _mm512_fmadd_pd(w3r, b4i, _mm512_mul_pd(w3i, b4r));
+        __m512d xr_7, xi_7;
+        { __m512d dr = _mm512_loadu_pd(&in_re[7*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[7*K+k]);
+          xr_7 = _mm512_fmsub_pd(dr, tw7r, _mm512_mul_pd(di, tw7i));
+          xi_7 = _mm512_fmadd_pd(dr, tw7i, _mm512_mul_pd(di, tw7r)); }
+        __m512d xr_8, xi_8;
+        { __m512d dr = _mm512_loadu_pd(&in_re[8*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[8*K+k]);
+          xr_8 = _mm512_fmsub_pd(dr, b8r, _mm512_mul_pd(di, b8i));
+          xi_8 = _mm512_fmadd_pd(dr, b8i, _mm512_mul_pd(di, b8r)); }
+        __m512d tw9r = _mm512_fmsub_pd(b1r, b8r, _mm512_mul_pd(b1i, b8i));
+        __m512d tw9i = _mm512_fmadd_pd(b1r, b8i, _mm512_mul_pd(b1i, b8r));
+        __m512d xr_9, xi_9;
+        { __m512d dr = _mm512_loadu_pd(&in_re[9*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[9*K+k]);
+          xr_9 = _mm512_fmsub_pd(dr, tw9r, _mm512_mul_pd(di, tw9i));
+          xi_9 = _mm512_fmadd_pd(dr, tw9i, _mm512_mul_pd(di, tw9r)); }
+        __m512d tw10r = _mm512_fmsub_pd(b2r, b8r, _mm512_mul_pd(b2i, b8i));
+        __m512d tw10i = _mm512_fmadd_pd(b2r, b8i, _mm512_mul_pd(b2i, b8r));
+        __m512d xr_10, xi_10;
+        { __m512d dr = _mm512_loadu_pd(&in_re[10*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[10*K+k]);
+          xr_10 = _mm512_fmsub_pd(dr, tw10r, _mm512_mul_pd(di, tw10i));
+          xi_10 = _mm512_fmadd_pd(dr, tw10i, _mm512_mul_pd(di, tw10r)); }
+        __m512d tw11r = _mm512_fmsub_pd(w3r, b8r, _mm512_mul_pd(w3i, b8i));
+        __m512d tw11i = _mm512_fmadd_pd(w3r, b8i, _mm512_mul_pd(w3i, b8r));
+        __m512d xr_11, xi_11;
+        { __m512d dr = _mm512_loadu_pd(&in_re[11*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[11*K+k]);
+          xr_11 = _mm512_fmsub_pd(dr, tw11r, _mm512_mul_pd(di, tw11i));
+          xi_11 = _mm512_fmadd_pd(dr, tw11i, _mm512_mul_pd(di, tw11r)); }
+        __m512d tw12r = _mm512_fmsub_pd(b4r, b8r, _mm512_mul_pd(b4i, b8i));
+        __m512d tw12i = _mm512_fmadd_pd(b4r, b8i, _mm512_mul_pd(b4i, b8r));
+        __m512d xr_12, xi_12;
+        { __m512d dr = _mm512_loadu_pd(&in_re[12*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[12*K+k]);
+          xr_12 = _mm512_fmsub_pd(dr, tw12r, _mm512_mul_pd(di, tw12i));
+          xi_12 = _mm512_fmadd_pd(dr, tw12i, _mm512_mul_pd(di, tw12r)); }
+        __m512d tw13r, tw13i;
+        { __m512d abr = _mm512_fmsub_pd(b1r, b4r, _mm512_mul_pd(b1i, b4i));
+          __m512d abi = _mm512_fmadd_pd(b1r, b4i, _mm512_mul_pd(b1i, b4r));
+          tw13r = _mm512_fmsub_pd(abr, b8r, _mm512_mul_pd(abi, b8i));
+          tw13i = _mm512_fmadd_pd(abr, b8i, _mm512_mul_pd(abi, b8r)); }
+        __m512d xr_13, xi_13;
+        { __m512d dr = _mm512_loadu_pd(&in_re[13*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[13*K+k]);
+          xr_13 = _mm512_fmsub_pd(dr, tw13r, _mm512_mul_pd(di, tw13i));
+          xi_13 = _mm512_fmadd_pd(dr, tw13i, _mm512_mul_pd(di, tw13r)); }
+        __m512d tw14r, tw14i;
+        { __m512d abr = _mm512_fmsub_pd(b2r, b4r, _mm512_mul_pd(b2i, b4i));
+          __m512d abi = _mm512_fmadd_pd(b2r, b4i, _mm512_mul_pd(b2i, b4r));
+          tw14r = _mm512_fmsub_pd(abr, b8r, _mm512_mul_pd(abi, b8i));
+          tw14i = _mm512_fmadd_pd(abr, b8i, _mm512_mul_pd(abi, b8r)); }
+        __m512d xr_14, xi_14;
+        { __m512d dr = _mm512_loadu_pd(&in_re[14*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[14*K+k]);
+          xr_14 = _mm512_fmsub_pd(dr, tw14r, _mm512_mul_pd(di, tw14i));
+          xi_14 = _mm512_fmadd_pd(dr, tw14i, _mm512_mul_pd(di, tw14r)); }
+        __m512d tw15r, tw15i;
+        { __m512d abr = _mm512_fmsub_pd(w3r, b4r, _mm512_mul_pd(w3i, b4i));
+          __m512d abi = _mm512_fmadd_pd(w3r, b4i, _mm512_mul_pd(w3i, b4r));
+          tw15r = _mm512_fmsub_pd(abr, b8r, _mm512_mul_pd(abi, b8i));
+          tw15i = _mm512_fmadd_pd(abr, b8i, _mm512_mul_pd(abi, b8r)); }
+        __m512d xr_15, xi_15;
+        { __m512d dr = _mm512_loadu_pd(&in_re[15*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[15*K+k]);
+          xr_15 = _mm512_fmsub_pd(dr, tw15r, _mm512_mul_pd(di, tw15i));
+          xi_15 = _mm512_fmadd_pd(dr, tw15i, _mm512_mul_pd(di, tw15r)); }
+        __m512d xr_16, xi_16;
+        { __m512d dr = _mm512_loadu_pd(&in_re[16*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[16*K+k]);
+          xr_16 = _mm512_fmsub_pd(dr, b16r, _mm512_mul_pd(di, b16i));
+          xi_16 = _mm512_fmadd_pd(dr, b16i, _mm512_mul_pd(di, b16r)); }
+        __m512d tw17r = _mm512_fmsub_pd(b1r, b16r, _mm512_mul_pd(b1i, b16i));
+        __m512d tw17i = _mm512_fmadd_pd(b1r, b16i, _mm512_mul_pd(b1i, b16r));
+        __m512d xr_17, xi_17;
+        { __m512d dr = _mm512_loadu_pd(&in_re[17*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[17*K+k]);
+          xr_17 = _mm512_fmsub_pd(dr, tw17r, _mm512_mul_pd(di, tw17i));
+          xi_17 = _mm512_fmadd_pd(dr, tw17i, _mm512_mul_pd(di, tw17r)); }
+        __m512d tw18r = _mm512_fmsub_pd(b2r, b16r, _mm512_mul_pd(b2i, b16i));
+        __m512d tw18i = _mm512_fmadd_pd(b2r, b16i, _mm512_mul_pd(b2i, b16r));
+        __m512d xr_18, xi_18;
+        { __m512d dr = _mm512_loadu_pd(&in_re[18*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[18*K+k]);
+          xr_18 = _mm512_fmsub_pd(dr, tw18r, _mm512_mul_pd(di, tw18i));
+          xi_18 = _mm512_fmadd_pd(dr, tw18i, _mm512_mul_pd(di, tw18r)); }
+        __m512d tw19r = _mm512_fmsub_pd(w3r, b16r, _mm512_mul_pd(w3i, b16i));
+        __m512d tw19i = _mm512_fmadd_pd(w3r, b16i, _mm512_mul_pd(w3i, b16r));
+        __m512d xr_19, xi_19;
+        { __m512d dr = _mm512_loadu_pd(&in_re[19*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[19*K+k]);
+          xr_19 = _mm512_fmsub_pd(dr, tw19r, _mm512_mul_pd(di, tw19i));
+          xi_19 = _mm512_fmadd_pd(dr, tw19i, _mm512_mul_pd(di, tw19r)); }
 
-    /* Phase 2: Butterfly (genfft n1_20 DAG) */
-    __m512d T1 = xr_0;
-    __m512d T2 = xr_10;
-    __m512d T3 = _mm512_add_pd(T1, T2);
-    __m512d T1N = _mm512_sub_pd(T1, T2);
-    __m512d TL = xi_0;
-    __m512d TM = xi_10;
-    __m512d TN = _mm512_sub_pd(TL, TM);
-    __m512d T2L = _mm512_add_pd(TL, TM);
-    __m512d T4 = xr_5;
-    __m512d T5 = xr_15;
-    __m512d T6 = _mm512_add_pd(T4, T5);
-    __m512d TO = _mm512_sub_pd(T4, T5);
-    __m512d T1O = xi_5;
-    __m512d T1P = xi_15;
-    __m512d T1Q = _mm512_sub_pd(T1O, T1P);
-    __m512d T2M = _mm512_add_pd(T1O, T1P);
-    __m512d T7 = _mm512_sub_pd(T3, T6);
-    __m512d T2N = _mm512_sub_pd(T2L, T2M);
-    __m512d T3b = _mm512_add_pd(T2L, T2M);
-    __m512d TD = _mm512_add_pd(T3, T6);
-    __m512d TP = _mm512_sub_pd(TN, TO);
-    __m512d T1R = _mm512_sub_pd(T1N, T1Q);
-    __m512d T2f = _mm512_add_pd(T1N, T1Q);
-    __m512d T1d = _mm512_add_pd(TO, TN);
-    __m512d Tn = xr_8;
-    __m512d To = xr_18;
-    __m512d Tp = _mm512_add_pd(Tn, To);
-    __m512d T1o = _mm512_sub_pd(Tn, To);
-    __m512d T11 = xi_8;
-    __m512d T12 = xi_18;
-    __m512d T13 = _mm512_sub_pd(T11, T12);
-    __m512d T2u = _mm512_add_pd(T11, T12);
-    __m512d Tq = xr_13;
-    __m512d Tr = xr_3;
-    __m512d Ts = _mm512_add_pd(Tq, Tr);
-    __m512d T14 = _mm512_sub_pd(Tq, Tr);
-    __m512d T1p = xi_13;
-    __m512d T1q = xi_3;
-    __m512d T1r = _mm512_sub_pd(T1p, T1q);
-    __m512d T2v = _mm512_add_pd(T1p, T1q);
-    __m512d Tu = xr_12;
-    __m512d Tv = xr_2;
-    __m512d Tw = _mm512_add_pd(Tu, Tv);
-    __m512d T1t = _mm512_sub_pd(Tu, Tv);
-    __m512d T16 = xi_12;
-    __m512d T17 = xi_2;
-    __m512d T18 = _mm512_sub_pd(T16, T17);
-    __m512d T2x = _mm512_add_pd(T16, T17);
-    __m512d Tx = xr_17;
-    __m512d Ty = xr_7;
-    __m512d Tz = _mm512_add_pd(Tx, Ty);
-    __m512d T19 = _mm512_sub_pd(Tx, Ty);
-    __m512d T1u = xi_17;
-    __m512d T1v = xi_7;
-    __m512d T1w = _mm512_sub_pd(T1u, T1v);
-    __m512d T2y = _mm512_add_pd(T1u, T1v);
-    __m512d Tt = _mm512_sub_pd(Tp, Ts);
-    __m512d TA = _mm512_sub_pd(Tw, Tz);
-    __m512d TB = _mm512_add_pd(Tt, TA);
-    __m512d T2w = _mm512_sub_pd(T2u, T2v);
-    __m512d T2z = _mm512_sub_pd(T2x, T2y);
-    __m512d T2P = _mm512_add_pd(T2w, T2z);
-    __m512d T35 = _mm512_add_pd(T2u, T2v);
-    __m512d T36 = _mm512_add_pd(T2x, T2y);
-    __m512d T3d = _mm512_add_pd(T35, T36);
-    __m512d TH = _mm512_add_pd(Tp, Ts);
-    __m512d TI = _mm512_add_pd(Tw, Tz);
-    __m512d TJ = _mm512_add_pd(TH, TI);
-    __m512d T15 = _mm512_sub_pd(T13, T14);
-    __m512d T1a = _mm512_sub_pd(T18, T19);
-    __m512d T1b = _mm512_add_pd(T15, T1a);
-    __m512d T1s = _mm512_sub_pd(T1o, T1r);
-    __m512d T1x = _mm512_sub_pd(T1t, T1w);
-    __m512d T1T = _mm512_add_pd(T1s, T1x);
-    __m512d T29 = _mm512_add_pd(T1o, T1r);
-    __m512d T2a = _mm512_add_pd(T1t, T1w);
-    __m512d T2h = _mm512_add_pd(T29, T2a);
-    __m512d T1h = _mm512_add_pd(T14, T13);
-    __m512d T1i = _mm512_add_pd(T19, T18);
-    __m512d T1j = _mm512_add_pd(T1h, T1i);
-    __m512d T8 = xr_4;
-    __m512d T9 = xr_14;
-    __m512d Ta = _mm512_add_pd(T8, T9);
-    __m512d T1z = _mm512_sub_pd(T8, T9);
-    __m512d TQ = xi_4;
-    __m512d TR = xi_14;
-    __m512d TS = _mm512_sub_pd(TQ, TR);
-    __m512d T2B = _mm512_add_pd(TQ, TR);
-    __m512d Tb = xr_9;
-    __m512d Tc = xr_19;
-    __m512d Td = _mm512_add_pd(Tb, Tc);
-    __m512d TT = _mm512_sub_pd(Tb, Tc);
-    __m512d T1A = xi_9;
-    __m512d T1B = xi_19;
-    __m512d T1C = _mm512_sub_pd(T1A, T1B);
-    __m512d T2C = _mm512_add_pd(T1A, T1B);
-    __m512d Tf = xr_16;
-    __m512d Tg = xr_6;
-    __m512d Th = _mm512_add_pd(Tf, Tg);
-    __m512d T1E = _mm512_sub_pd(Tf, Tg);
-    __m512d TV = xi_16;
-    __m512d TW = xi_6;
-    __m512d TX = _mm512_sub_pd(TV, TW);
-    __m512d T2E = _mm512_add_pd(TV, TW);
-    __m512d Ti = xr_1;
-    __m512d Tj = xr_11;
-    __m512d Tk = _mm512_add_pd(Ti, Tj);
-    __m512d TY = _mm512_sub_pd(Ti, Tj);
-    __m512d T1F = xi_1;
-    __m512d T1G = xi_11;
-    __m512d T1H = _mm512_sub_pd(T1F, T1G);
-    __m512d T2F = _mm512_add_pd(T1F, T1G);
-    __m512d Te = _mm512_sub_pd(Ta, Td);
-    __m512d Tl = _mm512_sub_pd(Th, Tk);
-    __m512d Tm = _mm512_add_pd(Te, Tl);
-    __m512d T2D = _mm512_sub_pd(T2B, T2C);
-    __m512d T2G = _mm512_sub_pd(T2E, T2F);
-    __m512d T2O = _mm512_add_pd(T2D, T2G);
-    __m512d T32 = _mm512_add_pd(T2B, T2C);
-    __m512d T33 = _mm512_add_pd(T2E, T2F);
-    __m512d T3c = _mm512_add_pd(T32, T33);
-    __m512d TE = _mm512_add_pd(Ta, Td);
-    __m512d TF = _mm512_add_pd(Th, Tk);
-    __m512d TG = _mm512_add_pd(TE, TF);
-    __m512d TU = _mm512_sub_pd(TS, TT);
-    __m512d TZ = _mm512_sub_pd(TX, TY);
-    __m512d T10 = _mm512_add_pd(TU, TZ);
-    __m512d T1D = _mm512_sub_pd(T1z, T1C);
-    __m512d T1I = _mm512_sub_pd(T1E, T1H);
-    __m512d T1S = _mm512_add_pd(T1D, T1I);
-    __m512d T26 = _mm512_add_pd(T1z, T1C);
-    __m512d T27 = _mm512_add_pd(T1E, T1H);
-    __m512d T2g = _mm512_add_pd(T26, T27);
-    __m512d T1e = _mm512_add_pd(TT, TS);
-    __m512d T1f = _mm512_add_pd(TY, TX);
-    __m512d T1g = _mm512_add_pd(T1e, T1f);
-    __m512d T2s = _mm512_sub_pd(Tm, TB);
-    __m512d TC = _mm512_add_pd(Tm, TB);
-    __m512d T2r = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TC, T7);
-    __m512d T2A = _mm512_sub_pd(T2w, T2z);
-    __m512d T2H = _mm512_sub_pd(T2D, T2G);
-    __m512d T2I = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2H, T2A);
-    __m512d T2K = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2A, T2H);
-    _mm512_storeu_pd(&out_re[10 * K + k], _mm512_add_pd(T7, TC));
-    __m512d T2J = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
-    _mm512_storeu_pd(&out_re[14 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
-    _mm512_storeu_pd(&out_re[6 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
-    __m512d T2t = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
-    _mm512_storeu_pd(&out_re[2 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
-    _mm512_storeu_pd(&out_re[18 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
-    __m512d T2S = _mm512_sub_pd(T2O, T2P);
-    __m512d T2Q = _mm512_add_pd(T2O, T2P);
-    __m512d T2R = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2Q, T2N);
-    __m512d T2U = _mm512_sub_pd(Tt, TA);
-    __m512d T2V = _mm512_sub_pd(Te, Tl);
-    __m512d T2W = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2V, T2U);
-    __m512d T2Y = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2U, T2V);
-    _mm512_storeu_pd(&out_im[10 * K + k], _mm512_add_pd(T2N, T2Q));
-    __m512d T2X = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
-    _mm512_storeu_pd(&out_im[6 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
-    _mm512_storeu_pd(&out_im[14 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
-    __m512d T2T = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
-    _mm512_storeu_pd(&out_im[2 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
-    _mm512_storeu_pd(&out_im[18 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
-    __m512d T30 = _mm512_sub_pd(TG, TJ);
-    __m512d TK = _mm512_add_pd(TG, TJ);
-    __m512d T2Z = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TK, TD);
-    __m512d T34 = _mm512_sub_pd(T32, T33);
-    __m512d T37 = _mm512_sub_pd(T35, T36);
-    __m512d T38 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T37, T34);
-    __m512d T3a = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T34, T37);
-    _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(TD, TK));
-    __m512d T39 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
-    _mm512_storeu_pd(&out_re[12 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
-    _mm512_storeu_pd(&out_re[8 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
-    __m512d T31 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
-    _mm512_storeu_pd(&out_re[4 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
-    _mm512_storeu_pd(&out_re[16 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
-    __m512d T3g = _mm512_sub_pd(T3c, T3d);
-    __m512d T3e = _mm512_add_pd(T3c, T3d);
-    __m512d T3f = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T3e, T3b);
-    __m512d T3i = _mm512_sub_pd(TE, TF);
-    __m512d T3j = _mm512_sub_pd(TH, TI);
-    __m512d T3k = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T3j, T3i);
-    __m512d T3m = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T3i, T3j);
-    _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(T3b, T3e));
-    __m512d T3l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
-    _mm512_storeu_pd(&out_im[8 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
-    _mm512_storeu_pd(&out_im[12 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
-    __m512d T3h = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
-    _mm512_storeu_pd(&out_im[4 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
-    _mm512_storeu_pd(&out_im[16 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
-    __m512d T24 = _mm512_sub_pd(T10, T1b);
-    __m512d T1c = _mm512_add_pd(T10, T1b);
-    __m512d T23 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1c, TP);
-    __m512d T28 = _mm512_sub_pd(T26, T27);
-    __m512d T2b = _mm512_sub_pd(T29, T2a);
-    __m512d T2c = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2b, T28);
-    __m512d T2e = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T28, T2b);
-    _mm512_storeu_pd(&out_im[5 * K + k], _mm512_add_pd(TP, T1c));
-    __m512d T2d = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
-    _mm512_storeu_pd(&out_im[13 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
-    _mm512_storeu_pd(&out_im[17 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
-    __m512d T25 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
-    _mm512_storeu_pd(&out_im[1 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
-    _mm512_storeu_pd(&out_im[9 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
-    __m512d T2k = _mm512_sub_pd(T2g, T2h);
-    __m512d T2i = _mm512_add_pd(T2g, T2h);
-    __m512d T2j = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2i, T2f);
-    __m512d T2m = _mm512_sub_pd(TU, TZ);
-    __m512d T2n = _mm512_sub_pd(T15, T1a);
-    __m512d T2o = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2n, T2m);
-    __m512d T2q = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2m, T2n);
-    _mm512_storeu_pd(&out_re[5 * K + k], _mm512_add_pd(T2f, T2i));
-    __m512d T2p = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
-    _mm512_storeu_pd(&out_re[13 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
-    _mm512_storeu_pd(&out_re[17 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
-    __m512d T2l = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
-    _mm512_storeu_pd(&out_re[1 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
-    _mm512_storeu_pd(&out_re[9 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
-    __m512d T1m = _mm512_sub_pd(T1g, T1j);
-    __m512d T1k = _mm512_add_pd(T1g, T1j);
-    __m512d T1l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1k, T1d);
-    __m512d T1y = _mm512_sub_pd(T1s, T1x);
-    __m512d T1J = _mm512_sub_pd(T1D, T1I);
-    __m512d T1K = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1J, T1y);
-    __m512d T1M = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1y, T1J);
-    _mm512_storeu_pd(&out_im[15 * K + k], _mm512_add_pd(T1d, T1k));
-    __m512d T1L = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
-    _mm512_storeu_pd(&out_im[11 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
-    _mm512_storeu_pd(&out_im[19 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
-    __m512d T1n = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
-    _mm512_storeu_pd(&out_im[3 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
-    _mm512_storeu_pd(&out_im[7 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
-    __m512d T1W = _mm512_sub_pd(T1S, T1T);
-    __m512d T1U = _mm512_add_pd(T1S, T1T);
-    __m512d T1V = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1U, T1R);
-    __m512d T1Y = _mm512_sub_pd(T1h, T1i);
-    __m512d T1Z = _mm512_sub_pd(T1e, T1f);
-    __m512d T20 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Z, T1Y);
-    __m512d T22 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Y, T1Z);
-    _mm512_storeu_pd(&out_re[15 * K + k], _mm512_add_pd(T1R, T1U));
-    __m512d T21 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
-    _mm512_storeu_pd(&out_re[11 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
-    _mm512_storeu_pd(&out_re[19 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
-    __m512d T1X = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
-    _mm512_storeu_pd(&out_re[3 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
-    _mm512_storeu_pd(&out_re[7 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
-  }
+        /* Phase 2: Butterfly (genfft n1_20 DAG) */
+        __m512d T1 = xr_0;
+        __m512d T2 = xr_10;
+        __m512d T3 = _mm512_add_pd(T1, T2);
+        __m512d T1N = _mm512_sub_pd(T1, T2);
+        __m512d TL = xi_0;
+        __m512d TM = xi_10;
+        __m512d TN = _mm512_sub_pd(TL, TM);
+        __m512d T2L = _mm512_add_pd(TL, TM);
+        __m512d T4 = xr_5;
+        __m512d T5 = xr_15;
+        __m512d T6 = _mm512_add_pd(T4, T5);
+        __m512d TO = _mm512_sub_pd(T4, T5);
+        __m512d T1O = xi_5;
+        __m512d T1P = xi_15;
+        __m512d T1Q = _mm512_sub_pd(T1O, T1P);
+        __m512d T2M = _mm512_add_pd(T1O, T1P);
+        __m512d T7 = _mm512_sub_pd(T3, T6);
+        __m512d T2N = _mm512_sub_pd(T2L, T2M);
+        __m512d T3b = _mm512_add_pd(T2L, T2M);
+        __m512d TD = _mm512_add_pd(T3, T6);
+        __m512d TP = _mm512_sub_pd(TN, TO);
+        __m512d T1R = _mm512_sub_pd(T1N, T1Q);
+        __m512d T2f = _mm512_add_pd(T1N, T1Q);
+        __m512d T1d = _mm512_add_pd(TO, TN);
+        __m512d Tn = xr_8;
+        __m512d To = xr_18;
+        __m512d Tp = _mm512_add_pd(Tn, To);
+        __m512d T1o = _mm512_sub_pd(Tn, To);
+        __m512d T11 = xi_8;
+        __m512d T12 = xi_18;
+        __m512d T13 = _mm512_sub_pd(T11, T12);
+        __m512d T2u = _mm512_add_pd(T11, T12);
+        __m512d Tq = xr_13;
+        __m512d Tr = xr_3;
+        __m512d Ts = _mm512_add_pd(Tq, Tr);
+        __m512d T14 = _mm512_sub_pd(Tq, Tr);
+        __m512d T1p = xi_13;
+        __m512d T1q = xi_3;
+        __m512d T1r = _mm512_sub_pd(T1p, T1q);
+        __m512d T2v = _mm512_add_pd(T1p, T1q);
+        __m512d Tu = xr_12;
+        __m512d Tv = xr_2;
+        __m512d Tw = _mm512_add_pd(Tu, Tv);
+        __m512d T1t = _mm512_sub_pd(Tu, Tv);
+        __m512d T16 = xi_12;
+        __m512d T17 = xi_2;
+        __m512d T18 = _mm512_sub_pd(T16, T17);
+        __m512d T2x = _mm512_add_pd(T16, T17);
+        __m512d Tx = xr_17;
+        __m512d Ty = xr_7;
+        __m512d Tz = _mm512_add_pd(Tx, Ty);
+        __m512d T19 = _mm512_sub_pd(Tx, Ty);
+        __m512d T1u = xi_17;
+        __m512d T1v = xi_7;
+        __m512d T1w = _mm512_sub_pd(T1u, T1v);
+        __m512d T2y = _mm512_add_pd(T1u, T1v);
+        __m512d Tt = _mm512_sub_pd(Tp, Ts);
+        __m512d TA = _mm512_sub_pd(Tw, Tz);
+        __m512d TB = _mm512_add_pd(Tt, TA);
+        __m512d T2w = _mm512_sub_pd(T2u, T2v);
+        __m512d T2z = _mm512_sub_pd(T2x, T2y);
+        __m512d T2P = _mm512_add_pd(T2w, T2z);
+        __m512d T35 = _mm512_add_pd(T2u, T2v);
+        __m512d T36 = _mm512_add_pd(T2x, T2y);
+        __m512d T3d = _mm512_add_pd(T35, T36);
+        __m512d TH = _mm512_add_pd(Tp, Ts);
+        __m512d TI = _mm512_add_pd(Tw, Tz);
+        __m512d TJ = _mm512_add_pd(TH, TI);
+        __m512d T15 = _mm512_sub_pd(T13, T14);
+        __m512d T1a = _mm512_sub_pd(T18, T19);
+        __m512d T1b = _mm512_add_pd(T15, T1a);
+        __m512d T1s = _mm512_sub_pd(T1o, T1r);
+        __m512d T1x = _mm512_sub_pd(T1t, T1w);
+        __m512d T1T = _mm512_add_pd(T1s, T1x);
+        __m512d T29 = _mm512_add_pd(T1o, T1r);
+        __m512d T2a = _mm512_add_pd(T1t, T1w);
+        __m512d T2h = _mm512_add_pd(T29, T2a);
+        __m512d T1h = _mm512_add_pd(T14, T13);
+        __m512d T1i = _mm512_add_pd(T19, T18);
+        __m512d T1j = _mm512_add_pd(T1h, T1i);
+        __m512d T8 = xr_4;
+        __m512d T9 = xr_14;
+        __m512d Ta = _mm512_add_pd(T8, T9);
+        __m512d T1z = _mm512_sub_pd(T8, T9);
+        __m512d TQ = xi_4;
+        __m512d TR = xi_14;
+        __m512d TS = _mm512_sub_pd(TQ, TR);
+        __m512d T2B = _mm512_add_pd(TQ, TR);
+        __m512d Tb = xr_9;
+        __m512d Tc = xr_19;
+        __m512d Td = _mm512_add_pd(Tb, Tc);
+        __m512d TT = _mm512_sub_pd(Tb, Tc);
+        __m512d T1A = xi_9;
+        __m512d T1B = xi_19;
+        __m512d T1C = _mm512_sub_pd(T1A, T1B);
+        __m512d T2C = _mm512_add_pd(T1A, T1B);
+        __m512d Tf = xr_16;
+        __m512d Tg = xr_6;
+        __m512d Th = _mm512_add_pd(Tf, Tg);
+        __m512d T1E = _mm512_sub_pd(Tf, Tg);
+        __m512d TV = xi_16;
+        __m512d TW = xi_6;
+        __m512d TX = _mm512_sub_pd(TV, TW);
+        __m512d T2E = _mm512_add_pd(TV, TW);
+        __m512d Ti = xr_1;
+        __m512d Tj = xr_11;
+        __m512d Tk = _mm512_add_pd(Ti, Tj);
+        __m512d TY = _mm512_sub_pd(Ti, Tj);
+        __m512d T1F = xi_1;
+        __m512d T1G = xi_11;
+        __m512d T1H = _mm512_sub_pd(T1F, T1G);
+        __m512d T2F = _mm512_add_pd(T1F, T1G);
+        __m512d Te = _mm512_sub_pd(Ta, Td);
+        __m512d Tl = _mm512_sub_pd(Th, Tk);
+        __m512d Tm = _mm512_add_pd(Te, Tl);
+        __m512d T2D = _mm512_sub_pd(T2B, T2C);
+        __m512d T2G = _mm512_sub_pd(T2E, T2F);
+        __m512d T2O = _mm512_add_pd(T2D, T2G);
+        __m512d T32 = _mm512_add_pd(T2B, T2C);
+        __m512d T33 = _mm512_add_pd(T2E, T2F);
+        __m512d T3c = _mm512_add_pd(T32, T33);
+        __m512d TE = _mm512_add_pd(Ta, Td);
+        __m512d TF = _mm512_add_pd(Th, Tk);
+        __m512d TG = _mm512_add_pd(TE, TF);
+        __m512d TU = _mm512_sub_pd(TS, TT);
+        __m512d TZ = _mm512_sub_pd(TX, TY);
+        __m512d T10 = _mm512_add_pd(TU, TZ);
+        __m512d T1D = _mm512_sub_pd(T1z, T1C);
+        __m512d T1I = _mm512_sub_pd(T1E, T1H);
+        __m512d T1S = _mm512_add_pd(T1D, T1I);
+        __m512d T26 = _mm512_add_pd(T1z, T1C);
+        __m512d T27 = _mm512_add_pd(T1E, T1H);
+        __m512d T2g = _mm512_add_pd(T26, T27);
+        __m512d T1e = _mm512_add_pd(TT, TS);
+        __m512d T1f = _mm512_add_pd(TY, TX);
+        __m512d T1g = _mm512_add_pd(T1e, T1f);
+        __m512d T2s = _mm512_sub_pd(Tm, TB);
+        __m512d TC = _mm512_add_pd(Tm, TB);
+        __m512d T2r = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TC, T7);
+        __m512d T2A = _mm512_sub_pd(T2w, T2z);
+        __m512d T2H = _mm512_sub_pd(T2D, T2G);
+        __m512d T2I = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2H, T2A);
+        __m512d T2K = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2A, T2H);
+        _mm512_storeu_pd(&out_re[10 * K + k], _mm512_add_pd(T7, TC));
+        __m512d T2J = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
+        _mm512_storeu_pd(&out_re[14 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
+        _mm512_storeu_pd(&out_re[6 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
+        __m512d T2t = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
+        _mm512_storeu_pd(&out_re[2 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
+        _mm512_storeu_pd(&out_re[18 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
+        __m512d T2S = _mm512_sub_pd(T2O, T2P);
+        __m512d T2Q = _mm512_add_pd(T2O, T2P);
+        __m512d T2R = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2Q, T2N);
+        __m512d T2U = _mm512_sub_pd(Tt, TA);
+        __m512d T2V = _mm512_sub_pd(Te, Tl);
+        __m512d T2W = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2V, T2U);
+        __m512d T2Y = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2U, T2V);
+        _mm512_storeu_pd(&out_im[10 * K + k], _mm512_add_pd(T2N, T2Q));
+        __m512d T2X = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
+        _mm512_storeu_pd(&out_im[6 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
+        _mm512_storeu_pd(&out_im[14 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
+        __m512d T2T = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
+        _mm512_storeu_pd(&out_im[2 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
+        _mm512_storeu_pd(&out_im[18 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
+        __m512d T30 = _mm512_sub_pd(TG, TJ);
+        __m512d TK = _mm512_add_pd(TG, TJ);
+        __m512d T2Z = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TK, TD);
+        __m512d T34 = _mm512_sub_pd(T32, T33);
+        __m512d T37 = _mm512_sub_pd(T35, T36);
+        __m512d T38 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T37, T34);
+        __m512d T3a = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T34, T37);
+        _mm512_storeu_pd(&out_re[0 * K + k], _mm512_add_pd(TD, TK));
+        __m512d T39 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
+        _mm512_storeu_pd(&out_re[12 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
+        _mm512_storeu_pd(&out_re[8 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
+        __m512d T31 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
+        _mm512_storeu_pd(&out_re[4 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
+        _mm512_storeu_pd(&out_re[16 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
+        __m512d T3g = _mm512_sub_pd(T3c, T3d);
+        __m512d T3e = _mm512_add_pd(T3c, T3d);
+        __m512d T3f = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T3e, T3b);
+        __m512d T3i = _mm512_sub_pd(TE, TF);
+        __m512d T3j = _mm512_sub_pd(TH, TI);
+        __m512d T3k = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T3j, T3i);
+        __m512d T3m = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T3i, T3j);
+        _mm512_storeu_pd(&out_im[0 * K + k], _mm512_add_pd(T3b, T3e));
+        __m512d T3l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
+        _mm512_storeu_pd(&out_im[8 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
+        _mm512_storeu_pd(&out_im[12 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
+        __m512d T3h = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
+        _mm512_storeu_pd(&out_im[4 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
+        _mm512_storeu_pd(&out_im[16 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
+        __m512d T24 = _mm512_sub_pd(T10, T1b);
+        __m512d T1c = _mm512_add_pd(T10, T1b);
+        __m512d T23 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1c, TP);
+        __m512d T28 = _mm512_sub_pd(T26, T27);
+        __m512d T2b = _mm512_sub_pd(T29, T2a);
+        __m512d T2c = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2b, T28);
+        __m512d T2e = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T28, T2b);
+        _mm512_storeu_pd(&out_im[5 * K + k], _mm512_add_pd(TP, T1c));
+        __m512d T2d = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
+        _mm512_storeu_pd(&out_im[13 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
+        _mm512_storeu_pd(&out_im[17 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
+        __m512d T25 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
+        _mm512_storeu_pd(&out_im[1 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
+        _mm512_storeu_pd(&out_im[9 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
+        __m512d T2k = _mm512_sub_pd(T2g, T2h);
+        __m512d T2i = _mm512_add_pd(T2g, T2h);
+        __m512d T2j = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2i, T2f);
+        __m512d T2m = _mm512_sub_pd(TU, TZ);
+        __m512d T2n = _mm512_sub_pd(T15, T1a);
+        __m512d T2o = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2n, T2m);
+        __m512d T2q = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2m, T2n);
+        _mm512_storeu_pd(&out_re[5 * K + k], _mm512_add_pd(T2f, T2i));
+        __m512d T2p = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
+        _mm512_storeu_pd(&out_re[13 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
+        _mm512_storeu_pd(&out_re[17 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
+        __m512d T2l = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
+        _mm512_storeu_pd(&out_re[1 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
+        _mm512_storeu_pd(&out_re[9 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
+        __m512d T1m = _mm512_sub_pd(T1g, T1j);
+        __m512d T1k = _mm512_add_pd(T1g, T1j);
+        __m512d T1l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1k, T1d);
+        __m512d T1y = _mm512_sub_pd(T1s, T1x);
+        __m512d T1J = _mm512_sub_pd(T1D, T1I);
+        __m512d T1K = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1J, T1y);
+        __m512d T1M = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1y, T1J);
+        _mm512_storeu_pd(&out_im[15 * K + k], _mm512_add_pd(T1d, T1k));
+        __m512d T1L = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
+        _mm512_storeu_pd(&out_im[11 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
+        _mm512_storeu_pd(&out_im[19 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
+        __m512d T1n = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
+        _mm512_storeu_pd(&out_im[3 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
+        _mm512_storeu_pd(&out_im[7 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
+        __m512d T1W = _mm512_sub_pd(T1S, T1T);
+        __m512d T1U = _mm512_add_pd(T1S, T1T);
+        __m512d T1V = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1U, T1R);
+        __m512d T1Y = _mm512_sub_pd(T1h, T1i);
+        __m512d T1Z = _mm512_sub_pd(T1e, T1f);
+        __m512d T20 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Z, T1Y);
+        __m512d T22 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Y, T1Z);
+        _mm512_storeu_pd(&out_re[15 * K + k], _mm512_add_pd(T1R, T1U));
+        __m512d T21 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
+        _mm512_storeu_pd(&out_re[11 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
+        _mm512_storeu_pd(&out_re[19 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
+        __m512d T1X = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
+        _mm512_storeu_pd(&out_re[3 * K + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
+        _mm512_storeu_pd(&out_re[7 * K + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
+    }
 }
 
 /* Backward (ladder): swap re<->im (Frigo & Johnson) */
-__attribute__((target("avx512f,fma"))) static inline void radix20_tw_dag_dit_ladder_bwd_avx512(
-    const double *__restrict__ in_re, const double *__restrict__ in_im,
-    double *__restrict__ out_re, double *__restrict__ out_im,
-    const double *__restrict__ tw_re, const double *__restrict__ tw_im,
+__attribute__((target("avx512f,fma")))
+static inline void radix20_tw_dag_dit_ladder_bwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
     size_t K)
 {
-  radix20_tw_dag_dit_ladder_fwd_avx512(in_im, in_re, out_im, out_re, tw_re, tw_im, K);
+    radix20_tw_dag_dit_ladder_fwd_avx512(in_im, in_re, out_im, out_re, tw_re, tw_im, K);
 }
 
-__attribute__((target("avx512f,fma"))) static void radix20_tw_dag_dit_contig_buf_fwd_avx512(
-    const double *__restrict__ in_re, const double *__restrict__ in_im,
-    double *__restrict__ out_re, double *__restrict__ out_im,
-    const double *__restrict__ tw_re, const double *__restrict__ tw_im,
+__attribute__((target("avx512f,fma")))
+static void radix20_tw_dag_dit_contig_buf_fwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
     size_t K)
 {
-  __attribute__((aligned(64))) double buf_re[160];
-  __attribute__((aligned(64))) double buf_im[160];
+    __attribute__((aligned(64))) double buf_re[160];
+    __attribute__((aligned(64))) double buf_im[160];
 
-  for (size_t k = 0; k < K; k += 8)
-  {
-    /* Phase 1: Contiguous flat twiddle load+apply */
-    const size_t kg = k / 8;
-    const double *tr = &tw_re[kg * 19 * 8];
-    const double *ti = &tw_im[kg * 19 * 8];
+    for (size_t k = 0; k < K; k += 8) {
+        /* Phase 1: Contiguous flat twiddle load+apply */
+        /* contiguous layout removed — using strided tw_re/tw_im directly */
+        /* (strided: tw_re[arm*K+k]) */
+        
 
-    __m512d xr_0 = _mm512_loadu_pd(&in_re[k]);
-    __m512d xi_0 = _mm512_loadu_pd(&in_im[k]);
-    __m512d xr_1, xi_1;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[1 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[1 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[0 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[0 * 8]);
-      xr_1 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_1 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_2, xi_2;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[2 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[2 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[1 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[1 * 8]);
-      xr_2 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_2 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_3, xi_3;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[3 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[3 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[2 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[2 * 8]);
-      xr_3 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_3 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_4, xi_4;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[4 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[4 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[3 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[3 * 8]);
-      xr_4 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_4 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_5, xi_5;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[5 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[5 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[4 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[4 * 8]);
-      xr_5 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_5 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_6, xi_6;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[6 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[6 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[5 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[5 * 8]);
-      xr_6 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_6 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_7, xi_7;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[7 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[7 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[6 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[6 * 8]);
-      xr_7 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_7 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_8, xi_8;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[8 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[8 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[7 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[7 * 8]);
-      xr_8 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_8 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_9, xi_9;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[9 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[9 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[8 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[8 * 8]);
-      xr_9 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_9 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_10, xi_10;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[10 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[10 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[9 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[9 * 8]);
-      xr_10 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_10 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_11, xi_11;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[11 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[11 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[10 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[10 * 8]);
-      xr_11 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_11 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_12, xi_12;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[12 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[12 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[11 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[11 * 8]);
-      xr_12 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_12 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_13, xi_13;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[13 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[13 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[12 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[12 * 8]);
-      xr_13 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_13 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_14, xi_14;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[14 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[14 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[13 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[13 * 8]);
-      xr_14 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_14 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_15, xi_15;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[15 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[15 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[14 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[14 * 8]);
-      xr_15 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_15 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_16, xi_16;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[16 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[16 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[15 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[15 * 8]);
-      xr_16 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_16 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_17, xi_17;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[17 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[17 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[16 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[16 * 8]);
-      xr_17 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_17 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_18, xi_18;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[18 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[18 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[17 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[17 * 8]);
-      xr_18 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_18 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
-    __m512d xr_19, xi_19;
-    {
-      __m512d dr = _mm512_loadu_pd(&in_re[19 * K + k]);
-      __m512d di = _mm512_loadu_pd(&in_im[19 * K + k]);
-      __m512d wr = _mm512_load_pd(&tr[18 * 8]);
-      __m512d wi = _mm512_load_pd(&ti[18 * 8]);
-      xr_19 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
-      xi_19 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr));
-    }
+        __m512d xr_0 = _mm512_loadu_pd(&in_re[k]);
+        __m512d xi_0 = _mm512_loadu_pd(&in_im[k]);
+        __m512d xr_1, xi_1;
+        { __m512d dr = _mm512_loadu_pd(&in_re[1*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[1*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[0*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[0*K+k]);
+          xr_1 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_1 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_2, xi_2;
+        { __m512d dr = _mm512_loadu_pd(&in_re[2*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[2*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[1*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[1*K+k]);
+          xr_2 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_2 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_3, xi_3;
+        { __m512d dr = _mm512_loadu_pd(&in_re[3*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[3*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[2*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[2*K+k]);
+          xr_3 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_3 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_4, xi_4;
+        { __m512d dr = _mm512_loadu_pd(&in_re[4*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[4*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[3*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[3*K+k]);
+          xr_4 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_4 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_5, xi_5;
+        { __m512d dr = _mm512_loadu_pd(&in_re[5*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[5*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[4*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[4*K+k]);
+          xr_5 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_5 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_6, xi_6;
+        { __m512d dr = _mm512_loadu_pd(&in_re[6*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[6*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[5*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[5*K+k]);
+          xr_6 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_6 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_7, xi_7;
+        { __m512d dr = _mm512_loadu_pd(&in_re[7*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[7*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[6*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[6*K+k]);
+          xr_7 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_7 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_8, xi_8;
+        { __m512d dr = _mm512_loadu_pd(&in_re[8*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[8*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[7*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[7*K+k]);
+          xr_8 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_8 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_9, xi_9;
+        { __m512d dr = _mm512_loadu_pd(&in_re[9*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[9*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[8*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[8*K+k]);
+          xr_9 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_9 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_10, xi_10;
+        { __m512d dr = _mm512_loadu_pd(&in_re[10*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[10*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[9*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[9*K+k]);
+          xr_10 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_10 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_11, xi_11;
+        { __m512d dr = _mm512_loadu_pd(&in_re[11*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[11*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[10*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[10*K+k]);
+          xr_11 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_11 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_12, xi_12;
+        { __m512d dr = _mm512_loadu_pd(&in_re[12*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[12*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[11*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[11*K+k]);
+          xr_12 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_12 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_13, xi_13;
+        { __m512d dr = _mm512_loadu_pd(&in_re[13*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[13*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[12*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[12*K+k]);
+          xr_13 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_13 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_14, xi_14;
+        { __m512d dr = _mm512_loadu_pd(&in_re[14*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[14*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[13*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[13*K+k]);
+          xr_14 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_14 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_15, xi_15;
+        { __m512d dr = _mm512_loadu_pd(&in_re[15*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[15*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[14*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[14*K+k]);
+          xr_15 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_15 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_16, xi_16;
+        { __m512d dr = _mm512_loadu_pd(&in_re[16*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[16*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[15*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[15*K+k]);
+          xr_16 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_16 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_17, xi_17;
+        { __m512d dr = _mm512_loadu_pd(&in_re[17*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[17*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[16*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[16*K+k]);
+          xr_17 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_17 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_18, xi_18;
+        { __m512d dr = _mm512_loadu_pd(&in_re[18*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[18*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[17*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[17*K+k]);
+          xr_18 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_18 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
+        __m512d xr_19, xi_19;
+        { __m512d dr = _mm512_loadu_pd(&in_re[19*K+k]);
+          __m512d di = _mm512_loadu_pd(&in_im[19*K+k]);
+          __m512d wr = _mm512_load_pd(&tw_re[18*K+k]);
+          __m512d wi = _mm512_load_pd(&tw_im[18*K+k]);
+          xr_19 = _mm512_fmsub_pd(dr, wr, _mm512_mul_pd(di, wi));
+          xi_19 = _mm512_fmadd_pd(dr, wi, _mm512_mul_pd(di, wr)); }
 
-    /* Phase 2: Butterfly → contiguous buffer (stride={VL}) */
-    __m512d T1 = xr_0;
-    __m512d T2 = xr_10;
-    __m512d T3 = _mm512_add_pd(T1, T2);
-    __m512d T1N = _mm512_sub_pd(T1, T2);
-    __m512d TL = xi_0;
-    __m512d TM = xi_10;
-    __m512d TN = _mm512_sub_pd(TL, TM);
-    __m512d T2L = _mm512_add_pd(TL, TM);
-    __m512d T4 = xr_5;
-    __m512d T5 = xr_15;
-    __m512d T6 = _mm512_add_pd(T4, T5);
-    __m512d TO = _mm512_sub_pd(T4, T5);
-    __m512d T1O = xi_5;
-    __m512d T1P = xi_15;
-    __m512d T1Q = _mm512_sub_pd(T1O, T1P);
-    __m512d T2M = _mm512_add_pd(T1O, T1P);
-    __m512d T7 = _mm512_sub_pd(T3, T6);
-    __m512d T2N = _mm512_sub_pd(T2L, T2M);
-    __m512d T3b = _mm512_add_pd(T2L, T2M);
-    __m512d TD = _mm512_add_pd(T3, T6);
-    __m512d TP = _mm512_sub_pd(TN, TO);
-    __m512d T1R = _mm512_sub_pd(T1N, T1Q);
-    __m512d T2f = _mm512_add_pd(T1N, T1Q);
-    __m512d T1d = _mm512_add_pd(TO, TN);
-    __m512d Tn = xr_8;
-    __m512d To = xr_18;
-    __m512d Tp = _mm512_add_pd(Tn, To);
-    __m512d T1o = _mm512_sub_pd(Tn, To);
-    __m512d T11 = xi_8;
-    __m512d T12 = xi_18;
-    __m512d T13 = _mm512_sub_pd(T11, T12);
-    __m512d T2u = _mm512_add_pd(T11, T12);
-    __m512d Tq = xr_13;
-    __m512d Tr = xr_3;
-    __m512d Ts = _mm512_add_pd(Tq, Tr);
-    __m512d T14 = _mm512_sub_pd(Tq, Tr);
-    __m512d T1p = xi_13;
-    __m512d T1q = xi_3;
-    __m512d T1r = _mm512_sub_pd(T1p, T1q);
-    __m512d T2v = _mm512_add_pd(T1p, T1q);
-    __m512d Tu = xr_12;
-    __m512d Tv = xr_2;
-    __m512d Tw = _mm512_add_pd(Tu, Tv);
-    __m512d T1t = _mm512_sub_pd(Tu, Tv);
-    __m512d T16 = xi_12;
-    __m512d T17 = xi_2;
-    __m512d T18 = _mm512_sub_pd(T16, T17);
-    __m512d T2x = _mm512_add_pd(T16, T17);
-    __m512d Tx = xr_17;
-    __m512d Ty = xr_7;
-    __m512d Tz = _mm512_add_pd(Tx, Ty);
-    __m512d T19 = _mm512_sub_pd(Tx, Ty);
-    __m512d T1u = xi_17;
-    __m512d T1v = xi_7;
-    __m512d T1w = _mm512_sub_pd(T1u, T1v);
-    __m512d T2y = _mm512_add_pd(T1u, T1v);
-    __m512d Tt = _mm512_sub_pd(Tp, Ts);
-    __m512d TA = _mm512_sub_pd(Tw, Tz);
-    __m512d TB = _mm512_add_pd(Tt, TA);
-    __m512d T2w = _mm512_sub_pd(T2u, T2v);
-    __m512d T2z = _mm512_sub_pd(T2x, T2y);
-    __m512d T2P = _mm512_add_pd(T2w, T2z);
-    __m512d T35 = _mm512_add_pd(T2u, T2v);
-    __m512d T36 = _mm512_add_pd(T2x, T2y);
-    __m512d T3d = _mm512_add_pd(T35, T36);
-    __m512d TH = _mm512_add_pd(Tp, Ts);
-    __m512d TI = _mm512_add_pd(Tw, Tz);
-    __m512d TJ = _mm512_add_pd(TH, TI);
-    __m512d T15 = _mm512_sub_pd(T13, T14);
-    __m512d T1a = _mm512_sub_pd(T18, T19);
-    __m512d T1b = _mm512_add_pd(T15, T1a);
-    __m512d T1s = _mm512_sub_pd(T1o, T1r);
-    __m512d T1x = _mm512_sub_pd(T1t, T1w);
-    __m512d T1T = _mm512_add_pd(T1s, T1x);
-    __m512d T29 = _mm512_add_pd(T1o, T1r);
-    __m512d T2a = _mm512_add_pd(T1t, T1w);
-    __m512d T2h = _mm512_add_pd(T29, T2a);
-    __m512d T1h = _mm512_add_pd(T14, T13);
-    __m512d T1i = _mm512_add_pd(T19, T18);
-    __m512d T1j = _mm512_add_pd(T1h, T1i);
-    __m512d T8 = xr_4;
-    __m512d T9 = xr_14;
-    __m512d Ta = _mm512_add_pd(T8, T9);
-    __m512d T1z = _mm512_sub_pd(T8, T9);
-    __m512d TQ = xi_4;
-    __m512d TR = xi_14;
-    __m512d TS = _mm512_sub_pd(TQ, TR);
-    __m512d T2B = _mm512_add_pd(TQ, TR);
-    __m512d Tb = xr_9;
-    __m512d Tc = xr_19;
-    __m512d Td = _mm512_add_pd(Tb, Tc);
-    __m512d TT = _mm512_sub_pd(Tb, Tc);
-    __m512d T1A = xi_9;
-    __m512d T1B = xi_19;
-    __m512d T1C = _mm512_sub_pd(T1A, T1B);
-    __m512d T2C = _mm512_add_pd(T1A, T1B);
-    __m512d Tf = xr_16;
-    __m512d Tg = xr_6;
-    __m512d Th = _mm512_add_pd(Tf, Tg);
-    __m512d T1E = _mm512_sub_pd(Tf, Tg);
-    __m512d TV = xi_16;
-    __m512d TW = xi_6;
-    __m512d TX = _mm512_sub_pd(TV, TW);
-    __m512d T2E = _mm512_add_pd(TV, TW);
-    __m512d Ti = xr_1;
-    __m512d Tj = xr_11;
-    __m512d Tk = _mm512_add_pd(Ti, Tj);
-    __m512d TY = _mm512_sub_pd(Ti, Tj);
-    __m512d T1F = xi_1;
-    __m512d T1G = xi_11;
-    __m512d T1H = _mm512_sub_pd(T1F, T1G);
-    __m512d T2F = _mm512_add_pd(T1F, T1G);
-    __m512d Te = _mm512_sub_pd(Ta, Td);
-    __m512d Tl = _mm512_sub_pd(Th, Tk);
-    __m512d Tm = _mm512_add_pd(Te, Tl);
-    __m512d T2D = _mm512_sub_pd(T2B, T2C);
-    __m512d T2G = _mm512_sub_pd(T2E, T2F);
-    __m512d T2O = _mm512_add_pd(T2D, T2G);
-    __m512d T32 = _mm512_add_pd(T2B, T2C);
-    __m512d T33 = _mm512_add_pd(T2E, T2F);
-    __m512d T3c = _mm512_add_pd(T32, T33);
-    __m512d TE = _mm512_add_pd(Ta, Td);
-    __m512d TF = _mm512_add_pd(Th, Tk);
-    __m512d TG = _mm512_add_pd(TE, TF);
-    __m512d TU = _mm512_sub_pd(TS, TT);
-    __m512d TZ = _mm512_sub_pd(TX, TY);
-    __m512d T10 = _mm512_add_pd(TU, TZ);
-    __m512d T1D = _mm512_sub_pd(T1z, T1C);
-    __m512d T1I = _mm512_sub_pd(T1E, T1H);
-    __m512d T1S = _mm512_add_pd(T1D, T1I);
-    __m512d T26 = _mm512_add_pd(T1z, T1C);
-    __m512d T27 = _mm512_add_pd(T1E, T1H);
-    __m512d T2g = _mm512_add_pd(T26, T27);
-    __m512d T1e = _mm512_add_pd(TT, TS);
-    __m512d T1f = _mm512_add_pd(TY, TX);
-    __m512d T1g = _mm512_add_pd(T1e, T1f);
-    __m512d T2s = _mm512_sub_pd(Tm, TB);
-    __m512d TC = _mm512_add_pd(Tm, TB);
-    __m512d T2r = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TC, T7);
-    __m512d T2A = _mm512_sub_pd(T2w, T2z);
-    __m512d T2H = _mm512_sub_pd(T2D, T2G);
-    __m512d T2I = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2H, T2A);
-    __m512d T2K = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2A, T2H);
-    _mm512_storeu_pd(&buf_re[10 * 8 + k], _mm512_add_pd(T7, TC));
-    __m512d T2J = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
-    _mm512_storeu_pd(&buf_re[14 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
-    _mm512_storeu_pd(&buf_re[6 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
-    __m512d T2t = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
-    _mm512_storeu_pd(&buf_re[2 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
-    _mm512_storeu_pd(&buf_re[18 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
-    __m512d T2S = _mm512_sub_pd(T2O, T2P);
-    __m512d T2Q = _mm512_add_pd(T2O, T2P);
-    __m512d T2R = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2Q, T2N);
-    __m512d T2U = _mm512_sub_pd(Tt, TA);
-    __m512d T2V = _mm512_sub_pd(Te, Tl);
-    __m512d T2W = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2V, T2U);
-    __m512d T2Y = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2U, T2V);
-    _mm512_storeu_pd(&buf_im[10 * 8 + k], _mm512_add_pd(T2N, T2Q));
-    __m512d T2X = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
-    _mm512_storeu_pd(&buf_im[6 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
-    _mm512_storeu_pd(&buf_im[14 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
-    __m512d T2T = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
-    _mm512_storeu_pd(&buf_im[2 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
-    _mm512_storeu_pd(&buf_im[18 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
-    __m512d T30 = _mm512_sub_pd(TG, TJ);
-    __m512d TK = _mm512_add_pd(TG, TJ);
-    __m512d T2Z = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TK, TD);
-    __m512d T34 = _mm512_sub_pd(T32, T33);
-    __m512d T37 = _mm512_sub_pd(T35, T36);
-    __m512d T38 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T37, T34);
-    __m512d T3a = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T34, T37);
-    _mm512_storeu_pd(&buf_re[0 * 8 + k], _mm512_add_pd(TD, TK));
-    __m512d T39 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
-    _mm512_storeu_pd(&buf_re[12 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
-    _mm512_storeu_pd(&buf_re[8 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
-    __m512d T31 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
-    _mm512_storeu_pd(&buf_re[4 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
-    _mm512_storeu_pd(&buf_re[16 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
-    __m512d T3g = _mm512_sub_pd(T3c, T3d);
-    __m512d T3e = _mm512_add_pd(T3c, T3d);
-    __m512d T3f = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T3e, T3b);
-    __m512d T3i = _mm512_sub_pd(TE, TF);
-    __m512d T3j = _mm512_sub_pd(TH, TI);
-    __m512d T3k = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T3j, T3i);
-    __m512d T3m = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T3i, T3j);
-    _mm512_storeu_pd(&buf_im[0 * 8 + k], _mm512_add_pd(T3b, T3e));
-    __m512d T3l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
-    _mm512_storeu_pd(&buf_im[8 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
-    _mm512_storeu_pd(&buf_im[12 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
-    __m512d T3h = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
-    _mm512_storeu_pd(&buf_im[4 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
-    _mm512_storeu_pd(&buf_im[16 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
-    __m512d T24 = _mm512_sub_pd(T10, T1b);
-    __m512d T1c = _mm512_add_pd(T10, T1b);
-    __m512d T23 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1c, TP);
-    __m512d T28 = _mm512_sub_pd(T26, T27);
-    __m512d T2b = _mm512_sub_pd(T29, T2a);
-    __m512d T2c = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2b, T28);
-    __m512d T2e = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T28, T2b);
-    _mm512_storeu_pd(&buf_im[5 * 8 + k], _mm512_add_pd(TP, T1c));
-    __m512d T2d = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
-    _mm512_storeu_pd(&buf_im[13 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
-    _mm512_storeu_pd(&buf_im[17 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
-    __m512d T25 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
-    _mm512_storeu_pd(&buf_im[1 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
-    _mm512_storeu_pd(&buf_im[9 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
-    __m512d T2k = _mm512_sub_pd(T2g, T2h);
-    __m512d T2i = _mm512_add_pd(T2g, T2h);
-    __m512d T2j = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2i, T2f);
-    __m512d T2m = _mm512_sub_pd(TU, TZ);
-    __m512d T2n = _mm512_sub_pd(T15, T1a);
-    __m512d T2o = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2n, T2m);
-    __m512d T2q = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2m, T2n);
-    _mm512_storeu_pd(&buf_re[5 * 8 + k], _mm512_add_pd(T2f, T2i));
-    __m512d T2p = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
-    _mm512_storeu_pd(&buf_re[13 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
-    _mm512_storeu_pd(&buf_re[17 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
-    __m512d T2l = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
-    _mm512_storeu_pd(&buf_re[1 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
-    _mm512_storeu_pd(&buf_re[9 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
-    __m512d T1m = _mm512_sub_pd(T1g, T1j);
-    __m512d T1k = _mm512_add_pd(T1g, T1j);
-    __m512d T1l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1k, T1d);
-    __m512d T1y = _mm512_sub_pd(T1s, T1x);
-    __m512d T1J = _mm512_sub_pd(T1D, T1I);
-    __m512d T1K = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1J, T1y);
-    __m512d T1M = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1y, T1J);
-    _mm512_storeu_pd(&buf_im[15 * 8 + k], _mm512_add_pd(T1d, T1k));
-    __m512d T1L = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
-    _mm512_storeu_pd(&buf_im[11 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
-    _mm512_storeu_pd(&buf_im[19 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
-    __m512d T1n = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
-    _mm512_storeu_pd(&buf_im[3 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
-    _mm512_storeu_pd(&buf_im[7 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
-    __m512d T1W = _mm512_sub_pd(T1S, T1T);
-    __m512d T1U = _mm512_add_pd(T1S, T1T);
-    __m512d T1V = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1U, T1R);
-    __m512d T1Y = _mm512_sub_pd(T1h, T1i);
-    __m512d T1Z = _mm512_sub_pd(T1e, T1f);
-    __m512d T20 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Z, T1Y);
-    __m512d T22 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Y, T1Z);
-    _mm512_storeu_pd(&buf_re[15 * 8 + k], _mm512_add_pd(T1R, T1U));
-    __m512d T21 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
-    _mm512_storeu_pd(&buf_re[11 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
-    _mm512_storeu_pd(&buf_re[19 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
-    __m512d T1X = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
-    _mm512_storeu_pd(&buf_re[3 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
-    _mm512_storeu_pd(&buf_re[7 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
+        /* Phase 2: Butterfly → contiguous buffer (stride={VL}) */
+        __m512d T1 = xr_0;
+        __m512d T2 = xr_10;
+        __m512d T3 = _mm512_add_pd(T1, T2);
+        __m512d T1N = _mm512_sub_pd(T1, T2);
+        __m512d TL = xi_0;
+        __m512d TM = xi_10;
+        __m512d TN = _mm512_sub_pd(TL, TM);
+        __m512d T2L = _mm512_add_pd(TL, TM);
+        __m512d T4 = xr_5;
+        __m512d T5 = xr_15;
+        __m512d T6 = _mm512_add_pd(T4, T5);
+        __m512d TO = _mm512_sub_pd(T4, T5);
+        __m512d T1O = xi_5;
+        __m512d T1P = xi_15;
+        __m512d T1Q = _mm512_sub_pd(T1O, T1P);
+        __m512d T2M = _mm512_add_pd(T1O, T1P);
+        __m512d T7 = _mm512_sub_pd(T3, T6);
+        __m512d T2N = _mm512_sub_pd(T2L, T2M);
+        __m512d T3b = _mm512_add_pd(T2L, T2M);
+        __m512d TD = _mm512_add_pd(T3, T6);
+        __m512d TP = _mm512_sub_pd(TN, TO);
+        __m512d T1R = _mm512_sub_pd(T1N, T1Q);
+        __m512d T2f = _mm512_add_pd(T1N, T1Q);
+        __m512d T1d = _mm512_add_pd(TO, TN);
+        __m512d Tn = xr_8;
+        __m512d To = xr_18;
+        __m512d Tp = _mm512_add_pd(Tn, To);
+        __m512d T1o = _mm512_sub_pd(Tn, To);
+        __m512d T11 = xi_8;
+        __m512d T12 = xi_18;
+        __m512d T13 = _mm512_sub_pd(T11, T12);
+        __m512d T2u = _mm512_add_pd(T11, T12);
+        __m512d Tq = xr_13;
+        __m512d Tr = xr_3;
+        __m512d Ts = _mm512_add_pd(Tq, Tr);
+        __m512d T14 = _mm512_sub_pd(Tq, Tr);
+        __m512d T1p = xi_13;
+        __m512d T1q = xi_3;
+        __m512d T1r = _mm512_sub_pd(T1p, T1q);
+        __m512d T2v = _mm512_add_pd(T1p, T1q);
+        __m512d Tu = xr_12;
+        __m512d Tv = xr_2;
+        __m512d Tw = _mm512_add_pd(Tu, Tv);
+        __m512d T1t = _mm512_sub_pd(Tu, Tv);
+        __m512d T16 = xi_12;
+        __m512d T17 = xi_2;
+        __m512d T18 = _mm512_sub_pd(T16, T17);
+        __m512d T2x = _mm512_add_pd(T16, T17);
+        __m512d Tx = xr_17;
+        __m512d Ty = xr_7;
+        __m512d Tz = _mm512_add_pd(Tx, Ty);
+        __m512d T19 = _mm512_sub_pd(Tx, Ty);
+        __m512d T1u = xi_17;
+        __m512d T1v = xi_7;
+        __m512d T1w = _mm512_sub_pd(T1u, T1v);
+        __m512d T2y = _mm512_add_pd(T1u, T1v);
+        __m512d Tt = _mm512_sub_pd(Tp, Ts);
+        __m512d TA = _mm512_sub_pd(Tw, Tz);
+        __m512d TB = _mm512_add_pd(Tt, TA);
+        __m512d T2w = _mm512_sub_pd(T2u, T2v);
+        __m512d T2z = _mm512_sub_pd(T2x, T2y);
+        __m512d T2P = _mm512_add_pd(T2w, T2z);
+        __m512d T35 = _mm512_add_pd(T2u, T2v);
+        __m512d T36 = _mm512_add_pd(T2x, T2y);
+        __m512d T3d = _mm512_add_pd(T35, T36);
+        __m512d TH = _mm512_add_pd(Tp, Ts);
+        __m512d TI = _mm512_add_pd(Tw, Tz);
+        __m512d TJ = _mm512_add_pd(TH, TI);
+        __m512d T15 = _mm512_sub_pd(T13, T14);
+        __m512d T1a = _mm512_sub_pd(T18, T19);
+        __m512d T1b = _mm512_add_pd(T15, T1a);
+        __m512d T1s = _mm512_sub_pd(T1o, T1r);
+        __m512d T1x = _mm512_sub_pd(T1t, T1w);
+        __m512d T1T = _mm512_add_pd(T1s, T1x);
+        __m512d T29 = _mm512_add_pd(T1o, T1r);
+        __m512d T2a = _mm512_add_pd(T1t, T1w);
+        __m512d T2h = _mm512_add_pd(T29, T2a);
+        __m512d T1h = _mm512_add_pd(T14, T13);
+        __m512d T1i = _mm512_add_pd(T19, T18);
+        __m512d T1j = _mm512_add_pd(T1h, T1i);
+        __m512d T8 = xr_4;
+        __m512d T9 = xr_14;
+        __m512d Ta = _mm512_add_pd(T8, T9);
+        __m512d T1z = _mm512_sub_pd(T8, T9);
+        __m512d TQ = xi_4;
+        __m512d TR = xi_14;
+        __m512d TS = _mm512_sub_pd(TQ, TR);
+        __m512d T2B = _mm512_add_pd(TQ, TR);
+        __m512d Tb = xr_9;
+        __m512d Tc = xr_19;
+        __m512d Td = _mm512_add_pd(Tb, Tc);
+        __m512d TT = _mm512_sub_pd(Tb, Tc);
+        __m512d T1A = xi_9;
+        __m512d T1B = xi_19;
+        __m512d T1C = _mm512_sub_pd(T1A, T1B);
+        __m512d T2C = _mm512_add_pd(T1A, T1B);
+        __m512d Tf = xr_16;
+        __m512d Tg = xr_6;
+        __m512d Th = _mm512_add_pd(Tf, Tg);
+        __m512d T1E = _mm512_sub_pd(Tf, Tg);
+        __m512d TV = xi_16;
+        __m512d TW = xi_6;
+        __m512d TX = _mm512_sub_pd(TV, TW);
+        __m512d T2E = _mm512_add_pd(TV, TW);
+        __m512d Ti = xr_1;
+        __m512d Tj = xr_11;
+        __m512d Tk = _mm512_add_pd(Ti, Tj);
+        __m512d TY = _mm512_sub_pd(Ti, Tj);
+        __m512d T1F = xi_1;
+        __m512d T1G = xi_11;
+        __m512d T1H = _mm512_sub_pd(T1F, T1G);
+        __m512d T2F = _mm512_add_pd(T1F, T1G);
+        __m512d Te = _mm512_sub_pd(Ta, Td);
+        __m512d Tl = _mm512_sub_pd(Th, Tk);
+        __m512d Tm = _mm512_add_pd(Te, Tl);
+        __m512d T2D = _mm512_sub_pd(T2B, T2C);
+        __m512d T2G = _mm512_sub_pd(T2E, T2F);
+        __m512d T2O = _mm512_add_pd(T2D, T2G);
+        __m512d T32 = _mm512_add_pd(T2B, T2C);
+        __m512d T33 = _mm512_add_pd(T2E, T2F);
+        __m512d T3c = _mm512_add_pd(T32, T33);
+        __m512d TE = _mm512_add_pd(Ta, Td);
+        __m512d TF = _mm512_add_pd(Th, Tk);
+        __m512d TG = _mm512_add_pd(TE, TF);
+        __m512d TU = _mm512_sub_pd(TS, TT);
+        __m512d TZ = _mm512_sub_pd(TX, TY);
+        __m512d T10 = _mm512_add_pd(TU, TZ);
+        __m512d T1D = _mm512_sub_pd(T1z, T1C);
+        __m512d T1I = _mm512_sub_pd(T1E, T1H);
+        __m512d T1S = _mm512_add_pd(T1D, T1I);
+        __m512d T26 = _mm512_add_pd(T1z, T1C);
+        __m512d T27 = _mm512_add_pd(T1E, T1H);
+        __m512d T2g = _mm512_add_pd(T26, T27);
+        __m512d T1e = _mm512_add_pd(TT, TS);
+        __m512d T1f = _mm512_add_pd(TY, TX);
+        __m512d T1g = _mm512_add_pd(T1e, T1f);
+        __m512d T2s = _mm512_sub_pd(Tm, TB);
+        __m512d TC = _mm512_add_pd(Tm, TB);
+        __m512d T2r = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TC, T7);
+        __m512d T2A = _mm512_sub_pd(T2w, T2z);
+        __m512d T2H = _mm512_sub_pd(T2D, T2G);
+        __m512d T2I = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2H, T2A);
+        __m512d T2K = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2A, T2H);
+        _mm512_storeu_pd(&buf_re[10 * 8 + k], _mm512_add_pd(T7, TC));
+        __m512d T2J = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
+        _mm512_storeu_pd(&buf_re[14 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
+        _mm512_storeu_pd(&buf_re[6 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2K, T2J));
+        __m512d T2t = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2s, T2r);
+        _mm512_storeu_pd(&buf_re[2 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
+        _mm512_storeu_pd(&buf_re[18 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2I, T2t));
+        __m512d T2S = _mm512_sub_pd(T2O, T2P);
+        __m512d T2Q = _mm512_add_pd(T2O, T2P);
+        __m512d T2R = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2Q, T2N);
+        __m512d T2U = _mm512_sub_pd(Tt, TA);
+        __m512d T2V = _mm512_sub_pd(Te, Tl);
+        __m512d T2W = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2V, T2U);
+        __m512d T2Y = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2U, T2V);
+        _mm512_storeu_pd(&buf_im[10 * 8 + k], _mm512_add_pd(T2N, T2Q));
+        __m512d T2X = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
+        _mm512_storeu_pd(&buf_im[6 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
+        _mm512_storeu_pd(&buf_im[14 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2Y, T2X));
+        __m512d T2T = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2S, T2R);
+        _mm512_storeu_pd(&buf_im[2 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
+        _mm512_storeu_pd(&buf_im[18 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2W, T2T));
+        __m512d T30 = _mm512_sub_pd(TG, TJ);
+        __m512d TK = _mm512_add_pd(TG, TJ);
+        __m512d T2Z = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), TK, TD);
+        __m512d T34 = _mm512_sub_pd(T32, T33);
+        __m512d T37 = _mm512_sub_pd(T35, T36);
+        __m512d T38 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T37, T34);
+        __m512d T3a = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T34, T37);
+        _mm512_storeu_pd(&buf_re[0 * 8 + k], _mm512_add_pd(TD, TK));
+        __m512d T39 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
+        _mm512_storeu_pd(&buf_re[12 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
+        _mm512_storeu_pd(&buf_re[8 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3a, T39));
+        __m512d T31 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T30, T2Z);
+        _mm512_storeu_pd(&buf_re[4 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
+        _mm512_storeu_pd(&buf_re[16 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T38, T31));
+        __m512d T3g = _mm512_sub_pd(T3c, T3d);
+        __m512d T3e = _mm512_add_pd(T3c, T3d);
+        __m512d T3f = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T3e, T3b);
+        __m512d T3i = _mm512_sub_pd(TE, TF);
+        __m512d T3j = _mm512_sub_pd(TH, TI);
+        __m512d T3k = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T3j, T3i);
+        __m512d T3m = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T3i, T3j);
+        _mm512_storeu_pd(&buf_im[0 * 8 + k], _mm512_add_pd(T3b, T3e));
+        __m512d T3l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
+        _mm512_storeu_pd(&buf_im[8 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
+        _mm512_storeu_pd(&buf_im[12 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3m, T3l));
+        __m512d T3h = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T3g, T3f);
+        _mm512_storeu_pd(&buf_im[4 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
+        _mm512_storeu_pd(&buf_im[16 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T3k, T3h));
+        __m512d T24 = _mm512_sub_pd(T10, T1b);
+        __m512d T1c = _mm512_add_pd(T10, T1b);
+        __m512d T23 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1c, TP);
+        __m512d T28 = _mm512_sub_pd(T26, T27);
+        __m512d T2b = _mm512_sub_pd(T29, T2a);
+        __m512d T2c = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2b, T28);
+        __m512d T2e = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T28, T2b);
+        _mm512_storeu_pd(&buf_im[5 * 8 + k], _mm512_add_pd(TP, T1c));
+        __m512d T2d = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
+        _mm512_storeu_pd(&buf_im[13 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
+        _mm512_storeu_pd(&buf_im[17 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2e, T2d));
+        __m512d T25 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T24, T23);
+        _mm512_storeu_pd(&buf_im[1 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
+        _mm512_storeu_pd(&buf_im[9 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2c, T25));
+        __m512d T2k = _mm512_sub_pd(T2g, T2h);
+        __m512d T2i = _mm512_add_pd(T2g, T2h);
+        __m512d T2j = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T2i, T2f);
+        __m512d T2m = _mm512_sub_pd(TU, TZ);
+        __m512d T2n = _mm512_sub_pd(T15, T1a);
+        __m512d T2o = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T2n, T2m);
+        __m512d T2q = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T2m, T2n);
+        _mm512_storeu_pd(&buf_re[5 * 8 + k], _mm512_add_pd(T2f, T2i));
+        __m512d T2p = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
+        _mm512_storeu_pd(&buf_re[13 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
+        _mm512_storeu_pd(&buf_re[17 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2q, T2p));
+        __m512d T2l = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T2k, T2j);
+        _mm512_storeu_pd(&buf_re[1 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
+        _mm512_storeu_pd(&buf_re[9 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T2o, T2l));
+        __m512d T1m = _mm512_sub_pd(T1g, T1j);
+        __m512d T1k = _mm512_add_pd(T1g, T1j);
+        __m512d T1l = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1k, T1d);
+        __m512d T1y = _mm512_sub_pd(T1s, T1x);
+        __m512d T1J = _mm512_sub_pd(T1D, T1I);
+        __m512d T1K = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1J, T1y);
+        __m512d T1M = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1y, T1J);
+        _mm512_storeu_pd(&buf_im[15 * 8 + k], _mm512_add_pd(T1d, T1k));
+        __m512d T1L = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
+        _mm512_storeu_pd(&buf_im[11 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
+        _mm512_storeu_pd(&buf_im[19 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1M, T1L));
+        __m512d T1n = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1m, T1l);
+        _mm512_storeu_pd(&buf_im[3 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
+        _mm512_storeu_pd(&buf_im[7 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T1K, T1n));
+        __m512d T1W = _mm512_sub_pd(T1S, T1T);
+        __m512d T1U = _mm512_add_pd(T1S, T1T);
+        __m512d T1V = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP250000000), T1U, T1R);
+        __m512d T1Y = _mm512_sub_pd(T1h, T1i);
+        __m512d T1Z = _mm512_sub_pd(T1e, T1f);
+        __m512d T20 = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Z, T1Y);
+        __m512d T22 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP618033988), T1Y, T1Z);
+        _mm512_storeu_pd(&buf_re[15 * 8 + k], _mm512_add_pd(T1R, T1U));
+        __m512d T21 = _mm512_fmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
+        _mm512_storeu_pd(&buf_re[11 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
+        _mm512_storeu_pd(&buf_re[19 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T22, T21));
+        __m512d T1X = _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP559016994), T1W, T1V);
+        _mm512_storeu_pd(&buf_re[3 * 8 + k], _mm512_fmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
+        _mm512_storeu_pd(&buf_re[7 * 8 + k], _mm512_fnmadd_pd(_mm512_set1_pd(R20_KP951056516), T20, T1X));
 
-    /* Phase 3: Scatter from buffer to strided output */
-    for (int m = 0; m < 20; m++)
-    {
-      _mm512_storeu_pd(&out_re[m * K + k], _mm512_load_pd(&buf_re[m * 8]));
-      _mm512_storeu_pd(&out_im[m * K + k], _mm512_load_pd(&buf_im[m * 8]));
+        /* Phase 3: Scatter from buffer to strided output */
+        for (int m = 0; m < 20; m++) {
+            _mm512_storeu_pd(&out_re[m * K + k], _mm512_load_pd(&buf_re[m * 8]));
+            _mm512_storeu_pd(&out_im[m * K + k], _mm512_load_pd(&buf_im[m * 8]));
+        }
     }
-  }
 }
 
 /* Backward (contiguous+buffered): swap re<->im */
-__attribute__((target("avx512f,fma"))) static inline void radix20_tw_dag_dit_contig_buf_bwd_avx512(
-    const double *__restrict__ in_re, const double *__restrict__ in_im,
-    double *__restrict__ out_re, double *__restrict__ out_im,
-    const double *__restrict__ tw_re, const double *__restrict__ tw_im,
+__attribute__((target("avx512f,fma")))
+static inline void radix20_tw_dag_dit_contig_buf_bwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
     size_t K)
 {
-  radix20_tw_dag_dit_contig_buf_fwd_avx512(in_im, in_re, out_im, out_re, tw_re, tw_im, K);
+    radix20_tw_dag_dit_contig_buf_fwd_avx512(in_im, in_re, out_im, out_re, tw_re, tw_im, K);
 }
 
 #endif /* FFT_RADIX20_AVX512_TW_DAG_H */

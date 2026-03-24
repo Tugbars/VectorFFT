@@ -49,8 +49,11 @@ typedef enum
 #endif
 #include "scalar/fft_radix20_scalar_tw.h"
 
-/* K threshold: DAG wins at K≤64, CT wins at K≥128 (benched March 2026) */
-#define RADIX20_DAG_K_THRESHOLD 96
+/* K threshold: DAG DIT tw is faster than CT at virtually all K (15-30%).
+ * Currently has an undiagnosed accuracy bug at K≥8.
+ * Use diag_r20_dag_tw.c to trace. Set to 4 as temporary workaround.
+ * TODO: fix the bug and restore SIZE_MAX */
+#define RADIX20_DAG_K_THRESHOLD 4
 
 /* ── IL tw codelets (DIT + DIF) ── */
 #if defined(__AVX512F__) || defined(__AVX512F)
