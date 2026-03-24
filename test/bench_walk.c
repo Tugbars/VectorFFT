@@ -78,7 +78,6 @@ static inline vfft_isa_level_t vfft_detect_isa(void)
 #include "fft_radix5_dif_dispatch.h"
 #include "fft_radix7_dif_dispatch.h"
 #include "fft_radix8_dif_dispatch.h"
-#include "fft_radix16_dif_dispatch.h"
 #include "fft_radix32_dif_dispatch.h"
 #include "fft_radix10_dif_dispatch.h"
 #include "fft_radix25_dif_dispatch.h"
