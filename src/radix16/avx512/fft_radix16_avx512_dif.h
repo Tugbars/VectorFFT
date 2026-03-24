@@ -35,7 +35,7 @@ static void radix16_ct_tw_dif_fwd_split_avx512(
     const double * __restrict__ tw_re, const double * __restrict__ tw_im,
     size_t K)
 {
-    const __m512i SM = _mm512_set1_epi64(0x8000000000000000ULL);
+    const __m512i SM = _mm512_set1_epi64((long long)0x8000000000000000ULL);
     const __m512d vw1r = _mm512_set1_pd(_r16d_W1r);
     const __m512d vw1i = _mm512_set1_pd(_r16d_W1i);
     const __m512d vw3r = _mm512_set1_pd(_r16d_W3r);
@@ -103,7 +103,7 @@ static void radix16_ct_tw_dif_fwd_split_avx512(
          * DIF: twiddle arm m by tw[(m-1)]. Arm 0 = no twiddle. */
         #define STORE_TW(yr,yi,arm) \
             if (arm == 0) { _mm512_store_pd(&or_[arm*K+k],yr); _mm512_store_pd(&oi[arm*K+k],yi); } \
-            else { __m512d wr=_mm512_load_pd(&tw_re[(arm-1)*K+k]),wi=_mm512_load_pd(&tw_im[(arm-1)*K+k]); \
+            else { __m512d wr=_mm512_load_pd(&tw_re[((size_t)(arm)-1)*K+k]),wi=_mm512_load_pd(&tw_im[((size_t)(arm)-1)*K+k]); \
                    _mm512_store_pd(&or_[arm*K+k],_mm512_fmsub_pd(yr,wr,_mm512_mul_pd(yi,wi))); \
                    _mm512_store_pd(&oi[arm*K+k],_mm512_fmadd_pd(yr,wi,_mm512_mul_pd(yi,wr))); }
 
@@ -145,7 +145,7 @@ static void radix16_ct_tw_dif_bwd_split_avx512(
     const double * __restrict__ tw_re, const double * __restrict__ tw_im,
     size_t K)
 {
-    const __m512i SM = _mm512_set1_epi64(0x8000000000000000ULL);
+    const __m512i SM = _mm512_set1_epi64((long long)0x8000000000000000ULL);
     const __m512d vw1r = _mm512_set1_pd(_r16d_W1rc);
     const __m512d vw1i = _mm512_set1_pd(_r16d_W1ic);
     const __m512d vw3r = _mm512_set1_pd(_r16d_W3rc);
@@ -211,7 +211,7 @@ static void radix16_ct_tw_dif_bwd_split_avx512(
         /* Pass 2 columns → conjugated twiddle on output → store */
         #define STORE_TW_CONJ(yr,yi,arm) \
             if (arm == 0) { _mm512_store_pd(&or_[arm*K+k],yr); _mm512_store_pd(&oi[arm*K+k],yi); } \
-            else { __m512d wr=_mm512_load_pd(&tw_re[(arm-1)*K+k]),wi=_mm512_load_pd(&tw_im[(arm-1)*K+k]); \
+            else { __m512d wr=_mm512_load_pd(&tw_re[((size_t)(arm)-1)*K+k]),wi=_mm512_load_pd(&tw_im[((size_t)(arm)-1)*K+k]); \
                    _mm512_store_pd(&or_[arm*K+k],_mm512_fmadd_pd(yr,wr,_mm512_mul_pd(yi,wi))); \
                    _mm512_store_pd(&oi[arm*K+k],_mm512_fmsub_pd(yi,wr,_mm512_mul_pd(yr,wi))); }
 
@@ -309,7 +309,7 @@ static void radix16_ct_tw_dif_fwd_il_avx512(
         /* Pass 2 columns → twiddle output → store */
         #define IL_STORE_TW(y,arm) \
             if (arm == 0) { _mm512_store_pd(&out[(arm*K)*2+off],y); } \
-            else { __m512d tw=_mm512_load_pd(&tw_il[((arm-1)*K)*2+off]); __m512d d; IL_CMUL_RT(y,tw,d); _mm512_store_pd(&out[(arm*K)*2+off],d); }
+            else { __m512d tw=_mm512_load_pd(&tw_il[(((size_t)(arm)-1)*K)*2+off]); __m512d d; IL_CMUL_RT(y,tw,d); _mm512_store_pd(&out[(arm*K)*2+off],d); }
 
         #define IL_COL_DIF_FWD(n0,n1,n2,n3, o0,o1,o2,o3) { \
             __m512d s02=_mm512_add_pd(n0,n2),d02=_mm512_sub_pd(n0,n2); \
@@ -400,7 +400,7 @@ static void radix16_ct_tw_dif_bwd_il_avx512(
         /* Pass 2 columns → conj twiddle output → store */
         #define IL_STORE_TW_CONJ(y,arm) \
             if (arm == 0) { _mm512_store_pd(&out[(arm*K)*2+off],y); } \
-            else { __m512d tw=_mm512_load_pd(&tw_il[((arm-1)*K)*2+off]); __m512d d; IL_CMUL_RT_CONJ(y,tw,d); _mm512_store_pd(&out[(arm*K)*2+off],d); }
+            else { __m512d tw=_mm512_load_pd(&tw_il[(((size_t)(arm)-1)*K)*2+off]); __m512d d; IL_CMUL_RT_CONJ(y,tw,d); _mm512_store_pd(&out[(arm*K)*2+off],d); }
 
         #define IL_COL_DIF_BWD(n0,n1,n2,n3, o0,o1,o2,o3) { \
             __m512d s02=_mm512_add_pd(n0,n2),d02=_mm512_sub_pd(n0,n2); \

@@ -47,9 +47,9 @@ static void radix16_dag_n1_bwd_il_avx2(
     const __m256d KS = _mm256_set1_pd(0.70710678118654752440084436210484904);
     const __m256d KC = _mm256_set1_pd(0.92387953251128675612818318939678829);
     const __m256d sign_odd = _mm256_castsi256_pd(_mm256_set_epi64x(
-        0x8000000000000000LL, 0, 0x8000000000000000LL, 0));
+        (long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL, 0));
     const __m256d sign_even = _mm256_castsi256_pd(_mm256_set_epi64x(
-        0, 0x8000000000000000LL, 0, 0x8000000000000000LL));
+        0, (long long)0x8000000000000000ULL, 0, (long long)0x8000000000000000ULL));
 
     /* Backward ×(+j): [re,im]→[-im,re] = permute + negate even */
     #define FMAI_B(B, A, D)  { __m256d jB = _mm256_xor_pd(_mm256_permute_pd(B,0x5),sign_even); D = _mm256_add_pd(A, jB); }
@@ -232,24 +232,24 @@ static void radix16_ct_n1_fwd_scalar(
     double sp_re[16], sp_im[16];
     for (size_t k = 0; k < K; k++) {
         /* Pass 1: 4 row DFT-4 + internal twiddles */
-        for (int n2 = 0; n2 < 4; n2++) {
+        for (size_t n2 = 0; n2 < 4; n2++) {
             double xr[4], xi[4];
-            for (int n1 = 0; n1 < 4; n1++) { xr[n1]=ir[(4*n1+n2)*K+k]; xi[n1]=ii[(4*n1+n2)*K+k]; }
+            for (size_t n1 = 0; n1 < 4; n1++) { xr[n1]=ir[(4*n1+n2)*K+k]; xi[n1]=ii[(4*n1+n2)*K+k]; }
             r16s_dft4_fwd(xr, xi);
-            for (int k1 = 0; k1 < 4; k1++) { sp_re[n2*4+k1]=xr[k1]; sp_im[n2*4+k1]=xi[k1]; }
+            for (size_t k1 = 0; k1 < 4; k1++) { sp_re[n2*4+k1]=xr[k1]; sp_im[n2*4+k1]=xi[k1]; }
         }
-        for (int k1 = 1; k1 < 4; k1++) {
+        for (size_t k1 = 1; k1 < 4; k1++) {
             double sr[4]={sp_re[0*4+k1],sp_re[1*4+k1],sp_re[2*4+k1],sp_re[3*4+k1]};
             double si[4]={sp_im[0*4+k1],sp_im[1*4+k1],sp_im[2*4+k1],sp_im[3*4+k1]};
             r16s_internal_tw_fwd(sr, si, k1);
-            for (int n2 = 0; n2 < 4; n2++) { sp_re[n2*4+k1]=sr[n2]; sp_im[n2*4+k1]=si[n2]; }
+            for (size_t n2 = 0; n2 < 4; n2++) { sp_re[n2*4+k1]=sr[n2]; sp_im[n2*4+k1]=si[n2]; }
         }
         /* Pass 2: 4 column DFT-4 */
-        for (int k1 = 0; k1 < 4; k1++) {
+        for (size_t k1 = 0; k1 < 4; k1++) {
             double xr[4], xi[4];
-            for (int n2 = 0; n2 < 4; n2++) { xr[n2]=sp_re[n2*4+k1]; xi[n2]=sp_im[n2*4+k1]; }
+            for (size_t n2 = 0; n2 < 4; n2++) { xr[n2]=sp_re[n2*4+k1]; xi[n2]=sp_im[n2*4+k1]; }
             r16s_dft4_fwd(xr, xi);
-            for (int k2 = 0; k2 < 4; k2++) { or_[(k1+4*k2)*K+k]=xr[k2]; oi[(k1+4*k2)*K+k]=xi[k2]; }
+            for (size_t k2 = 0; k2 < 4; k2++) { or_[(k1+4*k2)*K+k]=xr[k2]; oi[(k1+4*k2)*K+k]=xi[k2]; }
         }
     }
 }
@@ -262,23 +262,23 @@ static void radix16_ct_n1_bwd_scalar(
 {
     double sp_re[16], sp_im[16];
     for (size_t k = 0; k < K; k++) {
-        for (int n2 = 0; n2 < 4; n2++) {
+        for (size_t n2 = 0; n2 < 4; n2++) {
             double xr[4], xi[4];
-            for (int n1 = 0; n1 < 4; n1++) { xr[n1]=ir[(4*n1+n2)*K+k]; xi[n1]=ii[(4*n1+n2)*K+k]; }
+            for (size_t n1 = 0; n1 < 4; n1++) { xr[n1]=ir[(4*n1+n2)*K+k]; xi[n1]=ii[(4*n1+n2)*K+k]; }
             r16s_dft4_bwd(xr, xi);
-            for (int k1 = 0; k1 < 4; k1++) { sp_re[n2*4+k1]=xr[k1]; sp_im[n2*4+k1]=xi[k1]; }
+            for (size_t k1 = 0; k1 < 4; k1++) { sp_re[n2*4+k1]=xr[k1]; sp_im[n2*4+k1]=xi[k1]; }
         }
-        for (int k1 = 1; k1 < 4; k1++) {
+        for (size_t k1 = 1; k1 < 4; k1++) {
             double sr[4]={sp_re[0*4+k1],sp_re[1*4+k1],sp_re[2*4+k1],sp_re[3*4+k1]};
             double si[4]={sp_im[0*4+k1],sp_im[1*4+k1],sp_im[2*4+k1],sp_im[3*4+k1]};
             r16s_internal_tw_bwd(sr, si, k1);
-            for (int n2 = 0; n2 < 4; n2++) { sp_re[n2*4+k1]=sr[n2]; sp_im[n2*4+k1]=si[n2]; }
+            for (size_t n2 = 0; n2 < 4; n2++) { sp_re[n2*4+k1]=sr[n2]; sp_im[n2*4+k1]=si[n2]; }
         }
-        for (int k1 = 0; k1 < 4; k1++) {
+        for (size_t k1 = 0; k1 < 4; k1++) {
             double xr[4], xi[4];
-            for (int n2 = 0; n2 < 4; n2++) { xr[n2]=sp_re[n2*4+k1]; xi[n2]=sp_im[n2*4+k1]; }
+            for (size_t n2 = 0; n2 < 4; n2++) { xr[n2]=sp_re[n2*4+k1]; xi[n2]=sp_im[n2*4+k1]; }
             r16s_dft4_bwd(xr, xi);
-            for (int k2 = 0; k2 < 4; k2++) { or_[(k1+4*k2)*K+k]=xr[k2]; oi[(k1+4*k2)*K+k]=xi[k2]; }
+            for (size_t k2 = 0; k2 < 4; k2++) { or_[(k1+4*k2)*K+k]=xr[k2]; oi[(k1+4*k2)*K+k]=xi[k2]; }
         }
     }
 }
@@ -295,28 +295,28 @@ static void radix16_ct_tw_dit_fwd_scalar(
         /* Load + apply external twiddle */
         double xr[16], xi[16];
         xr[0]=ir[0*K+k]; xi[0]=ii[0*K+k];
-        for (int n = 1; n < 16; n++) {
+        for (size_t n = 1; n < 16; n++) {
             double a=ir[n*K+k],b=ii[n*K+k],wr=tw_re[(n-1)*K+k],wi=tw_im[(n-1)*K+k];
             xr[n]=a*wr-b*wi; xi[n]=a*wi+b*wr;
         }
         /* 4×4 CT forward */
-        for (int n2 = 0; n2 < 4; n2++) {
+        for (size_t n2 = 0; n2 < 4; n2++) {
             double dr[4]={xr[n2],xr[4+n2],xr[8+n2],xr[12+n2]};
             double di[4]={xi[n2],xi[4+n2],xi[8+n2],xi[12+n2]};
             r16s_dft4_fwd(dr, di);
-            for (int k1=0;k1<4;k1++){sp_re[n2*4+k1]=dr[k1];sp_im[n2*4+k1]=di[k1];}
+            for (size_t k1=0;k1<4;k1++){sp_re[n2*4+k1]=dr[k1];sp_im[n2*4+k1]=di[k1];}
         }
-        for (int k1=1;k1<4;k1++){
+        for (size_t k1=1;k1<4;k1++){
             double sr[4]={sp_re[0*4+k1],sp_re[1*4+k1],sp_re[2*4+k1],sp_re[3*4+k1]};
             double si[4]={sp_im[0*4+k1],sp_im[1*4+k1],sp_im[2*4+k1],sp_im[3*4+k1]};
             r16s_internal_tw_fwd(sr,si,k1);
-            for(int n2=0;n2<4;n2++){sp_re[n2*4+k1]=sr[n2];sp_im[n2*4+k1]=si[n2];}
+            for(size_t n2=0;n2<4;n2++){sp_re[n2*4+k1]=sr[n2];sp_im[n2*4+k1]=si[n2];}
         }
-        for (int k1=0;k1<4;k1++){
+        for (size_t k1=0;k1<4;k1++){
             double dr[4],di[4];
-            for(int n2=0;n2<4;n2++){dr[n2]=sp_re[n2*4+k1];di[n2]=sp_im[n2*4+k1];}
+            for(size_t n2=0;n2<4;n2++){dr[n2]=sp_re[n2*4+k1];di[n2]=sp_im[n2*4+k1];}
             r16s_dft4_fwd(dr,di);
-            for(int k2=0;k2<4;k2++){or_[(k1+4*k2)*K+k]=dr[k2];oi[(k1+4*k2)*K+k]=di[k2];}
+            for(size_t k2=0;k2<4;k2++){or_[(k1+4*k2)*K+k]=dr[k2];oi[(k1+4*k2)*K+k]=di[k2];}
         }
     }
 }
@@ -332,27 +332,27 @@ static void radix16_ct_tw_dit_bwd_scalar(
     for (size_t k = 0; k < K; k++) {
         double xr[16], xi[16];
         xr[0]=ir[0*K+k]; xi[0]=ii[0*K+k];
-        for (int n=1;n<16;n++){
+        for (size_t n=1;n<16;n++){
             double a=ir[n*K+k],b=ii[n*K+k],wr=tw_re[(n-1)*K+k],wi=tw_im[(n-1)*K+k];
             xr[n]=a*wr+b*wi; xi[n]=b*wr-a*wi; /* conj twiddle */
         }
-        for (int n2=0;n2<4;n2++){
+        for (size_t n2=0;n2<4;n2++){
             double dr[4]={xr[n2],xr[4+n2],xr[8+n2],xr[12+n2]};
             double di[4]={xi[n2],xi[4+n2],xi[8+n2],xi[12+n2]};
             r16s_dft4_bwd(dr,di);
-            for(int k1=0;k1<4;k1++){sp_re[n2*4+k1]=dr[k1];sp_im[n2*4+k1]=di[k1];}
+            for(size_t k1=0;k1<4;k1++){sp_re[n2*4+k1]=dr[k1];sp_im[n2*4+k1]=di[k1];}
         }
-        for (int k1=1;k1<4;k1++){
+        for (size_t k1=1;k1<4;k1++){
             double sr[4]={sp_re[0*4+k1],sp_re[1*4+k1],sp_re[2*4+k1],sp_re[3*4+k1]};
             double si[4]={sp_im[0*4+k1],sp_im[1*4+k1],sp_im[2*4+k1],sp_im[3*4+k1]};
             r16s_internal_tw_bwd(sr,si,k1);
-            for(int n2=0;n2<4;n2++){sp_re[n2*4+k1]=sr[n2];sp_im[n2*4+k1]=si[n2];}
+            for(size_t n2=0;n2<4;n2++){sp_re[n2*4+k1]=sr[n2];sp_im[n2*4+k1]=si[n2];}
         }
-        for (int k1=0;k1<4;k1++){
+        for (size_t k1=0;k1<4;k1++){
             double dr[4],di[4];
-            for(int n2=0;n2<4;n2++){dr[n2]=sp_re[n2*4+k1];di[n2]=sp_im[n2*4+k1];}
+            for(size_t n2=0;n2<4;n2++){dr[n2]=sp_re[n2*4+k1];di[n2]=sp_im[n2*4+k1];}
             r16s_dft4_bwd(dr,di);
-            for(int k2=0;k2<4;k2++){or_[(k1+4*k2)*K+k]=dr[k2];oi[(k1+4*k2)*K+k]=di[k2];}
+            for(size_t k2=0;k2<4;k2++){or_[(k1+4*k2)*K+k]=dr[k2];oi[(k1+4*k2)*K+k]=di[k2];}
         }
     }
 }
@@ -367,24 +367,24 @@ static void radix16_ct_tw_dif_fwd_scalar(
     double sp_re[16], sp_im[16];
     for (size_t k = 0; k < K; k++) {
         /* Butterfly (no twiddle on input) */
-        for (int n2=0;n2<4;n2++){
+        for (size_t n2=0;n2<4;n2++){
             double dr[4]={ir[(n2)*K+k],ir[(4+n2)*K+k],ir[(8+n2)*K+k],ir[(12+n2)*K+k]};
             double di[4]={ii[(n2)*K+k],ii[(4+n2)*K+k],ii[(8+n2)*K+k],ii[(12+n2)*K+k]};
             r16s_dft4_fwd(dr,di);
-            for(int k1=0;k1<4;k1++){sp_re[n2*4+k1]=dr[k1];sp_im[n2*4+k1]=di[k1];}
+            for(size_t k1=0;k1<4;k1++){sp_re[n2*4+k1]=dr[k1];sp_im[n2*4+k1]=di[k1];}
         }
-        for (int k1=1;k1<4;k1++){
+        for (size_t k1=1;k1<4;k1++){
             double sr[4]={sp_re[0*4+k1],sp_re[1*4+k1],sp_re[2*4+k1],sp_re[3*4+k1]};
             double si[4]={sp_im[0*4+k1],sp_im[1*4+k1],sp_im[2*4+k1],sp_im[3*4+k1]};
             r16s_internal_tw_fwd(sr,si,k1);
-            for(int n2=0;n2<4;n2++){sp_re[n2*4+k1]=sr[n2];sp_im[n2*4+k1]=si[n2];}
+            for(size_t n2=0;n2<4;n2++){sp_re[n2*4+k1]=sr[n2];sp_im[n2*4+k1]=si[n2];}
         }
-        for (int k1=0;k1<4;k1++){
+        for (size_t k1=0;k1<4;k1++){
             double dr[4],di[4];
-            for(int n2=0;n2<4;n2++){dr[n2]=sp_re[n2*4+k1];di[n2]=sp_im[n2*4+k1];}
+            for(size_t n2=0;n2<4;n2++){dr[n2]=sp_re[n2*4+k1];di[n2]=sp_im[n2*4+k1];}
             r16s_dft4_fwd(dr,di);
             /* Apply external twiddle on output, then store */
-            for(int k2=0;k2<4;k2++){
+            for(size_t k2=0;k2<4;k2++){
                 int m=k1+4*k2;
                 if(m==0){or_[m*K+k]=dr[k2];oi[m*K+k]=di[k2];}
                 else{double wr=tw_re[(m-1)*K+k],wi=tw_im[(m-1)*K+k];
@@ -403,23 +403,23 @@ static void radix16_ct_tw_dif_bwd_scalar(
 {
     double sp_re[16], sp_im[16];
     for (size_t k = 0; k < K; k++) {
-        for (int n2=0;n2<4;n2++){
+        for (size_t n2=0;n2<4;n2++){
             double dr[4]={ir[(n2)*K+k],ir[(4+n2)*K+k],ir[(8+n2)*K+k],ir[(12+n2)*K+k]};
             double di[4]={ii[(n2)*K+k],ii[(4+n2)*K+k],ii[(8+n2)*K+k],ii[(12+n2)*K+k]};
             r16s_dft4_bwd(dr,di);
-            for(int k1=0;k1<4;k1++){sp_re[n2*4+k1]=dr[k1];sp_im[n2*4+k1]=di[k1];}
+            for(size_t k1=0;k1<4;k1++){sp_re[n2*4+k1]=dr[k1];sp_im[n2*4+k1]=di[k1];}
         }
-        for (int k1=1;k1<4;k1++){
+        for (size_t k1=1;k1<4;k1++){
             double sr[4]={sp_re[0*4+k1],sp_re[1*4+k1],sp_re[2*4+k1],sp_re[3*4+k1]};
             double si[4]={sp_im[0*4+k1],sp_im[1*4+k1],sp_im[2*4+k1],sp_im[3*4+k1]};
             r16s_internal_tw_bwd(sr,si,k1);
-            for(int n2=0;n2<4;n2++){sp_re[n2*4+k1]=sr[n2];sp_im[n2*4+k1]=si[n2];}
+            for(size_t n2=0;n2<4;n2++){sp_re[n2*4+k1]=sr[n2];sp_im[n2*4+k1]=si[n2];}
         }
-        for (int k1=0;k1<4;k1++){
+        for (size_t k1=0;k1<4;k1++){
             double dr[4],di[4];
-            for(int n2=0;n2<4;n2++){dr[n2]=sp_re[n2*4+k1];di[n2]=sp_im[n2*4+k1];}
+            for(size_t n2=0;n2<4;n2++){dr[n2]=sp_re[n2*4+k1];di[n2]=sp_im[n2*4+k1];}
             r16s_dft4_bwd(dr,di);
-            for(int k2=0;k2<4;k2++){
+            for(size_t k2=0;k2<4;k2++){
                 int m=k1+4*k2;
                 if(m==0){or_[m*K+k]=dr[k2];oi[m*K+k]=di[k2];}
                 else{double wr=tw_re[(m-1)*K+k],wi=tw_im[(m-1)*K+k];

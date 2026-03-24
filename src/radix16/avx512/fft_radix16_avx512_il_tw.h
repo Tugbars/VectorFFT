@@ -115,7 +115,7 @@ static void radix16_ct_tw_dit_fwd_il_avx512(
 
         #define TW_LOAD_AND_MUL(arm, dst) { \
             __m512d raw = _mm512_load_pd(&in[(arm*K)*2 + off]); \
-            __m512d tw  = _mm512_load_pd(&tw_il[((arm-1)*K)*2 + off]); \
+            __m512d tw  = _mm512_load_pd(&tw_il[(((size_t)(arm)-1)*K)*2 + off]); \
             TW_CMUL_RT(raw, tw, dst); \
         }
 
