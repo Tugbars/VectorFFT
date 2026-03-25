@@ -144,6 +144,14 @@ if(NOT WIN32 OR VFFT_MINGW)
 endif()
 message(STATUS "test: bench_r20_codelets [ISA: ${BENCH_ISA_FLAGS}]")
 
+# ── bench_recursive — recursive executor vs flat vs FFTW ─────────────────────
+add_bench_target(bench_recursive bench_recursive.c)
+message(STATUS "test: bench_recursive [ISA: ${BENCH_ISA_FLAGS}]")
+
+# ── bench_codelets — all radixes codelet-level vs FFTW guru split ────────────
+add_bench_target(bench_codelets bench_codelets.c)
+message(STATUS "test: bench_codelets [ISA: ${BENCH_ISA_FLAGS}]")
+
 # ── diag_plan (no FFTW dep) ──────────────────────────────────────────────────
 #add_executable(diag_plan diag_plan.c)
 #target_compile_options(diag_plan PRIVATE ${VFFT_BASE_FLAGS} ${BENCH_ISA_FLAGS})
