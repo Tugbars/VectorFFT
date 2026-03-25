@@ -1503,7 +1503,7 @@ static void vfft_execute_fwd_dit(
     /* Interleaved buffer pair */
     double *src_il = plan->buf_il_a;
     double *dst_il = plan->buf_il_b;
-    int is_il = 0; /* current data layout: 0=split, 1=interleaved */
+    int is_il = 0;
 
     /* DIT: apply input digit-reversal permutation */
     if (plan->perm)
@@ -1520,8 +1520,145 @@ static void vfft_execute_fwd_dit(
         memcpy(src_im, in_im, N * sizeof(double));
     }
 
-    /* Process inner to outer: s=0 (K=1) → s=S-1 (largest K) */
-    for (int s = 0; s < (int)S; s++)
+    /* ═══════════════════════════════════════════════════════════════
+     * TILED STAGE FUSION
+     *
+     * Find consecutive inner stages whose combined tile fits in L1.
+     * Process all tiles through the fused stages before moving to
+     * outer stages. Each tile stays in L1 throughout the fused stages.
+     *
+     * Tile size = product of fused radixes.
+     * Working set = tile_size × 32 bytes (src_re + src_im + dst_re + dst_im).
+     * L1 budget: ~48KB on Raptor Lake → tile ≤ 1536 complex doubles.
+     *
+     * Skip tiling if any fused stage uses IL or block-walk (complex paths).
+     * ═══════════════════════════════════════════════════════════════ */
+
+    /* L1 tile threshold: tile_size × 32 bytes ≤ L1.
+     * 48KB / 32 = 1536. Be conservative: 1024. */
+    const size_t TILE_THRESHOLD = 1024;
+
+    /* Compute fusion depth: how many inner stages to fuse */
+    int fused = 0;
+    {
+        size_t tile = 1;
+        for (int s = 0; s < (int)S; s++)
+        {
+            const vfft_stage *st = &plan->stages[s];
+            size_t next_tile = tile * st->radix;
+
+            /* Stop if tile would exceed L1 */
+            if (next_tile > TILE_THRESHOLD)
+                break;
+
+            /* Stop if this stage uses IL or block-walk (complex paths) */
+            if (st->use_il || st->walk)
+                break;
+
+            tile = next_tile;
+            fused = s + 1;
+        }
+    }
+
+    /* Need at least 2 fused stages for tiling to help */
+    if (fused < 2)
+        fused = 0;
+
+    /* ── Phase 1: Tiled inner stages ── */
+    if (fused > 0)
+    {
+        size_t tile_size = 1;
+        for (int s = 0; s < fused; s++)
+            tile_size *= plan->stages[s].radix;
+        size_t n_tiles = N / tile_size;
+
+        for (size_t t = 0; t < n_tiles; t++)
+        {
+            size_t tile_off = t * tile_size;
+
+            /* Track local src/dst for this tile.
+             * Start: src = buf_a (after perm), dst = buf_b.
+             * Each stage swaps. */
+            double *t_src_re = src_re, *t_src_im = src_im;
+            double *t_dst_re = dst_re, *t_dst_im = dst_im;
+
+            for (int s = 0; s < fused; s++)
+            {
+                const vfft_stage *st = &plan->stages[s];
+                const size_t R = st->radix;
+                const size_t K = st->K;
+                const size_t stage_group_size = R * K;
+                const size_t groups_in_tile = tile_size / stage_group_size;
+
+                for (size_t g = 0; g < groups_in_tile; g++)
+                {
+                    size_t off = tile_off + g * stage_group_size;
+
+                    if (K > 1 && st->tw_re && st->tw_fwd)
+                    {
+                        st->tw_fwd(
+                            t_src_re + off, t_src_im + off,
+                            t_dst_re + off, t_dst_im + off,
+                            st->tw_re, st->tw_im, K);
+                    }
+                    else if (K > 1 && st->tw_re)
+                    {
+                        vfft_apply_twiddles_dispatch(
+                            t_src_re + off, t_src_im + off,
+                            st->tw_re, st->tw_im,
+                            R, K, /*conjugate=*/0);
+                        st->fwd(
+                            t_src_re + off, t_src_im + off,
+                            t_dst_re + off, t_dst_im + off, K);
+                    }
+                    else
+                    {
+                        st->fwd(
+                            t_src_re + off, t_src_im + off,
+                            t_dst_re + off, t_dst_im + off, K);
+                    }
+                }
+
+                /* Swap for next stage within this tile */
+                double *tmp;
+                tmp = t_src_re;
+                t_src_re = t_dst_re;
+                t_dst_re = tmp;
+                tmp = t_src_im;
+                t_src_im = t_dst_im;
+                t_dst_im = tmp;
+            }
+        }
+
+        /* After all tiles: data is in buf_a if fused is even, buf_b if odd */
+        if (fused & 1)
+        {
+            /* Odd number of fused stages: data in buf_b */
+            src_re = plan->buf_b_re;
+            src_im = plan->buf_b_im;
+            dst_re = plan->buf_a_re;
+            dst_im = plan->buf_a_im;
+        }
+        else
+        {
+            /* Even: data back in buf_a */
+            src_re = plan->buf_a_re;
+            src_im = plan->buf_a_im;
+            dst_re = plan->buf_b_re;
+            dst_im = plan->buf_b_im;
+        }
+
+        /* If ALL stages were fused, copy result to output */
+        if (fused == (int)S)
+        {
+            memcpy(out_re, src_re, N * sizeof(double));
+            memcpy(out_im, src_im, N * sizeof(double));
+            return;
+        }
+    }
+
+    /* ── Phase 2: Remaining outer stages (full-N, same as before) ── */
+    for (int s = fused; s < (int)S; s++)
     {
         const vfft_stage *st = &plan->stages[s];
         const size_t R = st->radix;
@@ -1529,10 +1666,9 @@ static void vfft_execute_fwd_dit(
         const size_t n_outer = N / (R * K);
         const int is_last = (s == (int)S - 1);
 
-        /* ── IL path: interleaved data, half the memory streams ── */
+        /* ── IL path ── */
         if (st->use_il && (st->tw_fwd_il_native || st->tw_fwd_il || st->n1_fwd_il))
         {
-            /* Convert split → IL if needed (one-time at transition) */
             if (!is_il)
             {
                 vfft_split_to_il(src_re, src_im, src_il, N);
@@ -1544,21 +1680,18 @@ static void vfft_execute_fwd_dit(
                 size_t off = g * R * K;
                 if (st->tw_fwd_il_native && st->tw_il)
                 {
-                    /* Native IL: pre-interleaved twiddles, zero permutex2var */
                     st->tw_fwd_il_native(
                         src_il + 2 * off, dst_il + 2 * off,
                         st->tw_il, K);
                 }
                 else if (st->tw_fwd_il)
                 {
-                    /* Legacy hybrid IL: split twiddles */
                     st->tw_fwd_il(
                         src_il + 2 * off, dst_il + 2 * off,
                         st->tw_re, st->tw_im, K);
                 }
                 else
                 {
-                    /* N1 IL: monolithic notw for innermost stage */
                     st->n1_fwd_il(
                         src_il + 2 * off, dst_il + 2 * off, K);
                 }
@@ -1566,12 +1699,10 @@ static void vfft_execute_fwd_dit(
 
             if (is_last)
             {
-                /* Convert IL result to split output */
                 vfft_il_to_split(dst_il, out_re, out_im, N);
             }
             else
             {
-                /* Swap IL buffers */
                 double *t = src_il;
                 src_il = dst_il;
                 dst_il = t;
@@ -1579,16 +1710,14 @@ static void vfft_execute_fwd_dit(
             continue;
         }
 
-        /* ── Split path: existing logic ── */
+        /* ── Split path ── */
 
-        /* Convert IL → split if returning from IL stages */
         if (is_il)
         {
             vfft_il_to_split(src_il, src_re, src_im, N);
             is_il = 0;
         }
 
-        /* Last stage: write directly into caller's output */
         if (is_last)
         {
             dst_re = out_re;
@@ -1634,7 +1763,6 @@ static void vfft_execute_fwd_dit(
             }
         }
 
-        /* Pointer swap (skip for last stage — result is in out) */
         if (!is_last)
         {
             double *t;
@@ -1646,7 +1774,6 @@ static void vfft_execute_fwd_dit(
             dst_im = t;
         }
     }
-    /* Output is in out_re/out_im */
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1844,9 +1971,11 @@ static void vfft_execute_fwd(
     const double *__restrict__ in_re, const double *__restrict__ in_im,
     double *__restrict__ out_re, double *__restrict__ out_im)
 {
-    /* DIF forward is always available (fallback: notw + separate twiddle).
-     * Prefer it over DIT to avoid the expensive input permutation. */
-    vfft_execute_fwd_dif(plan, in_re, in_im, out_re, out_im);
+    /* DIT forward: inner→outer, progressive cache warming.
+     * DIF forward available via vfft_execute_fwd_dif() but is slower
+     * in practice — output gather is as expensive as input scatter,
+     * and DIF's outer→inner order hits cold cache on the largest stage first. */
+    vfft_execute_fwd_dit(plan, in_re, in_im, out_re, out_im);
 }
 
 /* ═══════════════════════════════════════════════════════════════
