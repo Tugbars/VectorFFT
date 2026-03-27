@@ -44,7 +44,26 @@
       "Read(//c/ProgramData/mingw64/mingw64/lib/**)",
       "Read(//c/ProgramData/mingw64/mingw64/include/**)",
       "Read(//c/msys64/mingw64/**)",
-      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --build build-gcc)"
+      "Bash(\"/c/Program Files/CMake/bin/cmake.exe\" --build build-gcc)",
+      "Bash(find C:UsersTugbarsDesktophighSpeedFFTbuild -name CMakeCache.txt -o -name *fftw* -o -name *FFTW*)",
+      "Bash(where icx-cl:*)",
+      "Bash(icx --version)",
+      "Bash(grep -n [^[:ascii:]] c:UsersTugbarsDesktophighSpeedFFTsrctest-codeletsgen_radix4.py)",
+      "Bash(grep -n [^[:ascii:]] c:UsersTugbarsDesktophighSpeedFFTsrctest-codeletsgen_radix8.py)",
+      "Bash(grep -n [^[:ascii:]] c:UsersTugbarsDesktophighSpeedFFTsrctest-codeletsgen_radix16.py)",
+      "Bash(grep -n [^[:ascii:]] c:UsersTugbarsDesktophighSpeedFFTsrctest-codeletsgen_radix32.py)",
+      "Bash(grep -n [^[:ascii:]] c:UsersTugbarsDesktophighSpeedFFTsrctest-codeletsgen_n1_k1_simd.py)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(wc -l \"c:/Users/Tugbars/Desktop/highSpeedFFT/src/test-codelets/build_bench/headers/\"*.h)",
+      "Bash(icx -march=native -c /tmp/test_avx.c -o /dev/null)",
+      "Bash(icx -march=native -dM -E -x c /dev/null)",
+      "Bash(icx -march=native -dM -E -x c -)",
+      "Bash(icx -E -dM -march=native -x c -)",
+      "Bash(icx -E -dM -mavx512f -x c -)",
+      "Bash(PYTHONIOENCODING=utf-8 python gen_radix16.py --isa avx2 --variant dit_tw)",
+      "Bash(PYTHONIOENCODING=utf-8 python gen_radix16.py --isa avx2 --variant dit_tw_log3)",
+      "Bash(PYTHONIOENCODING=utf-8 python gen_radix16.py --isa avx2 --variant dif_tw_log3)"
     ]
   }
 }
