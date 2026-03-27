@@ -31,33 +31,26 @@ REM -- Step 1: Generate codelet headers --
 
 set "PYTHONIOENCODING=utf-8"
 
-echo Generating codelet headers...
+echo Generating codelet headers (AVX2 only)...
+
+python "%SCRIPT_DIR%gen_radix2.py" avx2 > "%HDR_DIR%\fft_radix2_avx2.h"
 
 python "%SCRIPT_DIR%gen_radix4.py" avx2 > "%HDR_DIR%\fft_radix4_avx2.h"
-python "%SCRIPT_DIR%gen_radix4.py" avx512 > "%HDR_DIR%\fft_radix4_avx512.h"
 
 python "%SCRIPT_DIR%gen_radix8.py" avx2 > "%HDR_DIR%\fft_radix8_avx2.h"
-python "%SCRIPT_DIR%gen_radix8.py" avx512 > "%HDR_DIR%\fft_radix8_avx512.h"
 
 python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant notw > "%HDR_DIR%\fft_radix16_avx2_notw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix16_avx2_dit_tw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant dif_tw > "%HDR_DIR%\fft_radix16_avx2_dif_tw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant dit_tw_log3 > "%HDR_DIR%\fft_radix16_avx2_dit_tw_log3.h" 2>nul
 python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant dif_tw_log3 > "%HDR_DIR%\fft_radix16_avx2_dif_tw_log3.h" 2>nul
-python "%SCRIPT_DIR%gen_radix16.py" --isa avx512 --variant notw > "%HDR_DIR%\fft_radix16_avx512_notw.h" 2>nul
-python "%SCRIPT_DIR%gen_radix16.py" --isa avx512 --variant dit_tw > "%HDR_DIR%\fft_radix16_avx512_dit_tw.h" 2>nul
-python "%SCRIPT_DIR%gen_radix16.py" --isa avx512 --variant dif_tw > "%HDR_DIR%\fft_radix16_avx512_dif_tw.h" 2>nul
-python "%SCRIPT_DIR%gen_radix16.py" --isa avx512 --variant dit_tw_log3 > "%HDR_DIR%\fft_radix16_avx512_dit_tw_log3.h" 2>nul
-python "%SCRIPT_DIR%gen_radix16.py" --isa avx512 --variant dif_tw_log3 > "%HDR_DIR%\fft_radix16_avx512_dif_tw_log3.h" 2>nul
 
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant notw > "%HDR_DIR%\fft_radix32_avx2_notw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix32_avx2_dit_tw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant dif_tw > "%HDR_DIR%\fft_radix32_avx2_dif_tw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant ladder > "%HDR_DIR%\fft_radix32_avx2_ladder.h" 2>nul
-python "%SCRIPT_DIR%gen_radix32.py" --isa avx512 --variant notw > "%HDR_DIR%\fft_radix32_avx512_notw.h" 2>nul
-python "%SCRIPT_DIR%gen_radix32.py" --isa avx512 --variant dit_tw > "%HDR_DIR%\fft_radix32_avx512_dit_tw.h" 2>nul
-python "%SCRIPT_DIR%gen_radix32.py" --isa avx512 --variant dif_tw > "%HDR_DIR%\fft_radix32_avx512_dif_tw.h" 2>nul
-python "%SCRIPT_DIR%gen_radix32.py" --isa avx512 --variant ladder > "%HDR_DIR%\fft_radix32_avx512_ladder.h" 2>nul
+
+python "%SCRIPT_DIR%gen_radix64.py" --isa avx2 --variant all > "%HDR_DIR%\r64_unified_avx2.h" 2>nul
 
 copy "%SCRIPT_DIR%fft_n1_k1.h" "%HDR_DIR%\" >nul
 python "%SCRIPT_DIR%gen_n1_k1_simd.py" all > "%HDR_DIR%\fft_n1_k1_simd.h"
@@ -92,6 +85,14 @@ echo   bench_r32_ladder_honest OK
 if errorlevel 1 ( echo FAILED: bench_k1 & exit /b 1 )
 echo   bench_k1 OK
 
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -I"%SCRIPT_DIR%." -o "%BUILD_DIR%\bench_r64.exe" "%SCRIPT_DIR%bench_r64.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: bench_r64 & exit /b 1 )
+echo   bench_r64 OK
+
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -I"%SCRIPT_DIR%." -o "%BUILD_DIR%\bench_r64_blocked.exe" "%SCRIPT_DIR%bench_r64_blocked.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: bench_r64_blocked & exit /b 1 )
+echo   bench_r64_blocked OK
+
 echo.
 
 REM -- Step 3: Run benchmarks --
@@ -109,29 +110,39 @@ echo   Compiler: ICX (Intel oneAPI)>> "%OUT%"
 echo ============================================================>> "%OUT%"
 echo.>> "%OUT%"
 
-echo   [1/5] bench_honest_all...
+echo   [1/7] bench_honest_all...
 echo BENCHMARK 1: bench_honest_all>> "%OUT%"
 "%BUILD_DIR%\bench_honest_all.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [2/5] bench_r8_log3...
+echo   [2/7] bench_r8_log3...
 echo BENCHMARK 2: bench_r8_log3>> "%OUT%"
 "%BUILD_DIR%\bench_r8_log3.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [3/5] bench_r16_log3...
+echo   [3/7] bench_r16_log3...
 echo BENCHMARK 3: bench_r16_log3>> "%OUT%"
 "%BUILD_DIR%\bench_r16_log3.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [4/5] bench_r32_ladder_honest...
+echo   [4/7] bench_r32_ladder_honest...
 echo BENCHMARK 4: bench_r32_ladder_honest>> "%OUT%"
 "%BUILD_DIR%\bench_r32_ladder_honest.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [5/5] bench_k1...
+echo   [5/7] bench_k1...
 echo BENCHMARK 5: bench_k1>> "%OUT%"
 "%BUILD_DIR%\bench_k1.exe" >> "%OUT%" 2>&1
+echo.>> "%OUT%"
+
+echo   [6/7] bench_r64...
+echo BENCHMARK 6: bench_r64>> "%OUT%"
+"%BUILD_DIR%\bench_r64.exe" >> "%OUT%" 2>&1
+echo.>> "%OUT%"
+
+echo   [7/7] bench_r64_blocked...
+echo BENCHMARK 7: bench_r64_blocked>> "%OUT%"
+"%BUILD_DIR%\bench_r64_blocked.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
 echo.

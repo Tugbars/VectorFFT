@@ -63,7 +63,8 @@
       "Bash(icx -E -dM -mavx512f -x c -)",
       "Bash(PYTHONIOENCODING=utf-8 python gen_radix16.py --isa avx2 --variant dit_tw)",
       "Bash(PYTHONIOENCODING=utf-8 python gen_radix16.py --isa avx2 --variant dit_tw_log3)",
-      "Bash(PYTHONIOENCODING=utf-8 python gen_radix16.py --isa avx2 --variant dif_tw_log3)"
+      "Bash(PYTHONIOENCODING=utf-8 python gen_radix16.py --isa avx2 --variant dif_tw_log3)",
+      "Bash(ls c:/Users/Tugbars/Desktop/highSpeedFFT/src/test-codelets/*.py c:/Users/Tugbars/Desktop/highSpeedFFT/src/test-codelets/*.c)"
     ]
   }
 }
