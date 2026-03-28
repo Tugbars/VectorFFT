@@ -15,7 +15,7 @@ Usage:
   python3 gen_radix64.py --isa scalar --variant notw
   python3 gen_radix64.py avx2  # legacy positional
 """
-import math, sys
+import math, sys, re
 
 # =======================================
 # ISA abstraction
@@ -838,4 +838,96 @@ if __name__ == '__main__':
     if args.isa_pos and args.isa_pos in ('scalar', 'avx2', 'avx512'):
         args.isa = args.isa_pos
 
-    print('\n'.join(gen_file(args.isa, args.variant)))
+    lines = gen_file(args.isa, args.variant)
+
+    # Add sv variants for SIMD ISAs
+    if args.isa != 'scalar':
+        isa = ISA(args.isa)
+
+        def _t2_to_sv(body):
+            blines = body.split('\n')
+            out = []
+            in_loop = False
+            depth = 0
+            for line in blines:
+                stripped = line.strip()
+                if not in_loop and 'for (size_t k' in stripped and 'k < K' in stripped:
+                    in_loop = True
+                    depth = 1
+                    continue
+                if in_loop:
+                    for ch in stripped:
+                        if ch == '{': depth += 1
+                        elif ch == '}': depth -= 1
+                    if depth <= 0:
+                        in_loop = False
+                        if stripped == '}':
+                            continue
+                line = re.sub(r'(\d+)\*K\+k', r'\1*vs', line)
+                line = re.sub(r'\[k\]', '[0]', line)
+                if line.startswith('        '):
+                    line = line[4:]
+                out.append(line)
+            return '\n'.join(out)
+
+        text = '\n'.join(lines)
+
+        # Name mapping for R=64
+        mappings = [
+            ('radix64_n1_dit_kernel', 'radix64_n1sv_kernel'),
+            ('radix64_tw_flat_dit_kernel', 'radix64_t1sv_dit_kernel'),
+            ('radix64_tw_flat_dif_kernel', 'radix64_t1sv_dif_kernel'),
+        ]
+
+        sv_lines = []
+        sv_lines.append('')
+        sv_lines.append(f'/* === sv codelets: no loop, elements at stride vs === */')
+        sv_lines.append(f'/* Executor calls K/{isa.C} times, advancing base pointers by {isa.C}. */')
+
+        for t2_pat, sv_pat in mappings:
+            for d in ('fwd', 'bwd'):
+                func_name = f'{t2_pat}_{d}_{args.isa}'
+                sv_func = f'{sv_pat}_{d}_{args.isa}'
+
+                func_start = text.find(f'{func_name}(')
+                if func_start < 0:
+                    continue
+                static_start = text.rfind('static', 0, func_start)
+                if static_start < 0:
+                    # Try attribute line
+                    attr_start = text.rfind('__attribute__', 0, func_start)
+                    if attr_start < 0:
+                        continue
+                    static_start = attr_start
+                brace_start = text.find('{', func_start)
+                if brace_start < 0:
+                    continue
+
+                depth = 0
+                pos = brace_start
+                while pos < len(text):
+                    if text[pos] == '{': depth += 1
+                    elif text[pos] == '}':
+                        depth -= 1
+                        if depth == 0: break
+                    pos += 1
+
+                func_body = text[brace_start + 1:pos]
+                sv_body = _t2_to_sv(func_body)
+
+                sig = text[static_start:brace_start]
+                sig = sig.replace(func_name, sv_func)
+                sig = sig.replace('size_t K)', 'size_t vs)')
+
+                sv_lines.append(sig + '{')
+                sv_lines.append(sv_body)
+                sv_lines.append('}')
+                sv_lines.append('')
+
+        # Insert before #endif
+        for i in range(len(lines) - 1, -1, -1):
+            if lines[i].startswith('#endif'):
+                lines[i:i] = sv_lines
+                break
+
+    print('\n'.join(lines))
