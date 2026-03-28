@@ -97,6 +97,10 @@ echo   bench_r64_blocked OK
 if errorlevel 1 ( echo FAILED: bench_sv & exit /b 1 )
 echo   bench_sv OK
 
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -o "%BUILD_DIR%\bench_fftw_style.exe" "%SCRIPT_DIR%bench_fftw_style.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: bench_fftw_style & exit /b 1 )
+echo   bench_fftw_style OK
+
 echo.
 
 REM -- Step 3: Run benchmarks --
@@ -149,9 +153,14 @@ echo BENCHMARK 7: bench_r64_blocked>> "%OUT%"
 "%BUILD_DIR%\bench_r64_blocked.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [8/8] bench_sv...
+echo   [8/9] bench_sv...
 echo BENCHMARK 8: bench_sv>> "%OUT%"
 "%BUILD_DIR%\bench_sv.exe" >> "%OUT%" 2>&1
+echo.>> "%OUT%"
+
+echo   [9/9] bench_fftw_style...
+echo BENCHMARK 9: bench_fftw_style>> "%OUT%"
+"%BUILD_DIR%\bench_fftw_style.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
 echo.
