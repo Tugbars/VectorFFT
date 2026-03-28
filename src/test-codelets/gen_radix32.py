@@ -240,23 +240,57 @@ class Emitter:
 
     # ── Load / Store / Spill / Reload ──
 
+    # addr_mode: 'K' (default), 'n1' (separate is/os), 't1' (in-place ios/ms)
+    addr_mode = 'K'
+
+    def _in_addr(self, n, k_expr="k"):
+        if self.addr_mode == 'n1': return f"{n}*is+{k_expr}"
+        if self.addr_mode == 't1': return f"m*ms+{n}*ios"
+        return f"{n}*K+{k_expr}"
+
+    def _out_addr(self, m, k_expr="k"):
+        if self.addr_mode == 'n1': return f"{m}*os+{k_expr}"
+        if self.addr_mode == 't1': return f"m*ms+{m}*ios"
+        return f"{m}*K+{k_expr}"
+
+    def _in_buf(self):
+        return "rio_re" if self.addr_mode == 't1' else "in_re"
+    def _in_buf_im(self):
+        return "rio_im" if self.addr_mode == 't1' else "in_im"
+    def _out_buf(self):
+        return "rio_re" if self.addr_mode == 't1' else "out_re"
+    def _out_buf_im(self):
+        return "rio_im" if self.addr_mode == 't1' else "out_im"
+
+    def _tw_addr(self, tw_idx, k_expr="k"):
+        if self.addr_mode == 't1': return f"{tw_idx}*me+m"
+        return f"{tw_idx}*K+{k_expr}"
+    def _tw_buf(self):
+        return "W_re" if self.addr_mode == 't1' else "tw_re"
+    def _tw_buf_im(self):
+        return "W_im" if self.addr_mode == 't1' else "tw_im"
+
     def emit_load(self, v, n, k_expr="k"):
         self.n_load += 2  # re + im
+        ib, ibi = self._in_buf(), self._in_buf_im()
+        addr = self._in_addr(n, k_expr)
         if self.isa.name == 'scalar':
-            self.o(f"{v}_re = in_re[{n}*K+{k_expr}];")
-            self.o(f"{v}_im = in_im[{n}*K+{k_expr}];")
+            self.o(f"{v}_re = {ib}[{addr}];")
+            self.o(f"{v}_im = {ibi}[{addr}];")
         else:
-            self.o(f"{v}_re = {self.isa.load_macro}(&in_re[{n}*K+{k_expr}]);")
-            self.o(f"{v}_im = {self.isa.load_macro}(&in_im[{n}*K+{k_expr}]);")
+            self.o(f"{v}_re = {self.isa.load_macro}(&{ib}[{addr}]);")
+            self.o(f"{v}_im = {self.isa.load_macro}(&{ibi}[{addr}]);")
 
     def emit_store(self, v, m, k_expr="k"):
         self.n_store += 2  # re + im
+        ob, obi = self._out_buf(), self._out_buf_im()
+        addr = self._out_addr(m, k_expr)
         if self.isa.name == 'scalar':
-            self.o(f"out_re[{m}*K+{k_expr}] = {v}_re;")
-            self.o(f"out_im[{m}*K+{k_expr}] = {v}_im;")
+            self.o(f"{ob}[{addr}] = {v}_re;")
+            self.o(f"{obi}[{addr}] = {v}_im;")
         else:
-            self.o(f"{self.isa.store_macro}(&out_re[{m}*K+{k_expr}],{v}_re);")
-            self.o(f"{self.isa.store_macro}(&out_im[{m}*K+{k_expr}],{v}_im);")
+            self.o(f"{self.isa.store_macro}(&{ob}[{addr}],{v}_re);")
+            self.o(f"{self.isa.store_macro}(&{obi}[{addr}],{v}_im);")
 
     def emit_spill(self, v, slot):
         sm = self.isa.spill_mul
@@ -446,8 +480,10 @@ class Emitter:
             return  # first element has no twiddle
         fwd = (d == 'fwd')
         T = self.isa.reg_type
+        tb, tbi = self._tw_buf(), self._tw_buf_im()
+        ta = self._tw_addr(n-1, k_expr)
         if self.isa.name == 'scalar':
-            self.o(f"{{ double wr = tw_re[{n-1}*K+{k_expr}], wi = tw_im[{n-1}*K+{k_expr}];")
+            self.o(f"{{ double wr = {tb}[{ta}], wi = {tbi}[{ta}];")
             self.o(f"  double tr = x{n1}_re;")
             if fwd:
                 self.o(f"  x{n1}_re = x{n1}_re*wr - x{n1}_im*wi;")
@@ -457,8 +493,8 @@ class Emitter:
                 self.o(f"  x{n1}_im = x{n1}_im*wr - tr*wi; }}")
         else:
             load_fn = '_mm256_load_pd' if self.isa.name == 'avx2' else '_mm512_load_pd'
-            self.o(f"{{ {T} wr = {load_fn}(&tw_re[{n-1}*K+{k_expr}]);")
-            self.o(f"  {T} wi = {load_fn}(&tw_im[{n-1}*K+{k_expr}]);")
+            self.o(f"{{ {T} wr = {load_fn}(&{tb}[{ta}]);")
+            self.o(f"  {T} wi = {load_fn}(&{tbi}[{ta}]);")
             self.o(f"  {T} tr = x{n1}_re;")
             if fwd:
                 self.o(f"  x{n1}_re = {self.fms(f'x{n1}_re','wr',self.mul(f'x{n1}_im','wi'))};")
@@ -496,11 +532,13 @@ class Emitter:
     # ── External twiddle on OUTPUT (DIF: post-butterfly) ──
 
     def emit_ext_twiddle_dif(self, v, tw_idx, d, k_expr="k"):
-        """Apply external twiddle tw[(tw_idx)*K+k] to variable v in-place (DIF)."""
+        """Apply external twiddle to variable v in-place (DIF)."""
         fwd = (d == 'fwd')
         T = self.isa.reg_type
+        tb, tbi = self._tw_buf(), self._tw_buf_im()
+        ta = self._tw_addr(tw_idx, k_expr)
         if self.isa.name == 'scalar':
-            self.o(f"{{ double wr = tw_re[{tw_idx}*K+{k_expr}], wi = tw_im[{tw_idx}*K+{k_expr}];")
+            self.o(f"{{ double wr = {tb}[{ta}], wi = {tbi}[{ta}];")
             self.o(f"  double tr = {v}_re;")
             if fwd:
                 self.o(f"  {v}_re = {v}_re*wr - {v}_im*wi;")
@@ -510,8 +548,8 @@ class Emitter:
                 self.o(f"  {v}_im = {v}_im*wr - tr*wi; }}")
         else:
             load_fn = '_mm256_load_pd' if self.isa.name == 'avx2' else '_mm512_load_pd'
-            self.o(f"{{ {T} wr = {load_fn}(&tw_re[{tw_idx}*K+{k_expr}]);")
-            self.o(f"  {T} wi = {load_fn}(&tw_im[{tw_idx}*K+{k_expr}]);")
+            self.o(f"{{ {T} wr = {load_fn}(&{tb}[{ta}]);")
+            self.o(f"  {T} wi = {load_fn}(&{tbi}[{ta}]);")
             self.o(f"  {T} tr = {v}_re;")
             if fwd:
                 self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
@@ -1787,12 +1825,142 @@ def emit_sv_variants(t2_lines, isa, variant):
     return out
 
 
+def emit_ct_file(isa, itw_set, ct_variant):
+    """Emit FFTW-style n1 or t1_dit codelet for R=32."""
+    is_n1 = ct_variant == 'ct_n1'
+    nfuse = isa.nfuse_notw if is_n1 else isa.nfuse_tw
+    T = isa.reg_type
+    em = Emitter(isa)
+    em.addr_mode = 'n1' if is_n1 else 't1'
+
+    func_base = "radix32_n1" if is_n1 else "radix32_t1_dit"
+    vname = "n1 (separate is/os)" if is_n1 else "t1 DIT (in-place twiddle)"
+    guard = f"FFT_RADIX32_{isa.name.upper()}_CT_{ct_variant.upper()}_H"
+
+    em.L.append(f"/**")
+    em.L.append(f" * @file fft_radix32_{isa.name}_{ct_variant}.h")
+    em.L.append(f" * @brief DFT-32 {isa.name.upper()} {vname} — NFUSE={nfuse}")
+    em.L.append(f" *")
+    em.L.append(f" * FFTW-style codelet for recursive CT executor.")
+    em.L.append(f" * Generated by gen_radix32.py --variant {ct_variant}")
+    em.L.append(f" */")
+    em.L.append(f"")
+    em.L.append(f"#ifndef {guard}")
+    em.L.append(f"#define {guard}")
+    em.L.append(f"")
+
+    if isa.name != 'scalar':
+        em.L.append(f"#include <immintrin.h>")
+        em.L.append(f"")
+
+    emit_twiddle_constants(em, itw_set)
+
+    # LD/ST macros (unaligned for n1, aligned for t1)
+    if isa.name == 'avx2':
+        em.L.append("#ifndef R32CT_LD"); em.L.append("#define R32CT_LD(p) _mm256_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32CT_ST"); em.L.append("#define R32CT_ST(p,v) _mm256_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32CT_LD"); em.L.append("#define ST R32CT_ST"); em.L.append("")
+    elif isa.name == 'avx512':
+        em.L.append("#ifndef R32CT5_LD"); em.L.append("#define R32CT5_LD(p) _mm512_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32CT5_ST"); em.L.append("#define R32CT5_ST(p,v) _mm512_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32CT5_LD"); em.L.append("#define ST R32CT5_ST"); em.L.append("")
+
+    for d in ['fwd', 'bwd']:
+        em.reset_counters()
+        em.addr_mode = 'n1' if is_n1 else 't1'
+
+        if isa.target_attr:
+            em.L.append(f"static {isa.target_attr} void")
+        else:
+            em.L.append(f"static void")
+
+        if is_n1:
+            em.L.append(f"{func_base}_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            if isa.name == 'scalar':
+                em.L.append(f"    size_t is, size_t os, size_t vl, size_t ivs, size_t ovs)")
+            else:
+                em.L.append(f"    size_t is, size_t os, size_t vl)")
+        else:
+            em.L.append(f"{func_base}_{d}_{isa.name}(")
+            em.L.append(f"    double * __restrict__ rio_re, double * __restrict__ rio_im,")
+            em.L.append(f"    const double * __restrict__ W_re, const double * __restrict__ W_im,")
+            if isa.name == 'scalar':
+                em.L.append(f"    size_t ios, size_t mb, size_t me, size_t ms)")
+            else:
+                em.L.append(f"    size_t ios, size_t me)")
+
+        em.L.append(f"{{")
+        em.ind = 1
+
+        if isa.name != 'scalar':
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            em.o(f"const {T} sign_flip = {set1}(-0.0);")
+            em.o(f"const {T} sqrt2_inv = {set1}(0.70710678118654752440);")
+            em.b()
+
+        spill_total = N * isa.spill_mul
+        if isa.name == 'scalar':
+            em.o(f"double spill_re[{N}], spill_im[{N}];")
+        else:
+            em.o(f"{isa.align_attr} double spill_re[{spill_total}];")
+            em.o(f"{isa.align_attr} double spill_im[{spill_total}];")
+        em.b()
+
+        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+        em.o(f"{T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;")
+        slist = ",".join(f"s{i}_re,s{i}_im" for i in range(nfuse))
+        em.o(f"{T} {slist};")
+        em.b()
+
+        if isa.name != 'scalar' and itw_set:
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            for (e, tN) in sorted(itw_set):
+                label = wN_label(e, tN)
+                em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+                em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
+            em.b()
+
+        if isa.name == 'scalar' and itw_set:
+            em.c(f"Internal W32 constants are #defined at file scope")
+            em.b()
+
+        # Loop
+        if is_n1:
+            if isa.name == 'scalar':
+                em.o(f"for (size_t k = 0; k < vl; k++) {{")
+            else:
+                em.o(f"for (size_t k = 0; k < vl; k += {isa.k_step}) {{")
+        else:
+            if isa.name == 'scalar':
+                em.o(f"for (size_t m = mb; m < me; m++) {{")
+            else:
+                em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
+
+        em.ind += 1
+        if is_n1:
+            emit_notw_kernel(em, d, nfuse, itw_set)
+        else:
+            emit_dit_tw_flat_kernel(em, d, nfuse, itw_set)
+        em.ind -= 1
+        em.o("}")
+        em.L.append("}")
+        em.L.append("")
+
+    if isa.name != 'scalar':
+        em.L.append("#undef LD"); em.L.append("#undef ST"); em.L.append("")
+    em.L.append(f"#endif /* {guard} */")
+    return em.L
+
+
 def main():
     parser = argparse.ArgumentParser(description='Unified R=32 codelet generator')
     parser.add_argument('--isa', default='avx2',
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='dit_tw',
-                        choices=['dit_tw', 'dif_tw', 'notw', 'ladder', 'avx512_full', 'all'])
+                        choices=['dit_tw', 'dif_tw', 'notw', 'ladder', 'avx512_full',
+                                 'ct_n1', 'ct_t1_dit', 'all'])
     args = parser.parse_args()
 
     itw_set = collect_internal_twiddles()
@@ -1860,6 +2028,18 @@ def main():
             if isa.name == 'scalar':
                 add_sqrt2_scalar(lines)
             print_file(lines, f"{isa.name.upper()} LADDER", stats, isa, 'ladder')
+
+        if args.variant in ('ct_n1',):
+            lines = emit_ct_file(isa, itw_set, 'ct_n1')
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print("\n".join(lines))
+
+        if args.variant in ('ct_t1_dit',):
+            lines = emit_ct_file(isa, itw_set, 'ct_t1_dit')
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print("\n".join(lines))
 
     # Legacy: avx512_full emits flat + ladder in one file (backward compat)
     if args.variant == 'avx512_full':
