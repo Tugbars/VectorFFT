@@ -17,8 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <time.h>
 #include <fftw3.h>
+#include "bench_compat.h"
 
 #include "fft_n1_k1.h"
 #include "fft_n1_k1_simd.h"
@@ -27,10 +27,7 @@
 #include "fft_radix16_avx2_dit_tw.h"
 #include "fft_radix16_avx2_dif_tw.h"
 
-static inline double now_ns(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
+/* now_ns() provided by bench_compat.h */
 
 #define N_FFT  32768
 #define NSTAGES 4
