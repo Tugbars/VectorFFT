@@ -260,8 +260,20 @@ int main(void) {
     init_t1_tw(W64_re,W64_im,8,8);
     init_t1_tw(W128_re,W128_im,16,8);
 
-    /* Only test sizes that have n1_ovs codelets (R=8 for now) */
+    /* Quick smoke test */
+    printf("  Smoke test exec_64...\n"); fflush(stdout);
+    {
+        double __attribute__((aligned(32))) ir[64]={0}, ii_[64]={0}, or_[64]={0}, oi_[64]={0};
+        ir[0]=1;
+        exec_64(ir,ii_,or_,oi_);
+        printf("  out[0..3]=%.4f %.4f %.4f %.4f\n",or_[0],or_[1],or_[2],or_[3]);
+        fflush(stdout);
+    }
+
+    /* Full correctness test vs FFTW */
+    printf("  Running full FFTW comparison...\n"); fflush(stdout);
     test_exec("8x8 (1-level)",64,exec_64,200000);
+    printf("  First test done.\n"); fflush(stdout);
     test_exec("16x8 (1-level)",128,exec_128,100000);
 
     printf("\n");
