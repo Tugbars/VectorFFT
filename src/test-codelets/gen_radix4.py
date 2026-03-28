@@ -723,6 +723,37 @@ radix4_n1_{direction}_{isa_name}(
     }}
 }}''')
 
+            # ── SIMD n1 with ovs: scatter stores for CT executor ──
+            parts.append(f'''
+{I['target']}
+static inline void
+radix4_n1_ovs_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, size_t ovs)
+{{
+    __attribute__((aligned(32))) double tr[4*{VL}], ti[4*{VL}];
+    for (size_t k = 0; k < vl; k += {VL}) {{
+        const {V} x0r = R4_LD(&in_re[0*is+k]), x0i = R4_LD(&in_im[0*is+k]);
+        const {V} x1r = R4_LD(&in_re[1*is+k]), x1i = R4_LD(&in_im[1*is+k]);
+        const {V} x2r = R4_LD(&in_re[2*is+k]), x2i = R4_LD(&in_im[2*is+k]);
+        const {V} x3r = R4_LD(&in_re[3*is+k]), x3i = R4_LD(&in_im[3*is+k]);
+        const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+        const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+        const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+        const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+        R4_ST(&tr[0*{VL}], {ADD}(t0r, t2r)); R4_ST(&ti[0*{VL}], {ADD}(t0i, t2i));
+        R4_ST(&tr[2*{VL}], {SUB}(t0r, t2r)); R4_ST(&ti[2*{VL}], {SUB}(t0i, t2i));
+        R4_ST(&tr[1*{VL}], {r1_e}); R4_ST(&ti[1*{VL}], {i1_e});
+        R4_ST(&tr[3*{VL}], {r3_e}); R4_ST(&ti[3*{VL}], {i3_e});
+        for (size_t m = 0; m < 4; m++)
+            for (size_t j = 0; j < {VL}; j++) {{
+                out_re[m*os + (k+j)*ovs] = tr[m*{VL}+j];
+                out_im[m*os + (k+j)*ovs] = ti[m*{VL}+j];
+            }}
+    }}
+}}''')
+
             # ── SIMD t1 DIT: in-place, vectorize over m (ms=1 implied) ──
             vc1r, vc1i = cmul_v('r1r','r1i','w1r','w1i')
             vc2r, vc2i = cmul_v('r2r','r2i','w2r','w2i')

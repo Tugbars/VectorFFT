@@ -1079,6 +1079,74 @@ radix8_n1_{direction}_{isa_name}(
 {chr(10).join(sn)}
 }}''')
 
+            # ── SIMD n1 with ovs: scatter stores for CT executor ──
+            # Same butterfly as n1, but writes at out[m*os + k*ovs] using
+            # a micro-transpose buffer. Butterfly computes 4 results per
+            # output bin (VL=4 k-values), then scatters them at stride ovs.
+            sn_ovs = []
+            sn_ovs.append(f'    const {V} vc = {set1}({fmt(C)});')
+            sn_ovs.append(f'    const {V} vnc = {set1}({fmt(-C)});')
+            sn_ovs.append(f'    __attribute__((aligned(32))) double tr[8*VL], ti[8*VL];')
+            sn_ovs.append(f'    for (size_t k = 0; k < vl; k += VL) {{')
+            # Loads — same as n1, reading at stride is with ivs=1
+            for n in range(8):
+                sn_ovs.append(f'        const {V} x{n}r = LD(&in_re[{n}*is+k]), x{n}i = LD(&in_im[{n}*is+k]);')
+            # Butterfly — identical to existing n1
+            sn_ovs.append(f'        const {V} epr={add}(x0r,x4r),eqr={sub}(x0r,x4r),err={add}(x2r,x6r),esr={sub}(x2r,x6r);')
+            sn_ovs.append(f'        const {V} epi={add}(x0i,x4i),eqi={sub}(x0i,x4i),eri={add}(x2i,x6i),esi={sub}(x2i,x6i);')
+            sn_ovs.append(f'        const {V} A0r={add}(epr,err),A0i={add}(epi,eri),A2r={sub}(epr,err),A2i={sub}(epi,eri);')
+            if fwd:
+                sn_ovs.append(f'        const {V} A1r={add}(eqr,esi),A1i={sub}(eqi,esr),A3r={sub}(eqr,esi),A3i={add}(eqi,esr);')
+            else:
+                sn_ovs.append(f'        const {V} A1r={sub}(eqr,esi),A1i={add}(eqi,esr),A3r={add}(eqr,esi),A3i={sub}(eqi,esr);')
+            sn_ovs.append(f'        const {V} opr={add}(x1r,x5r),oqr={sub}(x1r,x5r),orr={add}(x3r,x7r),osr={sub}(x3r,x7r);')
+            sn_ovs.append(f'        const {V} opi={add}(x1i,x5i),oqi={sub}(x1i,x5i),ori={add}(x3i,x7i),osi={sub}(x3i,x7i);')
+            sn_ovs.append(f'        const {V} B0r={add}(opr,orr),B0i={add}(opi,ori),B2r={sub}(opr,orr),B2i={sub}(opi,ori);')
+            if fwd:
+                sn_ovs.append(f'        const {V} B1r={add}(oqr,osi),B1i={sub}(oqi,osr),B3r={sub}(oqr,osi),B3i={add}(oqi,osr);')
+            else:
+                sn_ovs.append(f'        const {V} B1r={sub}(oqr,osi),B1i={add}(oqi,osr),B3r={add}(oqr,osi),B3i={sub}(oqi,osr);')
+            # W8 combine — store to transposition buffer instead of output
+            sn_ovs.append(f'        ST(&tr[0*VL],{add}(A0r,B0r)); ST(&ti[0*VL],{add}(A0i,B0i));')
+            sn_ovs.append(f'        ST(&tr[4*VL],{sub}(A0r,B0r)); ST(&ti[4*VL],{sub}(A0i,B0i));')
+            if fwd:
+                sn_ovs.append(f'        {{const {V} t1r={mul}(vc,{add}(B1r,B1i)),t1i={mul}(vc,{sub}(B1i,B1r));')
+            else:
+                sn_ovs.append(f'        {{const {V} t1r={mul}(vc,{sub}(B1r,B1i)),t1i={mul}(vc,{add}(B1r,B1i));')
+            sn_ovs.append(f'        ST(&tr[1*VL],{add}(A1r,t1r)); ST(&ti[1*VL],{add}(A1i,t1i));')
+            sn_ovs.append(f'        ST(&tr[5*VL],{sub}(A1r,t1r)); ST(&ti[5*VL],{sub}(A1i,t1i));}}')
+            if fwd:
+                sn_ovs.append(f'        ST(&tr[2*VL],{add}(A2r,B2i)); ST(&ti[2*VL],{sub}(A2i,B2r));')
+                sn_ovs.append(f'        ST(&tr[6*VL],{sub}(A2r,B2i)); ST(&ti[6*VL],{add}(A2i,B2r));')
+            else:
+                sn_ovs.append(f'        ST(&tr[2*VL],{sub}(A2r,B2i)); ST(&ti[2*VL],{add}(A2i,B2r));')
+                sn_ovs.append(f'        ST(&tr[6*VL],{add}(A2r,B2i)); ST(&ti[6*VL],{sub}(A2i,B2r));')
+            if fwd:
+                sn_ovs.append(f'        {{const {V} t3r={mul}(vnc,{sub}(B3r,B3i)),t3i={mul}(vnc,{add}(B3r,B3i));')
+            else:
+                sn_ovs.append(f'        {{const {V} t3r={mul}(vnc,{add}(B3r,B3i)),t3i={mul}(vc,{sub}(B3r,B3i));')
+            sn_ovs.append(f'        ST(&tr[3*VL],{add}(A3r,t3r)); ST(&ti[3*VL],{add}(A3i,t3i));')
+            sn_ovs.append(f'        ST(&tr[7*VL],{sub}(A3r,t3r)); ST(&ti[7*VL],{sub}(A3i,t3i));}}')
+            # Scatter from buffer to output at stride ovs
+            sn_ovs.append(f'        /* Scatter: tr[m*VL+j] -> out[m*os + (k+j)*ovs] */')
+            sn_ovs.append(f'        for (size_t m = 0; m < 8; m++)')
+            sn_ovs.append(f'            for (size_t j = 0; j < VL; j++) {{')
+            sn_ovs.append(f'                out_re[m*os + (k+j)*ovs] = tr[m*VL+j];')
+            sn_ovs.append(f'                out_im[m*os + (k+j)*ovs] = ti[m*VL+j];')
+            sn_ovs.append(f'            }}')
+            sn_ovs.append(f'    }}')
+
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_n1_ovs_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, size_t ovs)
+{{
+{chr(10).join(sn_ovs)}
+}}''')
+
             # ── SIMD t1 DIT (in-place, ms=1, mb=0) ──
             st = []
             st.append(f'    const {V} vc = {set1}({fmt(C)});')
