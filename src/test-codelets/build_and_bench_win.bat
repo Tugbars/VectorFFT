@@ -44,6 +44,8 @@ python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft
 python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant dif_tw > "%HDR_DIR%\fft_radix16_avx2_dif_tw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant dit_tw_log3 > "%HDR_DIR%\fft_radix16_avx2_dit_tw_log3.h" 2>nul
 python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant dif_tw_log3 > "%HDR_DIR%\fft_radix16_avx2_dif_tw_log3.h" 2>nul
+python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix16_avx2_ct_n1.h" 2>nul
+python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix16_avx2_ct_t1_dit.h" 2>nul
 
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant notw > "%HDR_DIR%\fft_radix32_avx2_notw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix32_avx2_dit_tw.h" 2>nul
@@ -100,6 +102,10 @@ echo   bench_sv OK
 %CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -o "%BUILD_DIR%\bench_fftw_style.exe" "%SCRIPT_DIR%bench_fftw_style.c" "%FFTW_LIB%"
 if errorlevel 1 ( echo FAILED: bench_fftw_style & exit /b 1 )
 echo   bench_fftw_style OK
+
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -o "%BUILD_DIR%\bench_recursive_ct.exe" "%SCRIPT_DIR%bench_recursive_ct.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: bench_recursive_ct & exit /b 1 )
+echo   bench_recursive_ct OK
 
 echo.
 
@@ -158,9 +164,14 @@ echo BENCHMARK 8: bench_sv>> "%OUT%"
 "%BUILD_DIR%\bench_sv.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [9/9] bench_fftw_style...
+echo   [9/10] bench_fftw_style...
 echo BENCHMARK 9: bench_fftw_style>> "%OUT%"
 "%BUILD_DIR%\bench_fftw_style.exe" >> "%OUT%" 2>&1
+echo.>> "%OUT%"
+
+echo   [10/10] bench_recursive_ct...
+echo BENCHMARK 10: bench_recursive_ct>> "%OUT%"
+"%BUILD_DIR%\bench_recursive_ct.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
 echo.

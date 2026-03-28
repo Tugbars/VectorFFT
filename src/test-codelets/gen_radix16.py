@@ -147,14 +147,16 @@ class Emitter:
         if self.addr_mode == 'n1':
             return f"{n}*is+{ke}"
         elif self.addr_mode == 't1':
-            return f"m*ms+{n}*ios"  # ke unused for t1
+            if self.isa.name == 'scalar': return f"m*ms+{n}*ios"
+            return f"m+{n}*ios"
         return f"{n}*K+{ke}"
 
     def _out_addr(self, m, ke="k"):
         if self.addr_mode == 'n1':
             return f"{m}*os+{ke}"
         elif self.addr_mode == 't1':
-            return f"m*ms+{m}*ios"
+            if self.isa.name == 'scalar': return f"m*ms+{m}*ios"
+            return f"m+{m}*ios"
         return f"{m}*K+{ke}"
 
     def _in_buf(self):
