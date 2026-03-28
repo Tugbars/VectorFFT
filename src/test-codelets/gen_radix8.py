@@ -1079,19 +1079,25 @@ radix8_n1_{direction}_{isa_name}(
 {chr(10).join(sn)}
 }}''')
 
-            # ── SIMD n1 with ovs: scatter stores for CT executor ──
-            # Same butterfly as n1, but writes at out[m*os + k*ovs] using
-            # a micro-transpose buffer. Butterfly computes 4 results per
-            # output bin (VL=4 k-values), then scatters them at stride ovs.
+            # ── SIMD n1 with ovs: SIMD transpose stores for CT executor ──
+            # Butterfly produces 8 YMM results (bins 0..7), each with VL=4 sub-seq values.
+            # We need to transpose so each sub-seq's 8 bins are contiguous.
+            # Two 4x4 transposes (bins 0-3, bins 4-7) → 8 contiguous SIMD stores.
+            #
+            # Layout: sub-seq k's 8 bins at out[k*ovs + 0..7] (os=1, contiguous).
+            # So: out[k*ovs..k*ovs+3] = lower 4 bins, out[k*ovs+4..k*ovs+7] = upper 4.
+            UP = '_mm256_unpacklo_pd'
+            UH = '_mm256_unpackhi_pd'
+            PM = '_mm256_permute2f128_pd'
+
             sn_ovs = []
             sn_ovs.append(f'    const {V} vc = {set1}({fmt(C)});')
             sn_ovs.append(f'    const {V} vnc = {set1}({fmt(-C)});')
-            sn_ovs.append(f'    __attribute__((aligned(32))) double tr[8*VL], ti[8*VL];')
             sn_ovs.append(f'    for (size_t k = 0; k < vl; k += VL) {{')
-            # Loads — same as n1, reading at stride is with ivs=1
+            # Loads — same as n1
             for n in range(8):
                 sn_ovs.append(f'        const {V} x{n}r = LD(&in_re[{n}*is+k]), x{n}i = LD(&in_im[{n}*is+k]);')
-            # Butterfly — identical to existing n1
+            # Butterfly — identical
             sn_ovs.append(f'        const {V} epr={add}(x0r,x4r),eqr={sub}(x0r,x4r),err={add}(x2r,x6r),esr={sub}(x2r,x6r);')
             sn_ovs.append(f'        const {V} epi={add}(x0i,x4i),eqi={sub}(x0i,x4i),eri={add}(x2i,x6i),esi={sub}(x2i,x6i);')
             sn_ovs.append(f'        const {V} A0r={add}(epr,err),A0i={add}(epi,eri),A2r={sub}(epr,err),A2i={sub}(epi,eri);')
@@ -1106,34 +1112,52 @@ radix8_n1_{direction}_{isa_name}(
                 sn_ovs.append(f'        const {V} B1r={add}(oqr,osi),B1i={sub}(oqi,osr),B3r={sub}(oqr,osi),B3i={add}(oqi,osr);')
             else:
                 sn_ovs.append(f'        const {V} B1r={sub}(oqr,osi),B1i={add}(oqi,osr),B3r={add}(oqr,osi),B3i={sub}(oqi,osr);')
-            # W8 combine — store to transposition buffer instead of output
-            sn_ovs.append(f'        ST(&tr[0*VL],{add}(A0r,B0r)); ST(&ti[0*VL],{add}(A0i,B0i));')
-            sn_ovs.append(f'        ST(&tr[4*VL],{sub}(A0r,B0r)); ST(&ti[4*VL],{sub}(A0i,B0i));')
+            # W8 combine — keep results in named registers
+            sn_ovs.append(f'        /* W8 combine into y0..y7 */')
+            sn_ovs.append(f'        const {V} y0r={add}(A0r,B0r), y0i={add}(A0i,B0i);')
+            sn_ovs.append(f'        const {V} y4r={sub}(A0r,B0r), y4i={sub}(A0i,B0i);')
             if fwd:
-                sn_ovs.append(f'        {{const {V} t1r={mul}(vc,{add}(B1r,B1i)),t1i={mul}(vc,{sub}(B1i,B1r));')
+                sn_ovs.append(f'        const {V} tw1r={mul}(vc,{add}(B1r,B1i)), tw1i={mul}(vc,{sub}(B1i,B1r));')
             else:
-                sn_ovs.append(f'        {{const {V} t1r={mul}(vc,{sub}(B1r,B1i)),t1i={mul}(vc,{add}(B1r,B1i));')
-            sn_ovs.append(f'        ST(&tr[1*VL],{add}(A1r,t1r)); ST(&ti[1*VL],{add}(A1i,t1i));')
-            sn_ovs.append(f'        ST(&tr[5*VL],{sub}(A1r,t1r)); ST(&ti[5*VL],{sub}(A1i,t1i));}}')
+                sn_ovs.append(f'        const {V} tw1r={mul}(vc,{sub}(B1r,B1i)), tw1i={mul}(vc,{add}(B1r,B1i));')
+            sn_ovs.append(f'        const {V} y1r={add}(A1r,tw1r), y1i={add}(A1i,tw1i);')
+            sn_ovs.append(f'        const {V} y5r={sub}(A1r,tw1r), y5i={sub}(A1i,tw1i);')
             if fwd:
-                sn_ovs.append(f'        ST(&tr[2*VL],{add}(A2r,B2i)); ST(&ti[2*VL],{sub}(A2i,B2r));')
-                sn_ovs.append(f'        ST(&tr[6*VL],{sub}(A2r,B2i)); ST(&ti[6*VL],{add}(A2i,B2r));')
+                sn_ovs.append(f'        const {V} y2r={add}(A2r,B2i), y2i={sub}(A2i,B2r);')
+                sn_ovs.append(f'        const {V} y6r={sub}(A2r,B2i), y6i={add}(A2i,B2r);')
             else:
-                sn_ovs.append(f'        ST(&tr[2*VL],{sub}(A2r,B2i)); ST(&ti[2*VL],{add}(A2i,B2r));')
-                sn_ovs.append(f'        ST(&tr[6*VL],{add}(A2r,B2i)); ST(&ti[6*VL],{sub}(A2i,B2r));')
+                sn_ovs.append(f'        const {V} y2r={sub}(A2r,B2i), y2i={add}(A2i,B2r);')
+                sn_ovs.append(f'        const {V} y6r={add}(A2r,B2i), y6i={sub}(A2i,B2r);')
             if fwd:
-                sn_ovs.append(f'        {{const {V} t3r={mul}(vnc,{sub}(B3r,B3i)),t3i={mul}(vnc,{add}(B3r,B3i));')
+                sn_ovs.append(f'        const {V} tw3r={mul}(vnc,{sub}(B3r,B3i)), tw3i={mul}(vnc,{add}(B3r,B3i));')
             else:
-                sn_ovs.append(f'        {{const {V} t3r={mul}(vnc,{add}(B3r,B3i)),t3i={mul}(vc,{sub}(B3r,B3i));')
-            sn_ovs.append(f'        ST(&tr[3*VL],{add}(A3r,t3r)); ST(&ti[3*VL],{add}(A3i,t3i));')
-            sn_ovs.append(f'        ST(&tr[7*VL],{sub}(A3r,t3r)); ST(&ti[7*VL],{sub}(A3i,t3i));}}')
-            # Scatter from buffer to output at stride ovs
-            sn_ovs.append(f'        /* Scatter: tr[m*VL+j] -> out[m*os + (k+j)*ovs] */')
-            sn_ovs.append(f'        for (size_t m = 0; m < 8; m++)')
-            sn_ovs.append(f'            for (size_t j = 0; j < VL; j++) {{')
-            sn_ovs.append(f'                out_re[m*os + (k+j)*ovs] = tr[m*VL+j];')
-            sn_ovs.append(f'                out_im[m*os + (k+j)*ovs] = ti[m*VL+j];')
-            sn_ovs.append(f'            }}')
+                sn_ovs.append(f'        const {V} tw3r={mul}(vnc,{add}(B3r,B3i)), tw3i={mul}(vc,{sub}(B3r,B3i));')
+            sn_ovs.append(f'        const {V} y3r={add}(A3r,tw3r), y3i={add}(A3i,tw3i);')
+            sn_ovs.append(f'        const {V} y7r={sub}(A3r,tw3r), y7i={sub}(A3i,tw3i);')
+            sn_ovs.append(f'')
+            # 4x4 transpose: bins 0-3 → 4 sub-seqs (lower half)
+            # Input: y0=[b0_k0,b0_k1,b0_k2,b0_k3], y1=[b1_k0,...], y2=[...], y3=[...]
+            # Output: s0=[b0_k0,b1_k0,b2_k0,b3_k0], s1=[b0_k1,b1_k1,...], ...
+            sn_ovs.append(f'        /* 4x4 transpose: bins 0-3 */')
+            for comp in ['r', 'i']:
+                sn_ovs.append(f'        {{ {V} lo01{comp}={UP}(y0{comp},y1{comp}), hi01{comp}={UH}(y0{comp},y1{comp});')
+                sn_ovs.append(f'          {V} lo23{comp}={UP}(y2{comp},y3{comp}), hi23{comp}={UH}(y2{comp},y3{comp});')
+                sn_ovs.append(f'          {V} s0{comp}={PM}(lo01{comp},lo23{comp},0x20), s1{comp}={PM}(hi01{comp},hi23{comp},0x20);')
+                sn_ovs.append(f'          {V} s2{comp}={PM}(lo01{comp},lo23{comp},0x31), s3{comp}={PM}(hi01{comp},hi23{comp},0x31);')
+                # Store lower 4 bins of each sub-seq: out[(k+j)*ovs + 0..3]
+                for j in range(4):
+                    sn_ovs.append(f'          ST(&out_{comp == "r" and "re" or "im"}[(k+{j})*ovs+os*0], s{j}{comp});')
+                sn_ovs.append(f'        }}')
+            # 4x4 transpose: bins 4-7 → upper half
+            sn_ovs.append(f'        /* 4x4 transpose: bins 4-7 */')
+            for comp in ['r', 'i']:
+                sn_ovs.append(f'        {{ {V} lo45{comp}={UP}(y4{comp},y5{comp}), hi45{comp}={UH}(y4{comp},y5{comp});')
+                sn_ovs.append(f'          {V} lo67{comp}={UP}(y6{comp},y7{comp}), hi67{comp}={UH}(y6{comp},y7{comp});')
+                sn_ovs.append(f'          {V} s0{comp}={PM}(lo45{comp},lo67{comp},0x20), s1{comp}={PM}(hi45{comp},hi67{comp},0x20);')
+                sn_ovs.append(f'          {V} s2{comp}={PM}(lo45{comp},lo67{comp},0x31), s3{comp}={PM}(hi45{comp},hi67{comp},0x31);')
+                for j in range(4):
+                    sn_ovs.append(f'          ST(&out_{comp == "r" and "re" or "im"}[(k+{j})*ovs+os*4], s{j}{comp});')
+                sn_ovs.append(f'        }}')
             sn_ovs.append(f'    }}')
 
             parts.append(f'''
