@@ -12,7 +12,7 @@ Usage:
   python3 gen_radix16.py --isa scalar --variant notw
   python3 gen_radix16.py --isa all --variant all
 """
-import math, sys, argparse
+import math, sys, argparse, re
 
 N, N1, N2 = 16, 4, 4
 
@@ -720,6 +720,124 @@ def emit_file(isa, itw_set, variant):
 
 
 # ═══════════════════════════════════════════════════════════════
+# SV CODELET GENERATION — text transform from t2 output
+# ═══════════════════════════════════════════════════════════════
+
+def _t2_to_sv(body):
+    """Transform a t2 codelet body to sv: strip k-loop, K→vs in addressing."""
+    lines = body.split('\n')
+    out = []
+    in_loop = False
+    depth = 0
+    for line in lines:
+        stripped = line.strip()
+        # Find the for-loop line — skip it and start tracking depth
+        if not in_loop and 'for (size_t k' in stripped and 'k < K' in stripped:
+            in_loop = True
+            depth = 1  # The '{' at end of for-line
+            continue
+        if in_loop:
+            # Count braces on this line
+            for ch in stripped:
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+            # When depth reaches 0, we've found the for-loop's closing '}'
+            if depth <= 0:
+                in_loop = False
+                if stripped == '}':
+                    continue  # Skip the bare closing brace
+                # If '}' is embedded in a line with code, still process the line
+        # Transform addressing
+        line = re.sub(r'(\d+)\*K\+k', r'\1*vs', line)
+        line = re.sub(r'\[k\]', '[0]', line)
+        # Dedent by 4 spaces (was inside for-loop)
+        if line.startswith('        '):
+            line = line[4:]
+        out.append(line)
+    return '\n'.join(out)
+
+
+def emit_sv_variants(t2_lines, isa, variant):
+    """Extract t2 functions from generated lines, emit sv versions."""
+    if isa.name == 'scalar':
+        return []
+    if variant.endswith('_log3'):
+        return []  # No sv for log3
+
+    text = '\n'.join(t2_lines)
+
+    # Map variant to function name patterns
+    if variant == 'notw':
+        t2_pattern = 'radix16_n1_dit_kernel'
+        sv_name = 'radix16_n1sv_kernel'
+    elif variant == 'dit_tw':
+        t2_pattern = 'radix16_tw_flat_dit_kernel'
+        sv_name = 'radix16_t1sv_dit_kernel'
+    elif variant == 'dif_tw':
+        t2_pattern = 'radix16_tw_flat_dif_kernel'
+        sv_name = 'radix16_t1sv_dif_kernel'
+    else:
+        return []
+
+    out = []
+    out.append('')
+    out.append(f'/* === sv codelets: no loop, elements at stride vs === */')
+    out.append(f'/* Executor calls K/{isa.k_step} times, advancing base pointers by {isa.k_step}. */')
+
+    for d in ['fwd', 'bwd']:
+        func_name = f'{t2_pattern}_{d}_{isa.name}'
+        sv_func_name = f'{sv_name}_{d}_{isa.name}'
+
+        # Find the function in the text
+        func_start = text.find(f'{func_name}(')
+        if func_start < 0:
+            continue
+
+        # Walk back to find 'static'
+        static_start = text.rfind('static', 0, func_start)
+        if static_start < 0:
+            continue
+
+        # Find function body: first '{' after signature, then matching '}'
+        brace_start = text.find('{', func_start)
+        if brace_start < 0:
+            continue
+
+        # Find matching closing brace
+        depth = 0
+        pos = brace_start
+        while pos < len(text):
+            if text[pos] == '{':
+                depth += 1
+            elif text[pos] == '}':
+                depth -= 1
+                if depth == 0:
+                    break
+            pos += 1
+
+        func_body = text[brace_start + 1:pos]
+
+        # Transform body
+        sv_body = _t2_to_sv(func_body)
+
+        # Build sv function signature
+        sig = text[static_start:brace_start]
+        # Replace function name
+        sig = sig.replace(func_name, sv_func_name)
+        # Replace 'size_t K)' with 'size_t vs)'
+        sig = sig.replace('size_t K)', 'size_t vs)')
+
+        out.append(sig + '{')
+        out.append(sv_body)
+        out.append('}')
+        out.append('')
+
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════
 
@@ -743,6 +861,14 @@ def main():
     for isa in targets:
         for variant in variants:
             lines, stats = emit_file(isa, itw_set, variant)
+            # Emit sv variants (before #endif)
+            sv_lines = emit_sv_variants(lines, isa, variant)
+            if sv_lines:
+                # Insert before '#undef LD' (so LD/ST macros are still defined)
+                for i in range(len(lines)):
+                    if lines[i].strip() == '#undef LD':
+                        lines[i:i] = sv_lines
+                        break
             print("\n".join(lines))
 
             print(f"\n=== {isa.name.upper()} {variant} ===", file=sys.stderr)

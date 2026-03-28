@@ -446,6 +446,119 @@ radix4_tw_dif_kernel_{direction}_{isa_name}_u2(
             parts.append(gen_simd_dif_tw_u2(isa_name, direction))
             parts.append('}')
 
+    # ── sv codelets (SIMD only): no loop, elements at stride vs ──
+    if not is_scalar:
+        parts.append('\n/* === sv codelets: no loop, elements at stride vs === */')
+        parts.append(f'/* Executor calls K/{I["VL"]} times, advancing base pointers by {I["VL"]}. */')
+
+        V, p, VL = I['V'], I['p'], I['VL']
+        ADD, SUB = f'{p}_add_pd', f'{p}_sub_pd'
+        MUL = f'{p}_mul_pd'
+        FNMA = f'{p}_fnmadd_pd'
+        FMA = f'{p}_fmadd_pd'
+
+        for direction in ['fwd', 'bwd']:
+            fwd = direction == 'fwd'
+            if fwd:
+                j_r1, j_i1 = f'{ADD}(t1r, t3i)', f'{SUB}(t1i, t3r)'
+                j_r3, j_i3 = f'{SUB}(t1r, t3i)', f'{ADD}(t1i, t3r)'
+            else:
+                j_r1, j_i1 = f'{SUB}(t1r, t3i)', f'{ADD}(t1i, t3r)'
+                j_r3, j_i3 = f'{ADD}(t1r, t3i)', f'{SUB}(t1i, t3r)'
+
+            if fwd:
+                def cmul_sv(xr,xi,wr,wi): return (f'{FNMA}({xi},{wi},{MUL}({xr},{wr}))',
+                                                    f'{FMA}({xr},{wi},{MUL}({xi},{wr}))')
+            else:
+                def cmul_sv(xr,xi,wr,wi): return (f'{FMA}({xi},{wi},{MUL}({xr},{wr}))',
+                                                    f'{FNMA}({xr},{wi},{MUL}({xi},{wr}))')
+
+            # n1sv: no twiddle
+            parts.append(f'''
+{I['target']}
+static inline void
+radix4_n1sv_kernel_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t vs)
+{{
+    const {V} x0r = R4_LD(&in_re[0*vs]), x0i = R4_LD(&in_im[0*vs]);
+    const {V} x1r = R4_LD(&in_re[1*vs]), x1i = R4_LD(&in_im[1*vs]);
+    const {V} x2r = R4_LD(&in_re[2*vs]), x2i = R4_LD(&in_im[2*vs]);
+    const {V} x3r = R4_LD(&in_re[3*vs]), x3i = R4_LD(&in_im[3*vs]);
+    const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+    const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+    const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+    const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+    R4_ST(&out_re[0*vs], {ADD}(t0r, t2r)); R4_ST(&out_im[0*vs], {ADD}(t0i, t2i));
+    R4_ST(&out_re[2*vs], {SUB}(t0r, t2r)); R4_ST(&out_im[2*vs], {SUB}(t0i, t2i));
+    R4_ST(&out_re[1*vs], {j_r1}); R4_ST(&out_im[1*vs], {j_i1});
+    R4_ST(&out_re[3*vs], {j_r3}); R4_ST(&out_im[3*vs], {j_i3});
+}}''')
+
+            # t1sv DIT: twiddle input, then butterfly
+            c1r, c1i = cmul_sv('r1r','r1i','w1r','w1i')
+            c2r, c2i = cmul_sv('r2r','r2i','w2r','w2i')
+            c3r, c3i = cmul_sv('r3r','r3i','w3r','w3i')
+            parts.append(f'''
+{I['target']}
+static inline void
+radix4_t1sv_dit_kernel_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    size_t vs)
+{{
+    const {V} x0r = R4_LD(&in_re[0*vs]), x0i = R4_LD(&in_im[0*vs]);
+    const {V} r1r = R4_LD(&in_re[1*vs]), r1i = R4_LD(&in_im[1*vs]);
+    const {V} r2r = R4_LD(&in_re[2*vs]), r2i = R4_LD(&in_im[2*vs]);
+    const {V} r3r = R4_LD(&in_re[3*vs]), r3i = R4_LD(&in_im[3*vs]);
+    const {V} w1r = R4_LD(&tw_re[0*vs]), w1i = R4_LD(&tw_im[0*vs]);
+    const {V} w2r = R4_LD(&tw_re[1*vs]), w2i = R4_LD(&tw_im[1*vs]);
+    const {V} w3r = R4_LD(&tw_re[2*vs]), w3i = R4_LD(&tw_im[2*vs]);
+    const {V} x1r = {c1r}, x1i = {c1i};
+    const {V} x2r = {c2r}, x2i = {c2i};
+    const {V} x3r = {c3r}, x3i = {c3i};
+    const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+    const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+    const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+    const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+    R4_ST(&out_re[0*vs], {ADD}(t0r, t2r)); R4_ST(&out_im[0*vs], {ADD}(t0i, t2i));
+    R4_ST(&out_re[2*vs], {SUB}(t0r, t2r)); R4_ST(&out_im[2*vs], {SUB}(t0i, t2i));
+    R4_ST(&out_re[1*vs], {j_r1}); R4_ST(&out_im[1*vs], {j_i1});
+    R4_ST(&out_re[3*vs], {j_r3}); R4_ST(&out_im[3*vs], {j_i3});
+}}''')
+
+            # t1sv DIF: butterfly, then twiddle output
+            y1r_sv, y1i_sv = cmul_sv(j_r1, j_i1, 'w1r', 'w1i')
+            y2r_sv, y2i_sv = cmul_sv(f'{SUB}(t0r, t2r)', f'{SUB}(t0i, t2i)', 'w2r', 'w2i')
+            y3r_sv, y3i_sv = cmul_sv(j_r3, j_i3, 'w3r', 'w3i')
+            parts.append(f'''
+{I['target']}
+static inline void
+radix4_t1sv_dif_kernel_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    size_t vs)
+{{
+    const {V} x0r = R4_LD(&in_re[0*vs]), x0i = R4_LD(&in_im[0*vs]);
+    const {V} x1r = R4_LD(&in_re[1*vs]), x1i = R4_LD(&in_im[1*vs]);
+    const {V} x2r = R4_LD(&in_re[2*vs]), x2i = R4_LD(&in_im[2*vs]);
+    const {V} x3r = R4_LD(&in_re[3*vs]), x3i = R4_LD(&in_im[3*vs]);
+    const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+    const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+    const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+    const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+    const {V} w1r = R4_LD(&tw_re[0*vs]), w1i = R4_LD(&tw_im[0*vs]);
+    const {V} w2r = R4_LD(&tw_re[1*vs]), w2i = R4_LD(&tw_im[1*vs]);
+    const {V} w3r = R4_LD(&tw_re[2*vs]), w3i = R4_LD(&tw_im[2*vs]);
+    R4_ST(&out_re[0*vs], {ADD}(t0r, t2r)); R4_ST(&out_im[0*vs], {ADD}(t0i, t2i));
+    R4_ST(&out_re[1*vs], {y1r_sv}); R4_ST(&out_im[1*vs], {y1i_sv});
+    R4_ST(&out_re[2*vs], {y2r_sv}); R4_ST(&out_im[2*vs], {y2i_sv});
+    R4_ST(&out_re[3*vs], {y3r_sv}); R4_ST(&out_im[3*vs], {y3i_sv});
+}}''')
+
     if not is_scalar:
         parts.append('\n#undef R4_LD\n#undef R4_ST')
 

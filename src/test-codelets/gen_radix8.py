@@ -18,7 +18,7 @@ W8 combine (forward, c = √2/2):
 Only 1 constant: c = √2/2 = 0.707106781186547524...
 """
 
-import sys, math
+import sys, math, re
 
 C = math.sqrt(2.0) / 2.0
 
@@ -654,6 +654,40 @@ def gen_stats_header(isa_name):
  *   dif_tw fwd/bwd           24    24    11     0     7     7 |    73    87 |  30  16   46"""
 
 
+def _t2_to_sv(body):
+    """Transform a t2 codelet body (loop over K, stride K) to sv (no loop, stride vs).
+    
+    Mechanical text replacement:
+    1. Remove 'for (size_t k = 0; k < K; k += VL) {' line
+    2. Remove matching closing '    }'
+    3. Replace 'n*K+k' with 'n*vs' in all addressing
+    4. Replace '[k]' with '[0]' (element 0 at base pointer)
+    5. Dedent body by 4 spaces (was inside for-loop)
+    """
+    lines = body.split('\n')
+    out = []
+    depth = 0
+    for line in lines:
+        stripped = line.strip()
+        # Skip the for-loop line
+        if stripped.startswith('for (size_t k') and 'k < K' in stripped:
+            depth += 1
+            continue
+        # Skip the matching closing brace
+        if depth > 0 and stripped == '}':
+            depth -= 1
+            continue
+        # Transform addressing: n*K+k -> n*vs (digits before *K)
+        line = re.sub(r'(\d+)\*K\+k', r'\1*vs', line)
+        # Transform [k] -> [0] for element 0 (appears in notw: in_re[k])
+        line = re.sub(r'\[k\]', '[0]', line)
+        # Dedent by one level (4 spaces)
+        if line.startswith('        '):
+            line = line[4:]
+        out.append(line)
+    return '\n'.join(out)
+
+
 def gen_file(isa_name):
     I = ISA[isa_name]
     guard = f'FFT_RADIX8_{isa_name.upper()}_H'
@@ -750,6 +784,51 @@ radix8_tw_log3_dif_kernel_{direction}_{isa_name}(
             parts.append('}')
 
     if not is_scalar:
+        parts.append('\n#undef LD\n#undef ST\n#undef VL')
+
+    # ── sv codelets (SIMD only): no loop, elements at stride vs ──
+    if not is_scalar:
+        parts.append(f'\n/* === sv codelets: no loop, elements at stride vs === */')
+        parts.append(f'/* Executor calls K/{I["VL"]} times, advancing base pointers by {I["VL"]}. */')
+        parts.append('')
+        parts.append(I['ld_macro'])
+        parts.append(f'#define VL {I["VL"]}')
+
+        for tw in [False, True]:
+            for direction in ['fwd', 'bwd']:
+                kind = 'n1sv' if not tw else 't1sv_dit'
+                tw_params = (',\n    const double * __restrict__ tw_re, const double * __restrict__ tw_im'
+                            if tw else '')
+                # Generate t2 body and transform to sv
+                body = gen_simd_body(isa_name, direction, tw)
+                sv_body = _t2_to_sv(body)
+                parts.append(f'''
+{I["target"]}
+static inline void
+radix8_{kind}_kernel_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im{tw_params},
+    size_t vs)
+{{''')
+                parts.append(sv_body)
+                parts.append('}')
+
+        # t1sv DIF
+        for direction in ['fwd', 'bwd']:
+            body = gen_simd_dif_body(isa_name, direction)
+            sv_body = _t2_to_sv(body)
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1sv_dif_kernel_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    size_t vs)
+{{''')
+            parts.append(sv_body)
+            parts.append('}')
+
         parts.append('\n#undef LD\n#undef ST\n#undef VL')
 
     parts.append(f'\n#endif /* {guard} */')
