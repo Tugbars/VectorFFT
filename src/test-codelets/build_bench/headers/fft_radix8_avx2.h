@@ -1573,7 +1573,6 @@ radix8_n1_ovs_fwd_avx2(
 {
     const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
     const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
-    __attribute__((aligned(32))) double tr[8*VL], ti[8*VL];
     for (size_t k = 0; k < vl; k += VL) {
         const __m256d x0r = LD(&in_re[0*is+k]), x0i = LD(&in_im[0*is+k]);
         const __m256d x1r = LD(&in_re[1*is+k]), x1i = LD(&in_im[1*is+k]);
@@ -1591,22 +1590,56 @@ radix8_n1_ovs_fwd_avx2(
         const __m256d opi=_mm256_add_pd(x1i,x5i),oqi=_mm256_sub_pd(x1i,x5i),ori=_mm256_add_pd(x3i,x7i),osi=_mm256_sub_pd(x3i,x7i);
         const __m256d B0r=_mm256_add_pd(opr,orr),B0i=_mm256_add_pd(opi,ori),B2r=_mm256_sub_pd(opr,orr),B2i=_mm256_sub_pd(opi,ori);
         const __m256d B1r=_mm256_add_pd(oqr,osi),B1i=_mm256_sub_pd(oqi,osr),B3r=_mm256_sub_pd(oqr,osi),B3i=_mm256_add_pd(oqi,osr);
-        ST(&tr[0*VL],_mm256_add_pd(A0r,B0r)); ST(&ti[0*VL],_mm256_add_pd(A0i,B0i));
-        ST(&tr[4*VL],_mm256_sub_pd(A0r,B0r)); ST(&ti[4*VL],_mm256_sub_pd(A0i,B0i));
-        {const __m256d t1r=_mm256_mul_pd(vc,_mm256_add_pd(B1r,B1i)),t1i=_mm256_mul_pd(vc,_mm256_sub_pd(B1i,B1r));
-        ST(&tr[1*VL],_mm256_add_pd(A1r,t1r)); ST(&ti[1*VL],_mm256_add_pd(A1i,t1i));
-        ST(&tr[5*VL],_mm256_sub_pd(A1r,t1r)); ST(&ti[5*VL],_mm256_sub_pd(A1i,t1i));}
-        ST(&tr[2*VL],_mm256_add_pd(A2r,B2i)); ST(&ti[2*VL],_mm256_sub_pd(A2i,B2r));
-        ST(&tr[6*VL],_mm256_sub_pd(A2r,B2i)); ST(&ti[6*VL],_mm256_add_pd(A2i,B2r));
-        {const __m256d t3r=_mm256_mul_pd(vnc,_mm256_sub_pd(B3r,B3i)),t3i=_mm256_mul_pd(vnc,_mm256_add_pd(B3r,B3i));
-        ST(&tr[3*VL],_mm256_add_pd(A3r,t3r)); ST(&ti[3*VL],_mm256_add_pd(A3i,t3i));
-        ST(&tr[7*VL],_mm256_sub_pd(A3r,t3r)); ST(&ti[7*VL],_mm256_sub_pd(A3i,t3i));}
-        /* Scatter: tr[m*VL+j] -> out[m*os + (k+j)*ovs] */
-        for (size_t m = 0; m < 8; m++)
-            for (size_t j = 0; j < VL; j++) {
-                out_re[m*os + (k+j)*ovs] = tr[m*VL+j];
-                out_im[m*os + (k+j)*ovs] = ti[m*VL+j];
-            }
+        /* W8 combine into y0..y7 */
+        const __m256d y0r=_mm256_add_pd(A0r,B0r), y0i=_mm256_add_pd(A0i,B0i);
+        const __m256d y4r=_mm256_sub_pd(A0r,B0r), y4i=_mm256_sub_pd(A0i,B0i);
+        const __m256d tw1r=_mm256_mul_pd(vc,_mm256_add_pd(B1r,B1i)), tw1i=_mm256_mul_pd(vc,_mm256_sub_pd(B1i,B1r));
+        const __m256d y1r=_mm256_add_pd(A1r,tw1r), y1i=_mm256_add_pd(A1i,tw1i);
+        const __m256d y5r=_mm256_sub_pd(A1r,tw1r), y5i=_mm256_sub_pd(A1i,tw1i);
+        const __m256d y2r=_mm256_add_pd(A2r,B2i), y2i=_mm256_sub_pd(A2i,B2r);
+        const __m256d y6r=_mm256_sub_pd(A2r,B2i), y6i=_mm256_add_pd(A2i,B2r);
+        const __m256d tw3r=_mm256_mul_pd(vnc,_mm256_sub_pd(B3r,B3i)), tw3i=_mm256_mul_pd(vnc,_mm256_add_pd(B3r,B3i));
+        const __m256d y3r=_mm256_add_pd(A3r,tw3r), y3i=_mm256_add_pd(A3i,tw3i);
+        const __m256d y7r=_mm256_sub_pd(A3r,tw3r), y7i=_mm256_sub_pd(A3i,tw3i);
+
+        /* 4x4 transpose: bins 0-3 */
+        { __m256d lo01r=_mm256_unpacklo_pd(y0r,y1r), hi01r=_mm256_unpackhi_pd(y0r,y1r);
+          __m256d lo23r=_mm256_unpacklo_pd(y2r,y3r), hi23r=_mm256_unpackhi_pd(y2r,y3r);
+          __m256d s0r=_mm256_permute2f128_pd(lo01r,lo23r,0x20), s1r=_mm256_permute2f128_pd(hi01r,hi23r,0x20);
+          __m256d s2r=_mm256_permute2f128_pd(lo01r,lo23r,0x31), s3r=_mm256_permute2f128_pd(hi01r,hi23r,0x31);
+          ST(&out_re[(k+0)*ovs+os*0], s0r);
+          ST(&out_re[(k+1)*ovs+os*0], s1r);
+          ST(&out_re[(k+2)*ovs+os*0], s2r);
+          ST(&out_re[(k+3)*ovs+os*0], s3r);
+        }
+        { __m256d lo01i=_mm256_unpacklo_pd(y0i,y1i), hi01i=_mm256_unpackhi_pd(y0i,y1i);
+          __m256d lo23i=_mm256_unpacklo_pd(y2i,y3i), hi23i=_mm256_unpackhi_pd(y2i,y3i);
+          __m256d s0i=_mm256_permute2f128_pd(lo01i,lo23i,0x20), s1i=_mm256_permute2f128_pd(hi01i,hi23i,0x20);
+          __m256d s2i=_mm256_permute2f128_pd(lo01i,lo23i,0x31), s3i=_mm256_permute2f128_pd(hi01i,hi23i,0x31);
+          ST(&out_im[(k+0)*ovs+os*0], s0i);
+          ST(&out_im[(k+1)*ovs+os*0], s1i);
+          ST(&out_im[(k+2)*ovs+os*0], s2i);
+          ST(&out_im[(k+3)*ovs+os*0], s3i);
+        }
+        /* 4x4 transpose: bins 4-7 */
+        { __m256d lo45r=_mm256_unpacklo_pd(y4r,y5r), hi45r=_mm256_unpackhi_pd(y4r,y5r);
+          __m256d lo67r=_mm256_unpacklo_pd(y6r,y7r), hi67r=_mm256_unpackhi_pd(y6r,y7r);
+          __m256d s0r=_mm256_permute2f128_pd(lo45r,lo67r,0x20), s1r=_mm256_permute2f128_pd(hi45r,hi67r,0x20);
+          __m256d s2r=_mm256_permute2f128_pd(lo45r,lo67r,0x31), s3r=_mm256_permute2f128_pd(hi45r,hi67r,0x31);
+          ST(&out_re[(k+0)*ovs+os*4], s0r);
+          ST(&out_re[(k+1)*ovs+os*4], s1r);
+          ST(&out_re[(k+2)*ovs+os*4], s2r);
+          ST(&out_re[(k+3)*ovs+os*4], s3r);
+        }
+        { __m256d lo45i=_mm256_unpacklo_pd(y4i,y5i), hi45i=_mm256_unpackhi_pd(y4i,y5i);
+          __m256d lo67i=_mm256_unpacklo_pd(y6i,y7i), hi67i=_mm256_unpackhi_pd(y6i,y7i);
+          __m256d s0i=_mm256_permute2f128_pd(lo45i,lo67i,0x20), s1i=_mm256_permute2f128_pd(hi45i,hi67i,0x20);
+          __m256d s2i=_mm256_permute2f128_pd(lo45i,lo67i,0x31), s3i=_mm256_permute2f128_pd(hi45i,hi67i,0x31);
+          ST(&out_im[(k+0)*ovs+os*4], s0i);
+          ST(&out_im[(k+1)*ovs+os*4], s1i);
+          ST(&out_im[(k+2)*ovs+os*4], s2i);
+          ST(&out_im[(k+3)*ovs+os*4], s3i);
+        }
     }
 }
 
@@ -1781,7 +1814,6 @@ radix8_n1_ovs_bwd_avx2(
 {
     const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
     const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
-    __attribute__((aligned(32))) double tr[8*VL], ti[8*VL];
     for (size_t k = 0; k < vl; k += VL) {
         const __m256d x0r = LD(&in_re[0*is+k]), x0i = LD(&in_im[0*is+k]);
         const __m256d x1r = LD(&in_re[1*is+k]), x1i = LD(&in_im[1*is+k]);
@@ -1799,22 +1831,56 @@ radix8_n1_ovs_bwd_avx2(
         const __m256d opi=_mm256_add_pd(x1i,x5i),oqi=_mm256_sub_pd(x1i,x5i),ori=_mm256_add_pd(x3i,x7i),osi=_mm256_sub_pd(x3i,x7i);
         const __m256d B0r=_mm256_add_pd(opr,orr),B0i=_mm256_add_pd(opi,ori),B2r=_mm256_sub_pd(opr,orr),B2i=_mm256_sub_pd(opi,ori);
         const __m256d B1r=_mm256_sub_pd(oqr,osi),B1i=_mm256_add_pd(oqi,osr),B3r=_mm256_add_pd(oqr,osi),B3i=_mm256_sub_pd(oqi,osr);
-        ST(&tr[0*VL],_mm256_add_pd(A0r,B0r)); ST(&ti[0*VL],_mm256_add_pd(A0i,B0i));
-        ST(&tr[4*VL],_mm256_sub_pd(A0r,B0r)); ST(&ti[4*VL],_mm256_sub_pd(A0i,B0i));
-        {const __m256d t1r=_mm256_mul_pd(vc,_mm256_sub_pd(B1r,B1i)),t1i=_mm256_mul_pd(vc,_mm256_add_pd(B1r,B1i));
-        ST(&tr[1*VL],_mm256_add_pd(A1r,t1r)); ST(&ti[1*VL],_mm256_add_pd(A1i,t1i));
-        ST(&tr[5*VL],_mm256_sub_pd(A1r,t1r)); ST(&ti[5*VL],_mm256_sub_pd(A1i,t1i));}
-        ST(&tr[2*VL],_mm256_sub_pd(A2r,B2i)); ST(&ti[2*VL],_mm256_add_pd(A2i,B2r));
-        ST(&tr[6*VL],_mm256_add_pd(A2r,B2i)); ST(&ti[6*VL],_mm256_sub_pd(A2i,B2r));
-        {const __m256d t3r=_mm256_mul_pd(vnc,_mm256_add_pd(B3r,B3i)),t3i=_mm256_mul_pd(vc,_mm256_sub_pd(B3r,B3i));
-        ST(&tr[3*VL],_mm256_add_pd(A3r,t3r)); ST(&ti[3*VL],_mm256_add_pd(A3i,t3i));
-        ST(&tr[7*VL],_mm256_sub_pd(A3r,t3r)); ST(&ti[7*VL],_mm256_sub_pd(A3i,t3i));}
-        /* Scatter: tr[m*VL+j] -> out[m*os + (k+j)*ovs] */
-        for (size_t m = 0; m < 8; m++)
-            for (size_t j = 0; j < VL; j++) {
-                out_re[m*os + (k+j)*ovs] = tr[m*VL+j];
-                out_im[m*os + (k+j)*ovs] = ti[m*VL+j];
-            }
+        /* W8 combine into y0..y7 */
+        const __m256d y0r=_mm256_add_pd(A0r,B0r), y0i=_mm256_add_pd(A0i,B0i);
+        const __m256d y4r=_mm256_sub_pd(A0r,B0r), y4i=_mm256_sub_pd(A0i,B0i);
+        const __m256d tw1r=_mm256_mul_pd(vc,_mm256_sub_pd(B1r,B1i)), tw1i=_mm256_mul_pd(vc,_mm256_add_pd(B1r,B1i));
+        const __m256d y1r=_mm256_add_pd(A1r,tw1r), y1i=_mm256_add_pd(A1i,tw1i);
+        const __m256d y5r=_mm256_sub_pd(A1r,tw1r), y5i=_mm256_sub_pd(A1i,tw1i);
+        const __m256d y2r=_mm256_sub_pd(A2r,B2i), y2i=_mm256_add_pd(A2i,B2r);
+        const __m256d y6r=_mm256_add_pd(A2r,B2i), y6i=_mm256_sub_pd(A2i,B2r);
+        const __m256d tw3r=_mm256_mul_pd(vnc,_mm256_add_pd(B3r,B3i)), tw3i=_mm256_mul_pd(vc,_mm256_sub_pd(B3r,B3i));
+        const __m256d y3r=_mm256_add_pd(A3r,tw3r), y3i=_mm256_add_pd(A3i,tw3i);
+        const __m256d y7r=_mm256_sub_pd(A3r,tw3r), y7i=_mm256_sub_pd(A3i,tw3i);
+
+        /* 4x4 transpose: bins 0-3 */
+        { __m256d lo01r=_mm256_unpacklo_pd(y0r,y1r), hi01r=_mm256_unpackhi_pd(y0r,y1r);
+          __m256d lo23r=_mm256_unpacklo_pd(y2r,y3r), hi23r=_mm256_unpackhi_pd(y2r,y3r);
+          __m256d s0r=_mm256_permute2f128_pd(lo01r,lo23r,0x20), s1r=_mm256_permute2f128_pd(hi01r,hi23r,0x20);
+          __m256d s2r=_mm256_permute2f128_pd(lo01r,lo23r,0x31), s3r=_mm256_permute2f128_pd(hi01r,hi23r,0x31);
+          ST(&out_re[(k+0)*ovs+os*0], s0r);
+          ST(&out_re[(k+1)*ovs+os*0], s1r);
+          ST(&out_re[(k+2)*ovs+os*0], s2r);
+          ST(&out_re[(k+3)*ovs+os*0], s3r);
+        }
+        { __m256d lo01i=_mm256_unpacklo_pd(y0i,y1i), hi01i=_mm256_unpackhi_pd(y0i,y1i);
+          __m256d lo23i=_mm256_unpacklo_pd(y2i,y3i), hi23i=_mm256_unpackhi_pd(y2i,y3i);
+          __m256d s0i=_mm256_permute2f128_pd(lo01i,lo23i,0x20), s1i=_mm256_permute2f128_pd(hi01i,hi23i,0x20);
+          __m256d s2i=_mm256_permute2f128_pd(lo01i,lo23i,0x31), s3i=_mm256_permute2f128_pd(hi01i,hi23i,0x31);
+          ST(&out_im[(k+0)*ovs+os*0], s0i);
+          ST(&out_im[(k+1)*ovs+os*0], s1i);
+          ST(&out_im[(k+2)*ovs+os*0], s2i);
+          ST(&out_im[(k+3)*ovs+os*0], s3i);
+        }
+        /* 4x4 transpose: bins 4-7 */
+        { __m256d lo45r=_mm256_unpacklo_pd(y4r,y5r), hi45r=_mm256_unpackhi_pd(y4r,y5r);
+          __m256d lo67r=_mm256_unpacklo_pd(y6r,y7r), hi67r=_mm256_unpackhi_pd(y6r,y7r);
+          __m256d s0r=_mm256_permute2f128_pd(lo45r,lo67r,0x20), s1r=_mm256_permute2f128_pd(hi45r,hi67r,0x20);
+          __m256d s2r=_mm256_permute2f128_pd(lo45r,lo67r,0x31), s3r=_mm256_permute2f128_pd(hi45r,hi67r,0x31);
+          ST(&out_re[(k+0)*ovs+os*4], s0r);
+          ST(&out_re[(k+1)*ovs+os*4], s1r);
+          ST(&out_re[(k+2)*ovs+os*4], s2r);
+          ST(&out_re[(k+3)*ovs+os*4], s3r);
+        }
+        { __m256d lo45i=_mm256_unpacklo_pd(y4i,y5i), hi45i=_mm256_unpackhi_pd(y4i,y5i);
+          __m256d lo67i=_mm256_unpacklo_pd(y6i,y7i), hi67i=_mm256_unpackhi_pd(y6i,y7i);
+          __m256d s0i=_mm256_permute2f128_pd(lo45i,lo67i,0x20), s1i=_mm256_permute2f128_pd(hi45i,hi67i,0x20);
+          __m256d s2i=_mm256_permute2f128_pd(lo45i,lo67i,0x31), s3i=_mm256_permute2f128_pd(hi45i,hi67i,0x31);
+          ST(&out_im[(k+0)*ovs+os*4], s0i);
+          ST(&out_im[(k+1)*ovs+os*4], s1i);
+          ST(&out_im[(k+2)*ovs+os*4], s2i);
+          ST(&out_im[(k+3)*ovs+os*4], s3i);
+        }
     }
 }
 

@@ -114,7 +114,7 @@ REM -- Step 3: Run benchmarks --
 set "PATH=%FFTW_BIN%;%PATH%"
 set "OUT=%BUILD_DIR%\results.txt"
 
-echo Running benchmarks (this takes 5-10 minutes)...
+echo Running bench_recursive_ct only...
 echo.> "%OUT%"
 
 echo ============================================================>> "%OUT%"
@@ -123,6 +123,9 @@ echo   %DATE% %TIME%>> "%OUT%"
 echo   Compiler: ICX (Intel oneAPI)>> "%OUT%"
 echo ============================================================>> "%OUT%"
 echo.>> "%OUT%"
+
+REM Skip benchmarks 1-9 for fast iteration
+goto :run_ct
 
 echo   [1/8] bench_honest_all...
 echo BENCHMARK 1: bench_honest_all>> "%OUT%"
@@ -169,6 +172,7 @@ echo BENCHMARK 9: bench_fftw_style>> "%OUT%"
 "%BUILD_DIR%\bench_fftw_style.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
+:run_ct
 echo   [10/10] bench_recursive_ct...
 echo BENCHMARK 10: bench_recursive_ct>> "%OUT%"
 "%BUILD_DIR%\bench_recursive_ct.exe" >> "%OUT%" 2>&1
