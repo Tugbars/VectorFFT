@@ -65,7 +65,17 @@
       "Bash(PYTHONIOENCODING=utf-8 python gen_radix16.py --isa avx2 --variant dit_tw_log3)",
       "Bash(PYTHONIOENCODING=utf-8 python gen_radix16.py --isa avx2 --variant dif_tw_log3)",
       "Bash(ls c:/Users/Tugbars/Desktop/highSpeedFFT/src/test-codelets/*.py c:/Users/Tugbars/Desktop/highSpeedFFT/src/test-codelets/*.c)",
-      "Bash(ls c:/Users/Tugbars/Desktop/highSpeedFFT/src/test-codelets/*.py)"
+      "Bash(ls c:/Users/Tugbars/Desktop/highSpeedFFT/src/test-codelets/*.py)",
+      "Bash(curl -s https://raw.githubusercontent.com/FFTW/fftw3/master/dft/codelet-dft.h)",
+      "Bash(curl -s https://raw.githubusercontent.com/FFTW/fftw3/master/dft/ct.h)",
+      "Bash(curl -s https://raw.githubusercontent.com/FFTW/fftw3/master/kernel/ifftw.h)",
+      "Bash(curl -s https://raw.githubusercontent.com/FFTW/fftw3/master/dft/ct_dit.c)",
+      "Bash(curl -s https://raw.githubusercontent.com/FFTW/fftw3/master/dft/ct_dif.c)",
+      "Bash(curl -s https://api.github.com/repos/FFTW/fftw3/contents/dft)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/FFTW/fftw3/master/dft/ct.c\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/FFTW/fftw3/master/dft/dftw-direct.c\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/FFTW/fftw3/master/dft/direct.c\")",
+      "Bash(curl -s https://api.github.com/repos/FFTW/fftw3/contents/dft/codelets)"
     ]
   }
 }
