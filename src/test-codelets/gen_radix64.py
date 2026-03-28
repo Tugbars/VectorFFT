@@ -845,16 +845,19 @@ def gen_ct_n1(isa, direction):
     return em.L
 
 
-def gen_ct_t1_dit(isa, direction):
-    """FFTW-style t1 DIT: in-place twiddle + butterfly, loop over m."""
+def gen_ct_t1_dit(isa, direction, log3=False):
+    """FFTW-style t1 DIT: in-place twiddle + butterfly, loop over m.
+    log3=True: derive 63 twiddles from 2 base loads (better at high me).
+    log3=False: direct 63 loads (better at small me, L1-resident)."""
     fwd = direction == 'fwd'
     em = Emitter()
     T, C = isa.T, isa.C
+    suffix = '_log3' if log3 else ''
 
     if isa.attr:
         em.L.append(isa.attr)
     em.L.append(f'static void')
-    em.L.append(f'radix64_t1_dit_{direction}_{isa.name}(')
+    em.L.append(f'radix64_t1_dit{suffix}_{direction}_{isa.name}(')
     em.L.append(f'    double * __restrict__ rio_re, double * __restrict__ rio_im,')
     em.L.append(f'    const double * __restrict__ W_re, const double * __restrict__ W_im,')
     if isa.is_scalar:
@@ -884,14 +887,34 @@ def gen_ct_t1_dit(isa, direction):
         em.o(f'for (size_t m = 0; m < me; m += {k_step}) {{')
     em.ind += 1
 
-    # For log3 derivation we need to emit it inside the m-loop for t1
-    emit_log3_derivation(isa, em)
+    if log3:
+        # Log3: load W^1 and W^8, derive W^2..W^56 (2 loads + 12 cmuls)
+        em.c('Log3: derive 63 external twiddles from W^1 and W^8')
+        em.o(f'const {T} ew1r = {isa.load("&W_re[0*me+m]")}, ew1i = {isa.load("&W_im[0*me+m]")};')
+        em.o(f'const {T} ew8r = {isa.load("&W_re[7*me+m]")}, ew8i = {isa.load("&W_im[7*me+m]")};')
+        em.b()
+        em.c('Column bases: W^2..W^7')
+        cmul_split(isa, em, 'ew2r','ew2i', 'ew1r','ew1i', 'ew1r','ew1i')
+        cmul_split(isa, em, 'ew3r','ew3i', 'ew1r','ew1i', 'ew2r','ew2i')
+        cmul_split(isa, em, 'ew4r','ew4i', 'ew2r','ew2i', 'ew2r','ew2i')
+        cmul_split(isa, em, 'ew5r','ew5i', 'ew1r','ew1i', 'ew4r','ew4i')
+        cmul_split(isa, em, 'ew6r','ew6i', 'ew3r','ew3i', 'ew3r','ew3i')
+        cmul_split(isa, em, 'ew7r','ew7i', 'ew3r','ew3i', 'ew4r','ew4i')
+        em.b()
+        em.c('Row bases: W^16..W^56')
+        cmul_split(isa, em, 'ew16r','ew16i', 'ew8r','ew8i', 'ew8r','ew8i')
+        cmul_split(isa, em, 'ew24r','ew24i', 'ew8r','ew8i', 'ew16r','ew16i')
+        cmul_split(isa, em, 'ew32r','ew32i', 'ew16r','ew16i', 'ew16r','ew16i')
+        cmul_split(isa, em, 'ew40r','ew40i', 'ew8r','ew8i', 'ew32r','ew32i')
+        cmul_split(isa, em, 'ew48r','ew48i', 'ew24r','ew24i', 'ew24r','ew24i')
+        cmul_split(isa, em, 'ew56r','ew56i', 'ew24r','ew24i', 'ew32r','ew32i')
+        em.b()
 
     xr = [f'x{i}r' for i in range(8)]
     xi = [f'x{i}i' for i in range(8)]
     sp_mul = C if not isa.is_scalar else 1
 
-    # PASS 1: 8 radix-8 sub-FFTs — load from rio at ios stride, apply external twiddle
+    # PASS 1: 8 radix-8 sub-FFTs — load from rio, apply external twiddle
     for n2 in range(8):
         em.c(f'Sub-FFT n2={n2}')
         for n1 in range(8):
@@ -900,8 +923,10 @@ def gen_ct_t1_dit(isa, direction):
                 em.o(f'{xr[n1]} = rio_re[m*ms+{n}*ios]; {xi[n1]} = rio_im[m*ms+{n}*ios];')
             else:
                 em.o(f'{xr[n1]} = {isa.load(f"&rio_re[m+{n}*ios]")}; {xi[n1]} = {isa.load(f"&rio_im[m+{n}*ios]")};')
-            # Apply external twiddle W for element n (DIT: pre-multiply)
-            if n > 0:
+            # Apply external twiddle W^n (DIT: pre-multiply)
+            if log3:
+                emit_ext_twiddle_full(isa, em, xr[n1], xi[n1], n, fwd)
+            elif n > 0:
                 if isa.is_scalar:
                     em.o(f'{{ double wr = W_re[{n-1}*me+m], wi = W_im[{n-1}*me+m], tr = {xr[n1]};')
                 else:
@@ -1125,11 +1150,20 @@ def gen_file(isa_name, variant='all'):
 
     if variant in ('ct_t1_dit', 'all') and not isa.is_scalar:
         L.append('/* ================================================================')
-        L.append(' * FFTW-style t1 DIT: in-place twiddle + butterfly')
+        L.append(' * FFTW-style t1 DIT: in-place twiddle + butterfly (direct loads)')
         L.append(' * ================================================================ */')
         L.append('')
         for d in ('fwd', 'bwd'):
-            L.extend(gen_ct_t1_dit(isa, d))
+            L.extend(gen_ct_t1_dit(isa, d, log3=False))
+            L.append('')
+
+    if variant in ('ct_t1_dit_log3', 'all') and not isa.is_scalar:
+        L.append('/* ================================================================')
+        L.append(' * FFTW-style t1 DIT log3: 2 base loads + 12 cmuls (high me)')
+        L.append(' * ================================================================ */')
+        L.append('')
+        for d in ('fwd', 'bwd'):
+            L.extend(gen_ct_t1_dit(isa, d, log3=True))
             L.append('')
 
     if variant in ('ct_t1_dif', 'all') and not isa.is_scalar:
@@ -1151,7 +1185,7 @@ if __name__ == '__main__':
     parser.add_argument('--isa', default='avx2',
                         choices=['scalar', 'avx2', 'avx512'])
     parser.add_argument('--variant', default='all',
-                        choices=['notw', 'dit_tw', 'dif_tw', 'ct_n1', 'ct_t1_dit', 'ct_t1_dif', 'all'])
+                        choices=['notw', 'dit_tw', 'dif_tw', 'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
     # Legacy positional: gen_radix64.py avx2
     parser.add_argument('isa_pos', nargs='?', default=None)
     args = parser.parse_args()
