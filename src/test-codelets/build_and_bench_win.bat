@@ -93,6 +93,10 @@ echo   bench_r64 OK
 if errorlevel 1 ( echo FAILED: bench_r64_blocked & exit /b 1 )
 echo   bench_r64_blocked OK
 
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -o "%BUILD_DIR%\bench_sv.exe" "%SCRIPT_DIR%bench_sv.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: bench_sv & exit /b 1 )
+echo   bench_sv OK
+
 echo.
 
 REM -- Step 3: Run benchmarks --
@@ -110,39 +114,44 @@ echo   Compiler: ICX (Intel oneAPI)>> "%OUT%"
 echo ============================================================>> "%OUT%"
 echo.>> "%OUT%"
 
-echo   [1/7] bench_honest_all...
+echo   [1/8] bench_honest_all...
 echo BENCHMARK 1: bench_honest_all>> "%OUT%"
 "%BUILD_DIR%\bench_honest_all.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [2/7] bench_r8_log3...
+echo   [2/8] bench_r8_log3...
 echo BENCHMARK 2: bench_r8_log3>> "%OUT%"
 "%BUILD_DIR%\bench_r8_log3.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [3/7] bench_r16_log3...
+echo   [3/8] bench_r16_log3...
 echo BENCHMARK 3: bench_r16_log3>> "%OUT%"
 "%BUILD_DIR%\bench_r16_log3.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [4/7] bench_r32_ladder_honest...
+echo   [4/8] bench_r32_ladder_honest...
 echo BENCHMARK 4: bench_r32_ladder_honest>> "%OUT%"
 "%BUILD_DIR%\bench_r32_ladder_honest.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [5/7] bench_k1...
+echo   [5/8] bench_k1...
 echo BENCHMARK 5: bench_k1>> "%OUT%"
 "%BUILD_DIR%\bench_k1.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [6/7] bench_r64...
+echo   [6/8] bench_r64...
 echo BENCHMARK 6: bench_r64>> "%OUT%"
 "%BUILD_DIR%\bench_r64.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
-echo   [7/7] bench_r64_blocked...
+echo   [7/8] bench_r64_blocked...
 echo BENCHMARK 7: bench_r64_blocked>> "%OUT%"
 "%BUILD_DIR%\bench_r64_blocked.exe" >> "%OUT%" 2>&1
+echo.>> "%OUT%"
+
+echo   [8/8] bench_sv...
+echo BENCHMARK 8: bench_sv>> "%OUT%"
+"%BUILD_DIR%\bench_sv.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
 echo.

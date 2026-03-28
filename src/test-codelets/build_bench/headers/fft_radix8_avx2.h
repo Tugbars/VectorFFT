@@ -826,4 +826,417 @@ radix8_tw_log3_dif_kernel_bwd_avx2(
 #undef ST
 #undef VL
 
+/* === sv codelets: no loop, elements at stride vs === */
+/* Executor calls K/4 times, advancing base pointers by 4. */
+
+#ifndef R8_256_LD
+#define R8_256_LD(p) _mm256_loadu_pd(p)
+#define R8_256_ST(p,v) _mm256_storeu_pd((p),(v))
+#endif
+#define LD R8_256_LD
+#define ST R8_256_ST
+#define VL 4
+
+__attribute__((target("avx2,fma")))
+static inline void
+radix8_n1sv_kernel_fwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t vs)
+{
+    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
+
+    const __m256d x0r = LD(&in_re[0*vs]), x0i = LD(&in_im[0*vs]);
+    const __m256d x1r = LD(&in_re[1*vs]), x1i = LD(&in_im[1*vs]);
+    const __m256d x2r = LD(&in_re[2*vs]), x2i = LD(&in_im[2*vs]);
+    const __m256d x3r = LD(&in_re[3*vs]), x3i = LD(&in_im[3*vs]);
+    const __m256d x4r = LD(&in_re[4*vs]), x4i = LD(&in_im[4*vs]);
+    const __m256d x5r = LD(&in_re[5*vs]), x5i = LD(&in_im[5*vs]);
+    const __m256d x6r = LD(&in_re[6*vs]), x6i = LD(&in_im[6*vs]);
+    const __m256d x7r = LD(&in_re[7*vs]), x7i = LD(&in_im[7*vs]);
+
+    /* DFT-4 of evens: x0, x2, x4, x6 */
+    const __m256d epr = _mm256_add_pd(x0r,x4r), eqr = _mm256_sub_pd(x0r,x4r);
+    const __m256d epi = _mm256_add_pd(x0i,x4i), eqi = _mm256_sub_pd(x0i,x4i);
+    const __m256d err = _mm256_add_pd(x2r,x6r), esr = _mm256_sub_pd(x2r,x6r);
+    const __m256d eri = _mm256_add_pd(x2i,x6i), esi = _mm256_sub_pd(x2i,x6i);
+    const __m256d A0r = _mm256_add_pd(epr,err), A0i = _mm256_add_pd(epi,eri);
+    const __m256d A2r = _mm256_sub_pd(epr,err), A2i = _mm256_sub_pd(epi,eri);
+    const __m256d A1r = _mm256_add_pd(eqr,esi), A1i = _mm256_sub_pd(eqi,esr);
+    const __m256d A3r = _mm256_sub_pd(eqr,esi), A3i = _mm256_add_pd(eqi,esr);
+
+    /* DFT-4 of odds: x1, x3, x5, x7 */
+    const __m256d opr = _mm256_add_pd(x1r,x5r), oqr = _mm256_sub_pd(x1r,x5r);
+    const __m256d opi = _mm256_add_pd(x1i,x5i), oqi = _mm256_sub_pd(x1i,x5i);
+    const __m256d orr = _mm256_add_pd(x3r,x7r), osr = _mm256_sub_pd(x3r,x7r);
+    const __m256d ori = _mm256_add_pd(x3i,x7i), osi = _mm256_sub_pd(x3i,x7i);
+    const __m256d B0r = _mm256_add_pd(opr,orr), B0i = _mm256_add_pd(opi,ori);
+    const __m256d B2r = _mm256_sub_pd(opr,orr), B2i = _mm256_sub_pd(opi,ori);
+    const __m256d B1r = _mm256_add_pd(oqr,osi), B1i = _mm256_sub_pd(oqi,osr);
+    const __m256d B3r = _mm256_sub_pd(oqr,osi), B3i = _mm256_add_pd(oqi,osr);
+
+    /* W8 combine and output */
+    ST(&out_re[0*vs], _mm256_add_pd(A0r,B0r)); ST(&out_im[0*vs], _mm256_add_pd(A0i,B0i));
+    ST(&out_re[4*vs], _mm256_sub_pd(A0r,B0r)); ST(&out_im[4*vs], _mm256_sub_pd(A0i,B0i));
+    const __m256d t1r = _mm256_mul_pd(vc, _mm256_add_pd(B1r,B1i));
+    const __m256d t1i = _mm256_mul_pd(vc, _mm256_sub_pd(B1i,B1r));
+    ST(&out_re[1*vs], _mm256_add_pd(A1r,t1r)); ST(&out_im[1*vs], _mm256_add_pd(A1i,t1i));
+    ST(&out_re[5*vs], _mm256_sub_pd(A1r,t1r)); ST(&out_im[5*vs], _mm256_sub_pd(A1i,t1i));
+    ST(&out_re[2*vs], _mm256_add_pd(A2r,B2i)); ST(&out_im[2*vs], _mm256_sub_pd(A2i,B2r));
+    ST(&out_re[6*vs], _mm256_sub_pd(A2r,B2i)); ST(&out_im[6*vs], _mm256_add_pd(A2i,B2r));
+    const __m256d t3r = _mm256_mul_pd(vnc, _mm256_sub_pd(B3r,B3i));
+    const __m256d t3i = _mm256_mul_pd(vnc, _mm256_add_pd(B3r,B3i));
+    ST(&out_re[3*vs], _mm256_add_pd(A3r,t3r)); ST(&out_im[3*vs], _mm256_add_pd(A3i,t3i));
+    ST(&out_re[7*vs], _mm256_sub_pd(A3r,t3r)); ST(&out_im[7*vs], _mm256_sub_pd(A3i,t3i));
+}
+
+__attribute__((target("avx2,fma")))
+static inline void
+radix8_n1sv_kernel_bwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t vs)
+{
+    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
+
+    const __m256d x0r = LD(&in_re[0*vs]), x0i = LD(&in_im[0*vs]);
+    const __m256d x1r = LD(&in_re[1*vs]), x1i = LD(&in_im[1*vs]);
+    const __m256d x2r = LD(&in_re[2*vs]), x2i = LD(&in_im[2*vs]);
+    const __m256d x3r = LD(&in_re[3*vs]), x3i = LD(&in_im[3*vs]);
+    const __m256d x4r = LD(&in_re[4*vs]), x4i = LD(&in_im[4*vs]);
+    const __m256d x5r = LD(&in_re[5*vs]), x5i = LD(&in_im[5*vs]);
+    const __m256d x6r = LD(&in_re[6*vs]), x6i = LD(&in_im[6*vs]);
+    const __m256d x7r = LD(&in_re[7*vs]), x7i = LD(&in_im[7*vs]);
+
+    /* DFT-4 of evens: x0, x2, x4, x6 */
+    const __m256d epr = _mm256_add_pd(x0r,x4r), eqr = _mm256_sub_pd(x0r,x4r);
+    const __m256d epi = _mm256_add_pd(x0i,x4i), eqi = _mm256_sub_pd(x0i,x4i);
+    const __m256d err = _mm256_add_pd(x2r,x6r), esr = _mm256_sub_pd(x2r,x6r);
+    const __m256d eri = _mm256_add_pd(x2i,x6i), esi = _mm256_sub_pd(x2i,x6i);
+    const __m256d A0r = _mm256_add_pd(epr,err), A0i = _mm256_add_pd(epi,eri);
+    const __m256d A2r = _mm256_sub_pd(epr,err), A2i = _mm256_sub_pd(epi,eri);
+    const __m256d A1r = _mm256_sub_pd(eqr,esi), A1i = _mm256_add_pd(eqi,esr);
+    const __m256d A3r = _mm256_add_pd(eqr,esi), A3i = _mm256_sub_pd(eqi,esr);
+
+    /* DFT-4 of odds: x1, x3, x5, x7 */
+    const __m256d opr = _mm256_add_pd(x1r,x5r), oqr = _mm256_sub_pd(x1r,x5r);
+    const __m256d opi = _mm256_add_pd(x1i,x5i), oqi = _mm256_sub_pd(x1i,x5i);
+    const __m256d orr = _mm256_add_pd(x3r,x7r), osr = _mm256_sub_pd(x3r,x7r);
+    const __m256d ori = _mm256_add_pd(x3i,x7i), osi = _mm256_sub_pd(x3i,x7i);
+    const __m256d B0r = _mm256_add_pd(opr,orr), B0i = _mm256_add_pd(opi,ori);
+    const __m256d B2r = _mm256_sub_pd(opr,orr), B2i = _mm256_sub_pd(opi,ori);
+    const __m256d B1r = _mm256_sub_pd(oqr,osi), B1i = _mm256_add_pd(oqi,osr);
+    const __m256d B3r = _mm256_add_pd(oqr,osi), B3i = _mm256_sub_pd(oqi,osr);
+
+    /* W8 combine and output */
+    ST(&out_re[0*vs], _mm256_add_pd(A0r,B0r)); ST(&out_im[0*vs], _mm256_add_pd(A0i,B0i));
+    ST(&out_re[4*vs], _mm256_sub_pd(A0r,B0r)); ST(&out_im[4*vs], _mm256_sub_pd(A0i,B0i));
+    const __m256d t1r = _mm256_mul_pd(vc, _mm256_sub_pd(B1r,B1i));
+    const __m256d t1i = _mm256_mul_pd(vc, _mm256_add_pd(B1r,B1i));
+    ST(&out_re[1*vs], _mm256_add_pd(A1r,t1r)); ST(&out_im[1*vs], _mm256_add_pd(A1i,t1i));
+    ST(&out_re[5*vs], _mm256_sub_pd(A1r,t1r)); ST(&out_im[5*vs], _mm256_sub_pd(A1i,t1i));
+    ST(&out_re[2*vs], _mm256_sub_pd(A2r,B2i)); ST(&out_im[2*vs], _mm256_add_pd(A2i,B2r));
+    ST(&out_re[6*vs], _mm256_add_pd(A2r,B2i)); ST(&out_im[6*vs], _mm256_sub_pd(A2i,B2r));
+    const __m256d t3r = _mm256_mul_pd(vnc, _mm256_add_pd(B3r,B3i));
+    const __m256d t3i = _mm256_mul_pd(vc, _mm256_sub_pd(B3r,B3i));
+    ST(&out_re[3*vs], _mm256_add_pd(A3r,t3r)); ST(&out_im[3*vs], _mm256_add_pd(A3i,t3i));
+    ST(&out_re[7*vs], _mm256_sub_pd(A3r,t3r)); ST(&out_im[7*vs], _mm256_sub_pd(A3i,t3i));
+}
+
+__attribute__((target("avx2,fma")))
+static inline void
+radix8_t1sv_dit_kernel_fwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    size_t vs)
+{
+    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
+
+    const __m256d x0r = LD(&in_re[0]), x0i = LD(&in_im[0]);
+    const __m256d r1r = LD(&in_re[1*vs]), r1i = LD(&in_im[1*vs]);
+    const __m256d tw1r = LD(&tw_re[0*vs]), tw1i = LD(&tw_im[0*vs]);
+    const __m256d x1r = _mm256_fnmadd_pd(r1i,tw1i,_mm256_mul_pd(r1r,tw1r));
+    const __m256d x1i = _mm256_fmadd_pd(r1r,tw1i,_mm256_mul_pd(r1i,tw1r));
+    const __m256d r2r = LD(&in_re[2*vs]), r2i = LD(&in_im[2*vs]);
+    const __m256d tw2r = LD(&tw_re[1*vs]), tw2i = LD(&tw_im[1*vs]);
+    const __m256d x2r = _mm256_fnmadd_pd(r2i,tw2i,_mm256_mul_pd(r2r,tw2r));
+    const __m256d x2i = _mm256_fmadd_pd(r2r,tw2i,_mm256_mul_pd(r2i,tw2r));
+    const __m256d r3r = LD(&in_re[3*vs]), r3i = LD(&in_im[3*vs]);
+    const __m256d tw3r = LD(&tw_re[2*vs]), tw3i = LD(&tw_im[2*vs]);
+    const __m256d x3r = _mm256_fnmadd_pd(r3i,tw3i,_mm256_mul_pd(r3r,tw3r));
+    const __m256d x3i = _mm256_fmadd_pd(r3r,tw3i,_mm256_mul_pd(r3i,tw3r));
+    const __m256d r4r = LD(&in_re[4*vs]), r4i = LD(&in_im[4*vs]);
+    const __m256d tw4r = LD(&tw_re[3*vs]), tw4i = LD(&tw_im[3*vs]);
+    const __m256d x4r = _mm256_fnmadd_pd(r4i,tw4i,_mm256_mul_pd(r4r,tw4r));
+    const __m256d x4i = _mm256_fmadd_pd(r4r,tw4i,_mm256_mul_pd(r4i,tw4r));
+    const __m256d r5r = LD(&in_re[5*vs]), r5i = LD(&in_im[5*vs]);
+    const __m256d tw5r = LD(&tw_re[4*vs]), tw5i = LD(&tw_im[4*vs]);
+    const __m256d x5r = _mm256_fnmadd_pd(r5i,tw5i,_mm256_mul_pd(r5r,tw5r));
+    const __m256d x5i = _mm256_fmadd_pd(r5r,tw5i,_mm256_mul_pd(r5i,tw5r));
+    const __m256d r6r = LD(&in_re[6*vs]), r6i = LD(&in_im[6*vs]);
+    const __m256d tw6r = LD(&tw_re[5*vs]), tw6i = LD(&tw_im[5*vs]);
+    const __m256d x6r = _mm256_fnmadd_pd(r6i,tw6i,_mm256_mul_pd(r6r,tw6r));
+    const __m256d x6i = _mm256_fmadd_pd(r6r,tw6i,_mm256_mul_pd(r6i,tw6r));
+    const __m256d r7r = LD(&in_re[7*vs]), r7i = LD(&in_im[7*vs]);
+    const __m256d tw7r = LD(&tw_re[6*vs]), tw7i = LD(&tw_im[6*vs]);
+    const __m256d x7r = _mm256_fnmadd_pd(r7i,tw7i,_mm256_mul_pd(r7r,tw7r));
+    const __m256d x7i = _mm256_fmadd_pd(r7r,tw7i,_mm256_mul_pd(r7i,tw7r));
+
+    /* DFT-4 of evens: x0, x2, x4, x6 */
+    const __m256d epr = _mm256_add_pd(x0r,x4r), eqr = _mm256_sub_pd(x0r,x4r);
+    const __m256d epi = _mm256_add_pd(x0i,x4i), eqi = _mm256_sub_pd(x0i,x4i);
+    const __m256d err = _mm256_add_pd(x2r,x6r), esr = _mm256_sub_pd(x2r,x6r);
+    const __m256d eri = _mm256_add_pd(x2i,x6i), esi = _mm256_sub_pd(x2i,x6i);
+    const __m256d A0r = _mm256_add_pd(epr,err), A0i = _mm256_add_pd(epi,eri);
+    const __m256d A2r = _mm256_sub_pd(epr,err), A2i = _mm256_sub_pd(epi,eri);
+    const __m256d A1r = _mm256_add_pd(eqr,esi), A1i = _mm256_sub_pd(eqi,esr);
+    const __m256d A3r = _mm256_sub_pd(eqr,esi), A3i = _mm256_add_pd(eqi,esr);
+
+    /* DFT-4 of odds: x1, x3, x5, x7 */
+    const __m256d opr = _mm256_add_pd(x1r,x5r), oqr = _mm256_sub_pd(x1r,x5r);
+    const __m256d opi = _mm256_add_pd(x1i,x5i), oqi = _mm256_sub_pd(x1i,x5i);
+    const __m256d orr = _mm256_add_pd(x3r,x7r), osr = _mm256_sub_pd(x3r,x7r);
+    const __m256d ori = _mm256_add_pd(x3i,x7i), osi = _mm256_sub_pd(x3i,x7i);
+    const __m256d B0r = _mm256_add_pd(opr,orr), B0i = _mm256_add_pd(opi,ori);
+    const __m256d B2r = _mm256_sub_pd(opr,orr), B2i = _mm256_sub_pd(opi,ori);
+    const __m256d B1r = _mm256_add_pd(oqr,osi), B1i = _mm256_sub_pd(oqi,osr);
+    const __m256d B3r = _mm256_sub_pd(oqr,osi), B3i = _mm256_add_pd(oqi,osr);
+
+    /* W8 combine and output */
+    ST(&out_re[0*vs], _mm256_add_pd(A0r,B0r)); ST(&out_im[0*vs], _mm256_add_pd(A0i,B0i));
+    ST(&out_re[4*vs], _mm256_sub_pd(A0r,B0r)); ST(&out_im[4*vs], _mm256_sub_pd(A0i,B0i));
+    const __m256d t1r = _mm256_mul_pd(vc, _mm256_add_pd(B1r,B1i));
+    const __m256d t1i = _mm256_mul_pd(vc, _mm256_sub_pd(B1i,B1r));
+    ST(&out_re[1*vs], _mm256_add_pd(A1r,t1r)); ST(&out_im[1*vs], _mm256_add_pd(A1i,t1i));
+    ST(&out_re[5*vs], _mm256_sub_pd(A1r,t1r)); ST(&out_im[5*vs], _mm256_sub_pd(A1i,t1i));
+    ST(&out_re[2*vs], _mm256_add_pd(A2r,B2i)); ST(&out_im[2*vs], _mm256_sub_pd(A2i,B2r));
+    ST(&out_re[6*vs], _mm256_sub_pd(A2r,B2i)); ST(&out_im[6*vs], _mm256_add_pd(A2i,B2r));
+    const __m256d t3r = _mm256_mul_pd(vnc, _mm256_sub_pd(B3r,B3i));
+    const __m256d t3i = _mm256_mul_pd(vnc, _mm256_add_pd(B3r,B3i));
+    ST(&out_re[3*vs], _mm256_add_pd(A3r,t3r)); ST(&out_im[3*vs], _mm256_add_pd(A3i,t3i));
+    ST(&out_re[7*vs], _mm256_sub_pd(A3r,t3r)); ST(&out_im[7*vs], _mm256_sub_pd(A3i,t3i));
+}
+
+__attribute__((target("avx2,fma")))
+static inline void
+radix8_t1sv_dit_kernel_bwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    size_t vs)
+{
+    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
+
+    const __m256d x0r = LD(&in_re[0]), x0i = LD(&in_im[0]);
+    const __m256d r1r = LD(&in_re[1*vs]), r1i = LD(&in_im[1*vs]);
+    const __m256d tw1r = LD(&tw_re[0*vs]), tw1i = LD(&tw_im[0*vs]);
+    const __m256d x1r = _mm256_fmadd_pd(r1i,tw1i,_mm256_mul_pd(r1r,tw1r));
+    const __m256d x1i = _mm256_fnmadd_pd(r1r,tw1i,_mm256_mul_pd(r1i,tw1r));
+    const __m256d r2r = LD(&in_re[2*vs]), r2i = LD(&in_im[2*vs]);
+    const __m256d tw2r = LD(&tw_re[1*vs]), tw2i = LD(&tw_im[1*vs]);
+    const __m256d x2r = _mm256_fmadd_pd(r2i,tw2i,_mm256_mul_pd(r2r,tw2r));
+    const __m256d x2i = _mm256_fnmadd_pd(r2r,tw2i,_mm256_mul_pd(r2i,tw2r));
+    const __m256d r3r = LD(&in_re[3*vs]), r3i = LD(&in_im[3*vs]);
+    const __m256d tw3r = LD(&tw_re[2*vs]), tw3i = LD(&tw_im[2*vs]);
+    const __m256d x3r = _mm256_fmadd_pd(r3i,tw3i,_mm256_mul_pd(r3r,tw3r));
+    const __m256d x3i = _mm256_fnmadd_pd(r3r,tw3i,_mm256_mul_pd(r3i,tw3r));
+    const __m256d r4r = LD(&in_re[4*vs]), r4i = LD(&in_im[4*vs]);
+    const __m256d tw4r = LD(&tw_re[3*vs]), tw4i = LD(&tw_im[3*vs]);
+    const __m256d x4r = _mm256_fmadd_pd(r4i,tw4i,_mm256_mul_pd(r4r,tw4r));
+    const __m256d x4i = _mm256_fnmadd_pd(r4r,tw4i,_mm256_mul_pd(r4i,tw4r));
+    const __m256d r5r = LD(&in_re[5*vs]), r5i = LD(&in_im[5*vs]);
+    const __m256d tw5r = LD(&tw_re[4*vs]), tw5i = LD(&tw_im[4*vs]);
+    const __m256d x5r = _mm256_fmadd_pd(r5i,tw5i,_mm256_mul_pd(r5r,tw5r));
+    const __m256d x5i = _mm256_fnmadd_pd(r5r,tw5i,_mm256_mul_pd(r5i,tw5r));
+    const __m256d r6r = LD(&in_re[6*vs]), r6i = LD(&in_im[6*vs]);
+    const __m256d tw6r = LD(&tw_re[5*vs]), tw6i = LD(&tw_im[5*vs]);
+    const __m256d x6r = _mm256_fmadd_pd(r6i,tw6i,_mm256_mul_pd(r6r,tw6r));
+    const __m256d x6i = _mm256_fnmadd_pd(r6r,tw6i,_mm256_mul_pd(r6i,tw6r));
+    const __m256d r7r = LD(&in_re[7*vs]), r7i = LD(&in_im[7*vs]);
+    const __m256d tw7r = LD(&tw_re[6*vs]), tw7i = LD(&tw_im[6*vs]);
+    const __m256d x7r = _mm256_fmadd_pd(r7i,tw7i,_mm256_mul_pd(r7r,tw7r));
+    const __m256d x7i = _mm256_fnmadd_pd(r7r,tw7i,_mm256_mul_pd(r7i,tw7r));
+
+    /* DFT-4 of evens: x0, x2, x4, x6 */
+    const __m256d epr = _mm256_add_pd(x0r,x4r), eqr = _mm256_sub_pd(x0r,x4r);
+    const __m256d epi = _mm256_add_pd(x0i,x4i), eqi = _mm256_sub_pd(x0i,x4i);
+    const __m256d err = _mm256_add_pd(x2r,x6r), esr = _mm256_sub_pd(x2r,x6r);
+    const __m256d eri = _mm256_add_pd(x2i,x6i), esi = _mm256_sub_pd(x2i,x6i);
+    const __m256d A0r = _mm256_add_pd(epr,err), A0i = _mm256_add_pd(epi,eri);
+    const __m256d A2r = _mm256_sub_pd(epr,err), A2i = _mm256_sub_pd(epi,eri);
+    const __m256d A1r = _mm256_sub_pd(eqr,esi), A1i = _mm256_add_pd(eqi,esr);
+    const __m256d A3r = _mm256_add_pd(eqr,esi), A3i = _mm256_sub_pd(eqi,esr);
+
+    /* DFT-4 of odds: x1, x3, x5, x7 */
+    const __m256d opr = _mm256_add_pd(x1r,x5r), oqr = _mm256_sub_pd(x1r,x5r);
+    const __m256d opi = _mm256_add_pd(x1i,x5i), oqi = _mm256_sub_pd(x1i,x5i);
+    const __m256d orr = _mm256_add_pd(x3r,x7r), osr = _mm256_sub_pd(x3r,x7r);
+    const __m256d ori = _mm256_add_pd(x3i,x7i), osi = _mm256_sub_pd(x3i,x7i);
+    const __m256d B0r = _mm256_add_pd(opr,orr), B0i = _mm256_add_pd(opi,ori);
+    const __m256d B2r = _mm256_sub_pd(opr,orr), B2i = _mm256_sub_pd(opi,ori);
+    const __m256d B1r = _mm256_sub_pd(oqr,osi), B1i = _mm256_add_pd(oqi,osr);
+    const __m256d B3r = _mm256_add_pd(oqr,osi), B3i = _mm256_sub_pd(oqi,osr);
+
+    /* W8 combine and output */
+    ST(&out_re[0*vs], _mm256_add_pd(A0r,B0r)); ST(&out_im[0*vs], _mm256_add_pd(A0i,B0i));
+    ST(&out_re[4*vs], _mm256_sub_pd(A0r,B0r)); ST(&out_im[4*vs], _mm256_sub_pd(A0i,B0i));
+    const __m256d t1r = _mm256_mul_pd(vc, _mm256_sub_pd(B1r,B1i));
+    const __m256d t1i = _mm256_mul_pd(vc, _mm256_add_pd(B1r,B1i));
+    ST(&out_re[1*vs], _mm256_add_pd(A1r,t1r)); ST(&out_im[1*vs], _mm256_add_pd(A1i,t1i));
+    ST(&out_re[5*vs], _mm256_sub_pd(A1r,t1r)); ST(&out_im[5*vs], _mm256_sub_pd(A1i,t1i));
+    ST(&out_re[2*vs], _mm256_sub_pd(A2r,B2i)); ST(&out_im[2*vs], _mm256_add_pd(A2i,B2r));
+    ST(&out_re[6*vs], _mm256_add_pd(A2r,B2i)); ST(&out_im[6*vs], _mm256_sub_pd(A2i,B2r));
+    const __m256d t3r = _mm256_mul_pd(vnc, _mm256_add_pd(B3r,B3i));
+    const __m256d t3i = _mm256_mul_pd(vc, _mm256_sub_pd(B3r,B3i));
+    ST(&out_re[3*vs], _mm256_add_pd(A3r,t3r)); ST(&out_im[3*vs], _mm256_add_pd(A3i,t3i));
+    ST(&out_re[7*vs], _mm256_sub_pd(A3r,t3r)); ST(&out_im[7*vs], _mm256_sub_pd(A3i,t3i));
+}
+
+__attribute__((target("avx2,fma")))
+static inline void
+radix8_t1sv_dif_kernel_fwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    size_t vs)
+{
+    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
+
+    const __m256d x0r = LD(&in_re[0*vs]), x0i = LD(&in_im[0*vs]);
+    const __m256d x1r = LD(&in_re[1*vs]), x1i = LD(&in_im[1*vs]);
+    const __m256d x2r = LD(&in_re[2*vs]), x2i = LD(&in_im[2*vs]);
+    const __m256d x3r = LD(&in_re[3*vs]), x3i = LD(&in_im[3*vs]);
+    const __m256d x4r = LD(&in_re[4*vs]), x4i = LD(&in_im[4*vs]);
+    const __m256d x5r = LD(&in_re[5*vs]), x5i = LD(&in_im[5*vs]);
+    const __m256d x6r = LD(&in_re[6*vs]), x6i = LD(&in_im[6*vs]);
+    const __m256d x7r = LD(&in_re[7*vs]), x7i = LD(&in_im[7*vs]);
+    const __m256d epr = _mm256_add_pd(x0r,x4r), eqr = _mm256_sub_pd(x0r,x4r);
+    const __m256d epi = _mm256_add_pd(x0i,x4i), eqi = _mm256_sub_pd(x0i,x4i);
+    const __m256d err = _mm256_add_pd(x2r,x6r), esr = _mm256_sub_pd(x2r,x6r);
+    const __m256d eri = _mm256_add_pd(x2i,x6i), esi = _mm256_sub_pd(x2i,x6i);
+    const __m256d A0r = _mm256_add_pd(epr,err), A0i = _mm256_add_pd(epi,eri);
+    const __m256d A2r = _mm256_sub_pd(epr,err), A2i = _mm256_sub_pd(epi,eri);
+    const __m256d A1r = _mm256_add_pd(eqr,esi), A1i = _mm256_sub_pd(eqi,esr);
+    const __m256d A3r = _mm256_sub_pd(eqr,esi), A3i = _mm256_add_pd(eqi,esr);
+    const __m256d opr = _mm256_add_pd(x1r,x5r), oqr = _mm256_sub_pd(x1r,x5r);
+    const __m256d opi = _mm256_add_pd(x1i,x5i), oqi = _mm256_sub_pd(x1i,x5i);
+    const __m256d orr = _mm256_add_pd(x3r,x7r), osr = _mm256_sub_pd(x3r,x7r);
+    const __m256d ori = _mm256_add_pd(x3i,x7i), osi = _mm256_sub_pd(x3i,x7i);
+    const __m256d B0r = _mm256_add_pd(opr,orr), B0i = _mm256_add_pd(opi,ori);
+    const __m256d B2r = _mm256_sub_pd(opr,orr), B2i = _mm256_sub_pd(opi,ori);
+    const __m256d B1r = _mm256_add_pd(oqr,osi), B1i = _mm256_sub_pd(oqi,osr);
+    const __m256d B3r = _mm256_sub_pd(oqr,osi), B3i = _mm256_add_pd(oqi,osr);
+    const __m256d y0r = _mm256_add_pd(A0r,B0r), y0i = _mm256_add_pd(A0i,B0i);
+    const __m256d y4r = _mm256_sub_pd(A0r,B0r), y4i = _mm256_sub_pd(A0i,B0i);
+    const __m256d t1r = _mm256_mul_pd(vc, _mm256_add_pd(B1r,B1i)), t1i = _mm256_mul_pd(vc, _mm256_sub_pd(B1i,B1r));
+    const __m256d y1r = _mm256_add_pd(A1r,t1r), y1i = _mm256_add_pd(A1i,t1i);
+    const __m256d y5r = _mm256_sub_pd(A1r,t1r), y5i = _mm256_sub_pd(A1i,t1i);
+    const __m256d y2r = _mm256_add_pd(A2r,B2i), y2i = _mm256_sub_pd(A2i,B2r);
+    const __m256d y6r = _mm256_sub_pd(A2r,B2i), y6i = _mm256_add_pd(A2i,B2r);
+    const __m256d t3r = _mm256_mul_pd(vnc, _mm256_sub_pd(B3r,B3i)), t3i = _mm256_mul_pd(vnc, _mm256_add_pd(B3r,B3i));
+    const __m256d y3r = _mm256_add_pd(A3r,t3r), y3i = _mm256_add_pd(A3i,t3i);
+    const __m256d y7r = _mm256_sub_pd(A3r,t3r), y7i = _mm256_sub_pd(A3i,t3i);
+    ST(&out_re[0*vs], y0r); ST(&out_im[0*vs], y0i);
+    { __m256d wr = LD(&tw_re[0*vs]), wi = LD(&tw_im[0*vs]), tr = y1r;
+      ST(&out_re[1*vs], _mm256_fnmadd_pd(y1i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[1*vs], _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(y1i,wr))); }
+    { __m256d wr = LD(&tw_re[1*vs]), wi = LD(&tw_im[1*vs]), tr = y2r;
+      ST(&out_re[2*vs], _mm256_fnmadd_pd(y2i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[2*vs], _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(y2i,wr))); }
+    { __m256d wr = LD(&tw_re[2*vs]), wi = LD(&tw_im[2*vs]), tr = y3r;
+      ST(&out_re[3*vs], _mm256_fnmadd_pd(y3i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[3*vs], _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(y3i,wr))); }
+    { __m256d wr = LD(&tw_re[3*vs]), wi = LD(&tw_im[3*vs]), tr = y4r;
+      ST(&out_re[4*vs], _mm256_fnmadd_pd(y4i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[4*vs], _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(y4i,wr))); }
+    { __m256d wr = LD(&tw_re[4*vs]), wi = LD(&tw_im[4*vs]), tr = y5r;
+      ST(&out_re[5*vs], _mm256_fnmadd_pd(y5i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[5*vs], _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(y5i,wr))); }
+    { __m256d wr = LD(&tw_re[5*vs]), wi = LD(&tw_im[5*vs]), tr = y6r;
+      ST(&out_re[6*vs], _mm256_fnmadd_pd(y6i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[6*vs], _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(y6i,wr))); }
+    { __m256d wr = LD(&tw_re[6*vs]), wi = LD(&tw_im[6*vs]), tr = y7r;
+      ST(&out_re[7*vs], _mm256_fnmadd_pd(y7i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[7*vs], _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(y7i,wr))); }
+}
+
+__attribute__((target("avx2,fma")))
+static inline void
+radix8_t1sv_dif_kernel_bwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ tw_re, const double * __restrict__ tw_im,
+    size_t vs)
+{
+    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
+
+    const __m256d x0r = LD(&in_re[0*vs]), x0i = LD(&in_im[0*vs]);
+    const __m256d x1r = LD(&in_re[1*vs]), x1i = LD(&in_im[1*vs]);
+    const __m256d x2r = LD(&in_re[2*vs]), x2i = LD(&in_im[2*vs]);
+    const __m256d x3r = LD(&in_re[3*vs]), x3i = LD(&in_im[3*vs]);
+    const __m256d x4r = LD(&in_re[4*vs]), x4i = LD(&in_im[4*vs]);
+    const __m256d x5r = LD(&in_re[5*vs]), x5i = LD(&in_im[5*vs]);
+    const __m256d x6r = LD(&in_re[6*vs]), x6i = LD(&in_im[6*vs]);
+    const __m256d x7r = LD(&in_re[7*vs]), x7i = LD(&in_im[7*vs]);
+    const __m256d epr = _mm256_add_pd(x0r,x4r), eqr = _mm256_sub_pd(x0r,x4r);
+    const __m256d epi = _mm256_add_pd(x0i,x4i), eqi = _mm256_sub_pd(x0i,x4i);
+    const __m256d err = _mm256_add_pd(x2r,x6r), esr = _mm256_sub_pd(x2r,x6r);
+    const __m256d eri = _mm256_add_pd(x2i,x6i), esi = _mm256_sub_pd(x2i,x6i);
+    const __m256d A0r = _mm256_add_pd(epr,err), A0i = _mm256_add_pd(epi,eri);
+    const __m256d A2r = _mm256_sub_pd(epr,err), A2i = _mm256_sub_pd(epi,eri);
+    const __m256d A1r = _mm256_sub_pd(eqr,esi), A1i = _mm256_add_pd(eqi,esr);
+    const __m256d A3r = _mm256_add_pd(eqr,esi), A3i = _mm256_sub_pd(eqi,esr);
+    const __m256d opr = _mm256_add_pd(x1r,x5r), oqr = _mm256_sub_pd(x1r,x5r);
+    const __m256d opi = _mm256_add_pd(x1i,x5i), oqi = _mm256_sub_pd(x1i,x5i);
+    const __m256d orr = _mm256_add_pd(x3r,x7r), osr = _mm256_sub_pd(x3r,x7r);
+    const __m256d ori = _mm256_add_pd(x3i,x7i), osi = _mm256_sub_pd(x3i,x7i);
+    const __m256d B0r = _mm256_add_pd(opr,orr), B0i = _mm256_add_pd(opi,ori);
+    const __m256d B2r = _mm256_sub_pd(opr,orr), B2i = _mm256_sub_pd(opi,ori);
+    const __m256d B1r = _mm256_sub_pd(oqr,osi), B1i = _mm256_add_pd(oqi,osr);
+    const __m256d B3r = _mm256_add_pd(oqr,osi), B3i = _mm256_sub_pd(oqi,osr);
+    const __m256d y0r = _mm256_add_pd(A0r,B0r), y0i = _mm256_add_pd(A0i,B0i);
+    const __m256d y4r = _mm256_sub_pd(A0r,B0r), y4i = _mm256_sub_pd(A0i,B0i);
+    const __m256d t1r = _mm256_mul_pd(vc, _mm256_sub_pd(B1r,B1i)), t1i = _mm256_mul_pd(vc, _mm256_add_pd(B1r,B1i));
+    const __m256d y1r = _mm256_add_pd(A1r,t1r), y1i = _mm256_add_pd(A1i,t1i);
+    const __m256d y5r = _mm256_sub_pd(A1r,t1r), y5i = _mm256_sub_pd(A1i,t1i);
+    const __m256d y2r = _mm256_sub_pd(A2r,B2i), y2i = _mm256_add_pd(A2i,B2r);
+    const __m256d y6r = _mm256_add_pd(A2r,B2i), y6i = _mm256_sub_pd(A2i,B2r);
+    const __m256d t3r = _mm256_mul_pd(vnc, _mm256_add_pd(B3r,B3i)), t3i = _mm256_mul_pd(vc, _mm256_sub_pd(B3r,B3i));
+    const __m256d y3r = _mm256_add_pd(A3r,t3r), y3i = _mm256_add_pd(A3i,t3i);
+    const __m256d y7r = _mm256_sub_pd(A3r,t3r), y7i = _mm256_sub_pd(A3i,t3i);
+    ST(&out_re[0*vs], y0r); ST(&out_im[0*vs], y0i);
+    { __m256d wr = LD(&tw_re[0*vs]), wi = LD(&tw_im[0*vs]), tr = y1r;
+      ST(&out_re[1*vs], _mm256_fmadd_pd(y1i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[1*vs], _mm256_fnmadd_pd(tr,wi,_mm256_mul_pd(y1i,wr))); }
+    { __m256d wr = LD(&tw_re[1*vs]), wi = LD(&tw_im[1*vs]), tr = y2r;
+      ST(&out_re[2*vs], _mm256_fmadd_pd(y2i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[2*vs], _mm256_fnmadd_pd(tr,wi,_mm256_mul_pd(y2i,wr))); }
+    { __m256d wr = LD(&tw_re[2*vs]), wi = LD(&tw_im[2*vs]), tr = y3r;
+      ST(&out_re[3*vs], _mm256_fmadd_pd(y3i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[3*vs], _mm256_fnmadd_pd(tr,wi,_mm256_mul_pd(y3i,wr))); }
+    { __m256d wr = LD(&tw_re[3*vs]), wi = LD(&tw_im[3*vs]), tr = y4r;
+      ST(&out_re[4*vs], _mm256_fmadd_pd(y4i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[4*vs], _mm256_fnmadd_pd(tr,wi,_mm256_mul_pd(y4i,wr))); }
+    { __m256d wr = LD(&tw_re[4*vs]), wi = LD(&tw_im[4*vs]), tr = y5r;
+      ST(&out_re[5*vs], _mm256_fmadd_pd(y5i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[5*vs], _mm256_fnmadd_pd(tr,wi,_mm256_mul_pd(y5i,wr))); }
+    { __m256d wr = LD(&tw_re[5*vs]), wi = LD(&tw_im[5*vs]), tr = y6r;
+      ST(&out_re[6*vs], _mm256_fmadd_pd(y6i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[6*vs], _mm256_fnmadd_pd(tr,wi,_mm256_mul_pd(y6i,wr))); }
+    { __m256d wr = LD(&tw_re[6*vs]), wi = LD(&tw_im[6*vs]), tr = y7r;
+      ST(&out_re[7*vs], _mm256_fmadd_pd(y7i,wi,_mm256_mul_pd(tr,wr)));
+      ST(&out_im[7*vs], _mm256_fnmadd_pd(tr,wi,_mm256_mul_pd(y7i,wr))); }
+}
+
+#undef LD
+#undef ST
+#undef VL
+
 #endif /* FFT_RADIX8_AVX2_H */

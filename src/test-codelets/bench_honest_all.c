@@ -5,8 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <time.h>
 #include <fftw3.h>
+#include "bench_compat.h"
 
 #include "fft_radix4_avx2.h"
 #include "fft_radix8_avx2.h"
@@ -16,10 +16,7 @@
 #include "fft_radix32_avx2_dit_tw.h"
 #include "r64_unified_avx2.h"
 
-static inline double now_ns(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
+/* now_ns() provided by bench_compat.h */
 typedef void (*notw_fn)(const double*,const double*,double*,double*,size_t);
 typedef void (*tw_fn)(const double*,const double*,double*,double*,const double*,const double*,size_t);
 
@@ -83,7 +80,7 @@ static void bench_radix(int R, notw_fn nf, tw_fn tf, size_t min_k) {
         pcell(K>=min_k?bench_nf(nf,ir,ii_,or_,oi,K,reps):-1,fsimd);
         pcell(K>=min_k?bench_tf(tf,ir,ii_,or_,oi,twr,twi,K,reps):-1,fsimd);
         printf("\n");
-        free(ir);free(ii_);free(or_);free(oi);free(twr);free(twi);
+        aligned_free(ir);aligned_free(ii_);aligned_free(or_);aligned_free(oi);aligned_free(twr);aligned_free(twi);
     }
 }
 int main(void) {
