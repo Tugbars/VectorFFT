@@ -65,8 +65,19 @@ static void ct_1level(
     const double *W_re, const double *W_im,
     size_t R, size_t M)
 {
-    n1(in_re, in_im, out_re, out_im, R, 1, M, R);
-    t1(out_re, out_im, W_re, W_im, R, M);
+    /* n1: DFT-M on R sub-sequences. vl=R, is=R, os=1, ovs=M.
+     * Reads in[n*R + k] for n=0..M-1, k=0..R-1 (R sub-seqs, each M elements at stride R)
+     * Writes out[n*1 + k*M] = out[k*M + n]: sub-seq k at positions k*M..k*M+M-1
+     *
+     * t1: radix-R butterfly. ios=M, me=R? No...
+     * t1(ios=M, me=M): for m=0..M-1, butterfly on out[m, m+M, m+2M, ..., m+(R-1)*M]
+     * That gathers bin m from R sub-sequences. Each sub-seq k has bin m at k*M+m.
+     * Position k*M+m = m + k*M. So rio[m + k*M] with ios=M gives positions m, m+M, m+2M...
+     * For R legs: k=0..R-1. me=M means m=0..M-1.
+     * This covers all N=R*M positions. CORRECT.
+     */
+    n1(in_re, in_im, out_re, out_im, R, 1, R, M);
+    t1(out_re, out_im, W_re, W_im, M, M);
 }
 
 /* ================================================================
@@ -274,6 +285,16 @@ int main(void) {
     printf("  Running full FFTW comparison...\n"); fflush(stdout);
     test_exec("8x8 (1-level)",64,exec_64,200000);
     printf("  First test done.\n"); fflush(stdout);
+
+    printf("  Smoke test exec_128...\n"); fflush(stdout);
+    {
+        double __attribute__((aligned(32))) ir[128]={0}, ii_[128]={0}, or_[128]={0}, oi_[128]={0};
+        ir[0]=1;
+        exec_128(ir,ii_,or_,oi_);
+        printf("  out[0..3]=%.4f %.4f %.4f %.4f\n",or_[0],or_[1],or_[2],or_[3]);
+        fflush(stdout);
+    }
+
     test_exec("16x8 (1-level)",128,exec_128,100000);
 
     printf("\n");
