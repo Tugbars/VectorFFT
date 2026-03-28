@@ -1828,13 +1828,21 @@ def emit_sv_variants(t2_lines, isa, variant):
 def emit_ct_file(isa, itw_set, ct_variant):
     """Emit FFTW-style n1 or t1_dit codelet for R=32."""
     is_n1 = ct_variant == 'ct_n1'
+    is_t1_dif = ct_variant == 'ct_t1_dif'
     nfuse = isa.nfuse_notw if is_n1 else isa.nfuse_tw
     T = isa.reg_type
     em = Emitter(isa)
     em.addr_mode = 'n1' if is_n1 else 't1'
 
-    func_base = "radix32_n1" if is_n1 else "radix32_t1_dit"
-    vname = "n1 (separate is/os)" if is_n1 else "t1 DIT (in-place twiddle)"
+    if is_n1:
+        func_base = "radix32_n1"
+        vname = "n1 (separate is/os)"
+    elif is_t1_dif:
+        func_base = "radix32_t1_dif"
+        vname = "t1 DIF (in-place twiddle)"
+    else:
+        func_base = "radix32_t1_dit"
+        vname = "t1 DIT (in-place twiddle)"
     guard = f"FFT_RADIX32_{isa.name.upper()}_CT_{ct_variant.upper()}_H"
 
     em.L.append(f"/**")
@@ -1941,6 +1949,8 @@ def emit_ct_file(isa, itw_set, ct_variant):
         em.ind += 1
         if is_n1:
             emit_notw_kernel(em, d, nfuse, itw_set)
+        elif is_t1_dif:
+            emit_dif_tw_flat_kernel(em, d, nfuse, itw_set)
         else:
             emit_dit_tw_flat_kernel(em, d, nfuse, itw_set)
         em.ind -= 1
@@ -1960,7 +1970,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='dit_tw',
                         choices=['dit_tw', 'dif_tw', 'notw', 'ladder', 'avx512_full',
-                                 'ct_n1', 'ct_t1_dit', 'all'])
+                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dif', 'all'])
     args = parser.parse_args()
 
     itw_set = collect_internal_twiddles()
@@ -2037,6 +2047,12 @@ def main():
 
         if args.variant in ('ct_t1_dit',):
             lines = emit_ct_file(isa, itw_set, 'ct_t1_dit')
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print("\n".join(lines))
+
+        if args.variant in ('ct_t1_dif',):
+            lines = emit_ct_file(isa, itw_set, 'ct_t1_dif')
             if isa.name == 'scalar':
                 add_sqrt2_scalar(lines)
             print("\n".join(lines))
