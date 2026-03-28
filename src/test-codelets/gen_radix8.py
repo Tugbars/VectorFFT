@@ -831,6 +831,262 @@ radix8_t1sv_dif_kernel_{direction}_{isa_name}(
 
         parts.append('\n#undef LD\n#undef ST\n#undef VL')
 
+    # ── FFTW-style codelets: n1 (separate is/os) + t1 (in-place twiddle) ──
+    parts.append('\n/* ================================================================')
+    parts.append(' * FFTW-style codelets for recursive CT executor')
+    parts.append(' *')
+    parts.append(' * n1:  out-of-place, separate input/output strides.')
+    parts.append(' * t1:  in-place twiddle + butterfly.')
+    parts.append(' * ================================================================ */\n')
+
+    for direction in ['fwd', 'bwd']:
+        fwd = direction == 'fwd'
+
+        # ── scalar n1 (notw with is/os/vl/ivs/ovs) ──
+        n1_lines = []
+        n1_lines.append(f'    const double c = {fmt(C)};')
+        n1_lines.append('    for (size_t k = 0; k < vl; k++) {')
+        for n in range(8):
+            n1_lines.append(f'        const double x{n}r = in_re[{n}*is + k*ivs], x{n}i = in_im[{n}*is + k*ivs];')
+        n1_lines.append('        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;')
+        n1_lines.append('        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;')
+        n1_lines.append('        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;')
+        if fwd:
+            n1_lines.append('        const double A1r=eq_r+es_i,A1i=eq_i-es_r,A3r=eq_r-es_i,A3i=eq_i+es_r;')
+        else:
+            n1_lines.append('        const double A1r=eq_r-es_i,A1i=eq_i+es_r,A3r=eq_r+es_i,A3i=eq_i-es_r;')
+        n1_lines.append('        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;')
+        n1_lines.append('        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;')
+        n1_lines.append('        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;')
+        if fwd:
+            n1_lines.append('        const double B1r=oq_r+os_i,B1i=oq_i-os_r,B3r=oq_r-os_i,B3i=oq_i+os_r;')
+        else:
+            n1_lines.append('        const double B1r=oq_r-os_i,B1i=oq_i+os_r,B3r=oq_r+os_i,B3i=oq_i-os_r;')
+        # W8 combine — output at stride os
+        n1_lines.append('        out_re[0*os+k*ovs]=A0r+B0r; out_im[0*os+k*ovs]=A0i+B0i;')
+        n1_lines.append('        out_re[4*os+k*ovs]=A0r-B0r; out_im[4*os+k*ovs]=A0i-B0i;')
+        if fwd:
+            n1_lines.append('        {double w1r=c*(B1r+B1i),w1i=c*(B1i-B1r);')
+        else:
+            n1_lines.append('        {double w1r=c*(B1r-B1i),w1i=c*(B1r+B1i);')
+        n1_lines.append('        out_re[1*os+k*ovs]=A1r+w1r; out_im[1*os+k*ovs]=A1i+w1i;')
+        n1_lines.append('        out_re[5*os+k*ovs]=A1r-w1r; out_im[5*os+k*ovs]=A1i-w1i;}')
+        if fwd:
+            n1_lines.append('        out_re[2*os+k*ovs]=A2r+B2i; out_im[2*os+k*ovs]=A2i-B2r;')
+            n1_lines.append('        out_re[6*os+k*ovs]=A2r-B2i; out_im[6*os+k*ovs]=A2i+B2r;')
+        else:
+            n1_lines.append('        out_re[2*os+k*ovs]=A2r-B2i; out_im[2*os+k*ovs]=A2i+B2r;')
+            n1_lines.append('        out_re[6*os+k*ovs]=A2r+B2i; out_im[6*os+k*ovs]=A2i-B2r;')
+        if fwd:
+            n1_lines.append('        {double w3r=-c*(B3r-B3i),w3i=-c*(B3r+B3i);')
+        else:
+            n1_lines.append('        {double w3r=-c*(B3r+B3i),w3i=c*(B3r-B3i);')
+        n1_lines.append('        out_re[3*os+k*ovs]=A3r+w3r; out_im[3*os+k*ovs]=A3i+w3i;')
+        n1_lines.append('        out_re[7*os+k*ovs]=A3r-w3r; out_im[7*os+k*ovs]=A3i-w3i;}')
+        n1_lines.append('    }')
+
+        parts.append(f'''
+static inline void
+radix8_n1_{direction}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, size_t ivs, size_t ovs)
+{{
+{chr(10).join(n1_lines)}
+}}''')
+
+        # ── scalar t1 DIT (in-place: twiddle then butterfly) ──
+        t1_lines = []
+        t1_lines.append(f'    const double c = {fmt(C)};')
+        t1_lines.append('    for (size_t m = mb; m < me; m++) {')
+        t1_lines.append('        const double x0r = rio_re[m*ms], x0i = rio_im[m*ms];')
+        for n in range(1, 8):
+            t1_lines.append(f'        const double r{n}r = rio_re[m*ms+{n}*ios], r{n}i = rio_im[m*ms+{n}*ios];')
+            t1_lines.append(f'        const double tw{n}r = W_re[{n-1}*me+m], tw{n}i = W_im[{n-1}*me+m];')
+            if fwd:
+                t1_lines.append(f'        const double x{n}r = r{n}r*tw{n}r-r{n}i*tw{n}i, x{n}i = r{n}r*tw{n}i+r{n}i*tw{n}r;')
+            else:
+                t1_lines.append(f'        const double x{n}r = r{n}r*tw{n}r+r{n}i*tw{n}i, x{n}i = -r{n}r*tw{n}i+r{n}i*tw{n}r;')
+        t1_lines.append('        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;')
+        t1_lines.append('        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;')
+        t1_lines.append('        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;')
+        if fwd:
+            t1_lines.append('        const double A1r=eq_r+es_i,A1i=eq_i-es_r,A3r=eq_r-es_i,A3i=eq_i+es_r;')
+        else:
+            t1_lines.append('        const double A1r=eq_r-es_i,A1i=eq_i+es_r,A3r=eq_r+es_i,A3i=eq_i-es_r;')
+        t1_lines.append('        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;')
+        t1_lines.append('        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;')
+        t1_lines.append('        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_r-or_i;')
+        if fwd:
+            t1_lines.append('        const double B1r=oq_r+os_i,B1i=oq_i-os_r,B3r=oq_r-os_i,B3i=oq_i+os_r;')
+        else:
+            t1_lines.append('        const double B1r=oq_r-os_i,B1i=oq_i+os_r,B3r=oq_r+os_i,B3i=oq_i-os_r;')
+        # W8 combine — write back in-place
+        t1_lines.append('        rio_re[m*ms+0*ios]=A0r+B0r; rio_im[m*ms+0*ios]=A0i+B0i;')
+        t1_lines.append('        rio_re[m*ms+4*ios]=A0r-B0r; rio_im[m*ms+4*ios]=A0i-B0i;')
+        if fwd:
+            t1_lines.append('        {double w1r=c*(B1r+B1i),w1i=c*(B1i-B1r);')
+        else:
+            t1_lines.append('        {double w1r=c*(B1r-B1i),w1i=c*(B1r+B1i);')
+        t1_lines.append('        rio_re[m*ms+1*ios]=A1r+w1r; rio_im[m*ms+1*ios]=A1i+w1i;')
+        t1_lines.append('        rio_re[m*ms+5*ios]=A1r-w1r; rio_im[m*ms+5*ios]=A1i-w1i;}')
+        if fwd:
+            t1_lines.append('        rio_re[m*ms+2*ios]=A2r+B2i; rio_im[m*ms+2*ios]=A2i-B2r;')
+            t1_lines.append('        rio_re[m*ms+6*ios]=A2r-B2i; rio_im[m*ms+6*ios]=A2i+B2r;')
+        else:
+            t1_lines.append('        rio_re[m*ms+2*ios]=A2r-B2i; rio_im[m*ms+2*ios]=A2i+B2r;')
+            t1_lines.append('        rio_re[m*ms+6*ios]=A2r+B2i; rio_im[m*ms+6*ios]=A2i-B2r;')
+        if fwd:
+            t1_lines.append('        {double w3r=-c*(B3r-B3i),w3i=-c*(B3r+B3i);')
+        else:
+            t1_lines.append('        {double w3r=-c*(B3r+B3i),w3i=c*(B3r-B3i);')
+        t1_lines.append('        rio_re[m*ms+3*ios]=A3r+w3r; rio_im[m*ms+3*ios]=A3i+w3i;')
+        t1_lines.append('        rio_re[m*ms+7*ios]=A3r-w3r; rio_im[m*ms+7*ios]=A3i-w3i;}')
+        t1_lines.append('    }')
+
+        parts.append(f'''
+static inline void
+radix8_t1_dit_{direction}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t mb, size_t me, size_t ms)
+{{
+{chr(10).join(t1_lines)}
+}}''')
+
+    # ── SIMD n1 + t1 ──
+    if not is_scalar:
+        parts.append(f'\n{I["ld_macro"]}')
+        parts.append(f'#define VL {I["VL"]}')
+        V, p, VL = I['V'], I['p'], I['VL']
+        add = f'{p}_add_pd'; sub = f'{p}_sub_pd'; mul = f'{p}_mul_pd'
+        fma_op = f'{p}_fmadd_pd'; fnma = f'{p}_fnmadd_pd'
+        set1 = f'{p}_set1_pd'
+
+        for direction in ['fwd', 'bwd']:
+            fwd = direction == 'fwd'
+
+            # ── SIMD n1 (ivs=ovs=1) ──
+            sn = []
+            sn.append(f'    const {V} vc = {set1}({fmt(C)});')
+            sn.append(f'    const {V} vnc = {set1}({fmt(-C)});')
+            sn.append(f'    for (size_t k = 0; k < vl; k += VL) {{')
+            for n in range(8):
+                sn.append(f'        const {V} x{n}r = LD(&in_re[{n}*is+k]), x{n}i = LD(&in_im[{n}*is+k]);')
+            # DFT-4 evens
+            sn.append(f'        const {V} epr={add}(x0r,x4r),eqr={sub}(x0r,x4r),err={add}(x2r,x6r),esr={sub}(x2r,x6r);')
+            sn.append(f'        const {V} epi={add}(x0i,x4i),eqi={sub}(x0i,x4i),eri={add}(x2i,x6i),esi={sub}(x2i,x6i);')
+            sn.append(f'        const {V} A0r={add}(epr,err),A0i={add}(epi,eri),A2r={sub}(epr,err),A2i={sub}(epi,eri);')
+            if fwd:
+                sn.append(f'        const {V} A1r={add}(eqr,esi),A1i={sub}(eqi,esr),A3r={sub}(eqr,esi),A3i={add}(eqi,esr);')
+            else:
+                sn.append(f'        const {V} A1r={sub}(eqr,esi),A1i={add}(eqi,esr),A3r={add}(eqr,esi),A3i={sub}(eqi,esr);')
+            # DFT-4 odds
+            sn.append(f'        const {V} opr={add}(x1r,x5r),oqr={sub}(x1r,x5r),orr={add}(x3r,x7r),osr={sub}(x3r,x7r);')
+            sn.append(f'        const {V} opi={add}(x1i,x5i),oqi={sub}(x1i,x5i),ori={add}(x3i,x7i),osi={sub}(x3i,x7i);')
+            sn.append(f'        const {V} B0r={add}(opr,orr),B0i={add}(opi,ori),B2r={sub}(opr,orr),B2i={sub}(opi,ori);')
+            if fwd:
+                sn.append(f'        const {V} B1r={add}(oqr,osi),B1i={sub}(oqi,osr),B3r={sub}(oqr,osi),B3i={add}(oqi,osr);')
+            else:
+                sn.append(f'        const {V} B1r={sub}(oqr,osi),B1i={add}(oqi,osr),B3r={add}(oqr,osi),B3i={sub}(oqi,osr);')
+            # W8 combine — output at stride os
+            sn.append(f'        ST(&out_re[0*os+k],{add}(A0r,B0r)); ST(&out_im[0*os+k],{add}(A0i,B0i));')
+            sn.append(f'        ST(&out_re[4*os+k],{sub}(A0r,B0r)); ST(&out_im[4*os+k],{sub}(A0i,B0i));')
+            if fwd:
+                sn.append(f'        {{const {V} t1r={mul}(vc,{add}(B1r,B1i)),t1i={mul}(vc,{sub}(B1i,B1r));')
+            else:
+                sn.append(f'        {{const {V} t1r={mul}(vc,{sub}(B1r,B1i)),t1i={mul}(vc,{add}(B1r,B1i));')
+            sn.append(f'        ST(&out_re[1*os+k],{add}(A1r,t1r)); ST(&out_im[1*os+k],{add}(A1i,t1i));')
+            sn.append(f'        ST(&out_re[5*os+k],{sub}(A1r,t1r)); ST(&out_im[5*os+k],{sub}(A1i,t1i));}}')
+            if fwd:
+                sn.append(f'        ST(&out_re[2*os+k],{add}(A2r,B2i)); ST(&out_im[2*os+k],{sub}(A2i,B2r));')
+                sn.append(f'        ST(&out_re[6*os+k],{sub}(A2r,B2i)); ST(&out_im[6*os+k],{add}(A2i,B2r));')
+            else:
+                sn.append(f'        ST(&out_re[2*os+k],{sub}(A2r,B2i)); ST(&out_im[2*os+k],{add}(A2i,B2r));')
+                sn.append(f'        ST(&out_re[6*os+k],{add}(A2r,B2i)); ST(&out_im[6*os+k],{sub}(A2i,B2r));')
+            if fwd:
+                sn.append(f'        {{const {V} t3r={mul}(vnc,{sub}(B3r,B3i)),t3i={mul}(vnc,{add}(B3r,B3i));')
+            else:
+                sn.append(f'        {{const {V} t3r={mul}(vnc,{add}(B3r,B3i)),t3i={mul}(vc,{sub}(B3r,B3i));')
+            sn.append(f'        ST(&out_re[3*os+k],{add}(A3r,t3r)); ST(&out_im[3*os+k],{add}(A3i,t3i));')
+            sn.append(f'        ST(&out_re[7*os+k],{sub}(A3r,t3r)); ST(&out_im[7*os+k],{sub}(A3i,t3i));}}')
+            sn.append('    }')
+
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_n1_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl)
+{{
+{chr(10).join(sn)}
+}}''')
+
+            # ── SIMD t1 DIT (in-place, ms=1, mb=0) ──
+            st = []
+            st.append(f'    const {V} vc = {set1}({fmt(C)});')
+            st.append(f'    const {V} vnc = {set1}({fmt(-C)});')
+            st.append(f'    for (size_t m = 0; m < me; m += VL) {{')
+            st.append(f'        {V} x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);')
+            for n in range(1, 8):
+                st.append(f'        {V} r{n}r = LD(&rio_re[m+{n}*ios]), r{n}i = LD(&rio_im[m+{n}*ios]);')
+                st.append(f'        const {V} tw{n}r = LD(&W_re[{n-1}*me+m]), tw{n}i = LD(&W_im[{n-1}*me+m]);')
+                if fwd:
+                    st.append(f'        const {V} x{n}r = {fnma}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+                    st.append(f'        const {V} x{n}i = {fma_op}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+                else:
+                    st.append(f'        const {V} x{n}r = {fma_op}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+                    st.append(f'        const {V} x{n}i = {fnma}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+            st.append(f'        const {V} epr={add}(x0r,x4r),eqr={sub}(x0r,x4r),err_={add}(x2r,x6r),esr={sub}(x2r,x6r);')
+            st.append(f'        const {V} epi={add}(x0i,x4i),eqi={sub}(x0i,x4i),eri={add}(x2i,x6i),esi={sub}(x2i,x6i);')
+            st.append(f'        const {V} A0r={add}(epr,err_),A0i={add}(epi,eri),A2r={sub}(epr,err_),A2i={sub}(epi,eri);')
+            if fwd:
+                st.append(f'        const {V} A1r={add}(eqr,esi),A1i={sub}(eqi,esr),A3r={sub}(eqr,esi),A3i={add}(eqi,esr);')
+            else:
+                st.append(f'        const {V} A1r={sub}(eqr,esi),A1i={add}(eqi,esr),A3r={add}(eqr,esi),A3i={sub}(eqi,esr);')
+            st.append(f'        const {V} opr={add}(x1r,x5r),oqr={sub}(x1r,x5r),orr={add}(x3r,x7r),osr={sub}(x3r,x7r);')
+            st.append(f'        const {V} opi={add}(x1i,x5i),oqi={sub}(x1i,x5i),ori={add}(x3i,x7i),osi={sub}(x3i,x7i);')
+            st.append(f'        const {V} B0r={add}(opr,orr),B0i={add}(opi,ori),B2r={sub}(opr,orr),B2i={sub}(opi,ori);')
+            if fwd:
+                st.append(f'        const {V} B1r={add}(oqr,osi),B1i={sub}(oqi,osr),B3r={sub}(oqr,osi),B3i={add}(oqi,osr);')
+            else:
+                st.append(f'        const {V} B1r={sub}(oqr,osi),B1i={add}(oqi,osr),B3r={add}(oqr,osi),B3i={sub}(oqi,osr);')
+            st.append(f'        ST(&rio_re[m+0*ios],{add}(A0r,B0r)); ST(&rio_im[m+0*ios],{add}(A0i,B0i));')
+            st.append(f'        ST(&rio_re[m+4*ios],{sub}(A0r,B0r)); ST(&rio_im[m+4*ios],{sub}(A0i,B0i));')
+            if fwd:
+                st.append(f'        {{const {V} t1r={mul}(vc,{add}(B1r,B1i)),t1i={mul}(vc,{sub}(B1i,B1r));')
+            else:
+                st.append(f'        {{const {V} t1r={mul}(vc,{sub}(B1r,B1i)),t1i={mul}(vc,{add}(B1r,B1i));')
+            st.append(f'        ST(&rio_re[m+1*ios],{add}(A1r,t1r)); ST(&rio_im[m+1*ios],{add}(A1i,t1i));')
+            st.append(f'        ST(&rio_re[m+5*ios],{sub}(A1r,t1r)); ST(&rio_im[m+5*ios],{sub}(A1i,t1i));}}')
+            if fwd:
+                st.append(f'        ST(&rio_re[m+2*ios],{add}(A2r,B2i)); ST(&rio_im[m+2*ios],{sub}(A2i,B2r));')
+                st.append(f'        ST(&rio_re[m+6*ios],{sub}(A2r,B2i)); ST(&rio_im[m+6*ios],{add}(A2i,B2r));')
+            else:
+                st.append(f'        ST(&rio_re[m+2*ios],{sub}(A2r,B2i)); ST(&rio_im[m+2*ios],{add}(A2i,B2r));')
+                st.append(f'        ST(&rio_re[m+6*ios],{add}(A2r,B2i)); ST(&rio_im[m+6*ios],{sub}(A2i,B2r));')
+            if fwd:
+                st.append(f'        {{const {V} t3r={mul}(vnc,{sub}(B3r,B3i)),t3i={mul}(vnc,{add}(B3r,B3i));')
+            else:
+                st.append(f'        {{const {V} t3r={mul}(vnc,{add}(B3r,B3i)),t3i={mul}(vc,{sub}(B3r,B3i));')
+            st.append(f'        ST(&rio_re[m+3*ios],{add}(A3r,t3r)); ST(&rio_im[m+3*ios],{add}(A3i,t3i));')
+            st.append(f'        ST(&rio_re[m+7*ios],{sub}(A3r,t3r)); ST(&rio_im[m+7*ios],{sub}(A3i,t3i));}}')
+            st.append('    }')
+
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1_dit_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+{chr(10).join(st)}
+}}''')
+
+        parts.append('\n#undef LD\n#undef ST\n#undef VL')
+
     parts.append(f'\n#endif /* {guard} */')
     return '\n'.join(parts)
 

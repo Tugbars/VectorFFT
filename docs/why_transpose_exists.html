@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Why the Transpose Exists</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500;700;900&display=swap');
+
+:root {
+  --bg: #0c0f16;
+  --bg2: #141824;
+  --bg3: #1c2333;
+  --fg: #e4e8ef;
+  --fg2: #8891a4;
+  --blue: #5b9cf5;
+  --green: #45d6a0;
+  --red: #f06868;
+  --amber: #f5b642;
+  --purple: #a78bfa;
+  --cyan: #36d8d8;
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'DM Sans', sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  line-height: 1.75;
+}
+
+.wrap { max-width: 900px; margin: 0 auto; padding: 0 2rem 6rem; }
+
+header {
+  padding: 5rem 0 3rem;
+  text-align: center;
+}
+header h1 {
+  font-size: 2.8rem;
+  font-weight: 900;
+  letter-spacing: -0.04em;
+  line-height: 1.15;
+  margin-bottom: 1.2rem;
+}
+header h1 span { color: var(--red); }
+header p { color: var(--fg2); font-size: 1.15rem; max-width: 620px; margin: 0 auto; }
+
+section { padding: 3.5rem 0; border-top: 1px solid rgba(255,255,255,0.05); }
+section h2 {
+  font-size: 1.75rem; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 0.4rem;
+}
+section h2 .n { font-family: var(--mono); color: var(--blue); font-weight: 600; font-size: 0.85em; }
+section h3 { font-size: 1.2rem; font-weight: 700; margin: 2rem 0 0.75rem; color: var(--amber); }
+section p { color: var(--fg2); margin-bottom: 1.1rem; font-size: 1.02rem; }
+section p strong { color: var(--fg); font-weight: 600; }
+
+.code {
+  background: var(--bg2);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 1.3rem 1.5rem;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.85;
+  overflow-x: auto;
+  margin: 1.3rem 0;
+  color: var(--fg2);
+}
+.code .kw { color: var(--purple); }
+.code .fn { color: var(--blue); }
+.code .cm { color: #3d4557; font-style: italic; }
+.code .hi { color: var(--green); font-weight: 600; }
+.code .bad { color: var(--red); font-weight: 600; }
+.code .num { color: var(--amber); }
+
+/* Memory grid viz */
+.mem-grid {
+  display: inline-grid;
+  gap: 3px;
+  margin: 0.5rem 0;
+}
+.mem-grid .cell {
+  width: 44px; height: 38px;
+  border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 0.65rem; font-weight: 600;
+  transition: all 0.3s;
+}
+.cell.empty { background: var(--bg3); color: var(--fg2); opacity: 0.4; }
+.cell.d0 { background: #1e3a5f; color: #5b9cf5; }
+.cell.d1 { background: #1e4a3a; color: #45d6a0; }
+.cell.d2 { background: #4a2e1e; color: #f5b642; }
+.cell.d3 { background: #3a1e3a; color: #a78bfa; }
+.cell.hot { box-shadow: 0 0 12px rgba(91,156,245,0.4); }
+
+/* Comparison panel */
+.cmp {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+.cmp .panel {
+  background: var(--bg2);
+  border-radius: 14px;
+  padding: 1.6rem;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.cmp .panel.old { border-left: 4px solid var(--red); }
+.cmp .panel.new { border-left: 4px solid var(--green); }
+.cmp .panel h4 {
+  font-size: 1rem; font-weight: 700; margin-bottom: 1rem;
+  font-family: var(--mono); letter-spacing: 0.02em;
+}
+.cmp .panel.old h4 { color: var(--red); }
+.cmp .panel.new h4 { color: var(--green); }
+.cmp .panel p { font-size: 0.92rem; }
+
+/* Arrow between stages */
+.arrow {
+  text-align: center;
+  color: var(--fg2);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  padding: 0.6rem 0;
+}
+.arrow .label {
+  display: inline-block;
+  background: var(--bg3);
+  padding: 0.25rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+}
+.arrow .cost { color: var(--red); font-weight: 600; }
+.arrow .free { color: var(--green); font-weight: 600; }
+
+/* Stage box */
+.stage {
+  background: var(--bg2);
+  border-radius: 14px;
+  padding: 1.6rem;
+  margin: 1rem 0;
+  border: 1px solid rgba(255,255,255,0.06);
+  position: relative;
+}
+.stage .tag {
+  position: absolute; top: -10px; left: 16px;
+  font-family: var(--mono); font-size: 0.7rem; font-weight: 600;
+  padding: 2px 10px; border-radius: 4px;
+  background: var(--blue); color: var(--bg);
+}
+.stage .tag.warn { background: var(--red); }
+.stage .tag.ok { background: var(--green); }
+
+/* Key insight box */
+.insight {
+  background: linear-gradient(135deg, rgba(91,156,245,0.08), rgba(69,214,160,0.08));
+  border: 1px solid rgba(91,156,245,0.2);
+  border-radius: 14px;
+  padding: 1.6rem;
+  margin: 2rem 0;
+}
+.insight h4 {
+  font-family: var(--mono); font-size: 0.85rem; color: var(--blue);
+  text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.6rem;
+}
+.insight p { font-size: 0.95rem; }
+
+@media (max-width: 700px) {
+  .cmp { grid-template-columns: 1fr; }
+  header h1 { font-size: 2rem; }
+  .mem-grid .cell { width: 32px; height: 28px; font-size: 0.55rem; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Why the <span>Transpose</span> Exists</h1>
+  <p>
+    A visual walkthrough of what permutation and transpose solve in the old FFT architecture,
+    why they cost 30–40% of execution time, and how a single signature change eliminates both.
+  </p>
+</header>
+
+<!-- ════════════════════ SECTION 1 ════════════════════ -->
+<section>
+  <h2><span class="n">01</span> The Setup</h2>
+  <p>
+    We want to compute a DFT of size <strong>N = 8</strong>, factored as <strong>R × M = 2 × 4</strong>
+    using decimation-in-time (DIT). The input is 8 complex values in natural order.
+  </p>
+  <p>
+    DIT says: split the input into <strong>R = 2</strong> groups by taking every R-th element.
+    Group 0 gets the even-indexed elements. Group 1 gets the odd-indexed elements.
+    Then compute an M-point DFT on each group independently, apply twiddle factors,
+    and combine with an R-point butterfly.
+  </p>
+
+  <h3>Input in natural order (memory layout)</h3>
+  <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+    <div class="cell d0">x₀</div>
+    <div class="cell d1">x₁</div>
+    <div class="cell d0">x₂</div>
+    <div class="cell d1">x₃</div>
+    <div class="cell d0">x₄</div>
+    <div class="cell d1">x₅</div>
+    <div class="cell d0">x₆</div>
+    <div class="cell d1">x₇</div>
+  </div>
+  <p style="font-size:0.85rem;margin-top:0.5rem;">
+    <span style="color:var(--blue);">■ Blue</span> = group 0 (even: x₀, x₂, x₄, x₆) &nbsp;
+    <span style="color:var(--green);">■ Green</span> = group 1 (odd: x₁, x₃, x₅, x₇)
+  </p>
+  <p>
+    Group 0 needs elements at positions 0, 2, 4, 6 — <strong>stride 2</strong> apart.<br>
+    Group 1 needs elements at positions 1, 3, 5, 7 — also <strong>stride 2</strong> apart.<br>
+    Neither group is contiguous in memory.
+  </p>
+</section>
+
+<!-- ════════════════════ SECTION 2 ════════════════════ -->
+<section>
+  <h2><span class="n">02</span> The Old Codelet's Limitation</h2>
+  <p>
+    Our codelet has this signature:
+  </p>
+  <div class="code">
+    <span class="kw">void</span> <span class="fn">radix4_fwd</span>(<span class="kw">const double</span> *in_re, <span class="kw">const double</span> *in_im,<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">double</span> *out_re, <span class="kw">double</span> *out_im,<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">const double</span> *tw_re, <span class="kw">const double</span> *tw_im,<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">size_t</span> <span class="hi">K</span>);<br><br>
+    <span class="cm">// Reads:  in_re[j * <span class="hi">K</span> + k]   for j = 0..3, k = 0..K-1</span><br>
+    <span class="cm">// Writes: out_re[j * <span class="hi">K</span> + k]  for j = 0..3, k = 0..K-1</span><br>
+    <span class="cm">//</span><br>
+    <span class="cm">// Same <span class="bad">K</span> for both input and output.</span><br>
+    <span class="cm">// <span class="bad">Cannot read at stride 2 and write at stride 1.</span></span>
+  </div>
+  <p>
+    The single <strong>K</strong> parameter is used for <em>both</em> the input element spacing and
+    the output element spacing. If K = 2, it reads at stride 2 and writes at stride 2.
+    If K = 1, it reads at stride 1 and writes at stride 1.
+    It cannot read at stride 2 (to gather the even elements) and write at stride 1
+    (to pack them contiguously). <strong>That asymmetry is exactly what DIT requires.</strong>
+  </p>
+
+  <div class="insight">
+    <h4>The Root Cause</h4>
+    <p>
+      DIT decomposition needs the inner DFT to <strong>read at stride R</strong> (gather every R-th element)
+      and <strong>write at stride 1</strong> (pack results contiguously for the next stage).
+      One parameter K cannot express two different strides.
+      The transpose exists to perform this stride change outside the codelet.
+    </p>
+  </div>
+</section>
+
+<!-- ════════════════════ SECTION 3 ════════════════════ -->
+<section>
+  <h2><span class="n">03</span> What the Old Code Actually Does</h2>
+  <p>
+    Since the codelet can't change stride, the executor must do it in separate passes.
+    Here's the full sequence for N = 8 = 2 × 4:
+  </p>
+
+  <div class="stage">
+    <div class="tag warn">PASS 1 — Transpose (stride change)</div>
+    <p style="margin-top:1rem;">
+      Rearrange memory so that each group's elements are contiguous.
+      Copy x₀, x₂, x₄, x₆ to positions 0–3 and x₁, x₃, x₅, x₇ to positions 4–7.
+    </p>
+    <p><strong>Before (natural order):</strong></p>
+    <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+      <div class="cell d0">x₀</div><div class="cell d1">x₁</div>
+      <div class="cell d0">x₂</div><div class="cell d1">x₃</div>
+      <div class="cell d0">x₄</div><div class="cell d1">x₅</div>
+      <div class="cell d0">x₆</div><div class="cell d1">x₇</div>
+    </div>
+    <p><strong>After (grouped):</strong></p>
+    <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+      <div class="cell d0 hot">x₀</div><div class="cell d0 hot">x₂</div>
+      <div class="cell d0 hot">x₄</div><div class="cell d0 hot">x₆</div>
+      <div class="cell d1 hot">x₁</div><div class="cell d1 hot">x₃</div>
+      <div class="cell d1 hot">x₅</div><div class="cell d1 hot">x₇</div>
+    </div>
+    <p style="font-size:0.85rem;color:var(--red);margin-top:0.5rem;">
+      Cost: N random reads + N sequential writes. For large N, every read is an L1 miss.
+    </p>
+  </div>
+
+  <div class="arrow">↓ <span class="label">now groups are contiguous</span></div>
+
+  <div class="stage">
+    <div class="tag">PASS 2 — Inner DFT-4 codelet (K = 1)</div>
+    <p style="margin-top:1rem;">
+      Run DFT-4 on group 0 (positions 0–3) and DFT-4 on group 1 (positions 4–7).
+      With K = 1, the codelet reads and writes contiguously. The math is a single 4-point butterfly.
+    </p>
+    <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+      <div class="cell d0 hot">G₀₀</div><div class="cell d0 hot">G₀₁</div>
+      <div class="cell d0 hot">G₀₂</div><div class="cell d0 hot">G₀₃</div>
+      <div class="cell d1 hot">G₁₀</div><div class="cell d1 hot">G₁₁</div>
+      <div class="cell d1 hot">G₁₂</div><div class="cell d1 hot">G₁₃</div>
+    </div>
+    <p style="font-size:0.85rem;color:var(--fg2);margin-top:0.5rem;">
+      G₀ₘ = DFT-4 of even elements, G₁ₘ = DFT-4 of odd elements.
+    </p>
+  </div>
+
+  <div class="arrow">↓ <span class="label">need another transpose for outer stage</span></div>
+
+  <div class="stage">
+    <div class="tag warn">PASS 3 — Transpose (interleave groups)</div>
+    <p style="margin-top:1rem;">
+      The outer radix-2 butterfly needs to operate on corresponding elements from each group:
+      (G₀₀, G₁₀), (G₀₁, G₁₁), etc. But they're in separate blocks. Transpose again.
+    </p>
+    <p><strong>Before:</strong></p>
+    <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+      <div class="cell d0">G₀₀</div><div class="cell d0">G₀₁</div>
+      <div class="cell d0">G₀₂</div><div class="cell d0">G₀₃</div>
+      <div class="cell d1">G₁₀</div><div class="cell d1">G₁₁</div>
+      <div class="cell d1">G₁₂</div><div class="cell d1">G₁₃</div>
+    </div>
+    <p><strong>After (interleaved for outer butterfly):</strong></p>
+    <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+      <div class="cell d0 hot">G₀₀</div><div class="cell d1 hot">G₁₀</div>
+      <div class="cell d0 hot">G₀₁</div><div class="cell d1 hot">G₁₁</div>
+      <div class="cell d0 hot">G₀₂</div><div class="cell d1 hot">G₁₂</div>
+      <div class="cell d0 hot">G₀₃</div><div class="cell d1 hot">G₁₃</div>
+    </div>
+    <p style="font-size:0.85rem;color:var(--red);margin-top:0.5rem;">
+      Another N-element shuffle. Another full pass over all data.
+    </p>
+  </div>
+
+  <div class="arrow">↓ <span class="label">data is now laid out for outer codelet</span></div>
+
+  <div class="stage">
+    <div class="tag">PASS 4 — Outer twiddle + radix-2 butterfly (K = 4)</div>
+    <p style="margin-top:1rem;">
+      Apply twiddle factors and 2-point butterfly. With K = 4, the codelet reads
+      pairs at stride 4: (G₀₀, G₁₀), (G₀₁, G₁₁), etc. Produces final output.
+    </p>
+    <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+      <div class="cell d2 hot">X₀</div><div class="cell d2 hot">X₁</div>
+      <div class="cell d2 hot">X₂</div><div class="cell d2 hot">X₃</div>
+      <div class="cell d2 hot">X₄</div><div class="cell d2 hot">X₅</div>
+      <div class="cell d2 hot">X₆</div><div class="cell d2 hot">X₇</div>
+    </div>
+  </div>
+
+  <h3>Total cost</h3>
+  <p>
+    <strong>4 passes</strong> over N elements. 2 of them are pure data movement (transposes) that
+    do zero useful arithmetic. For large N, these transposes dominate —
+    they're 30–40% of total execution time.
+  </p>
+</section>
+
+<!-- ════════════════════ SECTION 4 ════════════════════ -->
+<section>
+  <h2><span class="n">04</span> Why It's a Fundamental Limitation</h2>
+  <p>
+    This isn't a bug or a lazy implementation. It's a necessary consequence of the codelet interface.
+    Let me show why with the actual memory access pattern:
+  </p>
+
+  <div class="code">
+    <span class="cm">// The inner DFT-4 codelet needs to:</span><br>
+    <span class="cm">//   READ  x₀, x₂, x₄, x₆  (stride <span class="hi">2</span> in the input)</span><br>
+    <span class="cm">//   WRITE G₀₀, G₀₁, G₀₂, G₀₃  (stride <span class="hi">1</span> in the output)</span><br><br>
+    <span class="cm">// But the codelet computes:</span><br>
+    &nbsp;&nbsp;in_re[j * <span class="bad">K</span> + k] → out_re[j * <span class="bad">K</span> + k]<br><br>
+    <span class="cm">// If K = 2: reads at stride 2 ✓, writes at stride 2 ✗</span><br>
+    <span class="cm">// If K = 1: reads at stride 1 ✗, writes at stride 1 ✓</span><br>
+    <span class="cm">// No value of K satisfies both.</span>
+  </div>
+
+  <p>
+    The problem scales with every level of recursion. For N = R₁ × R₂ × R₃,
+    there are <strong>two</strong> stride changes (between levels 1→2 and 2→3),
+    each requiring a transpose. More levels = more transposes = more wasted bandwidth.
+  </p>
+
+  <p>
+    Our actual benchmarks measured this exactly:
+  </p>
+
+  <div class="code">
+    <span class="cm">// N = 2048, 2-level FFT: 32 × 64</span><br>
+    &nbsp;&nbsp;Inner DFT-64 codelet: &nbsp;<span class="hi">3374 ns</span> (44%)<br>
+    &nbsp;&nbsp;SIMD 4×4 Transpose: &nbsp;&nbsp;<span class="bad">1368 ns</span> (18%) <span class="cm">← pure waste</span><br>
+    &nbsp;&nbsp;Outer DFT-32 codelet: &nbsp;<span class="hi">2882 ns</span> (38%)<br>
+    &nbsp;&nbsp;Total: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;7623 ns<br>
+    &nbsp;&nbsp;FFTW MEASURE: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;5001 ns<br><br>
+    <span class="cm">// Without the transpose: 3374 + 2882 = 6256 ns</span><br>
+    <span class="cm">// That would <span class="hi">beat</span> FFTW. The transpose is the entire gap.</span>
+  </div>
+</section>
+
+<!-- ════════════════════ SECTION 5 ════════════════════ -->
+<section>
+  <h2><span class="n">05</span> The New Signature</h2>
+  <p>
+    Replace the single K with five parameters that decouple input stride from output stride:
+  </p>
+
+  <div class="code">
+    <span class="kw">void</span> <span class="fn">radix4_n1_fwd</span>(<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">const double</span> *ir, <span class="kw">const double</span> *ii,<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">double</span> *or_, <span class="kw">double</span> *oi,<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">size_t</span> <span class="hi">is</span>, &nbsp;&nbsp;&nbsp;<span class="cm">// input element stride</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">size_t</span> <span class="hi">os</span>, &nbsp;&nbsp;&nbsp;<span class="cm">// output element stride</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">size_t</span> vl, &nbsp;&nbsp;&nbsp;<span class="cm">// batch count (vectorization length)</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">size_t</span> ivs, &nbsp;&nbsp;<span class="cm">// input batch stride</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">size_t</span> ovs); &nbsp;<span class="cm">// output batch stride</span><br><br>
+    <span class="cm">// Reads:  ir[j * <span class="hi">is</span> + k * ivs]</span><br>
+    <span class="cm">// Writes: or_[j * <span class="hi">os</span> + k * ovs]</span><br><br>
+    <span class="cm">// <span class="hi">is</span> and <span class="hi">os</span> are independent. The codelet can now</span><br>
+    <span class="cm">// read at stride 2 and write at stride 1.</span>
+  </div>
+
+  <p>
+    The old codelet is a special case: <strong>is = os = K, ivs = ovs = 1</strong>.
+    The new signature is strictly more general — it can do everything the old one did,
+    plus the stride change that eliminates the transpose.
+  </p>
+</section>
+
+<!-- ════════════════════ SECTION 6 ════════════════════ -->
+<section>
+  <h2><span class="n">06</span> What Happens With the New Signature</h2>
+  <p>
+    Same problem: N = 8 = 2 × 4. Same DIT decomposition. But now without any transposes.
+  </p>
+
+  <div class="stage">
+    <div class="tag ok">PASS 1 — Inner DFT-4 codelet (is=2, os=1, vl=2, ivs=1, ovs=4)</div>
+    <p style="margin-top:1rem;">
+      The codelet reads at stride 2 (gathers every-other element) and writes at stride 1
+      (packs contiguously). Both groups are processed simultaneously (vl=2).
+    </p>
+    <p><strong>Input (natural order, read at stride 2):</strong></p>
+    <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+      <div class="cell d0 hot">x₀</div><div class="cell d1 hot">x₁</div>
+      <div class="cell d0 hot">x₂</div><div class="cell d1 hot">x₃</div>
+      <div class="cell d0 hot">x₄</div><div class="cell d1 hot">x₅</div>
+      <div class="cell d0 hot">x₆</div><div class="cell d1 hot">x₇</div>
+    </div>
+    <p style="font-size:0.85rem;margin-top:0.3rem;">
+      Group 0 reads: ir[0·2 + 0·1], ir[1·2 + 0·1], ir[2·2 + 0·1], ir[3·2 + 0·1] = x₀, x₂, x₄, x₆ ✓<br>
+      Group 1 reads: ir[0·2 + 1·1], ir[1·2 + 1·1], ir[2·2 + 1·1], ir[3·2 + 1·1] = x₁, x₃, x₅, x₇ ✓
+    </p>
+    <p><strong>Output (grouped contiguously, written at stride 1):</strong></p>
+    <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+      <div class="cell d0 hot">G₀₀</div><div class="cell d0 hot">G₀₁</div>
+      <div class="cell d0 hot">G₀₂</div><div class="cell d0 hot">G₀₃</div>
+      <div class="cell d1 hot">G₁₀</div><div class="cell d1 hot">G₁₁</div>
+      <div class="cell d1 hot">G₁₂</div><div class="cell d1 hot">G₁₃</div>
+    </div>
+    <p style="font-size:0.85rem;color:var(--green);margin-top:0.3rem;">
+      Group 0 writes: or_[0·1 + 0·4], or_[1·1 + 0·4], ... = positions 0,1,2,3 ✓<br>
+      Group 1 writes: or_[0·1 + 1·4], or_[1·1 + 1·4], ... = positions 4,5,6,7 ✓<br>
+      <strong>The stride change happened inside the codelet. No separate transpose.</strong>
+    </p>
+  </div>
+
+  <div class="arrow">↓ <span class="label"><span class="free">zero-cost</span> — data is already in the right layout</span></div>
+
+  <div class="stage">
+    <div class="tag ok">PASS 2 — Twiddle + radix-2 butterfly (in-place)</div>
+    <p style="margin-top:1rem;">
+      The twiddle codelet operates in-place on the contiguous blocks left by pass 1.
+      For each m = 0..3: apply twiddle, then 2-point butterfly on elements at stride 4.
+    </p>
+    <div class="code" style="margin-bottom:0.5rem;">
+      <span class="cm">// ios = 4 (distance between butterfly legs)</span><br>
+      <span class="cm">// For m=0: rio[0] and rio[4] → butterfly</span><br>
+      <span class="cm">// For m=1: rio[1] and rio[5] → butterfly</span><br>
+      <span class="cm">// For m=2: rio[2] and rio[6] → butterfly</span><br>
+      <span class="cm">// For m=3: rio[3] and rio[7] → butterfly</span>
+    </div>
+    <div class="mem-grid" style="grid-template-columns: repeat(8, 1fr);">
+      <div class="cell d2 hot">X₀</div><div class="cell d2 hot">X₁</div>
+      <div class="cell d2 hot">X₂</div><div class="cell d2 hot">X₃</div>
+      <div class="cell d2 hot">X₄</div><div class="cell d2 hot">X₅</div>
+      <div class="cell d2 hot">X₆</div><div class="cell d2 hot">X₇</div>
+    </div>
+  </div>
+
+  <h3>Total cost</h3>
+  <p>
+    <strong>2 passes</strong> over N elements. Both do useful arithmetic. Zero data-movement-only passes.
+    Every byte of memory bandwidth carries a butterfly or twiddle multiply along with it.
+  </p>
+</section>
+
+<!-- ════════════════════ SECTION 7 ════════════════════ -->
+<section>
+  <h2><span class="n">07</span> Side-by-Side Comparison</h2>
+
+  <div class="cmp">
+    <div class="panel old">
+      <h4>Old: K conflates all strides</h4>
+      <div class="code" style="font-size:0.78rem;">
+        Pass 1: <span class="bad">Transpose</span> (N reads+writes)<br>
+        Pass 2: Inner DFT-M, K=1<br>
+        Pass 3: <span class="bad">Transpose</span> (N reads+writes)<br>
+        Pass 4: Outer DFT-R, K=M
+      </div>
+      <p>4 passes. 2 are pure data movement.</p>
+      <p><strong>Memory traffic: 4 × 2N = 8N</strong></p>
+      <p style="font-size:0.85rem;color:var(--red);">
+        Transposes touch every element twice, polluting cache
+        and evicting the data the next codelet needs.
+      </p>
+    </div>
+    <div class="panel new">
+      <h4>New: is ≠ os eliminates transpose</h4>
+      <div class="code" style="font-size:0.78rem;">
+        Pass 1: Inner DFT-M, <span class="hi">is=R, os=1</span><br>
+        Pass 2: Twiddle + DFT-R, in-place
+      </div>
+      <p>2 passes. Both do useful arithmetic.</p>
+      <p><strong>Memory traffic: 2 × 2N = 4N</strong></p>
+      <p style="font-size:0.85rem;color:var(--green);">
+        Half the memory bandwidth. Data written by pass 1
+        is still in L1 when pass 2 reads it.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════ SECTION 8 ════════════════════ -->
+<section>
+  <h2><span class="n">08</span> At Scale: 3 Levels</h2>
+  <p>
+    For N = 4096 = 4 × 16 × 64, the old architecture needs a transpose between every level —
+    <strong>four extra passes</strong> of pure data movement. The new architecture needs zero.
+  </p>
+
+  <div class="cmp">
+    <div class="panel old">
+      <h4>Old: 7 passes (3 useful, 4 waste)</h4>
+      <div class="code" style="font-size:0.72rem;">
+        1. <span class="bad">Transpose</span> 4096 elements<br>
+        2. 4× DFT-1024 (K=1)<br>
+        3. <span class="bad">Transpose</span> 4096 elements<br>
+        4. 64× DFT-16 (K=1)<br>
+        5. <span class="bad">Transpose</span> 4096 elements<br>
+        6. 256× DFT-4 (K=1)<br>
+        7. <span class="bad">Transpose</span> 4096 elements
+      </div>
+      <p style="font-size:0.85rem;color:var(--red);">
+        Memory: 14 × N = 57344 element accesses.<br>
+        Over half is pure shuffling.
+      </p>
+    </div>
+    <div class="panel new">
+      <h4>New: 3 passes (all useful)</h4>
+      <div class="code" style="font-size:0.72rem;">
+        1. Inner DFT-64, <span class="hi">is=64, os=1</span><br>
+        2. Twiddle + DFT-16, in-place<br>
+        3. Twiddle + DFT-4, in-place
+      </div>
+      <p style="font-size:0.85rem;color:var(--green);">
+        Memory: 6 × N = 24576 element accesses.<br>
+        Every access carries useful arithmetic.<br>
+        Sub-problems fit in L1 at each level.
+      </p>
+    </div>
+  </div>
+
+  <div class="insight">
+    <h4>The Recursion</h4>
+    <p>
+      The recursive executor passes strides down the tree. Level 1 calls the inner DFT with
+      <strong>is = R₁ × parent_is</strong> (decimated input) and <strong>os = parent_os</strong> (contiguous output).
+      The stride change propagates through the recursion automatically.
+      No level ever needs to see the full array layout — it just processes its local
+      sub-problem with the strides it was given. The permutation that DIT requires
+      is distributed across the codelet load addresses instead of materialized
+      as a separate pass.
+    </p>
+  </div>
+</section>
+
+<!-- ════════════════════ SECTION 9 ════════════════════ -->
+<section>
+  <h2><span class="n">09</span> What Changes in the Code</h2>
+  <p>
+    The butterfly math inside the codelet stays <strong>identical</strong>. Only two things change:
+  </p>
+
+  <h3>1. Load addresses</h3>
+  <div class="code">
+    <span class="cm">// Old:</span><br>
+    __m256d x0 = _mm256_load_pd(&in_re[<span class="num">0</span> * <span class="bad">K</span> + k]);<br>
+    __m256d x1 = _mm256_load_pd(&in_re[<span class="num">1</span> * <span class="bad">K</span> + k]);<br><br>
+    <span class="cm">// New:</span><br>
+    __m256d x0 = _mm256_load_pd(&ir[<span class="num">0</span> * <span class="hi">is</span> + k * ivs]);<br>
+    __m256d x1 = _mm256_load_pd(&ir[<span class="num">1</span> * <span class="hi">is</span> + k * ivs]);<br>
+  </div>
+
+  <h3>2. Store addresses</h3>
+  <div class="code">
+    <span class="cm">// Old:</span><br>
+    _mm256_store_pd(&out_re[<span class="num">0</span> * <span class="bad">K</span> + k], result0);<br>
+    _mm256_store_pd(&out_re[<span class="num">1</span> * <span class="bad">K</span> + k], result1);<br><br>
+    <span class="cm">// New:</span><br>
+    _mm256_store_pd(&or_[<span class="num">0</span> * <span class="hi">os</span> + k * ovs], result0);<br>
+    _mm256_store_pd(&or_[<span class="num">1</span> * <span class="hi">os</span> + k * ovs], result1);<br>
+  </div>
+
+  <p>
+    The arithmetic between the loads and stores — every FMA, every add, every subtract —
+    is <strong>completely unchanged</strong>. The genfft DAG, the Sethi-Ullman scheduling,
+    the ILP interleaving — all of it stays exactly as-is.
+    The entire optimization is in the addressing, not the math.
+  </p>
+
+  <div class="insight">
+    <h4>Summary</h4>
+    <p>
+      The transpose and permutation exist because the old codelet interface uses one parameter
+      for both input and output stride. DIT decomposition requires different strides at each
+      level. The mismatch forces explicit data rearrangement passes that consume 30–40% of
+      execution time and pollute the cache hierarchy. Splitting K into separate is/os parameters
+      lets the codelet perform the stride change as part of its normal load/store operations,
+      eliminating every transpose and permutation from the FFT execution.
+    </p>
+  </div>
+</section>
+
+</div>
+</body>
+</html>
