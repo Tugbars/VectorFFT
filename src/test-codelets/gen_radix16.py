@@ -893,11 +893,19 @@ def emit_file_ct(isa, itw_set, ct_variant):
     T = isa.T
 
     is_n1 = ct_variant == 'ct_n1'
-    is_t1 = ct_variant == 'ct_t1_dit'
+    is_t1_dit = ct_variant == 'ct_t1_dit'
+    is_t1_dif = ct_variant == 'ct_t1_dif'
     em.addr_mode = 'n1' if is_n1 else 't1'
 
-    func_base = f"radix16_n1" if is_n1 else f"radix16_t1_dit"
-    vname = "n1 (separate is/os)" if is_n1 else "t1 DIT (in-place twiddle)"
+    if is_n1:
+        func_base = "radix16_n1"
+        vname = "n1 (separate is/os)"
+    elif is_t1_dif:
+        func_base = "radix16_t1_dif"
+        vname = "t1 DIF (in-place twiddle)"
+    else:
+        func_base = "radix16_t1_dit"
+        vname = "t1 DIT (in-place twiddle)"
     guard = f"FFT_RADIX16_{isa.name.upper()}_CT_{ct_variant.upper()}_H"
 
     em.L.append(f"/**")
@@ -1016,7 +1024,7 @@ def emit_file_ct(isa, itw_set, ct_variant):
 
         em.ind += 1
         # Reuse the same kernel body — addressing differs via addr_mode
-        kernel_variant = 'notw' if is_n1 else 'dit_tw'
+        kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
         emit_kernel_body(em, d, itw_set, kernel_variant)
         em.ind -= 1
         em.o("}")
@@ -1037,7 +1045,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='dit_tw',
                         choices=['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-                                 'ct_n1', 'ct_t1_dit', 'all'])
+                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dif', 'all'])
     args = parser.parse_args()
 
     itw_set = collect_internal_twiddles()

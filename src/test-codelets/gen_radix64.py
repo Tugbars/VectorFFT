@@ -767,6 +767,300 @@ def gen_notw(isa, direction):
 # File generator
 # =======================================
 
+def gen_ct_n1(isa, direction):
+    """FFTW-style n1: out-of-place, separate is/os, loop over vl."""
+    fwd = direction == 'fwd'
+    em = Emitter()
+    T, C = isa.T, isa.C
+
+    if isa.attr:
+        em.L.append(isa.attr)
+    em.L.append(f'static void')
+    em.L.append(f'radix64_n1_{direction}_{isa.name}(')
+    em.L.append(f'    const double * __restrict__ in_re, const double * __restrict__ in_im,')
+    em.L.append(f'    double * __restrict__ out_re, double * __restrict__ out_im,')
+    if isa.is_scalar:
+        em.L.append(f'    size_t is, size_t os, size_t vl, size_t ivs, size_t ovs)')
+    else:
+        em.L.append(f'    size_t is, size_t os, size_t vl)')
+    em.L.append(f'{{')
+    em.ind = 1
+
+    if isa.sign_mask:
+        em.o(isa.sign_mask)
+    em.o(f'const {T} vc = {isa.set1("0.707106781186547524400844362104849039284835938")};')
+    em.o(f'const {T} vnc = {isa.set1("-0.707106781186547524400844362104849039284835938")};')
+    if isa.is_scalar:
+        em.o(f'double sp_re[64], sp_im[64];')
+    else:
+        em.o(f'__attribute__((aligned({isa.align}))) double sp_re[64*{C}], sp_im[64*{C}];')
+    if isa.name == 'avx2':
+        em.o(f'__attribute__((aligned({isa.align}))) double bfr[4*{C}], bfi[4*{C}];')
+    em.o(f'{T} x0r,x0i,x1r,x1i,x2r,x2i,x3r,x3i,x4r,x4i,x5r,x5i,x6r,x6i,x7r,x7i;')
+    em.b()
+
+    k_step = C if not isa.is_scalar else 1
+    em.o(f'for (size_t k = 0; k < vl; k += {k_step}) {{')
+    em.ind += 1
+
+    xr = [f'x{i}r' for i in range(8)]
+    xi = [f'x{i}i' for i in range(8)]
+    sp_mul = C if not isa.is_scalar else 1
+
+    # PASS 1: 8 radix-8 sub-FFTs — loads use is
+    for n2 in range(8):
+        em.c(f'Sub-FFT n2={n2}')
+        for n1 in range(8):
+            n = 8*n1 + n2
+            em.o(f'{xr[n1]} = {isa.load(f"&in_re[{n}*is+k]")}; {xi[n1]} = {isa.load(f"&in_im[{n}*is+k]")};')
+        em.b()
+        emit_r8(isa, em, fwd, xr, xi, xr, xi)
+        em.b()
+        for k1 in range(8):
+            slot = n2 * 8 + k1
+            em.o(f'{isa.store(f"&sp_re[{slot}*{sp_mul}]", xr[k1])}; {isa.store(f"&sp_im[{slot}*{sp_mul}]", xi[k1])};')
+        em.b()
+
+    # PASS 2: 8 radix-8 column combines — stores use os
+    for k1 in range(8):
+        em.c(f'Column k1={k1}')
+        for n2 in range(8):
+            slot = n2 * 8 + k1
+            em.o(f'{xr[n2]} = {isa.load(f"&sp_re[{slot}*{sp_mul}]")}; {xi[n2]} = {isa.load(f"&sp_im[{slot}*{sp_mul}]")};')
+        if k1 > 0:
+            for n2 in range(1, 8):
+                emit_itw_apply(isa, em, xr[n2], xi[n2], (n2*k1)%64, fwd)
+        em.b()
+        emit_r8(isa, em, fwd, xr, xi, xr, xi)
+        em.b()
+        for k2 in range(8):
+            m = k1 + 8 * k2
+            em.o(f'{isa.store(f"&out_re[{m}*os+k]", xr[k2])}; {isa.store(f"&out_im[{m}*os+k]", xi[k2])};')
+        em.b()
+
+    em.ind -= 1
+    em.o('}')
+    em.L.append('}')
+    em.L.append('')
+    return em.L
+
+
+def gen_ct_t1_dit(isa, direction):
+    """FFTW-style t1 DIT: in-place twiddle + butterfly, loop over m."""
+    fwd = direction == 'fwd'
+    em = Emitter()
+    T, C = isa.T, isa.C
+
+    if isa.attr:
+        em.L.append(isa.attr)
+    em.L.append(f'static void')
+    em.L.append(f'radix64_t1_dit_{direction}_{isa.name}(')
+    em.L.append(f'    double * __restrict__ rio_re, double * __restrict__ rio_im,')
+    em.L.append(f'    const double * __restrict__ W_re, const double * __restrict__ W_im,')
+    if isa.is_scalar:
+        em.L.append(f'    size_t ios, size_t mb, size_t me, size_t ms)')
+    else:
+        em.L.append(f'    size_t ios, size_t me)')
+    em.L.append(f'{{')
+    em.ind = 1
+
+    if isa.sign_mask:
+        em.o(isa.sign_mask)
+    em.o(f'const {T} vc = {isa.set1("0.707106781186547524400844362104849039284835938")};')
+    em.o(f'const {T} vnc = {isa.set1("-0.707106781186547524400844362104849039284835938")};')
+    if isa.is_scalar:
+        em.o(f'double sp_re[64], sp_im[64];')
+    else:
+        em.o(f'__attribute__((aligned({isa.align}))) double sp_re[64*{C}], sp_im[64*{C}];')
+    if isa.name == 'avx2':
+        em.o(f'__attribute__((aligned({isa.align}))) double bfr[4*{C}], bfi[4*{C}];')
+    em.o(f'{T} x0r,x0i,x1r,x1i,x2r,x2i,x3r,x3i,x4r,x4i,x5r,x5i,x6r,x6i,x7r,x7i;')
+    em.b()
+
+    k_step = C if not isa.is_scalar else 1
+    if isa.is_scalar:
+        em.o(f'for (size_t m = mb; m < me; m++) {{')
+    else:
+        em.o(f'for (size_t m = 0; m < me; m += {k_step}) {{')
+    em.ind += 1
+
+    # For log3 derivation we need to emit it inside the m-loop for t1
+    emit_log3_derivation(isa, em)
+
+    xr = [f'x{i}r' for i in range(8)]
+    xi = [f'x{i}i' for i in range(8)]
+    sp_mul = C if not isa.is_scalar else 1
+
+    # PASS 1: 8 radix-8 sub-FFTs — load from rio at ios stride, apply external twiddle
+    for n2 in range(8):
+        em.c(f'Sub-FFT n2={n2}')
+        for n1 in range(8):
+            n = 8*n1 + n2
+            if isa.is_scalar:
+                em.o(f'{xr[n1]} = rio_re[m*ms+{n}*ios]; {xi[n1]} = rio_im[m*ms+{n}*ios];')
+            else:
+                em.o(f'{xr[n1]} = {isa.load(f"&rio_re[m+{n}*ios]")}; {xi[n1]} = {isa.load(f"&rio_im[m+{n}*ios]")};')
+            # Apply external twiddle W for element n (DIT: pre-multiply)
+            if n > 0:
+                if isa.is_scalar:
+                    em.o(f'{{ double wr = W_re[{n-1}*me+m], wi = W_im[{n-1}*me+m], tr = {xr[n1]};')
+                else:
+                    em.o(f'{{ {T} wr = {isa.load(f"&W_re[{n-1}*me+m]")}; {T} wi = {isa.load(f"&W_im[{n-1}*me+m]")};')
+                    em.o(f'  {T} tr = {xr[n1]};')
+                if fwd:
+                    if isa.is_scalar:
+                        em.o(f'  {xr[n1]} = {xr[n1]}*wr - {xi[n1]}*wi;')
+                        em.o(f'  {xi[n1]} = tr*wi + {xi[n1]}*wr; }}')
+                    else:
+                        em.o(f'  {xr[n1]} = {isa.fmsub(xr[n1],"wr",isa.mul(xi[n1],"wi"))};')
+                        em.o(f'  {xi[n1]} = {isa.fmadd("tr","wi",isa.mul(xi[n1],"wr"))}; }}')
+                else:
+                    if isa.is_scalar:
+                        em.o(f'  {xr[n1]} = {xr[n1]}*wr + {xi[n1]}*wi;')
+                        em.o(f'  {xi[n1]} = {xi[n1]}*wr - tr*wi; }}')
+                    else:
+                        em.o(f'  {xr[n1]} = {isa.fmadd(xr[n1],"wr",isa.mul(xi[n1],"wi"))};')
+                        em.o(f'  {xi[n1]} = {isa.fmsub(xi[n1],"wr",isa.mul("tr","wi"))}; }}')
+        em.b()
+        emit_r8(isa, em, fwd, xr, xi, xr, xi)
+        em.b()
+        for k1 in range(8):
+            slot = n2 * 8 + k1
+            em.o(f'{isa.store(f"&sp_re[{slot}*{sp_mul}]", xr[k1])}; {isa.store(f"&sp_im[{slot}*{sp_mul}]", xi[k1])};')
+        em.b()
+
+    # PASS 2: 8 radix-8 column combines — write back in-place
+    for k1 in range(8):
+        em.c(f'Column k1={k1}')
+        for n2 in range(8):
+            slot = n2 * 8 + k1
+            em.o(f'{xr[n2]} = {isa.load(f"&sp_re[{slot}*{sp_mul}]")}; {xi[n2]} = {isa.load(f"&sp_im[{slot}*{sp_mul}]")};')
+        if k1 > 0:
+            for n2 in range(1, 8):
+                emit_itw_apply(isa, em, xr[n2], xi[n2], (n2*k1)%64, fwd)
+        em.b()
+        emit_r8(isa, em, fwd, xr, xi, xr, xi)
+        em.b()
+        for k2 in range(8):
+            m_out = k1 + 8 * k2
+            if isa.is_scalar:
+                em.o(f'rio_re[m*ms+{m_out}*ios] = {xr[k2]}; rio_im[m*ms+{m_out}*ios] = {xi[k2]};')
+            else:
+                em.o(f'{isa.store(f"&rio_re[m+{m_out}*ios]", xr[k2])}; {isa.store(f"&rio_im[m+{m_out}*ios]", xi[k2])};')
+        em.b()
+
+    em.ind -= 1
+    em.o('}')
+    em.L.append('}')
+    em.L.append('')
+    return em.L
+
+
+def gen_ct_t1_dif(isa, direction):
+    """FFTW-style t1 DIF: in-place butterfly then post-twiddle, loop over m."""
+    fwd = direction == 'fwd'
+    em = Emitter()
+    T, C = isa.T, isa.C
+
+    if isa.attr:
+        em.L.append(isa.attr)
+    em.L.append(f'static void')
+    em.L.append(f'radix64_t1_dif_{direction}_{isa.name}(')
+    em.L.append(f'    double * __restrict__ rio_re, double * __restrict__ rio_im,')
+    em.L.append(f'    const double * __restrict__ W_re, const double * __restrict__ W_im,')
+    if isa.is_scalar:
+        em.L.append(f'    size_t ios, size_t mb, size_t me, size_t ms)')
+    else:
+        em.L.append(f'    size_t ios, size_t me)')
+    em.L.append(f'{{')
+    em.ind = 1
+
+    if isa.sign_mask:
+        em.o(isa.sign_mask)
+    em.o(f'const {T} vc = {isa.set1("0.707106781186547524400844362104849039284835938")};')
+    em.o(f'const {T} vnc = {isa.set1("-0.707106781186547524400844362104849039284835938")};')
+    if isa.is_scalar:
+        em.o(f'double sp_re[64], sp_im[64];')
+    else:
+        em.o(f'__attribute__((aligned({isa.align}))) double sp_re[64*{C}], sp_im[64*{C}];')
+    if isa.name == 'avx2':
+        em.o(f'__attribute__((aligned({isa.align}))) double bfr[4*{C}], bfi[4*{C}];')
+    em.o(f'{T} x0r,x0i,x1r,x1i,x2r,x2i,x3r,x3i,x4r,x4i,x5r,x5i,x6r,x6i,x7r,x7i;')
+    em.b()
+
+    k_step = C if not isa.is_scalar else 1
+    if isa.is_scalar:
+        em.o(f'for (size_t m = mb; m < me; m++) {{')
+    else:
+        em.o(f'for (size_t m = 0; m < me; m += {k_step}) {{')
+    em.ind += 1
+
+    xr = [f'x{i}r' for i in range(8)]
+    xi = [f'x{i}i' for i in range(8)]
+    sp_mul = C if not isa.is_scalar else 1
+
+    # PASS 1: 8 radix-8 sub-FFTs — no external twiddle on input (DIF)
+    for n2 in range(8):
+        em.c(f'Sub-FFT n2={n2}')
+        for n1 in range(8):
+            n = 8*n1 + n2
+            if isa.is_scalar:
+                em.o(f'{xr[n1]} = rio_re[m*ms+{n}*ios]; {xi[n1]} = rio_im[m*ms+{n}*ios];')
+            else:
+                em.o(f'{xr[n1]} = {isa.load(f"&rio_re[m+{n}*ios]")}; {xi[n1]} = {isa.load(f"&rio_im[m+{n}*ios]")};')
+        em.b()
+        emit_r8(isa, em, fwd, xr, xi, xr, xi)
+        em.b()
+        for k1 in range(8):
+            slot = n2 * 8 + k1
+            em.o(f'{isa.store(f"&sp_re[{slot}*{sp_mul}]", xr[k1])}; {isa.store(f"&sp_im[{slot}*{sp_mul}]", xi[k1])};')
+        em.b()
+
+    # PASS 2: 8 radix-8 column combines + internal W64 twiddles
+    for k1 in range(8):
+        em.c(f'Column k1={k1}')
+        for n2 in range(8):
+            slot = n2 * 8 + k1
+            em.o(f'{xr[n2]} = {isa.load(f"&sp_re[{slot}*{sp_mul}]")}; {xi[n2]} = {isa.load(f"&sp_im[{slot}*{sp_mul}]")};')
+        if k1 > 0:
+            for n2 in range(1, 8):
+                emit_itw_apply(isa, em, xr[n2], xi[n2], (n2*k1)%64, fwd)
+        em.b()
+        emit_r8(isa, em, fwd, xr, xi, xr, xi)
+        em.b()
+        # Post-twiddle outputs (DIF), then store in-place
+        for k2 in range(8):
+            m_out = k1 + 8 * k2
+            if m_out > 0:
+                if isa.is_scalar:
+                    em.o(f'{{ double wr=W_re[{m_out-1}*me+m],wi=W_im[{m_out-1}*me+m],tr={xr[k2]};')
+                    if fwd:
+                        em.o(f'  {xr[k2]}=tr*wr-{xi[k2]}*wi; {xi[k2]}=tr*wi+{xi[k2]}*wr; }}')
+                    else:
+                        em.o(f'  {xr[k2]}=tr*wr+{xi[k2]}*wi; {xi[k2]}={xi[k2]}*wr-tr*wi; }}')
+                else:
+                    em.o(f'{{ {T} wr={isa.load(f"&W_re[{m_out-1}*me+m]")};')
+                    em.o(f'  {T} wi={isa.load(f"&W_im[{m_out-1}*me+m]")};')
+                    em.o(f'  {T} tr={xr[k2]};')
+                    if fwd:
+                        em.o(f'  {xr[k2]}={isa.fmsub(xr[k2],"wr",isa.mul(xi[k2],"wi"))};')
+                        em.o(f'  {xi[k2]}={isa.fmadd("tr","wi",isa.mul(xi[k2],"wr"))}; }}')
+                    else:
+                        em.o(f'  {xr[k2]}={isa.fmadd(xr[k2],"wr",isa.mul(xi[k2],"wi"))};')
+                        em.o(f'  {xi[k2]}={isa.fmsub(xi[k2],"wr",isa.mul("tr","wi"))}; }}')
+            if isa.is_scalar:
+                em.o(f'rio_re[m*ms+{m_out}*ios]={xr[k2]}; rio_im[m*ms+{m_out}*ios]={xi[k2]};')
+            else:
+                em.o(f'{isa.store(f"&rio_re[m+{m_out}*ios]", xr[k2])}; {isa.store(f"&rio_im[m+{m_out}*ios]", xi[k2])};')
+        em.b()
+
+    em.ind -= 1
+    em.o('}')
+    em.L.append('}')
+    em.L.append('')
+    return em.L
+
+
 def gen_file(isa_name, variant='all'):
     isa = ISA(isa_name)
     ISA_U = isa_name.upper()
@@ -820,6 +1114,33 @@ def gen_file(isa_name, variant='all'):
             L.extend(gen_dif_tw(isa, d))
             L.append('')
 
+    if variant in ('ct_n1', 'all'):
+        L.append('/* ================================================================')
+        L.append(' * FFTW-style n1: out-of-place, separate is/os')
+        L.append(' * ================================================================ */')
+        L.append('')
+        for d in ('fwd', 'bwd'):
+            L.extend(gen_ct_n1(isa, d))
+            L.append('')
+
+    if variant in ('ct_t1_dit', 'all') and not isa.is_scalar:
+        L.append('/* ================================================================')
+        L.append(' * FFTW-style t1 DIT: in-place twiddle + butterfly')
+        L.append(' * ================================================================ */')
+        L.append('')
+        for d in ('fwd', 'bwd'):
+            L.extend(gen_ct_t1_dit(isa, d))
+            L.append('')
+
+    if variant in ('ct_t1_dif', 'all') and not isa.is_scalar:
+        L.append('/* ================================================================')
+        L.append(' * FFTW-style t1 DIF: in-place butterfly + post-twiddle')
+        L.append(' * ================================================================ */')
+        L.append('')
+        for d in ('fwd', 'bwd'):
+            L.extend(gen_ct_t1_dif(isa, d))
+            L.append('')
+
     L.append(f'#endif /* {guard} */')
     return L
 
@@ -830,7 +1151,7 @@ if __name__ == '__main__':
     parser.add_argument('--isa', default='avx2',
                         choices=['scalar', 'avx2', 'avx512'])
     parser.add_argument('--variant', default='all',
-                        choices=['notw', 'dit_tw', 'dif_tw', 'all'])
+                        choices=['notw', 'dit_tw', 'dif_tw', 'ct_n1', 'ct_t1_dit', 'ct_t1_dif', 'all'])
     # Legacy positional: gen_radix64.py avx2
     parser.add_argument('isa_pos', nargs='?', default=None)
     args = parser.parse_args()

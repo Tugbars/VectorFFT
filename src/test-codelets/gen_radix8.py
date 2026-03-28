@@ -954,6 +954,62 @@ radix8_t1_dit_{direction}(
 {chr(10).join(t1_lines)}
 }}''')
 
+        # ── scalar t1 DIF (in-place: butterfly then post-twiddle) ──
+        td = []
+        td.append(f'    const double c = {fmt(C)};')
+        td.append('    for (size_t m = mb; m < me; m++) {')
+        for n in range(8):
+            td.append(f'        const double x{n}r = rio_re[m*ms+{n}*ios], x{n}i = rio_im[m*ms+{n}*ios];')
+        td.append('        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;')
+        td.append('        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;')
+        td.append('        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;')
+        if fwd:
+            td.append('        const double A1r=eq_r+es_i,A1i=eq_i-es_r,A3r=eq_r-es_i,A3i=eq_i+es_r;')
+        else:
+            td.append('        const double A1r=eq_r-es_i,A1i=eq_i+es_r,A3r=eq_r+es_i,A3i=eq_i-es_r;')
+        td.append('        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;')
+        td.append('        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;')
+        td.append('        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;')
+        if fwd:
+            td.append('        const double B1r=oq_r+os_i,B1i=oq_i-os_r,B3r=oq_r-os_i,B3i=oq_i+os_r;')
+        else:
+            td.append('        const double B1r=oq_r-os_i,B1i=oq_i+os_r,B3r=oq_r+os_i,B3i=oq_i-os_r;')
+        # W8 combine into y0..y7
+        td.append('        double y0r=A0r+B0r,y0i=A0i+B0i,y4r=A0r-B0r,y4i=A0i-B0i;')
+        if fwd:
+            td.append('        double y1r=A1r+c*(B1r+B1i),y1i=A1i+c*(B1i-B1r);')
+            td.append('        double y5r=A1r-c*(B1r+B1i),y5i=A1i-c*(B1i-B1r);')
+            td.append('        double y2r=A2r+B2i,y2i=A2i-B2r,y6r=A2r-B2i,y6i=A2i+B2r;')
+            td.append('        double y3r=A3r-c*(B3r-B3i),y3i=A3i-c*(B3r+B3i);')
+            td.append('        double y7r=A3r+c*(B3r-B3i),y7i=A3i+c*(B3r+B3i);')
+        else:
+            td.append('        double y1r=A1r+c*(B1r-B1i),y1i=A1i+c*(B1r+B1i);')
+            td.append('        double y5r=A1r-c*(B1r-B1i),y5i=A1i-c*(B1r+B1i);')
+            td.append('        double y2r=A2r-B2i,y2i=A2i+B2r,y6r=A2r+B2i,y6i=A2i-B2r;')
+            td.append('        double y3r=A3r-c*(B3r+B3i),y3i=A3i+c*(B3r-B3i);')
+            td.append('        double y7r=A3r+c*(B3r+B3i),y7i=A3i-c*(B3r-B3i);')
+        # Store y0 (no twiddle), post-twiddle y1..y7
+        td.append('        rio_re[m*ms+0*ios]=y0r; rio_im[m*ms+0*ios]=y0i;')
+        td.append('        rio_re[m*ms+4*ios]=y4r; rio_im[m*ms+4*ios]=y4i;')
+        for n in range(1, 8):
+            if n == 4: continue
+            td.append(f'        {{ double wr=W_re[{n-1}*me+m],wi=W_im[{n-1}*me+m],tr=y{n}r;')
+            if fwd:
+                td.append(f'          rio_re[m*ms+{n}*ios]=tr*wr-y{n}i*wi; rio_im[m*ms+{n}*ios]=tr*wi+y{n}i*wr; }}')
+            else:
+                td.append(f'          rio_re[m*ms+{n}*ios]=tr*wr+y{n}i*wi; rio_im[m*ms+{n}*ios]=y{n}i*wr-tr*wi; }}')
+        td.append('    }')
+
+        parts.append(f'''
+static inline void
+radix8_t1_dif_{direction}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t mb, size_t me, size_t ms)
+{{
+{chr(10).join(td)}
+}}''')
+
     # ── SIMD n1 + t1 ──
     if not is_scalar:
         parts.append(f'\n{I["ld_macro"]}')
@@ -1083,6 +1139,72 @@ radix8_t1_dit_{direction}_{isa_name}(
     size_t ios, size_t me)
 {{
 {chr(10).join(st)}
+}}''')
+
+            # ── SIMD t1 DIF: in-place butterfly, then post-twiddle (ms=1, mb=0) ──
+            sd = []
+            sd.append(f'    const {V} vc = {set1}({fmt(C)});')
+            sd.append(f'    const {V} vnc = {set1}({fmt(-C)});')
+            sd.append(f'    for (size_t m = 0; m < me; m += VL) {{')
+            # Load from rio at ios stride
+            for n in range(8):
+                sd.append(f'        const {V} x{n}r = LD(&rio_re[m+{n}*ios]), x{n}i = LD(&rio_im[m+{n}*ios]);')
+            # DFT-4 evens
+            sd.append(f'        const {V} epr={add}(x0r,x4r),eqr={sub}(x0r,x4r),err_={add}(x2r,x6r),esr={sub}(x2r,x6r);')
+            sd.append(f'        const {V} epi={add}(x0i,x4i),eqi={sub}(x0i,x4i),eri={add}(x2i,x6i),esi={sub}(x2i,x6i);')
+            sd.append(f'        const {V} A0r={add}(epr,err_),A0i={add}(epi,eri),A2r={sub}(epr,err_),A2i={sub}(epi,eri);')
+            if fwd:
+                sd.append(f'        const {V} A1r={add}(eqr,esi),A1i={sub}(eqi,esr),A3r={sub}(eqr,esi),A3i={add}(eqi,esr);')
+            else:
+                sd.append(f'        const {V} A1r={sub}(eqr,esi),A1i={add}(eqi,esr),A3r={add}(eqr,esi),A3i={sub}(eqi,esr);')
+            # DFT-4 odds
+            sd.append(f'        const {V} opr={add}(x1r,x5r),oqr={sub}(x1r,x5r),orr={add}(x3r,x7r),osr={sub}(x3r,x7r);')
+            sd.append(f'        const {V} opi={add}(x1i,x5i),oqi={sub}(x1i,x5i),ori={add}(x3i,x7i),osi={sub}(x3i,x7i);')
+            sd.append(f'        const {V} B0r={add}(opr,orr),B0i={add}(opi,ori),B2r={sub}(opr,orr),B2i={sub}(opi,ori);')
+            if fwd:
+                sd.append(f'        const {V} B1r={add}(oqr,osi),B1i={sub}(oqi,osr),B3r={sub}(oqr,osi),B3i={add}(oqi,osr);')
+            else:
+                sd.append(f'        const {V} B1r={sub}(oqr,osi),B1i={add}(oqi,osr),B3r={add}(oqr,osi),B3i={sub}(oqi,osr);')
+            # W8 combine into y0..y7
+            sd.append(f'        const {V} y0r={add}(A0r,B0r),y0i={add}(A0i,B0i);')
+            sd.append(f'        const {V} y4r={sub}(A0r,B0r),y4i={sub}(A0i,B0i);')
+            if fwd:
+                sd.append(f'        const {V} y1r={add}(A1r,{mul}(vc,{add}(B1r,B1i))),y1i={add}(A1i,{mul}(vc,{sub}(B1i,B1r)));')
+                sd.append(f'        const {V} y5r={sub}(A1r,{mul}(vc,{add}(B1r,B1i))),y5i={sub}(A1i,{mul}(vc,{sub}(B1i,B1r)));')
+                sd.append(f'        const {V} y2r={add}(A2r,B2i),y2i={sub}(A2i,B2r);')
+                sd.append(f'        const {V} y6r={sub}(A2r,B2i),y6i={add}(A2i,B2r);')
+                sd.append(f'        const {V} y3r={add}(A3r,{mul}(vnc,{sub}(B3r,B3i))),y3i={add}(A3i,{mul}(vnc,{add}(B3r,B3i)));')
+                sd.append(f'        const {V} y7r={sub}(A3r,{mul}(vnc,{sub}(B3r,B3i))),y7i={sub}(A3i,{mul}(vnc,{add}(B3r,B3i)));')
+            else:
+                sd.append(f'        const {V} y1r={add}(A1r,{mul}(vc,{sub}(B1r,B1i))),y1i={add}(A1i,{mul}(vc,{add}(B1r,B1i)));')
+                sd.append(f'        const {V} y5r={sub}(A1r,{mul}(vc,{sub}(B1r,B1i))),y5i={sub}(A1i,{mul}(vc,{add}(B1r,B1i)));')
+                sd.append(f'        const {V} y2r={sub}(A2r,B2i),y2i={add}(A2i,B2r);')
+                sd.append(f'        const {V} y6r={add}(A2r,B2i),y6i={sub}(A2i,B2r);')
+                sd.append(f'        const {V} y3r={add}(A3r,{mul}(vnc,{add}(B3r,B3i))),y3i={add}(A3i,{mul}(vc,{sub}(B3r,B3i)));')
+                sd.append(f'        const {V} y7r={sub}(A3r,{mul}(vnc,{add}(B3r,B3i))),y7i={sub}(A3i,{mul}(vc,{sub}(B3r,B3i)));')
+            # Store y0,y4 (no post-twiddle), post-twiddle y1..y3,y5..y7
+            sd.append(f'        ST(&rio_re[m+0*ios],y0r); ST(&rio_im[m+0*ios],y0i);')
+            sd.append(f'        ST(&rio_re[m+4*ios],y4r); ST(&rio_im[m+4*ios],y4i);')
+            for n in [1,2,3,5,6,7]:
+                sd.append(f'        {{const {V} wr=LD(&W_re[{n-1}*me+m]),wi=LD(&W_im[{n-1}*me+m]);')
+                sd.append(f'        const {V} tr=y{n}r;')
+                if fwd:
+                    sd.append(f'        ST(&rio_re[m+{n}*ios],{fnma}(y{n}i,wi,{mul}(tr,wr)));')
+                    sd.append(f'        ST(&rio_im[m+{n}*ios],{fma_op}(tr,wi,{mul}(y{n}i,wr)));}}')
+                else:
+                    sd.append(f'        ST(&rio_re[m+{n}*ios],{fma_op}(y{n}i,wi,{mul}(tr,wr)));')
+                    sd.append(f'        ST(&rio_im[m+{n}*ios],{fnma}(tr,wi,{mul}(y{n}i,wr)));}}')
+            sd.append('    }')
+
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1_dif_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+{chr(10).join(sd)}
 }}''')
 
         parts.append('\n#undef LD\n#undef ST\n#undef VL')
