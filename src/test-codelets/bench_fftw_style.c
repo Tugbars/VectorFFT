@@ -40,10 +40,7 @@
 
 #define N_FFT 32768
 
-static inline double now_ns(void) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e9 + ts.tv_nsec;
-}
+/* now_ns() provided by bench_compat.h */
 
 static void init_tw(double *twr, double *twi, size_t R, size_t K) {
     for (size_t n = 1; n < R; n++)
