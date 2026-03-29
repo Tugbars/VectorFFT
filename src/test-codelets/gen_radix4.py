@@ -723,7 +723,10 @@ radix4_n1_{direction}_{isa_name}(
     }}
 }}''')
 
-            # ── SIMD n1 with ovs: scatter stores for CT executor ──
+            # ── SIMD n1 with ovs: SIMD 4x4 transpose stores ──
+            UP = '_mm256_unpacklo_pd'
+            UH = '_mm256_unpackhi_pd'
+            PM = '_mm256_permute2f128_pd'
             parts.append(f'''
 {I['target']}
 static inline void
@@ -732,7 +735,6 @@ radix4_n1_ovs_{direction}_{isa_name}(
     double * __restrict__ out_re, double * __restrict__ out_im,
     size_t is, size_t os, size_t vl, size_t ovs)
 {{
-    __attribute__((aligned(32))) double tr[4*{VL}], ti[4*{VL}];
     for (size_t k = 0; k < vl; k += {VL}) {{
         const {V} x0r = R4_LD(&in_re[0*is+k]), x0i = R4_LD(&in_im[0*is+k]);
         const {V} x1r = R4_LD(&in_re[1*is+k]), x1i = R4_LD(&in_im[1*is+k]);
@@ -742,15 +744,26 @@ radix4_n1_ovs_{direction}_{isa_name}(
         const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
         const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
         const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
-        R4_ST(&tr[0*{VL}], {ADD}(t0r, t2r)); R4_ST(&ti[0*{VL}], {ADD}(t0i, t2i));
-        R4_ST(&tr[2*{VL}], {SUB}(t0r, t2r)); R4_ST(&ti[2*{VL}], {SUB}(t0i, t2i));
-        R4_ST(&tr[1*{VL}], {r1_e}); R4_ST(&ti[1*{VL}], {i1_e});
-        R4_ST(&tr[3*{VL}], {r3_e}); R4_ST(&ti[3*{VL}], {i3_e});
-        for (size_t m = 0; m < 4; m++)
-            for (size_t j = 0; j < {VL}; j++) {{
-                out_re[m*os + (k+j)*ovs] = tr[m*{VL}+j];
-                out_im[m*os + (k+j)*ovs] = ti[m*{VL}+j];
-            }}
+        /* Butterfly results: y0=t0+t2, y2=t0-t2, y1, y3 */
+        const {V} y0r = {ADD}(t0r, t2r), y0i = {ADD}(t0i, t2i);
+        const {V} y2r = {SUB}(t0r, t2r), y2i = {SUB}(t0i, t2i);
+        const {V} y1r = {r1_e}, y1i = {i1_e};
+        const {V} y3r = {r3_e}, y3i = {i3_e};
+        /* 4x4 transpose: [y0,y1,y2,y3] each has 4 sub-seq values */
+        {{ {V} lo01r={UP}(y0r,y1r), hi01r={UH}(y0r,y1r);
+          {V} lo23r={UP}(y2r,y3r), hi23r={UH}(y2r,y3r);
+          R4_ST(&out_re[(k+0)*ovs+os*0], {PM}(lo01r,lo23r,0x20));
+          R4_ST(&out_re[(k+1)*ovs+os*0], {PM}(hi01r,hi23r,0x20));
+          R4_ST(&out_re[(k+2)*ovs+os*0], {PM}(lo01r,lo23r,0x31));
+          R4_ST(&out_re[(k+3)*ovs+os*0], {PM}(hi01r,hi23r,0x31));
+        }}
+        {{ {V} lo01i={UP}(y0i,y1i), hi01i={UH}(y0i,y1i);
+          {V} lo23i={UP}(y2i,y3i), hi23i={UH}(y2i,y3i);
+          R4_ST(&out_im[(k+0)*ovs+os*0], {PM}(lo01i,lo23i,0x20));
+          R4_ST(&out_im[(k+1)*ovs+os*0], {PM}(hi01i,hi23i,0x20));
+          R4_ST(&out_im[(k+2)*ovs+os*0], {PM}(lo01i,lo23i,0x31));
+          R4_ST(&out_im[(k+3)*ovs+os*0], {PM}(hi01i,hi23i,0x31));
+        }}
     }}
 }}''')
 

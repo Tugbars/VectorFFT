@@ -107,6 +107,10 @@ echo   bench_fftw_style OK
 if errorlevel 1 ( echo FAILED: bench_recursive_ct & exit /b 1 )
 echo   bench_recursive_ct OK
 
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -o "%BUILD_DIR%\bench_ct_factor.exe" "%SCRIPT_DIR%bench_ct_factor.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: bench_ct_factor & exit /b 1 )
+echo   bench_ct_factor OK
+
 echo.
 
 REM -- Step 3: Run benchmarks --
@@ -173,7 +177,12 @@ echo BENCHMARK 9: bench_fftw_style>> "%OUT%"
 echo.>> "%OUT%"
 
 :run_ct
-echo   [10/10] bench_recursive_ct...
+echo   bench_ct_factor...
+echo BENCHMARK: bench_ct_factor>> "%OUT%"
+"%BUILD_DIR%\bench_ct_factor.exe" >> "%OUT%" 2>&1
+echo.>> "%OUT%"
+
+echo   bench_recursive_ct...
 echo BENCHMARK 10: bench_recursive_ct>> "%OUT%"
 "%BUILD_DIR%\bench_recursive_ct.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"

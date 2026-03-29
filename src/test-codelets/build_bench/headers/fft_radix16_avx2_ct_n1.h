@@ -626,6 +626,182 @@ radix16_n1_bwd_avx2(
     }
 }
 
+
+static __attribute__((target("avx2,fma"))) void
+radix16_n1_ovs_fwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, size_t ovs)
+{
+    __attribute__((aligned(32))) double buf_re[64], buf_im[64];
+    for (size_t k = 0; k < vl; k += 4) {
+        radix16_n1_fwd_avx2(in_re + k, in_im + k, buf_re, buf_im, is, 4, 4);
+        /* Transpose bins 0..3 */
+        { __m256d a=_mm256_load_pd(&buf_re[0*4]), b_=_mm256_load_pd(&buf_re[1*4]);
+          __m256d c=_mm256_load_pd(&buf_re[2*4]), d_=_mm256_load_pd(&buf_re[3*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_re[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+1)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+2)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_re[(k+3)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        { __m256d a=_mm256_load_pd(&buf_im[0*4]), b_=_mm256_load_pd(&buf_im[1*4]);
+          __m256d c=_mm256_load_pd(&buf_im[2*4]), d_=_mm256_load_pd(&buf_im[3*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_im[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+1)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+2)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_im[(k+3)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        /* Transpose bins 4..7 */
+        { __m256d a=_mm256_load_pd(&buf_re[4*4]), b_=_mm256_load_pd(&buf_re[5*4]);
+          __m256d c=_mm256_load_pd(&buf_re[6*4]), d_=_mm256_load_pd(&buf_re[7*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_re[(k+0)*ovs+os*4], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+1)*ovs+os*4], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+2)*ovs+os*4], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_re[(k+3)*ovs+os*4], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        { __m256d a=_mm256_load_pd(&buf_im[4*4]), b_=_mm256_load_pd(&buf_im[5*4]);
+          __m256d c=_mm256_load_pd(&buf_im[6*4]), d_=_mm256_load_pd(&buf_im[7*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_im[(k+0)*ovs+os*4], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+1)*ovs+os*4], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+2)*ovs+os*4], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_im[(k+3)*ovs+os*4], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        /* Transpose bins 8..11 */
+        { __m256d a=_mm256_load_pd(&buf_re[8*4]), b_=_mm256_load_pd(&buf_re[9*4]);
+          __m256d c=_mm256_load_pd(&buf_re[10*4]), d_=_mm256_load_pd(&buf_re[11*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_re[(k+0)*ovs+os*8], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+1)*ovs+os*8], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+2)*ovs+os*8], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_re[(k+3)*ovs+os*8], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        { __m256d a=_mm256_load_pd(&buf_im[8*4]), b_=_mm256_load_pd(&buf_im[9*4]);
+          __m256d c=_mm256_load_pd(&buf_im[10*4]), d_=_mm256_load_pd(&buf_im[11*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_im[(k+0)*ovs+os*8], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+1)*ovs+os*8], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+2)*ovs+os*8], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_im[(k+3)*ovs+os*8], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        /* Transpose bins 12..15 */
+        { __m256d a=_mm256_load_pd(&buf_re[12*4]), b_=_mm256_load_pd(&buf_re[13*4]);
+          __m256d c=_mm256_load_pd(&buf_re[14*4]), d_=_mm256_load_pd(&buf_re[15*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_re[(k+0)*ovs+os*12], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+1)*ovs+os*12], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+2)*ovs+os*12], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_re[(k+3)*ovs+os*12], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        { __m256d a=_mm256_load_pd(&buf_im[12*4]), b_=_mm256_load_pd(&buf_im[13*4]);
+          __m256d c=_mm256_load_pd(&buf_im[14*4]), d_=_mm256_load_pd(&buf_im[15*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_im[(k+0)*ovs+os*12], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+1)*ovs+os*12], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+2)*ovs+os*12], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_im[(k+3)*ovs+os*12], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+    }
+}
+
+static __attribute__((target("avx2,fma"))) void
+radix16_n1_ovs_bwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, size_t ovs)
+{
+    __attribute__((aligned(32))) double buf_re[64], buf_im[64];
+    for (size_t k = 0; k < vl; k += 4) {
+        radix16_n1_bwd_avx2(in_re + k, in_im + k, buf_re, buf_im, is, 4, 4);
+        /* Transpose bins 0..3 */
+        { __m256d a=_mm256_load_pd(&buf_re[0*4]), b_=_mm256_load_pd(&buf_re[1*4]);
+          __m256d c=_mm256_load_pd(&buf_re[2*4]), d_=_mm256_load_pd(&buf_re[3*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_re[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+1)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+2)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_re[(k+3)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        { __m256d a=_mm256_load_pd(&buf_im[0*4]), b_=_mm256_load_pd(&buf_im[1*4]);
+          __m256d c=_mm256_load_pd(&buf_im[2*4]), d_=_mm256_load_pd(&buf_im[3*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_im[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+1)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+2)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_im[(k+3)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        /* Transpose bins 4..7 */
+        { __m256d a=_mm256_load_pd(&buf_re[4*4]), b_=_mm256_load_pd(&buf_re[5*4]);
+          __m256d c=_mm256_load_pd(&buf_re[6*4]), d_=_mm256_load_pd(&buf_re[7*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_re[(k+0)*ovs+os*4], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+1)*ovs+os*4], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+2)*ovs+os*4], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_re[(k+3)*ovs+os*4], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        { __m256d a=_mm256_load_pd(&buf_im[4*4]), b_=_mm256_load_pd(&buf_im[5*4]);
+          __m256d c=_mm256_load_pd(&buf_im[6*4]), d_=_mm256_load_pd(&buf_im[7*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_im[(k+0)*ovs+os*4], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+1)*ovs+os*4], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+2)*ovs+os*4], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_im[(k+3)*ovs+os*4], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        /* Transpose bins 8..11 */
+        { __m256d a=_mm256_load_pd(&buf_re[8*4]), b_=_mm256_load_pd(&buf_re[9*4]);
+          __m256d c=_mm256_load_pd(&buf_re[10*4]), d_=_mm256_load_pd(&buf_re[11*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_re[(k+0)*ovs+os*8], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+1)*ovs+os*8], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+2)*ovs+os*8], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_re[(k+3)*ovs+os*8], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        { __m256d a=_mm256_load_pd(&buf_im[8*4]), b_=_mm256_load_pd(&buf_im[9*4]);
+          __m256d c=_mm256_load_pd(&buf_im[10*4]), d_=_mm256_load_pd(&buf_im[11*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_im[(k+0)*ovs+os*8], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+1)*ovs+os*8], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+2)*ovs+os*8], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_im[(k+3)*ovs+os*8], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        /* Transpose bins 12..15 */
+        { __m256d a=_mm256_load_pd(&buf_re[12*4]), b_=_mm256_load_pd(&buf_re[13*4]);
+          __m256d c=_mm256_load_pd(&buf_re[14*4]), d_=_mm256_load_pd(&buf_re[15*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_re[(k+0)*ovs+os*12], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+1)*ovs+os*12], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_re[(k+2)*ovs+os*12], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_re[(k+3)*ovs+os*12], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+        { __m256d a=_mm256_load_pd(&buf_im[12*4]), b_=_mm256_load_pd(&buf_im[13*4]);
+          __m256d c=_mm256_load_pd(&buf_im[14*4]), d_=_mm256_load_pd(&buf_im[15*4]);
+          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);
+          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);
+          _mm256_storeu_pd(&out_im[(k+0)*ovs+os*12], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+1)*ovs+os*12], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));
+          _mm256_storeu_pd(&out_im[(k+2)*ovs+os*12], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));
+          _mm256_storeu_pd(&out_im[(k+3)*ovs+os*12], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));
+        }
+    }
+}
 #undef LD
 #undef ST
 
