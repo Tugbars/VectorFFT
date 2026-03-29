@@ -1033,6 +1033,42 @@ def emit_file_ct(isa, itw_set, ct_variant):
         em.L.append("}")
         em.L.append("")
 
+    # n1_ovs wrapper: calls n1 into stack buffer (os=VL), then 4x4 transposes to output
+    if is_n1 and isa.name != 'scalar':
+        R = 16
+        VL = isa.k_step
+        n_groups = R // 4
+        for d in ['fwd', 'bwd']:
+            em.L.append(f"")
+            if isa.target:
+                em.L.append(f"static {isa.target} void")
+            else:
+                em.L.append(f"static void")
+            em.L.append(f"radix16_n1_ovs_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    size_t is, size_t os, size_t vl, size_t ovs)")
+            em.L.append(f"{{")
+            em.L.append(f"    __attribute__((aligned(32))) double buf_re[{R*VL}], buf_im[{R*VL}];")
+            em.L.append(f"    for (size_t k = 0; k < vl; k += {VL}) {{")
+            em.L.append(f"        radix16_n1_{d}_{isa.name}(in_re + k, in_im + k, buf_re, buf_im, is, {VL}, {VL});")
+            for g in range(n_groups):
+                b = g * 4
+                em.L.append(f"        /* Transpose bins {b}..{b+3} */")
+                for comp, arr in [('re', 'out_re'), ('im', 'out_im')]:
+                    bname = f"buf_{comp}"
+                    em.L.append(f"        {{ __m256d a=_mm256_load_pd(&{bname}[{b+0}*{VL}]), b_=_mm256_load_pd(&{bname}[{b+1}*{VL}]);")
+                    em.L.append(f"          __m256d c=_mm256_load_pd(&{bname}[{b+2}*{VL}]), d_=_mm256_load_pd(&{bname}[{b+3}*{VL}]);")
+                    em.L.append(f"          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);")
+                    em.L.append(f"          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);")
+                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+0)*ovs+os*{b}], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));")
+                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+1)*ovs+os*{b}], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));")
+                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+2)*ovs+os*{b}], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));")
+                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+3)*ovs+os*{b}], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));")
+                    em.L.append(f"        }}")
+            em.L.append(f"    }}")
+            em.L.append(f"}}")
+
     em.L.append(f"#undef LD")
     em.L.append(f"#undef ST")
     em.L.append(f"")

@@ -533,7 +533,6 @@ radix4_n1_ovs_fwd_avx2(
     double * __restrict__ out_re, double * __restrict__ out_im,
     size_t is, size_t os, size_t vl, size_t ovs)
 {
-    __attribute__((aligned(32))) double tr[4*4], ti[4*4];
     for (size_t k = 0; k < vl; k += 4) {
         const __m256d x0r = R4_LD(&in_re[0*is+k]), x0i = R4_LD(&in_im[0*is+k]);
         const __m256d x1r = R4_LD(&in_re[1*is+k]), x1i = R4_LD(&in_im[1*is+k]);
@@ -543,15 +542,26 @@ radix4_n1_ovs_fwd_avx2(
         const __m256d t1r = _mm256_sub_pd(x0r, x2r), t1i = _mm256_sub_pd(x0i, x2i);
         const __m256d t2r = _mm256_add_pd(x1r, x3r), t2i = _mm256_add_pd(x1i, x3i);
         const __m256d t3r = _mm256_sub_pd(x1r, x3r), t3i = _mm256_sub_pd(x1i, x3i);
-        R4_ST(&tr[0*4], _mm256_add_pd(t0r, t2r)); R4_ST(&ti[0*4], _mm256_add_pd(t0i, t2i));
-        R4_ST(&tr[2*4], _mm256_sub_pd(t0r, t2r)); R4_ST(&ti[2*4], _mm256_sub_pd(t0i, t2i));
-        R4_ST(&tr[1*4], _mm256_add_pd(t1r, t3i)); R4_ST(&ti[1*4], _mm256_sub_pd(t1i, t3r));
-        R4_ST(&tr[3*4], _mm256_sub_pd(t1r, t3i)); R4_ST(&ti[3*4], _mm256_add_pd(t1i, t3r));
-        for (size_t m = 0; m < 4; m++)
-            for (size_t j = 0; j < 4; j++) {
-                out_re[m*os + (k+j)*ovs] = tr[m*4+j];
-                out_im[m*os + (k+j)*ovs] = ti[m*4+j];
-            }
+        /* Butterfly results: y0=t0+t2, y2=t0-t2, y1, y3 */
+        const __m256d y0r = _mm256_add_pd(t0r, t2r), y0i = _mm256_add_pd(t0i, t2i);
+        const __m256d y2r = _mm256_sub_pd(t0r, t2r), y2i = _mm256_sub_pd(t0i, t2i);
+        const __m256d y1r = _mm256_add_pd(t1r, t3i), y1i = _mm256_sub_pd(t1i, t3r);
+        const __m256d y3r = _mm256_sub_pd(t1r, t3i), y3i = _mm256_add_pd(t1i, t3r);
+        /* 4x4 transpose: [y0,y1,y2,y3] each has 4 sub-seq values */
+        { __m256d lo01r=_mm256_unpacklo_pd(y0r,y1r), hi01r=_mm256_unpackhi_pd(y0r,y1r);
+          __m256d lo23r=_mm256_unpacklo_pd(y2r,y3r), hi23r=_mm256_unpackhi_pd(y2r,y3r);
+          R4_ST(&out_re[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo01r,lo23r,0x20));
+          R4_ST(&out_re[(k+1)*ovs+os*0], _mm256_permute2f128_pd(hi01r,hi23r,0x20));
+          R4_ST(&out_re[(k+2)*ovs+os*0], _mm256_permute2f128_pd(lo01r,lo23r,0x31));
+          R4_ST(&out_re[(k+3)*ovs+os*0], _mm256_permute2f128_pd(hi01r,hi23r,0x31));
+        }
+        { __m256d lo01i=_mm256_unpacklo_pd(y0i,y1i), hi01i=_mm256_unpackhi_pd(y0i,y1i);
+          __m256d lo23i=_mm256_unpacklo_pd(y2i,y3i), hi23i=_mm256_unpackhi_pd(y2i,y3i);
+          R4_ST(&out_im[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo01i,lo23i,0x20));
+          R4_ST(&out_im[(k+1)*ovs+os*0], _mm256_permute2f128_pd(hi01i,hi23i,0x20));
+          R4_ST(&out_im[(k+2)*ovs+os*0], _mm256_permute2f128_pd(lo01i,lo23i,0x31));
+          R4_ST(&out_im[(k+3)*ovs+os*0], _mm256_permute2f128_pd(hi01i,hi23i,0x31));
+        }
     }
 }
 
@@ -643,7 +653,6 @@ radix4_n1_ovs_bwd_avx2(
     double * __restrict__ out_re, double * __restrict__ out_im,
     size_t is, size_t os, size_t vl, size_t ovs)
 {
-    __attribute__((aligned(32))) double tr[4*4], ti[4*4];
     for (size_t k = 0; k < vl; k += 4) {
         const __m256d x0r = R4_LD(&in_re[0*is+k]), x0i = R4_LD(&in_im[0*is+k]);
         const __m256d x1r = R4_LD(&in_re[1*is+k]), x1i = R4_LD(&in_im[1*is+k]);
@@ -653,15 +662,26 @@ radix4_n1_ovs_bwd_avx2(
         const __m256d t1r = _mm256_sub_pd(x0r, x2r), t1i = _mm256_sub_pd(x0i, x2i);
         const __m256d t2r = _mm256_add_pd(x1r, x3r), t2i = _mm256_add_pd(x1i, x3i);
         const __m256d t3r = _mm256_sub_pd(x1r, x3r), t3i = _mm256_sub_pd(x1i, x3i);
-        R4_ST(&tr[0*4], _mm256_add_pd(t0r, t2r)); R4_ST(&ti[0*4], _mm256_add_pd(t0i, t2i));
-        R4_ST(&tr[2*4], _mm256_sub_pd(t0r, t2r)); R4_ST(&ti[2*4], _mm256_sub_pd(t0i, t2i));
-        R4_ST(&tr[1*4], _mm256_sub_pd(t1r, t3i)); R4_ST(&ti[1*4], _mm256_add_pd(t1i, t3r));
-        R4_ST(&tr[3*4], _mm256_add_pd(t1r, t3i)); R4_ST(&ti[3*4], _mm256_sub_pd(t1i, t3r));
-        for (size_t m = 0; m < 4; m++)
-            for (size_t j = 0; j < 4; j++) {
-                out_re[m*os + (k+j)*ovs] = tr[m*4+j];
-                out_im[m*os + (k+j)*ovs] = ti[m*4+j];
-            }
+        /* Butterfly results: y0=t0+t2, y2=t0-t2, y1, y3 */
+        const __m256d y0r = _mm256_add_pd(t0r, t2r), y0i = _mm256_add_pd(t0i, t2i);
+        const __m256d y2r = _mm256_sub_pd(t0r, t2r), y2i = _mm256_sub_pd(t0i, t2i);
+        const __m256d y1r = _mm256_sub_pd(t1r, t3i), y1i = _mm256_add_pd(t1i, t3r);
+        const __m256d y3r = _mm256_add_pd(t1r, t3i), y3i = _mm256_sub_pd(t1i, t3r);
+        /* 4x4 transpose: [y0,y1,y2,y3] each has 4 sub-seq values */
+        { __m256d lo01r=_mm256_unpacklo_pd(y0r,y1r), hi01r=_mm256_unpackhi_pd(y0r,y1r);
+          __m256d lo23r=_mm256_unpacklo_pd(y2r,y3r), hi23r=_mm256_unpackhi_pd(y2r,y3r);
+          R4_ST(&out_re[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo01r,lo23r,0x20));
+          R4_ST(&out_re[(k+1)*ovs+os*0], _mm256_permute2f128_pd(hi01r,hi23r,0x20));
+          R4_ST(&out_re[(k+2)*ovs+os*0], _mm256_permute2f128_pd(lo01r,lo23r,0x31));
+          R4_ST(&out_re[(k+3)*ovs+os*0], _mm256_permute2f128_pd(hi01r,hi23r,0x31));
+        }
+        { __m256d lo01i=_mm256_unpacklo_pd(y0i,y1i), hi01i=_mm256_unpackhi_pd(y0i,y1i);
+          __m256d lo23i=_mm256_unpacklo_pd(y2i,y3i), hi23i=_mm256_unpackhi_pd(y2i,y3i);
+          R4_ST(&out_im[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo01i,lo23i,0x20));
+          R4_ST(&out_im[(k+1)*ovs+os*0], _mm256_permute2f128_pd(hi01i,hi23i,0x20));
+          R4_ST(&out_im[(k+2)*ovs+os*0], _mm256_permute2f128_pd(lo01i,lo23i,0x31));
+          R4_ST(&out_im[(k+3)*ovs+os*0], _mm256_permute2f128_pd(hi01i,hi23i,0x31));
+        }
     }
 }
 
