@@ -1442,6 +1442,7 @@ def emit_ct_file(isa, ct_variant):
     is_n1 = ct_variant == 'ct_n1'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
+    is_t1_dit_prefetch = ct_variant == 'ct_t1_dit_prefetch'
     nfuse = isa.nfuse_notw if is_n1 else isa.nfuse_tw
     T = isa.reg_type
     em = Emitter(isa)
@@ -1456,6 +1457,9 @@ def emit_ct_file(isa, ct_variant):
     elif is_t1_dit_log3:
         func_base = "radix64_t1_dit_log3"
         vname = "t1 DIT log3 (in-place twiddle)"
+    elif is_t1_dit_prefetch:
+        func_base = "radix64_t1_dit_prefetch"
+        vname = "t1 DIT with prefetch (in-place twiddle)"
     else:
         func_base = "radix64_t1_dit"
         vname = "t1 DIT (in-place twiddle)"
@@ -1526,12 +1530,26 @@ def emit_ct_file(isa, ct_variant):
                 em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
 
         em.ind += 1
+        # Insert prefetch for next m-block's twiddles
+        if is_t1_dit_prefetch and isa.name != 'scalar':
+            VL = isa.k_step
+            em.o(f"/* Prefetch next block twiddles */")
+            em.o(f"if (m + {VL} < me) {{")
+            # Prefetch all 63 twiddle rows for next m-block
+            # Group by cache line: 4 doubles = 32 bytes = 1 cache line at 64B alignment
+            # Prefetch every other row to reduce prefetch count
+            for n in range(1, 64, 2):
+                em.o(f"    _mm_prefetch((const char*)&W_re[{n-1}*me+m+{VL}], _MM_HINT_T0);")
+                em.o(f"    _mm_prefetch((const char*)&W_im[{n-1}*me+m+{VL}], _MM_HINT_T0);")
+            em.o(f"}}")
         if is_n1:
             emit_notw_kernel(em, d, nfuse)
         elif is_t1_dif:
             emit_dif_tw_flat_kernel(em, d, nfuse)
         elif is_t1_dit_log3:
             emit_dit_tw_log3_kernel(em, d, nfuse)
+        elif is_t1_dit_prefetch:
+            emit_dit_tw_flat_kernel(em, d, nfuse)
         else:
             emit_dit_tw_flat_kernel(em, d, nfuse)
         em.ind -= 1
@@ -1726,7 +1744,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='notw',
                         choices=['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
+                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dit_prefetch', 'ct_t1_dif', 'all'])
     # Legacy positional
     parser.add_argument('isa_pos', nargs='?', default=None)
     args = parser.parse_args()
@@ -1801,6 +1819,10 @@ def main():
         if args.variant in ('ct_t1_dit_log3', 'all') and isa.name != 'scalar':
             lines = emit_ct_file(isa, 'ct_t1_dit_log3')
             print_file(lines, f"{isa.name.upper()} CT T1 DIT LOG3")
+
+        if args.variant in ('ct_t1_dit_prefetch', 'all') and isa.name != 'scalar':
+            lines = emit_ct_file(isa, 'ct_t1_dit_prefetch')
+            print_file(lines, f"{isa.name.upper()} CT T1 DIT PREFETCH")
 
         if args.variant in ('ct_t1_dif', 'all') and isa.name != 'scalar':
             lines = emit_ct_file(isa, 'ct_t1_dif')

@@ -1233,6 +1233,33 @@ radix8_t1_dit_{direction}_{isa_name}(
 {chr(10).join(st)}
 }}''')
 
+            # ── SIMD t1 DIT with prefetch: same butterfly, prefetch next block's twiddles ──
+            st_pf = list(st)  # copy
+            # Find the 'for (size_t m' line and insert prefetch after it
+            for idx in range(len(st_pf)):
+                if 'for (size_t m = 0' in st_pf[idx]:
+                    pf_lines = []
+                    pf_lines.append(f'        /* Prefetch next block twiddles */')
+                    pf_lines.append(f'        if (m + VL < me) {{')
+                    for n in range(1, 8):
+                        pf_lines.append(f'            _mm_prefetch((const char*)&W_re[{n-1}*me+m+VL], _MM_HINT_T0);')
+                        pf_lines.append(f'            _mm_prefetch((const char*)&W_im[{n-1}*me+m+VL], _MM_HINT_T0);')
+                    pf_lines.append(f'        }}')
+                    for i, pl in enumerate(pf_lines):
+                        st_pf.insert(idx + 1 + i, pl)
+                    break
+
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1_dit_prefetch_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+{chr(10).join(st_pf)}
+}}''')
+
             # ── SIMD t1 DIF: in-place butterfly, then post-twiddle (ms=1, mb=0) ──
             sd = []
             sd.append(f'    const {V} vc = {set1}({fmt(C)});')
