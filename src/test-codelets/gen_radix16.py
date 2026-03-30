@@ -144,7 +144,7 @@ class Emitter:
     addr_mode = 'K'
 
     def _in_addr(self, n, ke="k"):
-        if self.addr_mode == 'n1':
+        if self.addr_mode in ('n1', 'n1_ovs'):
             return f"{n}*is+{ke}"
         elif self.addr_mode == 't1':
             if self.isa.name == 'scalar': return f"m*ms+{n}*ios"
@@ -154,22 +154,31 @@ class Emitter:
     def _out_addr(self, m, ke="k"):
         if self.addr_mode == 'n1':
             return f"{m}*os+{ke}"
+        elif self.addr_mode == 'n1_ovs':
+            # Write to local transposition buffer at stride VL
+            return f"{m}*{self.isa.k_step}"
         elif self.addr_mode == 't1':
             if self.isa.name == 'scalar': return f"m*ms+{m}*ios"
             return f"m+{m}*ios"
         return f"{m}*K+{ke}"
 
     def _in_buf(self):
-        return "rio_re" if self.addr_mode == 't1' else "in_re"
+        if self.addr_mode == 't1': return "rio_re"
+        return "in_re"
 
     def _in_buf_im(self):
-        return "rio_im" if self.addr_mode == 't1' else "in_im"
+        if self.addr_mode == 't1': return "rio_im"
+        return "in_im"
 
     def _out_buf(self):
-        return "rio_re" if self.addr_mode == 't1' else "out_re"
+        if self.addr_mode == 't1': return "rio_re"
+        if self.addr_mode == 'n1_ovs': return "tbuf_re"
+        return "out_re"
 
     def _out_buf_im(self):
-        return "rio_im" if self.addr_mode == 't1' else "out_im"
+        if self.addr_mode == 't1': return "rio_im"
+        if self.addr_mode == 'n1_ovs': return "tbuf_im"
+        return "out_im"
 
     def emit_load(self, v, n, ke="k"):
         self.n_load += 2
@@ -1033,12 +1042,17 @@ def emit_file_ct(isa, itw_set, ct_variant):
         em.L.append("}")
         em.L.append("")
 
-    # n1_ovs wrapper: calls n1 into stack buffer (os=VL), then 4x4 transposes to output
+    # n1_ovs: inline butterfly with fused SIMD transpose stores
     if is_n1 and isa.name != 'scalar':
         R = 16
         VL = isa.k_step
+        T = isa.T
         n_groups = R // 4
+
         for d in ['fwd', 'bwd']:
+            em2 = Emitter(isa)
+            em2.addr_mode = 'n1_ovs'  # reads at stride is, writes to tbuf at stride VL
+
             em.L.append(f"")
             if isa.target:
                 em.L.append(f"static {isa.target} void")
@@ -1049,23 +1063,71 @@ def emit_file_ct(isa, itw_set, ct_variant):
             em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
             em.L.append(f"    size_t is, size_t os, size_t vl, size_t ovs)")
             em.L.append(f"{{")
-            em.L.append(f"    __attribute__((aligned(32))) double buf_re[{R*VL}], buf_im[{R*VL}];")
-            em.L.append(f"    for (size_t k = 0; k < vl; k += {VL}) {{")
-            em.L.append(f"        radix16_n1_{d}_{isa.name}(in_re + k, in_im + k, buf_re, buf_im, is, {VL}, {VL});")
+            em.L.append(f"    /* Inline n1_ovs: butterfly writes to tbuf, then 4x4 transpose to output */")
+
+            # Emit the same boilerplate as the n1 codelet
+            em.L.append(f"    {isa.align} double tbuf_re[{R * VL}];")
+            em.L.append(f"    {isa.align} double tbuf_im[{R * VL}];")
+
+            if isa.name != 'scalar':
+                em.L.append(f"    const {T} sign_flip = {isa.p}_set1_pd(-0.0);")
+                em.L.append(f"    const {T} sqrt2_inv = {isa.p}_set1_pd(0.70710678118654752440);")
+            else:
+                em.L.append(f"    const double sqrt2_inv = 0.70710678118654752440;")
+
+            spill_total = N * isa.sm
+            if isa.name == 'scalar':
+                em.L.append(f"    double spill_re[{N}], spill_im[{N}];")
+            else:
+                em.L.append(f"    {isa.align} double spill_re[{spill_total}];")
+                em.L.append(f"    {isa.align} double spill_im[{spill_total}];")
+
+            em.L.append(f"    {T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+            em.L.append(f"")
+
+            # Hoisted internal twiddle broadcasts
+            if itw_set:
+                if isa.name != 'scalar':
+                    set1 = f"{isa.p}_set1_pd"
+                    for (e, tN) in sorted(itw_set):
+                        label = wN_label(e, tN)
+                        em.L.append(f"    const {T} tw_{label}_re = {set1}({label}_re);")
+                        em.L.append(f"    const {T} tw_{label}_im = {set1}({label}_im);")
+                else:
+                    for (e, tN) in sorted(itw_set):
+                        label = wN_label(e, tN)
+                        em.L.append(f"    const double tw_{label}_re = {label}_re;")
+                        em.L.append(f"    const double tw_{label}_im = {label}_im;")
+                em.L.append(f"")
+
+            # K loop
+            em.L.append(f"    for (size_t k = 0; k < vl; k += {isa.k_step}) {{")
+
+            # Use a fresh Emitter for the kernel body
+            em2.L = []
+            em2.ind = 2
+            em2.reset()
+            em2.addr_mode = 'n1_ovs'
+            emit_kernel_body(em2, d, itw_set, 'notw')
+
+            em.L.extend(em2.L)
+
+            # Now emit the 4x4 transpose blocks (tbuf → out)
+            em.L.append(f"        /* 4x4 transpose: tbuf → output at stride ovs */")
             for g in range(n_groups):
                 b = g * 4
-                em.L.append(f"        /* Transpose bins {b}..{b+3} */")
                 for comp, arr in [('re', 'out_re'), ('im', 'out_im')]:
-                    bname = f"buf_{comp}"
-                    em.L.append(f"        {{ __m256d a=_mm256_load_pd(&{bname}[{b+0}*{VL}]), b_=_mm256_load_pd(&{bname}[{b+1}*{VL}]);")
-                    em.L.append(f"          __m256d c=_mm256_load_pd(&{bname}[{b+2}*{VL}]), d_=_mm256_load_pd(&{bname}[{b+3}*{VL}]);")
-                    em.L.append(f"          __m256d lo_ab=_mm256_unpacklo_pd(a,b_), hi_ab=_mm256_unpackhi_pd(a,b_);")
-                    em.L.append(f"          __m256d lo_cd=_mm256_unpacklo_pd(c,d_), hi_cd=_mm256_unpackhi_pd(c,d_);")
+                    bname = f"tbuf_{comp}"
+                    em.L.append(f"        {{ __m256d a_=_mm256_load_pd(&{bname}[{b+0}*{VL}]), b_=_mm256_load_pd(&{bname}[{b+1}*{VL}]);")
+                    em.L.append(f"          __m256d c_=_mm256_load_pd(&{bname}[{b+2}*{VL}]), d_=_mm256_load_pd(&{bname}[{b+3}*{VL}]);")
+                    em.L.append(f"          __m256d lo_ab=_mm256_unpacklo_pd(a_,b_), hi_ab=_mm256_unpackhi_pd(a_,b_);")
+                    em.L.append(f"          __m256d lo_cd=_mm256_unpacklo_pd(c_,d_), hi_cd=_mm256_unpackhi_pd(c_,d_);")
                     em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+0)*ovs+os*{b}], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));")
                     em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+1)*ovs+os*{b}], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));")
                     em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+2)*ovs+os*{b}], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));")
                     em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+3)*ovs+os*{b}], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));")
                     em.L.append(f"        }}")
+
             em.L.append(f"    }}")
             em.L.append(f"}}")
 

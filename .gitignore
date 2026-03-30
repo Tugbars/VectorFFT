@@ -31,3 +31,7 @@ src/test-codelets/build_bench/bench_r16_log3.exe
 src/test-codelets/build_bench/bench_k1.exe
 src/test-codelets/build_bench/bench_honest_all.exe
 src/test-codelets/build_bench/bench_fftw_style.exe
+src/test-codelets/build_bench/bench_sv.exe
+src/test-codelets/build_bench/bench_recursive_ct.exe
+src/test-codelets/build_bench/bench_r8_log3.exe
+src/test-codelets/build_bench/bench_r64_blocked.exe
