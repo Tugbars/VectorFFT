@@ -95,7 +95,38 @@ static double bench_fftw(size_t N, int reps) {
 }
 
 /* ================================================================
- * Test one factorization: correctness + bench
+ * 2-level CT: outer n1_ovs + R1 x inner ct_1level + outer t1
+ * ================================================================ */
+
+static void ct_2level(
+    t1_fn t1_outer, size_t R1,
+    n1_ovs_fn n1_inner, t1_fn t1_inner, size_t R0, size_t M0,
+    const double *ir, const double *ii,
+    double *or_, double *oi,
+    double *tmp_re, double *tmp_im,
+    const double *W0_re, const double *W0_im,
+    const double *W1_re, const double *W1_im)
+{
+    size_t M1 = R0 * M0;
+    /* Step 1: Gather — rearrange input into R1 contiguous M1-blocks.
+     * Sub-sequence r reads elements r, r+R1, r+2*R1, ..., r+(M1-1)*R1 */
+    for (size_t r = 0; r < R1; r++)
+        for (size_t m = 0; m < M1; m++) {
+            tmp_re[r * M1 + m] = ir[r + m * R1];
+            tmp_im[r * M1 + m] = ii[r + m * R1];
+        }
+    /* Step 2: Inner 1-level CT on each M1-block */
+    for (size_t r = 0; r < R1; r++)
+        ct_1level(n1_inner, t1_inner,
+                  tmp_re + r*M1, tmp_im + r*M1,
+                  or_ + r*M1, oi + r*M1,
+                  W0_re, W0_im, R0, M0);
+    /* Step 3: Outer t1 combines R1 blocks */
+    t1_outer(or_, oi, W1_re, W1_im, M1, M1);
+}
+
+/* ================================================================
+ * Test one 1-level factorization: correctness + bench
  * Returns ns, or -1 on failure
  * ================================================================ */
 
@@ -147,7 +178,75 @@ static double test_one(size_t N, size_t R, size_t M,
 }
 
 /* ================================================================
- * Test all 1-level factorizations for one N
+ * Test one 2-level factorization: correctness + bench
+ * ================================================================ */
+
+static double test_two(size_t N, size_t R1, size_t R0, size_t M0,
+                       t1_fn t1_outer,
+                       n1_ovs_fn n1_inner, t1_fn t1_inner,
+                       const double *in_re, const double *in_im,
+                       const double *fftw_re, const double *fftw_im,
+                       int reps)
+{
+    size_t M1 = R0 * M0;
+    double *W0_re = (double*)aligned_alloc(32, (R0-1)*M0*8);
+    double *W0_im = (double*)aligned_alloc(32, (R0-1)*M0*8);
+    double *W1_re = (double*)aligned_alloc(32, (R1-1)*M1*8);
+    double *W1_im = (double*)aligned_alloc(32, (R1-1)*M1*8);
+    double *tmp_re = (double*)aligned_alloc(32, N*8);
+    double *tmp_im = (double*)aligned_alloc(32, N*8);
+    double *out_re = (double*)aligned_alloc(32, N*8);
+    double *out_im = (double*)aligned_alloc(32, N*8);
+    init_tw(W0_re, W0_im, R0, M0);
+    init_tw(W1_re, W1_im, R1, M1);
+
+    /* Correctness */
+    ct_2level(t1_outer, R1,
+              n1_inner, t1_inner, R0, M0,
+              in_re, in_im, out_re, out_im, tmp_re, tmp_im,
+              W0_re, W0_im, W1_re, W1_im);
+    double max_err = 0;
+    for (size_t i = 0; i < N; i++) {
+        double e = fabs(out_re[i] - fftw_re[i]) + fabs(out_im[i] - fftw_im[i]);
+        if (e > max_err) max_err = e;
+    }
+
+    double ns = -1;
+    if (max_err < 1e-10) {
+        for (int i = 0; i < 20; i++)
+            ct_2level(t1_outer, R1,
+                      n1_inner, t1_inner, R0, M0,
+                      in_re, in_im, out_re, out_im, tmp_re, tmp_im,
+                      W0_re, W0_im, W1_re, W1_im);
+        double best = 1e18;
+        for (int t = 0; t < 7; t++) {
+            double t0 = now_ns();
+            for (int i = 0; i < reps; i++)
+                ct_2level(t1_outer, R1,
+                          n1_inner, t1_inner, R0, M0,
+                          in_re, in_im, out_re, out_im, tmp_re, tmp_im,
+                          W0_re, W0_im, W1_re, W1_im);
+            double elapsed = (now_ns() - t0) / reps;
+            if (elapsed < best) best = elapsed;
+        }
+        ns = best;
+    }
+
+    aligned_free(W0_re); aligned_free(W0_im);
+    aligned_free(W1_re); aligned_free(W1_im);
+    aligned_free(tmp_re); aligned_free(tmp_im);
+    aligned_free(out_re); aligned_free(out_im);
+
+    if (max_err < 1e-10)
+        printf("    %2zux(%zux%-2zu) %6.0f ns  %.2e", R1, R0, M0, ns, max_err);
+    else
+        printf("    %2zux(%zux%-2zu) %6s     %.2e FAIL", R1, R0, M0, "--", max_err);
+
+    return ns;
+}
+
+/* ================================================================
+ * Test all 1-level and 2-level factorizations for one N
  * ================================================================ */
 
 static void test_N(size_t N) {
@@ -200,9 +299,38 @@ static void test_N(size_t N) {
         printf("\n");
     }
 
+    /* 2-level: N = R1 * R0 * M0, all three must have codelets */
+    for (const codelet_t *c1 = CODELETS; c1->R; c1++) {
+        size_t R1 = c1->R;
+        if (N % R1 != 0) continue;
+        size_t M1 = N / R1;
+
+        for (const codelet_t *c0 = CODELETS; c0->R; c0++) {
+            size_t R0 = c0->R;
+            if (M1 % R0 != 0) continue;
+            size_t M0 = M1 / R0;
+            if (M0 < 4) continue;       /* SIMD minimum */
+            if (R0 > M0) continue;       /* skip R0>M0 */
+
+            const codelet_t *cm = find(M0);  /* inner child n1_ovs */
+            if (!cm) continue;
+
+            /* outer t1 = R1's t1 */
+            /* inner n1_ovs = M0's n1, inner t1 = R0's t1 */
+            double ns = test_two(N, R1, R0, M0,
+                                 c1->t1,
+                                 cm->n1, c0->t1,
+                                 in_re, in_im, fro, fio, reps);
+            if (ns > 0 && ns < best_ns) {
+                printf("  <-- best");
+                best_ns = ns; best_R = R1; best_M = M1;
+            }
+            printf("\n");
+        }
+    }
+
     if (best_ns < 1e18)
-        printf("    >> BEST: %zux%zu  %.0f ns  (%.2fx vs FFTW)\n",
-               best_R, best_M, best_ns, fftw_ns / best_ns);
+        printf("    >> BEST: %.0f ns  (%.2fx vs FFTW)\n", best_ns, fftw_ns / best_ns);
 
     fftw_destroy_plan(fp);
     fftw_free(fre); fftw_free(fim); fftw_free(fro); fftw_free(fio);
@@ -221,6 +349,7 @@ int main(void) {
 
     size_t sizes[] = {
         16, 32, 64, 128, 256, 512, 1024, 2048, 4096,
+        8192, 16384, 32768, 65536,
         0
     };
 
