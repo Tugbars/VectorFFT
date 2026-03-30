@@ -65,7 +65,7 @@ echo.
 REM -- Step 2: Compile benchmarks --
 
 set "CC=icx"
-set "CFLAGS=-O3 -march=native -mavx2 -mfma -D_USE_MATH_DEFINES"
+set "CFLAGS=-O3 -march=native -mavx2 -mfma -D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS"
 
 echo Compiling benchmarks with ICX...
 
@@ -116,6 +116,14 @@ echo   bench_ct_factor OK
 %CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -o "%BUILD_DIR%\bench_prefetch.exe" "%SCRIPT_DIR%bench_prefetch.c" "%FFTW_LIB%"
 if errorlevel 1 ( echo FAILED: bench_prefetch & exit /b 1 )
 echo   bench_prefetch OK
+
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -o "%BUILD_DIR%\vfft_calibrate.exe" "%SCRIPT_DIR%vfft_calibrate.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: vfft_calibrate & exit /b 1 )
+echo   vfft_calibrate OK
+
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -o "%BUILD_DIR%\bench_from_wisdom.exe" "%SCRIPT_DIR%bench_from_wisdom.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: bench_from_wisdom & exit /b 1 )
+echo   bench_from_wisdom OK
 
 echo.
 
@@ -198,9 +206,20 @@ echo BENCHMARK 10: bench_recursive_ct>> "%OUT%"
 "%BUILD_DIR%\bench_recursive_ct.exe" >> "%OUT%" 2>&1
 echo.>> "%OUT%"
 
+echo   vfft_calibrate...
+echo CALIBRATION: vfft_calibrate>> "%OUT%"
+"%BUILD_DIR%\vfft_calibrate.exe" "%BUILD_DIR%\vfft_wisdom.txt" >> "%OUT%" 2>&1
+echo.>> "%OUT%"
+
+echo   bench_from_wisdom...
+echo WISDOM BENCHMARK: VectorFFT vs FFTW>> "%OUT%"
+"%BUILD_DIR%\bench_from_wisdom.exe" "%BUILD_DIR%\vfft_wisdom.txt" >> "%OUT%" 2>&1
+echo.>> "%OUT%"
+
 echo.
 echo ============================================================
 echo   Results saved to: %OUT%
+echo   Wisdom saved to: %BUILD_DIR%\vfft_wisdom.txt
 echo ============================================================
 echo.
 type "%OUT%"
