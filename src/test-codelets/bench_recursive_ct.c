@@ -74,6 +74,72 @@ static void ct_1level(n1_ovs_fn n1, t1_fn t1,
 }
 
 /* ================================================================
+ * Fused 1-level CT: direct calls (compiler can inline both)
+ * Eliminates function-pointer indirection so ICX can inline
+ * the static-inline n1_ovs and t1 bodies into one function.
+ * ================================================================ */
+
+typedef void (*fused_fn)(const double*, const double*,
+                         double*, double*,
+                         const double*, const double*);
+
+#define FUSED_1LEVEL(name, n1_func, t1_func, R_val, M_val)       \
+static void name(                                                  \
+    const double * __restrict__ ir, const double * __restrict__ ii,\
+    double * __restrict__ or_, double * __restrict__ oi,           \
+    const double * __restrict__ W_re, const double * __restrict__ W_im) \
+{                                                                  \
+    n1_func(ir, ii, or_, oi, R_val, 1, R_val, M_val);             \
+    t1_func(or_, oi, W_re, W_im, M_val, M_val);                   \
+}
+
+/* N=16 */
+FUSED_1LEVEL(fused_4x4,   radix4_n1_ovs_fwd_avx2,  radix4_t1_dit_fwd_avx2,   4,  4)
+/* N=32 */
+FUSED_1LEVEL(fused_4x8,   radix8_n1_ovs_fwd_avx2,  radix4_t1_dit_fwd_avx2,   4,  8)
+/* N=64 */
+FUSED_1LEVEL(fused_4x16,  radix16_n1_ovs_fwd_avx2, radix4_t1_dit_fwd_avx2,   4, 16)
+FUSED_1LEVEL(fused_8x8,   radix8_n1_ovs_fwd_avx2,  radix8_t1_dit_fwd_avx2,   8,  8)
+/* N=128 */
+FUSED_1LEVEL(fused_4x32,  radix32_n1_ovs_fwd_avx2, radix4_t1_dit_fwd_avx2,   4, 32)
+FUSED_1LEVEL(fused_8x16,  radix16_n1_ovs_fwd_avx2, radix8_t1_dit_fwd_avx2,   8, 16)
+/* N=256 */
+FUSED_1LEVEL(fused_4x64,  radix64_n1_ovs_fwd_avx2, radix4_t1_dit_fwd_avx2,   4, 64)
+FUSED_1LEVEL(fused_8x32,  radix32_n1_ovs_fwd_avx2, radix8_t1_dit_fwd_avx2,   8, 32)
+FUSED_1LEVEL(fused_16x16, radix16_n1_ovs_fwd_avx2, radix16_t1_dit_fwd_avx2, 16, 16)
+/* N=512 */
+FUSED_1LEVEL(fused_8x64,  radix64_n1_ovs_fwd_avx2, radix8_t1_dit_fwd_avx2,   8, 64)
+FUSED_1LEVEL(fused_16x32, radix32_n1_ovs_fwd_avx2, radix16_t1_dit_fwd_avx2, 16, 32)
+/* N=1024 */
+FUSED_1LEVEL(fused_16x64, radix64_n1_ovs_fwd_avx2, radix16_t1_dit_fwd_avx2, 16, 64)
+FUSED_1LEVEL(fused_32x32, radix32_n1_ovs_fwd_avx2, radix32_t1_dit_fwd_avx2, 32, 32)
+/* N=2048 */
+FUSED_1LEVEL(fused_32x64, radix64_n1_ovs_fwd_avx2, radix32_t1_dit_fwd_avx2, 32, 64)
+/* N=4096 */
+FUSED_1LEVEL(fused_64x64, radix64_n1_ovs_fwd_avx2, radix64_t1_dit_fwd_avx2, 64, 64)
+
+typedef struct { size_t R; size_t M; fused_fn fn; } fused_entry;
+
+static const fused_entry FUSED[] = {
+    {  4,   4, fused_4x4   },
+    {  4,   8, fused_4x8   },
+    {  4,  16, fused_4x16  },
+    {  8,   8, fused_8x8   },
+    {  4,  32, fused_4x32  },
+    {  8,  16, fused_8x16  },
+    {  4,  64, fused_4x64  },
+    {  8,  32, fused_8x32  },
+    { 16,  16, fused_16x16 },
+    {  8,  64, fused_8x64  },
+    { 16,  32, fused_16x32 },
+    { 16,  64, fused_16x64 },
+    { 32,  32, fused_32x32 },
+    { 32,  64, fused_32x64 },
+    { 64,  64, fused_64x64 },
+    {  0,   0, NULL }
+};
+
+/* ================================================================
  * FFTW reference
  * ================================================================ */
 
@@ -246,6 +312,56 @@ static double test_two(size_t N, size_t R1, size_t R0, size_t M0,
 }
 
 /* ================================================================
+ * Test one fused 1-level: direct calls, no function pointers
+ * ================================================================ */
+
+static double test_fused(size_t N, size_t R, size_t M,
+                         fused_fn fn,
+                         const double *in_re, const double *in_im,
+                         const double *fftw_re, const double *fftw_im,
+                         int reps)
+{
+    double *W_re = (double*)aligned_alloc(32, (R-1)*M*8);
+    double *W_im = (double*)aligned_alloc(32, (R-1)*M*8);
+    double *out_re = (double*)aligned_alloc(32, N*8);
+    double *out_im = (double*)aligned_alloc(32, N*8);
+    init_tw(W_re, W_im, R, M);
+
+    /* Correctness */
+    fn(in_re, in_im, out_re, out_im, W_re, W_im);
+    double max_err = 0;
+    for (size_t i = 0; i < N; i++) {
+        double e = fabs(out_re[i] - fftw_re[i]) + fabs(out_im[i] - fftw_im[i]);
+        if (e > max_err) max_err = e;
+    }
+
+    double ns = -1;
+    if (max_err < 1e-10) {
+        for (int i = 0; i < 20; i++)
+            fn(in_re, in_im, out_re, out_im, W_re, W_im);
+        double best = 1e18;
+        for (int t = 0; t < 7; t++) {
+            double t0 = now_ns();
+            for (int i = 0; i < reps; i++)
+                fn(in_re, in_im, out_re, out_im, W_re, W_im);
+            double elapsed = (now_ns() - t0) / reps;
+            if (elapsed < best) best = elapsed;
+        }
+        ns = best;
+    }
+
+    aligned_free(W_re); aligned_free(W_im);
+    aligned_free(out_re); aligned_free(out_im);
+
+    if (max_err < 1e-10)
+        printf("    %2zux%-3zu F %6.0f ns  %.2e", R, M, ns, max_err);
+    else
+        printf("    %2zux%-3zu F %6s     %.2e FAIL", R, M, "--", max_err);
+
+    return ns;
+}
+
+/* ================================================================
  * Test all 1-level and 2-level factorizations for one N
  * ================================================================ */
 
@@ -327,6 +443,18 @@ static void test_N(size_t N) {
             }
             printf("\n");
         }
+    }
+
+    /* Fused 1-level: direct calls (compiler inlines n1_ovs + t1) */
+    for (const fused_entry *f = FUSED; f->R; f++) {
+        if (f->R * f->M != N) continue;
+        double ns = test_fused(N, f->R, f->M, f->fn,
+                               in_re, in_im, fro, fio, reps);
+        if (ns > 0 && ns < best_ns) {
+            printf("  <-- best");
+            best_ns = ns;
+        }
+        printf("\n");
     }
 
     if (best_ns < 1e18)
