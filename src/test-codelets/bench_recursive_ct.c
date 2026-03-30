@@ -185,19 +185,52 @@ static void test_exec(const char *label, size_t N, exec_fn fn, int reps) {
  * The n1 radix = M (child DFT size)
  * The t1 radix = R (outer butterfly size) */
 
-/* N=64 = 8*8: n1_ovs=DFT-8, t1=radix-8 */
+/* ── 1-level factorizations ── */
+
+/* N=32 = 4*8: child=DFT-8, outer=radix-4 */
+static double W32_re[3*8], W32_im[3*8];
+static void exec_32_4x8(const double*ir,const double*ii,double*or_,double*oi){
+    ct_1level((n1_ovs_fn)radix8_n1_ovs_fwd_avx2,(t1_fn)radix4_t1_dit_fwd_avx2,
+              ir,ii,or_,oi,W32_re,W32_im,4,8);
+}
+
+/* N=64 = 4*16: child=DFT-16, outer=radix-4 */
+static double W64_4x16_re[3*16], W64_4x16_im[3*16];
+static void exec_64_4x16(const double*ir,const double*ii,double*or_,double*oi){
+    ct_1level((n1_ovs_fn)radix16_n1_ovs_fwd_avx2,(t1_fn)radix4_t1_dit_fwd_avx2,
+              ir,ii,or_,oi,W64_4x16_re,W64_4x16_im,4,16);
+}
+
+/* N=64 = 8*8: child=DFT-8, outer=radix-8 */
 static double W64_re[7*8], W64_im[7*8];
-static void exec_64(const double*ir,const double*ii,double*or_,double*oi){
+static void exec_64_8x8(const double*ir,const double*ii,double*or_,double*oi){
     ct_1level((n1_ovs_fn)radix8_n1_ovs_fwd_avx2,(t1_fn)radix8_t1_dit_fwd_avx2,
               ir,ii,or_,oi,W64_re,W64_im,8,8);
 }
 
-/* N=128 = 16*8: n1_ovs=DFT-8, t1=radix-16 */
+/* N=128 = 8*16: child=DFT-16, outer=radix-8 */
+static double W128_8x16_re[7*16], W128_8x16_im[7*16];
+static void exec_128_8x16(const double*ir,const double*ii,double*or_,double*oi){
+    ct_1level((n1_ovs_fn)radix16_n1_ovs_fwd_avx2,(t1_fn)radix8_t1_dit_fwd_avx2,
+              ir,ii,or_,oi,W128_8x16_re,W128_8x16_im,8,16);
+}
+
+/* N=128 = 16*8: child=DFT-8, outer=radix-16 */
 static double W128_re[15*8], W128_im[15*8];
-static void exec_128(const double*ir,const double*ii,double*or_,double*oi){
+static void exec_128_16x8(const double*ir,const double*ii,double*or_,double*oi){
     ct_1level((n1_ovs_fn)radix8_n1_ovs_fwd_avx2,(t1_fn)radix16_t1_dit_fwd_avx2,
               ir,ii,or_,oi,W128_re,W128_im,16,8);
 }
+
+/* N=256 = 16*16: child=DFT-16, outer=radix-16 */
+static double W256_re[15*16], W256_im[15*16];
+static void exec_256_16x16(const double*ir,const double*ii,double*or_,double*oi){
+    ct_1level((n1_ovs_fn)radix16_n1_ovs_fwd_avx2,(t1_fn)radix16_t1_dit_fwd_avx2,
+              ir,ii,or_,oi,W256_re,W256_im,16,16);
+}
+
+/* N=256 = 4*64 — SKIPPED: no n1_ovs for R=64 yet in this bench */
+/* N=512 = 8*64 — SKIPPED: no t1 for R=64 in this bench */
 
 #if 0 /* TODO: needs n1_ovs for R=16 */
 /* N=2048 = 16*(8*16): outer R=16, inner R=8, leaf M=16
@@ -268,34 +301,27 @@ int main(void) {
     printf("================================================================\n\n");
     fflush(stdout);
 
+    /* Init all twiddle tables */
+    init_t1_tw(W32_re,W32_im,4,8);
+    init_t1_tw(W64_4x16_re,W64_4x16_im,4,16);
     init_t1_tw(W64_re,W64_im,8,8);
+    init_t1_tw(W128_8x16_re,W128_8x16_im,8,16);
     init_t1_tw(W128_re,W128_im,16,8);
+    init_t1_tw(W256_re,W256_im,16,16);
 
-    /* Quick smoke test */
-    printf("  Smoke test exec_64...\n"); fflush(stdout);
-    {
-        double __attribute__((aligned(32))) ir[64]={0}, ii_[64]={0}, or_[64]={0}, oi_[64]={0};
-        ir[0]=1;
-        exec_64(ir,ii_,or_,oi_);
-        printf("  out[0..3]=%.4f %.4f %.4f %.4f\n",or_[0],or_[1],or_[2],or_[3]);
-        fflush(stdout);
-    }
+    /* N=32 */
+    test_exec("4x8",32,exec_32_4x8,200000);
 
-    /* Full correctness test vs FFTW */
-    printf("  Running full FFTW comparison...\n"); fflush(stdout);
-    test_exec("8x8 (1-level)",64,exec_64,200000);
-    printf("  First test done.\n"); fflush(stdout);
+    /* N=64: two factorizations */
+    test_exec("4x16",64,exec_64_4x16,200000);
+    test_exec("8x8",64,exec_64_8x8,200000);
 
-    printf("  Smoke test exec_128...\n"); fflush(stdout);
-    {
-        double __attribute__((aligned(32))) ir[128]={0}, ii_[128]={0}, or_[128]={0}, oi_[128]={0};
-        ir[0]=1;
-        exec_128(ir,ii_,or_,oi_);
-        printf("  out[0..3]=%.4f %.4f %.4f %.4f\n",or_[0],or_[1],or_[2],or_[3]);
-        fflush(stdout);
-    }
+    /* N=128: two factorizations */
+    test_exec("8x16",128,exec_128_8x16,100000);
+    test_exec("16x8",128,exec_128_16x8,100000);
 
-    test_exec("16x8 (1-level)",128,exec_128,100000);
+    /* N=256 */
+    test_exec("16x16",256,exec_256_16x16,50000);
 
     printf("\n");
     return 0;
