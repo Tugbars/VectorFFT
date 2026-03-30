@@ -1,7 +1,7 @@
 
 ============================================================
   VectorFFT Codelet Benchmark Results
-  Sun 03/29/2026  1:15:38.27
+  Sun 03/29/2026 20:17:54.59
   Compiler: ICX (Intel oneAPI)
 ============================================================
 
@@ -11,24 +11,33 @@ BENCHMARK: bench_ct_factor
   Permutation-free: n1_ovs + t1, all valid factorizations
   Radixes available: 4, 8, 16
 ================================================================
+  [1] 4x16: n1_ovs R16...
+  [1] t1 R4...
+  [1] done. out[0]=31.5000
+  [2] 8x8: n1_ovs R8...
+  [2] n1_ovs done. t1 R8...
+  [2] done. out[0]=31.5000
 
-  N=32  FFTW=17 ns
+  N=32  FFTW=19 ns
   Factorization              ns    vs FFTW      err
-    Trying 4x8 ...   4x8 (1L)                   --         --  1.1e+01 FAIL
-    Trying 8x4 ... 
+    Trying 4x8 (n1=R8, t1=R4) ...   4x8 (1L)                   15      1.29x  8.9e-16  <-- best
+  >> BEST: 4x8 (1L)             15 ns (1.29x vs FFTW)
+
+  N=64  FFTW=33 ns
+  Factorization              ns    vs FFTW      err
+    Trying 4x16 (n1=R16, t1=R4) ...   4x16 (1L)                  28      1.18x  3.1e-15  <-- best
+    Trying 8x8 (n1=R8, t1=R8) ... 
 BENCHMARK 10: bench_recursive_ct
 ================================================================
   Permutation-free CT executor (n1 + t1)
   No permutation, no transpose, no gather/scatter
 ================================================================
 
-  Smoke test exec_64...
-  out[0..3]=1.0000 1.0000 1.0000 1.0000
-  Running full FFTW comparison...
-  8x8 (1-level)                N=64     err=2.11e-15 OK        29 ns  (1.16x vs FFTW 34 ns)
-  First test done.
-  Smoke test exec_128...
-  out[0..3]=1.0000 1.0000 1.0000 1.0000
-  16x8 (1-level)               N=128    err=3.55e-15 OK        65 ns  (1.04x vs FFTW 68 ns)
+  4x8                          N=32     err=8.88e-16 OK        15 ns  (1.28x vs FFTW 19 ns)
+  4x16                         N=64     err=2.66e-15 OK        27 ns  (1.45x vs FFTW 40 ns)
+  8x8                          N=64     err=2.11e-15 OK        29 ns  (1.16x vs FFTW 34 ns)
+  8x16                         N=128    err=3.55e-15 OK        62 ns  (1.09x vs FFTW 68 ns)
+  16x8                         N=128    err=3.55e-15 OK        67 ns  (1.02x vs FFTW 68 ns)
+  16x16                        N=256    err=6.66e-15 OK       151 ns  (0.96x vs FFTW 144 ns)
 
 

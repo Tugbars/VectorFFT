@@ -1320,7 +1320,7 @@ radix8_t1_dit_fwd(
         const double A1r=eq_r+es_i,A1i=eq_i-es_r,A3r=eq_r-es_i,A3i=eq_i+es_r;
         const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;
         const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;
-        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_r-or_i;
+        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;
         const double B1r=oq_r+os_i,B1i=oq_i-os_r,B3r=oq_r-os_i,B3i=oq_i+os_r;
         rio_re[m*ms+0*ios]=A0r+B0r; rio_im[m*ms+0*ios]=A0i+B0i;
         rio_re[m*ms+4*ios]=A0r-B0r; rio_im[m*ms+4*ios]=A0i-B0i;
@@ -1455,7 +1455,7 @@ radix8_t1_dit_bwd(
         const double A1r=eq_r-es_i,A1i=eq_i+es_r,A3r=eq_r+es_i,A3i=eq_i-es_r;
         const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;
         const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;
-        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_r-or_i;
+        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;
         const double B1r=oq_r-os_i,B1i=oq_i+os_r,B3r=oq_r+os_i,B3i=oq_i-os_r;
         rio_re[m*ms+0*ios]=A0r+B0r; rio_im[m*ms+0*ios]=A0i+B0i;
         rio_re[m*ms+4*ios]=A0r-B0r; rio_im[m*ms+4*ios]=A0i-B0i;

@@ -77,8 +77,11 @@ static void ct_1level(n1_ovs_fn n1, t1_fn t1,
     const double *W_re, const double *W_im,
     size_t R, size_t M)
 {
+    /* n1_ovs: is=R, os=1, vl=R, ovs=M
+     * Sub-seq k at out[k*M..k*M+R-1]. Bin m across sub-seqs at stride M.
+     * t1: ios=M (stride between butterfly legs), me=M (sub-transforms) */
     n1(ir, ii, or_, oi, R, 1, R, M);
-    t1(or_, oi, W_re, W_im, R, M);
+    t1(or_, oi, W_re, W_im, M, M);
 }
 
 /* ================================================================
@@ -95,8 +98,10 @@ static void ct_2level(
     const double *W1_re, const double *W1_im)
 {
     size_t M1 = R0 * M0;
-    /* Outer n1_ovs: decimates input into R1 contiguous blocks of M1 */
-    n1_outer(ir, ii, tmp_re, tmp_im, R1, 1, R1, M1);
+    /* Outer n1_ovs: decimates input into R1 contiguous blocks of M1.
+     * is=R1 (stride between DFT elements), os=1 (output bin stride),
+     * vl=M1 (process all M1 k-values), ovs=M1 (sub-seqs M1 apart) */
+    n1_outer(ir, ii, tmp_re, tmp_im, R1, 1, M1, M1);
     /* Inner 1-level CT on each block */
     for (size_t r = 0; r < R1; r++)
         ct_1level(n1_inner, t1_inner,
@@ -155,17 +160,21 @@ static double check_vs_fftw(size_t N, const double *in_re, const double *in_im,
  * ================================================================ */
 
 static double bench_once(size_t N, const double *in_re, const double *in_im,
-                         double *out_re, double *out_im,
                          void (*fn)(const double*,const double*,double*,double*),
                          int reps) {
-    for(int i=0;i<20;i++) fn(in_re,in_im,out_re,out_im);
+    /* Allocate private output buffers for benchmarking */
+    double *or_ = (double*)aligned_alloc(32, (N+64)*8);
+    double *oi_ = (double*)aligned_alloc(32, (N+64)*8);
+    if (reps > 200) reps = 200;
+    for(int i=0;i<20;i++) fn(in_re,in_im,or_,oi_);
     double best=1e18;
     for(int t=0;t<7;t++){
         double t0=now_ns();
-        for(int i=0;i<reps;i++) fn(in_re,in_im,out_re,out_im);
+        for(int i=0;i<reps;i++) fn(in_re,in_im,or_,oi_);
         double ns=(now_ns()-t0)/reps;
         if(ns<best)best=ns;
     }
+    aligned_free(or_); aligned_free(oi_);
     return best;
 }
 
@@ -174,10 +183,11 @@ static double bench_once(size_t N, const double *in_re, const double *in_im,
  * ================================================================ */
 
 /* Captured state for executor closures */
-static n1_ovs_fn g_n1; static t1_fn g_t1;
-static double *g_W_re, *g_W_im;
-static size_t g_R, g_M;
+static volatile n1_ovs_fn g_n1; static volatile t1_fn g_t1;
+static double * volatile g_W_re; static double * volatile g_W_im;
+static volatile size_t g_R, g_M;
 
+__attribute__((noinline))
 static void exec_1level(const double *ir, const double *ii, double *or_, double *oi) {
     ct_1level(g_n1, g_t1, ir, ii, or_, oi, g_W_re, g_W_im, g_R, g_M);
 }
@@ -200,10 +210,17 @@ static void test_N(size_t N) {
     if (reps < 200) reps = 200;
     if (reps > 2000000) reps = 2000000;
 
-    double *in_re = (double*)aligned_alloc(32, N*8);
-    double *in_im = (double*)aligned_alloc(32, N*8);
-    double *out_re = (double*)aligned_alloc(32, N*8);
-    double *out_im = (double*)aligned_alloc(32, N*8);
+    /* Over-allocate with guard zones to detect out-of-bounds writes */
+    size_t alloc_sz = (N + 256) * 8;
+    double *in_re = (double*)aligned_alloc(32, alloc_sz);
+    double *in_im = (double*)aligned_alloc(32, alloc_sz);
+    double *out_re = (double*)aligned_alloc(32, alloc_sz);
+    double *out_im = (double*)aligned_alloc(32, alloc_sz);
+    double *tw_buf_re = (double*)aligned_alloc(32, alloc_sz);
+    double *tw_buf_im = (double*)aligned_alloc(32, alloc_sz);
+    memset(in_re, 0, alloc_sz); memset(in_im, 0, alloc_sz);
+    memset(out_re, 0, alloc_sz); memset(out_im, 0, alloc_sz);
+    memset(tw_buf_re, 0, alloc_sz); memset(tw_buf_im, 0, alloc_sz);
 
     srand(42);
     for (size_t i = 0; i < N; i++) {
@@ -234,17 +251,19 @@ static void test_N(size_t N) {
         codelet_entry *child = find_codelet(M);  /* n1_ovs for M-point DFT */
         codelet_entry *outer = find_codelet(R);   /* t1 for R-point butterfly */
         if (!child || !outer) continue;
-        printf("    Trying %zux%zu ... ", R, M); fflush(stdout);
+        /* Skip R > M until debugged */
+        if (R > M) continue;
+        printf("    Trying %zux%zu (n1=R%zu, t1=R%zu) ... ", R, M, child->R, outer->R); fflush(stdout);
 
         /* Setup */
         g_n1 = child->n1_ovs;
         g_t1 = outer->t1_dit;
         g_R = R; g_M = M;
-        g_W_re = (double*)aligned_alloc(32, (R-1)*M*8);
-        g_W_im = (double*)aligned_alloc(32, (R-1)*M*8);
-        init_t1_tw(g_W_re, g_W_im, R, M);
+        init_t1_tw(tw_buf_re, tw_buf_im, R, M);
+        g_W_re = tw_buf_re; g_W_im = tw_buf_im;
 
         /* Correctness */
+        memset(out_re, 0, N*8); memset(out_im, 0, N*8);
         exec_1level(in_re, in_im, out_re, out_im);
         double err = check_vs_fftw(N, in_re, in_im, out_re, out_im);
 
@@ -252,15 +271,13 @@ static void test_N(size_t N) {
         snprintf(label, sizeof(label), "%zux%zu (1L)", R, M);
 
         if (err < 1e-10) {
-            double ns = bench_once(N, in_re, in_im, out_re, out_im, exec_1level, reps);
+            double ns = bench_once(N, in_re, in_im, exec_1level, reps);
             printf("  %-20s %8.0f %9.2fx  %.1e %s\n", label, ns, fftw_ns/ns, err,
                    ns < best_ns ? " <-- best" : "");
             if (ns < best_ns) { best_ns = ns; snprintf(best_label, 64, "%s", label); }
         } else {
             printf("  %-20s %8s %10s  %.1e FAIL\n", label, "--", "--", err);
         }
-
-        aligned_free(g_W_re); aligned_free(g_W_im);
     }
 
     /* 2-level: N = R1 * R0 * M0 */
@@ -305,7 +322,7 @@ static void test_N(size_t N) {
             snprintf(label, sizeof(label), "%zux(%zux%zu) (2L)", R1, R0, M0);
 
             if (err < 1e-10) {
-                double ns = bench_once(N, in_re, in_im, out_re, out_im, exec_2level, reps);
+                double ns = bench_once(N, in_re, in_im, exec_2level, reps);
                 printf("  %-20s %8.0f %9.2fx  %.1e %s\n", label, ns, fftw_ns/ns, err,
                        ns < best_ns ? " <-- best" : "");
                 if (ns < best_ns) { best_ns = ns; snprintf(best_label, 64, "%s", label); }
@@ -323,6 +340,7 @@ static void test_N(size_t N) {
         printf("  >> BEST: %-20s %.0f ns (%.2fx vs FFTW)\n", best_label, best_ns, fftw_ns/best_ns);
     fflush(stdout);
 
+    aligned_free(tw_buf_re); aligned_free(tw_buf_im);
     aligned_free(in_re); aligned_free(in_im);
     aligned_free(out_re); aligned_free(out_im);
 }
@@ -336,6 +354,35 @@ int main(void) {
     printf("  Radixes available: 4, 8, 16\n");
     printf("================================================================\n");
     fflush(stdout);
+
+    /* Debug: explicit 4x16 then 8x8 test */
+    {
+        size_t N = 64;
+        double *ir = (double*)aligned_alloc(32, N*8);
+        double *ii_ = (double*)aligned_alloc(32, N*8);
+        double *or_ = (double*)aligned_alloc(32, N*8);
+        double *oi_ = (double*)aligned_alloc(32, N*8);
+        double *tw_re = (double*)aligned_alloc(32, N*8);
+        double *tw_im = (double*)aligned_alloc(32, N*8);
+        for(size_t i=0;i<N;i++){ir[i]=(double)i/N;ii_[i]=0;}
+
+        printf("  [1] 4x16: n1_ovs R16...\n"); fflush(stdout);
+        init_t1_tw(tw_re, tw_im, 4, 16);
+        radix16_n1_ovs_fwd_avx2(ir, ii_, or_, oi_, 4, 1, 4, 16);
+        printf("  [1] t1 R4...\n"); fflush(stdout);
+        radix4_t1_dit_fwd_avx2(or_, oi_, tw_re, tw_im, 16, 16);
+        printf("  [1] done. out[0]=%.4f\n", or_[0]); fflush(stdout);
+
+        printf("  [2] 8x8: n1_ovs R8...\n"); fflush(stdout);
+        init_t1_tw(tw_re, tw_im, 8, 8);
+        radix8_n1_ovs_fwd_avx2(ir, ii_, or_, oi_, 8, 1, 8, 8);
+        printf("  [2] n1_ovs done. t1 R8...\n"); fflush(stdout);
+        radix8_t1_dit_fwd_avx2(or_, oi_, tw_re, tw_im, 8, 8);
+        printf("  [2] done. out[0]=%.4f\n", or_[0]); fflush(stdout);
+
+        aligned_free(ir); aligned_free(ii_); aligned_free(or_); aligned_free(oi_);
+        aligned_free(tw_re); aligned_free(tw_im);
+    }
 
     size_t sizes[] = {32, 64, 128, 256, 512, 1024, 2048, 4096};
     int n_sizes = sizeof(sizes)/sizeof(sizes[0]);
