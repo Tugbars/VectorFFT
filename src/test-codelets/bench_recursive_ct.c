@@ -140,6 +140,80 @@ static const fused_entry FUSED[] = {
 };
 
 /* ================================================================
+ * Noinline wrappers: direct calls that ICX CANNOT inline.
+ * Tests whether inlining helps or hurts for each codelet size.
+ * ================================================================ */
+
+#define NOINLINE_N1(name, func) \
+__attribute__((noinline)) static void name( \
+    const double *ir, const double *ii, double *or_, double *oi, \
+    size_t is, size_t os, size_t vl, size_t ovs) { \
+    func(ir, ii, or_, oi, is, os, vl, ovs); }
+
+#define NOINLINE_T1(name, func) \
+__attribute__((noinline)) static void name( \
+    double *rio_re, double *rio_im, \
+    const double *W_re, const double *W_im, \
+    size_t ios, size_t me) { \
+    func(rio_re, rio_im, W_re, W_im, ios, me); }
+
+NOINLINE_N1(r4_n1_ni,  radix4_n1_ovs_fwd_avx2)
+NOINLINE_T1(r4_t1_ni,  radix4_t1_dit_fwd_avx2)
+NOINLINE_N1(r8_n1_ni,  radix8_n1_ovs_fwd_avx2)
+NOINLINE_T1(r8_t1_ni,  radix8_t1_dit_fwd_avx2)
+NOINLINE_N1(r16_n1_ni, radix16_n1_ovs_fwd_avx2)
+NOINLINE_T1(r16_t1_ni, radix16_t1_dit_fwd_avx2)
+NOINLINE_N1(r32_n1_ni, radix32_n1_ovs_fwd_avx2)
+NOINLINE_T1(r32_t1_ni, radix32_t1_dit_fwd_avx2)
+NOINLINE_N1(r64_n1_ni, radix64_n1_ovs_fwd_avx2)
+NOINLINE_T1(r64_t1_ni, radix64_t1_dit_fwd_avx2)
+
+/* Fused noinline: direct calls but bodies stay separate */
+/* N=16 */
+FUSED_1LEVEL(fni_4x4,   r4_n1_ni,  r4_t1_ni,   4,  4)
+/* N=32 */
+FUSED_1LEVEL(fni_4x8,   r8_n1_ni,  r4_t1_ni,   4,  8)
+/* N=64 */
+FUSED_1LEVEL(fni_4x16,  r16_n1_ni, r4_t1_ni,   4, 16)
+FUSED_1LEVEL(fni_8x8,   r8_n1_ni,  r8_t1_ni,   8,  8)
+/* N=128 */
+FUSED_1LEVEL(fni_4x32,  r32_n1_ni, r4_t1_ni,   4, 32)
+FUSED_1LEVEL(fni_8x16,  r16_n1_ni, r8_t1_ni,   8, 16)
+/* N=256 */
+FUSED_1LEVEL(fni_4x64,  r64_n1_ni, r4_t1_ni,   4, 64)
+FUSED_1LEVEL(fni_8x32,  r32_n1_ni, r8_t1_ni,   8, 32)
+FUSED_1LEVEL(fni_16x16, r16_n1_ni, r16_t1_ni, 16, 16)
+/* N=512 */
+FUSED_1LEVEL(fni_8x64,  r64_n1_ni, r8_t1_ni,   8, 64)
+FUSED_1LEVEL(fni_16x32, r32_n1_ni, r16_t1_ni, 16, 32)
+/* N=1024 */
+FUSED_1LEVEL(fni_16x64, r64_n1_ni, r16_t1_ni, 16, 64)
+FUSED_1LEVEL(fni_32x32, r32_n1_ni, r32_t1_ni, 32, 32)
+/* N=2048 */
+FUSED_1LEVEL(fni_32x64, r64_n1_ni, r32_t1_ni, 32, 64)
+/* N=4096 */
+FUSED_1LEVEL(fni_64x64, r64_n1_ni, r64_t1_ni, 64, 64)
+
+static const fused_entry FUSED_NOINL[] = {
+    {  4,   4, fni_4x4   },
+    {  4,   8, fni_4x8   },
+    {  4,  16, fni_4x16  },
+    {  8,   8, fni_8x8   },
+    {  4,  32, fni_4x32  },
+    {  8,  16, fni_8x16  },
+    {  4,  64, fni_4x64  },
+    {  8,  32, fni_8x32  },
+    { 16,  16, fni_16x16 },
+    {  8,  64, fni_8x64  },
+    { 16,  32, fni_16x32 },
+    { 16,  64, fni_16x64 },
+    { 32,  32, fni_32x32 },
+    { 32,  64, fni_32x64 },
+    { 64,  64, fni_64x64 },
+    {  0,   0, NULL }
+};
+
+/* ================================================================
  * FFTW reference
  * ================================================================ */
 
@@ -316,7 +390,7 @@ static double test_two(size_t N, size_t R1, size_t R0, size_t M0,
  * ================================================================ */
 
 static double test_fused(size_t N, size_t R, size_t M,
-                         fused_fn fn,
+                         fused_fn fn, const char *label,
                          const double *in_re, const double *in_im,
                          const double *fftw_re, const double *fftw_im,
                          int reps)
@@ -354,9 +428,9 @@ static double test_fused(size_t N, size_t R, size_t M,
     aligned_free(out_re); aligned_free(out_im);
 
     if (max_err < 1e-10)
-        printf("    %2zux%-3zu F %6.0f ns  %.2e", R, M, ns, max_err);
+        printf("    %2zux%-3zu %s %5.0f ns  %.2e", R, M, label, ns, max_err);
     else
-        printf("    %2zux%-3zu F %6s     %.2e FAIL", R, M, "--", max_err);
+        printf("    %2zux%-3zu %s %5s     %.2e FAIL", R, M, label, "--", max_err);
 
     return ns;
 }
@@ -448,7 +522,19 @@ static void test_N(size_t N) {
     /* Fused 1-level: direct calls (compiler inlines n1_ovs + t1) */
     for (const fused_entry *f = FUSED; f->R; f++) {
         if (f->R * f->M != N) continue;
-        double ns = test_fused(N, f->R, f->M, f->fn,
+        double ns = test_fused(N, f->R, f->M, f->fn, " F",
+                               in_re, in_im, fro, fio, reps);
+        if (ns > 0 && ns < best_ns) {
+            printf("  <-- best");
+            best_ns = ns;
+        }
+        printf("\n");
+    }
+
+    /* Fused noinline: direct calls, compiler CANNOT inline bodies */
+    for (const fused_entry *f = FUSED_NOINL; f->R; f++) {
+        if (f->R * f->M != N) continue;
+        double ns = test_fused(N, f->R, f->M, f->fn, "NI",
                                in_re, in_im, fro, fio, reps);
         if (ns > 0 && ns < best_ns) {
             printf("  <-- best");
@@ -470,8 +556,8 @@ static void test_N(size_t N) {
 int main(void) {
     printf("================================================================\n");
     printf("  Permutation-free CT: factorization search\n");
-    printf("  n1_ovs + t1_dit, radixes: 4, 8, 16, 32, 64\n");
-    printf("  No permutation, no transpose, no gather/scatter\n");
+    printf("  Indirect vs Fused-inline (F) vs Fused-noinline (NI)\n");
+    printf("  Radixes: 4, 8, 16, 32, 64\n");
     printf("================================================================\n");
     fflush(stdout);
 
