@@ -1,7 +1,7 @@
 
 ============================================================
   VectorFFT Codelet Benchmark Results
-  Sun 03/29/2026 20:17:54.59
+  Mon 03/30/2026 21:20:24.62
   Compiler: ICX (Intel oneAPI)
 ============================================================
 
@@ -20,24 +20,69 @@ BENCHMARK: bench_ct_factor
 
   N=32  FFTW=19 ns
   Factorization              ns    vs FFTW      err
-    Trying 4x8 (n1=R8, t1=R4) ...   4x8 (1L)                   15      1.29x  8.9e-16  <-- best
-  >> BEST: 4x8 (1L)             15 ns (1.29x vs FFTW)
+    Trying 4x8 (n1=R8, t1=R4) ...   4x8 (1L)                   14      1.33x  8.9e-16  <-- best
+  >> BEST: 4x8 (1L)             14 ns (1.33x vs FFTW)
 
-  N=64  FFTW=33 ns
+  N=64  FFTW=34 ns
   Factorization              ns    vs FFTW      err
-    Trying 4x16 (n1=R16, t1=R4) ...   4x16 (1L)                  28      1.18x  3.1e-15  <-- best
+    Trying 4x16 (n1=R16, t1=R4) ...   4x16 (1L)                  32      1.05x  3.1e-15  <-- best
     Trying 8x8 (n1=R8, t1=R8) ... 
 BENCHMARK 10: bench_recursive_ct
 ================================================================
-  Permutation-free CT executor (n1 + t1)
+  Permutation-free CT: factorization search
+  n1_ovs + t1_dit, radixes: 4, 8, 16, 32, 64
   No permutation, no transpose, no gather/scatter
 ================================================================
 
-  4x8                          N=32     err=8.88e-16 OK        15 ns  (1.28x vs FFTW 19 ns)
-  4x16                         N=64     err=2.66e-15 OK        27 ns  (1.45x vs FFTW 40 ns)
-  8x8                          N=64     err=2.11e-15 OK        29 ns  (1.16x vs FFTW 34 ns)
-  8x16                         N=128    err=3.55e-15 OK        62 ns  (1.09x vs FFTW 68 ns)
-  16x8                         N=128    err=3.55e-15 OK        67 ns  (1.02x vs FFTW 68 ns)
-  16x16                        N=256    err=6.66e-15 OK       151 ns  (0.96x vs FFTW 144 ns)
+  N=16      FFTW=15 ns  (reps=117647)
+    RxM           ns     err
+     4x4           7 ns  5.00e-16  <-- best
+    >> BEST: 4x4  7 ns  (2.11x vs FFTW)
+
+  N=32      FFTW=18 ns  (reps=60606)
+    RxM           ns     err
+     4x8          14 ns  8.88e-16  <-- best
+    >> BEST: 4x8  14 ns  (1.30x vs FFTW)
+
+  N=64      FFTW=33 ns  (reps=30769)
+    RxM           ns     err
+     4x16         27 ns  3.11e-15  <-- best
+     8x8          30 ns  2.55e-15
+    >> BEST: 4x16  27 ns  (1.24x vs FFTW)
+
+  N=128     FFTW=69 ns  (reps=15503)
+    RxM           ns     err
+     4x32         60 ns  5.33e-15  <-- best
+     8x16         63 ns  4.44e-15
+    >> BEST: 4x32  60 ns  (1.14x vs FFTW)
+
+  N=256     FFTW=146 ns  (reps=7782)
+    RxM           ns     err
+     4x64        139 ns  7.11e-15  <-- best
+     8x32        135 ns  7.33e-15  <-- best
+    16x16        139 ns  6.66e-15
+    >> BEST: 8x32  135 ns  (1.08x vs FFTW)
+
+  N=512     FFTW=321 ns  (reps=3898)
+    RxM           ns     err
+     8x64        300 ns  1.15e-14  <-- best
+    16x32        300 ns  1.42e-14  <-- best
+    >> BEST: 16x32  300 ns  (1.07x vs FFTW)
+
+  N=1024    FFTW=704 ns  (reps=1951)
+    RxM           ns     err
+    16x64        798 ns  2.00e-14  <-- best
+    32x32        728 ns  1.73e-14  <-- best
+    >> BEST: 32x32  728 ns  (0.97x vs FFTW)
+
+  N=2048    FFTW=1813 ns  (reps=976)
+    RxM           ns     err
+    32x64       2130 ns  3.02e-14  <-- best
+    >> BEST: 32x64  2130 ns  (0.85x vs FFTW)
+
+  N=4096    FFTW=6720 ns  (reps=488)
+    RxM           ns     err
+    64x64       5727 ns  4.97e-14  <-- best
+    >> BEST: 64x64  5727 ns  (1.17x vs FFTW)
 
 

@@ -51,6 +51,8 @@ python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant notw > "%HDR_DIR%\fft_r
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix32_avx2_dit_tw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant dif_tw > "%HDR_DIR%\fft_radix32_avx2_dif_tw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant ladder > "%HDR_DIR%\fft_radix32_avx2_ladder.h" 2>nul
+python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix32_avx2_ct_n1.h" 2>nul
+python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix32_avx2_ct_t1_dit.h" 2>nul
 
 python "%SCRIPT_DIR%gen_radix64.py" --isa avx2 --variant all > "%HDR_DIR%\r64_unified_avx2.h" 2>nul
 

@@ -1,17 +1,11 @@
 /**
- * bench_recursive_ct.c -- Permutation-free CT executor
+ * bench_recursive_ct.c -- Permutation-free CT: systematic factorization search
  *
- * Uses n1 (separate is/os) + t1 (in-place twiddle) codelets.
- * No permutation, no transpose, no gather/scatter.
+ * Tests all valid 1-level R*M factorizations for each N using
+ * n1_ovs (SIMD transpose stores) + t1_dit (in-place twiddle).
+ * Each factorization verified against FFTW, best highlighted.
  *
- * 1-level CT for N = R*M:
- *   n1(in, out, is=R, os=M, vl=M)  -- reads in[n*R+k], writes out[n*M+k]
- *   t1(out, W, ios=M, me=M)        -- in-place twiddle + butterfly
- *
- * 2-level CT for N = R1*(R0*M0):
- *   outer n1 decimates input into R1 contiguous blocks of M1=R0*M0
- *   inner 1-level CT on each block
- *   outer t1 combines
+ * Available radixes: 4, 8, 16, 32, 64
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,21 +14,23 @@
 #include <fftw3.h>
 #include "bench_compat.h"
 
+/* All CT codelet headers */
 #include "fft_radix4_avx2.h"
 #include "fft_radix8_avx2.h"
-#include "fft_radix16_avx2_notw.h"
 #include "fft_radix16_avx2_ct_n1.h"
 #include "fft_radix16_avx2_ct_t1_dit.h"
+#include "fft_radix32_avx2_ct_n1.h"
+#include "fft_radix32_avx2_ct_t1_dit.h"
+#include "r64_unified_avx2.h"
 
-typedef void (*n1_fn)(const double*, const double*, double*, double*,
-                      size_t, size_t, size_t);  /* in, out, is, os, vl */
 typedef void (*n1_ovs_fn)(const double*, const double*, double*, double*,
-                          size_t, size_t, size_t, size_t);  /* in, out, is, os, vl, ovs */
+                          size_t, size_t, size_t, size_t);
 typedef void (*t1_fn)(double*, double*, const double*, const double*,
-                      size_t, size_t);  /* rio, W, ios, me */
-typedef void (*exec_fn)(const double*, const double*, double*, double*);
+                      size_t, size_t);
 
-static void init_t1_tw(double *W_re, double *W_im, size_t R, size_t me) {
+/* ================================================================ */
+
+static void init_tw(double *W_re, double *W_im, size_t R, size_t me) {
     size_t N = R * me;
     for (size_t n = 1; n < R; n++)
         for (size_t m = 0; m < me; m++) {
@@ -45,65 +41,37 @@ static void init_t1_tw(double *W_re, double *W_im, size_t R, size_t me) {
 }
 
 /* ================================================================
- * 1-level CT: n1_ovs + t1
- *
- * n1_ovs(in, out, is=R, os=1, vl=M, ovs=R):
- *   reads  in[n*R + k]     for n=0..R-1, k=0..M-1
- *   writes out[n*1 + k*R]  for n=0..R-1, k=0..M-1
- *   = out[k*R + n]: sub-seq k occupies out[k*R .. k*R+R-1]
- *
- * t1(out, W, ios=R, me=M):
- *   for m=0..M-1: butterfly on out[m, m+R, m+2R, ..., m+(R-1)*R]
- *   = bin m from sub-seqs 0,1,...,M-1 (since sub-seq k's bin n is at k*R+n)
- *   For m=0: out[0, R, 2R, ...] = sub-seqs 0..M-1 bin 0. CORRECT.
+ * Codelet table
  * ================================================================ */
 
-static void ct_1level(
-    n1_ovs_fn n1, t1_fn t1,
-    const double *in_re, const double *in_im,
-    double *out_re, double *out_im,
-    const double *W_re, const double *W_im,
-    size_t R, size_t M)
-{
-    /* n1: DFT-M on R sub-sequences. vl=R, is=R, os=1, ovs=M.
-     * Reads in[n*R + k] for n=0..M-1, k=0..R-1 (R sub-seqs, each M elements at stride R)
-     * Writes out[n*1 + k*M] = out[k*M + n]: sub-seq k at positions k*M..k*M+M-1
-     *
-     * t1: radix-R butterfly. ios=M, me=R? No...
-     * t1(ios=M, me=M): for m=0..M-1, butterfly on out[m, m+M, m+2M, ..., m+(R-1)*M]
-     * That gathers bin m from R sub-sequences. Each sub-seq k has bin m at k*M+m.
-     * Position k*M+m = m + k*M. So rio[m + k*M] with ios=M gives positions m, m+M, m+2M...
-     * For R legs: k=0..R-1. me=M means m=0..M-1.
-     * This covers all N=R*M positions. CORRECT.
-     */
-    n1(in_re, in_im, out_re, out_im, R, 1, R, M);
-    t1(out_re, out_im, W_re, W_im, M, M);
+typedef struct { size_t R; n1_ovs_fn n1; t1_fn t1; } codelet_t;
+
+static const codelet_t CODELETS[] = {
+    {  4, (n1_ovs_fn)radix4_n1_ovs_fwd_avx2,  (t1_fn)radix4_t1_dit_fwd_avx2  },
+    {  8, (n1_ovs_fn)radix8_n1_ovs_fwd_avx2,  (t1_fn)radix8_t1_dit_fwd_avx2  },
+    { 16, (n1_ovs_fn)radix16_n1_ovs_fwd_avx2, (t1_fn)radix16_t1_dit_fwd_avx2 },
+    { 32, (n1_ovs_fn)radix32_n1_ovs_fwd_avx2, (t1_fn)radix32_t1_dit_fwd_avx2 },
+    { 64, (n1_ovs_fn)radix64_n1_ovs_fwd_avx2, (t1_fn)radix64_t1_dit_fwd_avx2 },
+    {  0, NULL, NULL }
+};
+
+static const codelet_t *find(size_t R) {
+    for (const codelet_t *c = CODELETS; c->R; c++)
+        if (c->R == R) return c;
+    return NULL;
 }
 
 /* ================================================================
- * 2-level CT: TODO — needs n1_ovs for R=16 before this can work
+ * 1-level CT: n1_ovs + t1
  * ================================================================ */
 
-#if 0
-static void ct_2level(
-    n1_fn n1_1, t1_fn t1_1, size_t R1,
-    n1_fn n1_0, t1_fn t1_0, size_t R0, size_t M0,
-    const double *in_re, const double *in_im,
-    double *out_re, double *out_im,
-    double *tmp_re, double *tmp_im,
-    const double *W0_re, const double *W0_im,
-    const double *W1_re, const double *W1_im)
+static void ct_1level(n1_ovs_fn n1, t1_fn t1,
+    const double *ir, const double *ii, double *or_, double *oi,
+    const double *W_re, const double *W_im, size_t R, size_t M)
 {
-    size_t M1 = R0 * M0;
-    n1_1(in_re, in_im, tmp_re, tmp_im, R1, M1, M1);
-    for (size_t r = 0; r < R1; r++)
-        ct_1level(n1_0, t1_0,
-                  tmp_re + r*M1, tmp_im + r*M1,
-                  out_re + r*M1, out_im + r*M1,
-                  W0_re, W0_im, R0, M0);
-    t1_1(out_re, out_im, W1_re, W1_im, M1, M1);
+    n1(ir, ii, or_, oi, R, 1, R, M);
+    t1(or_, oi, W_re, W_im, M, M);
 }
-#endif
 
 /* ================================================================
  * FFTW reference
@@ -127,201 +95,139 @@ static double bench_fftw(size_t N, int reps) {
 }
 
 /* ================================================================
- * Test harness
+ * Test one factorization: correctness + bench
+ * Returns ns, or -1 on failure
  * ================================================================ */
 
-static void test_exec(const char *label, size_t N, exec_fn fn, int reps) {
-    double *in_re=(double*)aligned_alloc(32,N*8);
-    double *in_im=(double*)aligned_alloc(32,N*8);
-    double *out_re=(double*)aligned_alloc(32,N*8);
-    double *out_im=(double*)aligned_alloc(32,N*8);
-    srand(42);
-    for(size_t i=0;i<N;i++){in_re[i]=(double)rand()/RAND_MAX-.5;in_im[i]=(double)rand()/RAND_MAX-.5;}
+static double test_one(size_t N, size_t R, size_t M,
+                       n1_ovs_fn n1, t1_fn t1,
+                       const double *in_re, const double *in_im,
+                       const double *fftw_re, const double *fftw_im,
+                       int reps)
+{
+    double *W_re = (double*)aligned_alloc(32, (R-1)*M*8);
+    double *W_im = (double*)aligned_alloc(32, (R-1)*M*8);
+    double *out_re = (double*)aligned_alloc(32, N*8);
+    double *out_im = (double*)aligned_alloc(32, N*8);
+    init_tw(W_re, W_im, R, M);
 
-    double *fre=fftw_malloc(N*8),*fim=fftw_malloc(N*8);
-    double *fro=fftw_malloc(N*8),*fio=fftw_malloc(N*8);
-    memcpy(fre,in_re,N*8);memcpy(fim,in_im,N*8);
-    fftw_iodim d={.n=(int)N,.is=1,.os=1};
-    fftw_iodim h={.n=1,.is=(int)N,.os=(int)N};
-    fftw_plan fp=fftw_plan_guru_split_dft(1,&d,1,&h,fre,fim,fro,fio,FFTW_ESTIMATE);
-    fftw_execute(fp);
-
-    fn(in_re,in_im,out_re,out_im);
-    double max_err=0;
-    for(size_t i=0;i<N;i++){double e=fabs(out_re[i]-fro[i])+fabs(out_im[i]-fio[i]);if(e>max_err)max_err=e;}
-    printf("  %-28s N=%-6zu err=%.2e %s",label,N,max_err,max_err<1e-10?"OK":"FAIL");
-
-    if(max_err>1e-10){
-        printf("\n");
-        fftw_destroy_plan(fp);fftw_free(fre);fftw_free(fim);fftw_free(fro);fftw_free(fio);
-        aligned_free(in_re);aligned_free(in_im);aligned_free(out_re);aligned_free(out_im);
-        return;
+    /* Correctness */
+    ct_1level(n1, t1, in_re, in_im, out_re, out_im, W_re, W_im, R, M);
+    double max_err = 0;
+    for (size_t i = 0; i < N; i++) {
+        double e = fabs(out_re[i] - fftw_re[i]) + fabs(out_im[i] - fftw_im[i]);
+        if (e > max_err) max_err = e;
     }
 
-    for(int i=0;i<20;i++)fn(in_re,in_im,out_re,out_im);
-    double best=1e18;
-    for(int t=0;t<7;t++){double t0=now_ns();
-        for(int i=0;i<reps;i++)fn(in_re,in_im,out_re,out_im);
-        double ns=(now_ns()-t0)/reps;if(ns<best)best=ns;}
-    double fftw_ns=bench_fftw(N,reps);
-    printf("  %8.0f ns  (%.2fx vs FFTW %.0f ns)\n",best,fftw_ns/best,fftw_ns);
+    double ns = -1;
+    if (max_err < 1e-10) {
+        /* Bench */
+        for (int i = 0; i < 20; i++)
+            ct_1level(n1, t1, in_re, in_im, out_re, out_im, W_re, W_im, R, M);
+        double best = 1e18;
+        for (int t = 0; t < 7; t++) {
+            double t0 = now_ns();
+            for (int i = 0; i < reps; i++)
+                ct_1level(n1, t1, in_re, in_im, out_re, out_im, W_re, W_im, R, M);
+            double elapsed = (now_ns() - t0) / reps;
+            if (elapsed < best) best = elapsed;
+        }
+        ns = best;
+    }
 
-    fftw_destroy_plan(fp);fftw_free(fre);fftw_free(fim);fftw_free(fro);fftw_free(fio);
-    aligned_free(in_re);aligned_free(in_im);aligned_free(out_re);aligned_free(out_im);
+    aligned_free(W_re); aligned_free(W_im);
+    aligned_free(out_re); aligned_free(out_im);
+
+    if (max_err < 1e-10)
+        printf("    %2zux%-3zu  %8.0f ns  %.2e", R, M, ns, max_err);
+    else
+        printf("    %2zux%-3zu  %8s     %.2e FAIL", R, M, "--", max_err);
+
+    return ns;
 }
 
 /* ================================================================
- * Test executors with captured state
+ * Test all 1-level factorizations for one N
  * ================================================================ */
 
-/* CT-DIT for N = R * M:
- *   n1 computes DFT-M (the child), not DFT-R
- *   t1 computes radix-R butterfly (the outer combine)
- *
- * So for N=128 = 16*8:
- *   n1 = DFT-8 (child size M=8), is=16, os=8, vl=8
- *   t1 = radix-16 butterfly, ios=8, me=8
- *
- * The n1 radix = M (child DFT size)
- * The t1 radix = R (outer butterfly size) */
+static void test_N(size_t N) {
+    int reps = (int)(2e6 / (N+1));
+    if (reps < 200) reps = 200;
+    if (reps > 200000) reps = 200000;
 
-/* ── 1-level factorizations ── */
+    double *in_re = (double*)aligned_alloc(32, N*8);
+    double *in_im = (double*)aligned_alloc(32, N*8);
+    srand(42);
+    for (size_t i = 0; i < N; i++) {
+        in_re[i] = (double)rand()/RAND_MAX - 0.5;
+        in_im[i] = (double)rand()/RAND_MAX - 0.5;
+    }
 
-/* N=32 = 4*8: child=DFT-8, outer=radix-4 */
-static double W32_re[3*8], W32_im[3*8];
-static void exec_32_4x8(const double*ir,const double*ii,double*or_,double*oi){
-    ct_1level((n1_ovs_fn)radix8_n1_ovs_fwd_avx2,(t1_fn)radix4_t1_dit_fwd_avx2,
-              ir,ii,or_,oi,W32_re,W32_im,4,8);
+    /* FFTW reference */
+    double *fre = fftw_malloc(N*8), *fim = fftw_malloc(N*8);
+    double *fro = fftw_malloc(N*8), *fio = fftw_malloc(N*8);
+    memcpy(fre, in_re, N*8); memcpy(fim, in_im, N*8);
+    fftw_iodim d = {.n=(int)N, .is=1, .os=1};
+    fftw_iodim h = {.n=1, .is=(int)N, .os=(int)N};
+    fftw_plan fp = fftw_plan_guru_split_dft(1, &d, 1, &h, fre, fim, fro, fio, FFTW_ESTIMATE);
+    fftw_execute(fp);
+
+    double fftw_ns = bench_fftw(N, reps);
+
+    printf("\n  N=%-6zu  FFTW=%.0f ns  (reps=%d)\n", N, fftw_ns, reps);
+    printf("    %-7s %8s     %s\n", "RxM", "ns", "err");
+
+    double best_ns = 1e18;
+    size_t best_R = 0, best_M = 0;
+
+    /* Try all R*M = N where both R and M have codelets, R <= M */
+    for (const codelet_t *cr = CODELETS; cr->R; cr++) {
+        size_t R = cr->R;
+        if (N % R != 0) continue;
+        size_t M = N / R;
+        if (M < 4) continue;  /* SIMD needs vl >= 4 */
+        if (R > M) continue;  /* skip R>M for now */
+
+        const codelet_t *cm = find(M);  /* child n1_ovs */
+        if (!cm) continue;
+
+        double ns = test_one(N, R, M, cm->n1, cr->t1,
+                             in_re, in_im, fro, fio, reps);
+        if (ns > 0 && ns < best_ns) {
+            printf("  <-- best");
+            best_ns = ns; best_R = R; best_M = M;
+        }
+        printf("\n");
+    }
+
+    if (best_ns < 1e18)
+        printf("    >> BEST: %zux%zu  %.0f ns  (%.2fx vs FFTW)\n",
+               best_R, best_M, best_ns, fftw_ns / best_ns);
+
+    fftw_destroy_plan(fp);
+    fftw_free(fre); fftw_free(fim); fftw_free(fro); fftw_free(fio);
+    aligned_free(in_re); aligned_free(in_im);
 }
-
-/* N=64 = 4*16: child=DFT-16, outer=radix-4 */
-static double W64_4x16_re[3*16], W64_4x16_im[3*16];
-static void exec_64_4x16(const double*ir,const double*ii,double*or_,double*oi){
-    ct_1level((n1_ovs_fn)radix16_n1_ovs_fwd_avx2,(t1_fn)radix4_t1_dit_fwd_avx2,
-              ir,ii,or_,oi,W64_4x16_re,W64_4x16_im,4,16);
-}
-
-/* N=64 = 8*8: child=DFT-8, outer=radix-8 */
-static double W64_re[7*8], W64_im[7*8];
-static void exec_64_8x8(const double*ir,const double*ii,double*or_,double*oi){
-    ct_1level((n1_ovs_fn)radix8_n1_ovs_fwd_avx2,(t1_fn)radix8_t1_dit_fwd_avx2,
-              ir,ii,or_,oi,W64_re,W64_im,8,8);
-}
-
-/* N=128 = 8*16: child=DFT-16, outer=radix-8 */
-static double W128_8x16_re[7*16], W128_8x16_im[7*16];
-static void exec_128_8x16(const double*ir,const double*ii,double*or_,double*oi){
-    ct_1level((n1_ovs_fn)radix16_n1_ovs_fwd_avx2,(t1_fn)radix8_t1_dit_fwd_avx2,
-              ir,ii,or_,oi,W128_8x16_re,W128_8x16_im,8,16);
-}
-
-/* N=128 = 16*8: child=DFT-8, outer=radix-16 */
-static double W128_re[15*8], W128_im[15*8];
-static void exec_128_16x8(const double*ir,const double*ii,double*or_,double*oi){
-    ct_1level((n1_ovs_fn)radix8_n1_ovs_fwd_avx2,(t1_fn)radix16_t1_dit_fwd_avx2,
-              ir,ii,or_,oi,W128_re,W128_im,16,8);
-}
-
-/* N=256 = 16*16: child=DFT-16, outer=radix-16 */
-static double W256_re[15*16], W256_im[15*16];
-static void exec_256_16x16(const double*ir,const double*ii,double*or_,double*oi){
-    ct_1level((n1_ovs_fn)radix16_n1_ovs_fwd_avx2,(t1_fn)radix16_t1_dit_fwd_avx2,
-              ir,ii,or_,oi,W256_re,W256_im,16,16);
-}
-
-/* N=256 = 4*64 — SKIPPED: no n1_ovs for R=64 yet in this bench */
-/* N=512 = 8*64 — SKIPPED: no t1 for R=64 in this bench */
-
-#if 0 /* TODO: needs n1_ovs for R=16 */
-/* N=2048 = 16*(8*16): outer R=16, inner R=8, leaf M=16
- * Outer: n1=DFT-128 (M1=128) -- BUT we don't have a DFT-128 n1 codelet!
- * This is the multi-level problem. For 2-level:
- *   outer n1 must be DFT-M1 where M1=R0*M0. We don't have DFT-128.
- *   So the outer n1 reads at stride R1=16 and writes M1=128 elements --
- *   but the n1 codelet's radix IS the DFT size it computes.
- *
- * For 2-level CT, ct_2level's outer n1 computes DFT-R1 (decimation step),
- * NOT the child DFT. Let me re-examine...
- *
- * Actually in ct_2level:
- *   Step 1: n1_outer(in, tmp, is=R1, os=M1, vl=M1)
- *     This is a DFT-R1 on R1 elements at stride R1, M1 times.
- *     It computes R1 outputs for each of M1 k-values.
- *     Output: tmp[n*M1 + k] for n=0..R1-1, k=0..M1-1
- *
- *   Step 2: inner 1-level CT on each M1-block in tmp
- *     Each block is M1=R0*M0 contiguous elements.
- *     Inner: n1_inner=DFT-M0, t1_inner=radix-R0
- *
- *   Step 3: t1_outer on out, ios=M1
- *
- * So outer n1 radix = R1 (the outer radix), NOT M1.
- * Inner n1 radix = M0 (the leaf DFT size).
- * Inner t1 radix = R0 (the inner butterfly).
- * Outer t1 radix = R1 (the outer butterfly).
- */
-
-/* N=2048 = 16*(8*16):
- * outer: R1=16, M1=128
- * inner: R0=8, M0=16
- * outer n1 = DFT-16 (radix R1=16), is=16, os=128, vl=128
- * inner n1 = DFT-16 (M0=16), inner t1 = radix-8 (R0=8)
- * outer t1 = radix-16 (R1=16) */
-static double W2048_0_re[7*16], W2048_0_im[7*16];     /* inner: (R0-1)*M0 = 7*16 */
-static double W2048_1_re[15*128], W2048_1_im[15*128];  /* outer: (R1-1)*M1 = 15*128 */
-static double tmp2048_re[2048], tmp2048_im[2048];
-static void exec_2048(const double*ir,const double*ii,double*or_,double*oi){
-    ct_2level((n1_fn)radix16_n1_fwd_avx2,(t1_fn)radix16_t1_dit_fwd_avx2,16,
-              (n1_fn)radix16_n1_fwd_avx2,(t1_fn)radix8_t1_dit_fwd_avx2,8,16,
-              ir,ii,or_,oi,tmp2048_re,tmp2048_im,
-              W2048_0_re,W2048_0_im,W2048_1_re,W2048_1_im);
-}
-
-/* N=4096 = 16*(16*16):
- * outer: R1=16, M1=256
- * inner: R0=16, M0=16
- * outer n1 = DFT-16 (R1), inner n1 = DFT-16 (M0), inner t1 = radix-16 (R0) */
-static double W4096_0_re[15*16], W4096_0_im[15*16];
-static double W4096_1_re[15*256], W4096_1_im[15*256];
-static double tmp4096_re[4096], tmp4096_im[4096];
-static void exec_4096(const double*ir,const double*ii,double*or_,double*oi){
-    ct_2level((n1_fn)radix16_n1_fwd_avx2,(t1_fn)radix16_t1_dit_fwd_avx2,16,
-              (n1_fn)radix16_n1_fwd_avx2,(t1_fn)radix16_t1_dit_fwd_avx2,16,16,
-              ir,ii,or_,oi,tmp4096_re,tmp4096_im,
-              W4096_0_re,W4096_0_im,W4096_1_re,W4096_1_im);
-}
-#endif
 
 /* ================================================================ */
 
 int main(void) {
     printf("================================================================\n");
-    printf("  Permutation-free CT executor (n1 + t1)\n");
+    printf("  Permutation-free CT: factorization search\n");
+    printf("  n1_ovs + t1_dit, radixes: 4, 8, 16, 32, 64\n");
     printf("  No permutation, no transpose, no gather/scatter\n");
-    printf("================================================================\n\n");
+    printf("================================================================\n");
     fflush(stdout);
 
-    /* Init all twiddle tables */
-    init_t1_tw(W32_re,W32_im,4,8);
-    init_t1_tw(W64_4x16_re,W64_4x16_im,4,16);
-    init_t1_tw(W64_re,W64_im,8,8);
-    init_t1_tw(W128_8x16_re,W128_8x16_im,8,16);
-    init_t1_tw(W128_re,W128_im,16,8);
-    init_t1_tw(W256_re,W256_im,16,16);
+    size_t sizes[] = {
+        16, 32, 64, 128, 256, 512, 1024, 2048, 4096,
+        0
+    };
 
-    /* N=32 */
-    test_exec("4x8",32,exec_32_4x8,200000);
-
-    /* N=64: two factorizations */
-    test_exec("4x16",64,exec_64_4x16,200000);
-    test_exec("8x8",64,exec_64_8x8,200000);
-
-    /* N=128: two factorizations */
-    test_exec("8x16",128,exec_128_8x16,100000);
-    test_exec("16x8",128,exec_128_16x8,100000);
-
-    /* N=256 */
-    test_exec("16x16",256,exec_256_16x16,50000);
+    for (size_t *p = sizes; *p; p++) {
+        test_N(*p);
+        fflush(stdout);
+    }
 
     printf("\n");
     return 0;
