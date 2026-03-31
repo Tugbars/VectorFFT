@@ -40,20 +40,22 @@ typedef void (*fused_fn)(const double*, const double*,
  * Codelet registry
  * ================================================================ */
 
-typedef struct { size_t R; n1_ovs_fn n1; t1_fn t1; } codelet_t;
+typedef struct { size_t R; n1_ovs_fn n1; t1_fn t1; const char *t1_tag; } codelet_t;
 
 static const codelet_t CODELETS[] = {
-    {  4, (n1_ovs_fn)radix4_n1_ovs_fwd_avx2,  (t1_fn)radix4_t1_dit_fwd_avx2  },
-    {  8, (n1_ovs_fn)radix8_n1_ovs_fwd_avx2,  (t1_fn)radix8_t1_dit_fwd_avx2  },
-    { 16, (n1_ovs_fn)radix16_n1_ovs_fwd_avx2, (t1_fn)radix16_t1_dit_fwd_avx2 },
-    { 32, (n1_ovs_fn)radix32_n1_ovs_fwd_avx2, (t1_fn)radix32_t1_dit_fwd_avx2 },
-    { 64, (n1_ovs_fn)radix64_n1_ovs_fwd_avx2, (t1_fn)radix64_t1_dit_fwd_avx2 },
-    {  0, NULL, NULL }
+    {  4, (n1_ovs_fn)radix4_n1_ovs_fwd_avx2,  (t1_fn)radix4_t1_dit_fwd_avx2,  "" },
+    {  8, (n1_ovs_fn)radix8_n1_ovs_fwd_avx2,  (t1_fn)radix8_t1_dit_fwd_avx2,  "" },
+    { 16, (n1_ovs_fn)radix16_n1_ovs_fwd_avx2, (t1_fn)radix16_t1_dit_fwd_avx2, "" },
+    { 32, (n1_ovs_fn)radix32_n1_ovs_fwd_avx2, (t1_fn)radix32_t1_dit_fwd_avx2, "" },
+    { 64, (n1_ovs_fn)radix64_n1_ovs_fwd_avx2, (t1_fn)radix64_t1_dit_fwd_avx2, "" },
+    /* Log3 t1: fewer twiddle loads, wins when tw table exceeds L1 */
+    { 64, (n1_ovs_fn)radix64_n1_ovs_fwd_avx2, (t1_fn)radix64_t1_dit_log3_fwd_avx2, "L" },
+    {  0, NULL, NULL, NULL }
 };
 
 static const codelet_t *find(size_t R) {
     for (const codelet_t *c = CODELETS; c->R; c++)
-        if (c->R == R) return c;
+        if (c->R == R && c->t1_tag[0] == '\0') return c;
     return NULL;
 }
 
@@ -305,7 +307,7 @@ static wisdom_entry calibrate_N(size_t N) {
         size_t R = cr->R;
         if (N % R != 0) continue;
         size_t M = N / R;
-        if (M < 4 || R > M) continue;
+        if (M < 4) continue;
 
         const codelet_t *cm = find(M);
         if (!cm) continue;
@@ -316,15 +318,16 @@ static wisdom_entry calibrate_N(size_t N) {
 
         const fused_pair *fp2 = find_fused(R, M);
 
-        /* --- Variant I: indirect --- */
+        /* --- Variant I: indirect (or L for log3) --- */
         ct_indirect(cm->n1, cr->t1, in_re, in_im, out_re, out_im,
                     W_re, W_im, R, M);
         double err = check_err(out_re, out_im, fro, fio, N);
         if (err < 1e-10) {
             double ns = bench_indirect(cm->n1, cr->t1, out_re, out_im,
                                        in_re, in_im, W_re, W_im, R, M, reps);
+            char v = cr->t1_tag[0] == 'L' ? 'L' : 'I';
             if (ns < best.ns) {
-                best.R = R; best.M = M; best.variant = 'I'; best.ns = ns;
+                best.R = R; best.M = M; best.variant = v; best.ns = ns;
             }
         }
 
@@ -394,7 +397,7 @@ int main(int argc, char **argv) {
         for (size_t *r2 = radixes; *r2; r2++) {
             size_t N = (*r1) * (*r2);
             if (N < min_N || N > max_N) continue;
-            if (*r1 > *r2) continue;  /* R <= M */
+            /* Allow R>M factorizations too */
             /* Check not already in list */
             int dup = 0;
             for (int i = 0; i < nsizes; i++)
@@ -424,7 +427,8 @@ int main(int argc, char **argv) {
 
         const char *vname = w.variant == 'I' ? "indirect" :
                             w.variant == 'F' ? "fused-inline" :
-                            w.variant == 'N' ? "fused-noinline" : "???";
+                            w.variant == 'N' ? "fused-noinline" :
+                            w.variant == 'L' ? "indirect-log3" : "???";
         printf("%2zux%-3zu %-14s %6.0f ns  (%.2fx vs FFTW)\n",
                w.R, w.M, vname, w.ns, w.fftw_ns / w.ns);
         fflush(stdout);

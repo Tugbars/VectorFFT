@@ -44,20 +44,22 @@ static void init_tw(double *W_re, double *W_im, size_t R, size_t me) {
  * Codelet table
  * ================================================================ */
 
-typedef struct { size_t R; n1_ovs_fn n1; t1_fn t1; } codelet_t;
+typedef struct { size_t R; n1_ovs_fn n1; t1_fn t1; const char *t1_tag; } codelet_t;
 
 static const codelet_t CODELETS[] = {
-    {  4, (n1_ovs_fn)radix4_n1_ovs_fwd_avx2,  (t1_fn)radix4_t1_dit_fwd_avx2  },
-    {  8, (n1_ovs_fn)radix8_n1_ovs_fwd_avx2,  (t1_fn)radix8_t1_dit_fwd_avx2  },
-    { 16, (n1_ovs_fn)radix16_n1_ovs_fwd_avx2, (t1_fn)radix16_t1_dit_fwd_avx2 },
-    { 32, (n1_ovs_fn)radix32_n1_ovs_fwd_avx2, (t1_fn)radix32_t1_dit_fwd_avx2 },
-    { 64, (n1_ovs_fn)radix64_n1_ovs_fwd_avx2, (t1_fn)radix64_t1_dit_fwd_avx2 },
-    {  0, NULL, NULL }
+    {  4, (n1_ovs_fn)radix4_n1_ovs_fwd_avx2,  (t1_fn)radix4_t1_dit_fwd_avx2,  "" },
+    {  8, (n1_ovs_fn)radix8_n1_ovs_fwd_avx2,  (t1_fn)radix8_t1_dit_fwd_avx2,  "" },
+    { 16, (n1_ovs_fn)radix16_n1_ovs_fwd_avx2, (t1_fn)radix16_t1_dit_fwd_avx2, "" },
+    { 32, (n1_ovs_fn)radix32_n1_ovs_fwd_avx2, (t1_fn)radix32_t1_dit_fwd_avx2, "" },
+    { 64, (n1_ovs_fn)radix64_n1_ovs_fwd_avx2, (t1_fn)radix64_t1_dit_fwd_avx2, "" },
+    /* Log3 t1 variants (fewer twiddle loads, wins when tw table > L1) */
+    { 64, (n1_ovs_fn)radix64_n1_ovs_fwd_avx2, (t1_fn)radix64_t1_dit_log3_fwd_avx2, "L" },
+    {  0, NULL, NULL, NULL }
 };
 
 static const codelet_t *find(size_t R) {
     for (const codelet_t *c = CODELETS; c->R; c++)
-        if (c->R == R) return c;
+        if (c->R == R && c->t1_tag[0] == '\0') return c;
     return NULL;
 }
 
@@ -210,6 +212,18 @@ static const fused_entry FUSED_NOINL[] = {
     { 32,  32, fni_32x32 },
     { 32,  64, fni_32x64 },
     { 64,  64, fni_64x64 },
+    {  0,   0, NULL }
+};
+
+/* ================================================================
+ * Phase 2 fused: interleaved transpose+twiddle+butterfly
+ * Generated codelets that eliminate the output↔t1 round-trip.
+ * ================================================================ */
+
+static const fused_entry FUSED_P2[] = {
+    {  4,  16, (fused_fn)radix16_fused_4x16_fwd_avx2 },
+    {  4,  32, (fused_fn)radix32_fused_4x32_fwd_avx2 },
+    {  4,  64, (fused_fn)radix64_fused_4x64_fwd_avx2 },
     {  0,   0, NULL }
 };
 
@@ -469,19 +483,19 @@ static void test_N(size_t N) {
     double best_ns = 1e18;
     size_t best_R = 0, best_M = 0;
 
-    /* Try all R*M = N where both R and M have codelets, R <= M */
+    /* Try all R*M = N where both R and M have codelets (including R>M and log3) */
     for (const codelet_t *cr = CODELETS; cr->R; cr++) {
         size_t R = cr->R;
         if (N % R != 0) continue;
         size_t M = N / R;
         if (M < 4) continue;  /* SIMD needs vl >= 4 */
-        if (R > M) continue;  /* skip R>M for now */
 
         const codelet_t *cm = find(M);  /* child n1_ovs */
         if (!cm) continue;
 
         double ns = test_one(N, R, M, cm->n1, cr->t1,
                              in_re, in_im, fro, fio, reps);
+        if (cr->t1_tag[0]) printf(" %s", cr->t1_tag);
         if (ns > 0 && ns < best_ns) {
             printf("  <-- best");
             best_ns = ns; best_R = R; best_M = M;
@@ -535,6 +549,18 @@ static void test_N(size_t N) {
     for (const fused_entry *f = FUSED_NOINL; f->R; f++) {
         if (f->R * f->M != N) continue;
         double ns = test_fused(N, f->R, f->M, f->fn, "NI",
+                               in_re, in_im, fro, fio, reps);
+        if (ns > 0 && ns < best_ns) {
+            printf("  <-- best");
+            best_ns = ns;
+        }
+        printf("\n");
+    }
+
+    /* Phase 2 fused: interleaved transpose+twiddle+butterfly */
+    for (const fused_entry *f = FUSED_P2; f->R; f++) {
+        if (f->R * f->M != N) continue;
+        double ns = test_fused(N, f->R, f->M, f->fn, "P2",
                                in_re, in_im, fro, fio, reps);
         if (ns > 0 && ns < best_ns) {
             printf("  <-- best");
