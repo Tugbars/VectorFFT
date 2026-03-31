@@ -1131,6 +1131,111 @@ def emit_file_ct(isa, itw_set, ct_variant):
             em.L.append(f"    }}")
             em.L.append(f"}}")
 
+    # -- Fused 4x16 codelet: n1_ovs PASS1+2 -> fused transpose+twiddle+R4 -> output --
+    if is_n1 and isa.name != 'scalar':
+        R_outer = 4
+        M = 16
+        VL = isa.k_step
+        T = isa.T
+        n_groups = M // VL
+
+        for d in ['fwd', 'bwd']:
+            fwd = (d == 'fwd')
+            em2 = Emitter(isa)
+            em2.addr_mode = 'n1_ovs'
+
+            em.L.append(f"")
+            if isa.target:
+                em.L.append(f"static {isa.target} void")
+            else:
+                em.L.append(f"static void")
+            em.L.append(f"radix16_fused_4x{M}_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    const double * __restrict__ W_re, const double * __restrict__ W_im)")
+            em.L.append(f"{{")
+
+            em.L.append(f"    {isa.align} double tbuf_re[{M * VL}];")
+            em.L.append(f"    {isa.align} double tbuf_im[{M * VL}];")
+            if isa.name != 'scalar':
+                em.L.append(f"    const {T} sign_flip = {isa.p}_set1_pd(-0.0);")
+                em.L.append(f"    const {T} sqrt2_inv = {isa.p}_set1_pd(0.70710678118654752440);")
+            spill_total = N * isa.sm
+            em.L.append(f"    {isa.align} double spill_re[{spill_total}];")
+            em.L.append(f"    {isa.align} double spill_im[{spill_total}];")
+            em.L.append(f"    {T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+            em.L.append(f"")
+
+            if itw_set and isa.name != 'scalar':
+                set1 = f"{isa.p}_set1_pd"
+                for (e, tN) in sorted(itw_set):
+                    label = wN_label(e, tN)
+                    em.L.append(f"    const {T} tw_{label}_re = {set1}({label}_re);")
+                    em.L.append(f"    const {T} tw_{label}_im = {set1}({label}_im);")
+                em.L.append(f"")
+
+            em.L.append(f"    const size_t is = {R_outer};")
+            em.L.append(f"    {{ const size_t k = 0;")
+
+            em2.L = []
+            em2.ind = 2
+            em2.reset()
+            em2.addr_mode = 'n1_ovs'
+            emit_kernel_body(em2, d, itw_set, 'notw')
+            em.L.extend(em2.L)
+
+            # Fused transpose + twiddle + R4 butterfly (runtime loop)
+            pfx = isa.p
+            add = f'{pfx}_add_pd'
+            sub_op = f'{pfx}_sub_pd'
+            fma_f = f'{pfx}_fmadd_pd'
+            fms_f = f'{pfx}_fmsub_pd'
+            mul_f = f'{pfx}_mul_pd'
+
+            em.L.append(f"        /* Fused: transpose + outer R4 twiddle+butterfly -> output */")
+            em.L.append(f"        for (size_t g = 0; g < {n_groups}; g++) {{")
+            em.L.append(f"            const size_t b = g * {VL};")
+            em.L.append(f"            {T} a_r=LD(&tbuf_re[(b+0)*{VL}]), b_r=LD(&tbuf_re[(b+1)*{VL}]);")
+            em.L.append(f"            {T} c_r=LD(&tbuf_re[(b+2)*{VL}]), d_r=LD(&tbuf_re[(b+3)*{VL}]);")
+            em.L.append(f"            {T} a_i=LD(&tbuf_im[(b+0)*{VL}]), b_i=LD(&tbuf_im[(b+1)*{VL}]);")
+            em.L.append(f"            {T} c_i=LD(&tbuf_im[(b+2)*{VL}]), d_i=LD(&tbuf_im[(b+3)*{VL}]);")
+            em.L.append(f"            {T} lo_ab_r={pfx}_unpacklo_pd(a_r,b_r), hi_ab_r={pfx}_unpackhi_pd(a_r,b_r);")
+            em.L.append(f"            {T} lo_cd_r={pfx}_unpacklo_pd(c_r,d_r), hi_cd_r={pfx}_unpackhi_pd(c_r,d_r);")
+            em.L.append(f"            {T} y0_re={pfx}_permute2f128_pd(lo_ab_r,lo_cd_r,0x20);")
+            em.L.append(f"            {T} y1_re={pfx}_permute2f128_pd(hi_ab_r,hi_cd_r,0x20);")
+            em.L.append(f"            {T} y2_re={pfx}_permute2f128_pd(lo_ab_r,lo_cd_r,0x31);")
+            em.L.append(f"            {T} y3_re={pfx}_permute2f128_pd(hi_ab_r,hi_cd_r,0x31);")
+            em.L.append(f"            {T} lo_ab_i={pfx}_unpacklo_pd(a_i,b_i), hi_ab_i={pfx}_unpackhi_pd(a_i,b_i);")
+            em.L.append(f"            {T} lo_cd_i={pfx}_unpacklo_pd(c_i,d_i), hi_cd_i={pfx}_unpackhi_pd(c_i,d_i);")
+            em.L.append(f"            {T} y0_im={pfx}_permute2f128_pd(lo_ab_i,lo_cd_i,0x20);")
+            em.L.append(f"            {T} y1_im={pfx}_permute2f128_pd(hi_ab_i,hi_cd_i,0x20);")
+            em.L.append(f"            {T} y2_im={pfx}_permute2f128_pd(lo_ab_i,lo_cd_i,0x31);")
+            em.L.append(f"            {T} y3_im={pfx}_permute2f128_pd(hi_ab_i,hi_cd_i,0x31);")
+            for sub in range(1, R_outer):
+                tw_base = (sub - 1) * M
+                em.L.append(f"            {{ {T} twr=LD(&W_re[{tw_base}+b]), twi=LD(&W_im[{tw_base}+b]);")
+                em.L.append(f"              {T} yr=y{sub}_re, yi=y{sub}_im;")
+                em.L.append(f"              y{sub}_re={fms_f}(yr,twr,{mul_f}(yi,twi));")
+                em.L.append(f"              y{sub}_im={fma_f}(yr,twi,{mul_f}(yi,twr)); }}")
+            em.L.append(f"            {{ {T} t0r={add}(y0_re,y2_re), t0i={add}(y0_im,y2_im);")
+            em.L.append(f"              {T} t1r={sub_op}(y0_re,y2_re), t1i={sub_op}(y0_im,y2_im);")
+            em.L.append(f"              {T} t2r={add}(y1_re,y3_re), t2i={add}(y1_im,y3_im);")
+            em.L.append(f"              {T} t3r={sub_op}(y1_re,y3_re), t3i={sub_op}(y1_im,y3_im);")
+            em.L.append(f"              y0_re={add}(t0r,t2r); y0_im={add}(t0i,t2i);")
+            em.L.append(f"              y2_re={sub_op}(t0r,t2r); y2_im={sub_op}(t0i,t2i);")
+            if fwd:
+                em.L.append(f"              y1_re={add}(t1r,t3i); y1_im={sub_op}(t1i,t3r);")
+                em.L.append(f"              y3_re={sub_op}(t1r,t3i); y3_im={add}(t1i,t3r); }}")
+            else:
+                em.L.append(f"              y1_re={sub_op}(t1r,t3i); y1_im={add}(t1i,t3r);")
+                em.L.append(f"              y3_re={add}(t1r,t3i); y3_im={sub_op}(t1i,t3r); }}")
+            for s in range(R_outer):
+                em.L.append(f"            ST(&out_re[{s}*{M}+b],y{s}_re); ST(&out_im[{s}*{M}+b],y{s}_im);")
+            em.L.append(f"        }}")
+            em.L.append(f"    }}")
+            em.L.append(f"}}")
+            em.L.append("")
+
     em.L.append(f"#undef LD")
     em.L.append(f"#undef ST")
     em.L.append(f"")

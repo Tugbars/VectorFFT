@@ -32211,6 +32211,2808 @@ radix64_n1_ovs_bwd_avx2(
         }
     }
 }
+
+static __attribute__((target("avx2,fma"))) void
+radix64_fused_4x64_fwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im)
+{
+    const __m256d sign_flip = _mm256_set1_pd(-0.0);
+    const __m256d sqrt2_inv = _mm256_set1_pd(0.70710678118654752440);
+    const __m256d nsqrt2_inv = _mm256_set1_pd(-0.70710678118654752440);
+    __attribute__((aligned(32))) double tbuf_re[256];
+    __attribute__((aligned(32))) double tbuf_im[256];
+    __attribute__((aligned(32))) double spill_re[256];
+    __attribute__((aligned(32))) double spill_im[256];
+    __attribute__((aligned(32))) double bfr[4*4], bfi[4*4];
+    __m256d x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;
+    __m256d x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;
+
+    const size_t is = 4;
+    { const size_t k = 0;
+        /* sub-FFT n2=0 */
+        x0_re = LD(&in_re[0*is+k]);
+        x0_im = LD(&in_im[0*is+k]);
+        x1_re = LD(&in_re[8*is+k]);
+        x1_im = LD(&in_im[8*is+k]);
+        x2_re = LD(&in_re[16*is+k]);
+        x2_im = LD(&in_im[16*is+k]);
+        x3_re = LD(&in_re[24*is+k]);
+        x3_im = LD(&in_im[24*is+k]);
+        x4_re = LD(&in_re[32*is+k]);
+        x4_im = LD(&in_im[32*is+k]);
+        x5_re = LD(&in_re[40*is+k]);
+        x5_im = LD(&in_im[40*is+k]);
+        x6_re = LD(&in_re[48*is+k]);
+        x6_im = LD(&in_im[48*is+k]);
+        x7_re = LD(&in_re[56*is+k]);
+        x7_im = LD(&in_im[56*is+k]);
+
+        /* radix-8 n2=0 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[0*4],x0_re);
+        _mm256_store_pd(&spill_im[0*4],x0_im);
+        _mm256_store_pd(&spill_re[1*4],x1_re);
+        _mm256_store_pd(&spill_im[1*4],x1_im);
+        _mm256_store_pd(&spill_re[2*4],x2_re);
+        _mm256_store_pd(&spill_im[2*4],x2_im);
+        _mm256_store_pd(&spill_re[3*4],x3_re);
+        _mm256_store_pd(&spill_im[3*4],x3_im);
+        _mm256_store_pd(&spill_re[4*4],x4_re);
+        _mm256_store_pd(&spill_im[4*4],x4_im);
+        _mm256_store_pd(&spill_re[5*4],x5_re);
+        _mm256_store_pd(&spill_im[5*4],x5_im);
+        _mm256_store_pd(&spill_re[6*4],x6_re);
+        _mm256_store_pd(&spill_im[6*4],x6_im);
+        _mm256_store_pd(&spill_re[7*4],x7_re);
+        _mm256_store_pd(&spill_im[7*4],x7_im);
+
+        /* sub-FFT n2=1 */
+        x0_re = LD(&in_re[1*is+k]);
+        x0_im = LD(&in_im[1*is+k]);
+        x1_re = LD(&in_re[9*is+k]);
+        x1_im = LD(&in_im[9*is+k]);
+        x2_re = LD(&in_re[17*is+k]);
+        x2_im = LD(&in_im[17*is+k]);
+        x3_re = LD(&in_re[25*is+k]);
+        x3_im = LD(&in_im[25*is+k]);
+        x4_re = LD(&in_re[33*is+k]);
+        x4_im = LD(&in_im[33*is+k]);
+        x5_re = LD(&in_re[41*is+k]);
+        x5_im = LD(&in_im[41*is+k]);
+        x6_re = LD(&in_re[49*is+k]);
+        x6_im = LD(&in_im[49*is+k]);
+        x7_re = LD(&in_re[57*is+k]);
+        x7_im = LD(&in_im[57*is+k]);
+
+        /* radix-8 n2=1 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[8*4],x0_re);
+        _mm256_store_pd(&spill_im[8*4],x0_im);
+        _mm256_store_pd(&spill_re[9*4],x1_re);
+        _mm256_store_pd(&spill_im[9*4],x1_im);
+        _mm256_store_pd(&spill_re[10*4],x2_re);
+        _mm256_store_pd(&spill_im[10*4],x2_im);
+        _mm256_store_pd(&spill_re[11*4],x3_re);
+        _mm256_store_pd(&spill_im[11*4],x3_im);
+        _mm256_store_pd(&spill_re[12*4],x4_re);
+        _mm256_store_pd(&spill_im[12*4],x4_im);
+        _mm256_store_pd(&spill_re[13*4],x5_re);
+        _mm256_store_pd(&spill_im[13*4],x5_im);
+        _mm256_store_pd(&spill_re[14*4],x6_re);
+        _mm256_store_pd(&spill_im[14*4],x6_im);
+        _mm256_store_pd(&spill_re[15*4],x7_re);
+        _mm256_store_pd(&spill_im[15*4],x7_im);
+
+        /* sub-FFT n2=2 */
+        x0_re = LD(&in_re[2*is+k]);
+        x0_im = LD(&in_im[2*is+k]);
+        x1_re = LD(&in_re[10*is+k]);
+        x1_im = LD(&in_im[10*is+k]);
+        x2_re = LD(&in_re[18*is+k]);
+        x2_im = LD(&in_im[18*is+k]);
+        x3_re = LD(&in_re[26*is+k]);
+        x3_im = LD(&in_im[26*is+k]);
+        x4_re = LD(&in_re[34*is+k]);
+        x4_im = LD(&in_im[34*is+k]);
+        x5_re = LD(&in_re[42*is+k]);
+        x5_im = LD(&in_im[42*is+k]);
+        x6_re = LD(&in_re[50*is+k]);
+        x6_im = LD(&in_im[50*is+k]);
+        x7_re = LD(&in_re[58*is+k]);
+        x7_im = LD(&in_im[58*is+k]);
+
+        /* radix-8 n2=2 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[16*4],x0_re);
+        _mm256_store_pd(&spill_im[16*4],x0_im);
+        _mm256_store_pd(&spill_re[17*4],x1_re);
+        _mm256_store_pd(&spill_im[17*4],x1_im);
+        _mm256_store_pd(&spill_re[18*4],x2_re);
+        _mm256_store_pd(&spill_im[18*4],x2_im);
+        _mm256_store_pd(&spill_re[19*4],x3_re);
+        _mm256_store_pd(&spill_im[19*4],x3_im);
+        _mm256_store_pd(&spill_re[20*4],x4_re);
+        _mm256_store_pd(&spill_im[20*4],x4_im);
+        _mm256_store_pd(&spill_re[21*4],x5_re);
+        _mm256_store_pd(&spill_im[21*4],x5_im);
+        _mm256_store_pd(&spill_re[22*4],x6_re);
+        _mm256_store_pd(&spill_im[22*4],x6_im);
+        _mm256_store_pd(&spill_re[23*4],x7_re);
+        _mm256_store_pd(&spill_im[23*4],x7_im);
+
+        /* sub-FFT n2=3 */
+        x0_re = LD(&in_re[3*is+k]);
+        x0_im = LD(&in_im[3*is+k]);
+        x1_re = LD(&in_re[11*is+k]);
+        x1_im = LD(&in_im[11*is+k]);
+        x2_re = LD(&in_re[19*is+k]);
+        x2_im = LD(&in_im[19*is+k]);
+        x3_re = LD(&in_re[27*is+k]);
+        x3_im = LD(&in_im[27*is+k]);
+        x4_re = LD(&in_re[35*is+k]);
+        x4_im = LD(&in_im[35*is+k]);
+        x5_re = LD(&in_re[43*is+k]);
+        x5_im = LD(&in_im[43*is+k]);
+        x6_re = LD(&in_re[51*is+k]);
+        x6_im = LD(&in_im[51*is+k]);
+        x7_re = LD(&in_re[59*is+k]);
+        x7_im = LD(&in_im[59*is+k]);
+
+        /* radix-8 n2=3 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[24*4],x0_re);
+        _mm256_store_pd(&spill_im[24*4],x0_im);
+        _mm256_store_pd(&spill_re[25*4],x1_re);
+        _mm256_store_pd(&spill_im[25*4],x1_im);
+        _mm256_store_pd(&spill_re[26*4],x2_re);
+        _mm256_store_pd(&spill_im[26*4],x2_im);
+        _mm256_store_pd(&spill_re[27*4],x3_re);
+        _mm256_store_pd(&spill_im[27*4],x3_im);
+        _mm256_store_pd(&spill_re[28*4],x4_re);
+        _mm256_store_pd(&spill_im[28*4],x4_im);
+        _mm256_store_pd(&spill_re[29*4],x5_re);
+        _mm256_store_pd(&spill_im[29*4],x5_im);
+        _mm256_store_pd(&spill_re[30*4],x6_re);
+        _mm256_store_pd(&spill_im[30*4],x6_im);
+        _mm256_store_pd(&spill_re[31*4],x7_re);
+        _mm256_store_pd(&spill_im[31*4],x7_im);
+
+        /* sub-FFT n2=4 */
+        x0_re = LD(&in_re[4*is+k]);
+        x0_im = LD(&in_im[4*is+k]);
+        x1_re = LD(&in_re[12*is+k]);
+        x1_im = LD(&in_im[12*is+k]);
+        x2_re = LD(&in_re[20*is+k]);
+        x2_im = LD(&in_im[20*is+k]);
+        x3_re = LD(&in_re[28*is+k]);
+        x3_im = LD(&in_im[28*is+k]);
+        x4_re = LD(&in_re[36*is+k]);
+        x4_im = LD(&in_im[36*is+k]);
+        x5_re = LD(&in_re[44*is+k]);
+        x5_im = LD(&in_im[44*is+k]);
+        x6_re = LD(&in_re[52*is+k]);
+        x6_im = LD(&in_im[52*is+k]);
+        x7_re = LD(&in_re[60*is+k]);
+        x7_im = LD(&in_im[60*is+k]);
+
+        /* radix-8 n2=4 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[32*4],x0_re);
+        _mm256_store_pd(&spill_im[32*4],x0_im);
+        _mm256_store_pd(&spill_re[33*4],x1_re);
+        _mm256_store_pd(&spill_im[33*4],x1_im);
+        _mm256_store_pd(&spill_re[34*4],x2_re);
+        _mm256_store_pd(&spill_im[34*4],x2_im);
+        _mm256_store_pd(&spill_re[35*4],x3_re);
+        _mm256_store_pd(&spill_im[35*4],x3_im);
+        _mm256_store_pd(&spill_re[36*4],x4_re);
+        _mm256_store_pd(&spill_im[36*4],x4_im);
+        _mm256_store_pd(&spill_re[37*4],x5_re);
+        _mm256_store_pd(&spill_im[37*4],x5_im);
+        _mm256_store_pd(&spill_re[38*4],x6_re);
+        _mm256_store_pd(&spill_im[38*4],x6_im);
+        _mm256_store_pd(&spill_re[39*4],x7_re);
+        _mm256_store_pd(&spill_im[39*4],x7_im);
+
+        /* sub-FFT n2=5 */
+        x0_re = LD(&in_re[5*is+k]);
+        x0_im = LD(&in_im[5*is+k]);
+        x1_re = LD(&in_re[13*is+k]);
+        x1_im = LD(&in_im[13*is+k]);
+        x2_re = LD(&in_re[21*is+k]);
+        x2_im = LD(&in_im[21*is+k]);
+        x3_re = LD(&in_re[29*is+k]);
+        x3_im = LD(&in_im[29*is+k]);
+        x4_re = LD(&in_re[37*is+k]);
+        x4_im = LD(&in_im[37*is+k]);
+        x5_re = LD(&in_re[45*is+k]);
+        x5_im = LD(&in_im[45*is+k]);
+        x6_re = LD(&in_re[53*is+k]);
+        x6_im = LD(&in_im[53*is+k]);
+        x7_re = LD(&in_re[61*is+k]);
+        x7_im = LD(&in_im[61*is+k]);
+
+        /* radix-8 n2=5 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[40*4],x0_re);
+        _mm256_store_pd(&spill_im[40*4],x0_im);
+        _mm256_store_pd(&spill_re[41*4],x1_re);
+        _mm256_store_pd(&spill_im[41*4],x1_im);
+        _mm256_store_pd(&spill_re[42*4],x2_re);
+        _mm256_store_pd(&spill_im[42*4],x2_im);
+        _mm256_store_pd(&spill_re[43*4],x3_re);
+        _mm256_store_pd(&spill_im[43*4],x3_im);
+        _mm256_store_pd(&spill_re[44*4],x4_re);
+        _mm256_store_pd(&spill_im[44*4],x4_im);
+        _mm256_store_pd(&spill_re[45*4],x5_re);
+        _mm256_store_pd(&spill_im[45*4],x5_im);
+        _mm256_store_pd(&spill_re[46*4],x6_re);
+        _mm256_store_pd(&spill_im[46*4],x6_im);
+        _mm256_store_pd(&spill_re[47*4],x7_re);
+        _mm256_store_pd(&spill_im[47*4],x7_im);
+
+        /* sub-FFT n2=6 */
+        x0_re = LD(&in_re[6*is+k]);
+        x0_im = LD(&in_im[6*is+k]);
+        x1_re = LD(&in_re[14*is+k]);
+        x1_im = LD(&in_im[14*is+k]);
+        x2_re = LD(&in_re[22*is+k]);
+        x2_im = LD(&in_im[22*is+k]);
+        x3_re = LD(&in_re[30*is+k]);
+        x3_im = LD(&in_im[30*is+k]);
+        x4_re = LD(&in_re[38*is+k]);
+        x4_im = LD(&in_im[38*is+k]);
+        x5_re = LD(&in_re[46*is+k]);
+        x5_im = LD(&in_im[46*is+k]);
+        x6_re = LD(&in_re[54*is+k]);
+        x6_im = LD(&in_im[54*is+k]);
+        x7_re = LD(&in_re[62*is+k]);
+        x7_im = LD(&in_im[62*is+k]);
+
+        /* radix-8 n2=6 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[48*4],x0_re);
+        _mm256_store_pd(&spill_im[48*4],x0_im);
+        _mm256_store_pd(&spill_re[49*4],x1_re);
+        _mm256_store_pd(&spill_im[49*4],x1_im);
+        _mm256_store_pd(&spill_re[50*4],x2_re);
+        _mm256_store_pd(&spill_im[50*4],x2_im);
+        _mm256_store_pd(&spill_re[51*4],x3_re);
+        _mm256_store_pd(&spill_im[51*4],x3_im);
+        _mm256_store_pd(&spill_re[52*4],x4_re);
+        _mm256_store_pd(&spill_im[52*4],x4_im);
+        _mm256_store_pd(&spill_re[53*4],x5_re);
+        _mm256_store_pd(&spill_im[53*4],x5_im);
+        _mm256_store_pd(&spill_re[54*4],x6_re);
+        _mm256_store_pd(&spill_im[54*4],x6_im);
+        _mm256_store_pd(&spill_re[55*4],x7_re);
+        _mm256_store_pd(&spill_im[55*4],x7_im);
+
+        /* sub-FFT n2=7 */
+        x0_re = LD(&in_re[7*is+k]);
+        x0_im = LD(&in_im[7*is+k]);
+        x1_re = LD(&in_re[15*is+k]);
+        x1_im = LD(&in_im[15*is+k]);
+        x2_re = LD(&in_re[23*is+k]);
+        x2_im = LD(&in_im[23*is+k]);
+        x3_re = LD(&in_re[31*is+k]);
+        x3_im = LD(&in_im[31*is+k]);
+        x4_re = LD(&in_re[39*is+k]);
+        x4_im = LD(&in_im[39*is+k]);
+        x5_re = LD(&in_re[47*is+k]);
+        x5_im = LD(&in_im[47*is+k]);
+        x6_re = LD(&in_re[55*is+k]);
+        x6_im = LD(&in_im[55*is+k]);
+        x7_re = LD(&in_re[63*is+k]);
+        x7_im = LD(&in_im[63*is+k]);
+
+        /* radix-8 n2=7 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[56*4],x0_re);
+        _mm256_store_pd(&spill_im[56*4],x0_im);
+        _mm256_store_pd(&spill_re[57*4],x1_re);
+        _mm256_store_pd(&spill_im[57*4],x1_im);
+        _mm256_store_pd(&spill_re[58*4],x2_re);
+        _mm256_store_pd(&spill_im[58*4],x2_im);
+        _mm256_store_pd(&spill_re[59*4],x3_re);
+        _mm256_store_pd(&spill_im[59*4],x3_im);
+        _mm256_store_pd(&spill_re[60*4],x4_re);
+        _mm256_store_pd(&spill_im[60*4],x4_im);
+        _mm256_store_pd(&spill_re[61*4],x5_re);
+        _mm256_store_pd(&spill_im[61*4],x5_im);
+        _mm256_store_pd(&spill_re[62*4],x6_re);
+        _mm256_store_pd(&spill_im[62*4],x6_im);
+        _mm256_store_pd(&spill_re[63*4],x7_re);
+        _mm256_store_pd(&spill_im[63*4],x7_im);
+
+        /* PASS 2 */
+
+        /* column k1=0 */
+        x0_re = _mm256_load_pd(&spill_re[0*4]);
+        x0_im = _mm256_load_pd(&spill_im[0*4]);
+        x1_re = _mm256_load_pd(&spill_re[8*4]);
+        x1_im = _mm256_load_pd(&spill_im[8*4]);
+        x2_re = _mm256_load_pd(&spill_re[16*4]);
+        x2_im = _mm256_load_pd(&spill_im[16*4]);
+        x3_re = _mm256_load_pd(&spill_re[24*4]);
+        x3_im = _mm256_load_pd(&spill_im[24*4]);
+        x4_re = _mm256_load_pd(&spill_re[32*4]);
+        x4_im = _mm256_load_pd(&spill_im[32*4]);
+        x5_re = _mm256_load_pd(&spill_re[40*4]);
+        x5_im = _mm256_load_pd(&spill_im[40*4]);
+        x6_re = _mm256_load_pd(&spill_re[48*4]);
+        x6_im = _mm256_load_pd(&spill_im[48*4]);
+        x7_re = _mm256_load_pd(&spill_re[56*4]);
+        x7_im = _mm256_load_pd(&spill_im[56*4]);
+
+        /* radix-8 k1=0 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[0*4],x0_re);
+        ST(&tbuf_im[0*4],x0_im);
+        ST(&tbuf_re[8*4],x1_re);
+        ST(&tbuf_im[8*4],x1_im);
+        ST(&tbuf_re[16*4],x2_re);
+        ST(&tbuf_im[16*4],x2_im);
+        ST(&tbuf_re[24*4],x3_re);
+        ST(&tbuf_im[24*4],x3_im);
+        ST(&tbuf_re[32*4],x4_re);
+        ST(&tbuf_im[32*4],x4_im);
+        ST(&tbuf_re[40*4],x5_re);
+        ST(&tbuf_im[40*4],x5_im);
+        ST(&tbuf_re[48*4],x6_re);
+        ST(&tbuf_im[48*4],x6_im);
+        ST(&tbuf_re[56*4],x7_re);
+        ST(&tbuf_im[56*4],x7_im);
+
+        /* column k1=1 */
+        x0_re = _mm256_load_pd(&spill_re[1*4]);
+        x0_im = _mm256_load_pd(&spill_im[1*4]);
+        x1_re = _mm256_load_pd(&spill_re[9*4]);
+        x1_im = _mm256_load_pd(&spill_im[9*4]);
+        x2_re = _mm256_load_pd(&spill_re[17*4]);
+        x2_im = _mm256_load_pd(&spill_im[17*4]);
+        x3_re = _mm256_load_pd(&spill_re[25*4]);
+        x3_im = _mm256_load_pd(&spill_im[25*4]);
+        x4_re = _mm256_load_pd(&spill_re[33*4]);
+        x4_im = _mm256_load_pd(&spill_im[33*4]);
+        x5_re = _mm256_load_pd(&spill_re[41*4]);
+        x5_im = _mm256_load_pd(&spill_im[41*4]);
+        x6_re = _mm256_load_pd(&spill_re[49*4]);
+        x6_im = _mm256_load_pd(&spill_im[49*4]);
+        x7_re = _mm256_load_pd(&spill_re[57*4]);
+        x7_im = _mm256_load_pd(&spill_im[57*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,_mm256_set1_pd(iw_re[1]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[1])));
+          x1_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[1]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[1]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,_mm256_set1_pd(iw_re[2]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[2])));
+          x2_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[2]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[2]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,_mm256_set1_pd(iw_re[3]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[3])));
+          x3_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[3]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[3]))); }
+        { __m256d tr = x4_re;
+          x4_re = _mm256_fmsub_pd(x4_re,_mm256_set1_pd(iw_re[4]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_im[4])));
+          x4_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[4]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_re[4]))); }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmsub_pd(x5_re,_mm256_set1_pd(iw_re[5]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[5])));
+          x5_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[5]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[5]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmsub_pd(x6_re,_mm256_set1_pd(iw_re[6]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[6])));
+          x6_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[6]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[6]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmsub_pd(x7_re,_mm256_set1_pd(iw_re[7]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[7])));
+          x7_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[7]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[7]))); }
+
+        /* radix-8 k1=1 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[1*4],x0_re);
+        ST(&tbuf_im[1*4],x0_im);
+        ST(&tbuf_re[9*4],x1_re);
+        ST(&tbuf_im[9*4],x1_im);
+        ST(&tbuf_re[17*4],x2_re);
+        ST(&tbuf_im[17*4],x2_im);
+        ST(&tbuf_re[25*4],x3_re);
+        ST(&tbuf_im[25*4],x3_im);
+        ST(&tbuf_re[33*4],x4_re);
+        ST(&tbuf_im[33*4],x4_im);
+        ST(&tbuf_re[41*4],x5_re);
+        ST(&tbuf_im[41*4],x5_im);
+        ST(&tbuf_re[49*4],x6_re);
+        ST(&tbuf_im[49*4],x6_im);
+        ST(&tbuf_re[57*4],x7_re);
+        ST(&tbuf_im[57*4],x7_im);
+
+        /* column k1=2 */
+        x0_re = _mm256_load_pd(&spill_re[2*4]);
+        x0_im = _mm256_load_pd(&spill_im[2*4]);
+        x1_re = _mm256_load_pd(&spill_re[10*4]);
+        x1_im = _mm256_load_pd(&spill_im[10*4]);
+        x2_re = _mm256_load_pd(&spill_re[18*4]);
+        x2_im = _mm256_load_pd(&spill_im[18*4]);
+        x3_re = _mm256_load_pd(&spill_re[26*4]);
+        x3_im = _mm256_load_pd(&spill_im[26*4]);
+        x4_re = _mm256_load_pd(&spill_re[34*4]);
+        x4_im = _mm256_load_pd(&spill_im[34*4]);
+        x5_re = _mm256_load_pd(&spill_re[42*4]);
+        x5_im = _mm256_load_pd(&spill_im[42*4]);
+        x6_re = _mm256_load_pd(&spill_re[50*4]);
+        x6_im = _mm256_load_pd(&spill_im[50*4]);
+        x7_re = _mm256_load_pd(&spill_re[58*4]);
+        x7_im = _mm256_load_pd(&spill_im[58*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,_mm256_set1_pd(iw_re[2]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[2])));
+          x1_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[2]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[2]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,_mm256_set1_pd(iw_re[4]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[4])));
+          x2_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[4]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[4]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,_mm256_set1_pd(iw_re[6]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[6])));
+          x3_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[6]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[6]))); }
+        { __m256d tr = _mm256_mul_pd(sqrt2_inv,_mm256_add_pd(x4_re,x4_im));
+          x4_im = _mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(x4_im,x4_re)); x4_re = tr; }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmsub_pd(x5_re,_mm256_set1_pd(iw_re[10]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[10])));
+          x5_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[10]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[10]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmsub_pd(x6_re,_mm256_set1_pd(iw_re[12]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[12])));
+          x6_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[12]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[12]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmsub_pd(x7_re,_mm256_set1_pd(iw_re[14]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[14])));
+          x7_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[14]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[14]))); }
+
+        /* radix-8 k1=2 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[2*4],x0_re);
+        ST(&tbuf_im[2*4],x0_im);
+        ST(&tbuf_re[10*4],x1_re);
+        ST(&tbuf_im[10*4],x1_im);
+        ST(&tbuf_re[18*4],x2_re);
+        ST(&tbuf_im[18*4],x2_im);
+        ST(&tbuf_re[26*4],x3_re);
+        ST(&tbuf_im[26*4],x3_im);
+        ST(&tbuf_re[34*4],x4_re);
+        ST(&tbuf_im[34*4],x4_im);
+        ST(&tbuf_re[42*4],x5_re);
+        ST(&tbuf_im[42*4],x5_im);
+        ST(&tbuf_re[50*4],x6_re);
+        ST(&tbuf_im[50*4],x6_im);
+        ST(&tbuf_re[58*4],x7_re);
+        ST(&tbuf_im[58*4],x7_im);
+
+        /* column k1=3 */
+        x0_re = _mm256_load_pd(&spill_re[3*4]);
+        x0_im = _mm256_load_pd(&spill_im[3*4]);
+        x1_re = _mm256_load_pd(&spill_re[11*4]);
+        x1_im = _mm256_load_pd(&spill_im[11*4]);
+        x2_re = _mm256_load_pd(&spill_re[19*4]);
+        x2_im = _mm256_load_pd(&spill_im[19*4]);
+        x3_re = _mm256_load_pd(&spill_re[27*4]);
+        x3_im = _mm256_load_pd(&spill_im[27*4]);
+        x4_re = _mm256_load_pd(&spill_re[35*4]);
+        x4_im = _mm256_load_pd(&spill_im[35*4]);
+        x5_re = _mm256_load_pd(&spill_re[43*4]);
+        x5_im = _mm256_load_pd(&spill_im[43*4]);
+        x6_re = _mm256_load_pd(&spill_re[51*4]);
+        x6_im = _mm256_load_pd(&spill_im[51*4]);
+        x7_re = _mm256_load_pd(&spill_re[59*4]);
+        x7_im = _mm256_load_pd(&spill_im[59*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,_mm256_set1_pd(iw_re[3]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[3])));
+          x1_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[3]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[3]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,_mm256_set1_pd(iw_re[6]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[6])));
+          x2_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[6]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[6]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,_mm256_set1_pd(iw_re[9]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[9])));
+          x3_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[9]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[9]))); }
+        { __m256d tr = x4_re;
+          x4_re = _mm256_fmsub_pd(x4_re,_mm256_set1_pd(iw_re[12]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_im[12])));
+          x4_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[12]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_re[12]))); }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmsub_pd(x5_re,_mm256_set1_pd(iw_re[15]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[15])));
+          x5_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[15]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[15]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmsub_pd(x6_re,_mm256_set1_pd(iw_re[18]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[18])));
+          x6_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[18]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[18]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmsub_pd(x7_re,_mm256_set1_pd(iw_re[21]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[21])));
+          x7_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[21]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[21]))); }
+
+        /* radix-8 k1=3 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[3*4],x0_re);
+        ST(&tbuf_im[3*4],x0_im);
+        ST(&tbuf_re[11*4],x1_re);
+        ST(&tbuf_im[11*4],x1_im);
+        ST(&tbuf_re[19*4],x2_re);
+        ST(&tbuf_im[19*4],x2_im);
+        ST(&tbuf_re[27*4],x3_re);
+        ST(&tbuf_im[27*4],x3_im);
+        ST(&tbuf_re[35*4],x4_re);
+        ST(&tbuf_im[35*4],x4_im);
+        ST(&tbuf_re[43*4],x5_re);
+        ST(&tbuf_im[43*4],x5_im);
+        ST(&tbuf_re[51*4],x6_re);
+        ST(&tbuf_im[51*4],x6_im);
+        ST(&tbuf_re[59*4],x7_re);
+        ST(&tbuf_im[59*4],x7_im);
+
+        /* column k1=4 */
+        x0_re = _mm256_load_pd(&spill_re[4*4]);
+        x0_im = _mm256_load_pd(&spill_im[4*4]);
+        x1_re = _mm256_load_pd(&spill_re[12*4]);
+        x1_im = _mm256_load_pd(&spill_im[12*4]);
+        x2_re = _mm256_load_pd(&spill_re[20*4]);
+        x2_im = _mm256_load_pd(&spill_im[20*4]);
+        x3_re = _mm256_load_pd(&spill_re[28*4]);
+        x3_im = _mm256_load_pd(&spill_im[28*4]);
+        x4_re = _mm256_load_pd(&spill_re[36*4]);
+        x4_im = _mm256_load_pd(&spill_im[36*4]);
+        x5_re = _mm256_load_pd(&spill_re[44*4]);
+        x5_im = _mm256_load_pd(&spill_im[44*4]);
+        x6_re = _mm256_load_pd(&spill_re[52*4]);
+        x6_im = _mm256_load_pd(&spill_im[52*4]);
+        x7_re = _mm256_load_pd(&spill_re[60*4]);
+        x7_im = _mm256_load_pd(&spill_im[60*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,_mm256_set1_pd(iw_re[4]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[4])));
+          x1_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[4]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[4]))); }
+        { __m256d tr = _mm256_mul_pd(sqrt2_inv,_mm256_add_pd(x2_re,x2_im));
+          x2_im = _mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(x2_im,x2_re)); x2_re = tr; }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,_mm256_set1_pd(iw_re[12]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[12])));
+          x3_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[12]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[12]))); }
+        { __m256d tr = x4_re; x4_re = x4_im; x4_im = _mm256_xor_pd(tr,sign_flip); }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmsub_pd(x5_re,_mm256_set1_pd(iw_re[20]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[20])));
+          x5_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[20]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[20]))); }
+        { __m256d tr = _mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(x6_re,x6_im));
+          x6_im = _mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(x6_re,x6_im)); x6_re = tr; }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmsub_pd(x7_re,_mm256_set1_pd(iw_re[28]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[28])));
+          x7_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[28]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[28]))); }
+
+        /* radix-8 k1=4 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[4*4],x0_re);
+        ST(&tbuf_im[4*4],x0_im);
+        ST(&tbuf_re[12*4],x1_re);
+        ST(&tbuf_im[12*4],x1_im);
+        ST(&tbuf_re[20*4],x2_re);
+        ST(&tbuf_im[20*4],x2_im);
+        ST(&tbuf_re[28*4],x3_re);
+        ST(&tbuf_im[28*4],x3_im);
+        ST(&tbuf_re[36*4],x4_re);
+        ST(&tbuf_im[36*4],x4_im);
+        ST(&tbuf_re[44*4],x5_re);
+        ST(&tbuf_im[44*4],x5_im);
+        ST(&tbuf_re[52*4],x6_re);
+        ST(&tbuf_im[52*4],x6_im);
+        ST(&tbuf_re[60*4],x7_re);
+        ST(&tbuf_im[60*4],x7_im);
+
+        /* column k1=5 */
+        x0_re = _mm256_load_pd(&spill_re[5*4]);
+        x0_im = _mm256_load_pd(&spill_im[5*4]);
+        x1_re = _mm256_load_pd(&spill_re[13*4]);
+        x1_im = _mm256_load_pd(&spill_im[13*4]);
+        x2_re = _mm256_load_pd(&spill_re[21*4]);
+        x2_im = _mm256_load_pd(&spill_im[21*4]);
+        x3_re = _mm256_load_pd(&spill_re[29*4]);
+        x3_im = _mm256_load_pd(&spill_im[29*4]);
+        x4_re = _mm256_load_pd(&spill_re[37*4]);
+        x4_im = _mm256_load_pd(&spill_im[37*4]);
+        x5_re = _mm256_load_pd(&spill_re[45*4]);
+        x5_im = _mm256_load_pd(&spill_im[45*4]);
+        x6_re = _mm256_load_pd(&spill_re[53*4]);
+        x6_im = _mm256_load_pd(&spill_im[53*4]);
+        x7_re = _mm256_load_pd(&spill_re[61*4]);
+        x7_im = _mm256_load_pd(&spill_im[61*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,_mm256_set1_pd(iw_re[5]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[5])));
+          x1_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[5]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[5]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,_mm256_set1_pd(iw_re[10]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[10])));
+          x2_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[10]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[10]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,_mm256_set1_pd(iw_re[15]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[15])));
+          x3_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[15]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[15]))); }
+        { __m256d tr = x4_re;
+          x4_re = _mm256_fmsub_pd(x4_re,_mm256_set1_pd(iw_re[20]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_im[20])));
+          x4_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[20]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_re[20]))); }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmsub_pd(x5_re,_mm256_set1_pd(iw_re[25]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[25])));
+          x5_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[25]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[25]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmsub_pd(x6_re,_mm256_set1_pd(iw_re[30]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[30])));
+          x6_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[30]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[30]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmsub_pd(x7_re,_mm256_set1_pd(iw_re[35]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[35])));
+          x7_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[35]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[35]))); }
+
+        /* radix-8 k1=5 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[5*4],x0_re);
+        ST(&tbuf_im[5*4],x0_im);
+        ST(&tbuf_re[13*4],x1_re);
+        ST(&tbuf_im[13*4],x1_im);
+        ST(&tbuf_re[21*4],x2_re);
+        ST(&tbuf_im[21*4],x2_im);
+        ST(&tbuf_re[29*4],x3_re);
+        ST(&tbuf_im[29*4],x3_im);
+        ST(&tbuf_re[37*4],x4_re);
+        ST(&tbuf_im[37*4],x4_im);
+        ST(&tbuf_re[45*4],x5_re);
+        ST(&tbuf_im[45*4],x5_im);
+        ST(&tbuf_re[53*4],x6_re);
+        ST(&tbuf_im[53*4],x6_im);
+        ST(&tbuf_re[61*4],x7_re);
+        ST(&tbuf_im[61*4],x7_im);
+
+        /* column k1=6 */
+        x0_re = _mm256_load_pd(&spill_re[6*4]);
+        x0_im = _mm256_load_pd(&spill_im[6*4]);
+        x1_re = _mm256_load_pd(&spill_re[14*4]);
+        x1_im = _mm256_load_pd(&spill_im[14*4]);
+        x2_re = _mm256_load_pd(&spill_re[22*4]);
+        x2_im = _mm256_load_pd(&spill_im[22*4]);
+        x3_re = _mm256_load_pd(&spill_re[30*4]);
+        x3_im = _mm256_load_pd(&spill_im[30*4]);
+        x4_re = _mm256_load_pd(&spill_re[38*4]);
+        x4_im = _mm256_load_pd(&spill_im[38*4]);
+        x5_re = _mm256_load_pd(&spill_re[46*4]);
+        x5_im = _mm256_load_pd(&spill_im[46*4]);
+        x6_re = _mm256_load_pd(&spill_re[54*4]);
+        x6_im = _mm256_load_pd(&spill_im[54*4]);
+        x7_re = _mm256_load_pd(&spill_re[62*4]);
+        x7_im = _mm256_load_pd(&spill_im[62*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,_mm256_set1_pd(iw_re[6]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[6])));
+          x1_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[6]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[6]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,_mm256_set1_pd(iw_re[12]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[12])));
+          x2_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[12]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[12]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,_mm256_set1_pd(iw_re[18]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[18])));
+          x3_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[18]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[18]))); }
+        { __m256d tr = _mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(x4_re,x4_im));
+          x4_im = _mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(x4_re,x4_im)); x4_re = tr; }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmsub_pd(x5_re,_mm256_set1_pd(iw_re[30]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[30])));
+          x5_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[30]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[30]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmsub_pd(x6_re,_mm256_set1_pd(iw_re[36]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[36])));
+          x6_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[36]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[36]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmsub_pd(x7_re,_mm256_set1_pd(iw_re[42]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[42])));
+          x7_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[42]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[42]))); }
+
+        /* radix-8 k1=6 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[6*4],x0_re);
+        ST(&tbuf_im[6*4],x0_im);
+        ST(&tbuf_re[14*4],x1_re);
+        ST(&tbuf_im[14*4],x1_im);
+        ST(&tbuf_re[22*4],x2_re);
+        ST(&tbuf_im[22*4],x2_im);
+        ST(&tbuf_re[30*4],x3_re);
+        ST(&tbuf_im[30*4],x3_im);
+        ST(&tbuf_re[38*4],x4_re);
+        ST(&tbuf_im[38*4],x4_im);
+        ST(&tbuf_re[46*4],x5_re);
+        ST(&tbuf_im[46*4],x5_im);
+        ST(&tbuf_re[54*4],x6_re);
+        ST(&tbuf_im[54*4],x6_im);
+        ST(&tbuf_re[62*4],x7_re);
+        ST(&tbuf_im[62*4],x7_im);
+
+        /* column k1=7 */
+        x0_re = _mm256_load_pd(&spill_re[7*4]);
+        x0_im = _mm256_load_pd(&spill_im[7*4]);
+        x1_re = _mm256_load_pd(&spill_re[15*4]);
+        x1_im = _mm256_load_pd(&spill_im[15*4]);
+        x2_re = _mm256_load_pd(&spill_re[23*4]);
+        x2_im = _mm256_load_pd(&spill_im[23*4]);
+        x3_re = _mm256_load_pd(&spill_re[31*4]);
+        x3_im = _mm256_load_pd(&spill_im[31*4]);
+        x4_re = _mm256_load_pd(&spill_re[39*4]);
+        x4_im = _mm256_load_pd(&spill_im[39*4]);
+        x5_re = _mm256_load_pd(&spill_re[47*4]);
+        x5_im = _mm256_load_pd(&spill_im[47*4]);
+        x6_re = _mm256_load_pd(&spill_re[55*4]);
+        x6_im = _mm256_load_pd(&spill_im[55*4]);
+        x7_re = _mm256_load_pd(&spill_re[63*4]);
+        x7_im = _mm256_load_pd(&spill_im[63*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,_mm256_set1_pd(iw_re[7]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[7])));
+          x1_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[7]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[7]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,_mm256_set1_pd(iw_re[14]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[14])));
+          x2_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[14]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[14]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,_mm256_set1_pd(iw_re[21]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[21])));
+          x3_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[21]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[21]))); }
+        { __m256d tr = x4_re;
+          x4_re = _mm256_fmsub_pd(x4_re,_mm256_set1_pd(iw_re[28]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_im[28])));
+          x4_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[28]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_re[28]))); }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmsub_pd(x5_re,_mm256_set1_pd(iw_re[35]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[35])));
+          x5_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[35]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[35]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmsub_pd(x6_re,_mm256_set1_pd(iw_re[42]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[42])));
+          x6_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[42]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[42]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmsub_pd(x7_re,_mm256_set1_pd(iw_re[49]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[49])));
+          x7_im = _mm256_fmadd_pd(tr,_mm256_set1_pd(iw_im[49]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[49]))); }
+
+        /* radix-8 k1=7 [fwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_sub_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_add_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_add_pd(oqr,osi), _B1i=_mm256_sub_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1i,_B1r));
+              const __m256d _B3r=_mm256_sub_pd(oqr,osi), _B3i=_mm256_add_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_add_pd(A2r,B2i); x2_im=_mm256_sub_pd(A2i,B2r);
+              x6_re=_mm256_sub_pd(A2r,B2i); x6_im=_mm256_add_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[7*4],x0_re);
+        ST(&tbuf_im[7*4],x0_im);
+        ST(&tbuf_re[15*4],x1_re);
+        ST(&tbuf_im[15*4],x1_im);
+        ST(&tbuf_re[23*4],x2_re);
+        ST(&tbuf_im[23*4],x2_im);
+        ST(&tbuf_re[31*4],x3_re);
+        ST(&tbuf_im[31*4],x3_im);
+        ST(&tbuf_re[39*4],x4_re);
+        ST(&tbuf_im[39*4],x4_im);
+        ST(&tbuf_re[47*4],x5_re);
+        ST(&tbuf_im[47*4],x5_im);
+        ST(&tbuf_re[55*4],x6_re);
+        ST(&tbuf_im[55*4],x6_im);
+        ST(&tbuf_re[63*4],x7_re);
+        ST(&tbuf_im[63*4],x7_im);
+
+        /* Fused: transpose + outer R4 twiddle+butterfly -> output */
+        for (size_t g = 0; g < 16; g++) {
+            const size_t b = g * 4;
+            __m256d a_r=LD(&tbuf_re[(b+0)*4]), b_r=LD(&tbuf_re[(b+1)*4]);
+            __m256d c_r=LD(&tbuf_re[(b+2)*4]), d_r=LD(&tbuf_re[(b+3)*4]);
+            __m256d a_i=LD(&tbuf_im[(b+0)*4]), b_i=LD(&tbuf_im[(b+1)*4]);
+            __m256d c_i=LD(&tbuf_im[(b+2)*4]), d_i=LD(&tbuf_im[(b+3)*4]);
+            __m256d lo_ab_r=_mm256_unpacklo_pd(a_r,b_r), hi_ab_r=_mm256_unpackhi_pd(a_r,b_r);
+            __m256d lo_cd_r=_mm256_unpacklo_pd(c_r,d_r), hi_cd_r=_mm256_unpackhi_pd(c_r,d_r);
+            __m256d y0_re=_mm256_permute2f128_pd(lo_ab_r,lo_cd_r,0x20);
+            __m256d y1_re=_mm256_permute2f128_pd(hi_ab_r,hi_cd_r,0x20);
+            __m256d y2_re=_mm256_permute2f128_pd(lo_ab_r,lo_cd_r,0x31);
+            __m256d y3_re=_mm256_permute2f128_pd(hi_ab_r,hi_cd_r,0x31);
+            __m256d lo_ab_i=_mm256_unpacklo_pd(a_i,b_i), hi_ab_i=_mm256_unpackhi_pd(a_i,b_i);
+            __m256d lo_cd_i=_mm256_unpacklo_pd(c_i,d_i), hi_cd_i=_mm256_unpackhi_pd(c_i,d_i);
+            __m256d y0_im=_mm256_permute2f128_pd(lo_ab_i,lo_cd_i,0x20);
+            __m256d y1_im=_mm256_permute2f128_pd(hi_ab_i,hi_cd_i,0x20);
+            __m256d y2_im=_mm256_permute2f128_pd(lo_ab_i,lo_cd_i,0x31);
+            __m256d y3_im=_mm256_permute2f128_pd(hi_ab_i,hi_cd_i,0x31);
+            { __m256d twr=LD(&W_re[0+b]), twi=LD(&W_im[0+b]);
+              __m256d yr=y1_re, yi=y1_im;
+              y1_re=_mm256_fmsub_pd(yr,twr,_mm256_mul_pd(yi,twi));
+              y1_im=_mm256_fmadd_pd(yr,twi,_mm256_mul_pd(yi,twr)); }
+            { __m256d twr=LD(&W_re[64+b]), twi=LD(&W_im[64+b]);
+              __m256d yr=y2_re, yi=y2_im;
+              y2_re=_mm256_fmsub_pd(yr,twr,_mm256_mul_pd(yi,twi));
+              y2_im=_mm256_fmadd_pd(yr,twi,_mm256_mul_pd(yi,twr)); }
+            { __m256d twr=LD(&W_re[128+b]), twi=LD(&W_im[128+b]);
+              __m256d yr=y3_re, yi=y3_im;
+              y3_re=_mm256_fmsub_pd(yr,twr,_mm256_mul_pd(yi,twi));
+              y3_im=_mm256_fmadd_pd(yr,twi,_mm256_mul_pd(yi,twr)); }
+            { __m256d t0r=_mm256_add_pd(y0_re,y2_re), t0i=_mm256_add_pd(y0_im,y2_im);
+              __m256d t1r=_mm256_sub_pd(y0_re,y2_re), t1i=_mm256_sub_pd(y0_im,y2_im);
+              __m256d t2r=_mm256_add_pd(y1_re,y3_re), t2i=_mm256_add_pd(y1_im,y3_im);
+              __m256d t3r=_mm256_sub_pd(y1_re,y3_re), t3i=_mm256_sub_pd(y1_im,y3_im);
+              y0_re=_mm256_add_pd(t0r,t2r); y0_im=_mm256_add_pd(t0i,t2i);
+              y2_re=_mm256_sub_pd(t0r,t2r); y2_im=_mm256_sub_pd(t0i,t2i);
+              y1_re=_mm256_add_pd(t1r,t3i); y1_im=_mm256_sub_pd(t1i,t3r);
+              y3_re=_mm256_sub_pd(t1r,t3i); y3_im=_mm256_add_pd(t1i,t3r); }
+            ST(&out_re[0*64+b],y0_re); ST(&out_im[0*64+b],y0_im);
+            ST(&out_re[1*64+b],y1_re); ST(&out_im[1*64+b],y1_im);
+            ST(&out_re[2*64+b],y2_re); ST(&out_im[2*64+b],y2_im);
+            ST(&out_re[3*64+b],y3_re); ST(&out_im[3*64+b],y3_im);
+        }
+    }
+}
+
+
+static __attribute__((target("avx2,fma"))) void
+radix64_fused_4x64_bwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im)
+{
+    const __m256d sign_flip = _mm256_set1_pd(-0.0);
+    const __m256d sqrt2_inv = _mm256_set1_pd(0.70710678118654752440);
+    const __m256d nsqrt2_inv = _mm256_set1_pd(-0.70710678118654752440);
+    __attribute__((aligned(32))) double tbuf_re[256];
+    __attribute__((aligned(32))) double tbuf_im[256];
+    __attribute__((aligned(32))) double spill_re[256];
+    __attribute__((aligned(32))) double spill_im[256];
+    __attribute__((aligned(32))) double bfr[4*4], bfi[4*4];
+    __m256d x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;
+    __m256d x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;
+
+    const size_t is = 4;
+    { const size_t k = 0;
+        /* sub-FFT n2=0 */
+        x0_re = LD(&in_re[0*is+k]);
+        x0_im = LD(&in_im[0*is+k]);
+        x1_re = LD(&in_re[8*is+k]);
+        x1_im = LD(&in_im[8*is+k]);
+        x2_re = LD(&in_re[16*is+k]);
+        x2_im = LD(&in_im[16*is+k]);
+        x3_re = LD(&in_re[24*is+k]);
+        x3_im = LD(&in_im[24*is+k]);
+        x4_re = LD(&in_re[32*is+k]);
+        x4_im = LD(&in_im[32*is+k]);
+        x5_re = LD(&in_re[40*is+k]);
+        x5_im = LD(&in_im[40*is+k]);
+        x6_re = LD(&in_re[48*is+k]);
+        x6_im = LD(&in_im[48*is+k]);
+        x7_re = LD(&in_re[56*is+k]);
+        x7_im = LD(&in_im[56*is+k]);
+
+        /* radix-8 n2=0 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[0*4],x0_re);
+        _mm256_store_pd(&spill_im[0*4],x0_im);
+        _mm256_store_pd(&spill_re[1*4],x1_re);
+        _mm256_store_pd(&spill_im[1*4],x1_im);
+        _mm256_store_pd(&spill_re[2*4],x2_re);
+        _mm256_store_pd(&spill_im[2*4],x2_im);
+        _mm256_store_pd(&spill_re[3*4],x3_re);
+        _mm256_store_pd(&spill_im[3*4],x3_im);
+        _mm256_store_pd(&spill_re[4*4],x4_re);
+        _mm256_store_pd(&spill_im[4*4],x4_im);
+        _mm256_store_pd(&spill_re[5*4],x5_re);
+        _mm256_store_pd(&spill_im[5*4],x5_im);
+        _mm256_store_pd(&spill_re[6*4],x6_re);
+        _mm256_store_pd(&spill_im[6*4],x6_im);
+        _mm256_store_pd(&spill_re[7*4],x7_re);
+        _mm256_store_pd(&spill_im[7*4],x7_im);
+
+        /* sub-FFT n2=1 */
+        x0_re = LD(&in_re[1*is+k]);
+        x0_im = LD(&in_im[1*is+k]);
+        x1_re = LD(&in_re[9*is+k]);
+        x1_im = LD(&in_im[9*is+k]);
+        x2_re = LD(&in_re[17*is+k]);
+        x2_im = LD(&in_im[17*is+k]);
+        x3_re = LD(&in_re[25*is+k]);
+        x3_im = LD(&in_im[25*is+k]);
+        x4_re = LD(&in_re[33*is+k]);
+        x4_im = LD(&in_im[33*is+k]);
+        x5_re = LD(&in_re[41*is+k]);
+        x5_im = LD(&in_im[41*is+k]);
+        x6_re = LD(&in_re[49*is+k]);
+        x6_im = LD(&in_im[49*is+k]);
+        x7_re = LD(&in_re[57*is+k]);
+        x7_im = LD(&in_im[57*is+k]);
+
+        /* radix-8 n2=1 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[8*4],x0_re);
+        _mm256_store_pd(&spill_im[8*4],x0_im);
+        _mm256_store_pd(&spill_re[9*4],x1_re);
+        _mm256_store_pd(&spill_im[9*4],x1_im);
+        _mm256_store_pd(&spill_re[10*4],x2_re);
+        _mm256_store_pd(&spill_im[10*4],x2_im);
+        _mm256_store_pd(&spill_re[11*4],x3_re);
+        _mm256_store_pd(&spill_im[11*4],x3_im);
+        _mm256_store_pd(&spill_re[12*4],x4_re);
+        _mm256_store_pd(&spill_im[12*4],x4_im);
+        _mm256_store_pd(&spill_re[13*4],x5_re);
+        _mm256_store_pd(&spill_im[13*4],x5_im);
+        _mm256_store_pd(&spill_re[14*4],x6_re);
+        _mm256_store_pd(&spill_im[14*4],x6_im);
+        _mm256_store_pd(&spill_re[15*4],x7_re);
+        _mm256_store_pd(&spill_im[15*4],x7_im);
+
+        /* sub-FFT n2=2 */
+        x0_re = LD(&in_re[2*is+k]);
+        x0_im = LD(&in_im[2*is+k]);
+        x1_re = LD(&in_re[10*is+k]);
+        x1_im = LD(&in_im[10*is+k]);
+        x2_re = LD(&in_re[18*is+k]);
+        x2_im = LD(&in_im[18*is+k]);
+        x3_re = LD(&in_re[26*is+k]);
+        x3_im = LD(&in_im[26*is+k]);
+        x4_re = LD(&in_re[34*is+k]);
+        x4_im = LD(&in_im[34*is+k]);
+        x5_re = LD(&in_re[42*is+k]);
+        x5_im = LD(&in_im[42*is+k]);
+        x6_re = LD(&in_re[50*is+k]);
+        x6_im = LD(&in_im[50*is+k]);
+        x7_re = LD(&in_re[58*is+k]);
+        x7_im = LD(&in_im[58*is+k]);
+
+        /* radix-8 n2=2 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[16*4],x0_re);
+        _mm256_store_pd(&spill_im[16*4],x0_im);
+        _mm256_store_pd(&spill_re[17*4],x1_re);
+        _mm256_store_pd(&spill_im[17*4],x1_im);
+        _mm256_store_pd(&spill_re[18*4],x2_re);
+        _mm256_store_pd(&spill_im[18*4],x2_im);
+        _mm256_store_pd(&spill_re[19*4],x3_re);
+        _mm256_store_pd(&spill_im[19*4],x3_im);
+        _mm256_store_pd(&spill_re[20*4],x4_re);
+        _mm256_store_pd(&spill_im[20*4],x4_im);
+        _mm256_store_pd(&spill_re[21*4],x5_re);
+        _mm256_store_pd(&spill_im[21*4],x5_im);
+        _mm256_store_pd(&spill_re[22*4],x6_re);
+        _mm256_store_pd(&spill_im[22*4],x6_im);
+        _mm256_store_pd(&spill_re[23*4],x7_re);
+        _mm256_store_pd(&spill_im[23*4],x7_im);
+
+        /* sub-FFT n2=3 */
+        x0_re = LD(&in_re[3*is+k]);
+        x0_im = LD(&in_im[3*is+k]);
+        x1_re = LD(&in_re[11*is+k]);
+        x1_im = LD(&in_im[11*is+k]);
+        x2_re = LD(&in_re[19*is+k]);
+        x2_im = LD(&in_im[19*is+k]);
+        x3_re = LD(&in_re[27*is+k]);
+        x3_im = LD(&in_im[27*is+k]);
+        x4_re = LD(&in_re[35*is+k]);
+        x4_im = LD(&in_im[35*is+k]);
+        x5_re = LD(&in_re[43*is+k]);
+        x5_im = LD(&in_im[43*is+k]);
+        x6_re = LD(&in_re[51*is+k]);
+        x6_im = LD(&in_im[51*is+k]);
+        x7_re = LD(&in_re[59*is+k]);
+        x7_im = LD(&in_im[59*is+k]);
+
+        /* radix-8 n2=3 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[24*4],x0_re);
+        _mm256_store_pd(&spill_im[24*4],x0_im);
+        _mm256_store_pd(&spill_re[25*4],x1_re);
+        _mm256_store_pd(&spill_im[25*4],x1_im);
+        _mm256_store_pd(&spill_re[26*4],x2_re);
+        _mm256_store_pd(&spill_im[26*4],x2_im);
+        _mm256_store_pd(&spill_re[27*4],x3_re);
+        _mm256_store_pd(&spill_im[27*4],x3_im);
+        _mm256_store_pd(&spill_re[28*4],x4_re);
+        _mm256_store_pd(&spill_im[28*4],x4_im);
+        _mm256_store_pd(&spill_re[29*4],x5_re);
+        _mm256_store_pd(&spill_im[29*4],x5_im);
+        _mm256_store_pd(&spill_re[30*4],x6_re);
+        _mm256_store_pd(&spill_im[30*4],x6_im);
+        _mm256_store_pd(&spill_re[31*4],x7_re);
+        _mm256_store_pd(&spill_im[31*4],x7_im);
+
+        /* sub-FFT n2=4 */
+        x0_re = LD(&in_re[4*is+k]);
+        x0_im = LD(&in_im[4*is+k]);
+        x1_re = LD(&in_re[12*is+k]);
+        x1_im = LD(&in_im[12*is+k]);
+        x2_re = LD(&in_re[20*is+k]);
+        x2_im = LD(&in_im[20*is+k]);
+        x3_re = LD(&in_re[28*is+k]);
+        x3_im = LD(&in_im[28*is+k]);
+        x4_re = LD(&in_re[36*is+k]);
+        x4_im = LD(&in_im[36*is+k]);
+        x5_re = LD(&in_re[44*is+k]);
+        x5_im = LD(&in_im[44*is+k]);
+        x6_re = LD(&in_re[52*is+k]);
+        x6_im = LD(&in_im[52*is+k]);
+        x7_re = LD(&in_re[60*is+k]);
+        x7_im = LD(&in_im[60*is+k]);
+
+        /* radix-8 n2=4 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[32*4],x0_re);
+        _mm256_store_pd(&spill_im[32*4],x0_im);
+        _mm256_store_pd(&spill_re[33*4],x1_re);
+        _mm256_store_pd(&spill_im[33*4],x1_im);
+        _mm256_store_pd(&spill_re[34*4],x2_re);
+        _mm256_store_pd(&spill_im[34*4],x2_im);
+        _mm256_store_pd(&spill_re[35*4],x3_re);
+        _mm256_store_pd(&spill_im[35*4],x3_im);
+        _mm256_store_pd(&spill_re[36*4],x4_re);
+        _mm256_store_pd(&spill_im[36*4],x4_im);
+        _mm256_store_pd(&spill_re[37*4],x5_re);
+        _mm256_store_pd(&spill_im[37*4],x5_im);
+        _mm256_store_pd(&spill_re[38*4],x6_re);
+        _mm256_store_pd(&spill_im[38*4],x6_im);
+        _mm256_store_pd(&spill_re[39*4],x7_re);
+        _mm256_store_pd(&spill_im[39*4],x7_im);
+
+        /* sub-FFT n2=5 */
+        x0_re = LD(&in_re[5*is+k]);
+        x0_im = LD(&in_im[5*is+k]);
+        x1_re = LD(&in_re[13*is+k]);
+        x1_im = LD(&in_im[13*is+k]);
+        x2_re = LD(&in_re[21*is+k]);
+        x2_im = LD(&in_im[21*is+k]);
+        x3_re = LD(&in_re[29*is+k]);
+        x3_im = LD(&in_im[29*is+k]);
+        x4_re = LD(&in_re[37*is+k]);
+        x4_im = LD(&in_im[37*is+k]);
+        x5_re = LD(&in_re[45*is+k]);
+        x5_im = LD(&in_im[45*is+k]);
+        x6_re = LD(&in_re[53*is+k]);
+        x6_im = LD(&in_im[53*is+k]);
+        x7_re = LD(&in_re[61*is+k]);
+        x7_im = LD(&in_im[61*is+k]);
+
+        /* radix-8 n2=5 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[40*4],x0_re);
+        _mm256_store_pd(&spill_im[40*4],x0_im);
+        _mm256_store_pd(&spill_re[41*4],x1_re);
+        _mm256_store_pd(&spill_im[41*4],x1_im);
+        _mm256_store_pd(&spill_re[42*4],x2_re);
+        _mm256_store_pd(&spill_im[42*4],x2_im);
+        _mm256_store_pd(&spill_re[43*4],x3_re);
+        _mm256_store_pd(&spill_im[43*4],x3_im);
+        _mm256_store_pd(&spill_re[44*4],x4_re);
+        _mm256_store_pd(&spill_im[44*4],x4_im);
+        _mm256_store_pd(&spill_re[45*4],x5_re);
+        _mm256_store_pd(&spill_im[45*4],x5_im);
+        _mm256_store_pd(&spill_re[46*4],x6_re);
+        _mm256_store_pd(&spill_im[46*4],x6_im);
+        _mm256_store_pd(&spill_re[47*4],x7_re);
+        _mm256_store_pd(&spill_im[47*4],x7_im);
+
+        /* sub-FFT n2=6 */
+        x0_re = LD(&in_re[6*is+k]);
+        x0_im = LD(&in_im[6*is+k]);
+        x1_re = LD(&in_re[14*is+k]);
+        x1_im = LD(&in_im[14*is+k]);
+        x2_re = LD(&in_re[22*is+k]);
+        x2_im = LD(&in_im[22*is+k]);
+        x3_re = LD(&in_re[30*is+k]);
+        x3_im = LD(&in_im[30*is+k]);
+        x4_re = LD(&in_re[38*is+k]);
+        x4_im = LD(&in_im[38*is+k]);
+        x5_re = LD(&in_re[46*is+k]);
+        x5_im = LD(&in_im[46*is+k]);
+        x6_re = LD(&in_re[54*is+k]);
+        x6_im = LD(&in_im[54*is+k]);
+        x7_re = LD(&in_re[62*is+k]);
+        x7_im = LD(&in_im[62*is+k]);
+
+        /* radix-8 n2=6 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[48*4],x0_re);
+        _mm256_store_pd(&spill_im[48*4],x0_im);
+        _mm256_store_pd(&spill_re[49*4],x1_re);
+        _mm256_store_pd(&spill_im[49*4],x1_im);
+        _mm256_store_pd(&spill_re[50*4],x2_re);
+        _mm256_store_pd(&spill_im[50*4],x2_im);
+        _mm256_store_pd(&spill_re[51*4],x3_re);
+        _mm256_store_pd(&spill_im[51*4],x3_im);
+        _mm256_store_pd(&spill_re[52*4],x4_re);
+        _mm256_store_pd(&spill_im[52*4],x4_im);
+        _mm256_store_pd(&spill_re[53*4],x5_re);
+        _mm256_store_pd(&spill_im[53*4],x5_im);
+        _mm256_store_pd(&spill_re[54*4],x6_re);
+        _mm256_store_pd(&spill_im[54*4],x6_im);
+        _mm256_store_pd(&spill_re[55*4],x7_re);
+        _mm256_store_pd(&spill_im[55*4],x7_im);
+
+        /* sub-FFT n2=7 */
+        x0_re = LD(&in_re[7*is+k]);
+        x0_im = LD(&in_im[7*is+k]);
+        x1_re = LD(&in_re[15*is+k]);
+        x1_im = LD(&in_im[15*is+k]);
+        x2_re = LD(&in_re[23*is+k]);
+        x2_im = LD(&in_im[23*is+k]);
+        x3_re = LD(&in_re[31*is+k]);
+        x3_im = LD(&in_im[31*is+k]);
+        x4_re = LD(&in_re[39*is+k]);
+        x4_im = LD(&in_im[39*is+k]);
+        x5_re = LD(&in_re[47*is+k]);
+        x5_im = LD(&in_im[47*is+k]);
+        x6_re = LD(&in_re[55*is+k]);
+        x6_im = LD(&in_im[55*is+k]);
+        x7_re = LD(&in_re[63*is+k]);
+        x7_im = LD(&in_im[63*is+k]);
+
+        /* radix-8 n2=7 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        _mm256_store_pd(&spill_re[56*4],x0_re);
+        _mm256_store_pd(&spill_im[56*4],x0_im);
+        _mm256_store_pd(&spill_re[57*4],x1_re);
+        _mm256_store_pd(&spill_im[57*4],x1_im);
+        _mm256_store_pd(&spill_re[58*4],x2_re);
+        _mm256_store_pd(&spill_im[58*4],x2_im);
+        _mm256_store_pd(&spill_re[59*4],x3_re);
+        _mm256_store_pd(&spill_im[59*4],x3_im);
+        _mm256_store_pd(&spill_re[60*4],x4_re);
+        _mm256_store_pd(&spill_im[60*4],x4_im);
+        _mm256_store_pd(&spill_re[61*4],x5_re);
+        _mm256_store_pd(&spill_im[61*4],x5_im);
+        _mm256_store_pd(&spill_re[62*4],x6_re);
+        _mm256_store_pd(&spill_im[62*4],x6_im);
+        _mm256_store_pd(&spill_re[63*4],x7_re);
+        _mm256_store_pd(&spill_im[63*4],x7_im);
+
+        /* PASS 2 */
+
+        /* column k1=0 */
+        x0_re = _mm256_load_pd(&spill_re[0*4]);
+        x0_im = _mm256_load_pd(&spill_im[0*4]);
+        x1_re = _mm256_load_pd(&spill_re[8*4]);
+        x1_im = _mm256_load_pd(&spill_im[8*4]);
+        x2_re = _mm256_load_pd(&spill_re[16*4]);
+        x2_im = _mm256_load_pd(&spill_im[16*4]);
+        x3_re = _mm256_load_pd(&spill_re[24*4]);
+        x3_im = _mm256_load_pd(&spill_im[24*4]);
+        x4_re = _mm256_load_pd(&spill_re[32*4]);
+        x4_im = _mm256_load_pd(&spill_im[32*4]);
+        x5_re = _mm256_load_pd(&spill_re[40*4]);
+        x5_im = _mm256_load_pd(&spill_im[40*4]);
+        x6_re = _mm256_load_pd(&spill_re[48*4]);
+        x6_im = _mm256_load_pd(&spill_im[48*4]);
+        x7_re = _mm256_load_pd(&spill_re[56*4]);
+        x7_im = _mm256_load_pd(&spill_im[56*4]);
+
+        /* radix-8 k1=0 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[0*4],x0_re);
+        ST(&tbuf_im[0*4],x0_im);
+        ST(&tbuf_re[8*4],x1_re);
+        ST(&tbuf_im[8*4],x1_im);
+        ST(&tbuf_re[16*4],x2_re);
+        ST(&tbuf_im[16*4],x2_im);
+        ST(&tbuf_re[24*4],x3_re);
+        ST(&tbuf_im[24*4],x3_im);
+        ST(&tbuf_re[32*4],x4_re);
+        ST(&tbuf_im[32*4],x4_im);
+        ST(&tbuf_re[40*4],x5_re);
+        ST(&tbuf_im[40*4],x5_im);
+        ST(&tbuf_re[48*4],x6_re);
+        ST(&tbuf_im[48*4],x6_im);
+        ST(&tbuf_re[56*4],x7_re);
+        ST(&tbuf_im[56*4],x7_im);
+
+        /* column k1=1 */
+        x0_re = _mm256_load_pd(&spill_re[1*4]);
+        x0_im = _mm256_load_pd(&spill_im[1*4]);
+        x1_re = _mm256_load_pd(&spill_re[9*4]);
+        x1_im = _mm256_load_pd(&spill_im[9*4]);
+        x2_re = _mm256_load_pd(&spill_re[17*4]);
+        x2_im = _mm256_load_pd(&spill_im[17*4]);
+        x3_re = _mm256_load_pd(&spill_re[25*4]);
+        x3_im = _mm256_load_pd(&spill_im[25*4]);
+        x4_re = _mm256_load_pd(&spill_re[33*4]);
+        x4_im = _mm256_load_pd(&spill_im[33*4]);
+        x5_re = _mm256_load_pd(&spill_re[41*4]);
+        x5_im = _mm256_load_pd(&spill_im[41*4]);
+        x6_re = _mm256_load_pd(&spill_re[49*4]);
+        x6_im = _mm256_load_pd(&spill_im[49*4]);
+        x7_re = _mm256_load_pd(&spill_re[57*4]);
+        x7_im = _mm256_load_pd(&spill_im[57*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,_mm256_set1_pd(iw_re[1]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[1])));
+          x1_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[1]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[1]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,_mm256_set1_pd(iw_re[2]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[2])));
+          x2_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[2]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[2]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,_mm256_set1_pd(iw_re[3]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[3])));
+          x3_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[3]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[3]))); }
+        { __m256d tr = x4_re;
+          x4_re = _mm256_fmadd_pd(x4_re,_mm256_set1_pd(iw_re[4]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_im[4])));
+          x4_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[4]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_re[4]))); }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmadd_pd(x5_re,_mm256_set1_pd(iw_re[5]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[5])));
+          x5_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[5]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[5]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmadd_pd(x6_re,_mm256_set1_pd(iw_re[6]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[6])));
+          x6_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[6]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[6]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmadd_pd(x7_re,_mm256_set1_pd(iw_re[7]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[7])));
+          x7_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[7]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[7]))); }
+
+        /* radix-8 k1=1 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[1*4],x0_re);
+        ST(&tbuf_im[1*4],x0_im);
+        ST(&tbuf_re[9*4],x1_re);
+        ST(&tbuf_im[9*4],x1_im);
+        ST(&tbuf_re[17*4],x2_re);
+        ST(&tbuf_im[17*4],x2_im);
+        ST(&tbuf_re[25*4],x3_re);
+        ST(&tbuf_im[25*4],x3_im);
+        ST(&tbuf_re[33*4],x4_re);
+        ST(&tbuf_im[33*4],x4_im);
+        ST(&tbuf_re[41*4],x5_re);
+        ST(&tbuf_im[41*4],x5_im);
+        ST(&tbuf_re[49*4],x6_re);
+        ST(&tbuf_im[49*4],x6_im);
+        ST(&tbuf_re[57*4],x7_re);
+        ST(&tbuf_im[57*4],x7_im);
+
+        /* column k1=2 */
+        x0_re = _mm256_load_pd(&spill_re[2*4]);
+        x0_im = _mm256_load_pd(&spill_im[2*4]);
+        x1_re = _mm256_load_pd(&spill_re[10*4]);
+        x1_im = _mm256_load_pd(&spill_im[10*4]);
+        x2_re = _mm256_load_pd(&spill_re[18*4]);
+        x2_im = _mm256_load_pd(&spill_im[18*4]);
+        x3_re = _mm256_load_pd(&spill_re[26*4]);
+        x3_im = _mm256_load_pd(&spill_im[26*4]);
+        x4_re = _mm256_load_pd(&spill_re[34*4]);
+        x4_im = _mm256_load_pd(&spill_im[34*4]);
+        x5_re = _mm256_load_pd(&spill_re[42*4]);
+        x5_im = _mm256_load_pd(&spill_im[42*4]);
+        x6_re = _mm256_load_pd(&spill_re[50*4]);
+        x6_im = _mm256_load_pd(&spill_im[50*4]);
+        x7_re = _mm256_load_pd(&spill_re[58*4]);
+        x7_im = _mm256_load_pd(&spill_im[58*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,_mm256_set1_pd(iw_re[2]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[2])));
+          x1_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[2]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[2]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,_mm256_set1_pd(iw_re[4]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[4])));
+          x2_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[4]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[4]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,_mm256_set1_pd(iw_re[6]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[6])));
+          x3_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[6]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[6]))); }
+        { __m256d tr = _mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(x4_re,x4_im));
+          x4_im = _mm256_mul_pd(sqrt2_inv,_mm256_add_pd(x4_re,x4_im)); x4_re = tr; }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmadd_pd(x5_re,_mm256_set1_pd(iw_re[10]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[10])));
+          x5_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[10]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[10]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmadd_pd(x6_re,_mm256_set1_pd(iw_re[12]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[12])));
+          x6_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[12]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[12]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmadd_pd(x7_re,_mm256_set1_pd(iw_re[14]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[14])));
+          x7_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[14]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[14]))); }
+
+        /* radix-8 k1=2 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[2*4],x0_re);
+        ST(&tbuf_im[2*4],x0_im);
+        ST(&tbuf_re[10*4],x1_re);
+        ST(&tbuf_im[10*4],x1_im);
+        ST(&tbuf_re[18*4],x2_re);
+        ST(&tbuf_im[18*4],x2_im);
+        ST(&tbuf_re[26*4],x3_re);
+        ST(&tbuf_im[26*4],x3_im);
+        ST(&tbuf_re[34*4],x4_re);
+        ST(&tbuf_im[34*4],x4_im);
+        ST(&tbuf_re[42*4],x5_re);
+        ST(&tbuf_im[42*4],x5_im);
+        ST(&tbuf_re[50*4],x6_re);
+        ST(&tbuf_im[50*4],x6_im);
+        ST(&tbuf_re[58*4],x7_re);
+        ST(&tbuf_im[58*4],x7_im);
+
+        /* column k1=3 */
+        x0_re = _mm256_load_pd(&spill_re[3*4]);
+        x0_im = _mm256_load_pd(&spill_im[3*4]);
+        x1_re = _mm256_load_pd(&spill_re[11*4]);
+        x1_im = _mm256_load_pd(&spill_im[11*4]);
+        x2_re = _mm256_load_pd(&spill_re[19*4]);
+        x2_im = _mm256_load_pd(&spill_im[19*4]);
+        x3_re = _mm256_load_pd(&spill_re[27*4]);
+        x3_im = _mm256_load_pd(&spill_im[27*4]);
+        x4_re = _mm256_load_pd(&spill_re[35*4]);
+        x4_im = _mm256_load_pd(&spill_im[35*4]);
+        x5_re = _mm256_load_pd(&spill_re[43*4]);
+        x5_im = _mm256_load_pd(&spill_im[43*4]);
+        x6_re = _mm256_load_pd(&spill_re[51*4]);
+        x6_im = _mm256_load_pd(&spill_im[51*4]);
+        x7_re = _mm256_load_pd(&spill_re[59*4]);
+        x7_im = _mm256_load_pd(&spill_im[59*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,_mm256_set1_pd(iw_re[3]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[3])));
+          x1_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[3]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[3]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,_mm256_set1_pd(iw_re[6]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[6])));
+          x2_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[6]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[6]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,_mm256_set1_pd(iw_re[9]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[9])));
+          x3_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[9]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[9]))); }
+        { __m256d tr = x4_re;
+          x4_re = _mm256_fmadd_pd(x4_re,_mm256_set1_pd(iw_re[12]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_im[12])));
+          x4_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[12]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_re[12]))); }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmadd_pd(x5_re,_mm256_set1_pd(iw_re[15]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[15])));
+          x5_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[15]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[15]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmadd_pd(x6_re,_mm256_set1_pd(iw_re[18]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[18])));
+          x6_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[18]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[18]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmadd_pd(x7_re,_mm256_set1_pd(iw_re[21]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[21])));
+          x7_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[21]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[21]))); }
+
+        /* radix-8 k1=3 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[3*4],x0_re);
+        ST(&tbuf_im[3*4],x0_im);
+        ST(&tbuf_re[11*4],x1_re);
+        ST(&tbuf_im[11*4],x1_im);
+        ST(&tbuf_re[19*4],x2_re);
+        ST(&tbuf_im[19*4],x2_im);
+        ST(&tbuf_re[27*4],x3_re);
+        ST(&tbuf_im[27*4],x3_im);
+        ST(&tbuf_re[35*4],x4_re);
+        ST(&tbuf_im[35*4],x4_im);
+        ST(&tbuf_re[43*4],x5_re);
+        ST(&tbuf_im[43*4],x5_im);
+        ST(&tbuf_re[51*4],x6_re);
+        ST(&tbuf_im[51*4],x6_im);
+        ST(&tbuf_re[59*4],x7_re);
+        ST(&tbuf_im[59*4],x7_im);
+
+        /* column k1=4 */
+        x0_re = _mm256_load_pd(&spill_re[4*4]);
+        x0_im = _mm256_load_pd(&spill_im[4*4]);
+        x1_re = _mm256_load_pd(&spill_re[12*4]);
+        x1_im = _mm256_load_pd(&spill_im[12*4]);
+        x2_re = _mm256_load_pd(&spill_re[20*4]);
+        x2_im = _mm256_load_pd(&spill_im[20*4]);
+        x3_re = _mm256_load_pd(&spill_re[28*4]);
+        x3_im = _mm256_load_pd(&spill_im[28*4]);
+        x4_re = _mm256_load_pd(&spill_re[36*4]);
+        x4_im = _mm256_load_pd(&spill_im[36*4]);
+        x5_re = _mm256_load_pd(&spill_re[44*4]);
+        x5_im = _mm256_load_pd(&spill_im[44*4]);
+        x6_re = _mm256_load_pd(&spill_re[52*4]);
+        x6_im = _mm256_load_pd(&spill_im[52*4]);
+        x7_re = _mm256_load_pd(&spill_re[60*4]);
+        x7_im = _mm256_load_pd(&spill_im[60*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,_mm256_set1_pd(iw_re[4]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[4])));
+          x1_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[4]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[4]))); }
+        { __m256d tr = _mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(x2_re,x2_im));
+          x2_im = _mm256_mul_pd(sqrt2_inv,_mm256_add_pd(x2_re,x2_im)); x2_re = tr; }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,_mm256_set1_pd(iw_re[12]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[12])));
+          x3_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[12]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[12]))); }
+        { __m256d tr = x4_re; x4_re = _mm256_xor_pd(x4_im,sign_flip); x4_im = tr; }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmadd_pd(x5_re,_mm256_set1_pd(iw_re[20]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[20])));
+          x5_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[20]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[20]))); }
+        { __m256d tr = _mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(x6_re,x6_im));
+          x6_im = _mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(x6_im,x6_re)); x6_re = tr; }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmadd_pd(x7_re,_mm256_set1_pd(iw_re[28]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[28])));
+          x7_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[28]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[28]))); }
+
+        /* radix-8 k1=4 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[4*4],x0_re);
+        ST(&tbuf_im[4*4],x0_im);
+        ST(&tbuf_re[12*4],x1_re);
+        ST(&tbuf_im[12*4],x1_im);
+        ST(&tbuf_re[20*4],x2_re);
+        ST(&tbuf_im[20*4],x2_im);
+        ST(&tbuf_re[28*4],x3_re);
+        ST(&tbuf_im[28*4],x3_im);
+        ST(&tbuf_re[36*4],x4_re);
+        ST(&tbuf_im[36*4],x4_im);
+        ST(&tbuf_re[44*4],x5_re);
+        ST(&tbuf_im[44*4],x5_im);
+        ST(&tbuf_re[52*4],x6_re);
+        ST(&tbuf_im[52*4],x6_im);
+        ST(&tbuf_re[60*4],x7_re);
+        ST(&tbuf_im[60*4],x7_im);
+
+        /* column k1=5 */
+        x0_re = _mm256_load_pd(&spill_re[5*4]);
+        x0_im = _mm256_load_pd(&spill_im[5*4]);
+        x1_re = _mm256_load_pd(&spill_re[13*4]);
+        x1_im = _mm256_load_pd(&spill_im[13*4]);
+        x2_re = _mm256_load_pd(&spill_re[21*4]);
+        x2_im = _mm256_load_pd(&spill_im[21*4]);
+        x3_re = _mm256_load_pd(&spill_re[29*4]);
+        x3_im = _mm256_load_pd(&spill_im[29*4]);
+        x4_re = _mm256_load_pd(&spill_re[37*4]);
+        x4_im = _mm256_load_pd(&spill_im[37*4]);
+        x5_re = _mm256_load_pd(&spill_re[45*4]);
+        x5_im = _mm256_load_pd(&spill_im[45*4]);
+        x6_re = _mm256_load_pd(&spill_re[53*4]);
+        x6_im = _mm256_load_pd(&spill_im[53*4]);
+        x7_re = _mm256_load_pd(&spill_re[61*4]);
+        x7_im = _mm256_load_pd(&spill_im[61*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,_mm256_set1_pd(iw_re[5]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[5])));
+          x1_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[5]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[5]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,_mm256_set1_pd(iw_re[10]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[10])));
+          x2_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[10]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[10]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,_mm256_set1_pd(iw_re[15]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[15])));
+          x3_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[15]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[15]))); }
+        { __m256d tr = x4_re;
+          x4_re = _mm256_fmadd_pd(x4_re,_mm256_set1_pd(iw_re[20]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_im[20])));
+          x4_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[20]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_re[20]))); }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmadd_pd(x5_re,_mm256_set1_pd(iw_re[25]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[25])));
+          x5_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[25]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[25]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmadd_pd(x6_re,_mm256_set1_pd(iw_re[30]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[30])));
+          x6_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[30]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[30]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmadd_pd(x7_re,_mm256_set1_pd(iw_re[35]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[35])));
+          x7_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[35]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[35]))); }
+
+        /* radix-8 k1=5 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[5*4],x0_re);
+        ST(&tbuf_im[5*4],x0_im);
+        ST(&tbuf_re[13*4],x1_re);
+        ST(&tbuf_im[13*4],x1_im);
+        ST(&tbuf_re[21*4],x2_re);
+        ST(&tbuf_im[21*4],x2_im);
+        ST(&tbuf_re[29*4],x3_re);
+        ST(&tbuf_im[29*4],x3_im);
+        ST(&tbuf_re[37*4],x4_re);
+        ST(&tbuf_im[37*4],x4_im);
+        ST(&tbuf_re[45*4],x5_re);
+        ST(&tbuf_im[45*4],x5_im);
+        ST(&tbuf_re[53*4],x6_re);
+        ST(&tbuf_im[53*4],x6_im);
+        ST(&tbuf_re[61*4],x7_re);
+        ST(&tbuf_im[61*4],x7_im);
+
+        /* column k1=6 */
+        x0_re = _mm256_load_pd(&spill_re[6*4]);
+        x0_im = _mm256_load_pd(&spill_im[6*4]);
+        x1_re = _mm256_load_pd(&spill_re[14*4]);
+        x1_im = _mm256_load_pd(&spill_im[14*4]);
+        x2_re = _mm256_load_pd(&spill_re[22*4]);
+        x2_im = _mm256_load_pd(&spill_im[22*4]);
+        x3_re = _mm256_load_pd(&spill_re[30*4]);
+        x3_im = _mm256_load_pd(&spill_im[30*4]);
+        x4_re = _mm256_load_pd(&spill_re[38*4]);
+        x4_im = _mm256_load_pd(&spill_im[38*4]);
+        x5_re = _mm256_load_pd(&spill_re[46*4]);
+        x5_im = _mm256_load_pd(&spill_im[46*4]);
+        x6_re = _mm256_load_pd(&spill_re[54*4]);
+        x6_im = _mm256_load_pd(&spill_im[54*4]);
+        x7_re = _mm256_load_pd(&spill_re[62*4]);
+        x7_im = _mm256_load_pd(&spill_im[62*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,_mm256_set1_pd(iw_re[6]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[6])));
+          x1_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[6]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[6]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,_mm256_set1_pd(iw_re[12]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[12])));
+          x2_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[12]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[12]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,_mm256_set1_pd(iw_re[18]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[18])));
+          x3_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[18]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[18]))); }
+        { __m256d tr = _mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(x4_re,x4_im));
+          x4_im = _mm256_mul_pd(nsqrt2_inv,_mm256_sub_pd(x4_im,x4_re)); x4_re = tr; }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmadd_pd(x5_re,_mm256_set1_pd(iw_re[30]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[30])));
+          x5_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[30]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[30]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmadd_pd(x6_re,_mm256_set1_pd(iw_re[36]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[36])));
+          x6_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[36]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[36]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmadd_pd(x7_re,_mm256_set1_pd(iw_re[42]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[42])));
+          x7_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[42]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[42]))); }
+
+        /* radix-8 k1=6 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[6*4],x0_re);
+        ST(&tbuf_im[6*4],x0_im);
+        ST(&tbuf_re[14*4],x1_re);
+        ST(&tbuf_im[14*4],x1_im);
+        ST(&tbuf_re[22*4],x2_re);
+        ST(&tbuf_im[22*4],x2_im);
+        ST(&tbuf_re[30*4],x3_re);
+        ST(&tbuf_im[30*4],x3_im);
+        ST(&tbuf_re[38*4],x4_re);
+        ST(&tbuf_im[38*4],x4_im);
+        ST(&tbuf_re[46*4],x5_re);
+        ST(&tbuf_im[46*4],x5_im);
+        ST(&tbuf_re[54*4],x6_re);
+        ST(&tbuf_im[54*4],x6_im);
+        ST(&tbuf_re[62*4],x7_re);
+        ST(&tbuf_im[62*4],x7_im);
+
+        /* column k1=7 */
+        x0_re = _mm256_load_pd(&spill_re[7*4]);
+        x0_im = _mm256_load_pd(&spill_im[7*4]);
+        x1_re = _mm256_load_pd(&spill_re[15*4]);
+        x1_im = _mm256_load_pd(&spill_im[15*4]);
+        x2_re = _mm256_load_pd(&spill_re[23*4]);
+        x2_im = _mm256_load_pd(&spill_im[23*4]);
+        x3_re = _mm256_load_pd(&spill_re[31*4]);
+        x3_im = _mm256_load_pd(&spill_im[31*4]);
+        x4_re = _mm256_load_pd(&spill_re[39*4]);
+        x4_im = _mm256_load_pd(&spill_im[39*4]);
+        x5_re = _mm256_load_pd(&spill_re[47*4]);
+        x5_im = _mm256_load_pd(&spill_im[47*4]);
+        x6_re = _mm256_load_pd(&spill_re[55*4]);
+        x6_im = _mm256_load_pd(&spill_im[55*4]);
+        x7_re = _mm256_load_pd(&spill_re[63*4]);
+        x7_im = _mm256_load_pd(&spill_im[63*4]);
+
+        { __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,_mm256_set1_pd(iw_re[7]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_im[7])));
+          x1_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[7]),_mm256_mul_pd(x1_im,_mm256_set1_pd(iw_re[7]))); }
+        { __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,_mm256_set1_pd(iw_re[14]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_im[14])));
+          x2_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[14]),_mm256_mul_pd(x2_im,_mm256_set1_pd(iw_re[14]))); }
+        { __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,_mm256_set1_pd(iw_re[21]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_im[21])));
+          x3_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[21]),_mm256_mul_pd(x3_im,_mm256_set1_pd(iw_re[21]))); }
+        { __m256d tr = x4_re;
+          x4_re = _mm256_fmadd_pd(x4_re,_mm256_set1_pd(iw_re[28]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_im[28])));
+          x4_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[28]),_mm256_mul_pd(x4_im,_mm256_set1_pd(iw_re[28]))); }
+        { __m256d tr = x5_re;
+          x5_re = _mm256_fmadd_pd(x5_re,_mm256_set1_pd(iw_re[35]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_im[35])));
+          x5_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[35]),_mm256_mul_pd(x5_im,_mm256_set1_pd(iw_re[35]))); }
+        { __m256d tr = x6_re;
+          x6_re = _mm256_fmadd_pd(x6_re,_mm256_set1_pd(iw_re[42]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_im[42])));
+          x6_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[42]),_mm256_mul_pd(x6_im,_mm256_set1_pd(iw_re[42]))); }
+        { __m256d tr = x7_re;
+          x7_re = _mm256_fmadd_pd(x7_re,_mm256_set1_pd(iw_re[49]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_im[49])));
+          x7_im = _mm256_fnmadd_pd(tr,_mm256_set1_pd(iw_im[49]),_mm256_mul_pd(x7_im,_mm256_set1_pd(iw_re[49]))); }
+
+        /* radix-8 k1=7 [bwd] (split) */
+        {
+            /* Phase 1: Even DFT-4 -> spill A0..A3 */
+            { __m256d epr=_mm256_add_pd(x0_re,x4_re), epi=_mm256_add_pd(x0_im,x4_im);
+              __m256d eqr=_mm256_sub_pd(x0_re,x4_re), eqi=_mm256_sub_pd(x0_im,x4_im);
+              __m256d err=_mm256_add_pd(x2_re,x6_re), eri=_mm256_add_pd(x2_im,x6_im);
+              __m256d esr=_mm256_sub_pd(x2_re,x6_re), esi=_mm256_sub_pd(x2_im,x6_im);
+              _mm256_store_pd(&bfr[0*4],_mm256_add_pd(epr,err)); _mm256_store_pd(&bfi[0*4],_mm256_add_pd(epi,eri));
+              _mm256_store_pd(&bfr[2*4],_mm256_sub_pd(epr,err)); _mm256_store_pd(&bfi[2*4],_mm256_sub_pd(epi,eri));
+              _mm256_store_pd(&bfr[1*4],_mm256_sub_pd(eqr,esi)); _mm256_store_pd(&bfi[1*4],_mm256_add_pd(eqi,esr));
+              _mm256_store_pd(&bfr[3*4],_mm256_add_pd(eqr,esi)); _mm256_store_pd(&bfi[3*4],_mm256_sub_pd(eqi,esr));
+            }
+            /* Phase 2: Odd DFT-4 + W8 twiddles */
+            { __m256d opr=_mm256_add_pd(x1_re,x5_re), opi=_mm256_add_pd(x1_im,x5_im);
+              __m256d oqr=_mm256_sub_pd(x1_re,x5_re), oqi=_mm256_sub_pd(x1_im,x5_im);
+              __m256d orr=_mm256_add_pd(x3_re,x7_re), ori=_mm256_add_pd(x3_im,x7_im);
+              __m256d osr=_mm256_sub_pd(x3_re,x7_re), osi=_mm256_sub_pd(x3_im,x7_im);
+              const __m256d B0r=_mm256_add_pd(opr,orr), B0i=_mm256_add_pd(opi,ori);
+              const __m256d B2r=_mm256_sub_pd(opr,orr), B2i=_mm256_sub_pd(opi,ori);
+              const __m256d _B1r=_mm256_sub_pd(oqr,osi), _B1i=_mm256_add_pd(oqi,osr);
+              const __m256d B1r=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B1r,_B1i)), B1i=_mm256_mul_pd(sqrt2_inv,_mm256_add_pd(_B1r,_B1i));
+              const __m256d _B3r=_mm256_add_pd(oqr,osi), _B3i=_mm256_sub_pd(oqi,osr);
+              const __m256d B3r=_mm256_mul_pd(nsqrt2_inv,_mm256_add_pd(_B3r,_B3i)), B3i=_mm256_mul_pd(sqrt2_inv,_mm256_sub_pd(_B3r,_B3i));
+            /* Phase 3: Reload A, combine A +/- B */
+            { const __m256d A0r=_mm256_load_pd(&bfr[0*4]), A0i=_mm256_load_pd(&bfi[0*4]);
+              x0_re=_mm256_add_pd(A0r,B0r); x0_im=_mm256_add_pd(A0i,B0i);
+              x4_re=_mm256_sub_pd(A0r,B0r); x4_im=_mm256_sub_pd(A0i,B0i); }
+            { const __m256d A1r=_mm256_load_pd(&bfr[1*4]), A1i=_mm256_load_pd(&bfi[1*4]);
+              x1_re=_mm256_add_pd(A1r,B1r); x1_im=_mm256_add_pd(A1i,B1i);
+              x5_re=_mm256_sub_pd(A1r,B1r); x5_im=_mm256_sub_pd(A1i,B1i); }
+            { const __m256d A2r=_mm256_load_pd(&bfr[2*4]), A2i=_mm256_load_pd(&bfi[2*4]);
+              x2_re=_mm256_sub_pd(A2r,B2i); x2_im=_mm256_add_pd(A2i,B2r);
+              x6_re=_mm256_add_pd(A2r,B2i); x6_im=_mm256_sub_pd(A2i,B2r); }
+            { const __m256d A3r=_mm256_load_pd(&bfr[3*4]), A3i=_mm256_load_pd(&bfi[3*4]);
+              x3_re=_mm256_add_pd(A3r,B3r); x3_im=_mm256_add_pd(A3i,B3i);
+              x7_re=_mm256_sub_pd(A3r,B3r); x7_im=_mm256_sub_pd(A3i,B3i); }
+            }
+        }
+
+        ST(&tbuf_re[7*4],x0_re);
+        ST(&tbuf_im[7*4],x0_im);
+        ST(&tbuf_re[15*4],x1_re);
+        ST(&tbuf_im[15*4],x1_im);
+        ST(&tbuf_re[23*4],x2_re);
+        ST(&tbuf_im[23*4],x2_im);
+        ST(&tbuf_re[31*4],x3_re);
+        ST(&tbuf_im[31*4],x3_im);
+        ST(&tbuf_re[39*4],x4_re);
+        ST(&tbuf_im[39*4],x4_im);
+        ST(&tbuf_re[47*4],x5_re);
+        ST(&tbuf_im[47*4],x5_im);
+        ST(&tbuf_re[55*4],x6_re);
+        ST(&tbuf_im[55*4],x6_im);
+        ST(&tbuf_re[63*4],x7_re);
+        ST(&tbuf_im[63*4],x7_im);
+
+        /* Fused: transpose + outer R4 twiddle+butterfly -> output */
+        for (size_t g = 0; g < 16; g++) {
+            const size_t b = g * 4;
+            __m256d a_r=LD(&tbuf_re[(b+0)*4]), b_r=LD(&tbuf_re[(b+1)*4]);
+            __m256d c_r=LD(&tbuf_re[(b+2)*4]), d_r=LD(&tbuf_re[(b+3)*4]);
+            __m256d a_i=LD(&tbuf_im[(b+0)*4]), b_i=LD(&tbuf_im[(b+1)*4]);
+            __m256d c_i=LD(&tbuf_im[(b+2)*4]), d_i=LD(&tbuf_im[(b+3)*4]);
+            __m256d lo_ab_r=_mm256_unpacklo_pd(a_r,b_r), hi_ab_r=_mm256_unpackhi_pd(a_r,b_r);
+            __m256d lo_cd_r=_mm256_unpacklo_pd(c_r,d_r), hi_cd_r=_mm256_unpackhi_pd(c_r,d_r);
+            __m256d y0_re=_mm256_permute2f128_pd(lo_ab_r,lo_cd_r,0x20);
+            __m256d y1_re=_mm256_permute2f128_pd(hi_ab_r,hi_cd_r,0x20);
+            __m256d y2_re=_mm256_permute2f128_pd(lo_ab_r,lo_cd_r,0x31);
+            __m256d y3_re=_mm256_permute2f128_pd(hi_ab_r,hi_cd_r,0x31);
+            __m256d lo_ab_i=_mm256_unpacklo_pd(a_i,b_i), hi_ab_i=_mm256_unpackhi_pd(a_i,b_i);
+            __m256d lo_cd_i=_mm256_unpacklo_pd(c_i,d_i), hi_cd_i=_mm256_unpackhi_pd(c_i,d_i);
+            __m256d y0_im=_mm256_permute2f128_pd(lo_ab_i,lo_cd_i,0x20);
+            __m256d y1_im=_mm256_permute2f128_pd(hi_ab_i,hi_cd_i,0x20);
+            __m256d y2_im=_mm256_permute2f128_pd(lo_ab_i,lo_cd_i,0x31);
+            __m256d y3_im=_mm256_permute2f128_pd(hi_ab_i,hi_cd_i,0x31);
+            { __m256d twr=LD(&W_re[0+b]), twi=LD(&W_im[0+b]);
+              __m256d yr=y1_re, yi=y1_im;
+              y1_re=_mm256_fmsub_pd(yr,twr,_mm256_mul_pd(yi,twi));
+              y1_im=_mm256_fmadd_pd(yr,twi,_mm256_mul_pd(yi,twr)); }
+            { __m256d twr=LD(&W_re[64+b]), twi=LD(&W_im[64+b]);
+              __m256d yr=y2_re, yi=y2_im;
+              y2_re=_mm256_fmsub_pd(yr,twr,_mm256_mul_pd(yi,twi));
+              y2_im=_mm256_fmadd_pd(yr,twi,_mm256_mul_pd(yi,twr)); }
+            { __m256d twr=LD(&W_re[128+b]), twi=LD(&W_im[128+b]);
+              __m256d yr=y3_re, yi=y3_im;
+              y3_re=_mm256_fmsub_pd(yr,twr,_mm256_mul_pd(yi,twi));
+              y3_im=_mm256_fmadd_pd(yr,twi,_mm256_mul_pd(yi,twr)); }
+            { __m256d t0r=_mm256_add_pd(y0_re,y2_re), t0i=_mm256_add_pd(y0_im,y2_im);
+              __m256d t1r=_mm256_sub_pd(y0_re,y2_re), t1i=_mm256_sub_pd(y0_im,y2_im);
+              __m256d t2r=_mm256_add_pd(y1_re,y3_re), t2i=_mm256_add_pd(y1_im,y3_im);
+              __m256d t3r=_mm256_sub_pd(y1_re,y3_re), t3i=_mm256_sub_pd(y1_im,y3_im);
+              y0_re=_mm256_add_pd(t0r,t2r); y0_im=_mm256_add_pd(t0i,t2i);
+              y2_re=_mm256_sub_pd(t0r,t2r); y2_im=_mm256_sub_pd(t0i,t2i);
+              y1_re=_mm256_sub_pd(t1r,t3i); y1_im=_mm256_add_pd(t1i,t3r);
+              y3_re=_mm256_add_pd(t1r,t3i); y3_im=_mm256_sub_pd(t1i,t3r); }
+            ST(&out_re[0*64+b],y0_re); ST(&out_im[0*64+b],y0_im);
+            ST(&out_re[1*64+b],y1_re); ST(&out_im[1*64+b],y1_im);
+            ST(&out_re[2*64+b],y2_re); ST(&out_im[2*64+b],y2_im);
+            ST(&out_re[3*64+b],y3_re); ST(&out_im[3*64+b],y3_im);
+        }
+    }
+}
+
 #undef LD
 #undef ST
 

@@ -1,7 +1,7 @@
 
 ============================================================
   VectorFFT Codelet Benchmark Results
-  Tue 03/31/2026  1:43:43.33
+  Tue 03/31/2026  2:32:11.30
   Compiler: ICX (Intel oneAPI)
 ============================================================
 
@@ -13,33 +13,33 @@ BENCHMARK: bench_prefetch
 
   R=8: t1_dit vs t1_dit_prefetch
 
-    R=8  M=16   tw=  1KB  normal=    26  prefetch=    30  (0.85x) <-- A wins
-    R=8  M=32   tw=  3KB  normal=    46  prefetch=    55  (0.85x) <-- A wins
-    R=8  M=64   tw=  7KB  normal=    88  prefetch=   106  (0.83x) <-- A wins
-    R=8  M=128  tw= 14KB  normal=   168  prefetch=   197  (0.85x) <-- A wins
+    R=8  M=16   tw=  1KB  normal=    25  prefetch=    29  (0.87x) <-- A wins
+    R=8  M=32   tw=  3KB  normal=    47  prefetch=    54  (0.86x) <-- A wins
+    R=8  M=64   tw=  7KB  normal=    85  prefetch=   105  (0.81x) <-- A wins
+    R=8  M=128  tw= 14KB  normal=   174  prefetch=   209  (0.83x) <-- A wins
     R=8  M=256  tw= 28KB  normal=   403  prefetch=   455  (0.89x) <-- A wins
-    R=8  M=512  tw= 56KB  normal=   891  prefetch=  1145  (0.78x) <-- A wins
-    R=8  M=1024 tw=112KB  normal=  3189  prefetch=  3577  (0.89x) <-- A wins
+    R=8  M=512  tw= 56KB  normal=   986  prefetch=  1160  (0.85x) <-- A wins
+    R=8  M=1024 tw=112KB  normal=  3417  prefetch=  3887  (0.88x) <-- A wins
 
   R=64: t1_dit (flat) vs t1_dit_prefetch
 
-    R=64 M=4    tw=  3KB  flat=   135  prefetch=   134  (1.00x) ~same
-    R=64 M=8    tw=  7KB  flat=   249  prefetch=   255  (0.98x) <-- A wins
-    R=64 M=16   tw= 15KB  flat=   508  prefetch=   494  (1.03x) <-- B wins
-    R=64 M=32   tw= 31KB  flat=  1216  prefetch=  1329  (0.91x) <-- A wins
-    R=64 M=64   tw= 63KB  flat=  2597  prefetch=  2995  (0.87x) <-- A wins
-    R=64 M=128  tw=126KB  flat=  8907  prefetch=  9424  (0.95x) <-- A wins
-    R=64 M=256  tw=252KB  flat= 16372  prefetch= 18251  (0.90x) <-- A wins
+    R=64 M=4    tw=  3KB  flat=   165  prefetch=   173  (0.95x) <-- A wins
+    R=64 M=8    tw=  7KB  flat=   308  prefetch=   335  (0.92x) <-- A wins
+    R=64 M=16   tw= 15KB  flat=   599  prefetch=   654  (0.92x) <-- A wins
+    R=64 M=32   tw= 31KB  flat=  1476  prefetch=  1634  (0.90x) <-- A wins
+    R=64 M=64   tw= 63KB  flat=  3041  prefetch=  3649  (0.83x) <-- A wins
+    R=64 M=128  tw=126KB  flat=  9665  prefetch= 10884  (0.89x) <-- A wins
+    R=64 M=256  tw=252KB  flat= 18116  prefetch= 21841  (0.83x) <-- A wins
 
   R=64: t1_dit (flat) vs t1_dit_log3
 
-    R=64 M=4    tw=  3KB  flat=   142  log3=   175  (0.81x) <-- A wins
-    R=64 M=8    tw=  7KB  flat=   250  log3=   335  (0.75x) <-- A wins
-    R=64 M=16   tw= 15KB  flat=   488  log3=   672  (0.73x) <-- A wins
-    R=64 M=32   tw= 31KB  flat=  1210  log3=  1312  (0.92x) <-- A wins
-    R=64 M=64   tw= 63KB  flat=  2626  log3=  3074  (0.85x) <-- A wins
-    R=64 M=128  tw=126KB  flat=  9442  log3=  9648  (0.98x) <-- A wins
-    R=64 M=256  tw=252KB  flat= 16386  log3= 18694  (0.88x) <-- A wins
+    R=64 M=4    tw=  3KB  flat=   165  log3=   177  (0.93x) <-- A wins
+    R=64 M=8    tw=  7KB  flat=   305  log3=   336  (0.91x) <-- A wins
+    R=64 M=16   tw= 15KB  flat=   596  log3=   665  (0.90x) <-- A wins
+    R=64 M=32   tw= 31KB  flat=  1425  log3=  1331  (1.07x) <-- B wins
+    R=64 M=64   tw= 63KB  flat=  3216  log3=  3251  (0.99x) ~same
+    R=64 M=128  tw=126KB  flat=  9599  log3= 10091  (0.95x) <-- A wins
+    R=64 M=256  tw=252KB  flat= 18068  log3= 20140  (0.90x) <-- A wins
 
 
 BENCHMARK: bench_ct_factor
@@ -57,12 +57,12 @@ BENCHMARK: bench_ct_factor
 
   N=32  FFTW=18 ns
   Factorization              ns    vs FFTW      err
-    Trying 4x8 (n1=R8, t1=R4) ...   4x8 (1L)                   14      1.26x  8.9e-16  <-- best
-  >> BEST: 4x8 (1L)             14 ns (1.26x vs FFTW)
+    Trying 4x8 (n1=R8, t1=R4) ...   4x8 (1L)                   14      1.22x  8.9e-16  <-- best
+  >> BEST: 4x8 (1L)             14 ns (1.22x vs FFTW)
 
-  N=64  FFTW=40 ns
+  N=64  FFTW=33 ns
   Factorization              ns    vs FFTW      err
-    Trying 4x16 (n1=R16, t1=R4) ...   4x16 (1L)                  28      1.42x  3.1e-15  <-- best
+    Trying 4x16 (n1=R16, t1=R4) ...   4x16 (1L)                  35      0.95x  3.1e-15  <-- best
     Trying 8x8 (n1=R8, t1=R8) ... 
 BENCHMARK 10: bench_recursive_ct
 ================================================================
@@ -74,171 +74,205 @@ BENCHMARK 10: bench_recursive_ct
   N=16      FFTW=15 ns  (reps=117647)
     RxM           ns     err
      4x4           7 ns  5.00e-16  <-- best
-     4x4    F     4 ns  5.00e-16  <-- best
+     4x4    F     5 ns  5.00e-16  <-- best
      4x4   NI     6 ns  5.00e-16
-    >> BEST: 4 ns  (3.54x vs FFTW)
+    >> BEST: 5 ns  (3.36x vs FFTW)
 
   N=32      FFTW=18 ns  (reps=60606)
     RxM           ns     err
-     4x8          13 ns  8.88e-16  <-- best
+     4x8          14 ns  8.88e-16  <-- best
+     8x4          16 ns  1.44e-15
      4x8    F    14 ns  8.88e-16
-     4x8   NI    21 ns  8.88e-16
-    >> BEST: 13 ns  (1.33x vs FFTW)
+     4x8   NI    14 ns  8.88e-16
+    >> BEST: 14 ns  (1.29x vs FFTW)
 
-  N=64      FFTW=34 ns  (reps=30769)
+  N=64      FFTW=35 ns  (reps=30769)
     RxM           ns     err
-     4x16         34 ns  3.11e-15  <-- best
-     8x8          29 ns  2.55e-15  <-- best
-     4x(4x4 )     63 ns  3.11e-15
-     4x16   F    27 ns  3.11e-15  <-- best
+     4x16         27 ns  3.11e-15  <-- best
+     8x8          30 ns  2.55e-15
+    16x4          32 ns  2.66e-15
+     4x(4x4 )     64 ns  3.11e-15
+     4x16   F    26 ns  3.11e-15  <-- best
      8x8    F    29 ns  2.55e-15
      4x16  NI    28 ns  3.11e-15
-     8x8   NI    39 ns  2.55e-15
-    >> BEST: 27 ns  (1.26x vs FFTW)
+     8x8   NI    30 ns  2.55e-15
+     4x16  P2    38 ns  3.11e-15
+    >> BEST: 26 ns  (1.32x vs FFTW)
 
-  N=128     FFTW=64 ns  (reps=15503)
+  N=128     FFTW=67 ns  (reps=15503)
     RxM           ns     err
-     4x32         72 ns  5.33e-15  <-- best
-     8x16         79 ns  4.44e-15
-     4x(4x8 )    117 ns  5.55e-15
-     8x(4x4 )    132 ns  4.88e-15
-     4x32   F    62 ns  5.33e-15  <-- best
-     8x16   F    58 ns  4.44e-15  <-- best
-     4x32  NI    59 ns  5.33e-15
+     4x32         58 ns  5.33e-15  <-- best
+     8x16         63 ns  4.44e-15
+    16x8          66 ns  4.00e-15
+    32x4          73 ns  4.44e-15
+     4x(4x8 )    116 ns  5.55e-15
+     8x(4x4 )    133 ns  4.88e-15
+     4x32   F    57 ns  5.33e-15  <-- best
+     8x16   F    58 ns  4.44e-15
+     4x32  NI    77 ns  5.33e-15
      8x16  NI    63 ns  4.44e-15
-    >> BEST: 58 ns  (1.11x vs FFTW)
+     4x32  P2   112 ns  5.33e-15
+    >> BEST: 57 ns  (1.19x vs FFTW)
 
-  N=256     FFTW=138 ns  (reps=7782)
+  N=256     FFTW=147 ns  (reps=7782)
     RxM           ns     err
-     4x64        130 ns  7.11e-15  <-- best
-     8x32        155 ns  7.33e-15
-    16x16        163 ns  6.66e-15
-     4x(4x16)    248 ns  7.55e-15
-     4x(8x8 )    234 ns  8.88e-15
-     8x(4x8 )    249 ns  7.77e-15
-    16x(4x4 )    280 ns  7.77e-15
-     4x64   F   134 ns  7.11e-15
-     8x32   F   127 ns  7.33e-15  <-- best
-    16x16   F   164 ns  6.66e-15
-     4x64  NI   146 ns  7.11e-15
-     8x32  NI   133 ns  7.33e-15
-    16x16  NI   132 ns  6.66e-15
-    >> BEST: 127 ns  (1.09x vs FFTW)
+     4x64        149 ns  7.11e-15  <-- best
+     8x32        132 ns  7.33e-15  <-- best
+    16x16        155 ns  6.66e-15
+    32x8         165 ns  7.99e-15
+    64x4         192 ns  7.11e-15
+    64x4         194 ns  1.84e-14 L
+     4x(4x16)    236 ns  7.55e-15
+     4x(8x8 )    240 ns  8.88e-15
+     8x(4x8 )    252 ns  7.77e-15
+    16x(4x4 )    285 ns  7.77e-15
+     4x64   F   148 ns  7.11e-15
+     8x32   F   152 ns  7.33e-15
+    16x16   F   141 ns  6.66e-15
+     4x64  NI   136 ns  7.11e-15
+     8x32  NI   164 ns  7.33e-15
+    16x16  NI   149 ns  6.66e-15
+     4x64  P2   136 ns  7.55e-15
+    >> BEST: 132 ns  (1.11x vs FFTW)
 
-  N=512     FFTW=322 ns  (reps=3898)
+  N=512     FFTW=317 ns  (reps=3898)
     RxM           ns     err
-     8x64        342 ns  1.15e-14  <-- best
-    16x32        348 ns  1.42e-14
-     4x(4x32)    528 ns  1.60e-14
-     4x(8x16)    539 ns  1.42e-14
-     8x(4x16)    524 ns  1.07e-14
-     8x(8x8 )    474 ns  1.35e-14
-    16x(4x8 )    512 ns  1.42e-14
-    32x(4x4 )    574 ns  1.24e-14
-     8x64   F   379 ns  1.15e-14
-    16x32   F   337 ns  1.42e-14  <-- best
-     8x64  NI   360 ns  1.15e-14
-    16x32  NI   284 ns  1.42e-14  <-- best
-    >> BEST: 284 ns  (1.14x vs FFTW)
+     8x64        322 ns  1.15e-14  <-- best
+    16x32        302 ns  1.42e-14  <-- best
+    32x16        322 ns  1.24e-14
+    64x8         397 ns  1.42e-14
+    64x8         395 ns  2.93e-14 L
+     4x(4x32)    470 ns  1.60e-14
+     4x(8x16)    492 ns  1.42e-14
+     8x(4x16)    485 ns  1.07e-14
+     8x(8x8 )    503 ns  1.35e-14
+    16x(4x8 )    536 ns  1.42e-14
+    32x(4x4 )    600 ns  1.24e-14
+     8x64   F   288 ns  1.15e-14  <-- best
+    16x32   F   299 ns  1.42e-14
+     8x64  NI   295 ns  1.15e-14
+    16x32  NI   383 ns  1.42e-14
+    >> BEST: 288 ns  (1.10x vs FFTW)
 
-  N=1024    FFTW=670 ns  (reps=1951)
+  N=1024    FFTW=706 ns  (reps=1951)
     RxM           ns     err
-    16x64        727 ns  2.00e-14  <-- best
-    32x32        837 ns  1.73e-14
-     4x(4x64)   1345 ns  1.87e-14
-     4x(8x32)   1537 ns  2.22e-14
-     4x(16x16)   1346 ns  2.18e-14
-     8x(4x32)   1344 ns  2.18e-14
-     8x(8x16)   1358 ns  1.73e-14
-    16x(4x16)   1324 ns  2.40e-14
-    16x(8x8 )   1321 ns  1.95e-14
-    32x(4x8 )   1285 ns  2.13e-14
-    64x(4x4 )   1499 ns  1.87e-14
-    16x64   F   914 ns  2.00e-14
-    32x32   F   710 ns  1.73e-14  <-- best
-    16x64  NI   793 ns  2.00e-14
-    32x32  NI   652 ns  1.73e-14  <-- best
-    >> BEST: 652 ns  (1.03x vs FFTW)
+    16x64        882 ns  2.00e-14  <-- best
+    32x32        741 ns  1.73e-14  <-- best
+    64x16        902 ns  1.78e-14
+    64x16        830 ns  5.33e-14 L
+     4x(4x64)   1430 ns  1.87e-14
+     4x(8x32)   1196 ns  2.22e-14
+     4x(16x16)   1245 ns  2.18e-14
+     8x(4x32)   1153 ns  2.18e-14
+     8x(8x16)   1189 ns  1.73e-14
+    16x(4x16)   1257 ns  2.40e-14
+    16x(8x8 )   1287 ns  1.95e-14
+    32x(4x8 )   1403 ns  2.13e-14
+    64x(4x4 )   1559 ns  1.87e-14
+    64x(4x4 )   1476 ns  5.33e-14
+    16x64   F   722 ns  2.00e-14  <-- best
+    32x32   F   773 ns  1.73e-14
+    16x64  NI   760 ns  2.00e-14
+    32x32  NI  1017 ns  1.73e-14
+    >> BEST: 722 ns  (0.98x vs FFTW)
 
-  N=2048    FFTW=1821 ns  (reps=976)
+  N=2048    FFTW=1855 ns  (reps=976)
     RxM           ns     err
-    32x64       2033 ns  3.02e-14  <-- best
-     4x(8x64)   3291 ns  3.64e-14
-     4x(16x32)   4664 ns  3.73e-14
-     8x(4x64)   3173 ns  2.84e-14
-     8x(8x32)   4273 ns  4.09e-14
-     8x(16x16)   3265 ns  3.55e-14
-    16x(4x32)   3640 ns  3.91e-14
-    16x(8x16)   3244 ns  3.55e-14
-    32x(4x16)   3338 ns  3.20e-14
-    32x(8x8 )   2909 ns  3.55e-14
-    64x(4x8 )   3090 ns  3.02e-14
-    32x64   F  2525 ns  3.02e-14
-    32x64  NI  2206 ns  3.02e-14
-    >> BEST: 2033 ns  (0.90x vs FFTW)
+    32x64       2524 ns  3.02e-14  <-- best
+    64x32       2672 ns  3.55e-14
+    64x32       2435 ns  9.95e-14 L  <-- best
+     4x(8x64)   3165 ns  3.64e-14
+     4x(16x32)   3403 ns  3.73e-14
+     8x(4x64)   3072 ns  2.84e-14
+     8x(8x32)   3007 ns  4.09e-14
+     8x(16x16)   2893 ns  3.55e-14
+    16x(4x32)   2678 ns  3.91e-14
+    16x(8x16)   2814 ns  3.55e-14
+    32x(4x16)   2916 ns  3.20e-14
+    32x(8x8 )   3006 ns  3.55e-14
+    64x(4x8 )   3591 ns  3.02e-14
+    64x(4x8 )   3189 ns  1.10e-13
+    32x64   F  2038 ns  3.02e-14  <-- best
+    32x64  NI  2394 ns  3.02e-14
+    >> BEST: 2038 ns  (0.91x vs FFTW)
 
-  N=4096    FFTW=6476 ns  (reps=488)
+  N=4096    FFTW=6991 ns  (reps=488)
     RxM           ns     err
-    64x64       6181 ns  4.97e-14  <-- best
-     4x(16x64)   6503 ns  5.33e-14
-     4x(32x32)   8474 ns  4.97e-14
-     8x(8x64)   9400 ns  4.97e-14
-     8x(16x32)  11419 ns  4.97e-14
-    16x(4x64)   8783 ns  4.80e-14
-    16x(8x32)   9960 ns  5.68e-14
-    16x(16x16)   9172 ns  4.97e-14
-    32x(4x32)   9109 ns  5.68e-14
-    32x(8x16)   9226 ns  5.15e-14
-    64x(4x16)   8869 ns  5.68e-14
-    64x(8x8 )   7852 ns  4.62e-14
-    64x64   F  7354 ns  4.97e-14
-    64x64  NI  6653 ns  4.97e-14
-    >> BEST: 6181 ns  (1.05x vs FFTW)
+    64x64       7383 ns  4.97e-14  <-- best
+    64x64       7325 ns  1.21e-13 L  <-- best
+     4x(16x64)   7244 ns  5.33e-14  <-- best
+     4x(32x32)   7626 ns  4.97e-14
+     8x(8x64)  10738 ns  4.97e-14
+     8x(16x32)  11092 ns  4.97e-14
+    16x(4x64)   9140 ns  4.80e-14
+    16x(8x32)   9178 ns  5.68e-14
+    16x(16x16)   9108 ns  4.97e-14
+    32x(4x32)   8657 ns  5.68e-14
+    32x(8x16)   8883 ns  5.15e-14
+    64x(4x16)   8434 ns  5.68e-14
+    64x(8x8 )   8646 ns  4.62e-14
+    64x(4x16)   8366 ns  1.21e-13
+    64x(8x8 )   8571 ns  1.35e-13
+    64x64   F  6302 ns  4.97e-14  <-- best
+    64x64  NI  6941 ns  4.97e-14
+    >> BEST: 6302 ns  (1.11x vs FFTW)
 
-  N=8192    FFTW=15255 ns  (reps=244)
+  N=8192    FFTW=16023 ns  (reps=244)
     RxM           ns     err
-     4x(32x64)  13490 ns  9.24e-14  <-- best
-     8x(16x64)  19182 ns  9.95e-14
-     8x(32x32)  22793 ns  8.17e-14
-    16x(8x64)  19494 ns  1.14e-13
-    16x(16x32)  22230 ns  8.53e-14
-    32x(4x64)  19263 ns  9.24e-14
-    32x(8x32)  22941 ns  7.82e-14
-    32x(16x16)  21372 ns  8.53e-14
-    64x(4x32)  20107 ns  9.06e-14
-    64x(8x16)  20201 ns  8.88e-14
-    >> BEST: 13490 ns  (1.13x vs FFTW)
+     4x(32x64)  19373 ns  9.24e-14  <-- best
+     8x(16x64)  21763 ns  9.95e-14
+     8x(32x32)  22127 ns  8.17e-14
+    16x(8x64)  21221 ns  1.14e-13
+    16x(16x32)  22672 ns  8.53e-14
+    32x(4x64)  20859 ns  9.24e-14
+    32x(8x32)  20628 ns  7.82e-14
+    32x(16x16)  20078 ns  8.53e-14
+    64x(4x32)  20349 ns  9.06e-14
+    64x(8x16)  20884 ns  8.88e-14
+    64x(4x32)  19965 ns  1.71e-13
+    64x(8x16)  20695 ns  1.67e-13
+    >> BEST: 19373 ns  (0.83x vs FFTW)
 
-  N=16384   FFTW=30008 ns  (reps=200)
+  N=16384   FFTW=30089 ns  (reps=200)
     RxM           ns     err
-     4x(64x64)  33714 ns  1.42e-13  <-- best
-     8x(32x64)  33315 ns  1.28e-13  <-- best
-    16x(16x64)  40335 ns  1.28e-13
-    16x(32x32)  47244 ns  1.21e-13
-    32x(8x64)  40270 ns  1.28e-13
-    32x(16x32)  48420 ns  1.21e-13
-    64x(4x64)  39188 ns  1.28e-13
-    64x(8x32)  43555 ns  1.42e-13
-    64x(16x16)  42209 ns  1.28e-13
-    >> BEST: 33315 ns  (0.90x vs FFTW)
+     4x(64x64)  42614 ns  1.42e-13  <-- best
+     4x(64x64)  35527 ns  3.09e-13  <-- best
+     8x(32x64)  45352 ns  1.28e-13
+    16x(16x64)  43589 ns  1.28e-13
+    16x(32x32)  42410 ns  1.21e-13
+    32x(8x64)  44882 ns  1.28e-13
+    32x(16x32)  44208 ns  1.21e-13
+    64x(4x64)  45730 ns  1.28e-13
+    64x(8x32)  42606 ns  1.42e-13
+    64x(16x16)  44486 ns  1.28e-13
+    64x(4x64)  44668 ns  2.77e-13
+    64x(8x32)  41216 ns  2.77e-13
+    64x(16x16)  42376 ns  2.77e-13
+    >> BEST: 35527 ns  (0.85x vs FFTW)
 
-  N=32768   FFTW=67451 ns  (reps=200)
+  N=32768   FFTW=68767 ns  (reps=200)
     RxM           ns     err
-     8x(64x64) 103397 ns  1.78e-13  <-- best
-    16x(32x64)  85315 ns  1.85e-13  <-- best
-    32x(16x64)  80411 ns  1.99e-13  <-- best
-    32x(32x32)  88791 ns  1.99e-13
-    64x(8x64)  81794 ns  1.99e-13
-    64x(16x32)  90357 ns  1.85e-13
-    >> BEST: 80411 ns  (0.84x vs FFTW)
+     8x(64x64) 125164 ns  1.78e-13  <-- best
+     8x(64x64) 122288 ns  4.41e-13  <-- best
+    16x(32x64)  94216 ns  1.85e-13  <-- best
+    32x(16x64) 106512 ns  1.99e-13
+    32x(32x32) 109414 ns  1.99e-13
+    64x(8x64) 107328 ns  1.99e-13
+    64x(16x32) 114433 ns  1.85e-13
+    64x(8x64)  98972 ns  3.84e-13
+    64x(16x32) 105330 ns  3.84e-13
+    >> BEST: 94216 ns  (0.73x vs FFTW)
 
-  N=65536   FFTW=151938 ns  (reps=200)
+  N=65536   FFTW=183411 ns  (reps=200)
     RxM           ns     err
-    16x(64x64) 227733 ns  2.84e-13  <-- best
-    32x(32x64) 224093 ns  2.63e-13  <-- best
-    64x(16x64) 229618 ns  3.27e-13
-    64x(32x32) 239947 ns  3.13e-13
-    >> BEST: 224093 ns  (0.68x vs FFTW)
+    16x(64x64) 284322 ns  2.84e-13  <-- best
+    16x(64x64) 284667 ns  6.96e-13
+    32x(32x64) 266256 ns  2.63e-13  <-- best
+    64x(16x64) 258170 ns  3.27e-13  <-- best
+    64x(32x32) 263808 ns  3.13e-13
+    64x(16x64) 264157 ns  6.64e-13
+    64x(32x32) 258038 ns  6.57e-13  <-- best
+    >> BEST: 258038 ns  (0.71x vs FFTW)
 
 
 CALIBRATION: vfft_calibrate
@@ -247,15 +281,15 @@ VectorFFT Calibrator
   Range:  N=16..4096
   Variants: I=indirect, F=fused-inline, N=fused-noinline
 
-  Calibrating N=16     ...  4x4   fused-inline        5 ns  (3.34x vs FFTW)
-  Calibrating N=32     ...  4x8   indirect           14 ns  (1.34x vs FFTW)
-  Calibrating N=64     ...  4x16  fused-inline       26 ns  (1.28x vs FFTW)
-  Calibrating N=128    ...  4x32  fused-inline       58 ns  (1.16x vs FFTW)
-  Calibrating N=256    ...  8x32  fused-inline      126 ns  (1.16x vs FFTW)
-  Calibrating N=512    ...  8x64  indirect          291 ns  (1.08x vs FFTW)
-  Calibrating N=1024   ... 32x32  fused-noinline    686 ns  (1.04x vs FFTW)
-  Calibrating N=2048   ... 32x64  indirect         2040 ns  (0.90x vs FFTW)
-  Calibrating N=4096   ... 64x64  indirect         4756 ns  (1.44x vs FFTW)
+  Calibrating N=16     ...  4x4   fused-inline        5 ns  (3.37x vs FFTW)
+  Calibrating N=32     ...  4x8   fused-noinline     14 ns  (1.27x vs FFTW)
+  Calibrating N=64     ...  4x16  fused-inline       26 ns  (1.32x vs FFTW)
+  Calibrating N=128    ...  4x32  fused-inline       57 ns  (1.19x vs FFTW)
+  Calibrating N=256    ...  8x32  fused-inline      127 ns  (1.16x vs FFTW)
+  Calibrating N=512    ...  8x64  fused-inline      288 ns  (1.12x vs FFTW)
+  Calibrating N=1024   ... 16x64  fused-inline      683 ns  (1.01x vs FFTW)
+  Calibrating N=2048   ... 32x64  fused-inline     2048 ns  (0.93x vs FFTW)
+  Calibrating N=4096   ... 64x64  fused-inline     4783 ns  (1.37x vs FFTW)
 
 Wisdom written to C:\Users\Tugbars\Desktop\highSpeedFFT\src\test-codelets\build_bench\vfft_wisdom.txt (9 entries)
 
@@ -267,14 +301,14 @@ WISDOM BENCHMARK: VectorFFT vs FFTW
 
   N         RxM     var     VecFFT      FFTW    ratio
   --------  ------- ----  --------  --------  -------
-  16        4x4     F           5        15    3.35x WINS
-  32        4x8     I          13        18    1.38x WINS
-  64        4x16    F          26        33    1.25x WINS
-  128       4x32    F          57        67    1.19x WINS
-  256       8x32    F         156       146    0.94x
-  512       8x64    I         322       326    1.01x WINS
-  1024      32x32   NI        855       697    0.82x
-  2048      32x64   I        2328      1817    0.78x
-  4096      64x64   I        7422      6612    0.89x
+  16        4x4     F           5        15    3.34x WINS
+  32        4x8     NI         14        18    1.29x WINS
+  64        4x16    F          26        34    1.28x WINS
+  128       4x32    F          57        69    1.22x WINS
+  256       8x32    F         149       145    0.97x
+  512       8x64    F         288       318    1.11x WINS
+  1024      16x64   F         740       700    0.95x
+  2048      32x64   F        2121      1837    0.87x
+  4096      64x64   F        5917      6586    1.11x WINS
 
 
