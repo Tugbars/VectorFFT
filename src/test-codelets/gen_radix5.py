@@ -253,7 +253,9 @@ class Emitter:
 
     # -- DFT-5 butterfly --
     def emit_radix5_clean(self, d, out_names=None):
-        """Emit DFT-5 butterfly on x0..x4. Clean version.
+        """Emit DFT-5 butterfly on x0..x4.
+        AVX2/scalar: register-pressure-optimized (peak 16 YMM).
+        AVX-512: max-ILP path, all intermediates live (peak 22/32 ZMM).
         out_names: if provided, list of 5 output variable names.
                    Default: overwrite x0..x4."""
         fwd = (d == 'fwd')
@@ -261,6 +263,9 @@ class Emitter:
 
         if out_names is None:
             out_names = ['x0', 'x1', 'x2', 'x3', 'x4']
+
+        if self.isa.name == 'avx512':
+            return self._emit_radix5_butterfly_avx512(d, out_names)
 
         self.c(f"DFT-5 butterfly [{d}]")
 
@@ -305,6 +310,55 @@ class Emitter:
 
         # qb_r = cB*d2_i - cC*d1_i  — d1,d2 die after this
         # qb_i = cB*d2_r - cC*d1_r
+        self.o(f"{T} qbr={self.fms('cB','d2i',self.mul('cC','d1i'))}, "
+               f"qbi={self.fms('cB','d2r',self.mul('cC','d1r'))};")
+
+        y1, y2, y3, y4 = out_names[1], out_names[2], out_names[3], out_names[4]
+        if fwd:
+            self.o(f"{y1}_re={self.add('p1r','qar')}; {y1}_im={self.sub('p1i','qai')};")
+            self.o(f"{y4}_re={self.sub('p1r','qar')}; {y4}_im={self.add('p1i','qai')};")
+            self.o(f"{y2}_re={self.sub('p2r','qbr')}; {y2}_im={self.add('p2i','qbi')};")
+            self.o(f"{y3}_re={self.add('p2r','qbr')}; {y3}_im={self.sub('p2i','qbi')};")
+        else:
+            self.o(f"{y1}_re={self.sub('p1r','qar')}; {y1}_im={self.add('p1i','qai')};")
+            self.o(f"{y4}_re={self.add('p1r','qar')}; {y4}_im={self.sub('p1i','qai')};")
+            self.o(f"{y2}_re={self.add('p2r','qbr')}; {y2}_im={self.sub('p2i','qbi')};")
+            self.o(f"{y3}_re={self.sub('p2r','qbr')}; {y3}_im={self.add('p2i','qbi')};")
+
+    def _emit_radix5_butterfly_avx512(self, d, out_names):
+        """AVX-512 path: all intermediates live for maximum ILP (peak 22/32 ZMM).
+        No interleaving tricks, no sd precompute — let both FMA ports saturate."""
+        fwd = (d == 'fwd')
+        T = self.isa.T
+
+        self.c(f"DFT-5 butterfly [{d}] (AVX-512, peak 22/32 ZMM)")
+
+        # All sums and diffs computed freely — no need to interleave for reg pressure
+        self.o(f"{T} s1r={self.add('x1_re','x4_re')}, s1i={self.add('x1_im','x4_im')};")
+        self.o(f"{T} s2r={self.add('x2_re','x3_re')}, s2i={self.add('x2_im','x3_im')};")
+        self.o(f"{T} d1r={self.sub('x1_re','x4_re')}, d1i={self.sub('x1_im','x4_im')};")
+        self.o(f"{T} d2r={self.sub('x2_re','x3_re')}, d2i={self.sub('x2_im','x3_im')};")
+
+        # ss = s1+s2 (for y0 and t0)
+        self.o(f"{T} ss_r={self.add('s1r','s2r')}, ss_i={self.add('s1i','s2i')};")
+
+        # t0 = x0 - 0.25*ss [use x0 BEFORE overwriting]
+        self.o(f"{T} t0r={self.fnma('cD','ss_r','x0_re')}, t0i={self.fnma('cD','ss_i','x0_im')};")
+
+        # y0 = x0 + ss
+        y0 = out_names[0]
+        self.o(f"{y0}_re={self.add('x0_re','ss_r')}; {y0}_im={self.add('x0_im','ss_i')};")
+
+        # p1 = t0 + cA*(s1-s2),  p2 = t0 - cA*(s1-s2)
+        # Keep s1,s2 live — compute s1-s2 inline in the FMA (no sd precompute needed)
+        self.o(f"{T} p1r={self.fma('cA',self.sub('s1r','s2r'),'t0r')}, "
+               f"p1i={self.fma('cA',self.sub('s1i','s2i'),'t0i')};")
+        self.o(f"{T} p2r={self.fnma('cA',self.sub('s1r','s2r'),'t0r')}, "
+               f"p2i={self.fnma('cA',self.sub('s1i','s2i'),'t0i')};")
+
+        # qa and qb — all diffs still live, no pressure issue
+        self.o(f"{T} qar={self.fma('cC','d2i',self.mul('cB','d1i'))}, "
+               f"qai={self.fma('cC','d2r',self.mul('cB','d1r'))};")
         self.o(f"{T} qbr={self.fms('cB','d2i',self.mul('cC','d1i'))}, "
                f"qbi={self.fms('cB','d2r',self.mul('cC','d1r'))};")
 
