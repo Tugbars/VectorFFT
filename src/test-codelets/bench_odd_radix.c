@@ -13,10 +13,14 @@
 #include <fftw3.h>
 #include "bench_compat.h"
 
-/* ── R=5 codelets ── */
+/* ── R=5 codelets: standard ── */
 #include "fft_radix5_avx2_notw.h"
 #include "fft_radix5_avx2_dit_tw.h"
 #include "fft_radix5_avx2_dit_tw_log3.h"
+
+/* CT codelets (n1_ovs + t1_dit) deferred to production executor integration.
+ * Odd-R CT requires mixed radixes: e.g. pow2_n1_ovs + radix5_t1_dit.
+ * The standalone codelet bench above validates the butterfly math. */
 
 /* ── R=3 codelets (uncomment when gen_radix3.py is ready) ── */
 /* #include "fft_radix3_avx2_notw.h"      */
@@ -32,8 +36,7 @@
 typedef void (*notw_fn)(const double*, const double*, double*, double*, size_t);
 typedef void (*tw_fn)(const double*, const double*, double*, double*,
                       const double*, const double*, size_t);
-
-/* ── Twiddle init: W_N^{n*k} for n=1..R-1, k=0..K-1 ── */
+/* ── Twiddle init for standard codelets: W_N^{n*k}, layout tw[(n-1)*K+k] ── */
 static void init_tw(double *twr, double *twi, int R, size_t K) {
     size_t N = (size_t)R * K;
     for (int n = 1; n < R; n++) {
@@ -319,8 +322,12 @@ int main(void) {
         (tw_fn)radix7_tw_log3_dit_kernel_fwd_avx2);
     */
 
+    /* CT end-to-end (n1_ovs + t1_dit) deferred to production executor.
+     * Odd-R CT requires mixed radixes: e.g. pow2_n1_ovs + radix5_t1_dit.
+     * Same-radix CT only works for N=R² which isn't SIMD-aligned for R=5. */
+
     if (fail) {
-        printf("\n*** SOME RADIXES FAILED CORRECTNESS ***\n");
+        printf("\n*** SOME TESTS FAILED ***\n");
         return 1;
     }
 
