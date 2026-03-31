@@ -43,10 +43,10 @@ REM python "%SCRIPT_DIR%gen_radix3.py" --isa avx2 --variant notw > "%HDR_DIR%\ff
 REM python "%SCRIPT_DIR%gen_radix3.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix3_avx2_dit_tw.h" 2>nul
 REM python "%SCRIPT_DIR%gen_radix3.py" --isa avx2 --variant dit_tw_log3 > "%HDR_DIR%\fft_radix3_avx2_dit_tw_log3.h" 2>nul
 
-REM R=7 — uncomment when gen_radix7.py is ready
-REM python "%SCRIPT_DIR%gen_radix7.py" --isa avx2 --variant notw > "%HDR_DIR%\fft_radix7_avx2_notw.h" 2>nul
-REM python "%SCRIPT_DIR%gen_radix7.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix7_avx2_dit_tw.h" 2>nul
-REM python "%SCRIPT_DIR%gen_radix7.py" --isa avx2 --variant dit_tw_log3 > "%HDR_DIR%\fft_radix7_avx2_dit_tw_log3.h" 2>nul
+REM R=7
+python "%SCRIPT_DIR%gen_radix7.py" --isa avx2 --variant notw > "%HDR_DIR%\fft_radix7_avx2_notw.h" 2>nul
+python "%SCRIPT_DIR%gen_radix7.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix7_avx2_dit_tw.h" 2>nul
+python "%SCRIPT_DIR%gen_radix7.py" --isa avx2 --variant dit_tw_log3 > "%HDR_DIR%\fft_radix7_avx2_dit_tw_log3.h" 2>nul
 
 echo   Headers generated.
 echo.
