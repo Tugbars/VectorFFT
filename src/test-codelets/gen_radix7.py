@@ -12,12 +12,12 @@ DFT-7 butterfly (forward):
   R1 = fmadd(KP623, a, fnmadd(KP222, b, fnmadd(KP900, c, x0)))
   R2 = x0 - KP222*a - KP900*b + KP623*c  = fmadd(KP623, c, fnmadd(KP900, b, fnmadd(KP222, a, x0)))
   R3 = fnmadd(KP222, c, fmadd(KP623, b, fnmadd(KP900, a, x0)))
-  S1_re = KP974*d_im + KP781*e_im + KP433*f_im
-  S1_im = KP974*d_re + KP781*e_re + KP433*f_re
-  S2_re = KP781*d_im - KP974*f_im - KP433*e_im
-  S2_im = KP781*d_re - KP974*f_re - KP433*e_re
-  S3_re = KP433*d_im - KP974*e_im + KP781*f_im
-  S3_im = KP433*d_re - KP974*e_re + KP781*f_re
+  S1_re = KP781*d_im + KP974*e_im + KP433*f_im   (sin(2pi/7)*d + sin(4pi/7)*e + sin(6pi/7)*f)
+  S1_im = KP781*d_re + KP974*e_re + KP433*f_re
+  S2_re = KP974*d_im - KP433*e_im - KP781*f_im   (sin(4pi/7)*d - sin(6pi/7)*e - sin(2pi/7)*f)
+  S2_im = KP974*d_re - KP433*e_re - KP781*f_re
+  S3_re = KP433*d_im - KP781*e_im + KP974*f_im   (sin(6pi/7)*d - sin(2pi/7)*e + sin(4pi/7)*f)
+  S3_im = KP433*d_re - KP781*e_re + KP974*f_re
   y1 = R1 + (S1_re, -S1_im);  y6 = R1 - (S1_re, -S1_im)   [fwd]
   y2 = R2 + (S2_re, -S2_im);  y5 = R2 - (S2_re, -S2_im)   [fwd]
   y3 = R3 + (S3_re, -S3_im);  y4 = R3 - (S3_re, -S3_im)   [fwd]
@@ -27,8 +27,8 @@ Constants (6):
   KP623 = cos(2pi/7)  = 0.623489801858733530525004884004239810632274731
   KP222 = |cos(4pi/7)|= 0.222520933956314404288902564496794759466355569
   KP900 = |cos(6pi/7)|= 0.900968867902419126236102319507445051165919162
-  KP974 = sin(2pi/7)  = 0.974927912181823607018131682993931217232785801
-  KP781 = sin(4pi/7)  = 0.781831482468029808708444526674057750232334519
+  KP974 = sin(4pi/7)  = 0.974927912181823607018131682993931217232785801
+  KP781 = sin(2pi/7)  = 0.781831482468029808708444526674057750232334519
   KP433 = sin(6pi/7)  = 0.433883739117558120475768332848358754609990728
 
 Spill budget: d,e,f,R1,R2,R3 = 6 complex spills = 12 SIMD stores + 12 SIMD reloads.
@@ -415,8 +415,9 @@ class Emitter:
         self.reload_c += 1
         # S1_re = KP974*d_im + KP781*e_im + KP433*f_im  (imag inputs -> real output cross)
         # S1_pos = KP974*d_re + KP781*e_re + KP433*f_re
-        self.o(f"{{ {T} S1re={self.fma('KP433','fi',self.fma('KP781','ei',self.mul('KP974','di')))};")
-        self.o(f"  {T} S1pos={self.fma('KP433','fr',self.fma('KP781','er',self.mul('KP974','dr')))};")
+        # S1 = KP781*d + KP974*e + KP433*f  (sin(2pi/7)*d + sin(4pi/7)*e + sin(6pi/7)*f)
+        self.o(f"{{ {T} S1re={self.fma('KP433','fi',self.fma('KP974','ei',self.mul('KP781','di')))};")
+        self.o(f"  {T} S1pos={self.fma('KP433','fr',self.fma('KP974','er',self.mul('KP781','dr')))};")
         y1, y6 = out_names[1], out_names[6]
         if fwd:
             self.o(f"  {y1}_re={self.add('R1r','S1re')}; {y1}_im={self.sub('R1i','S1pos')};")
@@ -436,8 +437,9 @@ class Emitter:
             self.o(f"R2r = {self.isa.p}_load_pd(&spill_re[4*{sm}]);")
             self.o(f"R2i = {self.isa.p}_load_pd(&spill_im[4*{sm}]);")
         self.reload_c += 1
-        self.o(f"{{ {T} S2re={self.fms('KP781','di',self.fma('KP433','ei',self.mul('KP974','fi')))};")
-        self.o(f"  {T} S2pos={self.fms('KP781','dr',self.fma('KP433','er',self.mul('KP974','fr')))};")
+        # S2 = KP974*d - KP433*e - KP781*f  (sin(4pi/7)*d - sin(6pi/7)*e - sin(2pi/7)*f)
+        self.o(f"{{ {T} S2re={self.fms('KP974','di',self.fma('KP433','ei',self.mul('KP781','fi')))};")
+        self.o(f"  {T} S2pos={self.fms('KP974','dr',self.fma('KP433','er',self.mul('KP781','fr')))};")
         y2, y5 = out_names[2], out_names[5]
         if fwd:
             self.o(f"  {y2}_re={self.add('R2r','S2re')}; {y2}_im={self.sub('R2i','S2pos')};")
@@ -457,8 +459,9 @@ class Emitter:
             self.o(f"R3r = {self.isa.p}_load_pd(&spill_re[5*{sm}]);")
             self.o(f"R3i = {self.isa.p}_load_pd(&spill_im[5*{sm}]);")
         self.reload_c += 1
-        self.o(f"{{ {T} S3re={self.fma('KP781','fi',self.fnma('KP974','ei',self.mul('KP433','di')))};")
-        self.o(f"  {T} S3pos={self.fma('KP781','fr',self.fnma('KP974','er',self.mul('KP433','dr')))};")
+        # S3 = KP433*d - KP781*e + KP974*f  (sin(6pi/7)*d - sin(2pi/7)*e + sin(4pi/7)*f)
+        self.o(f"{{ {T} S3re={self.fma('KP974','fi',self.fnma('KP781','ei',self.mul('KP433','di')))};")
+        self.o(f"  {T} S3pos={self.fma('KP974','fr',self.fnma('KP781','er',self.mul('KP433','dr')))};")
         y3, y4 = out_names[3], out_names[4]
         if fwd:
             self.o(f"  {y3}_re={self.add('R3r','S3re')}; {y3}_im={self.sub('R3i','S3pos')};")
@@ -498,8 +501,8 @@ class Emitter:
         self.c("Pair k=1 -> y1, y6")
         self.o(f"{{ {T} Rr={self.fma('KP623','ar',self.fnma('KP222','br','t1r'))};")
         self.o(f"  {T} Ri={self.fma('KP623','ai',self.fnma('KP222','bi','t1i'))};")
-        self.o(f"  {T} Sre={self.fma('KP433','fi',self.fma('KP781','ei',self.mul('KP974','di')))};")
-        self.o(f"  {T} Spos={self.fma('KP433','fr',self.fma('KP781','er',self.mul('KP974','dr')))};")
+        self.o(f"  {T} Sre={self.fma('KP433','fi',self.fma('KP974','ei',self.mul('KP781','di')))};")
+        self.o(f"  {T} Spos={self.fma('KP433','fr',self.fma('KP974','er',self.mul('KP781','dr')))};")
         y1, y6 = out_names[1], out_names[6]
         if fwd:
             self.o(f"  {y1}_re={self.add('Rr','Sre')}; {y1}_im={self.sub('Ri','Spos')};")
@@ -513,8 +516,8 @@ class Emitter:
         self.c("Pair k=2 -> y2, y5")
         self.o(f"{{ {T} Rr={self.fma('KP623','cr',self.fnma('KP900','br','t2r'))};")
         self.o(f"  {T} Ri={self.fma('KP623','ci',self.fnma('KP900','bi','t2i'))};")
-        self.o(f"  {T} Sre={self.fms('KP781','di',self.fma('KP433','ei',self.mul('KP974','fi')))};")
-        self.o(f"  {T} Spos={self.fms('KP781','dr',self.fma('KP433','er',self.mul('KP974','fr')))};")
+        self.o(f"  {T} Sre={self.fms('KP974','di',self.fma('KP433','ei',self.mul('KP781','fi')))};")
+        self.o(f"  {T} Spos={self.fms('KP974','dr',self.fma('KP433','er',self.mul('KP781','fr')))};")
         y2, y5 = out_names[2], out_names[5]
         if fwd:
             self.o(f"  {y2}_re={self.add('Rr','Sre')}; {y2}_im={self.sub('Ri','Spos')};")
@@ -528,8 +531,8 @@ class Emitter:
         self.c("Pair k=3 -> y3, y4")
         self.o(f"{{ {T} Rr={self.fnma('KP222','cr',self.fma('KP623','br','t3r'))};")
         self.o(f"  {T} Ri={self.fnma('KP222','ci',self.fma('KP623','bi','t3i'))};")
-        self.o(f"  {T} Sre={self.fma('KP781','fi',self.fnma('KP974','ei',self.mul('KP433','di')))};")
-        self.o(f"  {T} Spos={self.fma('KP781','fr',self.fnma('KP974','er',self.mul('KP433','dr')))};")
+        self.o(f"  {T} Sre={self.fma('KP974','fi',self.fnma('KP781','ei',self.mul('KP433','di')))};")
+        self.o(f"  {T} Spos={self.fma('KP974','fr',self.fnma('KP781','er',self.mul('KP433','dr')))};")
         y3, y4 = out_names[3], out_names[4]
         if fwd:
             self.o(f"  {y3}_re={self.add('Rr','Sre')}; {y3}_im={self.sub('Ri','Spos')};")
