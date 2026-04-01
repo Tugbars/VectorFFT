@@ -37,6 +37,11 @@
 #include "fft_radix25_avx2_dit_tw.h"
 #include "fft_radix25_avx2_dit_tw_log3.h"
 
+/* ── R=11 codelets: genfft DAG, gen_radix11.py ── */
+#include "fft_radix11_avx2_notw.h"
+#include "fft_radix11_avx2_dit_tw.h"
+#include "fft_radix11_avx2_dit_tw_log3.h"
+
 /* ── Function types ── */
 typedef void (*notw_fn)(const double*, const double*, double*, double*, size_t);
 typedef void (*tw_fn)(const double*, const double*, double*, double*,
@@ -330,6 +335,12 @@ int main(void) {
         (notw_fn)radix25_n1_dit_kernel_fwd_avx2,
         (tw_fn)radix25_tw_flat_dit_kernel_fwd_avx2,
         (tw_fn)radix25_tw_log3_dit_kernel_fwd_avx2);
+
+    /* R=11: genfft DAG codelet */
+    fail |= bench_radix(11, "AVX2 (genfft DAG)",
+        (notw_fn)radix11_n1_dit_kernel_fwd_avx2,
+        (tw_fn)radix11_tw_flat_dit_kernel_fwd_avx2,
+        (tw_fn)radix11_tw_log3_dit_kernel_fwd_avx2);
 
     /* CT end-to-end (n1_ovs + t1_dit) deferred to production executor.
      * Odd-R CT requires mixed radixes: e.g. pow2_n1_ovs + radix5_t1_dit.
