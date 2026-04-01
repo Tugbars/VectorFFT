@@ -56,6 +56,17 @@ static void init_t1_tw(double *W_re, double *W_im, size_t R, size_t me) {
         }
 }
 
+/* Like init_t1_tw but uses explicit N for the phase angle computation.
+ * Needed when me != N/R (e.g., M² buffer with odd child radix). */
+static void init_t1_tw_N(double *W_re, double *W_im, size_t R, size_t me, size_t N) {
+    for (size_t n = 1; n < R; n++)
+        for (size_t m = 0; m < me; m++) {
+            double a = -2.0 * M_PI * (double)(n * m) / (double)N;
+            W_re[(n-1)*me + m] = cos(a);
+            W_im[(n-1)*me + m] = sin(a);
+        }
+}
+
 /* ================================================================
  * Codelet registry: n1_ovs and t1 per radix
  * ================================================================ */
@@ -95,36 +106,25 @@ static codelet_entry *find_codelet(size_t R) {
 static void ct_1level(n1_ovs_fn n1, t1_fn t1,
     const double *ir, const double *ii,
     double *or_, double *oi,
+    double *tmp_re, double *tmp_im,
     const double *W_re, const double *W_im,
     size_t R, size_t M)
 {
     /* n1_ovs: is=R (stride between bins), os=1, vl=M (columns per bin), ovs=M
-     * This works for BOTH pow2 and odd R, as long as M >= R and M % VL == 0.
-     * The n1_ovs k-loop processes M elements, and bins 0..R-1 fit within
-     * each output row of width M (since M >= R).
      *
-     * t1: ios=M (stride), me=M (columns to process). M must be % VL == 0. */
-    n1(ir, ii, or_, oi, R, 1, M, M);
-    t1(or_, oi, W_re, W_im, M, M);
-}
-
-/* 1-level with odd child: N = pow2_parent * odd_child
- * The odd n1_ovs uses is=M (not R), vl=M, ovs=M.
- * Requires intermediate buffer of M*M for the odd-R layout. */
-static void ct_1level_odd_child(n1_ovs_fn n1, t1_fn t1,
-    const double *ir, const double *ii,
-    double *or_, double *oi,
-    double *tmp_re, double *tmp_im,
-    const double *W_re, const double *W_im,
-    size_t R_child, size_t R_parent, size_t M)
-{
-    /* M = R_child, total N = R_parent * R_child
-     * The odd n1_ovs: is=M (stride between bins), os=1, vl=M, ovs=M
-     * Output goes to tmp (M*M buffer), first R_child*M elements valid.
-     * Then t1_parent operates on the output. */
-    size_t N = R_parent * M;
+     * The n1_ovs output layout uses M*M positions (M columns × M stride).
+     * When R < M (odd child with pow2 parent), positions beyond R*M are
+     * written by the SIMD scatter but contain valid data from the DFT.
+     * The t1 then operates on the M*M buffer.
+     * After t1, the valid DFT output is in the first R*M = N elements.
+     *
+     * tmp buffer must be M*M elements (not just N = R*M).
+     */
+    size_t N = R * M;
     memset(tmp_re, 0, M * M * sizeof(double));
     memset(tmp_im, 0, M * M * sizeof(double));
+    /* is=M: bins are columns of R×M matrix, stride M between columns.
+     * os=1, vl=M (process M elements per bin), ovs=M. */
     n1(ir, ii, tmp_re, tmp_im, M, 1, M, M);
     t1(tmp_re, tmp_im, W_re, W_im, M, M);
     memcpy(or_, tmp_re, N * sizeof(double));
@@ -141,6 +141,7 @@ static void ct_2level(
     const double *ir, const double *ii,
     double *or_, double *oi,
     double *tmp_re, double *tmp_im,
+    double *inner_tmp_re, double *inner_tmp_im,
     const double *W0_re, const double *W0_im,
     const double *W1_re, const double *W1_im)
 {
@@ -152,6 +153,7 @@ static void ct_2level(
         ct_1level(n1_inner, t1_inner,
                   tmp_re + r*M1, tmp_im + r*M1,
                   or_ + r*M1, oi + r*M1,
+                  inner_tmp_re, inner_tmp_im,
                   W0_re, W0_im, R0, M0);
     /* Outer t1 */
     t1_outer(or_, oi, W1_re, W1_im, M1, M1);
@@ -201,17 +203,19 @@ static double check_vs_fftw(size_t N, const double *in_re, const double *in_im,
 
 static n1_ovs_fn g_n1; static t1_fn g_t1;
 static double *g_W_re, *g_W_im;
+static double *g_tmp_re, *g_tmp_im;
 static size_t g_R, g_M;
 
 __attribute__((noinline))
 static void exec_1level(const double *ir, const double *ii, double *or_, double *oi) {
-    ct_1level(g_n1, g_t1, ir, ii, or_, oi, g_W_re, g_W_im, g_R, g_M);
+    ct_1level(g_n1, g_t1, ir, ii, or_, oi, g_tmp_re, g_tmp_im, g_W_re, g_W_im, g_R, g_M);
 }
 
 static n1_ovs_fn g2_n1_outer, g2_n1_inner;
 static t1_fn g2_t1_outer, g2_t1_inner;
 static double *g2_W0_re, *g2_W0_im, *g2_W1_re, *g2_W1_im;
 static double *g2_tmp_re, *g2_tmp_im;
+static double *g2_inner_tmp_re, *g2_inner_tmp_im;
 static size_t g2_R1, g2_R0, g2_M0;
 
 __attribute__((noinline))
@@ -219,6 +223,7 @@ static void exec_2level(const double *ir, const double *ii, double *or_, double 
     ct_2level(g2_n1_outer, g2_t1_outer, g2_R1,
               g2_n1_inner, g2_t1_inner, g2_R0, g2_M0,
               ir, ii, or_, oi, g2_tmp_re, g2_tmp_im,
+              g2_inner_tmp_re, g2_inner_tmp_im,
               g2_W0_re, g2_W0_im, g2_W1_re, g2_W1_im);
 }
 
@@ -294,6 +299,9 @@ static void test_N(size_t N) {
         if (N % R_n1 != 0) continue;
         size_t R_t1 = N / R_n1;             /* t1 radix (parent) */
 
+        /* Skip pure pow2 factorizations — only test mixed odd×pow2 */
+        if (is_pow2(R_n1) && is_pow2(R_t1)) continue;
+
         codelet_entry *ce_n1 = find_codelet(R_n1);
         codelet_entry *ce_t1 = find_codelet(R_t1);
         if (!ce_n1 || !ce_n1->n1_ovs || !ce_t1 || !ce_t1->t1_dit) continue;
@@ -307,15 +315,22 @@ static void test_N(size_t N) {
         /* n1_ovs constraint: M >= R_n1 (bins fit in output row of width M) */
         if (M < R_n1) continue;
 
-        /* Setup twiddles for the t1 (parent) */
+        /* Setup twiddles for the t1 (parent).
+         * me = M = R_t1 (columns to process in the M² buffer),
+         * but phase angle uses actual N = R_n1 * R_t1. */
         double *tw_re = (double*)aligned_alloc(32, (R_t1-1)*M*8 + 64);
         double *tw_im = (double*)aligned_alloc(32, (R_t1-1)*M*8 + 64);
-        init_t1_tw(tw_re, tw_im, R_t1, M);
+        init_t1_tw_N(tw_re, tw_im, R_t1, M, N);
+
+        /* M*M tmp buffer for n1_ovs when R < M */
+        double *tmp1_re = (double*)aligned_alloc(32, M*M*8 + 64);
+        double *tmp1_im = (double*)aligned_alloc(32, M*M*8 + 64);
 
         g_n1 = ce_n1->n1_ovs;
         g_t1 = ce_t1->t1_dit;
         g_R = R_n1; g_M = M;
         g_W_re = tw_re; g_W_im = tw_im;
+        g_tmp_re = tmp1_re; g_tmp_im = tmp1_im;
 
         memset(out_re, 0, N*8); memset(out_im, 0, N*8);
         exec_1level(in_re, in_im, out_re, out_im);
@@ -334,62 +349,78 @@ static void test_N(size_t N) {
         }
 
         aligned_free(tw_re); aligned_free(tw_im);
+        aligned_free(tmp1_re); aligned_free(tmp1_im);
     }
 
-    /* Try 2-level: N = R1 * R0 * M0
-     * Outer: pow2 n1_ovs + odd t1 (or pow2 t1)
-     * Inner: pow2 n1_ovs + pow2 t1 */
+    /* Try 2-level: N = R1_n1 * R1_t1 * M0  (outer n1 + [inner n1 + inner t1] + outer t1)
+     * Actually the 2-level structure is:
+     *   N = R_outer * M_outer, where M_outer = R_inner * M_inner
+     *   Outer: n1_ovs(R_outer) decimates, then inner ct_1level on each block, then t1(R_outer)
+     *
+     * Constraints:
+     *   Outer n1_ovs: M_outer >= R_outer, M_outer % 4 == 0
+     *   Outer t1: M_outer % 4 == 0 (its me = M_outer)
+     *   Inner n1_ovs: M_inner >= R_inner, M_inner % 4 == 0
+     *   Inner t1: M_inner % 4 == 0 (its me = M_inner) */
     for (int outer_i = 0; outer_i < n_all; outer_i++) {
-        size_t R1 = all_radixes[outer_i];
-        if (N % R1 != 0) continue;
-        size_t M1 = N / R1;
-        codelet_entry *t1_out = find_codelet(R1);
-        if (!t1_out || !t1_out->t1_dit) continue;
+        size_t R_outer = all_radixes[outer_i];
+        if (N % R_outer != 0) continue;
+        size_t M_outer = N / R_outer;
+        if (M_outer < R_outer) continue;
+        if (M_outer % 4 != 0) continue;
 
-        /* Need pow2 n1_ovs for outer decimation */
-        codelet_entry *n1_out = find_codelet(R1);
-        if (!n1_out || !n1_out->n1_ovs) continue;
-        if (R1 % 4 != 0) continue;  /* Outer n1_ovs must be pow2 */
+        codelet_entry *ce_n1_out = find_codelet(R_outer);
+        codelet_entry *ce_t1_out = find_codelet(R_outer);
+        if (!ce_n1_out || !ce_n1_out->n1_ovs) continue;
+        if (!ce_t1_out || !ce_t1_out->t1_dit) continue;
 
         for (int inner_i = 0; inner_i < n_all; inner_i++) {
-            size_t R0 = all_radixes[inner_i];
-            if (M1 % R0 != 0) continue;
-            size_t M0 = M1 / R0;
-            if (M0 < 4) continue;
-            if (R0 > M0) continue;
+            size_t R_inner = all_radixes[inner_i];
+            if (M_outer % R_inner != 0) continue;
+            size_t M_inner = M_outer / R_inner;
+            if (M_inner < 4) continue;
+            if (M_inner % 4 != 0) continue;
+            if (M_inner < R_inner) continue;
 
-            codelet_entry *n1_in = find_codelet(R0);  /* Inner child n1_ovs */
-            codelet_entry *t1_in = find_codelet(R0);    /* Inner t1 */
-            if (!n1_in || !n1_in->n1_ovs) continue;
-            if (!t1_in || !t1_in->t1_dit) continue;
-            if (R0 % 4 != 0) continue;  /* Inner n1_ovs must be pow2 */
+            /* Skip pure pow2 factorizations */
+            if (is_pow2(R_outer) && is_pow2(R_inner)) continue;
 
-            /* At least one of R1 or R0 should be odd (otherwise it's a pure pow2 case) */
-            int has_odd = !is_pow2(R1) || !is_pow2(R0);
-            /* Actually we want to test mixed cases. Keep going. */
+            codelet_entry *ce_n1_in = find_codelet(R_inner);
+            codelet_entry *ce_t1_in = find_codelet(R_inner);
+            if (!ce_n1_in || !ce_n1_in->n1_ovs) continue;
+            if (!ce_t1_in || !ce_t1_in->t1_dit) continue;
 
-            g2_n1_outer = n1_out->n1_ovs;
-            g2_t1_outer = t1_out->t1_dit;
-            g2_R1 = R1;
-            g2_n1_inner = n1_in->n1_ovs;
-            g2_t1_inner = t1_in->t1_dit;
-            g2_R0 = R0; g2_M0 = M0;
+            /* Skip pure identity (R_outer=1 etc.) */
+            if (R_outer < 2 || R_inner < 2) continue;
 
-            g2_W0_re = (double*)aligned_alloc(32, (R0-1)*M0*8 + 64);
-            g2_W0_im = (double*)aligned_alloc(32, (R0-1)*M0*8 + 64);
-            g2_W1_re = (double*)aligned_alloc(32, (R1-1)*M1*8 + 64);
-            g2_W1_im = (double*)aligned_alloc(32, (R1-1)*M1*8 + 64);
-            g2_tmp_re = (double*)aligned_alloc(32, N*8 + 64);
-            g2_tmp_im = (double*)aligned_alloc(32, N*8 + 64);
-            init_t1_tw(g2_W0_re, g2_W0_im, R0, M0);
-            init_t1_tw(g2_W1_re, g2_W1_im, R1, M1);
+            g2_n1_outer = ce_n1_out->n1_ovs;
+            g2_t1_outer = ce_t1_out->t1_dit;
+            g2_R1 = R_outer;
+            g2_n1_inner = ce_n1_in->n1_ovs;
+            g2_t1_inner = ce_t1_in->t1_dit;
+            g2_R0 = R_inner; g2_M0 = M_inner;
+
+            g2_W0_re = (double*)aligned_alloc(32, (R_inner-1)*M_inner*8 + 64);
+            g2_W0_im = (double*)aligned_alloc(32, (R_inner-1)*M_inner*8 + 64);
+            g2_W1_re = (double*)aligned_alloc(32, (R_outer-1)*M_outer*8 + 64);
+            g2_W1_im = (double*)aligned_alloc(32, (R_outer-1)*M_outer*8 + 64);
+            /* Outer tmp: M_outer*M_outer for odd-R n1_ovs layout */
+            g2_tmp_re = (double*)aligned_alloc(32, M_outer*M_outer*8 + 64);
+            g2_tmp_im = (double*)aligned_alloc(32, M_outer*M_outer*8 + 64);
+            /* Inner tmp: M_inner*M_inner for inner ct_1level */
+            g2_inner_tmp_re = (double*)aligned_alloc(32, M_inner*M_inner*8 + 64);
+            g2_inner_tmp_im = (double*)aligned_alloc(32, M_inner*M_inner*8 + 64);
+            /* Inner twiddle: N_inner = R_inner * M_inner = M_outer */
+            init_t1_tw_N(g2_W0_re, g2_W0_im, R_inner, M_inner, R_inner * M_inner);
+            /* Outer twiddle: N_outer = R_outer * M_outer = N */
+            init_t1_tw_N(g2_W1_re, g2_W1_im, R_outer, M_outer, N);
 
             memset(out_re, 0, N*8); memset(out_im, 0, N*8);
             exec_2level(in_re, in_im, out_re, out_im);
             double err = check_vs_fftw(N, in_re, in_im, out_re, out_im);
 
             char label[64];
-            snprintf(label, sizeof(label), "%zux(%zux%zu) (2L)", R1, R0, M0);
+            snprintf(label, sizeof(label), "%zux(%zux%zu) (2L)", R_outer, R_inner, M_inner);
 
             if (err < 1e-9) {
                 double ns = bench_exec(N, in_re, in_im, exec_2level, reps);
@@ -403,6 +434,7 @@ static void test_N(size_t N) {
             aligned_free(g2_W0_re); aligned_free(g2_W0_im);
             aligned_free(g2_W1_re); aligned_free(g2_W1_im);
             aligned_free(g2_tmp_re); aligned_free(g2_tmp_im);
+            aligned_free(g2_inner_tmp_re); aligned_free(g2_inner_tmp_im);
         }
     }
 
@@ -432,8 +464,8 @@ int main(void) {
         100, 200, 400, 800,
         /* Multi-odd: 3×5=15, 5×7=35, etc. × pow2 */
         60, 120, 140, 280, 300, 600,
-        /* Larger smooth numbers */
-        1024, 1200, 1500, 2048, 2400, 3000, 4096,
+        /* Larger smooth numbers with odd factors */
+        1200, 1500, 2400, 3000,
     };
     int n_tests = (int)(sizeof(test_sizes)/sizeof(test_sizes[0]));
 
