@@ -481,6 +481,135 @@ def emit_kernel_body_log3(em, d, itw_set, variant):
         em.b()
 
 
+# ── AVX-512 single-pass: zero spill, all 12 values in registers ──
+
+def emit_kernel_body_avx512_singlepass(em, d, itw_set, variant):
+    """AVX-512 zero-spill: all 12 values live in ZMM registers.
+    24 data ZMM + 2 const (KHALF,KS) + sign_flip = 27/32 ZMM.
+    No spill buffer, no reload. Saves 24 memory ops per k-step."""
+    groups = [[f"r{n2}{k1}" for k1 in range(N1)] for n2 in range(N2)]
+
+    em.c("AVX-512 single-pass: all 12 values in registers, zero spill")
+
+    # Load all 12 inputs
+    for n2 in range(N2):
+        em.c(f"Load group n2={n2}")
+        for n1 in range(N1):
+            n = N2 * n1 + n2
+            em.emit_load(groups[n2][n1], n)
+            if variant == 'dit_tw' and n > 0:
+                em.emit_ext_tw(groups[n2][n1], n - 1, d)
+    em.b()
+
+    # 3x DFT-4 (each on one n2 group)
+    for n2 in range(N2):
+        em.emit_radix4(groups[n2], d, f"radix-4 n2={n2}")
+    em.b()
+
+    # Internal W12 twiddles
+    em.c("Internal W12 twiddles (3 cmul + 1 j-rotation + 1 negate)")
+    for k1 in range(1, N1):
+        for n2 in range(1, N2):
+            e = (k1 * n2) % N
+            em.emit_int_tw(groups[n2][k1], e, d)
+    em.b()
+
+    # 4x DFT-3 (column-wise)
+    for k1 in range(N1):
+        col = [groups[n2][k1] for n2 in range(N2)]
+        em.emit_radix3(col, d, f"radix-3 k1={k1}")
+    em.b()
+
+    # DIF twiddle
+    if variant == 'dif_tw':
+        for k1 in range(N1):
+            for k2 in range(N2):
+                m = k1 + N1 * k2
+                if m > 0:
+                    em.emit_ext_tw(groups[k2][k1], m - 1, d)
+        em.b()
+
+    # Store all 12 outputs
+    for k1 in range(N1):
+        for k2 in range(N2):
+            m = k1 + N1 * k2
+            em.emit_store(groups[k2][k1], m)
+
+
+# ── Fused last-group: skip spill for last DFT-4 group, save 8 mem ops ──
+
+def emit_kernel_body_fused(em, d, itw_set, variant):
+    """Fused: don't spill last DFT-4 group, keep x0..x3 live.
+    Standard: 12 spill + 12 reload = 24 memory ops.
+    Fused:     8 spill +  8 reload = 16 memory ops.  Saves 8 L1 round-trips.
+    Pass 2 columns consume x{k1} from last group + 2 reloads into t0,t1."""
+    xv4 = [f"x{i}" for i in range(N1)]
+    n2_last = N2 - 1
+
+    # Pass 1: first N2-1=2 groups with normal spill
+    for n2 in range(N2 - 1):
+        em.c(f"sub-FFT n2={n2}")
+        for n1 in range(N1):
+            n = N2 * n1 + n2
+            em.emit_load(f"x{n1}", n)
+            if variant == 'dit_tw' and n > 0:
+                em.emit_ext_tw(f"x{n1}", n - 1, d)
+        em.b()
+        em.emit_radix4(xv4, d, f"radix-4 n2={n2}")
+        em.b()
+        for k1 in range(N1):
+            em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        em.b()
+
+    # Last group: DFT-4, keep results in x0..x3 (NO spill)
+    em.c(f"sub-FFT n2={n2_last} (fused: keep in x0..x3, no spill)")
+    for n1 in range(N1):
+        n = N2 * n1 + n2_last
+        em.emit_load(f"x{n1}", n)
+        if variant == 'dit_tw' and n > 0:
+            em.emit_ext_tw(f"x{n1}", n - 1, d)
+    em.b()
+    em.emit_radix4(xv4, d, f"radix-4 n2={n2_last}")
+    em.b()
+
+    # Pass 2: each column k1 reloads 2 from spill + uses x{k1} live
+    em.c("PASS 2: fused radix-3 columns (2 reload + 1 live from x{k1})")
+    em.b()
+    for k1 in range(N1):
+        em.c(f"column k1={k1}")
+        for n2 in range(N2 - 1):
+            em.emit_reload(f"t{n2}", n2 * N1 + k1)
+        em.b()
+
+        # Internal twiddles
+        if k1 > 0:
+            for n2 in range(1, N2 - 1):
+                e = (k1 * n2) % N
+                em.emit_int_tw(f"t{n2}", e, d)
+            e_last = (k1 * n2_last) % N
+            em.emit_int_tw(f"x{k1}", e_last, d)
+            em.b()
+
+        # DFT-3 on [t0, t1, x{k1}]
+        dft3_vars = [f"t{n2}" for n2 in range(N2 - 1)] + [f"x{k1}"]
+        em.emit_radix3(dft3_vars, d, f"radix-3 k1={k1}")
+        em.b()
+
+        # DIF twiddle
+        if variant == 'dif_tw':
+            for k2 in range(N2):
+                m = k1 + N1 * k2
+                if m > 0:
+                    em.emit_ext_tw(dft3_vars[k2], m - 1, d)
+            em.b()
+
+        # Store
+        for k2 in range(N2):
+            m = k1 + N1 * k2
+            em.emit_store(dft3_vars[k2], m)
+        em.b()
+
+
 # ═══════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════
@@ -635,20 +764,51 @@ def emit_file(isa, itw_set, variant):
         em.L.append(f"    size_t K)")
         em.L.append(f"{{"); em.ind = 1
         emit_constants(em)
-        spill_total = N * isa.sm
-        if isa.name == 'scalar': em.o(f"double spill_re[{N}], spill_im[{N}];")
+
+        use_singlepass = (isa.name == 'avx512' and not is_log3)
+        use_fused = (not is_log3 and not use_singlepass)
+
+        if use_singlepass:
+            # AVX-512 zero-spill: all 12 in registers, no spill buffer
+            for n2 in range(N2):
+                vars_str = ", ".join([f"r{n2}{k1}_re,r{n2}{k1}_im" for k1 in range(N1)])
+                em.o(f"{T} {vars_str};")
+            em.b()
+        elif use_fused:
+            # Fused: reduced spill (8 entries), x0..x3 + t0,t1
+            spill_count = (N2 - 1) * N1  # 2*4 = 8
+            spill_total = spill_count * isa.sm
+            if isa.name == 'scalar': em.o(f"double spill_re[{spill_count}], spill_im[{spill_count}];")
+            else:
+                em.o(f"{isa.align} double spill_re[{spill_total}];")
+                em.o(f"{isa.align} double spill_im[{spill_total}];")
+            em.b()
+            em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+            em.o(f"{T} t0_re,t0_im,t1_re,t1_im;")
+            em.b()
         else:
-            em.o(f"{isa.align} double spill_re[{spill_total}];")
-            em.o(f"{isa.align} double spill_im[{spill_total}];")
-        em.b()
-        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
-        em.b()
+            # Standard 2-pass (log3 path)
+            spill_total = N * isa.sm
+            if isa.name == 'scalar': em.o(f"double spill_re[{N}], spill_im[{N}];")
+            else:
+                em.o(f"{isa.align} double spill_re[{spill_total}];")
+                em.o(f"{isa.align} double spill_im[{spill_total}];")
+            em.b()
+            em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+            em.b()
+
         emit_hoisted_w12(em, isa, itw_set, use_em=True)
         if isa.name == 'scalar': em.o(f"for (size_t k = 0; k < K; k++) {{")
         else:                    em.o(f"for (size_t k = 0; k < K; k += {isa.k_step}) {{")
         em.ind += 1
-        if is_log3: emit_kernel_body_log3(em, d, itw_set, variant)
-        else:       emit_kernel_body(em, d, itw_set, variant)
+        if is_log3:
+            emit_kernel_body_log3(em, d, itw_set, variant)
+        elif use_singlepass:
+            emit_kernel_body_avx512_singlepass(em, d, itw_set, variant)
+        elif use_fused:
+            emit_kernel_body_fused(em, d, itw_set, variant)
+        else:
+            emit_kernel_body(em, d, itw_set, variant)
         em.ind -= 1
         em.o("}"); em.L.append("}"); em.L.append("")
         stats[d] = em.get_stats()
