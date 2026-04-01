@@ -66,6 +66,11 @@ REM -- Step 2: Compile --
 set "CC=icx"
 set "CFLAGS=-O3 -march=native -mavx2 -mfma -D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS"
 
+echo Compiling debug_r11_notw with ICX...
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -I"%SCRIPT_DIR%." -o "%BUILD_DIR%\debug_r11_notw.exe" "%SCRIPT_DIR%debug_r11_notw.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: debug_r11_notw & exit /b 1 )
+echo   debug_r11_notw OK
+
 echo Compiling bench_odd_radix with ICX...
 %CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -I"%SCRIPT_DIR%." -o "%BUILD_DIR%\bench_odd_radix.exe" "%SCRIPT_DIR%bench_odd_radix.c" "%FFTW_LIB%"
 if errorlevel 1 ( echo FAILED: bench_odd_radix & exit /b 1 )
@@ -76,6 +81,11 @@ echo.
 REM -- Step 3: Run --
 
 set "PATH=%FFTW_BIN%;%PATH%"
+
+echo Running debug_r11_notw...
+echo.
+"%BUILD_DIR%\debug_r11_notw.exe"
+echo.
 
 echo Running bench_odd_radix...
 echo.

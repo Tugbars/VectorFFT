@@ -368,12 +368,7 @@ class Emitter:
         # Phase 2: y0 + 5 R (cosine) terms from {x0, T4, T7, Ta, Td, Tg}
         # -------------------------------------------------------
         self.b()
-        self.c("Phase 2 — y0 and 5 R (cosine) terms")
-
-        # y0 = x0 + T4 + T7 + Ta + Td + Tg
-        y0 = out_names[0]
-        self.o(f"{y0}_re={self.add('x0_re',self.add('T4r',self.add('T7r',self.add('Tar',self.add('Tdr','Tgr')))))};")
-        self.o(f"{y0}_im={self.add('x0_im',self.add('T4i',self.add('T7i',self.add('Tai',self.add('Tdi','Tgi')))))};")
+        self.c("Phase 2 — 5 R (cosine) terms THEN y0 (compute R before overwriting x0)")
 
         # R terms — exact genfft expression translated to FMA chains.
         # Each R is a linear combination of x0 and the 5 sums (T4,T7,Ta,Td,Tg).
