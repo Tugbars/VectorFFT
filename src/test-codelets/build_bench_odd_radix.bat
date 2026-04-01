@@ -60,6 +60,7 @@ echo Compiling bench_odd_radix with ICX...
 %CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -I"%SCRIPT_DIR%." -o "%BUILD_DIR%\bench_odd_radix.exe" "%SCRIPT_DIR%bench_odd_radix.c" "%FFTW_LIB%"
 if errorlevel 1 ( echo FAILED: bench_odd_radix & exit /b 1 )
 echo   bench_odd_radix OK
+
 echo.
 
 REM -- Step 3: Run --

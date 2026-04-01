@@ -1,58 +1,42 @@
 #!/usr/bin/env python3
 """
-gen_radix7.py -- Unified DFT-7 codelet generator for VectorFFT
+gen_radix3.py -- Unified DFT-3 codelet generator for VectorFFT
 
-Monolithic DFT-7 butterfly with 6 constants (no sign_flip needed).
-Sethi-Ullman scheduled for peak 16 YMMs on AVX2 with explicit spill buffer.
+Monolithic DFT-3 butterfly with 2 constants (KHALF, KS).
+No spills on any ISA: 3 complex inputs = 6 regs + 2 constants = 8 total.
+Peak 8 YMMs on AVX2, zero spills on ALL ISAs.
 
-DFT-7 butterfly (forward):
-  a=x1+x6, b=x2+x5, c=x3+x4
-  d=x1-x6, e=x2-x5, f=x3-x4
-  y0 = x0 + a + b + c
-  R1 = fmadd(KP623, a, fnmadd(KP222, b, fnmadd(KP900, c, x0)))
-  R2 = x0 - KP222*a - KP900*b + KP623*c  = fmadd(KP623, c, fnmadd(KP900, b, fnmadd(KP222, a, x0)))
-  R3 = fnmadd(KP222, c, fmadd(KP623, b, fnmadd(KP900, a, x0)))
-  S1_re = KP781*d_im + KP974*e_im + KP433*f_im   (sin(2pi/7)*d + sin(4pi/7)*e + sin(6pi/7)*f)
-  S1_im = KP781*d_re + KP974*e_re + KP433*f_re
-  S2_re = KP974*d_im - KP433*e_im - KP781*f_im   (sin(4pi/7)*d - sin(6pi/7)*e - sin(2pi/7)*f)
-  S2_im = KP974*d_re - KP433*e_re - KP781*f_re
-  S3_re = KP433*d_im - KP781*e_im + KP974*f_im   (sin(6pi/7)*d - sin(2pi/7)*e + sin(4pi/7)*f)
-  S3_im = KP433*d_re - KP781*e_re + KP974*f_re
-  y1 = R1 + (S1_re, -S1_im);  y6 = R1 - (S1_re, -S1_im)   [fwd]
-  y2 = R2 + (S2_re, -S2_im);  y5 = R2 - (S2_re, -S2_im)   [fwd]
-  y3 = R3 + (S3_re, -S3_im);  y4 = R3 - (S3_re, -S3_im)   [fwd]
-  BWD: swap y_k and y_{7-k} roles (negate S imaginary path)
+DFT-3 butterfly (forward):
+  a = x1 + x2        (symmetric sum)
+  d = x1 - x2        (antisymmetric diff)
+  y0 = x0 + a
+  R1 = fnmadd(KHALF, a, x0)   [= x0 - 0.5*a = x0 + cos(2pi/3)*a]
+  S_re = KS * d_im   (cross real from imag: sin(2pi/3)*d_im)
+  S_pos = KS * d_re  (sin(2pi/3)*d_re)
+  fwd: y1_re = R1_re + S_re;  y1_im = R1_im - S_pos
+       y2_re = R1_re - S_re;  y2_im = R1_im + S_pos
+  bwd: swap y1/y2 (or equivalently negate S)
 
-Constants (6):
-  KP623 = cos(2pi/7)  = 0.623489801858733530525004884004239810632274731
-  KP222 = |cos(4pi/7)|= 0.222520933956314404288902564496794759466355569
-  KP900 = |cos(6pi/7)|= 0.900968867902419126236102319507445051165919162
-  KP974 = sin(4pi/7)  = 0.974927912181823607018131682993931217232785801
-  KP781 = sin(2pi/7)  = 0.781831482468029808708444526674057750232334519
-  KP433 = sin(6pi/7)  = 0.433883739117558120475768332848358754609990728
+Constants:
+  KHALF = 0.5
+  KS = sin(2*pi/3) = sqrt(3)/2 = 0.866025403784438646763723170752936183471402627
 
-Spill budget: d,e,f,R1,R2,R3 = 6 complex spills = 12 SIMD stores + 12 SIMD reloads.
-
-Log3 twiddle derivation (R=7):
-  Load w1 from table.  w2=w1*w1, w3=w1*w2, w4=w2*w2, w5=w2*w3, w6=w3*w3  (5 cmuls)
+Log3 twiddle derivation (R=3):
+  Load w1 from table.  w2 = w1*w1  (1 cmul)
 
 Usage:
-  python3 gen_radix7.py --isa avx2 --variant all
-  python3 gen_radix7.py --isa all --variant ct_n1
-  python3 gen_radix7.py --isa avx2 --variant ct_t1_dit
+  python3 gen_radix3.py --isa avx2 --variant all
+  python3 gen_radix3.py --isa all --variant ct_n1
+  python3 gen_radix3.py --isa avx2 --variant ct_t1_dit
 """
 
 import sys, math, argparse, re
 
-R = 7
+R = 3
 
-# DFT-7 constants
-KP623_val = 0.623489801858733530525004884004239810632274731
-KP222_val = 0.222520933956314404288902564496794759466355569
-KP900_val = 0.900968867902419126236102319507445051165919162
-KP974_val = 0.974927912181823607018131682993931217232785801
-KP781_val = 0.781831482468029808708444526674057750232334519
-KP433_val = 0.433883739117558120475768332848358754609990728
+# DFT-3 constants
+KHALF_val = 0.500000000000000000000000000000000000000000000
+KS_val    = 0.866025403784438646763723170752936183471402627
 
 # ================================================================
 # ISA CONFIGURATION
@@ -70,13 +54,13 @@ class ISAConfig:
         self.align = align
         self.ld_prefix = ld_prefix
 
-ISA_SCALAR = ISAConfig('scalar', 'double', 1, 1, '', 1, '', '', 'R7S')
+ISA_SCALAR = ISAConfig('scalar', 'double', 1, 1, '', 1, '', '', 'R3S')
 ISA_AVX2   = ISAConfig('avx2', '__m256d', 4, 4, '_mm256', 4,
     '__attribute__((target("avx2,fma")))',
-    '__attribute__((aligned(32)))', 'R7A')
+    '__attribute__((aligned(32)))', 'R3A')
 ISA_AVX512 = ISAConfig('avx512', '__m512d', 8, 8, '_mm512', 8,
     '__attribute__((target("avx512f,avx512dq,fma")))',
-    '__attribute__((aligned(64)))', 'R7L')
+    '__attribute__((aligned(64)))', 'R3L')
 
 ALL_ISA = {'scalar': ISA_SCALAR, 'avx2': ISA_AVX2, 'avx512': ISA_AVX512}
 
@@ -89,15 +73,12 @@ class Emitter:
         self.isa = isa
         self.L = []
         self.ind = 1
-        self.spill_c = 0
-        self.reload_c = 0
         self.n_add = self.n_sub = self.n_mul = self.n_neg = 0
         self.n_fma = self.n_fms = 0
         self.n_load = self.n_store = 0
         self.addr_mode = 'K'
 
     def reset(self):
-        self.spill_c = self.reload_c = 0
         self.n_add = self.n_sub = self.n_mul = self.n_neg = 0
         self.n_fma = self.n_fms = 0
         self.n_load = self.n_store = 0
@@ -109,8 +90,7 @@ class Emitter:
             'add': self.n_add, 'sub': self.n_sub, 'mul': self.n_mul, 'neg': self.n_neg,
             'fma': self.n_fma, 'fms': self.n_fms, 'total_arith': ta, 'flops': fl,
             'load': self.n_load, 'store': self.n_store,
-            'spill': self.spill_c, 'reload': self.reload_c,
-            'total_mem': self.n_load + self.n_store + self.spill_c + self.reload_c,
+            'total_mem': self.n_load + self.n_store,
         }
 
     def o(self, t=""): self.L.append("    " * self.ind + t)
@@ -153,25 +133,6 @@ class Emitter:
         self.n_fma += 1
         if self.isa.name == 'scalar': return f"({c})-({a})*({b})"
         return f"{self.isa.p}_fnmadd_pd({a},{b},{c})"
-
-    # -- Spill / Reload to aligned stack buffer --
-    def emit_spill(self, v, slot):
-        self.spill_c += 1
-        sm = self.isa.sm
-        if self.isa.name == 'scalar':
-            self.o(f"spill_re[{slot}] = {v}_re; spill_im[{slot}] = {v}_im;")
-        else:
-            self.o(f"{self.isa.p}_store_pd(&spill_re[{slot}*{sm}], {v}_re);")
-            self.o(f"{self.isa.p}_store_pd(&spill_im[{slot}*{sm}], {v}_im);")
-
-    def emit_reload(self, v, slot):
-        self.reload_c += 1
-        sm = self.isa.sm
-        if self.isa.name == 'scalar':
-            self.o(f"{v}_re = spill_re[{slot}]; {v}_im = spill_im[{slot}];")
-        else:
-            self.o(f"{v}_re = {self.isa.p}_load_pd(&spill_re[{slot}*{sm}]);")
-            self.o(f"{v}_im = {self.isa.p}_load_pd(&spill_im[{slot}*{sm}]);")
 
     # -- Addressing --
     def _in_addr(self, n, ke="k"):
@@ -284,347 +245,81 @@ class Emitter:
             self.o(f"  {v}_re = {self.fma(f'{v}_re', wr, self.mul(f'{v}_im', wi))};")
             self.o(f"  {v}_im = {self.fms(f'{v}_im', wr, self.mul('tr', wi))}; }}")
 
-    # -- DFT-7 butterfly --
-    def emit_radix7_butterfly(self, d, out_names=None):
-        """Emit DFT-7 butterfly on x0..x6.
-        AVX2/scalar: Sethi-Ullman 3-phase with explicit spill buffer (peak 16 YMM).
-        AVX-512: single-pass, no spills (peak 24 of 32 ZMM).
-        out_names: if provided, list of 7 output variable names.
-                   Default: overwrite x0..x6."""
+    # -- DFT-3 butterfly --
+    def emit_radix3_butterfly(self, d, out_names=None):
+        """Emit DFT-3 butterfly on x0..x2.
+        No ISA dispatch needed: 3 complex inputs = 6 regs + 2 constants = 8 total.
+        Fits trivially on AVX2 (16 YMMs) and AVX-512 (32 ZMMs). Zero spills on all ISAs.
+        out_names: if provided, list of 3 output variable names.
+                   Default: overwrite x0..x2."""
         fwd = (d == 'fwd')
         T = self.isa.T
 
         if out_names is None:
-            out_names = [f'x{i}' for i in range(7)]
+            out_names = ['x0', 'x1', 'x2']
 
-        if self.isa.name == 'avx512':
-            return self._emit_radix7_butterfly_nospill(d, out_names)
+        self.c(f"DFT-3 butterfly [{d}]")
 
-        self.c(f"DFT-7 butterfly [{d}]")
+        # Symmetric/antisymmetric pair
+        # a = x1 + x2  (symmetric sum)
+        # d = x1 - x2  (antisymmetric diff)
+        self.o(f"{T} ar={self.add('x1_re','x2_re')}, ai={self.add('x1_im','x2_im')};")
+        self.o(f"{T} dr={self.sub('x1_re','x2_re')}, di={self.sub('x1_im','x2_im')};")
 
-        # ---- Phase 1: Load pairs, compute sums/diffs, spill diffs ----
-        # x0..x6 are already declared and loaded by caller.
-        # ar/ai..fr/fi, R1r/R1i..R3r/R3i are pre-declared at function scope.
+        # R1 = x0 - 0.5*a = fnmadd(KHALF, a, x0)  [compute BEFORE y0 to use x0 first]
+        self.o(f"{T} R1r={self.fnma('KHALF','ar','x0_re')}, R1i={self.fnma('KHALF','ai','x0_im')};")
 
-        self.c("Phase 1 — symmetric/antisymmetric pairs")
-        self.o(f"ar={self.add('x1_re','x6_re')}; ai={self.add('x1_im','x6_im')};")
-        self.o(f"dr={self.sub('x1_re','x6_re')}; di={self.sub('x1_im','x6_im')};")
-        self.o(f"br={self.add('x2_re','x5_re')}; bi={self.add('x2_im','x5_im')};")
-        self.o(f"er={self.sub('x2_re','x5_re')}; ei={self.sub('x2_im','x5_im')};")
-        self.o(f"cr={self.add('x3_re','x4_re')}; ci={self.add('x3_im','x4_im')};")
-        self.o(f"fr={self.sub('x3_re','x4_re')}; fi={self.sub('x3_im','x4_im')};")
-
-        # Spill diffs: d->slot0, e->slot1, f->slot2
-        self.c("Spill diffs d,e,f")
-        # Use temp variable names matching spill slots
-        # We spill by storing d_re/d_im into spill_re[0]/spill_im[0], etc.
-        # Use a small trick: emit_spill expects "v" where v_re and v_im exist.
-        # We have ar/ai as separate vars, not "a_re"/"a_im", so we emit manually.
-        sm = self.isa.sm
-        if self.isa.name == 'scalar':
-            self.o(f"spill_re[0] = dr; spill_im[0] = di;")
-            self.o(f"spill_re[1] = er; spill_im[1] = ei;")
-            self.o(f"spill_re[2] = fr; spill_im[2] = fi;")
-        else:
-            self.o(f"{self.isa.p}_store_pd(&spill_re[0*{sm}], dr);")
-            self.o(f"{self.isa.p}_store_pd(&spill_im[0*{sm}], di);")
-            self.o(f"{self.isa.p}_store_pd(&spill_re[1*{sm}], er);")
-            self.o(f"{self.isa.p}_store_pd(&spill_im[1*{sm}], ei);")
-            self.o(f"{self.isa.p}_store_pd(&spill_re[2*{sm}], fr);")
-            self.o(f"{self.isa.p}_store_pd(&spill_im[2*{sm}], fi);")
-        self.spill_c += 3
-
-        # ---- Phase 2: y0 and cosine (R) terms using {x0,a,b,c} ----
-        self.b()
-        self.c("Phase 2 — R-term first level + y0 + R completion")
-
-        # R-term depth reduction: compute 3 independent seeds from x0 first.
-        # t1 = x0 - KP900*c,  t2 = x0 - KP222*a,  t3 = x0 - KP900*a
-        # These are independent and issue on all FMA ports simultaneously.
-        # Then R1/R2/R3 each need only depth 2 from their seed (not depth 3 from x0).
-        self.c("3 independent R seeds from x0 (critical path: 1 FMA latency)")
-        self.o(f"{{ {T} t1r={self.fnma('KP900','cr','x0_re')}, t1i={self.fnma('KP900','ci','x0_im')};")
-        self.o(f"  {T} t2r={self.fnma('KP222','ar','x0_re')}, t2i={self.fnma('KP222','ai','x0_im')};")
-        self.o(f"  {T} t3r={self.fnma('KP900','ar','x0_re')}, t3i={self.fnma('KP900','ai','x0_im')};")
-
-        # R1 = KP623*a + (x0 - KP900*c - KP222*b) = fma(KP623, a, fnma(KP222, b, t1))
-        self.o(f"  R1r={self.fma('KP623','ar',self.fnma('KP222','br','t1r'))};")
-        self.o(f"  R1i={self.fma('KP623','ai',self.fnma('KP222','bi','t1i'))};")
-
-        # R2 = KP623*c + (x0 - KP222*a - KP900*b) = fma(KP623, c, fnma(KP900, b, t2))
-        self.o(f"  R2r={self.fma('KP623','cr',self.fnma('KP900','br','t2r'))};")
-        self.o(f"  R2i={self.fma('KP623','ci',self.fnma('KP900','bi','t2i'))};")
-
-        # R3 = KP623*b + (x0 - KP900*a - KP222*c) = fnma(KP222, c, fma(KP623, b, t3))
-        self.o(f"  R3r={self.fnma('KP222','cr',self.fma('KP623','br','t3r'))};")
-        self.o(f"  R3i={self.fnma('KP222','ci',self.fma('KP623','bi','t3i'))}; }}")
-
-        # y0 = x0 + a + b + c  (overwrite x0 now that R terms are computed)
+        # y0 = x0 + a  [now safe to overwrite x0]
         y0 = out_names[0]
-        self.o(f"{y0}_re={self.add('x0_re',self.add(self.add('ar','br'),'cr'))};")
-        self.o(f"{y0}_im={self.add('x0_im',self.add(self.add('ai','bi'),'ci'))};")
+        self.o(f"{y0}_re={self.add('x0_re','ar')}; {y0}_im={self.add('x0_im','ai')};")
 
-        # Spill R1,R2,R3 -> slots 3,4,5; a,b,c,x0 are now dead
-        self.c("Spill R1, R2, R3  (a,b,c,x0 dead after this)")
-        if self.isa.name == 'scalar':
-            self.o(f"spill_re[3] = R1r; spill_im[3] = R1i;")
-            self.o(f"spill_re[4] = R2r; spill_im[4] = R2i;")
-            self.o(f"spill_re[5] = R3r; spill_im[5] = R3i;")
-        else:
-            self.o(f"{self.isa.p}_store_pd(&spill_re[3*{sm}], R1r);")
-            self.o(f"{self.isa.p}_store_pd(&spill_im[3*{sm}], R1i);")
-            self.o(f"{self.isa.p}_store_pd(&spill_re[4*{sm}], R2r);")
-            self.o(f"{self.isa.p}_store_pd(&spill_im[4*{sm}], R2i);")
-            self.o(f"{self.isa.p}_store_pd(&spill_re[5*{sm}], R3r);")
-            self.o(f"{self.isa.p}_store_pd(&spill_im[5*{sm}], R3i);")
-        self.spill_c += 3
+        # S_re = KS * d_im  (cross: real output from imag input)
+        # S_pos = KS * d_re
+        self.o(f"{T} Sre={self.mul('KS','di')}, Spos={self.mul('KS','dr')};")
 
-        # ---- Phase 3: Reload diffs, compute S terms, combine + store ----
-        self.b()
-        self.c("Phase 3 — sine S terms + combine")
-
-        # Reload diffs
-        if self.isa.name == 'scalar':
-            self.o(f"dr = spill_re[0]; di = spill_im[0];")
-            self.o(f"er = spill_re[1]; ei = spill_im[1];")
-            self.o(f"fr = spill_re[2]; fi = spill_im[2];")
-        else:
-            self.o(f"dr = {self.isa.p}_load_pd(&spill_re[0*{sm}]);")
-            self.o(f"di = {self.isa.p}_load_pd(&spill_im[0*{sm}]);")
-            self.o(f"er = {self.isa.p}_load_pd(&spill_re[1*{sm}]);")
-            self.o(f"ei = {self.isa.p}_load_pd(&spill_im[1*{sm}]);")
-            self.o(f"fr = {self.isa.p}_load_pd(&spill_re[2*{sm}]);")
-            self.o(f"fi = {self.isa.p}_load_pd(&spill_im[2*{sm}]);")
-        self.reload_c += 3
-
-        # Pair k=1 (y1, y6):
-        # S1_re = KP974*d_im + KP781*e_im + KP433*f_im
-        # S1_pos = KP974*d_re + KP781*e_re + KP433*f_re
-        # fwd: y1 = R1 + (S1_re, -S1_pos);  y6 = R1 - (S1_re, -S1_pos)
-        # i.e. y1_re = R1_re + S1_re;  y1_im = R1_im - S1_pos
-        #      y6_re = R1_re - S1_re;  y6_im = R1_im + S1_pos
-        # bwd: swap roles -> y1_re = R1_re - S1_re; y1_im = R1_im + S1_pos
-        #                    y6_re = R1_re + S1_re; y6_im = R1_im - S1_pos
-        self.b()
-        self.c("Pair k=1 -> y1, y6")
-        if self.isa.name == 'scalar':
-            self.o(f"R1r = spill_re[3]; R1i = spill_im[3];")
-        else:
-            self.o(f"R1r = {self.isa.p}_load_pd(&spill_re[3*{sm}]);")
-            self.o(f"R1i = {self.isa.p}_load_pd(&spill_im[3*{sm}]);")
-        self.reload_c += 1
-        # S1_re = KP974*d_im + KP781*e_im + KP433*f_im  (imag inputs -> real output cross)
-        # S1_pos = KP974*d_re + KP781*e_re + KP433*f_re
-        # S1 = KP781*d + KP974*e + KP433*f  (sin(2pi/7)*d + sin(4pi/7)*e + sin(6pi/7)*f)
-        self.o(f"{{ {T} S1re={self.fma('KP433','fi',self.fma('KP974','ei',self.mul('KP781','di')))};")
-        self.o(f"  {T} S1pos={self.fma('KP433','fr',self.fma('KP974','er',self.mul('KP781','dr')))};")
-        y1, y6 = out_names[1], out_names[6]
+        # y1/y2 combine: fwd uses +/- S; bwd swaps y1/y2 (negates S roles)
+        y1, y2 = out_names[1], out_names[2]
         if fwd:
-            self.o(f"  {y1}_re={self.add('R1r','S1re')}; {y1}_im={self.sub('R1i','S1pos')};")
-            self.o(f"  {y6}_re={self.sub('R1r','S1re')}; {y6}_im={self.add('R1i','S1pos')}; }}")
+            self.o(f"{y1}_re={self.add('R1r','Sre')}; {y1}_im={self.sub('R1i','Spos')};")
+            self.o(f"{y2}_re={self.sub('R1r','Sre')}; {y2}_im={self.add('R1i','Spos')};")
         else:
-            self.o(f"  {y6}_re={self.add('R1r','S1re')}; {y6}_im={self.sub('R1i','S1pos')};")
-            self.o(f"  {y1}_re={self.sub('R1r','S1re')}; {y1}_im={self.add('R1i','S1pos')}; }}")
-
-        # Pair k=2 (y2, y5):
-        # S2_re = KP781*d_im - KP433*e_im - KP974*f_im
-        # S2_pos = KP781*d_re - KP433*e_re - KP974*f_re
-        self.b()
-        self.c("Pair k=2 -> y2, y5")
-        if self.isa.name == 'scalar':
-            self.o(f"R2r = spill_re[4]; R2i = spill_im[4];")
-        else:
-            self.o(f"R2r = {self.isa.p}_load_pd(&spill_re[4*{sm}]);")
-            self.o(f"R2i = {self.isa.p}_load_pd(&spill_im[4*{sm}]);")
-        self.reload_c += 1
-        # S2 = KP974*d - KP433*e - KP781*f  (sin(4pi/7)*d - sin(6pi/7)*e - sin(2pi/7)*f)
-        self.o(f"{{ {T} S2re={self.fms('KP974','di',self.fma('KP433','ei',self.mul('KP781','fi')))};")
-        self.o(f"  {T} S2pos={self.fms('KP974','dr',self.fma('KP433','er',self.mul('KP781','fr')))};")
-        y2, y5 = out_names[2], out_names[5]
-        if fwd:
-            self.o(f"  {y2}_re={self.add('R2r','S2re')}; {y2}_im={self.sub('R2i','S2pos')};")
-            self.o(f"  {y5}_re={self.sub('R2r','S2re')}; {y5}_im={self.add('R2i','S2pos')}; }}")
-        else:
-            self.o(f"  {y5}_re={self.add('R2r','S2re')}; {y5}_im={self.sub('R2i','S2pos')};")
-            self.o(f"  {y2}_re={self.sub('R2r','S2re')}; {y2}_im={self.add('R2i','S2pos')}; }}")
-
-        # Pair k=3 (y3, y4):
-        # S3_re = KP433*d_im - KP974*e_im + KP781*f_im
-        # S3_pos = KP433*d_re - KP974*e_re + KP781*f_re
-        self.b()
-        self.c("Pair k=3 -> y3, y4")
-        if self.isa.name == 'scalar':
-            self.o(f"R3r = spill_re[5]; R3i = spill_im[5];")
-        else:
-            self.o(f"R3r = {self.isa.p}_load_pd(&spill_re[5*{sm}]);")
-            self.o(f"R3i = {self.isa.p}_load_pd(&spill_im[5*{sm}]);")
-        self.reload_c += 1
-        # S3 = KP433*d - KP781*e + KP974*f  (sin(6pi/7)*d - sin(2pi/7)*e + sin(4pi/7)*f)
-        self.o(f"{{ {T} S3re={self.fma('KP974','fi',self.fnma('KP781','ei',self.mul('KP433','di')))};")
-        self.o(f"  {T} S3pos={self.fma('KP974','fr',self.fnma('KP781','er',self.mul('KP433','dr')))};")
-        y3, y4 = out_names[3], out_names[4]
-        if fwd:
-            self.o(f"  {y3}_re={self.add('R3r','S3re')}; {y3}_im={self.sub('R3i','S3pos')};")
-            self.o(f"  {y4}_re={self.sub('R3r','S3re')}; {y4}_im={self.add('R3i','S3pos')}; }}")
-        else:
-            self.o(f"  {y4}_re={self.add('R3r','S3re')}; {y4}_im={self.sub('R3i','S3pos')};")
-            self.o(f"  {y3}_re={self.sub('R3r','S3re')}; {y3}_im={self.add('R3i','S3pos')}; }}")
-
-    def _emit_radix7_butterfly_nospill(self, d, out_names):
-        """AVX-512 path: single-pass, no spills. Peak 24 of 32 ZMM registers.
-        All sums a,b,c and diffs d,e,f stay live throughout."""
-        fwd = (d == 'fwd')
-        T = self.isa.T
-
-        self.c(f"DFT-7 butterfly [{d}] (AVX-512 no-spill, peak 26/32 ZMM)")
-
-        # Symmetric / antisymmetric pairs — all live simultaneously
-        self.c("Sums and diffs (all live, no spill)")
-        self.o(f"{T} ar={self.add('x1_re','x6_re')}, ai={self.add('x1_im','x6_im')};")
-        self.o(f"{T} dr={self.sub('x1_re','x6_re')}, di={self.sub('x1_im','x6_im')};")
-        self.o(f"{T} br={self.add('x2_re','x5_re')}, bi={self.add('x2_im','x5_im')};")
-        self.o(f"{T} er={self.sub('x2_re','x5_re')}, ei={self.sub('x2_im','x5_im')};")
-        self.o(f"{T} cr={self.add('x3_re','x4_re')}, ci={self.add('x3_im','x4_im')};")
-        self.o(f"{T} fr={self.sub('x3_re','x4_re')}, fi={self.sub('x3_im','x4_im')};")
-
-        # R-term first level: 3 independent fnma from x0 (depth reduction).
-        # These issue on all FMA ports simultaneously, reducing critical path
-        # from 3 to 2 FMA latencies per R term.
-        self.b()
-        self.c("R-term first level (3 independent seeds from x0)")
-        self.o(f"{T} t1r={self.fnma('KP900','cr','x0_re')}, t1i={self.fnma('KP900','ci','x0_im')};")
-        self.o(f"{T} t2r={self.fnma('KP222','ar','x0_re')}, t2i={self.fnma('KP222','ai','x0_im')};")
-        self.o(f"{T} t3r={self.fnma('KP900','ar','x0_re')}, t3i={self.fnma('KP900','ai','x0_im')};")
-
-        # Pair k=1 (y1, y6): R1 from t1, S1 from diffs
-        self.b()
-        self.c("Pair k=1 -> y1, y6")
-        self.o(f"{{ {T} Rr={self.fma('KP623','ar',self.fnma('KP222','br','t1r'))};")
-        self.o(f"  {T} Ri={self.fma('KP623','ai',self.fnma('KP222','bi','t1i'))};")
-        self.o(f"  {T} Sre={self.fma('KP433','fi',self.fma('KP974','ei',self.mul('KP781','di')))};")
-        self.o(f"  {T} Spos={self.fma('KP433','fr',self.fma('KP974','er',self.mul('KP781','dr')))};")
-        y1, y6 = out_names[1], out_names[6]
-        if fwd:
-            self.o(f"  {y1}_re={self.add('Rr','Sre')}; {y1}_im={self.sub('Ri','Spos')};")
-            self.o(f"  {y6}_re={self.sub('Rr','Sre')}; {y6}_im={self.add('Ri','Spos')}; }}")
-        else:
-            self.o(f"  {y6}_re={self.add('Rr','Sre')}; {y6}_im={self.sub('Ri','Spos')};")
-            self.o(f"  {y1}_re={self.sub('Rr','Sre')}; {y1}_im={self.add('Ri','Spos')}; }}")
-
-        # Pair k=2 (y2, y5): R2 from t2
-        self.b()
-        self.c("Pair k=2 -> y2, y5")
-        self.o(f"{{ {T} Rr={self.fma('KP623','cr',self.fnma('KP900','br','t2r'))};")
-        self.o(f"  {T} Ri={self.fma('KP623','ci',self.fnma('KP900','bi','t2i'))};")
-        self.o(f"  {T} Sre={self.fms('KP974','di',self.fma('KP433','ei',self.mul('KP781','fi')))};")
-        self.o(f"  {T} Spos={self.fms('KP974','dr',self.fma('KP433','er',self.mul('KP781','fr')))};")
-        y2, y5 = out_names[2], out_names[5]
-        if fwd:
-            self.o(f"  {y2}_re={self.add('Rr','Sre')}; {y2}_im={self.sub('Ri','Spos')};")
-            self.o(f"  {y5}_re={self.sub('Rr','Sre')}; {y5}_im={self.add('Ri','Spos')}; }}")
-        else:
-            self.o(f"  {y5}_re={self.add('Rr','Sre')}; {y5}_im={self.sub('Ri','Spos')};")
-            self.o(f"  {y2}_re={self.sub('Rr','Sre')}; {y2}_im={self.add('Ri','Spos')}; }}")
-
-        # Pair k=3 (y3, y4): R3 from t3
-        self.b()
-        self.c("Pair k=3 -> y3, y4")
-        self.o(f"{{ {T} Rr={self.fnma('KP222','cr',self.fma('KP623','br','t3r'))};")
-        self.o(f"  {T} Ri={self.fnma('KP222','ci',self.fma('KP623','bi','t3i'))};")
-        self.o(f"  {T} Sre={self.fma('KP974','fi',self.fnma('KP781','ei',self.mul('KP433','di')))};")
-        self.o(f"  {T} Spos={self.fma('KP974','fr',self.fnma('KP781','er',self.mul('KP433','dr')))};")
-        y3, y4 = out_names[3], out_names[4]
-        if fwd:
-            self.o(f"  {y3}_re={self.add('Rr','Sre')}; {y3}_im={self.sub('Ri','Spos')};")
-            self.o(f"  {y4}_re={self.sub('Rr','Sre')}; {y4}_im={self.add('Ri','Spos')}; }}")
-        else:
-            self.o(f"  {y4}_re={self.add('Rr','Sre')}; {y4}_im={self.sub('Ri','Spos')};")
-            self.o(f"  {y3}_re={self.sub('Rr','Sre')}; {y3}_im={self.add('Ri','Spos')}; }}")
-
-        # y0 = x0 + a + b + c — LAST, after all pairs that read x0
-        self.b()
-        y0 = out_names[0]
-        self.o(f"{y0}_re={self.add('x0_re',self.add(self.add('ar','br'),'cr'))};")
-        self.o(f"{y0}_im={self.add('x0_im',self.add(self.add('ai','bi'),'ci'))};")
-
+            self.o(f"{y2}_re={self.add('R1r','Sre')}; {y2}_im={self.sub('R1i','Spos')};")
+            self.o(f"{y1}_re={self.sub('R1r','Sre')}; {y1}_im={self.add('R1i','Spos')};")
 
 
 # ================================================================
 # HELPERS: constants
 # ================================================================
 
-def emit_dft7_constants(em):
-    """Emit the 6 DFT-7 constants + sign_flip as SIMD broadcasts or scalars."""
+def emit_dft3_constants(em):
+    """Emit the 2 DFT-3 constants + sign_flip as SIMD broadcasts or scalars."""
     T = em.isa.T
     if em.isa.name == 'scalar':
-        em.o(f"const double KP623 = {KP623_val:.45f};")
-        em.o(f"const double KP222 = {KP222_val:.45f};")
-        em.o(f"const double KP900 = {KP900_val:.45f};")
-        em.o(f"const double KP974 = {KP974_val:.45f};")
-        em.o(f"const double KP781 = {KP781_val:.45f};")
-        em.o(f"const double KP433 = {KP433_val:.45f};")
+        em.o(f"const double KHALF = {KHALF_val:.45f};")
+        em.o(f"const double KS    = {KS_val:.45f};")
     else:
         set1 = f"{em.isa.p}_set1_pd"
         em.o(f"const {T} sign_flip = {set1}(-0.0);")
-        em.o(f"const {T} KP623 = {set1}({KP623_val:.45f});")
-        em.o(f"const {T} KP222 = {set1}({KP222_val:.45f});")
-        em.o(f"const {T} KP900 = {set1}({KP900_val:.45f});")
-        em.o(f"const {T} KP974 = {set1}({KP974_val:.45f});")
-        em.o(f"const {T} KP781 = {set1}({KP781_val:.45f});")
-        em.o(f"const {T} KP433 = {set1}({KP433_val:.45f});")
-        em.o(f"(void)sign_flip;  /* reserved for neg() */")
+        em.o(f"const {T} KHALF = {set1}({KHALF_val:.45f});")
+        em.o(f"const {T} KS    = {set1}({KS_val:.45f});")
+        em.o(f"(void)sign_flip;  /* unused by current butterfly, reserved for neg() */")
     em.b()
 
 
-def emit_dft7_constants_raw(lines, isa, indent=1):
-    """Append DFT-7 constant declarations + sign_flip to a line list."""
+def emit_dft3_constants_raw(lines, isa, indent=1):
+    """Append DFT-3 constant declarations + sign_flip directly to a line list."""
     pad = "    " * indent
     T = isa.T
     if isa.name == 'scalar':
-        lines.append(f"{pad}const double KP623 = {KP623_val:.45f};")
-        lines.append(f"{pad}const double KP222 = {KP222_val:.45f};")
-        lines.append(f"{pad}const double KP900 = {KP900_val:.45f};")
-        lines.append(f"{pad}const double KP974 = {KP974_val:.45f};")
-        lines.append(f"{pad}const double KP781 = {KP781_val:.45f};")
-        lines.append(f"{pad}const double KP433 = {KP433_val:.45f};")
+        lines.append(f"{pad}const double KHALF = {KHALF_val:.45f};")
+        lines.append(f"{pad}const double KS    = {KS_val:.45f};")
     else:
         set1 = f"{isa.p}_set1_pd"
         lines.append(f"{pad}const {T} sign_flip = {set1}(-0.0);")
-        lines.append(f"{pad}const {T} KP623 = {set1}({KP623_val:.45f});")
-        lines.append(f"{pad}const {T} KP222 = {set1}({KP222_val:.45f});")
-        lines.append(f"{pad}const {T} KP900 = {set1}({KP900_val:.45f});")
-        lines.append(f"{pad}const {T} KP974 = {set1}({KP974_val:.45f});")
-        lines.append(f"{pad}const {T} KP781 = {set1}({KP781_val:.45f});")
-        lines.append(f"{pad}const {T} KP433 = {set1}({KP433_val:.45f});")
+        lines.append(f"{pad}const {T} KHALF = {set1}({KHALF_val:.45f});")
+        lines.append(f"{pad}const {T} KS    = {set1}({KS_val:.45f});")
         lines.append(f"{pad}(void)sign_flip;")
     lines.append(f"")
-
-
-def emit_spill_decl(em):
-    """Emit the aligned spill buffer declaration (6 slots)."""
-    sm = em.isa.sm
-    T = em.isa.T
-    N_SPILL = 6
-    if em.isa.name == 'scalar':
-        em.o(f"double spill_re[{N_SPILL}], spill_im[{N_SPILL}];")
-    else:
-        em.o(f"{em.isa.align} {em.isa.T} spill_re_buf[{N_SPILL}];")
-        em.o(f"{em.isa.align} {em.isa.T} spill_im_buf[{N_SPILL}];")
-        em.o(f"double * __restrict__ spill_re = (double*)spill_re_buf;")
-        em.o(f"double * __restrict__ spill_im = (double*)spill_im_buf;")
-
-
-def emit_spill_decl_raw(lines, isa, indent=1):
-    """Append spill buffer declarations to a line list."""
-    pad = "    " * indent
-    N_SPILL = 6
-    if isa.name == 'scalar':
-        lines.append(f"{pad}double spill_re[{N_SPILL}], spill_im[{N_SPILL}];")
-    else:
-        lines.append(f"{pad}{isa.align} {isa.T} spill_re_buf[{N_SPILL}];")
-        lines.append(f"{pad}{isa.align} {isa.T} spill_im_buf[{N_SPILL}];")
-        lines.append(f"{pad}double * __restrict__ spill_re = (double*)spill_re_buf;")
-        lines.append(f"{pad}double * __restrict__ spill_im = (double*)spill_im_buf;")
 
 
 # ================================================================
@@ -639,16 +334,16 @@ def emit_kernel_body(em, d, variant):
     for n in range(R):
         em.emit_load(f"x{n}", n)
 
-    # DIT: twiddle inputs 1..6 before butterfly
+    # DIT: twiddle inputs 1..2 before butterfly
     if variant == 'dit_tw':
         for n in range(1, R):
             em.emit_ext_tw(f"x{n}", n - 1, d)
 
     em.b()
-    em.emit_radix7_butterfly(d)
+    em.emit_radix3_butterfly(d)
     em.b()
 
-    # DIF: twiddle outputs 1..6 after butterfly
+    # DIF: twiddle outputs 1..2 after butterfly
     if variant == 'dif_tw':
         for m in range(1, R):
             em.emit_ext_tw(f"x{m}", m - 1, d)
@@ -659,12 +354,12 @@ def emit_kernel_body(em, d, variant):
 
 
 def emit_kernel_body_log3(em, d, variant):
-    """Emit the log3 variant: derive w2..w6 from w1."""
+    """Emit the log3 variant: derive w2 from w1 (1 cmul for R=3)."""
     T = em.isa.T
     is_dit = variant == 'dit_tw_log3'
 
     # Load base twiddle w1
-    em.c("Load base twiddle w1, derive w2..w6 (5 cmuls)")
+    em.c("Load base twiddle w1, derive w2 (1 cmul)")
     if em.isa.name == 'scalar':
         em.o(f"const double w1r = tw_re[0*K+k], w1i = tw_im[0*K+k];")
     else:
@@ -674,39 +369,23 @@ def emit_kernel_body_log3(em, d, variant):
     # w2 = w1 * w1
     em.o(f"{T} w2r, w2i;")
     em.emit_cmul("w2r", "w2i", "w1r", "w1i", "w1r", "w1i", 'fwd')
-
-    # w3 = w1 * w2
-    em.o(f"{T} w3r, w3i;")
-    em.emit_cmul("w3r", "w3i", "w1r", "w1i", "w2r", "w2i", 'fwd')
-
-    # w4 = w2 * w2
-    em.o(f"{T} w4r, w4i;")
-    em.emit_cmul("w4r", "w4i", "w2r", "w2i", "w2r", "w2i", 'fwd')
-
-    # w5 = w2 * w3
-    em.o(f"{T} w5r, w5i;")
-    em.emit_cmul("w5r", "w5i", "w2r", "w2i", "w3r", "w3i", 'fwd')
-
-    # w6 = w3 * w3
-    em.o(f"{T} w6r, w6i;")
-    em.emit_cmul("w6r", "w6i", "w3r", "w3i", "w3r", "w3i", 'fwd')
     em.b()
 
     # Load inputs
     for n in range(R):
         em.emit_load(f"x{n}", n)
 
-    # DIT: apply twiddles to x1..x6
+    # DIT: apply twiddles to x1..x2
     if is_dit:
         for n in range(1, R):
             wname = f"w{n}"
             em.emit_cmul_inplace(f"x{n}", f"{wname}r", f"{wname}i", d)
     em.b()
 
-    em.emit_radix7_butterfly(d)
+    em.emit_radix3_butterfly(d)
     em.b()
 
-    # DIF: apply twiddles to outputs x1..x6
+    # DIF: apply twiddles to outputs x1..x2
     if not is_dit:
         for m in range(1, R):
             wname = f"w{m}"
@@ -729,18 +408,18 @@ def emit_file(isa, variant):
     func_base = ''
     tw_params = None
     if variant == 'notw':
-        func_base = 'radix7_n1_dit_kernel'
+        func_base = 'radix3_n1_dit_kernel'
     elif variant == 'dit_tw':
-        func_base = 'radix7_tw_flat_dit_kernel'
+        func_base = 'radix3_tw_flat_dit_kernel'
         tw_params = 'flat'
     elif variant == 'dif_tw':
-        func_base = 'radix7_tw_flat_dif_kernel'
+        func_base = 'radix3_tw_flat_dif_kernel'
         tw_params = 'flat'
     elif variant == 'dit_tw_log3':
-        func_base = 'radix7_tw_log3_dit_kernel'
-        tw_params = 'flat'
+        func_base = 'radix3_tw_log3_dit_kernel'
+        tw_params = 'flat'  # log3 still reads from tw_re/tw_im (just 1 base row)
     elif variant == 'dif_tw_log3':
-        func_base = 'radix7_tw_log3_dif_kernel'
+        func_base = 'radix3_tw_log3_dif_kernel'
         tw_params = 'flat'
 
     vname = {
@@ -749,15 +428,15 @@ def emit_file(isa, variant):
         'dit_tw_log3': 'DIT twiddled (log3 derived)',
         'dif_tw_log3': 'DIF twiddled (log3 derived)',
     }[variant]
-    guard = f"FFT_RADIX7_{isa.name.upper()}_{variant.upper()}_H"
+    guard = f"FFT_RADIX3_{isa.name.upper()}_{variant.upper()}_H"
 
     em.L.append(f"/**")
-    em.L.append(f" * @file fft_radix7_{isa.name}_{variant}.h")
-    em.L.append(f" * @brief DFT-7 {isa.name.upper()} {vname}")
+    em.L.append(f" * @file fft_radix3_{isa.name}_{variant}.h")
+    em.L.append(f" * @brief DFT-3 {isa.name.upper()} {vname}")
     em.L.append(f" *")
-    em.L.append(f" * Monolithic DFT-7 butterfly, 6 constants. AVX2: peak 16 YMMs + spill. AVX-512: 24/32 ZMMs, no spill.")
+    em.L.append(f" * Monolithic DFT-3 butterfly, 2 constants, zero spills on all ISAs.")
     em.L.append(f" * k-step={isa.k_step}")
-    em.L.append(f" * Generated by gen_radix7.py")
+    em.L.append(f" * Generated by gen_radix3.py")
     em.L.append(f" */")
     em.L.append(f"")
     em.L.append(f"#ifndef {guard}")
@@ -808,19 +487,11 @@ def emit_file(isa, variant):
         em.ind = 1
 
         # Constants
-        emit_dft7_constants(em)
+        emit_dft3_constants(em)
 
         # Working registers
-        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
-        em.o(f"{T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im;")
-
-        # Spill buffer + working temps (AVX2/scalar only, AVX-512 uses no-spill path)
-        if isa.name != 'avx512':
-            emit_spill_decl(em)
-            em.b()
-            em.o(f"{T} ar,ai,br,bi,cr,ci,dr,di,er,ei,fr,fi;")
-            em.o(f"{T} R1r,R1i,R2r,R2i,R3r,R3i;")
-            em.b()
+        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;")
+        em.b()
 
         # K loop
         if isa.name == 'scalar':
@@ -840,7 +511,7 @@ def emit_file(isa, variant):
         stats[d] = em.get_stats()
 
     # U=2 pipelining (AVX-512 only, non-log3)
-    # 2×14 working + 6 shared constants = 34 ZMM; with shared spill buffer this fits.
+    # R=3: 2x6 working + 2 shared constants = 14/32 ZMM — very comfortable.
     if isa.name == 'avx512' and not is_log3 and func_base is not None:
         VL = isa.k_step
         u2_name = func_base + '_u2'
@@ -865,12 +536,10 @@ def emit_file(isa, variant):
                 em.L.append(f"    const double * __restrict__ tw_re, const double * __restrict__ tw_im,")
             em.L.append(f"    size_t K)")
             em.L.append(f"{{")
-            em.L.append(f"    /* U=2: two independent k-groups per iteration */")
+            em.L.append(f"    /* U=2: two independent k-groups per iteration (14/32 ZMM) */")
 
-            emit_dft7_constants_raw(em.L, isa, indent=1)
-            # AVX-512 U=2: no spill buffer needed (no-spill butterfly path)
-            xdecl = (f"        {T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im,"
-                     f"x4_re,x4_im,x5_re,x5_im,x6_re,x6_im;")
+            emit_dft3_constants_raw(em.L, isa, indent=1)
+            xdecl = f"        {T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;"
             em.L.append(f"    for (size_t k = 0; k < K; k += {VL*2}) {{")
             em.L.append(f"        {{ /* Pipeline A: k */")
             em.L.append(xdecl)
@@ -908,23 +577,23 @@ def emit_file_ct(isa, ct_variant):
     em.addr_mode = 'n1' if is_n1 else 't1'
 
     if is_n1:
-        func_base = "radix7_n1"
+        func_base = "radix3_n1"
         vname = "n1 (separate is/os)"
     elif is_t1_dif:
-        func_base = "radix7_t1_dif"
+        func_base = "radix3_t1_dif"
         vname = "t1 DIF (in-place twiddle)"
     else:
-        func_base = "radix7_t1_dit"
+        func_base = "radix3_t1_dit"
         vname = "t1 DIT (in-place twiddle)"
 
-    guard = f"FFT_RADIX7_{isa.name.upper()}_CT_{ct_variant.upper()}_H"
+    guard = f"FFT_RADIX3_{isa.name.upper()}_CT_{ct_variant.upper()}_H"
 
     em.L.append(f"/**")
-    em.L.append(f" * @file fft_radix7_{isa.name}_{ct_variant}.h")
-    em.L.append(f" * @brief DFT-7 {isa.name.upper()} {vname}")
+    em.L.append(f" * @file fft_radix3_{isa.name}_{ct_variant}.h")
+    em.L.append(f" * @brief DFT-3 {isa.name.upper()} {vname}")
     em.L.append(f" *")
     em.L.append(f" * FFTW-style codelet for recursive CT executor.")
-    em.L.append(f" * Generated by gen_radix7.py --variant {ct_variant}")
+    em.L.append(f" * Generated by gen_radix3.py --variant {ct_variant}")
     em.L.append(f" */")
     em.L.append(f"")
     em.L.append(f"#ifndef {guard}")
@@ -985,14 +654,9 @@ def emit_file_ct(isa, ct_variant):
         em.L.append(f"{{")
         em.ind = 1
 
-        emit_dft7_constants(em)
+        emit_dft3_constants(em)
 
-        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
-        em.o(f"{T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im;")
-        if isa.name != 'avx512':
-            emit_spill_decl(em)
-            em.o(f"{T} ar,ai,br,bi,cr,ci,dr,di,er,ei,fr,fi;")
-            em.o(f"{T} R1r,R1i,R2r,R2i,R3r,R3i;")
+        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;")
         em.b()
 
         # Loop
@@ -1015,7 +679,9 @@ def emit_file_ct(isa, ct_variant):
         em.L.append("}")
         em.L.append("")
 
-    # n1_ovs: butterfly with fused SIMD transpose stores
+    # n1_ovs: butterfly with scatter stores
+    # R=3: NOT divisible by 4, so NO 4x4 transpose possible.
+    # ALL 3 bins use scalar scatter via AVX2 extract (same as R=5 bin 4, R=7 bins 4-6).
     if is_n1 and isa.name != 'scalar':
         VL = isa.k_step
 
@@ -1028,25 +694,20 @@ def emit_file_ct(isa, ct_variant):
                 em.L.append(f"static {isa.target} void")
             else:
                 em.L.append(f"static void")
-            em.L.append(f"radix7_n1_ovs_{d}_{isa.name}(")
+            em.L.append(f"radix3_n1_ovs_{d}_{isa.name}(")
             em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
             em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
             em.L.append(f"    size_t is, size_t os, size_t vl, size_t ovs)")
             em.L.append(f"{{")
 
-            em.L.append(f"    /* n1_ovs: butterfly -> tbuf, then 4x4 transpose (bins 0-3) + scalar scatter (bins 4-6) */")
+            em.L.append(f"    /* n1_ovs: butterfly -> tbuf, then scatter all 3 bins via AVX2 extract */")
+            em.L.append(f"    /* R=3 is not divisible by 4, so no 4x4 transpose is possible. */")
             em.L.append(f"    {isa.align} double tbuf_re[{R * VL}];")
             em.L.append(f"    {isa.align} double tbuf_im[{R * VL}];")
 
-            emit_dft7_constants_raw(em.L, isa, indent=1)
-            if isa.name != 'avx512':
-                emit_spill_decl_raw(em.L, isa, indent=1)
+            emit_dft3_constants_raw(em.L, isa, indent=1)
 
-            em.L.append(f"    {T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
-            em.L.append(f"    {T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im;")
-            if isa.name != 'avx512':
-                em.L.append(f"    {T} ar,ai,br,bi,cr,ci,dr,di,er,ei,fr,fi;")
-                em.L.append(f"    {T} R1r,R1i,R2r,R2i,R3r,R3i;")
+            em.L.append(f"    {T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;")
             em.L.append(f"")
 
             em.L.append(f"    for (size_t k = 0; k < vl; k += {isa.k_step}) {{")
@@ -1059,29 +720,11 @@ def emit_file_ct(isa, ct_variant):
             emit_kernel_body(em2, d, 'notw')
             em.L.extend(em2.L)
 
-            # Transpose bins 0-3 (standard 4x4 AVX2 transpose)
-            em.L.append(f"        /* 4x4 transpose: bins 0-3 -> output at stride ovs */")
-            for comp, arr in [('re', 'out_re'), ('im', 'out_im')]:
-                bname = f"tbuf_{comp}"
-                em.L.append(f"        {{ {T} a_=LD(&{bname}[0*{VL}]), b_=LD(&{bname}[1*{VL}]);")
-                em.L.append(f"          {T} c_=LD(&{bname}[2*{VL}]), d_=LD(&{bname}[3*{VL}]);")
-                if isa.name == 'avx2':
-                    em.L.append(f"          {T} lo_ab=_mm256_unpacklo_pd(a_,b_), hi_ab=_mm256_unpackhi_pd(a_,b_);")
-                    em.L.append(f"          {T} lo_cd=_mm256_unpacklo_pd(c_,d_), hi_cd=_mm256_unpackhi_pd(c_,d_);")
-                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));")
-                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+1)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));")
-                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+2)*ovs+os*0], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));")
-                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+3)*ovs+os*0], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));")
-                else:  # avx512
-                    for j in range(isa.k_step):
-                        for b in range(4):
-                            em.L.append(f"          {arr}[(k+{j})*ovs+os*{b}] = {bname}[{b}*{VL}+{j}];")
-                em.L.append(f"        }}")
-
-            # Bins 4,5,6: extract from tbuf or YMM registers (still in tbuf from notw store)
+            # Scatter all 3 bins via AVX2 extract from tbuf
+            # R=3 < 4: no 4x4 transpose possible. Each bin: load YMM from tbuf,
+            # castpd256_pd128 + extractf128, storel/storeh for 4 lanes.
             if isa.name == 'avx2':
-                # Bins 4-6: extract from tbuf via YMM load + scalar scatter
-                for bn in [4, 5, 6]:
+                for bn in range(R):
                     em.L.append(f"        /* Bin {bn}: extract from tbuf -> scatter */")
                     for comp, arr in [('re', 'out_re'), ('im', 'out_im')]:
                         bname = f"tbuf_{comp}"
@@ -1093,7 +736,7 @@ def emit_file_ct(isa, ct_variant):
                         em.L.append(f"          _mm_storeh_pd(&{arr}[(k+3)*ovs+os*{bn}], hi); }}")
             else:
                 # AVX-512 fallback: scalar scatter from tbuf
-                for bn in [4, 5, 6]:
+                for bn in range(R):
                     em.L.append(f"        /* Bin {bn}: scalar scatter */")
                     for comp, arr in [('re', 'out_re'), ('im', 'out_im')]:
                         bname = f"tbuf_{comp}"
@@ -1156,14 +799,14 @@ def emit_sv_variants(t2_lines, isa, variant):
     text = '\n'.join(t2_lines)
 
     if variant == 'notw':
-        t2_pattern = 'radix7_n1_dit_kernel'
-        sv_name = 'radix7_n1sv_kernel'
+        t2_pattern = 'radix3_n1_dit_kernel'
+        sv_name = 'radix3_n1sv_kernel'
     elif variant == 'dit_tw':
-        t2_pattern = 'radix7_tw_flat_dit_kernel'
-        sv_name = 'radix7_t1sv_dit_kernel'
+        t2_pattern = 'radix3_tw_flat_dit_kernel'
+        sv_name = 'radix3_t1sv_dit_kernel'
     elif variant == 'dif_tw':
-        t2_pattern = 'radix7_tw_flat_dif_kernel'
-        sv_name = 'radix7_t1sv_dif_kernel'
+        t2_pattern = 'radix3_tw_flat_dif_kernel'
+        sv_name = 'radix3_t1sv_dif_kernel'
     else:
         return []
 
@@ -1247,7 +890,7 @@ def print_file(lines, label):
 # ================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description='Unified R=7 codelet generator')
+    parser = argparse.ArgumentParser(description='Unified R=3 codelet generator')
     parser.add_argument('--isa', default='avx2',
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='notw',
