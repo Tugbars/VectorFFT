@@ -273,18 +273,16 @@ class Emitter:
         y0 = out_names[0]
         self.o(f"{y0}_re={self.add('x0_re','ar')}; {y0}_im={self.add('x0_im','ai')};")
 
-        # S_re = KS * d_im  (cross: real output from imag input)
-        # S_pos = KS * d_re
-        self.o(f"{T} Sre={self.mul('KS','di')}, Spos={self.mul('KS','dr')};")
-
-        # y1/y2 combine: fwd uses +/- S; bwd swaps y1/y2 (negates S roles)
+        # Fuse S into combine: y1 = R1 + KS*d_cross, y2 = R1 - KS*d_cross
+        # Eliminates 2 mul + 2 add/sub, replaced by 4 FMA.
+        # S_re = KS*d_im (cross real/imag), S_im = -KS*d_re
         y1, y2 = out_names[1], out_names[2]
         if fwd:
-            self.o(f"{y1}_re={self.add('R1r','Sre')}; {y1}_im={self.sub('R1i','Spos')};")
-            self.o(f"{y2}_re={self.sub('R1r','Sre')}; {y2}_im={self.add('R1i','Spos')};")
+            self.o(f"{y1}_re={self.fma('KS','di','R1r')}; {y1}_im={self.fnma('KS','dr','R1i')};")
+            self.o(f"{y2}_re={self.fnma('KS','di','R1r')}; {y2}_im={self.fma('KS','dr','R1i')};")
         else:
-            self.o(f"{y2}_re={self.add('R1r','Sre')}; {y2}_im={self.sub('R1i','Spos')};")
-            self.o(f"{y1}_re={self.sub('R1r','Sre')}; {y1}_im={self.add('R1i','Spos')};")
+            self.o(f"{y2}_re={self.fma('KS','di','R1r')}; {y2}_im={self.fnma('KS','dr','R1i')};")
+            self.o(f"{y1}_re={self.fnma('KS','di','R1r')}; {y1}_im={self.fma('KS','dr','R1i')};")
 
 
 # ================================================================
