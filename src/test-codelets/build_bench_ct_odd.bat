@@ -57,6 +57,11 @@ REM -- Compile --
 set "CC=icx"
 set "CFLAGS=-O3 -march=native -mavx2 -mfma -D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS"
 
+echo Compiling debug_ct_layout with ICX...
+%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -I"%SCRIPT_DIR%." -o "%BUILD_DIR%\debug_ct_layout.exe" "%SCRIPT_DIR%debug_ct_layout.c" "%FFTW_LIB%"
+if errorlevel 1 ( echo FAILED: debug_ct_layout & exit /b 1 )
+echo   debug_ct_layout OK
+
 echo Compiling bench_ct_odd with ICX...
 %CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -I"%SCRIPT_DIR%." -o "%BUILD_DIR%\bench_ct_odd.exe" "%SCRIPT_DIR%bench_ct_odd.c" "%FFTW_LIB%"
 if errorlevel 1 ( echo FAILED: bench_ct_odd & exit /b 1 )
@@ -66,6 +71,11 @@ echo.
 REM -- Run --
 set "PATH=%FFTW_BIN%;%PATH%"
 
+echo Running debug_ct_layout first...
+echo.
+"%BUILD_DIR%\debug_ct_layout.exe"
+
+echo.
 echo Running bench_ct_odd...
 echo.
 "%BUILD_DIR%\bench_ct_odd.exe"
