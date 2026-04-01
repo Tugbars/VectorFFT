@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VectorFFT: Stride-Based CT Executor Design</title>
+<style>
+body { font-family: 'Segoe UI', system-ui, sans-serif; max-width: 960px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #1a1a1a; }
+h1 { border-bottom: 3px solid #2563eb; padding-bottom: 10px; }
+h2 { color: #2563eb; margin-top: 2em; }
+h3 { color: #4b5563; }
+code { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 0.95em; }
+pre { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.9em; line-height: 1.5; }
+pre code { background: none; padding: 0; color: inherit; }
+.highlight { background: #fef3c7; padding: 12px 16px; border-left: 4px solid #f59e0b; margin: 16px 0; }
+.success { background: #dcfce7; padding: 12px 16px; border-left: 4px solid #22c55e; margin: 16px 0; }
+.danger { background: #fee2e2; padding: 12px 16px; border-left: 4px solid #ef4444; margin: 16px 0; }
+table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+th, td { border: 1px solid #d1d5db; padding: 8px 12px; text-align: left; }
+th { background: #f8fafc; font-weight: 600; }
+.mono { font-family: 'Consolas', 'Courier New', monospace; }
+.diagram { background: #f8fafc; border: 1px solid #e2e8f0; padding: 16px; border-radius: 8px; font-family: monospace; white-space: pre; line-height: 1.4; margin: 16px 0; }
+</style>
+</head>
+<body>
+
+<h1>Stride-Based CT Executor Design</h1>
+<p><strong>Date:</strong> April 2026 &nbsp;|&nbsp; <strong>Status:</strong> Design proposal &nbsp;|&nbsp; <strong>Author:</strong> VectorFFT team</p>
+
+<h2>1. Problem Statement</h2>
+
+<p>The current VectorFFT CT executor uses <strong>n1_ovs + t1</strong> codelets with an intermediate transpose buffer. Benchmarks show:</p>
+
+<table>
+<tr><th>Metric</th><th>Standalone codelet</th><th>CT pipeline</th><th>Loss</th></tr>
+<tr><td>R=5 notw vs FFTW</td><td class="mono">5.0x faster</td><td class="mono">~1.2x faster</td><td class="mono">~75%</td></tr>
+<tr><td>R=3 notw vs FFTW</td><td class="mono">6.5x faster</td><td class="mono">~0.9x (slower!)</td><td class="mono">~85%</td></tr>
+<tr><td>pow2 same-radix CT vs FFTW</td><td class="mono">-</td><td class="mono">~1.3x faster</td><td class="mono">significant</td></tr>
+</table>
+
+<div class="danger">
+<strong>Root cause:</strong> The n1_ovs codelet transposes data from strided to contiguous layout. This adds:
+(1) 4&times;4 shuffle + scatter operations, (2) M&sup2; intermediate buffer allocation,
+(3) memset/memcpy overhead, (4) output permutation issues for mixed radix.
+</div>
+
+<h2>2. How FFTW Solves This</h2>
+
+<p>FFTW uses <strong>stride-parameterized in-place codelets</strong>. The same codelet handles any data layout by accepting stride arguments at runtime.</p>
+
+<h3>FFTW Codelet Signatures</h3>
+<pre><code>// n1 (no-twiddle): v independent DFT-R butterflies
+n1(rio, is, os, v, ivs, ovs)
+    rio:  data pointer (in-place)
+    is:   input stride between R butterfly elements
+    os:   output stride
+    v:    number of butterflies to perform
+    ivs:  stride between successive input butterflies
+    ovs:  stride between successive output butterflies
+
+// t1 (twiddle): v independent DFT-R butterflies with external twiddle
+t1(rio, W, ios, v, ivs)
+    rio:  data pointer (in-place)
+    W:    twiddle factors
+    ios:  stride between R butterfly elements
+    v:    number of butterflies
+    ivs:  stride between successive butterflies</code></pre>
+
+<h3>Example: N = 12 = 3 &times; 4</h3>
+
+<div class="diagram">Input: x[0] x[1] x[2] x[3] x[4] x[5] x[6] x[7] x[8] x[9] x[10] x[11]
+
+View as 3&times;4 matrix (row-major):
+    col 0  col 1  col 2  col 3
+row 0:  x[0]   x[1]   x[2]   x[3]
+row 1:  x[4]   x[5]   x[6]   x[7]
+row 2:  x[8]   x[9]   x[10]  x[11]
+
+Level 1 &mdash; Child DFT-3 on each column:
+  n1(data, is=4, os=4, v=4, ivs=1, ovs=1)
+  &bull; 4 butterflies (one per column)
+  &bull; Each reads 3 elements at stride 4: {x[m], x[m+4], x[m+8]}
+  &bull; Writes back at stride 4 (in-place)
+
+Level 2 &mdash; Parent DFT-4 with twiddle on each row:
+  t1(data, W_12, ios=1, v=3, ivs=4)
+  &bull; 3 butterflies (one per row)
+  &bull; Each reads 4 elements at stride 1: {y[4k], y[4k+1], y[4k+2], y[4k+3]}
+  &bull; Twiddle W_12^{k*m} applied before butterfly
+  &bull; Writes back at stride 1 (in-place)
+
+Output: X[0] X[1] X[2] ... X[11]  (natural order, no permutation needed)</div>
+
+<div class="success">
+<strong>Key insight:</strong> Both stages operate on the <em>same buffer</em> with different strides.
+No transpose, no intermediate buffer, no permutation. The strides encode the matrix layout.
+</div>
+
+<h2>3. Current VectorFFT Architecture (n1_ovs + t1)</h2>
+
+<div class="diagram">Step 1: n1_ovs &mdash; load strided, butterfly, TRANSPOSE to contiguous
+  in[n*is + k] &rarr; butterfly &rarr; tbuf[bin*VL + lane] &rarr; 4x4 shuffle &rarr; out[lane*ovs + bin]
+
+Step 2: t1 &mdash; load contiguous, twiddle+butterfly, store contiguous
+  rio[m + n*ios] &rarr; twiddle &rarr; butterfly &rarr; rio[m + n*ios]
+
+Problems:
+  &bull; The 4x4 transpose adds ~4 shuffle instructions per group of 4 bins
+  &bull; Odd R (3,5,7) needs scatter for leftover bins (R % 4 != 0)
+  &bull; Output buffer must be M&sup2; (not N) when R &lt; M
+  &bull; Mixed-radix output is in digit-reversed order, not natural order
+  &bull; Total overhead: memset(M&sup2;) + transpose + memcpy(N) per call</div>
+
+<h2>4. Proposed Architecture: Stride-Based In-Place</h2>
+
+<h3>4.1 Codelet Signatures</h3>
+
+<p>We already generate the right codelets. The <code>ct_n1</code> variant produces:</p>
+
+<pre><code>// Stride-based n1 (already generated by gen_radix{3,5,7}.py --variant ct_n1)
+radix3_n1_fwd_avx2(in_re, in_im, out_re, out_im, is, os, vl)
+    is:  stride between the R input elements
+    os:  stride between the R output elements
+    vl:  number of butterflies to perform (SIMD k-loop)
+
+// Stride-based t1 (already generated by gen_radix{3,5,7}.py --variant ct_t1_dit)
+radix3_t1_dit_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me)
+    ios: stride between the R butterfly elements
+    me:  number of butterflies to perform (SIMD m-loop)</code></pre>
+
+<h3>4.2 Execution Pipeline</h3>
+
+<pre><code>// N = R_child &times; R_parent
+// Example: N = 12 = 3 &times; 4
+
+// Step 1: R_parent child DFT-R_child butterflies on columns (out-of-place)
+radix3_n1_fwd_avx2(
+    in_re, in_im,       // source (contiguous input)
+    out_re, out_im,     // destination (same size as input)
+    is = R_parent,      // stride between butterfly legs (= column stride)
+    os = R_parent,      // output stride (preserve layout)
+    vl = R_parent       // number of columns to process
+);
+
+// Step 2: R_child parent DFT-R_parent butterflies with twiddle on rows (in-place)
+radix4_t1_dit_fwd_avx2(
+    out_re, out_im,     // in-place on the output buffer
+    W_re, W_im,         // twiddle table W_N^{n*m}, layout W[(n-1)*me + m]
+    ios = 1,            // stride between butterfly legs (= row stride = 1 for contiguous rows)
+    me = R_parent       // number of elements per row
+);
+
+// No transpose. No intermediate buffer. No permutation.
+// Output is in natural order.</code></pre>
+
+<h3>4.3 Stride Computation Rules</h3>
+
+<table>
+<tr><th>Parameter</th><th>1-Level CT (N = A &times; B)</th><th>Description</th></tr>
+<tr><td>n1 <code>is</code></td><td class="mono">B</td><td>Column stride (distance between elements in same column)</td></tr>
+<tr><td>n1 <code>os</code></td><td class="mono">B</td><td>Output preserves input layout</td></tr>
+<tr><td>n1 <code>vl</code></td><td class="mono">B</td><td>Number of columns = B</td></tr>
+<tr><td>t1 <code>ios</code></td><td class="mono">1</td><td>Row elements are contiguous (stride 1 within a row)</td></tr>
+<tr><td>t1 <code>me</code></td><td class="mono">B</td><td>Row width = B elements per butterfly</td></tr>
+<tr><td>Twiddle N</td><td class="mono">A &times; B</td><td>Phase angle uses actual DFT size</td></tr>
+</table>
+
+<h3>4.4 Multi-Level CT</h3>
+
+<p>For N = A &times; B &times; C (3 levels):</p>
+
+<pre><code>// Level 1: DFT-A on "super-columns" at stride B*C, v=B*C butterflies at stride 1
+n1_A(data, is=B*C, os=B*C, vl=B*C)
+
+// Level 2: DFT-B with twiddle on "sub-rows" at stride C, v=A butterflies at stride B*C
+// Applied A times (once per row of the outer matrix)
+for (a = 0; a &lt; A; a++)
+    t1_B(data + a*B*C, W_AB, ios=C, me=C)  // ??? needs careful stride analysis
+
+// Level 3: DFT-C with twiddle on innermost elements, v=A*B at stride C
+// Applied A*B times
+for (ab = 0; ab &lt; A*B; ab++)
+    t1_C(data + ab*C, W_ABC, ios=1, me=C)</code></pre>
+
+<div class="highlight">
+<strong>Note:</strong> Multi-level stride computation for 3+ factors is non-trivial and requires
+careful analysis. The 2-level case (N = A &times; B) is well-understood and should be
+implemented first. The production planner's factorization strategy will determine which
+multi-level decompositions are actually used.
+</div>
+
+<h2>5. SIMD Constraints</h2>
+
+<h3>5.1 The VL Alignment Problem</h3>
+
+<p>Our SIMD codelets process VL=4 (AVX2) or VL=8 (AVX-512) elements per iteration.
+The <code>vl</code> (or <code>me</code>) parameter must be a multiple of VL for the SIMD k-loop/m-loop.</p>
+
+<table>
+<tr><th>Case</th><th>Constraint</th><th>Solution</th></tr>
+<tr><td>n1 with vl = R_parent</td><td>R_parent must be &ge; VL and R_parent % VL == 0</td><td>Only use pow2 as R_parent, or fall back to scalar for small R_parent</td></tr>
+<tr><td>t1 with me = R_parent</td><td>Same constraint</td><td>Same</td></tr>
+<tr><td>n1 with is = R_parent</td><td>Loads at stride R_parent &mdash; NOT contiguous</td><td>Strided loads (gather) or process one butterfly at a time</td></tr>
+</table>
+
+<div class="danger">
+<strong>Critical issue:</strong> When the child radix is odd (R_child=3, is=R_parent=4), the n1 codelet
+loads 3 elements at stride 4: <code>in[0], in[4], in[8]</code>. These are NOT contiguous &mdash;
+the SIMD <code>LD(&amp;in[n*is+k])</code> loads 4 contiguous elements starting at <code>n*is+k</code>.
+For n=0,k=0: loads <code>in[0..3]</code> which includes elements from other columns.
+<br><br>
+<strong>This is fine!</strong> The k-loop processes VL=4 columns simultaneously. Element <code>in[n*is+k]</code>
+for k=0..3 gives us 4 columns at once. The stride <code>is</code> separates the R butterfly legs,
+not individual elements. Each SIMD vector holds one value from each of 4 different columns.
+</div>
+
+<h3>5.2 When Strides Work with SIMD</h3>
+
+<pre><code>// n1_R3 with is=4, vl=4:
+// k=0: loads in[0*4+0..3] = {col0_row0, col1_row0, col2_row0, col3_row0}  &larr; contiguous!
+//       loads in[1*4+0..3] = {col0_row1, col1_row1, col2_row1, col3_row1}  &larr; contiguous!
+//       loads in[2*4+0..3] = {col0_row2, col1_row2, col2_row2, col3_row2}  &larr; contiguous!
+// &rArr; DFT-3 butterfly on all 4 columns simultaneously
+// &rArr; Stores out[0*4+0..3], out[1*4+0..3], out[2*4+0..3]  &larr; contiguous!
+
+// This works because:
+// - is = R_parent = column count = stride between rows
+// - vl = R_parent = number of columns
+// - VL consecutive columns are contiguous in memory (row-major layout)</code></pre>
+
+<div class="success">
+<strong>Key realization:</strong> For row-major layout where R_parent consecutive elements are contiguous,
+the stride-based n1 with <code>is=R_parent, vl=R_parent</code> naturally produces contiguous SIMD loads.
+No gather/scatter needed. This is exactly what we want.
+</div>
+
+<h2>6. Twiddle Table Layout</h2>
+
+<pre><code>// For the t1 stage with R_parent butterfly legs at stride ios:
+// Twiddle W_N^{n*m} where N = R_child * R_parent
+// n = 1..R_parent-1 (butterfly leg index)
+// m = 0..me-1 (column index within each row)
+//
+// Layout: W_re[(n-1)*me + m], W_im[(n-1)*me + m]
+// Phase: angle = -2*pi*n*m / N
+//
+// For ios=1, me=R_parent: the t1 m-loop processes R_parent elements per butterfly
+// Twiddle table size: (R_parent - 1) * R_parent doubles per component</code></pre>
+
+<h2>7. Implementation Plan</h2>
+
+<h3>Phase 1: Prototype (debug_ct_layout.c)</h3>
+<ol>
+<li>Test stride-based <code>n1_R3(is=4, os=4, vl=4) + t1_R4(ios=1, me=4)</code> for N=12</li>
+<li>Verify correctness against FFTW</li>
+<li>Extend to N=20 (R=5), N=28 (R=7)</li>
+<li>Measure performance vs n1_ovs approach</li>
+</ol>
+
+<h3>Phase 2: bench_ct_odd.c Rewrite</h3>
+<ol>
+<li>Replace n1_ovs + M&sup2; buffer with stride-based n1 + t1</li>
+<li>Test all odd &times; pow2 combinations: N = 3&times;4, 3&times;8, ..., 7&times;32</li>
+<li>Compare vs FFTW_MEASURE</li>
+</ol>
+
+<h3>Phase 3: Production Executor Integration</h3>
+<ol>
+<li>Add odd-radix n1/t1 dispatch wrappers to <code>vfft_register_codelets.h</code></li>
+<li>Update the planner's stride computation for mixed-radix stages</li>
+<li>Update the buffered execution path for large-K tiling</li>
+<li>Calibrate crossover thresholds</li>
+</ol>
+
+<h3>Phase 4: Multi-Level Mixed Radix</h3>
+<ol>
+<li>N = A &times; B &times; C with mixed odd/pow2 factors</li>
+<li>Stride propagation through multiple levels</li>
+<li>Integration with the production block-walk engine</li>
+</ol>
+
+<h2>8. Expected Performance</h2>
+
+<table>
+<tr><th>Approach</th><th>n1 cost</th><th>Transpose</th><th>Buffer</th><th>t1 cost</th><th>Total overhead</th></tr>
+<tr><td>Current (n1_ovs + t1)</td><td>butterfly</td><td>4&times;4 shuffle + scatter</td><td>M&sup2; memset + memcpy</td><td>butterfly + twiddle</td><td><strong>high</strong></td></tr>
+<tr><td>Proposed (stride n1 + t1)</td><td>butterfly</td><td><em>none</em></td><td><em>none (in-place)</em></td><td>butterfly + twiddle</td><td><strong>minimal</strong></td></tr>
+</table>
+
+<p>Expected improvement: from ~1.3x over FFTW (current CT) to ~3-4x over FFTW (matching standalone codelet speedup minus only the twiddle overhead).</p>
+
+<h2>9. Codelet Availability</h2>
+
+<p>All required codelets are already generated by our unified generators:</p>
+
+<table>
+<tr><th>Radix</th><th>Generator</th><th>n1 (stride)</th><th>t1_dit</th><th>t1_dif</th><th>SV</th></tr>
+<tr><td>R=3</td><td>gen_radix3.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=5</td><td>gen_radix5.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=7</td><td>gen_radix7.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=11</td><td>gen_radix11.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=13</td><td>gen_radix13.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=17</td><td>gen_radix17.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=25</td><td>gen_radix25.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=4</td><td>gen_radix4.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=8</td><td>gen_radix8.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=16</td><td>gen_radix16.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+<tr><td>R=32</td><td>gen_radix32.py</td><td>&check;</td><td>&check;</td><td>&check;</td><td>&check;</td></tr>
+</table>
+
+</body>
+</html>
