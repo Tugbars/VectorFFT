@@ -624,12 +624,12 @@ def _twiddle_by_exp_log3(em, vname, exp, d, T):
         # Pure multiple of 5
         bases = {1: 'b5', 2: 'w10', 3: 'w15', 4: 'w20'}
         wname = bases[q]
-        em.emit_cmul_inplace(vname, f"{wname}_re", f"{wname}_i", d)
+        em.emit_cmul_inplace(vname, f"{wname}_re", f"{wname}_im", d)
     elif q == 0:
         # Small exponent 1..4
         small = {1: 'b1', 2: 'w2', 3: 'w3', 4: 'w4'}
         wname = small[r]
-        em.emit_cmul_inplace(vname, f"{wname}_re", f"{wname}_i", d)
+        em.emit_cmul_inplace(vname, f"{wname}_re", f"{wname}_im", d)
     else:
         # Need to combine: W^(5q) * W^r
         # Derive combined on the fly
@@ -638,8 +638,8 @@ def _twiddle_by_exp_log3(em, vname, exp, d, T):
         qname = q_bases[q]
         rname = r_bases[r]
         em.o(f"{{ {T} cwr, cwi;")
-        em.emit_cmul("cwr", "cwi", f"{qname}_re", f"{qname}_i",
-                     f"{rname}_re", f"{rname}_i", 'fwd')
+        em.emit_cmul("cwr", "cwi", f"{qname}_re", f"{qname}_im",
+                     f"{rname}_re", f"{rname}_im", 'fwd')
         em.emit_cmul_inplace(vname, "cwr", "cwi", d)
         em.o(f"}}")
 
