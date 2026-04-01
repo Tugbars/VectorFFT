@@ -58,6 +58,16 @@ python "%SCRIPT_DIR%gen_radix11.py" --isa avx2 --variant notw > "%HDR_DIR%\fft_r
 python "%SCRIPT_DIR%gen_radix11.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix11_avx2_dit_tw.h" 2>nul
 python "%SCRIPT_DIR%gen_radix11.py" --isa avx2 --variant dit_tw_log3 > "%HDR_DIR%\fft_radix11_avx2_dit_tw_log3.h" 2>nul
 
+REM R=13
+python "%SCRIPT_DIR%gen_radix13.py" --isa avx2 --variant notw > "%HDR_DIR%\fft_radix13_avx2_notw.h" 2>nul
+python "%SCRIPT_DIR%gen_radix13.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix13_avx2_dit_tw.h" 2>nul
+python "%SCRIPT_DIR%gen_radix13.py" --isa avx2 --variant dit_tw_log3 > "%HDR_DIR%\fft_radix13_avx2_dit_tw_log3.h" 2>nul
+
+REM R=17
+python "%SCRIPT_DIR%gen_radix17.py" --isa avx2 --variant notw > "%HDR_DIR%\fft_radix17_avx2_notw.h" 2>nul
+python "%SCRIPT_DIR%gen_radix17.py" --isa avx2 --variant dit_tw > "%HDR_DIR%\fft_radix17_avx2_dit_tw.h" 2>nul
+python "%SCRIPT_DIR%gen_radix17.py" --isa avx2 --variant dit_tw_log3 > "%HDR_DIR%\fft_radix17_avx2_dit_tw_log3.h" 2>nul
+
 echo   Headers generated.
 echo.
 
@@ -65,11 +75,6 @@ REM -- Step 2: Compile --
 
 set "CC=icx"
 set "CFLAGS=-O3 -march=native -mavx2 -mfma -D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS"
-
-echo Compiling debug_r11_notw with ICX...
-%CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -I"%SCRIPT_DIR%." -o "%BUILD_DIR%\debug_r11_notw.exe" "%SCRIPT_DIR%debug_r11_notw.c" "%FFTW_LIB%"
-if errorlevel 1 ( echo FAILED: debug_r11_notw & exit /b 1 )
-echo   debug_r11_notw OK
 
 echo Compiling bench_odd_radix with ICX...
 %CC% %CFLAGS% -I"%HDR_DIR%" -I"%FFTW_INC%" -I"%SCRIPT_DIR%." -o "%BUILD_DIR%\bench_odd_radix.exe" "%SCRIPT_DIR%bench_odd_radix.c" "%FFTW_LIB%"
@@ -81,11 +86,6 @@ echo.
 REM -- Step 3: Run --
 
 set "PATH=%FFTW_BIN%;%PATH%"
-
-echo Running debug_r11_notw...
-echo.
-"%BUILD_DIR%\debug_r11_notw.exe"
-echo.
 
 echo Running bench_odd_radix...
 echo.

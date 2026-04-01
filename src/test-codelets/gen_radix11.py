@@ -395,6 +395,11 @@ class Emitter:
         self.o(f"Tor={self.fma('KP415415013','T4r',self.fma('KP841253532','Tgr',self.fnma('KP142314838','Tdr',self.fnma('KP959492973','Tar',self.fnma('KP654860733','T7r','x0_re')))))};")
         self.o(f"Toi={self.fma('KP415415013','T4i',self.fma('KP841253532','Tgi',self.fnma('KP142314838','Tdi',self.fnma('KP959492973','Tai',self.fnma('KP654860733','T7i','x0_im')))))};")
 
+        # y0 = x0 + T4 + T7 + Ta + Td + Tg  [NOW safe to overwrite x0]
+        y0 = out_names[0]
+        self.o(f"{y0}_re={self.add('x0_re',self.add('T4r',self.add('T7r',self.add('Tar',self.add('Tdr','Tgr')))))};")
+        self.o(f"{y0}_im={self.add('x0_im',self.add('T4i',self.add('T7i',self.add('Tai',self.add('Tdi','Tgi')))))};")
+
         # Spill R terms: Th->slot5, Tu->slot6, Ts->slot7, Tq->slot8, To->slot9
         self.c("Spill R terms Th,Tu,Ts,Tq,To (slots 5-9)")
         if self.isa.name == 'scalar':
@@ -608,13 +613,7 @@ class Emitter:
         self.o(f"{T} T7r={self.add('x2_re','x9_re')}, T7i={self.add('x2_im','x9_im')};")
         self.o(f"{T} Tmr={self.sub('x9_re','x2_re')}, Tmi={self.sub('x9_im','x2_im')};")
 
-        # y0
-        self.b()
-        y0 = out_names[0]
-        self.o(f"{y0}_re={self.add('x0_re',self.add('T4r',self.add('T7r',self.add('Tar',self.add('Tdr','Tgr')))))};")
-        self.o(f"{y0}_im={self.add('x0_im',self.add('T4i',self.add('T7i',self.add('Tai',self.add('Tdi','Tgi')))))};")
-
-        # Pair (4,7)
+        # Pair (4,7)  [y0 computed AFTER all pairs that read x0]
         self.b()
         self.c("Pair (4,7)")
         self.o(f"{{ {T} Rr={self.fma('KP841253532','Tar',self.fma('KP415415013','Tgr',self.fnma('KP959492973','Tdr',self.fnma('KP142314838','T7r',self.fnma('KP654860733','T4r','x0_re')))))};")
@@ -688,6 +687,12 @@ class Emitter:
         else:
             self.o(f"  {y9}_re={self.add('Rr','Sr')}; {y9}_im={self.add('Ri','Si')};")
             self.o(f"  {y2}_re={self.sub('Rr','Sr')}; {y2}_im={self.sub('Ri','Si')}; }}")
+
+        # y0 = x0 + T4 + T7 + Ta + Td + Tg — LAST, after all pairs that read x0
+        self.b()
+        y0 = out_names[0]
+        self.o(f"{y0}_re={self.add('x0_re',self.add('T4r',self.add('T7r',self.add('Tar',self.add('Tdr','Tgr')))))};")
+        self.o(f"{y0}_im={self.add('x0_im',self.add('T4i',self.add('T7i',self.add('Tai',self.add('Tdi','Tgi')))))};")
 
 
 # ================================================================

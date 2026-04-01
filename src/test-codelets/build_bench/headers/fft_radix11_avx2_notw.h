@@ -108,9 +108,7 @@ radix11_n1_dit_kernel_fwd_avx2(
         _mm256_store_pd(&spill_re[4*4],Tmr);
         _mm256_store_pd(&spill_im[4*4],Tmi);
 
-        /* Phase 2 — y0 and 5 R (cosine) terms */
-        x0_re=_mm256_add_pd(x0_re,_mm256_add_pd(T4r,_mm256_add_pd(T7r,_mm256_add_pd(Tar,_mm256_add_pd(Tdr,Tgr)))));
-        x0_im=_mm256_add_pd(x0_im,_mm256_add_pd(T4i,_mm256_add_pd(T7i,_mm256_add_pd(Tai,_mm256_add_pd(Tdi,Tgi)))));
+        /* Phase 2 — 5 R (cosine) terms THEN y0 (compute R before overwriting x0) */
         Thr=_mm256_fmadd_pd(KP841253532,Tar,_mm256_fmadd_pd(KP415415013,Tgr,_mm256_fnmadd_pd(KP959492973,Tdr,_mm256_fnmadd_pd(KP142314838,T7r,_mm256_fnmadd_pd(KP654860733,T4r,x0_re)))));
         Thi=_mm256_fmadd_pd(KP841253532,Tai,_mm256_fmadd_pd(KP415415013,Tgi,_mm256_fnmadd_pd(KP959492973,Tdi,_mm256_fnmadd_pd(KP142314838,T7i,_mm256_fnmadd_pd(KP654860733,T4i,x0_im)))));
         Tur=_mm256_fmadd_pd(KP841253532,T7r,_mm256_fmadd_pd(KP415415013,Tdr,_mm256_fnmadd_pd(KP142314838,Tgr,_mm256_fnmadd_pd(KP654860733,Tar,_mm256_fnmadd_pd(KP959492973,T4r,x0_re)))));
@@ -121,6 +119,8 @@ radix11_n1_dit_kernel_fwd_avx2(
         Tqi=_mm256_fmadd_pd(KP841253532,T4i,_mm256_fmadd_pd(KP415415013,T7i,_mm256_fnmadd_pd(KP959492973,Tgi,_mm256_fnmadd_pd(KP654860733,Tdi,_mm256_fnmadd_pd(KP142314838,Tai,x0_im)))));
         Tor=_mm256_fmadd_pd(KP415415013,T4r,_mm256_fmadd_pd(KP841253532,Tgr,_mm256_fnmadd_pd(KP142314838,Tdr,_mm256_fnmadd_pd(KP959492973,Tar,_mm256_fnmadd_pd(KP654860733,T7r,x0_re)))));
         Toi=_mm256_fmadd_pd(KP415415013,T4i,_mm256_fmadd_pd(KP841253532,Tgi,_mm256_fnmadd_pd(KP142314838,Tdi,_mm256_fnmadd_pd(KP959492973,Tai,_mm256_fnmadd_pd(KP654860733,T7i,x0_im)))));
+        x0_re=_mm256_add_pd(x0_re,_mm256_add_pd(T4r,_mm256_add_pd(T7r,_mm256_add_pd(Tar,_mm256_add_pd(Tdr,Tgr)))));
+        x0_im=_mm256_add_pd(x0_im,_mm256_add_pd(T4i,_mm256_add_pd(T7i,_mm256_add_pd(Tai,_mm256_add_pd(Tdi,Tgi)))));
         /* Spill R terms Th,Tu,Ts,Tq,To (slots 5-9) */
         _mm256_store_pd(&spill_re[5*4],Thr);
         _mm256_store_pd(&spill_im[5*4],Thi);
@@ -289,9 +289,7 @@ radix11_n1_dit_kernel_bwd_avx2(
         _mm256_store_pd(&spill_re[4*4],Tmr);
         _mm256_store_pd(&spill_im[4*4],Tmi);
 
-        /* Phase 2 — y0 and 5 R (cosine) terms */
-        x0_re=_mm256_add_pd(x0_re,_mm256_add_pd(T4r,_mm256_add_pd(T7r,_mm256_add_pd(Tar,_mm256_add_pd(Tdr,Tgr)))));
-        x0_im=_mm256_add_pd(x0_im,_mm256_add_pd(T4i,_mm256_add_pd(T7i,_mm256_add_pd(Tai,_mm256_add_pd(Tdi,Tgi)))));
+        /* Phase 2 — 5 R (cosine) terms THEN y0 (compute R before overwriting x0) */
         Thr=_mm256_fmadd_pd(KP841253532,Tar,_mm256_fmadd_pd(KP415415013,Tgr,_mm256_fnmadd_pd(KP959492973,Tdr,_mm256_fnmadd_pd(KP142314838,T7r,_mm256_fnmadd_pd(KP654860733,T4r,x0_re)))));
         Thi=_mm256_fmadd_pd(KP841253532,Tai,_mm256_fmadd_pd(KP415415013,Tgi,_mm256_fnmadd_pd(KP959492973,Tdi,_mm256_fnmadd_pd(KP142314838,T7i,_mm256_fnmadd_pd(KP654860733,T4i,x0_im)))));
         Tur=_mm256_fmadd_pd(KP841253532,T7r,_mm256_fmadd_pd(KP415415013,Tdr,_mm256_fnmadd_pd(KP142314838,Tgr,_mm256_fnmadd_pd(KP654860733,Tar,_mm256_fnmadd_pd(KP959492973,T4r,x0_re)))));
@@ -302,6 +300,8 @@ radix11_n1_dit_kernel_bwd_avx2(
         Tqi=_mm256_fmadd_pd(KP841253532,T4i,_mm256_fmadd_pd(KP415415013,T7i,_mm256_fnmadd_pd(KP959492973,Tgi,_mm256_fnmadd_pd(KP654860733,Tdi,_mm256_fnmadd_pd(KP142314838,Tai,x0_im)))));
         Tor=_mm256_fmadd_pd(KP415415013,T4r,_mm256_fmadd_pd(KP841253532,Tgr,_mm256_fnmadd_pd(KP142314838,Tdr,_mm256_fnmadd_pd(KP959492973,Tar,_mm256_fnmadd_pd(KP654860733,T7r,x0_re)))));
         Toi=_mm256_fmadd_pd(KP415415013,T4i,_mm256_fmadd_pd(KP841253532,Tgi,_mm256_fnmadd_pd(KP142314838,Tdi,_mm256_fnmadd_pd(KP959492973,Tai,_mm256_fnmadd_pd(KP654860733,T7i,x0_im)))));
+        x0_re=_mm256_add_pd(x0_re,_mm256_add_pd(T4r,_mm256_add_pd(T7r,_mm256_add_pd(Tar,_mm256_add_pd(Tdr,Tgr)))));
+        x0_im=_mm256_add_pd(x0_im,_mm256_add_pd(T4i,_mm256_add_pd(T7i,_mm256_add_pd(Tai,_mm256_add_pd(Tdi,Tgi)))));
         /* Spill R terms Th,Tu,Ts,Tq,To (slots 5-9) */
         _mm256_store_pd(&spill_re[5*4],Thr);
         _mm256_store_pd(&spill_im[5*4],Thi);
@@ -473,9 +473,7 @@ radix11_n1sv_kernel_fwd_avx2(
     _mm256_store_pd(&spill_re[4*4],Tmr);
     _mm256_store_pd(&spill_im[4*4],Tmi);
 
-    /* Phase 2 — y0 and 5 R (cosine) terms */
-    x0_re=_mm256_add_pd(x0_re,_mm256_add_pd(T4r,_mm256_add_pd(T7r,_mm256_add_pd(Tar,_mm256_add_pd(Tdr,Tgr)))));
-    x0_im=_mm256_add_pd(x0_im,_mm256_add_pd(T4i,_mm256_add_pd(T7i,_mm256_add_pd(Tai,_mm256_add_pd(Tdi,Tgi)))));
+    /* Phase 2 — 5 R (cosine) terms THEN y0 (compute R before overwriting x0) */
     Thr=_mm256_fmadd_pd(KP841253532,Tar,_mm256_fmadd_pd(KP415415013,Tgr,_mm256_fnmadd_pd(KP959492973,Tdr,_mm256_fnmadd_pd(KP142314838,T7r,_mm256_fnmadd_pd(KP654860733,T4r,x0_re)))));
     Thi=_mm256_fmadd_pd(KP841253532,Tai,_mm256_fmadd_pd(KP415415013,Tgi,_mm256_fnmadd_pd(KP959492973,Tdi,_mm256_fnmadd_pd(KP142314838,T7i,_mm256_fnmadd_pd(KP654860733,T4i,x0_im)))));
     Tur=_mm256_fmadd_pd(KP841253532,T7r,_mm256_fmadd_pd(KP415415013,Tdr,_mm256_fnmadd_pd(KP142314838,Tgr,_mm256_fnmadd_pd(KP654860733,Tar,_mm256_fnmadd_pd(KP959492973,T4r,x0_re)))));
@@ -486,6 +484,8 @@ radix11_n1sv_kernel_fwd_avx2(
     Tqi=_mm256_fmadd_pd(KP841253532,T4i,_mm256_fmadd_pd(KP415415013,T7i,_mm256_fnmadd_pd(KP959492973,Tgi,_mm256_fnmadd_pd(KP654860733,Tdi,_mm256_fnmadd_pd(KP142314838,Tai,x0_im)))));
     Tor=_mm256_fmadd_pd(KP415415013,T4r,_mm256_fmadd_pd(KP841253532,Tgr,_mm256_fnmadd_pd(KP142314838,Tdr,_mm256_fnmadd_pd(KP959492973,Tar,_mm256_fnmadd_pd(KP654860733,T7r,x0_re)))));
     Toi=_mm256_fmadd_pd(KP415415013,T4i,_mm256_fmadd_pd(KP841253532,Tgi,_mm256_fnmadd_pd(KP142314838,Tdi,_mm256_fnmadd_pd(KP959492973,Tai,_mm256_fnmadd_pd(KP654860733,T7i,x0_im)))));
+    x0_re=_mm256_add_pd(x0_re,_mm256_add_pd(T4r,_mm256_add_pd(T7r,_mm256_add_pd(Tar,_mm256_add_pd(Tdr,Tgr)))));
+    x0_im=_mm256_add_pd(x0_im,_mm256_add_pd(T4i,_mm256_add_pd(T7i,_mm256_add_pd(Tai,_mm256_add_pd(Tdi,Tgi)))));
     /* Spill R terms Th,Tu,Ts,Tq,To (slots 5-9) */
     _mm256_store_pd(&spill_re[5*4],Thr);
     _mm256_store_pd(&spill_im[5*4],Thi);
@@ -654,9 +654,7 @@ radix11_n1sv_kernel_bwd_avx2(
     _mm256_store_pd(&spill_re[4*4],Tmr);
     _mm256_store_pd(&spill_im[4*4],Tmi);
 
-    /* Phase 2 — y0 and 5 R (cosine) terms */
-    x0_re=_mm256_add_pd(x0_re,_mm256_add_pd(T4r,_mm256_add_pd(T7r,_mm256_add_pd(Tar,_mm256_add_pd(Tdr,Tgr)))));
-    x0_im=_mm256_add_pd(x0_im,_mm256_add_pd(T4i,_mm256_add_pd(T7i,_mm256_add_pd(Tai,_mm256_add_pd(Tdi,Tgi)))));
+    /* Phase 2 — 5 R (cosine) terms THEN y0 (compute R before overwriting x0) */
     Thr=_mm256_fmadd_pd(KP841253532,Tar,_mm256_fmadd_pd(KP415415013,Tgr,_mm256_fnmadd_pd(KP959492973,Tdr,_mm256_fnmadd_pd(KP142314838,T7r,_mm256_fnmadd_pd(KP654860733,T4r,x0_re)))));
     Thi=_mm256_fmadd_pd(KP841253532,Tai,_mm256_fmadd_pd(KP415415013,Tgi,_mm256_fnmadd_pd(KP959492973,Tdi,_mm256_fnmadd_pd(KP142314838,T7i,_mm256_fnmadd_pd(KP654860733,T4i,x0_im)))));
     Tur=_mm256_fmadd_pd(KP841253532,T7r,_mm256_fmadd_pd(KP415415013,Tdr,_mm256_fnmadd_pd(KP142314838,Tgr,_mm256_fnmadd_pd(KP654860733,Tar,_mm256_fnmadd_pd(KP959492973,T4r,x0_re)))));
@@ -667,6 +665,8 @@ radix11_n1sv_kernel_bwd_avx2(
     Tqi=_mm256_fmadd_pd(KP841253532,T4i,_mm256_fmadd_pd(KP415415013,T7i,_mm256_fnmadd_pd(KP959492973,Tgi,_mm256_fnmadd_pd(KP654860733,Tdi,_mm256_fnmadd_pd(KP142314838,Tai,x0_im)))));
     Tor=_mm256_fmadd_pd(KP415415013,T4r,_mm256_fmadd_pd(KP841253532,Tgr,_mm256_fnmadd_pd(KP142314838,Tdr,_mm256_fnmadd_pd(KP959492973,Tar,_mm256_fnmadd_pd(KP654860733,T7r,x0_re)))));
     Toi=_mm256_fmadd_pd(KP415415013,T4i,_mm256_fmadd_pd(KP841253532,Tgi,_mm256_fnmadd_pd(KP142314838,Tdi,_mm256_fnmadd_pd(KP959492973,Tai,_mm256_fnmadd_pd(KP654860733,T7i,x0_im)))));
+    x0_re=_mm256_add_pd(x0_re,_mm256_add_pd(T4r,_mm256_add_pd(T7r,_mm256_add_pd(Tar,_mm256_add_pd(Tdr,Tgr)))));
+    x0_im=_mm256_add_pd(x0_im,_mm256_add_pd(T4i,_mm256_add_pd(T7i,_mm256_add_pd(Tai,_mm256_add_pd(Tdi,Tgi)))));
     /* Spill R terms Th,Tu,Ts,Tq,To (slots 5-9) */
     _mm256_store_pd(&spill_re[5*4],Thr);
     _mm256_store_pd(&spill_im[5*4],Thi);
