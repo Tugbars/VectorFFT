@@ -336,20 +336,28 @@ class Emitter:
 
         # ---- Phase 2: y0 and cosine (R) terms using {x0,a,b,c} ----
         self.b()
-        self.c("Phase 2 — y0 + cosine R terms (compute R before overwriting x0)")
+        self.c("Phase 2 — R-term first level + y0 + R completion")
 
-        # Compute R1,R2,R3 FIRST (using original x0), then overwrite x0 with y0.
-        # R1 = x0 + KP623*a - KP222*b - KP900*c
-        self.o(f"R1r={self.fma('KP623','ar',self.fnma('KP222','br',self.fnma('KP900','cr','x0_re')))};")
-        self.o(f"R1i={self.fma('KP623','ai',self.fnma('KP222','bi',self.fnma('KP900','ci','x0_im')))};")
+        # R-term depth reduction: compute 3 independent seeds from x0 first.
+        # t1 = x0 - KP900*c,  t2 = x0 - KP222*a,  t3 = x0 - KP900*a
+        # These are independent and issue on all FMA ports simultaneously.
+        # Then R1/R2/R3 each need only depth 2 from their seed (not depth 3 from x0).
+        self.c("3 independent R seeds from x0 (critical path: 1 FMA latency)")
+        self.o(f"{{ {T} t1r={self.fnma('KP900','cr','x0_re')}, t1i={self.fnma('KP900','ci','x0_im')};")
+        self.o(f"  {T} t2r={self.fnma('KP222','ar','x0_re')}, t2i={self.fnma('KP222','ai','x0_im')};")
+        self.o(f"  {T} t3r={self.fnma('KP900','ar','x0_re')}, t3i={self.fnma('KP900','ai','x0_im')};")
 
-        # R2 = x0 - KP222*a - KP900*b + KP623*c
-        self.o(f"R2r={self.fma('KP623','cr',self.fnma('KP900','br',self.fnma('KP222','ar','x0_re')))};")
-        self.o(f"R2i={self.fma('KP623','ci',self.fnma('KP900','bi',self.fnma('KP222','ai','x0_im')))};")
+        # R1 = KP623*a + (x0 - KP900*c - KP222*b) = fma(KP623, a, fnma(KP222, b, t1))
+        self.o(f"  R1r={self.fma('KP623','ar',self.fnma('KP222','br','t1r'))};")
+        self.o(f"  R1i={self.fma('KP623','ai',self.fnma('KP222','bi','t1i'))};")
 
-        # R3 = x0 - KP900*a + KP623*b - KP222*c
-        self.o(f"R3r={self.fnma('KP222','cr',self.fma('KP623','br',self.fnma('KP900','ar','x0_re')))};")
-        self.o(f"R3i={self.fnma('KP222','ci',self.fma('KP623','bi',self.fnma('KP900','ai','x0_im')))};")
+        # R2 = KP623*c + (x0 - KP222*a - KP900*b) = fma(KP623, c, fnma(KP900, b, t2))
+        self.o(f"  R2r={self.fma('KP623','cr',self.fnma('KP900','br','t2r'))};")
+        self.o(f"  R2i={self.fma('KP623','ci',self.fnma('KP900','bi','t2i'))};")
+
+        # R3 = KP623*b + (x0 - KP900*a - KP222*c) = fnma(KP222, c, fma(KP623, b, t3))
+        self.o(f"  R3r={self.fnma('KP222','cr',self.fma('KP623','br','t3r'))};")
+        self.o(f"  R3i={self.fnma('KP222','ci',self.fma('KP623','bi','t3i'))}; }}")
 
         # y0 = x0 + a + b + c  (overwrite x0 now that R terms are computed)
         y0 = out_names[0]
