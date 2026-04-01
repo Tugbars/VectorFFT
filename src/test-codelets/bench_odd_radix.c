@@ -62,6 +62,11 @@
 #include "fft_radix20_avx2_dit_tw.h"
 #include "fft_radix20_avx2_dit_tw_log3.h"
 
+/* ── R=12 codelets: 4x3 CT composite, gen_radix12.py ── */
+#include "fft_radix12_avx2_notw.h"
+#include "fft_radix12_avx2_dit_tw.h"
+#include "fft_radix12_avx2_dit_tw_log3.h"
+
 /* ── Function types ── */
 typedef void (*notw_fn)(const double*, const double*, double*, double*, size_t);
 typedef void (*tw_fn)(const double*, const double*, double*, double*,
@@ -385,6 +390,12 @@ int main(void) {
         (notw_fn)radix20_n1_dit_kernel_fwd_avx2,
         (tw_fn)radix20_tw_flat_dit_kernel_fwd_avx2,
         (tw_fn)radix20_tw_log3_dit_kernel_fwd_avx2);
+
+    /* R=12: 4x3 CT composite codelet */
+    fail |= bench_radix(12, "AVX2 (4x3 CT)",
+        (notw_fn)radix12_n1_dit_kernel_fwd_avx2,
+        (tw_fn)radix12_tw_flat_dit_kernel_fwd_avx2,
+        (tw_fn)radix12_tw_log3_dit_kernel_fwd_avx2);
 
     /* CT end-to-end (n1_ovs + t1_dit) deferred to production executor.
      * Odd-R CT requires mixed radixes: e.g. pow2_n1_ovs + radix5_t1_dit.
