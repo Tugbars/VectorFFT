@@ -22,10 +22,10 @@
  * Odd-R CT requires mixed radixes: e.g. pow2_n1_ovs + radix5_t1_dit.
  * The standalone codelet bench above validates the butterfly math. */
 
-/* ── R=3 codelets (uncomment when gen_radix3.py is ready) ── */
-/* #include "fft_radix3_avx2_notw.h"      */
-/* #include "fft_radix3_avx2_dit_tw.h"     */
-/* #include "fft_radix3_avx2_dit_tw_log3.h" */
+/* ── R=3 codelets ── */
+#include "fft_radix3_avx2_notw.h"
+#include "fft_radix3_avx2_dit_tw.h"
+#include "fft_radix3_avx2_dit_tw_log3.h"
 
 /* ── R=7 codelets: Sethi-Ullman scheduled, gen_radix7.py ── */
 #include "fft_radix7_avx2_notw.h"
@@ -308,12 +308,11 @@ int main(void) {
         (tw_fn)radix5_tw_flat_dit_kernel_fwd_avx2,
         (tw_fn)radix5_tw_log3_dit_kernel_fwd_avx2);
 
-    /* R=3 — uncomment when gen_radix3.py is ready
+    /* R=3 */
     fail |= bench_radix(3, "AVX2",
         (notw_fn)radix3_n1_dit_kernel_fwd_avx2,
         (tw_fn)radix3_tw_flat_dit_kernel_fwd_avx2,
         (tw_fn)radix3_tw_log3_dit_kernel_fwd_avx2);
-    */
 
     /* R=7: Sethi-Ullman scheduled, flat + log3 */
     fail |= bench_radix(7, "AVX2",
