@@ -34,6 +34,8 @@ python "%SCRIPT_DIR%gen_radix4.py" avx2 > "%HDR_DIR%\fft_radix4_avx2.h" 2>nul
 python "%SCRIPT_DIR%gen_radix5.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix5_avx2_ct_n1.h" 2>nul
 python "%SCRIPT_DIR%gen_radix5.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix5_avx2_ct_t1_dit.h" 2>nul
 python "%SCRIPT_DIR%gen_radix6.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix6_avx2_ct_n1.h" 2>nul
+python "%SCRIPT_DIR%gen_radix7.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix7_avx2_ct_n1.h" 2>nul
+python "%SCRIPT_DIR%gen_radix11.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix11_avx2_ct_n1.h" 2>nul
 
 echo   Headers generated.
 echo.
