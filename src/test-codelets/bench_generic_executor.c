@@ -17,6 +17,9 @@
 #include "fft_radix4_avx2.h"
 #include "fft_radix5_avx2_ct_n1.h"
 #include "fft_radix5_avx2_ct_t1_dit.h"
+#include "fft_radix6_avx2_ct_n1.h"
+#include "fft_radix7_avx2_ct_n1.h"
+#include "fft_radix11_avx2_ct_n1.h"
 
 /* R=4 stride n1 (inline, same as bench_stride_executor.c) */
 __attribute__((target("avx2,fma")))
@@ -547,7 +550,7 @@ int main(void) {
         fail |= test_N("3x4x5", 60, factors, 3, n1f, n1b, t1f, t1b);
     }
 
-    /* N=120 = 3x4x5x2 */
+    /* N=120 = 3x4x5x2 (4 stages) */
     {
         int factors[] = {3, 4, 5, 2};
         stride_n1_fn n1f[] = {(stride_n1_fn)radix3_n1_fwd_avx2, (stride_n1_fn)radix4_n1_stride_fwd_avx2, (stride_n1_fn)radix5_n1_fwd_avx2, (stride_n1_fn)radix2_n1_stride_fwd_avx2};
@@ -555,6 +558,43 @@ int main(void) {
         stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix4_t1_dit_fwd_avx2, (stride_t1_fn)radix5_t1_dit_fwd_avx2, null_t1};
         stride_t1_fn t1b[] = {null_t1, (stride_t1_fn)radix4_t1_dit_bwd_avx2, (stride_t1_fn)radix5_t1_dit_bwd_avx2, null_t1};
         fail |= test_N("3x4x5x2", 120, factors, 4, n1f, n1b, t1f, t1b);
+    }
+
+    /* Standalone R=6 n1 correctness (isolate codelet bug) */
+    {
+        size_t K = 128;
+        size_t total = 6 * K;
+        double *ir = aligned_alloc(64, total*8), *ii = aligned_alloc(64, total*8);
+        double *or1 = aligned_alloc(64, total*8), *oi1 = aligned_alloc(64, total*8);
+        double *or2 = fftw_malloc(total*8), *oi2 = fftw_malloc(total*8);
+        for (size_t i=0;i<total;i++) { ir[i]=(double)rand()/RAND_MAX-0.5; ii[i]=(double)rand()/RAND_MAX-0.5; }
+        radix6_n1_fwd_avx2(ir,ii,or1,oi1, K,K,K);
+        double *ft1=fftw_malloc(total*8),*ft2=fftw_malloc(total*8);
+        memcpy(ft1,ir,total*8); memcpy(ft2,ii,total*8);
+        fftw_iodim dim={.n=6,.is=(int)K,.os=(int)K};
+        fftw_iodim howm={.n=(int)K,.is=1,.os=1};
+        fftw_plan fp=fftw_plan_guru_split_dft(1,&dim,1,&howm,ft1,ft2,or2,oi2,FFTW_ESTIMATE);
+        fftw_execute_split_dft(fp,ir,ii,or2,oi2);
+        fftw_destroy_plan(fp); fftw_free(ft1); fftw_free(ft2);
+        double merr=0;
+        for(size_t i=0;i<total;i++){
+            double e=fabs(or1[i]-or2[i])+fabs(oi1[i]-oi2[i]);
+            if(e>merr)merr=e;
+        }
+        printf("Standalone R=6 n1 K=%zu: err=%.2e %s\n\n", K, merr, merr<1e-10?"OK":"FAIL");
+        if(merr>=1e-10) { printf("R=6 CODELET BUG\n"); fail=1; }
+        aligned_free(ir);aligned_free(ii);aligned_free(or1);aligned_free(oi1);
+        fftw_free(or2);fftw_free(oi2);
+    }
+
+    /* N=120 = 6x4x5 (3 stages — R=6 absorbs 2*3, one fewer stage) */
+    {
+        int factors[] = {6, 4, 5};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix6_n1_fwd_avx2, (stride_n1_fn)radix4_n1_stride_fwd_avx2, (stride_n1_fn)radix5_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix6_n1_bwd_avx2, (stride_n1_fn)radix4_n1_stride_bwd_avx2, (stride_n1_fn)radix5_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix4_t1_dit_fwd_avx2, (stride_t1_fn)radix5_t1_dit_fwd_avx2};
+        stride_t1_fn t1b[] = {null_t1, (stride_t1_fn)radix4_t1_dit_bwd_avx2, (stride_t1_fn)radix5_t1_dit_bwd_avx2};
+        fail |= test_N("6x4x5", 120, factors, 3, n1f, n1b, t1f, t1b);
     }
 
     if (fail) printf("\n*** SOME TESTS FAILED ***\n");
