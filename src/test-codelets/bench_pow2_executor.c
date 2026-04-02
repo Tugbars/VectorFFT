@@ -12,89 +12,15 @@
 #include <fftw3.h>
 #include "bench_compat.h"
 
-/* Stride-based n1 codelets */
-#include "fft_radix3_avx2_ct_n1.h"
+/* n1 codelets */
+#include "fft_radix2_avx2.h"
 #include "fft_radix4_avx2.h"
-#include "fft_radix5_avx2_ct_n1.h"
-#include "fft_radix5_avx2_ct_t1_dit.h"
 #include "fft_radix16_avx2_ct_n1.h"
+#include "fft_radix16_avx2_ct_t1_dit.h"
 #include "fft_radix32_avx2_ct_n1.h"
+#include "fft_radix32_avx2_ct_t1_dit.h"
 #include "fft_radix64_avx2_ct_n1.h"
-
-/* Inline R=2 and R=4 stride n1 */
-__attribute__((target("avx2,fma")))
-static void radix2_n1_stride_fwd_avx2(
-    const double *in_re, const double *in_im,
-    double *out_re, double *out_im,
-    size_t is, size_t os, size_t vl) {
-    (void)in_re; (void)in_im;
-    for (size_t k = 0; k < vl; k += 4) {
-        __m256d r0=_mm256_load_pd(&out_re[k]),      i0=_mm256_load_pd(&out_im[k]);
-        __m256d r1=_mm256_load_pd(&out_re[k+os]),   i1=_mm256_load_pd(&out_im[k+os]);
-        _mm256_store_pd(&out_re[k],      _mm256_add_pd(r0,r1));
-        _mm256_store_pd(&out_im[k],      _mm256_add_pd(i0,i1));
-        _mm256_store_pd(&out_re[k+os],   _mm256_sub_pd(r0,r1));
-        _mm256_store_pd(&out_im[k+os],   _mm256_sub_pd(i0,i1));
-    }
-}
-__attribute__((target("avx2,fma")))
-static void radix2_n1_stride_bwd_avx2(
-    const double *in_re, const double *in_im,
-    double *out_re, double *out_im,
-    size_t is, size_t os, size_t vl) {
-    radix2_n1_stride_fwd_avx2(in_re,in_im,out_re,out_im,is,os,vl);
-}
-
-__attribute__((target("avx2,fma")))
-static void radix4_n1_stride_fwd_avx2(
-    const double *in_re, const double *in_im,
-    double *out_re, double *out_im,
-    size_t is, size_t os, size_t vl) {
-    (void)in_re; (void)in_im;
-    for (size_t k = 0; k < vl; k += 4) {
-        __m256d r0=_mm256_load_pd(&out_re[k+0*os]),i0=_mm256_load_pd(&out_im[k+0*os]);
-        __m256d r1=_mm256_load_pd(&out_re[k+1*os]),i1=_mm256_load_pd(&out_im[k+1*os]);
-        __m256d r2=_mm256_load_pd(&out_re[k+2*os]),i2=_mm256_load_pd(&out_im[k+2*os]);
-        __m256d r3=_mm256_load_pd(&out_re[k+3*os]),i3=_mm256_load_pd(&out_im[k+3*os]);
-        __m256d sr=_mm256_add_pd(r0,r2),si=_mm256_add_pd(i0,i2);
-        __m256d dr=_mm256_sub_pd(r0,r2),di=_mm256_sub_pd(i0,i2);
-        __m256d tr=_mm256_add_pd(r1,r3),ti=_mm256_add_pd(i1,i3);
-        __m256d ur=_mm256_sub_pd(r1,r3),ui=_mm256_sub_pd(i1,i3);
-        _mm256_store_pd(&out_re[k+0*os],_mm256_add_pd(sr,tr));
-        _mm256_store_pd(&out_im[k+0*os],_mm256_add_pd(si,ti));
-        _mm256_store_pd(&out_re[k+2*os],_mm256_sub_pd(sr,tr));
-        _mm256_store_pd(&out_im[k+2*os],_mm256_sub_pd(si,ti));
-        _mm256_store_pd(&out_re[k+1*os],_mm256_add_pd(dr,ui));
-        _mm256_store_pd(&out_im[k+1*os],_mm256_sub_pd(di,ur));
-        _mm256_store_pd(&out_re[k+3*os],_mm256_sub_pd(dr,ui));
-        _mm256_store_pd(&out_im[k+3*os],_mm256_add_pd(di,ur));
-    }
-}
-__attribute__((target("avx2,fma")))
-static void radix4_n1_stride_bwd_avx2(
-    const double *in_re, const double *in_im,
-    double *out_re, double *out_im,
-    size_t is, size_t os, size_t vl) {
-    (void)in_re; (void)in_im;
-    for (size_t k = 0; k < vl; k += 4) {
-        __m256d r0=_mm256_load_pd(&out_re[k+0*os]),i0=_mm256_load_pd(&out_im[k+0*os]);
-        __m256d r1=_mm256_load_pd(&out_re[k+1*os]),i1=_mm256_load_pd(&out_im[k+1*os]);
-        __m256d r2=_mm256_load_pd(&out_re[k+2*os]),i2=_mm256_load_pd(&out_im[k+2*os]);
-        __m256d r3=_mm256_load_pd(&out_re[k+3*os]),i3=_mm256_load_pd(&out_im[k+3*os]);
-        __m256d sr=_mm256_add_pd(r0,r2),si=_mm256_add_pd(i0,i2);
-        __m256d dr=_mm256_sub_pd(r0,r2),di=_mm256_sub_pd(i0,i2);
-        __m256d tr=_mm256_add_pd(r1,r3),ti=_mm256_add_pd(i1,i3);
-        __m256d ur=_mm256_sub_pd(r1,r3),ui=_mm256_sub_pd(i1,i3);
-        _mm256_store_pd(&out_re[k+0*os],_mm256_add_pd(sr,tr));
-        _mm256_store_pd(&out_im[k+0*os],_mm256_add_pd(si,ti));
-        _mm256_store_pd(&out_re[k+2*os],_mm256_sub_pd(sr,tr));
-        _mm256_store_pd(&out_im[k+2*os],_mm256_sub_pd(si,ti));
-        _mm256_store_pd(&out_re[k+1*os],_mm256_sub_pd(dr,ui));
-        _mm256_store_pd(&out_im[k+1*os],_mm256_add_pd(di,ur));
-        _mm256_store_pd(&out_re[k+3*os],_mm256_add_pd(dr,ui));
-        _mm256_store_pd(&out_im[k+3*os],_mm256_sub_pd(di,ur));
-    }
-}
+#include "fft_radix64_avx2_ct_t1_dit.h"
 
 static void null_t1(double *a, double *b, const double *c, const double *d,
                     size_t e, size_t f) {
@@ -282,9 +208,9 @@ int main(void) {
     /* Multi-stage: N=64 = 16x4 */
     {
         int f[] = {16, 4};
-        stride_n1_fn n1f[] = {(stride_n1_fn)radix16_n1_fwd_avx2, (stride_n1_fn)radix4_n1_stride_fwd_avx2};
-        stride_n1_fn n1b[] = {(stride_n1_fn)radix16_n1_bwd_avx2, (stride_n1_fn)radix4_n1_stride_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix16_n1_fwd_avx2, (stride_n1_fn)radix4_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix16_n1_bwd_avx2, (stride_n1_fn)radix4_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix4_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1};
         fail |= test_N("16x4", 64, f, 2, n1f, n1b, t1f, t1b);
     }
@@ -292,9 +218,9 @@ int main(void) {
     /* N=128 = 32x4 */
     {
         int f[] = {32, 4};
-        stride_n1_fn n1f[] = {(stride_n1_fn)radix32_n1_fwd_avx2, (stride_n1_fn)radix4_n1_stride_fwd_avx2};
-        stride_n1_fn n1b[] = {(stride_n1_fn)radix32_n1_bwd_avx2, (stride_n1_fn)radix4_n1_stride_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix32_n1_fwd_avx2, (stride_n1_fn)radix4_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix32_n1_bwd_avx2, (stride_n1_fn)radix4_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix4_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1};
         fail |= test_N("32x4", 128, f, 2, n1f, n1b, t1f, t1b);
     }
@@ -302,9 +228,9 @@ int main(void) {
     /* N=256 = 64x4 */
     {
         int f[] = {64, 4};
-        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix4_n1_stride_fwd_avx2};
-        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix4_n1_stride_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix4_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix4_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix4_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1};
         fail |= test_N("64x4", 256, f, 2, n1f, n1b, t1f, t1b);
     }
@@ -312,9 +238,9 @@ int main(void) {
     /* N=512 = 64x4x2 */
     {
         int f[] = {64, 4, 2};
-        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix4_n1_stride_fwd_avx2, (stride_n1_fn)radix2_n1_stride_fwd_avx2};
-        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix4_n1_stride_bwd_avx2, (stride_n1_fn)radix2_n1_stride_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1, null_t1};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix4_n1_fwd_avx2, (stride_n1_fn)radix2_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix4_n1_bwd_avx2, (stride_n1_fn)radix2_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix4_t1_dit_fwd_avx2, (stride_t1_fn)radix2_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1, null_t1};
         fail |= test_N("64x4x2", 512, f, 3, n1f, n1b, t1f, t1b);
     }
@@ -324,7 +250,7 @@ int main(void) {
         int f[] = {64, 16};
         stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix16_n1_fwd_avx2};
         stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix16_n1_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix16_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1};
         fail |= test_N("64x16", 1024, f, 2, n1f, n1b, t1f, t1b);
     }
@@ -334,7 +260,7 @@ int main(void) {
         int f[] = {64, 32};
         stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix32_n1_fwd_avx2};
         stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix32_n1_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix32_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1};
         fail |= test_N("64x32", 2048, f, 2, n1f, n1b, t1f, t1b);
     }
@@ -344,7 +270,7 @@ int main(void) {
         int f[] = {64, 64};
         stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix64_n1_fwd_avx2};
         stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix64_n1_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix64_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1};
         fail |= test_N("64x64", 4096, f, 2, n1f, n1b, t1f, t1b);
     }
@@ -352,9 +278,9 @@ int main(void) {
     /* N=8192 = 64x64x2 */
     {
         int f[] = {64, 64, 2};
-        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix2_n1_stride_fwd_avx2};
-        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix2_n1_stride_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1, null_t1};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix2_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix2_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix64_t1_dit_fwd_avx2, (stride_t1_fn)radix2_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1, null_t1};
         fail |= test_N("64x64x2", 8192, f, 3, n1f, n1b, t1f, t1b);
     }
@@ -362,9 +288,9 @@ int main(void) {
     /* N=16384 = 64x64x4 */
     {
         int f[] = {64, 64, 4};
-        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix4_n1_stride_fwd_avx2};
-        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix4_n1_stride_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1, null_t1};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix4_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix4_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix64_t1_dit_fwd_avx2, (stride_t1_fn)radix4_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1, null_t1};
         fail |= test_N("64x64x4", 16384, f, 3, n1f, n1b, t1f, t1b);
     }
@@ -374,7 +300,7 @@ int main(void) {
         int f[] = {64, 32, 16};
         stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix32_n1_fwd_avx2, (stride_n1_fn)radix16_n1_fwd_avx2};
         stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix32_n1_bwd_avx2, (stride_n1_fn)radix16_n1_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1, null_t1};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix32_t1_dit_fwd_avx2, (stride_t1_fn)radix16_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1, null_t1};
         fail |= test_N("64x32x16", 32768, f, 3, n1f, n1b, t1f, t1b);
     }
@@ -384,7 +310,7 @@ int main(void) {
         int f[] = {64, 64, 16};
         stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix16_n1_fwd_avx2};
         stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix16_n1_bwd_avx2};
-        stride_t1_fn t1f[] = {null_t1, null_t1, null_t1};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix64_t1_dit_fwd_avx2, (stride_t1_fn)radix16_t1_dit_fwd_avx2};
         stride_t1_fn t1b[] = {null_t1, null_t1, null_t1};
         fail |= test_N("64x64x16", 65536, f, 3, n1f, n1b, t1f, t1b);
     }

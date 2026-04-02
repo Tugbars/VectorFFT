@@ -340,6 +340,225 @@ static inline void folded_execute_fwd(const folded_plan_t *p, double *re, double
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+ * METHOD C: fully fused — combined twiddles baked into t1 table
+ *
+ * At plan time: tw_c[(j-1)*K + k] = common_factor * per_leg[j]
+ * At execute time: apply cf to leg 0 only (K muls), call t1_dit
+ * with combined table.
+ *
+ * Per-group twiddle table (not shared across groups).
+ * Memory: num_twiddled_groups * (R-1) * K * 16 bytes.
+ * ═══════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    int N;
+    int num_stages;
+    size_t K;
+    int factors[STRIDE_MAX_STAGES];
+
+    int radix[STRIDE_MAX_STAGES];
+    size_t stride[STRIDE_MAX_STAGES];
+    int num_groups[STRIDE_MAX_STAGES];
+    size_t *group_base[STRIDE_MAX_STAGES];
+
+    n1_fn n1_fwd[STRIDE_MAX_STAGES];
+    t1_dit_fn t1_fwd[STRIDE_MAX_STAGES];
+
+    /* Per-group: twiddle pointer + cf for leg 0 */
+    int *needs_tw[STRIDE_MAX_STAGES];      /* 0=n1, 1=t1 */
+    double **grp_tw_re[STRIDE_MAX_STAGES]; /* grp_tw_re[s][g] -> (R-1)*K table */
+    double **grp_tw_im[STRIDE_MAX_STAGES];
+    double *cf0_re[STRIDE_MAX_STAGES];     /* cf for leg 0 only (scalar per group) */
+    double *cf0_im[STRIDE_MAX_STAGES];
+    double *tw_pool[STRIDE_MAX_STAGES];    /* single alloc per stage */
+    double *tw_pool_im[STRIDE_MAX_STAGES];
+} fused_plan_t;
+
+static fused_plan_t *fused_plan_create(int N, size_t K, const int *factors, int nf,
+                                        n1_fn *n1_fwd_table, t1_dit_fn *t1_fwd_table) {
+    fused_plan_t *p = (fused_plan_t*)calloc(1, sizeof(*p));
+    p->N = N; p->K = K; p->num_stages = nf;
+    memcpy(p->factors, factors, nf * sizeof(int));
+
+    size_t dim_stride[STRIDE_MAX_STAGES];
+    { size_t acc = K; for (int d = nf-1; d >= 0; d--) { dim_stride[d] = acc; acc *= factors[d]; } }
+
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        p->radix[s] = R;
+        p->stride[s] = dim_stride[s];
+        p->num_groups[s] = N / R;
+        p->n1_fwd[s] = n1_fwd_table[s];
+        p->t1_fwd[s] = t1_fwd_table[s];
+
+        /* Group bases */
+        p->group_base[s] = (size_t*)malloc(p->num_groups[s] * sizeof(size_t));
+        {
+            int other_sizes[STRIDE_MAX_STAGES], n_other = 0;
+            size_t other_strides[STRIDE_MAX_STAGES];
+            for (int d = 0; d < nf; d++) {
+                if (d != s) { other_sizes[n_other] = factors[d]; other_strides[n_other] = dim_stride[d]; n_other++; }
+            }
+            int counter[STRIDE_MAX_STAGES]; memset(counter, 0, sizeof(counter));
+            for (int g = 0; g < p->num_groups[s]; g++) {
+                size_t base = 0;
+                for (int d = 0; d < n_other; d++) base += (size_t)counter[d] * other_strides[d];
+                p->group_base[s][g] = base;
+                for (int d = n_other-1; d >= 0; d--) { counter[d]++; if (counter[d] < other_sizes[d]) break; counter[d] = 0; }
+            }
+        }
+
+        int ng = p->num_groups[s];
+        p->needs_tw[s] = (int*)calloc(ng, sizeof(int));
+        p->grp_tw_re[s] = (double**)calloc(ng, sizeof(double*));
+        p->grp_tw_im[s] = (double**)calloc(ng, sizeof(double*));
+        p->cf0_re[s] = (double*)calloc(ng, sizeof(double));
+        p->cf0_im[s] = (double*)calloc(ng, sizeof(double));
+
+        if (s == 0) continue; /* stage 0: no twiddles */
+
+        int S_s = 1;
+        for (int d = s+1; d < nf; d++) S_s *= factors[d];
+        int ow_prev = 1;
+        for (int d = 0; d < s-1; d++) ow_prev *= factors[d];
+
+        /* Count twiddled groups for pool allocation */
+        int n_tw_groups = 0;
+        {
+            int other_sizes[STRIDE_MAX_STAGES]; int n_other = 0;
+            for (int d = 0; d < nf; d++) if (d != s) other_sizes[n_other++] = factors[d];
+            int counter[STRIDE_MAX_STAGES]; memset(counter, 0, sizeof(counter));
+            for (int g = 0; g < ng; g++) {
+                int k_prev = 0;
+                { int ci = 0; for (int d = 0; d < nf; d++) { if (d == s) continue; if (d == s-1) k_prev = counter[ci]; ci++; } }
+                if (k_prev != 0) n_tw_groups++;
+                for (int d = n_other-1; d >= 0; d--) { counter[d]++; if (counter[d] < other_sizes[d]) break; counter[d] = 0; }
+            }
+        }
+
+        /* Single pool alloc for all twiddled groups in this stage */
+        size_t per_grp = (size_t)(R-1) * K;
+        if (n_tw_groups > 0) {
+            p->tw_pool[s] = (double*)aligned_alloc(64, (size_t)n_tw_groups * per_grp * sizeof(double));
+            p->tw_pool_im[s] = (double*)aligned_alloc(64, (size_t)n_tw_groups * per_grp * sizeof(double));
+        }
+
+        /* Fill per-group combined twiddles */
+        {
+            int other_sizes[STRIDE_MAX_STAGES]; int n_other = 0;
+            for (int d = 0; d < nf; d++) if (d != s) other_sizes[n_other++] = factors[d];
+            int counter[STRIDE_MAX_STAGES]; memset(counter, 0, sizeof(counter));
+            int tw_idx = 0;
+
+            for (int g = 0; g < ng; g++) {
+                int k_prev = 0, lower_data_pos = 0;
+                {
+                    int ci = 0;
+                    for (int d = 0; d < nf; d++) {
+                        if (d == s) continue;
+                        if (d == s-1) k_prev = counter[ci];
+                        if (d > s) {
+                            int w = 1; for (int d2 = d+1; d2 < nf; d2++) w *= factors[d2];
+                            lower_data_pos += counter[ci] * w;
+                        }
+                        ci++;
+                    }
+                }
+
+                if (k_prev == 0) {
+                    p->needs_tw[s][g] = 0;
+                    p->cf0_re[s][g] = 1.0;
+                    p->cf0_im[s][g] = 0.0;
+                } else {
+                    p->needs_tw[s][g] = 1;
+
+                    /* Common factor for leg 0 */
+                    int cf_exp = ((long long)k_prev * ow_prev * lower_data_pos) % N;
+                    double cf_angle = -2.0 * M_PI * (double)cf_exp / (double)N;
+                    double cfr = cos(cf_angle), cfi = sin(cf_angle);
+                    p->cf0_re[s][g] = cfr;
+                    p->cf0_im[s][g] = cfi;
+
+                    /* Combined twiddle for legs 1..R-1: cf * per_leg[j] */
+                    double *tw_r = p->tw_pool[s] + (size_t)tw_idx * per_grp;
+                    double *tw_i = p->tw_pool_im[s] + (size_t)tw_idx * per_grp;
+                    p->grp_tw_re[s][g] = tw_r;
+                    p->grp_tw_im[s][g] = tw_i;
+
+                    for (int j = 1; j < R; j++) {
+                        int leg_exp = ((long long)k_prev * ow_prev * j * S_s) % N;
+                        double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
+                        double lr = cos(leg_angle), li = sin(leg_angle);
+                        /* combined = cf * per_leg */
+                        double wr = cfr * lr - cfi * li;
+                        double wi = cfr * li + cfi * lr;
+                        size_t base_idx = (size_t)(j-1) * K;
+                        for (size_t kk = 0; kk < K; kk++) {
+                            tw_r[base_idx + kk] = wr;
+                            tw_i[base_idx + kk] = wi;
+                        }
+                    }
+                    tw_idx++;
+                }
+
+                for (int d = n_other-1; d >= 0; d--) { counter[d]++; if (counter[d] < other_sizes[d]) break; counter[d] = 0; }
+            }
+        }
+    }
+    return p;
+}
+
+static void fused_plan_destroy(fused_plan_t *p) {
+    for (int s = 0; s < p->num_stages; s++) {
+        free(p->group_base[s]);
+        free(p->needs_tw[s]);
+        free(p->grp_tw_re[s]);
+        free(p->grp_tw_im[s]);
+        free(p->cf0_re[s]);
+        free(p->cf0_im[s]);
+        if (p->tw_pool[s]) aligned_free(p->tw_pool[s]);
+        if (p->tw_pool_im[s]) aligned_free(p->tw_pool_im[s]);
+    }
+    free(p);
+}
+
+static inline void fused_execute_fwd(const fused_plan_t *p, double *re, double *im) {
+    const size_t K = p->K;
+
+    for (int s = 0; s < p->num_stages; s++) {
+        const int R = p->radix[s];
+        const size_t ios = p->stride[s];
+
+        for (int g = 0; g < p->num_groups[s]; g++) {
+            double *base_re = re + p->group_base[s][g];
+            double *base_im = im + p->group_base[s][g];
+
+            if (!p->needs_tw[s][g]) {
+                /* No twiddle: n1 only */
+                p->n1_fwd[s](base_re, base_im, base_re, base_im, ios, ios, K);
+            } else {
+                /* Apply cf to leg 0 only */
+                double cfr = p->cf0_re[s][g];
+                double cfi = p->cf0_im[s][g];
+                if (cfr != 1.0 || cfi != 0.0) {
+                    double *lr = base_re;
+                    double *li = base_im;
+                    for (size_t kk = 0; kk < K; kk++) {
+                        double tr = lr[kk];
+                        lr[kk] = tr * cfr - li[kk] * cfi;
+                        li[kk] = tr * cfi + li[kk] * cfr;
+                    }
+                }
+                /* t1_dit with combined twiddle (cf * per_leg baked in) */
+                p->t1_fwd[s](base_re, base_im,
+                             p->grp_tw_re[s][g], p->grp_tw_im[s][g],
+                             ios, K);
+            }
+        }
+    }
+}
+
 /* ═══════════════════════════════════════════════════════════════ */
 
 static void build_digit_rev_perm(int *perm, const int *factors, int nf) {
@@ -392,7 +611,7 @@ static void bench_case(const test_case_t *tc) {
 
     printf("\n== %s  N=%d ==\n", tc->label, Nv);
 
-    /* Correctness check for method B (K=4) */
+    /* Correctness check for method B and C (K=4) */
     {
         const size_t K = 4;
         const size_t total = (size_t)Nv * K;
@@ -406,37 +625,39 @@ static void bench_case(const test_case_t *tc) {
             orig_im[i] = (double)rand()/RAND_MAX - 0.5;
         }
         bruteforce_dft(orig_re, orig_im, ref_re, ref_im, Nv, K);
-
-        folded_plan_t *fp = folded_plan_create(Nv, K, factors, nf, tc->n1f_typed, tc->t1f_typed);
-        memcpy(data_re, orig_re, total*8);
-        memcpy(data_im, orig_im, total*8);
-        folded_execute_fwd(fp, data_re, data_im);
-
         int *perm = (int*)malloc(Nv * sizeof(int));
         double *sr = (double*)malloc(total*8), *si = (double*)malloc(total*8);
         build_digit_rev_perm(perm, factors, nf);
-        for (int m = 0; m < Nv; m++) {
-            memcpy(sr + (size_t)m*K, data_re + (size_t)perm[m]*K, K*8);
-            memcpy(si + (size_t)m*K, data_im + (size_t)perm[m]*K, K*8);
-        }
-        double me = 0;
-        for (size_t i = 0; i < total; i++) {
-            double e = fabs(sr[i] - ref_re[i]) + fabs(si[i] - ref_im[i]);
-            if (e > me) me = e;
-        }
-        printf("  Method B correctness: err=%.2e %s\n", me, me < 1e-9 ? "OK" : "FAIL");
-        if (me >= 1e-9) { printf("  *** SKIP BENCH ***\n"); }
+
+        /* Method B */
+        folded_plan_t *fp = folded_plan_create(Nv, K, factors, nf, tc->n1f_typed, tc->t1f_typed);
+        memcpy(data_re, orig_re, total*8); memcpy(data_im, orig_im, total*8);
+        folded_execute_fwd(fp, data_re, data_im);
+        for (int m = 0; m < Nv; m++) { memcpy(sr+(size_t)m*K, data_re+(size_t)perm[m]*K, K*8); memcpy(si+(size_t)m*K, data_im+(size_t)perm[m]*K, K*8); }
+        double meB = 0;
+        for (size_t i = 0; i < total; i++) { double e = fabs(sr[i]-ref_re[i])+fabs(si[i]-ref_im[i]); if (e > meB) meB = e; }
+        printf("  Method B correctness: err=%.2e %s\n", meB, meB < 1e-9 ? "OK" : "FAIL");
+        folded_plan_destroy(fp);
+
+        /* Method C */
+        fused_plan_t *fc = fused_plan_create(Nv, K, factors, nf, tc->n1f_typed, tc->t1f_typed);
+        memcpy(data_re, orig_re, total*8); memcpy(data_im, orig_im, total*8);
+        fused_execute_fwd(fc, data_re, data_im);
+        for (int m = 0; m < Nv; m++) { memcpy(sr+(size_t)m*K, data_re+(size_t)perm[m]*K, K*8); memcpy(si+(size_t)m*K, data_im+(size_t)perm[m]*K, K*8); }
+        double meC = 0;
+        for (size_t i = 0; i < total; i++) { double e = fabs(sr[i]-ref_re[i])+fabs(si[i]-ref_im[i]); if (e > meC) meC = e; }
+        printf("  Method C correctness: err=%.2e %s\n", meC, meC < 1e-9 ? "OK" : "FAIL");
+        fused_plan_destroy(fc);
 
         free(perm); free(sr); free(si);
         free(ref_re); free(ref_im); free(orig_re); free(orig_im);
         aligned_free(data_re); aligned_free(data_im);
-        folded_plan_destroy(fp);
-        if (me >= 1e-9) return;
+        if (meB >= 1e-9 || meC >= 1e-9) { printf("  *** SKIP BENCH ***\n"); return; }
     }
 
     /* Performance comparison */
-    printf("\n  %-5s %-8s %10s %10s %10s %8s\n", "K", "N*K", "A(cf+n1)", "B(t1fold)", "FFTW_M", "B/A");
-    printf("  %-5s %-8s %10s %10s %10s %8s\n", "-----", "--------", "----------", "----------", "----------", "--------");
+    printf("\n  %-5s %-8s %10s %10s %10s %10s %6s %6s\n", "K", "N*K", "A(cf+n1)", "B(t1fold)", "C(fused)", "FFTW_M", "B/A", "C/A");
+    printf("  %-5s %-8s %10s %10s %10s %10s %6s %6s\n", "-----", "--------", "----------", "----------", "----------", "----------", "------", "------");
 
     stride_t1_fn null_t1s[STRIDE_MAX_STAGES];
     stride_n1_fn null_n1b[STRIDE_MAX_STAGES];
@@ -480,6 +701,21 @@ static void bench_case(const test_case_t *tc) {
         aligned_free(reB); aligned_free(imB);
         folded_plan_destroy(planB);
 
+        /* Method C: fully fused */
+        fused_plan_t *planC = fused_plan_create(Nv, K, factors, nf, tc->n1f_typed, tc->t1f_typed);
+        double *reC = aligned_alloc(64, total*8), *imC = aligned_alloc(64, total*8);
+        for (size_t i = 0; i < total; i++) { reC[i] = (double)rand()/RAND_MAX - 0.5; imC[i] = (double)rand()/RAND_MAX - 0.5; }
+        for (int i = 0; i < 20; i++) fused_execute_fwd(planC, reC, imC);
+        double bestC = 1e18;
+        for (int t = 0; t < 7; t++) {
+            double t0 = now_ns();
+            for (int i = 0; i < reps; i++) fused_execute_fwd(planC, reC, imC);
+            double ns = (now_ns() - t0) / reps;
+            if (ns < bestC) bestC = ns;
+        }
+        aligned_free(reC); aligned_free(imC);
+        fused_plan_destroy(planC);
+
         /* FFTW reference */
         double *fr = fftw_malloc(total*8), *fi = fftw_malloc(total*8);
         double *fo = fftw_malloc(total*8), *fo2 = fftw_malloc(total*8);
@@ -498,9 +734,10 @@ static void bench_case(const test_case_t *tc) {
         }
         fftw_destroy_plan(fp); fftw_free(fr); fftw_free(fi); fftw_free(fo); fftw_free(fo2);
 
-        double ratio = bestA > 0 ? bestA / bestB : 0;
-        printf("  %-5zu %-8zu %10.1f %10.1f %10.1f %7.2fx\n",
-               K, total, bestA, bestB, bestF, ratio);
+        double ratioB = bestA > 0 ? bestA / bestB : 0;
+        double ratioC = bestA > 0 ? bestA / bestC : 0;
+        printf("  %-5zu %-8zu %10.1f %10.1f %10.1f %10.1f %5.2fx %5.2fx\n",
+               K, total, bestA, bestB, bestC, bestF, ratioB, ratioC);
     }
 }
 

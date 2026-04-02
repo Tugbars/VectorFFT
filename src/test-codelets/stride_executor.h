@@ -1,13 +1,21 @@
 /**
- * stride_executor.h — Generic stride-based in-place FFT executor
+ * stride_executor.h — Generic stride-based in-place FFT executor (Method C)
  *
  * Single buffer, multi-pass, no transpose, no permutation (DIT+DIF roundtrip).
  * The plan is built once; the executor loop is O(N) per call.
  *
+ * Twiddle strategy: Method C (fully fused).
+ *   At plan time, bake common_factor * per_leg_twiddle into the t1 table.
+ *   At execute time, only apply common factor to leg 0 (K multiplies),
+ *   then call t1_dit codelet with combined twiddle table.
+ *
  * Architecture:
  *   Stage s has radix R_s, stride = (product of remaining radixes) * K.
- *   Groups with twiddle index < 0 use n1 codelet (no twiddle).
- *   Groups with twiddle index >= 0 use t1 codelet + optional common factor.
+ *   Groups with k_prev=0 use n1 codelet (no twiddle).
+ *   Groups with k_prev>0 use cf on leg 0 + t1_dit with combined twiddles.
+ *
+ * NOTE: R=64 t1_dit regresses at K>=256 due to strided access pressure.
+ *   For production, consider block-walk or cf+n1 fallback for R=64 at large K.
  */
 #ifndef STRIDE_EXECUTOR_H
 #define STRIDE_EXECUTOR_H
@@ -19,6 +27,15 @@
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
+#endif
+
+#ifdef _WIN32
+#include <malloc.h>
+#define STRIDE_ALIGNED_ALLOC(align, size)  _aligned_malloc((size), (align))
+#define STRIDE_ALIGNED_FREE(p)             _aligned_free(p)
+#else
+#define STRIDE_ALIGNED_ALLOC(align, size)  aligned_alloc((align), (size))
+#define STRIDE_ALIGNED_FREE(p)             free(p)
 #endif
 
 #define STRIDE_MAX_STAGES 8
@@ -55,16 +72,27 @@ typedef struct {
 
     /* Per-group info (num_groups entries) */
     size_t *group_base;     /* base offset for each group (in doubles) */
-    int *tw_set_idx;        /* twiddle set index per group (-1 = use n1) */
+    int *needs_tw;          /* 0 = use n1 (no twiddle), 1 = use t1 */
 
-    /* Twiddle tables: num_tw_sets sets, each (R-1)*K doubles per component */
-    int num_tw_sets;
-    double *tw_re, *tw_im;  /* tw[set * (R-1) * K + (leg-1) * K + k] */
+    /* Per-group combined twiddle tables (method C).
+     * grp_tw_re[g] -> (R-1)*K doubles, or NULL if needs_tw[g]==0.
+     * Twiddles include both common factor and per-leg component baked together.
+     * Layout: [(j-1)*K + k] for j=1..R-1. */
+    double **grp_tw_re;     /* array of num_groups pointers */
+    double **grp_tw_im;
 
-    /* Common-factor twiddles: one per group (NULL if not needed) */
-    /* cf[group * R * K + leg * K + k] — applied to ALL legs before t1 */
-    double *cf_re, *cf_im;
-    int has_common_factor;
+    /* Leg-0 common factor per group (scalar, broadcast to K elements) */
+    double *cf0_re;         /* num_groups entries */
+    double *cf0_im;
+
+    /* Single pool allocation for all twiddle data in this stage */
+    double *tw_pool_re;
+    double *tw_pool_im;
+
+    /* Legacy cf arrays for backward (DIF) path.
+     * Backward still uses separate conj-twiddle approach.
+     * cf_bwd[group * R * K + leg * K + k] — full combined twiddle per element. */
+    double *cf_bwd_re, *cf_bwd_im;
 } stride_stage_t;
 
 typedef struct {
@@ -77,7 +105,7 @@ typedef struct {
 
 
 /* ═══════════════════════════════════════════════════════════════
- * EXECUTOR LOOP
+ * EXECUTOR LOOP — FORWARD (Method C)
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void stride_execute_fwd(const stride_plan_t *plan,
@@ -86,37 +114,44 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
 
     for (int s = 0; s < plan->num_stages; s++) {
         const stride_stage_t *st = &plan->stages[s];
-        const int R = st->radix;
 
         for (int g = 0; g < st->num_groups; g++) {
             double *base_re = re + st->group_base[g];
             double *base_im = im + st->group_base[g];
-            int tidx = st->tw_set_idx[g];
 
-            /* Apply per-element twiddle (stored in cf arrays), then n1 butterfly */
-            if (tidx >= 0 && st->cf_re) {
-                const double *cfr = st->cf_re + (size_t)g * R * K;
-                const double *cfi = st->cf_im + (size_t)g * R * K;
-                for (int j = 0; j < R; j++) {
-                    double *lr = base_re + (size_t)j * st->stride;
-                    double *li = base_im + (size_t)j * st->stride;
-                    const double *wr = cfr + (size_t)j * K;
-                    const double *wi = cfi + (size_t)j * K;
+            if (!st->needs_tw[g]) {
+                /* No twiddle: n1 codelet only */
+                st->n1_fwd(base_re, base_im, base_re, base_im,
+                           st->stride, st->stride, K);
+            } else {
+                /* Apply common factor to leg 0 only */
+                double cfr = st->cf0_re[g];
+                double cfi = st->cf0_im[g];
+                if (cfr != 1.0 || cfi != 0.0) {
                     for (size_t kk = 0; kk < K; kk++) {
-                        double tr = lr[kk];
-                        lr[kk] = tr * wr[kk] - li[kk] * wi[kk];
-                        li[kk] = tr * wi[kk] + li[kk] * wr[kk];
+                        double tr = base_re[kk];
+                        base_re[kk] = tr * cfr - base_im[kk] * cfi;
+                        base_im[kk] = tr * cfi + base_im[kk] * cfr;
                     }
                 }
+                /* t1_dit with combined twiddle (cf * per_leg baked in) */
+                st->t1_fwd(base_re, base_im,
+                           st->grp_tw_re[g], st->grp_tw_im[g],
+                           st->stride, K);
             }
-            st->n1_fwd(base_re, base_im, base_re, base_im,
-                       st->stride, st->stride, K);
         }
     }
 }
 
-/* Backward: reverse stage order, use bwd codelets + conj twiddles.
- * For now, use separate-pass approach (n1_bwd + explicit conj-twiddle). */
+/* ═══════════════════════════════════════════════════════════════
+ * EXECUTOR LOOP — BACKWARD (DIF, reverse stage order)
+ *
+ * Backward uses n1_bwd butterfly + conj of combined twiddle.
+ * For DIF: butterfly first, then conj-twiddle on all legs.
+ * Uses cf_bwd arrays (full per-element twiddle, same as old method A).
+ * TODO: Implement t1_dif codelets for a proper method C backward.
+ * ═══════════════════════════════════════════════════════════════ */
+
 static inline void stride_execute_bwd(const stride_plan_t *plan,
                                       double *re, double *im) {
     const size_t K = plan->K;
@@ -125,40 +160,28 @@ static inline void stride_execute_bwd(const stride_plan_t *plan,
         const stride_stage_t *st = &plan->stages[s];
         const int R = st->radix;
 
-        if (s == 0) {
-            /* First stage (last in bwd): no twiddle */
-            for (int g = 0; g < st->num_groups; g++) {
-                double *base_re = re + st->group_base[g];
-                double *base_im = im + st->group_base[g];
-                st->n1_bwd(base_re, base_im, base_re, base_im,
-                           st->stride, st->stride, K);
-            }
-        } else {
-            /* Middle/last stages: n1_bwd butterfly, then conj-twiddle */
-            for (int g = 0; g < st->num_groups; g++) {
-                double *base_re = re + st->group_base[g];
-                double *base_im = im + st->group_base[g];
-                int tidx = st->tw_set_idx[g];
+        for (int g = 0; g < st->num_groups; g++) {
+            double *base_re = re + st->group_base[g];
+            double *base_im = im + st->group_base[g];
 
-                /* Butterfly first (no twiddle) */
-                st->n1_bwd(base_re, base_im, base_re, base_im,
-                           st->stride, st->stride, K);
+            /* Butterfly first (no twiddle) */
+            st->n1_bwd(base_re, base_im, base_re, base_im,
+                       st->stride, st->stride, K);
 
-                /* Conj-twiddle per-element (DIF backward) */
-                if (tidx >= 0 && st->cf_re) {
-                    const double *cfr = st->cf_re + (size_t)g * R * K;
-                    const double *cfi = st->cf_im + (size_t)g * R * K;
-                    for (int j = 0; j < R; j++) {
-                        double *lr = base_re + (size_t)j * st->stride;
-                        double *li = base_im + (size_t)j * st->stride;
-                        const double *wr = cfr + (size_t)j * K;
-                        const double *wi = cfi + (size_t)j * K;
-                        for (size_t kk = 0; kk < K; kk++) {
-                            double tr = lr[kk];
-                            /* conj(W) * x = (xr*wr + xi*wi, xi*wr - xr*wi) */
-                            lr[kk] = tr * wr[kk] + li[kk] * wi[kk];
-                            li[kk] = li[kk] * wr[kk] - tr * wi[kk];
-                        }
+            /* Conj-twiddle all legs (DIF backward) */
+            if (st->needs_tw[g] && st->cf_bwd_re) {
+                const double *cfr = st->cf_bwd_re + (size_t)g * R * K;
+                const double *cfi = st->cf_bwd_im + (size_t)g * R * K;
+                for (int j = 0; j < R; j++) {
+                    double *lr = base_re + (size_t)j * st->stride;
+                    double *li = base_im + (size_t)j * st->stride;
+                    const double *wr = cfr + (size_t)j * K;
+                    const double *wi = cfi + (size_t)j * K;
+                    for (size_t kk = 0; kk < K; kk++) {
+                        double tr = lr[kk];
+                        /* conj(W) * x = (xr*wr + xi*wi, xi*wr - xr*wi) */
+                        lr[kk] = tr * wr[kk] + li[kk] * wi[kk];
+                        li[kk] = li[kk] * wr[kk] - tr * wi[kk];
                     }
                 }
             }
@@ -171,12 +194,6 @@ static inline void stride_execute_bwd(const stride_plan_t *plan,
  * PLANNER
  * ═══════════════════════════════════════════════════════════════ */
 
-/* Compute group base offsets for stage s.
- * For N = R0 * R1 * ... * R_{m-1}, data index:
- *   n = n0*S0 + n1*S1 + ... + n_{m-1}*S_{m-1}
- * where S_i = product of R_{i+1}..R_{m-1} * K.
- * Stage s transforms dimension s. Groups are all combinations of
- * the OTHER dimensions. */
 static void plan_compute_groups(stride_plan_t *plan, int s) {
     stride_stage_t *st = &plan->stages[s];
     const int nf = plan->num_stages;
@@ -184,7 +201,6 @@ static void plan_compute_groups(stride_plan_t *plan, int s) {
     int N = plan->N;
     int R = plan->factors[s];
 
-    /* Compute stride for each dimension */
     size_t dim_stride[STRIDE_MAX_STAGES];
     {
         size_t acc = K;
@@ -199,23 +215,18 @@ static void plan_compute_groups(stride_plan_t *plan, int s) {
     st->num_groups = N / R;
 
     st->group_base = (size_t *)malloc((size_t)st->num_groups * sizeof(size_t));
-    st->tw_set_idx = (int *)malloc((size_t)st->num_groups * sizeof(int));
 
-    /* Enumerate all combinations of dims != s */
-    int other_dims[STRIDE_MAX_STAGES];
     int other_sizes[STRIDE_MAX_STAGES];
     size_t other_strides[STRIDE_MAX_STAGES];
     int n_other = 0;
     for (int d = 0; d < nf; d++) {
         if (d != s) {
-            other_dims[n_other] = d;
             other_sizes[n_other] = plan->factors[d];
             other_strides[n_other] = dim_stride[d];
             n_other++;
         }
     }
 
-    /* Iterate over all group combinations using mixed-radix counter */
     int counter[STRIDE_MAX_STAGES];
     memset(counter, 0, sizeof(counter));
 
@@ -225,7 +236,6 @@ static void plan_compute_groups(stride_plan_t *plan, int s) {
             base += (size_t)counter[d] * other_strides[d];
         st->group_base[g] = base;
 
-        /* Increment mixed-radix counter */
         for (int d = n_other - 1; d >= 0; d--) {
             counter[d]++;
             if (counter[d] < other_sizes[d]) break;
@@ -234,114 +244,155 @@ static void plan_compute_groups(stride_plan_t *plan, int s) {
     }
 }
 
-/* Compute twiddle tables for stage s.
+/* Method C twiddle computation.
  *
- * The twiddle for stage s at group g, leg j is:
- *   W_N^{j * (sum of higher-dim indices * their strides in output space)}
+ * For each group g in stage s:
+ *   k_prev = preceding dimension index
+ *   lower_data_pos = data-space position of dims s+1..nf-1
  *
- * For DIT: twiddle = W_N^{j * g_output_pos}
- * where g_output_pos is the position of this group in the output index space
- * of all stages processed so far (0..s-1).
+ * Full twiddle for leg j:
+ *   W_N^{k_prev * ow_prev * (j * S_s + lower_data_pos)}
  *
- * We decompose this into:
- *   per-leg twiddle: W_{N_partial}^{j * k_prev}  (fed to t1 codelet)
- *   common factor:   W_N^{j * cf_exp}            (applied before t1)
+ * Decomposed as:
+ *   common_factor = W_N^{k_prev * ow_prev * lower_data_pos}  (same for all legs)
+ *   per_leg[j]    = W_N^{k_prev * ow_prev * j * S_s}         (varies per leg)
  *
- * N_partial = product of radixes in stages 0..s.
- * k_prev = output index from stages 0..s-1 (i.e., the dimension being iterated
- *          by stages before s).
+ * Method C bakes combined = common_factor * per_leg[j] into t1 table for j=1..R-1.
+ * Leg 0's twiddle IS the common factor (applied separately to leg 0 data).
+ *
+ * For backward: store full combined twiddle for ALL legs (legacy cf arrays)
+ * so the DIF conj-twiddle path works unchanged.
  */
-static void plan_compute_twiddles(stride_plan_t *plan, int s) {
+static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
     stride_stage_t *st = &plan->stages[s];
     const int nf = plan->num_stages;
     const size_t K = plan->K;
     const int N = plan->N;
     const int R = st->radix;
+    const int ng = st->num_groups;
+
+    st->needs_tw = (int *)calloc(ng, sizeof(int));
+    st->grp_tw_re = (double **)calloc(ng, sizeof(double *));
+    st->grp_tw_im = (double **)calloc(ng, sizeof(double *));
+    st->cf0_re = (double *)calloc(ng, sizeof(double));
+    st->cf0_im = (double *)calloc(ng, sizeof(double));
 
     if (s == 0) {
         /* First stage: no twiddles */
-        st->num_tw_sets = 0;
-        st->tw_re = st->tw_im = NULL;
-        st->cf_re = st->cf_im = NULL;
-        st->has_common_factor = 0;
-        for (int g = 0; g < st->num_groups; g++)
-            st->tw_set_idx[g] = -1;
+        st->tw_pool_re = st->tw_pool_im = NULL;
+        st->cf_bwd_re = st->cf_bwd_im = NULL;
+        for (int g = 0; g < ng; g++) {
+            st->cf0_re[g] = 1.0;
+            st->cf0_im[g] = 0.0;
+        }
         return;
     }
 
-    /* Preceding-dimension-only twiddle approach.
-     *
-     * Stage s's twiddle depends on k_{s-1} ONLY (preceding stage's output).
-     * Earlier cross-terms were handled by earlier stages' twiddles.
-     *
-     * Per-leg twiddle for leg j at group with (k_{s-1}, lower_data_pos):
-     *   W_N^{k_{s-1} * (j * S_s + lower_data_pos)}
-     * where S_s = product of factors[s+1..nf-1] (data stride of dim s, excl K).
-     *
-     * lower_data_pos uses DATA-SPACE weights: product of factors[d+1..nf-1].
-     */
+    int S_s = 1;
+    for (int d = s + 1; d < nf; d++) S_s *= plan->factors[d];
+    int ow_prev = 1;
+    for (int d = 0; d < s - 1; d++) ow_prev *= plan->factors[d];
+
     int other_sizes[STRIDE_MAX_STAGES];
     int n_other = 0;
     for (int d = 0; d < nf; d++)
         if (d != s) other_sizes[n_other++] = plan->factors[d];
 
-    /* S_s = product of factors[s+1..nf-1] */
-    int S_s = 1;
-    for (int d = s + 1; d < nf; d++) S_s *= plan->factors[d];
+    /* Count twiddled groups for pool allocation */
+    int n_tw_groups = 0;
+    {
+        int counter[STRIDE_MAX_STAGES]; memset(counter, 0, sizeof(counter));
+        for (int g = 0; g < ng; g++) {
+            int k_prev = 0;
+            { int ci = 0; for (int d = 0; d < nf; d++) { if (d == s) continue; if (d == s-1) k_prev = counter[ci]; ci++; } }
+            if (k_prev != 0) n_tw_groups++;
+            for (int d = n_other-1; d >= 0; d--) { counter[d]++; if (counter[d] < other_sizes[d]) break; counter[d] = 0; }
+        }
+    }
 
-    /* out_weight[s-1] = product of R_0..R_{s-2} */
-    int ow_prev = 1;
-    for (int d = 0; d < s - 1; d++) ow_prev *= plan->factors[d];
+    /* Allocate twiddle pool + backward cf arrays */
+    size_t per_grp = (size_t)(R - 1) * K;
+    if (n_tw_groups > 0) {
+        st->tw_pool_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
+        st->tw_pool_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
+    } else {
+        st->tw_pool_re = st->tw_pool_im = NULL;
+    }
 
-    st->num_tw_sets = 0;
-    st->tw_re = st->tw_im = NULL;
-    st->has_common_factor = 1;
-    st->cf_re = (double *)calloc((size_t)st->num_groups * R * K, sizeof(double));
-    st->cf_im = (double *)calloc((size_t)st->num_groups * R * K, sizeof(double));
+    /* Backward cf: full per-element twiddle for all groups */
+    st->cf_bwd_re = (double *)calloc((size_t)ng * R * K, sizeof(double));
+    st->cf_bwd_im = (double *)calloc((size_t)ng * R * K, sizeof(double));
 
+    /* Fill per-group data */
     int counter[STRIDE_MAX_STAGES];
     memset(counter, 0, sizeof(counter));
+    int tw_idx = 0;
 
-    for (int g = 0; g < st->num_groups; g++) {
-        int k_prev = 0;           /* dim s-1 output index only */
-        int lower_data_pos = 0;   /* data-space position of dims s+1..nf-1 */
+    for (int g = 0; g < ng; g++) {
+        int k_prev = 0;
+        int lower_data_pos = 0;
         {
             int ci = 0;
             for (int d = 0; d < nf; d++) {
                 if (d == s) continue;
-                if (d == s - 1) {
-                    k_prev = counter[ci];
-                }
+                if (d == s - 1) k_prev = counter[ci];
                 if (d > s) {
-                    /* Data-space weight = product of factors[d+1..nf-1] */
                     int w = 1;
-                    for (int d2 = d + 1; d2 < nf; d2++)
-                        w *= plan->factors[d2];
+                    for (int d2 = d + 1; d2 < nf; d2++) w *= plan->factors[d2];
                     lower_data_pos += counter[ci] * w;
                 }
                 ci++;
             }
         }
 
+        /* Backward: fill full combined twiddle for all legs */
+        for (int j = 0; j < R; j++) {
+            int tw_exp = ((long long)k_prev * ow_prev * (j * S_s + lower_data_pos)) % N;
+            if (tw_exp < 0) tw_exp += N;
+            double angle = -2.0 * M_PI * (double)tw_exp / (double)N;
+            double wr = cos(angle), wi = sin(angle);
+            for (size_t kk = 0; kk < K; kk++) {
+                st->cf_bwd_re[(size_t)g * R * K + (size_t)j * K + kk] = wr;
+                st->cf_bwd_im[(size_t)g * R * K + (size_t)j * K + kk] = wi;
+            }
+        }
+
         if (k_prev == 0) {
-            st->tw_set_idx[g] = -1;
-            for (int j = 0; j < R; j++)
-                for (size_t kk = 0; kk < K; kk++) {
-                    st->cf_re[(size_t)g*R*K + (size_t)j*K + kk] = 1.0;
-                    st->cf_im[(size_t)g*R*K + (size_t)j*K + kk] = 0.0;
-                }
+            st->needs_tw[g] = 0;
+            st->cf0_re[g] = 1.0;
+            st->cf0_im[g] = 0.0;
         } else {
-            st->tw_set_idx[g] = 0;
-            for (int j = 0; j < R; j++) {
-                int rem_pos = j * S_s + lower_data_pos;
-                int tw_exp = (k_prev * ow_prev * rem_pos) % N;
-                double angle = -2.0 * M_PI * (double)tw_exp / (double)N;
-                double wr = cos(angle), wi = sin(angle);
+            st->needs_tw[g] = 1;
+
+            /* Common factor for leg 0 */
+            int cf_exp = ((long long)k_prev * ow_prev * lower_data_pos) % N;
+            if (cf_exp < 0) cf_exp += N;
+            double cf_angle = -2.0 * M_PI * (double)cf_exp / (double)N;
+            double cfr = cos(cf_angle), cfi = sin(cf_angle);
+            st->cf0_re[g] = cfr;
+            st->cf0_im[g] = cfi;
+
+            /* Combined twiddle for legs 1..R-1: cf * per_leg[j] */
+            double *tw_r = st->tw_pool_re + (size_t)tw_idx * per_grp;
+            double *tw_i = st->tw_pool_im + (size_t)tw_idx * per_grp;
+            st->grp_tw_re[g] = tw_r;
+            st->grp_tw_im[g] = tw_i;
+
+            for (int j = 1; j < R; j++) {
+                int leg_exp = ((long long)k_prev * ow_prev * j * S_s) % N;
+                if (leg_exp < 0) leg_exp += N;
+                double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
+                double lr = cos(leg_angle), li = sin(leg_angle);
+                /* combined = cf * per_leg */
+                double wr = cfr * lr - cfi * li;
+                double wi = cfr * li + cfi * lr;
+                size_t base_idx = (size_t)(j - 1) * K;
                 for (size_t kk = 0; kk < K; kk++) {
-                    st->cf_re[(size_t)g*R*K + (size_t)j*K + kk] = wr;
-                    st->cf_im[(size_t)g*R*K + (size_t)j*K + kk] = wi;
+                    tw_r[base_idx + kk] = wr;
+                    tw_i[base_idx + kk] = wi;
                 }
             }
+            tw_idx++;
         }
 
         for (int d = n_other - 1; d >= 0; d--) {
@@ -371,7 +422,7 @@ static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, in
         plan->stages[s].t1_bwd = t1_bwd_table[s];
 
         plan_compute_groups(plan, s);
-        plan_compute_twiddles(plan, s);
+        plan_compute_twiddles_c(plan, s);
     }
     return plan;
 }
@@ -379,11 +430,17 @@ static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, in
 static void stride_plan_destroy(stride_plan_t *plan) {
     for (int s = 0; s < plan->num_stages; s++) {
         free(plan->stages[s].group_base);
-        free(plan->stages[s].tw_set_idx);
-        free(plan->stages[s].tw_re);
-        free(plan->stages[s].tw_im);
-        free(plan->stages[s].cf_re);
-        free(plan->stages[s].cf_im);
+        free(plan->stages[s].needs_tw);
+        free(plan->stages[s].grp_tw_re);
+        free(plan->stages[s].grp_tw_im);
+        free(plan->stages[s].cf0_re);
+        free(plan->stages[s].cf0_im);
+        if (plan->stages[s].tw_pool_re) {
+            STRIDE_ALIGNED_FREE(plan->stages[s].tw_pool_re);
+            STRIDE_ALIGNED_FREE(plan->stages[s].tw_pool_im);
+        }
+        free(plan->stages[s].cf_bwd_re);
+        free(plan->stages[s].cf_bwd_im);
     }
     free(plan);
 }
