@@ -36,6 +36,9 @@ python "%SCRIPT_DIR%gen_radix3.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_r
 REM R=4 (includes t1_dit with ios/me)
 python "%SCRIPT_DIR%gen_radix4.py" avx2 > "%HDR_DIR%\fft_radix4_avx2.h" 2>nul
 
+REM R=5 ct_n1 (stride-based n1 with is/os/vl)
+python "%SCRIPT_DIR%gen_radix5.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix5_avx2_ct_n1.h" 2>nul
+
 echo   Headers generated.
 echo.
 
