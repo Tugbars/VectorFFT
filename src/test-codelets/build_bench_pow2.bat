@@ -27,13 +27,14 @@ if not exist "%HDR_DIR%" mkdir "%HDR_DIR%"
 set "PYTHONIOENCODING=utf-8"
 echo Generating headers...
 
-python "%SCRIPT_DIR%gen_radix3.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix3_avx2_ct_n1.h" 2>nul
+python "%SCRIPT_DIR%gen_radix2.py" avx2 > "%HDR_DIR%\fft_radix2_avx2.h" 2>nul
 python "%SCRIPT_DIR%gen_radix4.py" avx2 > "%HDR_DIR%\fft_radix4_avx2.h" 2>nul
-python "%SCRIPT_DIR%gen_radix5.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix5_avx2_ct_n1.h" 2>nul
-python "%SCRIPT_DIR%gen_radix5.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix5_avx2_ct_t1_dit.h" 2>nul
 python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix16_avx2_ct_n1.h" 2>nul
+python "%SCRIPT_DIR%gen_radix16.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix16_avx2_ct_t1_dit.h" 2>nul
 python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix32_avx2_ct_n1.h" 2>nul
+python "%SCRIPT_DIR%gen_radix32.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix32_avx2_ct_t1_dit.h" 2>nul
 python "%SCRIPT_DIR%gen_radix64.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix64_avx2_ct_n1.h" 2>nul
+python "%SCRIPT_DIR%gen_radix64.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix64_avx2_ct_t1_dit.h" 2>nul
 
 echo   Headers generated.
 echo.
