@@ -85,8 +85,9 @@ static void radix4_n1_stride_bwd_avx2(
     }
 }
 
-/* R=5 stride-based n1 codelet */
+/* R=5 stride-based n1 + t1_dit codelet */
 #include "fft_radix5_avx2_ct_n1.h"
+#include "fft_radix5_avx2_ct_t1_dit.h"
 
 /* ═══════════════════════════════════════════════════════════════
  * TWIDDLE PRECOMPUTATION
@@ -350,6 +351,153 @@ static void twiddle_pass1_60_bwd(double *re, double *im, size_t K) {
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+ * FOLDED N=60: twiddles merged into t1 codelets, no separate passes.
+ *
+ * Stage 2 t1_R4: W_12^{j*k1} for j=1..3.
+ *   2 twiddle sets (k1=1,2), each 3*K doubles per component.
+ *   Common factor W_60^{k1*n3} applied inline before t1 call.
+ *
+ * Stage 3 t1_R5: W_20^{j*k2} for j=1..4.
+ *   3 twiddle sets (k2=1,2,3), each 4*K doubles per component.
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* Stage 2 twiddle tables: tw_s2[k1-1][(j-1)*K + k] = W_12^{j*k1} broadcast */
+static void init_tw_stage2_60(double *tw_re, double *tw_im, size_t K) {
+    for (int k1 = 1; k1 <= 2; k1++) {
+        for (int j = 1; j <= 3; j++) {
+            double angle = -2.0 * M_PI * (double)(j * k1) / 12.0;
+            double wr = cos(angle), wi = sin(angle);
+            for (size_t k = 0; k < K; k++) {
+                tw_re[(k1-1)*3*K + (j-1)*K + k] = wr;
+                tw_im[(k1-1)*3*K + (j-1)*K + k] = wi;
+            }
+        }
+    }
+}
+
+/* Stage 3 twiddle tables: tw_s3[k2-1][(j-1)*K + k] = W_20^{j*k2} broadcast */
+static void init_tw_stage3_60(double *tw_re, double *tw_im, size_t K) {
+    for (int k2 = 1; k2 <= 3; k2++) {
+        for (int j = 1; j <= 4; j++) {
+            double angle = -2.0 * M_PI * (double)(j * k2) / 20.0;
+            double wr = cos(angle), wi = sin(angle);
+            for (size_t k = 0; k < K; k++) {
+                tw_re[(k2-1)*4*K + (j-1)*K + k] = wr;
+                tw_im[(k2-1)*4*K + (j-1)*K + k] = wi;
+            }
+        }
+    }
+}
+
+/* Inline common-factor twiddle: data[base..base+K-1] *= W_60^exp */
+__attribute__((target("avx2,fma")))
+static void apply_common_tw(double *re, double *im, size_t base, size_t K, int exp60) {
+    if (exp60 == 0) return;
+    double angle = -2.0 * M_PI * (double)exp60 / 60.0;
+    __m256d wr = _mm256_set1_pd(cos(angle));
+    __m256d wi = _mm256_set1_pd(sin(angle));
+    for (size_t k = 0; k < K; k += 4) {
+        __m256d xr = _mm256_load_pd(&re[base+k]);
+        __m256d xi = _mm256_load_pd(&im[base+k]);
+        __m256d tr = xr;
+        xr = _mm256_fmsub_pd(tr, wr, _mm256_mul_pd(xi, wi));
+        xi = _mm256_fmadd_pd(tr, wi, _mm256_mul_pd(xi, wr));
+        _mm256_store_pd(&re[base+k], xr);
+        _mm256_store_pd(&im[base+k], xi);
+    }
+}
+
+/* Backward: conj twiddle */
+__attribute__((target("avx2,fma")))
+static void apply_common_tw_bwd(double *re, double *im, size_t base, size_t K, int exp60) {
+    if (exp60 == 0) return;
+    double angle = +2.0 * M_PI * (double)exp60 / 60.0;
+    __m256d wr = _mm256_set1_pd(cos(angle));
+    __m256d wi = _mm256_set1_pd(sin(angle));
+    for (size_t k = 0; k < K; k += 4) {
+        __m256d xr = _mm256_load_pd(&re[base+k]);
+        __m256d xi = _mm256_load_pd(&im[base+k]);
+        __m256d tr = xr;
+        xr = _mm256_fmsub_pd(tr, wr, _mm256_mul_pd(xi, wi));
+        xi = _mm256_fmadd_pd(tr, wi, _mm256_mul_pd(xi, wr));
+        _mm256_store_pd(&re[base+k], xr);
+        _mm256_store_pd(&im[base+k], xi);
+    }
+}
+
+/* Forward declarations */
+static void execute_bwd_60(double *re, double *im, size_t K);
+
+static void execute_fwd_60_folded(double *re, double *im,
+                                  const double *tw_s2_re, const double *tw_s2_im,
+                                  const double *tw_s3_re, const double *tw_s3_im,
+                                  size_t K) {
+    /* Stage 1: 20x DFT-3 at stride 20K (no twiddle) */
+    for (int g = 0; g < 20; g++) {
+        radix3_n1_fwd_avx2(
+            re + g*K, im + g*K,
+            re + g*K, im + g*K,
+            20*K, 20*K, K);
+    }
+
+    /* Stage 2: 15x DFT-4 at stride 5K */
+    for (int k1 = 0; k1 < 3; k1++) {
+        for (int n3 = 0; n3 < 5; n3++) {
+            size_t base = (size_t)(k1*20 + n3) * K;
+            if (k1 == 0) {
+                /* k1=0: no twiddle, use n1 codelet */
+                radix4_n1_stride_fwd_avx2(re + base, im + base, 5*K, K);
+            } else {
+                /* Common factor: W_60^{k1*n3} applied to ALL 4 legs */
+                int cf = (k1 * n3) % 60;
+                if (cf != 0) {
+                    for (int j = 0; j < 4; j++)
+                        apply_common_tw(re, im, base + (size_t)j*5*K, K, cf);
+                }
+                /* t1_R4: applies W_12^{j*k1} per-leg */
+                radix4_t1_dit_fwd_avx2(
+                    re + base, im + base,
+                    tw_s2_re + (k1-1)*3*K, tw_s2_im + (k1-1)*3*K,
+                    5*K, K);
+            }
+        }
+    }
+
+    /* Stage 3: 12x DFT-5 at stride K */
+    for (int k1 = 0; k1 < 3; k1++) {
+        for (int k2 = 0; k2 < 4; k2++) {
+            size_t base = (size_t)(k1*4 + k2) * 5 * K;
+            if (k2 == 0) {
+                /* k2=0: no twiddle, use n1 codelet */
+                radix5_n1_fwd_avx2(
+                    re + base, im + base,
+                    re + base, im + base,
+                    K, K, K);
+            } else {
+                /* t1_R5: applies W_20^{j*k2} per-leg */
+                radix5_t1_dit_fwd_avx2(
+                    re + base, im + base,
+                    tw_s3_re + (k2-1)*4*K, tw_s3_im + (k2-1)*4*K,
+                    K, K);
+            }
+        }
+    }
+}
+
+/* Folded backward: use separate-pass backward (proven correct).
+ * The forward folded path is the perf-critical one.
+ * Backward just needs to produce the correct inverse. */
+static void execute_bwd_60_folded(double *re, double *im,
+                                  const double *tw_s2_re, const double *tw_s2_im,
+                                  const double *tw_s3_re, const double *tw_s3_im,
+                                  size_t K) {
+    (void)tw_s2_re; (void)tw_s2_im;
+    (void)tw_s3_re; (void)tw_s3_im;
+    execute_bwd_60(re, im, K);
+}
+
+/* Separate-pass N=60 executor (baseline for comparison) */
 static void execute_fwd_60(double *re, double *im, size_t K) {
     /* Stage 1: 20× DFT-3 at stride 20K */
     for (int g = 0; g < 20; g++) {
@@ -708,6 +856,36 @@ static double bench_ours_60(size_t K, int reps) {
     return best;
 }
 
+static double bench_ours_60_folded(size_t K, int reps) {
+    const size_t total = 60 * K;
+    double *re = aligned_alloc(64, total * 8);
+    double *im = aligned_alloc(64, total * 8);
+    double *tw_s2_re = aligned_alloc(64, 2*3*K*8);
+    double *tw_s2_im = aligned_alloc(64, 2*3*K*8);
+    double *tw_s3_re = aligned_alloc(64, 3*4*K*8);
+    double *tw_s3_im = aligned_alloc(64, 3*4*K*8);
+    init_tw_stage2_60(tw_s2_re, tw_s2_im, K);
+    init_tw_stage3_60(tw_s3_re, tw_s3_im, K);
+    for (size_t i = 0; i < total; i++) {
+        re[i] = (double)rand() / RAND_MAX - 0.5;
+        im[i] = (double)rand() / RAND_MAX - 0.5;
+    }
+    for (int i = 0; i < 20; i++)
+        execute_fwd_60_folded(re, im, tw_s2_re, tw_s2_im, tw_s3_re, tw_s3_im, K);
+    double best = 1e18;
+    for (int t = 0; t < 7; t++) {
+        double t0 = now_ns();
+        for (int i = 0; i < reps; i++)
+            execute_fwd_60_folded(re, im, tw_s2_re, tw_s2_im, tw_s3_re, tw_s3_im, K);
+        double ns = (now_ns() - t0) / reps;
+        if (ns < best) best = ns;
+    }
+    aligned_free(re); aligned_free(im);
+    aligned_free(tw_s2_re); aligned_free(tw_s2_im);
+    aligned_free(tw_s3_re); aligned_free(tw_s3_im);
+    return best;
+}
+
 static double bench_fftw_60(size_t K, int reps) {
     const int NN = 60;
     const size_t total = (size_t)NN * K;
@@ -895,12 +1073,97 @@ int main(void) {
     }
     printf("  All correct.\n\n");
 
-    /* N=60 Performance */
-    printf("Performance: stride executor vs FFTW_MEASURE (N=60)\n\n");
-    printf("%-5s %-7s %10s %10s %8s\n",
-           "K", "N*K", "FFTW_M", "stride", "ratio");
-    printf("%-5s %-7s %10s %10s %8s\n",
-           "-----", "-------", "----------", "----------", "--------");
+    /* N=60 Folded correctness */
+    printf("N=60 Folded correctness vs FFTW:\n");
+    for (int i = 0; i < n_test; i++) {
+        size_t K = test_Ks[i];
+        const size_t total = 60 * K;
+        double *data_re = aligned_alloc(64, total*8);
+        double *data_im = aligned_alloc(64, total*8);
+        double *orig_re = aligned_alloc(64, total*8);
+        double *orig_im = aligned_alloc(64, total*8);
+        double *ref_re = fftw_malloc(total*8);
+        double *ref_im = fftw_malloc(total*8);
+        double *sorted_re = aligned_alloc(64, total*8);
+        double *sorted_im = aligned_alloc(64, total*8);
+        for (size_t j = 0; j < total; j++) {
+            orig_re[j] = (double)rand()/RAND_MAX-0.5;
+            orig_im[j] = (double)rand()/RAND_MAX-0.5;
+        }
+        double *ftmp_re=fftw_malloc(total*8), *ftmp_im=fftw_malloc(total*8);
+        memcpy(ftmp_re,orig_re,total*8); memcpy(ftmp_im,orig_im,total*8);
+        fftw_iodim dim60={.n=60,.is=(int)K,.os=(int)K};
+        fftw_iodim howm60={.n=(int)K,.is=1,.os=1};
+        fftw_plan p60=fftw_plan_guru_split_dft(1,&dim60,1,&howm60,ftmp_re,ftmp_im,ref_re,ref_im,FFTW_ESTIMATE);
+        fftw_execute_split_dft(p60,orig_re,orig_im,ref_re,ref_im);
+        fftw_destroy_plan(p60); fftw_free(ftmp_re); fftw_free(ftmp_im);
+
+        memcpy(data_re,orig_re,total*8); memcpy(data_im,orig_im,total*8);
+        double *tw_s2r=aligned_alloc(64,2*3*K*8), *tw_s2i=aligned_alloc(64,2*3*K*8);
+        double *tw_s3r=aligned_alloc(64,3*4*K*8), *tw_s3i=aligned_alloc(64,3*4*K*8);
+        init_tw_stage2_60(tw_s2r,tw_s2i,K);
+        init_tw_stage3_60(tw_s3r,tw_s3i,K);
+        execute_fwd_60_folded(data_re,data_im,tw_s2r,tw_s2i,tw_s3r,tw_s3i,K);
+
+        int perm60[60];
+        build_digit_rev_perm_3(perm60, 3, 4, 5);
+        apply_perm(perm60, 60, K, data_re, data_im, sorted_re, sorted_im);
+        double max_err = 0;
+        for (size_t j=0;j<total;j++) {
+            double er=fabs(sorted_re[j]-ref_re[j]), ei=fabs(sorted_im[j]-ref_im[j]);
+            if(er>max_err) max_err=er; if(ei>max_err) max_err=ei;
+        }
+        printf("  K=%-4zu  err=%.2e  %s\n", K, max_err, max_err<1e-10?"OK":"FAIL");
+        if(max_err>=1e-10) fail=1;
+        aligned_free(data_re);aligned_free(data_im);aligned_free(orig_re);aligned_free(orig_im);
+        aligned_free(sorted_re);aligned_free(sorted_im);
+        aligned_free(tw_s2r);aligned_free(tw_s2i);aligned_free(tw_s3r);aligned_free(tw_s3i);
+        fftw_free(ref_re);fftw_free(ref_im);
+    }
+    if (fail) { printf("\n*** N=60 FOLDED CORRECTNESS FAILURE ***\n"); return 1; }
+    printf("  All correct.\n\n");
+
+    /* N=60 Folded roundtrip */
+    printf("N=60 Folded roundtrip (DIT fwd + DIF bwd):\n");
+    for (int i = 0; i < n_test; i++) {
+        size_t K = test_Ks[i];
+        const size_t total = 60 * K;
+        double *re = aligned_alloc(64, total*8);
+        double *im = aligned_alloc(64, total*8);
+        double *orig_re = aligned_alloc(64, total*8);
+        double *orig_im = aligned_alloc(64, total*8);
+        double *tw_s2r=aligned_alloc(64,2*3*K*8), *tw_s2i=aligned_alloc(64,2*3*K*8);
+        double *tw_s3r=aligned_alloc(64,3*4*K*8), *tw_s3i=aligned_alloc(64,3*4*K*8);
+        init_tw_stage2_60(tw_s2r,tw_s2i,K);
+        init_tw_stage3_60(tw_s3r,tw_s3i,K);
+        for (size_t j=0;j<total;j++) {
+            orig_re[j]=(double)rand()/RAND_MAX-0.5;
+            orig_im[j]=(double)rand()/RAND_MAX-0.5;
+        }
+        memcpy(re,orig_re,total*8); memcpy(im,orig_im,total*8);
+        execute_fwd_60_folded(re,im,tw_s2r,tw_s2i,tw_s3r,tw_s3i,K);
+        execute_bwd_60_folded(re,im,tw_s2r,tw_s2i,tw_s3r,tw_s3i,K);
+        double scale=1.0/60.0;
+        for(size_t j=0;j<total;j++){re[j]*=scale;im[j]*=scale;}
+        double max_err=0;
+        for(size_t j=0;j<total;j++){
+            double er=fabs(re[j]-orig_re[j]),ei=fabs(im[j]-orig_im[j]);
+            if(er>max_err)max_err=er;if(ei>max_err)max_err=ei;
+        }
+        printf("  K=%-4zu  err=%.2e  %s\n",K,max_err,max_err<1e-10?"OK":"FAIL");
+        if(max_err>=1e-10) fail=1;
+        aligned_free(re);aligned_free(im);aligned_free(orig_re);aligned_free(orig_im);
+        aligned_free(tw_s2r);aligned_free(tw_s2i);aligned_free(tw_s3r);aligned_free(tw_s3i);
+    }
+    if (fail) { printf("\n*** N=60 FOLDED ROUNDTRIP FAILURE ***\n"); return 1; }
+    printf("  All correct.\n\n");
+
+    /* N=60 Performance: separate vs folded vs FFTW */
+    printf("Performance N=60: FFTW vs separate vs folded\n\n");
+    printf("%-5s %-7s %10s %10s %10s %8s %8s\n",
+           "K", "N*K", "FFTW_M", "separate", "folded", "sep/fftw", "fld/fftw");
+    printf("%-5s %-7s %10s %10s %10s %8s %8s\n",
+           "-----","-------","----------","----------","----------","--------","--------");
     for (int i = 0; i < n_bench; i++) {
         size_t K = bench_Ks[i];
         size_t total = 60 * K;
@@ -908,10 +1171,12 @@ int main(void) {
         if (reps < 200) reps = 200;
         if (reps > 2000000) reps = 2000000;
         double fftw_ns = bench_fftw_60(K, reps);
-        double ours_ns = bench_ours_60(K, reps);
-        printf("%-5zu %-7zu %10.1f %10.1f %7.2fx\n",
-               K, total, fftw_ns, ours_ns,
-               fftw_ns > 0 ? fftw_ns / ours_ns : 0);
+        double sep_ns = bench_ours_60(K, reps);
+        double fld_ns = bench_ours_60_folded(K, reps);
+        printf("%-5zu %-7zu %10.1f %10.1f %10.1f %7.2fx %7.2fx\n",
+               K, total, fftw_ns, sep_ns, fld_ns,
+               fftw_ns > 0 ? fftw_ns / sep_ns : 0,
+               fftw_ns > 0 ? fftw_ns / fld_ns : 0);
     }
 
     printf("\nDone.\n");
