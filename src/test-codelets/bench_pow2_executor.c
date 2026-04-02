@@ -216,7 +216,7 @@ static int test_N(const char *label, int N_val, const int *factors, int nf,
     for(int bi=0;bi<9;bi++){
         size_t K=bench_Ks[bi]; size_t total=(size_t)N_val*K;
         stride_plan_t *plan=stride_plan_create(N_val,K,factors,nf,n1f,n1b,t1f,t1b);
-        int reps=(int)(2e6/(total+1)); if(reps<200)reps=200; if(reps>2000000)reps=2000000;
+        int reps=(int)(5e5/(total+1)); if(reps<50)reps=50; if(reps>500000)reps=500000;
         /* FFTW */
         double *ri=fftw_malloc(total*8),*ii_=fftw_malloc(total*8);
         double *ro=fftw_malloc(total*8),*io=fftw_malloc(total*8);
@@ -347,6 +347,46 @@ int main(void) {
         stride_t1_fn t1f[] = {null_t1, null_t1};
         stride_t1_fn t1b[] = {null_t1, null_t1};
         fail |= test_N("64x64", 4096, f, 2, n1f, n1b, t1f, t1b);
+    }
+
+    /* N=8192 = 64x64x2 */
+    {
+        int f[] = {64, 64, 2};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix2_n1_stride_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix2_n1_stride_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, null_t1, null_t1};
+        stride_t1_fn t1b[] = {null_t1, null_t1, null_t1};
+        fail |= test_N("64x64x2", 8192, f, 3, n1f, n1b, t1f, t1b);
+    }
+
+    /* N=16384 = 64x64x4 */
+    {
+        int f[] = {64, 64, 4};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix4_n1_stride_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix4_n1_stride_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, null_t1, null_t1};
+        stride_t1_fn t1b[] = {null_t1, null_t1, null_t1};
+        fail |= test_N("64x64x4", 16384, f, 3, n1f, n1b, t1f, t1b);
+    }
+
+    /* N=32768 = 64x32x16 */
+    {
+        int f[] = {64, 32, 16};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix32_n1_fwd_avx2, (stride_n1_fn)radix16_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix32_n1_bwd_avx2, (stride_n1_fn)radix16_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, null_t1, null_t1};
+        stride_t1_fn t1b[] = {null_t1, null_t1, null_t1};
+        fail |= test_N("64x32x16", 32768, f, 3, n1f, n1b, t1f, t1b);
+    }
+
+    /* N=65536 = 64x64x16 */
+    {
+        int f[] = {64, 64, 16};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix64_n1_fwd_avx2, (stride_n1_fn)radix16_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix64_n1_bwd_avx2, (stride_n1_fn)radix16_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, null_t1, null_t1};
+        stride_t1_fn t1b[] = {null_t1, null_t1, null_t1};
+        fail |= test_N("64x64x16", 65536, f, 3, n1f, n1b, t1f, t1b);
     }
 
     if (fail) printf("\n*** SOME TESTS FAILED ***\n");
