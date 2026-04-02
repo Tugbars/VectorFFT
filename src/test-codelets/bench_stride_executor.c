@@ -426,6 +426,18 @@ static void execute_bwd_60(double *re, double *im, size_t K) {
 }
 
 
+/* Digit-reversal permutation for N = R1*R2*R3.
+ * DIT output: X[k1 + R1*k2 + R1*R2*k3] at position k1*R2*R3 + k2*R3 + k3. */
+static void build_digit_rev_perm_3(int *perm, int R1, int R2, int R3) {
+    for (int k1 = 0; k1 < R1; k1++)
+        for (int k2 = 0; k2 < R2; k2++)
+            for (int k3 = 0; k3 < R3; k3++) {
+                int pos = k1*R2*R3 + k2*R3 + k3;
+                int dft_idx = k1 + R1*k2 + R1*R2*k3;
+                perm[dft_idx] = pos;
+            }
+}
+
 /* Digit-reversal permutation for N = R1*R2.
  * In-place CT produces X[k1 + R1*k2] at position R2*k1 + k2.
  * This permutation maps natural index m to storage position p.
@@ -604,6 +616,128 @@ static double bench_fftw_12(size_t K, int reps) {
 }
 
 
+/* ═══════════════════════════════════════════════════════════════
+ * N=60 VERIFICATION AND BENCHMARK
+ * ═══════════════════════════════════════════════════════════════ */
+
+static int verify_fwd_60(size_t K, int verbose) {
+    const int R1=3, R2=4, R3=5, NN=60;
+    const size_t total = (size_t)NN * K;
+
+    double *data_re = aligned_alloc(64, total * 8);
+    double *data_im = aligned_alloc(64, total * 8);
+    double *ref_re  = fftw_malloc(total * 8);
+    double *ref_im  = fftw_malloc(total * 8);
+    double *orig_re = aligned_alloc(64, total * 8);
+    double *orig_im = aligned_alloc(64, total * 8);
+    double *sorted_re = aligned_alloc(64, total * 8);
+    double *sorted_im = aligned_alloc(64, total * 8);
+
+    for (size_t i = 0; i < total; i++) {
+        orig_re[i] = (double)rand() / RAND_MAX - 0.5;
+        orig_im[i] = (double)rand() / RAND_MAX - 0.5;
+    }
+
+    double *ftmp_re = fftw_malloc(total * 8);
+    double *ftmp_im = fftw_malloc(total * 8);
+    memcpy(ftmp_re, orig_re, total * 8);
+    memcpy(ftmp_im, orig_im, total * 8);
+    fftw_iodim dim  = { .n = NN, .is = (int)K, .os = (int)K };
+    fftw_iodim howm = { .n = (int)K, .is = 1, .os = 1 };
+    fftw_plan p = fftw_plan_guru_split_dft(1, &dim, 1, &howm,
+                                           ftmp_re, ftmp_im,
+                                           ref_re, ref_im, FFTW_ESTIMATE);
+    fftw_execute_split_dft(p, orig_re, orig_im, ref_re, ref_im);
+    fftw_destroy_plan(p);
+    fftw_free(ftmp_re); fftw_free(ftmp_im);
+
+    memcpy(data_re, orig_re, total * 8);
+    memcpy(data_im, orig_im, total * 8);
+    execute_fwd_60(data_re, data_im, K);
+
+    /* Direct comparison */
+    double max_err_direct = 0;
+    for (size_t i = 0; i < total; i++) {
+        double er = fabs(data_re[i] - ref_re[i]);
+        double ei = fabs(data_im[i] - ref_im[i]);
+        if (er > max_err_direct) max_err_direct = er;
+        if (ei > max_err_direct) max_err_direct = ei;
+    }
+
+    /* With 3-factor digit-reversal */
+    int perm[60];
+    build_digit_rev_perm_3(perm, R1, R2, R3);
+    apply_perm(perm, NN, K, data_re, data_im, sorted_re, sorted_im);
+    double max_err_perm = 0;
+    for (size_t i = 0; i < total; i++) {
+        double er = fabs(sorted_re[i] - ref_re[i]);
+        double ei = fabs(sorted_im[i] - ref_im[i]);
+        if (er > max_err_perm) max_err_perm = er;
+        if (ei > max_err_perm) max_err_perm = ei;
+    }
+
+    if (verbose)
+        printf("  K=%-4zu  direct=%.2e  permuted=%.2e  %s\n", K,
+               max_err_direct, max_err_perm,
+               max_err_perm < 1e-10 ? "OK" : "FAIL");
+
+    aligned_free(data_re); aligned_free(data_im);
+    aligned_free(orig_re); aligned_free(orig_im);
+    aligned_free(sorted_re); aligned_free(sorted_im);
+    fftw_free(ref_re); fftw_free(ref_im);
+    return max_err_perm < 1e-10 ? 0 : 1;
+}
+
+static double bench_ours_60(size_t K, int reps) {
+    const size_t total = 60 * K;
+    double *re = aligned_alloc(64, total * 8);
+    double *im = aligned_alloc(64, total * 8);
+    for (size_t i = 0; i < total; i++) {
+        re[i] = (double)rand() / RAND_MAX - 0.5;
+        im[i] = (double)rand() / RAND_MAX - 0.5;
+    }
+    for (int i = 0; i < 20; i++) execute_fwd_60(re, im, K);
+    double best = 1e18;
+    for (int t = 0; t < 7; t++) {
+        double t0 = now_ns();
+        for (int i = 0; i < reps; i++) execute_fwd_60(re, im, K);
+        double ns = (now_ns() - t0) / reps;
+        if (ns < best) best = ns;
+    }
+    aligned_free(re); aligned_free(im);
+    return best;
+}
+
+static double bench_fftw_60(size_t K, int reps) {
+    const int NN = 60;
+    const size_t total = (size_t)NN * K;
+    double *ri = fftw_malloc(total*8), *ii = fftw_malloc(total*8);
+    double *ro = fftw_malloc(total*8), *io = fftw_malloc(total*8);
+    for (size_t i = 0; i < total; i++) {
+        ri[i] = (double)rand()/RAND_MAX-0.5;
+        ii[i] = (double)rand()/RAND_MAX-0.5;
+    }
+    fftw_iodim dim={.n=NN,.is=(int)K,.os=(int)K};
+    fftw_iodim howm={.n=(int)K,.is=1,.os=1};
+    fftw_plan p = fftw_plan_guru_split_dft(1,&dim,1,&howm,ri,ii,ro,io,FFTW_MEASURE);
+    for (size_t i = 0; i < total; i++) {
+        ri[i] = (double)rand()/RAND_MAX-0.5;
+        ii[i] = (double)rand()/RAND_MAX-0.5;
+    }
+    for (int i=0;i<20;i++) fftw_execute(p);
+    double best = 1e18;
+    for (int t=0;t<7;t++) {
+        double t0=now_ns();
+        for (int i=0;i<reps;i++) fftw_execute_split_dft(p,ri,ii,ro,io);
+        double ns=(now_ns()-t0)/reps;
+        if(ns<best) best=ns;
+    }
+    fftw_destroy_plan(p);
+    fftw_free(ri);fftw_free(ii);fftw_free(ro);fftw_free(io);
+    return best;
+}
+
+
 int main(void) {
     srand(42);
 
@@ -700,6 +834,81 @@ int main(void) {
         double fftw_ns = bench_fftw_12(K, reps);
         double ours_ns = bench_ours_12(K, reps);
 
+        printf("%-5zu %-7zu %10.1f %10.1f %7.2fx\n",
+               K, total, fftw_ns, ours_ns,
+               fftw_ns > 0 ? fftw_ns / ours_ns : 0);
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+     * N=60 = 3×4×5, 3-stage stride-based executor
+     * ══════════════════════════════════════════════════════════════ */
+    printf("\n========================================\n");
+    printf("N=60 = 3x4x5, 3-stage stride-based executor\n\n");
+
+    printf("Correctness vs FFTW (digit-reversal permuted):\n");
+    for (int i = 0; i < n_test; i++) {
+        size_t K = test_Ks[i];
+        int err = verify_fwd_60(K, 1);
+        fail |= err;
+    }
+    if (fail) {
+        printf("\n*** N=60 CORRECTNESS FAILURE ***\n");
+        return 1;
+    }
+    printf("  All correct.\n\n");
+
+    /* N=60 roundtrip */
+    printf("Roundtrip N=60 (DIT fwd + DIF bwd) = identity:\n");
+    for (int i = 0; i < n_test; i++) {
+        size_t K = test_Ks[i];
+        const size_t total = 60 * K;
+        double *re = aligned_alloc(64, total * 8);
+        double *im = aligned_alloc(64, total * 8);
+        double *orig_re = aligned_alloc(64, total * 8);
+        double *orig_im = aligned_alloc(64, total * 8);
+        for (size_t j = 0; j < total; j++) {
+            orig_re[j] = (double)rand() / RAND_MAX - 0.5;
+            orig_im[j] = (double)rand() / RAND_MAX - 0.5;
+        }
+        memcpy(re, orig_re, total * 8);
+        memcpy(im, orig_im, total * 8);
+        execute_fwd_60(re, im, K);
+        execute_bwd_60(re, im, K);
+        double scale = 1.0 / 60.0;
+        for (size_t j = 0; j < total; j++) { re[j] *= scale; im[j] *= scale; }
+        double max_err = 0;
+        for (size_t j = 0; j < total; j++) {
+            double er = fabs(re[j] - orig_re[j]);
+            double ei = fabs(im[j] - orig_im[j]);
+            if (er > max_err) max_err = er;
+            if (ei > max_err) max_err = ei;
+        }
+        printf("  K=%-4zu  err=%.2e  %s\n", K, max_err,
+               max_err < 1e-10 ? "OK" : "FAIL");
+        if (max_err >= 1e-10) fail = 1;
+        aligned_free(re); aligned_free(im);
+        aligned_free(orig_re); aligned_free(orig_im);
+    }
+    if (fail) {
+        printf("\n*** N=60 ROUNDTRIP FAILURE ***\n");
+        return 1;
+    }
+    printf("  All correct.\n\n");
+
+    /* N=60 Performance */
+    printf("Performance: stride executor vs FFTW_MEASURE (N=60)\n\n");
+    printf("%-5s %-7s %10s %10s %8s\n",
+           "K", "N*K", "FFTW_M", "stride", "ratio");
+    printf("%-5s %-7s %10s %10s %8s\n",
+           "-----", "-------", "----------", "----------", "--------");
+    for (int i = 0; i < n_bench; i++) {
+        size_t K = bench_Ks[i];
+        size_t total = 60 * K;
+        int reps = (int)(2e6 / (total + 1));
+        if (reps < 200) reps = 200;
+        if (reps > 2000000) reps = 2000000;
+        double fftw_ns = bench_fftw_60(K, reps);
+        double ours_ns = bench_ours_60(K, reps);
         printf("%-5zu %-7zu %10.1f %10.1f %7.2fx\n",
                K, total, fftw_ns, ours_ns,
                fftw_ns > 0 ? fftw_ns / ours_ns : 0);
