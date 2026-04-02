@@ -597,6 +597,46 @@ int main(void) {
         fail |= test_N("6x4x5", 120, factors, 3, n1f, n1b, t1f, t1b);
     }
 
+    /* N=28 = 4x7 (2 stages, tests R=7) */
+    {
+        int factors[] = {4, 7};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix4_n1_stride_fwd_avx2, (stride_n1_fn)radix7_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix4_n1_stride_bwd_avx2, (stride_n1_fn)radix7_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, null_t1};
+        stride_t1_fn t1b[] = {null_t1, null_t1};
+        fail |= test_N("4x7", 28, factors, 2, n1f, n1b, t1f, t1b);
+    }
+
+    /* N=44 = 4x11 (2 stages, tests R=11) */
+    {
+        int factors[] = {4, 11};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix4_n1_stride_fwd_avx2, (stride_n1_fn)radix11_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix4_n1_stride_bwd_avx2, (stride_n1_fn)radix11_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, null_t1};
+        stride_t1_fn t1b[] = {null_t1, null_t1};
+        fail |= test_N("4x11", 44, factors, 2, n1f, n1b, t1f, t1b);
+    }
+
+    /* N=77 = 7x11 (2 stages, both odd primes) */
+    {
+        int factors[] = {7, 11};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix7_n1_fwd_avx2, (stride_n1_fn)radix11_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix7_n1_bwd_avx2, (stride_n1_fn)radix11_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, null_t1};
+        stride_t1_fn t1b[] = {null_t1, null_t1};
+        fail |= test_N("7x11", 77, factors, 2, n1f, n1b, t1f, t1b);
+    }
+
+    /* N=140 = 4x5x7 (3 stages, smooth + prime 7) */
+    {
+        int factors[] = {4, 5, 7};
+        stride_n1_fn n1f[] = {(stride_n1_fn)radix4_n1_stride_fwd_avx2, (stride_n1_fn)radix5_n1_fwd_avx2, (stride_n1_fn)radix7_n1_fwd_avx2};
+        stride_n1_fn n1b[] = {(stride_n1_fn)radix4_n1_stride_bwd_avx2, (stride_n1_fn)radix5_n1_bwd_avx2, (stride_n1_fn)radix7_n1_bwd_avx2};
+        stride_t1_fn t1f[] = {null_t1, (stride_t1_fn)radix5_t1_dit_fwd_avx2, null_t1};
+        stride_t1_fn t1b[] = {null_t1, (stride_t1_fn)radix5_t1_dit_bwd_avx2, null_t1};
+        fail |= test_N("4x5x7", 140, factors, 3, n1f, n1b, t1f, t1b);
+    }
+
     if (fail) printf("\n*** SOME TESTS FAILED ***\n");
     else printf("\nAll tests passed.\n");
     return fail;
