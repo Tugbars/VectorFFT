@@ -35,3 +35,4 @@ src/test-codelets/build_bench/bench_sv.exe
 src/test-codelets/build_bench/bench_recursive_ct.exe
 src/test-codelets/build_bench/bench_r8_log3.exe
 src/test-codelets/build_bench/bench_r64_blocked.exe
+src/test-codelets.zip
