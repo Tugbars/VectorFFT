@@ -89,7 +89,22 @@ set(VFFT_CODELET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/codelets/${_isa}")
 
 if(NOT EXISTS "${VFFT_CODELET_DIR}/fft_radix16_${_isa}_ct_n1.h")
     message(WARNING "Codelets not found in ${VFFT_CODELET_DIR}. "
-                    "Run generators/generate_all.bat first.")
+                    "Run: cmake --build . --target generate_codelets")
+endif()
+
+# ── Codelet generation target ──
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_FOUND)
+    if(WIN32)
+        set(_gen_script "${CMAKE_CURRENT_SOURCE_DIR}/generators/generate_all.bat")
+    else()
+        set(_gen_script bash "${CMAKE_CURRENT_SOURCE_DIR}/generators/generate_all.sh")
+    endif()
+    add_custom_target(generate_codelets
+        COMMAND ${_gen_script}
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/generators"
+        COMMENT "Generating stride-fft codelets (AVX2 + AVX-512 + scalar)..."
+    )
 endif()
 
 # ── Interface library (header-only) ──
