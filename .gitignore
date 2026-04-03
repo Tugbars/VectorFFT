@@ -14,10 +14,9 @@ src/stride-fft/codelets/avx2/*.h
 src/stride-fft/codelets/avx512/*.h
 src/stride-fft/codelets/scalar/*.h
 
-# Benchmark artifacts
+# Benchmark artifacts (but NOT the PNG plots — those are used in README)
 src/stride-fft/bench/vfft_wisdom.txt
 src/stride-fft/bench/vfft_bench_results.csv
-src/stride-fft/bench/*.png
 
 # Old test-codelets build artifacts
 src/test-codelets/build_bench/
