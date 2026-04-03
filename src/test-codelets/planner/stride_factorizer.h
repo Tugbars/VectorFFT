@@ -120,27 +120,61 @@ static void _sort_factors_descending(int *f, int n) {
     }
 }
 
+/* Check if a composite radix should be decomposed at this K.
+ * Returns 1 if the composite's twiddle table overflows the L1 twiddle budget,
+ * meaning we should use smaller sub-radixes instead.
+ *
+ * Budget = L1 / 3 (twiddle shares L1 with data and codelet spills).
+ * Overflow when: (R-1) * K * 16 > budget */
+static int _should_decompose(int R, size_t K, size_t l1_bytes) {
+    size_t tw_budget = l1_bytes / 3;
+    size_t tw_bytes = (size_t)(R - 1) * K * 16;
+    return tw_bytes > tw_budget;
+}
+
 static int stride_factorize_greedy(int N, size_t K,
                                    const stride_registry_t *reg,
                                    const stride_cpu_info_t *cpu,
                                    stride_factorization_t *fact) {
     memset(fact, 0, sizeof(*fact));
     if (N <= 1) return 0;
-    (void)cpu; /* reserved for future use */
 
+    const size_t l1 = cpu->l1d_bytes;
     int remaining = N;
     int nf = 0;
 
-    /* Step 1: decompose using composite-preferring order */
+    /* Decompose N into available radixes.
+     *
+     * At small K: prefer composites (fewer stages, less overhead).
+     * At large K: skip composites whose twiddle tables overflow L1,
+     * let them decompose into smaller radixes that fit.
+     *
+     * The K threshold is per-radix: (R-1)*K*16 > L1/3. */
     while (remaining > 1 && nf < FACT_MAX_STAGES) {
         int best_R = 0;
         for (const int *rp = FACTORIZE_RADIXES; *rp; rp++) {
             int R = *rp;
             if (remaining % R != 0) continue;
             if (!stride_registry_has(reg, R)) continue;
+
+            /* For twiddled stages (nf > 0): check if this radix's twiddle
+             * table would overflow L1. If so, skip to smaller radixes. */
+            if (nf > 0 && _should_decompose(R, K, l1)) continue;
+
             best_R = R;
             break;
         }
+
+        /* Fallback: if nothing fits L1, pick smallest available */
+        if (!best_R) {
+            for (const int *rp = FACTORIZE_RADIXES; *rp; rp++) {
+                int R = *rp;
+                if (remaining % R != 0) continue;
+                if (!stride_registry_has(reg, R)) continue;
+                if (!best_R || R < best_R) best_R = R;
+            }
+        }
+
         if (!best_R) return -1;
         fact->factors[nf++] = best_R;
         remaining /= best_R;
@@ -148,17 +182,19 @@ static int stride_factorize_greedy(int N, size_t K,
     if (remaining != 1) return -1;
     fact->nfactors = nf;
 
-    /* Step 2: order based on K */
+    /* Order based on K:
+     * Small K (<=16): descending — large radixes first, everything fits L1.
+     * Large K (>16): ascending — small radixes first (small stride on outer stages),
+     *                large radixes last (stride=K, sequential access). */
     if (K <= 16) {
         _sort_factors_descending(fact->factors, nf);
     } else {
         _sort_factors_ascending(fact->factors, nf);
     }
 
-    /* Step 3: if R=64 is first, push it to last position.
-     * R=64's massive codelet (2225 ops, heavy spills) is better as the
-     * innermost stage where stride=K (sequential access). */
-    if (nf > 1 && fact->factors[0] == 64) {
+    /* Push R=64 away from first stage: its 2225-op codelet has too many
+     * compiler spills. Better as innermost (stride=K, sequential). */
+    if (nf > 1 && fact->factors[0] >= 64) {
         int tmp = fact->factors[0];
         for (int i = 0; i < nf - 1; i++) fact->factors[i] = fact->factors[i+1];
         fact->factors[nf-1] = tmp;
@@ -293,14 +329,13 @@ static int stride_factorize(int N, size_t K,
                             stride_factorization_t *fact) {
     stride_cpu_info_t cpu = stride_detect_cpu();
 
-    /* Step 1: greedy decomposition */
-    int ret = stride_factorize_greedy(N, K, reg, &cpu, fact);
-    if (ret != 0) return ret;
-
-    /* Step 2: optimize ordering */
-    stride_optimize_order(fact, K, N, &cpu);
-
-    return 0;
+    /* Greedy decomposition with K-aware ordering (v2).
+     * The greedy factorizer already sorts based on K:
+     *   small K → descending, large K → ascending.
+     * No additional permutation search — the scoring model is unreliable
+     * and the swap-based permuter has corruption bugs.
+     * Use exhaustive search (wisdom) for truly optimal ordering. */
+    return stride_factorize_greedy(N, K, reg, &cpu, fact);
 }
 
 #endif /* STRIDE_FACTORIZER_H */
