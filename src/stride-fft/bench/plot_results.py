@@ -5,9 +5,13 @@ Split-complex batched 1D FFT (double precision, single-threaded AVX2)
 
 Usage: python plot_results.py
 """
+import os
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Save to file without opening windows
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 plt.rcParams['figure.dpi'] = 150
 plt.rcParams['font.size'] = 11
@@ -109,7 +113,7 @@ ax.legend(loc='upper right', fontsize=8, ncol=3, framealpha=0.9)
 ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{int(x):,}'))
 
 plt.tight_layout()
-plt.savefig('vfft_throughput.png', dpi=200, bbox_inches='tight')
+plt.savefig(os.path.join(SCRIPT_DIR, 'vfft_throughput.png'), dpi=200, bbox_inches='tight')
 print('Saved: vfft_throughput.png')
 plt.show()
 
@@ -157,7 +161,7 @@ fig.suptitle('VectorFFT Speedup over FFTW and Intel MKL\n'
              'FP64 Split-Complex, Single Thread AVX2, i9-14900KF',
              fontsize=14, fontweight='bold', y=1.02)
 plt.tight_layout()
-plt.savefig('vfft_speedup_bars.png', dpi=200, bbox_inches='tight')
+plt.savefig(os.path.join(SCRIPT_DIR, 'vfft_speedup_bars.png'), dpi=200, bbox_inches='tight')
 print('Saved: vfft_speedup_bars.png')
 plt.show()
 
@@ -202,7 +206,7 @@ ax.legend(loc='upper right', fontsize=9, ncol=2, framealpha=0.9)
 ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f'{int(x):,}'))
 
 plt.tight_layout()
-plt.savefig('vfft_vs_mkl.png', dpi=200, bbox_inches='tight')
+plt.savefig(os.path.join(SCRIPT_DIR, 'vfft_vs_mkl.png'), dpi=200, bbox_inches='tight')
 print('Saved: vfft_vs_mkl.png')
 plt.show()
 
@@ -282,7 +286,7 @@ ax2.grid(axis='y', alpha=0.3)
 fig.suptitle('VectorFFT Accuracy — FP64 Split-Complex FFT\n'
              'i9-14900KF, AVX2', fontsize=14, fontweight='bold', y=1.02)
 plt.tight_layout()
-plt.savefig('vfft_accuracy.png', dpi=200, bbox_inches='tight')
+plt.savefig(os.path.join(SCRIPT_DIR, 'vfft_accuracy.png'), dpi=200, bbox_inches='tight')
 print('Saved: vfft_accuracy.png')
 plt.show()
 

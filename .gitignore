@@ -1,42 +1,44 @@
-/build
-/build/test
-/build/.cmake
-/build/.cmake/api
-/build/test/CMakeFiles
-/build/test
-/build/src/CMakeFiles
-build/test/test_mixedRadixFFT_standalone.exe
-/build/.cmake
-.cache/clangd/index/fft_radix4_avx512n1.h.D256B4F23E2A0985.idx
-/.cache
-/CMakeFiles
-/vcpkg
-highSpeedFFT.code-workspace
-/.claude
-/.vscode
-.claude/settings.local.json
-/.claude
-/.vscode
-/build-*
-ENGINEERING_GUIDE.md
-src/3-execute/TODO_contiguous_twiddles_r20.md
-src/test-codelets/build_bench/bench_sv.exe
-src/test-codelets/build_bench/bench_recursive_ct.exe
-src/test-codelets/build_bench/bench_r8_log3.exe
-src/test-codelets/build_bench/bench_recursive_ct.exe
-src/test-codelets/build_bench/bench_r64_blocked.exe
-src/test-codelets/build_bench/bench_r64.exe
-src/test-codelets/build_bench/bench_r32_ladder_honest.exe
-src/test-codelets/build_bench/bench_r16_log3.exe
-src/test-codelets/build_bench/bench_k1.exe
-src/test-codelets/build_bench/bench_honest_all.exe
-src/test-codelets/build_bench/bench_fftw_style.exe
-src/test-codelets/build_bench/bench_sv.exe
-src/test-codelets/build_bench/bench_recursive_ct.exe
-src/test-codelets/build_bench/bench_r8_log3.exe
-src/test-codelets/build_bench/bench_r64_blocked.exe
+# Build
+/build/
+/build-*/
+cmake-build-*/
+CMakeFiles/
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+
+# Generated codelets (regenerate via generators/generate_all)
+src/stride-fft/codelets/avx2/*.h
+src/stride-fft/codelets/avx512/*.h
+src/stride-fft/codelets/scalar/*.h
+
+# Benchmark artifacts
+src/stride-fft/bench/vfft_wisdom.txt
+src/stride-fft/bench/vfft_bench_results.csv
+src/stride-fft/bench/*.png
+
+# Old test-codelets build artifacts
+src/test-codelets/build_bench/
 src/test-codelets.zip
-vfft_accuracy.png
-vfft_speedup_bars.png
-vfft_throughput.png
-vfft_vs_mkl.png
+
+# Generated plots at root
+vfft_*.png
+
+# IDE / tools
+/.vscode/
+/.vs/
+/.cache/
+/.claude/
+*.code-workspace
+*.swp
+*~
+.idea/
+
+# vcpkg
+/vcpkg/
+
+# OS
+Thumbs.db
+.DS_Store
