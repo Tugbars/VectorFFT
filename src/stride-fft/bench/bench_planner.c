@@ -12,6 +12,10 @@
 #include <math.h>
 #include <fftw3.h>
 
+#ifdef VFFT_HAS_MKL
+#include <mkl_dfti.h>
+#endif
+
 #include "../core/planner.h"
 #include "../core/compat.h"
 
@@ -210,6 +214,60 @@ static double bench_fftw(int N, size_t K) {
     return best;
 }
 
+#ifdef VFFT_HAS_MKL
+static double bench_mkl(int N, size_t K) {
+    size_t total = (size_t)N * K;
+    double *re = (double*)aligned_alloc(64, total * sizeof(double));
+    double *im = (double*)aligned_alloc(64, total * sizeof(double));
+    for (size_t i = 0; i < total; i++) {
+        re[i] = (double)rand()/RAND_MAX - 0.5;
+        im[i] = (double)rand()/RAND_MAX - 0.5;
+    }
+
+    DFTI_DESCRIPTOR_HANDLE desc = NULL;
+    MKL_LONG status;
+    MKL_LONG strides[2] = {0, (MKL_LONG)K};
+
+    status = DftiCreateDescriptor(&desc, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N);
+    if (status != DFTI_NO_ERROR) { aligned_free(re); aligned_free(im); return 1e18; }
+
+    DftiSetValue(desc, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
+    DftiSetValue(desc, DFTI_PLACEMENT, DFTI_INPLACE);
+    DftiSetValue(desc, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+    DftiSetValue(desc, DFTI_INPUT_DISTANCE, 1);
+    DftiSetValue(desc, DFTI_OUTPUT_DISTANCE, 1);
+    DftiSetValue(desc, DFTI_INPUT_STRIDES, strides);
+    DftiSetValue(desc, DFTI_OUTPUT_STRIDES, strides);
+    status = DftiCommitDescriptor(desc);
+    if (status != DFTI_NO_ERROR) {
+        DftiFreeDescriptor(&desc);
+        aligned_free(re); aligned_free(im);
+        return 1e18;
+    }
+
+    /* Warmup */
+    for (int i = 0; i < 10; i++)
+        DftiComputeForward(desc, re, im);
+
+    int reps = (int)(1e6 / (total + 1));
+    if (reps < 20) reps = 20;
+    if (reps > 100000) reps = 100000;
+
+    double best = 1e18;
+    for (int t = 0; t < 5; t++) {
+        double t0 = now_ns();
+        for (int i = 0; i < reps; i++)
+            DftiComputeForward(desc, re, im);
+        double ns = (now_ns() - t0) / reps;
+        if (ns < best) best = ns;
+    }
+
+    DftiFreeDescriptor(&desc);
+    aligned_free(re); aligned_free(im);
+    return best;
+}
+#endif
+
 static void format_factors(char *buf, const int *factors, int nf) {
     buf[0] = 0;
     for (int s = 0; s < nf; s++) {
@@ -327,6 +385,15 @@ int main(void) {
     if (csv && csv_is_new)
         fprintf(csv, "timestamp,N,K,wis_factors,wis_ns,heur_factors,heur_ns,fftw_ns,wis_speedup,heur_speedup\n");
 
+#ifdef VFFT_HAS_MKL
+    printf("Phase 2: Benchmark (ours vs FFTW_MEASURE vs Intel MKL)\n\n");
+    printf("%-6s %-4s | %-16s %9s | %9s | %9s | %7s %7s\n",
+           "N", "K", "factors", "ours_ns", "fftw_ns", "mkl_ns",
+           "vs_fw", "vs_mkl");
+    printf("%-6s-%-4s-+-%-16s-%9s-+-%9s-+-%9s-+-%-7s-%-7s\n",
+           "------", "----", "----------------", "---------",
+           "---------", "---------", "-------", "-------");
+#else
     printf("Phase 2: Benchmark (wisdom vs heuristic vs FFTW_MEASURE)\n\n");
     printf("%-6s %-4s | %-16s %9s | %-16s %9s | %9s | %7s %7s\n",
            "N", "K", "wisdom_factors", "wis_ns",
@@ -336,11 +403,36 @@ int main(void) {
            "------", "----", "----------------", "---------",
            "----------------", "---------", "---------",
            "-------", "-------");
+#endif
 
     for (int ci = 0; ci < ncases; ci++) {
         int N = cases[ci].N;
         size_t K = cases[ci].K;
 
+#ifdef VFFT_HAS_MKL
+        /* MKL mode: use best plan (wisdom or heuristic), compare vs FFTW + MKL */
+        stride_plan_t *plan = stride_wise_plan(N, K, &reg, &wis);
+        if (!plan) {
+            printf("%-6d %-4zu | SKIP (cannot factor)\n", N, K);
+            continue;
+        }
+
+        char fstr[64];
+        format_factors(fstr, plan->factors, plan->num_stages);
+        double ours = bench_plan(plan, N, K);
+        double fns = bench_fftw(N, K);
+        double mns = bench_mkl(N, K);
+        double vs_fftw = fns / ours;
+        double vs_mkl = mns / ours;
+
+        printf("%-6d %-4zu | %-16s %7.1f ns | %7.1f ns | %7.1f ns | %6.2fx %6.2fx\n",
+               N, K, fstr, ours, fns, mns, vs_fftw, vs_mkl);
+        if (csv)
+            fprintf(csv, "%s,%d,%zu,%s,%.1f,,,%.1f,%.1f,%.2f,%.2f\n",
+                    ts, N, K, fstr, ours, fns, mns, vs_fftw, vs_mkl);
+
+        stride_plan_destroy(plan);
+#else
         stride_plan_t *hplan = stride_auto_plan(N, K, &reg);
         if (!hplan) {
             printf("%-6d %-4zu | SKIP (cannot factor)\n", N, K);
@@ -375,6 +467,7 @@ int main(void) {
 
         if (wplan) stride_plan_destroy(wplan);
         stride_plan_destroy(hplan);
+#endif
     }
 
     if (csv) {
@@ -382,8 +475,13 @@ int main(void) {
         printf("\nResults appended to %s\n", csv_path);
     }
 
+#ifdef VFFT_HAS_MKL
+    printf("\nvs_fw  = FFTW / ours  (>1 = we're faster)\n");
+    printf("vs_mkl = MKL / ours   (>1 = we're faster)\n");
+#else
     printf("\nwis/fw = FFTW / wisdom-plan  (>1 = we're faster)\n");
     printf("heu/fw = FFTW / heuristic-plan  (>1 = we're faster)\n");
+#endif
 
     return 0;
 }

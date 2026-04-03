@@ -14,7 +14,6 @@ cmake_minimum_required(VERSION 3.16)
 #   VFFT_STRIDE_ISA          - Force ISA: "avx512", "avx2", "scalar", "auto" (default: auto)
 # ═══════════════════════════════════════════════════════════════
 
-option(VFFT_STRIDE_BUILD_BENCH "Build stride-fft benchmark" OFF)
 set(VFFT_STRIDE_ISA "auto" CACHE STRING "ISA for stride-fft codelets (auto/avx512/avx2/scalar)")
 
 # ── ISA Detection ──
@@ -22,17 +21,24 @@ if(VFFT_STRIDE_ISA STREQUAL "auto")
     include(CheckCSourceCompiles)
     set(CMAKE_REQUIRED_FLAGS "")
 
-    # Check AVX-512
+    # Check AVX-512 (compile + run: must actually execute on this CPU)
     if(MSVC OR CMAKE_C_COMPILER_ID MATCHES "Intel")
         set(_avx512_flag "/arch:AVX512")
     else()
         set(_avx512_flag "-mavx512f -mavx512dq -mfma")
     endif()
     set(CMAKE_REQUIRED_FLAGS "${_avx512_flag}")
-    check_c_source_compiles("
-        #include <immintrin.h>
-        int main() { __m512d a = _mm512_setzero_pd(); (void)a; return 0; }
-    " VFFT_HAS_AVX512)
+    set(VFFT_HAS_AVX512 FALSE)
+    if(NOT CMAKE_CROSSCOMPILING)
+        try_run(_avx512_run _avx512_compile
+            "${CMAKE_BINARY_DIR}/avx512_check"
+            "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_avx512.c"
+            CMAKE_FLAGS "-DCMAKE_C_FLAGS=${_avx512_flag}"
+        )
+        if(_avx512_compile AND _avx512_run EQUAL 0)
+            set(VFFT_HAS_AVX512 TRUE)
+        endif()
+    endif()
 
     # Check AVX2
     if(MSVC OR CMAKE_C_COMPILER_ID MATCHES "Intel")
@@ -100,25 +106,64 @@ target_compile_definitions(vfft_stride INTERFACE
     $<$<PLATFORM_ID:Windows>:_USE_MATH_DEFINES>
 )
 
-# ── Benchmark target (optional) ──
-if(VFFT_STRIDE_BUILD_BENCH)
-    find_package(PkgConfig QUIET)
-    find_library(FFTW3_LIB fftw3 HINTS
-        "${CMAKE_SOURCE_DIR}/build/vcpkg_installed/x64-windows/lib"
-    )
-    find_path(FFTW3_INC fftw3.h HINTS
-        "${CMAKE_SOURCE_DIR}/build/vcpkg_installed/x64-windows/include"
+# ── FFTW3 discovery (shared by bench targets) ──
+find_library(FFTW3_LIB fftw3 HINTS
+    "${CMAKE_SOURCE_DIR}/build/vcpkg_installed/x64-windows/lib"
+)
+find_path(FFTW3_INC fftw3.h HINTS
+    "${CMAKE_SOURCE_DIR}/build/vcpkg_installed/x64-windows/include"
+)
+
+# ── MKL discovery (optional) ──
+set(VFFT_HAS_MKL OFF)
+find_path(MKL_INC mkl_dfti.h HINTS
+    "$ENV{MKLROOT}/include"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/include"
+)
+find_library(MKL_CORE mkl_core HINTS
+    "$ENV{MKLROOT}/lib"
+    "$ENV{MKLROOT}/lib/intel64"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/intel64"
+)
+find_library(MKL_SEQ mkl_sequential HINTS
+    "$ENV{MKLROOT}/lib"
+    "$ENV{MKLROOT}/lib/intel64"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/intel64"
+)
+find_library(MKL_ILP64 mkl_intel_ilp64 HINTS
+    "$ENV{MKLROOT}/lib"
+    "$ENV{MKLROOT}/lib/intel64"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/intel64"
+)
+if(MKL_INC AND MKL_CORE AND MKL_SEQ AND MKL_ILP64)
+    set(VFFT_HAS_MKL ON)
+    set(MKL_LIBS ${MKL_ILP64} ${MKL_SEQ} ${MKL_CORE})
+    message(STATUS "Intel MKL found: ${MKL_INC}")
+else()
+    message(STATUS "Intel MKL not found — MKL benchmark disabled")
+endif()
+
+# ── Benchmark target — always built, shows as VS Code target ──
+if(FFTW3_LIB AND FFTW3_INC)
+    add_executable(vfft_bench bench/bench_planner.c)
+    target_link_libraries(vfft_bench PRIVATE vfft_stride ${FFTW3_LIB})
+    target_include_directories(vfft_bench PRIVATE ${FFTW3_INC})
+    target_compile_definitions(vfft_bench PRIVATE _CRT_SECURE_NO_WARNINGS)
+    set_target_properties(vfft_bench PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
-    if(FFTW3_LIB AND FFTW3_INC)
-        add_executable(vfft_stride_bench bench/bench_planner.c)
-        target_link_libraries(vfft_stride_bench PRIVATE vfft_stride ${FFTW3_LIB})
-        target_include_directories(vfft_stride_bench PRIVATE ${FFTW3_INC})
-        target_compile_definitions(vfft_stride_bench PRIVATE
-            _CRT_SECURE_NO_WARNINGS
-        )
-        message(STATUS "VectorFFT stride-fft bench: enabled")
+    if(VFFT_HAS_MKL)
+        target_link_libraries(vfft_bench PRIVATE ${MKL_LIBS})
+        target_include_directories(vfft_bench PRIVATE ${MKL_INC})
+        target_compile_definitions(vfft_bench PRIVATE VFFT_HAS_MKL MKL_ILP64)
+        message(STATUS "VectorFFT bench: vfft_bench (FFTW + MKL)")
     else()
-        message(WARNING "FFTW3 not found — stride-fft bench disabled")
+        message(STATUS "VectorFFT bench: vfft_bench (FFTW only)")
     endif()
+else()
+    message(WARNING "FFTW3 not found — vfft_bench disabled. Install via: vcpkg install fftw3")
 endif()
