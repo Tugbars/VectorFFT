@@ -434,9 +434,11 @@ def emit_kernel_body_log3(em, d, itw_set, variant):
 
     # Load 4 base twiddles
     em.c("Load 4 log3 base twiddles: W^1, W^2, W^4, W^8")
+    tb, tbi = em._tw_buf(), em._tw_buf_im()
     for name, idx in sorted(LOG3_BASE_MAP.items(), key=lambda x: x[1]):
-        em.o(f"const {T} {name}_re = {ld}(&base_tw_re[{idx}*K+k]);")
-        em.o(f"const {T} {name}_im = {ld}(&base_tw_im[{idx}*K+k]);")
+        ta = em._tw_addr(idx)
+        em.o(f"const {T} {name}_re = {ld}(&{tb}[{ta}]);")
+        em.o(f"const {T} {name}_im = {ld}(&{tbi}[{ta}]);")
     em.n_load += 8
     em.b()
 
@@ -709,7 +711,7 @@ def emit_file(isa, itw_set, variant):
         if tw_params == 'flat':
             em.L.append(f"    const double * __restrict__ tw_re, const double * __restrict__ tw_im,")
         elif tw_params == 'log3':
-            em.L.append(f"    const double * __restrict__ base_tw_re, const double * __restrict__ base_tw_im,")
+            em.L.append(f"    const double * __restrict__ tw_re, const double * __restrict__ tw_im,")
         em.L.append(f"    size_t K)")
         em.L.append(f"{{")
         em.ind = 1
@@ -905,6 +907,7 @@ def emit_file_ct(isa, itw_set, ct_variant):
 
     is_n1 = ct_variant == 'ct_n1'
     is_t1_dit = ct_variant == 'ct_t1_dit'
+    is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     em.addr_mode = 'n1' if is_n1 else 't1'
 
@@ -914,6 +917,9 @@ def emit_file_ct(isa, itw_set, ct_variant):
     elif is_t1_dif:
         func_base = "radix16_t1_dif"
         vname = "t1 DIF (in-place twiddle)"
+    elif is_t1_dit_log3:
+        func_base = "radix16_t1_dit_log3"
+        vname = "t1 DIT log3 (in-place, derived twiddles)"
     else:
         func_base = "radix16_t1_dit"
         vname = "t1 DIT (in-place twiddle)"
@@ -1035,8 +1041,11 @@ def emit_file_ct(isa, itw_set, ct_variant):
 
         em.ind += 1
         # Reuse the same kernel body — addressing differs via addr_mode
-        kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
-        emit_kernel_body(em, d, itw_set, kernel_variant)
+        if is_t1_dit_log3:
+            emit_kernel_body_log3(em, d, itw_set, 'dit_tw_log3')
+        else:
+            kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
+            emit_kernel_body(em, d, itw_set, kernel_variant)
         em.ind -= 1
         em.o("}")
         em.L.append("}")
@@ -1250,7 +1259,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='dit_tw',
                         choices=['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dif', 'all'])
+                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
     args = parser.parse_args()
 
     itw_set = collect_internal_twiddles()

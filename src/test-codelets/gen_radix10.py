@@ -412,11 +412,13 @@ def emit_kernel_body_log3(em, d, itw_set, variant):
     em.c("  Chain: w2=w1*w1, w3=w1*w2, w4=w2*w2, w5=w1*w4,")
     em.c("         w6=w3*w3, w7=w3*w4, w8=w4*w4, w9=w4*w5")
     em.c("  Critical path: w1->w2->w4->w8 = depth 4 (vs 8 serial)")
+    tb, tbi = em._tw_buf(), em._tw_buf_im()
+    ta = em._tw_addr(0)
     if em.isa.name == 'scalar':
-        em.o(f"const double w1r = tw_re[0*K+k], w1i = tw_im[0*K+k];")
+        em.o(f"const double w1r = {tb}[{ta}], w1i = {tbi}[{ta}];")
     else:
         ld = f"{em.isa.p}_load_pd"
-        em.o(f"const {T} w1r = {ld}(&tw_re[0*K+k]), w1i = {ld}(&tw_im[0*K+k]);")
+        em.o(f"const {T} w1r = {ld}(&{tb}[{ta}]), w1i = {ld}(&{tbi}[{ta}]);")
     em.n_load += 2
     # Parallel derivation chain (depth 4):
     #   Level 1: w2 = w1*w1
@@ -726,6 +728,7 @@ def emit_file_ct(isa, itw_set, ct_variant):
 
     is_n1     = ct_variant == 'ct_n1'
     is_t1_dit = ct_variant == 'ct_t1_dit'
+    is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     em.addr_mode = 'n1' if is_n1 else 't1'
 
@@ -733,6 +736,8 @@ def emit_file_ct(isa, itw_set, ct_variant):
         func_base = "radix10_n1"; vname = "n1 (separate is/os)"
     elif is_t1_dif:
         func_base = "radix10_t1_dif"; vname = "t1 DIF (in-place twiddle)"
+    elif is_t1_dit_log3:
+        func_base = "radix10_t1_dit_log3"; vname = "t1 DIT log3 (in-place, derived twiddles)"
     else:
         func_base = "radix10_t1_dit"; vname = "t1 DIT (in-place twiddle)"
 
@@ -812,8 +817,11 @@ def emit_file_ct(isa, itw_set, ct_variant):
             else:                    em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
 
         em.ind += 1
-        kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
-        emit_kernel_body(em, d, itw_set, kernel_variant)
+        if is_t1_dit_log3:
+            emit_kernel_body_log3(em, d, itw_set, 'dit_tw_log3')
+        else:
+            kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
+            emit_kernel_body(em, d, itw_set, kernel_variant)
         em.ind -= 1
         em.o("}"); em.L.append("}"); em.L.append("")
 
@@ -979,10 +987,10 @@ def emit_sv_variants(t2_lines, isa, variant):
 
 ALL_VARIANTS = [
     'notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-    'ct_n1', 'ct_t1_dit', 'ct_t1_dif',
+    'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif',
 ]
 
-CT_VARIANTS = {'ct_n1', 'ct_t1_dit', 'ct_t1_dif'}
+CT_VARIANTS = {'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif'}
 
 
 def main():
@@ -991,7 +999,7 @@ def main():
                         help='scalar, avx2, avx512, or all')
     parser.add_argument('--variant', default='all',
                         help='notw, dit_tw, dif_tw, dit_tw_log3, dif_tw_log3, '
-                             'ct_n1, ct_t1_dit, ct_t1_dif, or all')
+                             'ct_n1, ct_t1_dit, ct_t1_dit_log3, ct_t1_dif, or all')
     args = parser.parse_args()
 
     isa_list = list(ALL_ISA.values()) if args.isa == 'all' else [ALL_ISA[args.isa]]

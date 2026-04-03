@@ -172,6 +172,61 @@ int main(void) {
                K, tw_kb, flat_ns, log3_ns, fall_ns, fftw_ns, winner);
     }
 
+    /* ═══ Table-driven: test all radixes with log3 support ═══ */
+    struct { int R; const char *label; } radix_tests[] = {
+        {5,  "R=5  (tw=4*K*16,  overflow K~768)"},
+        {7,  "R=7  (tw=6*K*16,  overflow K~512)"},
+        {10, "R=10 (tw=9*K*16,  overflow K~341)"},
+        {12, "R=12 (tw=11*K*16, overflow K~280)"},
+        {13, "R=13 (tw=12*K*16, overflow K~256)"},
+        {16, "R=16 (tw=15*K*16, overflow K~200)"},
+        {17, "R=17 (tw=16*K*16, overflow K~192)"},
+        {20, "R=20 (tw=19*K*16, overflow K~160)"},
+        {25, "R=25 (tw=24*K*16, overflow K~128)"},
+        {0, NULL}
+    };
+
+    size_t test_Ks[] = {4, 16, 64, 256, 512, 1024};
+
+    for (int ri = 0; radix_tests[ri].R; ri++) {
+        int R = radix_tests[ri].R;
+        int Nv = R * R;  /* N = R^2, 2-stage R×R */
+        int f[] = {R, R};
+
+        if (!reg.t1_fwd_log3[R]) {
+            printf("\n\n%s — NO LOG3 CODELET, skipped\n", radix_tests[ri].label);
+            continue;
+        }
+
+        printf("\n\nN=%d = %dx%d  %s\n\n", Nv, R, R, radix_tests[ri].label);
+        printf("%-5s %-8s %10s %10s %7s %7s\n",
+               "K", "tw_KB", "flat_t1", "log3_t1", "winner", "delta");
+        printf("%-5s %-8s %10s %10s %7s %7s\n",
+               "-----", "--------", "----------", "----------", "-------", "-------");
+
+        for (int ki = 0; ki < 6; ki++) {
+            size_t K = test_Ks[ki];
+            double tw_kb = (double)(R-1) * K * 16.0 / 1024.0;
+
+            stride_n1_fn n1f[] = {(stride_n1_fn)reg.n1_fwd[R], (stride_n1_fn)reg.n1_fwd[R]};
+            stride_n1_fn n1b[] = {(stride_n1_fn)reg.n1_bwd[R], (stride_n1_fn)reg.n1_bwd[R]};
+
+            stride_t1_fn t1f_flat[] = {null_t1, (stride_t1_fn)reg.t1_fwd[R]};
+            stride_t1_fn t1b_flat[] = {null_t1, null_t1};
+            double flat_ns = bench_plan(Nv, K, f, 2, n1f, n1b, t1f_flat, t1b_flat);
+
+            stride_t1_fn t1f_log3[] = {null_t1, (stride_t1_fn)reg.t1_fwd_log3[R]};
+            stride_t1_fn t1b_log3[] = {null_t1, null_t1};
+            double log3_ns = bench_plan(Nv, K, f, 2, n1f, n1b, t1f_log3, t1b_log3);
+
+            const char *w = flat_ns < log3_ns ? "flat" : "log3";
+            double delta = (flat_ns < log3_ns) ? log3_ns/flat_ns - 1.0 : flat_ns/log3_ns - 1.0;
+            printf("%-5zu %-8.1f %10.1f %10.1f %7s %+6.1f%%\n",
+                   K, tw_kb, flat_ns, log3_ns, w,
+                   (flat_ns < log3_ns) ? -delta*100 : delta*100);
+        }
+    }
+
     printf("\nDone.\n");
     return 0;
 }
