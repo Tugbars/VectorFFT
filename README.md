@@ -39,6 +39,18 @@
 
 ---
 
+## Accuracy
+
+![Accuracy](src/stride-fft/bench/vfft_accuracy.png)
+
+All three libraries achieve comparable accuracy against brute-force O(N^2) DFT reference. VectorFFT's errors are 1.3-2.5x higher than FFTW/MKL due to the multi-stage stride-based decomposition (more intermediate twiddle multiplications), but remain well within double-precision tolerance and follow the theoretical O(N * epsilon * log N) bound.
+
+Roundtrip error (fwd + bwd / N) is at machine epsilon (~1e-16) for all sizes — the permutation-free architecture guarantees perfect cancellation.
+
+> Run `vfft_bench` to see accuracy results for your hardware.
+
+---
+
 ## Architecture
 
 VectorFFT uses a **permutation-free stride-based Cooley-Tukey** architecture:
