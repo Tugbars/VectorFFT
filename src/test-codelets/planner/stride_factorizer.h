@@ -81,20 +81,44 @@ typedef struct {
 } stride_factorization_t;
 
 /* ═══════════════════════════════════════════════════════════════
- * GREEDY FACTORIZER — cache-aware, largest-first
+ * GREEDY FACTORIZER — composite-preferring
  *
- * Builds factorization from the outermost stage (processed first,
- * stride = K) toward the innermost (processed last, stride = N/R * K).
+ * Step 1: Decompose N into available radixes, preferring composites
+ *         (R=25,20,12,10) over equivalent small-factor decompositions.
+ *         This minimizes stage count.
  *
- * At each step, pick the largest available radix that:
- *   1. Divides remaining
- *   2. Has registered codelets
- *   3. Keeps the twiddle table within L1 budget
+ * Step 2: Order factors based on K.
+ *         Small K (<=16): descending (largest first) — everything fits L1.
+ *         Large K (>16):  ascending (smallest first) — reduce stride pressure
+ *                         on outer stages, put big radix last (stride=K, sequential).
  *
- * The twiddle table for the NEXT stage is what matters:
- *   tw_bytes = (R_next - 1) * K_next * 16
- * where K_next = K * product of radixes chosen so far.
+ * Step 3: Push R=64 away from first stage (its 2225-op codelet has too many
+ *         compiler spills to be efficient as the first pass).
  * ═══════════════════════════════════════════════════════════════ */
+
+/* Radixes sorted by preference for decomposition: composites first to absorb factors */
+static const int FACTORIZE_RADIXES[] = {
+    25, 20, 12, 10, 32, 16, 8, 7, 6, 5, 4, 3, 2,
+    64, /* R=64 last in decomposition preference — only if needed */
+    19, 17, 13, 11, /* odd primes last */
+    0
+};
+
+static void _sort_factors_ascending(int *f, int n) {
+    for (int i = 1; i < n; i++) {
+        int key = f[i]; int j = i - 1;
+        while (j >= 0 && f[j] > key) { f[j+1] = f[j]; j--; }
+        f[j+1] = key;
+    }
+}
+
+static void _sort_factors_descending(int *f, int n) {
+    for (int i = 1; i < n; i++) {
+        int key = f[i]; int j = i - 1;
+        while (j >= 0 && f[j] < key) { f[j+1] = f[j]; j--; }
+        f[j+1] = key;
+    }
+}
 
 static int stride_factorize_greedy(int N, size_t K,
                                    const stride_registry_t *reg,
@@ -102,58 +126,44 @@ static int stride_factorize_greedy(int N, size_t K,
                                    stride_factorization_t *fact) {
     memset(fact, 0, sizeof(*fact));
     if (N <= 1) return 0;
+    (void)cpu; /* reserved for future use */
 
-    const size_t l1 = cpu->l1d_bytes;
     int remaining = N;
-    size_t accumulated_K = K;  /* effective K for the next stage's twiddle */
     int nf = 0;
 
+    /* Step 1: decompose using composite-preferring order */
     while (remaining > 1 && nf < FACT_MAX_STAGES) {
         int best_R = 0;
-
-        /* Try radixes in preference order (largest first) */
-        for (const int *rp = STRIDE_AVAILABLE_RADIXES; *rp; rp++) {
+        for (const int *rp = FACTORIZE_RADIXES; *rp; rp++) {
             int R = *rp;
             if (remaining % R != 0) continue;
             if (!stride_registry_has(reg, R)) continue;
-
-            /* First stage (nf==0): no twiddle, any R is fine */
-            if (nf == 0) {
-                best_R = R;
-                break;
-            }
-
-            /* For stages 1+: check twiddle table fits L1.
-             * tw_bytes = (R - 1) * accumulated_K * 16
-             * Use soft limit: allow up to 2x L1 (data + twiddle share L1). */
-            size_t tw_bytes = (size_t)(R - 1) * accumulated_K * 16;
-            if (tw_bytes <= 2 * l1) {
-                best_R = R;
-                break;
-            }
+            best_R = R;
+            break;
         }
-
-        /* Fallback: if no R fits L1, pick smallest available (minimize damage) */
-        if (!best_R) {
-            for (int i = sizeof(STRIDE_AVAILABLE_RADIXES)/sizeof(int) - 2; i >= 0; i--) {
-                int R = STRIDE_AVAILABLE_RADIXES[i];
-                if (R == 0) continue;
-                if (remaining % R != 0) continue;
-                if (!stride_registry_has(reg, R)) continue;
-                best_R = R;
-                break;
-            }
-        }
-
-        if (!best_R) return -1; /* cannot factorize */
-
+        if (!best_R) return -1;
         fact->factors[nf++] = best_R;
         remaining /= best_R;
-        accumulated_K *= best_R;
     }
-
     if (remaining != 1) return -1;
     fact->nfactors = nf;
+
+    /* Step 2: order based on K */
+    if (K <= 16) {
+        _sort_factors_descending(fact->factors, nf);
+    } else {
+        _sort_factors_ascending(fact->factors, nf);
+    }
+
+    /* Step 3: if R=64 is first, push it to last position.
+     * R=64's massive codelet (2225 ops, heavy spills) is better as the
+     * innermost stage where stride=K (sequential access). */
+    if (nf > 1 && fact->factors[0] == 64) {
+        int tmp = fact->factors[0];
+        for (int i = 0; i < nf - 1; i++) fact->factors[i] = fact->factors[i+1];
+        fact->factors[nf-1] = tmp;
+    }
+
     return 0;
 }
 

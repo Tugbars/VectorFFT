@@ -20,6 +20,8 @@ int main(void) {
 
     stride_registry_t reg;
     stride_registry_init(&reg);
+    /* Enable verbose=2 to see all candidates */
+    (void)0; /* placeholder */
 
     stride_cpu_info_t cpu = stride_detect_cpu();
     printf("\nCPU: L1d=%zuKB  L2=%zuKB  line=%zuB\n",
