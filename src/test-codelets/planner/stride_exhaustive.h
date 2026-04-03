@@ -39,6 +39,8 @@ typedef struct {
     int count;
 } factorization_list_t;
 
+#define EXHAUST_MAX_DEPTH 5  /* max stages in exhaustive search (keeps search tractable) */
+
 static void _enumerate_factorizations(int remaining, const stride_registry_t *reg,
                                       int *current, int depth,
                                       factorization_list_t *list) {
@@ -51,7 +53,7 @@ static void _enumerate_factorizations(int remaining, const stride_registry_t *re
         }
         return;
     }
-    if (depth >= FACT_MAX_STAGES) return;
+    if (depth >= EXHAUST_MAX_DEPTH) return;
 
     for (const int *rp = STRIDE_AVAILABLE_RADIXES; *rp; rp++) {
         int R = *rp;
@@ -142,20 +144,18 @@ static double stride_bench_one_ex(int N, size_t K, const int *factors, int nf,
     stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b);
     if (!plan) return 1e18;
 
-    /* Warm up */
-    int reps = (int)(1e5 / (total + 1));
-    if (reps < 10) reps = 10;
-    if (reps > 50000) reps = 50000;
+    /* Warm up (1 iteration) */
+    int reps = (int)(5e4 / (total + 1));
+    if (reps < 5) reps = 5;
+    if (reps > 20000) reps = 20000;
 
-    for (int i = 0; i < 3; i++) {
-        memcpy(re, orig_re, total * sizeof(double));
-        memcpy(im, orig_im, total * sizeof(double));
-        stride_execute_fwd(plan, re, im);
-    }
+    memcpy(re, orig_re, total * sizeof(double));
+    memcpy(im, orig_im, total * sizeof(double));
+    stride_execute_fwd(plan, re, im);
 
-    /* Benchmark: best of 3 trials */
+    /* Benchmark: best of 2 trials */
     double best = 1e18;
-    for (int t = 0; t < 3; t++) {
+    for (int t = 0; t < 2; t++) {
         memcpy(re, orig_re, total * sizeof(double));
         memcpy(im, orig_im, total * sizeof(double));
         double t0 = now_ns();
@@ -277,10 +277,38 @@ static double stride_exhaustive_search(int N, size_t K,
                 }
 
                 {
+                    /* Quick single-trial pre-screen: skip if > 1.5x current best */
+                    stride_plan_t *qplan = stride_plan_create(N, K, factors_p, nf,
+                                                               n1f, n1b, t1f, t1b);
+                    if (!qplan) goto skip_combo;
+
+                    memcpy(re, orig_re, total * sizeof(double));
+                    memcpy(im, orig_im, total * sizeof(double));
+                    stride_execute_fwd(qplan, re, im); /* warmup */
+
+                    int qreps = (int)(2e4 / (total + 1));
+                    if (qreps < 3) qreps = 3;
+                    if (qreps > 5000) qreps = 5000;
+
+                    memcpy(re, orig_re, total * sizeof(double));
+                    memcpy(im, orig_im, total * sizeof(double));
+                    double qt0 = now_ns();
+                    for (int qi = 0; qi < qreps; qi++)
+                        stride_execute_fwd(qplan, re, im);
+                    double quick_ns = (now_ns() - qt0) / qreps;
+                    stride_plan_destroy(qplan);
+
+                    total_candidates++;
+
+                    /* Prune: if quick estimate > 1.5x best, skip full bench */
+                    if (quick_ns > global_best_ns * 1.5 && global_best_ns < 1e17) {
+                        continue;
+                    }
+
+                    /* Full bench */
                     double ns = stride_bench_one_ex(N, K, factors_p, nf,
                                                     n1f, n1b, t1f, t1b,
                                                     re, im, orig_re, orig_im);
-                    total_candidates++;
 
                     if (ns < global_best_ns) {
                         global_best_ns = ns;
