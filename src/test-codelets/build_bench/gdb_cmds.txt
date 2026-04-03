@@ -1,5 +1,0 @@
-set pagination off
-run
-backtrace
-info registers
-quit
