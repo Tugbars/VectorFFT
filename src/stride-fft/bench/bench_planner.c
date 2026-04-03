@@ -286,6 +286,12 @@ typedef struct { int N; size_t K; } test_case_t;
 int main(void) {
     srand(42);
 
+#ifdef VFFT_HAS_MKL
+    /* Force MKL single-threaded — belt and suspenders with mkl_sequential */
+    putenv("MKL_NUM_THREADS=1");
+    putenv("OMP_NUM_THREADS=1");
+#endif
+
     stride_registry_t reg;
     stride_registry_init(&reg);
 
