@@ -86,26 +86,30 @@ typedef struct {
     int nf;
 } permutation_list_t;
 
-static void _gen_perms(int *arr, int n, int depth, permutation_list_t *list) {
-    if (depth == n) {
-        if (list->count < EXHAUST_MAX_PERMS) {
-            memcpy(list->perms[list->count], arr, n * sizeof(int));
-            list->count++;
-        }
-        return;
+/* Sort ascending (for next-permutation algorithm) */
+static void _sort_int(int *arr, int n) {
+    for (int i = 1; i < n; i++) {
+        int key = arr[i]; int j = i - 1;
+        while (j >= 0 && arr[j] > key) { arr[j+1] = arr[j]; j--; }
+        arr[j+1] = key;
     }
-    for (int i = depth; i < n; i++) {
-        /* Skip duplicates: if arr[i] == arr[j] for some j < i, skip */
-        int skip = 0;
-        for (int j = depth; j < i; j++) {
-            if (arr[j] == arr[i]) { skip = 1; break; }
-        }
-        if (skip) continue;
+}
 
-        int tmp = arr[depth]; arr[depth] = arr[i]; arr[i] = tmp;
-        _gen_perms(arr, n, depth + 1, list);
-        arr[depth] = arr[i]; arr[i] = tmp;
-    }
+/* Reverse arr[l..r] in-place */
+static void _reverse_int(int *arr, int l, int r) {
+    while (l < r) { int t = arr[l]; arr[l] = arr[r]; arr[r] = t; l++; r--; }
+}
+
+/* Standard next-permutation (handles duplicates correctly) */
+static int _next_perm(int *arr, int n) {
+    int i = n - 2;
+    while (i >= 0 && arr[i] >= arr[i+1]) i--;
+    if (i < 0) return 0; /* last permutation */
+    int j = n - 1;
+    while (arr[j] <= arr[i]) j--;
+    int t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    _reverse_int(arr, i+1, n-1);
+    return 1;
 }
 
 static void stride_gen_permutations(const int *factors, int nf, permutation_list_t *list) {
@@ -113,7 +117,12 @@ static void stride_gen_permutations(const int *factors, int nf, permutation_list
     list->nf = nf;
     int work[FACT_MAX_STAGES];
     memcpy(work, factors, nf * sizeof(int));
-    _gen_perms(work, nf, 0, list);
+    _sort_int(work, nf); /* start from sorted (smallest permutation) */
+    do {
+        if (list->count >= EXHAUST_MAX_PERMS) break;
+        memcpy(list->perms[list->count], work, nf * sizeof(int));
+        list->count++;
+    } while (_next_perm(work, nf));
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -133,9 +142,10 @@ static double stride_bench_one(int N, size_t K, const int *factors, int nf,
     stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
     for (int s = 0; s < nf; s++) {
         int R = factors[s];
+        if (!reg->n1_fwd[R] || !reg->n1_bwd[R]) return 1e18; /* missing codelet */
         n1f[s] = reg->n1_fwd[R];
         n1b[s] = reg->n1_bwd[R];
-        t1f[s] = reg->t1_fwd[R];  /* may be NULL for stage 0, that's fine */
+        t1f[s] = reg->t1_fwd[R];  /* may be NULL — executor handles fallback */
         t1b[s] = reg->t1_bwd[R];
     }
 
@@ -217,15 +227,29 @@ static double stride_exhaustive_search(int N, size_t K,
         stride_gen_permutations(f->factors, f->nfactors, plist);
 
         for (int pi = 0; pi < plist->count; pi++) {
+            /* Verify product equals N */
+            {
+                int prod = 1;
+                for (int s = 0; s < f->nfactors; s++) prod *= plist->perms[pi][s];
+                if (prod != N) {
+                    if (verbose >= 2) { printf("    SKIP (product=%d != N=%d)\n", prod, N); fflush(stdout); }
+                    continue;
+                }
+            }
+            if (verbose >= 2) {
+                printf("    trying ");
+                for (int s = 0; s < f->nfactors; s++)
+                    printf("%s%d", s ? "x" : "", plist->perms[pi][s]);
+                printf("... ");
+                fflush(stdout);
+            }
             double ns = stride_bench_one(N, K, plist->perms[pi], f->nfactors,
                                          reg, re, im, orig_re, orig_im);
             total_perms++;
 
             if (verbose >= 2) {
-                printf("    ");
-                for (int s = 0; s < f->nfactors; s++)
-                    printf("%s%d", s ? "x" : "", plist->perms[pi][s]);
-                printf(": %.1f ns\n", ns);
+                printf("%.1f ns\n", ns);
+                fflush(stdout);
             }
 
             if (ns < global_best_ns) {
