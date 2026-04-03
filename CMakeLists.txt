@@ -47,6 +47,9 @@ endif()
 # ── Source tree ──────────────────────────────────────────────────────────
 add_subdirectory(src)
 
+# ── Stride-FFT module (new permutation-free executor) ───────────────────
+add_subdirectory(src/stride-fft)
+
 # ── Benchmarks ───────────────────────────────────────────────────────────
 if(VFFT_BUILD_BENCHMARKS)
     add_subdirectory(test)
@@ -68,4 +71,5 @@ message(STATUS "  AVX2:        ${VFFT_HAS_AVX2}")
 message(STATUS "  SSE2:        ${VFFT_HAS_SSE2}")
 message(STATUS "  Tests:       ${VFFT_BUILD_TESTS}")
 message(STATUS "  Benchmarks:  ${VFFT_BUILD_BENCHMARKS}")
+message(STATUS "  Stride-FFT:  ON (ISA: ${VFFT_STRIDE_ISA})")
 message(STATUS "")
