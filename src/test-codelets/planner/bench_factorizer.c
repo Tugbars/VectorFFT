@@ -57,7 +57,11 @@ int main(void) {
     };
 
     for (int i = 0; cases[i].N; i++) {
+        fflush(stdout);
+        printf("[starting N=%d K=%zu]\n", cases[i].N, cases[i].K);
+        fflush(stdout);
         stride_compare_strategies(cases[i].N, cases[i].K, &reg);
+        fflush(stdout);
     }
 
     printf("\nDone.\n");

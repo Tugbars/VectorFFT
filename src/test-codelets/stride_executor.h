@@ -444,10 +444,12 @@ static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, in
         plan_compute_groups(plan, s);
         plan_compute_twiddles_c(plan, s);
 
-        /* R=64 fallback: t1_dit regresses at large K due to strided access pressure.
-         * Use cf_all + n1 (method A) when twiddle table exceeds ~32KB per group.
-         * Threshold: (R-1)*K*16 bytes > 32KB  →  K > 32768/(63*16) ≈ 32.
-         * Bench shows crossover around K=128-256 for R=64. Use K>=128 conservatively. */
+        /* Fallback to cf_all + n1 when:
+         * 1. No t1_dit codelet available for this radix
+         * 2. R=64 at large K (t1_dit regresses due to strided access pressure) */
+        if (s > 0 && plan->stages[s].t1_fwd == NULL) {
+            plan->stages[s].use_n1_fallback = 1;
+        }
         if (factors[s] >= 64 && K >= 128 && s > 0) {
             plan->stages[s].use_n1_fallback = 1;
         }
