@@ -1,4 +1,4 @@
-<img width="1280" height="640" alt="vectorfft_banner" src="https://github.com/user-attachments/assets/59a30bb8-e98d-484a-a16b-25c783f0f011" />
+<img width="1280" height="640" alt="vectorfft_banner (1)" src="https://github.com/user-attachments/assets/27eeb333-f0a9-41d4-8b00-8624b1f1ee07" />
 
 
 <p align="center">
