@@ -12,8 +12,8 @@
 #include <math.h>
 #include <fftw3.h>
 
-#include "stride_planner.h"
-#include "../bench_compat.h"
+#include "../core/planner.h"
+#include "../core/compat.h"
 
 #define WISDOM_PATH "vfft_wisdom.txt"
 

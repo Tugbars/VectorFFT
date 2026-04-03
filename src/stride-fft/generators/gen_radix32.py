@@ -1,0 +1,2271 @@
+#!/usr/bin/env python3
+"""
+gen_radix32.py — Unified radix-32 codelet generator
+
+Emits all R=32 codelet variants from shared butterfly infrastructure
+with per-ISA / per-variant strategy configurations.
+
+8x4 decomposition: pass 1 = N2 radix-8 sub-FFTs, pass 2 = N1 radix-4 combines.
+Internal twiddles W32^(n1*n2) between passes.
+
+ISA-specific decisions preserved:
+  Scalar:  NFUSE=4, k-step=1, no SIMD
+  AVX2:    NFUSE=2, k-step=4, 16 YMM, flat only, U=1
+  AVX-512: NFUSE=4, k-step=8, 32 ZMM, flat+ladder, U=1+U=2
+
+Usage:
+  python3 gen_radix32.py --isa avx2 --variant dit_tw
+  python3 gen_radix32.py --isa avx512 --variant dit_tw
+  python3 gen_radix32.py --isa scalar --variant dit_tw
+  python3 gen_radix32.py --isa all --variant all
+"""
+
+import math, sys, argparse, re, re
+
+# ═══════════════════════════════════════════════════════════════
+# CONSTANTS
+# ═══════════════════════════════════════════════════════════════
+
+N, N1, N2 = 32, 8, 4
+
+# ═══════════════════════════════════════════════════════════════
+# TWIDDLE ANALYSIS — shared across all variants
+# ═══════════════════════════════════════════════════════════════
+
+def wN(e, tN):
+    e = e % tN
+    a = 2.0 * math.pi * e / tN
+    return (math.cos(a), -math.sin(a))
+
+def wN_label(e, tN):
+    return f"W{tN}_{e % tN}"
+
+def twiddle_is_trivial(e, tN):
+    """Classify twiddle factor for zero-multiply fast paths.
+    
+    Returns (is_trivial, type_tag).
+    8th-root-of-unity twiddles get special codegen (no mul needed).
+    """
+    e = e % tN
+    if e == 0:
+        return True, 'one'
+    if (8 * e) % tN == 0:
+        o = (8 * e) // tN
+        t = ['one', 'w8_1', 'neg_j', 'w8_3',
+             'neg_one', 'neg_w8_1', 'pos_j', 'neg_w8_3']
+        return True, t[o % 8]
+    return False, 'cmul'
+
+def collect_internal_twiddles():
+    """Find which W32 constants are needed for internal twiddles."""
+    tw = set()
+    for n2 in range(1, N2):
+        for k1 in range(1, N1):
+            e = (n2 * k1) % N
+            _, t = twiddle_is_trivial(e, N)
+            if t == 'cmul':
+                tw.add((e, N))
+    return tw
+
+
+# ═══════════════════════════════════════════════════════════════
+# ISA CONFIGURATION
+# ═══════════════════════════════════════════════════════════════
+
+class ISAConfig:
+    """ISA-specific parameters. Each field matches the existing generator exactly."""
+    def __init__(self, name, reg_type, width, k_step,
+                 load_macro, store_macro, spill_mul,
+                 target_attr, align_attr, align_bytes,
+                 nfuse_tw, nfuse_notw):
+        self.name = name
+        self.reg_type = reg_type
+        self.width = width          # doubles per register
+        self.k_step = k_step
+        self.load_macro = load_macro    # e.g. "LD" or raw intrinsic
+        self.store_macro = store_macro
+        self.spill_mul = spill_mul      # slot index multiplier (4 for avx2, 8 for avx512)
+        self.target_attr = target_attr
+        self.align_attr = align_attr
+        self.align_bytes = align_bytes
+        self.nfuse_tw = nfuse_tw
+        self.nfuse_notw = nfuse_notw
+
+ISA_SCALAR = ISAConfig(
+    name='scalar', reg_type='double', width=1, k_step=1,
+    load_macro=None, store_macro=None, spill_mul=1,
+    target_attr='', align_attr='', align_bytes=0,
+    nfuse_tw=4, nfuse_notw=4,
+)
+
+ISA_AVX2 = ISAConfig(
+    name='avx2', reg_type='__m256d', width=4, k_step=4,
+    load_macro='LD', store_macro='ST', spill_mul=4,
+    target_attr='__attribute__((target("avx2,fma")))',
+    align_attr='__attribute__((aligned(32)))',
+    align_bytes=32,
+    nfuse_tw=2, nfuse_notw=2,
+)
+
+ISA_AVX512 = ISAConfig(
+    name='avx512', reg_type='__m512d', width=8, k_step=8,
+    load_macro='LD', store_macro='ST', spill_mul=8,
+    target_attr='__attribute__((target("avx512f,avx512dq,fma")))',
+    align_attr='__attribute__((aligned(64)))',
+    align_bytes=64,
+    nfuse_tw=4, nfuse_notw=8,
+)
+
+ALL_ISA = {'scalar': ISA_SCALAR, 'avx2': ISA_AVX2, 'avx512': ISA_AVX512}
+
+# ═══════════════════════════════════════════════════════════════
+# EMITTER — shared code emission with ISA-parameterized operations
+# ═══════════════════════════════════════════════════════════════
+
+class Emitter:
+    def __init__(self, isa):
+        self.isa = isa
+        self.L = []
+        self.ind = 1
+        self.spill_c = 0
+        self.reload_c = 0
+        # Arithmetic counters (per kernel, reset between fwd/bwd)
+        self.n_add = 0
+        self.n_sub = 0
+        self.n_mul = 0
+        self.n_neg = 0
+        self.n_fma = 0
+        self.n_fms = 0
+        self.n_load = 0
+        self.n_store = 0
+
+    def reset_counters(self):
+        self.spill_c = 0
+        self.reload_c = 0
+        self.n_add = 0
+        self.n_sub = 0
+        self.n_mul = 0
+        self.n_neg = 0
+        self.n_fma = 0
+        self.n_fms = 0
+        self.n_load = 0
+        self.n_store = 0
+
+    def get_stats(self):
+        """Return a dict of all operation counts for the current kernel."""
+        total_arith = self.n_add + self.n_sub + self.n_mul + self.n_neg + self.n_fma + self.n_fms
+        total_mem = self.n_load + self.n_store + self.spill_c + self.reload_c
+        # FMA counts as 2 FLOPs (mul + add/sub)
+        flops = (self.n_add + self.n_sub + self.n_neg) + self.n_mul + 2 * (self.n_fma + self.n_fms)
+        return {
+            'add': self.n_add,
+            'sub': self.n_sub,
+            'mul': self.n_mul,
+            'neg': self.n_neg,
+            'fma': self.n_fma,
+            'fms': self.n_fms,
+            'total_arith': total_arith,
+            'flops': flops,
+            'load': self.n_load,
+            'store': self.n_store,
+            'spill': self.spill_c,
+            'reload': self.reload_c,
+            'total_mem': total_mem,
+        }
+
+    def o(self, t=""):
+        self.L.append("    " * self.ind + t)
+
+    def c(self, t):
+        self.o(f"/* {t} */")
+
+    def b(self):
+        self.L.append("")
+
+    # ── Arithmetic primitives (ISA-dispatched, counted) ──
+
+    def add(self, a, b):
+        self.n_add += 1
+        if self.isa.name == 'scalar':
+            return f"({a})+({b})"
+        elif self.isa.name == 'avx2':
+            return f"_mm256_add_pd({a},{b})"
+        else:
+            return f"_mm512_add_pd({a},{b})"
+
+    def sub(self, a, b):
+        self.n_sub += 1
+        if self.isa.name == 'scalar':
+            return f"({a})-({b})"
+        elif self.isa.name == 'avx2':
+            return f"_mm256_sub_pd({a},{b})"
+        else:
+            return f"_mm512_sub_pd({a},{b})"
+
+    def mul(self, a, b):
+        self.n_mul += 1
+        if self.isa.name == 'scalar':
+            return f"({a})*({b})"
+        elif self.isa.name == 'avx2':
+            return f"_mm256_mul_pd({a},{b})"
+        else:
+            return f"_mm512_mul_pd({a},{b})"
+
+    def neg(self, a):
+        self.n_neg += 1
+        if self.isa.name == 'scalar':
+            return f"-({a})"
+        elif self.isa.name == 'avx2':
+            return f"_mm256_xor_pd({a},sign_flip)"
+        else:
+            return f"_mm512_xor_pd({a},sign_flip)"
+
+    def fma(self, a, b, c):
+        self.n_fma += 1
+        if self.isa.name == 'scalar':
+            return f"({a})*({b})+({c})"
+        elif self.isa.name == 'avx2':
+            return f"_mm256_fmadd_pd({a},{b},{c})"
+        else:
+            return f"_mm512_fmadd_pd({a},{b},{c})"
+
+    def fms(self, a, b, c):
+        self.n_fms += 1
+        if self.isa.name == 'scalar':
+            return f"({a})*({b})-({c})"
+        elif self.isa.name == 'avx2':
+            return f"_mm256_fmsub_pd({a},{b},{c})"
+        else:
+            return f"_mm512_fmsub_pd({a},{b},{c})"
+
+    # ── Load / Store / Spill / Reload ──
+
+    # addr_mode: 'K' (default), 'n1' (separate is/os), 't1' (in-place ios/ms)
+    addr_mode = 'K'
+
+    def _in_addr(self, n, k_expr="k"):
+        if self.addr_mode in ('n1', 'n1_ovs'): return f"{n}*is+{k_expr}"
+        if self.addr_mode == 't1':
+            if self.isa.name == 'scalar': return f"m*ms+{n}*ios"
+            return f"m+{n}*ios"
+        return f"{n}*K+{k_expr}"
+
+    def _out_addr(self, m, k_expr="k"):
+        if self.addr_mode == 'n1': return f"{m}*os+{k_expr}"
+        if self.addr_mode == 'n1_ovs': return f"{m}*{self.isa.k_step}"
+        if self.addr_mode == 't1':
+            if self.isa.name == 'scalar': return f"m*ms+{m}*ios"
+            return f"m+{m}*ios"
+        return f"{m}*K+{k_expr}"
+
+    def _in_buf(self):
+        return "rio_re" if self.addr_mode == 't1' else "in_re"
+    def _in_buf_im(self):
+        return "rio_im" if self.addr_mode == 't1' else "in_im"
+    def _out_buf(self):
+        if self.addr_mode == 't1': return "rio_re"
+        if self.addr_mode == 'n1_ovs': return "tbuf_re"
+        return "out_re"
+    def _out_buf_im(self):
+        if self.addr_mode == 't1': return "rio_im"
+        if self.addr_mode == 'n1_ovs': return "tbuf_im"
+        return "out_im"
+
+    def _tw_addr(self, tw_idx, k_expr="k"):
+        if self.addr_mode == 't1': return f"{tw_idx}*me+m"
+        return f"{tw_idx}*K+{k_expr}"
+    def _tw_buf(self):
+        return "W_re" if self.addr_mode == 't1' else "tw_re"
+    def _tw_buf_im(self):
+        return "W_im" if self.addr_mode == 't1' else "tw_im"
+
+    def emit_load(self, v, n, k_expr="k"):
+        self.n_load += 2  # re + im
+        ib, ibi = self._in_buf(), self._in_buf_im()
+        addr = self._in_addr(n, k_expr)
+        if self.isa.name == 'scalar':
+            self.o(f"{v}_re = {ib}[{addr}];")
+            self.o(f"{v}_im = {ibi}[{addr}];")
+        else:
+            self.o(f"{v}_re = {self.isa.load_macro}(&{ib}[{addr}]);")
+            self.o(f"{v}_im = {self.isa.load_macro}(&{ibi}[{addr}]);")
+
+    def emit_store(self, v, m, k_expr="k"):
+        self.n_store += 2  # re + im
+        ob, obi = self._out_buf(), self._out_buf_im()
+        addr = self._out_addr(m, k_expr)
+        if self.isa.name == 'scalar':
+            self.o(f"{ob}[{addr}] = {v}_re;")
+            self.o(f"{obi}[{addr}] = {v}_im;")
+        else:
+            self.o(f"{self.isa.store_macro}(&{ob}[{addr}],{v}_re);")
+            self.o(f"{self.isa.store_macro}(&{obi}[{addr}],{v}_im);")
+
+    def emit_spill(self, v, slot):
+        sm = self.isa.spill_mul
+        if self.isa.name == 'scalar':
+            self.o(f"spill_re[{slot}] = {v}_re;")
+            self.o(f"spill_im[{slot}] = {v}_im;")
+        elif self.isa.name == 'avx2':
+            self.o(f"_mm256_store_pd(&spill_re[{slot}*{sm}],{v}_re);")
+            self.o(f"_mm256_store_pd(&spill_im[{slot}*{sm}],{v}_im);")
+        else:
+            self.o(f"_mm512_store_pd(&spill_re[{slot}*{sm}],{v}_re);")
+            self.o(f"_mm512_store_pd(&spill_im[{slot}*{sm}],{v}_im);")
+        self.spill_c += 1
+
+    def emit_reload(self, v, slot):
+        sm = self.isa.spill_mul
+        if self.isa.name == 'scalar':
+            self.o(f"{v}_re = spill_re[{slot}];")
+            self.o(f"{v}_im = spill_im[{slot}];")
+        elif self.isa.name == 'avx2':
+            self.o(f"{v}_re = _mm256_load_pd(&spill_re[{slot}*{sm}]);")
+            self.o(f"{v}_im = _mm256_load_pd(&spill_im[{slot}*{sm}]);")
+        else:
+            self.o(f"{v}_re = _mm512_load_pd(&spill_re[{slot}*{sm}]);")
+            self.o(f"{v}_im = _mm512_load_pd(&spill_im[{slot}*{sm}]);")
+        self.reload_c += 1
+
+    # ── Radix-8 butterfly (the core — identical math across all ISAs) ──
+
+    def emit_radix8(self, v, d, label=""):
+        """Emit split-radix DFT-8 on variables v[0]..v[7].
+        
+        Decomposed as two interleaved radix-4 (even/odd split) with
+        W8 internal twiddles. This is the same algorithm across all
+        generators — only the intrinsic names change.
+        """
+        fwd = (d == 'fwd')
+        T = self.isa.reg_type
+        if label:
+            self.c(f"{label} [{d}]")
+        self.o(f"{{ {T} e0r,e0i,e1r,e1i,e2r,e2i,e3r,e3i;")
+        self.o(f"  {T} t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;")
+        # Even part: v[0], v[2], v[4], v[6]
+        self.o(f"  t0r={self.add(f'{v[0]}_re',f'{v[4]}_re')}; t0i={self.add(f'{v[0]}_im',f'{v[4]}_im')};")
+        self.o(f"  t1r={self.sub(f'{v[0]}_re',f'{v[4]}_re')}; t1i={self.sub(f'{v[0]}_im',f'{v[4]}_im')};")
+        self.o(f"  t2r={self.add(f'{v[2]}_re',f'{v[6]}_re')}; t2i={self.add(f'{v[2]}_im',f'{v[6]}_im')};")
+        self.o(f"  t3r={self.sub(f'{v[2]}_re',f'{v[6]}_re')}; t3i={self.sub(f'{v[2]}_im',f'{v[6]}_im')};")
+        self.o(f"  e0r={self.add('t0r','t2r')}; e0i={self.add('t0i','t2i')};")
+        self.o(f"  e2r={self.sub('t0r','t2r')}; e2i={self.sub('t0i','t2i')};")
+        j_add, j_sub = ('add', 'sub') if fwd else ('sub', 'add')
+        self.o(f"  e1r={getattr(self,j_add)('t1r','t3i')}; e1i={getattr(self,j_sub)('t1i','t3r')};")
+        self.o(f"  e3r={getattr(self,j_sub)('t1r','t3i')}; e3i={getattr(self,j_add)('t1i','t3r')};")
+        # Odd part: v[1], v[3], v[5], v[7]
+        self.o(f"  {T} o0r,o0i,o1r,o1i,o2r,o2i,o3r,o3i;")
+        self.o(f"  t0r={self.add(f'{v[1]}_re',f'{v[5]}_re')}; t0i={self.add(f'{v[1]}_im',f'{v[5]}_im')};")
+        self.o(f"  t1r={self.sub(f'{v[1]}_re',f'{v[5]}_re')}; t1i={self.sub(f'{v[1]}_im',f'{v[5]}_im')};")
+        self.o(f"  t2r={self.add(f'{v[3]}_re',f'{v[7]}_re')}; t2i={self.add(f'{v[3]}_im',f'{v[7]}_im')};")
+        self.o(f"  t3r={self.sub(f'{v[3]}_re',f'{v[7]}_re')}; t3i={self.sub(f'{v[3]}_im',f'{v[7]}_im')};")
+        self.o(f"  o0r={self.add('t0r','t2r')}; o0i={self.add('t0i','t2i')};")
+        self.o(f"  o2r={self.sub('t0r','t2r')}; o2i={self.sub('t0i','t2i')};")
+        self.o(f"  o1r={getattr(self,j_add)('t1r','t3i')}; o1i={getattr(self,j_sub)('t1i','t3r')};")
+        self.o(f"  o3r={getattr(self,j_sub)('t1r','t3i')}; o3i={getattr(self,j_add)('t1i','t3r')};")
+        # W8 twiddles on odd outputs: o1 *= W8^1, o2 *= W8^2=-j, o3 *= W8^3
+        if fwd:
+            self.o(f"  t0r={self.mul(self.add('o1r','o1i'),'sqrt2_inv')};")
+            self.o(f"  t0i={self.mul(self.sub('o1i','o1r'),'sqrt2_inv')};")
+            self.o(f"  o1r=t0r; o1i=t0i;")
+            self.o(f"  t0r=o2i; t0i={self.neg('o2r')};")
+            self.o(f"  o2r=t0r; o2i=t0i;")
+            self.o(f"  t0r={self.mul(self.sub('o3i','o3r'),'sqrt2_inv')};")
+            self.o(f"  t0i={self.neg(self.mul(self.add('o3r','o3i'),'sqrt2_inv'))};")
+            self.o(f"  o3r=t0r; o3i=t0i;")
+        else:
+            self.o(f"  t0r={self.mul(self.sub('o1r','o1i'),'sqrt2_inv')};")
+            self.o(f"  t0i={self.mul(self.add('o1r','o1i'),'sqrt2_inv')};")
+            self.o(f"  o1r=t0r; o1i=t0i;")
+            self.o(f"  t0r={self.neg('o2i')}; t0i=o2r;")
+            self.o(f"  o2r=t0r; o2i=t0i;")
+            self.o(f"  t0r={self.neg(self.mul(self.add('o3r','o3i'),'sqrt2_inv'))};")
+            self.o(f"  t0i={self.mul(self.sub('o3r','o3i'),'sqrt2_inv')};")
+            self.o(f"  o3r=t0r; o3i=t0i;")
+        # Combine: v[i] = e_i + o_i, v[i+4] = e_i - o_i
+        for i, j in [(0, 4), (1, 5), (2, 6), (3, 7)]:
+            self.o(f"  {v[i]}_re={self.add(f'e{i}r',f'o{i}r')}; {v[i]}_im={self.add(f'e{i}i',f'o{i}i')};")
+            self.o(f"  {v[j]}_re={self.sub(f'e{i}r',f'o{i}r')}; {v[j]}_im={self.sub(f'e{i}i',f'o{i}i')};")
+        self.o(f"}}")
+
+    # ── Radix-4 butterfly ──
+
+    def emit_radix4(self, v, d, label=""):
+        fwd = (d == 'fwd')
+        T = self.isa.reg_type
+        if label:
+            self.c(f"{label} [{d}]")
+        a, b, c, dd = v[0], v[1], v[2], v[3]
+        self.o(f"{{ {T} t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;")
+        self.o(f"  t0r={self.add(f'{a}_re',f'{c}_re')}; t0i={self.add(f'{a}_im',f'{c}_im')};")
+        self.o(f"  t1r={self.sub(f'{a}_re',f'{c}_re')}; t1i={self.sub(f'{a}_im',f'{c}_im')};")
+        self.o(f"  t2r={self.add(f'{b}_re',f'{dd}_re')}; t2i={self.add(f'{b}_im',f'{dd}_im')};")
+        self.o(f"  t3r={self.sub(f'{b}_re',f'{dd}_re')}; t3i={self.sub(f'{b}_im',f'{dd}_im')};")
+        self.o(f"  {a}_re={self.add('t0r','t2r')}; {a}_im={self.add('t0i','t2i')};")
+        self.o(f"  {c}_re={self.sub('t0r','t2r')}; {c}_im={self.sub('t0i','t2i')};")
+        if fwd:
+            self.o(f"  {b}_re={self.add('t1r','t3i')}; {b}_im={self.sub('t1i','t3r')};")
+            self.o(f"  {dd}_re={self.sub('t1r','t3i')}; {dd}_im={self.add('t1i','t3r')};")
+        else:
+            self.o(f"  {b}_re={self.sub('t1r','t3i')}; {b}_im={self.add('t1i','t3r')};")
+            self.o(f"  {dd}_re={self.add('t1r','t3i')}; {dd}_im={self.sub('t1i','t3r')};")
+        self.o(f"}}")
+
+    # ── Internal twiddle W32^e (8 trivial specializations + cmul) ──
+
+    def emit_twiddle(self, dst, src, e, tN, d):
+        """Apply internal twiddle W_{tN}^e to variable src, store in dst.
+        
+        8 trivial cases avoid multiplications entirely.
+        Non-trivial cases use pre-broadcast constant registers.
+        """
+        _, typ = twiddle_is_trivial(e, tN)
+        fwd = (d == 'fwd')
+        T = self.isa.reg_type
+
+        if typ == 'one':
+            if dst != src:
+                self.o(f"{dst}_re={src}_re; {dst}_im={src}_im;")
+        elif typ == 'neg_one':
+            self.o(f"{dst}_re={self.neg(f'{src}_re')}; {dst}_im={self.neg(f'{src}_im')};")
+        elif typ == 'neg_j':
+            if fwd:
+                self.o(f"{{ {T} t={src}_re; {dst}_re={src}_im; {dst}_im={self.neg('t')}; }}")
+            else:
+                self.o(f"{{ {T} t={src}_re; {dst}_re={self.neg(f'{src}_im')}; {dst}_im=t; }}")
+        elif typ == 'pos_j':
+            if fwd:
+                self.o(f"{{ {T} t={src}_re; {dst}_re={self.neg(f'{src}_im')}; {dst}_im=t; }}")
+            else:
+                self.o(f"{{ {T} t={src}_re; {dst}_re={src}_im; {dst}_im={self.neg('t')}; }}")
+        elif typ == 'w8_1':
+            self.o(f"{{ {T} tr={src}_re,ti={src}_im;")
+            if fwd:
+                self.o(f"  {dst}_re={self.mul(self.add('tr','ti'),'sqrt2_inv')}; {dst}_im={self.mul(self.sub('ti','tr'),'sqrt2_inv')}; }}")
+            else:
+                self.o(f"  {dst}_re={self.mul(self.sub('tr','ti'),'sqrt2_inv')}; {dst}_im={self.mul(self.add('tr','ti'),'sqrt2_inv')}; }}")
+        elif typ == 'w8_3':
+            self.o(f"{{ {T} tr={src}_re,ti={src}_im;")
+            if fwd:
+                self.o(f"  {dst}_re={self.mul(self.sub('ti','tr'),'sqrt2_inv')}; {dst}_im={self.neg(self.mul(self.add('tr','ti'),'sqrt2_inv'))}; }}")
+            else:
+                self.o(f"  {dst}_re={self.neg(self.mul(self.add('tr','ti'),'sqrt2_inv'))}; {dst}_im={self.mul(self.sub('tr','ti'),'sqrt2_inv')}; }}")
+        elif typ == 'neg_w8_1':
+            self.o(f"{{ {T} tr={src}_re,ti={src}_im;")
+            if fwd:
+                self.o(f"  {dst}_re={self.neg(self.mul(self.add('tr','ti'),'sqrt2_inv'))}; {dst}_im={self.mul(self.sub('tr','ti'),'sqrt2_inv')}; }}")
+            else:
+                self.o(f"  {dst}_re={self.mul(self.sub('ti','tr'),'sqrt2_inv')}; {dst}_im={self.neg(self.mul(self.add('tr','ti'),'sqrt2_inv'))}; }}")
+        elif typ == 'neg_w8_3':
+            self.o(f"{{ {T} tr={src}_re,ti={src}_im;")
+            if fwd:
+                self.o(f"  {dst}_re={self.mul(self.sub('tr','ti'),'sqrt2_inv')}; {dst}_im={self.mul(self.add('tr','ti'),'sqrt2_inv')}; }}")
+            else:
+                self.o(f"  {dst}_re={self.mul(self.add('tr','ti'),'sqrt2_inv')}; {dst}_im={self.mul(self.sub('ti','tr'),'sqrt2_inv')}; }}")
+        else:
+            # General cmul with pre-broadcast constant
+            label = wN_label(e, tN)
+            if self.isa.name == 'scalar':
+                self.o(f"{{ double tr={src}_re;")
+                if fwd:
+                    self.o(f"  {dst}_re={src}_re*{label}_re - {src}_im*{label}_im;")
+                    self.o(f"  {dst}_im=tr*{label}_im + {src}_im*{label}_re; }}")
+                else:
+                    self.o(f"  {dst}_re={src}_re*{label}_re + {src}_im*{label}_im;")
+                    self.o(f"  {dst}_im={src}_im*{label}_re - tr*{label}_im; }}")
+            else:
+                self.o(f"{{ {T} tr={src}_re;")
+                if fwd:
+                    self.o(f"  {dst}_re={self.fms(f'{src}_re',f'tw_{label}_re',self.mul(f'{src}_im',f'tw_{label}_im'))};")
+                    self.o(f"  {dst}_im={self.fma('tr',f'tw_{label}_im',self.mul(f'{src}_im',f'tw_{label}_re'))}; }}")
+                else:
+                    self.o(f"  {dst}_re={self.fma(f'{src}_re',f'tw_{label}_re',self.mul(f'{src}_im',f'tw_{label}_im'))};")
+                    self.o(f"  {dst}_im={self.fms(f'{src}_im',f'tw_{label}_re',self.mul('tr',f'tw_{label}_im'))}; }}")
+
+    # ── External twiddle load + apply (DIT: pre-butterfly) ──
+
+    def emit_ext_twiddle_dit(self, n1, n, d, k_expr="k"):
+        """Load external twiddle for element n and apply to x{n1} (DIT: pre-multiply)."""
+        if n == 0:
+            return  # first element has no twiddle
+        fwd = (d == 'fwd')
+        T = self.isa.reg_type
+        tb, tbi = self._tw_buf(), self._tw_buf_im()
+        ta = self._tw_addr(n-1, k_expr)
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double wr = {tb}[{ta}], wi = {tbi}[{ta}];")
+            self.o(f"  double tr = x{n1}_re;")
+            if fwd:
+                self.o(f"  x{n1}_re = x{n1}_re*wr - x{n1}_im*wi;")
+                self.o(f"  x{n1}_im = tr*wi + x{n1}_im*wr; }}")
+            else:
+                self.o(f"  x{n1}_re = x{n1}_re*wr + x{n1}_im*wi;")
+                self.o(f"  x{n1}_im = x{n1}_im*wr - tr*wi; }}")
+        else:
+            load_fn = '_mm256_load_pd' if self.isa.name == 'avx2' else '_mm512_load_pd'
+            self.o(f"{{ {T} wr = {load_fn}(&{tb}[{ta}]);")
+            self.o(f"  {T} wi = {load_fn}(&{tbi}[{ta}]);")
+            self.o(f"  {T} tr = x{n1}_re;")
+            if fwd:
+                self.o(f"  x{n1}_re = {self.fms(f'x{n1}_re','wr',self.mul(f'x{n1}_im','wi'))};")
+                self.o(f"  x{n1}_im = {self.fma('tr','wi',self.mul(f'x{n1}_im','wr'))}; }}")
+            else:
+                self.o(f"  x{n1}_re = {self.fma(f'x{n1}_re','wr',self.mul(f'x{n1}_im','wi'))};")
+                self.o(f"  x{n1}_im = {self.fms(f'x{n1}_im','wr',self.mul('tr','wi'))}; }}")
+
+    # ── Complex multiply (separate dst — needed by ladder) ──
+
+    def emit_cmul(self, dst_r, dst_i, ar, ai, br, bi, d):
+        """Emit dst = a * b (fwd) or a * conj(b) (bwd)."""
+        fwd = (d == 'fwd')
+        if fwd:
+            self.o(f"{dst_r} = {self.fms(ar,br,self.mul(ai,bi))};")
+            self.o(f"{dst_i} = {self.fma(ar,bi,self.mul(ai,br))};")
+        else:
+            self.o(f"{dst_r} = {self.fma(ar,br,self.mul(ai,bi))};")
+            self.o(f"{dst_i} = {self.fms(ai,br,self.mul(ar,bi))};")
+
+    # ── Complex multiply in-place (needed by ladder) ──
+
+    def emit_cmul_inplace(self, v, wr, wi, d):
+        """Emit v *= (wr + j*wi) (fwd) or v *= conj(wr + j*wi) (bwd)."""
+        fwd = (d == 'fwd')
+        T = self.isa.reg_type
+        self.o(f"{{ {T} tr={v}_re;")
+        if fwd:
+            self.o(f"  {v}_re={self.fms(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+            self.o(f"  {v}_im={self.fma('tr',wi,self.mul(f'{v}_im',wr))}; }}")
+        else:
+            self.o(f"  {v}_re={self.fma(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+            self.o(f"  {v}_im={self.fms(f'{v}_im',wr,self.mul('tr',wi))}; }}")
+
+    # ── External twiddle on OUTPUT (DIF: post-butterfly) ──
+
+    def emit_ext_twiddle_dif(self, v, tw_idx, d, k_expr="k"):
+        """Apply external twiddle to variable v in-place (DIF)."""
+        fwd = (d == 'fwd')
+        T = self.isa.reg_type
+        tb, tbi = self._tw_buf(), self._tw_buf_im()
+        ta = self._tw_addr(tw_idx, k_expr)
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double wr = {tb}[{ta}], wi = {tbi}[{ta}];")
+            self.o(f"  double tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*wr - {v}_im*wi;")
+                self.o(f"  {v}_im = tr*wi + {v}_im*wr; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*wr + {v}_im*wi;")
+                self.o(f"  {v}_im = {v}_im*wr - tr*wi; }}")
+        else:
+            load_fn = '_mm256_load_pd' if self.isa.name == 'avx2' else '_mm512_load_pd'
+            self.o(f"{{ {T} wr = {load_fn}(&{tb}[{ta}]);")
+            self.o(f"  {T} wi = {load_fn}(&{tbi}[{ta}]);")
+            self.o(f"  {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fma('tr','wi',self.mul(f'{v}_im','wr'))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# KERNEL EMITTER — DIT tw flat (shared structure, ISA-parameterized)
+# ═══════════════════════════════════════════════════════════════
+
+def emit_dit_tw_flat_kernel(em, d, nfuse, itw_set, k_expr="k"):
+    """Emit one DIT twiddled flat kernel (fwd or bwd).
+    
+    This is the core kernel structure shared across scalar/AVX2/AVX-512 flat.
+    PASS 1: N2 radix-8 sub-FFTs with external twiddle pre-multiply.
+    PASS 2: N1 radix-4 column combines with internal twiddles.
+    """
+    isa = em.isa
+    T = isa.reg_type
+    fwd = (d == 'fwd')
+    last_n2 = N2 - 1
+
+    xv8 = [f"x{i}" for i in range(N1)]
+    xv4 = [f"x{i}" for i in range(N2)]
+
+    # PASS 1: N2 sub-FFTs
+    for n2 in range(N2):
+        is_last = (n2 == last_n2)
+        em.c(f"sub-FFT n2={n2}")
+        for n1 in range(N1):
+            n = N2 * n1 + n2
+            em.emit_load(f"x{n1}", n, k_expr)
+            em.emit_ext_twiddle_dit(n1, n, d, k_expr)
+        em.b()
+        em.emit_radix8(xv8, d, f"radix-8 n2={n2}")
+        em.b()
+
+        # Spill/fuse strategy
+        if is_last:
+            em.c(f"FUSED: save x0..x{nfuse-1} to s-regs, spill x{nfuse}..x{N1-1}")
+            for k1 in range(nfuse):
+                em.o(f"s{k1}_re = x{k1}_re; s{k1}_im = x{k1}_im;")
+            for k1 in range(nfuse, N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        em.b()
+
+    # PASS 2: N1 column combines
+    em.c(f"PASS 2")
+    em.b()
+    for k1 in range(N1):
+        em.c(f"column k1={k1}")
+
+        # Reload with fuse optimization
+        if k1 < nfuse:
+            for n2 in range(last_n2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+            em.o(f"x{last_n2}_re = s{k1}_re; x{last_n2}_im = s{k1}_im;")
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+        em.b()
+
+        # Internal twiddles (skip k1=0 — all W32^0 = 1)
+        if k1 > 0:
+            for n2 in range(1, N2):
+                e = (n2 * k1) % N
+                em.emit_twiddle(f"x{n2}", f"x{n2}", e, N, d)
+            em.b()
+
+        em.emit_radix4(xv4, d, f"radix-4 k1={k1}")
+        em.b()
+
+        for k2 in range(N2):
+            em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
+        em.b()
+
+
+# ═══════════════════════════════════════════════════════════════
+# KERNEL EMITTER — DIF tw flat
+#
+# Same 8×4 structure as DIT, but:
+#   PASS 1: load (NO ext twiddle) → radix-8 → spill
+#   PASS 2: reload → int twiddle → radix-4 → ext twiddle on OUTPUT → store
+# ═══════════════════════════════════════════════════════════════
+
+def emit_dif_tw_flat_kernel(em, d, nfuse, itw_set, k_expr="k"):
+    """Emit one DIF twiddled flat kernel (fwd or bwd)."""
+    fwd = (d == 'fwd')
+    last_n2 = N2 - 1
+    xv8 = [f"x{i}" for i in range(N1)]
+    xv4 = [f"x{i}" for i in range(N2)]
+
+    # PASS 1: load (no twiddle) → radix-8 → spill
+    for n2 in range(N2):
+        is_last = (n2 == last_n2)
+        em.c(f"sub-FFT n2={n2}")
+        for n1 in range(N1):
+            n = N2 * n1 + n2
+            em.emit_load(f"x{n1}", n, k_expr)
+            # DIF: NO external twiddle on input
+        em.b()
+        em.emit_radix8(xv8, d, f"radix-8 n2={n2}")
+        em.b()
+
+        if is_last:
+            em.c(f"FUSED: save x0..x{nfuse-1} to locals, spill x{nfuse}..x{N1-1}")
+            for k1 in range(nfuse):
+                em.o(f"s{k1}_re = x{k1}_re; s{k1}_im = x{k1}_im;")
+            for k1 in range(nfuse, N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        em.b()
+
+    # PASS 2: reload → internal twiddle → radix-4 → external twiddle → store
+    em.c(f"PASS 2")
+    em.b()
+    for k1 in range(N1):
+        em.c(f"column k1={k1}")
+        if k1 < nfuse:
+            for n2 in range(last_n2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+            em.o(f"x{last_n2}_re = s{k1}_re; x{last_n2}_im = s{k1}_im;")
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+        em.b()
+
+        if k1 > 0:
+            for n2 in range(1, N2):
+                e = (n2 * k1) % N
+                em.emit_twiddle(f"x{n2}", f"x{n2}", e, N, d)
+            em.b()
+
+        em.emit_radix4(xv4, d, f"radix-4 k1={k1}")
+        em.b()
+
+        # DIF: external twiddle on OUTPUT after butterfly
+        for k2 in range(N2):
+            m = k1 + N1 * k2  # output index
+            if m > 0:
+                em.emit_ext_twiddle_dif(f"x{k2}", m - 1, d, k_expr)
+        em.b()
+
+        for k2 in range(N2):
+            em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
+        em.b()
+
+
+# ═══════════════════════════════════════════════════════════════
+# KERNEL EMITTER — Notw (N1, no external twiddles)
+# ═══════════════════════════════════════════════════════════════
+
+def emit_notw_kernel(em, d, nfuse, itw_set, k_expr="k"):
+    """Emit one N1 (notw) kernel — same as DIT but no external twiddles."""
+    fwd = (d == 'fwd')
+    last_n2 = N2 - 1
+    xv8 = [f"x{i}" for i in range(N1)]
+    xv4 = [f"x{i}" for i in range(N2)]
+
+    # PASS 1: load (no twiddle) → radix-8 → spill
+    for n2 in range(N2):
+        is_last = (n2 == last_n2)
+        em.c(f"sub-FFT n2={n2}")
+        for n1 in range(N1):
+            n = N2 * n1 + n2
+            em.emit_load(f"x{n1}", n, k_expr)
+        em.b()
+        em.emit_radix8(xv8, d, f"radix-8 n2={n2}")
+        em.b()
+
+        if is_last:
+            em.c(f"FUSED: save x0..x{nfuse-1} to s-regs, spill x{nfuse}..x{N1-1}")
+            for k1 in range(nfuse):
+                em.o(f"s{k1}_re = x{k1}_re; s{k1}_im = x{k1}_im;")
+            for k1 in range(nfuse, N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        em.b()
+
+    # PASS 2: reload → internal twiddle → radix-4 → store (no ext twiddle)
+    em.c(f"PASS 2")
+    em.b()
+    for k1 in range(N1):
+        em.c(f"column k1={k1}")
+        if k1 < nfuse:
+            for n2 in range(last_n2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+            em.o(f"x{last_n2}_re = s{k1}_re; x{last_n2}_im = s{k1}_im;")
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+        em.b()
+
+        if k1 > 0:
+            for n2 in range(1, N2):
+                e = (n2 * k1) % N
+                em.emit_twiddle(f"x{n2}", f"x{n2}", e, N, d)
+            em.b()
+
+        em.emit_radix4(xv4, d, f"radix-4 k1={k1}")
+        em.b()
+
+        for k2 in range(N2):
+            em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
+        em.b()
+
+
+# ═══════════════════════════════════════════════════════════════
+# KERNEL EMITTER — Ladder twiddle (AVX-512 only)
+#
+# Instead of flat tw_re[31*K], uses 5 base twiddle pairs and
+# derives the other 26 via complex multiply chains.
+# Reduces memory loads from 31 to 5 per sub-FFT.
+# ═══════════════════════════════════════════════════════════════
+
+# Row twiddle derivation chain for 8×4 decomposition
+# (n1, derive_from, keep_as_b12)
+# n1=0: W^0 = 1 (no twiddle)
+# n1=1: W^(n2) = b4^n2 (base)
+# n1=2: W^(2*n2) = b8^n2 (base)
+# n1=3: W^(3*n2) = b4*b8 → derive, keep as b12
+# n1=4: W^(4*n2) = b16^n2 (base)
+# n1=5: W^(5*n2) = b4*b16 → derive
+# n1=6: W^(6*n2) = b8*b16 → derive
+# n1=7: W^(7*n2) = b12*b16 → derive
+ROW_CHAIN = [
+    (0, None, False), (1, None, False), (2, None, False),
+    (3, ('b4', 'b8'), True), (4, None, False),
+    (5, ('b4', 'b16'), False), (6, ('b8', 'b16'), False), (7, ('b12', 'b16'), False),
+]
+BASE_MAP = {'b1': 0, 'b2': 1, 'b4': 2, 'b8': 3, 'b16': 4}
+COL_TW = {0: None, 1: 'b1', 2: 'b2', 3: 'b3'}
+NFUSE_LADDER = {'avx512': 4, 'avx2': 2, 'scalar': 4}
+
+
+def emit_ladder_pipeline(em, pipe, k_expr, spill_base, d, itw_set, nfuse=None):
+    """Emit one pipeline of the ladder kernel (pass 1 + pass 2). ISA-agnostic."""
+    xv8 = [f"x{i}" for i in range(N1)]
+    xv4 = [f"x{i}" for i in range(N2)]
+    if nfuse is None:
+        nfuse = NFUSE_LADDER.get(em.isa.name, 4)
+    last_n2 = N2 - 1
+    T = em.isa.reg_type
+
+    # Load 5 base twiddle pairs
+    em.c(f"{pipe}Load 5 base twiddle pairs")
+    for name, idx in sorted(BASE_MAP.items(), key=lambda x: x[1]):
+        if em.isa.name == 'scalar':
+            em.o(f"const {T} {pipe}{name}_re = base_tw_re[{idx}*K+{k_expr}];")
+            em.o(f"const {T} {pipe}{name}_im = base_tw_im[{idx}*K+{k_expr}];")
+        else:
+            em.o(f"const {T} {pipe}{name}_re = LD(&base_tw_re[{idx}*K+{k_expr}]);")
+            em.o(f"const {T} {pipe}{name}_im = LD(&base_tw_im[{idx}*K+{k_expr}]);")
+    em.b()
+
+    # Derive b3 = b1*b2
+    em.c(f"{pipe}Derive b3 = b1*b2")
+    em.o(f"{T} {pipe}b3_re, {pipe}b3_im;")
+    em.emit_cmul(f"{pipe}b3_re", f"{pipe}b3_im",
+                 f"{pipe}b1_re", f"{pipe}b1_im",
+                 f"{pipe}b2_re", f"{pipe}b2_im", 'fwd')
+    em.b()
+
+    # Derived row twiddle scratch
+    em.c(f"{pipe}Derived row twiddle scratch")
+    em.o(f"{T} {pipe}r3_re,{pipe}r3_im, {pipe}r5_re,{pipe}r5_im, {pipe}r6_re,{pipe}r6_im, {pipe}r7_re,{pipe}r7_im;")
+    em.o(f"{T} {pipe}b12_re, {pipe}b12_im;")
+    em.b()
+
+    # PASS 1: sub-FFTs with ladder twiddles
+    for n2 in range(N2):
+        is_last = (n2 == last_n2)
+        em.c(f"{pipe}sub-FFT n2={n2}")
+        for n1, derive, keep in ROW_CHAIN:
+            n = N2 * n1 + n2
+            em.emit_load(f"x{n1}", n, k_expr)
+            if n1 > 0:
+                if derive is None:
+                    base_name = {1: 'b4', 2: 'b8', 4: 'b16'}[n1]
+                    wr, wi = f"{pipe}{base_name}_re", f"{pipe}{base_name}_im"
+                else:
+                    a_name, b_name = derive
+                    tw_name = f"r{n1}"
+                    em.emit_cmul(f"{pipe}{tw_name}_re", f"{pipe}{tw_name}_im",
+                                 f"{pipe}{a_name}_re", f"{pipe}{a_name}_im",
+                                 f"{pipe}{b_name}_re", f"{pipe}{b_name}_im", 'fwd')
+                    wr, wi = f"{pipe}{tw_name}_re", f"{pipe}{tw_name}_im"
+                    if keep:
+                        em.o(f"{pipe}b12_re = {wr}; {pipe}b12_im = {wi};")
+                em.emit_cmul_inplace(f"x{n1}", wr, wi, d)
+        em.b()
+        em.emit_radix8(xv8, d, f"{pipe}radix-8 n2={n2}")
+        em.b()
+
+        # Column twiddle (applied to entire sub-FFT output)
+        col = COL_TW[n2]
+        if col is not None:
+            em.c(f"{pipe}col twiddle {col}")
+            wr, wi = f"{pipe}{col}_re", f"{pipe}{col}_im"
+            for k1 in range(N1):
+                em.emit_cmul_inplace(f"x{k1}", wr, wi, d)
+            em.b()
+
+        # Spill/fuse
+        if is_last:
+            em.c(f"{pipe}FUSED: save x0..x{nfuse-1} in s-regs, spill x{nfuse}..x{N1-1}")
+            for k1 in range(nfuse):
+                em.o(f"s{k1}_re = x{k1}_re; s{k1}_im = x{k1}_im;")
+            for k1 in range(nfuse, N1):
+                em.emit_spill(f"x{k1}", spill_base + n2 * N1 + k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"x{k1}", spill_base + n2 * N1 + k1)
+        em.b()
+
+    # PASS 2: same as flat DIT (internal twiddles + radix-4)
+    em.c(f"{pipe}PASS 2 [{d}]")
+    em.b()
+    for k1 in range(N1):
+        em.c(f"{pipe}column k1={k1}")
+        if k1 < nfuse:
+            for n2 in range(last_n2):
+                em.emit_reload(f"x{n2}", spill_base + n2 * N1 + k1)
+            em.o(f"x{last_n2}_re = s{k1}_re; x{last_n2}_im = s{k1}_im;")
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", spill_base + n2 * N1 + k1)
+        em.b()
+        if k1 > 0:
+            for n2 in range(1, N2):
+                e = (n2 * k1) % N
+                em.emit_twiddle(f"x{n2}", f"x{n2}", e, N, d)
+            em.b()
+        em.emit_radix4(xv4, d, f"{pipe}radix-4 k1={k1}")
+        em.b()
+        for k2 in range(N2):
+            em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
+        em.b()
+
+
+def emit_ladder_dif_pipeline(em, pipe, k_expr, spill_base, d, itw_set, nfuse=None):
+    """Emit DIF ladder pipeline: butterfly first, then ladder-derived twiddle on outputs."""
+    xv8 = [f"x{i}" for i in range(N1)]
+    xv4 = [f"x{i}" for i in range(N2)]
+    if nfuse is None:
+        nfuse = NFUSE_LADDER.get(em.isa.name, 4)
+    last_n2 = N2 - 1
+    T = em.isa.reg_type
+
+    # Load 5 base twiddle pairs
+    em.c(f"{pipe}Load 5 base twiddle pairs")
+    for name, idx in sorted(BASE_MAP.items(), key=lambda x: x[1]):
+        if em.isa.name == 'scalar':
+            em.o(f"const {T} {pipe}{name}_re = base_tw_re[{idx}*K+{k_expr}];")
+            em.o(f"const {T} {pipe}{name}_im = base_tw_im[{idx}*K+{k_expr}];")
+        else:
+            em.o(f"const {T} {pipe}{name}_re = LD(&base_tw_re[{idx}*K+{k_expr}]);")
+            em.o(f"const {T} {pipe}{name}_im = LD(&base_tw_im[{idx}*K+{k_expr}]);")
+    em.b()
+
+    # Pre-derive all needed twiddles for output application
+    # b3=b1*b2, w5=b1*b4, w6=b2*b4, w7=b3*b4, b24=b8*b16
+    em.c(f"{pipe}Derive output twiddles")
+    em.o(f"{T} {pipe}b3_re,{pipe}b3_im;")
+    em.emit_cmul(f"{pipe}b3_re", f"{pipe}b3_im",
+                 f"{pipe}b1_re", f"{pipe}b1_im",
+                 f"{pipe}b2_re", f"{pipe}b2_im", 'fwd')
+    em.o(f"{T} {pipe}w5_re,{pipe}w5_im;")
+    em.emit_cmul(f"{pipe}w5_re", f"{pipe}w5_im",
+                 f"{pipe}b1_re", f"{pipe}b1_im",
+                 f"{pipe}b4_re", f"{pipe}b4_im", 'fwd')
+    em.o(f"{T} {pipe}w6_re,{pipe}w6_im;")
+    em.emit_cmul(f"{pipe}w6_re", f"{pipe}w6_im",
+                 f"{pipe}b2_re", f"{pipe}b2_im",
+                 f"{pipe}b4_re", f"{pipe}b4_im", 'fwd')
+    em.o(f"{T} {pipe}w7_re,{pipe}w7_im;")
+    em.emit_cmul(f"{pipe}w7_re", f"{pipe}w7_im",
+                 f"{pipe}b3_re", f"{pipe}b3_im",
+                 f"{pipe}b4_re", f"{pipe}b4_im", 'fwd')
+    em.o(f"{T} {pipe}b24_re,{pipe}b24_im;")
+    em.emit_cmul(f"{pipe}b24_re", f"{pipe}b24_im",
+                 f"{pipe}b8_re", f"{pipe}b8_im",
+                 f"{pipe}b16_re", f"{pipe}b16_im", 'fwd')
+    em.o(f"{T} {pipe}tw_re,{pipe}tw_im;")  # scratch for combined twiddle
+    em.b()
+
+    # Row twiddle lookup: W^k1 for k1=0..7
+    # k1=0: identity, k1=1: b1, k1=2: b2, k1=3: b3, k1=4: b4,
+    # k1=5: w5, k1=6: w6, k1=7: w7
+    row_tw = {0: None, 1: 'b1', 2: 'b2', 3: 'b3', 4: 'b4',
+              5: 'w5', 6: 'w6', 7: 'w7'}
+    # Column twiddle: W^(8*k2) for k2=0..3
+    # k2=0: identity, k2=1: b8, k2=2: b16, k2=3: b24
+    col_tw = {0: None, 1: 'b8', 2: 'b16', 3: 'b24'}
+
+    # PASS 1: load raw (no external twiddle) → radix-8 → spill
+    for n2 in range(N2):
+        is_last = (n2 == last_n2)
+        em.c(f"{pipe}sub-FFT n2={n2}")
+        for n1 in range(N1):
+            n = N2 * n1 + n2
+            em.emit_load(f"x{n1}", n, k_expr)
+        em.b()
+        em.emit_radix8(xv8, d, f"{pipe}radix-8 n2={n2}")
+        em.b()
+        if is_last:
+            em.c(f"{pipe}FUSED: save x0..x{nfuse-1} in s-regs, spill x{nfuse}..x{N1-1}")
+            for k1 in range(nfuse):
+                em.o(f"s{k1}_re = x{k1}_re; s{k1}_im = x{k1}_im;")
+            for k1 in range(nfuse, N1):
+                em.emit_spill(f"x{k1}", spill_base + n2 * N1 + k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"x{k1}", spill_base + n2 * N1 + k1)
+        em.b()
+
+    # PASS 2: reload → internal twiddle → radix-4 → output twiddle → store
+    em.c(f"{pipe}PASS 2 [{d}]")
+    em.b()
+    for k1 in range(N1):
+        em.c(f"{pipe}column k1={k1}")
+        if k1 < nfuse:
+            for n2 in range(last_n2):
+                em.emit_reload(f"x{n2}", spill_base + n2 * N1 + k1)
+            em.o(f"x{last_n2}_re = s{k1}_re; x{last_n2}_im = s{k1}_im;")
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", spill_base + n2 * N1 + k1)
+        em.b()
+        if k1 > 0:
+            for n2 in range(1, N2):
+                e = (n2 * k1) % N
+                em.emit_twiddle(f"x{n2}", f"x{n2}", e, N, d)
+            em.b()
+        em.emit_radix4(xv4, d, f"{pipe}radix-4 k1={k1}")
+        em.b()
+
+        # DIF: apply ladder-derived external twiddle to outputs
+        # Output m = k1 + 8*k2. W^m = W^k1 * W^(8*k2)
+        em.c(f"{pipe}DIF output twiddle (ladder)")
+        rtw = row_tw[k1]  # W^k1 name or None
+        for k2 in range(N2):
+            m = k1 + N1 * k2
+            if m == 0:
+                continue
+            ctw = col_tw[k2]  # W^(8*k2) name or None
+            if rtw is None and ctw is None:
+                continue  # m=0, already skipped
+            elif rtw is not None and ctw is None:
+                # Just row twiddle
+                em.emit_cmul_inplace(f"x{k2}", f"{pipe}{rtw}_re", f"{pipe}{rtw}_im", d)
+            elif rtw is None and ctw is not None:
+                # Just column twiddle (k1=0, k2>0)
+                em.emit_cmul_inplace(f"x{k2}", f"{pipe}{ctw}_re", f"{pipe}{ctw}_im", d)
+            else:
+                # Both: derive combined = rtw * ctw, then apply
+                em.emit_cmul(f"{pipe}tw_re", f"{pipe}tw_im",
+                             f"{pipe}{rtw}_re", f"{pipe}{rtw}_im",
+                             f"{pipe}{ctw}_re", f"{pipe}{ctw}_im", 'fwd')
+                em.emit_cmul_inplace(f"x{k2}", f"{pipe}tw_re", f"{pipe}tw_im", d)
+        em.b()
+
+        for k2 in range(N2):
+            em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
+        em.b()
+
+
+# ═══════════════════════════════════════════════════════════════
+# FILE EMITTER — assembles header file for one ISA
+# ═══════════════════════════════════════════════════════════════
+
+def emit_twiddle_constants(em, itw_set):
+    """Emit W32 constant definitions (guarded, shared across files)."""
+    by_tN = {}
+    for (e, tN) in sorted(itw_set):
+        by_tN.setdefault(tN, []).append(e)
+    for tN in sorted(by_tN):
+        g = f"FFT_W{tN}_TWIDDLES_DEFINED"
+        em.L.append(f"#ifndef {g}")
+        em.L.append(f"#define {g}")
+        for e in sorted(by_tN[tN]):
+            wr, wi = wN(e, tN)
+            l = wN_label(e, tN)
+            em.L.append(f"static const double {l}_re = {wr:.20e};")
+            em.L.append(f"static const double {l}_im = {wi:.20e};")
+        em.L.append(f"#endif")
+        em.L.append("")
+
+
+def insert_stats_into_header(lines, stats):
+    """Insert operation count table into the file header comment block.
+    
+    Finds the ' */' closing the header comment and inserts the stats
+    table just before it.
+    """
+    # Build the stats table
+    table = []
+    table.append(" *")
+    table.append(" * ── Operation counts per k-step ──")
+    table.append(" *")
+    table.append(f" *   {'kernel':<20s} {'add':>5s} {'sub':>5s} {'mul':>5s} {'neg':>5s}"
+                 f" {'fma':>5s} {'fms':>5s} | {'arith':>5s} {'flops':>5s}"
+                 f" | {'ld':>3s} {'st':>3s} {'sp':>3s} {'rl':>3s} {'mem':>4s}")
+    sep = '─' * 20
+    s5 = '─' * 5
+    s3 = '─' * 3
+    s4 = '─' * 4
+    table.append(f" *   {sep} {s5} {s5} {s5} {s5}"
+                 f" {s5} {s5} + {s5} {s5}"
+                 f" + {s3} {s3} {s3} {s3} {s4}")
+    for k in sorted(stats.keys()):
+        s = stats[k]
+        table.append(f" *   {k:<20s} {s['add']:5d} {s['sub']:5d} {s['mul']:5d} {s['neg']:5d}"
+                     f" {s['fma']:5d} {s['fms']:5d} | {s['total_arith']:5d} {s['flops']:5d}"
+                     f" | {s['load']:3d} {s['store']:3d} {s['spill']:3d} {s['reload']:3d} {s['total_mem']:4d}")
+    table.append(" *")
+
+    # Find the first ' */' that closes the header comment
+    for i, line in enumerate(lines):
+        if line.strip() == '*/':
+            for j, tl in enumerate(table):
+                lines.insert(i + j, tl)
+            return
+    # Fallback: couldn't find header end, prepend as standalone comment
+    lines.insert(0, "/* " + " | ".join(f"{k}:{v}" for k, v in stats.items()) + " */")
+
+
+def emit_dit_tw_flat_file(isa, itw_set):
+    """Emit complete DIT tw flat header for one ISA. Returns (lines, stats)."""
+    nfuse = isa.nfuse_tw
+    T = isa.reg_type
+    em = Emitter(isa)
+
+    # File header
+    em.L.append(f"/**")
+    em.L.append(f" * @file fft_radix32_{isa.name}_tw.h")
+    em.L.append(f" * @brief DFT-32 {isa.name.upper()} twiddled codelet — flat twiddles, NFUSE={nfuse}")
+    em.L.append(f" *")
+    em.L.append(f" * 8x4 decomposition, U=1, fwd + bwd")
+    em.L.append(f" * Generated by gen_radix32.py")
+    em.L.append(f" */")
+    em.L.append(f"")
+
+    guard = f"FFT_RADIX32_{isa.name.upper()}_TW_H"
+    em.L.append(f"#ifndef {guard}")
+    em.L.append(f"#define {guard}")
+    em.L.append(f"")
+
+    if isa.name != 'scalar':
+        em.L.append(f"#include <immintrin.h>")
+        em.L.append(f"")
+
+    # Twiddle constants
+    emit_twiddle_constants(em, itw_set)
+
+    # LD/ST macros (SIMD only)
+    if isa.name == 'avx2':
+        em.L.append("#ifndef R32A_LD")
+        em.L.append("#define R32A_LD(p) _mm256_loadu_pd(p)")
+        em.L.append("#endif")
+        em.L.append("#ifndef R32A_ST")
+        em.L.append("#define R32A_ST(p,v) _mm256_storeu_pd((p),(v))")
+        em.L.append("#endif")
+        em.L.append("#define LD R32A_LD")
+        em.L.append("#define ST R32A_ST")
+        em.L.append("")
+    elif isa.name == 'avx512':
+        em.L.append("#ifndef R32L_LD")
+        em.L.append("#define R32L_LD(p) _mm512_loadu_pd(p)")
+        em.L.append("#endif")
+        em.L.append("#ifndef R32L_ST")
+        em.L.append("#define R32L_ST(p,v) _mm512_storeu_pd((p),(v))")
+        em.L.append("#endif")
+        em.L.append("#define LD R32L_LD")
+        em.L.append("#define ST R32L_ST")
+        em.L.append("")
+
+    em.L.append(f"/* === FLAT U=1 ({isa.name.upper()}, NFUSE={nfuse}) === */")
+    em.L.append("")
+
+    stats = {}
+    for d in ['fwd', 'bwd']:
+        em.reset_counters()
+
+        # Function signature
+        if isa.target_attr:
+            em.L.append(f"static {isa.target_attr} void")
+        else:
+            em.L.append(f"static void")
+        em.L.append(f"radix32_tw_flat_dit_kernel_{d}_{isa.name}(")
+        em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+        em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+        em.L.append(f"    const double * __restrict__ tw_re, const double * __restrict__ tw_im,")
+        em.L.append(f"    size_t K)")
+        em.L.append(f"{{")
+        em.ind = 1
+
+        # Constants
+        if isa.name != 'scalar':
+            em.o(f"const {T} sign_flip = {'_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'}(-0.0);")
+            em.o(f"const {T} sqrt2_inv = {'_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'}(0.70710678118654752440);")
+        else:
+            pass  # scalar uses #define SQRT2_INV at file scope
+        em.b()
+
+        # Spill buffer
+        spill_total = N * isa.spill_mul
+        if isa.name == 'scalar':
+            em.o(f"double spill_re[{N}], spill_im[{N}];")
+        else:
+            em.o(f"{isa.align_attr} double spill_re[{spill_total}];")
+            em.o(f"{isa.align_attr} double spill_im[{spill_total}];")
+        em.b()
+
+        # Working registers
+        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+        em.o(f"{T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;")
+        # Saved registers for NFUSE
+        slist = ",".join(f"s{i}_re,s{i}_im" for i in range(nfuse))
+        em.o(f"{T} {slist};")
+        em.b()
+
+        # Hoisted internal twiddle broadcasts (SIMD only)
+        if isa.name != 'scalar' and itw_set:
+            em.c(f"Hoisted internal W32 broadcasts")
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            for (e, tN) in sorted(itw_set):
+                label = wN_label(e, tN)
+                em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+                em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
+            em.b()
+
+        # Scalar needs SQRT2_INV define — handled at file scope
+        if isa.name == 'scalar' and itw_set:
+            em.c(f"Internal W32 constants are #defined at file scope")
+            em.b()
+
+        # K loop
+        if isa.name == 'scalar':
+            em.o(f"for (size_t k = 0; k < K; k++) {{")
+        else:
+            em.o(f"for (size_t k = 0; k < K; k += {isa.k_step}) {{")
+        em.ind += 1
+
+        # Core kernel
+        emit_dit_tw_flat_kernel(em, d, nfuse, itw_set)
+
+        em.ind -= 1
+        em.o("}")
+        em.L.append("}")
+        em.L.append("")
+
+        stats[d] = em.get_stats()
+
+    # Cleanup macros
+    if isa.name != 'scalar':
+        em.L.append("#undef LD")
+        em.L.append("#undef ST")
+        em.L.append("")
+
+    em.L.append(f"#endif /* {guard} */")
+    insert_stats_into_header(em.L, stats)
+    return em.L, stats
+
+
+# ═══════════════════════════════════════════════════════════════
+# FILE EMITTER — DIF tw flat
+# ═══════════════════════════════════════════════════════════════
+
+def emit_dif_tw_flat_file(isa, itw_set):
+    """Emit complete DIF tw flat header for one ISA."""
+    nfuse = isa.nfuse_tw
+    T = isa.reg_type
+    em = Emitter(isa)
+
+    guard = f"FFT_RADIX32_{isa.name.upper()}_DIF_TW_H"
+    em.L.append(f"/**")
+    em.L.append(f" * @file fft_radix32_{isa.name}_dif_tw.h")
+    em.L.append(f" * @brief DFT-32 {isa.name.upper()} DIF twiddled codelet — flat twiddles, NFUSE={nfuse}")
+    em.L.append(f" *")
+    em.L.append(f" * DIF: external twiddle on OUTPUT (after butterfly)")
+    em.L.append(f" * 8x4 decomposition, fwd + bwd")
+    em.L.append(f" * Generated by gen_radix32.py")
+    em.L.append(f" */")
+    em.L.append(f"")
+    em.L.append(f"#ifndef {guard}")
+    em.L.append(f"#define {guard}")
+    em.L.append(f"")
+
+    if isa.name != 'scalar':
+        em.L.append(f"#include <immintrin.h>")
+        em.L.append(f"")
+
+    emit_twiddle_constants(em, itw_set)
+
+    if isa.name == 'avx2':
+        em.L.append("#ifndef R32DA_LD"); em.L.append("#define R32DA_LD(p) _mm256_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32DA_ST"); em.L.append("#define R32DA_ST(p,v) _mm256_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32DA_LD"); em.L.append("#define ST R32DA_ST"); em.L.append("")
+    elif isa.name == 'avx512':
+        em.L.append("#ifndef R32DL_LD"); em.L.append("#define R32DL_LD(p) _mm512_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32DL_ST"); em.L.append("#define R32DL_ST(p,v) _mm512_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32DL_LD"); em.L.append("#define ST R32DL_ST"); em.L.append("")
+
+    em.L.append(f"/* === DIF FLAT ({isa.name.upper()}, NFUSE={nfuse}) === */")
+    em.L.append("")
+
+    stats = {}
+    for d in ['fwd', 'bwd']:
+        em.reset_counters()
+        if isa.target_attr:
+            em.L.append(f"static {isa.target_attr} void")
+        else:
+            em.L.append(f"static void")
+        em.L.append(f"radix32_tw_flat_dif_kernel_{d}_{isa.name}(")
+        em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+        em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+        em.L.append(f"    const double * __restrict__ tw_re, const double * __restrict__ tw_im,")
+        em.L.append(f"    size_t K)")
+        em.L.append(f"{{")
+        em.ind = 1
+
+        if isa.name != 'scalar':
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            em.o(f"const {T} sign_flip = {set1}(-0.0);")
+            em.o(f"const {T} sqrt2_inv = {set1}(0.70710678118654752440);")
+            em.b()
+
+        spill_total = N * isa.spill_mul
+        if isa.name == 'scalar':
+            em.o(f"double spill_re[{N}], spill_im[{N}];")
+        else:
+            em.o(f"{isa.align_attr} double spill_re[{spill_total}];")
+            em.o(f"{isa.align_attr} double spill_im[{spill_total}];")
+        em.b()
+        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+        em.o(f"{T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;")
+        slist = ",".join(f"s{i}_re,s{i}_im" for i in range(nfuse))
+        em.o(f"{T} {slist};")
+        em.b()
+
+        if isa.name != 'scalar' and itw_set:
+            em.c(f"Hoisted internal W32 broadcasts")
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            for (e, tN) in sorted(itw_set):
+                label = wN_label(e, tN)
+                em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+                em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
+            em.b()
+
+        if isa.name == 'scalar' and itw_set:
+            em.c(f"Internal W32 constants are #defined at file scope")
+            em.b()
+
+        if isa.name == 'scalar':
+            em.o(f"for (size_t k = 0; k < K; k++) {{")
+        else:
+            em.o(f"for (size_t k = 0; k < K; k += {isa.k_step}) {{")
+        em.ind += 1
+        emit_dif_tw_flat_kernel(em, d, nfuse, itw_set)
+        em.ind -= 1
+        em.o("}")
+        em.L.append("}")
+        em.L.append("")
+        stats[d] = em.get_stats()
+
+    if isa.name != 'scalar':
+        em.L.append("#undef LD"); em.L.append("#undef ST"); em.L.append("")
+    em.L.append(f"#endif /* {guard} */")
+    insert_stats_into_header(em.L, stats)
+    return em.L, stats
+
+
+# ═══════════════════════════════════════════════════════════════
+# FILE EMITTER — Notw (N1)
+# ═══════════════════════════════════════════════════════════════
+
+def emit_notw_file(isa, itw_set):
+    """Emit complete notw header for one ISA."""
+    nfuse = isa.nfuse_notw
+    T = isa.reg_type
+    em = Emitter(isa)
+
+    guard = f"FFT_RADIX32_{isa.name.upper()}_NOTW_H"
+    em.L.append(f"/**")
+    em.L.append(f" * @file fft_radix32_{isa.name}_notw.h")
+    em.L.append(f" * @brief DFT-32 {isa.name.upper()} notw codelet — NFUSE={nfuse}")
+    em.L.append(f" *")
+    em.L.append(f" * No external twiddles. Pure DFT-32 butterfly.")
+    em.L.append(f" * 8x4 decomposition, fwd + bwd")
+    em.L.append(f" * Generated by gen_radix32.py")
+    em.L.append(f" */")
+    em.L.append(f"")
+    em.L.append(f"#ifndef {guard}")
+    em.L.append(f"#define {guard}")
+    em.L.append(f"")
+
+    if isa.name != 'scalar':
+        em.L.append(f"#include <immintrin.h>")
+        em.L.append(f"")
+
+    emit_twiddle_constants(em, itw_set)
+
+    # Notw-specific LD/ST macros
+    if isa.name == 'avx2':
+        em.L.append("#ifndef R32NA_LD"); em.L.append("#define R32NA_LD(p) _mm256_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32NA_ST"); em.L.append("#define R32NA_ST(p,v) _mm256_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32NA_LD"); em.L.append("#define ST R32NA_ST"); em.L.append("")
+    elif isa.name == 'avx512':
+        em.L.append("#ifndef R32N5_LD"); em.L.append("#define R32N5_LD(p) _mm512_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32N5_ST"); em.L.append("#define R32N5_ST(p,v) _mm512_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32N5_LD"); em.L.append("#define ST R32N5_ST"); em.L.append("")
+
+    em.L.append(f"/* === NOTW ({isa.name.upper()}, NFUSE={nfuse}) === */")
+    em.L.append("")
+
+    stats = {}
+    for d in ['fwd', 'bwd']:
+        em.reset_counters()
+        if isa.target_attr:
+            em.L.append(f"static {isa.target_attr} void")
+        else:
+            em.L.append(f"static void")
+        em.L.append(f"radix32_notw_dit_kernel_{d}_{isa.name}(")
+        em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+        em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+        em.L.append(f"    size_t K)")
+        em.L.append(f"{{")
+        em.ind = 1
+
+        if isa.name != 'scalar':
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            em.o(f"const {T} sign_flip = {set1}(-0.0);")
+            em.o(f"const {T} sqrt2_inv = {set1}(0.70710678118654752440);")
+            em.b()
+
+        # Spill buffer — always needed (pass 1 spills for n2 < N2-1 regardless of NFUSE)
+        spill_total = N * isa.spill_mul
+        if isa.name == 'scalar':
+            em.o(f"double spill_re[{N}], spill_im[{N}];")
+        else:
+            em.o(f"{isa.align_attr} double spill_re[{spill_total}];")
+            em.o(f"{isa.align_attr} double spill_im[{spill_total}];")
+        em.b()
+
+        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+        em.o(f"{T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;")
+        slist = ",".join(f"s{i}_re,s{i}_im" for i in range(nfuse))
+        em.o(f"{T} {slist};")
+        em.b()
+
+        if isa.name != 'scalar' and itw_set:
+            em.c(f"Hoisted internal W32 broadcasts")
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            for (e, tN) in sorted(itw_set):
+                label = wN_label(e, tN)
+                em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+                em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
+            em.b()
+
+        if isa.name == 'scalar' and itw_set:
+            em.c(f"Internal W32 constants are #defined at file scope")
+            em.b()
+
+        if isa.name == 'scalar':
+            em.o(f"for (size_t k = 0; k < K; k++) {{")
+        else:
+            em.o(f"for (size_t k = 0; k < K; k += {isa.k_step}) {{")
+        em.ind += 1
+        emit_notw_kernel(em, d, nfuse, itw_set)
+        em.ind -= 1
+        em.o("}")
+        em.L.append("}")
+        em.L.append("")
+        stats[d] = em.get_stats()
+
+    if isa.name != 'scalar':
+        em.L.append("#undef LD"); em.L.append("#undef ST"); em.L.append("")
+    em.L.append(f"#endif /* {guard} */")
+    insert_stats_into_header(em.L, stats)
+    return em.L, stats
+
+
+# ═══════════════════════════════════════════════════════════════
+# FILE EMITTER — Ladder DIT (all ISAs) + AVX-512 U=2
+# ═══════════════════════════════════════════════════════════════
+
+def _emit_ladder_boilerplate(em, isa, T, itw_set):
+    """Emit shared boilerplate for ladder kernels."""
+    nfuse = NFUSE_LADDER.get(isa.name, 4)
+    set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+
+    if isa.name != 'scalar':
+        em.o(f"const {T} sign_flip = {set1}(-0.0);")
+        em.o(f"const {T} sqrt2_inv = {set1}(0.70710678118654752440);")
+    else:
+        em.o(f"const double sqrt2_inv = 0.70710678118654752440;")
+    em.b()
+
+    spill_total = N * isa.spill_mul
+    if isa.name == 'scalar':
+        em.o(f"double spill_re[{N}], spill_im[{N}];")
+    else:
+        em.o(f"{isa.align_attr} double spill_re[{spill_total}];")
+        em.o(f"{isa.align_attr} double spill_im[{spill_total}];")
+    em.b()
+
+    em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+    em.o(f"{T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;")
+    slist = ",".join(f"s{i}_re,s{i}_im" for i in range(nfuse))
+    em.o(f"{T} {slist};")
+    em.b()
+
+    if isa.name != 'scalar' and itw_set:
+        em.c(f"Hoisted internal W32 broadcasts")
+        for (e, tN) in sorted(itw_set):
+            label = wN_label(e, tN)
+            em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+            em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
+        em.b()
+    elif isa.name == 'scalar' and itw_set:
+        em.c(f"Internal W32 constants at file scope")
+        em.b()
+
+
+def emit_ladder_file(isa, itw_set):
+    """Emit ladder DIT header for any ISA. Returns (lines, stats)."""
+    nfuse = NFUSE_LADDER.get(isa.name, 4)
+    T = isa.reg_type
+    em = Emitter(isa)
+
+    guard = f"FFT_RADIX32_{isa.name.upper()}_TW_LADDER_H"
+    em.L.append(f"/**")
+    em.L.append(f" * @file fft_radix32_{isa.name}_tw_ladder.h")
+    em.L.append(f" * @brief DFT-32 {isa.name.upper()} ladder (log-derived) twiddles, NFUSE={nfuse}")
+    em.L.append(f" *")
+    em.L.append(f" * 5 base twiddles → 26 derived via cmul. Table 6.2x smaller than flat.")
+    em.L.append(f" * Generated by gen_radix32.py")
+    em.L.append(f" */")
+    em.L.append(f"")
+    em.L.append(f"#ifndef {guard}")
+    em.L.append(f"#define {guard}")
+    em.L.append(f"")
+
+    if isa.name != 'scalar':
+        em.L.append(f"#include <immintrin.h>")
+        em.L.append(f"")
+    else:
+        em.L.append(f"#include <stddef.h>")
+        em.L.append(f"")
+
+    emit_twiddle_constants(em, itw_set)
+
+    # LD/ST macros
+    if isa.name == 'avx2':
+        em.L.append("#ifndef R32LA_LD"); em.L.append("#define R32LA_LD(p) _mm256_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32LA_ST"); em.L.append("#define R32LA_ST(p,v) _mm256_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32LA_LD"); em.L.append("#define ST R32LA_ST"); em.L.append("")
+    elif isa.name == 'avx512':
+        em.L.append("#ifndef R32L_LD"); em.L.append("#define R32L_LD(p) _mm512_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32L_ST"); em.L.append("#define R32L_ST(p,v) _mm512_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32L_LD"); em.L.append("#define ST R32L_ST"); em.L.append("")
+
+    if isa.name == 'scalar':
+        em.L.append(f"#define SQRT2_INV 0.70710678118654752440")
+        em.L.append(f"")
+
+    stats = {}
+
+    # === LADDER U=1 ===
+    em.L.append(f"/* === LADDER U=1 ({isa.name.upper()}, NFUSE={nfuse}) === */"); em.L.append("")
+    for d in ['fwd', 'bwd']:
+        em.reset_counters()
+        if isa.target_attr:
+            em.L.append(f"static {isa.target_attr} void")
+        else:
+            em.L.append(f"static void")
+        em.L.append(f"radix32_tw_ladder_dit_kernel_{d}_{isa.name}_u1(")
+        em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+        em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+        em.L.append(f"    const double * __restrict__ base_tw_re, const double * __restrict__ base_tw_im,")
+        em.L.append(f"    size_t K)")
+        em.L.append(f"{{")
+        em.ind = 1
+        _emit_ladder_boilerplate(em, isa, T, itw_set)
+        if isa.name == 'scalar':
+            em.o(f"for (size_t k = 0; k < K; k++) {{")
+        else:
+            em.o(f"for (size_t k = 0; k < K; k += {isa.k_step}) {{")
+        em.ind += 1
+        emit_ladder_pipeline(em, "", "k", 0, d, itw_set)
+        em.ind -= 1
+        em.o("}")
+        em.L.append("}"); em.L.append("")
+        stats[f'ladder_u1_{d}'] = em.get_stats()
+
+    # === DIF LADDER U=1 ===
+    em.L.append(f"/* === DIF LADDER U=1 ({isa.name.upper()}, NFUSE={nfuse}) === */"); em.L.append("")
+    for d in ['fwd', 'bwd']:
+        em.reset_counters()
+        if isa.target_attr:
+            em.L.append(f"static {isa.target_attr} void")
+        else:
+            em.L.append(f"static void")
+        em.L.append(f"radix32_tw_ladder_dif_kernel_{d}_{isa.name}_u1(")
+        em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+        em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+        em.L.append(f"    const double * __restrict__ base_tw_re, const double * __restrict__ base_tw_im,")
+        em.L.append(f"    size_t K)")
+        em.L.append(f"{{")
+        em.ind = 1
+        _emit_ladder_boilerplate(em, isa, T, itw_set)
+        if isa.name == 'scalar':
+            em.o(f"for (size_t k = 0; k < K; k++) {{")
+        else:
+            em.o(f"for (size_t k = 0; k < K; k += {isa.k_step}) {{")
+        em.ind += 1
+        emit_ladder_dif_pipeline(em, "", "k", 0, d, itw_set)
+        em.ind -= 1
+        em.o("}")
+        em.L.append("}"); em.L.append("")
+        stats[f'ladder_dif_u1_{d}'] = em.get_stats()
+
+    # === LADDER U=2 (AVX-512 only — needs 2x k-step per iteration) ===
+    if isa.name == 'avx512':
+        em.L.append(f"/* === LADDER U=2 (AVX-512 only) === */"); em.L.append("")
+        for d in ['fwd', 'bwd']:
+            em.reset_counters()
+            em.L.append(f"static {isa.target_attr} void")
+            em.L.append(f"radix32_tw_ladder_dit_kernel_{d}_avx512_u2(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    const double * __restrict__ base_tw_re, const double * __restrict__ base_tw_im,")
+            em.L.append(f"    size_t K)")
+            em.L.append(f"{{")
+            em.ind = 1
+            _emit_ladder_boilerplate(em, isa, T, itw_set)
+            em.o(f"for (size_t k = 0; k < K; k += 16) {{")
+            em.ind += 1
+            em.c(f"Pipeline A [{d}]")
+            emit_ladder_pipeline(em, "A_", "k", 0, d, itw_set)
+            em.c(f"Pipeline B [{d}]")
+            emit_ladder_pipeline(em, "B_", "k+8", 0, d, itw_set)
+            em.ind -= 1
+            em.o("}")
+            em.L.append("}"); em.L.append("")
+            stats[f'ladder_u2_{d}'] = em.get_stats()
+
+    # Cleanup
+    if isa.name != 'scalar':
+        em.L.append("#undef LD"); em.L.append("#undef ST"); em.L.append("")
+    else:
+        em.L.append("#undef SQRT2_INV"); em.L.append("")
+
+    em.L.append(f"#endif /* {guard} */")
+    insert_stats_into_header(em.L, stats)
+    return em.L, stats
+
+
+# ═══════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════
+# SV CODELET GENERATION — text transform from t2 output
+# ═══════════════════════════════════════════════════════════════
+
+def _t2_to_sv(body):
+    """Transform a t2 codelet body to sv: strip k-loop, K→vs in addressing."""
+    lines = body.split('\n')
+    out = []
+    in_loop = False
+    depth = 0
+    for line in lines:
+        stripped = line.strip()
+        if not in_loop and 'for (size_t k' in stripped and 'k < K' in stripped:
+            in_loop = True
+            depth = 1
+            continue
+        if in_loop:
+            for ch in stripped:
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+            if depth <= 0:
+                in_loop = False
+                if stripped == '}':
+                    continue
+        line = re.sub(r'(\d+)\*K\+k', r'\1*vs', line)
+        line = re.sub(r'\[k\]', '[0]', line)
+        if line.startswith('        '):
+            line = line[4:]
+        out.append(line)
+    return '\n'.join(out)
+
+
+def emit_sv_variants(t2_lines, isa, variant):
+    """Extract t2 functions from generated lines, emit sv versions."""
+    if isa.name == 'scalar':
+        return []
+    if 'ladder' in variant:
+        return []
+
+    text = '\n'.join(t2_lines)
+
+    if variant == 'notw':
+        t2_pattern = 'radix32_notw_dit_kernel'
+        sv_name = 'radix32_n1sv_kernel'
+    elif variant == 'dit_tw':
+        t2_pattern = 'radix32_tw_flat_dit_kernel'
+        sv_name = 'radix32_t1sv_dit_kernel'
+    elif variant == 'dif_tw':
+        t2_pattern = 'radix32_tw_flat_dif_kernel'
+        sv_name = 'radix32_t1sv_dif_kernel'
+    else:
+        return []
+
+    out = []
+    out.append('')
+    out.append(f'/* === sv codelets: no loop, elements at stride vs === */')
+    out.append(f'/* Executor calls K/{isa.k_step} times, advancing base pointers by {isa.k_step}. */')
+
+    for d in ['fwd', 'bwd']:
+        func_name = f'{t2_pattern}_{d}_{isa.name}'
+        sv_func_name = f'{sv_name}_{d}_{isa.name}'
+
+        func_start = text.find(f'{func_name}(')
+        if func_start < 0:
+            continue
+
+        static_start = text.rfind('static', 0, func_start)
+        if static_start < 0:
+            continue
+
+        brace_start = text.find('{', func_start)
+        if brace_start < 0:
+            continue
+
+        depth = 0
+        pos = brace_start
+        while pos < len(text):
+            if text[pos] == '{':
+                depth += 1
+            elif text[pos] == '}':
+                depth -= 1
+                if depth == 0:
+                    break
+            pos += 1
+
+        func_body = text[brace_start + 1:pos]
+        sv_body = _t2_to_sv(func_body)
+
+        sig = text[static_start:brace_start]
+        sig = sig.replace(func_name, sv_func_name)
+        sig = sig.replace('size_t K)', 'size_t vs)')
+
+        out.append(sig + '{')
+        out.append(sv_body)
+        out.append('}')
+        out.append('')
+
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════
+# SV CODELET GENERATION — text transform from t2 output
+# ═══════════════════════════════════════════════════════════════
+
+def _t2_to_sv(body):
+    """Transform a t2 codelet body to sv: strip k-loop, K→vs in addressing."""
+    lines = body.split('\n')
+    out = []
+    in_loop = False
+    depth = 0
+    for line in lines:
+        stripped = line.strip()
+        if not in_loop and 'for (size_t k' in stripped and 'k < K' in stripped:
+            in_loop = True
+            depth = 1
+            continue
+        if in_loop:
+            for ch in stripped:
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+            if depth <= 0:
+                in_loop = False
+                if stripped == '}':
+                    continue
+        line = re.sub(r'(\d+)\*K\+k', r'\1*vs', line)
+        line = re.sub(r'\[k\]', '[0]', line)
+        if line.startswith('        '):
+            line = line[4:]
+        out.append(line)
+    return '\n'.join(out)
+
+
+def emit_sv_variants(t2_lines, isa, variant):
+    """Extract t2 functions from generated lines, emit sv versions."""
+    if isa.name == 'scalar':
+        return []
+    if 'ladder' in variant:
+        return []
+
+    text = '\n'.join(t2_lines)
+
+    if variant == 'notw':
+        t2_pattern = 'radix32_notw_dit_kernel'
+        sv_name = 'radix32_n1sv_kernel'
+    elif variant == 'dit_tw':
+        t2_pattern = 'radix32_tw_flat_dit_kernel'
+        sv_name = 'radix32_t1sv_dit_kernel'
+    elif variant == 'dif_tw':
+        t2_pattern = 'radix32_tw_flat_dif_kernel'
+        sv_name = 'radix32_t1sv_dif_kernel'
+    else:
+        return []
+
+    out = []
+    out.append('')
+    out.append(f'/* === sv codelets: no loop, elements at stride vs === */')
+    out.append(f'/* Executor calls K/{isa.k_step} times, advancing base pointers by {isa.k_step}. */')
+
+    for d in ['fwd', 'bwd']:
+        func_name = f'{t2_pattern}_{d}_{isa.name}'
+        sv_func_name = f'{sv_name}_{d}_{isa.name}'
+
+        func_start = text.find(f'{func_name}(')
+        if func_start < 0:
+            continue
+        static_start = text.rfind('static', 0, func_start)
+        if static_start < 0:
+            continue
+        brace_start = text.find('{', func_start)
+        if brace_start < 0:
+            continue
+
+        depth = 0
+        pos = brace_start
+        while pos < len(text):
+            if text[pos] == '{':
+                depth += 1
+            elif text[pos] == '}':
+                depth -= 1
+                if depth == 0:
+                    break
+            pos += 1
+
+        func_body = text[brace_start + 1:pos]
+        sv_body = _t2_to_sv(func_body)
+
+        sig = text[static_start:brace_start]
+        sig = sig.replace(func_name, sv_func_name)
+        sig = sig.replace('size_t K)', 'size_t vs)')
+
+        out.append(sig + '{')
+        out.append(sv_body)
+        out.append('}')
+        out.append('')
+
+    return out
+
+
+def emit_ct_file(isa, itw_set, ct_variant):
+    """Emit FFTW-style n1 or t1_dit codelet for R=32."""
+    is_n1 = ct_variant == 'ct_n1'
+    is_t1_dif = ct_variant == 'ct_t1_dif'
+    nfuse = isa.nfuse_notw if is_n1 else isa.nfuse_tw
+    T = isa.reg_type
+    em = Emitter(isa)
+    em.addr_mode = 'n1' if is_n1 else 't1'
+
+    if is_n1:
+        func_base = "radix32_n1"
+        vname = "n1 (separate is/os)"
+    elif is_t1_dif:
+        func_base = "radix32_t1_dif"
+        vname = "t1 DIF (in-place twiddle)"
+    else:
+        func_base = "radix32_t1_dit"
+        vname = "t1 DIT (in-place twiddle)"
+    guard = f"FFT_RADIX32_{isa.name.upper()}_CT_{ct_variant.upper()}_H"
+
+    em.L.append(f"/**")
+    em.L.append(f" * @file fft_radix32_{isa.name}_{ct_variant}.h")
+    em.L.append(f" * @brief DFT-32 {isa.name.upper()} {vname} — NFUSE={nfuse}")
+    em.L.append(f" *")
+    em.L.append(f" * FFTW-style codelet for recursive CT executor.")
+    em.L.append(f" * Generated by gen_radix32.py --variant {ct_variant}")
+    em.L.append(f" */")
+    em.L.append(f"")
+    em.L.append(f"#ifndef {guard}")
+    em.L.append(f"#define {guard}")
+    em.L.append(f"")
+
+    if isa.name != 'scalar':
+        em.L.append(f"#include <immintrin.h>")
+        em.L.append(f"")
+
+    emit_twiddle_constants(em, itw_set)
+
+    # LD/ST macros (unaligned for n1, aligned for t1)
+    if isa.name == 'avx2':
+        em.L.append("#ifndef R32CT_LD"); em.L.append("#define R32CT_LD(p) _mm256_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32CT_ST"); em.L.append("#define R32CT_ST(p,v) _mm256_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32CT_LD"); em.L.append("#define ST R32CT_ST"); em.L.append("")
+    elif isa.name == 'avx512':
+        em.L.append("#ifndef R32CT5_LD"); em.L.append("#define R32CT5_LD(p) _mm512_loadu_pd(p)"); em.L.append("#endif")
+        em.L.append("#ifndef R32CT5_ST"); em.L.append("#define R32CT5_ST(p,v) _mm512_storeu_pd((p),(v))"); em.L.append("#endif")
+        em.L.append("#define LD R32CT5_LD"); em.L.append("#define ST R32CT5_ST"); em.L.append("")
+
+    for d in ['fwd', 'bwd']:
+        em.reset_counters()
+        em.addr_mode = 'n1' if is_n1 else 't1'
+
+        if isa.target_attr:
+            em.L.append(f"static {isa.target_attr} void")
+        else:
+            em.L.append(f"static void")
+
+        if is_n1:
+            em.L.append(f"{func_base}_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            if isa.name == 'scalar':
+                em.L.append(f"    size_t is, size_t os, size_t vl, size_t ivs, size_t ovs)")
+            else:
+                em.L.append(f"    size_t is, size_t os, size_t vl)")
+        else:
+            em.L.append(f"{func_base}_{d}_{isa.name}(")
+            em.L.append(f"    double * __restrict__ rio_re, double * __restrict__ rio_im,")
+            em.L.append(f"    const double * __restrict__ W_re, const double * __restrict__ W_im,")
+            if isa.name == 'scalar':
+                em.L.append(f"    size_t ios, size_t mb, size_t me, size_t ms)")
+            else:
+                em.L.append(f"    size_t ios, size_t me)")
+
+        em.L.append(f"{{")
+        em.ind = 1
+
+        if isa.name != 'scalar':
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            em.o(f"const {T} sign_flip = {set1}(-0.0);")
+            em.o(f"const {T} sqrt2_inv = {set1}(0.70710678118654752440);")
+            em.b()
+
+        spill_total = N * isa.spill_mul
+        if isa.name == 'scalar':
+            em.o(f"double spill_re[{N}], spill_im[{N}];")
+        else:
+            em.o(f"{isa.align_attr} double spill_re[{spill_total}];")
+            em.o(f"{isa.align_attr} double spill_im[{spill_total}];")
+        em.b()
+
+        em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+        em.o(f"{T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;")
+        slist = ",".join(f"s{i}_re,s{i}_im" for i in range(nfuse))
+        em.o(f"{T} {slist};")
+        em.b()
+
+        if isa.name != 'scalar' and itw_set:
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            for (e, tN) in sorted(itw_set):
+                label = wN_label(e, tN)
+                em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+                em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
+            em.b()
+
+        if isa.name == 'scalar' and itw_set:
+            em.c(f"Internal W32 constants are #defined at file scope")
+            em.b()
+
+        # Loop
+        if is_n1:
+            if isa.name == 'scalar':
+                em.o(f"for (size_t k = 0; k < vl; k++) {{")
+            else:
+                em.o(f"for (size_t k = 0; k < vl; k += {isa.k_step}) {{")
+        else:
+            if isa.name == 'scalar':
+                em.o(f"for (size_t m = mb; m < me; m++) {{")
+            else:
+                em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
+
+        em.ind += 1
+        if is_n1:
+            emit_notw_kernel(em, d, nfuse, itw_set)
+        elif is_t1_dif:
+            emit_dif_tw_flat_kernel(em, d, nfuse, itw_set)
+        else:
+            emit_dit_tw_flat_kernel(em, d, nfuse, itw_set)
+        em.ind -= 1
+        em.o("}")
+        em.L.append("}")
+        em.L.append("")
+
+    # n1_ovs: inline butterfly with fused SIMD transpose stores
+    if is_n1 and isa.name != 'scalar':
+        R = N  # 32
+        VL = isa.k_step
+        T = isa.reg_type
+        n_groups = R // 4
+        nfuse_ovs = isa.nfuse_notw
+
+        for d in ['fwd', 'bwd']:
+            em.L.append("")
+            if isa.target_attr:
+                em.L.append(f"static {isa.target_attr} void")
+            else:
+                em.L.append(f"static void")
+            em.L.append(f"radix32_n1_ovs_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    size_t is, size_t os, size_t vl, size_t ovs)")
+            em.L.append(f"{{")
+
+            # Boilerplate
+            if isa.name != 'scalar':
+                set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+                em.L.append(f"    const {T} sign_flip = {set1}(-0.0);")
+                em.L.append(f"    const {T} sqrt2_inv = {set1}(0.70710678118654752440);")
+            em.L.append(f"    {isa.align_attr} double tbuf_re[{R*VL}];")
+            em.L.append(f"    {isa.align_attr} double tbuf_im[{R*VL}];")
+            spill_total = R * isa.spill_mul
+            em.L.append(f"    {isa.align_attr} double spill_re[{spill_total}];")
+            em.L.append(f"    {isa.align_attr} double spill_im[{spill_total}];")
+            em.L.append(f"    {T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+            em.L.append(f"    {T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;")
+            slist = ",".join(f"s{i}_re,s{i}_im" for i in range(nfuse_ovs))
+            em.L.append(f"    {T} {slist};")
+
+            # Hoisted twiddle broadcasts
+            if isa.name != 'scalar' and itw_set:
+                set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+                for (e, tN) in sorted(itw_set):
+                    label = wN_label(e, tN)
+                    em.L.append(f"    const {T} tw_{label}_re = {set1}({label}_re);")
+                    em.L.append(f"    const {T} tw_{label}_im = {set1}({label}_im);")
+            em.L.append(f"")
+
+            # K loop
+            em.L.append(f"    for (size_t k = 0; k < vl; k += {isa.k_step}) {{")
+
+            # Emit butterfly body via Emitter with addr_mode='n1_ovs'
+            em2 = Emitter(isa)
+            em2.L = []
+            em2.ind = 2
+            em2.addr_mode = 'n1_ovs'
+            em2.reset_counters()
+            emit_notw_kernel(em2, d, nfuse_ovs, itw_set)
+            em.L.extend(em2.L)
+
+            # 4x4 transpose blocks: tbuf → output at stride ovs
+            em.L.append(f"        /* 4x4 transpose: tbuf -> output at stride ovs */")
+            for g in range(n_groups):
+                b = g * 4
+                for comp, arr in [('re', 'out_re'), ('im', 'out_im')]:
+                    bname = f"tbuf_{comp}"
+                    em.L.append(f"        {{ __m256d a_=_mm256_load_pd(&{bname}[{b+0}*{VL}]), b_=_mm256_load_pd(&{bname}[{b+1}*{VL}]);")
+                    em.L.append(f"          __m256d c_=_mm256_load_pd(&{bname}[{b+2}*{VL}]), d_=_mm256_load_pd(&{bname}[{b+3}*{VL}]);")
+                    em.L.append(f"          __m256d lo_ab=_mm256_unpacklo_pd(a_,b_), hi_ab=_mm256_unpackhi_pd(a_,b_);")
+                    em.L.append(f"          __m256d lo_cd=_mm256_unpacklo_pd(c_,d_), hi_cd=_mm256_unpackhi_pd(c_,d_);")
+                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+0)*ovs+os*{b}], _mm256_permute2f128_pd(lo_ab,lo_cd,0x20));")
+                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+1)*ovs+os*{b}], _mm256_permute2f128_pd(hi_ab,hi_cd,0x20));")
+                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+2)*ovs+os*{b}], _mm256_permute2f128_pd(lo_ab,lo_cd,0x31));")
+                    em.L.append(f"          _mm256_storeu_pd(&{arr}[(k+3)*ovs+os*{b}], _mm256_permute2f128_pd(hi_ab,hi_cd,0x31));")
+                    em.L.append(f"        }}")
+
+            em.L.append(f"    }}")
+            em.L.append(f"}}")
+
+    # -- Fused 4x32 codelet: n1_ovs PASS1+2 -> fused transpose+twiddle+R4 -> output --
+    # Eliminates the intermediate output<->t1 round-trip.
+    if is_n1 and isa.name != 'scalar':
+        R_outer = 4
+        M = N  # 32
+        VL = isa.k_step
+        T = isa.reg_type
+        n_groups = M // VL  # 8 groups of 4 bins
+        nfuse_ovs = isa.nfuse_notw
+
+        for d in ['fwd', 'bwd']:
+            fwd = (d == 'fwd')
+            em.L.append("")
+            if isa.target_attr:
+                em.L.append(f"static {isa.target_attr} void")
+            else:
+                em.L.append(f"static void")
+            em.L.append(f"radix32_fused_4x{M}_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    const double * __restrict__ W_re, const double * __restrict__ W_im)")
+            em.L.append(f"{{")
+
+            # Boilerplate (same as n1_ovs)
+            if isa.name != 'scalar':
+                set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+                em.L.append(f"    const {T} sign_flip = {set1}(-0.0);")
+                em.L.append(f"    const {T} sqrt2_inv = {set1}(0.70710678118654752440);")
+            em.L.append(f"    {isa.align_attr} double tbuf_re[{M*VL}];")
+            em.L.append(f"    {isa.align_attr} double tbuf_im[{M*VL}];")
+            spill_total = M * isa.spill_mul
+            em.L.append(f"    {isa.align_attr} double spill_re[{spill_total}];")
+            em.L.append(f"    {isa.align_attr} double spill_im[{spill_total}];")
+            em.L.append(f"    {T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;")
+            em.L.append(f"    {T} x4_re,x4_im,x5_re,x5_im,x6_re,x6_im,x7_re,x7_im;")
+            slist = ",".join(f"s{i}_re,s{i}_im" for i in range(nfuse_ovs))
+            em.L.append(f"    {T} {slist};")
+
+            # Hoisted twiddle broadcasts (internal twiddles for radix-32)
+            if isa.name != 'scalar' and itw_set:
+                set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+                for (e, tN) in sorted(itw_set):
+                    label = wN_label(e, tN)
+                    em.L.append(f"    const {T} tw_{label}_re = {set1}({label}_re);")
+                    em.L.append(f"    const {T} tw_{label}_im = {set1}({label}_im);")
+            em.L.append(f"")
+
+            # Fixed: is = R_outer = 4, vl = R_outer = 4 (one SIMD iteration)
+            em.L.append(f"    /* Inner radix-{M} PASS 1+2: is={R_outer}, writes to tbuf */")
+            em.L.append(f"    const size_t is = {R_outer};")
+            em.L.append(f"    {{ const size_t k = 0;")
+
+            # Emit PASS1+PASS2 body using n1_ovs addr_mode (stores to tbuf)
+            em2 = Emitter(isa)
+            em2.L = []
+            em2.ind = 2
+            em2.addr_mode = 'n1_ovs'
+            em2.reset_counters()
+            emit_notw_kernel(em2, d, nfuse_ovs, itw_set)
+            em.L.extend(em2.L)
+
+            # Fused: transpose + outer twiddle + radix-4 butterfly + store
+            # Use a runtime loop to keep code compact (avoid I-cache bloat)
+            if isa.name == 'avx2':
+                pfx, add, sub_op = '_mm256', '_mm256_add_pd', '_mm256_sub_pd'
+                fma_f, fms_f, mul_f = '_mm256_fmadd_pd', '_mm256_fmsub_pd', '_mm256_mul_pd'
+            else:
+                pfx, add, sub_op = '_mm512', '_mm512_add_pd', '_mm512_sub_pd'
+                fma_f, fms_f, mul_f = '_mm512_fmadd_pd', '_mm512_fmsub_pd', '_mm512_mul_pd'
+
+            em.L.append(f"        /* Fused: transpose + outer R4 twiddle+butterfly -> output */")
+            em.L.append(f"        for (size_t g = 0; g < {n_groups}; g++) {{")
+            em.L.append(f"            const size_t b = g * {VL};")
+            # Load from tbuf
+            em.L.append(f"            {T} a_r=LD(&tbuf_re[(b+0)*{VL}]), b_r=LD(&tbuf_re[(b+1)*{VL}]);")
+            em.L.append(f"            {T} c_r=LD(&tbuf_re[(b+2)*{VL}]), d_r=LD(&tbuf_re[(b+3)*{VL}]);")
+            em.L.append(f"            {T} a_i=LD(&tbuf_im[(b+0)*{VL}]), b_i=LD(&tbuf_im[(b+1)*{VL}]);")
+            em.L.append(f"            {T} c_i=LD(&tbuf_im[(b+2)*{VL}]), d_i=LD(&tbuf_im[(b+3)*{VL}]);")
+            # 4×4 transpose
+            em.L.append(f"            {T} lo_ab_r={pfx}_unpacklo_pd(a_r,b_r), hi_ab_r={pfx}_unpackhi_pd(a_r,b_r);")
+            em.L.append(f"            {T} lo_cd_r={pfx}_unpacklo_pd(c_r,d_r), hi_cd_r={pfx}_unpackhi_pd(c_r,d_r);")
+            em.L.append(f"            {T} y0_re={pfx}_permute2f128_pd(lo_ab_r,lo_cd_r,0x20);")
+            em.L.append(f"            {T} y1_re={pfx}_permute2f128_pd(hi_ab_r,hi_cd_r,0x20);")
+            em.L.append(f"            {T} y2_re={pfx}_permute2f128_pd(lo_ab_r,lo_cd_r,0x31);")
+            em.L.append(f"            {T} y3_re={pfx}_permute2f128_pd(hi_ab_r,hi_cd_r,0x31);")
+            em.L.append(f"            {T} lo_ab_i={pfx}_unpacklo_pd(a_i,b_i), hi_ab_i={pfx}_unpackhi_pd(a_i,b_i);")
+            em.L.append(f"            {T} lo_cd_i={pfx}_unpacklo_pd(c_i,d_i), hi_cd_i={pfx}_unpackhi_pd(c_i,d_i);")
+            em.L.append(f"            {T} y0_im={pfx}_permute2f128_pd(lo_ab_i,lo_cd_i,0x20);")
+            em.L.append(f"            {T} y1_im={pfx}_permute2f128_pd(hi_ab_i,hi_cd_i,0x20);")
+            em.L.append(f"            {T} y2_im={pfx}_permute2f128_pd(lo_ab_i,lo_cd_i,0x31);")
+            em.L.append(f"            {T} y3_im={pfx}_permute2f128_pd(hi_ab_i,hi_cd_i,0x31);")
+            # Outer twiddles for sub=1,2,3
+            for sub in range(1, R_outer):
+                tw_base = (sub - 1) * M
+                em.L.append(f"            {{ {T} twr=LD(&W_re[{tw_base}+b]), twi=LD(&W_im[{tw_base}+b]);")
+                em.L.append(f"              {T} yr=y{sub}_re, yi=y{sub}_im;")
+                em.L.append(f"              y{sub}_re={fms_f}(yr,twr,{mul_f}(yi,twi));")
+                em.L.append(f"              y{sub}_im={fma_f}(yr,twi,{mul_f}(yi,twr)); }}")
+            # Radix-4 butterfly
+            em.L.append(f"            {{ {T} t0r={add}(y0_re,y2_re), t0i={add}(y0_im,y2_im);")
+            em.L.append(f"              {T} t1r={sub_op}(y0_re,y2_re), t1i={sub_op}(y0_im,y2_im);")
+            em.L.append(f"              {T} t2r={add}(y1_re,y3_re), t2i={add}(y1_im,y3_im);")
+            em.L.append(f"              {T} t3r={sub_op}(y1_re,y3_re), t3i={sub_op}(y1_im,y3_im);")
+            em.L.append(f"              y0_re={add}(t0r,t2r); y0_im={add}(t0i,t2i);")
+            em.L.append(f"              y2_re={sub_op}(t0r,t2r); y2_im={sub_op}(t0i,t2i);")
+            if fwd:
+                em.L.append(f"              y1_re={add}(t1r,t3i); y1_im={sub_op}(t1i,t3r);")
+                em.L.append(f"              y3_re={sub_op}(t1r,t3i); y3_im={add}(t1i,t3r); }}")
+            else:
+                em.L.append(f"              y1_re={sub_op}(t1r,t3i); y1_im={add}(t1i,t3r);")
+                em.L.append(f"              y3_re={add}(t1r,t3i); y3_im={sub_op}(t1i,t3r); }}")
+            # Store to output at stride M
+            for s in range(R_outer):
+                em.L.append(f"            ST(&out_re[{s}*{M}+b],y{s}_re); ST(&out_im[{s}*{M}+b],y{s}_im);")
+            em.L.append(f"        }}")
+
+            em.L.append(f"    }}")  # close k block
+            em.L.append(f"}}")
+            em.L.append("")
+
+    if isa.name != 'scalar':
+        em.L.append("#undef LD"); em.L.append("#undef ST"); em.L.append("")
+    em.L.append(f"#endif /* {guard} */")
+    return em.L
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Unified R=32 codelet generator')
+    parser.add_argument('--isa', default='avx2',
+                        choices=['scalar', 'avx2', 'avx512', 'all'])
+    parser.add_argument('--variant', default='dit_tw',
+                        choices=['dit_tw', 'dif_tw', 'notw', 'ladder', 'avx512_full',
+                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dif', 'all'])
+    args = parser.parse_args()
+
+    itw_set = collect_internal_twiddles()
+
+    if args.isa == 'all':
+        targets = [ISA_SCALAR, ISA_AVX2, ISA_AVX512]
+    else:
+        targets = [ALL_ISA[args.isa]]
+
+    def add_sqrt2_scalar(lines):
+        idx = next(i for i, l in enumerate(lines) if 'TWIDDLES_DEFINED' in l or '#define FFT_RADIX32' in l)
+        lines.insert(idx, "")
+        lines.insert(idx, "#define SQRT2_INV 0.70710678118654752440")
+
+    def print_file(lines, label, stats, isa_obj=None, variant_name=None):
+        # Insert sv variants before #undef LD
+        if isa_obj and variant_name:
+            sv_lines = emit_sv_variants(lines, isa_obj, variant_name)
+            if sv_lines:
+                for i in range(len(lines)):
+                    if lines[i].strip() == '#undef LD':
+                        lines[i:i] = sv_lines
+                        break
+        print("\n".join(lines))
+        print(f"\n{'='*72}", file=sys.stderr)
+        print(f"  {label} — Operation Counts (per k-step)", file=sys.stderr)
+        print(f"{'='*72}", file=sys.stderr)
+        print(f"  {'kernel':<20s} {'add':>5s} {'sub':>5s} {'mul':>5s} {'neg':>5s}"
+              f" {'fma':>5s} {'fms':>5s} │ {'arith':>6s} {'flops':>6s}"
+              f" │ {'ld':>4s} {'st':>4s} {'sp':>4s} {'rl':>4s} {'mem':>5s}",
+              file=sys.stderr)
+        print(f"  {'─'*20} {'─'*5} {'─'*5} {'─'*5} {'─'*5}"
+              f" {'─'*5} {'─'*5} ┼ {'─'*6} {'─'*6}"
+              f" ┼ {'─'*4} {'─'*4} {'─'*4} {'─'*4} {'─'*5}",
+              file=sys.stderr)
+        for k in sorted(stats.keys()):
+            s = stats[k]
+            print(f"  {k:<20s} {s['add']:5d} {s['sub']:5d} {s['mul']:5d} {s['neg']:5d}"
+                  f" {s['fma']:5d} {s['fms']:5d} │ {s['total_arith']:6d} {s['flops']:6d}"
+                  f" │ {s['load']:4d} {s['store']:4d} {s['spill']:4d} {s['reload']:4d} {s['total_mem']:5d}",
+                  file=sys.stderr)
+        print(f"{'='*72}", file=sys.stderr)
+
+    for isa in targets:
+        if args.variant in ('dit_tw', 'all'):
+            lines, stats = emit_dit_tw_flat_file(isa, itw_set)
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print_file(lines, f"{isa.name.upper()} DIT TW", stats, isa, 'dit_tw')
+
+        if args.variant in ('dif_tw', 'all'):
+            lines, stats = emit_dif_tw_flat_file(isa, itw_set)
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print_file(lines, f"{isa.name.upper()} DIF TW", stats, isa, 'dif_tw')
+
+        if args.variant in ('notw', 'all'):
+            lines, stats = emit_notw_file(isa, itw_set)
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print_file(lines, f"{isa.name.upper()} NOTW", stats, isa, 'notw')
+
+        if args.variant in ('ladder', 'all'):
+            lines, stats = emit_ladder_file(isa, itw_set)
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print_file(lines, f"{isa.name.upper()} LADDER", stats, isa, 'ladder')
+
+        if args.variant in ('ct_n1',):
+            lines = emit_ct_file(isa, itw_set, 'ct_n1')
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print("\n".join(lines))
+
+        if args.variant in ('ct_t1_dit',):
+            lines = emit_ct_file(isa, itw_set, 'ct_t1_dit')
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print("\n".join(lines))
+
+        if args.variant in ('ct_t1_dif',):
+            lines = emit_ct_file(isa, itw_set, 'ct_t1_dif')
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print("\n".join(lines))
+
+    # Legacy: avx512_full emits flat + ladder in one file (backward compat)
+    if args.variant == 'avx512_full':
+        lines, stats = emit_ladder_file(ISA_AVX512, itw_set)
+        print_file(lines, "AVX512 LADDER", stats)
+
+
+if __name__ == '__main__':
+    main()
