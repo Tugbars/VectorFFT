@@ -306,7 +306,27 @@ int main(void) {
     else
         printf("\nWARNING: could not save wisdom\n\n");
 
-    /* ── Phase 2: Benchmark ── */
+    /* ── Phase 2: Benchmark + CSV ── */
+    const char *csv_path = "vfft_bench_results.csv";
+    int csv_is_new = 1;
+    { FILE *check = fopen(csv_path, "r");
+      if (check) { csv_is_new = 0; fclose(check); } }
+    FILE *csv = fopen(csv_path, "a");
+
+    /* Timestamp for CSV */
+    char ts[32] = "unknown";
+#ifdef _WIN32
+    { SYSTEMTIME st; GetLocalTime(&st);
+      sprintf(ts, "%04d-%02d-%02d_%02d:%02d:%02d",
+              st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond); }
+#else
+    { time_t now = time(NULL); struct tm *tm = localtime(&now);
+      strftime(ts, sizeof(ts), "%Y-%m-%d_%H:%M:%S", tm); }
+#endif
+
+    if (csv && csv_is_new)
+        fprintf(csv, "timestamp,N,K,wis_factors,wis_ns,heur_factors,heur_ns,fftw_ns,wis_speedup,heur_speedup\n");
+
     printf("Phase 2: Benchmark (wisdom vs heuristic vs FFTW_MEASURE)\n\n");
     printf("%-6s %-4s | %-16s %9s | %-16s %9s | %9s | %7s %7s\n",
            "N", "K", "wisdom_factors", "wis_ns",
@@ -321,14 +341,12 @@ int main(void) {
         int N = cases[ci].N;
         size_t K = cases[ci].K;
 
-        /* Heuristic plan (always available) */
         stride_plan_t *hplan = stride_auto_plan(N, K, &reg);
         if (!hplan) {
             printf("%-6d %-4zu | SKIP (cannot factor)\n", N, K);
             continue;
         }
 
-        /* Wisdom plan (may fall back to heuristic if no wisdom) */
         stride_plan_t *wplan = stride_wise_plan(N, K, &reg, &wis);
         int has_wisdom = (stride_wisdom_lookup(&wis, N, K) != NULL);
 
@@ -344,13 +362,24 @@ int main(void) {
             double wis_speedup = fns / wns;
             printf("%-6d %-4zu | %-16s %7.1f ns | %-16s %7.1f ns | %7.1f ns | %6.2fx %6.2fx\n",
                    N, K, wfstr, wns, hfstr, hns, fns, wis_speedup, heu_speedup);
+            if (csv)
+                fprintf(csv, "%s,%d,%zu,%s,%.1f,%s,%.1f,%.1f,%.2f,%.2f\n",
+                        ts, N, K, wfstr, wns, hfstr, hns, fns, wis_speedup, heu_speedup);
         } else {
             printf("%-6d %-4zu | %-16s %9s | %-16s %7.1f ns | %7.1f ns | %6s  %6.2fx\n",
                    N, K, "---", "---", hfstr, hns, fns, "---", heu_speedup);
+            if (csv)
+                fprintf(csv, "%s,%d,%zu,,,,%s,%.1f,%.1f,,%.2f\n",
+                        ts, N, K, hfstr, hns, fns, heu_speedup);
         }
 
         if (wplan) stride_plan_destroy(wplan);
         stride_plan_destroy(hplan);
+    }
+
+    if (csv) {
+        fclose(csv);
+        printf("\nResults appended to %s\n", csv_path);
     }
 
     printf("\nwis/fw = FFTW / wisdom-plan  (>1 = we're faster)\n");
