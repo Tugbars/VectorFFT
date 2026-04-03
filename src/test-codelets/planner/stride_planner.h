@@ -257,15 +257,62 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
 }
 
 /**
+ * _stride_refine_bench — Re-bench a factorization with high accuracy.
+ *
+ * The exhaustive search uses reduced reps for speed, producing noisy timings.
+ * This function re-benchmarks the winner with proper warmup, reps, and trials
+ * to get an accurate timing for the wisdom file.
+ */
+static double _stride_refine_bench(int N, size_t K,
+                                    const int *factors, int nf, int log3_mask,
+                                    const stride_registry_t *reg) {
+    stride_plan_t *plan = _stride_build_plan(N, K, factors, nf, log3_mask, reg);
+    if (!plan) return 1e18;
+
+    size_t total = (size_t)N * K;
+    double *re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    for (size_t i = 0; i < total; i++) {
+        re[i] = (double)rand()/RAND_MAX - 0.5;
+        im[i] = (double)rand()/RAND_MAX - 0.5;
+    }
+
+    /* Warmup */
+    for (int i = 0; i < 10; i++)
+        stride_execute_fwd(plan, re, im);
+
+    int reps = (int)(1e6 / (total + 1));
+    if (reps < 20) reps = 20;
+    if (reps > 100000) reps = 100000;
+
+    /* Best of 5 trials */
+    double best = 1e18;
+    for (int t = 0; t < 5; t++) {
+        double t0 = now_ns();
+        for (int i = 0; i < reps; i++)
+            stride_execute_fwd(plan, re, im);
+        double ns = (now_ns() - t0) / reps;
+        if (ns < best) best = ns;
+    }
+
+    STRIDE_ALIGNED_FREE(re);
+    STRIDE_ALIGNED_FREE(im);
+    stride_plan_destroy(plan);
+    return best;
+}
+
+/**
  * stride_wisdom_calibrate — Run exhaustive search and store result in wisdom.
  *
- * If the wisdom already has a result for (N, K) that's better, keeps it.
+ * After exhaustive search finds the best factorization, re-benchmarks it
+ * with full accuracy before storing. This avoids the noisy timings from
+ * the reduced-rep exhaustive search.
  */
 static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
                                      const stride_registry_t *reg) {
     stride_factorization_t best_fact;
-    double best_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
-    if (best_ns >= 1e17) return;
+    double search_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
+    if (search_ns >= 1e17) return;
 
     /* Reconstruct log3_mask from heuristic (matches what exhaustive used) */
     int log3_mask = 0;
@@ -274,8 +321,12 @@ static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
             log3_mask |= (1 << s);
     }
 
+    /* Re-bench with full accuracy */
+    double refined_ns = _stride_refine_bench(N, K, best_fact.factors,
+                                              best_fact.nfactors, log3_mask, reg);
+
     stride_wisdom_add(wis, N, K, best_fact.factors, best_fact.nfactors,
-                      log3_mask, best_ns);
+                      log3_mask, refined_ns);
 }
 
 #endif /* STRIDE_PLANNER_H */
