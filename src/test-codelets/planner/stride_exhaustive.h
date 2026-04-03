@@ -23,6 +23,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <fftw3.h>
 
 /* ═══════════════════════════════════════════════════════════════
  * ENUMERATE ALL VALID FACTORIZATIONS
@@ -297,10 +298,35 @@ static void stride_compare_strategies(int N, size_t K,
     stride_factorization_t exh_fact;
     double exh_ns = stride_exhaustive_search(N, K, reg, &exh_fact, 1);
 
+    /* FFTW reference */
+    fflush(stdout);
+    double *fr = (double *)fftw_malloc(total * sizeof(double));
+    double *fi = (double *)fftw_malloc(total * sizeof(double));
+    double *fo = (double *)fftw_malloc(total * sizeof(double));
+    double *fo2 = (double *)fftw_malloc(total * sizeof(double));
+    for (size_t i = 0; i < total; i++) { fr[i] = (double)rand()/RAND_MAX - 0.5; fi[i] = (double)rand()/RAND_MAX - 0.5; }
+    fftw_iodim dim = {.n = N, .is = (int)K, .os = (int)K};
+    fftw_iodim howm = {.n = (int)K, .is = 1, .os = 1};
+    fftw_plan fp = fftw_plan_guru_split_dft(1, &dim, 1, &howm, fr, fi, fo, fo2, FFTW_MEASURE);
+    for (size_t i = 0; i < total; i++) { fr[i] = (double)rand()/RAND_MAX - 0.5; fi[i] = (double)rand()/RAND_MAX - 0.5; }
+    int reps = (int)(2e5 / (total + 1)); if (reps < 20) reps = 20; if (reps > 100000) reps = 100000;
+    for (int i = 0; i < 10; i++) fftw_execute(fp);
+    double fftw_best = 1e18;
+    for (int t = 0; t < 5; t++) {
+        double t0 = now_ns();
+        for (int i = 0; i < reps; i++) fftw_execute_split_dft(fp, fr, fi, fo, fo2);
+        double ns = (now_ns() - t0) / reps;
+        if (ns < fftw_best) fftw_best = ns;
+    }
+    fftw_destroy_plan(fp); fftw_free(fr); fftw_free(fi); fftw_free(fo); fftw_free(fo2);
+
     /* Compare */
     double ratio = heur_ns / exh_ns;
+    double vs_fftw = fftw_best / exh_ns;
+    printf("  FFTW_MEASURE: %.1f ns\n", fftw_best);
     printf("  Heuristic/Exhaustive: %.2fx (%s)\n",
            ratio, ratio < 1.05 ? "OPTIMAL" : ratio < 1.20 ? "GOOD" : "NEEDS TUNING");
+    printf("  Best vs FFTW: %.2fx\n", vs_fftw);
 }
 
 #endif /* STRIDE_EXHAUSTIVE_H */

@@ -60,7 +60,11 @@ echo   Done.
 echo.
 
 echo Compiling...
-icx -O3 -march=native -mavx2 -mfma -D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS "-I%HDR_DIR%" "-I%FFTW_INC%" "-I%CODELET_DIR%" "-I%PLANNER_DIR%" -o "%BUILD_DIR%\bench_factorizer.exe" "%PLANNER_DIR%bench_factorizer.c" "%FFTW_LIB%"
+echo   FFTW_LIB=%FFTW_LIB%
+echo   SRC=%PLANNER_DIR%bench_factorizer.c
+if not exist "%PLANNER_DIR%bench_factorizer.c" echo ERROR: source file not found! & exit /b 1
+if not exist "%FFTW_LIB%" echo ERROR: fftw3.lib not found! & exit /b 1
+icx -O3 -march=native -mavx2 -mfma -D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS -I%HDR_DIR% -I%FFTW_INC% -I%CODELET_DIR% -I%PLANNER_DIR% -o %BUILD_DIR%\bench_factorizer.exe %PLANNER_DIR%bench_factorizer.c %FFTW_LIB%
 if errorlevel 1 ( echo FAILED & exit /b 1 )
 echo   OK
 echo.
