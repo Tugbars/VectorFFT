@@ -88,9 +88,10 @@
 #include "fft_radix32_avx2_ct_n1.h"
 #include "fft_radix32_avx2_ct_t1_dit.h"
 
-/* R=64: n1 + t1 from gen_radix64.py */
+/* R=64: n1 + t1 + t1_log3 from gen_radix64.py */
 #include "fft_radix64_avx2_ct_n1.h"
 #include "fft_radix64_avx2_ct_t1_dit.h"
+#include "fft_radix64_avx2_ct_t1_dit_log3.h"
 
 /* ═══════════════════════════════════════════════════════════════
  * REGISTRY STRUCTURE
@@ -101,8 +102,10 @@
 typedef struct {
     stride_n1_fn n1_fwd[STRIDE_REG_MAX_RADIX];
     stride_n1_fn n1_bwd[STRIDE_REG_MAX_RADIX];
-    stride_t1_fn t1_fwd[STRIDE_REG_MAX_RADIX];
+    stride_t1_fn t1_fwd[STRIDE_REG_MAX_RADIX];       /* flat twiddle */
     stride_t1_fn t1_bwd[STRIDE_REG_MAX_RADIX];
+    stride_t1_fn t1_fwd_log3[STRIDE_REG_MAX_RADIX];   /* log3 twiddle (derives W^2..R-1 from W^1) */
+    stride_t1_fn t1_bwd_log3[STRIDE_REG_MAX_RADIX];
 } stride_registry_t;
 
 /* Available radixes for the factorizer (sorted by preference: largest first) */
@@ -220,6 +223,8 @@ static void stride_registry_init(stride_registry_t *reg) {
     reg->n1_bwd[64] = (stride_n1_fn)radix64_n1_bwd_avx2;
     reg->t1_fwd[64] = (stride_t1_fn)radix64_t1_dit_fwd_avx2;
     reg->t1_bwd[64] = (stride_t1_fn)radix64_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[64] = (stride_t1_fn)radix64_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[64] = (stride_t1_fn)radix64_t1_dit_log3_bwd_avx2;
 }
 
 /* Check if a radix has codelets registered */
