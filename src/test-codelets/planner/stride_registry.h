@@ -26,63 +26,76 @@
 /* R=2: n1 + t1 from gen_radix2.py */
 #include "fft_radix2_avx2.h"
 
-/* R=3: n1 + t1 from gen_radix3.py */
+/* R=3: n1 + t1 + t1_log3 from gen_radix3.py */
 #include "fft_radix3_avx2_ct_n1.h"
 #include "fft_radix3_avx2_ct_t1_dit.h"
+#include "fft_radix3_avx2_ct_t1_dit_log3.h"
 
 /* R=4: n1 + t1 from gen_radix4.py (includes all variants) */
 #include "fft_radix4_avx2.h"
 
-/* R=5: n1 + t1 from gen_radix5.py */
+/* R=5: n1 + t1 + t1_log3 */
 #include "fft_radix5_avx2_ct_n1.h"
 #include "fft_radix5_avx2_ct_t1_dit.h"
+#include "fft_radix5_avx2_ct_t1_dit_log3.h"
 
-/* R=6: n1 + t1 from gen_radix6.py */
+/* R=6: n1 + t1 + t1_log3 */
 #include "fft_radix6_avx2_ct_n1.h"
 #include "fft_radix6_avx2_ct_t1_dit.h"
+#include "fft_radix6_avx2_ct_t1_dit_log3.h"
 
-/* R=7: n1 + t1 from gen_radix7.py */
+/* R=7: n1 + t1 + t1_log3 */
 #include "fft_radix7_avx2_ct_n1.h"
 #include "fft_radix7_avx2_ct_t1_dit.h"
+#include "fft_radix7_avx2_ct_t1_dit_log3.h"
 
 /* R=8: n1 + t1 from gen_radix8.py (includes all variants) */
 #include "fft_radix8_avx2.h"
 
-/* R=10: n1 + t1 from gen_radix10.py */
+/* R=10: n1 + t1 + t1_log3 */
 #include "fft_radix10_avx2_ct_n1.h"
 #include "fft_radix10_avx2_ct_t1_dit.h"
+#include "fft_radix10_avx2_ct_t1_dit_log3.h"
 
-/* R=11: n1 + t1 from gen_radix11.py */
+/* R=11: n1 + t1 + t1_log3 */
 #include "fft_radix11_avx2_ct_n1.h"
 #include "fft_radix11_avx2_ct_t1_dit.h"
+#include "fft_radix11_avx2_ct_t1_dit_log3.h"
 
-/* R=12: n1 + t1 from gen_radix12.py */
+/* R=12: n1 + t1 + t1_log3 */
 #include "fft_radix12_avx2_ct_n1.h"
 #include "fft_radix12_avx2_ct_t1_dit.h"
+#include "fft_radix12_avx2_ct_t1_dit_log3.h"
 
-/* R=13: n1 + t1 from gen_radix13.py */
+/* R=13: n1 + t1 + t1_log3 */
 #include "fft_radix13_avx2_ct_n1.h"
 #include "fft_radix13_avx2_ct_t1_dit.h"
+#include "fft_radix13_avx2_ct_t1_dit_log3.h"
 
-/* R=16: n1 + t1 from gen_radix16.py */
+/* R=16: n1 + t1 + t1_log3 from gen_radix16.py */
 #include "fft_radix16_avx2_ct_n1.h"
 #include "fft_radix16_avx2_ct_t1_dit.h"
+#include "fft_radix16_avx2_ct_t1_dit_log3.h"
 
-/* R=17: n1 + t1 from gen_radix17.py */
+/* R=17: n1 + t1 + t1_log3 */
 #include "fft_radix17_avx2_ct_n1.h"
 #include "fft_radix17_avx2_ct_t1_dit.h"
+#include "fft_radix17_avx2_ct_t1_dit_log3.h"
 
-/* R=19: n1 + t1 from gen_radix19.py */
+/* R=19: n1 + t1 + t1_log3 */
 #include "fft_radix19_avx2_ct_n1.h"
 #include "fft_radix19_avx2_ct_t1_dit.h"
+#include "fft_radix19_avx2_ct_t1_dit_log3.h"
 
-/* R=20: n1 + t1 from gen_radix20.py */
+/* R=20: n1 + t1 + t1_log3 */
 #include "fft_radix20_avx2_ct_n1.h"
 #include "fft_radix20_avx2_ct_t1_dit.h"
+#include "fft_radix20_avx2_ct_t1_dit_log3.h"
 
-/* R=25: n1 + t1 from gen_radix25.py */
+/* R=25: n1 + t1 + t1_log3 from gen_radix25.py */
 #include "fft_radix25_avx2_ct_n1.h"
 #include "fft_radix25_avx2_ct_t1_dit.h"
+#include "fft_radix25_avx2_ct_t1_dit_log3.h"
 
 /* R=32: n1 + t1 from gen_radix32.py */
 #include "fft_radix32_avx2_ct_n1.h"
@@ -127,6 +140,8 @@ static void stride_registry_init(stride_registry_t *reg) {
     reg->n1_bwd[3]  = (stride_n1_fn)radix3_n1_bwd_avx2;
     reg->t1_fwd[3]  = (stride_t1_fn)radix3_t1_dit_fwd_avx2;
     reg->t1_bwd[3]  = (stride_t1_fn)radix3_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[3]  = (stride_t1_fn)radix3_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[3]  = (stride_t1_fn)radix3_t1_dit_log3_bwd_avx2;
 
     /* R=4 (legacy names: no _avx2 suffix) */
     reg->n1_fwd[4]  = (stride_n1_fn)radix4_n1_fwd_avx2;
@@ -139,18 +154,24 @@ static void stride_registry_init(stride_registry_t *reg) {
     reg->n1_bwd[5]  = (stride_n1_fn)radix5_n1_bwd_avx2;
     reg->t1_fwd[5]  = (stride_t1_fn)radix5_t1_dit_fwd_avx2;
     reg->t1_bwd[5]  = (stride_t1_fn)radix5_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[5]  = (stride_t1_fn)radix5_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[5]  = (stride_t1_fn)radix5_t1_dit_log3_bwd_avx2;
 
     /* R=6 */
     reg->n1_fwd[6]  = (stride_n1_fn)radix6_n1_fwd_avx2;
     reg->n1_bwd[6]  = (stride_n1_fn)radix6_n1_bwd_avx2;
     reg->t1_fwd[6]  = (stride_t1_fn)radix6_t1_dit_fwd_avx2;
     reg->t1_bwd[6]  = (stride_t1_fn)radix6_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[6]  = (stride_t1_fn)radix6_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[6]  = (stride_t1_fn)radix6_t1_dit_log3_bwd_avx2;
 
     /* R=7 */
     reg->n1_fwd[7]  = (stride_n1_fn)radix7_n1_fwd_avx2;
     reg->n1_bwd[7]  = (stride_n1_fn)radix7_n1_bwd_avx2;
     reg->t1_fwd[7]  = (stride_t1_fn)radix7_t1_dit_fwd_avx2;
     reg->t1_bwd[7]  = (stride_t1_fn)radix7_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[7]  = (stride_t1_fn)radix7_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[7]  = (stride_t1_fn)radix7_t1_dit_log3_bwd_avx2;
 
     /* R=8 (legacy names: no _avx2 suffix) */
     reg->n1_fwd[8]  = (stride_n1_fn)radix8_n1_fwd_avx2;
@@ -163,54 +184,72 @@ static void stride_registry_init(stride_registry_t *reg) {
     reg->n1_bwd[10] = (stride_n1_fn)radix10_n1_bwd_avx2;
     reg->t1_fwd[10] = (stride_t1_fn)radix10_t1_dit_fwd_avx2;
     reg->t1_bwd[10] = (stride_t1_fn)radix10_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[10] = (stride_t1_fn)radix10_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[10] = (stride_t1_fn)radix10_t1_dit_log3_bwd_avx2;
 
     /* R=11 */
     reg->n1_fwd[11] = (stride_n1_fn)radix11_n1_fwd_avx2;
     reg->n1_bwd[11] = (stride_n1_fn)radix11_n1_bwd_avx2;
     reg->t1_fwd[11] = (stride_t1_fn)radix11_t1_dit_fwd_avx2;
     reg->t1_bwd[11] = (stride_t1_fn)radix11_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[11] = (stride_t1_fn)radix11_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[11] = (stride_t1_fn)radix11_t1_dit_log3_bwd_avx2;
 
     /* R=12 */
     reg->n1_fwd[12] = (stride_n1_fn)radix12_n1_fwd_avx2;
     reg->n1_bwd[12] = (stride_n1_fn)radix12_n1_bwd_avx2;
     reg->t1_fwd[12] = (stride_t1_fn)radix12_t1_dit_fwd_avx2;
     reg->t1_bwd[12] = (stride_t1_fn)radix12_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[12] = (stride_t1_fn)radix12_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[12] = (stride_t1_fn)radix12_t1_dit_log3_bwd_avx2;
 
     /* R=13 */
     reg->n1_fwd[13] = (stride_n1_fn)radix13_n1_fwd_avx2;
     reg->n1_bwd[13] = (stride_n1_fn)radix13_n1_bwd_avx2;
     reg->t1_fwd[13] = (stride_t1_fn)radix13_t1_dit_fwd_avx2;
     reg->t1_bwd[13] = (stride_t1_fn)radix13_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[13] = (stride_t1_fn)radix13_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[13] = (stride_t1_fn)radix13_t1_dit_log3_bwd_avx2;
 
     /* R=16 */
     reg->n1_fwd[16] = (stride_n1_fn)radix16_n1_fwd_avx2;
     reg->n1_bwd[16] = (stride_n1_fn)radix16_n1_bwd_avx2;
     reg->t1_fwd[16] = (stride_t1_fn)radix16_t1_dit_fwd_avx2;
     reg->t1_bwd[16] = (stride_t1_fn)radix16_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[16] = (stride_t1_fn)radix16_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[16] = (stride_t1_fn)radix16_t1_dit_log3_bwd_avx2;
 
     /* R=17 */
     reg->n1_fwd[17] = (stride_n1_fn)radix17_n1_fwd_avx2;
     reg->n1_bwd[17] = (stride_n1_fn)radix17_n1_bwd_avx2;
     reg->t1_fwd[17] = (stride_t1_fn)radix17_t1_dit_fwd_avx2;
     reg->t1_bwd[17] = (stride_t1_fn)radix17_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[17] = (stride_t1_fn)radix17_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[17] = (stride_t1_fn)radix17_t1_dit_log3_bwd_avx2;
 
     /* R=19 */
     reg->n1_fwd[19] = (stride_n1_fn)radix19_n1_fwd_avx2;
     reg->n1_bwd[19] = (stride_n1_fn)radix19_n1_bwd_avx2;
     reg->t1_fwd[19] = (stride_t1_fn)radix19_t1_dit_fwd_avx2;
     reg->t1_bwd[19] = (stride_t1_fn)radix19_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[19] = (stride_t1_fn)radix19_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[19] = (stride_t1_fn)radix19_t1_dit_log3_bwd_avx2;
 
     /* R=20 */
     reg->n1_fwd[20] = (stride_n1_fn)radix20_n1_fwd_avx2;
     reg->n1_bwd[20] = (stride_n1_fn)radix20_n1_bwd_avx2;
     reg->t1_fwd[20] = (stride_t1_fn)radix20_t1_dit_fwd_avx2;
     reg->t1_bwd[20] = (stride_t1_fn)radix20_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[20] = (stride_t1_fn)radix20_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[20] = (stride_t1_fn)radix20_t1_dit_log3_bwd_avx2;
 
     /* R=25 */
     reg->n1_fwd[25] = (stride_n1_fn)radix25_n1_fwd_avx2;
     reg->n1_bwd[25] = (stride_n1_fn)radix25_n1_bwd_avx2;
     reg->t1_fwd[25] = (stride_t1_fn)radix25_t1_dit_fwd_avx2;
     reg->t1_bwd[25] = (stride_t1_fn)radix25_t1_dit_bwd_avx2;
+    reg->t1_fwd_log3[25] = (stride_t1_fn)radix25_t1_dit_log3_fwd_avx2;
+    reg->t1_bwd_log3[25] = (stride_t1_fn)radix25_t1_dit_log3_bwd_avx2;
 
     /* R=32 */
     reg->n1_fwd[32] = (stride_n1_fn)radix32_n1_fwd_avx2;

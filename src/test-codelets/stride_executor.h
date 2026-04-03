@@ -446,11 +446,14 @@ static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, in
 
         /* Fallback to cf_all + n1 when:
          * 1. No t1_dit codelet available for this radix
-         * 2. R=64 at large K (t1_dit regresses due to strided access pressure) */
+         * 2. R>=64: t1_dit is ALWAYS slower than cf+n1 for R=64.
+         *    The 2225-op butterfly has too much register pressure for
+         *    fused twiddle+butterfly to help. Bench confirms n1_fallback
+         *    wins at ALL K values (2-3x faster than t1_dit). */
         if (s > 0 && plan->stages[s].t1_fwd == NULL) {
             plan->stages[s].use_n1_fallback = 1;
         }
-        if (factors[s] >= 64 && K >= 128 && s > 0) {
+        if (factors[s] >= 64 && s > 0) {
             plan->stages[s].use_n1_fallback = 1;
         }
     }

@@ -859,10 +859,12 @@ def emit_kernel_body_log3(em, d, variant):
     is_dit = variant == 'dit_tw_log3'
 
     em.c("Load base twiddle w1, derive w2..w12 (11 cmuls)")
+    tb, tbi = em._tw_buf(), em._tw_buf_im()
+    ta = em._tw_addr(0)
     if em.isa.name == 'scalar':
-        em.o(f"const double w1r = tw_re[0*K+k], w1i = tw_im[0*K+k];")
+        em.o(f"const double w1r = {tb}[{ta}], w1i = {tbi}[{ta}];")
     else:
-        em.o(f"const {T} w1r = LD(&tw_re[0*K+k]), w1i = LD(&tw_im[0*K+k]);")
+        em.o(f"const {T} w1r = LD(&{tb}[{ta}]), w1i = LD(&{tbi}[{ta}]);")
     em.n_load += 2
 
     # w2 = w1^2
@@ -1077,6 +1079,7 @@ def emit_file_ct(isa, ct_variant):
 
     is_n1     = ct_variant == 'ct_n1'
     is_t1_dit = ct_variant == 'ct_t1_dit'
+    is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     em.addr_mode = 'n1' if is_n1 else 't1'
 
@@ -1086,6 +1089,9 @@ def emit_file_ct(isa, ct_variant):
     elif is_t1_dif:
         func_base = "radix13_t1_dif"
         vname = "t1 DIF (in-place twiddle)"
+    elif is_t1_dit_log3:
+        func_base = "radix13_t1_dit_log3"
+        vname = "t1 DIT log3 (in-place, derived twiddles)"
     else:
         func_base = "radix13_t1_dit"
         vname = "t1 DIT (in-place twiddle)"
@@ -1179,8 +1185,11 @@ def emit_file_ct(isa, ct_variant):
                 em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
 
         em.ind += 1
-        kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
-        emit_kernel_body(em, d, kernel_variant)
+        if is_t1_dit_log3:
+            emit_kernel_body_log3(em, d, 'dit_tw_log3')
+        else:
+            kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
+            emit_kernel_body(em, d, kernel_variant)
         em.ind -= 1
         em.o("}")
         em.L.append("}")
@@ -1455,7 +1464,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='notw',
                         choices=['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dif', 'all'])
+                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
     args = parser.parse_args()
 
     if args.isa == 'all':
@@ -1464,7 +1473,7 @@ def main():
         targets = [ALL_ISA[args.isa]]
 
     std_variants = ['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3']
-    ct_variants  = ['ct_n1', 'ct_t1_dit', 'ct_t1_dif']
+    ct_variants  = ['ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif']
 
     if args.variant == 'all':
         variants = std_variants + ct_variants

@@ -21,7 +21,19 @@ echo.
 if not exist "%HDR_DIR%" mkdir "%HDR_DIR%"
 
 set "PYTHONIOENCODING=utf-8"
-echo Generating R=64 headers (n1 + t1_dit + t1_dit_log3)...
+echo Generating ALL headers (n1 + t1_dit + t1_dit_log3 for all radixes)...
+for %%R in (2 4 8) do (
+    python "%CODELET_DIR%\gen_radix%%R.py" avx2 > "%HDR_DIR%\fft_radix%%R_avx2.h" 2>nul
+)
+for %%R in (3 5 6 7 10 11 12 13 16 17 19 20 25) do (
+    python "%CODELET_DIR%\gen_radix%%R.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix%%R_avx2_ct_n1.h" 2>nul
+    python "%CODELET_DIR%\gen_radix%%R.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix%%R_avx2_ct_t1_dit.h" 2>nul
+    python "%CODELET_DIR%\gen_radix%%R.py" --isa avx2 --variant ct_t1_dit_log3 > "%HDR_DIR%\fft_radix%%R_avx2_ct_t1_dit_log3.h" 2>nul
+)
+for %%R in (32) do (
+    python "%CODELET_DIR%\gen_radix%%R.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix%%R_avx2_ct_n1.h" 2>nul
+    python "%CODELET_DIR%\gen_radix%%R.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix%%R_avx2_ct_t1_dit.h" 2>nul
+)
 python "%CODELET_DIR%\gen_radix64.py" --isa avx2 --variant ct_n1 > "%HDR_DIR%\fft_radix64_avx2_ct_n1.h" 2>nul
 python "%CODELET_DIR%\gen_radix64.py" --isa avx2 --variant ct_t1_dit > "%HDR_DIR%\fft_radix64_avx2_ct_t1_dit.h" 2>nul
 python "%CODELET_DIR%\gen_radix64.py" --isa avx2 --variant ct_t1_dit_log3 > "%HDR_DIR%\fft_radix64_avx2_ct_t1_dit_log3.h" 2>nul
