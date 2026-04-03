@@ -150,6 +150,92 @@ static int test_correctness(int N, size_t K, const stride_registry_t *reg) {
 }
 
 /* ================================================================
+ * Accuracy comparison: VectorFFT vs FFTW vs MKL (all vs brute-force)
+ * ================================================================ */
+
+static void test_accuracy(int N, size_t K, const stride_registry_t *reg) {
+    stride_plan_t *plan = stride_auto_plan(N, K, reg);
+    if (!plan) return;
+
+    size_t total = (size_t)N * K;
+    double *in_re  = (double*)aligned_alloc(64, total * sizeof(double));
+    double *in_im  = (double*)aligned_alloc(64, total * sizeof(double));
+    double *ref_re = (double*)aligned_alloc(64, total * sizeof(double));
+    double *ref_im = (double*)aligned_alloc(64, total * sizeof(double));
+    double *work_re = (double*)aligned_alloc(64, total * sizeof(double));
+    double *work_im = (double*)aligned_alloc(64, total * sizeof(double));
+
+    for (size_t i = 0; i < total; i++) {
+        in_re[i] = (double)rand()/RAND_MAX - 0.5;
+        in_im[i] = (double)rand()/RAND_MAX - 0.5;
+    }
+
+    /* Brute-force reference */
+    bruteforce_dft(in_re, in_im, ref_re, ref_im, N, K);
+
+    /* VectorFFT (digit-reversed output) */
+    int *perm = (int*)malloc(N * sizeof(int));
+    build_digit_rev_perm(perm, plan->factors, plan->num_stages);
+    memcpy(work_re, in_re, total * sizeof(double));
+    memcpy(work_im, in_im, total * sizeof(double));
+    stride_execute_fwd(plan, work_re, work_im);
+    double err_ours = max_err_perm(ref_re, ref_im, work_re, work_im, N, K, perm);
+
+    /* FFTW */
+    memcpy(work_re, in_re, total * sizeof(double));
+    memcpy(work_im, in_im, total * sizeof(double));
+    fftw_iodim dim = {N, (int)K, (int)K};
+    fftw_iodim batch = {(int)K, 1, 1};
+    fftw_plan fp = fftw_plan_guru_split_dft(1, &dim, 1, &batch,
+                                             work_re, work_im, work_re, work_im,
+                                             FFTW_MEASURE);
+    double err_fftw = 1e18;
+    if (fp) {
+        memcpy(work_re, in_re, total * sizeof(double));
+        memcpy(work_im, in_im, total * sizeof(double));
+        fftw_execute(fp);
+        err_fftw = max_err(ref_re, ref_im, work_re, work_im, total);
+        fftw_destroy_plan(fp);
+    }
+
+    /* MKL */
+    double err_mkl = 1e18;
+#ifdef VFFT_HAS_MKL
+    {
+        DFTI_DESCRIPTOR_HANDLE desc = NULL;
+        MKL_LONG strides[2] = {0, (MKL_LONG)K};
+        DftiCreateDescriptor(&desc, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N);
+        DftiSetValue(desc, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
+        DftiSetValue(desc, DFTI_PLACEMENT, DFTI_INPLACE);
+        DftiSetValue(desc, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+        DftiSetValue(desc, DFTI_INPUT_DISTANCE, 1);
+        DftiSetValue(desc, DFTI_OUTPUT_DISTANCE, 1);
+        DftiSetValue(desc, DFTI_INPUT_STRIDES, strides);
+        DftiSetValue(desc, DFTI_OUTPUT_STRIDES, strides);
+        if (DftiCommitDescriptor(desc) == DFTI_NO_ERROR) {
+            memcpy(work_re, in_re, total * sizeof(double));
+            memcpy(work_im, in_im, total * sizeof(double));
+            DftiComputeForward(desc, work_re, work_im);
+            err_mkl = max_err(ref_re, ref_im, work_re, work_im, total);
+        }
+        DftiFreeDescriptor(&desc);
+    }
+#endif
+
+    printf("  N=%5d K=%4zu | ours=%.2e  fftw=%.2e", N, K, err_ours, err_fftw);
+#ifdef VFFT_HAS_MKL
+    printf("  mkl=%.2e", err_mkl);
+#endif
+    printf("\n");
+
+    free(perm);
+    aligned_free(in_re); aligned_free(in_im);
+    aligned_free(ref_re); aligned_free(ref_im);
+    aligned_free(work_re); aligned_free(work_im);
+    stride_plan_destroy(plan);
+}
+
+/* ================================================================
  * Benchmarking
  * ================================================================ */
 
@@ -309,6 +395,18 @@ int main(void) {
         return 1;
     }
     printf("All correct.\n\n");
+
+    /* ── Accuracy comparison ── */
+    printf("Accuracy (max absolute error vs brute-force DFT, K=4):\n");
+    printf("  %-5s %-4s | %-12s %-12s", "N", "K", "VectorFFT", "FFTW");
+#ifdef VFFT_HAS_MKL
+    printf(" %-12s", "MKL");
+#endif
+    printf("\n");
+    int acc_Ns[] = {60, 200, 1000, 5000, 256, 1024, 4096, 49, 143, 875};
+    for (int i = 0; i < 10; i++)
+        test_accuracy(acc_Ns[i], 4, &reg);
+    printf("\n");
 
     /* ── Test cases ── */
     /* max_N_exhaust: above this, skip exhaustive (heuristic only + FFTW) */
