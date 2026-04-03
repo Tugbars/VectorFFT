@@ -132,40 +132,30 @@ static void stride_gen_permutations(const int *factors, int nf, permutation_list
  * Uses caller-provided aligned buffers (avoids alloc in hot loop).
  * ═══════════════════════════════════════════════════════════════ */
 
-static double stride_bench_one(int N, size_t K, const int *factors, int nf,
-                               const stride_registry_t *reg,
-                               double *re, double *im, double *orig_re, double *orig_im) {
+/* Bench with explicit t1 arrays (allows caller to mix flat/log3) */
+static double stride_bench_one_ex(int N, size_t K, const int *factors, int nf,
+                                  stride_n1_fn *n1f, stride_n1_fn *n1b,
+                                  stride_t1_fn *t1f, stride_t1_fn *t1b,
+                                  double *re, double *im, double *orig_re, double *orig_im) {
     size_t total = (size_t)N * K;
-
-    /* Build codelet arrays from registry */
-    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
-    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
-    for (int s = 0; s < nf; s++) {
-        int R = factors[s];
-        if (!reg->n1_fwd[R] || !reg->n1_bwd[R]) return 1e18; /* missing codelet */
-        n1f[s] = reg->n1_fwd[R];
-        n1b[s] = reg->n1_bwd[R];
-        t1f[s] = reg->t1_fwd[R];  /* may be NULL — executor handles fallback */
-        t1b[s] = reg->t1_bwd[R];
-    }
 
     stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b);
     if (!plan) return 1e18;
 
     /* Warm up */
-    int reps = (int)(2e5 / (total + 1));
-    if (reps < 20) reps = 20;
-    if (reps > 100000) reps = 100000;
+    int reps = (int)(1e5 / (total + 1));
+    if (reps < 10) reps = 10;
+    if (reps > 50000) reps = 50000;
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 3; i++) {
         memcpy(re, orig_re, total * sizeof(double));
         memcpy(im, orig_im, total * sizeof(double));
         stride_execute_fwd(plan, re, im);
     }
 
-    /* Benchmark: best of 5 trials */
+    /* Benchmark: best of 3 trials */
     double best = 1e18;
-    for (int t = 0; t < 5; t++) {
+    for (int t = 0; t < 3; t++) {
         memcpy(re, orig_re, total * sizeof(double));
         memcpy(im, orig_im, total * sizeof(double));
         double t0 = now_ns();
@@ -179,16 +169,39 @@ static double stride_bench_one(int N, size_t K, const int *factors, int nf,
     return best;
 }
 
+/* Convenience wrapper: builds codelet arrays from registry using heuristic log3 selection */
+static double stride_bench_one(int N, size_t K, const int *factors, int nf,
+                               const stride_registry_t *reg,
+                               double *re, double *im, double *orig_re, double *orig_im) {
+    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        if (!reg->n1_fwd[R] || !reg->n1_bwd[R]) return 1e18;
+        n1f[s] = reg->n1_fwd[R];
+        n1b[s] = reg->n1_bwd[R];
+        t1f[s] = stride_select_t1_fwd(R, K, reg);
+        t1b[s] = stride_select_t1_bwd(R, K, reg);
+    }
+    return stride_bench_one_ex(N, K, factors, nf, n1f, n1b, t1f, t1b,
+                               re, im, orig_re, orig_im);
+}
+
 /* ═══════════════════════════════════════════════════════════════
  * EXHAUSTIVE SEARCH
  *
  * For a given (N, K):
  *   1. Enumerate all valid factorizations of N
  *   2. For each, generate all unique permutations
- *   3. Benchmark each permutation
- *   4. Return the best
+ *   3. For each permutation, try all flat/log3 combinations per stage
+ *   4. Benchmark each candidate, return the best
  *
- * verbose: 0=silent, 1=summary, 2=all candidates
+ * Log3 combinations: for nf stages with s twiddled stages,
+ * try 2^s variants (flat/log3 per twiddled stage).
+ * Stage 0 is never twiddled. Max s = nf-1.
+ * For nf=3: 4 log3 combos. For nf=4: 8. Manageable.
+ *
+ * verbose: 0=silent, 1=summary
  * ═══════════════════════════════════════════════════════════════ */
 
 static double stride_exhaustive_search(int N, size_t K,
@@ -197,19 +210,15 @@ static double stride_exhaustive_search(int N, size_t K,
                                        int verbose) {
     size_t total = (size_t)N * K;
 
-    /* Allocate test buffers */
     double *re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
     double *im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
     double *orig_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
     double *orig_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-
-    /* Fill with random data */
     for (size_t i = 0; i < total; i++) {
         orig_re[i] = (double)rand() / RAND_MAX - 0.5;
         orig_im[i] = (double)rand() / RAND_MAX - 0.5;
     }
 
-    /* Step 1: enumerate all factorizations */
     factorization_list_t *flist = (factorization_list_t *)malloc(sizeof(*flist));
     stride_enumerate_factorizations(N, reg, flist);
 
@@ -217,9 +226,9 @@ static double stride_exhaustive_search(int N, size_t K,
         printf("  N=%d K=%zu: %d unique decompositions\n", N, K, flist->count);
 
     double global_best_ns = 1e18;
-    int total_perms = 0;
+    int total_candidates = 0;
+    int best_log3_mask = 0;
 
-    /* Step 2-3: for each factorization, try all permutations */
     for (int fi = 0; fi < flist->count; fi++) {
         const stride_factorization_t *f = &flist->results[fi];
 
@@ -227,35 +236,61 @@ static double stride_exhaustive_search(int N, size_t K,
         stride_gen_permutations(f->factors, f->nfactors, plist);
 
         for (int pi = 0; pi < plist->count; pi++) {
-            /* Verify product equals N */
-            {
-                int prod = 1;
-                for (int s = 0; s < f->nfactors; s++) prod *= plist->perms[pi][s];
-                if (prod != N) {
-                    if (verbose >= 2) { printf("    SKIP (product=%d != N=%d)\n", prod, N); fflush(stdout); }
-                    continue;
+            /* Verify product */
+            { int prod = 1; for (int s = 0; s < f->nfactors; s++) prod *= plist->perms[pi][s];
+              if (prod != N) continue; }
+
+            const int *factors_p = plist->perms[pi];
+            int nf = f->nfactors;
+
+            /* Count how many twiddled stages have log3 available */
+            int n_log3_stages = 0;
+            int log3_stage_idx[FACT_MAX_STAGES];
+            for (int s = 1; s < nf; s++) {
+                if (reg->t1_fwd_log3[factors_p[s]])
+                    log3_stage_idx[n_log3_stages++] = s;
+            }
+
+            /* Try all 2^n_log3_stages combinations */
+            int n_combos = 1 << n_log3_stages;
+            for (int combo = 0; combo < n_combos; combo++) {
+                stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+                stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
+
+                for (int s = 0; s < nf; s++) {
+                    int R = factors_p[s];
+                    if (!reg->n1_fwd[R]) goto skip_combo;
+                    n1f[s] = reg->n1_fwd[R];
+                    n1b[s] = reg->n1_bwd[R];
+                    t1f[s] = reg->t1_fwd[R];  /* default: flat */
+                    t1b[s] = reg->t1_bwd[R];
                 }
-            }
-            if (verbose >= 2) {
-                printf("    trying ");
-                for (int s = 0; s < f->nfactors; s++)
-                    printf("%s%d", s ? "x" : "", plist->perms[pi][s]);
-                printf("... ");
-                fflush(stdout);
-            }
-            double ns = stride_bench_one(N, K, plist->perms[pi], f->nfactors,
-                                         reg, re, im, orig_re, orig_im);
-            total_perms++;
 
-            if (verbose >= 2) {
-                printf("%.1f ns\n", ns);
-                fflush(stdout);
-            }
+                /* Apply log3 where this combo says to */
+                for (int li = 0; li < n_log3_stages; li++) {
+                    if (combo & (1 << li)) {
+                        int s = log3_stage_idx[li];
+                        int R = factors_p[s];
+                        t1f[s] = reg->t1_fwd_log3[R];
+                        t1b[s] = reg->t1_bwd_log3[R];
+                    }
+                }
 
-            if (ns < global_best_ns) {
-                global_best_ns = ns;
-                best_fact->nfactors = f->nfactors;
-                memcpy(best_fact->factors, plist->perms[pi], f->nfactors * sizeof(int));
+                {
+                    double ns = stride_bench_one_ex(N, K, factors_p, nf,
+                                                    n1f, n1b, t1f, t1b,
+                                                    re, im, orig_re, orig_im);
+                    total_candidates++;
+
+                    if (ns < global_best_ns) {
+                        global_best_ns = ns;
+                        best_fact->nfactors = nf;
+                        memcpy(best_fact->factors, factors_p, nf * sizeof(int));
+                        best_log3_mask = combo;
+                    }
+                }
+                continue;
+                skip_combo:;
             }
         }
         free(plist);
@@ -265,7 +300,9 @@ static double stride_exhaustive_search(int N, size_t K,
         printf("  Best: ");
         for (int s = 0; s < best_fact->nfactors; s++)
             printf("%s%d", s ? "x" : "", best_fact->factors[s]);
-        printf(" = %.1f ns (%d total candidates)\n", global_best_ns, total_perms);
+        if (best_log3_mask)
+            printf(" (log3 mask=%d)", best_log3_mask);
+        printf(" = %.1f ns (%d total candidates)\n", global_best_ns, total_candidates);
     }
 
     free(flist);
