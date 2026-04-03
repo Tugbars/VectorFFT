@@ -339,36 +339,37 @@ int main(void) {
     };
     int ncases = sizeof(cases) / sizeof(cases[0]);
 
-    /* ── Phase 1: Calibrate (exhaustive → wisdom) ── */
-    printf("Phase 1: Exhaustive calibration -> %s\n", WISDOM_PATH);
-    printf("(This takes a while...)\n\n");
-
+    /* ── Phase 1: Calibrate (only if no wisdom file exists) ── */
     stride_wisdom_t wis;
     stride_wisdom_init(&wis);
-    /* Load existing wisdom if available */
-    stride_wisdom_load(&wis, WISDOM_PATH);
 
-    for (int ci = 0; ci < ncases; ci++) {
-        int N = cases[ci].N;
-        size_t K = cases[ci].K;
+    int wisdom_loaded = (stride_wisdom_load(&wis, WISDOM_PATH) == 0 && wis.count > 0);
 
-        if (stride_wisdom_lookup(&wis, N, K))
-            continue;  /* already cached */
-        if (N > MAX_N_EXHAUST)
-            continue;  /* too large for exhaustive */
+    if (!wisdom_loaded) {
+        printf("Phase 1: Exhaustive calibration -> %s\n", WISDOM_PATH);
+        printf("(First run — this takes a while. Subsequent runs use cached wisdom.)\n\n");
 
-        printf("  N=%5d K=%4zu ... ", N, K);
-        fflush(stdout);
-        double t0 = now_ns();
-        stride_wisdom_calibrate(&wis, N, K, &reg);
-        printf("%.1fs\n", (now_ns() - t0) / 1e9);
+        for (int ci = 0; ci < ncases; ci++) {
+            int N = cases[ci].N;
+            size_t K = cases[ci].K;
+
+            if (N > MAX_N_EXHAUST)
+                continue;
+
+            printf("  N=%5d K=%4zu ... ", N, K);
+            fflush(stdout);
+            double t0 = now_ns();
+            stride_wisdom_calibrate(&wis, N, K, &reg);
+            printf("%.1fs\n", (now_ns() - t0) / 1e9);
+        }
+
+        if (stride_wisdom_save(&wis, WISDOM_PATH) == 0)
+            printf("\nWisdom saved to %s (%d entries)\n\n", WISDOM_PATH, wis.count);
+        else
+            printf("\nWARNING: could not save wisdom\n\n");
+    } else {
+        printf("Wisdom loaded from %s (%d entries)\n\n", WISDOM_PATH, wis.count);
     }
-
-    /* Save wisdom */
-    if (stride_wisdom_save(&wis, WISDOM_PATH) == 0)
-        printf("\nWisdom saved to %s (%d entries)\n\n", WISDOM_PATH, wis.count);
-    else
-        printf("\nWARNING: could not save wisdom\n\n");
 
     /* ── Phase 2: Benchmark + CSV ── */
     const char *csv_path = "vfft_bench_results.csv";
