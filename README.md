@@ -41,7 +41,7 @@
 
 ## Accuracy
 
-![Accuracy](src/stride-fft/bench/vfft_accuracy.png)
+<img width="3174" height="1230" alt="vfft_accuracy" src="https://github.com/user-attachments/assets/ba2dafe4-127b-4acb-b3b4-fe482cf53fd6" />
 
 All three libraries achieve comparable accuracy against brute-force O(N^2) DFT reference. VectorFFT's errors are 1.3-2.5x higher than FFTW/MKL due to the multi-stage stride-based decomposition (more intermediate twiddle multiplications), but remain well within double-precision tolerance and follow the theoretical O(N * epsilon * log N) bound.
 
