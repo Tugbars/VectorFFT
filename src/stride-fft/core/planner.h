@@ -36,7 +36,7 @@
 #include "registry.h"
 #include "factorizer.h"
 #include "exhaustive.h"
-#include "bluestein.h"
+#include "rader.h"      /* includes bluestein.h (shared SIMD helpers) */
 
 /* ═══════════════════════════════════════════════════════════════
  * WISDOM — cached exhaustive search results
@@ -221,10 +221,10 @@ static int _stride_is_rader_friendly(int n) {
 /**
  * stride_auto_plan — Heuristic planner (fast).
  *
- * 1. Try direct factorization (N into available radixes)
- * 2. If N is prime with non-smooth N-1: Bluestein
- * 3. If N is prime with smooth N-1: NULL (Rader slot — future)
- * 4. Otherwise: NULL (composite with unfactorable prime factor — future)
+ * 1. Direct factorization into available radixes     → staged plan
+ * 2. Prime N, non-smooth N-1 (p-1 has factors > 19) �� Bluestein
+ * 3. Prime N, smooth N-1 (p-1 is 19-smooth)         → Rader
+ * 4. Composite with unfactorable prime factor        → NULL (TODO)
  */
 static stride_plan_t *stride_auto_plan(int N, size_t K,
                                         const stride_registry_t *reg) {
@@ -241,7 +241,14 @@ static stride_plan_t *stride_auto_plan(int N, size_t K,
         if (inner) return stride_bluestein_plan(N, K, B, inner, M);
     }
 
-    /* 3. Prime with smooth N-1: reserved for Rader (TODO) */
+    /* 3. Prime with smooth N-1: Rader (convolution of size N-1) */
+    if (_stride_is_prime(N) && _stride_is_rader_friendly(N)) {
+        int nm1 = N - 1;
+        size_t B = _bluestein_block_size(nm1, K);
+        stride_plan_t *inner = stride_auto_plan(nm1, B, reg);
+        if (inner) return stride_rader_plan(N, K, B, inner);
+    }
+
     /* 4. Composite with unfactorable prime factor: reserved (TODO) */
     return NULL;
 }
