@@ -65,15 +65,16 @@ int main(void) {
         for (const size_t *kp = sweep_Ks; *kp; kp++) {
             size_t K = *kp;
 
-            double flat_ns = _log3_calib_bench(N, K, factors, nf, 0, &reg);
-            double log3_ns = _log3_calib_bench(N, K, factors, nf, (1 << 1), &reg);
-            double speedup = flat_ns / log3_ns;
-            int log3_wins = log3_ns < flat_ns;
+            /* Use interleaved comparison for stable results */
+            double flat_ns, log3_ns;
+            double ratio = _log3_calib_compare(N, K, factors, nf, &reg,
+                                                &flat_ns, &log3_ns);
+            int log3_wins = (ratio > 1.15);  /* 15% margin — match calibrator */
 
             if (log3_wins && crossover == (size_t)-1) crossover = K;
 
             printf("%-4d %-6d %-6zu | %7.1f ns %7.1f ns | %6.2fx | %s\n",
-                   R, inner, K, flat_ns, log3_ns, speedup,
+                   R, inner, K, flat_ns, log3_ns, ratio,
                    log3_wins ? "LOG3" : "flat");
         }
 

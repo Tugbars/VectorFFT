@@ -197,14 +197,14 @@ if(FFTW3_LIB AND FFTW3_INC)
     target_include_directories(vfft_bench_r32 PRIVATE ${FFTW3_INC})
     target_compile_definitions(vfft_bench_r32 PRIVATE _CRT_SECURE_NO_WARNINGS)
 
-    # ── Log3 calibration bench ──
-    add_executable(vfft_bench_log3_calib bench/bench_log3_calib.c)
-    target_link_libraries(vfft_bench_log3_calib PRIVATE vfft_stride ${FFTW3_LIB})
-    target_include_directories(vfft_bench_log3_calib PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench_log3_calib PRIVATE _CRT_SECURE_NO_WARNINGS)
-    set_target_properties(vfft_bench_log3_calib PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    )
+    # ── Log3 calibration bench (disabled — log3 not active in production) ──
+    # add_executable(vfft_bench_log3_calib bench/bench_log3_calib.c)
+    # target_link_libraries(vfft_bench_log3_calib PRIVATE vfft_stride ${FFTW3_LIB})
+    # target_include_directories(vfft_bench_log3_calib PRIVATE ${FFTW3_INC})
+    # target_compile_definitions(vfft_bench_log3_calib PRIVATE _CRT_SECURE_NO_WARNINGS)
+    # set_target_properties(vfft_bench_log3_calib PROPERTIES
+    #     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    # )
 
     # ── Monolithic vs blocked decomposition ──
     add_executable(vfft_bench_blocked bench/bench_blocked.c)

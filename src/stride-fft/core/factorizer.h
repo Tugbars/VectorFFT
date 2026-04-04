@@ -200,34 +200,6 @@ static int stride_factorize_greedy(int N, size_t K,
         fact->factors[nf-1] = tmp;
     }
 
-    /* ── Blocked decomposition for R=32 and R=64 ──
-     *
-     * Bench data:
-     *   R=32 → [4,8]: wins at K=16..256 (~1.05-1.8x), loses at K<=4, K>=512
-     *   R=64 → [8,8]: wins at K=4..256  (~1.2-2.0x),  loses at K>=512
-     *
-     * Split monolithic R=32/64 into sub-radixes when K is in the sweet spot.
-     * The twiddle tables of the sub-radixes fit L1 where the monolithic
-     * tables overflow, eliminating the cache cliff.
-     */
-    if (K >= 8 && K <= 256) {
-        int new_factors[FACT_MAX_STAGES];
-        int new_nf = 0;
-        for (int i = 0; i < nf && new_nf < FACT_MAX_STAGES - 1; i++) {
-            if (fact->factors[i] == 64) {
-                new_factors[new_nf++] = 8;
-                new_factors[new_nf++] = 8;
-            } else if (fact->factors[i] == 32) {
-                new_factors[new_nf++] = 4;
-                new_factors[new_nf++] = 8;
-            } else {
-                new_factors[new_nf++] = fact->factors[i];
-            }
-        }
-        memcpy(fact->factors, new_factors, new_nf * sizeof(int));
-        fact->nfactors = new_nf;
-    }
-
     return 0;
 }
 
@@ -367,272 +339,32 @@ static int stride_factorize(int N, size_t K,
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * LOG3 TWIDDLE SELECTION
+ * LOG3 TWIDDLE DERIVATION — DISABLED
  *
- * For each radix R with a log3 codelet, there's a threshold K
- * above which log3 beats flat. This threshold is either:
- *   1. Calibrated: measured by sweeping K, stored in wisdom file
- *   2. Estimated: physics-based model using codelet profiles
+ * Log3 codelets derive twiddle factors from a few base values via
+ * cmul chains, reducing L1 cache pressure at large K. The codelets
+ * exist in the registry (t1_fwd_log3/t1_bwd_log3) and are correct
+ * (220/220 tests passed), but benchmarking on i9-14900KF (hybrid
+ * P/E-core) showed gains too inconsistent to trust:
+ *   - Wins at one K, loses at adjacent K (spiky, not monotonic)
+ *   - Results flip between runs (R=19: NEVER → always wins → NEVER)
+ *   - Only R=12 K=1024 showed consistent >15% gains
  *
- * The calibrated thresholds live in stride_log3_thresholds_t,
- * which is populated from the wisdom file's @log3 lines.
- * When not calibrated, the estimate model is used as fallback.
+ * Attempted approaches that didn't resolve the inconsistency:
+ *   1. Physics-based estimate model (codelet profiles: spill_bytes,
+ *      bf_flops, n_bases, n_derived → L1 capacity / register pressure
+ *      threshold). Matched 11/16 radixes within 2x but couldn't
+ *      predict genfft primes (DAG-optimized, Sethi-Ullman scheduled).
+ *   2. Interleaved calibration (shared buffer, alternating batch order,
+ *      7 rounds median, 15% margin, two-pass confirmation). Still
+ *      produced run-to-run variance on hybrid CPU architecture.
  *
- * Physics model:
- *   Log3 trades memory loads for compute (cmul derivations).
- *   Two regimes govern the crossover:
- *
- *   1. Register-pressure regime (spill_bytes >= 768):
- *      The flat codelet already spills twiddles to stack.
- *      Log3 reduces live registers → eliminates spills.
- *      Threshold is LOW (16-128) — log3 wins at small K.
- *      K_est = L1 / (deriv_cost_ratio * row_bytes * pressure_factor)
- *
- *   2. L1-capacity regime (spill_bytes < 768):
- *      The flat codelet fits in registers at small K.
- *      Log3 only wins when twiddle TABLE exceeds L1.
- *      K_est = L1 / (2 * row_bytes) — classic cache model.
- *
- *   3. Genfft primes (R=11,13,17,19):
- *      DAG-optimized with Sethi-Ullman scheduling.
- *      Analytical model unreliable → use per-radix heuristic.
- * ═══════════════════════════════════════════════════════════════ */
-
-/* ── Codelet profiles for log3 estimation ──
- *
- * These describe the computational structure of each radix's
- * t1 DIT codelet, used to predict log3 crossover without benching.
- *
- * n_bases:    twiddle rows loaded from memory in log3 mode
- * n_derived:  twiddle rows computed via cmul chains
- * spill_bytes: approximate stack spill for flat codelet's twiddle
- *             handling (0 = all in registers, >0 = spills to stack).
- *             Computed as: simultaneous_twiddle_rows × 64 bytes (AVX2).
- * bf_flops:   FMA-equivalent ops in the butterfly (excl. twiddles)
- * is_genfft:  1 if DAG-optimized prime (Sethi-Ullman), 0 otherwise */
-
-typedef struct {
-    int     n_bases;
-    int     n_derived;
-    int     spill_bytes;
-    int     bf_flops;
-    int     is_genfft;
-} stride_codelet_profile_t;
-
-/* Profile table — indexed by radix.
- * Entries for radixes without log3 support are zero-filled (unused). */
-static const stride_codelet_profile_t STRIDE_LOG3_PROFILES[] = {
-    /*  R=0  */ { 0,  0,    0,    0, 0 },
-    /*  R=1  */ { 0,  0,    0,    0, 0 },
-    /*  R=2  */ { 0,  0,    0,    0, 0 },
-    /*  R=3  */ { 1,  1,    0,   20, 0 },
-    /*  R=4  */ { 1,  2,    0,   24, 0 },
-    /*  R=5  */ { 1,  3,    0,   48, 0 },
-    /*  R=6  */ { 1,  4,  320,   56, 0 },
-    /*  R=7  */ { 1,  5,  384,   82, 0 },
-    /*  R=8  */ { 0,  0,    0,    0, 0 },
-    /*  R=9  */ { 0,  0,    0,    0, 0 },
-    /* R=10  */ { 1,  8,  576,  120, 0 },
-    /* R=11  */ { 1,  9,    0,   60, 1 },
-    /* R=12  */ { 1, 10,  704,  140, 0 },
-    /* R=13  */ { 1, 11,    0,   78, 1 },
-    /* R=14  */ { 0,  0,    0,    0, 0 },
-    /* R=15  */ { 0,  0,    0,    0, 0 },
-    /* R=16  */ { 4, 10, 1024,  212, 0 },
-    /* R=17  */ { 1, 15,    0,  136, 1 },
-    /* R=18  */ { 0,  0,    0,    0, 0 },
-    /* R=19  */ { 1, 17,    0,  190, 1 },
-    /* R=20  */ { 2, 17, 1280,  280, 0 },
-    /* R=21  */ { 0,  0,    0,    0, 0 },
-    /* R=22  */ { 0,  0,    0,    0, 0 },
-    /* R=23  */ { 0,  0,    0,    0, 0 },
-    /* R=24  */ { 0,  0,    0,    0, 0 },
-    /* R=25  */ { 2, 22, 1600,  580, 0 },
-    /* R=26  */ { 0,  0,    0,    0, 0 },
-    /* R=27  */ { 0,  0,    0,    0, 0 },
-    /* R=28  */ { 0,  0,    0,    0, 0 },
-    /* R=29  */ { 0,  0,    0,    0, 0 },
-    /* R=30  */ { 0,  0,    0,    0, 0 },
-    /* R=31  */ { 0,  0,    0,    0, 0 },
-    /* R=32  */ { 5, 26, 2048,  876, 0 },
-};
-#define STRIDE_LOG3_PROFILE_COUNT (sizeof(STRIDE_LOG3_PROFILES)/sizeof(STRIDE_LOG3_PROFILES[0]))
-
-/* Spill threshold: above this, codelet is in register-pressure regime */
-#define STRIDE_SPILL_REGIME_BYTES 768
-
-/* Estimate the log3 threshold K for a given radix using physics model.
- *
- * Returns estimated K threshold, or (size_t)-1 for NEVER.
- * The estimate is conservative — when in doubt, returns a higher K
- * (meaning log3 activates later, falling back to the safe flat path). */
-static size_t stride_estimate_log3_threshold(int R, size_t l1_bytes) {
-    if (R < 2 || (size_t)R >= STRIDE_LOG3_PROFILE_COUNT) return (size_t)-1;
-
-    const stride_codelet_profile_t *p = &STRIDE_LOG3_PROFILES[R];
-    if (p->bf_flops == 0) return (size_t)-1; /* no profile → no log3 */
-
-    size_t row_bytes = (size_t)(R - 1) * 16; /* bytes per twiddle row per K */
-
-    /* ── Genfft primes: per-radix heuristic ──
-     * DAG-optimized codelets resist analytical modeling.
-     * R=13,17: derivation hides behind long butterfly → wins early (K=32)
-     * R=11: shorter butterfly, moderate derivation → wins at K=256
-     * R=19: derivation cost exceeds butterfly capacity → NEVER */
-    if (p->is_genfft) {
-        if (R == 19) return (size_t)-1;  /* never wins */
-        if (R == 13 || R == 17) return 32;
-        if (R == 11) return 256;
-        return 128; /* safe default for unknown genfft primes */
-    }
-
-    /* ── Register-pressure regime ──
-     * Flat codelet spills twiddles to stack (spill >= 1024B).
-     * Log3 reduces live twiddles from (R-1) to n_bases, eliminating
-     * most spills. Benefit is immediate even at small K.
-     *
-     * K_est = L1 / (row_bytes * net_benefit)
-     * net_benefit = spill_factor * hide_factor * load_reduction
-     *
-     * i-cache penalty: codelets >= 800 SIMD ops generate huge code
-     * that doesn't fit in the uop cache, adding overhead that offsets
-     * spill savings at small K. Multiply threshold by 8 for R >= 32. */
-    if (p->spill_bytes >= 1024) {
-        double spill_factor = (double)p->spill_bytes / 512.0;
-        double hide_factor = (double)p->bf_flops / ((double)p->n_derived * 8.0);
-        double load_red = (double)(R - 1 - p->n_bases) / (double)(R - 1);
-
-        double benefit = spill_factor * hide_factor * load_red;
-        if (benefit < 0.5) benefit = 0.5;
-        if (benefit > 32.0) benefit = 32.0;
-
-        size_t est = (size_t)((double)l1_bytes / ((double)row_bytes * benefit));
-
-        /* i-cache penalty for very large codelets.
-         * The log3 variant adds derivation code on top of an already huge
-         * butterfly. With many bases, the codelet also still loads multiple
-         * twiddle rows, reducing the load-elimination benefit.
-         * Scale penalty by n_bases: more bases = less benefit = higher K. */
-        if (p->bf_flops >= 800) est *= (unsigned)p->n_bases * 4;
-
-        /* Round down to power of 2 */
-        size_t k = 1;
-        while (k * 2 <= est) k *= 2;
-        if (k < 16) k = 16;
-        if (k > 1024) k = 1024;
-        return k;
-    }
-
-    /* ── Derivation-cost regime ──
-     * For codelets with moderate or no spill, the crossover is governed
-     * by how many twiddles must be derived (cmul chains) vs how much
-     * butterfly work can hide the derivation latency.
-     *
-     * n_derived is the strongest predictor:
-     *   - n_derived >= 8 (R=10,12): derivation is expensive, butterfly
-     *     can't hide it. Log3 only wins at very large K (1024+) where
-     *     the twiddle table completely overflows L1.
-     *   - n_derived 3-7 (R=5,6,7): moderate cost. Log3 wins when
-     *     table reaches ~L1 size. K_est = L1 / row_bytes.
-     *   - n_derived < 3 (R=3,4): cheap derivation. Log3 wins even
-     *     before full L1 overflow. K_est = L1 / (3 * row_bytes). */
-    if (p->n_derived >= 8) {
-        /* Heavy derivation — need massive L1 pressure to justify.
-         * The twiddle table must substantially exceed L1 before the
-         * cache-miss penalty outweighs the derivation overhead of
-         * 8+ cmul chains. Use 2× L1 as the crossover point. */
-        size_t k = (2 * l1_bytes) / row_bytes;
-        /* Round up to power of 2 for safety margin */
-        size_t p2 = 1;
-        while (p2 < k) p2 *= 2;
-        if (p2 > 2048) p2 = 2048;
-        return p2;
-    }
-
-    if (p->n_derived >= 3) {
-        /* Moderate derivation — table needs to approach L1 size. */
-        size_t est = l1_bytes / row_bytes;
-        size_t k = 1;
-        while (k * 2 <= est) k *= 2;
-        if (k < 128) k = 128;
-        if (k > 1024) k = 1024;
-        return k;
-    }
-
-    /* Light derivation (1-2 derived) — low overhead, wins early. */
-    {
-        size_t est = l1_bytes / (3 * row_bytes);
-        size_t k = 1;
-        while (k * 2 <= est) k *= 2;
-        if (k < 64) k = 64;
-        if (k > 1024) k = 1024;
-        return k;
-    }
-}
-
-typedef struct {
-    size_t threshold_K[STRIDE_REG_MAX_RADIX];  /* 0 = not calibrated, use estimate */
-    int calibrated[STRIDE_REG_MAX_RADIX];      /* 1 = threshold was measured */
-} stride_log3_thresholds_t;
-
-static void stride_log3_thresholds_init(stride_log3_thresholds_t *t) {
-    memset(t, 0, sizeof(*t));
-}
-
-static inline int stride_should_use_log3(int R, size_t K,
-                                         const stride_registry_t *reg) {
-    if (!reg->t1_fwd_log3[R]) return 0;
-
-    /* Physics-based estimate using codelet profiles + detected L1 size */
-    stride_cpu_info_t cpu = stride_detect_cpu();
-    size_t est_K = stride_estimate_log3_threshold(R, cpu.l1d_bytes);
-    if (est_K == (size_t)-1) return 0; /* NEVER */
-    return K >= est_K;
-}
-
-static inline int stride_should_use_log3_calibrated(
-        int R, size_t K,
-        const stride_registry_t *reg,
-        const stride_log3_thresholds_t *thresholds) {
-    if (!reg->t1_fwd_log3[R]) return 0;
-    if (thresholds && thresholds->calibrated[R])
-        return K >= thresholds->threshold_K[R];
-    /* Fallback to heuristic if not calibrated */
-    return stride_should_use_log3(R, K, reg);
-}
-
-/* Select t1 codelet (flat or log3) for a given radix and K */
-static inline stride_t1_fn stride_select_t1_fwd(int R, size_t K,
-                                                  const stride_registry_t *reg) {
-    if (stride_should_use_log3(R, K, reg))
-        return reg->t1_fwd_log3[R];
-    return reg->t1_fwd[R];
-}
-
-static inline stride_t1_fn stride_select_t1_bwd(int R, size_t K,
-                                                  const stride_registry_t *reg) {
-    if (stride_should_use_log3(R, K, reg))
-        return reg->t1_bwd_log3[R];
-    return reg->t1_bwd[R];
-}
-
-static inline stride_t1_fn stride_select_t1_fwd_calibrated(
-        int R, size_t K,
-        const stride_registry_t *reg,
-        const stride_log3_thresholds_t *thresholds) {
-    if (stride_should_use_log3_calibrated(R, K, reg, thresholds))
-        return reg->t1_fwd_log3[R];
-    return reg->t1_fwd[R];
-}
-
-static inline stride_t1_fn stride_select_t1_bwd_calibrated(
-        int R, size_t K,
-        const stride_registry_t *reg,
-        const stride_log3_thresholds_t *thresholds) {
-    if (stride_should_use_log3_calibrated(R, K, reg, thresholds))
-        return reg->t1_bwd_log3[R];
-    return reg->t1_bwd[R];
-}
+ * The log3 infrastructure (codelets, executor support, calibration)
+ * remains in the codebase. To re-enable on stable hardware (e.g.,
+ * server with isolated cores), restore the threshold logic and
+ * add back the codelet profile table + estimate model that was
+ * removed in this cleanup.
+ * ===================================================================== */
 
 
 #endif /* STRIDE_FACTORIZER_H */

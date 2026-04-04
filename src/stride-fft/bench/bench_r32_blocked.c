@@ -23,11 +23,21 @@ static stride_plan_t *make_plan_r32(int N, size_t K,
     if (stride_factorize(N, K, reg, &fact) != 0) return NULL;
 
     int log3_mask = 0;
-    if (force_log3) {
-        for (int s = 1; s < fact.nfactors; s++)
-            if (fact.factors[s] == 32) log3_mask |= (1 << s);
+    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
+    for (int s = 0; s < fact.nfactors; s++) {
+        int R = fact.factors[s];
+        n1f[s] = reg->n1_fwd[R]; n1b[s] = reg->n1_bwd[R];
+        if (s == 0) { t1f[s] = NULL; t1b[s] = NULL; }
+        else if (force_log3 && R == 32 && reg->t1_fwd_log3[R]) {
+            t1f[s] = reg->t1_fwd_log3[R]; t1b[s] = reg->t1_bwd_log3[R];
+            log3_mask |= (1 << s);
+        } else {
+            t1f[s] = reg->t1_fwd[R]; t1b[s] = reg->t1_bwd[R];
+        }
     }
-    return _stride_build_plan(N, K, fact.factors, fact.nfactors, log3_mask, reg);
+    return stride_plan_create(N, K, fact.factors, fact.nfactors,
+                              n1f, n1b, t1f, t1b, log3_mask);
 }
 
 static double bench(stride_plan_t *plan, int N, size_t K) {
@@ -181,11 +191,9 @@ int main(void) {
             int ok = test_roundtrip(p_auto, N, K);
             if (!ok && ok_flat) {
                 printf("  [auto FAIL, flat OK — auto plan bug at N=%d K=%zu]\n", N, K);
-                /* Show which stages use log3 in auto */
-                for (int s = 1; s < p_auto->num_stages; s++) {
-                    int R = p_auto->factors[s];
-                    int uses_log3 = stride_should_use_log3(R, K, &reg);
-                    printf("    stage %d: R=%d log3=%d\n", s, R, uses_log3);
+                /* Show stages in auto plan */
+                for (int s = 0; s < p_auto->num_stages; s++) {
+                    printf("    stage %d: R=%d\n", s, p_auto->factors[s]);
                 }
             }
             double flat_ns = bench(p_flat, N, K);
