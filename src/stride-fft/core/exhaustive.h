@@ -141,7 +141,7 @@ static double stride_bench_one_ex(int N, size_t K, const int *factors, int nf,
                                   double *re, double *im, double *orig_re, double *orig_im) {
     size_t total = (size_t)N * K;
 
-    stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b);
+    stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, 0);
     if (!plan) return 1e18;
 
     /* Warm up (1 iteration) */
@@ -279,7 +279,7 @@ static double stride_exhaustive_search(int N, size_t K,
                 {
                     /* Quick single-trial pre-screen: skip if > 1.5x current best */
                     stride_plan_t *qplan = stride_plan_create(N, K, factors_p, nf,
-                                                               n1f, n1b, t1f, t1b);
+                                                               n1f, n1b, t1f, t1b, 0);
                     if (!qplan) goto skip_combo;
 
                     memcpy(re, orig_re, total * sizeof(double));

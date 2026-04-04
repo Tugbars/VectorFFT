@@ -409,7 +409,7 @@ class Emitter:
 #
 # Names: 'b1','b2','b4','b8' for bases, 'w3'..'w15' for derived
 
-LOG3_BASE_MAP = {'b1': 0, 'b2': 1, 'b4': 2, 'b8': 3}
+LOG3_BASE_MAP = {'b1': 0, 'b2': 1, 'b4': 3, 'b8': 7}  # tw[(j-1)*me+m]: W^1→row0, W^2→row1, W^4→row3, W^8→row7
 
 def _log3_subfft_chain(n2):
     """Return [(n1, tw_action), ...] for sub-FFT n2.

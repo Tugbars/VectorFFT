@@ -184,6 +184,24 @@ if(FFTW3_LIB AND FFTW3_INC)
     target_link_libraries(vfft_bench_r4_log3 PRIVATE vfft_stride ${FFTW3_LIB})
     target_include_directories(vfft_bench_r4_log3 PRIVATE ${FFTW3_INC})
     target_compile_definitions(vfft_bench_r4_log3 PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+    # ── Log3 exhaustive correctness test ──
+    add_executable(vfft_test_log3 bench/test_log3_all.c)
+    target_link_libraries(vfft_test_log3 PRIVATE vfft_stride ${FFTW3_LIB})
+    target_include_directories(vfft_test_log3 PRIVATE ${FFTW3_INC})
+    target_compile_definitions(vfft_test_log3 PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+    # ── R=32 blocked/log3 A/B test ──
+    add_executable(vfft_bench_r32 bench/bench_r32_blocked.c)
+    target_link_libraries(vfft_bench_r32 PRIVATE vfft_stride ${FFTW3_LIB})
+    target_include_directories(vfft_bench_r32 PRIVATE ${FFTW3_INC})
+    target_compile_definitions(vfft_bench_r32 PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+    # ── Monolithic vs blocked decomposition ──
+    add_executable(vfft_bench_blocked bench/bench_blocked.c)
+    target_link_libraries(vfft_bench_blocked PRIVATE vfft_stride ${FFTW3_LIB})
+    target_include_directories(vfft_bench_blocked PRIVATE ${FFTW3_INC})
+    target_compile_definitions(vfft_bench_blocked PRIVATE _CRT_SECURE_NO_WARNINGS)
     set_target_properties(vfft_bench_r4_log3 PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )

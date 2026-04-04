@@ -200,6 +200,34 @@ static int stride_factorize_greedy(int N, size_t K,
         fact->factors[nf-1] = tmp;
     }
 
+    /* ── Blocked decomposition for R=32 and R=64 ──
+     *
+     * Bench data:
+     *   R=32 → [4,8]: wins at K=16..256 (~1.05-1.8x), loses at K<=4, K>=512
+     *   R=64 → [8,8]: wins at K=4..256  (~1.2-2.0x),  loses at K>=512
+     *
+     * Split monolithic R=32/64 into sub-radixes when K is in the sweet spot.
+     * The twiddle tables of the sub-radixes fit L1 where the monolithic
+     * tables overflow, eliminating the cache cliff.
+     */
+    if (K >= 8 && K <= 256) {
+        int new_factors[FACT_MAX_STAGES];
+        int new_nf = 0;
+        for (int i = 0; i < nf && new_nf < FACT_MAX_STAGES - 1; i++) {
+            if (fact->factors[i] == 64) {
+                new_factors[new_nf++] = 8;
+                new_factors[new_nf++] = 8;
+            } else if (fact->factors[i] == 32) {
+                new_factors[new_nf++] = 4;
+                new_factors[new_nf++] = 8;
+            } else {
+                new_factors[new_nf++] = fact->factors[i];
+            }
+        }
+        memcpy(fact->factors, new_factors, new_nf * sizeof(int));
+        fact->nfactors = new_nf;
+    }
+
     return 0;
 }
 

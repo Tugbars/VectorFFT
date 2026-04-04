@@ -96,6 +96,10 @@ typedef struct {
 
     /* Fallback flag: 1 = use cf_all + n1 instead of t1_dit (R=64 large K) */
     int use_n1_fallback;
+
+    /* Log3 flag: 1 = grp_tw stores raw per_leg (no cf baked in).
+     * Executor applies cf to ALL legs before calling log3 codelet. */
+    int use_log3;
 } stride_stage_t;
 
 typedef struct {
@@ -156,6 +160,25 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
                 }
                 st->n1_fwd(base_re, base_im, base_re, base_im,
                            st->stride, st->stride, K);
+            } else if (st->use_log3) {
+                /* Log3: cf on ALL legs + t1_log3 with raw per_leg twiddle */
+                double cfr = st->cf0_re[g];
+                double cfi = st->cf0_im[g];
+                if (cfr != 1.0 || cfi != 0.0) {
+                    const int R = st->radix;
+                    for (int j = 0; j < R; j++) {
+                        double *lr = base_re + (size_t)j * st->stride;
+                        double *li = base_im + (size_t)j * st->stride;
+                        for (size_t kk = 0; kk < K; kk++) {
+                            double tr = lr[kk];
+                            lr[kk] = tr * cfr - li[kk] * cfi;
+                            li[kk] = tr * cfi + li[kk] * cfr;
+                        }
+                    }
+                }
+                st->t1_fwd(base_re, base_im,
+                           st->grp_tw_re[g], st->grp_tw_im[g],
+                           st->stride, K);
             } else {
                 /* Method C: cf on leg 0 only + t1_dit with combined twiddle */
                 double cfr = st->cf0_re[g];
@@ -408,24 +431,42 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
             st->cf0_re[g] = cfr;
             st->cf0_im[g] = cfi;
 
-            /* Combined twiddle for legs 1..R-1: cf * per_leg[j] */
+            /* Twiddle table for legs 1..R-1 */
             double *tw_r = st->tw_pool_re + (size_t)tw_idx * per_grp;
             double *tw_i = st->tw_pool_im + (size_t)tw_idx * per_grp;
             st->grp_tw_re[g] = tw_r;
             st->grp_tw_im[g] = tw_i;
 
-            for (int j = 1; j < R; j++) {
-                int leg_exp = ((long long)k_prev * ow_prev * j * S_s) % N;
-                if (leg_exp < 0) leg_exp += N;
-                double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
-                double lr = cos(leg_angle), li = sin(leg_angle);
-                /* combined = cf * per_leg */
-                double wr = cfr * lr - cfi * li;
-                double wi = cfr * li + cfi * lr;
-                size_t base_idx = (size_t)(j - 1) * K;
-                for (size_t kk = 0; kk < K; kk++) {
-                    tw_r[base_idx + kk] = wr;
-                    tw_i[base_idx + kk] = wi;
+            if (st->use_log3) {
+                /* Log3: store raw per_leg[j] for ALL legs (no cf baked in).
+                 * Same layout as flat: tw[(j-1)*K + k] = W_N^{j * k_prev * ow_prev * S_s}
+                 * The log3 codelet picks whichever base rows it needs (radix-dependent).
+                 * The executor applies cf to ALL legs before calling the codelet. */
+                for (int j = 1; j < R; j++) {
+                    int leg_exp = ((long long)k_prev * ow_prev * j * S_s) % N;
+                    if (leg_exp < 0) leg_exp += N;
+                    double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
+                    double lr = cos(leg_angle), li = sin(leg_angle);
+                    size_t base_idx = (size_t)(j - 1) * K;
+                    for (size_t kk = 0; kk < K; kk++) {
+                        tw_r[base_idx + kk] = lr;
+                        tw_i[base_idx + kk] = li;
+                    }
+                }
+            } else {
+                /* Flat: combined = cf * per_leg[j] for all legs */
+                for (int j = 1; j < R; j++) {
+                    int leg_exp = ((long long)k_prev * ow_prev * j * S_s) % N;
+                    if (leg_exp < 0) leg_exp += N;
+                    double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
+                    double lr = cos(leg_angle), li = sin(leg_angle);
+                    double wr = cfr * lr - cfi * li;
+                    double wi = cfr * li + cfi * lr;
+                    size_t base_idx = (size_t)(j - 1) * K;
+                    for (size_t kk = 0; kk < K; kk++) {
+                        tw_r[base_idx + kk] = wr;
+                        tw_i[base_idx + kk] = wi;
+                    }
                 }
             }
             tw_idx++;
@@ -444,7 +485,8 @@ static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, in
                                          stride_n1_fn *n1_fwd_table,
                                          stride_n1_fn *n1_bwd_table,
                                          stride_t1_fn *t1_fwd_table,
-                                         stride_t1_fn *t1_bwd_table) {
+                                         stride_t1_fn *t1_bwd_table,
+                                         int log3_mask) {
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     plan->N = N;
     plan->K = K;
@@ -456,6 +498,7 @@ static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, in
         plan->stages[s].n1_bwd = n1_bwd_table[s];
         plan->stages[s].t1_fwd = t1_fwd_table[s];
         plan->stages[s].t1_bwd = t1_bwd_table[s];
+        plan->stages[s].use_log3 = (log3_mask > 0) && ((log3_mask >> s) & 1);
 
         plan_compute_groups(plan, s);
         plan_compute_twiddles_c(plan, s);
