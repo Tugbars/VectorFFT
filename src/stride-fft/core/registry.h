@@ -113,6 +113,7 @@
   #include "fft_radix25_avx512_ct_t1_dit_log3.h"
   #include "fft_radix32_avx512_ct_n1.h"
   #include "fft_radix32_avx512_ct_t1_dit.h"
+  #include "fft_radix32_avx512_ct_t1_dit_log3.h"
   #include "fft_radix64_avx512_ct_n1.h"
   #include "fft_radix64_avx512_ct_t1_dit.h"
   #include "fft_radix64_avx512_ct_t1_dit_log3.h"
@@ -158,6 +159,7 @@
   #include "fft_radix25_avx2_ct_t1_dit_log3.h"
   #include "fft_radix32_avx2_ct_n1.h"
   #include "fft_radix32_avx2_ct_t1_dit.h"
+  #include "fft_radix32_avx2_ct_t1_dit_log3.h"
   #include "fft_radix64_avx2_ct_n1.h"
   #include "fft_radix64_avx2_ct_t1_dit.h"
   #include "fft_radix64_avx2_ct_t1_dit_log3.h"
@@ -203,6 +205,7 @@
   #include "fft_radix25_scalar_ct_t1_dit_log3.h"
   #include "fft_radix32_scalar_ct_n1.h"
   #include "fft_radix32_scalar_ct_t1_dit.h"
+  #include "fft_radix32_scalar_ct_t1_dit_log3.h"
   #include "fft_radix64_scalar_ct_n1.h"
   #include "fft_radix64_scalar_ct_t1_dit.h"
   #include "fft_radix64_scalar_ct_t1_dit_log3.h"
@@ -268,7 +271,7 @@ static void stride_registry_init(stride_registry_t *reg) {
     _REG_FULL(19)
     _REG_FULL(20)
     _REG_FULL(25)
-    _REG_NO_LOG3(32)
+    _REG_FULL(32)
     _REG_FULL(64)
 }
 

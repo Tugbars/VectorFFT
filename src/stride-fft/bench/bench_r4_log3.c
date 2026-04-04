@@ -112,17 +112,25 @@ int main(void) {
     printf("============================================\n");
     printf("Threshold: (R-1)*K*16 > 24KB -> log3 activates at K > 512\n\n");
 
-    /* N values with multiple R=4 stages */
+    /* N values that produce R=4 twiddled stages.
+     * Factorizer prefers large composites (25,20,16,12,10,8,...),
+     * so R=4 appears when what's left after big radixes is 4. */
     test_n_t test_Ns[] = {
-        {256},       /* 4x4x4x4 — pure R=4 */
-        {1024},      /* 4x4x4x4x4 or 4x4x64 etc */
-        {4096},      /* many R=4 stages */
-        {16384},     /* deep R=4 chain */
-        {64},        /* 4x4x4 — small */
-        {16},        /* 4x4 — tiny */
-        {1000},      /* composite with R=4 stages */
-        {4000},      /* composite */
-        {16000},     /* composite */
+        {20},        /* 5x4 */
+        {28},        /* 7x4 */
+        {48},        /* 12x4 */
+        {80},        /* 20x4 */
+        {100},       /* 25x4 */
+        {140},       /* 7x20... or 7x5x4 */
+        {196},       /* 7x7x4 */
+        {300},       /* 25x12 or 25x3x4 */
+        {500},       /* 25x20 or 25x5x4 */
+        {700},       /* 7x25x4 */
+        {2500},      /* 25x25x4 */
+        {1400},      /* 7x25x8 or ... x4 */
+        {4900},      /* 7x7x25x4 */
+        {10000},     /* 25x20x20 or ... */
+        {62500},     /* 25x25x25x4 */
     };
     int n_Ns = sizeof(test_Ns) / sizeof(test_Ns[0]);
 
@@ -141,13 +149,24 @@ int main(void) {
         /* Check this N actually has R=4 stages */
         stride_plan_t *check = make_plan_r4(N, 32, &reg, 0);
         if (!check) continue;
-        int has_r4 = 0;
-        for (int s = 1; s < check->num_stages; s++)
-            if (check->factors[s] == 4) has_r4 = 1;
+        int r4_count = 0;
+        for (int s = 0; s < check->num_stages; s++)
+            if (check->factors[s] == 4) r4_count++;
         char fstr[64];
         format_factors(fstr, check);
         stride_plan_destroy(check);
-        if (!has_r4) continue;
+        /* Need at least one R=4 twiddled stage (s >= 1) */
+        int has_r4_tw = 0;
+        check = make_plan_r4(N, 32, &reg, 0);
+        if (check) {
+            for (int s = 1; s < check->num_stages; s++)
+                if (check->factors[s] == 4) has_r4_tw = 1;
+            stride_plan_destroy(check);
+        }
+        if (!has_r4_tw) {
+            printf("%-7d %-16s (no R=4 twiddled stage, skipping)\n\n", N, fstr);
+            continue;
+        }
 
         for (int ki = 0; ki < n_Ks; ki++) {
             size_t K = test_Ks[ki];

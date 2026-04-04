@@ -191,7 +191,18 @@ static stride_plan_t *_stride_build_plan(
         }
     }
 
-    return stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b);
+    /* Resolve log3_mask: if heuristic (-1), compute the actual mask */
+    int resolved_mask = 0;
+    if (log3_mask == -1) {
+        for (int s = 1; s < nf; s++) {
+            if (stride_should_use_log3(factors[s], K, reg))
+                resolved_mask |= (1 << s);
+        }
+    } else {
+        resolved_mask = log3_mask;
+    }
+
+    return stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, resolved_mask);
 }
 
 /* ═══════════════════════════════════════════════════════════════

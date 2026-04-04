@@ -51,10 +51,10 @@ radix16_t1_dit_log3_fwd_scalar(
         const double b1_im = _load_pd(&W_im[0*me+m]);
         const double b2_re = _load_pd(&W_re[1*me+m]);
         const double b2_im = _load_pd(&W_im[1*me+m]);
-        const double b4_re = _load_pd(&W_re[2*me+m]);
-        const double b4_im = _load_pd(&W_im[2*me+m]);
-        const double b8_re = _load_pd(&W_re[3*me+m]);
-        const double b8_im = _load_pd(&W_im[3*me+m]);
+        const double b4_re = _load_pd(&W_re[3*me+m]);
+        const double b4_im = _load_pd(&W_im[3*me+m]);
+        const double b8_re = _load_pd(&W_re[7*me+m]);
+        const double b8_im = _load_pd(&W_im[7*me+m]);
 
         double tw_dr, tw_di;
 
@@ -374,10 +374,10 @@ radix16_t1_dit_log3_bwd_scalar(
         const double b1_im = _load_pd(&W_im[0*me+m]);
         const double b2_re = _load_pd(&W_re[1*me+m]);
         const double b2_im = _load_pd(&W_im[1*me+m]);
-        const double b4_re = _load_pd(&W_re[2*me+m]);
-        const double b4_im = _load_pd(&W_im[2*me+m]);
-        const double b8_re = _load_pd(&W_re[3*me+m]);
-        const double b8_im = _load_pd(&W_im[3*me+m]);
+        const double b4_re = _load_pd(&W_re[3*me+m]);
+        const double b4_im = _load_pd(&W_im[3*me+m]);
+        const double b8_re = _load_pd(&W_re[7*me+m]);
+        const double b8_im = _load_pd(&W_im[7*me+m]);
 
         double tw_dr, tw_di;
 

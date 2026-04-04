@@ -671,6 +671,138 @@ def emit_dit_tw_flat_kernel(em, d, nfuse, itw_set, k_expr="k"):
 #   PASS 2: reload → int twiddle → radix-4 → ext twiddle on OUTPUT → store
 # ═══════════════════════════════════════════════════════════════
 
+def emit_dit_tw_log3_kernel(em, d, nfuse, itw_set, k_expr="k"):
+    """Emit one DIT twiddled log3 kernel (fwd or bwd).
+
+    Loads 5 base twiddles: W^1(row0), W^2(row1), W^4(row3), W^8(row7), W^16(row15).
+    Derives all 26 remaining twiddles via binary decomposition cmul chains.
+    PASS 2 is identical to flat (internal twiddles are constants).
+    """
+    isa = em.isa
+    T = isa.reg_type
+    fwd = (d == 'fwd')
+    last_n2 = N2 - 1
+
+    xv8 = [f"x{i}" for i in range(N1)]
+    xv4 = [f"x{i}" for i in range(N2)]
+
+    # ── Load 5 base twiddles ──
+    em.c("Log3: load 5 base twiddles W^1, W^2, W^4, W^8, W^16")
+    tb, tbi = em._tw_buf(), em._tw_buf_im()
+    bases = [('b1',0), ('b2',1), ('b4',3), ('b8',7), ('b16',15)]  # (name, row=j-1)
+    for bname, row in bases:
+        ta = em._tw_addr(row, k_expr)
+        if isa.name == 'scalar':
+            em.o(f"const double {bname}_re = {tb}[{ta}], {bname}_im = {tbi}[{ta}];")
+        else:
+            load_fn = '_mm256_load_pd' if isa.name == 'avx2' else '_mm512_load_pd'
+            em.o(f"const {T} {bname}_re = {load_fn}(&{tb}[{ta}]);")
+            em.o(f"const {T} {bname}_im = {load_fn}(&{tbi}[{ta}]);")
+    em.b()
+
+    # ── Derive column twiddles W^{4*n1} for n1=0..7 ──
+    # W^0=1 (skip), W^4=b4 (base), W^8=b8 (base), W^16=b16 (base)
+    # Derive: W^12=b4*b8, W^20=b4*b16, W^24=b8*b16, W^28=W^12*b16
+    em.c("Derive column twiddles: W^12, W^20, W^24, W^28")
+    em.o(f"{T} w12_re, w12_im;")
+    em.emit_cmul("w12_re", "w12_im", "b4_re", "b4_im", "b8_re", "b8_im", 'fwd')
+    em.o(f"{T} w20_re, w20_im;")
+    em.emit_cmul("w20_re", "w20_im", "b4_re", "b4_im", "b16_re", "b16_im", 'fwd')
+    em.o(f"{T} w24_re, w24_im;")
+    em.emit_cmul("w24_re", "w24_im", "b8_re", "b8_im", "b16_re", "b16_im", 'fwd')
+    em.o(f"{T} w28_re, w28_im;")
+    em.emit_cmul("w28_re", "w28_im", "w12_re", "w12_im", "b16_re", "b16_im", 'fwd')
+    em.b()
+
+    # Also derive W^3 = W^1 * W^2 (needed for sub-FFT n2=3)
+    em.o(f"{T} w3_re, w3_im;")
+    em.emit_cmul("w3_re", "w3_im", "b1_re", "b1_im", "b2_re", "b2_im", 'fwd')
+    em.b()
+
+    # Column twiddle lookup: W^{4*n1} for n1=0..7
+    # n1=0: 1, n1=1: b4, n1=2: b8, n1=3: w12, n1=4: b16, n1=5: w20, n1=6: w24, n1=7: w28
+    col_tw = {0: None, 1: 'b4', 2: 'b8', 3: 'w12', 4: 'b16', 5: 'w20', 6: 'w24', 7: 'w28'}
+    # Row twiddle: W^{n2} for n2=0..3
+    # n2=0: 1, n2=1: b1, n2=2: b2, n2=3: w3
+    row_tw = {0: None, 1: 'b1', 2: 'b2', 3: 'w3'}
+
+    # ── PASS 1: N2 sub-FFTs with log3-derived twiddles ──
+    for n2 in range(N2):
+        is_last = (n2 == last_n2)
+        em.c(f"sub-FFT n2={n2} (log3)")
+
+        # For sub-FFT n2, each input n1 needs twiddle W^{4*n1+n2} = W^{4*n1} * W^{n2}
+        for n1 in range(N1):
+            n = N2 * n1 + n2
+            em.emit_load(f"x{n1}", n, k_expr)
+
+            if n == 0:
+                pass  # no twiddle for element 0
+            else:
+                # Determine the twiddle: W^{4*n1+n2} = col_tw[n1] * row_tw[n2]
+                ct = col_tw[n1]
+                rt = row_tw[n2]
+
+                if ct is None and rt is None:
+                    pass  # W^0 = 1, no twiddle (shouldn't happen for n>0)
+                elif ct is None:
+                    # W^{n2} only (n1=0, n2>0)
+                    em.emit_cmul_inplace(f"x{n1}", f"{rt}_re", f"{rt}_im", d)
+                elif rt is None:
+                    # W^{4*n1} only (n2=0, n1>0)
+                    em.emit_cmul_inplace(f"x{n1}", f"{ct}_re", f"{ct}_im", d)
+                else:
+                    # W^{4*n1+n2} = col * row, derive in temp then apply
+                    em.o(f"{{ {T} tw_r, tw_i;")
+                    em.emit_cmul("tw_r", "tw_i", f"{ct}_re", f"{ct}_im", f"{rt}_re", f"{rt}_im", 'fwd')
+                    em.emit_cmul_inplace(f"x{n1}", "tw_r", "tw_i", d)
+                    em.o(f"}}")
+
+        em.b()
+        em.emit_radix8(xv8, d, f"radix-8 n2={n2}")
+        em.b()
+
+        # Spill/fuse strategy (identical to flat)
+        if is_last:
+            em.c(f"FUSED: save x0..x{nfuse-1} to s-regs, spill x{nfuse}..x{N1-1}")
+            for k1 in range(nfuse):
+                em.o(f"s{k1}_re = x{k1}_re; s{k1}_im = x{k1}_im;")
+            for k1 in range(nfuse, N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        em.b()
+
+    # ── PASS 2: identical to flat (internal twiddles are constants) ──
+    em.c(f"PASS 2")
+    em.b()
+    for k1 in range(N1):
+        em.c(f"column k1={k1}")
+
+        if k1 < nfuse:
+            for n2 in range(last_n2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+            em.o(f"x{last_n2}_re = s{k1}_re; x{last_n2}_im = s{k1}_im;")
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+        em.b()
+
+        if k1 > 0:
+            for n2 in range(1, N2):
+                e = (n2 * k1) % N
+                em.emit_twiddle(f"x{n2}", f"x{n2}", e, N, d)
+            em.b()
+
+        em.emit_radix4(xv4, d, f"radix-4 k1={k1}")
+        em.b()
+
+        for k2 in range(N2):
+            em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
+        em.b()
+
+
 def emit_dif_tw_flat_kernel(em, d, nfuse, itw_set, k_expr="k"):
     """Emit one DIF twiddled flat kernel (fwd or bwd)."""
     fwd = (d == 'fwd')
@@ -1859,6 +1991,7 @@ def emit_ct_file(isa, itw_set, ct_variant):
     """Emit FFTW-style n1 or t1_dit codelet for R=32."""
     is_n1 = ct_variant == 'ct_n1'
     is_t1_dif = ct_variant == 'ct_t1_dif'
+    is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     nfuse = isa.nfuse_notw if is_n1 else isa.nfuse_tw
     T = isa.reg_type
     em = Emitter(isa)
@@ -1870,6 +2003,9 @@ def emit_ct_file(isa, itw_set, ct_variant):
     elif is_t1_dif:
         func_base = "radix32_t1_dif"
         vname = "t1 DIF (in-place twiddle)"
+    elif is_t1_dit_log3:
+        func_base = "radix32_t1_dit_log3"
+        vname = "t1 DIT log3 (in-place, derived twiddles)"
     else:
         func_base = "radix32_t1_dit"
         vname = "t1 DIT (in-place twiddle)"
@@ -1981,6 +2117,8 @@ def emit_ct_file(isa, itw_set, ct_variant):
             emit_notw_kernel(em, d, nfuse, itw_set)
         elif is_t1_dif:
             emit_dif_tw_flat_kernel(em, d, nfuse, itw_set)
+        elif is_t1_dit_log3:
+            emit_dit_tw_log3_kernel(em, d, nfuse, itw_set)
         else:
             emit_dit_tw_flat_kernel(em, d, nfuse, itw_set)
         em.ind -= 1
@@ -2195,7 +2333,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='dit_tw',
                         choices=['dit_tw', 'dif_tw', 'notw', 'ladder', 'avx512_full',
-                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dif', 'all'])
+                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
     args = parser.parse_args()
 
     itw_set = collect_internal_twiddles()
@@ -2272,6 +2410,12 @@ def main():
 
         if args.variant in ('ct_t1_dit',):
             lines = emit_ct_file(isa, itw_set, 'ct_t1_dit')
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print("\n".join(lines))
+
+        if args.variant in ('ct_t1_dit_log3',):
+            lines = emit_ct_file(isa, itw_set, 'ct_t1_dit_log3')
             if isa.name == 'scalar':
                 add_sqrt2_scalar(lines)
             print("\n".join(lines))
