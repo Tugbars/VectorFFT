@@ -23,6 +23,17 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
         Debug Release RelWithDebInfo MinSizeRel)
 endif()
 
+# ── Intel compiler runtime library path (ICX needs libircmt.lib) ──────
+if(CMAKE_C_COMPILER_ID MATCHES "IntelLLVM")
+    get_filename_component(_icx_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+    get_filename_component(_icx_root "${_icx_bin}" DIRECTORY)
+    if(EXISTS "${_icx_root}/lib")
+        link_directories("${_icx_root}/lib")
+    elseif(EXISTS "${_icx_root}/compiler/lib")
+        link_directories("${_icx_root}/compiler/lib")
+    endif()
+endif()
+
 # ── Stride-FFT module ──────────────────────────────────────────────────
 add_subdirectory(src/stride-fft)
 

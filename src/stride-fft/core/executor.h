@@ -104,6 +104,14 @@ typedef struct {
     size_t K;
     int factors[STRIDE_MAX_STAGES];   /* radix per stage */
     stride_stage_t stages[STRIDE_MAX_STAGES];
+
+    /* Override for non-staged plans (Bluestein, Rader, etc.).
+     * When override_fwd is non-NULL, execute dispatches here
+     * instead of the staged loop. Set by bluestein.h. */
+    void (*override_fwd)(void *data, double *re, double *im);
+    void (*override_bwd)(void *data, double *re, double *im);
+    void (*override_destroy)(void *data);
+    void *override_data;
 } stride_plan_t;
 
 
@@ -113,6 +121,10 @@ typedef struct {
 
 static inline void stride_execute_fwd(const stride_plan_t *plan,
                                       double *re, double *im) {
+    if (plan->override_fwd) {
+        plan->override_fwd(plan->override_data, re, im);
+        return;
+    }
     const size_t K = plan->K;
 
     for (int s = 0; s < plan->num_stages; s++) {
@@ -174,6 +186,10 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
 
 static inline void stride_execute_bwd(const stride_plan_t *plan,
                                       double *re, double *im) {
+    if (plan->override_bwd) {
+        plan->override_bwd(plan->override_data, re, im);
+        return;
+    }
     const size_t K = plan->K;
 
     for (int s = plan->num_stages - 1; s >= 0; s--) {
@@ -461,6 +477,11 @@ static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, in
 }
 
 static void stride_plan_destroy(stride_plan_t *plan) {
+    if (plan->override_destroy) {
+        plan->override_destroy(plan->override_data);
+        free(plan);
+        return;
+    }
     for (int s = 0; s < plan->num_stages; s++) {
         free(plan->stages[s].group_base);
         free(plan->stages[s].needs_tw);
