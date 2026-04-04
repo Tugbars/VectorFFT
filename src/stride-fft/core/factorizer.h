@@ -120,14 +120,18 @@ static void _sort_factors_descending(int *f, int n) {
     }
 }
 
-/* Check if a composite radix should be decomposed at this K.
- * Returns 1 if the composite's twiddle table overflows the L1 twiddle budget,
- * meaning we should use smaller sub-radixes instead.
+/* Check if a radix's twiddle table overflows half the L1 at this K.
  *
- * Budget = L1 / 3 (twiddle shares L1 with data and codelet spills).
- * Overflow when: (R-1) * K * 16 > budget */
-static int _should_decompose(int R, size_t K, size_t l1_bytes) {
-    size_t tw_budget = l1_bytes / 3;
+ * Twiddle table size for one twiddled stage: (R-1) * K * 16 bytes.
+ * Budget = L1 / 2: twiddles get half, data + codelet spills get half.
+ *
+ * When nothing fits within L1/2, the fallback in the greedy loop picks
+ * the largest available radix anyway (fewer stages > perfect caching).
+ * This two-tier approach avoids both extremes:
+ *   - L1/3 was too strict: rejected R=8 at K=256, caused stage explosion
+ *   - Full L1 was too loose: left no cache for data on smaller L1 CPUs */
+static int _tw_overflows_l1(int R, size_t K, size_t l1_bytes) {
+    size_t tw_budget = l1_bytes / 2;
     size_t tw_bytes = (size_t)(R - 1) * K * 16;
     return tw_bytes > tw_budget;
 }
@@ -145,33 +149,33 @@ static int stride_factorize_greedy(int N, size_t K,
 
     /* Decompose N into available radixes.
      *
-     * At small K: prefer composites (fewer stages, less overhead).
-     * At large K: skip composites whose twiddle tables overflow L1,
-     * let them decompose into smaller radixes that fit.
-     *
-     * The K threshold is per-radix: (R-1)*K*16 > L1/3. */
+     * Strategy: prefer large composites (fewer stages) unless their
+     * twiddle table exceeds L1. When nothing fits, pick the LARGEST
+     * available radix anyway — extra cache misses are cheaper than
+     * extra stages (each stage is a full pass over all N*K data). */
     while (remaining > 1 && nf < FACT_MAX_STAGES) {
         int best_R = 0;
+
+        /* Pass 1: find largest radix whose twiddles fit L1 */
         for (const int *rp = FACTORIZE_RADIXES; *rp; rp++) {
             int R = *rp;
             if (remaining % R != 0) continue;
             if (!stride_registry_has(reg, R)) continue;
-
-            /* For twiddled stages (nf > 0): check if this radix's twiddle
-             * table would overflow L1. If so, skip to smaller radixes. */
-            if (nf > 0 && _should_decompose(R, K, l1)) continue;
-
+            if (nf > 0 && _tw_overflows_l1(R, K, l1)) continue;
             best_R = R;
             break;
         }
 
-        /* Fallback: if nothing fits L1, pick smallest available */
+        /* Pass 2: if nothing fits L1, pick largest available anyway.
+         * Fewer stages > perfect cache behavior. The twiddle data is
+         * accessed sequentially so L2 streaming works acceptably. */
         if (!best_R) {
             for (const int *rp = FACTORIZE_RADIXES; *rp; rp++) {
                 int R = *rp;
                 if (remaining % R != 0) continue;
                 if (!stride_registry_has(reg, R)) continue;
-                if (!best_R || R < best_R) best_R = R;
+                best_R = R;
+                break;  /* FACTORIZE_RADIXES is largest-first */
             }
         }
 
@@ -184,8 +188,8 @@ static int stride_factorize_greedy(int N, size_t K,
 
     /* Order based on K:
      * Small K (<=16): descending — large radixes first, everything fits L1.
-     * Large K (>16): ascending — small radixes first (small stride on outer stages),
-     *                large radixes last (stride=K, sequential access). */
+     * Large K (>16): ascending — small radixes first (small stride on outer
+     *                stages), large radixes last (stride=K, sequential). */
     if (K <= 16) {
         _sort_factors_descending(fact->factors, nf);
     } else {

@@ -409,8 +409,9 @@ int main(void) {
     printf("\n");
 
     /* ── Test cases ── */
-    /* max_N_exhaust: above this, skip exhaustive (heuristic only + FFTW) */
-    #define MAX_N_EXHAUST 2000
+    /* Exhaustive search for ALL sizes — this is our best vs MKL's best.
+     * Takes longer on first run but wisdom caches results for reruns. */
+    #define MAX_N_EXHAUST 200000
 
     test_case_t cases[] = {
         /* pow2 — small to large */
