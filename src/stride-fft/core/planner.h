@@ -56,10 +56,12 @@ typedef struct {
 typedef struct {
     stride_wisdom_entry_t entries[WISDOM_MAX_ENTRIES];
     int count;
+    stride_log3_thresholds_t log3;  /* calibrated per-radix log3 thresholds */
 } stride_wisdom_t;
 
 static void stride_wisdom_init(stride_wisdom_t *wis) {
     wis->count = 0;
+    stride_log3_thresholds_init(&wis->log3);
 }
 
 /* Find wisdom entry for (N, K). Returns NULL if not found. */
@@ -106,11 +108,35 @@ static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
  * Example:
  *   1000 256 4 8 5 5 5 7 14.20
  */
+/* ── Wisdom file I/O ──
+ * Format:
+ *   @log3 R threshold_K         — per-radix log3 threshold (calibrated)
+ *   N K nf f0 f1 ... log3_mask best_ns  — per-(N,K) plan
+ * Lines starting with # are comments.
+ *
+ * Example:
+ *   @log3 3 512
+ *   @log3 7 128
+ *   @log3 16 64
+ *   1000 256 4 8 5 5 5 6 14.20
+ */
 static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) return -1;
     fprintf(f, "# VectorFFT stride wisdom\n");
-    fprintf(f, "# N K nf factors... log3_mask best_ns\n");
+
+    /* Log3 thresholds */
+    int has_log3 = 0;
+    for (int R = 2; R < STRIDE_REG_MAX_RADIX; R++) {
+        if (wis->log3.calibrated[R]) {
+            if (!has_log3) { fprintf(f, "# log3 thresholds: @log3 R threshold_K\n"); has_log3 = 1; }
+            fprintf(f, "@log3 %d %zu\n", R, wis->log3.threshold_K[R]);
+        }
+    }
+
+    /* Per-(N,K) plans */
+    if (wis->count > 0)
+        fprintf(f, "# plans: N K nf factors... log3_mask best_ns\n");
     for (int i = 0; i < wis->count; i++) {
         const stride_wisdom_entry_t *e = &wis->entries[i];
         fprintf(f, "%d %zu %d", e->N, e->K, e->nfactors);
@@ -128,6 +154,20 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         if (line[0] == '#' || line[0] == '\n') continue;
+
+        /* @log3 R threshold_K */
+        if (line[0] == '@') {
+            int R; size_t tK;
+            if (sscanf(line, "@log3 %d %zu", &R, &tK) == 2) {
+                if (R >= 2 && R < STRIDE_REG_MAX_RADIX) {
+                    wis->log3.threshold_K[R] = tK;
+                    wis->log3.calibrated[R] = 1;
+                }
+            }
+            continue;
+        }
+
+        /* N K nf factors... log3_mask best_ns */
         stride_wisdom_entry_t e;
         memset(&e, 0, sizeof(e));
         int pos = 0, n;
@@ -151,18 +191,122 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+ * LOG3 THRESHOLD CALIBRATION
+ *
+ * For each radix R with log3 support, sweep K values and find
+ * the crossover point where log3 beats flat. Uses a simple
+ * inner × R plan (2 stages, stage 1 is twiddled R).
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* Pick an inner radix different from R for calibration */
+static int _log3_calib_inner(int R, const stride_registry_t *reg) {
+    int candidates[] = {8, 16, 5, 3, 7, 4, 6, 2, 0};
+    for (int *c = candidates; *c; c++)
+        if (*c != R && stride_registry_has(reg, *c)) return *c;
+    return 2;
+}
+
+static double _log3_calib_bench(int N, size_t K, const int *factors, int nf,
+                                 int log3_mask, const stride_registry_t *reg) {
+    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        n1f[s] = reg->n1_fwd[R]; n1b[s] = reg->n1_bwd[R];
+        if (s > 0 && ((log3_mask >> s) & 1) && reg->t1_fwd_log3[R]) {
+            t1f[s] = reg->t1_fwd_log3[R]; t1b[s] = reg->t1_bwd_log3[R];
+        } else {
+            t1f[s] = reg->t1_fwd[R]; t1b[s] = reg->t1_bwd[R];
+        }
+    }
+    stride_plan_t *plan = stride_plan_create(N, K, factors, nf,
+                                              n1f, n1b, t1f, t1b, log3_mask);
+    if (!plan) return 1e18;
+
+    size_t total = (size_t)N * K;
+    double *re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    for (size_t i = 0; i < total; i++) {
+        re[i] = (double)rand()/RAND_MAX - 0.5;
+        im[i] = (double)rand()/RAND_MAX - 0.5;
+    }
+
+    for (int i = 0; i < 5; i++) stride_execute_fwd(plan, re, im);
+
+    int reps = (int)(5e5 / (total + 1));
+    if (reps < 10) reps = 10;
+    if (reps > 50000) reps = 50000;
+
+    double best = 1e18;
+    for (int t = 0; t < 3; t++) {
+        double t0 = now_ns();
+        for (int i = 0; i < reps; i++) stride_execute_fwd(plan, re, im);
+        double ns = (now_ns() - t0) / reps;
+        if (ns < best) best = ns;
+    }
+
+    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
+    stride_plan_destroy(plan);
+    return best;
+}
+
+/**
+ * stride_calibrate_log3 -- Measure per-radix log3 thresholds.
+ *
+ * For each radix R with log3 support, benchmarks flat vs log3
+ * across K = 4, 8, 16, ..., 1024. The threshold is the smallest K
+ * where log3 wins. If log3 never wins, threshold is set to SIZE_MAX
+ * (effectively disabling it).
+ *
+ * Results are stored in wis->log3 and will be saved to the wisdom file.
+ */
+static void stride_calibrate_log3(stride_wisdom_t *wis,
+                                   const stride_registry_t *reg) {
+    static const size_t sweep_Ks[] = {4, 8, 16, 32, 64, 128, 256, 512, 1024, 0};
+
+    for (int R = 2; R < STRIDE_REG_MAX_RADIX; R++) {
+        if (!reg->t1_fwd_log3[R]) continue;
+
+        int inner = _log3_calib_inner(R, reg);
+        int N = inner * R;
+        int factors[2] = {inner, R};
+        int nf = 2;
+
+        size_t threshold = (size_t)-1;  /* default: log3 never wins */
+
+        for (const size_t *kp = sweep_Ks; *kp; kp++) {
+            size_t K = *kp;
+
+            double flat_ns = _log3_calib_bench(N, K, factors, nf, 0, reg);
+            double log3_ns = _log3_calib_bench(N, K, factors, nf, (1 << 1), reg);
+
+            /* Log3 must win by >2% to filter timing noise */
+            if (log3_ns < flat_ns * 0.98) {
+                threshold = K;
+                break;  /* first K where log3 reliably wins */
+            }
+        }
+
+        wis->log3.threshold_K[R] = threshold;
+        wis->log3.calibrated[R] = 1;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
  * PLAN CONSTRUCTION HELPERS
  * ═══════════════════════════════════════════════════════════════ */
 
 /**
  * Build codelet arrays from registry for a given factorization.
  * log3_mask: bitmask where bit s means use log3 for stage s.
- * If log3_mask == -1, use the heuristic (stride_select_t1).
+ * If log3_mask == -1, use heuristic (or calibrated thresholds if provided).
+ * thresholds: optional calibrated log3 thresholds (NULL = use heuristic).
  */
-static stride_plan_t *_stride_build_plan(
+static stride_plan_t *_stride_build_plan_ex(
         int N, size_t K,
         const int *factors, int nf, int log3_mask,
-        const stride_registry_t *reg) {
+        const stride_registry_t *reg,
+        const stride_log3_thresholds_t *thresholds) {
     stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
     stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
 
@@ -172,13 +316,12 @@ static stride_plan_t *_stride_build_plan(
         n1b[s] = reg->n1_bwd[R];
 
         if (s == 0) {
-            /* Stage 0: no twiddle needed */
             t1f[s] = NULL;
             t1b[s] = NULL;
         } else if (log3_mask == -1) {
-            /* Heuristic log3 selection */
-            t1f[s] = stride_select_t1_fwd(R, K, reg);
-            t1b[s] = stride_select_t1_bwd(R, K, reg);
+            /* Heuristic or calibrated selection */
+            t1f[s] = stride_select_t1_fwd_calibrated(R, K, reg, thresholds);
+            t1b[s] = stride_select_t1_bwd_calibrated(R, K, reg, thresholds);
         } else {
             /* Explicit log3 mask */
             if ((log3_mask >> s) & 1) {
@@ -191,11 +334,12 @@ static stride_plan_t *_stride_build_plan(
         }
     }
 
-    /* Resolve log3_mask: if heuristic (-1), compute the actual mask */
+    /* Resolve log3_mask: if heuristic (-1), compute actual mask using
+     * calibrated thresholds (if available) or heuristic fallback */
     int resolved_mask = 0;
     if (log3_mask == -1) {
         for (int s = 1; s < nf; s++) {
-            if (stride_should_use_log3(factors[s], K, reg))
+            if (stride_should_use_log3_calibrated(factors[s], K, reg, thresholds))
                 resolved_mask |= (1 << s);
         }
     } else {
@@ -203,6 +347,14 @@ static stride_plan_t *_stride_build_plan(
     }
 
     return stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, resolved_mask);
+}
+
+/* Convenience wrapper: no calibrated thresholds (uses heuristic fallback) */
+static stride_plan_t *_stride_build_plan(
+        int N, size_t K,
+        const int *factors, int nf, int log3_mask,
+        const stride_registry_t *reg) {
+    return _stride_build_plan_ex(N, K, factors, nf, log3_mask, reg, NULL);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -275,16 +427,14 @@ static stride_plan_t *stride_auto_plan(int N, size_t K,
 static stride_plan_t *stride_exhaustive_plan(int N, size_t K,
                                               const stride_registry_t *reg) {
     stride_factorization_t best_fact;
-    double best_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
+    int log3_mask = 0;
+    double best_ns = stride_exhaustive_search(N, K, reg, &best_fact, &log3_mask, NULL, 0);
     if (best_ns >= 1e17)
         return NULL;
 
-    /* Rebuild the plan with the best factorization.
-     * Note: exhaustive search already chose optimal log3 per stage,
-     * but best_fact doesn't carry the log3_mask. Use heuristic selection
-     * which should match since the same heuristic is used in bench_one(). */
+    /* Rebuild with the exact log3_mask the exhaustive search found best */
     return _stride_build_plan(N, K, best_fact.factors, best_fact.nfactors,
-                              -1, reg);
+                              log3_mask, reg);
 }
 
 /**
@@ -300,9 +450,15 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
                                         const stride_wisdom_t *wis) {
     const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
     if (e) {
+        /* Explicit log3_mask from wisdom — use as-is */
         return _stride_build_plan(N, K, e->factors, e->nfactors,
                                   e->log3_mask, reg);
     }
+    /* No wisdom for this (N,K): use heuristic with calibrated thresholds */
+    stride_factorization_t fact;
+    if (stride_factorize(N, K, reg, &fact) == 0)
+        return _stride_build_plan_ex(N, K, fact.factors, fact.nfactors,
+                                     -1, reg, &wis->log3);
     return stride_auto_plan(N, K, reg);
 }
 
@@ -358,20 +514,32 @@ static double _stride_refine_bench(int N, size_t K,
  * with full accuracy before storing. This avoids the noisy timings from
  * the reduced-rep exhaustive search.
  */
+/**
+ * stride_wisdom_ensure_log3 -- Calibrate log3 thresholds if not done yet.
+ *
+ * Called automatically before the first exhaustive search.
+ * Runs stride_calibrate_log3() once, stores results in wis->log3.
+ * Subsequent calls are no-ops (thresholds already calibrated).
+ */
+static void stride_wisdom_ensure_log3(stride_wisdom_t *wis,
+                                       const stride_registry_t *reg) {
+    /* Check if any radix is already calibrated */
+    for (int R = 2; R < STRIDE_REG_MAX_RADIX; R++)
+        if (wis->log3.calibrated[R]) return;  /* already done */
+    stride_calibrate_log3(wis, reg);
+}
+
 static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
                                      const stride_registry_t *reg) {
+    /* Ensure log3 thresholds are calibrated before exhaustive search */
+    stride_wisdom_ensure_log3(wis, reg);
+
     stride_factorization_t best_fact;
-    double search_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
+    int log3_mask = 0;
+    double search_ns = stride_exhaustive_search(N, K, reg, &best_fact, &log3_mask, &wis->log3, 0);
     if (search_ns >= 1e17) return;
 
-    /* Reconstruct log3_mask from heuristic (matches what exhaustive used) */
-    int log3_mask = 0;
-    for (int s = 1; s < best_fact.nfactors; s++) {
-        if (stride_should_use_log3(best_fact.factors[s], K, reg))
-            log3_mask |= (1 << s);
-    }
-
-    /* Re-bench with full accuracy */
+    /* Re-bench the winner with full accuracy using its exact log3_mask */
     double refined_ns = _stride_refine_bench(N, K, best_fact.factors,
                                               best_fact.nfactors, log3_mask, reg);
 
