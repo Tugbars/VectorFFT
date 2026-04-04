@@ -20,7 +20,7 @@
 static stride_plan_t *make_plan(int N, size_t K,
                                  const stride_registry_t *reg,
                                  const int *factors, int nf) {
-    return _stride_build_plan(N, K, factors, nf, -1, reg);
+    return _stride_build_plan(N, K, factors, nf, reg);
 }
 
 static double bench(stride_plan_t *plan, int N, size_t K) {

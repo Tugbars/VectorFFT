@@ -1,5 +1,5 @@
 /**
- * stride_exhaustive.h — Exhaustive factorization search for stride executor
+ * stride_exhaustive.h -- Exhaustive factorization search for stride executor
  *
  * For a given N and K, enumerates ALL valid factorizations into available
  * radixes, tries ALL orderings of each, benchmarks each combination,
@@ -12,7 +12,7 @@
  *   stride_registry_t reg;
  *   stride_registry_init(&reg);
  *   stride_factorization_t best;
- *   double best_ns = stride_exhaustive_search(N, K, &reg, &best, re, im);
+ *   double best_ns = stride_exhaustive_search(N, K, &reg, &best, 0);
  */
 #ifndef STRIDE_EXHAUSTIVE_H
 #define STRIDE_EXHAUSTIVE_H
@@ -25,12 +25,12 @@
 #include <stdio.h>
 #include <fftw3.h>
 
-/* ═══════════════════════════════════════════════════════════════
+/* =====================================================================
  * ENUMERATE ALL VALID FACTORIZATIONS
  *
  * Recursive: at each level, try every available radix that divides
  * remaining, recurse on remaining/R. Collect all complete factorizations.
- * ═══════════════════════════════════════════════════════════════ */
+ * ===================================================================== */
 
 #define EXHAUST_MAX_RESULTS 512
 
@@ -76,9 +76,9 @@ static void stride_enumerate_factorizations(int N, const stride_registry_t *reg,
     _enumerate_factorizations(N, reg, current, 0, list);
 }
 
-/* ═══════════════════════════════════════════════════════════════
+/* =====================================================================
  * GENERATE ALL PERMUTATIONS OF A FACTORIZATION
- * ═══════════════════════════════════════════════════════════════ */
+ * ===================================================================== */
 
 #define EXHAUST_MAX_PERMS 720  /* 6! = 720, max for nf=6 */
 
@@ -127,32 +127,45 @@ static void stride_gen_permutations(const int *factors, int nf, permutation_list
     } while (_next_perm(work, nf));
 }
 
-/* ═══════════════════════════════════════════════════════════════
+/* =====================================================================
  * BENCHMARK A SINGLE FACTORIZATION
  *
  * Creates a plan, warms up, times multiple runs, returns best ns.
  * Uses caller-provided aligned buffers (avoids alloc in hot loop).
- * ═══════════════════════════════════════════════════════════════ */
+ * ===================================================================== */
 
-/* Bench with explicit t1 arrays and log3 mask */
-static double stride_bench_one_ex(int N, size_t K, const int *factors, int nf,
-                                  stride_n1_fn *n1f, stride_n1_fn *n1b,
-                                  stride_t1_fn *t1f, stride_t1_fn *t1b,
-                                  int log3_mask,
-                                  double *re, double *im, double *orig_re, double *orig_im) {
+static double stride_bench_one(int N, size_t K, const int *factors, int nf,
+                               const stride_registry_t *reg,
+                               double *re, double *im, double *orig_re, double *orig_im) {
     size_t total = (size_t)N * K;
 
-    stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, log3_mask);
+    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        if (!reg->n1_fwd[R]) return 1e18;
+        n1f[s] = reg->n1_fwd[R];
+        n1b[s] = reg->n1_bwd[R];
+        if (s == 0) {
+            t1f[s] = NULL;
+            t1b[s] = NULL;
+        } else {
+            t1f[s] = reg->t1_fwd[R];
+            t1b[s] = reg->t1_bwd[R];
+        }
+    }
+
+    stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, 0);
     if (!plan) return 1e18;
 
-    /* Warm up (1 iteration) */
-    int reps = (int)(5e4 / (total + 1));
-    if (reps < 5) reps = 5;
-    if (reps > 20000) reps = 20000;
-
+    /* Warm up */
     memcpy(re, orig_re, total * sizeof(double));
     memcpy(im, orig_im, total * sizeof(double));
     stride_execute_fwd(plan, re, im);
+
+    int reps = (int)(5e4 / (total + 1));
+    if (reps < 5) reps = 5;
+    if (reps > 20000) reps = 20000;
 
     /* Benchmark: best of 2 trials */
     double best = 1e18;
@@ -170,51 +183,20 @@ static double stride_bench_one_ex(int N, size_t K, const int *factors, int nf,
     return best;
 }
 
-/* Convenience wrapper: builds codelet arrays from registry using heuristic log3 selection */
-static double stride_bench_one(int N, size_t K, const int *factors, int nf,
-                               const stride_registry_t *reg,
-                               double *re, double *im, double *orig_re, double *orig_im) {
-    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
-    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
-    for (int s = 0; s < nf; s++) {
-        int R = factors[s];
-        if (!reg->n1_fwd[R] || !reg->n1_bwd[R]) return 1e18;
-        n1f[s] = reg->n1_fwd[R];
-        n1b[s] = reg->n1_bwd[R];
-        t1f[s] = stride_select_t1_fwd(R, K, reg);
-        t1b[s] = stride_select_t1_bwd(R, K, reg);
-    }
-    /* Resolve heuristic log3 mask for bench_one_ex */
-    int mask = 0;
-    for (int s = 1; s < nf; s++)
-        if (stride_should_use_log3(factors[s], K, reg))
-            mask |= (1 << s);
-    return stride_bench_one_ex(N, K, factors, nf, n1f, n1b, t1f, t1b,
-                               mask, re, im, orig_re, orig_im);
-}
-
-/* ═══════════════════════════════════════════════════════════════
+/* =====================================================================
  * EXHAUSTIVE SEARCH
  *
  * For a given (N, K):
  *   1. Enumerate all valid factorizations of N
  *   2. For each, generate all unique permutations
- *   3. For each permutation, try all flat/log3 combinations per stage
- *   4. Benchmark each candidate, return the best
- *
- * Log3 combinations: for nf stages with s twiddled stages,
- * try 2^s variants (flat/log3 per twiddled stage).
- * Stage 0 is never twiddled. Max s = nf-1.
- * For nf=3: 4 log3 combos. For nf=4: 8. Manageable.
+ *   3. Benchmark each candidate, return the best
  *
  * verbose: 0=silent, 1=summary
- * ═══════════════════════════════════════════════════════════════ */
+ * ===================================================================== */
 
 static double stride_exhaustive_search(int N, size_t K,
                                        const stride_registry_t *reg,
                                        stride_factorization_t *best_fact,
-                                       int *out_log3_mask,
-                                       const stride_log3_thresholds_t *log3_thresholds,
                                        int verbose) {
     size_t total = (size_t)N * K;
 
@@ -235,7 +217,6 @@ static double stride_exhaustive_search(int N, size_t K,
 
     double global_best_ns = 1e18;
     int total_candidates = 0;
-    int best_log3_mask = 0;
 
     for (int fi = 0; fi < flist->count; fi++) {
         const stride_factorization_t *f = &flist->results[fi];
@@ -251,69 +232,22 @@ static double stride_exhaustive_search(int N, size_t K,
             const int *factors_p = plist->perms[pi];
             int nf = f->nfactors;
 
-            /* Resolve log3 from calibrated thresholds (or heuristic fallback) */
-            stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
-            stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
-            int actual_log3_mask = 0;
-            int skip = 0;
+            /* Quick single-trial pre-screen: skip if > 1.5x current best */
+            double quick_ns = stride_bench_one(N, K, factors_p, nf, reg,
+                                               re, im, orig_re, orig_im);
+            total_candidates++;
 
-            for (int s = 0; s < nf; s++) {
-                int R = factors_p[s];
-                if (!reg->n1_fwd[R]) { skip = 1; break; }
-                n1f[s] = reg->n1_fwd[R];
-                n1b[s] = reg->n1_bwd[R];
-                if (s > 0 && stride_should_use_log3_calibrated(R, K, reg, log3_thresholds)) {
-                    t1f[s] = reg->t1_fwd_log3[R];
-                    t1b[s] = reg->t1_bwd_log3[R];
-                    actual_log3_mask |= (1 << s);
-                } else {
-                    t1f[s] = reg->t1_fwd[R];
-                    t1b[s] = reg->t1_bwd[R];
-                }
-            }
-            if (skip) continue;
+            if (quick_ns > global_best_ns * 1.5 && global_best_ns < 1e17)
+                continue;
 
-            {
-                /* Quick single-trial pre-screen: skip if > 1.5x current best */
-                stride_plan_t *qplan = stride_plan_create(N, K, factors_p, nf,
-                                                           n1f, n1b, t1f, t1b, actual_log3_mask);
-                if (!qplan) continue;
+            /* Full bench (re-run with fresh data) */
+            double ns = stride_bench_one(N, K, factors_p, nf, reg,
+                                          re, im, orig_re, orig_im);
 
-                memcpy(re, orig_re, total * sizeof(double));
-                memcpy(im, orig_im, total * sizeof(double));
-                stride_execute_fwd(qplan, re, im); /* warmup */
-
-                int qreps = (int)(2e4 / (total + 1));
-                if (qreps < 3) qreps = 3;
-                if (qreps > 5000) qreps = 5000;
-
-                memcpy(re, orig_re, total * sizeof(double));
-                memcpy(im, orig_im, total * sizeof(double));
-                double qt0 = now_ns();
-                for (int qi = 0; qi < qreps; qi++)
-                    stride_execute_fwd(qplan, re, im);
-                double quick_ns = (now_ns() - qt0) / qreps;
-                stride_plan_destroy(qplan);
-
-                total_candidates++;
-
-                /* Prune: if quick estimate > 1.5x best, skip full bench */
-                if (quick_ns > global_best_ns * 1.5 && global_best_ns < 1e17) {
-                    continue;
-                }
-
-                /* Full bench */
-                double ns = stride_bench_one_ex(N, K, factors_p, nf,
-                                                n1f, n1b, t1f, t1b,
-                                                actual_log3_mask,
-                                                re, im, orig_re, orig_im);
-
-                if (ns < global_best_ns) {
-                    global_best_ns = ns;
-                    best_fact->nfactors = nf;
-                    memcpy(best_fact->factors, factors_p, nf * sizeof(int));
-                    best_log3_mask = actual_log3_mask;
-                }
+            if (ns < global_best_ns) {
+                global_best_ns = ns;
+                best_fact->nfactors = nf;
+                memcpy(best_fact->factors, factors_p, nf * sizeof(int));
             }
         }
         free(plist);
@@ -323,12 +257,8 @@ static double stride_exhaustive_search(int N, size_t K,
         printf("  Best: ");
         for (int s = 0; s < best_fact->nfactors; s++)
             printf("%s%d", s ? "x" : "", best_fact->factors[s]);
-        if (best_log3_mask)
-            printf(" (log3 mask=%d)", best_log3_mask);
         printf(" = %.1f ns (%d total candidates)\n", global_best_ns, total_candidates);
     }
-
-    if (out_log3_mask) *out_log3_mask = best_log3_mask;
 
     free(flist);
     STRIDE_ALIGNED_FREE(re);
@@ -339,12 +269,12 @@ static double stride_exhaustive_search(int N, size_t K,
     return global_best_ns;
 }
 
-/* ═══════════════════════════════════════════════════════════════
+/* =====================================================================
  * COMPARE: HEURISTIC vs EXHAUSTIVE
  *
  * Runs both, reports the heuristic's factorization, the exhaustive
  * best, and the ratio (how close the heuristic gets to optimal).
- * ═══════════════════════════════════════════════════════════════ */
+ * ===================================================================== */
 
 static void stride_compare_strategies(int N, size_t K,
                                       const stride_registry_t *reg) {
@@ -382,8 +312,7 @@ static void stride_compare_strategies(int N, size_t K,
 
     /* Exhaustive */
     stride_factorization_t exh_fact;
-    int exh_log3 = 0;
-    double exh_ns = stride_exhaustive_search(N, K, reg, &exh_fact, &exh_log3, NULL, 1);
+    double exh_ns = stride_exhaustive_search(N, K, reg, &exh_fact, 1);
 
     /* FFTW reference */
     fflush(stdout);

@@ -20,7 +20,21 @@
 
 static double roundtrip_err(int N, size_t K, const stride_registry_t *reg,
                             const int *factors, int nf, int log3_mask) {
-    stride_plan_t *p = _stride_build_plan(N, K, factors, nf, log3_mask, reg);
+    /* Build plan directly with log3 codelet selection */
+    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        n1f[s] = reg->n1_fwd[R]; n1b[s] = reg->n1_bwd[R];
+        if (s == 0) { t1f[s] = NULL; t1b[s] = NULL; }
+        else if ((log3_mask >> s) & 1) {
+            t1f[s] = reg->t1_fwd_log3[R] ? reg->t1_fwd_log3[R] : reg->t1_fwd[R];
+            t1b[s] = reg->t1_bwd_log3[R] ? reg->t1_bwd_log3[R] : reg->t1_bwd[R];
+        } else {
+            t1f[s] = reg->t1_fwd[R]; t1b[s] = reg->t1_bwd[R];
+        }
+    }
+    stride_plan_t *p = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, log3_mask);
     if (!p) return -1.0;
 
     size_t total = (size_t)N * K;
