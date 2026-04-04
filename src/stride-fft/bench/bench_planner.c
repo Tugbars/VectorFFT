@@ -102,12 +102,12 @@ static int test_correctness(int N, size_t K, const stride_registry_t *reg) {
     }
 
     size_t total = (size_t)N * K;
-    double *in_re  = (double*)aligned_alloc(64, total * sizeof(double));
-    double *in_im  = (double*)aligned_alloc(64, total * sizeof(double));
-    double *ref_re = (double*)aligned_alloc(64, total * sizeof(double));
-    double *ref_im = (double*)aligned_alloc(64, total * sizeof(double));
-    double *work_re = (double*)aligned_alloc(64, total * sizeof(double));
-    double *work_im = (double*)aligned_alloc(64, total * sizeof(double));
+    double *in_re  = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *in_im  = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *ref_re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *ref_im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *work_re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *work_im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
 
     for (size_t i = 0; i < total; i++) {
         in_re[i] = (double)rand()/RAND_MAX - 0.5;
@@ -142,9 +142,9 @@ static int test_correctness(int N, size_t K, const stride_registry_t *reg) {
     }
 
     free(perm);
-    aligned_free(in_re); aligned_free(in_im);
-    aligned_free(ref_re); aligned_free(ref_im);
-    aligned_free(work_re); aligned_free(work_im);
+    STRIDE_ALIGNED_FREE(in_re); STRIDE_ALIGNED_FREE(in_im);
+    STRIDE_ALIGNED_FREE(ref_re); STRIDE_ALIGNED_FREE(ref_im);
+    STRIDE_ALIGNED_FREE(work_re); STRIDE_ALIGNED_FREE(work_im);
     stride_plan_destroy(plan);
     return ok;
 }
@@ -158,12 +158,12 @@ static void test_accuracy(int N, size_t K, const stride_registry_t *reg) {
     if (!plan) return;
 
     size_t total = (size_t)N * K;
-    double *in_re  = (double*)aligned_alloc(64, total * sizeof(double));
-    double *in_im  = (double*)aligned_alloc(64, total * sizeof(double));
-    double *ref_re = (double*)aligned_alloc(64, total * sizeof(double));
-    double *ref_im = (double*)aligned_alloc(64, total * sizeof(double));
-    double *work_re = (double*)aligned_alloc(64, total * sizeof(double));
-    double *work_im = (double*)aligned_alloc(64, total * sizeof(double));
+    double *in_re  = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *in_im  = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *ref_re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *ref_im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *work_re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *work_im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
 
     for (size_t i = 0; i < total; i++) {
         in_re[i] = (double)rand()/RAND_MAX - 0.5;
@@ -229,9 +229,9 @@ static void test_accuracy(int N, size_t K, const stride_registry_t *reg) {
     printf("\n");
 
     free(perm);
-    aligned_free(in_re); aligned_free(in_im);
-    aligned_free(ref_re); aligned_free(ref_im);
-    aligned_free(work_re); aligned_free(work_im);
+    STRIDE_ALIGNED_FREE(in_re); STRIDE_ALIGNED_FREE(in_im);
+    STRIDE_ALIGNED_FREE(ref_re); STRIDE_ALIGNED_FREE(ref_im);
+    STRIDE_ALIGNED_FREE(work_re); STRIDE_ALIGNED_FREE(work_im);
     stride_plan_destroy(plan);
 }
 
@@ -241,8 +241,8 @@ static void test_accuracy(int N, size_t K, const stride_registry_t *reg) {
 
 static double bench_plan(const stride_plan_t *plan, int N, size_t K) {
     size_t total = (size_t)N * K;
-    double *re = (double*)aligned_alloc(64, total * sizeof(double));
-    double *im = (double*)aligned_alloc(64, total * sizeof(double));
+    double *re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
     for (size_t i = 0; i < total; i++) {
         re[i] = (double)rand()/RAND_MAX - 0.5;
         im[i] = (double)rand()/RAND_MAX - 0.5;
@@ -262,14 +262,14 @@ static double bench_plan(const stride_plan_t *plan, int N, size_t K) {
         if (ns < best) best = ns;
     }
 
-    aligned_free(re); aligned_free(im);
+    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
     return best;
 }
 
 static double bench_fftw(int N, size_t K) {
     size_t total = (size_t)N * K;
-    double *re = (double*)aligned_alloc(64, total * sizeof(double));
-    double *im = (double*)aligned_alloc(64, total * sizeof(double));
+    double *re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
     for (size_t i = 0; i < total; i++) {
         re[i] = (double)rand()/RAND_MAX - 0.5;
         im[i] = (double)rand()/RAND_MAX - 0.5;
@@ -279,7 +279,7 @@ static double bench_fftw(int N, size_t K) {
     fftw_iodim batch = {(int)K, 1, 1};
     fftw_plan p = fftw_plan_guru_split_dft(1, &dim, 1, &batch,
                                             re, im, re, im, FFTW_MEASURE);
-    if (!p) { aligned_free(re); aligned_free(im); return 1e18; }
+    if (!p) { STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im); return 1e18; }
 
     for (int i = 0; i < 10; i++) fftw_execute(p);
 
@@ -296,15 +296,15 @@ static double bench_fftw(int N, size_t K) {
     }
 
     fftw_destroy_plan(p);
-    aligned_free(re); aligned_free(im);
+    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
     return best;
 }
 
 #ifdef VFFT_HAS_MKL
 static double bench_mkl(int N, size_t K) {
     size_t total = (size_t)N * K;
-    double *re = (double*)aligned_alloc(64, total * sizeof(double));
-    double *im = (double*)aligned_alloc(64, total * sizeof(double));
+    double *re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
     for (size_t i = 0; i < total; i++) {
         re[i] = (double)rand()/RAND_MAX - 0.5;
         im[i] = (double)rand()/RAND_MAX - 0.5;
@@ -315,7 +315,7 @@ static double bench_mkl(int N, size_t K) {
     MKL_LONG strides[2] = {0, (MKL_LONG)K};
 
     status = DftiCreateDescriptor(&desc, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N);
-    if (status != DFTI_NO_ERROR) { aligned_free(re); aligned_free(im); return 1e18; }
+    if (status != DFTI_NO_ERROR) { STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im); return 1e18; }
 
     DftiSetValue(desc, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
     DftiSetValue(desc, DFTI_PLACEMENT, DFTI_INPLACE);
@@ -327,7 +327,7 @@ static double bench_mkl(int N, size_t K) {
     status = DftiCommitDescriptor(desc);
     if (status != DFTI_NO_ERROR) {
         DftiFreeDescriptor(&desc);
-        aligned_free(re); aligned_free(im);
+        STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
         return 1e18;
     }
 
@@ -349,16 +349,16 @@ static double bench_mkl(int N, size_t K) {
     }
 
     DftiFreeDescriptor(&desc);
-    aligned_free(re); aligned_free(im);
+    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
     return best;
 }
 #endif
 
-static void format_factors(char *buf, const int *factors, int nf) {
+static void format_plan(char *buf, const stride_plan_t *plan) {
     buf[0] = 0;
-    for (int s = 0; s < nf; s++) {
+    for (int s = 0; s < plan->num_stages; s++) {
         char tmp[16];
-        sprintf(tmp, "%s%d", s ? "x" : "", factors[s]);
+        sprintf(tmp, "%s%d", s ? "x" : "", plan->factors[s]);
         strcat(buf, tmp);
     }
 }
@@ -523,7 +523,7 @@ int main(void) {
         }
 
         char fstr[64];
-        format_factors(fstr, plan->factors, plan->num_stages);
+        format_plan(fstr, plan);
         double ours = bench_plan(plan, N, K);
         double fns = bench_fftw(N, K);
         double mns = bench_mkl(N, K);
@@ -548,13 +548,13 @@ int main(void) {
         int has_wisdom = (stride_wisdom_lookup(&wis, N, K) != NULL);
 
         char wfstr[64], hfstr[64];
-        format_factors(hfstr, hplan->factors, hplan->num_stages);
+        format_plan(hfstr, hplan);
         double hns = bench_plan(hplan, N, K);
         double fns = bench_fftw(N, K);
         double heu_speedup = fns / hns;
 
         if (has_wisdom && wplan) {
-            format_factors(wfstr, wplan->factors, wplan->num_stages);
+            format_plan(wfstr, wplan);
             double wns = bench_plan(wplan, N, K);
             double wis_speedup = fns / wns;
             printf("%-6d %-4zu | %-16s %7.1f ns | %-16s %7.1f ns | %7.1f ns | %6.2fx %6.2fx\n",
