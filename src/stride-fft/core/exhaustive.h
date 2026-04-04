@@ -158,18 +158,20 @@ static double stride_bench_one(int N, size_t K, const int *factors, int nf,
     stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, 0);
     if (!plan) return 1e18;
 
-    /* Warm up */
-    memcpy(re, orig_re, total * sizeof(double));
-    memcpy(im, orig_im, total * sizeof(double));
-    stride_execute_fwd(plan, re, im);
+    /* Warm up — enough to stabilize branch predictors and fill caches */
+    for (int w = 0; w < 3; w++) {
+        memcpy(re, orig_re, total * sizeof(double));
+        memcpy(im, orig_im, total * sizeof(double));
+        stride_execute_fwd(plan, re, im);
+    }
 
-    int reps = (int)(5e4 / (total + 1));
-    if (reps < 5) reps = 5;
-    if (reps > 20000) reps = 20000;
+    int reps = (int)(2e5 / (total + 1));
+    if (reps < 10) reps = 10;
+    if (reps > 50000) reps = 50000;
 
-    /* Benchmark: best of 2 trials */
+    /* Benchmark: best of 3 trials (more robust against noise) */
     double best = 1e18;
-    for (int t = 0; t < 2; t++) {
+    for (int t = 0; t < 3; t++) {
         memcpy(re, orig_re, total * sizeof(double));
         memcpy(im, orig_im, total * sizeof(double));
         double t0 = now_ns();
