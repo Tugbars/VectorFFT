@@ -179,6 +179,15 @@ if(FFTW3_LIB AND FFTW3_INC)
     else()
         message(STATUS "VectorFFT bench: vfft_bench (FFTW only)")
     endif()
+    # ── Rader standalone test ──
+    add_executable(vfft_bench_rader bench/bench_rader.c)
+    target_link_libraries(vfft_bench_rader PRIVATE vfft_stride ${FFTW3_LIB})
+    target_include_directories(vfft_bench_rader PRIVATE ${FFTW3_INC})
+    target_compile_definitions(vfft_bench_rader PRIVATE _CRT_SECURE_NO_WARNINGS)
+    set_target_properties(vfft_bench_rader PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
     # ── Bluestein standalone test ──
     add_executable(vfft_bench_bluestein bench/bench_bluestein.c)
     target_link_libraries(vfft_bench_bluestein PRIVATE vfft_stride ${FFTW3_LIB})
