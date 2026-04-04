@@ -403,6 +403,34 @@ radix4_t1_dit_fwd(
 }
 
 static inline void
+radix4_t1_dit_log3_fwd(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t mb, size_t me, size_t ms)
+{
+    for (size_t m = mb; m < me; m++) {
+        const double x0r = rio_re[m*ms + 0*ios], x0i = rio_im[m*ms + 0*ios];
+        const double r1r = rio_re[m*ms + 1*ios], r1i = rio_im[m*ms + 1*ios];
+        const double r2r = rio_re[m*ms + 2*ios], r2i = rio_im[m*ms + 2*ios];
+        const double r3r = rio_re[m*ms + 3*ios], r3i = rio_im[m*ms + 3*ios];
+        const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
+        const double w2r = w1r*w1r - w1i*w1i, w2i = 2.0*w1r*w1i;
+        const double w3r = w2r*w1r - w2i*w1i, w3i = w2r*w1i + w2i*w1r;
+        const double x1r = r1r*w1r - r1i*w1i, x1i = r1r*w1i + r1i*w1r;
+        const double x2r = r2r*w2r - r2i*w2i, x2i = r2r*w2i + r2i*w2r;
+        const double x3r = r3r*w3r - r3i*w3i, x3i = r3r*w3i + r3i*w3r;
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        rio_re[m*ms + 0*ios] = t0r + t2r; rio_im[m*ms + 0*ios] = t0i + t2i;
+        rio_re[m*ms + 2*ios] = t0r - t2r; rio_im[m*ms + 2*ios] = t0i - t2i;
+        rio_re[m*ms + 1*ios] = t1r + t3i; rio_im[m*ms + 1*ios] = t1i - t3r;
+        rio_re[m*ms + 3*ios] = t1r - t3i; rio_im[m*ms + 3*ios] = t1i + t3r;
+    }
+}
+
+static inline void
 radix4_t1_dif_fwd(
     double * __restrict__ rio_re, double * __restrict__ rio_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
@@ -463,6 +491,34 @@ radix4_t1_dit_bwd(
         const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
         const double w2r = W_re[1*me + m], w2i = W_im[1*me + m];
         const double w3r = W_re[2*me + m], w3i = W_im[2*me + m];
+        const double x1r = r1r*w1r + r1i*w1i, x1i = -r1r*w1i + r1i*w1r;
+        const double x2r = r2r*w2r + r2i*w2i, x2i = -r2r*w2i + r2i*w2r;
+        const double x3r = r3r*w3r + r3i*w3i, x3i = -r3r*w3i + r3i*w3r;
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        rio_re[m*ms + 0*ios] = t0r + t2r; rio_im[m*ms + 0*ios] = t0i + t2i;
+        rio_re[m*ms + 2*ios] = t0r - t2r; rio_im[m*ms + 2*ios] = t0i - t2i;
+        rio_re[m*ms + 1*ios] = t1r - t3i; rio_im[m*ms + 1*ios] = t1i + t3r;
+        rio_re[m*ms + 3*ios] = t1r + t3i; rio_im[m*ms + 3*ios] = t1i - t3r;
+    }
+}
+
+static inline void
+radix4_t1_dit_log3_bwd(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t mb, size_t me, size_t ms)
+{
+    for (size_t m = mb; m < me; m++) {
+        const double x0r = rio_re[m*ms + 0*ios], x0i = rio_im[m*ms + 0*ios];
+        const double r1r = rio_re[m*ms + 1*ios], r1i = rio_im[m*ms + 1*ios];
+        const double r2r = rio_re[m*ms + 2*ios], r2i = rio_im[m*ms + 2*ios];
+        const double r3r = rio_re[m*ms + 3*ios], r3i = rio_im[m*ms + 3*ios];
+        const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
+        const double w2r = w1r*w1r - w1i*w1i, w2i = 2.0*w1r*w1i;
+        const double w3r = w2r*w1r - w2i*w1i, w3i = w2r*w1i + w2i*w1r;
         const double x1r = r1r*w1r + r1i*w1i, x1i = -r1r*w1i + r1i*w1r;
         const double x2r = r2r*w2r + r2i*w2i, x2i = -r2r*w2i + r2i*w2r;
         const double x3r = r3r*w3r + r3i*w3i, x3i = -r3r*w3i + r3i*w3r;
@@ -547,7 +603,7 @@ radix4_n1_ovs_fwd_avx2(
         const __m256d y2r = _mm256_sub_pd(t0r, t2r), y2i = _mm256_sub_pd(t0i, t2i);
         const __m256d y1r = _mm256_add_pd(t1r, t3i), y1i = _mm256_sub_pd(t1i, t3r);
         const __m256d y3r = _mm256_sub_pd(t1r, t3i), y3i = _mm256_add_pd(t1i, t3r);
-        /* 4x4 transpose: [y0,y1,y2,y3] each has 4 sub-seq values */
+        /* Transpose: [y0,y1,y2,y3] each has VL sub-seq values */
         { __m256d lo01r=_mm256_unpacklo_pd(y0r,y1r), hi01r=_mm256_unpackhi_pd(y0r,y1r);
           __m256d lo23r=_mm256_unpacklo_pd(y2r,y3r), hi23r=_mm256_unpackhi_pd(y2r,y3r);
           R4_ST(&out_re[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo01r,lo23r,0x20));
@@ -581,6 +637,39 @@ radix4_t1_dit_fwd_avx2(
         const __m256d w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
         const __m256d w2r = R4_LD(&W_re[1*me+m]), w2i = R4_LD(&W_im[1*me+m]);
         const __m256d w3r = R4_LD(&W_re[2*me+m]), w3i = R4_LD(&W_im[2*me+m]);
+        const __m256d x1r = _mm256_fnmadd_pd(r1i,w1i,_mm256_mul_pd(r1r,w1r)), x1i = _mm256_fmadd_pd(r1r,w1i,_mm256_mul_pd(r1i,w1r));
+        const __m256d x2r = _mm256_fnmadd_pd(r2i,w2i,_mm256_mul_pd(r2r,w2r)), x2i = _mm256_fmadd_pd(r2r,w2i,_mm256_mul_pd(r2i,w2r));
+        const __m256d x3r = _mm256_fnmadd_pd(r3i,w3i,_mm256_mul_pd(r3r,w3r)), x3i = _mm256_fmadd_pd(r3r,w3i,_mm256_mul_pd(r3i,w3r));
+        const __m256d t0r = _mm256_add_pd(x0r, x2r), t0i = _mm256_add_pd(x0i, x2i);
+        const __m256d t1r = _mm256_sub_pd(x0r, x2r), t1i = _mm256_sub_pd(x0i, x2i);
+        const __m256d t2r = _mm256_add_pd(x1r, x3r), t2i = _mm256_add_pd(x1i, x3i);
+        const __m256d t3r = _mm256_sub_pd(x1r, x3r), t3i = _mm256_sub_pd(x1i, x3i);
+        R4_ST(&rio_re[m + 0*ios], _mm256_add_pd(t0r, t2r)); R4_ST(&rio_im[m + 0*ios], _mm256_add_pd(t0i, t2i));
+        R4_ST(&rio_re[m + 2*ios], _mm256_sub_pd(t0r, t2r)); R4_ST(&rio_im[m + 2*ios], _mm256_sub_pd(t0i, t2i));
+        R4_ST(&rio_re[m + 1*ios], _mm256_add_pd(t1r, t3i)); R4_ST(&rio_im[m + 1*ios], _mm256_sub_pd(t1i, t3r));
+        R4_ST(&rio_re[m + 3*ios], _mm256_sub_pd(t1r, t3i)); R4_ST(&rio_im[m + 3*ios], _mm256_add_pd(t1i, t3r));
+    }
+}
+
+__attribute__((target("avx2,fma")))
+static inline void
+radix4_t1_dit_log3_fwd_avx2(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{
+    /* SIMD t1 DIT log3: derive w2, w3 from w1. */
+    for (size_t m = 0; m < me; m += 4) {
+        __m256d x0r = R4_LD(&rio_re[m + 0*ios]), x0i = R4_LD(&rio_im[m + 0*ios]);
+        __m256d r1r = R4_LD(&rio_re[m + 1*ios]), r1i = R4_LD(&rio_im[m + 1*ios]);
+        __m256d r2r = R4_LD(&rio_re[m + 2*ios]), r2i = R4_LD(&rio_im[m + 2*ios]);
+        __m256d r3r = R4_LD(&rio_re[m + 3*ios]), r3i = R4_LD(&rio_im[m + 3*ios]);
+        /* Load base twiddle w1, derive w2 = w1*w1, w3 = w2*w1 */
+        const __m256d w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
+        const __m256d w2r = _mm256_fnmadd_pd(w1i, w1i, _mm256_mul_pd(w1r, w1r));
+        const __m256d w2i = _mm256_fmadd_pd(w1r, w1i, _mm256_mul_pd(w1r, w1i));
+        const __m256d w3r = _mm256_fnmadd_pd(w2i, w1i, _mm256_mul_pd(w2r, w1r));
+        const __m256d w3i = _mm256_fmadd_pd(w2r, w1i, _mm256_mul_pd(w2i, w1r));
         const __m256d x1r = _mm256_fnmadd_pd(r1i,w1i,_mm256_mul_pd(r1r,w1r)), x1i = _mm256_fmadd_pd(r1r,w1i,_mm256_mul_pd(r1i,w1r));
         const __m256d x2r = _mm256_fnmadd_pd(r2i,w2i,_mm256_mul_pd(r2r,w2r)), x2i = _mm256_fmadd_pd(r2r,w2i,_mm256_mul_pd(r2i,w2r));
         const __m256d x3r = _mm256_fnmadd_pd(r3i,w3i,_mm256_mul_pd(r3r,w3r)), x3i = _mm256_fmadd_pd(r3r,w3i,_mm256_mul_pd(r3i,w3r));
@@ -667,7 +756,7 @@ radix4_n1_ovs_bwd_avx2(
         const __m256d y2r = _mm256_sub_pd(t0r, t2r), y2i = _mm256_sub_pd(t0i, t2i);
         const __m256d y1r = _mm256_sub_pd(t1r, t3i), y1i = _mm256_add_pd(t1i, t3r);
         const __m256d y3r = _mm256_add_pd(t1r, t3i), y3i = _mm256_sub_pd(t1i, t3r);
-        /* 4x4 transpose: [y0,y1,y2,y3] each has 4 sub-seq values */
+        /* Transpose: [y0,y1,y2,y3] each has VL sub-seq values */
         { __m256d lo01r=_mm256_unpacklo_pd(y0r,y1r), hi01r=_mm256_unpackhi_pd(y0r,y1r);
           __m256d lo23r=_mm256_unpacklo_pd(y2r,y3r), hi23r=_mm256_unpackhi_pd(y2r,y3r);
           R4_ST(&out_re[(k+0)*ovs+os*0], _mm256_permute2f128_pd(lo01r,lo23r,0x20));
@@ -701,6 +790,39 @@ radix4_t1_dit_bwd_avx2(
         const __m256d w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
         const __m256d w2r = R4_LD(&W_re[1*me+m]), w2i = R4_LD(&W_im[1*me+m]);
         const __m256d w3r = R4_LD(&W_re[2*me+m]), w3i = R4_LD(&W_im[2*me+m]);
+        const __m256d x1r = _mm256_fmadd_pd(r1i,w1i,_mm256_mul_pd(r1r,w1r)), x1i = _mm256_fnmadd_pd(r1r,w1i,_mm256_mul_pd(r1i,w1r));
+        const __m256d x2r = _mm256_fmadd_pd(r2i,w2i,_mm256_mul_pd(r2r,w2r)), x2i = _mm256_fnmadd_pd(r2r,w2i,_mm256_mul_pd(r2i,w2r));
+        const __m256d x3r = _mm256_fmadd_pd(r3i,w3i,_mm256_mul_pd(r3r,w3r)), x3i = _mm256_fnmadd_pd(r3r,w3i,_mm256_mul_pd(r3i,w3r));
+        const __m256d t0r = _mm256_add_pd(x0r, x2r), t0i = _mm256_add_pd(x0i, x2i);
+        const __m256d t1r = _mm256_sub_pd(x0r, x2r), t1i = _mm256_sub_pd(x0i, x2i);
+        const __m256d t2r = _mm256_add_pd(x1r, x3r), t2i = _mm256_add_pd(x1i, x3i);
+        const __m256d t3r = _mm256_sub_pd(x1r, x3r), t3i = _mm256_sub_pd(x1i, x3i);
+        R4_ST(&rio_re[m + 0*ios], _mm256_add_pd(t0r, t2r)); R4_ST(&rio_im[m + 0*ios], _mm256_add_pd(t0i, t2i));
+        R4_ST(&rio_re[m + 2*ios], _mm256_sub_pd(t0r, t2r)); R4_ST(&rio_im[m + 2*ios], _mm256_sub_pd(t0i, t2i));
+        R4_ST(&rio_re[m + 1*ios], _mm256_sub_pd(t1r, t3i)); R4_ST(&rio_im[m + 1*ios], _mm256_add_pd(t1i, t3r));
+        R4_ST(&rio_re[m + 3*ios], _mm256_add_pd(t1r, t3i)); R4_ST(&rio_im[m + 3*ios], _mm256_sub_pd(t1i, t3r));
+    }
+}
+
+__attribute__((target("avx2,fma")))
+static inline void
+radix4_t1_dit_log3_bwd_avx2(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{
+    /* SIMD t1 DIT log3: derive w2, w3 from w1. */
+    for (size_t m = 0; m < me; m += 4) {
+        __m256d x0r = R4_LD(&rio_re[m + 0*ios]), x0i = R4_LD(&rio_im[m + 0*ios]);
+        __m256d r1r = R4_LD(&rio_re[m + 1*ios]), r1i = R4_LD(&rio_im[m + 1*ios]);
+        __m256d r2r = R4_LD(&rio_re[m + 2*ios]), r2i = R4_LD(&rio_im[m + 2*ios]);
+        __m256d r3r = R4_LD(&rio_re[m + 3*ios]), r3i = R4_LD(&rio_im[m + 3*ios]);
+        /* Load base twiddle w1, derive w2 = w1*w1, w3 = w2*w1 */
+        const __m256d w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
+        const __m256d w2r = _mm256_fnmadd_pd(w1i, w1i, _mm256_mul_pd(w1r, w1r));
+        const __m256d w2i = _mm256_fmadd_pd(w1r, w1i, _mm256_mul_pd(w1r, w1i));
+        const __m256d w3r = _mm256_fnmadd_pd(w2i, w1i, _mm256_mul_pd(w2r, w1r));
+        const __m256d w3i = _mm256_fmadd_pd(w2r, w1i, _mm256_mul_pd(w2i, w1r));
         const __m256d x1r = _mm256_fmadd_pd(r1i,w1i,_mm256_mul_pd(r1r,w1r)), x1i = _mm256_fnmadd_pd(r1r,w1i,_mm256_mul_pd(r1i,w1r));
         const __m256d x2r = _mm256_fmadd_pd(r2i,w2i,_mm256_mul_pd(r2r,w2r)), x2i = _mm256_fnmadd_pd(r2r,w2i,_mm256_mul_pd(r2i,w2r));
         const __m256d x3r = _mm256_fmadd_pd(r3i,w3i,_mm256_mul_pd(r3r,w3r)), x3i = _mm256_fnmadd_pd(r3r,w3i,_mm256_mul_pd(r3i,w3r));

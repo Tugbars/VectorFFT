@@ -663,6 +663,41 @@ radix4_t1_dit_{direction}(
     }}
 }}''')
 
+        # ── scalar t1 DIT log3 (derive w2, w3 from w1) ──
+        # For scalar: w2 = w1*w1, w3 = w2*w1 (standard cmul)
+        if fwd:
+            cm_log3 = lambda ar,ai,br,bi: (f'{ar}*{br} - {ai}*{bi}', f'{ar}*{bi} + {ai}*{br}')
+        else:
+            cm_log3 = lambda ar,ai,br,bi: (f'{ar}*{br} - {ai}*{bi}', f'{ar}*{bi} + {ai}*{br}')
+        parts.append(f'''
+static inline void
+radix4_t1_dit_log3_{direction}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t mb, size_t me, size_t ms)
+{{
+    for (size_t m = mb; m < me; m++) {{
+        const double x0r = rio_re[m*ms + 0*ios], x0i = rio_im[m*ms + 0*ios];
+        const double r1r = rio_re[m*ms + 1*ios], r1i = rio_im[m*ms + 1*ios];
+        const double r2r = rio_re[m*ms + 2*ios], r2i = rio_im[m*ms + 2*ios];
+        const double r3r = rio_re[m*ms + 3*ios], r3i = rio_im[m*ms + 3*ios];
+        const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
+        const double w2r = w1r*w1r - w1i*w1i, w2i = 2.0*w1r*w1i;
+        const double w3r = w2r*w1r - w2i*w1i, w3i = w2r*w1i + w2i*w1r;
+        const double x1r = {sc1r}, x1i = {sc1i};
+        const double x2r = {sc2r}, x2i = {sc2i};
+        const double x3r = {sc3r}, x3i = {sc3i};
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        rio_re[m*ms + 0*ios] = t0r + t2r; rio_im[m*ms + 0*ios] = t0i + t2i;
+        rio_re[m*ms + 2*ios] = t0r - t2r; rio_im[m*ms + 2*ios] = t0i - t2i;
+        rio_re[m*ms + 1*ios] = {bfly_r1}; rio_im[m*ms + 1*ios] = {bfly_i1};
+        rio_re[m*ms + 3*ios] = {bfly_r3}; rio_im[m*ms + 3*ios] = {bfly_i3};
+    }}
+}}''')
+
         # ── scalar t1 DIF (in-place: butterfly, then twiddle outputs 1..R-1) ──
         if fwd:
             dif_cm = lambda vr,vi,wr,wi: (f'{vr}*{wr} - {vi}*{wi}', f'{vr}*{wi} + {vi}*{wr}')
@@ -770,7 +805,7 @@ radix4_n1_ovs_{direction}_{isa_name}(
         const {V} y2r = {SUB}(t0r, t2r), y2i = {SUB}(t0i, t2i);
         const {V} y1r = {r1_e}, y1i = {i1_e};
         const {V} y3r = {r3_e}, y3i = {i3_e};
-        /* 4x4 transpose: [y0,y1,y2,y3] each has 4 sub-seq values */
+        /* Transpose: [y0,y1,y2,y3] each has VL sub-seq values */
         {{ {V} lo01r={UP}(y0r,y1r), hi01r={UH}(y0r,y1r);
           {V} lo23r={UP}(y2r,y3r), hi23r={UH}(y2r,y3r);
           R4_ST(&out_re[(k+0)*ovs+os*0], {PM}(lo01r,lo23r,0x20));
@@ -809,6 +844,43 @@ radix4_t1_dit_{direction}_{isa_name}(
         const {V} w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
         const {V} w2r = R4_LD(&W_re[1*me+m]), w2i = R4_LD(&W_im[1*me+m]);
         const {V} w3r = R4_LD(&W_re[2*me+m]), w3i = R4_LD(&W_im[2*me+m]);
+        const {V} x1r = {vc1r}, x1i = {vc1i};
+        const {V} x2r = {vc2r}, x2i = {vc2i};
+        const {V} x3r = {vc3r}, x3i = {vc3i};
+        const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+        const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+        const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+        const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+        R4_ST(&rio_re[m + 0*ios], {ADD}(t0r, t2r)); R4_ST(&rio_im[m + 0*ios], {ADD}(t0i, t2i));
+        R4_ST(&rio_re[m + 2*ios], {SUB}(t0r, t2r)); R4_ST(&rio_im[m + 2*ios], {SUB}(t0i, t2i));
+        R4_ST(&rio_re[m + 1*ios], {r1_e}); R4_ST(&rio_im[m + 1*ios], {i1_e});
+        R4_ST(&rio_re[m + 3*ios], {r3_e}); R4_ST(&rio_im[m + 3*ios], {i3_e});
+    }}
+}}''')
+
+            # ── SIMD t1 DIT log3: load w1, derive w2=w1*w1, w3=w2*w1 ──
+            # Saves 4 twiddle loads per iteration, costs 2 cmuls (4 FMA).
+            # Wins when twiddle table overflows L1 (high K).
+            parts.append(f'''
+{I['target']}
+static inline void
+radix4_t1_dit_log3_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+    /* SIMD t1 DIT log3: derive w2, w3 from w1. */
+    for (size_t m = 0; m < me; m += {VL}) {{
+        {V} x0r = R4_LD(&rio_re[m + 0*ios]), x0i = R4_LD(&rio_im[m + 0*ios]);
+        {V} r1r = R4_LD(&rio_re[m + 1*ios]), r1i = R4_LD(&rio_im[m + 1*ios]);
+        {V} r2r = R4_LD(&rio_re[m + 2*ios]), r2i = R4_LD(&rio_im[m + 2*ios]);
+        {V} r3r = R4_LD(&rio_re[m + 3*ios]), r3i = R4_LD(&rio_im[m + 3*ios]);
+        /* Load base twiddle w1, derive w2 = w1*w1, w3 = w2*w1 */
+        const {V} w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
+        const {V} w2r = {FNMA}(w1i, w1i, {MUL}(w1r, w1r));
+        const {V} w2i = {FMA}(w1r, w1i, {MUL}(w1r, w1i));
+        const {V} w3r = {FNMA}(w2i, w1i, {MUL}(w2r, w1r));
+        const {V} w3i = {FMA}(w2r, w1i, {MUL}(w2i, w1r));
         const {V} x1r = {vc1r}, x1i = {vc1i};
         const {V} x2r = {vc2r}, x2i = {vc2i};
         const {V} x3r = {vc3r}, x3i = {vc3i};
