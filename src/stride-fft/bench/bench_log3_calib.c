@@ -99,15 +99,29 @@ int main(void) {
 
     printf("Done in %.1f seconds.\n\n", elapsed);
 
-    /* Show calibrated thresholds */
-    printf("Calibrated log3 thresholds:\n");
+    /* Show calibrated vs estimated thresholds */
+    stride_cpu_info_t cpu = stride_detect_cpu();
+    printf("%-4s  %10s  %10s  %s\n", "R", "calibrated", "estimated", "match");
+    printf("%-4s  %10s  %10s  %s\n", "----", "----------", "----------", "-----");
     for (int R = 2; R < STRIDE_REG_MAX_RADIX; R++) {
         if (!wis.log3.calibrated[R]) continue;
-        size_t tK = wis.log3.threshold_K[R];
-        if (tK == (size_t)-1)
-            printf("  R=%-2d: NEVER (flat always wins)\n", R);
-        else
-            printf("  R=%-2d: K >= %zu\n", R, tK);
+        size_t cal_K = wis.log3.threshold_K[R];
+        size_t est_K = stride_estimate_log3_threshold(R, cpu.l1d_bytes);
+
+        char cal_str[16], est_str[16];
+        if (cal_K == (size_t)-1) snprintf(cal_str, sizeof(cal_str), "NEVER");
+        else snprintf(cal_str, sizeof(cal_str), "%zu", cal_K);
+        if (est_K == (size_t)-1) snprintf(est_str, sizeof(est_str), "NEVER");
+        else snprintf(est_str, sizeof(est_str), "%zu", est_K);
+
+        const char *match = "?";
+        if (cal_K == (size_t)-1 && est_K == (size_t)-1) match = "OK";
+        else if (cal_K == (size_t)-1 || est_K == (size_t)-1) match = "MISS";
+        else if (cal_K == est_K) match = "OK";
+        else if (cal_K <= est_K * 2 && est_K <= cal_K * 2) match = "~2x";
+        else match = "BAD";
+
+        printf("R=%-2d  %10s  %10s  %s\n", R, cal_str, est_str, match);
     }
     printf("\n");
 
