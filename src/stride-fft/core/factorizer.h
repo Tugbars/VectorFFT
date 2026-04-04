@@ -369,30 +369,45 @@ static int stride_factorize(int N, size_t K,
 /* ═══════════════════════════════════════════════════════════════
  * LOG3 TWIDDLE SELECTION
  *
- * For each twiddled stage, decide flat vs log3 t1 codelet.
+ * For each radix R with a log3 codelet, there's a threshold K
+ * above which log3 beats flat. This threshold is either:
+ *   1. Calibrated: measured by sweeping K, stored in wisdom file
+ *   2. Heuristic fallback: (R-1)*K*16 > L1/2 (~24KB)
  *
- * Heuristic: use log3 when the flat twiddle table overflows L1/2:
- *   (R-1) * K * 16 > 24576 bytes (24KB)
- *
- * Exceptions: R=5 and R=10 always flat — their log3 derivation
- * chain overhead exceeds the cache savings at all K values.
- *
- * R>=64: always n1_fallback (handled by executor, not here).
+ * The calibrated thresholds live in stride_log3_thresholds_t,
+ * which is populated from the wisdom file's @log3 lines.
+ * When not calibrated, threshold[R] = 0 and the heuristic is used.
  * ═══════════════════════════════════════════════════════════════ */
 
-#define STRIDE_LOG3_THRESHOLD 24576  /* bytes: L1/2 on 48KB L1 */
+#define STRIDE_LOG3_HEURISTIC_BYTES 24576  /* fallback: L1/2 on 48KB L1 */
+
+typedef struct {
+    size_t threshold_K[STRIDE_REG_MAX_RADIX];  /* 0 = not calibrated, use heuristic */
+    int calibrated[STRIDE_REG_MAX_RADIX];      /* 1 = threshold was measured */
+} stride_log3_thresholds_t;
+
+static void stride_log3_thresholds_init(stride_log3_thresholds_t *t) {
+    memset(t, 0, sizeof(*t));
+}
 
 static inline int stride_should_use_log3(int R, size_t K,
                                          const stride_registry_t *reg) {
-    /* No log3 codelet available */
     if (!reg->t1_fwd_log3[R]) return 0;
 
-    /* R=5, R=10: flat always wins (bench verified) */
-    if (R == 5 || R == 10) return 0;
-
-    /* Use log3 when flat twiddle table overflows L1/2 */
+    /* Heuristic fallback: (R-1)*K*16 > L1/2 */
     size_t tw_bytes = (size_t)(R - 1) * K * 16;
-    return tw_bytes > STRIDE_LOG3_THRESHOLD;
+    return tw_bytes > STRIDE_LOG3_HEURISTIC_BYTES;
+}
+
+static inline int stride_should_use_log3_calibrated(
+        int R, size_t K,
+        const stride_registry_t *reg,
+        const stride_log3_thresholds_t *thresholds) {
+    if (!reg->t1_fwd_log3[R]) return 0;
+    if (thresholds && thresholds->calibrated[R])
+        return K >= thresholds->threshold_K[R];
+    /* Fallback to heuristic if not calibrated */
+    return stride_should_use_log3(R, K, reg);
 }
 
 /* Select t1 codelet (flat or log3) for a given radix and K */
@@ -406,6 +421,24 @@ static inline stride_t1_fn stride_select_t1_fwd(int R, size_t K,
 static inline stride_t1_fn stride_select_t1_bwd(int R, size_t K,
                                                   const stride_registry_t *reg) {
     if (stride_should_use_log3(R, K, reg))
+        return reg->t1_bwd_log3[R];
+    return reg->t1_bwd[R];
+}
+
+static inline stride_t1_fn stride_select_t1_fwd_calibrated(
+        int R, size_t K,
+        const stride_registry_t *reg,
+        const stride_log3_thresholds_t *thresholds) {
+    if (stride_should_use_log3_calibrated(R, K, reg, thresholds))
+        return reg->t1_fwd_log3[R];
+    return reg->t1_fwd[R];
+}
+
+static inline stride_t1_fn stride_select_t1_bwd_calibrated(
+        int R, size_t K,
+        const stride_registry_t *reg,
+        const stride_log3_thresholds_t *thresholds) {
+    if (stride_should_use_log3_calibrated(R, K, reg, thresholds))
         return reg->t1_bwd_log3[R];
     return reg->t1_bwd[R];
 }

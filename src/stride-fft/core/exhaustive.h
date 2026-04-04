@@ -134,14 +134,15 @@ static void stride_gen_permutations(const int *factors, int nf, permutation_list
  * Uses caller-provided aligned buffers (avoids alloc in hot loop).
  * ═══════════════════════════════════════════════════════════════ */
 
-/* Bench with explicit t1 arrays (allows caller to mix flat/log3) */
+/* Bench with explicit t1 arrays and log3 mask */
 static double stride_bench_one_ex(int N, size_t K, const int *factors, int nf,
                                   stride_n1_fn *n1f, stride_n1_fn *n1b,
                                   stride_t1_fn *t1f, stride_t1_fn *t1b,
+                                  int log3_mask,
                                   double *re, double *im, double *orig_re, double *orig_im) {
     size_t total = (size_t)N * K;
 
-    stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, 0);
+    stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, log3_mask);
     if (!plan) return 1e18;
 
     /* Warm up (1 iteration) */
@@ -183,8 +184,13 @@ static double stride_bench_one(int N, size_t K, const int *factors, int nf,
         t1f[s] = stride_select_t1_fwd(R, K, reg);
         t1b[s] = stride_select_t1_bwd(R, K, reg);
     }
+    /* Resolve heuristic log3 mask for bench_one_ex */
+    int mask = 0;
+    for (int s = 1; s < nf; s++)
+        if (stride_should_use_log3(factors[s], K, reg))
+            mask |= (1 << s);
     return stride_bench_one_ex(N, K, factors, nf, n1f, n1b, t1f, t1b,
-                               re, im, orig_re, orig_im);
+                               mask, re, im, orig_re, orig_im);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -207,6 +213,8 @@ static double stride_bench_one(int N, size_t K, const int *factors, int nf,
 static double stride_exhaustive_search(int N, size_t K,
                                        const stride_registry_t *reg,
                                        stride_factorization_t *best_fact,
+                                       int *out_log3_mask,
+                                       const stride_log3_thresholds_t *log3_thresholds,
                                        int verbose) {
     size_t total = (size_t)N * K;
 
@@ -243,82 +251,69 @@ static double stride_exhaustive_search(int N, size_t K,
             const int *factors_p = plist->perms[pi];
             int nf = f->nfactors;
 
-            /* Count how many twiddled stages have log3 available */
-            int n_log3_stages = 0;
-            int log3_stage_idx[FACT_MAX_STAGES];
-            for (int s = 1; s < nf; s++) {
-                if (reg->t1_fwd_log3[factors_p[s]])
-                    log3_stage_idx[n_log3_stages++] = s;
-            }
+            /* Resolve log3 from calibrated thresholds (or heuristic fallback) */
+            stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+            stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
+            int actual_log3_mask = 0;
+            int skip = 0;
 
-            /* Try all 2^n_log3_stages combinations */
-            int n_combos = 1 << n_log3_stages;
-            for (int combo = 0; combo < n_combos; combo++) {
-                stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
-                stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
-
-                for (int s = 0; s < nf; s++) {
-                    int R = factors_p[s];
-                    if (!reg->n1_fwd[R]) goto skip_combo;
-                    n1f[s] = reg->n1_fwd[R];
-                    n1b[s] = reg->n1_bwd[R];
-                    t1f[s] = reg->t1_fwd[R];  /* default: flat */
+            for (int s = 0; s < nf; s++) {
+                int R = factors_p[s];
+                if (!reg->n1_fwd[R]) { skip = 1; break; }
+                n1f[s] = reg->n1_fwd[R];
+                n1b[s] = reg->n1_bwd[R];
+                if (s > 0 && stride_should_use_log3_calibrated(R, K, reg, log3_thresholds)) {
+                    t1f[s] = reg->t1_fwd_log3[R];
+                    t1b[s] = reg->t1_bwd_log3[R];
+                    actual_log3_mask |= (1 << s);
+                } else {
+                    t1f[s] = reg->t1_fwd[R];
                     t1b[s] = reg->t1_bwd[R];
                 }
+            }
+            if (skip) continue;
 
-                /* Apply log3 where this combo says to */
-                for (int li = 0; li < n_log3_stages; li++) {
-                    if (combo & (1 << li)) {
-                        int s = log3_stage_idx[li];
-                        int R = factors_p[s];
-                        t1f[s] = reg->t1_fwd_log3[R];
-                        t1b[s] = reg->t1_bwd_log3[R];
-                    }
+            {
+                /* Quick single-trial pre-screen: skip if > 1.5x current best */
+                stride_plan_t *qplan = stride_plan_create(N, K, factors_p, nf,
+                                                           n1f, n1b, t1f, t1b, actual_log3_mask);
+                if (!qplan) continue;
+
+                memcpy(re, orig_re, total * sizeof(double));
+                memcpy(im, orig_im, total * sizeof(double));
+                stride_execute_fwd(qplan, re, im); /* warmup */
+
+                int qreps = (int)(2e4 / (total + 1));
+                if (qreps < 3) qreps = 3;
+                if (qreps > 5000) qreps = 5000;
+
+                memcpy(re, orig_re, total * sizeof(double));
+                memcpy(im, orig_im, total * sizeof(double));
+                double qt0 = now_ns();
+                for (int qi = 0; qi < qreps; qi++)
+                    stride_execute_fwd(qplan, re, im);
+                double quick_ns = (now_ns() - qt0) / qreps;
+                stride_plan_destroy(qplan);
+
+                total_candidates++;
+
+                /* Prune: if quick estimate > 1.5x best, skip full bench */
+                if (quick_ns > global_best_ns * 1.5 && global_best_ns < 1e17) {
+                    continue;
                 }
 
-                {
-                    /* Quick single-trial pre-screen: skip if > 1.5x current best */
-                    stride_plan_t *qplan = stride_plan_create(N, K, factors_p, nf,
-                                                               n1f, n1b, t1f, t1b, 0);
-                    if (!qplan) goto skip_combo;
+                /* Full bench */
+                double ns = stride_bench_one_ex(N, K, factors_p, nf,
+                                                n1f, n1b, t1f, t1b,
+                                                actual_log3_mask,
+                                                re, im, orig_re, orig_im);
 
-                    memcpy(re, orig_re, total * sizeof(double));
-                    memcpy(im, orig_im, total * sizeof(double));
-                    stride_execute_fwd(qplan, re, im); /* warmup */
-
-                    int qreps = (int)(2e4 / (total + 1));
-                    if (qreps < 3) qreps = 3;
-                    if (qreps > 5000) qreps = 5000;
-
-                    memcpy(re, orig_re, total * sizeof(double));
-                    memcpy(im, orig_im, total * sizeof(double));
-                    double qt0 = now_ns();
-                    for (int qi = 0; qi < qreps; qi++)
-                        stride_execute_fwd(qplan, re, im);
-                    double quick_ns = (now_ns() - qt0) / qreps;
-                    stride_plan_destroy(qplan);
-
-                    total_candidates++;
-
-                    /* Prune: if quick estimate > 1.5x best, skip full bench */
-                    if (quick_ns > global_best_ns * 1.5 && global_best_ns < 1e17) {
-                        continue;
-                    }
-
-                    /* Full bench */
-                    double ns = stride_bench_one_ex(N, K, factors_p, nf,
-                                                    n1f, n1b, t1f, t1b,
-                                                    re, im, orig_re, orig_im);
-
-                    if (ns < global_best_ns) {
-                        global_best_ns = ns;
-                        best_fact->nfactors = nf;
-                        memcpy(best_fact->factors, factors_p, nf * sizeof(int));
-                        best_log3_mask = combo;
-                    }
+                if (ns < global_best_ns) {
+                    global_best_ns = ns;
+                    best_fact->nfactors = nf;
+                    memcpy(best_fact->factors, factors_p, nf * sizeof(int));
+                    best_log3_mask = actual_log3_mask;
                 }
-                continue;
-                skip_combo:;
             }
         }
         free(plist);
@@ -332,6 +327,8 @@ static double stride_exhaustive_search(int N, size_t K,
             printf(" (log3 mask=%d)", best_log3_mask);
         printf(" = %.1f ns (%d total candidates)\n", global_best_ns, total_candidates);
     }
+
+    if (out_log3_mask) *out_log3_mask = best_log3_mask;
 
     free(flist);
     STRIDE_ALIGNED_FREE(re);
@@ -385,7 +382,8 @@ static void stride_compare_strategies(int N, size_t K,
 
     /* Exhaustive */
     stride_factorization_t exh_fact;
-    double exh_ns = stride_exhaustive_search(N, K, reg, &exh_fact, 1);
+    int exh_log3 = 0;
+    double exh_ns = stride_exhaustive_search(N, K, reg, &exh_fact, &exh_log3, NULL, 1);
 
     /* FFTW reference */
     fflush(stdout);

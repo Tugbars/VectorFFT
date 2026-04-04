@@ -15,6 +15,16 @@ if exist "%ROOT%\vcpkg_installed\x64-windows\bin\fftw3.dll" (
 
 REM -- Run tests --
 echo ========================================
+echo  Log3 Calibration (per-radix thresholds)
+echo ========================================
+if exist "%BIN_DIR%\vfft_bench_log3_calib.exe" (
+    "%BIN_DIR%\vfft_bench_log3_calib.exe"
+) else (
+    echo [SKIP] vfft_bench_log3_calib.exe not found
+)
+echo.
+
+echo ========================================
 echo  Log3 Exhaustive Correctness
 echo ========================================
 if exist "%BIN_DIR2%\vfft_test_log3.exe" (
