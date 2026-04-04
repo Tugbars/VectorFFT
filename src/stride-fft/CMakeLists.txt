@@ -179,6 +179,15 @@ if(FFTW3_LIB AND FFTW3_INC)
     else()
         message(STATUS "VectorFFT bench: vfft_bench (FFTW only)")
     endif()
+    # ── R=4 log3 A/B test ──
+    add_executable(vfft_bench_r4_log3 bench/bench_r4_log3.c)
+    target_link_libraries(vfft_bench_r4_log3 PRIVATE vfft_stride ${FFTW3_LIB})
+    target_include_directories(vfft_bench_r4_log3 PRIVATE ${FFTW3_INC})
+    target_compile_definitions(vfft_bench_r4_log3 PRIVATE _CRT_SECURE_NO_WARNINGS)
+    set_target_properties(vfft_bench_r4_log3 PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
     # ── Rader standalone test ──
     add_executable(vfft_bench_rader bench/bench_rader.c)
     target_link_libraries(vfft_bench_rader PRIVATE vfft_stride ${FFTW3_LIB})

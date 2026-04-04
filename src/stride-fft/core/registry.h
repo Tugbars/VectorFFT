@@ -254,7 +254,7 @@ static void stride_registry_init(stride_registry_t *reg) {
 
     _REG_NO_LOG3(2)
     _REG_FULL(3)
-    _REG_NO_LOG3(4)
+    _REG_FULL(4)
     _REG_FULL(5)
     _REG_FULL(6)
     _REG_FULL(7)

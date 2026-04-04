@@ -262,6 +262,34 @@ radix4_t1_dit_fwd(
 }
 
 static inline void
+radix4_t1_dit_log3_fwd(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t mb, size_t me, size_t ms)
+{
+    for (size_t m = mb; m < me; m++) {
+        const double x0r = rio_re[m*ms + 0*ios], x0i = rio_im[m*ms + 0*ios];
+        const double r1r = rio_re[m*ms + 1*ios], r1i = rio_im[m*ms + 1*ios];
+        const double r2r = rio_re[m*ms + 2*ios], r2i = rio_im[m*ms + 2*ios];
+        const double r3r = rio_re[m*ms + 3*ios], r3i = rio_im[m*ms + 3*ios];
+        const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
+        const double w2r = w1r*w1r - w1i*w1i, w2i = 2.0*w1r*w1i;
+        const double w3r = w2r*w1r - w2i*w1i, w3i = w2r*w1i + w2i*w1r;
+        const double x1r = r1r*w1r - r1i*w1i, x1i = r1r*w1i + r1i*w1r;
+        const double x2r = r2r*w2r - r2i*w2i, x2i = r2r*w2i + r2i*w2r;
+        const double x3r = r3r*w3r - r3i*w3i, x3i = r3r*w3i + r3i*w3r;
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        rio_re[m*ms + 0*ios] = t0r + t2r; rio_im[m*ms + 0*ios] = t0i + t2i;
+        rio_re[m*ms + 2*ios] = t0r - t2r; rio_im[m*ms + 2*ios] = t0i - t2i;
+        rio_re[m*ms + 1*ios] = t1r + t3i; rio_im[m*ms + 1*ios] = t1i - t3r;
+        rio_re[m*ms + 3*ios] = t1r - t3i; rio_im[m*ms + 3*ios] = t1i + t3r;
+    }
+}
+
+static inline void
 radix4_t1_dif_fwd(
     double * __restrict__ rio_re, double * __restrict__ rio_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
@@ -322,6 +350,34 @@ radix4_t1_dit_bwd(
         const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
         const double w2r = W_re[1*me + m], w2i = W_im[1*me + m];
         const double w3r = W_re[2*me + m], w3i = W_im[2*me + m];
+        const double x1r = r1r*w1r + r1i*w1i, x1i = -r1r*w1i + r1i*w1r;
+        const double x2r = r2r*w2r + r2i*w2i, x2i = -r2r*w2i + r2i*w2r;
+        const double x3r = r3r*w3r + r3i*w3i, x3i = -r3r*w3i + r3i*w3r;
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        rio_re[m*ms + 0*ios] = t0r + t2r; rio_im[m*ms + 0*ios] = t0i + t2i;
+        rio_re[m*ms + 2*ios] = t0r - t2r; rio_im[m*ms + 2*ios] = t0i - t2i;
+        rio_re[m*ms + 1*ios] = t1r - t3i; rio_im[m*ms + 1*ios] = t1i + t3r;
+        rio_re[m*ms + 3*ios] = t1r + t3i; rio_im[m*ms + 3*ios] = t1i - t3r;
+    }
+}
+
+static inline void
+radix4_t1_dit_log3_bwd(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t mb, size_t me, size_t ms)
+{
+    for (size_t m = mb; m < me; m++) {
+        const double x0r = rio_re[m*ms + 0*ios], x0i = rio_im[m*ms + 0*ios];
+        const double r1r = rio_re[m*ms + 1*ios], r1i = rio_im[m*ms + 1*ios];
+        const double r2r = rio_re[m*ms + 2*ios], r2i = rio_im[m*ms + 2*ios];
+        const double r3r = rio_re[m*ms + 3*ios], r3i = rio_im[m*ms + 3*ios];
+        const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
+        const double w2r = w1r*w1r - w1i*w1i, w2i = 2.0*w1r*w1i;
+        const double w3r = w2r*w1r - w2i*w1i, w3i = w2r*w1i + w2i*w1r;
         const double x1r = r1r*w1r + r1i*w1i, x1i = -r1r*w1i + r1i*w1r;
         const double x2r = r2r*w2r + r2i*w2i, x2i = -r2r*w2i + r2i*w2r;
         const double x3r = r3r*w3r + r3i*w3i, x3i = -r3r*w3i + r3i*w3r;
