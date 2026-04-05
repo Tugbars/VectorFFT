@@ -31,6 +31,12 @@
 #  include <pthread.h>
 #  include <sched.h>
 #  include <unistd.h>
+#  include <sys/mman.h>
+#  include <stdint.h>
+#endif
+
+#ifndef _WIN32
+#  include <stdint.h>  /* uintptr_t */
 #endif
 
 /* =====================================================================
@@ -85,26 +91,35 @@ static inline void stride_env_restore(unsigned int saved_mxcsr) {
 /* =====================================================================
  * ALIGNED MEMORY ALLOCATION
  *
- * AVX2 requires 32-byte alignment, AVX-512 requires 64-byte alignment.
- * We always align to 64 bytes for forward compatibility and to ensure
- * cache line alignment (avoids false sharing, optimal prefetch).
+ * Two allocation strategies:
  *
- * Standard malloc returns 16-byte aligned memory on most platforms,
- * which causes performance degradation with SIMD loads/stores:
- *   - _mm256_load_pd requires 32-byte alignment (segfault if not)
- *   - _mm512_load_pd requires 64-byte alignment
- *   - Misaligned access uses slower microcode path on some CPUs
+ * 1. stride_alloc / stride_free -- 64-byte aligned, standard pages.
+ *    Use for small buffers, twiddle tables, metadata.
+ *
+ * 2. stride_alloc_huge / stride_free_huge -- 2MB huge pages.
+ *    Use for FFT data buffers (re[], im[]) when total size > 64KB.
+ *    Eliminates DTLB misses caused by stride access patterns.
+ *
+ * VTune profiling shows 23% DTLB Store Overhead at N=1000 K=256
+ * (4MB data across 1000 4KB pages, stride=2KB touches new page every
+ * 2 elements). With 2MB huge pages, same data spans 2 pages -> zero
+ * TLB misses.
+ *
+ * Huge page requirements:
+ *   Windows: "Lock pages in memory" privilege (gpedit.msc -> User Rights)
+ *   Linux:   echo 64 > /proc/sys/vm/nr_hugepages (or use THP)
+ *
+ * If huge pages are unavailable, falls back to standard allocation.
  * ===================================================================== */
 
 #define STRIDE_ALIGNMENT 64
+#define STRIDE_HUGEPAGE_THRESHOLD (64 * 1024)  /* use huge pages above 64KB */
 
 /**
- * stride_alloc -- Allocate SIMD-aligned memory.
+ * stride_alloc -- Allocate SIMD-aligned memory (standard pages).
  *
  * Returns a 64-byte aligned pointer suitable for FFT data buffers.
  * Free with stride_free(), NOT standard free().
- *
- * Returns NULL on allocation failure.
  */
 static inline void *stride_alloc(size_t bytes) {
     if (bytes == 0) return NULL;
@@ -118,6 +133,69 @@ static inline void *stride_alloc(size_t bytes) {
 }
 
 /**
+ * stride_alloc_huge -- Allocate with 2MB huge pages.
+ *
+ * For large FFT data buffers where stride access patterns cause
+ * DTLB misses with 4KB pages. Falls back to stride_alloc() if
+ * huge pages are unavailable.
+ *
+ * The returned pointer must be freed with stride_free_huge().
+ */
+static inline void *stride_alloc_huge(size_t bytes) {
+    if (bytes == 0) return NULL;
+
+    /* Only use huge pages for large allocations */
+    if (bytes < STRIDE_HUGEPAGE_THRESHOLD)
+        return stride_alloc(bytes);
+
+#ifdef _WIN32
+    /* VirtualAlloc with MEM_LARGE_PAGES.
+     * Requires "Lock pages in memory" privilege.
+     * Size must be a multiple of GetLargePageMinimum() (typically 2MB). */
+    {
+        SIZE_T page_size = GetLargePageMinimum();
+        if (page_size == 0) goto fallback;
+
+        /* Round up to huge page boundary */
+        SIZE_T alloc_size = (bytes + page_size - 1) & ~(page_size - 1);
+
+        void *p = VirtualAlloc(NULL, alloc_size,
+                               MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES,
+                               PAGE_READWRITE);
+        if (p) return p;
+    }
+#elif defined(__linux__)
+    /* mmap with MAP_HUGETLB for explicit huge pages.
+     * Requires nr_hugepages > 0 in /proc/sys/vm. */
+    {
+        #ifndef MAP_HUGETLB
+        #define MAP_HUGETLB 0x40000
+        #endif
+        size_t page_size = 2 * 1024 * 1024; /* 2MB */
+        size_t alloc_size = (bytes + page_size - 1) & ~(page_size - 1);
+
+        void *p = mmap(NULL, alloc_size, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+        if (p != MAP_FAILED) return p;
+
+        /* Try transparent huge pages as second attempt */
+        p = mmap(NULL, alloc_size, PROT_READ | PROT_WRITE,
+                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (p != MAP_FAILED) {
+            madvise(p, alloc_size, MADV_HUGEPAGE);
+            return p;
+        }
+    }
+#endif
+
+#ifdef _WIN32
+fallback:
+#endif
+    /* Fallback to standard aligned allocation */
+    return stride_alloc(bytes);
+}
+
+/**
  * stride_free -- Free memory allocated by stride_alloc.
  */
 static inline void stride_free(void *p) {
@@ -126,6 +204,44 @@ static inline void stride_free(void *p) {
     _aligned_free(p);
 #else
     free(p);
+#endif
+}
+
+/**
+ * stride_free_huge -- Free memory allocated by stride_alloc_huge.
+ *
+ * Must detect whether the pointer came from VirtualAlloc/mmap (huge)
+ * or from stride_alloc (fallback). We use a simple heuristic:
+ * huge-page allocations are always 2MB-aligned.
+ */
+static inline void stride_free_huge(void *p, size_t bytes) {
+    if (!p) return;
+
+    /* If below threshold, it was a regular stride_alloc */
+    if (bytes < STRIDE_HUGEPAGE_THRESHOLD) {
+        stride_free(p);
+        return;
+    }
+
+#ifdef _WIN32
+    /* Check if 2MB-aligned (came from VirtualAlloc with MEM_LARGE_PAGES) */
+    if (((uintptr_t)p & (2 * 1024 * 1024 - 1)) == 0) {
+        VirtualFree(p, 0, MEM_RELEASE);
+        return;
+    }
+    /* Fallback path used stride_alloc */
+    _aligned_free(p);
+#elif defined(__linux__)
+    /* Check if 2MB-aligned (came from mmap) */
+    if (((uintptr_t)p & (2 * 1024 * 1024 - 1)) == 0) {
+        size_t page_size = 2 * 1024 * 1024;
+        size_t alloc_size = (bytes + page_size - 1) & ~(page_size - 1);
+        munmap(p, alloc_size);
+        return;
+    }
+    free(p);
+#else
+    stride_free(p);
 #endif
 }
 
