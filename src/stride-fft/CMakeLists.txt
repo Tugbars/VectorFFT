@@ -182,6 +182,15 @@ if(FFTW3_LIB AND FFTW3_INC)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
+    # VTune profiling harness: single (N,K) in tight loop
+    add_executable(vfft_bench_vtune bench/bench_vtune.c)
+    target_link_libraries(vfft_bench_vtune PRIVATE vfft_stride ${FFTW3_LIB})
+    target_include_directories(vfft_bench_vtune PRIVATE ${FFTW3_INC})
+    target_compile_definitions(vfft_bench_vtune PRIVATE _CRT_SECURE_NO_WARNINGS)
+    set_target_properties(vfft_bench_vtune PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
     if(VFFT_HAS_MKL)
         target_link_libraries(vfft_bench PRIVATE ${MKL_LIBS})
         target_include_directories(vfft_bench PRIVATE ${MKL_INC})
@@ -189,9 +198,12 @@ if(FFTW3_LIB AND FFTW3_INC)
         target_link_libraries(vfft_bench_primes PRIVATE ${MKL_LIBS})
         target_include_directories(vfft_bench_primes PRIVATE ${MKL_INC})
         target_compile_definitions(vfft_bench_primes PRIVATE VFFT_HAS_MKL MKL_ILP64)
-        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes (FFTW + MKL)")
+        target_link_libraries(vfft_bench_vtune PRIVATE ${MKL_LIBS})
+        target_include_directories(vfft_bench_vtune PRIVATE ${MKL_INC})
+        target_compile_definitions(vfft_bench_vtune PRIVATE VFFT_HAS_MKL MKL_ILP64)
+        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes, vfft_bench_vtune (FFTW + MKL)")
     else()
-        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes (FFTW only)")
+        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes, vfft_bench_vtune (FFTW only)")
     endif()
 
 else()
