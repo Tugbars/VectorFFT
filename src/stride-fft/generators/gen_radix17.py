@@ -301,12 +301,21 @@ class Emitter:
                 self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
 
     def emit_hoist_all_tw_scalars(self, R):
-        """Emit broadcast of all (R-1) twiddle scalars BEFORE the m-loop.
-        This hoists loop-invariant broadcasts out of the inner loop,
-        letting the compiler keep small R in registers and spill large R
-        to L1-hot stack (aligned loads, not broadcasts per iteration)."""
+        """Emit broadcast of twiddle scalars BEFORE the m-loop.
+        Register-budget-aware: only hoists what fits in SIMD registers.
+        AVX2: 5 twiddle pairs (10 of 16 YMM), AVX-512: 12 pairs (24 of 32 ZMM).
+        Remaining twiddles are broadcast inline inside the loop."""
         T = self.isa.T
-        for i in range(R - 1):
+        n_tw = R - 1
+        if self.isa.name == 'scalar':
+            max_hoist = n_tw  # scalar has unlimited "registers"
+        elif self.isa.name == 'avx2':
+            max_hoist = 5     # 10 YMM for twiddles, 6 for data/temps
+        else:  # avx512
+            max_hoist = 12    # 24 ZMM for twiddles, 8 for data/temps
+        n_hoist = min(n_tw, max_hoist)
+        self.tw_hoisted_set = set(range(n_hoist))
+        for i in range(n_hoist):
             if self.isa.name == 'scalar':
                 self.o(f"const double tw{i}_re = W_re[{i}], tw{i}_im = W_im[{i}];")
             elif self.isa.name == 'avx2':
@@ -343,7 +352,7 @@ class Emitter:
         """Emit twiddle multiply using scalar broadcast (t1s variant).
         W_re/W_im are (R-1) scalars, NOT (R-1)*me arrays.
         Broadcasts one double to SIMD width."""
-        if self.tw_hoisted:
+        if self.tw_hoisted and tw_idx in self.tw_hoisted_set:
             return self.emit_apply_hoisted_tw(v, tw_idx, d)
         fwd = (d == 'fwd')
         T = self.isa.T

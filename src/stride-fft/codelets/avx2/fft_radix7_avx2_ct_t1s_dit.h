@@ -52,8 +52,6 @@ radix7_t1s_dit_fwd_avx2(
     const __m256d tw3_im = _mm256_broadcast_sd(&W_im[3]);
     const __m256d tw4_re = _mm256_broadcast_sd(&W_re[4]);
     const __m256d tw4_im = _mm256_broadcast_sd(&W_im[4]);
-    const __m256d tw5_re = _mm256_broadcast_sd(&W_re[5]);
-    const __m256d tw5_im = _mm256_broadcast_sd(&W_im[5]);
 
     for (size_t m = 0; m < me; m += 4) {
         x0_re = LD(&rio_re[m+0*ios]);
@@ -85,9 +83,11 @@ radix7_t1s_dit_fwd_avx2(
         { const __m256d tr = x5_re;
           x5_re = _mm256_fmsub_pd(x5_re,tw4_re,_mm256_mul_pd(x5_im,tw4_im));
           x5_im = _mm256_fmadd_pd(tr,tw4_im,_mm256_mul_pd(x5_im,tw4_re)); }
-        { const __m256d tr = x6_re;
-          x6_re = _mm256_fmsub_pd(x6_re,tw5_re,_mm256_mul_pd(x6_im,tw5_im));
-          x6_im = _mm256_fmadd_pd(tr,tw5_im,_mm256_mul_pd(x6_im,tw5_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[5]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[5]);
+          const __m256d tr = x6_re;
+          x6_re = _mm256_fmsub_pd(x6_re,wr,_mm256_mul_pd(x6_im,wi));
+          x6_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x6_im,wr)); }
 
         /* DFT-7 butterfly [fwd] */
         /* Phase 1 — symmetric/antisymmetric pairs */
@@ -209,8 +209,6 @@ radix7_t1s_dit_bwd_avx2(
     const __m256d tw3_im = _mm256_broadcast_sd(&W_im[3]);
     const __m256d tw4_re = _mm256_broadcast_sd(&W_re[4]);
     const __m256d tw4_im = _mm256_broadcast_sd(&W_im[4]);
-    const __m256d tw5_re = _mm256_broadcast_sd(&W_re[5]);
-    const __m256d tw5_im = _mm256_broadcast_sd(&W_im[5]);
 
     for (size_t m = 0; m < me; m += 4) {
         x0_re = LD(&rio_re[m+0*ios]);
@@ -242,9 +240,11 @@ radix7_t1s_dit_bwd_avx2(
         { const __m256d tr = x5_re;
           x5_re = _mm256_fmadd_pd(x5_re,tw4_re,_mm256_mul_pd(x5_im,tw4_im));
           x5_im = _mm256_fmsub_pd(x5_im,tw4_re,_mm256_mul_pd(tr,tw4_im)); }
-        { const __m256d tr = x6_re;
-          x6_re = _mm256_fmadd_pd(x6_re,tw5_re,_mm256_mul_pd(x6_im,tw5_im));
-          x6_im = _mm256_fmsub_pd(x6_im,tw5_re,_mm256_mul_pd(tr,tw5_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[5]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[5]);
+          const __m256d tr = x6_re;
+          x6_re = _mm256_fmadd_pd(x6_re,wr,_mm256_mul_pd(x6_im,wi));
+          x6_im = _mm256_fmsub_pd(x6_im,wr,_mm256_mul_pd(tr,wi)); }
 
         /* DFT-7 butterfly [bwd] */
         /* Phase 1 — symmetric/antisymmetric pairs */

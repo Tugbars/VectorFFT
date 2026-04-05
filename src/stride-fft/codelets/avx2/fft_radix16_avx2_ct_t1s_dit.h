@@ -59,26 +59,6 @@ radix16_t1s_dit_fwd_avx2(
     const __m256d tw3_im = _mm256_broadcast_sd(&W_im[3]);
     const __m256d tw4_re = _mm256_broadcast_sd(&W_re[4]);
     const __m256d tw4_im = _mm256_broadcast_sd(&W_im[4]);
-    const __m256d tw5_re = _mm256_broadcast_sd(&W_re[5]);
-    const __m256d tw5_im = _mm256_broadcast_sd(&W_im[5]);
-    const __m256d tw6_re = _mm256_broadcast_sd(&W_re[6]);
-    const __m256d tw6_im = _mm256_broadcast_sd(&W_im[6]);
-    const __m256d tw7_re = _mm256_broadcast_sd(&W_re[7]);
-    const __m256d tw7_im = _mm256_broadcast_sd(&W_im[7]);
-    const __m256d tw8_re = _mm256_broadcast_sd(&W_re[8]);
-    const __m256d tw8_im = _mm256_broadcast_sd(&W_im[8]);
-    const __m256d tw9_re = _mm256_broadcast_sd(&W_re[9]);
-    const __m256d tw9_im = _mm256_broadcast_sd(&W_im[9]);
-    const __m256d tw10_re = _mm256_broadcast_sd(&W_re[10]);
-    const __m256d tw10_im = _mm256_broadcast_sd(&W_im[10]);
-    const __m256d tw11_re = _mm256_broadcast_sd(&W_re[11]);
-    const __m256d tw11_im = _mm256_broadcast_sd(&W_im[11]);
-    const __m256d tw12_re = _mm256_broadcast_sd(&W_re[12]);
-    const __m256d tw12_im = _mm256_broadcast_sd(&W_im[12]);
-    const __m256d tw13_re = _mm256_broadcast_sd(&W_re[13]);
-    const __m256d tw13_im = _mm256_broadcast_sd(&W_im[13]);
-    const __m256d tw14_re = _mm256_broadcast_sd(&W_re[14]);
-    const __m256d tw14_im = _mm256_broadcast_sd(&W_im[14]);
 
     for (size_t m = 0; m < me; m += 4) {
         /* sub-FFT n2=0 */
@@ -91,14 +71,18 @@ radix16_t1s_dit_fwd_avx2(
           x1_im = _mm256_fmadd_pd(tr,tw3_im,_mm256_mul_pd(x1_im,tw3_re)); }
         x2_re = LD(&rio_re[m+8*ios]);
         x2_im = LD(&rio_im[m+8*ios]);
-        { const __m256d tr = x2_re;
-          x2_re = _mm256_fmsub_pd(x2_re,tw7_re,_mm256_mul_pd(x2_im,tw7_im));
-          x2_im = _mm256_fmadd_pd(tr,tw7_im,_mm256_mul_pd(x2_im,tw7_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[7]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[7]);
+          const __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
+          x2_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x2_im,wr)); }
         x3_re = LD(&rio_re[m+12*ios]);
         x3_im = LD(&rio_im[m+12*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmsub_pd(x3_re,tw11_re,_mm256_mul_pd(x3_im,tw11_im));
-          x3_im = _mm256_fmadd_pd(tr,tw11_im,_mm256_mul_pd(x3_im,tw11_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[11]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[11]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x3_im,wr)); }
 
         /* radix-4 n2=0 [fwd] */
         { __m256d t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;
@@ -134,14 +118,18 @@ radix16_t1s_dit_fwd_avx2(
           x1_im = _mm256_fmadd_pd(tr,tw4_im,_mm256_mul_pd(x1_im,tw4_re)); }
         x2_re = LD(&rio_re[m+9*ios]);
         x2_im = LD(&rio_im[m+9*ios]);
-        { const __m256d tr = x2_re;
-          x2_re = _mm256_fmsub_pd(x2_re,tw8_re,_mm256_mul_pd(x2_im,tw8_im));
-          x2_im = _mm256_fmadd_pd(tr,tw8_im,_mm256_mul_pd(x2_im,tw8_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[8]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[8]);
+          const __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
+          x2_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x2_im,wr)); }
         x3_re = LD(&rio_re[m+13*ios]);
         x3_im = LD(&rio_im[m+13*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmsub_pd(x3_re,tw12_re,_mm256_mul_pd(x3_im,tw12_im));
-          x3_im = _mm256_fmadd_pd(tr,tw12_im,_mm256_mul_pd(x3_im,tw12_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[12]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[12]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x3_im,wr)); }
 
         /* radix-4 n2=1 [fwd] */
         { __m256d t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;
@@ -172,19 +160,25 @@ radix16_t1s_dit_fwd_avx2(
           x0_im = _mm256_fmadd_pd(tr,tw1_im,_mm256_mul_pd(x0_im,tw1_re)); }
         x1_re = LD(&rio_re[m+6*ios]);
         x1_im = LD(&rio_im[m+6*ios]);
-        { const __m256d tr = x1_re;
-          x1_re = _mm256_fmsub_pd(x1_re,tw5_re,_mm256_mul_pd(x1_im,tw5_im));
-          x1_im = _mm256_fmadd_pd(tr,tw5_im,_mm256_mul_pd(x1_im,tw5_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[5]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[5]);
+          const __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,wr,_mm256_mul_pd(x1_im,wi));
+          x1_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x1_im,wr)); }
         x2_re = LD(&rio_re[m+10*ios]);
         x2_im = LD(&rio_im[m+10*ios]);
-        { const __m256d tr = x2_re;
-          x2_re = _mm256_fmsub_pd(x2_re,tw9_re,_mm256_mul_pd(x2_im,tw9_im));
-          x2_im = _mm256_fmadd_pd(tr,tw9_im,_mm256_mul_pd(x2_im,tw9_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[9]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[9]);
+          const __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
+          x2_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x2_im,wr)); }
         x3_re = LD(&rio_re[m+14*ios]);
         x3_im = LD(&rio_im[m+14*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmsub_pd(x3_re,tw13_re,_mm256_mul_pd(x3_im,tw13_im));
-          x3_im = _mm256_fmadd_pd(tr,tw13_im,_mm256_mul_pd(x3_im,tw13_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[13]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[13]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x3_im,wr)); }
 
         /* radix-4 n2=2 [fwd] */
         { __m256d t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;
@@ -215,19 +209,25 @@ radix16_t1s_dit_fwd_avx2(
           x0_im = _mm256_fmadd_pd(tr,tw2_im,_mm256_mul_pd(x0_im,tw2_re)); }
         x1_re = LD(&rio_re[m+7*ios]);
         x1_im = LD(&rio_im[m+7*ios]);
-        { const __m256d tr = x1_re;
-          x1_re = _mm256_fmsub_pd(x1_re,tw6_re,_mm256_mul_pd(x1_im,tw6_im));
-          x1_im = _mm256_fmadd_pd(tr,tw6_im,_mm256_mul_pd(x1_im,tw6_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[6]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[6]);
+          const __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,wr,_mm256_mul_pd(x1_im,wi));
+          x1_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x1_im,wr)); }
         x2_re = LD(&rio_re[m+11*ios]);
         x2_im = LD(&rio_im[m+11*ios]);
-        { const __m256d tr = x2_re;
-          x2_re = _mm256_fmsub_pd(x2_re,tw10_re,_mm256_mul_pd(x2_im,tw10_im));
-          x2_im = _mm256_fmadd_pd(tr,tw10_im,_mm256_mul_pd(x2_im,tw10_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[10]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[10]);
+          const __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
+          x2_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x2_im,wr)); }
         x3_re = LD(&rio_re[m+15*ios]);
         x3_im = LD(&rio_im[m+15*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmsub_pd(x3_re,tw14_re,_mm256_mul_pd(x3_im,tw14_im));
-          x3_im = _mm256_fmadd_pd(tr,tw14_im,_mm256_mul_pd(x3_im,tw14_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[14]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[14]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x3_im,wr)); }
 
         /* radix-4 n2=3 [fwd] */
         { __m256d t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;
@@ -434,26 +434,6 @@ radix16_t1s_dit_bwd_avx2(
     const __m256d tw3_im = _mm256_broadcast_sd(&W_im[3]);
     const __m256d tw4_re = _mm256_broadcast_sd(&W_re[4]);
     const __m256d tw4_im = _mm256_broadcast_sd(&W_im[4]);
-    const __m256d tw5_re = _mm256_broadcast_sd(&W_re[5]);
-    const __m256d tw5_im = _mm256_broadcast_sd(&W_im[5]);
-    const __m256d tw6_re = _mm256_broadcast_sd(&W_re[6]);
-    const __m256d tw6_im = _mm256_broadcast_sd(&W_im[6]);
-    const __m256d tw7_re = _mm256_broadcast_sd(&W_re[7]);
-    const __m256d tw7_im = _mm256_broadcast_sd(&W_im[7]);
-    const __m256d tw8_re = _mm256_broadcast_sd(&W_re[8]);
-    const __m256d tw8_im = _mm256_broadcast_sd(&W_im[8]);
-    const __m256d tw9_re = _mm256_broadcast_sd(&W_re[9]);
-    const __m256d tw9_im = _mm256_broadcast_sd(&W_im[9]);
-    const __m256d tw10_re = _mm256_broadcast_sd(&W_re[10]);
-    const __m256d tw10_im = _mm256_broadcast_sd(&W_im[10]);
-    const __m256d tw11_re = _mm256_broadcast_sd(&W_re[11]);
-    const __m256d tw11_im = _mm256_broadcast_sd(&W_im[11]);
-    const __m256d tw12_re = _mm256_broadcast_sd(&W_re[12]);
-    const __m256d tw12_im = _mm256_broadcast_sd(&W_im[12]);
-    const __m256d tw13_re = _mm256_broadcast_sd(&W_re[13]);
-    const __m256d tw13_im = _mm256_broadcast_sd(&W_im[13]);
-    const __m256d tw14_re = _mm256_broadcast_sd(&W_re[14]);
-    const __m256d tw14_im = _mm256_broadcast_sd(&W_im[14]);
 
     for (size_t m = 0; m < me; m += 4) {
         /* sub-FFT n2=0 */
@@ -466,14 +446,18 @@ radix16_t1s_dit_bwd_avx2(
           x1_im = _mm256_fmsub_pd(x1_im,tw3_re,_mm256_mul_pd(tr,tw3_im)); }
         x2_re = LD(&rio_re[m+8*ios]);
         x2_im = LD(&rio_im[m+8*ios]);
-        { const __m256d tr = x2_re;
-          x2_re = _mm256_fmadd_pd(x2_re,tw7_re,_mm256_mul_pd(x2_im,tw7_im));
-          x2_im = _mm256_fmsub_pd(x2_im,tw7_re,_mm256_mul_pd(tr,tw7_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[7]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[7]);
+          const __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
+          x2_im = _mm256_fmsub_pd(x2_im,wr,_mm256_mul_pd(tr,wi)); }
         x3_re = LD(&rio_re[m+12*ios]);
         x3_im = LD(&rio_im[m+12*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmadd_pd(x3_re,tw11_re,_mm256_mul_pd(x3_im,tw11_im));
-          x3_im = _mm256_fmsub_pd(x3_im,tw11_re,_mm256_mul_pd(tr,tw11_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[11]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[11]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmsub_pd(x3_im,wr,_mm256_mul_pd(tr,wi)); }
 
         /* radix-4 n2=0 [bwd] */
         { __m256d t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;
@@ -509,14 +493,18 @@ radix16_t1s_dit_bwd_avx2(
           x1_im = _mm256_fmsub_pd(x1_im,tw4_re,_mm256_mul_pd(tr,tw4_im)); }
         x2_re = LD(&rio_re[m+9*ios]);
         x2_im = LD(&rio_im[m+9*ios]);
-        { const __m256d tr = x2_re;
-          x2_re = _mm256_fmadd_pd(x2_re,tw8_re,_mm256_mul_pd(x2_im,tw8_im));
-          x2_im = _mm256_fmsub_pd(x2_im,tw8_re,_mm256_mul_pd(tr,tw8_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[8]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[8]);
+          const __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
+          x2_im = _mm256_fmsub_pd(x2_im,wr,_mm256_mul_pd(tr,wi)); }
         x3_re = LD(&rio_re[m+13*ios]);
         x3_im = LD(&rio_im[m+13*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmadd_pd(x3_re,tw12_re,_mm256_mul_pd(x3_im,tw12_im));
-          x3_im = _mm256_fmsub_pd(x3_im,tw12_re,_mm256_mul_pd(tr,tw12_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[12]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[12]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmsub_pd(x3_im,wr,_mm256_mul_pd(tr,wi)); }
 
         /* radix-4 n2=1 [bwd] */
         { __m256d t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;
@@ -547,19 +535,25 @@ radix16_t1s_dit_bwd_avx2(
           x0_im = _mm256_fmsub_pd(x0_im,tw1_re,_mm256_mul_pd(tr,tw1_im)); }
         x1_re = LD(&rio_re[m+6*ios]);
         x1_im = LD(&rio_im[m+6*ios]);
-        { const __m256d tr = x1_re;
-          x1_re = _mm256_fmadd_pd(x1_re,tw5_re,_mm256_mul_pd(x1_im,tw5_im));
-          x1_im = _mm256_fmsub_pd(x1_im,tw5_re,_mm256_mul_pd(tr,tw5_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[5]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[5]);
+          const __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,wr,_mm256_mul_pd(x1_im,wi));
+          x1_im = _mm256_fmsub_pd(x1_im,wr,_mm256_mul_pd(tr,wi)); }
         x2_re = LD(&rio_re[m+10*ios]);
         x2_im = LD(&rio_im[m+10*ios]);
-        { const __m256d tr = x2_re;
-          x2_re = _mm256_fmadd_pd(x2_re,tw9_re,_mm256_mul_pd(x2_im,tw9_im));
-          x2_im = _mm256_fmsub_pd(x2_im,tw9_re,_mm256_mul_pd(tr,tw9_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[9]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[9]);
+          const __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
+          x2_im = _mm256_fmsub_pd(x2_im,wr,_mm256_mul_pd(tr,wi)); }
         x3_re = LD(&rio_re[m+14*ios]);
         x3_im = LD(&rio_im[m+14*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmadd_pd(x3_re,tw13_re,_mm256_mul_pd(x3_im,tw13_im));
-          x3_im = _mm256_fmsub_pd(x3_im,tw13_re,_mm256_mul_pd(tr,tw13_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[13]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[13]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmsub_pd(x3_im,wr,_mm256_mul_pd(tr,wi)); }
 
         /* radix-4 n2=2 [bwd] */
         { __m256d t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;
@@ -590,19 +584,25 @@ radix16_t1s_dit_bwd_avx2(
           x0_im = _mm256_fmsub_pd(x0_im,tw2_re,_mm256_mul_pd(tr,tw2_im)); }
         x1_re = LD(&rio_re[m+7*ios]);
         x1_im = LD(&rio_im[m+7*ios]);
-        { const __m256d tr = x1_re;
-          x1_re = _mm256_fmadd_pd(x1_re,tw6_re,_mm256_mul_pd(x1_im,tw6_im));
-          x1_im = _mm256_fmsub_pd(x1_im,tw6_re,_mm256_mul_pd(tr,tw6_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[6]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[6]);
+          const __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,wr,_mm256_mul_pd(x1_im,wi));
+          x1_im = _mm256_fmsub_pd(x1_im,wr,_mm256_mul_pd(tr,wi)); }
         x2_re = LD(&rio_re[m+11*ios]);
         x2_im = LD(&rio_im[m+11*ios]);
-        { const __m256d tr = x2_re;
-          x2_re = _mm256_fmadd_pd(x2_re,tw10_re,_mm256_mul_pd(x2_im,tw10_im));
-          x2_im = _mm256_fmsub_pd(x2_im,tw10_re,_mm256_mul_pd(tr,tw10_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[10]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[10]);
+          const __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
+          x2_im = _mm256_fmsub_pd(x2_im,wr,_mm256_mul_pd(tr,wi)); }
         x3_re = LD(&rio_re[m+15*ios]);
         x3_im = LD(&rio_im[m+15*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmadd_pd(x3_re,tw14_re,_mm256_mul_pd(x3_im,tw14_im));
-          x3_im = _mm256_fmsub_pd(x3_im,tw14_re,_mm256_mul_pd(tr,tw14_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[14]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[14]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmsub_pd(x3_im,wr,_mm256_mul_pd(tr,wi)); }
 
         /* radix-4 n2=3 [bwd] */
         { __m256d t0r,t0i,t1r,t1i,t2r,t2i,t3r,t3i;

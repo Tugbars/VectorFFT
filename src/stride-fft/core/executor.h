@@ -191,11 +191,17 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
                 st->t1_fwd(base_re, base_im,
                            st->grp_tw_re[g], st->grp_tw_im[g],
                            st->stride, K);
-            } else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]) {
+            } else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]
+#ifdef STRIDE_FORCE_TEMP_BUFFER
+                       && 0  /* force temp buffer path for A/B testing */
+#endif
+                      ) {
                 /* Method C with scalar-broadcast twiddle codelet (t1s).
-                 * The codelet uses _mm256_broadcast_sd internally — no temp
-                 * buffer needed, twiddles are (R-1) scalars per group.
-                 * Zero twiddle cache pressure. */
+                 * Hoisted broadcasts: first N twiddles hoisted before the loop
+                 * (AVX2: 5 pairs, AVX-512: 12 pairs), rest broadcast inline.
+                 * ~neutral vs temp buffer for large R (>=12), wins for small R.
+                 * Define STRIDE_FORCE_TEMP_BUFFER to bypass t1s and use
+                 * the K-blocked temp buffer path below instead. */
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
                 if (cfr != 1.0 || cfi != 0.0) {

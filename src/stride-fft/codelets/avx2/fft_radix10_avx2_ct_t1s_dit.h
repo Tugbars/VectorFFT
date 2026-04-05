@@ -67,14 +67,6 @@ radix10_t1s_dit_fwd_avx2(
     const __m256d tw3_im = _mm256_broadcast_sd(&W_im[3]);
     const __m256d tw4_re = _mm256_broadcast_sd(&W_re[4]);
     const __m256d tw4_im = _mm256_broadcast_sd(&W_im[4]);
-    const __m256d tw5_re = _mm256_broadcast_sd(&W_re[5]);
-    const __m256d tw5_im = _mm256_broadcast_sd(&W_im[5]);
-    const __m256d tw6_re = _mm256_broadcast_sd(&W_re[6]);
-    const __m256d tw6_im = _mm256_broadcast_sd(&W_im[6]);
-    const __m256d tw7_re = _mm256_broadcast_sd(&W_re[7]);
-    const __m256d tw7_im = _mm256_broadcast_sd(&W_im[7]);
-    const __m256d tw8_re = _mm256_broadcast_sd(&W_re[8]);
-    const __m256d tw8_im = _mm256_broadcast_sd(&W_im[8]);
 
     for (size_t m = 0; m < me; m += 4) {
         /* sub-FFT n2=0 */
@@ -92,14 +84,18 @@ radix10_t1s_dit_fwd_avx2(
           x2_im = _mm256_fmadd_pd(tr,tw3_im,_mm256_mul_pd(x2_im,tw3_re)); }
         x3_re = LD(&rio_re[m+6*ios]);
         x3_im = LD(&rio_im[m+6*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmsub_pd(x3_re,tw5_re,_mm256_mul_pd(x3_im,tw5_im));
-          x3_im = _mm256_fmadd_pd(tr,tw5_im,_mm256_mul_pd(x3_im,tw5_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[5]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[5]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x3_im,wr)); }
         x4_re = LD(&rio_re[m+8*ios]);
         x4_im = LD(&rio_im[m+8*ios]);
-        { const __m256d tr = x4_re;
-          x4_re = _mm256_fmsub_pd(x4_re,tw7_re,_mm256_mul_pd(x4_im,tw7_im));
-          x4_im = _mm256_fmadd_pd(tr,tw7_im,_mm256_mul_pd(x4_im,tw7_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[7]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[7]);
+          const __m256d tr = x4_re;
+          x4_re = _mm256_fmsub_pd(x4_re,wr,_mm256_mul_pd(x4_im,wi));
+          x4_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x4_im,wr)); }
 
         /* radix-5 n2=0 [fwd] */
         {
@@ -150,14 +146,18 @@ radix10_t1s_dit_fwd_avx2(
           x2_im = _mm256_fmadd_pd(tr,tw4_im,_mm256_mul_pd(x2_im,tw4_re)); }
         x3_re = LD(&rio_re[m+7*ios]);
         x3_im = LD(&rio_im[m+7*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmsub_pd(x3_re,tw6_re,_mm256_mul_pd(x3_im,tw6_im));
-          x3_im = _mm256_fmadd_pd(tr,tw6_im,_mm256_mul_pd(x3_im,tw6_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[6]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[6]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmsub_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x3_im,wr)); }
         x4_re = LD(&rio_re[m+9*ios]);
         x4_im = LD(&rio_im[m+9*ios]);
-        { const __m256d tr = x4_re;
-          x4_re = _mm256_fmsub_pd(x4_re,tw8_re,_mm256_mul_pd(x4_im,tw8_im));
-          x4_im = _mm256_fmadd_pd(tr,tw8_im,_mm256_mul_pd(x4_im,tw8_re)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[8]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[8]);
+          const __m256d tr = x4_re;
+          x4_re = _mm256_fmsub_pd(x4_re,wr,_mm256_mul_pd(x4_im,wi));
+          x4_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x4_im,wr)); }
 
         /* radix-5 n2=1 [fwd] */
         {
@@ -328,14 +328,6 @@ radix10_t1s_dit_bwd_avx2(
     const __m256d tw3_im = _mm256_broadcast_sd(&W_im[3]);
     const __m256d tw4_re = _mm256_broadcast_sd(&W_re[4]);
     const __m256d tw4_im = _mm256_broadcast_sd(&W_im[4]);
-    const __m256d tw5_re = _mm256_broadcast_sd(&W_re[5]);
-    const __m256d tw5_im = _mm256_broadcast_sd(&W_im[5]);
-    const __m256d tw6_re = _mm256_broadcast_sd(&W_re[6]);
-    const __m256d tw6_im = _mm256_broadcast_sd(&W_im[6]);
-    const __m256d tw7_re = _mm256_broadcast_sd(&W_re[7]);
-    const __m256d tw7_im = _mm256_broadcast_sd(&W_im[7]);
-    const __m256d tw8_re = _mm256_broadcast_sd(&W_re[8]);
-    const __m256d tw8_im = _mm256_broadcast_sd(&W_im[8]);
 
     for (size_t m = 0; m < me; m += 4) {
         /* sub-FFT n2=0 */
@@ -353,14 +345,18 @@ radix10_t1s_dit_bwd_avx2(
           x2_im = _mm256_fmsub_pd(x2_im,tw3_re,_mm256_mul_pd(tr,tw3_im)); }
         x3_re = LD(&rio_re[m+6*ios]);
         x3_im = LD(&rio_im[m+6*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmadd_pd(x3_re,tw5_re,_mm256_mul_pd(x3_im,tw5_im));
-          x3_im = _mm256_fmsub_pd(x3_im,tw5_re,_mm256_mul_pd(tr,tw5_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[5]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[5]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmsub_pd(x3_im,wr,_mm256_mul_pd(tr,wi)); }
         x4_re = LD(&rio_re[m+8*ios]);
         x4_im = LD(&rio_im[m+8*ios]);
-        { const __m256d tr = x4_re;
-          x4_re = _mm256_fmadd_pd(x4_re,tw7_re,_mm256_mul_pd(x4_im,tw7_im));
-          x4_im = _mm256_fmsub_pd(x4_im,tw7_re,_mm256_mul_pd(tr,tw7_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[7]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[7]);
+          const __m256d tr = x4_re;
+          x4_re = _mm256_fmadd_pd(x4_re,wr,_mm256_mul_pd(x4_im,wi));
+          x4_im = _mm256_fmsub_pd(x4_im,wr,_mm256_mul_pd(tr,wi)); }
 
         /* radix-5 n2=0 [bwd] */
         {
@@ -411,14 +407,18 @@ radix10_t1s_dit_bwd_avx2(
           x2_im = _mm256_fmsub_pd(x2_im,tw4_re,_mm256_mul_pd(tr,tw4_im)); }
         x3_re = LD(&rio_re[m+7*ios]);
         x3_im = LD(&rio_im[m+7*ios]);
-        { const __m256d tr = x3_re;
-          x3_re = _mm256_fmadd_pd(x3_re,tw6_re,_mm256_mul_pd(x3_im,tw6_im));
-          x3_im = _mm256_fmsub_pd(x3_im,tw6_re,_mm256_mul_pd(tr,tw6_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[6]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[6]);
+          const __m256d tr = x3_re;
+          x3_re = _mm256_fmadd_pd(x3_re,wr,_mm256_mul_pd(x3_im,wi));
+          x3_im = _mm256_fmsub_pd(x3_im,wr,_mm256_mul_pd(tr,wi)); }
         x4_re = LD(&rio_re[m+9*ios]);
         x4_im = LD(&rio_im[m+9*ios]);
-        { const __m256d tr = x4_re;
-          x4_re = _mm256_fmadd_pd(x4_re,tw8_re,_mm256_mul_pd(x4_im,tw8_im));
-          x4_im = _mm256_fmsub_pd(x4_im,tw8_re,_mm256_mul_pd(tr,tw8_im)); }
+        { const __m256d wr = _mm256_broadcast_sd(&W_re[8]);
+          const __m256d wi = _mm256_broadcast_sd(&W_im[8]);
+          const __m256d tr = x4_re;
+          x4_re = _mm256_fmadd_pd(x4_re,wr,_mm256_mul_pd(x4_im,wi));
+          x4_im = _mm256_fmsub_pd(x4_im,wr,_mm256_mul_pd(tr,wi)); }
 
         /* radix-5 n2=1 [bwd] */
         {
