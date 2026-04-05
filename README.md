@@ -171,20 +171,6 @@ src/stride-fft/
 
 ---
 
-## How It Works
-
-Traditional FFT libraries (FFTW, MKL) use Cooley-Tukey with a **digit-reversal permutation** pass -- an O(N) memory shuffle that doesn't compute anything but costs cache misses.
-
-VectorFFT eliminates this entirely:
-
-1. **Forward (DIT):** stages process data at increasing strides, output lands in digit-reversed order
-2. **Backward (DIF):** stages process in reverse order, naturally undoing the permutation
-3. **Roundtrip (fwd + bwd):** produces natural-order output with zero permutation overhead
-
-This saves one full data pass per transform. At large N, that's the difference between 1x and 16x over FFTW.
-
----
-
 ## Acknowledgments
 
 - [FFTW](http://www.fftw.org/) by Matteo Frigo and Steven G. Johnson -- the gold standard for decades. VectorFFT's prime-radix butterflies (R=11, 13, 17, 19) are derived from FFTW's genfft algebraic output, then re-scheduled using Sethi-Ullman register allocation with explicit spill management to minimize register pressure on AVX2 (16 YMM) and AVX-512 (32 ZMM).
