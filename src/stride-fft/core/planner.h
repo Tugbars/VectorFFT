@@ -199,7 +199,21 @@ static stride_plan_t *_stride_build_plan(
         }
     }
 
-    return stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, 0);
+    stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, 0);
+    if (!plan) return NULL;
+
+    /* Attach scalar-broadcast twiddle codelets where available.
+     * These use _mm256_broadcast_sd internally — zero twiddle cache pressure.
+     * The executor prefers t1s over t1 when both are present. */
+    for (int s = 1; s < nf; s++) {
+        int R = factors[s];
+        if (R < STRIDE_REG_MAX_RADIX && reg->t1s_fwd[R]) {
+            plan->stages[s].t1s_fwd = reg->t1s_fwd[R];
+            plan->stages[s].t1s_bwd = reg->t1s_bwd[R];
+        }
+    }
+
+    return plan;
 }
 
 /* =====================================================================

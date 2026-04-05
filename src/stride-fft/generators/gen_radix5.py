@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Copyright (c) 2025 Tuğbars Heptaşkın
+# Copyright (c) 2025 Tugbars Heptaskin
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -104,6 +104,7 @@ class Emitter:
         self.n_fma = self.n_fms = 0
         self.n_load = self.n_store = 0
         self.addr_mode = 'K'
+        self.tw_hoisted = False
 
     def reset(self):
         self.n_add = self.n_sub = self.n_mul = self.n_neg = 0
@@ -241,6 +242,93 @@ class Emitter:
         else:
             self.o(f"{{ const {T} wr = LD(&{tb}[{ta}]);")
             self.o(f"  const {T} wi = LD(&{tbi}[{ta}]);")
+            self.o(f"  const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fma('tr','wi',self.mul(f'{v}_im','wr'))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
+
+    def emit_hoist_all_tw_scalars(self, R):
+        """Emit broadcast of twiddle scalars BEFORE the m-loop.
+        Register-budget-aware: only hoists what fits in SIMD registers.
+        AVX2: 5 twiddle pairs (10 of 16 YMM), AVX-512: 12 pairs (24 of 32 ZMM).
+        Remaining twiddles are broadcast inline inside the loop."""
+        T = self.isa.T
+        n_tw = R - 1
+        if self.isa.name == 'scalar':
+            max_hoist = n_tw  # scalar has unlimited "registers"
+        elif self.isa.name == 'avx2':
+            max_hoist = 5     # 10 YMM for twiddles, 6 for data/temps
+        else:  # avx512
+            max_hoist = 12    # 24 ZMM for twiddles, 8 for data/temps
+        n_hoist = min(n_tw, max_hoist)
+        self.tw_hoisted_set = set(range(n_hoist))
+        for i in range(n_hoist):
+            if self.isa.name == 'scalar':
+                self.o(f"const double tw{i}_re = W_re[{i}], tw{i}_im = W_im[{i}];")
+            elif self.isa.name == 'avx2':
+                self.o(f"const {T} tw{i}_re = _mm256_broadcast_sd(&W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm256_broadcast_sd(&W_im[{i}]);")
+            else:  # avx512
+                self.o(f"const {T} tw{i}_re = _mm512_set1_pd(W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm512_set1_pd(W_im[{i}]);")
+
+    def emit_apply_hoisted_tw(self, v, tw_idx, d):
+        """Apply pre-hoisted twiddle tw{idx} to variable v (no broadcast)."""
+        fwd = (d == 'fwd')
+        T = self.isa.T
+        wr = f"tw{tw_idx}_re"
+        wi = f"tw{tw_idx}_im"
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*{wr} - {v}_im*{wi};")
+                self.o(f"  {v}_im = tr*{wi} + {v}_im*{wr}; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*{wr} + {v}_im*{wi};")
+                self.o(f"  {v}_im = {v}_im*{wr} - tr*{wi}; }}")
+        else:
+            self.o(f"{{ const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fma('tr',wi,self.mul(f'{v}_im',wr))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im',wr,self.mul('tr',wi))}; }}")
+
+    def emit_ext_tw_scalar(self, v, tw_idx, d):
+        """Emit twiddle multiply using scalar broadcast (t1s variant).
+        W_re/W_im are (R-1) scalars, NOT (R-1)*me arrays.
+        If tw_hoisted and tw_idx is in the hoisted set, uses pre-hoisted variable.
+        Otherwise broadcasts inline (scoped, register freed after use)."""
+        if self.tw_hoisted and tw_idx in self.tw_hoisted_set:
+            return self.emit_apply_hoisted_tw(v, tw_idx, d)
+        fwd = (d == 'fwd')
+        T = self.isa.T
+        self.n_load += 2
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double wr = W_re[{tw_idx}], wi = W_im[{tw_idx}], tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*wr - {v}_im*wi;")
+                self.o(f"  {v}_im = tr*wi + {v}_im*wr; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*wr + {v}_im*wi;")
+                self.o(f"  {v}_im = {v}_im*wr - tr*wi; }}")
+        elif self.isa.name == 'avx2':
+            self.o(f"{{ const {T} wr = _mm256_broadcast_sd(&W_re[{tw_idx}]);")
+            self.o(f"  const {T} wi = _mm256_broadcast_sd(&W_im[{tw_idx}]);")
+            self.o(f"  const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fma('tr','wi',self.mul(f'{v}_im','wr'))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
+        else:  # avx512
+            self.o(f"{{ const {T} wr = _mm512_set1_pd(W_re[{tw_idx}]);")
+            self.o(f"  const {T} wi = _mm512_set1_pd(W_im[{tw_idx}]);")
             self.o(f"  const {T} tr = {v}_re;")
             if fwd:
                 self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
@@ -401,7 +489,7 @@ class Emitter:
 # ================================================================
 
 def emit_kernel_body(em, d, variant):
-    """Emit the inner loop body for notw, dit_tw, dif_tw."""
+    """Emit the inner loop body for notw, dit_tw, dif_tw, dit_tw_scalar."""
     T = em.isa.T
 
     # Load inputs
@@ -412,6 +500,9 @@ def emit_kernel_body(em, d, variant):
     if variant == 'dit_tw':
         for n in range(1, R):
             em.emit_ext_tw(f"x{n}", n - 1, d)
+    elif variant == 'dit_tw_scalar':
+        for n in range(1, R):
+            em.emit_ext_tw_scalar(f"x{n}", n - 1, d)
 
     em.b()
     em.emit_radix5_clean(d)
@@ -421,6 +512,9 @@ def emit_kernel_body(em, d, variant):
     if variant == 'dif_tw':
         for m in range(1, R):
             em.emit_ext_tw(f"x{m}", m - 1, d)
+    elif variant == 'dif_tw_scalar':
+        for m in range(1, R):
+            em.emit_ext_tw_scalar(f"x{m}", m - 1, d)
 
     # Store outputs
     for m in range(R):
@@ -659,6 +753,7 @@ def emit_file_ct(isa, ct_variant):
 
     is_n1 = ct_variant == 'ct_n1'
     is_t1_dit = ct_variant == 'ct_t1_dit'
+    is_t1s_dit = ct_variant == 'ct_t1s_dit'
     is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     em.addr_mode = 'n1' if is_n1 else 't1'
@@ -669,6 +764,9 @@ def emit_file_ct(isa, ct_variant):
     elif is_t1_dif:
         func_base = "radix5_t1_dif"
         vname = "t1 DIF (in-place twiddle)"
+    elif is_t1s_dit:
+        func_base = "radix5_t1s_dit"
+        vname = "t1s DIT (in-place, scalar broadcast twiddle)"
     elif is_t1_dit_log3:
         func_base = "radix5_t1_dit_log3"
         vname = "t1 DIT log3 (in-place, derived twiddles)"
@@ -749,6 +847,12 @@ def emit_file_ct(isa, ct_variant):
         em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im,x4_re,x4_im;")
         em.b()
 
+        # Hoist twiddle broadcasts before the loop (t1s only)
+        if is_t1s_dit:
+            em.tw_hoisted = True
+            em.emit_hoist_all_tw_scalars(R)
+            em.b()
+
         # Loop
         if is_n1:
             if isa.name == 'scalar':
@@ -764,6 +868,8 @@ def emit_file_ct(isa, ct_variant):
         em.ind += 1
         if is_t1_dit_log3:
             emit_kernel_body_log3(em, d, 'dit_tw_log3')
+        elif is_t1s_dit:
+            emit_kernel_body(em, d, 'dit_tw_scalar')
         else:
             kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
             emit_kernel_body(em, d, kernel_variant)
@@ -1041,7 +1147,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='notw',
                         choices=['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
+                                 'ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
     args = parser.parse_args()
 
     if args.isa == 'all':
@@ -1050,7 +1156,7 @@ def main():
         targets = [ALL_ISA[args.isa]]
 
     std_variants = ['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3']
-    ct_variants = ['ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif']
+    ct_variants = ['ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif']
 
     if args.variant == 'all':
         variants = std_variants + ct_variants

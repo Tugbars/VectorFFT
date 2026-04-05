@@ -69,6 +69,7 @@ typedef struct {
     /* Codelets */
     stride_n1_fn n1_fwd, n1_bwd;
     stride_t1_fn t1_fwd, t1_bwd;
+    stride_t1_fn t1s_fwd, t1s_bwd;  /* scalar-broadcast twiddle variant (NULL = not available) */
 
     /* Per-group info (num_groups entries) */
     size_t *group_base;     /* base offset for each group (in doubles) */
@@ -100,6 +101,17 @@ typedef struct {
     /* Log3 flag: 1 = grp_tw stores raw per_leg (no cf baked in).
      * Executor applies cf to ALL legs before calling log3 codelet. */
     int use_log3;
+
+    /* Scalar twiddle: each twiddle row is a SINGLE scalar (same for all K).
+     * tw_scalar_re[g] -> (R-1) doubles, indexed by leg j=0..R-2.
+     * Used with K-blocked executor: broadcast scalars into small temp buffer,
+     * call t1 codelet with me=BLOCK_K. Eliminates 99% of twiddle memory.
+     *
+     * NULL = disabled (use grp_tw_re/im full arrays, legacy path). */
+    double **tw_scalar_re;
+    double **tw_scalar_im;
+    double *tw_scalar_pool_re;
+    double *tw_scalar_pool_im;
 } stride_stage_t;
 
 typedef struct {
@@ -179,6 +191,68 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
                 st->t1_fwd(base_re, base_im,
                            st->grp_tw_re[g], st->grp_tw_im[g],
                            st->stride, K);
+            } else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]
+#ifdef STRIDE_FORCE_TEMP_BUFFER
+                       && 0  /* force temp buffer path for A/B testing */
+#endif
+                      ) {
+                /* Method C with scalar-broadcast twiddle codelet (t1s).
+                 * Hoisted broadcasts: first N twiddles hoisted before the loop
+                 * (AVX2: 5 pairs, AVX-512: 12 pairs), rest broadcast inline.
+                 * ~neutral vs temp buffer for large R (>=12), wins for small R.
+                 * Define STRIDE_FORCE_TEMP_BUFFER to bypass t1s and use
+                 * the K-blocked temp buffer path below instead. */
+                double cfr = st->cf0_re[g];
+                double cfi = st->cf0_im[g];
+                if (cfr != 1.0 || cfi != 0.0) {
+                    for (size_t kk = 0; kk < K; kk++) {
+                        double tr = base_re[kk];
+                        base_re[kk] = tr * cfr - base_im[kk] * cfi;
+                        base_im[kk] = tr * cfi + base_im[kk] * cfr;
+                    }
+                }
+                st->t1s_fwd(base_re, base_im,
+                            st->tw_scalar_re[g], st->tw_scalar_im[g],
+                            st->stride, K);
+            } else if (st->tw_scalar_re && st->tw_scalar_re[g]) {
+                /* Fallback: K-blocked scalar twiddle with temp buffer.
+                 * Used when t1s codelet is not available for this radix. */
+                double cfr = st->cf0_re[g];
+                double cfi = st->cf0_im[g];
+                if (cfr != 1.0 || cfi != 0.0) {
+                    for (size_t kk = 0; kk < K; kk++) {
+                        double tr = base_re[kk];
+                        base_re[kk] = tr * cfr - base_im[kk] * cfi;
+                        base_im[kk] = tr * cfi + base_im[kk] * cfr;
+                    }
+                }
+
+                #define STRIDE_TW_BLOCK_K 64
+                const int Rm1 = st->radix - 1;
+                const double *stw_r = st->tw_scalar_re[g];
+                const double *stw_i = st->tw_scalar_im[g];
+
+                double tw_buf_re[63 * STRIDE_TW_BLOCK_K];
+                double tw_buf_im[63 * STRIDE_TW_BLOCK_K];
+
+                for (size_t kb = 0; kb < K; kb += STRIDE_TW_BLOCK_K) {
+                    size_t this_K = K - kb;
+                    if (this_K > STRIDE_TW_BLOCK_K) this_K = STRIDE_TW_BLOCK_K;
+
+                    for (int j = 0; j < Rm1; j++) {
+                        double wr = stw_r[j];
+                        double wi = stw_i[j];
+                        size_t base = (size_t)j * this_K;
+                        for (size_t kk = 0; kk < this_K; kk++) {
+                            tw_buf_re[base + kk] = wr;
+                            tw_buf_im[base + kk] = wi;
+                        }
+                    }
+
+                    st->t1_fwd(base_re + kb, base_im + kb,
+                               tw_buf_re, tw_buf_im,
+                               st->stride, this_K);
+                }
             } else {
                 /* Method C: cf on leg 0 only + t1_dit with combined twiddle */
                 double cfr = st->cf0_re[g];
@@ -333,6 +407,8 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
     st->needs_tw = (int *)calloc(ng, sizeof(int));
     st->grp_tw_re = (double **)calloc(ng, sizeof(double *));
     st->grp_tw_im = (double **)calloc(ng, sizeof(double *));
+    st->tw_scalar_re = (double **)calloc(ng, sizeof(double *));
+    st->tw_scalar_im = (double **)calloc(ng, sizeof(double *));
     st->cf0_re = (double *)calloc(ng, sizeof(double));
     st->cf0_im = (double *)calloc(ng, sizeof(double));
 
@@ -369,13 +445,23 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
         }
     }
 
-    /* Allocate twiddle pool + backward cf arrays */
+    /* Allocate twiddle pools */
     size_t per_grp = (size_t)(R - 1) * K;
+    size_t scalar_per_grp = (size_t)(R - 1);
+
     if (n_tw_groups > 0) {
+        /* Full K-replicated twiddle tables (used by legacy codelet path + backward) */
         st->tw_pool_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
         st->tw_pool_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
+
+        /* Scalar twiddle tables: (R-1) scalars per group.
+         * Each scalar is the combined twiddle for leg j (constant across K).
+         * Used by K-blocked executor path for L1-friendly access. */
+        st->tw_scalar_pool_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
+        st->tw_scalar_pool_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
     } else {
         st->tw_pool_re = st->tw_pool_im = NULL;
+        st->tw_scalar_pool_re = st->tw_scalar_pool_im = NULL;
     }
 
     /* Backward cf: full per-element twiddle for all groups */
@@ -431,22 +517,27 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
             st->cf0_re[g] = cfr;
             st->cf0_im[g] = cfi;
 
-            /* Twiddle table for legs 1..R-1 */
+            /* Twiddle tables for legs 1..R-1 */
             double *tw_r = st->tw_pool_re + (size_t)tw_idx * per_grp;
             double *tw_i = st->tw_pool_im + (size_t)tw_idx * per_grp;
             st->grp_tw_re[g] = tw_r;
             st->grp_tw_im[g] = tw_i;
 
+            /* Scalar twiddle pointers */
+            double *stw_r = st->tw_scalar_pool_re + (size_t)tw_idx * scalar_per_grp;
+            double *stw_i = st->tw_scalar_pool_im + (size_t)tw_idx * scalar_per_grp;
+            st->tw_scalar_re[g] = stw_r;
+            st->tw_scalar_im[g] = stw_i;
+
             if (st->use_log3) {
-                /* Log3: store raw per_leg[j] for ALL legs (no cf baked in).
-                 * Same layout as flat: tw[(j-1)*K + k] = W_N^{j * k_prev * ow_prev * S_s}
-                 * The log3 codelet picks whichever base rows it needs (radix-dependent).
-                 * The executor applies cf to ALL legs before calling the codelet. */
+                /* Log3: store raw per_leg[j] for ALL legs (no cf baked in). */
                 for (int j = 1; j < R; j++) {
                     int leg_exp = ((long long)k_prev * ow_prev * j * S_s) % N;
                     if (leg_exp < 0) leg_exp += N;
                     double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
                     double lr = cos(leg_angle), li = sin(leg_angle);
+                    stw_r[j - 1] = lr;
+                    stw_i[j - 1] = li;
                     size_t base_idx = (size_t)(j - 1) * K;
                     for (size_t kk = 0; kk < K; kk++) {
                         tw_r[base_idx + kk] = lr;
@@ -462,6 +553,10 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
                     double lr = cos(leg_angle), li = sin(leg_angle);
                     double wr = cfr * lr - cfi * li;
                     double wi = cfr * li + cfi * lr;
+                    /* Scalar: one value per leg */
+                    stw_r[j - 1] = wr;
+                    stw_i[j - 1] = wi;
+                    /* Full K-replicated (for backward + legacy forward) */
                     size_t base_idx = (size_t)(j - 1) * K;
                     for (size_t kk = 0; kk < K; kk++) {
                         tw_r[base_idx + kk] = wr;
@@ -530,11 +625,17 @@ static void stride_plan_destroy(stride_plan_t *plan) {
         free(plan->stages[s].needs_tw);
         free(plan->stages[s].grp_tw_re);
         free(plan->stages[s].grp_tw_im);
+        free(plan->stages[s].tw_scalar_re);
+        free(plan->stages[s].tw_scalar_im);
         free(plan->stages[s].cf0_re);
         free(plan->stages[s].cf0_im);
         if (plan->stages[s].tw_pool_re) {
             STRIDE_ALIGNED_FREE(plan->stages[s].tw_pool_re);
             STRIDE_ALIGNED_FREE(plan->stages[s].tw_pool_im);
+        }
+        if (plan->stages[s].tw_scalar_pool_re) {
+            STRIDE_ALIGNED_FREE(plan->stages[s].tw_scalar_pool_re);
+            STRIDE_ALIGNED_FREE(plan->stages[s].tw_scalar_pool_im);
         }
         free(plan->stages[s].cf_all_re);
         free(plan->stages[s].cf_all_im);

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Copyright (c) 2025 Tuğbars Heptaşkın
+# Copyright (c) 2025 Tugbars Heptaskin
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -98,6 +98,7 @@ class Emitter:
         self.n_fma = self.n_fms = 0
         self.n_load = self.n_store = 0
         self.addr_mode = 'K'
+        self.tw_hoisted = False
 
     def reset(self):
         self.spill_c = self.reload_c = 0
@@ -238,6 +239,94 @@ class Emitter:
                 self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
                 self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
 
+    def emit_hoist_all_tw_scalars(self, R):
+        """Emit broadcast of twiddle scalars BEFORE the m-loop.
+        Register-budget-aware: only hoists what fits in SIMD registers.
+        AVX2: 5 twiddle pairs (10 of 16 YMM), AVX-512: 12 pairs (24 of 32 ZMM).
+        Remaining twiddles are broadcast inline inside the loop."""
+        T = self.isa.T
+        n_tw = R - 1
+        if self.isa.name == 'scalar':
+            max_hoist = n_tw  # scalar has unlimited "registers"
+        elif self.isa.name == 'avx2':
+            max_hoist = 5     # 10 YMM for twiddles, 6 for data/temps
+        else:  # avx512
+            max_hoist = 12    # 24 ZMM for twiddles, 8 for data/temps
+        n_hoist = min(n_tw, max_hoist)
+        self.tw_hoisted_set = set(range(n_hoist))
+        for i in range(n_hoist):
+            if self.isa.name == 'scalar':
+                self.o(f"const double tw{i}_re = W_re[{i}], tw{i}_im = W_im[{i}];")
+            elif self.isa.name == 'avx2':
+                self.o(f"const {T} tw{i}_re = _mm256_broadcast_sd(&W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm256_broadcast_sd(&W_im[{i}]);")
+            else:  # avx512
+                self.o(f"const {T} tw{i}_re = _mm512_set1_pd(W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm512_set1_pd(W_im[{i}]);")
+
+    def emit_apply_hoisted_tw(self, v, tw_idx, d):
+        """Apply pre-hoisted twiddle tw{idx} to variable v (no broadcast)."""
+        fwd = (d == 'fwd')
+        T = self.isa.T
+        wr = f"tw{tw_idx}_re"
+        wi = f"tw{tw_idx}_im"
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*{wr} - {v}_im*{wi};")
+                self.o(f"  {v}_im = tr*{wi} + {v}_im*{wr}; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*{wr} + {v}_im*{wi};")
+                self.o(f"  {v}_im = {v}_im*{wr} - tr*{wi}; }}")
+        else:
+            self.o(f"{{ const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fma('tr',wi,self.mul(f'{v}_im',wr))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im',wr,self.mul('tr',wi))}; }}")
+
+    def emit_ext_tw_scalar(self, v, tw_idx, d):
+        """Emit twiddle multiply using scalar broadcast (t1s variant).
+        W_re/W_im are (R-1) scalars, NOT (R-1)*me arrays.
+        Broadcasts one double to SIMD width."""
+        if self.tw_hoisted and tw_idx in self.tw_hoisted_set:
+            return self.emit_apply_hoisted_tw(v, tw_idx, d)
+        fwd = (d == 'fwd')
+        T = self.isa.T
+        self.n_load += 2
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double wr = W_re[{tw_idx}], wi = W_im[{tw_idx}], tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*wr - {v}_im*wi;")
+                self.o(f"  {v}_im = tr*wi + {v}_im*wr; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*wr + {v}_im*wi;")
+                self.o(f"  {v}_im = {v}_im*wr - tr*wi; }}")
+        elif self.isa.name == 'avx2':
+            self.o(f"{{ const {T} wr = _mm256_broadcast_sd(&W_re[{tw_idx}]);")
+            self.o(f"  const {T} wi = _mm256_broadcast_sd(&W_im[{tw_idx}]);")
+            self.o(f"  const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fma('tr','wi',self.mul(f'{v}_im','wr'))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
+        else:  # avx512
+            self.o(f"{{ const {T} wr = _mm512_set1_pd(W_re[{tw_idx}]);")
+            self.o(f"  const {T} wi = _mm512_set1_pd(W_im[{tw_idx}]);")
+            self.o(f"  const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fma('tr','wi',self.mul(f'{v}_im','wr'))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
+
+    # -- Complex multiply helpers (for log3 derivation) --
+
     def emit_cmul(self, dst_r, dst_i, ar, ai, br, bi, d):
         fwd = (d == 'fwd')
         if fwd:
@@ -308,6 +397,8 @@ def emit_kernel_body_fused(em, d, itw_set, variant):
             em.emit_load(f"x{n1}", n)
             if variant == 'dit_tw' and n > 0:
                 em.emit_ext_tw(f"x{n1}", n - 1, d)
+            elif variant == 'dit_tw_scalar' and n > 0:
+                em.emit_ext_tw_scalar(f"x{n1}", n - 1, d)
         em.b()
         em.emit_radix3(xv3, d, f"radix-3 n2={n2}")
         em.b()
@@ -322,6 +413,8 @@ def emit_kernel_body_fused(em, d, itw_set, variant):
         em.emit_load(f"x{n1}", n)
         if variant == 'dit_tw' and n > 0:
             em.emit_ext_tw(f"x{n1}", n - 1, d)
+        elif variant == 'dit_tw_scalar' and n > 0:
+            em.emit_ext_tw_scalar(f"x{n1}", n - 1, d)
     em.b()
     em.emit_radix3(xv3, d, f"radix-3 n2={n2_last}")
     em.b()
@@ -351,6 +444,12 @@ def emit_kernel_body_fused(em, d, itw_set, variant):
                 if m > 0:
                     em.emit_ext_tw(dft2_vars[k2], m - 1, d)
             em.b()
+        elif variant == 'dif_tw_scalar':
+            for k2 in range(N2):
+                m = k1 + N1 * k2
+                if m > 0:
+                    em.emit_ext_tw_scalar(dft2_vars[k2], m - 1, d)
+            em.b()
         for k2 in range(N2):
             m = k1 + N1 * k2
             em.emit_store(dft2_vars[k2], m)
@@ -368,6 +467,8 @@ def emit_kernel_body(em, d, itw_set, variant):
             em.emit_load(f"x{n1}", n)
             if variant == 'dit_tw' and n > 0:
                 em.emit_ext_tw(f"x{n1}", n - 1, d)
+            elif variant == 'dit_tw_scalar' and n > 0:
+                em.emit_ext_tw_scalar(f"x{n1}", n - 1, d)
         em.b()
         em.emit_radix3(xv3, d, f"radix-3 n2={n2}")
         em.b()
@@ -393,6 +494,12 @@ def emit_kernel_body(em, d, itw_set, variant):
                 m = k1 + N1 * k2
                 if m > 0:
                     em.emit_ext_tw(f"x{k2}", m - 1, d)
+            em.b()
+        elif variant == 'dif_tw_scalar':
+            for k2 in range(N2):
+                m = k1 + N1 * k2
+                if m > 0:
+                    em.emit_ext_tw_scalar(f"x{k2}", m - 1, d)
             em.b()
         for k2 in range(N2):
             em.emit_store(f"x{k2}", k1 + N1 * k2)
@@ -705,7 +812,11 @@ def emit_sv_variants(t2_lines, isa, variant):
         t2_pattern = 'radix6_n1_dit_kernel'; sv_name = 'radix6_n1sv_kernel'
     elif variant == 'dit_tw':
         t2_pattern = 'radix6_tw_flat_dit_kernel'; sv_name = 'radix6_t1sv_dit_kernel'
+    elif variant == 'dit_tw_scalar':
+        t2_pattern = 'radix6_tw_flat_dit_kernel'; sv_name = 'radix6_t1sv_dit_kernel'
     elif variant == 'dif_tw':
+        t2_pattern = 'radix6_tw_flat_dif_kernel'; sv_name = 'radix6_t1sv_dif_kernel'
+    elif variant == 'dif_tw_scalar':
         t2_pattern = 'radix6_tw_flat_dif_kernel'; sv_name = 'radix6_t1sv_dif_kernel'
     else: return []
     out = []; out.append('')
@@ -728,10 +839,12 @@ def emit_file_ct(isa, itw_set, ct_variant):
     em = Emitter(isa); T = isa.T
     is_n1 = ct_variant == 'ct_n1'
     is_t1_dit = ct_variant == 'ct_t1_dit'
+    is_t1s_dit = ct_variant == 'ct_t1s_dit'
     is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     em.addr_mode = 'n1' if is_n1 else 't1'
     if is_n1:           func_base = "radix6_n1"; vname = "n1 (separate is/os)"
+    elif is_t1s_dit:    func_base = "radix6_t1s_dit"; vname = "t1s DIT (in-place, scalar broadcast twiddle)"
     elif is_t1_dif:     func_base = "radix6_t1_dif"; vname = "t1 DIF"
     elif is_t1_dit_log3: func_base = "radix6_t1_dit_log3"; vname = "t1 DIT log3 (in-place, derived twiddles)"
     else:               func_base = "radix6_t1_dit"; vname = "t1 DIT"
@@ -784,6 +897,13 @@ def emit_file_ct(isa, itw_set, ct_variant):
         em.o(f"{T} x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;")
         em.b()
         emit_hoisted_w6(em, isa, itw_set, use_em=True)
+
+        # Hoist twiddle broadcasts before the loop (t1s only)
+        if is_t1s_dit:
+            em.tw_hoisted = True
+            em.emit_hoist_all_tw_scalars(R)
+            em.b()
+
         if is_n1:
             if isa.name == 'scalar': em.o(f"for (size_t k = 0; k < vl; k++) {{")
             else:                    em.o(f"for (size_t k = 0; k < vl; k += {isa.k_step}) {{")
@@ -791,7 +911,9 @@ def emit_file_ct(isa, itw_set, ct_variant):
             if isa.name == 'scalar': em.o(f"for (size_t m = mb; m < me; m++) {{")
             else:                    em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
         em.ind += 1
-        if is_t1_dit_log3:
+        if is_t1s_dit:
+            emit_kernel_body(em, d, itw_set, 'dit_tw_scalar')
+        elif is_t1_dit_log3:
             emit_kernel_body_log3(em, d, itw_set, 'dit_tw_log3')
         else:
             kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
@@ -876,8 +998,8 @@ def emit_file_ct(isa, itw_set, ct_variant):
 # ═══════════════════════════════════════════════════════════════
 
 ALL_VARIANTS = ['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-                'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif']
-CT_VARIANTS = {'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif'}
+                'ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif']
+CT_VARIANTS = {'ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif'}
 
 def main():
     parser = argparse.ArgumentParser(description='DFT-6 unified codelet generator')
