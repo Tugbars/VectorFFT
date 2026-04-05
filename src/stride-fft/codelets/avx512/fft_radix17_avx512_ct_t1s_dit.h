@@ -80,14 +80,6 @@ radix17_t1s_dit_fwd_avx512(
     const __m512d tw10_im = _mm512_set1_pd(W_im[10]);
     const __m512d tw11_re = _mm512_set1_pd(W_re[11]);
     const __m512d tw11_im = _mm512_set1_pd(W_im[11]);
-    const __m512d tw12_re = _mm512_set1_pd(W_re[12]);
-    const __m512d tw12_im = _mm512_set1_pd(W_im[12]);
-    const __m512d tw13_re = _mm512_set1_pd(W_re[13]);
-    const __m512d tw13_im = _mm512_set1_pd(W_im[13]);
-    const __m512d tw14_re = _mm512_set1_pd(W_re[14]);
-    const __m512d tw14_im = _mm512_set1_pd(W_im[14]);
-    const __m512d tw15_re = _mm512_set1_pd(W_re[15]);
-    const __m512d tw15_im = _mm512_set1_pd(W_im[15]);
 
     for (size_t m = 0; m < me; m += 8) {
         x0_re = LD(&rio_re[m+0*ios]);
@@ -160,18 +152,26 @@ radix17_t1s_dit_fwd_avx512(
         { const __m512d tr = x12_re;
           x12_re = _mm512_fmsub_pd(x12_re,tw11_re,_mm512_mul_pd(x12_im,tw11_im));
           x12_im = _mm512_fmadd_pd(tr,tw11_im,_mm512_mul_pd(x12_im,tw11_re)); }
-        { const __m512d tr = x13_re;
-          x13_re = _mm512_fmsub_pd(x13_re,tw12_re,_mm512_mul_pd(x13_im,tw12_im));
-          x13_im = _mm512_fmadd_pd(tr,tw12_im,_mm512_mul_pd(x13_im,tw12_re)); }
-        { const __m512d tr = x14_re;
-          x14_re = _mm512_fmsub_pd(x14_re,tw13_re,_mm512_mul_pd(x14_im,tw13_im));
-          x14_im = _mm512_fmadd_pd(tr,tw13_im,_mm512_mul_pd(x14_im,tw13_re)); }
-        { const __m512d tr = x15_re;
-          x15_re = _mm512_fmsub_pd(x15_re,tw14_re,_mm512_mul_pd(x15_im,tw14_im));
-          x15_im = _mm512_fmadd_pd(tr,tw14_im,_mm512_mul_pd(x15_im,tw14_re)); }
-        { const __m512d tr = x16_re;
-          x16_re = _mm512_fmsub_pd(x16_re,tw15_re,_mm512_mul_pd(x16_im,tw15_im));
-          x16_im = _mm512_fmadd_pd(tr,tw15_im,_mm512_mul_pd(x16_im,tw15_re)); }
+        { const __m512d wr = _mm512_set1_pd(W_re[12]);
+          const __m512d wi = _mm512_set1_pd(W_im[12]);
+          const __m512d tr = x13_re;
+          x13_re = _mm512_fmsub_pd(x13_re,wr,_mm512_mul_pd(x13_im,wi));
+          x13_im = _mm512_fmadd_pd(tr,wi,_mm512_mul_pd(x13_im,wr)); }
+        { const __m512d wr = _mm512_set1_pd(W_re[13]);
+          const __m512d wi = _mm512_set1_pd(W_im[13]);
+          const __m512d tr = x14_re;
+          x14_re = _mm512_fmsub_pd(x14_re,wr,_mm512_mul_pd(x14_im,wi));
+          x14_im = _mm512_fmadd_pd(tr,wi,_mm512_mul_pd(x14_im,wr)); }
+        { const __m512d wr = _mm512_set1_pd(W_re[14]);
+          const __m512d wi = _mm512_set1_pd(W_im[14]);
+          const __m512d tr = x15_re;
+          x15_re = _mm512_fmsub_pd(x15_re,wr,_mm512_mul_pd(x15_im,wi));
+          x15_im = _mm512_fmadd_pd(tr,wi,_mm512_mul_pd(x15_im,wr)); }
+        { const __m512d wr = _mm512_set1_pd(W_re[15]);
+          const __m512d wi = _mm512_set1_pd(W_im[15]);
+          const __m512d tr = x16_re;
+          x16_re = _mm512_fmsub_pd(x16_re,wr,_mm512_mul_pd(x16_im,wi));
+          x16_im = _mm512_fmadd_pd(tr,wi,_mm512_mul_pd(x16_im,wr)); }
 
         /* DFT-17 butterfly [fwd] (straight-line genfft DAG, compiler-managed regs) */
         {
@@ -606,14 +606,6 @@ radix17_t1s_dit_bwd_avx512(
     const __m512d tw10_im = _mm512_set1_pd(W_im[10]);
     const __m512d tw11_re = _mm512_set1_pd(W_re[11]);
     const __m512d tw11_im = _mm512_set1_pd(W_im[11]);
-    const __m512d tw12_re = _mm512_set1_pd(W_re[12]);
-    const __m512d tw12_im = _mm512_set1_pd(W_im[12]);
-    const __m512d tw13_re = _mm512_set1_pd(W_re[13]);
-    const __m512d tw13_im = _mm512_set1_pd(W_im[13]);
-    const __m512d tw14_re = _mm512_set1_pd(W_re[14]);
-    const __m512d tw14_im = _mm512_set1_pd(W_im[14]);
-    const __m512d tw15_re = _mm512_set1_pd(W_re[15]);
-    const __m512d tw15_im = _mm512_set1_pd(W_im[15]);
 
     for (size_t m = 0; m < me; m += 8) {
         x0_re = LD(&rio_re[m+0*ios]);
@@ -686,18 +678,26 @@ radix17_t1s_dit_bwd_avx512(
         { const __m512d tr = x12_re;
           x12_re = _mm512_fmadd_pd(x12_re,tw11_re,_mm512_mul_pd(x12_im,tw11_im));
           x12_im = _mm512_fmsub_pd(x12_im,tw11_re,_mm512_mul_pd(tr,tw11_im)); }
-        { const __m512d tr = x13_re;
-          x13_re = _mm512_fmadd_pd(x13_re,tw12_re,_mm512_mul_pd(x13_im,tw12_im));
-          x13_im = _mm512_fmsub_pd(x13_im,tw12_re,_mm512_mul_pd(tr,tw12_im)); }
-        { const __m512d tr = x14_re;
-          x14_re = _mm512_fmadd_pd(x14_re,tw13_re,_mm512_mul_pd(x14_im,tw13_im));
-          x14_im = _mm512_fmsub_pd(x14_im,tw13_re,_mm512_mul_pd(tr,tw13_im)); }
-        { const __m512d tr = x15_re;
-          x15_re = _mm512_fmadd_pd(x15_re,tw14_re,_mm512_mul_pd(x15_im,tw14_im));
-          x15_im = _mm512_fmsub_pd(x15_im,tw14_re,_mm512_mul_pd(tr,tw14_im)); }
-        { const __m512d tr = x16_re;
-          x16_re = _mm512_fmadd_pd(x16_re,tw15_re,_mm512_mul_pd(x16_im,tw15_im));
-          x16_im = _mm512_fmsub_pd(x16_im,tw15_re,_mm512_mul_pd(tr,tw15_im)); }
+        { const __m512d wr = _mm512_set1_pd(W_re[12]);
+          const __m512d wi = _mm512_set1_pd(W_im[12]);
+          const __m512d tr = x13_re;
+          x13_re = _mm512_fmadd_pd(x13_re,wr,_mm512_mul_pd(x13_im,wi));
+          x13_im = _mm512_fmsub_pd(x13_im,wr,_mm512_mul_pd(tr,wi)); }
+        { const __m512d wr = _mm512_set1_pd(W_re[13]);
+          const __m512d wi = _mm512_set1_pd(W_im[13]);
+          const __m512d tr = x14_re;
+          x14_re = _mm512_fmadd_pd(x14_re,wr,_mm512_mul_pd(x14_im,wi));
+          x14_im = _mm512_fmsub_pd(x14_im,wr,_mm512_mul_pd(tr,wi)); }
+        { const __m512d wr = _mm512_set1_pd(W_re[14]);
+          const __m512d wi = _mm512_set1_pd(W_im[14]);
+          const __m512d tr = x15_re;
+          x15_re = _mm512_fmadd_pd(x15_re,wr,_mm512_mul_pd(x15_im,wi));
+          x15_im = _mm512_fmsub_pd(x15_im,wr,_mm512_mul_pd(tr,wi)); }
+        { const __m512d wr = _mm512_set1_pd(W_re[15]);
+          const __m512d wi = _mm512_set1_pd(W_im[15]);
+          const __m512d tr = x16_re;
+          x16_re = _mm512_fmadd_pd(x16_re,wr,_mm512_mul_pd(x16_im,wi));
+          x16_im = _mm512_fmsub_pd(x16_im,wr,_mm512_mul_pd(tr,wi)); }
 
         /* DFT-17 butterfly [bwd] (straight-line genfft DAG, compiler-managed regs) */
         {

@@ -297,6 +297,13 @@ static const int STRIDE_AVAILABLE_RADIXES[] = {
 #define _REG_NO_LOG3(R) _REG_N1(R) _REG_T1(R)
 #define _REG_N1_ONLY(R) _REG_N1(R)
 
+/* t1s registration status:
+ * R=3,5,6,7,10: t1s wins — all twiddles fit in AVX2 registers (≤5 pairs).
+ * R=11,13,17,19: t1s ~neutral — partial hoisting, some inline broadcasts.
+ * R=12,16,20,25: t1s ~2% slower than temp buffer on AVX2 (register spill),
+ *   but kept registered for AVX-512 benefit and future optimization.
+ *   Define STRIDE_FORCE_TEMP_BUFFER to bypass t1s for A/B testing.
+ */
 static void stride_registry_init(stride_registry_t *reg) {
     memset(reg, 0, sizeof(*reg));
 
