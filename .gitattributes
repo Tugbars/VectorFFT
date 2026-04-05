@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Treat notebooks as binary (skip diff/merge noise)
+*.ipynb linguist-generated
+*.ipynb -diff
