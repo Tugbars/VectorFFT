@@ -69,6 +69,7 @@ typedef struct {
     /* Codelets */
     stride_n1_fn n1_fwd, n1_bwd;
     stride_t1_fn t1_fwd, t1_bwd;
+    stride_t1_fn t1s_fwd, t1s_bwd;  /* scalar-broadcast twiddle variant (NULL = not available) */
 
     /* Per-group info (num_groups entries) */
     size_t *group_base;     /* base offset for each group (in doubles) */
@@ -190,12 +191,26 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
                 st->t1_fwd(base_re, base_im,
                            st->grp_tw_re[g], st->grp_tw_im[g],
                            st->stride, K);
+            } else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]) {
+                /* Method C with scalar-broadcast twiddle codelet (t1s).
+                 * The codelet uses _mm256_broadcast_sd internally — no temp
+                 * buffer needed, twiddles are (R-1) scalars per group.
+                 * Zero twiddle cache pressure. */
+                double cfr = st->cf0_re[g];
+                double cfi = st->cf0_im[g];
+                if (cfr != 1.0 || cfi != 0.0) {
+                    for (size_t kk = 0; kk < K; kk++) {
+                        double tr = base_re[kk];
+                        base_re[kk] = tr * cfr - base_im[kk] * cfi;
+                        base_im[kk] = tr * cfi + base_im[kk] * cfr;
+                    }
+                }
+                st->t1s_fwd(base_re, base_im,
+                            st->tw_scalar_re[g], st->tw_scalar_im[g],
+                            st->stride, K);
             } else if (st->tw_scalar_re && st->tw_scalar_re[g]) {
-                /* Method C with K-blocked scalar twiddle.
-                 * Twiddles are (R-1) scalars per group (constant across K).
-                 * We broadcast into a small temp buffer and call the existing
-                 * t1 codelet in BLOCK_K chunks. The temp buffer fits in L1,
-                 * eliminating the L2/L3 twiddle cache pressure. */
+                /* Fallback: K-blocked scalar twiddle with temp buffer.
+                 * Used when t1s codelet is not available for this radix. */
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
                 if (cfr != 1.0 || cfi != 0.0) {
@@ -211,9 +226,6 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
                 const double *stw_r = st->tw_scalar_re[g];
                 const double *stw_i = st->tw_scalar_im[g];
 
-                /* Stack temp for one block: (R-1) * BLOCK_K * 2 doubles.
-                 * Max R=64 → 63*64 = 4032 doubles = 32KB. Too large for stack
-                 * if R>16. Use a smaller block or heap for large R. */
                 double tw_buf_re[63 * STRIDE_TW_BLOCK_K];
                 double tw_buf_im[63 * STRIDE_TW_BLOCK_K];
 
@@ -221,7 +233,6 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
                     size_t this_K = K - kb;
                     if (this_K > STRIDE_TW_BLOCK_K) this_K = STRIDE_TW_BLOCK_K;
 
-                    /* Broadcast scalars into temp buffer */
                     for (int j = 0; j < Rm1; j++) {
                         double wr = stw_r[j];
                         double wi = stw_i[j];

@@ -77,6 +77,7 @@
   #include "fft_radix3_avx512_ct_t1_dit_log3.h"
   #include "fft_radix5_avx512_ct_n1.h"
   #include "fft_radix5_avx512_ct_t1_dit.h"
+  #include "fft_radix5_avx512_ct_t1s_dit.h"
   #include "fft_radix5_avx512_ct_t1_dit_log3.h"
   #include "fft_radix6_avx512_ct_n1.h"
   #include "fft_radix6_avx512_ct_t1_dit.h"
@@ -123,6 +124,7 @@
   #include "fft_radix3_avx2_ct_t1_dit_log3.h"
   #include "fft_radix5_avx2_ct_n1.h"
   #include "fft_radix5_avx2_ct_t1_dit.h"
+  #include "fft_radix5_avx2_ct_t1s_dit.h"
   #include "fft_radix5_avx2_ct_t1_dit_log3.h"
   #include "fft_radix6_avx2_ct_n1.h"
   #include "fft_radix6_avx2_ct_t1_dit.h"
@@ -169,6 +171,7 @@
   #include "fft_radix3_scalar_ct_t1_dit_log3.h"
   #include "fft_radix5_scalar_ct_n1.h"
   #include "fft_radix5_scalar_ct_t1_dit.h"
+  #include "fft_radix5_scalar_ct_t1s_dit.h"
   #include "fft_radix5_scalar_ct_t1_dit_log3.h"
   #include "fft_radix6_scalar_ct_n1.h"
   #include "fft_radix6_scalar_ct_t1_dit.h"
@@ -224,6 +227,8 @@ typedef struct {
     stride_t1_fn t1_bwd[STRIDE_REG_MAX_RADIX];
     stride_t1_fn t1_fwd_log3[STRIDE_REG_MAX_RADIX];
     stride_t1_fn t1_bwd_log3[STRIDE_REG_MAX_RADIX];
+    stride_t1_fn t1s_fwd[STRIDE_REG_MAX_RADIX]; /* scalar-broadcast twiddle */
+    stride_t1_fn t1s_bwd[STRIDE_REG_MAX_RADIX];
 } stride_registry_t;
 
 static const int STRIDE_AVAILABLE_RADIXES[] = {
@@ -248,6 +253,10 @@ static const int STRIDE_AVAILABLE_RADIXES[] = {
     reg->t1_fwd_log3[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1_dit_log3_fwd); \
     reg->t1_bwd_log3[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1_dit_log3_bwd);
 
+#define _REG_T1S(R) \
+    reg->t1s_fwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1s_dit_fwd); \
+    reg->t1s_bwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1s_dit_bwd);
+
 #define _REG_FULL(R)    _REG_N1(R) _REG_T1(R) _REG_T1_LOG3(R)
 #define _REG_NO_LOG3(R) _REG_N1(R) _REG_T1(R)
 #define _REG_N1_ONLY(R) _REG_N1(R)
@@ -258,7 +267,7 @@ static void stride_registry_init(stride_registry_t *reg) {
     _REG_NO_LOG3(2)
     _REG_FULL(3)
     _REG_FULL(4)
-    _REG_FULL(5)
+    _REG_FULL(5) _REG_T1S(5)
     _REG_FULL(6)
     _REG_FULL(7)
     _REG_NO_LOG3(8)
