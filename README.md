@@ -25,8 +25,6 @@
 
 ![vs MKL](src/stride-fft/bench/vfft_vs_mkl.png)
 
-<img width="2380" height="1097" alt="PrimesVFFT" src="https://github.com/user-attachments/assets/bf75e541-74fe-4f78-a779-d98238d2ba8b" />
-
 | N | K | vs FFTW | vs MKL |
 |---|---|---------|--------|
 | 60 | 256 | 3.20x | **3.90x** |
@@ -41,7 +39,7 @@
 
 ### Prime-N Performance (Rader & Bluestein)
 
-![Primes](src/stride-fft/bench/vfft_primes.png)
+<img width="3172" height="1452" alt="vfft_primes" src="https://github.com/user-attachments/assets/cbc42dd5-a983-4e2e-be41-10bf5328ca28" />
 
 Smooth primes (N-1 is 19-smooth) use **Rader's algorithm** with hand-optimized codelets for the convolution. Non-smooth primes use **Bluestein's algorithm** (chirp-z transform).
 
