@@ -36,6 +36,7 @@
 #include "registry.h"
 #include "factorizer.h"
 #include "exhaustive.h"
+#include "dp_planner.h"
 #include "rader.h"      /* includes bluestein.h (shared SIMD helpers) */
 
 /* =====================================================================
@@ -336,16 +337,45 @@ static double _stride_refine_bench(int N, size_t K,
 }
 
 /**
- * stride_wisdom_calibrate -- Run exhaustive search and store in wisdom.
+ * stride_wisdom_calibrate -- Find best factorization and store in wisdom.
  *
- * After exhaustive search finds the best factorization, re-benchmarks it
- * with full accuracy before storing.
+ * Two strategies:
+ *   Small N (<=1024): exhaustive search (all factorizations x orderings)
+ *   Large N (>1024):  recursive DP planner (FFTW-style decomposition with
+ *                     memoization). Tries each radix as first stage,
+ *                     recursively plans the remainder, caches sub-solutions.
+ *                     Then tries all orderings of the winning radix set.
+ *                     ~150 benchmarks instead of ~61000.
+ *
+ * dp_ctx: optional pre-initialized DP context. If NULL, creates one
+ *         internally. Pass a shared context when calibrating many (N,K)
+ *         at the same K to reuse sub-problem cache across sizes.
  */
-static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
-                                     const stride_registry_t *reg) {
+#define STRIDE_EXHAUSTIVE_THRESHOLD 1024
+
+static void stride_wisdom_calibrate_ex(stride_wisdom_t *wis, int N, size_t K,
+                                        const stride_registry_t *reg,
+                                        stride_dp_context_t *dp_ctx) {
     stride_factorization_t best_fact;
-    double search_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
-    if (search_ns >= 1e17) return;
+    double best_ns;
+
+    if (N <= STRIDE_EXHAUSTIVE_THRESHOLD) {
+        /* Small N: full exhaustive (all factorizations x orderings) */
+        best_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
+    } else {
+        /* Large N: recursive DP planner */
+        stride_dp_context_t local_ctx;
+        int own_ctx = 0;
+        if (!dp_ctx) {
+            stride_dp_init(&local_ctx, K, N);
+            dp_ctx = &local_ctx;
+            own_ctx = 1;
+        }
+        best_ns = stride_dp_plan(dp_ctx, N, reg, &best_fact, 0);
+        if (own_ctx) stride_dp_destroy(&local_ctx);
+    }
+
+    if (best_ns >= 1e17) return;
 
     /* Re-bench the winner with full accuracy */
     double refined_ns = _stride_refine_bench(N, K, best_fact.factors,
@@ -353,6 +383,12 @@ static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
 
     stride_wisdom_add(wis, N, K, best_fact.factors, best_fact.nfactors,
                       refined_ns);
+}
+
+/* Convenience wrapper */
+static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
+                                     const stride_registry_t *reg) {
+    stride_wisdom_calibrate_ex(wis, N, K, reg, NULL);
 }
 
 #endif /* STRIDE_PLANNER_H */

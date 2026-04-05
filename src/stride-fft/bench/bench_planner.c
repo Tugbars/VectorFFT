@@ -409,8 +409,7 @@ int main(void) {
     printf("\n");
 
     /* ── Test cases ── */
-    /* Exhaustive search for ALL sizes — this is our best vs MKL's best.
-     * Takes longer on first run but wisdom caches results for reruns. */
+    /* All sizes get calibrated: small N uses exhaustive, large N uses DP */
     #define MAX_N_EXHAUST 200000
 
     test_case_t cases[] = {
@@ -445,8 +444,27 @@ int main(void) {
     int wisdom_loaded = (stride_wisdom_load(&wis, WISDOM_PATH) == 0 && wis.count > 0);
 
     if (!wisdom_loaded) {
-        printf("Phase 1: Exhaustive calibration -> %s\n", WISDOM_PATH);
-        printf("(First run — this takes a while. Subsequent runs use cached wisdom.)\n\n");
+        printf("Phase 1: Calibration -> %s\n", WISDOM_PATH);
+        printf("  N <= %d: exhaustive search (all factorizations x orderings)\n",
+               STRIDE_EXHAUSTIVE_THRESHOLD);
+        printf("  N > %d:  recursive DP planner (FFTW-style, ~100 benchmarks)\n\n",
+               STRIDE_EXHAUSTIVE_THRESHOLD);
+
+        /* Find max N per K for DP context allocation */
+        int max_N_32 = 0, max_N_256 = 0, max_N_1024 = 0;
+        for (int ci = 0; ci < ncases; ci++) {
+            if (cases[ci].N <= STRIDE_EXHAUSTIVE_THRESHOLD) continue;
+            if (cases[ci].K == 32   && cases[ci].N > max_N_32)   max_N_32   = cases[ci].N;
+            if (cases[ci].K == 256  && cases[ci].N > max_N_256)  max_N_256  = cases[ci].N;
+            if (cases[ci].K == 1024 && cases[ci].N > max_N_1024) max_N_1024 = cases[ci].N;
+        }
+
+        /* Create shared DP contexts per K (reuses sub-problem cache across sizes) */
+        stride_dp_context_t dp_32, dp_256, dp_1024;
+        int has_dp_32 = 0, has_dp_256 = 0, has_dp_1024 = 0;
+        if (max_N_32 > 0)   { stride_dp_init(&dp_32,   32,   max_N_32);   has_dp_32 = 1; }
+        if (max_N_256 > 0)  { stride_dp_init(&dp_256,  256,  max_N_256);  has_dp_256 = 1; }
+        if (max_N_1024 > 0) { stride_dp_init(&dp_1024, 1024, max_N_1024); has_dp_1024 = 1; }
 
         for (int ci = 0; ci < ncases; ci++) {
             int N = cases[ci].N;
@@ -455,12 +473,22 @@ int main(void) {
             if (N > MAX_N_EXHAUST)
                 continue;
 
-            printf("  N=%5d K=%4zu ... ", N, K);
+            stride_dp_context_t *dp = NULL;
+            if (K == 32 && has_dp_32)    dp = &dp_32;
+            if (K == 256 && has_dp_256)  dp = &dp_256;
+            if (K == 1024 && has_dp_1024) dp = &dp_1024;
+
+            const char *method = (N <= STRIDE_EXHAUSTIVE_THRESHOLD) ? "exhaustive" : "DP";
+            printf("  N=%5d K=%4zu (%s) ... ", N, K, method);
             fflush(stdout);
             double t0 = now_ns();
-            stride_wisdom_calibrate(&wis, N, K, &reg);
+            stride_wisdom_calibrate_ex(&wis, N, K, &reg, dp);
             printf("%.1fs\n", (now_ns() - t0) / 1e9);
         }
+
+        if (has_dp_32)   stride_dp_destroy(&dp_32);
+        if (has_dp_256)  stride_dp_destroy(&dp_256);
+        if (has_dp_1024) stride_dp_destroy(&dp_1024);
 
         if (stride_wisdom_save(&wis, WISDOM_PATH) == 0)
             printf("\nWisdom saved to %s (%d entries)\n\n", WISDOM_PATH, wis.count);
