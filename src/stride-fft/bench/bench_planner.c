@@ -19,7 +19,13 @@
 #include "../core/planner.h"
 #include "../core/compat.h"
 
-#define WISDOM_PATH "vfft_wisdom.txt"
+/* Wisdom file lives next to this source file (bench/ directory).
+ * VFFT_BENCH_DIR is set by CMake to the absolute path of this folder. */
+#ifdef VFFT_BENCH_DIR
+  #define WISDOM_PATH VFFT_BENCH_DIR "/vfft_wisdom.txt"
+#else
+  #define WISDOM_PATH "vfft_wisdom.txt"
+#endif
 
 /* ================================================================
  * Helpers
