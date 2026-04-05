@@ -97,18 +97,24 @@ static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
 }
 
 /* -- Wisdom file I/O --
- * Format: one entry per line
- *   N K nf f0 f1 ... best_ns
- * Lines starting with # are comments.
+ * Format:
+ *   Line 1: @version N  (format version, reject if mismatch)
+ *   Remaining: N K nf f0 f1 ... best_ns
+ *   Lines starting with # are comments.
  *
  * Example:
+ *   @version 2
  *   1000 256 4 8 5 5 5 14.20
- */
+ *
+ * Bump WISDOM_VERSION when the format changes — old files will be
+ * silently rejected and re-calibrated on next run. */
+#define WISDOM_VERSION 2
+
 static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) return -1;
-    fprintf(f, "# VectorFFT stride wisdom\n");
-    fprintf(f, "# Format: N K nf factors... best_ns\n");
+    fprintf(f, "@version %d\n", WISDOM_VERSION);
+    fprintf(f, "# VectorFFT stride wisdom — %d entries\n", wis->count);
     for (int i = 0; i < wis->count; i++) {
         const stride_wisdom_entry_t *e = &wis->entries[i];
         fprintf(f, "%d %zu %d", e->N, e->K, e->nfactors);
@@ -124,8 +130,24 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return -1;
     char line[256];
+    int version_ok = 0;
+
     while (fgets(line, sizeof(line), f)) {
         if (line[0] == '#' || line[0] == '\n') continue;
+
+        /* Version check — must be first non-comment line */
+        if (line[0] == '@') {
+            int ver = 0;
+            if (sscanf(line, "@version %d", &ver) == 1 && ver == WISDOM_VERSION)
+                version_ok = 1;
+            continue;
+        }
+
+        /* Reject entries if version doesn't match (or missing) */
+        if (!version_ok) {
+            fclose(f);
+            return -1;  /* stale wisdom — caller will re-calibrate */
+        }
 
         stride_wisdom_entry_t e;
         memset(&e, 0, sizeof(e));
@@ -145,7 +167,7 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
         stride_wisdom_add(wis, e.N, e.K, e.factors, e.nfactors, e.best_ns);
     }
     fclose(f);
-    return 0;
+    return version_ok ? 0 : -1;
 }
 
 /* =====================================================================

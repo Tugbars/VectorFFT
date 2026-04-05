@@ -234,6 +234,20 @@ if(FFTW3_LIB AND FFTW3_INC)
     )
     message(STATUS "VectorFFT bench: vfft_bench_bluestein (Bluestein standalone)")
 
+    # ── Prime-N test: Bluestein + Rader via planner ──
+    add_executable(vfft_bench_primes bench/bench_primes.c)
+    target_link_libraries(vfft_bench_primes PRIVATE vfft_stride ${FFTW3_LIB})
+    target_include_directories(vfft_bench_primes PRIVATE ${FFTW3_INC})
+    target_compile_definitions(vfft_bench_primes PRIVATE _CRT_SECURE_NO_WARNINGS)
+    set_target_properties(vfft_bench_primes PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+    if(VFFT_HAS_MKL)
+        target_link_libraries(vfft_bench_primes PRIVATE ${MKL_LIBS})
+        target_include_directories(vfft_bench_primes PRIVATE ${MKL_INC})
+        target_compile_definitions(vfft_bench_primes PRIVATE VFFT_HAS_MKL MKL_ILP64)
+    endif()
+
 else()
     message(WARNING "FFTW3 not found — vfft_bench disabled. Install via: vcpkg install fftw3")
 endif()
