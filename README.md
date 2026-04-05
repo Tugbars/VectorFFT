@@ -25,6 +25,8 @@
 
 ![vs MKL](src/stride-fft/bench/vfft_vs_mkl.png)
 
+<img width="2380" height="1097" alt="PrimesVFFT" src="https://github.com/user-attachments/assets/bf75e541-74fe-4f78-a779-d98238d2ba8b" />
+
 | N | K | vs FFTW | vs MKL |
 |---|---|---------|--------|
 | 60 | 256 | 3.20x | **3.90x** |
