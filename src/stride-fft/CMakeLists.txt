@@ -168,7 +168,10 @@ if(FFTW3_LIB AND FFTW3_INC)
     add_executable(vfft_bench bench/bench_planner.c)
     target_link_libraries(vfft_bench PRIVATE vfft_stride ${FFTW3_LIB})
     target_include_directories(vfft_bench PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(vfft_bench PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        VFFT_BENCH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/bench"
+    )
     set_target_properties(vfft_bench PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
