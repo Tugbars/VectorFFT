@@ -32,6 +32,7 @@
 #endif
 
 #include "../core/planner.h"
+#include "../core/env.h"
 #include "../core/compat.h"
 
 int main(int argc, char **argv) {
@@ -46,13 +47,37 @@ int main(int argc, char **argv) {
     size_t K = (size_t)atoi(argv[2]);
     const char *lib = (argc > 3) ? argv[3] : "ours";
     double run_secs = (argc > 4) ? atof(argv[4]) : 5.0;
+    int use_huge = 0;
+    /* Check for --huge flag anywhere in args */
+    for (int i = 1; i < argc; i++)
+        if (strcmp(argv[i], "--huge") == 0) use_huge = 1;
 
     size_t total = (size_t)N * K;
-    printf("N=%d  K=%zu  total=%zu  library=%s  duration=%.0fs\n", N, K, total, lib, run_secs);
+    size_t buf_bytes = total * sizeof(double);
+    printf("N=%d  K=%zu  total=%zu  library=%s  duration=%.0fs  huge_pages=%s\n",
+           N, K, total, lib, run_secs, use_huge ? "ON" : "off");
 
-    /* Allocate aligned buffers */
-    double *re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    double *im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    /* Initialize CPU environment (FTZ/DAZ) */
+    stride_env_init();
+
+    /* Allocate data buffers — huge pages eliminate DTLB overhead */
+    double *re, *im;
+    if (use_huge) {
+        re = (double *)stride_alloc_huge(buf_bytes);
+        im = (double *)stride_alloc_huge(buf_bytes);
+        if (re && im)
+            printf("Huge pages: allocated 2x %.1f MB\n", buf_bytes / (1024.0 * 1024.0));
+        else
+            printf("Huge pages: FAILED (falling back to standard)\n");
+    } else {
+        re = (double *)STRIDE_ALIGNED_ALLOC(64, buf_bytes);
+        im = (double *)STRIDE_ALIGNED_ALLOC(64, buf_bytes);
+    }
+    if (!re || !im) {
+        printf("ERROR: allocation failed\n");
+        return 1;
+    }
+
     srand(42);
     for (size_t i = 0; i < total; i++) {
         re[i] = (double)rand() / RAND_MAX - 0.5;
@@ -176,7 +201,12 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    STRIDE_ALIGNED_FREE(re);
-    STRIDE_ALIGNED_FREE(im);
+    if (use_huge) {
+        stride_free_huge(re, buf_bytes);
+        stride_free_huge(im, buf_bytes);
+    } else {
+        STRIDE_ALIGNED_FREE(re);
+        STRIDE_ALIGNED_FREE(im);
+    }
     return 0;
 }
