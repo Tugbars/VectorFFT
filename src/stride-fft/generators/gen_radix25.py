@@ -518,12 +518,6 @@ def emit_kernel_body(em, d, itw_set, variant):
             em.emit_load(f"x{n1}", n)
             if variant == 'dit_tw' and n > 0:
                 em.emit_ext_tw(f"x{n1}", n - 1, d)
-        em.b()
-        em.emit_radix5(xv5, d, f"radix-5 n2={n2}")
-        em.b()
-        for k1 in range(N1):
-            em.emit_spill(f"x{k1}", n2 * N1 + k1)
-        em.b()
             elif variant == 'dit_tw_scalar' and n > 0:
                 em.emit_ext_tw_scalar(f"x{n1}", n - 1, d)
         em.b()
@@ -555,9 +549,6 @@ def emit_kernel_body(em, d, itw_set, variant):
                 if m > 0:
                     em.emit_ext_tw(f"x{k2}", m - 1, d)
             em.b()
-        for k2 in range(N2):
-            em.emit_store(f"x{k2}", k1 + N1 * k2)
-        em.b()
         elif variant == 'dif_tw_scalar':
             for k2 in range(N2):
                 m = k1 + N1 * k2
@@ -822,13 +813,13 @@ def emit_file(isa, itw_set, variant):
         func_base = 'radix25_tw_flat_dit_kernel'
         tw_params = 'flat'
     elif variant == 'dit_tw_scalar':
-        func_base = 'radix25_tw_flat_dit_kernel'
+        func_base = 'radix25_tw_scalar_dit_kernel'
         tw_params = 'flat'
     elif variant == 'dif_tw':
         func_base = 'radix25_tw_flat_dif_kernel'
         tw_params = 'flat'
     elif variant == 'dif_tw_scalar':
-        func_base = 'radix25_tw_flat_dif_kernel'
+        func_base = 'radix25_tw_scalar_dif_kernel'
         tw_params = 'flat'
     elif variant == 'dit_tw_log3':
         func_base = 'radix25_tw_log3_dit_kernel'
@@ -1075,14 +1066,14 @@ def emit_sv_variants(t2_lines, isa, variant):
         t2_pattern = 'radix25_tw_flat_dit_kernel'
         sv_name = 'radix25_t1sv_dit_kernel'
     elif variant == 'dit_tw_scalar':
-        t2_pattern = 'radix25_tw_flat_dit_kernel'
-        sv_name = 'radix25_t1sv_dit_kernel'
+        t2_pattern = 'radix25_tw_scalar_dit_kernel'
+        sv_name = 'radix25_t1ssv_dit_kernel'
     elif variant == 'dif_tw':
         t2_pattern = 'radix25_tw_flat_dif_kernel'
         sv_name = 'radix25_t1sv_dif_kernel'
     elif variant == 'dif_tw_scalar':
-        t2_pattern = 'radix25_tw_flat_dif_kernel'
-        sv_name = 'radix25_t1sv_dif_kernel'
+        t2_pattern = 'radix25_tw_scalar_dif_kernel'
+        sv_name = 'radix25_t1ssv_dif_kernel'
     else:
         return []
 
@@ -1277,7 +1268,7 @@ def emit_file_ct(isa, itw_set, ct_variant):
 
         em.ind += 1
         if is_t1s_dit:
-            emit_kernel_body(em, d, 'dit_tw_scalar')
+            emit_kernel_body(em, d, itw_set, 'dit_tw_scalar')
         elif is_t1_dit_log3:
             emit_kernel_body_log3(em, d, itw_set, 'dit_tw_log3')
         else:
