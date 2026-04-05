@@ -36,6 +36,7 @@
 #include "registry.h"
 #include "factorizer.h"
 #include "exhaustive.h"
+#include "calibrate.h"
 #include "rader.h"      /* includes bluestein.h (shared SIMD helpers) */
 
 /* =====================================================================
@@ -336,16 +337,40 @@ static double _stride_refine_bench(int N, size_t K,
 }
 
 /**
- * stride_wisdom_calibrate -- Run exhaustive search and store in wisdom.
+ * stride_wisdom_calibrate -- Find best factorization and store in wisdom.
  *
- * After exhaustive search finds the best factorization, re-benchmarks it
- * with full accuracy before storing.
+ * Strategy depends on N:
+ *   Small N (<=1024): exhaustive search (tries all combos, seconds)
+ *   Large N (>1024):  calibrated search (per-radix cost prediction +
+ *                     verify top 5 candidates, seconds instead of hours)
+ *
+ * radix_costs: optional pre-measured per-radix costs. If NULL, calibration
+ *              is run automatically. Pass pre-measured costs when calibrating
+ *              many (N,K) pairs at the same K to avoid redundant measurement.
  */
-static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
-                                     const stride_registry_t *reg) {
+#define STRIDE_EXHAUSTIVE_THRESHOLD 1024
+
+static void stride_wisdom_calibrate_ex(stride_wisdom_t *wis, int N, size_t K,
+                                        const stride_registry_t *reg,
+                                        stride_radix_costs_t *radix_costs) {
     stride_factorization_t best_fact;
-    double search_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
-    if (search_ns >= 1e17) return;
+    double best_ns;
+
+    if (N <= STRIDE_EXHAUSTIVE_THRESHOLD) {
+        /* Small N: full exhaustive search (fast enough) */
+        best_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
+    } else {
+        /* Large N: calibrated prediction + verify top 5 */
+        stride_radix_costs_t local_costs;
+        if (!radix_costs) {
+            stride_calibrate_radixes(&local_costs, K, reg);
+            radix_costs = &local_costs;
+        }
+        best_ns = stride_calibrated_search(N, K, reg, radix_costs,
+                                            &best_fact, 5, 0);
+    }
+
+    if (best_ns >= 1e17) return;
 
     /* Re-bench the winner with full accuracy */
     double refined_ns = _stride_refine_bench(N, K, best_fact.factors,
@@ -353,6 +378,12 @@ static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
 
     stride_wisdom_add(wis, N, K, best_fact.factors, best_fact.nfactors,
                       refined_ns);
+}
+
+/* Convenience wrapper: no pre-measured radix costs */
+static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
+                                     const stride_registry_t *reg) {
+    stride_wisdom_calibrate_ex(wis, N, K, reg, NULL);
 }
 
 #endif /* STRIDE_PLANNER_H */

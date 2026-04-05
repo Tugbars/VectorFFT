@@ -19,7 +19,10 @@
 #include "../core/planner.h"
 #include "../core/compat.h"
 
-#define WISDOM_PATH "vfft_wisdom.txt"
+#ifndef VFFT_BENCH_DIR
+#  define VFFT_BENCH_DIR "."
+#endif
+#define WISDOM_PATH VFFT_BENCH_DIR "/vfft_wisdom.txt"
 
 /* ================================================================
  * Helpers
@@ -445,20 +448,51 @@ int main(void) {
     int wisdom_loaded = (stride_wisdom_load(&wis, WISDOM_PATH) == 0 && wis.count > 0);
 
     if (!wisdom_loaded) {
-        printf("Phase 1: Exhaustive calibration -> %s\n", WISDOM_PATH);
-        printf("(First run — this takes a while. Subsequent runs use cached wisdom.)\n\n");
+        printf("Phase 1: Calibration -> %s\n", WISDOM_PATH);
+        printf("  Small N (<=1024): exhaustive search (all combos)\n");
+        printf("  Large N (>1024):  calibrated prediction + verify top 5\n\n");
+
+        /* Pre-calibrate per-radix costs for each unique K.
+         * This avoids redundant measurement when multiple N share the same K. */
+        stride_radix_costs_t costs_32, costs_256, costs_1024;
+        int has_32 = 0, has_256 = 0, has_1024 = 0;
+
+        for (int ci = 0; ci < ncases; ci++) {
+            size_t K = cases[ci].K;
+            if (K == 32 && !has_32) {
+                printf("  Calibrating per-radix costs at K=%zu...\n", K);
+                fflush(stdout);
+                stride_calibrate_radixes(&costs_32, K, &reg);
+                has_32 = 1;
+            } else if (K == 256 && !has_256) {
+                printf("  Calibrating per-radix costs at K=%zu...\n", K);
+                fflush(stdout);
+                stride_calibrate_radixes(&costs_256, K, &reg);
+                has_256 = 1;
+            } else if (K == 1024 && !has_1024) {
+                printf("  Calibrating per-radix costs at K=%zu...\n", K);
+                fflush(stdout);
+                stride_calibrate_radixes(&costs_1024, K, &reg);
+                has_1024 = 1;
+            }
+        }
+        printf("\n");
 
         for (int ci = 0; ci < ncases; ci++) {
             int N = cases[ci].N;
             size_t K = cases[ci].K;
 
-            if (N > MAX_N_EXHAUST)
-                continue;
+            /* Pick pre-measured costs for this K */
+            stride_radix_costs_t *costs = NULL;
+            if (K == 32 && has_32) costs = &costs_32;
+            else if (K == 256 && has_256) costs = &costs_256;
+            else if (K == 1024 && has_1024) costs = &costs_1024;
 
-            printf("  N=%5d K=%4zu ... ", N, K);
+            printf("  N=%5d K=%4zu %s ... ", N, K,
+                   N <= STRIDE_EXHAUSTIVE_THRESHOLD ? "(exhaustive)" : "(calibrated)");
             fflush(stdout);
             double t0 = now_ns();
-            stride_wisdom_calibrate(&wis, N, K, &reg);
+            stride_wisdom_calibrate_ex(&wis, N, K, &reg, costs);
             printf("%.1fs\n", (now_ns() - t0) / 1e9);
         }
 
@@ -471,7 +505,7 @@ int main(void) {
     }
 
     /* ── Phase 2: Benchmark + CSV ── */
-    const char *csv_path = "vfft_bench_results.csv";
+    const char *csv_path = VFFT_BENCH_DIR "/vfft_bench_results.csv";
     int csv_is_new = 1;
     { FILE *check = fopen(csv_path, "r");
       if (check) { csv_is_new = 0; fclose(check); } }

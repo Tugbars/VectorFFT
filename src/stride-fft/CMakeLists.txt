@@ -164,11 +164,17 @@ endif()
 # ── Production benchmarks (VectorFFT vs FFTW vs MKL) ──
 if(FFTW3_LIB AND FFTW3_INC)
 
+    # Bench source directory — wisdom + CSV results live here (not in build/)
+    set(VFFT_BENCH_DIR "${CMAKE_CURRENT_SOURCE_DIR}/bench")
+
     # Main benchmark: exhaustive calibration + comparison
     add_executable(vfft_bench bench/bench_planner.c)
     target_link_libraries(vfft_bench PRIVATE vfft_stride ${FFTW3_LIB})
     target_include_directories(vfft_bench PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(vfft_bench PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        VFFT_BENCH_DIR="${VFFT_BENCH_DIR}"
+    )
     set_target_properties(vfft_bench PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
