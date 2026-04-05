@@ -121,58 +121,28 @@ This saves one full data pass per transform. At large N with large batch sizes, 
 
 ---
 
-## Getting Started
+## Quick Start
 
 ```bash
 git clone https://github.com/Tugbars/VectorFFT.git
-cd VectorFFT
-
-# Build
-mkdir build && cd build
+cd VectorFFT && mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
-
-# Generate codelets (requires Python 3)
-cmake --build . --target generate_codelets
-
-# Build everything
 cmake --build . --config Release
 ```
-
-### Usage
 
 ```c
 #include "planner.h"
 
-// Initialize
 stride_registry_t reg;
 stride_registry_init(&reg);
 
-// Plan (heuristic -- instant)
 stride_plan_t *plan = stride_auto_plan(N, K, &reg);
-
-// Execute (in-place, split-complex)
-stride_execute_fwd(plan, re, im);   // forward
-stride_execute_bwd(plan, re, im);   // backward (output / N to normalize)
-
+stride_execute_fwd(plan, re, im);   // forward DIT
+stride_execute_bwd(plan, re, im);   // backward DIF (divide by N to normalize)
 stride_plan_destroy(plan);
 ```
 
-### Wisdom (optional)
-
-Exhaustive search finds optimal factorization for each (N, K) pair:
-
-```c
-stride_wisdom_t wis;
-stride_wisdom_init(&wis);
-stride_wisdom_load(&wis, "vfft_wisdom.txt");
-
-// Use cached optimal plan, or fall back to heuristic
-stride_plan_t *plan = stride_wise_plan(N, K, &reg, &wis);
-
-// Calibrate new (N, K) pairs
-stride_wisdom_calibrate(&wis, N, K, &reg);
-stride_wisdom_save(&wis, "vfft_wisdom.txt");
-```
+See [`examples/basic_fft.c`](examples/basic_fft.c) for a complete working example covering all API entry points: environment setup, registry, heuristic and wisdom-based planning, forward/backward execution, prime-N support (Rader & Bluestein), and memory management.
 
 ---
 
