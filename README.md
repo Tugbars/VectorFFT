@@ -12,7 +12,6 @@
 
 ### VectorFFT vs Intel MKL vs FFTW
 
-<!-- Replace src paths with GitHub asset URLs after uploading PNGs -->
 ![Throughput](src/stride-fft/bench/vfft_throughput.png)
 
 > **Platform:** Intel Core i9-14900KF, 48 KB L1d, DDR5, AVX2, single-threaded  
@@ -28,15 +27,30 @@
 
 | N | K | vs FFTW | vs MKL |
 |---|---|---------|--------|
-| 60 | 256 | 4.15x | **4.86x** |
-| 49 | 32 | 4.73x | **4.19x** |
-| 200 | 256 | 3.13x | **3.30x** |
-| 1000 | 32 | 2.49x | **2.63x** |
-| 10000 | 256 | 6.83x | **1.38x** |
-| 50000 | 256 | 12.82x | **1.42x** |
-| 100000 | 32 | 6.92x | **1.54x** |
+| 60 | 256 | 3.20x | **3.90x** |
+| 49 | 32 | 4.71x | **5.94x** |
+| 200 | 256 | 3.34x | **3.50x** |
+| 1000 | 32 | 2.55x | **2.57x** |
+| 10000 | 256 | 3.97x | **1.28x** |
+| 50000 | 256 | 10.91x | **1.45x** |
+| 100000 | 32 | 7.25x | **1.51x** |
+| 16384 | 1024 | 5.15x | **1.30x** |
+| 4096 | 1024 | 4.99x | **1.39x** |
 
-**42 wins, 1 tie, 0 losses against Intel MKL** across 43 test cases (N=49 to 100,000, K=32 to 1024).
+### Prime-N Performance (Rader & Bluestein)
+
+![Primes](src/stride-fft/bench/vfft_primes.png)
+
+Smooth primes (N-1 is 19-smooth) use **Rader's algorithm** with hand-optimized codelets for the convolution. Non-smooth primes use **Bluestein's algorithm** (chirp-z transform).
+
+| Prime N | K | Method | vs FFTW | vs MKL |
+|---------|---|--------|---------|--------|
+| 61 | 32 | Rader | 3.89x | **5.41x** |
+| 337 | 256 | Rader | 2.37x | **2.58x** |
+| 2053 | 256 | Rader | 2.52x | **2.24x** |
+| 263 | 32 | Bluestein | 1.04x | **1.10x** |
+
+**Rader primes: 1.39x - 5.41x vs MKL (mean 2.46x)**. Bluestein handles the hard cases where no efficient decomposition exists.
 
 ---
 
@@ -46,7 +60,7 @@
 
 All three libraries achieve comparable accuracy against brute-force O(N^2) DFT reference. VectorFFT's errors are 1.3-2.5x higher than FFTW/MKL due to the multi-stage stride-based decomposition (more intermediate twiddle multiplications), but remain well within double-precision tolerance and follow the theoretical O(N * epsilon * log N) bound.
 
-Roundtrip error (fwd + bwd / N) is at machine epsilon (~1e-16) for all sizes — the permutation-free architecture guarantees perfect cancellation.
+Roundtrip error (fwd + bwd / N) is at machine epsilon (~1e-16) for all sizes -- the permutation-free architecture guarantees perfect cancellation.
 
 > Run `vfft_bench` to see accuracy results for your hardware.
 
