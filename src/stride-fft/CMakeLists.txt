@@ -161,8 +161,10 @@ else()
     message(STATUS "Intel MKL not found — MKL benchmark disabled")
 endif()
 
-# ── Benchmark target — always built, shows as VS Code target ──
+# ── Production benchmarks (VectorFFT vs FFTW vs MKL) ──
 if(FFTW3_LIB AND FFTW3_INC)
+
+    # Main benchmark: exhaustive calibration + comparison
     add_executable(vfft_bench bench/bench_planner.c)
     target_link_libraries(vfft_bench PRIVATE vfft_stride ${FFTW3_LIB})
     target_include_directories(vfft_bench PRIVATE ${FFTW3_INC})
@@ -171,70 +173,7 @@ if(FFTW3_LIB AND FFTW3_INC)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
-    if(VFFT_HAS_MKL)
-        target_link_libraries(vfft_bench PRIVATE ${MKL_LIBS})
-        target_include_directories(vfft_bench PRIVATE ${MKL_INC})
-        target_compile_definitions(vfft_bench PRIVATE VFFT_HAS_MKL MKL_ILP64)
-        message(STATUS "VectorFFT bench: vfft_bench (FFTW + MKL)")
-    else()
-        message(STATUS "VectorFFT bench: vfft_bench (FFTW only)")
-    endif()
-    # ── R=4 log3 A/B test ──
-    add_executable(vfft_bench_r4_log3 bench/bench_r4_log3.c)
-    target_link_libraries(vfft_bench_r4_log3 PRIVATE vfft_stride ${FFTW3_LIB})
-    target_include_directories(vfft_bench_r4_log3 PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench_r4_log3 PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-    # ── Log3 exhaustive correctness test ──
-    add_executable(vfft_test_log3 bench/test_log3_all.c)
-    target_link_libraries(vfft_test_log3 PRIVATE vfft_stride ${FFTW3_LIB})
-    target_include_directories(vfft_test_log3 PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_test_log3 PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-    # ── R=32 blocked/log3 A/B test ──
-    add_executable(vfft_bench_r32 bench/bench_r32_blocked.c)
-    target_link_libraries(vfft_bench_r32 PRIVATE vfft_stride ${FFTW3_LIB})
-    target_include_directories(vfft_bench_r32 PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench_r32 PRIVATE _CRT_SECURE_NO_WARNINGS)
-
-    # ── Log3 calibration bench (disabled — log3 not active in production) ──
-    # add_executable(vfft_bench_log3_calib bench/bench_log3_calib.c)
-    # target_link_libraries(vfft_bench_log3_calib PRIVATE vfft_stride ${FFTW3_LIB})
-    # target_include_directories(vfft_bench_log3_calib PRIVATE ${FFTW3_INC})
-    # target_compile_definitions(vfft_bench_log3_calib PRIVATE _CRT_SECURE_NO_WARNINGS)
-    # set_target_properties(vfft_bench_log3_calib PROPERTIES
-    #     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    # )
-
-    # ── Monolithic vs blocked decomposition ──
-    add_executable(vfft_bench_blocked bench/bench_blocked.c)
-    target_link_libraries(vfft_bench_blocked PRIVATE vfft_stride ${FFTW3_LIB})
-    target_include_directories(vfft_bench_blocked PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench_blocked PRIVATE _CRT_SECURE_NO_WARNINGS)
-    set_target_properties(vfft_bench_r4_log3 PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    )
-
-    # ── Rader standalone test ──
-    add_executable(vfft_bench_rader bench/bench_rader.c)
-    target_link_libraries(vfft_bench_rader PRIVATE vfft_stride ${FFTW3_LIB})
-    target_include_directories(vfft_bench_rader PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench_rader PRIVATE _CRT_SECURE_NO_WARNINGS)
-    set_target_properties(vfft_bench_rader PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    )
-
-    # ── Bluestein standalone test ──
-    add_executable(vfft_bench_bluestein bench/bench_bluestein.c)
-    target_link_libraries(vfft_bench_bluestein PRIVATE vfft_stride ${FFTW3_LIB})
-    target_include_directories(vfft_bench_bluestein PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench_bluestein PRIVATE _CRT_SECURE_NO_WARNINGS)
-    set_target_properties(vfft_bench_bluestein PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    )
-    message(STATUS "VectorFFT bench: vfft_bench_bluestein (Bluestein standalone)")
-
-    # ── Prime-N test: Bluestein + Rader via planner ──
+    # Prime-N benchmark: Bluestein + Rader via planner
     add_executable(vfft_bench_primes bench/bench_primes.c)
     target_link_libraries(vfft_bench_primes PRIVATE vfft_stride ${FFTW3_LIB})
     target_include_directories(vfft_bench_primes PRIVATE ${FFTW3_INC})
@@ -242,12 +181,25 @@ if(FFTW3_LIB AND FFTW3_INC)
     set_target_properties(vfft_bench_primes PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
+
     if(VFFT_HAS_MKL)
+        target_link_libraries(vfft_bench PRIVATE ${MKL_LIBS})
+        target_include_directories(vfft_bench PRIVATE ${MKL_INC})
+        target_compile_definitions(vfft_bench PRIVATE VFFT_HAS_MKL MKL_ILP64)
         target_link_libraries(vfft_bench_primes PRIVATE ${MKL_LIBS})
         target_include_directories(vfft_bench_primes PRIVATE ${MKL_INC})
         target_compile_definitions(vfft_bench_primes PRIVATE VFFT_HAS_MKL MKL_ILP64)
+        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes (FFTW + MKL)")
+    else()
+        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes (FFTW only)")
     endif()
 
 else()
-    message(WARNING "FFTW3 not found — vfft_bench disabled. Install via: vcpkg install fftw3")
+    message(WARNING "FFTW3 not found -- bench targets disabled. Install via: vcpkg install fftw3")
+endif()
+
+# ── Validation tests (internal development, optional) ──
+option(VFFT_BUILD_VALIDATION "Build internal validation/dev tests" OFF)
+if(VFFT_BUILD_VALIDATION AND FFTW3_LIB AND FFTW3_INC)
+    add_subdirectory(validation)
 endif()
