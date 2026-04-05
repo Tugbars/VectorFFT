@@ -55,6 +55,25 @@ radix19_t1s_dit_fwd_scalar(
     double x12_re,x12_im,x13_re,x13_im,x14_re,x14_im,x15_re,x15_im;
     double x16_re,x16_im,x17_re,x17_im,x18_re,x18_im;
 
+    const double tw0_re = W_re[0], tw0_im = W_im[0];
+    const double tw1_re = W_re[1], tw1_im = W_im[1];
+    const double tw2_re = W_re[2], tw2_im = W_im[2];
+    const double tw3_re = W_re[3], tw3_im = W_im[3];
+    const double tw4_re = W_re[4], tw4_im = W_im[4];
+    const double tw5_re = W_re[5], tw5_im = W_im[5];
+    const double tw6_re = W_re[6], tw6_im = W_im[6];
+    const double tw7_re = W_re[7], tw7_im = W_im[7];
+    const double tw8_re = W_re[8], tw8_im = W_im[8];
+    const double tw9_re = W_re[9], tw9_im = W_im[9];
+    const double tw10_re = W_re[10], tw10_im = W_im[10];
+    const double tw11_re = W_re[11], tw11_im = W_im[11];
+    const double tw12_re = W_re[12], tw12_im = W_im[12];
+    const double tw13_re = W_re[13], tw13_im = W_im[13];
+    const double tw14_re = W_re[14], tw14_im = W_im[14];
+    const double tw15_re = W_re[15], tw15_im = W_im[15];
+    const double tw16_re = W_re[16], tw16_im = W_im[16];
+    const double tw17_re = W_re[17], tw17_im = W_im[17];
+
     for (size_t m = mb; m < me; m++) {
         x0_re = rio_re[m*ms+0*ios]; x0_im = rio_im[m*ms+0*ios];
         x1_re = rio_re[m*ms+1*ios]; x1_im = rio_im[m*ms+1*ios];
@@ -75,60 +94,60 @@ radix19_t1s_dit_fwd_scalar(
         x16_re = rio_re[m*ms+16*ios]; x16_im = rio_im[m*ms+16*ios];
         x17_re = rio_re[m*ms+17*ios]; x17_im = rio_im[m*ms+17*ios];
         x18_re = rio_re[m*ms+18*ios]; x18_im = rio_im[m*ms+18*ios];
-        { double wr = W_re[0], wi = W_im[0], tr = x1_re;
-          x1_re = x1_re*wr - x1_im*wi;
-          x1_im = tr*wi + x1_im*wr; }
-        { double wr = W_re[1], wi = W_im[1], tr = x2_re;
-          x2_re = x2_re*wr - x2_im*wi;
-          x2_im = tr*wi + x2_im*wr; }
-        { double wr = W_re[2], wi = W_im[2], tr = x3_re;
-          x3_re = x3_re*wr - x3_im*wi;
-          x3_im = tr*wi + x3_im*wr; }
-        { double wr = W_re[3], wi = W_im[3], tr = x4_re;
-          x4_re = x4_re*wr - x4_im*wi;
-          x4_im = tr*wi + x4_im*wr; }
-        { double wr = W_re[4], wi = W_im[4], tr = x5_re;
-          x5_re = x5_re*wr - x5_im*wi;
-          x5_im = tr*wi + x5_im*wr; }
-        { double wr = W_re[5], wi = W_im[5], tr = x6_re;
-          x6_re = x6_re*wr - x6_im*wi;
-          x6_im = tr*wi + x6_im*wr; }
-        { double wr = W_re[6], wi = W_im[6], tr = x7_re;
-          x7_re = x7_re*wr - x7_im*wi;
-          x7_im = tr*wi + x7_im*wr; }
-        { double wr = W_re[7], wi = W_im[7], tr = x8_re;
-          x8_re = x8_re*wr - x8_im*wi;
-          x8_im = tr*wi + x8_im*wr; }
-        { double wr = W_re[8], wi = W_im[8], tr = x9_re;
-          x9_re = x9_re*wr - x9_im*wi;
-          x9_im = tr*wi + x9_im*wr; }
-        { double wr = W_re[9], wi = W_im[9], tr = x10_re;
-          x10_re = x10_re*wr - x10_im*wi;
-          x10_im = tr*wi + x10_im*wr; }
-        { double wr = W_re[10], wi = W_im[10], tr = x11_re;
-          x11_re = x11_re*wr - x11_im*wi;
-          x11_im = tr*wi + x11_im*wr; }
-        { double wr = W_re[11], wi = W_im[11], tr = x12_re;
-          x12_re = x12_re*wr - x12_im*wi;
-          x12_im = tr*wi + x12_im*wr; }
-        { double wr = W_re[12], wi = W_im[12], tr = x13_re;
-          x13_re = x13_re*wr - x13_im*wi;
-          x13_im = tr*wi + x13_im*wr; }
-        { double wr = W_re[13], wi = W_im[13], tr = x14_re;
-          x14_re = x14_re*wr - x14_im*wi;
-          x14_im = tr*wi + x14_im*wr; }
-        { double wr = W_re[14], wi = W_im[14], tr = x15_re;
-          x15_re = x15_re*wr - x15_im*wi;
-          x15_im = tr*wi + x15_im*wr; }
-        { double wr = W_re[15], wi = W_im[15], tr = x16_re;
-          x16_re = x16_re*wr - x16_im*wi;
-          x16_im = tr*wi + x16_im*wr; }
-        { double wr = W_re[16], wi = W_im[16], tr = x17_re;
-          x17_re = x17_re*wr - x17_im*wi;
-          x17_im = tr*wi + x17_im*wr; }
-        { double wr = W_re[17], wi = W_im[17], tr = x18_re;
-          x18_re = x18_re*wr - x18_im*wi;
-          x18_im = tr*wi + x18_im*wr; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw0_re - x1_im*tw0_im;
+          x1_im = tr*tw0_im + x1_im*tw0_re; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw1_re - x2_im*tw1_im;
+          x2_im = tr*tw1_im + x2_im*tw1_re; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw2_re - x3_im*tw2_im;
+          x3_im = tr*tw2_im + x3_im*tw2_re; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw3_re - x4_im*tw3_im;
+          x4_im = tr*tw3_im + x4_im*tw3_re; }
+        { double tr = x5_re;
+          x5_re = x5_re*tw4_re - x5_im*tw4_im;
+          x5_im = tr*tw4_im + x5_im*tw4_re; }
+        { double tr = x6_re;
+          x6_re = x6_re*tw5_re - x6_im*tw5_im;
+          x6_im = tr*tw5_im + x6_im*tw5_re; }
+        { double tr = x7_re;
+          x7_re = x7_re*tw6_re - x7_im*tw6_im;
+          x7_im = tr*tw6_im + x7_im*tw6_re; }
+        { double tr = x8_re;
+          x8_re = x8_re*tw7_re - x8_im*tw7_im;
+          x8_im = tr*tw7_im + x8_im*tw7_re; }
+        { double tr = x9_re;
+          x9_re = x9_re*tw8_re - x9_im*tw8_im;
+          x9_im = tr*tw8_im + x9_im*tw8_re; }
+        { double tr = x10_re;
+          x10_re = x10_re*tw9_re - x10_im*tw9_im;
+          x10_im = tr*tw9_im + x10_im*tw9_re; }
+        { double tr = x11_re;
+          x11_re = x11_re*tw10_re - x11_im*tw10_im;
+          x11_im = tr*tw10_im + x11_im*tw10_re; }
+        { double tr = x12_re;
+          x12_re = x12_re*tw11_re - x12_im*tw11_im;
+          x12_im = tr*tw11_im + x12_im*tw11_re; }
+        { double tr = x13_re;
+          x13_re = x13_re*tw12_re - x13_im*tw12_im;
+          x13_im = tr*tw12_im + x13_im*tw12_re; }
+        { double tr = x14_re;
+          x14_re = x14_re*tw13_re - x14_im*tw13_im;
+          x14_im = tr*tw13_im + x14_im*tw13_re; }
+        { double tr = x15_re;
+          x15_re = x15_re*tw14_re - x15_im*tw14_im;
+          x15_im = tr*tw14_im + x15_im*tw14_re; }
+        { double tr = x16_re;
+          x16_re = x16_re*tw15_re - x16_im*tw15_im;
+          x16_im = tr*tw15_im + x16_im*tw15_re; }
+        { double tr = x17_re;
+          x17_re = x17_re*tw16_re - x17_im*tw16_im;
+          x17_im = tr*tw16_im + x17_im*tw16_re; }
+        { double tr = x18_re;
+          x18_re = x18_re*tw17_re - x18_im*tw17_im;
+          x18_im = tr*tw17_im + x18_im*tw17_re; }
 
         /* DFT-19 butterfly [fwd] (straight-line genfft DAG, compiler-managed regs) */
         {
@@ -661,6 +680,25 @@ radix19_t1s_dit_bwd_scalar(
     double x12_re,x12_im,x13_re,x13_im,x14_re,x14_im,x15_re,x15_im;
     double x16_re,x16_im,x17_re,x17_im,x18_re,x18_im;
 
+    const double tw0_re = W_re[0], tw0_im = W_im[0];
+    const double tw1_re = W_re[1], tw1_im = W_im[1];
+    const double tw2_re = W_re[2], tw2_im = W_im[2];
+    const double tw3_re = W_re[3], tw3_im = W_im[3];
+    const double tw4_re = W_re[4], tw4_im = W_im[4];
+    const double tw5_re = W_re[5], tw5_im = W_im[5];
+    const double tw6_re = W_re[6], tw6_im = W_im[6];
+    const double tw7_re = W_re[7], tw7_im = W_im[7];
+    const double tw8_re = W_re[8], tw8_im = W_im[8];
+    const double tw9_re = W_re[9], tw9_im = W_im[9];
+    const double tw10_re = W_re[10], tw10_im = W_im[10];
+    const double tw11_re = W_re[11], tw11_im = W_im[11];
+    const double tw12_re = W_re[12], tw12_im = W_im[12];
+    const double tw13_re = W_re[13], tw13_im = W_im[13];
+    const double tw14_re = W_re[14], tw14_im = W_im[14];
+    const double tw15_re = W_re[15], tw15_im = W_im[15];
+    const double tw16_re = W_re[16], tw16_im = W_im[16];
+    const double tw17_re = W_re[17], tw17_im = W_im[17];
+
     for (size_t m = mb; m < me; m++) {
         x0_re = rio_re[m*ms+0*ios]; x0_im = rio_im[m*ms+0*ios];
         x1_re = rio_re[m*ms+1*ios]; x1_im = rio_im[m*ms+1*ios];
@@ -681,60 +719,60 @@ radix19_t1s_dit_bwd_scalar(
         x16_re = rio_re[m*ms+16*ios]; x16_im = rio_im[m*ms+16*ios];
         x17_re = rio_re[m*ms+17*ios]; x17_im = rio_im[m*ms+17*ios];
         x18_re = rio_re[m*ms+18*ios]; x18_im = rio_im[m*ms+18*ios];
-        { double wr = W_re[0], wi = W_im[0], tr = x1_re;
-          x1_re = x1_re*wr + x1_im*wi;
-          x1_im = x1_im*wr - tr*wi; }
-        { double wr = W_re[1], wi = W_im[1], tr = x2_re;
-          x2_re = x2_re*wr + x2_im*wi;
-          x2_im = x2_im*wr - tr*wi; }
-        { double wr = W_re[2], wi = W_im[2], tr = x3_re;
-          x3_re = x3_re*wr + x3_im*wi;
-          x3_im = x3_im*wr - tr*wi; }
-        { double wr = W_re[3], wi = W_im[3], tr = x4_re;
-          x4_re = x4_re*wr + x4_im*wi;
-          x4_im = x4_im*wr - tr*wi; }
-        { double wr = W_re[4], wi = W_im[4], tr = x5_re;
-          x5_re = x5_re*wr + x5_im*wi;
-          x5_im = x5_im*wr - tr*wi; }
-        { double wr = W_re[5], wi = W_im[5], tr = x6_re;
-          x6_re = x6_re*wr + x6_im*wi;
-          x6_im = x6_im*wr - tr*wi; }
-        { double wr = W_re[6], wi = W_im[6], tr = x7_re;
-          x7_re = x7_re*wr + x7_im*wi;
-          x7_im = x7_im*wr - tr*wi; }
-        { double wr = W_re[7], wi = W_im[7], tr = x8_re;
-          x8_re = x8_re*wr + x8_im*wi;
-          x8_im = x8_im*wr - tr*wi; }
-        { double wr = W_re[8], wi = W_im[8], tr = x9_re;
-          x9_re = x9_re*wr + x9_im*wi;
-          x9_im = x9_im*wr - tr*wi; }
-        { double wr = W_re[9], wi = W_im[9], tr = x10_re;
-          x10_re = x10_re*wr + x10_im*wi;
-          x10_im = x10_im*wr - tr*wi; }
-        { double wr = W_re[10], wi = W_im[10], tr = x11_re;
-          x11_re = x11_re*wr + x11_im*wi;
-          x11_im = x11_im*wr - tr*wi; }
-        { double wr = W_re[11], wi = W_im[11], tr = x12_re;
-          x12_re = x12_re*wr + x12_im*wi;
-          x12_im = x12_im*wr - tr*wi; }
-        { double wr = W_re[12], wi = W_im[12], tr = x13_re;
-          x13_re = x13_re*wr + x13_im*wi;
-          x13_im = x13_im*wr - tr*wi; }
-        { double wr = W_re[13], wi = W_im[13], tr = x14_re;
-          x14_re = x14_re*wr + x14_im*wi;
-          x14_im = x14_im*wr - tr*wi; }
-        { double wr = W_re[14], wi = W_im[14], tr = x15_re;
-          x15_re = x15_re*wr + x15_im*wi;
-          x15_im = x15_im*wr - tr*wi; }
-        { double wr = W_re[15], wi = W_im[15], tr = x16_re;
-          x16_re = x16_re*wr + x16_im*wi;
-          x16_im = x16_im*wr - tr*wi; }
-        { double wr = W_re[16], wi = W_im[16], tr = x17_re;
-          x17_re = x17_re*wr + x17_im*wi;
-          x17_im = x17_im*wr - tr*wi; }
-        { double wr = W_re[17], wi = W_im[17], tr = x18_re;
-          x18_re = x18_re*wr + x18_im*wi;
-          x18_im = x18_im*wr - tr*wi; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw0_re + x1_im*tw0_im;
+          x1_im = x1_im*tw0_re - tr*tw0_im; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw1_re + x2_im*tw1_im;
+          x2_im = x2_im*tw1_re - tr*tw1_im; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw2_re + x3_im*tw2_im;
+          x3_im = x3_im*tw2_re - tr*tw2_im; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw3_re + x4_im*tw3_im;
+          x4_im = x4_im*tw3_re - tr*tw3_im; }
+        { double tr = x5_re;
+          x5_re = x5_re*tw4_re + x5_im*tw4_im;
+          x5_im = x5_im*tw4_re - tr*tw4_im; }
+        { double tr = x6_re;
+          x6_re = x6_re*tw5_re + x6_im*tw5_im;
+          x6_im = x6_im*tw5_re - tr*tw5_im; }
+        { double tr = x7_re;
+          x7_re = x7_re*tw6_re + x7_im*tw6_im;
+          x7_im = x7_im*tw6_re - tr*tw6_im; }
+        { double tr = x8_re;
+          x8_re = x8_re*tw7_re + x8_im*tw7_im;
+          x8_im = x8_im*tw7_re - tr*tw7_im; }
+        { double tr = x9_re;
+          x9_re = x9_re*tw8_re + x9_im*tw8_im;
+          x9_im = x9_im*tw8_re - tr*tw8_im; }
+        { double tr = x10_re;
+          x10_re = x10_re*tw9_re + x10_im*tw9_im;
+          x10_im = x10_im*tw9_re - tr*tw9_im; }
+        { double tr = x11_re;
+          x11_re = x11_re*tw10_re + x11_im*tw10_im;
+          x11_im = x11_im*tw10_re - tr*tw10_im; }
+        { double tr = x12_re;
+          x12_re = x12_re*tw11_re + x12_im*tw11_im;
+          x12_im = x12_im*tw11_re - tr*tw11_im; }
+        { double tr = x13_re;
+          x13_re = x13_re*tw12_re + x13_im*tw12_im;
+          x13_im = x13_im*tw12_re - tr*tw12_im; }
+        { double tr = x14_re;
+          x14_re = x14_re*tw13_re + x14_im*tw13_im;
+          x14_im = x14_im*tw13_re - tr*tw13_im; }
+        { double tr = x15_re;
+          x15_re = x15_re*tw14_re + x15_im*tw14_im;
+          x15_im = x15_im*tw14_re - tr*tw14_im; }
+        { double tr = x16_re;
+          x16_re = x16_re*tw15_re + x16_im*tw15_im;
+          x16_im = x16_im*tw15_re - tr*tw15_im; }
+        { double tr = x17_re;
+          x17_re = x17_re*tw16_re + x17_im*tw16_im;
+          x17_im = x17_im*tw16_re - tr*tw16_im; }
+        { double tr = x18_re;
+          x18_re = x18_re*tw17_re + x18_im*tw17_im;
+          x18_im = x18_im*tw17_re - tr*tw17_im; }
 
         /* DFT-19 butterfly [bwd] (straight-line genfft DAG, compiler-managed regs) */
         {

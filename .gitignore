@@ -41,3 +41,4 @@ vfft_*.png
 # OS
 Thumbs.db
 .DS_Store
+*.pyc

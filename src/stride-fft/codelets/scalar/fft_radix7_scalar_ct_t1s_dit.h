@@ -35,6 +35,13 @@ radix7_t1s_dit_fwd_scalar(
     double ar,ai,br,bi,cr,ci,dr,di,er,ei,fr,fi;
     double R1r,R1i,R2r,R2i,R3r,R3i;
 
+    const double tw0_re = W_re[0], tw0_im = W_im[0];
+    const double tw1_re = W_re[1], tw1_im = W_im[1];
+    const double tw2_re = W_re[2], tw2_im = W_im[2];
+    const double tw3_re = W_re[3], tw3_im = W_im[3];
+    const double tw4_re = W_re[4], tw4_im = W_im[4];
+    const double tw5_re = W_re[5], tw5_im = W_im[5];
+
     for (size_t m = mb; m < me; m++) {
         x0_re = rio_re[m*ms+0*ios]; x0_im = rio_im[m*ms+0*ios];
         x1_re = rio_re[m*ms+1*ios]; x1_im = rio_im[m*ms+1*ios];
@@ -43,24 +50,24 @@ radix7_t1s_dit_fwd_scalar(
         x4_re = rio_re[m*ms+4*ios]; x4_im = rio_im[m*ms+4*ios];
         x5_re = rio_re[m*ms+5*ios]; x5_im = rio_im[m*ms+5*ios];
         x6_re = rio_re[m*ms+6*ios]; x6_im = rio_im[m*ms+6*ios];
-        { double wr = W_re[0], wi = W_im[0], tr = x1_re;
-          x1_re = x1_re*wr - x1_im*wi;
-          x1_im = tr*wi + x1_im*wr; }
-        { double wr = W_re[1], wi = W_im[1], tr = x2_re;
-          x2_re = x2_re*wr - x2_im*wi;
-          x2_im = tr*wi + x2_im*wr; }
-        { double wr = W_re[2], wi = W_im[2], tr = x3_re;
-          x3_re = x3_re*wr - x3_im*wi;
-          x3_im = tr*wi + x3_im*wr; }
-        { double wr = W_re[3], wi = W_im[3], tr = x4_re;
-          x4_re = x4_re*wr - x4_im*wi;
-          x4_im = tr*wi + x4_im*wr; }
-        { double wr = W_re[4], wi = W_im[4], tr = x5_re;
-          x5_re = x5_re*wr - x5_im*wi;
-          x5_im = tr*wi + x5_im*wr; }
-        { double wr = W_re[5], wi = W_im[5], tr = x6_re;
-          x6_re = x6_re*wr - x6_im*wi;
-          x6_im = tr*wi + x6_im*wr; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw0_re - x1_im*tw0_im;
+          x1_im = tr*tw0_im + x1_im*tw0_re; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw1_re - x2_im*tw1_im;
+          x2_im = tr*tw1_im + x2_im*tw1_re; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw2_re - x3_im*tw2_im;
+          x3_im = tr*tw2_im + x3_im*tw2_re; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw3_re - x4_im*tw3_im;
+          x4_im = tr*tw3_im + x4_im*tw3_re; }
+        { double tr = x5_re;
+          x5_re = x5_re*tw4_re - x5_im*tw4_im;
+          x5_im = tr*tw4_im + x5_im*tw4_re; }
+        { double tr = x6_re;
+          x6_re = x6_re*tw5_re - x6_im*tw5_im;
+          x6_im = tr*tw5_im + x6_im*tw5_re; }
 
         /* DFT-7 butterfly [fwd] */
         /* Phase 1 — symmetric/antisymmetric pairs */
@@ -148,6 +155,13 @@ radix7_t1s_dit_bwd_scalar(
     double ar,ai,br,bi,cr,ci,dr,di,er,ei,fr,fi;
     double R1r,R1i,R2r,R2i,R3r,R3i;
 
+    const double tw0_re = W_re[0], tw0_im = W_im[0];
+    const double tw1_re = W_re[1], tw1_im = W_im[1];
+    const double tw2_re = W_re[2], tw2_im = W_im[2];
+    const double tw3_re = W_re[3], tw3_im = W_im[3];
+    const double tw4_re = W_re[4], tw4_im = W_im[4];
+    const double tw5_re = W_re[5], tw5_im = W_im[5];
+
     for (size_t m = mb; m < me; m++) {
         x0_re = rio_re[m*ms+0*ios]; x0_im = rio_im[m*ms+0*ios];
         x1_re = rio_re[m*ms+1*ios]; x1_im = rio_im[m*ms+1*ios];
@@ -156,24 +170,24 @@ radix7_t1s_dit_bwd_scalar(
         x4_re = rio_re[m*ms+4*ios]; x4_im = rio_im[m*ms+4*ios];
         x5_re = rio_re[m*ms+5*ios]; x5_im = rio_im[m*ms+5*ios];
         x6_re = rio_re[m*ms+6*ios]; x6_im = rio_im[m*ms+6*ios];
-        { double wr = W_re[0], wi = W_im[0], tr = x1_re;
-          x1_re = x1_re*wr + x1_im*wi;
-          x1_im = x1_im*wr - tr*wi; }
-        { double wr = W_re[1], wi = W_im[1], tr = x2_re;
-          x2_re = x2_re*wr + x2_im*wi;
-          x2_im = x2_im*wr - tr*wi; }
-        { double wr = W_re[2], wi = W_im[2], tr = x3_re;
-          x3_re = x3_re*wr + x3_im*wi;
-          x3_im = x3_im*wr - tr*wi; }
-        { double wr = W_re[3], wi = W_im[3], tr = x4_re;
-          x4_re = x4_re*wr + x4_im*wi;
-          x4_im = x4_im*wr - tr*wi; }
-        { double wr = W_re[4], wi = W_im[4], tr = x5_re;
-          x5_re = x5_re*wr + x5_im*wi;
-          x5_im = x5_im*wr - tr*wi; }
-        { double wr = W_re[5], wi = W_im[5], tr = x6_re;
-          x6_re = x6_re*wr + x6_im*wi;
-          x6_im = x6_im*wr - tr*wi; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw0_re + x1_im*tw0_im;
+          x1_im = x1_im*tw0_re - tr*tw0_im; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw1_re + x2_im*tw1_im;
+          x2_im = x2_im*tw1_re - tr*tw1_im; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw2_re + x3_im*tw2_im;
+          x3_im = x3_im*tw2_re - tr*tw2_im; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw3_re + x4_im*tw3_im;
+          x4_im = x4_im*tw3_re - tr*tw3_im; }
+        { double tr = x5_re;
+          x5_re = x5_re*tw4_re + x5_im*tw4_im;
+          x5_im = x5_im*tw4_re - tr*tw4_im; }
+        { double tr = x6_re;
+          x6_re = x6_re*tw5_re + x6_im*tw5_im;
+          x6_im = x6_im*tw5_re - tr*tw5_im; }
 
         /* DFT-7 butterfly [bwd] */
         /* Phase 1 — symmetric/antisymmetric pairs */

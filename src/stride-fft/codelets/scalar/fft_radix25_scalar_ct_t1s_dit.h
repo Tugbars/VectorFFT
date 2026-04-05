@@ -72,25 +72,50 @@ radix25_t1s_dit_fwd_scalar(
     const double tw_W25_16_re = W25_16_re;
     const double tw_W25_16_im = W25_16_im;
 
+    const double tw0_re = W_re[0], tw0_im = W_im[0];
+    const double tw1_re = W_re[1], tw1_im = W_im[1];
+    const double tw2_re = W_re[2], tw2_im = W_im[2];
+    const double tw3_re = W_re[3], tw3_im = W_im[3];
+    const double tw4_re = W_re[4], tw4_im = W_im[4];
+    const double tw5_re = W_re[5], tw5_im = W_im[5];
+    const double tw6_re = W_re[6], tw6_im = W_im[6];
+    const double tw7_re = W_re[7], tw7_im = W_im[7];
+    const double tw8_re = W_re[8], tw8_im = W_im[8];
+    const double tw9_re = W_re[9], tw9_im = W_im[9];
+    const double tw10_re = W_re[10], tw10_im = W_im[10];
+    const double tw11_re = W_re[11], tw11_im = W_im[11];
+    const double tw12_re = W_re[12], tw12_im = W_im[12];
+    const double tw13_re = W_re[13], tw13_im = W_im[13];
+    const double tw14_re = W_re[14], tw14_im = W_im[14];
+    const double tw15_re = W_re[15], tw15_im = W_im[15];
+    const double tw16_re = W_re[16], tw16_im = W_im[16];
+    const double tw17_re = W_re[17], tw17_im = W_im[17];
+    const double tw18_re = W_re[18], tw18_im = W_im[18];
+    const double tw19_re = W_re[19], tw19_im = W_im[19];
+    const double tw20_re = W_re[20], tw20_im = W_im[20];
+    const double tw21_re = W_re[21], tw21_im = W_im[21];
+    const double tw22_re = W_re[22], tw22_im = W_im[22];
+    const double tw23_re = W_re[23], tw23_im = W_im[23];
+
     for (size_t m = mb; m < me; m++) {
         /* sub-FFT n2=0 */
         x0_re = rio_re[m*ms+0*ios]; x0_im = rio_im[m*ms+0*ios];
         x1_re = rio_re[m*ms+5*ios]; x1_im = rio_im[m*ms+5*ios];
-        { double wr = W_re[4], wi = W_im[4], tr = x1_re;
-          x1_re = x1_re*wr - x1_im*wi;
-          x1_im = tr*wi + x1_im*wr; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw4_re - x1_im*tw4_im;
+          x1_im = tr*tw4_im + x1_im*tw4_re; }
         x2_re = rio_re[m*ms+10*ios]; x2_im = rio_im[m*ms+10*ios];
-        { double wr = W_re[9], wi = W_im[9], tr = x2_re;
-          x2_re = x2_re*wr - x2_im*wi;
-          x2_im = tr*wi + x2_im*wr; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw9_re - x2_im*tw9_im;
+          x2_im = tr*tw9_im + x2_im*tw9_re; }
         x3_re = rio_re[m*ms+15*ios]; x3_im = rio_im[m*ms+15*ios];
-        { double wr = W_re[14], wi = W_im[14], tr = x3_re;
-          x3_re = x3_re*wr - x3_im*wi;
-          x3_im = tr*wi + x3_im*wr; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw14_re - x3_im*tw14_im;
+          x3_im = tr*tw14_im + x3_im*tw14_re; }
         x4_re = rio_re[m*ms+20*ios]; x4_im = rio_im[m*ms+20*ios];
-        { double wr = W_re[19], wi = W_im[19], tr = x4_re;
-          x4_re = x4_re*wr - x4_im*wi;
-          x4_im = tr*wi + x4_im*wr; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw19_re - x4_im*tw19_im;
+          x4_im = tr*tw19_im + x4_im*tw19_re; }
 
         /* radix-5 n2=0 [fwd] */
         {
@@ -120,25 +145,25 @@ radix25_t1s_dit_fwd_scalar(
 
         /* sub-FFT n2=1 */
         x0_re = rio_re[m*ms+1*ios]; x0_im = rio_im[m*ms+1*ios];
-        { double wr = W_re[0], wi = W_im[0], tr = x0_re;
-          x0_re = x0_re*wr - x0_im*wi;
-          x0_im = tr*wi + x0_im*wr; }
+        { double tr = x0_re;
+          x0_re = x0_re*tw0_re - x0_im*tw0_im;
+          x0_im = tr*tw0_im + x0_im*tw0_re; }
         x1_re = rio_re[m*ms+6*ios]; x1_im = rio_im[m*ms+6*ios];
-        { double wr = W_re[5], wi = W_im[5], tr = x1_re;
-          x1_re = x1_re*wr - x1_im*wi;
-          x1_im = tr*wi + x1_im*wr; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw5_re - x1_im*tw5_im;
+          x1_im = tr*tw5_im + x1_im*tw5_re; }
         x2_re = rio_re[m*ms+11*ios]; x2_im = rio_im[m*ms+11*ios];
-        { double wr = W_re[10], wi = W_im[10], tr = x2_re;
-          x2_re = x2_re*wr - x2_im*wi;
-          x2_im = tr*wi + x2_im*wr; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw10_re - x2_im*tw10_im;
+          x2_im = tr*tw10_im + x2_im*tw10_re; }
         x3_re = rio_re[m*ms+16*ios]; x3_im = rio_im[m*ms+16*ios];
-        { double wr = W_re[15], wi = W_im[15], tr = x3_re;
-          x3_re = x3_re*wr - x3_im*wi;
-          x3_im = tr*wi + x3_im*wr; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw15_re - x3_im*tw15_im;
+          x3_im = tr*tw15_im + x3_im*tw15_re; }
         x4_re = rio_re[m*ms+21*ios]; x4_im = rio_im[m*ms+21*ios];
-        { double wr = W_re[20], wi = W_im[20], tr = x4_re;
-          x4_re = x4_re*wr - x4_im*wi;
-          x4_im = tr*wi + x4_im*wr; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw20_re - x4_im*tw20_im;
+          x4_im = tr*tw20_im + x4_im*tw20_re; }
 
         /* radix-5 n2=1 [fwd] */
         {
@@ -168,25 +193,25 @@ radix25_t1s_dit_fwd_scalar(
 
         /* sub-FFT n2=2 */
         x0_re = rio_re[m*ms+2*ios]; x0_im = rio_im[m*ms+2*ios];
-        { double wr = W_re[1], wi = W_im[1], tr = x0_re;
-          x0_re = x0_re*wr - x0_im*wi;
-          x0_im = tr*wi + x0_im*wr; }
+        { double tr = x0_re;
+          x0_re = x0_re*tw1_re - x0_im*tw1_im;
+          x0_im = tr*tw1_im + x0_im*tw1_re; }
         x1_re = rio_re[m*ms+7*ios]; x1_im = rio_im[m*ms+7*ios];
-        { double wr = W_re[6], wi = W_im[6], tr = x1_re;
-          x1_re = x1_re*wr - x1_im*wi;
-          x1_im = tr*wi + x1_im*wr; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw6_re - x1_im*tw6_im;
+          x1_im = tr*tw6_im + x1_im*tw6_re; }
         x2_re = rio_re[m*ms+12*ios]; x2_im = rio_im[m*ms+12*ios];
-        { double wr = W_re[11], wi = W_im[11], tr = x2_re;
-          x2_re = x2_re*wr - x2_im*wi;
-          x2_im = tr*wi + x2_im*wr; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw11_re - x2_im*tw11_im;
+          x2_im = tr*tw11_im + x2_im*tw11_re; }
         x3_re = rio_re[m*ms+17*ios]; x3_im = rio_im[m*ms+17*ios];
-        { double wr = W_re[16], wi = W_im[16], tr = x3_re;
-          x3_re = x3_re*wr - x3_im*wi;
-          x3_im = tr*wi + x3_im*wr; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw16_re - x3_im*tw16_im;
+          x3_im = tr*tw16_im + x3_im*tw16_re; }
         x4_re = rio_re[m*ms+22*ios]; x4_im = rio_im[m*ms+22*ios];
-        { double wr = W_re[21], wi = W_im[21], tr = x4_re;
-          x4_re = x4_re*wr - x4_im*wi;
-          x4_im = tr*wi + x4_im*wr; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw21_re - x4_im*tw21_im;
+          x4_im = tr*tw21_im + x4_im*tw21_re; }
 
         /* radix-5 n2=2 [fwd] */
         {
@@ -216,25 +241,25 @@ radix25_t1s_dit_fwd_scalar(
 
         /* sub-FFT n2=3 */
         x0_re = rio_re[m*ms+3*ios]; x0_im = rio_im[m*ms+3*ios];
-        { double wr = W_re[2], wi = W_im[2], tr = x0_re;
-          x0_re = x0_re*wr - x0_im*wi;
-          x0_im = tr*wi + x0_im*wr; }
+        { double tr = x0_re;
+          x0_re = x0_re*tw2_re - x0_im*tw2_im;
+          x0_im = tr*tw2_im + x0_im*tw2_re; }
         x1_re = rio_re[m*ms+8*ios]; x1_im = rio_im[m*ms+8*ios];
-        { double wr = W_re[7], wi = W_im[7], tr = x1_re;
-          x1_re = x1_re*wr - x1_im*wi;
-          x1_im = tr*wi + x1_im*wr; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw7_re - x1_im*tw7_im;
+          x1_im = tr*tw7_im + x1_im*tw7_re; }
         x2_re = rio_re[m*ms+13*ios]; x2_im = rio_im[m*ms+13*ios];
-        { double wr = W_re[12], wi = W_im[12], tr = x2_re;
-          x2_re = x2_re*wr - x2_im*wi;
-          x2_im = tr*wi + x2_im*wr; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw12_re - x2_im*tw12_im;
+          x2_im = tr*tw12_im + x2_im*tw12_re; }
         x3_re = rio_re[m*ms+18*ios]; x3_im = rio_im[m*ms+18*ios];
-        { double wr = W_re[17], wi = W_im[17], tr = x3_re;
-          x3_re = x3_re*wr - x3_im*wi;
-          x3_im = tr*wi + x3_im*wr; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw17_re - x3_im*tw17_im;
+          x3_im = tr*tw17_im + x3_im*tw17_re; }
         x4_re = rio_re[m*ms+23*ios]; x4_im = rio_im[m*ms+23*ios];
-        { double wr = W_re[22], wi = W_im[22], tr = x4_re;
-          x4_re = x4_re*wr - x4_im*wi;
-          x4_im = tr*wi + x4_im*wr; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw22_re - x4_im*tw22_im;
+          x4_im = tr*tw22_im + x4_im*tw22_re; }
 
         /* radix-5 n2=3 [fwd] */
         {
@@ -264,25 +289,25 @@ radix25_t1s_dit_fwd_scalar(
 
         /* sub-FFT n2=4 */
         x0_re = rio_re[m*ms+4*ios]; x0_im = rio_im[m*ms+4*ios];
-        { double wr = W_re[3], wi = W_im[3], tr = x0_re;
-          x0_re = x0_re*wr - x0_im*wi;
-          x0_im = tr*wi + x0_im*wr; }
+        { double tr = x0_re;
+          x0_re = x0_re*tw3_re - x0_im*tw3_im;
+          x0_im = tr*tw3_im + x0_im*tw3_re; }
         x1_re = rio_re[m*ms+9*ios]; x1_im = rio_im[m*ms+9*ios];
-        { double wr = W_re[8], wi = W_im[8], tr = x1_re;
-          x1_re = x1_re*wr - x1_im*wi;
-          x1_im = tr*wi + x1_im*wr; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw8_re - x1_im*tw8_im;
+          x1_im = tr*tw8_im + x1_im*tw8_re; }
         x2_re = rio_re[m*ms+14*ios]; x2_im = rio_im[m*ms+14*ios];
-        { double wr = W_re[13], wi = W_im[13], tr = x2_re;
-          x2_re = x2_re*wr - x2_im*wi;
-          x2_im = tr*wi + x2_im*wr; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw13_re - x2_im*tw13_im;
+          x2_im = tr*tw13_im + x2_im*tw13_re; }
         x3_re = rio_re[m*ms+19*ios]; x3_im = rio_im[m*ms+19*ios];
-        { double wr = W_re[18], wi = W_im[18], tr = x3_re;
-          x3_re = x3_re*wr - x3_im*wi;
-          x3_im = tr*wi + x3_im*wr; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw18_re - x3_im*tw18_im;
+          x3_im = tr*tw18_im + x3_im*tw18_re; }
         x4_re = rio_re[m*ms+24*ios]; x4_im = rio_im[m*ms+24*ios];
-        { double wr = W_re[23], wi = W_im[23], tr = x4_re;
-          x4_re = x4_re*wr - x4_im*wi;
-          x4_im = tr*wi + x4_im*wr; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw23_re - x4_im*tw23_im;
+          x4_im = tr*tw23_im + x4_im*tw23_re; }
 
         /* radix-5 n2=4 [fwd] */
         {
@@ -566,25 +591,50 @@ radix25_t1s_dit_bwd_scalar(
     const double tw_W25_16_re = W25_16_re;
     const double tw_W25_16_im = W25_16_im;
 
+    const double tw0_re = W_re[0], tw0_im = W_im[0];
+    const double tw1_re = W_re[1], tw1_im = W_im[1];
+    const double tw2_re = W_re[2], tw2_im = W_im[2];
+    const double tw3_re = W_re[3], tw3_im = W_im[3];
+    const double tw4_re = W_re[4], tw4_im = W_im[4];
+    const double tw5_re = W_re[5], tw5_im = W_im[5];
+    const double tw6_re = W_re[6], tw6_im = W_im[6];
+    const double tw7_re = W_re[7], tw7_im = W_im[7];
+    const double tw8_re = W_re[8], tw8_im = W_im[8];
+    const double tw9_re = W_re[9], tw9_im = W_im[9];
+    const double tw10_re = W_re[10], tw10_im = W_im[10];
+    const double tw11_re = W_re[11], tw11_im = W_im[11];
+    const double tw12_re = W_re[12], tw12_im = W_im[12];
+    const double tw13_re = W_re[13], tw13_im = W_im[13];
+    const double tw14_re = W_re[14], tw14_im = W_im[14];
+    const double tw15_re = W_re[15], tw15_im = W_im[15];
+    const double tw16_re = W_re[16], tw16_im = W_im[16];
+    const double tw17_re = W_re[17], tw17_im = W_im[17];
+    const double tw18_re = W_re[18], tw18_im = W_im[18];
+    const double tw19_re = W_re[19], tw19_im = W_im[19];
+    const double tw20_re = W_re[20], tw20_im = W_im[20];
+    const double tw21_re = W_re[21], tw21_im = W_im[21];
+    const double tw22_re = W_re[22], tw22_im = W_im[22];
+    const double tw23_re = W_re[23], tw23_im = W_im[23];
+
     for (size_t m = mb; m < me; m++) {
         /* sub-FFT n2=0 */
         x0_re = rio_re[m*ms+0*ios]; x0_im = rio_im[m*ms+0*ios];
         x1_re = rio_re[m*ms+5*ios]; x1_im = rio_im[m*ms+5*ios];
-        { double wr = W_re[4], wi = W_im[4], tr = x1_re;
-          x1_re = x1_re*wr + x1_im*wi;
-          x1_im = x1_im*wr - tr*wi; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw4_re + x1_im*tw4_im;
+          x1_im = x1_im*tw4_re - tr*tw4_im; }
         x2_re = rio_re[m*ms+10*ios]; x2_im = rio_im[m*ms+10*ios];
-        { double wr = W_re[9], wi = W_im[9], tr = x2_re;
-          x2_re = x2_re*wr + x2_im*wi;
-          x2_im = x2_im*wr - tr*wi; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw9_re + x2_im*tw9_im;
+          x2_im = x2_im*tw9_re - tr*tw9_im; }
         x3_re = rio_re[m*ms+15*ios]; x3_im = rio_im[m*ms+15*ios];
-        { double wr = W_re[14], wi = W_im[14], tr = x3_re;
-          x3_re = x3_re*wr + x3_im*wi;
-          x3_im = x3_im*wr - tr*wi; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw14_re + x3_im*tw14_im;
+          x3_im = x3_im*tw14_re - tr*tw14_im; }
         x4_re = rio_re[m*ms+20*ios]; x4_im = rio_im[m*ms+20*ios];
-        { double wr = W_re[19], wi = W_im[19], tr = x4_re;
-          x4_re = x4_re*wr + x4_im*wi;
-          x4_im = x4_im*wr - tr*wi; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw19_re + x4_im*tw19_im;
+          x4_im = x4_im*tw19_re - tr*tw19_im; }
 
         /* radix-5 n2=0 [bwd] */
         {
@@ -614,25 +664,25 @@ radix25_t1s_dit_bwd_scalar(
 
         /* sub-FFT n2=1 */
         x0_re = rio_re[m*ms+1*ios]; x0_im = rio_im[m*ms+1*ios];
-        { double wr = W_re[0], wi = W_im[0], tr = x0_re;
-          x0_re = x0_re*wr + x0_im*wi;
-          x0_im = x0_im*wr - tr*wi; }
+        { double tr = x0_re;
+          x0_re = x0_re*tw0_re + x0_im*tw0_im;
+          x0_im = x0_im*tw0_re - tr*tw0_im; }
         x1_re = rio_re[m*ms+6*ios]; x1_im = rio_im[m*ms+6*ios];
-        { double wr = W_re[5], wi = W_im[5], tr = x1_re;
-          x1_re = x1_re*wr + x1_im*wi;
-          x1_im = x1_im*wr - tr*wi; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw5_re + x1_im*tw5_im;
+          x1_im = x1_im*tw5_re - tr*tw5_im; }
         x2_re = rio_re[m*ms+11*ios]; x2_im = rio_im[m*ms+11*ios];
-        { double wr = W_re[10], wi = W_im[10], tr = x2_re;
-          x2_re = x2_re*wr + x2_im*wi;
-          x2_im = x2_im*wr - tr*wi; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw10_re + x2_im*tw10_im;
+          x2_im = x2_im*tw10_re - tr*tw10_im; }
         x3_re = rio_re[m*ms+16*ios]; x3_im = rio_im[m*ms+16*ios];
-        { double wr = W_re[15], wi = W_im[15], tr = x3_re;
-          x3_re = x3_re*wr + x3_im*wi;
-          x3_im = x3_im*wr - tr*wi; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw15_re + x3_im*tw15_im;
+          x3_im = x3_im*tw15_re - tr*tw15_im; }
         x4_re = rio_re[m*ms+21*ios]; x4_im = rio_im[m*ms+21*ios];
-        { double wr = W_re[20], wi = W_im[20], tr = x4_re;
-          x4_re = x4_re*wr + x4_im*wi;
-          x4_im = x4_im*wr - tr*wi; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw20_re + x4_im*tw20_im;
+          x4_im = x4_im*tw20_re - tr*tw20_im; }
 
         /* radix-5 n2=1 [bwd] */
         {
@@ -662,25 +712,25 @@ radix25_t1s_dit_bwd_scalar(
 
         /* sub-FFT n2=2 */
         x0_re = rio_re[m*ms+2*ios]; x0_im = rio_im[m*ms+2*ios];
-        { double wr = W_re[1], wi = W_im[1], tr = x0_re;
-          x0_re = x0_re*wr + x0_im*wi;
-          x0_im = x0_im*wr - tr*wi; }
+        { double tr = x0_re;
+          x0_re = x0_re*tw1_re + x0_im*tw1_im;
+          x0_im = x0_im*tw1_re - tr*tw1_im; }
         x1_re = rio_re[m*ms+7*ios]; x1_im = rio_im[m*ms+7*ios];
-        { double wr = W_re[6], wi = W_im[6], tr = x1_re;
-          x1_re = x1_re*wr + x1_im*wi;
-          x1_im = x1_im*wr - tr*wi; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw6_re + x1_im*tw6_im;
+          x1_im = x1_im*tw6_re - tr*tw6_im; }
         x2_re = rio_re[m*ms+12*ios]; x2_im = rio_im[m*ms+12*ios];
-        { double wr = W_re[11], wi = W_im[11], tr = x2_re;
-          x2_re = x2_re*wr + x2_im*wi;
-          x2_im = x2_im*wr - tr*wi; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw11_re + x2_im*tw11_im;
+          x2_im = x2_im*tw11_re - tr*tw11_im; }
         x3_re = rio_re[m*ms+17*ios]; x3_im = rio_im[m*ms+17*ios];
-        { double wr = W_re[16], wi = W_im[16], tr = x3_re;
-          x3_re = x3_re*wr + x3_im*wi;
-          x3_im = x3_im*wr - tr*wi; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw16_re + x3_im*tw16_im;
+          x3_im = x3_im*tw16_re - tr*tw16_im; }
         x4_re = rio_re[m*ms+22*ios]; x4_im = rio_im[m*ms+22*ios];
-        { double wr = W_re[21], wi = W_im[21], tr = x4_re;
-          x4_re = x4_re*wr + x4_im*wi;
-          x4_im = x4_im*wr - tr*wi; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw21_re + x4_im*tw21_im;
+          x4_im = x4_im*tw21_re - tr*tw21_im; }
 
         /* radix-5 n2=2 [bwd] */
         {
@@ -710,25 +760,25 @@ radix25_t1s_dit_bwd_scalar(
 
         /* sub-FFT n2=3 */
         x0_re = rio_re[m*ms+3*ios]; x0_im = rio_im[m*ms+3*ios];
-        { double wr = W_re[2], wi = W_im[2], tr = x0_re;
-          x0_re = x0_re*wr + x0_im*wi;
-          x0_im = x0_im*wr - tr*wi; }
+        { double tr = x0_re;
+          x0_re = x0_re*tw2_re + x0_im*tw2_im;
+          x0_im = x0_im*tw2_re - tr*tw2_im; }
         x1_re = rio_re[m*ms+8*ios]; x1_im = rio_im[m*ms+8*ios];
-        { double wr = W_re[7], wi = W_im[7], tr = x1_re;
-          x1_re = x1_re*wr + x1_im*wi;
-          x1_im = x1_im*wr - tr*wi; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw7_re + x1_im*tw7_im;
+          x1_im = x1_im*tw7_re - tr*tw7_im; }
         x2_re = rio_re[m*ms+13*ios]; x2_im = rio_im[m*ms+13*ios];
-        { double wr = W_re[12], wi = W_im[12], tr = x2_re;
-          x2_re = x2_re*wr + x2_im*wi;
-          x2_im = x2_im*wr - tr*wi; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw12_re + x2_im*tw12_im;
+          x2_im = x2_im*tw12_re - tr*tw12_im; }
         x3_re = rio_re[m*ms+18*ios]; x3_im = rio_im[m*ms+18*ios];
-        { double wr = W_re[17], wi = W_im[17], tr = x3_re;
-          x3_re = x3_re*wr + x3_im*wi;
-          x3_im = x3_im*wr - tr*wi; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw17_re + x3_im*tw17_im;
+          x3_im = x3_im*tw17_re - tr*tw17_im; }
         x4_re = rio_re[m*ms+23*ios]; x4_im = rio_im[m*ms+23*ios];
-        { double wr = W_re[22], wi = W_im[22], tr = x4_re;
-          x4_re = x4_re*wr + x4_im*wi;
-          x4_im = x4_im*wr - tr*wi; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw22_re + x4_im*tw22_im;
+          x4_im = x4_im*tw22_re - tr*tw22_im; }
 
         /* radix-5 n2=3 [bwd] */
         {
@@ -758,25 +808,25 @@ radix25_t1s_dit_bwd_scalar(
 
         /* sub-FFT n2=4 */
         x0_re = rio_re[m*ms+4*ios]; x0_im = rio_im[m*ms+4*ios];
-        { double wr = W_re[3], wi = W_im[3], tr = x0_re;
-          x0_re = x0_re*wr + x0_im*wi;
-          x0_im = x0_im*wr - tr*wi; }
+        { double tr = x0_re;
+          x0_re = x0_re*tw3_re + x0_im*tw3_im;
+          x0_im = x0_im*tw3_re - tr*tw3_im; }
         x1_re = rio_re[m*ms+9*ios]; x1_im = rio_im[m*ms+9*ios];
-        { double wr = W_re[8], wi = W_im[8], tr = x1_re;
-          x1_re = x1_re*wr + x1_im*wi;
-          x1_im = x1_im*wr - tr*wi; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw8_re + x1_im*tw8_im;
+          x1_im = x1_im*tw8_re - tr*tw8_im; }
         x2_re = rio_re[m*ms+14*ios]; x2_im = rio_im[m*ms+14*ios];
-        { double wr = W_re[13], wi = W_im[13], tr = x2_re;
-          x2_re = x2_re*wr + x2_im*wi;
-          x2_im = x2_im*wr - tr*wi; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw13_re + x2_im*tw13_im;
+          x2_im = x2_im*tw13_re - tr*tw13_im; }
         x3_re = rio_re[m*ms+19*ios]; x3_im = rio_im[m*ms+19*ios];
-        { double wr = W_re[18], wi = W_im[18], tr = x3_re;
-          x3_re = x3_re*wr + x3_im*wi;
-          x3_im = x3_im*wr - tr*wi; }
+        { double tr = x3_re;
+          x3_re = x3_re*tw18_re + x3_im*tw18_im;
+          x3_im = x3_im*tw18_re - tr*tw18_im; }
         x4_re = rio_re[m*ms+24*ios]; x4_im = rio_im[m*ms+24*ios];
-        { double wr = W_re[23], wi = W_im[23], tr = x4_re;
-          x4_re = x4_re*wr + x4_im*wi;
-          x4_im = x4_im*wr - tr*wi; }
+        { double tr = x4_re;
+          x4_re = x4_re*tw23_re + x4_im*tw23_im;
+          x4_im = x4_im*tw23_re - tr*tw23_im; }
 
         /* radix-5 n2=4 [bwd] */
         {

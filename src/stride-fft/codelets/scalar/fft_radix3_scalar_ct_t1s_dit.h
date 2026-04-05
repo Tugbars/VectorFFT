@@ -27,16 +27,19 @@ radix3_t1s_dit_fwd_scalar(
 
     double x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;
 
+    const double tw0_re = W_re[0], tw0_im = W_im[0];
+    const double tw1_re = W_re[1], tw1_im = W_im[1];
+
     for (size_t m = mb; m < me; m++) {
         x0_re = rio_re[m*ms+0*ios]; x0_im = rio_im[m*ms+0*ios];
         x1_re = rio_re[m*ms+1*ios]; x1_im = rio_im[m*ms+1*ios];
         x2_re = rio_re[m*ms+2*ios]; x2_im = rio_im[m*ms+2*ios];
-        { double wr = W_re[0], wi = W_im[0], tr = x1_re;
-          x1_re = x1_re*wr - x1_im*wi;
-          x1_im = tr*wi + x1_im*wr; }
-        { double wr = W_re[1], wi = W_im[1], tr = x2_re;
-          x2_re = x2_re*wr - x2_im*wi;
-          x2_im = tr*wi + x2_im*wr; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw0_re - x1_im*tw0_im;
+          x1_im = tr*tw0_im + x1_im*tw0_re; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw1_re - x2_im*tw1_im;
+          x2_im = tr*tw1_im + x2_im*tw1_re; }
 
         /* DFT-3 butterfly [fwd] */
         double ar=(x1_re)+(x2_re), ai=(x1_im)+(x2_im);
@@ -63,16 +66,19 @@ radix3_t1s_dit_bwd_scalar(
 
     double x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;
 
+    const double tw0_re = W_re[0], tw0_im = W_im[0];
+    const double tw1_re = W_re[1], tw1_im = W_im[1];
+
     for (size_t m = mb; m < me; m++) {
         x0_re = rio_re[m*ms+0*ios]; x0_im = rio_im[m*ms+0*ios];
         x1_re = rio_re[m*ms+1*ios]; x1_im = rio_im[m*ms+1*ios];
         x2_re = rio_re[m*ms+2*ios]; x2_im = rio_im[m*ms+2*ios];
-        { double wr = W_re[0], wi = W_im[0], tr = x1_re;
-          x1_re = x1_re*wr + x1_im*wi;
-          x1_im = x1_im*wr - tr*wi; }
-        { double wr = W_re[1], wi = W_im[1], tr = x2_re;
-          x2_re = x2_re*wr + x2_im*wi;
-          x2_im = x2_im*wr - tr*wi; }
+        { double tr = x1_re;
+          x1_re = x1_re*tw0_re + x1_im*tw0_im;
+          x1_im = x1_im*tw0_re - tr*tw0_im; }
+        { double tr = x2_re;
+          x2_re = x2_re*tw1_re + x2_im*tw1_im;
+          x2_im = x2_im*tw1_re - tr*tw1_im; }
 
         /* DFT-3 butterfly [bwd] */
         double ar=(x1_re)+(x2_re), ai=(x1_im)+(x2_im);

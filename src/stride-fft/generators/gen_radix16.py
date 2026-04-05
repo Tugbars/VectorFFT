@@ -163,6 +163,7 @@ class Emitter:
     # ── Load / Store (counted) ──
     # addr_mode: 'K' (default), 'n1' (separate is/os), 't1' (in-place ios/ms)
     addr_mode = 'K'
+    tw_hoisted = False
 
     def _in_addr(self, n, ke="k"):
         if self.addr_mode in ('n1', 'n1_ovs'):
@@ -363,10 +364,51 @@ class Emitter:
                 self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
 
     # ── Complex multiply (log3 derivation) ──
+    def emit_hoist_all_tw_scalars(self, R):
+        """Emit broadcast of all (R-1) twiddle scalars BEFORE the m-loop.
+        This hoists loop-invariant broadcasts out of the inner loop,
+        letting the compiler keep small R in registers and spill large R
+        to L1-hot stack (aligned loads, not broadcasts per iteration)."""
+        T = self.isa.T
+        for i in range(R - 1):
+            if self.isa.name == 'scalar':
+                self.o(f"const double tw{i}_re = W_re[{i}], tw{i}_im = W_im[{i}];")
+            elif self.isa.name == 'avx2':
+                self.o(f"const {T} tw{i}_re = _mm256_broadcast_sd(&W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm256_broadcast_sd(&W_im[{i}]);")
+            else:  # avx512
+                self.o(f"const {T} tw{i}_re = _mm512_set1_pd(W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm512_set1_pd(W_im[{i}]);")
+
+    def emit_apply_hoisted_tw(self, v, tw_idx, d):
+        """Apply pre-hoisted twiddle tw{idx} to variable v (no broadcast)."""
+        fwd = (d == 'fwd')
+        T = self.isa.T
+        wr = f"tw{tw_idx}_re"
+        wi = f"tw{tw_idx}_im"
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*{wr} - {v}_im*{wi};")
+                self.o(f"  {v}_im = tr*{wi} + {v}_im*{wr}; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*{wr} + {v}_im*{wi};")
+                self.o(f"  {v}_im = {v}_im*{wr} - tr*{wi}; }}")
+        else:
+            self.o(f"{{ const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fma('tr',wi,self.mul(f'{v}_im',wr))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im',wr,self.mul('tr',wi))}; }}")
+
     def emit_ext_tw_scalar(self, v, tw_idx, d):
         """Emit twiddle multiply using scalar broadcast (t1s variant).
         W_re/W_im are (R-1) scalars, NOT (R-1)*me arrays.
         Broadcasts one double to SIMD width."""
+        if self.tw_hoisted:
+            return self.emit_apply_hoisted_tw(v, tw_idx, d)
         fwd = (d == 'fwd')
         T = self.isa.T
         self.n_load += 2
@@ -601,12 +643,6 @@ def emit_kernel_body(em, d, itw_set, variant):
             em.emit_load(f"x{n1}", n)
             if variant == 'dit_tw' and n > 0:
                 em.emit_ext_tw(f"x{n1}", n - 1, d)
-        em.b()
-        em.emit_radix4(xv4, d, f"radix-4 n2={n2}")
-        em.b()
-        for k1 in range(N1):
-            em.emit_spill(f"x{k1}", n2 * N1 + k1)
-        em.b()
             elif variant == 'dit_tw_scalar' and n > 0:
                 em.emit_ext_tw_scalar(f"x{n1}", n - 1, d)
         em.b()
@@ -638,9 +674,6 @@ def emit_kernel_body(em, d, itw_set, variant):
                 if m > 0:
                     em.emit_ext_tw(f"x{k2}", m - 1, d)
             em.b()
-        for k2 in range(N2):
-            em.emit_store(f"x{k2}", k1 + N1 * k2)
-        em.b()
         elif variant == 'dif_tw_scalar':
             for k2 in range(N2):
                 m = k1 + N1 * k2
@@ -1119,6 +1152,12 @@ def emit_file_ct(isa, itw_set, ct_variant):
                     em.o(f"const double tw_{label}_im = {label}_im;")
             em.b()
 
+        # Hoist twiddle broadcasts before the loop (t1s only)
+        if is_t1s_dit:
+            em.tw_hoisted = True
+            em.emit_hoist_all_tw_scalars(N)
+            em.b()
+
         # Loop
         if is_n1:
             if isa.name == 'scalar':
@@ -1134,7 +1173,7 @@ def emit_file_ct(isa, itw_set, ct_variant):
         em.ind += 1
         # Reuse the same kernel body — addressing differs via addr_mode
         if is_t1s_dit:
-            emit_kernel_body(em, d, 'dit_tw_scalar')
+            emit_kernel_body(em, d, itw_set, 'dit_tw_scalar')
         elif is_t1_dit_log3:
             emit_kernel_body_log3(em, d, itw_set, 'dit_tw_log3')
         else:
