@@ -168,6 +168,7 @@ class Emitter:
     # ── Load / Store (counted) ──
     # addr_mode: 'K' (default), 'n1' (separate is/os), 'n1_ovs', 't1' (in-place ios/ms)
     addr_mode = 'K'
+    tw_hoisted = False
 
     def _in_addr(self, n, ke="k"):
         if self.addr_mode in ('n1', 'n1_ovs'):
@@ -288,10 +289,51 @@ class Emitter:
         # Use precomputed tw_{label}_re / tw_{label}_im broadcasts
         self.emit_cmul_inplace_named(dst, f"tw_{label}_re", f"tw_{label}_im", d)
 
+    def emit_hoist_all_tw_scalars(self, R):
+        """Emit broadcast of all (R-1) twiddle scalars BEFORE the m-loop.
+        This hoists loop-invariant broadcasts out of the inner loop,
+        letting the compiler keep small R in registers and spill large R
+        to L1-hot stack (aligned loads, not broadcasts per iteration)."""
+        T = self.isa.T
+        for i in range(R - 1):
+            if self.isa.name == 'scalar':
+                self.o(f"const double tw{i}_re = W_re[{i}], tw{i}_im = W_im[{i}];")
+            elif self.isa.name == 'avx2':
+                self.o(f"const {T} tw{i}_re = _mm256_broadcast_sd(&W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm256_broadcast_sd(&W_im[{i}]);")
+            else:  # avx512
+                self.o(f"const {T} tw{i}_re = _mm512_set1_pd(W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm512_set1_pd(W_im[{i}]);")
+
+    def emit_apply_hoisted_tw(self, v, tw_idx, d):
+        """Apply pre-hoisted twiddle tw{idx} to variable v (no broadcast)."""
+        fwd = (d == 'fwd')
+        T = self.isa.T
+        wr = f"tw{tw_idx}_re"
+        wi = f"tw{tw_idx}_im"
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*{wr} - {v}_im*{wi};")
+                self.o(f"  {v}_im = tr*{wi} + {v}_im*{wr}; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*{wr} + {v}_im*{wi};")
+                self.o(f"  {v}_im = {v}_im*{wr} - tr*{wi}; }}")
+        else:
+            self.o(f"{{ const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fma('tr',wi,self.mul(f'{v}_im',wr))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im',wr,self.mul('tr',wi))}; }}")
+
     def emit_ext_tw_scalar(self, v, tw_idx, d):
         """Emit twiddle multiply using scalar broadcast (t1s variant).
         W_re/W_im are (R-1) scalars, NOT (R-1)*me arrays.
         Broadcasts one double to SIMD width."""
+        if self.tw_hoisted:
+            return self.emit_apply_hoisted_tw(v, tw_idx, d)
         fwd = (d == 'fwd')
         T = self.isa.T
         self.n_load += 2
@@ -1252,6 +1294,12 @@ def emit_file_ct(isa, itw_set, ct_variant):
                     label = wN_label(e, tN)
                     em.o(f"const double tw_{label}_re = {label}_re;")
                     em.o(f"const double tw_{label}_im = {label}_im;")
+            em.b()
+
+        # Hoist twiddle broadcasts before the loop (t1s only)
+        if is_t1s_dit:
+            em.tw_hoisted = True
+            em.emit_hoist_all_tw_scalars(N)
             em.b()
 
         # Loop

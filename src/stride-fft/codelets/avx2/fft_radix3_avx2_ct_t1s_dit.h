@@ -31,6 +31,11 @@ radix3_t1s_dit_fwd_avx2(
 
     __m256d x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;
 
+    const __m256d tw0_re = _mm256_broadcast_sd(&W_re[0]);
+    const __m256d tw0_im = _mm256_broadcast_sd(&W_im[0]);
+    const __m256d tw1_re = _mm256_broadcast_sd(&W_re[1]);
+    const __m256d tw1_im = _mm256_broadcast_sd(&W_im[1]);
+
     for (size_t m = 0; m < me; m += 4) {
         x0_re = LD(&rio_re[m+0*ios]);
         x0_im = LD(&rio_im[m+0*ios]);
@@ -38,16 +43,12 @@ radix3_t1s_dit_fwd_avx2(
         x1_im = LD(&rio_im[m+1*ios]);
         x2_re = LD(&rio_re[m+2*ios]);
         x2_im = LD(&rio_im[m+2*ios]);
-        { const __m256d wr = _mm256_broadcast_sd(&W_re[0]);
-          const __m256d wi = _mm256_broadcast_sd(&W_im[0]);
-          const __m256d tr = x1_re;
-          x1_re = _mm256_fmsub_pd(x1_re,wr,_mm256_mul_pd(x1_im,wi));
-          x1_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x1_im,wr)); }
-        { const __m256d wr = _mm256_broadcast_sd(&W_re[1]);
-          const __m256d wi = _mm256_broadcast_sd(&W_im[1]);
-          const __m256d tr = x2_re;
-          x2_re = _mm256_fmsub_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
-          x2_im = _mm256_fmadd_pd(tr,wi,_mm256_mul_pd(x2_im,wr)); }
+        { const __m256d tr = x1_re;
+          x1_re = _mm256_fmsub_pd(x1_re,tw0_re,_mm256_mul_pd(x1_im,tw0_im));
+          x1_im = _mm256_fmadd_pd(tr,tw0_im,_mm256_mul_pd(x1_im,tw0_re)); }
+        { const __m256d tr = x2_re;
+          x2_re = _mm256_fmsub_pd(x2_re,tw1_re,_mm256_mul_pd(x2_im,tw1_im));
+          x2_im = _mm256_fmadd_pd(tr,tw1_im,_mm256_mul_pd(x2_im,tw1_re)); }
 
         /* DFT-3 butterfly [fwd] */
         __m256d ar=_mm256_add_pd(x1_re,x2_re), ai=_mm256_add_pd(x1_im,x2_im);
@@ -79,6 +80,11 @@ radix3_t1s_dit_bwd_avx2(
 
     __m256d x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;
 
+    const __m256d tw0_re = _mm256_broadcast_sd(&W_re[0]);
+    const __m256d tw0_im = _mm256_broadcast_sd(&W_im[0]);
+    const __m256d tw1_re = _mm256_broadcast_sd(&W_re[1]);
+    const __m256d tw1_im = _mm256_broadcast_sd(&W_im[1]);
+
     for (size_t m = 0; m < me; m += 4) {
         x0_re = LD(&rio_re[m+0*ios]);
         x0_im = LD(&rio_im[m+0*ios]);
@@ -86,16 +92,12 @@ radix3_t1s_dit_bwd_avx2(
         x1_im = LD(&rio_im[m+1*ios]);
         x2_re = LD(&rio_re[m+2*ios]);
         x2_im = LD(&rio_im[m+2*ios]);
-        { const __m256d wr = _mm256_broadcast_sd(&W_re[0]);
-          const __m256d wi = _mm256_broadcast_sd(&W_im[0]);
-          const __m256d tr = x1_re;
-          x1_re = _mm256_fmadd_pd(x1_re,wr,_mm256_mul_pd(x1_im,wi));
-          x1_im = _mm256_fmsub_pd(x1_im,wr,_mm256_mul_pd(tr,wi)); }
-        { const __m256d wr = _mm256_broadcast_sd(&W_re[1]);
-          const __m256d wi = _mm256_broadcast_sd(&W_im[1]);
-          const __m256d tr = x2_re;
-          x2_re = _mm256_fmadd_pd(x2_re,wr,_mm256_mul_pd(x2_im,wi));
-          x2_im = _mm256_fmsub_pd(x2_im,wr,_mm256_mul_pd(tr,wi)); }
+        { const __m256d tr = x1_re;
+          x1_re = _mm256_fmadd_pd(x1_re,tw0_re,_mm256_mul_pd(x1_im,tw0_im));
+          x1_im = _mm256_fmsub_pd(x1_im,tw0_re,_mm256_mul_pd(tr,tw0_im)); }
+        { const __m256d tr = x2_re;
+          x2_re = _mm256_fmadd_pd(x2_re,tw1_re,_mm256_mul_pd(x2_im,tw1_im));
+          x2_im = _mm256_fmsub_pd(x2_im,tw1_re,_mm256_mul_pd(tr,tw1_im)); }
 
         /* DFT-3 butterfly [bwd] */
         __m256d ar=_mm256_add_pd(x1_re,x2_re), ai=_mm256_add_pd(x1_im,x2_im);

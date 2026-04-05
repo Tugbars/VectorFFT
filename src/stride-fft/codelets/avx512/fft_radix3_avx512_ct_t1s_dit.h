@@ -31,6 +31,11 @@ radix3_t1s_dit_fwd_avx512(
 
     __m512d x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;
 
+    const __m512d tw0_re = _mm512_set1_pd(W_re[0]);
+    const __m512d tw0_im = _mm512_set1_pd(W_im[0]);
+    const __m512d tw1_re = _mm512_set1_pd(W_re[1]);
+    const __m512d tw1_im = _mm512_set1_pd(W_im[1]);
+
     for (size_t m = 0; m < me; m += 8) {
         x0_re = LD(&rio_re[m+0*ios]);
         x0_im = LD(&rio_im[m+0*ios]);
@@ -38,16 +43,12 @@ radix3_t1s_dit_fwd_avx512(
         x1_im = LD(&rio_im[m+1*ios]);
         x2_re = LD(&rio_re[m+2*ios]);
         x2_im = LD(&rio_im[m+2*ios]);
-        { const __m512d wr = _mm512_set1_pd(W_re[0]);
-          const __m512d wi = _mm512_set1_pd(W_im[0]);
-          const __m512d tr = x1_re;
-          x1_re = _mm512_fmsub_pd(x1_re,wr,_mm512_mul_pd(x1_im,wi));
-          x1_im = _mm512_fmadd_pd(tr,wi,_mm512_mul_pd(x1_im,wr)); }
-        { const __m512d wr = _mm512_set1_pd(W_re[1]);
-          const __m512d wi = _mm512_set1_pd(W_im[1]);
-          const __m512d tr = x2_re;
-          x2_re = _mm512_fmsub_pd(x2_re,wr,_mm512_mul_pd(x2_im,wi));
-          x2_im = _mm512_fmadd_pd(tr,wi,_mm512_mul_pd(x2_im,wr)); }
+        { const __m512d tr = x1_re;
+          x1_re = _mm512_fmsub_pd(x1_re,tw0_re,_mm512_mul_pd(x1_im,tw0_im));
+          x1_im = _mm512_fmadd_pd(tr,tw0_im,_mm512_mul_pd(x1_im,tw0_re)); }
+        { const __m512d tr = x2_re;
+          x2_re = _mm512_fmsub_pd(x2_re,tw1_re,_mm512_mul_pd(x2_im,tw1_im));
+          x2_im = _mm512_fmadd_pd(tr,tw1_im,_mm512_mul_pd(x2_im,tw1_re)); }
 
         /* DFT-3 butterfly [fwd] */
         __m512d ar=_mm512_add_pd(x1_re,x2_re), ai=_mm512_add_pd(x1_im,x2_im);
@@ -79,6 +80,11 @@ radix3_t1s_dit_bwd_avx512(
 
     __m512d x0_re,x0_im,x1_re,x1_im,x2_re,x2_im;
 
+    const __m512d tw0_re = _mm512_set1_pd(W_re[0]);
+    const __m512d tw0_im = _mm512_set1_pd(W_im[0]);
+    const __m512d tw1_re = _mm512_set1_pd(W_re[1]);
+    const __m512d tw1_im = _mm512_set1_pd(W_im[1]);
+
     for (size_t m = 0; m < me; m += 8) {
         x0_re = LD(&rio_re[m+0*ios]);
         x0_im = LD(&rio_im[m+0*ios]);
@@ -86,16 +92,12 @@ radix3_t1s_dit_bwd_avx512(
         x1_im = LD(&rio_im[m+1*ios]);
         x2_re = LD(&rio_re[m+2*ios]);
         x2_im = LD(&rio_im[m+2*ios]);
-        { const __m512d wr = _mm512_set1_pd(W_re[0]);
-          const __m512d wi = _mm512_set1_pd(W_im[0]);
-          const __m512d tr = x1_re;
-          x1_re = _mm512_fmadd_pd(x1_re,wr,_mm512_mul_pd(x1_im,wi));
-          x1_im = _mm512_fmsub_pd(x1_im,wr,_mm512_mul_pd(tr,wi)); }
-        { const __m512d wr = _mm512_set1_pd(W_re[1]);
-          const __m512d wi = _mm512_set1_pd(W_im[1]);
-          const __m512d tr = x2_re;
-          x2_re = _mm512_fmadd_pd(x2_re,wr,_mm512_mul_pd(x2_im,wi));
-          x2_im = _mm512_fmsub_pd(x2_im,wr,_mm512_mul_pd(tr,wi)); }
+        { const __m512d tr = x1_re;
+          x1_re = _mm512_fmadd_pd(x1_re,tw0_re,_mm512_mul_pd(x1_im,tw0_im));
+          x1_im = _mm512_fmsub_pd(x1_im,tw0_re,_mm512_mul_pd(tr,tw0_im)); }
+        { const __m512d tr = x2_re;
+          x2_re = _mm512_fmadd_pd(x2_re,tw1_re,_mm512_mul_pd(x2_im,tw1_im));
+          x2_im = _mm512_fmsub_pd(x2_im,tw1_re,_mm512_mul_pd(tr,tw1_im)); }
 
         /* DFT-3 butterfly [bwd] */
         __m512d ar=_mm512_add_pd(x1_re,x2_re), ai=_mm512_add_pd(x1_im,x2_im);

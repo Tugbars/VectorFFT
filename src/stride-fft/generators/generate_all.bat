@@ -20,10 +20,11 @@ for %%R in (2 4 8) do (
     python "%GEN_DIR%gen_radix%%R.py" avx2 > "%AVX2_DIR%\fft_radix%%R_avx2.h" 2>nul
 )
 
-:: R=3,5,6,7,10,11,12,13,16,17,19,20,25: ct_n1 + ct_t1_dit + ct_t1_dit_log3
+:: R=3,5,6,7,10,11,12,13,16,17,19,20,25: ct_n1 + ct_t1_dit + ct_t1s_dit + ct_t1_dit_log3
 for %%R in (3 5 6 7 10 11 12 13 16 17 19 20 25) do (
     python "%GEN_DIR%gen_radix%%R.py" --isa avx2 --variant ct_n1 > "%AVX2_DIR%\fft_radix%%R_avx2_ct_n1.h" 2>nul
     python "%GEN_DIR%gen_radix%%R.py" --isa avx2 --variant ct_t1_dit > "%AVX2_DIR%\fft_radix%%R_avx2_ct_t1_dit.h" 2>nul
+    python "%GEN_DIR%gen_radix%%R.py" --isa avx2 --variant ct_t1s_dit > "%AVX2_DIR%\fft_radix%%R_avx2_ct_t1s_dit.h" 2>nul
     python "%GEN_DIR%gen_radix%%R.py" --isa avx2 --variant ct_t1_dit_log3 > "%AVX2_DIR%\fft_radix%%R_avx2_ct_t1_dit_log3.h" 2>nul
 )
 
@@ -46,10 +47,11 @@ for %%R in (2 4 8) do (
     python "%GEN_DIR%gen_radix%%R.py" avx512 > "%AVX512_DIR%\fft_radix%%R_avx512.h" 2>nul
 )
 
-:: R=3,5,6,7,10,11,12,13,16,17,19,20,25: ct_n1 + ct_t1_dit + ct_t1_dit_log3
+:: R=3,5,6,7,10,11,12,13,16,17,19,20,25: ct_n1 + ct_t1_dit + ct_t1s_dit + ct_t1_dit_log3
 for %%R in (3 5 6 7 10 11 12 13 16 17 19 20 25) do (
     python "%GEN_DIR%gen_radix%%R.py" --isa avx512 --variant ct_n1 > "%AVX512_DIR%\fft_radix%%R_avx512_ct_n1.h" 2>nul
     python "%GEN_DIR%gen_radix%%R.py" --isa avx512 --variant ct_t1_dit > "%AVX512_DIR%\fft_radix%%R_avx512_ct_t1_dit.h" 2>nul
+    python "%GEN_DIR%gen_radix%%R.py" --isa avx512 --variant ct_t1s_dit > "%AVX512_DIR%\fft_radix%%R_avx512_ct_t1s_dit.h" 2>nul
     python "%GEN_DIR%gen_radix%%R.py" --isa avx512 --variant ct_t1_dit_log3 > "%AVX512_DIR%\fft_radix%%R_avx512_ct_t1_dit_log3.h" 2>nul
 )
 
@@ -72,10 +74,11 @@ for %%R in (2 4 8) do (
     python "%GEN_DIR%gen_radix%%R.py" scalar > "%SCALAR_DIR%\fft_radix%%R_scalar.h" 2>nul
 )
 
-:: R=3,5,6,7,10,11,12,13,16,17,19,20,25: ct_n1 + ct_t1_dit + ct_t1_dit_log3
+:: R=3,5,6,7,10,11,12,13,16,17,19,20,25: ct_n1 + ct_t1_dit + ct_t1s_dit + ct_t1_dit_log3
 for %%R in (3 5 6 7 10 11 12 13 16 17 19 20 25) do (
     python "%GEN_DIR%gen_radix%%R.py" --isa scalar --variant ct_n1 > "%SCALAR_DIR%\fft_radix%%R_scalar_ct_n1.h" 2>nul
     python "%GEN_DIR%gen_radix%%R.py" --isa scalar --variant ct_t1_dit > "%SCALAR_DIR%\fft_radix%%R_scalar_ct_t1_dit.h" 2>nul
+    python "%GEN_DIR%gen_radix%%R.py" --isa scalar --variant ct_t1s_dit > "%SCALAR_DIR%\fft_radix%%R_scalar_ct_t1s_dit.h" 2>nul
     python "%GEN_DIR%gen_radix%%R.py" --isa scalar --variant ct_t1_dit_log3 > "%SCALAR_DIR%\fft_radix%%R_scalar_ct_t1_dit_log3.h" 2>nul
 )
 

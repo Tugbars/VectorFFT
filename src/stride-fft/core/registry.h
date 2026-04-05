@@ -82,6 +82,7 @@
   #include "fft_radix5_avx512_ct_t1_dit_log3.h"
   #include "fft_radix6_avx512_ct_n1.h"
   #include "fft_radix6_avx512_ct_t1_dit.h"
+  #include "fft_radix6_avx512_ct_t1s_dit.h"
   #include "fft_radix6_avx512_ct_t1_dit_log3.h"
   #include "fft_radix7_avx512_ct_n1.h"
   #include "fft_radix7_avx512_ct_t1_dit.h"
@@ -89,6 +90,7 @@
   #include "fft_radix7_avx512_ct_t1_dit_log3.h"
   #include "fft_radix10_avx512_ct_n1.h"
   #include "fft_radix10_avx512_ct_t1_dit.h"
+  #include "fft_radix10_avx512_ct_t1s_dit.h"
   #include "fft_radix10_avx512_ct_t1_dit_log3.h"
   #include "fft_radix11_avx512_ct_n1.h"
   #include "fft_radix11_avx512_ct_t1_dit.h"
@@ -96,6 +98,7 @@
   #include "fft_radix11_avx512_ct_t1_dit_log3.h"
   #include "fft_radix12_avx512_ct_n1.h"
   #include "fft_radix12_avx512_ct_t1_dit.h"
+  #include "fft_radix12_avx512_ct_t1s_dit.h"
   #include "fft_radix12_avx512_ct_t1_dit_log3.h"
   #include "fft_radix13_avx512_ct_n1.h"
   #include "fft_radix13_avx512_ct_t1_dit.h"
@@ -103,6 +106,7 @@
   #include "fft_radix13_avx512_ct_t1_dit_log3.h"
   #include "fft_radix16_avx512_ct_n1.h"
   #include "fft_radix16_avx512_ct_t1_dit.h"
+  #include "fft_radix16_avx512_ct_t1s_dit.h"
   #include "fft_radix16_avx512_ct_t1_dit_log3.h"
   #include "fft_radix17_avx512_ct_n1.h"
   #include "fft_radix17_avx512_ct_t1_dit.h"
@@ -114,6 +118,7 @@
   #include "fft_radix19_avx512_ct_t1_dit_log3.h"
   #include "fft_radix20_avx512_ct_n1.h"
   #include "fft_radix20_avx512_ct_t1_dit.h"
+  #include "fft_radix20_avx512_ct_t1s_dit.h"
   #include "fft_radix20_avx512_ct_t1_dit_log3.h"
   #include "fft_radix25_avx512_ct_n1.h"
   #include "fft_radix25_avx512_ct_t1_dit.h"
@@ -136,6 +141,7 @@
   #include "fft_radix5_avx2_ct_t1_dit_log3.h"
   #include "fft_radix6_avx2_ct_n1.h"
   #include "fft_radix6_avx2_ct_t1_dit.h"
+  #include "fft_radix6_avx2_ct_t1s_dit.h"
   #include "fft_radix6_avx2_ct_t1_dit_log3.h"
   #include "fft_radix7_avx2_ct_n1.h"
   #include "fft_radix7_avx2_ct_t1_dit.h"
@@ -143,6 +149,7 @@
   #include "fft_radix7_avx2_ct_t1_dit_log3.h"
   #include "fft_radix10_avx2_ct_n1.h"
   #include "fft_radix10_avx2_ct_t1_dit.h"
+  #include "fft_radix10_avx2_ct_t1s_dit.h"
   #include "fft_radix10_avx2_ct_t1_dit_log3.h"
   #include "fft_radix11_avx2_ct_n1.h"
   #include "fft_radix11_avx2_ct_t1_dit.h"
@@ -150,6 +157,7 @@
   #include "fft_radix11_avx2_ct_t1_dit_log3.h"
   #include "fft_radix12_avx2_ct_n1.h"
   #include "fft_radix12_avx2_ct_t1_dit.h"
+  #include "fft_radix12_avx2_ct_t1s_dit.h"
   #include "fft_radix12_avx2_ct_t1_dit_log3.h"
   #include "fft_radix13_avx2_ct_n1.h"
   #include "fft_radix13_avx2_ct_t1_dit.h"
@@ -157,6 +165,7 @@
   #include "fft_radix13_avx2_ct_t1_dit_log3.h"
   #include "fft_radix16_avx2_ct_n1.h"
   #include "fft_radix16_avx2_ct_t1_dit.h"
+  #include "fft_radix16_avx2_ct_t1s_dit.h"
   #include "fft_radix16_avx2_ct_t1_dit_log3.h"
   #include "fft_radix17_avx2_ct_n1.h"
   #include "fft_radix17_avx2_ct_t1_dit.h"
@@ -168,6 +177,7 @@
   #include "fft_radix19_avx2_ct_t1_dit_log3.h"
   #include "fft_radix20_avx2_ct_n1.h"
   #include "fft_radix20_avx2_ct_t1_dit.h"
+  #include "fft_radix20_avx2_ct_t1s_dit.h"
   #include "fft_radix20_avx2_ct_t1_dit_log3.h"
   #include "fft_radix25_avx2_ct_n1.h"
   #include "fft_radix25_avx2_ct_t1_dit.h"
@@ -190,6 +200,7 @@
   #include "fft_radix5_scalar_ct_t1_dit_log3.h"
   #include "fft_radix6_scalar_ct_n1.h"
   #include "fft_radix6_scalar_ct_t1_dit.h"
+  #include "fft_radix6_scalar_ct_t1s_dit.h"
   #include "fft_radix6_scalar_ct_t1_dit_log3.h"
   #include "fft_radix7_scalar_ct_n1.h"
   #include "fft_radix7_scalar_ct_t1_dit.h"
@@ -197,6 +208,7 @@
   #include "fft_radix7_scalar_ct_t1_dit_log3.h"
   #include "fft_radix10_scalar_ct_n1.h"
   #include "fft_radix10_scalar_ct_t1_dit.h"
+  #include "fft_radix10_scalar_ct_t1s_dit.h"
   #include "fft_radix10_scalar_ct_t1_dit_log3.h"
   #include "fft_radix11_scalar_ct_n1.h"
   #include "fft_radix11_scalar_ct_t1_dit.h"
@@ -204,6 +216,7 @@
   #include "fft_radix11_scalar_ct_t1_dit_log3.h"
   #include "fft_radix12_scalar_ct_n1.h"
   #include "fft_radix12_scalar_ct_t1_dit.h"
+  #include "fft_radix12_scalar_ct_t1s_dit.h"
   #include "fft_radix12_scalar_ct_t1_dit_log3.h"
   #include "fft_radix13_scalar_ct_n1.h"
   #include "fft_radix13_scalar_ct_t1_dit.h"
@@ -211,6 +224,7 @@
   #include "fft_radix13_scalar_ct_t1_dit_log3.h"
   #include "fft_radix16_scalar_ct_n1.h"
   #include "fft_radix16_scalar_ct_t1_dit.h"
+  #include "fft_radix16_scalar_ct_t1s_dit.h"
   #include "fft_radix16_scalar_ct_t1_dit_log3.h"
   #include "fft_radix17_scalar_ct_n1.h"
   #include "fft_radix17_scalar_ct_t1_dit.h"
@@ -222,6 +236,7 @@
   #include "fft_radix19_scalar_ct_t1_dit_log3.h"
   #include "fft_radix20_scalar_ct_n1.h"
   #include "fft_radix20_scalar_ct_t1_dit.h"
+  #include "fft_radix20_scalar_ct_t1s_dit.h"
   #include "fft_radix20_scalar_ct_t1_dit_log3.h"
   #include "fft_radix25_scalar_ct_n1.h"
   #include "fft_radix25_scalar_ct_t1_dit.h"
@@ -289,18 +304,18 @@ static void stride_registry_init(stride_registry_t *reg) {
     _REG_FULL(3)  _REG_T1S(3)
     _REG_FULL(4)
     _REG_FULL(5)  _REG_T1S(5)
-    _REG_FULL(6)
+    _REG_FULL(6)  _REG_T1S(6)
     _REG_FULL(7)  _REG_T1S(7)
     _REG_NO_LOG3(8)
-    _REG_FULL(10)
+    _REG_FULL(10) _REG_T1S(10)
     _REG_FULL(11) _REG_T1S(11)
-    _REG_FULL(12)
+    _REG_FULL(12) _REG_T1S(12)
     _REG_FULL(13) _REG_T1S(13)
-    _REG_FULL(16)
+    _REG_FULL(16) _REG_T1S(16)
     _REG_FULL(17) _REG_T1S(17)
     _REG_FULL(19) _REG_T1S(19)
-    _REG_FULL(20)
-    _REG_FULL(25) /* t1s disabled: 24 broadcasts/iter slower than temp buffer */
+    _REG_FULL(20) _REG_T1S(20)
+    _REG_FULL(25) _REG_T1S(25)
     _REG_FULL(32)
     _REG_FULL(64)
 }
