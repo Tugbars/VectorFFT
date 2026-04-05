@@ -15,8 +15,36 @@
  *   - Block-walk for large K: processes K in cache-friendly chunks,
  *     reducing scratch from M*K to M*B where B fits in L2
  *
- * Memory: 2N + 4M + 2*M*B doubles (chirp + kernels + scratch).
+ * Memory: 2N + 4M*B + 2*M*B doubles (chirp + kernels + scratch).
  * Scratch is pre-allocated at plan time (not per-call like FFTW).
+ *
+ * ── Performance analysis (April 2026) ──────────────────────────
+ *
+ * Profiled N=509 K=256 (M=1024, B=64, 4 blocks):
+ *   FFT (2x inner):    77-85% of total time
+ *   Modulate (chirp):   7-9%
+ *   Pointwise multiply: 5-7%
+ *   Demodulate (chirp): 4-7%
+ *
+ * Current: 0.68x vs MKL at N=509 K=256, 0.81x at K=32.
+ * The bottleneck is inner FFT speed, not chirp overhead.
+ *
+ * Attempted optimizations (no improvement):
+ *   - Pre-expanded chirp (M*B format, flat SIMD multiply instead of
+ *     N scalar-broadcast loops): zero gain because the broadcast is
+ *     already cheap and the flat multiply touches the zero-padded
+ *     region wastefully. Reverted.
+ *
+ * Leads for future optimization:
+ *   1. Composite M selection: for N=509, M=1020 (4x5x3x17) instead
+ *      of M=1024. Our composite codelets beat MKL 2-3x on non-pow2,
+ *      so even with one extra stage the relative FFT speed may improve.
+ *      Trade: absolute FFT time may be higher, but vs-MKL ratio better.
+ *   2. Faster inner pow2 FFT: codelet fusion or split-radix for
+ *      N=512/1024 would directly reduce the 80% FFT portion.
+ *   3. Fused chirp-butterfly: fold chirp multiply into the first/last
+ *      butterfly stage. Saves ~13% (mod+demod), but requires custom
+ *      Bluestein-aware codelets — high complexity for moderate gain.
  */
 #ifndef STRIDE_BLUESTEIN_H
 #define STRIDE_BLUESTEIN_H
@@ -442,7 +470,7 @@ static stride_plan_t *stride_bluestein_plan(
     d->B = block_K;
     d->inner_plan = inner_plan;
 
-    /* Chirp sequence */
+    /* Chirp sequence (N scalars) */
     d->chirp_re = (double *)malloc((size_t)N * sizeof(double));
     d->chirp_im = (double *)malloc((size_t)N * sizeof(double));
     _bluestein_chirp(N, d->chirp_re, d->chirp_im);
