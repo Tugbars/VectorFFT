@@ -10,9 +10,9 @@ CMakeFiles/
 *.ilk
 
 # Generated codelets (regenerate via generators/generate_all)
-src/stride-fft/codelets/avx2/*.h
-src/stride-fft/codelets/avx512/*.h
-src/stride-fft/codelets/scalar/*.h
+#src/stride-fft/codelets/avx2/*.h
+#src/stride-fft/codelets/avx512/*.h
+#src/stride-fft/codelets/scalar/*.h
 
 # Benchmark artifacts (but NOT the PNG plots — those are used in README)
 src/stride-fft/bench/vfft_wisdom.txt

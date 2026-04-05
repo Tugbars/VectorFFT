@@ -299,6 +299,44 @@ class Emitter:
                 self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
                 self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
 
+    def emit_ext_tw_scalar(self, v, tw_idx, d):
+        """Emit twiddle multiply using scalar broadcast (t1s variant).
+        W_re/W_im are (R-1) scalars, NOT (R-1)*me arrays.
+        Broadcasts one double to SIMD width."""
+        fwd = (d == 'fwd')
+        T = self.isa.T
+        self.n_load += 2
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double wr = W_re[{tw_idx}], wi = W_im[{tw_idx}], tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*wr - {v}_im*wi;")
+                self.o(f"  {v}_im = tr*wi + {v}_im*wr; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*wr + {v}_im*wi;")
+                self.o(f"  {v}_im = {v}_im*wr - tr*wi; }}")
+        elif self.isa.name == 'avx2':
+            self.o(f"{{ const {T} wr = _mm256_broadcast_sd(&W_re[{tw_idx}]);")
+            self.o(f"  const {T} wi = _mm256_broadcast_sd(&W_im[{tw_idx}]);")
+            self.o(f"  const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fma('tr','wi',self.mul(f'{v}_im','wr'))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
+        else:  # avx512
+            self.o(f"{{ const {T} wr = _mm512_set1_pd(W_re[{tw_idx}]);")
+            self.o(f"  const {T} wi = _mm512_set1_pd(W_im[{tw_idx}]);")
+            self.o(f"  const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fma('tr','wi',self.mul(f'{v}_im','wr'))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
+
+    # -- Complex multiply helpers (for log3 derivation) --
+
     # -- Complex multiply helpers (for log3 derivation) --
     def emit_cmul(self, dst_r, dst_i, ar, ai, br, bi, d):
         """Emit dst = a * b (fwd) or a * conj(b) (bwd)."""
@@ -1271,6 +1309,9 @@ def emit_kernel_body(em, d, variant):
     if variant == 'dit_tw':
         for n in range(1, R):
             em.emit_ext_tw(f"x{n}", n - 1, d)
+    elif variant == 'dit_tw_scalar':
+        for n in range(1, R):
+            em.emit_ext_tw_scalar(f"x{n}", n - 1, d)
 
     em.b()
     em.emit_radix17_butterfly(d)
@@ -1280,6 +1321,9 @@ def emit_kernel_body(em, d, variant):
     if variant == 'dif_tw':
         for m in range(1, R):
             em.emit_ext_tw(f"x{m}", m - 1, d)
+    elif variant == 'dif_tw_scalar':
+        for m in range(1, R):
+            em.emit_ext_tw_scalar(f"x{m}", m - 1, d)
 
     # Store all 17 outputs
     for m in range(R):
@@ -1364,7 +1408,13 @@ def emit_file(isa, variant):
     elif variant == 'dit_tw':
         func_base = 'radix17_tw_flat_dit_kernel'
         tw_params = 'flat'
+    elif variant == 'dit_tw_scalar':
+        func_base = 'radix17_tw_flat_dit_kernel'
+        tw_params = 'flat'
     elif variant == 'dif_tw':
+        func_base = 'radix17_tw_flat_dif_kernel'
+        tw_params = 'flat'
+    elif variant == 'dif_tw_scalar':
         func_base = 'radix17_tw_flat_dif_kernel'
         tw_params = 'flat'
     elif variant == 'dit_tw_log3':
@@ -1491,6 +1541,7 @@ def emit_file_ct(isa, ct_variant):
 
     is_n1     = ct_variant == 'ct_n1'
     is_t1_dit = ct_variant == 'ct_t1_dit'
+    is_t1s_dit = ct_variant == 'ct_t1s_dit'
     is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     em.addr_mode = 'n1' if is_n1 else 't1'
@@ -1501,6 +1552,9 @@ def emit_file_ct(isa, ct_variant):
     elif is_t1_dif:
         func_base = "radix17_t1_dif"
         vname = "t1 DIF (in-place twiddle)"
+    elif is_t1s_dit:
+        func_base = "radix17_t1s_dit"
+        vname = "t1s DIT (in-place, scalar broadcast twiddle)"
     elif is_t1_dit_log3:
         func_base = "radix17_t1_dit_log3"
         vname = "t1 DIT log3 (in-place, derived twiddles)"
@@ -1598,7 +1652,9 @@ def emit_file_ct(isa, ct_variant):
                 em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
 
         em.ind += 1
-        if is_t1_dit_log3:
+        if is_t1s_dit:
+            emit_kernel_body(em, d, 'dit_tw_scalar')
+        elif is_t1_dit_log3:
             emit_kernel_body_log3(em, d, 'dit_tw_log3')
         else:
             kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
@@ -1750,7 +1806,13 @@ def emit_sv_variants(t2_lines, isa, variant):
     elif variant == 'dit_tw':
         t2_pattern = 'radix17_tw_flat_dit_kernel'
         sv_name = 'radix17_t1sv_dit_kernel'
+    elif variant == 'dit_tw_scalar':
+        t2_pattern = 'radix17_tw_flat_dit_kernel'
+        sv_name = 'radix17_t1sv_dit_kernel'
     elif variant == 'dif_tw':
+        t2_pattern = 'radix17_tw_flat_dif_kernel'
+        sv_name = 'radix17_t1sv_dif_kernel'
+    elif variant == 'dif_tw_scalar':
         t2_pattern = 'radix17_tw_flat_dif_kernel'
         sv_name = 'radix17_t1sv_dif_kernel'
     else:
@@ -1842,7 +1904,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='notw',
                         choices=['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
+                                 'ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
     args = parser.parse_args()
 
     if args.isa == 'all':
@@ -1851,7 +1913,7 @@ def main():
         targets = [ALL_ISA[args.isa]]
 
     std_variants = ['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3']
-    ct_variants  = ['ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dif']
+    ct_variants  = ['ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif']
 
     if args.variant == 'all':
         variants = std_variants + ct_variants
