@@ -58,6 +58,15 @@ typedef void (*stride_t1_fn)(
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t ios, size_t me);
 
+/* t1_oop: out-of-place, separate is/os, with twiddles. For R2C fused pack
+ * and strided 2D FFT. Reads in_re[m + j*is], applies twiddle, butterflies,
+ * writes out_re[m + j*os]. Same twiddle layout as t1: W[(j-1)*me + m]. */
+typedef void (*stride_t1_oop_fn)(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me);
+
 /* ═══════════════════════════════════════════════════════════════
  * PLAN STRUCTURES
  * ═══════════════════════════════════════════════════════════════ */
@@ -71,6 +80,7 @@ typedef struct {
     stride_n1_fn n1_fwd, n1_bwd;
     stride_t1_fn t1_fwd, t1_bwd;
     stride_t1_fn t1s_fwd, t1s_bwd;  /* scalar-broadcast twiddle variant (NULL = not available) */
+    stride_t1_oop_fn t1_oop_fwd, t1_oop_bwd;  /* out-of-place twiddle (R2C fused pack, 2D) */
 
     /* Per-group info (num_groups entries) */
     size_t *group_base;     /* base offset for each group (in doubles) */

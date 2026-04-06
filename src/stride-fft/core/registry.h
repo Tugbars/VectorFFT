@@ -135,60 +135,75 @@
   #include "fft_radix3_avx2_ct_t1_dit.h"
   #include "fft_radix3_avx2_ct_t1s_dit.h"
   #include "fft_radix3_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix3_avx2_ct_t1_oop_dit.h"
   #include "fft_radix5_avx2_ct_n1.h"
   #include "fft_radix5_avx2_ct_t1_dit.h"
   #include "fft_radix5_avx2_ct_t1s_dit.h"
   #include "fft_radix5_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix5_avx2_ct_t1_oop_dit.h"
   #include "fft_radix6_avx2_ct_n1.h"
   #include "fft_radix6_avx2_ct_t1_dit.h"
   #include "fft_radix6_avx2_ct_t1s_dit.h"
   #include "fft_radix6_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix6_avx2_ct_t1_oop_dit.h"
   #include "fft_radix7_avx2_ct_n1.h"
   #include "fft_radix7_avx2_ct_t1_dit.h"
   #include "fft_radix7_avx2_ct_t1s_dit.h"
   #include "fft_radix7_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix7_avx2_ct_t1_oop_dit.h"
   #include "fft_radix10_avx2_ct_n1.h"
   #include "fft_radix10_avx2_ct_t1_dit.h"
   #include "fft_radix10_avx2_ct_t1s_dit.h"
   #include "fft_radix10_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix10_avx2_ct_t1_oop_dit.h"
   #include "fft_radix11_avx2_ct_n1.h"
   #include "fft_radix11_avx2_ct_t1_dit.h"
   #include "fft_radix11_avx2_ct_t1s_dit.h"
   #include "fft_radix11_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix11_avx2_ct_t1_oop_dit.h"
   #include "fft_radix12_avx2_ct_n1.h"
   #include "fft_radix12_avx2_ct_t1_dit.h"
   #include "fft_radix12_avx2_ct_t1s_dit.h"
   #include "fft_radix12_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix12_avx2_ct_t1_oop_dit.h"
   #include "fft_radix13_avx2_ct_n1.h"
   #include "fft_radix13_avx2_ct_t1_dit.h"
   #include "fft_radix13_avx2_ct_t1s_dit.h"
   #include "fft_radix13_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix13_avx2_ct_t1_oop_dit.h"
   #include "fft_radix16_avx2_ct_n1.h"
   #include "fft_radix16_avx2_ct_t1_dit.h"
   #include "fft_radix16_avx2_ct_t1s_dit.h"
   #include "fft_radix16_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix16_avx2_ct_t1_oop_dit.h"
   #include "fft_radix17_avx2_ct_n1.h"
   #include "fft_radix17_avx2_ct_t1_dit.h"
   #include "fft_radix17_avx2_ct_t1s_dit.h"
   #include "fft_radix17_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix17_avx2_ct_t1_oop_dit.h"
   #include "fft_radix19_avx2_ct_n1.h"
   #include "fft_radix19_avx2_ct_t1_dit.h"
   #include "fft_radix19_avx2_ct_t1s_dit.h"
   #include "fft_radix19_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix19_avx2_ct_t1_oop_dit.h"
   #include "fft_radix20_avx2_ct_n1.h"
   #include "fft_radix20_avx2_ct_t1_dit.h"
   #include "fft_radix20_avx2_ct_t1s_dit.h"
   #include "fft_radix20_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix20_avx2_ct_t1_oop_dit.h"
   #include "fft_radix25_avx2_ct_n1.h"
   #include "fft_radix25_avx2_ct_t1_dit.h"
   #include "fft_radix25_avx2_ct_t1s_dit.h"
   #include "fft_radix25_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix25_avx2_ct_t1_oop_dit.h"
   #include "fft_radix32_avx2_ct_n1.h"
   #include "fft_radix32_avx2_ct_t1_dit.h"
   #include "fft_radix32_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix32_avx2_ct_t1_oop_dit.h"
   #include "fft_radix64_avx2_ct_n1.h"
   #include "fft_radix64_avx2_ct_t1_dit.h"
   #include "fft_radix64_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix64_avx2_ct_t1_oop_dit.h"
 #else /* scalar */
   #include "fft_radix3_scalar_ct_n1.h"
   #include "fft_radix3_scalar_ct_t1_dit.h"
@@ -265,6 +280,8 @@ typedef struct {
     stride_t1_fn t1_bwd_log3[STRIDE_REG_MAX_RADIX];
     stride_t1_fn t1s_fwd[STRIDE_REG_MAX_RADIX]; /* scalar-broadcast twiddle */
     stride_t1_fn t1s_bwd[STRIDE_REG_MAX_RADIX];
+    stride_t1_oop_fn t1_oop_fwd[STRIDE_REG_MAX_RADIX]; /* out-of-place twiddle (R2C, 2D) */
+    stride_t1_oop_fn t1_oop_bwd[STRIDE_REG_MAX_RADIX];
 } stride_registry_t;
 
 static const int STRIDE_AVAILABLE_RADIXES[] = {
@@ -292,6 +309,10 @@ static const int STRIDE_AVAILABLE_RADIXES[] = {
 #define _REG_T1S(R) \
     reg->t1s_fwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1s_dit_fwd); \
     reg->t1s_bwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1s_dit_bwd);
+
+#define _REG_T1_OOP(R) \
+    reg->t1_oop_fwd[R] = (stride_t1_oop_fn)VFFT_FN(radix##R##_t1_oop_dit_fwd); \
+    reg->t1_oop_bwd[R] = (stride_t1_oop_fn)VFFT_FN(radix##R##_t1_oop_dit_bwd);
 
 #define _REG_FULL(R)    _REG_N1(R) _REG_T1(R) _REG_T1_LOG3(R)
 #define _REG_NO_LOG3(R) _REG_N1(R) _REG_T1(R)

@@ -732,6 +732,37 @@ radix4_t1_dif_{direction}(
     }}
 }}''')
 
+        # ── scalar t1_oop DIT (out-of-place: twiddle inputs 1..R-1, then butterfly) ──
+        parts.append(f'''
+static inline void
+radix4_t1_oop_dit_{direction}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{{
+    for (size_t m = 0; m < me; m++) {{
+        const double x0r = in_re[m + 0*is], x0i = in_im[m + 0*is];
+        const double r1r = in_re[m + 1*is], r1i = in_im[m + 1*is];
+        const double r2r = in_re[m + 2*is], r2i = in_im[m + 2*is];
+        const double r3r = in_re[m + 3*is], r3i = in_im[m + 3*is];
+        const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
+        const double w2r = W_re[1*me + m], w2i = W_im[1*me + m];
+        const double w3r = W_re[2*me + m], w3i = W_im[2*me + m];
+        const double x1r = {sc1r}, x1i = {sc1i};
+        const double x2r = {sc2r}, x2i = {sc2i};
+        const double x3r = {sc3r}, x3i = {sc3i};
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[m + 0*os] = t0r + t2r; out_im[m + 0*os] = t0i + t2i;
+        out_re[m + 2*os] = t0r - t2r; out_im[m + 2*os] = t0i - t2i;
+        out_re[m + 1*os] = {bfly_r1}; out_im[m + 1*os] = {bfly_i1};
+        out_re[m + 3*os] = {bfly_r3}; out_im[m + 3*os] = {bfly_i3};
+    }}
+}}''')
+
     # ── SIMD n1 + t1 (ivs=ovs=1 for n1, ms=1 for t1) ──
     if not is_scalar:
         V, p, VL = I['V'], I['p'], I['VL']
@@ -924,6 +955,42 @@ radix4_t1_dif_{direction}_{isa_name}(
         R4_ST(&rio_re[m + 1*ios], {vy1r}); R4_ST(&rio_im[m + 1*ios], {vy1i});
         R4_ST(&rio_re[m + 2*ios], {vy2r}); R4_ST(&rio_im[m + 2*ios], {vy2i});
         R4_ST(&rio_re[m + 3*ios], {vy3r}); R4_ST(&rio_im[m + 3*ios], {vy3i});
+    }}
+}}''')
+
+            # ── SIMD t1_oop DIT: out-of-place twiddle + butterfly ──
+            vc1r_oop, vc1i_oop = cmul_v('r1r','r1i','w1r','w1i')
+            vc2r_oop, vc2i_oop = cmul_v('r2r','r2i','w2r','w2i')
+            vc3r_oop, vc3i_oop = cmul_v('r3r','r3i','w3r','w3i')
+            parts.append(f'''
+{I['target']}
+static inline void
+radix4_t1_oop_dit_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{{
+    /* SIMD t1_oop DIT: out-of-place twiddle + butterfly. */
+    for (size_t m = 0; m < me; m += {VL}) {{
+        {V} x0r = R4_LD(&in_re[m + 0*is]), x0i = R4_LD(&in_im[m + 0*is]);
+        {V} r1r = R4_LD(&in_re[m + 1*is]), r1i = R4_LD(&in_im[m + 1*is]);
+        {V} r2r = R4_LD(&in_re[m + 2*is]), r2i = R4_LD(&in_im[m + 2*is]);
+        {V} r3r = R4_LD(&in_re[m + 3*is]), r3i = R4_LD(&in_im[m + 3*is]);
+        const {V} w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
+        const {V} w2r = R4_LD(&W_re[1*me+m]), w2i = R4_LD(&W_im[1*me+m]);
+        const {V} w3r = R4_LD(&W_re[2*me+m]), w3i = R4_LD(&W_im[2*me+m]);
+        const {V} x1r = {vc1r_oop}, x1i = {vc1i_oop};
+        const {V} x2r = {vc2r_oop}, x2i = {vc2i_oop};
+        const {V} x3r = {vc3r_oop}, x3i = {vc3i_oop};
+        const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+        const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+        const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+        const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+        R4_ST(&out_re[m + 0*os], {ADD}(t0r, t2r)); R4_ST(&out_im[m + 0*os], {ADD}(t0i, t2i));
+        R4_ST(&out_re[m + 2*os], {SUB}(t0r, t2r)); R4_ST(&out_im[m + 2*os], {SUB}(t0i, t2i));
+        R4_ST(&out_re[m + 1*os], {r1_e}); R4_ST(&out_im[m + 1*os], {i1_e});
+        R4_ST(&out_re[m + 3*os], {r3_e}); R4_ST(&out_im[m + 3*os], {i3_e});
     }}
 }}''')
 
