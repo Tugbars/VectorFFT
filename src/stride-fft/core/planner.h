@@ -38,6 +38,7 @@
 #include "exhaustive.h"
 #include "dp_planner.h"
 #include "rader.h"      /* includes bluestein.h (shared SIMD helpers) */
+#include "r2c.h"       /* real-to-complex / complex-to-real */
 
 /* =====================================================================
  * WISDOM -- cached exhaustive search results
@@ -303,6 +304,27 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
     if (e)
         return _stride_build_plan(N, K, e->factors, e->nfactors, reg);
     return stride_auto_plan(N, K, reg);
+}
+
+/**
+ * stride_r2c_auto_plan -- Create a real-to-complex FFT plan.
+ *
+ * N must be even. Returns a plan where:
+ *   stride_execute_fwd(plan, re, im):  re has N*K reals in, (N/2+1)*K re out, im has (N/2+1)*K im out
+ *   stride_execute_bwd(plan, re, im):  reverse (C2R), unnormalized (divide output by N)
+ *
+ * Or use the explicit API:
+ *   stride_execute_r2c(plan, real_in, out_re, out_im)
+ *   stride_execute_c2r(plan, in_re, in_im, real_out)
+ */
+static stride_plan_t *stride_r2c_auto_plan(int N, size_t K,
+                                            const stride_registry_t *reg) {
+    if (N < 2 || (N & 1)) return NULL;
+    int halfN = N / 2;
+    size_t B = _bluestein_block_size(halfN, K);
+    stride_plan_t *inner = stride_auto_plan(halfN, B, reg);
+    if (!inner) return NULL;
+    return stride_r2c_plan(N, K, B, inner);
 }
 
 /**

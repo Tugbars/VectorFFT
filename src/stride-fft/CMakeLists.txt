@@ -254,6 +254,17 @@ else()
     message(WARNING "FFTW3 not found -- bench targets disabled. Install via: vcpkg install fftw3")
 endif()
 
+# ── Examples ──
+if(FFTW3_LIB AND FFTW3_INC)
+add_executable(vfft_real_fft ../../examples/real_fft.c)
+target_link_libraries(vfft_real_fft PRIVATE vfft_stride ${FFTW3_LIB})
+target_include_directories(vfft_real_fft PRIVATE ${FFTW3_INC})
+target_compile_definitions(vfft_real_fft PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_real_fft PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+endif()
+
 # ── Validation tests (internal development, optional) ──
 option(VFFT_BUILD_VALIDATION "Build internal validation/dev tests" OFF)
 if(VFFT_BUILD_VALIDATION AND FFTW3_LIB AND FFTW3_INC)
