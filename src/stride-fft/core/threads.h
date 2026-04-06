@@ -182,6 +182,48 @@ static inline void _stride_pool_wait_all(void) {
 }
 
 /* =====================================================================
+ * SPIN BARRIER (for group-parallel execution)
+ *
+ * Sense-reversing barrier: threads spin on a shared counter.
+ * Low-latency (~100ns) vs pthread_barrier (~1us).
+ * ===================================================================== */
+
+typedef struct {
+    volatile int count;     /* threads arrived so far */
+    volatile int sense;     /* flips 0→1→0 each generation */
+    int n_threads;          /* total threads including caller */
+} _stride_barrier_t;
+
+static inline void _stride_barrier_init(_stride_barrier_t *b, int n) {
+    b->count = 0;
+    b->sense = 0;
+    b->n_threads = n;
+}
+
+static inline void _stride_barrier_wait(_stride_barrier_t *b, int my_sense) {
+    /* Atomically increment count. Last thread flips sense. */
+#ifdef _WIN32
+    int arrived = InterlockedIncrement((volatile LONG *)&b->count);
+#elif defined(__linux__)
+    int arrived = __sync_add_and_fetch(&b->count, 1);
+#else
+    int arrived = ++b->count;
+#endif
+    if (arrived == b->n_threads) {
+        b->count = 0;
+        b->sense = 1 - my_sense;  /* release all waiters */
+    } else {
+        while (b->sense == my_sense) {
+#ifdef _WIN32
+            _mm_pause();
+#elif defined(__linux__)
+            __builtin_ia32_pause();
+#endif
+        }
+    }
+}
+
+/* =====================================================================
  * PUBLIC API: stride_set_num_threads
  *
  * n=0 or n=1: single-threaded (default, destroys pool if active)

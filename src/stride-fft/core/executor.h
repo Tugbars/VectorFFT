@@ -307,6 +307,7 @@ static inline void _stride_execute_bwd_slice(const stride_plan_t *plan,
  * Thread 0 = caller thread (no dispatch overhead).
  * ═══════════════════════════════════════════════════════════════ */
 
+/* ── K-split dispatch args ── */
 typedef struct {
     const stride_plan_t *plan;
     double *re, *im;
@@ -322,6 +323,125 @@ static void _stride_slice_trampoline(void *arg) {
         _stride_execute_fwd_slice(a->plan, a->re, a->im, a->slice_K, a->full_K);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+ * GROUP-PARALLEL EXECUTOR
+ *
+ * For small K where K-split gives poor scaling: split GROUPS across
+ * threads instead. Each thread processes all K lanes for its subset
+ * of groups — full codelet utilization, no false sharing on K.
+ * Requires a barrier between stages (groups in stage s+1 depend on s).
+ * ═══════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    const stride_plan_t *plan;
+    double *re, *im;
+    int thread_id;          /* 0..T-1 */
+    int num_threads;
+    _stride_barrier_t *barrier;
+} _stride_group_par_arg_t;
+
+static void _stride_execute_fwd_group_par(void *arg) {
+    _stride_group_par_arg_t *a = (_stride_group_par_arg_t *)arg;
+    const stride_plan_t *plan = a->plan;
+    double *re = a->re, *im = a->im;
+    const int tid = a->thread_id;
+    const int T = a->num_threads;
+    const size_t K = plan->K;
+    int sense = 0;
+
+    for (int s = 0; s < plan->num_stages; s++) {
+        const stride_stage_t *st = &plan->stages[s];
+        const int ng = st->num_groups;
+
+        /* Each thread processes groups [g_start, g_end) */
+        int g_start = (ng * tid) / T;
+        int g_end   = (ng * (tid + 1)) / T;
+
+        for (int g = g_start; g < g_end; g++) {
+            double *base_re = re + st->group_base[g];
+            double *base_im = im + st->group_base[g];
+
+            if (!st->needs_tw[g]) {
+                st->n1_fwd(base_re, base_im, base_re, base_im,
+                           st->stride, st->stride, K);
+            } else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]
+#ifdef STRIDE_FORCE_TEMP_BUFFER
+                       && 0
+#endif
+                      ) {
+                double cfr = st->cf0_re[g];
+                double cfi = st->cf0_im[g];
+                if (cfr != 1.0 || cfi != 0.0) {
+                    for (size_t kk = 0; kk < K; kk++) {
+                        double tr = base_re[kk];
+                        base_re[kk] = tr * cfr - base_im[kk] * cfi;
+                        base_im[kk] = tr * cfi + base_im[kk] * cfr;
+                    }
+                }
+                st->t1s_fwd(base_re, base_im,
+                            st->tw_scalar_re[g], st->tw_scalar_im[g],
+                            st->stride, K);
+            } else if (st->tw_scalar_re && st->tw_scalar_re[g]) {
+                double cfr = st->cf0_re[g];
+                double cfi = st->cf0_im[g];
+                if (cfr != 1.0 || cfi != 0.0) {
+                    for (size_t kk = 0; kk < K; kk++) {
+                        double tr = base_re[kk];
+                        base_re[kk] = tr * cfr - base_im[kk] * cfi;
+                        base_im[kk] = tr * cfi + base_im[kk] * cfr;
+                    }
+                }
+                #ifndef STRIDE_TW_BLOCK_K
+                #define STRIDE_TW_BLOCK_K 64
+                #endif
+                const int Rm1 = st->radix - 1;
+                const double *stw_r = st->tw_scalar_re[g];
+                const double *stw_i = st->tw_scalar_im[g];
+                double tw_buf_re[63 * STRIDE_TW_BLOCK_K];
+                double tw_buf_im[63 * STRIDE_TW_BLOCK_K];
+                for (size_t kb = 0; kb < K; kb += STRIDE_TW_BLOCK_K) {
+                    size_t this_K = K - kb;
+                    if (this_K > STRIDE_TW_BLOCK_K) this_K = STRIDE_TW_BLOCK_K;
+                    for (int j = 0; j < Rm1; j++) {
+                        double wr = stw_r[j], wi = stw_i[j];
+                        size_t base = (size_t)j * this_K;
+                        for (size_t kk = 0; kk < this_K; kk++) {
+                            tw_buf_re[base + kk] = wr;
+                            tw_buf_im[base + kk] = wi;
+                        }
+                    }
+                    st->t1_fwd(base_re + kb, base_im + kb,
+                               tw_buf_re, tw_buf_im, st->stride, this_K);
+                }
+            } else {
+                double cfr = st->cf0_re[g];
+                double cfi = st->cf0_im[g];
+                if (cfr != 1.0 || cfi != 0.0) {
+                    for (size_t kk = 0; kk < K; kk++) {
+                        double tr = base_re[kk];
+                        base_re[kk] = tr * cfr - base_im[kk] * cfi;
+                        base_im[kk] = tr * cfi + base_im[kk] * cfr;
+                    }
+                }
+                st->t1_fwd(base_re, base_im,
+                           st->grp_tw_re[g], st->grp_tw_im[g],
+                           st->stride, K);
+            }
+        }
+
+        /* Barrier: wait for all threads to finish this stage */
+        if (s < plan->num_stages - 1)
+            _stride_barrier_wait(a->barrier, sense);
+        sense = 1 - sense;
+    }
+}
+
+/* ── Strategy selection threshold ──
+ * K-split works best when K/T >= 256 (no false sharing on cache lines).
+ * Below that, group-parallel gives better scaling by keeping full K
+ * per codelet call at the cost of inter-stage barriers. */
+#define STRIDE_KSPLIT_THRESHOLD 256
+
 static inline void stride_execute_fwd(const stride_plan_t *plan,
                                       double *re, double *im) {
     if (plan->override_fwd) {
@@ -331,50 +451,56 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
     const size_t K = plan->K;
     const int T = stride_get_num_threads();
 
-    /* K-split: use all requested threads. Each thread gets K/T lanes.
-     * For best scaling, K/T >= 256 (avoids cache line false sharing).
-     * The user controls thread count via stride_set_num_threads(). */
-    const int T_eff = T;
-
-    /* K must be divisible into SIMD-width slices */
-    /* Round slice size up to cache line boundary: 8 doubles = 64 bytes.
-     * Prevents false sharing at slice boundaries between adjacent threads.
-     * Last thread gets the remainder (may be smaller than S). */
-    const size_t S = ((K / T_eff) + 7) & ~(size_t)7;
-    if (S < 8) {
+    if (T <= 1) {
         _stride_execute_fwd_slice(plan, re, im, K, K);
         return;
     }
 
-    /* Dispatch T-1 workers, then run slice 0 on caller, then wait.
-     * All workers spin-wait on their done flag after SetEvent wakes them,
-     * so the next dispatch cycle sees them already spinning — fast re-wake. */
-    /* Thread 0 gets [0, S). Thread t gets [t*S, min((t+1)*S, K)).
-     * With round-up S, fewer threads may be needed than T_eff. */
-    _stride_slice_arg_t args[64];
-    int n_dispatch = 0;
-    for (int t = 1; t < T_eff && t <= _stride_pool_size; t++) {
-        size_t k_start = (size_t)t * S;
-        if (k_start >= K) break;  /* rounding made earlier threads cover everything */
-        size_t k_end = k_start + S;
-        if (k_end > K) k_end = K;
-        args[n_dispatch].plan = plan;
-        args[n_dispatch].re = re + k_start;
-        args[n_dispatch].im = im + k_start;
-        args[n_dispatch].slice_K = k_end - k_start;
-        args[n_dispatch].full_K = K;
-        args[n_dispatch].is_bwd = 0;
-        _stride_pool_dispatch(&_stride_workers[n_dispatch],
-                              _stride_slice_trampoline, &args[n_dispatch]);
-        n_dispatch++;
+    if (K / T >= STRIDE_KSPLIT_THRESHOLD) {
+        /* ── K-split: each thread processes K/T contiguous lanes ── */
+        const size_t S = ((K / T) + 7) & ~(size_t)7;
+        _stride_slice_arg_t args[64];
+        int n_dispatch = 0;
+        for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+            size_t k_start = (size_t)t * S;
+            if (k_start >= K) break;
+            size_t k_end = k_start + S;
+            if (k_end > K) k_end = K;
+            args[n_dispatch].plan = plan;
+            args[n_dispatch].re = re + k_start;
+            args[n_dispatch].im = im + k_start;
+            args[n_dispatch].slice_K = k_end - k_start;
+            args[n_dispatch].full_K = K;
+            args[n_dispatch].is_bwd = 0;
+            _stride_pool_dispatch(&_stride_workers[n_dispatch],
+                                  _stride_slice_trampoline, &args[n_dispatch]);
+            n_dispatch++;
+        }
+        size_t s0 = S < K ? S : K;
+        _stride_execute_fwd_slice(plan, re, im, s0, K);
+        _stride_pool_wait_all();
+    } else {
+        /* ── Group-parallel: split groups across threads, full K each ──
+         * Better for small K where K-split causes false sharing. */
+        _stride_barrier_t barrier;
+        _stride_barrier_init(&barrier, T);
+
+        _stride_group_par_arg_t gargs[64];
+        for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+            gargs[t].plan = plan;
+            gargs[t].re = re;
+            gargs[t].im = im;
+            gargs[t].thread_id = t;
+            gargs[t].num_threads = T;
+            gargs[t].barrier = &barrier;
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _stride_execute_fwd_group_par, &gargs[t]);
+        }
+        /* Thread 0 = caller */
+        _stride_group_par_arg_t a0 = {plan, re, im, 0, T, &barrier};
+        _stride_execute_fwd_group_par(&a0);
+        _stride_pool_wait_all();
     }
-
-    /* Thread 0 = caller: process [0, min(S, K)) */
-    size_t s0 = S < K ? S : K;
-    _stride_execute_fwd_slice(plan, re, im, s0, K);
-
-    /* Wait for all workers */
-    _stride_pool_wait_all();
 }
 
 /* ═══════════════════════════════════════════════════════════════
