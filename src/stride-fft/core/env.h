@@ -336,30 +336,8 @@ static inline void stride_print_info(void) {
  * execution — the stages are independent across K.
  * ===================================================================== */
 
-static int _stride_num_threads = 1;
-
-/**
- * stride_set_num_threads -- Set the maximum number of threads.
- *
- * n=0 or n=1: single-threaded (default)
- * n>1:        use up to n threads for FFT execution
- *
- * Call before creating plans. Changing thread count after plan
- * creation may require re-planning (plans may encode thread-specific
- * partitioning in future versions).
- *
- * Currently single-threaded — this stores the value for future use.
- */
-static inline void stride_set_num_threads(int n) {
-    _stride_num_threads = (n < 1) ? 1 : n;
-}
-
-/**
- * stride_get_num_threads -- Query current thread count setting.
- */
-static inline int stride_get_num_threads(void) {
-    return _stride_num_threads;
-}
+/* Thread count and pool management live in threads.h.
+ * Include threads.h to use stride_set_num_threads / stride_get_num_threads. */
 
 /* =====================================================================
  * CPU AFFINITY
