@@ -96,7 +96,7 @@ int main(int argc, char **argv) {
      * ================================================================ */
     if (strcmp(lib, "ours") == 0) {
         stride_set_num_threads(num_threads);
-        if (num_threads > 1) stride_pin_thread(0);  /* pin caller to P-core 0 */
+        if (num_threads > 1) stride_pin_thread(0);
 
         stride_registry_t reg;
         stride_registry_init(&reg);

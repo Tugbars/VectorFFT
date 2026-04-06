@@ -331,36 +331,47 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
     const size_t K = plan->K;
     const int T = stride_get_num_threads();
 
-    /* Single-threaded: K too small or only 1 thread */
-    if (T <= 1 || K < (size_t)T * 4) {
+    /* K-split: use all requested threads. Each thread gets K/T lanes.
+     * For best scaling, K/T >= 256 (avoids cache line false sharing).
+     * The user controls thread count via stride_set_num_threads(). */
+    const int T_eff = T;
+
+    /* K must be divisible into SIMD-width slices */
+    /* Round slice size up to cache line boundary: 8 doubles = 64 bytes.
+     * Prevents false sharing at slice boundaries between adjacent threads.
+     * Last thread gets the remainder (may be smaller than S). */
+    const size_t S = ((K / T_eff) + 7) & ~(size_t)7;
+    if (S < 8) {
         _stride_execute_fwd_slice(plan, re, im, K, K);
         return;
     }
 
-    /* K-split: divide K into T contiguous slices */
-    const size_t S = (K / T) & ~(size_t)3;  /* round down to multiple of 4 (SIMD) */
-    if (S < 4) {
-        _stride_execute_fwd_slice(plan, re, im, K, K);
-        return;
-    }
-
-    /* Dispatch T-1 workers */
-    _stride_slice_arg_t args[64];  /* max 64 threads */
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    /* Dispatch T-1 workers, then run slice 0 on caller, then wait.
+     * All workers spin-wait on their done flag after SetEvent wakes them,
+     * so the next dispatch cycle sees them already spinning — fast re-wake. */
+    /* Thread 0 gets [0, S). Thread t gets [t*S, min((t+1)*S, K)).
+     * With round-up S, fewer threads may be needed than T_eff. */
+    _stride_slice_arg_t args[64];
+    int n_dispatch = 0;
+    for (int t = 1; t < T_eff && t <= _stride_pool_size; t++) {
         size_t k_start = (size_t)t * S;
-        size_t k_end = (t == T - 1) ? K : k_start + S;
-        args[t].plan = plan;
-        args[t].re = re + k_start;
-        args[t].im = im + k_start;
-        args[t].slice_K = k_end - k_start;
-        args[t].full_K = K;
-        args[t].is_bwd = 0;
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _stride_slice_trampoline, &args[t]);
+        if (k_start >= K) break;  /* rounding made earlier threads cover everything */
+        size_t k_end = k_start + S;
+        if (k_end > K) k_end = K;
+        args[n_dispatch].plan = plan;
+        args[n_dispatch].re = re + k_start;
+        args[n_dispatch].im = im + k_start;
+        args[n_dispatch].slice_K = k_end - k_start;
+        args[n_dispatch].full_K = K;
+        args[n_dispatch].is_bwd = 0;
+        _stride_pool_dispatch(&_stride_workers[n_dispatch],
+                              _stride_slice_trampoline, &args[n_dispatch]);
+        n_dispatch++;
     }
 
-    /* Thread 0 = caller */
-    _stride_execute_fwd_slice(plan, re, im, S, K);
+    /* Thread 0 = caller: process [0, min(S, K)) */
+    size_t s0 = S < K ? S : K;
+    _stride_execute_fwd_slice(plan, re, im, s0, K);
 
     /* Wait for all workers */
     _stride_pool_wait_all();
@@ -382,32 +393,33 @@ static inline void stride_execute_bwd(const stride_plan_t *plan,
     const size_t K = plan->K;
     const int T = stride_get_num_threads();
 
-    if (T <= 1 || K < (size_t)T * 4) {
-        _stride_execute_bwd_slice(plan, re, im, K, K);
-        return;
-    }
-
-    const size_t S = (K / T) & ~(size_t)3;
-    if (S < 4) {
+    const int T_eff = T;
+    const size_t S = ((K / T_eff) + 7) & ~(size_t)7;
+    if (S < 8) {
         _stride_execute_bwd_slice(plan, re, im, K, K);
         return;
     }
 
     _stride_slice_arg_t args[64];
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    int n_dispatch = 0;
+    for (int t = 1; t < T_eff && t <= _stride_pool_size; t++) {
         size_t k_start = (size_t)t * S;
-        size_t k_end = (t == T - 1) ? K : k_start + S;
-        args[t].plan = plan;
-        args[t].re = re + k_start;
-        args[t].im = im + k_start;
-        args[t].slice_K = k_end - k_start;
-        args[t].full_K = K;
-        args[t].is_bwd = 1;
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _stride_slice_trampoline, &args[t]);
+        if (k_start >= K) break;
+        size_t k_end = k_start + S;
+        if (k_end > K) k_end = K;
+        args[n_dispatch].plan = plan;
+        args[n_dispatch].re = re + k_start;
+        args[n_dispatch].im = im + k_start;
+        args[n_dispatch].slice_K = k_end - k_start;
+        args[n_dispatch].full_K = K;
+        args[n_dispatch].is_bwd = 1;
+        _stride_pool_dispatch(&_stride_workers[n_dispatch],
+                              _stride_slice_trampoline, &args[n_dispatch]);
+        n_dispatch++;
     }
 
-    _stride_execute_bwd_slice(plan, re, im, S, K);
+    size_t s0 = S < K ? S : K;
+    _stride_execute_bwd_slice(plan, re, im, s0, K);
     _stride_pool_wait_all();
 }
 
