@@ -2,7 +2,7 @@
 
 
 <p align="center">
-  A permutation-free mixed-radix FFT library in C with hand-tuned AVX2/AVX-512 codelets.<br>
+  A permutation-free mixed-radix Fast Fourier Transform library library in C with hand-tuned AVX2/AVX-512 codelets.<br>
   <b>Beats Intel MKL and FFTW on every tested size.</b> No external dependencies.
 </p>
 
