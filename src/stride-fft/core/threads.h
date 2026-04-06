@@ -50,17 +50,13 @@ static inline int stride_get_num_threads(void) {
 typedef struct {
     void (*func)(void *);
     void *arg;
-    volatile int done;      /* 1 = work complete, set by worker */
+    volatile int done;      /* 1 = idle/complete, 0 = work posted */
     volatile int shutdown;  /* 1 = time to exit */
     int core_id;            /* logical core to pin to (-1 = no pin) */
 #ifdef _WIN32
     HANDLE thread;
-    HANDLE wake_event;      /* auto-reset event */
 #elif defined(__linux__)
     pthread_t thread;
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-    volatile int ready;     /* 1 = work posted */
 #endif
 } _stride_worker_t;
 
@@ -83,14 +79,20 @@ static inline void _stride_pin_to_core(int core_id) {
 #endif
 }
 
+/* Worker loop: spin-wait for work, execute, mark done.
+ * Spin-based dispatch gives ~10ns wake latency vs ~5us for events.
+ * Workers burn CPU while idle — acceptable for FFT workloads where
+ * dispatch frequency is high (thousands of calls per second). */
 #ifdef _WIN32
 static DWORD WINAPI _stride_worker_func(LPVOID param) {
     _stride_worker_t *w = (_stride_worker_t *)param;
     _stride_pin_to_core(w->core_id);
-    while (1) {
-        WaitForSingleObject(w->wake_event, INFINITE);
+    while (!w->shutdown) {
+        /* Spin-wait for work (done==0 means work posted) */
+        while (w->done && !w->shutdown)
+            _mm_pause();
         if (w->shutdown) break;
-        if (w->func) w->func(w->arg);
+        w->func(w->arg);
         w->done = 1;
     }
     return 0;
@@ -99,18 +101,13 @@ static DWORD WINAPI _stride_worker_func(LPVOID param) {
 static void *_stride_worker_func(void *param) {
     _stride_worker_t *w = (_stride_worker_t *)param;
     _stride_pin_to_core(w->core_id);
-    pthread_mutex_lock(&w->mutex);
-    while (1) {
-        while (!w->ready && !w->shutdown)
-            pthread_cond_wait(&w->cond, &w->mutex);
+    while (!w->shutdown) {
+        while (w->done && !w->shutdown)
+            __builtin_ia32_pause();
         if (w->shutdown) break;
-        w->ready = 0;
-        pthread_mutex_unlock(&w->mutex);
-        if (w->func) w->func(w->arg);
-        pthread_mutex_lock(&w->mutex);
+        w->func(w->arg);
         w->done = 1;
     }
-    pthread_mutex_unlock(&w->mutex);
     return NULL;
 }
 #endif
@@ -123,19 +120,12 @@ static void _stride_pool_destroy(void) {
     if (!_stride_workers) return;
     for (int i = 0; i < _stride_pool_size; i++) {
         _stride_worker_t *w = &_stride_workers[i];
-        w->shutdown = 1;
+        w->shutdown = 1;  /* spin-waiting worker sees this and exits */
 #ifdef _WIN32
-        SetEvent(w->wake_event);
         WaitForSingleObject(w->thread, INFINITE);
         CloseHandle(w->thread);
-        CloseHandle(w->wake_event);
 #elif defined(__linux__)
-        pthread_mutex_lock(&w->mutex);
-        pthread_cond_signal(&w->cond);
-        pthread_mutex_unlock(&w->mutex);
         pthread_join(w->thread, NULL);
-        pthread_mutex_destroy(&w->mutex);
-        pthread_cond_destroy(&w->cond);
 #endif
     }
     free(_stride_workers);
@@ -152,20 +142,14 @@ static void _stride_pool_create(int n_workers) {
 
     for (int i = 0; i < n_workers; i++) {
         _stride_worker_t *w = &_stride_workers[i];
-        w->done = 1;
+        w->done = 1;        /* no work pending initially */
         w->shutdown = 0;
         w->func = NULL;
         w->arg = NULL;
-        /* Pin worker i to core i+1 (core 0 reserved for caller).
-         * On hybrid CPUs (Intel 12th+), cores 0..7 are P-cores. */
-        w->core_id = i + 1;
+        w->core_id = i + 1; /* pin to core i+1 (core 0 = caller) */
 #ifdef _WIN32
-        w->wake_event = CreateEvent(NULL, FALSE, FALSE, NULL);
         w->thread = CreateThread(NULL, 0, _stride_worker_func, w, 0, NULL);
 #elif defined(__linux__)
-        w->ready = 0;
-        pthread_mutex_init(&w->mutex, NULL);
-        pthread_cond_init(&w->cond, NULL);
         pthread_create(&w->thread, NULL, _stride_worker_func, w);
 #endif
     }
@@ -175,20 +159,13 @@ static void _stride_pool_create(int n_workers) {
  * DISPATCH & WAIT
  * ===================================================================== */
 
-/** Post work to a single worker (non-blocking). */
+/** Post work to a single worker (non-blocking).
+ * Worker is spin-waiting on done==0, so clearing done is the wake signal. */
 static inline void _stride_pool_dispatch(_stride_worker_t *w,
                                           void (*func)(void *), void *arg) {
     w->func = func;
     w->arg = arg;
-    w->done = 0;
-#ifdef _WIN32
-    SetEvent(w->wake_event);
-#elif defined(__linux__)
-    pthread_mutex_lock(&w->mutex);
-    w->ready = 1;
-    pthread_cond_signal(&w->cond);
-    pthread_mutex_unlock(&w->mutex);
-#endif
+    w->done = 0;  /* this wakes the spinning worker */
 }
 
 /** Spin-wait for all workers to complete (lowest latency). */
