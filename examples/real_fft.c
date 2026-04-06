@@ -139,6 +139,7 @@ int main(void) {
 
     /* ── Benchmark: R2C vs complex FFT ── */
     printf("\n=== R2C vs Complex FFT Benchmark ===\n\n");
+    stride_pin_thread(0);  /* Pin to P-core 0 for stable timing */
     {
         int bench_sizes[] = {256, 1000, 4096, 10000};
         int nbench = sizeof(bench_sizes) / sizeof(bench_sizes[0]);
@@ -180,7 +181,7 @@ int main(void) {
             }
 
             /* Bench R2C (in-place, no restore — measures pure execute time) */
-            int reps = 500;
+            int reps = 2000;
             double t0 = now_ns();
             for (int r = 0; r < reps; r++)
                 stride_execute_fwd(r2c_plan, bre, bim);
