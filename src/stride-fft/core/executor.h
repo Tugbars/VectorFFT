@@ -148,11 +148,13 @@ typedef struct {
 
 /* ── Internal: forward executor on a K-slice ──
  * Processes slice_K contiguous lanes starting at re/im.
- * full_K is the plan's original K (used for cf_all/twiddle table strides). */
-static inline void _stride_execute_fwd_slice(const stride_plan_t *plan,
+ * full_K is the plan's original K (used for cf_all/twiddle table strides).
+ * start_stage: skip stages 0..start_stage-1 (used by R2C fused pack). */
+static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                                              double *re, double *im,
-                                             size_t slice_K, size_t full_K) {
-    for (int s = 0; s < plan->num_stages; s++) {
+                                             size_t slice_K, size_t full_K,
+                                             int start_stage) {
+    for (int s = start_stage; s < plan->num_stages; s++) {
         const stride_stage_t *st = &plan->stages[s];
 
         for (int g = 0; g < st->num_groups; g++) {
@@ -273,6 +275,13 @@ static inline void _stride_execute_fwd_slice(const stride_plan_t *plan,
             }
         }
     }
+}
+
+/* ── Convenience: execute all stages (start_stage=0) ── */
+static inline void _stride_execute_fwd_slice(const stride_plan_t *plan,
+                                             double *re, double *im,
+                                             size_t slice_K, size_t full_K) {
+    _stride_execute_fwd_slice_from(plan, re, im, slice_K, full_K, 0);
 }
 
 /* ── Internal: backward executor on a K-slice ── */
