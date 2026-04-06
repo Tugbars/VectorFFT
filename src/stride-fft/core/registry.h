@@ -310,9 +310,15 @@ static const int STRIDE_AVAILABLE_RADIXES[] = {
     reg->t1s_fwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1s_dit_fwd); \
     reg->t1s_bwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1s_dit_bwd);
 
+/* t1_oop: only AVX2/AVX-512 codelets generated so far.
+ * TODO: generate scalar t1_oop for scalar-only builds. */
+#if defined(VFFT_ISA_AVX2) || defined(VFFT_ISA_AVX512)
 #define _REG_T1_OOP(R) \
     reg->t1_oop_fwd[R] = (stride_t1_oop_fn)VFFT_FN(radix##R##_t1_oop_dit_fwd); \
     reg->t1_oop_bwd[R] = (stride_t1_oop_fn)VFFT_FN(radix##R##_t1_oop_dit_bwd);
+#else
+#define _REG_T1_OOP(R) /* scalar t1_oop not yet generated */
+#endif
 
 #define _REG_FULL(R)    _REG_N1(R) _REG_T1(R) _REG_T1_LOG3(R)
 #define _REG_NO_LOG3(R) _REG_N1(R) _REG_T1(R)
@@ -328,24 +334,27 @@ static const int STRIDE_AVAILABLE_RADIXES[] = {
 static void stride_registry_init(stride_registry_t *reg) {
     memset(reg, 0, sizeof(*reg));
 
-    _REG_NO_LOG3(2)
-    _REG_FULL(3)  _REG_T1S(3)
-    _REG_FULL(4)
-    _REG_FULL(5)  _REG_T1S(5)
-    _REG_FULL(6)  _REG_T1S(6)
-    _REG_FULL(7)  _REG_T1S(7)
-    _REG_NO_LOG3(8)
-    _REG_FULL(10) _REG_T1S(10)
-    _REG_FULL(11) _REG_T1S(11)
-    _REG_FULL(12) _REG_T1S(12)
-    _REG_FULL(13) _REG_T1S(13)
-    _REG_FULL(16) _REG_T1S(16)
-    _REG_FULL(17) _REG_T1S(17)
-    _REG_FULL(19) _REG_T1S(19)
-    _REG_FULL(20) _REG_T1S(20)
-    _REG_FULL(25) _REG_T1S(25)
-    _REG_FULL(32)
-    _REG_FULL(64)
+    _REG_NO_LOG3(2)  _REG_T1_OOP(2)
+    _REG_FULL(3)  _REG_T1S(3)  _REG_T1_OOP(3)
+    _REG_FULL(4)  _REG_T1_OOP(4)
+    _REG_FULL(5)  _REG_T1S(5)  _REG_T1_OOP(5)
+    _REG_FULL(6)  _REG_T1S(6)  _REG_T1_OOP(6)
+    _REG_FULL(7)  _REG_T1S(7)  _REG_T1_OOP(7)
+    _REG_NO_LOG3(8)  _REG_T1_OOP(8)
+    _REG_FULL(10) _REG_T1S(10) _REG_T1_OOP(10)
+    _REG_FULL(11) _REG_T1S(11) _REG_T1_OOP(11)
+    _REG_FULL(12) _REG_T1S(12) _REG_T1_OOP(12)
+    _REG_FULL(13) _REG_T1S(13) _REG_T1_OOP(13)
+    _REG_FULL(16) _REG_T1S(16) _REG_T1_OOP(16)
+    _REG_FULL(17) _REG_T1S(17) _REG_T1_OOP(17)
+    _REG_FULL(19) _REG_T1S(19) _REG_T1_OOP(19)
+    _REG_FULL(20) _REG_T1S(20) _REG_T1_OOP(20)
+    _REG_FULL(25) _REG_T1S(25) _REG_T1_OOP(25)
+    _REG_FULL(32) _REG_T1_OOP(32)
+    _REG_FULL(64) _REG_T1_OOP(64)
+    /* TODO: generate and include t1_oop AVX-512 and scalar headers.
+     * Currently only AVX2 t1_oop codelets are generated.
+     * AVX-512 + scalar t1_oop can be added via generate_all.bat. */
 }
 
 #undef _REG_N1
