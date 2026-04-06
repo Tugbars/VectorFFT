@@ -6,10 +6,12 @@
  * analysis to understand WHERE the CPU spends time.
  *
  * Usage:
- *   vfft_bench_vtune <N> <K> [library] [seconds]
+ *   vfft_bench_vtune <N> <K> [library] [seconds] [--threads T] [--huge]
  *
  *   library: "ours" (default), "fftw", "mkl"
  *   seconds: how long to run (default: 5)
+ *   --threads T: use T threads for VectorFFT (default: 1)
+ *   --huge: use 2MB huge pages
  *
  * Examples:
  *   vtune -collect uarch-exploration -- vfft_bench_vtune 1000 256 ours 10
@@ -34,6 +36,7 @@
 #include "../core/planner.h"
 #include "../core/env.h"
 #include "../core/compat.h"
+#include "../core/threads.h"
 
 int main(int argc, char **argv) {
     if (argc < 3) {
@@ -48,14 +51,18 @@ int main(int argc, char **argv) {
     const char *lib = (argc > 3) ? argv[3] : "ours";
     double run_secs = (argc > 4) ? atof(argv[4]) : 5.0;
     int use_huge = 0;
-    /* Check for --huge flag anywhere in args */
-    for (int i = 1; i < argc; i++)
+    int num_threads = 1;
+    /* Check for flags anywhere in args */
+    for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--huge") == 0) use_huge = 1;
+        if (strcmp(argv[i], "--threads") == 0 && i + 1 < argc)
+            num_threads = atoi(argv[++i]);
+    }
 
     size_t total = (size_t)N * K;
     size_t buf_bytes = total * sizeof(double);
-    printf("N=%d  K=%zu  total=%zu  library=%s  duration=%.0fs  huge_pages=%s\n",
-           N, K, total, lib, run_secs, use_huge ? "ON" : "off");
+    printf("N=%d  K=%zu  total=%zu  library=%s  duration=%.0fs  huge_pages=%s  threads=%d\n",
+           N, K, total, lib, run_secs, use_huge ? "ON" : "off", num_threads);
 
     /* Initialize CPU environment (FTZ/DAZ) */
     stride_env_init();
@@ -88,6 +95,9 @@ int main(int argc, char **argv) {
      * VectorFFT
      * ================================================================ */
     if (strcmp(lib, "ours") == 0) {
+        stride_set_num_threads(num_threads);
+        if (num_threads > 1) stride_pin_thread(0);  /* pin caller to P-core 0 */
+
         stride_registry_t reg;
         stride_registry_init(&reg);
 
