@@ -254,6 +254,15 @@ else()
     message(WARNING "FFTW3 not found -- bench targets disabled. Install via: vcpkg install fftw3")
 endif()
 
+# ── Strided A/B benchmark (no FFTW/MKL dependency) ──
+add_executable(vfft_bench_strided bench/bench_strided.c)
+target_link_libraries(vfft_bench_strided PRIVATE vfft_stride ${FFTW3_LIB})
+target_include_directories(vfft_bench_strided PRIVATE ${FFTW3_INC})
+target_compile_definitions(vfft_bench_strided PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_bench_strided PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ── Examples ──
 if(FFTW3_LIB AND FFTW3_INC)
 add_executable(vfft_real_fft ../../examples/real_fft.c)

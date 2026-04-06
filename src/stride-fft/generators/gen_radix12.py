@@ -183,6 +183,7 @@ class Emitter:
         elif self.addr_mode == 't1':
             if self.isa.name == 'scalar': return f"m*ms+{n}*ios"
             return f"m+{n}*ios"
+        elif self.addr_mode == 't1_oop': return f"m+{n}*is"
         return f"{n}*K+{ke}"
 
     def _out_addr(self, m, ke="k"):
@@ -191,6 +192,7 @@ class Emitter:
         elif self.addr_mode == 't1':
             if self.isa.name == 'scalar': return f"m*ms+{m}*ios"
             return f"m+{m}*ios"
+        elif self.addr_mode == 't1_oop': return f"m+{m}*os"
         return f"{m}*K+{ke}"
 
     def _in_buf(self):
@@ -244,12 +246,12 @@ class Emitter:
 
     # ── External twiddle ──
     def _tw_addr(self, tw_idx, ke="k"):
-        if self.addr_mode == 't1': return f"{tw_idx}*me+m"
+        if self.addr_mode in ('t1', 't1_oop'): return f"{tw_idx}*me+m"
         return f"{tw_idx}*K+{ke}"
     def _tw_buf(self):
-        return "W_re" if self.addr_mode == 't1' else "tw_re"
+        return "W_re" if self.addr_mode in ('t1', 't1_oop') else "tw_re"
     def _tw_buf_im(self):
-        return "W_im" if self.addr_mode == 't1' else "tw_im"
+        return "W_im" if self.addr_mode in ('t1', 't1_oop') else "tw_im"
 
     def emit_ext_tw(self, v, tw_idx, d, ke="k"):
         fwd = (d == 'fwd'); T = self.isa.T
@@ -1001,9 +1003,11 @@ def emit_file_ct(isa, itw_set, ct_variant):
     is_t1s_dit = ct_variant == 'ct_t1s_dit'
     is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     is_t1_dif = ct_variant == 'ct_t1_dif'
-    em.addr_mode = 'n1' if is_n1 else 't1'
+    is_t1_oop_dit = ct_variant == 'ct_t1_oop_dit'
+    em.addr_mode = 'n1' if is_n1 else ('t1_oop' if is_t1_oop_dit else 't1')
 
     if is_n1:           func_base = "radix12_n1"; vname = "n1 (separate is/os)"
+    elif is_t1_oop_dit: func_base = "radix12_t1_oop_dit"; vname = "t1_oop DIT (out-of-place, separate is/os, with twiddle)"
     elif is_t1s_dit:    func_base = "radix12_t1s_dit"; vname = "t1s DIT (in-place, scalar broadcast twiddle)"
     elif is_t1_dif:     func_base = "radix12_t1_dif"; vname = "t1 DIF (in-place twiddle)"
     elif is_t1_dit_log3: func_base = "radix12_t1_dit_log3"; vname = "t1 DIT log3 (in-place, derived twiddles)"
@@ -1033,7 +1037,7 @@ def emit_file_ct(isa, itw_set, ct_variant):
     em.L.append(f"#define LD {lp}_LD"); em.L.append(f"#define ST {lp}_ST"); em.L.append(f"")
 
     for d in ['fwd', 'bwd']:
-        em.reset(); em.addr_mode = 'n1' if is_n1 else 't1'
+        em.reset(); em.addr_mode = 'n1' if is_n1 else ('t1_oop' if is_t1_oop_dit else 't1')
         if isa.target: em.L.append(f"static {isa.target} void")
         else:          em.L.append(f"static void")
         if is_n1:
@@ -1044,6 +1048,12 @@ def emit_file_ct(isa, itw_set, ct_variant):
                 em.L.append(f"    size_t is, size_t os, size_t vl, size_t ivs, size_t ovs)")
             else:
                 em.L.append(f"    size_t is, size_t os, size_t vl)")
+        elif is_t1_oop_dit:
+            em.L.append(f"{func_base}_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    const double * __restrict__ W_re, const double * __restrict__ W_im,")
+            em.L.append(f"    size_t is, size_t os, size_t me)")
         else:
             em.L.append(f"{func_base}_{d}_{isa.name}(")
             em.L.append(f"    double * __restrict__ rio_re, double * __restrict__ rio_im,")
@@ -1073,8 +1083,8 @@ def emit_file_ct(isa, itw_set, ct_variant):
         if is_n1:
             if isa.name == 'scalar': em.o(f"for (size_t k = 0; k < vl; k++) {{")
             else:                    em.o(f"for (size_t k = 0; k < vl; k += {isa.k_step}) {{")
-        else:
-            if isa.name == 'scalar': em.o(f"for (size_t m = mb; m < me; m++) {{")
+        else:  # t1, t1_oop
+            if isa.name == 'scalar' and not is_t1_oop_dit: em.o(f"for (size_t m = mb; m < me; m++) {{")
             else:                    em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
         em.ind += 1
         if is_t1s_dit:
@@ -1083,6 +1093,9 @@ def emit_file_ct(isa, itw_set, ct_variant):
             emit_kernel_body_log3(em, d, itw_set, 'dit_tw_log3')
         else:
             kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
+            if is_t1_oop_dit:
+                em.addr_mode = 't1_oop'
+                kernel_variant = 'dit_tw'
             emit_kernel_body(em, d, itw_set, kernel_variant)
         em.ind -= 1
         em.o("}"); em.L.append("}"); em.L.append("")
@@ -1205,9 +1218,9 @@ def emit_sv_variants(t2_lines, isa, variant):
 
 ALL_VARIANTS = [
     'notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-    'ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif',
+    'ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'ct_t1_oop_dit',
 ]
-CT_VARIANTS = {'ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif'}
+CT_VARIANTS = {'ct_n1', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'ct_t1_oop_dit'}
 
 def main():
     parser = argparse.ArgumentParser(description='DFT-12 unified codelet generator')

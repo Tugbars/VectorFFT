@@ -214,6 +214,16 @@ static stride_plan_t *_stride_build_plan(
         }
     }
 
+    /* Attach out-of-place twiddle codelets for strided first-stage use.
+     * Used by R2C fused pack and 2D FFT strided executor. */
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        if (R < STRIDE_REG_MAX_RADIX && reg->t1_oop_fwd[R]) {
+            plan->stages[s].t1_oop_fwd = reg->t1_oop_fwd[R];
+            plan->stages[s].t1_oop_bwd = reg->t1_oop_bwd[R];
+        }
+    }
+
     return plan;
 }
 

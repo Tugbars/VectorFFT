@@ -426,6 +426,29 @@ radix2_t1_dif_{direction}(
 }}''')
             parts.append(f'')
 
+            # ── Scalar t1_oop DIT ──
+            if fwd:
+                tw_r_oop = 'r1r*wr - r1i*wi'; tw_i_oop = 'r1r*wi + r1i*wr'
+            else:
+                tw_r_oop = 'r1r*wr + r1i*wi'; tw_i_oop = 'r1i*wr - r1r*wi'
+            parts.append(f'''static inline void
+radix2_t1_oop_dit_{direction}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{{
+    for (size_t m = 0; m < me; m++) {{
+        const double x0r = in_re[m + 0*is], x0i = in_im[m + 0*is];
+        const double r1r = in_re[m + 1*is], r1i = in_im[m + 1*is];
+        const double wr = W_re[0*me + m], wi = W_im[0*me + m];
+        const double x1r = {tw_r_oop}, x1i = {tw_i_oop};
+        out_re[m + 0*os] = x0r + x1r; out_im[m + 0*os] = x0i + x1i;
+        out_re[m + 1*os] = x0r - x1r; out_im[m + 1*os] = x0i - x1i;
+    }}
+}}''')
+            parts.append(f'')
+
         # ── SIMD: n1, n1_ovs, t1_dit, t1_dif ──
         if not is_scalar:
             p = {'avx2': '_mm256', 'avx512': '_mm512'}[isa_name]
@@ -545,6 +568,27 @@ radix2_t1_dif_{direction}_{isa_name}(
         const {T} dr = {SUB}(x0r, x1r), di = {SUB}(x0i, x1i);
         ST(&rio_re[m + 0*ios], {ADD}(x0r, x1r)); ST(&rio_im[m + 0*ios], {ADD}(x0i, x1i));
         ST(&rio_re[m + 1*ios], {vd1r}); ST(&rio_im[m + 1*ios], {vd1i});
+    }}
+}}''')
+            parts.append(f'')
+
+            # ── SIMD t1_oop DIT: out-of-place twiddle + butterfly ──
+            vc1r_oop, vc1i_oop = cmul_v('r1r', 'r1i', 'wr', 'wi')
+            parts.append(f'''{target}
+static inline void
+radix2_t1_oop_dit_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{{
+    for (size_t m = 0; m < me; m += {VL}) {{
+        const {T} x0r = LD(&in_re[m + 0*is]), x0i = LD(&in_im[m + 0*is]);
+        const {T} r1r = LD(&in_re[m + 1*is]), r1i = LD(&in_im[m + 1*is]);
+        const {T} wr = LD(&W_re[0*me+m]), wi = LD(&W_im[0*me+m]);
+        const {T} x1r = {vc1r_oop}, x1i = {vc1i_oop};
+        ST(&out_re[m + 0*os], {ADD}(x0r, x1r)); ST(&out_im[m + 0*os], {ADD}(x0i, x1i));
+        ST(&out_re[m + 1*os], {SUB}(x0r, x1r)); ST(&out_im[m + 1*os], {SUB}(x0i, x1i));
     }}
 }}''')
             parts.append(f'')
