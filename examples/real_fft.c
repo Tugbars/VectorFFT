@@ -18,10 +18,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <time.h>
+#include <string.h>
 
 #include "../src/stride-fft/core/env.h"
 #include "../src/stride-fft/core/planner.h"
+#include "../src/stride-fft/core/compat.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -180,16 +181,16 @@ int main(void) {
 
             /* Bench R2C (in-place, no restore — measures pure execute time) */
             int reps = 500;
-            double t0 = (double)clock();
+            double t0 = now_ns();
             for (int r = 0; r < reps; r++)
                 stride_execute_fwd(r2c_plan, bre, bim);
-            double r2c_ns = ((double)clock() - t0) / CLOCKS_PER_SEC / reps * 1e9;
+            double r2c_ns = (now_ns() - t0) / reps;
 
             /* Bench complex */
-            t0 = (double)clock();
+            t0 = now_ns();
             for (int r = 0; r < reps; r++)
                 stride_execute_fwd(c2c_plan, cre, cim);
-            double c2c_ns = ((double)clock() - t0) / CLOCKS_PER_SEC / reps * 1e9;
+            double c2c_ns = (now_ns() - t0) / reps;
 
             printf("%-8d %12.0f %12.0f %7.2fx\n", BN, r2c_ns, c2c_ns, c2c_ns / r2c_ns);
 

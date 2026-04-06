@@ -51,6 +51,7 @@ typedef struct {
 
     double *scratch_re;     /* N/2 * B scratch for inner FFT */
     double *scratch_im;
+    double *c2r_im_buf;    /* (N/2+1) * K pre-allocated temp for stride_execute_c2r */
 
     stride_plan_t *inner;   /* N/2-point complex FFT plan with K = B */
 } stride_r2c_data_t;
@@ -122,32 +123,36 @@ static void _r2c_postprocess(
 
     /* DC (f=0) and Nyquist (f=N/2) — Z[0] is at perm[0] in DIT output */
     size_t z0_off = (size_t)perm[0] * B;
-#if defined(__AVX2__)
+    size_t nyq_off = (size_t)half_N * K + b0;
     {
         size_t k = 0;
+#if defined(__AVX512F__)
+        for (; k + 8 <= B; k += 8) {
+            __m512d zr = _mm512_load_pd(z_re + z0_off + k);
+            __m512d zi = _mm512_load_pd(z_im + z0_off + k);
+            _mm512_storeu_pd(out_re + b0 + k, _mm512_add_pd(zr, zi));
+            _mm512_storeu_pd(out_im + b0 + k, _mm512_setzero_pd());
+            _mm512_storeu_pd(out_re + nyq_off + k, _mm512_sub_pd(zr, zi));
+            _mm512_storeu_pd(out_im + nyq_off + k, _mm512_setzero_pd());
+        }
+#endif
+#if defined(__AVX2__) || defined(__AVX512F__)
         for (; k + 4 <= B; k += 4) {
             __m256d zr = _mm256_load_pd(z_re + z0_off + k);
             __m256d zi = _mm256_load_pd(z_im + z0_off + k);
             _mm256_storeu_pd(out_re + b0 + k, _mm256_add_pd(zr, zi));
             _mm256_storeu_pd(out_im + b0 + k, _mm256_setzero_pd());
-            _mm256_storeu_pd(out_re + (size_t)half_N * K + b0 + k, _mm256_sub_pd(zr, zi));
-            _mm256_storeu_pd(out_im + (size_t)half_N * K + b0 + k, _mm256_setzero_pd());
+            _mm256_storeu_pd(out_re + nyq_off + k, _mm256_sub_pd(zr, zi));
+            _mm256_storeu_pd(out_im + nyq_off + k, _mm256_setzero_pd());
         }
+#endif
         for (; k < B; k++) {
             out_re[b0 + k] = z_re[z0_off + k] + z_im[z0_off + k];
             out_im[b0 + k] = 0.0;
-            out_re[(size_t)half_N * K + b0 + k] = z_re[z0_off + k] - z_im[z0_off + k];
-            out_im[(size_t)half_N * K + b0 + k] = 0.0;
+            out_re[nyq_off + k] = z_re[z0_off + k] - z_im[z0_off + k];
+            out_im[nyq_off + k] = 0.0;
         }
     }
-#else
-    for (size_t k = 0; k < B; k++) {
-        out_re[b0 + k] = z_re[z0_off + k] + z_im[z0_off + k];
-        out_im[b0 + k] = 0.0;
-        out_re[(size_t)half_N * K + b0 + k] = z_re[z0_off + k] - z_im[z0_off + k];
-        out_im[(size_t)half_N * K + b0 + k] = 0.0;
-    }
-#endif
 
     /* Butterfly pairs (f, N/2-f) for f=1..N/2-1 */
     for (int f = 1; f < half_N; f++) {
@@ -160,60 +165,104 @@ static void _r2c_postprocess(
         size_t fo_off = (size_t)f * K + b0;
         size_t mo_off = (size_t)mirror * K + b0;
 
-#if defined(__AVX2__)
-        __m256d half_v = _mm256_set1_pd(0.5);
-        __m256d sign   = _mm256_set1_pd(-0.0);
-        __m256d vwr    = _mm256_set1_pd(wr);
-        __m256d vwi    = _mm256_set1_pd(wi);
-
         size_t k = 0;
-        for (; k + 4 <= B; k += 4) {
-            __m256d Zfr = _mm256_load_pd(z_re + f_off + k);
-            __m256d Zfi = _mm256_load_pd(z_im + f_off + k);
-            __m256d Zmr = _mm256_load_pd(z_re + m_off + k);
-            __m256d Zmi = _mm256_load_pd(z_im + m_off + k);
+#if defined(__AVX512F__)
+        {
+            __m512d half_v = _mm512_set1_pd(0.5);
+            __m512d vwr    = _mm512_set1_pd(wr);
+            __m512d vwi    = _mm512_set1_pd(wi);
 
-            /* E = (Z[f] + conj(Z[mirror])) / 2 */
-            __m256d Er = _mm256_mul_pd(_mm256_add_pd(Zfr, Zmr), half_v);
-            __m256d Ei = _mm256_mul_pd(_mm256_sub_pd(Zfi, Zmi), half_v);
+            for (; k + 8 <= B; k += 8) {
+                __m512d Zfr = _mm512_load_pd(z_re + f_off + k);
+                __m512d Zfi = _mm512_load_pd(z_im + f_off + k);
+                __m512d Zmr = _mm512_load_pd(z_re + m_off + k);
+                __m512d Zmi = _mm512_load_pd(z_im + m_off + k);
 
-            /* O = (Z[f] - conj(Z[mirror])) / 2 */
-            __m256d Or = _mm256_mul_pd(_mm256_sub_pd(Zfr, Zmr), half_v);
-            __m256d Oi = _mm256_mul_pd(_mm256_add_pd(Zfi, Zmi), half_v);
+                __m512d Er = _mm512_mul_pd(_mm512_add_pd(Zfr, Zmr), half_v);
+                __m512d Ei = _mm512_mul_pd(_mm512_sub_pd(Zfi, Zmi), half_v);
+                __m512d Or = _mm512_mul_pd(_mm512_sub_pd(Zfr, Zmr), half_v);
+                __m512d Oi = _mm512_mul_pd(_mm512_add_pd(Zfi, Zmi), half_v);
 
-            /* -i*O = (Oi, -Or) */
-            __m256d niOr = Oi;
-            __m256d niOi = _mm256_xor_pd(Or, sign);
+                /* -i*O = (Oi, -Or) */
+                __m512d niOr = Oi;
+                __m512d neg_Or = _mm512_sub_pd(_mm512_setzero_pd(), Or);
 
-            /* T = W * (-i*O) */
-            __m256d Tr = _mm256_fmsub_pd(vwr, niOr, _mm256_mul_pd(vwi, niOi));
-            __m256d Ti = _mm256_fmadd_pd(vwr, niOi, _mm256_mul_pd(vwi, niOr));
+                __m512d Tr = _mm512_fmsub_pd(vwr, niOr, _mm512_mul_pd(vwi, neg_Or));
+                __m512d Ti = _mm512_fmadd_pd(vwr, neg_Or, _mm512_mul_pd(vwi, niOr));
 
-            /* X[f] = E + T */
-            _mm256_storeu_pd(out_re + fo_off + k, _mm256_add_pd(Er, Tr));
-            _mm256_storeu_pd(out_im + fo_off + k, _mm256_add_pd(Ei, Ti));
+                _mm512_storeu_pd(out_re + fo_off + k, _mm512_add_pd(Er, Tr));
+                _mm512_storeu_pd(out_im + fo_off + k, _mm512_add_pd(Ei, Ti));
 
-            if (f != mirror) {
-                /* X[mirror]: use mirror twiddle */
-                __m256d vwrm = _mm256_set1_pd(tw_re[mirror]);
-                __m256d vwim = _mm256_set1_pd(tw_im[mirror]);
+                if (f != mirror) {
+                    __m512d vwrm = _mm512_set1_pd(tw_re[mirror]);
+                    __m512d vwim = _mm512_set1_pd(tw_im[mirror]);
 
-                /* E_mirror = conj(E), O_mirror = -conj(O) */
-                __m256d Emr = Er;
-                __m256d Emi = _mm256_xor_pd(Ei, sign);
-                __m256d Omr = _mm256_xor_pd(Or, sign);  /* -Or */
-                __m256d Omi = Oi;                         /* +Oi (not negated) */
+                    __m512d Emr = Er;
+                    __m512d Emi = _mm512_sub_pd(_mm512_setzero_pd(), Ei);
+                    __m512d neg_Or2 = neg_Or;   /* -Or */
+                    __m512d Omi = Oi;
 
-                __m256d niOmr = Omi;
-                __m256d niOmi = _mm256_xor_pd(Omr, sign);
+                    __m512d niOmr = Omi;
+                    __m512d niOmi = _mm512_sub_pd(_mm512_setzero_pd(), neg_Or2); /* Or */
 
-                __m256d Tmr = _mm256_fmsub_pd(vwrm, niOmr, _mm256_mul_pd(vwim, niOmi));
-                __m256d Tmi = _mm256_fmadd_pd(vwrm, niOmi, _mm256_mul_pd(vwim, niOmr));
+                    __m512d Tmr = _mm512_fmsub_pd(vwrm, niOmr, _mm512_mul_pd(vwim, niOmi));
+                    __m512d Tmi = _mm512_fmadd_pd(vwrm, niOmi, _mm512_mul_pd(vwim, niOmr));
 
-                _mm256_storeu_pd(out_re + mo_off + k, _mm256_add_pd(Emr, Tmr));
-                _mm256_storeu_pd(out_im + mo_off + k, _mm256_add_pd(Emi, Tmi));
+                    _mm512_storeu_pd(out_re + mo_off + k, _mm512_add_pd(Emr, Tmr));
+                    _mm512_storeu_pd(out_im + mo_off + k, _mm512_add_pd(Emi, Tmi));
+                }
             }
         }
+#endif
+#if defined(__AVX2__) || defined(__AVX512F__)
+        {
+            __m256d half_v = _mm256_set1_pd(0.5);
+            __m256d sign   = _mm256_set1_pd(-0.0);
+            __m256d vwr    = _mm256_set1_pd(wr);
+            __m256d vwi    = _mm256_set1_pd(wi);
+
+            for (; k + 4 <= B; k += 4) {
+                __m256d Zfr = _mm256_load_pd(z_re + f_off + k);
+                __m256d Zfi = _mm256_load_pd(z_im + f_off + k);
+                __m256d Zmr = _mm256_load_pd(z_re + m_off + k);
+                __m256d Zmi = _mm256_load_pd(z_im + m_off + k);
+
+                __m256d Er = _mm256_mul_pd(_mm256_add_pd(Zfr, Zmr), half_v);
+                __m256d Ei = _mm256_mul_pd(_mm256_sub_pd(Zfi, Zmi), half_v);
+                __m256d Or = _mm256_mul_pd(_mm256_sub_pd(Zfr, Zmr), half_v);
+                __m256d Oi = _mm256_mul_pd(_mm256_add_pd(Zfi, Zmi), half_v);
+
+                /* -i*O = (Oi, -Or) */
+                __m256d niOr = Oi;
+                __m256d niOi = _mm256_xor_pd(Or, sign);
+
+                __m256d Tr = _mm256_fmsub_pd(vwr, niOr, _mm256_mul_pd(vwi, niOi));
+                __m256d Ti = _mm256_fmadd_pd(vwr, niOi, _mm256_mul_pd(vwi, niOr));
+
+                _mm256_storeu_pd(out_re + fo_off + k, _mm256_add_pd(Er, Tr));
+                _mm256_storeu_pd(out_im + fo_off + k, _mm256_add_pd(Ei, Ti));
+
+                if (f != mirror) {
+                    __m256d vwrm = _mm256_set1_pd(tw_re[mirror]);
+                    __m256d vwim = _mm256_set1_pd(tw_im[mirror]);
+
+                    __m256d Emr = Er;
+                    __m256d Emi = _mm256_xor_pd(Ei, sign);
+                    __m256d Omr = _mm256_xor_pd(Or, sign);
+                    __m256d Omi = Oi;
+
+                    __m256d niOmr = Omi;
+                    __m256d niOmi = _mm256_xor_pd(Omr, sign);
+
+                    __m256d Tmr = _mm256_fmsub_pd(vwrm, niOmr, _mm256_mul_pd(vwim, niOmi));
+                    __m256d Tmi = _mm256_fmadd_pd(vwrm, niOmi, _mm256_mul_pd(vwim, niOmr));
+
+                    _mm256_storeu_pd(out_re + mo_off + k, _mm256_add_pd(Emr, Tmr));
+                    _mm256_storeu_pd(out_im + mo_off + k, _mm256_add_pd(Emi, Tmi));
+                }
+            }
+        }
+#endif
         /* Scalar tail */
         for (; k < B; k++) {
             double Zfr = z_re[f_off+k], Zfi = z_im[f_off+k];
@@ -233,26 +282,6 @@ static void _r2c_postprocess(
                 out_im[mo_off+k] = Emi + Tmi;
             }
         }
-#else
-        for (size_t k = 0; k < B; k++) {
-            double Zfr = z_re[f_off+k], Zfi = z_im[f_off+k];
-            double Zmr = z_re[m_off+k], Zmi = z_im[m_off+k];
-            double Er = (Zfr + Zmr) * 0.5, Ei = (Zfi - Zmi) * 0.5;
-            double Or = (Zfr - Zmr) * 0.5, Oi = (Zfi + Zmi) * 0.5;
-            double niOr = Oi, niOi = -Or;
-            double Tr = wr*niOr - wi*niOi, Ti = wr*niOi + wi*niOr;
-            out_re[fo_off+k] = Er + Tr;
-            out_im[fo_off+k] = Ei + Ti;
-            if (f != mirror) {
-                double wrm = tw_re[mirror], wim = tw_im[mirror];
-                double Emr = Er, Emi = -Ei, Omr = -Or, Omi = Oi;
-                double niOmr = Omi, niOmi = -Omr;
-                double Tmr = wrm*niOmr - wim*niOmi, Tmi = wrm*niOmi + wim*niOmr;
-                out_re[mo_off+k] = Emr + Tmr;
-                out_im[mo_off+k] = Emi + Tmi;
-            }
-        }
-#endif
 
         /* If f == mirror (N divisible by 4, f = N/4), the loop handles it
          * via the f != mirror guard — the single bin is computed once. */
@@ -287,9 +316,27 @@ static void _r2c_preprocess(
     /* DC: Z[0] written to permuted position perm[0] */
     {
         size_t z0_out = (size_t)perm[0] * B;
-        for (size_t k = 0; k < B; k++) {
+        size_t nyq = (size_t)half_N * K + b0;
+        size_t k = 0;
+#if defined(__AVX512F__)
+        for (; k + 8 <= B; k += 8) {
+            __m512d x0 = _mm512_loadu_pd(in_re + b0 + k);
+            __m512d xn = _mm512_loadu_pd(in_re + nyq + k);
+            _mm512_store_pd(z_re + z0_out + k, _mm512_add_pd(x0, xn));
+            _mm512_store_pd(z_im + z0_out + k, _mm512_sub_pd(x0, xn));
+        }
+#endif
+#if defined(__AVX2__) || defined(__AVX512F__)
+        for (; k + 4 <= B; k += 4) {
+            __m256d x0 = _mm256_loadu_pd(in_re + b0 + k);
+            __m256d xn = _mm256_loadu_pd(in_re + nyq + k);
+            _mm256_store_pd(z_re + z0_out + k, _mm256_add_pd(x0, xn));
+            _mm256_store_pd(z_im + z0_out + k, _mm256_sub_pd(x0, xn));
+        }
+#endif
+        for (; k < B; k++) {
             double x0r = in_re[b0 + k];
-            double xnr = in_re[(size_t)half_N * K + b0 + k];
+            double xnr = in_re[nyq + k];
             z_re[z0_out + k] = x0r + xnr;
             z_im[z0_out + k] = x0r - xnr;
         }
@@ -302,27 +349,72 @@ static void _r2c_preprocess(
         size_t mi = (size_t)mirror * K + b0;
         size_t fo = (size_t)perm[f] * B;
         size_t mo = (size_t)perm[mirror] * B;
+        (void)mo;
 
         /* conj(W) for this bin */
         double cwr = tw_re[f], cwi = -tw_im[f];
 
-        for (size_t k = 0; k < B; k++) {
+        size_t k = 0;
+#if defined(__AVX512F__)
+        {
+            __m512d half_v = _mm512_set1_pd(0.5);
+            __m512d vcwr   = _mm512_set1_pd(cwr);
+            __m512d vcwi   = _mm512_set1_pd(cwi);
+            for (; k + 8 <= B; k += 8) {
+                __m512d Xfr = _mm512_loadu_pd(in_re + fi + k);
+                __m512d Xfi = _mm512_loadu_pd(in_im + fi + k);
+                __m512d Xmr = _mm512_loadu_pd(in_re + mi + k);
+                __m512d Xmi = _mm512_loadu_pd(in_im + mi + k);
+
+                __m512d Er = _mm512_mul_pd(_mm512_add_pd(Xfr, Xmr), half_v);
+                __m512d Ei = _mm512_mul_pd(_mm512_sub_pd(Xfi, Xmi), half_v);
+                __m512d Dr = _mm512_mul_pd(_mm512_sub_pd(Xfr, Xmr), half_v);
+                __m512d Di = _mm512_mul_pd(_mm512_add_pd(Xfi, Xmi), half_v);
+
+                __m512d Xor = _mm512_fmsub_pd(vcwr, Dr, _mm512_mul_pd(vcwi, Di));
+                __m512d Xoi = _mm512_fmadd_pd(vcwr, Di, _mm512_mul_pd(vcwi, Dr));
+
+                _mm512_store_pd(z_re + fo + k, _mm512_sub_pd(Er, Xoi));
+                _mm512_store_pd(z_im + fo + k, _mm512_add_pd(Ei, Xor));
+            }
+        }
+#endif
+#if defined(__AVX2__) || defined(__AVX512F__)
+        {
+            __m256d half_v = _mm256_set1_pd(0.5);
+            __m256d vcwr   = _mm256_set1_pd(cwr);
+            __m256d vcwi   = _mm256_set1_pd(cwi);
+            for (; k + 4 <= B; k += 4) {
+                __m256d Xfr = _mm256_loadu_pd(in_re + fi + k);
+                __m256d Xfi = _mm256_loadu_pd(in_im + fi + k);
+                __m256d Xmr = _mm256_loadu_pd(in_re + mi + k);
+                __m256d Xmi = _mm256_loadu_pd(in_im + mi + k);
+
+                __m256d Er = _mm256_mul_pd(_mm256_add_pd(Xfr, Xmr), half_v);
+                __m256d Ei = _mm256_mul_pd(_mm256_sub_pd(Xfi, Xmi), half_v);
+                __m256d Dr = _mm256_mul_pd(_mm256_sub_pd(Xfr, Xmr), half_v);
+                __m256d Di = _mm256_mul_pd(_mm256_add_pd(Xfi, Xmi), half_v);
+
+                __m256d Xor = _mm256_fmsub_pd(vcwr, Dr, _mm256_mul_pd(vcwi, Di));
+                __m256d Xoi = _mm256_fmadd_pd(vcwr, Di, _mm256_mul_pd(vcwi, Dr));
+
+                _mm256_store_pd(z_re + fo + k, _mm256_sub_pd(Er, Xoi));
+                _mm256_store_pd(z_im + fo + k, _mm256_add_pd(Ei, Xor));
+            }
+        }
+#endif
+        for (; k < B; k++) {
             double Xfr = in_re[fi+k], Xfi = in_im[fi+k];
             double Xmr = in_re[mi+k], Xmi = in_im[mi+k];
 
-            /* E = (X[f] + conj(X[mirror])) / 2 */
             double Er = (Xfr + Xmr) * 0.5;
             double Ei = (Xfi - Xmi) * 0.5;
-
-            /* D = (X[f] - conj(X[mirror])) / 2 */
             double Dr = (Xfr - Xmr) * 0.5;
             double Di = (Xfi + Xmi) * 0.5;
 
-            /* Xo = conj(W) * D */
             double Xor = cwr * Dr - cwi * Di;
             double Xoi = cwr * Di + cwi * Dr;
 
-            /* Z[f] = E + i*Xo = (Er - Xoi) + i*(Ei + Xor) */
             z_re[fo+k] = Er - Xoi;
             z_im[fo+k] = Ei + Xor;
         }
@@ -347,7 +439,20 @@ static void _r2c_execute_fwd(void *data, double *re, double *im) {
             const double *odd  = re + (size_t)(2*n+1) * K + b0;
             double *dst_r = sr + (size_t)n * B;
             double *dst_i = si + (size_t)n * B;
-            for (size_t k = 0; k < B; k++) {
+            size_t k = 0;
+#if defined(__AVX512F__)
+            for (; k + 8 <= B; k += 8) {
+                _mm512_store_pd(dst_r + k, _mm512_loadu_pd(even + k));
+                _mm512_store_pd(dst_i + k, _mm512_loadu_pd(odd  + k));
+            }
+#endif
+#if defined(__AVX2__) || defined(__AVX512F__)
+            for (; k + 4 <= B; k += 4) {
+                _mm256_store_pd(dst_r + k, _mm256_loadu_pd(even + k));
+                _mm256_store_pd(dst_i + k, _mm256_loadu_pd(odd  + k));
+            }
+#endif
+            for (; k < B; k++) {
                 dst_r[k] = even[k];
                 dst_i[k] = odd[k];
             }
@@ -394,7 +499,26 @@ static void _r2c_execute_bwd(void *data, double *re, double *im) {
             const double *src_i = si + (size_t)n * B;
             double *even = re + (size_t)(2*n) * K + b0;
             double *odd  = re + (size_t)(2*n+1) * K + b0;
-            for (size_t k = 0; k < B; k++) {
+            size_t k = 0;
+#if defined(__AVX512F__)
+            {
+                __m512d two = _mm512_set1_pd(2.0);
+                for (; k + 8 <= B; k += 8) {
+                    _mm512_storeu_pd(even + k, _mm512_mul_pd(two, _mm512_load_pd(src_r + k)));
+                    _mm512_storeu_pd(odd  + k, _mm512_mul_pd(two, _mm512_load_pd(src_i + k)));
+                }
+            }
+#endif
+#if defined(__AVX2__) || defined(__AVX512F__)
+            {
+                __m256d two = _mm256_set1_pd(2.0);
+                for (; k + 4 <= B; k += 4) {
+                    _mm256_storeu_pd(even + k, _mm256_mul_pd(two, _mm256_load_pd(src_r + k)));
+                    _mm256_storeu_pd(odd  + k, _mm256_mul_pd(two, _mm256_load_pd(src_i + k)));
+                }
+            }
+#endif
+            for (; k < B; k++) {
                 even[k] = 2.0 * src_r[k];
                 odd[k]  = 2.0 * src_i[k];
             }
