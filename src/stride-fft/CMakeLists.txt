@@ -125,6 +125,9 @@ target_compile_definitions(vfft_stride INTERFACE
 find_library(FFTW3_LIB fftw3 HINTS
     "${CMAKE_SOURCE_DIR}/build/vcpkg_installed/x64-windows/lib"
 )
+find_library(FFTW3_THREADS_LIB fftw3_threads HINTS
+    "${CMAKE_SOURCE_DIR}/build/vcpkg_installed/x64-windows/lib"
+)
 find_path(FFTW3_INC fftw3.h HINTS
     "${CMAKE_SOURCE_DIR}/build/vcpkg_installed/x64-windows/include"
 )
@@ -153,10 +156,30 @@ find_library(MKL_ILP64 mkl_intel_ilp64 HINTS
     "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib"
     "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/intel64"
 )
+find_library(MKL_THREAD mkl_intel_thread HINTS
+    "$ENV{MKLROOT}/lib"
+    "$ENV{MKLROOT}/lib/intel64"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/lib/intel64"
+    "C:/Program Files (x86)/Intel/oneAPI/mkl/2025.3/lib"
+)
+find_library(MKL_IOMP5 libiomp5md HINTS
+    "$ENV{MKLROOT}/../compiler/lib"
+    "$ENV{MKLROOT}/../compiler/lib/intel64"
+    "C:/Program Files (x86)/Intel/oneAPI/compiler/latest/lib"
+    "C:/Program Files (x86)/Intel/oneAPI/compiler/latest/lib/intel64"
+    "C:/Program Files (x86)/Intel/oneAPI/compiler/2025.3/lib"
+)
 if(MKL_INC AND MKL_CORE AND MKL_SEQ AND MKL_ILP64)
     set(VFFT_HAS_MKL ON)
     set(MKL_LIBS ${MKL_ILP64} ${MKL_SEQ} ${MKL_CORE})
-    message(STATUS "Intel MKL found: ${MKL_INC}")
+    if(MKL_THREAD AND MKL_IOMP5)
+        set(MKL_LIBS_MT ${MKL_ILP64} ${MKL_THREAD} ${MKL_CORE} ${MKL_IOMP5})
+        message(STATUS "Intel MKL found (sequential + threaded): ${MKL_INC}")
+    else()
+        set(MKL_LIBS_MT ${MKL_LIBS})
+        message(STATUS "Intel MKL found (sequential only): ${MKL_INC}")
+    endif()
 else()
     message(STATUS "Intel MKL not found — MKL benchmark disabled")
 endif()
@@ -194,6 +217,21 @@ if(FFTW3_LIB AND FFTW3_INC)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
+    # Multithreaded benchmark: VectorFFT vs FFTW vs MKL at matching thread counts
+    add_executable(vfft_bench_mt bench/bench_mt.c)
+    target_link_libraries(vfft_bench_mt PRIVATE vfft_stride ${FFTW3_LIB})
+    if(FFTW3_THREADS_LIB)
+        target_link_libraries(vfft_bench_mt PRIVATE ${FFTW3_THREADS_LIB})
+    endif()
+    target_include_directories(vfft_bench_mt PRIVATE ${FFTW3_INC})
+    target_compile_definitions(vfft_bench_mt PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        VFFT_BENCH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/bench"
+    )
+    set_target_properties(vfft_bench_mt PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
+
     if(VFFT_HAS_MKL)
         target_link_libraries(vfft_bench PRIVATE ${MKL_LIBS})
         target_include_directories(vfft_bench PRIVATE ${MKL_INC})
@@ -204,9 +242,12 @@ if(FFTW3_LIB AND FFTW3_INC)
         target_link_libraries(vfft_bench_vtune PRIVATE ${MKL_LIBS})
         target_include_directories(vfft_bench_vtune PRIVATE ${MKL_INC})
         target_compile_definitions(vfft_bench_vtune PRIVATE VFFT_HAS_MKL MKL_ILP64)
-        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes, vfft_bench_vtune (FFTW + MKL)")
+        target_link_libraries(vfft_bench_mt PRIVATE ${MKL_LIBS_MT})
+        target_include_directories(vfft_bench_mt PRIVATE ${MKL_INC})
+        target_compile_definitions(vfft_bench_mt PRIVATE VFFT_HAS_MKL MKL_ILP64)
+        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes, vfft_bench_vtune, vfft_bench_mt (FFTW + MKL)")
     else()
-        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes, vfft_bench_vtune (FFTW only)")
+        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes, vfft_bench_vtune, vfft_bench_mt (FFTW only)")
     endif()
 
 else()

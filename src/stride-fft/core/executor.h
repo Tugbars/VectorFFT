@@ -364,6 +364,41 @@ static void _stride_execute_fwd_group_par(void *arg) {
             if (!st->needs_tw[g]) {
                 st->n1_fwd(base_re, base_im, base_re, base_im,
                            st->stride, st->stride, K);
+            } else if (st->use_n1_fallback) {
+                const int R = st->radix;
+                const double *cfr = st->cf_all_re + (size_t)g * R * K;
+                const double *cfi = st->cf_all_im + (size_t)g * R * K;
+                for (int j = 0; j < R; j++) {
+                    double *lr = base_re + (size_t)j * st->stride;
+                    double *li = base_im + (size_t)j * st->stride;
+                    const double *wr = cfr + (size_t)j * K;
+                    const double *wi = cfi + (size_t)j * K;
+                    for (size_t kk = 0; kk < K; kk++) {
+                        double tr = lr[kk];
+                        lr[kk] = tr * wr[kk] - li[kk] * wi[kk];
+                        li[kk] = tr * wi[kk] + li[kk] * wr[kk];
+                    }
+                }
+                st->n1_fwd(base_re, base_im, base_re, base_im,
+                           st->stride, st->stride, K);
+            } else if (st->use_log3) {
+                double cfr = st->cf0_re[g];
+                double cfi = st->cf0_im[g];
+                if (cfr != 1.0 || cfi != 0.0) {
+                    const int R = st->radix;
+                    for (int j = 0; j < R; j++) {
+                        double *lr = base_re + (size_t)j * st->stride;
+                        double *li = base_im + (size_t)j * st->stride;
+                        for (size_t kk = 0; kk < K; kk++) {
+                            double tr = lr[kk];
+                            lr[kk] = tr * cfr - li[kk] * cfi;
+                            li[kk] = tr * cfi + li[kk] * cfr;
+                        }
+                    }
+                }
+                st->t1_fwd(base_re, base_im,
+                           st->grp_tw_re[g], st->grp_tw_im[g],
+                           st->stride, K);
             } else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]
 #ifdef STRIDE_FORCE_TEMP_BUFFER
                        && 0
@@ -451,7 +486,9 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
     const size_t K = plan->K;
     const int T = stride_get_num_threads();
 
-    if (T <= 1) {
+    /* Minimum K for any threading: need at least SIMD width per thread for K-split,
+     * or at least T groups in the first stage for group-parallel. */
+    if (T <= 1 || K < 4) {
         _stride_execute_fwd_slice(plan, re, im, K, K);
         return;
     }
