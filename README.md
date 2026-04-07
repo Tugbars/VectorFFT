@@ -85,7 +85,7 @@ This saves one full data pass per transform. At large N with large batch sizes, 
 ### Executor
 
 - **Zero scratch buffers** -- fully in-place, single buffer for all stages
-- **Method C fused twiddles** -- bakes the common factor (product of all outer-stage twiddles) into each per-leg twiddle table at plan time, reducing the forward path to a single twiddle multiply per butterfly leg
+- *permutation-free tensor-stride FFT** -- bakes the common factor (product of all outer-stage twiddles) into each per-leg twiddle table at plan time, reducing the forward path to a single twiddle multiply per butterfly leg
 - **Scalar twiddle optimization** -- each twiddle row is a single scalar replicated K times; the executor stores only (R-1) unique doubles per group and broadcasts them to SIMD width inside the codelet, cutting twiddle memory from (R-1)\*K\*16 bytes to (R-1)\*16 bytes
 - **Split-complex layout** -- separate `re[]` / `im[]` arrays, naturally aligned for SIMD without interleave/deinterleave overhead
 
