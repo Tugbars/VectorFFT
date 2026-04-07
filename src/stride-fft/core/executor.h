@@ -67,6 +67,13 @@ typedef void (*stride_t1_oop_fn)(
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t is, size_t os, size_t me);
 
+/* n1_scaled: same as n1 but output *= scale. For C2R fused unpack where
+ * the last stage writes directly to output with a ×2 normalization factor. */
+typedef void (*stride_n1_scaled_fn)(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale);
+
 /* ═══════════════════════════════════════════════════════════════
  * PLAN STRUCTURES
  * ═══════════════════════════════════════════════════════════════ */
@@ -81,6 +88,7 @@ typedef struct {
     stride_t1_fn t1_fwd, t1_bwd;
     stride_t1_fn t1s_fwd, t1s_bwd;  /* scalar-broadcast twiddle variant (NULL = not available) */
     stride_t1_oop_fn t1_oop_fwd, t1_oop_bwd;  /* out-of-place twiddle (R2C fused pack, 2D) */
+    stride_n1_scaled_fn n1_scaled_fwd, n1_scaled_bwd;  /* scaled output (C2R fused unpack) */
 
     /* Per-group info (num_groups entries) */
     size_t *group_base;     /* base offset for each group (in doubles) */
@@ -284,11 +292,14 @@ static inline void _stride_execute_fwd_slice(const stride_plan_t *plan,
     _stride_execute_fwd_slice_from(plan, re, im, slice_K, full_K, 0);
 }
 
-/* ── Internal: backward executor on a K-slice ── */
-static inline void _stride_execute_bwd_slice(const stride_plan_t *plan,
+/* ── Internal: backward executor on a K-slice ──
+ * stop_stage: stop before this stage (used by C2R fused unpack to skip stage 0).
+ * Normal calls pass stop_stage=0 to run all stages. */
+static inline void _stride_execute_bwd_slice_until(const stride_plan_t *plan,
                                              double *re, double *im,
-                                             size_t slice_K, size_t full_K) {
-    for (int s = plan->num_stages - 1; s >= 0; s--) {
+                                             size_t slice_K, size_t full_K,
+                                             int stop_stage) {
+    for (int s = plan->num_stages - 1; s >= stop_stage; s--) {
         const stride_stage_t *st = &plan->stages[s];
         const int R = st->radix;
 
@@ -316,6 +327,13 @@ static inline void _stride_execute_bwd_slice(const stride_plan_t *plan,
             }
         }
     }
+}
+
+/* ── Convenience: execute all backward stages (stop_stage=0) ── */
+static inline void _stride_execute_bwd_slice(const stride_plan_t *plan,
+                                             double *re, double *im,
+                                             size_t slice_K, size_t full_K) {
+    _stride_execute_bwd_slice_until(plan, re, im, slice_K, full_K, 0);
 }
 
 /* ═══════════════════════════════════════════════════════════════

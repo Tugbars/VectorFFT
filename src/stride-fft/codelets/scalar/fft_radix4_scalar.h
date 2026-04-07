@@ -342,6 +342,28 @@ radix4_t1_oop_dit_fwd_scalar(
         out_re[m + 3*os] = t1r - t3i; out_im[m + 3*os] = t1i + t3r;
     }
 }
+static inline void
+radix4_n1_scaled_fwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    for (size_t m = 0; m < vl; m++) {
+        const double x0r = in_re[0*is+m], x0i = in_im[0*is+m];
+        const double x1r = in_re[1*is+m], x1i = in_im[1*is+m];
+        const double x2r = in_re[2*is+m], x2i = in_im[2*is+m];
+        const double x3r = in_re[3*is+m], x3i = in_im[3*is+m];
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[0*os+m] = scale * (t0r + t2r); out_im[0*os+m] = scale * (t0i + t2i);
+        out_re[2*os+m] = scale * (t0r - t2r); out_im[2*os+m] = scale * (t0i - t2i);
+        out_re[1*os+m] = scale * (t1r + t3i); out_im[1*os+m] = scale * (t1i - t3r);
+        out_re[3*os+m] = scale * (t1r - t3i); out_im[3*os+m] = scale * (t1i + t3r);
+    }
+}
+
 
 static inline void
 radix4_n1_bwd(
@@ -474,6 +496,28 @@ radix4_t1_oop_dit_bwd_scalar(
         out_re[m + 3*os] = t1r + t3i; out_im[m + 3*os] = t1i - t3r;
     }
 }
+static inline void
+radix4_n1_scaled_bwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    for (size_t m = 0; m < vl; m++) {
+        const double x0r = in_re[0*is+m], x0i = in_im[0*is+m];
+        const double x1r = in_re[1*is+m], x1i = in_im[1*is+m];
+        const double x2r = in_re[2*is+m], x2i = in_im[2*is+m];
+        const double x3r = in_re[3*is+m], x3i = in_im[3*is+m];
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[0*os+m] = scale * (t0r + t2r); out_im[0*os+m] = scale * (t0i + t2i);
+        out_re[2*os+m] = scale * (t0r - t2r); out_im[2*os+m] = scale * (t0i - t2i);
+        out_re[1*os+m] = scale * (t1r - t3i); out_im[1*os+m] = scale * (t1i + t3r);
+        out_re[3*os+m] = scale * (t1r + t3i); out_im[3*os+m] = scale * (t1i - t3r);
+    }
+}
+
 
 
 #endif /* FFT_RADIX4_SCALAR_H */

@@ -1285,6 +1285,43 @@ radix8_n1_fwd(
 }
 
 static inline void
+radix8_n1_scaled_fwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const double c = 0.707106781186547572737310929369414225220680236816;
+    for (size_t k = 0; k < vl; k++) {
+        const double x0r = in_re[0*is + k], x0i = in_im[0*is + k];
+        const double x1r = in_re[1*is + k], x1i = in_im[1*is + k];
+        const double x2r = in_re[2*is + k], x2i = in_im[2*is + k];
+        const double x3r = in_re[3*is + k], x3i = in_im[3*is + k];
+        const double x4r = in_re[4*is + k], x4i = in_im[4*is + k];
+        const double x5r = in_re[5*is + k], x5i = in_im[5*is + k];
+        const double x6r = in_re[6*is + k], x6i = in_im[6*is + k];
+        const double x7r = in_re[7*is + k], x7i = in_im[7*is + k];
+        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;
+        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;
+        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;
+        const double A1r=eq_r+es_i,A1i=eq_i-es_r,A3r=eq_r-es_i,A3i=eq_i+es_r;
+        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;
+        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;
+        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;
+        const double B1r=oq_r+os_i,B1i=oq_i-os_r,B3r=oq_r-os_i,B3i=oq_i+os_r;
+        out_re[0*os+k]=scale*(A0r+B0r); out_im[0*os+k]=scale*(A0i+B0i);
+        out_re[4*os+k]=scale*(A0r-B0r); out_im[4*os+k]=scale*(A0i-B0i);
+        {double w1r=c*(B1r+B1i),w1i=c*(B1i-B1r);
+        out_re[1*os+k]=scale*(A1r+w1r); out_im[1*os+k]=scale*(A1i+w1i);
+        out_re[5*os+k]=scale*(A1r-w1r); out_im[5*os+k]=scale*(A1i-w1i);}
+        out_re[2*os+k]=scale*(A2r+B2i); out_im[2*os+k]=scale*(A2i-B2r);
+        out_re[6*os+k]=scale*(A2r-B2i); out_im[6*os+k]=scale*(A2i+B2r);
+        {double w3r=-c*(B3r-B3i),w3i=-c*(B3r+B3i);
+        out_re[3*os+k]=scale*(A3r+w3r); out_im[3*os+k]=scale*(A3i+w3i);
+        out_re[7*os+k]=scale*(A3r-w3r); out_im[7*os+k]=scale*(A3i-w3i);}
+    }
+}
+
+static inline void
 radix8_t1_dit_fwd(
     double * __restrict__ rio_re, double * __restrict__ rio_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
@@ -1383,7 +1420,7 @@ radix8_t1_dif_fwd(
 }
 
 static inline void
-radix8_t1_oop_dit_fwd(
+radix8_t1_oop_dit_fwd_scalar(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
@@ -1468,6 +1505,43 @@ radix8_n1_bwd(
         {double w3r=-c*(B3r+B3i),w3i=c*(B3r-B3i);
         out_re[3*os+k*ovs]=A3r+w3r; out_im[3*os+k*ovs]=A3i+w3i;
         out_re[7*os+k*ovs]=A3r-w3r; out_im[7*os+k*ovs]=A3i-w3i;}
+    }
+}
+
+static inline void
+radix8_n1_scaled_bwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const double c = 0.707106781186547572737310929369414225220680236816;
+    for (size_t k = 0; k < vl; k++) {
+        const double x0r = in_re[0*is + k], x0i = in_im[0*is + k];
+        const double x1r = in_re[1*is + k], x1i = in_im[1*is + k];
+        const double x2r = in_re[2*is + k], x2i = in_im[2*is + k];
+        const double x3r = in_re[3*is + k], x3i = in_im[3*is + k];
+        const double x4r = in_re[4*is + k], x4i = in_im[4*is + k];
+        const double x5r = in_re[5*is + k], x5i = in_im[5*is + k];
+        const double x6r = in_re[6*is + k], x6i = in_im[6*is + k];
+        const double x7r = in_re[7*is + k], x7i = in_im[7*is + k];
+        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;
+        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;
+        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;
+        const double A1r=eq_r-es_i,A1i=eq_i+es_r,A3r=eq_r+es_i,A3i=eq_i-es_r;
+        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;
+        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;
+        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;
+        const double B1r=oq_r-os_i,B1i=oq_i+os_r,B3r=oq_r+os_i,B3i=oq_i-os_r;
+        out_re[0*os+k]=scale*(A0r+B0r); out_im[0*os+k]=scale*(A0i+B0i);
+        out_re[4*os+k]=scale*(A0r-B0r); out_im[4*os+k]=scale*(A0i-B0i);
+        {double w1r=c*(B1r-B1i),w1i=c*(B1r+B1i);
+        out_re[1*os+k]=scale*(A1r+w1r); out_im[1*os+k]=scale*(A1i+w1i);
+        out_re[5*os+k]=scale*(A1r-w1r); out_im[5*os+k]=scale*(A1i-w1i);}
+        out_re[2*os+k]=scale*(A2r-B2i); out_im[2*os+k]=scale*(A2i+B2r);
+        out_re[6*os+k]=scale*(A2r+B2i); out_im[6*os+k]=scale*(A2i-B2r);
+        {double w3r=-c*(B3r+B3i),w3i=c*(B3r-B3i);
+        out_re[3*os+k]=scale*(A3r+w3r); out_im[3*os+k]=scale*(A3i+w3i);
+        out_re[7*os+k]=scale*(A3r-w3r); out_im[7*os+k]=scale*(A3i-w3i);}
     }
 }
 
@@ -1570,7 +1644,7 @@ radix8_t1_dif_bwd(
 }
 
 static inline void
-radix8_t1_oop_dit_bwd(
+radix8_t1_oop_dit_bwd_scalar(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
@@ -2010,6 +2084,46 @@ radix8_t1_oop_dit_fwd_avx2(
 
 __attribute__((target("avx2,fma")))
 static inline void
+radix8_n1_scaled_fwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const __m256d vscale = _mm256_set1_pd(scale);
+    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
+    for (size_t k = 0; k < vl; k += VL) {
+        const __m256d x0r = LD(&in_re[0*is+k]), x0i = LD(&in_im[0*is+k]);
+        const __m256d x1r = LD(&in_re[1*is+k]), x1i = LD(&in_im[1*is+k]);
+        const __m256d x2r = LD(&in_re[2*is+k]), x2i = LD(&in_im[2*is+k]);
+        const __m256d x3r = LD(&in_re[3*is+k]), x3i = LD(&in_im[3*is+k]);
+        const __m256d x4r = LD(&in_re[4*is+k]), x4i = LD(&in_im[4*is+k]);
+        const __m256d x5r = LD(&in_re[5*is+k]), x5i = LD(&in_im[5*is+k]);
+        const __m256d x6r = LD(&in_re[6*is+k]), x6i = LD(&in_im[6*is+k]);
+        const __m256d x7r = LD(&in_re[7*is+k]), x7i = LD(&in_im[7*is+k]);
+        const __m256d epr=_mm256_add_pd(x0r,x4r),eqr=_mm256_sub_pd(x0r,x4r),err=_mm256_add_pd(x2r,x6r),esr=_mm256_sub_pd(x2r,x6r);
+        const __m256d epi=_mm256_add_pd(x0i,x4i),eqi=_mm256_sub_pd(x0i,x4i),eri=_mm256_add_pd(x2i,x6i),esi=_mm256_sub_pd(x2i,x6i);
+        const __m256d A0r=_mm256_add_pd(epr,err),A0i=_mm256_add_pd(epi,eri),A2r=_mm256_sub_pd(epr,err),A2i=_mm256_sub_pd(epi,eri);
+        const __m256d A1r=_mm256_add_pd(eqr,esi),A1i=_mm256_sub_pd(eqi,esr),A3r=_mm256_sub_pd(eqr,esi),A3i=_mm256_add_pd(eqi,esr);
+        const __m256d opr=_mm256_add_pd(x1r,x5r),oqr=_mm256_sub_pd(x1r,x5r),orr=_mm256_add_pd(x3r,x7r),osr=_mm256_sub_pd(x3r,x7r);
+        const __m256d opi=_mm256_add_pd(x1i,x5i),oqi=_mm256_sub_pd(x1i,x5i),ori=_mm256_add_pd(x3i,x7i),osi=_mm256_sub_pd(x3i,x7i);
+        const __m256d B0r=_mm256_add_pd(opr,orr),B0i=_mm256_add_pd(opi,ori),B2r=_mm256_sub_pd(opr,orr),B2i=_mm256_sub_pd(opi,ori);
+        const __m256d B1r=_mm256_add_pd(oqr,osi),B1i=_mm256_sub_pd(oqi,osr),B3r=_mm256_sub_pd(oqr,osi),B3i=_mm256_add_pd(oqi,osr);
+        ST(&out_re[0*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A0r,B0r))); ST(&out_im[0*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A0i,B0i)));
+        ST(&out_re[4*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A0r,B0r))); ST(&out_im[4*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A0i,B0i)));
+        {const __m256d t1r=_mm256_mul_pd(vc,_mm256_add_pd(B1r,B1i)),t1i=_mm256_mul_pd(vc,_mm256_sub_pd(B1i,B1r));
+        ST(&out_re[1*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A1r,t1r))); ST(&out_im[1*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A1i,t1i)));
+        ST(&out_re[5*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A1r,t1r))); ST(&out_im[5*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A1i,t1i)));}
+        ST(&out_re[2*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A2r,B2i))); ST(&out_im[2*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A2i,B2r)));
+        ST(&out_re[6*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A2r,B2i))); ST(&out_im[6*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A2i,B2r)));
+        {const __m256d t3r=_mm256_mul_pd(vnc,_mm256_sub_pd(B3r,B3i)),t3i=_mm256_mul_pd(vnc,_mm256_add_pd(B3r,B3i));
+        ST(&out_re[3*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A3r,t3r))); ST(&out_im[3*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A3i,t3i)));
+        ST(&out_re[7*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A3r,t3r))); ST(&out_im[7*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A3i,t3i)));}
+    }
+}
+
+__attribute__((target("avx2,fma")))
+static inline void
 radix8_n1_bwd_avx2(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
@@ -2384,6 +2498,46 @@ radix8_t1_oop_dit_bwd_avx2(
         {const __m256d t3r=_mm256_mul_pd(vnc,_mm256_add_pd(B3r,B3i)),t3i=_mm256_mul_pd(vc,_mm256_sub_pd(B3r,B3i));
         ST(&out_re[m+3*os],_mm256_add_pd(A3r,t3r)); ST(&out_im[m+3*os],_mm256_add_pd(A3i,t3i));
         ST(&out_re[m+7*os],_mm256_sub_pd(A3r,t3r)); ST(&out_im[m+7*os],_mm256_sub_pd(A3i,t3i));}
+    }
+}
+
+__attribute__((target("avx2,fma")))
+static inline void
+radix8_n1_scaled_bwd_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const __m256d vscale = _mm256_set1_pd(scale);
+    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
+    for (size_t k = 0; k < vl; k += VL) {
+        const __m256d x0r = LD(&in_re[0*is+k]), x0i = LD(&in_im[0*is+k]);
+        const __m256d x1r = LD(&in_re[1*is+k]), x1i = LD(&in_im[1*is+k]);
+        const __m256d x2r = LD(&in_re[2*is+k]), x2i = LD(&in_im[2*is+k]);
+        const __m256d x3r = LD(&in_re[3*is+k]), x3i = LD(&in_im[3*is+k]);
+        const __m256d x4r = LD(&in_re[4*is+k]), x4i = LD(&in_im[4*is+k]);
+        const __m256d x5r = LD(&in_re[5*is+k]), x5i = LD(&in_im[5*is+k]);
+        const __m256d x6r = LD(&in_re[6*is+k]), x6i = LD(&in_im[6*is+k]);
+        const __m256d x7r = LD(&in_re[7*is+k]), x7i = LD(&in_im[7*is+k]);
+        const __m256d epr=_mm256_add_pd(x0r,x4r),eqr=_mm256_sub_pd(x0r,x4r),err=_mm256_add_pd(x2r,x6r),esr=_mm256_sub_pd(x2r,x6r);
+        const __m256d epi=_mm256_add_pd(x0i,x4i),eqi=_mm256_sub_pd(x0i,x4i),eri=_mm256_add_pd(x2i,x6i),esi=_mm256_sub_pd(x2i,x6i);
+        const __m256d A0r=_mm256_add_pd(epr,err),A0i=_mm256_add_pd(epi,eri),A2r=_mm256_sub_pd(epr,err),A2i=_mm256_sub_pd(epi,eri);
+        const __m256d A1r=_mm256_sub_pd(eqr,esi),A1i=_mm256_add_pd(eqi,esr),A3r=_mm256_add_pd(eqr,esi),A3i=_mm256_sub_pd(eqi,esr);
+        const __m256d opr=_mm256_add_pd(x1r,x5r),oqr=_mm256_sub_pd(x1r,x5r),orr=_mm256_add_pd(x3r,x7r),osr=_mm256_sub_pd(x3r,x7r);
+        const __m256d opi=_mm256_add_pd(x1i,x5i),oqi=_mm256_sub_pd(x1i,x5i),ori=_mm256_add_pd(x3i,x7i),osi=_mm256_sub_pd(x3i,x7i);
+        const __m256d B0r=_mm256_add_pd(opr,orr),B0i=_mm256_add_pd(opi,ori),B2r=_mm256_sub_pd(opr,orr),B2i=_mm256_sub_pd(opi,ori);
+        const __m256d B1r=_mm256_sub_pd(oqr,osi),B1i=_mm256_add_pd(oqi,osr),B3r=_mm256_add_pd(oqr,osi),B3i=_mm256_sub_pd(oqi,osr);
+        ST(&out_re[0*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A0r,B0r))); ST(&out_im[0*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A0i,B0i)));
+        ST(&out_re[4*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A0r,B0r))); ST(&out_im[4*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A0i,B0i)));
+        {const __m256d t1r=_mm256_mul_pd(vc,_mm256_sub_pd(B1r,B1i)),t1i=_mm256_mul_pd(vc,_mm256_add_pd(B1r,B1i));
+        ST(&out_re[1*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A1r,t1r))); ST(&out_im[1*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A1i,t1i)));
+        ST(&out_re[5*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A1r,t1r))); ST(&out_im[5*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A1i,t1i)));}
+        ST(&out_re[2*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A2r,B2i))); ST(&out_im[2*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A2i,B2r)));
+        ST(&out_re[6*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A2r,B2i))); ST(&out_im[6*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A2i,B2r)));
+        {const __m256d t3r=_mm256_mul_pd(vnc,_mm256_add_pd(B3r,B3i)),t3i=_mm256_mul_pd(vc,_mm256_sub_pd(B3r,B3i));
+        ST(&out_re[3*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A3r,t3r))); ST(&out_im[3*os+k],_mm256_mul_pd(vscale,_mm256_add_pd(A3i,t3i)));
+        ST(&out_re[7*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A3r,t3r))); ST(&out_im[7*os+k],_mm256_mul_pd(vscale,_mm256_sub_pd(A3i,t3i)));}
     }
 }
 

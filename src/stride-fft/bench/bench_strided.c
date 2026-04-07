@@ -274,6 +274,180 @@ static void test_r2c_pack_fraction(void) {
 
 
 /* ═══════════════════════════════════════════════════════════════
+ * TEST C2R: OPTION B (pre-scale + strided n1_bwd) vs
+ *           OPTION C (n1_bwd with ×2 baked into stores)
+ *           vs BASELINE (n1_bwd on scratch + separate unpack)
+ *
+ * Stage 0 backward (DIF, last stage) is twiddle-free.
+ * Current: n1_bwd in-place on scratch → separate ×2 strided unpack
+ * Opt B:   ×2 scale scratch (dense) → n1_bwd(is=B, os=2K) strided write
+ * Opt C:   n1_bwd_scaled — butterfly with ×2 on stores, strided write
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* Manual radix-4 n1_bwd_scaled: butterfly + ×2 + strided write */
+__attribute__((target("avx2,fma")))
+static void radix4_n1_bwd_scaled_avx2(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl)
+{
+    __m256d two = _mm256_set1_pd(2.0);
+    for (size_t k = 0; k < vl; k += 4) {
+        __m256d x0r = _mm256_load_pd(&in_re[0*is+k]), x0i = _mm256_load_pd(&in_im[0*is+k]);
+        __m256d x1r = _mm256_load_pd(&in_re[1*is+k]), x1i = _mm256_load_pd(&in_im[1*is+k]);
+        __m256d x2r = _mm256_load_pd(&in_re[2*is+k]), x2i = _mm256_load_pd(&in_im[2*is+k]);
+        __m256d x3r = _mm256_load_pd(&in_re[3*is+k]), x3i = _mm256_load_pd(&in_im[3*is+k]);
+        /* Radix-4 DIF butterfly (bwd) */
+        __m256d t0r = _mm256_add_pd(x0r, x2r), t0i = _mm256_add_pd(x0i, x2i);
+        __m256d t1r = _mm256_sub_pd(x0r, x2r), t1i = _mm256_sub_pd(x0i, x2i);
+        __m256d t2r = _mm256_add_pd(x1r, x3r), t2i = _mm256_add_pd(x1i, x3i);
+        __m256d t3r = _mm256_sub_pd(x1r, x3r), t3i = _mm256_sub_pd(x1i, x3i);
+        /* Store with ×2 fused */
+        _mm256_storeu_pd(&out_re[0*os+k], _mm256_mul_pd(two, _mm256_add_pd(t0r, t2r)));
+        _mm256_storeu_pd(&out_im[0*os+k], _mm256_mul_pd(two, _mm256_add_pd(t0i, t2i)));
+        _mm256_storeu_pd(&out_re[2*os+k], _mm256_mul_pd(two, _mm256_sub_pd(t0r, t2r)));
+        _mm256_storeu_pd(&out_im[2*os+k], _mm256_mul_pd(two, _mm256_sub_pd(t0i, t2i)));
+        _mm256_storeu_pd(&out_re[1*os+k], _mm256_mul_pd(two, _mm256_sub_pd(t1r, t3i)));
+        _mm256_storeu_pd(&out_im[1*os+k], _mm256_mul_pd(two, _mm256_add_pd(t1i, t3r)));
+        _mm256_storeu_pd(&out_re[3*os+k], _mm256_mul_pd(two, _mm256_add_pd(t1r, t3i)));
+        _mm256_storeu_pd(&out_im[3*os+k], _mm256_mul_pd(two, _mm256_sub_pd(t1i, t3r)));
+    }
+}
+
+static void test_c2r_unpack_options(void) {
+    printf("\n=== Test C2R: Option B (pre-scale+strided) vs C (scaled butterfly) vs Baseline ===\n\n");
+
+    const int halfN_sizes[] = {64, 250, 500, 2048};
+    const int nsizes = sizeof(halfN_sizes) / sizeof(halfN_sizes[0]);
+    const size_t K = 256;
+    const size_t B = 32;
+
+    printf("%-8s %10s %10s %10s  %8s %8s\n",
+           "halfN", "base_ns", "optB_ns", "optC_ns", "B/base", "C/base");
+    printf("--------+----------+----------+----------+--------+--------\n");
+
+    for (int si = 0; si < nsizes; si++) {
+        const int halfN = halfN_sizes[si];
+        const int R = 4;
+        const int num_groups = halfN / R;
+
+        /* Scratch: halfN * B (dense, post-IFFT data) */
+        size_t scratch_sz = (size_t)halfN * B;
+        double *sr = (double *)_aligned_malloc(scratch_sz * sizeof(double), 64);
+        double *si_buf = (double *)_aligned_malloc(scratch_sz * sizeof(double), 64);
+
+        /* Output: N * K (strided, stride 2K between even/odd) */
+        size_t out_sz = (size_t)(2 * halfN) * K;
+        double *out_re = (double *)_aligned_malloc(out_sz * sizeof(double), 64);
+
+        /* Fill scratch with random data */
+        for (size_t i = 0; i < scratch_sz; i++) {
+            sr[i] = (double)rand() / RAND_MAX;
+            si_buf[i] = (double)rand() / RAND_MAX;
+        }
+
+        int reps = 3000;
+        size_t num_blocks = K / B;
+
+        /* Warmup */
+        for (int w = 0; w < 30; w++) {
+            for (size_t blk = 0; blk < num_blocks; blk++) {
+                size_t b0 = blk * B;
+                /* Baseline: in-place n1_bwd + unpack */
+                for (int g = 0; g < num_groups; g++) {
+                    size_t off = (size_t)(R * g) * B;
+                    radix4_n1_bwd_avx2(sr + off, si_buf + off, sr + off, si_buf + off, B, B, B);
+                }
+                for (int n = 0; n < halfN; n++) {
+                    double *even = out_re + (size_t)(2 * n) * K + b0;
+                    double *odd  = out_re + (size_t)(2 * n + 1) * K + b0;
+                    for (size_t k = 0; k + 4 <= B; k += 4) {
+                        _mm256_storeu_pd(even + k, _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_load_pd(sr + (size_t)n * B + k)));
+                        _mm256_storeu_pd(odd + k, _mm256_mul_pd(_mm256_set1_pd(2.0), _mm256_load_pd(si_buf + (size_t)n * B + k)));
+                    }
+                }
+            }
+        }
+
+        /* ── Baseline: in-place n1_bwd on scratch + separate ×2 unpack ── */
+        double t0 = now_ns();
+        for (int r = 0; r < reps; r++) {
+            for (size_t blk = 0; blk < num_blocks; blk++) {
+                size_t b0 = blk * B;
+                for (int g = 0; g < num_groups; g++) {
+                    size_t off = (size_t)(R * g) * B;
+                    radix4_n1_bwd_avx2(sr + off, si_buf + off, sr + off, si_buf + off, B, B, B);
+                }
+                __m256d two = _mm256_set1_pd(2.0);
+                for (int n = 0; n < halfN; n++) {
+                    double *even = out_re + (size_t)(2 * n) * K + b0;
+                    double *odd  = out_re + (size_t)(2 * n + 1) * K + b0;
+                    for (size_t k = 0; k + 4 <= B; k += 4) {
+                        _mm256_storeu_pd(even + k, _mm256_mul_pd(two, _mm256_load_pd(sr + (size_t)n * B + k)));
+                        _mm256_storeu_pd(odd + k, _mm256_mul_pd(two, _mm256_load_pd(si_buf + (size_t)n * B + k)));
+                    }
+                }
+            }
+        }
+        double base_ns = (now_ns() - t0) / reps;
+
+        /* ── Option B: ×2 scale scratch (dense) + n1_bwd(is=B, os=2K) ── */
+        t0 = now_ns();
+        for (int r = 0; r < reps; r++) {
+            for (size_t blk = 0; blk < num_blocks; blk++) {
+                size_t b0 = blk * B;
+                /* Pre-scale scratch ×2 (dense, cache-friendly) */
+                __m256d two = _mm256_set1_pd(2.0);
+                for (size_t i = 0; i + 4 <= scratch_sz; i += 4) {
+                    _mm256_store_pd(sr + i, _mm256_mul_pd(two, _mm256_load_pd(sr + i)));
+                    _mm256_store_pd(si_buf + i, _mm256_mul_pd(two, _mm256_load_pd(si_buf + i)));
+                }
+                /* n1_bwd with strided output: is=B, os=2K */
+                for (int g = 0; g < num_groups; g++) {
+                    size_t scratch_base = (size_t)(R * g) * B;
+                    size_t elem_idx = scratch_base / B;
+                    size_t out_off = elem_idx * 2 * K + b0;
+                    size_t input_leg_stride = (B / B) * 2 * K;  /* elem_per_leg * 2K */
+                    radix4_n1_bwd_avx2(sr + scratch_base, si_buf + scratch_base,
+                                       out_re + out_off, out_re + K + out_off,
+                                       B, input_leg_stride, B);
+                }
+            }
+        }
+        double optB_ns = (now_ns() - t0) / reps;
+
+        /* ── Option C: scaled n1_bwd (×2 baked into butterfly stores) ── */
+        t0 = now_ns();
+        for (int r = 0; r < reps; r++) {
+            for (size_t blk = 0; blk < num_blocks; blk++) {
+                size_t b0 = blk * B;
+                for (int g = 0; g < num_groups; g++) {
+                    size_t scratch_base = (size_t)(R * g) * B;
+                    size_t elem_idx = scratch_base / B;
+                    size_t out_off = elem_idx * 2 * K + b0;
+                    size_t input_leg_stride = (B / B) * 2 * K;
+                    radix4_n1_bwd_scaled_avx2(sr + scratch_base, si_buf + scratch_base,
+                                              out_re + out_off, out_re + K + out_off,
+                                              B, input_leg_stride, B);
+                }
+            }
+        }
+        double optC_ns = (now_ns() - t0) / reps;
+
+        printf("%-8d %10.0f %10.0f %10.0f  %7.2fx %7.2fx\n",
+               halfN, base_ns, optB_ns, optC_ns,
+               base_ns / optB_ns, base_ns / optC_ns);
+
+        _aligned_free(sr);
+        _aligned_free(si_buf);
+        _aligned_free(out_re);
+    }
+
+    printf("\n  B/base, C/base: >1 means option is faster than baseline\n");
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
  * TEST 3: OPTION 1 (t1_oop) vs OPTION 2 (twiddle-free first stage)
  *
  * Option 1: t1_oop — strided read + twiddle multiply + butterfly + dense write
@@ -700,6 +874,7 @@ int main(void) {
 
     test_r2c_fused_pack();
     test_r2c_pack_fraction();
+    test_c2r_unpack_options();
     test_option1_vs_option2();
     test_2d_tile();
 

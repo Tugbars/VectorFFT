@@ -763,6 +763,30 @@ radix4_t1_oop_dit_{direction}_scalar(
     }}
 }}''')
 
+        # ── scalar n1_scaled: n1 with output *= scale ──
+        parts.append(f'''static inline void
+radix4_n1_scaled_{direction}_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{{
+    for (size_t m = 0; m < vl; m++) {{
+        const double x0r = in_re[0*is+m], x0i = in_im[0*is+m];
+        const double x1r = in_re[1*is+m], x1i = in_im[1*is+m];
+        const double x2r = in_re[2*is+m], x2i = in_im[2*is+m];
+        const double x3r = in_re[3*is+m], x3i = in_im[3*is+m];
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[0*os+m] = scale * (t0r + t2r); out_im[0*os+m] = scale * (t0i + t2i);
+        out_re[2*os+m] = scale * (t0r - t2r); out_im[2*os+m] = scale * (t0i - t2i);
+        out_re[1*os+m] = scale * ({bfly_r1}); out_im[1*os+m] = scale * ({bfly_i1});
+        out_re[3*os+m] = scale * ({bfly_r3}); out_im[3*os+m] = scale * ({bfly_i3});
+    }}
+}}''')
+        parts.append(f'')
+
     # ── SIMD n1 + t1 (ivs=ovs=1 for n1, ms=1 for t1) ──
     if not is_scalar:
         V, p, VL = I['V'], I['p'], I['VL']
@@ -991,6 +1015,34 @@ radix4_t1_oop_dit_{direction}_{isa_name}(
         R4_ST(&out_re[m + 2*os], {SUB}(t0r, t2r)); R4_ST(&out_im[m + 2*os], {SUB}(t0i, t2i));
         R4_ST(&out_re[m + 1*os], {r1_e}); R4_ST(&out_im[m + 1*os], {i1_e});
         R4_ST(&out_re[m + 3*os], {r3_e}); R4_ST(&out_im[m + 3*os], {i3_e});
+    }}
+}}''')
+
+            # ── SIMD n1_scaled: n1 with output *= scale ──
+            MUL = f'{p}_mul_pd'
+            SET1 = f'{p}_set1_pd'
+            parts.append(f'''
+{I['target']}
+static inline void
+radix4_n1_scaled_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{{
+    const {V} vscale = {SET1}(scale);
+    for (size_t k = 0; k < vl; k += {VL}) {{
+        const {V} x0r = R4_LD(&in_re[0*is+k]), x0i = R4_LD(&in_im[0*is+k]);
+        const {V} x1r = R4_LD(&in_re[1*is+k]), x1i = R4_LD(&in_im[1*is+k]);
+        const {V} x2r = R4_LD(&in_re[2*is+k]), x2i = R4_LD(&in_im[2*is+k]);
+        const {V} x3r = R4_LD(&in_re[3*is+k]), x3i = R4_LD(&in_im[3*is+k]);
+        const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+        const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+        const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+        const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+        R4_ST(&out_re[0*os+k], {MUL}(vscale, {ADD}(t0r, t2r))); R4_ST(&out_im[0*os+k], {MUL}(vscale, {ADD}(t0i, t2i)));
+        R4_ST(&out_re[2*os+k], {MUL}(vscale, {SUB}(t0r, t2r))); R4_ST(&out_im[2*os+k], {MUL}(vscale, {SUB}(t0i, t2i)));
+        R4_ST(&out_re[1*os+k], {MUL}(vscale, {r1_e})); R4_ST(&out_im[1*os+k], {MUL}(vscale, {i1_e}));
+        R4_ST(&out_re[3*os+k], {MUL}(vscale, {r3_e})); R4_ST(&out_im[3*os+k], {MUL}(vscale, {i3_e}));
     }}
 }}''')
 
