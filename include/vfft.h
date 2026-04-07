@@ -144,7 +144,8 @@ void vfft_execute_bwd_normalized(vfft_plan p, double *re, double *im);
  *
  * @param p         Plan from vfft_plan_r2c.
  * @param real_in   Real input: real_in[n*K + k], N*K doubles.
- * @param out_re    Complex output real parts: (N/2+1)*K doubles.
+ * @param out_re    Complex output real parts: must be N*K doubles (used as workspace).
+ *                  Only the first (N/2+1)*K contain valid output.
  * @param out_im    Complex output imag parts: (N/2+1)*K doubles.
  */
 void vfft_execute_r2c(vfft_plan p, const double *real_in,
