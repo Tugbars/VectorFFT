@@ -111,6 +111,41 @@ int main(void) {
         vfft_free(il); vfft_free(re); vfft_free(im); vfft_free(out);
     }
 
+    /* ── 2D FFT roundtrip ── */
+    {
+        int sizes[][2] = {{8, 8}, {16, 32}, {64, 64}, {128, 256}, {100, 200}};
+        int nsizes = sizeof(sizes) / sizeof(sizes[0]);
+
+        for (int si = 0; si < nsizes; si++) {
+            int N1 = sizes[si][0], N2 = sizes[si][1];
+            size_t total = (size_t)N1 * N2;
+
+            double *re  = (double *)vfft_alloc(total * sizeof(double));
+            double *im  = (double *)vfft_alloc(total * sizeof(double));
+            double *ref = (double *)vfft_alloc(total * sizeof(double));
+
+            for (size_t i = 0; i < total; i++) {
+                re[i] = (double)rand() / RAND_MAX;
+                im[i] = (double)rand() / RAND_MAX;
+                ref[i] = re[i];
+            }
+
+            vfft_plan p = vfft_plan_2d(N1, N2);
+            if (!p) { printf("  2D %dx%d  PLAN FAILED\n", N1, N2); all_pass = 0; continue; }
+
+            vfft_execute_fwd(p, re, im);
+            vfft_execute_bwd_normalized(p, re, im);
+
+            double err = max_err(re, ref, total);
+            int ok = err < 1e-8;
+            printf("  2D %3dx%-3d roundtrip  err=%.2e  %s\n", N1, N2, err, ok ? "OK" : "FAIL");
+            if (!ok) all_pass = 0;
+
+            vfft_destroy(p);
+            vfft_free(re); vfft_free(im); vfft_free(ref);
+        }
+    }
+
     printf("\n%s\n", all_pass ? "All API tests PASSED" : "Some tests FAILED");
     return all_pass ? 0 : 1;
 }

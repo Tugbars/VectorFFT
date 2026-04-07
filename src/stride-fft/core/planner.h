@@ -447,4 +447,7 @@ static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
     stride_wisdom_calibrate_ex(wis, N, K, reg, NULL);
 }
 
+/* 2D FFT — must be after stride_auto_plan is defined */
+#include "fft2d.h"
+
 #endif /* STRIDE_PLANNER_H */

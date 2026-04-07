@@ -17,7 +17,8 @@
 
 typedef enum {
     VFFT_TYPE_C2C,
-    VFFT_TYPE_R2C
+    VFFT_TYPE_R2C,
+    VFFT_TYPE_2D
 } vfft_plan_type;
 
 struct vfft_plan_s {
@@ -86,6 +87,19 @@ vfft_plan vfft_plan_r2c(int N, size_t K) {
     struct vfft_plan_s *p = (struct vfft_plan_s *)calloc(1, sizeof(*p));
     if (!p) { stride_plan_destroy(inner); return NULL; }
     p->type = VFFT_TYPE_R2C;
+    p->inner = inner;
+    return p;
+}
+
+vfft_plan vfft_plan_2d(int N1, int N2) {
+    if (!g_initialized) vfft_init();
+
+    stride_plan_t *inner = stride_plan_2d(N1, N2, &g_registry);
+    if (!inner) return NULL;
+
+    struct vfft_plan_s *p = (struct vfft_plan_s *)calloc(1, sizeof(*p));
+    if (!p) { stride_plan_destroy(inner); return NULL; }
+    p->type = VFFT_TYPE_2D;
     p->inner = inner;
     return p;
 }

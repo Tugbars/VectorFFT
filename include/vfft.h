@@ -102,6 +102,18 @@ vfft_plan vfft_plan_c2c_measure(int N, size_t K);
 vfft_plan vfft_plan_r2c(int N, size_t K);
 
 /**
+ * vfft_plan_2d — Create a 2D complex FFT plan.
+ *
+ * In-place, row-major layout: re[i*N2 + j], im[i*N2 + j].
+ * bwd(fwd(x)) = N1*N2 * x.
+ *
+ * @param N1   Number of rows (axis-0 FFT length).
+ * @param N2   Number of columns (axis-1 FFT length).
+ * @return     Plan handle, or NULL on failure.
+ */
+vfft_plan vfft_plan_2d(int N1, int N2);
+
+/**
  * vfft_destroy — Destroy a plan and free all resources.
  *
  * @param p   Plan handle (NULL is safe — no-op).
