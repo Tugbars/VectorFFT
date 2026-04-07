@@ -625,6 +625,46 @@ static inline void stride_execute_bwd(const stride_plan_t *plan,
 
 
 /* ═══════════════════════════════════════════════════════════════
+ * NORMALIZED BACKWARD: bwd(fwd(x)) = x  (not N*x)
+ *
+ * Applies 1/N scaling after the backward transform.
+ * SIMD-vectorized, uses the same buffer in-place.
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void stride_execute_bwd_normalized(const stride_plan_t *plan,
+                                                  double *re, double *im) {
+    stride_execute_bwd(plan, re, im);
+
+    const size_t NK = (size_t)plan->N * plan->K;
+    const double inv_N = 1.0 / (double)plan->N;
+
+#if defined(__AVX512F__)
+    {
+        __m512d vinv = _mm512_set1_pd(inv_N);
+        size_t i = 0;
+        for (; i + 8 <= NK; i += 8) {
+            _mm512_storeu_pd(re + i, _mm512_mul_pd(vinv, _mm512_loadu_pd(re + i)));
+            _mm512_storeu_pd(im + i, _mm512_mul_pd(vinv, _mm512_loadu_pd(im + i)));
+        }
+        for (; i < NK; i++) { re[i] *= inv_N; im[i] *= inv_N; }
+    }
+#elif defined(__AVX2__)
+    {
+        __m256d vinv = _mm256_set1_pd(inv_N);
+        size_t i = 0;
+        for (; i + 4 <= NK; i += 4) {
+            _mm256_storeu_pd(re + i, _mm256_mul_pd(vinv, _mm256_loadu_pd(re + i)));
+            _mm256_storeu_pd(im + i, _mm256_mul_pd(vinv, _mm256_loadu_pd(im + i)));
+        }
+        for (; i < NK; i++) { re[i] *= inv_N; im[i] *= inv_N; }
+    }
+#else
+    for (size_t i = 0; i < NK; i++) { re[i] *= inv_N; im[i] *= inv_N; }
+#endif
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
  * PLANNER
  * ═══════════════════════════════════════════════════════════════ */
 
