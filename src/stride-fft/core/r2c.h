@@ -607,7 +607,7 @@ static void _r2c_execute_bwd(void *data, double *re, double *im)
 
         /* 2+3. Fused IFFT + unpack: run stages num_stages-1..1 on scratch,
          *       then stage 0 writes ×2 scaled output directly at stride 2K. */
-        if (0 && d->inner->num_stages > 0 && d->inner->stages[0].n1_scaled_bwd) {  /* DISABLED for debugging */
+        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_scaled_bwd) {
             _stride_execute_bwd_slice_until(d->inner, sr, si, B, B, 1);
             _r2c_fused_last_stage(d->inner, re, sr, si, K, B, b0);
         } else {
