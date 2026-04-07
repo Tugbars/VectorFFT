@@ -73,10 +73,9 @@ No other FFT library has this codelet type. FFTW separates copy from compute. Vk
 - `core/registry.h` — `_REG_T1_OOP(R)`, t1_oop slots in registry struct
 - `core/planner.h` — t1_oop populated from registry into plan stages
 - `generators/gen_radix*.py` — `ct_t1_oop_dit` variant, `t1_oop` addr_mode
-- `codelets/avx2/*_ct_t1_oop_dit.h` — generated AVX2 t1_oop codelets
+- `codelets/{avx2,avx512,scalar}/*_ct_t1_oop_dit.h` — generated t1_oop codelets (all ISAs)
 
 ## TODO
 
 - C2R fused unpack (symmetric: last stage writes directly to output at stride 2K)
-- AVX-512 + scalar t1_oop codelet generation
 - Wire t1_oop into 2D FFT strided executor for non-contiguous axis

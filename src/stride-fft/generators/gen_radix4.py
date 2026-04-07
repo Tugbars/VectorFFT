@@ -735,7 +735,7 @@ radix4_t1_dif_{direction}(
         # ── scalar t1_oop DIT (out-of-place: twiddle inputs 1..R-1, then butterfly) ──
         parts.append(f'''
 static inline void
-radix4_t1_oop_dit_{direction}(
+radix4_t1_oop_dit_{direction}_scalar(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,

@@ -432,7 +432,7 @@ radix2_t1_dif_{direction}(
             else:
                 tw_r_oop = 'r1r*wr + r1i*wi'; tw_i_oop = 'r1i*wr - r1r*wi'
             parts.append(f'''static inline void
-radix2_t1_oop_dit_{direction}(
+radix2_t1_oop_dit_{direction}_scalar(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
