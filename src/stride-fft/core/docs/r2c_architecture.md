@@ -75,7 +75,17 @@ No other FFT library has this codelet type. FFTW separates copy from compute. Vk
 - `generators/gen_radix*.py` — `ct_t1_oop_dit` variant, `t1_oop` addr_mode
 - `codelets/{avx2,avx512,scalar}/*_ct_t1_oop_dit.h` — generated t1_oop codelets (all ISAs)
 
+## C2R Fused Unpack
+
+Symmetric to the forward fused pack. DIF backward runs stage `num_stages-1 .. 1` on scratch, then stage 0 (last, twiddle-free) writes directly to output at stride 2K with ×2 normalization baked in.
+
+Uses `n1_scaled_bwd(is=scratch_stride, os=output_stride, scale=2.0)` — a dedicated codelet that applies `vmulpd(vscale, result)` before each store. Benchmarked at 1.4-1.85x over the separate unpack approach. No impact on the regular C2C hot path.
+
+```
+Before:  IFFT stages → scratch  ──×2 copy──>  output[2n·K]
+After:   IFFT stages 1+ → scratch  ──n1_scaled_bwd(os=2K, scale=2.0)──>  output[2n·K]
+```
+
 ## TODO
 
-- C2R fused unpack (symmetric: last stage writes directly to output at stride 2K)
 - Wire t1_oop into 2D FFT strided executor for non-contiguous axis
