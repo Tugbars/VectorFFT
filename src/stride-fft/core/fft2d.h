@@ -107,9 +107,7 @@ static void _fft2d_scatter(const double * __restrict__ src,
 }
 
 /* Axis-1 forward: tile-walk B rows at a time.
- * Gather B rows → dense scratch, FFT with K=B, scatter back.
- * TODO: fuse first/last stage with gather/scatter via n1_fwd(is=N2, os=B)
- *       to eliminate 2 of the 4 copy passes per tile. */
+ * Gather B rows → column-major scratch, FFT with K=B, scatter back. */
 static void _fft2d_axis1_fwd(
         const stride_plan_t *plan, double *re, double *im,
         double *sr, double *si,
@@ -142,7 +140,6 @@ static void _fft2d_axis1_bwd(
         double *tile_re = re + b0 * N2;
         double *tile_im = im + b0 * N2;
 
-        /* Gather → backward FFT → scatter */
         _fft2d_gather(tile_re, sr, N2, this_B, (size_t)N2);
         _fft2d_gather(tile_im, si, N2, this_B, (size_t)N2);
         stride_execute_bwd(plan, sr, si);
@@ -164,8 +161,8 @@ static void _fft2d_execute_fwd(void *data, double *re, double *im) {
 
     /* Axis 1: row FFT, length N2, tiled with B rows at a time. */
     _fft2d_axis1_fwd(d->plan_ax1, re, im,
-                            d->scratch_re, d->scratch_im,
-                            d->N1, d->N2, d->B);
+                     d->scratch_re, d->scratch_im,
+                     d->N1, d->N2, d->B);
 }
 
 static void _fft2d_execute_bwd(void *data, double *re, double *im) {
@@ -173,8 +170,8 @@ static void _fft2d_execute_bwd(void *data, double *re, double *im) {
 
     /* Axis 1 backward (rows) first — reverse order of forward */
     _fft2d_axis1_bwd(d->plan_ax1, re, im,
-                            d->scratch_re, d->scratch_im,
-                            d->N1, d->N2, d->B);
+                     d->scratch_re, d->scratch_im,
+                     d->N1, d->N2, d->B);
 
     /* Axis 0 backward (columns) */
     stride_execute_bwd(d->plan_ax0, re, im);
@@ -218,7 +215,8 @@ static stride_plan_t *stride_plan_2d(
     if (!d->plan_ax0) { free(d); return NULL; }
 
     /* Axis 1: N2-point FFT with K = B (row FFT, tiled).
-     * B = number of rows per tile, chosen to fit scratch in L2. */
+     * B = tile height, chosen to fit scratch in L2.
+     * Gather B rows → column-major scratch, FFT with K=B, scatter back. */
     d->B = _bluestein_block_size(N2, (size_t)N1);
     d->plan_ax1 = stride_auto_plan(N2, d->B, reg);
     if (!d->plan_ax1) { stride_plan_destroy(d->plan_ax0); free(d); return NULL; }
@@ -227,10 +225,6 @@ static stride_plan_t *stride_plan_2d(
     size_t scratch_sz = (size_t)N2 * d->B;
     d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_sz * sizeof(double));
     d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_sz * sizeof(double));
-    if (!d->scratch_re || !d->scratch_im) {
-        _fft2d_destroy(d);
-        return NULL;
-    }
 
     /* Wrap in override plan */
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
