@@ -291,6 +291,15 @@ set_target_properties(vfft_api_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# Minimal R2C test (no vfft.h, no vfft.c — pure internal API)
+add_executable(vfft_r2c_minimal ../../examples/r2c_minimal.c)
+target_link_libraries(vfft_r2c_minimal PRIVATE vfft_stride ${FFTW3_LIB})
+target_include_directories(vfft_r2c_minimal PRIVATE ${FFTW3_INC})
+target_compile_definitions(vfft_r2c_minimal PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_r2c_minimal PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 if(FFTW3_LIB AND FFTW3_INC)
 add_executable(vfft_real_fft ../../examples/real_fft.c)
 target_link_libraries(vfft_real_fft PRIVATE vfft_stride ${FFTW3_LIB})

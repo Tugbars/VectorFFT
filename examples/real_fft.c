@@ -57,7 +57,7 @@ int main(void) {
     /* Test multiple sizes */
     int test_sizes[] = {8, 16, 64, 100, 200, 256, 1000, 1024, 4096};
     int ntests = sizeof(test_sizes) / sizeof(test_sizes[0]);
-    size_t K = 4;  /* small K for correctness test */
+    size_t K = 64;  /* test with larger K */
 
     int all_pass = 1;
 

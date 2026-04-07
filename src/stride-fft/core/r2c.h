@@ -607,7 +607,7 @@ static void _r2c_execute_bwd(void *data, double *re, double *im)
 
         /* 2+3. Fused IFFT + unpack: run stages num_stages-1..1 on scratch,
          *       then stage 0 writes ×2 scaled output directly at stride 2K. */
-        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_scaled_bwd) {
+        if (0 && d->inner->num_stages > 0 && d->inner->stages[0].n1_scaled_bwd) {  /* DISABLED for debugging */
             _stride_execute_bwd_slice_until(d->inner, sr, si, B, B, 1);
             _r2c_fused_last_stage(d->inner, re, sr, si, K, B, b0);
         } else {
@@ -775,8 +775,13 @@ static inline void stride_execute_c2r(const stride_plan_t *plan,
 {
     stride_r2c_data_t *d = (stride_r2c_data_t *)plan->override_data;
     size_t halfN_plus1_K = (size_t)(plan->N / 2 + 1) * plan->K;
-    /* Copy complex input to real_out (re) and pre-allocated im buffer.
-     * No malloc/free per call — the im buffer lives in the plan. */
+    /* Copy freq-domain data into real_out (N*K buffer) and im temp.
+     * The backward preprocess reads from (re, im) at freq offsets f*K,
+     * then the fused unpack writes time samples to re at offsets 2n*K.
+     * real_out is N*K doubles — large enough for both freq input (N/2+1 rows)
+     * and time output (N rows). The preprocess reads only from rows 0..N/2
+     * and writes to scratch; the unpack then writes all N rows from scratch.
+     * No aliasing: preprocess for block b0 completes before unpack for b0. */
     memcpy(real_out, in_re, halfN_plus1_K * sizeof(double));
     memcpy(d->c2r_im_buf, in_im, halfN_plus1_K * sizeof(double));
     plan->override_bwd(plan->override_data, real_out, d->c2r_im_buf);
