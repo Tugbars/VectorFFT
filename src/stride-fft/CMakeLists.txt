@@ -121,6 +121,10 @@ target_compile_definitions(vfft_stride INTERFACE
     $<$<PLATFORM_ID:Windows>:_USE_MATH_DEFINES>
 )
 
+# ── Compiled library (vfft) — opaque C API ──
+# NOTE: built after FFTW3 discovery below so ${FFTW3_INC} is available.
+# The add_library call is deferred to after FFTW3 discovery.
+
 # ── FFTW3 discovery (shared by bench targets) ──
 find_library(FFTW3_LIB fftw3 HINTS
     "${CMAKE_SOURCE_DIR}/build/vcpkg_installed/x64-windows/lib"
@@ -183,6 +187,19 @@ if(MKL_INC AND MKL_CORE AND MKL_SEQ AND MKL_ILP64)
 else()
     message(STATUS "Intel MKL not found — MKL benchmark disabled")
 endif()
+
+# ── Compiled library (vfft) — opaque C API ──
+add_library(vfft STATIC vfft.c)
+target_link_libraries(vfft PUBLIC vfft_stride)
+target_include_directories(vfft
+    PUBLIC ${CMAKE_SOURCE_DIR}/include
+    PRIVATE ${FFTW3_INC}
+)
+target_compile_definitions(vfft PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft PROPERTIES
+    C_STANDARD 11
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+)
 
 # ── Production benchmarks (VectorFFT vs FFTW vs MKL) ──
 if(FFTW3_LIB AND FFTW3_INC)
@@ -264,6 +281,16 @@ set_target_properties(vfft_bench_strided PROPERTIES
 )
 
 # ── Examples ──
+
+# API test: compiles vfft.c + api_test.c together (avoids static lib linking issues)
+add_executable(vfft_api_test ../../examples/api_test.c vfft.c)
+target_link_libraries(vfft_api_test PRIVATE vfft_stride ${FFTW3_LIB})
+target_include_directories(vfft_api_test PRIVATE ${CMAKE_SOURCE_DIR}/include ${FFTW3_INC})
+target_compile_definitions(vfft_api_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_api_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 if(FFTW3_LIB AND FFTW3_INC)
 add_executable(vfft_real_fft ../../examples/real_fft.c)
 target_link_libraries(vfft_real_fft PRIVATE vfft_stride ${FFTW3_LIB})

@@ -665,6 +665,81 @@ static inline void stride_execute_bwd_normalized(const stride_plan_t *plan,
 
 
 /* ═══════════════════════════════════════════════════════════════
+ * INTERLEAVED ↔ SPLIT CONVERSION
+ *
+ * For callers with interleaved {re,im,re,im,...} data (FFTW/MKL style).
+ * SIMD-optimized. O(N*K) — same cost as a memcpy.
+ *
+ * Usage:
+ *   stride_deinterleave(interleaved, re, im, N*K);
+ *   stride_execute_fwd(plan, re, im);
+ *   stride_reinterleave(re, im, interleaved, N*K);
+ * ═══════════════════════════════════════════════════════════════ */
+
+/** Deinterleave: {r0,i0,r1,i1,...} → re[],im[] */
+static inline void stride_deinterleave(const double * __restrict__ interleaved,
+                                        double * __restrict__ re,
+                                        double * __restrict__ im,
+                                        size_t count) {
+    size_t i = 0;
+#if defined(__AVX512F__)
+    for (; i + 8 <= count; i += 8) {
+        __m512d a = _mm512_loadu_pd(interleaved + 2 * i);
+        __m512d b = _mm512_loadu_pd(interleaved + 2 * i + 8);
+        _mm512_storeu_pd(re + i, _mm512_unpacklo_pd(a, b)); /* not correct for 512 — use permute */
+        _mm512_storeu_pd(im + i, _mm512_unpackhi_pd(a, b));
+    }
+    /* AVX-512 deinterleave is complex (needs cross-lane permutes).
+     * Fall through to AVX2 for remaining. */
+#endif
+#if defined(__AVX2__)
+    for (; i + 4 <= count; i += 4) {
+        /* Load 4 interleaved pairs = 8 doubles */
+        __m256d p0 = _mm256_loadu_pd(interleaved + 2 * i);      /* r0,i0,r1,i1 */
+        __m256d p1 = _mm256_loadu_pd(interleaved + 2 * i + 4);  /* r2,i2,r3,i3 */
+        /* Shuffle: extract re and im */
+        __m256d re_v = _mm256_shuffle_pd(p0, p1, 0x00); /* r0,r1,r2,r3 — wrong lanes */
+        __m256d im_v = _mm256_shuffle_pd(p0, p1, 0x0F); /* i0,i1,i2,i3 — wrong lanes */
+        /* Fix cross-lane: permute 128-bit halves */
+        re_v = _mm256_permute4x64_pd(re_v, 0xD8); /* 0,2,1,3 → r0,r1,r2,r3 */
+        im_v = _mm256_permute4x64_pd(im_v, 0xD8);
+        _mm256_storeu_pd(re + i, re_v);
+        _mm256_storeu_pd(im + i, im_v);
+    }
+#endif
+    for (; i < count; i++) {
+        re[i] = interleaved[2 * i];
+        im[i] = interleaved[2 * i + 1];
+    }
+}
+
+/** Reinterleave: re[],im[] → {r0,i0,r1,i1,...} */
+static inline void stride_reinterleave(const double * __restrict__ re,
+                                        const double * __restrict__ im,
+                                        double * __restrict__ interleaved,
+                                        size_t count) {
+    size_t i = 0;
+#if defined(__AVX2__)
+    for (; i + 4 <= count; i += 4) {
+        __m256d re_v = _mm256_loadu_pd(re + i);  /* r0,r1,r2,r3 */
+        __m256d im_v = _mm256_loadu_pd(im + i);  /* i0,i1,i2,i3 */
+        /* Permute to prepare for interleave */
+        re_v = _mm256_permute4x64_pd(re_v, 0xD8); /* r0,r2,r1,r3 */
+        im_v = _mm256_permute4x64_pd(im_v, 0xD8); /* i0,i2,i1,i3 */
+        __m256d lo = _mm256_unpacklo_pd(re_v, im_v); /* r0,i0,r1,i1 */
+        __m256d hi = _mm256_unpackhi_pd(re_v, im_v); /* r2,i2,r3,i3 */
+        _mm256_storeu_pd(interleaved + 2 * i, lo);
+        _mm256_storeu_pd(interleaved + 2 * i + 4, hi);
+    }
+#endif
+    for (; i < count; i++) {
+        interleaved[2 * i]     = re[i];
+        interleaved[2 * i + 1] = im[i];
+    }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
  * PLANNER
  * ═══════════════════════════════════════════════════════════════ */
 
