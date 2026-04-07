@@ -916,6 +916,29 @@ radix8_n1_{direction}(
 {chr(10).join(n1_lines)}
 }}''')
 
+        # ── scalar n1_scaled: n1 with output *= scale ──
+        import re as _re
+        n1s_lines = []
+        for line in n1_lines:
+            # Replace "out_re[addr]=expr;" with "out_re[addr]=scale*(expr);"
+            line_s = _re.sub(
+                r'(out_(?:re|im)\[[^\]]+\])=([^;]+);',
+                lambda m: f'{m.group(1)}=scale*({m.group(2)});',
+                line)
+            # Replace k*ovs with just k (n1_scaled uses vl-style k, no ovs)
+            line_s = line_s.replace('k*ovs', 'k').replace('k*ivs', 'k')
+            n1s_lines.append(line_s)
+
+        parts.append(f'''
+static inline void
+radix8_n1_scaled_{direction}_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{{
+{chr(10).join(n1s_lines)}
+}}''')
+
         # ── scalar t1 DIT (in-place: twiddle then butterfly) ──
         t1_lines = []
         t1_lines.append(f'    const double c = {fmt(C)};')
@@ -1468,6 +1491,30 @@ radix8_t1_oop_dit_{direction}_{isa_name}(
     size_t is, size_t os, size_t me)
 {{
 {chr(10).join(st_oop)}
+}}''')
+
+            # ── SIMD n1_scaled: n1 with output *= scale ──
+            # Reuse the n1 code list 'sn', wrapping each ST value with mul(vscale, ...)
+            import re as _re
+            sn_scaled = []
+            sn_scaled.append(f'    const {V} vscale = {set1}(scale);')
+            for line in sn:
+                # Replace ST(&addr, val) with ST(&addr, mul(vscale, val))
+                line_s = _re.sub(
+                    r'ST\((&[^,]+),\s*(.+?)\);',
+                    lambda m: f'ST({m.group(1)},{mul}(vscale,{m.group(2)}));',
+                    line)
+                sn_scaled.append(line_s)
+
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_n1_scaled_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{{
+{chr(10).join(sn_scaled)}
 }}''')
 
         parts.append('\n#undef LD\n#undef ST\n#undef VL')

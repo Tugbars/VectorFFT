@@ -732,7 +732,7 @@ radix4_t1_dif_fwd(
 }
 
 static inline void
-radix4_t1_oop_dit_fwd(
+radix4_t1_oop_dit_fwd_scalar(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
@@ -759,6 +759,28 @@ radix4_t1_oop_dit_fwd(
         out_re[m + 3*os] = t1r - t3i; out_im[m + 3*os] = t1i + t3r;
     }
 }
+static inline void
+radix4_n1_scaled_fwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    for (size_t m = 0; m < vl; m++) {
+        const double x0r = in_re[0*is+m], x0i = in_im[0*is+m];
+        const double x1r = in_re[1*is+m], x1i = in_im[1*is+m];
+        const double x2r = in_re[2*is+m], x2i = in_im[2*is+m];
+        const double x3r = in_re[3*is+m], x3i = in_im[3*is+m];
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[0*os+m] = scale * (t0r + t2r); out_im[0*os+m] = scale * (t0i + t2i);
+        out_re[2*os+m] = scale * (t0r - t2r); out_im[2*os+m] = scale * (t0i - t2i);
+        out_re[1*os+m] = scale * (t1r + t3i); out_im[1*os+m] = scale * (t1i - t3r);
+        out_re[3*os+m] = scale * (t1r - t3i); out_im[3*os+m] = scale * (t1i + t3r);
+    }
+}
+
 
 static inline void
 radix4_n1_bwd(
@@ -864,7 +886,7 @@ radix4_t1_dif_bwd(
 }
 
 static inline void
-radix4_t1_oop_dit_bwd(
+radix4_t1_oop_dit_bwd_scalar(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
@@ -891,6 +913,28 @@ radix4_t1_oop_dit_bwd(
         out_re[m + 3*os] = t1r + t3i; out_im[m + 3*os] = t1i - t3r;
     }
 }
+static inline void
+radix4_n1_scaled_bwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    for (size_t m = 0; m < vl; m++) {
+        const double x0r = in_re[0*is+m], x0i = in_im[0*is+m];
+        const double x1r = in_re[1*is+m], x1i = in_im[1*is+m];
+        const double x2r = in_re[2*is+m], x2i = in_im[2*is+m];
+        const double x3r = in_re[3*is+m], x3i = in_im[3*is+m];
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[0*os+m] = scale * (t0r + t2r); out_im[0*os+m] = scale * (t0i + t2i);
+        out_re[2*os+m] = scale * (t0r - t2r); out_im[2*os+m] = scale * (t0i - t2i);
+        out_re[1*os+m] = scale * (t1r - t3i); out_im[1*os+m] = scale * (t1i + t3r);
+        out_re[3*os+m] = scale * (t1r + t3i); out_im[3*os+m] = scale * (t1i - t3r);
+    }
+}
+
 
 __attribute__((target("avx512f,fma")))
 static inline void
@@ -1078,6 +1122,30 @@ radix4_t1_oop_dit_fwd_avx512(
 
 __attribute__((target("avx512f,fma")))
 static inline void
+radix4_n1_scaled_fwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const __m512d vscale = _mm512_set1_pd(scale);
+    for (size_t k = 0; k < vl; k += 8) {
+        const __m512d x0r = R4_LD(&in_re[0*is+k]), x0i = R4_LD(&in_im[0*is+k]);
+        const __m512d x1r = R4_LD(&in_re[1*is+k]), x1i = R4_LD(&in_im[1*is+k]);
+        const __m512d x2r = R4_LD(&in_re[2*is+k]), x2i = R4_LD(&in_im[2*is+k]);
+        const __m512d x3r = R4_LD(&in_re[3*is+k]), x3i = R4_LD(&in_im[3*is+k]);
+        const __m512d t0r = _mm512_add_pd(x0r, x2r), t0i = _mm512_add_pd(x0i, x2i);
+        const __m512d t1r = _mm512_sub_pd(x0r, x2r), t1i = _mm512_sub_pd(x0i, x2i);
+        const __m512d t2r = _mm512_add_pd(x1r, x3r), t2i = _mm512_add_pd(x1i, x3i);
+        const __m512d t3r = _mm512_sub_pd(x1r, x3r), t3i = _mm512_sub_pd(x1i, x3i);
+        R4_ST(&out_re[0*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(t0r, t2r))); R4_ST(&out_im[0*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(t0i, t2i)));
+        R4_ST(&out_re[2*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(t0r, t2r))); R4_ST(&out_im[2*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(t0i, t2i)));
+        R4_ST(&out_re[1*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(t1r, t3i))); R4_ST(&out_im[1*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(t1i, t3r)));
+        R4_ST(&out_re[3*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(t1r, t3i))); R4_ST(&out_im[3*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(t1i, t3r)));
+    }
+}
+
+__attribute__((target("avx512f,fma")))
+static inline void
 radix4_n1_bwd_avx512(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
@@ -1257,6 +1325,30 @@ radix4_t1_oop_dit_bwd_avx512(
         R4_ST(&out_re[m + 2*os], _mm512_sub_pd(t0r, t2r)); R4_ST(&out_im[m + 2*os], _mm512_sub_pd(t0i, t2i));
         R4_ST(&out_re[m + 1*os], _mm512_sub_pd(t1r, t3i)); R4_ST(&out_im[m + 1*os], _mm512_add_pd(t1i, t3r));
         R4_ST(&out_re[m + 3*os], _mm512_add_pd(t1r, t3i)); R4_ST(&out_im[m + 3*os], _mm512_sub_pd(t1i, t3r));
+    }
+}
+
+__attribute__((target("avx512f,fma")))
+static inline void
+radix4_n1_scaled_bwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const __m512d vscale = _mm512_set1_pd(scale);
+    for (size_t k = 0; k < vl; k += 8) {
+        const __m512d x0r = R4_LD(&in_re[0*is+k]), x0i = R4_LD(&in_im[0*is+k]);
+        const __m512d x1r = R4_LD(&in_re[1*is+k]), x1i = R4_LD(&in_im[1*is+k]);
+        const __m512d x2r = R4_LD(&in_re[2*is+k]), x2i = R4_LD(&in_im[2*is+k]);
+        const __m512d x3r = R4_LD(&in_re[3*is+k]), x3i = R4_LD(&in_im[3*is+k]);
+        const __m512d t0r = _mm512_add_pd(x0r, x2r), t0i = _mm512_add_pd(x0i, x2i);
+        const __m512d t1r = _mm512_sub_pd(x0r, x2r), t1i = _mm512_sub_pd(x0i, x2i);
+        const __m512d t2r = _mm512_add_pd(x1r, x3r), t2i = _mm512_add_pd(x1i, x3i);
+        const __m512d t3r = _mm512_sub_pd(x1r, x3r), t3i = _mm512_sub_pd(x1i, x3i);
+        R4_ST(&out_re[0*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(t0r, t2r))); R4_ST(&out_im[0*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(t0i, t2i)));
+        R4_ST(&out_re[2*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(t0r, t2r))); R4_ST(&out_im[2*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(t0i, t2i)));
+        R4_ST(&out_re[1*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(t1r, t3i))); R4_ST(&out_im[1*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(t1i, t3r)));
+        R4_ST(&out_re[3*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(t1r, t3i))); R4_ST(&out_im[3*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(t1i, t3r)));
     }
 }
 

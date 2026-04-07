@@ -224,6 +224,16 @@ static stride_plan_t *_stride_build_plan(
         }
     }
 
+    /* Attach scaled n1 codelets for C2R fused unpack.
+     * Used by backward R2C: last stage writes ×2 scaled output at stride 2K. */
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        if (R < STRIDE_REG_MAX_RADIX && reg->n1_scaled_fwd[R]) {
+            plan->stages[s].n1_scaled_fwd = reg->n1_scaled_fwd[R];
+            plan->stages[s].n1_scaled_bwd = reg->n1_scaled_bwd[R];
+        }
+    }
+
     return plan;
 }
 

@@ -180,6 +180,20 @@ radix2_t1_oop_dit_fwd_scalar(
 }
 
 static inline void
+radix2_n1_scaled_fwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    for (size_t k = 0; k < vl; k++) {
+        const double x0r = in_re[0*is+k], x0i = in_im[0*is+k];
+        const double x1r = in_re[1*is+k], x1i = in_im[1*is+k];
+        out_re[0*os+k] = scale * (x0r + x1r); out_im[0*os+k] = scale * (x0i + x1i);
+        out_re[1*os+k] = scale * (x0r - x1r); out_im[1*os+k] = scale * (x0i - x1i);
+    }
+}
+
+static inline void
 radix2_t1_dit_bwd(
     double * __restrict__ rio_re, double * __restrict__ rio_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
@@ -225,6 +239,20 @@ radix2_t1_oop_dit_bwd_scalar(
         const double x1r = r1r*wr + r1i*wi, x1i = r1i*wr - r1r*wi;
         out_re[m + 0*os] = x0r + x1r; out_im[m + 0*os] = x0i + x1i;
         out_re[m + 1*os] = x0r - x1r; out_im[m + 1*os] = x0i - x1i;
+    }
+}
+
+static inline void
+radix2_n1_scaled_bwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    for (size_t k = 0; k < vl; k++) {
+        const double x0r = in_re[0*is+k], x0i = in_im[0*is+k];
+        const double x1r = in_re[1*is+k], x1i = in_im[1*is+k];
+        out_re[0*os+k] = scale * (x0r + x1r); out_im[0*os+k] = scale * (x0i + x1i);
+        out_re[1*os+k] = scale * (x0r - x1r); out_im[1*os+k] = scale * (x0i - x1i);
     }
 }
 

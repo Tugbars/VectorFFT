@@ -374,6 +374,22 @@ radix2_t1_oop_dit_fwd_avx512(
 
 __attribute__((target("avx512f,fma")))
 static inline void
+radix2_n1_scaled_fwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const __m512d vscale = _mm512_set1_pd(scale);
+    for (size_t k = 0; k < vl; k += 8) {
+        const __m512d x0r = LD(&in_re[0*is+k]), x0i = LD(&in_im[0*is+k]);
+        const __m512d x1r = LD(&in_re[1*is+k]), x1i = LD(&in_im[1*is+k]);
+        ST(&out_re[0*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(x0r, x1r))); ST(&out_im[0*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(x0i, x1i)));
+        ST(&out_re[1*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(x0r, x1r))); ST(&out_im[1*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(x0i, x1i)));
+    }
+}
+
+__attribute__((target("avx512f,fma")))
+static inline void
 radix2_n1_bwd_avx512(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
@@ -483,6 +499,22 @@ radix2_t1_oop_dit_bwd_avx512(
         const __m512d x1r = _mm512_fmadd_pd(r1i,wi,_mm512_mul_pd(r1r,wr)), x1i = _mm512_fnmadd_pd(r1r,wi,_mm512_mul_pd(r1i,wr));
         ST(&out_re[m + 0*os], _mm512_add_pd(x0r, x1r)); ST(&out_im[m + 0*os], _mm512_add_pd(x0i, x1i));
         ST(&out_re[m + 1*os], _mm512_sub_pd(x0r, x1r)); ST(&out_im[m + 1*os], _mm512_sub_pd(x0i, x1i));
+    }
+}
+
+__attribute__((target("avx512f,fma")))
+static inline void
+radix2_n1_scaled_bwd_avx512(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const __m512d vscale = _mm512_set1_pd(scale);
+    for (size_t k = 0; k < vl; k += 8) {
+        const __m512d x0r = LD(&in_re[0*is+k]), x0i = LD(&in_im[0*is+k]);
+        const __m512d x1r = LD(&in_re[1*is+k]), x1i = LD(&in_im[1*is+k]);
+        ST(&out_re[0*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(x0r, x1r))); ST(&out_im[0*os+k], _mm512_mul_pd(vscale, _mm512_add_pd(x0i, x1i)));
+        ST(&out_re[1*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(x0r, x1r))); ST(&out_im[1*os+k], _mm512_mul_pd(vscale, _mm512_sub_pd(x0i, x1i)));
     }
 }
 

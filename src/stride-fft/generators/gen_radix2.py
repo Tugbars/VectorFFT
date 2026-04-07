@@ -449,6 +449,22 @@ radix2_t1_oop_dit_{direction}_scalar(
 }}''')
             parts.append(f'')
 
+            # ── Scalar n1_scaled (n1 with output *= scale) ──
+            parts.append(f'''static inline void
+radix2_n1_scaled_{direction}_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{{
+    for (size_t k = 0; k < vl; k++) {{
+        const double x0r = in_re[0*is+k], x0i = in_im[0*is+k];
+        const double x1r = in_re[1*is+k], x1i = in_im[1*is+k];
+        out_re[0*os+k] = scale * (x0r + x1r); out_im[0*os+k] = scale * (x0i + x1i);
+        out_re[1*os+k] = scale * (x0r - x1r); out_im[1*os+k] = scale * (x0i - x1i);
+    }}
+}}''')
+            parts.append(f'')
+
         # ── SIMD: n1, n1_ovs, t1_dit, t1_dif ──
         if not is_scalar:
             p = {'avx2': '_mm256', 'avx512': '_mm512'}[isa_name]
@@ -589,6 +605,25 @@ radix2_t1_oop_dit_{direction}_{isa_name}(
         const {T} x1r = {vc1r_oop}, x1i = {vc1i_oop};
         ST(&out_re[m + 0*os], {ADD}(x0r, x1r)); ST(&out_im[m + 0*os], {ADD}(x0i, x1i));
         ST(&out_re[m + 1*os], {SUB}(x0r, x1r)); ST(&out_im[m + 1*os], {SUB}(x0i, x1i));
+    }}
+}}''')
+            parts.append(f'')
+
+            # ── SIMD n1_scaled: n1 with output *= scale ──
+            SET1 = f'{p}_set1_pd'
+            parts.append(f'''{target}
+static inline void
+radix2_n1_scaled_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{{
+    const {T} vscale = {SET1}(scale);
+    for (size_t k = 0; k < vl; k += {VL}) {{
+        const {T} x0r = LD(&in_re[0*is+k]), x0i = LD(&in_im[0*is+k]);
+        const {T} x1r = LD(&in_re[1*is+k]), x1i = LD(&in_im[1*is+k]);
+        ST(&out_re[0*os+k], {MUL}(vscale, {ADD}(x0r, x1r))); ST(&out_im[0*os+k], {MUL}(vscale, {ADD}(x0i, x1i)));
+        ST(&out_re[1*os+k], {MUL}(vscale, {SUB}(x0r, x1r))); ST(&out_im[1*os+k], {MUL}(vscale, {SUB}(x0i, x1i)));
     }}
 }}''')
             parts.append(f'')
