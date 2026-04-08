@@ -309,6 +309,19 @@ if(VFFT_HAS_MKL)
     target_compile_definitions(vfft_bench_2d PRIVATE VFFT_HAS_MKL MKL_ILP64)
 endif()
 
+# ── Transpose benchmark ──
+add_executable(vfft_bench_transpose bench/bench_transpose.c)
+target_link_libraries(vfft_bench_transpose PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_transpose PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_bench_transpose PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(VFFT_HAS_MKL)
+    target_link_libraries(vfft_bench_transpose PRIVATE ${MKL_LIBS})
+    target_include_directories(vfft_bench_transpose PRIVATE ${MKL_INC})
+    target_compile_definitions(vfft_bench_transpose PRIVATE VFFT_HAS_MKL MKL_ILP64)
+endif()
+
 # ── Examples ──
 
 # API test: compiles vfft.c + api_test.c together (avoids static lib linking issues)
