@@ -1,8 +1,8 @@
 /**
  * bench_2d.c — 2D FFT benchmark: VectorFFT (Bailey) vs MKL
  *
- * Tests heuristic vs exhaustive planner, compares against MKL.
- * Includes roundtrip correctness check.
+ * Uses exhaustive sub-plan search (default for 2D).
+ * Includes roundtrip correctness check and timing breakdown.
  */
 
 #include <stdio.h>
@@ -37,34 +37,6 @@ static double max_roundtrip_err(const double *orig_re, const double *orig_im,
     return mx;
 }
 
-static double bench_plan(stride_plan_t *plan, double *re, double *im,
-                         const double *ref_re, const double *ref_im,
-                         size_t total, int reps) {
-    memcpy(re, ref_re, total * sizeof(double));
-    memcpy(im, ref_im, total * sizeof(double));
-    for (int w = 0; w < 20; w++)
-        stride_execute_fwd(plan, re, im);
-    double t0 = now_ns();
-    for (int r = 0; r < reps; r++)
-        stride_execute_fwd(plan, re, im);
-    return (now_ns() - t0) / reps / 1000.0;
-}
-
-static void print_plan_factors(stride_plan_t *plan, const char *label) {
-    if (plan->override_fwd) {
-        /* 2D plan — print sub-plan factors */
-        stride_fft2d_data_t *d = (stride_fft2d_data_t *)plan->override_data;
-        printf("  %s col [N=%d,K=%zu]: ", label, d->plan_col->N, d->plan_col->K);
-        for (int s = 0; s < d->plan_col->num_stages; s++)
-            printf("%d%s", d->plan_col->factors[s], s < d->plan_col->num_stages-1 ? "×" : "");
-        printf("\n");
-        printf("  %s row [N=%d,K=%zu]: ", label, d->plan_row->N, d->plan_row->K);
-        for (int s = 0; s < d->plan_row->num_stages; s++)
-            printf("%d%s", d->plan_row->factors[s], s < d->plan_row->num_stages-1 ? "×" : "");
-        printf("\n");
-    }
-}
-
 int main(void) {
     stride_env_init();
     stride_pin_thread(0);
@@ -76,18 +48,25 @@ int main(void) {
     stride_registry_t reg;
     stride_registry_init(&reg);
 
-    printf("=== 2D FFT Benchmark: VectorFFT (Bailey) vs MKL ===\n\n");
+    printf("=== 2D FFT Benchmark: VectorFFT (Bailey+exhaustive) vs MKL ===\n\n");
 
     int sizes[][2] = {
+        {32, 32},
         {64, 64},
         {128, 128},
         {256, 256},
         {512, 512},
         {1024, 1024},
+        {64, 128},
+        {128, 256},
         {100, 200},
     };
     int nsizes = sizeof(sizes) / sizeof(sizes[0]);
     int reps = 200;
+
+    printf("%-12s %10s %10s %10s %10s %8s %10s\n",
+           "Size", "vfft_us", "col_us", "tp+row_us", "mkl_us", "ratio", "err");
+    printf("------------+----------+----------+----------+----------+--------+----------\n");
 
     for (int si = 0; si < nsizes; si++) {
         int N1 = sizes[si][0], N2 = sizes[si][1];
@@ -103,22 +82,55 @@ int main(void) {
             ref_im[i] = (double)rand() / RAND_MAX;
         }
 
-        char label[32];
-        snprintf(label, sizeof(label), "%dx%d", N1, N2);
-        printf("── %s ──\n", label);
+        /* ── VectorFFT (exhaustive by default) ── */
+        stride_plan_t *plan = stride_plan_2d(N1, N2, &reg);
+        if (!plan) {
+            char label[32];
+            snprintf(label, sizeof(label), "%dx%d", N1, N2);
+            printf("%-12s  PLAN FAILED\n", label);
+            STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
+            STRIDE_ALIGNED_FREE(ref_re); STRIDE_ALIGNED_FREE(ref_im);
+            continue;
+        }
 
-        /* ── Heuristic plan ── */
-        stride_plan_t *plan_h = stride_plan_2d(N1, N2, &reg);
-        double err_h = max_roundtrip_err(ref_re, ref_im, re, im, total, plan_h);
-        double us_h = bench_plan(plan_h, re, im, ref_re, ref_im, total, reps);
-        print_plan_factors(plan_h, "heur");
+        /* Print factorizations */
+        {
+            stride_fft2d_data_t *d = (stride_fft2d_data_t *)plan->override_data;
+            printf("  %dx%d col: ", N1, N2);
+            for (int s = 0; s < d->plan_col->num_stages; s++)
+                printf("%d%s", d->plan_col->factors[s], s < d->plan_col->num_stages-1 ? "x" : "");
+            printf("  row: ");
+            for (int s = 0; s < d->plan_row->num_stages; s++)
+                printf("%d%s", d->plan_row->factors[s], s < d->plan_row->num_stages-1 ? "x" : "");
+            printf("\n");
+        }
 
-        /* ── Exhaustive plan ── */
-        printf("  (running exhaustive search...)\n");
-        stride_plan_t *plan_e = stride_plan_2d_measure(N1, N2, &reg);
-        double err_e = max_roundtrip_err(ref_re, ref_im, re, im, total, plan_e);
-        double us_e = bench_plan(plan_e, re, im, ref_re, ref_im, total, reps);
-        print_plan_factors(plan_e, "exh ");
+        /* Correctness */
+        double err = max_roundtrip_err(ref_re, ref_im, re, im, total, plan);
+
+        /* Bench total */
+        memcpy(re, ref_re, total * sizeof(double));
+        memcpy(im, ref_im, total * sizeof(double));
+        for (int w = 0; w < 20; w++)
+            stride_execute_fwd(plan, re, im);
+        double t0 = now_ns();
+        for (int r = 0; r < reps; r++)
+            stride_execute_fwd(plan, re, im);
+        double vfft_us = (now_ns() - t0) / reps / 1000.0;
+
+        /* Bench column FFT only (for timing split) */
+        stride_plan_t *plan_col_only = stride_exhaustive_plan(N1, (size_t)N2, &reg);
+        if (!plan_col_only) plan_col_only = stride_auto_plan(N1, (size_t)N2, &reg);
+        for (int w = 0; w < 20; w++)
+            stride_execute_fwd(plan_col_only, re, im);
+        t0 = now_ns();
+        for (int r = 0; r < reps; r++)
+            stride_execute_fwd(plan_col_only, re, im);
+        double col_us = (now_ns() - t0) / reps / 1000.0;
+        double tp_row_us = vfft_us - col_us;
+        stride_plan_destroy(plan_col_only);
+
+        stride_plan_destroy(plan);
 
         /* ── MKL ── */
         double mkl_us = 0;
@@ -139,7 +151,7 @@ int main(void) {
 
         for (int w = 0; w < 20; w++)
             DftiComputeForward(mkl_h, re, im);
-        double t0 = now_ns();
+        t0 = now_ns();
         for (int r = 0; r < reps; r++)
             DftiComputeForward(mkl_h, re, im);
         mkl_us = (now_ns() - t0) / reps / 1000.0;
@@ -147,23 +159,21 @@ int main(void) {
         DftiFreeDescriptor(&mkl_h);
 #endif
 
-        printf("  heuristic:  %8.1f us  err=%.1e\n", us_h, err_h);
-        printf("  exhaustive: %8.1f us  err=%.1e", us_e, err_e);
-        if (us_h > 0) printf("  (%.0f%% of heur)", 100.0 * us_e / us_h);
-        printf("\n");
-        if (mkl_us > 0) {
-            printf("  MKL:        %8.1f us\n", mkl_us);
-            printf("  vs MKL:     heur=%.2fx  exh=%.2fx\n",
-                   mkl_us / us_h, mkl_us / us_e);
-        }
-        printf("\n");
+        char label[32];
+        snprintf(label, sizeof(label), "%dx%d", N1, N2);
+        if (mkl_us > 0)
+            printf("%-12s %9.1f %9.1f %9.1f %9.1f %7.2fx %9.1e\n",
+                   label, vfft_us, col_us, tp_row_us, mkl_us,
+                   mkl_us / vfft_us, err);
+        else
+            printf("%-12s %9.1f %9.1f %9.1f %9s %7s %9.1e\n",
+                   label, vfft_us, col_us, tp_row_us, "N/A", "N/A", err);
 
-        stride_plan_destroy(plan_h);
-        stride_plan_destroy(plan_e);
         STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
         STRIDE_ALIGNED_FREE(ref_re); STRIDE_ALIGNED_FREE(ref_im);
     }
 
+    printf("\nratio = MKL/ours (>1 = we're faster)\n");
     printf("Done.\n");
     return 0;
 }
