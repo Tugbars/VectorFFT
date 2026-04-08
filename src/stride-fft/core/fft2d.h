@@ -1,29 +1,29 @@
 /**
- * stride_fft2d.h -- 2D FFT via Bailey transpose decomposition
+ * stride_fft2d.h -- 2D FFT with two-regime dispatch
  *
- * In-place, same layout (row-major in, row-major out).
+ * Small/mid sizes (WS ≤ L2):  tiled gather/scatter with SIMD transpose kernels
+ * Large sizes     (WS > L2):  Bailey full-matrix transpose decomposition
  *
- * Algorithm (Bailey):
- *   Forward:
- *     1. Column FFTs (N1-point, K=N2) — native, no transpose needed.
- *     2. Transpose N1×N2 → N2×N1 to scratch.
- *     3. Row FFTs on transposed scratch (N2-point, K=N1) — native.
- *     4. Transpose N2×N1 → N1×N2 back to data.
+ * Both regimes use the same column FFT (native, K=N2). They differ only
+ * in how row FFTs are performed:
  *
- *   Backward (reverse of forward):
- *     1. Transpose N1×N2 → N2×N1 to scratch.
- *     2. Row IFFTs on scratch (N2-point, K=N1) — native.
- *     3. Transpose N2×N1 → N1×N2 back to data.
- *     4. Column IFFTs (N1-point, K=N2) — native.
+ *   Tiled: for each tile of B rows:
+ *     1. Gather B rows → scratch via SIMD transpose (B×N2 → N2×B)
+ *     2. N2-point FFT with K=B on scratch
+ *     3. Scatter scratch back via SIMD transpose (N2×B → B×N2)
  *
- * Both FFT phases are native column FFTs (stride = K). The transpose
- * converts row access patterns to column access patterns, eliminating
- * the gather/scatter that was 80% of execution time in the old tiled
- * approach.
+ *   Bailey: two full-matrix transposes bracket a single large-K row FFT.
+ *     1. Transpose N1×N2 → N2×N1 to scratch
+ *     2. N2-point FFT with K=N1 on scratch
+ *     3. Transpose N2×N1 → N1×N2 back
+ *
+ * Tiled wins when the working set fits in L2 — the per-tile gather/scatter
+ * uses our fast 4×4/8×4 SIMD transpose kernels and the tile FFT benefits
+ * from warm L2 cache. Bailey wins at large sizes where cache-oblivious
+ * recursive transpose is essential.
  *
  * Data layout (split-complex):
  *   re[i * N2 + j]  for i=0..N1-1, j=0..N2-1
- *   im[i * N2 + j]  same
  *
  * Normalization: bwd(fwd(x)) = N1*N2 * x.
  */
@@ -33,6 +33,15 @@
 #include "executor.h"
 #include "transpose.h"
 
+/* Working-set threshold for regime selection (bytes).
+ * Below this: tiled gather/scatter. Above: Bailey transpose. */
+#ifndef FFT2D_TILED_WS_BYTES
+#define FFT2D_TILED_WS_BYTES (256 * 1024)
+#endif
+
+/* Minimum tile height for SIMD efficiency. */
+#define FFT2D_MIN_TILE 4
+
 /* ═══════════════════════════════════════════════════════════════
  * 2D PLAN DATA
  * ═══════════════════════════════════════════════════════════════ */
@@ -40,56 +49,128 @@
 typedef struct {
     int N1;                    /* rows (axis-0 FFT length) */
     int N2;                    /* cols (axis-1 FFT length) */
+    int use_bailey;            /* 1 = full transpose, 0 = tiled */
 
     stride_plan_t *plan_col;   /* N1-point FFT, K = N2 (column FFTs, native) */
-    stride_plan_t *plan_row;   /* N2-point FFT, K = N1 (row FFTs on transposed data) */
+    stride_plan_t *plan_row;   /* N2-point FFT, K = N1 (Bailey) or K = B (tiled) */
 
-    double *scratch_re;        /* N1 * N2 scratch for transpose */
+    size_t B;                  /* tile height (tiled mode only) */
+    double *scratch_re;        /* Bailey: N1*N2. Tiled: N2*B */
     double *scratch_im;
 } stride_fft2d_data_t;
 
 
 /* ═══════════════════════════════════════════════════════════════
- * EXECUTE
+ * TILED EXECUTOR — gather/scatter via SIMD transpose
  * ═══════════════════════════════════════════════════════════════ */
 
-static void _fft2d_execute_fwd(void *data, double *re, double *im) {
-    stride_fft2d_data_t *d = (stride_fft2d_data_t *)data;
-    const size_t N1 = (size_t)d->N1;
-    const size_t N2 = (size_t)d->N2;
+static void _fft2d_tiled_fwd(stride_fft2d_data_t *d,
+                              double *re, double *im) {
+    const int N1 = d->N1, N2 = d->N2;
+    const size_t B = d->B;
 
-    /* 1. Column FFTs: N1-point, K=N2 — native layout */
-    stride_execute_fwd(d->plan_col, re, im);
+    for (size_t i = 0; i < (size_t)N1; i += B) {
+        size_t this_B = B;
+        if (i + B > (size_t)N1) this_B = (size_t)N1 - i;
 
-    /* 2. Transpose N1×N2 → N2×N1 to scratch */
+        /* Gather: transpose this_B × N2 → N2 × B scratch.
+         * ld_dst = B (not this_B!) so the plan's K=B layout is correct.
+         * Positions this_B..B-1 in each block are unused. */
+        stride_transpose_pair(
+            re + i * N2, im + i * N2,
+            d->scratch_re, d->scratch_im,
+            (size_t)N2, B,
+            this_B, (size_t)N2);
+
+        /* FFT on scratch: N2-point, slice_K=this_B of the K=B plan */
+        _stride_execute_fwd_slice(d->plan_row,
+                                  d->scratch_re, d->scratch_im,
+                                  this_B, B);
+
+        /* Scatter: transpose N2 × B scratch → this_B × N2 back.
+         * ld_src = B to match the plan's layout. */
+        stride_transpose_pair(
+            d->scratch_re, d->scratch_im,
+            re + i * N2, im + i * N2,
+            B, (size_t)N2,
+            (size_t)N2, this_B);
+    }
+}
+
+static void _fft2d_tiled_bwd(stride_fft2d_data_t *d,
+                              double *re, double *im) {
+    const int N1 = d->N1, N2 = d->N2;
+    const size_t B = d->B;
+
+    for (size_t i = 0; i < (size_t)N1; i += B) {
+        size_t this_B = B;
+        if (i + B > (size_t)N1) this_B = (size_t)N1 - i;
+
+        stride_transpose_pair(
+            re + i * N2, im + i * N2,
+            d->scratch_re, d->scratch_im,
+            (size_t)N2, B,
+            this_B, (size_t)N2);
+
+        _stride_execute_bwd_slice(d->plan_row,
+                                  d->scratch_re, d->scratch_im,
+                                  this_B, B);
+
+        stride_transpose_pair(
+            d->scratch_re, d->scratch_im,
+            re + i * N2, im + i * N2,
+            B, (size_t)N2,
+            (size_t)N2, this_B);
+    }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * BAILEY EXECUTOR — full-matrix transpose
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void _fft2d_bailey_fwd(stride_fft2d_data_t *d,
+                               double *re, double *im) {
+    const size_t N1 = (size_t)d->N1, N2 = (size_t)d->N2;
+
     stride_transpose_pair(re, im, d->scratch_re, d->scratch_im,
                           N2, N1, N1, N2);
-
-    /* 3. Row FFTs on transposed scratch: N2-point, K=N1 — native */
     stride_execute_fwd(d->plan_row, d->scratch_re, d->scratch_im);
-
-    /* 4. Transpose N2×N1 → N1×N2 back to data */
     stride_transpose_pair(d->scratch_re, d->scratch_im, re, im,
                           N1, N2, N2, N1);
 }
 
-static void _fft2d_execute_bwd(void *data, double *re, double *im) {
-    stride_fft2d_data_t *d = (stride_fft2d_data_t *)data;
-    const size_t N1 = (size_t)d->N1;
-    const size_t N2 = (size_t)d->N2;
+static void _fft2d_bailey_bwd(stride_fft2d_data_t *d,
+                               double *re, double *im) {
+    const size_t N1 = (size_t)d->N1, N2 = (size_t)d->N2;
 
-    /* 1. Transpose N1×N2 → N2×N1 to scratch */
     stride_transpose_pair(re, im, d->scratch_re, d->scratch_im,
                           N2, N1, N1, N2);
-
-    /* 2. Row IFFTs on scratch: N2-point, K=N1 — native */
     stride_execute_bwd(d->plan_row, d->scratch_re, d->scratch_im);
-
-    /* 3. Transpose N2×N1 → N1×N2 back to data */
     stride_transpose_pair(d->scratch_re, d->scratch_im, re, im,
                           N1, N2, N2, N1);
+}
 
-    /* 4. Column IFFTs: N1-point, K=N2 — native */
+
+/* ═══════════════════════════════════════════════════════════════
+ * DISPATCH
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void _fft2d_execute_fwd(void *data, double *re, double *im) {
+    stride_fft2d_data_t *d = (stride_fft2d_data_t *)data;
+    stride_execute_fwd(d->plan_col, re, im);
+    if (d->use_bailey)
+        _fft2d_bailey_fwd(d, re, im);
+    else
+        _fft2d_tiled_fwd(d, re, im);
+}
+
+static void _fft2d_execute_bwd(void *data, double *re, double *im) {
+    stride_fft2d_data_t *d = (stride_fft2d_data_t *)data;
+    if (d->use_bailey)
+        _fft2d_bailey_bwd(d, re, im);
+    else
+        _fft2d_tiled_bwd(d, re, im);
     stride_execute_bwd(d->plan_col, re, im);
 }
 
@@ -113,66 +194,83 @@ static void _fft2d_destroy(void *data) {
  * PLAN CREATION
  * ═══════════════════════════════════════════════════════════════ */
 
-/* Internal: build 2D plan from two pre-built sub-plans */
-static stride_plan_t *_fft2d_build(int N1, int N2,
-                                    stride_plan_t *plan_col,
-                                    stride_plan_t *plan_row) {
-    stride_fft2d_data_t *d =
-        (stride_fft2d_data_t *)calloc(1, sizeof(*d));
-    if (!d) return NULL;
-
-    d->N1 = N1;
-    d->N2 = N2;
-    d->plan_col = plan_col;
-    d->plan_row = plan_row;
-
-    /* Scratch: full N1*N2 for transpose (split-complex) */
-    size_t total = (size_t)N1 * N2;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    if (!d->scratch_re || !d->scratch_im) {
-        _fft2d_destroy(d);
-        return NULL;
-    }
-
-    /* Wrap in override plan */
+static stride_plan_t *_fft2d_wrap(stride_fft2d_data_t *d) {
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     if (!plan) { _fft2d_destroy(d); return NULL; }
-
-    plan->N = N1 * N2;
+    plan->N = d->N1 * d->N2;
     plan->K = 1;
     plan->num_stages = 0;
     plan->override_fwd     = _fft2d_execute_fwd;
     plan->override_bwd     = _fft2d_execute_bwd;
     plan->override_destroy = _fft2d_destroy;
     plan->override_data    = d;
-
     return plan;
 }
 
-/** Default 2D plan — uses exhaustive search for sub-plans.
- *
- * 2D sub-plans have large K (K=N2 or K=N1) where the heuristic
- * factorizer picks R=32 which regresses badly due to stride pressure.
- * Exhaustive search avoids this (finds [4,4,4,4] instead of [2,4,32]
- * for N=256, K=256 — 24% faster). The search cost is negligible since
- * 2D plans are created once and sub-plan N is typically moderate. */
+/** Choose tile height B for tiled mode.
+ *  Fits N2*B in half of L2 (leave room for data reads). */
+static size_t _fft2d_choose_tile(int N2, int N1) {
+    size_t max_B = FFT2D_TILED_WS_BYTES / (2 * (size_t)N2 * sizeof(double));
+    if (max_B < FFT2D_MIN_TILE) max_B = FFT2D_MIN_TILE;
+    /* Round down to multiple of 8 for 8×4 kernel alignment */
+    max_B &= ~(size_t)7;
+    if (max_B < FFT2D_MIN_TILE) max_B = FFT2D_MIN_TILE;
+    if (max_B > (size_t)N1) max_B = (size_t)N1;
+    return max_B;
+}
+
+/** Default 2D plan — auto-selects tiled or Bailey based on working set. */
 static stride_plan_t *stride_plan_2d(
         int N1, int N2,
         const stride_registry_t *reg)
 {
     if (N1 < 1 || N2 < 1) return NULL;
 
-    /* Try exhaustive first, fall back to heuristic */
-    stride_plan_t *pc = stride_exhaustive_plan(N1, (size_t)N2, reg);
-    if (!pc) pc = stride_auto_plan(N1, (size_t)N2, reg);
-    if (!pc) return NULL;
+    stride_fft2d_data_t *d =
+        (stride_fft2d_data_t *)calloc(1, sizeof(*d));
+    if (!d) return NULL;
 
-    stride_plan_t *pr = stride_exhaustive_plan(N2, (size_t)N1, reg);
-    if (!pr) pr = stride_auto_plan(N2, (size_t)N1, reg);
-    if (!pr) { stride_plan_destroy(pc); return NULL; }
+    d->N1 = N1;
+    d->N2 = N2;
 
-    return _fft2d_build(N1, N2, pc, pr);
+    /* Column FFTs: always N1-point, K=N2 */
+    d->plan_col = stride_exhaustive_plan(N1, (size_t)N2, reg);
+    if (!d->plan_col) d->plan_col = stride_auto_plan(N1, (size_t)N2, reg);
+    if (!d->plan_col) { free(d); return NULL; }
+
+    /* Decide regime: tiled vs Bailey */
+    size_t ws = 2 * (size_t)N1 * N2 * sizeof(double); /* re + im */
+    d->use_bailey = (ws > FFT2D_TILED_WS_BYTES);
+
+    if (d->use_bailey) {
+        /* Bailey: row plan with K=N1, full-matrix scratch */
+        d->plan_row = stride_exhaustive_plan(N2, (size_t)N1, reg);
+        if (!d->plan_row) d->plan_row = stride_auto_plan(N2, (size_t)N1, reg);
+        if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+
+        d->B = (size_t)N1;
+        size_t total = (size_t)N1 * N2;
+        d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    } else {
+        /* Tiled: row plan with K=B, small scratch */
+        d->B = _fft2d_choose_tile(N2, N1);
+
+        d->plan_row = stride_exhaustive_plan(N2, d->B, reg);
+        if (!d->plan_row) d->plan_row = stride_auto_plan(N2, d->B, reg);
+        if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+
+        size_t tile_sz = (size_t)N2 * d->B;
+        d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
+        d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
+    }
+
+    if (!d->scratch_re || !d->scratch_im) {
+        _fft2d_destroy(d);
+        return NULL;
+    }
+
+    return _fft2d_wrap(d);
 }
 
 /** Fast 2D plan — heuristic only, no exhaustive search. */
@@ -182,12 +280,41 @@ static stride_plan_t *stride_plan_2d_heuristic(
 {
     if (N1 < 1 || N2 < 1) return NULL;
 
-    stride_plan_t *pc = stride_auto_plan(N1, (size_t)N2, reg);
-    if (!pc) return NULL;
-    stride_plan_t *pr = stride_auto_plan(N2, (size_t)N1, reg);
-    if (!pr) { stride_plan_destroy(pc); return NULL; }
+    stride_fft2d_data_t *d =
+        (stride_fft2d_data_t *)calloc(1, sizeof(*d));
+    if (!d) return NULL;
 
-    return _fft2d_build(N1, N2, pc, pr);
+    d->N1 = N1;
+    d->N2 = N2;
+
+    d->plan_col = stride_auto_plan(N1, (size_t)N2, reg);
+    if (!d->plan_col) { free(d); return NULL; }
+
+    size_t ws = 2 * (size_t)N1 * N2 * sizeof(double);
+    d->use_bailey = (ws > FFT2D_TILED_WS_BYTES);
+
+    if (d->use_bailey) {
+        d->plan_row = stride_auto_plan(N2, (size_t)N1, reg);
+        if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+        d->B = (size_t)N1;
+        size_t total = (size_t)N1 * N2;
+        d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    } else {
+        d->B = _fft2d_choose_tile(N2, N1);
+        d->plan_row = stride_auto_plan(N2, d->B, reg);
+        if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+        size_t tile_sz = (size_t)N2 * d->B;
+        d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
+        d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
+    }
+
+    if (!d->scratch_re || !d->scratch_im) {
+        _fft2d_destroy(d);
+        return NULL;
+    }
+
+    return _fft2d_wrap(d);
 }
 
 
