@@ -1,13 +1,10 @@
 /**
- * stride_fft2d.h -- 2D FFT with two-regime dispatch
+ * stride_fft2d.h -- 2D FFT with two methods: tiled and Bailey
  *
- * Small/mid sizes (WS ≤ L2):  tiled gather/scatter with SIMD transpose kernels
- * Large sizes     (WS > L2):  Bailey full-matrix transpose decomposition
+ * Both methods use the same column FFT (native, K=N2). They differ
+ * only in how row FFTs are performed:
  *
- * Both regimes use the same column FFT (native, K=N2). They differ only
- * in how row FFTs are performed:
- *
- *   Tiled: for each tile of B rows:
+ *   Tiled (default): for each tile of B rows:
  *     1. Gather B rows → scratch via SIMD transpose (B×N2 → N2×B)
  *     2. N2-point FFT with K=B on scratch
  *     3. Scatter scratch back via SIMD transpose (N2×B → B×N2)
@@ -17,10 +14,15 @@
  *     2. N2-point FFT with K=N1 on scratch
  *     3. Transpose N2×N1 → N1×N2 back
  *
- * Tiled wins when the working set fits in L2 — the per-tile gather/scatter
- * uses our fast 4×4/8×4 SIMD transpose kernels and the tile FFT benefits
- * from warm L2 cache. Bailey wins at large sizes where cache-oblivious
- * recursive transpose is essential.
+ * Default: tiled with B=8. On Intel i9-14900KF (AVX2), tiled B=8 beats
+ * both Bailey and MKL at all tested sizes (32² to 1024², 1.08-1.63x
+ * over MKL). Small tiles keep the working set in L1/L2 and the SIMD
+ * 4×4/8×4 transpose kernels make gather/scatter nearly free.
+ *
+ * NOTE: this was benchmarked on a single CPU. Other architectures
+ * (different L1/L2 sizes, memory subsystems) may prefer Bailey at
+ * very large sizes or a different tile B. Override FFT2D_DEFAULT_TILE
+ * at build time to tune.
  *
  * Data layout (split-complex):
  *   re[i * N2 + j]  for i=0..N1-1, j=0..N2-1
@@ -207,19 +209,23 @@ static stride_plan_t *_fft2d_wrap(stride_fft2d_data_t *d) {
     return plan;
 }
 
-/** Choose tile height B for tiled mode.
- *  Fits N2*B in half of L2 (leave room for data reads). */
+/* Default tile height. Benchmarked: B=8 wins at large sizes (256+),
+ * B=16 wins at mid sizes (64-128). B=8 is the safe default — it
+ * keeps the tile (N2×8×16 bytes) well within L1 for any N2 ≤ 256
+ * and within L2 for N2 ≤ 2048. Override at build time if needed. */
+#ifndef FFT2D_DEFAULT_TILE
+#define FFT2D_DEFAULT_TILE 8
+#endif
+
 static size_t _fft2d_choose_tile(int N2, int N1) {
-    size_t max_B = FFT2D_TILED_WS_BYTES / (2 * (size_t)N2 * sizeof(double));
-    if (max_B < FFT2D_MIN_TILE) max_B = FFT2D_MIN_TILE;
-    /* Round down to multiple of 8 for 8×4 kernel alignment */
-    max_B &= ~(size_t)7;
-    if (max_B < FFT2D_MIN_TILE) max_B = FFT2D_MIN_TILE;
-    if (max_B > (size_t)N1) max_B = (size_t)N1;
-    return max_B;
+    size_t B = FFT2D_DEFAULT_TILE;
+    if (B > (size_t)N1) B = (size_t)N1;
+    if (B < FFT2D_MIN_TILE) B = FFT2D_MIN_TILE;
+    return B;
 }
 
-/** Default 2D plan — auto-selects tiled or Bailey based on working set. */
+/** Default 2D plan — tiled with exhaustive sub-plan search.
+ *  Beats MKL 1.08-1.63x on i9-14900KF (AVX2). */
 static stride_plan_t *stride_plan_2d(
         int N1, int N2,
         const stride_registry_t *reg)
@@ -238,32 +244,19 @@ static stride_plan_t *stride_plan_2d(
     if (!d->plan_col) d->plan_col = stride_auto_plan(N1, (size_t)N2, reg);
     if (!d->plan_col) { free(d); return NULL; }
 
-    /* Decide regime: tiled vs Bailey */
-    size_t ws = 2 * (size_t)N1 * N2 * sizeof(double); /* re + im */
-    d->use_bailey = (ws > FFT2D_TILED_WS_BYTES);
+    /* Tiled approach: small tiles (B=8) beat Bailey at all tested sizes.
+     * Keeps tile working set in L1/L2, SIMD transpose kernels make
+     * gather/scatter nearly free. */
+    d->use_bailey = 0;
+    d->B = _fft2d_choose_tile(N2, N1);
 
-    if (d->use_bailey) {
-        /* Bailey: row plan with K=N1, full-matrix scratch */
-        d->plan_row = stride_exhaustive_plan(N2, (size_t)N1, reg);
-        if (!d->plan_row) d->plan_row = stride_auto_plan(N2, (size_t)N1, reg);
-        if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+    d->plan_row = stride_exhaustive_plan(N2, d->B, reg);
+    if (!d->plan_row) d->plan_row = stride_auto_plan(N2, d->B, reg);
+    if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
 
-        d->B = (size_t)N1;
-        size_t total = (size_t)N1 * N2;
-        d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-        d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    } else {
-        /* Tiled: row plan with K=B, small scratch */
-        d->B = _fft2d_choose_tile(N2, N1);
-
-        d->plan_row = stride_exhaustive_plan(N2, d->B, reg);
-        if (!d->plan_row) d->plan_row = stride_auto_plan(N2, d->B, reg);
-        if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
-
-        size_t tile_sz = (size_t)N2 * d->B;
-        d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
-        d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
-    }
+    size_t tile_sz = (size_t)N2 * d->B;
+    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
+    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
 
     if (!d->scratch_re || !d->scratch_im) {
         _fft2d_destroy(d);
@@ -273,8 +266,11 @@ static stride_plan_t *stride_plan_2d(
     return _fft2d_wrap(d);
 }
 
-/** Fast 2D plan — heuristic only, no exhaustive search. */
-static stride_plan_t *stride_plan_2d_heuristic(
+/** Bailey 2D plan — always uses full-matrix transpose.
+ *  Provided as alternative for architectures where large-K FFT + cache-
+ *  oblivious transpose outperforms the tiled approach (e.g. CPUs with
+ *  large L2/L3 and fast HW prefetch). Uses exhaustive sub-plan search. */
+static stride_plan_t *stride_plan_2d_bailey(
         int N1, int N2,
         const stride_registry_t *reg)
 {
@@ -286,28 +282,20 @@ static stride_plan_t *stride_plan_2d_heuristic(
 
     d->N1 = N1;
     d->N2 = N2;
+    d->use_bailey = 1;
 
-    d->plan_col = stride_auto_plan(N1, (size_t)N2, reg);
+    d->plan_col = stride_exhaustive_plan(N1, (size_t)N2, reg);
+    if (!d->plan_col) d->plan_col = stride_auto_plan(N1, (size_t)N2, reg);
     if (!d->plan_col) { free(d); return NULL; }
 
-    size_t ws = 2 * (size_t)N1 * N2 * sizeof(double);
-    d->use_bailey = (ws > FFT2D_TILED_WS_BYTES);
+    d->plan_row = stride_exhaustive_plan(N2, (size_t)N1, reg);
+    if (!d->plan_row) d->plan_row = stride_auto_plan(N2, (size_t)N1, reg);
+    if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
 
-    if (d->use_bailey) {
-        d->plan_row = stride_auto_plan(N2, (size_t)N1, reg);
-        if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
-        d->B = (size_t)N1;
-        size_t total = (size_t)N1 * N2;
-        d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-        d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    } else {
-        d->B = _fft2d_choose_tile(N2, N1);
-        d->plan_row = stride_auto_plan(N2, d->B, reg);
-        if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
-        size_t tile_sz = (size_t)N2 * d->B;
-        d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
-        d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
-    }
+    d->B = (size_t)N1;
+    size_t total = (size_t)N1 * N2;
+    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
 
     if (!d->scratch_re || !d->scratch_im) {
         _fft2d_destroy(d);
