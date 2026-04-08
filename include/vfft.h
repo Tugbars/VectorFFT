@@ -11,17 +11,64 @@
  * Convention: bwd(fwd(x)) = N * x  (unnormalized backward).
  *   Use vfft_execute_bwd_normalized for bwd(fwd(x)) = x.
  *
+ * Output order: the forward transform produces output in implementation-defined
+ *   (digit-reversed) order, NOT natural DFT order. This is by design — the
+ *   DIT forward and DIF backward permutations cancel, giving a permutation-free
+ *   roundtrip with zero reordering overhead.
+ *
+ *   Implications:
+ *   - Roundtrip (fwd then bwd) is exact — no permutation needed.
+ *   - Pointwise multiply of two spectra from the SAME plan is correct
+ *     (both are in the same scrambled order) — convolution works.
+ *   - Reading individual frequency bins (e.g., DC, Nyquist) from forward
+ *     output requires knowing the permutation order.
+ *   - R2C output IS in natural order (the postprocess unscrambles it).
+ *   - 2D forward output is in natural order along axis-1 (rows) but
+ *     digit-reversed along axis-0 (columns).
+ *
+ *   Future: vfft_permute(plan, re, im) will be provided to reorder forward
+ *   output into natural DFT order for users who need frequency-domain
+ *   inspection, filtering, or spectral analysis. The permutation table is
+ *   already computed internally — exposing it is a minor addition.
+ *
  * Thread safety:
  *   - Plans are immutable after creation — safe to share across threads.
  *   - vfft_execute_* modifies only the user's data buffers (re, im).
  *   - vfft_set_num_threads is global — call before creating plans.
  *
- * Example:
+ * === Quick start ===
+ *
+ *   #include <vfft.h>
+ *
  *   vfft_init();
  *   vfft_plan p = vfft_plan_c2c(1024, 256);
+ *   double *re = vfft_alloc(1024 * 256 * sizeof(double));
+ *   double *im = vfft_alloc(1024 * 256 * sizeof(double));
+ *   // ... fill re[], im[] ...
  *   vfft_execute_fwd(p, re, im);
- *   vfft_execute_bwd_normalized(p, re, im);
+ *   vfft_execute_bwd_normalized(p, re, im);  // roundtrip: output == input
  *   vfft_destroy(p);
+ *   vfft_free(re); vfft_free(im);
+ *
+ * === CMake integration ===
+ *
+ *   # In your CMakeLists.txt:
+ *   find_package(VectorFFT REQUIRED)
+ *   target_link_libraries(myapp PRIVATE VectorFFT::vfft)
+ *
+ *   # Build and install VectorFFT:
+ *   git clone https://github.com/user/VectorFFT.git
+ *   cd VectorFFT && mkdir build && cd build
+ *   cmake .. -DCMAKE_BUILD_TYPE=Release
+ *   cmake --build . --config Release
+ *   cmake --install . --prefix /usr/local  # or any prefix
+ *
+ *   # Then in your project:
+ *   cmake -DCMAKE_PREFIX_PATH=/usr/local ..
+ *
+ * === pkg-config ===
+ *
+ *   pkg-config --cflags --libs vectorfft
  */
 #ifndef VFFT_H
 #define VFFT_H

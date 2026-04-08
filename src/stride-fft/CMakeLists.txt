@@ -107,12 +107,12 @@ if(Python3_FOUND)
     )
 endif()
 
-# ── Interface library (header-only) ──
+# ── Interface library (header-only, internal) ──
 add_library(vfft_stride INTERFACE)
 
 target_include_directories(vfft_stride INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/core
-    ${VFFT_CODELET_DIR}
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/core>
+    $<BUILD_INTERFACE:${VFFT_CODELET_DIR}>
 )
 
 target_compile_options(vfft_stride INTERFACE ${_isa_flags})
@@ -189,16 +189,31 @@ else()
 endif()
 
 # ── Compiled library (vfft) — opaque C API ──
+# Does NOT link vfft_stride (avoids export dependency). Instead, it gets
+# the same include dirs and flags directly so it compiles standalone.
 add_library(vfft STATIC vfft.c)
-target_link_libraries(vfft PUBLIC vfft_stride)
 target_include_directories(vfft
-    PUBLIC ${CMAKE_SOURCE_DIR}/include
-    PRIVATE ${FFTW3_INC}
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core
+        ${VFFT_CODELET_DIR}
 )
-target_compile_definitions(vfft PRIVATE _CRT_SECURE_NO_WARNINGS)
+# FFTW include only needed if benchmarks use exhaustive search with FFTW reference
+if(FFTW3_INC)
+    target_include_directories(vfft PRIVATE ${FFTW3_INC})
+endif()
+target_compile_options(vfft PRIVATE ${_isa_flags})
+target_compile_definitions(vfft PRIVATE
+    _CRT_SECURE_NO_WARNINGS
+    $<$<PLATFORM_ID:Windows>:_USE_MATH_DEFINES>
+)
 set_target_properties(vfft PROPERTIES
     C_STANDARD 11
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    EXPORT_NAME vfft
+    OUTPUT_NAME vfft
 )
 
 # ── Production benchmarks (VectorFFT vs FFTW vs MKL) ──
@@ -297,9 +312,8 @@ endif()
 # ── Examples ──
 
 # API test: compiles vfft.c + api_test.c together (avoids static lib linking issues)
-add_executable(vfft_api_test ../../examples/api_test.c vfft.c)
-target_link_libraries(vfft_api_test PRIVATE vfft_stride ${FFTW3_LIB})
-target_include_directories(vfft_api_test PRIVATE ${CMAKE_SOURCE_DIR}/include ${FFTW3_INC})
+add_executable(vfft_api_test ../../examples/api_test.c)
+target_link_libraries(vfft_api_test PRIVATE vfft)
 target_compile_definitions(vfft_api_test PRIVATE _CRT_SECURE_NO_WARNINGS)
 set_target_properties(vfft_api_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"

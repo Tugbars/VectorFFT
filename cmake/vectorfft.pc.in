@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: VectorFFT
+Description: High-performance mixed-radix FFT library
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lvfft
+Cflags: -I${includedir}
