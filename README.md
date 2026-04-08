@@ -1,10 +1,11 @@
 <img width="1280" height="640" alt="vectorfft_banner (1)" src="https://github.com/user-attachments/assets/27eeb333-f0a9-41d4-8b00-8624b1f1ee07" />
 
-
 <p align="center">
   A permutation-free mixed-radix Fast Fourier Transform library library in C with hand-tuned AVX2/AVX-512 codelets.<br>
   <b>Beats Intel MKL and FFTW on every tested size.</b> No external dependencies.
 </p>
+
+The classical FFT literature optimized a cost model where arithmetic operations were the dominant resource. Mature libraries descending from that tradition — FFTW, MKL, and their kin — inherit codelet structures and factorization heuristics shaped by that assumption. On modern SIMD CPUs the binding constraint has shifted from arithmetic throughput to register pressure, memory bandwidth, and instruction-level parallelism; algorithms that were optimal under the old cost model are no longer optimal under the new one. VectorFFT was designed from the hardware backward: the butterfly, radix, and twiddle-storage decisions are driven by what the machine is actually bottlenecked on, not by operation count minimization
 
 ---
 
