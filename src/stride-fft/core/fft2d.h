@@ -150,8 +150,33 @@ static stride_plan_t *_fft2d_build(int N1, int N2,
     return plan;
 }
 
-/** Heuristic 2D plan (fast planner). */
+/** Default 2D plan — uses exhaustive search for sub-plans.
+ *
+ * 2D sub-plans have large K (K=N2 or K=N1) where the heuristic
+ * factorizer picks R=32 which regresses badly due to stride pressure.
+ * Exhaustive search avoids this (finds [4,4,4,4] instead of [2,4,32]
+ * for N=256, K=256 — 24% faster). The search cost is negligible since
+ * 2D plans are created once and sub-plan N is typically moderate. */
 static stride_plan_t *stride_plan_2d(
+        int N1, int N2,
+        const stride_registry_t *reg)
+{
+    if (N1 < 1 || N2 < 1) return NULL;
+
+    /* Try exhaustive first, fall back to heuristic */
+    stride_plan_t *pc = stride_exhaustive_plan(N1, (size_t)N2, reg);
+    if (!pc) pc = stride_auto_plan(N1, (size_t)N2, reg);
+    if (!pc) return NULL;
+
+    stride_plan_t *pr = stride_exhaustive_plan(N2, (size_t)N1, reg);
+    if (!pr) pr = stride_auto_plan(N2, (size_t)N1, reg);
+    if (!pr) { stride_plan_destroy(pc); return NULL; }
+
+    return _fft2d_build(N1, N2, pc, pr);
+}
+
+/** Fast 2D plan — heuristic only, no exhaustive search. */
+static stride_plan_t *stride_plan_2d_heuristic(
         int N1, int N2,
         const stride_registry_t *reg)
 {
@@ -160,24 +185,6 @@ static stride_plan_t *stride_plan_2d(
     stride_plan_t *pc = stride_auto_plan(N1, (size_t)N2, reg);
     if (!pc) return NULL;
     stride_plan_t *pr = stride_auto_plan(N2, (size_t)N1, reg);
-    if (!pr) { stride_plan_destroy(pc); return NULL; }
-
-    return _fft2d_build(N1, N2, pc, pr);
-}
-
-/** Exhaustive 2D plan (slow planner — tries all factorizations). */
-static stride_plan_t *stride_plan_2d_measure(
-        int N1, int N2,
-        const stride_registry_t *reg)
-{
-    if (N1 < 1 || N2 < 1) return NULL;
-
-    stride_plan_t *pc = stride_exhaustive_plan(N1, (size_t)N2, reg);
-    if (!pc) pc = stride_auto_plan(N1, (size_t)N2, reg);
-    if (!pc) return NULL;
-
-    stride_plan_t *pr = stride_exhaustive_plan(N2, (size_t)N1, reg);
-    if (!pr) pr = stride_auto_plan(N2, (size_t)N1, reg);
     if (!pr) { stride_plan_destroy(pc); return NULL; }
 
     return _fft2d_build(N1, N2, pc, pr);
