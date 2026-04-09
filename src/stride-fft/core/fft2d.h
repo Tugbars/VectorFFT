@@ -387,5 +387,44 @@ static stride_plan_t *stride_plan_2d_bailey(
     return _fft2d_wrap(d);
 }
 
+/** Wisdom-aware 2D plan — uses pre-calibrated wisdom for sub-plans.
+ *  Avoids redundant exhaustive search when wisdom already has the entries.
+ *  Falls back to exhaustive if wisdom doesn't have the entry. */
+static stride_plan_t *stride_plan_2d_wise(
+        int N1, int N2,
+        const stride_registry_t *reg,
+        const stride_wisdom_t *wis)
+{
+    if (N1 < 1 || N2 < 1) return NULL;
+
+    stride_fft2d_data_t *d =
+        (stride_fft2d_data_t *)calloc(1, sizeof(*d));
+    if (!d) return NULL;
+
+    d->N1 = N1;
+    d->N2 = N2;
+    d->use_bailey = 0;
+    d->B = _fft2d_choose_tile(N2, N1);
+
+    /* Column FFTs: use wisdom, fall back to exhaustive, then heuristic */
+    d->plan_col = stride_wise_plan(N1, (size_t)N2, reg, wis);
+    if (!d->plan_col) d->plan_col = stride_exhaustive_plan(N1, (size_t)N2, reg);
+    if (!d->plan_col) d->plan_col = stride_auto_plan(N1, (size_t)N2, reg);
+    if (!d->plan_col) { free(d); return NULL; }
+
+    /* Row FFTs: use wisdom, fall back to exhaustive, then heuristic */
+    d->plan_row = stride_wise_plan(N2, d->B, reg, wis);
+    if (!d->plan_row) d->plan_row = stride_exhaustive_plan(N2, d->B, reg);
+    if (!d->plan_row) d->plan_row = stride_auto_plan(N2, d->B, reg);
+    if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+
+    if (!_fft2d_alloc_scratch(d, (size_t)N2 * d->B)) {
+        _fft2d_destroy(d);
+        return NULL;
+    }
+
+    return _fft2d_wrap(d);
+}
+
 
 #endif /* STRIDE_FFT2D_H */
