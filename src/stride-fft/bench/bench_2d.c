@@ -1,7 +1,7 @@
 /**
- * bench_2d.c — 2D FFT benchmark: tiled vs Bailey vs MKL
+ * bench_2d.c — 2D FFT benchmark: VectorFFT (tiled, multi-threaded) vs MKL
  *
- * Compares both regimes at every size to find the crossover.
+ * Tests 1, 2, 4, 8 threads. Includes roundtrip correctness check.
  */
 
 #include <stdio.h>
@@ -48,84 +48,24 @@ static double bench_fwd(stride_plan_t *plan, double *re, double *im,
     return (now_ns() - t0) / reps / 1000.0;
 }
 
-/* Build a forced-Bailey plan (always full transpose, even for small sizes) */
-static stride_plan_t *_build_bailey(int N1, int N2,
-                                     const stride_registry_t *reg) {
-    stride_fft2d_data_t *d = (stride_fft2d_data_t *)calloc(1, sizeof(*d));
-    if (!d) return NULL;
-    d->N1 = N1; d->N2 = N2; d->use_bailey = 1;
-
-    d->plan_col = stride_exhaustive_plan(N1, (size_t)N2, reg);
-    if (!d->plan_col) d->plan_col = stride_auto_plan(N1, (size_t)N2, reg);
-    if (!d->plan_col) { free(d); return NULL; }
-
-    d->plan_row = stride_exhaustive_plan(N2, (size_t)N1, reg);
-    if (!d->plan_row) d->plan_row = stride_auto_plan(N2, (size_t)N1, reg);
-    if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
-
-    d->B = (size_t)N1;
-    size_t total = (size_t)N1 * N2;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-
-    stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
-    plan->N = N1 * N2; plan->K = 1; plan->num_stages = 0;
-    plan->override_fwd = _fft2d_execute_fwd;
-    plan->override_bwd = _fft2d_execute_bwd;
-    plan->override_destroy = _fft2d_destroy;
-    plan->override_data = d;
-    return plan;
-}
-
-/* Build a forced-tiled plan with specific B */
-static stride_plan_t *_build_tiled(int N1, int N2, size_t B,
-                                    const stride_registry_t *reg) {
-    stride_fft2d_data_t *d = (stride_fft2d_data_t *)calloc(1, sizeof(*d));
-    if (!d) return NULL;
-    d->N1 = N1; d->N2 = N2; d->use_bailey = 0; d->B = B;
-
-    d->plan_col = stride_exhaustive_plan(N1, (size_t)N2, reg);
-    if (!d->plan_col) d->plan_col = stride_auto_plan(N1, (size_t)N2, reg);
-    if (!d->plan_col) { free(d); return NULL; }
-
-    d->plan_row = stride_exhaustive_plan(N2, B, reg);
-    if (!d->plan_row) d->plan_row = stride_auto_plan(N2, B, reg);
-    if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
-
-    size_t tile_sz = (size_t)N2 * B;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, tile_sz * sizeof(double));
-
-    stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
-    plan->N = N1 * N2; plan->K = 1; plan->num_stages = 0;
-    plan->override_fwd = _fft2d_execute_fwd;
-    plan->override_bwd = _fft2d_execute_bwd;
-    plan->override_destroy = _fft2d_destroy;
-    plan->override_data = d;
-    return plan;
-}
-
 int main(void) {
     stride_env_init();
     stride_pin_thread(0);
-    stride_set_num_threads(1);
-#ifdef VFFT_HAS_MKL
-    mkl_set_num_threads(1);
-#endif
 
     stride_registry_t reg;
     stride_registry_init(&reg);
 
-    printf("=== 2D FFT: Tiled vs Bailey vs MKL ===\n\n");
+    printf("=== 2D FFT Multi-threaded Benchmark ===\n\n");
 
     int sizes[][2] = {
-        {32, 32}, {64, 64}, {128, 128}, {256, 256},
-        {512, 512}, {1024, 1024},
-        {64, 128}, {128, 256}, {100, 200},
+        {128, 128},
+        {256, 256},
+        {512, 512},
+        {1024, 1024},
     };
     int nsizes = sizeof(sizes) / sizeof(sizes[0]);
-    size_t tile_Bs[] = {8, 16, 32, 64};
-    int ntiles = sizeof(tile_Bs) / sizeof(tile_Bs[0]);
+    int thread_counts[] = {1, 2, 4, 8};
+    int nthreads = sizeof(thread_counts) / sizeof(thread_counts[0]);
     int reps = 200;
 
     for (int si = 0; si < nsizes; si++) {
@@ -145,67 +85,59 @@ int main(void) {
         snprintf(label, sizeof(label), "%dx%d", N1, N2);
         printf("── %s ──\n", label);
 
-        /* Bailey */
-        stride_plan_t *pb = _build_bailey(N1, N2, &reg);
-        double err_b = roundtrip_err(ref_re, ref_im, re, im, total, pb);
-        double us_b = bench_fwd(pb, re, im, ref_re, ref_im, total, reps);
-        stride_plan_destroy(pb);
-        printf("  Bailey (K=%d):     %8.1f us  err=%.1e\n", N1, us_b, err_b);
+        double us_1t = 0;
 
-        /* Tiled at various B */
-        double best_tiled = 1e18;
-        size_t best_B = 0;
-        for (int ti = 0; ti < ntiles; ti++) {
-            size_t B = tile_Bs[ti];
-            if (B > (size_t)N1) continue;
+        for (int ti = 0; ti < nthreads; ti++) {
+            int T = thread_counts[ti];
+            stride_set_num_threads(T);
 
-            stride_plan_t *pt = _build_tiled(N1, N2, B, &reg);
-            if (!pt) continue;
-            double err_t = roundtrip_err(ref_re, ref_im, re, im, total, pt);
-            double us_t = bench_fwd(pt, re, im, ref_re, ref_im, total, reps);
-            stride_plan_destroy(pt);
-            printf("  Tiled  (B=%3zu):   %8.1f us  err=%.1e\n", B, us_t, err_t);
+            stride_plan_t *plan = stride_plan_2d(N1, N2, &reg);
+            if (!plan) { printf("  T=%d: PLAN FAILED\n", T); continue; }
 
-            if (us_t < best_tiled) { best_tiled = us_t; best_B = B; }
+            double err = roundtrip_err(ref_re, ref_im, re, im, total, plan);
+            double us = bench_fwd(plan, re, im, ref_re, ref_im, total, reps);
+
+            if (T == 1) us_1t = us;
+            double speedup = (us_1t > 0) ? us_1t / us : 0;
+
+            printf("  T=%d:  %8.1f us  speedup=%.2fx  err=%.1e\n",
+                   T, us, speedup, err);
+
+            stride_plan_destroy(plan);
         }
 
-        /* MKL */
-        double mkl_us = 0;
+        /* MKL single-threaded for reference */
 #ifdef VFFT_HAS_MKL
-        memcpy(re, ref_re, total * sizeof(double));
-        memcpy(im, ref_im, total * sizeof(double));
-        DFTI_DESCRIPTOR_HANDLE mkl_h = NULL;
-        MKL_LONG dims[2] = {N1, N2};
-        MKL_LONG strides[3] = {0, N2, 1};
-        DftiCreateDescriptor(&mkl_h, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims);
-        DftiSetValue(mkl_h, DFTI_PLACEMENT, DFTI_INPLACE);
-        DftiSetValue(mkl_h, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
-        DftiSetValue(mkl_h, DFTI_INPUT_STRIDES, strides);
-        DftiSetValue(mkl_h, DFTI_OUTPUT_STRIDES, strides);
-        DftiCommitDescriptor(mkl_h);
-        for (int w = 0; w < 20; w++)
-            DftiComputeForward(mkl_h, re, im);
-        double t0 = now_ns();
-        for (int r = 0; r < reps; r++)
-            DftiComputeForward(mkl_h, re, im);
-        mkl_us = (now_ns() - t0) / reps / 1000.0;
-        DftiFreeDescriptor(&mkl_h);
+        {
+            mkl_set_num_threads(1);
+            memcpy(re, ref_re, total * sizeof(double));
+            memcpy(im, ref_im, total * sizeof(double));
+            DFTI_DESCRIPTOR_HANDLE mkl_h = NULL;
+            MKL_LONG dims[2] = {N1, N2};
+            MKL_LONG strides[3] = {0, N2, 1};
+            DftiCreateDescriptor(&mkl_h, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims);
+            DftiSetValue(mkl_h, DFTI_PLACEMENT, DFTI_INPLACE);
+            DftiSetValue(mkl_h, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
+            DftiSetValue(mkl_h, DFTI_INPUT_STRIDES, strides);
+            DftiSetValue(mkl_h, DFTI_OUTPUT_STRIDES, strides);
+            DftiCommitDescriptor(mkl_h);
+            for (int w = 0; w < 20; w++)
+                DftiComputeForward(mkl_h, re, im);
+            double t0 = now_ns();
+            for (int r = 0; r < reps; r++)
+                DftiComputeForward(mkl_h, re, im);
+            double mkl_us = (now_ns() - t0) / reps / 1000.0;
+            DftiFreeDescriptor(&mkl_h);
+            printf("  MKL(1T): %6.1f us\n", mkl_us);
+        }
 #endif
-
-        /* Summary */
-        double best_us = (best_tiled < us_b) ? best_tiled : us_b;
-        const char *winner = (best_tiled < us_b) ? "tiled" : "bailey";
-        size_t winner_K = (best_tiled < us_b) ? best_B : (size_t)N1;
-        printf("  >> Best: %s (K=%zu) = %.1f us", winner, winner_K, best_us);
-        if (mkl_us > 0)
-            printf("  |  MKL: %.1f us  |  ratio: %.2fx",
-                   mkl_us, mkl_us / best_us);
-        printf("\n\n");
+        printf("\n");
 
         STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
         STRIDE_ALIGNED_FREE(ref_re); STRIDE_ALIGNED_FREE(ref_im);
     }
 
-    printf("ratio = MKL/ours (>1 = we're faster)\n");
+    stride_set_num_threads(1);
+    printf("Done.\n");
     return 0;
 }
