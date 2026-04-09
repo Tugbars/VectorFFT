@@ -34,7 +34,27 @@
  * Thread safety:
  *   - Plans are immutable after creation — safe to share across threads.
  *   - vfft_execute_* modifies only the user's data buffers (re, im).
- *   - vfft_set_num_threads is global — call before creating plans.
+ *     No global or plan state is written during execution.
+ *   - vfft_set_num_threads is global — call once before creating plans.
+ *     Do not call concurrently with execute or plan creation.
+ *   - vfft_init / vfft_plan_* allocate memory — call from one thread.
+ *
+ * Threading model (two options, do not mix):
+ *
+ *   Option A — internal parallelism (recommended for single-stream):
+ *     vfft_set_num_threads(8);        // library parallelizes internally
+ *     vfft_execute_fwd(plan, re, im); // call from ONE thread
+ *
+ *   Option B — external parallelism (recommended for multi-stream):
+ *     vfft_set_num_threads(1);        // disable internal threading
+ *     // Each of your threads calls execute on its own data:
+ *     //   thread 0: vfft_execute_fwd(plan, re0, im0);
+ *     //   thread 1: vfft_execute_fwd(plan, re1, im1);
+ *     // Safe: plan is read-only, no shared mutable state at T=1.
+ *
+ *   Do not combine both (calling execute from multiple threads with
+ *   internal threading enabled) — this oversubscribes the CPU and the
+ *   internal thread pool is not designed for concurrent callers.
  *
  * === Quick start ===
  *
