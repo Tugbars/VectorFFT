@@ -1,5 +1,4 @@
-<img width="1280" height="640" alt="vectorfft_banner (1)" src="https://github.com/user-attachments/assets/27eeb333-f0a9-41d4-8b00-8624b1f1ee07" />
-
+<img width="2560" height="960" alt="image" src="https://github.com/user-attachments/assets/0a206a63-f7d3-45f4-8e1d-be3aca3e2cb5" />
 
 <p align="center">
   A permutation-free mixed-radix Fast Fourier Transform library in C with hand-tuned AVX2/AVX-512 codelets.<br>
