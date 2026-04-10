@@ -22,8 +22,9 @@ src/stride-fft/bench/vfft_bench_results.csv
 src/test-codelets/build_bench/
 src/test-codelets.zip
 
-# Generated plots at root
+# Generated plots at root (but allow docs/performance/ for README images)
 vfft_*.png
+!docs/performance/*.png
 
 # IDE / tools
 /.vscode/
