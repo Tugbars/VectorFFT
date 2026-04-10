@@ -16,7 +16,7 @@
 
 ### 1D FFT Throughput — VectorFFT vs Intel MKL
 
-![Throughput](src/stride-fft/bench/vfft_throughput_1d.png)
+![Throughput](docs/performance/vfft_throughput_1d.png)
 
 Three panels showing GFLOP/s at each batch size. Blue = VectorFFT, Red = MKL. Different marker shapes per category. VectorFFT sits above MKL across the board.
 
@@ -33,7 +33,7 @@ Three panels showing GFLOP/s at each batch size. Blue = VectorFFT, Red = MKL. Di
 
 ### Speedup over Intel MKL — All Categories
 
-![Speedup](src/stride-fft/bench/vfft_speedup_vs_mkl.png)
+![Speedup](docs/performance/vfft_speedup_vs_mkl.png)
 
 Every point above the dashed line is a VectorFFT win. Marker size indicates batch count (small=K=4, medium=K=32, large=K=256). **All 198 points are above parity.**
 
@@ -47,7 +47,7 @@ Every point above the dashed line is a VectorFFT win. Marker size indicates batc
 
 ### Combined Dense Scatter — All Sizes & Batch Counts
 
-![Scatter](src/stride-fft/bench/vfft_scatter_all.png)
+![Scatter](docs/performance/vfft_scatter_all.png)
 
 All 198 data points overlaid. Blue cloud (VectorFFT) consistently above red cloud (MKL). Peak throughput at small N with large K where codelets run entirely from L1.
 
@@ -100,7 +100,7 @@ Multi-threaded 2D (tile-parallel, per-thread scratch, zero barriers):
 
 ## Accuracy
 
-![Precision](src/stride-fft/bench/vfft_precision.png)
+![Precision](docs/performance/vfft_precision.png)
 
 Roundtrip error (fwd + bwd / N) across all tested sizes. Errors follow the theoretical O(log2(N) * epsilon) bound. All values within double-precision tolerance.
 
