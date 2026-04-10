@@ -187,10 +187,10 @@ static const size_entry_t all_sizes[] = {
     {78125,  "prime_pow"},   /* 5^7 */
 
     /* Pure prime powers — large */
-    {59049,  "prime_pow"},   /* 3^10 */
+    /* 59049 (3^10) and 531441 (3^12) skipped: need >5 stages of R=3,
+     * exceeds EXHAUST_MAX_DEPTH. Revisit when R=9 or R=27 codelets exist. */
     {117649, "prime_pow"},   /* 7^6 */
     {390625, "prime_pow"},   /* 5^8 */
-    {531441, "prime_pow"},   /* 3^12 */
     {823543, "prime_pow"},   /* 7^7 */
 
     /* Genfft prime powers (R=11, R=13) */
