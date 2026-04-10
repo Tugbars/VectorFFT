@@ -171,6 +171,8 @@ class Emitter:
         elif self.addr_mode == 't1':
             if self.isa.name == 'scalar': return f"m*ms+{n}*ios"
             return f"m+{n}*ios"
+        elif self.addr_mode == 't1_oop':
+            return f"m+{n}*is"
         return f"{n}*K+{ke}"
 
     def _out_addr(self, m, ke="k"):
@@ -182,6 +184,8 @@ class Emitter:
         elif self.addr_mode == 't1':
             if self.isa.name == 'scalar': return f"m*ms+{m}*ios"
             return f"m+{m}*ios"
+        elif self.addr_mode == 't1_oop':
+            return f"m+{m}*os"
         return f"{m}*K+{ke}"
 
     def _in_buf(self):
@@ -217,10 +221,17 @@ class Emitter:
         ob, obi = self._out_buf(), self._out_buf_im()
         addr = self._out_addr(m, ke)
         if self.isa.name == 'scalar':
-            self.o(f"{ob}[{addr}] = {v}_re; {obi}[{addr}] = {v}_im;")
+            if getattr(self, 'store_scale', False):
+                self.o(f"{ob}[{addr}] = scale * {v}_re; {obi}[{addr}] = scale * {v}_im;")
+            else:
+                self.o(f"{ob}[{addr}] = {v}_re; {obi}[{addr}] = {v}_im;")
         else:
-            self.o(f"ST(&{ob}[{addr}], {v}_re);")
-            self.o(f"ST(&{obi}[{addr}], {v}_im);")
+            if getattr(self, 'store_scale', False):
+                self.o(f"ST(&{ob}[{addr}], {self.isa.p}_mul_pd(vscale, {v}_re));")
+                self.o(f"ST(&{obi}[{addr}], {self.isa.p}_mul_pd(vscale, {v}_im));")
+            else:
+                self.o(f"ST(&{ob}[{addr}], {v}_re);")
+                self.o(f"ST(&{obi}[{addr}], {v}_im);")
 
     def emit_spill(self, v, slot):
         self.spill_c += 1
@@ -328,15 +339,15 @@ class Emitter:
 
     # ── External twiddle ──
     def _tw_addr(self, tw_idx, ke="k"):
-        if self.addr_mode == 't1':
+        if self.addr_mode in ('t1', 't1_oop'):
             return f"{tw_idx}*me+m"
         return f"{tw_idx}*K+{ke}"
 
     def _tw_buf(self):
-        return "W_re" if self.addr_mode == 't1' else "tw_re"
+        return "W_re" if self.addr_mode in ('t1', 't1_oop') else "tw_re"
 
     def _tw_buf_im(self):
-        return "W_im" if self.addr_mode == 't1' else "tw_im"
+        return "W_im" if self.addr_mode in ('t1', 't1_oop') else "tw_im"
 
     def emit_ext_tw(self, v, tw_idx, d, ke="k"):
         fwd = (d == 'fwd')
@@ -1036,15 +1047,23 @@ def emit_file_ct(isa, itw_set, ct_variant):
     T = isa.T
 
     is_n1 = ct_variant == 'ct_n1'
+    is_n1_scaled = ct_variant == 'ct_n1_scaled'
     is_t1_dit = ct_variant == 'ct_t1_dit'
     is_t1s_dit = ct_variant == 'ct_t1s_dit'
     is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     is_t1_dif = ct_variant == 'ct_t1_dif'
-    em.addr_mode = 'n1' if is_n1 else 't1'
+    is_t1_oop_dit = ct_variant == 'ct_t1_oop_dit'
+    em.addr_mode = 'n1' if (is_n1 or is_n1_scaled) else ('t1_oop' if is_t1_oop_dit else 't1')
 
     if is_n1:
         func_base = "radix16_n1"
         vname = "n1 (separate is/os)"
+    elif is_n1_scaled:
+        func_base = "radix16_n1_scaled"
+        vname = "n1_scaled (separate is/os, output *= scale)"
+    elif is_t1_oop_dit:
+        func_base = "radix16_t1_oop_dit"
+        vname = "t1_oop DIT (out-of-place, separate is/os, with twiddle)"
     elif is_t1_dif:
         func_base = "radix16_t1_dif"
         vname = "t1 DIF (in-place twiddle)"
@@ -1099,14 +1118,20 @@ def emit_file_ct(isa, itw_set, ct_variant):
 
     for d in ['fwd', 'bwd']:
         em.reset()
-        em.addr_mode = 'n1' if is_n1 else 't1'
+        em.addr_mode = 'n1' if (is_n1 or is_n1_scaled) else ('t1_oop' if is_t1_oop_dit else 't1')
+        em.store_scale = is_n1_scaled
 
         if isa.target:
             em.L.append(f"static {isa.target} void")
         else:
             em.L.append(f"static void")
 
-        if is_n1:
+        if is_n1_scaled:
+            em.L.append(f"{func_base}_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    size_t is, size_t os, size_t vl, double scale)")
+        elif is_n1:
             em.L.append(f"{func_base}_{d}_{isa.name}(")
             em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
             em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
@@ -1114,6 +1139,12 @@ def emit_file_ct(isa, itw_set, ct_variant):
                 em.L.append(f"    size_t is, size_t os, size_t vl, size_t ivs, size_t ovs)")
             else:
                 em.L.append(f"    size_t is, size_t os, size_t vl)")
+        elif is_t1_oop_dit:
+            em.L.append(f"{func_base}_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    const double * __restrict__ W_re, const double * __restrict__ W_im,")
+            em.L.append(f"    size_t is, size_t os, size_t me)")
         else:  # t1
             em.L.append(f"{func_base}_{d}_{isa.name}(")
             em.L.append(f"    double * __restrict__ rio_re, double * __restrict__ rio_im,")
@@ -1167,14 +1198,20 @@ def emit_file_ct(isa, itw_set, ct_variant):
             em.emit_hoist_all_tw_scalars(N)
             em.b()
 
+        # Broadcast scale factor before the loop (n1_scaled only)
+        if is_n1_scaled and isa.name != 'scalar':
+            set1 = f"{isa.p}_set1_pd"
+            em.o(f"const {T} vscale = {set1}(scale);")
+            em.b()
+
         # Loop
-        if is_n1:
+        if is_n1 or is_n1_scaled:
             if isa.name == 'scalar':
                 em.o(f"for (size_t k = 0; k < vl; k++) {{")
             else:
                 em.o(f"for (size_t k = 0; k < vl; k += {isa.k_step}) {{")
-        else:  # t1
-            if isa.name == 'scalar':
+        else:  # t1, t1_oop
+            if isa.name == 'scalar' and not is_t1_oop_dit:
                 em.o(f"for (size_t m = mb; m < me; m++) {{")
             else:
                 em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
@@ -1186,7 +1223,10 @@ def emit_file_ct(isa, itw_set, ct_variant):
         elif is_t1_dit_log3:
             emit_kernel_body_log3(em, d, itw_set, 'dit_tw_log3')
         else:
-            kernel_variant = 'notw' if is_n1 else ('dif_tw' if is_t1_dif else 'dit_tw')
+            kernel_variant = 'notw' if (is_n1 or is_n1_scaled) else ('dif_tw' if is_t1_dif else 'dit_tw')
+            if is_t1_oop_dit:
+                em.addr_mode = 't1_oop'
+                kernel_variant = 'dit_tw'
             emit_kernel_body(em, d, itw_set, kernel_variant)
         em.ind -= 1
         em.o("}")
@@ -1640,7 +1680,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='dit_tw',
                         choices=['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-                                 'ct_n1', 'ct_n1_il', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'all'])
+                                 'ct_n1', 'ct_n1_scaled', 'ct_n1_il', 'ct_t1_dit', 'ct_t1s_dit', 'ct_t1_dit_log3', 'ct_t1_dif', 'ct_t1_oop_dit', 'all'])
     args = parser.parse_args()
 
     itw_set = collect_internal_twiddles()

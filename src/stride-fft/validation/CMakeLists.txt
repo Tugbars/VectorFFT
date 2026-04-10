@@ -75,3 +75,55 @@ add_custom_target(vfft_validation DEPENDS
     vfft_val_bluestein
     vfft_val_rader
 )
+
+
+# =====================================================================
+# Development-cycle benchmarks (off by default)
+#
+# These are internal profiling/calibration tools used during development.
+# Not needed for production benchmarking (use bench_1d_csv / bench_2d_csv).
+#
+# Enable: cmake -DVFFT_BUILD_DEV_BENCH=ON ..
+# Build:  cmake --build build --target vfft_dev_bench
+# =====================================================================
+
+option(VFFT_BUILD_DEV_BENCH "Build development-cycle benchmarks" OFF)
+
+if(VFFT_BUILD_DEV_BENCH)
+
+    # Helper: define a dev bench target
+    macro(add_dev_bench name source)
+        add_executable(${name} ${source})
+        target_link_libraries(${name} PRIVATE vfft_stride)
+        target_compile_definitions(${name} PRIVATE _CRT_SECURE_NO_WARNINGS)
+        set_target_properties(${name} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/validation"
+        )
+        if(FFTW3_LIB AND FFTW3_INC)
+            target_link_libraries(${name} PRIVATE ${FFTW3_LIB})
+            target_include_directories(${name} PRIVATE ${FFTW3_INC})
+        endif()
+        if(VFFT_HAS_MKL)
+            target_link_libraries(${name} PRIVATE ${MKL_LIBS})
+            target_include_directories(${name} PRIVATE ${MKL_INC})
+            target_compile_definitions(${name} PRIVATE VFFT_HAS_MKL MKL_ILP64)
+        endif()
+    endmacro()
+
+    add_dev_bench(vfft_dev_primes   dev/bench_primes.c)
+    add_dev_bench(vfft_dev_vtune    dev/bench_vtune.c)
+    add_dev_bench(vfft_dev_strided  dev/bench_strided.c)
+    add_dev_bench(vfft_dev_transpose dev/bench_transpose.c)
+    add_dev_bench(vfft_dev_2d      dev/bench_2d.c)
+
+    # Convenience target
+    add_custom_target(vfft_dev_bench DEPENDS
+        vfft_dev_primes
+        vfft_dev_vtune
+        vfft_dev_strided
+        vfft_dev_transpose
+        vfft_dev_2d
+    )
+
+    message(STATUS "VectorFFT dev benchmarks: enabled (VFFT_BUILD_DEV_BENCH=ON)")
+endif()

@@ -916,6 +916,29 @@ radix8_n1_{direction}(
 {chr(10).join(n1_lines)}
 }}''')
 
+        # ── scalar n1_scaled: n1 with output *= scale ──
+        import re as _re
+        n1s_lines = []
+        for line in n1_lines:
+            # Replace "out_re[addr]=expr;" with "out_re[addr]=scale*(expr);"
+            line_s = _re.sub(
+                r'(out_(?:re|im)\[[^\]]+\])=([^;]+);',
+                lambda m: f'{m.group(1)}=scale*({m.group(2)});',
+                line)
+            # Replace k*ovs with just k (n1_scaled uses vl-style k, no ovs)
+            line_s = line_s.replace('k*ovs', 'k').replace('k*ivs', 'k')
+            n1s_lines.append(line_s)
+
+        parts.append(f'''
+static inline void
+radix8_n1_scaled_{direction}_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{{
+{chr(10).join(n1s_lines)}
+}}''')
+
         # ── scalar t1 DIT (in-place: twiddle then butterfly) ──
         t1_lines = []
         t1_lines.append(f'    const double c = {fmt(C)};')
@@ -1029,6 +1052,66 @@ radix8_t1_dif_{direction}(
     size_t ios, size_t mb, size_t me, size_t ms)
 {{
 {chr(10).join(td)}
+}}''')
+
+        # ── scalar t1_oop DIT (out-of-place: twiddle then butterfly) ──
+        t1_oop = []
+        t1_oop.append(f'    const double c = {fmt(C)};')
+        t1_oop.append('    for (size_t m = 0; m < me; m++) {')
+        t1_oop.append('        const double x0r = in_re[m], x0i = in_im[m];')
+        for n in range(1, 8):
+            t1_oop.append(f'        const double r{n}r = in_re[m+{n}*is], r{n}i = in_im[m+{n}*is];')
+            t1_oop.append(f'        const double tw{n}r = W_re[{n-1}*me+m], tw{n}i = W_im[{n-1}*me+m];')
+            if fwd:
+                t1_oop.append(f'        const double x{n}r = r{n}r*tw{n}r-r{n}i*tw{n}i, x{n}i = r{n}r*tw{n}i+r{n}i*tw{n}r;')
+            else:
+                t1_oop.append(f'        const double x{n}r = r{n}r*tw{n}r+r{n}i*tw{n}i, x{n}i = -r{n}r*tw{n}i+r{n}i*tw{n}r;')
+        t1_oop.append('        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;')
+        t1_oop.append('        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;')
+        t1_oop.append('        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;')
+        if fwd:
+            t1_oop.append('        const double A1r=eq_r+es_i,A1i=eq_i-es_r,A3r=eq_r-es_i,A3i=eq_i+es_r;')
+        else:
+            t1_oop.append('        const double A1r=eq_r-es_i,A1i=eq_i+es_r,A3r=eq_r+es_i,A3i=eq_i-es_r;')
+        t1_oop.append('        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;')
+        t1_oop.append('        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;')
+        t1_oop.append('        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;')
+        if fwd:
+            t1_oop.append('        const double B1r=oq_r+os_i,B1i=oq_i-os_r,B3r=oq_r-os_i,B3i=oq_i+os_r;')
+        else:
+            t1_oop.append('        const double B1r=oq_r-os_i,B1i=oq_i+os_r,B3r=oq_r+os_i,B3i=oq_i-os_r;')
+        # W8 combine — write to out
+        t1_oop.append('        out_re[m+0*os]=A0r+B0r; out_im[m+0*os]=A0i+B0i;')
+        t1_oop.append('        out_re[m+4*os]=A0r-B0r; out_im[m+4*os]=A0i-B0i;')
+        if fwd:
+            t1_oop.append('        {double w1r=c*(B1r+B1i),w1i=c*(B1i-B1r);')
+        else:
+            t1_oop.append('        {double w1r=c*(B1r-B1i),w1i=c*(B1r+B1i);')
+        t1_oop.append('        out_re[m+1*os]=A1r+w1r; out_im[m+1*os]=A1i+w1i;')
+        t1_oop.append('        out_re[m+5*os]=A1r-w1r; out_im[m+5*os]=A1i-w1i;}')
+        if fwd:
+            t1_oop.append('        out_re[m+2*os]=A2r+B2i; out_im[m+2*os]=A2i-B2r;')
+            t1_oop.append('        out_re[m+6*os]=A2r-B2i; out_im[m+6*os]=A2i+B2r;')
+        else:
+            t1_oop.append('        out_re[m+2*os]=A2r-B2i; out_im[m+2*os]=A2i+B2r;')
+            t1_oop.append('        out_re[m+6*os]=A2r+B2i; out_im[m+6*os]=A2i-B2r;')
+        if fwd:
+            t1_oop.append('        {double w3r=-c*(B3r-B3i),w3i=-c*(B3r+B3i);')
+        else:
+            t1_oop.append('        {double w3r=-c*(B3r+B3i),w3i=c*(B3r-B3i);')
+        t1_oop.append('        out_re[m+3*os]=A3r+w3r; out_im[m+3*os]=A3i+w3i;')
+        t1_oop.append('        out_re[m+7*os]=A3r-w3r; out_im[m+7*os]=A3i-w3i;}')
+        t1_oop.append('    }')
+
+        parts.append(f'''
+static inline void
+radix8_t1_oop_dit_{direction}_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{{
+{chr(10).join(t1_oop)}
 }}''')
 
     # ── SIMD n1 + t1 ──
@@ -1345,6 +1428,93 @@ radix8_t1_dif_{direction}_{isa_name}(
     size_t ios, size_t me)
 {{
 {chr(10).join(sd)}
+}}''')
+
+            # ── SIMD t1_oop DIT: out-of-place twiddle + butterfly ──
+            st_oop = []
+            st_oop.append(f'    const {V} vc = {set1}({fmt(C)});')
+            st_oop.append(f'    const {V} vnc = {set1}({fmt(-C)});')
+            st_oop.append(f'    for (size_t m = 0; m < me; m += VL) {{')
+            st_oop.append(f'        {V} x0r = LD(&in_re[m]), x0i = LD(&in_im[m]);')
+            for n in range(1, 8):
+                st_oop.append(f'        {V} r{n}r = LD(&in_re[m+{n}*is]), r{n}i = LD(&in_im[m+{n}*is]);')
+                st_oop.append(f'        const {V} tw{n}r = LD(&W_re[{n-1}*me+m]), tw{n}i = LD(&W_im[{n-1}*me+m]);')
+                if fwd:
+                    st_oop.append(f'        const {V} x{n}r = {fnma}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+                    st_oop.append(f'        const {V} x{n}i = {fma_op}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+                else:
+                    st_oop.append(f'        const {V} x{n}r = {fma_op}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+                    st_oop.append(f'        const {V} x{n}i = {fnma}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+            st_oop.append(f'        const {V} epr={add}(x0r,x4r),eqr={sub}(x0r,x4r),err_={add}(x2r,x6r),esr={sub}(x2r,x6r);')
+            st_oop.append(f'        const {V} epi={add}(x0i,x4i),eqi={sub}(x0i,x4i),eri={add}(x2i,x6i),esi={sub}(x2i,x6i);')
+            st_oop.append(f'        const {V} A0r={add}(epr,err_),A0i={add}(epi,eri),A2r={sub}(epr,err_),A2i={sub}(epi,eri);')
+            if fwd:
+                st_oop.append(f'        const {V} A1r={add}(eqr,esi),A1i={sub}(eqi,esr),A3r={sub}(eqr,esi),A3i={add}(eqi,esr);')
+            else:
+                st_oop.append(f'        const {V} A1r={sub}(eqr,esi),A1i={add}(eqi,esr),A3r={add}(eqr,esi),A3i={sub}(eqi,esr);')
+            st_oop.append(f'        const {V} opr={add}(x1r,x5r),oqr={sub}(x1r,x5r),orr={add}(x3r,x7r),osr={sub}(x3r,x7r);')
+            st_oop.append(f'        const {V} opi={add}(x1i,x5i),oqi={sub}(x1i,x5i),ori={add}(x3i,x7i),osi={sub}(x3i,x7i);')
+            st_oop.append(f'        const {V} B0r={add}(opr,orr),B0i={add}(opi,ori),B2r={sub}(opr,orr),B2i={sub}(opi,ori);')
+            if fwd:
+                st_oop.append(f'        const {V} B1r={add}(oqr,osi),B1i={sub}(oqi,osr),B3r={sub}(oqr,osi),B3i={add}(oqi,osr);')
+            else:
+                st_oop.append(f'        const {V} B1r={sub}(oqr,osi),B1i={add}(oqi,osr),B3r={add}(oqr,osi),B3i={sub}(oqi,osr);')
+            st_oop.append(f'        ST(&out_re[m+0*os],{add}(A0r,B0r)); ST(&out_im[m+0*os],{add}(A0i,B0i));')
+            st_oop.append(f'        ST(&out_re[m+4*os],{sub}(A0r,B0r)); ST(&out_im[m+4*os],{sub}(A0i,B0i));')
+            if fwd:
+                st_oop.append(f'        {{const {V} t1r={mul}(vc,{add}(B1r,B1i)),t1i={mul}(vc,{sub}(B1i,B1r));')
+            else:
+                st_oop.append(f'        {{const {V} t1r={mul}(vc,{sub}(B1r,B1i)),t1i={mul}(vc,{add}(B1r,B1i));')
+            st_oop.append(f'        ST(&out_re[m+1*os],{add}(A1r,t1r)); ST(&out_im[m+1*os],{add}(A1i,t1i));')
+            st_oop.append(f'        ST(&out_re[m+5*os],{sub}(A1r,t1r)); ST(&out_im[m+5*os],{sub}(A1i,t1i));}}')
+            if fwd:
+                st_oop.append(f'        ST(&out_re[m+2*os],{add}(A2r,B2i)); ST(&out_im[m+2*os],{sub}(A2i,B2r));')
+                st_oop.append(f'        ST(&out_re[m+6*os],{sub}(A2r,B2i)); ST(&out_im[m+6*os],{add}(A2i,B2r));')
+            else:
+                st_oop.append(f'        ST(&out_re[m+2*os],{sub}(A2r,B2i)); ST(&out_im[m+2*os],{add}(A2i,B2r));')
+                st_oop.append(f'        ST(&out_re[m+6*os],{add}(A2r,B2i)); ST(&out_im[m+6*os],{sub}(A2i,B2r));')
+            if fwd:
+                st_oop.append(f'        {{const {V} t3r={mul}(vnc,{sub}(B3r,B3i)),t3i={mul}(vnc,{add}(B3r,B3i));')
+            else:
+                st_oop.append(f'        {{const {V} t3r={mul}(vnc,{add}(B3r,B3i)),t3i={mul}(vc,{sub}(B3r,B3i));')
+            st_oop.append(f'        ST(&out_re[m+3*os],{add}(A3r,t3r)); ST(&out_im[m+3*os],{add}(A3i,t3i));')
+            st_oop.append(f'        ST(&out_re[m+7*os],{sub}(A3r,t3r)); ST(&out_im[m+7*os],{sub}(A3i,t3i));}}')
+            st_oop.append('    }')
+
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1_oop_dit_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{{
+{chr(10).join(st_oop)}
+}}''')
+
+            # ── SIMD n1_scaled: n1 with output *= scale ──
+            # Reuse the n1 code list 'sn', wrapping each ST value with mul(vscale, ...)
+            import re as _re
+            sn_scaled = []
+            sn_scaled.append(f'    const {V} vscale = {set1}(scale);')
+            for line in sn:
+                # Replace ST(&addr, val) with ST(&addr, mul(vscale, val))
+                line_s = _re.sub(
+                    r'ST\((&[^,]+),\s*(.+?)\);',
+                    lambda m: f'ST({m.group(1)},{mul}(vscale,{m.group(2)}));',
+                    line)
+                sn_scaled.append(line_s)
+
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_n1_scaled_{direction}_{isa_name}(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{{
+{chr(10).join(sn_scaled)}
 }}''')
 
         parts.append('\n#undef LD\n#undef ST\n#undef VL')

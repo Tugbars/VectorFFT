@@ -107,12 +107,12 @@ if(Python3_FOUND)
     )
 endif()
 
-# ── Interface library (header-only) ──
+# ── Interface library (header-only, internal) ──
 add_library(vfft_stride INTERFACE)
 
 target_include_directories(vfft_stride INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/core
-    ${VFFT_CODELET_DIR}
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/core>
+    $<BUILD_INTERFACE:${VFFT_CODELET_DIR}>
 )
 
 target_compile_options(vfft_stride INTERFACE ${_isa_flags})
@@ -120,6 +120,10 @@ target_compile_options(vfft_stride INTERFACE ${_isa_flags})
 target_compile_definitions(vfft_stride INTERFACE
     $<$<PLATFORM_ID:Windows>:_USE_MATH_DEFINES>
 )
+
+# ── Compiled library (vfft) — opaque C API ──
+# NOTE: built after FFTW3 discovery below so ${FFTW3_INC} is available.
+# The add_library call is deferred to after FFTW3 discovery.
 
 # ── FFTW3 discovery (shared by bench targets) ──
 find_library(FFTW3_LIB fftw3 HINTS
@@ -184,10 +188,38 @@ else()
     message(STATUS "Intel MKL not found — MKL benchmark disabled")
 endif()
 
+# ── Compiled library (vfft) — opaque C API ──
+# Does NOT link vfft_stride (avoids export dependency). Instead, it gets
+# the same include dirs and flags directly so it compiles standalone.
+add_library(vfft STATIC vfft.c)
+target_include_directories(vfft
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/core
+        ${VFFT_CODELET_DIR}
+)
+# FFTW include only needed if benchmarks use exhaustive search with FFTW reference
+if(FFTW3_INC)
+    target_include_directories(vfft PRIVATE ${FFTW3_INC})
+endif()
+target_compile_options(vfft PRIVATE ${_isa_flags})
+target_compile_definitions(vfft PRIVATE
+    _CRT_SECURE_NO_WARNINGS
+    $<$<PLATFORM_ID:Windows>:_USE_MATH_DEFINES>
+)
+set_target_properties(vfft PROPERTIES
+    C_STANDARD 11
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
+    EXPORT_NAME vfft
+    OUTPUT_NAME vfft
+)
+
 # ── Production benchmarks (VectorFFT vs FFTW vs MKL) ──
 if(FFTW3_LIB AND FFTW3_INC)
 
-    # Main benchmark: exhaustive calibration + comparison
+    # Main calibration + benchmark (generates wisdom, compares vs FFTW/MKL)
     add_executable(vfft_bench bench/bench_planner.c)
     target_link_libraries(vfft_bench PRIVATE vfft_stride ${FFTW3_LIB})
     target_include_directories(vfft_bench PRIVATE ${FFTW3_INC})
@@ -199,25 +231,7 @@ if(FFTW3_LIB AND FFTW3_INC)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
 
-    # Prime-N benchmark: Bluestein + Rader via planner
-    add_executable(vfft_bench_primes bench/bench_primes.c)
-    target_link_libraries(vfft_bench_primes PRIVATE vfft_stride ${FFTW3_LIB})
-    target_include_directories(vfft_bench_primes PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench_primes PRIVATE _CRT_SECURE_NO_WARNINGS)
-    set_target_properties(vfft_bench_primes PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    )
-
-    # VTune profiling harness: single (N,K) in tight loop
-    add_executable(vfft_bench_vtune bench/bench_vtune.c)
-    target_link_libraries(vfft_bench_vtune PRIVATE vfft_stride ${FFTW3_LIB})
-    target_include_directories(vfft_bench_vtune PRIVATE ${FFTW3_INC})
-    target_compile_definitions(vfft_bench_vtune PRIVATE _CRT_SECURE_NO_WARNINGS)
-    set_target_properties(vfft_bench_vtune PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    )
-
-    # Multithreaded benchmark: VectorFFT vs FFTW vs MKL at matching thread counts
+    # MT benchmark
     add_executable(vfft_bench_mt bench/bench_mt.c)
     target_link_libraries(vfft_bench_mt PRIVATE vfft_stride ${FFTW3_LIB})
     if(FFTW3_THREADS_LIB)
@@ -231,30 +245,62 @@ if(FFTW3_LIB AND FFTW3_INC)
     set_target_properties(vfft_bench_mt PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
-
     if(VFFT_HAS_MKL)
         target_link_libraries(vfft_bench PRIVATE ${MKL_LIBS})
         target_include_directories(vfft_bench PRIVATE ${MKL_INC})
         target_compile_definitions(vfft_bench PRIVATE VFFT_HAS_MKL MKL_ILP64)
-        target_link_libraries(vfft_bench_primes PRIVATE ${MKL_LIBS})
-        target_include_directories(vfft_bench_primes PRIVATE ${MKL_INC})
-        target_compile_definitions(vfft_bench_primes PRIVATE VFFT_HAS_MKL MKL_ILP64)
-        target_link_libraries(vfft_bench_vtune PRIVATE ${MKL_LIBS})
-        target_include_directories(vfft_bench_vtune PRIVATE ${MKL_INC})
-        target_compile_definitions(vfft_bench_vtune PRIVATE VFFT_HAS_MKL MKL_ILP64)
         target_link_libraries(vfft_bench_mt PRIVATE ${MKL_LIBS_MT})
         target_include_directories(vfft_bench_mt PRIVATE ${MKL_INC})
         target_compile_definitions(vfft_bench_mt PRIVATE VFFT_HAS_MKL MKL_ILP64)
-        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes, vfft_bench_vtune, vfft_bench_mt (FFTW + MKL)")
-    else()
-        message(STATUS "VectorFFT bench: vfft_bench, vfft_bench_primes, vfft_bench_vtune, vfft_bench_mt (FFTW only)")
     endif()
 
 else()
-    message(WARNING "FFTW3 not found -- bench targets disabled. Install via: vcpkg install fftw3")
+    message(WARNING "FFTW3 not found -- bench_mt disabled. Install via: vcpkg install fftw3")
+endif()
+
+# ── Comprehensive 1D benchmark with CSV output ──
+add_executable(vfft_bench_1d_csv bench/bench_1d_csv.c)
+target_link_libraries(vfft_bench_1d_csv PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_1d_csv PRIVATE
+    _CRT_SECURE_NO_WARNINGS
+    VFFT_BENCH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/bench"
+)
+set_target_properties(vfft_bench_1d_csv PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(VFFT_HAS_MKL)
+    target_link_libraries(vfft_bench_1d_csv PRIVATE ${MKL_LIBS})
+    target_include_directories(vfft_bench_1d_csv PRIVATE ${MKL_INC})
+    target_compile_definitions(vfft_bench_1d_csv PRIVATE VFFT_HAS_MKL MKL_ILP64)
+endif()
+
+# ── Comprehensive 2D benchmark with CSV output ──
+add_executable(vfft_bench_2d_csv bench/bench_2d_csv.c)
+target_link_libraries(vfft_bench_2d_csv PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_2d_csv PRIVATE
+    _CRT_SECURE_NO_WARNINGS
+    VFFT_BENCH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/bench"
+)
+set_target_properties(vfft_bench_2d_csv PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(VFFT_HAS_MKL)
+    target_link_libraries(vfft_bench_2d_csv PRIVATE ${MKL_LIBS})
+    target_include_directories(vfft_bench_2d_csv PRIVATE ${MKL_INC})
+    target_compile_definitions(vfft_bench_2d_csv PRIVATE VFFT_HAS_MKL MKL_ILP64)
 endif()
 
 # ── Examples ──
+
+# API test: compiles vfft.c + api_test.c together (avoids static lib linking issues)
+add_executable(vfft_api_test ../../examples/api_test.c)
+target_link_libraries(vfft_api_test PRIVATE vfft)
+target_compile_definitions(vfft_api_test PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_api_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+
 if(FFTW3_LIB AND FFTW3_INC)
 add_executable(vfft_real_fft ../../examples/real_fft.c)
 target_link_libraries(vfft_real_fft PRIVATE vfft_stride ${FFTW3_LIB})

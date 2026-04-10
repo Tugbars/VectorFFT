@@ -482,6 +482,35 @@ static void _r2c_preprocess(
  * EXECUTE -- FORWARD R2C (block-walk)
  * ═══════════════════════════════════════════════════════════════ */
 
+/* ── Fused first stage: read from input at stride 2K, write to scratch at stride B.
+ *    Stage 0 is ALWAYS twiddle-free (cf0=1, needs_tw=0 for all groups).
+ *    So all groups use n1_fwd with is=input_leg_stride, os=scratch_leg_stride.
+ *    Eliminates the entire O(halfN*B) pack pass. ── */
+static inline void _r2c_fused_first_stage(
+        const stride_plan_t *inner, double *re,
+        double *sr, double *si,
+        size_t K, size_t B, size_t b0)
+{
+    const stride_stage_t *st = &inner->stages[0];
+    const int ngroups = st->num_groups;
+    const size_t scratch_leg_stride = st->stride;        /* distance between legs in scratch */
+    const size_t elem_per_leg = scratch_leg_stride / B;   /* element spacing per leg */
+    const size_t input_leg_stride = elem_per_leg * 2 * K; /* distance between legs in input */
+
+    for (int g = 0; g < ngroups; g++) {
+        size_t scratch_base = st->group_base[g];
+        size_t first_elem = scratch_base / B;
+        size_t in_re_off = first_elem * 2 * K + b0;
+
+        st->n1_fwd(re + in_re_off, re + K + in_re_off,
+                   sr + scratch_base, si + scratch_base,
+                   input_leg_stride, scratch_leg_stride, B);
+    }
+}
+
+/* Remaining stages use _stride_execute_fwd_slice_from(plan, sr, si, B, B, 1)
+ * defined in executor.h — no duplicated executor code needed. */
+
 static void _r2c_execute_fwd(void *data, double *re, double *im)
 {
     stride_r2c_data_t *d = (stride_r2c_data_t *)data;
@@ -491,40 +520,39 @@ static void _r2c_execute_fwd(void *data, double *re, double *im)
 
     for (size_t b0 = 0; b0 < K; b0 += B)
     {
-        /* 1. Pack pairs: z[n] = x[2n] + i*x[2n+1] */
-        for (int n = 0; n < halfN; n++)
-        {
-            const double *even = re + (size_t)(2 * n) * K + b0;
-            const double *odd = re + (size_t)(2 * n + 1) * K + b0;
-            double *dst_r = sr + (size_t)n * B;
-            double *dst_i = si + (size_t)n * B;
-            size_t k = 0;
+        /* 1. Fused first stage: read from input at stride 2K,
+         *    twiddle + butterfly, write to scratch at stride B.
+         *    Eliminates the O(halfN*B) pack pass entirely. */
+        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd) {
+            _r2c_fused_first_stage(d->inner, re, sr, si, K, B, b0);
+            /* Run stages 1+ on dense scratch via the real executor */
+            _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
+        } else {
+            /* Fallback: explicit pack + full inner FFT (for plans without t1_oop) */
+            for (int n = 0; n < halfN; n++) {
+                const double *even = re + (size_t)(2 * n) * K + b0;
+                const double *odd  = re + (size_t)(2 * n + 1) * K + b0;
+                double *dst_r = sr + (size_t)n * B;
+                double *dst_i = si + (size_t)n * B;
+                size_t k = 0;
 #if defined(__AVX512F__)
-            for (; k + 8 <= B; k += 8)
-            {
-                _mm512_store_pd(dst_r + k, _mm512_loadu_pd(even + k));
-                _mm512_store_pd(dst_i + k, _mm512_loadu_pd(odd + k));
-            }
+                for (; k + 8 <= B; k += 8) {
+                    _mm512_store_pd(dst_r + k, _mm512_loadu_pd(even + k));
+                    _mm512_store_pd(dst_i + k, _mm512_loadu_pd(odd + k));
+                }
 #endif
 #if defined(__AVX2__) || defined(__AVX512F__)
-            for (; k + 4 <= B; k += 4)
-            {
-                _mm256_store_pd(dst_r + k, _mm256_loadu_pd(even + k));
-                _mm256_store_pd(dst_i + k, _mm256_loadu_pd(odd + k));
-            }
+                for (; k + 4 <= B; k += 4) {
+                    _mm256_store_pd(dst_r + k, _mm256_loadu_pd(even + k));
+                    _mm256_store_pd(dst_i + k, _mm256_loadu_pd(odd + k));
+                }
 #endif
-            for (; k < B; k++)
-            {
-                dst_r[k] = even[k];
-                dst_i[k] = odd[k];
+                for (; k < B; k++) { dst_r[k] = even[k]; dst_i[k] = odd[k]; }
             }
+            stride_execute_fwd(d->inner, sr, si);
         }
 
-        /* 2. N/2-point complex FFT (DIT forward — output in digit-reversed order) */
-        stride_execute_fwd(d->inner, sr, si);
-
-        /* 3. Post-process with permuted indices: reads Z[perm[f]] directly,
-         *    no separate permutation pass needed. */
+        /* 3. Post-process with permuted indices */
         _r2c_postprocess(sr, si, re, im, d->tw_re, d->tw_im, d->iperm, d->perm,
                          halfN, K, B, b0);
     }
@@ -536,6 +564,32 @@ static void _r2c_execute_fwd(void *data, double *re, double *im)
  * Unnormalized: output = N * original_input.
  * Caller divides by N to normalize (consistent with complex bwd).
  * ═══════════════════════════════════════════════════════════════ */
+
+/* ── Fused last stage (backward): DIF butterfly + ×2 scale + strided write.
+ *    Stage 0 is twiddle-free and is the LAST stage in DIF order.
+ *    n1_scaled_bwd reads from scratch at stride B, writes to output at stride 2K
+ *    with output *= 2.0. Eliminates the O(halfN*B) unpack pass. ── */
+static inline void _r2c_fused_last_stage(
+        const stride_plan_t *inner, double *re,
+        double *sr, double *si,
+        size_t K, size_t B, size_t b0)
+{
+    const stride_stage_t *st = &inner->stages[0];
+    const int ngroups = st->num_groups;
+    const size_t scratch_leg_stride = st->stride;
+    const size_t elem_per_leg = scratch_leg_stride / B;
+    const size_t output_leg_stride = elem_per_leg * 2 * K;
+
+    for (int g = 0; g < ngroups; g++) {
+        size_t scratch_base = st->group_base[g];
+        size_t first_elem = scratch_base / B;
+        size_t out_off = first_elem * 2 * K + b0;
+
+        st->n1_scaled_bwd(sr + scratch_base, si + scratch_base,
+                          re + out_off, re + K + out_off,
+                          scratch_leg_stride, output_leg_stride, B, 2.0);
+    }
+}
 
 static void _r2c_execute_bwd(void *data, double *re, double *im)
 {
@@ -551,43 +605,39 @@ static void _r2c_execute_bwd(void *data, double *re, double *im)
         _r2c_preprocess(re, im, sr, si, d->tw_re, d->tw_im, d->perm,
                         halfN, K, B, b0);
 
-        /* 2. N/2-point complex IFFT (unnormalized: gives halfN * z[n]) */
-        stride_execute_bwd(d->inner, sr, si);
-
-        /* 3. Unpack: x[2n] = 2*Re(z[n]), x[2n+1] = 2*Im(z[n])
-         *    Factor 2: inner bwd gives halfN * z[n], we need N * x[n].
-         *    Since z[n] = x[2n] + i*x[2n+1], halfN * z[n] -> need *2 for N. */
-        for (int n = 0; n < halfN; n++)
-        {
-            const double *src_r = sr + (size_t)n * B;
-            const double *src_i = si + (size_t)n * B;
-            double *even = re + (size_t)(2 * n) * K + b0;
-            double *odd = re + (size_t)(2 * n + 1) * K + b0;
-            size_t k = 0;
+        /* 2+3. Fused IFFT + unpack: run stages num_stages-1..1 on scratch,
+         *       then stage 0 writes ×2 scaled output directly at stride 2K. */
+        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_scaled_bwd) {
+            _stride_execute_bwd_slice_until(d->inner, sr, si, B, B, 1);
+            _r2c_fused_last_stage(d->inner, re, sr, si, K, B, b0);
+        } else {
+            /* Fallback: full IFFT + separate unpack */
+            stride_execute_bwd(d->inner, sr, si);
+            for (int n = 0; n < halfN; n++) {
+                const double *src_r = sr + (size_t)n * B;
+                const double *src_i = si + (size_t)n * B;
+                double *even = re + (size_t)(2 * n) * K + b0;
+                double *odd  = re + (size_t)(2 * n + 1) * K + b0;
+                size_t k = 0;
 #if defined(__AVX512F__)
-            {
-                __m512d two = _mm512_set1_pd(2.0);
-                for (; k + 8 <= B; k += 8)
                 {
-                    _mm512_storeu_pd(even + k, _mm512_mul_pd(two, _mm512_load_pd(src_r + k)));
-                    _mm512_storeu_pd(odd + k, _mm512_mul_pd(two, _mm512_load_pd(src_i + k)));
+                    __m512d two = _mm512_set1_pd(2.0);
+                    for (; k + 8 <= B; k += 8) {
+                        _mm512_storeu_pd(even + k, _mm512_mul_pd(two, _mm512_load_pd(src_r + k)));
+                        _mm512_storeu_pd(odd + k, _mm512_mul_pd(two, _mm512_load_pd(src_i + k)));
+                    }
                 }
-            }
 #endif
 #if defined(__AVX2__) || defined(__AVX512F__)
-            {
-                __m256d two = _mm256_set1_pd(2.0);
-                for (; k + 4 <= B; k += 4)
                 {
-                    _mm256_storeu_pd(even + k, _mm256_mul_pd(two, _mm256_load_pd(src_r + k)));
-                    _mm256_storeu_pd(odd + k, _mm256_mul_pd(two, _mm256_load_pd(src_i + k)));
+                    __m256d two = _mm256_set1_pd(2.0);
+                    for (; k + 4 <= B; k += 4) {
+                        _mm256_storeu_pd(even + k, _mm256_mul_pd(two, _mm256_load_pd(src_r + k)));
+                        _mm256_storeu_pd(odd + k, _mm256_mul_pd(two, _mm256_load_pd(src_i + k)));
+                    }
                 }
-            }
 #endif
-            for (; k < B; k++)
-            {
-                even[k] = 2.0 * src_r[k];
-                odd[k] = 2.0 * src_i[k];
+                for (; k < B; k++) { even[k] = 2.0 * src_r[k]; odd[k] = 2.0 * src_i[k]; }
             }
         }
     }
@@ -725,8 +775,13 @@ static inline void stride_execute_c2r(const stride_plan_t *plan,
 {
     stride_r2c_data_t *d = (stride_r2c_data_t *)plan->override_data;
     size_t halfN_plus1_K = (size_t)(plan->N / 2 + 1) * plan->K;
-    /* Copy complex input to real_out (re) and pre-allocated im buffer.
-     * No malloc/free per call — the im buffer lives in the plan. */
+    /* Copy freq-domain data into real_out (N*K buffer) and im temp.
+     * The backward preprocess reads from (re, im) at freq offsets f*K,
+     * then the fused unpack writes time samples to re at offsets 2n*K.
+     * real_out is N*K doubles — large enough for both freq input (N/2+1 rows)
+     * and time output (N rows). The preprocess reads only from rows 0..N/2
+     * and writes to scratch; the unpack then writes all N rows from scratch.
+     * No aliasing: preprocess for block b0 completes before unpack for b0. */
     memcpy(real_out, in_re, halfN_plus1_K * sizeof(double));
     memcpy(d->c2r_im_buf, in_im, halfN_plus1_K * sizeof(double));
     plan->override_bwd(plan->override_data, real_out, d->c2r_im_buf);

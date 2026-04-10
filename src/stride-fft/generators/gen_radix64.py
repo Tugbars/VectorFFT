@@ -308,6 +308,7 @@ class Emitter:
         if self.addr_mode == 't1':
             if self.isa.name == 'scalar': return f"m*ms+{n}*ios"
             return f"m+{n}*ios"
+        if self.addr_mode == 't1_oop': return f"m+{n}*is"
         return f"{n}*K+{k_expr}"
 
     def _out_addr(self, m, k_expr="k"):
@@ -316,6 +317,7 @@ class Emitter:
         if self.addr_mode == 't1':
             if self.isa.name == 'scalar': return f"m*ms+{m}*ios"
             return f"m+{m}*ios"
+        if self.addr_mode == 't1_oop': return f"m+{m}*os"
         return f"{m}*K+{k_expr}"
 
     def _in_buf(self):
@@ -332,12 +334,12 @@ class Emitter:
         return "out_im"
 
     def _tw_addr(self, tw_idx, k_expr="k"):
-        if self.addr_mode == 't1': return f"{tw_idx}*me+m"
+        if self.addr_mode in ('t1', 't1_oop'): return f"{tw_idx}*me+m"
         return f"{tw_idx}*K+{k_expr}"
     def _tw_buf(self):
-        return "W_re" if self.addr_mode == 't1' else "tw_re"
+        return "W_re" if self.addr_mode in ('t1', 't1_oop') else "tw_re"
     def _tw_buf_im(self):
-        return "W_im" if self.addr_mode == 't1' else "tw_im"
+        return "W_im" if self.addr_mode in ('t1', 't1_oop') else "tw_im"
 
     def emit_load(self, v, n, k_expr="k"):
         self.n_load += 2
@@ -355,11 +357,20 @@ class Emitter:
         ob, obi = self._out_buf(), self._out_buf_im()
         addr = self._out_addr(m, k_expr)
         if self.isa.name == 'scalar':
-            self.o(f"{ob}[{addr}] = {v}_re;")
-            self.o(f"{obi}[{addr}] = {v}_im;")
+            if getattr(self, 'store_scale', False):
+                self.o(f"{ob}[{addr}] = scale * {v}_re;")
+                self.o(f"{obi}[{addr}] = scale * {v}_im;")
+            else:
+                self.o(f"{ob}[{addr}] = {v}_re;")
+                self.o(f"{obi}[{addr}] = {v}_im;")
         else:
-            self.o(f"{self.isa.store_macro}(&{ob}[{addr}],{v}_re);")
-            self.o(f"{self.isa.store_macro}(&{obi}[{addr}],{v}_im);")
+            if getattr(self, 'store_scale', False):
+                mul = '_mm256_mul_pd' if self.isa.name == 'avx2' else '_mm512_mul_pd'
+                self.o(f"{self.isa.store_macro}(&{ob}[{addr}],{mul}(vscale,{v}_re));")
+                self.o(f"{self.isa.store_macro}(&{obi}[{addr}],{mul}(vscale,{v}_im));")
+            else:
+                self.o(f"{self.isa.store_macro}(&{ob}[{addr}],{v}_re);")
+                self.o(f"{self.isa.store_macro}(&{obi}[{addr}],{v}_im);")
 
     def emit_spill(self, v, slot):
         sm = self.isa.spill_mul
@@ -1461,17 +1472,25 @@ def emit_dif_tw_log3_file(isa):
 def emit_ct_file(isa, ct_variant):
     """Emit FFTW-style CT codelet for R=64."""
     is_n1 = ct_variant == 'ct_n1'
+    is_n1_scaled = ct_variant == 'ct_n1_scaled'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
     is_t1_dit_prefetch = ct_variant == 'ct_t1_dit_prefetch'
-    nfuse = isa.nfuse_notw if is_n1 else isa.nfuse_tw
+    is_t1_oop_dit = ct_variant == 'ct_t1_oop_dit'
+    nfuse = isa.nfuse_notw if (is_n1 or is_n1_scaled) else isa.nfuse_tw
     T = isa.reg_type
     em = Emitter(isa)
-    em.addr_mode = 'n1' if is_n1 else 't1'
+    em.addr_mode = 'n1' if (is_n1 or is_n1_scaled) else ('t1_oop' if is_t1_oop_dit else 't1')
 
     if is_n1:
         func_base = "radix64_n1"
         vname = "n1 (separate is/os)"
+    elif is_n1_scaled:
+        func_base = "radix64_n1_scaled"
+        vname = "n1_scaled (separate is/os, output *= scale)"
+    elif is_t1_oop_dit:
+        func_base = "radix64_t1_oop_dit"
+        vname = "t1_oop DIT (out-of-place, separate is/os, with twiddle)"
     elif is_t1_dif:
         func_base = "radix64_t1_dif"
         vname = "t1 DIF (in-place twiddle)"
@@ -1509,14 +1528,20 @@ def emit_ct_file(isa, ct_variant):
 
     for d in ['fwd', 'bwd']:
         em.reset_counters()
-        em.addr_mode = 'n1' if is_n1 else 't1'
+        em.addr_mode = 'n1' if (is_n1 or is_n1_scaled) else ('t1_oop' if is_t1_oop_dit else 't1')
+        em.store_scale = is_n1_scaled
 
         if isa.target_attr:
             em.L.append(f"static {isa.target_attr} void")
         else:
             em.L.append(f"static void")
 
-        if is_n1:
+        if is_n1_scaled:
+            em.L.append(f"{func_base}_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    size_t is, size_t os, size_t vl, double scale)")
+        elif is_n1:
             em.L.append(f"{func_base}_{d}_{isa.name}(")
             em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
             em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
@@ -1524,6 +1549,12 @@ def emit_ct_file(isa, ct_variant):
                 em.L.append(f"    size_t is, size_t os, size_t vl, size_t ivs, size_t ovs)")
             else:
                 em.L.append(f"    size_t is, size_t os, size_t vl)")
+        elif is_t1_oop_dit:
+            em.L.append(f"{func_base}_{d}_{isa.name}(")
+            em.L.append(f"    const double * __restrict__ in_re, const double * __restrict__ in_im,")
+            em.L.append(f"    double * __restrict__ out_re, double * __restrict__ out_im,")
+            em.L.append(f"    const double * __restrict__ W_re, const double * __restrict__ W_im,")
+            em.L.append(f"    size_t is, size_t os, size_t me)")
         else:
             em.L.append(f"{func_base}_{d}_{isa.name}(")
             em.L.append(f"    double * __restrict__ rio_re, double * __restrict__ rio_im,")
@@ -1538,14 +1569,20 @@ def emit_ct_file(isa, ct_variant):
 
         _emit_common_boilerplate(em, isa, T, nfuse)
 
+        # Broadcast scale factor before the loop (n1_scaled only)
+        if is_n1_scaled and isa.name != 'scalar':
+            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+            em.o(f"const {T} vscale = {set1}(scale);")
+            em.b()
+
         # Loop
-        if is_n1:
+        if is_n1 or is_n1_scaled:
             if isa.name == 'scalar':
                 em.o(f"for (size_t k = 0; k < vl; k++) {{")
             else:
                 em.o(f"for (size_t k = 0; k < vl; k += {isa.k_step}) {{")
-        else:
-            if isa.name == 'scalar':
+        else:  # t1, t1_oop
+            if isa.name == 'scalar' and not is_t1_oop_dit:
                 em.o(f"for (size_t m = mb; m < me; m++) {{")
             else:
                 em.o(f"for (size_t m = 0; m < me; m += {isa.k_step}) {{")
@@ -1563,7 +1600,7 @@ def emit_ct_file(isa, ct_variant):
                 em.o(f"    _mm_prefetch((const char*)&W_re[{n-1}*me+m+{VL}], _MM_HINT_T0);")
                 em.o(f"    _mm_prefetch((const char*)&W_im[{n-1}*me+m+{VL}], _MM_HINT_T0);")
             em.o(f"}}")
-        if is_n1:
+        if is_n1 or is_n1_scaled:
             emit_notw_kernel(em, d, nfuse)
         elif is_t1_dif:
             emit_dif_tw_flat_kernel(em, d, nfuse)
@@ -1572,6 +1609,8 @@ def emit_ct_file(isa, ct_variant):
         elif is_t1_dit_prefetch:
             emit_dit_tw_flat_kernel(em, d, nfuse)
         else:
+            if is_t1_oop_dit:
+                em.addr_mode = 't1_oop'
             emit_dit_tw_flat_kernel(em, d, nfuse)
         em.ind -= 1
         em.o("}")
@@ -1872,7 +1911,7 @@ def main():
                         choices=['scalar', 'avx2', 'avx512', 'all'])
     parser.add_argument('--variant', default='notw',
                         choices=['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
-                                 'ct_n1', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dit_prefetch', 'ct_t1_dif', 'all'])
+                                 'ct_n1', 'ct_n1_scaled', 'ct_t1_dit', 'ct_t1_dit_log3', 'ct_t1_dit_prefetch', 'ct_t1_dif', 'ct_t1_oop_dit', 'all'])
     # Legacy positional
     parser.add_argument('isa_pos', nargs='?', default=None)
     args = parser.parse_args()
@@ -1940,6 +1979,10 @@ def main():
             lines = emit_ct_file(isa, 'ct_n1')
             print_file(lines, f"{isa.name.upper()} CT N1")
 
+        if args.variant in ('ct_n1_scaled', 'all'):
+            lines = emit_ct_file(isa, 'ct_n1_scaled')
+            print_file(lines, f"{isa.name.upper()} CT N1 SCALED")
+
         if args.variant in ('ct_t1_dit', 'all') and isa.name != 'scalar':
             lines = emit_ct_file(isa, 'ct_t1_dit')
             print_file(lines, f"{isa.name.upper()} CT T1 DIT")
@@ -1955,6 +1998,10 @@ def main():
         if args.variant in ('ct_t1_dif', 'all') and isa.name != 'scalar':
             lines = emit_ct_file(isa, 'ct_t1_dif')
             print_file(lines, f"{isa.name.upper()} CT T1 DIF")
+
+        if args.variant in ('ct_t1_oop_dit', 'all') and isa.name != 'scalar':
+            lines = emit_ct_file(isa, 'ct_t1_oop_dit')
+            print_file(lines, f"{isa.name.upper()} CT T1 OOP DIT")
 
 
 if __name__ == '__main__':

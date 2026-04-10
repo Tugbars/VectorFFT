@@ -23,7 +23,9 @@
 
 #include <string.h>
 #include <stdio.h>
+#ifdef VFFT_HAS_FFTW
 #include <fftw3.h>
+#endif
 
 /* =====================================================================
  * ENUMERATE ALL VALID FACTORIZATIONS
@@ -316,6 +318,12 @@ static void stride_compare_strategies(int N, size_t K,
     stride_factorization_t exh_fact;
     double exh_ns = stride_exhaustive_search(N, K, reg, &exh_fact, 1);
 
+    /* Compare */
+    double ratio = heur_ns / exh_ns;
+    printf("  Heuristic/Exhaustive: %.2fx (%s)\n",
+           ratio, ratio < 1.05 ? "OPTIMAL" : ratio < 1.20 ? "GOOD" : "NEEDS TUNING");
+
+#ifdef VFFT_HAS_FFTW
     /* FFTW reference */
     fflush(stdout);
     double *fr = (double *)fftw_malloc(total * sizeof(double));
@@ -337,14 +345,10 @@ static void stride_compare_strategies(int N, size_t K,
         if (ns < fftw_best) fftw_best = ns;
     }
     fftw_destroy_plan(fp); fftw_free(fr); fftw_free(fi); fftw_free(fo); fftw_free(fo2);
-
-    /* Compare */
-    double ratio = heur_ns / exh_ns;
     double vs_fftw = fftw_best / exh_ns;
     printf("  FFTW_MEASURE: %.1f ns\n", fftw_best);
-    printf("  Heuristic/Exhaustive: %.2fx (%s)\n",
-           ratio, ratio < 1.05 ? "OPTIMAL" : ratio < 1.20 ? "GOOD" : "NEEDS TUNING");
     printf("  Best vs FFTW: %.2fx\n", vs_fftw);
+#endif
 }
 
 #endif /* STRIDE_EXHAUSTIVE_H */
