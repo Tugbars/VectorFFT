@@ -254,39 +254,25 @@ cmake --build build --target vfft_bench_1d_csv vfft_bench_2d_csv
 
 ---
 
-## Project Structure
+## Roadmap
 
-```
-include/
-  vfft.h                Public C API (opaque handles, stable ABI)
-src/stride-fft/
-  vfft.c                C API implementation
-  core/                 Runtime engine (header-only)
-    executor.h          In-place stride-based executor (Method C)
-    planner.h           Top-level API + wisdom calibration
-    registry.h          ISA-aware codelet registry
-    factorizer.h        CPU-aware heuristic factorizer
-    exhaustive.h        Exhaustive factorization search
-    dp_planner.h        Recursive DP planner with memoization
-    transpose.h         Cache-oblivious SIMD matrix transpose
-    fft2d.h             2D FFT (tiled + Bailey)
-    r2c.h               Real-to-complex / complex-to-real
-    threads.h           Lightweight thread pool
-    bluestein.h         Bluestein's algorithm
-    rader.h             Rader's algorithm
-  codelets/             Generated SIMD headers (~150k lines)
-    avx2/               47 AVX2 codelet headers
-    avx512/             47 AVX-512 codelet headers
-    scalar/             47 scalar fallback headers
-  generators/           Python codelet generators
-  bench/                Production benchmarks + CSV output
-  csv/                  Benchmark result CSVs
-  validation/           Internal development tests
-examples/
-  spectrum_analyzer.c   Live audio spectrum analyzer (miniaudio + R2C)
-  api_test.c            C API integration test
-  basic_fft.c           Minimal usage example
-```
+### Near-term
+- **Natural-order DFT output** (`vfft_permute`) -- expose the digit-reversal permutation table so users can inspect individual frequency bins without roundtrip
+- **R=9 codelet** -- unlocks 3^N sizes (3^10 = 59049, 3^12 = 531441) that currently exceed the max stage depth with R=3 alone. Fits AVX2's 16 YMMs.
+- **Strided-batch codelets for 2D** -- eliminate transpose entirely by allowing non-unit batch stride in codelets. Estimated 1.27x over MKL at 256x256 (currently 1.14x with tiled transpose).
+- **K=1 scalar fallback** -- AVX2 codelets currently require K>=4 (SIMD width). Add scalar path for single-transform use cases.
+- **Native interleaved C2C** -- dedicated codelets for interleaved complex layout (re+im adjacent), avoiding deinterleave overhead for users with packed data.
+
+### Medium-term
+- **1D Bailey 4-step** -- natural-order output for large 1D transforms using transpose + twiddle infrastructure (already built and benchmarked)
+- **3D FFT** -- extend tiled 2D approach to three dimensions
+- **ARM NEON / SVE codelets** -- port codelet generators to ARM SIMD targets
+- **Single-precision (float32)** support -- separate codelet set with 8-wide AVX2 / 16-wide AVX-512
+
+### Long-term
+- **GPU backend** (Vulkan compute / CUDA) -- VkFFT-style GPU execution sharing the same planner and wisdom infrastructure
+- **Distributed FFT** (MPI) -- multi-node decomposition for very large transforms
+- **White paper** -- microarchitectural profiling (PMU counters, spill analysis, roofline) documenting why VectorFFT beats MKL at the instruction level
 
 ---
 
