@@ -292,82 +292,103 @@ int main(int argc, char **argv) {
         stride_plan_destroy(plan);
     }
 
-    /* ── K sweep with best factorization (4x4x16x64) ── */
-    printf("\n── K sweep: 4x4x16x64 (best blocked absolute time) ──\n\n");
-    printf("%-6s %10s %10s %7s\n", "K", "standard", "blocked", "speedup");
-    printf("────── ────────── ────────── ───────\n");
+    /* ── N sweep at K=4 and K=8: all pow2 sizes that use multiple stages ── */
+    int sweep_Ns[] = {256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536};
+    int n_Ns = sizeof(sweep_Ns) / sizeof(sweep_Ns[0]);
+    size_t sweep_Ks[] = {4, 8};
+    int n_Ks = sizeof(sweep_Ks) / sizeof(sweep_Ks[0]);
 
-    int sweep_factors[] = {4, 4, 16, 64};
-    int sweep_nf = 4;
-    size_t sweep_Ks[] = {4, 8, 16, 32, 64, 128, 256};
-    int n_sweep = sizeof(sweep_Ks) / sizeof(sweep_Ks[0]);
-
-    for (int ki = 0; ki < n_sweep; ki++) {
+    for (int ki = 0; ki < n_Ks; ki++) {
         size_t Kv = sweep_Ks[ki];
-        size_t tot = (size_t)N * Kv;
+        printf("\n── N sweep at K=%zu (exhaustive factorization) ──\n\n", Kv);
+        printf("%-8s %-18s %3s %10s %10s %7s  %-30s\n",
+               "N", "factors", "sp", "standard", "blocked", "speedup", "stages");
+        printf("──────── ────────────────── ─── ────────── ────────── ───────  "
+               "──────────────────────────────\n");
 
-        double *sre = (double *)STRIDE_ALIGNED_ALLOC(64, tot * sizeof(double));
-        double *sim = (double *)STRIDE_ALIGNED_ALLOC(64, tot * sizeof(double));
-        for (size_t i = 0; i < tot; i++) {
-            sre[i] = (double)rand() / RAND_MAX - 0.5;
-            sim[i] = (double)rand() / RAND_MAX - 0.5;
-        }
+        for (int ni = 0; ni < n_Ns; ni++) {
+            int Nv = sweep_Ns[ni];
+            size_t tot = (size_t)Nv * Kv;
 
-        stride_plan_t *p = _stride_build_plan(N, Kv, sweep_factors, sweep_nf, &reg);
-        if (!p) { STRIDE_ALIGNED_FREE(sre); STRIDE_ALIGNED_FREE(sim); continue; }
+            /* Use exhaustive to find best standard factorization */
+            stride_plan_t *p = stride_exhaustive_plan(Nv, Kv, &reg);
+            if (!p) p = stride_auto_plan(Nv, Kv, &reg);
+            if (!p) continue;
 
-        /* Find split */
-        int sp = p->num_stages;
-        for (int s = 0; s < p->num_stages; s++) {
-            size_t ws = (size_t)p->stages[s].radix * p->stages[s].stride * Kv * 16;
-            if (ws <= 48 * 1024) { sp = s; break; }
-        }
-        int bg = 1;
-        if (sp < p->num_stages) {
-            size_t per_grp = (size_t)p->stages[sp].radix *
-                             p->stages[sp].stride * Kv * 16;
-            bg = (int)(48 * 1024 / per_grp);
-            if (bg < 1) bg = 1;
-            if (bg > p->stages[sp].num_groups) bg = p->stages[sp].num_groups;
-        }
+            char fstr[64];
+            format_factors(fstr, p->factors, p->num_stages);
 
-        /* Bench standard */
-        for (int w = 0; w < 500; w++)
-            _stride_execute_fwd_slice(p, sre, sim, Kv, Kv);
-        int reps = 5000;
-        double t0 = now_ns();
-        for (int r = 0; r < reps; r++)
-            _stride_execute_fwd_slice(p, sre, sim, Kv, Kv);
-        double calib = (now_ns() - t0) / reps;
-        reps = (int)((double)duration_ms * 1e6 / calib);
-        if (reps < 500) reps = 500;
+            /* Stage info */
+            char sinfo[128] = "";
+            for (int s = 0; s < p->num_stages; s++) {
+                size_t ws = (size_t)p->stages[s].radix * p->stages[s].stride * Kv * 16;
+                char tmp[24];
+                sprintf(tmp, "%sR%d:%s", s ? " " : "", p->stages[s].radix,
+                        ws <= 48*1024 ? "L1" : ws <= 2*1024*1024 ? "L2" : "L3");
+                strcat(sinfo, tmp);
+            }
 
-        double best_s = 1e18;
-        for (int trial = 0; trial < 5; trial++) {
-            t0 = now_ns();
+            /* Find split */
+            int sp = p->num_stages;
+            for (int s = 0; s < p->num_stages; s++) {
+                size_t ws = (size_t)p->stages[s].radix * p->stages[s].stride * Kv * 16;
+                if (ws <= 48 * 1024) { sp = s; break; }
+            }
+            int bg = 1;
+            if (sp < p->num_stages) {
+                size_t per_grp = (size_t)p->stages[sp].radix *
+                                 p->stages[sp].stride * Kv * 16;
+                bg = (int)(48 * 1024 / per_grp);
+                if (bg < 1) bg = 1;
+                if (bg > p->stages[sp].num_groups) bg = p->stages[sp].num_groups;
+            }
+
+            double *sre = (double *)STRIDE_ALIGNED_ALLOC(64, tot * sizeof(double));
+            double *sim = (double *)STRIDE_ALIGNED_ALLOC(64, tot * sizeof(double));
+            for (size_t i = 0; i < tot; i++) {
+                sre[i] = (double)rand() / RAND_MAX - 0.5;
+                sim[i] = (double)rand() / RAND_MAX - 0.5;
+            }
+
+            /* Bench standard */
+            for (int w = 0; w < 200; w++)
+                _stride_execute_fwd_slice(p, sre, sim, Kv, Kv);
+            int reps = 5000;
+            double t0 = now_ns();
             for (int r = 0; r < reps; r++)
                 _stride_execute_fwd_slice(p, sre, sim, Kv, Kv);
-            double ns = (now_ns() - t0) / reps;
-            if (ns < best_s) best_s = ns;
-        }
+            double calib = (now_ns() - t0) / reps;
+            reps = (int)((double)duration_ms * 1e6 / calib);
+            if (reps < 200) reps = 200;
+            if (reps > 500000) reps = 500000;
 
-        /* Bench blocked */
-        for (int w = 0; w < 500; w++)
-            execute_fwd_blocked(p, sre, sim, sp, bg);
-        double best_b = 1e18;
-        for (int trial = 0; trial < 5; trial++) {
-            t0 = now_ns();
-            for (int r = 0; r < reps; r++)
+            double best_s = 1e18;
+            for (int trial = 0; trial < 5; trial++) {
+                t0 = now_ns();
+                for (int r = 0; r < reps; r++)
+                    _stride_execute_fwd_slice(p, sre, sim, Kv, Kv);
+                double ns = (now_ns() - t0) / reps;
+                if (ns < best_s) best_s = ns;
+            }
+
+            /* Bench blocked */
+            for (int w = 0; w < 200; w++)
                 execute_fwd_blocked(p, sre, sim, sp, bg);
-            double ns = (now_ns() - t0) / reps;
-            if (ns < best_b) best_b = ns;
+            double best_b = 1e18;
+            for (int trial = 0; trial < 5; trial++) {
+                t0 = now_ns();
+                for (int r = 0; r < reps; r++)
+                    execute_fwd_blocked(p, sre, sim, sp, bg);
+                double ns = (now_ns() - t0) / reps;
+                if (ns < best_b) best_b = ns;
+            }
+
+            printf("%-8d %-18s %3d %9.0f %9.0f %6.2fx  %s\n",
+                   Nv, fstr, sp, best_s, best_b, best_s / best_b, sinfo);
+
+            stride_plan_destroy(p);
+            STRIDE_ALIGNED_FREE(sre); STRIDE_ALIGNED_FREE(sim);
         }
-
-        printf("%-6zu %9.0f %9.0f %6.2fx  (split@%d, blk=%d)\n",
-               Kv, best_s, best_b, best_s / best_b, sp, bg);
-
-        stride_plan_destroy(p);
-        STRIDE_ALIGNED_FREE(sre); STRIDE_ALIGNED_FREE(sim);
     }
 
     STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
