@@ -1,11 +1,9 @@
-<img width="1280" height="640" alt="vectorfft_banner (1)" src="https://github.com/user-attachments/assets/27eeb333-f0a9-41d4-8b00-8624b1f1ee07" />
+<img width="2560" height="960" alt="image" src="https://github.com/user-attachments/assets/0a206a63-f7d3-45f4-8e1d-be3aca3e2cb5" />
 
 <p align="center">
   A permutation-free mixed-radix Fast Fourier Transform library in C with hand-tuned AVX2/AVX-512 codelets.<br>
   <b>Beats Intel MKL on every tested size — 198/198 benchmarks.</b> No external dependencies.
 </p>
-
-The classical FFT literature optimized a cost model where arithmetic operations were the dominant resource. Mature libraries descending from that tradition — FFTW, MKL, and their kin — inherit codelet structures and factorization heuristics shaped by that assumption. On modern SIMD CPUs the binding constraint has shifted from arithmetic throughput to register pressure, memory bandwidth, and instruction-level parallelism; algorithms that were optimal under the old cost model are no longer optimal under the new one. VectorFFT was designed from the hardware backward: the butterfly, radix, and twiddle-storage decisions are driven by what the machine is actually bottlenecked on, not by operation count minimization
 
 ---
 
@@ -136,7 +134,7 @@ This saves one full data pass per transform. At large N with large batch sizes, 
 ### Executor
 
 - **Zero scratch buffers** -- fully in-place, single buffer for all stages
-- *permutation-free tensor-stride FFT** -- bakes the common factor (product of all outer-stage twiddles) into each per-leg twiddle table at plan time, reducing the forward path to a single twiddle multiply per butterfly leg
+- **Method C fused twiddles** -- bakes the common factor (product of all outer-stage twiddles) into each per-leg twiddle table at plan time, reducing the forward path to a single twiddle multiply per butterfly leg
 - **Scalar twiddle optimization** -- each twiddle row is a single scalar replicated K times; the executor stores only (R-1) unique doubles per group and broadcasts them to SIMD width inside the codelet, cutting twiddle memory from (R-1)\*K\*16 bytes to (R-1)\*16 bytes
 - **Split-complex layout** -- separate `re[]` / `im[]` arrays, naturally aligned for SIMD without interleave/deinterleave overhead
 
