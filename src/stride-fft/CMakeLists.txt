@@ -258,6 +258,14 @@ else()
     message(WARNING "FFTW3 not found -- bench_mt disabled. Install via: vcpkg install fftw3")
 endif()
 
+# ── R=4 isolated codelet microbenchmark (for VTune / perf stat) ──
+add_executable(vfft_bench_r4 bench/bench_r4_codelet.c)
+target_link_libraries(vfft_bench_r4 PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_r4 PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_bench_r4 PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ── Comprehensive 1D benchmark with CSV output ──
 add_executable(vfft_bench_1d_csv bench/bench_1d_csv.c)
 target_link_libraries(vfft_bench_1d_csv PRIVATE vfft_stride)
