@@ -395,31 +395,42 @@ static double _stride_refine_bench(int N, size_t K,
 /**
  * stride_wisdom_calibrate -- Find best factorization and store in wisdom.
  *
- * Two strategies:
- *   Small N (<=1024): exhaustive search (all factorizations x orderings)
- *   Large N (>1024):  recursive DP planner (FFTW-style decomposition with
- *                     memoization). Tries each radix as first stage,
- *                     recursively plans the remainder, caches sub-solutions.
- *                     Then tries all orderings of the winning radix set.
- *                     ~150 benchmarks instead of ~61000.
+ * Two strategies based on exhaustive_threshold:
+ *   N <= threshold: exhaustive search (all factorizations x orderings)
+ *   N >  threshold: recursive DP planner (FFTW-style with memoization)
  *
- * dp_ctx: optional pre-initialized DP context. If NULL, creates one
- *         internally. Pass a shared context when calibrating many (N,K)
- *         at the same K to reuse sub-problem cache across sizes.
+ * Parameters:
+ *   wis:         wisdom database to update
+ *   N, K:        transform size and batch count
+ *   reg:         codelet registry
+ *   dp_ctx:      optional shared DP context (NULL = create internally)
+ *   force:       0 = skip if (N,K) already in wisdom, 1 = always recalibrate
+ *   verbose:     0 = quiet, 1 = print decompositions + winner
+ *   exhaustive_threshold: N <= this uses exhaustive, N > uses DP
+ *   save_path:   if non-NULL, save wisdom to this file after each new entry
+ *                (crash protection for long calibration runs)
+ *
+ * Returns: best time in ns, or 1e18 on failure.
  */
-#define STRIDE_EXHAUSTIVE_THRESHOLD 1024
+static double stride_wisdom_calibrate_full(
+        stride_wisdom_t *wis, int N, size_t K,
+        const stride_registry_t *reg,
+        stride_dp_context_t *dp_ctx,
+        int force, int verbose, int exhaustive_threshold,
+        const char *save_path)
+{
+    /* Skip if already calibrated (unless force) */
+    if (!force) {
+        const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
+        if (e) return e->best_ns;
+    }
 
-static void stride_wisdom_calibrate_ex(stride_wisdom_t *wis, int N, size_t K,
-                                        const stride_registry_t *reg,
-                                        stride_dp_context_t *dp_ctx) {
     stride_factorization_t best_fact;
     double best_ns;
 
-    if (N <= STRIDE_EXHAUSTIVE_THRESHOLD) {
-        /* Small N: full exhaustive (all factorizations x orderings) */
-        best_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
+    if (N <= exhaustive_threshold) {
+        best_ns = stride_exhaustive_search(N, K, reg, &best_fact, verbose);
     } else {
-        /* Large N: recursive DP planner */
         stride_dp_context_t local_ctx;
         int own_ctx = 0;
         if (!dp_ctx) {
@@ -427,11 +438,11 @@ static void stride_wisdom_calibrate_ex(stride_wisdom_t *wis, int N, size_t K,
             dp_ctx = &local_ctx;
             own_ctx = 1;
         }
-        best_ns = stride_dp_plan(dp_ctx, N, reg, &best_fact, 0);
+        best_ns = stride_dp_plan(dp_ctx, N, reg, &best_fact, verbose);
         if (own_ctx) stride_dp_destroy(&local_ctx);
     }
 
-    if (best_ns >= 1e17) return;
+    if (best_ns >= 1e17) return best_ns;
 
     /* Re-bench the winner with full accuracy */
     double refined_ns = _stride_refine_bench(N, K, best_fact.factors,
@@ -439,12 +450,28 @@ static void stride_wisdom_calibrate_ex(stride_wisdom_t *wis, int N, size_t K,
 
     stride_wisdom_add(wis, N, K, best_fact.factors, best_fact.nfactors,
                       refined_ns);
+
+    /* Save to disk immediately if path provided */
+    if (save_path)
+        stride_wisdom_save(wis, save_path);
+
+    return refined_ns;
 }
 
-/* Convenience wrapper */
+#define STRIDE_EXHAUSTIVE_THRESHOLD 1024
+
+/* Legacy wrappers for backward compatibility */
+static void stride_wisdom_calibrate_ex(stride_wisdom_t *wis, int N, size_t K,
+                                        const stride_registry_t *reg,
+                                        stride_dp_context_t *dp_ctx) {
+    stride_wisdom_calibrate_full(wis, N, K, reg, dp_ctx,
+                                  1, 0, STRIDE_EXHAUSTIVE_THRESHOLD, NULL);
+}
+
 static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
                                      const stride_registry_t *reg) {
-    stride_wisdom_calibrate_ex(wis, N, K, reg, NULL);
+    stride_wisdom_calibrate_full(wis, N, K, reg, NULL,
+                                  1, 0, STRIDE_EXHAUSTIVE_THRESHOLD, NULL);
 }
 
 /* 2D FFT — must be after stride_auto_plan is defined */

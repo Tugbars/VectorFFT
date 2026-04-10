@@ -232,13 +232,20 @@ static const int n_sizes = sizeof(all_sizes) / sizeof(all_sizes[0]);
 static const size_t Ks[] = {4, 32, 256};
 static const int n_Ks = sizeof(Ks) / sizeof(Ks[0]);
 
-int main(void) {
+int main(int argc, char **argv) {
     stride_env_init();
     stride_pin_thread(0);
     stride_set_num_threads(1);
 #ifdef VFFT_HAS_MKL
     mkl_set_num_threads(1);
 #endif
+
+    /* --recalibrate: wipe wisdom and re-run all entries from scratch.
+     * Use after codelet changes to ensure optimal factorizations. */
+    int recalibrate = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--recalibrate") == 0) recalibrate = 1;
+    }
 
     stride_registry_t reg;
     stride_registry_init(&reg);
@@ -249,34 +256,79 @@ int main(void) {
 
     stride_wisdom_t wis;
     stride_wisdom_init(&wis);
-    stride_wisdom_load(&wis, WISDOM_PATH);
 
-    printf("=== Phase 1: Wisdom calibration ===\n");
-    printf("Loaded %d existing entries from %s\n", wis.count, WISDOM_PATH);
+    if (recalibrate) {
+        printf("=== Phase 1: RECALIBRATE (all entries from scratch) ===\n");
+    } else {
+        stride_wisdom_load(&wis, WISDOM_PATH);
+        printf("=== Phase 1: Wisdom calibration ===\n");
+        printf("Loaded %d existing entries from %s\n", wis.count, WISDOM_PATH);
+    }
+
+    /* Shared DP contexts per K — reuses sub-problem memoization across sizes */
+    int max_N = 0;
+    for (int si = 0; si < n_sizes; si++)
+        if (all_sizes[si].N > max_N) max_N = all_sizes[si].N;
+
+    stride_dp_context_t dp_4, dp_32, dp_256;
+    stride_dp_init(&dp_4,   4,   max_N);
+    stride_dp_init(&dp_32,  32,  max_N);
+    stride_dp_init(&dp_256, 256, max_N);
+
+    #define BENCH_EXHAUSTIVE_THRESH 2048
 
     int calibrated = 0;
     for (int si = 0; si < n_sizes; si++) {
         int N = all_sizes[si].N;
         for (int ki = 0; ki < n_Ks; ki++) {
             size_t K = Ks[ki];
-            if (stride_wisdom_lookup(&wis, N, K))
-                continue;  /* already calibrated */
 
-            printf("  Calibrating N=%d K=%zu ... ", N, K);
+            /* Check if already in wisdom before calling */
+            int had_entry = (stride_wisdom_lookup(&wis, N, K) != NULL);
+
+            stride_dp_context_t *dp = (K == 4) ? &dp_4 :
+                                      (K == 32) ? &dp_32 : &dp_256;
+
+            const char *method = (N <= BENCH_EXHAUSTIVE_THRESH) ? "exhaustive" : "DP";
+            printf("  N=%-6d K=%-4zu ", N, K);
             fflush(stdout);
+
             double t0 = now_ns();
-            stride_wisdom_calibrate(&wis, N, K, &reg);
-            printf("%.1fs\n", (now_ns() - t0) / 1e9);
-            calibrated++;
+            double ns = stride_wisdom_calibrate_full(
+                &wis, N, K, &reg, dp,
+                recalibrate,              /* force */
+                1,                        /* verbose */
+                BENCH_EXHAUSTIVE_THRESH,
+                WISDOM_PATH);             /* save to disk after each entry */
+            double elapsed = (now_ns() - t0) / 1e9;
+
+            if (!had_entry || recalibrate) {
+                if (ns < 1e17) {
+                    printf("    → saved [%s] (%.1fs)\n", method, elapsed);
+                    calibrated++;
+                } else {
+                    printf("    → FAILED [%s] (%.1fs)\n", method, elapsed);
+                }
+            } else {
+                /* Was cached — calibrate_full returned early */
+                const stride_wisdom_entry_t *e = stride_wisdom_lookup(&wis, N, K);
+                printf("[cached] ");
+                for (int f = 0; f < e->nfactors; f++)
+                    printf("%s%d", f ? "x" : "", e->factors[f]);
+                printf("\n");
+            }
         }
     }
 
+    stride_dp_destroy(&dp_4);
+    stride_dp_destroy(&dp_32);
+    stride_dp_destroy(&dp_256);
+
     if (calibrated > 0) {
-        stride_wisdom_save(&wis, WISDOM_PATH);
-        printf("Calibrated %d new entries, saved to %s (%d total)\n\n",
-               calibrated, WISDOM_PATH, wis.count);
+        printf("\nCalibrated %d new entries, wisdom has %d total in %s\n\n",
+               calibrated, wis.count, WISDOM_PATH);
     } else {
-        printf("All entries present, no calibration needed.\n\n");
+        printf("\nAll entries present, no calibration needed.\n\n");
     }
 
     /* ═══════════════════════════════════════════════════════
@@ -289,6 +341,43 @@ int main(void) {
     fprintf(fp, "N,K,category,factors,vfft_ns,mkl_ns,vfft_gflops,mkl_gflops,ratio_vs_mkl\n");
 
     printf("=== Phase 2: Performance → %s ===\n\n", perf_path);
+
+    /* Pre-build all plans, verify wisdom → plan factorization match */
+    printf("Verifying wisdom → plan factorizations:\n");
+    for (int si = 0; si < n_sizes; si++) {
+        int N = all_sizes[si].N;
+        for (int ki = 0; ki < n_Ks; ki++) {
+            size_t K = Ks[ki];
+            const stride_wisdom_entry_t *e = stride_wisdom_lookup(&wis, N, K);
+            stride_plan_t *p = stride_wise_plan(N, K, &reg, &wis);
+            if (!e || !p) continue;
+
+            /* Wisdom factorization */
+            printf("  N=%-6d K=%-4zu  wis=", N, K);
+            for (int f = 0; f < e->nfactors; f++)
+                printf("%s%d", f ? "x" : "", e->factors[f]);
+
+            /* Plan factorization (should match for staged plans) */
+            if (p->num_stages > 0) {
+                printf("  plan=");
+                for (int s = 0; s < p->num_stages; s++)
+                    printf("%s%d", s ? "x" : "", p->factors[s]);
+
+                /* Check match */
+                int match = (p->num_stages == e->nfactors);
+                if (match)
+                    for (int s = 0; s < p->num_stages; s++)
+                        if (p->factors[s] != e->factors[s]) { match = 0; break; }
+                printf("  %s", match ? "OK" : "MISMATCH!");
+            } else {
+                printf("  plan=[override]");  /* Rader/Bluestein */
+            }
+            printf("\n");
+            stride_plan_destroy(p);
+        }
+    }
+    printf("\nBenchmarking...\n\n");
+
     printf("%-8s %-5s %-12s %-16s %10s %10s %8s %8s %7s\n",
            "N", "K", "category", "factors", "vfft_ns", "mkl_ns",
            "vfft_GF", "mkl_GF", "ratio");
