@@ -76,178 +76,268 @@
   #include "fft_radix3_avx512_ct_t1_dit.h"
   #include "fft_radix3_avx512_ct_t1s_dit.h"
   #include "fft_radix3_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix3_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix3_avx512_ct_n1_scaled.h"
   #include "fft_radix5_avx512_ct_n1.h"
   #include "fft_radix5_avx512_ct_t1_dit.h"
   #include "fft_radix5_avx512_ct_t1s_dit.h"
   #include "fft_radix5_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix5_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix5_avx512_ct_n1_scaled.h"
   #include "fft_radix6_avx512_ct_n1.h"
   #include "fft_radix6_avx512_ct_t1_dit.h"
   #include "fft_radix6_avx512_ct_t1s_dit.h"
   #include "fft_radix6_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix6_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix6_avx512_ct_n1_scaled.h"
   #include "fft_radix7_avx512_ct_n1.h"
   #include "fft_radix7_avx512_ct_t1_dit.h"
   #include "fft_radix7_avx512_ct_t1s_dit.h"
   #include "fft_radix7_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix7_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix7_avx512_ct_n1_scaled.h"
   #include "fft_radix10_avx512_ct_n1.h"
   #include "fft_radix10_avx512_ct_t1_dit.h"
   #include "fft_radix10_avx512_ct_t1s_dit.h"
   #include "fft_radix10_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix10_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix10_avx512_ct_n1_scaled.h"
   #include "fft_radix11_avx512_ct_n1.h"
   #include "fft_radix11_avx512_ct_t1_dit.h"
   #include "fft_radix11_avx512_ct_t1s_dit.h"
   #include "fft_radix11_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix11_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix11_avx512_ct_n1_scaled.h"
   #include "fft_radix12_avx512_ct_n1.h"
   #include "fft_radix12_avx512_ct_t1_dit.h"
   #include "fft_radix12_avx512_ct_t1s_dit.h"
   #include "fft_radix12_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix12_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix12_avx512_ct_n1_scaled.h"
   #include "fft_radix13_avx512_ct_n1.h"
   #include "fft_radix13_avx512_ct_t1_dit.h"
   #include "fft_radix13_avx512_ct_t1s_dit.h"
   #include "fft_radix13_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix13_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix13_avx512_ct_n1_scaled.h"
   #include "fft_radix16_avx512_ct_n1.h"
   #include "fft_radix16_avx512_ct_t1_dit.h"
   #include "fft_radix16_avx512_ct_t1s_dit.h"
   #include "fft_radix16_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix16_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix16_avx512_ct_n1_scaled.h"
   #include "fft_radix17_avx512_ct_n1.h"
   #include "fft_radix17_avx512_ct_t1_dit.h"
   #include "fft_radix17_avx512_ct_t1s_dit.h"
   #include "fft_radix17_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix17_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix17_avx512_ct_n1_scaled.h"
   #include "fft_radix19_avx512_ct_n1.h"
   #include "fft_radix19_avx512_ct_t1_dit.h"
   #include "fft_radix19_avx512_ct_t1s_dit.h"
   #include "fft_radix19_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix19_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix19_avx512_ct_n1_scaled.h"
   #include "fft_radix20_avx512_ct_n1.h"
   #include "fft_radix20_avx512_ct_t1_dit.h"
   #include "fft_radix20_avx512_ct_t1s_dit.h"
   #include "fft_radix20_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix20_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix20_avx512_ct_n1_scaled.h"
   #include "fft_radix25_avx512_ct_n1.h"
   #include "fft_radix25_avx512_ct_t1_dit.h"
   #include "fft_radix25_avx512_ct_t1s_dit.h"
   #include "fft_radix25_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix25_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix25_avx512_ct_n1_scaled.h"
   #include "fft_radix32_avx512_ct_n1.h"
   #include "fft_radix32_avx512_ct_t1_dit.h"
   #include "fft_radix32_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix32_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix32_avx512_ct_n1_scaled.h"
   #include "fft_radix64_avx512_ct_n1.h"
   #include "fft_radix64_avx512_ct_t1_dit.h"
   #include "fft_radix64_avx512_ct_t1_dit_log3.h"
+  #include "fft_radix64_avx512_ct_t1_oop_dit.h"
+  #include "fft_radix64_avx512_ct_n1_scaled.h"
 #elif defined(VFFT_ISA_AVX2)
   #include "fft_radix3_avx2_ct_n1.h"
   #include "fft_radix3_avx2_ct_t1_dit.h"
   #include "fft_radix3_avx2_ct_t1s_dit.h"
   #include "fft_radix3_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix3_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix3_avx2_ct_n1_scaled.h"
   #include "fft_radix5_avx2_ct_n1.h"
   #include "fft_radix5_avx2_ct_t1_dit.h"
   #include "fft_radix5_avx2_ct_t1s_dit.h"
   #include "fft_radix5_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix5_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix5_avx2_ct_n1_scaled.h"
   #include "fft_radix6_avx2_ct_n1.h"
   #include "fft_radix6_avx2_ct_t1_dit.h"
   #include "fft_radix6_avx2_ct_t1s_dit.h"
   #include "fft_radix6_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix6_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix6_avx2_ct_n1_scaled.h"
   #include "fft_radix7_avx2_ct_n1.h"
   #include "fft_radix7_avx2_ct_t1_dit.h"
   #include "fft_radix7_avx2_ct_t1s_dit.h"
   #include "fft_radix7_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix7_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix7_avx2_ct_n1_scaled.h"
   #include "fft_radix10_avx2_ct_n1.h"
   #include "fft_radix10_avx2_ct_t1_dit.h"
   #include "fft_radix10_avx2_ct_t1s_dit.h"
   #include "fft_radix10_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix10_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix10_avx2_ct_n1_scaled.h"
   #include "fft_radix11_avx2_ct_n1.h"
   #include "fft_radix11_avx2_ct_t1_dit.h"
   #include "fft_radix11_avx2_ct_t1s_dit.h"
   #include "fft_radix11_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix11_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix11_avx2_ct_n1_scaled.h"
   #include "fft_radix12_avx2_ct_n1.h"
   #include "fft_radix12_avx2_ct_t1_dit.h"
   #include "fft_radix12_avx2_ct_t1s_dit.h"
   #include "fft_radix12_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix12_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix12_avx2_ct_n1_scaled.h"
   #include "fft_radix13_avx2_ct_n1.h"
   #include "fft_radix13_avx2_ct_t1_dit.h"
   #include "fft_radix13_avx2_ct_t1s_dit.h"
   #include "fft_radix13_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix13_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix13_avx2_ct_n1_scaled.h"
   #include "fft_radix16_avx2_ct_n1.h"
   #include "fft_radix16_avx2_ct_t1_dit.h"
   #include "fft_radix16_avx2_ct_t1s_dit.h"
   #include "fft_radix16_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix16_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix16_avx2_ct_n1_scaled.h"
   #include "fft_radix17_avx2_ct_n1.h"
   #include "fft_radix17_avx2_ct_t1_dit.h"
   #include "fft_radix17_avx2_ct_t1s_dit.h"
   #include "fft_radix17_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix17_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix17_avx2_ct_n1_scaled.h"
   #include "fft_radix19_avx2_ct_n1.h"
   #include "fft_radix19_avx2_ct_t1_dit.h"
   #include "fft_radix19_avx2_ct_t1s_dit.h"
   #include "fft_radix19_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix19_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix19_avx2_ct_n1_scaled.h"
   #include "fft_radix20_avx2_ct_n1.h"
   #include "fft_radix20_avx2_ct_t1_dit.h"
   #include "fft_radix20_avx2_ct_t1s_dit.h"
   #include "fft_radix20_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix20_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix20_avx2_ct_n1_scaled.h"
   #include "fft_radix25_avx2_ct_n1.h"
   #include "fft_radix25_avx2_ct_t1_dit.h"
   #include "fft_radix25_avx2_ct_t1s_dit.h"
   #include "fft_radix25_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix25_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix25_avx2_ct_n1_scaled.h"
   #include "fft_radix32_avx2_ct_n1.h"
   #include "fft_radix32_avx2_ct_t1_dit.h"
   #include "fft_radix32_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix32_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix32_avx2_ct_n1_scaled.h"
   #include "fft_radix64_avx2_ct_n1.h"
   #include "fft_radix64_avx2_ct_t1_dit.h"
   #include "fft_radix64_avx2_ct_t1_dit_log3.h"
+  #include "fft_radix64_avx2_ct_t1_oop_dit.h"
+  #include "fft_radix64_avx2_ct_n1_scaled.h"
 #else /* scalar */
   #include "fft_radix3_scalar_ct_n1.h"
   #include "fft_radix3_scalar_ct_t1_dit.h"
   #include "fft_radix3_scalar_ct_t1s_dit.h"
   #include "fft_radix3_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix3_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix3_scalar_ct_n1_scaled.h"
   #include "fft_radix5_scalar_ct_n1.h"
   #include "fft_radix5_scalar_ct_t1_dit.h"
   #include "fft_radix5_scalar_ct_t1s_dit.h"
   #include "fft_radix5_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix5_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix5_scalar_ct_n1_scaled.h"
   #include "fft_radix6_scalar_ct_n1.h"
   #include "fft_radix6_scalar_ct_t1_dit.h"
   #include "fft_radix6_scalar_ct_t1s_dit.h"
   #include "fft_radix6_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix6_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix6_scalar_ct_n1_scaled.h"
   #include "fft_radix7_scalar_ct_n1.h"
   #include "fft_radix7_scalar_ct_t1_dit.h"
   #include "fft_radix7_scalar_ct_t1s_dit.h"
   #include "fft_radix7_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix7_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix7_scalar_ct_n1_scaled.h"
   #include "fft_radix10_scalar_ct_n1.h"
   #include "fft_radix10_scalar_ct_t1_dit.h"
   #include "fft_radix10_scalar_ct_t1s_dit.h"
   #include "fft_radix10_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix10_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix10_scalar_ct_n1_scaled.h"
   #include "fft_radix11_scalar_ct_n1.h"
   #include "fft_radix11_scalar_ct_t1_dit.h"
   #include "fft_radix11_scalar_ct_t1s_dit.h"
   #include "fft_radix11_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix11_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix11_scalar_ct_n1_scaled.h"
   #include "fft_radix12_scalar_ct_n1.h"
   #include "fft_radix12_scalar_ct_t1_dit.h"
   #include "fft_radix12_scalar_ct_t1s_dit.h"
   #include "fft_radix12_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix12_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix12_scalar_ct_n1_scaled.h"
   #include "fft_radix13_scalar_ct_n1.h"
   #include "fft_radix13_scalar_ct_t1_dit.h"
   #include "fft_radix13_scalar_ct_t1s_dit.h"
   #include "fft_radix13_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix13_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix13_scalar_ct_n1_scaled.h"
   #include "fft_radix16_scalar_ct_n1.h"
   #include "fft_radix16_scalar_ct_t1_dit.h"
   #include "fft_radix16_scalar_ct_t1s_dit.h"
   #include "fft_radix16_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix16_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix16_scalar_ct_n1_scaled.h"
   #include "fft_radix17_scalar_ct_n1.h"
   #include "fft_radix17_scalar_ct_t1_dit.h"
   #include "fft_radix17_scalar_ct_t1s_dit.h"
   #include "fft_radix17_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix17_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix17_scalar_ct_n1_scaled.h"
   #include "fft_radix19_scalar_ct_n1.h"
   #include "fft_radix19_scalar_ct_t1_dit.h"
   #include "fft_radix19_scalar_ct_t1s_dit.h"
   #include "fft_radix19_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix19_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix19_scalar_ct_n1_scaled.h"
   #include "fft_radix20_scalar_ct_n1.h"
   #include "fft_radix20_scalar_ct_t1_dit.h"
   #include "fft_radix20_scalar_ct_t1s_dit.h"
   #include "fft_radix20_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix20_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix20_scalar_ct_n1_scaled.h"
   #include "fft_radix25_scalar_ct_n1.h"
   #include "fft_radix25_scalar_ct_t1_dit.h"
   #include "fft_radix25_scalar_ct_t1s_dit.h"
   #include "fft_radix25_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix25_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix25_scalar_ct_n1_scaled.h"
   #include "fft_radix32_scalar_ct_n1.h"
   #include "fft_radix32_scalar_ct_t1_dit.h"
   #include "fft_radix32_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix32_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix32_scalar_ct_n1_scaled.h"
   #include "fft_radix64_scalar_ct_n1.h"
   #include "fft_radix64_scalar_ct_t1_dit.h"
   #include "fft_radix64_scalar_ct_t1_dit_log3.h"
+  #include "fft_radix64_scalar_ct_t1_oop_dit.h"
+  #include "fft_radix64_scalar_ct_n1_scaled.h"
 #endif
 
 /* ═══════════════════════════════════════════════════════════════
@@ -265,6 +355,10 @@ typedef struct {
     stride_t1_fn t1_bwd_log3[STRIDE_REG_MAX_RADIX];
     stride_t1_fn t1s_fwd[STRIDE_REG_MAX_RADIX]; /* scalar-broadcast twiddle */
     stride_t1_fn t1s_bwd[STRIDE_REG_MAX_RADIX];
+    stride_t1_oop_fn t1_oop_fwd[STRIDE_REG_MAX_RADIX]; /* out-of-place twiddle (R2C, 2D) */
+    stride_t1_oop_fn t1_oop_bwd[STRIDE_REG_MAX_RADIX];
+    stride_n1_scaled_fn n1_scaled_fwd[STRIDE_REG_MAX_RADIX]; /* scaled output (C2R) */
+    stride_n1_scaled_fn n1_scaled_bwd[STRIDE_REG_MAX_RADIX];
 } stride_registry_t;
 
 static const int STRIDE_AVAILABLE_RADIXES[] = {
@@ -293,6 +387,14 @@ static const int STRIDE_AVAILABLE_RADIXES[] = {
     reg->t1s_fwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1s_dit_fwd); \
     reg->t1s_bwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1s_dit_bwd);
 
+#define _REG_T1_OOP(R) \
+    reg->t1_oop_fwd[R] = (stride_t1_oop_fn)VFFT_FN(radix##R##_t1_oop_dit_fwd); \
+    reg->t1_oop_bwd[R] = (stride_t1_oop_fn)VFFT_FN(radix##R##_t1_oop_dit_bwd);
+
+#define _REG_N1_SCALED(R) \
+    reg->n1_scaled_fwd[R] = (stride_n1_scaled_fn)VFFT_FN(radix##R##_n1_scaled_fwd); \
+    reg->n1_scaled_bwd[R] = (stride_n1_scaled_fn)VFFT_FN(radix##R##_n1_scaled_bwd);
+
 #define _REG_FULL(R)    _REG_N1(R) _REG_T1(R) _REG_T1_LOG3(R)
 #define _REG_NO_LOG3(R) _REG_N1(R) _REG_T1(R)
 #define _REG_N1_ONLY(R) _REG_N1(R)
@@ -307,24 +409,27 @@ static const int STRIDE_AVAILABLE_RADIXES[] = {
 static void stride_registry_init(stride_registry_t *reg) {
     memset(reg, 0, sizeof(*reg));
 
-    _REG_NO_LOG3(2)
-    _REG_FULL(3)  _REG_T1S(3)
-    _REG_FULL(4)
-    _REG_FULL(5)  _REG_T1S(5)
-    _REG_FULL(6)  _REG_T1S(6)
-    _REG_FULL(7)  _REG_T1S(7)
-    _REG_NO_LOG3(8)
-    _REG_FULL(10) _REG_T1S(10)
-    _REG_FULL(11) _REG_T1S(11)
-    _REG_FULL(12) _REG_T1S(12)
-    _REG_FULL(13) _REG_T1S(13)
-    _REG_FULL(16) _REG_T1S(16)
-    _REG_FULL(17) _REG_T1S(17)
-    _REG_FULL(19) _REG_T1S(19)
-    _REG_FULL(20) _REG_T1S(20)
-    _REG_FULL(25) _REG_T1S(25)
-    _REG_FULL(32)
-    _REG_FULL(64)
+    _REG_NO_LOG3(2)  _REG_T1_OOP(2)  _REG_N1_SCALED(2)
+    _REG_FULL(3)  _REG_T1S(3)  _REG_T1_OOP(3)  _REG_N1_SCALED(3)
+    _REG_FULL(4)  _REG_T1_OOP(4)  _REG_N1_SCALED(4)
+    _REG_FULL(5)  _REG_T1S(5)  _REG_T1_OOP(5)  _REG_N1_SCALED(5)
+    _REG_FULL(6)  _REG_T1S(6)  _REG_T1_OOP(6)  _REG_N1_SCALED(6)
+    _REG_FULL(7)  _REG_T1S(7)  _REG_T1_OOP(7)  _REG_N1_SCALED(7)
+    _REG_NO_LOG3(8)  _REG_T1_OOP(8)  _REG_N1_SCALED(8)
+    _REG_FULL(10) _REG_T1S(10) _REG_T1_OOP(10) _REG_N1_SCALED(10)
+    _REG_FULL(11) _REG_T1S(11) _REG_T1_OOP(11) _REG_N1_SCALED(11)
+    _REG_FULL(12) _REG_T1S(12) _REG_T1_OOP(12) _REG_N1_SCALED(12)
+    _REG_FULL(13) _REG_T1S(13) _REG_T1_OOP(13) _REG_N1_SCALED(13)
+    _REG_FULL(16) _REG_T1S(16) _REG_T1_OOP(16) _REG_N1_SCALED(16)
+    _REG_FULL(17) _REG_T1S(17) _REG_T1_OOP(17) _REG_N1_SCALED(17)
+    _REG_FULL(19) _REG_T1S(19) _REG_T1_OOP(19) _REG_N1_SCALED(19)
+    _REG_FULL(20) _REG_T1S(20) _REG_T1_OOP(20) _REG_N1_SCALED(20)
+    _REG_FULL(25) _REG_T1S(25) _REG_T1_OOP(25) _REG_N1_SCALED(25)
+    _REG_FULL(32) _REG_T1_OOP(32) _REG_N1_SCALED(32)
+    _REG_FULL(64) _REG_T1_OOP(64) _REG_N1_SCALED(64)
+    /* TODO: generate and include t1_oop AVX-512 and scalar headers.
+     * Currently only AVX2 t1_oop codelets are generated.
+     * AVX-512 + scalar t1_oop can be added via generate_all.bat. */
 }
 
 #undef _REG_N1

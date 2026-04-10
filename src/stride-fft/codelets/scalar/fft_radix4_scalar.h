@@ -315,6 +315,57 @@ radix4_t1_dif_fwd(
 }
 
 static inline void
+radix4_t1_oop_dit_fwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{
+    for (size_t m = 0; m < me; m++) {
+        const double x0r = in_re[m + 0*is], x0i = in_im[m + 0*is];
+        const double r1r = in_re[m + 1*is], r1i = in_im[m + 1*is];
+        const double r2r = in_re[m + 2*is], r2i = in_im[m + 2*is];
+        const double r3r = in_re[m + 3*is], r3i = in_im[m + 3*is];
+        const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
+        const double w2r = W_re[1*me + m], w2i = W_im[1*me + m];
+        const double w3r = W_re[2*me + m], w3i = W_im[2*me + m];
+        const double x1r = r1r*w1r - r1i*w1i, x1i = r1r*w1i + r1i*w1r;
+        const double x2r = r2r*w2r - r2i*w2i, x2i = r2r*w2i + r2i*w2r;
+        const double x3r = r3r*w3r - r3i*w3i, x3i = r3r*w3i + r3i*w3r;
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[m + 0*os] = t0r + t2r; out_im[m + 0*os] = t0i + t2i;
+        out_re[m + 2*os] = t0r - t2r; out_im[m + 2*os] = t0i - t2i;
+        out_re[m + 1*os] = t1r + t3i; out_im[m + 1*os] = t1i - t3r;
+        out_re[m + 3*os] = t1r - t3i; out_im[m + 3*os] = t1i + t3r;
+    }
+}
+static inline void
+radix4_n1_scaled_fwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    for (size_t m = 0; m < vl; m++) {
+        const double x0r = in_re[0*is+m], x0i = in_im[0*is+m];
+        const double x1r = in_re[1*is+m], x1i = in_im[1*is+m];
+        const double x2r = in_re[2*is+m], x2i = in_im[2*is+m];
+        const double x3r = in_re[3*is+m], x3i = in_im[3*is+m];
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[0*os+m] = scale * (t0r + t2r); out_im[0*os+m] = scale * (t0i + t2i);
+        out_re[2*os+m] = scale * (t0r - t2r); out_im[2*os+m] = scale * (t0i - t2i);
+        out_re[1*os+m] = scale * (t1r + t3i); out_im[1*os+m] = scale * (t1i - t3r);
+        out_re[3*os+m] = scale * (t1r - t3i); out_im[3*os+m] = scale * (t1i + t3r);
+    }
+}
+
+
+static inline void
 radix4_n1_bwd(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
@@ -416,6 +467,57 @@ radix4_t1_dif_bwd(
         rio_re[m*ms + 3*ios] = t1r + t3i*w3r + t1i - t3r*w3i; rio_im[m*ms + 3*ios] = -t1r + t3i*w3i + t1i - t3r*w3r;
     }
 }
+
+static inline void
+radix4_t1_oop_dit_bwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{
+    for (size_t m = 0; m < me; m++) {
+        const double x0r = in_re[m + 0*is], x0i = in_im[m + 0*is];
+        const double r1r = in_re[m + 1*is], r1i = in_im[m + 1*is];
+        const double r2r = in_re[m + 2*is], r2i = in_im[m + 2*is];
+        const double r3r = in_re[m + 3*is], r3i = in_im[m + 3*is];
+        const double w1r = W_re[0*me + m], w1i = W_im[0*me + m];
+        const double w2r = W_re[1*me + m], w2i = W_im[1*me + m];
+        const double w3r = W_re[2*me + m], w3i = W_im[2*me + m];
+        const double x1r = r1r*w1r + r1i*w1i, x1i = -r1r*w1i + r1i*w1r;
+        const double x2r = r2r*w2r + r2i*w2i, x2i = -r2r*w2i + r2i*w2r;
+        const double x3r = r3r*w3r + r3i*w3i, x3i = -r3r*w3i + r3i*w3r;
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[m + 0*os] = t0r + t2r; out_im[m + 0*os] = t0i + t2i;
+        out_re[m + 2*os] = t0r - t2r; out_im[m + 2*os] = t0i - t2i;
+        out_re[m + 1*os] = t1r - t3i; out_im[m + 1*os] = t1i + t3r;
+        out_re[m + 3*os] = t1r + t3i; out_im[m + 3*os] = t1i - t3r;
+    }
+}
+static inline void
+radix4_n1_scaled_bwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    for (size_t m = 0; m < vl; m++) {
+        const double x0r = in_re[0*is+m], x0i = in_im[0*is+m];
+        const double x1r = in_re[1*is+m], x1i = in_im[1*is+m];
+        const double x2r = in_re[2*is+m], x2i = in_im[2*is+m];
+        const double x3r = in_re[3*is+m], x3i = in_im[3*is+m];
+        const double t0r = x0r + x2r, t0i = x0i + x2i;
+        const double t1r = x0r - x2r, t1i = x0i - x2i;
+        const double t2r = x1r + x3r, t2i = x1i + x3i;
+        const double t3r = x1r - x3r, t3i = x1i - x3i;
+        out_re[0*os+m] = scale * (t0r + t2r); out_im[0*os+m] = scale * (t0i + t2i);
+        out_re[2*os+m] = scale * (t0r - t2r); out_im[2*os+m] = scale * (t0i - t2i);
+        out_re[1*os+m] = scale * (t1r - t3i); out_im[1*os+m] = scale * (t1i + t3r);
+        out_re[3*os+m] = scale * (t1r + t3i); out_im[3*os+m] = scale * (t1i - t3r);
+    }
+}
+
 
 
 #endif /* FFT_RADIX4_SCALAR_H */

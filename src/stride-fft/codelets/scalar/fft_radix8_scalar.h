@@ -421,6 +421,43 @@ radix8_n1_fwd(
 }
 
 static inline void
+radix8_n1_scaled_fwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const double c = 0.707106781186547572737310929369414225220680236816;
+    for (size_t k = 0; k < vl; k++) {
+        const double x0r = in_re[0*is + k], x0i = in_im[0*is + k];
+        const double x1r = in_re[1*is + k], x1i = in_im[1*is + k];
+        const double x2r = in_re[2*is + k], x2i = in_im[2*is + k];
+        const double x3r = in_re[3*is + k], x3i = in_im[3*is + k];
+        const double x4r = in_re[4*is + k], x4i = in_im[4*is + k];
+        const double x5r = in_re[5*is + k], x5i = in_im[5*is + k];
+        const double x6r = in_re[6*is + k], x6i = in_im[6*is + k];
+        const double x7r = in_re[7*is + k], x7i = in_im[7*is + k];
+        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;
+        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;
+        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;
+        const double A1r=eq_r+es_i,A1i=eq_i-es_r,A3r=eq_r-es_i,A3i=eq_i+es_r;
+        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;
+        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;
+        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;
+        const double B1r=oq_r+os_i,B1i=oq_i-os_r,B3r=oq_r-os_i,B3i=oq_i+os_r;
+        out_re[0*os+k]=scale*(A0r+B0r); out_im[0*os+k]=scale*(A0i+B0i);
+        out_re[4*os+k]=scale*(A0r-B0r); out_im[4*os+k]=scale*(A0i-B0i);
+        {double w1r=c*(B1r+B1i),w1i=c*(B1i-B1r);
+        out_re[1*os+k]=scale*(A1r+w1r); out_im[1*os+k]=scale*(A1i+w1i);
+        out_re[5*os+k]=scale*(A1r-w1r); out_im[5*os+k]=scale*(A1i-w1i);}
+        out_re[2*os+k]=scale*(A2r+B2i); out_im[2*os+k]=scale*(A2i-B2r);
+        out_re[6*os+k]=scale*(A2r-B2i); out_im[6*os+k]=scale*(A2i+B2r);
+        {double w3r=-c*(B3r-B3i),w3i=-c*(B3r+B3i);
+        out_re[3*os+k]=scale*(A3r+w3r); out_im[3*os+k]=scale*(A3i+w3i);
+        out_re[7*os+k]=scale*(A3r-w3r); out_im[7*os+k]=scale*(A3i-w3i);}
+    }
+}
+
+static inline void
 radix8_t1_dit_fwd(
     double * __restrict__ rio_re, double * __restrict__ rio_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
@@ -519,6 +556,58 @@ radix8_t1_dif_fwd(
 }
 
 static inline void
+radix8_t1_oop_dit_fwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{
+    const double c = 0.707106781186547572737310929369414225220680236816;
+    for (size_t m = 0; m < me; m++) {
+        const double x0r = in_re[m], x0i = in_im[m];
+        const double r1r = in_re[m+1*is], r1i = in_im[m+1*is];
+        const double tw1r = W_re[0*me+m], tw1i = W_im[0*me+m];
+        const double x1r = r1r*tw1r-r1i*tw1i, x1i = r1r*tw1i+r1i*tw1r;
+        const double r2r = in_re[m+2*is], r2i = in_im[m+2*is];
+        const double tw2r = W_re[1*me+m], tw2i = W_im[1*me+m];
+        const double x2r = r2r*tw2r-r2i*tw2i, x2i = r2r*tw2i+r2i*tw2r;
+        const double r3r = in_re[m+3*is], r3i = in_im[m+3*is];
+        const double tw3r = W_re[2*me+m], tw3i = W_im[2*me+m];
+        const double x3r = r3r*tw3r-r3i*tw3i, x3i = r3r*tw3i+r3i*tw3r;
+        const double r4r = in_re[m+4*is], r4i = in_im[m+4*is];
+        const double tw4r = W_re[3*me+m], tw4i = W_im[3*me+m];
+        const double x4r = r4r*tw4r-r4i*tw4i, x4i = r4r*tw4i+r4i*tw4r;
+        const double r5r = in_re[m+5*is], r5i = in_im[m+5*is];
+        const double tw5r = W_re[4*me+m], tw5i = W_im[4*me+m];
+        const double x5r = r5r*tw5r-r5i*tw5i, x5i = r5r*tw5i+r5i*tw5r;
+        const double r6r = in_re[m+6*is], r6i = in_im[m+6*is];
+        const double tw6r = W_re[5*me+m], tw6i = W_im[5*me+m];
+        const double x6r = r6r*tw6r-r6i*tw6i, x6i = r6r*tw6i+r6i*tw6r;
+        const double r7r = in_re[m+7*is], r7i = in_im[m+7*is];
+        const double tw7r = W_re[6*me+m], tw7i = W_im[6*me+m];
+        const double x7r = r7r*tw7r-r7i*tw7i, x7i = r7r*tw7i+r7i*tw7r;
+        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;
+        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;
+        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;
+        const double A1r=eq_r+es_i,A1i=eq_i-es_r,A3r=eq_r-es_i,A3i=eq_i+es_r;
+        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;
+        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;
+        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;
+        const double B1r=oq_r+os_i,B1i=oq_i-os_r,B3r=oq_r-os_i,B3i=oq_i+os_r;
+        out_re[m+0*os]=A0r+B0r; out_im[m+0*os]=A0i+B0i;
+        out_re[m+4*os]=A0r-B0r; out_im[m+4*os]=A0i-B0i;
+        {double w1r=c*(B1r+B1i),w1i=c*(B1i-B1r);
+        out_re[m+1*os]=A1r+w1r; out_im[m+1*os]=A1i+w1i;
+        out_re[m+5*os]=A1r-w1r; out_im[m+5*os]=A1i-w1i;}
+        out_re[m+2*os]=A2r+B2i; out_im[m+2*os]=A2i-B2r;
+        out_re[m+6*os]=A2r-B2i; out_im[m+6*os]=A2i+B2r;
+        {double w3r=-c*(B3r-B3i),w3i=-c*(B3r+B3i);
+        out_re[m+3*os]=A3r+w3r; out_im[m+3*os]=A3i+w3i;
+        out_re[m+7*os]=A3r-w3r; out_im[m+7*os]=A3i-w3i;}
+    }
+}
+
+static inline void
 radix8_n1_bwd(
     const double * __restrict__ in_re, const double * __restrict__ in_im,
     double * __restrict__ out_re, double * __restrict__ out_im,
@@ -552,6 +641,43 @@ radix8_n1_bwd(
         {double w3r=-c*(B3r+B3i),w3i=c*(B3r-B3i);
         out_re[3*os+k*ovs]=A3r+w3r; out_im[3*os+k*ovs]=A3i+w3i;
         out_re[7*os+k*ovs]=A3r-w3r; out_im[7*os+k*ovs]=A3i-w3i;}
+    }
+}
+
+static inline void
+radix8_n1_scaled_bwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    size_t is, size_t os, size_t vl, double scale)
+{
+    const double c = 0.707106781186547572737310929369414225220680236816;
+    for (size_t k = 0; k < vl; k++) {
+        const double x0r = in_re[0*is + k], x0i = in_im[0*is + k];
+        const double x1r = in_re[1*is + k], x1i = in_im[1*is + k];
+        const double x2r = in_re[2*is + k], x2i = in_im[2*is + k];
+        const double x3r = in_re[3*is + k], x3i = in_im[3*is + k];
+        const double x4r = in_re[4*is + k], x4i = in_im[4*is + k];
+        const double x5r = in_re[5*is + k], x5i = in_im[5*is + k];
+        const double x6r = in_re[6*is + k], x6i = in_im[6*is + k];
+        const double x7r = in_re[7*is + k], x7i = in_im[7*is + k];
+        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;
+        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;
+        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;
+        const double A1r=eq_r-es_i,A1i=eq_i+es_r,A3r=eq_r+es_i,A3i=eq_i-es_r;
+        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;
+        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;
+        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;
+        const double B1r=oq_r-os_i,B1i=oq_i+os_r,B3r=oq_r+os_i,B3i=oq_i-os_r;
+        out_re[0*os+k]=scale*(A0r+B0r); out_im[0*os+k]=scale*(A0i+B0i);
+        out_re[4*os+k]=scale*(A0r-B0r); out_im[4*os+k]=scale*(A0i-B0i);
+        {double w1r=c*(B1r-B1i),w1i=c*(B1r+B1i);
+        out_re[1*os+k]=scale*(A1r+w1r); out_im[1*os+k]=scale*(A1i+w1i);
+        out_re[5*os+k]=scale*(A1r-w1r); out_im[5*os+k]=scale*(A1i-w1i);}
+        out_re[2*os+k]=scale*(A2r-B2i); out_im[2*os+k]=scale*(A2i+B2r);
+        out_re[6*os+k]=scale*(A2r+B2i); out_im[6*os+k]=scale*(A2i-B2r);
+        {double w3r=-c*(B3r+B3i),w3i=c*(B3r-B3i);
+        out_re[3*os+k]=scale*(A3r+w3r); out_im[3*os+k]=scale*(A3i+w3i);
+        out_re[7*os+k]=scale*(A3r-w3r); out_im[7*os+k]=scale*(A3i-w3i);}
     }
 }
 
@@ -650,6 +776,58 @@ radix8_t1_dif_bwd(
           rio_re[m*ms+6*ios]=tr*wr+y6i*wi; rio_im[m*ms+6*ios]=y6i*wr-tr*wi; }
         { double wr=W_re[6*me+m],wi=W_im[6*me+m],tr=y7r;
           rio_re[m*ms+7*ios]=tr*wr+y7i*wi; rio_im[m*ms+7*ios]=y7i*wr-tr*wi; }
+    }
+}
+
+static inline void
+radix8_t1_oop_dit_bwd_scalar(
+    const double * __restrict__ in_re, const double * __restrict__ in_im,
+    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t is, size_t os, size_t me)
+{
+    const double c = 0.707106781186547572737310929369414225220680236816;
+    for (size_t m = 0; m < me; m++) {
+        const double x0r = in_re[m], x0i = in_im[m];
+        const double r1r = in_re[m+1*is], r1i = in_im[m+1*is];
+        const double tw1r = W_re[0*me+m], tw1i = W_im[0*me+m];
+        const double x1r = r1r*tw1r+r1i*tw1i, x1i = -r1r*tw1i+r1i*tw1r;
+        const double r2r = in_re[m+2*is], r2i = in_im[m+2*is];
+        const double tw2r = W_re[1*me+m], tw2i = W_im[1*me+m];
+        const double x2r = r2r*tw2r+r2i*tw2i, x2i = -r2r*tw2i+r2i*tw2r;
+        const double r3r = in_re[m+3*is], r3i = in_im[m+3*is];
+        const double tw3r = W_re[2*me+m], tw3i = W_im[2*me+m];
+        const double x3r = r3r*tw3r+r3i*tw3i, x3i = -r3r*tw3i+r3i*tw3r;
+        const double r4r = in_re[m+4*is], r4i = in_im[m+4*is];
+        const double tw4r = W_re[3*me+m], tw4i = W_im[3*me+m];
+        const double x4r = r4r*tw4r+r4i*tw4i, x4i = -r4r*tw4i+r4i*tw4r;
+        const double r5r = in_re[m+5*is], r5i = in_im[m+5*is];
+        const double tw5r = W_re[4*me+m], tw5i = W_im[4*me+m];
+        const double x5r = r5r*tw5r+r5i*tw5i, x5i = -r5r*tw5i+r5i*tw5r;
+        const double r6r = in_re[m+6*is], r6i = in_im[m+6*is];
+        const double tw6r = W_re[5*me+m], tw6i = W_im[5*me+m];
+        const double x6r = r6r*tw6r+r6i*tw6i, x6i = -r6r*tw6i+r6i*tw6r;
+        const double r7r = in_re[m+7*is], r7i = in_im[m+7*is];
+        const double tw7r = W_re[6*me+m], tw7i = W_im[6*me+m];
+        const double x7r = r7r*tw7r+r7i*tw7i, x7i = -r7r*tw7i+r7i*tw7r;
+        const double ep_r=x0r+x4r,eq_r=x0r-x4r,er_r=x2r+x6r,es_r=x2r-x6r;
+        const double ep_i=x0i+x4i,eq_i=x0i-x4i,er_i=x2i+x6i,es_i=x2i-x6i;
+        const double A0r=ep_r+er_r,A0i=ep_i+er_i,A2r=ep_r-er_r,A2i=ep_i-er_i;
+        const double A1r=eq_r-es_i,A1i=eq_i+es_r,A3r=eq_r+es_i,A3i=eq_i-es_r;
+        const double op_r=x1r+x5r,oq_r=x1r-x5r,or_r=x3r+x7r,os_r=x3r-x7r;
+        const double op_i=x1i+x5i,oq_i=x1i-x5i,or_i=x3i+x7i,os_i=x3i-x7i;
+        const double B0r=op_r+or_r,B0i=op_i+or_i,B2r=op_r-or_r,B2i=op_i-or_i;
+        const double B1r=oq_r-os_i,B1i=oq_i+os_r,B3r=oq_r+os_i,B3i=oq_i-os_r;
+        out_re[m+0*os]=A0r+B0r; out_im[m+0*os]=A0i+B0i;
+        out_re[m+4*os]=A0r-B0r; out_im[m+4*os]=A0i-B0i;
+        {double w1r=c*(B1r-B1i),w1i=c*(B1r+B1i);
+        out_re[m+1*os]=A1r+w1r; out_im[m+1*os]=A1i+w1i;
+        out_re[m+5*os]=A1r-w1r; out_im[m+5*os]=A1i-w1i;}
+        out_re[m+2*os]=A2r-B2i; out_im[m+2*os]=A2i+B2r;
+        out_re[m+6*os]=A2r+B2i; out_im[m+6*os]=A2i-B2r;
+        {double w3r=-c*(B3r+B3i),w3i=c*(B3r-B3i);
+        out_re[m+3*os]=A3r+w3r; out_im[m+3*os]=A3i+w3i;
+        out_re[m+7*os]=A3r-w3r; out_im[m+7*os]=A3i-w3i;}
     }
 }
 

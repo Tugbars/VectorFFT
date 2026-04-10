@@ -1,0 +1,14 @@
+@PACKAGE_INIT@
+
+# VectorFFTConfig.cmake — CMake package config for VectorFFT
+#
+# Usage:
+#   find_package(VectorFFT REQUIRED)
+#   target_link_libraries(myapp PRIVATE VectorFFT::vfft)
+#
+# This provides the VectorFFT::vfft target (static library + public header).
+# Include with: #include <vfft.h>
+
+include("${CMAKE_CURRENT_LIST_DIR}/VectorFFTTargets.cmake")
+
+check_required_components(VectorFFT)
