@@ -257,6 +257,7 @@ cmake --build build --target vfft_bench_1d_csv vfft_bench_2d_csv
 ## Roadmap
 
 ### Near-term
+- **ILP optimization for large power-of-2** -- VTune profiling shows MKL achieves better instruction-level parallelism on large pow2 at K=4 (our closest margin: 1.02x at N=16384). Codelet scheduling improvements to increase FMA port saturation.
 - **Natural-order DFT output** (`vfft_permute`) -- expose the digit-reversal permutation table so users can inspect individual frequency bins without roundtrip
 - **R=9 codelet** -- unlocks 3^N sizes (3^10 = 59049, 3^12 = 531441) that currently exceed the max stage depth with R=3 alone. Fits AVX2's 16 YMMs.
 - **Strided-batch codelets for 2D** -- eliminate transpose entirely by allowing non-unit batch stride in codelets. Estimated 1.27x over MKL at 256x256 (currently 1.14x with tiled transpose).
