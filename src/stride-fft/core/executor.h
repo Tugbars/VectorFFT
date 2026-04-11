@@ -140,6 +140,13 @@ typedef struct {
     int factors[STRIDE_MAX_STAGES];   /* radix per stage */
     stride_stage_t stages[STRIDE_MAX_STAGES];
 
+    /* Blocked executor selection (set by planner_blocked.h).
+     * When use_blocked=1, execute dispatches to the blocked executor
+     * instead of the standard stage-sweep loop. */
+    int use_blocked;        /* 0 = standard, 1 = blocked */
+    int split_stage;        /* first blocked stage */
+    int block_groups;       /* groups per block at split stage */
+
     /* Override for non-staged plans (Bluestein, Rader, etc.).
      * When override_fwd is non-NULL, execute dispatches here
      * instead of the staged loop. Set by bluestein.h. */
