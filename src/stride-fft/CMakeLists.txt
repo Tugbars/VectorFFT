@@ -266,6 +266,14 @@ set_target_properties(vfft_bench_r4 PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ── Unified codelet microbenchmark (R=2,4,8,16,32 — VTune / perf stat) ──
+add_executable(vfft_bench_codelet bench/bench_codelet.c)
+target_link_libraries(vfft_bench_codelet PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_codelet PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_bench_codelet PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ── Blocked executor experiment (standard vs blocked, VTune) ──
 add_executable(vfft_bench_blocked bench/bench_blocked_executor.c)
 target_link_libraries(vfft_bench_blocked PRIVATE vfft_stride)
