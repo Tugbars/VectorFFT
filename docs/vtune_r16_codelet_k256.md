@@ -136,4 +136,66 @@ The calibration system should avoid R=16 as a twiddle stage on AVX2. Factoring a
 
 The cliff between R=8 and R=16 is dramatic: CPE goes from 0.516 to 2.580 (5x worse), retiring from 72% to 22%. R=8 is the largest radix that fits in AVX2's register file.
 
-**Verdict: R=16 on AVX2 is broken by register pressure. 78% of pipeline capacity wasted on spill traffic. The codelet works correctly but at 1/4th the efficiency of R=8. Reserve R=16 for AVX-512.**
+---
+
+## Optimizations Applied
+
+Three micro-optimizations were tested on the R=16 t1_dit codelet. Two produced significant wins.
+
+### #1: Defer W16 constants to Pass 2 (applied, -4.4%)
+
+The original codelet loaded 8 constant YMM registers (`sign_flip`, `sqrt2_inv`, 6 x `tw_W16_*`) at function scope. These consumed 8 of 16 YMM during Pass 1's twiddle+DFT-4 phase, where they are never used. Moving them to just before Pass 2 freed registers during Pass 1, reducing compiler-generated spills.
+
+| | ns/call | CPE |
+|---|---|---|
+| Before | 4474.5 | 2.580 |
+| After | 4275.9 | 2.481 |
+| Delta | **-4.4%** | |
+
+### #2: Prefetch next column's twiddles during DFT-4 (applied, -63.5%)
+
+The external twiddle loads (`W_re[n*me+m]`) access data at stride `me` = K = 256 doubles = 2KB apart. The hardware prefetcher cannot predict this strided pattern. Adding `_mm_prefetch` for the next column's twiddles during the current column's DFT-4 computation (which is compute-bound, leaving load ports idle) hides the load latency entirely.
+
+| | ns/call | CPE |
+|---|---|---|
+| Before (#1 only) | 4275.9 | 2.481 |
+| After (#1+#2) | 1631.6 | 0.941 |
+| Delta | **-63.5%** | |
+
+VTune confirmed the mechanism: L1 Bound dropped 30.3% to 11.6%, DTLB Load dropped 1.5% to 0.4%. Store Bound rose from 39.3% to 53.0% as stores became the new relative bottleneck.
+
+### #3: Skip spill for k1=0 bin-0 values (applied, neutral)
+
+After each Pass 1 column DFT-4, bin 0 is stored directly to `rio` instead of the spill buffer. Pass 2's column k1=0 then loads from the TLB-warm `rio` array. Expected to save 8 STLB lookups per iteration. Result: within noise (~1612 vs 1631 ns). The spill buffer was already L1-hot; the bottleneck is the 16 stride-K rio stores in Pass 2, not spill traffic.
+
+### Post-optimization VTune profile
+
+| Metric | Original | Optimized (#1+#2+#3) |
+|--------|----------|---------------------|
+| **Retiring** | 21.8% | 22.5% |
+| **CPI** | 0.757 | 0.735 |
+| **CPE** | 2.580 | **0.941** |
+| Back-End Bound | 76.2% | 75.4% |
+| **L1 Bound** | 30.3% | **11.6%** |
+| **DTLB Load** | 1.5% | **0.4%** |
+| L2 Bound | 9.6% | 11.8% |
+| **Store Bound** | 39.3% | **53.0%** |
+| Store Latency | 34.2% | 34.1% |
+| **DTLB Store** | 23.9% | **18.5%** |
+| Port 0/1 | 23%/31% | 18%/27% |
+
+The remaining bottleneck is **Store Bound 53.0%** — 16 stride-K stores to `rio` in Pass 2 that cannot be prefetched (no store-prefetch on x86). The DTLB Store at 18.5% is from these rio output stores hitting different pages.
+
+### R=4 -> R=8 -> R=16 trend (updated)
+
+| Metric | R=4 (16 values) | R=8 (16 values) | R=16 original | R=16 optimized |
+|--------|-----------------|-----------------|---------------|----------------|
+| Retiring | 85.9% | 72.2% | 21.8% | 22.5% |
+| Bottleneck | Compute (peak) | Dependency chains | Spill + load stalls | **Store bound** |
+| CPI | 0.189 | 0.228 | 0.757 | 0.735 |
+| CPE | 0.277 | 0.516 | 2.580 | **0.941** |
+| Port 0/1 | 96%/91% | 76%/80% | 23%/31% | 18%/27% |
+
+The prefetch optimization brought R=16 from 5x worse than R=8 to **1.8x worse** — still not competitive per-element, but no longer catastrophic. The calibration system's stage-count reduction benefit may now justify R=16 at more (N, K) pairs.
+
+**Verdict: R=16 on AVX2 improved from 2.58 to 0.94 CPE (2.7x faster) via deferred constants and twiddle prefetch. Still store-bound at 53% due to stride-K output writes. AVX-512 with 32 registers would eliminate both the spill buffer and the register pressure that forces the 2-pass architecture.**
