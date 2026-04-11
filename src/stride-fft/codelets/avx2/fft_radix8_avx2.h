@@ -1828,8 +1828,6 @@ radix8_t1_dit_fwd_avx2(
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t ios, size_t me)
 {
-    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
-    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
     for (size_t m = 0; m < me; m += VL) {
         __m256d x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);
         __m256d r1r = LD(&rio_re[m+1*ios]), r1i = LD(&rio_im[m+1*ios]);
@@ -1868,6 +1866,9 @@ radix8_t1_dit_fwd_avx2(
         const __m256d opi=_mm256_add_pd(x1i,x5i),oqi=_mm256_sub_pd(x1i,x5i),ori=_mm256_add_pd(x3i,x7i),osi=_mm256_sub_pd(x3i,x7i);
         const __m256d B0r=_mm256_add_pd(opr,orr),B0i=_mm256_add_pd(opi,ori),B2r=_mm256_sub_pd(opr,orr),B2i=_mm256_sub_pd(opi,ori);
         const __m256d B1r=_mm256_add_pd(oqr,osi),B1i=_mm256_sub_pd(oqi,osr),B3r=_mm256_sub_pd(oqr,osi),B3i=_mm256_add_pd(oqi,osr);
+        /* W8 combine — vc/vnc deferred to here to free regs during twiddle+butterfly */
+        const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+        const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
         ST(&rio_re[m+0*ios],_mm256_add_pd(A0r,B0r)); ST(&rio_im[m+0*ios],_mm256_add_pd(A0i,B0i));
         ST(&rio_re[m+4*ios],_mm256_sub_pd(A0r,B0r)); ST(&rio_im[m+4*ios],_mm256_sub_pd(A0i,B0i));
         {const __m256d t1r=_mm256_mul_pd(vc,_mm256_add_pd(B1r,B1i)),t1i=_mm256_mul_pd(vc,_mm256_sub_pd(B1i,B1r));
@@ -2247,8 +2248,6 @@ radix8_t1_dit_bwd_avx2(
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t ios, size_t me)
 {
-    const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
-    const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
     for (size_t m = 0; m < me; m += VL) {
         __m256d x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);
         __m256d r1r = LD(&rio_re[m+1*ios]), r1i = LD(&rio_im[m+1*ios]);
@@ -2287,6 +2286,8 @@ radix8_t1_dit_bwd_avx2(
         const __m256d opi=_mm256_add_pd(x1i,x5i),oqi=_mm256_sub_pd(x1i,x5i),ori=_mm256_add_pd(x3i,x7i),osi=_mm256_sub_pd(x3i,x7i);
         const __m256d B0r=_mm256_add_pd(opr,orr),B0i=_mm256_add_pd(opi,ori),B2r=_mm256_sub_pd(opr,orr),B2i=_mm256_sub_pd(opi,ori);
         const __m256d B1r=_mm256_sub_pd(oqr,osi),B1i=_mm256_add_pd(oqi,osr),B3r=_mm256_add_pd(oqr,osi),B3i=_mm256_sub_pd(oqi,osr);
+        const __m256d vc = _mm256_set1_pd(0.707106781186547572737310929369414225220680236816);
+        const __m256d vnc = _mm256_set1_pd(-0.707106781186547572737310929369414225220680236816);
         ST(&rio_re[m+0*ios],_mm256_add_pd(A0r,B0r)); ST(&rio_im[m+0*ios],_mm256_add_pd(A0i,B0i));
         ST(&rio_re[m+4*ios],_mm256_sub_pd(A0r,B0r)); ST(&rio_im[m+4*ios],_mm256_sub_pd(A0i,B0i));
         {const __m256d t1r=_mm256_mul_pd(vc,_mm256_sub_pd(B1r,B1i)),t1i=_mm256_mul_pd(vc,_mm256_add_pd(B1r,B1i));
