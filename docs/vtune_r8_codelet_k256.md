@@ -130,4 +130,38 @@ A fused-half layout was tested: compute even twiddles + even DFT-4 first (freein
 | Memory Bound | 1.0% | 1.4% | Both clean |
 | DTLB | ~0% | ~0% | Both clean |
 
-**Verdict: R=8 DIT codelet is good (72.2% retiring) but not at peak like R=4 (85.9%). The gap is entirely from deeper dependency chains in the DFT-8 butterfly — algorithmic, not fixable by instruction reordering. The actionable win is preferring DIF over DIT for R=8 twiddle stages (+10% throughput).**
+---
+
+## Optimizations Attempted
+
+### Deferred vc/vnc constants (applied, -2 to -4%)
+
+The W8 combine constants `vc` (√2/2) and `vnc` (-√2/2) were loaded at function scope, consuming 2 of 16 YMM registers throughout the twiddle and butterfly phases where they are unused. Moving them to just before the W8 combine frees 2 registers during the most pressure-heavy phase.
+
+| | Best ns/call | Median ns/call |
+|---|---|---|
+| Before | 434.9 | 445.8 |
+| After | **425.7** | **427.6** |
+| Delta | **-2.1%** | **-4.1%** |
+
+### Fused-half layout (reverted, +5.5% regression)
+
+Compute even twiddles + even DFT-4 before loading odds, reducing peak live registers. The non-sequential memory access pattern (0,4,2,6,1,5,3,7) hurt performance more than register pressure reduction helped. ICX already schedules the sequential layout well.
+
+### U=2 interleaving (reverted, +39% regression)
+
+Process two k-blocks per iteration for cross-block ILP. Two R=8 blocks need 32 YMM values — catastrophic spilling on AVX2's 16 registers. Only viable on AVX-512 (32 ZMM registers); a U=2 AVX-512 variant was written and is ready for testing.
+
+### Twiddle prefetch — aggressive (reverted, +15% regression)
+
+14 prefetch instructions at loop start for all 7 twiddle rows. R=8 is 72% retiring with only 1.4% Memory Bound — the OOO engine already overlaps twiddle loads with computation. The prefetch instructions competed for front-end slots and load ports, adding pure overhead.
+
+### Twiddle prefetch — lightweight (reverted, +8% regression)
+
+3 prefetch instructions for tw5-tw7 im components during early multiplies. Still hurt — even 3 extra instructions are measurable when the pipeline is 72% busy with useful work. No idle slots to absorb them.
+
+### Key insight: R=8 is NOT load-bound
+
+The R=16 codelet saw 2.7x speedup from prefetch because it was 30% L1 Bound (loads stalling on cache misses from stride-K access). R=8 is only 0.9% L1 Bound — the OOO engine's 512-entry ROB can see ~6 iterations ahead and naturally overlaps all twiddle loads. Prefetch helps load-bound codelets, hurts compute-bound ones.
+
+**Verdict: R=8 DIT codelet is good (72.2% retiring) but not at peak like R=4 (85.9%). The gap is entirely from deeper dependency chains in the DFT-8 butterfly — algorithmic, not fixable by instruction reordering or prefetch. The applied win is deferred constants (-2 to -4%). The DIF variant is consistently 10% faster than DIT due to shorter critical path.**
