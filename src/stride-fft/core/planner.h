@@ -41,6 +41,11 @@
 #include "rader.h"      /* includes bluestein.h (shared SIMD helpers) */
 #include "r2c.h"       /* real-to-complex / complex-to-real */
 
+/* Blocked executor heuristic threshold: K <= this triggers blocking check */
+#ifndef STRIDE_BLOCKED_K_THRESHOLD
+#define STRIDE_BLOCKED_K_THRESHOLD 8
+#endif
+
 /* =====================================================================
  * BLOCKED DISPATCH — wraps stride_execute_fwd/bwd with blocked path
  *
@@ -523,10 +528,6 @@ static double stride_wisdom_calibrate_full(
      *
      * We re-enumerate factorizations and test each with both executors.
      * Cost: ~2x the standard exhaustive search (acceptable for small K). */
-    #ifndef STRIDE_BLOCKED_K_THRESHOLD
-    #define STRIDE_BLOCKED_K_THRESHOLD 8
-    #endif
-
     if (K <= STRIDE_BLOCKED_K_THRESHOLD && N > 512 && N <= exhaustive_threshold) {
         if (verbose)
             printf("  Joint blocked search (K<=%d, N>512)...\n",
