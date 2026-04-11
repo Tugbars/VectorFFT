@@ -24,6 +24,7 @@
 #include "../core/compat.h"
 #include "../core/env.h"
 #include "../core/executor.h"  /* STRIDE_ALIGNED_ALLOC/FREE */
+#include "../core/prefetch.h"
 
 /* Include all pow2 codelet headers */
 #include "../codelets/avx2/fft_radix2_avx2.h"

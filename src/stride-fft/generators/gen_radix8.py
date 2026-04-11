@@ -1277,8 +1277,6 @@ radix8_n1_ovs_{direction}_{isa_name}(
 
             # ── SIMD t1 DIT (in-place, ms=1, mb=0) ──
             st = []
-            st.append(f'    const {V} vc = {set1}({fmt(C)});')
-            st.append(f'    const {V} vnc = {set1}({fmt(-C)});')
             st.append(f'    for (size_t m = 0; m < me; m += VL) {{')
             st.append(f'        {V} x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);')
             for n in range(1, 8):
@@ -1304,6 +1302,10 @@ radix8_n1_ovs_{direction}_{isa_name}(
                 st.append(f'        const {V} B1r={add}(oqr,osi),B1i={sub}(oqi,osr),B3r={sub}(oqr,osi),B3i={add}(oqi,osr);')
             else:
                 st.append(f'        const {V} B1r={sub}(oqr,osi),B1i={add}(oqi,osr),B3r={add}(oqr,osi),B3i={sub}(oqi,osr);')
+            # Defer vc/vnc to W8 combine — frees 2 regs during twiddle+butterfly
+            st.append(f'        /* W8 combine — vc/vnc deferred to free regs during twiddle+butterfly */')
+            st.append(f'        const {V} vc = {set1}({fmt(C)});')
+            st.append(f'        const {V} vnc = {set1}({fmt(-C)});')
             st.append(f'        ST(&rio_re[m+0*ios],{add}(A0r,B0r)); ST(&rio_im[m+0*ios],{add}(A0i,B0i));')
             st.append(f'        ST(&rio_re[m+4*ios],{sub}(A0r,B0r)); ST(&rio_im[m+4*ios],{sub}(A0i,B0i));')
             if fwd:
@@ -1432,8 +1434,6 @@ radix8_t1_dif_{direction}_{isa_name}(
 
             # ── SIMD t1_oop DIT: out-of-place twiddle + butterfly ──
             st_oop = []
-            st_oop.append(f'    const {V} vc = {set1}({fmt(C)});')
-            st_oop.append(f'    const {V} vnc = {set1}({fmt(-C)});')
             st_oop.append(f'    for (size_t m = 0; m < me; m += VL) {{')
             st_oop.append(f'        {V} x0r = LD(&in_re[m]), x0i = LD(&in_im[m]);')
             for n in range(1, 8):
@@ -1459,6 +1459,9 @@ radix8_t1_dif_{direction}_{isa_name}(
                 st_oop.append(f'        const {V} B1r={add}(oqr,osi),B1i={sub}(oqi,osr),B3r={sub}(oqr,osi),B3i={add}(oqi,osr);')
             else:
                 st_oop.append(f'        const {V} B1r={sub}(oqr,osi),B1i={add}(oqi,osr),B3r={add}(oqr,osi),B3i={sub}(oqi,osr);')
+            # Defer vc/vnc to W8 combine
+            st_oop.append(f'        const {V} vc = {set1}({fmt(C)});')
+            st_oop.append(f'        const {V} vnc = {set1}({fmt(-C)});')
             st_oop.append(f'        ST(&out_re[m+0*os],{add}(A0r,B0r)); ST(&out_im[m+0*os],{add}(A0i,B0i));')
             st_oop.append(f'        ST(&out_re[m+4*os],{sub}(A0r,B0r)); ST(&out_im[m+4*os],{sub}(A0i,B0i));')
             if fwd:
