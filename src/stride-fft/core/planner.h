@@ -37,8 +37,38 @@
 #include "factorizer.h"
 #include "exhaustive.h"
 #include "dp_planner.h"
+#include "executor_blocked.h"
 #include "rader.h"      /* includes bluestein.h (shared SIMD helpers) */
 #include "r2c.h"       /* real-to-complex / complex-to-real */
+
+/* =====================================================================
+ * BLOCKED DISPATCH — wraps stride_execute_fwd/bwd with blocked path
+ *
+ * When plan->use_blocked is set (by wisdom), dispatches to the blocked
+ * executor. Otherwise falls through to the standard executor.
+ * These are defined here (after both executor.h and executor_blocked.h)
+ * to avoid circular includes.
+ * ===================================================================== */
+
+static inline void stride_execute_fwd_auto(const stride_plan_t *plan,
+                                            double *re, double *im) {
+    if (plan->use_blocked) {
+        _stride_execute_fwd_blocked(plan, re, im,
+                                     plan->split_stage, plan->block_groups);
+        return;
+    }
+    stride_execute_fwd(plan, re, im);
+}
+
+static inline void stride_execute_bwd_auto(const stride_plan_t *plan,
+                                            double *re, double *im) {
+    if (plan->use_blocked) {
+        _stride_execute_bwd_blocked(plan, re, im,
+                                     plan->split_stage, plan->block_groups);
+        return;
+    }
+    stride_execute_bwd(plan, re, im);
+}
 
 /* =====================================================================
  * WISDOM -- cached exhaustive search results
@@ -52,6 +82,13 @@ typedef struct {
     int factors[FACT_MAX_STAGES];
     int nfactors;
     double best_ns;   /* best time found */
+
+    /* Blocked executor selection (version 3+).
+     * Determined by joint calibration over (factorization × executor × split).
+     * use_blocked=0 means standard sweep executor (default, backward compat). */
+    int use_blocked;     /* 0 = standard, 1 = blocked */
+    int split_stage;     /* first blocked stage */
+    int block_groups;    /* groups per block at split stage */
 } stride_wisdom_entry_t;
 
 typedef struct {
@@ -73,9 +110,11 @@ static const stride_wisdom_entry_t *stride_wisdom_lookup(
     return NULL;
 }
 
-/* Add or update wisdom entry */
-static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
-                               const int *factors, int nf, double best_ns) {
+/* Add or update wisdom entry (full version with blocked fields) */
+static void stride_wisdom_add_full(stride_wisdom_t *wis, int N, size_t K,
+                                    const int *factors, int nf, double best_ns,
+                                    int use_blocked, int split_stage,
+                                    int block_groups) {
     /* Update existing */
     for (int i = 0; i < wis->count; i++) {
         if (wis->entries[i].N == N && wis->entries[i].K == K) {
@@ -83,6 +122,9 @@ static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
                 memcpy(wis->entries[i].factors, factors, nf * sizeof(int));
                 wis->entries[i].nfactors = nf;
                 wis->entries[i].best_ns = best_ns;
+                wis->entries[i].use_blocked = use_blocked;
+                wis->entries[i].split_stage = split_stage;
+                wis->entries[i].block_groups = block_groups;
             }
             return;
         }
@@ -95,7 +137,16 @@ static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
         memcpy(e->factors, factors, nf * sizeof(int));
         e->nfactors = nf;
         e->best_ns = best_ns;
+        e->use_blocked = use_blocked;
+        e->split_stage = split_stage;
+        e->block_groups = block_groups;
     }
+}
+
+/* Legacy wrapper (standard executor, no blocking) */
+static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
+                               const int *factors, int nf, double best_ns) {
+    stride_wisdom_add_full(wis, N, K, factors, nf, best_ns, 0, 0, 0);
 }
 
 /* -- Wisdom file I/O --
@@ -110,19 +161,21 @@ static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
  *
  * Bump WISDOM_VERSION when the format changes — old files will be
  * silently rejected and re-calibrated on next run. */
-#define WISDOM_VERSION 2
+#define WISDOM_VERSION 3
 
 static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) return -1;
     fprintf(f, "@version %d\n", WISDOM_VERSION);
     fprintf(f, "# VectorFFT stride wisdom — %d entries\n", wis->count);
+    fprintf(f, "# N K nf factors... best_ns use_blocked split_stage block_groups\n");
     for (int i = 0; i < wis->count; i++) {
         const stride_wisdom_entry_t *e = &wis->entries[i];
         fprintf(f, "%d %zu %d", e->N, e->K, e->nfactors);
         for (int j = 0; j < e->nfactors; j++)
             fprintf(f, " %d", e->factors[j]);
-        fprintf(f, " %.2f\n", e->best_ns);
+        fprintf(f, " %.2f %d %d %d\n", e->best_ns,
+                e->use_blocked, e->split_stage, e->block_groups);
     }
     fclose(f);
     return 0;
@@ -164,9 +217,14 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
             pos += n;
         }
         if (!ok) continue;
-        if (sscanf(line + pos, "%lf", &e.best_ns) < 1)
+        if (sscanf(line + pos, "%lf%n", &e.best_ns, &n) < 1)
             continue;
-        stride_wisdom_add(wis, e.N, e.K, e.factors, e.nfactors, e.best_ns);
+        pos += n;
+        /* Version 3: blocked executor fields (optional, default 0) */
+        sscanf(line + pos, "%d %d %d",
+               &e.use_blocked, &e.split_stage, &e.block_groups);
+        stride_wisdom_add_full(wis, e.N, e.K, e.factors, e.nfactors, e.best_ns,
+                               e.use_blocked, e.split_stage, e.block_groups);
     }
     fclose(f);
     return version_ok ? 0 : -1;
@@ -321,8 +379,15 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
                                         const stride_registry_t *reg,
                                         const stride_wisdom_t *wis) {
     const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
-    if (e)
-        return _stride_build_plan(N, K, e->factors, e->nfactors, reg);
+    if (e) {
+        stride_plan_t *plan = _stride_build_plan(N, K, e->factors, e->nfactors, reg);
+        if (plan) {
+            plan->use_blocked = e->use_blocked;
+            plan->split_stage = e->split_stage;
+            plan->block_groups = e->block_groups;
+        }
+        return plan;
+    }
     return stride_auto_plan(N, K, reg);
 }
 
@@ -444,12 +509,113 @@ static double stride_wisdom_calibrate_full(
 
     if (best_ns >= 1e17) return best_ns;
 
-    /* Re-bench the winner with full accuracy */
+    /* Re-bench the standard winner with full accuracy */
     double refined_ns = _stride_refine_bench(N, K, best_fact.factors,
                                               best_fact.nfactors, reg);
 
-    stride_wisdom_add(wis, N, K, best_fact.factors, best_fact.nfactors,
-                      refined_ns);
+    int win_blocked = 0, win_split = 0, win_bg = 0;
+
+    /* ── Joint blocked search for small K where DTLB matters ──
+     * At K<=8 and N>512, try all factorizations with the blocked executor
+     * at each valid split point. The standard search above found the best
+     * factorization for the standard executor; the blocked search may find
+     * a different factorization + split that's faster overall.
+     *
+     * We re-enumerate factorizations and test each with both executors.
+     * Cost: ~2x the standard exhaustive search (acceptable for small K). */
+    #ifndef STRIDE_BLOCKED_K_THRESHOLD
+    #define STRIDE_BLOCKED_K_THRESHOLD 8
+    #endif
+
+    if (K <= STRIDE_BLOCKED_K_THRESHOLD && N > 512 && N <= exhaustive_threshold) {
+        if (verbose)
+            printf("  Joint blocked search (K<=%d, N>512)...\n",
+                   STRIDE_BLOCKED_K_THRESHOLD);
+
+        factorization_list_t *flist = (factorization_list_t *)malloc(sizeof(*flist));
+        stride_enumerate_factorizations(N, reg, flist);
+
+        size_t total = (size_t)N * K;
+        double *jre      = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        double *jim      = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        double *jorig_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        double *jorig_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        for (size_t i = 0; i < total; i++) {
+            jorig_re[i] = (double)rand() / RAND_MAX - 0.5;
+            jorig_im[i] = (double)rand() / RAND_MAX - 0.5;
+        }
+
+        int jreps = (int)(5e5 / (total + 1));
+        if (jreps < 10) jreps = 10;
+        if (jreps > 50000) jreps = 50000;
+
+        for (int fi = 0; fi < flist->count; fi++) {
+            permutation_list_t *plist = (permutation_list_t *)malloc(sizeof(*plist));
+            stride_gen_permutations(flist->results[fi].factors,
+                                    flist->results[fi].nfactors, plist);
+
+            for (int pi = 0; pi < plist->count; pi++) {
+                const int *fac = plist->perms[pi];
+                int nf = flist->results[fi].nfactors;
+                int prod = 1;
+                for (int s = 0; s < nf; s++) prod *= fac[s];
+                if (prod != N) continue;
+
+                stride_plan_t *jp = _stride_build_plan(N, K, fac, nf, reg);
+                if (!jp) continue;
+
+                /* Try blocked at each valid split point */
+                for (int sp = 0; sp < jp->num_stages; sp++) {
+                    size_t ws = (size_t)jp->stages[sp].radix *
+                                jp->stages[sp].stride * K * 2 * sizeof(double);
+                    if (ws > STRIDE_BLOCKED_L1_BYTES) continue;
+
+                    int bg = _stride_compute_block_groups(jp, sp);
+
+                    /* Quick bench */
+                    for (int w = 0; w < 3; w++)
+                        _stride_execute_fwd_blocked(jp, jorig_re, jorig_im, sp, bg);
+
+                    double jbest = 1e18;
+                    for (int t = 0; t < 3; t++) {
+                        memcpy(jre, jorig_re, total * sizeof(double));
+                        memcpy(jim, jorig_im, total * sizeof(double));
+                        double t0 = now_ns();
+                        for (int r = 0; r < jreps; r++)
+                            _stride_execute_fwd_blocked(jp, jre, jim, sp, bg);
+                        double ns = (now_ns() - t0) / jreps;
+                        if (ns < jbest) jbest = ns;
+                    }
+
+                    if (jbest < refined_ns) {
+                        refined_ns = jbest;
+                        best_fact.nfactors = nf;
+                        memcpy(best_fact.factors, fac, nf * sizeof(int));
+                        win_blocked = 1;
+                        win_split = sp;
+                        win_bg = bg;
+                    }
+                }
+                stride_plan_destroy(jp);
+            }
+            free(plist);
+        }
+
+        STRIDE_ALIGNED_FREE(jre); STRIDE_ALIGNED_FREE(jim);
+        STRIDE_ALIGNED_FREE(jorig_re); STRIDE_ALIGNED_FREE(jorig_im);
+        free(flist);
+
+        if (verbose && win_blocked) {
+            printf("  Blocked winner: ");
+            for (int s = 0; s < best_fact.nfactors; s++)
+                printf("%s%d", s ? "x" : "", best_fact.factors[s]);
+            printf(" blocked split@%d bg=%d = %.0f ns\n",
+                   win_split, win_bg, refined_ns);
+        }
+    }
+
+    stride_wisdom_add_full(wis, N, K, best_fact.factors, best_fact.nfactors,
+                           refined_ns, win_blocked, win_split, win_bg);
 
     /* Save to disk immediately if path provided */
     if (save_path)
