@@ -274,6 +274,19 @@ set_target_properties(vfft_bench_blocked PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ── Joint calibration: blocked vs MKL on weakest pow2 ──
+add_executable(vfft_bench_blocked_mkl bench/bench_blocked_vs_mkl.c)
+target_link_libraries(vfft_bench_blocked_mkl PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_blocked_mkl PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_bench_blocked_mkl PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(VFFT_HAS_MKL)
+    target_link_libraries(vfft_bench_blocked_mkl PRIVATE ${MKL_LIBS})
+    target_include_directories(vfft_bench_blocked_mkl PRIVATE ${MKL_INC})
+    target_compile_definitions(vfft_bench_blocked_mkl PRIVATE VFFT_HAS_MKL MKL_ILP64)
+endif()
+
 # ── Comprehensive 1D benchmark with CSV output ──
 add_executable(vfft_bench_1d_csv bench/bench_1d_csv.c)
 target_link_libraries(vfft_bench_1d_csv PRIVATE vfft_stride)
