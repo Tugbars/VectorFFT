@@ -34,6 +34,8 @@
 #include "../codelets/avx2/fft_radix16_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix32_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix32_avx2_ct_t1_dit.h"
+#include "../codelets/avx2/fft_radix64_avx2_ct_n1.h"
+#include "../codelets/avx2/fft_radix64_avx2_ct_t1_dit.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -149,6 +151,21 @@ static void r32_t1_dit_bwd(void) {
     radix32_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
 }
 
+/* ── R=64 wrappers ── */
+
+static void r64_n1_fwd(void) {
+    radix64_n1_fwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r64_n1_bwd(void) {
+    radix64_n1_bwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r64_t1_dit_fwd(void) {
+    radix64_t1_dit_fwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r64_t1_dit_bwd(void) {
+    radix64_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+
 /* ── Benchmark harness ── */
 
 static double bench_one(void (*body)(void), int reps) {
@@ -218,6 +235,12 @@ static const codelet_entry_t g_tests[] = {
     {"R32 n1_bwd (notw)", 32, r32_n1_bwd,    340},
     {"R32 t1_dit_fwd",    32, r32_t1_dit_fwd,520},
     {"R32 t1_dit_bwd",    32, r32_t1_dit_bwd,520},
+
+    /* R=64 (no DIF variant) */
+    {"R64 n1_fwd (notw)", 64, r64_n1_fwd,     816},
+    {"R64 n1_bwd (notw)", 64, r64_n1_bwd,     816},
+    {"R64 t1_dit_fwd",    64, r64_t1_dit_fwd, 1260},
+    {"R64 t1_dit_bwd",    64, r64_t1_dit_bwd, 1260},
 };
 
 #define N_TESTS (int)(sizeof(g_tests) / sizeof(g_tests[0]))
@@ -245,8 +268,8 @@ int main(int argc, char **argv) {
     if (codelet_filter) printf("codelet_filter=%s\n", codelet_filter);
     printf("\n");
 
-    /* Allocate for max R=32 */
-    size_t max_R = 32;
+    /* Allocate for max R=64 */
+    size_t max_R = 64;
     size_t max_elem = max_R * K;
     size_t max_tw   = (max_R - 1) * K;
 
