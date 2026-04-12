@@ -32,6 +32,8 @@
 #include "../codelets/avx2/fft_radix8_avx2.h"
 #include "../codelets/avx2/fft_radix16_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix16_avx2_ct_t1_dit.h"
+#include "../codelets/avx2/fft_radix20_avx2_ct_n1.h"
+#include "../codelets/avx2/fft_radix20_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix32_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix32_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix64_avx2_ct_n1.h"
@@ -136,6 +138,21 @@ static void r16_t1_dit_bwd(void) {
     radix16_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
 }
 
+/* ── R=20 wrappers ── */
+
+static void r20_n1_fwd(void) {
+    radix20_n1_fwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r20_n1_bwd(void) {
+    radix20_n1_bwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r20_t1_dit_fwd(void) {
+    radix20_t1_dit_fwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r20_t1_dit_bwd(void) {
+    radix20_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+
 /* ── R=32 wrappers ── */
 
 static void r32_n1_fwd(void) {
@@ -229,6 +246,12 @@ static const codelet_entry_t g_tests[] = {
     {"R16 n1_bwd (notw)", 16, r16_n1_bwd,    136},
     {"R16 t1_dit_fwd",    16, r16_t1_dit_fwd,210},
     {"R16 t1_dit_bwd",    16, r16_t1_dit_bwd,210},
+
+    /* R=20 (composite 4x5, no DIF variant) */
+    {"R20 n1_fwd (notw)", 20, r20_n1_fwd,     180},
+    {"R20 n1_bwd (notw)", 20, r20_n1_bwd,     180},
+    {"R20 t1_dit_fwd",    20, r20_t1_dit_fwd, 280},
+    {"R20 t1_dit_bwd",    20, r20_t1_dit_bwd, 280},
 
     /* R=32 (no DIF variant) */
     {"R32 n1_fwd (notw)", 32, r32_n1_fwd,    340},
