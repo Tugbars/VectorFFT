@@ -644,7 +644,13 @@ def emit_dit_tw_flat_kernel(em, d, nfuse, itw_set, k_expr="k"):
         em.b()
 
     # PASS 2: N1 column combines
-    em.c(f"PASS 2")
+    em.c(f"PASS 2 — W32 twiddle broadcasts deferred to free regs during PASS 1")
+    if isa.name != 'scalar' and itw_set:
+        set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+        for (e, tN) in sorted(itw_set):
+            label = wN_label(e, tN)
+            em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+            em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
     em.b()
     for k1 in range(N1):
         em.c(f"column k1={k1}")
@@ -786,7 +792,13 @@ def emit_dit_tw_log3_kernel(em, d, nfuse, itw_set, k_expr="k"):
         em.b()
 
     # ── PASS 2: identical to flat (internal twiddles are constants) ──
-    em.c(f"PASS 2")
+    em.c(f"PASS 2 — W32 twiddle broadcasts deferred to free regs during PASS 1")
+    if isa.name != 'scalar' and itw_set:
+        set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+        for (e_tw, tN) in sorted(itw_set):
+            label = wN_label(e_tw, tN)
+            em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+            em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
     em.b()
     for k1 in range(N1):
         em.c(f"column k1={k1}")
@@ -1355,15 +1367,8 @@ def emit_dit_tw_flat_file(isa, itw_set):
         em.o(f"{T} {slist};")
         em.b()
 
-        # Hoisted internal twiddle broadcasts (SIMD only)
-        if isa.name != 'scalar' and itw_set:
-            em.c(f"Hoisted internal W32 broadcasts")
-            set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
-            for (e, tN) in sorted(itw_set):
-                label = wN_label(e, tN)
-                em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
-                em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
-            em.b()
+        # Note: W32 twiddle broadcasts are deferred to PASS 2 (inside kernel)
+        # to free registers during PASS 1 — gave -21.5% on R=32 t1_dit (AVX2)
 
         # Scalar needs SQRT2_INV define — handled at file scope
         if isa.name == 'scalar' and itw_set:
@@ -2119,7 +2124,11 @@ def emit_ct_file(isa, itw_set, ct_variant):
         em.o(f"{T} {slist};")
         em.b()
 
-        if isa.name != 'scalar' and itw_set:
+        # For DIT variants (t1_dit, t1_oop_dit, t1_dit_log3), the W32 broadcasts
+        # are deferred into PASS 2 inside the kernel — frees registers during
+        # PASS 1. Gave -21.5% on R=32 t1_dit (AVX2). Other variants still hoist.
+        _defer_itw = ct_variant in ('ct_t1_dit', 'ct_t1_oop_dit', 'ct_t1_dit_log3')
+        if isa.name != 'scalar' and itw_set and not _defer_itw:
             set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
             for (e, tN) in sorted(itw_set):
                 label = wN_label(e, tN)
