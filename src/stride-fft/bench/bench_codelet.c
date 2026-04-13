@@ -32,6 +32,10 @@
 #include "../codelets/avx2/fft_radix8_avx2.h"
 #include "../codelets/avx2/fft_radix16_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix16_avx2_ct_t1_dit.h"
+#include "../codelets/avx2/fft_radix10_avx2_ct_n1.h"
+#include "../codelets/avx2/fft_radix10_avx2_ct_t1_dit.h"
+#include "../codelets/avx2/fft_radix12_avx2_ct_n1.h"
+#include "../codelets/avx2/fft_radix12_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix20_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix20_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix25_avx2_ct_n1.h"
@@ -49,6 +53,13 @@
 
 static double estimate_ghz(void) {
     volatile double x = 1.0;
+    /* Warmup loop — triggers turbo before measurement.
+     * Without this, the cold CPU runs at base clock during the
+     * timed loop, producing freq estimates ~2.4 GHz instead of
+     * the actual ~5.7 GHz turbo seen during sustained workload. */
+    for (int i = 0; i < 50000000; i++)
+        x = x * 1.0000001;
+    /* Timed loop — CPU should now be at turbo */
     double t0 = now_ns();
     for (int i = 0; i < 100000000; i++)
         x = x * 1.0000001;
@@ -138,6 +149,36 @@ static void r16_t1_dit_fwd(void) {
 }
 static void r16_t1_dit_bwd(void) {
     radix16_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+
+/* ── R=10 wrappers ── */
+
+static void r10_n1_fwd(void) {
+    radix10_n1_fwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r10_n1_bwd(void) {
+    radix10_n1_bwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r10_t1_dit_fwd(void) {
+    radix10_t1_dit_fwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r10_t1_dit_bwd(void) {
+    radix10_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+
+/* ── R=12 wrappers ── */
+
+static void r12_n1_fwd(void) {
+    radix12_n1_fwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r12_n1_bwd(void) {
+    radix12_n1_bwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r12_t1_dit_fwd(void) {
+    radix12_t1_dit_fwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r12_t1_dit_bwd(void) {
+    radix12_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
 }
 
 /* ── R=20 wrappers ── */
@@ -263,6 +304,18 @@ static const codelet_entry_t g_tests[] = {
     {"R16 n1_bwd (notw)", 16, r16_n1_bwd,    136},
     {"R16 t1_dit_fwd",    16, r16_t1_dit_fwd,210},
     {"R16 t1_dit_bwd",    16, r16_t1_dit_bwd,210},
+
+    /* R=10 (composite 2x5, no DIF variant) */
+    {"R10 n1_fwd (notw)", 10, r10_n1_fwd,      80},
+    {"R10 n1_bwd (notw)", 10, r10_n1_bwd,      80},
+    {"R10 t1_dit_fwd",    10, r10_t1_dit_fwd, 130},
+    {"R10 t1_dit_bwd",    10, r10_t1_dit_bwd, 130},
+
+    /* R=12 (composite 4x3, no DIF variant) */
+    {"R12 n1_fwd (notw)", 12, r12_n1_fwd,      96},
+    {"R12 n1_bwd (notw)", 12, r12_n1_bwd,      96},
+    {"R12 t1_dit_fwd",    12, r12_t1_dit_fwd, 160},
+    {"R12 t1_dit_bwd",    12, r12_t1_dit_bwd, 160},
 
     /* R=20 (composite 4x5, no DIF variant) */
     {"R20 n1_fwd (notw)", 20, r20_n1_fwd,     180},
