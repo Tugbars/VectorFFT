@@ -625,6 +625,211 @@ static double stride_wisdom_calibrate_full(
     return refined_ns;
 }
 
+/**
+ * stride_dp_plan_joint_blocked -- DP-style joint factorization + blocked search.
+ *
+ * Designed for large N (where exhaustive enumeration of all factorizations is
+ * too slow). Strategy:
+ *
+ *   1. Run standard DP planner to find the best factorization for the standard
+ *      executor (memoized across sub-problems, fast).
+ *   2. Take the DP-winning factorization. Try all permutations of its factor
+ *      set with both the standard executor AND the blocked executor at each
+ *      valid split point.
+ *   3. Return the global winner (factorization + use_blocked + split + bg).
+ *
+ * Tradeoff vs exhaustive joint search: enumerates permutations of ONE
+ * factorization (the DP winner), not all factorizations. At large N (mostly
+ * pow2), the radix choices are constrained, so the DP-winner is typically the
+ * right base. Misses cases where a different factorization is uniquely
+ * blocked-friendly — acceptable for the close-call regime.
+ */
+static double stride_dp_plan_joint_blocked(
+        stride_dp_context_t *ctx, int N, size_t K,
+        const stride_registry_t *reg,
+        stride_factorization_t *best_fact,
+        int *out_use_blocked, int *out_split, int *out_bg,
+        int verbose)
+{
+    *out_use_blocked = 0;
+    *out_split = 0;
+    *out_bg = 0;
+
+    /* Phase 1: standard DP factorization (memoized) */
+    stride_factorization_t dp_fact;
+    double dp_ns = stride_dp_plan(ctx, N, reg, &dp_fact, verbose);
+    if (dp_ns >= 1e17) return dp_ns;
+
+    /* Baseline: standard winner */
+    double best_ns = dp_ns;
+    *best_fact = dp_fact;
+
+    /* Phase 2: enumerate permutations × split points × executor variants */
+    permutation_list_t *plist = (permutation_list_t *)malloc(sizeof(*plist));
+    stride_gen_permutations(dp_fact.factors, dp_fact.nfactors, plist);
+
+    size_t total = (size_t)N * K;
+    double *jre      = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *jim      = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *jorig_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *jorig_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    for (size_t i = 0; i < total; i++) {
+        jorig_re[i] = (double)rand() / RAND_MAX - 0.5;
+        jorig_im[i] = (double)rand() / RAND_MAX - 0.5;
+    }
+
+    int jreps = (int)(5e5 / (total + 1));
+    if (jreps < 5) jreps = 5;
+    if (jreps > 50000) jreps = 50000;
+
+    int variants_tried = 0;
+    int blocked_winners = 0;
+
+    for (int pi = 0; pi < plist->count; pi++) {
+        const int *fac = plist->perms[pi];
+        int nf = dp_fact.nfactors;
+
+        stride_plan_t *jp = _stride_build_plan(N, K, fac, nf, reg);
+        if (!jp) continue;
+
+        /* Bench standard executor for this permutation */
+        for (int w = 0; w < 3; w++)
+            _stride_execute_fwd_slice(jp, jorig_re, jorig_im, K, K);
+
+        double std_best = 1e18;
+        for (int t = 0; t < 3; t++) {
+            memcpy(jre, jorig_re, total * sizeof(double));
+            memcpy(jim, jorig_im, total * sizeof(double));
+            double t0 = now_ns();
+            for (int r = 0; r < jreps; r++)
+                _stride_execute_fwd_slice(jp, jre, jim, K, K);
+            double ns = (now_ns() - t0) / jreps;
+            if (ns < std_best) std_best = ns;
+        }
+        variants_tried++;
+
+        if (std_best < best_ns) {
+            best_ns = std_best;
+            best_fact->nfactors = nf;
+            memcpy(best_fact->factors, fac, nf * sizeof(int));
+            *out_use_blocked = 0;
+            *out_split = 0;
+            *out_bg = 0;
+        }
+
+        /* Bench blocked executor at each valid split point */
+        for (int sp = 0; sp < jp->num_stages; sp++) {
+            size_t ws = (size_t)jp->stages[sp].radix *
+                        jp->stages[sp].stride * K * 2 * sizeof(double);
+            if (ws > STRIDE_BLOCKED_L1_BYTES) continue;
+
+            int bg = _stride_compute_block_groups(jp, sp);
+
+            for (int w = 0; w < 3; w++)
+                _stride_execute_fwd_blocked(jp, jorig_re, jorig_im, sp, bg);
+
+            double jbest = 1e18;
+            for (int t = 0; t < 3; t++) {
+                memcpy(jre, jorig_re, total * sizeof(double));
+                memcpy(jim, jorig_im, total * sizeof(double));
+                double t0 = now_ns();
+                for (int r = 0; r < jreps; r++)
+                    _stride_execute_fwd_blocked(jp, jre, jim, sp, bg);
+                double ns = (now_ns() - t0) / jreps;
+                if (ns < jbest) jbest = ns;
+            }
+            variants_tried++;
+
+            if (jbest < best_ns) {
+                best_ns = jbest;
+                best_fact->nfactors = nf;
+                memcpy(best_fact->factors, fac, nf * sizeof(int));
+                *out_use_blocked = 1;
+                *out_split = sp;
+                *out_bg = bg;
+                blocked_winners++;
+            }
+        }
+
+        stride_plan_destroy(jp);
+    }
+
+    STRIDE_ALIGNED_FREE(jre);
+    STRIDE_ALIGNED_FREE(jim);
+    STRIDE_ALIGNED_FREE(jorig_re);
+    STRIDE_ALIGNED_FREE(jorig_im);
+    free(plist);
+
+    if (verbose) {
+        printf("  Joint DP-blocked search: %d variants tried, blocked %s\n",
+               variants_tried,
+               *out_use_blocked ? "WON" : "lost");
+        if (*out_use_blocked) {
+            printf("    Winner: ");
+            for (int s = 0; s < best_fact->nfactors; s++)
+                printf("%s%d", s ? "x" : "", best_fact->factors[s]);
+            printf(" blocked split@%d bg=%d = %.0f ns (vs DP std %.0f ns)\n",
+                   *out_split, *out_bg, best_ns, dp_ns);
+        }
+    }
+
+    return best_ns;
+}
+
+/**
+ * stride_wisdom_recalibrate_with_blocked -- Opt-in joint blocked recalibration.
+ *
+ * Forces a joint (factorization × blocked executor) search for a single
+ * (N, K) entry, regardless of the gates in stride_wisdom_calibrate_full.
+ * Updates the wisdom entry IN-MEMORY ONLY (no file I/O).
+ *
+ * Strategy:
+ *   - Small N (<= STRIDE_EXHAUSTIVE_THRESHOLD): existing exhaustive joint
+ *     search via stride_wisdom_calibrate_full (its gate fires naturally).
+ *   - Large N: stride_dp_plan_joint_blocked (DP factorization + permutation
+ *     × split-point joint blocked search).
+ *
+ * Use this for the close-call cases where the standard calibration's blocked
+ * gate (N <= 2048) excludes the case from joint blocked consideration.
+ *
+ * Notes:
+ *   - The wisdom entry is added via stride_wisdom_add_full. If an entry for
+ *     (N, K) already exists with a better best_ns, it will NOT be overwritten.
+ *     For experiments, start with a fresh in-memory wisdom.
+ *   - No save_path — caller is responsible for any persistence decisions.
+ */
+static double stride_wisdom_recalibrate_with_blocked(
+        stride_wisdom_t *wis, int N, size_t K,
+        const stride_registry_t *reg,
+        stride_dp_context_t *dp_ctx,
+        int verbose)
+{
+    /* Outside blocked-relevant range — fall back to standard calibration */
+    if (K > STRIDE_BLOCKED_K_THRESHOLD || N <= 512) {
+        return stride_wisdom_calibrate_full(wis, N, K, reg, dp_ctx,
+                                             1, verbose, 1024, NULL);
+    }
+
+    /* Small N: existing exhaustive joint search applies (its gate fires) */
+    if (N <= 1024) {
+        return stride_wisdom_calibrate_full(wis, N, K, reg, dp_ctx,
+                                             1, verbose, 1024, NULL);
+    }
+
+    /* Large N: DP-style joint blocked search */
+    stride_factorization_t best_fact;
+    int use_blocked, split, bg;
+    double best_ns = stride_dp_plan_joint_blocked(
+        dp_ctx, N, K, reg, &best_fact,
+        &use_blocked, &split, &bg, verbose);
+
+    if (best_ns >= 1e17) return best_ns;
+
+    stride_wisdom_add_full(wis, N, K, best_fact.factors, best_fact.nfactors,
+                           best_ns, use_blocked, split, bg);
+    return best_ns;
+}
+
 #define STRIDE_EXHAUSTIVE_THRESHOLD 1024
 
 /* Legacy wrappers for backward compatibility */

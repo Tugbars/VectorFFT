@@ -282,7 +282,10 @@ set_target_properties(vfft_bench_blocked PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
-# ── Joint calibration: blocked vs MKL on weakest pow2 ──
+# ── Joint DP-blocked search at large N vs MKL ──
+# Tests whether extending the joint (factorization × blocked executor) search
+# beyond the N<=2048 gate helps on close-call cases (K=4, large pow2 N).
+# In-memory wisdom only — the canonical wisdom file is never modified.
 add_executable(vfft_bench_blocked_mkl bench/bench_blocked_vs_mkl.c)
 target_link_libraries(vfft_bench_blocked_mkl PRIVATE vfft_stride)
 target_compile_definitions(vfft_bench_blocked_mkl PRIVATE _CRT_SECURE_NO_WARNINGS)

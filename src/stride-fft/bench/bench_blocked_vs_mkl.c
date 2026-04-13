@@ -1,10 +1,16 @@
 /**
- * bench_blocked_vs_mkl.c — Joint calibration on weakest pow2 cases vs MKL
+ * bench_blocked_vs_mkl.c — Joint blocked search at large N vs MKL
  *
- * Runs the joint (factorization × executor × split) search for the 3 pow2
- * sizes where MKL is closest, then benchmarks the winner against MKL.
+ * Tests whether extending the joint (factorization × blocked executor) search
+ * to large N improves on the standard DP planner for the close-call cases
+ * where MKL is tightest.
  *
- * No wisdom file written — pure in-memory calibration + comparison.
+ * Calibration is in-memory only — the canonical wisdom file is never touched.
+ *
+ * Compares three columns:
+ *   - standard:    stride_dp_plan winner with standard executor
+ *   - joint:       stride_dp_plan_joint_blocked winner (may be standard or blocked)
+ *   - MKL:         Intel MKL DftiComputeForward
  */
 
 #include <stdio.h>
@@ -15,14 +21,14 @@
 #include "../core/compat.h"
 #include "../core/env.h"
 #include "../core/planner.h"
-#include "../core/planner_blocked.h"
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 #endif
 
-/* Refine bench: re-bench the joint winner with high accuracy */
+/* Refine bench: re-bench a built plan with high accuracy.
+ * Dispatches to blocked or standard path based on plan->use_blocked. */
 static double refine_bench(stride_plan_t *plan, int N, size_t K, int reps) {
     size_t total = (size_t)N * K;
     double *re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
@@ -60,43 +66,6 @@ static double refine_bench(stride_plan_t *plan, int N, size_t K, int reps) {
     return best;
 }
 
-/* Standard executor bench for comparison */
-static double bench_standard(int N, size_t K, const stride_registry_t *reg, int reps) {
-    stride_plan_t *plan = stride_exhaustive_plan(N, K, reg);
-    if (!plan) plan = stride_auto_plan(N, K, reg);
-    if (!plan) return 1e18;
-
-    size_t total = (size_t)N * K;
-    double *re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    double *im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    for (size_t i = 0; i < total; i++) {
-        re[i] = (double)rand() / RAND_MAX - 0.5;
-        im[i] = (double)rand() / RAND_MAX - 0.5;
-    }
-
-    for (int w = 0; w < 50; w++)
-        stride_execute_fwd(plan, re, im);
-
-    double best = 1e18;
-    for (int t = 0; t < 7; t++) {
-        double t0 = now_ns();
-        for (int r = 0; r < reps; r++)
-            stride_execute_fwd(plan, re, im);
-        double ns = (now_ns() - t0) / reps;
-        if (ns < best) best = ns;
-    }
-
-    printf("    standard factors: ");
-    for (int s = 0; s < plan->num_stages; s++)
-        printf("%s%d", s ? "x" : "", plan->factors[s]);
-    printf("\n");
-
-    STRIDE_ALIGNED_FREE(re);
-    STRIDE_ALIGNED_FREE(im);
-    stride_plan_destroy(plan);
-    return best;
-}
-
 #ifdef VFFT_HAS_MKL
 static double bench_mkl(int N, size_t K, int reps) {
     size_t total = (size_t)N * K;
@@ -108,14 +77,14 @@ static double bench_mkl(int N, size_t K, int reps) {
     }
 
     DFTI_DESCRIPTOR_HANDLE desc = NULL;
-    MKL_LONG strides[2] = {0, (MKL_LONG)K};
     DftiCreateDescriptor(&desc, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N);
-    DftiSetValue(desc, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
     DftiSetValue(desc, DFTI_PLACEMENT, DFTI_INPLACE);
+    DftiSetValue(desc, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
     DftiSetValue(desc, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
-    DftiSetValue(desc, DFTI_INPUT_DISTANCE, 1);
-    DftiSetValue(desc, DFTI_OUTPUT_DISTANCE, 1);
-    DftiSetValue(desc, DFTI_INPUT_STRIDES, strides);
+    DftiSetValue(desc, DFTI_INPUT_DISTANCE,  (MKL_LONG)1);
+    DftiSetValue(desc, DFTI_OUTPUT_DISTANCE, (MKL_LONG)1);
+    MKL_LONG strides[2] = {0, (MKL_LONG)K};
+    DftiSetValue(desc, DFTI_INPUT_STRIDES,  strides);
     DftiSetValue(desc, DFTI_OUTPUT_STRIDES, strides);
     DftiCommitDescriptor(desc);
 
@@ -149,20 +118,37 @@ int main(void) {
     stride_registry_t reg;
     stride_registry_init(&reg);
 
-    printf("=== Blocked Executor vs MKL: Weakest Pow2 Cases ===\n\n");
+    printf("=== Joint Blocked Search at Large N vs MKL ===\n");
+    printf("Close-call cases from dp_results.txt (K=4, large pow2 N).\n");
+    printf("In-memory wisdom only — canonical wisdom file untouched.\n\n");
 
+    /* Close-call cases: K=4 with large pow2 N from dp_results.txt.
+     * These are the cases where the DP planner alone is tightest vs MKL,
+     * and where the existing joint blocked search (gated to N<=2048) was
+     * not previously applied. */
     struct { int N; size_t K; } cases[] = {
-        {8192,  4},
-        {16384, 4},
-        {32768, 4},
+        {4096,   4},   /* 1.31x baseline */
+        {8192,   4},   /* 1.21x baseline */
+        {16384,  4},   /* 1.02x — tightest */
+        {32768,  4},   /* 1.07x */
+        {65536,  4},   /* 1.19x */
+        {131072, 4},   /* 1.09x */
     };
     int ncases = sizeof(cases) / sizeof(cases[0]);
 
+    /* Single shared DP context for K=4 (reused across all cases) */
+    int max_N = 0;
+    for (int ci = 0; ci < ncases; ci++)
+        if (cases[ci].N > max_N) max_N = cases[ci].N;
+
+    stride_dp_context_t dp_ctx;
+    stride_dp_init(&dp_ctx, 4, max_N);
+
     printf("%-8s %-3s | %10s %10s %10s | %7s %7s | %s\n",
            "N", "K", "standard", "joint", "MKL",
-           "old_rat", "new_rat", "joint winner");
+           "std/MKL", "joint/MKL", "joint winner");
     printf("──────── ─── + ────────── ────────── ────────── +"
-           " ─────── ─────── + ──────────────────\n");
+           " ─────── ─────── + ──────────────────────────\n");
 
     for (int ci = 0; ci < ncases; ci++) {
         int N = cases[ci].N;
@@ -172,32 +158,42 @@ int main(void) {
         if (reps < 100) reps = 100;
         if (reps > 50000) reps = 50000;
 
-        printf("\nCalibrating N=%d K=%zu ...\n", N, K);
+        printf("\nCalibrating N=%d K=%zu (joint DP-blocked, in-memory)...\n",
+               N, K);
 
-        /* Joint calibration (in-memory, no file) */
-        stride_blocked_wisdom_t bwis;
-        stride_blocked_wisdom_init(&bwis);
-        stride_blocked_calibrate(&bwis, N, K, &reg, NULL,
-                                  1, 1, 2048, NULL);
+        /* Fresh in-memory wisdom for this case (no disk I/O) */
+        stride_wisdom_t wis;
+        stride_wisdom_init(&wis);
 
-        const stride_blocked_entry_t *e = stride_blocked_wisdom_lookup(&bwis, N, K);
-        if (!e) {
-            printf("%-8d %-3zu | CALIBRATION FAILED\n", N, K);
+        double joint_ns = stride_wisdom_recalibrate_with_blocked(
+            &wis, N, K, &reg, &dp_ctx, 1);
+
+        if (joint_ns >= 1e17) {
+            printf("%-8d %-3zu | RECALIBRATION FAILED\n", N, K);
             continue;
         }
 
-        /* Build plan from joint winner */
-        stride_plan_t *jplan = stride_blocked_wise_plan(N, K, &reg, &bwis);
+        /* Build plan from in-memory wisdom. The wisdom-built plan carries
+         * use_blocked / split_stage / block_groups from the joint search. */
+        stride_plan_t *jplan = stride_wise_plan(N, K, &reg, &wis);
         if (!jplan) {
             printf("%-8d %-3zu | PLAN BUILD FAILED\n", N, K);
             continue;
         }
 
         /* Refine-bench the joint winner */
-        double joint_ns = refine_bench(jplan, N, K, reps);
+        double joint_refined_ns = refine_bench(jplan, N, K, reps);
 
-        /* Bench standard (exhaustive, no blocking) */
-        double std_ns = bench_standard(N, K, &reg, reps);
+        /* Bench the standard DP planner alone (no blocked consideration)
+         * for the "before" baseline. */
+        stride_factorization_t std_fact;
+        double std_dp_ns = stride_dp_plan(&dp_ctx, N, &reg, &std_fact, 0);
+        (void)std_dp_ns;
+        stride_plan_t *std_plan = _stride_build_plan(
+            N, K, std_fact.factors, std_fact.nfactors, &reg);
+        double std_refined_ns = (std_plan != NULL)
+            ? refine_bench(std_plan, N, K, reps)
+            : 1e18;
 
         /* Bench MKL */
         double mkl_ns = 0;
@@ -205,27 +201,38 @@ int main(void) {
         mkl_ns = bench_mkl(N, K, reps);
 #endif
 
-        double old_ratio = (mkl_ns > 0) ? mkl_ns / std_ns : 0;
-        double new_ratio = (mkl_ns > 0) ? mkl_ns / joint_ns : 0;
+        double std_ratio   = (mkl_ns > 0) ? mkl_ns / std_refined_ns   : 0;
+        double joint_ratio = (mkl_ns > 0) ? mkl_ns / joint_refined_ns : 0;
 
-        char winner_desc[64] = "";
-        for (int s = 0; s < e->nfactors; s++)
-            sprintf(winner_desc + strlen(winner_desc), "%s%d", s ? "x" : "", e->factors[s]);
-        sprintf(winner_desc + strlen(winner_desc), " %s",
-                e->use_blocked ? "BLOCKED" : "standard");
-        if (e->use_blocked)
-            sprintf(winner_desc + strlen(winner_desc), " sp%d bg%d",
-                    e->split_stage, e->block_groups);
+        /* Compose joint winner description */
+        const stride_wisdom_entry_t *e = stride_wisdom_lookup(&wis, N, K);
+        char winner_desc[80] = "";
+        if (e) {
+            for (int s = 0; s < e->nfactors; s++)
+                sprintf(winner_desc + strlen(winner_desc),
+                        "%s%d", s ? "x" : "", e->factors[s]);
+            sprintf(winner_desc + strlen(winner_desc), " %s",
+                    e->use_blocked ? "BLOCKED" : "standard");
+            if (e->use_blocked)
+                sprintf(winner_desc + strlen(winner_desc), " sp%d bg%d",
+                        e->split_stage, e->block_groups);
+        }
 
         printf("%-8d %-3zu | %9.0f %9.0f %9.0f | %6.2fx %6.2fx | %s\n",
-               N, K, std_ns, joint_ns, mkl_ns, old_ratio, new_ratio, winner_desc);
+               N, K, std_refined_ns, joint_refined_ns, mkl_ns,
+               std_ratio, joint_ratio, winner_desc);
 
+        if (std_plan) stride_plan_destroy(std_plan);
         stride_plan_destroy(jplan);
+        /* stride_wisdom_t is a flat struct with inline arrays — no cleanup */
     }
 
-    printf("\nold_rat = MKL / standard_executor (before)\n");
-    printf("new_rat = MKL / joint_winner      (after)\n");
-    printf(">1 = we're faster\n");
+    stride_dp_destroy(&dp_ctx);
+
+    printf("\nstd/MKL   = MKL / standard_DP_winner       (before)\n");
+    printf("joint/MKL = MKL / joint_DP_blocked_winner   (after)\n");
+    printf(">1 = VectorFFT faster than MKL\n");
+    printf("If joint > std, the extended joint blocked search found gains.\n");
 
     return 0;
 }
