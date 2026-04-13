@@ -122,27 +122,35 @@ int main(void) {
     printf("Close-call cases from dp_results.txt (K=4, large pow2 N).\n");
     printf("In-memory wisdom only — canonical wisdom file untouched.\n\n");
 
-    /* Close-call cases: K=4 with large pow2 N from dp_results.txt.
-     * These are the cases where the DP planner alone is tightest vs MKL,
-     * and where the existing joint blocked search (gated to N<=2048) was
-     * not previously applied. */
+    /* Close-call cases: K=4 and K=8 with large pow2 N.
+     * K=4: originally tightest vs MKL in dp_results.txt.
+     * K=8: right at STRIDE_BLOCKED_K_THRESHOLD, where blocked executor
+     *      was designed to help. Not in dp_results.txt baseline; worth
+     *      testing as a second data point for the joint search. */
     struct { int N; size_t K; } cases[] = {
-        {4096,   4},   /* 1.31x baseline */
-        {8192,   4},   /* 1.21x baseline */
-        {16384,  4},   /* 1.02x — tightest */
-        {32768,  4},   /* 1.07x */
-        {65536,  4},   /* 1.19x */
-        {131072, 4},   /* 1.09x */
+        {4096,   4},   /* K=4 cases */
+        {8192,   4},
+        {16384,  4},
+        {32768,  4},
+        {65536,  4},
+        {131072, 4},
+        {4096,   8},   /* K=8 cases — blocked's designed sweet spot */
+        {8192,   8},
+        {16384,  8},
+        {32768,  8},
+        {65536,  8},
+        {131072, 8},
     };
     int ncases = sizeof(cases) / sizeof(cases[0]);
 
-    /* Single shared DP context for K=4 (reused across all cases) */
+    /* Shared DP contexts per K (reused across all cases of same K) */
     int max_N = 0;
     for (int ci = 0; ci < ncases; ci++)
         if (cases[ci].N > max_N) max_N = cases[ci].N;
 
-    stride_dp_context_t dp_ctx;
-    stride_dp_init(&dp_ctx, 4, max_N);
+    stride_dp_context_t dp_k4, dp_k8;
+    stride_dp_init(&dp_k4, 4, max_N);
+    stride_dp_init(&dp_k8, 8, max_N);
 
     printf("%-8s %-3s | %10s %10s %10s | %7s %7s | %s\n",
            "N", "K", "standard", "joint", "MKL",
@@ -165,8 +173,9 @@ int main(void) {
         stride_wisdom_t wis;
         stride_wisdom_init(&wis);
 
+        stride_dp_context_t *dp = (K == 4) ? &dp_k4 : &dp_k8;
         double joint_ns = stride_wisdom_recalibrate_with_blocked(
-            &wis, N, K, &reg, &dp_ctx, 1);
+            &wis, N, K, &reg, dp, 1);
 
         if (joint_ns >= 1e17) {
             printf("%-8d %-3zu | RECALIBRATION FAILED\n", N, K);
@@ -187,7 +196,7 @@ int main(void) {
         /* Bench the standard DP planner alone (no blocked consideration)
          * for the "before" baseline. */
         stride_factorization_t std_fact;
-        double std_dp_ns = stride_dp_plan(&dp_ctx, N, &reg, &std_fact, 0);
+        double std_dp_ns = stride_dp_plan(dp, N, &reg, &std_fact, 0);
         (void)std_dp_ns;
         stride_plan_t *std_plan = _stride_build_plan(
             N, K, std_fact.factors, std_fact.nfactors, &reg);
@@ -227,7 +236,8 @@ int main(void) {
         /* stride_wisdom_t is a flat struct with inline arrays — no cleanup */
     }
 
-    stride_dp_destroy(&dp_ctx);
+    stride_dp_destroy(&dp_k4);
+    stride_dp_destroy(&dp_k8);
 
     printf("\nstd/MKL   = MKL / standard_DP_winner       (before)\n");
     printf("joint/MKL = MKL / joint_DP_blocked_winner   (after)\n");
