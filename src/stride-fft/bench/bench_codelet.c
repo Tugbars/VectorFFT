@@ -34,8 +34,12 @@
 #include "../codelets/avx2/fft_radix16_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix10_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix10_avx2_ct_t1_dit.h"
+#include "../codelets/avx2/fft_radix11_avx2_ct_n1.h"
+#include "../codelets/avx2/fft_radix11_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix12_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix12_avx2_ct_t1_dit.h"
+#include "../codelets/avx2/fft_radix13_avx2_ct_n1.h"
+#include "../codelets/avx2/fft_radix13_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix20_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix20_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix25_avx2_ct_n1.h"
@@ -53,19 +57,16 @@
 
 static double estimate_ghz(void) {
     volatile double x = 1.0;
-    /* Warmup loop — triggers turbo before measurement.
-     * Without this, the cold CPU runs at base clock during the
-     * timed loop, producing freq estimates ~2.4 GHz instead of
-     * the actual ~5.7 GHz turbo seen during sustained workload. */
-    for (int i = 0; i < 50000000; i++)
-        x = x * 1.0000001;
-    /* Timed loop — CPU should now be at turbo */
     double t0 = now_ns();
     for (int i = 0; i < 100000000; i++)
         x = x * 1.0000001;
     double ns = now_ns() - t0;
     return 100000000.0 * 4.0 / ns;
 }
+/* NOTE: est_freq from this function is unreliable on Raptor Lake — reads ~2.4 GHz
+ * because the CPU doesn't sustain turbo through this short calibration loop.
+ * Actual codelet runs are at ~5.7 GHz turbo (VTune confirmed). The CPE column
+ * is approximate; ns/call is the source of truth. */
 
 /* ── Globals for zero-overhead codelet calls ── */
 
@@ -166,6 +167,21 @@ static void r10_t1_dit_bwd(void) {
     radix10_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
 }
 
+/* ── R=11 wrappers (genfft prime) ── */
+
+static void r11_n1_fwd(void) {
+    radix11_n1_fwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r11_n1_bwd(void) {
+    radix11_n1_bwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r11_t1_dit_fwd(void) {
+    radix11_t1_dit_fwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r11_t1_dit_bwd(void) {
+    radix11_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+
 /* ── R=12 wrappers ── */
 
 static void r12_n1_fwd(void) {
@@ -179,6 +195,21 @@ static void r12_t1_dit_fwd(void) {
 }
 static void r12_t1_dit_bwd(void) {
     radix12_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+
+/* ── R=13 wrappers (genfft prime) ── */
+
+static void r13_n1_fwd(void) {
+    radix13_n1_fwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r13_n1_bwd(void) {
+    radix13_n1_bwd_avx2(g_re, g_im, g_re, g_im, g_stride, g_stride, g_K);
+}
+static void r13_t1_dit_fwd(void) {
+    radix13_t1_dit_fwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r13_t1_dit_bwd(void) {
+    radix13_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
 }
 
 /* ── R=20 wrappers ── */
@@ -311,11 +342,23 @@ static const codelet_entry_t g_tests[] = {
     {"R10 t1_dit_fwd",    10, r10_t1_dit_fwd, 130},
     {"R10 t1_dit_bwd",    10, r10_t1_dit_bwd, 130},
 
+    /* R=11 (genfft prime, Winograd-style, no DIF variant) */
+    {"R11 n1_fwd (notw)", 11, r11_n1_fwd,      88},
+    {"R11 n1_bwd (notw)", 11, r11_n1_bwd,      88},
+    {"R11 t1_dit_fwd",    11, r11_t1_dit_fwd, 140},
+    {"R11 t1_dit_bwd",    11, r11_t1_dit_bwd, 140},
+
     /* R=12 (composite 4x3, no DIF variant) */
     {"R12 n1_fwd (notw)", 12, r12_n1_fwd,      96},
     {"R12 n1_bwd (notw)", 12, r12_n1_bwd,      96},
     {"R12 t1_dit_fwd",    12, r12_t1_dit_fwd, 160},
     {"R12 t1_dit_bwd",    12, r12_t1_dit_bwd, 160},
+
+    /* R=13 (genfft prime, Winograd-style, no DIF variant) */
+    {"R13 n1_fwd (notw)", 13, r13_n1_fwd,     110},
+    {"R13 n1_bwd (notw)", 13, r13_n1_bwd,     110},
+    {"R13 t1_dit_fwd",    13, r13_t1_dit_fwd, 175},
+    {"R13 t1_dit_bwd",    13, r13_t1_dit_bwd, 175},
 
     /* R=20 (composite 4x5, no DIF variant) */
     {"R20 n1_fwd (notw)", 20, r20_n1_fwd,     180},
