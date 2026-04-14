@@ -128,18 +128,7 @@ int main(void) {
      *      was designed to help. Not in dp_results.txt baseline; worth
      *      testing as a second data point for the joint search. */
     struct { int N; size_t K; } cases[] = {
-        {4096,   4},   /* K=4 cases */
-        {8192,   4},
-        {16384,  4},
-        {32768,  4},
-        {65536,  4},
-        {131072, 4},
-        {4096,   8},   /* K=8 cases — blocked's designed sweet spot */
-        {8192,   8},
-        {16384,  8},
-        {32768,  8},
-        {65536,  8},
-        {131072, 8},
+        {65536, 256},  /* One-off: large K, suspicious factorization 64x32x32 */
     };
     int ncases = sizeof(cases) / sizeof(cases[0]);
 
@@ -148,9 +137,10 @@ int main(void) {
     for (int ci = 0; ci < ncases; ci++)
         if (cases[ci].N > max_N) max_N = cases[ci].N;
 
-    stride_dp_context_t dp_k4, dp_k8;
+    stride_dp_context_t dp_k4, dp_k8, dp_k256;
     stride_dp_init(&dp_k4, 4, max_N);
     stride_dp_init(&dp_k8, 8, max_N);
+    stride_dp_init(&dp_k256, 256, max_N);
 
     printf("%-8s %-3s | %10s %10s %10s | %7s %7s | %s\n",
            "N", "K", "standard", "joint", "MKL",
@@ -173,9 +163,19 @@ int main(void) {
         stride_wisdom_t wis;
         stride_wisdom_init(&wis);
 
-        stride_dp_context_t *dp = (K == 4) ? &dp_k4 : &dp_k8;
-        double joint_ns = stride_wisdom_recalibrate_with_blocked(
-            &wis, N, K, &reg, dp, 1);
+        stride_dp_context_t *dp = (K == 4) ? &dp_k4 :
+                                  (K == 8) ? &dp_k8 : &dp_k256;
+
+        /* Bypass K<=8 gate: call joint-blocked DP directly for any K */
+        stride_factorization_t jb_fact;
+        int jb_use_blocked, jb_split, jb_bg;
+        double joint_ns = stride_dp_plan_joint_blocked(
+            dp, N, K, &reg, &jb_fact,
+            &jb_use_blocked, &jb_split, &jb_bg, 1);
+        if (joint_ns < 1e17) {
+            stride_wisdom_add_full(&wis, N, K, jb_fact.factors, jb_fact.nfactors,
+                                    joint_ns, jb_use_blocked, jb_split, jb_bg);
+        }
 
         if (joint_ns >= 1e17) {
             printf("%-8d %-3zu | RECALIBRATION FAILED\n", N, K);
