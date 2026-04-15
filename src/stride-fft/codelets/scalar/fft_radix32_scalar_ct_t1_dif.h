@@ -45,6 +45,8 @@ radix32_t1_dif_fwd_scalar(
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t ios, size_t mb, size_t me, size_t ms)
 {
+    const double sqrt2_inv = 0.70710678118654752440;
+
     double spill_re[32], spill_im[32];
 
     double x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;
@@ -794,6 +796,8 @@ radix32_t1_dif_bwd_scalar(
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t ios, size_t mb, size_t me, size_t ms)
 {
+    const double sqrt2_inv = 0.70710678118654752440;
+
     double spill_re[32], spill_im[32];
 
     double x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;
