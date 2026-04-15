@@ -274,6 +274,22 @@ set_target_properties(vfft_bench_codelet PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ── R=16 DIF codelet correctness gate ──
+add_executable(vfft_test_r16_dif validation/test_radix16_dif.c)
+target_link_libraries(vfft_test_r16_dif PRIVATE vfft_stride)
+target_compile_definitions(vfft_test_r16_dif PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_test_r16_dif PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── R=32 DIF codelet correctness gate ──
+add_executable(vfft_test_r32_dif validation/test_radix32_dif.c)
+target_link_libraries(vfft_test_r32_dif PRIVATE vfft_stride)
+target_compile_definitions(vfft_test_r32_dif PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_test_r32_dif PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ── Blocked executor experiment (standard vs blocked, VTune) ──
 add_executable(vfft_bench_blocked bench/bench_blocked_executor.c)
 target_link_libraries(vfft_bench_blocked PRIVATE vfft_stride)

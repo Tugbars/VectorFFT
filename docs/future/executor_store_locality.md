@@ -122,6 +122,39 @@ The large-pow2 K=4 cluster is where the gap is tightest — exactly the regime w
 
 Cheap to run (few minutes each), directly validates or invalidates the store-locality thesis before committing to Fix A or Fix B implementation.
 
+## Empirical: R=16 DIF isolated codelet bench (2026-04-15)
+
+Before committing to the full integration rewrite, we measured R=16 DIF
+vs DIT as isolated codelets at K=256 on i9-14900KF (AVX2, single P-core).
+Three independent `vfft_bench_codelet` runs:
+
+| Run | dit_fwd ns | dif_fwd ns | Δ fwd | dit_bwd ns | dif_bwd ns | Δ bwd |
+|-----|-----------:|-----------:|------:|-----------:|-----------:|------:|
+|   1 |       4335 |       4107 | -5.3% |       4282 |       4078 | -4.8% |
+|   2 |       3985 |       3495 | -12.3% |       3958 |       3500 | -11.6% |
+|   3 |       4551 |       4026 | -11.5% |       4489 |       4009 | -10.7% |
+
+**Mean Δ: -9.7% fwd, -9.0% bwd. All three runs favor DIF in both directions.**
+Worst-case win is ~5%, well outside same-factorization variance observed in
+earlier unlocked bench runs for cases with identical factors.
+
+This is the isolated compute measurement — no stride-context DTLB effect.
+The DTLB-store benefit (the original hypothesis for MKL's advantage at large
+pow2) is a *separate* mechanism that only manifests in multi-pass pipeline
+context at large stride. Integration should therefore show ≥ this 10%,
+possibly substantially more if the DTLB-store effect is as large as the
+full-FFT VTune at N=16384 K=4 suggested (32.4% vs MKL's 2.7%).
+
+**Correctness gate.** Prior to the bench, scalar vs AVX2 cross-check at K=256
+showed all three kernels (`dif_fwd`, `dif_bwd`, `dit_fwd`) agreeing to
+~1e-16 per element. The AVX2 DIF emit is bit-identical to the scalar
+reference modulo FMA rounding. Validates generator self-consistency.
+
+**What this unblocks.** Proceed to full integration: registry entries for
+DIF, per-stage direction bit in the planner, wisdom format bump. Then rerun
+the four tightest pow2 K=4 cases (32768 / 65536 / 131072) and the K=256
+close-calls (256 / 16384 / 32768).
+
 ## Evidence this is the right axis
 
 - VTune data is unambiguous: **store DTLB is the single largest VectorFFT-vs-MKL gap** at 30 points, and concentrated on the regime (large pow2, mid-to-high K) where we're tightest against MKL.
