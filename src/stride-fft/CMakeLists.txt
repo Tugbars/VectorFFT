@@ -290,6 +290,17 @@ set_target_properties(vfft_test_r32_dif PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+# ── R=16 DIF vs DIT pipeline A/B ──
+add_executable(vfft_bench_r16_dif_pipeline bench/bench_r16_dif_pipeline.c)
+target_link_libraries(vfft_bench_r16_dif_pipeline PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_r16_dif_pipeline PRIVATE
+    _CRT_SECURE_NO_WARNINGS
+    VFFT_BENCH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/bench"
+)
+set_target_properties(vfft_bench_r16_dif_pipeline PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # ── Blocked executor experiment (standard vs blocked, VTune) ──
 add_executable(vfft_bench_blocked bench/bench_blocked_executor.c)
 target_link_libraries(vfft_bench_blocked PRIVATE vfft_stride)
