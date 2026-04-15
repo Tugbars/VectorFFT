@@ -32,6 +32,7 @@
 #include "../codelets/avx2/fft_radix8_avx2.h"
 #include "../codelets/avx2/fft_radix16_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix16_avx2_ct_t1_dit.h"
+#include "../codelets/avx2/fft_radix16_avx2_ct_t1_dif.h"
 #include "../codelets/avx2/fft_radix10_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix10_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix11_avx2_ct_n1.h"
@@ -150,6 +151,12 @@ static void r16_t1_dit_fwd(void) {
 }
 static void r16_t1_dit_bwd(void) {
     radix16_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r16_t1_dif_fwd(void) {
+    radix16_t1_dif_fwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r16_t1_dif_bwd(void) {
+    radix16_t1_dif_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
 }
 
 /* ── R=10 wrappers ── */
@@ -335,6 +342,8 @@ static const codelet_entry_t g_tests[] = {
     {"R16 n1_bwd (notw)", 16, r16_n1_bwd,    136},
     {"R16 t1_dit_fwd",    16, r16_t1_dit_fwd,210},
     {"R16 t1_dit_bwd",    16, r16_t1_dit_bwd,210},
+    {"R16 t1_dif_fwd",    16, r16_t1_dif_fwd,210},
+    {"R16 t1_dif_bwd",    16, r16_t1_dif_bwd,210},
 
     /* R=10 (composite 2x5, no DIF variant) */
     {"R10 n1_fwd (notw)", 10, r10_n1_fwd,      80},

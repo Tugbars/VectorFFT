@@ -65,6 +65,9 @@ add_validation_target(vfft_val_bluestein bench_bluestein.c)
 # -- Rader standalone (bypasses planner) --
 add_validation_target(vfft_val_rader bench_rader.c)
 
+# -- R=16 DIF codelet correctness gate --
+add_validation_target(vfft_test_r16_dif test_radix16_dif.c)
+
 # Convenience target: build all validation tests
 add_custom_target(vfft_validation DEPENDS
     vfft_test_log3
