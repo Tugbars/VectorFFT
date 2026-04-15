@@ -857,7 +857,14 @@ def emit_dif_tw_flat_kernel(em, d, nfuse, itw_set, k_expr="k"):
         em.b()
 
     # PASS 2: reload → internal twiddle → radix-4 → external twiddle → store
-    em.c(f"PASS 2")
+    em.c(f"PASS 2 — W32 twiddle broadcasts deferred to free regs during PASS 1")
+    if em.isa.name != 'scalar' and itw_set:
+        set1 = '_mm256_set1_pd' if em.isa.name == 'avx2' else '_mm512_set1_pd'
+        T = em.isa.reg_type
+        for (e, tN) in sorted(itw_set):
+            label = wN_label(e, tN)
+            em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+            em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
     em.b()
     for k1 in range(N1):
         em.c(f"column k1={k1}")
@@ -879,13 +886,24 @@ def emit_dif_tw_flat_kernel(em, d, nfuse, itw_set, k_expr="k"):
         em.emit_radix4(xv4, d, f"radix-4 k1={k1}")
         em.b()
 
-        # DIF: external twiddle on OUTPUT after butterfly
+        # DIF: spill butterfly outputs so PASS 2b can reload and apply
+        # external twiddles without holding all 8×2 butterfly regs live
+        # through the ext_tw loads. Mirrors DIT's split-phase structure.
         for k2 in range(N2):
-            m = k1 + N1 * k2  # output index
+            em.emit_spill(f"x{k2}", k1 + N1 * k2)
+        em.b()
+
+    # PASS 2b: reload → ext_tw → store (separate phase, like DIT PASS 2)
+    em.c(f"PASS 2b — ext_tw + store")
+    for k1 in range(N1):
+        for k2 in range(N2):
+            em.emit_reload(f"x{k2}", k1 + N1 * k2)
+        em.b()
+        for k2 in range(N2):
+            m = k1 + N1 * k2
             if m > 0:
                 em.emit_ext_twiddle_dif(f"x{k2}", m - 1, d, k_expr)
         em.b()
-
         for k2 in range(N2):
             em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
         em.b()
@@ -2133,7 +2151,7 @@ def emit_ct_file(isa, itw_set, ct_variant):
         # For DIT variants (t1_dit, t1_oop_dit, t1_dit_log3), the W32 broadcasts
         # are deferred into PASS 2 inside the kernel — frees registers during
         # PASS 1. Gave -21.5% on R=32 t1_dit (AVX2). Other variants still hoist.
-        _defer_itw = ct_variant in ('ct_t1_dit', 'ct_t1_oop_dit', 'ct_t1_dit_log3')
+        _defer_itw = ct_variant in ('ct_t1_dit', 'ct_t1_oop_dit', 'ct_t1_dit_log3', 'ct_t1_dif')
         if isa.name != 'scalar' and itw_set and not _defer_itw:
             set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
             for (e, tN) in sorted(itw_set):
