@@ -393,6 +393,8 @@ static const codelet_entry_t g_tests[] = {
     {"R32 n1_bwd (notw)", 32, r32_n1_bwd,    340},
     {"R32 t1_dit_fwd",    32, r32_t1_dit_fwd,520},
     {"R32 t1_dit_bwd",    32, r32_t1_dit_bwd,520},
+    {"R32 t1_dif_fwd",    32, r32_t1_dif_fwd,520},
+    {"R32 t1_dif_bwd",    32, r32_t1_dif_bwd,520},
 
     /* R=64 (no DIF variant) */
     {"R64 n1_fwd (notw)", 64, r64_n1_fwd,     816},
