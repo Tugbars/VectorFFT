@@ -1465,6 +1465,9 @@ def emit_dif_tw_flat_file(isa, itw_set):
             em.o(f"const {T} sign_flip = {set1}(-0.0);")
             em.o(f"const {T} sqrt2_inv = {set1}(0.70710678118654752440);")
             em.b()
+        else:
+            em.o(f"const double sqrt2_inv = 0.70710678118654752440;")
+            em.b()
 
         spill_total = N * isa.spill_mul
         if isa.name == 'scalar':
@@ -2108,6 +2111,9 @@ def emit_ct_file(isa, itw_set, ct_variant):
             set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
             em.o(f"const {T} sign_flip = {set1}(-0.0);")
             em.o(f"const {T} sqrt2_inv = {set1}(0.70710678118654752440);")
+            em.b()
+        else:
+            em.o(f"const double sqrt2_inv = 0.70710678118654752440;")
             em.b()
 
         spill_total = N * isa.spill_mul

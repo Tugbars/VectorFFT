@@ -47,6 +47,7 @@
 #include "../codelets/avx2/fft_radix25_avx2_ct_t1_dit.h"
 #include "../codelets/avx2/fft_radix32_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix32_avx2_ct_t1_dit.h"
+#include "../codelets/avx2/fft_radix32_avx2_ct_t1_dif.h"
 #include "../codelets/avx2/fft_radix64_avx2_ct_n1.h"
 #include "../codelets/avx2/fft_radix64_avx2_ct_t1_dit.h"
 
@@ -262,6 +263,12 @@ static void r32_t1_dit_fwd(void) {
 }
 static void r32_t1_dit_bwd(void) {
     radix32_t1_dit_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r32_t1_dif_fwd(void) {
+    radix32_t1_dif_fwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
+}
+static void r32_t1_dif_bwd(void) {
+    radix32_t1_dif_bwd_avx2(g_re, g_im, g_tw_re, g_tw_im, g_stride, g_K);
 }
 
 /* ── R=64 wrappers ── */
