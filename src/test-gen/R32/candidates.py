@@ -1,159 +1,118 @@
-"""
-candidates.py — candidate matrix for R=16 codelet bench.
+"""R=32 candidate enumeration with cache-spill gating."""
+from dataclasses import dataclass
+from typing import List, Tuple
 
-Single source of truth for the three downstream scripts:
-  - bench_codelets.py   iterates candidates, generates .h files, runs bench
-  - select_codelets.py  iterates winners, writes selection.json
-  - emit_selector.py    iterates kept candidates, writes codelet_select_r16.h
-
-Every candidate is a (family, knob-config) tuple describing ONE specific
-generated codelet. The bench measures all of them across (ios, me) points
-and the selector picks winners per region.
-
-Scope: R=16, ct_t1_dit signature (mid-plan in-place DIT). Extend this file
-to add more radixes or codelet signatures.
-"""
-
-from dataclasses import dataclass, field
-from typing import Optional
+ASSUMED_L1D_BYTES = 48 * 1024
+ASSUMED_L2_BYTES = 2 * 1024 * 1024
+SIZEOF_COMPLEX = 16
+R = 32
 
 
 @dataclass(frozen=True)
 class Candidate:
-    """One generator invocation producing one codelet."""
-    family: str                    # e.g. 'ct_t1_dit', 'ct_t1_buf_dit'
-    isa: str                       # 'avx2' or 'avx512'
-    knobs: tuple = ()              # frozen list of (flag, value) pairs
-
-    def cli_args(self) -> list:
-        """Return the generator CLI args to produce this codelet."""
-        args = ['--isa', self.isa, '--variant', self.family]
-        for flag, value in self.knobs:
-            if isinstance(value, bool):
-                if value:
-                    args.append(flag)
-            else:
-                args.extend([flag, str(value)])
-        return args
+    family: str
+    isa: str
+    tile: int = None
+    drain: str = None
+    drain_prefetch: bool = None
+    twiddle_prefetch: int = 0
+    twiddle_prefetch_rows: int = 1
 
     def id(self) -> str:
-        """Stable identifier — used as dispatch index in the harness."""
-        knob_str = '_'.join(f"{k.lstrip('-').replace('-', '_')}{v}"
-                            for k, v in self.knobs)
-        if knob_str:
-            return f"{self.family}__{self.isa}__{knob_str}"
-        return f"{self.family}__{self.isa}"
+        parts = [self.family, self.isa]
+        if self.family == 'ct_t1_buf_dit':
+            parts.append(f'tile{self.tile}')
+            parts.append(f'drain{self.drain}')
+            if self.drain_prefetch:
+                parts.append('prefw')
+        if self.twiddle_prefetch > 0:
+            parts.append(f'tpf{self.twiddle_prefetch}r{self.twiddle_prefetch_rows}')
+        return '__'.join(parts)
 
     def header_name(self) -> str:
-        """Output .h filename for this candidate's generated code."""
-        return f"{self.id()}.h"
+        return f'{self.id()}.h'
+
+    def cli_args(self) -> List[str]:
+        args = ['--isa', self.isa, '--variant', self.family]
+        if self.family == 'ct_t1_buf_dit':
+            args += ['--tile', str(self.tile), '--drain', self.drain]
+            if self.drain_prefetch:
+                args.append('--drain-prefetch')
+        if self.twiddle_prefetch > 0:
+            args += ['--twiddle-prefetch', str(self.twiddle_prefetch),
+                     '--twiddle-prefetch-rows', str(self.twiddle_prefetch_rows)]
+        return args
 
     def function_names(self) -> dict:
-        """
-        Expected function symbol names emitted by the generator.
-        Returns {'fwd': '...', 'bwd': '...'}.
-
-        This is coupled to the generator's naming convention. If the
-        generator changes how it names functions, update here.
-        """
+        base = 'radix32_'
         f = self.family
-        isa = self.isa
-
-        # Base symbol derived from family name
         if f == 'ct_t1_dit':
-            base = 'radix16_t1_dit'
+            base += 't1_dit'
         elif f == 'ct_t1_dit_log3':
-            base = 'radix16_t1_dit_log3'
-        elif f == 'ct_t1s_dit':
-            base = 'radix16_t1s_dit'
+            base += 't1_dit_log3'
+        elif f == 'ct_t1_ladder_dit':
+            base += 't1_ladder_dit'
         elif f == 'ct_t1_buf_dit':
-            tile = next(v for k, v in self.knobs if k == '--tile')
-            drain = next(v for k, v in self.knobs if k == '--drain')
-            base = f'radix16_t1_buf_dit_tile{tile}_{drain}'
+            base += f't1_buf_dit_tile{self.tile}_{self.drain}'
+            if self.drain_prefetch:
+                base += '_prefw'
         else:
-            raise ValueError(f"unknown family {f}")
-
-        return {
-            'fwd': f'{base}_fwd_{isa}',
-            'bwd': f'{base}_bwd_{isa}',
-        }
-
-
-# ─────────────────────────────────────────────────────────────────────
-# KNOB ENUMERATION
-# ─────────────────────────────────────────────────────────────────────
-
-BUF_TILES = [16, 32, 64, 128]
-BUF_DRAINS = ['temporal', 'stream']
+            raise ValueError(f"Unknown family: {f}")
+        if self.twiddle_prefetch > 0:
+            base += f'_tpf{self.twiddle_prefetch}r{self.twiddle_prefetch_rows}'
+        return {'fwd': f'{base}_fwd_{self.isa}',
+                'bwd': f'{base}_bwd_{self.isa}'}
 
 
-def _enumerate_buf_candidates(isa: str) -> list:
-    """All (tile × drain) combos of ct_t1_buf_dit for one ISA."""
-    return [
-        Candidate(
-            family='ct_t1_buf_dit',
-            isa=isa,
-            knobs=(('--tile', t), ('--drain', d)),
-        )
-        for t in BUF_TILES
-        for d in BUF_DRAINS
-    ]
+SWEEP_ME = [64, 128, 256, 512, 1024, 2048]
+SWEEP_IOS_OFFSETS = [0, 8, 64]
+
+def sweep_points() -> List[Tuple[int, int]]:
+    return [(me + off, me) for me in SWEEP_ME for off in SWEEP_IOS_OFFSETS]
 
 
-def _enumerate_simple_candidates(isa: str) -> list:
-    """Families without extra knobs: one candidate each."""
-    return [
-        Candidate(family='ct_t1_dit', isa=isa),
-        Candidate(family='ct_t1_dit_log3', isa=isa),
-        Candidate(family='ct_t1s_dit', isa=isa),
-    ]
+def _stream_useful() -> bool:
+    return R * max(SWEEP_ME) * SIZEOF_COMPLEX > ASSUMED_L2_BYTES
+
+def _prefetch_useful() -> bool:
+    return (R - 1) * max(SWEEP_ME) * SIZEOF_COMPLEX > ASSUMED_L1D_BYTES
 
 
-def enumerate_all() -> list:
-    """All candidates across ISAs we might want to bench."""
-    out = []
+def _prefetch_configs() -> List[Tuple[int, int]]:
+    if not _prefetch_useful():
+        return [(0, 1)]
+    cfgs = [(0, 1)]
+    for dist in (4, 8, 16, 32):
+        cfgs.append((dist, 1))
+        if dist >= 8:
+            cfgs.append((dist, 2))
+    return cfgs
+
+def _drain_modes() -> List[str]:
+    return ['temporal', 'stream'] if _stream_useful() else ['temporal']
+
+
+def enumerate_all() -> List[Candidate]:
+    cands = []
     for isa in ('avx2', 'avx512'):
-        out.extend(_enumerate_simple_candidates(isa))
-        out.extend(_enumerate_buf_candidates(isa))
-    return out
-
-
-# ─────────────────────────────────────────────────────────────────────
-# SWEEP SHAPE — the (ios, me) grid the bench measures at
-# ─────────────────────────────────────────────────────────────────────
-
-# me values span a range covering small (L1), medium (L2), and large (L3).
-ME_VALUES = [64, 128, 256, 512, 1024, 2048]
-
-# For each me, we measure at several ios values:
-#   ios == me         (the "default" case — what plans usually call with)
-#   ios == me + 8     (one cacheline of padding — tests stride aliasing)
-#   ios == me + 64    (larger padding — confirms alignment effects)
-def ios_variants_for(me: int) -> list:
-    return [me, me + 8, me + 64]
-
-
-def sweep_points() -> list:
-    """Full list of (ios, me) points to measure."""
-    return [(ios, me) for me in ME_VALUES for ios in ios_variants_for(me)]
+        for tp, tpr in _prefetch_configs():
+            cands.append(Candidate(family='ct_t1_dit', isa=isa,
+                                   twiddle_prefetch=tp, twiddle_prefetch_rows=tpr))
+        for tp, tpr in _prefetch_configs():
+            cands.append(Candidate(family='ct_t1_dit_log3', isa=isa,
+                                   twiddle_prefetch=tp, twiddle_prefetch_rows=tpr))
+        if isa == 'avx512':
+            cands.append(Candidate(family='ct_t1_ladder_dit', isa=isa))
+        for tile in (32, 64, 128, 256):
+            for drain in _drain_modes():
+                for drain_pf in (False, True):
+                    for tp, tpr in _prefetch_configs():
+                        cands.append(Candidate(
+                            family='ct_t1_buf_dit', isa=isa,
+                            tile=tile, drain=drain, drain_prefetch=drain_pf,
+                            twiddle_prefetch=tp, twiddle_prefetch_rows=tpr))
+    return cands
 
 
 if __name__ == '__main__':
-    # Sanity summary when run directly
-    cands = enumerate_all()
-    pts = sweep_points()
-    print(f"R=16 candidate matrix: {len(cands)} candidates")
-    by_isa = {}
-    for c in cands:
-        by_isa.setdefault(c.isa, []).append(c)
-    for isa, cs in by_isa.items():
-        print(f"  {isa}: {len(cs)}")
-    print(f"Sweep points: {len(pts)} (ios, me) combinations")
-    print(f"Total measurements: {len(cands)} × {len(pts)} × 2 (fwd/bwd) = "
-          f"{len(cands) * len(pts) * 2}")
-    print()
-    print("Sample candidates:")
-    for c in cands[:5]:
-        print(f"  {c.id()}")
-        print(f"    CLI:  {' '.join(c.cli_args())}")
-        print(f"    fwd:  {c.function_names()['fwd']}")
+    print(f'{len(enumerate_all())} candidates')
