@@ -1394,28 +1394,37 @@ def main():
     else:
         variants = [args.variant]
 
-    # --enumerate-buf-candidates: emit a matrix of buf variants for the harness
+    # --enumerate-buf-candidates: emit a matrix of buf variants for the harness.
+    #
+    # DESIGN DECISION: buffered variants are only worth generating for AVX2.
+    #
+    # Reasoning:
+    # - AVX2 baseline was store-bound at K=256 (18.5% DTLB Store in VTune), so
+    #   buffering the 16 stride-K output streams into a contiguous tile pays off
+    #   (1.21-1.30x speedup measured).
+    # - AVX-512 baseline already uses all 32 ZMM registers with minimal spill
+    #   (~5 spill ops = ~3% of runtime). It has 2x512-bit store ports and larger
+    #   DTLBs on target chips (Zen 4/5, SPR, EPYC). The 16-stream output pattern
+    #   isn't a bottleneck there. Adding a drain pass that re-reads outbuf is
+    #   pure overhead.
+    # - Scalar code path has no meaningful store-bound pressure.
+    #
+    # If future profiling reveals that AVX-512 hits a different bottleneck that
+    # buffering or tiling could attack, revisit this decision.
     if args.enumerate_buf_candidates:
-        # Candidate matrix. Tile sizes chosen to bracket L1 working-set thresholds:
-        #   64  — smallest tile that amortizes drain overhead
-        #   128 — matches ~K=256 DTLB-L1 threshold (empirical sweet spot on Raptor Lake)
-        #   256 — large L1 footprint, for huge-core-count / high-bandwidth platforms
-        # Drain modes: temporal (cache-friendly) and stream (bypass cache).
-        #
-        # NOTE: ct_t1_buf_dit_log3 is not enumerated here — the underlying log3
-        # kernel has a latent correctness bug at m>0 that must be resolved first.
-        # The code path is still present in emit_file_ct for future use.
+        # AVX2 only. Tile sizes bracket the L1 working-set threshold observed
+        # on Raptor Lake (K=256 is where baseline starts thrashing DTLB).
         buf_variants = ['ct_t1_buf_dit']
         tile_sizes = [64, 128, 256]
         drain_modes = ['temporal', 'stream']
         for isa in targets:
+            if isa.name != 'avx2':
+                continue  # baseline wins on avx512/scalar
             for variant in buf_variants:
                 for t in tile_sizes:
                     if t % isa.k_step != 0:
-                        continue  # skip invalid (scalar handles any tile)
+                        continue
                     for dm in drain_modes:
-                        if isa.name == 'scalar' and dm == 'stream':
-                            continue  # no stream stores in scalar
                         tag = f"{isa.name}__{variant}__tile{t}__{dm}"
                         print(f"/* === BEGIN CANDIDATE {tag} === */")
                         lines = emit_file_ct(isa, itw_set, variant, tile=t, drain_mode=dm)
