@@ -256,6 +256,20 @@ static double measure(t1_fn fn, size_t ios, size_t me, int bwd) {
     double *Wi = aalloc((R-1) * me * sizeof(double));
     (void)bwd;
 
+    /* Check all allocations succeeded */
+    if (!rio_re || !rio_im || !src_re || !src_im || !Wr || !Wi) {
+        fprintf(stderr, "    aalloc FAILED at ios=%zu me=%zu (alloc_N=%zu bytes_each=%zu)\n",
+                ios, me, alloc_N, alloc_N * sizeof(double));
+        fflush(stderr);
+        if (rio_re) afree(rio_re);
+        if (rio_im) afree(rio_im);
+        if (src_re) afree(src_re);
+        if (src_im) afree(src_im);
+        if (Wr)     afree(Wr);
+        if (Wi)     afree(Wi);
+        return -1.0;
+    }
+
     /* Random data — don't want zero inputs (FMA throughput differs) */
     unsigned s = 12345;
     for (size_t i = 0; i < alloc_N; i++) {
@@ -332,13 +346,20 @@ int main(int argc, char **argv) {
             continue;
         }
         fprintf(stderr, "  [%d/%d] %s\n", ci+1, N_CANDIDATES, c->id);
+        fflush(stderr);
 
         for (int sp = 0; sp < N_SWEEP; sp++) {
             size_t ios = SWEEP[sp].ios;
             size_t me  = SWEEP[sp].me;
 
+            fprintf(stderr, "    ios=%zu me=%zu fwd...", ios, me);
+            fflush(stderr);
             double fwd_ns = measure(c->fwd, ios, me, 0);
+            fprintf(stderr, " bwd...");
+            fflush(stderr);
             double bwd_ns = measure(c->bwd, ios, me, 1);
+            fprintf(stderr, " done (fwd=%.0f bwd=%.0f ns)\n", fwd_ns, bwd_ns);
+            fflush(stderr);
 
             if (!first) printf(",\n");
             first = 0;
@@ -436,9 +457,19 @@ def phase_build(verbose: bool = True) -> Path:
                                f'/Fe:{harness_bin}',
                                f'/Fo:{BUILD}\\']
     else:
-        # GCC-style driver (gcc, clang, icx with GCC-like flags)
-        cflags = ['-O3', '-march=native', '-mavx2', '-mfma',
-                  '-mavx512f', '-mavx512dq',
+        # GCC-style driver (gcc, clang, icx with GCC-like flags).
+        # Baseline ISA: -mavx2 + -mfma only. We do NOT pass -march=native
+        # because on some hosts that would enable -mavx512f globally,
+        # which means the compiler could emit AVX-512 instructions in
+        # glue code (memcpy inlining, outer loops) that would SIGILL on
+        # AVX2-only CPUs. AVX-512 codelets compile correctly via
+        # per-function __attribute__((target("avx512f,avx512dq"))).
+        #
+        # But we DO pass -mtune=native so the compiler schedules the
+        # generated code for the host microarchitecture (cache latencies,
+        # execution port layout, front-end width). This is the best of
+        # both worlds: correct baseline + host-tuned codegen.
+        cflags = ['-O3', '-mtune=native', '-mavx2', '-mfma',
                   '-Wno-overflow', '-Wno-implicit-function-declaration',
                   '-Wno-unknown-argument']
         # On Windows with ICX, use the bundled LLD linker to avoid the need
@@ -485,18 +516,43 @@ def phase_build(verbose: bool = True) -> Path:
 # ─────────────────────────────────────────────────────────────────────
 
 def phase_run(harness_bin: Path, verbose: bool = True) -> dict:
-    """Execute the harness and parse its JSON output."""
+    """Execute the harness and parse its JSON output.
+
+    Streams stderr live (harness prints progress there) so the user sees
+    progress as the bench runs. Captures stdout (the JSON) separately.
+    """
     if verbose:
         print(f"[run] executing {harness_bin}")
+        print(f"[run] streaming progress from harness (stderr) below:")
     t0 = time.time()
-    result = subprocess.run([str(harness_bin)], capture_output=True,
-                            text=True, encoding='utf-8', errors='replace',
-                            timeout=3600)
-    if result.returncode != 0:
-        raise RuntimeError(f"harness failed: {result.stderr[:500]}")
 
-    # Harness writes progress to stderr, JSON to stdout
-    data = json.loads(result.stdout)
+    # Launch harness with stdout captured (JSON), stderr inheriting current
+    # process's stderr (so progress lines print live to the user's terminal).
+    proc = subprocess.Popen(
+        [str(harness_bin)],
+        stdout=subprocess.PIPE,
+        stderr=None,  # inherit — progress prints live
+        text=False,   # read stdout as bytes to avoid encoding issues
+    )
+    try:
+        stdout_bytes, _ = proc.communicate(timeout=3600)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise
+
+    if proc.returncode != 0:
+        raise RuntimeError(f"harness exited with code {proc.returncode} "
+                           f"(see stderr above for progress before crash)")
+
+    # Decode stdout as UTF-8 (harness emits JSON, ASCII-safe)
+    stdout_text = stdout_bytes.decode('utf-8', errors='replace')
+    try:
+        data = json.loads(stdout_text)
+    except json.JSONDecodeError as e:
+        print(f"[run] harness stdout was not valid JSON:")
+        print(stdout_text[:2000])
+        raise RuntimeError(f"JSON parse failed: {e}")
+
     if verbose:
         print(f"[run] done in {time.time()-t0:.1f}s — "
               f"{len(data['measurements'])} measurements")
