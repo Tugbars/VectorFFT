@@ -224,6 +224,20 @@ static double measure(t1_fn fn, size_t ios, size_t me, int bwd) {
     double *Wi = aalloc((R-1) * me * sizeof(double));
     (void)bwd;
 
+    /* Check all allocations succeeded */
+    if (!rio_re || !rio_im || !src_re || !src_im || !Wr || !Wi) {
+        fprintf(stderr, "    aalloc FAILED at ios=%zu me=%zu (alloc_N=%zu bytes_each=%zu)\n",
+                ios, me, alloc_N, alloc_N * sizeof(double));
+        fflush(stderr);
+        if (rio_re) afree(rio_re);
+        if (rio_im) afree(rio_im);
+        if (src_re) afree(src_re);
+        if (src_im) afree(src_im);
+        if (Wr)     afree(Wr);
+        if (Wi)     afree(Wi);
+        return -1.0;
+    }
+
     /* Random data — don't want zero inputs (FMA throughput differs) */
     unsigned s = 12345;
     for (size_t i = 0; i < alloc_N; i++) {
@@ -300,13 +314,20 @@ int main(int argc, char **argv) {
             continue;
         }
         fprintf(stderr, "  [%d/%d] %s\n", ci+1, N_CANDIDATES, c->id);
+        fflush(stderr);
 
         for (int sp = 0; sp < N_SWEEP; sp++) {
             size_t ios = SWEEP[sp].ios;
             size_t me  = SWEEP[sp].me;
 
+            fprintf(stderr, "    ios=%zu me=%zu fwd...", ios, me);
+            fflush(stderr);
             double fwd_ns = measure(c->fwd, ios, me, 0);
+            fprintf(stderr, " bwd...");
+            fflush(stderr);
             double bwd_ns = measure(c->bwd, ios, me, 1);
+            fprintf(stderr, " done (fwd=%.0f bwd=%.0f ns)\n", fwd_ns, bwd_ns);
+            fflush(stderr);
 
             if (!first) printf(",\n");
             first = 0;
