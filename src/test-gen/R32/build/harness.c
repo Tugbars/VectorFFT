@@ -75,10 +75,51 @@ static void *aalloc(size_t bytes) {
 static void afree(void *p) { free(p); }
 #endif
 
-/* ─── runtime CPU feature check for AVX-512 ─── */
+/* ─── runtime CPU feature check for AVX-512 ───
+ * Uses direct CPUID instruction rather than __builtin_cpu_supports()
+ * (which on some Windows compilers requires __cpu_model runtime symbol
+ * that LLD can't resolve).
+ *
+ * AVX-512F  = CPUID.7.0:EBX[16]
+ * AVX-512DQ = CPUID.7.0:EBX[17]
+ * OSXSAVE is checked too: CPUID.1:ECX[27]
+ * XGETBV XCR0 bits 5,6,7 must be set for the OS to save ZMM state.
+ */
+#if defined(_MSC_VER) || defined(__INTEL_LLVM_COMPILER) || defined(__INTEL_COMPILER)
+  #include <intrin.h>
+  static void _cpuid(int out[4], int leaf, int subleaf) {
+      __cpuidex(out, leaf, subleaf);
+  }
+#else
+  #include <cpuid.h>
+  static void _cpuid(int out[4], int leaf, int subleaf) {
+      __cpuid_count(leaf, subleaf, out[0], out[1], out[2], out[3]);
+  }
+#endif
+
 static int have_avx512(void) {
-    return __builtin_cpu_supports("avx512f")
-        && __builtin_cpu_supports("avx512dq");
+    int r[4];
+    /* Check OSXSAVE first (bit 27 of ECX from CPUID.1) */
+    _cpuid(r, 1, 0);
+    if (!(r[2] & (1 << 27))) return 0;  /* OS doesn't support XSAVE */
+    /* XGETBV to check XCR0 bits for ZMM state saving */
+    unsigned long long xcr0;
+#if defined(_MSC_VER) || defined(__INTEL_LLVM_COMPILER) || defined(__INTEL_COMPILER)
+    xcr0 = _xgetbv(0);
+#else
+    unsigned int lo, hi;
+    __asm__ volatile ("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    xcr0 = ((unsigned long long)hi << 32) | lo;
+#endif
+    /* Bits 1 (SSE), 2 (AVX), 5 (opmask), 6 (zmm hi), 7 (zmm 16-31) */
+    const unsigned long long want = (1ULL << 1) | (1ULL << 2)
+                                  | (1ULL << 5) | (1ULL << 6) | (1ULL << 7);
+    if ((xcr0 & want) != want) return 0;
+    /* Now check actual CPU support via CPUID.7.0:EBX */
+    _cpuid(r, 7, 0);
+    const int has_avx512f  = (r[1] & (1 << 16)) != 0;
+    const int has_avx512dq = (r[1] & (1 << 17)) != 0;
+    return has_avx512f && has_avx512dq;
 }
 
 /* ─── dispatch tables ─── */
