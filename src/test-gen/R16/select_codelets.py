@@ -24,10 +24,10 @@ import candidates
 
 # Simpler-first preference. Lower index = preferred when within tie threshold.
 FAMILY_PREFERENCE = [
-    'ct_t1_dit',
-    'ct_t1_dit_log3',
-    'ct_t1_ladder_dit',
-    'ct_t1_buf_dit',
+    'ct_t1_dit',       # baseline: simplest, smallest
+    'ct_t1s_dit',      # scalar-broadcast twiddles (zero cache pressure)
+    'ct_t1_dit_log3',  # derived twiddles
+    'ct_t1_buf_dit',   # buffered: most complex
 ]
 
 
