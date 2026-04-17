@@ -1,401 +1,1391 @@
 {
-  "avx512_available": true,
+  "avx512_available": false,
   "measurements": [
-    {"id": "ct_t1_dit__avx2", "ios": 64, "me": 64, "fwd_ns": 613.49, "bwd_ns": 619.94},
-    {"id": "ct_t1_dit__avx2", "ios": 72, "me": 64, "fwd_ns": 735.77, "bwd_ns": 723.25},
-    {"id": "ct_t1_dit__avx2", "ios": 128, "me": 64, "fwd_ns": 539.62, "bwd_ns": 514.62},
-    {"id": "ct_t1_dit__avx2", "ios": 128, "me": 128, "fwd_ns": 1165.60, "bwd_ns": 1144.47},
-    {"id": "ct_t1_dit__avx2", "ios": 136, "me": 128, "fwd_ns": 1210.99, "bwd_ns": 1213.23},
-    {"id": "ct_t1_dit__avx2", "ios": 192, "me": 128, "fwd_ns": 1486.37, "bwd_ns": 1448.48},
-    {"id": "ct_t1_dit__avx2", "ios": 256, "me": 256, "fwd_ns": 5372.18, "bwd_ns": 5375.46},
-    {"id": "ct_t1_dit__avx2", "ios": 264, "me": 256, "fwd_ns": 3179.50, "bwd_ns": 3161.03},
-    {"id": "ct_t1_dit__avx2", "ios": 320, "me": 256, "fwd_ns": 3272.71, "bwd_ns": 3191.20},
-    {"id": "ct_t1_dit__avx2", "ios": 512, "me": 512, "fwd_ns": 13706.59, "bwd_ns": 13852.13},
-    {"id": "ct_t1_dit__avx2", "ios": 520, "me": 512, "fwd_ns": 6754.36, "bwd_ns": 6480.58},
-    {"id": "ct_t1_dit__avx2", "ios": 576, "me": 512, "fwd_ns": 6748.08, "bwd_ns": 7420.06},
-    {"id": "ct_t1_dit__avx2", "ios": 1024, "me": 1024, "fwd_ns": 27180.57, "bwd_ns": 27730.93},
-    {"id": "ct_t1_dit__avx2", "ios": 1032, "me": 1024, "fwd_ns": 13416.46, "bwd_ns": 14227.21},
-    {"id": "ct_t1_dit__avx2", "ios": 1088, "me": 1024, "fwd_ns": 15081.89, "bwd_ns": 14379.69},
-    {"id": "ct_t1_dit__avx2", "ios": 2048, "me": 2048, "fwd_ns": 63049.83, "bwd_ns": 56453.43},
-    {"id": "ct_t1_dit__avx2", "ios": 2056, "me": 2048, "fwd_ns": 34100.60, "bwd_ns": 33576.70},
-    {"id": "ct_t1_dit__avx2", "ios": 2112, "me": 2048, "fwd_ns": 32265.90, "bwd_ns": 32787.83},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 64, "me": 64, "fwd_ns": 712.98, "bwd_ns": 709.05},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 72, "me": 64, "fwd_ns": 692.16, "bwd_ns": 695.32},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 128, "me": 64, "fwd_ns": 394.34, "bwd_ns": 385.25},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 128, "me": 128, "fwd_ns": 925.88, "bwd_ns": 976.65},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 136, "me": 128, "fwd_ns": 1048.09, "bwd_ns": 1077.01},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 192, "me": 128, "fwd_ns": 1129.39, "bwd_ns": 1150.14},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 256, "me": 256, "fwd_ns": 5045.17, "bwd_ns": 5023.80},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 264, "me": 256, "fwd_ns": 2673.78, "bwd_ns": 2595.43},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 320, "me": 256, "fwd_ns": 2670.73, "bwd_ns": 2743.70},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 512, "me": 512, "fwd_ns": 12536.02, "bwd_ns": 12683.82},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 520, "me": 512, "fwd_ns": 5126.35, "bwd_ns": 5151.66},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 576, "me": 512, "fwd_ns": 5538.56, "bwd_ns": 5480.02},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 1024, "me": 1024, "fwd_ns": 25587.48, "bwd_ns": 25487.89},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 1032, "me": 1024, "fwd_ns": 10736.66, "bwd_ns": 10662.59},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 1088, "me": 1024, "fwd_ns": 10863.82, "bwd_ns": 11142.92},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 2048, "me": 2048, "fwd_ns": 51292.40, "bwd_ns": 50544.60},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 2056, "me": 2048, "fwd_ns": 24444.97, "bwd_ns": 23720.77},
-    {"id": "ct_t1_dit_log3__avx2", "ios": 2112, "me": 2048, "fwd_ns": 22147.53, "bwd_ns": 23284.87},
-    {"id": "ct_t1s_dit__avx2", "ios": 64, "me": 64, "fwd_ns": 593.20, "bwd_ns": 579.51},
-    {"id": "ct_t1s_dit__avx2", "ios": 72, "me": 64, "fwd_ns": 596.79, "bwd_ns": 623.43},
-    {"id": "ct_t1s_dit__avx2", "ios": 128, "me": 64, "fwd_ns": 443.79, "bwd_ns": 443.15},
-    {"id": "ct_t1s_dit__avx2", "ios": 128, "me": 128, "fwd_ns": 947.95, "bwd_ns": 962.82},
-    {"id": "ct_t1s_dit__avx2", "ios": 136, "me": 128, "fwd_ns": 1020.52, "bwd_ns": 1058.49},
-    {"id": "ct_t1s_dit__avx2", "ios": 192, "me": 128, "fwd_ns": 1189.20, "bwd_ns": 1224.70},
-    {"id": "ct_t1s_dit__avx2", "ios": 256, "me": 256, "fwd_ns": 5206.38, "bwd_ns": 5245.94},
-    {"id": "ct_t1s_dit__avx2", "ios": 264, "me": 256, "fwd_ns": 2791.53, "bwd_ns": 2818.18},
-    {"id": "ct_t1s_dit__avx2", "ios": 320, "me": 256, "fwd_ns": 2763.67, "bwd_ns": 2825.44},
-    {"id": "ct_t1s_dit__avx2", "ios": 512, "me": 512, "fwd_ns": 13622.80, "bwd_ns": 13601.26},
-    {"id": "ct_t1s_dit__avx2", "ios": 520, "me": 512, "fwd_ns": 5499.00, "bwd_ns": 5568.55},
-    {"id": "ct_t1s_dit__avx2", "ios": 576, "me": 512, "fwd_ns": 6049.91, "bwd_ns": 5767.84},
-    {"id": "ct_t1s_dit__avx2", "ios": 1024, "me": 1024, "fwd_ns": 27135.77, "bwd_ns": 27040.25},
-    {"id": "ct_t1s_dit__avx2", "ios": 1032, "me": 1024, "fwd_ns": 11619.89, "bwd_ns": 11220.21},
-    {"id": "ct_t1s_dit__avx2", "ios": 1088, "me": 1024, "fwd_ns": 11494.69, "bwd_ns": 11948.67},
-    {"id": "ct_t1s_dit__avx2", "ios": 2048, "me": 2048, "fwd_ns": 54108.47, "bwd_ns": 55616.63},
-    {"id": "ct_t1s_dit__avx2", "ios": 2056, "me": 2048, "fwd_ns": 26697.77, "bwd_ns": 27305.83},
-    {"id": "ct_t1s_dit__avx2", "ios": 2112, "me": 2048, "fwd_ns": 23081.93, "bwd_ns": 23677.10},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 64, "me": 64, "fwd_ns": 874.07, "bwd_ns": 814.76},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 72, "me": 64, "fwd_ns": 905.35, "bwd_ns": 831.49},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 128, "me": 64, "fwd_ns": 812.62, "bwd_ns": 774.66},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 128, "me": 128, "fwd_ns": 1644.43, "bwd_ns": 1599.36},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 136, "me": 128, "fwd_ns": 1649.42, "bwd_ns": 1617.15},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 192, "me": 128, "fwd_ns": 1730.48, "bwd_ns": 1711.24},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 256, "me": 256, "fwd_ns": 5174.51, "bwd_ns": 5578.57},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 264, "me": 256, "fwd_ns": 3711.66, "bwd_ns": 3651.90},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 320, "me": 256, "fwd_ns": 3714.02, "bwd_ns": 3634.86},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 512, "me": 512, "fwd_ns": 12510.81, "bwd_ns": 14265.65},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 520, "me": 512, "fwd_ns": 7676.76, "bwd_ns": 7540.47},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 576, "me": 512, "fwd_ns": 7638.02, "bwd_ns": 7631.92},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 1024, "me": 1024, "fwd_ns": 24972.97, "bwd_ns": 28189.44},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 1032, "me": 1024, "fwd_ns": 15582.03, "bwd_ns": 15363.90},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 1088, "me": 1024, "fwd_ns": 15349.64, "bwd_ns": 15349.02},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 2048, "me": 2048, "fwd_ns": 50766.67, "bwd_ns": 58758.10},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 2056, "me": 2048, "fwd_ns": 35053.80, "bwd_ns": 35078.27},
-    {"id": "ct_t1_buf_dit__avx2__tile16_draintemporal", "ios": 2112, "me": 2048, "fwd_ns": 34311.67, "bwd_ns": 33556.63},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 64, "me": 64, "fwd_ns": 6126.83, "bwd_ns": 6014.02},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 72, "me": 64, "fwd_ns": 6196.27, "bwd_ns": 6158.78},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 128, "me": 64, "fwd_ns": 5638.63, "bwd_ns": 5665.85},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 128, "me": 128, "fwd_ns": 10627.24, "bwd_ns": 10636.94},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 136, "me": 128, "fwd_ns": 10651.74, "bwd_ns": 10725.69},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 192, "me": 128, "fwd_ns": 10447.12, "bwd_ns": 10621.03},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 256, "me": 256, "fwd_ns": 20070.54, "bwd_ns": 19924.72},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 264, "me": 256, "fwd_ns": 20368.18, "bwd_ns": 21277.26},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 320, "me": 256, "fwd_ns": 20265.13, "bwd_ns": 20234.84},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 512, "me": 512, "fwd_ns": 40206.22, "bwd_ns": 40492.32},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 520, "me": 512, "fwd_ns": 39498.33, "bwd_ns": 39742.32},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 576, "me": 512, "fwd_ns": 39321.81, "bwd_ns": 39355.80},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 1024, "me": 1024, "fwd_ns": 73069.74, "bwd_ns": 70997.02},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 1032, "me": 1024, "fwd_ns": 67999.79, "bwd_ns": 68063.49},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 1088, "me": 1024, "fwd_ns": 62226.07, "bwd_ns": 64017.08},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 2048, "me": 2048, "fwd_ns": 132249.40, "bwd_ns": 132335.90},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 2056, "me": 2048, "fwd_ns": 131381.53, "bwd_ns": 128963.37},
-    {"id": "ct_t1_buf_dit__avx2__tile16_drainstream", "ios": 2112, "me": 2048, "fwd_ns": 127189.60, "bwd_ns": 127594.53},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 64, "me": 64, "fwd_ns": 861.57, "bwd_ns": 889.85},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 72, "me": 64, "fwd_ns": 1012.32, "bwd_ns": 1002.97},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 128, "me": 64, "fwd_ns": 983.27, "bwd_ns": 991.98},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 128, "me": 128, "fwd_ns": 1965.88, "bwd_ns": 1957.62},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 136, "me": 128, "fwd_ns": 1903.95, "bwd_ns": 1876.50},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 192, "me": 128, "fwd_ns": 1941.73, "bwd_ns": 1955.87},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 256, "me": 256, "fwd_ns": 5865.14, "bwd_ns": 6106.25},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 264, "me": 256, "fwd_ns": 4175.92, "bwd_ns": 4280.22},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 320, "me": 256, "fwd_ns": 4076.73, "bwd_ns": 4081.01},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 512, "me": 512, "fwd_ns": 13662.03, "bwd_ns": 14596.24},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 520, "me": 512, "fwd_ns": 12066.41, "bwd_ns": 9174.04},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 576, "me": 512, "fwd_ns": 8419.66, "bwd_ns": 8513.11},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 1024, "me": 1024, "fwd_ns": 27681.02, "bwd_ns": 30144.52},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 1032, "me": 1024, "fwd_ns": 16676.02, "bwd_ns": 25707.87},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 1088, "me": 1024, "fwd_ns": 23455.15, "bwd_ns": 17203.85},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 2048, "me": 2048, "fwd_ns": 59231.97, "bwd_ns": 63188.00},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 2056, "me": 2048, "fwd_ns": 42342.00, "bwd_ns": 43264.00},
-    {"id": "ct_t1_buf_dit__avx2__tile32_draintemporal", "ios": 2112, "me": 2048, "fwd_ns": 37915.73, "bwd_ns": 38070.70},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 64, "me": 64, "fwd_ns": 6120.52, "bwd_ns": 6260.41},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 72, "me": 64, "fwd_ns": 6281.19, "bwd_ns": 6258.64},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 128, "me": 64, "fwd_ns": 5818.14, "bwd_ns": 5805.69},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 128, "me": 128, "fwd_ns": 11146.99, "bwd_ns": 11038.11},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 136, "me": 128, "fwd_ns": 10959.03, "bwd_ns": 11018.08},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 192, "me": 128, "fwd_ns": 10787.94, "bwd_ns": 10854.61},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 256, "me": 256, "fwd_ns": 21189.92, "bwd_ns": 21160.87},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 264, "me": 256, "fwd_ns": 21175.50, "bwd_ns": 21062.27},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 320, "me": 256, "fwd_ns": 20904.16, "bwd_ns": 20639.45},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 512, "me": 512, "fwd_ns": 41475.41, "bwd_ns": 40972.87},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 520, "me": 512, "fwd_ns": 41143.33, "bwd_ns": 41564.30},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 576, "me": 512, "fwd_ns": 41200.68, "bwd_ns": 40813.01},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 1024, "me": 1024, "fwd_ns": 74353.85, "bwd_ns": 73998.54},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 1032, "me": 1024, "fwd_ns": 72168.33, "bwd_ns": 67674.70},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 1088, "me": 1024, "fwd_ns": 62525.67, "bwd_ns": 63458.75},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 2048, "me": 2048, "fwd_ns": 135745.17, "bwd_ns": 155009.80},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 2056, "me": 2048, "fwd_ns": 129408.37, "bwd_ns": 129606.63},
-    {"id": "ct_t1_buf_dit__avx2__tile32_drainstream", "ios": 2112, "me": 2048, "fwd_ns": 133765.10, "bwd_ns": 132373.80},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 64, "me": 64, "fwd_ns": 1217.02, "bwd_ns": 1223.76},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 72, "me": 64, "fwd_ns": 1355.64, "bwd_ns": 1392.22},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 128, "me": 64, "fwd_ns": 1302.96, "bwd_ns": 1495.05},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 128, "me": 128, "fwd_ns": 2376.15, "bwd_ns": 2515.87},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 136, "me": 128, "fwd_ns": 2423.72, "bwd_ns": 2419.15},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 192, "me": 128, "fwd_ns": 2639.73, "bwd_ns": 2643.46},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 256, "me": 256, "fwd_ns": 6089.54, "bwd_ns": 6081.24},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 264, "me": 256, "fwd_ns": 4906.89, "bwd_ns": 4963.36},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 320, "me": 256, "fwd_ns": 4908.78, "bwd_ns": 4897.39},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 512, "me": 512, "fwd_ns": 14526.40, "bwd_ns": 14639.48},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 520, "me": 512, "fwd_ns": 10485.34, "bwd_ns": 10603.86},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 576, "me": 512, "fwd_ns": 9333.59, "bwd_ns": 9555.84},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 1024, "me": 1024, "fwd_ns": 29448.25, "bwd_ns": 29409.43},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 1032, "me": 1024, "fwd_ns": 21710.34, "bwd_ns": 21302.69},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 1088, "me": 1024, "fwd_ns": 19494.85, "bwd_ns": 18605.67},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 2048, "me": 2048, "fwd_ns": 64387.40, "bwd_ns": 62575.57},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 2056, "me": 2048, "fwd_ns": 45364.83, "bwd_ns": 47022.90},
-    {"id": "ct_t1_buf_dit__avx2__tile64_draintemporal", "ios": 2112, "me": 2048, "fwd_ns": 40389.53, "bwd_ns": 41333.07},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 64, "me": 64, "fwd_ns": 6396.32, "bwd_ns": 6329.94},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 72, "me": 64, "fwd_ns": 6296.93, "bwd_ns": 6372.77},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 128, "me": 64, "fwd_ns": 5996.89, "bwd_ns": 5892.84},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 128, "me": 128, "fwd_ns": 11413.88, "bwd_ns": 11332.16},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 136, "me": 128, "fwd_ns": 11513.24, "bwd_ns": 11444.00},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 192, "me": 128, "fwd_ns": 11273.76, "bwd_ns": 12333.37},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 256, "me": 256, "fwd_ns": 21425.65, "bwd_ns": 21814.05},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 264, "me": 256, "fwd_ns": 21281.68, "bwd_ns": 21346.37},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 320, "me": 256, "fwd_ns": 21216.39, "bwd_ns": 21812.93},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 512, "me": 512, "fwd_ns": 43095.06, "bwd_ns": 43136.39},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 520, "me": 512, "fwd_ns": 41994.47, "bwd_ns": 42006.62},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 576, "me": 512, "fwd_ns": 41725.61, "bwd_ns": 41594.20},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 1024, "me": 1024, "fwd_ns": 75667.52, "bwd_ns": 74899.98},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 1032, "me": 1024, "fwd_ns": 72299.87, "bwd_ns": 69419.74},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 1088, "me": 1024, "fwd_ns": 65180.92, "bwd_ns": 66560.98},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 2048, "me": 2048, "fwd_ns": 140601.40, "bwd_ns": 144377.60},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 2056, "me": 2048, "fwd_ns": 132356.30, "bwd_ns": 130422.10},
-    {"id": "ct_t1_buf_dit__avx2__tile64_drainstream", "ios": 2112, "me": 2048, "fwd_ns": 133708.87, "bwd_ns": 134212.13},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 64, "me": 64, "fwd_ns": 617.76, "bwd_ns": 631.45},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 72, "me": 64, "fwd_ns": 704.63, "bwd_ns": 700.96},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 128, "me": 64, "fwd_ns": 570.96, "bwd_ns": 579.53},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 128, "me": 128, "fwd_ns": 2667.56, "bwd_ns": 2739.28},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 136, "me": 128, "fwd_ns": 2708.11, "bwd_ns": 2709.76},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 192, "me": 128, "fwd_ns": 2774.25, "bwd_ns": 2788.84},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 256, "me": 256, "fwd_ns": 5790.65, "bwd_ns": 5876.37},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 264, "me": 256, "fwd_ns": 5467.23, "bwd_ns": 5525.54},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 320, "me": 256, "fwd_ns": 5571.27, "bwd_ns": 5641.75},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 512, "me": 512, "fwd_ns": 11075.85, "bwd_ns": 10990.03},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 520, "me": 512, "fwd_ns": 11109.07, "bwd_ns": 10797.88},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 576, "me": 512, "fwd_ns": 11395.69, "bwd_ns": 11863.25},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 1024, "me": 1024, "fwd_ns": 21462.75, "bwd_ns": 21591.90},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 1032, "me": 1024, "fwd_ns": 21369.69, "bwd_ns": 21310.46},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 1088, "me": 1024, "fwd_ns": 22614.41, "bwd_ns": 23039.38},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 2048, "me": 2048, "fwd_ns": 46765.03, "bwd_ns": 44763.67},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 2056, "me": 2048, "fwd_ns": 44082.43, "bwd_ns": 44683.03},
-    {"id": "ct_t1_buf_dit__avx2__tile128_draintemporal", "ios": 2112, "me": 2048, "fwd_ns": 47092.67, "bwd_ns": 47471.87},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 64, "me": 64, "fwd_ns": 616.83, "bwd_ns": 636.43},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 72, "me": 64, "fwd_ns": 729.91, "bwd_ns": 709.56},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 128, "me": 64, "fwd_ns": 582.57, "bwd_ns": 591.11},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 128, "me": 128, "fwd_ns": 11731.82, "bwd_ns": 11690.09},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 136, "me": 128, "fwd_ns": 11589.16, "bwd_ns": 11521.22},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 192, "me": 128, "fwd_ns": 11314.07, "bwd_ns": 11434.93},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 256, "me": 256, "fwd_ns": 22146.98, "bwd_ns": 22214.61},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 264, "me": 256, "fwd_ns": 22112.77, "bwd_ns": 22251.05},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 320, "me": 256, "fwd_ns": 22438.81, "bwd_ns": 22096.72},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 512, "me": 512, "fwd_ns": 43449.70, "bwd_ns": 43525.33},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 520, "me": 512, "fwd_ns": 42506.88, "bwd_ns": 43027.15},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 576, "me": 512, "fwd_ns": 43730.40, "bwd_ns": 44098.51},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 1024, "me": 1024, "fwd_ns": 80331.77, "bwd_ns": 76206.59},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 1032, "me": 1024, "fwd_ns": 71960.59, "bwd_ns": 72948.38},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 1088, "me": 1024, "fwd_ns": 68696.34, "bwd_ns": 69133.95},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 2048, "me": 2048, "fwd_ns": 139982.23, "bwd_ns": 147462.23},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 2056, "me": 2048, "fwd_ns": 136973.83, "bwd_ns": 140089.37},
-    {"id": "ct_t1_buf_dit__avx2__tile128_drainstream", "ios": 2112, "me": 2048, "fwd_ns": 136266.97, "bwd_ns": 136732.30},
-    {"id": "ct_t1_dit__avx512", "ios": 64, "me": 64, "fwd_ns": 374.71, "bwd_ns": 388.96},
-    {"id": "ct_t1_dit__avx512", "ios": 72, "me": 64, "fwd_ns": 450.03, "bwd_ns": 454.62},
-    {"id": "ct_t1_dit__avx512", "ios": 128, "me": 64, "fwd_ns": 262.23, "bwd_ns": 272.26},
-    {"id": "ct_t1_dit__avx512", "ios": 128, "me": 128, "fwd_ns": 690.56, "bwd_ns": 664.98},
-    {"id": "ct_t1_dit__avx512", "ios": 136, "me": 128, "fwd_ns": 698.19, "bwd_ns": 739.13},
-    {"id": "ct_t1_dit__avx512", "ios": 192, "me": 128, "fwd_ns": 904.55, "bwd_ns": 900.58},
-    {"id": "ct_t1_dit__avx512", "ios": 256, "me": 256, "fwd_ns": 2933.06, "bwd_ns": 2950.88},
-    {"id": "ct_t1_dit__avx512", "ios": 264, "me": 256, "fwd_ns": 2023.77, "bwd_ns": 2097.92},
-    {"id": "ct_t1_dit__avx512", "ios": 320, "me": 256, "fwd_ns": 1969.82, "bwd_ns": 2148.63},
-    {"id": "ct_t1_dit__avx512", "ios": 512, "me": 512, "fwd_ns": 6335.11, "bwd_ns": 6377.51},
-    {"id": "ct_t1_dit__avx512", "ios": 520, "me": 512, "fwd_ns": 4480.18, "bwd_ns": 4449.66},
-    {"id": "ct_t1_dit__avx512", "ios": 576, "me": 512, "fwd_ns": 4873.37, "bwd_ns": 4925.43},
-    {"id": "ct_t1_dit__avx512", "ios": 1024, "me": 1024, "fwd_ns": 12601.85, "bwd_ns": 12480.02},
-    {"id": "ct_t1_dit__avx512", "ios": 1032, "me": 1024, "fwd_ns": 10106.72, "bwd_ns": 9003.39},
-    {"id": "ct_t1_dit__avx512", "ios": 1088, "me": 1024, "fwd_ns": 9893.16, "bwd_ns": 10022.26},
-    {"id": "ct_t1_dit__avx512", "ios": 2048, "me": 2048, "fwd_ns": 29690.40, "bwd_ns": 27569.73},
-    {"id": "ct_t1_dit__avx512", "ios": 2056, "me": 2048, "fwd_ns": 21065.17, "bwd_ns": 21986.30},
-    {"id": "ct_t1_dit__avx512", "ios": 2112, "me": 2048, "fwd_ns": 25255.23, "bwd_ns": 24172.13},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 64, "me": 64, "fwd_ns": 432.12, "bwd_ns": 439.72},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 72, "me": 64, "fwd_ns": 445.91, "bwd_ns": 443.67},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 128, "me": 64, "fwd_ns": 268.99, "bwd_ns": 234.71},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 128, "me": 128, "fwd_ns": 527.13, "bwd_ns": 539.03},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 136, "me": 128, "fwd_ns": 720.89, "bwd_ns": 680.49},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 192, "me": 128, "fwd_ns": 819.34, "bwd_ns": 798.31},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 256, "me": 256, "fwd_ns": 2906.27, "bwd_ns": 2951.43},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 264, "me": 256, "fwd_ns": 1841.97, "bwd_ns": 1854.92},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 320, "me": 256, "fwd_ns": 1983.38, "bwd_ns": 2082.56},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 512, "me": 512, "fwd_ns": 6625.61, "bwd_ns": 6034.51},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 520, "me": 512, "fwd_ns": 3904.60, "bwd_ns": 3659.79},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 576, "me": 512, "fwd_ns": 4181.02, "bwd_ns": 4100.46},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 1024, "me": 1024, "fwd_ns": 13191.70, "bwd_ns": 13003.30},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 1032, "me": 1024, "fwd_ns": 7402.69, "bwd_ns": 7707.56},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 1088, "me": 1024, "fwd_ns": 8147.25, "bwd_ns": 7888.64},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 2048, "me": 2048, "fwd_ns": 27861.23, "bwd_ns": 24477.33},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 2056, "me": 2048, "fwd_ns": 16110.10, "bwd_ns": 16222.23},
-    {"id": "ct_t1_dit_log3__avx512", "ios": 2112, "me": 2048, "fwd_ns": 16455.63, "bwd_ns": 18035.87},
-    {"id": "ct_t1s_dit__avx512", "ios": 64, "me": 64, "fwd_ns": 384.59, "bwd_ns": 367.75},
-    {"id": "ct_t1s_dit__avx512", "ios": 72, "me": 64, "fwd_ns": 435.38, "bwd_ns": 414.74},
-    {"id": "ct_t1s_dit__avx512", "ios": 128, "me": 64, "fwd_ns": 259.45, "bwd_ns": 275.14},
-    {"id": "ct_t1s_dit__avx512", "ios": 128, "me": 128, "fwd_ns": 552.52, "bwd_ns": 577.53},
-    {"id": "ct_t1s_dit__avx512", "ios": 136, "me": 128, "fwd_ns": 652.47, "bwd_ns": 637.28},
-    {"id": "ct_t1s_dit__avx512", "ios": 192, "me": 128, "fwd_ns": 887.75, "bwd_ns": 896.61},
-    {"id": "ct_t1s_dit__avx512", "ios": 256, "me": 256, "fwd_ns": 2960.52, "bwd_ns": 2990.10},
-    {"id": "ct_t1s_dit__avx512", "ios": 264, "me": 256, "fwd_ns": 1959.97, "bwd_ns": 1947.97},
-    {"id": "ct_t1s_dit__avx512", "ios": 320, "me": 256, "fwd_ns": 1992.28, "bwd_ns": 2021.24},
-    {"id": "ct_t1s_dit__avx512", "ios": 512, "me": 512, "fwd_ns": 6615.97, "bwd_ns": 6598.37},
-    {"id": "ct_t1s_dit__avx512", "ios": 520, "me": 512, "fwd_ns": 4029.02, "bwd_ns": 4122.52},
-    {"id": "ct_t1s_dit__avx512", "ios": 576, "me": 512, "fwd_ns": 4408.85, "bwd_ns": 4669.76},
-    {"id": "ct_t1s_dit__avx512", "ios": 1024, "me": 1024, "fwd_ns": 12487.05, "bwd_ns": 13629.61},
-    {"id": "ct_t1s_dit__avx512", "ios": 1032, "me": 1024, "fwd_ns": 8710.61, "bwd_ns": 8589.49},
-    {"id": "ct_t1s_dit__avx512", "ios": 1088, "me": 1024, "fwd_ns": 8590.70, "bwd_ns": 8445.57},
-    {"id": "ct_t1s_dit__avx512", "ios": 2048, "me": 2048, "fwd_ns": 29309.70, "bwd_ns": 27081.27},
-    {"id": "ct_t1s_dit__avx512", "ios": 2056, "me": 2048, "fwd_ns": 18659.10, "bwd_ns": 17474.73},
-    {"id": "ct_t1s_dit__avx512", "ios": 2112, "me": 2048, "fwd_ns": 19528.17, "bwd_ns": 18615.13},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 64, "me": 64, "fwd_ns": 651.22, "bwd_ns": 639.78},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 72, "me": 64, "fwd_ns": 680.72, "bwd_ns": 664.30},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 128, "me": 64, "fwd_ns": 594.86, "bwd_ns": 605.29},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 128, "me": 128, "fwd_ns": 1303.80, "bwd_ns": 1360.13},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 136, "me": 128, "fwd_ns": 1265.78, "bwd_ns": 1247.54},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 192, "me": 128, "fwd_ns": 1316.42, "bwd_ns": 1340.58},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 256, "me": 256, "fwd_ns": 4252.83, "bwd_ns": 4189.47},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 264, "me": 256, "fwd_ns": 2992.34, "bwd_ns": 3025.88},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 320, "me": 256, "fwd_ns": 3420.91, "bwd_ns": 3007.70},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 512, "me": 512, "fwd_ns": 9111.63, "bwd_ns": 9008.27},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 520, "me": 512, "fwd_ns": 6415.10, "bwd_ns": 6364.55},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 576, "me": 512, "fwd_ns": 6505.72, "bwd_ns": 6428.00},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 1024, "me": 1024, "fwd_ns": 17702.36, "bwd_ns": 17672.25},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 1032, "me": 1024, "fwd_ns": 13359.30, "bwd_ns": 13042.00},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 1088, "me": 1024, "fwd_ns": 12747.61, "bwd_ns": 12878.44},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 2048, "me": 2048, "fwd_ns": 37704.73, "bwd_ns": 36281.27},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 2056, "me": 2048, "fwd_ns": 29725.83, "bwd_ns": 30059.37},
-    {"id": "ct_t1_buf_dit__avx512__tile16_draintemporal", "ios": 2112, "me": 2048, "fwd_ns": 27146.07, "bwd_ns": 27344.93},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 64, "me": 64, "fwd_ns": 5776.06, "bwd_ns": 5798.38},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 72, "me": 64, "fwd_ns": 5735.71, "bwd_ns": 5817.84},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 128, "me": 64, "fwd_ns": 5318.41, "bwd_ns": 5306.45},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 128, "me": 128, "fwd_ns": 10003.98, "bwd_ns": 10128.82},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 136, "me": 128, "fwd_ns": 10237.48, "bwd_ns": 10020.15},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 192, "me": 128, "fwd_ns": 10053.55, "bwd_ns": 9865.39},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 256, "me": 256, "fwd_ns": 19301.36, "bwd_ns": 19367.82},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 264, "me": 256, "fwd_ns": 19377.19, "bwd_ns": 19336.45},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 320, "me": 256, "fwd_ns": 19343.86, "bwd_ns": 19437.54},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 512, "me": 512, "fwd_ns": 38120.96, "bwd_ns": 38027.48},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 520, "me": 512, "fwd_ns": 37083.99, "bwd_ns": 37143.57},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 576, "me": 512, "fwd_ns": 37323.27, "bwd_ns": 37094.68},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 1024, "me": 1024, "fwd_ns": 63264.02, "bwd_ns": 65072.97},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 1032, "me": 1024, "fwd_ns": 58891.67, "bwd_ns": 59380.48},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 1088, "me": 1024, "fwd_ns": 55188.98, "bwd_ns": 56497.67},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 2048, "me": 2048, "fwd_ns": 114999.07, "bwd_ns": 116110.63},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 2056, "me": 2048, "fwd_ns": 125753.07, "bwd_ns": 128762.50},
-    {"id": "ct_t1_buf_dit__avx512__tile16_drainstream", "ios": 2112, "me": 2048, "fwd_ns": 112552.87, "bwd_ns": 113850.67},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 64, "me": 64, "fwd_ns": 652.75, "bwd_ns": 658.86},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 72, "me": 64, "fwd_ns": 762.20, "bwd_ns": 765.40},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 128, "me": 64, "fwd_ns": 757.26, "bwd_ns": 754.49},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 128, "me": 128, "fwd_ns": 1404.53, "bwd_ns": 1403.71},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 136, "me": 128, "fwd_ns": 1374.29, "bwd_ns": 1330.88},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 192, "me": 128, "fwd_ns": 1414.31, "bwd_ns": 1394.98},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 256, "me": 256, "fwd_ns": 4401.32, "bwd_ns": 4454.38},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 264, "me": 256, "fwd_ns": 2988.98, "bwd_ns": 3020.71},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 320, "me": 256, "fwd_ns": 3077.06, "bwd_ns": 3158.08},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 512, "me": 512, "fwd_ns": 8445.36, "bwd_ns": 8509.19},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 520, "me": 512, "fwd_ns": 6340.67, "bwd_ns": 6871.28},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 576, "me": 512, "fwd_ns": 6393.35, "bwd_ns": 6084.40},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 1024, "me": 1024, "fwd_ns": 16940.39, "bwd_ns": 16451.77},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 1032, "me": 1024, "fwd_ns": 12987.62, "bwd_ns": 12872.43},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 1088, "me": 1024, "fwd_ns": 11485.02, "bwd_ns": 12001.67},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 2048, "me": 2048, "fwd_ns": 35467.00, "bwd_ns": 36498.57},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 2056, "me": 2048, "fwd_ns": 31983.93, "bwd_ns": 29720.80},
-    {"id": "ct_t1_buf_dit__avx512__tile32_draintemporal", "ios": 2112, "me": 2048, "fwd_ns": 27549.40, "bwd_ns": 27371.50},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 64, "me": 64, "fwd_ns": 5674.32, "bwd_ns": 5696.02},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 72, "me": 64, "fwd_ns": 5778.47, "bwd_ns": 6084.86},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 128, "me": 64, "fwd_ns": 5805.23, "bwd_ns": 5269.31},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 128, "me": 128, "fwd_ns": 10016.70, "bwd_ns": 10019.61},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 136, "me": 128, "fwd_ns": 10162.93, "bwd_ns": 10031.77},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 192, "me": 128, "fwd_ns": 9939.25, "bwd_ns": 9935.74},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 256, "me": 256, "fwd_ns": 19000.45, "bwd_ns": 19482.66},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 264, "me": 256, "fwd_ns": 19429.31, "bwd_ns": 19326.30},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 320, "me": 256, "fwd_ns": 18724.86, "bwd_ns": 18689.34},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 512, "me": 512, "fwd_ns": 36878.54, "bwd_ns": 37063.51},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 520, "me": 512, "fwd_ns": 36921.48, "bwd_ns": 36964.66},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 576, "me": 512, "fwd_ns": 37362.89, "bwd_ns": 37146.99},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 1024, "me": 1024, "fwd_ns": 65363.39, "bwd_ns": 65094.39},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 1032, "me": 1024, "fwd_ns": 59545.89, "bwd_ns": 59559.23},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 1088, "me": 1024, "fwd_ns": 63588.34, "bwd_ns": 57780.95},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 2048, "me": 2048, "fwd_ns": 120825.47, "bwd_ns": 122732.37},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 2056, "me": 2048, "fwd_ns": 116816.17, "bwd_ns": 116345.93},
-    {"id": "ct_t1_buf_dit__avx512__tile32_drainstream", "ios": 2112, "me": 2048, "fwd_ns": 114780.13, "bwd_ns": 123660.47},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 64, "me": 64, "fwd_ns": 1056.91, "bwd_ns": 1042.30},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 72, "me": 64, "fwd_ns": 1161.33, "bwd_ns": 1162.64},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 128, "me": 64, "fwd_ns": 1067.11, "bwd_ns": 1068.02},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 128, "me": 128, "fwd_ns": 2089.60, "bwd_ns": 2059.62},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 136, "me": 128, "fwd_ns": 1993.93, "bwd_ns": 1938.94},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 192, "me": 128, "fwd_ns": 2167.99, "bwd_ns": 2089.50},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 256, "me": 256, "fwd_ns": 4800.75, "bwd_ns": 4885.11},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 264, "me": 256, "fwd_ns": 4099.97, "bwd_ns": 4132.22},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 320, "me": 256, "fwd_ns": 4172.47, "bwd_ns": 4022.71},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 512, "me": 512, "fwd_ns": 8670.24, "bwd_ns": 8749.74},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 520, "me": 512, "fwd_ns": 8797.48, "bwd_ns": 8627.18},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 576, "me": 512, "fwd_ns": 7874.22, "bwd_ns": 7721.41},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 1024, "me": 1024, "fwd_ns": 16814.95, "bwd_ns": 16855.59},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 1032, "me": 1024, "fwd_ns": 17550.13, "bwd_ns": 17523.57},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 1088, "me": 1024, "fwd_ns": 15530.75, "bwd_ns": 15554.98},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 2048, "me": 2048, "fwd_ns": 35510.77, "bwd_ns": 37784.03},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 2056, "me": 2048, "fwd_ns": 37336.57, "bwd_ns": 39314.27},
-    {"id": "ct_t1_buf_dit__avx512__tile64_draintemporal", "ios": 2112, "me": 2048, "fwd_ns": 34334.73, "bwd_ns": 34250.23},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 64, "me": 64, "fwd_ns": 5787.35, "bwd_ns": 5768.58},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 72, "me": 64, "fwd_ns": 5825.65, "bwd_ns": 5903.81},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 128, "me": 64, "fwd_ns": 5484.11, "bwd_ns": 5444.86},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 128, "me": 128, "fwd_ns": 10262.88, "bwd_ns": 10321.68},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 136, "me": 128, "fwd_ns": 10394.45, "bwd_ns": 10232.30},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 192, "me": 128, "fwd_ns": 9951.32, "bwd_ns": 10124.77},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 256, "me": 256, "fwd_ns": 19407.96, "bwd_ns": 19443.72},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 264, "me": 256, "fwd_ns": 19439.43, "bwd_ns": 19188.87},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 320, "me": 256, "fwd_ns": 19175.49, "bwd_ns": 19124.31},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 512, "me": 512, "fwd_ns": 37167.72, "bwd_ns": 37280.83},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 520, "me": 512, "fwd_ns": 36924.77, "bwd_ns": 37202.87},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 576, "me": 512, "fwd_ns": 37065.74, "bwd_ns": 38292.88},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 1024, "me": 1024, "fwd_ns": 67644.79, "bwd_ns": 66349.67},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 1032, "me": 1024, "fwd_ns": 63862.98, "bwd_ns": 65045.38},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 1088, "me": 1024, "fwd_ns": 62361.52, "bwd_ns": 63398.89},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 2048, "me": 2048, "fwd_ns": 119444.30, "bwd_ns": 116912.50},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 2056, "me": 2048, "fwd_ns": 117378.57, "bwd_ns": 120967.23},
-    {"id": "ct_t1_buf_dit__avx512__tile64_drainstream", "ios": 2112, "me": 2048, "fwd_ns": 115480.80, "bwd_ns": 118278.90},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 64, "me": 64, "fwd_ns": 416.10, "bwd_ns": 396.70},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 72, "me": 64, "fwd_ns": 464.92, "bwd_ns": 462.54},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 128, "me": 64, "fwd_ns": 371.18, "bwd_ns": 332.06},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 128, "me": 128, "fwd_ns": 2229.61, "bwd_ns": 2252.85},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 136, "me": 128, "fwd_ns": 2216.79, "bwd_ns": 2222.37},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 192, "me": 128, "fwd_ns": 2384.24, "bwd_ns": 2401.44},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 256, "me": 256, "fwd_ns": 4983.02, "bwd_ns": 5076.20},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 264, "me": 256, "fwd_ns": 4841.83, "bwd_ns": 4811.67},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 320, "me": 256, "fwd_ns": 4896.43, "bwd_ns": 4899.40},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 512, "me": 512, "fwd_ns": 9184.75, "bwd_ns": 9181.63},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 520, "me": 512, "fwd_ns": 9601.86, "bwd_ns": 9506.57},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 576, "me": 512, "fwd_ns": 10023.57, "bwd_ns": 10114.56},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 1024, "me": 1024, "fwd_ns": 18646.49, "bwd_ns": 18758.82},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 1032, "me": 1024, "fwd_ns": 18810.18, "bwd_ns": 18869.49},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 1088, "me": 1024, "fwd_ns": 19707.75, "bwd_ns": 20023.61},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 2048, "me": 2048, "fwd_ns": 37853.40, "bwd_ns": 38220.47},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 2056, "me": 2048, "fwd_ns": 39874.30, "bwd_ns": 38685.70},
-    {"id": "ct_t1_buf_dit__avx512__tile128_draintemporal", "ios": 2112, "me": 2048, "fwd_ns": 40221.97, "bwd_ns": 40852.40},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 64, "me": 64, "fwd_ns": 403.29, "bwd_ns": 402.93},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 72, "me": 64, "fwd_ns": 462.75, "bwd_ns": 471.25},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 128, "me": 64, "fwd_ns": 313.89, "bwd_ns": 331.46},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 128, "me": 128, "fwd_ns": 10852.04, "bwd_ns": 10757.44},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 136, "me": 128, "fwd_ns": 10786.34, "bwd_ns": 10746.80},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 192, "me": 128, "fwd_ns": 10737.03, "bwd_ns": 10711.91},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 256, "me": 256, "fwd_ns": 19719.52, "bwd_ns": 19532.05},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 264, "me": 256, "fwd_ns": 19691.32, "bwd_ns": 19641.17},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 320, "me": 256, "fwd_ns": 19780.67, "bwd_ns": 19765.68},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 512, "me": 512, "fwd_ns": 37454.39, "bwd_ns": 37617.32},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 520, "me": 512, "fwd_ns": 38445.64, "bwd_ns": 37610.25},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 576, "me": 512, "fwd_ns": 38305.18, "bwd_ns": 38014.51},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 1024, "me": 1024, "fwd_ns": 65719.10, "bwd_ns": 66633.28},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 1032, "me": 1024, "fwd_ns": 59493.07, "bwd_ns": 60118.13},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 1088, "me": 1024, "fwd_ns": 62322.92, "bwd_ns": 59490.05},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 2048, "me": 2048, "fwd_ns": 117237.80, "bwd_ns": 123293.13},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 2056, "me": 2048, "fwd_ns": 121268.57, "bwd_ns": 122185.80},
-    {"id": "ct_t1_buf_dit__avx512__tile128_drainstream", "ios": 2112, "me": 2048, "fwd_ns": 121058.07, "bwd_ns": 129250.77}
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 443.69,
+      "bwd_ns": 461.23
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 410.15,
+      "bwd_ns": 406.15
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 697.95,
+      "bwd_ns": 686.46
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 1118.24,
+      "bwd_ns": 1104.1
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 1095.29,
+      "bwd_ns": 1093.65
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 1234.43,
+      "bwd_ns": 1286.07
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 5006.56,
+      "bwd_ns": 4820.08
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 2336.89,
+      "bwd_ns": 2332.38
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 2509.43,
+      "bwd_ns": 2553.69
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 9088.52,
+      "bwd_ns": 9028.69
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 5245.08,
+      "bwd_ns": 5228.69
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 5270.49,
+      "bwd_ns": 5412.3
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 17965.57,
+      "bwd_ns": 18024.59
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 10021.31,
+      "bwd_ns": 10000.0
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 10160.66,
+      "bwd_ns": 10572.13
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 35476.67,
+      "bwd_ns": 33726.67
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 20676.67,
+      "bwd_ns": 20663.33
+    },
+    {
+      "id": "ct_t1_dit__avx2",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 20650.0,
+      "bwd_ns": 20453.33
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 352.41,
+      "bwd_ns": 353.85
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 415.38,
+      "bwd_ns": 365.03
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 700.82,
+      "bwd_ns": 655.69
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 992.62,
+      "bwd_ns": 974.39
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 1029.92,
+      "bwd_ns": 1037.91
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 1167.21,
+      "bwd_ns": 1171.31
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 4525.41,
+      "bwd_ns": 4573.77
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 2109.84,
+      "bwd_ns": 2150.82
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 2272.95,
+      "bwd_ns": 2283.61
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 8882.79,
+      "bwd_ns": 8977.87
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 4423.77,
+      "bwd_ns": 4478.69
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 4487.7,
+      "bwd_ns": 4706.56
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 17372.13,
+      "bwd_ns": 17690.16
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 8537.7,
+      "bwd_ns": 8652.46
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 8680.33,
+      "bwd_ns": 8778.69
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 34546.67,
+      "bwd_ns": 34613.33
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 17073.33,
+      "bwd_ns": 17576.67
+    },
+    {
+      "id": "ct_t1_dit_log3__avx2",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 16570.0,
+      "bwd_ns": 17216.67
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 334.26,
+      "bwd_ns": 327.28
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 332.51,
+      "bwd_ns": 331.59
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 648.1,
+      "bwd_ns": 638.87
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 897.75,
+      "bwd_ns": 919.88
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 939.55,
+      "bwd_ns": 981.56
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 1143.65,
+      "bwd_ns": 1135.45
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 4729.1,
+      "bwd_ns": 4659.84
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 2078.28,
+      "bwd_ns": 2064.34
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 2663.52,
+      "bwd_ns": 2250.41
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 8433.61,
+      "bwd_ns": 8259.84
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 4345.9,
+      "bwd_ns": 4723.77
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 4554.92,
+      "bwd_ns": 4736.07
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 16403.28,
+      "bwd_ns": 16195.08
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 9922.95,
+      "bwd_ns": 9042.62
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 8942.62,
+      "bwd_ns": 9706.56
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 32103.33,
+      "bwd_ns": 30850.0
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 17526.67,
+      "bwd_ns": 17286.67
+    },
+    {
+      "id": "ct_t1s_dit__avx2",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 17823.33,
+      "bwd_ns": 17603.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 451.59,
+      "bwd_ns": 463.38
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 582.87,
+      "bwd_ns": 561.85
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 820.1,
+      "bwd_ns": 834.87
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 1422.34,
+      "bwd_ns": 1328.28
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 1348.36,
+      "bwd_ns": 1534.63
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 1426.23,
+      "bwd_ns": 1420.9
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 3650.0,
+      "bwd_ns": 3703.28
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 2638.52,
+      "bwd_ns": 2667.62
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 2821.72,
+      "bwd_ns": 2864.34
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 9040.98,
+      "bwd_ns": 9164.75
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 5623.77,
+      "bwd_ns": 5750.82
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 5866.39,
+      "bwd_ns": 5899.18
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 17965.57,
+      "bwd_ns": 18163.93
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 11285.25,
+      "bwd_ns": 11280.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 11498.36,
+      "bwd_ns": 11439.34
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 35150.0,
+      "bwd_ns": 35223.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 23776.67,
+      "bwd_ns": 22326.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_draintemporal",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 22703.33,
+      "bwd_ns": 23380.0
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 2729.03,
+      "bwd_ns": 2775.28
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 2852.62,
+      "bwd_ns": 2762.05
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 2751.18,
+      "bwd_ns": 2773.85
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 5118.65,
+      "bwd_ns": 5050.61
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 4853.48,
+      "bwd_ns": 5177.25
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 5013.11,
+      "bwd_ns": 5125.0
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 9595.08,
+      "bwd_ns": 9270.08
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 9301.23,
+      "bwd_ns": 9413.52
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 9496.31,
+      "bwd_ns": 9557.38
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 19306.56,
+      "bwd_ns": 19114.75
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 18552.46,
+      "bwd_ns": 18768.03
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 18154.92,
+      "bwd_ns": 18684.43
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 33275.41,
+      "bwd_ns": 33649.18
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 24957.38,
+      "bwd_ns": 31421.31
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 26742.62,
+      "bwd_ns": 25513.11
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 50473.33,
+      "bwd_ns": 50376.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 50500.0,
+      "bwd_ns": 49083.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile16_drainstream",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 49340.0,
+      "bwd_ns": 52780.0
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 560.31,
+      "bwd_ns": 568.92
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 672.1,
+      "bwd_ns": 682.36
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 976.0,
+      "bwd_ns": 933.95
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 1473.16,
+      "bwd_ns": 1471.11
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 1435.86,
+      "bwd_ns": 1455.12
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 1548.36,
+      "bwd_ns": 1549.39
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 3818.85,
+      "bwd_ns": 3832.38
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 2898.77,
+      "bwd_ns": 2886.07
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 3017.62,
+      "bwd_ns": 3048.36
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 9090.98,
+      "bwd_ns": 9239.34
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 5988.52,
+      "bwd_ns": 6114.75
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 5868.03,
+      "bwd_ns": 5925.41
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 18093.44,
+      "bwd_ns": 18547.54
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 12080.33,
+      "bwd_ns": 13291.8
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 11686.89,
+      "bwd_ns": 11459.02
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 36696.67,
+      "bwd_ns": 36583.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 25076.67,
+      "bwd_ns": 25110.0
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_draintemporal",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 24530.0,
+      "bwd_ns": 24366.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 2909.95,
+      "bwd_ns": 2797.74
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 2827.49,
+      "bwd_ns": 2776.1
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 2826.56,
+      "bwd_ns": 2794.36
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 5078.69,
+      "bwd_ns": 5008.4
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 5199.59,
+      "bwd_ns": 5192.01
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 5094.26,
+      "bwd_ns": 5193.24
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 9681.15,
+      "bwd_ns": 9384.84
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 9296.72,
+      "bwd_ns": 9404.51
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 9204.1,
+      "bwd_ns": 9614.75
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 18518.85,
+      "bwd_ns": 18598.36
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 18528.69,
+      "bwd_ns": 18355.74
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 17947.54,
+      "bwd_ns": 18615.57
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 31880.33,
+      "bwd_ns": 32696.72
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 31404.92,
+      "bwd_ns": 32347.54
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 25416.39,
+      "bwd_ns": 25695.08
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 50360.0,
+      "bwd_ns": 51196.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 50343.33,
+      "bwd_ns": 49446.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile32_drainstream",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 50203.33,
+      "bwd_ns": 49923.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 770.87,
+      "bwd_ns": 797.95
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 801.74,
+      "bwd_ns": 808.72
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 1053.95,
+      "bwd_ns": 1059.9
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 1715.78,
+      "bwd_ns": 1732.58
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 1744.88,
+      "bwd_ns": 1768.24
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 1943.85,
+      "bwd_ns": 1953.07
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 3872.95,
+      "bwd_ns": 3831.56
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 3331.97,
+      "bwd_ns": 3363.93
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 3631.97,
+      "bwd_ns": 3673.77
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 9229.51,
+      "bwd_ns": 9412.3
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 7177.05,
+      "bwd_ns": 7527.87
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 7099.18,
+      "bwd_ns": 7133.61
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 18206.56,
+      "bwd_ns": 18308.2
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 14104.92,
+      "bwd_ns": 14213.11
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 13642.62,
+      "bwd_ns": 13790.16
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 35446.67,
+      "bwd_ns": 36456.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 27090.0,
+      "bwd_ns": 27470.0
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_draintemporal",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 26116.67,
+      "bwd_ns": 26620.0
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 2840.62,
+      "bwd_ns": 2784.62
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 2726.87,
+      "bwd_ns": 2781.95
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 2764.31,
+      "bwd_ns": 2803.18
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 5132.38,
+      "bwd_ns": 5197.75
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 5249.39,
+      "bwd_ns": 5191.6
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 5280.12,
+      "bwd_ns": 5173.36
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 9425.82,
+      "bwd_ns": 9115.16
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 9402.46,
+      "bwd_ns": 9141.39
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 9545.9,
+      "bwd_ns": 9479.51
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 18554.1,
+      "bwd_ns": 18584.43
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 18732.79,
+      "bwd_ns": 18397.54
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 17915.57,
+      "bwd_ns": 18270.49
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 32957.38,
+      "bwd_ns": 31591.8
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 31678.69,
+      "bwd_ns": 30747.54
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 26181.97,
+      "bwd_ns": 25454.1
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 50826.67,
+      "bwd_ns": 51456.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 51950.0,
+      "bwd_ns": 49753.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile64_drainstream",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 50510.0,
+      "bwd_ns": 50273.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 345.33,
+      "bwd_ns": 352.72
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 399.9,
+      "bwd_ns": 406.46
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 692.82,
+      "bwd_ns": 694.15
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 2026.64,
+      "bwd_ns": 2035.04
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 2125.41,
+      "bwd_ns": 2131.76
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 2272.75,
+      "bwd_ns": 2330.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 4274.18,
+      "bwd_ns": 4262.3
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 4520.9,
+      "bwd_ns": 4185.25
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 4403.28,
+      "bwd_ns": 4520.08
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 8390.16,
+      "bwd_ns": 8446.72
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 8135.25,
+      "bwd_ns": 8290.16
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 8812.3,
+      "bwd_ns": 8801.64
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 16209.84,
+      "bwd_ns": 16586.89
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 15801.64,
+      "bwd_ns": 15904.92
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 17501.64,
+      "bwd_ns": 17219.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 31923.33,
+      "bwd_ns": 31633.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 30903.33,
+      "bwd_ns": 30983.33
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_draintemporal",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 33363.33,
+      "bwd_ns": 33596.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 64,
+      "me": 64,
+      "fwd_ns": 356.62,
+      "bwd_ns": 347.79
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 72,
+      "me": 64,
+      "fwd_ns": 412.31,
+      "bwd_ns": 421.03
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 128,
+      "me": 64,
+      "fwd_ns": 704.1,
+      "bwd_ns": 703.18
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 128,
+      "me": 128,
+      "fwd_ns": 5230.12,
+      "bwd_ns": 5118.85
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 136,
+      "me": 128,
+      "fwd_ns": 5226.23,
+      "bwd_ns": 5363.73
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 192,
+      "me": 128,
+      "fwd_ns": 5415.57,
+      "bwd_ns": 5466.6
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 256,
+      "me": 256,
+      "fwd_ns": 9696.72,
+      "bwd_ns": 9686.07
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 264,
+      "me": 256,
+      "fwd_ns": 9955.33,
+      "bwd_ns": 9895.9
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 320,
+      "me": 256,
+      "fwd_ns": 10183.2,
+      "bwd_ns": 10214.75
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 512,
+      "me": 512,
+      "fwd_ns": 19109.84,
+      "bwd_ns": 18783.61
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 520,
+      "me": 512,
+      "fwd_ns": 19928.69,
+      "bwd_ns": 18827.87
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 576,
+      "me": 512,
+      "fwd_ns": 19656.56,
+      "bwd_ns": 19660.66
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 1024,
+      "me": 1024,
+      "fwd_ns": 33122.95,
+      "bwd_ns": 33413.11
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 1032,
+      "me": 1024,
+      "fwd_ns": 33508.2,
+      "bwd_ns": 33362.3
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 1088,
+      "me": 1024,
+      "fwd_ns": 28154.1,
+      "bwd_ns": 27972.13
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 2048,
+      "me": 2048,
+      "fwd_ns": 51683.33,
+      "bwd_ns": 50756.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 2056,
+      "me": 2048,
+      "fwd_ns": 51526.67,
+      "bwd_ns": 51806.67
+    },
+    {
+      "id": "ct_t1_buf_dit__avx2__tile128_drainstream",
+      "ios": 2112,
+      "me": 2048,
+      "fwd_ns": 54096.67,
+      "bwd_ns": 54123.33
+    }
   ]
 }

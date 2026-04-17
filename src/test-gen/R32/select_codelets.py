@@ -69,7 +69,7 @@ def pick_winner(measurements_at_point, direction: str, tie_threshold: float):
 
 def select(measurements_path: Path, output_path: Path,
            tie_threshold: float = 0.02, verbose: bool = True):
-    data = json.loads(measurements_path.read_text())
+    data = json.loads(measurements_path.read_text(encoding='utf-8'))
     avx512_ok = data.get('avx512_available', True)
 
     # Index measurements by (ios, me, isa)
@@ -101,7 +101,7 @@ def select(measurements_path: Path, output_path: Path,
         'winners': winning_ids,
         'isas_measured': sorted({id_to_isa(i) for i in winning_ids}),
     }
-    output_path.write_text(json.dumps(out, indent=2))
+    output_path.write_text(json.dumps(out, indent=2), encoding='utf-8')
 
     if verbose:
         print(f"[select] {len(decisions)} decisions, "
@@ -110,9 +110,9 @@ def select(measurements_path: Path, output_path: Path,
         win_counts = defaultdict(int)
         for d in decisions:
             win_counts[d['winner']] += 1
-        print("[select] win counts (candidate → regions won):")
+        print("[select] win counts (candidate -> regions won):")
         for cid, count in sorted(win_counts.items(), key=lambda x: -x[1]):
-            print(f"  {count:>4} wins — {cid}")
+            print(f"  {count:>4} wins  {cid}")
         print(f"[select] written: {output_path}")
 
 

@@ -16,20 +16,6 @@
       "winner": "ct_t1s_dit__avx2"
     },
     {
-      "ios": 64,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 64,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1s_dit__avx512"
-    },
-    {
       "ios": 72,
       "me": 64,
       "isa": "avx2",
@@ -44,57 +30,15 @@
       "winner": "ct_t1s_dit__avx2"
     },
     {
-      "ios": 72,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1s_dit__avx512"
-    },
-    {
-      "ios": 72,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1s_dit__avx512"
-    },
-    {
       "ios": 128,
       "me": 64,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 128,
       "me": 64,
-      "isa": "avx2",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 128,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 128,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 128,
-      "me": 128,
-      "isa": "avx2",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 128,
-      "me": 128,
       "isa": "avx2",
       "direction": "bwd",
       "winner": "ct_t1s_dit__avx2"
@@ -102,16 +46,16 @@
     {
       "ios": 128,
       "me": 128,
-      "isa": "avx512",
+      "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 128,
       "me": 128,
-      "isa": "avx512",
+      "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 136,
@@ -128,102 +72,46 @@
       "winner": "ct_t1s_dit__avx2"
     },
     {
-      "ios": 136,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1s_dit__avx512"
-    },
-    {
-      "ios": 136,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1s_dit__avx512"
-    },
-    {
       "ios": 192,
       "me": 128,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 192,
       "me": 128,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 192,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 192,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 256,
       "me": 256,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
+      "winner": "ct_t1_buf_dit__avx2__tile16_draintemporal"
     },
     {
       "ios": 256,
       "me": 256,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 256,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 256,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512"
+      "winner": "ct_t1_buf_dit__avx2__tile16_draintemporal"
     },
     {
       "ios": 264,
       "me": 256,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 264,
       "me": 256,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 264,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 264,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 320,
@@ -237,56 +125,28 @@
       "me": 256,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 320,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 320,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1s_dit__avx512"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 512,
       "me": 512,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_buf_dit__avx2__tile128_draintemporal"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 512,
       "me": 512,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_buf_dit__avx2__tile128_draintemporal"
-    },
-    {
-      "ios": 512,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 512,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 520,
       "me": 512,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 520,
@@ -296,74 +156,32 @@
       "winner": "ct_t1_dit_log3__avx2"
     },
     {
-      "ios": 520,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 520,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
       "ios": 576,
       "me": 512,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 576,
       "me": 512,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 576,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 576,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 1024,
       "me": 1024,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_buf_dit__avx2__tile128_draintemporal"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 1024,
       "me": 1024,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_buf_dit__avx2__tile128_draintemporal"
-    },
-    {
-      "ios": 1024,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 1024,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 1032,
@@ -380,20 +198,6 @@
       "winner": "ct_t1_dit_log3__avx2"
     },
     {
-      "ios": 1032,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 1032,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
       "ios": 1088,
       "me": 1024,
       "isa": "avx2",
@@ -408,46 +212,18 @@
       "winner": "ct_t1_dit_log3__avx2"
     },
     {
-      "ios": 1088,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 1088,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
       "ios": 2048,
       "me": 2048,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_buf_dit__avx2__tile128_draintemporal"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 2048,
       "me": 2048,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_buf_dit__avx2__tile128_draintemporal"
-    },
-    {
-      "ios": 2048,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 2048,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1s_dit__avx2"
     },
     {
       "ios": 2056,
@@ -458,34 +234,6 @@
     },
     {
       "ios": 2056,
-      "me": 2048,
-      "isa": "avx2",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 2056,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 2056,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 2112,
-      "me": 2048,
-      "isa": "avx2",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 2112,
       "me": 2048,
       "isa": "avx2",
       "direction": "bwd",
@@ -494,28 +242,24 @@
     {
       "ios": 2112,
       "me": 2048,
-      "isa": "avx512",
+      "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1_dit_log3__avx2"
     },
     {
       "ios": 2112,
       "me": 2048,
-      "isa": "avx512",
+      "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1_dit_log3__avx2"
     }
   ],
   "winners": [
-    "ct_t1_buf_dit__avx2__tile128_draintemporal",
-    "ct_t1_dit__avx512",
+    "ct_t1_buf_dit__avx2__tile16_draintemporal",
     "ct_t1_dit_log3__avx2",
-    "ct_t1_dit_log3__avx512",
-    "ct_t1s_dit__avx2",
-    "ct_t1s_dit__avx512"
+    "ct_t1s_dit__avx2"
   ],
   "isas_measured": [
-    "avx2",
-    "avx512"
+    "avx2"
   ]
 }

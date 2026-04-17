@@ -186,12 +186,15 @@ codelet_select_r16_bwd(int isa, size_t ios, size_t me) {
 
 def emit_selector_h(selection_path: Path, out_dir: Path,
                      verbose: bool = True) -> None:
-    selection = json.loads(selection_path.read_text())
+    selection = json.loads(selection_path.read_text(encoding='utf-8'))
     decisions = selection['decisions']
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Copy winning .h files to include/
+    # 1. Copy winning .h files to include/.
+    # shutil.copyfile copies raw bytes — no encoding reinterpretation.
+    # This matters because the generator's .h files may be in the
+    # system's native encoding (cp1252 on Windows) not UTF-8.
     for winner_id in selection['winners']:
         src = STAGING / f'{winner_id}.h'
         dst = out_dir / f'{winner_id}.h'
@@ -224,7 +227,10 @@ def emit_selector_h(selection_path: Path, out_dir: Path,
     header = preamble + body + HEADER_EPILOGUE
 
     out_path = out_dir / 'codelet_select_r16.h'
-    out_path.write_text(header)
+    # Explicit UTF-8: the header contains em-dashes and other Unicode
+    # in its banner comments. Writing without encoding defaults to cp1252
+    # on Windows, which fails on any non-ASCII character.
+    out_path.write_text(header, encoding='utf-8')
 
     if verbose:
         print(f"[emit] wrote {out_path}")
@@ -237,8 +243,8 @@ def emit_selector_h(selection_path: Path, out_dir: Path,
 
 def emit_report(selection_path: Path, measurements_path: Path,
                 out_path: Path, verbose: bool = True) -> None:
-    selection = json.loads(selection_path.read_text())
-    measurements = json.loads(measurements_path.read_text())
+    selection = json.loads(selection_path.read_text(encoding='utf-8'))
+    measurements = json.loads(measurements_path.read_text(encoding='utf-8'))
 
     # Index measurements for quick lookup
     meas_idx = {}
@@ -285,7 +291,7 @@ def emit_report(selection_path: Path, measurements_path: Path,
             )
         lines.append('')
 
-    out_path.write_text('\n'.join(lines))
+    out_path.write_text('\n'.join(lines), encoding='utf-8')
     if verbose:
         print(f"[emit] wrote {out_path}")
 
