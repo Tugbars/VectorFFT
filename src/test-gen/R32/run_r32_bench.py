@@ -55,29 +55,84 @@ HARNESS_PREAMBLE = r'''
 #include <math.h>
 #include <time.h>
 #include <stddef.h>
-#include <cpuid.h>
 
+#ifdef _WIN32
+  #include <windows.h>
+  #include <malloc.h>
+#endif
+
+/* CPUID via the compiler's preferred intrinsic header */
+#if defined(_MSC_VER) || defined(__INTEL_LLVM_COMPILER) || defined(__INTEL_COMPILER)
+  #include <intrin.h>
+  static void _cpuid_count(int leaf, int subleaf, int *eax, int *ebx, int *ecx, int *edx) {
+      int r[4]; __cpuidex(r, leaf, subleaf);
+      *eax = r[0]; *ebx = r[1]; *ecx = r[2]; *edx = r[3];
+  }
+#else
+  #include <cpuid.h>
+  static void _cpuid_count(int leaf, int subleaf, int *eax, int *ebx, int *ecx, int *edx) {
+      unsigned int a, b, c, d;
+      __cpuid_count(leaf, subleaf, a, b, c, d);
+      *eax = (int)a; *ebx = (int)b; *ecx = (int)c; *edx = (int)d;
+  }
+#endif
+
+/* ─── timing: portable high-resolution monotonic clock in ns ─── */
+#ifdef _WIN32
+static double now_ns(void) {
+    static LARGE_INTEGER freq;
+    static int init = 0;
+    if (!init) { QueryPerformanceFrequency(&freq); init = 1; }
+    LARGE_INTEGER t; QueryPerformanceCounter(&t);
+    return (double)t.QuadPart * 1e9 / (double)freq.QuadPart;
+}
+#else
 static double now_ns(void) {
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1e9 + ts.tv_nsec;
 }
+#endif
+
+/* ─── aligned alloc / free ─── */
+#ifdef _WIN32
 static void *aalloc(size_t b) {
-    void *p = NULL; if (posix_memalign(&p, 64, b) != 0) return NULL;
+    void *p = _aligned_malloc(b, 64);
+    if (p) memset(p, 0, b);
+    return p;
+}
+static void afree(void *p) { _aligned_free(p); }
+#else
+static void *aalloc(size_t b) {
+    void *p = NULL;
+    if (posix_memalign(&p, 64, b) != 0) return NULL;
     memset(p, 0, b); return p;
 }
+static void afree(void *p) { free(p); }
+#endif
+
 static int _dcmp(const void *a, const void *b) {
     double x = *(const double*)a, y = *(const double*)b;
     return (x > y) - (x < y);
 }
+
 static int have_avx512(void) {
-    int r[4]; __cpuid_count(1, 0, r[0], r[1], r[2], r[3]);
-    if (!(r[2] & (1<<27))) return 0;
+    int a, b, c, d;
+    /* OSXSAVE required for AVX/AVX-512 state save */
+    _cpuid_count(1, 0, &a, &b, &c, &d);
+    if (!(c & (1 << 27))) return 0;
+    /* XGETBV to check XCR0 bits for ZMM state saving */
+    unsigned long long xcr0;
+#if defined(_MSC_VER) || defined(__INTEL_LLVM_COMPILER) || defined(__INTEL_COMPILER)
+    xcr0 = _xgetbv(0);
+#else
     unsigned int lo, hi;
     __asm__ volatile ("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
-    unsigned long long xcr0 = ((unsigned long long)hi << 32) | lo;
+    xcr0 = ((unsigned long long)hi << 32) | lo;
+#endif
+    /* Bits 1(SSE) 2(AVX) 5(opmask) 6(zmm hi) 7(zmm16-31) */
     if ((xcr0 & 0xE6) != 0xE6) return 0;
-    __cpuid_count(7, 0, r[0], r[1], r[2], r[3]);
-    return ((r[1] & (1<<16)) != 0) && ((r[1] & (1<<17)) != 0);
+    _cpuid_count(7, 0, &a, &b, &c, &d);
+    return ((b & (1<<16)) != 0) && ((b & (1<<17)) != 0);
 }
 
 typedef void (*t1_fn)(double*, double*, const double*, const double*, size_t, size_t);
@@ -132,7 +187,7 @@ static double measure(t1_fn fn, size_t ios, size_t me) {
     qsort(s2, 21, sizeof(double), _dcmp);
     double net = s1[10] - s2[10];
     if (net < 0) net = s1[10];
-    free(rio_re); free(rio_im); free(src_re); free(src_im); free(Wr); free(Wi);
+    afree(rio_re); afree(rio_im); afree(src_re); afree(src_im); afree(Wr); afree(Wi);
     return net;
 }
 '''
@@ -144,13 +199,97 @@ def _wrapper_c(candidate):
             f'#include "{(STAGING / candidate.header_name()).resolve()}"\n')
 
 
-def _gcc_cmd(src, out, isa):
-    flags = ['-O3', '-mtune=native', '-mavx2', '-mfma',
-             '-Wno-overflow', '-Wno-implicit-function-declaration',
-             '-Wno-unused-function', '-c']
-    if isa == 'avx512':
-        flags += ['-mavx512f', '-mavx512dq']
-    return ['gcc'] + flags + [str(src), '-o', str(out)]
+# ────────────────────────────────────────────────────
+# Compiler detection — GCC, Clang, Intel ICX on any OS
+# ────────────────────────────────────────────────────
+def _detect_toolchain():
+    """Returns a dict describing the compiler setup:
+      cc: the command name ('gcc', 'icx', 'clang', etc.)
+      msvc_style: True if flags use /O2 style (cl, icl, icx-cl)
+      is_windows, is_icx, is_gcc, is_clang: bool
+      toolchain_name: human-readable description
+    """
+    cc = os.environ.get('CC', 'gcc')
+    cc_basename = Path(cc).name.lower()
+    msvc_style = cc_basename in ('cl', 'cl.exe', 'icl', 'icl.exe',
+                                  'icx-cl', 'icx-cl.exe')
+    is_windows = os.name == 'nt'
+    is_icx = 'icx' in cc_basename
+    is_gcc = 'gcc' in cc_basename
+    is_clang = 'clang' in cc_basename
+
+    if is_icx and msvc_style:
+        name = 'Intel ICX (MSVC-style, icx-cl)'
+    elif is_icx:
+        name = 'Intel ICX (GCC-style)'
+    elif msvc_style:
+        name = 'Microsoft MSVC (cl.exe)'
+    elif is_clang:
+        name = 'LLVM Clang'
+    elif is_gcc:
+        name = 'GNU GCC'
+    else:
+        name = f'{cc} (unknown driver style)'
+
+    return {
+        'cc': cc, 'cc_basename': cc_basename,
+        'msvc_style': msvc_style,
+        'is_windows': is_windows, 'is_icx': is_icx,
+        'is_gcc': is_gcc, 'is_clang': is_clang,
+        'toolchain_name': name,
+    }
+
+
+def _compile_cmd(src, out, isa, tc):
+    """Build the compile command line for the given toolchain.
+    Produces a compile-to-object command (no linking)."""
+    if tc['msvc_style']:
+        # MSVC-style: /c for compile-only, /Fo for output
+        flags = ['/c', '/O2', '/fp:fast', '/wd4244', '/wd4267']
+        if isa == 'avx512':
+            flags.append('/arch:AVX512')
+        else:
+            flags.append('/arch:AVX2')
+        return [tc['cc']] + flags + [str(src), f'/Fo:{out}']
+    else:
+        # GCC-style: -c for compile-only, -o for output
+        flags = ['-c', '-O3', '-mtune=native', '-mavx2', '-mfma',
+                 '-Wno-overflow', '-Wno-implicit-function-declaration',
+                 '-Wno-unused-function', '-Wno-unknown-argument']
+        if isa == 'avx512':
+            flags += ['-mavx512f', '-mavx512dq']
+        return [tc['cc']] + flags + [str(src), '-o', str(out)]
+
+
+def _link_cmd(obj_files, harness_obj, out_bin, tc):
+    """Build the link command line for the given toolchain."""
+    if tc['msvc_style']:
+        # MSVC-style linking
+        return [tc['cc']] + obj_files + [str(harness_obj),
+                f'/Fe:{out_bin}',
+                '/link', '/FORCE:MULTIPLE']
+    else:
+        # GCC-style linking. LLD for Windows+ICX to avoid needing link.exe
+        # (works if lld-link.exe is on PATH; setvars.bat from oneAPI ensures this).
+        cmd = [tc['cc']] + obj_files + [str(harness_obj),
+               '-Wl,--allow-multiple-definition',
+               '-o', str(out_bin)]
+        if tc['is_windows'] and tc['is_icx']:
+            cmd.append('-fuse-ld=lld')
+        if not tc['is_windows']:
+            cmd.append('-lm')
+        return cmd
+
+
+def _harness_compile_cmd(src, out, tc):
+    """Compile just the harness (AVX2 baseline, no per-codelet flags)."""
+    if tc['msvc_style']:
+        flags = ['/c', '/O2', '/arch:AVX2', '/fp:fast']
+        return [tc['cc']] + flags + [str(src), f'/Fo:{out}']
+    else:
+        flags = ['-c', '-O2', '-mavx2', '-mfma',
+                 '-Wno-unknown-argument']
+        return [tc['cc']] + flags + [str(src), '-o', str(out)]
 
 
 def _run_with_progress(procs, label):
@@ -181,11 +320,25 @@ def phase_build():
     OBJS.mkdir(exist_ok=True)
     cands = candidates.enumerate_all()
 
+    # Detect toolchain (gcc/icx/msvc, GCC-style vs MSVC-style flags)
+    tc = _detect_toolchain()
+    print(f"[build] toolchain: {tc['toolchain_name']}")
+    if tc['is_windows'] and tc['is_icx']:
+        print(f"[build] linker: LLD (-fuse-ld=lld, bundled with ICX)")
+        print(f"[build] note: ensure Intel oneAPI env is set (setvars.bat sourced)")
+    elif tc['msvc_style']:
+        print(f"[build] linker: Microsoft link.exe")
+        print(f"[build] note: ensure VS Developer Command Prompt or vcvarsall sourced")
+
+    # Binary suffix: .exe on Windows
+    out_bin = BUILD / ('bench.exe' if tc['is_windows'] else 'bench')
+    obj_ext = '.obj' if tc['msvc_style'] else '.o'
+
     # Write wrapper .c files, one per codelet
     wrappers = []
     for c in cands:
         wc = OBJS / f'{c.id()}.c'
-        wc.write_text(_wrapper_c(c))
+        wc.write_text(_wrapper_c(c), encoding='utf-8')
         wrappers.append((c, wc))
 
     # Parallel compile — batch dispatch
@@ -195,10 +348,10 @@ def phase_build():
 
     procs_all = []
     def spawn(c, wc):
-        obj = OBJS / f'{c.id()}.o'
+        obj = OBJS / f'{c.id()}{obj_ext}'
         err_log = OBJS / f'{c.id()}.err'
         errf = open(err_log, 'wb')
-        cmd = _gcc_cmd(wc, obj, c.isa)
+        cmd = _compile_cmd(wc, obj, c.isa, tc)
         p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errf)
         p._errfile = errf
         p._errpath = err_log
@@ -209,11 +362,9 @@ def phase_build():
     pending = list(wrappers)
     completed = 0
     while pending or active:
-        # Fill up active slots
         while pending and len(active) < maxN:
             c, wc = pending.pop(0)
             active.append(spawn(c, wc))
-        # Wait for at least one to finish
         time.sleep(0.1)
         still = []
         for p in active:
@@ -332,53 +483,50 @@ int main(int argc, char **argv) {{
     hc = BUILD / 'harness.c'
     hc.write_text(harness, encoding='utf-8')
 
-    # Compile harness
-    hobj = OBJS / 'harness.o'
-    r = subprocess.run(['gcc', '-O2', '-mavx2', '-mfma',
-                        '-c', str(hc), '-o', str(hobj)],
-                       capture_output=True)
+    # Compile harness (AVX2 baseline — no AVX-512 in glue code)
+    hobj = OBJS / ('harness' + obj_ext)
+    hcmd = _harness_compile_cmd(hc, hobj, tc)
+    r = subprocess.run(hcmd, capture_output=True,
+                       text=True, encoding='utf-8', errors='replace')
     if r.returncode != 0:
-        print(f"[build] harness compile failed:\n{r.stderr.decode('utf-8','replace')[:2000]}")
+        print(f"[build] harness compile failed:\n{r.stderr[:2000]}")
         sys.exit(1)
     print(f"[build] harness compiled")
 
-    # Link everything. -Wl,--allow-multiple-definition tolerates duplicate
-    # twiddle-table constants that appear in every codelet's .o (they were
-    # 'static const' in the headers; our '#define static' trick made them
-    # external. All copies are bit-identical so picking the first is fine).
-    obj_files = [str(OBJS / f'{c.id()}.o') for c in cands]
-    out_bin = BUILD / 'bench'
-    r = subprocess.run(['gcc'] + obj_files + [str(hobj),
-                        '-Wl,--allow-multiple-definition',
-                        '-o', str(out_bin), '-lm'],
-                       capture_output=True)
+    # Link everything. --allow-multiple-definition / /FORCE:MULTIPLE tolerates
+    # duplicate twiddle-table constants (W32_* symbols) that appear in every
+    # codelet's .o (they were 'static const' in the headers; '#define static'
+    # trick promoted them to external linkage; all copies are bit-identical).
+    obj_files = [str(OBJS / f'{c.id()}{obj_ext}') for c in cands]
+    lcmd = _link_cmd(obj_files, hobj, out_bin, tc)
+    r = subprocess.run(lcmd, capture_output=True,
+                       text=True, encoding='utf-8', errors='replace')
     if r.returncode != 0:
-        print(f"[build] link failed:\n{r.stderr.decode('utf-8','replace')[:2000]}")
+        print(f"[build] link failed:\n{r.stderr[:2000]}")
         sys.exit(1)
     print(f"[build] linked → {out_bin}, total build time {time.time()-t0:.1f}s")
 
 
 def phase_run():
-    bench = BUILD / 'bench'
+    bench = BUILD / ('bench.exe' if os.name == 'nt' else 'bench')
     if not bench.exists():
-        print("[run] bench binary missing; run --phase build first")
+        print(f"[run] bench binary missing at {bench}; run --phase build first")
         sys.exit(1)
     print(f"[run] executing {bench}")
     t0 = time.time()
-    # Run in the background, poll
     log = BUILD / 'run.log'
-    with open(log, 'w') as lf:
+    with open(log, 'w', encoding='utf-8') as lf:
         p = subprocess.Popen([str(bench), str(MEAS)],
                              stdout=lf, stderr=lf)
         while p.poll() is None:
             time.sleep(2)
-            # Print current measurement count
             if MEAS.exists():
-                with open(MEAS) as f:
+                with open(MEAS, encoding='utf-8') as f:
                     n = sum(1 for _ in f)
                 print(f"  progress: {n} measurements  ({time.time()-t0:.0f}s)", flush=True)
     if p.returncode != 0:
-        print(f"[run] bench FAILED with code {p.returncode}")
+        print(f"[run] bench exited with code {p.returncode}")
+        print(f"       rerun --phase run to resume (measurements.jsonl is checkpointed)")
         sys.exit(1)
     print(f"[run] done in {time.time()-t0:.1f}s")
 
@@ -388,6 +536,33 @@ if __name__ == '__main__':
     ap.add_argument('--phase', choices=('generate','build','run','all'),
                     default='all')
     args = ap.parse_args()
+
+    # Startup banner — show environment so users can diagnose issues
+    # before long-running phases start.
+    import platform
+    cc = os.environ.get('CC', 'gcc')
+    print("-" * 64)
+    print(" VectorFFT codelet bench (R=32)")
+    print("-" * 64)
+    print(f" Platform:  {platform.system()} {platform.machine()}")
+    print(f" Python:    {platform.python_version()} ({sys.executable})")
+    print(f" Compiler:  {cc} (set CC env var to change)")
+    print(f" Generator: {GEN}")
+    print("-" * 64)
+    if os.name == 'nt' and 'icx' in Path(cc).name.lower():
+        print(" Using Intel ICX on Windows: LLD linker via -fuse-ld=lld.")
+        print(" If linking fails, ensure you launched cmd from:")
+        print("   - Intel oneAPI command prompt, OR")
+        print("   - sourced setvars.bat in this shell.")
+        print("-" * 64)
+    elif os.name == 'nt' and Path(cc).name.lower() in ('cl', 'icx-cl', 'icl'):
+        print(" Using MSVC-style driver on Windows.")
+        print(" If linking fails, ensure link.exe is on PATH:")
+        print("   - launch from 'Developer Command Prompt for VS', OR")
+        print("   - sourced vcvarsall.bat in this shell.")
+        print("-" * 64)
+    print()
+
     if args.phase in ('generate', 'all'): phase_generate()
     if args.phase in ('build', 'all'): phase_build()
     if args.phase in ('run', 'all'): phase_run()
