@@ -157,6 +157,30 @@ extern void radix64_t1_dit_prefetch_fwd_avx2(double*, double*, const double*, co
 extern void radix64_t1_dit_prefetch_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
 extern void radix64_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
 extern void radix64_t1s_dit_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_temporal_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_temporal_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_temporal_prefw_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_temporal_prefw_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_stream_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_stream_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_stream_prefw_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_stream_prefw_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_temporal_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_temporal_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_temporal_prefw_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_temporal_prefw_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_stream_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_stream_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_stream_prefw_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_stream_prefw_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_temporal_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_temporal_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_temporal_prefw_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_temporal_prefw_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_stream_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_stream_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_stream_prefw_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_stream_prefw_bwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
 extern void radix64_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
 extern void radix64_t1_dit_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
 extern void radix64_t1_dif_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
@@ -167,6 +191,30 @@ extern void radix64_t1_dit_prefetch_fwd_avx512(double*, double*, const double*, 
 extern void radix64_t1_dit_prefetch_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
 extern void radix64_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
 extern void radix64_t1s_dit_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_temporal_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_temporal_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_temporal_prefw_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_temporal_prefw_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_stream_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_stream_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_stream_prefw_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile32_stream_prefw_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_temporal_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_temporal_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_temporal_prefw_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_temporal_prefw_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_stream_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_stream_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_stream_prefw_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile64_stream_prefw_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_temporal_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_temporal_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_temporal_prefw_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_temporal_prefw_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_stream_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_stream_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_stream_prefw_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_buf_dit_tile128_stream_prefw_bwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
 
 typedef struct { const char *id; const char *isa; t1_fn fwd, bwd; int req512; } cand_t;
 static cand_t CANDS[] = {
@@ -175,11 +223,35 @@ static cand_t CANDS[] = {
     {"ct_t1_dit_log3__avx2", "avx2", radix64_t1_dit_log3_fwd_avx2, radix64_t1_dit_log3_bwd_avx2, 0},
     {"ct_t1_dit_prefetch__avx2", "avx2", radix64_t1_dit_prefetch_fwd_avx2, radix64_t1_dit_prefetch_bwd_avx2, 0},
     {"ct_t1s_dit__avx2", "avx2", radix64_t1s_dit_fwd_avx2, radix64_t1s_dit_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile32__draintemporal", "avx2", radix64_t1_buf_dit_tile32_temporal_fwd_avx2, radix64_t1_buf_dit_tile32_temporal_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile32__draintemporal__prefw", "avx2", radix64_t1_buf_dit_tile32_temporal_prefw_fwd_avx2, radix64_t1_buf_dit_tile32_temporal_prefw_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile32__drainstream", "avx2", radix64_t1_buf_dit_tile32_stream_fwd_avx2, radix64_t1_buf_dit_tile32_stream_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile32__drainstream__prefw", "avx2", radix64_t1_buf_dit_tile32_stream_prefw_fwd_avx2, radix64_t1_buf_dit_tile32_stream_prefw_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile64__draintemporal", "avx2", radix64_t1_buf_dit_tile64_temporal_fwd_avx2, radix64_t1_buf_dit_tile64_temporal_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile64__draintemporal__prefw", "avx2", radix64_t1_buf_dit_tile64_temporal_prefw_fwd_avx2, radix64_t1_buf_dit_tile64_temporal_prefw_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile64__drainstream", "avx2", radix64_t1_buf_dit_tile64_stream_fwd_avx2, radix64_t1_buf_dit_tile64_stream_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile64__drainstream__prefw", "avx2", radix64_t1_buf_dit_tile64_stream_prefw_fwd_avx2, radix64_t1_buf_dit_tile64_stream_prefw_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile128__draintemporal", "avx2", radix64_t1_buf_dit_tile128_temporal_fwd_avx2, radix64_t1_buf_dit_tile128_temporal_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile128__draintemporal__prefw", "avx2", radix64_t1_buf_dit_tile128_temporal_prefw_fwd_avx2, radix64_t1_buf_dit_tile128_temporal_prefw_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile128__drainstream", "avx2", radix64_t1_buf_dit_tile128_stream_fwd_avx2, radix64_t1_buf_dit_tile128_stream_bwd_avx2, 0},
+    {"ct_t1_buf_dit__avx2__tile128__drainstream__prefw", "avx2", radix64_t1_buf_dit_tile128_stream_prefw_fwd_avx2, radix64_t1_buf_dit_tile128_stream_prefw_bwd_avx2, 0},
     {"ct_t1_dit__avx512", "avx512", radix64_t1_dit_fwd_avx512, radix64_t1_dit_bwd_avx512, 1},
     {"ct_t1_dif__avx512", "avx512", radix64_t1_dif_fwd_avx512, radix64_t1_dif_bwd_avx512, 1},
     {"ct_t1_dit_log3__avx512", "avx512", radix64_t1_dit_log3_fwd_avx512, radix64_t1_dit_log3_bwd_avx512, 1},
     {"ct_t1_dit_prefetch__avx512", "avx512", radix64_t1_dit_prefetch_fwd_avx512, radix64_t1_dit_prefetch_bwd_avx512, 1},
     {"ct_t1s_dit__avx512", "avx512", radix64_t1s_dit_fwd_avx512, radix64_t1s_dit_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile32__draintemporal", "avx512", radix64_t1_buf_dit_tile32_temporal_fwd_avx512, radix64_t1_buf_dit_tile32_temporal_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile32__draintemporal__prefw", "avx512", radix64_t1_buf_dit_tile32_temporal_prefw_fwd_avx512, radix64_t1_buf_dit_tile32_temporal_prefw_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile32__drainstream", "avx512", radix64_t1_buf_dit_tile32_stream_fwd_avx512, radix64_t1_buf_dit_tile32_stream_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile32__drainstream__prefw", "avx512", radix64_t1_buf_dit_tile32_stream_prefw_fwd_avx512, radix64_t1_buf_dit_tile32_stream_prefw_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile64__draintemporal", "avx512", radix64_t1_buf_dit_tile64_temporal_fwd_avx512, radix64_t1_buf_dit_tile64_temporal_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile64__draintemporal__prefw", "avx512", radix64_t1_buf_dit_tile64_temporal_prefw_fwd_avx512, radix64_t1_buf_dit_tile64_temporal_prefw_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile64__drainstream", "avx512", radix64_t1_buf_dit_tile64_stream_fwd_avx512, radix64_t1_buf_dit_tile64_stream_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile64__drainstream__prefw", "avx512", radix64_t1_buf_dit_tile64_stream_prefw_fwd_avx512, radix64_t1_buf_dit_tile64_stream_prefw_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile128__draintemporal", "avx512", radix64_t1_buf_dit_tile128_temporal_fwd_avx512, radix64_t1_buf_dit_tile128_temporal_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile128__draintemporal__prefw", "avx512", radix64_t1_buf_dit_tile128_temporal_prefw_fwd_avx512, radix64_t1_buf_dit_tile128_temporal_prefw_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile128__drainstream", "avx512", radix64_t1_buf_dit_tile128_stream_fwd_avx512, radix64_t1_buf_dit_tile128_stream_bwd_avx512, 1},
+    {"ct_t1_buf_dit__avx512__tile128__drainstream__prefw", "avx512", radix64_t1_buf_dit_tile128_stream_prefw_fwd_avx512, radix64_t1_buf_dit_tile128_stream_prefw_bwd_avx512, 1},
     {NULL,NULL,NULL,NULL,0}
 };
 typedef struct { size_t ios, me; } sp_t;
