@@ -67,14 +67,45 @@ def pick_winner(measurements_at_point, direction: str, tie_threshold: float):
     return contenders[0]['id']
 
 
+def _load_measurements(path: Path) -> tuple:
+    """Load measurements from either format:
+      - JSON (R=16 style): {'avx512_available': bool, 'measurements': [...]}
+        where each measurement has fwd_ns and bwd_ns paired in one record.
+      - JSONL (R=32 style): one {id, ios, me, dir, ns} per line,
+        emitted incrementally by the bench harness for checkpointing.
+    Returns (measurements_list, avx512_ok) where measurements_list has
+    {id, ios, me, fwd_ns, bwd_ns} records regardless of input format.
+    """
+    text = path.read_text(encoding='utf-8')
+    if path.suffix == '.jsonl' or (text.lstrip().startswith('{') and '\n{' in text.strip()):
+        # JSONL format: one record per line, separate fwd/bwd
+        grouped = {}
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            key = (r['id'], r['ios'], r['me'])
+            grouped.setdefault(key, {'id': r['id'], 'ios': r['ios'], 'me': r['me']})
+            grouped[key][f"{r['dir']}_ns"] = r['ns']
+        # Keep only fully-paired records (both fwd_ns and bwd_ns present)
+        measurements = [m for m in grouped.values()
+                        if 'fwd_ns' in m and 'bwd_ns' in m]
+        # avx512 availability: infer from presence of any avx512 candidate
+        avx512_ok = any('__avx512' in m['id'] for m in measurements)
+        return measurements, avx512_ok
+    else:
+        data = json.loads(text)
+        return data['measurements'], data.get('avx512_available', True)
+
+
 def select(measurements_path: Path, output_path: Path,
            tie_threshold: float = 0.02, verbose: bool = True):
-    data = json.loads(measurements_path.read_text(encoding='utf-8'))
-    avx512_ok = data.get('avx512_available', True)
+    measurements, avx512_ok = _load_measurements(measurements_path)
 
     # Index measurements by (ios, me, isa)
     by_point_isa = defaultdict(list)
-    for m in data['measurements']:
+    for m in measurements:
         isa = id_to_isa(m['id'])
         by_point_isa[(m['ios'], m['me'], isa)].append(m)
 
@@ -118,13 +149,23 @@ def select(measurements_path: Path, output_path: Path,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--input', default='measurements.json')
+    ap.add_argument('--input', default=None,
+                    help='measurements file (auto-detects jsonl vs json; '
+                         'defaults to measurements.jsonl if present, '
+                         'else measurements.json)')
     ap.add_argument('--output', default='selection.json')
     ap.add_argument('--tie-threshold', type=float, default=0.02,
                     help='fractional margin; within this is considered a tie '
                          '(default 0.02 = 2%%)')
     ap.add_argument('--quiet', action='store_true')
     args = ap.parse_args()
+
+    # Auto-detect input format: prefer .jsonl (R=32 incremental) if present
+    if args.input is None:
+        if Path('measurements.jsonl').exists():
+            args.input = 'measurements.jsonl'
+        else:
+            args.input = 'measurements.json'
     select(Path(args.input), Path(args.output),
            tie_threshold=args.tie_threshold,
            verbose=not args.quiet)

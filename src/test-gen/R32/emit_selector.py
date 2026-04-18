@@ -244,12 +244,25 @@ def emit_selector_h(selection_path: Path, out_dir: Path,
 def emit_report(selection_path: Path, measurements_path: Path,
                 out_path: Path, verbose: bool = True) -> None:
     selection = json.loads(selection_path.read_text(encoding='utf-8'))
-    measurements = json.loads(measurements_path.read_text(encoding='utf-8'))
 
-    # Index measurements for quick lookup
+    # Load measurements (JSONL or JSON format)
+    mtxt = measurements_path.read_text(encoding='utf-8')
     meas_idx = {}
-    for m in measurements['measurements']:
-        meas_idx[(m['id'], m['ios'], m['me'])] = m
+    if measurements_path.suffix == '.jsonl' or (
+            mtxt.lstrip().startswith('{') and '\n{' in mtxt.strip()):
+        # JSONL: one record per line
+        for line in mtxt.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            key = (r['id'], r['ios'], r['me'])
+            meas_idx.setdefault(key, {'id': r['id'], 'ios': r['ios'], 'me': r['me']})
+            meas_idx[key][f"{r['dir']}_ns"] = r['ns']
+    else:
+        measurements = json.loads(mtxt)
+        for m in measurements['measurements']:
+            meas_idx[(m['id'], m['ios'], m['me'])] = m
 
     # Win counts per candidate
     win_counts = defaultdict(int)
@@ -303,13 +316,21 @@ def emit_report(selection_path: Path, measurements_path: Path,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--selection', default='selection.json')
-    ap.add_argument('--measurements', default='measurements.json')
+    ap.add_argument('--measurements', default=None,
+                    help='measurements file (auto-detects jsonl vs json)')
     ap.add_argument('--out-dir', default='include',
                     help='output directory for codelet_select_r32.h + winner .h files')
     ap.add_argument('--report', default='codelet_select_r32_report.md')
     ap.add_argument('--quiet', action='store_true')
     args = ap.parse_args()
     verbose = not args.quiet
+
+    # Auto-detect measurements format
+    if args.measurements is None:
+        if Path('measurements.jsonl').exists():
+            args.measurements = 'measurements.jsonl'
+        else:
+            args.measurements = 'measurements.json'
 
     emit_selector_h(Path(args.selection), Path(args.out_dir), verbose=verbose)
     emit_report(Path(args.selection), Path(args.measurements),
