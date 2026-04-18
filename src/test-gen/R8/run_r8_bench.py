@@ -36,10 +36,17 @@ def phase_generate():
     isas_needed = sorted({c.isa for c in cands})
     print(f"[generate] {len(cands)} candidates across {len(isas_needed)} ISAs")
     t0 = time.time()
+    # Windows Python defaults to cp1252 for stdout; force UTF-8 so the
+    # generator can print characters like √ (U+221A) in comment blocks
+    # without UnicodeEncodeError. The harness already captures stdout as
+    # bytes (via capture_output=True), so the encoding only matters for
+    # how Python inside the subprocess encodes before writing to the pipe.
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'utf-8'
     for isa in isas_needed:
         out_path = STAGING / f'radix8_all_{isa}.h'
         r = subprocess.run([sys.executable, str(GEN), isa],
-                           capture_output=True, timeout=60)
+                           capture_output=True, timeout=60, env=env)
         if r.returncode != 0:
             err = r.stderr.decode('utf-8', 'replace')
             print(f"  FAIL generate {isa}:")
