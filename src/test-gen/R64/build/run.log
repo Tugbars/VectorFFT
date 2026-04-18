@@ -1,0 +1,7 @@
+harness: 10 candidates, 18 sweeps, 2 dirs; 0 done (will skip)
+[1/10] ct_t1_dit__avx2
+[2/10] ct_t1_dif__avx2
+[3/10] ct_t1_dit_log3__avx2
+[4/10] ct_t1_dit_prefetch__avx2
+[5/10] ct_t1s_dit__avx2
+done: measured=180, skipped=0
