@@ -3,7 +3,7 @@
  * Do NOT edit. Regenerate via bench/emit_selector.py.
  *
  * This file is machine-specific. It was generated on:
- *   2026-04-18T02:38:13
+ *   2026-04-18T03:39:13
  * with tie_threshold=0.020.
  *
  * Usage (in planner / registry setup):
@@ -32,28 +32,15 @@ typedef void (*codelet_r32_t1_fn)(
     const double *W_re, const double *W_im,
     size_t ios, size_t me);
 
-#include "ct_t1_buf_dit__avx2__tile128__draintemporal__tpf32r1.h"
-#include "ct_t1_buf_dit__avx2__tile128__draintemporal__tpf32r2.h"
-#include "ct_t1_buf_dit__avx2__tile128__draintemporal__tpf8r1.h"
-#include "ct_t1_buf_dit__avx2__tile256__draintemporal.h"
-#include "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf16r2.h"
-#include "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf8r2.h"
-#include "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf16r2.h"
-#include "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf32r1.h"
+#include "ct_t1_buf_dit__avx2__tile128__draintemporal.h"
+#include "ct_t1_buf_dit__avx2__tile128__draintemporal__prefw__tpf4r1.h"
+#include "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf32r1.h"
+#include "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf32r2.h"
+#include "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf4r1.h"
+#include "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf8r1.h"
+#include "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf32r2.h"
 #include "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf8r1.h"
-#include "ct_t1_buf_dit__avx2__tile32__draintemporal__prefw__tpf4r1.h"
-#include "ct_t1_buf_dit__avx2__tile32__draintemporal__tpf16r2.h"
-#include "ct_t1_buf_dit__avx2__tile32__draintemporal__tpf32r1.h"
-#include "ct_t1_buf_dit__avx2__tile64__draintemporal__prefw__tpf4r1.h"
-#include "ct_t1_buf_dit__avx2__tile64__draintemporal__tpf32r2.h"
-#include "ct_t1_dit__avx2__tpf8r2.h"
-#include "ct_t1_dit_log3__avx2__tpf16r1.h"
-#include "ct_t1_dit_log3__avx2__tpf16r2.h"
-#include "ct_t1_dit_log3__avx2__tpf32r1.h"
-#include "ct_t1_dit_log3__avx2__tpf32r2.h"
-#include "ct_t1_dit_log3__avx2__tpf4r1.h"
-#include "ct_t1_dit_log3__avx2__tpf8r1.h"
-#include "ct_t1_dit_log3__avx2__tpf8r2.h"
+#include "ct_t1s_dit__avx2.h"
 
 
 /* Decision table entry */
@@ -64,46 +51,46 @@ typedef struct {
 } codelet_select_r32_entry_t;
 
 static const codelet_select_r32_entry_t table_avx2_fwd[] = {
-    {64, 64, radix32_t1_buf_dit_tile128_temporal_tpf32r1_fwd_avx2},
-    {72, 64, radix32_t1_buf_dit_tile256_temporal_fwd_avx2},
-    {128, 64, radix32_t1_buf_dit_tile256_temporal_prefw_tpf8r2_fwd_avx2},
-    {128, 128, radix32_t1_buf_dit_tile256_temporal_tpf16r2_fwd_avx2},
-    {136, 128, radix32_t1_buf_dit_tile256_temporal_prefw_tpf16r2_fwd_avx2},
-    {192, 128, radix32_t1_buf_dit_tile256_temporal_tpf8r1_fwd_avx2},
-    {256, 256, radix32_t1_buf_dit_tile64_temporal_prefw_tpf4r1_fwd_avx2},
-    {264, 256, radix32_t1_dit_log3_tpf32r1_fwd_avx2},
-    {320, 256, radix32_t1_dit_tpf8r2_fwd_avx2},
-    {512, 512, radix32_t1_buf_dit_tile64_temporal_prefw_tpf4r1_fwd_avx2},
-    {520, 512, radix32_t1_dit_log3_tpf32r1_fwd_avx2},
-    {576, 512, radix32_t1_dit_log3_tpf16r2_fwd_avx2},
-    {1024, 1024, radix32_t1_buf_dit_tile32_temporal_tpf32r1_fwd_avx2},
-    {1032, 1024, radix32_t1_dit_log3_tpf32r2_fwd_avx2},
-    {1088, 1024, radix32_t1_dit_log3_tpf32r1_fwd_avx2},
-    {2048, 2048, radix32_t1_buf_dit_tile32_temporal_prefw_tpf4r1_fwd_avx2},
-    {2056, 2048, radix32_t1_dit_log3_tpf16r2_fwd_avx2},
-    {2112, 2048, radix32_t1_dit_log3_tpf16r2_fwd_avx2},
+    {64, 64, radix32_t1_buf_dit_tile256_temporal_prefw_tpf32r2_fwd_avx2},
+    {72, 64, radix32_t1_buf_dit_tile128_temporal_fwd_avx2},
+    {128, 64, radix32_t1_buf_dit_tile256_temporal_prefw_tpf4r1_fwd_avx2},
+    {128, 128, radix32_t1_buf_dit_tile256_temporal_prefw_tpf8r1_fwd_avx2},
+    {136, 128, radix32_t1_buf_dit_tile256_temporal_tpf8r1_fwd_avx2},
+    {192, 128, radix32_t1_buf_dit_tile256_temporal_tpf32r2_fwd_avx2},
+    {256, 256, radix32_t1s_dit_fwd_avx2},
+    {264, 256, radix32_t1s_dit_fwd_avx2},
+    {320, 256, radix32_t1s_dit_fwd_avx2},
+    {512, 512, radix32_t1s_dit_fwd_avx2},
+    {520, 512, radix32_t1s_dit_fwd_avx2},
+    {576, 512, radix32_t1s_dit_fwd_avx2},
+    {1024, 1024, radix32_t1s_dit_fwd_avx2},
+    {1032, 1024, radix32_t1s_dit_fwd_avx2},
+    {1088, 1024, radix32_t1s_dit_fwd_avx2},
+    {2048, 2048, radix32_t1s_dit_fwd_avx2},
+    {2056, 2048, radix32_t1s_dit_fwd_avx2},
+    {2112, 2048, radix32_t1s_dit_fwd_avx2},
 };
 static const int table_avx2_fwd_count = 18;
 
 static const codelet_select_r32_entry_t table_avx2_bwd[] = {
-    {64, 64, radix32_t1_buf_dit_tile128_temporal_tpf32r2_bwd_avx2},
-    {72, 64, radix32_t1_buf_dit_tile128_temporal_tpf8r1_bwd_avx2},
-    {128, 64, radix32_t1_dit_log3_tpf16r1_bwd_avx2},
-    {128, 128, radix32_t1_buf_dit_tile256_temporal_tpf32r1_bwd_avx2},
-    {136, 128, radix32_t1_buf_dit_tile256_temporal_bwd_avx2},
-    {192, 128, radix32_t1_buf_dit_tile256_temporal_bwd_avx2},
-    {256, 256, radix32_t1_buf_dit_tile64_temporal_tpf32r2_bwd_avx2},
-    {264, 256, radix32_t1_dit_log3_tpf4r1_bwd_avx2},
-    {320, 256, radix32_t1_dit_log3_tpf4r1_bwd_avx2},
-    {512, 512, radix32_t1_buf_dit_tile32_temporal_tpf32r1_bwd_avx2},
-    {520, 512, radix32_t1_dit_log3_tpf8r1_bwd_avx2},
-    {576, 512, radix32_t1_dit_log3_tpf4r1_bwd_avx2},
-    {1024, 1024, radix32_t1_buf_dit_tile32_temporal_tpf16r2_bwd_avx2},
-    {1032, 1024, radix32_t1_dit_log3_tpf16r2_bwd_avx2},
-    {1088, 1024, radix32_t1_dit_log3_tpf8r2_bwd_avx2},
-    {2048, 2048, radix32_t1_buf_dit_tile32_temporal_prefw_tpf4r1_bwd_avx2},
-    {2056, 2048, radix32_t1_dit_log3_tpf32r1_bwd_avx2},
-    {2112, 2048, radix32_t1_dit_log3_tpf32r2_bwd_avx2},
+    {64, 64, radix32_t1_buf_dit_tile128_temporal_bwd_avx2},
+    {72, 64, radix32_t1_buf_dit_tile128_temporal_bwd_avx2},
+    {128, 64, radix32_t1_buf_dit_tile128_temporal_prefw_tpf4r1_bwd_avx2},
+    {128, 128, radix32_t1_buf_dit_tile256_temporal_tpf32r2_bwd_avx2},
+    {136, 128, radix32_t1_buf_dit_tile256_temporal_tpf8r1_bwd_avx2},
+    {192, 128, radix32_t1_buf_dit_tile256_temporal_prefw_tpf32r1_bwd_avx2},
+    {256, 256, radix32_t1s_dit_bwd_avx2},
+    {264, 256, radix32_t1s_dit_bwd_avx2},
+    {320, 256, radix32_t1s_dit_bwd_avx2},
+    {512, 512, radix32_t1s_dit_bwd_avx2},
+    {520, 512, radix32_t1s_dit_bwd_avx2},
+    {576, 512, radix32_t1s_dit_bwd_avx2},
+    {1024, 1024, radix32_t1s_dit_bwd_avx2},
+    {1032, 1024, radix32_t1s_dit_bwd_avx2},
+    {1088, 1024, radix32_t1s_dit_bwd_avx2},
+    {2048, 2048, radix32_t1s_dit_bwd_avx2},
+    {2056, 2048, radix32_t1s_dit_bwd_avx2},
+    {2112, 2048, radix32_t1s_dit_bwd_avx2},
 };
 static const int table_avx2_bwd_count = 18;
 
