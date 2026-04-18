@@ -314,7 +314,9 @@ class Emitter:
 
     def _in_addr(self, n, k_expr="k"):
         if self.addr_mode in ('n1', 'n1_ovs'): return f"{n}*is+{k_expr}"
-        if self.addr_mode in ('t1', 't1_buf'):
+        # t1s uses the same in-place data layout as t1 — only the TWIDDLE
+        # delivery differs (scalar-broadcast vs vector-load).
+        if self.addr_mode in ('t1', 't1_buf', 't1s'):
             if self.isa.name == 'scalar': return f"m*ms+{n}*ios"
             return f"m+{n}*ios"
         if self.addr_mode == 't1_oop': return f"m+{n}*is"
@@ -323,7 +325,7 @@ class Emitter:
     def _out_addr(self, m, k_expr="k"):
         if self.addr_mode == 'n1': return f"{m}*os+{k_expr}"
         if self.addr_mode == 'n1_ovs': return f"{m}*{self.isa.k_step}"
-        if self.addr_mode == 't1':
+        if self.addr_mode in ('t1', 't1s'):
             if self.isa.name == 'scalar': return f"m*ms+{m}*ios"
             return f"m+{m}*ios"
         if self.addr_mode == 't1_buf':
@@ -334,27 +336,33 @@ class Emitter:
         return f"{m}*K+{k_expr}"
 
     def _in_buf(self):
-        return "rio_re" if self.addr_mode in ('t1', 't1_buf') else "in_re"
+        return "rio_re" if self.addr_mode in ('t1', 't1_buf', 't1s') else "in_re"
     def _in_buf_im(self):
-        return "rio_im" if self.addr_mode in ('t1', 't1_buf') else "in_im"
+        return "rio_im" if self.addr_mode in ('t1', 't1_buf', 't1s') else "in_im"
     def _out_buf(self):
-        if self.addr_mode == 't1': return "rio_re"
+        if self.addr_mode in ('t1', 't1s'): return "rio_re"
         if self.addr_mode == 't1_buf': return "outbuf_re"
         if self.addr_mode == 'n1_ovs': return "tbuf_re"
         return "out_re"
     def _out_buf_im(self):
-        if self.addr_mode == 't1': return "rio_im"
+        if self.addr_mode in ('t1', 't1s'): return "rio_im"
         if self.addr_mode == 't1_buf': return "outbuf_im"
         if self.addr_mode == 'n1_ovs': return "tbuf_im"
         return "out_im"
 
     def _tw_addr(self, tw_idx, k_expr="k"):
+        # t1s: W_re/W_im are (R-1) scalars (one per twiddle row), not arrays
+        # indexed by m. Broadcast from W_re[tw_idx] happens in emit_ext_tw_scalar.
+        if self.addr_mode == 't1s': return f"{tw_idx}"
         if self.addr_mode in ('t1', 't1_buf', 't1_oop'): return f"{tw_idx}*me+m"
         return f"{tw_idx}*K+{k_expr}"
     def _tw_buf(self):
-        return "W_re" if self.addr_mode in ('t1', 't1_buf', 't1_oop') else "tw_re"
+        # t1s uses the same W_re/W_im names as t1, but reads scalar not vector
+        if self.addr_mode in ('t1', 't1_buf', 't1_oop', 't1s'): return "W_re"
+        return "tw_re"
     def _tw_buf_im(self):
-        return "W_im" if self.addr_mode in ('t1', 't1_buf', 't1_oop') else "tw_im"
+        if self.addr_mode in ('t1', 't1_buf', 't1_oop', 't1s'): return "W_im"
+        return "tw_im"
 
     def emit_load(self, v, n, k_expr="k"):
         self.n_load += 2  # re + im
@@ -570,9 +578,20 @@ class Emitter:
     # ── External twiddle load + apply (DIT: pre-butterfly) ──
 
     def emit_ext_twiddle_dit(self, n1, n, d, k_expr="k"):
-        """Load external twiddle for element n and apply to x{n1} (DIT: pre-multiply)."""
+        """Load external twiddle for element n and apply to x{n1} (DIT: pre-multiply).
+
+        In t1s addressing mode, the twiddle is a SCALAR (W_re[n-1]) that gets
+        broadcast to the vector width, rather than a vector load from
+        W_re[(n-1)*me + m]. The t1s_hoisted mechanism lets frequently-used
+        twiddles be pre-broadcast once before the m-loop (amortizing the
+        broadcast across the loop), while the rest are broadcast inline.
+        """
         if n == 0:
             return  # first element has no twiddle
+        # Dispatch to scalar-broadcast version if in t1s mode
+        if self.addr_mode == 't1s':
+            self.emit_ext_tw_scalar(f'x{n1}', n-1, d)
+            return
         fwd = (d == 'fwd')
         T = self.isa.reg_type
         tb, tbi = self._tw_buf(), self._tw_buf_im()
@@ -597,6 +616,106 @@ class Emitter:
             else:
                 self.o(f"  x{n1}_re = {self.fma(f'x{n1}_re','wr',self.mul(f'x{n1}_im','wi'))};")
                 self.o(f"  x{n1}_im = {self.fms(f'x{n1}_im','wr',self.mul('tr','wi'))}; }}")
+
+    # ── Scalar-broadcast twiddle (t1s variant) ──
+
+    def emit_hoist_all_tw_scalars(self, R):
+        """Emit broadcast of twiddle scalars BEFORE the m-loop.
+
+        Register-budget-aware: only hoists what fits in SIMD registers without
+        displacing data/temp registers needed inside the butterfly. Remaining
+        twiddles are broadcast inline inside the loop.
+
+        R=32 butterfly has R-1=31 twiddle rows. Register budget is tighter
+        than R=16 because more x{n} vars are live inside the butterfly.
+
+        Budgets (conservative, leave headroom for spills):
+          AVX2  (16 YMM): hoist 4 twiddles → 8 YMM, leaves 8 for data+temps
+          AVX-512 (32 ZMM): hoist 10 twiddles → 20 ZMM, leaves 12 for data+temps
+        """
+        T = self.isa.reg_type
+        n_tw = R - 1
+        if self.isa.name == 'scalar':
+            max_hoist = n_tw  # scalar has unlimited 'registers'
+        elif self.isa.name == 'avx2':
+            max_hoist = 4     # 8 YMM for hoisted twiddles, 8 for butterfly state
+        else:  # avx512
+            max_hoist = 10    # 20 ZMM for hoisted twiddles, 12 for butterfly state
+        n_hoist = min(n_tw, max_hoist)
+        self.tw_hoisted_set = set(range(n_hoist))
+        for i in range(n_hoist):
+            if self.isa.name == 'scalar':
+                self.o(f"const double tw{i}_re = W_re[{i}], tw{i}_im = W_im[{i}];")
+            elif self.isa.name == 'avx2':
+                self.o(f"const {T} tw{i}_re = _mm256_broadcast_sd(&W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm256_broadcast_sd(&W_im[{i}]);")
+            else:  # avx512
+                self.o(f"const {T} tw{i}_re = _mm512_set1_pd(W_re[{i}]);")
+                self.o(f"const {T} tw{i}_im = _mm512_set1_pd(W_im[{i}]);")
+
+    def emit_apply_hoisted_tw(self, v, tw_idx, d):
+        """Apply a pre-hoisted twiddle tw{idx} to variable v (no broadcast)."""
+        fwd = (d == 'fwd')
+        T = self.isa.reg_type
+        wr = f"tw{tw_idx}_re"
+        wi = f"tw{tw_idx}_im"
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*{wr} - {v}_im*{wi};")
+                self.o(f"  {v}_im = tr*{wi} + {v}_im*{wr}; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*{wr} + {v}_im*{wi};")
+                self.o(f"  {v}_im = {v}_im*{wr} - tr*{wi}; }}")
+        else:
+            self.o(f"{{ const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fma('tr',wi,self.mul(f'{v}_im',wr))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re',wr,self.mul(f'{v}_im',wi))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im',wr,self.mul('tr',wi))}; }}")
+
+    def emit_ext_tw_scalar(self, v, tw_idx, d):
+        """Emit twiddle multiply using scalar broadcast (t1s variant).
+
+        W_re/W_im are (R-1) scalars, NOT (R-1)*me arrays. A scalar is
+        broadcast to SIMD width at each use (unless pre-hoisted).
+        """
+        if getattr(self, 'tw_hoisted', False) and tw_idx in getattr(self, 'tw_hoisted_set', set()):
+            self.emit_apply_hoisted_tw(v, tw_idx, d)
+            return
+        fwd = (d == 'fwd')
+        T = self.isa.reg_type
+        self.n_load += 2  # scalar re + scalar im (but broadcast, not vector load)
+        if self.isa.name == 'scalar':
+            self.o(f"{{ double wr = W_re[{tw_idx}], wi = W_im[{tw_idx}], tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {v}_re*wr - {v}_im*wi;")
+                self.o(f"  {v}_im = tr*wi + {v}_im*wr; }}")
+            else:
+                self.o(f"  {v}_re = {v}_re*wr + {v}_im*wi;")
+                self.o(f"  {v}_im = {v}_im*wr - tr*wi; }}")
+        elif self.isa.name == 'avx2':
+            self.o(f"{{ const {T} wr = _mm256_broadcast_sd(&W_re[{tw_idx}]);")
+            self.o(f"  const {T} wi = _mm256_broadcast_sd(&W_im[{tw_idx}]);")
+            self.o(f"  const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fma('tr','wi',self.mul(f'{v}_im','wr'))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
+        else:  # avx512
+            self.o(f"{{ const {T} wr = _mm512_set1_pd(W_re[{tw_idx}]);")
+            self.o(f"  const {T} wi = _mm512_set1_pd(W_im[{tw_idx}]);")
+            self.o(f"  const {T} tr = {v}_re;")
+            if fwd:
+                self.o(f"  {v}_re = {self.fms(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fma('tr','wi',self.mul(f'{v}_im','wr'))}; }}")
+            else:
+                self.o(f"  {v}_re = {self.fma(f'{v}_re','wr',self.mul(f'{v}_im','wi'))};")
+                self.o(f"  {v}_im = {self.fms(f'{v}_im','wr',self.mul('tr','wi'))}; }}")
 
     # ── Complex multiply (separate dst — needed by ladder) ──
 
@@ -2123,6 +2242,7 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
     is_t1_oop_dit = ct_variant == 'ct_t1_oop_dit'
     is_t1_buf_dit = ct_variant == 'ct_t1_buf_dit'
     is_t1_ladder_dit = ct_variant == 'ct_t1_ladder_dit'
+    is_t1s_dit = ct_variant == 'ct_t1s_dit'
     nfuse = isa.nfuse_notw if (is_n1 or is_n1_scaled) else isa.nfuse_tw
     T = isa.reg_type
     em = Emitter(isa)
@@ -2134,6 +2254,13 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
     if is_t1_ladder_dit and isa.name != 'avx512':
         raise ValueError("ct_t1_ladder_dit currently supported on AVX-512 only "
                          "(ladder kernel design assumes 32-register budget)")
+
+    # ct_t1s_dit (scalar-broadcast twiddle) disallows twiddle_prefetch — there
+    # are only (R-1) scalar twiddles total, sized ~500 bytes, always L1-resident.
+    # SW prefetch would be pure overhead.
+    if is_t1s_dit and twiddle_prefetch_distance > 0:
+        raise ValueError("ct_t1s_dit doesn't support twiddle_prefetch — "
+                         "scalar twiddle table is always L1-resident")
 
     # Default tile size for buffered variant
     if is_t1_buf_dit:
@@ -2148,7 +2275,8 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
 
     em.addr_mode = 'n1' if (is_n1 or is_n1_scaled) else \
                    ('t1_oop' if is_t1_oop_dit else \
-                   ('t1_buf' if is_t1_buf_dit else 't1'))
+                   ('t1_buf' if is_t1_buf_dit else \
+                   ('t1s' if is_t1s_dit else 't1')))
 
     # Twiddle prefetch suffix applied to base names when active
     tpf_suffix = f"_tpf{twiddle_prefetch_distance}r{twiddle_prefetch_rows}" \
@@ -2169,6 +2297,9 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
     elif is_t1_dit_log3:
         func_base = f"radix32_t1_dit_log3{tpf_suffix}"
         vname = "t1 DIT log3 (in-place, derived twiddles)"
+    elif is_t1s_dit:
+        func_base = "radix32_t1s_dit"
+        vname = "t1s DIT (in-place, scalar-broadcast twiddles)"
     elif is_t1_buf_dit:
         prefw_suffix = "_prefw" if drain_prefetch else ""
         func_base = f"radix32_t1_buf_dit_tile{tile}_{drain_mode}{prefw_suffix}{tpf_suffix}"
@@ -2219,9 +2350,13 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
 
     for d in ['fwd', 'bwd']:
         em.reset_counters()
+        # Reset hoist state — each direction's codelet gets its own hoist
+        em.tw_hoisted = False
+        em.tw_hoisted_set = set()
         em.addr_mode = 'n1' if (is_n1 or is_n1_scaled) else \
                        ('t1_oop' if is_t1_oop_dit else \
-                       ('t1_buf' if is_t1_buf_dit else 't1'))
+                       ('t1_buf' if is_t1_buf_dit else \
+                       ('t1s' if is_t1s_dit else 't1')))
         em.store_scale = is_n1_scaled
 
         if isa.target_attr:
@@ -2316,6 +2451,17 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
         if is_n1_scaled and isa.name != 'scalar':
             set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
             em.o(f"const {T} vscale = {set1}(scale);")
+            em.b()
+
+        # Hoist twiddle broadcasts before the m-loop (t1s only).
+        # A register-budgeted subset of (R-1)=31 twiddles gets broadcast here
+        # once; the rest are broadcast inline inside each butterfly (see
+        # emit_ext_tw_scalar). The hoisted broadcasts are the amortization win:
+        # one broadcast pays for me/k_step butterfly invocations.
+        if is_t1s_dit:
+            em.c(f"Hoist a register-budgeted subset of twiddle broadcasts")
+            em.tw_hoisted = True
+            em.emit_hoist_all_tw_scalars(N)
             em.b()
 
         # Loop
@@ -2414,7 +2560,7 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
                                  tw_stride='me')
             em.ind -= 1
             em.o("}")
-        else:  # t1, t1_oop, t1_dif, t1_dit_log3
+        else:  # t1, t1_oop, t1_dif, t1_dit_log3, t1s
             if isa.name == 'scalar' and not is_t1_oop_dit:
                 em.o(f"for (size_t m = mb; m < me; m++) {{")
             else:
@@ -2425,6 +2571,8 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
             elif is_t1_dit_log3:
                 emit_dit_tw_log3_kernel(em, d, nfuse, itw_set)
             else:
+                # t1, t1_oop, t1s — same kernel, different addr_mode dispatch
+                # for twiddle delivery (vector load vs scalar broadcast).
                 if is_t1_oop_dit:
                     em.addr_mode = 't1_oop'
                 emit_dit_tw_flat_kernel(em, d, nfuse, itw_set)
@@ -2522,7 +2670,7 @@ def main():
                         choices=['dit_tw', 'dif_tw', 'notw', 'ladder',
                                  'ct_n1', 'ct_n1_scaled', 'ct_t1_dit', 'ct_t1_dit_log3',
                                  'ct_t1_dif', 'ct_t1_oop_dit', 'ct_t1_buf_dit',
-                                 'ct_t1_ladder_dit', 'all'])
+                                 'ct_t1_ladder_dit', 'ct_t1s_dit', 'all'])
     parser.add_argument('--tile', type=int, default=None,
                         help='Tile size for ct_t1_buf_dit (default: 64/AVX2, 32/AVX-512)')
     parser.add_argument('--drain', default='temporal',
@@ -2631,6 +2779,16 @@ def main():
             lines = emit_ct_file(isa, itw_set, 'ct_t1_dit',
                                  twiddle_prefetch_distance=args.twiddle_prefetch,
                                  twiddle_prefetch_rows=args.twiddle_prefetch_rows)
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print("\n".join(lines))
+
+        if args.variant in ('ct_t1s_dit',):
+            # t1s doesn't accept twiddle_prefetch (validated inside emit_ct_file);
+            # scalar twiddle table is always L1-resident.
+            lines = emit_ct_file(isa, itw_set, 'ct_t1s_dit',
+                                 twiddle_prefetch_distance=0,
+                                 twiddle_prefetch_rows=1)
             if isa.name == 'scalar':
                 add_sqrt2_scalar(lines)
             print("\n".join(lines))

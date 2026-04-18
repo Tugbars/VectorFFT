@@ -25,6 +25,7 @@ import candidates
 # Simpler-first preference. Lower index = preferred when within tie threshold.
 FAMILY_PREFERENCE = [
     'ct_t1_dit',
+    'ct_t1s_dit',
     'ct_t1_dit_log3',
     'ct_t1_ladder_dit',
     'ct_t1_buf_dit',
