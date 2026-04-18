@@ -16,20 +16,6 @@
       "winner": "ct_t1_dif__avx2"
     },
     {
-      "ios": 64,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 64,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
       "ios": 72,
       "me": 64,
       "isa": "avx2",
@@ -44,46 +30,18 @@
       "winner": "ct_t1_dif__avx2"
     },
     {
-      "ios": 72,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 72,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
       "ios": 128,
       "me": 64,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dif__avx2"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 128,
       "me": 64,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 128,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 128,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 128,
@@ -98,20 +56,6 @@
       "isa": "avx2",
       "direction": "bwd",
       "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 128,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 128,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
     },
     {
       "ios": 136,
@@ -128,20 +72,6 @@
       "winner": "ct_t1_dif__avx2"
     },
     {
-      "ios": 136,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 136,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
       "ios": 192,
       "me": 128,
       "isa": "avx2",
@@ -153,84 +83,42 @@
       "me": 128,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 192,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 192,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 256,
       "me": 256,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dif__avx2"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 256,
       "me": 256,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 256,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 256,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 264,
       "me": 256,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dif__avx2"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 264,
       "me": 256,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 264,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 264,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 320,
       "me": 256,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dif__avx2"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 320,
@@ -240,53 +128,25 @@
       "winner": "ct_t1_dif__avx2"
     },
     {
-      "ios": 320,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 320,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
       "ios": 512,
       "me": 512,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dif__avx2"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 512,
       "me": 512,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 512,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 512,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 520,
       "me": 512,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dif__avx2"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 520,
@@ -296,25 +156,11 @@
       "winner": "ct_t1_dif__avx2"
     },
     {
-      "ios": 520,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 520,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
       "ios": 576,
       "me": 512,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dif__avx2"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 576,
@@ -322,20 +168,6 @@
       "isa": "avx2",
       "direction": "bwd",
       "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 576,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 576,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
     },
     {
       "ios": 1024,
@@ -349,49 +181,21 @@
       "me": 1024,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 1024,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 1024,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 1032,
-      "me": 1024,
-      "isa": "avx2",
-      "direction": "fwd",
       "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 1032,
       "me": 1024,
       "isa": "avx2",
-      "direction": "bwd",
+      "direction": "fwd",
       "winner": "ct_t1_dif__avx2"
     },
     {
       "ios": 1032,
       "me": 1024,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 1032,
-      "me": 1024,
-      "isa": "avx512",
+      "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
+      "winner": "ct_t1_dif__avx2"
     },
     {
       "ios": 1088,
@@ -406,20 +210,6 @@
       "isa": "avx2",
       "direction": "bwd",
       "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 1088,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 1088,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
     },
     {
       "ios": 2048,
@@ -433,21 +223,7 @@
       "me": 2048,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 2048,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 2048,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512"
+      "winner": "ct_t1_dit__avx2"
     },
     {
       "ios": 2056,
@@ -464,20 +240,6 @@
       "winner": "ct_t1_dif__avx2"
     },
     {
-      "ios": 2056,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 2056,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
       "ios": 2112,
       "me": 2048,
       "isa": "avx2",
@@ -490,30 +252,13 @@
       "isa": "avx2",
       "direction": "bwd",
       "winner": "ct_t1_dif__avx2"
-    },
-    {
-      "ios": 2112,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dif__avx512"
-    },
-    {
-      "ios": 2112,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dif__avx512"
     }
   ],
   "winners": [
     "ct_t1_dif__avx2",
-    "ct_t1_dif__avx512",
-    "ct_t1_dit__avx2",
-    "ct_t1_dit__avx512"
+    "ct_t1_dit__avx2"
   ],
   "isas_measured": [
-    "avx2",
-    "avx512"
+    "avx2"
   ]
 }
