@@ -6,455 +6,231 @@
       "me": 64,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
+      "winner": "ct_t1_buf_dit__avx2__tile128__draintemporal__tpf32r1"
     },
     {
       "ios": 64,
-      "me": 64,
-      "isa": "avx2",
-      "direction": "bwd",
-      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf32r2"
-    },
-    {
-      "ios": 64,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf4r1"
-    },
-    {
-      "ios": 64,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_buf_dit__avx512__tile128__draintemporal__prefw__tpf4r1"
-    },
-    {
-      "ios": 72,
-      "me": 64,
-      "isa": "avx2",
-      "direction": "fwd",
-      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf16r2"
-    },
-    {
-      "ios": 72,
-      "me": 64,
-      "isa": "avx2",
-      "direction": "bwd",
-      "winner": "ct_t1_buf_dit__avx2__tile128__draintemporal__prefw__tpf8r2"
-    },
-    {
-      "ios": 72,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_buf_dit__avx512__tile128__draintemporal__prefw__tpf8r2"
-    },
-    {
-      "ios": 72,
-      "me": 64,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf4r1"
-    },
-    {
-      "ios": 128,
-      "me": 64,
-      "isa": "avx2",
-      "direction": "fwd",
-      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw"
-    },
-    {
-      "ios": 128,
       "me": 64,
       "isa": "avx2",
       "direction": "bwd",
       "winner": "ct_t1_buf_dit__avx2__tile128__draintemporal__tpf32r2"
     },
     {
-      "ios": 128,
+      "ios": 72,
       "me": 64,
-      "isa": "avx512",
+      "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal"
+    },
+    {
+      "ios": 72,
+      "me": 64,
+      "isa": "avx2",
+      "direction": "bwd",
+      "winner": "ct_t1_buf_dit__avx2__tile128__draintemporal__tpf8r1"
     },
     {
       "ios": 128,
       "me": 64,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512__tpf8r2"
+      "isa": "avx2",
+      "direction": "fwd",
+      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf8r2"
     },
     {
       "ios": 128,
+      "me": 64,
+      "isa": "avx2",
+      "direction": "bwd",
+      "winner": "ct_t1_dit_log3__avx2__tpf16r1"
+    },
+    {
+      "ios": 128,
+      "me": 128,
+      "isa": "avx2",
+      "direction": "fwd",
+      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf16r2"
+    },
+    {
+      "ios": 128,
+      "me": 128,
+      "isa": "avx2",
+      "direction": "bwd",
+      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf32r1"
+    },
+    {
+      "ios": 136,
       "me": 128,
       "isa": "avx2",
       "direction": "fwd",
       "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf16r2"
     },
     {
-      "ios": 128,
-      "me": 128,
-      "isa": "avx2",
-      "direction": "bwd",
-      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf4r1"
-    },
-    {
-      "ios": 128,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512__tpf4r1"
-    },
-    {
-      "ios": 128,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf4r1"
-    },
-    {
-      "ios": 136,
-      "me": 128,
-      "isa": "avx2",
-      "direction": "fwd",
-      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf4r1"
-    },
-    {
       "ios": 136,
       "me": 128,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf4r1"
-    },
-    {
-      "ios": 136,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512__tpf4r1"
-    },
-    {
-      "ios": 136,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_buf_dit__avx512__tile256__draintemporal__tpf4r1"
+      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal"
     },
     {
       "ios": 192,
       "me": 128,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
+      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf8r1"
     },
     {
       "ios": 192,
       "me": 128,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
-    },
-    {
-      "ios": 192,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512__tpf32r1"
-    },
-    {
-      "ios": 192,
-      "me": 128,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512__tpf32r1"
+      "winner": "ct_t1_buf_dit__avx2__tile256__draintemporal"
     },
     {
       "ios": 256,
       "me": 256,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
+      "winner": "ct_t1_buf_dit__avx2__tile64__draintemporal__prefw__tpf4r1"
     },
     {
       "ios": 256,
       "me": 256,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
-    },
-    {
-      "ios": 256,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_ladder_dit__avx512"
-    },
-    {
-      "ios": 256,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_ladder_dit__avx512"
+      "winner": "ct_t1_buf_dit__avx2__tile64__draintemporal__tpf32r2"
     },
     {
       "ios": 264,
       "me": 256,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
+      "winner": "ct_t1_dit_log3__avx2__tpf32r1"
     },
     {
       "ios": 264,
       "me": 256,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
-    },
-    {
-      "ios": 264,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512__tpf32r1"
-    },
-    {
-      "ios": 264,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512__tpf32r1"
+      "winner": "ct_t1_dit_log3__avx2__tpf4r1"
     },
     {
       "ios": 320,
       "me": 256,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
+      "winner": "ct_t1_dit__avx2__tpf8r2"
     },
     {
       "ios": 320,
       "me": 256,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
-    },
-    {
-      "ios": 320,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 320,
-      "me": 256,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf32r1"
+      "winner": "ct_t1_dit_log3__avx2__tpf4r1"
     },
     {
       "ios": 512,
       "me": 512,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
+      "winner": "ct_t1_buf_dit__avx2__tile64__draintemporal__prefw__tpf4r1"
     },
     {
       "ios": 512,
       "me": 512,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit__avx2__tpf16r2"
-    },
-    {
-      "ios": 512,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf32r1"
-    },
-    {
-      "ios": 512,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf32r1"
+      "winner": "ct_t1_buf_dit__avx2__tile32__draintemporal__tpf32r1"
     },
     {
       "ios": 520,
       "me": 512,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit__avx2"
+      "winner": "ct_t1_dit_log3__avx2__tpf32r1"
     },
     {
       "ios": 520,
       "me": 512,
-      "isa": "avx2",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx2"
-    },
-    {
-      "ios": 520,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit__avx512"
-    },
-    {
-      "ios": 520,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 576,
-      "me": 512,
-      "isa": "avx2",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 576,
-      "me": 512,
-      "isa": "avx2",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 576,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf16r2"
-    },
-    {
-      "ios": 576,
-      "me": 512,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit__avx512__tpf32r1"
-    },
-    {
-      "ios": 1024,
-      "me": 1024,
-      "isa": "avx2",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2__tpf8r1"
-    },
-    {
-      "ios": 1024,
-      "me": 1024,
       "isa": "avx2",
       "direction": "bwd",
       "winner": "ct_t1_dit_log3__avx2__tpf8r1"
     },
     {
-      "ios": 1024,
-      "me": 1024,
-      "isa": "avx512",
+      "ios": 576,
+      "me": 512,
+      "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf16r2"
+      "winner": "ct_t1_dit_log3__avx2__tpf16r2"
+    },
+    {
+      "ios": 576,
+      "me": 512,
+      "isa": "avx2",
+      "direction": "bwd",
+      "winner": "ct_t1_dit_log3__avx2__tpf4r1"
     },
     {
       "ios": 1024,
       "me": 1024,
-      "isa": "avx512",
+      "isa": "avx2",
+      "direction": "fwd",
+      "winner": "ct_t1_buf_dit__avx2__tile32__draintemporal__tpf32r1"
+    },
+    {
+      "ios": 1024,
+      "me": 1024,
+      "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit__avx512"
+      "winner": "ct_t1_buf_dit__avx2__tile32__draintemporal__tpf16r2"
     },
     {
       "ios": 1032,
       "me": 1024,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2__tpf8r1"
+      "winner": "ct_t1_dit_log3__avx2__tpf32r2"
     },
     {
       "ios": 1032,
+      "me": 1024,
+      "isa": "avx2",
+      "direction": "bwd",
+      "winner": "ct_t1_dit_log3__avx2__tpf16r2"
+    },
+    {
+      "ios": 1088,
+      "me": 1024,
+      "isa": "avx2",
+      "direction": "fwd",
+      "winner": "ct_t1_dit_log3__avx2__tpf32r1"
+    },
+    {
+      "ios": 1088,
       "me": 1024,
       "isa": "avx2",
       "direction": "bwd",
       "winner": "ct_t1_dit_log3__avx2__tpf8r2"
     },
     {
-      "ios": 1032,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf8r1"
-    },
-    {
-      "ios": 1032,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 1088,
-      "me": 1024,
-      "isa": "avx2",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 1088,
-      "me": 1024,
-      "isa": "avx2",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2"
-    },
-    {
-      "ios": 1088,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf16r1"
-    },
-    {
-      "ios": 1088,
-      "me": 1024,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
       "ios": 2048,
       "me": 2048,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2"
+      "winner": "ct_t1_buf_dit__avx2__tile32__draintemporal__prefw__tpf4r1"
     },
     {
       "ios": 2048,
       "me": 2048,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2__tpf32r1"
-    },
-    {
-      "ios": 2048,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf8r1"
-    },
-    {
-      "ios": 2048,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
+      "winner": "ct_t1_buf_dit__avx2__tile32__draintemporal__prefw__tpf4r1"
     },
     {
       "ios": 2056,
       "me": 2048,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2__tpf16r1"
+      "winner": "ct_t1_dit_log3__avx2__tpf16r2"
     },
     {
       "ios": 2056,
@@ -464,80 +240,45 @@
       "winner": "ct_t1_dit_log3__avx2__tpf32r1"
     },
     {
-      "ios": 2056,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
-      "ios": 2056,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512"
-    },
-    {
       "ios": 2112,
       "me": 2048,
       "isa": "avx2",
       "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx2__tpf16r1"
+      "winner": "ct_t1_dit_log3__avx2__tpf16r2"
     },
     {
       "ios": 2112,
       "me": 2048,
       "isa": "avx2",
       "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx2__tpf32r1"
-    },
-    {
-      "ios": 2112,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "fwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf32r2"
-    },
-    {
-      "ios": 2112,
-      "me": 2048,
-      "isa": "avx512",
-      "direction": "bwd",
-      "winner": "ct_t1_dit_log3__avx512__tpf32r2"
+      "winner": "ct_t1_dit_log3__avx2__tpf32r2"
     }
   ],
   "winners": [
-    "ct_t1_buf_dit__avx2__tile128__draintemporal__prefw__tpf8r2",
+    "ct_t1_buf_dit__avx2__tile128__draintemporal__tpf32r1",
     "ct_t1_buf_dit__avx2__tile128__draintemporal__tpf32r2",
-    "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw",
+    "ct_t1_buf_dit__avx2__tile128__draintemporal__tpf8r1",
+    "ct_t1_buf_dit__avx2__tile256__draintemporal",
     "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf16r2",
-    "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf32r2",
-    "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf4r1",
-    "ct_t1_buf_dit__avx512__tile128__draintemporal__prefw__tpf4r1",
-    "ct_t1_buf_dit__avx512__tile128__draintemporal__prefw__tpf8r2",
-    "ct_t1_buf_dit__avx512__tile256__draintemporal__tpf4r1",
-    "ct_t1_dit__avx2",
-    "ct_t1_dit__avx2__tpf16r2",
-    "ct_t1_dit__avx512",
-    "ct_t1_dit__avx512__tpf32r1",
-    "ct_t1_dit__avx512__tpf4r1",
-    "ct_t1_dit__avx512__tpf8r2",
-    "ct_t1_dit_log3__avx2",
+    "ct_t1_buf_dit__avx2__tile256__draintemporal__prefw__tpf8r2",
+    "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf16r2",
+    "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf32r1",
+    "ct_t1_buf_dit__avx2__tile256__draintemporal__tpf8r1",
+    "ct_t1_buf_dit__avx2__tile32__draintemporal__prefw__tpf4r1",
+    "ct_t1_buf_dit__avx2__tile32__draintemporal__tpf16r2",
+    "ct_t1_buf_dit__avx2__tile32__draintemporal__tpf32r1",
+    "ct_t1_buf_dit__avx2__tile64__draintemporal__prefw__tpf4r1",
+    "ct_t1_buf_dit__avx2__tile64__draintemporal__tpf32r2",
+    "ct_t1_dit__avx2__tpf8r2",
     "ct_t1_dit_log3__avx2__tpf16r1",
+    "ct_t1_dit_log3__avx2__tpf16r2",
     "ct_t1_dit_log3__avx2__tpf32r1",
+    "ct_t1_dit_log3__avx2__tpf32r2",
+    "ct_t1_dit_log3__avx2__tpf4r1",
     "ct_t1_dit_log3__avx2__tpf8r1",
-    "ct_t1_dit_log3__avx2__tpf8r2",
-    "ct_t1_dit_log3__avx512",
-    "ct_t1_dit_log3__avx512__tpf16r1",
-    "ct_t1_dit_log3__avx512__tpf16r2",
-    "ct_t1_dit_log3__avx512__tpf32r1",
-    "ct_t1_dit_log3__avx512__tpf32r2",
-    "ct_t1_dit_log3__avx512__tpf4r1",
-    "ct_t1_dit_log3__avx512__tpf8r1",
-    "ct_t1_ladder_dit__avx512"
+    "ct_t1_dit_log3__avx2__tpf8r2"
   ],
   "isas_measured": [
-    "avx2",
-    "avx512"
+    "avx2"
   ]
 }
