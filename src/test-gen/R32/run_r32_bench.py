@@ -35,7 +35,11 @@ def phase_generate():
         r = subprocess.run([sys.executable, str(GEN)] + c.cli_args(),
                            capture_output=True, timeout=60)
         if r.returncode != 0:
-            print(f"  FAIL {c.id()}: {r.stderr.decode('utf-8','replace')[:200]}")
+            err = r.stderr.decode('utf-8','replace')
+            print(f"  FAIL {c.id()}:")
+            print(f"    {err[:2000]}")
+            if len(err) > 2000:
+                print(f"    [truncated; full {len(err)} chars]")
             sys.exit(1)
         (STAGING / c.header_name()).write_bytes(r.stdout)
         if i % 20 == 19 or i == len(cands)-1:
@@ -194,9 +198,51 @@ static double measure(t1_fn fn, size_t ios, size_t me) {
 
 
 def _wrapper_c(candidate):
-    """Single-codelet wrapper: #define static to force external linkage."""
-    return (f'#define static\n'
-            f'#include "{(STAGING / candidate.header_name()).resolve()}"\n')
+    """Single-codelet wrapper: copy the staged .h into a .c with the
+    two codelet function definitions promoted from static to external
+    linkage.
+
+    Why not '#define static'? That sledgehammer strips static from every
+    declaration in the header, including Intel intrinsic inline wrappers
+    (Intel's immintrin.h on Windows declares AMX intrinsics as 'static
+    inline' without always_inline — stripping static makes them emit as
+    real symbols in every TU, producing link-time collisions on dozens
+    of AMX intrinsic names).
+
+    Instead we read the header and do a targeted replacement: find the
+    two 'static __attribute__((target("..."))) void\\nradix32_..._fwd'
+    and '..._bwd' declarations and rewrite them without 'static'. Other
+    statics (intrinsic wrappers, W32_* twiddle constants) stay untouched.
+    """
+    header_path = STAGING / candidate.header_name()
+    src = header_path.read_text(encoding='utf-8', errors='replace')
+
+    fns = candidate.function_names()
+    # Remove 'static' from the codelet function definitions only.
+    # Pattern: 'static __attribute__((target("..."))) void\nradix32_..._fwd_avx2('
+    # Use str.replace since the generator's output is deterministic.
+    for direction in ('fwd', 'bwd'):
+        fn_name = fns[direction]
+        # The generator emits: static __attribute__((target("..."))) void\nradix32_...(
+        # We need to remove the leading 'static' keyword.
+        # Search for 'void\n{fn_name}' preceded by 'static ... '
+        needle = f'void\n{fn_name}('
+        if needle in src:
+            # Find 'static' before this and remove it.
+            # The 'static' appears at start of a line before the attribute/void.
+            idx = src.find(needle)
+            # Search backwards for 'static' keyword on the same or previous line
+            # (within ~200 chars of the function name)
+            search_start = max(0, idx - 200)
+            region = src[search_start:idx]
+            last_static = region.rfind('static ')
+            if last_static >= 0:
+                abs_idx = search_start + last_static
+                # Replace 'static ' with '' at that position
+                src = src[:abs_idx] + src[abs_idx + len('static '):]
+
+    # Write the patched source as a .c file
+    return src
 
 
 # ────────────────────────────────────────────────────
@@ -242,40 +288,81 @@ def _detect_toolchain():
 
 def _compile_cmd(src, out, isa, tc):
     """Build the compile command line for the given toolchain.
-    Produces a compile-to-object command (no linking)."""
+    Produces a compile-to-object command (no linking).
+
+    NOTE: ICX 2025.3 has an ICE (segfault in Machine Instruction Scheduler)
+    on our large 1700+ line generated codelets. We disable that pass
+    explicitly with -enable-misched=false; MI scheduler runs at every -O
+    level, so lowering -O alone doesn't help. With misched disabled, we
+    can stay at -O3 safely.
+
+    Codelets are already hand-vectorized with explicit intrinsics, so
+    losing the scheduler's reordering costs ~nothing. The compiler's
+    auto-vectorizer has nothing useful to do and only risks triggering
+    ICEs, so we also disable -fvectorize / -fslp-vectorize on ICX/Clang.
+    """
     if tc['msvc_style']:
-        # MSVC-style: /c for compile-only, /Fo for output
-        flags = ['/c', '/O2', '/fp:fast', '/wd4244', '/wd4267']
+        # MSVC-style (icx-cl, cl.exe): /c for compile-only, /Fo for output
+        flags = ['/c', '/O3', '/fp:fast', '/wd4244', '/wd4267']
         if isa == 'avx512':
             flags.append('/arch:AVX512')
         else:
             flags.append('/arch:AVX2')
+        # ICX /clang: passthrough for LLVM backend flags
+        if tc['is_icx']:
+            flags += ['/clang:-fno-slp-vectorize',
+                      '/clang:-fno-vectorize',
+                      '/clang:-mllvm', '/clang:-enable-misched=false']
         return [tc['cc']] + flags + [str(src), f'/Fo:{out}']
     else:
         # GCC-style: -c for compile-only, -o for output
         flags = ['-c', '-O3', '-mtune=native', '-mavx2', '-mfma',
                  '-Wno-overflow', '-Wno-implicit-function-declaration',
                  '-Wno-unused-function', '-Wno-unknown-argument']
+        # ICX/Clang-specific: disable auto-vectorizer and MI scheduler
+        # to dodge ICX 2025.3 ICEs. GCC ignores these via -Wno-unknown-argument.
+        if tc['is_icx'] or tc['is_clang']:
+            flags += ['-fno-slp-vectorize', '-fno-vectorize',
+                      '-mllvm', '-enable-misched=false']
+        if isa == 'avx512':
+            flags += ['-mavx512f', '-mavx512dq']
+        return [tc['cc']] + flags + [str(src), '-o', str(out)]
         if isa == 'avx512':
             flags += ['-mavx512f', '-mavx512dq']
         return [tc['cc']] + flags + [str(src), '-o', str(out)]
 
 
 def _link_cmd(obj_files, harness_obj, out_bin, tc):
-    """Build the link command line for the given toolchain."""
+    """Build the link command line for the given toolchain.
+
+    Our '#define static' trick exposes every static symbol in every codelet
+    header, including Intel intrinsic wrappers (W32_* twiddles, AMX
+    intrinsics on Windows). Each of 161 .o files gets duplicate copies.
+    Linkers handle this differently:
+      - GNU ld / LLD ELF mode (Linux):   -Wl,--allow-multiple-definition
+      - lld-link.exe (Windows, MSVC ABI): /force:multiple  (via -Xlinker)
+      - link.exe (Windows MSVC):         /FORCE:MULTIPLE
+    """
     if tc['msvc_style']:
-        # MSVC-style linking
+        # MSVC-style linking (cl.exe / icx-cl)
         return [tc['cc']] + obj_files + [str(harness_obj),
                 f'/Fe:{out_bin}',
                 '/link', '/FORCE:MULTIPLE']
     else:
-        # GCC-style linking. LLD for Windows+ICX to avoid needing link.exe
-        # (works if lld-link.exe is on PATH; setvars.bat from oneAPI ensures this).
+        # GCC-style driver (gcc, icx, clang)
         cmd = [tc['cc']] + obj_files + [str(harness_obj),
-               '-Wl,--allow-multiple-definition',
                '-o', str(out_bin)]
+        # Duplicate-symbol handling depends on which linker is in use
         if tc['is_windows'] and tc['is_icx']:
+            # -fuse-ld=lld on Windows routes through lld-link.exe which
+            # uses MSVC-compatible link syntax. Use -Xlinker to pass
+            # flags directly (bypasses the GCC-style -Wl, parser which
+            # splits on commas and may mangle /force:multiple).
             cmd.append('-fuse-ld=lld')
+            cmd += ['-Xlinker', '/force:multiple']
+        else:
+            # GNU ld / LLD ELF mode (Linux, or GCC on Windows with MinGW)
+            cmd.append('-Wl,--allow-multiple-definition')
         if not tc['is_windows']:
             cmd.append('-lm')
         return cmd
@@ -382,12 +469,25 @@ def phase_build():
     fails = []
     for p in procs_all:
         if p.returncode != 0:
-            err = p._errpath.read_text(errors='replace')[:400] if p._errpath.exists() else ''
-            fails.append((p._wc.name, err))
+            err = p._errpath.read_text(errors='replace') if p._errpath.exists() else ''
+            fails.append((p._wc.name, err, p._errpath))
     if fails:
-        print(f"[build] {len(fails)} codelet compile failures:")
-        for n, e in fails[:3]:
-            print(f"  {n}: {e}")
+        # Consolidate all failure logs into one file for easy inspection
+        fail_log = BUILD / 'compile_failures.log'
+        with open(fail_log, 'w', encoding='utf-8') as flog:
+            for n, e, path in fails:
+                flog.write(f"=== {n} ===\n")
+                flog.write(f"  .err file: {path}\n")
+                flog.write(e)
+                flog.write("\n\n")
+        print(f"[build] {len(fails)} codelet compile failures "
+              f"(full details in {fail_log}):")
+        # Print first 2000 chars of first 3 failures so we can see ICEs etc.
+        for n, e, path in fails[:3]:
+            print(f"  --- {n} ---")
+            print(f"  {e[:2000]}")
+            if len(e) > 2000:
+                print(f"  [truncated; full {len(e)} chars in {path}]")
         sys.exit(1)
     print(f"[build] codelets compiled in {time.time()-t0:.1f}s")
 
@@ -566,3 +666,4 @@ if __name__ == '__main__':
     if args.phase in ('generate', 'all'): phase_generate()
     if args.phase in ('build', 'all'): phase_build()
     if args.phase in ('run', 'all'): phase_run()
+    
