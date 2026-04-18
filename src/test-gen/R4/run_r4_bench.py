@@ -32,8 +32,11 @@ def phase_generate():
     print(f"[generate] {len(cands)} candidates")
     t0 = time.time()
     for i, c in enumerate(cands):
+        # Force UTF-8 on child process stdout for Windows cp1252 compatibility
+        # (gen_radix4.py emits Unicode box-drawing chars in comments).
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         r = subprocess.run([sys.executable, str(GEN)] + c.cli_args(),
-                           capture_output=True, timeout=60)
+                           capture_output=True, timeout=60, env=env)
         if r.returncode != 0:
             err = r.stderr.decode('utf-8','replace')
             print(f"  FAIL {c.id()}:")
