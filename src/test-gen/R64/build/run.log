@@ -1,7 +1,19 @@
-harness: 10 candidates, 18 sweeps, 2 dirs; 0 done (will skip)
-[1/10] ct_t1_dit__avx2
-[2/10] ct_t1_dif__avx2
-[3/10] ct_t1_dit_log3__avx2
-[4/10] ct_t1_dit_prefetch__avx2
-[5/10] ct_t1s_dit__avx2
-done: measured=180, skipped=0
+harness: 34 candidates, 18 sweeps, 2 dirs; 0 done (will skip)
+[1/34] ct_t1_dit__avx2
+[2/34] ct_t1_dif__avx2
+[3/34] ct_t1_dit_log3__avx2
+[4/34] ct_t1_dit_prefetch__avx2
+[5/34] ct_t1s_dit__avx2
+[6/34] ct_t1_buf_dit__avx2__tile32__draintemporal
+[7/34] ct_t1_buf_dit__avx2__tile32__draintemporal__prefw
+[8/34] ct_t1_buf_dit__avx2__tile32__drainstream
+[9/34] ct_t1_buf_dit__avx2__tile32__drainstream__prefw
+[10/34] ct_t1_buf_dit__avx2__tile64__draintemporal
+[11/34] ct_t1_buf_dit__avx2__tile64__draintemporal__prefw
+[12/34] ct_t1_buf_dit__avx2__tile64__drainstream
+[13/34] ct_t1_buf_dit__avx2__tile64__drainstream__prefw
+[14/34] ct_t1_buf_dit__avx2__tile128__draintemporal
+[15/34] ct_t1_buf_dit__avx2__tile128__draintemporal__prefw
+[16/34] ct_t1_buf_dit__avx2__tile128__drainstream
+[17/34] ct_t1_buf_dit__avx2__tile128__drainstream__prefw
+done: measured=612, skipped=0
