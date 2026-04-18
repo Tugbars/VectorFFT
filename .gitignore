@@ -43,3 +43,4 @@ vfft_*.png
 Thumbs.db
 .DS_Store
 *.pyc
+/src/test-gen/R32/build

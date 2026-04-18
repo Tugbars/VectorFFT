@@ -52,6 +52,8 @@ class Candidate:
             base += 't1_dit_log3'
         elif f == 'ct_t1_ladder_dit':
             base += 't1_ladder_dit'
+        elif f == 'ct_t1s_dit':
+            base += 't1s_dit'
         elif f == 'ct_t1_buf_dit':
             base += f't1_buf_dit_tile{self.tile}_{self.drain}'
             if self.drain_prefetch:
@@ -101,6 +103,10 @@ def enumerate_all() -> List[Candidate]:
         for tp, tpr in _prefetch_configs():
             cands.append(Candidate(family='ct_t1_dit_log3', isa=isa,
                                    twiddle_prefetch=tp, twiddle_prefetch_rows=tpr))
+        # t1s (scalar-broadcast twiddle): no knobs.
+        # Twiddle prefetch is pointless (scalars always L1-resident),
+        # no tile/drain/buf dimension. One candidate per ISA.
+        cands.append(Candidate(family='ct_t1s_dit', isa=isa))
         if isa == 'avx512':
             cands.append(Candidate(family='ct_t1_ladder_dit', isa=isa))
         for tile in (32, 64, 128, 256):
