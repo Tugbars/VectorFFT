@@ -950,6 +950,127 @@ radix4_t1_dit_log3_{direction}_{isa_name}(
     }}
 }}''')
 
+            # ── SIMD t1 DIT log1: load w1 and w2, derive w3 = w1*w2 ──
+            # Saves 2 twiddle loads per iteration, costs 1 cmul (4 FMA).
+            # Middle ground between flat (6 twiddle loads) and log3 (2 loads).
+            # Shallower dep chain than log3: {w1, w2} → w3 is 2-deep
+            # (vs log3's w1 → w2 → w3 which is 3-deep).
+            # May win on chips/compilers where log3's serial chain hurts.
+            parts.append(f'''
+{I['target']}
+static inline void
+radix4_t1_dit_log1_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+    /* SIMD t1 DIT log1: derive w3 = w1 * w2 (2-deep dep chain). */
+    for (size_t m = 0; m < me; m += {VL}) {{
+        {V} x0r = R4_LD(&rio_re[m + 0*ios]), x0i = R4_LD(&rio_im[m + 0*ios]);
+        {V} r1r = R4_LD(&rio_re[m + 1*ios]), r1i = R4_LD(&rio_im[m + 1*ios]);
+        {V} r2r = R4_LD(&rio_re[m + 2*ios]), r2i = R4_LD(&rio_im[m + 2*ios]);
+        {V} r3r = R4_LD(&rio_re[m + 3*ios]), r3i = R4_LD(&rio_im[m + 3*ios]);
+        /* Load w1 and w2, derive w3 = w1 * w2. */
+        const {V} w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
+        const {V} w2r = R4_LD(&W_re[1*me+m]), w2i = R4_LD(&W_im[1*me+m]);
+        const {V} w3r = {FNMA}(w1i, w2i, {MUL}(w1r, w2r));
+        const {V} w3i = {FMA}(w1r, w2i, {MUL}(w1i, w2r));
+        const {V} x1r = {vc1r}, x1i = {vc1i};
+        const {V} x2r = {vc2r}, x2i = {vc2i};
+        const {V} x3r = {vc3r}, x3i = {vc3i};
+        const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+        const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+        const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+        const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+        R4_ST(&rio_re[m + 0*ios], {ADD}(t0r, t2r)); R4_ST(&rio_im[m + 0*ios], {ADD}(t0i, t2i));
+        R4_ST(&rio_re[m + 2*ios], {SUB}(t0r, t2r)); R4_ST(&rio_im[m + 2*ios], {SUB}(t0i, t2i));
+        R4_ST(&rio_re[m + 1*ios], {r1_e}); R4_ST(&rio_im[m + 1*ios], {i1_e});
+        R4_ST(&rio_re[m + 3*ios], {r3_e}); R4_ST(&rio_im[m + 3*ios], {i3_e});
+    }}
+}}''')
+
+            # ── SIMD t1 DIT u2: unroll m-loop by 2 ──
+            # Processes 2x k_step butterflies per outer iteration. The compiler
+            # interleaves the two blocks across both FMA ports, hiding latency
+            # in dependency chains. Tail handles odd (me/VL) trip counts.
+            # Expected win: large-me regimes where iteration latency dominates.
+            parts.append(f'''
+{I['target']}
+static inline void
+radix4_t1_dit_u2_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+    /* SIMD t1 DIT u2: m-loop unrolled 2x for ILP. */
+    const size_t me_unroll = (me / {VL*2}) * {VL*2};
+    size_t m = 0;
+    for (; m < me_unroll; m += {VL*2}) {{
+        {{ /* Block A: m */
+            {V} x0r = R4_LD(&rio_re[m + 0*ios]), x0i = R4_LD(&rio_im[m + 0*ios]);
+            {V} r1r = R4_LD(&rio_re[m + 1*ios]), r1i = R4_LD(&rio_im[m + 1*ios]);
+            {V} r2r = R4_LD(&rio_re[m + 2*ios]), r2i = R4_LD(&rio_im[m + 2*ios]);
+            {V} r3r = R4_LD(&rio_re[m + 3*ios]), r3i = R4_LD(&rio_im[m + 3*ios]);
+            const {V} w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
+            const {V} w2r = R4_LD(&W_re[1*me+m]), w2i = R4_LD(&W_im[1*me+m]);
+            const {V} w3r = R4_LD(&W_re[2*me+m]), w3i = R4_LD(&W_im[2*me+m]);
+            const {V} x1r = {vc1r}, x1i = {vc1i};
+            const {V} x2r = {vc2r}, x2i = {vc2i};
+            const {V} x3r = {vc3r}, x3i = {vc3i};
+            const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+            const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+            const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+            const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+            R4_ST(&rio_re[m + 0*ios], {ADD}(t0r, t2r)); R4_ST(&rio_im[m + 0*ios], {ADD}(t0i, t2i));
+            R4_ST(&rio_re[m + 2*ios], {SUB}(t0r, t2r)); R4_ST(&rio_im[m + 2*ios], {SUB}(t0i, t2i));
+            R4_ST(&rio_re[m + 1*ios], {r1_e}); R4_ST(&rio_im[m + 1*ios], {i1_e});
+            R4_ST(&rio_re[m + 3*ios], {r3_e}); R4_ST(&rio_im[m + 3*ios], {i3_e});
+        }}
+        {{ /* Block B: m+{VL} */
+            const size_t mb = m + {VL};
+            {V} x0r = R4_LD(&rio_re[mb + 0*ios]), x0i = R4_LD(&rio_im[mb + 0*ios]);
+            {V} r1r = R4_LD(&rio_re[mb + 1*ios]), r1i = R4_LD(&rio_im[mb + 1*ios]);
+            {V} r2r = R4_LD(&rio_re[mb + 2*ios]), r2i = R4_LD(&rio_im[mb + 2*ios]);
+            {V} r3r = R4_LD(&rio_re[mb + 3*ios]), r3i = R4_LD(&rio_im[mb + 3*ios]);
+            const {V} w1r = R4_LD(&W_re[0*me+mb]), w1i = R4_LD(&W_im[0*me+mb]);
+            const {V} w2r = R4_LD(&W_re[1*me+mb]), w2i = R4_LD(&W_im[1*me+mb]);
+            const {V} w3r = R4_LD(&W_re[2*me+mb]), w3i = R4_LD(&W_im[2*me+mb]);
+            const {V} x1r = {vc1r}, x1i = {vc1i};
+            const {V} x2r = {vc2r}, x2i = {vc2i};
+            const {V} x3r = {vc3r}, x3i = {vc3i};
+            const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+            const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+            const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+            const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+            R4_ST(&rio_re[mb + 0*ios], {ADD}(t0r, t2r)); R4_ST(&rio_im[mb + 0*ios], {ADD}(t0i, t2i));
+            R4_ST(&rio_re[mb + 2*ios], {SUB}(t0r, t2r)); R4_ST(&rio_im[mb + 2*ios], {SUB}(t0i, t2i));
+            R4_ST(&rio_re[mb + 1*ios], {r1_e}); R4_ST(&rio_im[mb + 1*ios], {i1_e});
+            R4_ST(&rio_re[mb + 3*ios], {r3_e}); R4_ST(&rio_im[mb + 3*ios], {i3_e});
+        }}
+    }}
+    /* Tail: handle the odd remainder (me not a multiple of 2*VL) */
+    for (; m < me; m += {VL}) {{
+        {V} x0r = R4_LD(&rio_re[m + 0*ios]), x0i = R4_LD(&rio_im[m + 0*ios]);
+        {V} r1r = R4_LD(&rio_re[m + 1*ios]), r1i = R4_LD(&rio_im[m + 1*ios]);
+        {V} r2r = R4_LD(&rio_re[m + 2*ios]), r2i = R4_LD(&rio_im[m + 2*ios]);
+        {V} r3r = R4_LD(&rio_re[m + 3*ios]), r3i = R4_LD(&rio_im[m + 3*ios]);
+        const {V} w1r = R4_LD(&W_re[0*me+m]), w1i = R4_LD(&W_im[0*me+m]);
+        const {V} w2r = R4_LD(&W_re[1*me+m]), w2i = R4_LD(&W_im[1*me+m]);
+        const {V} w3r = R4_LD(&W_re[2*me+m]), w3i = R4_LD(&W_im[2*me+m]);
+        const {V} x1r = {vc1r}, x1i = {vc1i};
+        const {V} x2r = {vc2r}, x2i = {vc2i};
+        const {V} x3r = {vc3r}, x3i = {vc3i};
+        const {V} t0r = {ADD}(x0r, x2r), t0i = {ADD}(x0i, x2i);
+        const {V} t1r = {SUB}(x0r, x2r), t1i = {SUB}(x0i, x2i);
+        const {V} t2r = {ADD}(x1r, x3r), t2i = {ADD}(x1i, x3i);
+        const {V} t3r = {SUB}(x1r, x3r), t3i = {SUB}(x1i, x3i);
+        R4_ST(&rio_re[m + 0*ios], {ADD}(t0r, t2r)); R4_ST(&rio_im[m + 0*ios], {ADD}(t0i, t2i));
+        R4_ST(&rio_re[m + 2*ios], {SUB}(t0r, t2r)); R4_ST(&rio_im[m + 2*ios], {SUB}(t0i, t2i));
+        R4_ST(&rio_re[m + 1*ios], {r1_e}); R4_ST(&rio_im[m + 1*ios], {i1_e});
+        R4_ST(&rio_re[m + 3*ios], {r3_e}); R4_ST(&rio_im[m + 3*ios], {i3_e});
+    }}
+}}''')
+
             # ── SIMD t1 DIF: in-place butterfly, then post-twiddle outputs ──
             vy1r, vy1i = cmul_v(r1_e, i1_e, 'w1r', 'w1i')
             vy2r, vy2i = cmul_v(f'{SUB}(t0r, t2r)', f'{SUB}(t0i, t2i)', 'w2r', 'w2i')
