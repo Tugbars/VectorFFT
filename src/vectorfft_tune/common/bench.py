@@ -545,4 +545,3 @@ if __name__ == '__main__':
                 Path(args.out).resolve(),
                 phases,
                 generated_root=Path(args.generated).resolve())
-    

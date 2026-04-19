@@ -172,4 +172,3 @@ def host_supports_avx2() -> bool:
         return True  # AVX2 has been baseline on Intel/AMD x86 for ~10 years
     except Exception:
         return True
-    
