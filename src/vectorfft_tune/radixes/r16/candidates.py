@@ -1,25 +1,28 @@
 """
-radixes/r16/candidates.py — R=16 candidate enumeration (Phase A).
+radixes/r16/candidates.py — R=16 candidate enumeration (Phase A + Phase B).
 
-Phase A matrix (4 variants, each its own dispatcher):
-
+Phase A (4 variants, one per dispatcher):
   ct_t1_dit            flat DIT baseline
-  ct_t1_dif            flat DIF — different codelet family from DIT
-  ct_t1s_dit           scalar broadcast (R-1)=15 twiddles, K-blocked
-  ct_t1_dit_log3       sparse-log3 reading W^1,W^2,W^4,W^8 from flat buffer,
-                       deriving W^3, W^5, W^6, W^7, W^9..W^15 via cmul chain
+  ct_t1_dif            flat DIF
+  ct_t1s_dit           (R-1)=15 scalars broadcast, K-blocked
+  ct_t1_dit_log3       sparse-log3 reading W^1,W^2,W^4,W^8
 
-Phase B (not yet ported):
-  ct_t1_buf_dit        tile × drain matrix (6 combos) — expected RL winner
-                       based on prior standalone R=16 bench
-  ct_t1_oop_dit        out-of-place signature — needs separate handling
+Phase B (6 parameterized buf variants, all in one dispatcher):
+  ct_t1_buf_dit_tile{T}_{drain}
+    tile ∈ {64, 128, 256}, drain ∈ {temporal, stream}
+
+  All 6 compete for the 't1_buf_dit' dispatcher — planner picks the
+  fastest (tile, drain) per (me, ios) from bench.
+
+Still deferred to later:
+  ct_t1_oop_dit        out-of-place signature differs
   ct_t1_dit_log1       not emitted by R=16 generator yet
 
 Sweep grid:
   Standard: me ∈ {64, 128, 256, 512, 1024, 2048}, ios ∈ {me, me+8, 8*me}
-  t1s:      me ∈ {64, 128} only (K-blocked pattern — broadcasts amortize
-            across K iterations; t1s loses badly at large me where butterfly
-            cost per iteration dwarfs broadcast setup).
+  t1s:      me ∈ {64, 128} only (K-blocked scalar broadcasts)
+  buf:      standard grid, but skip combinations where me < tile
+            (the buf kernel requires me ≥ tile for a full tile iteration)
 """
 from __future__ import annotations
 import sys
@@ -50,8 +53,16 @@ _ME_T1S    = [64, 128]
 def _ios_for_me(me: int) -> list[int]:
     return [me, me + 8, 8 * me]
 
+
 def sweep_grid(variant_id: str) -> list[tuple[int, int]]:
-    mes = _ME_T1S if variant_id == 'ct_t1s_dit' else _ME_RANGES
+    if variant_id == 'ct_t1s_dit':
+        mes = _ME_T1S
+    elif _gen.is_buf_variant(variant_id):
+        # buf requires me ≥ tile (kernel processes tile-sized m-blocks)
+        tile, _ = _gen._parse_buf_variant(variant_id)
+        mes = [me for me in _ME_RANGES if me >= tile]
+    else:
+        mes = _ME_RANGES
     return [(me, ios) for me in mes for ios in _ios_for_me(me)]
 
 

@@ -41,6 +41,7 @@
     #include "vfft_r16_t1_dif_dispatch_avx2.h"
     #include "vfft_r16_t1_dit_log3_dispatch_avx2.h"
     #include "vfft_r16_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r16_t1_buf_dit_dispatch_avx2.h"
   #endif
   #if defined(VALIDATE_AVX512)
     #include "fft_radix16_avx512.h"
@@ -48,6 +49,7 @@
     #include "vfft_r16_t1_dif_dispatch_avx512.h"
     #include "vfft_r16_t1_dit_log3_dispatch_avx512.h"
     #include "vfft_r16_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r16_t1_buf_dit_dispatch_avx512.h"
   #endif
   #include "vfft_r16_plan_wisdom.h"
 #elif RADIX == 32
