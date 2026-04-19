@@ -232,42 +232,93 @@ def emit_candidate_table(candidates_mod, staging: Path, build: Path) -> list[Pat
 
 def phase_compile(candidates_mod, staging: Path, build: Path,
                   harness_c: Path, cand_c_files: list[Path]) -> Path:
+    """Multi-step compilation:
+      1. harness.c            → compiled with base ISA flags only (no AVX-512)
+      2. aggregator TU        → compiled with base ISA flags only
+      3. per-ISA fragment     → compiled with its ISA-specific flags
+      4. link all objects into harness executable
+
+    This ISA isolation matters: if we use one monolithic compile with
+    -mavx512* globally, the compiler is free to emit AVX-512 instructions
+    in harness/measure/setup code. On a host without AVX-512 (e.g. Raptor
+    Lake with AVX-512 fused off) those instructions raise STATUS_ILLEGAL_
+    INSTRUCTION at runtime even though the codelet itself is AVX2.
+    """
     build.mkdir(parents=True, exist_ok=True)
     spec = _cc.detect()
 
-    # Compile with the widest ISA flag set any candidate needs. Individual
-    # codelet functions use __attribute__((target(...))) for function-level
-    # gating, so global flags just enable intrinsic headers.
-    isas = sorted({c.isa for c in candidates_mod.enumerate_all()})
-    isa_flags: list[str] = []
-    seen_flags: set[str] = set()
-    for isa in isas:
-        for f in spec.isa_flags(isa):
-            if f in seen_flags:
-                continue
-            seen_flags.add(f)
-            isa_flags.append(f)
-    if spec.kind == 'msvc':
-        # MSVC only accepts one /arch: at a time; widest wins.
-        if 'avx512' in isas:
-            isa_flags = spec.isa_flags('avx512')
-        elif 'avx2' in isas:
-            isa_flags = spec.isa_flags('avx2')
+    # Separate the per-ISA fragments from the aggregator. Aggregator is
+    # identified by *not* having a known ISA suffix.
+    per_isa_cs: dict[str, Path] = {}
+    aggregator_c: Path | None = None
+    for p in cand_c_files:
+        stem = p.stem  # e.g. vfft_harness_candidates_avx2 or vfft_harness_candidates
+        for isa in ('avx2', 'avx512', 'scalar'):
+            if stem.endswith('_' + isa):
+                per_isa_cs[isa] = p
+                break
         else:
-            isa_flags = []
+            aggregator_c = p
+    if aggregator_c is None:
+        raise RuntimeError('no aggregator candidate file found among cand_c_files')
 
-    cmd = [spec.cc] + spec.base_flags('O3') + isa_flags
-    cmd += spec.include(str(staging))
-    cmd += [str(harness_c)]
-    cmd += [str(p) for p in cand_c_files]
-    cmd += spec.link_math()
+    obj_ext = '.obj' if spec.on_windows else '.o'
 
+    def _compile(src: Path, isa: str | None, label: str) -> Path:
+        """Compile one TU to object file. isa=None uses base flags."""
+        isa_flags = spec.isa_flags(isa) if isa else spec.isa_flags('avx2')
+        # Dedup
+        seen, out_flags = set(), []
+        for f in isa_flags:
+            if f not in seen:
+                seen.add(f); out_flags.append(f)
+        obj = build / (src.stem + obj_ext)
+        cmd = [spec.cc] + spec.base_flags('O3') + out_flags
+        cmd.append(spec.compile_only_flag())
+        cmd += spec.include(str(staging))
+        cmd += [str(src)]
+        cmd += spec.output_flag(str(obj))
+        print(f'  [cc {label}] {src.name}')
+        _run(cmd)
+        return obj
+
+    objs: list[Path] = []
+    # 1. harness.c with base flags (no AVX-512)
+    objs.append(_compile(harness_c, 'avx2', 'base'))
+    # 2. aggregator with base flags
+    objs.append(_compile(aggregator_c, 'avx2', 'base'))
+    # 3. per-ISA fragments with per-ISA flags
+    for isa, src in sorted(per_isa_cs.items()):
+        # Skip AVX-512 fragment on hosts that can't run it — the binary
+        # would still work (CPUID gate prevents calls), but skipping saves
+        # compile time and avoids any host-specific ICX quirks.
+        if isa == 'avx512' and not _cc.host_supports_avx512():
+            print(f'  [cc {isa}] skipping — host lacks AVX-512')
+            # Still need a stub to satisfy aggregator externs. Emit a
+            # minimal fragment that provides empty CANDIDATES_AVX512[].
+            stub = build / (src.stem + '_stub.c')
+            stub.write_text(
+                '#include <stddef.h>\n'
+                'typedef void (*t1_fn)(double*, double*, const double*, '
+                'const double*, size_t, size_t);\n'
+                'typedef struct { const char *variant, *isa, *protocol; '
+                't1_fn fwd, bwd; int requires_avx512; } candidate_t;\n'
+                f'const candidate_t CANDIDATES_{isa.upper()}[1] = {{{{0}}}};\n'
+                f'const size_t N_CANDIDATES_{isa.upper()} = 0;\n',
+                encoding='utf-8')
+            objs.append(_compile(stub, 'avx2', f'{isa}_stub'))
+            continue
+        objs.append(_compile(src, isa, isa))
+
+    # 4. Link
     exe_name = 'harness.exe' if spec.on_windows else 'harness'
     exe_path = build / exe_name
-    cmd += spec.output_flag(str(exe_path))
-
-    print(f'  [cc] {spec.kind} ({spec.cc})')
-    _run(cmd)
+    link_cmd = [spec.cc] + spec.base_flags('O3')
+    link_cmd += [str(o) for o in objs]
+    link_cmd += spec.link_math()
+    link_cmd += spec.output_flag(str(exe_path))
+    print(f'  [link] {exe_name}')
+    _run(link_cmd)
     return exe_path
 
 
@@ -494,3 +545,4 @@ if __name__ == '__main__':
                 Path(args.out).resolve(),
                 phases,
                 generated_root=Path(args.generated).resolve())
+    
