@@ -50,6 +50,34 @@ building a plan.
 
 Each phase idempotent. `--phase run` resumes from existing jsonl.
 
+## Output layout
+
+After `--phase all` (or `--phase emit`), the `generated/r{N}/` directory is
+the complete, drop-in library for radix N:
+
+```
+generated/r8/
+├── fft_radix8_avx2.h              codelet bodies for all 8 variants (AVX2)
+├── fft_radix8_avx512.h            codelet bodies for all 8 variants (AVX-512)
+├── vfft_r8_t1_dit_dispatch_avx2.h per-dispatcher selection wrappers
+├── vfft_r8_t1_dit_dispatch_avx512.h
+├── vfft_r8_t1_dif_dispatch_avx2.h
+├── ...                            (one pair per dispatcher)
+├── vfft_r8_plan_wisdom.h          machine-readable winner table
+└── vfft_r8_report.md              human-readable results summary
+```
+
+To use from a downstream codebase: add `generated/r{N}/` to your include
+path and `#include "vfft_r{N}_<dispatcher>_dispatch_<isa>.h"`. The
+dispatcher wrapper pulls in the codelet header automatically. Each
+variant wrapper is `static inline` so there is nothing to link — the
+compiler inlines the winning codelet directly at the call site.
+
+AVX-512 headers are generated on every host (they're just intrinsic
+code), but only compiled and benched on hosts where AVX-512 is
+actually available. Carrying both sets lets the same `generated/`
+tree be used on any Intel chip.
+
 ## Portability
 
 ### Linux (default)
