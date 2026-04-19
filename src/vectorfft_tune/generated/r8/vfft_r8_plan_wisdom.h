@@ -18,24 +18,24 @@
 
 /* Cross-protocol comparison (fwd direction, AVX2):
  *   me    ios   winning_protocol   winning_ns
- *      64    64   flat              229.6
- *      64    72   flat              232.7
- *      64   512   flat              503.9
- *     128   128   flat              484.8
- *     128   136   flat              492.2
- *     128  1024   flat             1079.6
- *     256   256   flat             1042.5
- *     256   264   flat             1040.3
- *     256  2048   flat             4080.7
- *     512   512   flat             4222.6
- *     512   520   flat             2119.3
- *     512  4096   flat             8568.6
- *    1024  1024   flat             9230.7
- *    1024  1032   flat             3982.3
- *    1024  8192   flat            16879.6
- *    2048  2048   flat            34116.1
- *    2048  2056   flat            14893.7
- *    2048 16384   flat            35213.4
+ *      64    64   flat               90.0
+ *      64    72   flat               91.6
+ *      64   512   flat              232.9
+ *     128   128   flat              171.7
+ *     128   136   flat              177.1
+ *     128  1024   flat              421.7
+ *     256   256   flat              460.0
+ *     256   264   flat              419.0
+ *     256  2048   flat              831.1
+ *     512   512   flat             1811.3
+ *     512   520   flat             1028.1
+ *     512  4096   flat             1745.0
+ *    1024  1024   flat             3675.7
+ *    1024  1032   flat             2120.5
+ *    1024  8192   flat             3451.8
+ *    2048  2048   flat             7285.2
+ *    2048  2056   flat             4459.6
+ *    2048 16384   flat            14874.4
  */
 
 /* Should the planner use log3 protocol at (me, ios)? */
