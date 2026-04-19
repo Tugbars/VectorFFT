@@ -183,34 +183,67 @@ static const validate_case_t CASES[] = {
 #define ADD_CASE(TAG, ISA, DIR, PROTO, REF, DISP) \
   { TAG " " #ISA " " #DIR, REF, DISP, PROTO }
 
-#if defined(VALIDATE_AVX2)
-  ADD_CASE("flat", avx2, fwd, "flat",
-           radix4_t1_dit_fwd_avx2,        vfft_r4_t1_dit_dispatch_fwd_avx2),
-  ADD_CASE("flat", avx2, bwd, "flat",
-           radix4_t1_dit_bwd_avx2,        vfft_r4_t1_dit_dispatch_bwd_avx2),
-  ADD_CASE("log3", avx2, fwd, "log3",
-           radix4_t1_dit_log3_fwd_avx2,   vfft_r4_t1_dit_log3_dispatch_fwd_avx2),
-  ADD_CASE("log3", avx2, bwd, "log3",
-           radix4_t1_dit_log3_bwd_avx2,   vfft_r4_t1_dit_log3_dispatch_bwd_avx2),
-  ADD_CASE("t1s",  avx2, fwd, "t1s",
-           radix4_t1s_dit_fwd_avx2,       vfft_r4_t1s_dit_dispatch_fwd_avx2),
-  ADD_CASE("t1s",  avx2, bwd, "t1s",
-           radix4_t1s_dit_bwd_avx2,       vfft_r4_t1s_dit_dispatch_bwd_avx2),
-#endif
+#if RADIX == 4
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("flat", avx2, fwd, "flat",
+             radix4_t1_dit_fwd_avx2,        vfft_r4_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("flat", avx2, bwd, "flat",
+             radix4_t1_dit_bwd_avx2,        vfft_r4_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("log3", avx2, fwd, "log3",
+             radix4_t1_dit_log3_fwd_avx2,   vfft_r4_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("log3", avx2, bwd, "log3",
+             radix4_t1_dit_log3_bwd_avx2,   vfft_r4_t1_dit_log3_dispatch_bwd_avx2),
+    ADD_CASE("t1s",  avx2, fwd, "t1s",
+             radix4_t1s_dit_fwd_avx2,       vfft_r4_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s",  avx2, bwd, "t1s",
+             radix4_t1s_dit_bwd_avx2,       vfft_r4_t1s_dit_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("flat", avx512, fwd, "flat",
+             radix4_t1_dit_fwd_avx512,      vfft_r4_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("flat", avx512, bwd, "flat",
+             radix4_t1_dit_bwd_avx512,      vfft_r4_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("log3", avx512, fwd, "log3",
+             radix4_t1_dit_log3_fwd_avx512, vfft_r4_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("log3", avx512, bwd, "log3",
+             radix4_t1_dit_log3_bwd_avx512, vfft_r4_t1_dit_log3_dispatch_bwd_avx512),
+    ADD_CASE("t1s",  avx512, fwd, "t1s",
+             radix4_t1s_dit_fwd_avx512,     vfft_r4_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s",  avx512, bwd, "t1s",
+             radix4_t1s_dit_bwd_avx512,     vfft_r4_t1s_dit_dispatch_bwd_avx512),
+  #endif
 
-#if defined(VALIDATE_AVX512)
-  ADD_CASE("flat", avx512, fwd, "flat",
-           radix4_t1_dit_fwd_avx512,      vfft_r4_t1_dit_dispatch_fwd_avx512),
-  ADD_CASE("flat", avx512, bwd, "flat",
-           radix4_t1_dit_bwd_avx512,      vfft_r4_t1_dit_dispatch_bwd_avx512),
-  ADD_CASE("log3", avx512, fwd, "log3",
-           radix4_t1_dit_log3_fwd_avx512, vfft_r4_t1_dit_log3_dispatch_fwd_avx512),
-  ADD_CASE("log3", avx512, bwd, "log3",
-           radix4_t1_dit_log3_bwd_avx512, vfft_r4_t1_dit_log3_dispatch_bwd_avx512),
-  ADD_CASE("t1s",  avx512, fwd, "t1s",
-           radix4_t1s_dit_fwd_avx512,     vfft_r4_t1s_dit_dispatch_fwd_avx512),
-  ADD_CASE("t1s",  avx512, bwd, "t1s",
-           radix4_t1s_dit_bwd_avx512,     vfft_r4_t1s_dit_dispatch_bwd_avx512),
+#elif RADIX == 8
+  /* R=8 has two dispatchers (different codelet families, each picks among
+   * its own variants only):
+   *   t1_dit : dit / dit_prefetch variants — reference is radix8_t1_dit
+   *   t1_dif : dif only (for now)          — reference is radix8_t1_dif
+   * DIT and DIF compute different functions from the same (rio, W, ios, me)
+   * inputs, so each dispatcher is validated against its OWN family's
+   * reference codelet. */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit", avx2, fwd, "flat",
+             radix8_t1_dit_fwd_avx2,        vfft_r8_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit", avx2, bwd, "flat",
+             radix8_t1_dit_bwd_avx2,        vfft_r8_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dif", avx2, fwd, "flat",
+             radix8_t1_dif_fwd_avx2,        vfft_r8_t1_dif_dispatch_fwd_avx2),
+    ADD_CASE("t1_dif", avx2, bwd, "flat",
+             radix8_t1_dif_bwd_avx2,        vfft_r8_t1_dif_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit", avx512, fwd, "flat",
+             radix8_t1_dit_fwd_avx512,      vfft_r8_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit", avx512, bwd, "flat",
+             radix8_t1_dit_bwd_avx512,      vfft_r8_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dif", avx512, fwd, "flat",
+             radix8_t1_dif_fwd_avx512,      vfft_r8_t1_dif_dispatch_fwd_avx512),
+    ADD_CASE("t1_dif", avx512, bwd, "flat",
+             radix8_t1_dif_bwd_avx512,      vfft_r8_t1_dif_dispatch_bwd_avx512),
+  #endif
+
+#else
+  #error "validate.c: unsupported RADIX (extend CASES[])"
 #endif
 };
 static const size_t N_CASES = sizeof(CASES) / sizeof(CASES[0]);

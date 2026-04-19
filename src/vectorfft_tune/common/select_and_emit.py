@@ -101,27 +101,48 @@ def pick_winner(entries: list[dict], tie_threshold: float = 0.02) -> dict:
     return contenders[0]
 
 
-def _group_per_point(ms: list[dict]) -> dict:
-    """Group measurements by (isa, protocol, me, ios, dir) -> list of entries."""
+def _group_per_point(ms: list[dict], dispatcher_fn) -> dict:
+    """Group measurements by (isa, dispatcher, me, ios, dir) -> list of entries.
+
+    dispatcher_fn: callable(variant) -> dispatcher_key. Passed in so the
+    loader can reach back to the candidates module.
+    """
     g = defaultdict(list)
     for m in ms:
-        k = (m['isa'], m['protocol'], m['me'], m['ios'], m['dir'])
+        variant = m['variant']
+        try:
+            disp = dispatcher_fn(variant)
+        except Exception:
+            # Handicap experiments (log1_tight) and unknown variants: skip
+            # the dispatcher grouping; they remain available for the
+            # handicap report via raw measurement list.
+            continue
+        k = (m['isa'], disp, m['me'], m['ios'], m['dir'])
         g[k].append(m)
     return g
 
 
-def winners_per_protocol(ms: list[dict]) -> dict:
-    """Return {(isa, protocol, me, ios, dir) -> winner_entry}."""
-    grouped = _group_per_point(ms)
+def winners_per_dispatcher(ms: list[dict], dispatcher_fn) -> dict:
+    """Return {(isa, dispatcher, me, ios, dir) -> winner_entry}."""
+    grouped = _group_per_point(ms, dispatcher_fn)
     return {k: pick_winner(v) for k, v in grouped.items() if v}
 
 
 def winners_cross_protocol(ms: list[dict]) -> dict:
     """For each (isa, me, ios, dir), return {protocol -> best_entry}.
-    Used to build plan-wisdom decision functions."""
-    grouped = _group_per_point(ms)
+    Used to build plan-wisdom decision functions. This groups by PROTOCOL
+    (twiddle layout) — a different axis than dispatcher (codelet family).
+
+    The same codelet can belong to different protocols depending on how
+    its twiddle buffer is allocated (the log1_tight handicap experiment
+    uses 'log1_tight' as a synthetic protocol name to keep it separate
+    from real 'flat')."""
+    g: dict = defaultdict(list)
+    for m in ms:
+        k = (m['isa'], m['protocol'], m['me'], m['ios'], m['dir'])
+        g[k].append(m)
     out: dict = defaultdict(dict)
-    for (isa, protocol, me, ios, d), entries in grouped.items():
+    for (isa, protocol, me, ios, d), entries in g.items():
         w = pick_winner(entries)
         if w is not None:
             out[(isa, me, ios, d)][protocol] = w
@@ -190,34 +211,39 @@ def pick_variant_across(entries: list[tuple[str, float]]) -> str | None:
     return cands[0]
 
 
-def emit_dispatch_header(R: int, protocol: str, isa: str,
-                         candidates_mod, winners_by_pisa: dict,
+def emit_dispatch_header(R: int, dispatcher_key: str, isa: str,
+                         candidates_mod, winners_by_disp: dict,
                          out_path: Path):
-    """Emit `vfft_r{R}_{protocol}_dispatch_{isa}.h` — a header file with:
-      - #include of the generator header (for raw codelet access)
-      - static inline dispatcher functions for fwd and bwd
+    """Emit `vfft_r{R}_{dispatcher}_dispatch_{isa}.h` with static inline
+    fwd/bwd dispatchers that pick the winning variant per (me, ios).
 
-    Dispatcher name: vfft_r{R}_{protocol_slug}_dispatch_{dir}_{isa}
-    where protocol_slug is 't1_dit' for flat, 't1_dit_log3' for log3, etc."""
-    proto_slug = {
-        'flat': 't1_dit',
-        'log3': 't1_dit_log3',
-        't1s':  't1s_dit',
-    }[protocol]
+    Dispatcher name: vfft_r{R}_{dispatcher_key}_dispatch_{dir}_{isa}.
+    Variants sharing a dispatcher key compute the same mathematical
+    function and are mutually exchangeable based on measured ns/call.
+    """
+    dispatcher_name = lambda d: f'vfft_r{R}_{dispatcher_key}_dispatch_{d}_{isa}'
 
-    dispatcher_name = lambda d: f'vfft_r{R}_{proto_slug}_dispatch_{d}_{isa}'
+    # Pick a fallback variant for the dispatcher: the first variant
+    # declared for this dispatcher key in the candidates module.
+    fallback_variant = None
+    for c in candidates_mod.enumerate_all():
+        if candidates_mod.dispatcher(c.variant) == dispatcher_key:
+            fallback_variant = c.variant
+            break
+    if fallback_variant is None:
+        raise RuntimeError(f'no variants for dispatcher {dispatcher_key}')
 
     lines = [
-        f'/* vfft_r{R}_{proto_slug}_dispatch_{isa}.h',
+        f'/* vfft_r{R}_{dispatcher_key}_dispatch_{isa}.h',
         f' *',
-        f' * Auto-generated codelet dispatcher for R={R} / protocol={protocol} / isa={isa}.',
+        f' * Auto-generated codelet dispatcher for R={R} / dispatcher={dispatcher_key} / isa={isa}.',
         f' * Derived from a bench run on this host. The dispatcher picks the',
         f' * fastest variant per (me, ios) based on measured ns/call.',
         f' *',
-        f' * To retune: re-run common/bench.py + common/select_and_emit.py.',
+        f' * To retune: re-run common/bench.py.',
         f' */',
-        f'#ifndef VFFT_R{R}_{proto_slug.upper()}_DISPATCH_{isa.upper()}_H',
-        f'#define VFFT_R{R}_{proto_slug.upper()}_DISPATCH_{isa.upper()}_H',
+        f'#ifndef VFFT_R{R}_{dispatcher_key.upper()}_DISPATCH_{isa.upper()}_H',
+        f'#define VFFT_R{R}_{dispatcher_key.upper()}_DISPATCH_{isa.upper()}_H',
         f'',
         f'#include <stddef.h>',
         f'#include "fft_radix{R}_{isa}.h"',
@@ -225,10 +251,9 @@ def emit_dispatch_header(R: int, protocol: str, isa: str,
     ]
 
     for direction in ('fwd', 'bwd'):
-        key = (isa, protocol, direction)
-        winners = winners_by_pisa.get(key, [])
-        rules = _rules_from_winners(winners,
-            fallback_variant=_protocol_fallback_variant(protocol))
+        key = (isa, dispatcher_key, direction)
+        winners = winners_by_disp.get(key, [])
+        rules = _rules_from_winners(winners, fallback_variant=fallback_variant)
 
         lines += [
             f'static inline void {dispatcher_name(direction)}(',
@@ -253,20 +278,13 @@ def emit_dispatch_header(R: int, protocol: str, isa: str,
         # Emit the actual branching.
         for i, r in enumerate(rules):
             cond_me = []
-            if i > 0:  # not first rule — need lower bound
+            if i > 0:
                 cond_me.append(f'me >= {r["me_min"]}')
-            if r['me_max'] != 2**31 - 1:  # not last rule — need upper bound
+            if r['me_max'] != 2**31 - 1:
                 cond_me.append(f'me <= {r["me_max"]}')
-            is_last = (i == len(rules) - 1)
             prefix = '    if (' if i == 0 else '    else if ('
             if not cond_me:
-                # Pure catch-all
-                if is_last:
-                    prefix = '    '
-                    cond_line = None
-                else:
-                    cond_line = None
-                    prefix = '    if (1) '
+                cond_line = None
             else:
                 cond_line = ' && '.join(cond_me)
 
@@ -297,7 +315,7 @@ def emit_dispatch_header(R: int, protocol: str, isa: str,
         ]
 
     lines += [
-        f'#endif /* VFFT_R{R}_{proto_slug.upper()}_DISPATCH_{isa.upper()}_H */',
+        f'#endif /* VFFT_R{R}_{dispatcher_key.upper()}_DISPATCH_{isa.upper()}_H */',
         f'',
     ]
 
@@ -305,6 +323,7 @@ def emit_dispatch_header(R: int, protocol: str, isa: str,
 
 
 def _protocol_fallback_variant(protocol: str) -> str:
+    # Legacy helper, retained for compatibility with any older imports.
     if protocol == 'flat': return 'ct_t1_dit'
     if protocol == 'log3': return 'ct_t1_dit_log3'
     if protocol == 't1s':  return 'ct_t1s_dit'
@@ -431,7 +450,8 @@ def emit_plan_wisdom(R: int, cross: dict, out_path: Path, host_desc: str):
 # Human-readable report
 # ═══════════════════════════════════════════════════════════════
 
-def emit_report(R: int, ms: list[dict], cross: dict, out_path: Path):
+def emit_report(R: int, ms: list[dict], cross: dict, out_path: Path,
+                dispatcher_fn=None):
     lines = [
         f'# VectorFFT R={R} tuning report',
         f'',
@@ -439,7 +459,8 @@ def emit_report(R: int, ms: list[dict], cross: dict, out_path: Path):
         f'',
         f'## Cross-protocol winners (fwd direction)',
         f'',
-        f'Best-of-protocol ns/call at each sweep point.',
+        f'Best-of-protocol ns/call at each sweep point (informs plan-level',
+        f'choice of twiddle-table layout).',
         f'',
         f'| isa | me | ios | flat | log3 | t1s | log1_tight | plan winner |',
         f'|---|---|---|---|---|---|---|---|',
@@ -458,55 +479,58 @@ def emit_report(R: int, ms: list[dict], cross: dict, out_path: Path):
         winner = min(plan_candidates, key=plan_candidates.get) if plan_candidates else '—'
         rows.append(f'| {isa} | {me} | {ios} | '
                     + ' | '.join(cells) + f' | {winner} |')
-    lines += rows[:40]  # truncate to avoid overwhelming reports
+    lines += rows[:40]
     if len(rows) > 40:
         lines.append(f'| ... | ... ({len(rows) - 40} rows omitted) | | | | | | |')
 
-    lines += [
-        f'',
-        f'## Flat-protocol variant winners (fwd)',
-        f'',
-        f'Within the flat protocol, which variant (dit/u2/log1) wins each point?',
-        f'',
-        f'| isa | me | ios | winner | ns |',
-        f'|---|---|---|---|---|',
-    ]
-    per_proto = winners_per_protocol(ms)
-    for (isa, proto, me, ios, d), w in sorted(per_proto.items()):
-        if proto != 'flat' or d != 'fwd': continue
-        lines.append(f'| {isa} | {me} | {ios} | `{w["variant"]}` | {w["ns"]:.0f} |')
+    if dispatcher_fn is not None:
+        lines += [
+            f'',
+            f'## Per-dispatcher winners (fwd)',
+            f'',
+            f'Within each dispatcher slot (variants that compute the same',
+            f'mathematical function), which variant wins each point?',
+            f'',
+            f'| isa | dispatcher | me | ios | winner | ns |',
+            f'|---|---|---|---|---|---|',
+        ]
+        per_disp = winners_per_dispatcher(ms, dispatcher_fn)
+        for (isa, disp, me, ios, d), w in sorted(per_disp.items()):
+            if d != 'fwd': continue
+            lines.append(
+                f'| {isa} | `{disp}` | {me} | {ios} | `{w["variant"]}` | {w["ns"]:.0f} |')
 
-    lines += [
-        f'',
-        f'## log1 vs log1_tight (handicap experiment)',
-        f'',
-        f'Tests whether the log1 variant in flat protocol is handicapped by a',
-        f'full (R-1)*me twiddle table vs a tight 2*me table. Same codelet body;',
-        f'different harness allocation. Expected: within 2% at all points on a',
-        f'chip where memory footprint isnt the bottleneck.',
-        f'',
-        f'| isa | me | ios | log1 (full) ns | log1_tight ns | delta % |',
-        f'|---|---|---|---|---|---|',
-    ]
-    tight_cmp: list[tuple] = []
-    for (isa, me, ios, d), by_p in cross.items():
-        if d != 'fwd': continue
-        # Entries for log1 specifically under flat protocol (fetched from ms)
-        flat_entries = [m for m in ms if m['isa']==isa and m['me']==me
-                        and m['ios']==ios and m['dir']=='fwd'
-                        and m['protocol']=='flat' and m['variant']=='ct_t1_dit_log1']
-        tight_entries = [m for m in ms if m['isa']==isa and m['me']==me
-                         and m['ios']==ios and m['dir']=='fwd'
-                         and m['protocol']=='log1_tight']
-        if not flat_entries or not tight_entries:
-            continue
-        a = flat_entries[0]['ns']
-        b = tight_entries[0]['ns']
-        delta = (b - a) / a * 100.0
-        tight_cmp.append((isa, me, ios, a, b, delta))
-    for (isa, me, ios, a, b, delta) in sorted(tight_cmp):
-        sign = '+' if delta >= 0 else ''
-        lines.append(f'| {isa} | {me} | {ios} | {a:.0f} | {b:.0f} | {sign}{delta:.1f}% |')
+    # Handicap experiment: only relevant for R=4 (has log1_tight variant)
+    if any(m.get('protocol') == 'log1_tight' for m in ms):
+        lines += [
+            f'',
+            f'## log1 vs log1_tight (handicap experiment)',
+            f'',
+            f'Tests whether the log1 variant in flat protocol is handicapped',
+            f'by a full (R-1)*me twiddle table vs a tight 2*me table. Same',
+            f'codelet body; different harness allocation.',
+            f'',
+            f'| isa | me | ios | log1 (full) ns | log1_tight ns | delta % |',
+            f'|---|---|---|---|---|---|',
+        ]
+        tight_cmp: list[tuple] = []
+        for (isa, me, ios, d), by_p in cross.items():
+            if d != 'fwd': continue
+            flat_entries = [m for m in ms if m['isa']==isa and m['me']==me
+                            and m['ios']==ios and m['dir']=='fwd'
+                            and m['protocol']=='flat' and m['variant']=='ct_t1_dit_log1']
+            tight_entries = [m for m in ms if m['isa']==isa and m['me']==me
+                             and m['ios']==ios and m['dir']=='fwd'
+                             and m['protocol']=='log1_tight']
+            if not flat_entries or not tight_entries:
+                continue
+            a = flat_entries[0]['ns']
+            b = tight_entries[0]['ns']
+            delta = (b - a) / a * 100.0
+            tight_cmp.append((isa, me, ios, a, b, delta))
+        for (isa, me, ios, a, b, delta) in sorted(tight_cmp):
+            sign = '+' if delta >= 0 else ''
+            lines.append(f'| {isa} | {me} | {ios} | {a:.0f} | {b:.0f} | {sign}{delta:.1f}% |')
 
     out_path.write_text('\n'.join(lines), encoding='utf-8')
 
@@ -523,44 +547,39 @@ def emit_all(candidates_mod, measurements: Path, out_root: Path,
         raise SystemExit(f'no measurements found in {measurements}')
     print(f'  loaded {len(ms)} measurements')
 
-    # Per-protocol winner tables: for each (isa, protocol, direction),
-    # list of (me, ios, winner_variant, ns).
-    winners_per: dict[tuple[str, str, str], list] = defaultdict(list)
-    per_proto = winners_per_protocol(ms)
-    for (isa, proto, me, ios, d), w in per_proto.items():
-        winners_per[(isa, proto, d)].append((me, ios, w['variant'], w['ns']))
+    dispatcher_fn = candidates_mod.dispatcher  # variant -> dispatcher key
+
+    # Per-dispatcher winner tables: {(isa, dispatcher, direction) ->
+    # [(me, ios, winner_variant, ns), ...]}
+    winners_by_disp: dict[tuple[str, str, str], list] = defaultdict(list)
+    per_disp = winners_per_dispatcher(ms, dispatcher_fn)
+    for (isa, disp, me, ios, d), w in per_disp.items():
+        winners_by_disp[(isa, disp, d)].append((me, ios, w['variant'], w['ns']))
 
     cross = winners_cross_protocol(ms)
 
-    # Emit dispatchers — one per (protocol, ISA).
     out_root.mkdir(parents=True, exist_ok=True)
 
-    # Flat
-    for isa in sorted({isa for (isa, p, _) in winners_per if p == 'flat'}):
-        path = out_root / f'vfft_r{R}_t1_dit_dispatch_{isa}.h'
-        emit_dispatch_header(R, 'flat', isa, candidates_mod, winners_per, path)
-        print(f'  [emit] {path.name}')
+    # Emit one dispatcher header per (dispatcher, isa).
+    disp_keys_by_isa: dict[str, set] = defaultdict(set)
+    for (isa, disp, _) in winners_by_disp:
+        disp_keys_by_isa[isa].add(disp)
 
-    # Log3
-    for isa in sorted({isa for (isa, p, _) in winners_per if p == 'log3'}):
-        path = out_root / f'vfft_r{R}_t1_dit_log3_dispatch_{isa}.h'
-        emit_dispatch_header(R, 'log3', isa, candidates_mod, winners_per, path)
-        print(f'  [emit] {path.name}')
+    for isa in sorted(disp_keys_by_isa):
+        for disp in sorted(disp_keys_by_isa[isa]):
+            path = out_root / f'vfft_r{R}_{disp}_dispatch_{isa}.h'
+            emit_dispatch_header(R, disp, isa, candidates_mod,
+                                 winners_by_disp, path)
+            print(f'  [emit] {path.name}')
 
-    # T1s
-    for isa in sorted({isa for (isa, p, _) in winners_per if p == 't1s'}):
-        path = out_root / f'vfft_r{R}_t1s_dit_dispatch_{isa}.h'
-        emit_dispatch_header(R, 't1s', isa, candidates_mod, winners_per, path)
-        print(f'  [emit] {path.name}')
-
-    # Plan wisdom
+    # Plan wisdom (cross-protocol comparison, unchanged).
     path = out_root / f'vfft_r{R}_plan_wisdom.h'
     emit_plan_wisdom(R, cross, path, host_desc)
     print(f'  [emit] {path.name}')
 
     # Report
     path = out_root / f'vfft_r{R}_report.md'
-    emit_report(R, ms, cross, path)
+    emit_report(R, ms, cross, path, dispatcher_fn=dispatcher_fn)
     print(f'  [emit] {path.name}')
 
 

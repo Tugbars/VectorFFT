@@ -1242,14 +1242,14 @@ radix4_n1_scaled_{direction}_{isa_name}(
 # ═══════════════════════════════════════════════════════════════
 
 VARIANTS = {
-    # flat protocol
-    'ct_t1_dit':        ('radix4_t1_dit',        'flat'),
-    'ct_t1_dit_u2':     ('radix4_t1_dit_u2',     'flat'),
-    'ct_t1_dit_log1':   ('radix4_t1_dit_log1',   'flat'),
-    # log3 protocol
-    'ct_t1_dit_log3':   ('radix4_t1_dit_log3',   'log3'),
-    # t1s protocol
-    'ct_t1s_dit':       ('radix4_t1s_dit',       't1s'),
+    # flat protocol — share dispatcher 't1_dit'
+    'ct_t1_dit':        ('radix4_t1_dit',        'flat', 't1_dit'),
+    'ct_t1_dit_u2':     ('radix4_t1_dit_u2',     'flat', 't1_dit'),
+    'ct_t1_dit_log1':   ('radix4_t1_dit_log1',   'flat', 't1_dit'),
+    # log3 protocol — own dispatcher
+    'ct_t1_dit_log3':   ('radix4_t1_dit_log3',   'log3', 't1_dit_log3'),
+    # t1s protocol — own dispatcher
+    'ct_t1s_dit':       ('radix4_t1s_dit',       't1s',  't1s_dit'),
 }
 
 def function_name(variant_id, isa, direction):
@@ -1257,12 +1257,19 @@ def function_name(variant_id, isa, direction):
     E.g. ('ct_t1_dit_u2', 'avx2', 'fwd') → 'radix4_t1_dit_u2_fwd_avx2'"""
     if variant_id not in VARIANTS:
         raise KeyError(f"unknown variant {variant_id}; known: {list(VARIANTS)}")
-    base, _ = VARIANTS[variant_id]
+    base, _, _ = VARIANTS[variant_id]
     return f'{base}_{direction}_{isa}'
 
 def protocol(variant_id):
-    """Return 'flat' | 'log3' | 't1s' for the given variant."""
+    """Return the twiddle-table layout: 'flat' | 'log3' | 't1s'."""
     return VARIANTS[variant_id][1]
+
+def dispatcher(variant_id):
+    """Return the dispatcher slot this variant fills. Variants sharing
+    a dispatcher slot compute the same mathematical function and are
+    mutually exchangeable; variants in different slots (e.g. DIT vs DIF)
+    are NOT and must be chosen at plan-construction time."""
+    return VARIANTS[variant_id][2]
 
 
 if __name__ == '__main__':

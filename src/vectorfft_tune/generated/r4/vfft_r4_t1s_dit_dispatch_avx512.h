@@ -1,10 +1,10 @@
 /* vfft_r4_t1s_dit_dispatch_avx512.h
  *
- * Auto-generated codelet dispatcher for R=4 / protocol=t1s / isa=avx512.
+ * Auto-generated codelet dispatcher for R=4 / dispatcher=t1s_dit / isa=avx512.
  * Derived from a bench run on this host. The dispatcher picks the
  * fastest variant per (me, ios) based on measured ns/call.
  *
- * To retune: re-run common/bench.py + common/select_and_emit.py.
+ * To retune: re-run common/bench.py.
  */
 #ifndef VFFT_R4_T1S_DIT_DISPATCH_AVX512_H
 #define VFFT_R4_T1S_DIT_DISPATCH_AVX512_H

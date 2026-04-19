@@ -109,3 +109,7 @@ def function_name(variant_id: str, isa: str, direction: str) -> str:
 
 def protocol(variant_id: str) -> str:
     return _gen.protocol(variant_id)
+
+
+def dispatcher(variant_id: str) -> str:
+    return _gen.dispatcher(variant_id)
