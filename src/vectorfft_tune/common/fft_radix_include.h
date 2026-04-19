@@ -23,11 +23,15 @@
     #include "fft_radix8_avx2.h"
     #include "vfft_r8_t1_dit_dispatch_avx2.h"
     #include "vfft_r8_t1_dif_dispatch_avx2.h"
+    #include "vfft_r8_t1_dit_log3_dispatch_avx2.h"
+    #include "vfft_r8_t1s_dit_dispatch_avx2.h"
   #endif
   #if defined(VALIDATE_AVX512)
     #include "fft_radix8_avx512.h"
     #include "vfft_r8_t1_dit_dispatch_avx512.h"
     #include "vfft_r8_t1_dif_dispatch_avx512.h"
+    #include "vfft_r8_t1_dit_log3_dispatch_avx512.h"
+    #include "vfft_r8_t1s_dit_dispatch_avx512.h"
   #endif
   #include "vfft_r8_plan_wisdom.h"
 #else

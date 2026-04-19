@@ -1,22 +1,31 @@
 """
-radixes/r8/candidates.py — R=8 candidate enumeration (Phase A).
+radixes/r8/candidates.py — R=8 candidate enumeration (Phase B).
 
-Current candidate matrix (small, intentionally):
-  ct_t1_dit            — flat baseline (DIT)
-  ct_t1_dif            — flat DIF (VTune: ~10% faster than DIT on Raptor Lake)
-  ct_t1_dit_prefetch   — DIT with SW twiddle prefetch; NEGATIVE CONTROL
-                          (VTune on Raptor Lake showed +8-15% regression; we
-                          still bench it to see if that holds across chips —
-                          Zen with weaker HW prefetch might flip it)
+Candidate matrix (8 variants):
 
-Phase B candidates (not yet ported to gen_radix8):
-  ct_t1s_dit           — scalar-broadcast twiddles (R-1=7 scalars)
-  ct_t1_dit_log1       — load w1+w2+...+w6, derive w7
-  ct_t1_dit_log3       — derive w2..w7 from 3 bases (exists but OOP signature)
-  ct_t1_dit_u2         — 2x m-loop unroll (AVX-512 only per VTune — 32 ZMM)
+  DIT family (dispatcher=t1_dit, flat protocol):
+    ct_t1_dit              baseline — 7 twiddle loads per butterfly
+    ct_t1_dit_prefetch     baseline + SW prefetch of next block's twiddles
+    ct_t1_dit_log1         6 twiddle loads + derive W^7 = W^3 * W^4
+    ct_t1_dit_u2           AVX-512 ONLY — 2x m-loop unroll, hides DFT-8
+                           dependency chain via cross-block ILP
 
-Sweep grid: same as R=4. No reason to differ (codelet is called at the same
-range of (me, ios) in larger plans).
+  DIF family (dispatcher=t1_dif, flat protocol):
+    ct_t1_dif              baseline — butterfly first, post-twiddle outputs
+    ct_t1_dif_prefetch     baseline + SW prefetch
+
+  Log3 (dispatcher=t1_dit_log3, log3 protocol):
+    ct_t1_dit_log3         CT-signature — load 3 bases W^1,W^2,W^4,
+                           derive W^3,W^5,W^6,W^7
+
+  T1s (dispatcher=t1s_dit, t1s protocol):
+    ct_t1s_dit             hoisted 7 scalar broadcasts, K-blocked execution
+
+Sweep grid:
+  Most variants: me ∈ {64, 128, 256, 512, 1024, 2048}, ios ∈ {me, me+8, 8*me}
+  t1s_dit:       me ∈ {64, 128} only (K-blocked pattern — scalar twiddles
+                 amortize across K iterations, so t1s is only relevant at
+                 small me where each m-iteration is cheap).
 """
 from __future__ import annotations
 import sys
@@ -41,22 +50,29 @@ class Candidate:
     requires_avx512: bool = False
 
 
-# Sweep grid (shared with R=4).
 _ME_RANGES = [64, 128, 256, 512, 1024, 2048]
+_ME_T1S    = [64, 128]  # t1s K-blocked — only benched at small me
 
 def _ios_for_me(me: int) -> list[int]:
     return [me, me + 8, 8 * me]
 
 def sweep_grid(variant_id: str) -> list[tuple[int, int]]:
-    return [(me, ios) for me in _ME_RANGES for ios in _ios_for_me(me)]
+    mes = _ME_T1S if variant_id == 'ct_t1s_dit' else _ME_RANGES
+    return [(me, ios) for me in mes for ios in _ios_for_me(me)]
 
 
 _ISAS = ['avx2', 'avx512']
+
+# u2 is AVX-512 only (AVX2 has only 16 YMM — catastrophic spill with 2x unroll)
+_AVX512_ONLY = {'ct_t1_dit_u2'}
+
 
 def enumerate_all() -> list[Candidate]:
     out: list[Candidate] = []
     for variant in _gen.VARIANTS:
         for isa in _ISAS:
+            if variant in _AVX512_ONLY and isa != 'avx512':
+                continue
             out.append(Candidate(
                 variant=variant,
                 isa=isa,

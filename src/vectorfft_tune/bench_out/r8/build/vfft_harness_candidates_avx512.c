@@ -15,6 +15,11 @@ typedef struct {
 const candidate_t CANDIDATES_AVX512[] = {
   {"ct_t1_dit", "avx512", "flat", radix8_t1_dit_fwd_avx512, radix8_t1_dit_bwd_avx512, 1},
   {"ct_t1_dit_prefetch", "avx512", "flat", radix8_t1_dit_prefetch_fwd_avx512, radix8_t1_dit_prefetch_bwd_avx512, 1},
+  {"ct_t1_dit_log1", "avx512", "flat", radix8_t1_dit_log1_fwd_avx512, radix8_t1_dit_log1_bwd_avx512, 1},
+  {"ct_t1_dit_u2", "avx512", "flat", radix8_t1_dit_u2_fwd_avx512, radix8_t1_dit_u2_bwd_avx512, 1},
   {"ct_t1_dif", "avx512", "flat", radix8_t1_dif_fwd_avx512, radix8_t1_dif_bwd_avx512, 1},
+  {"ct_t1_dif_prefetch", "avx512", "flat", radix8_t1_dif_prefetch_fwd_avx512, radix8_t1_dif_prefetch_bwd_avx512, 1},
+  {"ct_t1_dit_log3", "avx512", "log3", radix8_t1_dit_log3_fwd_avx512, radix8_t1_dit_log3_bwd_avx512, 1},
+  {"ct_t1s_dit", "avx512", "t1s", radix8_t1s_dit_fwd_avx512, radix8_t1s_dit_bwd_avx512, 1},
 };
 const size_t N_CANDIDATES_AVX512 = sizeof(CANDIDATES_AVX512) / sizeof(CANDIDATES_AVX512[0]);

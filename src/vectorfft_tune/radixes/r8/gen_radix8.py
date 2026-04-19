@@ -447,6 +447,314 @@ def _emit_cmul_inplace(V, fma, fnma, mul, v_r, v_i, wr, wi, fwd):
     return lines
 
 
+# ═══════════════════════════════════════════════════════════════
+# Shared DFT-8 butterfly (post-twiddle).
+#
+# After x0..x7 are loaded and twiddled, the butterfly is identical across
+# all CT-style DIT variants (log1, t1s, log3). This helper emits just the
+# butterfly + W8-combine + stores, using x0r..x7r / x0i..x7i as inputs.
+# Returns list of C lines to append to the m-loop body.
+# ═══════════════════════════════════════════════════════════════
+
+def _emit_dft8_butterfly_ct(V, p, direction):
+    """Emit the DFT-8 butterfly (DIT structure) for CT-style in-place codelets.
+
+    Assumes variables x0r..x7r, x0i..x7i already hold the twiddled inputs.
+    Writes results back to rio_{re,im}[m + n*ios].
+    Defers vc/vnc to the W8 combine step to free 2 registers during
+    the upstream twiddle+butterfly phase.
+    """
+    add, sub, mul = f'{p}_add_pd', f'{p}_sub_pd', f'{p}_mul_pd'
+    set1 = f'{p}_set1_pd'
+    fwd = direction == 'fwd'
+
+    lines = []
+    # DFT-4 of evens
+    lines.append(f'        const {V} epr={add}(x0r,x4r),eqr={sub}(x0r,x4r),err_={add}(x2r,x6r),esr={sub}(x2r,x6r);')
+    lines.append(f'        const {V} epi={add}(x0i,x4i),eqi={sub}(x0i,x4i),eri={add}(x2i,x6i),esi={sub}(x2i,x6i);')
+    lines.append(f'        const {V} A0r={add}(epr,err_),A0i={add}(epi,eri),A2r={sub}(epr,err_),A2i={sub}(epi,eri);')
+    if fwd:
+        lines.append(f'        const {V} A1r={add}(eqr,esi),A1i={sub}(eqi,esr),A3r={sub}(eqr,esi),A3i={add}(eqi,esr);')
+    else:
+        lines.append(f'        const {V} A1r={sub}(eqr,esi),A1i={add}(eqi,esr),A3r={add}(eqr,esi),A3i={sub}(eqi,esr);')
+    # DFT-4 of odds
+    lines.append(f'        const {V} opr={add}(x1r,x5r),oqr={sub}(x1r,x5r),orr={add}(x3r,x7r),osr={sub}(x3r,x7r);')
+    lines.append(f'        const {V} opi={add}(x1i,x5i),oqi={sub}(x1i,x5i),ori={add}(x3i,x7i),osi={sub}(x3i,x7i);')
+    lines.append(f'        const {V} B0r={add}(opr,orr),B0i={add}(opi,ori),B2r={sub}(opr,orr),B2i={sub}(opi,ori);')
+    if fwd:
+        lines.append(f'        const {V} B1r={add}(oqr,osi),B1i={sub}(oqi,osr),B3r={sub}(oqr,osi),B3i={add}(oqi,osr);')
+    else:
+        lines.append(f'        const {V} B1r={sub}(oqr,osi),B1i={add}(oqi,osr),B3r={add}(oqr,osi),B3i={sub}(oqi,osr);')
+    # W8 combine — defer vc/vnc to free regs during twiddle+butterfly
+    lines.append(f'        /* W8 combine — vc/vnc deferred to free regs during twiddle+butterfly */')
+    lines.append(f'        const {V} vc = {set1}({fmt(C)});')
+    lines.append(f'        const {V} vnc = {set1}({fmt(-C)});')
+    lines.append(f'        ST(&rio_re[m+0*ios],{add}(A0r,B0r)); ST(&rio_im[m+0*ios],{add}(A0i,B0i));')
+    lines.append(f'        ST(&rio_re[m+4*ios],{sub}(A0r,B0r)); ST(&rio_im[m+4*ios],{sub}(A0i,B0i));')
+    if fwd:
+        lines.append(f'        {{const {V} t1r={mul}(vc,{add}(B1r,B1i)),t1i={mul}(vc,{sub}(B1i,B1r));')
+    else:
+        lines.append(f'        {{const {V} t1r={mul}(vc,{sub}(B1r,B1i)),t1i={mul}(vc,{add}(B1r,B1i));')
+    lines.append(f'        ST(&rio_re[m+1*ios],{add}(A1r,t1r)); ST(&rio_im[m+1*ios],{add}(A1i,t1i));')
+    lines.append(f'        ST(&rio_re[m+5*ios],{sub}(A1r,t1r)); ST(&rio_im[m+5*ios],{sub}(A1i,t1i));}}')
+    if fwd:
+        lines.append(f'        ST(&rio_re[m+2*ios],{add}(A2r,B2i)); ST(&rio_im[m+2*ios],{sub}(A2i,B2r));')
+        lines.append(f'        ST(&rio_re[m+6*ios],{sub}(A2r,B2i)); ST(&rio_im[m+6*ios],{add}(A2i,B2r));')
+    else:
+        lines.append(f'        ST(&rio_re[m+2*ios],{sub}(A2r,B2i)); ST(&rio_im[m+2*ios],{add}(A2i,B2r));')
+        lines.append(f'        ST(&rio_re[m+6*ios],{add}(A2r,B2i)); ST(&rio_im[m+6*ios],{sub}(A2i,B2r));')
+    if fwd:
+        lines.append(f'        {{const {V} t3r={mul}(vnc,{sub}(B3r,B3i)),t3i={mul}(vnc,{add}(B3r,B3i));')
+    else:
+        lines.append(f'        {{const {V} t3r={mul}(vnc,{add}(B3r,B3i)),t3i={mul}(vc,{sub}(B3r,B3i));')
+    lines.append(f'        ST(&rio_re[m+3*ios],{add}(A3r,t3r)); ST(&rio_im[m+3*ios],{add}(A3i,t3i));')
+    lines.append(f'        ST(&rio_re[m+7*ios],{sub}(A3r,t3r)); ST(&rio_im[m+7*ios],{sub}(A3i,t3i));}}')
+    return lines
+
+
+# ═══════════════════════════════════════════════════════════════
+# CT-style DIT variants — log1, t1s, log3, u2.
+#
+# All share the butterfly + store structure. They differ only in how the
+# twiddles W^1..W^7 are sourced:
+#
+#   ct_t1_dit       : load all 7 from W_re[n*me+m], W_im[n*me+m]
+#                     (baseline — already in gen_file)
+#   ct_t1_dit_log1  : load W^1..W^6, derive W^7 = W^1 * W^6 (or W^3 * W^4)
+#   ct_t1s_dit      : broadcast 7 scalars from W_re[n-1], W_im[n-1]
+#                     hoisted ONCE before the m-loop (planner supplies
+#                     (R-1)=7 scalars; K-blocked execution required)
+#   ct_t1_dit_log3  : load W^1, W^2, W^4 from W_re[{0,me,2*me}+m], derive
+#                     W^3 = W^1*W^2, W^5 = W^1*W^4, W^6 = W^2*W^4,
+#                     W^7 = W^3*W^4 — CT signature (not the OOP kernel)
+#   ct_t1_dit_u2    : 2x m-loop unroll, AVX-512 only — needs 32 ZMM to
+#                     hold 2 blocks' worth of rio+twiddle state
+# ═══════════════════════════════════════════════════════════════
+
+def _gen_simd_t1_dit_log1_body(isa_name, direction):
+    """Load W^1..W^6, derive W^7 = W^3 * W^4, apply twiddles, butterfly.
+
+    log1 variant: 6 loads + 1 cmul. Compared to baseline (7 loads, 0 cmul)
+    this trades 2 load-port μops for a cmul-chain (4 FMAs). Wins on chips
+    where twiddle bandwidth is a bottleneck.
+
+    Why derive W^7 = W^3 * W^4 (not W^1 * W^6)? Both are mathematically
+    identical; we pick the pair that's loaded earliest so the cmul has
+    the most time to complete before the W^7 twiddle application.
+    """
+    I = ISA[isa_name]
+    V, p = I['V'], I['p']
+    add, sub, mul = f'{p}_add_pd', f'{p}_sub_pd', f'{p}_mul_pd'
+    fma, fnma = f'{p}_fmadd_pd', f'{p}_fnmadd_pd'
+    fwd = direction == 'fwd'
+    fma_op, mul_op = fma, mul  # alias for readability
+
+    lines = []
+    lines.append(f'    for (size_t m = 0; m < me; m += VL) {{')
+    lines.append(f'        {V} x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);')
+    # Load W^1..W^6 and apply to r1..r6
+    for n in range(1, 7):
+        lines.append(f'        {V} r{n}r = LD(&rio_re[m+{n}*ios]), r{n}i = LD(&rio_im[m+{n}*ios]);')
+        lines.append(f'        const {V} tw{n}r = LD(&W_re[{n-1}*me+m]), tw{n}i = LD(&W_im[{n-1}*me+m]);')
+        if fwd:
+            lines.append(f'        const {V} x{n}r = {fnma}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+            lines.append(f'        const {V} x{n}i = {fma_op}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+        else:
+            lines.append(f'        const {V} x{n}r = {fma_op}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+            lines.append(f'        const {V} x{n}i = {fnma}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+    # Derive W^7 = W^3 * W^4. Both are canonical twiddles (same sign convention
+    # whether fwd or bwd — they're plan-level constants), so cmul is "true" (fwd=True).
+    lines.append(f'        /* log1: derive W^7 = W^3 * W^4 */')
+    lines.extend(_emit_cmul(V, fma, fnma, mul, 'tw7r', 'tw7i', 'tw3r', 'tw3i', 'tw4r', 'tw4i', True))
+    # Load r7 and apply derived W^7
+    lines.append(f'        {V} r7r = LD(&rio_re[m+7*ios]), r7i = LD(&rio_im[m+7*ios]);')
+    if fwd:
+        lines.append(f'        const {V} x7r = {fnma}(r7i,tw7i,{mul}(r7r,tw7r));')
+        lines.append(f'        const {V} x7i = {fma_op}(r7r,tw7i,{mul}(r7i,tw7r));')
+    else:
+        lines.append(f'        const {V} x7r = {fma_op}(r7i,tw7i,{mul}(r7r,tw7r));')
+        lines.append(f'        const {V} x7i = {fnma}(r7r,tw7i,{mul}(r7i,tw7r));')
+    # Butterfly
+    lines.extend(_emit_dft8_butterfly_ct(V, p, direction))
+    lines.append('    }')
+    return '\n'.join(lines)
+
+
+def _gen_simd_t1s_dit_body(isa_name, direction):
+    """t1s DIT: broadcast 7 scalars once BEFORE the m-loop.
+
+    Planner contract: W_re / W_im point to (R-1)=7 doubles each. These are
+    the scalar twiddles for the current k block. Callers execute the
+    codelet K-blocked: for each k-block, rebroadcast the 7 scalars.
+
+    Register budget (AVX2, 16 YMM):
+      7 broadcast YMM + 8 rio YMM (in-flight) = 15, leaves 1 free.
+      ICX may spill during butterfly's A/B/y temporaries; that's OK since
+      broadcasts live across iterations.
+    Register budget (AVX-512, 32 ZMM):
+      7 broadcast ZMM + 8 rio ZMM = 15, leaves 17 free — comfortable.
+    """
+    I = ISA[isa_name]
+    V, p = I['V'], I['p']
+    mul = f'{p}_mul_pd'
+    fma, fnma = f'{p}_fmadd_pd', f'{p}_fnmadd_pd'
+    set1 = f'{p}_set1_pd'
+    fwd = direction == 'fwd'
+    fma_op = fma
+
+    lines = []
+    # Broadcast 7 scalars — hoisted before m-loop.
+    lines.append(f'    /* Hoist (R-1)=7 scalar twiddles before m-loop.')
+    lines.append(f'     * Planner supplies 7 doubles in W_re/W_im; K-blocked */')
+    for n in range(1, 8):
+        lines.append(f'    const {V} tw{n}r = {set1}(W_re[{n-1}]);')
+        lines.append(f'    const {V} tw{n}i = {set1}(W_im[{n-1}]);')
+    lines.append(f'    for (size_t m = 0; m < me; m += VL) {{')
+    lines.append(f'        {V} x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);')
+    for n in range(1, 8):
+        lines.append(f'        {V} r{n}r = LD(&rio_re[m+{n}*ios]), r{n}i = LD(&rio_im[m+{n}*ios]);')
+        if fwd:
+            lines.append(f'        const {V} x{n}r = {fnma}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+            lines.append(f'        const {V} x{n}i = {fma_op}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+        else:
+            lines.append(f'        const {V} x{n}r = {fma_op}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+            lines.append(f'        const {V} x{n}i = {fnma}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+    lines.extend(_emit_dft8_butterfly_ct(V, p, direction))
+    lines.append('    }')
+    return '\n'.join(lines)
+
+
+def _gen_simd_t1_dit_log3_ct_body(isa_name, direction):
+    """DIT log3 CT-style: load 3 bases W^1,W^2,W^4 from standard flat layout,
+    derive W^3=W^1*W^2, W^5=W^1*W^4, W^6=W^2*W^4, W^7=W^3*W^4.
+
+    Planner contract: W_re/W_im point to a log3 twiddle table of size 3*me
+    doubles each, with W^1 at offset 0, W^2 at offset me, W^4 at offset 2*me.
+    (Distinct from OOP kernel's log3 which has 3*K layout.)
+
+    Cost: 3 loads + 4 cmuls = 3 loads + 16 FMAs (vs baseline's 7 loads).
+    Wins on chips where twiddle-load bandwidth is the bottleneck; loses
+    on FMA-port-bound chips.
+    """
+    I = ISA[isa_name]
+    V, p = I['V'], I['p']
+    mul = f'{p}_mul_pd'
+    fma, fnma = f'{p}_fmadd_pd', f'{p}_fnmadd_pd'
+    fwd = direction == 'fwd'
+    fma_op = fma
+
+    lines = []
+    lines.append(f'    for (size_t m = 0; m < me; m += VL) {{')
+    lines.append(f'        {V} x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);')
+    # Load 3 bases — W^1 at slot 0, W^2 at slot 1, W^4 at slot 2
+    lines.append(f'        /* log3: load 3 bases W^1, W^2, W^4 */')
+    lines.append(f'        const {V} tw1r = LD(&W_re[0*me+m]), tw1i = LD(&W_im[0*me+m]);')
+    lines.append(f'        const {V} tw2r = LD(&W_re[1*me+m]), tw2i = LD(&W_im[1*me+m]);')
+    lines.append(f'        const {V} tw4r = LD(&W_re[2*me+m]), tw4i = LD(&W_im[2*me+m]);')
+    # Derive 4 twiddles (canonical cmul, independent of direction)
+    lines.append(f'        /* Derive W^3 = W^1 * W^2 */')
+    lines.extend(_emit_cmul(V, fma, fnma, mul, 'tw3r', 'tw3i', 'tw1r', 'tw1i', 'tw2r', 'tw2i', True))
+    lines.append(f'        /* Derive W^5 = W^1 * W^4 */')
+    lines.extend(_emit_cmul(V, fma, fnma, mul, 'tw5r', 'tw5i', 'tw1r', 'tw1i', 'tw4r', 'tw4i', True))
+    lines.append(f'        /* Derive W^6 = W^2 * W^4 */')
+    lines.extend(_emit_cmul(V, fma, fnma, mul, 'tw6r', 'tw6i', 'tw2r', 'tw2i', 'tw4r', 'tw4i', True))
+    lines.append(f'        /* Derive W^7 = W^3 * W^4 */')
+    lines.extend(_emit_cmul(V, fma, fnma, mul, 'tw7r', 'tw7i', 'tw3r', 'tw3i', 'tw4r', 'tw4i', True))
+    # Apply twiddles to r1..r7
+    for n in range(1, 8):
+        lines.append(f'        {V} r{n}r = LD(&rio_re[m+{n}*ios]), r{n}i = LD(&rio_im[m+{n}*ios]);')
+        if fwd:
+            lines.append(f'        const {V} x{n}r = {fnma}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+            lines.append(f'        const {V} x{n}i = {fma_op}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+        else:
+            lines.append(f'        const {V} x{n}r = {fma_op}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+            lines.append(f'        const {V} x{n}i = {fnma}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+    lines.extend(_emit_dft8_butterfly_ct(V, p, direction))
+    lines.append('    }')
+    return '\n'.join(lines)
+
+
+def _gen_simd_t1_dit_u2_body(isa_name, direction):
+    """U=2 interleaved DIT: process 2 m-blocks per iteration for cross-block ILP.
+
+    AVX-512 ONLY. AVX2 catastrophically spills: 8 rio × 2 blocks = 16 YMM
+    (register file limit) with zero room for butterfly temporaries; result
+    is +39% regression on Raptor Lake per VTune.
+
+    AVX-512 has 32 ZMM: 16 rio (in-flight) + 7 twiddles (broadcast/common)
+    leaves 9 free for butterfly temporaries. The OOO engine can interleave
+    the two blocks naturally, hiding the DFT-8 dependency chain.
+    """
+    assert isa_name == 'avx512', 'u2 variant requires AVX-512'
+    I = ISA[isa_name]
+    V, p = I['V'], I['p']
+    add, sub, mul = f'{p}_add_pd', f'{p}_sub_pd', f'{p}_mul_pd'
+    fma, fnma = f'{p}_fmadd_pd', f'{p}_fnmadd_pd'
+    set1 = f'{p}_set1_pd'
+    fwd = direction == 'fwd'
+    fma_op = fma
+
+    lines = []
+    lines.append(f'    /* u2: process 2 m-blocks per iteration. */')
+    lines.append(f'    size_t m;')
+    lines.append(f'    for (m = 0; m + 2*VL <= me; m += 2*VL) {{')
+    # Load both blocks' x0, then twiddled x1..x7 for each
+    for u in (0, 1):
+        off = '' if u == 0 else '+VL'
+        lines.append(f'        {V} x0r_{u} = LD(&rio_re[m{off}]), x0i_{u} = LD(&rio_im[m{off}]);')
+    for n in range(1, 8):
+        for u in (0, 1):
+            off = '' if u == 0 else '+VL'
+            lines.append(f'        {V} r{n}r_{u} = LD(&rio_re[m{off}+{n}*ios]), r{n}i_{u} = LD(&rio_im[m{off}+{n}*ios]);')
+            lines.append(f'        const {V} tw{n}r_{u} = LD(&W_re[{n-1}*me+m{off}]), tw{n}i_{u} = LD(&W_im[{n-1}*me+m{off}]);')
+            if fwd:
+                lines.append(f'        const {V} x{n}r_{u} = {fnma}(r{n}i_{u},tw{n}i_{u},{mul}(r{n}r_{u},tw{n}r_{u}));')
+                lines.append(f'        const {V} x{n}i_{u} = {fma_op}(r{n}r_{u},tw{n}i_{u},{mul}(r{n}i_{u},tw{n}r_{u}));')
+            else:
+                lines.append(f'        const {V} x{n}r_{u} = {fma_op}(r{n}i_{u},tw{n}i_{u},{mul}(r{n}r_{u},tw{n}r_{u}));')
+                lines.append(f'        const {V} x{n}i_{u} = {fnma}(r{n}r_{u},tw{n}i_{u},{mul}(r{n}i_{u},tw{n}r_{u}));')
+    # Emit two butterflies (independent) — suffix-aware version
+    for u in (0, 1):
+        off = '' if u == 0 else '+VL'
+        # Replace x0r..x7r / x0i..x7i with x{n}r_{u} in a mini-substitution
+        bf = _emit_dft8_butterfly_ct(V, p, direction)
+        # Rename xNr/xNi → xNr_u/xNi_u and fix store offsets
+        for ln in bf:
+            # Rename inputs
+            ln2 = ln
+            for n in range(8):
+                ln2 = ln2.replace(f'x{n}r', f'x{n}r_{u}').replace(f'x{n}i', f'x{n}i_{u}')
+            # Rewrite all temporaries with _u suffix to avoid collision
+            for sym in ['epr','epi','eqr','eqi','err_','esr','eri','esi',
+                        'opr','opi','oqr','oqi','orr','osr','ori','osi',
+                        'A0r','A0i','A1r','A1i','A2r','A2i','A3r','A3i',
+                        'B0r','B0i','B1r','B1i','B2r','B2i','B3r','B3i',
+                        'vc','vnc','t1r','t1i','t3r','t3i']:
+                # Careful word-boundary replacement
+                import re
+                ln2 = re.sub(rf'\b{re.escape(sym)}\b', f'{sym}_{u}', ln2)
+            # Fix store addresses: rio_re[m+N*ios] → rio_re[m{off}+N*ios]
+            ln2 = ln2.replace('rio_re[m+', f'rio_re[m{off}+').replace('rio_im[m+', f'rio_im[m{off}+')
+            lines.append(ln2)
+    lines.append('    }')
+    # Tail: handle any remaining VL-sized block
+    lines.append(f'    /* Tail: single-block remainder if me not a multiple of 2*VL */')
+    lines.append(f'    for (; m < me; m += VL) {{')
+    lines.append(f'        {V} x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);')
+    for n in range(1, 8):
+        lines.append(f'        {V} r{n}r = LD(&rio_re[m+{n}*ios]), r{n}i = LD(&rio_im[m+{n}*ios]);')
+        lines.append(f'        const {V} tw{n}r = LD(&W_re[{n-1}*me+m]), tw{n}i = LD(&W_im[{n-1}*me+m]);')
+        if fwd:
+            lines.append(f'        const {V} x{n}r = {fnma}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+            lines.append(f'        const {V} x{n}i = {fma_op}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+        else:
+            lines.append(f'        const {V} x{n}r = {fma_op}(r{n}i,tw{n}i,{mul}(r{n}r,tw{n}r));')
+            lines.append(f'        const {V} x{n}i = {fnma}(r{n}r,tw{n}i,{mul}(r{n}i,tw{n}r));')
+    lines.extend(_emit_dft8_butterfly_ct(V, p, direction))
+    lines.append('    }')
+    return '\n'.join(lines)
+
+
 def gen_simd_log3_dit_body(isa_name, direction):
     """DIT log3: load 3 bases, derive 4, apply to inputs, then butterfly."""
     I = ISA[isa_name]
@@ -1371,7 +1679,58 @@ radix8_t1_dit_prefetch_{direction}_{isa_name}(
 {chr(10).join(st_pf)}
 }}''')
 
-            # ── SIMD t1 DIF: in-place butterfly, then post-twiddle (ms=1, mb=0) ──
+            # ── SIMD t1_dit_log1: load 6 twiddles, derive W^7 ──
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1_dit_log1_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+{_gen_simd_t1_dit_log1_body(isa_name, direction)}
+}}''')
+
+            # ── SIMD t1s_dit: broadcast 7 scalars before m-loop ──
+            # K-blocked execution required at planner level.
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1s_dit_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+{_gen_simd_t1s_dit_body(isa_name, direction)}
+}}''')
+
+            # ── SIMD t1_dit_log3 (CT signature): load 3 bases, derive 4 ──
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1_dit_log3_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+{_gen_simd_t1_dit_log3_ct_body(isa_name, direction)}
+}}''')
+
+            # ── SIMD t1_dit_u2 (AVX-512 ONLY): 2x m-block unroll ──
+            # AVX2 skipped: 16 YMM × 2 blocks = 32 needed, spills catastrophically.
+            if isa_name == 'avx512':
+                parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1_dit_u2_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+{_gen_simd_t1_dit_u2_body(isa_name, direction)}
+}}''')
+
+            # ── SIMD t1 DIF (in-place butterfly, then post-twiddle ms=1, mb=0) ──
             sd = []
             sd.append(f'    const {V} vc = {set1}({fmt(C)});')
             sd.append(f'    const {V} vnc = {set1}({fmt(-C)});')
@@ -1435,6 +1794,36 @@ radix8_t1_dif_{direction}_{isa_name}(
     size_t ios, size_t me)
 {{
 {chr(10).join(sd)}
+}}''')
+
+            # ── SIMD t1 DIF with prefetch: same structure, prefetch next block's twiddles ──
+            # DIF loads twiddles at the END of each iteration (post-twiddle).
+            # Unlike DIT (prefetch before twiddle loads), DIF's natural order
+            # means the prefetch has to race the butterfly. Insert after the
+            # butterfly starts so HW has a head-start warming caches.
+            sd_pf = list(sd)  # copy
+            for idx in range(len(sd_pf)):
+                if 'for (size_t m = 0' in sd_pf[idx]:
+                    pf_lines = []
+                    pf_lines.append(f'        /* Prefetch next block twiddles */')
+                    pf_lines.append(f'        if (m + VL < me) {{')
+                    for n in range(1, 8):
+                        pf_lines.append(f'            _mm_prefetch((const char*)&W_re[{n-1}*me+m+VL], _MM_HINT_T0);')
+                        pf_lines.append(f'            _mm_prefetch((const char*)&W_im[{n-1}*me+m+VL], _MM_HINT_T0);')
+                    pf_lines.append(f'        }}')
+                    for i, pl in enumerate(pf_lines):
+                        sd_pf.insert(idx + 1 + i, pl)
+                    break
+
+            parts.append(f'''
+{I["target"]}
+static inline void
+radix8_t1_dif_prefetch_{direction}_{isa_name}(
+    double * __restrict__ rio_re, double * __restrict__ rio_im,
+    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    size_t ios, size_t me)
+{{
+{chr(10).join(sd_pf)}
 }}''')
 
             # ── SIMD t1_oop DIT: out-of-place twiddle + butterfly ──
@@ -1557,9 +1946,18 @@ radix8_n1_scaled_{direction}_{isa_name}(
 # ═══════════════════════════════════════════════════════════════
 
 VARIANTS = {
-    'ct_t1_dit':          ('radix8_t1_dit',          'flat', 't1_dit'),
-    'ct_t1_dit_prefetch': ('radix8_t1_dit_prefetch', 'flat', 't1_dit'),
-    'ct_t1_dif':          ('radix8_t1_dif',          'flat', 't1_dif'),
+    # t1_dit dispatcher (flat protocol, DIT variants — interchangeable)
+    'ct_t1_dit':          ('radix8_t1_dit',          'flat',       't1_dit'),
+    'ct_t1_dit_prefetch': ('radix8_t1_dit_prefetch', 'flat',       't1_dit'),
+    'ct_t1_dit_log1':     ('radix8_t1_dit_log1',     'flat',       't1_dit'),
+    'ct_t1_dit_u2':       ('radix8_t1_dit_u2',       'flat',       't1_dit'),  # AVX-512 only, filtered in candidates.py
+    # t1_dif dispatcher (flat protocol, DIF variants)
+    'ct_t1_dif':          ('radix8_t1_dif',          'flat',       't1_dif'),
+    'ct_t1_dif_prefetch': ('radix8_t1_dif_prefetch', 'flat',       't1_dif'),
+    # t1_dit_log3 dispatcher (log3 protocol — different twiddle layout)
+    'ct_t1_dit_log3':     ('radix8_t1_dit_log3',     'log3',       't1_dit_log3'),
+    # t1s_dit dispatcher (t1s protocol — scalar broadcast, K-blocked)
+    'ct_t1s_dit':         ('radix8_t1s_dit',         't1s',        't1s_dit'),
 }
 
 def function_name(variant_id, isa, direction):

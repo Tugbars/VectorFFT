@@ -19,19 +19,30 @@ static inline void vfft_r8_t1_dit_dispatch_fwd_avx512(
 {
     /* dispatch rules (per bench):
      *   me∈[64..128]: ct_t1_dit
-     *   me∈[256..256]: ct_t1_dit_prefetch
-     *   me∈[512..∞]: ct_t1_dit
+     *   me∈[256..256]: ct_t1_dit_log1
+     *   me∈[512..1024] pow2 ios: ct_t1_dit_log1
+     *   me∈[512..1024] padded ios: ct_t1_dit
+     *   me∈[2048..∞]: ct_t1_dit_log1
      */
     if (me <= 128) {
         radix8_t1_dit_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
     else if (me >= 256 && me <= 256) {
-        radix8_t1_dit_prefetch_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        radix8_t1_dit_log1_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
-    else if (me >= 512) {
-        radix8_t1_dit_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+    else if (me >= 512 && me <= 1024) {
+        if (ios == me) {
+            radix8_t1_dit_log1_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        } else {
+            radix8_t1_dit_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        }
+    }
+    else if (me >= 2048) {
+        radix8_t1_dit_log1_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
 }
@@ -43,26 +54,42 @@ static inline void vfft_r8_t1_dit_dispatch_bwd_avx512(
 {
     /* dispatch rules (per bench):
      *   me∈[64..128]: ct_t1_dit
-     *   me∈[256..256] pow2 ios: ct_t1_dit
-     *   me∈[256..256] padded ios: ct_t1_dit_prefetch
-     *   me∈[512..∞]: ct_t1_dit
+     *   me∈[256..256]: ct_t1_dit_log1
+     *   me∈[512..512]: ct_t1_dit
+     *   me∈[1024..1024] pow2 ios: ct_t1_dit_log1
+     *   me∈[1024..1024] padded ios: ct_t1_dit
+     *   me∈[2048..∞] pow2 ios: ct_t1_dit
+     *   me∈[2048..∞] padded ios: ct_t1_dit_u2
      */
     if (me <= 128) {
         radix8_t1_dit_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
     else if (me >= 256 && me <= 256) {
+        radix8_t1_dit_log1_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 512 && me <= 512) {
+        radix8_t1_dit_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 1024 && me <= 1024) {
+        if (ios == me) {
+            radix8_t1_dit_log1_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        } else {
+            radix8_t1_dit_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        }
+    }
+    else if (me >= 2048) {
         if (ios == me) {
             radix8_t1_dit_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
             return;
         } else {
-            radix8_t1_dit_prefetch_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            radix8_t1_dit_u2_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
             return;
         }
-    }
-    else if (me >= 512) {
-        radix8_t1_dit_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-        return;
     }
 }
 
