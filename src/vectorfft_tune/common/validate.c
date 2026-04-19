@@ -472,6 +472,45 @@ static const validate_case_t CASES[] = {
              radix32_t1_dit_bwd_avx512, vfft_r32_t1_buf_dit_dispatch_bwd_avx512),
   #endif
 
+#elif RADIX == 64
+  /* R=64 Phase A: same structure as R=16/R=32 — 4 dispatchers, one variant each. */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",     avx2, fwd, "flat",
+             radix64_t1_dit_fwd_avx2,       vfft_r64_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",     avx2, bwd, "flat",
+             radix64_t1_dit_bwd_avx2,       vfft_r64_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dif",     avx2, fwd, "flat",
+             radix64_t1_dif_fwd_avx2,       vfft_r64_t1_dif_dispatch_fwd_avx2),
+    ADD_CASE("t1_dif",     avx2, bwd, "flat",
+             radix64_t1_dif_bwd_avx2,       vfft_r64_t1_dif_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix64_t1_dit_log3_fwd_avx2,  vfft_r64_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix64_t1_dit_log3_bwd_avx2,  vfft_r64_t1_dit_log3_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",    avx2, fwd, "t1s",
+             radix64_t1s_dit_fwd_avx2,      vfft_r64_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",    avx2, bwd, "t1s",
+             radix64_t1s_dit_bwd_avx2,      vfft_r64_t1s_dit_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",     avx512, fwd, "flat",
+             radix64_t1_dit_fwd_avx512,       vfft_r64_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",     avx512, bwd, "flat",
+             radix64_t1_dit_bwd_avx512,       vfft_r64_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dif",     avx512, fwd, "flat",
+             radix64_t1_dif_fwd_avx512,       vfft_r64_t1_dif_dispatch_fwd_avx512),
+    ADD_CASE("t1_dif",     avx512, bwd, "flat",
+             radix64_t1_dif_bwd_avx512,       vfft_r64_t1_dif_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix64_t1_dit_log3_fwd_avx512,  vfft_r64_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix64_t1_dit_log3_bwd_avx512,  vfft_r64_t1_dit_log3_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",    avx512, fwd, "t1s",
+             radix64_t1s_dit_fwd_avx512,      vfft_r64_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",    avx512, bwd, "t1s",
+             radix64_t1s_dit_bwd_avx512,      vfft_r64_t1s_dit_dispatch_bwd_avx512),
+  #endif
+
 #else
   #error "validate.c: unsupported RADIX (extend CASES[])"
 #endif
