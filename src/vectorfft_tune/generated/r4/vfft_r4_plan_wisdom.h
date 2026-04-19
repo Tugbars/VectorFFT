@@ -18,31 +18,31 @@
 
 /* Cross-protocol comparison (fwd direction, AVX2):
  *   me    ios   winning_protocol   winning_ns
- *      64    64   t1s                73.8
- *      64    72   t1s                74.9
- *      64   512   t1s                75.0
- *     128   128   t1s               144.0
- *     128   136   t1s               146.8
- *     128  1024   t1s               142.4
- *     256   256   flat              350.4
- *     256   264   flat              344.5
- *     256  2048   flat              340.1
- *     512   512   flat              702.2
- *     512   520   log3              693.0
- *     512  4096   log3              682.6
- *    1024  1024   log3             1496.2
- *    1024  1032   log3             1592.4
- *    1024  8192   log3             1587.9
- *    2048  2048   log3             3194.5
- *    2048  2056   log3             3129.1
- *    2048 16384   log3             3269.6
+ *      64    64   t1s                27.8
+ *      64    72   t1s                27.9
+ *      64   512   flat               28.6
+ *     128   128   t1s                57.0
+ *     128   136   t1s                57.1
+ *     128  1024   flat               56.3
+ *     256   256   flat              112.1
+ *     256   264   flat              111.2
+ *     256  2048   flat              113.0
+ *     512   512   flat              263.3
+ *     512   520   flat              295.9
+ *     512  4096   flat              262.1
+ *    1024  1024   log3              674.0
+ *    1024  1032   log3              712.5
+ *    1024  8192   log3              701.6
+ *    2048  2048   log3             1418.0
+ *    2048  2056   log3             1390.9
+ *    2048 16384   log3             1481.7
  */
 
 /* Should the planner use log3 protocol at (me, ios)? */
 static inline int radix4_prefer_log3(size_t me, size_t ios) {
     (void)ios;  /* may be unused if rules are me-only */
-    /* Bench wins at me ∈ {512, 1024, 2048} */
-    if (me == 512 || me == 1024 || me == 2048) return 1;
+    /* Bench wins at me ∈ {1024, 2048} */
+    if (me == 1024 || me == 2048) return 1;
     return 0;
 }
 
