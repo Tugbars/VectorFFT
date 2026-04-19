@@ -1,43 +1,43 @@
-/* vfft_r32_t1_dit_dispatch_avx2.h
+/* vfft_r64_t1_dit_log3_dispatch_avx2.h
  *
- * Auto-generated codelet dispatcher for R=32 / dispatcher=t1_dit / isa=avx2.
+ * Auto-generated codelet dispatcher for R=64 / dispatcher=t1_dit_log3 / isa=avx2.
  * Derived from a bench run on this host. The dispatcher picks the
  * fastest variant per (me, ios) based on measured ns/call.
  *
  * To retune: re-run common/bench.py.
  */
-#ifndef VFFT_R32_T1_DIT_DISPATCH_AVX2_H
-#define VFFT_R32_T1_DIT_DISPATCH_AVX2_H
+#ifndef VFFT_R64_T1_DIT_LOG3_DISPATCH_AVX2_H
+#define VFFT_R64_T1_DIT_LOG3_DISPATCH_AVX2_H
 
 #include <stddef.h>
-#include "fft_radix32_avx2.h"
+#include "fft_radix64_avx2.h"
 
-static inline void vfft_r32_t1_dit_dispatch_fwd_avx2(
+static inline void vfft_r64_t1_dit_log3_dispatch_fwd_avx2(
     double * __restrict__ rio_re, double * __restrict__ rio_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..∞]: ct_t1_dit
+     *   me∈[64..∞]: ct_t1_dit_log3
      */
     {
-        radix32_t1_dit_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
+        radix64_t1_dit_log3_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
 }
 
-static inline void vfft_r32_t1_dit_dispatch_bwd_avx2(
+static inline void vfft_r64_t1_dit_log3_dispatch_bwd_avx2(
     double * __restrict__ rio_re, double * __restrict__ rio_im,
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..∞]: ct_t1_dit
+     *   me∈[64..∞]: ct_t1_dit_log3
      */
     {
-        radix32_t1_dit_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
+        radix64_t1_dit_log3_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
 }
 
-#endif /* VFFT_R32_T1_DIT_DISPATCH_AVX2_H */
+#endif /* VFFT_R64_T1_DIT_LOG3_DISPATCH_AVX2_H */
