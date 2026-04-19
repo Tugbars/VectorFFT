@@ -625,12 +625,19 @@ def _gen_simd_t1s_dit_body(isa_name, direction):
 
 
 def _gen_simd_t1_dit_log3_ct_body(isa_name, direction):
-    """DIT log3 CT-style: load 3 bases W^1,W^2,W^4 from standard flat layout,
+    """DIT log3 CT-style: load 3 bases W^1, W^2, W^4 from FLAT twiddle buffer,
     derive W^3=W^1*W^2, W^5=W^1*W^4, W^6=W^2*W^4, W^7=W^3*W^4.
 
-    Planner contract: W_re/W_im point to a log3 twiddle table of size 3*me
-    doubles each, with W^1 at offset 0, W^2 at offset me, W^4 at offset 2*me.
-    (Distinct from OOP kernel's log3 which has 3*K layout.)
+    Planner contract: W_re/W_im point to a flat twiddle table of size
+    (R-1)*me = 7*me doubles each. The log3 codelet reads ONLY slots 0, 1, 3
+    (positions of W^1, W^2, W^4 in the canonical W^j -> (j-1)*me indexing).
+    The remaining slots 2, 4, 5, 6 are unused by this variant but still
+    allocated — this keeps the twiddle buffer shape identical to flat
+    protocol, so the planner never branches on codelet choice.
+
+    Cross-radix convention: R=4 reads slot 0 (W^1), R=8 reads {0,1,3}
+    (W^1,W^2,W^4), R=16 reads {0,1,3,7} (W^1,W^2,W^4,W^8), R=32 reads
+    {0,1,3,7,15}, etc. — slots (2^k - 1) for k = 0..log2(R)-1.
 
     Cost: 3 loads + 4 cmuls = 3 loads + 16 FMAs (vs baseline's 7 loads).
     Wins on chips where twiddle-load bandwidth is the bottleneck; loses
@@ -646,11 +653,11 @@ def _gen_simd_t1_dit_log3_ct_body(isa_name, direction):
     lines = []
     lines.append(f'    for (size_t m = 0; m < me; m += VL) {{')
     lines.append(f'        {V} x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);')
-    # Load 3 bases — W^1 at slot 0, W^2 at slot 1, W^4 at slot 2
-    lines.append(f'        /* log3: load 3 bases W^1, W^2, W^4 */')
+    # Sparse reads from flat buffer: W^1 at slot 0, W^2 at slot 1, W^4 at slot 3.
+    lines.append(f'        /* log3: sparse read of W^1, W^2, W^4 from flat buffer */')
     lines.append(f'        const {V} tw1r = LD(&W_re[0*me+m]), tw1i = LD(&W_im[0*me+m]);')
     lines.append(f'        const {V} tw2r = LD(&W_re[1*me+m]), tw2i = LD(&W_im[1*me+m]);')
-    lines.append(f'        const {V} tw4r = LD(&W_re[2*me+m]), tw4i = LD(&W_im[2*me+m]);')
+    lines.append(f'        const {V} tw4r = LD(&W_re[3*me+m]), tw4i = LD(&W_im[3*me+m]);')
     # Derive 4 twiddles (canonical cmul, independent of direction)
     lines.append(f'        /* Derive W^3 = W^1 * W^2 */')
     lines.extend(_emit_cmul(V, fma, fnma, mul, 'tw3r', 'tw3i', 'tw1r', 'tw1i', 'tw2r', 'tw2i', True))

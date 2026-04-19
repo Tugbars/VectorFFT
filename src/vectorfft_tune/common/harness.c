@@ -139,29 +139,13 @@ static int host_has_avx512(void) {
  * should not be degenerate (0 / NaN / subnormal).
  * ═══════════════════════════════════════════════════════════════ */
 
-static size_t log3_bases_for_radix(int R) {
-  /* log3 protocol derives W^2..W^{R-1} from a small set of "base" twiddles.
-   *   R=2: no twiddles (trivial butterfly)
-   *   R=4: 1 base  (W^1 → W^2, W^3 via cmul)
-   *   R=8: 3 bases (W^1, W^2, W^4 → W^3, W^5, W^6, W^7)
-   *   R=16: 4 bases (W^1, W^2, W^4, W^8 → rest)
-   * Generalizing: bases are W^(2^k) for k s.t. 2^k < R; count = floor(log2(R-1))+1
-   * for R∈{4,8,16,32,64}.  */
-  if (R <= 2)  return 0;
-  if (R == 4)  return 1;
-  if (R == 8)  return 3;
-  if (R == 16) return 4;
-  if (R == 32) return 5;
-  if (R == 64) return 6;
-  /* Generic fallback — floor(log2(R-1)) + 1 */
-  int n = 0, x = R - 1;
-  while (x > 0) { n++; x >>= 1; }
-  return (size_t)n;
-}
-
 static size_t twiddle_doubles(const char *protocol, int R, size_t me) {
+  /* Sparse log3 convention: log3 codelets read only 4-5 slots of a full
+   * (R-1)*me flat buffer. Buffer shape is identical to flat protocol;
+   * codelet choice is a runtime dispatcher decision that never changes
+   * the buffer. This keeps the planner uniform across codelet variants. */
   if (strcmp(protocol, "flat")       == 0) return (size_t)(R - 1) * me;
-  if (strcmp(protocol, "log3")       == 0) return log3_bases_for_radix(R) * me;
+  if (strcmp(protocol, "log3")       == 0) return (size_t)(R - 1) * me;
   if (strcmp(protocol, "t1s")        == 0) return (size_t)(R - 1);
   if (strcmp(protocol, "log1_tight") == 0) return (size_t)2 * me;
   fprintf(stderr, "unknown protocol: %s\n", protocol);
