@@ -3,138 +3,126 @@
 Radix-generic ATLAS-style autotuning for VectorFFT codelets. Per-chip
 calibration emits dispatcher headers that the registry picks up.
 
-Currently ported: **R=4, R=8**.
-
 ## What this does
 
 For a given radix R, measures every codelet variant across a sweep of
-`(me, ios)` points on the current machine, then emits per-dispatcher
-header files plus a plan-wisdom header. Example R=8 output:
+`(me, ios)` points on the current machine, then emits per-protocol
+dispatcher headers plus a plan-wisdom header:
 
-    vfft_r8_t1_dit_dispatch_avx2.h    # DIT dispatcher, picks among DIT variants
-    vfft_r8_t1_dif_dispatch_avx2.h    # DIF dispatcher, picks among DIF variants
-    vfft_r8_t1_dit_dispatch_avx512.h
-    vfft_r8_t1_dif_dispatch_avx512.h
-    vfft_r8_plan_wisdom.h             # protocol selection for planner
+    vfft_r{R}_t1_dit_dispatch.h       # flat protocol dispatcher
+    vfft_r{R}_t1_dit_log3_dispatch.h  # log3 protocol dispatcher
+    vfft_r{R}_t1s_dit_dispatch.h      # t1s protocol dispatcher
+    vfft_r{R}_plan_wisdom.h           # protocol selection for planner
 
-## Schema: protocol vs dispatcher
+The generated headers drop into the existing VectorFFT build; the
+registry's `_REG_T1(R)` / `_REG_T1_LOG3(R)` / `_REG_T1S(R)` macros
+resolve to the dispatcher (which is `static inline` and picks among
+its variants based on `(me, ios)`).
 
-Each codelet variant has two orthogonal tags:
+## Architecture
 
-- **protocol**: the twiddle-table layout the variant expects
-  (`flat` = `(R-1)*me` doubles; `log3` = `me` doubles; `t1s` = `(R-1)` scalars).
-  The planner uses this to size and populate the twiddle buffer.
+One dispatcher per protocol per radix. A **protocol** is a contract
+between the planner (which populates the twiddle buffer) and the
+codelet (which reads from it):
 
-- **dispatcher**: the codelet slot the variant populates. Variants sharing
-  a dispatcher key compute the **same mathematical function** and are
-  mutually exchangeable based on measured ns/call. Variants in **different**
-  dispatcher slots (e.g. DIT vs DIF at R=8) compute different functions
-  from the same inputs, and the planner chooses between them at plan
-  construction time, not at codelet-call time.
+- **flat**: `W_re` has `(R-1) * me` doubles; codelet reads per-m per-leg.
+  Variants: `ct_t1_dit`, `ct_t1_dit_u2`, `ct_t1_dit_log1`.
+- **log3**: `W_re` has `me` doubles (w1 only); codelet derives w2, w3.
+  Variants: `ct_t1_dit_log3`.
+- **t1s**: `W_re` has `R-1` scalars; codelet broadcasts once before the
+  m-loop. Requires K-blocked execution at the planner level.
+  Variants: `ct_t1s_dit`.
 
-R=4 example: `ct_t1_dit`, `ct_t1_dit_u2`, `ct_t1_dit_log1` all have
-dispatcher=`t1_dit` (all DIT, all flat). `ct_t1_dit_log3` has
-dispatcher=`t1_dit_log3` (separate because it needs a different twiddle
-buffer). `ct_t1s_dit` has dispatcher=`t1s_dit`.
-
-R=8 example: `ct_t1_dit` and `ct_t1_dit_prefetch` both have
-dispatcher=`t1_dit` (both DIT-family). `ct_t1_dif` has dispatcher=`t1_dif`
-(DIF-family — computes a different function).
+Within each protocol, the bench picks the winning variant per
+`(me, ios)`. Across protocols, plan-wisdom emits decision functions
+(`radix{R}_prefer_log3(me, ios)` etc) that the planner consults when
+building a plan.
 
 ## Pipeline
 
-```
-python common/bench.py --radix-dir radixes/r4 --phase all   # all 5 phases
-python common/bench.py --radix-dir radixes/r8 --phase all
-```
+    python common/bench.py --radix-dir radixes/r4 --phase generate
+    python common/bench.py --radix-dir radixes/r4 --phase compile
+    python common/bench.py --radix-dir radixes/r4 --phase run
+    # --> bench_out/r4/measurements.jsonl
 
-Or run individual phases:
+    python common/select_and_emit.py --radix-dir radixes/r4
+    # --> generated/vfft_r4_*.h
 
-```
-python common/bench.py --radix-dir radixes/r4 --phase generate
-python common/bench.py --radix-dir radixes/r4 --phase compile
-python common/bench.py --radix-dir radixes/r4 --phase run
-python common/bench.py --radix-dir radixes/r4 --phase emit
-python common/bench.py --radix-dir radixes/r4 --phase validate
-```
-
-Phases are idempotent; `--phase run` resumes from existing jsonl.
+Each phase idempotent. `--phase run` resumes from existing jsonl.
 
 ## Portability
 
 ### Linux (default)
+Container or Ubuntu with `gcc` on PATH. Nothing special.
+
 ```
 python3 common/bench.py --radix-dir radixes/r4 --phase all
 ```
 
-### Windows + ICX (production target)
+### Windows + ICX (Tugbars's production target)
+
+Set up Intel oneAPI environment (ICX + LLD), then:
+
 ```
-"C:\Program Files (x86)\Intel\oneAPI\setvars.bat"
+set CC=icx
 python common\bench.py --radix-dir radixes\r4 --phase all
 ```
 
-Sources oneAPI env (needed for libircmt.lib link). ICX on Windows uses
-LLD linker by default. AVX-512 candidates auto-skip on hosts without
-AVX-512 via CPUID at runtime.
+ICX on Windows uses LLD linker by default. AVX-512 candidates auto-skip
+via CPUID at harness runtime (Raptor Lake has AVX-512 fused off).
 
-### Compile flag isolation
-Each translation unit is compiled with only its needed ISA flags.
-`harness.c` and the aggregator get base (AVX2) flags. Per-ISA candidate
-fragments get their ISA-specific flags. This prevents the compiler from
-emitting AVX-512 instructions in outer harness code on hosts without
-AVX-512 support (previous symptom: `STATUS_ILLEGAL_INSTRUCTION` at runtime).
+### Windows + MSVC (fallback)
 
-On hosts without AVX-512, the AVX-512 fragment is replaced with an empty
-stub so the aggregator's `extern` declarations still resolve.
+```
+set CC=cl
+python common\bench.py --radix-dir radixes\r4 --phase all
+```
+
+MSVC only accepts one `/arch:` at a time; infrastructure picks the widest
+ISA any candidate requires.
+
+### Override the compiler
+
+`VFFT_CC` takes precedence over `CC`. Absolute paths work:
+
+```
+set VFFT_CC=C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin\icx.exe
+```
 
 ## Adding a new radix
 
 Create `radixes/rN/` with:
 
-- `gen_radixN.py` — codelet generator. Must expose:
-  - `VARIANTS` dict: `{variant_id: (function_base, protocol, dispatcher)}`
-  - `function_name(variant_id, isa, direction) -> str`
-  - `protocol(variant_id) -> str`
-  - `dispatcher(variant_id) -> str`
-  - CLI supporting `--isa avx2|avx512|scalar` to emit the ISA header.
-
+- `gen_radixN.py` — codelet generator. Must expose a `VARIANTS` dict
+  mapping variant IDs to `(function_base, protocol)`, plus `function_name(v, isa, dir)` and `protocol(v)` helpers.
+  Must support `--isa {avx2|avx512|scalar}` to emit the ISA header.
 - `candidates.py` — exposes `RADIX`, `GEN_SCRIPT`, `enumerate_all()`,
-  `sweep_grid(variant)`, `function_name`, `protocol`, `dispatcher`.
+  `sweep_grid(variant)`, `function_name(v, isa, dir)`, `protocol(v)`.
 
-The bench infrastructure in `common/` is radix-agnostic and requires no
-changes.
-
-After bench runs, extend:
-
-- `common/validate.c` — add `#elif RADIX == N` block with `ADD_CASE`
-  entries for each dispatcher you emit.
-- `common/fft_radix_include.h` — add `#elif RADIX == N` block including
-  the generator header + each dispatcher header + plan wisdom.
+The bench infrastructure in `common/` is radix-agnostic — no changes
+required.
 
 ## Files in bench_out/r{R}/
 
 - `staging/fft_radix{R}_{isa}.h` — generator output per ISA
 - `build/vfft_harness_candidates_{isa}.c` — per-ISA candidate tables
 - `build/vfft_harness_candidates.c` — aggregator
-- `build/*.o | *.obj` — per-TU object files (multi-step compile)
 - `build/harness[.exe]` — measurement binary
-- `build/validate_{isa}[.exe]` — validator binaries
 - `measurements.jsonl` — raw results, one JSON object per line
 
 ## Troubleshooting
 
 **"No C compiler found"**: install gcc/clang/icx, or set `VFFT_CC`.
 
-**AVX-512 candidates measured as "host_lacks_avx512"**: expected on Raptor
-Lake (AVX-512 fused off). The harness's runtime CPUID probe skips them.
+**AVX-512 candidates measured as "skipped" on Raptor Lake**: expected —
+Raptor Lake has AVX-512 fused off. The bench correctly skips them via
+`__builtin_cpu_supports("avx512f")` CPUID.
 
-**Validator shows failures**: the dispatcher produces different output
-than the reference codelet for that dispatcher's family. This usually
-means a genuine codelet bug, OR a twiddle-table layout mismatch between
-the validator's `populate_tw()` and what the codelet expects. Check
-`common/validate.c`'s `populate_tw()` for the protocol in question.
+**Duplicate symbol errors at link time**: the infrastructure splits one
+TU per ISA to avoid scalar-codelet name collisions. If you hit this,
+check that `emit_candidate_table` is producing separate `vfft_harness_candidates_{isa}.c`
+files and not a single shared one.
 
-**Multiple dispatchers emitted for same radix**: expected. DIT and DIF
-families at R=8 get separate dispatchers because they compute different
-functions.
-
+**Windows cp1252 decode errors**: make sure `subprocess` calls go through
+`common/bench.py`'s `_run` helper, which forces `PYTHONIOENCODING=utf-8`
+on child processes.

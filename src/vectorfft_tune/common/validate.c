@@ -55,9 +55,23 @@ typedef void (*t1_fn)(double *rio_re, double *rio_im,
  * Twiddle layouts (must match harness.c)
  * ═══════════════════════════════════════════════════════════════ */
 
+static size_t log3_bases(int R) {
+  /* Count of base twiddles in log3 layout per radix. Must match
+   * harness.c's log3_bases_for_radix(). */
+  if (R <= 2)  return 0;
+  if (R == 4)  return 1;
+  if (R == 8)  return 3;
+  if (R == 16) return 4;
+  if (R == 32) return 5;
+  if (R == 64) return 6;
+  int n = 0, x = R - 1;
+  while (x > 0) { n++; x >>= 1; }
+  return (size_t)n;
+}
+
 static size_t tw_doubles(const char *protocol, int R, size_t me) {
   if (strcmp(protocol, "flat")       == 0) return (size_t)(R - 1) * me;
-  if (strcmp(protocol, "log3")       == 0) return me;
+  if (strcmp(protocol, "log3")       == 0) return log3_bases(R) * me;
   if (strcmp(protocol, "t1s")        == 0) return (size_t)(R - 1);
   return 0;
 }
@@ -67,10 +81,7 @@ static void populate_tw(const char *protocol, int R, size_t me,
 {
   /* Must use ACTUAL DFT twiddles — w[(j-1)*me + m] = exp(-2πi*j*m/(R*me)).
      This way w2 = w1², w3 = w1³, making flat/log1/log3 variants produce
-     identical results when run against a common twiddle table. (Using
-     arbitrary unit-magnitude values breaks w_k = w_1^k, and log3/log1
-     produce different output from flat — a validator bug, not a codelet
-     bug.) */
+     identical results when run against a common twiddle table. */
   const double TWO_PI = 6.28318530717958647692;
   if (strcmp(protocol, "flat") == 0) {
     for (int j = 1; j < R; j++) {
@@ -81,11 +92,19 @@ static void populate_tw(const char *protocol, int R, size_t me,
       }
     }
   } else if (strcmp(protocol, "log3") == 0) {
-    /* log3 reads only w1 = exp(-2πi*m/(R*me)) */
-    for (size_t m = 0; m < me; m++) {
-      double phase = -TWO_PI * (double)m / ((double)R * (double)me);
-      W_re[m] = cos(phase);
-      W_im[m] = sin(phase);
+    /* log3 stores bases W^(2^k) for k = 0..log3_bases(R)-1 at offsets k*me.
+     *   R=4: bases = [W^1]
+     *   R=8: bases = [W^1, W^2, W^4]
+     *   R=16: bases = [W^1, W^2, W^4, W^8]
+     * Codelet derives the rest via cmul. */
+    size_t nb = log3_bases(R);
+    for (size_t k = 0; k < nb; k++) {
+      int j = 1 << k;   /* exponent of this base: W^(2^k) */
+      for (size_t m = 0; m < me; m++) {
+        double phase = -TWO_PI * (double)j * (double)m / ((double)R * (double)me);
+        W_re[k * me + m] = cos(phase);
+        W_im[k * me + m] = sin(phase);
+      }
     }
   } else if (strcmp(protocol, "t1s") == 0) {
     /* t1s: (R-1) scalars — one per leg, constant for this call.
@@ -214,32 +233,53 @@ static const validate_case_t CASES[] = {
   #endif
 
 #elif RADIX == 8
-  /* R=8 has two dispatchers (different codelet families, each picks among
-   * its own variants only):
-   *   t1_dit : dit / dit_prefetch variants — reference is radix8_t1_dit
-   *   t1_dif : dif only (for now)          — reference is radix8_t1_dif
-   * DIT and DIF compute different functions from the same (rio, W, ios, me)
-   * inputs, so each dispatcher is validated against its OWN family's
-   * reference codelet. */
+  /* R=8 has four dispatchers:
+   *   t1_dit      : variants dit / dit_prefetch / dit_log1 / dit_u2(AVX-512)
+   *                 reference = radix8_t1_dit (flat protocol)
+   *   t1_dif      : variants dif / dif_prefetch
+   *                 reference = radix8_t1_dif (flat protocol)
+   *   t1_dit_log3 : single variant t1_dit_log3
+   *                 reference = self (log3 protocol — different twiddle layout)
+   *   t1s_dit     : single variant t1s_dit
+   *                 reference = self (t1s protocol — 7 scalars)
+   * Each dispatcher validates against its own family's flat reference
+   * codelet. log3 and t1s self-validate (dispatcher just wraps the sole
+   * variant) since no other codelet reads their twiddle layout. */
   #if defined(VALIDATE_AVX2)
-    ADD_CASE("t1_dit", avx2, fwd, "flat",
-             radix8_t1_dit_fwd_avx2,        vfft_r8_t1_dit_dispatch_fwd_avx2),
-    ADD_CASE("t1_dit", avx2, bwd, "flat",
-             radix8_t1_dit_bwd_avx2,        vfft_r8_t1_dit_dispatch_bwd_avx2),
-    ADD_CASE("t1_dif", avx2, fwd, "flat",
-             radix8_t1_dif_fwd_avx2,        vfft_r8_t1_dif_dispatch_fwd_avx2),
-    ADD_CASE("t1_dif", avx2, bwd, "flat",
-             radix8_t1_dif_bwd_avx2,        vfft_r8_t1_dif_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit",     avx2, fwd, "flat",
+             radix8_t1_dit_fwd_avx2,       vfft_r8_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",     avx2, bwd, "flat",
+             radix8_t1_dit_bwd_avx2,       vfft_r8_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dif",     avx2, fwd, "flat",
+             radix8_t1_dif_fwd_avx2,       vfft_r8_t1_dif_dispatch_fwd_avx2),
+    ADD_CASE("t1_dif",     avx2, bwd, "flat",
+             radix8_t1_dif_bwd_avx2,       vfft_r8_t1_dif_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix8_t1_dit_log3_fwd_avx2,  vfft_r8_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix8_t1_dit_log3_bwd_avx2,  vfft_r8_t1_dit_log3_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",    avx2, fwd, "t1s",
+             radix8_t1s_dit_fwd_avx2,      vfft_r8_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",    avx2, bwd, "t1s",
+             radix8_t1s_dit_bwd_avx2,      vfft_r8_t1s_dit_dispatch_bwd_avx2),
   #endif
   #if defined(VALIDATE_AVX512)
-    ADD_CASE("t1_dit", avx512, fwd, "flat",
-             radix8_t1_dit_fwd_avx512,      vfft_r8_t1_dit_dispatch_fwd_avx512),
-    ADD_CASE("t1_dit", avx512, bwd, "flat",
-             radix8_t1_dit_bwd_avx512,      vfft_r8_t1_dit_dispatch_bwd_avx512),
-    ADD_CASE("t1_dif", avx512, fwd, "flat",
-             radix8_t1_dif_fwd_avx512,      vfft_r8_t1_dif_dispatch_fwd_avx512),
-    ADD_CASE("t1_dif", avx512, bwd, "flat",
-             radix8_t1_dif_bwd_avx512,      vfft_r8_t1_dif_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit",     avx512, fwd, "flat",
+             radix8_t1_dit_fwd_avx512,     vfft_r8_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",     avx512, bwd, "flat",
+             radix8_t1_dit_bwd_avx512,     vfft_r8_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dif",     avx512, fwd, "flat",
+             radix8_t1_dif_fwd_avx512,     vfft_r8_t1_dif_dispatch_fwd_avx512),
+    ADD_CASE("t1_dif",     avx512, bwd, "flat",
+             radix8_t1_dif_bwd_avx512,     vfft_r8_t1_dif_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix8_t1_dit_log3_fwd_avx512, vfft_r8_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix8_t1_dit_log3_bwd_avx512, vfft_r8_t1_dit_log3_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",    avx512, fwd, "t1s",
+             radix8_t1s_dit_fwd_avx512,    vfft_r8_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",    avx512, bwd, "t1s",
+             radix8_t1s_dit_bwd_avx512,    vfft_r8_t1s_dit_dispatch_bwd_avx512),
   #endif
 
 #else

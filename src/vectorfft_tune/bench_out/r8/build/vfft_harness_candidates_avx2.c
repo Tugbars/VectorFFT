@@ -15,6 +15,10 @@ typedef struct {
 const candidate_t CANDIDATES_AVX2[] = {
   {"ct_t1_dit", "avx2", "flat", radix8_t1_dit_fwd_avx2, radix8_t1_dit_bwd_avx2, 0},
   {"ct_t1_dit_prefetch", "avx2", "flat", radix8_t1_dit_prefetch_fwd_avx2, radix8_t1_dit_prefetch_bwd_avx2, 0},
+  {"ct_t1_dit_log1", "avx2", "flat", radix8_t1_dit_log1_fwd_avx2, radix8_t1_dit_log1_bwd_avx2, 0},
   {"ct_t1_dif", "avx2", "flat", radix8_t1_dif_fwd_avx2, radix8_t1_dif_bwd_avx2, 0},
+  {"ct_t1_dif_prefetch", "avx2", "flat", radix8_t1_dif_prefetch_fwd_avx2, radix8_t1_dif_prefetch_bwd_avx2, 0},
+  {"ct_t1_dit_log3", "avx2", "log3", radix8_t1_dit_log3_fwd_avx2, radix8_t1_dit_log3_bwd_avx2, 0},
+  {"ct_t1s_dit", "avx2", "t1s", radix8_t1s_dit_fwd_avx2, radix8_t1s_dit_bwd_avx2, 0},
 };
 const size_t N_CANDIDATES_AVX2 = sizeof(CANDIDATES_AVX2) / sizeof(CANDIDATES_AVX2[0]);

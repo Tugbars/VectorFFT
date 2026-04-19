@@ -18,30 +18,9 @@ static inline void vfft_r4_t1_dit_dispatch_fwd_avx2(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..64]: ct_t1_dit_log1
-     *   me∈[128..128]: ct_t1_dit
-     *   me∈[256..256] pow2 ios: ct_t1_dit_log1
-     *   me∈[256..256] padded ios: ct_t1_dit
-     *   me∈[512..∞]: ct_t1_dit_log1
+     *   me∈[64..∞]: ct_t1_dit_log1
      */
-    if (me <= 64) {
-        radix4_t1_dit_log1_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-        return;
-    }
-    else if (me >= 128 && me <= 128) {
-        radix4_t1_dit_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-        return;
-    }
-    else if (me >= 256 && me <= 256) {
-        if (ios == me) {
-            radix4_t1_dit_log1_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        } else {
-            radix4_t1_dit_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        }
-    }
-    else if (me >= 512) {
+    {
         radix4_t1_dit_log1_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
@@ -53,19 +32,9 @@ static inline void vfft_r4_t1_dit_dispatch_bwd_avx2(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..64]: ct_t1_dit_log1
-     *   me∈[128..128]: ct_t1_dit
-     *   me∈[256..∞]: ct_t1_dit_log1
+     *   me∈[64..∞]: ct_t1_dit_log1
      */
-    if (me <= 64) {
-        radix4_t1_dit_log1_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-        return;
-    }
-    else if (me >= 128 && me <= 128) {
-        radix4_t1_dit_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-        return;
-    }
-    else if (me >= 256) {
+    {
         radix4_t1_dit_log1_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
