@@ -504,7 +504,23 @@ def main_driver(radix_dir: Path, out_root: Path, phases: list[str],
         print('[phase] emit')
         # select_and_emit lives in the same package; invoke it as a module.
         import select_and_emit as _sae
+        import shutil as _shutil
         generated.mkdir(parents=True, exist_ok=True)
+
+        # Codelet headers (fft_radix{R}_{isa}.h) are produced in staging/ by
+        # phase_generate. The dispatcher headers that select_and_emit writes
+        # all `#include "fft_radix{R}_{isa}.h"` — so the codelet headers must
+        # sit alongside the dispatcher headers in generated/ for the library
+        # to compile downstream.
+        isas_needed = sorted({c.isa for c in candidates_mod.enumerate_all()})
+        R = candidates_mod.RADIX
+        for isa in isas_needed:
+            src = staging / f'fft_radix{R}_{isa}.h'
+            if src.exists():
+                dst = generated / src.name
+                _shutil.copyfile(src, dst)
+                print(f'  [copy] {src.name} -> generated/')
+
         host_desc = os.environ.get('VFFT_HOST_DESC', '')
         if not host_desc:
             try:
