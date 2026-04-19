@@ -126,6 +126,10 @@ class CompilerSpec:
         """Math library linker flag."""
         if self.kind == 'msvc':
             return []  # msvcrt has math
+        if self.on_windows:
+            # Any compiler on Windows links against msvcrt which provides libm.
+            # ICX in clang-cl mode rejects -lm outright; mingw-gcc doesn't need it.
+            return []
         return ['-lm']
 
     def link_flags(self) -> list[str]:
@@ -168,3 +172,4 @@ def host_supports_avx2() -> bool:
         return True  # AVX2 has been baseline on Intel/AMD x86 for ~10 years
     except Exception:
         return True
+    
