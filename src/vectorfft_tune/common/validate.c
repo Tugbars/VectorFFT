@@ -115,8 +115,9 @@ static int compare_buffers(const double *a_re, const double *a_im,
 typedef struct {
   const char *name;     /* descriptive name for output */
   t1_fn ref_fn;         /* reference codelet (e.g. the flat baseline) */
-  t1_fn disp_fn;        /* dispatcher to validate */
+  t1_fn disp_fn;        /* dispatcher or variant to validate */
   const char *protocol; /* twiddle layout */
+  size_t min_me;        /* skip points with me < min_me (for buf: tile size) */
 } validate_case_t;
 
 static int run_case(const validate_case_t *c, int R, size_t me, size_t ios,
@@ -176,7 +177,9 @@ static int run_case(const validate_case_t *c, int R, size_t me, size_t ios,
 
 static const validate_case_t CASES[] = {
 #define ADD_CASE(TAG, ISA, DIR, PROTO, REF, DISP) \
-  { TAG " " #ISA " " #DIR, REF, DISP, PROTO }
+  { TAG " " #ISA " " #DIR, REF, DISP, PROTO, 0 }
+#define ADD_CASE_MIN_ME(TAG, ISA, DIR, PROTO, REF, DISP, MINME) \
+  { TAG " " #ISA " " #DIR, REF, DISP, PROTO, MINME }
 
 #if RADIX == 4
   #if defined(VALIDATE_AVX2)
@@ -301,6 +304,73 @@ static const validate_case_t CASES[] = {
     ADD_CASE("t1s_dit",    avx512, bwd, "t1s",
              radix16_t1s_dit_bwd_avx512,      vfft_r16_t1s_dit_dispatch_bwd_avx512),
   #endif
+  /* ── Phase B: buf variants (3 tiles × 2 drains × 2 ISAs × 2 dirs = 24 cases) ──
+   * Each buf variant validates directly (not via dispatcher) against the
+   * flat t1_dit reference. The dispatcher-level validator test at the top
+   * only catches bugs in whatever variant the dispatcher happens to pick
+   * at each me; testing each variant individually catches bugs in all six.
+   * min_me = tile size: buf kernel requires me >= tile for a full iteration. */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE_MIN_ME("buf_tile64_temporal",  avx2, fwd, "flat",
+                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile64_temporal_fwd_avx2, 64),
+    ADD_CASE_MIN_ME("buf_tile64_temporal",  avx2, bwd, "flat",
+                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile64_temporal_bwd_avx2, 64),
+    ADD_CASE_MIN_ME("buf_tile64_stream",    avx2, fwd, "flat",
+                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile64_stream_fwd_avx2, 64),
+    ADD_CASE_MIN_ME("buf_tile64_stream",    avx2, bwd, "flat",
+                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile64_stream_bwd_avx2, 64),
+    ADD_CASE_MIN_ME("buf_tile128_temporal", avx2, fwd, "flat",
+                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile128_temporal_fwd_avx2, 128),
+    ADD_CASE_MIN_ME("buf_tile128_temporal", avx2, bwd, "flat",
+                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile128_temporal_bwd_avx2, 128),
+    ADD_CASE_MIN_ME("buf_tile128_stream",   avx2, fwd, "flat",
+                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile128_stream_fwd_avx2, 128),
+    ADD_CASE_MIN_ME("buf_tile128_stream",   avx2, bwd, "flat",
+                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile128_stream_bwd_avx2, 128),
+    ADD_CASE_MIN_ME("buf_tile256_temporal", avx2, fwd, "flat",
+                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile256_temporal_fwd_avx2, 256),
+    ADD_CASE_MIN_ME("buf_tile256_temporal", avx2, bwd, "flat",
+                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile256_temporal_bwd_avx2, 256),
+    ADD_CASE_MIN_ME("buf_tile256_stream",   avx2, fwd, "flat",
+                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile256_stream_fwd_avx2, 256),
+    ADD_CASE_MIN_ME("buf_tile256_stream",   avx2, bwd, "flat",
+                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile256_stream_bwd_avx2, 256),
+    /* Dispatcher-level validation (checks whichever variant the dispatcher picks at each me) */
+    ADD_CASE("t1_buf_dit", avx2, fwd, "flat",
+             radix16_t1_dit_fwd_avx2, vfft_r16_t1_buf_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_buf_dit", avx2, bwd, "flat",
+             radix16_t1_dit_bwd_avx2, vfft_r16_t1_buf_dit_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE_MIN_ME("buf_tile64_temporal",  avx512, fwd, "flat",
+                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile64_temporal_fwd_avx512, 64),
+    ADD_CASE_MIN_ME("buf_tile64_temporal",  avx512, bwd, "flat",
+                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile64_temporal_bwd_avx512, 64),
+    ADD_CASE_MIN_ME("buf_tile64_stream",    avx512, fwd, "flat",
+                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile64_stream_fwd_avx512, 64),
+    ADD_CASE_MIN_ME("buf_tile64_stream",    avx512, bwd, "flat",
+                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile64_stream_bwd_avx512, 64),
+    ADD_CASE_MIN_ME("buf_tile128_temporal", avx512, fwd, "flat",
+                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile128_temporal_fwd_avx512, 128),
+    ADD_CASE_MIN_ME("buf_tile128_temporal", avx512, bwd, "flat",
+                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile128_temporal_bwd_avx512, 128),
+    ADD_CASE_MIN_ME("buf_tile128_stream",   avx512, fwd, "flat",
+                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile128_stream_fwd_avx512, 128),
+    ADD_CASE_MIN_ME("buf_tile128_stream",   avx512, bwd, "flat",
+                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile128_stream_bwd_avx512, 128),
+    ADD_CASE_MIN_ME("buf_tile256_temporal", avx512, fwd, "flat",
+                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile256_temporal_fwd_avx512, 256),
+    ADD_CASE_MIN_ME("buf_tile256_temporal", avx512, bwd, "flat",
+                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile256_temporal_bwd_avx512, 256),
+    ADD_CASE_MIN_ME("buf_tile256_stream",   avx512, fwd, "flat",
+                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile256_stream_fwd_avx512, 256),
+    ADD_CASE_MIN_ME("buf_tile256_stream",   avx512, bwd, "flat",
+                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile256_stream_bwd_avx512, 256),
+    ADD_CASE("t1_buf_dit", avx512, fwd, "flat",
+             radix16_t1_dit_fwd_avx512, vfft_r16_t1_buf_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_buf_dit", avx512, bwd, "flat",
+             radix16_t1_dit_bwd_avx512, vfft_r16_t1_buf_dit_dispatch_bwd_avx512),
+  #endif
 
 #elif RADIX == 32
   /* R=32 Phase A: same structure as R=16 — 4 dispatchers, one variant each. */
@@ -366,6 +436,8 @@ int main(void) {
     size_t grid_n     = is_t1s ? ME_N_T1S    : ME_N;
     for (size_t i = 0; i < grid_n; i++) {
       size_t me = grid[i];
+      /* Per-case min_me (buf variants require me >= tile) */
+      if (cc->min_me && me < cc->min_me) continue;
       size_t ios_list[] = {me, me + 8, 8 * me};
       for (size_t j = 0; j < 3; j++) {
         total++;
