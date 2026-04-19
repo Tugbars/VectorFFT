@@ -17,5 +17,11 @@ const candidate_t CANDIDATES_AVX512[] = {
   {"ct_t1_dif", "avx512", "flat", radix64_t1_dif_fwd_avx512, radix64_t1_dif_bwd_avx512, 1},
   {"ct_t1s_dit", "avx512", "t1s", radix64_t1s_dit_fwd_avx512, radix64_t1s_dit_bwd_avx512, 1},
   {"ct_t1_dit_log3", "avx512", "log3", radix64_t1_dit_log3_fwd_avx512, radix64_t1_dit_log3_bwd_avx512, 1},
+  {"ct_t1_buf_dit_tile64_temporal", "avx512", "flat", radix64_t1_buf_dit_tile64_temporal_fwd_avx512, radix64_t1_buf_dit_tile64_temporal_bwd_avx512, 1},
+  {"ct_t1_buf_dit_tile64_stream", "avx512", "flat", radix64_t1_buf_dit_tile64_stream_fwd_avx512, radix64_t1_buf_dit_tile64_stream_bwd_avx512, 1},
+  {"ct_t1_buf_dit_tile128_temporal", "avx512", "flat", radix64_t1_buf_dit_tile128_temporal_fwd_avx512, radix64_t1_buf_dit_tile128_temporal_bwd_avx512, 1},
+  {"ct_t1_buf_dit_tile128_stream", "avx512", "flat", radix64_t1_buf_dit_tile128_stream_fwd_avx512, radix64_t1_buf_dit_tile128_stream_bwd_avx512, 1},
+  {"ct_t1_buf_dit_tile256_temporal", "avx512", "flat", radix64_t1_buf_dit_tile256_temporal_fwd_avx512, radix64_t1_buf_dit_tile256_temporal_bwd_avx512, 1},
+  {"ct_t1_buf_dit_tile256_stream", "avx512", "flat", radix64_t1_buf_dit_tile256_stream_fwd_avx512, radix64_t1_buf_dit_tile256_stream_bwd_avx512, 1},
 };
 const size_t N_CANDIDATES_AVX512 = sizeof(CANDIDATES_AVX512) / sizeof(CANDIDATES_AVX512[0]);
