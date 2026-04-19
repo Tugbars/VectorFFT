@@ -98,26 +98,36 @@ typedef struct {
 extern const candidate_t *candidate_at(size_t i);
 extern size_t candidate_count(void);
 
-/* Runtime AVX-512 check (for auto-skip on hosts that can't run it). */
+/* Runtime AVX-512 check (for auto-skip on hosts that can't run it).
+ * Direct CPUID probe — avoids __builtin_cpu_supports, which on ICX/LLD
+ * Windows pulls in __cpu_model from libintlc that the default link line
+ * doesn't include. */
 static int host_has_avx512(void) {
-  #if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
-    #if defined(__AVX512F__)
-      return __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512dq");
+  unsigned int eax, ebx, ecx, edx;
+  #if defined(_MSC_VER) || (defined(_WIN32) && (defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)))
+    int info[4];
+    __cpuidex(info, 7, 0);
+    ebx = (unsigned int)info[1];
+  #elif defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER)
+    #if defined(__i386__) && defined(__PIC__)
+      /* 32-bit PIC: ebx is reserved for GOT */
+      __asm__ __volatile__(
+        "xchgl %%ebx, %1\n\t"
+        "cpuid\n\t"
+        "xchgl %%ebx, %1"
+        : "=a"(eax), "=r"(ebx), "=c"(ecx), "=d"(edx)
+        : "0"(7), "2"(0));
     #else
-      /* Compiler didn't enable avx512 in this TU; do a cpuid probe.
-         Easiest on gcc/clang/icx: still call __builtin_cpu_supports — it
-         reads from CPUID, independent of compile-time ISA. */
-      return __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512dq");
+      __asm__ __volatile__("cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        : "a"(7), "c"(0));
     #endif
-  #elif defined(_MSC_VER)
-    int cpuInfo[4];
-    __cpuidex(cpuInfo, 7, 0);
-    int has_f  = (cpuInfo[1] >> 16) & 1;
-    int has_dq = (cpuInfo[1] >> 17) & 1;
-    return has_f && has_dq;
   #else
     return 0;
   #endif
+  int has_f  = (ebx >> 16) & 1;  /* CPUID.7.0:EBX[16] = AVX-512F */
+  int has_dq = (ebx >> 17) & 1;  /* CPUID.7.0:EBX[17] = AVX-512DQ */
+  return has_f && has_dq;
 }
 
 /* ═══════════════════════════════════════════════════════════════

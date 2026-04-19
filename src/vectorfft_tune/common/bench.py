@@ -240,8 +240,13 @@ def phase_compile(candidates_mod, staging: Path, build: Path,
     # gating, so global flags just enable intrinsic headers.
     isas = sorted({c.isa for c in candidates_mod.enumerate_all()})
     isa_flags: list[str] = []
+    seen_flags: set[str] = set()
     for isa in isas:
-        isa_flags += spec.isa_flags(isa)
+        for f in spec.isa_flags(isa):
+            if f in seen_flags:
+                continue
+            seen_flags.add(f)
+            isa_flags.append(f)
     if spec.kind == 'msvc':
         # MSVC only accepts one /arch: at a time; widest wins.
         if 'avx512' in isas:
