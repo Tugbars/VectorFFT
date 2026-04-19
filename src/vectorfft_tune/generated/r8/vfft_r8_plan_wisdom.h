@@ -18,31 +18,31 @@
 
 /* Cross-protocol comparison (fwd direction, AVX2):
  *   me    ios   winning_protocol   winning_ns
- *      64    64   flat               91.2
- *      64    72   t1s                86.5
- *      64   512   log3              230.5
- *     128   128   t1s               166.9
- *     128   136   flat              181.6
- *     128  1024   flat              417.2
- *     256   256   flat              413.2
- *     256   264   log3              414.6
- *     256  2048   flat              861.9
- *     512   512   log3             1746.8
- *     512   520   log3              929.6
- *     512  4096   flat             1701.1
- *    1024  1024   log3             3357.9
- *    1024  1032   log3             1858.7
- *    1024  8192   log3             2458.3
- *    2048  2048   log3             6880.7
- *    2048  2056   log3             3851.3
- *    2048 16384   flat            15103.1
+ *      64    64   flat               90.4
+ *      64    72   flat               91.3
+ *      64   512   flat              233.0
+ *     128   128   flat              178.4
+ *     128   136   t1s               167.2
+ *     128  1024   flat              419.2
+ *     256   256   flat              410.8
+ *     256   264   flat              402.9
+ *     256  2048   log3              876.2
+ *     512   512   log3             1703.0
+ *     512   520   log3              938.6
+ *     512  4096   flat             1739.5
+ *    1024  1024   flat             3383.0
+ *    1024  1032   log3             1927.6
+ *    1024  8192   flat             3458.4
+ *    2048  2048   log3             6672.3
+ *    2048  2056   log3             3909.5
+ *    2048 16384   flat            15096.6
  */
 
 /* Should the planner use log3 protocol at (me, ios)? */
 static inline int radix8_prefer_log3(size_t me, size_t ios) {
     (void)ios;  /* may be unused if rules are me-only */
-    /* Bench wins at me ∈ {512, 1024, 2048} */
-    if (me == 512 || me == 1024 || me == 2048) return 1;
+    /* Bench wins at me ∈ {512, 2048} */
+    if (me == 512 || me == 2048) return 1;
     return 0;
 }
 

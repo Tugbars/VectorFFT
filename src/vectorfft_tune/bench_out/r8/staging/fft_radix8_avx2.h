@@ -2102,10 +2102,10 @@ radix8_t1_dit_log3_fwd_avx2(
 {
     for (size_t m = 0; m < me; m += VL) {
         __m256d x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);
-        /* log3: load 3 bases W^1, W^2, W^4 */
+        /* log3: sparse read of W^1, W^2, W^4 from flat buffer */
         const __m256d tw1r = LD(&W_re[0*me+m]), tw1i = LD(&W_im[0*me+m]);
         const __m256d tw2r = LD(&W_re[1*me+m]), tw2i = LD(&W_im[1*me+m]);
-        const __m256d tw4r = LD(&W_re[2*me+m]), tw4i = LD(&W_im[2*me+m]);
+        const __m256d tw4r = LD(&W_re[3*me+m]), tw4i = LD(&W_im[3*me+m]);
         /* Derive W^3 = W^1 * W^2 */
         const __m256d tw3r = _mm256_fnmadd_pd(tw1i,tw2i,_mm256_mul_pd(tw1r,tw2r));
         const __m256d tw3i = _mm256_fmadd_pd(tw1r,tw2i,_mm256_mul_pd(tw1i,tw2r));
@@ -2806,10 +2806,10 @@ radix8_t1_dit_log3_bwd_avx2(
 {
     for (size_t m = 0; m < me; m += VL) {
         __m256d x0r = LD(&rio_re[m]), x0i = LD(&rio_im[m]);
-        /* log3: load 3 bases W^1, W^2, W^4 */
+        /* log3: sparse read of W^1, W^2, W^4 from flat buffer */
         const __m256d tw1r = LD(&W_re[0*me+m]), tw1i = LD(&W_im[0*me+m]);
         const __m256d tw2r = LD(&W_re[1*me+m]), tw2i = LD(&W_im[1*me+m]);
-        const __m256d tw4r = LD(&W_re[2*me+m]), tw4i = LD(&W_im[2*me+m]);
+        const __m256d tw4r = LD(&W_re[3*me+m]), tw4i = LD(&W_im[3*me+m]);
         /* Derive W^3 = W^1 * W^2 */
         const __m256d tw3r = _mm256_fnmadd_pd(tw1i,tw2i,_mm256_mul_pd(tw1r,tw2r));
         const __m256d tw3i = _mm256_fmadd_pd(tw1r,tw2i,_mm256_mul_pd(tw1i,tw2r));

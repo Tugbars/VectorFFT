@@ -55,23 +55,11 @@ typedef void (*t1_fn)(double *rio_re, double *rio_im,
  * Twiddle layouts (must match harness.c)
  * ═══════════════════════════════════════════════════════════════ */
 
-static size_t log3_bases(int R) {
-  /* Count of base twiddles in log3 layout per radix. Must match
-   * harness.c's log3_bases_for_radix(). */
-  if (R <= 2)  return 0;
-  if (R == 4)  return 1;
-  if (R == 8)  return 3;
-  if (R == 16) return 4;
-  if (R == 32) return 5;
-  if (R == 64) return 6;
-  int n = 0, x = R - 1;
-  while (x > 0) { n++; x >>= 1; }
-  return (size_t)n;
-}
-
 static size_t tw_doubles(const char *protocol, int R, size_t me) {
+  /* log3 uses the same buffer shape as flat — sparse reads convention.
+   * See harness.c for the rationale. */
   if (strcmp(protocol, "flat")       == 0) return (size_t)(R - 1) * me;
-  if (strcmp(protocol, "log3")       == 0) return log3_bases(R) * me;
+  if (strcmp(protocol, "log3")       == 0) return (size_t)(R - 1) * me;
   if (strcmp(protocol, "t1s")        == 0) return (size_t)(R - 1);
   return 0;
 }
@@ -79,31 +67,19 @@ static size_t tw_doubles(const char *protocol, int R, size_t me) {
 static void populate_tw(const char *protocol, int R, size_t me,
                         double *W_re, double *W_im)
 {
-  /* Must use ACTUAL DFT twiddles — w[(j-1)*me + m] = exp(-2πi*j*m/(R*me)).
-     This way w2 = w1², w3 = w1³, making flat/log1/log3 variants produce
-     identical results when run against a common twiddle table. */
+  /* Must use ACTUAL DFT twiddles — W[(j-1)*me + m] = exp(-2πi*j*m/(R*me)).
+     This way W^k = (W^1)^k, making flat/log1/log3 variants produce
+     identical results from the same buffer. log3 reads only slots at
+     positions (2^k - 1) for k = 0..log2(R)-1; those slots still need
+     to contain the correct DFT twiddles. Simplest: populate the entire
+     (R-1)*me buffer the same way flat does. log3 just reads a subset. */
   const double TWO_PI = 6.28318530717958647692;
-  if (strcmp(protocol, "flat") == 0) {
+  if (strcmp(protocol, "flat") == 0 || strcmp(protocol, "log3") == 0) {
     for (int j = 1; j < R; j++) {
       for (size_t m = 0; m < me; m++) {
         double phase = -TWO_PI * (double)j * (double)m / ((double)R * (double)me);
         W_re[(j - 1) * me + m] = cos(phase);
         W_im[(j - 1) * me + m] = sin(phase);
-      }
-    }
-  } else if (strcmp(protocol, "log3") == 0) {
-    /* log3 stores bases W^(2^k) for k = 0..log3_bases(R)-1 at offsets k*me.
-     *   R=4: bases = [W^1]
-     *   R=8: bases = [W^1, W^2, W^4]
-     *   R=16: bases = [W^1, W^2, W^4, W^8]
-     * Codelet derives the rest via cmul. */
-    size_t nb = log3_bases(R);
-    for (size_t k = 0; k < nb; k++) {
-      int j = 1 << k;   /* exponent of this base: W^(2^k) */
-      for (size_t m = 0; m < me; m++) {
-        double phase = -TWO_PI * (double)j * (double)m / ((double)R * (double)me);
-        W_re[k * me + m] = cos(phase);
-        W_im[k * me + m] = sin(phase);
       }
     }
   } else if (strcmp(protocol, "t1s") == 0) {
@@ -280,6 +256,50 @@ static const validate_case_t CASES[] = {
              radix8_t1s_dit_fwd_avx512,    vfft_r8_t1s_dit_dispatch_fwd_avx512),
     ADD_CASE("t1s_dit",    avx512, bwd, "t1s",
              radix8_t1s_dit_bwd_avx512,    vfft_r8_t1s_dit_dispatch_bwd_avx512),
+  #endif
+
+#elif RADIX == 16
+  /* R=16 Phase A has four dispatchers, one variant each:
+   *   t1_dit      : ct_t1_dit        (flat)
+   *   t1_dif      : ct_t1_dif        (flat) — different function from DIT
+   *   t1_dit_log3 : ct_t1_dit_log3   (log3 protocol — sparse read)
+   *   t1s_dit     : ct_t1s_dit       (t1s protocol — scalar broadcasts)
+   * Each dispatcher self-validates since it wraps a single variant. */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",     avx2, fwd, "flat",
+             radix16_t1_dit_fwd_avx2,       vfft_r16_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",     avx2, bwd, "flat",
+             radix16_t1_dit_bwd_avx2,       vfft_r16_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dif",     avx2, fwd, "flat",
+             radix16_t1_dif_fwd_avx2,       vfft_r16_t1_dif_dispatch_fwd_avx2),
+    ADD_CASE("t1_dif",     avx2, bwd, "flat",
+             radix16_t1_dif_bwd_avx2,       vfft_r16_t1_dif_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix16_t1_dit_log3_fwd_avx2,  vfft_r16_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix16_t1_dit_log3_bwd_avx2,  vfft_r16_t1_dit_log3_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",    avx2, fwd, "t1s",
+             radix16_t1s_dit_fwd_avx2,      vfft_r16_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",    avx2, bwd, "t1s",
+             radix16_t1s_dit_bwd_avx2,      vfft_r16_t1s_dit_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",     avx512, fwd, "flat",
+             radix16_t1_dit_fwd_avx512,       vfft_r16_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",     avx512, bwd, "flat",
+             radix16_t1_dit_bwd_avx512,       vfft_r16_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dif",     avx512, fwd, "flat",
+             radix16_t1_dif_fwd_avx512,       vfft_r16_t1_dif_dispatch_fwd_avx512),
+    ADD_CASE("t1_dif",     avx512, bwd, "flat",
+             radix16_t1_dif_bwd_avx512,       vfft_r16_t1_dif_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix16_t1_dit_log3_fwd_avx512,  vfft_r16_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix16_t1_dit_log3_bwd_avx512,  vfft_r16_t1_dit_log3_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",    avx512, fwd, "t1s",
+             radix16_t1s_dit_fwd_avx512,      vfft_r16_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",    avx512, bwd, "t1s",
+             radix16_t1s_dit_bwd_avx512,      vfft_r16_t1s_dit_dispatch_bwd_avx512),
   #endif
 
 #else
