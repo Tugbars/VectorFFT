@@ -130,6 +130,20 @@
     #include "vfft_r7_t1_dit_log3_dispatch_avx512.h"
   #endif
   #include "vfft_r7_plan_wisdom.h"
+#elif RADIX == 25
+  #if defined(VALIDATE_AVX2)
+    #include "fft_radix25_avx2.h"
+    #include "vfft_r25_t1_dit_dispatch_avx2.h"
+    #include "vfft_r25_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r25_t1_dit_log3_dispatch_avx2.h"
+  #endif
+  #if defined(VALIDATE_AVX512)
+    #include "fft_radix25_avx512.h"
+    #include "vfft_r25_t1_dit_dispatch_avx512.h"
+    #include "vfft_r25_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r25_t1_dit_log3_dispatch_avx512.h"
+  #endif
+  #include "vfft_r25_plan_wisdom.h"
 #else
   #error "validator shim does not yet cover this radix"
 #endif
