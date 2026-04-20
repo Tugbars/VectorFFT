@@ -742,6 +742,42 @@ static const validate_case_t CASES[] = {
              radix7_t1_dit_log3_bwd_avx512,  vfft_r7_t1_dit_log3_dispatch_bwd_avx512),
   #endif
 
+#elif RADIX == 25
+  /* R=25 composite: 5×5 CT with fused internal twiddles.
+   * Same 3-variant tuning matrix as R=5 and R=7.
+   * Per-protocol reference:
+   *   flat  -> radix25_t1_dit
+   *   t1s   -> radix25_t1s_dit
+   *   log3  -> radix25_t1_dit_log3 */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix25_t1_dit_fwd_avx2,       vfft_r25_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix25_t1_dit_bwd_avx2,       vfft_r25_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix25_t1s_dit_fwd_avx2,      vfft_r25_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix25_t1s_dit_bwd_avx2,      vfft_r25_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix25_t1_dit_log3_fwd_avx2,  vfft_r25_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix25_t1_dit_log3_bwd_avx2,  vfft_r25_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix25_t1_dit_fwd_avx512,       vfft_r25_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix25_t1_dit_bwd_avx512,       vfft_r25_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix25_t1s_dit_fwd_avx512,      vfft_r25_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix25_t1s_dit_bwd_avx512,      vfft_r25_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix25_t1_dit_log3_fwd_avx512,  vfft_r25_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix25_t1_dit_log3_bwd_avx512,  vfft_r25_t1_dit_log3_dispatch_bwd_avx512),
+  #endif
+
 #else
   #error "validate.c: unsupported RADIX (extend CASES[])"
 #endif
@@ -765,6 +801,11 @@ static const size_t ME_N_R3 = sizeof(ME_GRID_R3) / sizeof(ME_GRID_R3[0]);
 static const size_t ME_GRID_R5[] = {40, 80, 160, 320, 640, 1280};
 static const size_t ME_N_R5 = sizeof(ME_GRID_R5) / sizeof(ME_GRID_R5[0]);
 
+/* R=25 composite uses small me values (L1/L2-working-set study).
+ * All divisible by both AVX2 k_step=4 and AVX-512 k_step=8. */
+static const size_t ME_GRID_R25[] = {8, 16, 32, 64, 128, 256};
+static const size_t ME_N_R25 = sizeof(ME_GRID_R25) / sizeof(ME_GRID_R25[0]);
+
 /* R=7 uses multiples of 56 = lcm(7, 8) so both AVX2 k_step=4 and
  * AVX-512 k_step=8 divide me cleanly; R=7 codelet has no loop tail. */
 static const size_t ME_GRID_R7[] = {56, 112, 224, 448, 896, 1792};
@@ -776,7 +817,7 @@ int main(void) {
 
   int total = 0, failed = 0;
 
-  /* Per-radix grid override for prime radixes. */
+  /* Per-radix grid override for prime radixes and R=25 composite. */
   const size_t *default_grid;
   size_t default_grid_n;
   if (R == 3) {
@@ -788,6 +829,9 @@ int main(void) {
   } else if (R == 7) {
     default_grid = ME_GRID_R7;
     default_grid_n = ME_N_R7;
+  } else if (R == 25) {
+    default_grid = ME_GRID_R25;
+    default_grid_n = ME_N_R25;
   } else {
     default_grid = ME_GRID;
     default_grid_n = ME_N;
@@ -795,9 +839,9 @@ int main(void) {
 
   for (size_t c = 0; c < N_CASES; c++) {
     const validate_case_t *cc = &CASES[c];
-    /* Small-me t1s restriction only applies at power-of-two radixes;
-     * prime radixes (R=3, R=5, R=7) use their own grid for all protocols. */
-    int is_t1s_small_only = (R != 3 && R != 5 && R != 7 &&
+    /* Small-me t1s restriction only applies at power-of-two radixes.
+     * Prime radixes (R=3, R=5, R=7) and R=25 use their own grid. */
+    int is_t1s_small_only = (R != 3 && R != 5 && R != 7 && R != 25 &&
                              strcmp(cc->protocol, "t1s") == 0);
     const size_t *grid = is_t1s_small_only ? ME_GRID_T1S : default_grid;
     size_t grid_n     = is_t1s_small_only ? ME_N_T1S    : default_grid_n;
