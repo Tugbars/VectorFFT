@@ -154,3 +154,51 @@ files and not a single shared one.
 **Windows cp1252 decode errors**: make sure `subprocess` calls go through
 `common/bench.py`'s `_run` helper, which forces `PYTHONIOENCODING=utf-8`
 on child processes.
+
+
+## Orchestrator — full-portfolio bench
+
+For a full sweep across all tuned radixes, use `common/orchestrator.py` instead
+of invoking `common/bench.py` per-radix by hand:
+
+```
+python3 common/orchestrator.py             # runs all discovered radixes
+python3 common/orchestrator.py --radix r10,r12   # subset
+python3 common/orchestrator.py --skip r25        # all except
+python3 common/orchestrator.py --dry-run         # show commands, don't execute
+python3 common/orchestrator.py --phase emit      # just emit phase across all
+```
+
+**Benchmark hygiene built in:**
+- Pre-flight check: CPU governor (Linux) / power plan (Windows) must be
+  performance-class; aborts otherwise. `--force` to bypass.
+- CPU affinity: all bench runs pinned to one core via `taskset -c N` on
+  Linux or `start /AFFINITY` on Windows. Default CPU 2 (first "clean"
+  P-core on most consumer Intel); override with `--cpu N` or config file.
+- Thermal pacing: 2s sleep between radix runs (adjust via `--pace-seconds N`).
+- Sequential execution: measurement phases never parallelize.
+
+**Config file**: `orchestrator.json` at project root sets defaults.
+CLI args override config values override builtins. Example:
+
+```json
+{
+  "cpu": 4,
+  "pace_seconds": 3,
+  "phase": "all"
+}
+```
+
+**Outputs**:
+- `bench_out/ALL_SUMMARY.md` — cross-radix win-count tables, regime
+  transitions, portfolio stats (regenerated from all measurement data
+  on disk, not just this invocation)
+- `bench_out/rN/orchestrator.log` — per-radix captured output
+- `bench_out/orchestrator.log` — overall sweep log
+
+**Other options**: `--quiet` (capture only, no terminal stream),
+`--fail-fast` (stop on first failure), `--no-summary` (skip summary
+regeneration), `--config PATH` (alternate config file).
+
+Expected runtime: ~15-25 minutes for all 13 radixes on a consumer
+Raptor Lake class chip with AVX2 only.
