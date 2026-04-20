@@ -167,6 +167,13 @@ static void populate_twiddles(const char *protocol, int R, size_t me,
 
 /* ═══════════════════════════════════════════════════════════════
  * FFTW-STYLE TIMING
+ *
+ * Input-drift note: t1_dit codelets transform rio in place. Without
+ * resetting, after N iterations rio contains the N-th forward transform
+ * of the initial data, which can drift toward pathological magnitudes
+ * (denormals, NaN) on long runs. We reset rio from a reference copy
+ * before each TIME_REPEAT block; the memcpy cost is outside the timer
+ * and negligible (~microseconds vs 10ms block time).
  * ═══════════════════════════════════════════════════════════════ */
 
 #define TIME_MIN     (10.0 * 1e6)   /* 10 ms in ns */
@@ -185,19 +192,25 @@ static double time_block(t1_fn fn, double *rio_re, double *rio_im,
 }
 
 static double measure(t1_fn fn, double *rio_re, double *rio_im,
+                      const double *rio_reset_re, const double *rio_reset_im,
+                      size_t nbuf,
                       const double *W_re, const double *W_im,
                       size_t ios, size_t me)
 {
   /* Warm caches, train branch predictor. */
   fn(rio_re, rio_im, W_re, W_im, ios, me);
 
-  /* Find iter count that produces at least TIME_MIN per block. */
+  /* Find iter count that produces at least TIME_MIN per block.
+   * Reset rio before each trial so iters calibration measures a fresh
+   * transform each time, not a drifted state. */
   int iters = 1;
   double total_ns = 0.0;
   double dt_block = 0.0;
   double global_start = now_ns();
 
   for (;;) {
+    memcpy(rio_re, rio_reset_re, nbuf * sizeof(double));
+    memcpy(rio_im, rio_reset_im, nbuf * sizeof(double));
     dt_block = time_block(fn, rio_re, rio_im, W_re, W_im, ios, me, iters);
     total_ns = now_ns() - global_start;
     if (dt_block >= TIME_MIN) break;
@@ -206,11 +219,14 @@ static double measure(t1_fn fn, double *rio_re, double *rio_im,
     if (iters > (1 << 22)) break;  /* sanity cap */
   }
 
-  /* Run TIME_REPEAT blocks of `iters`, track minimum. */
+  /* Run TIME_REPEAT blocks of `iters`, track minimum. Reset rio before
+   * each block so block N measures the same transform as block 0. */
   double best_block_ns = dt_block;
   for (int r = 1; r < TIME_REPEAT; r++) {
     total_ns = now_ns() - global_start;
     if (total_ns >= TIME_LIMIT) break;
+    memcpy(rio_re, rio_reset_re, nbuf * sizeof(double));
+    memcpy(rio_im, rio_reset_im, nbuf * sizeof(double));
     double t = time_block(fn, rio_re, rio_im, W_re, W_im, ios, me, iters);
     if (t < best_block_ns) best_block_ns = t;
   }
@@ -321,10 +337,13 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  /* Allocate: R rows of ios doubles each, per re/im. */
+  /* Allocate: R rows of ios doubles each, per re/im.
+   * Reset buffers hold a pristine copy for restoring rio before each block. */
   size_t nbuf = (size_t)a.R * a.ios;
   double *rio_re = (double*)vfft_aligned_alloc(64, nbuf * sizeof(double));
   double *rio_im = (double*)vfft_aligned_alloc(64, nbuf * sizeof(double));
+  double *rio_reset_re = (double*)vfft_aligned_alloc(64, nbuf * sizeof(double));
+  double *rio_reset_im = (double*)vfft_aligned_alloc(64, nbuf * sizeof(double));
 
   /* Twiddle table per protocol. */
   size_t tw_doubles = twiddle_doubles(proto, a.R, a.me);
@@ -333,23 +352,28 @@ int main(int argc, char **argv) {
   double *W_re = (double*)vfft_aligned_alloc(64, tw_alloc * sizeof(double));
   double *W_im = (double*)vfft_aligned_alloc(64, tw_alloc * sizeof(double));
 
-  if (!rio_re || !rio_im || !W_re || !W_im) {
+  if (!rio_re || !rio_im || !rio_reset_re || !rio_reset_im || !W_re || !W_im) {
     emit_skip_result(&a, "alloc_failed");
     return 0;
   }
 
-  /* Seed rio with deterministic non-trivial data. */
+  /* Seed rio reset buffer with deterministic non-trivial data, then copy
+   * into rio. rio_reset_* is the pristine reference that measure() uses to
+   * restore rio before each timing block. */
   for (size_t i = 0; i < nbuf; i++) {
     double p = 0.00123 * (double)i;
-    rio_re[i] = cos(p);
-    rio_im[i] = sin(p);
+    rio_reset_re[i] = cos(p);
+    rio_reset_im[i] = sin(p);
   }
+  memcpy(rio_re, rio_reset_re, nbuf * sizeof(double));
+  memcpy(rio_im, rio_reset_im, nbuf * sizeof(double));
   populate_twiddles(proto, a.R, a.me, W_re, W_im);
   /* Zero the padding so debug tools don't flag uninit reads. */
   for (size_t i = tw_doubles; i < tw_alloc; i++) { W_re[i] = 0.0; W_im[i] = 0.0; }
 
   /* Measure. */
-  double ns = measure(fn, rio_re, rio_im, W_re, W_im, a.ios, a.me);
+  double ns = measure(fn, rio_re, rio_im, rio_reset_re, rio_reset_im, nbuf,
+                      W_re, W_im, a.ios, a.me);
 
   /* Emit result. */
   printf("{\"variant\":\"%s\",\"isa\":\"%s\",\"protocol\":\"%s\","
@@ -359,6 +383,8 @@ int main(int argc, char **argv) {
 
   vfft_aligned_free(rio_re);
   vfft_aligned_free(rio_im);
+  vfft_aligned_free(rio_reset_re);
+  vfft_aligned_free(rio_reset_im);
   vfft_aligned_free(W_re);
   vfft_aligned_free(W_im);
   return 0;
