@@ -4,7 +4,21 @@
 #ifndef VFFT_VALIDATE_INCLUDE_H
 #define VFFT_VALIDATE_INCLUDE_H
 
-#if RADIX == 4
+#if RADIX == 3
+  #if defined(VALIDATE_AVX2)
+    #include "fft_radix3_avx2.h"
+    #include "vfft_r3_t1_dit_dispatch_avx2.h"
+    #include "vfft_r3_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r3_t1_dit_log3_dispatch_avx2.h"
+  #endif
+  #if defined(VALIDATE_AVX512)
+    #include "fft_radix3_avx512.h"
+    #include "vfft_r3_t1_dit_dispatch_avx512.h"
+    #include "vfft_r3_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r3_t1_dit_log3_dispatch_avx512.h"
+  #endif
+  #include "vfft_r3_plan_wisdom.h"
+#elif RADIX == 4
   #if defined(VALIDATE_AVX2)
     #include "fft_radix4_avx2.h"
     #include "vfft_r4_t1_dit_dispatch_avx2.h"
@@ -88,6 +102,34 @@
     #include "vfft_r64_t1_buf_dit_dispatch_avx512.h"
   #endif
   #include "vfft_r64_plan_wisdom.h"
+#elif RADIX == 5
+  #if defined(VALIDATE_AVX2)
+    #include "fft_radix5_avx2.h"
+    #include "vfft_r5_t1_dit_dispatch_avx2.h"
+    #include "vfft_r5_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r5_t1_dit_log3_dispatch_avx2.h"
+  #endif
+  #if defined(VALIDATE_AVX512)
+    #include "fft_radix5_avx512.h"
+    #include "vfft_r5_t1_dit_dispatch_avx512.h"
+    #include "vfft_r5_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r5_t1_dit_log3_dispatch_avx512.h"
+  #endif
+  #include "vfft_r5_plan_wisdom.h"
+#elif RADIX == 7
+  #if defined(VALIDATE_AVX2)
+    #include "fft_radix7_avx2.h"
+    #include "vfft_r7_t1_dit_dispatch_avx2.h"
+    #include "vfft_r7_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r7_t1_dit_log3_dispatch_avx2.h"
+  #endif
+  #if defined(VALIDATE_AVX512)
+    #include "fft_radix7_avx512.h"
+    #include "vfft_r7_t1_dit_dispatch_avx512.h"
+    #include "vfft_r7_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r7_t1_dit_log3_dispatch_avx512.h"
+  #endif
+  #include "vfft_r7_plan_wisdom.h"
 #else
   #error "validator shim does not yet cover this radix"
 #endif

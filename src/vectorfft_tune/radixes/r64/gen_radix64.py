@@ -1612,6 +1612,13 @@ def emit_ct_file(isa, ct_variant, tile=None, drain_mode='temporal',
                   on the drain path (skips L2 pollution at large me).
       drain_prefetch: bool. t1_buf only; if True, emits __builtin_prefetch on
                       the drain destination pages to warm the store DTLB.
+
+    NOTE (deferred): drain_prefetch is NOT currently exercised by the Phase-B
+    bench. The candidates.py for R=64 only enumerates (tile, drain_mode)
+    combinations, leaving drain_prefetch=False. See DESIGN.md § "R=32 and
+    R=64 have dead buf knobs" for reasoning. The emitter code path for
+    drain_prefetch=True is still present and generates valid code; wiring
+    it into Phase-B requires only a candidates.py extension.
     """
     is_n1 = ct_variant == 'ct_n1'
     is_n1_scaled = ct_variant == 'ct_n1_scaled'

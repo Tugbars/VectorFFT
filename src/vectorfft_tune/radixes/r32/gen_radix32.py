@@ -2234,6 +2234,14 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
     twiddle_prefetch_rows: how many sub-FFT twiddle rows to prefetch per
     k-step. Each row is typically 1 cacheline. Default 2 keeps front-end
     pressure low; HW L2 prefetcher catches up for remaining rows.
+
+    NOTE (deferred): drain_prefetch, twiddle_prefetch_distance, and
+    twiddle_prefetch_rows are NOT currently exercised by the Phase-B bench.
+    The candidates.py for this radix only enumerates (tile, drain_mode)
+    combinations, leaving the prefetch knobs at their defaults. See
+    DESIGN.md § "R=32 and R=64 have dead buf knobs" for reasoning. Reviving
+    these knobs is a candidates.py change only — no emitter work — and
+    would multiply the sweep 2× (drain_prefetch) or more.
     """
     is_n1 = ct_variant == 'ct_n1'
     is_n1_scaled = ct_variant == 'ct_n1_scaled'
