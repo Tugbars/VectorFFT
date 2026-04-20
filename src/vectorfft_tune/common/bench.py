@@ -29,6 +29,7 @@ import argparse
 import importlib.util
 import json
 import os
+import platform
 import subprocess
 import sys
 import time
@@ -39,6 +40,90 @@ HERE = Path(__file__).parent.resolve()
 sys.path.insert(0, str(HERE))
 import compiler as _cc  # noqa: E402
 import protocols as _protos  # noqa: E402
+
+
+# ═══════════════════════════════════════════════════════════════
+# Host fingerprint — detect if measurements are being mixed across
+# different machines (e.g. a contributor benching on laptop, then
+# resuming on workstation; or a cloud VM migrating between hosts).
+# ═══════════════════════════════════════════════════════════════
+
+def host_fingerprint() -> dict:
+    """Return a dict identifying the current host.
+
+    Fields are chosen so that two runs on the same physical core with
+    the same OS configuration produce identical fingerprints, but
+    runs on different cores of the same machine, or the same core with
+    different turbo/frequency settings, produce different fingerprints.
+
+    Not every field is available on every OS; missing fields are empty.
+    The fingerprint is a plain dict so it serializes as JSON and can
+    be diffed field-by-field when mismatches are detected.
+    """
+    fp = {
+        'os': platform.system(),
+        'release': platform.release(),
+        'machine': platform.machine(),
+        'python': platform.python_version(),
+        'hostname': platform.node(),
+    }
+    # CPU model from /proc/cpuinfo on Linux, from registry on Windows.
+    try:
+        with open('/proc/cpuinfo') as f:
+            for line in f:
+                if line.startswith('model name'):
+                    fp['cpu_model'] = line.split(':', 1)[1].strip()
+                    break
+        # Physical core id of the first thread — a weak proxy for
+        # "which core did the scheduler happen to stick us on."
+        # Not reliable (the bench will migrate) but useful as a
+        # tripwire if someone benches inside and outside a taskset.
+        with open('/proc/cpuinfo') as f:
+            for line in f:
+                if line.startswith('core id'):
+                    fp['first_core_id'] = line.split(':', 1)[1].strip()
+                    break
+    except FileNotFoundError:
+        # Windows / macOS: platform.processor() is best we have
+        fp['cpu_model'] = platform.processor()
+    return fp
+
+
+def _fingerprint_signature(fp: dict) -> str:
+    """A single string that uniquely identifies what matters for
+    measurement stability. Used to detect cross-machine contamination
+    without being so strict that trivial differences trip it."""
+    # os + cpu_model + machine captures "same silicon, same OS kernel."
+    # We deliberately do NOT include hostname — container restarts
+    # often rename the host but run on the same physical hardware.
+    return '|'.join(str(fp.get(k, '')) for k in
+                    ('os', 'cpu_model', 'machine'))
+
+
+def _fingerprint_check(measurements_dir: Path) -> None:
+    """Compare current host to the fingerprint stored from first run.
+    Warns on mismatch; does not abort. Writes the fingerprint on first
+    call."""
+    fp_path = measurements_dir / 'host_fingerprint.json'
+    cur = host_fingerprint()
+    cur_sig = _fingerprint_signature(cur)
+    if fp_path.exists():
+        try:
+            stored = json.loads(fp_path.read_text())
+            stored_sig = _fingerprint_signature(stored)
+        except Exception:
+            stored, stored_sig = None, None
+        if stored_sig and stored_sig != cur_sig:
+            print('  [warn] host fingerprint changed since first run:')
+            print(f'         stored: {stored_sig}')
+            print(f'         current: {cur_sig}')
+            print('         measurements in this jsonl may be mixed across')
+            print('         machines. Delete measurements.jsonl to start fresh')
+            print('         on this host, or back it up and continue if you')
+            print('         know what you are doing.')
+    else:
+        measurements_dir.mkdir(parents=True, exist_ok=True)
+        fp_path.write_text(json.dumps(cur, indent=2) + '\n')
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -353,6 +438,12 @@ def phase_run(candidates_mod, exe: Path, measurements: Path):
     cands = candidates_mod.enumerate_all()
     R = candidates_mod.RADIX
     done = _load_done(measurements)
+
+    # Machine-identity sanity check — warn if the jsonl was begun on a
+    # different host than the one we're running on now. This catches
+    # contributors who ran bench on one machine, copied the tree to
+    # another, and don't realize they'll be mixing measurements.
+    _fingerprint_check(measurements.parent)
 
     total_jobs = 0
     for c in cands:

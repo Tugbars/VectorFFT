@@ -181,7 +181,106 @@ static const validate_case_t CASES[] = {
 #define ADD_CASE_MIN_ME(TAG, ISA, DIR, PROTO, REF, DISP, MINME) \
   { TAG " " #ISA " " #DIR, REF, DISP, PROTO, MINME }
 
-#if RADIX == 4
+#if RADIX == 3
+  /* R=3 tuning matrix:
+   *   AVX2:    U=1 only for each of {flat, t1s, log3}  (3 variants)
+   *   AVX-512: U=1/U=2/U=3 for each of {flat, t1s, log3}  (9 variants)
+   *
+   * Reference selection note: because populate_tw produces different
+   * buffer contents per protocol (flat/log3 fill (R-1)*me doubles;
+   * t1s fills only (R-1) scalars), a cross-protocol reference would
+   * read out-of-bounds or garbage. Each protocol self-references:
+   *   flat cases  -> reference is radix3_t1_dit_u1      (flat reader)
+   *   log3 cases  -> reference is radix3_t1_dit_log3_u1 (log3 reader)
+   *   t1s cases   -> reference is radix3_t1s_dit_u1     (t1s reader)
+   *
+   * This is intra-protocol validation: U=2 and U=3 within a family
+   * bit-match U=1 of the same family. It does NOT cross-validate
+   * that flat and t1s compute semantically equivalent transforms
+   * (they operate on different twiddle buffers). That's consistent
+   * with how R=4..R=64 validators are structured. */
+  #if defined(VALIDATE_AVX2)
+    /* Per-variant (AVX2 = U=1 only) — U=1 self-validates (trivial) */
+    ADD_CASE("t1_dit_u1",       avx2, fwd, "flat",
+             radix3_t1_dit_u1_fwd_avx2,       radix3_t1_dit_u1_fwd_avx2),
+    ADD_CASE("t1_dit_u1",       avx2, bwd, "flat",
+             radix3_t1_dit_u1_bwd_avx2,       radix3_t1_dit_u1_bwd_avx2),
+    ADD_CASE("t1s_dit_u1",      avx2, fwd, "t1s",
+             radix3_t1s_dit_u1_fwd_avx2,      radix3_t1s_dit_u1_fwd_avx2),
+    ADD_CASE("t1s_dit_u1",      avx2, bwd, "t1s",
+             radix3_t1s_dit_u1_bwd_avx2,      radix3_t1s_dit_u1_bwd_avx2),
+    ADD_CASE("t1_dit_log3_u1",  avx2, fwd, "log3",
+             radix3_t1_dit_log3_u1_fwd_avx2,  radix3_t1_dit_log3_u1_fwd_avx2),
+    ADD_CASE("t1_dit_log3_u1",  avx2, bwd, "log3",
+             radix3_t1_dit_log3_u1_bwd_avx2,  radix3_t1_dit_log3_u1_bwd_avx2),
+    /* Dispatcher-level */
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix3_t1_dit_u1_fwd_avx2,       vfft_r3_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix3_t1_dit_u1_bwd_avx2,       vfft_r3_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix3_t1s_dit_u1_fwd_avx2,      vfft_r3_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix3_t1s_dit_u1_bwd_avx2,      vfft_r3_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix3_t1_dit_log3_u1_fwd_avx2,  vfft_r3_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix3_t1_dit_log3_u1_bwd_avx2,  vfft_r3_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    /* Per-variant: U=1 self, U=2/U=3 vs U=1 within same protocol */
+    ADD_CASE("t1_dit_u1",       avx512, fwd, "flat",
+             radix3_t1_dit_u1_fwd_avx512,       radix3_t1_dit_u1_fwd_avx512),
+    ADD_CASE("t1_dit_u1",       avx512, bwd, "flat",
+             radix3_t1_dit_u1_bwd_avx512,       radix3_t1_dit_u1_bwd_avx512),
+    ADD_CASE("t1_dit_u2",       avx512, fwd, "flat",
+             radix3_t1_dit_u1_fwd_avx512,       radix3_t1_dit_u2_fwd_avx512),
+    ADD_CASE("t1_dit_u2",       avx512, bwd, "flat",
+             radix3_t1_dit_u1_bwd_avx512,       radix3_t1_dit_u2_bwd_avx512),
+    ADD_CASE("t1_dit_u3",       avx512, fwd, "flat",
+             radix3_t1_dit_u1_fwd_avx512,       radix3_t1_dit_u3_fwd_avx512),
+    ADD_CASE("t1_dit_u3",       avx512, bwd, "flat",
+             radix3_t1_dit_u1_bwd_avx512,       radix3_t1_dit_u3_bwd_avx512),
+    ADD_CASE("t1s_dit_u1",      avx512, fwd, "t1s",
+             radix3_t1s_dit_u1_fwd_avx512,      radix3_t1s_dit_u1_fwd_avx512),
+    ADD_CASE("t1s_dit_u1",      avx512, bwd, "t1s",
+             radix3_t1s_dit_u1_bwd_avx512,      radix3_t1s_dit_u1_bwd_avx512),
+    ADD_CASE("t1s_dit_u2",      avx512, fwd, "t1s",
+             radix3_t1s_dit_u1_fwd_avx512,      radix3_t1s_dit_u2_fwd_avx512),
+    ADD_CASE("t1s_dit_u2",      avx512, bwd, "t1s",
+             radix3_t1s_dit_u1_bwd_avx512,      radix3_t1s_dit_u2_bwd_avx512),
+    ADD_CASE("t1s_dit_u3",      avx512, fwd, "t1s",
+             radix3_t1s_dit_u1_fwd_avx512,      radix3_t1s_dit_u3_fwd_avx512),
+    ADD_CASE("t1s_dit_u3",      avx512, bwd, "t1s",
+             radix3_t1s_dit_u1_bwd_avx512,      radix3_t1s_dit_u3_bwd_avx512),
+    ADD_CASE("t1_dit_log3_u1",  avx512, fwd, "log3",
+             radix3_t1_dit_log3_u1_fwd_avx512,  radix3_t1_dit_log3_u1_fwd_avx512),
+    ADD_CASE("t1_dit_log3_u1",  avx512, bwd, "log3",
+             radix3_t1_dit_log3_u1_bwd_avx512,  radix3_t1_dit_log3_u1_bwd_avx512),
+    ADD_CASE("t1_dit_log3_u2",  avx512, fwd, "log3",
+             radix3_t1_dit_log3_u1_fwd_avx512,  radix3_t1_dit_log3_u2_fwd_avx512),
+    ADD_CASE("t1_dit_log3_u2",  avx512, bwd, "log3",
+             radix3_t1_dit_log3_u1_bwd_avx512,  radix3_t1_dit_log3_u2_bwd_avx512),
+    ADD_CASE("t1_dit_log3_u3",  avx512, fwd, "log3",
+             radix3_t1_dit_log3_u1_fwd_avx512,  radix3_t1_dit_log3_u3_fwd_avx512),
+    ADD_CASE("t1_dit_log3_u3",  avx512, bwd, "log3",
+             radix3_t1_dit_log3_u1_bwd_avx512,  radix3_t1_dit_log3_u3_bwd_avx512),
+    /* Dispatcher-level */
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix3_t1_dit_u1_fwd_avx512,       vfft_r3_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix3_t1_dit_u1_bwd_avx512,       vfft_r3_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix3_t1s_dit_u1_fwd_avx512,      vfft_r3_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix3_t1s_dit_u1_bwd_avx512,      vfft_r3_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix3_t1_dit_log3_u1_fwd_avx512,  vfft_r3_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix3_t1_dit_log3_u1_bwd_avx512,  vfft_r3_t1_dit_log3_dispatch_bwd_avx512),
+  #endif
+
+#elif RADIX == 4
   #if defined(VALIDATE_AVX2)
     ADD_CASE("flat", avx2, fwd, "flat",
              radix4_t1_dit_fwd_avx2,        vfft_r4_t1_dit_dispatch_fwd_avx2),
@@ -572,6 +671,77 @@ static const validate_case_t CASES[] = {
              radix64_t1_dit_bwd_avx512, vfft_r64_t1_buf_dit_dispatch_bwd_avx512),
   #endif
 
+#elif RADIX == 5
+  /* R=5 tuning matrix: 3 twiddle strategies × U=1 × 2 ISAs × 2 directions.
+   * Per-protocol reference (same convention as R=3, R=7):
+   *   flat  -> radix5_t1_dit
+   *   t1s   -> radix5_t1s_dit
+   *   log3  -> radix5_t1_dit_log3 */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix5_t1_dit_fwd_avx2,       vfft_r5_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix5_t1_dit_bwd_avx2,       vfft_r5_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix5_t1s_dit_fwd_avx2,      vfft_r5_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix5_t1s_dit_bwd_avx2,      vfft_r5_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix5_t1_dit_log3_fwd_avx2,  vfft_r5_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix5_t1_dit_log3_bwd_avx2,  vfft_r5_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix5_t1_dit_fwd_avx512,       vfft_r5_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix5_t1_dit_bwd_avx512,       vfft_r5_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix5_t1s_dit_fwd_avx512,      vfft_r5_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix5_t1s_dit_bwd_avx512,      vfft_r5_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix5_t1_dit_log3_fwd_avx512,  vfft_r5_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix5_t1_dit_log3_bwd_avx512,  vfft_r5_t1_dit_log3_dispatch_bwd_avx512),
+  #endif
+
+#elif RADIX == 7
+  /* R=7 tuning matrix: 3 twiddle strategies × U=1 × 2 ISAs × 2 directions.
+   * Per-protocol reference (same convention as R=3, R=16, etc.):
+   *   flat  -> radix7_t1_dit
+   *   t1s   -> radix7_t1s_dit
+   *   log3  -> radix7_t1_dit_log3
+   * Each dispatcher self-validates against its protocol's reference. */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix7_t1_dit_fwd_avx2,       vfft_r7_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix7_t1_dit_bwd_avx2,       vfft_r7_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix7_t1s_dit_fwd_avx2,      vfft_r7_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix7_t1s_dit_bwd_avx2,      vfft_r7_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix7_t1_dit_log3_fwd_avx2,  vfft_r7_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix7_t1_dit_log3_bwd_avx2,  vfft_r7_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix7_t1_dit_fwd_avx512,       vfft_r7_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix7_t1_dit_bwd_avx512,       vfft_r7_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix7_t1s_dit_fwd_avx512,      vfft_r7_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix7_t1s_dit_bwd_avx512,      vfft_r7_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix7_t1_dit_log3_fwd_avx512,  vfft_r7_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix7_t1_dit_log3_bwd_avx512,  vfft_r7_t1_dit_log3_dispatch_bwd_avx512),
+  #endif
+
 #else
   #error "validate.c: unsupported RADIX (extend CASES[])"
 #endif
@@ -584,20 +754,55 @@ static const size_t ME_N = sizeof(ME_GRID) / sizeof(ME_GRID[0]);
 static const size_t ME_GRID_T1S[] = {64, 128};
 static const size_t ME_N_T1S = sizeof(ME_GRID_T1S) / sizeof(ME_GRID_T1S[0]);
 
+/* R=3 uses multiples of 24 so U=3 variants exercise the main unrolled
+ * loop (step = 3*VL = 24) rather than falling entirely through to the
+ * U=1 tail. These me values match the bench sweep in candidates.py. */
+static const size_t ME_GRID_R3[] = {24, 48, 96, 192, 384, 768, 1536, 3072};
+static const size_t ME_N_R3 = sizeof(ME_GRID_R3) / sizeof(ME_GRID_R3[0]);
+
+/* R=5 uses multiples of lcm(5, 8) = 40 so both AVX2 k_step=4 and
+ * AVX-512 k_step=8 divide me cleanly; R=5 codelet has no loop tail. */
+static const size_t ME_GRID_R5[] = {40, 80, 160, 320, 640, 1280};
+static const size_t ME_N_R5 = sizeof(ME_GRID_R5) / sizeof(ME_GRID_R5[0]);
+
+/* R=7 uses multiples of 56 = lcm(7, 8) so both AVX2 k_step=4 and
+ * AVX-512 k_step=8 divide me cleanly; R=7 codelet has no loop tail. */
+static const size_t ME_GRID_R7[] = {56, 112, 224, 448, 896, 1792};
+static const size_t ME_N_R7 = sizeof(ME_GRID_R7) / sizeof(ME_GRID_R7[0]);
+
 int main(void) {
   int R = RADIX;
   const double TOL = 1e-10;
 
   int total = 0, failed = 0;
 
+  /* Per-radix grid override for prime radixes. */
+  const size_t *default_grid;
+  size_t default_grid_n;
+  if (R == 3) {
+    default_grid = ME_GRID_R3;
+    default_grid_n = ME_N_R3;
+  } else if (R == 5) {
+    default_grid = ME_GRID_R5;
+    default_grid_n = ME_N_R5;
+  } else if (R == 7) {
+    default_grid = ME_GRID_R7;
+    default_grid_n = ME_N_R7;
+  } else {
+    default_grid = ME_GRID;
+    default_grid_n = ME_N;
+  }
+
   for (size_t c = 0; c < N_CASES; c++) {
     const validate_case_t *cc = &CASES[c];
-    int is_t1s = strcmp(cc->protocol, "t1s") == 0;
-    const size_t *grid = is_t1s ? ME_GRID_T1S : ME_GRID;
-    size_t grid_n     = is_t1s ? ME_N_T1S    : ME_N;
+    /* Small-me t1s restriction only applies at power-of-two radixes;
+     * prime radixes (R=3, R=5, R=7) use their own grid for all protocols. */
+    int is_t1s_small_only = (R != 3 && R != 5 && R != 7 &&
+                             strcmp(cc->protocol, "t1s") == 0);
+    const size_t *grid = is_t1s_small_only ? ME_GRID_T1S : default_grid;
+    size_t grid_n     = is_t1s_small_only ? ME_N_T1S    : default_grid_n;
     for (size_t i = 0; i < grid_n; i++) {
       size_t me = grid[i];
-      /* Per-case min_me (buf variants require me >= tile) */
       if (cc->min_me && me < cc->min_me) continue;
       size_t ios_list[] = {me, me + 8, 8 * me};
       for (size_t j = 0; j < 3; j++) {
