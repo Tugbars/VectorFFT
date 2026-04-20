@@ -1,6 +1,6 @@
 /* Auto-generated per-ISA candidate fragment. DO NOT EDIT. */
 #include <stddef.h>
-#include "fft_radix25_avx2.h"
+#include "fft_radix20_avx2.h"
 
 typedef void (*t1_fn)(double *rio_re, double *rio_im,
                      const double *W_re, const double *W_im,
@@ -13,8 +13,8 @@ typedef struct {
 } candidate_t;
 
 const candidate_t CANDIDATES_AVX2[] = {
-  {"ct_t1_dit", "avx2", "flat", radix25_t1_dit_fwd_avx2, radix25_t1_dit_bwd_avx2, 0},
-  {"ct_t1s_dit", "avx2", "t1s", radix25_t1s_dit_fwd_avx2, radix25_t1s_dit_bwd_avx2, 0},
-  {"ct_t1_dit_log3", "avx2", "log3", radix25_t1_dit_log3_fwd_avx2, radix25_t1_dit_log3_bwd_avx2, 0},
+  {"ct_t1_dit", "avx2", "flat", radix20_t1_dit_fwd_avx2, radix20_t1_dit_bwd_avx2, 0},
+  {"ct_t1s_dit", "avx2", "t1s", radix20_t1s_dit_fwd_avx2, radix20_t1s_dit_bwd_avx2, 0},
+  {"ct_t1_dit_log3", "avx2", "log3", radix20_t1_dit_log3_fwd_avx2, radix20_t1_dit_log3_bwd_avx2, 0},
 };
 const size_t N_CANDIDATES_AVX2 = sizeof(CANDIDATES_AVX2) / sizeof(CANDIDATES_AVX2[0]);
