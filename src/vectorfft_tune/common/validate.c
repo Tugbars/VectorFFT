@@ -780,11 +780,16 @@ static const validate_case_t CASES[] = {
 
 #elif RADIX == 25
   /* R=25 composite: 5×5 CT with fused internal twiddles.
-   * Same 3-variant tuning matrix as R=5 and R=7.
+   * Base 3-variant tuning matrix: flat, t1s, log3.
+   * Phase B buf variants: tile ∈ {32,64} × drain ∈ {temporal,stream}.
    * Per-protocol reference:
-   *   flat  -> radix25_t1_dit
-   *   t1s   -> radix25_t1s_dit
-   *   log3  -> radix25_t1_dit_log3 */
+   *   flat/buf -> radix25_t1_dit  (buf computes same function, different store pattern)
+   *   t1s      -> radix25_t1s_dit
+   *   log3     -> radix25_t1_dit_log3
+   *
+   * min_me note: buf variants require me >= tile for the full-tiles loop to
+   * execute; at smaller me only the tail path runs (falls back to flat stores),
+   * which is functionally correct but pointless — we gate at enumeration time. */
   #if defined(VALIDATE_AVX2)
     ADD_CASE("t1_dit",      avx2, fwd, "flat",
              radix25_t1_dit_fwd_avx2,       vfft_r25_t1_dit_dispatch_fwd_avx2),
@@ -798,6 +803,31 @@ static const validate_case_t CASES[] = {
              radix25_t1_dit_log3_fwd_avx2,  vfft_r25_t1_dit_log3_dispatch_fwd_avx2),
     ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
              radix25_t1_dit_log3_bwd_avx2,  vfft_r25_t1_dit_log3_dispatch_bwd_avx2),
+    /* Buf variants: per-variant validation against flat reference */
+    ADD_CASE_MIN_ME("buf_t32_temp", avx2, fwd, "flat",
+                    radix25_t1_dit_fwd_avx2,
+                    radix25_t1_buf_dit_tile32_temporal_fwd_avx2, 32),
+    ADD_CASE_MIN_ME("buf_t32_temp", avx2, bwd, "flat",
+                    radix25_t1_dit_bwd_avx2,
+                    radix25_t1_buf_dit_tile32_temporal_bwd_avx2, 32),
+    ADD_CASE_MIN_ME("buf_t32_stream", avx2, fwd, "flat",
+                    radix25_t1_dit_fwd_avx2,
+                    radix25_t1_buf_dit_tile32_stream_fwd_avx2, 32),
+    ADD_CASE_MIN_ME("buf_t32_stream", avx2, bwd, "flat",
+                    radix25_t1_dit_bwd_avx2,
+                    radix25_t1_buf_dit_tile32_stream_bwd_avx2, 32),
+    ADD_CASE_MIN_ME("buf_t64_temp", avx2, fwd, "flat",
+                    radix25_t1_dit_fwd_avx2,
+                    radix25_t1_buf_dit_tile64_temporal_fwd_avx2, 64),
+    ADD_CASE_MIN_ME("buf_t64_temp", avx2, bwd, "flat",
+                    radix25_t1_dit_bwd_avx2,
+                    radix25_t1_buf_dit_tile64_temporal_bwd_avx2, 64),
+    ADD_CASE_MIN_ME("buf_t64_stream", avx2, fwd, "flat",
+                    radix25_t1_dit_fwd_avx2,
+                    radix25_t1_buf_dit_tile64_stream_fwd_avx2, 64),
+    ADD_CASE_MIN_ME("buf_t64_stream", avx2, bwd, "flat",
+                    radix25_t1_dit_bwd_avx2,
+                    radix25_t1_buf_dit_tile64_stream_bwd_avx2, 64),
   #endif
   #if defined(VALIDATE_AVX512)
     ADD_CASE("t1_dit",      avx512, fwd, "flat",
@@ -812,6 +842,30 @@ static const validate_case_t CASES[] = {
              radix25_t1_dit_log3_fwd_avx512,  vfft_r25_t1_dit_log3_dispatch_fwd_avx512),
     ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
              radix25_t1_dit_log3_bwd_avx512,  vfft_r25_t1_dit_log3_dispatch_bwd_avx512),
+    ADD_CASE_MIN_ME("buf_t32_temp", avx512, fwd, "flat",
+                    radix25_t1_dit_fwd_avx512,
+                    radix25_t1_buf_dit_tile32_temporal_fwd_avx512, 32),
+    ADD_CASE_MIN_ME("buf_t32_temp", avx512, bwd, "flat",
+                    radix25_t1_dit_bwd_avx512,
+                    radix25_t1_buf_dit_tile32_temporal_bwd_avx512, 32),
+    ADD_CASE_MIN_ME("buf_t32_stream", avx512, fwd, "flat",
+                    radix25_t1_dit_fwd_avx512,
+                    radix25_t1_buf_dit_tile32_stream_fwd_avx512, 32),
+    ADD_CASE_MIN_ME("buf_t32_stream", avx512, bwd, "flat",
+                    radix25_t1_dit_bwd_avx512,
+                    radix25_t1_buf_dit_tile32_stream_bwd_avx512, 32),
+    ADD_CASE_MIN_ME("buf_t64_temp", avx512, fwd, "flat",
+                    radix25_t1_dit_fwd_avx512,
+                    radix25_t1_buf_dit_tile64_temporal_fwd_avx512, 64),
+    ADD_CASE_MIN_ME("buf_t64_temp", avx512, bwd, "flat",
+                    radix25_t1_dit_bwd_avx512,
+                    radix25_t1_buf_dit_tile64_temporal_bwd_avx512, 64),
+    ADD_CASE_MIN_ME("buf_t64_stream", avx512, fwd, "flat",
+                    radix25_t1_dit_fwd_avx512,
+                    radix25_t1_buf_dit_tile64_stream_fwd_avx512, 64),
+    ADD_CASE_MIN_ME("buf_t64_stream", avx512, bwd, "flat",
+                    radix25_t1_dit_bwd_avx512,
+                    radix25_t1_buf_dit_tile64_stream_bwd_avx512, 64),
   #endif
 
 #else

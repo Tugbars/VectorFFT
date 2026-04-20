@@ -63,8 +63,19 @@ def _ios_for_me(me: int) -> list[int]:
     return [me, me + 8, 25 * me, 32 * me]
 
 
+def _min_me_for_variant(variant_id: str) -> int:
+    """Buf variants require me >= tile so that at least one full tile fits.
+    Base variants have no me floor."""
+    if 'tile32' in variant_id:
+        return 32
+    if 'tile64' in variant_id:
+        return 64
+    return 0
+
+
 def sweep_grid(variant_id: str) -> list[tuple[int, int]]:
-    return [(me, ios) for me in _ME_GRID for ios in _ios_for_me(me)]
+    floor = _min_me_for_variant(variant_id)
+    return [(me, ios) for me in _ME_GRID if me >= floor for ios in _ios_for_me(me)]
 
 
 _ISAS = ['avx2', 'avx512']
