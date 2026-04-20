@@ -144,6 +144,20 @@
     #include "vfft_r10_t1_dit_log3_dispatch_avx512.h"
   #endif
   #include "vfft_r10_plan_wisdom.h"
+#elif RADIX == 11
+  #if defined(VALIDATE_AVX2)
+    #include "fft_radix11_avx2.h"
+    #include "vfft_r11_t1_dit_dispatch_avx2.h"
+    #include "vfft_r11_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r11_t1_dit_log3_dispatch_avx2.h"
+  #endif
+  #if defined(VALIDATE_AVX512)
+    #include "fft_radix11_avx512.h"
+    #include "vfft_r11_t1_dit_dispatch_avx512.h"
+    #include "vfft_r11_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r11_t1_dit_log3_dispatch_avx512.h"
+  #endif
+  #include "vfft_r11_plan_wisdom.h"
 #elif RADIX == 12
   #if defined(VALIDATE_AVX2)
     #include "fft_radix12_avx2.h"

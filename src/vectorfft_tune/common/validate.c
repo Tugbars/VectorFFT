@@ -806,6 +806,37 @@ static const validate_case_t CASES[] = {
                     radix10_t1_dit_log3_u2b_bwd_avx512, 16),
   #endif
 
+#elif RADIX == 11
+  /* R=11 prime-direct (monolithic genfft DAG, Sethi-Ullman scheduled). */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix11_t1_dit_fwd_avx2,       vfft_r11_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix11_t1_dit_bwd_avx2,       vfft_r11_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix11_t1s_dit_fwd_avx2,      vfft_r11_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix11_t1s_dit_bwd_avx2,      vfft_r11_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix11_t1_dit_log3_fwd_avx2,  vfft_r11_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix11_t1_dit_log3_bwd_avx2,  vfft_r11_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix11_t1_dit_fwd_avx512,       vfft_r11_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix11_t1_dit_bwd_avx512,       vfft_r11_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix11_t1s_dit_fwd_avx512,      vfft_r11_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix11_t1s_dit_bwd_avx512,      vfft_r11_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix11_t1_dit_log3_fwd_avx512,  vfft_r11_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix11_t1_dit_log3_bwd_avx512,  vfft_r11_t1_dit_log3_dispatch_bwd_avx512),
+  #endif
+
 #elif RADIX == 12
   /* R=12 composite: 4×3 CT (Pass 1 DFT-4 × Pass 2 DFT-3).
    * Base 3-variant matrix on both ISAs. AVX-512 adds 4 U=2 variants. */
@@ -1015,6 +1046,10 @@ static const size_t ME_N_R5 = sizeof(ME_GRID_R5) / sizeof(ME_GRID_R5[0]);
 static const size_t ME_GRID_R10[] = {8, 16, 32, 64, 128, 256};
 static const size_t ME_N_R10 = sizeof(ME_GRID_R10) / sizeof(ME_GRID_R10[0]);
 
+/* R=11 prime uses same grid as composites. */
+static const size_t ME_GRID_R11[] = {8, 16, 32, 64, 128, 256};
+static const size_t ME_N_R11 = sizeof(ME_GRID_R11) / sizeof(ME_GRID_R11[0]);
+
 /* R=12 composite uses same grid as R=10/R=20/R=25 for cross-composite comparison. */
 static const size_t ME_GRID_R12[] = {8, 16, 32, 64, 128, 256};
 static const size_t ME_N_R12 = sizeof(ME_GRID_R12) / sizeof(ME_GRID_R12[0]);
@@ -1054,6 +1089,9 @@ int main(void) {
   } else if (R == 10) {
     default_grid = ME_GRID_R10;
     default_grid_n = ME_N_R10;
+  } else if (R == 11) {
+    default_grid = ME_GRID_R11;
+    default_grid_n = ME_N_R11;
   } else if (R == 12) {
     default_grid = ME_GRID_R12;
     default_grid_n = ME_N_R12;
@@ -1071,8 +1109,8 @@ int main(void) {
   for (size_t c = 0; c < N_CASES; c++) {
     const validate_case_t *cc = &CASES[c];
     /* Small-me t1s restriction only applies at power-of-two radixes.
-     * Primes (R=3, R=5, R=7) and composites (R=10, R=12, R=20, R=25) use their own grid. */
-    int is_t1s_small_only = (R != 3 && R != 5 && R != 7 &&
+     * Primes (R=3, R=5, R=7, R=11) and composites (R=10, R=12, R=20, R=25) use their own grid. */
+    int is_t1s_small_only = (R != 3 && R != 5 && R != 7 && R != 11 &&
                              R != 10 && R != 12 && R != 20 && R != 25 &&
                              strcmp(cc->protocol, "t1s") == 0);
     const size_t *grid = is_t1s_small_only ? ME_GRID_T1S : default_grid;
