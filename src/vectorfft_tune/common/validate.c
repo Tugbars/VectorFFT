@@ -742,6 +742,70 @@ static const validate_case_t CASES[] = {
              radix7_t1_dit_log3_bwd_avx512,  vfft_r7_t1_dit_log3_dispatch_bwd_avx512),
   #endif
 
+#elif RADIX == 10
+  /* R=10 composite: 5×2 CT (Pass 1 DFT-5 × Pass 2 DFT-2).
+   * Base 3-variant matrix: flat, t1s, log3 (both ISAs).
+   * AVX-512 adds 4 U=2 variants: flat/log3 × approach A (interleaved) / B (pipelined).
+   * Per-protocol reference:
+   *   flat/U=2a,b -> radix10_t1_dit  (same flat protocol, different unrolling)
+   *   t1s         -> radix10_t1s_dit
+   *   log3/U=2a,b -> radix10_t1_dit_log3
+   *
+   * U=2 min_me=16 so the 2*VL=16 main loop runs at least once. */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix10_t1_dit_fwd_avx2,       vfft_r10_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix10_t1_dit_bwd_avx2,       vfft_r10_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix10_t1s_dit_fwd_avx2,      vfft_r10_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix10_t1s_dit_bwd_avx2,      vfft_r10_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix10_t1_dit_log3_fwd_avx2,  vfft_r10_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix10_t1_dit_log3_bwd_avx2,  vfft_r10_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix10_t1_dit_fwd_avx512,       vfft_r10_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix10_t1_dit_bwd_avx512,       vfft_r10_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix10_t1s_dit_fwd_avx512,      vfft_r10_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix10_t1s_dit_bwd_avx512,      vfft_r10_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix10_t1_dit_log3_fwd_avx512,  vfft_r10_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix10_t1_dit_log3_bwd_avx512,  vfft_r10_t1_dit_log3_dispatch_bwd_avx512),
+    /* U=2 variants validate against their U=1 protocol siblings */
+    ADD_CASE_MIN_ME("u2a_flat", avx512, fwd, "flat",
+                    radix10_t1_dit_fwd_avx512,
+                    radix10_t1_dit_u2a_fwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2a_flat", avx512, bwd, "flat",
+                    radix10_t1_dit_bwd_avx512,
+                    radix10_t1_dit_u2a_bwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2b_flat", avx512, fwd, "flat",
+                    radix10_t1_dit_fwd_avx512,
+                    radix10_t1_dit_u2b_fwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2b_flat", avx512, bwd, "flat",
+                    radix10_t1_dit_bwd_avx512,
+                    radix10_t1_dit_u2b_bwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2a_log3", avx512, fwd, "log3",
+                    radix10_t1_dit_log3_fwd_avx512,
+                    radix10_t1_dit_log3_u2a_fwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2a_log3", avx512, bwd, "log3",
+                    radix10_t1_dit_log3_bwd_avx512,
+                    radix10_t1_dit_log3_u2a_bwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2b_log3", avx512, fwd, "log3",
+                    radix10_t1_dit_log3_fwd_avx512,
+                    radix10_t1_dit_log3_u2b_fwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2b_log3", avx512, bwd, "log3",
+                    radix10_t1_dit_log3_bwd_avx512,
+                    radix10_t1_dit_log3_u2b_bwd_avx512, 16),
+  #endif
+
 #elif RADIX == 20
   /* R=20 composite: 4×5 CT with fused internal twiddles.
    * Same 3-variant tuning matrix as R=5, R=7, R=25.
@@ -891,6 +955,10 @@ static const size_t ME_N_R3 = sizeof(ME_GRID_R3) / sizeof(ME_GRID_R3[0]);
 static const size_t ME_GRID_R5[] = {40, 80, 160, 320, 640, 1280};
 static const size_t ME_N_R5 = sizeof(ME_GRID_R5) / sizeof(ME_GRID_R5[0]);
 
+/* R=10 composite uses same grid as R=20/R=25 for cross-composite comparison. */
+static const size_t ME_GRID_R10[] = {8, 16, 32, 64, 128, 256};
+static const size_t ME_N_R10 = sizeof(ME_GRID_R10) / sizeof(ME_GRID_R10[0]);
+
 /* R=20 composite uses same grid as R=25 for cross-composite comparison. */
 static const size_t ME_GRID_R20[] = {8, 16, 32, 64, 128, 256};
 static const size_t ME_N_R20 = sizeof(ME_GRID_R20) / sizeof(ME_GRID_R20[0]);
@@ -923,6 +991,9 @@ int main(void) {
   } else if (R == 7) {
     default_grid = ME_GRID_R7;
     default_grid_n = ME_N_R7;
+  } else if (R == 10) {
+    default_grid = ME_GRID_R10;
+    default_grid_n = ME_N_R10;
   } else if (R == 20) {
     default_grid = ME_GRID_R20;
     default_grid_n = ME_N_R20;
@@ -937,9 +1008,9 @@ int main(void) {
   for (size_t c = 0; c < N_CASES; c++) {
     const validate_case_t *cc = &CASES[c];
     /* Small-me t1s restriction only applies at power-of-two radixes.
-     * Primes (R=3, R=5, R=7) and composites (R=20, R=25) use their own grid. */
+     * Primes (R=3, R=5, R=7) and composites (R=10, R=20, R=25) use their own grid. */
     int is_t1s_small_only = (R != 3 && R != 5 && R != 7 &&
-                             R != 20 && R != 25 &&
+                             R != 10 && R != 20 && R != 25 &&
                              strcmp(cc->protocol, "t1s") == 0);
     const size_t *grid = is_t1s_small_only ? ME_GRID_T1S : default_grid;
     size_t grid_n     = is_t1s_small_only ? ME_N_T1S    : default_grid_n;
