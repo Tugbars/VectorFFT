@@ -116,6 +116,20 @@
     #include "vfft_r5_t1_dit_log3_dispatch_avx512.h"
   #endif
   #include "vfft_r5_plan_wisdom.h"
+#elif RADIX == 6
+  #if defined(VALIDATE_AVX2)
+    #include "fft_radix6_avx2.h"
+    #include "vfft_r6_t1_dit_dispatch_avx2.h"
+    #include "vfft_r6_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r6_t1_dit_log3_dispatch_avx2.h"
+  #endif
+  #if defined(VALIDATE_AVX512)
+    #include "fft_radix6_avx512.h"
+    #include "vfft_r6_t1_dit_dispatch_avx512.h"
+    #include "vfft_r6_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r6_t1_dit_log3_dispatch_avx512.h"
+  #endif
+  #include "vfft_r6_plan_wisdom.h"
 #elif RADIX == 7
   #if defined(VALIDATE_AVX2)
     #include "fft_radix7_avx2.h"
@@ -172,6 +186,48 @@
     #include "vfft_r12_t1_dit_log3_dispatch_avx512.h"
   #endif
   #include "vfft_r12_plan_wisdom.h"
+#elif RADIX == 13
+  #if defined(VALIDATE_AVX2)
+    #include "fft_radix13_avx2.h"
+    #include "vfft_r13_t1_dit_dispatch_avx2.h"
+    #include "vfft_r13_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r13_t1_dit_log3_dispatch_avx2.h"
+  #endif
+  #if defined(VALIDATE_AVX512)
+    #include "fft_radix13_avx512.h"
+    #include "vfft_r13_t1_dit_dispatch_avx512.h"
+    #include "vfft_r13_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r13_t1_dit_log3_dispatch_avx512.h"
+  #endif
+  #include "vfft_r13_plan_wisdom.h"
+#elif RADIX == 17
+  #if defined(VALIDATE_AVX2)
+    #include "fft_radix17_avx2.h"
+    #include "vfft_r17_t1_dit_dispatch_avx2.h"
+    #include "vfft_r17_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r17_t1_dit_log3_dispatch_avx2.h"
+  #endif
+  #if defined(VALIDATE_AVX512)
+    #include "fft_radix17_avx512.h"
+    #include "vfft_r17_t1_dit_dispatch_avx512.h"
+    #include "vfft_r17_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r17_t1_dit_log3_dispatch_avx512.h"
+  #endif
+  #include "vfft_r17_plan_wisdom.h"
+#elif RADIX == 19
+  #if defined(VALIDATE_AVX2)
+    #include "fft_radix19_avx2.h"
+    #include "vfft_r19_t1_dit_dispatch_avx2.h"
+    #include "vfft_r19_t1s_dit_dispatch_avx2.h"
+    #include "vfft_r19_t1_dit_log3_dispatch_avx2.h"
+  #endif
+  #if defined(VALIDATE_AVX512)
+    #include "fft_radix19_avx512.h"
+    #include "vfft_r19_t1_dit_dispatch_avx512.h"
+    #include "vfft_r19_t1s_dit_dispatch_avx512.h"
+    #include "vfft_r19_t1_dit_log3_dispatch_avx512.h"
+  #endif
+  #include "vfft_r19_plan_wisdom.h"
 #elif RADIX == 20
   #if defined(VALIDATE_AVX2)
     #include "fft_radix20_avx2.h"
