@@ -1019,6 +1019,154 @@ static const validate_case_t CASES[] = {
                     radix25_t1_buf_dit_tile64_stream_bwd_avx512, 64),
   #endif
 
+#elif RADIX == 6
+  /* R=6 composite: 3×2 CT (Pass 1 2× DFT-3, Pass 2 3× DFT-2).
+   * Base 3-variant matrix on both ISAs. AVX-512 adds 3 U=2 variants
+   * (flat, t1s, log3 all take U=2). */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix6_t1_dit_fwd_avx2,       vfft_r6_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix6_t1_dit_bwd_avx2,       vfft_r6_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix6_t1s_dit_fwd_avx2,      vfft_r6_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix6_t1s_dit_bwd_avx2,      vfft_r6_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix6_t1_dit_log3_fwd_avx2,  vfft_r6_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix6_t1_dit_log3_bwd_avx2,  vfft_r6_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix6_t1_dit_fwd_avx512,       vfft_r6_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix6_t1_dit_bwd_avx512,       vfft_r6_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix6_t1s_dit_fwd_avx512,      vfft_r6_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix6_t1s_dit_bwd_avx512,      vfft_r6_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix6_t1_dit_log3_fwd_avx512,  vfft_r6_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix6_t1_dit_log3_bwd_avx512,  vfft_r6_t1_dit_log3_dispatch_bwd_avx512),
+    ADD_CASE_MIN_ME("u2_flat", avx512, fwd, "flat",
+                    radix6_t1_dit_fwd_avx512,
+                    radix6_t1_dit_u2_fwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2_flat", avx512, bwd, "flat",
+                    radix6_t1_dit_bwd_avx512,
+                    radix6_t1_dit_u2_bwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2_t1s",  avx512, fwd, "t1s",
+                    radix6_t1s_dit_fwd_avx512,
+                    radix6_t1s_dit_u2_fwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2_t1s",  avx512, bwd, "t1s",
+                    radix6_t1s_dit_bwd_avx512,
+                    radix6_t1s_dit_u2_bwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2_log3", avx512, fwd, "log3",
+                    radix6_t1_dit_log3_fwd_avx512,
+                    radix6_t1_dit_log3_u2_fwd_avx512, 16),
+    ADD_CASE_MIN_ME("u2_log3", avx512, bwd, "log3",
+                    radix6_t1_dit_log3_bwd_avx512,
+                    radix6_t1_dit_log3_u2_bwd_avx512, 16),
+  #endif
+
+#elif RADIX == 13
+  /* R=13 prime: monolithic DFT-13 butterfly (21 genfft constants).
+   * Both ISAs: 3 base variants × U=1 only (register pressure infeasible for U=2). */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix13_t1_dit_fwd_avx2,       vfft_r13_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix13_t1_dit_bwd_avx2,       vfft_r13_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix13_t1s_dit_fwd_avx2,      vfft_r13_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix13_t1s_dit_bwd_avx2,      vfft_r13_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix13_t1_dit_log3_fwd_avx2,  vfft_r13_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix13_t1_dit_log3_bwd_avx2,  vfft_r13_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix13_t1_dit_fwd_avx512,       vfft_r13_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix13_t1_dit_bwd_avx512,       vfft_r13_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix13_t1s_dit_fwd_avx512,      vfft_r13_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix13_t1s_dit_bwd_avx512,      vfft_r13_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix13_t1_dit_log3_fwd_avx512,  vfft_r13_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix13_t1_dit_log3_bwd_avx512,  vfft_r13_t1_dit_log3_dispatch_bwd_avx512),
+  #endif
+
+#elif RADIX == 17
+  /* R=17 prime: monolithic DFT-17 butterfly (23 genfft constants, 366 ops).
+   * Both ISAs: 3 base variants × U=1 only (register pressure infeasible for U=2). */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix17_t1_dit_fwd_avx2,       vfft_r17_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix17_t1_dit_bwd_avx2,       vfft_r17_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix17_t1s_dit_fwd_avx2,      vfft_r17_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix17_t1s_dit_bwd_avx2,      vfft_r17_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix17_t1_dit_log3_fwd_avx2,  vfft_r17_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix17_t1_dit_log3_bwd_avx2,  vfft_r17_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix17_t1_dit_fwd_avx512,       vfft_r17_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix17_t1_dit_bwd_avx512,       vfft_r17_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix17_t1s_dit_fwd_avx512,      vfft_r17_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix17_t1s_dit_bwd_avx512,      vfft_r17_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix17_t1_dit_log3_fwd_avx512,  vfft_r17_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix17_t1_dit_log3_bwd_avx512,  vfft_r17_t1_dit_log3_dispatch_bwd_avx512),
+  #endif
+
+#elif RADIX == 19
+  /* R=19 prime: monolithic DFT-19 butterfly (26 genfft constants, 542 ops).
+   * Heaviest prime butterfly in the portfolio. Both ISAs: 3 base variants
+   * × U=1 only (register pressure 64+ at U=1, U=N infeasible). */
+  #if defined(VALIDATE_AVX2)
+    ADD_CASE("t1_dit",      avx2, fwd, "flat",
+             radix19_t1_dit_fwd_avx2,       vfft_r19_t1_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit",      avx2, bwd, "flat",
+             radix19_t1_dit_bwd_avx2,       vfft_r19_t1_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, fwd, "t1s",
+             radix19_t1s_dit_fwd_avx2,      vfft_r19_t1s_dit_dispatch_fwd_avx2),
+    ADD_CASE("t1s_dit",     avx2, bwd, "t1s",
+             radix19_t1s_dit_bwd_avx2,      vfft_r19_t1s_dit_dispatch_bwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+             radix19_t1_dit_log3_fwd_avx2,  vfft_r19_t1_dit_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+             radix19_t1_dit_log3_bwd_avx2,  vfft_r19_t1_dit_log3_dispatch_bwd_avx2),
+  #endif
+  #if defined(VALIDATE_AVX512)
+    ADD_CASE("t1_dit",      avx512, fwd, "flat",
+             radix19_t1_dit_fwd_avx512,       vfft_r19_t1_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit",      avx512, bwd, "flat",
+             radix19_t1_dit_bwd_avx512,       vfft_r19_t1_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, fwd, "t1s",
+             radix19_t1s_dit_fwd_avx512,      vfft_r19_t1s_dit_dispatch_fwd_avx512),
+    ADD_CASE("t1s_dit",     avx512, bwd, "t1s",
+             radix19_t1s_dit_bwd_avx512,      vfft_r19_t1s_dit_dispatch_bwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+             radix19_t1_dit_log3_fwd_avx512,  vfft_r19_t1_dit_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+             radix19_t1_dit_log3_bwd_avx512,  vfft_r19_t1_dit_log3_dispatch_bwd_avx512),
+  #endif
+
 #else
   #error "validate.c: unsupported RADIX (extend CASES[])"
 #endif

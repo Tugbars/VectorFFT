@@ -985,6 +985,22 @@ def main():
     # summary code), or when the user wants a fresh summary after manually
     # deleting stale per-radix data.
     if getattr(args, 'summary_only', False):
+        if not BENCH_OUT.is_dir():
+            print(f'[orch] --summary-only: no bench_out directory at {BENCH_OUT}. '
+                  f'Either no sweep has run yet, or you are running the orchestrator '
+                  f'from a different directory than the one holding your measurements. '
+                  f'Check cwd: {Path.cwd()}', file=sys.stderr)
+            return 1
+        # Check if any radix has measurement data
+        has_data = any(
+            (BENCH_OUT / d.name / 'measurements.jsonl').is_file()
+            for d in BENCH_OUT.iterdir() if d.is_dir() and _RE_RADIX_DIR.match(d.name)
+        ) if BENCH_OUT.is_dir() else False
+        if not has_data:
+            print(f'[orch] --summary-only: bench_out exists at {BENCH_OUT} but contains '
+                  f'no measurements.jsonl files. Run the orchestrator normally first '
+                  f'to generate measurement data.', file=sys.stderr)
+            return 1
         empty_report = SweepReport()
         empty_report.host_info = {
             'system':  system,
