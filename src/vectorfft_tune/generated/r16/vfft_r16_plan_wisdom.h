@@ -18,37 +18,39 @@
 
 /* Cross-protocol comparison (fwd direction, AVX2):
  *   me    ios   winning_protocol   winning_ns
- *      64    64   log3              650.3
- *      64    72   log3              657.4
- *      64   512   t1s              1598.0
- *     128   128   log3             1302.3
- *     128   136   log3             1298.7
- *     128  1024   t1s              3771.3
- *     256   256   log3             4992.2
- *     256   264   log3             2875.5
- *     256  2048   flat             7171.8
- *     512   512   flat            13717.6
- *     512   520   log3             5868.6
- *     512  4096   flat            15106.6
- *    1024  1024   flat            27841.6
- *    1024  1032   log3            11536.2
- *    1024  8192   flat            30950.9
- *    2048  2048   flat            62410.9
- *    2048  2056   log3            25194.9
- *    2048 16384   flat            63299.1
+ *      64    64   t1s               249.0
+ *      64    72   flat              278.7
+ *      64   512   flat              836.7
+ *     128   128   t1s               575.2
+ *     128   136   t1s               495.6
+ *     128  1024   t1s              1639.7
+ *     256   256   flat             3145.6
+ *     256   264   log3             1576.4
+ *     256  2048   flat             3682.6
+ *     512   512   flat             7228.8
+ *     512   520   log3             3338.3
+ *     512  4096   flat             6814.8
+ *    1024  1024   flat            14700.8
+ *    1024  1032   flat             6905.0
+ *    1024  8192   flat            15601.6
+ *    2048  2048   flat            27585.4
+ *    2048  2056   log3            12597.8
+ *    2048 16384   log3            34642.8
  */
 
 /* Should the planner use log3 protocol at (me, ios)? */
 static inline int radix16_prefer_log3(size_t me, size_t ios) {
     (void)ios;  /* may be unused if rules are me-only */
-    /* Bench wins at me ∈ {64, 128, 256} */
-    if (me == 64 || me == 128 || me == 256) return 1;
+    /* Bench wins at me ∈ {2048} */
+    if (me == 2048) return 1;
     return 0;
 }
 
 /* Should the planner use t1s protocol at (me, ios)? */
 static inline int radix16_prefer_t1s(size_t me, size_t ios) {
     (void)ios;  /* may be unused if rules are me-only */
+    /* Bench wins at me ∈ {128} */
+    if (me == 128) return 1;
     return 0;
 }
 

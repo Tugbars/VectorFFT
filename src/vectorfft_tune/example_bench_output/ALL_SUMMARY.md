@@ -1,20 +1,12 @@
 # VectorFFT portfolio tuning summary
 
-Generated: 2026-04-20 23:32:13
-Host: Linux x86_64 (pinned to CPU 0)
+Generated: 2026-04-21 09:43:00
+Host: Linux x86_64 (pinned to CPU 2)
 
 ## Portfolio
 
 - **Radixes tuned** (with measurement data on disk): 13
 - **Total measurements** (fwd + bwd, across all radixes): 3002
-- **This invocation**: 1 passed, 0 failed, 1 total
-- **Elapsed**: 54.7s (0.9 min)
-
-## This invocation
-
-| Radix | Status | Measurements | Validated | Failed | Elapsed | Reason |
-|---|---|---|---|---|---|---|
-| r4 | success | 384 | 168 | 0 | 54.7s |  |
 
 ## Dispatcher winners by radix (fwd direction)
 
@@ -25,7 +17,7 @@ For each (radix, ISA), count of sweep points each protocol wins. "Total" is the 
 | Radix | flat | t1s | log3 | Total | Transition me |
 |---|---|---|---|---|---|
 | r3 | 5 | 24 | 3 | 32 | me≥24 |
-| r4 | 6 | 6 | 6 | 18 | me≥64 |
+| r4 | 5 | 6 | 7 | 18 | me≥64 |
 | r5 | 0 | 24 | 0 | 24 | me≥40 |
 | r7 | 1 | 23 | 0 | 24 | me≥56 |
 | r8 | 0 | 3 | 15 | 18 | me≥64 |
@@ -43,7 +35,7 @@ For each (radix, ISA), count of sweep points each protocol wins. "Total" is the 
 | Radix | flat | t1s | log3 | Total | Transition me |
 |---|---|---|---|---|---|
 | r3 | 0 | 32 | 0 | 32 | me≥24 |
-| r4 | 8 | 5 | 5 | 18 | me≥64 |
+| r4 | 6 | 6 | 6 | 18 | me≥64 |
 | r5 | 0 | 24 | 0 | 24 | me≥40 |
 | r7 | 1 | 20 | 3 | 24 | me≥56 |
 | r8 | 2 | 2 | 14 | 18 | me≥64 |
@@ -61,7 +53,7 @@ For each (radix, ISA), count of sweep points each protocol wins. "Total" is the 
 | Radix | Last measurement written |
 |---|---|
 | r3 | 2026-04-20 23:29 |
-| r4 | 2026-04-20 23:32 |
+| r4 | 2026-04-21 09:34 |
 | r5 | 2026-04-20 12:10 |
 | r7 | 2026-04-20 11:56 |
 | r8 | 2026-04-19 21:43 |

@@ -18,27 +18,22 @@ static inline void vfft_r8_t1_dif_dispatch_fwd_avx2(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..256]: ct_t1_dif
-     *   me∈[512..512] pow2 ios: ct_t1_dif_prefetch
-     *   me∈[512..512] padded ios: ct_t1_dif
-     *   me∈[1024..1024]: ct_t1_dif
+     *   me∈[64..256] pow2 ios: ct_t1_dif
+     *   me∈[64..256] padded ios: ct_t1_dif_prefetch
+     *   me∈[512..1024]: ct_t1_dif
      *   me∈[2048..∞] pow2 ios: ct_t1_dif
      *   me∈[2048..∞] padded ios: ct_t1_dif_prefetch
      */
     if (me <= 256) {
-        radix8_t1_dif_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-        return;
-    }
-    else if (me >= 512 && me <= 512) {
         if (ios == me) {
-            radix8_t1_dif_prefetch_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
+            radix8_t1_dif_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
             return;
         } else {
-            radix8_t1_dif_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
+            radix8_t1_dif_prefetch_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
             return;
         }
     }
-    else if (me >= 1024 && me <= 1024) {
+    else if (me >= 512 && me <= 1024) {
         radix8_t1_dif_fwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
@@ -59,15 +54,36 @@ static inline void vfft_r8_t1_dif_dispatch_bwd_avx2(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..1024]: ct_t1_dif
-     *   me∈[2048..∞]: ct_t1_dif_prefetch
+     *   me∈[64..64]: ct_t1_dif
+     *   me∈[128..128] pow2 ios: ct_t1_dif
+     *   me∈[128..128] padded ios: ct_t1_dif_prefetch
+     *   me∈[256..256]: ct_t1_dif
+     *   me∈[512..512]: ct_t1_dif_prefetch
+     *   me∈[1024..∞]: ct_t1_dif
      */
-    if (me <= 1024) {
+    if (me <= 64) {
         radix8_t1_dif_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
-    else if (me >= 2048) {
+    else if (me >= 128 && me <= 128) {
+        if (ios == me) {
+            radix8_t1_dif_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        } else {
+            radix8_t1_dif_prefetch_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        }
+    }
+    else if (me >= 256 && me <= 256) {
+        radix8_t1_dif_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 512 && me <= 512) {
         radix8_t1_dif_prefetch_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 1024) {
+        radix8_t1_dif_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
 }

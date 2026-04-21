@@ -1,0 +1,42 @@
+[phase] generate
+  [gen] fft_radix11_avx2.h: 90985 bytes
+  [gen] fft_radix11_avx512.h: 75071 bytes
+[phase] compile
+  [cands] vfft_harness_candidates_avx2.c: 3 symbols
+  [cands] vfft_harness_candidates_avx512.c: 3 symbols
+  [cands] vfft_harness_candidates.c: aggregator for 6 total
+  [cc base] harness.c
+  [cc base] vfft_harness_candidates.c
+  [cc avx2] vfft_harness_candidates_avx2.c
+  [cc avx512] skipping — host lacks AVX-512
+  [cc avx512_stub] vfft_harness_candidates_avx512_stub.c
+  [link] harness.exe
+[phase] run
+  [run] 288 jobs (0 already done — will skip)
+    [run] 25/288 (9%)  skipped_done=0 skipped_host=0
+    [run] 50/288 (17%)  skipped_done=0 skipped_host=2
+    [run] 75/288 (26%)  skipped_done=0 skipped_host=27
+    [run] 100/288 (35%)  skipped_done=0 skipped_host=48
+    [run] 125/288 (43%)  skipped_done=0 skipped_host=48
+    [run] 150/288 (52%)  skipped_done=0 skipped_host=54
+    [run] 175/288 (61%)  skipped_done=0 skipped_host=79
+    [run] 200/288 (69%)  skipped_done=0 skipped_host=96
+    [run] 225/288 (78%)  skipped_done=0 skipped_host=96
+    [run] 250/288 (87%)  skipped_done=0 skipped_host=106
+    [run] 275/288 (95%)  skipped_done=0 skipped_host=131
+  [run] done: 288/288  skipped_done=0  skipped_host=144
+[phase] emit
+  [copy] fft_radix11_avx2.h -> generated/
+  [copy] fft_radix11_avx512.h -> generated/
+  loaded 144 measurements
+  [emit] vfft_r11_t1_dit_dispatch_avx2.h
+  [emit] vfft_r11_t1_dit_log3_dispatch_avx2.h
+  [emit] vfft_r11_t1s_dit_dispatch_avx2.h
+  [emit] vfft_r11_plan_wisdom.h
+  [emit] vfft_r11_report.md
+[phase] validate
+  [cc validate] avx2
+  [run validate] avx2
+[validate] 108 cases, 0 failed
+  [validate] skipping avx512: host lacks AVX-512
+[done] elapsed 21.6s
