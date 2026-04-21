@@ -53,16 +53,17 @@ CONFIG_FILE_DEFAULT = PROJECT_ROOT / 'orchestrator.json'
 # Try different cores during calibration runs to find the best one for your chip.
 
 DEFAULTS = {
-    'cpu':           2,
-    'pace_seconds':  2,
-    'phase':         'all',
-    'radix':         None,     # None means all radixes
-    'skip':          None,
-    'force':         False,
-    'fail_fast':     False,
-    'quiet':         False,
-    'dry_run':       False,
-    'no_summary':    False,
+    'cpu':              2,
+    'pace_seconds':     2,
+    'phase':            'all',
+    'radix':            None,     # None means all radixes
+    'skip':             None,
+    'force':            False,
+    'fail_fast':        False,
+    'quiet':            False,
+    'dry_run':          False,
+    'no_summary':       False,
+    'auto_performance': False,    # opt-in: switch to high-perf plan, restore on exit
 }
 
 
@@ -133,7 +134,7 @@ def filter_radixes(all_runs: list[RadixRun], include: Optional[str],
 
 def _read_text(path: Path) -> Optional[str]:
     try:
-        return path.read_text().strip()
+        return path.read_text(encoding='utf-8').strip()
     except Exception:
         return None
 
@@ -163,11 +164,22 @@ def preflight_linux() -> tuple[bool, str]:
     return True, f"governor=performance on {len(governors)} CPUs checked"
 
 
-# GUIDs from Windows powercfg; locale-independent identifiers
+# GUIDs from Windows powercfg for the canonical Microsoft-distributed plans.
+# Duplicated instances (e.g., via `powercfg -duplicatescheme`) get fresh GUIDs,
+# so we also fall back to name matching for "high performance" / "ultimate
+# performance" as identifiers.
 _WIN_HIGHPERF_GUIDS = {
     '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c': 'High performance',
     'e9a42b02-d5df-448d-aa00-03f14749eb61': 'Ultimate Performance',
 }
+
+# Name tokens that identify a high-perf-class plan, in multiple spellings.
+# Matched case-insensitively against the plan name reported by powercfg.
+# English only; users on other locales may need --force (documented).
+_WIN_HIGHPERF_NAME_TOKENS = (
+    'high performance',
+    'ultimate performance',
+)
 
 def preflight_windows() -> tuple[bool, str]:
     try:
@@ -177,16 +189,24 @@ def preflight_windows() -> tuple[bool, str]:
         return False, f"powercfg failed: {e}"
     if out.returncode != 0:
         return False, f"powercfg returned {out.returncode}: {out.stderr.strip()}"
-    text = out.stdout.lower()
+    text_lower = out.stdout.lower()
+    # Primary: canonical Microsoft GUID
     for guid, name in _WIN_HIGHPERF_GUIDS.items():
-        if guid in text:
-            return True, f"active power plan is '{name}' (GUID {guid})"
+        if guid in text_lower:
+            return True, f"active power plan is '{name}' (canonical GUID {guid})"
+    # Fallback: name contains a high-perf token (handles duplicated/vendor plans
+    # with non-canonical GUIDs but recognizable names).
+    # powercfg output format: "Power Scheme GUID: <guid>  (<name>)"
+    for token in _WIN_HIGHPERF_NAME_TOKENS:
+        if token in text_lower:
+            return True, f"active power plan name matches '{token}' (non-canonical GUID, accepted by name)"
     return False, (
         f"active power plan is not a high-performance scheme. "
         f"Fix with: powercfg /setactive SCHEME_MIN  "
         f"(or enable Ultimate Performance via: "
         f"powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61). "
-        f"Run with --force to bypass. Output was: {out.stdout.strip()}"
+        f"If your plan is high-perf but not in English, run with --force. "
+        f"Output was: {out.stdout.strip()}"
     )
 
 
@@ -196,9 +216,14 @@ def preflight_affinity_tool(system: str) -> tuple[bool, str]:
             return False, "'taskset' not found on PATH; install util-linux or disable pinning"
         return True, "taskset available"
     if system == 'Windows':
-        # 'start' is a cmd.exe builtin, not a binary on PATH. Assume it exists;
-        # we'll fall back gracefully if it doesn't.
-        return True, "'start' builtin assumed available (cmd.exe)"
+        # We use ctypes.windll.kernel32.SetProcessAffinityMask for pinning.
+        # ctypes is stdlib, so this is a sanity load check.
+        try:
+            import ctypes
+            ctypes.windll.kernel32  # probe
+            return True, "ctypes available for SetProcessAffinityMask"
+        except Exception as e:
+            return False, f"ctypes load failed: {e}"
     return False, f"unsupported OS for affinity pinning: {system}"
 
 
@@ -225,34 +250,340 @@ def run_preflight(force: bool) -> tuple[bool, list[str]]:
     return ok, messages
 
 
+# ────────────────────── power-plan auto-switch ──────────────────────
+#
+# When --auto-performance is on, the orchestrator captures the current
+# power plan / governor, forces high-performance for the duration of the
+# sweep, and restores on exit. A backup file at bench_out/.power_state_backup
+# records the original state so ungraceful exits can be detected and
+# recovered on next launch.
+#
+# Limitations:
+#   - SIGKILL, kernel panic, or power loss: backup stays on disk; next run
+#     detects it and offers manual restore.
+#   - Linux writes /sys/.../scaling_governor, which usually requires root.
+#     Without root the switch fails; we warn and proceed without switching
+#     rather than abort (the preflight check will still catch the wrong
+#     governor and refuse to run).
+
+_BACKUP_FILENAME = '.power_state_backup'
+# Canonical High Performance GUID; works on all Windows editions that have
+# a default plan set. Consumer Windows ships this built in.
+_WIN_HIGHPERF_TARGET_GUID = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
+
+
+def _backup_path() -> Path:
+    return BENCH_OUT / _BACKUP_FILENAME
+
+
+def capture_current_plan(system: str) -> Optional[dict]:
+    """Return current state as a dict, or None if it can't be determined.
+    Shape: {'system': 'Linux'|'Windows', 'value': <serialized state>}
+    """
+    if system == 'Windows':
+        try:
+            out = subprocess.run(['powercfg', '/getactivescheme'],
+                                 capture_output=True, text=True, timeout=5)
+        except Exception:
+            return None
+        if out.returncode != 0:
+            return None
+        # Parse: "Power Scheme GUID: <guid>  (<name>)"
+        m = re.search(r'GUID:\s*([0-9a-fA-F-]{36})', out.stdout)
+        if not m:
+            return None
+        return {'system': 'Windows', 'guid': m.group(1), 'raw': out.stdout.strip()}
+
+    if system == 'Linux':
+        # Capture governors for all CPUs (they may differ).
+        gov_files = sorted(Path('/sys/devices/system/cpu').glob(
+            'cpu[0-9]*/cpufreq/scaling_governor'))
+        if not gov_files:
+            return None
+        per_cpu = {}
+        for g in gov_files:
+            val = _read_text(g)
+            if val is not None:
+                per_cpu[str(g)] = val
+        if not per_cpu:
+            return None
+        return {'system': 'Linux', 'governors': per_cpu}
+
+    return None
+
+
+def apply_performance_plan(system: str) -> tuple[bool, str]:
+    """Switch to high-performance. Return (ok, message)."""
+    if system == 'Windows':
+        try:
+            out = subprocess.run(
+                ['powercfg', '/setactive', _WIN_HIGHPERF_TARGET_GUID],
+                capture_output=True, text=True, timeout=5)
+        except Exception as e:
+            return False, f"powercfg /setactive failed: {e}"
+        if out.returncode != 0:
+            return False, f"powercfg /setactive returned {out.returncode}: {out.stderr.strip()}"
+        return True, f"switched to High Performance (GUID {_WIN_HIGHPERF_TARGET_GUID})"
+
+    if system == 'Linux':
+        if os.geteuid() != 0:
+            return False, ("writing /sys/.../scaling_governor requires root. "
+                           "Re-run with sudo, or set governor manually and omit --auto-performance.")
+        gov_files = sorted(Path('/sys/devices/system/cpu').glob(
+            'cpu[0-9]*/cpufreq/scaling_governor'))
+        if not gov_files:
+            return False, "no scaling_governor files found"
+        errors = []
+        for g in gov_files:
+            try:
+                g.write_text('performance\n')
+            except Exception as e:
+                errors.append(f"{g}: {e}")
+        if errors:
+            return False, f"wrote performance to {len(gov_files) - len(errors)} CPUs, "\
+                          f"failed on {len(errors)}: {errors[0]}"
+        return True, f"set performance governor on {len(gov_files)} CPUs"
+
+    return False, f"auto-performance not supported on {system}"
+
+
+def restore_plan(state: dict) -> tuple[bool, str]:
+    """Restore the captured state. Return (ok, message)."""
+    system = state.get('system')
+    if system == 'Windows':
+        guid = state.get('guid')
+        if not guid:
+            return False, "backup has no GUID"
+        try:
+            out = subprocess.run(['powercfg', '/setactive', guid],
+                                 capture_output=True, text=True, timeout=5)
+        except Exception as e:
+            return False, f"powercfg /setactive failed: {e}"
+        if out.returncode != 0:
+            return False, f"powercfg returned {out.returncode}: {out.stderr.strip()}"
+        return True, f"restored power plan GUID {guid}"
+
+    if system == 'Linux':
+        governors = state.get('governors', {})
+        if not governors:
+            return False, "backup has no governor records"
+        if os.geteuid() != 0:
+            return False, "restoring governor requires root"
+        errors = []
+        for path_str, gov in governors.items():
+            try:
+                Path(path_str).write_text(gov + '\n')
+            except Exception as e:
+                errors.append(f"{path_str}: {e}")
+        if errors:
+            return False, f"restored {len(governors) - len(errors)} governors, "\
+                          f"failed on {len(errors)}: {errors[0]}"
+        return True, f"restored {len(governors)} governors"
+
+    return False, f"restore not supported on {system}"
+
+
+def write_backup(state: dict) -> None:
+    BENCH_OUT.mkdir(parents=True, exist_ok=True)
+    _backup_path().write_text(json.dumps(state, indent=2), encoding='utf-8')
+
+
+def delete_backup() -> None:
+    p = _backup_path()
+    if p.exists():
+        try:
+            p.unlink()
+        except Exception:
+            pass
+
+
+def check_stale_backup(auto_performance: bool) -> None:
+    """If a backup exists at startup, prior run ended ungracefully.
+    Warn the user and offer to restore."""
+    p = _backup_path()
+    if not p.exists():
+        return
+    try:
+        state = json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        print(f'[auto-perf] found unreadable backup at {p}; leaving it alone',
+              file=sys.stderr)
+        return
+    print(f'[auto-perf] WARNING: stale power-state backup found at {p}')
+    print(f'[auto-perf] A previous run ended ungracefully without restoring '
+          f'the system power state.')
+    print(f'[auto-perf] Captured state: {state}')
+    if not auto_performance:
+        print(f'[auto-perf] Re-run with --auto-performance to restore, '
+              f'or delete the backup manually: {p}')
+        return
+    # With --auto-performance, prompt for restore
+    try:
+        answer = input('[auto-perf] Restore this state now? [y/N]: ').strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = 'n'
+    if answer == 'y':
+        ok, msg = restore_plan(state)
+        marker = 'OK' if ok else 'FAIL'
+        print(f'[auto-perf] restore {marker}: {msg}')
+        if ok:
+            delete_backup()
+    else:
+        print(f'[auto-perf] skipped restore; backup remains at {p}')
+
+
+# Global to coordinate cleanup between signal handlers and normal exit.
+_AUTO_PERF_ACTIVE = {'state': None, 'done': False}
+
+
+def _restore_and_mark_done() -> None:
+    """Idempotent restore helper used by all exit paths."""
+    if _AUTO_PERF_ACTIVE['done']:
+        return
+    state = _AUTO_PERF_ACTIVE['state']
+    if state is None:
+        _AUTO_PERF_ACTIVE['done'] = True
+        return
+    ok, msg = restore_plan(state)
+    marker = 'OK' if ok else 'FAIL'
+    print(f'[auto-perf] restore on exit {marker}: {msg}', file=sys.stderr)
+    if ok:
+        delete_backup()
+    _AUTO_PERF_ACTIVE['done'] = True
+
+
+def _signal_restore_handler(signum, frame):
+    """Signal handler: restore state, then re-raise the signal at default
+    disposition so the process actually exits."""
+    print(f'\n[auto-perf] signal {signum} received, restoring power state...',
+          file=sys.stderr)
+    _restore_and_mark_done()
+    # Re-raise at default disposition
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
+def _is_state_already_highperf(state: dict) -> bool:
+    """True if the captured state is already a high-performance plan/governor.
+    When true, we skip the apply step (don't lateral-move away from Ultimate
+    Performance to High Performance, for example) and only register restore
+    tracking for the duration of the sweep."""
+    if state.get('system') == 'Windows':
+        guid = state.get('guid', '').lower()
+        raw = state.get('raw', '').lower()
+        # Canonical GUID match
+        if guid in (g.lower() for g in _WIN_HIGHPERF_GUIDS):
+            return True
+        # Name fallback — handles duplicated / vendor plans
+        for token in _WIN_HIGHPERF_NAME_TOKENS:
+            if token in raw:
+                return True
+        return False
+    if state.get('system') == 'Linux':
+        governors = state.get('governors', {})
+        if not governors:
+            return False
+        # Consider already-high-perf if ALL sampled governors are 'performance'
+        return all(g == 'performance' for g in governors.values())
+    return False
+
+
+def install_auto_performance(system: str) -> bool:
+    """Capture state, switch to high-perf (if needed), install cleanup handlers.
+    Return True on success, False if we should proceed without the switch."""
+    state = capture_current_plan(system)
+    if state is None:
+        print('[auto-perf] FAIL: could not capture current power state; '
+              'proceeding without auto-switch', file=sys.stderr)
+        return False
+
+    already_highperf = _is_state_already_highperf(state)
+    apply_msg = ''
+    if already_highperf:
+        apply_msg = 'current plan is already high-performance; skipping apply (tracking only)'
+    else:
+        ok, apply_msg = apply_performance_plan(system)
+        if not ok:
+            print(f'[auto-perf] FAIL to apply: {apply_msg}', file=sys.stderr)
+            if system == 'Linux' and os.geteuid() != 0:
+                print('[auto-perf] Linux auto-performance requires root. '
+                      'Re-run with sudo, or use --force if you have already '
+                      'set the governor manually.', file=sys.stderr)
+            return False
+
+    # Register cleanup handlers, write backup, mark active.
+    # We always write a backup so SIGKILL recovery works even for the
+    # "already high-perf, no apply" case — if some external process
+    # modifies the plan during our sweep, restore brings it back.
+    write_backup(state)
+    _AUTO_PERF_ACTIVE['state'] = state
+    _AUTO_PERF_ACTIVE['done'] = False
+
+    import atexit
+    atexit.register(_restore_and_mark_done)
+    # SIGINT and SIGTERM — on Windows signal.SIGTERM exists but only
+    # raise-from-python works; external termination is harder to catch.
+    try:
+        signal.signal(signal.SIGINT, _signal_restore_handler)
+    except Exception:
+        pass
+    try:
+        signal.signal(signal.SIGTERM, _signal_restore_handler)
+    except Exception:
+        pass
+
+    print(f'[auto-perf] OK: {apply_msg}')
+    if not already_highperf:
+        print('[auto-perf] WARNING: if this process is killed (SIGKILL, power loss, '
+              'crash), the power plan will NOT be auto-restored.')
+        print(f'[auto-perf]          To restore manually afterward, check '
+              f'{_backup_path()} or run the orchestrator again and accept the prompt.')
+    return True
+
+
 # ────────────────────── subprocess invocation ──────────────────────
 
-def build_command(radix_dir: Path, phase: str, cpu: int,
-                  system: str) -> tuple[list[str], Optional[str]]:
-    """Return (argv, shell_cmd_string). Exactly one is non-None.
+def set_parent_affinity_windows(cpu: int) -> tuple[bool, str]:
+    """Set the orchestrator's own affinity on Windows via ctypes.
+    Child processes inherit the mask by default on Windows, so setting
+    the orchestrator once pins every subprocess we spawn.
 
-    Linux: argv list for direct exec with taskset prefix.
-    Windows: shell command string for `start /AFFINITY` (requires shell=True).
+    Using ctypes instead of `start /AFFINITY` has two advantages:
+      1. Exit codes propagate through subprocess.Popen.wait() correctly
+         (the `cmd /c "start /WAIT ..."` chain can lose exit codes in
+         some Windows configurations).
+      2. No shell quoting, no `start` quirks around first-quoted-arg-as-
+         window-title, no delayed-expansion ERRORLEVEL tricks.
     """
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.SetProcessAffinityMask.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+        k32.SetProcessAffinityMask.restype  = ctypes.c_int
+        handle = k32.GetCurrentProcess()
+        mask = 1 << cpu
+        if k32.SetProcessAffinityMask(handle, mask) == 0:
+            err = ctypes.get_last_error()
+            return False, f"SetProcessAffinityMask failed (GetLastError={err})"
+        return True, f"orchestrator pinned to CPU {cpu} (mask 0x{mask:x}); children inherit"
+    except Exception as e:
+        return False, f"ctypes call failed: {e}"
+
+
+def build_command(radix_dir: Path, phase: str, cpu: int,
+                  system: str) -> list[str]:
+    """Return the argv to exec. On Linux we prepend taskset; on Windows
+    affinity is inherited from the orchestrator's own mask (set at startup
+    via set_parent_affinity_windows)."""
     bench_args = [
         sys.executable, str(BENCH_PY),
         '--radix-dir', str(radix_dir.relative_to(PROJECT_ROOT)),
         '--phase', phase,
     ]
     if system == 'Linux':
-        argv = ['taskset', '-c', str(cpu)] + bench_args
-        return argv, None
-    elif system == 'Windows':
-        # Affinity mask: bit N set for CPU N. /WAIT blocks until the child exits.
-        mask_hex = f'{1 << cpu:x}'
-        # Use cmd /c to ensure 'start' is recognized. /B to suppress a new window.
-        # Quote bench_args elements that may contain spaces.
-        quoted = ' '.join(f'"{a}"' if ' ' in a else a for a in bench_args)
-        shell_cmd = f'start /WAIT /B /AFFINITY {mask_hex} {quoted}'
-        return [], shell_cmd
-    else:
-        # Best-effort: no pinning
-        return bench_args, None
+        return ['taskset', '-c', str(cpu)] + bench_args
+    # Windows and other OSes: bare argv; affinity inheritance handles pinning.
+    return bench_args
 
 
 def run_radix(radix: RadixRun, phase: str, cpu: int, quiet: bool,
@@ -261,30 +592,21 @@ def run_radix(radix: RadixRun, phase: str, cpu: int, quiet: bool,
     log_path = BENCH_OUT / radix.name / 'orchestrator.log'
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    argv, shell_cmd = build_command(radix.dir_path, phase, cpu, system)
+    argv = build_command(radix.dir_path, phase, cpu, system)
 
     t0 = time.time()
-    # Open log file for both capture (quiet) and tee-style (live stream)
-    log_f = open(log_path, 'w')
+    log_f = open(log_path, 'w', encoding='utf-8', errors='replace')
     try:
-        if shell_cmd is not None:
-            proc = subprocess.Popen(
-                shell_cmd, shell=True, cwd=str(PROJECT_ROOT),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
-            )
-        else:
-            proc = subprocess.Popen(
-                argv, cwd=str(PROJECT_ROOT),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
-            )
+        proc = subprocess.Popen(
+            argv, cwd=str(PROJECT_ROOT),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        )
         assert proc.stdout is not None
         for line in proc.stdout:
             log_f.write(line)
             log_f.flush()
             if not quiet:
-                # Prefix each line with radix tag so interleaved output is parseable
                 sys.stdout.write(f'[{radix.name}] {line}')
                 sys.stdout.flush()
         rc = proc.wait()
@@ -292,8 +614,6 @@ def run_radix(radix: RadixRun, phase: str, cpu: int, quiet: bool,
         log_f.close()
 
     radix.elapsed_s = time.time() - t0
-
-    # Parse the log to extract measurement count and validation results
     _populate_run_stats(radix, log_path)
 
     if rc != 0:
@@ -314,7 +634,7 @@ _RE_VALIDATE    = re.compile(r'\[validate\] (\d+) cases, (\d+) failed')
 def _populate_run_stats(radix: RadixRun, log_path: Path) -> None:
     """Parse log for measurement/validation counts. Best-effort."""
     try:
-        text = log_path.read_text()
+        text = log_path.read_text(encoding='utf-8', errors='replace')
     except Exception:
         return
     m = _RE_MEAS_LOADED.search(text)
@@ -361,7 +681,7 @@ def aggregate_all_measurements() -> dict:
 
         records = []
         try:
-            for line in meas_file.read_text().splitlines():
+            for line in meas_file.read_text(encoding='utf-8', errors='replace').splitlines():
                 if line.strip():
                     records.append(_json.loads(line))
         except Exception:
@@ -465,7 +785,7 @@ def regime_transitions() -> dict:
         if not meas_file.is_file():
             continue
         try:
-            records = [json.loads(L) for L in meas_file.read_text().splitlines() if L.strip()]
+            records = [json.loads(L) for L in meas_file.read_text(encoding='utf-8', errors='replace').splitlines() if L.strip()]
         except Exception:
             continue
         result[radix_out.name] = {
@@ -573,7 +893,7 @@ def write_summary(report: SweepReport, summary_path: Path) -> None:
                  'Orchestrator logs: `bench_out/rN/orchestrator.log`.')
 
     summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text('\n'.join(lines) + '\n')
+    summary_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
 # ────────────────────── config ──────────────────────
@@ -582,7 +902,7 @@ def load_config(path: Path) -> dict:
     if not path.is_file():
         return {}
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding='utf-8'))
     except Exception as e:
         print(f"orchestrator: failed to parse {path}: {e}", file=sys.stderr)
         return {}
@@ -616,6 +936,15 @@ def parse_args():
                     help='print discovered radixes and commands, do not execute')
     ap.add_argument('--no-summary', action='store_true',
                     help='skip regenerating bench_out/ALL_SUMMARY.md')
+    ap.add_argument('--summary-only', action='store_true',
+                    help='regenerate ALL_SUMMARY.md from existing measurement data '
+                         'and exit; skip preflight and bench runs entirely')
+    ap.add_argument('--auto-performance', action='store_true',
+                    help='before sweep: capture current power plan/governor, '
+                         'switch to high-performance, restore on exit. Opt-in; '
+                         'Linux requires root. Backup written to '
+                         'bench_out/.power_state_backup for recovery if the '
+                         'process is killed.')
     ap.add_argument('--config', type=Path, default=CONFIG_FILE_DEFAULT,
                     help=f'config file path (default: {CONFIG_FILE_DEFAULT.name})')
     return ap.parse_args()
@@ -650,15 +979,79 @@ def main():
     s = merge_settings(args)
     system = platform.system()
 
+    # --summary-only: regenerate the summary from whatever data is on disk,
+    # then exit. No preflight, no bench runs. Useful when a previous sweep
+    # completed successfully but the summary write failed (e.g. a bug in the
+    # summary code), or when the user wants a fresh summary after manually
+    # deleting stale per-radix data.
+    if getattr(args, 'summary_only', False):
+        empty_report = SweepReport()
+        empty_report.host_info = {
+            'system':  system,
+            'machine': platform.machine(),
+            'cpu':     s['cpu'],
+        }
+        summary_path = BENCH_OUT / 'ALL_SUMMARY.md'
+        try:
+            write_summary(empty_report, summary_path)
+        except Exception as e:
+            print(f'[orch] summary regeneration FAILED: {type(e).__name__}: {e}',
+                  file=sys.stderr)
+            return 1
+        print(f'[orch] summary regenerated at {summary_path}')
+        return 0
+
+    # Check for stale backup from a prior ungraceful exit. Do this BEFORE
+    # pre-flight because if the stale state is Balanced but we're now running
+    # in performance (leftover from a killed previous run), the user probably
+    # wants the restore offered regardless of whether this invocation uses
+    # --auto-performance.
+    check_stale_backup(s['auto_performance'])
+
     # Pre-flight
     ok, messages = run_preflight(s['force'])
     for tag, good, msg in messages:
         marker = 'OK' if good else 'FAIL'
         print(f'[preflight] {marker}  {tag}: {msg}')
+
+    # If --auto-performance is on and pre-flight failed because of governor,
+    # try to fix by switching plan; then re-run pre-flight.
+    # (Skip the actual switch during --dry-run; we only want to show what
+    # would be done, not modify system state.)
+    if not ok and s['auto_performance'] and not s['force'] and not s['dry_run']:
+        print('[preflight] governor check failed; attempting auto-switch to high-performance')
+        if install_auto_performance(system):
+            # Re-run pre-flight to confirm the switch worked
+            ok2, messages2 = run_preflight(s['force'])
+            for tag, good, msg in messages2:
+                marker = 'OK' if good else 'FAIL'
+                print(f'[preflight/retry] {marker}  {tag}: {msg}')
+            ok = ok2
+
     if not ok and not s['force']:
-        print('[preflight] FAIL — run with --force to bypass (measurements may be noisy)',
+        print('[preflight] FAIL — run with --force to bypass, or use --auto-performance '
+              'to auto-switch (Linux requires root). Measurements in a non-perf plan may be noisy.',
               file=sys.stderr)
         return 2
+
+    # If auto-performance was requested but wasn't already installed above
+    # (pre-flight passed without needing the switch), install it now so the
+    # restore-on-exit behavior still applies — prior state is preserved
+    # regardless of whether the current state was already high-perf.
+    # Skip during --dry-run: we don't modify system state when just showing plans.
+    if s['auto_performance'] and not s['dry_run'] and _AUTO_PERF_ACTIVE['state'] is None:
+        install_auto_performance(system)
+
+    # Windows: set orchestrator's own affinity so child processes inherit.
+    # (Linux pinning happens per-subprocess via the taskset wrapper; this
+    # block is Windows-only.) Skip during --dry-run.
+    if system == 'Windows' and not s['dry_run']:
+        ok_aff, msg_aff = set_parent_affinity_windows(s['cpu'])
+        marker = 'OK' if ok_aff else 'WARN'
+        print(f'[affinity] {marker}  {msg_aff}')
+        if not ok_aff:
+            print('[affinity] proceeding without parent-affinity pinning; '
+                  'measurements may be noisier', file=sys.stderr)
 
     # Discover
     all_runs = discover_radixes()
@@ -675,12 +1068,12 @@ def main():
 
     if s['dry_run']:
         print('[orch] --dry-run: would execute:')
+        if system == 'Windows':
+            print(f'  (orchestrator affinity → CPU {s["cpu"]} via SetProcessAffinityMask; '
+                  f'children inherit)')
         for r in selected:
-            argv, shell_cmd = build_command(r.dir_path, s['phase'], s['cpu'], system)
-            if shell_cmd:
-                print(f'  cd {PROJECT_ROOT} && {shell_cmd}')
-            else:
-                print('  ' + ' '.join(argv))
+            argv = build_command(r.dir_path, s['phase'], s['cpu'], system)
+            print('  ' + ' '.join(argv))
         return 0
 
     # Run
@@ -732,7 +1125,7 @@ def main():
 
     # Overall log
     overall_log = BENCH_OUT / 'orchestrator.log'
-    with open(overall_log, 'w') as f:
+    with open(overall_log, 'w', encoding='utf-8') as f:
         f.write(f'Sweep at {time.strftime("%Y-%m-%d %H:%M:%S")}\n')
         f.write(f'System: {system} {platform.machine()}  CPU pin: {s["cpu"]}\n')
         f.write(f'Phase: {s["phase"]}  Elapsed: {report.overall_elapsed_s:.1f}s\n\n')

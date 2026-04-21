@@ -18,50 +18,49 @@
 
 /* Cross-protocol comparison (fwd direction, AVX2):
  *   me    ios   winning_protocol   winning_ns
- *      24    24   t1s                25.1
- *      24    32   t1s                24.8
- *      24    72   t1s                24.6
- *      24   192   t1s                24.4
- *      48    48   t1s                47.1
- *      48    56   t1s                47.0
- *      48   144   t1s                47.2
- *      48   384   flat               47.7
- *      96    96   flat               93.5
- *      96   104   flat               93.1
- *      96   288   t1s                93.5
- *      96   768   t1s                92.7
- *     192   192   log3              185.8
- *     192   200   flat              184.7
- *     192   576   t1s               182.7
- *     192  1536   log3              182.8
- *     384   384   t1s               363.9
- *     384   392   t1s               366.2
- *     384  1152   flat              367.3
- *     384  3072   t1s               363.8
- *     768   768   log3              766.4
- *     768   776   t1s               725.9
- *     768  2304   t1s               736.9
- *     768  6144   t1s               736.6
- *    1536  1536   t1s              1611.1
- *    1536  1544   t1s              1730.7
- *    1536  4608   t1s              1834.8
- *    1536 12288   t1s              1590.3
- *    3072  3072   t1s              3402.4
- *    3072  3080   t1s              3392.6
+ *      24    24   t1s                 9.2
+ *      24    32   t1s                 8.9
+ *      24    72   flat                9.2
+ *      24   192   flat                9.2
+ *      48    48   t1s                16.8
+ *      48    56   flat               16.9
+ *      48   144   t1s                17.1
+ *      48   384   flat               17.0
+ *      96    96   flat               34.2
+ *      96   104   flat               32.6
+ *      96   288   flat               32.6
+ *      96   768   flat               33.0
+ *     192   192   t1s                64.8
+ *     192   200   t1s                67.3
+ *     192   576   flat               64.3
+ *     192  1536   flat               67.6
+ *     384   384   t1s               127.9
+ *     384   392   flat              126.0
+ *     384  1152   flat              127.9
+ *     384  3072   t1s               129.3
+ *     768   768   t1s               259.1
+ *     768   776   t1s               269.0
+ *     768  2304   t1s               253.9
+ *     768  6144   t1s               265.1
+ *    1536  1536   t1s               762.3
+ *    1536  1544   t1s               785.2
+ *    1536  4608   t1s               771.3
+ *    1536 12288   t1s               785.4
+ *    3072  3072   t1s              1583.4
+ *    3072  3080   t1s              1603.5
  */
 
 /* Should the planner use log3 protocol at (me, ios)? */
 static inline int radix3_prefer_log3(size_t me, size_t ios) {
     (void)ios;  /* may be unused if rules are me-only */
-    /* Bench wins at me ∈ {192} */
-    if (me == 192) return 1;
+    /* Bench showed log3 never wins on this host. */
     return 0;
 }
 
 /* Should the planner use t1s protocol at (me, ios)? */
 static inline int radix3_prefer_t1s(size_t me, size_t ios) {
     (void)ios;  /* may be unused if rules are me-only */
-    /* Bench wins at me ∈ {24, 48, 96, 384, 768, 1536, 3072} */
+    /* Bench wins at me ∈ {24, 48, 192, 384, 768, 1536, 3072} */
     if (me >= 24 && me <= 3072) return 1;
     return 0;
 }

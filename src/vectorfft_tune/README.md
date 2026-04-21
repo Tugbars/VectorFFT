@@ -169,6 +169,18 @@ python3 common/orchestrator.py --dry-run         # show commands, don't execute
 python3 common/orchestrator.py --phase emit      # just emit phase across all
 ```
 
+**Windows + Intel compiler (icx)**: the shell you launch the orchestrator
+from must have `setvars.bat` already active, otherwise the Intel linker
+won't find its own runtime (`LNK1104: cannot open file 'libircmt.lib'`).
+Running setvars in a different shell and then launching the orchestrator
+from a fresh cmd won't work — environment variables like `LIB` aren't
+inherited across unrelated shells.
+
+```
+"C:\Program Files (x86)\Intel\oneAPI\setvars.bat"
+python common\orchestrator.py
+```
+
 **Benchmark hygiene built in:**
 - Pre-flight check: CPU governor (Linux) / power plan (Windows) must be
   performance-class; aborts otherwise. `--force` to bypass.
@@ -199,6 +211,32 @@ CLI args override config values override builtins. Example:
 **Other options**: `--quiet` (capture only, no terminal stream),
 `--fail-fast` (stop on first failure), `--no-summary` (skip summary
 regeneration), `--config PATH` (alternate config file).
+
+**Auto power-plan switching** (opt-in): `--auto-performance` captures
+the current power plan / CPU governor at startup, switches to High
+Performance (Windows: `SCHEME_MIN` GUID; Linux: writes `performance`
+to `scaling_governor`), runs the sweep, and restores the original on
+exit.
+
+```
+python common\orchestrator.py --auto-performance
+```
+
+Backup is written to `bench_out/.power_state_backup` before the switch.
+On graceful exit (success, failure, SIGINT, SIGTERM) the original state
+is restored and the backup is deleted. If the process is killed via
+SIGKILL or the machine loses power, the backup remains and the next
+orchestrator invocation detects it and prompts for restore.
+
+**Linux requires root** because writing `scaling_governor` needs
+privileged access. Without root, the switch silently fails and the
+normal preflight abort takes over — set the governor manually or re-run
+with `sudo`.
+
+**Warning**: if the orchestrator is killed forcibly during a sweep, the
+system stays in High Performance until you restore it manually
+(`powercfg /setactive SCHEME_BALANCED` on Windows, or run the
+orchestrator again to trigger the stale-backup prompt).
 
 Expected runtime: ~15-25 minutes for all 13 radixes on a consumer
 Raptor Lake class chip with AVX2 only.
