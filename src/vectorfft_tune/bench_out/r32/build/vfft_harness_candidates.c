@@ -20,9 +20,9 @@ extern const size_t N_CANDIDATES_AVX512;
  * We build it at startup via a constructor-like initializer below, but
  * since C doesn't allow initializing an array from other arrays at file
  * scope we expose an indexer function instead. */
-/* compile-time total: 20 */
+/* compile-time total: 15 */
 
-static candidate_t _flat[20];
+static candidate_t _flat[15];
 static size_t _flat_n = 0;
 static int _flat_init = 0;
 

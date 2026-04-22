@@ -9,30 +9,30 @@ choice of twiddle-table layout).
 
 | isa | me | ios | flat | log3 | t1s | log1_tight | plan winner |
 |---|---|---|---|---|---|---|---|
-| avx2 | 8 | 8 | 65 | 70 | 60 | — | t1s |
-| avx2 | 8 | 16 | 61 | 69 | 73 | — | flat |
-| avx2 | 8 | 160 | 70 | 69 | 59 | — | t1s |
-| avx2 | 8 | 256 | 68 | 71 | 61 | — | t1s |
-| avx2 | 16 | 16 | 115 | 133 | 107 | — | t1s |
-| avx2 | 16 | 24 | 115 | 131 | 118 | — | flat |
-| avx2 | 16 | 320 | 130 | 134 | 106 | — | t1s |
-| avx2 | 16 | 512 | 297 | 279 | 270 | — | t1s |
-| avx2 | 32 | 32 | 314 | 258 | 224 | — | t1s |
-| avx2 | 32 | 40 | 233 | 258 | 218 | — | t1s |
-| avx2 | 32 | 640 | 237 | 259 | 220 | — | t1s |
-| avx2 | 32 | 1024 | 771 | 516 | 524 | — | log3 |
-| avx2 | 64 | 64 | 465 | 700 | 410 | — | t1s |
-| avx2 | 64 | 72 | 434 | 506 | 390 | — | t1s |
-| avx2 | 64 | 1280 | 1117 | 911 | 1058 | — | log3 |
-| avx2 | 64 | 2048 | 1241 | 1071 | 1082 | — | log3 |
-| avx2 | 128 | 128 | 1535 | 1008 | 782 | — | t1s |
-| avx2 | 128 | 136 | 1167 | 1200 | 852 | — | t1s |
-| avx2 | 128 | 2560 | 2279 | 2192 | 2253 | — | log3 |
-| avx2 | 128 | 4096 | 2367 | 2332 | 2007 | — | t1s |
-| avx2 | 256 | 256 | 4381 | 4338 | 4488 | — | log3 |
-| avx2 | 256 | 264 | 2604 | 2170 | 1885 | — | t1s |
-| avx2 | 256 | 5120 | 5290 | 4783 | 4169 | — | t1s |
-| avx2 | 256 | 8192 | 5960 | 6712 | 5096 | — | t1s |
+| avx2 | 8 | 8 | 63 | 88 | 61 | — | t1s |
+| avx2 | 8 | 16 | 62 | 77 | 62 | — | t1s |
+| avx2 | 8 | 160 | 60 | 79 | 62 | — | flat |
+| avx2 | 8 | 256 | 63 | 73 | 62 | — | t1s |
+| avx2 | 16 | 16 | 139 | 143 | 111 | — | t1s |
+| avx2 | 16 | 24 | 112 | 135 | 108 | — | t1s |
+| avx2 | 16 | 320 | 117 | 140 | 109 | — | t1s |
+| avx2 | 16 | 512 | 271 | 292 | 306 | — | flat |
+| avx2 | 32 | 32 | 231 | 271 | 225 | — | t1s |
+| avx2 | 32 | 40 | 228 | 302 | 202 | — | t1s |
+| avx2 | 32 | 640 | 230 | 277 | 221 | — | t1s |
+| avx2 | 32 | 1024 | 579 | 547 | 575 | — | log3 |
+| avx2 | 64 | 64 | 431 | 616 | 431 | — | t1s |
+| avx2 | 64 | 72 | 693 | 665 | 423 | — | t1s |
+| avx2 | 64 | 1280 | 1086 | 1032 | 1014 | — | t1s |
+| avx2 | 64 | 2048 | 1143 | 1123 | 1109 | — | t1s |
+| avx2 | 128 | 128 | 1119 | 1061 | 809 | — | t1s |
+| avx2 | 128 | 136 | 1094 | 1062 | 826 | — | t1s |
+| avx2 | 128 | 2560 | 2197 | 2111 | 2270 | — | log3 |
+| avx2 | 128 | 4096 | 2612 | 2244 | 2058 | — | t1s |
+| avx2 | 256 | 256 | 4291 | 4893 | 4263 | — | t1s |
+| avx2 | 256 | 264 | 2641 | 2270 | 2146 | — | t1s |
+| avx2 | 256 | 5120 | 5287 | 4769 | 4449 | — | t1s |
+| avx2 | 256 | 8192 | 6448 | 6468 | 5166 | — | t1s |
 
 ## Per-dispatcher winners (fwd)
 
@@ -41,75 +41,75 @@ mathematical function), which variant wins each point?
 
 | isa | dispatcher | me | ios | winner | ns |
 |---|---|---|---|---|---|
-| avx2 | `t1_dit` | 8 | 8 | `ct_t1_dit` | 65 |
-| avx2 | `t1_dit` | 8 | 16 | `ct_t1_dit` | 61 |
-| avx2 | `t1_dit` | 8 | 160 | `ct_t1_dit` | 70 |
-| avx2 | `t1_dit` | 8 | 256 | `ct_t1_dit` | 68 |
-| avx2 | `t1_dit` | 16 | 16 | `ct_t1_dit` | 115 |
-| avx2 | `t1_dit` | 16 | 24 | `ct_t1_dit` | 115 |
-| avx2 | `t1_dit` | 16 | 320 | `ct_t1_dit` | 130 |
-| avx2 | `t1_dit` | 16 | 512 | `ct_t1_dit` | 297 |
-| avx2 | `t1_dit` | 32 | 32 | `ct_t1_dit` | 314 |
-| avx2 | `t1_dit` | 32 | 40 | `ct_t1_dit` | 233 |
-| avx2 | `t1_dit` | 32 | 640 | `ct_t1_dit` | 237 |
-| avx2 | `t1_dit` | 32 | 1024 | `ct_t1_dit` | 771 |
-| avx2 | `t1_dit` | 64 | 64 | `ct_t1_dit` | 465 |
-| avx2 | `t1_dit` | 64 | 72 | `ct_t1_dit` | 434 |
-| avx2 | `t1_dit` | 64 | 1280 | `ct_t1_dit` | 1117 |
-| avx2 | `t1_dit` | 64 | 2048 | `ct_t1_dit` | 1241 |
-| avx2 | `t1_dit` | 128 | 128 | `ct_t1_dit` | 1535 |
-| avx2 | `t1_dit` | 128 | 136 | `ct_t1_dit` | 1167 |
-| avx2 | `t1_dit` | 128 | 2560 | `ct_t1_dit` | 2279 |
-| avx2 | `t1_dit` | 128 | 4096 | `ct_t1_dit` | 2367 |
-| avx2 | `t1_dit` | 256 | 256 | `ct_t1_dit` | 4381 |
-| avx2 | `t1_dit` | 256 | 264 | `ct_t1_dit` | 2604 |
-| avx2 | `t1_dit` | 256 | 5120 | `ct_t1_dit` | 5290 |
-| avx2 | `t1_dit` | 256 | 8192 | `ct_t1_dit` | 5960 |
-| avx2 | `t1_dit_log3` | 8 | 8 | `ct_t1_dit_log3` | 70 |
-| avx2 | `t1_dit_log3` | 8 | 16 | `ct_t1_dit_log3` | 69 |
-| avx2 | `t1_dit_log3` | 8 | 160 | `ct_t1_dit_log3` | 69 |
-| avx2 | `t1_dit_log3` | 8 | 256 | `ct_t1_dit_log3` | 71 |
-| avx2 | `t1_dit_log3` | 16 | 16 | `ct_t1_dit_log3` | 133 |
-| avx2 | `t1_dit_log3` | 16 | 24 | `ct_t1_dit_log3` | 131 |
-| avx2 | `t1_dit_log3` | 16 | 320 | `ct_t1_dit_log3` | 134 |
-| avx2 | `t1_dit_log3` | 16 | 512 | `ct_t1_dit_log3` | 279 |
-| avx2 | `t1_dit_log3` | 32 | 32 | `ct_t1_dit_log3` | 258 |
-| avx2 | `t1_dit_log3` | 32 | 40 | `ct_t1_dit_log3` | 258 |
-| avx2 | `t1_dit_log3` | 32 | 640 | `ct_t1_dit_log3` | 259 |
-| avx2 | `t1_dit_log3` | 32 | 1024 | `ct_t1_dit_log3` | 516 |
-| avx2 | `t1_dit_log3` | 64 | 64 | `ct_t1_dit_log3` | 700 |
-| avx2 | `t1_dit_log3` | 64 | 72 | `ct_t1_dit_log3` | 506 |
-| avx2 | `t1_dit_log3` | 64 | 1280 | `ct_t1_dit_log3` | 911 |
-| avx2 | `t1_dit_log3` | 64 | 2048 | `ct_t1_dit_log3` | 1071 |
-| avx2 | `t1_dit_log3` | 128 | 128 | `ct_t1_dit_log3` | 1008 |
-| avx2 | `t1_dit_log3` | 128 | 136 | `ct_t1_dit_log3` | 1200 |
-| avx2 | `t1_dit_log3` | 128 | 2560 | `ct_t1_dit_log3` | 2192 |
-| avx2 | `t1_dit_log3` | 128 | 4096 | `ct_t1_dit_log3` | 2332 |
-| avx2 | `t1_dit_log3` | 256 | 256 | `ct_t1_dit_log3` | 4338 |
-| avx2 | `t1_dit_log3` | 256 | 264 | `ct_t1_dit_log3` | 2170 |
-| avx2 | `t1_dit_log3` | 256 | 5120 | `ct_t1_dit_log3` | 4783 |
-| avx2 | `t1_dit_log3` | 256 | 8192 | `ct_t1_dit_log3` | 6712 |
-| avx2 | `t1s_dit` | 8 | 8 | `ct_t1s_dit` | 60 |
-| avx2 | `t1s_dit` | 8 | 16 | `ct_t1s_dit` | 73 |
-| avx2 | `t1s_dit` | 8 | 160 | `ct_t1s_dit` | 59 |
-| avx2 | `t1s_dit` | 8 | 256 | `ct_t1s_dit` | 61 |
-| avx2 | `t1s_dit` | 16 | 16 | `ct_t1s_dit` | 107 |
-| avx2 | `t1s_dit` | 16 | 24 | `ct_t1s_dit` | 118 |
-| avx2 | `t1s_dit` | 16 | 320 | `ct_t1s_dit` | 106 |
-| avx2 | `t1s_dit` | 16 | 512 | `ct_t1s_dit` | 270 |
-| avx2 | `t1s_dit` | 32 | 32 | `ct_t1s_dit` | 224 |
-| avx2 | `t1s_dit` | 32 | 40 | `ct_t1s_dit` | 218 |
-| avx2 | `t1s_dit` | 32 | 640 | `ct_t1s_dit` | 220 |
-| avx2 | `t1s_dit` | 32 | 1024 | `ct_t1s_dit` | 524 |
-| avx2 | `t1s_dit` | 64 | 64 | `ct_t1s_dit` | 410 |
-| avx2 | `t1s_dit` | 64 | 72 | `ct_t1s_dit` | 390 |
-| avx2 | `t1s_dit` | 64 | 1280 | `ct_t1s_dit` | 1058 |
-| avx2 | `t1s_dit` | 64 | 2048 | `ct_t1s_dit` | 1082 |
-| avx2 | `t1s_dit` | 128 | 128 | `ct_t1s_dit` | 782 |
-| avx2 | `t1s_dit` | 128 | 136 | `ct_t1s_dit` | 852 |
-| avx2 | `t1s_dit` | 128 | 2560 | `ct_t1s_dit` | 2253 |
-| avx2 | `t1s_dit` | 128 | 4096 | `ct_t1s_dit` | 2007 |
-| avx2 | `t1s_dit` | 256 | 256 | `ct_t1s_dit` | 4488 |
-| avx2 | `t1s_dit` | 256 | 264 | `ct_t1s_dit` | 1885 |
-| avx2 | `t1s_dit` | 256 | 5120 | `ct_t1s_dit` | 4169 |
-| avx2 | `t1s_dit` | 256 | 8192 | `ct_t1s_dit` | 5096 |
+| avx2 | `t1_dit` | 8 | 8 | `ct_t1_dit` | 63 |
+| avx2 | `t1_dit` | 8 | 16 | `ct_t1_dit` | 62 |
+| avx2 | `t1_dit` | 8 | 160 | `ct_t1_dit` | 60 |
+| avx2 | `t1_dit` | 8 | 256 | `ct_t1_dit` | 63 |
+| avx2 | `t1_dit` | 16 | 16 | `ct_t1_dit` | 139 |
+| avx2 | `t1_dit` | 16 | 24 | `ct_t1_dit` | 112 |
+| avx2 | `t1_dit` | 16 | 320 | `ct_t1_dit` | 117 |
+| avx2 | `t1_dit` | 16 | 512 | `ct_t1_dit` | 271 |
+| avx2 | `t1_dit` | 32 | 32 | `ct_t1_dit` | 231 |
+| avx2 | `t1_dit` | 32 | 40 | `ct_t1_dit` | 228 |
+| avx2 | `t1_dit` | 32 | 640 | `ct_t1_dit` | 230 |
+| avx2 | `t1_dit` | 32 | 1024 | `ct_t1_dit` | 579 |
+| avx2 | `t1_dit` | 64 | 64 | `ct_t1_dit` | 431 |
+| avx2 | `t1_dit` | 64 | 72 | `ct_t1_dit` | 693 |
+| avx2 | `t1_dit` | 64 | 1280 | `ct_t1_dit` | 1086 |
+| avx2 | `t1_dit` | 64 | 2048 | `ct_t1_dit` | 1143 |
+| avx2 | `t1_dit` | 128 | 128 | `ct_t1_dit` | 1119 |
+| avx2 | `t1_dit` | 128 | 136 | `ct_t1_dit` | 1094 |
+| avx2 | `t1_dit` | 128 | 2560 | `ct_t1_dit` | 2197 |
+| avx2 | `t1_dit` | 128 | 4096 | `ct_t1_dit` | 2612 |
+| avx2 | `t1_dit` | 256 | 256 | `ct_t1_dit` | 4291 |
+| avx2 | `t1_dit` | 256 | 264 | `ct_t1_dit` | 2641 |
+| avx2 | `t1_dit` | 256 | 5120 | `ct_t1_dit` | 5287 |
+| avx2 | `t1_dit` | 256 | 8192 | `ct_t1_dit` | 6448 |
+| avx2 | `t1_dit_log3` | 8 | 8 | `ct_t1_dit_log3` | 88 |
+| avx2 | `t1_dit_log3` | 8 | 16 | `ct_t1_dit_log3` | 77 |
+| avx2 | `t1_dit_log3` | 8 | 160 | `ct_t1_dit_log3` | 79 |
+| avx2 | `t1_dit_log3` | 8 | 256 | `ct_t1_dit_log3` | 73 |
+| avx2 | `t1_dit_log3` | 16 | 16 | `ct_t1_dit_log3` | 143 |
+| avx2 | `t1_dit_log3` | 16 | 24 | `ct_t1_dit_log3` | 135 |
+| avx2 | `t1_dit_log3` | 16 | 320 | `ct_t1_dit_log3` | 140 |
+| avx2 | `t1_dit_log3` | 16 | 512 | `ct_t1_dit_log3` | 292 |
+| avx2 | `t1_dit_log3` | 32 | 32 | `ct_t1_dit_log3` | 271 |
+| avx2 | `t1_dit_log3` | 32 | 40 | `ct_t1_dit_log3` | 302 |
+| avx2 | `t1_dit_log3` | 32 | 640 | `ct_t1_dit_log3` | 277 |
+| avx2 | `t1_dit_log3` | 32 | 1024 | `ct_t1_dit_log3` | 547 |
+| avx2 | `t1_dit_log3` | 64 | 64 | `ct_t1_dit_log3` | 616 |
+| avx2 | `t1_dit_log3` | 64 | 72 | `ct_t1_dit_log3` | 665 |
+| avx2 | `t1_dit_log3` | 64 | 1280 | `ct_t1_dit_log3` | 1032 |
+| avx2 | `t1_dit_log3` | 64 | 2048 | `ct_t1_dit_log3` | 1123 |
+| avx2 | `t1_dit_log3` | 128 | 128 | `ct_t1_dit_log3` | 1061 |
+| avx2 | `t1_dit_log3` | 128 | 136 | `ct_t1_dit_log3` | 1062 |
+| avx2 | `t1_dit_log3` | 128 | 2560 | `ct_t1_dit_log3` | 2111 |
+| avx2 | `t1_dit_log3` | 128 | 4096 | `ct_t1_dit_log3` | 2244 |
+| avx2 | `t1_dit_log3` | 256 | 256 | `ct_t1_dit_log3` | 4893 |
+| avx2 | `t1_dit_log3` | 256 | 264 | `ct_t1_dit_log3` | 2270 |
+| avx2 | `t1_dit_log3` | 256 | 5120 | `ct_t1_dit_log3` | 4769 |
+| avx2 | `t1_dit_log3` | 256 | 8192 | `ct_t1_dit_log3` | 6468 |
+| avx2 | `t1s_dit` | 8 | 8 | `ct_t1s_dit` | 61 |
+| avx2 | `t1s_dit` | 8 | 16 | `ct_t1s_dit` | 62 |
+| avx2 | `t1s_dit` | 8 | 160 | `ct_t1s_dit` | 62 |
+| avx2 | `t1s_dit` | 8 | 256 | `ct_t1s_dit` | 62 |
+| avx2 | `t1s_dit` | 16 | 16 | `ct_t1s_dit` | 111 |
+| avx2 | `t1s_dit` | 16 | 24 | `ct_t1s_dit` | 108 |
+| avx2 | `t1s_dit` | 16 | 320 | `ct_t1s_dit` | 109 |
+| avx2 | `t1s_dit` | 16 | 512 | `ct_t1s_dit` | 306 |
+| avx2 | `t1s_dit` | 32 | 32 | `ct_t1s_dit` | 225 |
+| avx2 | `t1s_dit` | 32 | 40 | `ct_t1s_dit` | 202 |
+| avx2 | `t1s_dit` | 32 | 640 | `ct_t1s_dit` | 221 |
+| avx2 | `t1s_dit` | 32 | 1024 | `ct_t1s_dit` | 575 |
+| avx2 | `t1s_dit` | 64 | 64 | `ct_t1s_dit` | 431 |
+| avx2 | `t1s_dit` | 64 | 72 | `ct_t1s_dit` | 423 |
+| avx2 | `t1s_dit` | 64 | 1280 | `ct_t1s_dit` | 1014 |
+| avx2 | `t1s_dit` | 64 | 2048 | `ct_t1s_dit` | 1109 |
+| avx2 | `t1s_dit` | 128 | 128 | `ct_t1s_dit` | 809 |
+| avx2 | `t1s_dit` | 128 | 136 | `ct_t1s_dit` | 826 |
+| avx2 | `t1s_dit` | 128 | 2560 | `ct_t1s_dit` | 2270 |
+| avx2 | `t1s_dit` | 128 | 4096 | `ct_t1s_dit` | 2058 |
+| avx2 | `t1s_dit` | 256 | 256 | `ct_t1s_dit` | 4263 |
+| avx2 | `t1s_dit` | 256 | 264 | `ct_t1s_dit` | 2146 |
+| avx2 | `t1s_dit` | 256 | 5120 | `ct_t1s_dit` | 4449 |
+| avx2 | `t1s_dit` | 256 | 8192 | `ct_t1s_dit` | 5166 |

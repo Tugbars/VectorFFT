@@ -1118,6 +1118,141 @@ def emit_dit_tw_log3_kernel(em, d, nfuse, k_expr="k"):
         em.b()
 
 
+# ═══════════════════════════════════════════════════════════════
+# KERNEL EMITTER — DIT tw log3 isub2 Design A (R=64 AVX-512 only)
+# ═══════════════════════════════════════════════════════════════
+#
+# Paired-sub-FFT interleaving for R=64. Mirrors R=32 Design A structure
+# onto R=64's 8×8 factorization (8 sub-FFTs × 8 legs, vs R=32's 4 × 8).
+#
+# Structure: 4 paired regions, each pairing two sub-FFTs. Within each
+# pair, load both sub-FFTs' 16 legs, interleave the composite-apply
+# regions (via emit_ext_twiddle_log3), butterfly x, spill x, butterfly y,
+# spill y.
+#
+# Pair order: (1, 6), (2, 5), (3, 4), (0, 7). The last pair is (0, 7),
+# emitting n2=0 first and n2=7 second — this keeps n2=7 as the final
+# emitted sub-FFT, matching baseline log3's nfuse anchor (last_n2=N2-1=7).
+#
+# Why it's carried in the portfolio:
+# On Intel Emerald Rapids (container) the bench shows 3W/9T/3L —
+# near-neutral overall, with a real pattern (aligned-stride cells
+# favor isub2 at +5-7%, tight-stride cells favor log3 at −3-6%).
+# Kept for AMD EPYC Zen4/Zen5 testing where the 3 load ports and
+# different reorder buffer may make the paired-parallelism mechanism
+# more valuable. If EPYC data shows clean wins, dispatcher selects it
+# per cell alongside baseline log3; if EPYC mirrors Intel's mixed
+# pattern, revisit removal.
+#
+# Register budget note:
+#   - Working data: 16 legs × 2 (re+im) = 32 ZMM peak during paired apply
+#   - 14 log3 bases spill to stack under this pressure; store-forwarding
+#     keeps reload cost manageable
+# Hard over for AVX2 (16-YMM budget), so AVX-512 only.
+
+def emit_dit_tw_log3_isub2_kernel(em, d, nfuse, k_expr="k"):
+    """Emit DIT twiddled log3 kernel with paired-sub-FFT interleaving
+    (Design A). AVX-512 only.
+    """
+    isa = em.isa
+    if isa.name != 'avx512':
+        raise ValueError(
+            f"ct_t1_dit_log3_isub2 requires AVX-512 (current isa={isa.name}). "
+            "Peak working-data footprint (~32 ZMM during paired apply) plus "
+            "14 bases overflows AVX2's 16-YMM budget.")
+
+    T = isa.reg_type
+    fwd = (d == 'fwd')
+
+    # Declare second set of working regs y0..y7
+    em.c("isub2 Design A: second set of working regs for paired sub-FFT")
+    em.o(f"{T} y0_re,y0_im,y1_re,y1_im,y2_re,y2_im,y3_re,y3_im;")
+    em.o(f"{T} y4_re,y4_im,y5_re,y5_im,y6_re,y6_im,y7_re,y7_im;")
+    em.b()
+
+    # Derive all 14 log3 bases (same as baseline log3)
+    emit_log3_full(em, k_expr)
+
+    xv_x = [f"x{i}" for i in range(N1)]
+    xv_y = [f"y{i}" for i in range(N1)]
+
+    # Pair order: last pair is (0, 7) so n2=7 fuses correctly (baseline
+    # log3 uses last_n2 = N2-1 = 7 as the fused anchor).
+    pairs = [(1, 6), (2, 5), (3, 4), (0, 7)]
+    LAST_PAIR_IDX = len(pairs) - 1  # (0, 7) is last
+    # Within the last pair, y (second element, n2=7) is the fused anchor.
+
+    for pair_idx, (n2_x, n2_y) in enumerate(pairs):
+        em.c(f"=== Paired region: sub-FFT n2={n2_x} (x) + sub-FFT n2={n2_y} (y) ===")
+
+        # Load + ext-twiddle-apply, interleaved leg by leg.
+        # emit_ext_twiddle_log3 takes raw (xr, xi) names, so we can alternate
+        # x{n1} and y{n1} freely. This exposes 16 composite-apply streams
+        # to the compiler simultaneously (one pair of sub-FFTs at a time).
+        em.c(f"Load + interleaved ext-twiddle (n2={n2_x} + n2={n2_y})")
+        for n1 in range(N1):
+            n_x = N2 * n1 + n2_x
+            n_y = N2 * n1 + n2_y
+            em.emit_load(f"x{n1}", n_x, k_expr)
+            em.emit_ext_twiddle_log3(f"x{n1}_re", f"x{n1}_im", n_x, fwd)
+            em.emit_load(f"y{n1}", n_y, k_expr)
+            em.emit_ext_twiddle_log3(f"y{n1}_re", f"y{n1}_im", n_y, fwd)
+        em.b()
+
+        # Butterfly x, spill x. (x is never the last-emitted sub-FFT in
+        # our pair order, so no fuse path here.)
+        em.emit_r8(xv_x, d, f"radix-8 n2={n2_x}")
+        em.b()
+        for k1 in range(N1):
+            em.emit_spill(f"x{k1}", n2_x * N1 + k1)
+        em.b()
+
+        # Butterfly y, spill y. On the last pair, y corresponds to n2=7
+        # which is the nfuse anchor — fuse its low-k1 columns to s-regs.
+        em.emit_r8(xv_y, d, f"radix-8 n2={n2_y}")
+        em.b()
+        is_last_y = (pair_idx == LAST_PAIR_IDX)
+        if is_last_y and nfuse > 0:
+            em.c(f"FUSED: save y0..y{nfuse-1} to s-regs, spill y{nfuse}..y{N1-1}")
+            for k1 in range(nfuse):
+                em.o(f"s{k1}_re = y{k1}_re; s{k1}_im = y{k1}_im;")
+            for k1 in range(nfuse, N1):
+                em.emit_spill(f"y{k1}", n2_y * N1 + k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"y{k1}", n2_y * N1 + k1)
+        em.b()
+
+    # PASS 2: identical to baseline log3.
+    em.c(f"PASS 2")
+    em.b()
+    last_n2 = N2 - 1
+    xv = [f"x{i}" for i in range(N1)]
+    for k1 in range(N1):
+        em.c(f"column k1={k1}")
+        if k1 < nfuse:
+            for n2 in range(last_n2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+            em.o(f"x{last_n2}_re = s{k1}_re; x{last_n2}_im = s{k1}_im;")
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+        em.b()
+
+        if k1 > 0:
+            for n2 in range(1, N2):
+                e = (n2 * k1) % N
+                em.emit_itw_apply(f"x{n2}_re", f"x{n2}_im", e, fwd)
+            em.b()
+
+        em.emit_r8(xv, d, f"radix-8 k1={k1}")
+        em.b()
+
+        for k2 in range(N2):
+            em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
+        em.b()
+
+
 def emit_dif_tw_log3_kernel(em, d, nfuse, k_expr="k"):
     """Emit DIF twiddled log3 kernel."""
     fwd = (d == 'fwd')
@@ -1624,6 +1759,8 @@ def emit_ct_file(isa, ct_variant, tile=None, drain_mode='temporal',
     is_n1_scaled = ct_variant == 'ct_n1_scaled'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
+    is_t1_dit_log3_isub2 = ct_variant == 'ct_t1_dit_log3_isub2'
+    is_t1_dif_log3 = ct_variant == 'ct_t1_dif_log3'
     is_t1_dit_prefetch = ct_variant == 'ct_t1_dit_prefetch'
     is_t1_oop_dit = ct_variant == 'ct_t1_oop_dit'
     is_t1s_dit = ct_variant == 'ct_t1s_dit'
@@ -1662,6 +1799,12 @@ def emit_ct_file(isa, ct_variant, tile=None, drain_mode='temporal',
     elif is_t1_dit_log3:
         func_base = "radix64_t1_dit_log3"
         vname = "t1 DIT log3 (in-place twiddle)"
+    elif is_t1_dit_log3_isub2:
+        func_base = "radix64_t1_dit_log3_isub2"
+        vname = "t1 DIT log3 isub2 (paired-sub-FFT interleave, AVX-512)"
+    elif is_t1_dif_log3:
+        func_base = "radix64_t1_dif_log3"
+        vname = "t1 DIF log3 (in-place, 14-base derivation, PASS 2 post-twiddle)"
     elif is_t1_dit_prefetch:
         func_base = "radix64_t1_dit_prefetch"
         vname = "t1 DIT with prefetch (in-place twiddle)"
@@ -1873,8 +2016,12 @@ def emit_ct_file(isa, ct_variant, tile=None, drain_mode='temporal',
                 em.o(f"}}")
             if is_t1_dif:
                 emit_dif_tw_flat_kernel(em, d, nfuse)
+            elif is_t1_dif_log3:
+                emit_dif_tw_log3_kernel(em, d, nfuse)
             elif is_t1_dit_log3:
                 emit_dit_tw_log3_kernel(em, d, nfuse)
+            elif is_t1_dit_log3_isub2:
+                emit_dit_tw_log3_isub2_kernel(em, d, nfuse)
             elif is_t1_dit_prefetch:
                 emit_dit_tw_flat_kernel(em, d, nfuse)
             else:
@@ -2183,7 +2330,9 @@ def main():
     parser.add_argument('--variant', default='notw',
                         choices=['notw', 'dit_tw', 'dif_tw', 'dit_tw_log3', 'dif_tw_log3',
                                  'ct_n1', 'ct_n1_scaled', 'ct_t1_dit', 'ct_t1_dit_log3',
-                                 'ct_t1_dit_prefetch', 'ct_t1_dif', 'ct_t1_oop_dit',
+                                 'ct_t1_dit_log3_isub2',
+                                 'ct_t1_dit_prefetch', 'ct_t1_dif', 'ct_t1_dif_log3',
+                                 'ct_t1_oop_dit',
                                  'ct_t1s_dit', 'ct_t1_buf_dit', 'all'])
     # ct_t1_buf_dit knobs
     parser.add_argument('--tile', type=int, default=None,
@@ -2281,6 +2430,14 @@ def main():
             lines = emit_ct_file(isa, 'ct_t1_dif')
             print_file(lines, f"{isa.name.upper()} CT T1 DIF")
 
+        if args.variant in ('ct_t1_dif_log3', 'all') and isa.name != 'scalar':
+            lines = emit_ct_file(isa, 'ct_t1_dif_log3')
+            print_file(lines, f"{isa.name.upper()} CT T1 DIF LOG3")
+
+        if args.variant in ('ct_t1_dit_log3_isub2', 'all') and isa.name == 'avx512':
+            lines = emit_ct_file(isa, 'ct_t1_dit_log3_isub2')
+            print_file(lines, f"{isa.name.upper()} CT T1 DIT LOG3 ISUB2")
+
         if args.variant in ('ct_t1_oop_dit', 'all') and isa.name != 'scalar':
             lines = emit_ct_file(isa, 'ct_t1_oop_dit')
             print_file(lines, f"{isa.name.upper()} CT T1 OOP DIT")
@@ -2309,13 +2466,44 @@ VARIANTS = {
     'ct_t1_dif':        ('radix64_t1_dif',      'flat', 't1_dif'),
     'ct_t1s_dit':       ('radix64_t1s_dit',     't1s',  't1s_dit'),
     'ct_t1_dit_log3':   ('radix64_t1_dit_log3', 'log3', 't1_dit_log3'),
+    'ct_t1_dif_log3':   ('radix64_t1_dif_log3', 'log3', 't1_dif_log3'),
+    # isub2: paired-sub-FFT interleaving (Design A). AVX-512 only.
+    # Intel server container: 3W/9T/3L (mixed pattern, aligned-stride wins
+    # +5-7%, tight-stride losses −3-6%). Carried for AMD EPYC Zen4/Zen5
+    # testing where the 3-load-port / wider-ROB profile may favor the
+    # paired-parallelism mechanism more decisively than Intel's 2-load
+    # port core does. Shares dispatcher 't1_dit_log3' — planner picks
+    # between log3 and isub2 per (me, ios) cell.
+    'ct_t1_dit_log3_isub2': ('radix64_t1_dit_log3_isub2', 'log3', 't1_dit_log3', {'avx512'}),
 }
 
-# Phase B buf variants: 3 tiles × 2 drains = 6 parameterized candidates.
-# Same matrix as R=16/R=32. Tiles {64, 128, 256} divisible by both AVX2
-# k_step=4 and AVX-512 k_step=8. All share t1_buf_dit dispatcher.
-_BUF_TILES = [64, 128, 256]
-_BUF_DRAINS = ['temporal', 'stream']
+
+def supported_isas(variant_id):
+    """Return the set of ISAs a variant supports, or None if unrestricted.
+
+    4-tuple VARIANTS entries carry the set explicitly (e.g. {'avx512'}).
+    3-tuple entries (the default) are treated as unrestricted (None).
+    Used by candidates.py to filter (variant, isa) pairs that would fail
+    at codegen time with ValueError — e.g. ct_t1_dit_log3_isub2 on AVX2.
+    """
+    entry = VARIANTS[variant_id]
+    if len(entry) >= 4:
+        return entry[3]
+    return None
+
+# Phase B buf variants: 2 tiles × 1 drain = 2 parameterized candidates.
+# Pruned from the original 3×2 matrix per cross-radix measured evidence
+# (R=16, R=32, R=64 all agree):
+#
+#   tile256_*  — outbuf (64 KiB) exceeds 48 KiB L1d on Raptor Lake and
+#                crowds the same L1 region on SPR. Never wins vs tile128
+#                at me ≥ 256 cells where it's applicable.
+#   *_stream   — non-temporal drain assumes output won't be reused; in a
+#                recursive FFT the next stage reads it immediately, so the
+#                cache-bypass hint is actively wrong. 3–4× slower than
+#                temporal at every measured cell, cross-radix.
+_BUF_TILES = [64, 128]
+_BUF_DRAINS = ['temporal']
 for _t in _BUF_TILES:
     for _d in _BUF_DRAINS:
         _vid = f'ct_t1_buf_dit_tile{_t}_{_d}'
@@ -2338,7 +2526,8 @@ def is_buf_variant(variant_id):
 def function_name(variant_id, isa, direction):
     if variant_id not in VARIANTS:
         raise KeyError(f"unknown variant {variant_id}; known: {list(VARIANTS)}")
-    base, _, _ = VARIANTS[variant_id]
+    # VARIANTS entries may be 3-tuples (unrestricted) or 4-tuples (with supported_isas).
+    base = VARIANTS[variant_id][0]
     return f'{base}_{direction}_{isa}'
 
 def protocol(variant_id):
@@ -2379,10 +2568,18 @@ def _emit_all_variants(isa_name):
             out.append(L)
         out.append('')
 
-    # Phase A
-    for v in ['ct_t1_dit', 'ct_t1_dif', 'ct_t1s_dit', 'ct_t1_dit_log3']:
+    # Phase A — unrestricted variants
+    for v in ['ct_t1_dit', 'ct_t1_dif', 'ct_t1s_dit',
+              'ct_t1_dit_log3', 'ct_t1_dif_log3']:
         lines = emit_ct_file(isa, v, tile=None, drain_mode='temporal')
         _append_cleaned(lines)
+
+    # ISA-restricted variants: query supported_isas() to skip incompatible ISAs.
+    for v in ['ct_t1_dit_log3_isub2']:
+        allowed = supported_isas(v)
+        if allowed is None or isa_name in allowed:
+            lines = emit_ct_file(isa, v, tile=None, drain_mode='temporal')
+            _append_cleaned(lines)
 
     # Phase B buf variants
     for t in _BUF_TILES:

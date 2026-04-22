@@ -18,25 +18,9 @@ static inline void vfft_r16_t1_buf_dit_dispatch_fwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..128]: ct_t1_buf_dit_tile64_temporal
-     *   me∈[256..256] pow2 ios: ct_t1_buf_dit_tile128_temporal
-     *   me∈[256..256] padded ios: ct_t1_buf_dit_tile64_temporal
-     *   me∈[512..∞]: ct_t1_buf_dit_tile64_temporal
+     *   me∈[64..∞]: ct_t1_buf_dit_tile64_temporal
      */
-    if (me <= 128) {
-        radix16_t1_buf_dit_tile64_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-        return;
-    }
-    else if (me >= 256 && me <= 256) {
-        if (ios == me) {
-            radix16_t1_buf_dit_tile128_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        } else {
-            radix16_t1_buf_dit_tile64_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        }
-    }
-    else if (me >= 512) {
+    {
         radix16_t1_buf_dit_tile64_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
@@ -48,38 +32,11 @@ static inline void vfft_r16_t1_buf_dit_dispatch_bwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..128]: ct_t1_buf_dit_tile64_temporal
-     *   me∈[256..256] pow2 ios: ct_t1_buf_dit_tile128_temporal
-     *   me∈[256..256] padded ios: ct_t1_buf_dit_tile64_temporal
-     *   me∈[512..1024]: ct_t1_buf_dit_tile64_temporal
-     *   me∈[2048..∞] pow2 ios: ct_t1_buf_dit_tile128_temporal
-     *   me∈[2048..∞] padded ios: ct_t1_buf_dit_tile64_temporal
+     *   me∈[64..∞]: ct_t1_buf_dit_tile64_temporal
      */
-    if (me <= 128) {
+    {
         radix16_t1_buf_dit_tile64_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
-    }
-    else if (me >= 256 && me <= 256) {
-        if (ios == me) {
-            radix16_t1_buf_dit_tile128_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        } else {
-            radix16_t1_buf_dit_tile64_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        }
-    }
-    else if (me >= 512 && me <= 1024) {
-        radix16_t1_buf_dit_tile64_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-        return;
-    }
-    else if (me >= 2048) {
-        if (ios == me) {
-            radix16_t1_buf_dit_tile128_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        } else {
-            radix16_t1_buf_dit_tile64_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        }
     }
 }
 
