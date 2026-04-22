@@ -1020,6 +1020,204 @@ def emit_dit_tw_log3_kernel(em, d, nfuse, itw_set, k_expr="k"):
         em.b()
 
 
+# ═══════════════════════════════════════════════════════════════
+# KERNEL EMITTER — DIT tw log3 isub2 Design A (R=32 AVX-512 only)
+# ═══════════════════════════════════════════════════════════════
+#
+# Paired-sub-FFT interleaving for R=32 (8×4 factorization → 4 sub-FFTs
+# of radix 8). Pairs: (0, 3) first, (1, 2) last. n2=2 is the fused anchor
+# within the last pair, matching baseline log3's nfuse contract
+# (last_n2 = N2-1 = 3 in baseline; but Design A must pick an in-pair
+# anchor so uses n2=2 as the last emitted sub-FFT, with PASS 2 reload
+# adjusted to read from s-regs at n2=2 and from spill at n2=3).
+#
+# Why it's carried in the portfolio:
+# On Intel Emerald Rapids (container) this variant shows 0W/2T/13L —
+# clean loss by −8% to −16%. The mechanism failed on Intel because
+# the register pressure from holding 32 ZMM of paired working data
+# forces sustained forwarded-spill traffic for the 10-11 log3 bases,
+# and the OOO window on Intel's Golden Cove / Redwood Cove already
+# extracts most of the sub-FFT-level parallelism from baseline log3.
+#
+# Kept anyway for AMD EPYC Zen4/Zen5 evaluation alongside R=64 isub2.
+# Zen's 3 load ports, wider ROB, and different L1/cache organization
+# may reveal the paired-parallelism mechanism differently. If EPYC
+# shows clean wins, this variant earns its place; if EPYC mirrors
+# Intel's clean loss, revisit removal with real data.
+#
+# Register budget:
+#   Working data: 8 legs × 2 sub-FFTs × 2 (re+im) = 32 ZMM peak
+#     during interleaved composite-apply phase.
+#   Log3 bases (10-11) spill to stack under this pressure;
+#   store-forwarding keeps reload cost in the 5-cycle range.
+# Over for AVX2, viable on AVX-512.
+
+def emit_dit_tw_log3_isub2_kernel(em, d, nfuse, itw_set, k_expr="k"):
+    """Emit DIT twiddled log3 kernel with paired-sub-FFT interleaving
+    (Design A). AVX-512 only.
+    """
+    isa = em.isa
+    if isa.name != 'avx512':
+        raise ValueError(
+            f"ct_t1_dit_log3_isub2 requires AVX-512 (current isa={isa.name}). "
+            "Peak working-data footprint (~32 ZMM during paired apply) "
+            "exceeds AVX2's 16-YMM budget.")
+
+    T = isa.reg_type
+    fwd = (d == 'fwd')
+
+    # Declare second set of working registers y0..y7
+    em.c("isub2 Design A: second set of working regs for paired sub-FFT")
+    em.o(f"{T} y0_re,y0_im,y1_re,y1_im,y2_re,y2_im,y3_re,y3_im;")
+    em.o(f"{T} y4_re,y4_im,y5_re,y5_im,y6_re,y6_im,y7_re,y7_im;")
+    em.b()
+
+    # Load 5 base twiddles (identical to log3)
+    em.c("Log3: load 5 base twiddles W^1, W^2, W^4, W^8, W^16")
+    tb, tbi = em._tw_buf(), em._tw_buf_im()
+    bases = [('b1', 0), ('b2', 1), ('b4', 3), ('b8', 7), ('b16', 15)]
+    for bname, row in bases:
+        ta = em._tw_addr(row, k_expr)
+        load_fn = '_mm512_load_pd'
+        em.o(f"const {T} {bname}_re = {load_fn}(&{tb}[{ta}]);")
+        em.o(f"const {T} {bname}_im = {load_fn}(&{tbi}[{ta}]);")
+    em.b()
+
+    # Derive column twiddles and w3 (identical to log3)
+    em.c("Derive column twiddles: W^12, W^20, W^24, W^28")
+    em.o(f"{T} w12_re, w12_im;")
+    em.emit_cmul("w12_re", "w12_im", "b4_re", "b4_im", "b8_re", "b8_im", 'fwd')
+    em.o(f"{T} w20_re, w20_im;")
+    em.emit_cmul("w20_re", "w20_im", "b4_re", "b4_im", "b16_re", "b16_im", 'fwd')
+    em.o(f"{T} w24_re, w24_im;")
+    em.emit_cmul("w24_re", "w24_im", "b8_re", "b8_im", "b16_re", "b16_im", 'fwd')
+    em.o(f"{T} w28_re, w28_im;")
+    em.emit_cmul("w28_re", "w28_im", "w12_re", "w12_im", "b16_re", "b16_im", 'fwd')
+    em.b()
+
+    em.o(f"{T} w3_re, w3_im;")
+    em.emit_cmul("w3_re", "w3_im", "b1_re", "b1_im", "b2_re", "b2_im", 'fwd')
+    em.b()
+
+    col_tw = {0: None, 1: 'b4', 2: 'b8', 3: 'w12', 4: 'b16', 5: 'w20', 6: 'w24', 7: 'w28'}
+    row_tw = {0: None, 1: 'b1', 2: 'b2', 3: 'w3'}
+
+    xv_x = [f"x{i}" for i in range(N1)]
+    xv_y = [f"y{i}" for i in range(N1)]
+    xv4 = [f"x{i}" for i in range(N2)]  # PASS 2 uses x-regs
+
+    def emit_composite_apply_one_leg(name_prefix, n1, n2):
+        """Emit one leg's twiddle apply (simple or composite)."""
+        n = N2 * n1 + n2
+        if n == 0:
+            return  # DC leg
+        ct = col_tw[n1]
+        rt = row_tw[n2]
+        if ct is None and rt is None:
+            return
+        elif ct is None:
+            em.emit_cmul_inplace(f"{name_prefix}{n1}", f"{rt}_re", f"{rt}_im", d)
+        elif rt is None:
+            em.emit_cmul_inplace(f"{name_prefix}{n1}", f"{ct}_re", f"{ct}_im", d)
+        else:
+            em.o(f"{{ {T} tw_r, tw_i;")
+            em.emit_cmul("tw_r", "tw_i", f"{ct}_re", f"{ct}_im",
+                         f"{rt}_re", f"{rt}_im", 'fwd')
+            em.emit_cmul_inplace(f"{name_prefix}{n1}", "tw_r", "tw_i", d)
+            em.o(f"}}")
+
+    # PASS 1: Paired sub-FFT regions.
+    # Pair order: (0, 3), then (1, 2). Last emitted sub-FFT is n2=2 (y in
+    # pair 2). PASS 2 below reads from s-regs for n2=2 and from spill for
+    # n2 ∈ {0, 1, 3}.
+    pairs = [(0, 3), (1, 2)]
+    LAST_PAIR_IDX = 1
+    DESIGN_A_LAST_N2 = 2  # the n2 whose legs go to s-regs (fused)
+
+    for pair_idx, (n2_x, n2_y) in enumerate(pairs):
+        em.c(f"=== Paired region: sub-FFT n2={n2_x} (x) + sub-FFT n2={n2_y} (y) ===")
+
+        # Load both sub-FFTs' legs, interleaved
+        em.c(f"Load both sub-FFTs' 16 legs (interleaved)")
+        for n1 in range(N1):
+            n_x = N2 * n1 + n2_x
+            n_y = N2 * n1 + n2_y
+            em.emit_load(f"x{n1}", n_x, k_expr)
+            em.emit_load(f"y{n1}", n_y, k_expr)
+        em.b()
+
+        # Interleaved composite-apply: leg by leg, apply both sub-FFTs'
+        # twiddles. Two independent FMA streams visible simultaneously.
+        em.c(f"Interleaved twiddle-apply (n2={n2_x} + n2={n2_y})")
+        for n1 in range(N1):
+            emit_composite_apply_one_leg('x', n1, n2_x)
+            emit_composite_apply_one_leg('y', n1, n2_y)
+        em.b()
+
+        # Butterfly x, spill x (x is never the last-emitted sub-FFT).
+        em.emit_radix8(xv_x, d, f"radix-8 n2={n2_x}")
+        em.b()
+        for k1 in range(N1):
+            em.emit_spill(f"x{k1}", n2_x * N1 + k1)
+        em.b()
+
+        # Butterfly y, spill y. On the last pair, y=n2=2 is the fused anchor.
+        em.emit_radix8(xv_y, d, f"radix-8 n2={n2_y}")
+        em.b()
+        is_last_y = (pair_idx == LAST_PAIR_IDX)
+        if is_last_y and nfuse > 0:
+            em.c(f"FUSED: save y0..y{nfuse-1} to s-regs, spill y{nfuse}..y{N1-1}")
+            for k1 in range(nfuse):
+                em.o(f"s{k1}_re = y{k1}_re; s{k1}_im = y{k1}_im;")
+            for k1 in range(nfuse, N1):
+                em.emit_spill(f"y{k1}", n2_y * N1 + k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"y{k1}", n2_y * N1 + k1)
+        em.b()
+
+    # PASS 2: same structure as baseline log3, but the fused anchor is n2=2
+    # (not last_n2=N2-1=3 as in baseline). PASS 2 reloads from spill for
+    # n2 ∈ {0, 1, 3} and uses s-regs for n2=2.
+    em.c("PASS 2 — W32 twiddle broadcasts deferred to free regs during PASS 1")
+    if isa.name != 'scalar' and itw_set:
+        set1 = '_mm512_set1_pd'
+        for (e_tw, tN) in sorted(itw_set):
+            label = wN_label(e_tw, tN)
+            em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+            em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
+    em.b()
+
+    for k1 in range(N1):
+        em.c(f"column k1={k1}")
+
+        if k1 < nfuse:
+            # n2 ∈ {0, 1, 3}: reload from spill.
+            # n2 = DESIGN_A_LAST_N2: use s-reg.
+            for n2 in range(N2):
+                if n2 == DESIGN_A_LAST_N2:
+                    em.o(f"x{n2}_re = s{k1}_re; x{n2}_im = s{k1}_im;")
+                else:
+                    em.emit_reload(f"x{n2}", n2 * N1 + k1)
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+        em.b()
+
+        if k1 > 0:
+            for n2 in range(1, N2):
+                e = (n2 * k1) % N
+                em.emit_twiddle(f"x{n2}", f"x{n2}", e, N, d)
+            em.b()
+
+        em.emit_radix4(xv4, d, f"radix-4 k1={k1}")
+        em.b()
+
+        for k2 in range(N2):
+            em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
+        em.b()
+
+
 def emit_dif_tw_flat_kernel(em, d, nfuse, itw_set, k_expr="k"):
     """Emit one DIF twiddled flat kernel (fwd or bwd)."""
     fwd = (d == 'fwd')
@@ -1098,6 +1296,243 @@ def emit_dif_tw_flat_kernel(em, d, nfuse, itw_set, k_expr="k"):
             if m > 0:
                 em.emit_ext_twiddle_dif(f"x{k2}", m - 1, d, k_expr)
         em.b()
+        for k2 in range(N2):
+            em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
+        em.b()
+
+
+# ═══════════════════════════════════════════════════════════════
+# R=32 DIF-log3 CHAIN DESIGN
+# ═══════════════════════════════════════════════════════════════
+#
+# PASS 2b structure: for each k1 column (k1 ∈ 0..7), 4 legs with m-values
+# {k1, k1+8, k1+16, k1+24}. We express each m as a product of bases
+# {b1=W^1, b2=W^2, b4=W^4, b8=W^8, b16=W^16} via bit decomposition, reusing
+# derivations WITHIN a column:
+#
+#   Column layout (k1, m-values, chain plan):
+#     k1=0 [0,8,16,24]:    DC | b8 | b16 | w24=b8*b16
+#     k1=1 [1,9,17,25]:    b1 | w9=b1*b8 | w17=b1*b16 | w25=w9*b16
+#     k1=2 [2,10,18,26]:   b2 | w10=b2*b8 | w18=b2*b16 | w26=w10*b16
+#     k1=3 [3,11,19,27]:   w3=b1*b2 | w11=w3*b8 | w19=w3*b16 | w27=w11*b16
+#     k1=4 [4,12,20,28]:   b4 | w12=b4*b8 | w20=b4*b16 | w28=w12*b16
+#     k1=5 [5,13,21,29]:   w5=b1*b4 | w13=w5*b8 | w21=w5*b16 | w29=w13*b16
+#     k1=6 [6,14,22,30]:   w6=b2*b4 | w14=w6*b8 | w22=w6*b16 | w30=w14*b16
+#     k1=7 [7,15,23,31]:   w7=b1*b2*b4 | w15=w7*b8 | w23=w7*b16 | w31=w15*b16
+#
+# Every column has the same 4-leg shape: either a base or a depth-1
+# derivation for the k2=0 leg, then k2=1/2/3 legs each multiply the k2=0
+# result (or a depth-≤1 variant) by b8/b16/b8*b16. This gives max-depth-3
+# chains with tight sharing — analogous to R=16 DIT log3's chain structure,
+# but specialized for R=32's 8-column PASS 2.
+#
+# Total per-iteration cost: 58 cmuls (vs R=32 DIT-log3's 57, essentially
+# identical). Compare to R=32 DIF-flat's 31 cmuls (but 62 loads vs log3's
+# 10 base loads). The same load-bandwidth tradeoff as DIT-log3.
+
+def _r32_dif_log3_column_plan(k1):
+    """Return the ordered chain plan for one k1 column in DIF PASS 2b.
+
+    Plan is a list of (k2, action) tuples. Actions:
+      None                        — DC leg (m=0), no twiddle applied
+      ('base', bname)             — apply loaded base directly (no derivation)
+      ('derive_apply', wname, factors)
+                                  — derive wname = factors[0] * factors[1] * ...
+                                    (each factor cmul'd into a running product),
+                                    then apply wname to x{k2} in-place
+
+    Chain reuse is lexical within this plan: if wname was produced by an
+    earlier (k2, action) in the same column, later actions can reference
+    it by name. See the k1=3 column for the deepest reuse pattern (w11
+    and w19 both reuse w3; w27 reuses w11).
+    """
+    def bits_of(m):
+        return [b for b in [1, 2, 4, 8, 16] if m & b]
+
+    N1, N2 = 8, 4
+    plan = []
+    derived_by_bits = {}  # frozenset(bits) -> wname
+
+    for k2 in range(N2):
+        m = k1 + N1 * k2
+        if m == 0:
+            plan.append((k2, None))
+            continue
+        bits = bits_of(m)
+        if len(bits) == 1:
+            plan.append((k2, ('base', f'b{bits[0]}')))
+            continue
+
+        # Multi-bit: find longest derived subset to reuse
+        best_subset = None
+        best_size = 0
+        target = frozenset(bits)
+        for subset, wname in derived_by_bits.items():
+            if subset.issubset(target) and len(subset) > best_size:
+                best_subset = subset
+                best_size = len(subset)
+
+        wname = f'w{m}'
+        if best_subset is not None:
+            start = derived_by_bits[best_subset]
+            remaining = sorted(target - best_subset)
+            factors = [start] + [f'b{b}' for b in remaining]
+        else:
+            # Build from scratch, smallest bit first
+            bits_sorted = sorted(bits)
+            factors = [f'b{bits_sorted[0]}'] + [f'b{b}' for b in bits_sorted[1:]]
+
+        plan.append((k2, ('derive_apply', wname, factors)))
+        derived_by_bits[target] = wname
+
+    return plan
+
+
+# ═══════════════════════════════════════════════════════════════
+# KERNEL EMITTER — DIF tw log3 (R=32, 8x4, log3 protocol)
+# ═══════════════════════════════════════════════════════════════
+
+def emit_dif_tw_log3_kernel(em, d, nfuse, itw_set, k_expr="k"):
+    """Emit one DIF twiddled log3 kernel (fwd or bwd) for R=32.
+
+    Same protocol and base set as DIT-log3: load W^1, W^2, W^4, W^8, W^16
+    (slots 0, 1, 3, 7, 15 in the flat (R-1)*me buffer). Derive the other
+    26 twiddles via cmul chains, but apply them POST-butterfly in PASS 2b
+    rather than PRE-butterfly in PASS 1.
+
+    Chain structure uses per-column sharing via _r32_dif_log3_column_plan;
+    see that function's docstring for the layout.
+    """
+    isa = em.isa
+    T = isa.reg_type
+    fwd = (d == 'fwd')
+    last_n2 = N2 - 1
+
+    xv8 = [f"x{i}" for i in range(N1)]
+    xv4 = [f"x{i}" for i in range(N2)]
+
+    # ── PASS 1: load (no twiddle on input — DIF) → radix-8 → spill ──
+    for n2 in range(N2):
+        is_last = (n2 == last_n2)
+        em.c(f"sub-FFT n2={n2}")
+        for n1 in range(N1):
+            n = N2 * n1 + n2
+            em.emit_load(f"x{n1}", n, k_expr)
+        em.b()
+        em.emit_radix8(xv8, d, f"radix-8 n2={n2}")
+        em.b()
+
+        if is_last:
+            em.c(f"FUSED: save x0..x{nfuse-1} to locals, spill x{nfuse}..x{N1-1}")
+            for k1 in range(nfuse):
+                em.o(f"s{k1}_re = x{k1}_re; s{k1}_im = x{k1}_im;")
+            for k1 in range(nfuse, N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        else:
+            for k1 in range(N1):
+                em.emit_spill(f"x{k1}", n2 * N1 + k1)
+        em.b()
+
+    # ── PASS 2: reload → internal twiddle → radix-4 → spill ──
+    em.c(f"PASS 2 — internal W32 broadcast twiddles (same as flat)")
+    if isa.name != 'scalar' and itw_set:
+        set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
+        for (e, tN) in sorted(itw_set):
+            label = wN_label(e, tN)
+            em.o(f"const {T} tw_{label}_re = {set1}({label}_re);")
+            em.o(f"const {T} tw_{label}_im = {set1}({label}_im);")
+    em.b()
+    for k1 in range(N1):
+        em.c(f"column k1={k1}")
+        if k1 < nfuse:
+            for n2 in range(last_n2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+            em.o(f"x{last_n2}_re = s{k1}_re; x{last_n2}_im = s{k1}_im;")
+        else:
+            for n2 in range(N2):
+                em.emit_reload(f"x{n2}", n2 * N1 + k1)
+        em.b()
+
+        if k1 > 0:
+            for n2 in range(1, N2):
+                e = (n2 * k1) % N
+                em.emit_twiddle(f"x{n2}", f"x{n2}", e, N, d)
+            em.b()
+
+        em.emit_radix4(xv4, d, f"radix-4 k1={k1}")
+        em.b()
+
+        for k2 in range(N2):
+            em.emit_spill(f"x{k2}", k1 + N1 * k2)
+        em.b()
+
+    # ── PASS 2b: reload → derive + apply external twiddles (log3) → store ──
+    em.c("Log3: load 5 base twiddles W^1, W^2, W^4, W^8, W^16")
+    tb, tbi = em._tw_buf(), em._tw_buf_im()
+    bases = [('b1', 0), ('b2', 1), ('b4', 3), ('b8', 7), ('b16', 15)]
+    for bname, row in bases:
+        ta = em._tw_addr(row, k_expr)
+        if isa.name == 'scalar':
+            em.o(f"const double {bname}_re = {tb}[{ta}], {bname}_im = {tbi}[{ta}];")
+        else:
+            load_fn = '_mm256_load_pd' if isa.name == 'avx2' else '_mm512_load_pd'
+            em.o(f"const {T} {bname}_re = {load_fn}(&{tb}[{ta}]);")
+            em.o(f"const {T} {bname}_im = {load_fn}(&{tbi}[{ta}]);")
+    em.b()
+
+    em.c(f"PASS 2b — derive + apply external twiddles (log3 chain), then store")
+    for k1 in range(N1):
+        em.c(f"column k1={k1} ext_tw + store")
+        # Reload butterfly outputs for this column
+        for k2 in range(N2):
+            em.emit_reload(f"x{k2}", k1 + N1 * k2)
+        em.b()
+
+        # Emit the per-column chain plan
+        plan = _r32_dif_log3_column_plan(k1)
+        # Track derived-twiddle variable names declared in this k1 scope so
+        # we don't redeclare if a later leg reuses them. Each `derive_apply`
+        # declaration introduces a new name; since plan guarantees unique
+        # wnames per leg (and reuse refers by name, not re-derivation),
+        # we declare at first definition.
+        declared = set()
+        for k2, action in plan:
+            if action is None:
+                continue  # DC leg, no twiddle
+            if action[0] == 'base':
+                bname = action[1]
+                em.emit_cmul_inplace(f"x{k2}", f"{bname}_re", f"{bname}_im", d)
+            elif action[0] == 'derive_apply':
+                wname, factors = action[1], action[2]
+                # Build the chain: start = factors[0] * factors[1], then fold
+                # each subsequent factor into wname. The fold steps need a
+                # scratch temp because emit_cmul has a read-after-write hazard
+                # when dst aliases src (w_re = w_re*b_re - w_im*b_im sets w_re,
+                # then the next line needs the old w_re for w_im).
+                if wname not in declared:
+                    em.o(f"{T} {wname}_re, {wname}_im;")
+                    declared.add(wname)
+                # First step: wname = factors[0] * factors[1] (no aliasing)
+                em.emit_cmul(f"{wname}_re", f"{wname}_im",
+                             f"{factors[0]}_re", f"{factors[0]}_im",
+                             f"{factors[1]}_re", f"{factors[1]}_im", 'fwd')
+                # Additional factors: fold via scratch to avoid aliasing
+                if len(factors) > 2:
+                    scratch_declared = False
+                    for i in range(2, len(factors)):
+                        if not scratch_declared:
+                            em.o(f"{T} tw_scratch_re, tw_scratch_im;")
+                            scratch_declared = True
+                        em.emit_cmul(f"tw_scratch_re", f"tw_scratch_im",
+                                     f"{wname}_re", f"{wname}_im",
+                                     f"{factors[i]}_re", f"{factors[i]}_im", 'fwd')
+                        em.o(f"{wname}_re = tw_scratch_re;")
+                        em.o(f"{wname}_im = tw_scratch_im;")
+                # Apply to data
+                em.emit_cmul_inplace(f"x{k2}", f"{wname}_re", f"{wname}_im", d)
+        em.b()
+
+        # Store
         for k2 in range(N2):
             em.emit_store(f"x{k2}", k1 + N1 * k2, k_expr)
         em.b()
@@ -2247,6 +2682,8 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
     is_n1_scaled = ct_variant == 'ct_n1_scaled'
     is_t1_dif = ct_variant == 'ct_t1_dif'
     is_t1_dit_log3 = ct_variant == 'ct_t1_dit_log3'
+    is_t1_dit_log3_isub2 = ct_variant == 'ct_t1_dit_log3_isub2'
+    is_t1_dif_log3 = ct_variant == 'ct_t1_dif_log3'
     is_t1_oop_dit = ct_variant == 'ct_t1_oop_dit'
     is_t1_buf_dit = ct_variant == 'ct_t1_buf_dit'
     is_t1_ladder_dit = ct_variant == 'ct_t1_ladder_dit'
@@ -2262,6 +2699,13 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
     if is_t1_ladder_dit and isa.name != 'avx512':
         raise ValueError("ct_t1_ladder_dit currently supported on AVX-512 only "
                          "(ladder kernel design assumes 32-register budget)")
+
+    # ct_t1_dit_log3_isub2: Design A paired-sub-FFT interleave. AVX-512
+    # only — peak 32-ZMM working-data footprint exceeds AVX2's 16-YMM.
+    if is_t1_dit_log3_isub2 and isa.name != 'avx512':
+        raise ValueError(
+            "ct_t1_dit_log3_isub2 currently supported on AVX-512 only "
+            "(paired-sub-FFT working-data peak ~32 ZMM > AVX2 16 YMM).")
 
     # ct_t1s_dit (scalar-broadcast twiddle) disallows twiddle_prefetch — there
     # are only (R-1) scalar twiddles total, sized ~500 bytes, always L1-resident.
@@ -2305,6 +2749,12 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
     elif is_t1_dit_log3:
         func_base = f"radix32_t1_dit_log3{tpf_suffix}"
         vname = "t1 DIT log3 (in-place, derived twiddles)"
+    elif is_t1_dit_log3_isub2:
+        func_base = f"radix32_t1_dit_log3_isub2{tpf_suffix}"
+        vname = "t1 DIT log3 isub2 (paired-sub-FFT interleave Design A, AVX-512)"
+    elif is_t1_dif_log3:
+        func_base = f"radix32_t1_dif_log3{tpf_suffix}"
+        vname = "t1 DIF log3 (in-place, derived twiddles, PASS 2b chain)"
     elif is_t1s_dit:
         func_base = "radix32_t1s_dit"
         vname = "t1s DIT (in-place, scalar-broadcast twiddles)"
@@ -2442,7 +2892,8 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
         # registers during PASS 1. Gave -21.5% on R=32 t1_dit (AVX2). Other
         # variants still hoist.
         _defer_itw = ct_variant in ('ct_t1_dit', 'ct_t1_oop_dit', 'ct_t1_dit_log3',
-                                    'ct_t1_dif', 'ct_t1_buf_dit')
+                                    'ct_t1_dit_log3_isub2',
+                                    'ct_t1_dif', 'ct_t1_dif_log3', 'ct_t1_buf_dit')
         if isa.name != 'scalar' and itw_set and not _defer_itw:
             set1 = '_mm256_set1_pd' if isa.name == 'avx2' else '_mm512_set1_pd'
             for (e, tN) in sorted(itw_set):
@@ -2576,8 +3027,12 @@ def emit_ct_file(isa, itw_set, ct_variant, tile=None, drain_mode='temporal',
             em.ind += 1
             if is_t1_dif:
                 emit_dif_tw_flat_kernel(em, d, nfuse, itw_set)
+            elif is_t1_dif_log3:
+                emit_dif_tw_log3_kernel(em, d, nfuse, itw_set)
             elif is_t1_dit_log3:
                 emit_dit_tw_log3_kernel(em, d, nfuse, itw_set)
+            elif is_t1_dit_log3_isub2:
+                emit_dit_tw_log3_isub2_kernel(em, d, nfuse, itw_set)
             else:
                 # t1, t1_oop, t1s — same kernel, different addr_mode dispatch
                 # for twiddle delivery (vector load vs scalar broadcast).
@@ -2677,7 +3132,9 @@ def main():
     parser.add_argument('--variant', default='dit_tw',
                         choices=['dit_tw', 'dif_tw', 'notw', 'ladder',
                                  'ct_n1', 'ct_n1_scaled', 'ct_t1_dit', 'ct_t1_dit_log3',
-                                 'ct_t1_dif', 'ct_t1_oop_dit', 'ct_t1_buf_dit',
+                                 'ct_t1_dit_log3_isub2',
+                                 'ct_t1_dif', 'ct_t1_dif_log3', 'ct_t1_oop_dit',
+                                 'ct_t1_buf_dit',
                                  'ct_t1_ladder_dit', 'ct_t1s_dit', 'all'])
     parser.add_argument('--tile', type=int, default=None,
                         help='Tile size for ct_t1_buf_dit (default: 64/AVX2, 32/AVX-512)')
@@ -2817,6 +3274,21 @@ def main():
                 add_sqrt2_scalar(lines)
             print("\n".join(lines))
 
+        if args.variant in ('ct_t1_dif_log3',):
+            lines = emit_ct_file(isa, itw_set, 'ct_t1_dif_log3',
+                                 twiddle_prefetch_distance=args.twiddle_prefetch,
+                                 twiddle_prefetch_rows=args.twiddle_prefetch_rows)
+            if isa.name == 'scalar':
+                add_sqrt2_scalar(lines)
+            print("\n".join(lines))
+
+        if args.variant in ('ct_t1_dit_log3_isub2',):
+            if isa.name == 'avx512':
+                lines = emit_ct_file(isa, itw_set, 'ct_t1_dit_log3_isub2',
+                                     twiddle_prefetch_distance=args.twiddle_prefetch,
+                                     twiddle_prefetch_rows=args.twiddle_prefetch_rows)
+                print("\n".join(lines))
+
         if args.variant in ('ct_t1_oop_dit',):
             lines = emit_ct_file(isa, itw_set, 'ct_t1_oop_dit',
                                  twiddle_prefetch_distance=args.twiddle_prefetch,
@@ -2885,19 +3357,50 @@ VARIANTS = {
     'ct_t1_dif':        ('radix32_t1_dif',      'flat', 't1_dif'),
     'ct_t1s_dit':       ('radix32_t1s_dit',     't1s',  't1s_dit'),
     'ct_t1_dit_log3':   ('radix32_t1_dit_log3', 'log3', 't1_dit_log3'),
+    'ct_t1_dif_log3':   ('radix32_t1_dif_log3', 'log3', 't1_dif_log3'),
+    # isub2: Design A paired-sub-FFT interleaving. AVX-512 only.
+    # Intel server container: 0W/2T/13L (clean loss by −8% to −16%) —
+    # the mechanism fails on Intel because register pressure from the
+    # 32-ZMM paired working set forces sustained forwarded-spill traffic
+    # on 10-11 log3 bases. Carried for AMD EPYC Zen4/Zen5 testing —
+    # Zen's 3 load ports and wider ROB may reveal the paired-parallelism
+    # mechanism differently. Shares dispatcher 't1_dit_log3' — planner
+    # picks between log3 and isub2 per (me, ios) cell from bench data.
+    'ct_t1_dit_log3_isub2': ('radix32_t1_dit_log3_isub2', 'log3', 't1_dit_log3', {'avx512'}),
 }
 
-# Phase B buf variants: 3 tiles × 2 drains = 6 parameterized candidates.
-# Same tile set as R=16 (64, 128, 256 — all divisible by both AVX2 k_step=4
-# and AVX-512 k_step=8). Drain modes identical. All share t1_buf_dit
-# dispatcher — the dispatcher picks the fastest (tile, drain) per (me, ios).
+
+def supported_isas(variant_id):
+    """Return the set of ISAs a variant supports, or None if unrestricted.
+
+    4-tuple VARIANTS entries carry the set explicitly (e.g. {'avx512'}).
+    3-tuple entries (the default) are treated as unrestricted (None).
+    Used by candidates.py to filter (variant, isa) pairs that would fail
+    at codegen time with ValueError — e.g. ct_t1_dit_log3_isub2 on AVX2.
+    """
+    entry = VARIANTS[variant_id]
+    if len(entry) >= 4:
+        return entry[3]
+    return None
+
+# Phase B buf variants: 2 tiles × 1 drain = 2 parameterized candidates.
+# Pruned from the original 3×2 matrix per cross-radix measured evidence:
+#
+#   tile256_*  — outbuf (64 KiB) exceeds 48 KiB L1d on Raptor Lake and
+#                crowds the same L1 region on SPR. Never wins vs tile128
+#                at me ≥ 256 cells where it's applicable.
+#   *_stream   — non-temporal drain assumes output won't be reused; in a
+#                recursive FFT the next stage reads it immediately, so the
+#                cache-bypass hint is actively wrong. 3–4× slower than
+#                temporal at every measured cell, cross-radix (R=16, R=32,
+#                R=64 all agree).
 #
 # Prefetch variants (drain_prefetch, twiddle_prefetch_distance) from the
 # old R=32 bench are deferred — they expand the sweep space 6× without
 # a commensurate win signal in the data we have. Revisit if Phase B
 # results motivate it.
-_BUF_TILES = [64, 128, 256]
-_BUF_DRAINS = ['temporal', 'stream']
+_BUF_TILES = [64, 128]
+_BUF_DRAINS = ['temporal']
 for _t in _BUF_TILES:
     for _d in _BUF_DRAINS:
         _vid = f'ct_t1_buf_dit_tile{_t}_{_d}'
@@ -2920,7 +3423,8 @@ def is_buf_variant(variant_id):
 def function_name(variant_id, isa, direction):
     if variant_id not in VARIANTS:
         raise KeyError(f"unknown variant {variant_id}; known: {list(VARIANTS)}")
-    base, _, _ = VARIANTS[variant_id]
+    # VARIANTS entries may be 3-tuples (unrestricted) or 4-tuples (with supported_isas).
+    base = VARIANTS[variant_id][0]
     return f'{base}_{direction}_{isa}'
 
 def protocol(variant_id):
@@ -2963,10 +3467,18 @@ def _emit_all_variants(isa_name):
             out.append(L)
         out.append('')
 
-    # Phase A
-    for v in ['ct_t1_dit', 'ct_t1_dif', 'ct_t1s_dit', 'ct_t1_dit_log3']:
+    # Phase A — unrestricted variants
+    for v in ['ct_t1_dit', 'ct_t1_dif', 'ct_t1s_dit',
+              'ct_t1_dit_log3', 'ct_t1_dif_log3']:
         lines = emit_ct_file(isa, itw_set, v, tile=None, drain_mode='temporal')
         _append_cleaned(lines)
+
+    # ISA-restricted variants: query supported_isas() to skip incompatible ISAs.
+    for v in ['ct_t1_dit_log3_isub2']:
+        allowed = supported_isas(v)
+        if allowed is None or isa_name in allowed:
+            lines = emit_ct_file(isa, itw_set, v, tile=None, drain_mode='temporal')
+            _append_cleaned(lines)
 
     # Phase B buf variants
     for t in _BUF_TILES:

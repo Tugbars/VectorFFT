@@ -32,9 +32,25 @@ static inline void vfft_r32_t1_dit_log3_dispatch_bwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..∞]: ct_t1_dit_log3
+     *   me∈[64..64]: ct_t1_dit_log3
+     *   me∈[128..128] pow2 ios: ct_t1_dit_log3_isub2
+     *   me∈[128..128] padded ios: ct_t1_dit_log3
+     *   me∈[256..∞]: ct_t1_dit_log3
      */
-    {
+    if (me <= 64) {
+        radix32_t1_dit_log3_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 128 && me <= 128) {
+        if (ios == me) {
+            radix32_t1_dit_log3_isub2_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        } else {
+            radix32_t1_dit_log3_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        }
+    }
+    else if (me >= 256) {
         radix32_t1_dit_log3_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }

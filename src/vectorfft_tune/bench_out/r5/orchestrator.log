@@ -39,4 +39,4 @@
   [run validate] avx2
 [validate] 108 cases, 0 failed
   [validate] skipping avx512: host lacks AVX-512
-[done] elapsed 20.2s
+[done] elapsed 21.7s

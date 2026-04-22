@@ -361,79 +361,94 @@ static const validate_case_t CASES[] = {
   #endif
 
 #elif RADIX == 16
-  /* R=16 Phase A has four dispatchers, one variant each:
-   *   t1_dit      : ct_t1_dit        (flat)
-   *   t1_dif      : ct_t1_dif        (flat) — different function from DIT
-   *   t1_dit_log3 : ct_t1_dit_log3   (log3 protocol — sparse read)
-   *   t1s_dit     : ct_t1s_dit       (t1s protocol — scalar broadcasts)
-   * Each dispatcher self-validates since it wraps a single variant. */
+  /* R=16 Phase A: five dispatchers, one or more variants each:
+   *   t1_dit          : ct_t1_dit        (flat)
+   *   t1_dif          : ct_t1_dif        (flat) — different function from DIT
+   *   t1_dit_log3     : ct_t1_dit_log3   (log3 protocol — sparse read)
+   *                     + ct_t1_dit_log3_isub2 (AVX-512 only, paired sub-FFTs)
+   *                     + ct_t1_dit_log_half    (AVX-512 only, 8 bases + 7 derivs)
+   *   t1_dif_log3     : ct_t1_dif_log3   (log3 applied post-butterfly in PASS 2)
+   *   t1s_dit         : ct_t1s_dit       (t1s protocol — scalar broadcasts)
+   * Per-dispatcher validation catches bugs in whichever variant the
+   * dispatcher picks at each (me, ios). Within-dispatcher variants (isub2,
+   * log_half) additionally get individual ADD_CASE entries so every symbol
+   * is validated in every build, not only at the points where the dispatcher
+   * happens to pick them. */
   #if defined(VALIDATE_AVX2)
-    ADD_CASE("t1_dit",     avx2, fwd, "flat",
+    ADD_CASE("t1_dit",          avx2, fwd, "flat",
              radix16_t1_dit_fwd_avx2,       vfft_r16_t1_dit_dispatch_fwd_avx2),
-    ADD_CASE("t1_dit",     avx2, bwd, "flat",
+    ADD_CASE("t1_dit",          avx2, bwd, "flat",
              radix16_t1_dit_bwd_avx2,       vfft_r16_t1_dit_dispatch_bwd_avx2),
-    ADD_CASE("t1_dif",     avx2, fwd, "flat",
+    ADD_CASE("t1_dif",          avx2, fwd, "flat",
              radix16_t1_dif_fwd_avx2,       vfft_r16_t1_dif_dispatch_fwd_avx2),
-    ADD_CASE("t1_dif",     avx2, bwd, "flat",
+    ADD_CASE("t1_dif",          avx2, bwd, "flat",
              radix16_t1_dif_bwd_avx2,       vfft_r16_t1_dif_dispatch_bwd_avx2),
-    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx2, fwd, "log3",
              radix16_t1_dit_log3_fwd_avx2,  vfft_r16_t1_dit_log3_dispatch_fwd_avx2),
-    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx2, bwd, "log3",
              radix16_t1_dit_log3_bwd_avx2,  vfft_r16_t1_dit_log3_dispatch_bwd_avx2),
-    ADD_CASE("t1s_dit",    avx2, fwd, "t1s",
+    ADD_CASE("t1_dif_log3",     avx2, fwd, "log3",
+             radix16_t1_dif_log3_fwd_avx2,  vfft_r16_t1_dif_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dif_log3",     avx2, bwd, "log3",
+             radix16_t1_dif_log3_bwd_avx2,  vfft_r16_t1_dif_log3_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",         avx2, fwd, "t1s",
              radix16_t1s_dit_fwd_avx2,      vfft_r16_t1s_dit_dispatch_fwd_avx2),
-    ADD_CASE("t1s_dit",    avx2, bwd, "t1s",
+    ADD_CASE("t1s_dit",         avx2, bwd, "t1s",
              radix16_t1s_dit_bwd_avx2,      vfft_r16_t1s_dit_dispatch_bwd_avx2),
+    /* isub2 / log_half are AVX-512 only — not emitted for AVX2 by the
+     * generator (supported_isas == {'avx512'}). No ADD_CASE here. */
   #endif
   #if defined(VALIDATE_AVX512)
-    ADD_CASE("t1_dit",     avx512, fwd, "flat",
+    ADD_CASE("t1_dit",          avx512, fwd, "flat",
              radix16_t1_dit_fwd_avx512,       vfft_r16_t1_dit_dispatch_fwd_avx512),
-    ADD_CASE("t1_dit",     avx512, bwd, "flat",
+    ADD_CASE("t1_dit",          avx512, bwd, "flat",
              radix16_t1_dit_bwd_avx512,       vfft_r16_t1_dit_dispatch_bwd_avx512),
-    ADD_CASE("t1_dif",     avx512, fwd, "flat",
+    ADD_CASE("t1_dif",          avx512, fwd, "flat",
              radix16_t1_dif_fwd_avx512,       vfft_r16_t1_dif_dispatch_fwd_avx512),
-    ADD_CASE("t1_dif",     avx512, bwd, "flat",
+    ADD_CASE("t1_dif",          avx512, bwd, "flat",
              radix16_t1_dif_bwd_avx512,       vfft_r16_t1_dif_dispatch_bwd_avx512),
-    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx512, fwd, "log3",
              radix16_t1_dit_log3_fwd_avx512,  vfft_r16_t1_dit_log3_dispatch_fwd_avx512),
-    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx512, bwd, "log3",
              radix16_t1_dit_log3_bwd_avx512,  vfft_r16_t1_dit_log3_dispatch_bwd_avx512),
-    ADD_CASE("t1s_dit",    avx512, fwd, "t1s",
+    ADD_CASE("t1_dif_log3",     avx512, fwd, "log3",
+             radix16_t1_dif_log3_fwd_avx512,  vfft_r16_t1_dif_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dif_log3",     avx512, bwd, "log3",
+             radix16_t1_dif_log3_bwd_avx512,  vfft_r16_t1_dif_log3_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",         avx512, fwd, "t1s",
              radix16_t1s_dit_fwd_avx512,      vfft_r16_t1s_dit_dispatch_fwd_avx512),
-    ADD_CASE("t1s_dit",    avx512, bwd, "t1s",
+    ADD_CASE("t1s_dit",         avx512, bwd, "t1s",
              radix16_t1s_dit_bwd_avx512,      vfft_r16_t1s_dit_dispatch_bwd_avx512),
+    /* AVX-512-only within-dispatcher variants (compete against plain log3 in t1_dit_log3).
+     * Validate each symbol directly against the flat reference so a bug in
+     * isub2 or log_half is caught at build time regardless of whether the
+     * dispatcher picks them at any given point. */
+    ADD_CASE("t1_dit_log3_isub2", avx512, fwd, "log3",
+             radix16_t1_dit_fwd_avx512,       radix16_t1_dit_log3_isub2_fwd_avx512),
+    ADD_CASE("t1_dit_log3_isub2", avx512, bwd, "log3",
+             radix16_t1_dit_bwd_avx512,       radix16_t1_dit_log3_isub2_bwd_avx512),
+    ADD_CASE("t1_dit_log_half",   avx512, fwd, "log3",
+             radix16_t1_dit_fwd_avx512,       radix16_t1_dit_log_half_fwd_avx512),
+    ADD_CASE("t1_dit_log_half",   avx512, bwd, "log3",
+             radix16_t1_dit_bwd_avx512,       radix16_t1_dit_log_half_bwd_avx512),
   #endif
-  /* ── Phase B: buf variants (3 tiles × 2 drains × 2 ISAs × 2 dirs = 24 cases) ──
-   * Each buf variant validates directly (not via dispatcher) against the
-   * flat t1_dit reference. The dispatcher-level validator test at the top
-   * only catches bugs in whatever variant the dispatcher happens to pick
-   * at each me; testing each variant individually catches bugs in all six.
-   * min_me = tile size: buf kernel requires me >= tile for a full iteration. */
+  /* ── Phase B: buf variants (pruned — tile64/128 temporal only) ──
+   * tile256 removed: outbuf (64 KiB) exceeds 48 KiB L1d on Raptor Lake;
+   * 44-58% slower than tile128 at every me >= 256 cell (measured RL AVX2).
+   * stream drain removed: next stage reads output immediately in recursive
+   * FFT; cache-bypass hint is actively wrong; 3-4x slower than temporal
+   * at every cross-radix measured cell.
+   * Each buf variant validates directly against the flat t1_dit reference.
+   * min_me = tile: buf kernel requires me >= tile for a full iteration. */
   #if defined(VALIDATE_AVX2)
     ADD_CASE_MIN_ME("buf_tile64_temporal",  avx2, fwd, "flat",
                     radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile64_temporal_fwd_avx2, 64),
     ADD_CASE_MIN_ME("buf_tile64_temporal",  avx2, bwd, "flat",
                     radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile64_temporal_bwd_avx2, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx2, fwd, "flat",
-                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile64_stream_fwd_avx2, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx2, bwd, "flat",
-                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile64_stream_bwd_avx2, 64),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx2, fwd, "flat",
                     radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile128_temporal_fwd_avx2, 128),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx2, bwd, "flat",
                     radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile128_temporal_bwd_avx2, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx2, fwd, "flat",
-                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile128_stream_fwd_avx2, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx2, bwd, "flat",
-                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile128_stream_bwd_avx2, 128),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx2, fwd, "flat",
-                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile256_temporal_fwd_avx2, 256),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx2, bwd, "flat",
-                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile256_temporal_bwd_avx2, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx2, fwd, "flat",
-                    radix16_t1_dit_fwd_avx2, radix16_t1_buf_dit_tile256_stream_fwd_avx2, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx2, bwd, "flat",
-                    radix16_t1_dit_bwd_avx2, radix16_t1_buf_dit_tile256_stream_bwd_avx2, 256),
     /* Dispatcher-level validation (checks whichever variant the dispatcher picks at each me) */
     ADD_CASE("t1_buf_dit", avx2, fwd, "flat",
              radix16_t1_dit_fwd_avx2, vfft_r16_t1_buf_dit_dispatch_fwd_avx2),
@@ -445,26 +460,10 @@ static const validate_case_t CASES[] = {
                     radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile64_temporal_fwd_avx512, 64),
     ADD_CASE_MIN_ME("buf_tile64_temporal",  avx512, bwd, "flat",
                     radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile64_temporal_bwd_avx512, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx512, fwd, "flat",
-                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile64_stream_fwd_avx512, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx512, bwd, "flat",
-                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile64_stream_bwd_avx512, 64),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx512, fwd, "flat",
                     radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile128_temporal_fwd_avx512, 128),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx512, bwd, "flat",
                     radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile128_temporal_bwd_avx512, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx512, fwd, "flat",
-                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile128_stream_fwd_avx512, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx512, bwd, "flat",
-                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile128_stream_bwd_avx512, 128),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx512, fwd, "flat",
-                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile256_temporal_fwd_avx512, 256),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx512, bwd, "flat",
-                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile256_temporal_bwd_avx512, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx512, fwd, "flat",
-                    radix16_t1_dit_fwd_avx512, radix16_t1_buf_dit_tile256_stream_fwd_avx512, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx512, bwd, "flat",
-                    radix16_t1_dit_bwd_avx512, radix16_t1_buf_dit_tile256_stream_bwd_avx512, 256),
     ADD_CASE("t1_buf_dit", avx512, fwd, "flat",
              radix16_t1_dit_fwd_avx512, vfft_r16_t1_buf_dit_dispatch_fwd_avx512),
     ADD_CASE("t1_buf_dit", avx512, bwd, "flat",
@@ -472,69 +471,86 @@ static const validate_case_t CASES[] = {
   #endif
 
 #elif RADIX == 32
-  /* R=32 Phase A: same structure as R=16 — 4 dispatchers, one variant each. */
+  /* R=32 Phase A: five dispatchers, one or more variants each:
+   *   t1_dit          : ct_t1_dit        (flat)
+   *   t1_dif          : ct_t1_dif        (flat) — different function from DIT
+   *   t1_dit_log3     : ct_t1_dit_log3   (log3 — sparse read, 5 bases)
+   *                     + ct_t1_dit_log3_isub2 (AVX-512 only, paired sub-FFTs)
+   *   t1_dif_log3     : ct_t1_dif_log3   (log3 applied post-butterfly in PASS 2)
+   *   t1s_dit         : ct_t1s_dit       (t1s — (R-1)=31 scalar broadcasts)
+   * Per-dispatcher validation catches bugs in whichever variant the
+   * dispatcher picks at each (me, ios). Within-dispatcher variants (isub2)
+   * additionally get individual ADD_CASE entries so every symbol is
+   * validated at build time regardless of dispatcher pick. */
   #if defined(VALIDATE_AVX2)
-    ADD_CASE("t1_dit",     avx2, fwd, "flat",
+    ADD_CASE("t1_dit",          avx2, fwd, "flat",
              radix32_t1_dit_fwd_avx2,       vfft_r32_t1_dit_dispatch_fwd_avx2),
-    ADD_CASE("t1_dit",     avx2, bwd, "flat",
+    ADD_CASE("t1_dit",          avx2, bwd, "flat",
              radix32_t1_dit_bwd_avx2,       vfft_r32_t1_dit_dispatch_bwd_avx2),
-    ADD_CASE("t1_dif",     avx2, fwd, "flat",
+    ADD_CASE("t1_dif",          avx2, fwd, "flat",
              radix32_t1_dif_fwd_avx2,       vfft_r32_t1_dif_dispatch_fwd_avx2),
-    ADD_CASE("t1_dif",     avx2, bwd, "flat",
+    ADD_CASE("t1_dif",          avx2, bwd, "flat",
              radix32_t1_dif_bwd_avx2,       vfft_r32_t1_dif_dispatch_bwd_avx2),
-    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx2, fwd, "log3",
              radix32_t1_dit_log3_fwd_avx2,  vfft_r32_t1_dit_log3_dispatch_fwd_avx2),
-    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx2, bwd, "log3",
              radix32_t1_dit_log3_bwd_avx2,  vfft_r32_t1_dit_log3_dispatch_bwd_avx2),
-    ADD_CASE("t1s_dit",    avx2, fwd, "t1s",
+    ADD_CASE("t1_dif_log3",     avx2, fwd, "log3",
+             radix32_t1_dif_log3_fwd_avx2,  vfft_r32_t1_dif_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dif_log3",     avx2, bwd, "log3",
+             radix32_t1_dif_log3_bwd_avx2,  vfft_r32_t1_dif_log3_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",         avx2, fwd, "t1s",
              radix32_t1s_dit_fwd_avx2,      vfft_r32_t1s_dit_dispatch_fwd_avx2),
-    ADD_CASE("t1s_dit",    avx2, bwd, "t1s",
+    ADD_CASE("t1s_dit",         avx2, bwd, "t1s",
              radix32_t1s_dit_bwd_avx2,      vfft_r32_t1s_dit_dispatch_bwd_avx2),
+    /* isub2 is AVX-512 only — not emitted for AVX2 by the generator
+     * (supported_isas == {'avx512'}). No ADD_CASE here. */
   #endif
   #if defined(VALIDATE_AVX512)
-    ADD_CASE("t1_dit",     avx512, fwd, "flat",
+    ADD_CASE("t1_dit",          avx512, fwd, "flat",
              radix32_t1_dit_fwd_avx512,       vfft_r32_t1_dit_dispatch_fwd_avx512),
-    ADD_CASE("t1_dit",     avx512, bwd, "flat",
+    ADD_CASE("t1_dit",          avx512, bwd, "flat",
              radix32_t1_dit_bwd_avx512,       vfft_r32_t1_dit_dispatch_bwd_avx512),
-    ADD_CASE("t1_dif",     avx512, fwd, "flat",
+    ADD_CASE("t1_dif",          avx512, fwd, "flat",
              radix32_t1_dif_fwd_avx512,       vfft_r32_t1_dif_dispatch_fwd_avx512),
-    ADD_CASE("t1_dif",     avx512, bwd, "flat",
+    ADD_CASE("t1_dif",          avx512, bwd, "flat",
              radix32_t1_dif_bwd_avx512,       vfft_r32_t1_dif_dispatch_bwd_avx512),
-    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx512, fwd, "log3",
              radix32_t1_dit_log3_fwd_avx512,  vfft_r32_t1_dit_log3_dispatch_fwd_avx512),
-    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx512, bwd, "log3",
              radix32_t1_dit_log3_bwd_avx512,  vfft_r32_t1_dit_log3_dispatch_bwd_avx512),
-    ADD_CASE("t1s_dit",    avx512, fwd, "t1s",
+    ADD_CASE("t1_dif_log3",     avx512, fwd, "log3",
+             radix32_t1_dif_log3_fwd_avx512,  vfft_r32_t1_dif_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dif_log3",     avx512, bwd, "log3",
+             radix32_t1_dif_log3_bwd_avx512,  vfft_r32_t1_dif_log3_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",         avx512, fwd, "t1s",
              radix32_t1s_dit_fwd_avx512,      vfft_r32_t1s_dit_dispatch_fwd_avx512),
-    ADD_CASE("t1s_dit",    avx512, bwd, "t1s",
+    ADD_CASE("t1s_dit",         avx512, bwd, "t1s",
              radix32_t1s_dit_bwd_avx512,      vfft_r32_t1s_dit_dispatch_bwd_avx512),
+    /* AVX-512-only within-dispatcher variant (competes with plain log3 in
+     * t1_dit_log3). Validate each symbol directly against flat so a bug
+     * in isub2 is caught at build time regardless of dispatcher pick. */
+    ADD_CASE("t1_dit_log3_isub2", avx512, fwd, "log3",
+             radix32_t1_dit_fwd_avx512,       radix32_t1_dit_log3_isub2_fwd_avx512),
+    ADD_CASE("t1_dit_log3_isub2", avx512, bwd, "log3",
+             radix32_t1_dit_bwd_avx512,       radix32_t1_dit_log3_isub2_bwd_avx512),
   #endif
-  /* ── R=32 Phase B: buf variants (3 tiles × 2 drains × 2 ISAs × 2 dirs = 24 cases) ── */
+  /* ── R=32 Phase B: buf variants (pruned — tile64/128 temporal only) ──
+   * tile256 removed: outbuf (64 KiB) exceeds 48 KiB L1d on Raptor Lake;
+   * never wins vs tile128 at me >= 256 cells (cross-radix evidence R=16 + R=32).
+   * stream drain removed: next stage reads output immediately in recursive
+   * FFT; cache-bypass hint is actively wrong; 3-4x slower than temporal
+   * at every cross-radix cell.
+   * min_me = tile: buf kernel requires me >= tile for a full iteration. */
   #if defined(VALIDATE_AVX2)
     ADD_CASE_MIN_ME("buf_tile64_temporal",  avx2, fwd, "flat",
                     radix32_t1_dit_fwd_avx2, radix32_t1_buf_dit_tile64_temporal_fwd_avx2, 64),
     ADD_CASE_MIN_ME("buf_tile64_temporal",  avx2, bwd, "flat",
                     radix32_t1_dit_bwd_avx2, radix32_t1_buf_dit_tile64_temporal_bwd_avx2, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx2, fwd, "flat",
-                    radix32_t1_dit_fwd_avx2, radix32_t1_buf_dit_tile64_stream_fwd_avx2, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx2, bwd, "flat",
-                    radix32_t1_dit_bwd_avx2, radix32_t1_buf_dit_tile64_stream_bwd_avx2, 64),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx2, fwd, "flat",
                     radix32_t1_dit_fwd_avx2, radix32_t1_buf_dit_tile128_temporal_fwd_avx2, 128),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx2, bwd, "flat",
                     radix32_t1_dit_bwd_avx2, radix32_t1_buf_dit_tile128_temporal_bwd_avx2, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx2, fwd, "flat",
-                    radix32_t1_dit_fwd_avx2, radix32_t1_buf_dit_tile128_stream_fwd_avx2, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx2, bwd, "flat",
-                    radix32_t1_dit_bwd_avx2, radix32_t1_buf_dit_tile128_stream_bwd_avx2, 128),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx2, fwd, "flat",
-                    radix32_t1_dit_fwd_avx2, radix32_t1_buf_dit_tile256_temporal_fwd_avx2, 256),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx2, bwd, "flat",
-                    radix32_t1_dit_bwd_avx2, radix32_t1_buf_dit_tile256_temporal_bwd_avx2, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx2, fwd, "flat",
-                    radix32_t1_dit_fwd_avx2, radix32_t1_buf_dit_tile256_stream_fwd_avx2, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx2, bwd, "flat",
-                    radix32_t1_dit_bwd_avx2, radix32_t1_buf_dit_tile256_stream_bwd_avx2, 256),
     ADD_CASE("t1_buf_dit", avx2, fwd, "flat",
              radix32_t1_dit_fwd_avx2, vfft_r32_t1_buf_dit_dispatch_fwd_avx2),
     ADD_CASE("t1_buf_dit", avx2, bwd, "flat",
@@ -545,26 +561,10 @@ static const validate_case_t CASES[] = {
                     radix32_t1_dit_fwd_avx512, radix32_t1_buf_dit_tile64_temporal_fwd_avx512, 64),
     ADD_CASE_MIN_ME("buf_tile64_temporal",  avx512, bwd, "flat",
                     radix32_t1_dit_bwd_avx512, radix32_t1_buf_dit_tile64_temporal_bwd_avx512, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx512, fwd, "flat",
-                    radix32_t1_dit_fwd_avx512, radix32_t1_buf_dit_tile64_stream_fwd_avx512, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx512, bwd, "flat",
-                    radix32_t1_dit_bwd_avx512, radix32_t1_buf_dit_tile64_stream_bwd_avx512, 64),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx512, fwd, "flat",
                     radix32_t1_dit_fwd_avx512, radix32_t1_buf_dit_tile128_temporal_fwd_avx512, 128),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx512, bwd, "flat",
                     radix32_t1_dit_bwd_avx512, radix32_t1_buf_dit_tile128_temporal_bwd_avx512, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx512, fwd, "flat",
-                    radix32_t1_dit_fwd_avx512, radix32_t1_buf_dit_tile128_stream_fwd_avx512, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx512, bwd, "flat",
-                    radix32_t1_dit_bwd_avx512, radix32_t1_buf_dit_tile128_stream_bwd_avx512, 128),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx512, fwd, "flat",
-                    radix32_t1_dit_fwd_avx512, radix32_t1_buf_dit_tile256_temporal_fwd_avx512, 256),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx512, bwd, "flat",
-                    radix32_t1_dit_bwd_avx512, radix32_t1_buf_dit_tile256_temporal_bwd_avx512, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx512, fwd, "flat",
-                    radix32_t1_dit_fwd_avx512, radix32_t1_buf_dit_tile256_stream_fwd_avx512, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx512, bwd, "flat",
-                    radix32_t1_dit_bwd_avx512, radix32_t1_buf_dit_tile256_stream_bwd_avx512, 256),
     ADD_CASE("t1_buf_dit", avx512, fwd, "flat",
              radix32_t1_dit_fwd_avx512, vfft_r32_t1_buf_dit_dispatch_fwd_avx512),
     ADD_CASE("t1_buf_dit", avx512, bwd, "flat",
@@ -572,69 +572,86 @@ static const validate_case_t CASES[] = {
   #endif
 
 #elif RADIX == 64
-  /* R=64 Phase A: same structure as R=16/R=32 — 4 dispatchers, one variant each. */
+  /* R=64 Phase A: five dispatchers, one or more variants each:
+   *   t1_dit          : ct_t1_dit        (flat)
+   *   t1_dif          : ct_t1_dif        (flat) — different function from DIT
+   *   t1_dit_log3     : ct_t1_dit_log3   (log3 — 2-base sparse read, W^1/W^8)
+   *                     + ct_t1_dit_log3_isub2 (AVX-512 only, paired sub-FFTs)
+   *   t1_dif_log3     : ct_t1_dif_log3   (log3 applied post-butterfly in PASS 2)
+   *   t1s_dit         : ct_t1s_dit       (t1s — (R-1)=63 scalar broadcasts)
+   * Per-dispatcher validation catches bugs in whichever variant the
+   * dispatcher picks at each (me, ios). Within-dispatcher variants (isub2)
+   * additionally get individual ADD_CASE entries so every symbol is
+   * validated at build time regardless of dispatcher pick. */
   #if defined(VALIDATE_AVX2)
-    ADD_CASE("t1_dit",     avx2, fwd, "flat",
+    ADD_CASE("t1_dit",          avx2, fwd, "flat",
              radix64_t1_dit_fwd_avx2,       vfft_r64_t1_dit_dispatch_fwd_avx2),
-    ADD_CASE("t1_dit",     avx2, bwd, "flat",
+    ADD_CASE("t1_dit",          avx2, bwd, "flat",
              radix64_t1_dit_bwd_avx2,       vfft_r64_t1_dit_dispatch_bwd_avx2),
-    ADD_CASE("t1_dif",     avx2, fwd, "flat",
+    ADD_CASE("t1_dif",          avx2, fwd, "flat",
              radix64_t1_dif_fwd_avx2,       vfft_r64_t1_dif_dispatch_fwd_avx2),
-    ADD_CASE("t1_dif",     avx2, bwd, "flat",
+    ADD_CASE("t1_dif",          avx2, bwd, "flat",
              radix64_t1_dif_bwd_avx2,       vfft_r64_t1_dif_dispatch_bwd_avx2),
-    ADD_CASE("t1_dit_log3", avx2, fwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx2, fwd, "log3",
              radix64_t1_dit_log3_fwd_avx2,  vfft_r64_t1_dit_log3_dispatch_fwd_avx2),
-    ADD_CASE("t1_dit_log3", avx2, bwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx2, bwd, "log3",
              radix64_t1_dit_log3_bwd_avx2,  vfft_r64_t1_dit_log3_dispatch_bwd_avx2),
-    ADD_CASE("t1s_dit",    avx2, fwd, "t1s",
+    ADD_CASE("t1_dif_log3",     avx2, fwd, "log3",
+             radix64_t1_dif_log3_fwd_avx2,  vfft_r64_t1_dif_log3_dispatch_fwd_avx2),
+    ADD_CASE("t1_dif_log3",     avx2, bwd, "log3",
+             radix64_t1_dif_log3_bwd_avx2,  vfft_r64_t1_dif_log3_dispatch_bwd_avx2),
+    ADD_CASE("t1s_dit",         avx2, fwd, "t1s",
              radix64_t1s_dit_fwd_avx2,      vfft_r64_t1s_dit_dispatch_fwd_avx2),
-    ADD_CASE("t1s_dit",    avx2, bwd, "t1s",
+    ADD_CASE("t1s_dit",         avx2, bwd, "t1s",
              radix64_t1s_dit_bwd_avx2,      vfft_r64_t1s_dit_dispatch_bwd_avx2),
+    /* isub2 is AVX-512 only — not emitted for AVX2 by the generator
+     * (supported_isas == {'avx512'}). No ADD_CASE here. */
   #endif
   #if defined(VALIDATE_AVX512)
-    ADD_CASE("t1_dit",     avx512, fwd, "flat",
+    ADD_CASE("t1_dit",          avx512, fwd, "flat",
              radix64_t1_dit_fwd_avx512,       vfft_r64_t1_dit_dispatch_fwd_avx512),
-    ADD_CASE("t1_dit",     avx512, bwd, "flat",
+    ADD_CASE("t1_dit",          avx512, bwd, "flat",
              radix64_t1_dit_bwd_avx512,       vfft_r64_t1_dit_dispatch_bwd_avx512),
-    ADD_CASE("t1_dif",     avx512, fwd, "flat",
+    ADD_CASE("t1_dif",          avx512, fwd, "flat",
              radix64_t1_dif_fwd_avx512,       vfft_r64_t1_dif_dispatch_fwd_avx512),
-    ADD_CASE("t1_dif",     avx512, bwd, "flat",
+    ADD_CASE("t1_dif",          avx512, bwd, "flat",
              radix64_t1_dif_bwd_avx512,       vfft_r64_t1_dif_dispatch_bwd_avx512),
-    ADD_CASE("t1_dit_log3", avx512, fwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx512, fwd, "log3",
              radix64_t1_dit_log3_fwd_avx512,  vfft_r64_t1_dit_log3_dispatch_fwd_avx512),
-    ADD_CASE("t1_dit_log3", avx512, bwd, "log3",
+    ADD_CASE("t1_dit_log3",     avx512, bwd, "log3",
              radix64_t1_dit_log3_bwd_avx512,  vfft_r64_t1_dit_log3_dispatch_bwd_avx512),
-    ADD_CASE("t1s_dit",    avx512, fwd, "t1s",
+    ADD_CASE("t1_dif_log3",     avx512, fwd, "log3",
+             radix64_t1_dif_log3_fwd_avx512,  vfft_r64_t1_dif_log3_dispatch_fwd_avx512),
+    ADD_CASE("t1_dif_log3",     avx512, bwd, "log3",
+             radix64_t1_dif_log3_bwd_avx512,  vfft_r64_t1_dif_log3_dispatch_bwd_avx512),
+    ADD_CASE("t1s_dit",         avx512, fwd, "t1s",
              radix64_t1s_dit_fwd_avx512,      vfft_r64_t1s_dit_dispatch_fwd_avx512),
-    ADD_CASE("t1s_dit",    avx512, bwd, "t1s",
+    ADD_CASE("t1s_dit",         avx512, bwd, "t1s",
              radix64_t1s_dit_bwd_avx512,      vfft_r64_t1s_dit_dispatch_bwd_avx512),
+    /* AVX-512-only within-dispatcher variant (competes with plain log3 in
+     * t1_dit_log3). Validate each symbol directly against flat so a bug
+     * in isub2 is caught at build time regardless of dispatcher pick. */
+    ADD_CASE("t1_dit_log3_isub2", avx512, fwd, "log3",
+             radix64_t1_dit_fwd_avx512,       radix64_t1_dit_log3_isub2_fwd_avx512),
+    ADD_CASE("t1_dit_log3_isub2", avx512, bwd, "log3",
+             radix64_t1_dit_bwd_avx512,       radix64_t1_dit_log3_isub2_bwd_avx512),
   #endif
-  /* ── R=64 Phase B: buf variants (3 tiles × 2 drains × 2 ISAs × 2 dirs = 24 cases) ── */
+  /* ── R=64 Phase B: buf variants (pruned — tile64/128 temporal only) ──
+   * tile256 removed: outbuf (64 KiB) exceeds 48 KiB L1d on Raptor Lake;
+   * never wins vs tile128 at me >= 256 cells (cross-radix evidence).
+   * stream drain removed: next stage reads output immediately in recursive
+   * FFT; cache-bypass hint is actively wrong; 3-4x slower than temporal
+   * at every cross-radix cell.
+   * min_me = tile: buf kernel requires me >= tile for a full iteration. */
   #if defined(VALIDATE_AVX2)
     ADD_CASE_MIN_ME("buf_tile64_temporal",  avx2, fwd, "flat",
                     radix64_t1_dit_fwd_avx2, radix64_t1_buf_dit_tile64_temporal_fwd_avx2, 64),
     ADD_CASE_MIN_ME("buf_tile64_temporal",  avx2, bwd, "flat",
                     radix64_t1_dit_bwd_avx2, radix64_t1_buf_dit_tile64_temporal_bwd_avx2, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx2, fwd, "flat",
-                    radix64_t1_dit_fwd_avx2, radix64_t1_buf_dit_tile64_stream_fwd_avx2, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx2, bwd, "flat",
-                    radix64_t1_dit_bwd_avx2, radix64_t1_buf_dit_tile64_stream_bwd_avx2, 64),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx2, fwd, "flat",
                     radix64_t1_dit_fwd_avx2, radix64_t1_buf_dit_tile128_temporal_fwd_avx2, 128),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx2, bwd, "flat",
                     radix64_t1_dit_bwd_avx2, radix64_t1_buf_dit_tile128_temporal_bwd_avx2, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx2, fwd, "flat",
-                    radix64_t1_dit_fwd_avx2, radix64_t1_buf_dit_tile128_stream_fwd_avx2, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx2, bwd, "flat",
-                    radix64_t1_dit_bwd_avx2, radix64_t1_buf_dit_tile128_stream_bwd_avx2, 128),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx2, fwd, "flat",
-                    radix64_t1_dit_fwd_avx2, radix64_t1_buf_dit_tile256_temporal_fwd_avx2, 256),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx2, bwd, "flat",
-                    radix64_t1_dit_bwd_avx2, radix64_t1_buf_dit_tile256_temporal_bwd_avx2, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx2, fwd, "flat",
-                    radix64_t1_dit_fwd_avx2, radix64_t1_buf_dit_tile256_stream_fwd_avx2, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx2, bwd, "flat",
-                    radix64_t1_dit_bwd_avx2, radix64_t1_buf_dit_tile256_stream_bwd_avx2, 256),
     ADD_CASE("t1_buf_dit", avx2, fwd, "flat",
              radix64_t1_dit_fwd_avx2, vfft_r64_t1_buf_dit_dispatch_fwd_avx2),
     ADD_CASE("t1_buf_dit", avx2, bwd, "flat",
@@ -645,26 +662,10 @@ static const validate_case_t CASES[] = {
                     radix64_t1_dit_fwd_avx512, radix64_t1_buf_dit_tile64_temporal_fwd_avx512, 64),
     ADD_CASE_MIN_ME("buf_tile64_temporal",  avx512, bwd, "flat",
                     radix64_t1_dit_bwd_avx512, radix64_t1_buf_dit_tile64_temporal_bwd_avx512, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx512, fwd, "flat",
-                    radix64_t1_dit_fwd_avx512, radix64_t1_buf_dit_tile64_stream_fwd_avx512, 64),
-    ADD_CASE_MIN_ME("buf_tile64_stream",    avx512, bwd, "flat",
-                    radix64_t1_dit_bwd_avx512, radix64_t1_buf_dit_tile64_stream_bwd_avx512, 64),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx512, fwd, "flat",
                     radix64_t1_dit_fwd_avx512, radix64_t1_buf_dit_tile128_temporal_fwd_avx512, 128),
     ADD_CASE_MIN_ME("buf_tile128_temporal", avx512, bwd, "flat",
                     radix64_t1_dit_bwd_avx512, radix64_t1_buf_dit_tile128_temporal_bwd_avx512, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx512, fwd, "flat",
-                    radix64_t1_dit_fwd_avx512, radix64_t1_buf_dit_tile128_stream_fwd_avx512, 128),
-    ADD_CASE_MIN_ME("buf_tile128_stream",   avx512, bwd, "flat",
-                    radix64_t1_dit_bwd_avx512, radix64_t1_buf_dit_tile128_stream_bwd_avx512, 128),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx512, fwd, "flat",
-                    radix64_t1_dit_fwd_avx512, radix64_t1_buf_dit_tile256_temporal_fwd_avx512, 256),
-    ADD_CASE_MIN_ME("buf_tile256_temporal", avx512, bwd, "flat",
-                    radix64_t1_dit_bwd_avx512, radix64_t1_buf_dit_tile256_temporal_bwd_avx512, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx512, fwd, "flat",
-                    radix64_t1_dit_fwd_avx512, radix64_t1_buf_dit_tile256_stream_fwd_avx512, 256),
-    ADD_CASE_MIN_ME("buf_tile256_stream",   avx512, bwd, "flat",
-                    radix64_t1_dit_bwd_avx512, radix64_t1_buf_dit_tile256_stream_bwd_avx512, 256),
     ADD_CASE("t1_buf_dit", avx512, fwd, "flat",
              radix64_t1_dit_fwd_avx512, vfft_r64_t1_buf_dit_dispatch_fwd_avx512),
     ADD_CASE("t1_buf_dit", avx512, bwd, "flat",

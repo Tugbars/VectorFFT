@@ -174,6 +174,46 @@ static void populate_twiddles(const char *protocol, int R, size_t me,
  * (denormals, NaN) on long runs. We reset rio from a reference copy
  * before each TIME_REPEAT block; the memcpy cost is outside the timer
  * and negligible (~microseconds vs 10ms block time).
+ *
+ * ─── OPEN QUESTION: methodology sensitivity (2026-04-21) ───
+ *
+ * Adding the pre-block reset shifted cross-protocol win counts
+ * substantially on the RL 14900KF AVX2 sweep. Examples:
+ *   R=5:  t1s 24/24  →  12/24  (flat climbed from 0 to 12)
+ *   R=10: t1s 23/24  →   9/24  (flat climbed from 0 to 14)
+ *   R=11: t1s 19/24  →   5/24  (flat climbed from 1 to 15)
+ *   R=25: t1s 18/24  →  11/24  (flat climbed from 5 to 11)
+ *   R=8:  log3 15/18 →   5/18  (flat climbed from 0 to 12)
+ * Prime-heavy radixes shifted less:
+ *   R=7: t1s 23 → 20 (mostly stable)
+ *   R=19: t1s 23 → 11 (container vs RL, but different machine)
+ *
+ * Hypothesis: without reset, rio drifts under repeated forward
+ * transforms. Magnitudes grow/shrink away from the cos/sin seed
+ * range. Some codepaths (broadcast-then-FMA in t1s?) may hit
+ * microcode or register-allocation paths that differ by input
+ * magnitude in ways we did not control for. The reset keeps inputs
+ * in their tested (cos/sin, |rio| = 1) range every block, matching
+ * FFTW's methodology (FFTW zeros inputs → zero drift by construction).
+ *
+ * Both "with reset" and "without reset" are defensible choices; FFTW
+ * uses zero inputs (drift-free), we use cos/sin + reset (drift-free
+ * while exercising realistic register values). The reset is the
+ * more defensible choice — it isolates code-level performance from
+ * input-magnitude-dependent microarchitecture effects.
+ *
+ * To test this hypothesis directly, temporarily comment out the four
+ * memcpy lines below (the two in the iters-calibration loop and the
+ * two in the TIME_REPEAT loop) and re-run a single radix. If winner
+ * counts shift back toward the old pattern, the hypothesis is
+ * confirmed and the methodology choice is material.
+ *
+ * If confirmed, this is paper-worthy: cross-protocol comparisons in
+ * FFT codelets are sensitive to input-reset methodology; numbers
+ * from papers without explicit reset should be interpreted with
+ * caution. Our framework's wisdom is against reset-methodology data,
+ * which is what you want for production codelets called repeatedly
+ * with fresh inputs (the common real-world case).
  * ═══════════════════════════════════════════════════════════════ */
 
 #define TIME_MIN     (10.0 * 1e6)   /* 10 ms in ns */
