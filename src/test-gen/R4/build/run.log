@@ -1,7 +1,0 @@
-harness: 5 candidates, 24 sweeps, 2 dirs; 0 done (will skip)
-[1/5] ct_t1_dit__avx2
-[2/5] ct_t1_dit_log3__avx2
-[3/5] ct_t1_dit_log1__avx2
-[4/5] ct_t1_dit_u2__avx2
-[5/5] ct_t1_dif__avx2
-done: measured=240, skipped=0
