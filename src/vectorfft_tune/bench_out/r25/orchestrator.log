@@ -1,0 +1,41 @@
+[phase] generate
+  [gen] fft_radix25_avx2.h: 801804 bytes
+  [gen] fft_radix25_avx512.h: 800674 bytes
+[phase] compile
+  [cands] vfft_harness_candidates_avx2.c: 7 symbols
+  [cands] vfft_harness_candidates_avx512.c: 7 symbols
+  [cands] vfft_harness_candidates.c: aggregator for 14 total
+  [cc base] harness.c
+  [cc base] vfft_harness_candidates.c
+  [cc avx2] vfft_harness_candidates_avx2.c
+  [cc avx512] skipping — host lacks AVX-512
+  [cc avx512_stub] vfft_harness_candidates_avx512_stub.c
+  [link] harness.exe
+[phase] run
+  [warn] host fingerprint changed since first run:
+         stored: Linux|unknown|x86_64
+         current: Windows|Intel64 Family 6 Model 183 Stepping 1, GenuineIntel|AMD64
+         measurements in this jsonl may be mixed across
+         machines. Delete measurements.jsonl to start fresh
+         on this host, or back it up and continue if you
+         know what you are doing.
+  [run] 512 jobs (512 already done — will skip)
+  [run] done: 512/512  skipped_done=512  skipped_host=0
+[phase] emit
+  [copy] fft_radix25_avx2.h -> generated/
+  [copy] fft_radix25_avx512.h -> generated/
+  loaded 512 measurements
+  [emit] vfft_r25_t1_dit_dispatch_avx2.h
+  [emit] vfft_r25_t1_dit_log3_dispatch_avx2.h
+  [emit] vfft_r25_t1s_dit_dispatch_avx2.h
+  [emit] vfft_r25_t1_dit_dispatch_avx512.h
+  [emit] vfft_r25_t1_dit_log3_dispatch_avx512.h
+  [emit] vfft_r25_t1s_dit_dispatch_avx512.h
+  [emit] vfft_r25_plan_wisdom.h
+  [emit] vfft_r25_report.md
+[phase] validate
+  [cc validate] avx2
+  [run validate] avx2
+[validate] 192 cases, 0 failed
+  [validate] skipping avx512: host lacks AVX-512
+[done] elapsed 4.7s
