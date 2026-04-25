@@ -23,6 +23,7 @@
 
 #include "planner.h"  /* resolves to src/core/planner.h via -I order */
 #include "env.h"      /* stride_alloc / stride_free */
+#include "wisdom_bridge.h"  /* stride_prefer_* for diagnostics */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -118,6 +119,40 @@ static int test_roundtrip(int N, size_t K) {
 
     int fail = (max_err > 1e-12) ? 1 : 0;
     printf("  %s\n", fail ? "FAIL" : "PASS");
+
+    /* Per-stage codelet decision dump.
+     *
+     * Stage 0 is always n1 (no twiddle). Other stages: the planner picks
+     * one of {log3, buf, baseline-flat} as the t1_fwd codelet, then
+     * optionally attaches t1s_fwd which the executor prefers at runtime
+     * if it's set. We can't compare function pointers across the
+     * static-inline dispatcher boundary (they each generate their own
+     * inline copies), so instead we re-query the wisdom predicates with
+     * the same (R, me, ios) inputs the planner used.
+     */
+    size_t me_plan = K;  /* single-threaded — slice is full K */
+    for (int s = 0; s < plan->num_stages; s++) {
+        int R = plan->factors[s];
+        size_t ios = (size_t)K;
+        for (int d = s + 1; d < plan->num_stages; d++)
+            ios *= (size_t)plan->factors[d];
+
+        const char *codelet;
+        if (s == 0) {
+            codelet = "n1 (no twiddle)";
+        } else if (stride_prefer_dit_log3(R, me_plan, ios)) {
+            codelet = "log3 (t1_dit_log3 dispatcher)";
+        } else if (stride_prefer_buf(R, me_plan, ios)) {
+            codelet = "buf (t1_buf_dit dispatcher)";
+        } else if (stride_prefer_t1s(R, me_plan, ios)
+                   && plan->stages[s].t1s_fwd) {
+            codelet = "t1s (t1s_dit dispatcher)";
+        } else {
+            codelet = "flat (t1_dit dispatcher, baseline)";
+        }
+        printf("    stage %d: R=%2d  me=%zu  ios=%-6zu -> %s\n",
+               s, R, me_plan, ios, codelet);
+    }
 
     stride_free(re); stride_free(im); stride_free(re0); stride_free(im0);
     stride_plan_destroy(plan);

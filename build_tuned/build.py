@@ -35,8 +35,14 @@ ROOT = HERE.parent  # repo root: highSpeedFFT/
 
 CORE_NEW       = ROOT / 'src' / 'core'
 CORE_PROD      = ROOT / 'src' / 'stride-fft' / 'core'
-CODELETS_AVX2  = ROOT / 'src' / 'stride-fft' / 'codelets' / 'avx2'
 TUNED_GEN      = ROOT / 'src' / 'vectorfft_tune' / 'generated'
+
+# stride-fft codelet dirs are NOT on the include path for AVX2/AVX-512
+# builds. All SIMD codelets come from vectorfft_tune/generated/r{R}/.
+# For scalar fallback (no AVX2/AVX-512) the registry's scalar branch
+# still includes stride-fft scalar headers — that path is handled in
+# build_includes() below by adding the scalar codelet dir conditionally.
+CODELETS_SCALAR = ROOT / 'src' / 'stride-fft' / 'codelets' / 'scalar'
 
 # Tuned radixes whose dispatcher dirs need -I. These match the wisdom_bridge
 # include list and the registry's _REG_TUNED_FULL[_*] calls.
@@ -56,8 +62,23 @@ def detect_toolchain():
 
 
 def build_includes() -> list[str]:
-    """Build the -I flag list. Order matters — first match wins."""
-    inc = [str(CORE_NEW), str(CORE_PROD), str(CODELETS_AVX2)]
+    """Build the -I flag list. Order matters — first match wins.
+
+    Layout (AVX2 / AVX-512 build):
+        src/core                                 (new core overrides)
+        src/stride-fft/core                      (factorizer, threads, env...)
+        src/vectorfft_tune/generated/r2          (R=2 bootstrap)
+        src/vectorfft_tune/generated/r{3..64}    (per-radix codelets +
+                                                  aux + dispatchers)
+
+    No stride-fft/codelets/avx2 on the path — the new core is fully
+    self-reliant on vectorfft_tune for SIMD codelets.
+    """
+    inc = [str(CORE_NEW), str(CORE_PROD)]
+    # R=2 first (single-variant bootstrap)
+    r2 = TUNED_GEN / 'r2'
+    if r2.is_dir():
+        inc.append(str(r2))
     for r in TUNED_RADIXES:
         d = TUNED_GEN / f'r{r}'
         if d.is_dir():
