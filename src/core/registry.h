@@ -80,9 +80,26 @@
 #define VFFT_FN(base)        _VFFT_PASTE(base, _, VFFT_ISA_TAG)
 
 /* ═══════════════════════════════════════════════════════════════
- * UNTUNED RADIX HEADERS — R=2 only (production all-in-one codelets)
+ * RADIX HEADERS — all from vectorfft_tune/generated/r{R}/
+ *
+ * As of v1.0, the new core pulls every SIMD codelet from the
+ * vectorfft_tune tree. No #include from src/stride-fft/codelets/.
+ *
+ * R=2: copied once from production into generated/r2/ (bootstrap —
+ *      no orchestrator coverage for R=2, single variant only).
+ * R=4, R=8: legacy unified header with all variants baked in (n1,
+ *      n1_scaled, t1_oop_dit, plus tuned variants).
+ * R=3..R=64 except 4/8: bench-portfolio variants in unified header
+ *      fft_radix{R}_{isa}.h, aux variants (n1, n1_scaled, t1_oop_dit)
+ *      as separate per-variant headers fft_radix{R}_{isa}_ct_*.h.
+ *      Both produced by phase_generate in common/bench.py and copied
+ *      to generated/r{R}/ by phase_emit.
+ *
+ * Scalar fallback path remains tied to stride-fft/codelets/scalar/
+ * because the orchestrator only targets AVX2 / AVX-512.
  * ═══════════════════════════════════════════════════════════════ */
 
+/* R=2 — single variant, no tune dispatcher needed. */
 #if defined(VFFT_ISA_AVX512)
   #include "fft_radix2_avx512.h"
 #elif defined(VFFT_ISA_AVX2)
@@ -92,12 +109,15 @@
 #endif
 
 /* ═══════════════════════════════════════════════════════════════
- * AUXILIARY HEADERS — production n1, n1_scaled, t1_oop
+ * AUXILIARY HEADERS — n1, n1_scaled, t1_oop (R≥3, except R=4/R=8)
  *
- * The tune generator does not emit these variants. They're consumed by
- * R2C/C2R fused pack-unpack and by the 2D FFT strided executor. Pulled
- * in from the production codelet directory for every radix that has
- * them (the same per-variant header list as stride-fft/registry.h).
+ * These are NOT bench-tuned (single variant per radix) but are needed
+ * by the new core's R2C/C2R/2D paths. Emitted by bench.py's
+ * phase_generate alongside the unified bench-portfolio header, copied
+ * to generated/r{R}/ by phase_emit.
+ *
+ * For R=4 and R=8 these are baked into the legacy unified header and
+ * pulled in transitively via the dispatcher includes below.
  * ═══════════════════════════════════════════════════════════════ */
 
 #if defined(VFFT_ISA_AVX512)

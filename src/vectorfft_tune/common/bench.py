@@ -176,10 +176,81 @@ def phase_generate(candidates_mod, staging: Path):
     isas_needed = sorted({c.isa for c in candidates_mod.enumerate_all()})
     R = candidates_mod.RADIX
     for isa in isas_needed:
+        # Unified bench-portfolio header — t1_dit, log3, t1s, buf, etc.
         out_path = staging / f'fft_radix{R}_{isa}.h'
         r = _run([sys.executable, candidates_mod.GEN_SCRIPT, '--isa', isa])
         out_path.write_text(r.stdout, encoding='utf-8')
         print(f'  [gen] {out_path.name}: {out_path.stat().st_size} bytes')
+
+        # Auxiliary codelet variants used by R2C / C2R / 2D paths.
+        # The orchestrator doesn't bench these (single variant per radix)
+        # but they need to be alongside the unified header so a downstream
+        # consumer (src/core/registry.h) can pull all SIMD codelets from
+        # vectorfft_tune/generated/ alone, with no dependency on
+        # stride-fft/codelets/.
+        #
+        # Strategy: try the generator first. If the generator lacks a
+        # variant (gen_radix{6,10,12,20}.py currently miss ct_n1_scaled
+        # and ct_t1_oop_dit — TODO v1.1 to add), fall back to copying
+        # the production codelet header from stride-fft/codelets/{isa}/.
+        # This bootstrap dependency on stride-fft disappears once the
+        # remaining generators learn the missing variants.
+        _emit_aux_variants(candidates_mod, isa, R, staging)
+
+
+def _emit_aux_variants(candidates_mod, isa, R, staging: Path):
+    """Emit ct_n1, ct_n1_scaled, ct_t1_oop_dit per ISA into staging.
+
+    For R=4 and R=8 the legacy generators emit these inside the unified
+    fft_radix{4,8}_{isa}.h header — no separate file needed; we skip.
+    For other radixes, emit as per-variant headers matching production
+    naming: fft_radix{R}_{isa}_ct_n1.h etc. — so the registry's includes
+    work the same way they used to.
+    """
+    if R in (2, 4, 8):
+        # R=2 has no tune generator; R=4/R=8 unified already has aux.
+        return
+
+    HERE_LOCAL = Path(__file__).parent.resolve()
+    # Path to production fallback: ../../stride-fft/codelets/{isa}/
+    prod_codelet_dir = (HERE_LOCAL / '..' / '..' / 'stride-fft' /
+                        'codelets' / isa).resolve()
+
+    # Strategy: prefer production headers (known-good, stable). Some
+    # generators have buggy emit for these variants — gen_radix6.py's
+    # ct_t1_oop_dit produces a function with t1 in-place signature but
+    # t1_oop body, for example. The aux variants aren't bench-tuned
+    # (single variant per radix), so per-host generation has no value;
+    # just copy production. If production lacks a header for some radix
+    # we don't otherwise need (rare), the generator is the fallback.
+    #
+    # TODO v1.1: when stride-fft is deleted, audit each generator's aux
+    # emit for correctness and switch this to always-generate. Or fold
+    # production's known-good aux headers into the gen output as static
+    # text the way unified headers do for buf etc.
+    import shutil as _shutil
+    for variant in ('ct_n1', 'ct_n1_scaled', 'ct_t1_oop_dit'):
+        aux_name = f'fft_radix{R}_{isa}_{variant}.h'
+        aux_path = staging / aux_name
+
+        # Prefer production header.
+        prod_path = prod_codelet_dir / aux_name
+        if prod_path.exists():
+            _shutil.copyfile(prod_path, aux_path)
+            print(f'  [copy from stride-fft] {aux_name}')
+            continue
+
+        # Fallback: try the generator.
+        try:
+            r = _run([sys.executable, candidates_mod.GEN_SCRIPT,
+                      '--isa', isa, '--variant', variant])
+            if r.returncode == 0 and f'radix{R}_{variant[3:]}' in r.stdout:
+                aux_path.write_text(r.stdout, encoding='utf-8')
+                print(f'  [gen fallback] {aux_name} ({len(r.stdout)} bytes)')
+        except Exception:
+            # Variant not available anywhere — silently skip. R2C/C2R
+            # paths that need this variant won't apply for this radix.
+            pass
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -606,11 +677,23 @@ def main_driver(radix_dir: Path, out_root: Path, phases: list[str],
         isas_needed = sorted({c.isa for c in candidates_mod.enumerate_all()})
         R = candidates_mod.RADIX
         for isa in isas_needed:
+            # Unified bench-portfolio header.
             src = staging / f'fft_radix{R}_{isa}.h'
             if src.exists():
                 dst = generated / src.name
                 _shutil.copyfile(src, dst)
                 print(f'  [copy] {src.name} -> generated/')
+
+            # Aux variant headers (ct_n1, ct_n1_scaled, ct_t1_oop_dit).
+            # See _emit_aux_variants above. Each is a separate file so
+            # the new core's registry can include them with the same
+            # filenames it would have used from stride-fft/codelets/.
+            for variant in ('ct_n1', 'ct_n1_scaled', 'ct_t1_oop_dit'):
+                aux_src = staging / f'fft_radix{R}_{isa}_{variant}.h'
+                if aux_src.exists():
+                    aux_dst = generated / aux_src.name
+                    _shutil.copyfile(aux_src, aux_dst)
+                    print(f'  [copy] {aux_src.name} -> generated/')
 
         host_desc = os.environ.get('VFFT_HOST_DESC', '')
         if not host_desc:
