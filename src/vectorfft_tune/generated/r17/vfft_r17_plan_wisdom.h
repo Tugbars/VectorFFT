@@ -61,7 +61,8 @@
 /* Should the planner use DIT-log3 protocol at (me, ios)? */
 /* Safe for today's executor: activates DIT-log3 codelet on the forward path. */
 static inline int radix17_prefer_dit_log3(size_t me, size_t ios) {
-    (void)ios;  /* may be unused if rules are me-only */
+    /* Sparse DIT-log3 wins at 3 specific (me, ios) cells: (16,512), (32,1024), (128,4096) */
+    if ((me == 16 && ios == 512) || (me == 32 && ios == 1024) || (me == 128 && ios == 4096)) return 1;
     /* Bench wins at me ∈ {256} */
     if (me == 256) return 1;
     return 0;
@@ -71,7 +72,7 @@ static inline int radix17_prefer_dit_log3(size_t me, size_t ios) {
 /* NOT yet consumable by the default executor (forward path is DIT).
  * Requires a DIF-forward executor path to activate. Informational. */
 static inline int radix17_prefer_dif_log3(size_t me, size_t ios) {
-    (void)ios;  /* may be unused if rules are me-only */
+    (void)me; (void)ios;
     /* Bench showed DIF-log3 never wins on this host. */
     return 0;
 }
@@ -85,7 +86,8 @@ static inline int radix17_prefer_log3(size_t me, size_t ios) {
 
 /* Should the planner use t1s protocol at (me, ios)? */
 static inline int radix17_prefer_t1s(size_t me, size_t ios) {
-    (void)ios;  /* may be unused if rules are me-only */
+    /* Sparse t1s wins at 1 specific (me, ios) cells: (256,264) */
+    if ((me == 256 && ios == 264)) return 1;
     /* Bench wins at me ∈ {8, 16, 32, 64, 128} */
     if (me >= 8 && me <= 128) return 1;
     return 0;
