@@ -1,5 +1,21 @@
-Sweep at 2026-04-21 09:35:03
-System: Linux x86_64  CPU pin: 0
-Phase: all  Elapsed: 0.2s
+Sweep at 2026-04-25 23:07:58
+System: Windows AMD64  CPU pin: 2
+Phase: all  Elapsed: 307.3s
 
-r999: failure in 0.2s  meas=0 val=0 failed=0  bench.py exited 1
+r3: success in 4.1s  meas=768 val=288 failed=0  
+r4: success in 51.2s  meas=348 val=84 failed=0  
+r5: success in 2.1s  meas=288 val=108 failed=0  
+r6: success in 2.1s  meas=408 val=84 failed=0  
+r7: success in 2.1s  meas=288 val=108 failed=0  
+r8: success in 60.6s  meas=414 val=120 failed=0  
+r10: success in 2.1s  meas=448 val=108 failed=0  
+r11: success in 2.1s  meas=288 val=108 failed=0  
+r12: success in 2.1s  meas=448 val=108 failed=0  
+r13: success in 2.3s  meas=288 val=84 failed=0  
+r16: success in 3.0s  meas=936 val=258 failed=0  
+r17: success in 2.4s  meas=288 val=84 failed=0  
+r19: success in 2.7s  meas=288 val=84 failed=0  
+r20: success in 2.4s  meas=288 val=108 failed=0  
+r25: success in 4.9s  meas=512 val=192 failed=0  
+r32: success in 62.7s  meas=402 val=258 failed=0  
+r64: success in 66.1s  meas=402 val=258 failed=0  

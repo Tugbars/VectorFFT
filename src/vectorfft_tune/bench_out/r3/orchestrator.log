@@ -1,6 +1,6 @@
 [phase] generate
-  [gen] fft_radix3_avx2.h: 14678 bytes
-  [gen] fft_radix3_avx512.h: 96648 bytes
+  [gen] fft_radix3_avx2.h: 15050 bytes
+  [gen] fft_radix3_avx512.h: 98782 bytes
 [phase] compile
   [cands] vfft_harness_candidates_avx2.c: 3 symbols
   [cands] vfft_harness_candidates_avx512.c: 9 symbols
@@ -8,41 +8,19 @@
   [cc base] harness.c
   [cc base] vfft_harness_candidates.c
   [cc avx2] vfft_harness_candidates_avx2.c
-  [cc avx512] vfft_harness_candidates_avx512.c
-  [link] harness
+  [cc avx512] skipping — host lacks AVX-512
+  [cc avx512_stub] vfft_harness_candidates_avx512_stub.c
+  [link] harness.exe
 [phase] run
-  [run] 768 jobs (0 already done — will skip)
-    [run] 25/768 (3%)  skipped_done=0 skipped_host=0
-    [run] 50/768 (7%)  skipped_done=0 skipped_host=0
-    [run] 75/768 (10%)  skipped_done=0 skipped_host=0
-    [run] 100/768 (13%)  skipped_done=0 skipped_host=0
-    [run] 125/768 (16%)  skipped_done=0 skipped_host=0
-    [run] 150/768 (20%)  skipped_done=0 skipped_host=0
-    [run] 175/768 (23%)  skipped_done=0 skipped_host=0
-    [run] 200/768 (26%)  skipped_done=0 skipped_host=0
-    [run] 225/768 (29%)  skipped_done=0 skipped_host=0
-    [run] 250/768 (33%)  skipped_done=0 skipped_host=0
-    [run] 275/768 (36%)  skipped_done=0 skipped_host=0
-    [run] 300/768 (39%)  skipped_done=0 skipped_host=0
-    [run] 325/768 (42%)  skipped_done=0 skipped_host=0
-    [run] 350/768 (46%)  skipped_done=0 skipped_host=0
-    [run] 375/768 (49%)  skipped_done=0 skipped_host=0
-    [run] 400/768 (52%)  skipped_done=0 skipped_host=0
-    [run] 425/768 (55%)  skipped_done=0 skipped_host=0
-    [run] 450/768 (59%)  skipped_done=0 skipped_host=0
-    [run] 475/768 (62%)  skipped_done=0 skipped_host=0
-    [run] 500/768 (65%)  skipped_done=0 skipped_host=0
-    [run] 525/768 (68%)  skipped_done=0 skipped_host=0
-    [run] 550/768 (72%)  skipped_done=0 skipped_host=0
-    [run] 575/768 (75%)  skipped_done=0 skipped_host=0
-    [run] 600/768 (78%)  skipped_done=0 skipped_host=0
-    [run] 625/768 (81%)  skipped_done=0 skipped_host=0
-    [run] 650/768 (85%)  skipped_done=0 skipped_host=0
-    [run] 675/768 (88%)  skipped_done=0 skipped_host=0
-    [run] 700/768 (91%)  skipped_done=0 skipped_host=0
-    [run] 725/768 (94%)  skipped_done=0 skipped_host=0
-    [run] 750/768 (98%)  skipped_done=0 skipped_host=0
-  [run] done: 768/768  skipped_done=0  skipped_host=0
+  [warn] host fingerprint changed since first run:
+         stored: Linux|unknown|x86_64
+         current: Windows|Intel64 Family 6 Model 183 Stepping 1, GenuineIntel|AMD64
+         measurements in this jsonl may be mixed across
+         machines. Delete measurements.jsonl to start fresh
+         on this host, or back it up and continue if you
+         know what you are doing.
+  [run] 768 jobs (768 already done — will skip)
+  [run] done: 768/768  skipped_done=768  skipped_host=0
 [phase] emit
   [copy] fft_radix3_avx2.h -> generated/
   [copy] fft_radix3_avx512.h -> generated/
@@ -59,7 +37,5 @@
   [cc validate] avx2
   [run validate] avx2
 [validate] 288 cases, 0 failed
-  [cc validate] avx512
-  [run validate] avx512
-[validate] 576 cases, 0 failed
-[done] elapsed 111.4s
+  [validate] skipping avx512: host lacks AVX-512
+[done] elapsed 4.0s
