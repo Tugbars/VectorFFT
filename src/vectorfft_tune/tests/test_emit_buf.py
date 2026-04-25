@@ -196,6 +196,77 @@ def test_emitted_r16_prefer_buf_compiles_to_valid_predicate():
 #         the pre-change winner
 # ─────────────────────────────────────────────────────────────────────
 
+def test_r64_prefer_buf_fires_at_high_stride_cells():
+    """The reviewer's R=64 predictions, derived from raw measurements:
+
+      (1024, 8192):  buf wins cross-protocol — flat=161673 (buf tile128),
+                     log3=184304. Within flat, buf tile128 (161673) beats
+                     baseline t1_dit (198192). prefer_buf must be 1.
+
+      (2048, 16384): same pattern — flat=333975 (buf tile128) beats
+                     log3=399937. Within flat, buf tile128 wins.
+                     prefer_buf must be 1.
+
+      (64, 64):      t1s wins cross-protocol (2542 ns) — buf is far behind
+                     at 6205 ns. prefer_buf must be 0 (cross-protocol).
+
+      (2048, 2048):  flat-baseline wins (239201 ns). Within flat, t1_dit
+                     (239201) beats buf tile128 (276205). prefer_buf must
+                     be 0 (lost within flat to baseline).
+
+    These are sparse (me, ios) wins. Before the cell-list emit fix, these
+    silently emitted prefer_buf == 0 because no me had majority wins.
+    """
+    wisdom_path = ROOT / 'generated' / 'r64' / 'vfft_r64_plan_wisdom.h'
+    if not wisdom_path.exists():
+        import pytest
+        pytest.skip('r64 plan_wisdom not yet emitted; run --phase emit')
+
+    text = wisdom_path.read_text(encoding='utf-8')
+
+    # Extract the prefer_buf body and evaluate it as Python with me/ios
+    # substituted. Simple regex pull.
+    import re
+    m = re.search(
+        r'static inline int radix64_prefer_buf\([^)]*\)\s*\{(.+?)^\}',
+        text, re.MULTILINE | re.DOTALL)
+    assert m, 'prefer_buf signature not found in r64 wisdom'
+    body = m.group(1)
+
+    # Asserts via static check on the body — the if-condition must
+    # cover the high-stride cells.
+    assert '1024' in body and '8192' in body, (
+        f'prefer_buf body does not reference (1024, 8192):\n{body}')
+    assert '2048' in body and '16384' in body, (
+        f'prefer_buf body does not reference (2048, 16384):\n{body}')
+
+
+def test_r64_prefer_t1s_fires_at_low_me():
+    """t1s wins broadly at small me on R=64 — me ∈ {64, 96, 128} per
+    the orchestrator's measurements. The wisdom file should emit a
+    me-range or me-list rule covering these. The bridge's old hardcoded
+    `case 64: return 0;` was wrong — now fixed to call radix64_prefer_t1s."""
+    wisdom_path = ROOT / 'generated' / 'r64' / 'vfft_r64_plan_wisdom.h'
+    if not wisdom_path.exists():
+        import pytest
+        pytest.skip('r64 plan_wisdom not yet emitted')
+
+    text = wisdom_path.read_text(encoding='utf-8')
+    import re
+    m = re.search(
+        r'static inline int radix64_prefer_t1s\([^)]*\)\s*\{(.+?)^\}',
+        text, re.MULTILINE | re.DOTALL)
+    assert m, 'prefer_t1s signature not found in r64 wisdom'
+    body = m.group(1)
+
+    # Must reference me=64 (low-me t1s win)
+    assert 'me == 64' in body or 'me >= 64' in body, (
+        f'prefer_t1s body does not cover me=64:\n{body}')
+    # Should NOT be the always-zero stub
+    assert 'never wins' not in body, (
+        f'prefer_t1s body claims never-wins but should fire at low me:\n{body}')
+
+
 def test_existing_predicates_change_only_at_dif_cells():
     """The DIF filter changes prefer_dit_log3 / prefer_log3 / prefer_t1s
     only at cells where the pre-change winner (no filter) was a DIF

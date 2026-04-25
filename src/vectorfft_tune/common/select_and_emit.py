@@ -607,25 +607,62 @@ def emit_plan_wisdom(R: int, cross: dict,
     # -- Helper: given a list of (me, ios) wins, emit a predicate body --
     # Returns the list of lines forming the function body (excluding the
     # signature and closing brace).
+    #
+    # Two-tier emit:
+    #   1. me-majority rule:    `if (me >= LO && me <= HI) return 1;`
+    #      Used where the predicate fires at the majority of ios values
+    #      for a given me. Dense wins (e.g. t1s at small me on every
+    #      stride) collapse into a clean me-range rule.
+    #   2. cell-list rule:      `if ((me == 1024 && ios == 8192) || ...) return 1;`
+    #      Used for sparse wins at specific (me, ios) pairs that don't
+    #      belong to a majority me. Required for buf and similar predicates
+    #      that fire only at high-stride cells. Without this, sparse wins
+    #      get silently dropped — that bug emitted prefer_buf == 0 even
+    #      when buf had real wins on R=64 at (1024, 8192) and (2048, 16384).
     def _emit_predicate_body(wins: list[tuple[int, int]],
                              total_fwd: list[tuple[int, int, str, float, str]],
                              wanted_label: str) -> list[str]:
         body: list[str] = []
-        body.append(f'    (void)ios;  /* may be unused if rules are me-only */')
         if not wins:
+            body.append(f'    (void)me; (void)ios;')
             body.append(f'    /* Bench showed {wanted_label} never wins on this host. */')
             body.append(f'    return 0;')
             return body
+
         wins_by_me: dict[int, int] = defaultdict(int)
         total_by_me: dict[int, int] = defaultdict(int)
-        for (me, ios, *_rest) in total_fwd:
+        for (me, _ios, *_rest) in total_fwd:
             total_by_me[me] += 1
-        for (me, ios) in wins:
+        for (me, _ios) in wins:
             wins_by_me[me] += 1
 
-        # me values where wanted is majority winner of the ios variants at that me
+        # Tier 1: me values where the predicate is majority winner across ios.
         rule_mes = sorted(me for me in wins_by_me
                           if wins_by_me[me] >= total_by_me[me] / 2)
+        me_rule_set = set(rule_mes)
+
+        # Tier 2: cells outside the majority-me set — sparse wins at
+        # specific (me, ios) pairs.
+        sparse_cells = sorted([(me, ios) for (me, ios) in wins
+                               if me not in me_rule_set])
+
+        # Decide whether ios is referenced by any rule.
+        rules_use_ios = bool(sparse_cells)
+        if not rules_use_ios:
+            body.append(f'    (void)ios;  /* rules are me-only */')
+
+        if sparse_cells:
+            # Document the cells so a reader can audit them quickly.
+            cell_strs = [f'({me},{ios})' for (me, ios) in sparse_cells[:8]]
+            tail = '' if len(sparse_cells) <= 8 else f', ... +{len(sparse_cells) - 8} more'
+            body.append(f'    /* Sparse {wanted_label} wins at {len(sparse_cells)} '
+                        f'specific (me, ios) cells: {", ".join(cell_strs)}{tail} */')
+            # Emit the OR-chain. C compilers handle long ||-chains fine.
+            cell_conds = ' || '.join(
+                f'(me == {me} && ios == {ios})'
+                for (me, ios) in sparse_cells)
+            body.append(f'    if ({cell_conds}) return 1;')
+
         if rule_mes:
             lo, hi = min(rule_mes), max(rule_mes)
             body.append(f'    /* Bench wins at me ∈ {{{", ".join(str(m) for m in rule_mes)}}} */')
@@ -634,6 +671,7 @@ def emit_plan_wisdom(R: int, cross: dict,
                 body.append(f'    if ({conds}) return 1;')
             else:
                 body.append(f'    if (me >= {lo} && me <= {hi}) return 1;')
+
         body.append(f'    return 0;')
         return body
 

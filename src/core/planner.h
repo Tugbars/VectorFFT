@@ -356,6 +356,24 @@ static stride_plan_t *_stride_build_plan(
             (R < STRIDE_REG_MAX_RADIX) &&
             (reg->t1_fwd_log3[R] != NULL);
 
+        /* Buf consultation: at cells where flat won cross-protocol AND
+         * buf won within flat (t1_buf_dit dispatcher beats t1_dit), use
+         * the buf dispatcher in the t1_fwd slot. Same flat protocol —
+         * twiddle layout is unchanged — so no flag bit is set; the
+         * planner just picks a different codelet pointer.
+         *
+         * Buf is checked AFTER log3: if log3 won cross-protocol, log3
+         * is faster than any flat variant including buf. The wisdom is
+         * exclusive (prefer_buf returns 0 wherever flat lost cross-
+         * protocol), but the explicit ordering here makes the precedence
+         * structurally obvious.
+         */
+        int want_buf =
+            !want_log3 &&
+            stride_prefer_buf(R, me_plan, ios_s) &&
+            (R < STRIDE_REG_MAX_RADIX) &&
+            (reg->t1_buf_fwd[R] != NULL);
+
         if (want_log3) {
             t1f[s] = reg->t1_fwd_log3[R];
             t1b[s] = reg->t1_bwd_log3[R];
@@ -364,6 +382,12 @@ static stride_plan_t *_stride_build_plan(
              * (Executor's runtime branch order would prefer log3 anyway,
              * but clearing t1s_fwd keeps stage state consistent with
              * the plan-time decision.) */
+            stage_skip_t1s[s] = 1;
+        } else if (want_buf) {
+            t1f[s] = reg->t1_buf_fwd[R];
+            t1b[s] = reg->t1_buf_bwd[R];
+            /* Buf wins flat — t1s would shadow it via the executor's
+             * runtime preference. Skip t1s for this stage. */
             stage_skip_t1s[s] = 1;
         } else {
             t1f[s] = reg->t1_fwd[R];
@@ -381,16 +405,35 @@ static stride_plan_t *_stride_build_plan(
                                               log3_mask);
     if (!plan) return NULL;
 
-    /* Attach scalar-broadcast twiddle codelets where available and
-     * wisdom hasn't claimed the stage for log3. The executor prefers
-     * t1s over t1 when t1s_fwd is set (see executor.h ~line 218). */
+    /* Attach scalar-broadcast twiddle codelets where wisdom prefers t1s.
+     *
+     * Gating rule: attach t1s_fwd ONLY when:
+     *   1. The stage hasn't been claimed by log3 or buf (stage_skip_t1s)
+     *   2. A t1s codelet is registered for this radix
+     *   3. The wisdom predicate prefer_t1s fires at this (me, ios)
+     *
+     * Without rule 3, the executor's runtime preference (which always
+     * picks t1s when t1s_fwd is set) would activate t1s at cells where
+     * flat or log3 actually wins. The bench data shows ~31% of R=16
+     * cells have flat winning over t1s, for example. Gating here lets
+     * the wisdom decide per-stage.
+     *
+     * Backward compatibility: if the radix has no plan_wisdom (e.g.
+     * R=2), stride_prefer_t1s returns 0 from its default switch case,
+     * and t1s is NOT attached. That's stricter than the pre-Phase-2.1
+     * behaviour which attached t1s unconditionally — but R=2 has no
+     * t1s codelet anyway, so this is a no-op in practice. Other
+     * radixes without wisdom would lose t1s; if that becomes an
+     * operational issue, a heuristic fallback (e.g. attach t1s when
+     * me <= 256) can be added here. */
     for (int s = 1; s < nf; s++) {
         if (stage_skip_t1s[s]) continue;
         int R = factors[s];
-        if (R < STRIDE_REG_MAX_RADIX && reg->t1s_fwd[R]) {
-            plan->stages[s].t1s_fwd = reg->t1s_fwd[R];
-            plan->stages[s].t1s_bwd = reg->t1s_bwd[R];
-        }
+        if (R >= STRIDE_REG_MAX_RADIX || !reg->t1s_fwd[R]) continue;
+        size_t ios_s = _stride_ios_at_stage(K, factors, nf, s);
+        if (!stride_prefer_t1s(R, me_plan, ios_s)) continue;
+        plan->stages[s].t1s_fwd = reg->t1s_fwd[R];
+        plan->stages[s].t1s_bwd = reg->t1s_bwd[R];
     }
 
     /* Attach out-of-place twiddle codelets for strided first-stage use.

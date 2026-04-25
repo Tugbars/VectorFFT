@@ -61,7 +61,7 @@
 /* Should the planner use DIT-log3 protocol at (me, ios)? */
 /* Safe for today's executor: activates DIT-log3 codelet on the forward path. */
 static inline int radix5_prefer_dit_log3(size_t me, size_t ios) {
-    (void)ios;  /* may be unused if rules are me-only */
+    (void)me; (void)ios;
     /* Bench showed DIT-log3 never wins on this host. */
     return 0;
 }
@@ -70,7 +70,7 @@ static inline int radix5_prefer_dit_log3(size_t me, size_t ios) {
 /* NOT yet consumable by the default executor (forward path is DIT).
  * Requires a DIF-forward executor path to activate. Informational. */
 static inline int radix5_prefer_dif_log3(size_t me, size_t ios) {
-    (void)ios;  /* may be unused if rules are me-only */
+    (void)me; (void)ios;
     /* Bench showed DIF-log3 never wins on this host. */
     return 0;
 }
@@ -84,7 +84,7 @@ static inline int radix5_prefer_log3(size_t me, size_t ios) {
 
 /* Should the planner use t1s protocol at (me, ios)? */
 static inline int radix5_prefer_t1s(size_t me, size_t ios) {
-    (void)ios;  /* may be unused if rules are me-only */
+    (void)ios;  /* rules are me-only */
     /* Bench wins at me ∈ {40, 80, 160, 320, 640, 1280} */
     if (me >= 40 && me <= 1280) return 1;
     return 0;
