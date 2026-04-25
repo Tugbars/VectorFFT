@@ -44,11 +44,40 @@ from dataclasses import dataclass
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent.parent / 'common'))
 import gen_radix16 as _gen  # noqa: E402
+import grids as _grids  # noqa: E402
 
 
 RADIX = 16
 GEN_SCRIPT = str(_HERE / 'gen_radix16.py')
+
+# Per-radix grid density preference. Override with the _ME / _IOS env vars
+# set by bench.py --me-density / --ios-density, or override globally by
+# editing these defaults.
+#
+# R=16 defaults to 'fine' on me because it has the most competing variants
+# (flat/t1s/log3/DIF-log3/isub2/log_half/buf × tile × drain) and the RL AVX2
+# bench showed a 6/6/6 even split — the most potential for fine-grained
+# winner-flip discovery anywhere in the portfolio.
+_GRID_DENSITY_ME  = 'fine'
+_GRID_DENSITY_IOS = 'medium'
+
+
+def _effective_me_density() -> str:
+    import os
+    env = os.environ.get('VFFT_ME_DENSITY')
+    if env:
+        return env
+    return _GRID_DENSITY_ME
+
+
+def _effective_ios_density() -> str:
+    import os
+    env = os.environ.get('VFFT_IOS_DENSITY')
+    if env:
+        return env
+    return _GRID_DENSITY_IOS
 
 
 @dataclass(frozen=True)
@@ -60,23 +89,25 @@ class Candidate:
     requires_avx512: bool = False
 
 
-_ME_RANGES = [64, 128, 256, 512, 1024, 2048]
-_ME_T1S    = [64, 128]
-
-def _ios_for_me(me: int) -> list[int]:
-    return [me, me + 8, 8 * me]
-
-
 def sweep_grid(variant_id: str) -> list[tuple[int, int]]:
+    me_density = _effective_me_density()
+    ios_density = _effective_ios_density()
+    full_me_grid = _grids.me_grid(RADIX, density=me_density)
+
     if variant_id == 'ct_t1s_dit':
-        mes = _ME_T1S
+        # t1s only benches the two smallest me values (K-blocked broadcast
+        # pattern; larger me values saturate cache with full twiddle table).
+        # In 'fine'/'ultra' grids this picks up slightly more points.
+        mes = [me for me in full_me_grid if me <= 128]
     elif _gen.is_buf_variant(variant_id):
         # buf requires me >= tile (kernel processes tile-sized m-blocks)
         tile, _ = _gen._parse_buf_variant(variant_id)
-        mes = [me for me in _ME_RANGES if me >= tile]
+        mes = [me for me in full_me_grid if me >= tile]
     else:
-        mes = _ME_RANGES
-    return [(me, ios) for me in mes for ios in _ios_for_me(me)]
+        mes = full_me_grid
+
+    return [(me, ios) for me in mes
+                       for ios in _grids.ios_grid(me, ios_density)]
 
 
 _ISAS = ['avx2', 'avx512']

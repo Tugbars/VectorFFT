@@ -945,6 +945,18 @@ def parse_args():
                          'Linux requires root. Backup written to '
                          'bench_out/.power_state_backup for recovery if the '
                          'process is killed.')
+    ap.add_argument('--me-density',
+                    choices=['coarse', 'medium', 'fine', 'ultra', 'default'],
+                    default='default',
+                    help='override me-axis grid density for all radixes in '
+                         'this run (default: per-radix preference; pow2 '
+                         'radixes default to fine, others to medium)')
+    ap.add_argument('--ios-density',
+                    choices=['coarse', 'medium', 'fine', 'ultra', 'default'],
+                    default='default',
+                    help='override ios-axis grid density for all radixes '
+                         'in this run (default: per-radix preference; '
+                         'medium is {me, me+8, 8*me})')
     ap.add_argument('--config', type=Path, default=CONFIG_FILE_DEFAULT,
                     help=f'config file path (default: {CONFIG_FILE_DEFAULT.name})')
     return ap.parse_args()
@@ -978,6 +990,17 @@ def main():
     args = parse_args()
     s = merge_settings(args)
     system = platform.system()
+
+    # Propagate --me-density / --ios-density to per-radix bench subprocesses
+    # via env vars. The bench.py in each subprocess reads these and passes
+    # them through to each candidates.py via os.environ. Setting here (in
+    # the parent) means child processes inherit them automatically.
+    if getattr(args, 'me_density', 'default') != 'default':
+        os.environ['VFFT_ME_DENSITY'] = args.me_density
+        print(f'[orch] me-density override: {args.me_density}')
+    if getattr(args, 'ios_density', 'default') != 'default':
+        os.environ['VFFT_IOS_DENSITY'] = args.ios_density
+        print(f'[orch] ios-density override: {args.ios_density}')
 
     # --summary-only: regenerate the summary from whatever data is on disk,
     # then exit. No preflight, no bench runs. Useful when a previous sweep

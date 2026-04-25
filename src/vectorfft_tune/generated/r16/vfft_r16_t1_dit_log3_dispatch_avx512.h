@@ -18,18 +18,25 @@ static inline void vfft_r16_t1_dit_log3_dispatch_fwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..128]: ct_t1_dit_log_half
-     *   me∈[256..256] pow2 ios: ct_t1_dit_log3_isub2
-     *   me∈[256..256] padded ios: ct_t1_dit_log3
-     *   me∈[512..512] pow2 ios: ct_t1_dit_log3
-     *   me∈[512..512] padded ios: ct_t1_dit_log3_isub2
-     *   me∈[1024..∞]: ct_t1_dit_log3
+     *   me∈[64..95]: ct_t1_dit_log3_isub2
+     *   me∈[96..191] pow2 ios: ct_t1_dit_log3_isub2
+     *   me∈[96..191] padded ios: ct_t1_dit_log3
+     *   me∈[192..383] pow2 ios: ct_t1_dit_log3
+     *   me∈[192..383] padded ios: ct_t1_dit_log3_isub2
+     *   me∈[384..511] pow2 ios: ct_t1_dit_log3_isub2
+     *   me∈[384..511] padded ios: ct_t1_dit_log3
+     *   me∈[512..767] pow2 ios: ct_t1_dit_log3
+     *   me∈[512..767] padded ios: ct_t1_dit_log3_isub2
+     *   me∈[768..1023]: ct_t1_dit_log3
+     *   me∈[1024..2047]: ct_t1_dit_log3_isub2
+     *   me∈[2048..∞] pow2 ios: ct_t1_dit_log3_isub2
+     *   me∈[2048..∞] padded ios: ct_t1_dit_log3
      */
-    if (me <= 128) {
-        radix16_t1_dit_log_half_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+    if (me <= 95) {
+        radix16_t1_dit_log3_isub2_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
-    else if (me >= 256 && me <= 256) {
+    else if (me >= 96 && me <= 191) {
         if (ios == me) {
             radix16_t1_dit_log3_isub2_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
             return;
@@ -38,7 +45,7 @@ static inline void vfft_r16_t1_dit_log3_dispatch_fwd_avx512(
             return;
         }
     }
-    else if (me >= 512 && me <= 512) {
+    else if (me >= 192 && me <= 383) {
         if (ios == me) {
             radix16_t1_dit_log3_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
             return;
@@ -47,9 +54,40 @@ static inline void vfft_r16_t1_dit_log3_dispatch_fwd_avx512(
             return;
         }
     }
-    else if (me >= 1024) {
+    else if (me >= 384 && me <= 511) {
+        if (ios == me) {
+            radix16_t1_dit_log3_isub2_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        } else {
+            radix16_t1_dit_log3_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        }
+    }
+    else if (me >= 512 && me <= 767) {
+        if (ios == me) {
+            radix16_t1_dit_log3_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        } else {
+            radix16_t1_dit_log3_isub2_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        }
+    }
+    else if (me >= 768 && me <= 1023) {
         radix16_t1_dit_log3_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
+    }
+    else if (me >= 1024 && me <= 2047) {
+        radix16_t1_dit_log3_isub2_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 2048) {
+        if (ios == me) {
+            radix16_t1_dit_log3_isub2_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        } else {
+            radix16_t1_dit_log3_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        }
     }
 }
 
@@ -59,37 +97,46 @@ static inline void vfft_r16_t1_dit_log3_dispatch_bwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..64] pow2 ios: ct_t1_dit_log3_isub2
-     *   me∈[64..64] padded ios: ct_t1_dit_log_half
-     *   me∈[128..256] pow2 ios: ct_t1_dit_log_half
-     *   me∈[128..256] padded ios: ct_t1_dit_log3_isub2
-     *   me∈[512..1024]: ct_t1_dit_log3
-     *   me∈[2048..∞] pow2 ios: ct_t1_dit_log3_isub2
-     *   me∈[2048..∞] padded ios: ct_t1_dit_log3
+     *   me∈[64..127]: ct_t1_dit_log3_isub2
+     *   me∈[128..255] pow2 ios: ct_t1_dit_log3_isub2
+     *   me∈[128..255] padded ios: ct_t1_dit_log3
+     *   me∈[256..383]: ct_t1_dit_log3
+     *   me∈[384..767]: ct_t1_dit_log3_isub2
+     *   me∈[768..1023]: ct_t1_dit_log3
+     *   me∈[1024..1535]: ct_t1_dit_log3_isub2
+     *   me∈[1536..∞] pow2 ios: ct_t1_dit_log3_isub2
+     *   me∈[1536..∞] padded ios: ct_t1_dit_log3
      */
-    if (me <= 64) {
+    if (me <= 127) {
+        radix16_t1_dit_log3_isub2_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 128 && me <= 255) {
         if (ios == me) {
             radix16_t1_dit_log3_isub2_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
             return;
         } else {
-            radix16_t1_dit_log_half_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            radix16_t1_dit_log3_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
             return;
         }
     }
-    else if (me >= 128 && me <= 256) {
-        if (ios == me) {
-            radix16_t1_dit_log_half_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        } else {
-            radix16_t1_dit_log3_isub2_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        }
-    }
-    else if (me >= 512 && me <= 1024) {
+    else if (me >= 256 && me <= 383) {
         radix16_t1_dit_log3_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
-    else if (me >= 2048) {
+    else if (me >= 384 && me <= 767) {
+        radix16_t1_dit_log3_isub2_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 768 && me <= 1023) {
+        radix16_t1_dit_log3_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 1024 && me <= 1535) {
+        radix16_t1_dit_log3_isub2_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 1536) {
         if (ios == me) {
             radix16_t1_dit_log3_isub2_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
             return;

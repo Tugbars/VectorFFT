@@ -37,7 +37,7 @@ static const double W20_8_re = -8.09016994374947340241e-01;
 static const double W20_8_im = -5.87785252292473248126e-01;
 static const double W20_9_re = -9.51056516295153531182e-01;
 static const double W20_9_im = -3.09016994374947506774e-01;
-static const double W20_12_re = -8.09016994374947451263e-01;
+static const double W20_12_re = -8.09016994374947562285e-01;
 static const double W20_12_im = 5.87785252292473026081e-01;
 #endif
 
@@ -1075,7 +1075,7 @@ static const double W20_8_re = -8.09016994374947340241e-01;
 static const double W20_8_im = -5.87785252292473248126e-01;
 static const double W20_9_re = -9.51056516295153531182e-01;
 static const double W20_9_im = -3.09016994374947506774e-01;
-static const double W20_12_re = -8.09016994374947451263e-01;
+static const double W20_12_re = -8.09016994374947562285e-01;
 static const double W20_12_im = 5.87785252292473026081e-01;
 #endif
 
@@ -2115,7 +2115,7 @@ static const double W20_8_re = -8.09016994374947340241e-01;
 static const double W20_8_im = -5.87785252292473248126e-01;
 static const double W20_9_re = -9.51056516295153531182e-01;
 static const double W20_9_im = -3.09016994374947506774e-01;
-static const double W20_12_re = -8.09016994374947451263e-01;
+static const double W20_12_re = -8.09016994374947562285e-01;
 static const double W20_12_im = 5.87785252292473026081e-01;
 #endif
 
