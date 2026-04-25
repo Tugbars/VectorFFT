@@ -196,10 +196,17 @@
   #include "fft_radix64_avx2_ct_n1.h"
   #include "fft_radix64_avx2_ct_t1_oop_dit.h"
   #include "fft_radix64_avx2_ct_n1_scaled.h"
-  /* R=4 and R=8 use legacy all-in-one fft_radix{4,8}_avx2.h headers
-   * — they provide n1 directly without a separate ct_n1 header. */
-  #include "fft_radix4_avx2.h"
-  #include "fft_radix8_avx2.h"
+  /* R=4 and R=8: NOT included here. The vectorfft_tune dispatcher headers
+   * (vfft_r{4,8}_*_dispatch_avx2.h) sibling-include the generated unified
+   * `fft_radix{4,8}_avx2.h` from generated/r{4,8}/, which has the FULL
+   * variant set (log1, log3, t1s, plus n1 / n1_scaled / t1_oop aux).
+   * The production legacy `src/stride-fft/codelets/avx2/fft_radix{4,8}_avx2.h`
+   * uses the same #include guard `FFT_RADIX{4,8}_AVX2_H` but with FEWER
+   * variants. Including the production header here would set the guard
+   * first, causing the dispatcher's include of the unified version to
+   * be skipped — and tuned dispatchers would then reference undefined
+   * symbols (radix4_t1s_dit_fwd_avx2, radix8_t1_dit_log1_fwd_avx2, etc.).
+   * Letting the dispatcher pull the unified version first sidesteps this. */
 #else
   #include "fft_radix3_scalar_ct_n1.h"
   #include "fft_radix3_scalar_ct_t1_oop_dit.h"

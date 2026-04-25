@@ -97,20 +97,47 @@ def build_env(tc):
     env = os.environ.copy()
     if not tc['is_windows'] or not tc['is_icx']:
         return env
-    # Probe known oneAPI install paths.
-    candidates = [
-        r'C:\Program Files (x86)\Intel\oneAPI\compiler\2025.3\lib',
-        r'C:\Program Files (x86)\Intel\oneAPI\compiler\latest\lib',
-        r'C:\Program Files\Intel\oneAPI\compiler\2025.3\lib',
-        r'C:\Program Files\Intel\oneAPI\compiler\latest\lib',
-    ]
-    for lib_dir in candidates:
-        if Path(lib_dir).is_dir():
-            existing = env.get('LIB', '')
-            if lib_dir not in existing:
-                env['LIB'] = lib_dir + (';' + existing if existing else '')
-            return env
-    print(f'  [warn] no Intel oneAPI lib dir found — link may fail')
+    # Build LIB path covering: oneAPI runtime, MSVC, Windows SDK (um + ucrt).
+    # setvars.bat / vcvarsall.bat normally set this; we replicate it.
+    lib_paths = []
+
+    # oneAPI compiler runtime
+    for p in (r'C:\Program Files (x86)\Intel\oneAPI\compiler\2025.3\lib',
+              r'C:\Program Files (x86)\Intel\oneAPI\compiler\latest\lib',
+              r'C:\Program Files\Intel\oneAPI\compiler\2025.3\lib',
+              r'C:\Program Files\Intel\oneAPI\compiler\latest\lib'):
+        if Path(p).is_dir():
+            lib_paths.append(p)
+            break
+
+    # MSVC C runtime — pick the highest-versioned MSVC under VS Community
+    msvc_root = Path(r'C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC')
+    if msvc_root.is_dir():
+        versions = sorted([d for d in msvc_root.iterdir() if d.is_dir()],
+                          reverse=True)
+        if versions:
+            msvc_lib = versions[0] / 'lib' / 'x64'
+            if msvc_lib.is_dir():
+                lib_paths.append(str(msvc_lib))
+
+    # Windows SDK (kernel32.lib, uuid.lib, etc.) — pick highest version
+    sdk_root = Path(r'C:\Program Files (x86)\Windows Kits\10\Lib')
+    if sdk_root.is_dir():
+        versions = sorted([d for d in sdk_root.iterdir() if d.is_dir()],
+                          reverse=True)
+        if versions:
+            for sub in ('um', 'ucrt'):
+                p = versions[0] / sub / 'x64'
+                if p.is_dir():
+                    lib_paths.append(str(p))
+
+    if not lib_paths:
+        print('  [warn] no system lib dirs found — link may fail')
+        return env
+
+    existing = env.get('LIB', '')
+    new_lib = ';'.join(lib_paths)
+    env['LIB'] = new_lib + (';' + existing if existing else '')
     return env
 
 
