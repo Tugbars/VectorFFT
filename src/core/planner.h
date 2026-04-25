@@ -34,6 +34,18 @@
 #define STRIDE_PLANNER_H
 
 #include "registry.h"
+
+/* Forward declaration. _stride_build_plan is defined later in this file
+ * but called from exhaustive.h and dp_planner.h (included below) — those
+ * files were updated to route through _stride_build_plan so wisdom-driven
+ * log3/buf activation propagates into the exhaustive/DP search paths.
+ * registry.h above provides stride_registry_t and stride_plan_t (via
+ * executor.h) so we can reference them directly. */
+static stride_plan_t *_stride_build_plan(
+        int N, size_t K,
+        const int *factors, int nf,
+        const stride_registry_t *reg);
+
 #include "factorizer.h"
 #include "exhaustive.h"
 #include "dp_planner.h"

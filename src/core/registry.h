@@ -47,8 +47,13 @@
  * The dispatchers are static inline so there is nothing to link — the
  * compiler inlines the winning codelet at the call site.
  */
-#ifndef VFFT_CORE_REGISTRY_H
-#define VFFT_CORE_REGISTRY_H
+/* Use the SAME guard as production registry.h (stride-fft/core/registry.h)
+ * so that when production headers (e.g. factorizer.h) sibling-include
+ * "registry.h" and find the production version, the guard is already set
+ * and the production content is skipped. The new core's planner.h includes
+ * THIS file first via the -I order, ensuring this version wins. */
+#ifndef STRIDE_REGISTRY_H
+#define STRIDE_REGISTRY_H
 
 #include "executor.h"
 #include <string.h>
@@ -649,4 +654,4 @@ static inline int stride_registry_has_t1_buf(const stride_registry_t *reg, int r
     return radix > 0 && radix < STRIDE_REG_MAX_RADIX && reg->t1_buf_fwd[radix] != NULL;
 }
 
-#endif /* VFFT_CORE_REGISTRY_H */
+#endif /* STRIDE_REGISTRY_H */
