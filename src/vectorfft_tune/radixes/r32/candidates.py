@@ -57,11 +57,29 @@ from dataclasses import dataclass
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent.parent / 'common'))
 import gen_radix32 as _gen  # noqa: E402
+import grids as _grids  # noqa: E402
 
 
 RADIX = 32
 GEN_SCRIPT = str(_HERE / 'gen_radix32.py')
+
+# R=32 defaults to 'fine' me grid. This is the mid-radix DIF-log3 inflection
+# point (5W/4T/9L near-tie on RL AVX2) — dense sampling here is the best
+# chance to characterize where exactly DIF-log3 begins to outcompete flat.
+_GRID_DENSITY_ME  = 'fine'
+_GRID_DENSITY_IOS = 'medium'
+
+
+def _effective_me_density() -> str:
+    import os
+    return os.environ.get('VFFT_ME_DENSITY', _GRID_DENSITY_ME)
+
+
+def _effective_ios_density() -> str:
+    import os
+    return os.environ.get('VFFT_IOS_DENSITY', _GRID_DENSITY_IOS)
 
 
 @dataclass(frozen=True)
@@ -73,22 +91,20 @@ class Candidate:
     requires_avx512: bool = False
 
 
-_ME_RANGES = [64, 128, 256, 512, 1024, 2048]
-_ME_T1S    = [64, 128]
-
-def _ios_for_me(me: int) -> list[int]:
-    return [me, me + 8, 8 * me]
-
-
 def sweep_grid(variant_id: str) -> list[tuple[int, int]]:
+    me_density  = _effective_me_density()
+    ios_density = _effective_ios_density()
+    full_me_grid = _grids.me_grid(RADIX, density=me_density)
+
     if variant_id == 'ct_t1s_dit':
-        mes = _ME_T1S
+        mes = [me for me in full_me_grid if me <= 128]
     elif _gen.is_buf_variant(variant_id):
         tile, _ = _gen._parse_buf_variant(variant_id)
-        mes = [me for me in _ME_RANGES if me >= tile]
+        mes = [me for me in full_me_grid if me >= tile]
     else:
-        mes = _ME_RANGES
-    return [(me, ios) for me in mes for ios in _ios_for_me(me)]
+        mes = full_me_grid
+    return [(me, ios) for me in mes
+                       for ios in _grids.ios_grid(me, ios_density)]
 
 
 _ISAS = ['avx2', 'avx512']

@@ -1,0 +1,28 @@
+--- /tmp/orig_executor.h	2026-04-24 22:20:27.903932582 +0000
++++ executor.h	2026-04-24 22:17:16.458977713 +0000
+@@ -1024,14 +1024,20 @@
+ 
+         /* Fallback to cf_all + n1 when:
+          * 1. No t1_dit codelet available for this radix
+-         * 2. R>=64: t1_dit is ALWAYS slower than cf+n1 for R=64.
+-         *    The 2225-op butterfly has too much register pressure for
+-         *    fused twiddle+butterfly to help. Bench confirms n1_fallback
+-         *    wins at ALL K values (2-3x faster than t1_dit). */
++         * 2. R>=64: t1_dit is ALWAYS slower than cf+n1 for R=64 in the
++         *    flat protocol. The 2225-op butterfly has too much register
++         *    pressure for fused twiddle+butterfly to help.
++         *
++         *    EXCEPTION: when the planner has chosen log3 for this stage
++         *    (use_log3 set via log3_mask), the log3 codelet uses
++         *    derivation chains that avoid the flat register-pressure
++         *    problem, and the codelet-bench shows log3 winning
++         *    decisively at R=64 (8/18 cells on RL AVX2). In that case
++         *    keep the log3 path — do NOT fall back to n1. */
+         if (s > 0 && plan->stages[s].t1_fwd == NULL) {
+             plan->stages[s].use_n1_fallback = 1;
+         }
+-        if (factors[s] >= 64 && s > 0) {
++        if (factors[s] >= 64 && s > 0 && !plan->stages[s].use_log3) {
+             plan->stages[s].use_n1_fallback = 1;
+         }
+     }

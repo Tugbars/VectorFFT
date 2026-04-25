@@ -1,8 +1,9 @@
 {
-  "os": "Windows",
-  "release": "11",
-  "machine": "AMD64",
-  "python": "3.13.1",
-  "hostname": "DESKTOP-RHCG7VG",
-  "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel"
+  "os": "Linux",
+  "release": "4.4.0",
+  "machine": "x86_64",
+  "python": "3.12.3",
+  "hostname": "runsc",
+  "cpu_model": "unknown",
+  "first_core_id": "0"
 }

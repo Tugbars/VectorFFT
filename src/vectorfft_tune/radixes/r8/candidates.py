@@ -34,11 +34,28 @@ from dataclasses import dataclass
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent.parent / 'common'))
 import gen_radix8 as _gen  # noqa: E402
+import grids as _grids  # noqa: E402
 
 
 RADIX = 8
 GEN_SCRIPT = str(_HERE / 'gen_radix8.py')
+
+# R=8 defaults to 'fine' me grid because it's a power-of-2 radix with
+# multiple unroll variants (U=1/U=2/U=3) that compete at short loops.
+_GRID_DENSITY_ME  = 'fine'
+_GRID_DENSITY_IOS = 'medium'
+
+
+def _effective_me_density() -> str:
+    import os
+    return os.environ.get('VFFT_ME_DENSITY', _GRID_DENSITY_ME)
+
+
+def _effective_ios_density() -> str:
+    import os
+    return os.environ.get('VFFT_IOS_DENSITY', _GRID_DENSITY_IOS)
 
 
 @dataclass(frozen=True)
@@ -50,15 +67,18 @@ class Candidate:
     requires_avx512: bool = False
 
 
-_ME_RANGES = [64, 128, 256, 512, 1024, 2048]
-_ME_T1S    = [64, 128]  # t1s K-blocked — only benched at small me
-
-def _ios_for_me(me: int) -> list[int]:
-    return [me, me + 8, 8 * me]
-
 def sweep_grid(variant_id: str) -> list[tuple[int, int]]:
-    mes = _ME_T1S if variant_id == 'ct_t1s_dit' else _ME_RANGES
-    return [(me, ios) for me in mes for ios in _ios_for_me(me)]
+    me_density  = _effective_me_density()
+    ios_density = _effective_ios_density()
+    full_me_grid = _grids.me_grid(RADIX, density=me_density)
+
+    if variant_id == 'ct_t1s_dit':
+        mes = [me for me in full_me_grid if me <= 128]
+    else:
+        mes = full_me_grid
+
+    return [(me, ios) for me in mes
+                       for ios in _grids.ios_grid(me, ios_density)]
 
 
 _ISAS = ['avx2', 'avx512']

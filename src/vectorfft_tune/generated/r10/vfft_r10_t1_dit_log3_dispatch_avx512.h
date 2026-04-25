@@ -32,11 +32,11 @@ static inline void vfft_r10_t1_dit_log3_dispatch_bwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[8..128]: ct_t1_dit_log3
+     *   me∈[8..255]: ct_t1_dit_log3
      *   me∈[256..∞] pow2 ios: ct_t1_dit_log3_u2a
      *   me∈[256..∞] padded ios: ct_t1_dit_log3
      */
-    if (me <= 128) {
+    if (me <= 255) {
         radix10_t1_dit_log3_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }

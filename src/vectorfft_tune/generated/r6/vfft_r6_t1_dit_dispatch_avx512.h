@@ -18,22 +18,22 @@ static inline void vfft_r6_t1_dit_dispatch_fwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[8..16]: ct_t1_dit
-     *   me∈[32..32]: ct_t1_dit_u2
-     *   me∈[64..64] pow2 ios: ct_t1_dit_u2
-     *   me∈[64..64] padded ios: ct_t1_dit
-     *   me∈[128..128]: ct_t1_dit_u2
+     *   me∈[8..31]: ct_t1_dit
+     *   me∈[32..63]: ct_t1_dit_u2
+     *   me∈[64..127] pow2 ios: ct_t1_dit_u2
+     *   me∈[64..127] padded ios: ct_t1_dit
+     *   me∈[128..255]: ct_t1_dit_u2
      *   me∈[256..∞]: ct_t1_dit
      */
-    if (me <= 16) {
+    if (me <= 31) {
         radix6_t1_dit_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
-    else if (me >= 32 && me <= 32) {
+    else if (me >= 32 && me <= 63) {
         radix6_t1_dit_u2_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
-    else if (me >= 64 && me <= 64) {
+    else if (me >= 64 && me <= 127) {
         if (ios == me) {
             radix6_t1_dit_u2_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
             return;
@@ -42,7 +42,7 @@ static inline void vfft_r6_t1_dit_dispatch_fwd_avx512(
             return;
         }
     }
-    else if (me >= 128 && me <= 128) {
+    else if (me >= 128 && me <= 255) {
         radix6_t1_dit_u2_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
@@ -58,16 +58,16 @@ static inline void vfft_r6_t1_dit_dispatch_bwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[8..8]: ct_t1_dit
-     *   me∈[16..16] pow2 ios: ct_t1_dit_u2
-     *   me∈[16..16] padded ios: ct_t1_dit
+     *   me∈[8..15]: ct_t1_dit
+     *   me∈[16..31] pow2 ios: ct_t1_dit_u2
+     *   me∈[16..31] padded ios: ct_t1_dit
      *   me∈[32..∞]: ct_t1_dit
      */
-    if (me <= 8) {
+    if (me <= 15) {
         radix6_t1_dit_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
-    else if (me >= 16 && me <= 16) {
+    else if (me >= 16 && me <= 31) {
         if (ios == me) {
             radix6_t1_dit_u2_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
             return;

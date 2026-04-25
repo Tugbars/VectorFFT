@@ -32,25 +32,9 @@ static inline void vfft_r25_t1_dit_dispatch_bwd_avx2(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[8..16]: ct_t1_dit
-     *   me∈[32..32] pow2 ios: ct_t1_buf_dit_tile32_temporal
-     *   me∈[32..32] padded ios: ct_t1_dit
-     *   me∈[64..∞]: ct_t1_dit
+     *   me∈[8..∞]: ct_t1_dit
      */
-    if (me <= 16) {
-        radix25_t1_dit_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-        return;
-    }
-    else if (me >= 32 && me <= 32) {
-        if (ios == me) {
-            radix25_t1_buf_dit_tile32_temporal_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        } else {
-            radix25_t1_dit_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
-            return;
-        }
-    }
-    else if (me >= 64) {
+    {
         radix25_t1_dit_bwd_avx2(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }

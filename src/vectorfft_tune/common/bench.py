@@ -646,8 +646,28 @@ if __name__ == '__main__':
                     choices=['generate', 'compile', 'run', 'emit',
                              'validate', 'all'],
                     help='pipeline phase(s) to run; repeat or omit for all')
+    ap.add_argument('--me-density',
+                    choices=['coarse', 'medium', 'fine', 'ultra', 'default'],
+                    default='default',
+                    help='sweep me-grid density. "default" uses the radix\'s '
+                         'preferred density (fine for power-of-2 radixes, '
+                         'medium otherwise)')
+    ap.add_argument('--ios-density',
+                    choices=['coarse', 'medium', 'fine', 'ultra', 'default'],
+                    default='default',
+                    help='sweep ios-grid density. "default" uses medium '
+                         'unless the radix specifies otherwise')
     args = ap.parse_args()
     phases = args.phase or ['all']
+    # Export density settings for candidates.py modules to pick up.
+    # candidates.py reads these via os.environ if set, falling back to its
+    # own _GRID_DENSITY_ME / _GRID_DENSITY_IOS module constants or the
+    # grids.py defaults.
+    import os as _os
+    if args.me_density != 'default':
+        _os.environ['VFFT_ME_DENSITY'] = args.me_density
+    if args.ios_density != 'default':
+        _os.environ['VFFT_IOS_DENSITY'] = args.ios_density
     main_driver(Path(args.radix_dir).resolve(),
                 Path(args.out).resolve(),
                 phases,

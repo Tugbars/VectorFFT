@@ -18,9 +18,35 @@ static inline void vfft_r16_t1_buf_dit_dispatch_fwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..∞]: ct_t1_buf_dit_tile64_temporal
+     *   me∈[64..191]: ct_t1_buf_dit_tile64_temporal
+     *   me∈[192..255]: ct_t1_buf_dit_tile128_temporal
+     *   me∈[256..1023]: ct_t1_buf_dit_tile64_temporal
+     *   me∈[1024..1535] pow2 ios: ct_t1_buf_dit_tile64_temporal
+     *   me∈[1024..1535] padded ios: ct_t1_buf_dit_tile128_temporal
+     *   me∈[1536..∞]: ct_t1_buf_dit_tile64_temporal
      */
-    {
+    if (me <= 191) {
+        radix16_t1_buf_dit_tile64_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 192 && me <= 255) {
+        radix16_t1_buf_dit_tile128_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 256 && me <= 1023) {
+        radix16_t1_buf_dit_tile64_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 1024 && me <= 1535) {
+        if (ios == me) {
+            radix16_t1_buf_dit_tile64_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        } else {
+            radix16_t1_buf_dit_tile128_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        }
+    }
+    else if (me >= 1536) {
         radix16_t1_buf_dit_tile64_temporal_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
     }
@@ -32,11 +58,32 @@ static inline void vfft_r16_t1_buf_dit_dispatch_bwd_avx512(
     size_t ios, size_t me)
 {
     /* dispatch rules (per bench):
-     *   me∈[64..∞]: ct_t1_buf_dit_tile64_temporal
+     *   me∈[64..191]: ct_t1_buf_dit_tile64_temporal
+     *   me∈[192..255]: ct_t1_buf_dit_tile128_temporal
+     *   me∈[256..2047]: ct_t1_buf_dit_tile64_temporal
+     *   me∈[2048..∞] pow2 ios: ct_t1_buf_dit_tile128_temporal
+     *   me∈[2048..∞] padded ios: ct_t1_buf_dit_tile64_temporal
      */
-    {
+    if (me <= 191) {
         radix16_t1_buf_dit_tile64_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
         return;
+    }
+    else if (me >= 192 && me <= 255) {
+        radix16_t1_buf_dit_tile128_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 256 && me <= 2047) {
+        radix16_t1_buf_dit_tile64_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+        return;
+    }
+    else if (me >= 2048) {
+        if (ios == me) {
+            radix16_t1_buf_dit_tile128_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        } else {
+            radix16_t1_buf_dit_tile64_temporal_bwd_avx512(rio_re, rio_im, W_re, W_im, ios, me);
+            return;
+        }
     }
 }
 

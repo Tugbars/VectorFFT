@@ -1,0 +1,34 @@
+--- /tmp/orig_exhaustive.h	2026-04-24 22:20:27.924932577 +0000
++++ exhaustive.h	2026-04-24 22:18:50.694955370 +0000
+@@ -141,23 +141,17 @@
+                                double *re, double *im, double *orig_re, double *orig_im) {
+     size_t total = (size_t)N * K;
+ 
+-    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+-    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
++    /* Sanity check: all requested radixes must have n1 codelets. */
+     for (int s = 0; s < nf; s++) {
+-        int R = factors[s];
+-        if (!reg->n1_fwd[R]) return 1e18;
+-        n1f[s] = reg->n1_fwd[R];
+-        n1b[s] = reg->n1_bwd[R];
+-        if (s == 0) {
+-            t1f[s] = NULL;
+-            t1b[s] = NULL;
+-        } else {
+-            t1f[s] = reg->t1_fwd[R];
+-            t1b[s] = reg->t1_bwd[R];
+-        }
++        if (!reg->n1_fwd[factors[s]]) return 1e18;
+     }
+ 
+-    stride_plan_t *plan = stride_plan_create(N, K, factors, nf, n1f, n1b, t1f, t1b, 0);
++    /* Phase 2: route through _stride_build_plan so wisdom-driven log3
++     * activation is reflected in exhaustive search results. Without this,
++     * exhaustive would compare flat-only plans across factorizations and
++     * miss the case where factorization B's log3-eligible stages dominate
++     * factorization A's flat-only stages. */
++    stride_plan_t *plan = _stride_build_plan(N, K, factors, nf, reg);
+     if (!plan) return 1e18;
+ 
+     /* Warm up — enough to stabilize branch predictors and fill caches */

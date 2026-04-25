@@ -17,11 +17,30 @@ from dataclasses import dataclass, field
 # Import the generator's VARIANTS metadata directly.
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent.parent / 'common'))
 import gen_radix4 as _gen  # noqa: E402
+import grids as _grids  # noqa: E402
 
 
 RADIX = 4
 GEN_SCRIPT = str(_HERE / 'gen_radix4.py')
+
+# Per-radix grid density preference. R=4 defaults to 'fine' on me because
+# it's power-of-2 and has U=1/U=2/U=3 unroll variants that can flip winners
+# across me values (compiler scheduling sensitivity on short loops).
+# Override via bench.py --me-density/--ios-density, or by editing here.
+_GRID_DENSITY_ME  = 'fine'
+_GRID_DENSITY_IOS = 'medium'
+
+
+def _effective_me_density() -> str:
+    import os
+    return os.environ.get('VFFT_ME_DENSITY', _GRID_DENSITY_ME)
+
+
+def _effective_ios_density() -> str:
+    import os
+    return os.environ.get('VFFT_IOS_DENSITY', _GRID_DENSITY_IOS)
 
 
 @dataclass(frozen=True)
@@ -44,29 +63,33 @@ class Candidate:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Sweep grid
+# Sweep grid (density-configurable — see common/grids.py)
 #
-# For each me, bench ios in {me, me+8, 8*me}:
-#   me:    power-of-2 stride (worst-case aliasing)
-#   me+8:  minimally padded stride (alias-free)
-#   8*me:  large stride (memory-latency-bound regime)
+# me axis:  controlled by _GRID_DENSITY_ME or VFFT_ME_DENSITY env.
+#           Defaults to 'fine' for R=4 (power-of-2 radix with unroll variants).
+# ios axis: controlled by _GRID_DENSITY_IOS or VFFT_IOS_DENSITY env.
+#           Defaults to 'medium' which is {me, me+8, 8*me}:
+#             me    — power-of-2 stride (worst-case aliasing)
+#             me+8  — minimally padded stride (alias-free)
+#             8*me  — large stride (memory-latency-bound regime)
 # ═══════════════════════════════════════════════════════════════
-
-_ME_RANGES = [64, 128, 256, 512, 1024, 2048]
-_ME_T1S    = [64, 128]  # t1s only benched at small me (K-blocked pattern)
-
-
-def _ios_for_me(me: int) -> list[int]:
-    return [me, me + 8, 8 * me]
 
 
 def sweep_grid(variant_id: str) -> list[tuple[int, int]]:
     """Return the (me, ios) points where this variant should be benched."""
+    me_density  = _effective_me_density()
+    ios_density = _effective_ios_density()
+    full_me_grid = _grids.me_grid(RADIX, density=me_density)
+
     if variant_id == 'ct_t1s_dit':
-        mes = _ME_T1S
+        # t1s benched only at small me (K-blocked pattern; t1s loses at
+        # large me because scalar broadcasts serialize the inner loop).
+        mes = [me for me in full_me_grid if me <= 128]
     else:
-        mes = _ME_RANGES
-    return [(me, ios) for me in mes for ios in _ios_for_me(me)]
+        mes = full_me_grid
+
+    return [(me, ios) for me in mes
+                       for ios in _grids.ios_grid(me, ios_density)]
 
 
 # ═══════════════════════════════════════════════════════════════
