@@ -74,16 +74,26 @@ def build_cmd(tc, src_c, out_bin):
         inc = [a.replace('-I', '/I') for a in build_includes()]
         return [tc['cc']] + flags + inc + [str(src_c), f'/Fe:{out_bin}']
     # GCC-style (icx, gcc, clang).
-    # If ICX hits the Machine Instruction Scheduler ICE on a large codelet
-    # (we saw this on R=32 in test-gen/R32), the workaround flag depends on
-    # ICX version. Try `-mllvm -enable-misched=false` first; older versions
-    # used `-mllvm -disable-misched`. Drop both if neither is recognized.
+    # _CRT_SECURE_NO_WARNINGS suppresses MSVC's fopen/sscanf deprecation
+    # warnings — they spam thousands of lines and bury real errors.
     flags = ['-O2', '-mavx2', '-mfma',
+             '-D_CRT_SECURE_NO_WARNINGS',
              '-Wno-overflow', '-Wno-implicit-function-declaration',
-             '-Wno-unused-function', '-Wno-unknown-argument']
+             '-Wno-unused-function', '-Wno-unknown-argument',
+             '-Wno-deprecated-declarations']
     cmd = [tc['cc']] + flags + build_includes() + [str(src_c), '-o', str(out_bin)]
     if tc['is_windows'] and tc['is_icx']:
         cmd.append('-fuse-ld=lld')
+        # Add Intel oneAPI runtime library path so LLD can find libircmt.lib,
+        # svml_dispmt.lib, libmmt.lib. Without setvars.bat, ICX doesn't add
+        # this automatically. Probe both 2025.x and latest paths.
+        for lib_dir in (
+            r'C:\Program Files (x86)\Intel\oneAPI\compiler\2025.3\lib',
+            r'C:\Program Files (x86)\Intel\oneAPI\compiler\latest\lib',
+        ):
+            if Path(lib_dir).is_dir():
+                cmd.append(f'-L{lib_dir}')
+                break
     if not tc['is_windows']:
         cmd.append('-lm')
     return cmd

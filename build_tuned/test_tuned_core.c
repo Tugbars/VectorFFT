@@ -22,6 +22,7 @@
 #include <math.h>
 
 #include "planner.h"  /* resolves to src/core/planner.h via -I order */
+#include "env.h"      /* stride_alloc / stride_free */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
