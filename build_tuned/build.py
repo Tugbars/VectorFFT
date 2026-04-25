@@ -84,19 +84,34 @@ def build_cmd(tc, src_c, out_bin):
     cmd = [tc['cc']] + flags + build_includes() + [str(src_c), '-o', str(out_bin)]
     if tc['is_windows'] and tc['is_icx']:
         cmd.append('-fuse-ld=lld')
-        # Add Intel oneAPI runtime library path so LLD can find libircmt.lib,
-        # svml_dispmt.lib, libmmt.lib. Without setvars.bat, ICX doesn't add
-        # this automatically. Probe both 2025.x and latest paths.
-        for lib_dir in (
-            r'C:\Program Files (x86)\Intel\oneAPI\compiler\2025.3\lib',
-            r'C:\Program Files (x86)\Intel\oneAPI\compiler\latest\lib',
-        ):
-            if Path(lib_dir).is_dir():
-                cmd.append(f'-L{lib_dir}')
-                break
     if not tc['is_windows']:
         cmd.append('-lm')
     return cmd
+
+
+def build_env(tc):
+    """Build subprocess env. On Windows + ICX, ensure LIB contains the
+    Intel oneAPI runtime library directory so lld-link can find
+    libircmt.lib, svml_dispmt.lib, libmmt.lib. setvars.bat normally does
+    this; we replicate the minimum needed when called from a plain cmd."""
+    env = os.environ.copy()
+    if not tc['is_windows'] or not tc['is_icx']:
+        return env
+    # Probe known oneAPI install paths.
+    candidates = [
+        r'C:\Program Files (x86)\Intel\oneAPI\compiler\2025.3\lib',
+        r'C:\Program Files (x86)\Intel\oneAPI\compiler\latest\lib',
+        r'C:\Program Files\Intel\oneAPI\compiler\2025.3\lib',
+        r'C:\Program Files\Intel\oneAPI\compiler\latest\lib',
+    ]
+    for lib_dir in candidates:
+        if Path(lib_dir).is_dir():
+            existing = env.get('LIB', '')
+            if lib_dir not in existing:
+                env['LIB'] = lib_dir + (';' + existing if existing else '')
+            return env
+    print(f'  [warn] no Intel oneAPI lib dir found — link may fail')
+    return env
 
 
 def main():
@@ -126,7 +141,8 @@ def main():
     print(f'[compile] {tc["cc"]} ... -> {out_bin.name}', flush=True)
     t0 = time.time()
     result = subprocess.run(cmd, capture_output=True,
-                            text=True, encoding='utf-8', errors='replace')
+                            text=True, encoding='utf-8', errors='replace',
+                            env=build_env(tc))
     if result.returncode != 0:
         print(f'[compile] FAILED ({time.time()-t0:.1f}s)')
         # Print stderr in full — Intel ICE/include errors get cut off otherwise
