@@ -42,6 +42,22 @@ static const size_t GRID_K[] = { 4, 32, 128, 256 };
 
 #define EXHAUSTIVE_MAX_N 2048   /* N <= this uses exhaustive; > this uses DP */
 
+/* Inter-cell pacing (ms). Lets thermal/cache state settle between cells so
+ * one cell's residual heat or cache contents doesn't bias the next cell's
+ * search measurements. Override at runtime via argv[3]. */
+#define DEFAULT_PACE_MS 1000
+
+#ifdef _WIN32
+  #ifndef WIN32_LEAN_AND_MEAN
+  #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <windows.h>
+  static void pace_ms(int ms) { if (ms > 0) Sleep((DWORD)ms); }
+#else
+  #include <unistd.h>
+  static void pace_ms(int ms) { if (ms > 0) usleep((useconds_t)ms * 1000); }
+#endif
+
 /* ===========================================================================
  * Per-stage codelet classification (mirrors test_tuned_core.c).
  * ========================================================================= */
@@ -92,7 +108,7 @@ static double bench_plan_min(const stride_plan_t *plan, int N, size_t K) {
     }
 
     /* Warmup */
-    for (int i = 0; i < 10; i++) stride_execute_fwd(plan, re, im);
+    for (int i = 0; i < 10; i++) stride_execute_fwd_auto(plan, re, im);
 
     int reps = (int)(1e6 / (total + 1));
     if (reps < 20) reps = 20;
@@ -101,7 +117,7 @@ static double bench_plan_min(const stride_plan_t *plan, int N, size_t K) {
     double best = 1e18;
     for (int t = 0; t < 5; t++) {
         double t0 = now_ns();
-        for (int i = 0; i < reps; i++) stride_execute_fwd(plan, re, im);
+        for (int i = 0; i < reps; i++) stride_execute_fwd_auto(plan, re, im);
         double ns = (now_ns() - t0) / reps;
         if (ns < best) best = ns;
     }
@@ -130,8 +146,8 @@ static double roundtrip_err(const stride_plan_t *plan, int N, size_t K) {
     }
     memcpy(re, re0, total * sizeof(double));
     memcpy(im, im0, total * sizeof(double));
-    stride_execute_fwd(plan, re, im);
-    stride_execute_bwd(plan, re, im);
+    stride_execute_fwd_auto(plan, re, im);
+    stride_execute_bwd_auto(plan, re, im);
     double max_err = 0.0;
     double scale = 1.0 / (double)N;
     for (size_t i = 0; i < total; i++) {
@@ -155,51 +171,100 @@ typedef struct {
     codelet_kind_t      codelets[FACT_MAX_STAGES];
     double              best_ns;
     double              err;
-    const char         *method;   /* "exh" or "dp" */
+    const char         *method;       /* "exh", "dp", "exh+jb", "dp+jb" */
+    int                 use_blocked;
+    int                 split_stage;
+    int                 block_groups;
 } cell_result_t;
 
+/* Calibrate one cell. Routes through stride_wisdom_calibrate_full so we
+ * inherit production's exact protocol (search → refine_bench → joint
+ * blocked search for K<=8 N>512 N<=threshold). For K<=8 cells with
+ * N > threshold we additionally call stride_dp_plan_joint_blocked
+ * explicitly — that's how production gets blocked wisdom for N=2048,
+ * 4096+ at K=4 (via bench_blocked_vs_mkl.c). */
 static int calibrate_cell(int N, size_t K,
                           const stride_registry_t *reg,
-                          stride_dp_context_t *dp_ctx,  /* NULL if exh */
+                          stride_dp_context_t *dp_ctx,
+                          stride_wisdom_t *wis,
                           cell_result_t *out) {
-    stride_factorization_t best_fact;
-    memset(&best_fact, 0, sizeof(best_fact));
+    out->method = (N <= EXHAUSTIVE_MAX_N) ? "exh" : "dp";
 
-    if (N <= EXHAUSTIVE_MAX_N) {
-        out->method = "exh";
-        double ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
-        if (ns >= 1e17) {
-            fprintf(stderr, "  [%s] N=%d K=%zu: exhaustive returned 1e18\n",
-                    out->method, N, K);
-            return 1;
-        }
-    } else {
-        out->method = "dp";
-        double ns = stride_dp_plan(dp_ctx, N, reg, &best_fact, 0);
-        if (ns >= 1e17) {
-            fprintf(stderr, "  [%s] N=%d K=%zu: DP returned 1e18\n",
-                    out->method, N, K);
-            return 1;
-        }
-    }
-
-    stride_plan_t *plan = _stride_build_plan(N, K,
-                                             best_fact.factors,
-                                             best_fact.nfactors, reg);
-    if (!plan) {
-        fprintf(stderr, "  [%s] N=%d K=%zu: _stride_build_plan returned NULL\n",
-                out->method, N, K);
+    /* ── Phase A: standard search + small-N joint blocked ───────────── */
+    double std_ns = stride_wisdom_calibrate_full(
+            wis, N, K, reg, dp_ctx,
+            /*force=*/1, /*verbose=*/0,
+            EXHAUSTIVE_MAX_N, /*save_path=*/NULL);
+    if (std_ns >= 1e17) {
+        fprintf(stderr, "  N=%d K=%zu: standard search returned 1e18\n", N, K);
         return 1;
     }
 
-    out->nfactors = plan->num_stages;
-    for (int s = 0; s < plan->num_stages; s++) {
-        out->factors[s]  = plan->factors[s];
-        out->codelets[s] = classify_stage(plan, K, s);
+    /* ── Phase B: large-N joint blocked for small K ─────────────────── *
+     * stride_wisdom_calibrate_full's joint blocked path only fires for
+     * N <= EXHAUSTIVE_MAX_N (the K<=8 N>512 N<=threshold gate). For
+     * larger N at K<=8 we run stride_dp_plan_joint_blocked manually so
+     * we don't miss blocked wins like N=4096 K=4. */
+    if (K <= STRIDE_BLOCKED_K_THRESHOLD && N > EXHAUSTIVE_MAX_N) {
+        stride_factorization_t jb_fact;
+        int jb_use_blocked = 0, jb_split = 0, jb_bg = 0;
+        double joint_ns = stride_dp_plan_joint_blocked(
+                dp_ctx, N, K, reg, &jb_fact,
+                &jb_use_blocked, &jb_split, &jb_bg, /*verbose=*/0);
+        if (joint_ns < 1e17) {
+            /* Refine-bench the joint winner with the same protocol used
+             * for the standard winner so the comparison is fair. */
+            stride_plan_t *jp = _stride_build_plan(
+                    N, K, jb_fact.factors, jb_fact.nfactors, reg);
+            if (jp) {
+                if (jb_use_blocked) {
+                    jp->use_blocked  = 1;
+                    jp->split_stage  = jb_split;
+                    jp->block_groups = jb_bg;
+                }
+                double refined = bench_plan_min(jp, N, K);
+                stride_plan_destroy(jp);
+                if (refined < std_ns) {
+                    /* stride_wisdom_add_full updates only if best_ns
+                     * decreases, so this is idempotent. */
+                    stride_wisdom_add_full(wis, N, K,
+                                           jb_fact.factors, jb_fact.nfactors,
+                                           refined,
+                                           jb_use_blocked, jb_split, jb_bg);
+                    out->method = (N <= EXHAUSTIVE_MAX_N) ? "exh+jb" : "dp+jb";
+                }
+            }
+        }
     }
-    out->err     = roundtrip_err(plan, N, K);
-    out->best_ns = bench_plan_min(plan, N, K);
 
+    /* ── Phase C: read back wisdom entry, classify codelets, verify ─── */
+    const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
+    if (!e) {
+        fprintf(stderr, "  N=%d K=%zu: wisdom lookup failed\n", N, K);
+        return 1;
+    }
+
+    out->nfactors     = e->nfactors;
+    for (int s = 0; s < e->nfactors; s++) out->factors[s] = e->factors[s];
+    out->best_ns      = e->best_ns;
+    out->use_blocked  = e->use_blocked;
+    out->split_stage  = e->split_stage;
+    out->block_groups = e->block_groups;
+
+    stride_plan_t *plan = _stride_build_plan(
+            N, K, e->factors, e->nfactors, reg);
+    if (!plan) {
+        fprintf(stderr, "  N=%d K=%zu: build plan from wisdom failed\n", N, K);
+        return 1;
+    }
+    if (e->use_blocked) {
+        plan->use_blocked  = e->use_blocked;
+        plan->split_stage  = e->split_stage;
+        plan->block_groups = e->block_groups;
+    }
+    for (int s = 0; s < plan->num_stages; s++)
+        out->codelets[s] = classify_stage(plan, K, s);
+    out->err = roundtrip_err(plan, N, K);
     stride_plan_destroy(plan);
     return 0;
 }
@@ -211,12 +276,15 @@ static int calibrate_cell(int N, size_t K,
 int main(int argc, char **argv) {
     const char *out_path = "vfft_wisdom_tuned.txt";
     const char *info_csv = "vfft_wisdom_tuned_codelets.csv";
+    int pace_ms_arg = DEFAULT_PACE_MS;
     if (argc >= 2) out_path = argv[1];
     if (argc >= 3) info_csv = argv[2];
+    if (argc >= 4) pace_ms_arg = atoi(argv[3]);
 
     printf("=== calibrate_tuned: new-core wisdom generator ===\n");
-    printf("output: %s\n", out_path);
-    printf("info  : %s\n", info_csv);
+    printf("output : %s\n", out_path);
+    printf("info   : %s\n", info_csv);
+    printf("pacing : %d ms between cells\n", pace_ms_arg);
 
     stride_registry_t reg;
     stride_registry_init(&reg);
@@ -229,7 +297,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "fatal: cannot open %s for writing\n", info_csv);
         return 2;
     }
-    fprintf(info, "N,K,method,nf,factors,codelets,best_ns,roundtrip_err\n");
+    fprintf(info, "N,K,method,nf,factors,codelets,best_ns,"
+                  "use_blocked,split_stage,block_groups,roundtrip_err\n");
 
     int n_cells = (int)(sizeof(GRID_N)/sizeof(GRID_N[0]) *
                         sizeof(GRID_K)/sizeof(GRID_K[0]));
@@ -253,48 +322,56 @@ int main(int argc, char **argv) {
             int N = GRID_N[ni];
             done++;
 
+            /* Pace before each cell (except the very first) so thermal
+             * and cache state from the prior cell don't bias this one's
+             * search measurements. */
+            if (done > 0) pace_ms(pace_ms_arg);
+
             cell_result_t r;
             memset(&r, 0, sizeof(r));
             int rc = calibrate_cell(N, K, &reg,
-                                    (N > EXHAUSTIVE_MAX_N) ? &dp_ctx : NULL,
+                                    /* dp ctx valid for any K when search
+                                     * picks DP path (>EXHAUSTIVE_MAX_N or
+                                     * stride_dp_plan_joint_blocked) */
+                                    &dp_ctx,
+                                    &wis,
                                     &r);
+            done++;
             if (rc != 0) {
                 failures++;
                 continue;
             }
 
             /* Print human-readable progress */
-            printf("[%2d/%2d] N=%-5d K=%-3zu method=%-3s factors=",
+            printf("[%2d/%2d] N=%-5d K=%-3zu method=%-6s factors=",
                    done, n_cells, N, K, r.method);
             for (int s = 0; s < r.nfactors; s++)
                 printf("%s%d", s ? "x" : "", r.factors[s]);
             printf("  codelets=");
             for (int s = 0; s < r.nfactors; s++)
                 printf("%s%s", s ? "/" : "", codelet_short(r.codelets[s]));
+            if (r.use_blocked)
+                printf("  BLOCKED@split=%d,bg=%d", r.split_stage, r.block_groups);
             printf("  best=%.1f ns  err=%.2e %s\n",
                    r.best_ns, r.err,
                    r.err < 1e-12 ? "" : "[PRECISION FAIL]");
             fflush(stdout);
 
-            if (r.err >= 1e-12) {
-                failures++;
-                /* Still record it — the wisdom load path doesn't gate on err,
-                 * but we want the row in the file so A/B reporting can show
-                 * it. The header column flags it. */
-            }
+            if (r.err >= 1e-12) failures++;
 
-            /* Add to wisdom */
-            stride_wisdom_add(&wis, N, K, r.factors, r.nfactors, r.best_ns);
-
-            /* Sidecar CSV: per-stage codelets so the merge script doesn't
-             * need to reproduce the wisdom predicate logic. */
+            /* Sidecar CSV: per-stage codelets + blocked-executor info so
+             * the merge script doesn't need to reproduce the wisdom
+             * predicate logic. */
             fprintf(info, "%d,%zu,%s,%d,", N, K, r.method, r.nfactors);
             for (int s = 0; s < r.nfactors; s++)
                 fprintf(info, "%s%d", s ? "x" : "", r.factors[s]);
             fprintf(info, ",");
             for (int s = 0; s < r.nfactors; s++)
                 fprintf(info, "%s%s", s ? "/" : "", codelet_short(r.codelets[s]));
-            fprintf(info, ",%.2f,%.2e\n", r.best_ns, r.err);
+            fprintf(info, ",%.2f,%d,%d,%d,%.2e\n",
+                    r.best_ns,
+                    r.use_blocked, r.split_stage, r.block_groups,
+                    r.err);
             fflush(info);
         }
 

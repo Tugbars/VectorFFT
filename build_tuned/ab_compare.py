@@ -164,12 +164,21 @@ def main() -> int:
 
         info = codelets.get(key, {})
 
+        # Blocked-executor flag for each side. Wisdom file has the
+        # use_blocked/split/groups columns; sidecar CSV duplicates them.
+        def fmt_blocked(entry: dict) -> str:
+            if entry.get('use_blocked'):
+                return f'blk@s={entry["split_stage"]},g={entry["block_groups"]}'
+            return ''
+
         rows.append({
             'N': N, 'K': K,
-            'prod_factors': fmt_factors(p['factors']),
-            'tuned_factors': fmt_factors(t['factors']),
+            'prod_factors':   fmt_factors(p['factors']),
+            'tuned_factors':  fmt_factors(t['factors']),
             'tuned_codelets': info.get('codelets', ''),
             'tuned_method':   info.get('method', ''),
+            'prod_blocked':   fmt_blocked(p),
+            'tuned_blocked':  fmt_blocked(t),
             'prod_ns':  f'{p["best_ns"]:.2f}',
             'tuned_ns': f'{t["best_ns"]:.2f}',
             'speedup':  f'{speedup:.3f}',
@@ -189,12 +198,15 @@ def main() -> int:
 
     # Console summary
     print()
-    print(f'{"N":>6} {"K":>4} {"prod_ns":>11} {"tuned_ns":>11} {"speedup":>8} {"verdict":>10}  factors_p / factors_t / codelets_t')
-    print('-' * 110)
+    print(f'{"N":>6} {"K":>4} {"prod_ns":>11} {"tuned_ns":>11} {"speedup":>8} {"verdict":>10}  factors_p / factors_t / codelets_t [blocked]')
+    print('-' * 130)
     for r in rows:
+        blocked_tag = ''
+        if r['prod_blocked'] or r['tuned_blocked']:
+            blocked_tag = f' [P:{r["prod_blocked"] or "-"} | T:{r["tuned_blocked"] or "-"}]'
         print(f'{r["N"]:>6} {r["K"]:>4} {r["prod_ns"]:>11} {r["tuned_ns"]:>11} '
               f'{r["speedup"]:>8} {r["verdict"]:>10}  '
-              f'{r["prod_factors"]} / {r["tuned_factors"]} / {r["tuned_codelets"]}')
+              f'{r["prod_factors"]} / {r["tuned_factors"]} / {r["tuned_codelets"]}{blocked_tag}')
 
     print()
     print(f'wins        : {n_wins}')
