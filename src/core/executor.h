@@ -312,6 +312,108 @@ static inline void _stride_execute_fwd_slice(const stride_plan_t *plan,
     _stride_execute_fwd_slice_from(plan, re, im, slice_K, full_K, 0);
 }
 
+/* ── Forward executor — DIF orientation (whole-plan) ──
+ *
+ * Mirrors _stride_execute_fwd_slice_from but with DIF semantics:
+ *   - Stages traversed 0..nf-1 ascending (same direction as DIT).
+ *   - At each stage where needs_tw[g]: codelet POST-multiplies legs
+ *     1..R-1 by the per-leg twiddle baked with cf, then executor
+ *     POST-multiplies leg 0 by cf0 (since the codelet doesn't touch
+ *     leg 0 for the post-twiddle operation).
+ *   - The last stage (s == nf-1) has no output-edge twiddle (per the
+ *     DIF stage-ownership model) so it always uses n1_fwd.
+ *
+ * Simplified vs the DIT path: no log3 / t1s / buf / n1_fallback paths
+ * for v1.1. The DIF orientation is whole-plan flat-only initially. If
+ * a stage's t1_fwd is NULL we have no fallback — the plan-build must
+ * not select DIF orientation for plans that include such radixes. */
+static inline void _stride_execute_fwd_dif_slice(const stride_plan_t *plan,
+                                                 double *re, double *im,
+                                                 size_t slice_K, size_t full_K) {
+    (void)full_K;
+    for (int s = 0; s < plan->num_stages; s++) {
+        const stride_stage_t *st = &plan->stages[s];
+
+        for (int g = 0; g < st->num_groups; g++) {
+            double *base_re = re + st->group_base[g];
+            double *base_im = im + st->group_base[g];
+
+            if (!st->needs_tw[g]) {
+                st->n1_fwd(base_re, base_im, base_re, base_im,
+                           st->stride, st->stride, slice_K);
+                continue;
+            }
+
+            /* DIF: codelet does butterfly then post-mul legs 1..R-1 by the
+             * full per-leg twiddle. cf0 is identically 1 in DIF (every term
+             * in the cross-stage exponent contains j, so leg 0 has W^0 = 1
+             * unconditionally). No leg-0 post-mul is needed. */
+            st->t1_fwd(base_re, base_im,
+                       st->grp_tw_re[g], st->grp_tw_im[g],
+                       st->stride, slice_K);
+        }
+    }
+}
+
+/* ── Backward executor — DIF orientation ──
+ *
+ * Symmetric mirror of the production DIT-orientation backward path:
+ * production DIT-fwd (pre-mul + butterfly) is undone by a DIF-style
+ * backward (n1_bwd + post-mul-conjugate). For DIF-orientation, the
+ * roles flip — DIF-fwd (butterfly + post-mul) is undone by a DIT-style
+ * backward (pre-mul-conjugate + n1_bwd).
+ *
+ * Per-group sequence (when needs_tw[g]):
+ *   1. For each leg j in 1..R-1: leg_j *= conj(grp_tw[(j-1)*K + kk]).
+ *   2. Call n1_bwd to do the inverse butterfly.
+ *
+ * Leg 0 has no twiddle (cf0 = 1 in DIF), so step 1 skips it.
+ *
+ * No DIF-bwd codelet is called — the t1_dif_bwd codelet is structured
+ * for "inverse FFT in DIF style" (butterfly + post-mul-conj), which is
+ * NOT the inverse of t1_dif_fwd at the per-stage level. Inverting fwd
+ * requires the dual structure (pre-mul-conj + inverse-butterfly), which
+ * we get with manual pre-mul + n1_bwd here. */
+static inline void _stride_execute_bwd_dif_slice(const stride_plan_t *plan,
+                                                 double *re, double *im,
+                                                 size_t slice_K, size_t full_K) {
+    (void)full_K;
+    for (int s = plan->num_stages - 1; s >= 0; s--) {
+        const stride_stage_t *st = &plan->stages[s];
+        const int R = st->radix;
+
+        for (int g = 0; g < st->num_groups; g++) {
+            double *base_re = re + st->group_base[g];
+            double *base_im = im + st->group_base[g];
+
+            if (st->needs_tw[g]) {
+                /* Pre-multiply legs 1..R-1 by conj(per-leg twiddle).
+                 * Per-leg twiddle stored in grp_tw with row-major layout
+                 * tw[(j-1)*K + kk] for j=1..R-1, kk=0..K-1. */
+                const double *tw_r = st->grp_tw_re[g];
+                const double *tw_i = st->grp_tw_im[g];
+                for (int j = 1; j < R; j++) {
+                    double *lr = base_re + (size_t)j * st->stride;
+                    double *li = base_im + (size_t)j * st->stride;
+                    const double *wr = tw_r + (size_t)(j - 1) * plan->K;
+                    const double *wi = tw_i + (size_t)(j - 1) * plan->K;
+                    for (size_t kk = 0; kk < slice_K; kk++) {
+                        double tr = lr[kk];
+                        /* x * conj(W) = (x_r + i*x_i)(W_r - i*W_i)
+                         *             = (x_r*W_r + x_i*W_i) + i*(x_i*W_r - x_r*W_i) */
+                        lr[kk] = tr     * wr[kk] + li[kk] * wi[kk];
+                        li[kk] = li[kk] * wr[kk] - tr     * wi[kk];
+                    }
+                }
+            }
+
+            /* Inverse butterfly via n1_bwd. */
+            st->n1_bwd(base_re, base_im, base_re, base_im,
+                       st->stride, st->stride, slice_K);
+        }
+    }
+}
+
 /* ── Internal: backward executor on a K-slice ──
  * stop_stage: stop before this stage (used by C2R fused unpack to skip stage 0).
  * Normal calls pass stop_stage=0 to run all stages. */
@@ -541,6 +643,15 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
         return;
     }
     const size_t K = plan->K;
+
+    /* DIF orientation runs single-threaded for v1.1. Threading paths
+     * (K-split, group-parallel) for DIF can be added once correctness
+     * is validated and on-host wins justify the complexity. */
+    if (plan->use_dif_forward) {
+        _stride_execute_fwd_dif_slice(plan, re, im, K, K);
+        return;
+    }
+
     const int T = stride_get_num_threads();
 
     /* Minimum K for any threading: need at least SIMD width per thread for K-split,
@@ -611,6 +722,12 @@ static inline void stride_execute_bwd(const stride_plan_t *plan,
         return;
     }
     const size_t K = plan->K;
+
+    if (plan->use_dif_forward) {
+        _stride_execute_bwd_dif_slice(plan, re, im, K, K);
+        return;
+    }
+
     const int T = stride_get_num_threads();
 
     const int T_eff = T;
@@ -1012,16 +1129,225 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
 }
 
 
-static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, int nf,
-                                         stride_n1_fn *n1_fwd_table,
-                                         stride_n1_fn *n1_bwd_table,
-                                         stride_t1_fn *t1_fwd_table,
-                                         stride_t1_fn *t1_bwd_table,
-                                         int log3_mask) {
+/* DIF orientation twiddle layout.
+ *
+ * DIT attaches the cross-stage twiddle between edges (s-1, s) to stage s
+ * as PRE-multiply at the input. The exponent is
+ *   e_DIT(j, g) = k_prev * ow_prev * (j*S_s + lower_data_pos)
+ * where every leg-0 piece (lower_data_pos contribution) has a constant
+ * factor in j (since j=0 multiplies it out). Pulling out
+ *   cf0  = W^{k_prev * ow_prev * lower_data_pos}     (no j)
+ *   per_leg[j] = W^{k_prev * ow_prev * j * S_s}      (j-linear)
+ * works because cf0 is genuinely leg-independent.
+ *
+ * DIF attaches the cross-stage twiddle between edges (s, s+1) to stage s
+ * as POST-multiply at the output. The correct exponent is
+ *   e_DIF(j, g) = j * ow_prev * (k_next*S_s + lower_data_pos)
+ * — note: j is OUTSIDE the parens, so EVERY term contains j. There is no
+ * leg-independent "cf0" piece. cf0 is identically 1 and the codelet's
+ * post-mul of legs 1..R-1 by per_leg[j] is the entire DIF twiddle apply.
+ *
+ * For leg 0 (j=0), e_DIF(0, g) = 0, so leg 0's twiddle is W^0 = 1 — the
+ * codelet correctly leaves it untouched.
+ *
+ * needs_tw test: a group needs the codelet path iff e_DIF(j>0, g) != 0
+ * for any j. That's iff (k_next*S_s + lower_data_pos) != 0. Cannot be
+ * shortened to k_next == 0 the way DIT can — a group with k_next=0 but
+ * lower_data_pos != 0 still has real per-leg twiddles.
+ *
+ * Index conventions vs DIT (analogous shifts):
+ *   - Early-out at s == nf-1 (last stage has no output-edge in DIF)
+ *     instead of s == 0.
+ *   - S_s   uses factors[s+2..nf-1]  (DIT: factors[s+1..nf-1]).
+ *   - ow_prev uses factors[0..s-1]   (DIT: factors[0..s-2]).
+ *   - k_next reads counter for axis s+1 (DIT: axis s-1).
+ */
+static void plan_compute_twiddles_dif_c(stride_plan_t *plan, int s) {
+    stride_stage_t *st = &plan->stages[s];
+    const int nf = plan->num_stages;
+    const size_t K = plan->K;
+    const int N = plan->N;
+    const int R = st->radix;
+    const int ng = st->num_groups;
+
+    st->needs_tw = (int *)calloc(ng, sizeof(int));
+    st->grp_tw_re = (double **)calloc(ng, sizeof(double *));
+    st->grp_tw_im = (double **)calloc(ng, sizeof(double *));
+    st->tw_scalar_re = (double **)calloc(ng, sizeof(double *));
+    st->tw_scalar_im = (double **)calloc(ng, sizeof(double *));
+    st->cf0_re = (double *)calloc(ng, sizeof(double));
+    st->cf0_im = (double *)calloc(ng, sizeof(double));
+
+    if (s == nf - 1) {
+        /* Last stage in DIF: no output-edge twiddle */
+        st->tw_pool_re = st->tw_pool_im = NULL;
+        st->cf_all_re = st->cf_all_im = NULL;
+        for (int g = 0; g < ng; g++) {
+            st->cf0_re[g] = 1.0;
+            st->cf0_im[g] = 0.0;
+        }
+        return;
+    }
+
+    /* For DIF at stage s: the twiddle exponent is the same shape as DIT
+     * but indexed at the s+1 axis instead of s-1. */
+    int S_s = 1;
+    for (int d = s + 2; d < nf; d++) S_s *= plan->factors[d];
+    int ow_prev = 1;
+    for (int d = 0; d < s; d++) ow_prev *= plan->factors[d];
+
+    int other_sizes[STRIDE_MAX_STAGES];
+    int n_other = 0;
+    for (int d = 0; d < nf; d++)
+        if (d != s) other_sizes[n_other++] = plan->factors[d];
+
+    /* Count twiddled groups for pool allocation. A group is "twiddled" iff
+     * its g_factor = k_next*S_s + lower_data_pos is non-zero. */
+    int n_tw_groups = 0;
+    {
+        int counter[STRIDE_MAX_STAGES]; memset(counter, 0, sizeof(counter));
+        for (int g = 0; g < ng; g++) {
+            int k_next = 0;
+            int lower_data_pos = 0;
+            int ci = 0;
+            for (int d = 0; d < nf; d++) {
+                if (d == s) continue;
+                if (d == s + 1) k_next = counter[ci];
+                if (d > s + 1) {
+                    int w = 1;
+                    for (int d2 = d + 1; d2 < nf; d2++) w *= plan->factors[d2];
+                    lower_data_pos += counter[ci] * w;
+                }
+                ci++;
+            }
+            if (k_next * S_s + lower_data_pos != 0) n_tw_groups++;
+            for (int d = n_other-1; d >= 0; d--) { counter[d]++; if (counter[d] < other_sizes[d]) break; counter[d] = 0; }
+        }
+    }
+
+    size_t per_grp = (size_t)(R - 1) * K;
+    size_t scalar_per_grp = (size_t)(R - 1);
+
+    if (n_tw_groups > 0) {
+        st->tw_pool_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
+        st->tw_pool_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
+        st->tw_scalar_pool_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
+        st->tw_scalar_pool_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
+    } else {
+        st->tw_pool_re = st->tw_pool_im = NULL;
+        st->tw_scalar_pool_re = st->tw_scalar_pool_im = NULL;
+    }
+
+    st->cf_all_re = (double *)calloc((size_t)ng * R * K, sizeof(double));
+    st->cf_all_im = (double *)calloc((size_t)ng * R * K, sizeof(double));
+
+    int counter[STRIDE_MAX_STAGES];
+    memset(counter, 0, sizeof(counter));
+    int tw_idx = 0;
+
+    for (int g = 0; g < ng; g++) {
+        int k_next = 0;
+        int lower_data_pos = 0;
+        {
+            int ci = 0;
+            for (int d = 0; d < nf; d++) {
+                if (d == s) continue;
+                if (d == s + 1) k_next = counter[ci];
+                if (d > s + 1) {
+                    int w = 1;
+                    for (int d2 = d + 1; d2 < nf; d2++) w *= plan->factors[d2];
+                    lower_data_pos += counter[ci] * w;
+                }
+                ci++;
+            }
+        }
+
+        /* DIF: cf0 is identically 1 (every term in e_DIF contains j, so
+         * leg 0 (j=0) always has W^0 = 1). The executor's leg-0 post-mul
+         * block becomes a no-op and is omitted. */
+        st->cf0_re[g] = 1.0;
+        st->cf0_im[g] = 0.0;
+
+        /* The "twiddle factor" for leg j of group g is the COMPLETE term
+         * with j outside the parens:
+         *   e_DIF(j, g) = j * ow_prev * (k_next * S_s + lower_data_pos)
+         * This common factor (k_next*S_s + lower_data_pos) is leg-independent
+         * AND tells us whether the group needs a twiddle path at all
+         * (zero  → all legs hit W^0 = 1, no codelet twiddle work needed). */
+        const long long g_factor = (long long)k_next * S_s + (long long)lower_data_pos;
+
+        /* cf_all path (used by some legacy backward paths). Currently no DIF
+         * executor reads cf_all, but we fill it for symmetry with DIT in case
+         * that changes — values use the corrected DIF formula. */
+        for (int j = 0; j < R; j++) {
+            int tw_exp = (int)(((long long)j * ow_prev * g_factor) % N);
+            if (tw_exp < 0) tw_exp += N;
+            double angle = -2.0 * M_PI * (double)tw_exp / (double)N;
+            double wr = cos(angle), wi = sin(angle);
+            for (size_t kk = 0; kk < K; kk++) {
+                st->cf_all_re[(size_t)g * R * K + (size_t)j * K + kk] = wr;
+                st->cf_all_im[(size_t)g * R * K + (size_t)j * K + kk] = wi;
+            }
+        }
+
+        if (g_factor == 0) {
+            /* All legs land on W^0 = 1 — bypass the codelet's twiddle path.
+             * Cannot shortcut on k_next == 0 alone the way DIT shortcuts on
+             * k_prev == 0: a group with k_next=0 but lower_data_pos!=0 still
+             * has nonzero per-leg exponents in DIF. */
+            st->needs_tw[g] = 0;
+        } else {
+            st->needs_tw[g] = 1;
+
+            double *tw_r = st->tw_pool_re + (size_t)tw_idx * per_grp;
+            double *tw_i = st->tw_pool_im + (size_t)tw_idx * per_grp;
+            st->grp_tw_re[g] = tw_r;
+            st->grp_tw_im[g] = tw_i;
+
+            double *stw_r = st->tw_scalar_pool_re + (size_t)tw_idx * scalar_per_grp;
+            double *stw_i = st->tw_scalar_pool_im + (size_t)tw_idx * scalar_per_grp;
+            st->tw_scalar_re[g] = stw_r;
+            st->tw_scalar_im[g] = stw_i;
+
+            /* Per-leg twiddle for legs 1..R-1. The codelet post-multiplies
+             * directly by these — no cf baking is needed since cf0 = 1. */
+            for (int j = 1; j < R; j++) {
+                int leg_exp = (int)(((long long)j * ow_prev * g_factor) % N);
+                if (leg_exp < 0) leg_exp += N;
+                double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
+                double lr = cos(leg_angle), li = sin(leg_angle);
+                stw_r[j - 1] = lr;
+                stw_i[j - 1] = li;
+                size_t base_idx = (size_t)(j - 1) * K;
+                for (size_t kk = 0; kk < K; kk++) {
+                    tw_r[base_idx + kk] = lr;
+                    tw_i[base_idx + kk] = li;
+                }
+            }
+            tw_idx++;
+        }
+
+        for (int d = n_other - 1; d >= 0; d--) {
+            counter[d]++;
+            if (counter[d] < other_sizes[d]) break;
+            counter[d] = 0;
+        }
+    }
+}
+
+static stride_plan_t *stride_plan_create_ex(int N, size_t K,
+                                             const int *factors, int nf,
+                                             stride_n1_fn *n1_fwd_table,
+                                             stride_n1_fn *n1_bwd_table,
+                                             stride_t1_fn *t1_fwd_table,
+                                             stride_t1_fn *t1_bwd_table,
+                                             int log3_mask,
+                                             int use_dif_forward) {
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     plan->N = N;
     plan->K = K;
     plan->num_stages = nf;
+    plan->use_dif_forward = use_dif_forward;
     memcpy(plan->factors, factors, nf * sizeof(int));
 
     for (int s = 0; s < nf; s++) {
@@ -1032,28 +1358,44 @@ static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, in
         plan->stages[s].use_log3 = (log3_mask > 0) && ((log3_mask >> s) & 1);
 
         plan_compute_groups(plan, s);
-        plan_compute_twiddles_c(plan, s);
+        if (use_dif_forward)
+            plan_compute_twiddles_dif_c(plan, s);
+        else
+            plan_compute_twiddles_c(plan, s);
 
         /* Fallback to cf_all + n1 when:
-         * 1. No t1_dit codelet available for this radix
-         * 2. R>=64: t1_dit is ALWAYS slower than cf+n1 for R=64 in the
-         *    flat protocol. The 2225-op butterfly has too much register
-         *    pressure for fused twiddle+butterfly to help.
+         * 1. No t1 codelet available for this radix
+         * 2. R>=64: t1 (flat) is ALWAYS slower than cf+n1 for R=64 in
+         *    DIT flat protocol. EXCEPTION: log3 (see below).
          *
-         *    EXCEPTION: when the planner has chosen log3 for this stage
-         *    (use_log3 set via log3_mask), the log3 codelet uses
-         *    derivation chains that avoid the flat register-pressure
-         *    problem, and the codelet-bench shows log3 winning
-         *    decisively at R=64 (8/18 cells on RL AVX2). In that case
-         *    keep the log3 path — do NOT fall back to n1. */
-        if (s > 0 && plan->stages[s].t1_fwd == NULL) {
-            plan->stages[s].use_n1_fallback = 1;
-        }
-        if (factors[s] >= 64 && s > 0 && !plan->stages[s].use_log3) {
-            plan->stages[s].use_n1_fallback = 1;
+         * For DIF orientation we don't apply the n1_fallback gating —
+         * DIF's post-multiply structure interacts differently with the
+         * R=64 register-pressure profile, and the calibrator picks DIF
+         * vs DIT per cell so it can fall back to DIT if needed. */
+        if (!use_dif_forward) {
+            int twiddle_stage = (s > 0);  /* DIT: stages 1..nf-1 own twiddle */
+            if (twiddle_stage && plan->stages[s].t1_fwd == NULL) {
+                plan->stages[s].use_n1_fallback = 1;
+            }
+            if (factors[s] >= 64 && twiddle_stage && !plan->stages[s].use_log3) {
+                plan->stages[s].use_n1_fallback = 1;
+            }
         }
     }
     return plan;
+}
+
+/* Legacy entry point — defaults to DIT orientation (use_dif_forward=0). */
+static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, int nf,
+                                         stride_n1_fn *n1_fwd_table,
+                                         stride_n1_fn *n1_bwd_table,
+                                         stride_t1_fn *t1_fwd_table,
+                                         stride_t1_fn *t1_bwd_table,
+                                         int log3_mask) {
+    return stride_plan_create_ex(N, K, factors, nf,
+                                  n1_fwd_table, n1_bwd_table,
+                                  t1_fwd_table, t1_bwd_table,
+                                  log3_mask, /*use_dif_forward=*/0);
 }
 
 static void stride_plan_destroy(stride_plan_t *plan) {

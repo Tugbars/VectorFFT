@@ -106,6 +106,14 @@ typedef struct {
     int use_blocked;     /* 0 = standard, 1 = blocked */
     int split_stage;     /* first blocked stage */
     int block_groups;    /* groups per block at split stage */
+
+    /* DIT/DIF orientation selection (version 4+).
+     * 0 = DIT-forward + DIF-style backward (current default)
+     * 1 = DIF-forward + DIT-style backward
+     * Determined by per-cell DIT-vs-DIF bench in the calibrator. Mutually
+     * exclusive with use_blocked=1 in v1.1 — the DIF executor doesn't have
+     * a blocked variant yet. */
+    int use_dif_forward;
 } stride_wisdom_entry_t;
 
 typedef struct {
@@ -127,11 +135,11 @@ static const stride_wisdom_entry_t *stride_wisdom_lookup(
     return NULL;
 }
 
-/* Add or update wisdom entry (full version with blocked fields) */
-static void stride_wisdom_add_full(stride_wisdom_t *wis, int N, size_t K,
-                                    const int *factors, int nf, double best_ns,
-                                    int use_blocked, int split_stage,
-                                    int block_groups) {
+/* Add or update wisdom entry (full version with blocked + DIF fields) */
+static void stride_wisdom_add_v4(stride_wisdom_t *wis, int N, size_t K,
+                                  const int *factors, int nf, double best_ns,
+                                  int use_blocked, int split_stage,
+                                  int block_groups, int use_dif_forward) {
     /* Update existing */
     for (int i = 0; i < wis->count; i++) {
         if (wis->entries[i].N == N && wis->entries[i].K == K) {
@@ -142,6 +150,7 @@ static void stride_wisdom_add_full(stride_wisdom_t *wis, int N, size_t K,
                 wis->entries[i].use_blocked = use_blocked;
                 wis->entries[i].split_stage = split_stage;
                 wis->entries[i].block_groups = block_groups;
+                wis->entries[i].use_dif_forward = use_dif_forward;
             }
             return;
         }
@@ -157,42 +166,55 @@ static void stride_wisdom_add_full(stride_wisdom_t *wis, int N, size_t K,
         e->use_blocked = use_blocked;
         e->split_stage = split_stage;
         e->block_groups = block_groups;
+        e->use_dif_forward = use_dif_forward;
     }
 }
 
-/* Legacy wrapper (standard executor, no blocking) */
+/* Legacy v3 wrapper — kept for callers that don't know about DIF yet.
+ * Forwards with use_dif_forward=0. */
+static void stride_wisdom_add_full(stride_wisdom_t *wis, int N, size_t K,
+                                    const int *factors, int nf, double best_ns,
+                                    int use_blocked, int split_stage,
+                                    int block_groups) {
+    stride_wisdom_add_v4(wis, N, K, factors, nf, best_ns,
+                         use_blocked, split_stage, block_groups,
+                         /*use_dif_forward=*/0);
+}
+
+/* Legacy wrapper (standard executor, no blocking, no DIF) */
 static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
                                const int *factors, int nf, double best_ns) {
-    stride_wisdom_add_full(wis, N, K, factors, nf, best_ns, 0, 0, 0);
+    stride_wisdom_add_v4(wis, N, K, factors, nf, best_ns, 0, 0, 0, 0);
 }
 
 /* -- Wisdom file I/O --
  * Format:
  *   Line 1: @version N  (format version, reject if mismatch)
- *   Remaining: N K nf f0 f1 ... best_ns
+ *   Remaining: N K nf f0 f1 ... best_ns use_blocked split_stage block_groups use_dif_forward
  *   Lines starting with # are comments.
  *
- * Example:
- *   @version 2
- *   1000 256 4 8 5 5 5 14.20
+ * Example v4:
+ *   @version 4
+ *   1000 256 4 8 5 5 5 14.20 0 0 0 0
  *
  * Bump WISDOM_VERSION when the format changes — old files will be
  * silently rejected and re-calibrated on next run. */
-#define WISDOM_VERSION 3
+#define WISDOM_VERSION 4
 
 static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) return -1;
     fprintf(f, "@version %d\n", WISDOM_VERSION);
     fprintf(f, "# VectorFFT stride wisdom — %d entries\n", wis->count);
-    fprintf(f, "# N K nf factors... best_ns use_blocked split_stage block_groups\n");
+    fprintf(f, "# N K nf factors... best_ns use_blocked split_stage block_groups use_dif_forward\n");
     for (int i = 0; i < wis->count; i++) {
         const stride_wisdom_entry_t *e = &wis->entries[i];
         fprintf(f, "%d %zu %d", e->N, e->K, e->nfactors);
         for (int j = 0; j < e->nfactors; j++)
             fprintf(f, " %d", e->factors[j]);
-        fprintf(f, " %.2f %d %d %d\n", e->best_ns,
-                e->use_blocked, e->split_stage, e->block_groups);
+        fprintf(f, " %.2f %d %d %d %d\n", e->best_ns,
+                e->use_blocked, e->split_stage, e->block_groups,
+                e->use_dif_forward);
     }
     fclose(f);
     return 0;
@@ -237,11 +259,15 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
         if (sscanf(line + pos, "%lf%n", &e.best_ns, &n) < 1)
             continue;
         pos += n;
-        /* Version 3: blocked executor fields (optional, default 0) */
-        sscanf(line + pos, "%d %d %d",
-               &e.use_blocked, &e.split_stage, &e.block_groups);
-        stride_wisdom_add_full(wis, e.N, e.K, e.factors, e.nfactors, e.best_ns,
-                               e.use_blocked, e.split_stage, e.block_groups);
+        /* Version 4: blocked + DIF fields (optional, default 0). The 4-arg
+         * sscanf accepts 3 or 4 trailing ints; missing use_dif_forward
+         * leaves it at zero from the prior memset. */
+        sscanf(line + pos, "%d %d %d %d",
+               &e.use_blocked, &e.split_stage, &e.block_groups,
+               &e.use_dif_forward);
+        stride_wisdom_add_v4(wis, e.N, e.K, e.factors, e.nfactors, e.best_ns,
+                              e.use_blocked, e.split_stage, e.block_groups,
+                              e.use_dif_forward);
     }
     fclose(f);
     return version_ok ? 0 : -1;
@@ -471,6 +497,43 @@ static stride_plan_t *_stride_build_plan(
     return plan;
 }
 
+/* DIF-orientation plan builder.
+ *
+ * Returns NULL if any stage's radix lacks a DIF codelet — the calibrator
+ * uses this NULL return to skip the DIF orientation for plans whose
+ * factorization includes non-pow2 factors (R=3, 5, 7, etc., which have
+ * no DIF codelets emitted in v1.1).
+ *
+ * Simpler than _stride_build_plan: no log3/buf/t1s wisdom paths for v1.1
+ * (the DIF executor only handles flat). All stages get reg->t1_dif_*
+ * pointers; stride_plan_create_ex computes DIF twiddle layout via
+ * plan_compute_twiddles_dif_c. */
+static stride_plan_t *_stride_build_plan_dif(
+        int N, size_t K,
+        const int *factors, int nf,
+        const stride_registry_t *reg) {
+    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
+
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        if (R >= STRIDE_REG_MAX_RADIX || !reg->n1_fwd[R] ||
+            !reg->t1_dif_fwd[R] || !reg->t1_dif_bwd[R]) {
+            /* DIF not available for this radix (non-pow2 or untuned). */
+            return NULL;
+        }
+        n1f[s] = reg->n1_fwd[R];
+        n1b[s] = reg->n1_bwd[R];
+        t1f[s] = reg->t1_dif_fwd[R];
+        t1b[s] = reg->t1_dif_bwd[R];
+    }
+
+    stride_plan_t *plan = stride_plan_create_ex(
+            N, K, factors, nf, n1f, n1b, t1f, t1b,
+            /*log3_mask=*/0, /*use_dif_forward=*/1);
+    return plan;
+}
+
 /* =====================================================================
  * PUBLIC API
  * ===================================================================== */
@@ -556,11 +619,21 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
                                         const stride_wisdom_t *wis) {
     const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
     if (e) {
-        stride_plan_t *plan = _stride_build_plan(N, K, e->factors, e->nfactors, reg);
-        if (plan) {
-            plan->use_blocked = e->use_blocked;
-            plan->split_stage = e->split_stage;
-            plan->block_groups = e->block_groups;
+        /* DIF orientation wins this cell — build a DIF plan. Falls back
+         * to DIT if for some reason DIF can't be built (e.g. wisdom
+         * loaded from a different host with DIF codelets that aren't
+         * present here). */
+        stride_plan_t *plan = NULL;
+        if (e->use_dif_forward) {
+            plan = _stride_build_plan_dif(N, K, e->factors, e->nfactors, reg);
+        }
+        if (!plan) {
+            plan = _stride_build_plan(N, K, e->factors, e->nfactors, reg);
+            if (plan) {
+                plan->use_blocked = e->use_blocked;
+                plan->split_stage = e->split_stage;
+                plan->block_groups = e->block_groups;
+            }
         }
         return plan;
     }

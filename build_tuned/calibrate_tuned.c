@@ -170,11 +170,14 @@ typedef struct {
     int                 factors[FACT_MAX_STAGES];
     codelet_kind_t      codelets[FACT_MAX_STAGES];
     double              best_ns;
+    double              dit_ns;        /* DIT bench (for diagnostic) */
+    double              dif_ns;        /* DIF bench, or -1 if N/A */
     double              err;
-    const char         *method;       /* "exh", "dp", "exh+jb", "dp+jb" */
+    const char         *method;       /* "exh", "dp", "exh+jb", "dp+jb"; +"/dif" if DIF won */
     int                 use_blocked;
     int                 split_stage;
     int                 block_groups;
+    int                 use_dif_forward;
 } cell_result_t;
 
 /* Calibrate one cell. Routes through stride_wisdom_calibrate_full so we
@@ -237,22 +240,57 @@ static int calibrate_cell(int N, size_t K,
         }
     }
 
-    /* ── Phase C: read back wisdom entry, classify codelets, verify ─── */
+    /* ── Phase C: read back wisdom entry, get DIT timing baseline ───── */
     const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
     if (!e) {
         fprintf(stderr, "  N=%d K=%zu: wisdom lookup failed\n", N, K);
         return 1;
     }
+    out->dit_ns = e->best_ns;
 
-    out->nfactors     = e->nfactors;
+    /* ── Phase D: bench DIF orientation on the same factorization ──── *
+     * DIF is only available for plans whose factors are all in
+     * {2, 4, 8, 16, 32, 64} (the radixes with t1_dif_* slots populated).
+     * Skip if any non-pow2 factor or if blocked won (DIF + blocked not
+     * supported in v1.1). */
+    out->dif_ns = -1.0;
+    if (!e->use_blocked) {
+        stride_plan_t *dif_plan = _stride_build_plan_dif(
+                N, K, e->factors, e->nfactors, reg);
+        if (dif_plan) {
+            double dif_refined = bench_plan_min(dif_plan, N, K);
+            stride_plan_destroy(dif_plan);
+            out->dif_ns = dif_refined;
+            if (dif_refined < e->best_ns) {
+                /* DIF wins this cell. Update wisdom with use_dif_forward=1
+                 * and the new (faster) best_ns. */
+                stride_wisdom_add_v4(wis, N, K,
+                                     e->factors, e->nfactors,
+                                     dif_refined,
+                                     /*use_blocked=*/0, /*split=*/0, /*bg=*/0,
+                                     /*use_dif_forward=*/1);
+                /* Annotate method tag so the stdout dump shows DIF won. */
+                out->method = (out->method && strstr(out->method, "+jb"))
+                              ? ((N <= EXHAUSTIVE_MAX_N) ? "exh+jb/dif" : "dp+jb/dif")
+                              : ((N <= EXHAUSTIVE_MAX_N) ? "exh/dif"    : "dp/dif");
+                /* Re-fetch the entry; the loop's e pointer now stale. */
+                e = stride_wisdom_lookup(wis, N, K);
+            }
+        }
+    }
+
+    /* ── Phase E: copy result, classify codelets, verify roundtrip ─── */
+    out->nfactors        = e->nfactors;
     for (int s = 0; s < e->nfactors; s++) out->factors[s] = e->factors[s];
-    out->best_ns      = e->best_ns;
-    out->use_blocked  = e->use_blocked;
-    out->split_stage  = e->split_stage;
-    out->block_groups = e->block_groups;
+    out->best_ns         = e->best_ns;
+    out->use_blocked     = e->use_blocked;
+    out->split_stage     = e->split_stage;
+    out->block_groups    = e->block_groups;
+    out->use_dif_forward = e->use_dif_forward;
 
-    stride_plan_t *plan = _stride_build_plan(
-            N, K, e->factors, e->nfactors, reg);
+    stride_plan_t *plan = e->use_dif_forward
+        ? _stride_build_plan_dif(N, K, e->factors, e->nfactors, reg)
+        : _stride_build_plan    (N, K, e->factors, e->nfactors, reg);
     if (!plan) {
         fprintf(stderr, "  N=%d K=%zu: build plan from wisdom failed\n", N, K);
         return 1;
@@ -262,8 +300,15 @@ static int calibrate_cell(int N, size_t K,
         plan->split_stage  = e->split_stage;
         plan->block_groups = e->block_groups;
     }
-    for (int s = 0; s < plan->num_stages; s++)
-        out->codelets[s] = classify_stage(plan, K, s);
+    /* Codelet classification (log3/buf/t1s/flat) only meaningful for DIT
+     * plans — DIF uses flat codelets exclusively in v1.1. */
+    if (e->use_dif_forward) {
+        out->codelets[0] = CL_N1;
+        for (int s = 1; s < plan->num_stages; s++) out->codelets[s] = CL_FLAT;
+    } else {
+        for (int s = 0; s < plan->num_stages; s++)
+            out->codelets[s] = classify_stage(plan, K, s);
+    }
     out->err = roundtrip_err(plan, N, K);
     stride_plan_destroy(plan);
     return 0;
@@ -298,7 +343,8 @@ int main(int argc, char **argv) {
         return 2;
     }
     fprintf(info, "N,K,method,nf,factors,codelets,best_ns,"
-                  "use_blocked,split_stage,block_groups,roundtrip_err\n");
+                  "use_blocked,split_stage,block_groups,use_dif_forward,"
+                  "dit_ns,dif_ns,roundtrip_err\n");
 
     int n_cells = (int)(sizeof(GRID_N)/sizeof(GRID_N[0]) *
                         sizeof(GRID_K)/sizeof(GRID_K[0]));
@@ -320,7 +366,6 @@ int main(int argc, char **argv) {
 
         for (size_t ni = 0; ni < sizeof(GRID_N)/sizeof(GRID_N[0]); ni++) {
             int N = GRID_N[ni];
-            done++;
 
             /* Pace before each cell (except the very first) so thermal
              * and cache state from the prior cell don't bias this one's
@@ -343,7 +388,7 @@ int main(int argc, char **argv) {
             }
 
             /* Print human-readable progress */
-            printf("[%2d/%2d] N=%-5d K=%-3zu method=%-6s factors=",
+            printf("[%2d/%2d] N=%-5d K=%-3zu method=%-10s factors=",
                    done, n_cells, N, K, r.method);
             for (int s = 0; s < r.nfactors; s++)
                 printf("%s%d", s ? "x" : "", r.factors[s]);
@@ -352,25 +397,31 @@ int main(int argc, char **argv) {
                 printf("%s%s", s ? "/" : "", codelet_short(r.codelets[s]));
             if (r.use_blocked)
                 printf("  BLOCKED@split=%d,bg=%d", r.split_stage, r.block_groups);
-            printf("  best=%.1f ns  err=%.2e %s\n",
-                   r.best_ns, r.err,
-                   r.err < 1e-12 ? "" : "[PRECISION FAIL]");
+            if (r.use_dif_forward) printf("  DIF");
+            printf("  best=%.1f ns", r.best_ns);
+            if (r.dif_ns > 0)
+                printf("  (DIT=%.1f, DIF=%.1f, DIF/DIT=%.3f)",
+                       r.dit_ns, r.dif_ns, r.dif_ns / r.dit_ns);
+            printf("  err=%.2e %s\n",
+                   r.err, r.err < 1e-12 ? "" : "[PRECISION FAIL]");
             fflush(stdout);
 
             if (r.err >= 1e-12) failures++;
 
-            /* Sidecar CSV: per-stage codelets + blocked-executor info so
-             * the merge script doesn't need to reproduce the wisdom
-             * predicate logic. */
+            /* Sidecar CSV: per-stage codelets + blocked + DIF info so the
+             * merge script doesn't need to reproduce the wisdom logic. */
             fprintf(info, "%d,%zu,%s,%d,", N, K, r.method, r.nfactors);
             for (int s = 0; s < r.nfactors; s++)
                 fprintf(info, "%s%d", s ? "x" : "", r.factors[s]);
             fprintf(info, ",");
             for (int s = 0; s < r.nfactors; s++)
                 fprintf(info, "%s%s", s ? "/" : "", codelet_short(r.codelets[s]));
-            fprintf(info, ",%.2f,%d,%d,%d,%.2e\n",
+            fprintf(info, ",%.2f,%d,%d,%d,%d,%.2f,%.2f,%.2e\n",
                     r.best_ns,
                     r.use_blocked, r.split_stage, r.block_groups,
+                    r.use_dif_forward,
+                    r.dit_ns,
+                    r.dif_ns >= 0 ? r.dif_ns : 0.0,
                     r.err);
             fflush(info);
         }
