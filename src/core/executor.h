@@ -148,6 +148,18 @@ typedef struct {
     int split_stage;        /* first blocked stage */
     int block_groups;       /* groups per block at split stage */
 
+    /* DIT/DIF orientation (whole-plan, no per-stage mixing).
+     *   0 = DIT forward + DIT backward (current default; pre-multiply
+     *       twiddles, executor traverses stages 0..N-1 fwd, N-1..0 bwd)
+     *   1 = DIF forward + DIF backward (post-multiply twiddles, executor
+     *       traverses with DIF codelets at each stage)
+     *
+     * Set by the calibrator after benching both orientations per cell.
+     * Loaded from wisdom v4. Per-stage codelets (t1_fwd/t1_bwd) and the
+     * per-stage twiddle tables (grp_tw_re/im, cf_all_*) must be built
+     * for the chosen orientation by plan_compute_twiddles_{c,dif_c}. */
+    int use_dif_forward;
+
     /* Override for non-staged plans (Bluestein, Rader, etc.).
      * When override_fwd is non-NULL, execute dispatches here
      * instead of the staged loop. Set by bluestein.h. */

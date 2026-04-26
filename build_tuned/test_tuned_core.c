@@ -70,6 +70,37 @@ static int test_registry_init(void) {
         }
     }
 
+    /* DIF orientation slots: pow2 radixes only (R=2, 4, 8, 16, 32, 64).
+     * log3 only for R=16, 32, 64. Other radixes: NULL. */
+    static const int with_dif[] = {2, 4, 8, 16, 32, 64};
+    for (size_t i = 0; i < sizeof(with_dif)/sizeof(with_dif[0]); i++) {
+        int R = with_dif[i];
+        if (!reg.t1_dif_fwd[R]) {
+            printf("  FAIL: t1_dif_fwd[%d] is NULL\n", R);
+            fail = 1;
+        }
+        if (!reg.t1_dif_bwd[R]) {
+            printf("  FAIL: t1_dif_bwd[%d] is NULL\n", R);
+            fail = 1;
+        }
+    }
+    static const int with_dif_log3[] = {16, 32, 64};
+    for (size_t i = 0; i < sizeof(with_dif_log3)/sizeof(with_dif_log3[0]); i++) {
+        int R = with_dif_log3[i];
+        if (!reg.t1_dif_log3_fwd[R]) {
+            printf("  FAIL: t1_dif_log3_fwd[%d] is NULL\n", R);
+            fail = 1;
+        }
+    }
+    static const int no_dif[] = {3, 5, 6, 7, 10, 11, 12, 13, 17, 19, 20, 25};
+    for (size_t i = 0; i < sizeof(no_dif)/sizeof(no_dif[0]); i++) {
+        int R = no_dif[i];
+        if (reg.t1_dif_fwd[R]) {
+            printf("  FAIL: t1_dif_fwd[%d] non-NULL (no DIF codelet expected)\n", R);
+            fail = 1;
+        }
+    }
+
     if (!fail) printf("  PASS test_registry_init\n");
     return fail;
 }

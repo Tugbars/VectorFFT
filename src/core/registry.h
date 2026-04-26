@@ -19,11 +19,15 @@
  *    choose between t1_dit and t1_buf_dit. The slot is wired but inert
  *    until then.
  *
- * 2. No `t1_dif` slot. DIF codelets exist as bench artifacts (the
- *    `vfft_r{R}_t1_dif_dispatch_*.h` files) but the DIT-structured
- *    forward executor cannot substitute them per stage — DIT and DIF
- *    compute different output buffers given the same input and twiddles.
- *    Filtered for v1.0 per `dit_dif_design_note.md`.
+ * 2. `t1_dif_fwd/bwd` and `t1_dif_log3_fwd/bwd` slots, populated by
+ *    the per-host DIF dispatchers. These are NOT mixed per-stage with
+ *    DIT slots — that would require a per-stage transpose. Instead a
+ *    plan picks one orientation for the whole forward pass via the
+ *    `use_dif_forward` flag in stride_plan_t. Forward-DIT pairs with
+ *    backward-DIF (current default zero-permutation roundtrip);
+ *    forward-DIF pairs with backward-DIT (the parallel team). The
+ *    plan calibrator benches both orientations per (N, K) and keeps
+ *    the winner.
  *
  * 3. Tuned vs untuned radixes
  *    Tuned (dispatchers + plan_wisdom): 3, 4, 5, 6, 7, 8, 10, 11, 12,
@@ -503,9 +507,28 @@ typedef struct {
     stride_n1_scaled_fn n1_scaled_fwd[STRIDE_REG_MAX_RADIX];
     stride_n1_scaled_fn n1_scaled_bwd[STRIDE_REG_MAX_RADIX];
 
-    /* No t1_dif / t1_dif_log3 slots. DIF codelets exist in
-     * vectorfft_tune as bench artifacts but are not executor-callable
-     * per stage in v1.0. See dit_dif_design_note.md. */
+    /* DIF orientation slots (whole-plan alternative to DIT, opt in via
+     * stride_plan_t.use_dif_forward).
+     *
+     * Populated only for radixes whose unified codelet header emits
+     * radix{R}_t1_dif_{fwd,bwd}: R=2, 4, 8, 16, 32, 64 (pow2 only).
+     * NULL for odd/composite radixes — the calibrator must check all
+     * stages have non-NULL t1_dif_fwd before trying the DIF orientation
+     * for a given factorization.
+     *
+     * No dispatcher indirection: DIF wires raw codelet symbols directly.
+     * The dispatcher abstraction was an isolation-bench heuristic; the
+     * plan calibrator owns variant selection now (per the demote-codelet-
+     * wisdom decision). DIT continues to go through dispatchers for v1.1
+     * — that asymmetry is documented and will be reconciled when DIT
+     * also moves off dispatchers in a later phase.
+     *
+     * t1_dif_log3 is populated only for R=16, R=32, R=64. Other radixes
+     * get NULL there too. */
+    stride_t1_fn t1_dif_fwd[STRIDE_REG_MAX_RADIX];
+    stride_t1_fn t1_dif_bwd[STRIDE_REG_MAX_RADIX];
+    stride_t1_fn t1_dif_log3_fwd[STRIDE_REG_MAX_RADIX];
+    stride_t1_fn t1_dif_log3_bwd[STRIDE_REG_MAX_RADIX];
 } stride_registry_t;
 
 static const int STRIDE_AVAILABLE_RADIXES[] = {
@@ -575,6 +598,22 @@ static const int STRIDE_AVAILABLE_RADIXES[] = {
 #define _REG_N1_SCALED(R) \
     reg->n1_scaled_fwd[R] = (stride_n1_scaled_fn)VFFT_FN(radix##R##_n1_scaled_fwd); \
     reg->n1_scaled_bwd[R] = (stride_n1_scaled_fn)VFFT_FN(radix##R##_n1_scaled_bwd);
+
+/* DIF flat: raw codelet symbols (no dispatcher). Populated for pow2
+ * radixes only (R=2, 4, 8, 16, 32, 64). The codelet exists for both
+ * AVX2 and AVX-512 in the unified header fft_radix{R}_{isa}.h. Scalar
+ * builds: not wired (the new core's DIF path targets SIMD only). */
+#if defined(VFFT_ISA_SCALAR)
+  #define _REG_DIF_FLAT(R) /* no-op: scalar path doesn't expose DIF */
+  #define _REG_DIF_LOG3(R) /* no-op */
+#else
+  #define _REG_DIF_FLAT(R) \
+      reg->t1_dif_fwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1_dif_fwd); \
+      reg->t1_dif_bwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1_dif_bwd);
+  #define _REG_DIF_LOG3(R) \
+      reg->t1_dif_log3_fwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1_dif_log3_fwd); \
+      reg->t1_dif_log3_bwd[R] = (stride_t1_fn)VFFT_FN(radix##R##_t1_dif_log3_bwd);
+#endif
 
 /* Bundle macros for tuned radixes.
  * _REG_TUNED_FULL: t1_dit + t1_dit_log3 + t1s_dit dispatchers.
@@ -648,6 +687,26 @@ static void stride_registry_init(stride_registry_t *reg) {
     _REG_TUNED_FULL_WITH_BUF(32)
     _REG_TUNED_FULL_WITH_BUF(64)
 #endif
+
+    /* DIF orientation slots — pow2 radixes only.
+     *
+     * The DIF codelet exists for R=2, 4, 8, 16, 32, 64 in the unified
+     * header for each ISA. R=2 codelet was bootstrapped from production
+     * (single variant); R=4, 8 use the legacy unified header; R=16, 32,
+     * 64 expose log3 too. Other radixes (3, 5, 6, 7, 10, 11, 12, 13, 17,
+     * 19, 20, 25) have no DIF codelet emitted, so their DIF slots stay
+     * NULL — the calibrator skips DIF orientation for plans that include
+     * any such radix.
+     *
+     * Scalar builds: _REG_DIF_FLAT/_LOG3 are no-ops (no DIF codelets in
+     * the scalar production portfolio).
+     */
+    _REG_DIF_FLAT(2)
+    _REG_DIF_FLAT(4)
+    _REG_DIF_FLAT(8)
+    _REG_DIF_FLAT(16) _REG_DIF_LOG3(16)
+    _REG_DIF_FLAT(32) _REG_DIF_LOG3(32)
+    _REG_DIF_FLAT(64) _REG_DIF_LOG3(64)
 }
 
 #undef _REG_N1
@@ -662,6 +721,8 @@ static void stride_registry_init(stride_registry_t *reg) {
 #undef _REG_TUNED_FULL_WITH_BUF
 #undef _REG_TUNED_FULL_LEGACY_HDR
 #undef _REG_RAW_R2
+#undef _REG_DIF_FLAT
+#undef _REG_DIF_LOG3
 
 /* ═══════════════════════════════════════════════════════════════
  * QUERIES
@@ -679,6 +740,14 @@ static inline int stride_registry_has_t1(const stride_registry_t *reg, int radix
  * Used by future planner prefer_buf consultation (Phase 2.1+). */
 static inline int stride_registry_has_t1_buf(const stride_registry_t *reg, int radix) {
     return radix > 0 && radix < STRIDE_REG_MAX_RADIX && reg->t1_buf_fwd[radix] != NULL;
+}
+
+/* Does this radix have DIF codelets wired? Used by the calibrator to
+ * decide whether the use_dif_forward orientation is viable for a plan
+ * — every stage's radix must answer yes here, otherwise DIF is skipped
+ * for that factorization. R=2, 4, 8, 16, 32, 64 only. */
+static inline int stride_registry_has_dif(const stride_registry_t *reg, int radix) {
+    return radix > 0 && radix < STRIDE_REG_MAX_RADIX && reg->t1_dif_fwd[radix] != NULL;
 }
 
 #endif /* STRIDE_REGISTRY_H */
