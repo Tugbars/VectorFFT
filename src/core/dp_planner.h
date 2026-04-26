@@ -442,10 +442,13 @@ static double stride_dp_plan(stride_dp_context_t *ctx, int N,
  * ===================================================================== */
 
 #ifndef MEASURE_TOPK_DEFAULT
-#define MEASURE_TOPK_DEFAULT 3
+#define MEASURE_TOPK_DEFAULT 5
 #endif
 #ifndef MEASURE_MAX_CANDIDATES
 #define MEASURE_MAX_CANDIDATES 1024
+#endif
+#ifndef MEASURE_COARSE_RUNS
+#define MEASURE_COARSE_RUNS 2     /* coarse-pass sweeps; per-cand min */
 #endif
 
 typedef struct {
@@ -640,6 +643,18 @@ static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
     if (n_cands == 0) {
         if (verbose) printf("  N=%d MEASURE: no working coarse plans\n", N);
         return 1e18;
+    }
+
+    /* Best-of-runs: extra coarse sweeps over the same candidate set.
+     * Each (factorization, permutation) gets its min cost across runs.
+     * Reduces variance-driven ranking flips that knocked the actual
+     * best multiset out of top-K in earlier pilots. */
+    for (int run = 1; run < MEASURE_COARSE_RUNS; run++) {
+        for (int i = 0; i < n_cands; i++) {
+            double ns = _dp_bench(ctx, N, cands[i].factors, cands[i].nf,
+                                  ctx->K, reg);
+            if (ns < cands[i].cost_ns) cands[i].cost_ns = ns;
+        }
     }
 
     /* Sort, take top-K. */

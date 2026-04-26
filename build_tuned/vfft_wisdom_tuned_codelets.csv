@@ -1,3 +1,0 @@
-N,K,method,nf,factors,codelets,variant_codes,best_ns,use_blocked,split_stage,block_groups,use_dif_forward,dit_ns,dif_ns,variants_searched,roundtrip_err
-4096,4,dp+measure,3,4x64x16,n1/log3/flat,0/1/0,20286.89,0,0,0,1,-1.00,0.00,502,6.11e-16
-4096,256,dp+measure,5,4x2x4x4x32,n1/flat/t1s/t1s/t1s,0/0/2/2/2,2393215.01,0,0,0,0,-1.00,0.00,686,5.97e-16
