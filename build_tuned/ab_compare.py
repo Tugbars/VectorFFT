@@ -30,7 +30,11 @@ DEFAULT_OUT   = HERE / 'ab_comparison.csv'
 
 
 def parse_wisdom(path: Path) -> dict[tuple[int, int], dict]:
-    """Load v3 wisdom file. Returns {(N, K): {factors, best_ns, ...}}."""
+    """Load v3 or v4 wisdom file. Returns {(N, K): {factors, best_ns, ...}}.
+
+    v3 columns: N K nf factors... best_ns use_blocked split_stage block_groups
+    v4 columns: ...above + use_dif_forward
+    """
     if not path.exists():
         raise FileNotFoundError(f'wisdom file not found: {path}')
     out: dict[tuple[int, int], dict] = {}
@@ -43,16 +47,15 @@ def parse_wisdom(path: Path) -> dict[tuple[int, int], dict]:
             if line.startswith('@'):
                 if line.startswith('@version'):
                     parts = line.split()
-                    if len(parts) >= 2 and parts[1] == '3':
+                    if len(parts) >= 2 and parts[1] in ('3', '4'):
                         version_seen = True
                     else:
                         raise ValueError(
-                            f'{path}: expected @version 3, got: {line}')
+                            f'{path}: expected @version 3 or 4, got: {line}')
                 continue
             if not version_seen:
-                raise ValueError(f'{path}: missing @version 3 header')
+                raise ValueError(f'{path}: missing @version header')
             tokens = line.split()
-            # Format: N K nf factor1..factorNF best_ns [use_blocked split_stage block_groups]
             if len(tokens) < 5:
                 continue
             N      = int(tokens[0])
@@ -67,11 +70,14 @@ def parse_wisdom(path: Path) -> dict[tuple[int, int], dict]:
                 'factors': factors,
                 'best_ns': best_ns,
                 'use_blocked': 0, 'split_stage': 0, 'block_groups': 0,
+                'use_dif_forward': 0,
             }
             if len(tokens) >= 3 + nf + 4:
                 entry['use_blocked']  = int(tokens[3 + nf + 1])
                 entry['split_stage']  = int(tokens[3 + nf + 2])
                 entry['block_groups'] = int(tokens[3 + nf + 3])
+            if len(tokens) >= 3 + nf + 5:
+                entry['use_dif_forward'] = int(tokens[3 + nf + 4])
             out[(N, K)] = entry
     return out
 
@@ -171,6 +177,9 @@ def main() -> int:
                 return f'blk@s={entry["split_stage"]},g={entry["block_groups"]}'
             return ''
 
+        # DIF orientation flag (v4+). Production is always v3 (DIT only).
+        tuned_dif = bool(t.get('use_dif_forward', 0))
+
         rows.append({
             'N': N, 'K': K,
             'prod_factors':   fmt_factors(p['factors']),
@@ -179,6 +188,7 @@ def main() -> int:
             'tuned_method':   info.get('method', ''),
             'prod_blocked':   fmt_blocked(p),
             'tuned_blocked':  fmt_blocked(t),
+            'tuned_dif':      'DIF' if tuned_dif else '',
             'prod_ns':  f'{p["best_ns"]:.2f}',
             'tuned_ns': f'{t["best_ns"]:.2f}',
             'speedup':  f'{speedup:.3f}',
@@ -198,15 +208,18 @@ def main() -> int:
 
     # Console summary
     print()
-    print(f'{"N":>6} {"K":>4} {"prod_ns":>11} {"tuned_ns":>11} {"speedup":>8} {"verdict":>10}  factors_p / factors_t / codelets_t [blocked]')
+    print(f'{"N":>6} {"K":>4} {"prod_ns":>11} {"tuned_ns":>11} {"speedup":>8} {"verdict":>10}  factors_p / factors_t / codelets_t [tags]')
     print('-' * 130)
     for r in rows:
-        blocked_tag = ''
+        tags = []
         if r['prod_blocked'] or r['tuned_blocked']:
-            blocked_tag = f' [P:{r["prod_blocked"] or "-"} | T:{r["tuned_blocked"] or "-"}]'
+            tags.append(f'P:{r["prod_blocked"] or "-"} | T:{r["tuned_blocked"] or "-"}')
+        if r['tuned_dif']:
+            tags.append(r['tuned_dif'])
+        tag_str = f' [{"; ".join(tags)}]' if tags else ''
         print(f'{r["N"]:>6} {r["K"]:>4} {r["prod_ns"]:>11} {r["tuned_ns"]:>11} '
               f'{r["speedup"]:>8} {r["verdict"]:>10}  '
-              f'{r["prod_factors"]} / {r["tuned_factors"]} / {r["tuned_codelets"]}{blocked_tag}')
+              f'{r["prod_factors"]} / {r["tuned_factors"]} / {r["tuned_codelets"]}{tag_str}')
 
     print()
     print(f'wins        : {n_wins}')
