@@ -68,18 +68,15 @@ static int test_full_matrix(int N, size_t K, const int *factors, int nf,
 
     for (int orient = 0; orient < 2; orient++) {
         const char *orient_name = orient ? "DIF" : "DIT";
-        printf("  attempting [%s] orientation\n", orient_name); fflush(stdout);
 
         vfft_variant_iter_t it;
         if (!vfft_variant_iter_init(&it, factors, nf, orient, &reg)) {
             printf("  [%s] no variants available; skipping\n", orient_name);
-            fflush(stdout);
             continue;
         }
 
         long total = vfft_variant_iter_total(&it);
-        printf("  [%s] %ld variant assignments to test\n", orient_name, total);
-        fflush(stdout);
+        printf("  [%s] %ld variant assignments\n", orient_name, total);
 
         do {
             vfft_variant_t variants[STRIDE_MAX_STAGES];
@@ -91,16 +88,13 @@ static int test_full_matrix(int N, size_t K, const int *factors, int nf,
                 n += snprintf(buf + n, sizeof(buf) - n, "%s%s",
                               s ? "/" : "", vname(variants[s]));
 
-            printf("    building %s ...\n", buf); fflush(stdout);
             stride_plan_t *plan = _stride_build_plan_explicit(
                     N, K, factors, nf, variants, orient, &reg);
             if (!plan) {
                 printf("  %-50s [build failed]\n", buf);
-                fflush(stdout);
                 fail++;
                 continue;
             }
-            printf("    running %s ...\n", buf); fflush(stdout);
             fail += run_roundtrip(plan, N, K, buf);
             stride_plan_destroy(plan);
         } while (vfft_variant_iter_next(&it));
