@@ -38,12 +38,30 @@
 
 /* =====================================================================
  * DP CACHE
+ *
+ * Upgrade A (2026-04-26): cache key is now (N, K_eff), not just N.
+ *   K_eff is the *effective* batch size at this call site:
+ *     K_eff = K_outer * product(prefix radixes consumed before reaching N).
+ *   Two calls for the same N at different K_eff produce different cache
+ *   slots, so a sub-plan winner found in one composition context cannot
+ *   pollute lookups from a different context. This is the principled fix
+ *   for the v1.1 "lock-in" failure mode where M's cache returned a
+ *   factorization that was best as-isolated but suboptimal as-substage.
+ *
+ * Upgrade C: believe_subplan_cost toggle (FFTW BELIEVE_PCOST analog).
+ *   When 1 (default, MEASURE-style): cache hit returns cached cost,
+ *   no re-measurement.
+ *   When 0 (PATIENT-style): cache hit returns the cached factorization
+ *   but the cost is re-measured fresh. Structural memoization is kept
+ *   so the radix-search isn't repeated, but variance is re-absorbed
+ *   on every encounter.
  * ===================================================================== */
 
 #define DP_CACHE_MAX 512
 
 typedef struct {
     int N;
+    size_t K_eff;                          /* effective batch at lookup time */
     int factors[FACT_MAX_STAGES];
     int nfactors;
     double cost_ns;
@@ -52,12 +70,17 @@ typedef struct {
 typedef struct {
     dp_entry_t entries[DP_CACHE_MAX];
     int count;
-    size_t K;
+    size_t K;                              /* top-level K_outer */
 
     /* Shared benchmark buffers (allocated for max N*K) */
     double *re, *im, *orig_re, *orig_im;
     size_t buf_total;  /* current buffer size in elements */
     int max_N;         /* largest N we'll plan for */
+
+    /* Compositional-trust toggle (set by user before stride_dp_plan).
+     * 1 = trust cached pcost (default, MEASURE).
+     * 0 = re-measure on cache hit (PATIENT). */
+    int believe_subplan_cost;
 
     /* Statistics */
     int n_benchmarks;
@@ -69,6 +92,7 @@ static void stride_dp_init(stride_dp_context_t *ctx, size_t K, int max_N) {
     ctx->K = K;
     ctx->max_N = max_N;
     ctx->buf_total = (size_t)max_N * K;
+    ctx->believe_subplan_cost = 1;          /* default: MEASURE semantics */
 
     ctx->re      = (double *)STRIDE_ALIGNED_ALLOC(64, ctx->buf_total * sizeof(double));
     ctx->im      = (double *)STRIDE_ALIGNED_ALLOC(64, ctx->buf_total * sizeof(double));
@@ -90,19 +114,21 @@ static void stride_dp_destroy(stride_dp_context_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
 }
 
-/* Cache lookup */
-static dp_entry_t *_dp_lookup(stride_dp_context_t *ctx, int N) {
+/* Cache lookup — keyed by (N, K_eff). */
+static dp_entry_t *_dp_lookup(stride_dp_context_t *ctx, int N, size_t K_eff) {
     for (int i = 0; i < ctx->count; i++)
-        if (ctx->entries[i].N == N) return &ctx->entries[i];
+        if (ctx->entries[i].N == N && ctx->entries[i].K_eff == K_eff)
+            return &ctx->entries[i];
     return NULL;
 }
 
-/* Cache insert */
-static dp_entry_t *_dp_insert(stride_dp_context_t *ctx, int N) {
+/* Cache insert — keyed by (N, K_eff). */
+static dp_entry_t *_dp_insert(stride_dp_context_t *ctx, int N, size_t K_eff) {
     if (ctx->count >= DP_CACHE_MAX) return NULL;
     dp_entry_t *e = &ctx->entries[ctx->count++];
     memset(e, 0, sizeof(*e));
     e->N = N;
+    e->K_eff = K_eff;
     e->cost_ns = 1e18;
     return e;
 }
@@ -110,51 +136,90 @@ static dp_entry_t *_dp_insert(stride_dp_context_t *ctx, int N) {
 /* =====================================================================
  * BENCHMARK HELPER
  *
- * Benchmarks a full plan using the context's shared buffers.
- * Lighter than stride_bench_one: fewer warmup/trials for DP
- * (speed matters here since we run ~100+ benchmarks).
+ * Benchmarks a full plan at (N, K_eff) using the context's shared buffers.
+ *
+ * Upgrade B (2026-04-26): timing harness now mirrors FFTW's
+ * measure_execution_time (kernel/timer.c). Adaptive iteration count:
+ * doubles `reps` until tmin*reps >= TIME_MIN, then takes best-of-N
+ * across DP_TIME_REPEAT trials. Hard wall-clock cap per call.
+ * Per-trial buffer reset (zero-init via copy from orig) keeps the
+ * data path consistent across repeats and absorbs denormals.
+ *
+ * Buffer-size invariant: total = N * K_eff, and N*K_eff is conserved
+ * across the recursion (sub_N * sub_K_eff = N_outer * K_outer), so
+ * the once-allocated ctx buffers always fit.
  * ===================================================================== */
 
+#ifndef DP_TIME_REPEAT
+#define DP_TIME_REPEAT  6        /* number of best-of trials */
+#endif
+#ifndef DP_TIME_MIN_NS
+#define DP_TIME_MIN_NS  2.0e6    /* min wall-clock per trial (2 ms) */
+#endif
+#ifndef DP_TIME_LIMIT_NS
+#define DP_TIME_LIMIT_NS  5.0e8  /* per-bench cap (~0.5 s) */
+#endif
+
 static double _dp_bench(stride_dp_context_t *ctx, int N,
-                         const int *factors, int nf,
+                         const int *factors, int nf, size_t K_eff,
                          const stride_registry_t *reg) {
-    size_t K = ctx->K;
-    size_t total = (size_t)N * K;
+    size_t total = (size_t)N * K_eff;
 
     /* Sanity check: all requested radixes must have n1 codelets registered. */
     for (int s = 0; s < nf; s++) {
         if (!reg->n1_fwd[factors[s]]) return 1e18;
     }
 
-    /* Phase 2: route through _stride_build_plan so that codelet-side
-     * plan_wisdom drives protocol selection (flat / t1s / DIT-log3) at
-     * plan time. This keeps the DP's benchmarks honest: the plan being
-     * measured here is the exact same plan shape that stride_auto_plan
-     * and stride_wise_plan will produce at deploy time. Without this,
-     * DP would compare flat-only plans and might pick factorization A
-     * over B even though B wins decisively when its stages can use log3. */
-    stride_plan_t *plan = _stride_build_plan(N, K, factors, nf, reg);
+    /* Route through _stride_build_plan so that codelet-side plan_wisdom
+     * drives protocol selection (flat / t1s / DIT-log3) at plan time.
+     * The plan shape we measure here matches what stride_auto_plan and
+     * stride_wise_plan will produce at deploy time. */
+    stride_plan_t *plan = _stride_build_plan(N, K_eff, factors, nf, reg);
     if (!plan) return 1e18;
 
-    /* Warmup */
+    /* Warmup (also serves as a single-iter calibration baseline). */
     memcpy(ctx->re, ctx->orig_re, total * sizeof(double));
     memcpy(ctx->im, ctx->orig_im, total * sizeof(double));
     stride_execute_fwd(plan, ctx->re, ctx->im);
 
-    int reps = (int)(1e5 / (total + 1));
-    if (reps < 5) reps = 5;
-    if (reps > 20000) reps = 20000;
+    /* Adaptive iter: double `reps` until one trial >= DP_TIME_MIN_NS,
+     * then collect DP_TIME_REPEAT best-of trials at that rep count.
+     * Mirrors FFTW kernel/timer.c::measure_execution_time. */
+    double best = 1e30;
+    double total_elapsed = 0.0;
+    int reps = 1;
+    int calibrated = 0;
 
-    /* Best of 2 trials (fast, DP will verify winner later) */
-    double best = 1e18;
-    for (int t = 0; t < 2; t++) {
-        memcpy(ctx->re, ctx->orig_re, total * sizeof(double));
-        memcpy(ctx->im, ctx->orig_im, total * sizeof(double));
-        double t0 = now_ns();
-        for (int i = 0; i < reps; i++)
-            stride_execute_fwd(plan, ctx->re, ctx->im);
-        double ns = (now_ns() - t0) / reps;
-        if (ns < best) best = ns;
+    for (int outer = 0; outer < 32 && total_elapsed < DP_TIME_LIMIT_NS; outer++) {
+        double tmin_trial = 1e30;
+
+        for (int t = 0; t < DP_TIME_REPEAT; t++) {
+            memcpy(ctx->re, ctx->orig_re, total * sizeof(double));
+            memcpy(ctx->im, ctx->orig_im, total * sizeof(double));
+            double t0 = now_ns();
+            for (int i = 0; i < reps; i++)
+                stride_execute_fwd(plan, ctx->re, ctx->im);
+            double trial_ns = now_ns() - t0;
+            if (trial_ns < tmin_trial) tmin_trial = trial_ns;
+            total_elapsed += trial_ns;
+            if (total_elapsed >= DP_TIME_LIMIT_NS) break;
+        }
+
+        if (!calibrated) {
+            /* If trial duration is too short, double reps and retry. */
+            if (tmin_trial < DP_TIME_MIN_NS) {
+                reps *= 2;
+                if (reps > (1 << 24)) { calibrated = 1; }   /* sanity cap */
+                continue;
+            }
+            calibrated = 1;
+        }
+
+        double per_iter = tmin_trial / (double)reps;
+        if (per_iter < best) best = per_iter;
+
+        /* Calibrated and DP_TIME_REPEAT collected — done. */
+        break;
     }
 
     stride_plan_destroy(plan);
@@ -179,24 +244,31 @@ static const int DP_RADIXES[] = {
     19, 17, 13, 11, 0
 };
 
-static double _dp_solve(stride_dp_context_t *ctx, int N,
+static double _dp_solve(stride_dp_context_t *ctx, int N, size_t K_eff,
                          const stride_registry_t *reg,
                          int *out_factors, int *out_nf) {
-    /* Check cache */
-    dp_entry_t *cached = _dp_lookup(ctx, N);
+    /* Check cache (keyed by N + K_eff). */
+    dp_entry_t *cached = _dp_lookup(ctx, N, K_eff);
     if (cached) {
         ctx->n_cache_hits++;
         memcpy(out_factors, cached->factors, cached->nfactors * sizeof(int));
         *out_nf = cached->nfactors;
-        return cached->cost_ns;
+        if (ctx->believe_subplan_cost) {
+            return cached->cost_ns;
+        }
+        /* PATIENT: re-measure with the cached factorization. */
+        double fresh = _dp_bench(ctx, N, cached->factors, cached->nfactors,
+                                 K_eff, reg);
+        cached->cost_ns = fresh;        /* refresh the stored cost */
+        return fresh;
     }
 
     /* Base case: N is itself a registered radix — single stage */
     if (stride_registry_has(reg, N) && N <= 64) {
         int factors[1] = {N};
-        double ns = _dp_bench(ctx, N, factors, 1, reg);
+        double ns = _dp_bench(ctx, N, factors, 1, K_eff, reg);
 
-        dp_entry_t *e = _dp_insert(ctx, N);
+        dp_entry_t *e = _dp_insert(ctx, N, K_eff);
         if (e) {
             e->factors[0] = N;
             e->nfactors = 1;
@@ -223,7 +295,7 @@ static double _dp_solve(stride_dp_context_t *ctx, int N,
         /* Base case for M=1: single stage R */
         if (M == 1) {
             int factors[1] = {R};
-            double ns = _dp_bench(ctx, N, factors, 1, reg);
+            double ns = _dp_bench(ctx, N, factors, 1, K_eff, reg);
             if (ns < best_ns) {
                 best_ns = ns;
                 best_factors[0] = R;
@@ -232,10 +304,13 @@ static double _dp_solve(stride_dp_context_t *ctx, int N,
             continue;
         }
 
-        /* Recursively solve M */
+        /* Recursively solve M.
+         * K_eff for the sub-problem grows by R: when R is consumed as the
+         * first stage of N, M's stages execute at batch K_eff * R. */
+        size_t K_eff_sub = K_eff * (size_t)R;
         int sub_factors[FACT_MAX_STAGES];
         int sub_nf = 0;
-        double sub_cost = _dp_solve(ctx, M, reg, sub_factors, &sub_nf);
+        double sub_cost = _dp_solve(ctx, M, K_eff_sub, reg, sub_factors, &sub_nf);
         if (sub_cost >= 1e17) continue;
         if (sub_nf + 1 > FACT_MAX_STAGES) continue;
 
@@ -245,8 +320,8 @@ static double _dp_solve(stride_dp_context_t *ctx, int N,
         memcpy(candidate + 1, sub_factors, sub_nf * sizeof(int));
         int nf = sub_nf + 1;
 
-        /* Benchmark the FULL plan (captures real cache behavior) */
-        double ns = _dp_bench(ctx, N, candidate, nf, reg);
+        /* Benchmark the FULL plan at this K_eff (captures composition). */
+        double ns = _dp_bench(ctx, N, candidate, nf, K_eff, reg);
 
         if (ns < best_ns) {
             best_ns = ns;
@@ -256,7 +331,7 @@ static double _dp_solve(stride_dp_context_t *ctx, int N,
     }
 
     /* Cache result */
-    dp_entry_t *e = _dp_insert(ctx, N);
+    dp_entry_t *e = _dp_insert(ctx, N, K_eff);
     if (e && best_nf > 0) {
         memcpy(e->factors, best_factors, best_nf * sizeof(int));
         e->nfactors = best_nf;
@@ -281,10 +356,11 @@ static double stride_dp_plan(stride_dp_context_t *ctx, int N,
                               const stride_registry_t *reg,
                               stride_factorization_t *best_fact,
                               int verbose) {
-    /* Phase 1: recursive DP to find best radix set */
+    /* Phase 1: recursive DP to find best radix set.
+     * Top-level call uses K_eff = ctx->K (i.e., the user-requested batch). */
     int dp_factors[FACT_MAX_STAGES];
     int dp_nf = 0;
-    double dp_ns = _dp_solve(ctx, N, reg, dp_factors, &dp_nf);
+    double dp_ns = _dp_solve(ctx, N, ctx->K, reg, dp_factors, &dp_nf);
 
     if (dp_nf == 0 || dp_ns >= 1e17) {
         if (verbose) printf("  N=%d: DP failed to find a plan\n", N);
@@ -316,7 +392,7 @@ static double stride_dp_plan(stride_dp_context_t *ctx, int N,
             if (plist->perms[pi][s] != dp_factors[s]) { same = 0; break; }
         if (same) continue;
 
-        double ns = _dp_bench(ctx, N, plist->perms[pi], dp_nf, reg);
+        double ns = _dp_bench(ctx, N, plist->perms[pi], dp_nf, ctx->K, reg);
         if (ns < global_best) {
             global_best = ns;
             memcpy(best_fact->factors, plist->perms[pi], dp_nf * sizeof(int));
