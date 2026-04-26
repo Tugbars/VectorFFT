@@ -412,26 +412,41 @@ static double stride_dp_plan(stride_dp_context_t *ctx, int N,
 }
 
 /* =====================================================================
- * VFFT_MEASURE — VARIANT-AWARE PLANNER
+ * VFFT_MEASURE — TOP-K + VARIANT-AWARE PLANNER (FFTW PATIENT-style)
  *
- * Layered on top of the legacy DP recursion (which picks a factorization
- * using wisdom-default variants). After the factorization is chosen,
- * MEASURE runs the variant cartesian × {DIT, DIF} on that factorization
- * and returns the joint winner.
+ * Two-pass design:
  *
- * Cost vs. EXTREME (calibrate_cell_joint, full joint cartesian over
- *                   factorizations × permutations × variants × orient):
- *   MEASURE searches variants × orient on ONE factorization.
- *   Skips variant-axis-flips-factorization cases — the v1.2 K=4 finding
- *   where joint search picked 8x32x16 over the legacy 4x4x16x16 cannot
- *   be reproduced here. The K=256 finding (same factorization, variants
- *   change) IS reproduced.
+ *   1. Coarse pass: enumerate every (factorization, permutation) pair,
+ *      bench with wisdom-default variants. Cheap because wisdom-default
+ *      is one bench per pair, and the FFTW-style adaptive timer keeps
+ *      each bench bounded.
  *
- * If empirical comparison shows MEASURE retains <80% of EXTREME wins,
- * the next-gen MEASURE will track top-K factorizations and run variant
- * search on each. For now, single-factorization is the deliberate
- * scope-cut.
+ *   2. Refine pass: take the K_top lowest-cost (factorization, permutation)
+ *      pairs from the coarse pass; for each, run the full variant
+ *      cartesian × {DIT, DIF}. Pick global best.
+ *
+ * This addresses the v1.2 lesson that variant choice can flip the
+ * factorization ranking (the K=4 case where joint picked 8x32x16 over
+ * legacy 4x4x16x16): if the right-factorization survives the coarse
+ * pass at top-K, the refine pass discovers its variant-optimal cost.
+ *
+ * Cost vs. EXTREME (full joint cartesian, calibrate_cell_joint):
+ *   coarse:  C × bench_default       (~ N=4096 K=256: ~500 × 100ms = 50s)
+ *   refine:  K_top × V × 2 × bench   (~ 3 × 256 × 2 × 100ms = 150s)
+ *   Total:   ~200s/cell at N=4096 K=256, vs EXTREME ~3000s = ~7%.
+ *
+ * K_top is the search-budget knob:
+ *   K_top=1  ≈ legacy DP + variant cartesian (the previous MEASURE)
+ *   K_top=3  default — captures most variant-axis-flips-fact cases
+ *   K_top=∞  ≈ EXTREME (every coarse pair gets full refine)
  * ===================================================================== */
+
+#ifndef MEASURE_TOPK_DEFAULT
+#define MEASURE_TOPK_DEFAULT 3
+#endif
+#ifndef MEASURE_MAX_CANDIDATES
+#define MEASURE_MAX_CANDIDATES 1024
+#endif
 
 typedef struct {
     stride_factorization_t fact;
@@ -549,70 +564,139 @@ static double _dp_variant_search(stride_dp_context_t *ctx, int N,
     return best_ns;
 }
 
-/* Top-level VFFT_MEASURE entry point.
+/* Coarse-pass candidate, sorted by default-variant cost. */
+typedef struct {
+    int    factors[FACT_MAX_STAGES];
+    int    nf;
+    double cost_ns;
+} _measure_candidate_t;
+
+static int _measure_cmp(const void *a, const void *b) {
+    double ca = ((const _measure_candidate_t *)a)->cost_ns;
+    double cb = ((const _measure_candidate_t *)b)->cost_ns;
+    if (ca < cb) return -1;
+    if (ca > cb) return  1;
+    return 0;
+}
+
+/* Top-level VFFT_MEASURE entry point (top-K + variant cartesian).
  *
- * Pipeline:
- *   1. Run legacy stride_dp_plan to choose a factorization F (default
- *      variants, DIT-implicit). This already includes Phase 2 permutation.
- *   2. For orient in {DIT, DIF}: variant cartesian over (F, orient).
- *   3. Pick global best across orientations.
+ * Coarse pass: bench every (factorization, permutation) with default
+ * variants. Sort. Take top-K.
+ * Refine pass: variant cartesian × {DIT, DIF} on each top-K, pick global
+ * best.
  *
- * decision->cost_ns is filled with the variant-best ns/iter at the
- * winning orientation. If verbose, prints a one-line summary. */
+ * decision->cost_ns is the variant-best ns/iter at the winning orientation
+ * (measured by the FFTW-style adaptive timer; the calibrator re-benches
+ * with deploy-quality bench_plan_min before writing wisdom). */
 static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
                                      const stride_registry_t *reg,
                                      stride_plan_decision_t *decision,
                                      int verbose) {
-    /* Phase 1: legacy DP picks a factorization (default variants). */
-    stride_factorization_t fact;
-    double base_ns = stride_dp_plan(ctx, N, reg, &fact, 0);
-    if (base_ns >= 1e17 || fact.nfactors <= 0) {
-        if (verbose) printf("  N=%d MEASURE: DP failed\n", N);
+    /* COARSE PASS: enumerate factorizations × permutations × default
+     * variants. _dp_bench routes through _stride_build_plan so the
+     * coarse cost reflects what the wisdom path would deploy. */
+    factorization_list_t flist;
+    stride_enumerate_factorizations(N, reg, &flist);
+    if (flist.count == 0) {
+        if (verbose) printf("  N=%d MEASURE: no factorizations enumerated\n", N);
         return 1e18;
     }
 
-    /* Phase 2: variant cartesian × both orientations on the chosen
-     * factorization. */
-    double best_ns = 1e18;
-    vfft_variant_t best_variants[FACT_MAX_STAGES];
-    int best_use_dif = 0;
-    long total_assignments = 0;
+    static _measure_candidate_t cands[MEASURE_MAX_CANDIDATES];
+    int n_cands = 0;
 
-    for (int orient = 0; orient < 2; orient++) {
-        vfft_variant_t cur_best[FACT_MAX_STAGES];
-        long n_this = 0;
-        double ns = _dp_variant_search(ctx, N, fact.factors, fact.nfactors,
-                                       orient, ctx->K, reg,
-                                       cur_best, &n_this, verbose);
-        total_assignments += n_this;
-        if (ns < best_ns) {
-            best_ns = ns;
-            memcpy(best_variants, cur_best,
-                   fact.nfactors * sizeof(vfft_variant_t));
-            best_use_dif = orient;
+    for (int fi = 0; fi < flist.count && n_cands < MEASURE_MAX_CANDIDATES; fi++) {
+        const int  nf = flist.results[fi].nfactors;
+        const int *base_factors = flist.results[fi].factors;
+
+        permutation_list_t plist;
+        stride_gen_permutations(base_factors, nf, &plist);
+
+        for (int pi = 0; pi < plist.count && n_cands < MEASURE_MAX_CANDIDATES; pi++) {
+            const int *perm = plist.perms[pi];
+
+            /* Validate: every radix needs an n1 codelet. */
+            int can_build = 1;
+            for (int s = 0; s < nf; s++) {
+                int R = perm[s];
+                if (R <= 0 || R >= STRIDE_REG_MAX_RADIX || !reg->n1_fwd[R]) {
+                    can_build = 0;
+                    break;
+                }
+            }
+            if (!can_build) continue;
+
+            double ns = _dp_bench(ctx, N, perm, nf, ctx->K, reg);
+            if (ns >= 1e17) continue;
+
+            cands[n_cands].nf = nf;
+            for (int s = 0; s < nf; s++) cands[n_cands].factors[s] = perm[s];
+            cands[n_cands].cost_ns = ns;
+            n_cands++;
+        }
+    }
+
+    if (n_cands == 0) {
+        if (verbose) printf("  N=%d MEASURE: no working coarse plans\n", N);
+        return 1e18;
+    }
+
+    /* Sort, take top-K. */
+    qsort(cands, n_cands, sizeof(*cands), _measure_cmp);
+    int K_top = MEASURE_TOPK_DEFAULT;
+    int n_topk = (n_cands < K_top) ? n_cands : K_top;
+
+    /* REFINE: variant cartesian × {DIT, DIF} on each top-K candidate. */
+    double best_ns = 1e18;
+    int    best_factors[FACT_MAX_STAGES];
+    int    best_nf = 0;
+    vfft_variant_t best_variants[FACT_MAX_STAGES];
+    int    best_use_dif = 0;
+    long   total_refine = 0;
+
+    for (int k = 0; k < n_topk; k++) {
+        const _measure_candidate_t *c = &cands[k];
+
+        for (int orient = 0; orient < 2; orient++) {
+            vfft_variant_t cur_best[FACT_MAX_STAGES];
+            long n_this = 0;
+            double ns = _dp_variant_search(ctx, N, c->factors, c->nf,
+                                           orient, ctx->K, reg,
+                                           cur_best, &n_this, 0);
+            total_refine += n_this;
+            if (ns < best_ns) {
+                best_ns = ns;
+                best_nf = c->nf;
+                memcpy(best_factors, c->factors, c->nf * sizeof(int));
+                memcpy(best_variants, cur_best,
+                       c->nf * sizeof(vfft_variant_t));
+                best_use_dif = orient;
+            }
         }
     }
 
     if (best_ns >= 1e17) {
-        if (verbose) printf("  N=%d MEASURE: no valid variant assignment\n", N);
+        if (verbose) printf("  N=%d MEASURE: no valid refine\n", N);
         return 1e18;
     }
 
-    decision->fact = fact;
+    decision->fact.nfactors = best_nf;
+    memcpy(decision->fact.factors, best_factors, best_nf * sizeof(int));
     memcpy(decision->variants, best_variants,
-           fact.nfactors * sizeof(vfft_variant_t));
+           best_nf * sizeof(vfft_variant_t));
     decision->use_dif_forward = best_use_dif;
     decision->cost_ns = best_ns;
 
     if (verbose) {
-        printf("  N=%d K=%zu MEASURE: ", N, ctx->K);
-        for (int s = 0; s < fact.nfactors; s++)
-            printf("%s%d", s ? "x" : "", fact.factors[s]);
+        printf("  N=%d K=%zu MEASURE-topk(%d): coarse=%d top=%d refine=%ld -> ",
+               N, ctx->K, K_top, n_cands, n_topk, total_refine);
+        for (int s = 0; s < best_nf; s++)
+            printf("%s%d", s ? "x" : "", best_factors[s]);
         printf(" %s ", best_use_dif ? "DIF" : "DIT");
-        for (int s = 0; s < fact.nfactors; s++)
+        for (int s = 0; s < best_nf; s++)
             printf("%s%s", s ? "/" : "", vfft_variant_name(best_variants[s]));
-        printf(" = %.1f ns (base=%.1f ns, %ld variant assignments)\n",
-               best_ns, base_ns, total_assignments);
+        printf(" = %.1f ns\n", best_ns);
     }
 
     return best_ns;
