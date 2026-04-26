@@ -188,7 +188,8 @@ def setup_affinity(cpu: int) -> bool:
     return False
 
 
-def run_calibrator(cpu: int, pinned: bool) -> int:
+def run_calibrator(cpu: int, pinned: bool, mode: str,
+                   pace_ms: int = 1000) -> int:
     exe = HERE / ('calibrate_tuned.exe' if os.name == 'nt' else 'calibrate_tuned')
     if not exe.exists():
         print(f'[error] calibrator binary not found: {exe}', file=sys.stderr)
@@ -199,7 +200,8 @@ def run_calibrator(cpu: int, pinned: bool) -> int:
     argv: list[str] = []
     if pinned and platform.system() == 'Linux':
         argv += ['taskset', '-c', str(cpu)]
-    argv += [str(exe), str(out), str(info)]
+    # Positional: out_path info_csv pace_ms mode
+    argv += [str(exe), str(out), str(info), str(pace_ms), mode]
 
     print(f'[run] {" ".join(argv)}')
     t0 = time.time()
@@ -223,6 +225,13 @@ def main() -> int:
     ap.add_argument('--no-affinity', action='store_true',
                     help='Skip CPU pinning. NOT recommended — codelet '
                          'wisdom was tuned under pinned conditions.')
+    ap.add_argument('--mode', choices=['measure', 'extreme'],
+                    default='measure',
+                    help='Calibration mode. measure: DP recursion + '
+                         'variant cartesian on the chosen factorization '
+                         '(~1-15s/cell). extreme: full joint cartesian '
+                         'over all factorizations × variants × orientations '
+                         '(~50min/cell at N=4096 K=256). Default: measure.')
     args = ap.parse_args()
 
     print('=' * 60)
@@ -276,7 +285,7 @@ def main() -> int:
             if rc != 0:
                 print(f'[error] compile failed with rc={rc}')
                 return rc
-        rc = run_calibrator(args.cpu, pinned)
+        rc = run_calibrator(args.cpu, pinned, args.mode)
     finally:
         teardown_powercfg(state)
 
