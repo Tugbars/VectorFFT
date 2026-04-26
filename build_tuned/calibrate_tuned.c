@@ -58,13 +58,14 @@
 #endif
 
 #if CALIB_PILOT_JOINT
-  /* Pilot cells. Selected to overlap with production wisdom cells in
-   * src/stride-fft/bench/vfft_wisdom.txt so ab_compare can show diffs.
-   * N=256 and N=1024 keep the joint search bounded — N=2048 with K=256
-   * triples the bench count (longer plans → more permutations × variant
-   * cartesian). Add larger N to GRID_N for more coverage once the pilot
-   * shape is validated. */
-  static const int   GRID_N[] = { 256, 1024 };
+  /* Pilot cells. N=4096 is where MKL gets closest (smallest margin in
+   * production wisdom) — joint search there shows whether plan-level
+   * variant search recovers performance the wisdom-driven path misses.
+   * K=4 covers the small-batch / blocked-favored regime; K=256 covers
+   * the multi-thread / log3-favored regime. Both N=4096 (K=4) and
+   * (K=256) are present in production wisdom so ab_compare has direct
+   * diffs. */
+  static const int   GRID_N[] = { 4096 };
   static const size_t GRID_K[] = { 4, 256 };
   /* No DP path used in joint mode; threshold is ignored. Set high to be safe. */
   #define EXHAUSTIVE_MAX_N 65536
@@ -638,10 +639,19 @@ int main(int argc, char **argv) {
                 printf("  BLOCKED@split=%d,bg=%d", r.split_stage, r.block_groups);
             if (r.use_dif_forward) printf("  DIF");
             printf("  best=%.1f ns", r.best_ns);
-            if (r.variants_searched > 0)
-                printf("  (DIT_baseline=%.1f, %ld variants searched, best speedup=%.3f)",
-                       r.dit_ns, r.variants_searched,
-                       r.best_ns > 0 ? r.dit_ns / r.best_ns : 1.0);
+            if (r.variants_searched > 0) {
+                /* dit_ns is the wisdom-driven baseline used by sequential
+                 * mode. In joint mode there's no separate baseline (the
+                 * search itself produces the winner), so dit_ns stays at
+                 * -1 and the speedup ratio is meaningless — suppress it. */
+                if (r.dit_ns > 0) {
+                    printf("  (DIT_baseline=%.1f, %ld variants searched, best speedup=%.3f)",
+                           r.dit_ns, r.variants_searched,
+                           r.best_ns > 0 ? r.dit_ns / r.best_ns : 1.0);
+                } else {
+                    printf("  (%ld variants searched)", r.variants_searched);
+                }
+            }
             printf("  err=%.2e %s\n",
                    r.err, r.err < 1e-12 ? "" : "[PRECISION FAIL]");
             fflush(stdout);
