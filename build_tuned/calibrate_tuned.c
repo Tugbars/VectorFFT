@@ -556,21 +556,128 @@ static int calibrate_cell_joint(int N, size_t K,
 }
 
 /* ===========================================================================
+ * VFFT_MEASURE per-cell calibration
+ *
+ * Uses stride_dp_plan_measure to pick (factorization × variants × orient)
+ * via DP-recursion-then-variant-cartesian. Cheaper than calibrate_cell_joint
+ * by ~100-1000x; misses cases where variant choice would flip the
+ * factorization ranking (the v1.2 K=4 finding pattern). Re-benches the
+ * winner with deploy-quality bench_plan_min so the wisdom cost numbers
+ * are directly comparable to the joint-mode entries.
+ * ========================================================================= */
+
+static int calibrate_cell_measure(int N, size_t K,
+                                   const stride_registry_t *reg,
+                                   stride_dp_context_t *dp_ctx,
+                                   stride_wisdom_t *wis,
+                                   cell_result_t *out) {
+    stride_plan_decision_t dec;
+    memset(&dec, 0, sizeof(dec));
+
+    long pre_benches = dp_ctx->n_benchmarks;
+    double cost = stride_dp_plan_measure(dp_ctx, N, reg, &dec, /*verbose=*/0);
+    long benches_used = dp_ctx->n_benchmarks - pre_benches;
+    (void)cost;  /* deploy-bench below produces the wisdom-quality number */
+
+    if (dec.fact.nfactors <= 0) {
+        fprintf(stderr, "  N=%d K=%zu: MEASURE failed\n", N, K);
+        return 1;
+    }
+
+    /* Build the chosen plan and re-bench with deploy-quality protocol so
+     * the cost we record in wisdom v5 matches what calibrate_cell_joint
+     * would have written for the same plan. */
+    stride_plan_t *plan = _stride_build_plan_explicit(
+            N, K, dec.fact.factors, dec.fact.nfactors,
+            dec.variants, dec.use_dif_forward, reg);
+    if (!plan) {
+        fprintf(stderr, "  N=%d K=%zu: MEASURE winner build failed\n", N, K);
+        return 1;
+    }
+
+    double deploy_ns = bench_plan_min(plan, N, K);
+    double err = roundtrip_err(plan, N, K);
+    stride_plan_destroy(plan);
+
+    /* Commit to wisdom v5 (explicit variant codes). */
+    int code_ints[STRIDE_MAX_STAGES];
+    for (int s = 0; s < dec.fact.nfactors; s++)
+        code_ints[s] = (int)dec.variants[s];
+    stride_wisdom_add_v5(wis, N, K, dec.fact.factors, dec.fact.nfactors,
+                          deploy_ns,
+                          /*use_blocked=*/0, /*split=*/0, /*bg=*/0,
+                          dec.use_dif_forward,
+                          /*has_variant_codes=*/1, code_ints);
+
+    /* Fill cell_result_t for the harness's display + CSV. */
+    out->method            = "dp+measure";
+    out->variants_searched = benches_used;
+    out->dit_ns            = -1;
+    out->dif_ns            = -1;
+    out->nfactors          = dec.fact.nfactors;
+    for (int s = 0; s < dec.fact.nfactors; s++)
+        out->factors[s] = dec.fact.factors[s];
+    out->best_ns           = deploy_ns;
+    out->use_blocked       = 0;
+    out->split_stage       = 0;
+    out->block_groups      = 0;
+    out->use_dif_forward   = dec.use_dif_forward;
+    for (int s = 0; s < dec.fact.nfactors; s++)
+        out->variant_codes[s] = code_ints[s];
+
+    /* Codelet display from variant codes directly. */
+    out->codelets[0] = CL_N1;
+    for (int s = 1; s < dec.fact.nfactors; s++) {
+        switch (dec.variants[s]) {
+            case VFFT_VAR_FLAT: out->codelets[s] = CL_FLAT; break;
+            case VFFT_VAR_LOG3: out->codelets[s] = CL_LOG3; break;
+            case VFFT_VAR_T1S:  out->codelets[s] = CL_T1S;  break;
+            case VFFT_VAR_BUF:  out->codelets[s] = CL_BUF;  break;
+            default:            out->codelets[s] = CL_FLAT; break;
+        }
+    }
+
+    out->err = err;
+    return 0;
+}
+
+/* ===========================================================================
  * MAIN
  * ========================================================================= */
+
+typedef enum {
+    CALIB_MODE_MEASURE = 0,    /* default: DP + variant cartesian */
+    CALIB_MODE_EXTREME = 1,    /* full joint cartesian (PATIENT-style) */
+} calib_mode_t;
 
 int main(int argc, char **argv) {
     const char *out_path = "vfft_wisdom_tuned.txt";
     const char *info_csv = "vfft_wisdom_tuned_codelets.csv";
     int pace_ms_arg = DEFAULT_PACE_MS;
+    calib_mode_t mode = CALIB_MODE_MEASURE;
+
+    /* Positional: out_path info_csv pace_ms mode
+     * `mode` is "measure" (default) or "extreme". */
     if (argc >= 2) out_path = argv[1];
     if (argc >= 3) info_csv = argv[2];
     if (argc >= 4) pace_ms_arg = atoi(argv[3]);
+    if (argc >= 5) {
+        if (strcmp(argv[4], "extreme") == 0)      mode = CALIB_MODE_EXTREME;
+        else if (strcmp(argv[4], "measure") == 0) mode = CALIB_MODE_MEASURE;
+        else {
+            fprintf(stderr, "fatal: unknown mode '%s' (expected measure|extreme)\n",
+                    argv[4]);
+            return 2;
+        }
+    }
 
     printf("=== calibrate_tuned: new-core wisdom generator ===\n");
     printf("output : %s\n", out_path);
     printf("info   : %s\n", info_csv);
     printf("pacing : %d ms between cells\n", pace_ms_arg);
+    printf("mode   : %s\n",
+           mode == CALIB_MODE_EXTREME ? "extreme (full joint cartesian)"
+                                       : "measure (DP + variant cartesian)");
 
     stride_registry_t reg;
     stride_registry_init(&reg);
@@ -615,12 +722,13 @@ int main(int argc, char **argv) {
 
             cell_result_t r;
             memset(&r, 0, sizeof(r));
-#if CALIB_PILOT_JOINT
-            int rc = calibrate_cell_joint(N, K, &reg, &wis, &r);
-            (void)dp_ctx;  /* unused in joint mode */
-#else
-            int rc = calibrate_cell(N, K, &reg, &dp_ctx, &wis, &r);
-#endif
+            int rc;
+            if (mode == CALIB_MODE_EXTREME) {
+                rc = calibrate_cell_joint(N, K, &reg, &wis, &r);
+                (void)dp_ctx;  /* unused in extreme mode */
+            } else {
+                rc = calibrate_cell_measure(N, K, &reg, &dp_ctx, &wis, &r);
+            }
             done++;
             if (rc != 0) {
                 failures++;

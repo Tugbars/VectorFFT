@@ -411,4 +411,211 @@ static double stride_dp_plan(stride_dp_context_t *ctx, int N,
     return global_best;
 }
 
+/* =====================================================================
+ * VFFT_MEASURE — VARIANT-AWARE PLANNER
+ *
+ * Layered on top of the legacy DP recursion (which picks a factorization
+ * using wisdom-default variants). After the factorization is chosen,
+ * MEASURE runs the variant cartesian × {DIT, DIF} on that factorization
+ * and returns the joint winner.
+ *
+ * Cost vs. EXTREME (calibrate_cell_joint, full joint cartesian over
+ *                   factorizations × permutations × variants × orient):
+ *   MEASURE searches variants × orient on ONE factorization.
+ *   Skips variant-axis-flips-factorization cases — the v1.2 K=4 finding
+ *   where joint search picked 8x32x16 over the legacy 4x4x16x16 cannot
+ *   be reproduced here. The K=256 finding (same factorization, variants
+ *   change) IS reproduced.
+ *
+ * If empirical comparison shows MEASURE retains <80% of EXTREME wins,
+ * the next-gen MEASURE will track top-K factorizations and run variant
+ * search on each. For now, single-factorization is the deliberate
+ * scope-cut.
+ * ===================================================================== */
+
+typedef struct {
+    stride_factorization_t fact;
+    vfft_variant_t         variants[FACT_MAX_STAGES];
+    int                    use_dif_forward;
+    double                 cost_ns;
+} stride_plan_decision_t;
+
+/* Single bench at fully-explicit (factors, variants, orientation, K_eff).
+ * Builds via _stride_build_plan_explicit, runs the FFTW-style adaptive
+ * timer (same harness as _dp_bench), returns ns/iter. 1e18 on failure. */
+static double _dp_bench_explicit_one(stride_dp_context_t *ctx, int N,
+                                     const int *factors, int nf,
+                                     const vfft_variant_t *variants,
+                                     int use_dif_forward, size_t K_eff,
+                                     const stride_registry_t *reg) {
+    size_t total = (size_t)N * K_eff;
+
+    for (int s = 0; s < nf; s++) {
+        if (!reg->n1_fwd[factors[s]]) return 1e18;
+        if (!vfft_variant_available(reg, factors[s], use_dif_forward,
+                                    variants[s])) {
+            /* Stage 0 in DIT and stage nf-1 in DIF have no twiddle
+             * codelet; the iterator still emits a variant code (FLAT)
+             * but the registry slot is unused. Don't fail on those. */
+            int is_no_tw = use_dif_forward ? (s == nf - 1) : (s == 0);
+            if (!is_no_tw) return 1e18;
+        }
+    }
+
+    stride_plan_t *plan = _stride_build_plan_explicit(
+            N, K_eff, factors, nf, variants, use_dif_forward, reg);
+    if (!plan) return 1e18;
+
+    memcpy(ctx->re, ctx->orig_re, total * sizeof(double));
+    memcpy(ctx->im, ctx->orig_im, total * sizeof(double));
+    stride_execute_fwd(plan, ctx->re, ctx->im);
+
+    double best = 1e30;
+    double total_elapsed = 0.0;
+    int reps = 1;
+    int calibrated = 0;
+
+    for (int outer = 0; outer < 32 && total_elapsed < DP_TIME_LIMIT_NS; outer++) {
+        double tmin_trial = 1e30;
+
+        for (int t = 0; t < DP_TIME_REPEAT; t++) {
+            memcpy(ctx->re, ctx->orig_re, total * sizeof(double));
+            memcpy(ctx->im, ctx->orig_im, total * sizeof(double));
+            double t0 = now_ns();
+            for (int i = 0; i < reps; i++)
+                stride_execute_fwd(plan, ctx->re, ctx->im);
+            double trial_ns = now_ns() - t0;
+            if (trial_ns < tmin_trial) tmin_trial = trial_ns;
+            total_elapsed += trial_ns;
+            if (total_elapsed >= DP_TIME_LIMIT_NS) break;
+        }
+
+        if (!calibrated) {
+            if (tmin_trial < DP_TIME_MIN_NS) {
+                reps *= 2;
+                if (reps > (1 << 24)) calibrated = 1;
+                continue;
+            }
+            calibrated = 1;
+        }
+
+        double per_iter = tmin_trial / (double)reps;
+        if (per_iter < best) best = per_iter;
+        break;
+    }
+
+    stride_plan_destroy(plan);
+    ctx->n_benchmarks++;
+    return best;
+}
+
+/* Variant cartesian search at one (factors, orientation, K_eff). Walks
+ * vfft_variant_iter_*, benches each, returns the best (cost, variants).
+ * Returns 1e18 if no valid assignment exists in this orientation. */
+static double _dp_variant_search(stride_dp_context_t *ctx, int N,
+                                 const int *factors, int nf,
+                                 int use_dif_forward, size_t K_eff,
+                                 const stride_registry_t *reg,
+                                 vfft_variant_t *out_best,
+                                 long *out_n_assignments,
+                                 int verbose) {
+    vfft_variant_iter_t it;
+    if (!vfft_variant_iter_init(&it, factors, nf, use_dif_forward, reg)) {
+        if (out_n_assignments) *out_n_assignments = 0;
+        return 1e18;
+    }
+
+    double best_ns = 1e18;
+    long count = 0;
+    do {
+        vfft_variant_t cur[STRIDE_MAX_STAGES];
+        vfft_variant_iter_get(&it, cur);
+        double ns = _dp_bench_explicit_one(ctx, N, factors, nf, cur,
+                                           use_dif_forward, K_eff, reg);
+        count++;
+        if (verbose) {
+            printf("    [%s] ", use_dif_forward ? "DIF" : "DIT");
+            for (int s = 0; s < nf; s++)
+                printf("%s%s", s ? "/" : "", vfft_variant_name(cur[s]));
+            printf(" = %.1f ns\n", ns);
+        }
+        if (ns < best_ns) {
+            best_ns = ns;
+            if (out_best) memcpy(out_best, cur, nf * sizeof(*out_best));
+        }
+    } while (vfft_variant_iter_next(&it));
+
+    if (out_n_assignments) *out_n_assignments = count;
+    return best_ns;
+}
+
+/* Top-level VFFT_MEASURE entry point.
+ *
+ * Pipeline:
+ *   1. Run legacy stride_dp_plan to choose a factorization F (default
+ *      variants, DIT-implicit). This already includes Phase 2 permutation.
+ *   2. For orient in {DIT, DIF}: variant cartesian over (F, orient).
+ *   3. Pick global best across orientations.
+ *
+ * decision->cost_ns is filled with the variant-best ns/iter at the
+ * winning orientation. If verbose, prints a one-line summary. */
+static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
+                                     const stride_registry_t *reg,
+                                     stride_plan_decision_t *decision,
+                                     int verbose) {
+    /* Phase 1: legacy DP picks a factorization (default variants). */
+    stride_factorization_t fact;
+    double base_ns = stride_dp_plan(ctx, N, reg, &fact, 0);
+    if (base_ns >= 1e17 || fact.nfactors <= 0) {
+        if (verbose) printf("  N=%d MEASURE: DP failed\n", N);
+        return 1e18;
+    }
+
+    /* Phase 2: variant cartesian × both orientations on the chosen
+     * factorization. */
+    double best_ns = 1e18;
+    vfft_variant_t best_variants[FACT_MAX_STAGES];
+    int best_use_dif = 0;
+    long total_assignments = 0;
+
+    for (int orient = 0; orient < 2; orient++) {
+        vfft_variant_t cur_best[FACT_MAX_STAGES];
+        long n_this = 0;
+        double ns = _dp_variant_search(ctx, N, fact.factors, fact.nfactors,
+                                       orient, ctx->K, reg,
+                                       cur_best, &n_this, verbose);
+        total_assignments += n_this;
+        if (ns < best_ns) {
+            best_ns = ns;
+            memcpy(best_variants, cur_best,
+                   fact.nfactors * sizeof(vfft_variant_t));
+            best_use_dif = orient;
+        }
+    }
+
+    if (best_ns >= 1e17) {
+        if (verbose) printf("  N=%d MEASURE: no valid variant assignment\n", N);
+        return 1e18;
+    }
+
+    decision->fact = fact;
+    memcpy(decision->variants, best_variants,
+           fact.nfactors * sizeof(vfft_variant_t));
+    decision->use_dif_forward = best_use_dif;
+    decision->cost_ns = best_ns;
+
+    if (verbose) {
+        printf("  N=%d K=%zu MEASURE: ", N, ctx->K);
+        for (int s = 0; s < fact.nfactors; s++)
+            printf("%s%d", s ? "x" : "", fact.factors[s]);
+        printf(" %s ", best_use_dif ? "DIF" : "DIT");
+        for (int s = 0; s < fact.nfactors; s++)
+            printf("%s%s", s ? "/" : "", vfft_variant_name(best_variants[s]));
+        printf(" = %.1f ns (base=%.1f ns, %ld variant assignments)\n",
+               best_ns, base_ns, total_assignments);
+    }
+
+    return best_ns;
+}
+
 #endif /* STRIDE_DP_PLANNER_H */
