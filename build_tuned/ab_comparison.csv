@@ -1,5 +1,3 @@
 N,K,prod_factors,tuned_factors,tuned_codelets,tuned_variants,tuned_method,prod_blocked,tuned_blocked,tuned_dif,prod_ns,tuned_ns,speedup,ratio_t/p,verdict
-256,4,16x16,16x16,n1/log3,flat/log3,exh+joint,,,,661.85,623.28,1.062,0.942,WIN
-256,256,4x4x16,4x4x4x4,n1/t1s/t1s/t1s,flat/t1s/t1s/t1s,exh+joint,,,,44365.00,45405.00,0.977,1.023,tie
-1024,4,64x16,64x16,n1/log3,flat/log3,exh+joint,"blk@s=1,g=12",,,3669.67,4018.85,0.913,1.095,REGRESSION
-1024,256,4x4x4x4x4,4x4x4x4x4,n1/t1s/t1s/t1s/log3,flat/t1s/t1s/t1s/log3,exh+joint,,,,426460.00,390735.00,1.091,0.916,WIN
+4096,4,4x4x16x16,8x32x16,n1/t1s/log3,flat/t1s/log3,exh+joint,,,,29634.43,21108.20,1.404,0.712,WIN
+4096,256,2x4x4x4x32,2x4x4x4x32,n1/t1s/t1s/t1s/t1s,flat/t1s/t1s/t1s/t1s,exh+joint,,,,2603060.01,2238340.00,1.163,0.860,WIN
