@@ -382,18 +382,21 @@ int main(int argc, char **argv) {
 }
 
 /* ─────────────────────────────────────────────────────────────────
- * Build notes
+ * Build notes — MKL extension for build.py
  *
- * To compile without MKL (VFFT-only numbers; mkl columns = 0):
- *     python build.py --src bench_1d_vs_mkl.c --compile
+ * Production CMake uses ILP64 sequential. To match, build.py needs a
+ * `--mkl` flag that appends (when MKLROOT is set in the environment):
  *
- * To compile with MKL, build.py needs:
- *   - -I "<MKL_ROOT>/include" appended to includes
- *   - -DVFFT_HAS_MKL added to flags
- *   - mkl_intel_ilp64.lib mkl_sequential.lib mkl_core.lib (Windows ICX)
- *     appended to the link command (or use MKL link advisor's ICX
- *     recipe). On Linux: -lmkl_intel_ilp64 -lmkl_sequential -lmkl_core.
+ *   includes:  -I"$MKLROOT/include"
+ *   flags:     -DVFFT_HAS_MKL -DMKL_ILP64
+ *   link:      -L"$MKLROOT/lib/intel64"
+ *              mkl_intel_ilp64.lib  mkl_sequential.lib  mkl_core.lib
+ *              (Linux: -lmkl_intel_ilp64 -lmkl_sequential -lmkl_core)
  *
- * The cleanest path is a small `--mkl` flag in build.py that adds these
- * conditionally. Sketch this tomorrow alongside the first run.
+ * Discovery probe (mirrors src/stride-fft/CMakeLists.txt:139-177):
+ *   - exists $MKLROOT/include/mkl_dfti.h  → header found
+ *   - exists $MKLROOT/lib/intel64/mkl_intel_ilp64.lib  → libs present
+ *
+ * Without --mkl the binary still compiles (VFFT-only path), and the
+ * mkl_ns column is 0 in the CSV. Useful as a sanity gate.
  * ───────────────────────────────────────────────────────────────── */
