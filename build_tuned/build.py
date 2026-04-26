@@ -183,7 +183,8 @@ def main():
         print(f'[error] source not found: {src}', file=sys.stderr)
         return 1
 
-    out_bin = HERE / ('test_tuned_core.exe' if tc['is_windows'] else 'test_tuned_core')
+    stem = src.stem
+    out_bin = HERE / (stem + '.exe' if tc['is_windows'] else stem)
     cmd = build_cmd(tc, src, out_bin)
 
     print(f'[compile] {tc["cc"]} ... -> {out_bin.name}', flush=True)
