@@ -33,14 +33,47 @@
 #include "wisdom_bridge.h"
 
 /* ===========================================================================
- * Cell grid (pow2). Edit here to expand/shrink the calibration scope.
+ * CALIBRATION MODE
+ *
+ * CALIB_PILOT_JOINT=1 (set below):
+ *   - Small (N, K) grid for fast turnaround
+ *   - JOINT search: exhaustive over factorizations × permutations × per-stage
+ *     variants × orientations. No wisdom-predicate shortcut. The plan-level
+ *     bench is the verdict for both factorization AND variant choice.
+ *   - DP planner skipped entirely.
+ *
+ * CALIB_PILOT_JOINT=0:
+ *   - Full pow2 grid (40 cells)
+ *   - SEQUENTIAL search: Phase A picks factorization via wisdom-driven
+ *     stride_wisdom_calibrate_full (DP for large N, exh for small N), then
+ *     Phase C cartesian-searches variants on that one winning factorization.
+ *
+ * The pilot/joint mode runs much fewer cells but each cell is more
+ * expensive per cell (~10-100x more bench plans). For total wall time the
+ * pilot is faster because it's 4 cells instead of 40.
  * ========================================================================= */
 
-static const int   GRID_N[] = { 64, 128, 256, 512, 1024, 2048,
-                                4096, 8192, 16384, 32768 };
-static const size_t GRID_K[] = { 4, 32, 128, 256 };
+#ifndef CALIB_PILOT_JOINT
+  #define CALIB_PILOT_JOINT 1
+#endif
 
-#define EXHAUSTIVE_MAX_N 2048   /* N <= this uses exhaustive; > this uses DP */
+#if CALIB_PILOT_JOINT
+  /* Pilot cells. Selected to overlap with production wisdom cells in
+   * src/stride-fft/bench/vfft_wisdom.txt so ab_compare can show diffs.
+   * N=256 and N=1024 keep the joint search bounded — N=2048 with K=256
+   * triples the bench count (longer plans → more permutations × variant
+   * cartesian). Add larger N to GRID_N for more coverage once the pilot
+   * shape is validated. */
+  static const int   GRID_N[] = { 256, 1024 };
+  static const size_t GRID_K[] = { 4, 256 };
+  /* No DP path used in joint mode; threshold is ignored. Set high to be safe. */
+  #define EXHAUSTIVE_MAX_N 65536
+#else
+  static const int   GRID_N[] = { 64, 128, 256, 512, 1024, 2048,
+                                  4096, 8192, 16384, 32768 };
+  static const size_t GRID_K[] = { 4, 32, 128, 256 };
+  #define EXHAUSTIVE_MAX_N 2048
+#endif
 
 /* Inter-cell pacing (ms). Lets thermal/cache state settle between cells so
  * one cell's residual heat or cache contents doesn't bias the next cell's
@@ -391,6 +424,137 @@ static int calibrate_cell(int N, size_t K,
 }
 
 /* ===========================================================================
+ * JOINT SEARCH — exhaustive over factorizations × permutations × per-stage
+ * variants × orientations. The plan-level bench is the verdict for every
+ * decision dimension (no wisdom-predicate shortcut anywhere in the search).
+ *
+ * This is what the user describes as "for each (stage, radix) combination,
+ * find the best codelet". Used in pilot mode (small grid) where the cost
+ * of joint search is manageable. For the full grid, sequential search
+ * (calibrate_cell above) is the affordable approximation.
+ * ========================================================================= */
+
+static int calibrate_cell_joint(int N, size_t K,
+                                 const stride_registry_t *reg,
+                                 stride_wisdom_t *wis,
+                                 cell_result_t *out) {
+    factorization_list_t flist;
+    stride_enumerate_factorizations(N, reg, &flist);
+    if (flist.count == 0) {
+        fprintf(stderr, "  N=%d K=%zu: no factorizations enumerated\n", N, K);
+        return 1;
+    }
+
+    double best_ns = 1e18;
+    int    best_nf = 0;
+    int    best_factors[STRIDE_MAX_STAGES] = {0};
+    int    best_use_dif = 0;
+    vfft_variant_t best_variants[STRIDE_MAX_STAGES] = {0};
+    long   total_searched = 0;
+
+    for (int fi = 0; fi < flist.count; fi++) {
+        const int nf = flist.results[fi].nfactors;
+        const int *base_factors = flist.results[fi].factors;
+
+        permutation_list_t plist;
+        stride_gen_permutations(base_factors, nf, &plist);
+
+        for (int pi = 0; pi < plist.count; pi++) {
+            const int *perm = plist.perms[pi];
+
+            /* Validate: all stage radixes must have n1 codelet registered.
+             * (Some non-pow2 factorizations may include a radix without
+             * SIMD codelets; skip those silently.) */
+            int can_build = 1;
+            for (int s = 0; s < nf; s++) {
+                int R = perm[s];
+                if (R <= 0 || R >= STRIDE_REG_MAX_RADIX || !reg->n1_fwd[R]) {
+                    can_build = 0;
+                    break;
+                }
+            }
+            if (!can_build) continue;
+
+            for (int orient = 0; orient < 2; orient++) {
+                vfft_variant_iter_t iter;
+                if (!vfft_variant_iter_init(&iter, perm, nf, orient, reg))
+                    continue;
+                do {
+                    vfft_variant_t variants[STRIDE_MAX_STAGES];
+                    vfft_variant_iter_get(&iter, variants);
+
+                    stride_plan_t *plan = _stride_build_plan_explicit(
+                            N, K, perm, nf, variants, orient, reg);
+                    if (!plan) continue;
+
+                    double ns = bench_plan_min(plan, N, K);
+                    stride_plan_destroy(plan);
+                    total_searched++;
+
+                    if (ns < best_ns) {
+                        best_ns = ns;
+                        best_nf = nf;
+                        for (int s = 0; s < nf; s++) best_factors[s] = perm[s];
+                        best_use_dif = orient;
+                        for (int s = 0; s < nf; s++) best_variants[s] = variants[s];
+                    }
+                } while (vfft_variant_iter_next(&iter));
+            }
+        }
+    }
+
+    if (best_ns >= 1e17) {
+        fprintf(stderr, "  N=%d K=%zu: joint search found no working plan\n", N, K);
+        return 1;
+    }
+
+    /* Commit to wisdom (v5 with explicit codes). */
+    int code_ints[STRIDE_MAX_STAGES];
+    for (int s = 0; s < best_nf; s++) code_ints[s] = (int)best_variants[s];
+    stride_wisdom_add_v5(wis, N, K, best_factors, best_nf, best_ns,
+                          /*use_blocked=*/0, /*split=*/0, /*bg=*/0,
+                          best_use_dif,
+                          /*has_variant_codes=*/1, code_ints);
+
+    /* Fill cell_result_t for the harness's display + CSV. */
+    out->method        = "exh+joint";
+    out->variants_searched = total_searched;
+    out->dit_ns        = -1;
+    out->dif_ns        = -1;
+    out->nfactors      = best_nf;
+    for (int s = 0; s < best_nf; s++) out->factors[s] = best_factors[s];
+    out->best_ns       = best_ns;
+    out->use_blocked   = 0;
+    out->split_stage   = 0;
+    out->block_groups  = 0;
+    out->use_dif_forward = best_use_dif;
+    for (int s = 0; s < best_nf; s++) out->variant_codes[s] = code_ints[s];
+
+    /* Codelet display from variant codes directly. */
+    out->codelets[0] = CL_N1;
+    for (int s = 1; s < best_nf; s++) {
+        switch (best_variants[s]) {
+            case VFFT_VAR_FLAT: out->codelets[s] = CL_FLAT; break;
+            case VFFT_VAR_LOG3: out->codelets[s] = CL_LOG3; break;
+            case VFFT_VAR_T1S:  out->codelets[s] = CL_T1S;  break;
+            case VFFT_VAR_BUF:  out->codelets[s] = CL_BUF;  break;
+            default:            out->codelets[s] = CL_FLAT; break;
+        }
+    }
+
+    /* Roundtrip verification on the winner. */
+    stride_plan_t *plan = _stride_build_plan_explicit(
+            N, K, best_factors, best_nf, best_variants, best_use_dif, reg);
+    if (!plan) {
+        fprintf(stderr, "  N=%d K=%zu: winner build failed\n", N, K);
+        return 1;
+    }
+    out->err = roundtrip_err(plan, N, K);
+    stride_plan_destroy(plan);
+    return 0;
+}
+
+/* ===========================================================================
  * MAIN
  * ========================================================================= */
 
@@ -450,13 +614,12 @@ int main(int argc, char **argv) {
 
             cell_result_t r;
             memset(&r, 0, sizeof(r));
-            int rc = calibrate_cell(N, K, &reg,
-                                    /* dp ctx valid for any K when search
-                                     * picks DP path (>EXHAUSTIVE_MAX_N or
-                                     * stride_dp_plan_joint_blocked) */
-                                    &dp_ctx,
-                                    &wis,
-                                    &r);
+#if CALIB_PILOT_JOINT
+            int rc = calibrate_cell_joint(N, K, &reg, &wis, &r);
+            (void)dp_ctx;  /* unused in joint mode */
+#else
+            int rc = calibrate_cell(N, K, &reg, &dp_ctx, &wis, &r);
+#endif
             done++;
             if (rc != 0) {
                 failures++;
