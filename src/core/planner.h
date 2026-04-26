@@ -114,6 +114,19 @@ typedef struct {
      * exclusive with use_blocked=1 in v1.1 — the DIF executor doesn't have
      * a blocked variant yet. */
     int use_dif_forward;
+
+    /* Per-stage variant codes (version 5+). Each entry is a vfft_variant_t
+     * value (FLAT/LOG3/T1S/BUF), one per stage 0..nfactors-1. Stage 0 is
+     * conventionally FLAT (no twiddle codelet anyway). For other stages,
+     * the calibrator's plan-level variant search picks the value that
+     * wins as a whole plan in the chosen orientation.
+     *
+     * `has_variant_codes` is set when the wisdom entry carries explicit
+     * codes (loaded from a v5 file or produced by the v1.2 calibrator);
+     * it's 0 for legacy v3/v4 entries where the deploy-side build must
+     * fall back to wisdom_bridge predicate consultation. */
+    int has_variant_codes;
+    int variant_codes[STRIDE_MAX_STAGES];
 } stride_wisdom_entry_t;
 
 typedef struct {
@@ -135,11 +148,16 @@ static const stride_wisdom_entry_t *stride_wisdom_lookup(
     return NULL;
 }
 
-/* Add or update wisdom entry (full version with blocked + DIF fields) */
-static void stride_wisdom_add_v4(stride_wisdom_t *wis, int N, size_t K,
+/* Add or update wisdom entry — full version with blocked + DIF + per-stage
+ * variant codes. The plan-level calibrator (v1.2+) calls this with
+ * has_variant_codes=1 and explicit per-stage choices; legacy callers go
+ * through the v4 wrapper below with has_variant_codes=0. */
+static void stride_wisdom_add_v5(stride_wisdom_t *wis, int N, size_t K,
                                   const int *factors, int nf, double best_ns,
                                   int use_blocked, int split_stage,
-                                  int block_groups, int use_dif_forward) {
+                                  int block_groups, int use_dif_forward,
+                                  int has_variant_codes,
+                                  const int *variant_codes) {
     /* Update existing */
     for (int i = 0; i < wis->count; i++) {
         if (wis->entries[i].N == N && wis->entries[i].K == K) {
@@ -151,6 +169,14 @@ static void stride_wisdom_add_v4(stride_wisdom_t *wis, int N, size_t K,
                 wis->entries[i].split_stage = split_stage;
                 wis->entries[i].block_groups = block_groups;
                 wis->entries[i].use_dif_forward = use_dif_forward;
+                wis->entries[i].has_variant_codes = has_variant_codes;
+                if (has_variant_codes && variant_codes) {
+                    for (int s = 0; s < nf; s++)
+                        wis->entries[i].variant_codes[s] = variant_codes[s];
+                } else {
+                    for (int s = 0; s < nf; s++)
+                        wis->entries[i].variant_codes[s] = 0;
+                }
             }
             return;
         }
@@ -167,11 +193,32 @@ static void stride_wisdom_add_v4(stride_wisdom_t *wis, int N, size_t K,
         e->split_stage = split_stage;
         e->block_groups = block_groups;
         e->use_dif_forward = use_dif_forward;
+        e->has_variant_codes = has_variant_codes;
+        if (has_variant_codes && variant_codes) {
+            for (int s = 0; s < nf; s++)
+                e->variant_codes[s] = variant_codes[s];
+        } else {
+            for (int s = 0; s < nf; s++)
+                e->variant_codes[s] = 0;
+        }
     }
 }
 
-/* Legacy v3 wrapper — kept for callers that don't know about DIF yet.
- * Forwards with use_dif_forward=0. */
+/* Legacy v4 wrapper — kept for the in-process calibrator phases that
+ * still write entries before the variant search runs. Sets
+ * has_variant_codes=0 so the deploy-side build falls back to wisdom-
+ * predicate consultation rather than mistaking unset codes for FLAT. */
+static void stride_wisdom_add_v4(stride_wisdom_t *wis, int N, size_t K,
+                                  const int *factors, int nf, double best_ns,
+                                  int use_blocked, int split_stage,
+                                  int block_groups, int use_dif_forward) {
+    stride_wisdom_add_v5(wis, N, K, factors, nf, best_ns,
+                         use_blocked, split_stage, block_groups,
+                         use_dif_forward,
+                         /*has_variant_codes=*/0, /*variant_codes=*/NULL);
+}
+
+/* Legacy v3 wrapper. */
 static void stride_wisdom_add_full(stride_wisdom_t *wis, int N, size_t K,
                                     const int *factors, int nf, double best_ns,
                                     int use_blocked, int split_stage,
@@ -181,40 +228,53 @@ static void stride_wisdom_add_full(stride_wisdom_t *wis, int N, size_t K,
                          /*use_dif_forward=*/0);
 }
 
-/* Legacy wrapper (standard executor, no blocking, no DIF) */
+/* Legacy wrapper (standard executor, no blocking, no DIF, no variants) */
 static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
                                const int *factors, int nf, double best_ns) {
-    stride_wisdom_add_v4(wis, N, K, factors, nf, best_ns, 0, 0, 0, 0);
+    stride_wisdom_add_v5(wis, N, K, factors, nf, best_ns, 0, 0, 0, 0,
+                         /*has_variant_codes=*/0, /*variant_codes=*/NULL);
 }
 
 /* -- Wisdom file I/O --
- * Format:
- *   Line 1: @version N  (format version, reject if mismatch)
- *   Remaining: N K nf f0 f1 ... best_ns use_blocked split_stage block_groups use_dif_forward
- *   Lines starting with # are comments.
+ * Format v5:
+ *   Line 1: @version 5
+ *   Remaining: N K nf f0..f{nf-1} best_ns use_blocked split_stage block_groups
+ *              use_dif_forward v0..v{nf-1}
  *
- * Example v4:
- *   @version 4
- *   1000 256 4 8 5 5 5 14.20 0 0 0 0
+ * Example v5 (3-stage plan):
+ *   @version 5
+ *   256 4 3 4 4 16 879.10 0 0 0 0 0 0 1
+ *   (256, K=4, factors=4x4x16, best=879ns, no blocked, DIT, variants=FLAT/FLAT/LOG3)
  *
- * Bump WISDOM_VERSION when the format changes — old files will be
- * silently rejected and re-calibrated on next run. */
-#define WISDOM_VERSION 4
+ * Bump WISDOM_VERSION when the format changes — old files are silently
+ * rejected on load and re-calibrated on next run. */
+#define WISDOM_VERSION 5
 
 static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path) {
     FILE *f = fopen(path, "w");
     if (!f) return -1;
     fprintf(f, "@version %d\n", WISDOM_VERSION);
     fprintf(f, "# VectorFFT stride wisdom — %d entries\n", wis->count);
-    fprintf(f, "# N K nf factors... best_ns use_blocked split_stage block_groups use_dif_forward\n");
+    fprintf(f, "# N K nf factors... best_ns use_blocked split_stage block_groups "
+               "use_dif_forward variant_codes... (v=0:FLAT 1:LOG3 2:T1S 3:BUF)\n");
     for (int i = 0; i < wis->count; i++) {
         const stride_wisdom_entry_t *e = &wis->entries[i];
         fprintf(f, "%d %zu %d", e->N, e->K, e->nfactors);
         for (int j = 0; j < e->nfactors; j++)
             fprintf(f, " %d", e->factors[j]);
-        fprintf(f, " %.2f %d %d %d %d\n", e->best_ns,
+        fprintf(f, " %.2f %d %d %d %d", e->best_ns,
                 e->use_blocked, e->split_stage, e->block_groups,
                 e->use_dif_forward);
+        /* Per-stage variant codes. If has_variant_codes=0 (legacy entry
+         * not produced by the v1.2+ search), emit -1 placeholders so the
+         * loader can distinguish "no codes" from "all-FLAT codes". */
+        for (int j = 0; j < e->nfactors; j++) {
+            if (e->has_variant_codes)
+                fprintf(f, " %d", e->variant_codes[j]);
+            else
+                fprintf(f, " -1");
+        }
+        fprintf(f, "\n");
     }
     fclose(f);
     return 0;
@@ -223,13 +283,12 @@ static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path) {
 static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return -1;
-    char line[256];
+    char line[512];
     int version_ok = 0;
 
     while (fgets(line, sizeof(line), f)) {
         if (line[0] == '#' || line[0] == '\n') continue;
 
-        /* Version check — must be first non-comment line */
         if (line[0] == '@') {
             int ver = 0;
             if (sscanf(line, "@version %d", &ver) == 1 && ver == WISDOM_VERSION)
@@ -237,10 +296,9 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
             continue;
         }
 
-        /* Reject entries if version doesn't match (or missing) */
         if (!version_ok) {
             fclose(f);
-            return -1;  /* stale wisdom — caller will re-calibrate */
+            return -1;
         }
 
         stride_wisdom_entry_t e;
@@ -259,15 +317,41 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
         if (sscanf(line + pos, "%lf%n", &e.best_ns, &n) < 1)
             continue;
         pos += n;
-        /* Version 4: blocked + DIF fields (optional, default 0). The 4-arg
-         * sscanf accepts 3 or 4 trailing ints; missing use_dif_forward
-         * leaves it at zero from the prior memset. */
-        sscanf(line + pos, "%d %d %d %d",
-               &e.use_blocked, &e.split_stage, &e.block_groups,
-               &e.use_dif_forward);
-        stride_wisdom_add_v4(wis, e.N, e.K, e.factors, e.nfactors, e.best_ns,
+        /* v5 trailing fields: use_blocked split_stage block_groups
+         * use_dif_forward [variant_codes...]. */
+        if (sscanf(line + pos, "%d %d %d %d%n",
+                   &e.use_blocked, &e.split_stage, &e.block_groups,
+                   &e.use_dif_forward, &n) >= 4) {
+            pos += n;
+            /* Variant codes: -1 sentinel means "no explicit codes for this
+             * stage" — entry is legacy-style, has_variant_codes stays 0. */
+            int any_real_code = 0;
+            int parsed_codes[STRIDE_MAX_STAGES] = {0};
+            int parsed_ok = 1;
+            for (int j = 0; j < e.nfactors; j++) {
+                int v = -1;
+                if (sscanf(line + pos, "%d%n", &v, &n) < 1) {
+                    parsed_ok = 0;
+                    break;
+                }
+                pos += n;
+                parsed_codes[j] = v;
+                if (v >= 0) any_real_code = 1;
+            }
+            if (parsed_ok && any_real_code) {
+                e.has_variant_codes = 1;
+                for (int j = 0; j < e.nfactors; j++) {
+                    /* -1 placeholders within an otherwise-explicit entry
+                     * (shouldn't normally happen) collapse to FLAT. */
+                    e.variant_codes[j] = parsed_codes[j] >= 0 ? parsed_codes[j] : 0;
+                }
+            }
+        }
+        stride_wisdom_add_v5(wis, e.N, e.K, e.factors, e.nfactors, e.best_ns,
                               e.use_blocked, e.split_stage, e.block_groups,
-                              e.use_dif_forward);
+                              e.use_dif_forward,
+                              e.has_variant_codes,
+                              e.has_variant_codes ? e.variant_codes : NULL);
     }
     fclose(f);
     return version_ok ? 0 : -1;
@@ -534,6 +618,142 @@ static stride_plan_t *_stride_build_plan_dif(
     return plan;
 }
 
+/* Explicit-variant plan builder. Used by the plan-level calibrator's
+ * search loop and by stride_wise_plan when loading wisdom v5+ entries.
+ *
+ * Caller dictates per-stage variant choice via `variants[]` (length nf)
+ * and the orientation via `use_dif_forward`. No wisdom predicates are
+ * consulted — this function is the answer to "the codelet-isolation
+ * bench was wrong; the plan calibrator's bench is the verdict".
+ *
+ * `variants[0]` is ignored (stage 0 has no twiddle codelet). For other
+ * stages, the variant code maps to registry slots per the table in
+ * registry.h's PER-STAGE VARIANT ENUMERATION block.
+ *
+ * Returns NULL if any (R, use_dif_forward, variant) tuple has no
+ * registered codelet — the caller's search loop must already have
+ * filtered out unavailable assignments via vfft_stage_variants(). A
+ * NULL return here indicates a bug or registry inconsistency, not a
+ * routine search-pruning case.
+ *
+ * Auxiliary slots (t1_oop, n1_scaled) are attached unconditionally
+ * where registered — same behavior as _stride_build_plan. */
+static stride_plan_t *_stride_build_plan_explicit(
+        int N, size_t K,
+        const int *factors, int nf,
+        const vfft_variant_t *variants,
+        int use_dif_forward,
+        const stride_registry_t *reg) {
+    stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
+    stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
+    int log3_mask = 0;
+    int t1s_mask  = 0;  /* stages where variant=T1S; t1s_fwd attached after create */
+
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        if (R <= 0 || R >= STRIDE_REG_MAX_RADIX || !reg->n1_fwd[R])
+            return NULL;
+        n1f[s] = reg->n1_fwd[R];
+        n1b[s] = reg->n1_bwd[R];
+
+        /* Which stage has no twiddle codelet depends on orientation:
+         *   DIT: stage 0 (input-edge twiddle to stages 1..nf-1)
+         *   DIF: stage nf-1 (output-edge twiddle on stages 0..nf-2)
+         * The executor's needs_tw[g] is set to 0 for that stage by
+         * plan_compute_twiddles_{c,dif_c}, so leaving t1_fwd NULL is
+         * safe — the executor falls through to n1_fwd. */
+        int is_no_tw_stage =
+            use_dif_forward ? (s == nf - 1) : (s == 0);
+        if (is_no_tw_stage) {
+            t1f[s] = NULL;
+            t1b[s] = NULL;
+            continue;
+        }
+
+        vfft_variant_t v = variants[s];
+        if (use_dif_forward) {
+            switch (v) {
+                case VFFT_VAR_FLAT:
+                    if (!reg->t1_dif_fwd[R]) return NULL;
+                    t1f[s] = reg->t1_dif_fwd[R];
+                    t1b[s] = reg->t1_dif_bwd[R];
+                    break;
+                case VFFT_VAR_LOG3:
+                    if (!reg->t1_dif_log3_fwd[R]) return NULL;
+                    t1f[s] = reg->t1_dif_log3_fwd[R];
+                    t1b[s] = reg->t1_dif_log3_bwd[R];
+                    log3_mask |= (1 << s);
+                    break;
+                default:
+                    /* T1S, BUF: no DIF analog. */
+                    return NULL;
+            }
+        } else {
+            switch (v) {
+                case VFFT_VAR_FLAT:
+                    if (!reg->t1_fwd[R]) return NULL;
+                    t1f[s] = reg->t1_fwd[R];
+                    t1b[s] = reg->t1_bwd[R];
+                    break;
+                case VFFT_VAR_LOG3:
+                    if (!reg->t1_fwd_log3[R]) return NULL;
+                    t1f[s] = reg->t1_fwd_log3[R];
+                    t1b[s] = reg->t1_bwd_log3[R];
+                    log3_mask |= (1 << s);
+                    break;
+                case VFFT_VAR_T1S:
+                    /* T1S sits on top of flat: codelet uses t1_fwd path
+                     * for grp_tw, plus t1s_fwd is attached and the
+                     * executor's runtime preference dispatches to it. */
+                    if (!reg->t1_fwd[R] || !reg->t1s_fwd[R]) return NULL;
+                    t1f[s] = reg->t1_fwd[R];
+                    t1b[s] = reg->t1_bwd[R];
+                    t1s_mask |= (1 << s);
+                    break;
+                case VFFT_VAR_BUF:
+                    if (!reg->t1_buf_fwd[R]) return NULL;
+                    t1f[s] = reg->t1_buf_fwd[R];
+                    t1b[s] = reg->t1_buf_bwd[R];
+                    break;
+                default:
+                    return NULL;
+            }
+        }
+    }
+
+    stride_plan_t *plan = stride_plan_create_ex(
+            N, K, factors, nf, n1f, n1b, t1f, t1b,
+            log3_mask, use_dif_forward);
+    if (!plan) return NULL;
+
+    /* Attach t1s_fwd to stages whose variant chose T1S. The executor's
+     * runtime dispatch checks t1s_fwd != NULL and prefers it on flat
+     * stages — so T1S stages get t1s, flat stages stay flat. */
+    for (int s = 0; s < nf; s++) {
+        if (!(t1s_mask & (1 << s))) continue;
+        int R = factors[s];
+        plan->stages[s].t1s_fwd = reg->t1s_fwd[R];
+        plan->stages[s].t1s_bwd = reg->t1s_bwd[R];
+    }
+
+    /* Attach auxiliary codelets (t1_oop for R2C/2D, n1_scaled for C2R)
+     * unconditionally — same as _stride_build_plan. These don't depend
+     * on variant choice. */
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        if (R < STRIDE_REG_MAX_RADIX && reg->t1_oop_fwd[R]) {
+            plan->stages[s].t1_oop_fwd = reg->t1_oop_fwd[R];
+            plan->stages[s].t1_oop_bwd = reg->t1_oop_bwd[R];
+        }
+        if (R < STRIDE_REG_MAX_RADIX && reg->n1_scaled_fwd[R]) {
+            plan->stages[s].n1_scaled_fwd = reg->n1_scaled_fwd[R];
+            plan->stages[s].n1_scaled_bwd = reg->n1_scaled_bwd[R];
+        }
+    }
+
+    return plan;
+}
+
 /* =====================================================================
  * PUBLIC API
  * ===================================================================== */
@@ -618,26 +838,44 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
                                         const stride_registry_t *reg,
                                         const stride_wisdom_t *wis) {
     const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
-    if (e) {
-        /* DIF orientation wins this cell — build a DIF plan. Falls back
-         * to DIT if for some reason DIF can't be built (e.g. wisdom
-         * loaded from a different host with DIF codelets that aren't
-         * present here). */
-        stride_plan_t *plan = NULL;
-        if (e->use_dif_forward) {
-            plan = _stride_build_plan_dif(N, K, e->factors, e->nfactors, reg);
+    if (!e)
+        return stride_auto_plan(N, K, reg);
+
+    /* Preferred path (v5+): explicit per-stage variant codes. The plan
+     * calibrator picked these by benching the full plan, so we trust
+     * them over any wisdom-bridge predicate consultation. */
+    if (e->has_variant_codes) {
+        vfft_variant_t variants[STRIDE_MAX_STAGES];
+        for (int s = 0; s < e->nfactors; s++)
+            variants[s] = (vfft_variant_t)e->variant_codes[s];
+        stride_plan_t *plan = _stride_build_plan_explicit(
+                N, K, e->factors, e->nfactors,
+                variants, e->use_dif_forward, reg);
+        if (plan) {
+            plan->use_blocked  = e->use_blocked;
+            plan->split_stage  = e->split_stage;
+            plan->block_groups = e->block_groups;
+            return plan;
         }
-        if (!plan) {
-            plan = _stride_build_plan(N, K, e->factors, e->nfactors, reg);
-            if (plan) {
-                plan->use_blocked = e->use_blocked;
-                plan->split_stage = e->split_stage;
-                plan->block_groups = e->block_groups;
-            }
-        }
-        return plan;
+        /* If explicit build fails (wisdom loaded from a host with
+         * different registry shape), fall through to legacy build. */
     }
-    return stride_auto_plan(N, K, reg);
+
+    /* Legacy path (v3/v4 entries, or v5 fallback). Wisdom-bridge
+     * predicates pick variants per stage at plan-build time. */
+    stride_plan_t *plan = NULL;
+    if (e->use_dif_forward) {
+        plan = _stride_build_plan_dif(N, K, e->factors, e->nfactors, reg);
+    }
+    if (!plan) {
+        plan = _stride_build_plan(N, K, e->factors, e->nfactors, reg);
+        if (plan) {
+            plan->use_blocked  = e->use_blocked;
+            plan->split_stage  = e->split_stage;
+            plan->block_groups = e->block_groups;
+        }
+    }
+    return plan;
 }
 
 /**

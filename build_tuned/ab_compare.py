@@ -30,10 +30,11 @@ DEFAULT_OUT   = HERE / 'ab_comparison.csv'
 
 
 def parse_wisdom(path: Path) -> dict[tuple[int, int], dict]:
-    """Load v3 or v4 wisdom file. Returns {(N, K): {factors, best_ns, ...}}.
+    """Load v3, v4, or v5 wisdom file. Returns {(N, K): {factors, best_ns, ...}}.
 
-    v3 columns: N K nf factors... best_ns use_blocked split_stage block_groups
-    v4 columns: ...above + use_dif_forward
+    v3: ... best_ns use_blocked split_stage block_groups
+    v4: ... + use_dif_forward
+    v5: ... + variant_codes[nf] (each is 0:FLAT 1:LOG3 2:T1S 3:BUF, or -1 = legacy)
     """
     if not path.exists():
         raise FileNotFoundError(f'wisdom file not found: {path}')
@@ -47,11 +48,11 @@ def parse_wisdom(path: Path) -> dict[tuple[int, int], dict]:
             if line.startswith('@'):
                 if line.startswith('@version'):
                     parts = line.split()
-                    if len(parts) >= 2 and parts[1] in ('3', '4'):
+                    if len(parts) >= 2 and parts[1] in ('3', '4', '5'):
                         version_seen = True
                     else:
                         raise ValueError(
-                            f'{path}: expected @version 3 or 4, got: {line}')
+                            f'{path}: expected @version 3/4/5, got: {line}')
                 continue
             if not version_seen:
                 raise ValueError(f'{path}: missing @version header')
@@ -71,6 +72,7 @@ def parse_wisdom(path: Path) -> dict[tuple[int, int], dict]:
                 'best_ns': best_ns,
                 'use_blocked': 0, 'split_stage': 0, 'block_groups': 0,
                 'use_dif_forward': 0,
+                'variant_codes': [],  # empty if v3/v4 or all -1 in v5
             }
             if len(tokens) >= 3 + nf + 4:
                 entry['use_blocked']  = int(tokens[3 + nf + 1])
@@ -78,8 +80,21 @@ def parse_wisdom(path: Path) -> dict[tuple[int, int], dict]:
                 entry['block_groups'] = int(tokens[3 + nf + 3])
             if len(tokens) >= 3 + nf + 5:
                 entry['use_dif_forward'] = int(tokens[3 + nf + 4])
+            # v5 trailing variant codes (one per stage). -1 sentinel = legacy.
+            if len(tokens) >= 3 + nf + 5 + nf:
+                vc = [int(tokens[3 + nf + 5 + s]) for s in range(nf)]
+                if any(v >= 0 for v in vc):
+                    entry['variant_codes'] = vc
             out[(N, K)] = entry
     return out
+
+
+_VARIANT_NAMES = {0: 'flat', 1: 'log3', 2: 't1s', 3: 'buf'}
+
+def fmt_variant_codes(codes: list[int]) -> str:
+    if not codes:
+        return ''
+    return '/'.join(_VARIANT_NAMES.get(c, '?') if c >= 0 else '-' for c in codes)
 
 
 def parse_codelets(path: Path) -> dict[tuple[int, int], dict]:
@@ -179,12 +194,15 @@ def main() -> int:
 
         # DIF orientation flag (v4+). Production is always v3 (DIT only).
         tuned_dif = bool(t.get('use_dif_forward', 0))
+        # Per-stage variant codes (v5+). Empty for v3/v4 entries.
+        tuned_variants = fmt_variant_codes(t.get('variant_codes', []))
 
         rows.append({
             'N': N, 'K': K,
             'prod_factors':   fmt_factors(p['factors']),
             'tuned_factors':  fmt_factors(t['factors']),
             'tuned_codelets': info.get('codelets', ''),
+            'tuned_variants': tuned_variants,
             'tuned_method':   info.get('method', ''),
             'prod_blocked':   fmt_blocked(p),
             'tuned_blocked':  fmt_blocked(t),
@@ -208,8 +226,8 @@ def main() -> int:
 
     # Console summary
     print()
-    print(f'{"N":>6} {"K":>4} {"prod_ns":>11} {"tuned_ns":>11} {"speedup":>8} {"verdict":>10}  factors_p / factors_t / codelets_t [tags]')
-    print('-' * 130)
+    print(f'{"N":>6} {"K":>4} {"prod_ns":>11} {"tuned_ns":>11} {"speedup":>8} {"verdict":>10}  factors_p / factors_t / variants_t [tags]')
+    print('-' * 140)
     for r in rows:
         tags = []
         if r['prod_blocked'] or r['tuned_blocked']:
@@ -217,9 +235,11 @@ def main() -> int:
         if r['tuned_dif']:
             tags.append(r['tuned_dif'])
         tag_str = f' [{"; ".join(tags)}]' if tags else ''
+        # Prefer variant_codes (v5) over codelets (legacy classification) for the tuned side.
+        tuned_display = r['tuned_variants'] or r['tuned_codelets']
         print(f'{r["N"]:>6} {r["K"]:>4} {r["prod_ns"]:>11} {r["tuned_ns"]:>11} '
               f'{r["speedup"]:>8} {r["verdict"]:>10}  '
-              f'{r["prod_factors"]} / {r["tuned_factors"]} / {r["tuned_codelets"]}{tag_str}')
+              f'{r["prod_factors"]} / {r["tuned_factors"]} / {tuned_display}{tag_str}')
 
     print()
     print(f'wins        : {n_wins}')

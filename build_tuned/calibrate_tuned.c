@@ -170,14 +170,16 @@ typedef struct {
     int                 factors[FACT_MAX_STAGES];
     codelet_kind_t      codelets[FACT_MAX_STAGES];
     double              best_ns;
-    double              dit_ns;        /* DIT bench (for diagnostic) */
-    double              dif_ns;        /* DIF bench, or -1 if N/A */
+    double              dit_ns;          /* baseline DIT (wisdom predicate pick) */
+    double              dif_ns;          /* DIF bench (best across DIF variants), or -1 if N/A */
     double              err;
-    const char         *method;       /* "exh", "dp", "exh+jb", "dp+jb"; +"/dif" if DIF won */
+    const char         *method;
     int                 use_blocked;
     int                 split_stage;
     int                 block_groups;
     int                 use_dif_forward;
+    int                 variant_codes[FACT_MAX_STAGES];
+    long                variants_searched;  /* how many cartesian assignments benched */
 } cell_result_t;
 
 /* Calibrate one cell. Routes through stride_wisdom_calibrate_full so we
@@ -240,46 +242,95 @@ static int calibrate_cell(int N, size_t K,
         }
     }
 
-    /* ── Phase C: read back wisdom entry, get DIT timing baseline ───── */
+    /* ── Phase C: read DIT timing baseline ──────────────────────────── */
     const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
     if (!e) {
         fprintf(stderr, "  N=%d K=%zu: wisdom lookup failed\n", N, K);
         return 1;
     }
     out->dit_ns = e->best_ns;
-
-    /* ── Phase D: bench DIF orientation on the same factorization ──── *
-     * DIF is only available for plans whose factors are all in
-     * {2, 4, 8, 16, 32, 64} (the radixes with t1_dif_* slots populated).
-     * Skip if any non-pow2 factor or if blocked won (DIF + blocked not
-     * supported in v1.1). */
     out->dif_ns = -1.0;
-    if (!e->use_blocked) {
-        stride_plan_t *dif_plan = _stride_build_plan_dif(
-                N, K, e->factors, e->nfactors, reg);
-        if (dif_plan) {
-            double dif_refined = bench_plan_min(dif_plan, N, K);
-            stride_plan_destroy(dif_plan);
-            out->dif_ns = dif_refined;
-            if (dif_refined < e->best_ns) {
-                /* DIF wins this cell. Update wisdom with use_dif_forward=1
-                 * and the new (faster) best_ns. */
-                stride_wisdom_add_v4(wis, N, K,
-                                     e->factors, e->nfactors,
-                                     dif_refined,
-                                     /*use_blocked=*/0, /*split=*/0, /*bg=*/0,
-                                     /*use_dif_forward=*/1);
-                /* Annotate method tag so the stdout dump shows DIF won. */
-                out->method = (out->method && strstr(out->method, "+jb"))
-                              ? ((N <= EXHAUSTIVE_MAX_N) ? "exh+jb/dif" : "dp+jb/dif")
-                              : ((N <= EXHAUSTIVE_MAX_N) ? "exh/dif"    : "dp/dif");
-                /* Re-fetch the entry; the loop's e pointer now stale. */
-                e = stride_wisdom_lookup(wis, N, K);
-            }
+
+    /* Capture the factorization before we start updating wisdom; the
+     * pointer `e` may become stale across stride_wisdom_add_v5 calls. */
+    int factors[STRIDE_MAX_STAGES];
+    int nf = e->nfactors;
+    for (int s = 0; s < nf; s++) factors[s] = e->factors[s];
+    int blocked_won  = e->use_blocked;
+    int split_stage  = e->split_stage;
+    int block_groups = e->block_groups;
+    double baseline_ns = e->best_ns;
+
+    /* ── Phase D: variant cartesian search ──────────────────────────── *
+     * Walks (orientation × per-stage variant assignment) on the winning
+     * factorization. Skipped when the blocked executor won — variants
+     * don't compose with blocking in v1.1, so the blocked plan stays
+     * the verdict. The user can still load it; the v5 entry just has
+     * has_variant_codes=0 and stride_wise_plan falls back to the
+     * legacy build path.
+     *
+     * For each variant assignment that beats the prior best, we update
+     * wisdom incrementally — stride_wisdom_add_v5 only commits when
+     * best_ns decreases, so this is idempotent.
+     */
+    double best_ns = baseline_ns;
+    int best_use_dif = 0;
+    vfft_variant_t best_variants[STRIDE_MAX_STAGES] = {0};
+    int has_winner = 0;
+    long total_searched = 0;
+
+    if (!blocked_won) {
+        for (int orient = 0; orient < 2; orient++) {
+            vfft_variant_iter_t it;
+            if (!vfft_variant_iter_init(&it, factors, nf, orient, reg))
+                continue;
+            do {
+                vfft_variant_t variants[STRIDE_MAX_STAGES];
+                vfft_variant_iter_get(&it, variants);
+
+                stride_plan_t *plan = _stride_build_plan_explicit(
+                        N, K, factors, nf, variants, orient, reg);
+                if (!plan) continue;
+
+                double ns = bench_plan_min(plan, N, K);
+                stride_plan_destroy(plan);
+                total_searched++;
+
+                if (ns < best_ns) {
+                    best_ns = ns;
+                    best_use_dif = orient;
+                    for (int s = 0; s < nf; s++) best_variants[s] = variants[s];
+                    has_winner = 1;
+                }
+                /* Also track best DIF result (any variant) for diagnostic. */
+                if (orient == 1 && (out->dif_ns < 0 || ns < out->dif_ns))
+                    out->dif_ns = ns;
+            } while (vfft_variant_iter_next(&it));
+        }
+
+        if (has_winner) {
+            int code_ints[STRIDE_MAX_STAGES];
+            for (int s = 0; s < nf; s++) code_ints[s] = (int)best_variants[s];
+            stride_wisdom_add_v5(wis, N, K, factors, nf,
+                                  best_ns,
+                                  /*use_blocked=*/0, /*split=*/0, /*bg=*/0,
+                                  best_use_dif,
+                                  /*has_variant_codes=*/1, code_ints);
+            const char *base = (out->method && strstr(out->method, "+jb"))
+                              ? ((N <= EXHAUSTIVE_MAX_N) ? "exh+jb" : "dp+jb")
+                              : ((N <= EXHAUSTIVE_MAX_N) ? "exh"    : "dp");
+            out->method = best_use_dif ? (strstr(base, "+jb") ?
+                                          (N <= EXHAUSTIVE_MAX_N ? "exh+jb/dif" : "dp+jb/dif")
+                                        : (N <= EXHAUSTIVE_MAX_N ? "exh/dif"    : "dp/dif"))
+                                       : (strstr(base, "+jb") ?
+                                          (N <= EXHAUSTIVE_MAX_N ? "exh+jb/var" : "dp+jb/var")
+                                        : (N <= EXHAUSTIVE_MAX_N ? "exh/var"    : "dp/var"));
         }
     }
+    out->variants_searched = total_searched;
 
-    /* ── Phase E: copy result, classify codelets, verify roundtrip ─── */
+    /* ── Phase E: copy final result, build plan, verify roundtrip ──── */
+    e = stride_wisdom_lookup(wis, N, K);  /* re-fetch after any updates */
     out->nfactors        = e->nfactors;
     for (int s = 0; s < e->nfactors; s++) out->factors[s] = e->factors[s];
     out->best_ns         = e->best_ns;
@@ -287,10 +338,22 @@ static int calibrate_cell(int N, size_t K,
     out->split_stage     = e->split_stage;
     out->block_groups    = e->block_groups;
     out->use_dif_forward = e->use_dif_forward;
+    for (int s = 0; s < e->nfactors; s++)
+        out->variant_codes[s] = e->has_variant_codes ? e->variant_codes[s] : -1;
 
-    stride_plan_t *plan = e->use_dif_forward
-        ? _stride_build_plan_dif(N, K, e->factors, e->nfactors, reg)
-        : _stride_build_plan    (N, K, e->factors, e->nfactors, reg);
+    stride_plan_t *plan;
+    if (e->has_variant_codes) {
+        vfft_variant_t variants[STRIDE_MAX_STAGES];
+        for (int s = 0; s < e->nfactors; s++)
+            variants[s] = (vfft_variant_t)e->variant_codes[s];
+        plan = _stride_build_plan_explicit(
+                N, K, e->factors, e->nfactors, variants,
+                e->use_dif_forward, reg);
+    } else if (e->use_dif_forward) {
+        plan = _stride_build_plan_dif(N, K, e->factors, e->nfactors, reg);
+    } else {
+        plan = _stride_build_plan(N, K, e->factors, e->nfactors, reg);
+    }
     if (!plan) {
         fprintf(stderr, "  N=%d K=%zu: build plan from wisdom failed\n", N, K);
         return 1;
@@ -300,9 +363,22 @@ static int calibrate_cell(int N, size_t K,
         plan->split_stage  = e->split_stage;
         plan->block_groups = e->block_groups;
     }
-    /* Codelet classification (log3/buf/t1s/flat) only meaningful for DIT
-     * plans — DIF uses flat codelets exclusively in v1.1. */
-    if (e->use_dif_forward) {
+
+    /* Codelet display kind. v5 entries: derive directly from variant codes.
+     * Legacy entries (blocked won, or DIT/DIF without explicit search):
+     * fall back to wisdom-bridge classify_stage. */
+    if (e->has_variant_codes) {
+        out->codelets[0] = CL_N1;
+        for (int s = 1; s < plan->num_stages; s++) {
+            switch ((vfft_variant_t)e->variant_codes[s]) {
+                case VFFT_VAR_FLAT: out->codelets[s] = CL_FLAT; break;
+                case VFFT_VAR_LOG3: out->codelets[s] = CL_LOG3; break;
+                case VFFT_VAR_T1S:  out->codelets[s] = CL_T1S;  break;
+                case VFFT_VAR_BUF:  out->codelets[s] = CL_BUF;  break;
+                default:            out->codelets[s] = CL_FLAT; break;
+            }
+        }
+    } else if (e->use_dif_forward) {
         out->codelets[0] = CL_N1;
         for (int s = 1; s < plan->num_stages; s++) out->codelets[s] = CL_FLAT;
     } else {
@@ -342,9 +418,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "fatal: cannot open %s for writing\n", info_csv);
         return 2;
     }
-    fprintf(info, "N,K,method,nf,factors,codelets,best_ns,"
+    fprintf(info, "N,K,method,nf,factors,codelets,variant_codes,best_ns,"
                   "use_blocked,split_stage,block_groups,use_dif_forward,"
-                  "dit_ns,dif_ns,roundtrip_err\n");
+                  "dit_ns,dif_ns,variants_searched,roundtrip_err\n");
 
     int n_cells = (int)(sizeof(GRID_N)/sizeof(GRID_N[0]) *
                         sizeof(GRID_K)/sizeof(GRID_K[0]));
@@ -399,29 +475,34 @@ int main(int argc, char **argv) {
                 printf("  BLOCKED@split=%d,bg=%d", r.split_stage, r.block_groups);
             if (r.use_dif_forward) printf("  DIF");
             printf("  best=%.1f ns", r.best_ns);
-            if (r.dif_ns > 0)
-                printf("  (DIT=%.1f, DIF=%.1f, DIF/DIT=%.3f)",
-                       r.dit_ns, r.dif_ns, r.dif_ns / r.dit_ns);
+            if (r.variants_searched > 0)
+                printf("  (DIT_baseline=%.1f, %ld variants searched, best speedup=%.3f)",
+                       r.dit_ns, r.variants_searched,
+                       r.best_ns > 0 ? r.dit_ns / r.best_ns : 1.0);
             printf("  err=%.2e %s\n",
                    r.err, r.err < 1e-12 ? "" : "[PRECISION FAIL]");
             fflush(stdout);
 
             if (r.err >= 1e-12) failures++;
 
-            /* Sidecar CSV: per-stage codelets + blocked + DIF info so the
-             * merge script doesn't need to reproduce the wisdom logic. */
+            /* Sidecar CSV: per-stage codelets, variant codes, blocked, DIF,
+             * search budget so the merge script has full visibility. */
             fprintf(info, "%d,%zu,%s,%d,", N, K, r.method, r.nfactors);
             for (int s = 0; s < r.nfactors; s++)
                 fprintf(info, "%s%d", s ? "x" : "", r.factors[s]);
             fprintf(info, ",");
             for (int s = 0; s < r.nfactors; s++)
                 fprintf(info, "%s%s", s ? "/" : "", codelet_short(r.codelets[s]));
-            fprintf(info, ",%.2f,%d,%d,%d,%d,%.2f,%.2f,%.2e\n",
+            fprintf(info, ",");
+            for (int s = 0; s < r.nfactors; s++)
+                fprintf(info, "%s%d", s ? "/" : "", r.variant_codes[s]);
+            fprintf(info, ",%.2f,%d,%d,%d,%d,%.2f,%.2f,%ld,%.2e\n",
                     r.best_ns,
                     r.use_blocked, r.split_stage, r.block_groups,
                     r.use_dif_forward,
                     r.dit_ns,
                     r.dif_ns >= 0 ? r.dif_ns : 0.0,
+                    r.variants_searched,
                     r.err);
             fflush(info);
         }
