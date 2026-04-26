@@ -160,6 +160,46 @@ static dp_entry_t *_dp_insert(stride_dp_context_t *ctx, int N, size_t K_eff) {
 #define DP_TIME_LIMIT_NS  5.0e8  /* per-bench cap (~0.5 s) */
 #endif
 
+/* Intra-cell thermal pacing.
+ *
+ * At K > MEASURE_PACE_K_THRESHOLD, sustained 100% core load during the
+ * search heats the core enough that bench numbers drift up over the
+ * minutes-long search at a single cell. The package thermal envelope is
+ * shared, so even core-pinned runs are affected at large K.
+ *
+ * Sleep MEASURE_PACE_MS ms every MEASURE_PACE_EVERY benches to let the
+ * core temp recover. ~5% wall overhead at K=256, much smoother numbers. */
+#ifndef MEASURE_PACE_K_THRESHOLD
+#define MEASURE_PACE_K_THRESHOLD 64
+#endif
+#ifndef MEASURE_PACE_EVERY
+#define MEASURE_PACE_EVERY 25
+#endif
+#ifndef MEASURE_PACE_MS
+#define MEASURE_PACE_MS 200
+#endif
+
+#ifdef _WIN32
+  /* Forward-declare Sleep without pulling all of windows.h into every
+   * TU that includes this header. _WINDOWS_ is windows.h's own guard;
+   * if it's defined, Sleep is already declared. */
+  #ifndef _WINDOWS_
+  extern __declspec(dllimport) void __stdcall Sleep(unsigned long ms);
+  #endif
+  static void _dp_pace_sleep(int ms) { if (ms > 0) Sleep((unsigned long)ms); }
+#else
+  #include <unistd.h>
+  static void _dp_pace_sleep(int ms) {
+    if (ms > 0) usleep((useconds_t)ms * 1000);
+  }
+#endif
+
+static void _dp_maybe_pace(stride_dp_context_t *ctx) {
+    if (ctx->K <= (size_t)MEASURE_PACE_K_THRESHOLD) return;
+    if ((ctx->n_benchmarks % MEASURE_PACE_EVERY) != 0) return;
+    _dp_pace_sleep(MEASURE_PACE_MS);
+}
+
 static double _dp_bench(stride_dp_context_t *ctx, int N,
                          const int *factors, int nf, size_t K_eff,
                          const stride_registry_t *reg) {
@@ -224,6 +264,7 @@ static double _dp_bench(stride_dp_context_t *ctx, int N,
 
     stride_plan_destroy(plan);
     ctx->n_benchmarks++;
+    _dp_maybe_pace(ctx);
     return best;
 }
 
@@ -524,6 +565,7 @@ static double _dp_bench_explicit_one(stride_dp_context_t *ctx, int N,
 
     stride_plan_destroy(plan);
     ctx->n_benchmarks++;
+    _dp_maybe_pace(ctx);
     return best;
 }
 
