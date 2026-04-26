@@ -750,4 +750,177 @@ static inline int stride_registry_has_dif(const stride_registry_t *reg, int radi
     return radix > 0 && radix < STRIDE_REG_MAX_RADIX && reg->t1_dif_fwd[radix] != NULL;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+ * PER-STAGE VARIANT ENUMERATION
+ *
+ * The shift from per-codelet wisdom to per-plan wisdom: each stage's
+ * codelet variant is now a separately-searched dimension at calibration
+ * time, not a wisdom-predicate decision baked at plan-build time. Each
+ * variant maps to a specific registry slot per orientation:
+ *
+ *   Orientation = DIT (use_dif_forward = 0):
+ *     FLAT → reg->t1_fwd[R] / t1_bwd[R]
+ *     LOG3 → reg->t1_fwd_log3[R] / t1_bwd_log3[R]
+ *     T1S  → reg->t1_fwd[R]  + attach reg->t1s_fwd[R] to stage->t1s_fwd
+ *     BUF  → reg->t1_buf_fwd[R] / t1_buf_bwd[R]
+ *
+ *   Orientation = DIF (use_dif_forward = 1):
+ *     FLAT → reg->t1_dif_fwd[R] / t1_dif_bwd[R]
+ *     LOG3 → reg->t1_dif_log3_fwd[R] / t1_dif_log3_bwd[R]
+ *     T1S, BUF — not available (DIT-specific optimizations)
+ *
+ * Stage 0 has no twiddle (n1 codelet only); its variant code is ignored
+ * at plan-build time but conventionally set to FLAT for wisdom-file
+ * regularity.
+ * ═══════════════════════════════════════════════════════════════ */
+
+typedef enum {
+    VFFT_VAR_FLAT = 0,
+    VFFT_VAR_LOG3 = 1,
+    VFFT_VAR_T1S  = 2,   /* DIT only */
+    VFFT_VAR_BUF  = 3,   /* DIT only, R=16/32/64 */
+    VFFT_VAR_COUNT = 4,  /* upper bound for sizing */
+} vfft_variant_t;
+
+static inline const char *vfft_variant_name(vfft_variant_t v) {
+    switch (v) {
+        case VFFT_VAR_FLAT: return "flat";
+        case VFFT_VAR_LOG3: return "log3";
+        case VFFT_VAR_T1S:  return "t1s";
+        case VFFT_VAR_BUF:  return "buf";
+        default:            return "?";
+    }
+}
+
+/* Enumerate variants registered for radix R in the given orientation.
+ * Writes up to VFFT_VAR_COUNT codes into out[], returns the count.
+ * out must have room for VFFT_VAR_COUNT entries. */
+static inline int vfft_stage_variants(const stride_registry_t *reg, int R,
+                                       int use_dif_forward,
+                                       vfft_variant_t *out) {
+    int n = 0;
+    if (R <= 0 || R >= STRIDE_REG_MAX_RADIX) return 0;
+    if (use_dif_forward) {
+        if (reg->t1_dif_fwd[R])      out[n++] = VFFT_VAR_FLAT;
+        if (reg->t1_dif_log3_fwd[R]) out[n++] = VFFT_VAR_LOG3;
+    } else {
+        if (reg->t1_fwd[R])     out[n++] = VFFT_VAR_FLAT;
+        if (reg->t1_fwd_log3[R])out[n++] = VFFT_VAR_LOG3;
+        if (reg->t1s_fwd[R])    out[n++] = VFFT_VAR_T1S;
+        if (reg->t1_buf_fwd[R]) out[n++] = VFFT_VAR_BUF;
+    }
+    return n;
+}
+
+/* Does the registry have the codelet referenced by variant v on radix R
+ * in the given orientation? Used by the calibrator to validate explicit
+ * variant assignments before building. */
+static inline int vfft_variant_available(const stride_registry_t *reg, int R,
+                                          int use_dif_forward,
+                                          vfft_variant_t v) {
+    if (R <= 0 || R >= STRIDE_REG_MAX_RADIX) return 0;
+    if (use_dif_forward) {
+        switch (v) {
+            case VFFT_VAR_FLAT: return reg->t1_dif_fwd[R] != NULL;
+            case VFFT_VAR_LOG3: return reg->t1_dif_log3_fwd[R] != NULL;
+            default: return 0;  /* T1S, BUF: no DIF version */
+        }
+    }
+    switch (v) {
+        case VFFT_VAR_FLAT: return reg->t1_fwd[R] != NULL;
+        case VFFT_VAR_LOG3: return reg->t1_fwd_log3[R] != NULL;
+        case VFFT_VAR_T1S:  return reg->t1s_fwd[R]   != NULL;
+        case VFFT_VAR_BUF:  return reg->t1_buf_fwd[R]!= NULL;
+        default: return 0;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * VARIANT CARTESIAN ITERATOR
+ *
+ * Walks the cartesian product of per-stage variant choices for a given
+ * factorization + orientation. Stage 0 is fixed to FLAT (no twiddle
+ * codelet anyway). Other stages enumerate vfft_stage_variants(R, orient).
+ *
+ * Usage:
+ *   vfft_variant_iter_t it;
+ *   vfft_variant_t cur[STRIDE_MAX_STAGES];
+ *   if (!vfft_variant_iter_init(&it, factors, nf, use_dif, reg)) {
+ *       // No variants for some stage in this orientation — skip this orient.
+ *   }
+ *   do {
+ *       vfft_variant_iter_get(&it, cur);
+ *       // build plan with `cur`, bench, track winner
+ *   } while (vfft_variant_iter_next(&it));
+ *
+ * Iteration order: lex over (counter[0], counter[1], ..., counter[nf-1])
+ * with counter[nf-1] varying fastest. Total iterations = product of
+ * per_stage_count over s = 1..nf-1 (stage 0 contributes factor 1).
+ * ═══════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    int            nf;
+    int            counts [STRIDE_MAX_STAGES];
+    vfft_variant_t options[STRIDE_MAX_STAGES][VFFT_VAR_COUNT];
+    int            counter[STRIDE_MAX_STAGES];
+    int            done;
+} vfft_variant_iter_t;
+
+/* Initialize iterator. Returns 0 (and leaves iter unusable) if any stage
+ * has no variants for this orientation — caller should skip that orient
+ * for this factorization. */
+static inline int vfft_variant_iter_init(vfft_variant_iter_t *it,
+                                          const int *factors, int nf,
+                                          int use_dif_forward,
+                                          const stride_registry_t *reg) {
+    it->nf = nf;
+    it->done = 0;
+    for (int s = 0; s < nf; s++) {
+        it->counter[s] = 0;
+        if (s == 0) {
+            /* Stage 0: no twiddle codelet, variant is conventionally FLAT
+             * regardless of orientation. */
+            it->counts[s] = 1;
+            it->options[s][0] = VFFT_VAR_FLAT;
+            continue;
+        }
+        int n = vfft_stage_variants(reg, factors[s], use_dif_forward,
+                                     it->options[s]);
+        if (n == 0) {
+            it->done = 1;
+            return 0;
+        }
+        it->counts[s] = n;
+    }
+    return 1;
+}
+
+/* Read the current variant assignment into out[]. out must hold
+ * at least it->nf entries. */
+static inline void vfft_variant_iter_get(const vfft_variant_iter_t *it,
+                                          vfft_variant_t *out) {
+    for (int s = 0; s < it->nf; s++)
+        out[s] = it->options[s][it->counter[s]];
+}
+
+/* Advance to next assignment. Returns 1 if a new assignment is now
+ * current; 0 if the iterator is exhausted (and stays exhausted on
+ * subsequent calls). */
+static inline int vfft_variant_iter_next(vfft_variant_iter_t *it) {
+    if (it->done) return 0;
+    for (int s = it->nf - 1; s >= 0; s--) {
+        if (++it->counter[s] < it->counts[s]) return 1;
+        it->counter[s] = 0;
+    }
+    it->done = 1;
+    return 0;
+}
+
+/* Total number of assignments this iterator will produce (for budgeting). */
+static inline long vfft_variant_iter_total(const vfft_variant_iter_t *it) {
+    long total = 1;
+    for (int s = 0; s < it->nf; s++) total *= it->counts[s];
+    return total;
+}
+
 #endif /* STRIDE_REGISTRY_H */
