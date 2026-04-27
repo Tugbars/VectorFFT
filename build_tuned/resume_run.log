@@ -1,0 +1,36 @@
+  N=127 K=4: MEASURE failed
+  N=251 K=4: MEASURE failed
+  N=257 K=4: MEASURE failed
+  N=401 K=4: MEASURE failed
+  N=641 K=4: MEASURE failed
+  N=1009 K=4: MEASURE failed
+  N=2801 K=4: MEASURE failed
+  N=4001 K=4: MEASURE failed
+=== calibrate_tuned: new-core wisdom generator ===
+output : C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\vfft_wisdom_tuned.txt
+info   : C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\vfft_wisdom_tuned_codelets.csv
+pacing : 1000 ms between cells
+mode   : measure (DP + variant cartesian)
+loaded : 60 existing entries from C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\vfft_wisdom_tuned.txt
+[ 9/183] N=60    K=32  method=dp+measure     factors=12x5  codelets=n1/t1s  best=686.0 ns  (87 variants searched)  err=2.93e-16 
+[10/183] N=100   K=32  method=dp+measure     factors=20x5  codelets=n1/t1s  best=1497.8 ns  (61 variants searched)  err=2.75e-16 
+  N=127 K=32: MEASURE failed
+[12/183] N=175   K=32  method=dp+measure     factors=7x5x5  codelets=n1/t1s/t1s  best=3792.7 ns  (43 variants searched)  err=3.53e-16 
+[13/183] N=200   K=32  method=dp+measure     factors=10x20  codelets=n1/t1s  best=3633.3 ns  (159 variants searched)  err=3.31e-16 
+[14/183] N=243   K=32  method=dp+measure     factors=3x3x3x3x3  codelets=n1/t1s/t1s/log3/t1s  best=6991.4 ns  (83 variants searched)  err=8.14e-16 
+  N=251 K=32: MEASURE failed
+  N=257 K=32: MEASURE failed
+  N=401 K=32: MEASURE failed
+[18/183] N=500   K=32  method=dp+measure     factors=10x10x5  codelets=n1/t1s/t1s  best=11758.1 ns  (155 variants searched)  err=4.61e-16 
+[19/183] N=525   K=32  method=dp+measure     factors=7x3x5x5  codelets=n1/t1s/t1s/t1s  best=14449.2 ns  (117 variants searched)  err=4.65e-16 
+[20/183] N=625   K=32  method=dp+measure     factors=5x5x5x5  codelets=n1/t1s/t1s/t1s  best=16008.2 ns  (67 variants searched)  err=4.64e-16 
+  N=641 K=32: MEASURE failed
+[22/183] N=1000  K=32  method=dp+measure     factors=5x8x25  codelets=n1/t1s/t1s  best=26854.8 ns  (387 variants searched)  err=4.93e-16 
+  N=1009 K=32: MEASURE failed
+[24/183] N=1024  K=32  method=dp+measure     factors=4x4x8x8  codelets=n1/t1s/t1s/t1s  best=25413.3 ns  (618 variants searched)  err=5.00e-16 
+[25/183] N=1225  K=32  method=dp+measure     factors=7x5x5x7  codelets=n1/t1s/t1s/t1s  best=38272.0 ns  (99 variants searched)  err=5.99e-16 
+[26/183] N=1331  K=32  method=dp+measure     factors=11x11x11  codelets=n1/t1s/t1s  best=47156.5 ns  (11 variants searched)  err=4.61e-16 
+[27/183] N=2000  K=32  method=dp+measure     factors=8x10x25  codelets=n1/t1s/t1s  best=58105.0 ns  (833 variants searched)  err=5.06e-16 
+[28/183] N=2048  K=32  method=dp+measure     factors=4x4x4x4x8  codelets=n1/t1s/t1s/t1s/t1s  best=62375.0 ns  (978 variants searched)  err=5.00e-16 
+[29/183] N=2197  K=32  method=dp+measure     factors=13x13x13  codelets=n1/t1s/log3  best=99105.0 ns  (14 variants searched)  err=7.62e-16 
+[30/183] N=2205  K=32  method=dp+measure     factors=7x3x7x3x5  codelets=n1/t1s/t1s/t1s/t1s  best=79080.0 ns  (647 variants searched)  err=5.84e-16 

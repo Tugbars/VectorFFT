@@ -189,7 +189,8 @@ def setup_affinity(cpu: int) -> bool:
 
 
 def run_calibrator(cpu: int, pinned: bool, mode: str,
-                   pace_ms: int = 1000, cells: str | None = None) -> int:
+                   pace_ms: int = 1000, cells: str | None = None,
+                   force: bool = False) -> int:
     exe = HERE / ('calibrate_tuned.exe' if os.name == 'nt' else 'calibrate_tuned')
     if not exe.exists():
         print(f'[error] calibrator binary not found: {exe}', file=sys.stderr)
@@ -200,10 +201,12 @@ def run_calibrator(cpu: int, pinned: bool, mode: str,
     argv: list[str] = []
     if pinned and platform.system() == 'Linux':
         argv += ['taskset', '-c', str(cpu)]
-    # Positional: out_path info_csv pace_ms mode [cells]
+    # Positional: out_path info_csv pace_ms mode [cells] [force]
     argv += [str(exe), str(out), str(info), str(pace_ms), mode]
     if cells:
         argv += [cells]
+    if force:
+        argv += ['force']
 
     print(f'[run] {" ".join(argv)}')
     t0 = time.time()
@@ -239,6 +242,10 @@ def main() -> int:
                          'selectively (e.g., "1024:4,2048:4"). When given, '
                          'only those cells are run and existing wisdom for '
                          'other (N, K) pairs is preserved. Default: full grid.')
+    ap.add_argument('--force', action='store_true',
+                    help='Re-bench cells that already exist in the wisdom '
+                         'file. Default is skip-if-cached (resume mode), '
+                         'matching production bench_1d_csv behaviour.')
     args = ap.parse_args()
 
     print('=' * 60)
@@ -292,7 +299,8 @@ def main() -> int:
             if rc != 0:
                 print(f'[error] compile failed with rc={rc}')
                 return rc
-        rc = run_calibrator(args.cpu, pinned, args.mode, cells=args.cells)
+        rc = run_calibrator(args.cpu, pinned, args.mode,
+                            cells=args.cells, force=args.force)
     finally:
         teardown_powercfg(state)
 
