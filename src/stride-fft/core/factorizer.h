@@ -23,7 +23,7 @@
 #include "registry.h"
 #include <string.h>
 
-#define FACT_MAX_STAGES 8
+#define FACT_MAX_STAGES 9
 #define FACT_MAX_DECOMPOSITIONS 64
 
 /* ═══════════════════════════════════════════════════════════════
