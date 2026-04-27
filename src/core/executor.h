@@ -40,7 +40,7 @@
 #define STRIDE_ALIGNED_FREE(p)             free(p)
 #endif
 
-#define STRIDE_MAX_STAGES 8
+#define STRIDE_MAX_STAGES 9
 #define STRIDE_MAX_RADIX 32
 
 /* ═══════════════════════════════════════════════════════════════
