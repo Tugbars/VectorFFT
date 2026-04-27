@@ -838,11 +838,15 @@ int main(int argc, char **argv) {
     int pace_ms_arg = DEFAULT_PACE_MS;
     calib_mode_t mode = CALIB_MODE_MEASURE;
     const char *cells_arg = NULL;
+    int force_recalibrate = 0;
 
-    /* Positional: out_path info_csv pace_ms mode cells
+    /* Positional: out_path info_csv pace_ms mode cells force
      * `mode`  = "measure" (default) | "extreme"
-     * `cells` = optional "N1:K1,N2:K2,..."; if given, only those cells
-     *           run, and existing wisdom for other (N, K) is preserved. */
+     * `cells` = optional "N1:K1,N2:K2,..." selective list. Either "force"
+     *           (treated as the force flag with no cell selection) or a
+     *           cells string.
+     * `force` = literal "force" if you want to re-bench cells already
+     *           in the wisdom file (default: skip cached cells, resume mode). */
     if (argc >= 2) out_path  = argv[1];
     if (argc >= 3) info_csv  = argv[2];
     if (argc >= 4) pace_ms_arg = atoi(argv[3]);
@@ -855,7 +859,14 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    if (argc >= 6) cells_arg = argv[5];
+    if (argc >= 6) {
+        if (strcmp(argv[5], "force") == 0) {
+            force_recalibrate = 1;
+        } else {
+            cells_arg = argv[5];
+        }
+    }
+    if (argc >= 7 && strcmp(argv[6], "force") == 0) force_recalibrate = 1;
 
     cell_t selected[MAX_SELECTED_CELLS];
     int n_selected = 0;
@@ -929,6 +940,7 @@ int main(int argc, char **argv) {
 
     int done = 0;
     int failures = 0;
+    int skipped = 0;
     int n_cells = n_all;
 
     /* DP context: one per K group, reused across same-K cells. */
@@ -939,6 +951,14 @@ int main(int argc, char **argv) {
     for (int i = 0; i < n_all; i++) {
         int    N = all_cells[i].N;
         size_t K = all_cells[i].K;
+
+        /* Skip-if-cached: production-style resume mode. If the wisdom file
+         * already has an entry for (N, K), don't re-bench. Pass "force"
+         * on the CLI to override (full re-calibration). */
+        if (!force_recalibrate && stride_wisdom_lookup(&wis, N, K) != NULL) {
+            skipped++;
+            continue;
+        }
 
         if (K != prev_K) {
             if (ctx_active) stride_dp_destroy(&dp_ctx);
