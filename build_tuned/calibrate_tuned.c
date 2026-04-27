@@ -53,26 +53,42 @@
  * pilot is faster because it's 4 cells instead of 40.
  * ========================================================================= */
 
+/* Default 0 (full grid mirroring bench_1d_csv) post-v1.2-MEASURE-topk
+ * landing. Pilot mode (CALIB_PILOT_JOINT=1) provides a 2-cell fast
+ * iteration grid for development; enable via -DCALIB_PILOT_JOINT=1. */
 #ifndef CALIB_PILOT_JOINT
-  #define CALIB_PILOT_JOINT 1
+  #define CALIB_PILOT_JOINT 0
 #endif
 
 #if CALIB_PILOT_JOINT
-  /* Pilot cells. N=4096 is where MKL gets closest (smallest margin in
-   * production wisdom) — joint search there shows whether plan-level
-   * variant search recovers performance the wisdom-driven path misses.
-   * K=4 covers the small-batch / blocked-favored regime; K=256 covers
-   * the multi-thread / log3-favored regime. Both N=4096 (K=4) and
-   * (K=256) are present in production wisdom so ab_compare has direct
-   * diffs. */
+  /* Pilot: original v1.2 validation cells. */
   static const int   GRID_N[] = { 4096 };
   static const size_t GRID_K[] = { 4, 256 };
-  /* No DP path used in joint mode; threshold is ignored. Set high to be safe. */
   #define EXHAUSTIVE_MAX_N 65536
 #else
-  static const int   GRID_N[] = { 64, 128, 256, 512, 1024, 2048,
-                                  4096, 8192, 16384, 32768 };
-  static const size_t GRID_K[] = { 4, 32, 128, 256 };
+  /* Full grid: same N values as bench_1d_csv.c::all_sizes[] so every
+   * cell the MKL bench knows about gets a wisdom entry (modulo prime N
+   * which calibrate_cell_measure skips — those fall back to
+   * stride_auto_plan at bench time). K values match bench_1d_csv's. */
+  static const int   GRID_N[] = {
+      /* small */
+      8, 16, 32, 64, 128,
+      /* pow2 */
+      256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072,
+      /* composite */
+      60, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000,
+      /* prime_pow */
+      243, 625, 2401, 3125, 15625, 16807, 78125, 117649, 390625, 823543,
+      /* genfft */
+      1331, 14641, 161051, 2197, 28561,
+      /* rader (primes — calibrate_cell_measure skips these) */
+      127, 251, 257, 401, 641, 1009, 2801, 4001,
+      /* odd_comp */
+      175, 525, 1225, 2205, 6615, 11025,
+      /* mixed_deep */
+      2310, 6930, 30030, 60060, 4620, 13860,
+  };
+  static const size_t GRID_K[] = { 4, 32, 256 };
   #define EXHAUSTIVE_MAX_N 2048
 #endif
 
@@ -556,6 +572,120 @@ static int calibrate_cell_joint(int N, size_t K,
 }
 
 /* ===========================================================================
+ * Blocked-executor refine for K <= STRIDE_BLOCKED_K_THRESHOLD medium N
+ *
+ * MEASURE picks (factorization, permutation, variants, orientation) using
+ * the standard executor. For small batch (K<=8) at medium N, the blocked
+ * executor can beat the standard one by easing DTLB pressure. This helper
+ * takes MEASURE's variant-tuned plan and tries the blocked executor at
+ * each valid split point. Variants flow through naturally because the
+ * blocked executor calls the same plan->stages[s].t1_fwd codelet pointers
+ * that _stride_build_plan_explicit set up.
+ *
+ * Returns 1 if blocked beats MEASURE's deploy bench, 0 otherwise.
+ * Mirrors the L1 working-set guard + block_groups computation from
+ * stride_dp_plan_joint_blocked. */
+static int try_blocked_refine(
+        int N, size_t K,
+        const stride_plan_decision_t *dec,
+        const stride_registry_t *reg,
+        double measure_deploy_ns,
+        int *out_split, int *out_bg, double *out_blocked_ns)
+{
+    *out_split = 0;
+    *out_bg = 0;
+    *out_blocked_ns = 1e18;
+
+    if (K > STRIDE_BLOCKED_K_THRESHOLD) return 0;
+    if (N <= 512) return 0;
+
+    stride_plan_t *plan = _stride_build_plan_explicit(
+            N, K, dec->fact.factors, dec->fact.nfactors,
+            dec->variants, dec->use_dif_forward, reg);
+    if (!plan) return 0;
+
+    size_t total = (size_t)N * K;
+    double *re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    if (!re || !im) {
+        if (re) STRIDE_ALIGNED_FREE(re);
+        if (im) STRIDE_ALIGNED_FREE(im);
+        stride_plan_destroy(plan);
+        return 0;
+    }
+
+    int reps = (int)(2e6 / (total + 1));
+    if (reps < 20) reps = 20;
+    if (reps > 100000) reps = 100000;
+
+    double best_blocked = 1e18;
+    int best_sp = 0, best_bg = 0;
+
+    for (int sp = 0; sp < plan->num_stages; sp++) {
+        size_t ws = (size_t)plan->stages[sp].radix *
+                    plan->stages[sp].stride * K * 2 * sizeof(double);
+        if (ws > STRIDE_BLOCKED_L1_BYTES) continue;
+
+        int bg = _stride_compute_block_groups(plan, sp);
+
+        srand(42 + N + (int)K + sp);
+        for (size_t i = 0; i < total; i++) {
+            re[i] = (double)rand() / RAND_MAX - 0.5;
+            im[i] = (double)rand() / RAND_MAX - 0.5;
+        }
+        for (int w = 0; w < 10; w++)
+            _stride_execute_fwd_blocked(plan, re, im, sp, bg);
+
+        double trial_best = 1e18;
+        for (int t = 0; t < 5; t++) {
+            srand(42 + N + (int)K + sp);
+            for (size_t i = 0; i < total; i++) {
+                re[i] = (double)rand() / RAND_MAX - 0.5;
+                im[i] = (double)rand() / RAND_MAX - 0.5;
+            }
+            double t0 = now_ns();
+            for (int r = 0; r < reps; r++)
+                _stride_execute_fwd_blocked(plan, re, im, sp, bg);
+            double ns = (now_ns() - t0) / reps;
+            if (ns < trial_best) trial_best = ns;
+        }
+
+        if (trial_best < best_blocked) {
+            best_blocked = trial_best;
+            best_sp = sp;
+            best_bg = bg;
+        }
+    }
+
+    STRIDE_ALIGNED_FREE(re);
+    STRIDE_ALIGNED_FREE(im);
+    stride_plan_destroy(plan);
+
+    if (best_blocked < measure_deploy_ns) {
+        *out_split = best_sp;
+        *out_bg = best_bg;
+        *out_blocked_ns = best_blocked;
+        return 1;
+    }
+    return 0;
+}
+
+/* Force-replace any existing entry for (N, K) before adding a new one.
+ * stride_wisdom_add_v5 is "update if better" — for selective re-calibration
+ * we want the new bench to win regardless of cost (the calibrator's logic
+ * may have changed). */
+static void calib_remove_entry(stride_wisdom_t *wis, int N, size_t K) {
+    for (int i = 0; i < wis->count; i++) {
+        if (wis->entries[i].N == N && wis->entries[i].K == K) {
+            for (int j = i; j < wis->count - 1; j++)
+                wis->entries[j] = wis->entries[j + 1];
+            wis->count--;
+            return;
+        }
+    }
+}
+
+/* ===========================================================================
  * VFFT_MEASURE per-cell calibration
  *
  * Uses stride_dp_plan_measure to pick (factorization × variants × orient)
@@ -564,6 +694,10 @@ static int calibrate_cell_joint(int N, size_t K,
  * factorization ranking (the v1.2 K=4 finding pattern). Re-benches the
  * winner with deploy-quality bench_plan_min so the wisdom cost numbers
  * are directly comparable to the joint-mode entries.
+ *
+ * Post-MEASURE: tries the blocked executor at each valid split point on
+ * the same variant-tuned plan. If blocked beats MEASURE's bench, the
+ * wisdom entry is stamped with use_blocked=1 + split + bg.
  * ========================================================================= */
 
 static int calibrate_cell_measure(int N, size_t K,
@@ -599,18 +733,32 @@ static int calibrate_cell_measure(int N, size_t K,
     double err = roundtrip_err(plan, N, K);
     stride_plan_destroy(plan);
 
-    /* Commit to wisdom v5 (explicit variant codes). */
+    /* Post-MEASURE blocked refine for K <= STRIDE_BLOCKED_K_THRESHOLD
+     * medium N. If blocked wins, deploy_ns is overridden and the entry
+     * gets stamped with use_blocked=1. */
+    int blocked_split = 0, blocked_bg = 0;
+    double blocked_ns = 1e18;
+    int use_blocked = try_blocked_refine(N, K, &dec, reg, deploy_ns,
+                                          &blocked_split, &blocked_bg,
+                                          &blocked_ns);
+    if (use_blocked) {
+        deploy_ns = blocked_ns;
+    }
+
+    /* Commit to wisdom v5 (explicit variant codes). Force-replace any
+     * existing entry first so re-calibration runs always overwrite. */
     int code_ints[STRIDE_MAX_STAGES];
     for (int s = 0; s < dec.fact.nfactors; s++)
         code_ints[s] = (int)dec.variants[s];
+    calib_remove_entry(wis, N, K);
     stride_wisdom_add_v5(wis, N, K, dec.fact.factors, dec.fact.nfactors,
                           deploy_ns,
-                          /*use_blocked=*/0, /*split=*/0, /*bg=*/0,
+                          use_blocked, blocked_split, blocked_bg,
                           dec.use_dif_forward,
                           /*has_variant_codes=*/1, code_ints);
 
     /* Fill cell_result_t for the harness's display + CSV. */
-    out->method            = "dp+measure";
+    out->method            = use_blocked ? "dp+measure+blk" : "dp+measure";
     out->variants_searched = benches_used;
     out->dit_ns            = -1;
     out->dif_ns            = -1;
@@ -618,9 +766,9 @@ static int calibrate_cell_measure(int N, size_t K,
     for (int s = 0; s < dec.fact.nfactors; s++)
         out->factors[s] = dec.fact.factors[s];
     out->best_ns           = deploy_ns;
-    out->use_blocked       = 0;
-    out->split_stage       = 0;
-    out->block_groups      = 0;
+    out->use_blocked       = use_blocked;
+    out->split_stage       = blocked_split;
+    out->block_groups      = blocked_bg;
     out->use_dif_forward   = dec.use_dif_forward;
     for (int s = 0; s < dec.fact.nfactors; s++)
         out->variant_codes[s] = code_ints[s];
@@ -650,16 +798,53 @@ typedef enum {
     CALIB_MODE_EXTREME = 1,    /* full joint cartesian (PATIENT-style) */
 } calib_mode_t;
 
+typedef struct { int N; size_t K; } cell_t;
+
+#define MAX_SELECTED_CELLS 256
+
+/* Parse "N1:K1,N2:K2,..." into out[]. Returns count, or -1 on malformed. */
+static int parse_cells_arg(const char *s, cell_t *out, int max_out) {
+    int count = 0;
+    while (*s && count < max_out) {
+        while (*s == ' ' || *s == ',') s++;
+        if (!*s) break;
+        int N = 0;
+        size_t K = 0;
+        while (*s >= '0' && *s <= '9') N = N * 10 + (*s++ - '0');
+        if (*s != ':') return -1;
+        s++;
+        while (*s >= '0' && *s <= '9') K = K * 10 + (*s++ - '0');
+        if (N == 0 || K == 0) return -1;
+        out[count].N = N;
+        out[count].K = K;
+        count++;
+    }
+    return count;
+}
+
+static int cell_cmp_by_K(const void *a, const void *b) {
+    const cell_t *ca = (const cell_t *)a;
+    const cell_t *cb = (const cell_t *)b;
+    if (ca->K < cb->K) return -1;
+    if (ca->K > cb->K) return  1;
+    if (ca->N < cb->N) return -1;
+    if (ca->N > cb->N) return  1;
+    return 0;
+}
+
 int main(int argc, char **argv) {
     const char *out_path = "vfft_wisdom_tuned.txt";
     const char *info_csv = "vfft_wisdom_tuned_codelets.csv";
     int pace_ms_arg = DEFAULT_PACE_MS;
     calib_mode_t mode = CALIB_MODE_MEASURE;
+    const char *cells_arg = NULL;
 
-    /* Positional: out_path info_csv pace_ms mode
-     * `mode` is "measure" (default) or "extreme". */
-    if (argc >= 2) out_path = argv[1];
-    if (argc >= 3) info_csv = argv[2];
+    /* Positional: out_path info_csv pace_ms mode cells
+     * `mode`  = "measure" (default) | "extreme"
+     * `cells` = optional "N1:K1,N2:K2,..."; if given, only those cells
+     *           run, and existing wisdom for other (N, K) is preserved. */
+    if (argc >= 2) out_path  = argv[1];
+    if (argc >= 3) info_csv  = argv[2];
     if (argc >= 4) pace_ms_arg = atoi(argv[3]);
     if (argc >= 5) {
         if (strcmp(argv[4], "extreme") == 0)      mode = CALIB_MODE_EXTREME;
@@ -670,6 +855,18 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
+    if (argc >= 6) cells_arg = argv[5];
+
+    cell_t selected[MAX_SELECTED_CELLS];
+    int n_selected = 0;
+    if (cells_arg) {
+        n_selected = parse_cells_arg(cells_arg, selected, MAX_SELECTED_CELLS);
+        if (n_selected <= 0) {
+            fprintf(stderr, "fatal: --cells arg malformed: '%s'\n", cells_arg);
+            return 2;
+        }
+        qsort(selected, n_selected, sizeof(cell_t), cell_cmp_by_K);
+    }
 
     printf("=== calibrate_tuned: new-core wisdom generator ===\n");
     printf("output : %s\n", out_path);
@@ -678,12 +875,23 @@ int main(int argc, char **argv) {
     printf("mode   : %s\n",
            mode == CALIB_MODE_EXTREME ? "extreme (full joint cartesian)"
                                        : "measure (DP + variant cartesian)");
+    if (n_selected > 0) {
+        printf("cells  : %d selected (full grid bypassed)\n", n_selected);
+    }
 
     stride_registry_t reg;
     stride_registry_init(&reg);
 
     stride_wisdom_t wis;
     stride_wisdom_init(&wis);
+
+    /* Always load existing wisdom at startup so a mid-run interruption
+     * doesn't overwrite the file with a partial snapshot. Full-grid mode
+     * still re-calibrates every cell (calib_remove_entry forces overwrite
+     * before each wisdom_add); selective mode preserves un-touched cells. */
+    if (stride_wisdom_load(&wis, out_path) >= 0 && wis.count > 0) {
+        printf("loaded : %d existing entries from %s\n", wis.count, out_path);
+    }
 
     FILE *info = fopen(info_csv, "w");
     if (!info) {
@@ -694,108 +902,134 @@ int main(int argc, char **argv) {
                   "use_blocked,split_stage,block_groups,use_dif_forward,"
                   "dit_ns,dif_ns,variants_searched,roundtrip_err\n");
 
-    int n_cells = (int)(sizeof(GRID_N)/sizeof(GRID_N[0]) *
-                        sizeof(GRID_K)/sizeof(GRID_K[0]));
-    int done = 0;
-    int failures = 0;
-
-    /* DP context per K — max_N = max value in GRID_N to size the buffers
-     * once. Re-using the context across cells with same K lets DP cache
-     * sub-problem solutions, which is the entire point of DP. */
     int max_N = 0;
     for (size_t i = 0; i < sizeof(GRID_N)/sizeof(GRID_N[0]); i++)
         if (GRID_N[i] > max_N) max_N = GRID_N[i];
 
-    for (size_t ki = 0; ki < sizeof(GRID_K)/sizeof(GRID_K[0]); ki++) {
-        size_t K = GRID_K[ki];
-
-        stride_dp_context_t dp_ctx;
-        stride_dp_init(&dp_ctx, K, max_N);
-
-        for (size_t ni = 0; ni < sizeof(GRID_N)/sizeof(GRID_N[0]); ni++) {
-            int N = GRID_N[ni];
-
-            /* Pace before each cell (except the very first) so thermal
-             * and cache state from the prior cell don't bias this one's
-             * search measurements. */
-            if (done > 0) pace_ms(pace_ms_arg);
-
-            cell_result_t r;
-            memset(&r, 0, sizeof(r));
-            int rc;
-            if (mode == CALIB_MODE_EXTREME) {
-                rc = calibrate_cell_joint(N, K, &reg, &wis, &r);
-                (void)dp_ctx;  /* unused in extreme mode */
-            } else {
-                rc = calibrate_cell_measure(N, K, &reg, &dp_ctx, &wis, &r);
+    /* Unified cell list: either selected via --cells, or full GRID_N x GRID_K.
+     * Sorted by K so we can keep one DP context per K group (memoization
+     * reuse across same-K cells). */
+    cell_t all_cells[MAX_SELECTED_CELLS + 256];   /* full grid worst case */
+    int n_all = 0;
+    if (n_selected > 0) {
+        for (int i = 0; i < n_selected; i++) all_cells[n_all++] = selected[i];
+    } else {
+        for (size_t ki = 0; ki < sizeof(GRID_K)/sizeof(GRID_K[0]); ki++) {
+            for (size_t ni = 0; ni < sizeof(GRID_N)/sizeof(GRID_N[0]); ni++) {
+                if (n_all >= (int)(sizeof(all_cells)/sizeof(all_cells[0]))) break;
+                all_cells[n_all].N = GRID_N[ni];
+                all_cells[n_all].K = GRID_K[ki];
+                n_all++;
             }
-            done++;
-            if (rc != 0) {
-                failures++;
-                continue;
-            }
+        }
+        /* Already K-grouped by construction, but explicit qsort is cheap and
+         * keeps the invariant local. */
+        qsort(all_cells, n_all, sizeof(cell_t), cell_cmp_by_K);
+    }
 
-            /* Print human-readable progress */
-            printf("[%2d/%2d] N=%-5d K=%-3zu method=%-10s factors=",
-                   done, n_cells, N, K, r.method);
-            for (int s = 0; s < r.nfactors; s++)
-                printf("%s%d", s ? "x" : "", r.factors[s]);
-            printf("  codelets=");
-            for (int s = 0; s < r.nfactors; s++)
-                printf("%s%s", s ? "/" : "", codelet_short(r.codelets[s]));
-            if (r.use_blocked)
-                printf("  BLOCKED@split=%d,bg=%d", r.split_stage, r.block_groups);
-            if (r.use_dif_forward) printf("  DIF");
-            printf("  best=%.1f ns", r.best_ns);
-            if (r.variants_searched > 0) {
-                /* dit_ns is the wisdom-driven baseline used by sequential
-                 * mode. In joint mode there's no separate baseline (the
-                 * search itself produces the winner), so dit_ns stays at
-                 * -1 and the speedup ratio is meaningless — suppress it. */
-                if (r.dit_ns > 0) {
-                    printf("  (DIT_baseline=%.1f, %ld variants searched, best speedup=%.3f)",
-                           r.dit_ns, r.variants_searched,
-                           r.best_ns > 0 ? r.dit_ns / r.best_ns : 1.0);
-                } else {
-                    printf("  (%ld variants searched)", r.variants_searched);
-                }
-            }
-            printf("  err=%.2e %s\n",
-                   r.err, r.err < 1e-12 ? "" : "[PRECISION FAIL]");
-            fflush(stdout);
+    int done = 0;
+    int failures = 0;
+    int n_cells = n_all;
 
-            if (r.err >= 1e-12) failures++;
+    /* DP context: one per K group, reused across same-K cells. */
+    size_t prev_K = (size_t)-1;
+    stride_dp_context_t dp_ctx;
+    int ctx_active = 0;
 
-            /* Sidecar CSV: per-stage codelets, variant codes, blocked, DIF,
-             * search budget so the merge script has full visibility. */
-            fprintf(info, "%d,%zu,%s,%d,", N, K, r.method, r.nfactors);
-            for (int s = 0; s < r.nfactors; s++)
-                fprintf(info, "%s%d", s ? "x" : "", r.factors[s]);
-            fprintf(info, ",");
-            for (int s = 0; s < r.nfactors; s++)
-                fprintf(info, "%s%s", s ? "/" : "", codelet_short(r.codelets[s]));
-            fprintf(info, ",");
-            for (int s = 0; s < r.nfactors; s++)
-                fprintf(info, "%s%d", s ? "/" : "", r.variant_codes[s]);
-            fprintf(info, ",%.2f,%d,%d,%d,%d,%.2f,%.2f,%ld,%.2e\n",
-                    r.best_ns,
-                    r.use_blocked, r.split_stage, r.block_groups,
-                    r.use_dif_forward,
-                    r.dit_ns,
-                    r.dif_ns >= 0 ? r.dif_ns : 0.0,
-                    r.variants_searched,
-                    r.err);
-            fflush(info);
+    for (int i = 0; i < n_all; i++) {
+        int    N = all_cells[i].N;
+        size_t K = all_cells[i].K;
+
+        if (K != prev_K) {
+            if (ctx_active) stride_dp_destroy(&dp_ctx);
+            stride_dp_init(&dp_ctx, K, max_N);
+            ctx_active = 1;
+            prev_K = K;
         }
 
-        stride_dp_destroy(&dp_ctx);
+        /* Pace before each cell (except the very first) so thermal
+         * and cache state from the prior cell don't bias this one's
+         * search measurements. */
+        if (done > 0) pace_ms(pace_ms_arg);
+
+        cell_result_t r;
+        memset(&r, 0, sizeof(r));
+        int rc;
+        if (mode == CALIB_MODE_EXTREME) {
+            rc = calibrate_cell_joint(N, K, &reg, &wis, &r);
+        } else {
+            rc = calibrate_cell_measure(N, K, &reg, &dp_ctx, &wis, &r);
+        }
+        done++;
+        if (rc != 0) {
+            failures++;
+            continue;
+        }
+
+        /* Print human-readable progress */
+        printf("[%2d/%2d] N=%-5d K=%-3zu method=%-14s factors=",
+               done, n_cells, N, K, r.method);
+        for (int s = 0; s < r.nfactors; s++)
+            printf("%s%d", s ? "x" : "", r.factors[s]);
+        printf("  codelets=");
+        for (int s = 0; s < r.nfactors; s++)
+            printf("%s%s", s ? "/" : "", codelet_short(r.codelets[s]));
+        if (r.use_blocked)
+            printf("  BLOCKED@split=%d,bg=%d", r.split_stage, r.block_groups);
+        if (r.use_dif_forward) printf("  DIF");
+        printf("  best=%.1f ns", r.best_ns);
+        if (r.variants_searched > 0) {
+            if (r.dit_ns > 0) {
+                printf("  (DIT_baseline=%.1f, %ld variants searched, best speedup=%.3f)",
+                       r.dit_ns, r.variants_searched,
+                       r.best_ns > 0 ? r.dit_ns / r.best_ns : 1.0);
+            } else {
+                printf("  (%ld variants searched)", r.variants_searched);
+            }
+        }
+        printf("  err=%.2e %s\n",
+               r.err, r.err < 1e-12 ? "" : "[PRECISION FAIL]");
+        fflush(stdout);
+
+        if (r.err >= 1e-12) failures++;
+
+        /* Sidecar CSV. */
+        fprintf(info, "%d,%zu,%s,%d,", N, K, r.method, r.nfactors);
+        for (int s = 0; s < r.nfactors; s++)
+            fprintf(info, "%s%d", s ? "x" : "", r.factors[s]);
+        fprintf(info, ",");
+        for (int s = 0; s < r.nfactors; s++)
+            fprintf(info, "%s%s", s ? "/" : "", codelet_short(r.codelets[s]));
+        fprintf(info, ",");
+        for (int s = 0; s < r.nfactors; s++)
+            fprintf(info, "%s%d", s ? "/" : "", r.variant_codes[s]);
+        fprintf(info, ",%.2f,%d,%d,%d,%d,%.2f,%.2f,%ld,%.2e\n",
+                r.best_ns,
+                r.use_blocked, r.split_stage, r.block_groups,
+                r.use_dif_forward,
+                r.dit_ns,
+                r.dif_ns >= 0 ? r.dif_ns : 0.0,
+                r.variants_searched,
+                r.err);
+        fflush(info);
+
+        /* Incremental save — crash-resilient. */
+        int srv = stride_wisdom_save(&wis, out_path);
+        if (srv != 0) {
+            fprintf(stderr,
+                    "warn: incremental stride_wisdom_save(%s) failed at "
+                    "N=%d K=%zu (continuing)\n", out_path, N, K);
+        }
     }
+
+    if (ctx_active) stride_dp_destroy(&dp_ctx);
 
     fclose(info);
 
+    /* Final save — redundant after incremental, but kept as safety net. */
     int srv = stride_wisdom_save(&wis, out_path);
     if (srv != 0) {
-        fprintf(stderr, "fatal: stride_wisdom_save(%s) failed\n", out_path);
+        fprintf(stderr, "fatal: final stride_wisdom_save(%s) failed\n", out_path);
         return 3;
     }
 

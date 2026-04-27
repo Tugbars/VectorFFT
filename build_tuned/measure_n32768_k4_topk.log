@@ -1,0 +1,17 @@
+=== calibrate_tuned: new-core wisdom generator ===
+output : C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\vfft_wisdom_tuned.txt
+info   : C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\vfft_wisdom_tuned_codelets.csv
+pacing : 1000 ms between cells
+mode   : measure (DP + variant cartesian)
+[ 1/ 1] N=32768 K=4   method=dp+measure factors=4x4x4x4x4x32  codelets=n1/t1s/t1s/t1s/t1s/t1s  best=327005.0 ns  (1863 variants searched)  err=5.93e-16 
+===
+wrote 1 entries to C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\vfft_wisdom_tuned.txt
+wrote per-cell codelet info to C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\vfft_wisdom_tuned_codelets.csv
+done.
+============================================================
+ new-core calibration: A/B wisdom generator
+============================================================
+[powercfg] active power plan name matches 'ultimate performance' (non-canonical GUID, accepted by name) — user-managed (--no-powercfg)
+[affinity] orchestrator pinned to CPU 2 (mask 0x4); children inherit
+[run] C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\calibrate_tuned.exe C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\vfft_wisdom_tuned.txt C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\vfft_wisdom_tuned_codelets.csv 1000 measure
+[run] exit 0  elapsed 87.9s

@@ -59,12 +59,36 @@
 
 #define DP_CACHE_MAX 512
 
+/* Top-K-at-every-level (Upgrade D, 2026-04-27).
+ *
+ * Each cache row stores up to DP_TOPK_MAX best plans for (N, K_eff).
+ * The recursion exposes runners-up to outer levels so that a
+ * factorization that lost the top-1 race in isolation can still be
+ * composed under a different outer radix and win there.
+ *
+ * Concretely fixes the N=32768 K=4 regression where outer R=4 got
+ * sub-DP(8192, K_eff=16)'s top-1 plan but missed [4,32,64] (a runner-up
+ * that, wrapped under R=4, would have produced [4,4,32,64] beating the
+ * eventual [64,8,64] winner).
+ *
+ * Cost: |R| * DP_TOPK_MAX benches per cache-miss call (vs |R|), ~3x DP
+ * overhead at K=3. Cache memory: DP_CACHE_MAX * DP_TOPK_MAX * sizeof(plan)
+ * = ~120KB at K=3, bounded. */
+#ifndef DP_TOPK_MAX
+#define DP_TOPK_MAX 3
+#endif
+
 typedef struct {
-    int N;
-    size_t K_eff;                          /* effective batch at lookup time */
-    int factors[FACT_MAX_STAGES];
-    int nfactors;
+    int    factors[FACT_MAX_STAGES];
+    int    nfactors;
     double cost_ns;
+} dp_subplan_t;
+
+typedef struct {
+    int           N;
+    size_t        K_eff;                       /* effective batch at lookup time */
+    dp_subplan_t  plans[DP_TOPK_MAX];          /* sorted by cost, ascending */
+    int           n_plans;                     /* 0 .. DP_TOPK_MAX */
 } dp_entry_t;
 
 typedef struct {
@@ -122,15 +146,24 @@ static dp_entry_t *_dp_lookup(stride_dp_context_t *ctx, int N, size_t K_eff) {
     return NULL;
 }
 
-/* Cache insert — keyed by (N, K_eff). */
+/* Cache insert — keyed by (N, K_eff). Plans array starts empty. */
 static dp_entry_t *_dp_insert(stride_dp_context_t *ctx, int N, size_t K_eff) {
     if (ctx->count >= DP_CACHE_MAX) return NULL;
     dp_entry_t *e = &ctx->entries[ctx->count++];
     memset(e, 0, sizeof(*e));
     e->N = N;
     e->K_eff = K_eff;
-    e->cost_ns = 1e18;
+    e->n_plans = 0;
     return e;
+}
+
+/* Sort comparator for dp_subplan_t (ascending by cost_ns). */
+static int _dp_subplan_cmp(const void *a, const void *b) {
+    double ca = ((const dp_subplan_t *)a)->cost_ns;
+    double cb = ((const dp_subplan_t *)b)->cost_ns;
+    if (ca < cb) return -1;
+    if (ca > cb) return  1;
+    return 0;
 }
 
 /* =====================================================================
@@ -285,103 +318,143 @@ static const int DP_RADIXES[] = {
     19, 17, 13, 11, 0
 };
 
-static double _dp_solve(stride_dp_context_t *ctx, int N, size_t K_eff,
-                         const stride_registry_t *reg,
-                         int *out_factors, int *out_nf) {
-    /* Check cache (keyed by N + K_eff). */
+/* Top-K recursive DP solver. Returns up to max_out best plans for
+ * (N, K_eff), sorted by cost ascending. Cached on first call. The
+ * cache row stores up to DP_TOPK_MAX plans; subsequent calls return
+ * min(cached_count, max_out) of them.
+ *
+ * BELIEVE_PCOST behavior: when 0, the top-ranked cached plan's cost is
+ * re-measured fresh and the cache row is updated; runners-up are kept
+ * with their original (stale) costs. This matches the production
+ * intent — the BELIEVE flag affects winner selection variance, not the
+ * shape of the runner-up list. */
+static int _dp_solve_topk(stride_dp_context_t *ctx, int N, size_t K_eff,
+                          const stride_registry_t *reg,
+                          dp_subplan_t *out, int max_out) {
+    if (max_out <= 0) return 0;
+
+    /* Cache check (keyed by N + K_eff). */
     dp_entry_t *cached = _dp_lookup(ctx, N, K_eff);
     if (cached) {
         ctx->n_cache_hits++;
-        memcpy(out_factors, cached->factors, cached->nfactors * sizeof(int));
-        *out_nf = cached->nfactors;
-        if (ctx->believe_subplan_cost) {
-            return cached->cost_ns;
+        int n = cached->n_plans < max_out ? cached->n_plans : max_out;
+        for (int i = 0; i < n; i++) out[i] = cached->plans[i];
+        if (!ctx->believe_subplan_cost && n > 0) {
+            /* PATIENT: re-bench top-1 with the cached factorization. */
+            double fresh = _dp_bench(ctx, N, cached->plans[0].factors,
+                                     cached->plans[0].nfactors, K_eff, reg);
+            cached->plans[0].cost_ns = fresh;
+            out[0].cost_ns = fresh;
         }
-        /* PATIENT: re-measure with the cached factorization. */
-        double fresh = _dp_bench(ctx, N, cached->factors, cached->nfactors,
-                                 K_eff, reg);
-        cached->cost_ns = fresh;        /* refresh the stored cost */
-        return fresh;
+        return n;
     }
 
-    /* Base case: N is itself a registered radix — single stage */
+    /* Accumulator: collect every viable candidate produced by this call.
+     * Sized for |DP_RADIXES| * DP_TOPK_MAX + slack. */
+    enum { _DP_ACCUM_MAX = 64 };
+    dp_subplan_t accum[_DP_ACCUM_MAX];
+    int n_accum = 0;
+
+    /* Base case: N is itself a registered radix — emits a single
+     * one-stage plan. The recursive case below also tries N=R candidates
+     * via the M=1 branch, but that requires N to be a registered radix
+     * AND a divisor of itself; emitting here covers the 2 ≤ N ≤ 64 base. */
     if (stride_registry_has(reg, N) && N <= 64) {
         int factors[1] = {N};
         double ns = _dp_bench(ctx, N, factors, 1, K_eff, reg);
-
-        dp_entry_t *e = _dp_insert(ctx, N, K_eff);
-        if (e) {
-            e->factors[0] = N;
-            e->nfactors = 1;
-            e->cost_ns = ns;
+        if (ns < 1e17 && n_accum < _DP_ACCUM_MAX) {
+            accum[n_accum].factors[0] = N;
+            accum[n_accum].nfactors = 1;
+            accum[n_accum].cost_ns = ns;
+            n_accum++;
         }
-        out_factors[0] = N;
-        *out_nf = 1;
-        return ns;
     }
 
-    /* Recursive case: try each valid radix as first stage */
-    double best_ns = 1e18;
-    int best_factors[FACT_MAX_STAGES];
-    int best_nf = 0;
-
-    for (const int *rp = DP_RADIXES; *rp; rp++) {
+    /* Recursive case: try each radix R as first stage. For each R,
+     * recurse on M = N/R requesting top-K_sub plans, then assemble
+     * [R, sub_plan_i] for each returned sub-plan and bench. */
+    for (const int *rp = DP_RADIXES; *rp && n_accum < _DP_ACCUM_MAX; rp++) {
         int R = *rp;
         if (N % R != 0) continue;
         if (!stride_registry_has(reg, R)) continue;
+        if (R == N) continue;   /* base case already emitted above */
 
         int M = N / R;
         if (M < 1) continue;
 
-        /* Base case for M=1: single stage R */
         if (M == 1) {
+            /* Single-stage [R] (when R itself == N is a registered radix). */
             int factors[1] = {R};
             double ns = _dp_bench(ctx, N, factors, 1, K_eff, reg);
-            if (ns < best_ns) {
-                best_ns = ns;
-                best_factors[0] = R;
-                best_nf = 1;
+            if (ns < 1e17 && n_accum < _DP_ACCUM_MAX) {
+                accum[n_accum].factors[0] = R;
+                accum[n_accum].nfactors = 1;
+                accum[n_accum].cost_ns = ns;
+                n_accum++;
             }
             continue;
         }
 
-        /* Recursively solve M.
-         * K_eff for the sub-problem grows by R: when R is consumed as the
-         * first stage of N, M's stages execute at batch K_eff * R. */
+        /* Recurse on M with top-K. K_eff for the sub-problem grows by R:
+         * when R is consumed as the first stage of N, M's stages execute
+         * at batch K_eff * R. */
         size_t K_eff_sub = K_eff * (size_t)R;
-        int sub_factors[FACT_MAX_STAGES];
-        int sub_nf = 0;
-        double sub_cost = _dp_solve(ctx, M, K_eff_sub, reg, sub_factors, &sub_nf);
-        if (sub_cost >= 1e17) continue;
-        if (sub_nf + 1 > FACT_MAX_STAGES) continue;
+        dp_subplan_t sub[DP_TOPK_MAX];
+        int n_sub = _dp_solve_topk(ctx, M, K_eff_sub, reg, sub, DP_TOPK_MAX);
 
-        /* Build candidate: [R, sub_factors...] */
-        int candidate[FACT_MAX_STAGES];
-        candidate[0] = R;
-        memcpy(candidate + 1, sub_factors, sub_nf * sizeof(int));
-        int nf = sub_nf + 1;
+        for (int s = 0; s < n_sub && n_accum < _DP_ACCUM_MAX; s++) {
+            if (sub[s].cost_ns >= 1e17) continue;
+            if (sub[s].nfactors + 1 > FACT_MAX_STAGES) continue;
 
-        /* Benchmark the FULL plan at this K_eff (captures composition). */
-        double ns = _dp_bench(ctx, N, candidate, nf, K_eff, reg);
+            int candidate[FACT_MAX_STAGES];
+            candidate[0] = R;
+            memcpy(candidate + 1, sub[s].factors,
+                   sub[s].nfactors * sizeof(int));
+            int nf = sub[s].nfactors + 1;
 
-        if (ns < best_ns) {
-            best_ns = ns;
-            memcpy(best_factors, candidate, nf * sizeof(int));
-            best_nf = nf;
+            double ns = _dp_bench(ctx, N, candidate, nf, K_eff, reg);
+            if (ns >= 1e17) continue;
+
+            memcpy(accum[n_accum].factors, candidate, nf * sizeof(int));
+            accum[n_accum].nfactors = nf;
+            accum[n_accum].cost_ns = ns;
+            n_accum++;
         }
     }
 
-    /* Cache result */
+    /* Sort by cost ascending. */
+    if (n_accum > 1)
+        qsort(accum, n_accum, sizeof(dp_subplan_t), _dp_subplan_cmp);
+
+    /* Cache top DP_TOPK_MAX. */
+    int n_keep = n_accum < DP_TOPK_MAX ? n_accum : DP_TOPK_MAX;
     dp_entry_t *e = _dp_insert(ctx, N, K_eff);
-    if (e && best_nf > 0) {
-        memcpy(e->factors, best_factors, best_nf * sizeof(int));
-        e->nfactors = best_nf;
-        e->cost_ns = best_ns;
+    if (e) {
+        for (int i = 0; i < n_keep; i++) e->plans[i] = accum[i];
+        e->n_plans = n_keep;
     }
 
-    memcpy(out_factors, best_factors, best_nf * sizeof(int));
-    *out_nf = best_nf;
-    return best_ns;
+    /* Output up to max_out plans. */
+    int n_out = n_keep < max_out ? n_keep : max_out;
+    for (int i = 0; i < n_out; i++) out[i] = accum[i];
+    return n_out;
+}
+
+/* Backward-compat wrapper: returns top-1 in the legacy (factors, nf, cost)
+ * shape. All existing callers (stride_dp_plan, stride_dp_plan_joint_blocked,
+ * etc.) keep working unchanged. */
+static double _dp_solve(stride_dp_context_t *ctx, int N, size_t K_eff,
+                         const stride_registry_t *reg,
+                         int *out_factors, int *out_nf) {
+    dp_subplan_t top1;
+    int n = _dp_solve_topk(ctx, N, K_eff, reg, &top1, 1);
+    if (n == 0) {
+        *out_nf = 0;
+        return 1e18;
+    }
+    memcpy(out_factors, top1.factors, top1.nfactors * sizeof(int));
+    *out_nf = top1.nfactors;
+    return top1.cost_ns;
 }
 
 /* =====================================================================
@@ -490,6 +563,22 @@ static double stride_dp_plan(stride_dp_context_t *ctx, int N,
 #endif
 #ifndef MEASURE_COARSE_RUNS
 #define MEASURE_COARSE_RUNS 2     /* coarse-pass sweeps; per-cand min */
+#endif
+
+/* Above this N, MEASURE switches from exhaustive (factorization, permutation)
+ * enumeration to DP-driven candidate collection. Below: exhaustive is cheap.
+ * Above: DP recursion (now keyed on (N, K_eff), see Upgrade A) finds
+ * good multisets without walking the full Cartesian. Mirrors the
+ * production split point used by bench_1d_csv. */
+#ifndef MEASURE_EXH_THRESHOLD
+#define MEASURE_EXH_THRESHOLD 2048
+#endif
+/* Number of top-ranked multisets the DP collector keeps at the OUTERMOST
+ * recursion frame. Sub-problems still use top-1 (regular _dp_solve);
+ * only the outer level varies, which is enough to recover the v1.2
+ * variant-axis-flips-multiset cases at large N (e.g., 8x32x16 vs 4x4x16x16). */
+#ifndef MEASURE_DP_TOPK_MULTISETS
+#define MEASURE_DP_TOPK_MULTISETS 3
 #endif
 
 typedef struct {
@@ -624,6 +713,65 @@ static int _measure_cmp(const void *a, const void *b) {
     return 0;
 }
 
+/* DP-driven candidate collection. Calls the top-K-at-every-level
+ * recursive solver (_dp_solve_topk) to get the K best multisets for
+ * (N, ctx->K), then expands each multiset into all permutations and
+ * coarse-benches them. Populates _measure_candidate_t entries for the
+ * shared refine pass.
+ *
+ * Used by stride_dp_plan_measure when N > MEASURE_EXH_THRESHOLD. The
+ * top-K-at-every-level recursion (Upgrade D) means runners-up at sub
+ * problems are exposed up the stack, so a multiset that would have been
+ * pruned by top-1 sub-DP can still surface here when wrapped under a
+ * different outer radix. */
+static int _measure_collect_via_dp(stride_dp_context_t *ctx, int N,
+                                   const stride_registry_t *reg,
+                                   int K_top_multisets,
+                                   _measure_candidate_t *cands_out,
+                                   int max_cands) {
+    if (K_top_multisets > DP_TOPK_MAX) K_top_multisets = DP_TOPK_MAX;
+
+    /* Step 1: get top-K multisets via recursive top-K DP. */
+    dp_subplan_t plans[DP_TOPK_MAX];
+    int n_plans = _dp_solve_topk(ctx, N, ctx->K, reg, plans, K_top_multisets);
+    if (n_plans == 0) return 0;
+
+    /* Step 2: expand each multiset into all permutations and coarse-bench. */
+    int n_cands = 0;
+    for (int p = 0; p < n_plans && n_cands < max_cands; p++) {
+        const int  nf = plans[p].nfactors;
+        const int *base_factors = plans[p].factors;
+
+        permutation_list_t plist;
+        stride_gen_permutations(base_factors, nf, &plist);
+
+        for (int pi = 0; pi < plist.count && n_cands < max_cands; pi++) {
+            const int *perm = plist.perms[pi];
+
+            int can_build = 1;
+            for (int s = 0; s < nf; s++) {
+                int R = perm[s];
+                if (R <= 0 || R >= STRIDE_REG_MAX_RADIX || !reg->n1_fwd[R]) {
+                    can_build = 0;
+                    break;
+                }
+            }
+            if (!can_build) continue;
+
+            double ns = _dp_bench(ctx, N, perm, nf, ctx->K, reg);
+            if (ns >= 1e17) continue;
+
+            cands_out[n_cands].nf = nf;
+            for (int s = 0; s < nf; s++)
+                cands_out[n_cands].factors[s] = perm[s];
+            cands_out[n_cands].cost_ns = ns;
+            n_cands++;
+        }
+    }
+
+    return n_cands;
+}
+
 /* Top-level VFFT_MEASURE entry point (top-K + variant cartesian).
  *
  * Coarse pass: bench every (factorization, permutation) with default
@@ -638,53 +786,69 @@ static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
                                      const stride_registry_t *reg,
                                      stride_plan_decision_t *decision,
                                      int verbose) {
-    /* COARSE PASS: enumerate factorizations × permutations × default
-     * variants. _dp_bench routes through _stride_build_plan so the
-     * coarse cost reflects what the wisdom path would deploy. */
-    factorization_list_t flist;
-    stride_enumerate_factorizations(N, reg, &flist);
-    if (flist.count == 0) {
-        if (verbose) printf("  N=%d MEASURE: no factorizations enumerated\n", N);
-        return 1e18;
-    }
-
     static _measure_candidate_t cands[MEASURE_MAX_CANDIDATES];
     int n_cands = 0;
+    const char *coarse_path = NULL;
 
-    for (int fi = 0; fi < flist.count && n_cands < MEASURE_MAX_CANDIDATES; fi++) {
-        const int  nf = flist.results[fi].nfactors;
-        const int *base_factors = flist.results[fi].factors;
-
-        permutation_list_t plist;
-        stride_gen_permutations(base_factors, nf, &plist);
-
-        for (int pi = 0; pi < plist.count && n_cands < MEASURE_MAX_CANDIDATES; pi++) {
-            const int *perm = plist.perms[pi];
-
-            /* Validate: every radix needs an n1 codelet. */
-            int can_build = 1;
-            for (int s = 0; s < nf; s++) {
-                int R = perm[s];
-                if (R <= 0 || R >= STRIDE_REG_MAX_RADIX || !reg->n1_fwd[R]) {
-                    can_build = 0;
-                    break;
-                }
-            }
-            if (!can_build) continue;
-
-            double ns = _dp_bench(ctx, N, perm, nf, ctx->K, reg);
-            if (ns >= 1e17) continue;
-
-            cands[n_cands].nf = nf;
-            for (int s = 0; s < nf; s++) cands[n_cands].factors[s] = perm[s];
-            cands[n_cands].cost_ns = ns;
-            n_cands++;
+    if (N > MEASURE_EXH_THRESHOLD) {
+        /* Large N: DP-driven candidate collection. Outer-only top-K
+         * multisets, inner sub-plans solved by top-1 _dp_solve recursion
+         * (memoized on (N, K_eff) per Upgrade A). Each top-K multiset is
+         * expanded into all permutations; each (multiset, permutation)
+         * becomes a _measure_candidate_t for the shared refine pass. */
+        coarse_path = "DP";
+        n_cands = _measure_collect_via_dp(ctx, N, reg,
+                                          MEASURE_DP_TOPK_MULTISETS,
+                                          cands, MEASURE_MAX_CANDIDATES);
+        if (n_cands == 0) {
+            if (verbose) printf("  N=%d MEASURE-DP: no DP candidates\n", N);
+            return 1e18;
         }
-    }
+    } else {
+        /* Small N: exhaustive enumeration. Cheap because the
+         * factorization space is small for N ≤ MEASURE_EXH_THRESHOLD. */
+        coarse_path = "exh";
+        factorization_list_t flist;
+        stride_enumerate_factorizations(N, reg, &flist);
+        if (flist.count == 0) {
+            if (verbose) printf("  N=%d MEASURE: no factorizations enumerated\n", N);
+            return 1e18;
+        }
 
-    if (n_cands == 0) {
-        if (verbose) printf("  N=%d MEASURE: no working coarse plans\n", N);
-        return 1e18;
+        for (int fi = 0; fi < flist.count && n_cands < MEASURE_MAX_CANDIDATES; fi++) {
+            const int  nf = flist.results[fi].nfactors;
+            const int *base_factors = flist.results[fi].factors;
+
+            permutation_list_t plist;
+            stride_gen_permutations(base_factors, nf, &plist);
+
+            for (int pi = 0; pi < plist.count && n_cands < MEASURE_MAX_CANDIDATES; pi++) {
+                const int *perm = plist.perms[pi];
+
+                int can_build = 1;
+                for (int s = 0; s < nf; s++) {
+                    int R = perm[s];
+                    if (R <= 0 || R >= STRIDE_REG_MAX_RADIX || !reg->n1_fwd[R]) {
+                        can_build = 0;
+                        break;
+                    }
+                }
+                if (!can_build) continue;
+
+                double ns = _dp_bench(ctx, N, perm, nf, ctx->K, reg);
+                if (ns >= 1e17) continue;
+
+                cands[n_cands].nf = nf;
+                for (int s = 0; s < nf; s++) cands[n_cands].factors[s] = perm[s];
+                cands[n_cands].cost_ns = ns;
+                n_cands++;
+            }
+        }
+
+        if (n_cands == 0) {
+            if (verbose) printf("  N=%d MEASURE-exh: no working coarse plans\n", N);
+            return 1e18;
+        }
     }
 
     /* Best-of-runs: extra coarse sweeps over the same candidate set.
@@ -746,8 +910,10 @@ static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
     decision->cost_ns = best_ns;
 
     if (verbose) {
-        printf("  N=%d K=%zu MEASURE-topk(%d): coarse=%d top=%d refine=%ld -> ",
-               N, ctx->K, K_top, n_cands, n_topk, total_refine);
+        printf("  N=%d K=%zu MEASURE-topk(%d) [%s]: coarse=%d top=%d refine=%ld -> ",
+               N, ctx->K, K_top,
+               coarse_path ? coarse_path : "?",
+               n_cands, n_topk, total_refine);
         for (int s = 0; s < best_nf; s++)
             printf("%s%d", s ? "x" : "", best_factors[s]);
         printf(" %s ", best_use_dif ? "DIF" : "DIT");
