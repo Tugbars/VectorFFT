@@ -189,7 +189,7 @@ def setup_affinity(cpu: int) -> bool:
 
 
 def run_calibrator(cpu: int, pinned: bool, mode: str,
-                   pace_ms: int = 1000) -> int:
+                   pace_ms: int = 1000, cells: str | None = None) -> int:
     exe = HERE / ('calibrate_tuned.exe' if os.name == 'nt' else 'calibrate_tuned')
     if not exe.exists():
         print(f'[error] calibrator binary not found: {exe}', file=sys.stderr)
@@ -200,8 +200,10 @@ def run_calibrator(cpu: int, pinned: bool, mode: str,
     argv: list[str] = []
     if pinned and platform.system() == 'Linux':
         argv += ['taskset', '-c', str(cpu)]
-    # Positional: out_path info_csv pace_ms mode
+    # Positional: out_path info_csv pace_ms mode [cells]
     argv += [str(exe), str(out), str(info), str(pace_ms), mode]
+    if cells:
+        argv += [cells]
 
     print(f'[run] {" ".join(argv)}')
     t0 = time.time()
@@ -232,6 +234,11 @@ def main() -> int:
                          '(~1-15s/cell). extreme: full joint cartesian '
                          'over all factorizations × variants × orientations '
                          '(~50min/cell at N=4096 K=256). Default: measure.')
+    ap.add_argument('--cells', default=None,
+                    help='Comma-separated "N:K" pairs to calibrate '
+                         'selectively (e.g., "1024:4,2048:4"). When given, '
+                         'only those cells are run and existing wisdom for '
+                         'other (N, K) pairs is preserved. Default: full grid.')
     args = ap.parse_args()
 
     print('=' * 60)
@@ -285,7 +292,7 @@ def main() -> int:
             if rc != 0:
                 print(f'[error] compile failed with rc={rc}')
                 return rc
-        rc = run_calibrator(args.cpu, pinned, args.mode)
+        rc = run_calibrator(args.cpu, pinned, args.mode, cells=args.cells)
     finally:
         teardown_powercfg(state)
 

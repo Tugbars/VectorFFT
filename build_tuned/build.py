@@ -88,12 +88,59 @@ def build_includes() -> list[str]:
     return [f'-I{p}' for p in inc]
 
 
-def build_cmd(tc, src_c, out_bin):
+def find_mkl():
+    """Locate MKL include + lib dirs. Returns (inc_dir, lib_dir) or
+    (None, None) if not found. Mirrors the discovery hints in
+    src/stride-fft/CMakeLists.txt."""
+    mklroot = os.environ.get('MKLROOT')
+    inc_candidates = []
+    lib_candidates = []
+    if mklroot:
+        inc_candidates += [Path(mklroot) / 'include']
+        lib_candidates += [Path(mklroot) / 'lib',
+                           Path(mklroot) / 'lib' / 'intel64']
+    inc_candidates += [
+        Path(r'C:\Program Files (x86)\Intel\oneAPI\mkl\latest\include'),
+        Path(r'C:\Program Files\Intel\oneAPI\mkl\latest\include'),
+    ]
+    lib_candidates += [
+        Path(r'C:\Program Files (x86)\Intel\oneAPI\mkl\latest\lib'),
+        Path(r'C:\Program Files (x86)\Intel\oneAPI\mkl\latest\lib\intel64'),
+        Path(r'C:\Program Files\Intel\oneAPI\mkl\latest\lib'),
+        Path(r'C:\Program Files\Intel\oneAPI\mkl\latest\lib\intel64'),
+    ]
+    inc = next((p for p in inc_candidates if (p / 'mkl_dfti.h').is_file()), None)
+    lib = next((p for p in lib_candidates if (p / 'mkl_intel_ilp64.lib').is_file()
+                                          or (p / 'libmkl_intel_ilp64.a').is_file()
+                                          or (p / 'libmkl_intel_ilp64.so').is_file()), None)
+    return inc, lib
+
+
+def build_cmd(tc, src_c, out_bin, mkl=False):
+    mkl_inc, mkl_lib = (None, None)
+    if mkl:
+        mkl_inc, mkl_lib = find_mkl()
+        if not mkl_inc or not mkl_lib:
+            print('  [error] --mkl requested but MKL not found',
+                  file=sys.stderr)
+            print(f'  set MKLROOT or install Intel oneAPI MKL', file=sys.stderr)
+            sys.exit(2)
+        print(f'  [mkl] include: {mkl_inc}')
+        print(f'  [mkl] libs:    {mkl_lib}')
+
     if tc['is_msvc_style']:
         # MSVC-style: /I instead of -I, /Fe for output
         flags = ['/O2', '/arch:AVX2', '/fp:fast', '/wd4244', '/wd4267']
         inc = [a.replace('-I', '/I') for a in build_includes()]
-        return [tc['cc']] + flags + inc + [str(src_c), f'/Fe:{out_bin}']
+        if mkl:
+            flags += ['/DVFFT_HAS_MKL', '/DMKL_ILP64']
+            inc += [f'/I{mkl_inc}']
+        cmd = [tc['cc']] + flags + inc + [str(src_c), f'/Fe:{out_bin}']
+        if mkl:
+            cmd += [f'/link', f'/LIBPATH:{mkl_lib}',
+                    'mkl_intel_ilp64.lib', 'mkl_sequential.lib', 'mkl_core.lib']
+        return cmd
+
     # GCC-style (icx, gcc, clang).
     # _CRT_SECURE_NO_WARNINGS suppresses MSVC's fopen/sscanf deprecation
     # warnings — they spam thousands of lines and bury real errors.
@@ -102,9 +149,21 @@ def build_cmd(tc, src_c, out_bin):
              '-Wno-overflow', '-Wno-implicit-function-declaration',
              '-Wno-unused-function', '-Wno-unknown-argument',
              '-Wno-deprecated-declarations']
+    if mkl:
+        flags += ['-DVFFT_HAS_MKL', '-DMKL_ILP64', f'-I{mkl_inc}']
     cmd = [tc['cc']] + flags + build_includes() + [str(src_c), '-o', str(out_bin)]
     if tc['is_windows'] and tc['is_icx']:
         cmd.append('-fuse-ld=lld')
+    if mkl:
+        if tc['is_windows']:
+            # lld-link doesn't honor -L; pass full lib paths instead.
+            cmd += [str(Path(mkl_lib) / 'mkl_intel_ilp64.lib'),
+                    str(Path(mkl_lib) / 'mkl_sequential.lib'),
+                    str(Path(mkl_lib) / 'mkl_core.lib')]
+        else:
+            cmd += [f'-L{mkl_lib}',
+                    '-lmkl_intel_ilp64', '-lmkl_sequential', '-lmkl_core',
+                    '-lpthread', '-lm', '-ldl']
     if not tc['is_windows']:
         cmd.append('-lm')
     return cmd
@@ -167,6 +226,11 @@ def main():
     ap.add_argument('--compile', action='store_true',
                     help='Compile only, do not run')
     ap.add_argument('--src', default=str(HERE / 'test_tuned_core.c'))
+    ap.add_argument('--mkl', action='store_true',
+                    help='Link Intel MKL (ILP64 sequential). Adds '
+                         '-DVFFT_HAS_MKL -DMKL_ILP64 and the three '
+                         'libs (mkl_intel_ilp64, mkl_sequential, mkl_core). '
+                         'Requires MKLROOT or oneAPI default install path.')
     args = ap.parse_args()
 
     tc = detect_toolchain()
@@ -185,7 +249,7 @@ def main():
 
     stem = src.stem
     out_bin = HERE / (stem + '.exe' if tc['is_windows'] else stem)
-    cmd = build_cmd(tc, src, out_bin)
+    cmd = build_cmd(tc, src, out_bin, mkl=args.mkl)
 
     print(f'[compile] {tc["cc"]} ... -> {out_bin.name}', flush=True)
     t0 = time.time()
