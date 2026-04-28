@@ -41,10 +41,16 @@ typedef struct {
     int count;
 } factorization_list_t;
 
-#define EXHAUST_MAX_DEPTH 5  /* max stages in exhaustive search (keeps search tractable) */
+/* Two-bucket depth caps. Pow2 N has shallow optimal decompositions on this
+ * core (most pow2 wisdom entries are 4-5 stages), so 5 keeps the search
+ * tractable. Non-pow2 N with many small primes (e.g., 6615=3^3*5*7^2 needs
+ * 6 stages, 117649=7^6 needs 6, 823543=7^7 needs 7) requires deeper search;
+ * 9 covers everything in our bench grid and matches FACT_MAX_STAGES. */
+#define EXHAUST_MAX_DEPTH_POW2     5
+#define EXHAUST_MAX_DEPTH_NONPOW2  9
 
 static void _enumerate_factorizations(int remaining, const stride_registry_t *reg,
-                                      int *current, int depth,
+                                      int *current, int depth, int max_depth,
                                       factorization_list_t *list) {
     if (remaining == 1) {
         if (depth > 0 && list->count < EXHAUST_MAX_RESULTS) {
@@ -55,7 +61,7 @@ static void _enumerate_factorizations(int remaining, const stride_registry_t *re
         }
         return;
     }
-    if (depth >= EXHAUST_MAX_DEPTH) return;
+    if (depth >= max_depth) return;
 
     for (const int *rp = STRIDE_AVAILABLE_RADIXES; *rp; rp++) {
         int R = *rp;
@@ -67,7 +73,7 @@ static void _enumerate_factorizations(int remaining, const stride_registry_t *re
         if (depth > 0 && R > current[depth - 1]) continue;
 
         current[depth] = R;
-        _enumerate_factorizations(remaining / R, reg, current, depth + 1, list);
+        _enumerate_factorizations(remaining / R, reg, current, depth + 1, max_depth, list);
     }
 }
 
@@ -75,7 +81,9 @@ static void stride_enumerate_factorizations(int N, const stride_registry_t *reg,
                                             factorization_list_t *list) {
     list->count = 0;
     int current[FACT_MAX_STAGES];
-    _enumerate_factorizations(N, reg, current, 0, list);
+    int n_is_pow2 = (N > 0) && ((N & (N - 1)) == 0);
+    int max_depth = n_is_pow2 ? EXHAUST_MAX_DEPTH_POW2 : EXHAUST_MAX_DEPTH_NONPOW2;
+    _enumerate_factorizations(N, reg, current, 0, max_depth, list);
 }
 
 /* =====================================================================

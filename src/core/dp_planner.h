@@ -790,8 +790,17 @@ static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
     int n_cands = 0;
     const char *coarse_path = NULL;
 
-    if (N > MEASURE_EXH_THRESHOLD) {
-        /* Large N: DP-driven candidate collection. Outer-only top-K
+    /* Hybrid (Upgrade E, 2026-04-27): pow2 N >threshold uses DP top-K to
+     * stay tractable (factorization space explodes); non-pow2 N stays on
+     * exhaustive regardless of size because its multiset space is small
+     * (constrained by prime factorization), and DP top-K's noise-driven
+     * mis-picks at non-pow2 cells were producing systematic regressions
+     * (see follow-up notes for N=100000 K=32 etc.). */
+    int n_is_pow2 = (N > 0) && ((N & (N - 1)) == 0);
+    int use_exhaustive = (N <= MEASURE_EXH_THRESHOLD) || !n_is_pow2;
+
+    if (!use_exhaustive) {
+        /* Large pow2: DP-driven candidate collection. Outer-only top-K
          * multisets, inner sub-plans solved by top-1 _dp_solve recursion
          * (memoized on (N, K_eff) per Upgrade A). Each top-K multiset is
          * expanded into all permutations; each (multiset, permutation)
@@ -805,8 +814,8 @@ static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
             return 1e18;
         }
     } else {
-        /* Small N: exhaustive enumeration. Cheap because the
-         * factorization space is small for N ≤ MEASURE_EXH_THRESHOLD. */
+        /* Exhaustive enumeration: small pow2 (multiset space small) OR
+         * any non-pow2 N (multiset space constrained by prime factors). */
         coarse_path = "exh";
         factorization_list_t flist;
         stride_enumerate_factorizations(N, reg, &flist);
@@ -837,6 +846,45 @@ static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
 
                 double ns = _dp_bench(ctx, N, perm, nf, ctx->K, reg);
                 if (ns >= 1e17) continue;
+
+                /* LOG3-aware coarse probe (Upgrade F, 2026-04-29): also bench
+                 * with LOG3 forced on every stage where it's registered (DIT
+                 * orientation; LOG3 has limited DIF coverage). LOG3 is a
+                 * high-leverage variant — for prime radixes (5, 7, 11, 13)
+                 * the Winograd codelet can be ±30% vs T1S, with no analytical
+                 * predictor. Without this, the coarse pass benches every
+                 * multiset with default variants only and a LOG3-friendly
+                 * multiset can be eliminated before refine has a chance to
+                 * try LOG3 on it. Doubles coarse cost when any stage has
+                 * LOG3 available; refine still picks the actual best variants. */
+                {
+                    vfft_variant_t log3_variants[FACT_MAX_STAGES];
+                    int has_log3_eligible = 0;
+                    for (int s = 0; s < nf; s++) {
+                        if (s == 0) {
+                            /* Stage 0 in DIT has no twiddle codelet. */
+                            log3_variants[s] = VFFT_VAR_FLAT;
+                            continue;
+                        }
+                        if (vfft_variant_available(reg, perm[s],
+                                                    /*use_dif=*/0,
+                                                    VFFT_VAR_LOG3)) {
+                            log3_variants[s] = VFFT_VAR_LOG3;
+                            has_log3_eligible = 1;
+                        } else if (vfft_variant_available(reg, perm[s], 0,
+                                                           VFFT_VAR_T1S)) {
+                            log3_variants[s] = VFFT_VAR_T1S;
+                        } else {
+                            log3_variants[s] = VFFT_VAR_FLAT;
+                        }
+                    }
+                    if (has_log3_eligible) {
+                        double ns_log3 = _dp_bench_explicit_one(
+                                ctx, N, perm, nf, log3_variants,
+                                /*use_dif_forward=*/0, ctx->K, reg);
+                        if (ns_log3 < ns) ns = ns_log3;
+                    }
+                }
 
                 cands[n_cands].nf = nf;
                 for (int s = 0; s < nf; s++) cands[n_cands].factors[s] = perm[s];
