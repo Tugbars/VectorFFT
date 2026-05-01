@@ -787,38 +787,83 @@ static int _stride_is_rader_friendly(int n) {
 }
 
 /**
- * stride_auto_plan -- Heuristic planner (fast).
+ * stride_auto_plan_wis -- Wisdom-aware heuristic planner.
  *
- * 1. Direct factorization into available radixes     -> staged plan
- * 2. Prime N, non-smooth N-1 (p-1 has factors > 19) -> Bluestein
- * 3. Prime N, smooth N-1 (p-1 is 19-smooth)         -> Rader
- * 4. Composite with unfactorable prime factor        -> NULL (TODO)
+ *   1. If wisdom has a (N, K) entry, build from it (uses variant codes).
+ *   2. Else direct factorization into available radixes -> staged plan.
+ *   3. Prime N, non-smooth N-1 -> Bluestein (recurse with wisdom).
+ *   4. Prime N, smooth N-1     -> Rader     (recurse with wisdom).
+ *   5. Composite with unfactorable prime factor -> NULL.
+ *
+ * Wisdom plumbing matters for Bluestein/Rader: their inner FFT runs at
+ * size M (or N-1) with block-size K, sizes that aren't standard bench
+ * cells. Calibrating those (M, B) cells and passing wisdom through the
+ * recursion lets the inner plan pick variant codes (LOG3/T1S/BUF) the
+ * heuristic would never select. Pass wis=NULL to opt out (legacy path).
  */
-static stride_plan_t *stride_auto_plan(int N, size_t K,
-                                        const stride_registry_t *reg) {
-    /* 1. Direct factorization */
+static stride_plan_t *stride_auto_plan_wis(int N, size_t K,
+                                            const stride_registry_t *reg,
+                                            const stride_wisdom_t *wis) {
+    /* 1. Wisdom hit: build with explicit variant codes (v5+) or
+     * legacy factor list (v3/v4). Mirrors stride_wise_plan. */
+    if (wis) {
+        const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
+        if (e) {
+            stride_plan_t *plan = NULL;
+            if (e->has_variant_codes) {
+                vfft_variant_t variants[STRIDE_MAX_STAGES];
+                for (int s = 0; s < e->nfactors; s++)
+                    variants[s] = (vfft_variant_t)e->variant_codes[s];
+                plan = _stride_build_plan_explicit(
+                        N, K, e->factors, e->nfactors,
+                        variants, e->use_dif_forward, reg);
+            }
+            if (!plan && e->use_dif_forward) {
+                plan = _stride_build_plan_dif(N, K, e->factors, e->nfactors, reg);
+            }
+            if (!plan) {
+                plan = _stride_build_plan(N, K, e->factors, e->nfactors, reg);
+            }
+            if (plan) {
+                plan->use_blocked  = e->use_blocked;
+                plan->split_stage  = e->split_stage;
+                plan->block_groups = e->block_groups;
+                return plan;
+            }
+            /* Build failed (registry shape mismatch): fall through. */
+        }
+    }
+
+    /* 2. Direct factorization */
     stride_factorization_t fact;
     if (stride_factorize(N, K, reg, &fact) == 0)
         return _stride_build_plan(N, K, fact.factors, fact.nfactors, reg);
 
-    /* 2. Prime with non-smooth N-1: Bluestein */
+    /* 3. Prime with non-smooth N-1: Bluestein (recurse with wisdom) */
     if (_stride_is_prime(N) && !_stride_is_rader_friendly(N)) {
         int M = _bluestein_choose_m(N);
         size_t B = _bluestein_block_size(M, K);
-        stride_plan_t *inner = stride_auto_plan(M, B, reg);
+        stride_plan_t *inner = stride_auto_plan_wis(M, B, reg, wis);
         if (inner) return stride_bluestein_plan(N, K, B, inner, M);
     }
 
-    /* 3. Prime with smooth N-1: Rader (convolution of size N-1) */
+    /* 4. Prime with smooth N-1: Rader (recurse with wisdom) */
     if (_stride_is_prime(N) && _stride_is_rader_friendly(N)) {
         int nm1 = N - 1;
         size_t B = _bluestein_block_size(nm1, K);
-        stride_plan_t *inner = stride_auto_plan(nm1, B, reg);
+        stride_plan_t *inner = stride_auto_plan_wis(nm1, B, reg, wis);
         if (inner) return stride_rader_plan(N, K, B, inner);
     }
 
-    /* 4. Composite with unfactorable prime factor: reserved (TODO) */
+    /* 5. Composite with unfactorable prime factor: reserved (TODO) */
     return NULL;
+}
+
+/* Legacy no-wisdom wrapper (back-compat for callers that don't have
+ * wisdom available, e.g., test code or pre-wisdom code paths). */
+static stride_plan_t *stride_auto_plan(int N, size_t K,
+                                        const stride_registry_t *reg) {
+    return stride_auto_plan_wis(N, K, reg, /*wis=*/NULL);
 }
 
 /**
@@ -840,14 +885,16 @@ static stride_plan_t *stride_exhaustive_plan(int N, size_t K,
  * stride_wise_plan -- Wisdom-aware planner.
  *
  * Checks wisdom for a cached result. If found, builds plan from it.
- * Otherwise falls back to heuristic (stride_auto_plan).
+ * Otherwise falls back to wisdom-aware heuristic (stride_auto_plan_wis),
+ * which carries wisdom through Bluestein/Rader inner-plan recursion so
+ * those inner FFTs can pick up variant-tuned wisdom too.
  */
 static stride_plan_t *stride_wise_plan(int N, size_t K,
                                         const stride_registry_t *reg,
                                         const stride_wisdom_t *wis) {
     const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
     if (!e)
-        return stride_auto_plan(N, K, reg);
+        return stride_auto_plan_wis(N, K, reg, wis);
 
     /* Preferred path (v5+): explicit per-stage variant codes. The plan
      * calibrator picked these by benching the full plan, so we trust

@@ -225,6 +225,17 @@ static const size_entry_t all_sizes[] = {
     {127, "rader"}, {251, "rader"}, {257, "rader"}, {401, "rader"},
     {641, "rader"}, {1009, "rader"}, {2801, "rader"}, {4001, "rader"},
 
+    /* Bluestein primes — N-1 has a prime factor > 19, so Rader doesn't fit.
+     * These auto-route to the Bluestein chirp-z path with pow2 inner FFT. */
+    {47, "bluestein"},   /* p-1 = 2*23  */
+    {59, "bluestein"},   /* p-1 = 2*29  */
+    {83, "bluestein"},   /* p-1 = 2*41  */
+    {107, "bluestein"},  /* p-1 = 2*53  */
+    {167, "bluestein"},  /* p-1 = 2*83  */
+    {179, "bluestein"},  /* p-1 = 2*89  */
+    {263, "bluestein"},  /* p-1 = 2*131 */
+    {311, "bluestein"},  /* p-1 = 2*5*31 (31 > 19) */
+
     {175, "odd_comp"}, {525, "odd_comp"}, {1225, "odd_comp"},
     {2205, "odd_comp"}, {6615, "odd_comp"}, {11025, "odd_comp"},
 
@@ -304,12 +315,13 @@ int main(int argc, char **argv) {
         for (int ki = 0; ki < n_Ks; ki++) {
             size_t K = Ks[ki];
 
-            /* Skip cells with no wisdom entry — we explicitly do not
-             * fall back to estimate-mode plans, since the whole point
-             * of this bench is to measure the MEASURE-tuned plan. */
+            /* No-wisdom fallback: stride_wise_plan auto-falls-back to
+             * stride_auto_plan, which handles primes (Rader/Bluestein)
+             * and any non-calibrated cell via heuristic factorization.
+             * Matches old stride-fft bench behavior. */
             const stride_wisdom_entry_t *e =
                 stride_wisdom_lookup(&wis, N, K);
-            if (!e) { n_skipped++; continue; }
+            (void)e;  /* presence informational only, not gating */
 
             stride_plan_t *plan = stride_wise_plan(N, K, &reg, &wis);
             if (!plan) {
