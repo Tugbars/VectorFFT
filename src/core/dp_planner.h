@@ -564,6 +564,26 @@ static double stride_dp_plan(stride_dp_context_t *ctx, int N,
 #ifndef MEASURE_COARSE_RUNS
 #define MEASURE_COARSE_RUNS 2     /* coarse-pass sweeps; per-cand min */
 #endif
+#ifndef MEASURE_REFINE_RUNS
+#define MEASURE_REFINE_RUNS 4     /* refine variant cartesian sweeps; per-variant min.
+                                    * Smooths noise at the variant axis — important for
+                                    * low-K prime-power cells where the search collapses
+                                    * onto variants alone and per-config measurements
+                                    * sit close to the Windows ~5-10% noise floor. */
+#endif
+#ifndef MEASURE_DEPLOY_THRESHOLD_PCT
+#define MEASURE_DEPLOY_THRESHOLD_PCT 10  /* candidates within X% of refine-best go to
+                                           * deploy rebench. Matches Windows noise
+                                           * floor (~12%); tighter would miss real
+                                           * tied-winners, looser would waste deploy
+                                           * benches on genuinely-slower plans. */
+#endif
+#ifndef MEASURE_DEPLOY_TOPK_MAX
+#define MEASURE_DEPLOY_TOPK_MAX 5         /* hard cap on candidates to deploy-bench
+                                            * post-refine; prevents pathological
+                                            * blow-up on cells with near-flat variant
+                                            * cartesian. */
+#endif
 
 /* Above this N, MEASURE switches from exhaustive (factorization, permutation)
  * enumeration to DP-driven candidate collection. Below: exhaustive is cheap.
@@ -658,30 +678,59 @@ static double _dp_bench_explicit_one(stride_dp_context_t *ctx, int N,
     return best;
 }
 
+/* Per-call refine top-K candidate (variants only; multiset/orient supplied
+ * by caller). Used by stride_dp_plan_measure to feed deploy rebench. */
+typedef struct {
+    vfft_variant_t variants[STRIDE_MAX_STAGES];
+    double         cost_ns;
+} _refine_top_t;
+
 /* Variant cartesian search at one (factors, orientation, K_eff). Walks
  * vfft_variant_iter_*, benches each, returns the best (cost, variants).
- * Returns 1e18 if no valid assignment exists in this orientation. */
+ * Returns 1e18 if no valid assignment exists in this orientation.
+ *
+ * If top_out and max_top > 0, also populates a sorted-ascending top-K list
+ * of seen (variants, cost). Caller passes a buffer of size max_top.
+ * *top_count is set to the number of valid entries (≤ max_top). */
 static double _dp_variant_search(stride_dp_context_t *ctx, int N,
                                  const int *factors, int nf,
                                  int use_dif_forward, size_t K_eff,
                                  const stride_registry_t *reg,
                                  vfft_variant_t *out_best,
                                  long *out_n_assignments,
+                                 _refine_top_t *top_out,
+                                 int *top_count,
+                                 int max_top,
                                  int verbose) {
     vfft_variant_iter_t it;
     if (!vfft_variant_iter_init(&it, factors, nf, use_dif_forward, reg)) {
         if (out_n_assignments) *out_n_assignments = 0;
+        if (top_count) *top_count = 0;
         return 1e18;
     }
 
     double best_ns = 1e18;
     long count = 0;
+    int n_top = 0;
     do {
         vfft_variant_t cur[STRIDE_MAX_STAGES];
         vfft_variant_iter_get(&it, cur);
-        double ns = _dp_bench_explicit_one(ctx, N, factors, nf, cur,
-                                           use_dif_forward, K_eff, reg);
-        count++;
+
+        /* Per-variant best-of-runs (Upgrade G, 2026-04-29): each variant
+         * config is benched MEASURE_REFINE_RUNS times and we keep the min.
+         * Each call to _dp_bench_explicit_one already does best-of-6 trials
+         * internally, but adjacent trials within one call have correlated
+         * cache state. Multiple calls add fresh memcpy warmups in between,
+         * decorrelating the noise. Critical for low-K prime-power cells
+         * where variant signal is close to the noise floor — without this
+         * the calibrator's pick is noise-driven on those cells. */
+        double ns = 1e18;
+        for (int run = 0; run < MEASURE_REFINE_RUNS; run++) {
+            double r = _dp_bench_explicit_one(ctx, N, factors, nf, cur,
+                                               use_dif_forward, K_eff, reg);
+            if (r < ns) ns = r;
+        }
+        count += MEASURE_REFINE_RUNS;
         if (verbose) {
             printf("    [%s] ", use_dif_forward ? "DIF" : "DIT");
             for (int s = 0; s < nf; s++)
@@ -692,9 +741,31 @@ static double _dp_variant_search(stride_dp_context_t *ctx, int N,
             best_ns = ns;
             if (out_best) memcpy(out_best, cur, nf * sizeof(*out_best));
         }
+
+        /* Maintain sorted top-K (Upgrade H, 2026-04-29): insertion sort into
+         * fixed-size array. Cost: O(K) per insert, K = MEASURE_DEPLOY_TOPK_MAX,
+         * trivial vs the bench cost. Caller filters by threshold% later. */
+        if (top_out && max_top > 0) {
+            if (n_top < max_top) {
+                int pos = n_top;
+                while (pos > 0 && top_out[pos - 1].cost_ns > ns) pos--;
+                for (int i = n_top; i > pos; i--) top_out[i] = top_out[i - 1];
+                memcpy(top_out[pos].variants, cur, nf * sizeof(*cur));
+                top_out[pos].cost_ns = ns;
+                n_top++;
+            } else if (ns < top_out[max_top - 1].cost_ns) {
+                int pos = max_top - 1;
+                while (pos > 0 && top_out[pos - 1].cost_ns > ns) pos--;
+                for (int i = max_top - 1; i > pos; i--)
+                    top_out[i] = top_out[i - 1];
+                memcpy(top_out[pos].variants, cur, nf * sizeof(*cur));
+                top_out[pos].cost_ns = ns;
+            }
+        }
     } while (vfft_variant_iter_next(&it));
 
     if (out_n_assignments) *out_n_assignments = count;
+    if (top_count) *top_count = n_top;
     return best_ns;
 }
 
@@ -708,6 +779,17 @@ typedef struct {
 static int _measure_cmp(const void *a, const void *b) {
     double ca = ((const _measure_candidate_t *)a)->cost_ns;
     double cb = ((const _measure_candidate_t *)b)->cost_ns;
+    if (ca < cb) return -1;
+    if (ca > cb) return  1;
+    return 0;
+}
+
+/* Comparator for stride_plan_decision_t by cost_ns ascending. Used for
+ * sorting the global pool of top-K refine candidates before threshold
+ * filtering (Upgrade H). */
+static int _decision_cost_cmp(const void *a, const void *b) {
+    double ca = ((const stride_plan_decision_t *)a)->cost_ns;
+    double cb = ((const stride_plan_decision_t *)b)->cost_ns;
     if (ca < cb) return -1;
     if (ca > cb) return  1;
     return 0;
@@ -781,10 +863,20 @@ static int _measure_collect_via_dp(stride_dp_context_t *ctx, int N,
  *
  * decision->cost_ns is the variant-best ns/iter at the winning orientation
  * (measured by the FFTW-style adaptive timer; the calibrator re-benches
- * with deploy-quality bench_plan_min before writing wisdom). */
+ * with deploy-quality bench_plan_min before writing wisdom).
+ *
+ * Optional top-K outputs (Upgrade H, 2026-04-29): if top_k_out and top_k_count
+ * are non-NULL, populates an array of up to MEASURE_DEPLOY_TOPK_MAX candidates
+ * within MEASURE_DEPLOY_THRESHOLD_PCT of the global best refine cost. Caller
+ * (the calibrator) deploy-rebenches each one with bench_plan_min and picks
+ * the actual fastest, resolving variant-axis ties that refine's noisy
+ * best-of-N can't disambiguate. top_k_out[0] always equals the same plan
+ * as `decision`. */
 static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
                                      const stride_registry_t *reg,
                                      stride_plan_decision_t *decision,
+                                     stride_plan_decision_t *top_k_out,
+                                     int *top_k_count,
                                      int verbose) {
     static _measure_candidate_t cands[MEASURE_MAX_CANDIDATES];
     int n_cands = 0;
@@ -924,16 +1016,48 @@ static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
     int    best_use_dif = 0;
     long   total_refine = 0;
 
+    /* Global top-K pool (Upgrade H, 2026-04-29). Each (multiset × orient)
+     * call to _dp_variant_search returns its own top-K-by-cost variants;
+     * we pool them all here, then filter at the end to within
+     * MEASURE_DEPLOY_THRESHOLD_PCT of the global best, capped at
+     * MEASURE_DEPLOY_TOPK_MAX. Caller deploy-rebenches the survivors. */
+    static stride_plan_decision_t pool[
+        MEASURE_TOPK_DEFAULT * 2 * MEASURE_DEPLOY_TOPK_MAX];
+    int n_pool = 0;
+    const int pool_max = (int)(sizeof(pool) / sizeof(pool[0]));
+
     for (int k = 0; k < n_topk; k++) {
         const _measure_candidate_t *c = &cands[k];
 
         for (int orient = 0; orient < 2; orient++) {
             vfft_variant_t cur_best[FACT_MAX_STAGES];
+            _refine_top_t  per_call_top[MEASURE_DEPLOY_TOPK_MAX];
+            int            per_call_count = 0;
             long n_this = 0;
-            double ns = _dp_variant_search(ctx, N, c->factors, c->nf,
-                                           orient, ctx->K, reg,
-                                           cur_best, &n_this, 0);
+            double ns = _dp_variant_search(
+                    ctx, N, c->factors, c->nf,
+                    orient, ctx->K, reg,
+                    cur_best, &n_this,
+                    (top_k_out ? per_call_top : NULL),
+                    (top_k_out ? &per_call_count : NULL),
+                    (top_k_out ? MEASURE_DEPLOY_TOPK_MAX : 0),
+                    0);
             total_refine += n_this;
+
+            /* Aggregate this call's top-K into global pool. */
+            if (top_k_out) {
+                for (int i = 0; i < per_call_count && n_pool < pool_max; i++) {
+                    stride_plan_decision_t *p = &pool[n_pool++];
+                    p->fact.nfactors = c->nf;
+                    memcpy(p->fact.factors, c->factors,
+                           c->nf * sizeof(int));
+                    memcpy(p->variants, per_call_top[i].variants,
+                           c->nf * sizeof(vfft_variant_t));
+                    p->use_dif_forward = orient;
+                    p->cost_ns = per_call_top[i].cost_ns;
+                }
+            }
+
             if (ns < best_ns) {
                 best_ns = ns;
                 best_nf = c->nf;
@@ -942,6 +1066,24 @@ static double stride_dp_plan_measure(stride_dp_context_t *ctx, int N,
                        c->nf * sizeof(vfft_variant_t));
                 best_use_dif = orient;
             }
+        }
+    }
+
+    /* Threshold-filter the pool and emit to top_k_out (Upgrade H). */
+    if (top_k_out && top_k_count) {
+        if (n_pool > 0) {
+            qsort(pool, n_pool, sizeof(*pool), _decision_cost_cmp);
+            double pool_best = pool[0].cost_ns;
+            double thresh = pool_best *
+                            (1.0 + (double)MEASURE_DEPLOY_THRESHOLD_PCT / 100.0);
+            int n_emit = 0;
+            for (int i = 0; i < n_pool && n_emit < MEASURE_DEPLOY_TOPK_MAX; i++) {
+                if (pool[i].cost_ns > thresh) break;
+                top_k_out[n_emit++] = pool[i];
+            }
+            *top_k_count = n_emit;
+        } else {
+            *top_k_count = 0;
         }
     }
 

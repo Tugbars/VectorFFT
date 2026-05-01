@@ -708,8 +708,15 @@ static int calibrate_cell_measure(int N, size_t K,
     stride_plan_decision_t dec;
     memset(&dec, 0, sizeof(dec));
 
+    /* Top-K candidates within MEASURE_DEPLOY_THRESHOLD_PCT of refine-best.
+     * Caller-side deploy rebench (Upgrade H, 2026-04-29) resolves
+     * variant-axis ties that refine's noisy best-of-N can't disambiguate. */
+    stride_plan_decision_t top_k[MEASURE_DEPLOY_TOPK_MAX];
+    int n_top_k = 0;
+
     long pre_benches = dp_ctx->n_benchmarks;
-    double cost = stride_dp_plan_measure(dp_ctx, N, reg, &dec, /*verbose=*/0);
+    double cost = stride_dp_plan_measure(dp_ctx, N, reg, &dec,
+                                          top_k, &n_top_k, /*verbose=*/0);
     long benches_used = dp_ctx->n_benchmarks - pre_benches;
     (void)cost;  /* deploy-bench below produces the wisdom-quality number */
 
@@ -718,20 +725,54 @@ static int calibrate_cell_measure(int N, size_t K,
         return 1;
     }
 
-    /* Build the chosen plan and re-bench with deploy-quality protocol so
-     * the cost we record in wisdom v5 matches what calibrate_cell_joint
-     * would have written for the same plan. */
-    stride_plan_t *plan = _stride_build_plan_explicit(
-            N, K, dec.fact.factors, dec.fact.nfactors,
-            dec.variants, dec.use_dif_forward, reg);
-    if (!plan) {
-        fprintf(stderr, "  N=%d K=%zu: MEASURE winner build failed\n", N, K);
-        return 1;
+    /* Deploy rebench across top-K candidates (Upgrade H). Each candidate
+     * within 10% of refine-best gets one bench_plan_min call; the actual
+     * fastest in deploy timing wins. The deploy harness is independent
+     * from the refine harness (different warmup, fresh plan), so its
+     * noise is decorrelated — picking the deploy-fastest robustly resolves
+     * within-noise ties in refine.
+     *
+     * If n_top_k == 0 (couldn't populate, e.g., orient mismatch), fall
+     * back to the single best from `dec`. */
+    double deploy_ns = 1e18;
+    double err       = 1.0;
+    if (n_top_k > 0) {
+        for (int i = 0; i < n_top_k; i++) {
+            stride_plan_t *plan = _stride_build_plan_explicit(
+                    N, K, top_k[i].fact.factors, top_k[i].fact.nfactors,
+                    top_k[i].variants, top_k[i].use_dif_forward, reg);
+            if (!plan) continue;
+            double cand_ns = bench_plan_min(plan, N, K);
+            if (cand_ns < deploy_ns) {
+                deploy_ns = cand_ns;
+                err = roundtrip_err(plan, N, K);
+                /* Promote this candidate to be the wisdom entry. */
+                dec.fact.nfactors = top_k[i].fact.nfactors;
+                memcpy(dec.fact.factors, top_k[i].fact.factors,
+                       top_k[i].fact.nfactors * sizeof(int));
+                memcpy(dec.variants, top_k[i].variants,
+                       top_k[i].fact.nfactors * sizeof(vfft_variant_t));
+                dec.use_dif_forward = top_k[i].use_dif_forward;
+            }
+            stride_plan_destroy(plan);
+        }
+        if (deploy_ns >= 1e17) {
+            fprintf(stderr, "  N=%d K=%zu: deploy rebench all failed\n", N, K);
+            return 1;
+        }
+    } else {
+        /* Fallback: build single best from dec, deploy bench once. */
+        stride_plan_t *plan = _stride_build_plan_explicit(
+                N, K, dec.fact.factors, dec.fact.nfactors,
+                dec.variants, dec.use_dif_forward, reg);
+        if (!plan) {
+            fprintf(stderr, "  N=%d K=%zu: MEASURE winner build failed\n", N, K);
+            return 1;
+        }
+        deploy_ns = bench_plan_min(plan, N, K);
+        err = roundtrip_err(plan, N, K);
+        stride_plan_destroy(plan);
     }
-
-    double deploy_ns = bench_plan_min(plan, N, K);
-    double err = roundtrip_err(plan, N, K);
-    stride_plan_destroy(plan);
 
     /* Post-MEASURE blocked refine for K <= STRIDE_BLOCKED_K_THRESHOLD
      * medium N. If blocked wins, deploy_ns is overridden and the entry

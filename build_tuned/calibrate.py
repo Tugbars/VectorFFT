@@ -246,6 +246,10 @@ def main() -> int:
                     help='Re-bench cells that already exist in the wisdom '
                          'file. Default is skip-if-cached (resume mode), '
                          'matching production bench_1d_csv behaviour.')
+    ap.add_argument('--pace', type=int, default=1000,
+                    help='Inter-cell pacing in ms. Lets the CPU cool down '
+                         'between cells to reduce thermal/cache-state '
+                         'correlation across measurements. Default: 1000.')
     args = ap.parse_args()
 
     print('=' * 60)
@@ -300,6 +304,7 @@ def main() -> int:
                 print(f'[error] compile failed with rc={rc}')
                 return rc
         rc = run_calibrator(args.cpu, pinned, args.mode,
+                            pace_ms=args.pace,
                             cells=args.cells, force=args.force)
     finally:
         teardown_powercfg(state)

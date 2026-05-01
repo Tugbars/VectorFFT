@@ -61,7 +61,10 @@ static int run_cell(int N, size_t K, stride_registry_t *reg) {
     memset(&dec, 0, sizeof(dec));
 
     double t0 = now_ns();
-    double cost = stride_dp_plan_measure(&ctx, N, reg, &dec, 1);
+    double cost = stride_dp_plan_measure(&ctx, N, reg, &dec,
+                                          /*top_k_out=*/NULL,
+                                          /*top_k_count=*/NULL,
+                                          /*verbose=*/1);
     double wall_s = (now_ns() - t0) * 1e-9;
 
     if (cost >= 1e17) {
