@@ -175,7 +175,7 @@ static void _rader_precompute_kernel(
     }
 
     /* FFT of kernel (all B lanes identical) */
-    stride_execute_fwd(inner_plan, work_re, work_im);
+    stride_execute_fwd_serial(inner_plan, work_re, work_im);
 
     /* Copy with 1/(N-1) baked in */
     double inv = 1.0 / (double)nm1;
@@ -227,15 +227,15 @@ static void _rader_execute_fwd(void *data, double *re, double *im) {
             memcpy(si + dst, im + src, B * sizeof(double));
         }
 
-        /* 3. FFT_{N-1} */
-        stride_execute_fwd(d->inner_plan, sr, si);
+        /* 3. FFT_{N-1} (serial — outer plan owns threading) */
+        stride_execute_fwd_serial(d->inner_plan, sr, si);
 
         /* 4. Flat pointwise multiply by Ω_fwd */
         _blue_cmul_vv(sr, si, sr, si,
                       d->omega_fwd_re, d->omega_fwd_im, (size_t)nm1 * B);
 
-        /* 5. IFFT_{N-1} → convolution result */
-        stride_execute_bwd(d->inner_plan, sr, si);
+        /* 5. IFFT_{N-1} → convolution result (serial) */
+        stride_execute_bwd_serial(d->inner_plan, sr, si);
 
         /* 6. Scatter: X[g^{-q}] = x[0] + conv[q]
          * re[b0+k] still holds x[0] — gpow/ginvpow never touch index 0. */
@@ -295,15 +295,15 @@ static void _rader_execute_bwd(void *data, double *re, double *im) {
             memcpy(si + dst, im + src, B * sizeof(double));
         }
 
-        /* 3. FFT_{N-1} */
-        stride_execute_fwd(d->inner_plan, sr, si);
+        /* 3. FFT_{N-1} (serial — outer plan owns threading) */
+        stride_execute_fwd_serial(d->inner_plan, sr, si);
 
         /* 4. Flat pointwise multiply by Ω_bwd */
         _blue_cmul_vv(sr, si, sr, si,
                       d->omega_bwd_re, d->omega_bwd_im, (size_t)nm1 * B);
 
-        /* 5. IFFT_{N-1} */
-        stride_execute_bwd(d->inner_plan, sr, si);
+        /* 5. IFFT_{N-1} (serial) */
+        stride_execute_bwd_serial(d->inner_plan, sr, si);
 
         /* 6. Scatter: x̃[g^p] = X[0] + conv[p]
          * re[b0+k] still holds X[0] — gpow/ginvpow never touch index 0. */
