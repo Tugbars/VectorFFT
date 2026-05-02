@@ -37,14 +37,6 @@ Three panels showing GFLOP/s at each batch size. Blue = VectorFFT, Red = MKL. Di
 
 Every point above the dashed line is a VectorFFT win. Marker size indicates batch count (small=K=4, medium=K=32, large=K=256). **All 207 points are above parity.**
 
-| Metric | Value |
-|--------|-------|
-| **Win rate** | 207 / 207 (100%) |
-| **Median speedup** | 2.36x |
-| **Best speedup** | 8.98x (N=8, K=4) |
-| **Closest MKL** | 1.01x (N=179, K=256, Bluestein) |
-| **Peak GFLOP/s** | 103.0 (N=8, K=256) |
-
 ### Combined Dense Scatter — All Sizes & Batch Counts
 
 ![Scatter](docs/performance/vfft_scatter_all.png)
@@ -86,33 +78,6 @@ Multi-threaded 2D (tile-parallel, per-thread scratch, zero barriers):
 |------|----------|-----------|---------|
 | 256x256 | 147.5 us | 37.0 us | **3.99x** |
 | 1024x1024 | 3,787 us | 1,002 us | **3.78x** |
-
-### Prime-N Performance (Rader and Bluestein)
-
-Both prime-handling paths use wisdom-driven inner FFTs — calibrating the inner cell sizes lets the prime path pick up the same per-stage variant codes (LOG3, T1S, BUF) as the regular composite path.
-
-**Rader (smooth N-1):**
-
-| Prime N | K | vs MKL |
-|---------|---|--------|
-| 127 | 32 | **2.11x** |
-| 257 | 32 | **3.29x** |
-| 641 | 32 | **3.42x** |
-| 1009 | 32 | **1.95x** |
-| 2801 | 32 | **2.46x** |
-| 4001 | 32 | **1.28x** |
-
-**Bluestein (non-smooth N-1, chirp-z):**
-
-| Prime N | K | vs MKL |
-|---------|---|--------|
-| 47 | 32 | **1.71x** |
-| 83 | 32 | **2.98x** |
-| 167 | 32 | **1.66x** |
-| 263 | 32 | **1.61x** |
-| 311 | 32 | **1.57x** |
-
----
 
 ## Accuracy
 
