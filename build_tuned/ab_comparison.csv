@@ -1,3 +1,0 @@
-N,K,prod_factors,tuned_factors,tuned_codelets,tuned_variants,tuned_method,prod_blocked,tuned_blocked,tuned_dif,prod_ns,tuned_ns,speedup,ratio_t/p,verdict
-4096,4,4x4x16x16,8x32x16,n1/t1s/log3,flat/t1s/log3,exh+joint,,,,29634.43,21108.20,1.404,0.712,WIN
-4096,256,2x4x4x4x32,2x4x4x4x32,n1/t1s/t1s/t1s/t1s,flat/t1s/t1s/t1s/t1s,exh+joint,,,,2603060.01,2238340.00,1.163,0.860,WIN
