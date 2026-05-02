@@ -1,6 +1,2 @@
 N,K,category,factors,vfft_ns,mkl_ns,vfft_gflops,mkl_gflops,ratio_vs_mkl
-47,32,bluestein,[override],6911,11828,6.044,3.532,1.711
-179,4,bluestein,[override],4635,5634,5.780,4.755,1.216
-179,32,bluestein,[override],40866,44294,5.245,4.839,1.084
-179,256,bluestein,[override],360223,362386,4.760,4.732,1.006
-311,256,bluestein,[override],501296,667444,6.576,4.939,1.331
+179,32,bluestein,[override],40474,44052,5.296,4.866,1.088
