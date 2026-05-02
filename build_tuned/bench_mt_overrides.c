@@ -53,10 +53,11 @@ typedef struct {
     int N;
     size_t K;
     const char *label;
+    int is_r2c;        /* if 1: build via stride_r2c_wise_plan; else stride_wise_plan */
 } bench_cell_t;
 
 static int test_cell(stride_registry_t *reg, stride_wisdom_t *wis,
-                     int N, size_t K, const char *label) {
+                     int N, size_t K, const char *label, int is_r2c) {
     size_t NK = (size_t)N * K;
     double *re_orig = (double *)_aligned_malloc(NK * sizeof(double), 64);
     double *im_orig = (double *)_aligned_malloc(NK * sizeof(double), 64);
@@ -66,17 +67,21 @@ static int test_cell(stride_registry_t *reg, stride_wisdom_t *wis,
     double *im_w    = (double *)_aligned_malloc(NK * sizeof(double), 64);
 
     fill_random(re_orig, im_orig, NK, 42 + N);
+    if (is_r2c) {
+        /* R2C input is real — zero out im_orig so the bench is well-defined */
+        memset(im_orig, 0, NK * sizeof(double));
+    }
 
     /* Reset T=T_MAX before plan creation so the plan snapshots the max
-     * for its scratch allocation. The previous test_cell may have ended
-     * with T=1 (single-thread reference); without this reset, every plan
-     * after the first would be created with n_threads=1. */
+     * for its scratch allocation. */
     stride_set_num_threads(T_MAX);
 
-    stride_plan_t *plan = stride_wise_plan(N, K, reg, wis);
-    if (!plan) {
-        /* Wisdom miss — try auto plan */
-        plan = stride_auto_plan_wis(N, K, reg, wis);
+    stride_plan_t *plan = NULL;
+    if (is_r2c) {
+        plan = stride_r2c_wise_plan(N, K, reg, wis);
+    } else {
+        plan = stride_wise_plan(N, K, reg, wis);
+        if (!plan) plan = stride_auto_plan_wis(N, K, reg, wis);
     }
     if (!plan) {
         printf("  [%s] N=%d K=%zu  FAIL: could not build plan\n", label, N, K);
@@ -96,10 +101,14 @@ static int test_cell(stride_registry_t *reg, stride_wisdom_t *wis,
     double inv_N = 1.0 / (double)N;
     for (size_t i = 0; i < NK; i++) { re_ref[i] *= inv_N; im_ref[i] *= inv_N; }
 
-    /* Roundtrip error vs original (sanity) */
+    /* Roundtrip error vs original. For R2C, only re holds the time-domain
+     * reconstruction; im_ref is left holding fwd's freq-imag output (never
+     * overwritten by bwd) and would diverge from im_orig=0. Compare re only. */
     double rt_err = max_abs_diff(re_orig, re_ref, NK);
-    double rt_err_im = max_abs_diff(im_orig, im_ref, NK);
-    if (rt_err_im > rt_err) rt_err = rt_err_im;
+    if (!is_r2c) {
+        double rt_err_im = max_abs_diff(im_orig, im_ref, NK);
+        if (rt_err_im > rt_err) rt_err = rt_err_im;
+    }
 
     /* Peek at override block-size info if applicable */
     char info[128] = "";
@@ -199,19 +208,24 @@ int main(int argc, char **argv) {
 
     bench_cell_t cells[] = {
         /* Override-path cells (Bluestein/Rader) */
-        { 311,  256, "bluestein 311:256" },
-        { 509,  256, "bluestein 509:256" },
-        { 127,  256, "rader     127:256" },
-        { 2801, 256, "rader    2801:256" },
-        /* Direct executor path (K-split / group-parallel) — for comparison */
-        { 1024, 256, "pow2      1024:256" },
-        { 4096, 256, "pow2      4096:256" },
-        { 16384, 256, "pow2     16384:256" },
-        { 1000, 256, "comp      1000:256" },
+        { 311,  256, "bluestein 311:256",   0 },
+        { 509,  256, "bluestein 509:256",   0 },
+        { 127,  256, "rader     127:256",   0 },
+        { 2801, 256, "rader    2801:256",   0 },
+        /* Direct executor path (K-split / group-parallel) */
+        { 1024, 256, "pow2      1024:256",  0 },
+        { 4096, 256, "pow2      4096:256",  0 },
+        { 16384, 256, "pow2     16384:256", 0 },
+        { 1000, 256, "comp      1000:256",  0 },
+        /* R2C override path */
+        { 1024, 256, "r2c       1024:256",  1 },
+        { 4096, 256, "r2c       4096:256",  1 },
+        { 16384, 256, "r2c      16384:256", 1 },
     };
     int nf = 0;
     for (size_t i = 0; i < sizeof(cells)/sizeof(cells[0]); i++) {
-        nf += test_cell(&reg, &wis, cells[i].N, cells[i].K, cells[i].label);
+        nf += test_cell(&reg, &wis, cells[i].N, cells[i].K, cells[i].label,
+                        cells[i].is_r2c);
     }
 
     printf("\n=== %s: %d cells %s ===\n",
