@@ -60,6 +60,7 @@ static stride_plan_t *_stride_build_plan_explicit(
 #include "executor_blocked.h"
 #include "rader.h"      /* includes bluestein.h (shared SIMD helpers) */
 #include "r2c.h"       /* real-to-complex / complex-to-real */
+#include "dct.h"       /* DCT-II (built atop R2C) */
 
 /* Blocked executor heuristic threshold: K <= this triggers blocking check */
 #ifndef STRIDE_BLOCKED_K_THRESHOLD
@@ -999,6 +1000,46 @@ static stride_plan_t *stride_r2c_wise_plan(int N, size_t K,
     stride_plan_t *inner = _r2c_force_dit_inner(halfN, B, reg, wis);
     if (!inner) return NULL;
     return stride_r2c_plan(N, K, B, inner);
+}
+
+/**
+ * stride_dct2_auto_plan_wis -- DCT-II (FFTW REDFT10 convention).
+ *
+ * Y[k] = 2 * sum_{n=0..N-1} x[n] * cos(π k (2n+1) / (2N))   for k=0..N-1
+ *
+ * Built atop a 2N-point R2C plan: the inner R2C handles all the heavy
+ * lifting (factorization choice, MT, etc.). DCT-II adds an even-extension
+ * pass and a post-process twiddle on top.
+ *
+ *   stride_execute_dct2(plan, in, out)         -- 1D DCT-II, batched K
+ */
+static stride_plan_t *stride_dct2_auto_plan_wis(int N, size_t K,
+                                                 const stride_registry_t *reg,
+                                                 const stride_wisdom_t *wis) {
+    if (N < 1) return NULL;
+    int twoN = 2 * N;   /* always even, R2C-compatible */
+    stride_plan_t *r2c = stride_r2c_auto_plan_wis(twoN, K, reg, wis);
+    if (!r2c) return NULL;
+    return stride_dct2_plan(N, K, r2c);
+}
+
+/* No-wisdom convenience wrapper. */
+static stride_plan_t *stride_dct2_auto_plan(int N, size_t K,
+                                             const stride_registry_t *reg) {
+    return stride_dct2_auto_plan_wis(N, K, reg, /*wis=*/NULL);
+}
+
+/* Wisdom-aware DCT-II — uses wisdom for the inner 2N-point R2C plan
+ * (which itself uses wisdom for the halfN=N-point complex inner FFT,
+ * subject to R2C's DIT-only v1.0 constraint). */
+static stride_plan_t *stride_dct2_wise_plan(int N, size_t K,
+                                             const stride_registry_t *reg,
+                                             const stride_wisdom_t *wis) {
+    if (N < 1) return NULL;
+    int twoN = 2 * N;
+    stride_plan_t *r2c = stride_r2c_wise_plan(twoN, K, reg, wis);
+    if (!r2c) return NULL;
+    return stride_dct2_plan(N, K, r2c);
 }
 
 /**
