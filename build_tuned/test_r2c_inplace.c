@@ -30,8 +30,16 @@ int main(void) {
     memcpy(orig, re, NK * sizeof(double));
     memset(im, 0, NK * sizeof(double));
 
-    stride_plan_t *plan = stride_r2c_auto_plan_wis(N, K, &reg, NULL);
+    stride_wisdom_t wis;
+    stride_wisdom_init(&wis);
+    stride_wisdom_load(&wis, "vfft_wisdom_tuned.txt");
+    stride_plan_t *plan = stride_r2c_wise_plan(N, K, &reg, &wis);
     if (!plan) { printf("plan failed\n"); return 1; }
+    stride_r2c_data_t *d = (stride_r2c_data_t *)plan->override_data;
+    printf("Plan: N=%d K=%zu B=%zu n_threads=%d inner_factors=", N, K,
+           d->B, d->n_threads);
+    for (int s = 0; s < d->inner->num_stages; s++) printf("%d ", d->inner->factors[s]);
+    printf("inner_dif_fwd=%d\n", d->inner->use_dif_forward);
 
     /* Build and tear down a complex plan FIRST (to mimic bench_mt_overrides
      * sequence where R2C cells come after several non-R2C cells). */

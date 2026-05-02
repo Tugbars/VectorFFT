@@ -945,37 +945,58 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
  *   stride_execute_r2c(plan, real_in, out_re, out_im)
  *   stride_execute_c2r(plan, in_re, in_im, real_out)
  */
-/* Wisdom-aware R2C planner. The inner halfN-point complex FFT consults
- * wisdom for variant selection, matching parity with stride_wise_plan. */
+/* R2C requires DIT inner plans: the fused first/last-stage paths assume
+ * stage 0 is twiddle-free and is the FIRST executed stage, which is only
+ * true under DIT semantics. The perm/iperm tables also assume DIT digit-
+ * reversal output ordering. A DIF inner plan would silently produce
+ * 1-2 unit roundtrip errors with no warning.
+ *
+ * If a wisdom-tuned inner is DIF, drop it and fall back to a
+ * factorization-driven DIT plan (slightly less variant-tuned but correct).
+ * Variant codes (LOG3/T1S/BUF) on individual stages are still picked up
+ * from wisdom_bridge predicates inside _stride_build_plan. */
+static inline stride_plan_t *_r2c_force_dit_inner(
+        int halfN, size_t B, const stride_registry_t *reg,
+        const stride_wisdom_t *wis)
+{
+    stride_plan_t *inner = stride_wise_plan(halfN, B, reg, wis);
+    if (inner && inner->use_dif_forward) {
+        stride_plan_destroy(inner);
+        inner = NULL;
+    }
+    if (!inner) inner = stride_auto_plan_wis(halfN, B, reg, /*wis=*/NULL);
+    return inner;
+}
+
+/* Wisdom-aware R2C planner. Inner halfN-point FFT picks variant-tuned codelets
+ * via wisdom, but DIF orientation is rejected (incompatible with R2C's fused
+ * first/last-stage paths). */
 static stride_plan_t *stride_r2c_auto_plan_wis(int N, size_t K,
                                                 const stride_registry_t *reg,
                                                 const stride_wisdom_t *wis) {
     if (N < 2 || (N & 1)) return NULL;
     int halfN = N / 2;
     size_t B = _bluestein_block_size_T(halfN, K, stride_get_num_threads());
-    stride_plan_t *inner = stride_auto_plan_wis(halfN, B, reg, wis);
+    stride_plan_t *inner = _r2c_force_dit_inner(halfN, B, reg, wis);
     if (!inner) return NULL;
     return stride_r2c_plan(N, K, B, inner);
 }
 
-/* Legacy no-wisdom wrapper. Inner FFT runs with estimate-mode planner. */
+/* Legacy no-wisdom wrapper. */
 static stride_plan_t *stride_r2c_auto_plan(int N, size_t K,
                                             const stride_registry_t *reg) {
     return stride_r2c_auto_plan_wis(N, K, reg, /*wis=*/NULL);
 }
 
-/* Wisdom-aware R2C plan that prefers a wisdom hit on (halfN, B). Mirror of
- * stride_wise_plan's role for complex plans. If wisdom has the inner cell,
- * uses _wise (with explicit variant codes). Otherwise falls through to
- * stride_r2c_auto_plan_wis which carries wisdom into Bluestein/Rader recursion. */
+/* Wisdom-aware R2C plan, mirror of stride_wise_plan for R2C. Same DIT
+ * constraint as stride_r2c_auto_plan_wis. */
 static stride_plan_t *stride_r2c_wise_plan(int N, size_t K,
                                             const stride_registry_t *reg,
                                             const stride_wisdom_t *wis) {
     if (N < 2 || (N & 1)) return NULL;
     int halfN = N / 2;
     size_t B = _bluestein_block_size_T(halfN, K, stride_get_num_threads());
-    stride_plan_t *inner = stride_wise_plan(halfN, B, reg, wis);
-    if (!inner) inner = stride_auto_plan_wis(halfN, B, reg, wis);
+    stride_plan_t *inner = _r2c_force_dit_inner(halfN, B, reg, wis);
     if (!inner) return NULL;
     return stride_r2c_plan(N, K, B, inner);
 }
