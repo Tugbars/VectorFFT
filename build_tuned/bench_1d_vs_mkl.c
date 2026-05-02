@@ -251,13 +251,49 @@ static const int n_Ks = (int)(sizeof(Ks) / sizeof(Ks[0]));
  * Main
  * ───────────────────────────────────────────────────────────────── */
 
+/* Returns 1 if (N, K) appears in the comma-separated "N:K" list `filter`.
+ * filter == NULL or empty: no filter active, every cell passes. */
+static int _cell_in_filter(int N, size_t K, const char *filter) {
+    if (!filter || !*filter) return 1;
+    const char *p = filter;
+    while (*p) {
+        int fN = 0, fK = 0;
+        while (*p == ' ' || *p == ',') p++;
+        while (*p >= '0' && *p <= '9') { fN = fN*10 + (*p++ - '0'); }
+        if (*p == ':') {
+            p++;
+            while (*p >= '0' && *p <= '9') { fK = fK*10 + (*p++ - '0'); }
+            if (fN == N && (size_t)fK == K) return 1;
+        }
+        while (*p && *p != ',') p++;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     const char *wisdom_path = DEFAULT_WISDOM_PATH;
     const char *perf_path   = DEFAULT_PERF_PATH;
     const char *acc_path    = DEFAULT_ACC_PATH;
-    if (argc >= 2) wisdom_path = argv[1];
-    if (argc >= 3) perf_path   = argv[2];
-    if (argc >= 4) acc_path    = argv[3];
+    const char *cells       = NULL;  /* --cells "N:K,N:K,..." filter */
+
+    /* Pull --cells out first, then take positional args from the rest. */
+    int posn = 1;
+    int positional_idx = 0;
+    while (posn < argc) {
+        if (strcmp(argv[posn], "--cells") == 0 && posn + 1 < argc) {
+            cells = argv[posn + 1];
+            posn += 2;
+            continue;
+        }
+        switch (positional_idx) {
+            case 0: wisdom_path = argv[posn]; break;
+            case 1: perf_path   = argv[posn]; break;
+            case 2: acc_path    = argv[posn]; break;
+            default: break;
+        }
+        positional_idx++;
+        posn++;
+    }
 
     stride_env_init();
     stride_pin_thread(0);
@@ -308,12 +344,17 @@ int main(int argc, char **argv) {
     printf("--------+-----+------------+--------------------+----------+"
            "----------+--------+--------+-------\n");
 
+    if (cells) printf("cells filter active: %s\n", cells);
+
     int n_benched = 0, n_skipped = 0;
     for (int si = 0; si < n_sizes; si++) {
         int N = all_sizes[si].N;
         const char *cat = all_sizes[si].category;
         for (int ki = 0; ki < n_Ks; ki++) {
             size_t K = Ks[ki];
+
+            /* --cells filter: skip cells not in the user-supplied list. */
+            if (!_cell_in_filter(N, K, cells)) { n_skipped++; continue; }
 
             /* No-wisdom fallback: stride_wise_plan auto-falls-back to
              * stride_auto_plan, which handles primes (Rader/Bluestein)
@@ -377,6 +418,7 @@ int main(int argc, char **argv) {
         const char *cat = all_sizes[si].category;
         size_t K = 4;
 
+        if (!_cell_in_filter(N, K, cells)) continue;
         if (!stride_wisdom_lookup(&wis, N, K)) continue;
 
         stride_plan_t *plan = stride_wise_plan(N, K, &reg, &wis);
