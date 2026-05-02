@@ -19,17 +19,17 @@
 
 Three panels showing GFLOP/s at each batch size. Blue = VectorFFT, Red = MKL. Different marker shapes per category. VectorFFT sits above MKL across the board.
 
-| Category | Cells | Best Win | Closest MKL Gets |
-|----------|-------|----------|-------------------|
-| **Small pow2** (8-128) | 15 | **8.98x** (N=8, K=4) | 2.38x (N=128, K=4) |
-| **Power-of-2** (256-131K) | 30 | **2.74x** (N=512, K=256) | 1.17x (N=131072, K=4) |
-| **Composite** (60-100K) | 33 | **5.15x** (N=60, K=32) | 1.69x (N=50000, K=256) |
-| **Prime powers** (3,5,7) | 30 | **3.95x** (N=390625, K=4) | 1.26x (N=243, K=4) |
-| **Prime powers** (R=11,13) | 15 | **3.06x** (N=14641, K=32) | 1.50x (N=2197, K=256) |
-| **Rader primes** | 24 | **3.42x** (N=641, K=32) | 1.05x (N=127, K=4) |
-| **Bluestein primes** | 24 | **3.09x** (N=83, K=4) | 1.01x (N=179, K=256) |
-| **Odd composites** | 18 | **4.20x** (N=175, K=256) | 1.86x (N=6615, K=4) |
-| **Mixed deep** | 18 | **3.09x** (N=4620, K=32) | 1.70x (N=6930, K=4) |
+| Category | Cells | Median | Best Win | Closest MKL Gets |
+|----------|-------|--------|----------|-------------------|
+| **Small pow2** (8-128) | 15 | **4.37x** | **8.98x** (N=8, K=4) | 2.38x (N=128, K=4) |
+| **Power-of-2** (256-131K) | 30 | **1.72x** | **2.74x** (N=512, K=256) | 1.17x (N=131072, K=4) |
+| **Composite** (60-100K) | 33 | **2.69x** | **5.15x** (N=60, K=32) | 1.69x (N=50000, K=256) |
+| **Prime powers** (3,5,7) | 30 | **2.68x** | **3.95x** (N=390625, K=4) | 1.26x (N=243, K=4) |
+| **Prime powers** (R=11,13) | 15 | **2.39x** | **3.06x** (N=14641, K=32) | 1.50x (N=2197, K=256) |
+| **Rader primes** | 24 | **1.96x** | **3.42x** (N=641, K=32) | 1.05x (N=127, K=4) |
+| **Bluestein primes** | 24 | **1.47x** | **3.09x** (N=83, K=4) | 1.01x (N=179, K=256) |
+| **Odd composites** | 18 | **2.67x** | **4.20x** (N=175, K=256) | 1.86x (N=6615, K=4) |
+| **Mixed deep** | 18 | **2.32x** | **3.09x** (N=4620, K=32) | 1.70x (N=6930, K=4) |
 
 ### Speedup over Intel MKL — All Categories
 
