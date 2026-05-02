@@ -1,0 +1,9 @@
+{
+  "os": "Linux",
+  "release": "4.4.0",
+  "machine": "x86_64",
+  "python": "3.12.3",
+  "hostname": "runsc",
+  "cpu_model": "unknown",
+  "first_core_id": "0"
+}

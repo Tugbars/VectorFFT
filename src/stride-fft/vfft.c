@@ -115,15 +115,33 @@ void vfft_destroy(vfft_plan p) {
  * ═══════════════════════════════════════════════════════════════ */
 
 void vfft_execute_fwd(vfft_plan p, double *re, double *im) {
-    stride_execute_fwd(p->inner, re, im);
+    stride_execute_fwd_auto(p->inner, re, im);
 }
 
 void vfft_execute_bwd(vfft_plan p, double *re, double *im) {
-    stride_execute_bwd(p->inner, re, im);
+    stride_execute_bwd_auto(p->inner, re, im);
 }
 
 void vfft_execute_bwd_normalized(vfft_plan p, double *re, double *im) {
-    stride_execute_bwd_normalized(p->inner, re, im);
+    stride_execute_bwd_auto(p->inner, re, im);
+
+    /* Scale by 1/N */
+    const size_t NK = (size_t)p->inner->N * p->inner->K;
+    const double inv_N = 1.0 / (double)p->inner->N;
+
+#if defined(__AVX2__) || defined(__AVX512F__)
+    {
+        __m256d vinv = _mm256_set1_pd(inv_N);
+        size_t i = 0;
+        for (; i + 4 <= NK; i += 4) {
+            _mm256_storeu_pd(&re[i], _mm256_mul_pd(_mm256_loadu_pd(&re[i]), vinv));
+            _mm256_storeu_pd(&im[i], _mm256_mul_pd(_mm256_loadu_pd(&im[i]), vinv));
+        }
+        for (; i < NK; i++) { re[i] *= inv_N; im[i] *= inv_N; }
+    }
+#else
+    for (size_t i = 0; i < NK; i++) { re[i] *= inv_N; im[i] *= inv_N; }
+#endif
 }
 
 /* ═══════════════════════════════════════════════════════════════

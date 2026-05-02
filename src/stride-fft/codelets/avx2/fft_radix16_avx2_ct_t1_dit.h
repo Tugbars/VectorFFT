@@ -34,20 +34,10 @@ radix16_t1_dit_fwd_avx2(
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t ios, size_t me)
 {
-    const __m256d sign_flip = _mm256_set1_pd(-0.0);
-    const __m256d sqrt2_inv = _mm256_set1_pd(0.70710678118654752440);
-
     __attribute__((aligned(32))) double spill_re[64];
     __attribute__((aligned(32))) double spill_im[64];
 
     __m256d x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;
-
-    const __m256d tw_W16_1_re = _mm256_set1_pd(W16_1_re);
-    const __m256d tw_W16_1_im = _mm256_set1_pd(W16_1_im);
-    const __m256d tw_W16_3_re = _mm256_set1_pd(W16_3_re);
-    const __m256d tw_W16_3_im = _mm256_set1_pd(W16_3_im);
-    const __m256d tw_W16_9_re = _mm256_set1_pd(W16_9_re);
-    const __m256d tw_W16_9_im = _mm256_set1_pd(W16_9_im);
 
     for (size_t m = 0; m < me; m += 4) {
         /* sub-FFT n2=0 */
@@ -87,12 +77,20 @@ radix16_t1_dit_fwd_avx2(
           x3_re=_mm256_sub_pd(t1r,t3i); x3_im=_mm256_add_pd(t1i,t3r);
         }
 
+        _mm_prefetch((const char*)&W_re[0*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[0*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[0*4], x0_re);
         _mm256_store_pd(&spill_im[0*4], x0_im);
+        _mm_prefetch((const char*)&W_re[4*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[4*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[1*4], x1_re);
         _mm256_store_pd(&spill_im[1*4], x1_im);
+        _mm_prefetch((const char*)&W_re[8*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[8*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[2*4], x2_re);
         _mm256_store_pd(&spill_im[2*4], x2_im);
+        _mm_prefetch((const char*)&W_re[12*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[12*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[3*4], x3_re);
         _mm256_store_pd(&spill_im[3*4], x3_im);
 
@@ -138,12 +136,20 @@ radix16_t1_dit_fwd_avx2(
           x3_re=_mm256_sub_pd(t1r,t3i); x3_im=_mm256_add_pd(t1i,t3r);
         }
 
+        _mm_prefetch((const char*)&W_re[1*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[1*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[4*4], x0_re);
         _mm256_store_pd(&spill_im[4*4], x0_im);
+        _mm_prefetch((const char*)&W_re[5*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[5*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[5*4], x1_re);
         _mm256_store_pd(&spill_im[5*4], x1_im);
+        _mm_prefetch((const char*)&W_re[9*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[9*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[6*4], x2_re);
         _mm256_store_pd(&spill_im[6*4], x2_im);
+        _mm_prefetch((const char*)&W_re[13*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[13*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[7*4], x3_re);
         _mm256_store_pd(&spill_im[7*4], x3_im);
 
@@ -189,12 +195,20 @@ radix16_t1_dit_fwd_avx2(
           x3_re=_mm256_sub_pd(t1r,t3i); x3_im=_mm256_add_pd(t1i,t3r);
         }
 
+        _mm_prefetch((const char*)&W_re[2*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[2*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[8*4], x0_re);
         _mm256_store_pd(&spill_im[8*4], x0_im);
+        _mm_prefetch((const char*)&W_re[6*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[6*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[9*4], x1_re);
         _mm256_store_pd(&spill_im[9*4], x1_im);
+        _mm_prefetch((const char*)&W_re[10*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[10*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[10*4], x2_re);
         _mm256_store_pd(&spill_im[10*4], x2_im);
+        _mm_prefetch((const char*)&W_re[14*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[14*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[11*4], x3_re);
         _mm256_store_pd(&spill_im[11*4], x3_im);
 
@@ -249,7 +263,15 @@ radix16_t1_dit_fwd_avx2(
         _mm256_store_pd(&spill_re[15*4], x3_re);
         _mm256_store_pd(&spill_im[15*4], x3_im);
 
-        /* PASS 2 */
+        /* PASS 2 — deferred constants (free regs during PASS 1) */
+        const __m256d sign_flip = _mm256_set1_pd(-0.0);
+        const __m256d sqrt2_inv = _mm256_set1_pd(0.70710678118654752440);
+        const __m256d tw_W16_1_re = _mm256_set1_pd(W16_1_re);
+        const __m256d tw_W16_1_im = _mm256_set1_pd(W16_1_im);
+        const __m256d tw_W16_3_re = _mm256_set1_pd(W16_3_re);
+        const __m256d tw_W16_3_im = _mm256_set1_pd(W16_3_im);
+        const __m256d tw_W16_9_re = _mm256_set1_pd(W16_9_re);
+        const __m256d tw_W16_9_im = _mm256_set1_pd(W16_9_im);
 
         /* column k1=0 */
         x0_re = _mm256_load_pd(&spill_re[0*4]);
@@ -408,20 +430,10 @@ radix16_t1_dit_bwd_avx2(
     const double * __restrict__ W_re, const double * __restrict__ W_im,
     size_t ios, size_t me)
 {
-    const __m256d sign_flip = _mm256_set1_pd(-0.0);
-    const __m256d sqrt2_inv = _mm256_set1_pd(0.70710678118654752440);
-
     __attribute__((aligned(32))) double spill_re[64];
     __attribute__((aligned(32))) double spill_im[64];
 
     __m256d x0_re,x0_im,x1_re,x1_im,x2_re,x2_im,x3_re,x3_im;
-
-    const __m256d tw_W16_1_re = _mm256_set1_pd(W16_1_re);
-    const __m256d tw_W16_1_im = _mm256_set1_pd(W16_1_im);
-    const __m256d tw_W16_3_re = _mm256_set1_pd(W16_3_re);
-    const __m256d tw_W16_3_im = _mm256_set1_pd(W16_3_im);
-    const __m256d tw_W16_9_re = _mm256_set1_pd(W16_9_re);
-    const __m256d tw_W16_9_im = _mm256_set1_pd(W16_9_im);
 
     for (size_t m = 0; m < me; m += 4) {
         /* sub-FFT n2=0 */
@@ -461,12 +473,20 @@ radix16_t1_dit_bwd_avx2(
           x3_re=_mm256_add_pd(t1r,t3i); x3_im=_mm256_sub_pd(t1i,t3r);
         }
 
+        _mm_prefetch((const char*)&W_re[0*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[0*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[0*4], x0_re);
         _mm256_store_pd(&spill_im[0*4], x0_im);
+        _mm_prefetch((const char*)&W_re[4*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[4*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[1*4], x1_re);
         _mm256_store_pd(&spill_im[1*4], x1_im);
+        _mm_prefetch((const char*)&W_re[8*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[8*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[2*4], x2_re);
         _mm256_store_pd(&spill_im[2*4], x2_im);
+        _mm_prefetch((const char*)&W_re[12*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[12*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[3*4], x3_re);
         _mm256_store_pd(&spill_im[3*4], x3_im);
 
@@ -512,12 +532,20 @@ radix16_t1_dit_bwd_avx2(
           x3_re=_mm256_add_pd(t1r,t3i); x3_im=_mm256_sub_pd(t1i,t3r);
         }
 
+        _mm_prefetch((const char*)&W_re[1*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[1*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[4*4], x0_re);
         _mm256_store_pd(&spill_im[4*4], x0_im);
+        _mm_prefetch((const char*)&W_re[5*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[5*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[5*4], x1_re);
         _mm256_store_pd(&spill_im[5*4], x1_im);
+        _mm_prefetch((const char*)&W_re[9*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[9*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[6*4], x2_re);
         _mm256_store_pd(&spill_im[6*4], x2_im);
+        _mm_prefetch((const char*)&W_re[13*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[13*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[7*4], x3_re);
         _mm256_store_pd(&spill_im[7*4], x3_im);
 
@@ -563,12 +591,20 @@ radix16_t1_dit_bwd_avx2(
           x3_re=_mm256_add_pd(t1r,t3i); x3_im=_mm256_sub_pd(t1i,t3r);
         }
 
+        _mm_prefetch((const char*)&W_re[2*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[2*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[8*4], x0_re);
         _mm256_store_pd(&spill_im[8*4], x0_im);
+        _mm_prefetch((const char*)&W_re[6*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[6*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[9*4], x1_re);
         _mm256_store_pd(&spill_im[9*4], x1_im);
+        _mm_prefetch((const char*)&W_re[10*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[10*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[10*4], x2_re);
         _mm256_store_pd(&spill_im[10*4], x2_im);
+        _mm_prefetch((const char*)&W_re[14*me+m], _MM_HINT_T0);
+        _mm_prefetch((const char*)&W_im[14*me+m], _MM_HINT_T0);
         _mm256_store_pd(&spill_re[11*4], x3_re);
         _mm256_store_pd(&spill_im[11*4], x3_im);
 
@@ -623,7 +659,15 @@ radix16_t1_dit_bwd_avx2(
         _mm256_store_pd(&spill_re[15*4], x3_re);
         _mm256_store_pd(&spill_im[15*4], x3_im);
 
-        /* PASS 2 */
+        /* PASS 2 — deferred constants (free regs during PASS 1) */
+        const __m256d sign_flip = _mm256_set1_pd(-0.0);
+        const __m256d sqrt2_inv = _mm256_set1_pd(0.70710678118654752440);
+        const __m256d tw_W16_1_re = _mm256_set1_pd(W16_1_re);
+        const __m256d tw_W16_1_im = _mm256_set1_pd(W16_1_im);
+        const __m256d tw_W16_3_re = _mm256_set1_pd(W16_3_re);
+        const __m256d tw_W16_3_im = _mm256_set1_pd(W16_3_im);
+        const __m256d tw_W16_9_re = _mm256_set1_pd(W16_9_re);
+        const __m256d tw_W16_9_im = _mm256_set1_pd(W16_9_im);
 
         /* column k1=0 */
         x0_re = _mm256_load_pd(&spill_re[0*4]);

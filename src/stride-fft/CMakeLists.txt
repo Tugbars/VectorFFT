@@ -258,6 +258,73 @@ else()
     message(WARNING "FFTW3 not found -- bench_mt disabled. Install via: vcpkg install fftw3")
 endif()
 
+# ── R=4 isolated codelet microbenchmark (for VTune / perf stat) ──
+add_executable(vfft_bench_r4 bench/bench_r4_codelet.c)
+target_link_libraries(vfft_bench_r4 PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_r4 PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_bench_r4 PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── Unified codelet microbenchmark (R=2,4,8,16,32 — VTune / perf stat) ──
+add_executable(vfft_bench_codelet bench/bench_codelet.c)
+target_link_libraries(vfft_bench_codelet PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_codelet PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_bench_codelet PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── R=16 DIF codelet correctness gate ──
+add_executable(vfft_test_r16_dif validation/test_radix16_dif.c)
+target_link_libraries(vfft_test_r16_dif PRIVATE vfft_stride)
+target_compile_definitions(vfft_test_r16_dif PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_test_r16_dif PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── R=32 DIF codelet correctness gate ──
+add_executable(vfft_test_r32_dif validation/test_radix32_dif.c)
+target_link_libraries(vfft_test_r32_dif PRIVATE vfft_stride)
+target_compile_definitions(vfft_test_r32_dif PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_test_r32_dif PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── R=16 DIF vs DIT pipeline A/B ──
+add_executable(vfft_bench_r16_dif_pipeline bench/bench_r16_dif_pipeline.c)
+target_link_libraries(vfft_bench_r16_dif_pipeline PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_r16_dif_pipeline PRIVATE
+    _CRT_SECURE_NO_WARNINGS
+    VFFT_BENCH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/bench"
+)
+set_target_properties(vfft_bench_r16_dif_pipeline PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── Blocked executor experiment (standard vs blocked, VTune) ──
+add_executable(vfft_bench_blocked bench/bench_blocked_executor.c)
+target_link_libraries(vfft_bench_blocked PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_blocked PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_bench_blocked PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# ── Joint DP-blocked search at large N vs MKL ──
+# Tests whether extending the joint (factorization × blocked executor) search
+# beyond the N<=2048 gate helps on close-call cases (K=4, large pow2 N).
+# In-memory wisdom only — the canonical wisdom file is never modified.
+add_executable(vfft_bench_blocked_mkl bench/bench_blocked_vs_mkl.c)
+target_link_libraries(vfft_bench_blocked_mkl PRIVATE vfft_stride)
+target_compile_definitions(vfft_bench_blocked_mkl PRIVATE _CRT_SECURE_NO_WARNINGS)
+set_target_properties(vfft_bench_blocked_mkl PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+if(VFFT_HAS_MKL)
+    target_link_libraries(vfft_bench_blocked_mkl PRIVATE ${MKL_LIBS})
+    target_include_directories(vfft_bench_blocked_mkl PRIVATE ${MKL_INC})
+    target_compile_definitions(vfft_bench_blocked_mkl PRIVATE VFFT_HAS_MKL MKL_ILP64)
+endif()
+
 # ── Comprehensive 1D benchmark with CSV output ──
 add_executable(vfft_bench_1d_csv bench/bench_1d_csv.c)
 target_link_libraries(vfft_bench_1d_csv PRIVATE vfft_stride)
