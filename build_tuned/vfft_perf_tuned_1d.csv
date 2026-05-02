@@ -1,3 +1,5 @@
 N,K,category,factors,vfft_ns,mkl_ns,vfft_gflops,mkl_gflops,ratio_vs_mkl
-127,256,rader,[override],88277,176552,12.869,6.435,2.000
-311,256,bluestein,[override],516932,672208,6.377,4.904,1.300
+127,256,rader,[override],88146,172980,12.889,6.568,1.962
+251,256,rader,[override],192745,356810,13.287,7.178,1.851
+2801,256,rader,[override],4588325,8858965,8.948,4.635,1.931
+311,256,bluestein,[override],450312,803356,7.320,4.103,1.784

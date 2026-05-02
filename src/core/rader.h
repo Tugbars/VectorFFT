@@ -36,6 +36,8 @@ typedef struct {
     size_t K;             /* total batch count */
     size_t B;             /* block size for cache-friendly execution */
 
+    int n_threads;        /* T_plan snapshot: scratch is sized for this many parallel workers */
+
     int *gpow;            /* N-1 entries: g^i mod N   (fwd gather, bwd scatter) */
     int *ginvpow;         /* N-1 entries: g^{-i} mod N (fwd scatter, bwd gather) */
 
@@ -44,7 +46,8 @@ typedef struct {
     double *omega_bwd_re; /* (N-1)*B: expanded backward kernel */
     double *omega_bwd_im;
 
-    double *scratch_re;   /* (N-1)*B work buffer */
+    double *scratch_re;   /* n_threads * N*B doubles; slot t base = scratch_re + t*N*B
+                           * (N-1)*B for FFT data + B for DC stash, per slot */
     double *scratch_im;
 
     stride_plan_t *inner_plan;  /* (N-1)-point plan with K = B */
@@ -195,18 +198,33 @@ static void _rader_precompute_kernel(
  * where a[p] = x[g^p], convolution via FFT_{N-1}
  * ═══════════════════════════════════════════════════════════════ */
 
-static void _rader_execute_fwd(void *data, double *re, double *im) {
-    stride_rader_data_t *d = (stride_rader_data_t *)data;
+/* ── Worker arg shared by fwd and bwd ────────────────────────── */
+typedef struct {
+    stride_rader_data_t *d;
+    double *re;
+    double *im;
+    size_t b0_start;
+    size_t b0_end;
+    int tid;
+} _rader_worker_arg_t;
+
+/* ── Per-thread forward worker: processes [b0_start, b0_end) of K ── */
+static void _rader_worker_fwd(void *arg) {
+    _rader_worker_arg_t *a = (_rader_worker_arg_t *)arg;
+    stride_rader_data_t *d = a->d;
     const int N = d->N;
     const int nm1 = N - 1;
     const size_t K = d->K, B = d->B;
-    double *sr = d->scratch_re, *si = d->scratch_im;
+    const size_t NB = (size_t)N * B;   /* per-slot stride: (N-1)*B FFT + B DC = N*B */
+    double *sr = d->scratch_re + (size_t)a->tid * NB;
+    double *si = d->scratch_im + (size_t)a->tid * NB;
+    double * const re = a->re;
+    double * const im = a->im;
 
-    for (size_t b0 = 0; b0 < K; b0 += B) {
-        /* 1. DC sum: X[0] = Σ x[n] for this block.
-         * Note: x[0] (input at position 0) is needed separately in step 6.
-         * Since gpow/ginvpow never map to 0, re[b0+k] holds x[0] until step 7. */
-        double *dc_re = sr + (size_t)nm1 * B;  /* stash DC after scratch data */
+    for (size_t b0 = a->b0_start; b0 < a->b0_end; b0 += B) {
+        /* 1. DC sum: X[0] = Σ x[n]. Stash after scratch data.
+         * re[b0+k] still holds x[0] until step 7 (gpow/ginvpow never touch index 0). */
+        double *dc_re = sr + (size_t)nm1 * B;
         double *dc_im = si + (size_t)nm1 * B;
         memset(dc_re, 0, B * sizeof(double));
         memset(dc_im, 0, B * sizeof(double));
@@ -227,18 +245,12 @@ static void _rader_execute_fwd(void *data, double *re, double *im) {
             memcpy(si + dst, im + src, B * sizeof(double));
         }
 
-        /* 3. FFT_{N-1} (serial — outer plan owns threading) */
         stride_execute_fwd_serial(d->inner_plan, sr, si);
-
-        /* 4. Flat pointwise multiply by Ω_fwd */
         _blue_cmul_vv(sr, si, sr, si,
                       d->omega_fwd_re, d->omega_fwd_im, (size_t)nm1 * B);
-
-        /* 5. IFFT_{N-1} → convolution result (serial) */
         stride_execute_bwd_serial(d->inner_plan, sr, si);
 
-        /* 6. Scatter: X[g^{-q}] = x[0] + conv[q]
-         * re[b0+k] still holds x[0] — gpow/ginvpow never touch index 0. */
+        /* 6. Scatter: X[g^{-q}] = x[0] + conv[q] */
         for (int q = 0; q < nm1; q++) {
             size_t dst = (size_t)d->ginvpow[q] * K + b0;
             size_t src_off = (size_t)q * B;
@@ -254,26 +266,21 @@ static void _rader_execute_fwd(void *data, double *re, double *im) {
     }
 }
 
-
-/* ═══════════════════════════════════════════════════════════════
- * EXECUTE -- BACKWARD DFT (unnormalized inverse, block-walk)
- *
- * x̃[0] = Σ X[k]
- * x̃[g^p] = X[0] + (ã ⊛ b̃_bwd)[p]
- *
- * where ã[q] = X[g^{-q}], backward kernel has conjugated twiddles.
- * User divides by N for proper normalization.
- * ═══════════════════════════════════════════════════════════════ */
-
-static void _rader_execute_bwd(void *data, double *re, double *im) {
-    stride_rader_data_t *d = (stride_rader_data_t *)data;
+/* ── Per-thread backward worker: gather by ginvpow, scatter by gpow,
+ * conjugated kernel Ω_bwd ── */
+static void _rader_worker_bwd(void *arg) {
+    _rader_worker_arg_t *a = (_rader_worker_arg_t *)arg;
+    stride_rader_data_t *d = a->d;
     const int N = d->N;
     const int nm1 = N - 1;
     const size_t K = d->K, B = d->B;
-    double *sr = d->scratch_re, *si = d->scratch_im;
+    const size_t NB = (size_t)N * B;
+    double *sr = d->scratch_re + (size_t)a->tid * NB;
+    double *si = d->scratch_im + (size_t)a->tid * NB;
+    double * const re = a->re;
+    double * const im = a->im;
 
-    for (size_t b0 = 0; b0 < K; b0 += B) {
-        /* 1. DC sum: x̃[0] = Σ X[k]. Stash after scratch data. */
+    for (size_t b0 = a->b0_start; b0 < a->b0_end; b0 += B) {
         double *dc_re = sr + (size_t)nm1 * B;
         double *dc_im = si + (size_t)nm1 * B;
         memset(dc_re, 0, B * sizeof(double));
@@ -287,7 +294,7 @@ static void _rader_execute_bwd(void *data, double *re, double *im) {
             }
         }
 
-        /* 2. Gather by ginvpow (backward uses inverse permutation) */
+        /* Gather by ginvpow (backward uses inverse permutation) */
         for (int q = 0; q < nm1; q++) {
             size_t src = (size_t)d->ginvpow[q] * K + b0;
             size_t dst = (size_t)q * B;
@@ -295,18 +302,12 @@ static void _rader_execute_bwd(void *data, double *re, double *im) {
             memcpy(si + dst, im + src, B * sizeof(double));
         }
 
-        /* 3. FFT_{N-1} (serial — outer plan owns threading) */
         stride_execute_fwd_serial(d->inner_plan, sr, si);
-
-        /* 4. Flat pointwise multiply by Ω_bwd */
         _blue_cmul_vv(sr, si, sr, si,
                       d->omega_bwd_re, d->omega_bwd_im, (size_t)nm1 * B);
-
-        /* 5. IFFT_{N-1} (serial) */
         stride_execute_bwd_serial(d->inner_plan, sr, si);
 
-        /* 6. Scatter: x̃[g^p] = X[0] + conv[p]
-         * re[b0+k] still holds X[0] — gpow/ginvpow never touch index 0. */
+        /* Scatter: x̃[g^p] = X[0] + conv[p] */
         for (int p = 0; p < nm1; p++) {
             size_t dst = (size_t)d->gpow[p] * K + b0;
             size_t src_off = (size_t)p * B;
@@ -316,10 +317,95 @@ static void _rader_execute_bwd(void *data, double *re, double *im) {
             }
         }
 
-        /* 7. x̃[0] = Σ X[k] (overwrites X[0] — must come after step 6) */
         memcpy(re + b0, dc_re, B * sizeof(double));
         memcpy(im + b0, dc_im, B * sizeof(double));
     }
+}
+
+/* ── Dispatcher: split block range across T workers (mirror of Bluestein) ── */
+static void _rader_execute_fwd(void *data, double *re, double *im) {
+    stride_rader_data_t *d = (stride_rader_data_t *)data;
+    const size_t K = d->K, B = d->B;
+    const size_t n_blocks = (K + B - 1) / B;
+
+    int T = stride_get_num_threads();
+    if (T > d->n_threads) T = d->n_threads;
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T > (int)n_blocks) T = (int)n_blocks;
+    if (T < 1) T = 1;
+
+    if (T == 1) {
+        _rader_worker_arg_t a = { d, re, im, 0, K, 0 };
+        _rader_worker_fwd(&a);
+        return;
+    }
+
+    _rader_worker_arg_t args[64];
+    for (int t = 0; t < T; t++) {
+        size_t bk_start = (n_blocks * (size_t)t)       / (size_t)T;
+        size_t bk_end   = (n_blocks * (size_t)(t + 1)) / (size_t)T;
+        size_t b0_end   = bk_end * B;
+        if (b0_end > K) b0_end = K;
+        args[t].d  = d;
+        args[t].re = re;
+        args[t].im = im;
+        args[t].b0_start = bk_start * B;
+        args[t].b0_end   = b0_end;
+        args[t].tid = t;
+    }
+    for (int t = 1; t < T; t++)
+        _stride_pool_dispatch(&_stride_workers[t - 1],
+                              _rader_worker_fwd, &args[t]);
+    _rader_worker_fwd(&args[0]);
+    _stride_pool_wait_all();
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * EXECUTE -- BACKWARD DFT (unnormalized inverse, block-walk)
+ *
+ * x̃[0] = Σ X[k]
+ * x̃[g^p] = X[0] + (ã ⊛ b̃_bwd)[p]
+ *
+ * where ã[q] = X[g^{-q}], backward kernel has conjugated twiddles.
+ * User divides by N for proper normalization.
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void _rader_execute_bwd(void *data, double *re, double *im) {
+    stride_rader_data_t *d = (stride_rader_data_t *)data;
+    const size_t K = d->K, B = d->B;
+    const size_t n_blocks = (K + B - 1) / B;
+
+    int T = stride_get_num_threads();
+    if (T > d->n_threads) T = d->n_threads;
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T > (int)n_blocks) T = (int)n_blocks;
+    if (T < 1) T = 1;
+
+    if (T == 1) {
+        _rader_worker_arg_t a = { d, re, im, 0, K, 0 };
+        _rader_worker_bwd(&a);
+        return;
+    }
+
+    _rader_worker_arg_t args[64];
+    for (int t = 0; t < T; t++) {
+        size_t bk_start = (n_blocks * (size_t)t)       / (size_t)T;
+        size_t bk_end   = (n_blocks * (size_t)(t + 1)) / (size_t)T;
+        size_t b0_end   = bk_end * B;
+        if (b0_end > K) b0_end = K;
+        args[t].d  = d;
+        args[t].re = re;
+        args[t].im = im;
+        args[t].b0_start = bk_start * B;
+        args[t].b0_end   = b0_end;
+        args[t].tid = t;
+    }
+    for (int t = 1; t < T; t++)
+        _stride_pool_dispatch(&_stride_workers[t - 1],
+                              _rader_worker_bwd, &args[t]);
+    _rader_worker_bwd(&args[0]);
+    _stride_pool_wait_all();
 }
 
 
@@ -367,6 +453,12 @@ static stride_plan_t *stride_rader_plan(
     d->B = block_K;
     d->inner_plan = inner_plan;
 
+    /* Snapshot thread count: scratch is sized for T_plan parallel workers.
+     * Effective T at execute time is capped at this value. */
+    int T_plan = stride_get_num_threads();
+    if (T_plan < 1) T_plan = 1;
+    d->n_threads = T_plan;
+
     /* Primitive root */
     int g = _rader_find_generator(N);
 
@@ -382,10 +474,12 @@ static stride_plan_t *stride_rader_plan(
     d->omega_bwd_re = (double *)STRIDE_ALIGNED_ALLOC(64, NB * sizeof(double));
     d->omega_bwd_im = (double *)STRIDE_ALIGNED_ALLOC(64, NB * sizeof(double));
 
-    /* Scratch: (N-1)*B for FFT data + B for DC stash = N*B total */
-    size_t scratch_sz = (size_t)N * block_K;
-    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_sz * sizeof(double));
-    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_sz * sizeof(double));
+    /* Scratch: T_plan * N * B per slot ((N-1)*B FFT + B DC = N*B per worker).
+     * Slot 0 (the first N*B doubles) is reused by kernel precompute below. */
+    size_t scratch_per_slot = (size_t)N * block_K;
+    size_t scratch_total = (size_t)T_plan * scratch_per_slot;
+    d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_total * sizeof(double));
+    d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64, scratch_total * sizeof(double));
 
     /* Precompute forward kernel: b_rev[m] = W_N^{ginvpow[m]}, sign = -1 */
     _rader_precompute_kernel(N, block_K, d->ginvpow, -1.0,

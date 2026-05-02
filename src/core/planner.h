@@ -839,18 +839,19 @@ static stride_plan_t *stride_auto_plan_wis(int N, size_t K,
     if (stride_factorize(N, K, reg, &fact) == 0)
         return _stride_build_plan(N, K, fact.factors, fact.nfactors, reg);
 
-    /* 3. Prime with non-smooth N-1: Bluestein (recurse with wisdom) */
+    /* 3. Prime with non-smooth N-1: Bluestein (recurse with wisdom).
+     * Block size is T-aware: more blocks at higher T for outer-loop MT. */
     if (_stride_is_prime(N) && !_stride_is_rader_friendly(N)) {
         int M = _bluestein_choose_m(N);
-        size_t B = _bluestein_block_size(M, K);
+        size_t B = _bluestein_block_size_T(M, K, stride_get_num_threads());
         stride_plan_t *inner = stride_auto_plan_wis(M, B, reg, wis);
         if (inner) return stride_bluestein_plan(N, K, B, inner, M);
     }
 
-    /* 4. Prime with smooth N-1: Rader (recurse with wisdom) */
+    /* 4. Prime with smooth N-1: Rader (recurse with wisdom). */
     if (_stride_is_prime(N) && _stride_is_rader_friendly(N)) {
         int nm1 = N - 1;
-        size_t B = _bluestein_block_size(nm1, K);
+        size_t B = _bluestein_block_size_T(nm1, K, stride_get_num_threads());
         stride_plan_t *inner = stride_auto_plan_wis(nm1, B, reg, wis);
         if (inner) return stride_rader_plan(N, K, B, inner);
     }
@@ -948,7 +949,7 @@ static stride_plan_t *stride_r2c_auto_plan(int N, size_t K,
                                             const stride_registry_t *reg) {
     if (N < 2 || (N & 1)) return NULL;
     int halfN = N / 2;
-    size_t B = _bluestein_block_size(halfN, K);
+    size_t B = _bluestein_block_size_T(halfN, K, stride_get_num_threads());
     stride_plan_t *inner = stride_auto_plan(halfN, B, reg);
     if (!inner) return NULL;
     return stride_r2c_plan(N, K, B, inner);

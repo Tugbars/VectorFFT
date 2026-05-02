@@ -25,7 +25,9 @@
 #include <string.h>
 #include <math.h>
 #include "threads.h"
-#include "prefetch.h"
+/* prefetch.h dropped — stride_prefetch_tw was never called. Codelets emit
+ * raw _mm_prefetch from the generators (688 calls in r8/r16). If/when a
+ * prefetch calibration framework is added, it'll have a different shape. */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
