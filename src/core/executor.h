@@ -762,6 +762,46 @@ static inline void stride_execute_bwd(const stride_plan_t *plan,
 
 
 /* ═══════════════════════════════════════════════════════════════
+ * SERIAL ENTRY POINTS — bypass thread dispatch
+ *
+ * Used by overrides (Bluestein, Rader) when calling inner sub-plans:
+ * the override is itself executing inside one of N parallel slices,
+ * so the inner FFT must NOT re-thread (would dispatch T more workers
+ * at K=B granularity, producing pure overhead).
+ *
+ * Semantics: same as stride_execute_fwd/bwd but never dispatches workers.
+ * If the sub-plan also has an override, that override is invoked
+ * (it's responsible for its own threading discipline).
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline void stride_execute_fwd_serial(const stride_plan_t *plan,
+                                              double *re, double *im) {
+    if (plan->override_fwd) {
+        plan->override_fwd(plan->override_data, re, im);
+        return;
+    }
+    if (plan->use_dif_forward) {
+        _stride_execute_fwd_dif_slice(plan, re, im, plan->K, plan->K);
+        return;
+    }
+    _stride_execute_fwd_slice(plan, re, im, plan->K, plan->K);
+}
+
+static inline void stride_execute_bwd_serial(const stride_plan_t *plan,
+                                              double *re, double *im) {
+    if (plan->override_bwd) {
+        plan->override_bwd(plan->override_data, re, im);
+        return;
+    }
+    if (plan->use_dif_forward) {
+        _stride_execute_bwd_dif_slice(plan, re, im, plan->K, plan->K);
+        return;
+    }
+    _stride_execute_bwd_slice(plan, re, im, plan->K, plan->K);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
  * NORMALIZED BACKWARD: bwd(fwd(x)) = x  (not N*x)
  *
  * Applies 1/N scaling after the backward transform.

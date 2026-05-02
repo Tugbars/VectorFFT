@@ -318,7 +318,7 @@ static void _bluestein_precompute_kernel(
         }
     }
 
-    stride_execute_fwd(inner_plan, work_re, work_im);
+    stride_execute_fwd_serial(inner_plan, work_re, work_im);
 
     /* Copy full M*B result with 1/M baked in.
      * All B lanes are identical (broadcast input), so the expanded
@@ -358,14 +358,14 @@ static void _bluestein_execute_fwd(void *data, double *re, double *im) {
         memset(sr + (size_t)N * B, 0, (size_t)(M - N) * B * sizeof(double));
         memset(si + (size_t)N * B, 0, (size_t)(M - N) * B * sizeof(double));
 
-        /* 2. Forward FFT of size M */
-        stride_execute_fwd(d->inner_plan, sr, si);
+        /* 2. Forward FFT of size M (serial — outer plan owns threading) */
+        stride_execute_fwd_serial(d->inner_plan, sr, si);
 
         /* 3. Flat pointwise multiply by pre-expanded B_hat (single SIMD pass) */
         _blue_cmul_vv(sr, si, sr, si, d->B_hat_re, d->B_hat_im, (size_t)M * B);
 
         /* 4. Backward FFT of size M -> convolution result */
-        stride_execute_bwd(d->inner_plan, sr, si);
+        stride_execute_bwd_serial(d->inner_plan, sr, si);
 
         /* 5. Demodulate: output[n*K+b0+k] = scratch[n*B+k] * chirp[n] */
         for (int n = 0; n < N; n++) {
@@ -402,14 +402,14 @@ static void _bluestein_execute_bwd(void *data, double *re, double *im) {
         memset(sr + (size_t)N * B, 0, (size_t)(M - N) * B * sizeof(double));
         memset(si + (size_t)N * B, 0, (size_t)(M - N) * B * sizeof(double));
 
-        /* 2. Forward FFT */
-        stride_execute_fwd(d->inner_plan, sr, si);
+        /* 2. Forward FFT (serial — outer plan owns threading) */
+        stride_execute_fwd_serial(d->inner_plan, sr, si);
 
         /* 3. Flat pointwise multiply by pre-expanded C_hat */
         _blue_cmul_vv(sr, si, sr, si, d->C_hat_re, d->C_hat_im, (size_t)M * B);
 
         /* 4. Backward FFT */
-        stride_execute_bwd(d->inner_plan, sr, si);
+        stride_execute_bwd_serial(d->inner_plan, sr, si);
 
         /* 5. Demodulate by conj(chirp) */
         for (int n = 0; n < N; n++) {
