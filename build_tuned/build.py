@@ -116,8 +116,21 @@ def find_mkl():
     return inc, lib
 
 
-def build_cmd(tc, src_c, out_bin, mkl=False):
+def find_fftw():
+    """Locate FFTW3 (vcpkg install). Returns (inc, lib_dir, dll_dir)."""
+    candidates = [
+        Path(r'C:\vcpkg\installed\x64-windows'),
+        Path(r'C:\Users\Tugbars\Desktop\highSpeedFFT\vcpkg\installed\x64-windows'),
+    ]
+    for root in candidates:
+        if (root / 'include' / 'fftw' / 'fftw3.h').is_file():
+            return root / 'include' / 'fftw', root / 'lib', root / 'bin'
+    return None, None, None
+
+
+def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False):
     mkl_inc, mkl_lib = (None, None)
+    fftw_inc, fftw_lib, fftw_dll = (None, None, None)
     if mkl:
         mkl_inc, mkl_lib = find_mkl()
         if not mkl_inc or not mkl_lib:
@@ -127,6 +140,14 @@ def build_cmd(tc, src_c, out_bin, mkl=False):
             sys.exit(2)
         print(f'  [mkl] include: {mkl_inc}')
         print(f'  [mkl] libs:    {mkl_lib}')
+    if fftw:
+        fftw_inc, fftw_lib, fftw_dll = find_fftw()
+        if not fftw_inc or not fftw_lib:
+            print('  [error] --fftw requested but FFTW3 not found in vcpkg',
+                  file=sys.stderr)
+            sys.exit(2)
+        print(f'  [fftw] include: {fftw_inc}')
+        print(f'  [fftw] libs:    {fftw_lib}')
 
     if tc['is_msvc_style']:
         # MSVC-style: /I instead of -I, /Fe for output
@@ -151,6 +172,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False):
              '-Wno-deprecated-declarations']
     if mkl:
         flags += ['-DVFFT_HAS_MKL', '-DMKL_ILP64', f'-I{mkl_inc}']
+    if fftw:
+        flags += ['-DVFFT_HAS_FFTW', f'-I{fftw_inc}']
     cmd = [tc['cc']] + flags + build_includes() + [str(src_c), '-o', str(out_bin)]
     if tc['is_windows'] and tc['is_icx']:
         cmd.append('-fuse-ld=lld')
@@ -164,6 +187,11 @@ def build_cmd(tc, src_c, out_bin, mkl=False):
             cmd += [f'-L{mkl_lib}',
                     '-lmkl_intel_ilp64', '-lmkl_sequential', '-lmkl_core',
                     '-lpthread', '-lm', '-ldl']
+    if fftw:
+        if tc['is_windows']:
+            cmd += [str(Path(fftw_lib) / 'fftw3.lib')]
+        else:
+            cmd += [f'-L{fftw_lib}', '-lfftw3', '-lm']
     if not tc['is_windows']:
         cmd.append('-lm')
     return cmd
@@ -231,6 +259,9 @@ def main():
                          '-DVFFT_HAS_MKL -DMKL_ILP64 and the three '
                          'libs (mkl_intel_ilp64, mkl_sequential, mkl_core). '
                          'Requires MKLROOT or oneAPI default install path.')
+    ap.add_argument('--fftw', action='store_true',
+                    help='Link FFTW3 (vcpkg double-precision). Adds '
+                         '-DVFFT_HAS_FFTW and fftw3.lib.')
     args = ap.parse_args()
 
     tc = detect_toolchain()
@@ -249,7 +280,7 @@ def main():
 
     stem = src.stem
     out_bin = HERE / (stem + '.exe' if tc['is_windows'] else stem)
-    cmd = build_cmd(tc, src, out_bin, mkl=args.mkl)
+    cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw)
 
     print(f'[compile] {tc["cc"]} ... -> {out_bin.name}', flush=True)
     t0 = time.time()
@@ -272,7 +303,12 @@ def main():
         return 0
 
     print(f'[run] {out_bin}', flush=True)
-    rc = subprocess.run([str(out_bin)]).returncode
+    run_env = os.environ.copy()
+    if args.fftw:
+        _, _, fftw_dll = find_fftw()
+        if fftw_dll and fftw_dll.is_dir():
+            run_env['PATH'] = str(fftw_dll) + os.pathsep + run_env.get('PATH', '')
+    rc = subprocess.run([str(out_bin)], env=run_env).returncode
     print(f'[run] exit code {rc}')
     return rc
 

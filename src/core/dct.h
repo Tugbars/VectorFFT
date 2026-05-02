@@ -6,22 +6,41 @@
  *
  *   Y[k] = 2 * sum_{n=0..N-1} x[n] * cos( π k (2n+1) / (2N) )    for k=0..N-1
  *
- * Algorithm: 2N-point R2C trick.
- *   1. Build even extension: y[m] = x[m] for m<N, y[m] = x[2N-1-m] for m>=N
- *   2. R2C of 2N reals -> Y_2N[0..N] complex bins
- *   3. Post-process: DCT_II[k] = 2*(cos(πk/(2N))*Re(Y_2N[k]) + sin(πk/(2N))*Im(Y_2N[k]))
+ * Algorithm: **Makhoul's reduction** — DCT-II via N-point R2C plus a clever
+ * pre-permutation. ~2× faster than the textbook 2N-point R2C approach,
+ * matching FFTW's own implementation in reodft010e-r2hc.c.
  *
- * Cost: dominated by the 2N-point R2C (which is ≈ 1× cost of an N-point
- * complex FFT since R2C of 2N reals is internally an N-point complex FFT).
+ * Reference: J. Makhoul, "A fast cosine transform in one and two dimensions,"
+ * IEEE Trans. ASSP-28 (1), 27-34 (1980).
+ *
+ * Pipeline:
+ *   1. Pre-permute: even-indexed samples into front half, odd-indexed
+ *      samples into back half reversed:
+ *        buf[0]   = x[0]
+ *        buf[i]   = x[2i]      for i=1..N/2-1
+ *        buf[N-i] = x[2i-1]    (same i)
+ *        buf[N/2] = x[N-1]     (only when N even)
+ *   2. N-point R2C of buf -> Z[0..N/2] complex bins
+ *   3. Post-process butterfly:
+ *        Y[0]   = 2 * Re(Z[0])
+ *        Y[i]   = wa*a + wb*b  where a=2Re(Z[i]), b=2Im(Z[i])
+ *        Y[N-i] = wb*a - wa*b
+ *        Y[N/2] = 2 * cos(π/4) * Re(Z[N/2])  (N even)
+ *      with wa = cos(πi/(2N)), wb = sin(πi/(2N))
+ *
+ * Cost: dominated by the N-point R2C (~half the work of a 2N-point R2C).
  *
  * Layout (split-complex batched, real input):
- *   in[n * K + k]  for n=0..N-1, k=0..K-1
- *   out[n * K + k]  for n=0..N-1 (DCT bins), same layout
+ *   in[n*K + k]  for n=0..N-1, k=0..K-1
+ *   out[n*K + k] same layout (DCT bins)
  *
  * Inverse (DCT-III, FFTW REDFT01) is NOT implemented in v1.0 — defer to next pass.
  *
+ * v1.0 limitation: requires N to be even (our R2C implementation requires
+ * even input length). Odd N would need a different inner-FFT path; deferred.
+ *
  * MT: defers all MT to the inner R2C plan (which has its own outer-K dispatcher).
- * Even extension and post-process are O(NK) memory passes, single-threaded for now.
+ * Pre-permute and post-process are O(NK) memory passes, single-threaded for now.
  */
 #ifndef STRIDE_DCT_H
 #define STRIDE_DCT_H
@@ -40,24 +59,27 @@
  * ═══════════════════════════════════════════════════════════════ */
 
 typedef struct {
-    int N;                 /* DCT-II size (input length, output bin count) */
+    int N;                 /* DCT-II size (must be even). Output bin count = N. */
     size_t K;              /* batch count */
-    int n_threads;         /* T_plan snapshot (R2C inner uses this) */
+    int n_threads;         /* T_plan snapshot */
 
-    /* Post-process twiddles: cos(πk/(2N)) and sin(πk/(2N)) for k=0..N-1 */
+    /* Post-process twiddles: cos(πi/(2N)), sin(πi/(2N)) for i=0..N/2 */
     double *cos_tw;
     double *sin_tw;
 
-    /* Internal scratch for 2N-point R2C (sized 2N*K each) */
-    double *ext_re;
-    double *ext_im;
+    /* Internal scratch for N-point R2C (sized N*K each).
+     * Holds permuted real input, then in-place R2C freq output. */
+    double *buf_re;
+    double *buf_im;
 
-    stride_plan_t *r2c_plan;   /* 2N-point R2C plan with batch K */
+    stride_plan_t *r2c_plan;   /* N-point R2C plan with batch K */
 } stride_dct2_data_t;
 
 
 /* ═══════════════════════════════════════════════════════════════
  * EXECUTE -- FORWARD DCT-II (in-place over re; im unused)
+ *
+ * Implements FFTW's apply_re10 verbatim, vectorized across the K batch axis.
  * ═══════════════════════════════════════════════════════════════ */
 
 static void _dct2_execute_fwd(void *data, double *re, double *im) {
@@ -65,42 +87,155 @@ static void _dct2_execute_fwd(void *data, double *re, double *im) {
     stride_dct2_data_t *d = (stride_dct2_data_t *)data;
     const int N = d->N;
     const size_t K = d->K;
-    const size_t twoN = 2 * (size_t)N;
 
-    /* 1. Even extension into ext_re. Lower half copies x as-is;
-     *    upper half mirrors (y[2N-1-m] = x[m]). */
-    for (int m = 0; m < N; m++) {
-        memcpy(d->ext_re + (size_t)m * K,
-               re + (size_t)m * K,
+    /* 1. Pre-permute:
+     *      buf[0]   = re[0]
+     *      buf[i]   = re[2i]      for i=1..⌊(N-1)/2⌋
+     *      buf[N-i] = re[2i-1]    (same i)
+     *      buf[N/2] = re[N-1]     (when N is even, the trailing odd index)
+     */
+    memcpy(d->buf_re, re, K * sizeof(double));     /* buf[0] = re[0] */
+
+    int i;
+    for (i = 1; i + i < N; i++) {
+        memcpy(d->buf_re + (size_t)i       * K,
+               re        + (size_t)(2 * i) * K,
+               K * sizeof(double));
+        memcpy(d->buf_re + (size_t)(N - i)     * K,
+               re        + (size_t)(2 * i - 1) * K,
                K * sizeof(double));
     }
-    for (int m = 0; m < N; m++) {
-        memcpy(d->ext_re + (size_t)(2 * N - 1 - m) * K,
-               re + (size_t)m * K,
+    if (i + i == N) {   /* even N: middle bin gets the trailing odd index */
+        memcpy(d->buf_re + (size_t)i       * K,
+               re        + (size_t)(N - 1) * K,
                K * sizeof(double));
     }
-    /* ext_im is freq-output workspace; R2C overwrites it. No init needed. */
 
-    /* 2. R2C of size 2N. After this, ext_re/ext_im hold the freq output
-     *    at the first (N+1)*K positions. */
-    stride_execute_fwd(d->r2c_plan, d->ext_re, d->ext_im);
+    /* 2. N-point R2C in-place. After this, buf_re/buf_im hold (N/2+1)
+     *    complex bins at positions 0..N/2 in split-complex layout. */
+    stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);
 
-    /* 3. Post-process: write DCT-II bins back into the user's re buffer.
-     *    DCT_II_FFTW[k] = cos[k] * Re(Y[k]) + sin[k] * Im(Y[k])  for k=0..N-1
-     *    The factor of 2 from FFTW's `Y[k] = 2 * sum(...)` definition is
-     *    already absorbed by the doubling effect of the even extension on
-     *    the 2N-point R2C output. Note: bin N (Nyquist of the 2N R2C)
-     *    is not used by DCT-II. */
-    for (int k = 0; k < N; k++) {
-        const double c = d->cos_tw[k];
-        const double s = d->sin_tw[k];
-        const double *yr = d->ext_re + (size_t)k * K;
-        const double *yi = d->ext_im + (size_t)k * K;
-        double *out = re + (size_t)k * K;
-        for (size_t j = 0; j < K; j++)
-            out[j] = c * yr[j] + s * yi[j];
+    /* 3. Post-process:
+     *     out[0]   = 2 * Re(Z[0])
+     *     out[i]   = wa * 2Re(Z[i]) + wb * 2Im(Z[i])
+     *     out[N-i] = wb * 2Re(Z[i]) - wa * 2Im(Z[i])
+     *     out[N/2] = 2 * cos(π/4) * Re(Z[N/2])    (N even, no Im part)
+     *   with wa = cos(πi/(2N)), wb = sin(πi/(2N))
+     */
+    for (size_t k = 0; k < K; k++)
+        re[k] = 2.0 * d->buf_re[k];
+
+    for (i = 1; i + i < N; i++) {
+        const double wa = d->cos_tw[i];
+        const double wb = d->sin_tw[i];
+        const double *Zr = d->buf_re + (size_t)i * K;
+        const double *Zi = d->buf_im + (size_t)i * K;
+        double *out_lo = re + (size_t)i       * K;
+        double *out_hi = re + (size_t)(N - i) * K;
+        for (size_t k = 0; k < K; k++) {
+            double a = 2.0 * Zr[k];
+            double b = 2.0 * Zi[k];
+            out_lo[k] = wa * a + wb * b;
+            out_hi[k] = wb * a - wa * b;
+        }
     }
-    (void)twoN;
+    if (i + i == N) {   /* even N middle bin (Nyquist of inner R2C) */
+        const double wa = d->cos_tw[i];
+        const double *Zr = d->buf_re + (size_t)i * K;
+        double *out = re + (size_t)i * K;
+        for (size_t k = 0; k < K; k++)
+            out[k] = 2.0 * Zr[k] * wa;
+    }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * EXECUTE -- DCT-III / FFTW REDFT01 (the inverse of DCT-II up to scale 2N)
+ *
+ * Y[k] = X[0] + 2 * sum_{n=1..N-1} X[n] * cos( π n (2k+1) / (2N) )
+ *
+ * Algorithm: mirror of DCT-II Makhoul. Same N-point R2C primitive (forward,
+ * not inverse — the DHT trick lets us reuse R2C). Pre-process applies
+ * twiddles + butterfly to pack input bins; post-process undoes the Makhoul
+ * permutation.
+ *
+ *   Pre:   buf[0]   = X[0]
+ *          buf[i]   = wa * amb + wb * apb     (= Re of pre-twiddled bin i)
+ *          buf[N-i] = wa * apb - wb * amb     (= Im of pre-twiddled bin i)
+ *          where apb = X[i]+X[N-i], amb = X[i]-X[N-i],
+ *                wa = cos(πi/(2N)), wb = sin(πi/(2N))
+ *          buf[N/2] = 2 * X[N/2] * cos(π/4)   (when N even)
+ *   FFT:   N-point R2C (forward) of buf
+ *   Post:  scatter (un-Makhoul):
+ *          Y[0] = buf_re[0]
+ *          Y[2i-1] = buf_re[i] - buf_im[i]
+ *          Y[2i]   = buf_re[i] + buf_im[i]
+ *          Y[N-1] = buf_re[N/2]   (when N even)
+ * ═══════════════════════════════════════════════════════════════ */
+
+static void _dct3_execute_fwd(void *data, double *re, double *im) {
+    (void)im;
+    stride_dct2_data_t *d = (stride_dct2_data_t *)data;
+    const int N = d->N;
+    const size_t K = d->K;
+
+    /* 1. Pre-process: butterfly + twiddle into buf_re (real array). */
+    memcpy(d->buf_re, re, K * sizeof(double));     /* buf[0] = X[0] */
+
+    int i;
+    for (i = 1; i + i < N; i++) {
+        const double wa = d->cos_tw[i];
+        const double wb = d->sin_tw[i];
+        const double *Xi = re + (size_t)i       * K;
+        const double *Xm = re + (size_t)(N - i) * K;
+        double *buf_lo = d->buf_re + (size_t)i       * K;
+        double *buf_hi = d->buf_re + (size_t)(N - i) * K;
+        for (size_t k = 0; k < K; k++) {
+            double a = Xi[k];
+            double b = Xm[k];
+            double apb = a + b;
+            double amb = a - b;
+            buf_lo[k] = wa * amb + wb * apb;
+            buf_hi[k] = wa * apb - wb * amb;
+        }
+    }
+    if (i + i == N) {   /* even N: middle bin */
+        const double wa = d->cos_tw[i];
+        const double *Xi = re + (size_t)i * K;
+        double *buf_mid = d->buf_re + (size_t)i * K;
+        for (size_t k = 0; k < K; k++)
+            buf_mid[k] = 2.0 * Xi[k] * wa;
+    }
+
+    /* 2. N-point R2C of buf_re (forward, NOT inverse — DHT trick).
+     *    Input is in buf_re; freq output goes to (buf_re, buf_im) split-complex. */
+    stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);
+
+    /* 3. Post-permute: un-Makhoul scatter to output Y.
+     *    FFTW's halfcomplex layout: buf[i] -> our buf_re[i],
+     *                               buf[N-i] -> our buf_im[i] (for i=1..N/2-1)
+     */
+    for (size_t k = 0; k < K; k++)
+        re[k] = d->buf_re[k];   /* Y[0] = buf[0] */
+
+    for (i = 1; i + i < N; i++) {
+        const double *Zr = d->buf_re + (size_t)i * K;
+        const double *Zi = d->buf_im + (size_t)i * K;
+        double *out_odd  = re + (size_t)(2 * i - 1) * K;
+        double *out_even = re + (size_t)(2 * i)     * K;
+        for (size_t k = 0; k < K; k++) {
+            double a = Zr[k];
+            double b = Zi[k];
+            out_odd[k]  = a - b;
+            out_even[k] = a + b;
+        }
+    }
+    if (i + i == N) {   /* even N: last bin from middle scratch position */
+        const double *Zr = d->buf_re + (size_t)i * K;
+        double *out = re + (size_t)(N - 1) * K;
+        for (size_t k = 0; k < K; k++)
+            out[k] = Zr[k];
+    }
 }
 
 
@@ -113,8 +248,8 @@ static void _dct2_destroy(void *data) {
     if (!d) return;
     free(d->cos_tw);
     free(d->sin_tw);
-    STRIDE_ALIGNED_FREE(d->ext_re);
-    STRIDE_ALIGNED_FREE(d->ext_im);
+    STRIDE_ALIGNED_FREE(d->buf_re);
+    STRIDE_ALIGNED_FREE(d->buf_im);
     if (d->r2c_plan) stride_plan_destroy(d->r2c_plan);
     free(d);
 }
@@ -123,46 +258,45 @@ static void _dct2_destroy(void *data) {
 /* ═══════════════════════════════════════════════════════════════
  * PLAN CREATION
  *
- * Caller passes N (DCT size), K (batch), and an inner R2C plan for size 2N
- * with batch K. The plan owns the inner R2C plan from this point on
- * (destroyed via plan_destroy).
+ * Caller provides an N-point R2C plan. The DCT plan owns it from here.
+ * Constraint: N must be even (our R2C requires even input size).
  * ═══════════════════════════════════════════════════════════════ */
 
-static stride_plan_t *stride_dct2_plan(int N, size_t K, stride_plan_t *r2c_plan_2N)
+static stride_plan_t *stride_dct2_plan(int N, size_t K, stride_plan_t *r2c_plan_N)
 {
-    if (N < 1 || !r2c_plan_2N) {
-        if (r2c_plan_2N) stride_plan_destroy(r2c_plan_2N);
+    if (N < 2 || (N & 1) || !r2c_plan_N) {
+        if (r2c_plan_N) stride_plan_destroy(r2c_plan_N);
         return NULL;
     }
 
     stride_dct2_data_t *d =
         (stride_dct2_data_t *)calloc(1, sizeof(*d));
-    if (!d) { stride_plan_destroy(r2c_plan_2N); return NULL; }
+    if (!d) { stride_plan_destroy(r2c_plan_N); return NULL; }
 
     d->N = N;
     d->K = K;
-    d->r2c_plan = r2c_plan_2N;
+    d->r2c_plan = r2c_plan_N;
 
     int T_plan = stride_get_num_threads();
     if (T_plan < 1) T_plan = 1;
     d->n_threads = T_plan;
 
-    /* Post-process twiddles */
-    d->cos_tw = (double *)malloc((size_t)N * sizeof(double));
-    d->sin_tw = (double *)malloc((size_t)N * sizeof(double));
+    /* Twiddles: cos(πi/(2N)), sin(πi/(2N)) for i=0..N/2 (need N/2+1 entries) */
+    int n_tw = N / 2 + 1;
+    d->cos_tw = (double *)malloc((size_t)n_tw * sizeof(double));
+    d->sin_tw = (double *)malloc((size_t)n_tw * sizeof(double));
     if (!d->cos_tw || !d->sin_tw) { _dct2_destroy(d); return NULL; }
-    for (int k = 0; k < N; k++) {
-        double angle = M_PI * (double)k / (2.0 * (double)N);
-        d->cos_tw[k] = cos(angle);
-        d->sin_tw[k] = sin(angle);
+    for (int i = 0; i < n_tw; i++) {
+        double angle = M_PI * (double)i / (2.0 * (double)N);
+        d->cos_tw[i] = cos(angle);
+        d->sin_tw[i] = sin(angle);
     }
 
-    /* Internal scratch: 2N * K each (for in-place R2C of size 2N).
-     * R2C's convenience wrapper uses N*K-sized buffers (where N=2N here). */
-    size_t ext_sz = (size_t)(2 * N) * K;
-    d->ext_re = (double *)STRIDE_ALIGNED_ALLOC(64, ext_sz * sizeof(double));
-    d->ext_im = (double *)STRIDE_ALIGNED_ALLOC(64, ext_sz * sizeof(double));
-    if (!d->ext_re || !d->ext_im) { _dct2_destroy(d); return NULL; }
+    /* Internal scratch: N*K (HALF the size of the textbook 2N-R2C approach) */
+    size_t buf_sz = (size_t)N * K;
+    d->buf_re = (double *)STRIDE_ALIGNED_ALLOC(64, buf_sz * sizeof(double));
+    d->buf_im = (double *)STRIDE_ALIGNED_ALLOC(64, buf_sz * sizeof(double));
+    if (!d->buf_re || !d->buf_im) { _dct2_destroy(d); return NULL; }
 
     /* Wrap with override pointers */
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
@@ -171,8 +305,8 @@ static stride_plan_t *stride_dct2_plan(int N, size_t K, stride_plan_t *r2c_plan_
     plan->N = N;
     plan->K = K;
     plan->num_stages = 0;
-    plan->override_fwd     = _dct2_execute_fwd;
-    plan->override_bwd     = NULL;   /* DCT-III not implemented yet */
+    plan->override_fwd     = _dct2_execute_fwd;   /* DCT-II  (REDFT10) */
+    plan->override_bwd     = _dct3_execute_fwd;   /* DCT-III (REDFT01), the inverse */
     plan->override_destroy = _dct2_destroy;
     plan->override_data    = d;
 
@@ -182,12 +316,6 @@ static stride_plan_t *stride_dct2_plan(int N, size_t K, stride_plan_t *r2c_plan_
 
 /* ═══════════════════════════════════════════════════════════════
  * CONVENIENCE API
- *
- * stride_execute_dct2: separate input and output buffers (or same for
- * in-place). Wraps the override path.
- *
- * NOTE: bwd not implemented in v1.0. DCT-III (FFTW REDFT01, the inverse
- * of DCT-II) is the natural follow-up.
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void stride_execute_dct2(const stride_plan_t *plan,
@@ -195,6 +323,17 @@ static inline void stride_execute_dct2(const stride_plan_t *plan,
     size_t NK = (size_t)plan->N * plan->K;
     if (in != out) memcpy(out, in, NK * sizeof(double));
     plan->override_fwd(plan->override_data, out, NULL);
+}
+
+/* DCT-III (FFTW REDFT01) — the inverse of DCT-II up to scale factor 2N.
+ *   stride_execute_dct3(plan, in, out)  computes:
+ *     Y[k] = X[0] + 2 * sum_{n=1..N-1} X[n] * cos(πn(2k+1)/(2N))
+ *   For y = DCT-II(x), then x_recovered = DCT-III(y) / (2N). */
+static inline void stride_execute_dct3(const stride_plan_t *plan,
+                                        const double *in, double *out) {
+    size_t NK = (size_t)plan->N * plan->K;
+    if (in != out) memcpy(out, in, NK * sizeof(double));
+    plan->override_bwd(plan->override_data, out, NULL);
 }
 
 

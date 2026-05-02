@@ -1007,18 +1007,19 @@ static stride_plan_t *stride_r2c_wise_plan(int N, size_t K,
  *
  * Y[k] = 2 * sum_{n=0..N-1} x[n] * cos(π k (2n+1) / (2N))   for k=0..N-1
  *
- * Built atop a 2N-point R2C plan: the inner R2C handles all the heavy
- * lifting (factorization choice, MT, etc.). DCT-II adds an even-extension
- * pass and a post-process twiddle on top.
+ * Implementation: Makhoul's algorithm — built atop an **N-point R2C**
+ * (NOT 2N-point) plus a clever pre-permutation. ~2× faster than the
+ * textbook 2N-R2C approach. Matches FFTW's reodft010e-r2hc.c.
+ *
+ * Constraint: N must be even (our R2C requires even input size).
  *
  *   stride_execute_dct2(plan, in, out)         -- 1D DCT-II, batched K
  */
 static stride_plan_t *stride_dct2_auto_plan_wis(int N, size_t K,
                                                  const stride_registry_t *reg,
                                                  const stride_wisdom_t *wis) {
-    if (N < 1) return NULL;
-    int twoN = 2 * N;   /* always even, R2C-compatible */
-    stride_plan_t *r2c = stride_r2c_auto_plan_wis(twoN, K, reg, wis);
+    if (N < 2 || (N & 1)) return NULL;   /* Makhoul needs even N */
+    stride_plan_t *r2c = stride_r2c_auto_plan_wis(N, K, reg, wis);
     if (!r2c) return NULL;
     return stride_dct2_plan(N, K, r2c);
 }
@@ -1029,15 +1030,13 @@ static stride_plan_t *stride_dct2_auto_plan(int N, size_t K,
     return stride_dct2_auto_plan_wis(N, K, reg, /*wis=*/NULL);
 }
 
-/* Wisdom-aware DCT-II — uses wisdom for the inner 2N-point R2C plan
- * (which itself uses wisdom for the halfN=N-point complex inner FFT,
- * subject to R2C's DIT-only v1.0 constraint). */
+/* Wisdom-aware DCT-II — uses wisdom for the inner N-point R2C plan
+ * (subject to R2C's DIT-only v1.0 constraint). */
 static stride_plan_t *stride_dct2_wise_plan(int N, size_t K,
                                              const stride_registry_t *reg,
                                              const stride_wisdom_t *wis) {
-    if (N < 1) return NULL;
-    int twoN = 2 * N;
-    stride_plan_t *r2c = stride_r2c_wise_plan(twoN, K, reg, wis);
+    if (N < 2 || (N & 1)) return NULL;
+    stride_plan_t *r2c = stride_r2c_wise_plan(N, K, reg, wis);
     if (!r2c) return NULL;
     return stride_dct2_plan(N, K, r2c);
 }
