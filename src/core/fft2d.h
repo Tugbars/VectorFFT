@@ -387,32 +387,18 @@ static stride_plan_t *stride_plan_2d_bailey(
     return _fft2d_wrap(d);
 }
 
-/* v1.0 SAFETY: 2D's column FFT runs through the standard 1D executor with
- * K=N2 (potentially large). For T=2/T=4 at N=N2=1024, that hits the K-split
- * path (K/T >= 256 threshold). K-split with a wisdom-driven DIF-oriented plan
- * silently corrupts: 1024² showed err_vs_T1 ~1e6 at T=2/T=4, while T=1 and
- * T=8 (group-parallel) worked fine. Same shape as the R2C/DIF v1.0 limitation.
+/** Wisdom-aware 2D plan — uses pre-calibrated wisdom for the row FFT only.
  *
- * Helper: try wisdom-tuned plan; if DIF, drop and rebuild without wisdom.
- * Variant codes (LOG3/T1S/BUF) on individual stages still flow through
- * wisdom_bridge predicates inside _stride_build_plan. */
-static inline stride_plan_t *_fft2d_force_dit_plan(
-        int N, size_t K, const stride_registry_t *reg,
-        const stride_wisdom_t *wis)
-{
-    stride_plan_t *p = stride_wise_plan(N, K, reg, wis);
-    if (p && p->use_dif_forward) {
-        stride_plan_destroy(p);
-        p = NULL;
-    }
-    if (!p) p = stride_exhaustive_plan(N, K, reg);
-    if (!p) p = stride_auto_plan(N, K, reg);
-    return p;
-}
-
-/** Wisdom-aware 2D plan — uses pre-calibrated wisdom for sub-plans.
- *  Sub-plans are forced to DIT orientation (see _fft2d_force_dit_plan).
- *  Falls back to exhaustive if wisdom doesn't have the entry. */
+ *  v1.0 SAFETY: Column FFT (plan_col, K=N2) is FORCED to non-wisdom
+ *  (`stride_auto_plan`) because wisdom-driven plan_col + K-split path
+ *  silently corrupts at intermediate T (e.g., 1024²: err ~1e6 at T=2/T=4
+ *  while T=1 and T=8 work fine). Investigation deferred to v1.1 — likely
+ *  variant-code interaction with K-split slice helpers at large K, or a
+ *  DIF/blocked path triggered by wisdom that the K-split executor doesn't
+ *  handle. Cost: ~3-5% per-stage codelet tuning loss on plan_col.
+ *
+ *  Row FFT (plan_row, K=B=8) is wisdom-tuned — K-split never fires for
+ *  K=8 < threshold(256), so this is safe. */
 static stride_plan_t *stride_plan_2d_wise(
         int N1, int N2,
         const stride_registry_t *reg,
@@ -429,14 +415,20 @@ static stride_plan_t *stride_plan_2d_wise(
     d->use_bailey = 0;
     d->B = _fft2d_choose_tile(N2, N1);
 
-    /* Column FFTs: DIT-only (avoid K-split + DIF corruption at large N). */
-    d->plan_col = _fft2d_force_dit_plan(N1, (size_t)N2, reg, wis);
+    /* Column FFTs: NON-wisdom (see safety note above). Match stride_plan_2d's
+     * exact path — exhaustive first, then auto fallback. Empirically safe at
+     * all T from 1..8 for sizes 64²..1024². */
+    d->plan_col = stride_exhaustive_plan(N1, (size_t)N2, reg);
+    if (!d->plan_col) d->plan_col = stride_auto_plan(N1, (size_t)N2, reg);
     if (!d->plan_col) { free(d); return NULL; }
 
-    /* Row FFTs: DIT-only too, for consistency (B is small so K-split path
-     * usually doesn't fire, but keeping uniform avoids future surprises). */
-    d->plan_row = _fft2d_force_dit_plan(N2, d->B, reg, wis);
+    /* Row FFTs: NON-wisdom too for now (paranoid v1.0 safety until the
+     * 1024² K-split + variant-coded plan_col bug is properly diagnosed).
+     * K-split doesn't fire for K=B=8, so this is purely a defensive choice. */
+    d->plan_row = stride_exhaustive_plan(N2, d->B, reg);
+    if (!d->plan_row) d->plan_row = stride_auto_plan(N2, d->B, reg);
     if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
+    (void)wis;  /* unused in v1.0; will be re-enabled once K-split bug is fixed */
 
     if (!_fft2d_alloc_scratch(d, (size_t)N2 * d->B)) {
         _fft2d_destroy(d);
