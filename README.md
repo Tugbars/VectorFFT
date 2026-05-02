@@ -2,7 +2,7 @@
 
 <p align="center">
   A permutation-free mixed-radix Fast Fourier Transform library in C with hand-tuned AVX2/AVX-512 codelets.<br>
-  <b>Beats Intel MKL on every tested size — 198/198 benchmarks.</b> No external dependencies.
+  <b>Beats Intel MKL on every tested size — 207/207 benchmarks.</b> No external dependencies.
 </p>
 
 ---
@@ -11,7 +11,7 @@
 
 > **Platform:** Intel Core i9-14900KF, 48 KB L1d, DDR5, AVX2, single-threaded  
 > **Competitor:** Intel MKL 2025 (sequential, `mkl_set_num_threads(1)`)  
-> **198 data points** across 8 categories, 3 batch sizes (K=4, K=32, K=256), N=8 to N=823,543
+> **207 data points** across 9 categories, 3 batch sizes (K=4, K=32, K=256), N=8 to N=823,543
 
 ### 1D FFT Throughput — VectorFFT vs Intel MKL
 
@@ -19,49 +19,44 @@
 
 Three panels showing GFLOP/s at each batch size. Blue = VectorFFT, Red = MKL. Different marker shapes per category. VectorFFT sits above MKL across the board.
 
-| Category | Sizes | Best Win | Closest MKL Gets |
-|----------|-------|----------|-------------------|
-| **Small pow2** (8-128) | 5 sizes | **9.81x** (N=8, K=4) | 1.92x (N=64, K=256) |
-| **Power-of-2** (256-131K) | 10 sizes | **2.38x** (N=512, K=4) | 1.02x (N=16384, K=4) |
-| **Composite** (60-100K) | 11 sizes | **5.30x** (N=60, K=32) | 1.80x (N=10000, K=256) |
-| **Prime powers** (3,5,7) | 10 sizes | **3.56x** (N=390625, K=4) | 1.31x (N=243, K=4) |
-| **Genfft** (R=11,13) | 5 sizes | **3.00x** (N=14641, K=32) | 1.41x (N=2197, K=256) |
-| **Rader primes** | 8 sizes | **2.91x** (N=257, K=32) | 1.08x (N=127, K=4) |
-| **Odd composites** | 6 sizes | **3.70x** (N=175, K=256) | 1.72x (N=6615, K=4) |
-| **Mixed deep** | 6 sizes | **3.17x** (N=4620, K=32) | 1.59x (N=6930, K=4) |
+| Category | Cells | Median | Best Win | Closest MKL Gets |
+|----------|-------|--------|----------|-------------------|
+| **Small pow2** (8-128) | 15 | **4.37x** | **8.98x** (N=8, K=4) | 2.38x (N=128, K=4) |
+| **Power-of-2** (256-131K) | 30 | **1.72x** | **2.74x** (N=512, K=256) | 1.17x (N=131072, K=4) |
+| **Composite** (60-100K) | 33 | **2.69x** | **5.15x** (N=60, K=32) | 1.69x (N=50000, K=256) |
+| **Prime powers** (3,5,7) | 30 | **2.68x** | **3.95x** (N=390625, K=4) | 1.26x (N=243, K=4) |
+| **Prime powers** (R=11,13) | 15 | **2.39x** | **3.06x** (N=14641, K=32) | 1.50x (N=2197, K=256) |
+| **Rader primes** | 24 | **1.96x** | **3.42x** (N=641, K=32) | 1.05x (N=127, K=4) |
+| **Bluestein primes** | 24 | **1.47x** | **3.09x** (N=83, K=4) | 1.01x (N=179, K=256) |
+| **Odd composites** | 18 | **2.67x** | **4.20x** (N=175, K=256) | 1.86x (N=6615, K=4) |
+| **Mixed deep** | 18 | **2.32x** | **3.09x** (N=4620, K=32) | 1.70x (N=6930, K=4) |
 
 ### Speedup over Intel MKL — All Categories
 
 ![Speedup](docs/performance/vfft_speedup_vs_mkl.png)
 
-Every point above the dashed line is a VectorFFT win. Marker size indicates batch count (small=K=4, medium=K=32, large=K=256). **All 198 points are above parity.**
-
-| Metric | Value |
-|--------|-------|
-| **Win rate** | 198 / 198 (100%) |
-| **Median speedup** | 2.35x |
-| **Best speedup** | 9.81x (N=8, K=4) |
-| **Closest MKL** | 1.02x (N=16384, K=4) |
-| **Peak GFLOP/s** | 102.9 (N=8, K=256) |
+Every point above the dashed line is a VectorFFT win. Marker size indicates batch count (small=K=4, medium=K=32, large=K=256). **All 207 points are above parity.**
 
 ### Combined Dense Scatter — All Sizes & Batch Counts
 
 ![Scatter](docs/performance/vfft_scatter_all.png)
 
-All 198 data points overlaid. Blue cloud (VectorFFT) consistently above red cloud (MKL). Peak throughput at small N with large K where codelets run entirely from L1.
+All 207 data points overlaid. Blue cloud (VectorFFT) consistently above red cloud (MKL). Peak throughput at small N with large K where codelets run entirely from L1.
 
 ### Highlight Results
 
 | N | K | Category | Factors | VectorFFT | MKL | Speedup |
 |---|---|----------|---------|-----------|-----|---------|
-| 8 | 256 | small | 8 | 102.9 GF/s | 13.3 GF/s | **7.72x** |
+| 8 | 256 | small | 8 | 103.0 GF/s | 13.3 GF/s | **7.75x** |
+| 8 | 4 | small | 8 | 49.1 GF/s | 5.5 GF/s | **8.98x** |
 | 60 | 32 | composite | 12x5 | 82.0 GF/s | 15.5 GF/s | **5.30x** |
-| 390625 | 32 | prime_pow (5^8) | 25x25x25x25 | 29.8 GF/s | 8.6 GF/s | **3.47x** |
-| 823543 | 256 | prime_pow (7^7) | 7x7x7x7x7x7x7 | 22.6 GF/s | 7.2 GF/s | **3.14x** |
-| 2310 | 32 | mixed_deep | 6x7x11x5 | 51.8 GF/s | 19.3 GF/s | **2.69x** |
-| 100000 | 32 | composite | 32x25x25x5 | 29.2 GF/s | 11.2 GF/s | **2.61x** |
-| 131072 | 32 | pow2 | 4x4x4x32x64 | 18.4 GF/s | 11.3 GF/s | **1.63x** |
-| 16384 | 4 | pow2 | 2x8x16x64 | 27.4 GF/s | 26.9 GF/s | 1.02x |
+| 390625 | 4 | prime_pow (5^8) | 25x25x25x25 | 39.3 GF/s | 11.0 GF/s | **3.95x** |
+| 641 | 32 | rader | (override) | 15.1 GF/s | 4.4 GF/s | **3.42x** |
+| 175 | 256 | odd_comp | 5x5x7 | 56.6 GF/s | 15.3 GF/s | **4.20x** |
+| 4620 | 32 | mixed_deep | 7x6x10x11 | 47.2 GF/s | 14.6 GF/s | **3.09x** |
+| 83 | 4 | bluestein | (override) | 6.2 GF/s | 2.0 GF/s | **3.09x** |
+| 131072 | 32 | pow2 | 16x4x4x4x4x4x8 | 18.4 GF/s | 11.3 GF/s | **1.49x** |
+| 131072 | 4 | pow2 | 4x4x4x4x8x4x4x4 | 22.8 GF/s | 21.0 GF/s | 1.18x |
 
 ### 2D FFT — Tiled SIMD Transpose
 
@@ -84,19 +79,6 @@ Multi-threaded 2D (tile-parallel, per-thread scratch, zero barriers):
 | 256x256 | 147.5 us | 37.0 us | **3.99x** |
 | 1024x1024 | 3,787 us | 1,002 us | **3.78x** |
 
-### Prime-N Performance (Rader)
-
-| Prime N | K | vs MKL |
-|---------|---|--------|
-| 127 | 32 | **2.00x** |
-| 257 | 32 | **2.91x** |
-| 641 | 32 | **2.33x** |
-| 1009 | 32 | **2.05x** |
-| 2801 | 32 | **2.49x** |
-| 4001 | 32 | **1.37x** |
-
----
-
 ## Accuracy
 
 ![Precision](docs/performance/vfft_precision.png)
@@ -105,15 +87,17 @@ Roundtrip error (fwd + bwd / N) across all tested sizes. Errors follow the theor
 
 | Category | Min Error | Max Error |
 |----------|-----------|-----------|
-| pow2 (8-131K) | 1.1e-16 | 7.2e-16 |
-| composite | 2.5e-16 | 7.6e-16 |
-| prime powers | 3.6e-16 | 8.6e-16 |
-| genfft (R=11,13) | 4.3e-16 | 9.2e-16 |
-| Rader primes | 6.5e-16 | 2.5e-15 |
-| odd composites | 2.8e-16 | 8.3e-16 |
-| mixed deep | 5.1e-16 | 7.8e-16 |
+| Small pow2 (8-128) | 1.1e-16 | 3.3e-16 |
+| Power-of-2 (256-131K) | 2.8e-16 | 6.7e-16 |
+| Composite | 2.4e-16 | 8.3e-16 |
+| Prime powers (3,5,7) | 4.6e-16 | 8.8e-16 |
+| Prime powers (R=11,13) | 4.6e-16 | 8.8e-16 |
+| Odd composites | 4.3e-16 | 6.7e-16 |
+| Mixed deep | 5.5e-16 | 1.2e-15 |
 
-Rader primes show slightly higher error (up to 2.5e-15 at N=4001) due to the convolution overhead, but still well within acceptable bounds. The permutation-free roundtrip guarantees perfect cancellation of digit-reversal — no accumulated permutation error.
+Errors stay within the theoretical O(log2(N) · ε) bound across the grid. The permutation-free roundtrip guarantees perfect cancellation of digit-reversal — no accumulated permutation error from the Cooley-Tukey decomposition.
+
+Rader and Bluestein prime cells use a convolution-based path; their roundtrip error is comparable (~6e-16 to 2e-15 range, dominated by the inner FFT's accumulated rounding), well within FP64 acceptable bounds.
 
 ---
 

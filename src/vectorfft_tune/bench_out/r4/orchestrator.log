@@ -1,0 +1,58 @@
+[phase] generate
+  [gen] fft_radix4_avx2.h: 90293 bytes
+  [gen] fft_radix4_avx512.h: 106336 bytes
+[phase] compile
+  [cands] vfft_harness_candidates_avx2.c: 5 symbols
+  [cands] vfft_harness_candidates_avx512.c: 5 symbols
+  [cands] vfft_harness_candidates.c: aggregator for 10 total
+  [cc base] harness.c
+  [cc base] vfft_harness_candidates.c
+  [cc avx2] vfft_harness_candidates_avx2.c
+  [cc avx512] skipping — host lacks AVX-512
+  [cc avx512_stub] vfft_harness_candidates_avx512_stub.c
+  [link] harness.exe
+[phase] run
+  [run] 696 jobs (0 already done — will skip)
+    [run] 25/696 (4%)  skipped_done=0 skipped_host=0
+    [run] 50/696 (7%)  skipped_done=0 skipped_host=0
+    [run] 75/696 (11%)  skipped_done=0 skipped_host=9
+    [run] 100/696 (14%)  skipped_done=0 skipped_host=34
+    [run] 125/696 (18%)  skipped_done=0 skipped_host=59
+    [run] 150/696 (22%)  skipped_done=0 skipped_host=66
+    [run] 175/696 (25%)  skipped_done=0 skipped_host=66
+    [run] 200/696 (29%)  skipped_done=0 skipped_host=68
+    [run] 225/696 (32%)  skipped_done=0 skipped_host=93
+    [run] 250/696 (36%)  skipped_done=0 skipped_host=118
+    [run] 275/696 (40%)  skipped_done=0 skipped_host=132
+    [run] 300/696 (43%)  skipped_done=0 skipped_host=132
+    [run] 325/696 (47%)  skipped_done=0 skipped_host=132
+    [run] 350/696 (50%)  skipped_done=0 skipped_host=152
+    [run] 375/696 (54%)  skipped_done=0 skipped_host=177
+    [run] 400/696 (57%)  skipped_done=0 skipped_host=198
+    [run] 425/696 (61%)  skipped_done=0 skipped_host=198
+    [run] 450/696 (65%)  skipped_done=0 skipped_host=198
+    [run] 475/696 (68%)  skipped_done=0 skipped_host=211
+    [run] 500/696 (72%)  skipped_done=0 skipped_host=236
+    [run] 525/696 (75%)  skipped_done=0 skipped_host=261
+    [run] 550/696 (79%)  skipped_done=0 skipped_host=268
+    [run] 575/696 (83%)  skipped_done=0 skipped_host=282
+    [run] 600/696 (86%)  skipped_done=0 skipped_host=282
+    [run] 625/696 (90%)  skipped_done=0 skipped_host=282
+    [run] 650/696 (93%)  skipped_done=0 skipped_host=302
+    [run] 675/696 (97%)  skipped_done=0 skipped_host=327
+  [run] done: 696/696  skipped_done=0  skipped_host=348
+[phase] emit
+  [copy] fft_radix4_avx2.h -> generated/
+  [copy] fft_radix4_avx512.h -> generated/
+  loaded 348 measurements
+  [emit] vfft_r4_t1_dit_dispatch_avx2.h
+  [emit] vfft_r4_t1_dit_log3_dispatch_avx2.h
+  [emit] vfft_r4_t1s_dit_dispatch_avx2.h
+  [emit] vfft_r4_plan_wisdom.h
+  [emit] vfft_r4_report.md
+[phase] validate
+  [cc validate] avx2
+  [run validate] avx2
+[validate] 84 cases, 0 failed
+  [validate] skipping avx512: host lacks AVX-512
+[done] elapsed 51.1s

@@ -25,6 +25,7 @@
 #include <string.h>
 #include <math.h>
 #include "threads.h"
+#include "prefetch.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -39,7 +40,7 @@
 #define STRIDE_ALIGNED_FREE(p)             free(p)
 #endif
 
-#define STRIDE_MAX_STAGES 8
+#define STRIDE_MAX_STAGES 9
 #define STRIDE_MAX_RADIX 32
 
 /* ═══════════════════════════════════════════════════════════════
@@ -139,6 +140,13 @@ typedef struct {
     size_t K;
     int factors[STRIDE_MAX_STAGES];   /* radix per stage */
     stride_stage_t stages[STRIDE_MAX_STAGES];
+
+    /* Blocked executor selection (set by planner_blocked.h).
+     * When use_blocked=1, execute dispatches to the blocked executor
+     * instead of the standard stage-sweep loop. */
+    int use_blocked;        /* 0 = standard, 1 = blocked */
+    int split_stage;        /* first blocked stage */
+    int block_groups;       /* groups per block at split stage */
 
     /* Override for non-staged plans (Bluestein, Rader, etc.).
      * When override_fwd is non-NULL, execute dispatches here
