@@ -20,3 +20,4 @@ N,K,method,nf,factors,codelets,variant_codes,best_ns,use_blocked,split_stage,blo
 95,256,dp+measure,2,19x5,n1/t1s,0/2,19526.83,0,0,0,0,-1.00,0.00,30,4.69e-16
 119,256,dp+measure,2,7x17,n1/t1s,0/2,46234.38,0,0,0,0,-1.00,0.00,30,3.96e-16
 169,256,dp+measure,2,13x13,n1/t1s,0/2,65304.35,0,0,0,0,-1.00,0.00,15,4.43e-16
+220,256,dp+measure,3,4x11x5,n1/t1s/t1s,0/2/2,49035.00,0,0,0,0,-1.00,0.00,258,4.45e-16
