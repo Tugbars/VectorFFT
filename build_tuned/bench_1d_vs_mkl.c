@@ -275,13 +275,25 @@ int main(int argc, char **argv) {
     const char *perf_path   = DEFAULT_PERF_PATH;
     const char *acc_path    = DEFAULT_ACC_PATH;
     const char *cells       = NULL;  /* --cells "N:K,N:K,..." filter */
+    int run_perf = 1, run_acc = 1;   /* --phase perf|acc|both */
 
-    /* Pull --cells out first, then take positional args from the rest. */
     int posn = 1;
     int positional_idx = 0;
     while (posn < argc) {
         if (strcmp(argv[posn], "--cells") == 0 && posn + 1 < argc) {
             cells = argv[posn + 1];
+            posn += 2;
+            continue;
+        }
+        if (strcmp(argv[posn], "--phase") == 0 && posn + 1 < argc) {
+            const char *p = argv[posn + 1];
+            if      (strcmp(p, "perf") == 0) { run_perf = 1; run_acc = 0; }
+            else if (strcmp(p, "acc")  == 0) { run_perf = 0; run_acc = 1; }
+            else if (strcmp(p, "both") == 0) { run_perf = 1; run_acc = 1; }
+            else {
+                fprintf(stderr, "--phase must be one of: perf, acc, both\n");
+                return 2;
+            }
             posn += 2;
             continue;
         }
@@ -332,6 +344,7 @@ int main(int argc, char **argv) {
      * Phase 2: Performance benchmark → CSV
      * ─────────────────────────────────────────────── */
 
+  if (run_perf) {
     FILE *fp = fopen(perf_path, "w");
     if (!fp) { fprintf(stderr, "cannot open %s\n", perf_path); return 1; }
     fprintf(fp, "N,K,category,factors,vfft_ns,mkl_ns,"
@@ -400,11 +413,15 @@ int main(int argc, char **argv) {
     printf("\nBenched %d cells, skipped %d (no wisdom entry).\n",
            n_benched, n_skipped);
     printf("Performance → %s\n\n", perf_path);
+  } else {
+    printf("=== Phase 2: SKIPPED (--phase acc) ===\n\n");
+  }
 
     /* ───────────────────────────────────────────────
      * Phase 3: Accuracy → CSV
      * ─────────────────────────────────────────────── */
 
+  if (run_acc) {
     FILE *fa = fopen(acc_path, "w");
     if (!fa) { fprintf(stderr, "cannot open %s\n", acc_path); return 1; }
     fprintf(fa, "N,category,roundtrip_err\n");
@@ -431,6 +448,9 @@ int main(int argc, char **argv) {
     }
     fclose(fa);
     printf("\nAccuracy → %s\n", acc_path);
+  } else {
+    printf("=== Phase 3: SKIPPED (--phase perf) ===\n");
+  }
     printf("\nDone.\n");
     return 0;
 }
