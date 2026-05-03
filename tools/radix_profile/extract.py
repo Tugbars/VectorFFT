@@ -23,9 +23,14 @@ Three codelet variants are profiled per (R, ISA):
 log3 is intentionally skipped (too experimental for the cost model).
 
 Outputs:
-  profile_avx2.csv     — per-radix per-variant table for AVX2
-  profile_avx512.csv   — per-radix per-variant table for AVX-512
-  radix_profile.h      — auto-generated C header consumed by the cost model
+  tools/radix_profile/profile_avx2.csv      — per-radix per-variant CSV (AVX2)
+  tools/radix_profile/profile_avx512.csv    — per-radix per-variant CSV (AVX-512)
+  src/core/generated/radix_profile.h        — auto-generated C header
+                                              consumed by the cost model
+
+The CSV files stay alongside the extractor (dev artifacts). The header
+lives in src/core/generated/ because it's part of the library's compile-
+time surface, not a developer tool.
 
 Run from the repo root or from this directory:
     python tools/radix_profile/extract.py
@@ -324,9 +329,10 @@ def main() -> int:
     header = (HEADER_TEMPLATE
               .replace('@@MAX_R@@', str(max_r))
               .replace('@@TABLES@@', tables))
-    h_path = HERE / 'radix_profile.h'
+    h_path = ROOT / 'src' / 'core' / 'generated' / 'radix_profile.h'
+    h_path.parent.mkdir(parents=True, exist_ok=True)
     h_path.write_text(header, encoding='utf-8')
-    print(f'  wrote {h_path.name}')
+    print(f'  wrote {h_path.relative_to(ROOT)}')
 
     # Console summary table — one row per (R, variant), AVX2 numbers.
     print()
