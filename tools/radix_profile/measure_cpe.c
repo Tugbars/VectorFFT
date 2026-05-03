@@ -43,8 +43,14 @@
 /* ─────────────────────────── tunables ─────────────────────────── */
 
 #define BENCH_K          256          /* twiddle-stage column count */
-#define BENCH_N_RUNS      21          /* batches; report median + CV */
-#define BENCH_TARGET_NS   2000000.0   /* ~2 ms per batch (auto-iters) */
+#define BENCH_N_RUNS      51          /* batches; report median + CV.
+                                       * Bumped from 21 because cpe_measure
+                                       * runs once per orchestrator pass
+                                       * (not per-radix), so we have wall
+                                       * budget to spend on stability. */
+#define BENCH_TARGET_NS   5000000.0   /* ~5 ms per batch (auto-iters).
+                                       * Total per codelet ≈ 51 × 5ms = 255ms;
+                                       * full sweep across ~50 variants ≈ 13s. */
 #define BENCH_CALIB_NS    100000.0    /* ~100 us calibration probe */
 #define MAX_CV_DEFAULT    0.05        /* 5% — refuse if any codelet exceeds */
 
@@ -307,10 +313,10 @@ static double bench_t1_with_cv(stride_t1_fn fn, int R, double *cv_out)
 
 typedef struct {
     int    R;
-    int    have_n1, have_t1, have_t1s;
-    double ns_n1, ns_t1, ns_t1s;     /* nanoseconds per codelet call */
-    double cv_n1, cv_t1, cv_t1s;     /* coefficient of variation */
-    double cyc_n1, cyc_t1, cyc_t1s;  /* cycles per butterfly */
+    int    have_n1, have_t1, have_t1s, have_log3;
+    double ns_n1, ns_t1, ns_t1s, ns_log3;     /* nanoseconds per codelet call */
+    double cv_n1, cv_t1, cv_t1s, cv_log3;     /* coefficient of variation */
+    double cyc_n1, cyc_t1, cyc_t1s, cyc_log3; /* cycles per butterfly */
 } radix_row_t;
 
 /* ───────────────────────── header emit ───────────────────────── */
@@ -386,6 +392,7 @@ static void emit_header(const char *path, const radix_row_t *rows, int n,
     fprintf(f, "    double cyc_n1;\n");
     fprintf(f, "    double cyc_t1;\n");
     fprintf(f, "    double cyc_t1s;\n");
+    fprintf(f, "    double cyc_log3;\n");
     fprintf(f, "} stride_radix_cpe_t;\n\n");
 
     /* The current build is one ISA at a time; emit only the matching table.
@@ -395,11 +402,12 @@ static void emit_header(const char *path, const radix_row_t *rows, int n,
         "[STRIDE_RADIX_PROFILE_MAX_R] = {\n", isa_tag());
     for (int i = 0; i < n; i++) {
         const radix_row_t *r = &rows[i];
-        if (!r->have_n1 && !r->have_t1 && !r->have_t1s) continue;
+        if (!r->have_n1 && !r->have_t1 && !r->have_t1s && !r->have_log3) continue;
         fprintf(f, "    [%2d] = {", r->R);
-        if (r->have_n1)  fprintf(f, " .cyc_n1 = %7.3f,", r->cyc_n1);
-        if (r->have_t1)  fprintf(f, " .cyc_t1 = %7.3f,", r->cyc_t1);
-        if (r->have_t1s) fprintf(f, " .cyc_t1s = %7.3f,", r->cyc_t1s);
+        if (r->have_n1)   fprintf(f, " .cyc_n1 = %7.3f,",   r->cyc_n1);
+        if (r->have_t1)   fprintf(f, " .cyc_t1 = %7.3f,",   r->cyc_t1);
+        if (r->have_t1s)  fprintf(f, " .cyc_t1s = %7.3f,",  r->cyc_t1s);
+        if (r->have_log3) fprintf(f, " .cyc_log3 = %7.3f,", r->cyc_log3);
         fprintf(f, " },\n");
     }
     fprintf(f, "};\n\n");
@@ -459,9 +467,11 @@ int main(int argc, char **argv) {
 
     printf("[measure_cpe] %s, K=%d, %d runs/codelet, ~%.0fms/run\n",
            isa_tag(), BENCH_K, BENCH_N_RUNS, BENCH_TARGET_NS / 1e6);
-    printf("\n  %3s  %-3s    %12s  %6s    %12s  %6s    %12s  %6s\n",
-           "R", "isa", "n1 ns/call", "CV%", "t1 ns/call", "CV%", "t1s ns/call", "CV%");
-    printf("  ---  ---    ------------  ------    ------------  ------    ------------  ------\n");
+    printf("\n  %3s  %-3s    %12s  %6s    %12s  %6s    %12s  %6s    %12s  %6s\n",
+           "R", "isa", "n1 ns/call", "CV%", "t1 ns/call", "CV%",
+           "t1s ns/call", "CV%", "log3 ns/call", "CV%");
+    printf("  ---  ---    ------------  ------    ------------  ------    "
+           "------------  ------    ------------  ------\n");
 
     int idx = 0;
     double max_cv = 0.0;
@@ -509,6 +519,22 @@ int main(int argc, char **argv) {
         } else {
             printf("   %10s  %6s", "—", "—");
         }
+
+        /* t1 log3 forward (twiddle-derivation chain). Same signature as t1
+         * (stride_t1_fn), so reuse bench_t1_with_cv. The log3 codelet
+         * accesses a smaller base set of twiddles + does cmul chains to
+         * derive the rest; the harness still allocates a full (R-1)*K
+         * twiddle table because its load address-arithmetic doesn't change. */
+        if (R < STRIDE_REG_MAX_RADIX && reg.t1_fwd_log3[R]) {
+            double cv;
+            double ns = bench_t1_with_cv(reg.t1_fwd_log3[R], R, &cv);
+            r->have_log3 = 1; r->ns_log3 = ns; r->cv_log3 = cv;
+            r->cyc_log3 = ns * freq_ghz / (double)BENCH_K;
+            if (cv > max_cv) { max_cv = cv; max_cv_R = R; max_cv_variant = "log3"; }
+            printf("   %10.2f  %5.2f%%", ns, cv * 100.0);
+        } else {
+            printf("   %10s  %6s", "—", "—");
+        }
         printf("\n");
     }
 
@@ -534,13 +560,14 @@ int main(int argc, char **argv) {
     }
 
     if (verbose) {
-        printf("\nCycles per butterfly (cyc_n1 / cyc_t1 / cyc_t1s):\n");
+        printf("\nCycles per butterfly (cyc_n1 / cyc_t1 / cyc_t1s / cyc_log3):\n");
         for (int i = 0; i < idx; i++) {
             const radix_row_t *r = &rows[i];
             printf("  R=%2d:", r->R);
-            if (r->have_n1)  printf("  n1=%7.2f", r->cyc_n1);  else printf("  n1=  ----");
-            if (r->have_t1)  printf("  t1=%7.2f", r->cyc_t1);  else printf("  t1=  ----");
-            if (r->have_t1s) printf("  t1s=%7.2f", r->cyc_t1s); else printf("  t1s=  ----");
+            if (r->have_n1)   printf("  n1=%7.2f", r->cyc_n1);    else printf("  n1=  ----");
+            if (r->have_t1)   printf("  t1=%7.2f", r->cyc_t1);    else printf("  t1=  ----");
+            if (r->have_t1s)  printf("  t1s=%7.2f", r->cyc_t1s);  else printf("  t1s=  ----");
+            if (r->have_log3) printf("  log3=%7.2f", r->cyc_log3); else printf("  log3=  ----");
             printf("\n");
         }
     }

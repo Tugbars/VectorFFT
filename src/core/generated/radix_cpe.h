@@ -10,8 +10,8 @@
  * Host CPU:   Intel(R) Core(TM) i9-14900KF
  * ISA tag:    avx2
  * Eff. freq:  3.187 GHz (RDTSC over 50ms wall)
- * Max CV:     18.98% (refuse threshold 5.00%)
- * Date (UTC): 2026-05-03 18:11
+ * Max CV:     92.99% (refuse threshold 5.00%)
+ * Date (UTC): 2026-05-03 19:17
  */
 #ifndef STRIDE_RADIX_CPE_H
 #define STRIDE_RADIX_CPE_H
@@ -22,27 +22,28 @@ typedef struct {
     double cyc_n1;
     double cyc_t1;
     double cyc_t1s;
+    double cyc_log3;
 } stride_radix_cpe_t;
 
 static const stride_radix_cpe_t stride_radix_cpe_avx2[STRIDE_RADIX_PROFILE_MAX_R] = {
-    [ 2] = { .cyc_n1 =   0.569, .cyc_t1 =   0.578, },
-    [ 3] = { .cyc_n1 =   0.862, .cyc_t1 =   1.074, .cyc_t1s =   1.079, },
-    [ 4] = { .cyc_n1 =   1.203, .cyc_t1 =   1.561, .cyc_t1s =   1.461, },
-    [ 5] = { .cyc_n1 =   2.046, .cyc_t1 =   2.921, .cyc_t1s =   2.903, },
-    [ 6] = { .cyc_n1 =   3.984, .cyc_t1 =   3.465, .cyc_t1s =   3.516, },
-    [ 7] = { .cyc_n1 =  10.337, .cyc_t1 =   6.233, .cyc_t1s =   5.892, },
-    [ 8] = { .cyc_n1 =   8.160, .cyc_t1 =   5.234, .cyc_t1s =   4.745, },
-    [10] = { .cyc_n1 =  10.634, .cyc_t1 =  15.597, .cyc_t1s =   8.852, },
-    [11] = { .cyc_n1 =  17.056, .cyc_t1 =  22.072, .cyc_t1s =  14.417, },
-    [12] = { .cyc_n1 =  12.932, .cyc_t1 =  20.801, .cyc_t1s =   9.876, },
-    [13] = { .cyc_n1 =  22.980, .cyc_t1 =  31.343, .cyc_t1s =  20.723, },
-    [16] = { .cyc_n1 =  18.049, .cyc_t1 =  20.454, .cyc_t1s =  17.670, },
-    [17] = { .cyc_n1 =  32.355, .cyc_t1 =  43.908, .cyc_t1s =  35.540, },
-    [19] = { .cyc_n1 =  86.316, .cyc_t1 =  61.500, .cyc_t1s =  47.611, },
-    [20] = { .cyc_n1 =  41.139, .cyc_t1 =  35.149, .cyc_t1s =  27.754, },
-    [25] = { .cyc_n1 =  66.226, .cyc_t1 =  61.224, .cyc_t1s =  50.567, },
-    [32] = { .cyc_n1 =  69.731, .cyc_t1 =  99.004, .cyc_t1s =  92.855, },
-    [64] = { .cyc_n1 = 196.537, .cyc_t1 = 267.343, .cyc_t1s = 249.973, },
+    [ 2] = { .cyc_n1 =   0.573, .cyc_t1 =   0.588, },
+    [ 3] = { .cyc_n1 =   0.897, .cyc_t1 =   1.103, .cyc_t1s =   1.088, .cyc_log3 =   1.322, },
+    [ 4] = { .cyc_n1 =   1.170, .cyc_t1 =   1.531, .cyc_t1s =   1.461, .cyc_log3 =   2.004, },
+    [ 5] = { .cyc_n1 =   2.034, .cyc_t1 =  11.312, .cyc_t1s =  13.055, .cyc_log3 =  15.501, },
+    [ 6] = { .cyc_n1 =  11.338, .cyc_t1 =  15.504, .cyc_t1s =  16.186, .cyc_log3 =  21.114, },
+    [ 7] = { .cyc_n1 =  18.403, .cyc_t1 =  25.784, .cyc_t1s =  22.361, .cyc_log3 =  28.880, },
+    [ 8] = { .cyc_n1 =  27.140, .cyc_t1 =  23.677, .cyc_t1s =  20.912, .cyc_log3 =  21.902, },
+    [10] = { .cyc_n1 =  40.840, .cyc_t1 =  39.120, .cyc_t1s =  35.114, .cyc_log3 =  43.417, },
+    [11] = { .cyc_n1 =  55.337, .cyc_t1 =  61.871, .cyc_t1s =  57.755, .cyc_log3 =  62.534, },
+    [12] = { .cyc_n1 =  59.261, .cyc_t1 =  44.419, .cyc_t1s =  41.007, .cyc_log3 =  48.713, },
+    [13] = { .cyc_n1 =  81.142, .cyc_t1 =  70.819, .cyc_t1s =  77.774, .cyc_log3 =  72.638, },
+    [16] = { .cyc_n1 =  36.889, .cyc_t1 =  23.469, .cyc_t1s =  59.417, .cyc_log3 =  62.894, },
+    [17] = { .cyc_n1 = 145.281, .cyc_t1 = 130.990, .cyc_t1s = 123.757, .cyc_log3 = 121.544, },
+    [19] = { .cyc_n1 = 202.433, .cyc_t1 = 182.164, .cyc_t1s =  54.871, .cyc_log3 = 171.738, },
+    [20] = { .cyc_n1 = 126.695, .cyc_t1 = 103.267, .cyc_t1s =  93.619, .cyc_log3 = 112.028, },
+    [25] = { .cyc_n1 = 165.188, .cyc_t1 = 187.414, .cyc_t1s = 142.407, .cyc_log3 = 154.686, },
+    [32] = { .cyc_n1 = 195.991, .cyc_t1 = 221.754, .cyc_t1s = 194.184, .cyc_log3 = 202.256, },
+    [64] = { .cyc_n1 = 460.989, .cyc_t1 = 595.066, .cyc_t1s = 516.645, .cyc_log3 = 569.210, },
 };
 
 static const stride_radix_cpe_t stride_radix_cpe_avx512[STRIDE_RADIX_PROFILE_MAX_R] = {0};
