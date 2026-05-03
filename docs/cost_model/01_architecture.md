@@ -90,6 +90,34 @@ calibration-grade host.
 - **Does not consider DIF orientation.** The whole-plan DIF flag
   (`use_dif_forward`) is set by the wisdom-driven calibrator. Estimate
   plans are DIT-only.
+- **Does not run for transforms whose execute path has a specialized
+  codelet bypass.** Today only **DCT-II / DCT-III at N=8** qualifies
+  (the JPEG block size has straight-line `dct2_n8_avx2` /
+  `dct3_n8_avx2` codelets that bypass the inner R2C entirely at
+  execute time — see [src/core/dct.h:99-107](../../src/core/dct.h#L99)).
+  Plan creation still builds a (now-unused) inner R2C plan for these
+  cells; the cost-model effort is wasted but the executor is fast.
+
+  **v1.1 will expand this category significantly.** The codelet
+  roadmap ([docs/v1_1_codelet_roadmap.md §2](../v1_1_codelet_roadmap.md))
+  adds specialized straight-line codelets for hot small-N cells —
+  `r2hc_8/16/32` (R2C), `e10_16/32` (DCT-II), `e11_16/32` (DCT-IV
+  short/long windows for MDCT), with DST analogs likely to follow.
+  When those land, the planner will need to:
+
+  1. **Detect the bypass at plan time** rather than execute time, so
+     the inner-plan build can be skipped (no wasted cost-model work).
+  2. **Score against the specialized codelet's cost** rather than the
+     inner-plan cost when the bypass applies, so the cost number the
+     model reports matches what will actually run.
+
+  Both extensions are mechanical once the codelets exist —
+  `_radix_butterfly_cost` already has the variant-dispatch shape;
+  the new codelets just become additional (R, kind) entries in the
+  CPE table with their own per-codelet cycle measurements. The
+  estimate-mode wiring done in v1.0 (covering R2C / DCT-II/III /
+  DCT-IV / DST / DHT inner C2C plans) is the foundation that makes
+  this v1.1 work additive rather than restructuring.
 
 ## See also
 

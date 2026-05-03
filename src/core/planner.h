@@ -1126,8 +1126,14 @@ static inline stride_plan_t *_r2c_force_dit_inner(
         stride_plan_destroy(inner);
         inner = NULL;
     }
+    /* Fallback: cost-model-driven plan (stride_estimate_plan) instead of
+     * the legacy greedy factorizer. Estimate gives ~1.20x wisdom on 1D
+     * C2C across the bench, vs greedy's ~1.85x — so any transform with
+     * an inner C2C (R2C, DCT-II/III, DCT-IV, DST-II/III, DHT) inherits
+     * the cost-model benefit by default. stride_estimate_plan always
+     * builds DIT plans, so the use_dif_forward filter is moot here. */
     if (!inner)
-        inner = stride_auto_plan_wis(halfN, B, reg, /*wis=*/NULL);
+        inner = stride_estimate_plan(halfN, B, reg);
     return inner;
 }
 
@@ -1345,7 +1351,14 @@ static stride_plan_t *stride_dct4_auto_plan_wis(int N, size_t K,
     if (K < 2)
         return NULL;  /* inherits R2C K>=2 v1.0 constraint */
     int halfN = N / 2;
-    stride_plan_t *fft = stride_auto_plan_wis(halfN, K, reg, wis);
+    /* Inner N/2-point complex FFT. With wisdom: use the wisdom-aware
+     * planner so calibrated cells get explicit variant codes. Without
+     * wisdom: use the cost-model-driven estimate planner (matches what
+     * VFFT_ESTIMATE on 1D C2C does). The earlier greedy fallback via
+     * stride_auto_plan_wis(...wis=NULL) was the silent inconsistency
+     * that made VFFT_ESTIMATE on DCT-IV identical to the no-flag default. */
+    stride_plan_t *fft = wis ? stride_auto_plan_wis(halfN, K, reg, wis)
+                             : stride_estimate_plan(halfN, K, reg);
     if (!fft)
         return NULL;
     return stride_dct4_plan(N, K, fft);

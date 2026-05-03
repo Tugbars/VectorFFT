@@ -1,4 +1,4 @@
 @version 5
 # VectorFFT stride wisdom — 1 entries
 # N K nf factors... best_ns use_blocked split_stage block_groups use_dif_forward variant_codes... (v=0:FLAT 1:LOG3 2:T1S 3:BUF)
-64 32 2 16 4 780.12 0 0 0 0 -1 -1
+64 32 1 64 637.30 0 0 0 0 -1
