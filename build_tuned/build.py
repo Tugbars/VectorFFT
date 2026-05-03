@@ -257,7 +257,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--compile', action='store_true',
                     help='Compile only, do not run')
-    ap.add_argument('--src', default=str(HERE / 'test_tuned_core.c'))
+    ap.add_argument('--src', default=str(HERE / 'test' / 'test_tuned_core.c'),
+                    help='Source file to build. Bench files live in build_tuned/, '
+                         'tests live in build_tuned/test/.')
     ap.add_argument('--mkl', action='store_true',
                     help='Link Intel MKL (ILP64 sequential). Adds '
                          '-DVFFT_HAS_MKL -DMKL_ILP64 and the three '
@@ -277,13 +279,13 @@ def main():
     print(f' Includes:  {len(build_includes())} dirs')
     print('-' * 60)
 
-    src = Path(args.src)
+    src = Path(args.src).resolve()
     if not src.exists():
         print(f'[error] source not found: {src}', file=sys.stderr)
         return 1
 
     stem = src.stem
-    out_bin = HERE / (stem + '.exe' if tc['is_windows'] else stem)
+    out_bin = src.parent / (stem + '.exe' if tc['is_windows'] else stem)
     cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw)
 
     print(f'[compile] {tc["cc"]} ... -> {out_bin.name}', flush=True)
