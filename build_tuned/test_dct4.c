@@ -50,7 +50,7 @@ static int test_cell(int N, size_t K, stride_registry_t *reg, stride_wisdom_t *w
     srand(17 + N + (int)K);
     for (size_t i = 0; i < NK; i++) orig[i] = (double)rand() / RAND_MAX - 0.5;
 
-    stride_plan_t *plan = stride_dct4_wise_plan(N, K, reg, wis);
+    stride_plan_t *plan = stride_dct4_auto_plan(N, K, reg);  /* DIAG: no wisdom */
     if (!plan) {
         printf("  N=%-5d K=%-3zu  PLAN_FAIL\n", N, K);
         _aligned_free(orig); _aligned_free(coefs); _aligned_free(back);
