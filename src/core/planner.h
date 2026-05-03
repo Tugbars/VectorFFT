@@ -158,10 +158,11 @@ static void stride_wisdom_init(stride_wisdom_t *wis)
     wis->count = 0;
 }
 
-/* Find wisdom entry for (N, K). Returns NULL if not found. */
+/* Find wisdom entry for (N, K). Returns NULL if not found or if wis is NULL. */
 static const stride_wisdom_entry_t *stride_wisdom_lookup(
     const stride_wisdom_t *wis, int N, size_t K)
 {
+    if (!wis) return NULL;
     for (int i = 0; i < wis->count; i++)
     {
         if (wis->entries[i].N == N && wis->entries[i].K == K)
@@ -979,6 +980,45 @@ static stride_plan_t *stride_auto_plan(int N, size_t K,
                                        const stride_registry_t *reg)
 {
     return stride_auto_plan_wis(N, K, reg, /*wis=*/NULL);
+}
+
+/**
+ * stride_estimate_plan -- Cost-model-driven planner (no measurement).
+ *
+ * Greedy factorization + permutation search using the analytic cost model
+ * (stride_score_factorization in factorizer.h). Pure model-based — no
+ * measurement, no wisdom lookup. Plan creation is fast (microseconds).
+ *
+ * Compared to stride_auto_plan (greedy with K-aware ordering): this also
+ * tries all radix-set permutations and picks the best-scored one, which
+ * matters for nf>=3 cases where greedy ordering may not be cache-optimal.
+ *
+ * Compared to stride_wise_plan (wisdom-driven): this skips both wisdom
+ * lookup and measurement. Use for fast plan creation when wisdom is not
+ * available and the user accepts the model's accuracy limits.
+ *
+ * Known limit: the cost model is documented as "spiky" — predicts within
+ * 2x for 11/16 radixes but can mis-pick prime-radix factorizations whose
+ * codelets have non-obvious scheduling (Sethi-Ullman). For prime-heavy N,
+ * users should use VFFT_MEASURE or higher.
+ */
+static stride_plan_t *stride_estimate_plan(int N, size_t K,
+                                           const stride_registry_t *reg)
+{
+    stride_cpu_info_t cpu = stride_detect_cpu();
+    stride_factorization_t fact;
+
+    /* Scored multi-decomposition search: enumerates every ordered
+     * factorization of N (up to FACT_MAX_STAGES stages) using available
+     * radix codelets, scores each via the per-radix profile-driven cost
+     * model, returns the lowest-scoring one. Sub-millisecond for typical N. */
+    if (stride_factorize_scored(N, K, reg, &cpu, &fact) != 0) {
+        /* N has prime factors not in our radix set — fall back to
+         * auto_plan which handles Bluestein/Rader for primes. */
+        return stride_auto_plan(N, K, reg);
+    }
+
+    return _stride_build_plan(N, K, fact.factors, fact.nfactors, reg);
 }
 
 /**

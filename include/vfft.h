@@ -107,6 +107,71 @@ extern "C" {
 typedef struct vfft_plan_s *vfft_plan;
 
 /* ═══════════════════════════════════════════════════════════════
+ * PLAN CREATION FLAGS
+ *
+ * Mirrors FFTW's flag conventions. Pass to vfft_plan_* as the trailing
+ * flags argument. Combine with bitwise OR (e.g. VFFT_MEASURE|VFFT_WISDOM_ONLY).
+ * ═══════════════════════════════════════════════════════════════ */
+
+/** Heuristic plan via cost model. Fast plan creation, possibly suboptimal.
+ *  Equivalent to FFTW_ESTIMATE. */
+#define VFFT_ESTIMATE        0u
+
+/** Wisdom-driven plan. On wisdom miss, runs a per-cell calibration
+ *  and inserts the result into the in-memory wisdom database (so subsequent
+ *  identical (N, K) plans hit the cache). Equivalent to FFTW_MEASURE. */
+#define VFFT_MEASURE         (1u << 0)
+
+/** Wider per-cell calibration on miss (more candidates, more reps).
+ *  Slower plan creation; usually picks the same plan as MEASURE.
+ *  Equivalent to FFTW_EXHAUSTIVE. */
+#define VFFT_EXHAUSTIVE      (1u << 1)
+
+/** Use only what is already in the wisdom database. Returns NULL on miss
+ *  (no calibration). Useful when plan creation must be fast and predictable.
+ *  Equivalent to FFTW_WISDOM_ONLY. */
+#define VFFT_WISDOM_ONLY     (1u << 2)
+
+/* ═══════════════════════════════════════════════════════════════
+ * WISDOM LIFECYCLE
+ *
+ * Wisdom is a measured-plan cache. The library maintains an in-memory
+ * wisdom database initialized empty by vfft_init(). Users opt in by
+ * loading a wisdom file (their own calibration output, or a sample shipped
+ * under examples/<arch>/wisdom.txt). MEASURE/EXHAUSTIVE plans consult
+ * the database; on miss, they calibrate that cell and insert the result.
+ *
+ * The library does NOT auto-load wisdom from disk. Users with no wisdom
+ * loaded who pass VFFT_MEASURE will pay one-time calibration per cell
+ * (matching FFTW_MEASURE behavior).
+ *
+ * Wisdom is per-precision and per-microarchitecture. The sample wisdom
+ * under examples/14900KF/wisdom.txt was generated on Intel i9-14900KF
+ * (Raptor Lake, AVX2, single-thread); it may be sub-optimal on other
+ * hardware. Generate your own with vfft_save_wisdom() after exercising
+ * the plans you care about under VFFT_MEASURE.
+ * ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * vfft_load_wisdom — Load wisdom from a file, merging into the in-memory
+ * database. Existing entries with matching (N, K) are replaced.
+ * @return  0 on success, non-zero if the file was unreadable or malformed.
+ */
+int vfft_load_wisdom(const char *path);
+
+/**
+ * vfft_save_wisdom — Save the in-memory wisdom database to a file.
+ * @return  0 on success, non-zero on I/O error.
+ */
+int vfft_save_wisdom(const char *path);
+
+/**
+ * vfft_forget_wisdom — Discard the in-memory wisdom database.
+ * Subsequent VFFT_MEASURE plans will calibrate from scratch.
+ */
+void vfft_forget_wisdom(void);
+
+/* ═══════════════════════════════════════════════════════════════
  * INITIALIZATION
  * ═══════════════════════════════════════════════════════════════ */
 
@@ -135,50 +200,67 @@ int vfft_pin_thread(int core_id);
 /**
  * vfft_plan_c2c — Create a complex-to-complex FFT plan.
  *
- * @param N   Transform size (any positive integer; highly composite N is fastest).
- * @param K   Batch count (number of independent transforms). K >= 4 for SIMD.
- * @return    Plan handle, or NULL on failure.
+ * @param N      Transform size (any positive integer; highly composite N is fastest).
+ * @param K      Batch count (number of independent transforms). K >= 4 for SIMD.
+ * @param flags  VFFT_ESTIMATE / VFFT_MEASURE / VFFT_EXHAUSTIVE / VFFT_WISDOM_ONLY.
+ * @return       Plan handle, or NULL on failure (or VFFT_WISDOM_ONLY miss).
  *
  * The plan is reusable: call vfft_execute_* many times with different data.
- * Uses the heuristic planner. For calibrated plans, use vfft_plan_c2c_measure.
+ * MEASURE/EXHAUSTIVE consult the wisdom cache (load via vfft_load_wisdom);
+ * on miss they calibrate the cell and insert the result.
  */
-vfft_plan vfft_plan_c2c(int N, size_t K);
-
-/**
- * vfft_plan_c2c_measure — Create a calibrated complex-to-complex FFT plan.
- *
- * Tries multiple factorizations and measures actual performance.
- * Slower to create but may produce faster plans for repeated execution.
- *
- * @param N   Transform size.
- * @param K   Batch count.
- * @return    Plan handle, or NULL on failure.
- */
-vfft_plan vfft_plan_c2c_measure(int N, size_t K);
+vfft_plan vfft_plan_c2c(int N, size_t K, unsigned flags);
 
 /**
  * vfft_plan_r2c — Create a real-to-complex FFT plan.
  *
  * N-point real FFT → N/2+1 complex output (Hermitian symmetry).
- * N must be even.
- *
- * @param N   Transform size (must be even).
- * @param K   Batch count.
- * @return    Plan handle, or NULL on failure.
+ * Constraint: N must be even, K must be >= 2.
  */
-vfft_plan vfft_plan_r2c(int N, size_t K);
+vfft_plan vfft_plan_r2c(int N, size_t K, unsigned flags);
 
 /**
  * vfft_plan_2d — Create a 2D complex FFT plan.
  *
  * In-place, row-major layout: re[i*N2 + j], im[i*N2 + j].
  * bwd(fwd(x)) = N1*N2 * x.
- *
- * @param N1   Number of rows (axis-0 FFT length).
- * @param N2   Number of columns (axis-1 FFT length).
- * @return     Plan handle, or NULL on failure.
  */
-vfft_plan vfft_plan_2d(int N1, int N2);
+vfft_plan vfft_plan_2d(int N1, int N2, unsigned flags);
+
+/**
+ * vfft_plan_2d_r2c — Create a 2D real-to-complex FFT plan.
+ *
+ * Forward: N1*N2 reals -> N1*(N2/2+1) complex bins (reduces along inner axis).
+ * Backward: reverse, scaled bwd(fwd(x)) = N1*N2 * x.
+ * Constraint: N2 must be even.
+ */
+vfft_plan vfft_plan_2d_r2c(int N1, int N2, unsigned flags);
+
+/**
+ * vfft_plan_dct2 — DCT-II (REDFT10) / DCT-III (REDFT01) plan, both directions.
+ *   vfft_execute_dct2 = forward; vfft_execute_dct3 = backward (inverse up to 2N).
+ * Constraint: N must be even.
+ */
+vfft_plan vfft_plan_dct2(int N, size_t K, unsigned flags);
+
+/**
+ * vfft_plan_dct4 — DCT-IV (REDFT11) plan. Involutory up to scale 2N.
+ * Constraint: N must be even.
+ */
+vfft_plan vfft_plan_dct4(int N, size_t K, unsigned flags);
+
+/**
+ * vfft_plan_dst2 — DST-II (RODFT10) / DST-III (RODFT01) plan, both directions.
+ *   vfft_execute_dst2 = forward; vfft_execute_dst3 = backward (inverse up to 2N).
+ * Constraint: N must be even.
+ */
+vfft_plan vfft_plan_dst2(int N, size_t K, unsigned flags);
+
+/**
+ * vfft_plan_dht — Discrete Hartley Transform (FFTW_DHT) plan.
+ * Self-inverse up to scale 1/N. Constraint: N must be even.
+ */
+vfft_plan vfft_plan_dht(int N, size_t K, unsigned flags);
 
 /**
  * vfft_destroy — Destroy a plan and free all resources.
@@ -242,6 +324,71 @@ void vfft_execute_r2c(vfft_plan p, const double *real_in,
  */
 void vfft_execute_c2r(vfft_plan p, const double *in_re, const double *in_im,
                        double *real_out);
+
+/* ═══════════════════════════════════════════════════════════════
+ * EXECUTION — 2D REAL-TO-COMPLEX / COMPLEX-TO-REAL
+ * ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * vfft_execute_2d_r2c — 2D forward real-to-complex FFT.
+ *
+ * @param p         Plan from vfft_plan_2d_r2c.
+ * @param real_in   Real input: real_in[i*N2 + j], N1*N2 doubles.
+ * @param out_re    Complex output Re bins: N1*(N2/2+1) doubles.
+ * @param out_im    Complex output Im bins: N1*(N2/2+1) doubles.
+ */
+void vfft_execute_2d_r2c(vfft_plan p, const double *real_in,
+                          double *out_re, double *out_im);
+
+/**
+ * vfft_execute_2d_c2r — 2D backward complex-to-real FFT.
+ *
+ * Output = N1*N2 * original_input. Divide by N1*N2 to normalize.
+ */
+void vfft_execute_2d_c2r(vfft_plan p, const double *in_re, const double *in_im,
+                          double *real_out);
+
+/* ═══════════════════════════════════════════════════════════════
+ * EXECUTION — DCT / DST / DHT (real-to-real)
+ *
+ * All r2r layouts: in[n*K + k] for n=0..N-1, k=0..K-1; out same shape.
+ * In-place safe (caller may pass in == out).
+ * Conventions match FFTW: unnormalized; user divides for roundtrip.
+ * ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * vfft_execute_dct2 — DCT-II (FFTW REDFT10).
+ *   Y[k] = 2 * sum_{n=0..N-1} x[n] * cos(pi*k*(2n+1)/(2N))
+ */
+void vfft_execute_dct2(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dct3 — DCT-III (FFTW REDFT01), inverse of DCT-II up to scale 2N.
+ *   For y = dct2(x), x_recovered = dct3(y) / (2N).
+ */
+void vfft_execute_dct3(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dct4 — DCT-IV (FFTW REDFT11). Involutory up to scale 2N.
+ *   For y = dct4(x), x_recovered = dct4(y) / (2N).
+ */
+void vfft_execute_dct4(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dst2 — DST-II (FFTW RODFT10).
+ */
+void vfft_execute_dst2(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dst3 — DST-III (FFTW RODFT01), inverse of DST-II up to scale 2N.
+ */
+void vfft_execute_dst3(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dht — Discrete Hartley Transform (FFTW_DHT). Self-inverse up to 1/N.
+ *   For y = dht(x), x_recovered = dht(y) / N.
+ */
+void vfft_execute_dht(vfft_plan p, const double *in, double *out);
 
 /* ═══════════════════════════════════════════════════════════════
  * THREADING
