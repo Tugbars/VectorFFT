@@ -12,6 +12,7 @@ how to regenerate everything from scratch.
 
 ## Reading order
 
+0. [00_thesis.md](00_thesis.md) — **start here** — the memory-bound thesis and why the cost model is shaped the way it is
 1. [01_architecture.md](01_architecture.md) — components and data flow
 2. [02_static_profile.md](02_static_profile.md) — what `extract.py` produces (op counts, register pressure)
 3. [03_dynamic_cpe.md](03_dynamic_cpe.md) — what `measure_cpe.c` produces (per-butterfly cycles)
@@ -19,9 +20,13 @@ how to regenerate everything from scratch.
 5. [05_variant_selection.md](05_variant_selection.md) — how the cost model mirrors plan-build's choice between t1, t1s, and log3 codelets
 6. [06_validation.md](06_validation.md) — bench methodology and current results
 7. [07_regeneration_workflow.md](07_regeneration_workflow.md) — exact commands to rebuild everything
+9. [09_decisions.md](09_decisions.md) — ADR-style record of non-obvious decisions, with the alternatives we rejected
 
 ## Audiences
 
+- **First-time reader / reviewer**: read 00 first. Everything else
+  reads as obvious if you start there; tries to make sense of details
+  if you skip it.
 - **Library maintainer adding a new radix**: read 02 + 03 + 07 — those
   cover the data inputs to the cost model. New radixes need profile
   rows in both auto-generated headers.
@@ -30,8 +35,8 @@ how to regenerate everything from scratch.
   target hardware.
 - **User comparing ESTIMATE / MEASURE / EXHAUSTIVE modes**: read 04 +
   06 — those cover what the model does and how accurate it is.
-- **Reviewer auditing the methodology**: read 03 + 04 + 05 — those are
-  where the technical decisions live.
+- **Reviewer auditing the methodology**: read 00 + 03 + 04 + 05 + 09
+  — those are where the technical claims and decision rationale live.
 
 ## Source of truth
 
