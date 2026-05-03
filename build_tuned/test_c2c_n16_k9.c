@@ -10,7 +10,7 @@ int main(void) {
     stride_set_num_threads(1);
     stride_registry_t reg; stride_registry_init(&reg);
 
-    int N = 8; size_t K = 9;
+    int N = 16; size_t K = 9;
     size_t NK = (size_t)N * K;
     double *re = (double *)_aligned_malloc(NK*sizeof(double), 64);
     double *im = (double *)_aligned_malloc(NK*sizeof(double), 64);
