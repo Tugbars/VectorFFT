@@ -35,11 +35,11 @@
 
 #ifdef _WIN32
 #include <malloc.h>
-#define STRIDE_ALIGNED_ALLOC(align, size)  _aligned_malloc((size), (align))
-#define STRIDE_ALIGNED_FREE(p)             _aligned_free(p)
+#define STRIDE_ALIGNED_ALLOC(align, size) _aligned_malloc((size), (align))
+#define STRIDE_ALIGNED_FREE(p) _aligned_free(p)
 #else
-#define STRIDE_ALIGNED_ALLOC(align, size)  aligned_alloc((align), (size))
-#define STRIDE_ALIGNED_FREE(p)             free(p)
+#define STRIDE_ALIGNED_ALLOC(align, size) aligned_alloc((align), (size))
+#define STRIDE_ALIGNED_FREE(p) free(p)
 #endif
 
 #define STRIDE_MAX_STAGES 9
@@ -51,61 +51,62 @@
 
 /* n1: out-of-place (or in-place when in==out), stride-based, no twiddle */
 typedef void (*stride_n1_fn)(
-    const double * __restrict__ in_re, const double * __restrict__ in_im,
-    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double *__restrict__ in_re, const double *__restrict__ in_im,
+    double *__restrict__ out_re, double *__restrict__ out_im,
     size_t is, size_t os, size_t vl);
 
 /* t1: in-place, stride-based, with twiddles. W[(j-1)*me + m] layout. */
 typedef void (*stride_t1_fn)(
-    double * __restrict__ rio_re, double * __restrict__ rio_im,
-    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    double *__restrict__ rio_re, double *__restrict__ rio_im,
+    const double *__restrict__ W_re, const double *__restrict__ W_im,
     size_t ios, size_t me);
 
 /* t1_oop: out-of-place, separate is/os, with twiddles. For R2C fused pack
  * and strided 2D FFT. Reads in_re[m + j*is], applies twiddle, butterflies,
  * writes out_re[m + j*os]. Same twiddle layout as t1: W[(j-1)*me + m]. */
 typedef void (*stride_t1_oop_fn)(
-    const double * __restrict__ in_re, const double * __restrict__ in_im,
-    double * __restrict__ out_re, double * __restrict__ out_im,
-    const double * __restrict__ W_re, const double * __restrict__ W_im,
+    const double *__restrict__ in_re, const double *__restrict__ in_im,
+    double *__restrict__ out_re, double *__restrict__ out_im,
+    const double *__restrict__ W_re, const double *__restrict__ W_im,
     size_t is, size_t os, size_t me);
 
 /* n1_scaled: same as n1 but output *= scale. For C2R fused unpack where
  * the last stage writes directly to output with a ×2 normalization factor. */
 typedef void (*stride_n1_scaled_fn)(
-    const double * __restrict__ in_re, const double * __restrict__ in_im,
-    double * __restrict__ out_re, double * __restrict__ out_im,
+    const double *__restrict__ in_re, const double *__restrict__ in_im,
+    double *__restrict__ out_re, double *__restrict__ out_im,
     size_t is, size_t os, size_t vl, double scale);
 
 /* ═══════════════════════════════════════════════════════════════
  * PLAN STRUCTURES
  * ═══════════════════════════════════════════════════════════════ */
 
-typedef struct {
-    int radix;              /* R for this stage */
-    size_t stride;          /* distance between butterfly legs (doubles) */
-    int num_groups;         /* total groups = N / R */
+typedef struct
+{
+    int radix;      /* R for this stage */
+    size_t stride;  /* distance between butterfly legs (doubles) */
+    int num_groups; /* total groups = N / R */
 
     /* Codelets */
     stride_n1_fn n1_fwd, n1_bwd;
     stride_t1_fn t1_fwd, t1_bwd;
-    stride_t1_fn t1s_fwd, t1s_bwd;  /* scalar-broadcast twiddle variant (NULL = not available) */
-    stride_t1_oop_fn t1_oop_fwd, t1_oop_bwd;  /* out-of-place twiddle (R2C fused pack, 2D) */
-    stride_n1_scaled_fn n1_scaled_fwd, n1_scaled_bwd;  /* scaled output (C2R fused unpack) */
+    stride_t1_fn t1s_fwd, t1s_bwd;                    /* scalar-broadcast twiddle variant (NULL = not available) */
+    stride_t1_oop_fn t1_oop_fwd, t1_oop_bwd;          /* out-of-place twiddle (R2C fused pack, 2D) */
+    stride_n1_scaled_fn n1_scaled_fwd, n1_scaled_bwd; /* scaled output (C2R fused unpack) */
 
     /* Per-group info (num_groups entries) */
-    size_t *group_base;     /* base offset for each group (in doubles) */
-    int *needs_tw;          /* 0 = use n1 (no twiddle), 1 = use t1 */
+    size_t *group_base; /* base offset for each group (in doubles) */
+    int *needs_tw;      /* 0 = use n1 (no twiddle), 1 = use t1 */
 
     /* Per-group combined twiddle tables (method C).
      * grp_tw_re[g] -> (R-1)*K doubles, or NULL if needs_tw[g]==0.
      * Twiddles include both common factor and per-leg component baked together.
      * Layout: [(j-1)*K + k] for j=1..R-1. */
-    double **grp_tw_re;     /* array of num_groups pointers */
+    double **grp_tw_re; /* array of num_groups pointers */
     double **grp_tw_im;
 
     /* Leg-0 common factor per group (scalar, broadcast to K elements) */
-    double *cf0_re;         /* num_groups entries */
+    double *cf0_re; /* num_groups entries */
     double *cf0_im;
 
     /* Single pool allocation for all twiddle data in this stage */
@@ -136,19 +137,20 @@ typedef struct {
     double *tw_scalar_pool_im;
 } stride_stage_t;
 
-typedef struct {
+typedef struct
+{
     int N;
     int num_stages;
     size_t K;
-    int factors[STRIDE_MAX_STAGES];   /* radix per stage */
+    int factors[STRIDE_MAX_STAGES]; /* radix per stage */
     stride_stage_t stages[STRIDE_MAX_STAGES];
 
     /* Blocked executor selection (set by planner_blocked.h).
      * When use_blocked=1, execute dispatches to the blocked executor
      * instead of the standard stage-sweep loop. */
-    int use_blocked;        /* 0 = standard, 1 = blocked */
-    int split_stage;        /* first blocked stage */
-    int block_groups;       /* groups per block at split stage */
+    int use_blocked;  /* 0 = standard, 1 = blocked */
+    int split_stage;  /* first blocked stage */
+    int block_groups; /* groups per block at split stage */
 
     /* DIT/DIF orientation (whole-plan, no per-stage mixing).
      *   0 = DIT forward + DIT backward (current default; pre-multiply
@@ -171,7 +173,6 @@ typedef struct {
     void *override_data;
 } stride_plan_t;
 
-
 /* ═══════════════════════════════════════════════════════════════
  * EXECUTOR LOOP — FORWARD (Method C)
  * ═══════════════════════════════════════════════════════════════ */
@@ -181,29 +182,37 @@ typedef struct {
  * full_K is the plan's original K (used for cf_all/twiddle table strides).
  * start_stage: skip stages 0..start_stage-1 (used by R2C fused pack). */
 static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
-                                             double *re, double *im,
-                                             size_t slice_K, size_t full_K,
-                                             int start_stage) {
-    for (int s = start_stage; s < plan->num_stages; s++) {
+                                                  double *re, double *im,
+                                                  size_t slice_K, size_t full_K,
+                                                  int start_stage)
+{
+    for (int s = start_stage; s < plan->num_stages; s++)
+    {
         const stride_stage_t *st = &plan->stages[s];
 
-        for (int g = 0; g < st->num_groups; g++) {
+        for (int g = 0; g < st->num_groups; g++)
+        {
             double *base_re = re + st->group_base[g];
             double *base_im = im + st->group_base[g];
 
-            if (!st->needs_tw[g]) {
+            if (!st->needs_tw[g])
+            {
                 st->n1_fwd(base_re, base_im, base_re, base_im,
                            st->stride, st->stride, slice_K);
-            } else if (st->use_n1_fallback) {
+            }
+            else if (st->use_n1_fallback)
+            {
                 const int R = st->radix;
                 const double *cfr = st->cf_all_re + (size_t)g * R * full_K;
                 const double *cfi = st->cf_all_im + (size_t)g * R * full_K;
-                for (int j = 0; j < R; j++) {
+                for (int j = 0; j < R; j++)
+                {
                     double *lr = base_re + (size_t)j * st->stride;
                     double *li = base_im + (size_t)j * st->stride;
                     const double *wr = cfr + (size_t)j * full_K;
                     const double *wi = cfi + (size_t)j * full_K;
-                    for (size_t kk = 0; kk < slice_K; kk++) {
+                    for (size_t kk = 0; kk < slice_K; kk++)
+                    {
                         double tr = lr[kk];
                         lr[kk] = tr * wr[kk] - li[kk] * wi[kk];
                         li[kk] = tr * wi[kk] + li[kk] * wr[kk];
@@ -211,15 +220,20 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                 }
                 st->n1_fwd(base_re, base_im, base_re, base_im,
                            st->stride, st->stride, slice_K);
-            } else if (st->use_log3) {
+            }
+            else if (st->use_log3)
+            {
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
-                if (cfr != 1.0 || cfi != 0.0) {
+                if (cfr != 1.0 || cfi != 0.0)
+                {
                     const int R = st->radix;
-                    for (int j = 0; j < R; j++) {
+                    for (int j = 0; j < R; j++)
+                    {
                         double *lr = base_re + (size_t)j * st->stride;
                         double *li = base_im + (size_t)j * st->stride;
-                        for (size_t kk = 0; kk < slice_K; kk++) {
+                        for (size_t kk = 0; kk < slice_K; kk++)
+                        {
                             double tr = lr[kk];
                             lr[kk] = tr * cfr - li[kk] * cfi;
                             li[kk] = tr * cfi + li[kk] * cfr;
@@ -229,15 +243,19 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                 st->t1_fwd(base_re, base_im,
                            st->grp_tw_re[g], st->grp_tw_im[g],
                            st->stride, slice_K);
-            } else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]
+            }
+            else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]
 #ifdef STRIDE_FORCE_TEMP_BUFFER
-                       && 0
+                     && 0
 #endif
-                      ) {
+            )
+            {
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
-                if (cfr != 1.0 || cfi != 0.0) {
-                    for (size_t kk = 0; kk < slice_K; kk++) {
+                if (cfr != 1.0 || cfi != 0.0)
+                {
+                    for (size_t kk = 0; kk < slice_K; kk++)
+                    {
                         double tr = base_re[kk];
                         base_re[kk] = tr * cfr - base_im[kk] * cfi;
                         base_im[kk] = tr * cfi + base_im[kk] * cfr;
@@ -246,20 +264,24 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                 st->t1s_fwd(base_re, base_im,
                             st->tw_scalar_re[g], st->tw_scalar_im[g],
                             st->stride, slice_K);
-            } else if (st->tw_scalar_re && st->tw_scalar_re[g]) {
+            }
+            else if (st->tw_scalar_re && st->tw_scalar_re[g])
+            {
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
-                if (cfr != 1.0 || cfi != 0.0) {
-                    for (size_t kk = 0; kk < slice_K; kk++) {
+                if (cfr != 1.0 || cfi != 0.0)
+                {
+                    for (size_t kk = 0; kk < slice_K; kk++)
+                    {
                         double tr = base_re[kk];
                         base_re[kk] = tr * cfr - base_im[kk] * cfi;
                         base_im[kk] = tr * cfi + base_im[kk] * cfr;
                     }
                 }
 
-                #ifndef STRIDE_TW_BLOCK_K
-                #define STRIDE_TW_BLOCK_K 64
-                #endif
+#ifndef STRIDE_TW_BLOCK_K
+#define STRIDE_TW_BLOCK_K 64
+#endif
                 const int Rm1 = st->radix - 1;
                 const double *stw_r = st->tw_scalar_re[g];
                 const double *stw_i = st->tw_scalar_im[g];
@@ -267,15 +289,19 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                 double tw_buf_re[63 * STRIDE_TW_BLOCK_K];
                 double tw_buf_im[63 * STRIDE_TW_BLOCK_K];
 
-                for (size_t kb = 0; kb < slice_K; kb += STRIDE_TW_BLOCK_K) {
+                for (size_t kb = 0; kb < slice_K; kb += STRIDE_TW_BLOCK_K)
+                {
                     size_t this_K = slice_K - kb;
-                    if (this_K > STRIDE_TW_BLOCK_K) this_K = STRIDE_TW_BLOCK_K;
+                    if (this_K > STRIDE_TW_BLOCK_K)
+                        this_K = STRIDE_TW_BLOCK_K;
 
-                    for (int j = 0; j < Rm1; j++) {
+                    for (int j = 0; j < Rm1; j++)
+                    {
                         double wr = stw_r[j];
                         double wi = stw_i[j];
                         size_t base = (size_t)j * this_K;
-                        for (size_t kk = 0; kk < this_K; kk++) {
+                        for (size_t kk = 0; kk < this_K; kk++)
+                        {
                             tw_buf_re[base + kk] = wr;
                             tw_buf_im[base + kk] = wi;
                         }
@@ -285,15 +311,19 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                                tw_buf_re, tw_buf_im,
                                st->stride, this_K);
                 }
-            } else {
+            }
+            else
+            {
                 /* Legacy full-twiddle path — NOT K-split safe (twiddle stride
                  * mismatch). Falls through here only if scalar twiddle is
                  * unavailable. Run with full slice_K which must equal full_K
                  * (single-threaded fallback). */
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
-                if (cfr != 1.0 || cfi != 0.0) {
-                    for (size_t kk = 0; kk < slice_K; kk++) {
+                if (cfr != 1.0 || cfi != 0.0)
+                {
+                    for (size_t kk = 0; kk < slice_K; kk++)
+                    {
                         double tr = base_re[kk];
                         base_re[kk] = tr * cfr - base_im[kk] * cfi;
                         base_im[kk] = tr * cfi + base_im[kk] * cfr;
@@ -310,7 +340,8 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
 /* ── Convenience: execute all stages (start_stage=0) ── */
 static inline void _stride_execute_fwd_slice(const stride_plan_t *plan,
                                              double *re, double *im,
-                                             size_t slice_K, size_t full_K) {
+                                             size_t slice_K, size_t full_K)
+{
     _stride_execute_fwd_slice_from(plan, re, im, slice_K, full_K, 0);
 }
 
@@ -331,16 +362,20 @@ static inline void _stride_execute_fwd_slice(const stride_plan_t *plan,
  * not select DIF orientation for plans that include such radixes. */
 static inline void _stride_execute_fwd_dif_slice(const stride_plan_t *plan,
                                                  double *re, double *im,
-                                                 size_t slice_K, size_t full_K) {
+                                                 size_t slice_K, size_t full_K)
+{
     (void)full_K;
-    for (int s = 0; s < plan->num_stages; s++) {
+    for (int s = 0; s < plan->num_stages; s++)
+    {
         const stride_stage_t *st = &plan->stages[s];
 
-        for (int g = 0; g < st->num_groups; g++) {
+        for (int g = 0; g < st->num_groups; g++)
+        {
             double *base_re = re + st->group_base[g];
             double *base_im = im + st->group_base[g];
 
-            if (!st->needs_tw[g]) {
+            if (!st->needs_tw[g])
+            {
                 st->n1_fwd(base_re, base_im, base_re, base_im,
                            st->stride, st->stride, slice_K);
                 continue;
@@ -378,33 +413,39 @@ static inline void _stride_execute_fwd_dif_slice(const stride_plan_t *plan,
  * we get with manual pre-mul + n1_bwd here. */
 static inline void _stride_execute_bwd_dif_slice(const stride_plan_t *plan,
                                                  double *re, double *im,
-                                                 size_t slice_K, size_t full_K) {
+                                                 size_t slice_K, size_t full_K)
+{
     (void)full_K;
-    for (int s = plan->num_stages - 1; s >= 0; s--) {
+    for (int s = plan->num_stages - 1; s >= 0; s--)
+    {
         const stride_stage_t *st = &plan->stages[s];
         const int R = st->radix;
 
-        for (int g = 0; g < st->num_groups; g++) {
+        for (int g = 0; g < st->num_groups; g++)
+        {
             double *base_re = re + st->group_base[g];
             double *base_im = im + st->group_base[g];
 
-            if (st->needs_tw[g]) {
+            if (st->needs_tw[g])
+            {
                 /* Pre-multiply legs 1..R-1 by conj(per-leg twiddle).
                  * Per-leg twiddle stored in grp_tw with row-major layout
                  * tw[(j-1)*K + kk] for j=1..R-1, kk=0..K-1. */
                 const double *tw_r = st->grp_tw_re[g];
                 const double *tw_i = st->grp_tw_im[g];
-                for (int j = 1; j < R; j++) {
+                for (int j = 1; j < R; j++)
+                {
                     double *lr = base_re + (size_t)j * st->stride;
                     double *li = base_im + (size_t)j * st->stride;
                     const double *wr = tw_r + (size_t)(j - 1) * plan->K;
                     const double *wi = tw_i + (size_t)(j - 1) * plan->K;
-                    for (size_t kk = 0; kk < slice_K; kk++) {
+                    for (size_t kk = 0; kk < slice_K; kk++)
+                    {
                         double tr = lr[kk];
                         /* x * conj(W) = (x_r + i*x_i)(W_r - i*W_i)
                          *             = (x_r*W_r + x_i*W_i) + i*(x_i*W_r - x_r*W_i) */
-                        lr[kk] = tr     * wr[kk] + li[kk] * wi[kk];
-                        li[kk] = li[kk] * wr[kk] - tr     * wi[kk];
+                        lr[kk] = tr * wr[kk] + li[kk] * wi[kk];
+                        li[kk] = li[kk] * wr[kk] - tr * wi[kk];
                     }
                 }
             }
@@ -420,29 +461,35 @@ static inline void _stride_execute_bwd_dif_slice(const stride_plan_t *plan,
  * stop_stage: stop before this stage (used by C2R fused unpack to skip stage 0).
  * Normal calls pass stop_stage=0 to run all stages. */
 static inline void _stride_execute_bwd_slice_until(const stride_plan_t *plan,
-                                             double *re, double *im,
-                                             size_t slice_K, size_t full_K,
-                                             int stop_stage) {
-    for (int s = plan->num_stages - 1; s >= stop_stage; s--) {
+                                                   double *re, double *im,
+                                                   size_t slice_K, size_t full_K,
+                                                   int stop_stage)
+{
+    for (int s = plan->num_stages - 1; s >= stop_stage; s--)
+    {
         const stride_stage_t *st = &plan->stages[s];
         const int R = st->radix;
 
-        for (int g = 0; g < st->num_groups; g++) {
+        for (int g = 0; g < st->num_groups; g++)
+        {
             double *base_re = re + st->group_base[g];
             double *base_im = im + st->group_base[g];
 
             st->n1_bwd(base_re, base_im, base_re, base_im,
                        st->stride, st->stride, slice_K);
 
-            if (st->needs_tw[g] && st->cf_all_re) {
+            if (st->needs_tw[g] && st->cf_all_re)
+            {
                 const double *cfr = st->cf_all_re + (size_t)g * R * full_K;
                 const double *cfi = st->cf_all_im + (size_t)g * R * full_K;
-                for (int j = 0; j < R; j++) {
+                for (int j = 0; j < R; j++)
+                {
                     double *lr = base_re + (size_t)j * st->stride;
                     double *li = base_im + (size_t)j * st->stride;
                     const double *wr = cfr + (size_t)j * full_K;
                     const double *wi = cfi + (size_t)j * full_K;
-                    for (size_t kk = 0; kk < slice_K; kk++) {
+                    for (size_t kk = 0; kk < slice_K; kk++)
+                    {
                         double tr = lr[kk];
                         lr[kk] = tr * wr[kk] + li[kk] * wi[kk];
                         li[kk] = li[kk] * wr[kk] - tr * wi[kk];
@@ -456,7 +503,8 @@ static inline void _stride_execute_bwd_slice_until(const stride_plan_t *plan,
 /* ── Convenience: execute all backward stages (stop_stage=0) ── */
 static inline void _stride_execute_bwd_slice(const stride_plan_t *plan,
                                              double *re, double *im,
-                                             size_t slice_K, size_t full_K) {
+                                             size_t slice_K, size_t full_K)
+{
     _stride_execute_bwd_slice_until(plan, re, im, slice_K, full_K, 0);
 }
 
@@ -469,14 +517,16 @@ static inline void _stride_execute_bwd_slice(const stride_plan_t *plan,
  * ═══════════════════════════════════════════════════════════════ */
 
 /* ── K-split dispatch args ── */
-typedef struct {
+typedef struct
+{
     const stride_plan_t *plan;
     double *re, *im;
     size_t slice_K, full_K;
     int is_bwd;
 } _stride_slice_arg_t;
 
-static void _stride_slice_trampoline(void *arg) {
+static void _stride_slice_trampoline(void *arg)
+{
     _stride_slice_arg_t *a = (_stride_slice_arg_t *)arg;
     if (a->is_bwd)
         _stride_execute_bwd_slice(a->plan, a->re, a->im, a->slice_K, a->full_K);
@@ -493,15 +543,17 @@ static void _stride_slice_trampoline(void *arg) {
  * Requires a barrier between stages (groups in stage s+1 depend on s).
  * ═══════════════════════════════════════════════════════════════ */
 
-typedef struct {
+typedef struct
+{
     const stride_plan_t *plan;
     double *re, *im;
-    int thread_id;          /* 0..T-1 */
+    int thread_id; /* 0..T-1 */
     int num_threads;
     _stride_barrier_t *barrier;
 } _stride_group_par_arg_t;
 
-static void _stride_execute_fwd_group_par(void *arg) {
+static void _stride_execute_fwd_group_par(void *arg)
+{
     _stride_group_par_arg_t *a = (_stride_group_par_arg_t *)arg;
     const stride_plan_t *plan = a->plan;
     double *re = a->re, *im = a->im;
@@ -510,31 +562,38 @@ static void _stride_execute_fwd_group_par(void *arg) {
     const size_t K = plan->K;
     int sense = 0;
 
-    for (int s = 0; s < plan->num_stages; s++) {
+    for (int s = 0; s < plan->num_stages; s++)
+    {
         const stride_stage_t *st = &plan->stages[s];
         const int ng = st->num_groups;
 
         /* Each thread processes groups [g_start, g_end) */
         int g_start = (ng * tid) / T;
-        int g_end   = (ng * (tid + 1)) / T;
+        int g_end = (ng * (tid + 1)) / T;
 
-        for (int g = g_start; g < g_end; g++) {
+        for (int g = g_start; g < g_end; g++)
+        {
             double *base_re = re + st->group_base[g];
             double *base_im = im + st->group_base[g];
 
-            if (!st->needs_tw[g]) {
+            if (!st->needs_tw[g])
+            {
                 st->n1_fwd(base_re, base_im, base_re, base_im,
                            st->stride, st->stride, K);
-            } else if (st->use_n1_fallback) {
+            }
+            else if (st->use_n1_fallback)
+            {
                 const int R = st->radix;
                 const double *cfr = st->cf_all_re + (size_t)g * R * K;
                 const double *cfi = st->cf_all_im + (size_t)g * R * K;
-                for (int j = 0; j < R; j++) {
+                for (int j = 0; j < R; j++)
+                {
                     double *lr = base_re + (size_t)j * st->stride;
                     double *li = base_im + (size_t)j * st->stride;
                     const double *wr = cfr + (size_t)j * K;
                     const double *wi = cfi + (size_t)j * K;
-                    for (size_t kk = 0; kk < K; kk++) {
+                    for (size_t kk = 0; kk < K; kk++)
+                    {
                         double tr = lr[kk];
                         lr[kk] = tr * wr[kk] - li[kk] * wi[kk];
                         li[kk] = tr * wi[kk] + li[kk] * wr[kk];
@@ -542,15 +601,20 @@ static void _stride_execute_fwd_group_par(void *arg) {
                 }
                 st->n1_fwd(base_re, base_im, base_re, base_im,
                            st->stride, st->stride, K);
-            } else if (st->use_log3) {
+            }
+            else if (st->use_log3)
+            {
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
-                if (cfr != 1.0 || cfi != 0.0) {
+                if (cfr != 1.0 || cfi != 0.0)
+                {
                     const int R = st->radix;
-                    for (int j = 0; j < R; j++) {
+                    for (int j = 0; j < R; j++)
+                    {
                         double *lr = base_re + (size_t)j * st->stride;
                         double *li = base_im + (size_t)j * st->stride;
-                        for (size_t kk = 0; kk < K; kk++) {
+                        for (size_t kk = 0; kk < K; kk++)
+                        {
                             double tr = lr[kk];
                             lr[kk] = tr * cfr - li[kk] * cfi;
                             li[kk] = tr * cfi + li[kk] * cfr;
@@ -560,15 +624,19 @@ static void _stride_execute_fwd_group_par(void *arg) {
                 st->t1_fwd(base_re, base_im,
                            st->grp_tw_re[g], st->grp_tw_im[g],
                            st->stride, K);
-            } else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]
+            }
+            else if (st->t1s_fwd && st->tw_scalar_re && st->tw_scalar_re[g]
 #ifdef STRIDE_FORCE_TEMP_BUFFER
-                       && 0
+                     && 0
 #endif
-                      ) {
+            )
+            {
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
-                if (cfr != 1.0 || cfi != 0.0) {
-                    for (size_t kk = 0; kk < K; kk++) {
+                if (cfr != 1.0 || cfi != 0.0)
+                {
+                    for (size_t kk = 0; kk < K; kk++)
+                    {
                         double tr = base_re[kk];
                         base_re[kk] = tr * cfr - base_im[kk] * cfi;
                         base_im[kk] = tr * cfi + base_im[kk] * cfr;
@@ -577,31 +645,39 @@ static void _stride_execute_fwd_group_par(void *arg) {
                 st->t1s_fwd(base_re, base_im,
                             st->tw_scalar_re[g], st->tw_scalar_im[g],
                             st->stride, K);
-            } else if (st->tw_scalar_re && st->tw_scalar_re[g]) {
+            }
+            else if (st->tw_scalar_re && st->tw_scalar_re[g])
+            {
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
-                if (cfr != 1.0 || cfi != 0.0) {
-                    for (size_t kk = 0; kk < K; kk++) {
+                if (cfr != 1.0 || cfi != 0.0)
+                {
+                    for (size_t kk = 0; kk < K; kk++)
+                    {
                         double tr = base_re[kk];
                         base_re[kk] = tr * cfr - base_im[kk] * cfi;
                         base_im[kk] = tr * cfi + base_im[kk] * cfr;
                     }
                 }
-                #ifndef STRIDE_TW_BLOCK_K
-                #define STRIDE_TW_BLOCK_K 64
-                #endif
+#ifndef STRIDE_TW_BLOCK_K
+#define STRIDE_TW_BLOCK_K 64
+#endif
                 const int Rm1 = st->radix - 1;
                 const double *stw_r = st->tw_scalar_re[g];
                 const double *stw_i = st->tw_scalar_im[g];
                 double tw_buf_re[63 * STRIDE_TW_BLOCK_K];
                 double tw_buf_im[63 * STRIDE_TW_BLOCK_K];
-                for (size_t kb = 0; kb < K; kb += STRIDE_TW_BLOCK_K) {
+                for (size_t kb = 0; kb < K; kb += STRIDE_TW_BLOCK_K)
+                {
                     size_t this_K = K - kb;
-                    if (this_K > STRIDE_TW_BLOCK_K) this_K = STRIDE_TW_BLOCK_K;
-                    for (int j = 0; j < Rm1; j++) {
+                    if (this_K > STRIDE_TW_BLOCK_K)
+                        this_K = STRIDE_TW_BLOCK_K;
+                    for (int j = 0; j < Rm1; j++)
+                    {
                         double wr = stw_r[j], wi = stw_i[j];
                         size_t base = (size_t)j * this_K;
-                        for (size_t kk = 0; kk < this_K; kk++) {
+                        for (size_t kk = 0; kk < this_K; kk++)
+                        {
                             tw_buf_re[base + kk] = wr;
                             tw_buf_im[base + kk] = wi;
                         }
@@ -609,11 +685,15 @@ static void _stride_execute_fwd_group_par(void *arg) {
                     st->t1_fwd(base_re + kb, base_im + kb,
                                tw_buf_re, tw_buf_im, st->stride, this_K);
                 }
-            } else {
+            }
+            else
+            {
                 double cfr = st->cf0_re[g];
                 double cfi = st->cf0_im[g];
-                if (cfr != 1.0 || cfi != 0.0) {
-                    for (size_t kk = 0; kk < K; kk++) {
+                if (cfr != 1.0 || cfi != 0.0)
+                {
+                    for (size_t kk = 0; kk < K; kk++)
+                    {
                         double tr = base_re[kk];
                         base_re[kk] = tr * cfr - base_im[kk] * cfi;
                         base_im[kk] = tr * cfi + base_im[kk] * cfr;
@@ -639,8 +719,10 @@ static void _stride_execute_fwd_group_par(void *arg) {
 #define STRIDE_KSPLIT_THRESHOLD 256
 
 static inline void stride_execute_fwd(const stride_plan_t *plan,
-                                      double *re, double *im) {
-    if (plan->override_fwd) {
+                                      double *re, double *im)
+{
+    if (plan->override_fwd)
+    {
         plan->override_fwd(plan->override_data, re, im);
         return;
     }
@@ -649,7 +731,8 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
     /* DIF orientation runs single-threaded for v1.1. Threading paths
      * (K-split, group-parallel) for DIF can be added once correctness
      * is validated and on-host wins justify the complexity. */
-    if (plan->use_dif_forward) {
+    if (plan->use_dif_forward)
+    {
         _stride_execute_fwd_dif_slice(plan, re, im, K, K);
         return;
     }
@@ -658,21 +741,26 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
 
     /* Minimum K for any threading: need at least SIMD width per thread for K-split,
      * or at least T groups in the first stage for group-parallel. */
-    if (T <= 1 || K < 4) {
+    if (T <= 1 || K < 4)
+    {
         _stride_execute_fwd_slice(plan, re, im, K, K);
         return;
     }
 
-    if (K / T >= STRIDE_KSPLIT_THRESHOLD) {
+    if (K / T >= STRIDE_KSPLIT_THRESHOLD)
+    {
         /* ── K-split: each thread processes K/T contiguous lanes ── */
         const size_t S = ((K / T) + 7) & ~(size_t)7;
         _stride_slice_arg_t args[64];
         int n_dispatch = 0;
-        for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+        for (int t = 1; t < T && t <= _stride_pool_size; t++)
+        {
             size_t k_start = (size_t)t * S;
-            if (k_start >= K) break;
+            if (k_start >= K)
+                break;
             size_t k_end = k_start + S;
-            if (k_end > K) k_end = K;
+            if (k_end > K)
+                k_end = K;
             args[n_dispatch].plan = plan;
             args[n_dispatch].re = re + k_start;
             args[n_dispatch].im = im + k_start;
@@ -686,14 +774,17 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
         size_t s0 = S < K ? S : K;
         _stride_execute_fwd_slice(plan, re, im, s0, K);
         _stride_pool_wait_all();
-    } else {
+    }
+    else
+    {
         /* ── Group-parallel: split groups across threads, full K each ──
          * Better for small K where K-split causes false sharing. */
         _stride_barrier_t barrier;
         _stride_barrier_init(&barrier, T);
 
         _stride_group_par_arg_t gargs[64];
-        for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+        for (int t = 1; t < T && t <= _stride_pool_size; t++)
+        {
             gargs[t].plan = plan;
             gargs[t].re = re;
             gargs[t].im = im;
@@ -718,14 +809,17 @@ static inline void stride_execute_fwd(const stride_plan_t *plan,
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void stride_execute_bwd(const stride_plan_t *plan,
-                                      double *re, double *im) {
-    if (plan->override_bwd) {
+                                      double *re, double *im)
+{
+    if (plan->override_bwd)
+    {
         plan->override_bwd(plan->override_data, re, im);
         return;
     }
     const size_t K = plan->K;
 
-    if (plan->use_dif_forward) {
+    if (plan->use_dif_forward)
+    {
         _stride_execute_bwd_dif_slice(plan, re, im, K, K);
         return;
     }
@@ -734,18 +828,22 @@ static inline void stride_execute_bwd(const stride_plan_t *plan,
 
     const int T_eff = T;
     const size_t S = ((K / T_eff) + 7) & ~(size_t)7;
-    if (S < 8) {
+    if (S < 8)
+    {
         _stride_execute_bwd_slice(plan, re, im, K, K);
         return;
     }
 
     _stride_slice_arg_t args[64];
     int n_dispatch = 0;
-    for (int t = 1; t < T_eff && t <= _stride_pool_size; t++) {
+    for (int t = 1; t < T_eff && t <= _stride_pool_size; t++)
+    {
         size_t k_start = (size_t)t * S;
-        if (k_start >= K) break;
+        if (k_start >= K)
+            break;
         size_t k_end = k_start + S;
-        if (k_end > K) k_end = K;
+        if (k_end > K)
+            k_end = K;
         args[n_dispatch].plan = plan;
         args[n_dispatch].re = re + k_start;
         args[n_dispatch].im = im + k_start;
@@ -762,7 +860,6 @@ static inline void stride_execute_bwd(const stride_plan_t *plan,
     _stride_pool_wait_all();
 }
 
-
 /* ═══════════════════════════════════════════════════════════════
  * SERIAL ENTRY POINTS — bypass thread dispatch
  *
@@ -777,12 +874,15 @@ static inline void stride_execute_bwd(const stride_plan_t *plan,
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void stride_execute_fwd_serial(const stride_plan_t *plan,
-                                              double *re, double *im) {
-    if (plan->override_fwd) {
+                                             double *re, double *im)
+{
+    if (plan->override_fwd)
+    {
         plan->override_fwd(plan->override_data, re, im);
         return;
     }
-    if (plan->use_dif_forward) {
+    if (plan->use_dif_forward)
+    {
         _stride_execute_fwd_dif_slice(plan, re, im, plan->K, plan->K);
         return;
     }
@@ -790,18 +890,20 @@ static inline void stride_execute_fwd_serial(const stride_plan_t *plan,
 }
 
 static inline void stride_execute_bwd_serial(const stride_plan_t *plan,
-                                              double *re, double *im) {
-    if (plan->override_bwd) {
+                                             double *re, double *im)
+{
+    if (plan->override_bwd)
+    {
         plan->override_bwd(plan->override_data, re, im);
         return;
     }
-    if (plan->use_dif_forward) {
+    if (plan->use_dif_forward)
+    {
         _stride_execute_bwd_dif_slice(plan, re, im, plan->K, plan->K);
         return;
     }
     _stride_execute_bwd_slice(plan, re, im, plan->K, plan->K);
 }
-
 
 /* ═══════════════════════════════════════════════════════════════
  * NORMALIZED BACKWARD: bwd(fwd(x)) = x  (not N*x)
@@ -811,7 +913,8 @@ static inline void stride_execute_bwd_serial(const stride_plan_t *plan,
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void stride_execute_bwd_normalized(const stride_plan_t *plan,
-                                                  double *re, double *im) {
+                                                 double *re, double *im)
+{
     stride_execute_bwd(plan, re, im);
 
     const size_t NK = (size_t)plan->N * plan->K;
@@ -821,27 +924,40 @@ static inline void stride_execute_bwd_normalized(const stride_plan_t *plan,
     {
         __m512d vinv = _mm512_set1_pd(inv_N);
         size_t i = 0;
-        for (; i + 8 <= NK; i += 8) {
+        for (; i + 8 <= NK; i += 8)
+        {
             _mm512_storeu_pd(re + i, _mm512_mul_pd(vinv, _mm512_loadu_pd(re + i)));
             _mm512_storeu_pd(im + i, _mm512_mul_pd(vinv, _mm512_loadu_pd(im + i)));
         }
-        for (; i < NK; i++) { re[i] *= inv_N; im[i] *= inv_N; }
+        for (; i < NK; i++)
+        {
+            re[i] *= inv_N;
+            im[i] *= inv_N;
+        }
     }
 #elif defined(__AVX2__)
     {
         __m256d vinv = _mm256_set1_pd(inv_N);
         size_t i = 0;
-        for (; i + 4 <= NK; i += 4) {
+        for (; i + 4 <= NK; i += 4)
+        {
             _mm256_storeu_pd(re + i, _mm256_mul_pd(vinv, _mm256_loadu_pd(re + i)));
             _mm256_storeu_pd(im + i, _mm256_mul_pd(vinv, _mm256_loadu_pd(im + i)));
         }
-        for (; i < NK; i++) { re[i] *= inv_N; im[i] *= inv_N; }
+        for (; i < NK; i++)
+        {
+            re[i] *= inv_N;
+            im[i] *= inv_N;
+        }
     }
 #else
-    for (size_t i = 0; i < NK; i++) { re[i] *= inv_N; im[i] *= inv_N; }
+    for (size_t i = 0; i < NK; i++)
+    {
+        re[i] *= inv_N;
+        im[i] *= inv_N;
+    }
 #endif
 }
-
 
 /* ═══════════════════════════════════════════════════════════════
  * INTERLEAVED ↔ SPLIT CONVERSION
@@ -856,13 +972,15 @@ static inline void stride_execute_bwd_normalized(const stride_plan_t *plan,
  * ═══════════════════════════════════════════════════════════════ */
 
 /** Deinterleave: {r0,i0,r1,i1,...} → re[],im[] */
-static inline void stride_deinterleave(const double * __restrict__ interleaved,
-                                        double * __restrict__ re,
-                                        double * __restrict__ im,
-                                        size_t count) {
+static inline void stride_deinterleave(const double *__restrict__ interleaved,
+                                       double *__restrict__ re,
+                                       double *__restrict__ im,
+                                       size_t count)
+{
     size_t i = 0;
 #if defined(__AVX512F__)
-    for (; i + 8 <= count; i += 8) {
+    for (; i + 8 <= count; i += 8)
+    {
         __m512d a = _mm512_loadu_pd(interleaved + 2 * i);
         __m512d b = _mm512_loadu_pd(interleaved + 2 * i + 8);
         _mm512_storeu_pd(re + i, _mm512_unpacklo_pd(a, b)); /* not correct for 512 — use permute */
@@ -872,10 +990,11 @@ static inline void stride_deinterleave(const double * __restrict__ interleaved,
      * Fall through to AVX2 for remaining. */
 #endif
 #if defined(__AVX2__)
-    for (; i + 4 <= count; i += 4) {
+    for (; i + 4 <= count; i += 4)
+    {
         /* Load 4 interleaved pairs = 8 doubles */
-        __m256d p0 = _mm256_loadu_pd(interleaved + 2 * i);      /* r0,i0,r1,i1 */
-        __m256d p1 = _mm256_loadu_pd(interleaved + 2 * i + 4);  /* r2,i2,r3,i3 */
+        __m256d p0 = _mm256_loadu_pd(interleaved + 2 * i);     /* r0,i0,r1,i1 */
+        __m256d p1 = _mm256_loadu_pd(interleaved + 2 * i + 4); /* r2,i2,r3,i3 */
         /* Shuffle: extract re and im */
         __m256d re_v = _mm256_shuffle_pd(p0, p1, 0x00); /* r0,r1,r2,r3 — wrong lanes */
         __m256d im_v = _mm256_shuffle_pd(p0, p1, 0x0F); /* i0,i1,i2,i3 — wrong lanes */
@@ -886,43 +1005,47 @@ static inline void stride_deinterleave(const double * __restrict__ interleaved,
         _mm256_storeu_pd(im + i, im_v);
     }
 #endif
-    for (; i < count; i++) {
+    for (; i < count; i++)
+    {
         re[i] = interleaved[2 * i];
         im[i] = interleaved[2 * i + 1];
     }
 }
 
 /** Reinterleave: re[],im[] → {r0,i0,r1,i1,...} */
-static inline void stride_reinterleave(const double * __restrict__ re,
-                                        const double * __restrict__ im,
-                                        double * __restrict__ interleaved,
-                                        size_t count) {
+static inline void stride_reinterleave(const double *__restrict__ re,
+                                       const double *__restrict__ im,
+                                       double *__restrict__ interleaved,
+                                       size_t count)
+{
     size_t i = 0;
 #if defined(__AVX2__)
-    for (; i + 4 <= count; i += 4) {
-        __m256d re_v = _mm256_loadu_pd(re + i);  /* r0,r1,r2,r3 */
-        __m256d im_v = _mm256_loadu_pd(im + i);  /* i0,i1,i2,i3 */
+    for (; i + 4 <= count; i += 4)
+    {
+        __m256d re_v = _mm256_loadu_pd(re + i); /* r0,r1,r2,r3 */
+        __m256d im_v = _mm256_loadu_pd(im + i); /* i0,i1,i2,i3 */
         /* Permute to prepare for interleave */
-        re_v = _mm256_permute4x64_pd(re_v, 0xD8); /* r0,r2,r1,r3 */
-        im_v = _mm256_permute4x64_pd(im_v, 0xD8); /* i0,i2,i1,i3 */
+        re_v = _mm256_permute4x64_pd(re_v, 0xD8);    /* r0,r2,r1,r3 */
+        im_v = _mm256_permute4x64_pd(im_v, 0xD8);    /* i0,i2,i1,i3 */
         __m256d lo = _mm256_unpacklo_pd(re_v, im_v); /* r0,i0,r1,i1 */
         __m256d hi = _mm256_unpackhi_pd(re_v, im_v); /* r2,i2,r3,i3 */
         _mm256_storeu_pd(interleaved + 2 * i, lo);
         _mm256_storeu_pd(interleaved + 2 * i + 4, hi);
     }
 #endif
-    for (; i < count; i++) {
-        interleaved[2 * i]     = re[i];
+    for (; i < count; i++)
+    {
+        interleaved[2 * i] = re[i];
         interleaved[2 * i + 1] = im[i];
     }
 }
-
 
 /* ═══════════════════════════════════════════════════════════════
  * PLANNER
  * ═══════════════════════════════════════════════════════════════ */
 
-static void plan_compute_groups(stride_plan_t *plan, int s) {
+static void plan_compute_groups(stride_plan_t *plan, int s)
+{
     stride_stage_t *st = &plan->stages[s];
     const int nf = plan->num_stages;
     const size_t K = plan->K;
@@ -932,7 +1055,8 @@ static void plan_compute_groups(stride_plan_t *plan, int s) {
     size_t dim_stride[STRIDE_MAX_STAGES];
     {
         size_t acc = K;
-        for (int d = nf - 1; d >= 0; d--) {
+        for (int d = nf - 1; d >= 0; d--)
+        {
             dim_stride[d] = acc;
             acc *= plan->factors[d];
         }
@@ -947,8 +1071,10 @@ static void plan_compute_groups(stride_plan_t *plan, int s) {
     int other_sizes[STRIDE_MAX_STAGES];
     size_t other_strides[STRIDE_MAX_STAGES];
     int n_other = 0;
-    for (int d = 0; d < nf; d++) {
-        if (d != s) {
+    for (int d = 0; d < nf; d++)
+    {
+        if (d != s)
+        {
             other_sizes[n_other] = plan->factors[d];
             other_strides[n_other] = dim_stride[d];
             n_other++;
@@ -958,15 +1084,18 @@ static void plan_compute_groups(stride_plan_t *plan, int s) {
     int counter[STRIDE_MAX_STAGES];
     memset(counter, 0, sizeof(counter));
 
-    for (int g = 0; g < st->num_groups; g++) {
+    for (int g = 0; g < st->num_groups; g++)
+    {
         size_t base = 0;
         for (int d = 0; d < n_other; d++)
             base += (size_t)counter[d] * other_strides[d];
         st->group_base[g] = base;
 
-        for (int d = n_other - 1; d >= 0; d--) {
+        for (int d = n_other - 1; d >= 0; d--)
+        {
             counter[d]++;
-            if (counter[d] < other_sizes[d]) break;
+            if (counter[d] < other_sizes[d])
+                break;
             counter[d] = 0;
         }
     }
@@ -991,7 +1120,8 @@ static void plan_compute_groups(stride_plan_t *plan, int s) {
  * For backward: store full combined twiddle for ALL legs (legacy cf arrays)
  * so the DIF conj-twiddle path works unchanged.
  */
-static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
+static void plan_compute_twiddles_c(stride_plan_t *plan, int s)
+{
     stride_stage_t *st = &plan->stages[s];
     const int nf = plan->num_stages;
     const size_t K = plan->K;
@@ -1007,11 +1137,13 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
     st->cf0_re = (double *)calloc(ng, sizeof(double));
     st->cf0_im = (double *)calloc(ng, sizeof(double));
 
-    if (s == 0) {
+    if (s == 0)
+    {
         /* First stage: no twiddles */
         st->tw_pool_re = st->tw_pool_im = NULL;
         st->cf_all_re = st->cf_all_im = NULL;
-        for (int g = 0; g < ng; g++) {
+        for (int g = 0; g < ng; g++)
+        {
             st->cf0_re[g] = 1.0;
             st->cf0_im[g] = 0.0;
         }
@@ -1019,24 +1151,46 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
     }
 
     int S_s = 1;
-    for (int d = s + 1; d < nf; d++) S_s *= plan->factors[d];
+    for (int d = s + 1; d < nf; d++)
+        S_s *= plan->factors[d];
     int ow_prev = 1;
-    for (int d = 0; d < s - 1; d++) ow_prev *= plan->factors[d];
+    for (int d = 0; d < s - 1; d++)
+        ow_prev *= plan->factors[d];
 
     int other_sizes[STRIDE_MAX_STAGES];
     int n_other = 0;
     for (int d = 0; d < nf; d++)
-        if (d != s) other_sizes[n_other++] = plan->factors[d];
+        if (d != s)
+            other_sizes[n_other++] = plan->factors[d];
 
     /* Count twiddled groups for pool allocation */
     int n_tw_groups = 0;
     {
-        int counter[STRIDE_MAX_STAGES]; memset(counter, 0, sizeof(counter));
-        for (int g = 0; g < ng; g++) {
+        int counter[STRIDE_MAX_STAGES];
+        memset(counter, 0, sizeof(counter));
+        for (int g = 0; g < ng; g++)
+        {
             int k_prev = 0;
-            { int ci = 0; for (int d = 0; d < nf; d++) { if (d == s) continue; if (d == s-1) k_prev = counter[ci]; ci++; } }
-            if (k_prev != 0) n_tw_groups++;
-            for (int d = n_other-1; d >= 0; d--) { counter[d]++; if (counter[d] < other_sizes[d]) break; counter[d] = 0; }
+            {
+                int ci = 0;
+                for (int d = 0; d < nf; d++)
+                {
+                    if (d == s)
+                        continue;
+                    if (d == s - 1)
+                        k_prev = counter[ci];
+                    ci++;
+                }
+            }
+            if (k_prev != 0)
+                n_tw_groups++;
+            for (int d = n_other - 1; d >= 0; d--)
+            {
+                counter[d]++;
+                if (counter[d] < other_sizes[d])
+                    break;
+                counter[d] = 0;
+            }
         }
     }
 
@@ -1044,7 +1198,8 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
     size_t per_grp = (size_t)(R - 1) * K;
     size_t scalar_per_grp = (size_t)(R - 1);
 
-    if (n_tw_groups > 0) {
+    if (n_tw_groups > 0)
+    {
         /* Full K-replicated twiddle tables (used by legacy codelet path + backward) */
         st->tw_pool_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
         st->tw_pool_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
@@ -1054,7 +1209,9 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
          * Used by K-blocked executor path for L1-friendly access. */
         st->tw_scalar_pool_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
         st->tw_scalar_pool_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
-    } else {
+    }
+    else
+    {
         st->tw_pool_re = st->tw_pool_im = NULL;
         st->tw_scalar_pool_re = st->tw_scalar_pool_im = NULL;
     }
@@ -1068,17 +1225,23 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
     memset(counter, 0, sizeof(counter));
     int tw_idx = 0;
 
-    for (int g = 0; g < ng; g++) {
+    for (int g = 0; g < ng; g++)
+    {
         int k_prev = 0;
         int lower_data_pos = 0;
         {
             int ci = 0;
-            for (int d = 0; d < nf; d++) {
-                if (d == s) continue;
-                if (d == s - 1) k_prev = counter[ci];
-                if (d > s) {
+            for (int d = 0; d < nf; d++)
+            {
+                if (d == s)
+                    continue;
+                if (d == s - 1)
+                    k_prev = counter[ci];
+                if (d > s)
+                {
                     int w = 1;
-                    for (int d2 = d + 1; d2 < nf; d2++) w *= plan->factors[d2];
+                    for (int d2 = d + 1; d2 < nf; d2++)
+                        w *= plan->factors[d2];
                     lower_data_pos += counter[ci] * w;
                 }
                 ci++;
@@ -1086,27 +1249,34 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
         }
 
         /* Backward: fill full combined twiddle for all legs */
-        for (int j = 0; j < R; j++) {
+        for (int j = 0; j < R; j++)
+        {
             int tw_exp = ((long long)k_prev * ow_prev * (j * S_s + lower_data_pos)) % N;
-            if (tw_exp < 0) tw_exp += N;
+            if (tw_exp < 0)
+                tw_exp += N;
             double angle = -2.0 * M_PI * (double)tw_exp / (double)N;
             double wr = cos(angle), wi = sin(angle);
-            for (size_t kk = 0; kk < K; kk++) {
+            for (size_t kk = 0; kk < K; kk++)
+            {
                 st->cf_all_re[(size_t)g * R * K + (size_t)j * K + kk] = wr;
                 st->cf_all_im[(size_t)g * R * K + (size_t)j * K + kk] = wi;
             }
         }
 
-        if (k_prev == 0) {
+        if (k_prev == 0)
+        {
             st->needs_tw[g] = 0;
             st->cf0_re[g] = 1.0;
             st->cf0_im[g] = 0.0;
-        } else {
+        }
+        else
+        {
             st->needs_tw[g] = 1;
 
             /* Common factor for leg 0 */
             int cf_exp = ((long long)k_prev * ow_prev * lower_data_pos) % N;
-            if (cf_exp < 0) cf_exp += N;
+            if (cf_exp < 0)
+                cf_exp += N;
             double cf_angle = -2.0 * M_PI * (double)cf_exp / (double)N;
             double cfr = cos(cf_angle), cfi = sin(cf_angle);
             st->cf0_re[g] = cfr;
@@ -1124,26 +1294,34 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
             st->tw_scalar_re[g] = stw_r;
             st->tw_scalar_im[g] = stw_i;
 
-            if (st->use_log3) {
+            if (st->use_log3)
+            {
                 /* Log3: store raw per_leg[j] for ALL legs (no cf baked in). */
-                for (int j = 1; j < R; j++) {
+                for (int j = 1; j < R; j++)
+                {
                     int leg_exp = ((long long)k_prev * ow_prev * j * S_s) % N;
-                    if (leg_exp < 0) leg_exp += N;
+                    if (leg_exp < 0)
+                        leg_exp += N;
                     double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
                     double lr = cos(leg_angle), li = sin(leg_angle);
                     stw_r[j - 1] = lr;
                     stw_i[j - 1] = li;
                     size_t base_idx = (size_t)(j - 1) * K;
-                    for (size_t kk = 0; kk < K; kk++) {
+                    for (size_t kk = 0; kk < K; kk++)
+                    {
                         tw_r[base_idx + kk] = lr;
                         tw_i[base_idx + kk] = li;
                     }
                 }
-            } else {
+            }
+            else
+            {
                 /* Flat: combined = cf * per_leg[j] for all legs */
-                for (int j = 1; j < R; j++) {
+                for (int j = 1; j < R; j++)
+                {
                     int leg_exp = ((long long)k_prev * ow_prev * j * S_s) % N;
-                    if (leg_exp < 0) leg_exp += N;
+                    if (leg_exp < 0)
+                        leg_exp += N;
                     double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
                     double lr = cos(leg_angle), li = sin(leg_angle);
                     double wr = cfr * lr - cfi * li;
@@ -1153,7 +1331,8 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
                     stw_i[j - 1] = wi;
                     /* Full K-replicated (for backward + legacy forward) */
                     size_t base_idx = (size_t)(j - 1) * K;
-                    for (size_t kk = 0; kk < K; kk++) {
+                    for (size_t kk = 0; kk < K; kk++)
+                    {
                         tw_r[base_idx + kk] = wr;
                         tw_i[base_idx + kk] = wi;
                     }
@@ -1162,14 +1341,15 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
             tw_idx++;
         }
 
-        for (int d = n_other - 1; d >= 0; d--) {
+        for (int d = n_other - 1; d >= 0; d--)
+        {
             counter[d]++;
-            if (counter[d] < other_sizes[d]) break;
+            if (counter[d] < other_sizes[d])
+                break;
             counter[d] = 0;
         }
     }
 }
-
 
 /* DIF orientation twiddle layout.
  *
@@ -1204,7 +1384,8 @@ static void plan_compute_twiddles_c(stride_plan_t *plan, int s) {
  *   - ow_prev uses factors[0..s-1]   (DIT: factors[0..s-2]).
  *   - k_next reads counter for axis s+1 (DIT: axis s-1).
  */
-static void plan_compute_twiddles_dif_c(stride_plan_t *plan, int s) {
+static void plan_compute_twiddles_dif_c(stride_plan_t *plan, int s)
+{
     stride_stage_t *st = &plan->stages[s];
     const int nf = plan->num_stages;
     const size_t K = plan->K;
@@ -1220,11 +1401,13 @@ static void plan_compute_twiddles_dif_c(stride_plan_t *plan, int s) {
     st->cf0_re = (double *)calloc(ng, sizeof(double));
     st->cf0_im = (double *)calloc(ng, sizeof(double));
 
-    if (s == nf - 1) {
+    if (s == nf - 1)
+    {
         /* Last stage in DIF: no output-edge twiddle */
         st->tw_pool_re = st->tw_pool_im = NULL;
         st->cf_all_re = st->cf_all_im = NULL;
-        for (int g = 0; g < ng; g++) {
+        for (int g = 0; g < ng; g++)
+        {
             st->cf0_re[g] = 1.0;
             st->cf0_im[g] = 0.0;
         }
@@ -1234,48 +1417,68 @@ static void plan_compute_twiddles_dif_c(stride_plan_t *plan, int s) {
     /* For DIF at stage s: the twiddle exponent is the same shape as DIT
      * but indexed at the s+1 axis instead of s-1. */
     int S_s = 1;
-    for (int d = s + 2; d < nf; d++) S_s *= plan->factors[d];
+    for (int d = s + 2; d < nf; d++)
+        S_s *= plan->factors[d];
     int ow_prev = 1;
-    for (int d = 0; d < s; d++) ow_prev *= plan->factors[d];
+    for (int d = 0; d < s; d++)
+        ow_prev *= plan->factors[d];
 
     int other_sizes[STRIDE_MAX_STAGES];
     int n_other = 0;
     for (int d = 0; d < nf; d++)
-        if (d != s) other_sizes[n_other++] = plan->factors[d];
+        if (d != s)
+            other_sizes[n_other++] = plan->factors[d];
 
     /* Count twiddled groups for pool allocation. A group is "twiddled" iff
      * its g_factor = k_next*S_s + lower_data_pos is non-zero. */
     int n_tw_groups = 0;
     {
-        int counter[STRIDE_MAX_STAGES]; memset(counter, 0, sizeof(counter));
-        for (int g = 0; g < ng; g++) {
+        int counter[STRIDE_MAX_STAGES];
+        memset(counter, 0, sizeof(counter));
+        for (int g = 0; g < ng; g++)
+        {
             int k_next = 0;
             int lower_data_pos = 0;
             int ci = 0;
-            for (int d = 0; d < nf; d++) {
-                if (d == s) continue;
-                if (d == s + 1) k_next = counter[ci];
-                if (d > s + 1) {
+            for (int d = 0; d < nf; d++)
+            {
+                if (d == s)
+                    continue;
+                if (d == s + 1)
+                    k_next = counter[ci];
+                if (d > s + 1)
+                {
                     int w = 1;
-                    for (int d2 = d + 1; d2 < nf; d2++) w *= plan->factors[d2];
+                    for (int d2 = d + 1; d2 < nf; d2++)
+                        w *= plan->factors[d2];
                     lower_data_pos += counter[ci] * w;
                 }
                 ci++;
             }
-            if (k_next * S_s + lower_data_pos != 0) n_tw_groups++;
-            for (int d = n_other-1; d >= 0; d--) { counter[d]++; if (counter[d] < other_sizes[d]) break; counter[d] = 0; }
+            if (k_next * S_s + lower_data_pos != 0)
+                n_tw_groups++;
+            for (int d = n_other - 1; d >= 0; d--)
+            {
+                counter[d]++;
+                if (counter[d] < other_sizes[d])
+                    break;
+                counter[d] = 0;
+            }
         }
     }
 
     size_t per_grp = (size_t)(R - 1) * K;
     size_t scalar_per_grp = (size_t)(R - 1);
 
-    if (n_tw_groups > 0) {
+    if (n_tw_groups > 0)
+    {
         st->tw_pool_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
         st->tw_pool_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * per_grp * sizeof(double));
         st->tw_scalar_pool_re = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
         st->tw_scalar_pool_im = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
-    } else {
+    }
+    else
+    {
         st->tw_pool_re = st->tw_pool_im = NULL;
         st->tw_scalar_pool_re = st->tw_scalar_pool_im = NULL;
     }
@@ -1287,17 +1490,23 @@ static void plan_compute_twiddles_dif_c(stride_plan_t *plan, int s) {
     memset(counter, 0, sizeof(counter));
     int tw_idx = 0;
 
-    for (int g = 0; g < ng; g++) {
+    for (int g = 0; g < ng; g++)
+    {
         int k_next = 0;
         int lower_data_pos = 0;
         {
             int ci = 0;
-            for (int d = 0; d < nf; d++) {
-                if (d == s) continue;
-                if (d == s + 1) k_next = counter[ci];
-                if (d > s + 1) {
+            for (int d = 0; d < nf; d++)
+            {
+                if (d == s)
+                    continue;
+                if (d == s + 1)
+                    k_next = counter[ci];
+                if (d > s + 1)
+                {
                     int w = 1;
-                    for (int d2 = d + 1; d2 < nf; d2++) w *= plan->factors[d2];
+                    for (int d2 = d + 1; d2 < nf; d2++)
+                        w *= plan->factors[d2];
                     lower_data_pos += counter[ci] * w;
                 }
                 ci++;
@@ -1321,24 +1530,30 @@ static void plan_compute_twiddles_dif_c(stride_plan_t *plan, int s) {
         /* cf_all path (used by some legacy backward paths). Currently no DIF
          * executor reads cf_all, but we fill it for symmetry with DIT in case
          * that changes — values use the corrected DIF formula. */
-        for (int j = 0; j < R; j++) {
+        for (int j = 0; j < R; j++)
+        {
             int tw_exp = (int)(((long long)j * ow_prev * g_factor) % N);
-            if (tw_exp < 0) tw_exp += N;
+            if (tw_exp < 0)
+                tw_exp += N;
             double angle = -2.0 * M_PI * (double)tw_exp / (double)N;
             double wr = cos(angle), wi = sin(angle);
-            for (size_t kk = 0; kk < K; kk++) {
+            for (size_t kk = 0; kk < K; kk++)
+            {
                 st->cf_all_re[(size_t)g * R * K + (size_t)j * K + kk] = wr;
                 st->cf_all_im[(size_t)g * R * K + (size_t)j * K + kk] = wi;
             }
         }
 
-        if (g_factor == 0) {
+        if (g_factor == 0)
+        {
             /* All legs land on W^0 = 1 — bypass the codelet's twiddle path.
              * Cannot shortcut on k_next == 0 alone the way DIT shortcuts on
              * k_prev == 0: a group with k_next=0 but lower_data_pos!=0 still
              * has nonzero per-leg exponents in DIF. */
             st->needs_tw[g] = 0;
-        } else {
+        }
+        else
+        {
             st->needs_tw[g] = 1;
 
             double *tw_r = st->tw_pool_re + (size_t)tw_idx * per_grp;
@@ -1353,15 +1568,18 @@ static void plan_compute_twiddles_dif_c(stride_plan_t *plan, int s) {
 
             /* Per-leg twiddle for legs 1..R-1. The codelet post-multiplies
              * directly by these — no cf baking is needed since cf0 = 1. */
-            for (int j = 1; j < R; j++) {
+            for (int j = 1; j < R; j++)
+            {
                 int leg_exp = (int)(((long long)j * ow_prev * g_factor) % N);
-                if (leg_exp < 0) leg_exp += N;
+                if (leg_exp < 0)
+                    leg_exp += N;
                 double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
                 double lr = cos(leg_angle), li = sin(leg_angle);
                 stw_r[j - 1] = lr;
                 stw_i[j - 1] = li;
                 size_t base_idx = (size_t)(j - 1) * K;
-                for (size_t kk = 0; kk < K; kk++) {
+                for (size_t kk = 0; kk < K; kk++)
+                {
                     tw_r[base_idx + kk] = lr;
                     tw_i[base_idx + kk] = li;
                 }
@@ -1369,22 +1587,25 @@ static void plan_compute_twiddles_dif_c(stride_plan_t *plan, int s) {
             tw_idx++;
         }
 
-        for (int d = n_other - 1; d >= 0; d--) {
+        for (int d = n_other - 1; d >= 0; d--)
+        {
             counter[d]++;
-            if (counter[d] < other_sizes[d]) break;
+            if (counter[d] < other_sizes[d])
+                break;
             counter[d] = 0;
         }
     }
 }
 
 static stride_plan_t *stride_plan_create_ex(int N, size_t K,
-                                             const int *factors, int nf,
-                                             stride_n1_fn *n1_fwd_table,
-                                             stride_n1_fn *n1_bwd_table,
-                                             stride_t1_fn *t1_fwd_table,
-                                             stride_t1_fn *t1_bwd_table,
-                                             int log3_mask,
-                                             int use_dif_forward) {
+                                            const int *factors, int nf,
+                                            stride_n1_fn *n1_fwd_table,
+                                            stride_n1_fn *n1_bwd_table,
+                                            stride_t1_fn *t1_fwd_table,
+                                            stride_t1_fn *t1_bwd_table,
+                                            int log3_mask,
+                                            int use_dif_forward)
+{
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     plan->N = N;
     plan->K = K;
@@ -1392,7 +1613,8 @@ static stride_plan_t *stride_plan_create_ex(int N, size_t K,
     plan->use_dif_forward = use_dif_forward;
     memcpy(plan->factors, factors, nf * sizeof(int));
 
-    for (int s = 0; s < nf; s++) {
+    for (int s = 0; s < nf; s++)
+    {
         plan->stages[s].n1_fwd = n1_fwd_table[s];
         plan->stages[s].n1_bwd = n1_bwd_table[s];
         plan->stages[s].t1_fwd = t1_fwd_table[s];
@@ -1414,12 +1636,15 @@ static stride_plan_t *stride_plan_create_ex(int N, size_t K,
          * DIF's post-multiply structure interacts differently with the
          * R=64 register-pressure profile, and the calibrator picks DIF
          * vs DIT per cell so it can fall back to DIT if needed. */
-        if (!use_dif_forward) {
-            int twiddle_stage = (s > 0);  /* DIT: stages 1..nf-1 own twiddle */
-            if (twiddle_stage && plan->stages[s].t1_fwd == NULL) {
+        if (!use_dif_forward)
+        {
+            int twiddle_stage = (s > 0); /* DIT: stages 1..nf-1 own twiddle */
+            if (twiddle_stage && plan->stages[s].t1_fwd == NULL)
+            {
                 plan->stages[s].use_n1_fallback = 1;
             }
-            if (factors[s] >= 64 && twiddle_stage && !plan->stages[s].use_log3) {
+            if (factors[s] >= 64 && twiddle_stage && !plan->stages[s].use_log3)
+            {
                 plan->stages[s].use_n1_fallback = 1;
             }
         }
@@ -1433,20 +1658,24 @@ static stride_plan_t *stride_plan_create(int N, size_t K, const int *factors, in
                                          stride_n1_fn *n1_bwd_table,
                                          stride_t1_fn *t1_fwd_table,
                                          stride_t1_fn *t1_bwd_table,
-                                         int log3_mask) {
+                                         int log3_mask)
+{
     return stride_plan_create_ex(N, K, factors, nf,
-                                  n1_fwd_table, n1_bwd_table,
-                                  t1_fwd_table, t1_bwd_table,
-                                  log3_mask, /*use_dif_forward=*/0);
+                                 n1_fwd_table, n1_bwd_table,
+                                 t1_fwd_table, t1_bwd_table,
+                                 log3_mask, /*use_dif_forward=*/0);
 }
 
-static void stride_plan_destroy(stride_plan_t *plan) {
-    if (plan->override_destroy) {
+static void stride_plan_destroy(stride_plan_t *plan)
+{
+    if (plan->override_destroy)
+    {
         plan->override_destroy(plan->override_data);
         free(plan);
         return;
     }
-    for (int s = 0; s < plan->num_stages; s++) {
+    for (int s = 0; s < plan->num_stages; s++)
+    {
         free(plan->stages[s].group_base);
         free(plan->stages[s].needs_tw);
         free(plan->stages[s].grp_tw_re);
@@ -1455,11 +1684,13 @@ static void stride_plan_destroy(stride_plan_t *plan) {
         free(plan->stages[s].tw_scalar_im);
         free(plan->stages[s].cf0_re);
         free(plan->stages[s].cf0_im);
-        if (plan->stages[s].tw_pool_re) {
+        if (plan->stages[s].tw_pool_re)
+        {
             STRIDE_ALIGNED_FREE(plan->stages[s].tw_pool_re);
             STRIDE_ALIGNED_FREE(plan->stages[s].tw_pool_im);
         }
-        if (plan->stages[s].tw_scalar_pool_re) {
+        if (plan->stages[s].tw_scalar_pool_re)
+        {
             STRIDE_ALIGNED_FREE(plan->stages[s].tw_scalar_pool_re);
             STRIDE_ALIGNED_FREE(plan->stages[s].tw_scalar_pool_im);
         }
@@ -1468,6 +1699,5 @@ static void stride_plan_destroy(stride_plan_t *plan) {
     }
     free(plan);
 }
-
 
 #endif /* STRIDE_EXECUTOR_H */
