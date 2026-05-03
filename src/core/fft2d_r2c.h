@@ -316,13 +316,14 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
                                                stride_plan_t *plan_r2c,
                                                stride_plan_t *plan_col)
 {
-    if (N1 < 1 || N2 < 2 || (N2 & 1) || !plan_r2c || !plan_col) {
+    /* Caller must ensure B == plan_r2c->K (they index the same scratch).
+     * No clamping here — clamping would silently break the layout invariant. */
+    if (N1 < 2 || N2 < 2 || (N2 & 1) || !plan_r2c || !plan_col ||
+        B < 2 || B > (size_t)N1) {
         if (plan_r2c) stride_plan_destroy(plan_r2c);
         if (plan_col) stride_plan_destroy(plan_col);
         return NULL;
     }
-    if (B < FFT2D_R2C_MIN_TILE) B = FFT2D_R2C_MIN_TILE;
-    if (B > (size_t)N1) B = (size_t)N1;
 
     stride_fft2d_r2c_data_t *d =
         (stride_fft2d_r2c_data_t *)calloc(1, sizeof(*d));
@@ -378,7 +379,11 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
  *
  * stride_execute_2d_c2r(plan, in_re, in_im, real_out):
  *   in_re, in_im: each N1*(N2/2+1) doubles.
- *   real_out: N1*N2 reals (also serves as scratch for the in-place override).
+ *   real_out: N1*N2 reals.
+ *
+ * Both wrappers allocate temp scratch internally because the in-place
+ * override requires the re buffer to be sized for the LARGER of input
+ * (N1*N2 reals for forward) or output (N1*N2 reals for backward).
  * ═══════════════════════════════════════════════════════════════ */
 
 static inline void stride_execute_2d_r2c(const stride_plan_t *plan,
@@ -387,8 +392,15 @@ static inline void stride_execute_2d_r2c(const stride_plan_t *plan,
 {
     stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
     size_t real_sz = (size_t)d->N1 * (size_t)d->N2;
-    memcpy(out_re, real_in, real_sz * sizeof(double));
-    plan->override_fwd(plan->override_data, out_re, out_im);
+    size_t cplx_sz = (size_t)d->N1 * (size_t)(d->N2 / 2 + 1);
+    /* In-place override needs re sized real_sz (= max(real_sz, cplx_sz)).
+     * Use a scratch re buffer, then copy the lower cplx_sz doubles to out_re. */
+    double *re_tmp = (double *)STRIDE_ALIGNED_ALLOC(64, real_sz * sizeof(double));
+    if (!re_tmp) return;
+    memcpy(re_tmp, real_in, real_sz * sizeof(double));
+    plan->override_fwd(plan->override_data, re_tmp, out_im);
+    memcpy(out_re, re_tmp, cplx_sz * sizeof(double));
+    STRIDE_ALIGNED_FREE(re_tmp);
 }
 
 static inline void stride_execute_2d_c2r(const stride_plan_t *plan,
@@ -396,14 +408,13 @@ static inline void stride_execute_2d_c2r(const stride_plan_t *plan,
                                           double *real_out)
 {
     stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
+    size_t real_sz = (size_t)d->N1 * (size_t)d->N2;
     size_t cplx_sz = (size_t)d->N1 * (size_t)(d->N2 / 2 + 1);
-    /* real_out doubles as the re scratch (need N1*N2 ≥ N1*(N2/2+1) reals).
-     * We need a temp im buffer because the override_bwd writes to im too. */
+    /* real_out is sized real_sz; also serves as the re scratch (real_sz >= cplx_sz). */
     memcpy(real_out, in_re, cplx_sz * sizeof(double));
-    /* Allocate a temp im buffer. (For repeated calls, plan could cache one;
-     * v1.0 keeps this simple — caller pays one alloc per c2r call.) */
+    /* Need a temp im buffer (override_bwd writes to im too). */
     double *im_tmp = (double *)STRIDE_ALIGNED_ALLOC(64, cplx_sz * sizeof(double));
-    if (!im_tmp) return; /* OOM: silent fail; caller buffer untouched */
+    if (!im_tmp) return;
     memcpy(im_tmp, in_im, cplx_sz * sizeof(double));
     plan->override_bwd(plan->override_data, real_out, im_tmp);
     STRIDE_ALIGNED_FREE(im_tmp);
