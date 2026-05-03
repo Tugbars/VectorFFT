@@ -47,20 +47,21 @@ For real-input FFTs, DCT/DST family, and 2D, see the [API table](#api--conventio
 
 | Transform | Status | Notes |
 |-----------|--------|-------|
-| 1D C2C | shipped | Forward + backward, split-complex, batched, wisdom-tuned |
-| 1D R2C / C2R | shipped | Pair-packing algorithm |
-| 2D C2C | shipped | Tiled (B=8) + Bailey methods |
-| 2D R2C / C2R | shipped | Tiled row R2C + col C2C with K-padding |
-| 3D / ND | v1.1 | Recurses on 2D once 2D R2C is performant |
-| DCT-I (REDFT00) | deferred | Lowest demand |
-| DCT-II (REDFT10) | shipped | Makhoul + N=8 specialized straight-line codelet |
-| DCT-III (REDFT01) | shipped | Same plan as DCT-II |
-| DCT-IV (REDFT11) | shipped | Lee 1984 — single N/2-point complex FFT |
-| DST-I (RODFT00) | deferred | |
-| DST-II (RODFT10) | shipped | Wraps DCT-II via Wang's identity |
-| DST-III (RODFT01) | shipped | Wraps DCT-III |
-| DST-IV (RODFT11) | deferred | |
-| DHT (Hartley) | shipped | Reuses R2C, self-inverse |
+| 1D C2C | ✅ shipped | Forward + backward, split-complex, batched, wisdom-tuned |
+| 1D R2C / C2R | ✅ shipped | Pair-packing algorithm |
+| 2D C2C | ✅ shipped | Tiled (B=8) + Bailey methods |
+| 2D R2C / C2R | ✅ shipped | Tiled row R2C + col C2C with K-padding |
+| 3D anything | ❌ v1.1 | Recurses on 2D once 2D R2C is performant |
+| ND anything | ❌ v1.1 | |
+| DCT-I (REDFT00) | ❌ deferred | Lowest demand |
+| DCT-II (REDFT10) | ✅ shipped | Makhoul + N=8 specialized straight-line codelet |
+| DCT-III (REDFT01) | ✅ shipped | Same plan as DCT-II |
+| DCT-IV (REDFT11) | ✅ shipped | Lee 1984 — single N/2-point complex FFT |
+| DST-I (RODFT00) | ❌ deferred | |
+| DST-II (RODFT10) | ✅ shipped | Wraps DCT-II via Wang's identity |
+| DST-III (RODFT01) | ✅ shipped | Wraps DCT-III |
+| DST-IV (RODFT11) | ❌ deferred | |
+| DHT (Hartley) | ✅ shipped | Reuses R2C, self-inverse |
 
 Why some r2r are "wrap" while others get specialized algorithms: the wrappers (DST-II/III) cost only one O(N×K) sign-flip + reverse pass on top of the inner DCT-II/III, which is a few percent at typical N/K. Lee 1984 for DCT-IV is needed because the textbook DCT-IV-via-DCT-III+DST-III approach pays 2× R2C cost; Lee gets it back to 1× by going directly to a half-size complex FFT.
 
@@ -93,13 +94,13 @@ The DST vs MKL comparison has a caveat — MKL's `MKL_STAGGERED_SINE_TRANSFORM` 
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Split-complex (`re`, `im` separate) | shipped | Native layout, no interleaved support |
-| Interleaved complex (`fftw_complex`) | not planned | Would require API rework |
-| In-place execution | shipped | All transforms |
-| Out-of-place execution | v1.1 | r2r and R2C have 3-pointer convenience wrappers that allocate scratch internally; no native OOP |
-| Double precision (FP64) | shipped | |
-| Single precision (FP32) | not planned | Codelet generators are FP64-only |
-| Half precision (FP16) | not planned | |
+| Split-complex (`re`, `im` separate) | ✅ shipped | Native layout, no interleaved support |
+| Interleaved complex (`fftw_complex`) | ❌ never | Would need API rework, not planned |
+| In-place execution | ✅ shipped | All transforms |
+| Out-of-place execution | ❌ v1.1 | r2r and R2C have 3-pointer convenience wrappers that allocate scratch internally; no native OOP |
+| Double precision (FP64) | ✅ shipped | |
+| Single precision (FP32) | ❌ never | Codelet generators are FP64-only |
+| Half precision (FP16) | ❌ never | |
 
 The split-complex layout is intentional, not an oversight. Split-complex enables:
 - Zero-copy I/O for I/Q data sources where re and im come from separate ADCs/channels
@@ -116,13 +117,13 @@ In-place is the only mode for v1.0. Convenience wrappers for r2r and R2C (`strid
 
 ## Numeric / size constraints
 
-| Constraint | Where it applies | Why |
-|-----------|------------------|-----|
-| K must be ≥ 2 | R2C / DCT / DST / DHT / DCT-IV | K=1 hits a SIMD edge case (codelet vl<4 reads past buffer). Hard-rejected (returns NULL) for v1.0 |
-| K must be multiple of 4 | All C2C plans | Codelets' SIMD inner loops have no scalar tail (`for (k=0; k<vl; k+=4)`). 2D R2C pads K_pad internally; 1D users hit this if they pass non-mult-of-4 K |
-| N must be even | R2C / DCT / DST family / DHT | Pair-packing R2C requires even N |
-| N ≥ 2 | All transforms | |
-| Arbitrary primes | shipped | Bluestein for arbitrary primes, Rader for smooth-N-1 primes |
+| Constraint | Where it applies |
+|-----------|------------------|
+| K must be ≥ 2 | R2C / DCT / DST / DHT / DCT-IV (K=1 hard-rejected, returns NULL) |
+| K must be multiple of 4 | All C2C codelet paths — codelets have no scalar tail at vl<4. 2D R2C pads internally; 1D users hit this if they pass non-mult-of-4 K |
+| N must be even | R2C / DCT / DST family / DHT (inherits R2C) |
+| N must be ≥ 2 | All transforms |
+| Arbitrary N (primes) | ✅ shipped via Bluestein (any prime) and Rader (smooth-N-1 primes) |
 
 The K-multiple-of-4 constraint is the most surprising one for users. It surfaces for any caller passing batched K not divisible by 4. The 2D R2C path pads internally (K_pad = ceil((N2/2+1)/4)*4) to dodge this, paying ~6% extra col-FFT work for typical N2. Removing the constraint requires v1.1 codelet rewrites with proper scalar tails.
 
@@ -132,14 +133,14 @@ The K-multiple-of-4 constraint is the most surprising one for users. It surfaces
 
 | Feature | Status |
 |---------|--------|
-| 1D C2C K-split MT | shipped |
-| 1D C2C group-parallel MT | shipped |
-| Bluestein / Rader block-walk MT | shipped (T-aware block sizing) |
-| 1D R2C block-walk MT | shipped |
-| 2D C2C tile-parallel + K-split MT | shipped |
-| 2D R2C forward tile-parallel | shipped |
-| 2D R2C backward MT | v1.1 (single-threaded; reverse-iteration constraint blocks naive tile parallelism) |
-| Thread pinning | shipped |
+| 1D C2C K-split MT | ✅ shipped |
+| 1D C2C group-parallel MT | ✅ shipped |
+| Bluestein / Rader block-walk MT | ✅ shipped (T-aware block sizing) |
+| 1D R2C block-walk MT | ✅ shipped |
+| 2D C2C tile-parallel + K-split MT | ✅ shipped |
+| 2D R2C forward tile-parallel | ✅ shipped |
+| 2D R2C backward MT | ❌ v1.1 (single-threaded; reverse-iteration constraint blocks naive tile parallelism) |
+| Thread pinning | ✅ shipped |
 
 The threading model is heterogeneous on purpose — different transforms benefit from different parallel decompositions:
 - Pure 1D C2C uses K-split (each thread owns a contiguous batch slice) plus group-parallel within stages.
