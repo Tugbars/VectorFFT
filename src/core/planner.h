@@ -43,23 +43,28 @@
  * exhaustive/DP search paths. registry.h above provides stride_registry_t
  * and stride_plan_t (via executor.h) so we can reference them directly. */
 static stride_plan_t *_stride_build_plan(
-        int N, size_t K,
-        const int *factors, int nf,
-        const stride_registry_t *reg);
+    int N, size_t K,
+    const int *factors, int nf,
+    const stride_registry_t *reg);
 
 static stride_plan_t *_stride_build_plan_explicit(
-        int N, size_t K,
-        const int *factors, int nf,
-        const vfft_variant_t *variants,
-        int use_dif_forward,
-        const stride_registry_t *reg);
+    int N, size_t K,
+    const int *factors, int nf,
+    const vfft_variant_t *variants,
+    int use_dif_forward,
+    const stride_registry_t *reg);
 
 #include "factorizer.h"
 #include "exhaustive.h"
 #include "dp_planner.h"
 #include "executor_blocked.h"
-#include "rader.h"      /* includes bluestein.h (shared SIMD helpers) */
-#include "r2c.h"       /* real-to-complex / complex-to-real */
+#include "rader.h" /* includes bluestein.h (shared SIMD helpers) */
+#include "r2c.h"   /* real-to-complex / complex-to-real */
+#include "dct.h"   /* DCT-II (built atop R2C) */
+#include "dht.h"   /* DHT (built atop R2C, self-inverse) */
+#include "dst.h"   /* DST-II / DST-III (built atop DCT-II/III) */
+#include "dct4.h"  /* DCT-IV (built atop DCT-III + DST-III) */
+#include "fft2d_r2c.h" /* 2D R2C / C2R (built atop 1D R2C + 1D C2C col) */
 
 /* Blocked executor heuristic threshold: K <= this triggers blocking check */
 #ifndef STRIDE_BLOCKED_K_THRESHOLD
@@ -76,20 +81,24 @@ static stride_plan_t *_stride_build_plan_explicit(
  * ===================================================================== */
 
 static inline void stride_execute_fwd_auto(const stride_plan_t *plan,
-                                            double *re, double *im) {
-    if (plan->use_blocked) {
+                                           double *re, double *im)
+{
+    if (plan->use_blocked)
+    {
         _stride_execute_fwd_blocked(plan, re, im,
-                                     plan->split_stage, plan->block_groups);
+                                    plan->split_stage, plan->block_groups);
         return;
     }
     stride_execute_fwd(plan, re, im);
 }
 
 static inline void stride_execute_bwd_auto(const stride_plan_t *plan,
-                                            double *re, double *im) {
-    if (plan->use_blocked) {
+                                           double *re, double *im)
+{
+    if (plan->use_blocked)
+    {
         _stride_execute_bwd_blocked(plan, re, im,
-                                     plan->split_stage, plan->block_groups);
+                                    plan->split_stage, plan->block_groups);
         return;
     }
     stride_execute_bwd(plan, re, im);
@@ -101,19 +110,20 @@ static inline void stride_execute_bwd_auto(const stride_plan_t *plan,
 
 #define WISDOM_MAX_ENTRIES 256
 
-typedef struct {
+typedef struct
+{
     int N;
     size_t K;
     int factors[FACT_MAX_STAGES];
     int nfactors;
-    double best_ns;   /* best time found */
+    double best_ns; /* best time found */
 
     /* Blocked executor selection (version 3+).
      * Determined by joint calibration over (factorization × executor × split).
      * use_blocked=0 means standard sweep executor (default, backward compat). */
-    int use_blocked;     /* 0 = standard, 1 = blocked */
-    int split_stage;     /* first blocked stage */
-    int block_groups;    /* groups per block at split stage */
+    int use_blocked;  /* 0 = standard, 1 = blocked */
+    int split_stage;  /* first blocked stage */
+    int block_groups; /* groups per block at split stage */
 
     /* DIT/DIF orientation selection (version 4+).
      * 0 = DIT-forward + DIF-style backward (current default)
@@ -137,19 +147,23 @@ typedef struct {
     int variant_codes[STRIDE_MAX_STAGES];
 } stride_wisdom_entry_t;
 
-typedef struct {
+typedef struct
+{
     stride_wisdom_entry_t entries[WISDOM_MAX_ENTRIES];
     int count;
 } stride_wisdom_t;
 
-static void stride_wisdom_init(stride_wisdom_t *wis) {
+static void stride_wisdom_init(stride_wisdom_t *wis)
+{
     wis->count = 0;
 }
 
 /* Find wisdom entry for (N, K). Returns NULL if not found. */
 static const stride_wisdom_entry_t *stride_wisdom_lookup(
-        const stride_wisdom_t *wis, int N, size_t K) {
-    for (int i = 0; i < wis->count; i++) {
+    const stride_wisdom_t *wis, int N, size_t K)
+{
+    for (int i = 0; i < wis->count; i++)
+    {
         if (wis->entries[i].N == N && wis->entries[i].K == K)
             return &wis->entries[i];
     }
@@ -161,15 +175,19 @@ static const stride_wisdom_entry_t *stride_wisdom_lookup(
  * has_variant_codes=1 and explicit per-stage choices; legacy callers go
  * through the v4 wrapper below with has_variant_codes=0. */
 static void stride_wisdom_add_v5(stride_wisdom_t *wis, int N, size_t K,
-                                  const int *factors, int nf, double best_ns,
-                                  int use_blocked, int split_stage,
-                                  int block_groups, int use_dif_forward,
-                                  int has_variant_codes,
-                                  const int *variant_codes) {
+                                 const int *factors, int nf, double best_ns,
+                                 int use_blocked, int split_stage,
+                                 int block_groups, int use_dif_forward,
+                                 int has_variant_codes,
+                                 const int *variant_codes)
+{
     /* Update existing */
-    for (int i = 0; i < wis->count; i++) {
-        if (wis->entries[i].N == N && wis->entries[i].K == K) {
-            if (best_ns < wis->entries[i].best_ns) {
+    for (int i = 0; i < wis->count; i++)
+    {
+        if (wis->entries[i].N == N && wis->entries[i].K == K)
+        {
+            if (best_ns < wis->entries[i].best_ns)
+            {
                 memcpy(wis->entries[i].factors, factors, nf * sizeof(int));
                 wis->entries[i].nfactors = nf;
                 wis->entries[i].best_ns = best_ns;
@@ -178,10 +196,13 @@ static void stride_wisdom_add_v5(stride_wisdom_t *wis, int N, size_t K,
                 wis->entries[i].block_groups = block_groups;
                 wis->entries[i].use_dif_forward = use_dif_forward;
                 wis->entries[i].has_variant_codes = has_variant_codes;
-                if (has_variant_codes && variant_codes) {
+                if (has_variant_codes && variant_codes)
+                {
                     for (int s = 0; s < nf; s++)
                         wis->entries[i].variant_codes[s] = variant_codes[s];
-                } else {
+                }
+                else
+                {
                     for (int s = 0; s < nf; s++)
                         wis->entries[i].variant_codes[s] = 0;
                 }
@@ -190,7 +211,8 @@ static void stride_wisdom_add_v5(stride_wisdom_t *wis, int N, size_t K,
         }
     }
     /* Insert new */
-    if (wis->count < WISDOM_MAX_ENTRIES) {
+    if (wis->count < WISDOM_MAX_ENTRIES)
+    {
         stride_wisdom_entry_t *e = &wis->entries[wis->count++];
         e->N = N;
         e->K = K;
@@ -202,10 +224,13 @@ static void stride_wisdom_add_v5(stride_wisdom_t *wis, int N, size_t K,
         e->block_groups = block_groups;
         e->use_dif_forward = use_dif_forward;
         e->has_variant_codes = has_variant_codes;
-        if (has_variant_codes && variant_codes) {
+        if (has_variant_codes && variant_codes)
+        {
             for (int s = 0; s < nf; s++)
                 e->variant_codes[s] = variant_codes[s];
-        } else {
+        }
+        else
+        {
             for (int s = 0; s < nf; s++)
                 e->variant_codes[s] = 0;
         }
@@ -217,9 +242,10 @@ static void stride_wisdom_add_v5(stride_wisdom_t *wis, int N, size_t K,
  * has_variant_codes=0 so the deploy-side build falls back to wisdom-
  * predicate consultation rather than mistaking unset codes for FLAT. */
 static void stride_wisdom_add_v4(stride_wisdom_t *wis, int N, size_t K,
-                                  const int *factors, int nf, double best_ns,
-                                  int use_blocked, int split_stage,
-                                  int block_groups, int use_dif_forward) {
+                                 const int *factors, int nf, double best_ns,
+                                 int use_blocked, int split_stage,
+                                 int block_groups, int use_dif_forward)
+{
     stride_wisdom_add_v5(wis, N, K, factors, nf, best_ns,
                          use_blocked, split_stage, block_groups,
                          use_dif_forward,
@@ -228,9 +254,10 @@ static void stride_wisdom_add_v4(stride_wisdom_t *wis, int N, size_t K,
 
 /* Legacy v3 wrapper. */
 static void stride_wisdom_add_full(stride_wisdom_t *wis, int N, size_t K,
-                                    const int *factors, int nf, double best_ns,
-                                    int use_blocked, int split_stage,
-                                    int block_groups) {
+                                   const int *factors, int nf, double best_ns,
+                                   int use_blocked, int split_stage,
+                                   int block_groups)
+{
     stride_wisdom_add_v4(wis, N, K, factors, nf, best_ns,
                          use_blocked, split_stage, block_groups,
                          /*use_dif_forward=*/0);
@@ -238,7 +265,8 @@ static void stride_wisdom_add_full(stride_wisdom_t *wis, int N, size_t K,
 
 /* Legacy wrapper (standard executor, no blocking, no DIF, no variants) */
 static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
-                               const int *factors, int nf, double best_ns) {
+                              const int *factors, int nf, double best_ns)
+{
     stride_wisdom_add_v5(wis, N, K, factors, nf, best_ns, 0, 0, 0, 0,
                          /*has_variant_codes=*/0, /*variant_codes=*/NULL);
 }
@@ -258,14 +286,17 @@ static void stride_wisdom_add(stride_wisdom_t *wis, int N, size_t K,
  * rejected on load and re-calibrated on next run. */
 #define WISDOM_VERSION 5
 
-static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path) {
+static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path)
+{
     FILE *f = fopen(path, "w");
-    if (!f) return -1;
+    if (!f)
+        return -1;
     fprintf(f, "@version %d\n", WISDOM_VERSION);
     fprintf(f, "# VectorFFT stride wisdom — %d entries\n", wis->count);
     fprintf(f, "# N K nf factors... best_ns use_blocked split_stage block_groups "
                "use_dif_forward variant_codes... (v=0:FLAT 1:LOG3 2:T1S 3:BUF)\n");
-    for (int i = 0; i < wis->count; i++) {
+    for (int i = 0; i < wis->count; i++)
+    {
         const stride_wisdom_entry_t *e = &wis->entries[i];
         fprintf(f, "%d %zu %d", e->N, e->K, e->nfactors);
         for (int j = 0; j < e->nfactors; j++)
@@ -276,7 +307,8 @@ static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path) {
         /* Per-stage variant codes. If has_variant_codes=0 (legacy entry
          * not produced by the v1.2+ search), emit -1 placeholders so the
          * loader can distinguish "no codes" from "all-FLAT codes". */
-        for (int j = 0; j < e->nfactors; j++) {
+        for (int j = 0; j < e->nfactors; j++)
+        {
             if (e->has_variant_codes)
                 fprintf(f, " %d", e->variant_codes[j]);
             else
@@ -288,23 +320,29 @@ static int stride_wisdom_save(const stride_wisdom_t *wis, const char *path) {
     return 0;
 }
 
-static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
+static int stride_wisdom_load(stride_wisdom_t *wis, const char *path)
+{
     FILE *f = fopen(path, "r");
-    if (!f) return -1;
+    if (!f)
+        return -1;
     char line[512];
     int version_ok = 0;
 
-    while (fgets(line, sizeof(line), f)) {
-        if (line[0] == '#' || line[0] == '\n') continue;
+    while (fgets(line, sizeof(line), f))
+    {
+        if (line[0] == '#' || line[0] == '\n')
+            continue;
 
-        if (line[0] == '@') {
+        if (line[0] == '@')
+        {
             int ver = 0;
             if (sscanf(line, "@version %d", &ver) == 1 && ver == WISDOM_VERSION)
                 version_ok = 1;
             continue;
         }
 
-        if (!version_ok) {
+        if (!version_ok)
+        {
             fclose(f);
             return -1;
         }
@@ -315,13 +353,20 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
         if (sscanf(line, "%d %zu %d%n", &e.N, &e.K, &e.nfactors, &n) < 3)
             continue;
         pos = n;
-        if (e.nfactors < 1 || e.nfactors > FACT_MAX_STAGES) continue;
+        if (e.nfactors < 1 || e.nfactors > FACT_MAX_STAGES)
+            continue;
         int ok = 1;
-        for (int j = 0; j < e.nfactors; j++) {
-            if (sscanf(line + pos, "%d%n", &e.factors[j], &n) < 1) { ok = 0; break; }
+        for (int j = 0; j < e.nfactors; j++)
+        {
+            if (sscanf(line + pos, "%d%n", &e.factors[j], &n) < 1)
+            {
+                ok = 0;
+                break;
+            }
             pos += n;
         }
-        if (!ok) continue;
+        if (!ok)
+            continue;
         if (sscanf(line + pos, "%lf%n", &e.best_ns, &n) < 1)
             continue;
         pos += n;
@@ -329,26 +374,32 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
          * use_dif_forward [variant_codes...]. */
         if (sscanf(line + pos, "%d %d %d %d%n",
                    &e.use_blocked, &e.split_stage, &e.block_groups,
-                   &e.use_dif_forward, &n) >= 4) {
+                   &e.use_dif_forward, &n) >= 4)
+        {
             pos += n;
             /* Variant codes: -1 sentinel means "no explicit codes for this
              * stage" — entry is legacy-style, has_variant_codes stays 0. */
             int any_real_code = 0;
             int parsed_codes[STRIDE_MAX_STAGES] = {0};
             int parsed_ok = 1;
-            for (int j = 0; j < e.nfactors; j++) {
+            for (int j = 0; j < e.nfactors; j++)
+            {
                 int v = -1;
-                if (sscanf(line + pos, "%d%n", &v, &n) < 1) {
+                if (sscanf(line + pos, "%d%n", &v, &n) < 1)
+                {
                     parsed_ok = 0;
                     break;
                 }
                 pos += n;
                 parsed_codes[j] = v;
-                if (v >= 0) any_real_code = 1;
+                if (v >= 0)
+                    any_real_code = 1;
             }
-            if (parsed_ok && any_real_code) {
+            if (parsed_ok && any_real_code)
+            {
                 e.has_variant_codes = 1;
-                for (int j = 0; j < e.nfactors; j++) {
+                for (int j = 0; j < e.nfactors; j++)
+                {
                     /* -1 placeholders within an otherwise-explicit entry
                      * (shouldn't normally happen) collapse to FLAT. */
                     e.variant_codes[j] = parsed_codes[j] >= 0 ? parsed_codes[j] : 0;
@@ -356,10 +407,10 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
             }
         }
         stride_wisdom_add_v5(wis, e.N, e.K, e.factors, e.nfactors, e.best_ns,
-                              e.use_blocked, e.split_stage, e.block_groups,
-                              e.use_dif_forward,
-                              e.has_variant_codes,
-                              e.has_variant_codes ? e.variant_codes : NULL);
+                             e.use_blocked, e.split_stage, e.block_groups,
+                             e.use_dif_forward,
+                             e.has_variant_codes,
+                             e.has_variant_codes ? e.variant_codes : NULL);
     }
     fclose(f);
     return version_ok ? 0 : -1;
@@ -399,8 +450,8 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
  * same as pre-wisdom planner.
  */
 
-#include "wisdom_bridge.h"  /* stride_prefer_dit_log3() — DIT-only safe query */
-#include "threads.h"        /* stride_get_num_threads() */
+#include "wisdom_bridge.h" /* stride_prefer_dit_log3() — DIT-only safe query */
+#include "threads.h"       /* stride_get_num_threads() */
 
 /* Compute the expected per-thread slice size at plan time.
  *
@@ -414,9 +465,11 @@ static int stride_wisdom_load(stride_wisdom_t *wis, const char *path) {
  * within a few me values, and the K/T estimate errs toward smaller me,
  * which is the regime with more variant-choice sensitivity. Single-
  * threaded runs collapse to K. */
-static inline size_t _stride_me_plan(size_t K) {
+static inline size_t _stride_me_plan(size_t K)
+{
     int T = stride_get_num_threads();
-    if (T <= 1) return K;
+    if (T <= 1)
+        return K;
     /* K-split slice, rounded up so the planner never under-estimates. */
     return (K + (size_t)T - 1) / (size_t)T;
 }
@@ -427,7 +480,8 @@ static inline size_t _stride_me_plan(size_t K) {
  *   ios[s] = K * prod(factors[s+1 .. nf-1])
  */
 static inline size_t _stride_ios_at_stage(size_t K, const int *factors,
-                                           int nf, int s) {
+                                          int nf, int s)
+{
     size_t ios = K;
     for (int d = s + 1; d < nf; d++)
         ios *= (size_t)factors[d];
@@ -442,24 +496,27 @@ static inline size_t _stride_ios_at_stage(size_t K, const int *factors,
  * wisdom-preferred for this me/ios).
  */
 static stride_plan_t *_stride_build_plan(
-        int N, size_t K,
-        const int *factors, int nf,
-        const stride_registry_t *reg) {
+    int N, size_t K,
+    const int *factors, int nf,
+    const stride_registry_t *reg)
+{
     stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
     stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
 
     /* Per-stage protocol decisions. stage_uses_log3 doubles as the
      * log3_mask bits passed to stride_plan_create. */
     int stage_uses_log3[FACT_MAX_STAGES] = {0};
-    int stage_skip_t1s [FACT_MAX_STAGES] = {0};
+    int stage_skip_t1s[FACT_MAX_STAGES] = {0};
 
     size_t me_plan = _stride_me_plan(K);
 
-    for (int s = 0; s < nf; s++) {
+    for (int s = 0; s < nf; s++)
+    {
         int R = factors[s];
         n1f[s] = reg->n1_fwd[R];
         n1b[s] = reg->n1_bwd[R];
-        if (s == 0) {
+        if (s == 0)
+        {
             /* Stage 0 has no twiddles (the outermost butterfly). */
             t1f[s] = NULL;
             t1b[s] = NULL;
@@ -504,7 +561,8 @@ static stride_plan_t *_stride_build_plan(
             (R < STRIDE_REG_MAX_RADIX) &&
             (reg->t1_buf_fwd[R] != NULL);
 
-        if (want_log3) {
+        if (want_log3)
+        {
             t1f[s] = reg->t1_fwd_log3[R];
             t1b[s] = reg->t1_bwd_log3[R];
             stage_uses_log3[s] = 1;
@@ -513,13 +571,17 @@ static stride_plan_t *_stride_build_plan(
              * but clearing t1s_fwd keeps stage state consistent with
              * the plan-time decision.) */
             stage_skip_t1s[s] = 1;
-        } else if (want_buf) {
+        }
+        else if (want_buf)
+        {
             t1f[s] = reg->t1_buf_fwd[R];
             t1b[s] = reg->t1_buf_bwd[R];
             /* Buf wins flat — t1s would shadow it via the executor's
              * runtime preference. Skip t1s for this stage. */
             stage_skip_t1s[s] = 1;
-        } else {
+        }
+        else
+        {
             t1f[s] = reg->t1_fwd[R];
             t1b[s] = reg->t1_bwd[R];
         }
@@ -528,12 +590,14 @@ static stride_plan_t *_stride_build_plan(
     /* Assemble log3_mask from per-stage flags. */
     int log3_mask = 0;
     for (int s = 0; s < nf; s++)
-        if (stage_uses_log3[s]) log3_mask |= (1 << s);
+        if (stage_uses_log3[s])
+            log3_mask |= (1 << s);
 
     stride_plan_t *plan = stride_plan_create(N, K, factors, nf,
-                                              n1f, n1b, t1f, t1b,
-                                              log3_mask);
-    if (!plan) return NULL;
+                                             n1f, n1b, t1f, t1b,
+                                             log3_mask);
+    if (!plan)
+        return NULL;
 
     /* Attach scalar-broadcast twiddle codelets where wisdom prefers t1s.
      *
@@ -556,21 +620,27 @@ static stride_plan_t *_stride_build_plan(
      * radixes without wisdom would lose t1s; if that becomes an
      * operational issue, a heuristic fallback (e.g. attach t1s when
      * me <= 256) can be added here. */
-    for (int s = 1; s < nf; s++) {
-        if (stage_skip_t1s[s]) continue;
+    for (int s = 1; s < nf; s++)
+    {
+        if (stage_skip_t1s[s])
+            continue;
         int R = factors[s];
-        if (R >= STRIDE_REG_MAX_RADIX || !reg->t1s_fwd[R]) continue;
+        if (R >= STRIDE_REG_MAX_RADIX || !reg->t1s_fwd[R])
+            continue;
         size_t ios_s = _stride_ios_at_stage(K, factors, nf, s);
-        if (!stride_prefer_t1s(R, me_plan, ios_s)) continue;
+        if (!stride_prefer_t1s(R, me_plan, ios_s))
+            continue;
         plan->stages[s].t1s_fwd = reg->t1s_fwd[R];
         plan->stages[s].t1s_bwd = reg->t1s_bwd[R];
     }
 
     /* Attach out-of-place twiddle codelets for strided first-stage use.
      * Used by R2C fused pack and 2D FFT strided executor. */
-    for (int s = 0; s < nf; s++) {
+    for (int s = 0; s < nf; s++)
+    {
         int R = factors[s];
-        if (R < STRIDE_REG_MAX_RADIX && reg->t1_oop_fwd[R]) {
+        if (R < STRIDE_REG_MAX_RADIX && reg->t1_oop_fwd[R])
+        {
             plan->stages[s].t1_oop_fwd = reg->t1_oop_fwd[R];
             plan->stages[s].t1_oop_bwd = reg->t1_oop_bwd[R];
         }
@@ -578,9 +648,11 @@ static stride_plan_t *_stride_build_plan(
 
     /* Attach scaled n1 codelets for C2R fused unpack.
      * Used by backward R2C: last stage writes ×2 scaled output at stride 2K. */
-    for (int s = 0; s < nf; s++) {
+    for (int s = 0; s < nf; s++)
+    {
         int R = factors[s];
-        if (R < STRIDE_REG_MAX_RADIX && reg->n1_scaled_fwd[R]) {
+        if (R < STRIDE_REG_MAX_RADIX && reg->n1_scaled_fwd[R])
+        {
             plan->stages[s].n1_scaled_fwd = reg->n1_scaled_fwd[R];
             plan->stages[s].n1_scaled_bwd = reg->n1_scaled_bwd[R];
         }
@@ -601,16 +673,19 @@ static stride_plan_t *_stride_build_plan(
  * pointers; stride_plan_create_ex computes DIF twiddle layout via
  * plan_compute_twiddles_dif_c. */
 static stride_plan_t *_stride_build_plan_dif(
-        int N, size_t K,
-        const int *factors, int nf,
-        const stride_registry_t *reg) {
+    int N, size_t K,
+    const int *factors, int nf,
+    const stride_registry_t *reg)
+{
     stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
     stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
 
-    for (int s = 0; s < nf; s++) {
+    for (int s = 0; s < nf; s++)
+    {
         int R = factors[s];
         if (R >= STRIDE_REG_MAX_RADIX || !reg->n1_fwd[R] ||
-            !reg->t1_dif_fwd[R] || !reg->t1_dif_bwd[R]) {
+            !reg->t1_dif_fwd[R] || !reg->t1_dif_bwd[R])
+        {
             /* DIF not available for this radix (non-pow2 or untuned). */
             return NULL;
         }
@@ -621,8 +696,8 @@ static stride_plan_t *_stride_build_plan_dif(
     }
 
     stride_plan_t *plan = stride_plan_create_ex(
-            N, K, factors, nf, n1f, n1b, t1f, t1b,
-            /*log3_mask=*/0, /*use_dif_forward=*/1);
+        N, K, factors, nf, n1f, n1b, t1f, t1b,
+        /*log3_mask=*/0, /*use_dif_forward=*/1);
     return plan;
 }
 
@@ -647,17 +722,19 @@ static stride_plan_t *_stride_build_plan_dif(
  * Auxiliary slots (t1_oop, n1_scaled) are attached unconditionally
  * where registered — same behavior as _stride_build_plan. */
 static stride_plan_t *_stride_build_plan_explicit(
-        int N, size_t K,
-        const int *factors, int nf,
-        const vfft_variant_t *variants,
-        int use_dif_forward,
-        const stride_registry_t *reg) {
+    int N, size_t K,
+    const int *factors, int nf,
+    const vfft_variant_t *variants,
+    int use_dif_forward,
+    const stride_registry_t *reg)
+{
     stride_n1_fn n1f[FACT_MAX_STAGES], n1b[FACT_MAX_STAGES];
     stride_t1_fn t1f[FACT_MAX_STAGES], t1b[FACT_MAX_STAGES];
     int log3_mask = 0;
-    int t1s_mask  = 0;  /* stages where variant=T1S; t1s_fwd attached after create */
+    int t1s_mask = 0; /* stages where variant=T1S; t1s_fwd attached after create */
 
-    for (int s = 0; s < nf; s++) {
+    for (int s = 0; s < nf; s++)
+    {
         int R = factors[s];
         if (R <= 0 || R >= STRIDE_REG_MAX_RADIX || !reg->n1_fwd[R])
             return NULL;
@@ -672,73 +749,88 @@ static stride_plan_t *_stride_build_plan_explicit(
          * safe — the executor falls through to n1_fwd. */
         int is_no_tw_stage =
             use_dif_forward ? (s == nf - 1) : (s == 0);
-        if (is_no_tw_stage) {
+        if (is_no_tw_stage)
+        {
             t1f[s] = NULL;
             t1b[s] = NULL;
             continue;
         }
 
         vfft_variant_t v = variants[s];
-        if (use_dif_forward) {
-            switch (v) {
-                case VFFT_VAR_FLAT:
-                    if (!reg->t1_dif_fwd[R]) return NULL;
-                    t1f[s] = reg->t1_dif_fwd[R];
-                    t1b[s] = reg->t1_dif_bwd[R];
-                    break;
-                case VFFT_VAR_LOG3:
-                    if (!reg->t1_dif_log3_fwd[R]) return NULL;
-                    t1f[s] = reg->t1_dif_log3_fwd[R];
-                    t1b[s] = reg->t1_dif_log3_bwd[R];
-                    log3_mask |= (1 << s);
-                    break;
-                default:
-                    /* T1S, BUF: no DIF analog. */
+        if (use_dif_forward)
+        {
+            switch (v)
+            {
+            case VFFT_VAR_FLAT:
+                if (!reg->t1_dif_fwd[R])
                     return NULL;
+                t1f[s] = reg->t1_dif_fwd[R];
+                t1b[s] = reg->t1_dif_bwd[R];
+                break;
+            case VFFT_VAR_LOG3:
+                if (!reg->t1_dif_log3_fwd[R])
+                    return NULL;
+                t1f[s] = reg->t1_dif_log3_fwd[R];
+                t1b[s] = reg->t1_dif_log3_bwd[R];
+                log3_mask |= (1 << s);
+                break;
+            default:
+                /* T1S, BUF: no DIF analog. */
+                return NULL;
             }
-        } else {
-            switch (v) {
-                case VFFT_VAR_FLAT:
-                    if (!reg->t1_fwd[R]) return NULL;
-                    t1f[s] = reg->t1_fwd[R];
-                    t1b[s] = reg->t1_bwd[R];
-                    break;
-                case VFFT_VAR_LOG3:
-                    if (!reg->t1_fwd_log3[R]) return NULL;
-                    t1f[s] = reg->t1_fwd_log3[R];
-                    t1b[s] = reg->t1_bwd_log3[R];
-                    log3_mask |= (1 << s);
-                    break;
-                case VFFT_VAR_T1S:
-                    /* T1S sits on top of flat: codelet uses t1_fwd path
-                     * for grp_tw, plus t1s_fwd is attached and the
-                     * executor's runtime preference dispatches to it. */
-                    if (!reg->t1_fwd[R] || !reg->t1s_fwd[R]) return NULL;
-                    t1f[s] = reg->t1_fwd[R];
-                    t1b[s] = reg->t1_bwd[R];
-                    t1s_mask |= (1 << s);
-                    break;
-                case VFFT_VAR_BUF:
-                    if (!reg->t1_buf_fwd[R]) return NULL;
-                    t1f[s] = reg->t1_buf_fwd[R];
-                    t1b[s] = reg->t1_buf_bwd[R];
-                    break;
-                default:
+        }
+        else
+        {
+            switch (v)
+            {
+            case VFFT_VAR_FLAT:
+                if (!reg->t1_fwd[R])
                     return NULL;
+                t1f[s] = reg->t1_fwd[R];
+                t1b[s] = reg->t1_bwd[R];
+                break;
+            case VFFT_VAR_LOG3:
+                if (!reg->t1_fwd_log3[R])
+                    return NULL;
+                t1f[s] = reg->t1_fwd_log3[R];
+                t1b[s] = reg->t1_bwd_log3[R];
+                log3_mask |= (1 << s);
+                break;
+            case VFFT_VAR_T1S:
+                /* T1S sits on top of flat: codelet uses t1_fwd path
+                 * for grp_tw, plus t1s_fwd is attached and the
+                 * executor's runtime preference dispatches to it. */
+                if (!reg->t1_fwd[R] || !reg->t1s_fwd[R])
+                    return NULL;
+                t1f[s] = reg->t1_fwd[R];
+                t1b[s] = reg->t1_bwd[R];
+                t1s_mask |= (1 << s);
+                break;
+            case VFFT_VAR_BUF:
+                if (!reg->t1_buf_fwd[R])
+                    return NULL;
+                t1f[s] = reg->t1_buf_fwd[R];
+                t1b[s] = reg->t1_buf_bwd[R];
+                break;
+            default:
+                return NULL;
             }
         }
     }
 
     stride_plan_t *plan = stride_plan_create_ex(
-            N, K, factors, nf, n1f, n1b, t1f, t1b,
-            log3_mask, use_dif_forward);
-    if (!plan) return NULL;
+        N, K, factors, nf, n1f, n1b, t1f, t1b,
+        log3_mask, use_dif_forward);
+    if (!plan)
+        return NULL;
 
     /* Attach t1s_fwd to stages whose variant chose T1S. The executor's
      * runtime dispatch checks t1s_fwd != NULL and prefers it on flat
      * stages — so T1S stages get t1s, flat stages stay flat. */
-    for (int s = 0; s < nf; s++) {
-        if (!(t1s_mask & (1 << s))) continue;
+    for (int s = 0; s < nf; s++)
+    {
+        if (!(t1s_mask & (1 << s)))
+            continue;
         int R = factors[s];
         plan->stages[s].t1s_fwd = reg->t1s_fwd[R];
         plan->stages[s].t1s_bwd = reg->t1s_bwd[R];
@@ -747,13 +839,16 @@ static stride_plan_t *_stride_build_plan_explicit(
     /* Attach auxiliary codelets (t1_oop for R2C/2D, n1_scaled for C2R)
      * unconditionally — same as _stride_build_plan. These don't depend
      * on variant choice. */
-    for (int s = 0; s < nf; s++) {
+    for (int s = 0; s < nf; s++)
+    {
         int R = factors[s];
-        if (R < STRIDE_REG_MAX_RADIX && reg->t1_oop_fwd[R]) {
+        if (R < STRIDE_REG_MAX_RADIX && reg->t1_oop_fwd[R])
+        {
             plan->stages[s].t1_oop_fwd = reg->t1_oop_fwd[R];
             plan->stages[s].t1_oop_bwd = reg->t1_oop_bwd[R];
         }
-        if (R < STRIDE_REG_MAX_RADIX && reg->n1_scaled_fwd[R]) {
+        if (R < STRIDE_REG_MAX_RADIX && reg->n1_scaled_fwd[R])
+        {
             plan->stages[s].n1_scaled_fwd = reg->n1_scaled_fwd[R];
             plan->stages[s].n1_scaled_bwd = reg->n1_scaled_bwd[R];
         }
@@ -768,21 +863,28 @@ static stride_plan_t *_stride_build_plan_explicit(
 
 /* -- Helpers for prime-size dispatch -- */
 
-static int _stride_is_prime(int n) {
-    if (n < 2) return 0;
-    if (n < 4) return 1;
-    if (n % 2 == 0 || n % 3 == 0) return 0;
+static int _stride_is_prime(int n)
+{
+    if (n < 2)
+        return 0;
+    if (n < 4)
+        return 1;
+    if (n % 2 == 0 || n % 3 == 0)
+        return 0;
     for (int i = 5; (long long)i * i <= n; i += 6)
-        if (n % i == 0 || n % (i + 2) == 0) return 0;
+        if (n % i == 0 || n % (i + 2) == 0)
+            return 0;
     return 1;
 }
 
 /* N-1 factors entirely into primes covered by our radix set */
-static int _stride_is_rader_friendly(int n) {
+static int _stride_is_rader_friendly(int n)
+{
     int m = n - 1;
     static const int primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 0};
     for (const int *p = primes; *p; p++)
-        while (m % *p == 0) m /= *p;
+        while (m % *p == 0)
+            m /= *p;
     return m == 1;
 }
 
@@ -802,31 +904,38 @@ static int _stride_is_rader_friendly(int n) {
  * heuristic would never select. Pass wis=NULL to opt out (legacy path).
  */
 static stride_plan_t *stride_auto_plan_wis(int N, size_t K,
-                                            const stride_registry_t *reg,
-                                            const stride_wisdom_t *wis) {
+                                           const stride_registry_t *reg,
+                                           const stride_wisdom_t *wis)
+{
     /* 1. Wisdom hit: build with explicit variant codes (v5+) or
      * legacy factor list (v3/v4). Mirrors stride_wise_plan. */
-    if (wis) {
+    if (wis)
+    {
         const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
-        if (e) {
+        if (e)
+        {
             stride_plan_t *plan = NULL;
-            if (e->has_variant_codes) {
+            if (e->has_variant_codes)
+            {
                 vfft_variant_t variants[STRIDE_MAX_STAGES];
                 for (int s = 0; s < e->nfactors; s++)
                     variants[s] = (vfft_variant_t)e->variant_codes[s];
                 plan = _stride_build_plan_explicit(
-                        N, K, e->factors, e->nfactors,
-                        variants, e->use_dif_forward, reg);
+                    N, K, e->factors, e->nfactors,
+                    variants, e->use_dif_forward, reg);
             }
-            if (!plan && e->use_dif_forward) {
+            if (!plan && e->use_dif_forward)
+            {
                 plan = _stride_build_plan_dif(N, K, e->factors, e->nfactors, reg);
             }
-            if (!plan) {
+            if (!plan)
+            {
                 plan = _stride_build_plan(N, K, e->factors, e->nfactors, reg);
             }
-            if (plan) {
-                plan->use_blocked  = e->use_blocked;
-                plan->split_stage  = e->split_stage;
+            if (plan)
+            {
+                plan->use_blocked = e->use_blocked;
+                plan->split_stage = e->split_stage;
                 plan->block_groups = e->block_groups;
                 return plan;
             }
@@ -841,19 +950,23 @@ static stride_plan_t *stride_auto_plan_wis(int N, size_t K,
 
     /* 3. Prime with non-smooth N-1: Bluestein (recurse with wisdom).
      * Block size is T-aware: more blocks at higher T for outer-loop MT. */
-    if (_stride_is_prime(N) && !_stride_is_rader_friendly(N)) {
+    if (_stride_is_prime(N) && !_stride_is_rader_friendly(N))
+    {
         int M = _bluestein_choose_m(N);
         size_t B = _bluestein_block_size_T(M, K, stride_get_num_threads());
         stride_plan_t *inner = stride_auto_plan_wis(M, B, reg, wis);
-        if (inner) return stride_bluestein_plan(N, K, B, inner, M);
+        if (inner)
+            return stride_bluestein_plan(N, K, B, inner, M);
     }
 
     /* 4. Prime with smooth N-1: Rader (recurse with wisdom). */
-    if (_stride_is_prime(N) && _stride_is_rader_friendly(N)) {
+    if (_stride_is_prime(N) && _stride_is_rader_friendly(N))
+    {
         int nm1 = N - 1;
         size_t B = _bluestein_block_size_T(nm1, K, stride_get_num_threads());
         stride_plan_t *inner = stride_auto_plan_wis(nm1, B, reg, wis);
-        if (inner) return stride_rader_plan(N, K, B, inner);
+        if (inner)
+            return stride_rader_plan(N, K, B, inner);
     }
 
     /* 5. Composite with unfactorable prime factor: reserved (TODO) */
@@ -863,7 +976,8 @@ static stride_plan_t *stride_auto_plan_wis(int N, size_t K,
 /* Legacy no-wisdom wrapper (back-compat for callers that don't have
  * wisdom available, e.g., test code or pre-wisdom code paths). */
 static stride_plan_t *stride_auto_plan(int N, size_t K,
-                                        const stride_registry_t *reg) {
+                                       const stride_registry_t *reg)
+{
     return stride_auto_plan_wis(N, K, reg, /*wis=*/NULL);
 }
 
@@ -874,7 +988,8 @@ static stride_plan_t *stride_auto_plan(int N, size_t K,
  * returns a plan built from the best one found.
  */
 static stride_plan_t *stride_exhaustive_plan(int N, size_t K,
-                                              const stride_registry_t *reg) {
+                                             const stride_registry_t *reg)
+{
     stride_factorization_t best_fact;
     double best_ns = stride_exhaustive_search(N, K, reg, &best_fact, 0);
     if (best_ns >= 1e17)
@@ -891,8 +1006,9 @@ static stride_plan_t *stride_exhaustive_plan(int N, size_t K,
  * those inner FFTs can pick up variant-tuned wisdom too.
  */
 static stride_plan_t *stride_wise_plan(int N, size_t K,
-                                        const stride_registry_t *reg,
-                                        const stride_wisdom_t *wis) {
+                                       const stride_registry_t *reg,
+                                       const stride_wisdom_t *wis)
+{
     const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
     if (!e)
         return stride_auto_plan_wis(N, K, reg, wis);
@@ -900,16 +1016,18 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
     /* Preferred path (v5+): explicit per-stage variant codes. The plan
      * calibrator picked these by benching the full plan, so we trust
      * them over any wisdom-bridge predicate consultation. */
-    if (e->has_variant_codes) {
+    if (e->has_variant_codes)
+    {
         vfft_variant_t variants[STRIDE_MAX_STAGES];
         for (int s = 0; s < e->nfactors; s++)
             variants[s] = (vfft_variant_t)e->variant_codes[s];
         stride_plan_t *plan = _stride_build_plan_explicit(
-                N, K, e->factors, e->nfactors,
-                variants, e->use_dif_forward, reg);
-        if (plan) {
-            plan->use_blocked  = e->use_blocked;
-            plan->split_stage  = e->split_stage;
+            N, K, e->factors, e->nfactors,
+            variants, e->use_dif_forward, reg);
+        if (plan)
+        {
+            plan->use_blocked = e->use_blocked;
+            plan->split_stage = e->split_stage;
             plan->block_groups = e->block_groups;
             return plan;
         }
@@ -920,14 +1038,17 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
     /* Legacy path (v3/v4 entries, or v5 fallback). Wisdom-bridge
      * predicates pick variants per stage at plan-build time. */
     stride_plan_t *plan = NULL;
-    if (e->use_dif_forward) {
+    if (e->use_dif_forward)
+    {
         plan = _stride_build_plan_dif(N, K, e->factors, e->nfactors, reg);
     }
-    if (!plan) {
+    if (!plan)
+    {
         plan = _stride_build_plan(N, K, e->factors, e->nfactors, reg);
-        if (plan) {
-            plan->use_blocked  = e->use_blocked;
-            plan->split_stage  = e->split_stage;
+        if (plan)
+        {
+            plan->use_blocked = e->use_blocked;
+            plan->split_stage = e->split_stage;
             plan->block_groups = e->block_groups;
         }
     }
@@ -956,49 +1077,261 @@ static stride_plan_t *stride_wise_plan(int N, size_t K,
  * Variant codes (LOG3/T1S/BUF) on individual stages are still picked up
  * from wisdom_bridge predicates inside _stride_build_plan. */
 static inline stride_plan_t *_r2c_force_dit_inner(
-        int halfN, size_t B, const stride_registry_t *reg,
-        const stride_wisdom_t *wis)
+    int halfN, size_t B, const stride_registry_t *reg,
+    const stride_wisdom_t *wis)
 {
     stride_plan_t *inner = stride_wise_plan(halfN, B, reg, wis);
-    if (inner && inner->use_dif_forward) {
+    if (inner && inner->use_dif_forward)
+    {
         stride_plan_destroy(inner);
         inner = NULL;
     }
-    if (!inner) inner = stride_auto_plan_wis(halfN, B, reg, /*wis=*/NULL);
+    if (!inner)
+        inner = stride_auto_plan_wis(halfN, B, reg, /*wis=*/NULL);
     return inner;
 }
 
 /* Wisdom-aware R2C planner. Inner halfN-point FFT picks variant-tuned codelets
  * via wisdom, but DIF orientation is rejected (incompatible with R2C's fused
- * first/last-stage paths). */
+ * first/last-stage paths).
+ *
+ * v1.0 constraint: K must be >= 2. K=1 hits a SIMD edge case where the
+ * inner FFT codelets receive vl=1 (block size collapses to 1) and overrun
+ * scratch on aligned loads. Returning NULL is safer than corrupting memory.
+ * Caller can pad to K>=2 (zero-fill the second batch) as a workaround.
+ * Proper fix: v1.1 (B-padding inside the planner). */
 static stride_plan_t *stride_r2c_auto_plan_wis(int N, size_t K,
-                                                const stride_registry_t *reg,
-                                                const stride_wisdom_t *wis) {
-    if (N < 2 || (N & 1)) return NULL;
+                                               const stride_registry_t *reg,
+                                               const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL;
+    if (K < 2)
+        return NULL;  /* v1.0: K=1 corrupts via inner-codelet SIMD overrun */
     int halfN = N / 2;
     size_t B = _bluestein_block_size_T(halfN, K, stride_get_num_threads());
     stride_plan_t *inner = _r2c_force_dit_inner(halfN, B, reg, wis);
-    if (!inner) return NULL;
+    if (!inner)
+        return NULL;
     return stride_r2c_plan(N, K, B, inner);
 }
 
 /* Legacy no-wisdom wrapper. */
 static stride_plan_t *stride_r2c_auto_plan(int N, size_t K,
-                                            const stride_registry_t *reg) {
+                                           const stride_registry_t *reg)
+{
     return stride_r2c_auto_plan_wis(N, K, reg, /*wis=*/NULL);
 }
 
 /* Wisdom-aware R2C plan, mirror of stride_wise_plan for R2C. Same DIT
- * constraint as stride_r2c_auto_plan_wis. */
+ * constraint as stride_r2c_auto_plan_wis, and same K>=2 v1.0 constraint. */
 static stride_plan_t *stride_r2c_wise_plan(int N, size_t K,
-                                            const stride_registry_t *reg,
-                                            const stride_wisdom_t *wis) {
-    if (N < 2 || (N & 1)) return NULL;
+                                           const stride_registry_t *reg,
+                                           const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL;
+    if (K < 2)
+        return NULL;  /* v1.0: K=1 corrupts via inner-codelet SIMD overrun */
     int halfN = N / 2;
     size_t B = _bluestein_block_size_T(halfN, K, stride_get_num_threads());
     stride_plan_t *inner = _r2c_force_dit_inner(halfN, B, reg, wis);
-    if (!inner) return NULL;
+    if (!inner)
+        return NULL;
     return stride_r2c_plan(N, K, B, inner);
+}
+
+/**
+ * stride_dct2_auto_plan_wis -- DCT-II (FFTW REDFT10 convention).
+ *
+ * Y[k] = 2 * sum_{n=0..N-1} x[n] * cos(π k (2n+1) / (2N))   for k=0..N-1
+ *
+ * Implementation: Makhoul's algorithm — built atop an **N-point R2C**
+ * (NOT 2N-point) plus a clever pre-permutation. ~2× faster than the
+ * textbook 2N-R2C approach. Matches FFTW's reodft010e-r2hc.c.
+ *
+ * Constraint: N must be even (our R2C requires even input size).
+ *
+ *   stride_execute_dct2(plan, in, out)         -- 1D DCT-II, batched K
+ */
+static stride_plan_t *stride_dct2_auto_plan_wis(int N, size_t K,
+                                                const stride_registry_t *reg,
+                                                const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL; /* Makhoul needs even N */
+    stride_plan_t *r2c = stride_r2c_auto_plan_wis(N, K, reg, wis);
+    if (!r2c)
+        return NULL;
+    return stride_dct2_plan(N, K, r2c);
+}
+
+/* No-wisdom convenience wrapper. */
+static stride_plan_t *stride_dct2_auto_plan(int N, size_t K,
+                                            const stride_registry_t *reg)
+{
+    return stride_dct2_auto_plan_wis(N, K, reg, /*wis=*/NULL);
+}
+
+/* Wisdom-aware DCT-II — uses wisdom for the inner N-point R2C plan
+ * (subject to R2C's DIT-only v1.0 constraint). */
+static stride_plan_t *stride_dct2_wise_plan(int N, size_t K,
+                                            const stride_registry_t *reg,
+                                            const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL;
+    stride_plan_t *r2c = stride_r2c_wise_plan(N, K, reg, wis);
+    if (!r2c)
+        return NULL;
+    return stride_dct2_plan(N, K, r2c);
+}
+
+/**
+ * stride_dht_auto_plan_wis -- Discrete Hartley Transform.
+ *
+ * H[k] = sum_{n=0..N-1} x[n] * (cos(2*pi*k*n/N) + sin(2*pi*k*n/N))
+ *
+ * Self-inverse up to 1/N: DHT(DHT(x)) = N*x. Caller divides by N to
+ * recover the original. Convention matches FFTW's FFTW_DHT.
+ *
+ * Built atop N-point R2C plus an O(N*K) butterfly. ~2x faster than
+ * a full N-point complex FFT.
+ *
+ * Constraint: N must be even (our R2C requires even input).
+ *
+ *   stride_execute_dht(plan, in, out)   -- 1D DHT, batched K
+ */
+static stride_plan_t *stride_dht_auto_plan_wis(int N, size_t K,
+                                               const stride_registry_t *reg,
+                                               const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL;
+    stride_plan_t *r2c = stride_r2c_auto_plan_wis(N, K, reg, wis);
+    if (!r2c)
+        return NULL;
+    return stride_dht_plan(N, K, r2c);
+}
+
+/* No-wisdom convenience wrapper. */
+static stride_plan_t *stride_dht_auto_plan(int N, size_t K,
+                                           const stride_registry_t *reg)
+{
+    return stride_dht_auto_plan_wis(N, K, reg, /*wis=*/NULL);
+}
+
+/* Wisdom-aware DHT — uses wisdom for the inner N-point R2C plan
+ * (subject to R2C's DIT-only v1.0 constraint). */
+static stride_plan_t *stride_dht_wise_plan(int N, size_t K,
+                                           const stride_registry_t *reg,
+                                           const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL;
+    stride_plan_t *r2c = stride_r2c_wise_plan(N, K, reg, wis);
+    if (!r2c)
+        return NULL;
+    return stride_dht_plan(N, K, r2c);
+}
+
+/**
+ * stride_dst2_auto_plan_wis -- DST-II (FFTW RODFT10) and DST-III (RODFT01).
+ *
+ *   Y_DST2[k] = 2 * sum_{n=0..N-1} x[n] * sin(pi*(k+1)*(2n+1)/(2N))
+ *   Y_DST3[k] = (-1)^k * X[N-1] + 2 * sum_{n=0..N-2} X[n] * sin(pi*(n+1)*(2k+1)/(2N))
+ *
+ * One plan handles both directions:
+ *   stride_execute_dst2(plan, in, out)   -- forward (RODFT10)
+ *   stride_execute_dst3(plan, in, out)   -- backward (RODFT01); inverse up to 2N
+ *
+ * Built atop DCT-II/III with sign-flip + reversal wrapper.
+ *
+ * Constraint: N must be even (inherits R2C's even-N constraint).
+ */
+static stride_plan_t *stride_dst2_auto_plan_wis(int N, size_t K,
+                                                const stride_registry_t *reg,
+                                                const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL;
+    stride_plan_t *dct = stride_dct2_auto_plan_wis(N, K, reg, wis);
+    if (!dct)
+        return NULL;
+    return stride_dst2_plan(N, K, dct);
+}
+
+/* No-wisdom convenience wrapper. */
+static stride_plan_t *stride_dst2_auto_plan(int N, size_t K,
+                                            const stride_registry_t *reg)
+{
+    return stride_dst2_auto_plan_wis(N, K, reg, /*wis=*/NULL);
+}
+
+/* Wisdom-aware DST-II/III — uses wisdom for the inner DCT-II/III's R2C plan
+ * (subject to R2C's DIT-only v1.0 constraint). */
+static stride_plan_t *stride_dst2_wise_plan(int N, size_t K,
+                                            const stride_registry_t *reg,
+                                            const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL;
+    stride_plan_t *dct = stride_dct2_wise_plan(N, K, reg, wis);
+    if (!dct)
+        return NULL;
+    return stride_dst2_plan(N, K, dct);
+}
+
+/**
+ * stride_dct4_auto_plan_wis -- DCT-IV (FFTW REDFT11).
+ *
+ *   Y[k] = 2 * sum_{n=0..N-1} x[n] * cos(pi*(2k+1)*(2n+1)/(4N))
+ *
+ * Involutory up to scale 2N: DCT-IV(DCT-IV(x))/(2N) = x.
+ *
+ * Algorithm: Lee 1984 -- single N/2-point complex FFT plus pre/post twiddles.
+ * Reuses our existing C2C plan; no new codelets needed.
+ *
+ * Constraint: N must be even.
+ *
+ *   stride_execute_dct4(plan, in, out)   -- DCT-IV (involutory)
+ */
+static stride_plan_t *stride_dct4_auto_plan_wis(int N, size_t K,
+                                                const stride_registry_t *reg,
+                                                const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL;
+    if (K < 2)
+        return NULL;  /* inherits R2C K>=2 v1.0 constraint */
+    int halfN = N / 2;
+    stride_plan_t *fft = stride_auto_plan_wis(halfN, K, reg, wis);
+    if (!fft)
+        return NULL;
+    return stride_dct4_plan(N, K, fft);
+}
+
+/* No-wisdom convenience wrapper. */
+static stride_plan_t *stride_dct4_auto_plan(int N, size_t K,
+                                            const stride_registry_t *reg)
+{
+    return stride_dct4_auto_plan_wis(N, K, reg, /*wis=*/NULL);
+}
+
+/* Wisdom-aware DCT-IV. */
+static stride_plan_t *stride_dct4_wise_plan(int N, size_t K,
+                                            const stride_registry_t *reg,
+                                            const stride_wisdom_t *wis)
+{
+    if (N < 2 || (N & 1))
+        return NULL;
+    if (K < 2)
+        return NULL;
+    int halfN = N / 2;
+    stride_plan_t *fft = stride_wise_plan(halfN, K, reg, wis);
+    if (!fft)
+        return NULL;
+    return stride_dct4_plan(N, K, fft);
 }
 
 /**
@@ -1009,17 +1342,20 @@ static stride_plan_t *stride_r2c_wise_plan(int N, size_t K,
  * to get an accurate timing for the wisdom file.
  */
 static double _stride_refine_bench(int N, size_t K,
-                                    const int *factors, int nf,
-                                    const stride_registry_t *reg) {
+                                   const int *factors, int nf,
+                                   const stride_registry_t *reg)
+{
     stride_plan_t *plan = _stride_build_plan(N, K, factors, nf, reg);
-    if (!plan) return 1e18;
+    if (!plan)
+        return 1e18;
 
     size_t total = (size_t)N * K;
-    double *re = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    double *im = (double*)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    for (size_t i = 0; i < total; i++) {
-        re[i] = (double)rand()/RAND_MAX - 0.5;
-        im[i] = (double)rand()/RAND_MAX - 0.5;
+    double *re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    for (size_t i = 0; i < total; i++)
+    {
+        re[i] = (double)rand() / RAND_MAX - 0.5;
+        im[i] = (double)rand() / RAND_MAX - 0.5;
     }
 
     /* Warmup */
@@ -1027,17 +1363,21 @@ static double _stride_refine_bench(int N, size_t K,
         stride_execute_fwd(plan, re, im);
 
     int reps = (int)(1e6 / (total + 1));
-    if (reps < 20) reps = 20;
-    if (reps > 100000) reps = 100000;
+    if (reps < 20)
+        reps = 20;
+    if (reps > 100000)
+        reps = 100000;
 
     /* Best of 5 trials */
     double best = 1e18;
-    for (int t = 0; t < 5; t++) {
+    for (int t = 0; t < 5; t++)
+    {
         double t0 = now_ns();
         for (int i = 0; i < reps; i++)
             stride_execute_fwd(plan, re, im);
         double ns = (now_ns() - t0) / reps;
-        if (ns < best) best = ns;
+        if (ns < best)
+            best = ns;
     }
 
     STRIDE_ALIGNED_FREE(re);
@@ -1067,40 +1407,48 @@ static double _stride_refine_bench(int N, size_t K,
  * Returns: best time in ns, or 1e18 on failure.
  */
 static double stride_wisdom_calibrate_full(
-        stride_wisdom_t *wis, int N, size_t K,
-        const stride_registry_t *reg,
-        stride_dp_context_t *dp_ctx,
-        int force, int verbose, int exhaustive_threshold,
-        const char *save_path)
+    stride_wisdom_t *wis, int N, size_t K,
+    const stride_registry_t *reg,
+    stride_dp_context_t *dp_ctx,
+    int force, int verbose, int exhaustive_threshold,
+    const char *save_path)
 {
     /* Skip if already calibrated (unless force) */
-    if (!force) {
+    if (!force)
+    {
         const stride_wisdom_entry_t *e = stride_wisdom_lookup(wis, N, K);
-        if (e) return e->best_ns;
+        if (e)
+            return e->best_ns;
     }
 
     stride_factorization_t best_fact;
     double best_ns;
 
-    if (N <= exhaustive_threshold) {
+    if (N <= exhaustive_threshold)
+    {
         best_ns = stride_exhaustive_search(N, K, reg, &best_fact, verbose);
-    } else {
+    }
+    else
+    {
         stride_dp_context_t local_ctx;
         int own_ctx = 0;
-        if (!dp_ctx) {
+        if (!dp_ctx)
+        {
             stride_dp_init(&local_ctx, K, N);
             dp_ctx = &local_ctx;
             own_ctx = 1;
         }
         best_ns = stride_dp_plan(dp_ctx, N, reg, &best_fact, verbose);
-        if (own_ctx) stride_dp_destroy(&local_ctx);
+        if (own_ctx)
+            stride_dp_destroy(&local_ctx);
     }
 
-    if (best_ns >= 1e17) return best_ns;
+    if (best_ns >= 1e17)
+        return best_ns;
 
     /* Re-bench the standard winner with full accuracy */
     double refined_ns = _stride_refine_bench(N, K, best_fact.factors,
-                                              best_fact.nfactors, reg);
+                                             best_fact.nfactors, reg);
 
     int win_blocked = 0, win_split = 0, win_bg = 0;
 
@@ -1112,7 +1460,8 @@ static double stride_wisdom_calibrate_full(
      *
      * We re-enumerate factorizations and test each with both executors.
      * Cost: ~2x the standard exhaustive search (acceptable for small K). */
-    if (K <= STRIDE_BLOCKED_K_THRESHOLD && N > 512 && N <= exhaustive_threshold) {
+    if (K <= STRIDE_BLOCKED_K_THRESHOLD && N > 512 && N <= exhaustive_threshold)
+    {
         if (verbose)
             printf("  Joint blocked search (K<=%d, N>512)...\n",
                    STRIDE_BLOCKED_K_THRESHOLD);
@@ -1121,39 +1470,49 @@ static double stride_wisdom_calibrate_full(
         stride_enumerate_factorizations(N, reg, flist);
 
         size_t total = (size_t)N * K;
-        double *jre      = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-        double *jim      = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        double *jre = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        double *jim = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
         double *jorig_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
         double *jorig_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-        for (size_t i = 0; i < total; i++) {
+        for (size_t i = 0; i < total; i++)
+        {
             jorig_re[i] = (double)rand() / RAND_MAX - 0.5;
             jorig_im[i] = (double)rand() / RAND_MAX - 0.5;
         }
 
         int jreps = (int)(5e5 / (total + 1));
-        if (jreps < 10) jreps = 10;
-        if (jreps > 50000) jreps = 50000;
+        if (jreps < 10)
+            jreps = 10;
+        if (jreps > 50000)
+            jreps = 50000;
 
-        for (int fi = 0; fi < flist->count; fi++) {
+        for (int fi = 0; fi < flist->count; fi++)
+        {
             permutation_list_t *plist = (permutation_list_t *)malloc(sizeof(*plist));
             stride_gen_permutations(flist->results[fi].factors,
                                     flist->results[fi].nfactors, plist);
 
-            for (int pi = 0; pi < plist->count; pi++) {
+            for (int pi = 0; pi < plist->count; pi++)
+            {
                 const int *fac = plist->perms[pi];
                 int nf = flist->results[fi].nfactors;
                 int prod = 1;
-                for (int s = 0; s < nf; s++) prod *= fac[s];
-                if (prod != N) continue;
+                for (int s = 0; s < nf; s++)
+                    prod *= fac[s];
+                if (prod != N)
+                    continue;
 
                 stride_plan_t *jp = _stride_build_plan(N, K, fac, nf, reg);
-                if (!jp) continue;
+                if (!jp)
+                    continue;
 
                 /* Try blocked at each valid split point */
-                for (int sp = 0; sp < jp->num_stages; sp++) {
+                for (int sp = 0; sp < jp->num_stages; sp++)
+                {
                     size_t ws = (size_t)jp->stages[sp].radix *
                                 jp->stages[sp].stride * K * 2 * sizeof(double);
-                    if (ws > STRIDE_BLOCKED_L1_BYTES) continue;
+                    if (ws > STRIDE_BLOCKED_L1_BYTES)
+                        continue;
 
                     int bg = _stride_compute_block_groups(jp, sp);
 
@@ -1162,17 +1521,20 @@ static double stride_wisdom_calibrate_full(
                         _stride_execute_fwd_blocked(jp, jorig_re, jorig_im, sp, bg);
 
                     double jbest = 1e18;
-                    for (int t = 0; t < 3; t++) {
+                    for (int t = 0; t < 3; t++)
+                    {
                         memcpy(jre, jorig_re, total * sizeof(double));
                         memcpy(jim, jorig_im, total * sizeof(double));
                         double t0 = now_ns();
                         for (int r = 0; r < jreps; r++)
                             _stride_execute_fwd_blocked(jp, jre, jim, sp, bg);
                         double ns = (now_ns() - t0) / jreps;
-                        if (ns < jbest) jbest = ns;
+                        if (ns < jbest)
+                            jbest = ns;
                     }
 
-                    if (jbest < refined_ns) {
+                    if (jbest < refined_ns)
+                    {
                         refined_ns = jbest;
                         best_fact.nfactors = nf;
                         memcpy(best_fact.factors, fac, nf * sizeof(int));
@@ -1186,11 +1548,14 @@ static double stride_wisdom_calibrate_full(
             free(plist);
         }
 
-        STRIDE_ALIGNED_FREE(jre); STRIDE_ALIGNED_FREE(jim);
-        STRIDE_ALIGNED_FREE(jorig_re); STRIDE_ALIGNED_FREE(jorig_im);
+        STRIDE_ALIGNED_FREE(jre);
+        STRIDE_ALIGNED_FREE(jim);
+        STRIDE_ALIGNED_FREE(jorig_re);
+        STRIDE_ALIGNED_FREE(jorig_im);
         free(flist);
 
-        if (verbose && win_blocked) {
+        if (verbose && win_blocked)
+        {
             printf("  Blocked winner: ");
             for (int s = 0; s < best_fact.nfactors; s++)
                 printf("%s%d", s ? "x" : "", best_fact.factors[s]);
@@ -1229,11 +1594,11 @@ static double stride_wisdom_calibrate_full(
  * blocked-friendly — acceptable for the close-call regime.
  */
 static double stride_dp_plan_joint_blocked(
-        stride_dp_context_t *ctx, int N, size_t K,
-        const stride_registry_t *reg,
-        stride_factorization_t *best_fact,
-        int *out_use_blocked, int *out_split, int *out_bg,
-        int verbose)
+    stride_dp_context_t *ctx, int N, size_t K,
+    const stride_registry_t *reg,
+    stride_factorization_t *best_fact,
+    int *out_use_blocked, int *out_split, int *out_bg,
+    int verbose)
 {
     *out_use_blocked = 0;
     *out_split = 0;
@@ -1242,7 +1607,8 @@ static double stride_dp_plan_joint_blocked(
     /* Phase 1: standard DP factorization (memoized) */
     stride_factorization_t dp_fact;
     double dp_ns = stride_dp_plan(ctx, N, reg, &dp_fact, verbose);
-    if (dp_ns >= 1e17) return dp_ns;
+    if (dp_ns >= 1e17)
+        return dp_ns;
 
     /* Baseline: standard winner */
     double best_ns = dp_ns;
@@ -1253,46 +1619,54 @@ static double stride_dp_plan_joint_blocked(
     stride_gen_permutations(dp_fact.factors, dp_fact.nfactors, plist);
 
     size_t total = (size_t)N * K;
-    double *jre      = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    double *jim      = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *jre = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+    double *jim = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
     double *jorig_re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
     double *jorig_im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    for (size_t i = 0; i < total; i++) {
+    for (size_t i = 0; i < total; i++)
+    {
         jorig_re[i] = (double)rand() / RAND_MAX - 0.5;
         jorig_im[i] = (double)rand() / RAND_MAX - 0.5;
     }
 
     int jreps = (int)(5e5 / (total + 1));
-    if (jreps < 5) jreps = 5;
-    if (jreps > 50000) jreps = 50000;
+    if (jreps < 5)
+        jreps = 5;
+    if (jreps > 50000)
+        jreps = 50000;
 
     int variants_tried = 0;
     int blocked_winners = 0;
 
-    for (int pi = 0; pi < plist->count; pi++) {
+    for (int pi = 0; pi < plist->count; pi++)
+    {
         const int *fac = plist->perms[pi];
         int nf = dp_fact.nfactors;
 
         stride_plan_t *jp = _stride_build_plan(N, K, fac, nf, reg);
-        if (!jp) continue;
+        if (!jp)
+            continue;
 
         /* Bench standard executor for this permutation */
         for (int w = 0; w < 3; w++)
             _stride_execute_fwd_slice(jp, jorig_re, jorig_im, K, K);
 
         double std_best = 1e18;
-        for (int t = 0; t < 3; t++) {
+        for (int t = 0; t < 3; t++)
+        {
             memcpy(jre, jorig_re, total * sizeof(double));
             memcpy(jim, jorig_im, total * sizeof(double));
             double t0 = now_ns();
             for (int r = 0; r < jreps; r++)
                 _stride_execute_fwd_slice(jp, jre, jim, K, K);
             double ns = (now_ns() - t0) / jreps;
-            if (ns < std_best) std_best = ns;
+            if (ns < std_best)
+                std_best = ns;
         }
         variants_tried++;
 
-        if (std_best < best_ns) {
+        if (std_best < best_ns)
+        {
             best_ns = std_best;
             best_fact->nfactors = nf;
             memcpy(best_fact->factors, fac, nf * sizeof(int));
@@ -1302,10 +1676,12 @@ static double stride_dp_plan_joint_blocked(
         }
 
         /* Bench blocked executor at each valid split point */
-        for (int sp = 0; sp < jp->num_stages; sp++) {
+        for (int sp = 0; sp < jp->num_stages; sp++)
+        {
             size_t ws = (size_t)jp->stages[sp].radix *
                         jp->stages[sp].stride * K * 2 * sizeof(double);
-            if (ws > STRIDE_BLOCKED_L1_BYTES) continue;
+            if (ws > STRIDE_BLOCKED_L1_BYTES)
+                continue;
 
             int bg = _stride_compute_block_groups(jp, sp);
 
@@ -1313,18 +1689,21 @@ static double stride_dp_plan_joint_blocked(
                 _stride_execute_fwd_blocked(jp, jorig_re, jorig_im, sp, bg);
 
             double jbest = 1e18;
-            for (int t = 0; t < 3; t++) {
+            for (int t = 0; t < 3; t++)
+            {
                 memcpy(jre, jorig_re, total * sizeof(double));
                 memcpy(jim, jorig_im, total * sizeof(double));
                 double t0 = now_ns();
                 for (int r = 0; r < jreps; r++)
                     _stride_execute_fwd_blocked(jp, jre, jim, sp, bg);
                 double ns = (now_ns() - t0) / jreps;
-                if (ns < jbest) jbest = ns;
+                if (ns < jbest)
+                    jbest = ns;
             }
             variants_tried++;
 
-            if (jbest < best_ns) {
+            if (jbest < best_ns)
+            {
                 best_ns = jbest;
                 best_fact->nfactors = nf;
                 memcpy(best_fact->factors, fac, nf * sizeof(int));
@@ -1344,11 +1723,13 @@ static double stride_dp_plan_joint_blocked(
     STRIDE_ALIGNED_FREE(jorig_im);
     free(plist);
 
-    if (verbose) {
+    if (verbose)
+    {
         printf("  Joint DP-blocked search: %d variants tried, blocked %s\n",
                variants_tried,
                *out_use_blocked ? "WON" : "lost");
-        if (*out_use_blocked) {
+        if (*out_use_blocked)
+        {
             printf("    Winner: ");
             for (int s = 0; s < best_fact->nfactors; s++)
                 printf("%s%d", s ? "x" : "", best_fact->factors[s]);
@@ -1383,21 +1764,23 @@ static double stride_dp_plan_joint_blocked(
  *   - No save_path — caller is responsible for any persistence decisions.
  */
 static double stride_wisdom_recalibrate_with_blocked(
-        stride_wisdom_t *wis, int N, size_t K,
-        const stride_registry_t *reg,
-        stride_dp_context_t *dp_ctx,
-        int verbose)
+    stride_wisdom_t *wis, int N, size_t K,
+    const stride_registry_t *reg,
+    stride_dp_context_t *dp_ctx,
+    int verbose)
 {
     /* Outside blocked-relevant range — fall back to standard calibration */
-    if (K > STRIDE_BLOCKED_K_THRESHOLD || N <= 512) {
+    if (K > STRIDE_BLOCKED_K_THRESHOLD || N <= 512)
+    {
         return stride_wisdom_calibrate_full(wis, N, K, reg, dp_ctx,
-                                             1, verbose, 1024, NULL);
+                                            1, verbose, 1024, NULL);
     }
 
     /* Small N: existing exhaustive joint search applies (its gate fires) */
-    if (N <= 1024) {
+    if (N <= 1024)
+    {
         return stride_wisdom_calibrate_full(wis, N, K, reg, dp_ctx,
-                                             1, verbose, 1024, NULL);
+                                            1, verbose, 1024, NULL);
     }
 
     /* Large N: DP-style joint blocked search */
@@ -1407,7 +1790,8 @@ static double stride_wisdom_recalibrate_with_blocked(
         dp_ctx, N, K, reg, &best_fact,
         &use_blocked, &split, &bg, verbose);
 
-    if (best_ns >= 1e17) return best_ns;
+    if (best_ns >= 1e17)
+        return best_ns;
 
     stride_wisdom_add_full(wis, N, K, best_fact.factors, best_fact.nfactors,
                            best_ns, use_blocked, split, bg);
@@ -1418,19 +1802,81 @@ static double stride_wisdom_recalibrate_with_blocked(
 
 /* Legacy wrappers for backward compatibility */
 static void stride_wisdom_calibrate_ex(stride_wisdom_t *wis, int N, size_t K,
-                                        const stride_registry_t *reg,
-                                        stride_dp_context_t *dp_ctx) {
+                                       const stride_registry_t *reg,
+                                       stride_dp_context_t *dp_ctx)
+{
     stride_wisdom_calibrate_full(wis, N, K, reg, dp_ctx,
-                                  1, 0, STRIDE_EXHAUSTIVE_THRESHOLD, NULL);
+                                 1, 0, STRIDE_EXHAUSTIVE_THRESHOLD, NULL);
 }
 
 static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
-                                     const stride_registry_t *reg) {
+                                    const stride_registry_t *reg)
+{
     stride_wisdom_calibrate_full(wis, N, K, reg, NULL,
-                                  1, 0, STRIDE_EXHAUSTIVE_THRESHOLD, NULL);
+                                 1, 0, STRIDE_EXHAUSTIVE_THRESHOLD, NULL);
 }
 
 /* 2D FFT — must be after stride_auto_plan is defined */
 #include "fft2d.h"
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * 2D R2C planner — must be after stride_r2c_auto_plan and stride_auto_plan.
+ *
+ * Forward: N1*N2 reals -> N1*(N2/2+1) complex (reduces along inner axis).
+ * Backward: reverse, scaled bwd(fwd(x)) = (N1*N2) * x.
+ *
+ * Constraint: N2 must be even.
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* Tile size selector: B must equal the inner R2C plan's K (they index the
+ * same scratch). We pick B = min(DEFAULT_TILE, N1), clamped to >=2 (R2C K>=2
+ * v1.0 constraint). For N1=1 we'd need a different approach (just call 1D R2C);
+ * v1.0 rejects N1<2. */
+static inline size_t _fft2d_r2c_choose_tile(int N1) {
+    size_t B = FFT2D_R2C_DEFAULT_TILE;
+    if (B > (size_t)N1) B = (size_t)N1;
+    return B;
+}
+
+/** 2D R2C plan (no wisdom). Uses 1D R2C inner (K=B) and 1D C2C col (K=K_pad).
+ *
+ * K_pad = ceil((N2/2+1)/4)*4 — col FFT batch is padded to multiple of 4
+ * because our codelets' SIMD loops have no scalar tail at vl<4. The
+ * pad columns are zero-filled internally; convenience wrappers pack/unpack
+ * to the user-facing N1*(N2/2+1) layout. */
+static stride_plan_t *stride_plan_2d_r2c(int N1, int N2,
+                                          const stride_registry_t *reg)
+{
+    if (N1 < 2 || N2 < 2 || (N2 & 1)) return NULL;  /* R2C needs K>=2 */
+    size_t B = _fft2d_r2c_choose_tile(N1);
+    size_t hp1 = (size_t)(N2 / 2 + 1);
+    size_t K_pad = (hp1 + 3) & ~(size_t)3;  /* round up to multiple of 4 */
+
+    stride_plan_t *plan_r2c = stride_r2c_auto_plan(N2, B, reg);
+    if (!plan_r2c) return NULL;
+    stride_plan_t *plan_col = stride_auto_plan(N1, K_pad, reg);
+    if (!plan_col) { stride_plan_destroy(plan_r2c); return NULL; }
+
+    return stride_plan_2d_r2c_from(N1, N2, B, K_pad, plan_r2c, plan_col);
+}
+
+/** Wisdom-aware 2D R2C plan.
+ *
+ * v1.0 SAFETY: matches the 2D C2C wisdom-disable for the column FFT
+ * (see stride_plan_2d_wise note in fft2d.h about K-split + variant-coded
+ * plan corruption at large K). Both inner plans here use NON-wisdom paths;
+ * row R2C also bypasses wisdom for the same paranoia.
+ *
+ * Cost: ~3-5% per-stage tuning loss vs full wisdom. v1.1 will re-enable
+ * once the K-split + variant-coded corruption is root-caused. */
+static stride_plan_t *stride_plan_2d_r2c_wise(int N1, int N2,
+                                               const stride_registry_t *reg,
+                                               const stride_wisdom_t *wis)
+{
+    (void)wis;  /* unused in v1.0 — see safety note above */
+    return stride_plan_2d_r2c(N1, N2, reg);
+}
+
 
 #endif /* STRIDE_PLANNER_H */
