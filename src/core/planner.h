@@ -1829,10 +1829,13 @@ static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
  * Constraint: N2 must be even.
  * ═══════════════════════════════════════════════════════════════ */
 
+/* Tile size selector: B must equal the inner R2C plan's K (they index the
+ * same scratch). We pick B = min(DEFAULT_TILE, N1), clamped to >=2 (R2C K>=2
+ * v1.0 constraint). For N1=1 we'd need a different approach (just call 1D R2C);
+ * v1.0 rejects N1<2. */
 static inline size_t _fft2d_r2c_choose_tile(int N1) {
     size_t B = FFT2D_R2C_DEFAULT_TILE;
     if (B > (size_t)N1) B = (size_t)N1;
-    if (B < FFT2D_R2C_MIN_TILE) B = FFT2D_R2C_MIN_TILE;
     return B;
 }
 
@@ -1840,7 +1843,7 @@ static inline size_t _fft2d_r2c_choose_tile(int N1) {
 static stride_plan_t *stride_plan_2d_r2c(int N1, int N2,
                                           const stride_registry_t *reg)
 {
-    if (N1 < 1 || N2 < 2 || (N2 & 1)) return NULL;
+    if (N1 < 2 || N2 < 2 || (N2 & 1)) return NULL;  /* R2C needs K>=2 */
     size_t B = _fft2d_r2c_choose_tile(N1);
 
     stride_plan_t *plan_r2c = stride_r2c_auto_plan(N2, B, reg);
