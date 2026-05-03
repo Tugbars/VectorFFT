@@ -37,8 +37,8 @@
   #include <x86intrin.h>
 #endif
 
-#include "registry.h"        /* stride_registry_t, stride_n1_fn, stride_t1_fn */
-#include "radix_profile.h"   /* STRIDE_RADIX_PROFILE_MAX_R */
+#include "registry.h"                  /* stride_registry_t, codelet typedefs */
+#include "generated/radix_profile.h"   /* STRIDE_RADIX_PROFILE_MAX_R */
 
 /* ─────────────────────────── tunables ─────────────────────────── */
 
@@ -439,7 +439,7 @@ int main(int argc, char **argv) {
     int no_emit = parse_flag(argc, argv, "--no-emit");
     int verbose = parse_flag(argc, argv, "--verbose") || parse_flag(argc, argv, "-v");
     const char *out_path = parse_kv(argc, argv, "--output");
-    if (!out_path) out_path = "tools/radix_profile/radix_cpe.h";
+    if (!out_path) out_path = "src/core/generated/radix_cpe.h";
 
     timer_init();
     printf("[measure_cpe] calibrating CPU frequency...\n");

@@ -75,7 +75,6 @@ def build_includes() -> list[str]:
     self-reliant on vectorfft_tune for SIMD codelets.
     """
     inc = [str(ROOT / 'include'),
-           str(ROOT / 'tools' / 'radix_profile'),
            str(CORE_NEW), str(CORE_PROD)]
     # R=2 first (single-variant bootstrap)
     r2 = TUNED_GEN / 'r2'
