@@ -5,7 +5,14 @@
  * Users link against the compiled library and include only <vfft.h>;
  * everything else (planner.h, executor.h, etc.) is implementation detail.
  *
- * Replaces src/stride-fft/vfft.c which targeted the old stride-fft core.
+ * v1.0 plan creation flags (FFTW-style):
+ *   VFFT_ESTIMATE     — cost-model-driven, no wisdom lookup, fast plan creation
+ *   VFFT_MEASURE      — consult wisdom; on miss, calibrate this cell and cache
+ *   VFFT_EXHAUSTIVE   — wider per-cell calibration on miss
+ *   VFFT_WISDOM_ONLY  — return NULL on wisdom miss (no calibration)
+ *
+ * Wisdom is per-process. Loaded explicitly via vfft_load_wisdom();
+ * the library does NOT auto-load any default file.
  */
 
 #include "core/env.h"
@@ -38,8 +45,9 @@ struct vfft_plan_s {
     stride_plan_t *inner;
 };
 
-/* Global registry — initialized once by vfft_init. */
+/* Global registry + wisdom database. Initialized by vfft_init(). */
 static stride_registry_t g_registry;
+static stride_wisdom_t   g_wisdom;
 static int g_initialized = 0;
 
 
@@ -51,6 +59,7 @@ void vfft_init(void) {
     if (g_initialized) return;
     stride_env_init();
     stride_registry_init(&g_registry);
+    stride_wisdom_init(&g_wisdom);
     g_initialized = 1;
 }
 
@@ -60,7 +69,27 @@ int vfft_pin_thread(int core_id) {
 
 
 /* ═══════════════════════════════════════════════════════════════
- * PLAN CREATION HELPER
+ * WISDOM LIFECYCLE
+ * ═══════════════════════════════════════════════════════════════ */
+
+int vfft_load_wisdom(const char *path) {
+    if (!g_initialized) vfft_init();
+    return stride_wisdom_load(&g_wisdom, path);
+}
+
+int vfft_save_wisdom(const char *path) {
+    if (!g_initialized) vfft_init();
+    return stride_wisdom_save(&g_wisdom, path);
+}
+
+void vfft_forget_wisdom(void) {
+    if (!g_initialized) vfft_init();
+    stride_wisdom_init(&g_wisdom);  /* reset to empty */
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * PLAN CREATION HELPERS
  * ═══════════════════════════════════════════════════════════════ */
 
 static vfft_plan _wrap(vfft_plan_type type, stride_plan_t *inner) {
@@ -72,27 +101,59 @@ static vfft_plan _wrap(vfft_plan_type type, stride_plan_t *inner) {
     return p;
 }
 
+/* Decide whether the user wants wisdom (MEASURE/EXHAUSTIVE/WISDOM_ONLY)
+ * vs a pure cost-model plan (ESTIMATE). */
+static int _flags_want_wisdom(unsigned flags) {
+    return (flags & (VFFT_MEASURE | VFFT_EXHAUSTIVE | VFFT_WISDOM_ONLY)) != 0;
+}
+
+/* Calibrate one cell into g_wisdom. Used by MEASURE/EXHAUSTIVE on miss.
+ * Returns 0 on success. EXHAUSTIVE bumps the exhaustive_threshold so more
+ * sizes get the wider search (instead of DP-pruned). */
+static int _calibrate_one(int N, size_t K, unsigned flags) {
+    int exhaustive_threshold = (flags & VFFT_EXHAUSTIVE) ? 1 << 20 /* effectively unbounded */
+                                                         : STRIDE_EXHAUSTIVE_THRESHOLD;
+    double ns = stride_wisdom_calibrate_full(&g_wisdom, N, K, &g_registry,
+                                             /*dp_ctx=*/NULL,
+                                             /*force=*/0, /*verbose=*/0,
+                                             exhaustive_threshold,
+                                             /*save_path=*/NULL);
+    return (ns < 1e17) ? 0 : -1;
+}
+
 
 /* ═══════════════════════════════════════════════════════════════
  * PLAN CREATION — 1D / 2D complex
  * ═══════════════════════════════════════════════════════════════ */
 
-vfft_plan vfft_plan_c2c(int N, size_t K) {
+vfft_plan vfft_plan_c2c(int N, size_t K, unsigned flags) {
     if (!g_initialized) vfft_init();
-    return _wrap(VFFT_TYPE_C2C, stride_auto_plan(N, K, &g_registry));
+
+    if (!_flags_want_wisdom(flags)) {
+        /* ESTIMATE — cost model, no wisdom */
+        return _wrap(VFFT_TYPE_C2C, stride_estimate_plan(N, K, &g_registry));
+    }
+
+    /* Wisdom path */
+    const stride_wisdom_entry_t *e = stride_wisdom_lookup(&g_wisdom, N, K);
+    if (!e) {
+        if (flags & VFFT_WISDOM_ONLY) return NULL;
+        if (_calibrate_one(N, K, flags) != 0) return NULL;
+    }
+    return _wrap(VFFT_TYPE_C2C, stride_wise_plan(N, K, &g_registry, &g_wisdom));
 }
 
-vfft_plan vfft_plan_c2c_measure(int N, size_t K) {
+vfft_plan vfft_plan_2d(int N1, int N2, unsigned flags) {
     if (!g_initialized) vfft_init();
-    /* TODO: full FFTW_MEASURE semantics require the calibrator + wisdom file.
-     * For v1.0 this is a thin alias for the heuristic plan; users wanting the
-     * measured path should run the calibrator and load wisdom externally. */
-    return _wrap(VFFT_TYPE_C2C, stride_auto_plan(N, K, &g_registry));
-}
 
-vfft_plan vfft_plan_2d(int N1, int N2) {
-    if (!g_initialized) vfft_init();
-    return _wrap(VFFT_TYPE_2D, stride_plan_2d(N1, N2, &g_registry));
+    if (!_flags_want_wisdom(flags))
+        return _wrap(VFFT_TYPE_2D, stride_plan_2d(N1, N2, &g_registry));
+
+    /* 2D wisdom is partially gated for v1.0 (K-split + variant-coded plan
+     * corruption safety). MEASURE/EXHAUSTIVE on 2D currently behave as
+     * ESTIMATE — wisdom path returns the same plan. Documented limitation;
+     * v1.1 fixes the K-split bug and re-enables 2D wisdom. */
+    return _wrap(VFFT_TYPE_2D, stride_plan_2d_wise(N1, N2, &g_registry, &g_wisdom));
 }
 
 
@@ -100,39 +161,104 @@ vfft_plan vfft_plan_2d(int N1, int N2) {
  * PLAN CREATION — Real-to-complex (1D and 2D)
  * ═══════════════════════════════════════════════════════════════ */
 
-vfft_plan vfft_plan_r2c(int N, size_t K) {
+vfft_plan vfft_plan_r2c(int N, size_t K, unsigned flags) {
     if (!g_initialized) vfft_init();
-    return _wrap(VFFT_TYPE_R2C, stride_r2c_auto_plan(N, K, &g_registry));
+
+    if (!_flags_want_wisdom(flags))
+        return _wrap(VFFT_TYPE_R2C, stride_r2c_auto_plan(N, K, &g_registry));
+
+    /* For R2C, calibration is on the inner halfN-point complex FFT (with
+     * K=B block size). Without that wisdom entry, stride_r2c_wise_plan
+     * still works — it just doesn't pick variant-tuned codelets. */
+    int halfN = N / 2;
+    const stride_wisdom_entry_t *e = stride_wisdom_lookup(&g_wisdom, halfN, K);
+    if (!e) {
+        if (flags & VFFT_WISDOM_ONLY) return NULL;
+        if (_calibrate_one(halfN, K, flags) != 0) {
+            /* Calibration failed (rare) — fall back to non-wisdom path */
+            return _wrap(VFFT_TYPE_R2C, stride_r2c_auto_plan(N, K, &g_registry));
+        }
+    }
+    return _wrap(VFFT_TYPE_R2C,
+                 stride_r2c_wise_plan(N, K, &g_registry, &g_wisdom));
 }
 
-vfft_plan vfft_plan_2d_r2c(int N1, int N2) {
+vfft_plan vfft_plan_2d_r2c(int N1, int N2, unsigned flags) {
     if (!g_initialized) vfft_init();
-    return _wrap(VFFT_TYPE_2D_R2C, stride_plan_2d_r2c(N1, N2, &g_registry));
+    /* 2D R2C wisdom is fully gated for v1.0 (same K-split safety). All flags
+     * map to the heuristic plan. */
+    (void)flags;
+    return _wrap(VFFT_TYPE_2D_R2C,
+                 stride_plan_2d_r2c(N1, N2, &g_registry));
 }
 
 
 /* ═══════════════════════════════════════════════════════════════
  * PLAN CREATION — Real-to-real family
+ *
+ * DCT-II/III, DCT-IV, DST-II/III, DHT all compose on top of R2C / C2C.
+ * Wisdom paths consult the inner R2C or C2C entry (halfN, K).
  * ═══════════════════════════════════════════════════════════════ */
 
-vfft_plan vfft_plan_dct2(int N, size_t K) {
+vfft_plan vfft_plan_dct2(int N, size_t K, unsigned flags) {
     if (!g_initialized) vfft_init();
-    return _wrap(VFFT_TYPE_DCT2, stride_dct2_auto_plan(N, K, &g_registry));
+    if (!_flags_want_wisdom(flags))
+        return _wrap(VFFT_TYPE_DCT2, stride_dct2_auto_plan(N, K, &g_registry));
+    int halfN = N / 2;
+    const stride_wisdom_entry_t *e = stride_wisdom_lookup(&g_wisdom, halfN, K);
+    if (!e) {
+        if (flags & VFFT_WISDOM_ONLY) return NULL;
+        if (_calibrate_one(halfN, K, flags) != 0)
+            return _wrap(VFFT_TYPE_DCT2, stride_dct2_auto_plan(N, K, &g_registry));
+    }
+    return _wrap(VFFT_TYPE_DCT2,
+                 stride_dct2_wise_plan(N, K, &g_registry, &g_wisdom));
 }
 
-vfft_plan vfft_plan_dct4(int N, size_t K) {
+vfft_plan vfft_plan_dct4(int N, size_t K, unsigned flags) {
     if (!g_initialized) vfft_init();
-    return _wrap(VFFT_TYPE_DCT4, stride_dct4_auto_plan(N, K, &g_registry));
+    if (!_flags_want_wisdom(flags))
+        return _wrap(VFFT_TYPE_DCT4, stride_dct4_auto_plan(N, K, &g_registry));
+    /* DCT-IV inner is N/2-point complex C2C. */
+    int halfN = N / 2;
+    const stride_wisdom_entry_t *e = stride_wisdom_lookup(&g_wisdom, halfN, K);
+    if (!e) {
+        if (flags & VFFT_WISDOM_ONLY) return NULL;
+        if (_calibrate_one(halfN, K, flags) != 0)
+            return _wrap(VFFT_TYPE_DCT4, stride_dct4_auto_plan(N, K, &g_registry));
+    }
+    return _wrap(VFFT_TYPE_DCT4,
+                 stride_dct4_wise_plan(N, K, &g_registry, &g_wisdom));
 }
 
-vfft_plan vfft_plan_dst2(int N, size_t K) {
+vfft_plan vfft_plan_dst2(int N, size_t K, unsigned flags) {
     if (!g_initialized) vfft_init();
-    return _wrap(VFFT_TYPE_DST2, stride_dst2_auto_plan(N, K, &g_registry));
+    if (!_flags_want_wisdom(flags))
+        return _wrap(VFFT_TYPE_DST2, stride_dst2_auto_plan(N, K, &g_registry));
+    int halfN = N / 2;
+    const stride_wisdom_entry_t *e = stride_wisdom_lookup(&g_wisdom, halfN, K);
+    if (!e) {
+        if (flags & VFFT_WISDOM_ONLY) return NULL;
+        if (_calibrate_one(halfN, K, flags) != 0)
+            return _wrap(VFFT_TYPE_DST2, stride_dst2_auto_plan(N, K, &g_registry));
+    }
+    return _wrap(VFFT_TYPE_DST2,
+                 stride_dst2_wise_plan(N, K, &g_registry, &g_wisdom));
 }
 
-vfft_plan vfft_plan_dht(int N, size_t K) {
+vfft_plan vfft_plan_dht(int N, size_t K, unsigned flags) {
     if (!g_initialized) vfft_init();
-    return _wrap(VFFT_TYPE_DHT, stride_dht_auto_plan(N, K, &g_registry));
+    if (!_flags_want_wisdom(flags))
+        return _wrap(VFFT_TYPE_DHT, stride_dht_auto_plan(N, K, &g_registry));
+    int halfN = N / 2;
+    const stride_wisdom_entry_t *e = stride_wisdom_lookup(&g_wisdom, halfN, K);
+    if (!e) {
+        if (flags & VFFT_WISDOM_ONLY) return NULL;
+        if (_calibrate_one(halfN, K, flags) != 0)
+            return _wrap(VFFT_TYPE_DHT, stride_dht_auto_plan(N, K, &g_registry));
+    }
+    return _wrap(VFFT_TYPE_DHT,
+                 stride_dht_wise_plan(N, K, &g_registry, &g_wisdom));
 }
 
 

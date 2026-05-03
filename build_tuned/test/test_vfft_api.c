@@ -40,11 +40,11 @@ static void test_c2c(void) {
     for (size_t i = 0; i < NK; i++) { re[i] = re0[i] = (double)rand()/RAND_MAX - 0.5;
                                        im[i] = im0[i] = (double)rand()/RAND_MAX - 0.5; }
 
-    vfft_plan p = vfft_plan_c2c(N, K);
+    vfft_plan p = vfft_plan_c2c(N, K, VFFT_ESTIMATE);
     vfft_execute_fwd(p, re, im);
     vfft_execute_bwd_normalized(p, re, im);
     double err = max_diff(re, re0, NK) + max_diff(im, im0, NK);
-    check("vfft_plan_c2c roundtrip", err, 1e-12);
+    check("vfft_plan_c2c (ESTIMATE)", err, 1e-12);
 
     vfft_destroy(p);
     vfft_free(re); vfft_free(im); vfft_free(re0); vfft_free(im0);
@@ -65,12 +65,12 @@ static void test_r2c(void) {
     srand(2);
     for (size_t i = 0; i < real_sz; i++) real_in[i] = orig[i] = (double)rand()/RAND_MAX - 0.5;
 
-    vfft_plan p = vfft_plan_r2c(N, K);
+    vfft_plan p = vfft_plan_r2c(N, K, VFFT_ESTIMATE);
     vfft_execute_r2c(p, real_in, out_re, out_im);
     vfft_execute_c2r(p, out_re, out_im, back);
     double inv_N = 1.0 / (double)N;
     for (size_t i = 0; i < real_sz; i++) back[i] *= inv_N;
-    check("vfft_plan_r2c roundtrip", max_diff(orig, back, real_sz), 1e-12);
+    check("vfft_plan_r2c (ESTIMATE)", max_diff(orig, back, real_sz), 1e-12);
 
     vfft_destroy(p);
     vfft_free(real_in); vfft_free(out_re); vfft_free(out_im);
@@ -88,13 +88,13 @@ static void test_2d(void) {
     for (size_t i = 0; i < NK; i++) { re[i] = re0[i] = (double)rand()/RAND_MAX - 0.5;
                                        im[i] = im0[i] = (double)rand()/RAND_MAX - 0.5; }
 
-    vfft_plan p = vfft_plan_2d(N1, N2);
+    vfft_plan p = vfft_plan_2d(N1, N2, VFFT_ESTIMATE);
     vfft_execute_fwd(p, re, im);
     vfft_execute_bwd(p, re, im);
     double inv = 1.0 / (double)NK;
     for (size_t i = 0; i < NK; i++) { re[i] *= inv; im[i] *= inv; }
     double err = max_diff(re, re0, NK) + max_diff(im, im0, NK);
-    check("vfft_plan_2d roundtrip", err, 1e-12);
+    check("vfft_plan_2d (ESTIMATE)", err, 1e-12);
 
     vfft_destroy(p);
     vfft_free(re); vfft_free(im); vfft_free(re0); vfft_free(im0);
@@ -113,12 +113,12 @@ static void test_2d_r2c(void) {
     srand(4);
     for (size_t i = 0; i < real_sz; i++) real_in[i] = orig[i] = (double)rand()/RAND_MAX - 0.5;
 
-    vfft_plan p = vfft_plan_2d_r2c(N1, N2);
+    vfft_plan p = vfft_plan_2d_r2c(N1, N2, VFFT_ESTIMATE);
     vfft_execute_2d_r2c(p, real_in, out_re, out_im);
     vfft_execute_2d_c2r(p, out_re, out_im, back);
     double inv = 1.0 / (double)real_sz;
     for (size_t i = 0; i < real_sz; i++) back[i] *= inv;
-    check("vfft_plan_2d_r2c roundtrip", max_diff(orig, back, real_sz), 1e-12);
+    check("vfft_plan_2d_r2c (ESTIMATE)", max_diff(orig, back, real_sz), 1e-12);
 
     vfft_destroy(p);
     vfft_free(real_in); vfft_free(out_re); vfft_free(out_im);
@@ -135,12 +135,12 @@ static void test_dct23(void) {
     srand(5);
     for (size_t i = 0; i < NK; i++) in[i] = orig[i] = (double)rand()/RAND_MAX - 0.5;
 
-    vfft_plan p = vfft_plan_dct2(N, K);
+    vfft_plan p = vfft_plan_dct2(N, K, VFFT_ESTIMATE);
     vfft_execute_dct2(p, in, coef);
     vfft_execute_dct3(p, coef, back);
     double inv = 1.0 / (2.0 * (double)N);
     for (size_t i = 0; i < NK; i++) back[i] *= inv;
-    check("vfft_plan_dct2 roundtrip", max_diff(orig, back, NK), 1e-12);
+    check("vfft_plan_dct2 (ESTIMATE)", max_diff(orig, back, NK), 1e-12);
 
     vfft_destroy(p);
     vfft_free(in); vfft_free(coef); vfft_free(back); vfft_free(orig);
@@ -156,12 +156,12 @@ static void test_dct4(void) {
     srand(6);
     for (size_t i = 0; i < NK; i++) in[i] = orig[i] = (double)rand()/RAND_MAX - 0.5;
 
-    vfft_plan p = vfft_plan_dct4(N, K);
+    vfft_plan p = vfft_plan_dct4(N, K, VFFT_ESTIMATE);
     vfft_execute_dct4(p, in, out);
     vfft_execute_dct4(p, out, back);
     double inv = 1.0 / (2.0 * (double)N);
     for (size_t i = 0; i < NK; i++) back[i] *= inv;
-    check("vfft_plan_dct4 roundtrip", max_diff(orig, back, NK), 1e-12);
+    check("vfft_plan_dct4 (ESTIMATE)", max_diff(orig, back, NK), 1e-12);
 
     vfft_destroy(p);
     vfft_free(in); vfft_free(out); vfft_free(back); vfft_free(orig);
@@ -177,12 +177,12 @@ static void test_dst23(void) {
     srand(7);
     for (size_t i = 0; i < NK; i++) in[i] = orig[i] = (double)rand()/RAND_MAX - 0.5;
 
-    vfft_plan p = vfft_plan_dst2(N, K);
+    vfft_plan p = vfft_plan_dst2(N, K, VFFT_ESTIMATE);
     vfft_execute_dst2(p, in, coef);
     vfft_execute_dst3(p, coef, back);
     double inv = 1.0 / (2.0 * (double)N);
     for (size_t i = 0; i < NK; i++) back[i] *= inv;
-    check("vfft_plan_dst2 roundtrip", max_diff(orig, back, NK), 1e-12);
+    check("vfft_plan_dst2 (ESTIMATE)", max_diff(orig, back, NK), 1e-12);
 
     vfft_destroy(p);
     vfft_free(in); vfft_free(coef); vfft_free(back); vfft_free(orig);
@@ -198,15 +198,58 @@ static void test_dht(void) {
     srand(8);
     for (size_t i = 0; i < NK; i++) in[i] = orig[i] = (double)rand()/RAND_MAX - 0.5;
 
-    vfft_plan p = vfft_plan_dht(N, K);
+    vfft_plan p = vfft_plan_dht(N, K, VFFT_ESTIMATE);
     vfft_execute_dht(p, in, out);
     vfft_execute_dht(p, out, back);
     double inv = 1.0 / (double)N;
     for (size_t i = 0; i < NK; i++) back[i] *= inv;
-    check("vfft_plan_dht roundtrip", max_diff(orig, back, NK), 1e-12);
+    check("vfft_plan_dht (ESTIMATE)", max_diff(orig, back, NK), 1e-12);
 
     vfft_destroy(p);
     vfft_free(in); vfft_free(out); vfft_free(back); vfft_free(orig);
+}
+
+/* ─── Plan-creation flag exercise ───────────────────────────────
+ * Verifies WISDOM_ONLY misses cleanly, load/MEASURE hit, save round-trips. */
+static void test_flags(void) {
+    int N = 64; size_t K = 32;
+
+    /* Empty wisdom: WISDOM_ONLY should return NULL. */
+    vfft_forget_wisdom();
+    vfft_plan p = vfft_plan_c2c(N, K, VFFT_WISDOM_ONLY);
+    if (p == NULL) {
+        printf("  %-30s WISDOM_ONLY+empty -> NULL  PASS\n", "vfft_plan_c2c flags");
+        n_pass++;
+    } else {
+        printf("  %-30s WISDOM_ONLY+empty -> non-NULL  FAIL\n", "vfft_plan_c2c flags");
+        n_fail++;
+        vfft_destroy(p);
+    }
+
+    /* Load the dev wisdom (build_tuned/vfft_wisdom_tuned.txt — CWD-relative). */
+    int rc = vfft_load_wisdom("vfft_wisdom_tuned.txt");
+    printf("  %-30s vfft_load_wisdom rc=%d %s\n",
+           "vfft_load_wisdom",
+           rc, rc == 0 ? "PASS" : "(no wisdom file — ok)");
+    if (rc == 0) n_pass++;  /* file exists, load succeeded */
+
+    /* MEASURE with loaded wisdom should hit (or calibrate quickly) and produce a plan. */
+    p = vfft_plan_c2c(N, K, VFFT_MEASURE);
+    if (p) {
+        printf("  %-30s MEASURE -> plan  PASS\n", "vfft_plan_c2c flags");
+        n_pass++;
+        vfft_destroy(p);
+    } else {
+        printf("  %-30s MEASURE -> NULL  FAIL\n", "vfft_plan_c2c flags");
+        n_fail++;
+    }
+
+    /* Save round-trip — write current in-memory wisdom to a temp file. */
+    rc = vfft_save_wisdom("vfft_wisdom_tmp.txt");
+    printf("  %-30s vfft_save_wisdom rc=%d %s\n",
+           "vfft_save_wisdom",
+           rc, rc == 0 ? "PASS" : "FAIL");
+    if (rc == 0) n_pass++; else n_fail++;
 }
 
 int main(void) {
@@ -226,6 +269,7 @@ int main(void) {
     fprintf(stderr, "[dct4]\n"); fflush(stderr);    test_dct4();
     fprintf(stderr, "[dst23]\n"); fflush(stderr);   test_dst23();
     fprintf(stderr, "[dht]\n"); fflush(stderr);     test_dht();
+    fprintf(stderr, "[flags]\n"); fflush(stderr);   test_flags();
 
     fprintf(stderr, "\n=== %d passed, %d failed ===\n", n_pass, n_fail);
     return n_fail;
