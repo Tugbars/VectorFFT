@@ -248,12 +248,14 @@ Two known wisdom limitations:
 | K-split + variant-coded plan corruption | bug | Investigation; possibly codelet thread-safety audit |
 | 256² MT scaling regression | bug | Investigation |
 | DCT-I / DST-I / DST-IV | feature | Completionist, low demand |
-| Single precision (FP32) | codelet | Would double codelet generator output |
+| Single precision (FP32) | codelet | Single-source via SIMD type macros — see [v1.1 codelet roadmap](../../docs/v1_1_codelet_roadmap.md#fp32-versions--single-source-via-simd-type-macros) |
 | Convolution helpers | feature | FFTW and VkFFT have these |
 | Native zero-padded transforms | feature | FFTW and VkFFT have these |
 | EPYC / Zen 5 / AOCC validation | porting | Different ISA path; codelet generators need cross-uarch tuning |
 
 The v1.1 priority is R2C codelet-fusion. Two transforms benefit (1D R2C, 2D R2C) and the fix is well-scoped: extend the radix codelet generators to emit fused first-stage (twiddle + scaled output) and fused last-stage (input scale + butterfly) variants, then replace R2C's three-pass design with a one-pass walk through fused stages.
+
+For the full v1.1 codelet plan (all three new categories, sequencing, and what each unlocks), see [`docs/v1_1_codelet_roadmap.md`](../../docs/v1_1_codelet_roadmap.md).
 
 ---
 
