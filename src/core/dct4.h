@@ -57,6 +57,10 @@ typedef struct {
     /* Scratch for N/2-point complex FFT (split-complex). */
     double *psi_re;
     double *psi_im;
+    /* Mixed-radix digit-reversal permutation (size N/2). Multi-stage DIT
+     * plans output their result at digit-reversed positions; perm[k'] is
+     * where natural-order bin k' lands. We read psi at perm[k']. */
+    int *perm;
     stride_plan_t *fft_plan; /* owned: N/2-point complex FFT plan */
 } stride_dct4_data_t;
 
@@ -79,15 +83,16 @@ static void _dct4_execute(void *data, double *re, double *im) {
     const int halfN = N / 2;
     const size_t K = d->K;
 
-    /* 1. Pre-twiddle. Reads re[2m*K..] and re[(N-1-2m)*K..]; writes psi scratch.
-     *    psi_re[m] = x[2m]*cos(pi*m/N) + x[N-1-2m]*sin(pi*m/N)
-     *    psi_im[m] = x[2m]*sin(pi*m/N) - x[N-1-2m]*cos(pi*m/N)
-     */
+    /* 1. Pre-twiddle. Compute psi[m] = z[m] * exp(+i*pi*m/N) for m=0..halfN-1.
+     *    Our backward FFT executor expects input in *fwd-output* (digit-reversed)
+     *    layout — so we write psi[m] at position perm[m]. After bwd, natural-order
+     *    output W[k'] = bwd_DFT[k'] sits at position k' in psi (no further perm). */
     for (int m = 0; m < halfN; m++) {
+        const int dst = d->perm[m];
         const double *x_e = re + (size_t)(2 * m)         * K;  /* x[2m] */
         const double *x_o = re + (size_t)(N - 1 - 2 * m) * K;  /* x[N-1-2m] */
-        double *psi_r = d->psi_re + (size_t)m * K;
-        double *psi_i = d->psi_im + (size_t)m * K;
+        double *psi_r = d->psi_re + (size_t)dst * K;
+        double *psi_i = d->psi_im + (size_t)dst * K;
         const double cm = d->pre_cos[m];
         const double sm = d->pre_sin[m];
         for (size_t k = 0; k < K; k++) {
@@ -98,14 +103,13 @@ static void _dct4_execute(void *data, double *re, double *im) {
         }
     }
 
-    /* 2. DIAG: backward via conj+fwd+conj to isolate executor bug.
-     *    bwd(psi)[k'] = conj(fwd(conj(psi))[k']) */
-    for (size_t i = 0; i < (size_t)halfN * K; i++) d->psi_im[i] = -d->psi_im[i];
-    stride_execute_fwd(d->fft_plan, d->psi_re, d->psi_im);
-    for (size_t i = 0; i < (size_t)halfN * K; i++) d->psi_im[i] = -d->psi_im[i];
+    /* 2. Apply N/2-point backward complex FFT.
+     *    Our backward executor takes input in fwd-output (digit-reversed)
+     *    layout and produces natural-order output. We pre-permuted in step 1. */
+    stride_execute_bwd(d->fft_plan, d->psi_re, d->psi_im);
 
-    /* 3. Post-twiddle + unpack.
-     *    For each k'=0..halfN-1:
+    /* 3. Post-twiddle + unpack. After our bwd (which interprets digit-reversed
+     *    input → natural output), psi at position k' is bwd_DFT[k']. Read naturally.
      *      Y[2k']     = 2 * (post_cos[k']*W_re - post_sin[k']*W_im)
      *      Y[N-1-2k'] = 2 * (post_cos[k']*W_im + post_sin[k']*W_re)
      *    (post_cos2/post_sin2 already include the 2x.)
@@ -138,6 +142,7 @@ static void _dct4_destroy(void *data) {
     free(d->pre_sin);
     free(d->post_cos2);
     free(d->post_sin2);
+    free(d->perm);
     STRIDE_ALIGNED_FREE(d->psi_re);
     STRIDE_ALIGNED_FREE(d->psi_im);
     if (d->fft_plan) stride_plan_destroy(d->fft_plan);
@@ -190,6 +195,27 @@ static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_
     d->psi_re = (double *)STRIDE_ALIGNED_ALLOC(64, psi_sz * sizeof(double));
     d->psi_im = (double *)STRIDE_ALIGNED_ALLOC(64, psi_sz * sizeof(double));
     if (!d->psi_re || !d->psi_im) { _dct4_destroy(d); return NULL; }
+
+    /* Compute mixed-radix digit-reversal permutation for the inner FFT.
+     * For DIT forward / backward: output[perm[n]] = DFT[n]. We use it in
+     * the post-twiddle to read W[k'] from psi[perm[k']]. */
+    d->perm = (int *)malloc((size_t)halfN * sizeof(int));
+    if (!d->perm) { _dct4_destroy(d); return NULL; }
+    {
+        const int *factors = fft_plan_halfN->factors;
+        const int nf = fft_plan_halfN->num_stages;
+        for (int n = 0; n < halfN; n++) {
+            int idx = n, rev = 0, radix_product = 1;
+            for (int s = 0; s < nf; s++) {
+                int R = factors[s];
+                int digit = idx % R;
+                idx /= R;
+                rev += digit * (halfN / (radix_product * R));
+                radix_product *= R;
+            }
+            d->perm[n] = rev;
+        }
+    }
 
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     if (!plan) { _dct4_destroy(d); return NULL; }
