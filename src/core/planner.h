@@ -64,6 +64,7 @@ static stride_plan_t *_stride_build_plan_explicit(
 #include "dht.h"   /* DHT (built atop R2C, self-inverse) */
 #include "dst.h"   /* DST-II / DST-III (built atop DCT-II/III) */
 #include "dct4.h"  /* DCT-IV (built atop DCT-III + DST-III) */
+#include "fft2d_r2c.h" /* 2D R2C / C2R (built atop 1D R2C + 1D C2C col) */
 
 /* Blocked executor heuristic threshold: K <= this triggers blocking check */
 #ifndef STRIDE_BLOCKED_K_THRESHOLD
@@ -1817,5 +1818,55 @@ static void stride_wisdom_calibrate(stride_wisdom_t *wis, int N, size_t K,
 
 /* 2D FFT — must be after stride_auto_plan is defined */
 #include "fft2d.h"
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * 2D R2C planner — must be after stride_r2c_auto_plan and stride_auto_plan.
+ *
+ * Forward: N1*N2 reals -> N1*(N2/2+1) complex (reduces along inner axis).
+ * Backward: reverse, scaled bwd(fwd(x)) = (N1*N2) * x.
+ *
+ * Constraint: N2 must be even.
+ * ═══════════════════════════════════════════════════════════════ */
+
+static inline size_t _fft2d_r2c_choose_tile(int N1) {
+    size_t B = FFT2D_R2C_DEFAULT_TILE;
+    if (B > (size_t)N1) B = (size_t)N1;
+    if (B < FFT2D_R2C_MIN_TILE) B = FFT2D_R2C_MIN_TILE;
+    return B;
+}
+
+/** 2D R2C plan (no wisdom). Uses 1D R2C inner (K=B) and 1D C2C col (K=N2/2+1). */
+static stride_plan_t *stride_plan_2d_r2c(int N1, int N2,
+                                          const stride_registry_t *reg)
+{
+    if (N1 < 1 || N2 < 2 || (N2 & 1)) return NULL;
+    size_t B = _fft2d_r2c_choose_tile(N1);
+
+    stride_plan_t *plan_r2c = stride_r2c_auto_plan(N2, B, reg);
+    if (!plan_r2c) return NULL;
+    stride_plan_t *plan_col = stride_auto_plan(N1, (size_t)(N2 / 2 + 1), reg);
+    if (!plan_col) { stride_plan_destroy(plan_r2c); return NULL; }
+
+    return stride_plan_2d_r2c_from(N1, N2, B, plan_r2c, plan_col);
+}
+
+/** Wisdom-aware 2D R2C plan.
+ *
+ * v1.0 SAFETY: matches the 2D C2C wisdom-disable for the column FFT
+ * (see stride_plan_2d_wise note in fft2d.h about K-split + variant-coded
+ * plan corruption at large K). Both inner plans here use NON-wisdom paths;
+ * row R2C also bypasses wisdom for the same paranoia.
+ *
+ * Cost: ~3-5% per-stage tuning loss vs full wisdom. v1.1 will re-enable
+ * once the K-split + variant-coded corruption is root-caused. */
+static stride_plan_t *stride_plan_2d_r2c_wise(int N1, int N2,
+                                               const stride_registry_t *reg,
+                                               const stride_wisdom_t *wis)
+{
+    (void)wis;  /* unused in v1.0 — see safety note above */
+    return stride_plan_2d_r2c(N1, N2, reg);
+}
+
 
 #endif /* STRIDE_PLANNER_H */
