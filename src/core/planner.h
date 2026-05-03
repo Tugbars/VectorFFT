@@ -1288,12 +1288,8 @@ static stride_plan_t *stride_dst2_wise_plan(int N, size_t K,
  *
  * Involutory up to scale 2N: DCT-IV(DCT-IV(x))/(2N) = x.
  *
- * Built atop DCT-III + DST-III via the trigonometric identity
- *   cos((2k+1)(2n+1) pi/(4N)) = cos(pi(2k+1)/(4N)) cos(pi n (2k+1)/(2N))
- *                             - sin(pi(2k+1)/(4N)) sin(pi n (2k+1)/(2N))
- *
- * v1.0 cost: 2 R2C-based transforms + O(N*K) twiddle. v1.1 candidate:
- * Lee 1984 reduces to a single N/2-point complex FFT.
+ * Algorithm: Lee 1984 -- single N/2-point complex FFT plus pre/post twiddles.
+ * Reuses our existing C2C plan; no new codelets needed.
  *
  * Constraint: N must be even.
  *
@@ -1305,15 +1301,13 @@ static stride_plan_t *stride_dct4_auto_plan_wis(int N, size_t K,
 {
     if (N < 2 || (N & 1))
         return NULL;
-    stride_plan_t *dct = stride_dct2_auto_plan_wis(N, K, reg, wis);
-    if (!dct)
+    if (K < 2)
+        return NULL;  /* inherits R2C K>=2 v1.0 constraint */
+    int halfN = N / 2;
+    stride_plan_t *fft = stride_auto_plan_wis(halfN, K, reg, wis);
+    if (!fft)
         return NULL;
-    stride_plan_t *dst = stride_dst2_auto_plan_wis(N, K, reg, wis);
-    if (!dst) {
-        stride_plan_destroy(dct);
-        return NULL;
-    }
-    return stride_dct4_plan(N, K, dct, dst);
+    return stride_dct4_plan(N, K, fft);
 }
 
 /* No-wisdom convenience wrapper. */
@@ -1330,15 +1324,13 @@ static stride_plan_t *stride_dct4_wise_plan(int N, size_t K,
 {
     if (N < 2 || (N & 1))
         return NULL;
-    stride_plan_t *dct = stride_dct2_wise_plan(N, K, reg, wis);
-    if (!dct)
+    if (K < 2)
         return NULL;
-    stride_plan_t *dst = stride_dst2_wise_plan(N, K, reg, wis);
-    if (!dst) {
-        stride_plan_destroy(dct);
+    int halfN = N / 2;
+    stride_plan_t *fft = stride_wise_plan(halfN, K, reg, wis);
+    if (!fft)
         return NULL;
-    }
-    return stride_dct4_plan(N, K, dct, dst);
+    return stride_dct4_plan(N, K, fft);
 }
 
 /**

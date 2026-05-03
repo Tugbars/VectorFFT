@@ -3,26 +3,32 @@
  *
  *   Y[k] = 2 * sum_{n=0..N-1} x[n] * cos(pi*(2k+1)*(2n+1)/(4N))   for k=0..N-1
  *
- * DCT-IV is involutory up to scale 2N: DCT-IV(DCT-IV(x))/(2N) = x.
+ * Involutory up to scale 2N: DCT-IV(DCT-IV(x))/(2N) = x.
  * Used in MDCT (modified DCT) for audio codecs (MP3/AAC/Vorbis/Opus).
  *
- * Algorithm (v1.0 — correctness-first, ~2x R2C cost):
- *   Identity: cos((2k+1)(2n+1) pi/(4N))
- *           = cos(pi*(2k+1)/(4N)) * cos(pi*n*(2k+1)/(2N))
- *           - sin(pi*(2k+1)/(4N)) * sin(pi*n*(2k+1)/(2N))
+ * Algorithm: Lee 1984 -- single N/2-point complex FFT plus pre/post twiddles.
  *
- *   So DCT-IV[k] = cos(pi*(2k+1)/(4N)) * A[k]
- *                - sin(pi*(2k+1)/(4N)) * B[k]
+ * Derivation (in summary form):
+ *   Define z[m] = x[2m] - i*x[N-1-2m]    for m = 0..N/2-1
  *
- *   where  A[k] = 2 * sum_{n=0..N-1} x[n] * cos(pi*n*(2k+1)/(2N))
- *               = x[0] + DCT-III(x)[k]
- *   and    B[k] = 2 * sum_{n=1..N-1} x[n] * sin(pi*n*(2k+1)/(2N))
- *               = DST-III(x')[k]   with x' = (x[1], x[2], ..., x[N-1], 0)
+ *   Pair Y[2k'] (cos-based) with Y[N-1-2k'] (sin-based via the (-1)^n
+ *   index identity) into one complex sequence:
+ *     Z[k'] := Y[2k'] + i*Y[N-1-2k']
  *
- * Cost: 2 R2C-based transforms (DCT-III + DST-III) + O(N*K) twiddle.
- * v1.1 candidate: Lee 1984 reduces to a single N/2-point complex FFT.
+ *   Index manipulation collapses the four (n,k) parities into:
+ *     Z[k'] = 2 * exp(i*pi*(4k'+1)/(4N)) * IFFT_{N/2}(psi)[k']
  *
- * Constraint: N must be even (inherits R2C even-N).
+ *   where psi[m] = z[m] * exp(i*pi*m/N)   (pre-twiddle by exp(i*pi*m/N))
+ *   and  IFFT_{N/2}(psi)[k'] = sum_m psi[m] * exp(+2*pi*i*m*k'/(N/2))
+ *                              (unnormalized backward FFT in our convention).
+ *
+ *   Y[2k']     = Re(Z[k'])
+ *   Y[N-1-2k'] = Im(Z[k'])
+ *
+ * Cost: 1 N/2-point complex FFT + 2 O(N*K) twiddle passes. ~2x faster than
+ * the textbook DCT-III + DST-III combo (which costs 2 R2C-based transforms).
+ *
+ * Constraint: N must be even.
  *
  * Layout (split-batched, real input/output):
  *   in[n*K + k]  for n=0..N-1, k=0..K-1
@@ -32,8 +38,6 @@
 #define STRIDE_DCT4_H
 
 #include "executor.h"
-#include "dct.h"
-#include "dst.h"
 #include <math.h>
 
 #ifndef M_PI
@@ -43,57 +47,82 @@
 typedef struct {
     int N;                  /* DCT-IV size (must be even) */
     size_t K;               /* batch count */
-    double *cos_tw;         /* cos(pi*(2k+1)/(4N)) for k=0..N-1 */
-    double *sin_tw;         /* sin(pi*(2k+1)/(4N)) for k=0..N-1 */
-    double *A_buf;          /* N*K — holds X[0] + DCT-III(X) */
-    double *B_buf;          /* N*K — holds DST-III(X') */
-    stride_plan_t *dct_plan; /* owned: DCT-II/III plan */
-    stride_plan_t *dst_plan; /* owned: DST-II/III plan */
+    /* Pre-twiddle: exp(i*pi*m/N) for m=0..N/2-1 */
+    double *pre_cos;
+    double *pre_sin;
+    /* Post-twiddle: exp(i*pi*(4k'+1)/(4N)) for k'=0..N/2-1.
+     * Includes the 2x prefactor: stored as 2*cos(...) and 2*sin(...). */
+    double *post_cos2;
+    double *post_sin2;
+    /* Scratch for N/2-point complex FFT (split-complex). */
+    double *psi_re;
+    double *psi_im;
+    stride_plan_t *fft_plan; /* owned: N/2-point complex FFT plan */
 } stride_dct4_data_t;
 
 
 /* ═══════════════════════════════════════════════════════════════
- * EXECUTE -- DCT-IV (involutory; same routine for fwd and bwd).
+ * EXECUTE -- DCT-IV via Lee 1984.
+ *
+ * 1. Pre-twiddle: psi[m] = (x[2m] - i*x[N-1-2m]) * exp(i*pi*m/N)
+ * 2. N/2-point backward FFT (e^{+2*pi*i/M}, unnormalized).
+ * 3. Post-twiddle + unpack:
+ *      P[k'] = 2 * exp(i*pi*(4k'+1)/(4N)) * W[k']
+ *      Y[2k']     = Re(P[k'])
+ *      Y[N-1-2k'] = Im(P[k'])
  * ═══════════════════════════════════════════════════════════════ */
 
 static void _dct4_execute(void *data, double *re, double *im) {
     (void)im;
     stride_dct4_data_t *d = (stride_dct4_data_t *)data;
     const int N = d->N;
+    const int halfN = N / 2;
     const size_t K = d->K;
 
-    /* 1. Compute A[k] = X[0] + DCT-III(X)[k].
-     *    Copy re into A_buf, run DCT-III on A_buf, then add re[0..K) to every row. */
-    memcpy(d->A_buf, re, (size_t)N * K * sizeof(double));
-    d->dct_plan->override_bwd(d->dct_plan->override_data, d->A_buf, NULL);
-
-    {
-        const double *X0 = re;  /* re[0..K) holds x[0] for each batch element */
-        for (int k = 0; k < N; k++) {
-            double *Arow = d->A_buf + (size_t)k * K;
-            for (size_t b = 0; b < K; b++) Arow[b] += X0[b];
+    /* 1. Pre-twiddle. Reads re[2m*K..] and re[(N-1-2m)*K..]; writes psi scratch.
+     *    psi_re[m] = x[2m]*cos(pi*m/N) + x[N-1-2m]*sin(pi*m/N)
+     *    psi_im[m] = x[2m]*sin(pi*m/N) - x[N-1-2m]*cos(pi*m/N)
+     */
+    for (int m = 0; m < halfN; m++) {
+        const double *x_e = re + (size_t)(2 * m)         * K;  /* x[2m] */
+        const double *x_o = re + (size_t)(N - 1 - 2 * m) * K;  /* x[N-1-2m] */
+        double *psi_r = d->psi_re + (size_t)m * K;
+        double *psi_i = d->psi_im + (size_t)m * K;
+        const double cm = d->pre_cos[m];
+        const double sm = d->pre_sin[m];
+        for (size_t k = 0; k < K; k++) {
+            const double xe = x_e[k];
+            const double xo = x_o[k];
+            psi_r[k] = xe * cm + xo * sm;
+            psi_i[k] = xe * sm - xo * cm;
         }
     }
 
-    /* 2. Build X' = (x[1], x[2], ..., x[N-1], 0) into B_buf, then run DST-III. */
-    for (int n = 0; n < N - 1; n++) {
-        memcpy(d->B_buf + (size_t)n       * K,
-               re        + (size_t)(n + 1) * K,
-               K * sizeof(double));
-    }
-    memset(d->B_buf + (size_t)(N - 1) * K, 0, K * sizeof(double));
+    /* 2. DIAG: backward via conj+fwd+conj to isolate executor bug.
+     *    bwd(psi)[k'] = conj(fwd(conj(psi))[k']) */
+    for (size_t i = 0; i < (size_t)halfN * K; i++) d->psi_im[i] = -d->psi_im[i];
+    stride_execute_fwd(d->fft_plan, d->psi_re, d->psi_im);
+    for (size_t i = 0; i < (size_t)halfN * K; i++) d->psi_im[i] = -d->psi_im[i];
 
-    d->dst_plan->override_bwd(d->dst_plan->override_data, d->B_buf, NULL);
-
-    /* 3. Combine: re[k] = cos_tw[k] * A[k] - sin_tw[k] * B[k]. */
-    for (int k = 0; k < N; k++) {
-        const double cw = d->cos_tw[k];
-        const double sw = d->sin_tw[k];
-        const double *A = d->A_buf + (size_t)k * K;
-        const double *B = d->B_buf + (size_t)k * K;
-        double       *out = re     + (size_t)k * K;
-        for (size_t b = 0; b < K; b++)
-            out[b] = cw * A[b] - sw * B[b];
+    /* 3. Post-twiddle + unpack.
+     *    For each k'=0..halfN-1:
+     *      Y[2k']     = 2 * (post_cos[k']*W_re - post_sin[k']*W_im)
+     *      Y[N-1-2k'] = 2 * (post_cos[k']*W_im + post_sin[k']*W_re)
+     *    (post_cos2/post_sin2 already include the 2x.)
+     */
+    for (int kp = 0; kp < halfN; kp++) {
+        const double pc = d->post_cos2[kp];
+        const double ps = d->post_sin2[kp];
+        const double *Wr = d->psi_re + (size_t)kp * K;
+        const double *Wi = d->psi_im + (size_t)kp * K;
+        double *out_lo = re + (size_t)(2 * kp)         * K;
+        double *out_hi = re + (size_t)(N - 1 - 2 * kp) * K;
+        for (size_t k = 0; k < K; k++) {
+            const double wr = Wr[k];
+            const double wi = Wi[k];
+            out_lo[k] = pc * wr - ps * wi;
+            out_hi[k] = pc * wi + ps * wr;
+        }
     }
 }
 
@@ -105,12 +134,13 @@ static void _dct4_execute(void *data, double *re, double *im) {
 static void _dct4_destroy(void *data) {
     stride_dct4_data_t *d = (stride_dct4_data_t *)data;
     if (!d) return;
-    free(d->cos_tw);
-    free(d->sin_tw);
-    STRIDE_ALIGNED_FREE(d->A_buf);
-    STRIDE_ALIGNED_FREE(d->B_buf);
-    if (d->dct_plan) stride_plan_destroy(d->dct_plan);
-    if (d->dst_plan) stride_plan_destroy(d->dst_plan);
+    free(d->pre_cos);
+    free(d->pre_sin);
+    free(d->post_cos2);
+    free(d->post_sin2);
+    STRIDE_ALIGNED_FREE(d->psi_re);
+    STRIDE_ALIGNED_FREE(d->psi_im);
+    if (d->fft_plan) stride_plan_destroy(d->fft_plan);
     free(d);
 }
 
@@ -118,45 +148,48 @@ static void _dct4_destroy(void *data) {
 /* ═══════════════════════════════════════════════════════════════
  * PLAN CREATION
  *
- * Caller provides a DCT-II/III plan and a DST-II/III plan; the DCT-IV
- * plan owns both from here. Constraint: N must be even.
+ * Caller provides an N/2-point complex FFT plan. The DCT-IV plan owns
+ * it from here. Constraint: N must be even.
  * ═══════════════════════════════════════════════════════════════ */
 
-static stride_plan_t *stride_dct4_plan(int N, size_t K,
-                                       stride_plan_t *dct_plan,
-                                       stride_plan_t *dst_plan)
+static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_halfN)
 {
-    if (N < 2 || (N & 1) || !dct_plan || !dst_plan) {
-        if (dct_plan) stride_plan_destroy(dct_plan);
-        if (dst_plan) stride_plan_destroy(dst_plan);
+    if (N < 2 || (N & 1) || !fft_plan_halfN) {
+        if (fft_plan_halfN) stride_plan_destroy(fft_plan_halfN);
         return NULL;
     }
 
     stride_dct4_data_t *d = (stride_dct4_data_t *)calloc(1, sizeof(*d));
-    if (!d) {
-        stride_plan_destroy(dct_plan);
-        stride_plan_destroy(dst_plan);
-        return NULL;
-    }
+    if (!d) { stride_plan_destroy(fft_plan_halfN); return NULL; }
 
     d->N = N;
     d->K = K;
-    d->dct_plan = dct_plan;
-    d->dst_plan = dst_plan;
+    d->fft_plan = fft_plan_halfN;
 
-    d->cos_tw = (double *)malloc((size_t)N * sizeof(double));
-    d->sin_tw = (double *)malloc((size_t)N * sizeof(double));
-    if (!d->cos_tw || !d->sin_tw) { _dct4_destroy(d); return NULL; }
-    for (int k = 0; k < N; k++) {
-        double a = M_PI * (double)(2 * k + 1) / (4.0 * (double)N);
-        d->cos_tw[k] = cos(a);
-        d->sin_tw[k] = sin(a);
+    const int halfN = N / 2;
+
+    d->pre_cos = (double *)malloc((size_t)halfN * sizeof(double));
+    d->pre_sin = (double *)malloc((size_t)halfN * sizeof(double));
+    d->post_cos2 = (double *)malloc((size_t)halfN * sizeof(double));
+    d->post_sin2 = (double *)malloc((size_t)halfN * sizeof(double));
+    if (!d->pre_cos || !d->pre_sin || !d->post_cos2 || !d->post_sin2) {
+        _dct4_destroy(d); return NULL;
+    }
+    for (int m = 0; m < halfN; m++) {
+        const double a = M_PI * (double)m / (double)N;
+        d->pre_cos[m] = cos(a);
+        d->pre_sin[m] = sin(a);
+    }
+    for (int kp = 0; kp < halfN; kp++) {
+        const double a = M_PI * (double)(4 * kp + 1) / (4.0 * (double)N);
+        d->post_cos2[kp] = 2.0 * cos(a);
+        d->post_sin2[kp] = 2.0 * sin(a);
     }
 
-    size_t buf_sz = (size_t)N * K;
-    d->A_buf = (double *)STRIDE_ALIGNED_ALLOC(64, buf_sz * sizeof(double));
-    d->B_buf = (double *)STRIDE_ALIGNED_ALLOC(64, buf_sz * sizeof(double));
-    if (!d->A_buf || !d->B_buf) { _dct4_destroy(d); return NULL; }
+    size_t psi_sz = (size_t)halfN * K;
+    d->psi_re = (double *)STRIDE_ALIGNED_ALLOC(64, psi_sz * sizeof(double));
+    d->psi_im = (double *)STRIDE_ALIGNED_ALLOC(64, psi_sz * sizeof(double));
+    if (!d->psi_re || !d->psi_im) { _dct4_destroy(d); return NULL; }
 
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     if (!plan) { _dct4_destroy(d); return NULL; }
