@@ -73,20 +73,60 @@ All numbers are single-threaded on Intel i9-14900KF (AVX2) unless noted.
 
 | Transform | vs FFTW | vs MKL |
 |-----------|---------|--------|
-| 1D C2C | wins broadly | **207/207 wins** (median 2.35×, range 1.02-9.81×) |
+| 1D C2C | **1.09–13.34×** ¹ | **207/207 wins** ² |
 | 1D R2C | ~1.5× | loses (codelet-fusion gap, v1.1) |
-| 2D C2C | wins | 1.08-1.63× |
-| 2D R2C | **0.33-0.77×** (loses) | not benched (no batched MKL R2C 2D) |
-| DCT-II | 1.48× JPEG | predicted 4-13× (not benched yet) |
+| 2D C2C | wins | 1.08–1.63× |
+| 2D R2C | **0.33–0.77×** (loses) | not benched (no batched MKL R2C 2D) |
+| DCT-II | 1.48× JPEG | predicted 4–13× (not benched yet) |
 | DCT-III | similar | similar |
-| DCT-IV | 1.85-3.84× | **4-13×** |
-| DST-II | 1.91-2.77× | 2.5-8× (caveat: MKL TT solves a different transform) |
+| DCT-IV | 1.85–3.84× | **4–13×** |
+| DST-II | 1.91–2.77× | 2.5–8× (caveat: MKL TT solves a different transform) |
 | DST-III | similar | similar |
-| DHT | 1-2× | no MKL DHT API |
+| DHT | 1–2× | no MKL DHT API |
 
-The R2C and 2D R2C losses are the same root cause: our R2C is structurally a 3-pass design (pack → C2C → butterfly), while FFTW and MKL fuse the pack into the first DIT stage and the butterfly into the last DIT stage. Closing this gap requires new codelet variants per radix (fused-first-stage, fused-last-stage); that's the headline v1.1 item.
+### ¹ 1D C2C vs FFTW reference
 
-The DST vs MKL comparison has a caveat — MKL's `MKL_STAGGERED_SINE_TRANSFORM` is part of their Trigonometric Transforms library, designed for PDE boundary-value problems, with a different mathematical definition than FFTW's RODFT10. The timing comparison still says something useful ("how fast can MKL do an N-length sine-like transform K times"), but it's not same-math.
+Old stride-fft v0.x 44-cell bench from `src/stride-fft/bench/vfft_bench_results.csv`. The new core is a refactor of that codebase with strictly better codelet variants and joint plan-level search, so these numbers are a **lower bound** on the new core's vs-FFTW performance.
+
+| Cell | vs FFTW |
+|------|---------|
+| N=4096, K=1024 | 4.99× |
+| N=16384, K=256 | 5.63× |
+| N=10000 (composite), K=1024 | 6.63× |
+| N=20000, K=256 | 6.36× |
+| N=40000, K=256 | **13.34×** |
+| N=2401 = 7⁴ (Rader prime stack), K=32 | 2.11× |
+| N=143 = 11×13, K=32 | 3.38× |
+
+### ² 1D C2C vs MKL reference (new core)
+
+207-cell wisdom-tuned bench, full report in `build_tuned/vfft_perf_tuned_1d.txt`. Overall: **min 1.01×, median 2.36×, max 8.98×, mean 2.51×, 100% wins**. Per-category breakdown:
+
+| Category | Cells | Min | Median | Max | Mean |
+|----------|-------|-----|--------|-----|------|
+| Small (N≤128) | 15 | 2.38× | **4.37×** | 8.98× | 4.97× |
+| Power-of-2 | 30 | 1.17× | 1.80× | 2.74× | 1.78× |
+| Composite | 33 | 1.69× | 2.69× | 5.15× | 2.88× |
+| Odd composite | 18 | 1.86× | 2.69× | 4.20× | 2.83× |
+| Mixed deep | 18 | 1.70× | 2.42× | 3.09× | 2.30× |
+| Prime powers | 30 | 1.26× | 2.69× | 3.95× | 2.67× |
+| Genfft (R=11/13) | 15 | 1.50× | 2.39× | 3.06× | 2.34× |
+| Rader primes | 24 | 1.05× | 1.96× | 3.42× | 2.04× |
+| Bluestein primes | 24 | 1.01× | 1.53× | 3.09× | 1.65× |
+| **OVERALL** | **207** | **1.01×** | **2.36×** | **8.98×** | **2.51×** |
+
+Headline cells:
+- Small N (8–128) is the strongest regime: 4.37× median, peak 8.98× at N=8 K=4. This is where MKL's per-call overhead dominates and our straight-line codelets shine.
+- Composite (60-100000 with mixed-radix factors) sits at 2.69× median, peak 5.15× at N=60 K=32.
+- Bluestein primes are the weakest category at 1.53× median — MKL is competitive on convolution-based prime FFTs, but we still win every cell.
+
+### Why R2C and 2D R2C lose
+
+Same root cause: our R2C is structurally a 3-pass design (pack → C2C → butterfly), while FFTW and MKL fuse the pack into the first DIT stage and the butterfly into the last DIT stage. Closing this gap requires new codelet variants per radix (fused-first-stage, fused-last-stage); that's the headline v1.1 item.
+
+### DST vs MKL caveat
+
+MKL's `MKL_STAGGERED_SINE_TRANSFORM` is part of their Trigonometric Transforms library, designed for PDE boundary-value problems, with a different mathematical definition than FFTW's RODFT10. The timing comparison still says something useful ("how fast can MKL do an N-length sine-like transform K times"), but it's not same-math.
 
 ---
 
