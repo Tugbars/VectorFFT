@@ -27,7 +27,7 @@ typedef struct {
 static const stride_radix_cpe_t stride_radix_cpe_avx2[STRIDE_RADIX_PROFILE_MAX_R] = {
     [ 2] = { .cyc_n1 =   0.569, .cyc_t1 =   0.578, },
     [ 3] = { .cyc_n1 =   0.862, .cyc_t1 =   1.074, .cyc_t1s =   1.079, },
-    [ 4] = { .cyc_n1 = 999.000, .cyc_t1 = 999.000, .cyc_t1s = 999.000, },
+    [ 4] = { .cyc_n1 =   1.203, .cyc_t1 =   1.561, .cyc_t1s =   1.461, },
     [ 5] = { .cyc_n1 =   2.046, .cyc_t1 =   2.921, .cyc_t1s =   2.903, },
     [ 6] = { .cyc_n1 =   3.984, .cyc_t1 =   3.465, .cyc_t1s =   3.516, },
     [ 7] = { .cyc_n1 =  10.337, .cyc_t1 =   6.233, .cyc_t1s =   5.892, },
