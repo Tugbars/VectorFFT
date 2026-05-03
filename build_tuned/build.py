@@ -74,7 +74,7 @@ def build_includes() -> list[str]:
     No stride-fft/codelets/avx2 on the path — the new core is fully
     self-reliant on vectorfft_tune for SIMD codelets.
     """
-    inc = [str(CORE_NEW), str(CORE_PROD)]
+    inc = [str(ROOT / 'include'), str(CORE_NEW), str(CORE_PROD)]
     # R=2 first (single-variant bootstrap)
     r2 = TUNED_GEN / 'r2'
     if r2.is_dir():
@@ -132,7 +132,7 @@ def find_fftw():
     return None, None, None
 
 
-def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False):
+def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None):
     mkl_inc, mkl_lib = (None, None)
     fftw_inc, fftw_lib, fftw_dll = (None, None, None)
     if mkl:
@@ -160,7 +160,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False):
         if mkl:
             flags += ['/DVFFT_HAS_MKL', '/DMKL_ILP64']
             inc += [f'/I{mkl_inc}']
-        cmd = [tc['cc']] + flags + inc + [str(src_c), f'/Fe:{out_bin}']
+        all_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
+        cmd = [tc['cc']] + flags + inc + all_srcs + [f'/Fe:{out_bin}']
         if mkl:
             cmd += [f'/link', f'/LIBPATH:{mkl_lib}',
                     'mkl_intel_ilp64.lib', 'mkl_sequential.lib', 'mkl_core.lib']
@@ -178,7 +179,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False):
         flags += ['-DVFFT_HAS_MKL', '-DMKL_ILP64', f'-I{mkl_inc}']
     if fftw:
         flags += ['-DVFFT_HAS_FFTW', f'-I{fftw_inc}']
-    cmd = [tc['cc']] + flags + build_includes() + [str(src_c), '-o', str(out_bin)]
+    all_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
+    cmd = [tc['cc']] + flags + build_includes() + all_srcs + ['-o', str(out_bin)]
     if tc['is_windows'] and tc['is_icx']:
         cmd.append('-fuse-ld=lld')
     if mkl:
@@ -268,6 +270,10 @@ def main():
     ap.add_argument('--fftw', action='store_true',
                     help='Link FFTW3 (vcpkg double-precision). Adds '
                          '-DVFFT_HAS_FFTW and fftw3.lib.')
+    ap.add_argument('--vfft', action='store_true',
+                    help='Compile src/vfft.c alongside the source. Use this '
+                         'when the source file uses the public vfft.h API '
+                         '(opaque-handle entry points).')
     args = ap.parse_args()
 
     tc = detect_toolchain()
@@ -286,7 +292,11 @@ def main():
 
     stem = src.stem
     out_bin = src.parent / (stem + '.exe' if tc['is_windows'] else stem)
-    cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw)
+    extra_srcs = []
+    if args.vfft:
+        extra_srcs.append(ROOT / 'src' / 'vfft.c')
+    cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw,
+                    extra_srcs=extra_srcs)
 
     print(f'[compile] {tc["cc"]} ... -> {out_bin.name}', flush=True)
     t0 = time.time()

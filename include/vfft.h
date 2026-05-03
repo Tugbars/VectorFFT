@@ -181,6 +181,58 @@ vfft_plan vfft_plan_r2c(int N, size_t K);
 vfft_plan vfft_plan_2d(int N1, int N2);
 
 /**
+ * vfft_plan_2d_r2c — Create a 2D real-to-complex FFT plan.
+ *
+ * Forward: N1*N2 reals -> N1*(N2/2+1) complex bins (reduces along inner axis).
+ * Backward: reverse, scaled bwd(fwd(x)) = N1*N2 * x.
+ *
+ * @param N1   Number of rows (axis-0).
+ * @param N2   Number of columns (axis-1, must be even).
+ * @return     Plan handle, or NULL on failure.
+ */
+vfft_plan vfft_plan_2d_r2c(int N1, int N2);
+
+/**
+ * vfft_plan_dct2 — Create a DCT-II / DCT-III plan (FFTW REDFT10 / REDFT01).
+ *
+ * One plan handles both directions:
+ *   vfft_execute_dct2 = forward (REDFT10)
+ *   vfft_execute_dct3 = backward (REDFT01); inverse up to scale 2N.
+ *
+ * Constraint: N must be even.
+ */
+vfft_plan vfft_plan_dct2(int N, size_t K);
+
+/**
+ * vfft_plan_dct4 — Create a DCT-IV plan (FFTW REDFT11).
+ *
+ * Involutory up to scale 2N: dct4(dct4(x))/(2N) = x. One plan, one executor.
+ *
+ * Constraint: N must be even.
+ */
+vfft_plan vfft_plan_dct4(int N, size_t K);
+
+/**
+ * vfft_plan_dst2 — Create a DST-II / DST-III plan (FFTW RODFT10 / RODFT01).
+ *
+ * One plan handles both directions:
+ *   vfft_execute_dst2 = forward (RODFT10)
+ *   vfft_execute_dst3 = backward (RODFT01); inverse up to scale 2N.
+ *
+ * Constraint: N must be even.
+ */
+vfft_plan vfft_plan_dst2(int N, size_t K);
+
+/**
+ * vfft_plan_dht — Create a Discrete Hartley Transform plan (FFTW_DHT).
+ *
+ * Self-inverse up to scale 1/N: dht(dht(x))/N = x. One plan, one executor.
+ *
+ * Constraint: N must be even.
+ */
+vfft_plan vfft_plan_dht(int N, size_t K);
+
+/**
  * vfft_destroy — Destroy a plan and free all resources.
  *
  * @param p   Plan handle (NULL is safe — no-op).
@@ -242,6 +294,71 @@ void vfft_execute_r2c(vfft_plan p, const double *real_in,
  */
 void vfft_execute_c2r(vfft_plan p, const double *in_re, const double *in_im,
                        double *real_out);
+
+/* ═══════════════════════════════════════════════════════════════
+ * EXECUTION — 2D REAL-TO-COMPLEX / COMPLEX-TO-REAL
+ * ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * vfft_execute_2d_r2c — 2D forward real-to-complex FFT.
+ *
+ * @param p         Plan from vfft_plan_2d_r2c.
+ * @param real_in   Real input: real_in[i*N2 + j], N1*N2 doubles.
+ * @param out_re    Complex output Re bins: N1*(N2/2+1) doubles.
+ * @param out_im    Complex output Im bins: N1*(N2/2+1) doubles.
+ */
+void vfft_execute_2d_r2c(vfft_plan p, const double *real_in,
+                          double *out_re, double *out_im);
+
+/**
+ * vfft_execute_2d_c2r — 2D backward complex-to-real FFT.
+ *
+ * Output = N1*N2 * original_input. Divide by N1*N2 to normalize.
+ */
+void vfft_execute_2d_c2r(vfft_plan p, const double *in_re, const double *in_im,
+                          double *real_out);
+
+/* ═══════════════════════════════════════════════════════════════
+ * EXECUTION — DCT / DST / DHT (real-to-real)
+ *
+ * All r2r layouts: in[n*K + k] for n=0..N-1, k=0..K-1; out same shape.
+ * In-place safe (caller may pass in == out).
+ * Conventions match FFTW: unnormalized; user divides for roundtrip.
+ * ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * vfft_execute_dct2 — DCT-II (FFTW REDFT10).
+ *   Y[k] = 2 * sum_{n=0..N-1} x[n] * cos(pi*k*(2n+1)/(2N))
+ */
+void vfft_execute_dct2(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dct3 — DCT-III (FFTW REDFT01), inverse of DCT-II up to scale 2N.
+ *   For y = dct2(x), x_recovered = dct3(y) / (2N).
+ */
+void vfft_execute_dct3(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dct4 — DCT-IV (FFTW REDFT11). Involutory up to scale 2N.
+ *   For y = dct4(x), x_recovered = dct4(y) / (2N).
+ */
+void vfft_execute_dct4(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dst2 — DST-II (FFTW RODFT10).
+ */
+void vfft_execute_dst2(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dst3 — DST-III (FFTW RODFT01), inverse of DST-II up to scale 2N.
+ */
+void vfft_execute_dst3(vfft_plan p, const double *in, double *out);
+
+/**
+ * vfft_execute_dht — Discrete Hartley Transform (FFTW_DHT). Self-inverse up to 1/N.
+ *   For y = dht(x), x_recovered = dht(y) / N.
+ */
+void vfft_execute_dht(vfft_plan p, const double *in, double *out);
 
 /* ═══════════════════════════════════════════════════════════════
  * THREADING
