@@ -107,6 +107,71 @@ extern "C" {
 typedef struct vfft_plan_s *vfft_plan;
 
 /* ═══════════════════════════════════════════════════════════════
+ * PLAN CREATION FLAGS
+ *
+ * Mirrors FFTW's flag conventions. Pass to vfft_plan_* as the trailing
+ * flags argument. Combine with bitwise OR (e.g. VFFT_MEASURE|VFFT_WISDOM_ONLY).
+ * ═══════════════════════════════════════════════════════════════ */
+
+/** Heuristic plan via cost model. Fast plan creation, possibly suboptimal.
+ *  Equivalent to FFTW_ESTIMATE. */
+#define VFFT_ESTIMATE        0u
+
+/** Wisdom-driven plan. On wisdom miss, runs a per-cell calibration
+ *  and inserts the result into the in-memory wisdom database (so subsequent
+ *  identical (N, K) plans hit the cache). Equivalent to FFTW_MEASURE. */
+#define VFFT_MEASURE         (1u << 0)
+
+/** Wider per-cell calibration on miss (more candidates, more reps).
+ *  Slower plan creation; usually picks the same plan as MEASURE.
+ *  Equivalent to FFTW_EXHAUSTIVE. */
+#define VFFT_EXHAUSTIVE      (1u << 1)
+
+/** Use only what is already in the wisdom database. Returns NULL on miss
+ *  (no calibration). Useful when plan creation must be fast and predictable.
+ *  Equivalent to FFTW_WISDOM_ONLY. */
+#define VFFT_WISDOM_ONLY     (1u << 2)
+
+/* ═══════════════════════════════════════════════════════════════
+ * WISDOM LIFECYCLE
+ *
+ * Wisdom is a measured-plan cache. The library maintains an in-memory
+ * wisdom database initialized empty by vfft_init(). Users opt in by
+ * loading a wisdom file (their own calibration output, or a sample shipped
+ * under examples/<arch>/wisdom.txt). MEASURE/EXHAUSTIVE plans consult
+ * the database; on miss, they calibrate that cell and insert the result.
+ *
+ * The library does NOT auto-load wisdom from disk. Users with no wisdom
+ * loaded who pass VFFT_MEASURE will pay one-time calibration per cell
+ * (matching FFTW_MEASURE behavior).
+ *
+ * Wisdom is per-precision and per-microarchitecture. The sample wisdom
+ * under examples/14900KF/wisdom.txt was generated on Intel i9-14900KF
+ * (Raptor Lake, AVX2, single-thread); it may be sub-optimal on other
+ * hardware. Generate your own with vfft_save_wisdom() after exercising
+ * the plans you care about under VFFT_MEASURE.
+ * ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * vfft_load_wisdom — Load wisdom from a file, merging into the in-memory
+ * database. Existing entries with matching (N, K) are replaced.
+ * @return  0 on success, non-zero if the file was unreadable or malformed.
+ */
+int vfft_load_wisdom(const char *path);
+
+/**
+ * vfft_save_wisdom — Save the in-memory wisdom database to a file.
+ * @return  0 on success, non-zero on I/O error.
+ */
+int vfft_save_wisdom(const char *path);
+
+/**
+ * vfft_forget_wisdom — Discard the in-memory wisdom database.
+ * Subsequent VFFT_MEASURE plans will calibrate from scratch.
+ */
+void vfft_forget_wisdom(void);
+
+/* ═══════════════════════════════════════════════════════════════
  * INITIALIZATION
  * ═══════════════════════════════════════════════════════════════ */
 

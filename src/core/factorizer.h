@@ -298,7 +298,8 @@ static void _permute_and_score(int *arr, int n, int depth,
         /* swap arr[depth] and arr[i] */
         int tmp = arr[depth]; arr[depth] = arr[i]; arr[i] = tmp;
         _permute_and_score(arr, n, depth + 1, K, N, cpu, best_order, best_score);
-        arr[depth] = arr[i]; arr[i] = tmp; /* swap back */
+        /* re-swap (swap is involution) — restores both positions */
+        tmp = arr[depth]; arr[depth] = arr[i]; arr[i] = tmp;
     }
 }
 

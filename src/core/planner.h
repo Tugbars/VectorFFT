@@ -982,6 +982,45 @@ static stride_plan_t *stride_auto_plan(int N, size_t K,
 }
 
 /**
+ * stride_estimate_plan -- Cost-model-driven planner (no measurement).
+ *
+ * Greedy factorization + permutation search using the analytic cost model
+ * (stride_score_factorization in factorizer.h). Pure model-based — no
+ * measurement, no wisdom lookup. Plan creation is fast (microseconds).
+ *
+ * Compared to stride_auto_plan (greedy with K-aware ordering): this also
+ * tries all radix-set permutations and picks the best-scored one, which
+ * matters for nf>=3 cases where greedy ordering may not be cache-optimal.
+ *
+ * Compared to stride_wise_plan (wisdom-driven): this skips both wisdom
+ * lookup and measurement. Use for fast plan creation when wisdom is not
+ * available and the user accepts the model's accuracy limits.
+ *
+ * Known limit: the cost model is documented as "spiky" — predicts within
+ * 2x for 11/16 radixes but can mis-pick prime-radix factorizations whose
+ * codelets have non-obvious scheduling (Sethi-Ullman). For prime-heavy N,
+ * users should use VFFT_MEASURE or higher.
+ */
+static stride_plan_t *stride_estimate_plan(int N, size_t K,
+                                           const stride_registry_t *reg)
+{
+    stride_cpu_info_t cpu = stride_detect_cpu();
+    stride_factorization_t fact;
+    if (stride_factorize_greedy(N, K, reg, &cpu, &fact) != 0) {
+        /* Greedy failed (prime / non-smooth) — fall back to auto_plan
+         * which handles Bluestein/Rader for primes. */
+        return stride_auto_plan(N, K, reg);
+    }
+
+    /* Permutation search over the radix set, scored by the analytic cost
+     * model. Only worth doing for nf >= 2 (single-factor plan has nothing
+     * to permute). For nf >= 6 the search is skipped (too many perms). */
+    stride_optimize_order(&fact, K, N, &cpu);
+
+    return _stride_build_plan(N, K, fact.factors, fact.nfactors, reg);
+}
+
+/**
  * stride_exhaustive_plan -- Exhaustive search planner (slow).
  *
  * Tries all factorizations x orderings, benchmarks each,
