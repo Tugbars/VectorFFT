@@ -40,6 +40,7 @@
 #include "executor.h"
 #include "transpose.h"
 #include "r2c.h"
+#include <stdio.h>  /* DIAG */
 
 #ifndef FFT2D_R2C_DEFAULT_TILE
 #define FFT2D_R2C_DEFAULT_TILE 8
@@ -269,6 +270,16 @@ static void _fft2d_r2c_execute_fwd(void *data, double *re, double *im) {
 
     /* Phase 1: tiled R2C row pass. After: (re, im) holds N1*(N2/2+1) complex. */
     _fft2d_r2c_tiled_fwd_mt(d, re, im);
+
+    /* DIAG */
+    if (d->N1 == 16 && d->N2 == 16) {
+        int hp1 = d->N2 / 2 + 1;
+        fprintf(stderr, "[fwd post-row] re:");
+        for (int i = 0; i < d->N1 * hp1; i++) fprintf(stderr, " %.2f", re[i]);
+        fprintf(stderr, "\n[fwd post-row] im:");
+        for (int i = 0; i < d->N1 * hp1; i++) fprintf(stderr, " %.2f", im[i]);
+        fprintf(stderr, "\n"); fflush(stderr);
+    }
 
     /* Phase 2: C2C col FFT (batched, K=N2/2+1). */
     stride_execute_fwd(d->plan_col, re, im);

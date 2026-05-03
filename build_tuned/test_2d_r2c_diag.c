@@ -14,7 +14,7 @@ int main(void) {
     stride_registry_t reg; stride_registry_init(&reg);
     stride_wisdom_t wis; stride_wisdom_init(&wis);
 
-    int N1 = 2, N2 = 4;  /* tiny case: x = impulse @ (0,0), expect all-1 bins */
+    int N1 = 16, N2 = 16;
     size_t real_sz = (size_t)N1 * (size_t)N2;
     size_t cplx_sz = (size_t)N1 * (size_t)(N2 / 2 + 1);
 
@@ -30,6 +30,18 @@ int main(void) {
     fprintf(stderr, "[diag] plan\n"); fflush(stderr);
     stride_plan_t *plan = stride_plan_2d_r2c(N1, N2, &reg);
     if (!plan) { fprintf(stderr, "PLAN_FAIL\n"); return 1; }
+
+    /* Inspect the col FFT plan's factorization. */
+    stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
+    fprintf(stderr, "[diag] col plan: N=%d K=%zu stages=%d factors=",
+            d->plan_col->N, d->plan_col->K, d->plan_col->num_stages);
+    for (int s = 0; s < d->plan_col->num_stages; s++)
+        fprintf(stderr, "%d,", d->plan_col->factors[s]);
+    fprintf(stderr, "\n[diag] r2c plan: N=%d K=%zu B=%zu\n",
+            ((stride_r2c_data_t *)d->plan_r2c->override_data)->N,
+            ((stride_r2c_data_t *)d->plan_r2c->override_data)->K,
+            ((stride_r2c_data_t *)d->plan_r2c->override_data)->B);
+    fflush(stderr);
 
     fprintf(stderr, "[diag] orig:");
     for (size_t i = 0; i < real_sz; i++) fprintf(stderr, " %.2f", orig[i]);
