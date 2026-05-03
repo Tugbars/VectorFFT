@@ -1839,19 +1839,26 @@ static inline size_t _fft2d_r2c_choose_tile(int N1) {
     return B;
 }
 
-/** 2D R2C plan (no wisdom). Uses 1D R2C inner (K=B) and 1D C2C col (K=N2/2+1). */
+/** 2D R2C plan (no wisdom). Uses 1D R2C inner (K=B) and 1D C2C col (K=K_pad).
+ *
+ * K_pad = ceil((N2/2+1)/4)*4 — col FFT batch is padded to multiple of 4
+ * because our codelets' SIMD loops have no scalar tail at vl<4. The
+ * pad columns are zero-filled internally; convenience wrappers pack/unpack
+ * to the user-facing N1*(N2/2+1) layout. */
 static stride_plan_t *stride_plan_2d_r2c(int N1, int N2,
                                           const stride_registry_t *reg)
 {
     if (N1 < 2 || N2 < 2 || (N2 & 1)) return NULL;  /* R2C needs K>=2 */
     size_t B = _fft2d_r2c_choose_tile(N1);
+    size_t hp1 = (size_t)(N2 / 2 + 1);
+    size_t K_pad = (hp1 + 3) & ~(size_t)3;  /* round up to multiple of 4 */
 
     stride_plan_t *plan_r2c = stride_r2c_auto_plan(N2, B, reg);
     if (!plan_r2c) return NULL;
-    stride_plan_t *plan_col = stride_auto_plan(N1, (size_t)(N2 / 2 + 1), reg);
+    stride_plan_t *plan_col = stride_auto_plan(N1, K_pad, reg);
     if (!plan_col) { stride_plan_destroy(plan_r2c); return NULL; }
 
-    return stride_plan_2d_r2c_from(N1, N2, B, plan_r2c, plan_col);
+    return stride_plan_2d_r2c_from(N1, N2, B, K_pad, plan_r2c, plan_col);
 }
 
 /** Wisdom-aware 2D R2C plan.

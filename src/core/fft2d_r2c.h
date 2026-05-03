@@ -40,7 +40,6 @@
 #include "executor.h"
 #include "transpose.h"
 #include "r2c.h"
-#include <stdio.h>  /* DIAG */
 
 #ifndef FFT2D_R2C_DEFAULT_TILE
 #define FFT2D_R2C_DEFAULT_TILE 8
@@ -63,15 +62,27 @@ typedef struct {
     int N1;                       /* rows */
     int N2;                       /* cols (must be even) */
     size_t B;                     /* row tile height */
+    size_t K_pad;                 /* col FFT batch dim, padded to multiple of 4
+                                   * (codelet n1_fwd has no scalar tail at vl<4) */
 
     int num_scratch;              /* per-thread scratch slots */
     size_t tile_real_sz;          /* N2 * B */
-    size_t tile_complex_sz;       /* (N2/2+1) * B */
+    size_t tile_complex_sz;       /* K_pad * B (was (N2/2+1)*B; now padded) */
     double *scratch_re;           /* num_scratch * tile_real_sz doubles */
     double *scratch_im;           /* num_scratch * tile_complex_sz doubles */
 
+    /* Padded col-FFT scratch sized N1 * K_pad doubles each. After tiled row
+     * pass writes here, col FFT runs on this with K=K_pad. */
+    double *re_pad;
+    double *im_pad;
+
+    /* Mixed-radix digit-reversal permutation for col FFT (size N1). Multi-stage
+     * DIT plans output at digit-reversed positions; pack/unpack uses perm to
+     * remap user-natural i <-> col-FFT-output i. */
+    int *perm;
+
     stride_plan_t *plan_r2c;      /* N=N2, K=B, R2C inner */
-    stride_plan_t *plan_col;      /* N=N1, K=N2/2+1, C2C col */
+    stride_plan_t *plan_col;      /* N=N1, K=K_pad, C2C col */
 } stride_fft2d_r2c_data_t;
 
 
@@ -109,34 +120,47 @@ static inline void _fft2d_r2c_inner_bwd(stride_plan_t *plan, double *re, double 
  *   scatter scratch (N2/2+1 x B split-complex) -> out (B x (N2/2+1))
  * ═══════════════════════════════════════════════════════════════ */
 
+/* Forward row pass: re_in is the user's real input buffer (read-only here).
+ * out_pad_re/out_pad_im are the padded col-FFT scratch (written here). */
 static void _fft2d_r2c_tiled_fwd_range(stride_fft2d_r2c_data_t *d,
-                                        double *re, double *im,
+                                        const double *re_in,
+                                        double *out_pad_re, double *out_pad_im,
                                         double *sr, double *si,
                                         size_t row_start, size_t row_end)
 {
     const int N2 = d->N2;
     const int halfN_plus1 = N2 / 2 + 1;
     const size_t B = d->B;
+    const size_t K_pad = d->K_pad;
 
     for (size_t i = row_start; i < row_end; i += B) {
         size_t this_B = B;
         if (i + B > row_end) this_B = row_end - i;
 
         /* Gather: real B x N2 -> scratch_re N2 x B (single-plane transpose). */
-        stride_transpose(re + i * (size_t)N2, (size_t)N2,
+        stride_transpose(re_in + i * (size_t)N2, (size_t)N2,
                          sr, B, this_B, (size_t)N2);
 
         /* Inner R2C in-place on scratch. After: sr[f*B + k_local] holds Re bins,
          * si[f*B + k_local] holds Im bins for f=0..N2/2. */
         _fft2d_r2c_inner_fwd(d->plan_r2c, sr, si);
 
-        /* Scatter split-complex: (N2/2+1) x B -> B x (N2/2+1).
-         * Output layout: re[i*(N2/2+1) + f]. */
+        /* Scatter split-complex: (halfN_plus1) x B -> B x K_pad (padded).
+         * Padding columns [halfN_plus1..K_pad) are zeroed for col-FFT. */
         stride_transpose_pair(sr, si,
-                              re + i * (size_t)halfN_plus1,
-                              im + i * (size_t)halfN_plus1,
-                              B, (size_t)halfN_plus1,
+                              out_pad_re + i * K_pad,
+                              out_pad_im + i * K_pad,
+                              B, K_pad,
                               (size_t)halfN_plus1, this_B);
+        /* Zero the padding columns of the rows we just wrote. */
+        for (size_t r = 0; r < this_B; r++) {
+            double *rr = out_pad_re + (i + r) * K_pad;
+            double *ii = out_pad_im + (i + r) * K_pad;
+            for (size_t f = (size_t)halfN_plus1; f < K_pad; f++) {
+                rr[f] = 0.0;
+                ii[f] = 0.0;
+            }
+        }
     }
 }
 
@@ -155,17 +179,20 @@ static void _fft2d_r2c_tiled_fwd_range(stride_fft2d_r2c_data_t *d,
  *   scatter scratch_re (N2 x B real) -> re (B x N2 real)
  * ═══════════════════════════════════════════════════════════════ */
 
+/* Backward row pass: gathers from padded col-FFT output (in_pad_re/im),
+ * writes real samples to re_out. Reads only the lower halfN_plus1 columns
+ * of the padded layout (the rest is zero/garbage from forward padding). */
 static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
-                                        double *re, double *im,
+                                        const double *in_pad_re, const double *in_pad_im,
+                                        double *re_out,
                                         double *sr, double *si,
                                         size_t row_start, size_t row_end)
 {
     const int N2 = d->N2;
     const int halfN_plus1 = N2 / 2 + 1;
     const size_t B = d->B;
+    const size_t K_pad = d->K_pad;
 
-    /* Iterate tiles in reverse to avoid in-place aliasing. Each tile
-     * starts at i = row_start + k*B; we walk k from largest down to 0. */
     if (row_end <= row_start) return;
     size_t span = row_end - row_start;
     size_t n_tiles = (span + B - 1) / B;
@@ -175,19 +202,19 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
         size_t this_B = B;
         if (i + B > row_end) this_B = row_end - i;
 
-        /* Gather split-complex: B x (N2/2+1) -> (N2/2+1) x B. */
-        stride_transpose_pair(re + i * (size_t)halfN_plus1,
-                              im + i * (size_t)halfN_plus1,
+        /* Gather split-complex: B x K_pad (read only halfN_plus1 cols) ->
+         * (halfN_plus1) x B for the inner C2R. */
+        stride_transpose_pair(in_pad_re + i * K_pad,
+                              in_pad_im + i * K_pad,
                               sr, si,
-                              (size_t)halfN_plus1, B,
+                              K_pad, B,
                               this_B, (size_t)halfN_plus1);
 
-        /* Inner C2R in-place on scratch. After: sr[j*B + k_local] holds
-         * the j-th real sample for tile-row k_local. */
+        /* Inner C2R in-place on scratch. */
         _fft2d_r2c_inner_bwd(d->plan_r2c, sr, si);
 
         /* Scatter real: N2 x B -> B x N2. */
-        stride_transpose(sr, B, re + i * (size_t)N2, (size_t)N2,
+        stride_transpose(sr, B, re_out + i * (size_t)N2, (size_t)N2,
                          (size_t)N2, this_B);
     }
 }
@@ -203,19 +230,21 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
 
 typedef struct {
     stride_fft2d_r2c_data_t *d;
-    double *re, *im;
+    const double *re_in;       /* read-only real input (forward) */
+    double *out_re, *out_im;   /* padded col-FFT scratch destination */
     double *sr, *si;
     size_t row_start, row_end;
 } _fft2d_r2c_tile_arg_t;
 
 static void _fft2d_r2c_tile_fwd_trampoline(void *arg) {
     _fft2d_r2c_tile_arg_t *a = (_fft2d_r2c_tile_arg_t *)arg;
-    _fft2d_r2c_tiled_fwd_range(a->d, a->re, a->im, a->sr, a->si,
-                                a->row_start, a->row_end);
+    _fft2d_r2c_tiled_fwd_range(a->d, a->re_in, a->out_re, a->out_im,
+                                a->sr, a->si, a->row_start, a->row_end);
 }
 
 static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
-                                     double *re, double *im) {
+                                     const double *re_in,
+                                     double *out_re, double *out_im) {
     const size_t N1 = (size_t)d->N1;
     const size_t B = d->B;
     int T = stride_get_num_threads();
@@ -223,7 +252,7 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
 
     size_t n_tiles = (N1 + B - 1) / B;
     if (T <= 1 || n_tiles <= 1) {
-        _fft2d_r2c_tiled_fwd_range(d, re, im,
+        _fft2d_r2c_tiled_fwd_range(d, re_in, out_re, out_im,
                                     d->scratch_re, d->scratch_im,
                                     0, N1);
         return;
@@ -240,8 +269,9 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
         if (row_start >= N1) break;
 
         args[t].d = d;
-        args[t].re = re;
-        args[t].im = im;
+        args[t].re_in = re_in;
+        args[t].out_re = out_re;
+        args[t].out_im = out_im;
         args[t].sr = _fft2d_r2c_scratch_re(d, t);
         args[t].si = _fft2d_r2c_scratch_im(d, t);
         args[t].row_start = row_start;
@@ -253,7 +283,7 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
     {
         size_t row_end = ((n_tiles * 1) / T) * B;
         if (row_end > N1) row_end = N1;
-        _fft2d_r2c_tiled_fwd_range(d, re, im,
+        _fft2d_r2c_tiled_fwd_range(d, re_in, out_re, out_im,
                                     d->scratch_re, d->scratch_im,
                                     0, row_end);
     }
@@ -268,33 +298,59 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
 static void _fft2d_r2c_execute_fwd(void *data, double *re, double *im) {
     stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)data;
 
-    /* Phase 1: tiled R2C row pass. After: (re, im) holds N1*(N2/2+1) complex. */
-    _fft2d_r2c_tiled_fwd_mt(d, re, im);
+    /* Phase 1: tiled R2C row pass reads user's real input (re), writes to
+     * padded col-FFT scratch (re_pad, im_pad) with row stride K_pad
+     * (multiple of 4 — required by codelet vl). */
+    _fft2d_r2c_tiled_fwd_mt(d, re, d->re_pad, d->im_pad);
 
-    /* DIAG */
-    if (d->N1 == 16 && d->N2 == 16) {
-        int hp1 = d->N2 / 2 + 1;
-        fprintf(stderr, "[fwd post-row] re:");
-        for (int i = 0; i < d->N1 * hp1; i++) fprintf(stderr, " %.2f", re[i]);
-        fprintf(stderr, "\n[fwd post-row] im:");
-        for (int i = 0; i < d->N1 * hp1; i++) fprintf(stderr, " %.2f", im[i]);
-        fprintf(stderr, "\n"); fflush(stderr);
+    /* Phase 2: C2C col FFT at K=K_pad on padded scratch. */
+    stride_execute_fwd(d->plan_col, d->re_pad, d->im_pad);
+
+    /* Phase 3: pack padded N1*K_pad scratch -> user's N1*(N2/2+1) layout.
+     * Col FFT output at row i is at digit-reversed position perm[i] in scratch.
+     * Read at perm[i] to get natural-i output. */
+    {
+        const size_t hp1 = (size_t)(d->N2 / 2 + 1);
+        for (int i = 0; i < d->N1; i++) {
+            int p = d->perm[i];
+            memcpy(re + (size_t)i * hp1,
+                   d->re_pad + (size_t)p * d->K_pad,
+                   hp1 * sizeof(double));
+            memcpy(im + (size_t)i * hp1,
+                   d->im_pad + (size_t)p * d->K_pad,
+                   hp1 * sizeof(double));
+        }
     }
-
-    /* Phase 2: C2C col FFT (batched, K=N2/2+1). */
-    stride_execute_fwd(d->plan_col, re, im);
 }
 
 static void _fft2d_r2c_execute_bwd(void *data, double *re, double *im) {
     stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)data;
+    const size_t hp1 = (size_t)(d->N2 / 2 + 1);
+    const size_t K_pad = d->K_pad;
 
-    /* Phase 1: C2C col IFFT (batched, K=N2/2+1). */
-    stride_execute_bwd(d->plan_col, re, im);
+    /* Phase 1: unpack user's N1*(N2/2+1) packed input -> N1*K_pad padded
+     * scratch with padding zeroed. Place row i at scratch row perm[i] —
+     * col IFFT consumes its input in fwd-output (digit-reversed) layout
+     * and produces natural-i output. */
+    for (int i = 0; i < d->N1; i++) {
+        int p = d->perm[i];
+        memcpy(d->re_pad + (size_t)p * K_pad,
+               re + (size_t)i * hp1,
+               hp1 * sizeof(double));
+        memcpy(d->im_pad + (size_t)p * K_pad,
+               im + (size_t)i * hp1,
+               hp1 * sizeof(double));
+        for (size_t f = hp1; f < K_pad; f++) {
+            d->re_pad[(size_t)p * K_pad + f] = 0.0;
+            d->im_pad[(size_t)p * K_pad + f] = 0.0;
+        }
+    }
 
-    /* Phase 2: tiled C2R row pass — REVERSE tile order for in-place safety.
-     * Single-threaded for v1.0 (reverse iteration + tile parallelism is
-     * solvable but not in scope here). */
-    _fft2d_r2c_tiled_bwd_range(d, re, im,
+    /* Phase 2: C2C col IFFT at K=K_pad on padded scratch. */
+    stride_execute_bwd(d->plan_col, d->re_pad, d->im_pad);
+
+    /* Phase 3: tiled C2R row pass reads padded scratch, writes reals to re. */
+    _fft2d_r2c_tiled_bwd_range(d, d->re_pad, d->im_pad, re,
                                 d->scratch_re, d->scratch_im,
                                 0, (size_t)d->N1);
 }
@@ -311,6 +367,9 @@ static void _fft2d_r2c_destroy(void *data) {
     if (d->plan_col) stride_plan_destroy(d->plan_col);
     STRIDE_ALIGNED_FREE(d->scratch_re);
     STRIDE_ALIGNED_FREE(d->scratch_im);
+    STRIDE_ALIGNED_FREE(d->re_pad);
+    STRIDE_ALIGNED_FREE(d->im_pad);
+    free(d->perm);
     free(d);
 }
 
@@ -324,13 +383,18 @@ static void _fft2d_r2c_destroy(void *data) {
  * ═══════════════════════════════════════════════════════════════ */
 
 static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
+                                               size_t K_pad,
                                                stride_plan_t *plan_r2c,
                                                stride_plan_t *plan_col)
 {
-    /* Caller must ensure B == plan_r2c->K (they index the same scratch).
-     * No clamping here — clamping would silently break the layout invariant. */
+    /* Caller must ensure:
+     *   B == plan_r2c->K (they index the same row-pass scratch).
+     *   K_pad == plan_col->K, K_pad multiple of 4, K_pad >= N2/2+1.
+     * No clamping here — clamping would silently break layout invariants. */
+    const size_t hp1 = (size_t)(N2 / 2 + 1);
     if (N1 < 2 || N2 < 2 || (N2 & 1) || !plan_r2c || !plan_col ||
-        B < 2 || B > (size_t)N1) {
+        B < 2 || B > (size_t)N1 ||
+        K_pad < hp1 || (K_pad & 3) != 0) {
         if (plan_r2c) stride_plan_destroy(plan_r2c);
         if (plan_col) stride_plan_destroy(plan_col);
         return NULL;
@@ -346,11 +410,15 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
     d->N1 = N1;
     d->N2 = N2;
     d->B = B;
+    d->K_pad = K_pad;
     d->plan_r2c = plan_r2c;
     d->plan_col = plan_col;
 
     d->tile_real_sz = (size_t)N2 * B;
-    d->tile_complex_sz = (size_t)(N2 / 2 + 1) * B;
+    /* Per-tile complex scratch: hp1 rows actually written by R2C, but we
+     * size it generously at N2*B (= tile_real_sz) since that's the buffer
+     * R2C reuses for input + Re bins. Im just needs hp1*B. */
+    d->tile_complex_sz = hp1 * B;
 
     int T = stride_get_num_threads();
     if (T > FFT2D_R2C_MAX_THREADS) T = FFT2D_R2C_MAX_THREADS;
@@ -361,9 +429,33 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
         (size_t)T * d->tile_real_sz * sizeof(double));
     d->scratch_im = (double *)STRIDE_ALIGNED_ALLOC(64,
         (size_t)T * d->tile_complex_sz * sizeof(double));
-    if (!d->scratch_re || !d->scratch_im) {
+    /* Padded col-FFT scratch: N1 * K_pad doubles each. */
+    d->re_pad = (double *)STRIDE_ALIGNED_ALLOC(64,
+        (size_t)N1 * K_pad * sizeof(double));
+    d->im_pad = (double *)STRIDE_ALIGNED_ALLOC(64,
+        (size_t)N1 * K_pad * sizeof(double));
+    if (!d->scratch_re || !d->scratch_im || !d->re_pad || !d->im_pad) {
         _fft2d_r2c_destroy(d);
         return NULL;
+    }
+
+    /* Compute mixed-radix digit-reversal permutation for the col FFT. */
+    d->perm = (int *)malloc((size_t)N1 * sizeof(int));
+    if (!d->perm) { _fft2d_r2c_destroy(d); return NULL; }
+    {
+        const int *factors = plan_col->factors;
+        const int nf = plan_col->num_stages;
+        for (int n = 0; n < N1; n++) {
+            int idx = n, rev = 0, radix_product = 1;
+            for (int s = 0; s < nf; s++) {
+                int R = factors[s];
+                int digit = idx % R;
+                idx /= R;
+                rev += digit * (N1 / (radix_product * R));
+                radix_product *= R;
+            }
+            d->perm[n] = rev;
+        }
     }
 
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
