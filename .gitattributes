@@ -4,3 +4,6 @@
 # Treat notebooks as binary (skip diff/merge noise)
 *.ipynb linguist-generated
 *.ipynb -diff
+
+# Auto-generated headers — collapse in GitHub diff views, do not hand-edit.
+# src/core/generated/* linguist-generated

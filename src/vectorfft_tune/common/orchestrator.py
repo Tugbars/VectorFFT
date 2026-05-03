@@ -896,6 +896,102 @@ def write_summary(report: SweepReport, summary_path: Path) -> None:
     summary_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
+# ────────────────────── cpe_measure single-shot phase ──────────────────────
+#
+# Unlike the per-radix bench phases, CPE measurement is a SINGLE-SHOT
+# operation: tools/radix_profile/measure_cpe.exe iterates over the entire
+# codelet registry internally, times each (R, variant, isa) at K=256, and
+# emits src/core/generated/radix_cpe.h in one go.
+#
+# Splitting it per-radix would defeat the cross-codelet variance check
+# (we want one consistent host state across all measurements). So this
+# function is invoked ONCE per orchestrator run, either as the sole
+# operation (--phase=cpe_measure) or as the final step of --phase=all.
+#
+# It reuses the orchestrator's existing power-plan, affinity, and signal-
+# handler restore machinery for free — by the time we get here, the host
+# is already in a calibration-grade state.
+
+# The orchestrator's PROJECT_ROOT is `src/vectorfft_tune/` (its own subtree
+# root). cpe_measure lives under the actual repo root, two levels up.
+_REPO_ROOT = PROJECT_ROOT.parent.parent
+_MEASURE_CPE_SRC = _REPO_ROOT / 'tools' / 'radix_profile' / 'measure_cpe.c'
+_MEASURE_CPE_EXE = _REPO_ROOT / 'tools' / 'radix_profile' / 'measure_cpe.exe'
+_MEASURE_CPE_BUILD = _REPO_ROOT / 'build_tuned' / 'build.py'
+
+
+def _build_measure_cpe(quiet: bool) -> tuple[bool, str]:
+    """Compile measure_cpe.c via build_tuned/build.py. Idempotent — the
+    build script is fast on a no-op rebuild. Returns (ok, message)."""
+    if not _MEASURE_CPE_SRC.is_file():
+        return False, f"missing {_MEASURE_CPE_SRC.relative_to(_REPO_ROOT)}"
+    if not _MEASURE_CPE_BUILD.is_file():
+        return False, f"missing {_MEASURE_CPE_BUILD.relative_to(_REPO_ROOT)}"
+    # --compile: build but don't run. We invoke measure_cpe.exe ourselves
+    # so its exit code reaches the orchestrator unmangled (a variance fail
+    # exits 3 from the exe, but build.py would otherwise relay it as if
+    # build itself failed, which it didn't).
+    argv = [sys.executable, str(_MEASURE_CPE_BUILD),
+            '--compile',
+            '--src', str(_MEASURE_CPE_SRC.relative_to(_REPO_ROOT))]
+    try:
+        out = subprocess.run(argv, cwd=str(_REPO_ROOT),
+                             capture_output=quiet, text=True, timeout=180)
+    except Exception as e:
+        return False, f"build subprocess failed: {e}"
+    if out.returncode != 0:
+        tail = out.stderr.strip()[-400:] if quiet and out.stderr else ''
+        return False, f"build exited {out.returncode}{(': ' + tail) if tail else ''}"
+    return True, f"built {_MEASURE_CPE_EXE.name}"
+
+
+def run_cpe_measure_phase(system: str, cpu: int, quiet: bool,
+                          force: bool) -> tuple[bool, str]:
+    """Build (if needed) + run measure_cpe.exe under the active power plan
+    + affinity. Regenerates src/core/generated/radix_cpe.h.
+
+    Returns (ok, message). On variance-check failure (CV > 5%), measure_cpe
+    exits 3 and refuses to overwrite the header — we surface that verbatim
+    so the operator can decide whether to re-run on a quieter machine.
+    """
+    ok, msg = _build_measure_cpe(quiet)
+    if not ok:
+        return False, msg
+
+    if not _MEASURE_CPE_EXE.is_file():
+        return False, f"build reported success but {_MEASURE_CPE_EXE.name} missing"
+
+    args = [str(_MEASURE_CPE_EXE)]
+    if force:
+        args.append('--force')
+
+    if system == 'Linux':
+        if shutil.which('taskset') is None:
+            return False, "taskset not available; cannot pin measure_cpe"
+        args = ['taskset', '-c', str(cpu)] + args
+    # Windows: orchestrator's parent affinity (set earlier) is inherited.
+
+    print(f'[cpe_measure] running {_MEASURE_CPE_EXE.name} '
+          f'(pinned CPU {cpu}, K=256, 51 runs/codelet)...')
+    t0 = time.time()
+    try:
+        # Stream output live — measure_cpe prints a per-radix progress table
+        # that's useful to watch.
+        rc = subprocess.run(args, cwd=str(_REPO_ROOT)).returncode
+    except KeyboardInterrupt:
+        return False, "interrupted"
+    elapsed = time.time() - t0
+
+    if rc == 0:
+        return True, (f"radix_cpe.h regenerated in {elapsed:.1f}s "
+                      f"(variance check passed)")
+    if rc == 3:
+        return False, (f"variance check exceeded 5% threshold after {elapsed:.1f}s; "
+                       f"radix_cpe.h NOT updated. Re-run on a quieter machine, or "
+                       f"use --force to bypass (commits noisy numbers — not recommended).")
+    return False, f"measure_cpe exited {rc} after {elapsed:.1f}s"
+
+
 # ────────────────────── config ──────────────────────
 
 def load_config(path: Path) -> dict:
@@ -919,8 +1015,17 @@ def parse_args():
         description='VectorFFT per-radix bench orchestrator.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument('--phase', choices=['emit', 'build', 'run', 'validate', 'all'],
-                    help='phase passed through to each per-radix bench.py (default: all)')
+    ap.add_argument('--phase',
+                    choices=['emit', 'build', 'run', 'validate', 'all',
+                             'cpe_measure'],
+                    help='phase passed through to each per-radix bench.py '
+                         '(default: all). Special phase "cpe_measure" runs '
+                         'tools/radix_profile/measure_cpe.exe ONCE (not per-'
+                         'radix) under the same preflight/affinity/auto-perf '
+                         'machinery, regenerating src/core/generated/'
+                         'radix_cpe.h. With --phase=all, cpe_measure runs '
+                         'automatically as the final step after per-radix '
+                         'measurement completes.')
     ap.add_argument('--radix', help='comma-separated radix names (e.g. r10,r12)')
     ap.add_argument('--skip',  help='comma-separated radix names to skip')
     ap.add_argument('--cpu', type=int, help='CPU core to pin bench runs to (default: 2)')
@@ -1092,6 +1197,23 @@ def main():
             print('[affinity] proceeding without parent-affinity pinning; '
                   'measurements may be noisier', file=sys.stderr)
 
+    # ───── --phase=cpe_measure: single-shot, no per-radix sweep ─────
+    # measure_cpe.exe iterates over the entire codelet registry internally;
+    # there's nothing to dispatch per-radix. Just run it under the active
+    # power plan + affinity (already established above) and exit.
+    if s['phase'] == 'cpe_measure':
+        if s['dry_run']:
+            print('[orch] --dry-run: would execute:')
+            print(f'  python build_tuned/build.py --src '
+                  f'{_MEASURE_CPE_SRC.relative_to(_REPO_ROOT)}')
+            print(f'  {_MEASURE_CPE_EXE.relative_to(_REPO_ROOT)}'
+                  f'{" --force" if s["force"] else ""}')
+            return 0
+        ok, msg = run_cpe_measure_phase(system, s['cpu'], s['quiet'], s['force'])
+        marker = 'OK' if ok else 'FAIL'
+        print(f'[cpe_measure] {marker}  {msg}')
+        return 0 if ok else 1
+
     # Discover
     all_runs = discover_radixes()
     if not all_runs:
@@ -1155,6 +1277,22 @@ def main():
                 break
 
     report.overall_elapsed_s = time.time() - t_overall
+
+    # ───── --phase=all: append cpe_measure as the final step ─────
+    # The estimate-mode cost model in src/core/factorizer.h reads from
+    # src/core/generated/radix_cpe.h. If users run --phase=all to regen
+    # codelets but skip cpe_measure, they'd ship binaries with stale CPE
+    # numbers (or worse, ops/SIMD fallback). Auto-running it here ensures
+    # the cost model reflects the codelets we just measured.
+    #
+    # Skip on --fail-fast if anything failed: don't waste time measuring
+    # codelets that aren't fully built/tested.
+    if s['phase'] == 'all' and not (any_failed and s['fail_fast']):
+        ok, msg = run_cpe_measure_phase(system, s['cpu'], s['quiet'], s['force'])
+        marker = 'OK' if ok else 'FAIL'
+        print(f'[cpe_measure] {marker}  {msg}')
+        if not ok:
+            any_failed = True
 
     # Summary
     if not s['no_summary']:
