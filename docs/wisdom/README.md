@@ -57,12 +57,9 @@ Code, not docs:
 
 - [src/core/planner.h](../../src/core/planner.h) — `stride_wisdom_t`, `stride_wise_plan`, `_stride_build_plan_explicit`
 - [src/core/dp_planner.h](../../src/core/dp_planner.h) — `stride_dp_plan_measure` (top-K + variant cartesian)
-- [src/core/wisdom_bridge.h](../../src/core/wisdom_bridge.h) — Layer-1 predicate dispatcher
 - [src/core/registry.h](../../src/core/registry.h) — `vfft_variant_t`, `vfft_stage_variants`, `vfft_variant_iter_*`
-- [src/vectorfft_tune/generated/r{R}/vfft_r{R}_plan_wisdom.h](../../src/vectorfft_tune/generated/) — Layer-1 per-radix predicates
-- [src/vectorfft_tune/common/select_and_emit.py](../../src/vectorfft_tune/common/select_and_emit.py) — bench → predicates emission
-- [build_tuned/calibrate_tuned.c](../../build_tuned/calibrate_tuned.c) — Layer-2 calibrator (top-level driver)
-- [build_tuned/vfft_wisdom_tuned.txt](../../build_tuned/vfft_wisdom_tuned.txt) — Layer-2 wisdom file (output)
+- [build_tuned/calibrate_tuned.c](../../build_tuned/calibrate_tuned.c) — calibrator (top-level driver)
+- [build_tuned/vfft_wisdom_tuned.txt](../../build_tuned/vfft_wisdom_tuned.txt) — shipped wisdom file
 
 If a doc disagrees with the code, the code wins. Open an issue.
 
