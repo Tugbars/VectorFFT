@@ -44,11 +44,13 @@ int main(void) {
         plan = stride_auto_plan(N, K, &reg);
         if (!plan) { printf("N=%d PLAN_FAIL2\n", N); continue; }
 
-        stride_execute_fwd(plan, r, i);
-
-        /* If output is natural and impulse was at n=0, then Y[k] = 1 for all k.
-         * Take just the first batch lane (k=0). */
-        printf("N=%-3d num_stages=%d  Y[0..7]=", N, plan->num_stages);
+        /* Test BWD: impulse at index 1. bwd convention: e^{+2*pi*i n k/N} at output n.
+         * If bwd output is natural-order: bwd(impulse@1)[n] = e^{+2*pi*i n / N}.
+         * For n=1: bwd(impulse@1)[1] = e^{+2*pi*i / N} = (cos(2pi/N), sin(2pi/N)) */
+        stride_execute_bwd(plan, r, i);
+        printf("N=%-3d num_stages=%d factors=", N, plan->num_stages);
+        for (int s = 0; s < plan->num_stages; s++) printf("%d,", plan->factors[s]);
+        printf("  bwd[0..7]=");
         for (int n = 0; n < 8 && n < N; n++) {
             printf(" (%.2f,%.2f)", r[(size_t)n*K + 0], i[(size_t)n*K + 0]);
         }
