@@ -10,7 +10,7 @@
 #include "env.h"
 #include "fftw3.h"
 
-static double now_ns(void) {
+static double r2c2d_now_ns(void) {
     LARGE_INTEGER f, c;
     QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);
     return (double)c.QuadPart * 1e9 / (double)f.QuadPart;
@@ -57,16 +57,16 @@ int main(void) {
 
         double vfft_min = 1e18;
         for (int it = 0; it < reps; it++) {
-            double t0 = now_ns();
+            double t0 = r2c2d_now_ns();
             stride_execute_2d_r2c(plan, src, out_re, out_im);
-            double t1 = now_ns();
+            double t1 = r2c2d_now_ns();
             if (t1-t0 < vfft_min) vfft_min = t1-t0;
         }
         double fftw_min = 1e18;
         for (int it = 0; it < reps; it++) {
-            double t0 = now_ns();
+            double t0 = r2c2d_now_ns();
             fftw_execute(fp);
-            double t1 = now_ns();
+            double t1 = r2c2d_now_ns();
             if (t1-t0 < fftw_min) fftw_min = t1-t0;
         }
 
