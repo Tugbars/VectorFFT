@@ -158,10 +158,11 @@ static void stride_wisdom_init(stride_wisdom_t *wis)
     wis->count = 0;
 }
 
-/* Find wisdom entry for (N, K). Returns NULL if not found. */
+/* Find wisdom entry for (N, K). Returns NULL if not found or if wis is NULL. */
 static const stride_wisdom_entry_t *stride_wisdom_lookup(
     const stride_wisdom_t *wis, int N, size_t K)
 {
+    if (!wis) return NULL;
     for (int i = 0; i < wis->count; i++)
     {
         if (wis->entries[i].N == N && wis->entries[i].K == K)

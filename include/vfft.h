@@ -200,102 +200,67 @@ int vfft_pin_thread(int core_id);
 /**
  * vfft_plan_c2c — Create a complex-to-complex FFT plan.
  *
- * @param N   Transform size (any positive integer; highly composite N is fastest).
- * @param K   Batch count (number of independent transforms). K >= 4 for SIMD.
- * @return    Plan handle, or NULL on failure.
+ * @param N      Transform size (any positive integer; highly composite N is fastest).
+ * @param K      Batch count (number of independent transforms). K >= 4 for SIMD.
+ * @param flags  VFFT_ESTIMATE / VFFT_MEASURE / VFFT_EXHAUSTIVE / VFFT_WISDOM_ONLY.
+ * @return       Plan handle, or NULL on failure (or VFFT_WISDOM_ONLY miss).
  *
  * The plan is reusable: call vfft_execute_* many times with different data.
- * Uses the heuristic planner. For calibrated plans, use vfft_plan_c2c_measure.
+ * MEASURE/EXHAUSTIVE consult the wisdom cache (load via vfft_load_wisdom);
+ * on miss they calibrate the cell and insert the result.
  */
-vfft_plan vfft_plan_c2c(int N, size_t K);
-
-/**
- * vfft_plan_c2c_measure — Create a calibrated complex-to-complex FFT plan.
- *
- * Tries multiple factorizations and measures actual performance.
- * Slower to create but may produce faster plans for repeated execution.
- *
- * @param N   Transform size.
- * @param K   Batch count.
- * @return    Plan handle, or NULL on failure.
- */
-vfft_plan vfft_plan_c2c_measure(int N, size_t K);
+vfft_plan vfft_plan_c2c(int N, size_t K, unsigned flags);
 
 /**
  * vfft_plan_r2c — Create a real-to-complex FFT plan.
  *
  * N-point real FFT → N/2+1 complex output (Hermitian symmetry).
- * N must be even.
- *
- * @param N   Transform size (must be even).
- * @param K   Batch count.
- * @return    Plan handle, or NULL on failure.
+ * Constraint: N must be even, K must be >= 2.
  */
-vfft_plan vfft_plan_r2c(int N, size_t K);
+vfft_plan vfft_plan_r2c(int N, size_t K, unsigned flags);
 
 /**
  * vfft_plan_2d — Create a 2D complex FFT plan.
  *
  * In-place, row-major layout: re[i*N2 + j], im[i*N2 + j].
  * bwd(fwd(x)) = N1*N2 * x.
- *
- * @param N1   Number of rows (axis-0 FFT length).
- * @param N2   Number of columns (axis-1 FFT length).
- * @return     Plan handle, or NULL on failure.
  */
-vfft_plan vfft_plan_2d(int N1, int N2);
+vfft_plan vfft_plan_2d(int N1, int N2, unsigned flags);
 
 /**
  * vfft_plan_2d_r2c — Create a 2D real-to-complex FFT plan.
  *
  * Forward: N1*N2 reals -> N1*(N2/2+1) complex bins (reduces along inner axis).
  * Backward: reverse, scaled bwd(fwd(x)) = N1*N2 * x.
- *
- * @param N1   Number of rows (axis-0).
- * @param N2   Number of columns (axis-1, must be even).
- * @return     Plan handle, or NULL on failure.
+ * Constraint: N2 must be even.
  */
-vfft_plan vfft_plan_2d_r2c(int N1, int N2);
+vfft_plan vfft_plan_2d_r2c(int N1, int N2, unsigned flags);
 
 /**
- * vfft_plan_dct2 — Create a DCT-II / DCT-III plan (FFTW REDFT10 / REDFT01).
- *
- * One plan handles both directions:
- *   vfft_execute_dct2 = forward (REDFT10)
- *   vfft_execute_dct3 = backward (REDFT01); inverse up to scale 2N.
- *
+ * vfft_plan_dct2 — DCT-II (REDFT10) / DCT-III (REDFT01) plan, both directions.
+ *   vfft_execute_dct2 = forward; vfft_execute_dct3 = backward (inverse up to 2N).
  * Constraint: N must be even.
  */
-vfft_plan vfft_plan_dct2(int N, size_t K);
+vfft_plan vfft_plan_dct2(int N, size_t K, unsigned flags);
 
 /**
- * vfft_plan_dct4 — Create a DCT-IV plan (FFTW REDFT11).
- *
- * Involutory up to scale 2N: dct4(dct4(x))/(2N) = x. One plan, one executor.
- *
+ * vfft_plan_dct4 — DCT-IV (REDFT11) plan. Involutory up to scale 2N.
  * Constraint: N must be even.
  */
-vfft_plan vfft_plan_dct4(int N, size_t K);
+vfft_plan vfft_plan_dct4(int N, size_t K, unsigned flags);
 
 /**
- * vfft_plan_dst2 — Create a DST-II / DST-III plan (FFTW RODFT10 / RODFT01).
- *
- * One plan handles both directions:
- *   vfft_execute_dst2 = forward (RODFT10)
- *   vfft_execute_dst3 = backward (RODFT01); inverse up to scale 2N.
- *
+ * vfft_plan_dst2 — DST-II (RODFT10) / DST-III (RODFT01) plan, both directions.
+ *   vfft_execute_dst2 = forward; vfft_execute_dst3 = backward (inverse up to 2N).
  * Constraint: N must be even.
  */
-vfft_plan vfft_plan_dst2(int N, size_t K);
+vfft_plan vfft_plan_dst2(int N, size_t K, unsigned flags);
 
 /**
- * vfft_plan_dht — Create a Discrete Hartley Transform plan (FFTW_DHT).
- *
- * Self-inverse up to scale 1/N: dht(dht(x))/N = x. One plan, one executor.
- *
- * Constraint: N must be even.
+ * vfft_plan_dht — Discrete Hartley Transform (FFTW_DHT) plan.
+ * Self-inverse up to scale 1/N. Constraint: N must be even.
  */
-vfft_plan vfft_plan_dht(int N, size_t K);
+vfft_plan vfft_plan_dht(int N, size_t K, unsigned flags);
 
 /**
  * vfft_destroy — Destroy a plan and free all resources.
