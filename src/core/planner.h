@@ -1007,16 +1007,16 @@ static stride_plan_t *stride_estimate_plan(int N, size_t K,
 {
     stride_cpu_info_t cpu = stride_detect_cpu();
     stride_factorization_t fact;
-    if (stride_factorize_greedy(N, K, reg, &cpu, &fact) != 0) {
-        /* Greedy failed (prime / non-smooth) — fall back to auto_plan
-         * which handles Bluestein/Rader for primes. */
+
+    /* Scored multi-decomposition search: enumerates every ordered
+     * factorization of N (up to FACT_MAX_STAGES stages) using available
+     * radix codelets, scores each via the per-radix profile-driven cost
+     * model, returns the lowest-scoring one. Sub-millisecond for typical N. */
+    if (stride_factorize_scored(N, K, reg, &cpu, &fact) != 0) {
+        /* N has prime factors not in our radix set — fall back to
+         * auto_plan which handles Bluestein/Rader for primes. */
         return stride_auto_plan(N, K, reg);
     }
-
-    /* Permutation search over the radix set, scored by the analytic cost
-     * model. Only worth doing for nf >= 2 (single-factor plan has nothing
-     * to permute). For nf >= 6 the search is skipped (too many perms). */
-    stride_optimize_order(&fact, K, N, &cpu);
 
     return _stride_build_plan(N, K, fact.factors, fact.nfactors, reg);
 }
