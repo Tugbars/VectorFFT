@@ -55,3 +55,4 @@ Thumbs.db
 /build_icx
 /build_gcc
 /build_msvc
+/build_check
