@@ -136,7 +136,7 @@ Wisdom mechanics:
 - **VTune-calibrated cost model** for `VFFT_ESTIMATE` — closed-form scoring with per-radix CPE (cycles-per-element) measurements. Lands within ~1.20× of measured wisdom on the calibration host. FFTW's `FFTW_ESTIMATE` typically picks plans 2–5× off; ours within 1.3×.
 - **Recursive DP planner** for `VFFT_MEASURE` (FFTW-style) — tries each radix as the first stage, recursively solves sub-problems with memoization, then benchmarks all orderings of the winning factorization (~150 benchmarks for N=100,000 vs ~61,000 for exhaustive search).
 - **Joint plan-level search** at calibration time — ranks plans on a top-K-of-3 stable scoring metric to defeat noise, then per-radix variant tuning (FLAT / LOG3 / T1S / BUF) per `(R, me, ios)` cell.
-- **Wisdom file** persists across runs via `vfft_load_wisdom()` / `vfft_save_wisdom()`. The library does not auto-load any default file; users opt in by loading their own calibration output or a sample shipped under `examples/<arch>/wisdom.txt`.
+- **Wisdom file** persists across runs via `vfft_load_wisdom()` / `vfft_save_wisdom()`. The library does not auto-load any default file — users opt in. A pre-calibrated wisdom file for the Intel i9-14900KF ships at [`examples/14900KF/wisdom.txt`](examples/14900KF/wisdom.txt) (see its README for details on per-host scope and when to recalibrate).
 
 ### Transforms
 
@@ -199,17 +199,17 @@ Both inherit ESTIMATE/MEASURE from the inner mixed-radix FFT.
 ```bash
 git clone https://github.com/Tugbars/VectorFFT.git
 cd VectorFFT
-python tools/radix_profile/extract.py                            # op counts (deterministic)
+python tools/radix_profile/extract.py                              # op counts (deterministic)
 python build_tuned/build.py --src tools/radix_profile/measure_cpe.c
-tools/radix_profile/measure_cpe.exe                              # cycles/butterfly (host-specific)
+tools/radix_profile/measure_cpe.exe                                # cycles/butterfly (host-specific)
 ```
 
-`extract.py` writes `src/core/generated/radix_profile.h` (per-radix op
-counts, deterministic — re-run after codelet changes). `measure_cpe.exe`
-times each registered codelet variant at K=256 and writes
-`src/core/generated/radix_cpe.h` (cycles per butterfly). Together they
-feed the closed-form cost model in `src/core/factorizer.h` that powers
-`VFFT_ESTIMATE`.
+`extract.py` writes [`src/core/generated/radix_profile.h`](src/core/generated/radix_profile.h)
+(per-radix op counts, deterministic — re-run after codelet changes).
+`measure_cpe.exe` times each registered codelet variant at K=256 and
+writes [`src/core/generated/radix_cpe.h`](src/core/generated/radix_cpe.h)
+(cycles per butterfly). Together they feed the closed-form cost model in
+[`src/core/factorizer.h`](src/core/factorizer.h) that powers `VFFT_ESTIMATE`.
 
 A reference CPE table for the i9-14900KF is already checked in. Re-run
 on a different host (or after codelet changes) to retune. The tool
@@ -224,56 +224,23 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . --config Release
 ```
 
-### C API (opaque handles)
+**Step 3 — see the API in action**:
 
-```c
-#include <vfft.h>
+[`examples/quickstart.c`](examples/quickstart.c) is a single self-contained
+program that exercises every public entry point in [`include/vfft.h`](include/vfft.h):
+1D C2C, R2C/C2R, 2D C2C, 2D R2C/C2R, DCT-II/III/IV, DST-II/III, DHT,
+threading, interleaved/split conversion, and the wisdom lifecycle
+(load / save / forget). It also doubles as a correctness gate — every
+demo verifies a forward+backward roundtrip at machine precision.
 
-vfft_init();
-vfft_plan p = vfft_plan_c2c(1024, 256);
-double *re = vfft_alloc(1024 * 256 * sizeof(double));
-double *im = vfft_alloc(1024 * 256 * sizeof(double));
-// ... fill re[], im[] ...
-vfft_execute_fwd(p, re, im);
-vfft_execute_bwd_normalized(p, re, im);  // roundtrip: output == input
-vfft_destroy(p);
-vfft_free(re); vfft_free(im);
+```bash
+./build/bin/vfft_quickstart           # built automatically by the cmake step above
 ```
 
-### Internal API (header-only)
-
-```c
-#include "planner.h"
-
-stride_registry_t reg;
-stride_registry_init(&reg);
-
-stride_plan_t *plan = stride_auto_plan(N, K, &reg);
-stride_execute_fwd(plan, re, im);
-stride_execute_bwd(plan, re, im);
-stride_plan_destroy(plan);
-```
-
-### Threading
-
-```c
-// Option A: internal parallelism (library manages threads)
-vfft_set_num_threads(8);
-vfft_execute_fwd(plan, re, im);  // call from ONE thread
-
-// Option B: external parallelism (you manage threads)
-vfft_set_num_threads(1);
-// Each of your threads calls execute on its own data — safe.
-```
-
-### 2D FFT
-
-```c
-vfft_plan p = vfft_plan_2d(256, 256);
-vfft_execute_fwd(p, re, im);
-```
-
-See [`examples/`](examples/) for complete working examples including spectrum analyzer with live audio.
+For pre-calibrated wisdom on Intel Raptor Lake hosts, see
+[`examples/14900KF/`](examples/14900KF/) — it ships 198 calibrated plans
+covering the headline (N, K) grid plus a README explaining when the file
+applies and when to recalibrate for your host.
 
 ---
 

@@ -224,6 +224,13 @@ vfft_plan vfft_plan_r2c(int N, size_t K, unsigned flags);
  *
  * In-place, row-major layout: re[i*N2 + j], im[i*N2 + j].
  * bwd(fwd(x)) = N1*N2 * x.
+ *
+ * v1.0 flag handling: `flags` is accepted for API consistency with the 1D
+ * plan creators but is currently a no-op. The 2D path always uses the
+ * wisdom-aware planner, which already runs an exhaustive-grade inner 1D
+ * search. Wisdom-tuned codelet variant selection is gated by the K-split
+ * corruption fix landing in v1.1; all flags collapse to the same plan in
+ * v1.0.
  */
 vfft_plan vfft_plan_2d(int N1, int N2, unsigned flags);
 
@@ -233,6 +240,9 @@ vfft_plan vfft_plan_2d(int N1, int N2, unsigned flags);
  * Forward: N1*N2 reals -> N1*(N2/2+1) complex bins (reduces along inner axis).
  * Backward: reverse, scaled bwd(fwd(x)) = N1*N2 * x.
  * Constraint: N2 must be even.
+ *
+ * v1.0 flag handling: same as vfft_plan_2d — `flags` is a no-op; all flags
+ * return the same plan.
  */
 vfft_plan vfft_plan_2d_r2c(int N1, int N2, unsigned flags);
 
