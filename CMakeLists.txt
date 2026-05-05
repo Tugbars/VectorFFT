@@ -37,6 +37,12 @@ endif()
 # ── VectorFFT v1.0 production library (new core) ──────────────────────
 add_subdirectory(src)
 
+# ── Examples (opt-in: -DVFFT_BUILD_EXAMPLES=ON) ────────────────────────
+option(VFFT_BUILD_EXAMPLES "Build the quickstart example program" ON)
+if(VFFT_BUILD_EXAMPLES)
+    add_subdirectory(examples)
+endif()
+
 # ── Install rules ──────────────────────────────────────────────────────
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
