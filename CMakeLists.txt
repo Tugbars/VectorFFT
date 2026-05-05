@@ -34,8 +34,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "IntelLLVM")
     endif()
 endif()
 
-# ── Stride-FFT module ──────────────────────────────────────────────────
-add_subdirectory(src/stride-fft)
+# ── VectorFFT v1.0 production library (new core) ──────────────────────
+add_subdirectory(src)
 
 # ── Install rules ──────────────────────────────────────────────────────
 include(GNUInstallDirs)
