@@ -109,16 +109,6 @@ Rader and Bluestein prime cells use a convolution-based path; their roundtrip er
 
 VectorFFT uses a **permutation-free stride-based Cooley-Tukey** architecture.
 
-### Permutation-Free Roundtrip
-
-Traditional FFT libraries (FFTW, MKL) compute the Cooley-Tukey decomposition followed by a **digit-reversal permutation** -- an O(N) memory shuffle that produces no useful computation but costs cache misses. VectorFFT eliminates this entirely:
-
-- **Forward (DIT):** stages process data at increasing strides; output lands in digit-reversed order
-- **Backward (DIF):** stages process in reverse order, naturally undoing the permutation
-- **Roundtrip (fwd + bwd):** produces natural-order output with zero permutation overhead
-
-This saves one full data pass per transform. At large N with large batch sizes, that's the difference between 1x and 16x over FFTW.
-
 ### Executor
 
 - **Fully in-place** — single buffer, no scratch allocation along the stage chain
