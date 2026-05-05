@@ -47,3 +47,7 @@ Thumbs.db
 *.pyc
 /src/test-gen/R32/build
 /src/codelet-bench
+/build_cmake_test
+/build_gcc
+/build_icx
+/build_msvc
