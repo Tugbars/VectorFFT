@@ -30,9 +30,103 @@
 typedef struct {
     int N;                  /* DST size (must be even) */
     size_t K;               /* batch count */
+    int n_threads;          /* T_plan snapshot — caps execute-time T */
     double *prebuf;         /* N*K scratch for permuted input/output */
     stride_plan_t *dct_plan; /* DCT-II/III plan (owned) */
 } stride_dst_data_t;
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * MT INFRASTRUCTURE — sign-flip + reversal passes are K-partitionable.
+ * Three-phase dispatch around the inner DCT-II/III (which has its own MT).
+ * ═══════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    stride_dst_data_t *d;
+    double *re;
+    size_t k0, k1;
+} _dst_slice_arg_t;
+
+static inline int _dst_mt_threads(int n_threads_plan, int N, size_t K) {
+    int T = stride_get_num_threads();
+    if (T > n_threads_plan) T = n_threads_plan;
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T < 1) T = 1;
+    if (T > 1 && (size_t)N * K < (size_t)8192 * (size_t)T) T = 1;
+    return T;
+}
+
+/* DST-II Phase 1: prebuf[n] = (-1)^n * re[n], K-slice */
+static void _dst2_worker_pre_fwd(void *arg) {
+    _dst_slice_arg_t *a = (_dst_slice_arg_t *)arg;
+    stride_dst_data_t *d = a->d;
+    const int N = d->N;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1, slice = k1 - k0;
+    const double *re = a->re;
+    double *prebuf = d->prebuf;
+    for (int n = 0; n < N; n++) {
+        const double *src = re     + (size_t)n * K;
+        double       *dst = prebuf + (size_t)n * K;
+        if (n & 1) {
+            for (size_t k = k0; k < k1; k++) dst[k] = -src[k];
+        } else {
+            memcpy(dst + k0, src + k0, slice * sizeof(double));
+        }
+    }
+}
+
+/* DST-II Phase 3: re[k] = prebuf[N-1-k], K-slice */
+static void _dst2_worker_post_fwd(void *arg) {
+    _dst_slice_arg_t *a = (_dst_slice_arg_t *)arg;
+    stride_dst_data_t *d = a->d;
+    const int N = d->N;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1, slice = k1 - k0;
+    double *re = a->re;
+    const double *prebuf = d->prebuf;
+    for (int k = 0; k < N; k++) {
+        memcpy(re     + (size_t)k             * K + k0,
+               prebuf + (size_t)(N - 1 - k)   * K + k0,
+               slice * sizeof(double));
+    }
+}
+
+/* DST-III Phase 1: prebuf[n] = re[N-1-n], K-slice */
+static void _dst3_worker_pre_fwd(void *arg) {
+    _dst_slice_arg_t *a = (_dst_slice_arg_t *)arg;
+    stride_dst_data_t *d = a->d;
+    const int N = d->N;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1, slice = k1 - k0;
+    const double *re = a->re;
+    double *prebuf = d->prebuf;
+    for (int n = 0; n < N; n++) {
+        memcpy(prebuf + (size_t)n           * K + k0,
+               re     + (size_t)(N - 1 - n) * K + k0,
+               slice * sizeof(double));
+    }
+}
+
+/* DST-III Phase 3: re[k] = (-1)^k * prebuf[k], K-slice */
+static void _dst3_worker_post_fwd(void *arg) {
+    _dst_slice_arg_t *a = (_dst_slice_arg_t *)arg;
+    stride_dst_data_t *d = a->d;
+    const int N = d->N;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1, slice = k1 - k0;
+    double *re = a->re;
+    const double *prebuf = d->prebuf;
+    for (int k = 0; k < N; k++) {
+        const double *src = prebuf + (size_t)k * K;
+        double       *dst = re     + (size_t)k * K;
+        if (k & 1) {
+            for (size_t kk = k0; kk < k1; kk++) dst[kk] = -src[kk];
+        } else {
+            memcpy(dst + k0, src + k0, slice * sizeof(double));
+        }
+    }
+}
 
 
 /* ═══════════════════════════════════════════════════════════════
@@ -49,6 +143,32 @@ static void _dst2_execute_fwd(void *data, double *re, double *im) {
     const int N = d->N;
     const size_t K = d->K;
 
+    int T = _dst_mt_threads(d->n_threads, N, K);
+    if (T > 1) {
+        _dst_slice_arg_t args[64];
+        for (int t = 0; t < T; t++) {
+            args[t].d  = d;
+            args[t].re = re;
+            args[t].k0 = (K * (size_t)t)       / (size_t)T;
+            args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
+        }
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dst2_worker_pre_fwd, &args[t]);
+        _dst2_worker_pre_fwd(&args[0]);
+        _stride_pool_wait_all();
+
+        d->dct_plan->override_fwd(d->dct_plan->override_data, d->prebuf, NULL);
+
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dst2_worker_post_fwd, &args[t]);
+        _dst2_worker_post_fwd(&args[0]);
+        _stride_pool_wait_all();
+        return;
+    }
+
+    /* Single-threaded path */
     for (int n = 0; n < N; n++) {
         const double *src = re        + (size_t)n * K;
         double       *dst = d->prebuf + (size_t)n * K;
@@ -83,6 +203,32 @@ static void _dst3_execute_fwd(void *data, double *re, double *im) {
     const int N = d->N;
     const size_t K = d->K;
 
+    int T = _dst_mt_threads(d->n_threads, N, K);
+    if (T > 1) {
+        _dst_slice_arg_t args[64];
+        for (int t = 0; t < T; t++) {
+            args[t].d  = d;
+            args[t].re = re;
+            args[t].k0 = (K * (size_t)t)       / (size_t)T;
+            args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
+        }
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dst3_worker_pre_fwd, &args[t]);
+        _dst3_worker_pre_fwd(&args[0]);
+        _stride_pool_wait_all();
+
+        d->dct_plan->override_bwd(d->dct_plan->override_data, d->prebuf, NULL);
+
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dst3_worker_post_fwd, &args[t]);
+        _dst3_worker_post_fwd(&args[0]);
+        _stride_pool_wait_all();
+        return;
+    }
+
+    /* Single-threaded path */
     for (int n = 0; n < N; n++) {
         memcpy(d->prebuf + (size_t)n           * K,
                re        + (size_t)(N - 1 - n) * K,
@@ -137,6 +283,10 @@ static stride_plan_t *stride_dst2_plan(int N, size_t K, stride_plan_t *dct_plan)
     d->N = N;
     d->K = K;
     d->dct_plan = dct_plan;
+
+    int T_plan = stride_get_num_threads();
+    if (T_plan < 1) T_plan = 1;
+    d->n_threads = T_plan;
 
     size_t buf_sz = (size_t)N * K;
     d->prebuf = (double *)STRIDE_ALIGNED_ALLOC(64, buf_sz * sizeof(double));

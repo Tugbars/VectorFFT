@@ -180,6 +180,10 @@ The K-multiple-of-4 constraint is the most surprising one for users. It surfaces
 | 2D C2C tile-parallel + K-split MT | ✅ shipped |
 | 2D R2C forward tile-parallel | ✅ shipped |
 | 2D R2C backward MT | ❌ v1.1 (single-threaded; reverse-iteration constraint blocks naive tile parallelism) |
+| **DCT-II / DCT-III** wrapper MT | ✅ shipped (K-split pre/post around inner R2C) |
+| **DCT-IV** wrapper MT | ✅ shipped (K-split pre/post twiddles around inner C2C) |
+| **DST-II / DST-III** wrapper MT | ✅ shipped (K-split sign-flip + reversal around inner DCT-II/III) |
+| **DHT** wrapper MT | ✅ shipped (K-split post-butterfly around inner R2C; pre-memcpy sequential) |
 | Thread pinning | ✅ shipped |
 
 The threading model is heterogeneous on purpose — different transforms benefit from different parallel decompositions:
@@ -187,6 +191,33 @@ The threading model is heterogeneous on purpose — different transforms benefit
 - Bluestein and Rader use block-walk: each thread owns a batch block and runs the full pipeline serially within it.
 - 2D row passes parallelize over independent tiles; col passes use K-split.
 - 2D R2C backward currently runs single-threaded because the in-place backward must process tiles in reverse order to avoid overwriting future tiles' input. Tile-parallel reverse iteration is solvable but not in scope for v1.0.
+- **DCT/DST/DHT** use a three-phase dispatch: K-split pre-pass → inner FFT (which has its own MT) → K-split post-pass. No nested parallelism: only one set of T threads is active at any moment.
+
+### DCT/DST/DHT MT scaling — v1.0 honest framing
+
+The wrapper MT lifts T=8 scaling on consumer hardware (i9-14900KF) from
+~1.4× (sequential wrappers, inner FFT MT only) to **1.6–2.6×** (parallel
+wrappers + inner FFT MT). Bench evidence at K ∈ {1024, 4096} and N up to
+4096 in [build_tuned/bench_mt_dct.c](../../build_tuned/bench_mt_dct.c).
+
+The remaining gap from 8× theoretical is the **DRAM bandwidth wall**:
+each transform is a three-pass design (pre + inner FFT + post), each
+pass reads + writes the full N·K data once. Total memory traffic per
+call ≈ 3 × N·K·16 bytes; at N·K = 16M that's ~1 GB per call. DDR5 on
+this CPU saturates around 25 GB/s, capping wall-time before T=8 can
+fully exploit core parallelism.
+
+To go past ~2.6× at T=8, the design needs **fused DCT/DST/DHT codelets**
+that read input once, do all the math in registers, and write output
+once — eliminating the multi-pass memory traffic. v1.1 codelet roadmap
+covers exactly these (`e10_*` for DCT-II, `e11_*` for DCT-IV,
+`r2hc_*` for R2C). Projected T=8 ceiling with fused codelets: ~5×.
+
+| Generation | T=8 ceiling | Bottleneck |
+|-----------|:-----------:|------------|
+| v1.0 sequential wrappers (pre-2026-05) | ~1.4× | sequential pre/post passes |
+| **v1.0 parallel wrappers (current)** | **~2.6×** | **DRAM bandwidth (3-pass design)** |
+| v1.1 fused codelets (planned) | ~5× | compute throughput |
 
 ---
 
