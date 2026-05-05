@@ -9,6 +9,10 @@
 
 ## Benchmark Results
 
+> **For the full v1.0 performance picture** — vs MKL, vs FFTW3, multi-threaded
+> scaling, DCT/DST/DHT, cost-model accuracy, per-codelet VTune profiles, hardware
+> caveats — see [`docs/performance/v1_0_results.md`](docs/performance/v1_0_results.md).
+
 > **Platform:** Intel Core i9-14900KF, 48 KB L1d, DDR5, AVX2, single-threaded  
 > **Competitor:** Intel MKL 2025 (sequential, `mkl_set_num_threads(1)`)  
 > **207 data points** across 9 categories, 3 batch sizes (K=4, K=32, K=256), N=8 to N=823,543
