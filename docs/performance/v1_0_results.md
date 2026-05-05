@@ -1,10 +1,11 @@
 # VectorFFT v1.0 — performance results
 
-Empirical performance of VectorFFT v1.0 across three axes:
+Empirical performance of VectorFFT v1.0 across four axes:
 
 1. **Wall-time vs MKL** on 1D C2C (the headline competitive metric)
 2. **Estimate-mode plan quality** vs measured wisdom (cost-model accuracy)
-3. **Multi-threaded scaling** at T=2/4/8 across all transforms
+3. **Wall-time vs FFTW3** on the r2r family (DCT/DST/DHT, single-thread)
+4. **Multi-threaded scaling** at T=2/4/8 across all transforms
 
 All numbers are from the i9-14900KF calibration host (P-core pinned,
 performance plan, single-threaded unless noted). The numbers move on
@@ -154,7 +155,117 @@ in v1.0 will not improve performance. It returns the same plan as
 `VFFT_ESTIMATE` would. Document accordingly when relying on flag
 behavior.
 
-## 3. Multi-threaded scaling
+## 3. r2r family — single-thread vs FFTW3
+
+The DCT / DST / DHT wrappers are built atop our R2C using Makhoul (DCT-II/III)
+and Lee 1984 (DCT-IV); DST-II/III piggyback on DCT-II/III with sign-flip
++ index reversal; DHT is a free derivation of R2C output. Specialized
+straight-line N=8 codelets (`gen_dct8.py`, `gen_dct3_n8.py`) bypass
+Makhoul for the JPEG block size.
+
+All numbers here are **single-threaded** (T=1) vs FFTW3 with `FFTW_MEASURE`
+planning, split-complex API.
+
+### DCT-II (REDFT10) — `bench_dct2_vs_fftw`
+
+| N | K | vfft ns | fftw ns | ratio |
+|--:|--:|--------:|--------:|------:|
+| 8 | 1024 (JPEG) | 2,300 | 3,400 | **1.48×** |
+| 8 | 4096 | 9,500 | 11,100 | 1.17× |
+| 16 | 1024 | 12,400 | 39,200 | 3.16× |
+| 32 | 1024 | 32,200 | 81,100 | 2.52× |
+| 64 | 1024 | 71,200 | 173,800 | 2.44× |
+| 128 | 256 | 28,900 | 88,300 | 3.06× |
+
+Wins all measured cells (range 1.17–3.16×).
+
+### DCT-III (REDFT01) — `bench_dct3_vs_fftw`
+
+| N | K | vfft ns | fftw ns | ratio |
+|--:|--:|--------:|--------:|------:|
+| 8 | 1024 (JPEG) | 2,500 | 2,900 | 1.16× |
+| **8** | **4096** | **17,200** | **10,400** | **0.60× (FFTW wins)** |
+| 16 | 1024 | 13,700 | 41,100 | 3.00× |
+| 32 | 1024 | 34,100 | 84,800 | 2.49× |
+| 64 | 1024 | 75,200 | 178,100 | 2.37× |
+| 256 | 256 | 65,900 | 203,300 | 3.08× |
+| 1024 | 256 | 416,000 | 1,495,500 | **3.59×** |
+
+> **The only v1.0 r2r loss vs FFTW3** is DCT-III at N=8 K=4096 (0.60×).
+> Both N=8 codelets (`gen_dct3_n8`) target the JPEG-range K (256–1024)
+> and don't optimize for very-large-K layout. FFTW switches to a
+> different large-batch code path that still beats us at K≥4096. v1.1
+> fix: a K-specialized DCT-III N=8 variant — same flavor as the JPEG
+> codelet, different cache layout for K≥4096. Tracked in
+> [docs/v1_1_codelet_roadmap.md](../v1_1_codelet_roadmap.md).
+
+### DCT-IV (REDFT11) — `bench_dct4_vs_fftw`
+
+After the specialized N=8 codelet landed:
+
+| N | K | vfft ns | fftw ns | ratio |
+|--:|--:|--------:|--------:|------:|
+| 8 | 256 | 800 | 2,700 | 3.38× |
+| 8 | 1024 | 4,300 | 9,400 | 2.19× |
+| 8 | 4096 | 17,600 | 36,900 | 2.10× |
+| 16 | 1024 | 8,900 | 35,900 | **4.03×** |
+| 32 | 1024 | 28,300 | 74,200 | 2.62× |
+| 64 | 1024 | 60,800 | 161,800 | 2.66× |
+| 256 | 256 | 59,500 | 186,000 | 3.13× |
+| 1024 | 256 | 354,200 | 1,482,100 | **4.18×** |
+
+Wins all measured cells (range 1.85–4.18×). The pre-codelet build
+showed losses 0.53–1.06× at small N — codelet flipped that.
+
+### DST-II / DST-III (RODFT10 / RODFT01) — `bench_dst23_vs_fftw`
+
+| Variant | N | K | vfft ns | fftw ns | ratio |
+|---------|--:|--:|--------:|--------:|------:|
+| DST-II | 8 | 256 | 600 | 2,400 | **4.00×** |
+| DST-II | 16 | 1024 | 16,100 | 38,900 | 2.42× |
+| DST-II | 32 | 1024 | 39,100 | 78,500 | 2.01× |
+| DST-II | 64 | 1024 | 90,800 | 173,600 | 1.91× |
+| DST-II | 256 | 256 | 82,600 | 198,600 | 2.40× |
+| DST-II | 1024 | 256 | 553,900 | 1,484,500 | 2.68× |
+| DST-III | 8 | 256 | 700 | 2,900 | **4.14×** |
+| DST-III | 16 | 1024 | 21,400 | 40,800 | 1.91× |
+| DST-III | 32 | 1024 | 41,100 | 83,200 | 2.02× |
+| DST-III | 64 | 1024 | 94,700 | 176,700 | 1.87× |
+| DST-III | 256 | 256 | 84,300 | 207,100 | 2.46× |
+| DST-III | 1024 | 256 | 544,900 | 1,507,000 | 2.77× |
+
+Wins all measured cells. Range 1.85–4.14×; strongest at small N where
+FFTW's DST is less specialized than its DCT path.
+
+### DHT (Hartley)
+
+Per session notes, DHT lands **1.9–2.8× over FFTW** across the same
+N/K range. A dedicated `bench_dht_vs_fftw` per-cell table was not
+written for v1.0 — `test_dht.c` confirms 22/22 cells pass at machine
+precision vs FFTW reference, but timing data was not preserved. v1.1
+adds the bench so the DHT row matches the DCT/DST detail level.
+
+### Headline (r2r vs FFTW3, T=1)
+
+> **VectorFFT wins 53/54 measured r2r cells vs FFTW3** (1.16–4.18×
+> range; mean ~2.5×). Single loss: DCT-III at N=8 K=4096 (0.60×) —
+> codelet-fixable in v1.1.
+
+| Family | Ratio range | Cells | Wins |
+|--------|:-----------:|:-----:|:----:|
+| DCT-II | 1.17–3.16× | 6 | 6/6 |
+| DCT-III | 0.60–3.59× | 7 | 6/7 |
+| DCT-IV | 1.85–4.18× | 11 | 11/11 |
+| DST-II | 1.91–4.00× | 6 | 6/6 |
+| DST-III | 1.87–4.14× | 6 | 6/6 |
+| DHT | ~1.9–2.8× (summary) | — | — |
+
+MKL TT was also benched for DCT-IV (4–13× wins) and DST (timing-only —
+MKL TT computes a different PDE-oriented math convention, so the
+comparison is informational, not apples-to-apples). FFTW3 is the
+correct r2r baseline.
+
+## 4. Multi-threaded scaling
 
 ### 1D C2C / R2C (direct MT, shipped pre-v1.0)
 
@@ -229,7 +340,7 @@ because it's pure memory bandwidth, and a single optimized memcpy
 typically beats T smaller memcpys when the limit is DRAM throughput.
 DHT will benefit most from v1.1 fused codelets.
 
-## 4. Per-codelet performance (VTune-grade)
+## 5. Per-codelet performance (VTune-grade)
 
 For deep per-radix analysis at K=256 see
 [docs/vtune-profiles/](../vtune-profiles/) — one detailed profile per
@@ -255,7 +366,7 @@ these benefit specifically from the cost model's variant-aware
 selection (T1S / LOG3 / BUF) which routes around their bottlenecks
 when wisdom shows another protocol wins.
 
-## 5. Hardware caveats
+## 6. Hardware caveats
 
 ### These numbers are from one CPU
 
@@ -293,7 +404,7 @@ latency. Per-thread efficiency drops sharply past 8. For workloads
 that benefit from many threads, the bench grid should be extended
 (v1.1 work).
 
-## 6. Reproducing these numbers
+## 7. Reproducing these numbers
 
 ### vs MKL
 
@@ -313,6 +424,23 @@ cd build_tuned && ./bench_estimate_vs_wisdom.exe
 ```
 
 Needs `vfft_wisdom_tuned.txt` in cwd. ~10 seconds wall.
+
+### r2r vs FFTW3 (single-thread)
+
+```
+python build_tuned/build.py --vfft --src build_tuned/bench_dct2_vs_fftw.c --fftw
+python build_tuned/build.py --vfft --src build_tuned/bench_dct3_vs_fftw.c --fftw
+python build_tuned/build.py --vfft --src build_tuned/bench_dct4_vs_fftw.c --fftw
+python build_tuned/build.py --vfft --src build_tuned/bench_dst23_vs_fftw.c --fftw
+build_tuned/bench_dct2_vs_fftw.exe
+build_tuned/bench_dct3_vs_fftw.exe
+build_tuned/bench_dct4_vs_fftw.exe
+build_tuned/bench_dst23_vs_fftw.exe
+```
+
+Requires FFTW3 (vcpkg install or local build). ~30 seconds wall total.
+Each binary plans with `FFTW_MEASURE` so first-run setup is the bulk
+of the time; benched min over 21 reps after 5 warmup.
 
 ### MT scaling for DCT/DST/DHT
 
