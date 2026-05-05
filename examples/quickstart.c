@@ -32,52 +32,57 @@
 
 #include "vfft.h"
 
-
 /* ───────────────────────────────────────────────────────────────────
  * Cross-platform high-resolution timer
  * ─────────────────────────────────────────────────────────────────── */
 
 #if defined(_WIN32)
-#  define WIN32_LEAN_AND_MEAN
-#  include <windows.h>
-static double now_ns(void) {
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+static double now_ns(void)
+{
     LARGE_INTEGER f, c;
     QueryPerformanceFrequency(&f);
     QueryPerformanceCounter(&c);
     return (double)c.QuadPart * 1e9 / (double)f.QuadPart;
 }
 #else
-#  include <time.h>
-static double now_ns(void) {
+#include <time.h>
+static double now_ns(void)
+{
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1e9 + ts.tv_nsec;
 }
 #endif
 
-
 /* ───────────────────────────────────────────────────────────────────
  * Helpers — fill, max-abs-diff, header printer
  * ─────────────────────────────────────────────────────────────────── */
 
-static void fill_random(double *p, size_t n, unsigned seed) {
+static void fill_random(double *p, size_t n, unsigned seed)
+{
     srand(seed);
-    for (size_t i = 0; i < n; i++) p[i] = (double)rand() / RAND_MAX - 0.5;
+    for (size_t i = 0; i < n; i++)
+        p[i] = (double)rand() / RAND_MAX - 0.5;
 }
 
-static double max_abs_diff(const double *a, const double *b, size_t n) {
+static double max_abs_diff(const double *a, const double *b, size_t n)
+{
     double m = 0.0;
-    for (size_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++)
+    {
         double d = fabs(a[i] - b[i]);
-        if (d > m) m = d;
+        if (d > m)
+            m = d;
     }
     return m;
 }
 
-static void section(const char *title) {
+static void section(const char *title)
+{
     printf("\n=== %s ===\n", title);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 1 — 1D Complex-to-Complex (C2C)
@@ -91,7 +96,8 @@ static void section(const char *title) {
  *                bwd_normalized(fwd(x)) = x
  * ─────────────────────────────────────────────────────────────────── */
 
-static void demo_1d_c2c(unsigned flags) {
+static void demo_1d_c2c(unsigned flags)
+{
     section("1D C2C  N=1024 K=4");
 
     const int N = 1024;
@@ -99,10 +105,14 @@ static void demo_1d_c2c(unsigned flags) {
     const size_t NK = (size_t)N * K;
 
     vfft_plan p = vfft_plan_c2c(N, K, flags);
-    if (!p) { fprintf(stderr, "  vfft_plan_c2c failed\n"); return; }
+    if (!p)
+    {
+        fprintf(stderr, "  vfft_plan_c2c failed\n");
+        return;
+    }
 
-    double *re  = (double *)vfft_alloc(NK * sizeof(double));
-    double *im  = (double *)vfft_alloc(NK * sizeof(double));
+    double *re = (double *)vfft_alloc(NK * sizeof(double));
+    double *im = (double *)vfft_alloc(NK * sizeof(double));
     double *re0 = (double *)vfft_alloc(NK * sizeof(double));
     double *im0 = (double *)vfft_alloc(NK * sizeof(double));
 
@@ -119,10 +129,12 @@ static void demo_1d_c2c(unsigned flags) {
     double err = fmax(max_abs_diff(re, re0, NK), max_abs_diff(im, im0, NK));
     printf("  fwd + bwd_normalized roundtrip:   err=%.2e   t=%.0f ns\n", err, dt);
 
-    vfft_free(re); vfft_free(im); vfft_free(re0); vfft_free(im0);
+    vfft_free(re);
+    vfft_free(im);
+    vfft_free(re0);
+    vfft_free(im0);
     vfft_destroy(p);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 2 — 1D Real-to-Complex / Complex-to-Real (R2C/C2R)
@@ -137,7 +149,8 @@ static void demo_1d_c2c(unsigned flags) {
  *   Roundtrip: c2r(r2c(x)) = N * x  (caller divides for normalization)
  * ─────────────────────────────────────────────────────────────────── */
 
-static void demo_r2c(unsigned flags) {
+static void demo_r2c(unsigned flags)
+{
     section("1D R2C/C2R  N=512 K=8");
 
     const int N = 512;
@@ -145,13 +158,17 @@ static void demo_r2c(unsigned flags) {
     const size_t Nfreq = (size_t)(N / 2 + 1);
 
     vfft_plan p = vfft_plan_r2c(N, K, flags);
-    if (!p) { fprintf(stderr, "  vfft_plan_r2c failed\n"); return; }
+    if (!p)
+    {
+        fprintf(stderr, "  vfft_plan_r2c failed\n");
+        return;
+    }
 
-    double *real_in   = (double *)vfft_alloc((size_t)N * K * sizeof(double));
+    double *real_in = (double *)vfft_alloc((size_t)N * K * sizeof(double));
     double *real_orig = (double *)vfft_alloc((size_t)N * K * sizeof(double));
-    double *real_out  = (double *)vfft_alloc((size_t)N * K * sizeof(double));
-    double *bins_re   = (double *)vfft_alloc((size_t)N * K * sizeof(double));  /* workspace */
-    double *bins_im   = (double *)vfft_alloc(Nfreq * K * sizeof(double));
+    double *real_out = (double *)vfft_alloc((size_t)N * K * sizeof(double));
+    double *bins_re = (double *)vfft_alloc((size_t)N * K * sizeof(double)); /* workspace */
+    double *bins_im = (double *)vfft_alloc(Nfreq * K * sizeof(double));
 
     fill_random(real_in, (size_t)N * K, 100);
     memcpy(real_orig, real_in, (size_t)N * K * sizeof(double));
@@ -160,16 +177,19 @@ static void demo_r2c(unsigned flags) {
     vfft_execute_c2r(p, bins_re, bins_im, real_out);
 
     double inv_N = 1.0 / (double)N;
-    for (size_t i = 0; i < (size_t)N * K; i++) real_out[i] *= inv_N;
+    for (size_t i = 0; i < (size_t)N * K; i++)
+        real_out[i] *= inv_N;
 
     double err = max_abs_diff(real_out, real_orig, (size_t)N * K);
     printf("  r2c + c2r/N roundtrip:            err=%.2e\n", err);
 
-    vfft_free(real_in); vfft_free(real_orig); vfft_free(real_out);
-    vfft_free(bins_re); vfft_free(bins_im);
+    vfft_free(real_in);
+    vfft_free(real_orig);
+    vfft_free(real_out);
+    vfft_free(bins_re);
+    vfft_free(bins_im);
     vfft_destroy(p);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 3 — 2D Complex (C2C)
@@ -179,17 +199,22 @@ static void demo_r2c(unsigned flags) {
  *   Roundtrip: bwd(fwd(x)) = N1*N2 * x
  * ─────────────────────────────────────────────────────────────────── */
 
-static void demo_2d_c2c(unsigned flags) {
+static void demo_2d_c2c(unsigned flags)
+{
     section("2D C2C  256x256");
 
     const int N1 = 256, N2 = 256;
     const size_t total = (size_t)N1 * N2;
 
     vfft_plan p = vfft_plan_2d(N1, N2, flags);
-    if (!p) { fprintf(stderr, "  vfft_plan_2d failed\n"); return; }
+    if (!p)
+    {
+        fprintf(stderr, "  vfft_plan_2d failed\n");
+        return;
+    }
 
-    double *re  = (double *)vfft_alloc(total * sizeof(double));
-    double *im  = (double *)vfft_alloc(total * sizeof(double));
+    double *re = (double *)vfft_alloc(total * sizeof(double));
+    double *im = (double *)vfft_alloc(total * sizeof(double));
     double *re0 = (double *)vfft_alloc(total * sizeof(double));
     double *im0 = (double *)vfft_alloc(total * sizeof(double));
 
@@ -202,15 +227,21 @@ static void demo_2d_c2c(unsigned flags) {
     vfft_execute_bwd(p, re, im);
 
     double inv = 1.0 / ((double)N1 * (double)N2);
-    for (size_t i = 0; i < total; i++) { re[i] *= inv; im[i] *= inv; }
+    for (size_t i = 0; i < total; i++)
+    {
+        re[i] *= inv;
+        im[i] *= inv;
+    }
 
     double err = fmax(max_abs_diff(re, re0, total), max_abs_diff(im, im0, total));
     printf("  fwd + bwd / (N1*N2) roundtrip:    err=%.2e\n", err);
 
-    vfft_free(re); vfft_free(im); vfft_free(re0); vfft_free(im0);
+    vfft_free(re);
+    vfft_free(im);
+    vfft_free(re0);
+    vfft_free(im0);
     vfft_destroy(p);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 4 — 2D Real-to-Complex / Complex-to-Real (R2C/C2R)
@@ -221,7 +252,8 @@ static void demo_2d_c2c(unsigned flags) {
  *   Constraint: N2 even.
  * ─────────────────────────────────────────────────────────────────── */
 
-static void demo_2d_r2c(unsigned flags) {
+static void demo_2d_r2c(unsigned flags)
+{
     section("2D R2C/C2R  256x256");
 
     const int N1 = 256, N2 = 256;
@@ -230,13 +262,17 @@ static void demo_2d_r2c(unsigned flags) {
     const size_t total_freq = (size_t)N1 * freq2;
 
     vfft_plan p = vfft_plan_2d_r2c(N1, N2, flags);
-    if (!p) { fprintf(stderr, "  vfft_plan_2d_r2c failed\n"); return; }
+    if (!p)
+    {
+        fprintf(stderr, "  vfft_plan_2d_r2c failed\n");
+        return;
+    }
 
-    double *real_in   = (double *)vfft_alloc(total_real * sizeof(double));
+    double *real_in = (double *)vfft_alloc(total_real * sizeof(double));
     double *real_orig = (double *)vfft_alloc(total_real * sizeof(double));
-    double *real_out  = (double *)vfft_alloc(total_real * sizeof(double));
-    double *bins_re   = (double *)vfft_alloc(total_freq * sizeof(double));
-    double *bins_im   = (double *)vfft_alloc(total_freq * sizeof(double));
+    double *real_out = (double *)vfft_alloc(total_real * sizeof(double));
+    double *bins_re = (double *)vfft_alloc(total_freq * sizeof(double));
+    double *bins_im = (double *)vfft_alloc(total_freq * sizeof(double));
 
     fill_random(real_in, total_real, 11);
     memcpy(real_orig, real_in, total_real * sizeof(double));
@@ -245,16 +281,19 @@ static void demo_2d_r2c(unsigned flags) {
     vfft_execute_2d_c2r(p, bins_re, bins_im, real_out);
 
     double inv = 1.0 / ((double)N1 * (double)N2);
-    for (size_t i = 0; i < total_real; i++) real_out[i] *= inv;
+    for (size_t i = 0; i < total_real; i++)
+        real_out[i] *= inv;
 
     double err = max_abs_diff(real_out, real_orig, total_real);
     printf("  2d_r2c + 2d_c2r / (N1*N2) error:  %.2e\n", err);
 
-    vfft_free(real_in); vfft_free(real_orig); vfft_free(real_out);
-    vfft_free(bins_re); vfft_free(bins_im);
+    vfft_free(real_in);
+    vfft_free(real_orig);
+    vfft_free(real_out);
+    vfft_free(bins_re);
+    vfft_free(bins_im);
     vfft_destroy(p);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 5 — DCT-II / DCT-III (Makhoul, JPEG/MPEG/AAC)
@@ -265,7 +304,8 @@ static void demo_2d_r2c(unsigned flags) {
  *   Constraint: N even.
  * ─────────────────────────────────────────────────────────────────── */
 
-static void demo_dct2_dct3(unsigned flags) {
+static void demo_dct2_dct3(unsigned flags)
+{
     section("DCT-II / DCT-III  N=1024 K=4");
 
     const int N = 1024;
@@ -273,29 +313,36 @@ static void demo_dct2_dct3(unsigned flags) {
     const size_t NK = (size_t)N * K;
 
     vfft_plan p = vfft_plan_dct2(N, K, flags);
-    if (!p) { fprintf(stderr, "  vfft_plan_dct2 failed\n"); return; }
+    if (!p)
+    {
+        fprintf(stderr, "  vfft_plan_dct2 failed\n");
+        return;
+    }
 
-    double *in   = (double *)vfft_alloc(NK * sizeof(double));
+    double *in = (double *)vfft_alloc(NK * sizeof(double));
     double *orig = (double *)vfft_alloc(NK * sizeof(double));
-    double *mid  = (double *)vfft_alloc(NK * sizeof(double));
-    double *out  = (double *)vfft_alloc(NK * sizeof(double));
+    double *mid = (double *)vfft_alloc(NK * sizeof(double));
+    double *out = (double *)vfft_alloc(NK * sizeof(double));
 
     fill_random(in, NK, 21);
     memcpy(orig, in, NK * sizeof(double));
 
-    vfft_execute_dct2(p, in, mid);     /* forward  */
-    vfft_execute_dct3(p, mid, out);    /* inverse  */
+    vfft_execute_dct2(p, in, mid);  /* forward  */
+    vfft_execute_dct3(p, mid, out); /* inverse  */
 
     double inv = 1.0 / (2.0 * N);
-    for (size_t i = 0; i < NK; i++) out[i] *= inv;
+    for (size_t i = 0; i < NK; i++)
+        out[i] *= inv;
 
     double err = max_abs_diff(out, orig, NK);
     printf("  dct3(dct2(x)) / (2N) error:       %.2e\n", err);
 
-    vfft_free(in); vfft_free(orig); vfft_free(mid); vfft_free(out);
+    vfft_free(in);
+    vfft_free(orig);
+    vfft_free(mid);
+    vfft_free(out);
     vfft_destroy(p);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 6 — DCT-IV (Lee 1984, MDCT for MP3/AAC/Vorbis/Opus)
@@ -305,7 +352,8 @@ static void demo_dct2_dct3(unsigned flags) {
  *   Constraint: N even.
  * ─────────────────────────────────────────────────────────────────── */
 
-static void demo_dct4(unsigned flags) {
+static void demo_dct4(unsigned flags)
+{
     section("DCT-IV  N=1024 K=4");
 
     const int N = 1024;
@@ -313,12 +361,16 @@ static void demo_dct4(unsigned flags) {
     const size_t NK = (size_t)N * K;
 
     vfft_plan p = vfft_plan_dct4(N, K, flags);
-    if (!p) { fprintf(stderr, "  vfft_plan_dct4 failed\n"); return; }
+    if (!p)
+    {
+        fprintf(stderr, "  vfft_plan_dct4 failed\n");
+        return;
+    }
 
-    double *in   = (double *)vfft_alloc(NK * sizeof(double));
+    double *in = (double *)vfft_alloc(NK * sizeof(double));
     double *orig = (double *)vfft_alloc(NK * sizeof(double));
-    double *mid  = (double *)vfft_alloc(NK * sizeof(double));
-    double *out  = (double *)vfft_alloc(NK * sizeof(double));
+    double *mid = (double *)vfft_alloc(NK * sizeof(double));
+    double *out = (double *)vfft_alloc(NK * sizeof(double));
 
     fill_random(in, NK, 22);
     memcpy(orig, in, NK * sizeof(double));
@@ -327,15 +379,18 @@ static void demo_dct4(unsigned flags) {
     vfft_execute_dct4(p, mid, out);
 
     double inv = 1.0 / (2.0 * N);
-    for (size_t i = 0; i < NK; i++) out[i] *= inv;
+    for (size_t i = 0; i < NK; i++)
+        out[i] *= inv;
 
     double err = max_abs_diff(out, orig, NK);
     printf("  dct4(dct4(x)) / (2N) error:       %.2e\n", err);
 
-    vfft_free(in); vfft_free(orig); vfft_free(mid); vfft_free(out);
+    vfft_free(in);
+    vfft_free(orig);
+    vfft_free(mid);
+    vfft_free(out);
     vfft_destroy(p);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 7 — DST-II / DST-III
@@ -344,7 +399,8 @@ static void demo_dct4(unsigned flags) {
  *   DST-III inverts DST-II up to scale 2N. Constraint: N even.
  * ─────────────────────────────────────────────────────────────────── */
 
-static void demo_dst2_dst3(unsigned flags) {
+static void demo_dst2_dst3(unsigned flags)
+{
     section("DST-II / DST-III  N=1024 K=4");
 
     const int N = 1024;
@@ -352,12 +408,16 @@ static void demo_dst2_dst3(unsigned flags) {
     const size_t NK = (size_t)N * K;
 
     vfft_plan p = vfft_plan_dst2(N, K, flags);
-    if (!p) { fprintf(stderr, "  vfft_plan_dst2 failed\n"); return; }
+    if (!p)
+    {
+        fprintf(stderr, "  vfft_plan_dst2 failed\n");
+        return;
+    }
 
-    double *in   = (double *)vfft_alloc(NK * sizeof(double));
+    double *in = (double *)vfft_alloc(NK * sizeof(double));
     double *orig = (double *)vfft_alloc(NK * sizeof(double));
-    double *mid  = (double *)vfft_alloc(NK * sizeof(double));
-    double *out  = (double *)vfft_alloc(NK * sizeof(double));
+    double *mid = (double *)vfft_alloc(NK * sizeof(double));
+    double *out = (double *)vfft_alloc(NK * sizeof(double));
 
     fill_random(in, NK, 23);
     memcpy(orig, in, NK * sizeof(double));
@@ -366,15 +426,18 @@ static void demo_dst2_dst3(unsigned flags) {
     vfft_execute_dst3(p, mid, out);
 
     double inv = 1.0 / (2.0 * N);
-    for (size_t i = 0; i < NK; i++) out[i] *= inv;
+    for (size_t i = 0; i < NK; i++)
+        out[i] *= inv;
 
     double err = max_abs_diff(out, orig, NK);
     printf("  dst3(dst2(x)) / (2N) error:       %.2e\n", err);
 
-    vfft_free(in); vfft_free(orig); vfft_free(mid); vfft_free(out);
+    vfft_free(in);
+    vfft_free(orig);
+    vfft_free(mid);
+    vfft_free(out);
     vfft_destroy(p);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 8 — DHT (Discrete Hartley Transform)
@@ -384,7 +447,8 @@ static void demo_dst2_dst3(unsigned flags) {
  *   Constraint: N even.
  * ─────────────────────────────────────────────────────────────────── */
 
-static void demo_dht(unsigned flags) {
+static void demo_dht(unsigned flags)
+{
     section("DHT  N=1024 K=4");
 
     const int N = 1024;
@@ -392,12 +456,16 @@ static void demo_dht(unsigned flags) {
     const size_t NK = (size_t)N * K;
 
     vfft_plan p = vfft_plan_dht(N, K, flags);
-    if (!p) { fprintf(stderr, "  vfft_plan_dht failed\n"); return; }
+    if (!p)
+    {
+        fprintf(stderr, "  vfft_plan_dht failed\n");
+        return;
+    }
 
-    double *in   = (double *)vfft_alloc(NK * sizeof(double));
+    double *in = (double *)vfft_alloc(NK * sizeof(double));
     double *orig = (double *)vfft_alloc(NK * sizeof(double));
-    double *mid  = (double *)vfft_alloc(NK * sizeof(double));
-    double *out  = (double *)vfft_alloc(NK * sizeof(double));
+    double *mid = (double *)vfft_alloc(NK * sizeof(double));
+    double *out = (double *)vfft_alloc(NK * sizeof(double));
 
     fill_random(in, NK, 24);
     memcpy(orig, in, NK * sizeof(double));
@@ -406,15 +474,18 @@ static void demo_dht(unsigned flags) {
     vfft_execute_dht(p, mid, out);
 
     double inv = 1.0 / (double)N;
-    for (size_t i = 0; i < NK; i++) out[i] *= inv;
+    for (size_t i = 0; i < NK; i++)
+        out[i] *= inv;
 
     double err = max_abs_diff(out, orig, NK);
     printf("  dht(dht(x)) / N error:            %.2e\n", err);
 
-    vfft_free(in); vfft_free(orig); vfft_free(mid); vfft_free(out);
+    vfft_free(in);
+    vfft_free(orig);
+    vfft_free(mid);
+    vfft_free(out);
     vfft_destroy(p);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 9 — Threading and interleaved-array conversion
@@ -424,7 +495,8 @@ static void demo_dht(unsigned flags) {
  *   vfft_deinterleave / reinterleave — bridge {re,im,re,im,...} <→ split.
  * ─────────────────────────────────────────────────────────────────── */
 
-static void demo_threading_and_convert(void) {
+static void demo_threading_and_convert(void)
+{
     section("Threading + interleave/deinterleave");
 
     int initial = vfft_get_num_threads();
@@ -436,8 +508,22 @@ static void demo_threading_and_convert(void) {
     /* Roundtrip a small interleaved buffer through split-complex. */
     const size_t count = 8;
     double interleaved[16] = {
-        0.0,1.0, 2.0,3.0, 4.0,5.0, 6.0,7.0,
-        8.0,9.0, 10.0,11.0, 12.0,13.0, 14.0,15.0,
+        0.0,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+        9.0,
+        10.0,
+        11.0,
+        12.0,
+        13.0,
+        14.0,
+        15.0,
     };
     double re[8], im[8], roundtrip[16];
     vfft_deinterleave(interleaved, re, im, count);
@@ -449,7 +535,6 @@ static void demo_threading_and_convert(void) {
      * inherit a thread count the user didn't set. */
     vfft_set_num_threads(initial > 0 ? initial : 1);
 }
-
 
 /* ───────────────────────────────────────────────────────────────────
  * SECTION 10 — Wisdom lifecycle
@@ -464,7 +549,8 @@ static void demo_threading_and_convert(void) {
  *   Returns 0 on success.
  * ─────────────────────────────────────────────────────────────────── */
 
-static int try_load_wisdom(void) {
+static int try_load_wisdom(void)
+{
     /* Try a few common spots: user-supplied via env, then build_tuned/
      * (the developer location), then examples/<arch>/wisdom.txt. */
     const char *candidates[] = {
@@ -475,8 +561,10 @@ static int try_load_wisdom(void) {
         "../examples/14900KF/wisdom.txt",
         NULL,
     };
-    for (int i = 0; candidates[i]; i++) {
-        if (vfft_load_wisdom(candidates[i]) == 0) {
+    for (int i = 0; candidates[i]; i++)
+    {
+        if (vfft_load_wisdom(candidates[i]) == 0)
+        {
             printf("[wisdom] loaded from %s\n", candidates[i]);
             return 0;
         }
@@ -485,12 +573,12 @@ static int try_load_wisdom(void) {
     return -1;
 }
 
-
 /* ───────────────────────────────────────────────────────────────────
  * MAIN
  * ─────────────────────────────────────────────────────────────────── */
 
-int main(void) {
+int main(void)
+{
     /* Init: sets FTZ/DAZ, prepares the global codelet registry. Idempotent. */
     vfft_init();
 
@@ -517,7 +605,8 @@ int main(void) {
 
     /* Optionally persist wisdom we may have calibrated on the fly during
      * VFFT_MEASURE plans above. Comment out if you don't want this. */
-    if (has_wisdom) {
+    if (has_wisdom)
+    {
         vfft_save_wisdom("vfft_wisdom_quickstart.txt");
         printf("\n[wisdom] saved current db to vfft_wisdom_quickstart.txt\n");
     }
