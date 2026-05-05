@@ -25,8 +25,12 @@ src/test-codelets.zip
 # Generated plots at root (but allow docs/performance/ for README images)
 vfft_*.png
 !docs/performance/*.png
-# Allow committing notebook-generated plots from build_tuned for README use.
-!build_tuned/vfft_*.png
+# Allow committing notebook-generated plots from build_tuned/results/ for README use.
+!build_tuned/results/vfft_*.png
+
+# build_tuned/ scratch + run artifacts
+build_tuned/**/*.log
+build_tuned/vfft_wisdom_tmp.txt
 
 # IDE / tools
 /.vscode/
