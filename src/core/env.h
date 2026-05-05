@@ -18,6 +18,24 @@
 #ifndef STRIDE_ENV_H
 #define STRIDE_ENV_H
 
+/* ── MSVC compatibility shims ──────────────────────────────────────
+ * The codelets and core use GCC/Clang/ICX syntax for restrict and
+ * function-target attributes. MSVC accepts neither. Map them to
+ * MSVC equivalents (or no-ops) so the same source builds cleanly
+ * on cl.exe alongside icx and gcc.
+ *
+ * The active compiler under typical Windows installs is ICX; MSVC
+ * is exercised when users build via the default Visual Studio
+ * generator without an Intel toolchain. */
+#if defined(_MSC_VER) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
+  #ifndef __restrict__
+    #define __restrict__ __restrict
+  #endif
+  #ifndef __attribute__
+    #define __attribute__(x) /* no-op: MSVC uses /arch:AVX2 globally */
+  #endif
+#endif
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
