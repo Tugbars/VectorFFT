@@ -167,50 +167,38 @@ VectorFFT v1.0 covers ten transform variants. Each entry below names the **metho
 
 #### 1D R2C / C2R
 
-Pair-packing reduces an N-point real FFT to a single N/2-point complex FFT plus a `O(N·K)` butterfly post-process. Forward: pack `z[n] = x[2n] + i·x[2n+1]`, run N/2-point C2C, extract `X[k]` from `Z[k]` via twiddle butterfly. Backward: reverse butterfly + N/2-point IFFT + unpack. **1.5–1.9× faster** than the equivalent complex FFT. Hermitian post-process emits bins in natural frequency order. Block-walked over K to keep scratch in L2.
+**Pair-packing** — one N/2-point complex FFT + butterfly post-process. **1.5–1.9× faster** than the equivalent complex FFT. Block-walked over K to keep scratch in L2.
 
 #### 2D C2C
 
-Two execution modes:
-- **Tiled (default, B=8)** — for each tile of B rows, gather B×N2 → N2×B via SIMD transpose, run N2-point FFT with K=B on scratch, scatter back. Beats MKL on every tested size (1.08–1.63× across 32² to 1024²).
-- **Bailey (full transpose)** — bracket a single large-K row FFT with two N1×N2 ↔ N2×N1 matrix transposes. Useful where large-K FFT outperforms tiled (rare on this CPU; kept as alternative).
-
-Both modes use the cache-oblivious recursive transpose with 8×4 line-filling kernel (writes full 64-byte cache lines, eliminates write-allocate penalties). Tile-parallel threading on the row pass; per-thread scratch, zero barriers.
+**Tiled (default, B=8)** — gather B rows via SIMD transpose, FFT on scratch, scatter back. Tile-parallel threading on the row pass. Beats MKL 1.08–1.63× across 32² to 1024². **Bailey** mode (full-matrix transpose around one large-K row FFT) is available as an alternative.
 
 #### 2D R2C / C2R
 
-Mirrors 2D C2C structure but the row pass is a 1D R2C (FFTW convention: reduce along the inner axis, output is N1×(N2/2+1) complex). The col pass batches K=(N2/2+1) — typically large enough that the 1D C2C executor's K-split MT activates without further tile parallelism. Backward processes tiles in reverse order to handle the asymmetric scatter (longer rows written than gather reads) without input-buffer overlap.
+Same tiled pattern as 2D C2C but the row pass is a 1D R2C (FFTW reduce-along-inner convention; output is N1×(N2/2+1) complex). Backward processes tiles in reverse order to avoid input-buffer overlap during the asymmetric scatter.
 
 #### DCT-II / DCT-III (REDFT10 / REDFT01)
 
-**Makhoul's reduction** (1980) — the JPEG/MPEG/AAC workhorse. ~2× faster than the textbook 2N-point R2C approach; matches FFTW's own `reodft010e-r2hc.c` strategy. Three-phase pipeline: pre-permute (interleave even/odd-indexed samples), N-point R2C, post-process butterfly with `cos(πi/2N)` / `sin(πi/2N)` twiddles. **Specialized straight-line codelets at N=8** (`gen_dct8.py`, `gen_dct3_n8.py`) bypass Makhoul for the JPEG block — 1.48× / 1.16× over FFTW at the JPEG cell. Even N only.
+**Makhoul's reduction** (1980) — pre-permute + N-point R2C + post-twiddle butterfly. ~2× faster than the textbook 2N-point R2C; matches FFTW's `reodft010e-r2hc.c`. **Specialized straight-line codelets at N=8** bypass Makhoul for the JPEG block (1.48× / 1.16× over FFTW at the JPEG cell). Even N only.
 
 #### DCT-IV (REDFT11)
 
-**Lee 1984** — single N/2-point complex FFT plus pre/post twiddle passes. Folds Y[2k] (cos basis) and Y[N-1-2k] (sin basis) into one complex sequence via the `(-1)^n` index identity, runs one N/2-point C2C, unpacks to real outputs. ~2× faster than the textbook DCT-III + DST-III combo. Used in MDCT (modified DCT) for audio codecs. Even N only.
+**Lee 1984** — single N/2-point complex FFT + pre/post twiddle passes. Folds Y[2k] / Y[N−1−2k] into one complex sequence via the `(−1)^n` identity. ~2× faster than the textbook DCT-III + DST-III combo. Used in MDCT for audio codecs. Even N only.
 
 #### DST-II / DST-III (RODFT10 / RODFT01)
 
-Wraps DCT-II/III with sign-flip + index reversal:
-- DST-II[k] = DCT-II[(-1)^n · x[n]][N-1-k]
-- DST-III[k] = (-1)^k · DCT-III[reversed-input][k]
-
-Reuses all of DCT-II/III (including the specialized N=8 codelets indirectly). Adds one `O(N·K)` pre/post pass. Even N only.
+Wraps DCT-II/III with a sign-flip + index-reversal pass. Reuses all of DCT-II/III's machinery including the N=8 codelets. Even N only.
 
 #### DHT (Discrete Hartley Transform)
 
-Built directly on N-point R2C with **no twiddles**. From the R2C output X[k] = Re + i·Im:
-- H[k]   = Re(X[k]) − Im(X[k])
-- H[N−k] = Re(X[k]) + Im(X[k])
-
-Self-inverse up to 1/N (`DHT(DHT(x)) = N·x`). Cost: one R2C + one O(N·K) butterfly pass. ~2× faster than the equivalent complex FFT. Even N only.
+Built on N-point R2C with **no twiddles** — `H[k] = Re(X[k]) − Im(X[k])`, `H[N−k] = Re(X[k]) + Im(X[k])`. Self-inverse up to 1/N. ~2× faster than the equivalent complex FFT. Even N only.
 
 #### Prime-N support (Rader / Bluestein)
 
-- **Rader's algorithm** for smooth primes (N−1 is 19-smooth): primitive-root permutation reduces the prime-N DFT to a length-(N−1) cyclic convolution computed via the existing mixed-radix engine. ~2× faster than Bluestein. AVX2 pointwise multiply, block-walked for L2 residency.
-- **Bluestein's algorithm** (chirp-z transform) for non-smooth primes: chirp-modulate, length-M convolution where M ≥ 2N−1. M is selected to favor fewer-stage factorizations (e.g. 1024 over 1020). AVX2 chirp + pointwise kernels, block-walked.
+- **Rader** for smooth primes (N−1 is 19-smooth) — primitive-root permutation reduces the prime DFT to a length-(N−1) cyclic convolution. ~2× faster than Bluestein.
+- **Bluestein** (chirp-z) for non-smooth primes — length-M ≥ 2N−1 convolution; M chosen to favor fewer-stage factorizations.
 
-Both inherit ESTIMATE/MEASURE wiring from the inner mixed-radix FFT — calibrate the inner length and the prime-N path tracks it.
+Both inherit ESTIMATE/MEASURE from the inner mixed-radix FFT.
 
 ---
 
