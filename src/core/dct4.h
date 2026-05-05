@@ -47,6 +47,7 @@
 typedef struct {
     int N;                  /* DCT-IV size (must be even) */
     size_t K;               /* batch count */
+    int n_threads;          /* T_plan snapshot — caps execute-time T */
     /* Pre-twiddle: exp(i*pi*m/N) for m=0..N/2-1 */
     double *pre_cos;
     double *pre_sin;
@@ -63,6 +64,79 @@ typedef struct {
     int *perm;
     stride_plan_t *fft_plan; /* owned: N/2-point complex FFT plan */
 } stride_dct4_data_t;
+
+
+/* ═══════════════════════════════════════════════════════════════
+ * MT INFRASTRUCTURE — same shape as dct.h's _dct2_*. K-split workers
+ * for the pre-twiddle and post-twiddle passes; inner backward FFT
+ * runs between the two phases with its own MT.
+ * ═══════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    stride_dct4_data_t *d;
+    double *re;
+    size_t k0, k1;
+} _dct4_slice_arg_t;
+
+static inline int _dct4_mt_threads(int n_threads_plan, int N, size_t K) {
+    int T = stride_get_num_threads();
+    if (T > n_threads_plan) T = n_threads_plan;
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T < 1) T = 1;
+    if (T > 1 && (size_t)N * K < (size_t)8192 * (size_t)T) T = 1;
+    return T;
+}
+
+/* Pre-twiddle K-slice: psi[perm[m]] = (x[2m], -x[N-1-2m]) * exp(+i*pi*m/N) */
+static void _dct4_worker_pre(void *arg) {
+    _dct4_slice_arg_t *a = (_dct4_slice_arg_t *)arg;
+    stride_dct4_data_t *d = a->d;
+    const int N = d->N, halfN = N / 2;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1;
+    const double *re = a->re;
+
+    for (int m = 0; m < halfN; m++) {
+        const int dst = d->perm[m];
+        const double *x_e = re + (size_t)(2 * m)         * K;
+        const double *x_o = re + (size_t)(N - 1 - 2 * m) * K;
+        double *psi_r = d->psi_re + (size_t)dst * K;
+        double *psi_i = d->psi_im + (size_t)dst * K;
+        const double cm = d->pre_cos[m];
+        const double sm = d->pre_sin[m];
+        for (size_t k = k0; k < k1; k++) {
+            const double xe = x_e[k];
+            const double xo = x_o[k];
+            psi_r[k] = xe * cm + xo * sm;
+            psi_i[k] = xe * sm - xo * cm;
+        }
+    }
+}
+
+/* Post-twiddle + unpack K-slice. */
+static void _dct4_worker_post(void *arg) {
+    _dct4_slice_arg_t *a = (_dct4_slice_arg_t *)arg;
+    stride_dct4_data_t *d = a->d;
+    const int N = d->N, halfN = N / 2;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1;
+    double *re = a->re;
+
+    for (int kp = 0; kp < halfN; kp++) {
+        const double pc = d->post_cos2[kp];
+        const double ps = d->post_sin2[kp];
+        const double *Wr = d->psi_re + (size_t)kp * K;
+        const double *Wi = d->psi_im + (size_t)kp * K;
+        double *out_lo = re + (size_t)(2 * kp)         * K;
+        double *out_hi = re + (size_t)(N - 1 - 2 * kp) * K;
+        for (size_t k = k0; k < k1; k++) {
+            const double wr = Wr[k];
+            const double wi = Wi[k];
+            out_lo[k] = pc * wr - ps * wi;
+            out_hi[k] = pc * wi + ps * wr;
+        }
+    }
+}
 
 
 /* ═══════════════════════════════════════════════════════════════
@@ -83,6 +157,37 @@ static void _dct4_execute(void *data, double *re, double *im) {
     const int halfN = N / 2;
     const size_t K = d->K;
 
+    /* MT path: K-split pre/post-twiddle passes, three-phase dispatch. */
+    int T = _dct4_mt_threads(d->n_threads, N, K);
+    if (T > 1) {
+        _dct4_slice_arg_t args[64];
+        for (int t = 0; t < T; t++) {
+            args[t].d  = d;
+            args[t].re = re;
+            args[t].k0 = (K * (size_t)t)       / (size_t)T;
+            args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
+        }
+
+        /* Phase 1: pre-twiddle, T-parallel */
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dct4_worker_pre, &args[t]);
+        _dct4_worker_pre(&args[0]);
+        _stride_pool_wait_all();
+
+        /* Phase 2: inner backward N/2-point FFT (uses its own MT) */
+        stride_execute_bwd(d->fft_plan, d->psi_re, d->psi_im);
+
+        /* Phase 3: post-twiddle + unpack, T-parallel */
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dct4_worker_post, &args[t]);
+        _dct4_worker_post(&args[0]);
+        _stride_pool_wait_all();
+        return;
+    }
+
+    /* Single-threaded path: original sequential implementation. */
     /* 1. Pre-twiddle. Compute psi[m] = z[m] * exp(+i*pi*m/N) for m=0..halfN-1.
      *    Our backward FFT executor expects input in *fwd-output* (digit-reversed)
      *    layout — so we write psi[m] at position perm[m]. After bwd, natural-order
@@ -170,6 +275,10 @@ static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_
     d->N = N;
     d->K = K;
     d->fft_plan = fft_plan_halfN;
+
+    int T_plan = stride_get_num_threads();
+    if (T_plan < 1) T_plan = 1;
+    d->n_threads = T_plan;
 
     const int halfN = N / 2;
 
