@@ -13,7 +13,7 @@ different hardware — see "Hardware caveats" at the end.
 
 ## 1. vs MKL — 1D C2C
 
-Source: [build_tuned/vfft_perf_tuned_1d.txt](../../build_tuned/vfft_perf_tuned_1d.txt)
+Source: [build_tuned/results/vfft_perf_tuned_1d.txt](../../build_tuned/results/vfft_perf_tuned_1d.txt)
 (207 cells × MKL ILP64 sequential, calibrated wisdom loaded).
 
 ```
@@ -60,7 +60,7 @@ Figures:
 
 ## 2. Cost-model accuracy — estimate vs wisdom
 
-Source: [build_tuned/bench_estimate_vs_wisdom.c](../../build_tuned/bench_estimate_vs_wisdom.c)
+Source: [build_tuned/dev/bench_estimate_vs_wisdom.c](../../build_tuned/dev/bench_estimate_vs_wisdom.c)
 (28 cells × 21 reps min, single-threaded).
 
 Compares plans built by `VFFT_ESTIMATE` (closed-form cost-model
@@ -112,7 +112,7 @@ ESTIMATE typically picks within 1.3×.
 
 ### Flag honoring across transforms
 
-Source: [build_tuned/bench_gap_check.c](../../build_tuned/bench_gap_check.c).
+Source: [build_tuned/dev/bench_gap_check.c](../../build_tuned/dev/bench_gap_check.c).
 
 A diagnostic that plans the same cell with `VFFT_ESTIMATE` and
 `VFFT_MEASURE` and times each. If the two wall times match within
@@ -164,7 +164,7 @@ no interleave / deinterleave overhead on the FFTW side.
 
 ### 1D C2C — full sweep
 
-Source: [build_tuned/bench_1d_vs_fftw.c](../../build_tuned/bench_1d_vs_fftw.c)
+Source: [build_tuned/benches/bench_1d_vs_fftw.c](../../build_tuned/benches/bench_1d_vs_fftw.c)
 (207 cells × MKL bench grid, calibrated wisdom loaded). Same N/K grid
 as Section 1's MKL bench, so ratios are directly comparable.
 
@@ -226,9 +226,9 @@ overhead the inner FFT speedup can't fully amortize, and FFTW's
 chirp-z implementation is mature. v1.1 considers a Rader-fallback
 hybrid for the small primes that currently route through Bluestein.
 
-Full per-cell data: [build_tuned/vfft_perf_tuned_1d_fftw.txt](../../build_tuned/vfft_perf_tuned_1d_fftw.txt)
+Full per-cell data: [build_tuned/results/vfft_perf_tuned_1d_fftw.txt](../../build_tuned/results/vfft_perf_tuned_1d_fftw.txt)
 (human-readable, generated from
-[vfft_perf_tuned_1d_fftw.csv](../../build_tuned/vfft_perf_tuned_1d_fftw.csv)
+[vfft_perf_tuned_1d_fftw.csv](../../build_tuned/results/vfft_perf_tuned_1d_fftw.csv)
 via `python build_tuned/make_perf_txt_fftw.py`).
 
 ### r2r family
@@ -350,7 +350,7 @@ large N·K but typically 4–6× at T=8 on small/medium cells.
 
 ### DCT-II / DCT-III / DCT-IV / DST-II/III / DHT (wrapper MT, new in v1.0)
 
-Source: [build_tuned/bench_mt_dct.c](../../build_tuned/bench_mt_dct.c).
+Source: [build_tuned/benches/bench_mt_dct.c](../../build_tuned/benches/bench_mt_dct.c).
 
 ```
 Transform   Cell           T=1 ns   T=2 (×)    T=4 (×)    T=8 (×)
@@ -485,8 +485,8 @@ that benefit from many threads, the bench grid should be extended
 ### vs MKL
 
 ```
-python build_tuned/build.py --vfft --src build_tuned/bench_1d_csv.c --mkl
-build_tuned/bench_1d_csv.exe        # writes vfft_perf_tuned_1d.txt
+python build_tuned/build.py --vfft --src build_tuned/benches/bench_1d_vs_mkl.c --mkl
+build_tuned/benches/bench_1d_vs_mkl.exe        # writes vfft_perf_tuned_1d.txt
 ```
 
 Requires MKL ILP64 sequential (Intel oneAPI install). 207 cells × ~1
@@ -495,7 +495,7 @@ second = ~5 minutes wall.
 ### Estimate vs wisdom
 
 ```
-python build_tuned/build.py --vfft --src build_tuned/bench_estimate_vs_wisdom.c
+python build_tuned/build.py --vfft --src build_tuned/dev/bench_estimate_vs_wisdom.c
 cd build_tuned && ./bench_estimate_vs_wisdom.exe
 ```
 
@@ -504,12 +504,12 @@ Needs `vfft_wisdom_tuned.txt` in cwd. ~10 seconds wall.
 ### 1D C2C vs FFTW3 (single-thread)
 
 ```
-python build_tuned/build.py --vfft --src build_tuned/bench_1d_vs_fftw.c --fftw
+python build_tuned/build.py --vfft --src build_tuned/benches/bench_1d_vs_fftw.c --fftw
 # fftw3.dll must be co-located with the exe (already copied into build_tuned/).
-build_tuned/bench_1d_vs_fftw.exe \
+build_tuned/benches/bench_1d_vs_fftw.exe \
     build_tuned/vfft_wisdom_tuned.txt \
-    build_tuned/vfft_perf_tuned_1d_fftw.csv \
-    build_tuned/vfft_acc_tuned_1d_fftw.csv
+    build_tuned/results/vfft_perf_tuned_1d_fftw.csv \
+    build_tuned/results/vfft_acc_tuned_1d_fftw.csv
 ```
 
 Long run — 1–2 hours on the calibration host because of FFTW's
@@ -520,14 +520,14 @@ load for cleanest numbers.
 ### r2r vs FFTW3 (single-thread)
 
 ```
-python build_tuned/build.py --vfft --src build_tuned/bench_dct2_vs_fftw.c --fftw
-python build_tuned/build.py --vfft --src build_tuned/bench_dct3_vs_fftw.c --fftw
-python build_tuned/build.py --vfft --src build_tuned/bench_dct4_vs_fftw.c --fftw
-python build_tuned/build.py --vfft --src build_tuned/bench_dst23_vs_fftw.c --fftw
-build_tuned/bench_dct2_vs_fftw.exe
-build_tuned/bench_dct3_vs_fftw.exe
-build_tuned/bench_dct4_vs_fftw.exe
-build_tuned/bench_dst23_vs_fftw.exe
+python build_tuned/build.py --vfft --src build_tuned/benches/bench_dct2_vs_fftw.c --fftw
+python build_tuned/build.py --vfft --src build_tuned/benches/bench_dct3_vs_fftw.c --fftw
+python build_tuned/build.py --vfft --src build_tuned/benches/bench_dct4_vs_fftw.c --fftw
+python build_tuned/build.py --vfft --src build_tuned/benches/bench_dst23_vs_fftw.c --fftw
+build_tuned/benches/bench_dct2_vs_fftw.exe
+build_tuned/benches/bench_dct3_vs_fftw.exe
+build_tuned/benches/bench_dct4_vs_fftw.exe
+build_tuned/benches/bench_dst23_vs_fftw.exe
 ```
 
 Requires FFTW3 (vcpkg install or local build). ~30 seconds wall total.
@@ -537,8 +537,8 @@ of the time; benched min over 21 reps after 5 warmup.
 ### MT scaling for DCT/DST/DHT
 
 ```
-python build_tuned/build.py --vfft --src build_tuned/bench_mt_dct.c
-build_tuned/bench_mt_dct.exe
+python build_tuned/build.py --vfft --src build_tuned/benches/bench_mt_dct.c
+build_tuned/benches/bench_mt_dct.exe
 ```
 
 ~30 seconds wall. Run with no other significant load on the machine
@@ -547,8 +547,8 @@ for cleanest numbers.
 ### Flag honoring (gap diagnostic)
 
 ```
-python build_tuned/build.py --vfft --src build_tuned/bench_gap_check.c
-build_tuned/bench_gap_check.exe
+python build_tuned/build.py --vfft --src build_tuned/dev/bench_gap_check.c
+build_tuned/dev/bench_gap_check.exe
 ```
 
 Needs `vfft_wisdom_tuned.txt` accessible. ~5 seconds wall. Confirms
