@@ -563,6 +563,11 @@ static int try_load_wisdom(void)
 #ifdef VFFT_WISDOM_DEFAULT_PATH
         VFFT_WISDOM_DEFAULT_PATH,
 #endif
+        /* Packaged sample wisdom (per-host, see examples/14900KF/README.md). */
+        "examples/14900KF/wisdom.txt",
+        "../examples/14900KF/wisdom.txt",
+        "../../examples/14900KF/wisdom.txt",
+        /* Live calibration output (developer location). */
         "build_tuned/vfft_wisdom_tuned.txt",
         "../build_tuned/vfft_wisdom_tuned.txt",
         "../../build_tuned/vfft_wisdom_tuned.txt",

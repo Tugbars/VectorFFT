@@ -145,14 +145,13 @@ vfft_plan vfft_plan_c2c(int N, size_t K, unsigned flags) {
 
 vfft_plan vfft_plan_2d(int N1, int N2, unsigned flags) {
     if (!g_initialized) vfft_init();
-
-    if (!_flags_want_wisdom(flags))
-        return _wrap(VFFT_TYPE_2D, stride_plan_2d(N1, N2, &g_registry));
-
-    /* 2D wisdom is partially gated for v1.0 (K-split + variant-coded plan
-     * corruption safety). MEASURE/EXHAUSTIVE on 2D currently behave as
-     * ESTIMATE — wisdom path returns the same plan. Documented limitation;
-     * v1.1 fixes the K-split bug and re-enables 2D wisdom. */
+    /* v1.0: 2D plans always use the wisdom-aware path. The inner 1D search
+     * is already exhaustive-grade; what's not yet wired is wisdom-tuned
+     * codelet variant selection (gated by the K-split corruption fix
+     * landing in v1.1). The wisdom and non-wisdom paths produce equivalent
+     * plans today. The `flags` argument is accepted for API consistency
+     * with the 1D plan creators but is currently a no-op. */
+    (void)flags;
     return _wrap(VFFT_TYPE_2D, stride_plan_2d_wise(N1, N2, &g_registry, &g_wisdom));
 }
 
@@ -185,8 +184,8 @@ vfft_plan vfft_plan_r2c(int N, size_t K, unsigned flags) {
 
 vfft_plan vfft_plan_2d_r2c(int N1, int N2, unsigned flags) {
     if (!g_initialized) vfft_init();
-    /* 2D R2C wisdom is fully gated for v1.0 (same K-split safety). All flags
-     * map to the heuristic plan. */
+    /* v1.0: same flag-collapse rationale as vfft_plan_2d. Wisdom-tuned
+     * variant selection lands in v1.1 along with the K-split fix. */
     (void)flags;
     return _wrap(VFFT_TYPE_2D_R2C,
                  stride_plan_2d_r2c(N1, N2, &g_registry));
