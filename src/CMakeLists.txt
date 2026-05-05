@@ -111,7 +111,6 @@ target_include_directories(vfft
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_SOURCE_DIR}/src/core
-        ${CMAKE_SOURCE_DIR}/src/stride-fft/core    # factorizer.h, threads.h, env.h fallback
         ${_codelet_includes}
 )
 
