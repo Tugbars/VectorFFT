@@ -84,6 +84,177 @@ typedef struct {
 
 
 /* ═══════════════════════════════════════════════════════════════
+ * MT INFRASTRUCTURE — K-split workers for pre/post passes
+ *
+ * The pre/post passes are O(N·K) and naturally K-partitionable. We split
+ * the K axis across threads, sequenced as three phases:
+ *
+ *    Phase 1: pre-pass     — T workers, each on its [k0, k1) slice
+ *    Phase 2: inner R2C    — uses R2C's own MT internally on the same pool
+ *    Phase 3: post-pass    — T workers, each on its [k0, k1) slice
+ *
+ * Each phase is a complete dispatch+wait cycle, so at any moment only one
+ * set of T threads is active. No nested parallelism.
+ * ═══════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    stride_dct2_data_t *d;
+    double *re;
+    size_t k0, k1;
+} _dct2_slice_arg_t;
+
+/* T calculation shared by DCT-II / DCT-III. Returns 1 to skip MT path
+ * (caller falls through to the existing single-threaded code). */
+static inline int _dct2_mt_threads(int n_threads_plan, int N, size_t K) {
+    int T = stride_get_num_threads();
+    if (T > n_threads_plan) T = n_threads_plan;
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T < 1) T = 1;
+    /* Per-thread workload threshold: at least ~8K elements per thread,
+     * otherwise dispatch+wait_all (~200ns) dominates the work. */
+    if (T > 1 && (size_t)N * K < (size_t)8192 * (size_t)T) T = 1;
+    return T;
+}
+
+/* ── DCT-II forward: pre-permute K-slice ───────────────────────── */
+static void _dct2_worker_pre_fwd(void *arg) {
+    _dct2_slice_arg_t *a = (_dct2_slice_arg_t *)arg;
+    stride_dct2_data_t *d = a->d;
+    const int N = d->N;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1, slice = k1 - k0;
+    const double *re = a->re;
+    double *buf_re = d->buf_re;
+
+    memcpy(buf_re + k0, re + k0, slice * sizeof(double));    /* buf[0] slice */
+
+    int i;
+    for (i = 1; i + i < N; i++) {
+        memcpy(buf_re + (size_t)i       * K + k0,
+               re     + (size_t)(2 * i) * K + k0,
+               slice * sizeof(double));
+        memcpy(buf_re + (size_t)(N - i)     * K + k0,
+               re     + (size_t)(2 * i - 1) * K + k0,
+               slice * sizeof(double));
+    }
+    if (i + i == N) {
+        memcpy(buf_re + (size_t)i       * K + k0,
+               re     + (size_t)(N - 1) * K + k0,
+               slice * sizeof(double));
+    }
+}
+
+/* ── DCT-II forward: post-process K-slice ──────────────────────── */
+static void _dct2_worker_post_fwd(void *arg) {
+    _dct2_slice_arg_t *a = (_dct2_slice_arg_t *)arg;
+    stride_dct2_data_t *d = a->d;
+    const int N = d->N;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1;
+    double *re = a->re;
+    const double *buf_re = d->buf_re;
+    const double *buf_im = d->buf_im;
+
+    for (size_t k = k0; k < k1; k++) re[k] = 2.0 * buf_re[k];
+
+    int i;
+    for (i = 1; i + i < N; i++) {
+        const double wa = d->cos_tw[i];
+        const double wb = d->sin_tw[i];
+        const double *Zr = buf_re + (size_t)i * K;
+        const double *Zi = buf_im + (size_t)i * K;
+        double *out_lo = re + (size_t)i       * K;
+        double *out_hi = re + (size_t)(N - i) * K;
+        for (size_t k = k0; k < k1; k++) {
+            double a2 = 2.0 * Zr[k];
+            double b2 = 2.0 * Zi[k];
+            out_lo[k] = wa * a2 + wb * b2;
+            out_hi[k] = wb * a2 - wa * b2;
+        }
+    }
+    if (i + i == N) {
+        const double wa = d->cos_tw[i];
+        const double *Zr = buf_re + (size_t)i * K;
+        double *out = re + (size_t)i * K;
+        for (size_t k = k0; k < k1; k++)
+            out[k] = 2.0 * Zr[k] * wa;
+    }
+}
+
+/* ── DCT-III (backward): pre-process K-slice ───────────────────── */
+static void _dct2_worker_pre_bwd(void *arg) {
+    _dct2_slice_arg_t *a = (_dct2_slice_arg_t *)arg;
+    stride_dct2_data_t *d = a->d;
+    const int N = d->N;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1, slice = k1 - k0;
+    const double *re = a->re;
+    double *buf_re = d->buf_re;
+
+    memcpy(buf_re + k0, re + k0, slice * sizeof(double));    /* buf[0] = X[0] */
+
+    int i;
+    for (i = 1; i + i < N; i++) {
+        const double wa = d->cos_tw[i];
+        const double wb = d->sin_tw[i];
+        const double *Xi = re + (size_t)i       * K;
+        const double *Xm = re + (size_t)(N - i) * K;
+        double *buf_lo = buf_re + (size_t)i       * K;
+        double *buf_hi = buf_re + (size_t)(N - i) * K;
+        for (size_t k = k0; k < k1; k++) {
+            double aa = Xi[k];
+            double bb = Xm[k];
+            double apb = aa + bb;
+            double amb = aa - bb;
+            buf_lo[k] = wa * amb + wb * apb;
+            buf_hi[k] = wa * apb - wb * amb;
+        }
+    }
+    if (i + i == N) {
+        const double wa = d->cos_tw[i];
+        const double *Xi = re + (size_t)i * K;
+        double *buf_mid = buf_re + (size_t)i * K;
+        for (size_t k = k0; k < k1; k++)
+            buf_mid[k] = 2.0 * Xi[k] * wa;
+    }
+}
+
+/* ── DCT-III (backward): post-permute K-slice ──────────────────── */
+static void _dct2_worker_post_bwd(void *arg) {
+    _dct2_slice_arg_t *a = (_dct2_slice_arg_t *)arg;
+    stride_dct2_data_t *d = a->d;
+    const int N = d->N;
+    const size_t K = d->K;
+    const size_t k0 = a->k0, k1 = a->k1, slice = k1 - k0;
+    double *re = a->re;
+    const double *buf_re = d->buf_re;
+    const double *buf_im = d->buf_im;
+
+    memcpy(re + k0, buf_re + k0, slice * sizeof(double));    /* Y[0] = buf[0] */
+
+    int i;
+    for (i = 1; i + i < N; i++) {
+        const double *Zr = buf_re + (size_t)i * K;
+        const double *Zi = buf_im + (size_t)i * K;
+        double *out_odd  = re + (size_t)(2 * i - 1) * K;
+        double *out_even = re + (size_t)(2 * i)     * K;
+        for (size_t k = k0; k < k1; k++) {
+            double aa = Zr[k];
+            double bb = Zi[k];
+            out_odd[k]  = aa - bb;
+            out_even[k] = aa + bb;
+        }
+    }
+    if (i + i == N) {
+        const double *Zr = buf_re + (size_t)i * K;
+        double *out = re + (size_t)(N - 1) * K;
+        for (size_t k = k0; k < k1; k++)
+            out[k] = Zr[k];
+    }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
  * EXECUTE -- FORWARD DCT-II (in-place over re; im unused)
  *
  * Implements FFTW's apply_re10 verbatim, vectorized across the K batch axis.
@@ -107,6 +278,39 @@ static void _dct2_execute_fwd(void *data, double *re, double *im) {
     }
 #endif
 
+    /* MT path: K-split the pre/post passes across worker threads.
+     * Falls through to single-threaded path when T == 1 (small K, low
+     * thread count, or below the workload threshold). */
+    int T = _dct2_mt_threads(d->n_threads, N, K);
+    if (T > 1) {
+        _dct2_slice_arg_t args[64];
+        for (int t = 0; t < T; t++) {
+            args[t].d  = d;
+            args[t].re = re;
+            args[t].k0 = (K * (size_t)t)       / (size_t)T;
+            args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
+        }
+
+        /* Phase 1: pre-permute, T-parallel */
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dct2_worker_pre_fwd, &args[t]);
+        _dct2_worker_pre_fwd(&args[0]);
+        _stride_pool_wait_all();
+
+        /* Phase 2: inner R2C — uses its own MT internally on the same pool */
+        stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);
+
+        /* Phase 3: post-process, T-parallel */
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dct2_worker_post_fwd, &args[t]);
+        _dct2_worker_post_fwd(&args[0]);
+        _stride_pool_wait_all();
+        return;
+    }
+
+    /* Single-threaded path: original sequential implementation. */
     /* 1. Pre-permute:
      *      buf[0]   = re[0]
      *      buf[i]   = re[2i]      for i=1..⌊(N-1)/2⌋
@@ -208,6 +412,37 @@ static void _dct3_execute_fwd(void *data, double *re, double *im) {
     }
 #endif
 
+    /* MT path: mirror of DCT-II's three-phase dispatch. */
+    int T = _dct2_mt_threads(d->n_threads, N, K);
+    if (T > 1) {
+        _dct2_slice_arg_t args[64];
+        for (int t = 0; t < T; t++) {
+            args[t].d  = d;
+            args[t].re = re;
+            args[t].k0 = (K * (size_t)t)       / (size_t)T;
+            args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
+        }
+
+        /* Phase 1: pre-process (twiddle butterfly), T-parallel */
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dct2_worker_pre_bwd, &args[t]);
+        _dct2_worker_pre_bwd(&args[0]);
+        _stride_pool_wait_all();
+
+        /* Phase 2: inner R2C — uses its own MT internally */
+        stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);
+
+        /* Phase 3: post-permute, T-parallel */
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1],
+                                  _dct2_worker_post_bwd, &args[t]);
+        _dct2_worker_post_bwd(&args[0]);
+        _stride_pool_wait_all();
+        return;
+    }
+
+    /* Single-threaded path: original sequential implementation. */
     /* 1. Pre-process: butterfly + twiddle into buf_re (real array). */
     memcpy(d->buf_re, re, K * sizeof(double));     /* buf[0] = X[0] */
 
