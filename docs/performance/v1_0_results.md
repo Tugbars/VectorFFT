@@ -4,7 +4,7 @@ Empirical performance of VectorFFT v1.0 across four axes:
 
 1. **Wall-time vs MKL** on 1D C2C (the headline competitive metric)
 2. **Estimate-mode plan quality** vs measured wisdom (cost-model accuracy)
-3. **Wall-time vs FFTW3** on the r2r family (DCT/DST/DHT, single-thread)
+3. **Wall-time vs FFTW3** on 1D C2C and the r2r family (DCT/DST/DHT), single-thread
 4. **Multi-threaded scaling** at T=2/4/8 across all transforms
 
 All numbers are from the i9-14900KF calibration host (P-core pinned,
@@ -155,7 +155,84 @@ in v1.0 will not improve performance. It returns the same plan as
 `VFFT_ESTIMATE` would. Document accordingly when relying on flag
 behavior.
 
-## 3. r2r family — single-thread vs FFTW3
+## 3. vs FFTW3 — single-thread
+
+VectorFFT's calibrated wisdom path measured against FFTW3 with
+`FFTW_MEASURE` planning. FFTW3 split-complex API
+(`fftw_plan_guru_split_dft`) so the layout matches VectorFFT exactly —
+no interleave / deinterleave overhead on the FFTW side.
+
+### 1D C2C — full sweep
+
+Source: [build_tuned/bench_1d_vs_fftw.c](../../build_tuned/bench_1d_vs_fftw.c)
+(207 cells × MKL bench grid, calibrated wisdom loaded). Same N/K grid
+as Section 1's MKL bench, so ratios are directly comparable.
+
+```
+Category       Cells    Min   Median    Max    Mean
+─────────────────────────────────────────────────────
+Small (N≤128)    15   1.86×   4.10×   8.70×   4.60×
+Power-of-2       30   1.34×   3.09×  15.89×   4.28×
+Composite        33   1.82×   3.45×  15.07×   4.93×
+Odd composite    18   1.38×   3.82×   6.29×   3.72×
+Mixed deep        8   1.62×   4.95×   6.65×   3.88×
+Prime powers     30   1.37×   5.19×  17.79×   6.85×
+Genfft (R=11/13) 15   1.85×   3.25×  10.94×   4.52×
+Rader primes     24   1.07×   2.23×   4.05×   2.38×
+Bluestein primes 24   0.92×   1.16×   1.74×   1.22×
+─────────────────────────────────────────────────────
+OVERALL         197   0.92×   3.14×  17.79×   4.15×
+
+Wins vs FFTW3: 192/197 (97.5%)
+```
+
+Headline:
+
+> **VectorFFT beats FFTW3 on 192/197 (97.5%) of bench cells. Median
+> speedup 3.14×, mean 4.15×, range 0.92×–17.79×.**
+
+The median against FFTW3 (3.14×) is meaningfully higher than the
+median against MKL (2.36× from Section 1). FFTW3 is genuinely behind
+on power-of-two and prime-power cells once N·K outgrows last-level
+cache — the calibrated wisdom routes around L3 thrashing while
+FFTW's plan search doesn't capture the cache-residency effect.
+
+**Top wins (large prime-power and pow-of-2 cells):**
+
+| Cell | Factors | Ratio |
+|------|---------|------:|
+| N=390625 (5^8) K=256 | 5×5×5×5×5×5×25 | **17.79×** |
+| N=78125 (5^7) K=256 | 5×5×5×25×5×5 | 17.51× |
+| N=65536 K=256 | 4×4×8×16×32 | 15.89× |
+| N=131072 K=256 | 4×4×4×4×4×4×32 | 15.57× |
+| N=100000 K=256 | 4×25×5×8×25 | 15.07× |
+
+At these sizes FFTW drops to ~1 GFLOP/s while VectorFFT sustains
+~17–20 GFLOP/s — 1D batched FFT against a 16M+ working set is
+memory-bound, and our wisdom-tuned multi-stage factorizations keep
+inner radices L1-resident across the K=256 batch.
+
+**Weakest cells (Bluestein primes):**
+
+| Cell | Ratio |
+|------|------:|
+| N=179 K=256 (Bluestein) | 0.92× (FFTW wins) |
+| N=59 K=256 (Bluestein) | 0.93× (FFTW wins) |
+| N=59 K=32 (Bluestein) | 0.96× (within noise) |
+
+All five sub-1.0× cells are Bluestein-routed primes (N ∈ {47, 59,
+83, 107, 167, 179, 263, 311}) at K=32 or K=256. Bluestein has fixed
+overhead the inner FFT speedup can't fully amortize, and FFTW's
+chirp-z implementation is mature. v1.1 considers a Rader-fallback
+hybrid for the small primes that currently route through Bluestein.
+
+> **Note**: full 207-cell run was in progress at doc write time — the
+> last 10 mixed-deep cells (N ∈ {30030, 60060, 4620, 13860} × K)
+> finished after this snapshot. Rerunning
+> `bench_1d_vs_fftw.exe` yields the complete CSV at
+> `build_tuned/vfft_perf_tuned_1d_fftw.csv`.
+
+### r2r family
 
 The DCT / DST / DHT wrappers are built atop our R2C using Makhoul (DCT-II/III)
 and Lee 1984 (DCT-IV); DST-II/III piggyback on DCT-II/III with sign-flip
@@ -424,6 +501,22 @@ cd build_tuned && ./bench_estimate_vs_wisdom.exe
 ```
 
 Needs `vfft_wisdom_tuned.txt` in cwd. ~10 seconds wall.
+
+### 1D C2C vs FFTW3 (single-thread)
+
+```
+python build_tuned/build.py --vfft --src build_tuned/bench_1d_vs_fftw.c --fftw
+# fftw3.dll must be co-located with the exe (already copied into build_tuned/).
+build_tuned/bench_1d_vs_fftw.exe \
+    build_tuned/vfft_wisdom_tuned.txt \
+    build_tuned/vfft_perf_tuned_1d_fftw.csv \
+    build_tuned/vfft_acc_tuned_1d_fftw.csv
+```
+
+Long run — 1–2 hours on the calibration host because of FFTW's
+`FFTW_MEASURE` plan-search cost on the larger prime-power cells
+(N=823543 alone takes ~30 min at K=256). Run with no other significant
+load for cleanest numbers.
 
 ### r2r vs FFTW3 (single-thread)
 
