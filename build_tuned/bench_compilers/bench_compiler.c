@@ -12,8 +12,8 @@
 #include <windows.h>
 #include "vfft.h"
 
-#define N    1024
-#define K    256
+#define N    65536
+#define K    4
 #define WARM 5
 #define REPS 21
 
