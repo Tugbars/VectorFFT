@@ -27,12 +27,13 @@ target_compile_definitions(vfft_quickstart PRIVATE
     VFFT_WISDOM_DEFAULT_PATH="${CMAKE_SOURCE_DIR}/build_tuned/vfft_wisdom_tuned.txt"
 )
 
-# GCC on MinGW has a known issue at -O3 where compile-then-link of this
-# specific source segfaults (works fine at -O2 or with -flto). Override
-# the default Release flags down to -O2 for this target only.
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
-    target_compile_options(vfft_quickstart PRIVATE -O2)
-endif()
+# NOTE: MinGW GCC has been observed to occasionally segfault on this
+# example (heisenbug — same binary crashes some runs, succeeds others;
+# affects -O2 and -O3 alike, regardless of compile/link separation).
+# The library itself runs fine under GCC — only this multi-section
+# demo program is affected. Recommended toolchains for this example:
+# MSVC or Intel ICX. Linux GCC has not been observed to misbehave.
+# Tracked for v1.1 investigation.
 
 # Match the lib's ISA flags so the example uses the same SIMD path.
 # vfft target inherits these flags via target_compile_options; the
