@@ -18,6 +18,16 @@
 #ifndef STRIDE_ENV_H
 #define STRIDE_ENV_H
 
+/* On Windows, stride_print_info() calls __cpuidex. MSVC/ICX expose it
+ * via <intrin.h>; MinGW GCC exposes it via <cpuid.h> (which <intrin.h>
+ * includes for it). Pull <intrin.h> in directly so the declaration is
+ * visible before the call site below — without this, GCC issues an
+ * implicit-declaration warning here, then errors at <cpuid.h>'s static
+ * definition later because the implicit signature mismatches. */
+#if defined(_WIN32)
+  #include <intrin.h>
+#endif
+
 /* ── MSVC compatibility shims ──────────────────────────────────────
  * The codelets and core use GCC/Clang/ICX syntax for restrict and
  * function-target attributes. MSVC accepts neither. Map them to

@@ -49,3 +49,5 @@ Thumbs.db
 /src/codelet-bench
 /build_cmake_test
 /build_icx
+/build_gcc
+/build_msvc
