@@ -56,3 +56,4 @@ Thumbs.db
 /build_gcc
 /build_msvc
 /build_check
+/build_msvc_ex

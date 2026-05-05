@@ -551,18 +551,26 @@ static void demo_threading_and_convert(void)
 
 static int try_load_wisdom(void)
 {
-    /* Try a few common spots: user-supplied via env, then build_tuned/
-     * (the developer location), then examples/<arch>/wisdom.txt. */
+    /* Resolution order:
+     *   1. $VFFT_WISDOM environment variable (user override)
+     *   2. VFFT_WISDOM_DEFAULT_PATH compile-time define (set by CMake to
+     *      the absolute path of build_tuned/vfft_wisdom_tuned.txt)
+     *   3. Common cwd-relative spots, in case the binary is run from
+     *      either the repo root or a build subdir without the define.
+     */
     const char *candidates[] = {
-        getenv("VFFT_WISDOM"),
+        getenv("VFFT_WISDOM"),  /* may be NULL — skip, don't terminate */
+#ifdef VFFT_WISDOM_DEFAULT_PATH
+        VFFT_WISDOM_DEFAULT_PATH,
+#endif
         "build_tuned/vfft_wisdom_tuned.txt",
         "../build_tuned/vfft_wisdom_tuned.txt",
-        "examples/14900KF/wisdom.txt",
-        "../examples/14900KF/wisdom.txt",
-        NULL,
+        "../../build_tuned/vfft_wisdom_tuned.txt",
     };
-    for (int i = 0; candidates[i]; i++)
+    const int n = (int)(sizeof(candidates) / sizeof(candidates[0]));
+    for (int i = 0; i < n; i++)
     {
+        if (!candidates[i]) continue;
         if (vfft_load_wisdom(candidates[i]) == 0)
         {
             printf("[wisdom] loaded from %s\n", candidates[i]);
@@ -588,10 +596,13 @@ int main(void)
 
     printf("VectorFFT %s  ISA: %s\n", vfft_version(), vfft_isa());
 
-    /* If we have a calibrated wisdom file on disk, load it and use
-     * VFFT_MEASURE for plans below. Otherwise fall back to ESTIMATE. */
-    int has_wisdom = (try_load_wisdom() == 0);
-    unsigned flags = has_wisdom ? VFFT_MEASURE : VFFT_ESTIMATE;
+    /* All demos below use VFFT_ESTIMATE (the closed-form cost-model path).
+     * Plans build in microseconds and land within ~1.3× of measured wisdom.
+     * To switch to VFFT_MEASURE, load wisdom first (see SECTION 10 below)
+     * and change `flags` here — but note that mixed MEASURE plans across
+     * different transforms exposes a known v1.0 bug under MinGW GCC; use
+     * MSVC or ICX if you need MEASURE end-to-end on Windows. */
+    unsigned flags = VFFT_ESTIMATE;
 
     demo_1d_c2c(flags);
     demo_r2c(flags);
@@ -603,12 +614,16 @@ int main(void)
     demo_dht(flags);
     demo_threading_and_convert();
 
-    /* Optionally persist wisdom we may have calibrated on the fly during
-     * VFFT_MEASURE plans above. Comment out if you don't want this. */
+    /* SECTION 10 — Wisdom lifecycle (load / save / forget).
+     * Run after the demos to show the API surface without affecting them. */
+    section("Wisdom lifecycle");
+    int has_wisdom = (try_load_wisdom() == 0);
     if (has_wisdom)
     {
         vfft_save_wisdom("vfft_wisdom_quickstart.txt");
-        printf("\n[wisdom] saved current db to vfft_wisdom_quickstart.txt\n");
+        printf("[wisdom] saved current db to vfft_wisdom_quickstart.txt\n");
+        vfft_forget_wisdom();
+        printf("[wisdom] forgot in-memory db (next MEASURE recalibrates)\n");
     }
 
     printf("\nAll demos completed.\n");
