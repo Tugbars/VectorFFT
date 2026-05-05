@@ -172,26 +172,26 @@ as Section 1's MKL bench, so ratios are directly comparable.
 Category       Cells    Min   Median    Max    Mean
 ─────────────────────────────────────────────────────
 Small (N≤128)    15   1.86×   4.10×   8.70×   4.60×
-Power-of-2       30   1.34×   3.09×  15.89×   4.28×
+Power-of-2       30   1.34×   3.08×  15.89×   4.28×
 Composite        33   1.82×   3.45×  15.07×   4.93×
-Odd composite    18   1.38×   3.82×   6.29×   3.72×
-Mixed deep        8   1.62×   4.95×   6.65×   3.88×
-Prime powers     30   1.37×   5.19×  17.79×   6.85×
+Odd composite    18   1.38×   3.67×   6.29×   3.72×
+Mixed deep       18   1.50×   5.28×  11.38×   5.11×
+Prime powers     30   1.37×   5.09×  17.79×   6.85×
 Genfft (R=11/13) 15   1.85×   3.25×  10.94×   4.52×
 Rader primes     24   1.07×   2.23×   4.05×   2.38×
-Bluestein primes 24   0.92×   1.16×   1.74×   1.22×
+Bluestein primes 24   0.92×   1.15×   1.74×   1.22×
 ─────────────────────────────────────────────────────
-OVERALL         197   0.92×   3.14×  17.79×   4.15×
+OVERALL         207   0.92×   3.21×  17.79×   4.25×
 
-Wins vs FFTW3: 192/197 (97.5%)
+Wins vs FFTW3: 202/207 (97.6%)
 ```
 
 Headline:
 
-> **VectorFFT beats FFTW3 on 192/197 (97.5%) of bench cells. Median
-> speedup 3.14×, mean 4.15×, range 0.92×–17.79×.**
+> **VectorFFT beats FFTW3 on 202/207 (97.6%) of bench cells. Median
+> speedup 3.21×, mean 4.25×, range 0.92×–17.79×.**
 
-The median against FFTW3 (3.14×) is meaningfully higher than the
+The median against FFTW3 (3.21×) is meaningfully higher than the
 median against MKL (2.36× from Section 1). FFTW3 is genuinely behind
 on power-of-two and prime-power cells once N·K outgrows last-level
 cache — the calibrated wisdom routes around L3 thrashing while
@@ -226,11 +226,10 @@ overhead the inner FFT speedup can't fully amortize, and FFTW's
 chirp-z implementation is mature. v1.1 considers a Rader-fallback
 hybrid for the small primes that currently route through Bluestein.
 
-> **Note**: full 207-cell run was in progress at doc write time — the
-> last 10 mixed-deep cells (N ∈ {30030, 60060, 4620, 13860} × K)
-> finished after this snapshot. Rerunning
-> `bench_1d_vs_fftw.exe` yields the complete CSV at
-> `build_tuned/vfft_perf_tuned_1d_fftw.csv`.
+Full per-cell data: [build_tuned/vfft_perf_tuned_1d_fftw.txt](../../build_tuned/vfft_perf_tuned_1d_fftw.txt)
+(human-readable, generated from
+[vfft_perf_tuned_1d_fftw.csv](../../build_tuned/vfft_perf_tuned_1d_fftw.csv)
+via `python build_tuned/make_perf_txt_fftw.py`).
 
 ### r2r family
 
