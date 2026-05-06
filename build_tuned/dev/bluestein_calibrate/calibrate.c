@@ -84,37 +84,51 @@ static void factorization_str(int m, char *buf, size_t buflen) {
     }
 }
 
-/* ── single-(M, B) Bluestein measurement ─────────────────────── */
+/* ── single-(M, B) Bluestein measurement ─────────────────────── *
+ * Multi-trial-min: do n_trials independent timing runs (one warmup,
+ * many trials per build) and return the minimum. Mean / median bias
+ * upward when occasional samples hit cache pollution / scheduler
+ * preemption / thermal blips; min reflects the true peak-of-CPU and
+ * eliminates outliers without false-flooring. */
 static double bench_bluestein(int N, size_t K, int M, size_t B,
                               stride_registry_t *reg, stride_wisdom_t *wis,
-                              double *re, double *im, double budget_sec)
+                              double *re, double *im,
+                              double per_trial_budget, int n_trials)
 {
     stride_plan_t *inner = stride_wise_plan(M, B, reg, wis);
     if (!inner) return -1.0;
     stride_plan_t *plan = stride_bluestein_plan(N, K, B, inner, M);
     if (!plan) { stride_plan_destroy(inner); return -1.0; }
 
+    /* Warm up once before all trials -- caches, branch predictors. */
     for (int w = 0; w < 5; w++) stride_execute_fwd(plan, re, im);
 
-    double t0 = now_ns();
-    stride_execute_fwd(plan, re, im);
-    double sample = now_ns() - t0;
-    int reps = (sample > 0) ? (int)(budget_sec * 1e9 / sample) : 1000;
-    if (reps < 20)        reps = 20;
-    if (reps > 200000)    reps = 200000;
+    double best_ns = 1e30;
+    for (int trial = 0; trial < n_trials; trial++) {
+        double t0 = now_ns();
+        stride_execute_fwd(plan, re, im);
+        double sample = now_ns() - t0;
+        int reps = (sample > 0) ? (int)(per_trial_budget * 1e9 / sample) : 1000;
+        if (reps < 20)        reps = 20;
+        if (reps > 200000)    reps = 200000;
 
-    double ts = now_ns();
-    for (int r = 0; r < reps; r++) stride_execute_fwd(plan, re, im);
-    double te = now_ns();
+        double ts = now_ns();
+        for (int r = 0; r < reps; r++) stride_execute_fwd(plan, re, im);
+        double te = now_ns();
+
+        double trial_ns = (te - ts) / reps;
+        if (trial_ns < best_ns) best_ns = trial_ns;
+    }
 
     stride_plan_destroy(plan);
-    return (te - ts) / reps;
+    return best_ns;
 }
 
 /* ── single-B Rader measurement (M is fixed at N-1) ──────────── */
 static double bench_rader(int N, size_t K, size_t B,
                           stride_registry_t *reg, stride_wisdom_t *wis,
-                          double *re, double *im, double budget_sec)
+                          double *re, double *im,
+                          double per_trial_budget, int n_trials)
 {
     int nm1 = N - 1;
     stride_plan_t *inner = stride_wise_plan(nm1, B, reg, wis);
@@ -124,19 +138,25 @@ static double bench_rader(int N, size_t K, size_t B,
 
     for (int w = 0; w < 5; w++) stride_execute_fwd(plan, re, im);
 
-    double t0 = now_ns();
-    stride_execute_fwd(plan, re, im);
-    double sample = now_ns() - t0;
-    int reps = (sample > 0) ? (int)(budget_sec * 1e9 / sample) : 1000;
-    if (reps < 20)        reps = 20;
-    if (reps > 200000)    reps = 200000;
+    double best_ns = 1e30;
+    for (int trial = 0; trial < n_trials; trial++) {
+        double t0 = now_ns();
+        stride_execute_fwd(plan, re, im);
+        double sample = now_ns() - t0;
+        int reps = (sample > 0) ? (int)(per_trial_budget * 1e9 / sample) : 1000;
+        if (reps < 20)        reps = 20;
+        if (reps > 200000)    reps = 200000;
 
-    double ts = now_ns();
-    for (int r = 0; r < reps; r++) stride_execute_fwd(plan, re, im);
-    double te = now_ns();
+        double ts = now_ns();
+        for (int r = 0; r < reps; r++) stride_execute_fwd(plan, re, im);
+        double te = now_ns();
+
+        double trial_ns = (te - ts) / reps;
+        if (trial_ns < best_ns) best_ns = trial_ns;
+    }
 
     stride_plan_destroy(plan);
-    return (te - ts) / reps;
+    return best_ns;
 }
 
 /* ── per-cell calibration ────────────────────────────────────── */
@@ -156,7 +176,8 @@ static const int N_B_CANDIDATES = sizeof(B_CANDIDATES) / sizeof(B_CANDIDATES[0])
 
 static void calibrate_cell(int N, size_t K,
                            stride_registry_t *reg, stride_wisdom_t *wis,
-                           double *re, double *im, double budget_sec,
+                           double *re, double *im,
+                           double per_trial_budget, int n_trials,
                            cell_result_t *out)
 {
     out->N = N; out->K = K;
@@ -175,7 +196,8 @@ static void calibrate_cell(int N, size_t K,
             size_t B = B_CANDIDATES[bi];
             if (B > K) continue;
             if (K % B != 0) continue;
-            double ns = bench_rader(N, K, B, reg, wis, re, im, budget_sec);
+            double ns = bench_rader(N, K, B, reg, wis, re, im,
+                                    per_trial_budget, n_trials);
             if (ns > 0) {
                 out->n_candidates_tried++;
                 if (ns < out->ns_best) {
@@ -195,7 +217,8 @@ static void calibrate_cell(int N, size_t K,
                 size_t B = B_CANDIDATES[bi];
                 if (B > K) continue;
                 if (K % B != 0) continue;
-                double ns = bench_bluestein(N, K, M, B, reg, wis, re, im, budget_sec);
+                double ns = bench_bluestein(N, K, M, B, reg, wis, re, im,
+                                            per_trial_budget, n_trials);
                 if (ns > 0) {
                     out->n_candidates_tried++;
                     if (ns < out->ns_best) {
@@ -228,7 +251,12 @@ int main(int argc, char **argv) {
     int n_primes = N_DEFAULT_PRIMES;
     const size_t *Ks = DEFAULT_KS;
     int n_Ks = N_DEFAULT_KS;
-    double budget_sec = 0.2;
+    /* Default measurement: 3 trials × 0.15s/trial, take min.
+     * Min-of-N filters out cache pollution and scheduler-preemption
+     * outliers without false-flooring. */
+    double per_trial_budget = 0.15;
+    int n_trials = 3;
+    int cooldown_ms = 3000;   /* between cells, lets thermal recover */
 
     /* Custom buffers for --primes / --Ks parsing */
     static int  user_primes[64];
@@ -250,13 +278,19 @@ int main(int argc, char **argv) {
             while (tok && n < 16) { user_Ks[n++] = (size_t)atoll(tok); tok = strtok(NULL, ","); }
             Ks = user_Ks; n_Ks = n;
         } else if (!strcmp(argv[i], "--budget") && i + 1 < argc) {
-            budget_sec = atof(argv[++i]);
+            per_trial_budget = atof(argv[++i]);
+        } else if (!strcmp(argv[i], "--trials") && i + 1 < argc) {
+            n_trials = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--cooldown-ms") && i + 1 < argc) {
+            cooldown_ms = atoi(argv[++i]);
         }
     }
 
     fprintf(stderr, "[calibrate] grid: %d primes x %d Ks = %d cells\n",
             n_primes, n_Ks, n_primes * n_Ks);
-    fprintf(stderr, "[calibrate] per-(M,B) budget: %.2fs\n", budget_sec);
+    fprintf(stderr, "[calibrate] per-trial budget: %.2fs, n_trials=%d (min-of-%d)\n",
+            per_trial_budget, n_trials, n_trials);
+    fprintf(stderr, "[calibrate] cooldown between cells: %d ms\n", cooldown_ms);
     fprintf(stderr, "[calibrate] output: %s\n", output_path);
 
     stride_set_num_threads(1);
@@ -307,9 +341,18 @@ int main(int argc, char **argv) {
         for (int k = 0; k < n_Ks; k++) {
             size_t K = Ks[k];
             cell_idx++;
+
+            /* Cooldown before each cell (skip before the first one).
+             * Lets thermal headroom recover and L3 / heap state quiesce
+             * after the prior cell's plan-churn. */
+            if (cell_idx > 1 && cooldown_ms > 0) {
+                Sleep((DWORD)cooldown_ms);
+            }
+
             double t_start = now_ns();
             cell_result_t r;
-            calibrate_cell(N, K, &reg, &wis, re, im, budget_sec, &r);
+            calibrate_cell(N, K, &reg, &wis, re, im,
+                           per_trial_budget, n_trials, &r);
             double t_end = now_ns();
 
             if (r.M_best > 0 && r.ns_best < 1e29) {
