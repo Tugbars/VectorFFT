@@ -165,6 +165,57 @@ compounds load-port pressure the codelet already creates. R=32
 K=256 is also DTLB-bound per existing VTune profiles — prefetch
 can't help when page-table walks are the bottleneck.
 
+### C — Aggressive small-R direct-call dispatch
+
+**Hypothesis:** The function-pointer dispatch through `reg->t1_fwd[R]`
+costs an indirect-call mispredict (~3 cycles) per group iteration.
+Replacing it with a switch over `st->radix` for R∈{2,4,8,16} (with
+direct calls to the per-radix dispatcher symbols) lets the compiler
+inline the dispatcher and eliminates the v-table cost.
+
+```c
+static VFFT_FORCEINLINE void
+_stride_call_t1_fwd(int R, stride_t1_fn fn, ...) {
+    switch (R) {
+        case 4:  vfft_r4_t1_dit_dispatch_fwd_avx2(...); return;
+        case 8:  vfft_r8_t1_dit_dispatch_fwd_avx2(...); return;
+        case 16: vfft_r16_t1_dit_dispatch_fwd_avx2(...); return;
+        default: break;
+    }
+    fn(...);  /* fallback for R≥10 */
+}
+```
+
+**Result: large regression across every cell.**
+
+| Cell | Baseline | With inline dispatch | Δ |
+|------|------:|------:|---:|
+| N=131072 K=4 | 1,890,907 | 2,247,795 | **+19%** |
+| N=32768 K=4 | 345,335 | 434,829 | **+26%** |
+| N=243 K=4 | 1,698 | 2,532 | **+49%** |
+| N=8 K=256 | 308 | 395 | **+28%** |
+
+N=243 K=4 even dropped below MKL parity (1.25× → 0.96×). Executor
+share rose from 19% to 28% — the *opposite* of the intended effect.
+
+**Why it failed:** The per-radix dispatchers (`vfft_r4_t1_dit_dispatch_fwd_avx2`)
+contain a runtime switch on (me, ios) parameters. Inlining them at
+every executor call site duplicated the dispatcher's switch table
+at every call site. The compiler can't constant-fold me/ios because
+they vary at runtime, so the inline expansion just bloated code —
+`_stride_execute_fwd_slice_from` no longer fit comfortably in L1i.
+ICache pressure went up, branch predictor lost the per-stage call
+target locality, codelet calls themselves got slower.
+
+**Lesson:** the "v-table mispredict cost" mental model was wrong.
+The v-table call is a *perfect-prediction* indirect call —
+`st->t1_fwd` is constant within a stage, so the branch predictor
+nails the target after one iteration. There were no mispredicts to
+save; only ICache to lose.
+
+This was an example of **aggressive inlining as code-bloat**, where
+the inlined body has runtime branches the compiler can't fold.
+
 ## Three converging hypotheses for why prefetch fails on this CPU
 
 1. **HW prefetcher hierarchy is genuinely strong.** Raptor Lake's
