@@ -1,15 +1,21 @@
 
 category  N        K     factors   vfft_ns      mkl_ns       vfft_GF  mkl_GF   ratio  
 ---------------------------------------------------------------------------------------
-CLOSE     131072   4     (see wisdom)      2138638      2689622    20.84    16.57   1.26x  1.17x — pow2 K=4 ILP weakness
-CLOSE     32768    4     (see wisdom)       411017       450290    23.92    21.83   1.10x  1.20x — pow2 K=4
-CLOSE     8192     4     (see wisdom)        78812        85569    27.03    24.89   1.09x  1.32x — pow2 K=4 borderline
-CLOSE     243      4     (see wisdom)         2385         2491    16.15    15.46   1.04x  1.26x — 3^5 prime power, K=4
-MID       1024     256   (see wisdom)       455135       821376    28.80    15.96   1.80x  1.94x — pow2 well-tuned baseline
-MID       2048     256   (see wisdom)       912173      1919663    31.61    15.02   2.10x  2.08x — pow2 mid
-MID       4096     256   (see wisdom)      3036604      4506356    20.72    13.96   1.48x  1.80x — pow2 large
-DECISIVE  8        256   (see wisdom)          351         2653    87.48    11.58   7.55x  7.78x — small-N batch, MKL drowns
-DECISIVE  16       256   (see wisdom)         1233         6926    66.42    11.83   5.62x  4.80x — small-N batch
-DECISIVE  60       32    (see wisdom)          919         4387    61.74    12.93   4.78x  5.15x — composite 12x5
-DECISIVE  128      256   (see wisdom)        21971        66818    52.20    17.16   3.04x  2.93x — radix-4x4x8
-DECISIVE  243      256   (see wisdom)        62527       190726    39.42    12.92   3.05x  2.69x — same N=243 as CLOSE, K=256
+CLOSE     131072   4     (see wisdom)      2273896      2311153    19.60    19.28   1.02x  1.17x — pow2 K=4 ILP weakness
+CLOSE     32768    4     (see wisdom)       406390       413304    24.19    23.78   1.02x  1.20x — pow2 K=4
+CLOSE     8192     4     (see wisdom)        73197        84970    29.10    25.07   1.16x  1.32x — pow2 K=4 borderline
+CLOSE     243      4     (see wisdom)         2296         2230    16.77    17.27   0.97x  1.26x — 3^5 prime power, K=4
+MID       1024     256   (see wisdom)       380694       763630    34.43    17.16   2.01x  1.94x — pow2 well-tuned baseline
+MID       2048     256   (see wisdom)       874307      1800920    32.98    16.01   2.06x  2.08x — pow2 mid
+MID       4096     256   (see wisdom)      2892449      4164202    21.75    15.11   1.44x  1.80x — pow2 large
+DECISIVE  8        256   (see wisdom)          340         2466    90.46    12.46   7.26x  7.78x — small-N batch, MKL drowns
+DECISIVE  16       256   (see wisdom)         1175         6369    69.72    12.86   5.42x  4.80x — small-N batch
+DECISIVE  60       32    (see wisdom)          860         4047    65.91    14.01   4.70x  5.15x — composite 12x5
+DECISIVE  128      256   (see wisdom)        19690        60630    58.25    18.92   3.08x  2.93x — radix-4x4x8
+DECISIVE  243      256   (see wisdom)        57510       178306    42.86    13.82   3.10x  2.69x — same N=243 as CLOSE, K=256
+BLUESTEIN 47       256   (see wisdom)        69787       105947     4.79     3.15   1.52x  1.41x MKL / 0.99x FFTW3 — tied
+BLUESTEIN 59       256   (see wisdom)        99823       173426     4.45     2.56   1.74x  1.62x MKL / 0.93x FFTW3 — losing FFTW3
+BLUESTEIN 83       256   (see wisdom)       141001       368701     4.80     1.84   2.61x  2.83x MKL / 1.01x FFTW3 — barely beats
+BLUESTEIN 107      256   (see wisdom)       268532       177645     3.44     5.20   0.66x  1.06x MKL / 1.41x FFTW3 — close to MKL
+BLUESTEIN 179      256   (see wisdom)       381076       389506     4.50     4.40   1.02x  1.01x MKL / 0.92x FFTW3 — worst loss
+BLUESTEIN 311      256   (see wisdom)       494386       724250     6.67     4.55   1.46x  1.36x MKL / 1.61x FFTW3 — control

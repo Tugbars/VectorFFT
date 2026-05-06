@@ -117,7 +117,12 @@ static int auto_reps(double ns_per_call, double target_seconds) {
  * VFFT bench path
  * ═══════════════════════════════════════════════════════════════ */
 static double bench_vfft_cell(const cell_t *c, double *re, double *im) {
-    vfft_plan p = vfft_plan_c2c(c->N, c->K, VFFT_MEASURE);
+    /* MEASURE attempts calibration on wisdom miss, which fails for
+     * Bluestein primes (no factorization to search). Wisdom file has no
+     * entry for these primes anyway, so ESTIMATE produces the same plan
+     * (falls back to stride_auto_plan → Bluestein/Rader). */
+    unsigned flags = (c->category[0] == 'B') ? 0u : VFFT_MEASURE;
+    vfft_plan p = vfft_plan_c2c(c->N, c->K, flags);
     if (!p) {
         fprintf(stderr, "  [vfft] plan_c2c(N=%d K=%zu) failed\n", c->N, c->K);
         return -1;
