@@ -46,8 +46,9 @@ struct vfft_plan_s {
 };
 
 /* Global registry + wisdom database. Initialized by vfft_init(). */
-static stride_registry_t g_registry;
-static stride_wisdom_t   g_wisdom;
+static stride_registry_t  g_registry;
+static stride_wisdom_t    g_wisdom;
+static bluestein_wisdom_t g_bluestein_wisdom_db;  /* per-(N,K) M/B for prime cells */
 static int g_initialized = 0;
 
 
@@ -60,6 +61,8 @@ void vfft_init(void) {
     stride_env_init();
     stride_registry_init(&g_registry);
     stride_wisdom_init(&g_wisdom);
+    bluestein_wisdom_init(&g_bluestein_wisdom_db);
+    stride_set_bluestein_wisdom(&g_bluestein_wisdom_db);
     g_initialized = 1;
 }
 
@@ -72,19 +75,66 @@ int vfft_pin_thread(int core_id) {
  * WISDOM LIFECYCLE
  * ═══════════════════════════════════════════════════════════════ */
 
+/* Derive Bluestein-wisdom companion path from the main wisdom path:
+ *   "foo.txt"  -> "foo_bluestein.txt"
+ *   "foo"      -> "foo_bluestein"
+ * Caller-owned buffer must be at least strlen(path)+11 bytes. */
+static void _bluestein_companion_path(const char *path, char *out, size_t out_size) {
+    const char *dot = strrchr(path, '.');
+    /* Avoid treating directory dots as the extension (e.g. "../foo"). */
+    const char *slash = strrchr(path, '/');
+    const char *bslash = strrchr(path, '\\');
+    if (slash && dot && dot < slash)   dot = NULL;
+    if (bslash && dot && dot < bslash) dot = NULL;
+
+    if (dot) {
+        size_t prefix_len = (size_t)(dot - path);
+        snprintf(out, out_size, "%.*s_bluestein%s",
+                 (int)prefix_len, path, dot);
+    } else {
+        snprintf(out, out_size, "%s_bluestein", path);
+    }
+}
+
 int vfft_load_wisdom(const char *path) {
     if (!g_initialized) vfft_init();
-    return stride_wisdom_load(&g_wisdom, path);
+    int rc = stride_wisdom_load(&g_wisdom, path);
+    /* Auto-load Bluestein companion file. Quiet on miss -- not every
+     * wisdom file has a Bluestein sibling. */
+    char comp_path[1024];
+    _bluestein_companion_path(path, comp_path, sizeof(comp_path));
+    bluestein_wisdom_load(&g_bluestein_wisdom_db, comp_path);
+    return rc;
 }
 
 int vfft_save_wisdom(const char *path) {
     if (!g_initialized) vfft_init();
-    return stride_wisdom_save(&g_wisdom, path);
+    int rc = stride_wisdom_save(&g_wisdom, path);
+    /* Save Bluestein companion alongside if there are any entries. */
+    if (g_bluestein_wisdom_db.count > 0) {
+        char comp_path[1024];
+        _bluestein_companion_path(path, comp_path, sizeof(comp_path));
+        bluestein_wisdom_save(&g_bluestein_wisdom_db, comp_path);
+    }
+    return rc;
 }
 
 void vfft_forget_wisdom(void) {
     if (!g_initialized) vfft_init();
-    stride_wisdom_init(&g_wisdom);  /* reset to empty */
+    stride_wisdom_init(&g_wisdom);            /* reset stride wisdom */
+    bluestein_wisdom_init(&g_bluestein_wisdom_db);  /* reset bluestein wisdom */
+}
+
+/* Explicit Bluestein wisdom load -- callable independently of main wisdom.
+ * Returns number of entries loaded, -1 on file-open failure. */
+int vfft_load_bluestein_wisdom(const char *path) {
+    if (!g_initialized) vfft_init();
+    return bluestein_wisdom_load(&g_bluestein_wisdom_db, path);
+}
+
+int vfft_save_bluestein_wisdom(const char *path) {
+    if (!g_initialized) vfft_init();
+    return bluestein_wisdom_save(&g_bluestein_wisdom_db, path);
 }
 
 

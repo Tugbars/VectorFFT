@@ -59,6 +59,7 @@ static stride_plan_t *_stride_build_plan_explicit(
 #include "dp_planner.h"
 #include "executor_blocked.h"
 #include "rader.h" /* includes bluestein.h (shared SIMD helpers) */
+#include "bluestein_wisdom.h" /* per-(N,K) M/B overrides for Bluestein/Rader */
 #include "r2c.h"   /* real-to-complex / complex-to-real */
 #include "dct.h"   /* DCT-II (built atop R2C) */
 #include "dht.h"   /* DHT (built atop R2C, self-inverse) */
@@ -70,6 +71,16 @@ static stride_plan_t *_stride_build_plan_explicit(
 #ifndef STRIDE_BLOCKED_K_THRESHOLD
 #define STRIDE_BLOCKED_K_THRESHOLD 8
 #endif
+
+/* Bluestein wisdom: optional per-(N,K) (M, B) override table installed by
+ * the public API (vfft.c). NULL = use _bluestein_choose_m heuristic.
+ * Each translation unit has its own static copy; the production library
+ * has only one TU (vfft.c), which sets it during vfft_load_wisdom. */
+static bluestein_wisdom_t *g_bluestein_wisdom = NULL;
+
+static inline void stride_set_bluestein_wisdom(bluestein_wisdom_t *bw) {
+    g_bluestein_wisdom = bw;
+}
 
 /* =====================================================================
  * BLOCKED DISPATCH — wraps stride_execute_fwd/bwd with blocked path
@@ -950,21 +961,38 @@ static stride_plan_t *stride_auto_plan_wis(int N, size_t K,
         return _stride_build_plan(N, K, fact.factors, fact.nfactors, reg);
 
     /* 3. Prime with non-smooth N-1: Bluestein (recurse with wisdom).
-     * Block size is T-aware: more blocks at higher T for outer-loop MT. */
+     * Bluestein wisdom (if installed) overrides the M/B heuristic --
+     * empirically the heuristic is up to 4.65x off optimal because it
+     * picks fewest-stages rather than best-codelet (e.g. M=361=19^2 vs
+     * M=384=64*6 for N=179). Lookup miss = use existing heuristic. */
     if (_stride_is_prime(N) && !_stride_is_rader_friendly(N))
     {
-        int M = _bluestein_choose_m(N);
-        size_t B = _bluestein_block_size_T(M, K, stride_get_num_threads());
+        const bluestein_wisdom_entry_t *bw =
+            bluestein_wisdom_lookup(g_bluestein_wisdom, N, K);
+        int M;
+        size_t B;
+        if (bw) {
+            M = bw->M;
+            B = bw->B;
+        } else {
+            M = _bluestein_choose_m(N);
+            B = _bluestein_block_size_T(M, K, stride_get_num_threads());
+        }
         stride_plan_t *inner = stride_auto_plan_wis(M, B, reg, wis);
         if (inner)
             return stride_bluestein_plan(N, K, B, inner, M);
     }
 
-    /* 4. Prime with smooth N-1: Rader (recurse with wisdom). */
+    /* 4. Prime with smooth N-1: Rader (recurse with wisdom).
+     * For Rader, M is fixed at N-1 by the algorithm; only B is tunable.
+     * If wisdom records an entry for this prime, honor its B override. */
     if (_stride_is_prime(N) && _stride_is_rader_friendly(N))
     {
         int nm1 = N - 1;
-        size_t B = _bluestein_block_size_T(nm1, K, stride_get_num_threads());
+        const bluestein_wisdom_entry_t *bw =
+            bluestein_wisdom_lookup(g_bluestein_wisdom, N, K);
+        size_t B = bw ? bw->B
+                      : _bluestein_block_size_T(nm1, K, stride_get_num_threads());
         stride_plan_t *inner = stride_auto_plan_wis(nm1, B, reg, wis);
         if (inner)
             return stride_rader_plan(N, K, B, inner);

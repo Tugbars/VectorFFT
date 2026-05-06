@@ -155,12 +155,20 @@ typedef struct vfft_plan_s *vfft_plan;
 /**
  * vfft_load_wisdom — Load wisdom from a file, merging into the in-memory
  * database. Existing entries with matching (N, K) are replaced.
- * @return  0 on success, non-zero if the file was unreadable or malformed.
+ *
+ * Auto-loads a Bluestein wisdom companion file if present:
+ *   "vfft_wisdom.txt"     also tries  "vfft_wisdom_bluestein.txt"
+ * The companion file records optimal (M, B) overrides for prime-N
+ * cells routed through Bluestein/Rader. Missing companion is silent.
+ *
+ * @return  0 on success, non-zero if the main file was unreadable.
  */
 int vfft_load_wisdom(const char *path);
 
 /**
  * vfft_save_wisdom — Save the in-memory wisdom database to a file.
+ * If the Bluestein wisdom table has any entries, also writes a
+ * companion file (see vfft_load_wisdom for naming).
  * @return  0 on success, non-zero on I/O error.
  */
 int vfft_save_wisdom(const char *path);
@@ -170,6 +178,20 @@ int vfft_save_wisdom(const char *path);
  * Subsequent VFFT_MEASURE plans will calibrate from scratch.
  */
 void vfft_forget_wisdom(void);
+
+/**
+ * vfft_load_bluestein_wisdom — Load only the Bluestein wisdom file.
+ * Useful when the main and companion wisdom files live in different
+ * locations or have non-default names.
+ * @return  number of entries loaded, or -1 on file-open failure.
+ */
+int vfft_load_bluestein_wisdom(const char *path);
+
+/**
+ * vfft_save_bluestein_wisdom — Save only the Bluestein wisdom table.
+ * @return  0 on success, non-zero on I/O error.
+ */
+int vfft_save_bluestein_wisdom(const char *path);
 
 /* ═══════════════════════════════════════════════════════════════
  * INITIALIZATION
