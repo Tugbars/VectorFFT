@@ -116,6 +116,19 @@ target_include_directories(vfft
 
 target_compile_options(vfft PRIVATE ${_isa_flags})
 
+# Always emit debug info even in Release builds. Performance impact is
+# zero (PDB is generated alongside the .obj, not affecting codegen) and
+# it makes VTune / profiler output show real codelet function names
+# (`radix4_t1_dit_kernel_fwd_avx2`, etc.) instead of `func@0x1402ad480`.
+if(MSVC OR CMAKE_C_COMPILER_ID MATCHES "Intel")
+    target_compile_options(vfft PRIVATE /Zi)
+    set_target_properties(vfft PROPERTIES
+        COMPILE_PDB_NAME vfft
+        COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+else()
+    target_compile_options(vfft PRIVATE -g)
+endif()
+
 target_compile_definitions(vfft PRIVATE
     ${_isa_defs}
     _CRT_SECURE_NO_WARNINGS

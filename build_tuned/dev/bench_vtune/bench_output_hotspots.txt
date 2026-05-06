@@ -1,63 +1,15 @@
-vtune: Warning: Microarchitecture performance insights will not be available. Make sure the sampling driver is installed and enabled on your system.
-vtune: Warning: To collect microarchitecture performance insights, run the product as administrator.
-vtune: Collection started. To stop the collection, either press CTRL-C or enter from another console window: vtune -r C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\dev\bench_vtune\vt_hotspots -command stop.
-vtune: Collection stopped.
-vtune: Using result path `C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\dev\bench_vtune\vt_hotspots'
-vtune: Executing actions  0 %                                                  vtune: Executing actions  0 % Finalizing results                               vtune: Executing actions  0 % Finalizing the result                            vtune: Executing actions  0 % Clearing the database                            vtune: Executing actions  7 % Clearing the database                            vtune: Executing actions  7 % Loading raw data to the database                 vtune: Executing actions  7 % Loading 'systemcollector-12320-DESKTOP-RHCG7VG.scvtune: Executing actions 12 % Loading 'systemcollector-12320-DESKTOP-RHCG7VG.scvtune: Executing actions 12 % Loading '62704-52064.0.trace' file               vtune: Executing actions 12 % Loading 'userapicollector-52064-4a3bda5d.trace' fvtune: Executing actions 12 % Updating precomputed scalar metrics              vtune: Executing actions 14 % Updating precomputed scalar metrics              vtune: Executing actions 14 % Processing profile metrics and debug information vtune: Executing actions 19 % Processing profile metrics and debug information vtune: Executing actions 19 % Setting data model parameters                    vtune: Executing actions 19 % Resolving module symbols                         vtune: Executing actions 19 % Resolving information for `KERNEL32.DLL'         vtune: Executing actions 19 % Resolving information for `ucrtbase.dll'         vtune: Executing actions 19 % Resolving information for `ntdll.dll'            vtune: Executing actions 19 % Resolving information for dangling locations     vtune: Executing actions 19 % Resolving information for `bench_vtune.exe'      vtune: Executing actions 19 % Resolving information for `libmmd.dll'           vtune: Executing actions 19 % Resolving information for `KERNELBASE.dll'       vtune: Executing actions 19 % Resolving information for `ittnotify_collector.dl
-vtune: Warning: Cannot locate debugging information for file `C:\WINDOWS\System32\ucrtbase.dll'.
-vtune: Warning: Cannot locate debugging information for file `C:\WINDOWS\System32\KERNEL32.DLL'.
-vtune: Warning: Cannot locate debugging information for file `C:\WINDOWS\SYSTEM32\ntdll.dll'.
-vtune: Executing actions 19 % Resolving information for `tpsstool.dll'         
-vtune: Warning: Cannot locate debugging information for file `C:\WINDOWS\System32\KERNELBASE.dll'.
-vtune: Warning: Cannot locate debugging information for file `C:\Program Files (x86)\Intel\oneAPI\compiler\2025.3\bin\libmmd.dll'.
-vtune: Warning: Cannot locate debugging information for file `C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\runtime\ittnotify_collector.dll'.
-vtune: Executing actions 20 % Resolving information for `tpsstool.dll'         
-vtune: Warning: Cannot locate debugging information for file `C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\tpsstool.dll'.
-vtune: Executing actions 21 % Resolving information for `tpsstool.dll'         vtune: Executing actions 22 % Resolving information for `tpsstool.dll'         vtune: Executing actions 22 % Resolving bottom user stack information          vtune: Executing actions 23 % Resolving bottom user stack information          vtune: Executing actions 23 % Resolving thread name information                vtune: Executing actions 24 % Resolving thread name information                vtune: Executing actions 24 % Resolving call target names for dynamic code     vtune: Executing actions 25 % Resolving call target names for dynamic code     vtune: Executing actions 25 % Resolving interrupt name information             vtune: Executing actions 26 % Resolving interrupt name information             vtune: Executing actions 26 % Processing profile metrics and debug information vtune: Executing actions 28 % Processing profile metrics and debug information vtune: Executing actions 29 % Processing profile metrics and debug information vtune: Executing actions 30 % Processing profile metrics and debug information vtune: Executing actions 31 % Processing profile metrics and debug information vtune: Executing actions 32 % Processing profile metrics and debug information vtune: Executing actions 33 % Processing profile metrics and debug information vtune: Executing actions 33 % Setting data model parameters                    vtune: Executing actions 34 % Setting data model parameters                    vtune: Executing actions 34 % Precomputing frequently used data                vtune: Executing actions 34 % Precomputing frequently used data                vtune: Executing actions 35 % Precomputing frequently used data                vtune: Executing actions 36 % Precomputing frequently used data                vtune: Executing actions 38 % Precomputing frequently used data                vtune: Executing actions 39 % Precomputing frequently used data                vtune: Executing actions 39 % Updating precomputed scalar metrics              vtune: Executing actions 41 % Updating precomputed scalar metrics              vtune: Executing actions 41 % Discarding redundant overtime data               vtune: Executing actions 42 % Discarding redundant overtime data               vtune: Executing actions 42 % Saving the result                                vtune: Executing actions 44 % Saving the result                                vtune: Executing actions 46 % Saving the result                                vtune: Executing actions 50 % Saving the result                                vtune: Executing actions 50 % Generating a report                              vtune: Executing actions 50 % Setting data model parameters                    vtune: Executing actions 75 % Setting data model parameters                    vtune: Executing actions 75 % Generating a report                              Elapsed Time: 58.851s
-    CPU Time: 46.034s
-        Effective Time: 46.034s
-        Spin Time: 0s
-        Overhead Time: 0s
-    Total Thread Count: 1
-    Paused Time: 0s
 
-Top Hotspots
-Function          Module           CPU Time  % of CPU Time(%)
-----------------  ---------------  --------  ----------------
-func@0x1402ad480  bench_vtune.exe    5.626s             12.2%
-func@0x1402ac890  bench_vtune.exe    5.384s             11.7%
-func@0x140db63e0  bench_vtune.exe    4.697s             10.2%
-func@0x1400063e0  bench_vtune.exe    4.524s              9.8%
-func@0x140005210  bench_vtune.exe    4.465s              9.7%
-[Others]          N/A               21.338s             46.4%
-
-Top Tasks
-Task Type              Task Time  Task Count  Average Task Time
----------------------  ---------  ----------  -----------------
-MKL_N131072_K4_CLOSE      2.774s           1             2.774s
-VFFT_N4096_K256_MID       2.367s           1             2.367s
-MKL_N1024_K256_MID        2.293s           1             2.293s
-MKL_N16_K256_DECISIVE     2.194s           1             2.194s
-MKL_N60_K32_DECISIVE      2.144s           1             2.144s
-[Others]                 37.174s          19             1.957s
-Collection and Platform Info
-    Application Command Line: C:\Users\Tugbars\Desktop\highSpeedFFT\build_tuned\dev\bench_vtune\bench_vtune.exe "--mkl" 
-    Operating System: Microsoft Windows 11
-    Computer Name: DESKTOP-RHCG7VG
-    Result Size: 5.2 MB 
-    Collection start time: 16:20:26 06/05/2026 UTC
-    Collection stop time: 16:21:27 06/05/2026 UTC
-    Collector Type: User-mode sampling and tracing
-    CPU
-        Name: Intel(R) microarchitecture code named Raptorlake-DT
-        Frequency: 3.187 GHz
-        Logical CPU Count: 32
-        Cache Allocation Technology
-            Level 2 capability: not detected
-            Level 3 capability: not detected
-
-If you want to skip descriptions of detected performance issues in the report,
-enter: vtune -report summary -report-knob show-issues=false -r <my_result_dir>.
-Alternatively, you may view the report in the csv format: vtune -report
-<report_name> -format=csv.
-vtune: Executing actions 100 % Generating a report                             vtune: Executing actions 100 % done                                            
+category  N        K     factors   vfft_ns      mkl_ns       vfft_GF  mkl_GF   ratio  
+---------------------------------------------------------------------------------------
+CLOSE     131072   4     (see wisdom)      2232879      2557188    19.96    17.43   1.15x  1.17x — pow2 K=4 ILP weakness
+CLOSE     32768    4     (see wisdom)       413848       447523    23.75    21.97   1.08x  1.20x — pow2 K=4
+CLOSE     8192     4     (see wisdom)        79458        84868    26.81    25.10   1.07x  1.32x — pow2 K=4 borderline
+CLOSE     243      4     (see wisdom)         2454         2367    15.69    16.27   0.96x  1.26x — 3^5 prime power, K=4
+MID       1024     256   (see wisdom)       429448       788860    30.52    16.62   1.84x  1.94x — pow2 well-tuned baseline
+MID       2048     256   (see wisdom)       900937      1890388    32.01    15.25   2.10x  2.08x — pow2 mid
+MID       4096     256   (see wisdom)      2849541      4488202    22.08    14.02   1.58x  1.80x — pow2 large
+DECISIVE  8        256   (see wisdom)          360         2676    85.24    11.48   7.42x  7.78x — small-N batch, MKL drowns
+DECISIVE  16       256   (see wisdom)         1286         6979    63.68    11.74   5.42x  4.80x — small-N batch
+DECISIVE  60       32    (see wisdom)          910         4404    62.31    12.88   4.84x  5.15x — composite 12x5
+DECISIVE  128      256   (see wisdom)        21533        66219    53.26    17.32   3.08x  2.93x — radix-4x4x8
+DECISIVE  243      256   (see wisdom)        62109       192898    39.69    12.78   3.11x  2.69x — same N=243 as CLOSE, K=256
