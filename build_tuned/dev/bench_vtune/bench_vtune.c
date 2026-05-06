@@ -235,11 +235,17 @@ int main(int argc, char **argv) {
         im[i] = (double)rand() / RAND_MAX - 0.5;
     }
 
-    /* ── Print header ──────────────────────────────────────────── */
-    printf("\n%-9s %-8s %-5s %-9s %-12s %-12s %-8s %-8s %-7s\n",
-           "category", "N", "K", "factors",
+    /* ── Print header (also to file if --output given) ─────────── */
+    const char *hdr_fmt = "\n%-9s %-8s %-5s %-9s %-12s %-12s %-8s %-8s %-7s\n";
+    const char *sep = "---------------------------------------------------------------------------------------\n";
+    printf(hdr_fmt, "category", "N", "K", "factors",
            "vfft_ns", "mkl_ns", "vfft_GF", "mkl_GF", "ratio");
-    printf("---------------------------------------------------------------------------------------\n");
+    printf("%s", sep);
+    if (fout) {
+        fprintf(fout, hdr_fmt, "category", "N", "K", "factors",
+                "vfft_ns", "mkl_ns", "vfft_GF", "mkl_GF", "ratio");
+        fprintf(fout, "%s", sep);
+    }
 
     for (int i = 0; i < N_CELLS; i++) {
         const cell_t *c = &CELLS[i];
@@ -254,12 +260,18 @@ int main(int argc, char **argv) {
         double m_gf = (m_ns > 0) ? 5.0 * c->N * log2((double)c->N) * c->K / m_ns : 0;
         double ratio = (m_ns > 0 && v_ns > 0) ? m_ns / v_ns : 0;
 
-        printf("%-9s %-8d %-5zu %-9s %12.0f %12.0f %8.2f %8.2f %6.2fx  %s\n",
-               c->category, c->N, c->K, "(see wisdom)",
+        const char *row_fmt = "%-9s %-8d %-5zu %-9s %12.0f %12.0f %8.2f %8.2f %6.2fx  %s\n";
+        printf(row_fmt, c->category, c->N, c->K, "(see wisdom)",
                v_ns, m_ns, v_gf, m_gf, ratio, c->note);
         fflush(stdout);
+        if (fout) {
+            fprintf(fout, row_fmt, c->category, c->N, c->K, "(see wisdom)",
+                    v_ns, m_ns, v_gf, m_gf, ratio, c->note);
+            fflush(fout);
+        }
     }
 
+    if (fout) fclose(fout);
     vfft_free(re);
     vfft_free(im);
     return 0;
