@@ -43,18 +43,22 @@ echo Original scheme: %ORIG_SCHEME%
 powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
 if errorlevel 1 echo [warn] powercfg failed (admin needed) — continuing
 
-rem ── Build with ITT + MKL ──────────────────────────────────────────
+rem ── Build with ITT + MKL + debug symbols (PDB).
+rem    /Zi + /DEBUG keeps optimization on (/O2) but emits a PDB so
+rem    VTune can resolve function names instead of showing
+rem    `func@0x1402ad480`. /Z7 would inline the debug info into the
+rem    .obj; /Zi puts it in a separate .pdb which VTune prefers. ──────
 echo.
-echo === Building bench_vtune.exe with ITT + MKL ===
-cl /nologo /O2 /MD /arch:AVX2 ^
+echo === Building bench_vtune.exe with ITT + MKL + debug symbols ===
+cl /nologo /O2 /Zi /MD /arch:AVX2 ^
     /I "%ROOT%\include" ^
     /I "%VTUNE_ROOT%\sdk\include" ^
     /I "%MKLROOT%\include" ^
     /DVFFT_HAS_MKL /DMKL_ILP64 ^
     "%OUTDIR%\bench_vtune.c" ^
-    /Fe:"%OUTDIR%\bench_vtune.exe" /Fo"%OUTDIR%\\" ^
-    /link ^
-    "%ROOT%\build\lib\vfft.lib" ^
+    /Fe:"%OUTDIR%\bench_vtune.exe" /Fo"%OUTDIR%\\" /Fd"%OUTDIR%\bench_vtune.pdb" ^
+    /link /DEBUG ^
+    "%ROOT%\build\lib\Release\vfft.lib" ^
     "%VTUNE_ROOT%\sdk\lib64\libittnotify.lib" ^
     mkl_intel_ilp64.lib mkl_sequential.lib mkl_core.lib
 if errorlevel 1 (echo build failed & goto :restore_power)
@@ -74,22 +78,28 @@ if exist "!RESULT_DIR!" rmdir /s /q "!RESULT_DIR!"
 echo.
 echo === Running under vtune -collect %COLLECT% ===
 echo Result dir: !RESULT_DIR!
-rem Capture bench stdout to a side file (not in result dir — vtune
-rem owns that path until it returns).
+rem Bench writes its summary table directly to a file via --output
+rem (VTune captures+suppresses the wrapped program's stdout, so we
+rem can't rely on > redirection to get the bench results).
 set "BENCH_OUT=%OUTDIR%\bench_output_%COLLECT%.txt"
 "%VTUNE_ROOT%\bin64\vtune.exe" -collect %COLLECT% ^
     -result-dir "!RESULT_DIR!" ^
-    -- "%OUTDIR%\bench_vtune.exe" --mkl > "!BENCH_OUT!" 2>&1
+    -- "%OUTDIR%\bench_vtune.exe" --mkl --output "!BENCH_OUT!"
 type "!BENCH_OUT!"
-rem Now move it into the result dir for the report builder
+rem Move into result dir for the report builder
 if exist "!BENCH_OUT!" copy /y "!BENCH_OUT!" "!RESULT_DIR!\bench_output.txt" >nul
 
 echo.
 echo === Exporting VTune reports as CSV ===
 "%VTUNE_ROOT%\bin64\vtune.exe" -report summary  -result-dir "!RESULT_DIR!" -format=csv -report-output "!RESULT_DIR!\summary.csv"
-"%VTUNE_ROOT%\bin64\vtune.exe" -report hotspots -result-dir "!RESULT_DIR!" -format=csv -group-by task -report-output "!RESULT_DIR!\hotspots.csv"
+rem -group-by task,function gives per-function breakdown WITHIN each ITT
+rem task — i.e. "which codelet ran for which cell". With just `task`
+rem grouping we'd only see the task's total time, not the functions
+rem inside it. Both files are exported so the report builder can
+rem present per-cell drill-down.
+"%VTUNE_ROOT%\bin64\vtune.exe" -report hotspots -result-dir "!RESULT_DIR!" -format=csv -group-by task,function -report-output "!RESULT_DIR!\hotspots.csv"
 if /i "%COLLECT%"=="uarch-exploration" (
-    "%VTUNE_ROOT%\bin64\vtune.exe" -report top-down -result-dir "!RESULT_DIR!" -format=csv -group-by task -report-output "!RESULT_DIR!\topdown.csv"
+    "%VTUNE_ROOT%\bin64\vtune.exe" -report top-down -result-dir "!RESULT_DIR!" -format=csv -group-by task,function -report-output "!RESULT_DIR!\topdown.csv"
 )
 
 echo.
