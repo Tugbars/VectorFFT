@@ -29,6 +29,207 @@
  * raw _mm_prefetch from the generators (688 calls in r8/r16). If/when a
  * prefetch calibration framework is added, it'll have a different shape. */
 
+#if defined(__AVX2__) || defined(__AVX512F__)
+#include <immintrin.h>
+#endif
+
+#if defined(_MSC_VER) && !defined(__clang__) && !defined(__INTEL_LLVM_COMPILER)
+  #define VFFT_FORCEINLINE __forceinline
+#else
+  #define VFFT_FORCEINLINE __attribute__((always_inline)) inline
+#endif
+
+/* ── Inline SIMD helpers for executor scalar preprocessing ─────────
+ * The executor's per-group preprocessing (cf0 multiply, K-blocked
+ * twiddle broadcast, n1_fallback per-element multiply) is plain
+ * scalar C in the K-loop. Replacing those K-loops with vector SIMD
+ * passes saves ~5–15% on cells where the relevant path runs.
+ *
+ * Per-ISA implementations are defined explicitly. A macro at the
+ * bottom of this block aliases the public name (`_stride_cmul_*`)
+ * to the widest available vector path at compile time:
+ *   AVX-512 build → `_avx512` (8 doubles per iter)
+ *   AVX2/FMA build → `_avx2`  (4 doubles per iter)
+ *   scalar build   → plain C
+ *
+ * The inner FFT codelets handle their own SIMD; these helpers only
+ * apply to the bookkeeping that the executor does AROUND the codelet.
+ * ──────────────────────────────────────────────────────────────── */
+
+/* ── AVX2 implementations (4 doubles per iteration) ────────────── */
+#if defined(__AVX2__) && defined(__FMA__)
+
+static VFFT_FORCEINLINE void
+_stride_cmul_scalar_avx2(double *re, double *im, size_t n,
+                         double cfr, double cfi)
+{
+    size_t k = 0;
+    __m256d vcfr = _mm256_set1_pd(cfr);
+    __m256d vcfi = _mm256_set1_pd(cfi);
+    for (; k + 4 <= n; k += 4) {
+        __m256d vr = _mm256_loadu_pd(re + k);
+        __m256d vi = _mm256_loadu_pd(im + k);
+        __m256d nr = _mm256_fmsub_pd(vr, vcfr, _mm256_mul_pd(vi, vcfi));
+        __m256d ni = _mm256_fmadd_pd(vr, vcfi, _mm256_mul_pd(vi, vcfr));
+        _mm256_storeu_pd(re + k, nr);
+        _mm256_storeu_pd(im + k, ni);
+    }
+    for (; k < n; k++) {
+        double tr = re[k];
+        re[k] = tr * cfr - im[k] * cfi;
+        im[k] = tr * cfi + im[k] * cfr;
+    }
+}
+
+static VFFT_FORCEINLINE void
+_stride_cmul_vec_avx2(double *re, double *im, size_t n,
+                      const double *wr_arr, const double *wi_arr)
+{
+    size_t k = 0;
+    for (; k + 4 <= n; k += 4) {
+        __m256d vr  = _mm256_loadu_pd(re + k);
+        __m256d vi  = _mm256_loadu_pd(im + k);
+        __m256d vwr = _mm256_loadu_pd(wr_arr + k);
+        __m256d vwi = _mm256_loadu_pd(wi_arr + k);
+        __m256d nr = _mm256_fmsub_pd(vr, vwr, _mm256_mul_pd(vi, vwi));
+        __m256d ni = _mm256_fmadd_pd(vr, vwi, _mm256_mul_pd(vi, vwr));
+        _mm256_storeu_pd(re + k, nr);
+        _mm256_storeu_pd(im + k, ni);
+    }
+    for (; k < n; k++) {
+        double tr = re[k];
+        re[k] = tr * wr_arr[k] - im[k] * wi_arr[k];
+        im[k] = tr * wi_arr[k] + im[k] * wr_arr[k];
+    }
+}
+
+static VFFT_FORCEINLINE void
+_stride_broadcast_avx2(double *out_re, double *out_im, size_t n,
+                       double wr, double wi)
+{
+    size_t k = 0;
+    __m256d vwr = _mm256_set1_pd(wr);
+    __m256d vwi = _mm256_set1_pd(wi);
+    for (; k + 4 <= n; k += 4) {
+        _mm256_storeu_pd(out_re + k, vwr);
+        _mm256_storeu_pd(out_im + k, vwi);
+    }
+    for (; k < n; k++) {
+        out_re[k] = wr;
+        out_im[k] = wi;
+    }
+}
+
+#endif /* AVX2 */
+
+/* ── AVX-512 implementations (8 doubles per iteration) ─────────── */
+#if defined(__AVX512F__)
+
+static VFFT_FORCEINLINE void
+_stride_cmul_scalar_avx512(double *re, double *im, size_t n,
+                           double cfr, double cfi)
+{
+    size_t k = 0;
+    __m512d vcfr = _mm512_set1_pd(cfr);
+    __m512d vcfi = _mm512_set1_pd(cfi);
+    for (; k + 8 <= n; k += 8) {
+        __m512d vr = _mm512_loadu_pd(re + k);
+        __m512d vi = _mm512_loadu_pd(im + k);
+        __m512d nr = _mm512_fmsub_pd(vr, vcfr, _mm512_mul_pd(vi, vcfi));
+        __m512d ni = _mm512_fmadd_pd(vr, vcfi, _mm512_mul_pd(vi, vcfr));
+        _mm512_storeu_pd(re + k, nr);
+        _mm512_storeu_pd(im + k, ni);
+    }
+    for (; k < n; k++) {
+        double tr = re[k];
+        re[k] = tr * cfr - im[k] * cfi;
+        im[k] = tr * cfi + im[k] * cfr;
+    }
+}
+
+static VFFT_FORCEINLINE void
+_stride_cmul_vec_avx512(double *re, double *im, size_t n,
+                        const double *wr_arr, const double *wi_arr)
+{
+    size_t k = 0;
+    for (; k + 8 <= n; k += 8) {
+        __m512d vr  = _mm512_loadu_pd(re + k);
+        __m512d vi  = _mm512_loadu_pd(im + k);
+        __m512d vwr = _mm512_loadu_pd(wr_arr + k);
+        __m512d vwi = _mm512_loadu_pd(wi_arr + k);
+        __m512d nr = _mm512_fmsub_pd(vr, vwr, _mm512_mul_pd(vi, vwi));
+        __m512d ni = _mm512_fmadd_pd(vr, vwi, _mm512_mul_pd(vi, vwr));
+        _mm512_storeu_pd(re + k, nr);
+        _mm512_storeu_pd(im + k, ni);
+    }
+    for (; k < n; k++) {
+        double tr = re[k];
+        re[k] = tr * wr_arr[k] - im[k] * wi_arr[k];
+        im[k] = tr * wi_arr[k] + im[k] * wr_arr[k];
+    }
+}
+
+static VFFT_FORCEINLINE void
+_stride_broadcast_avx512(double *out_re, double *out_im, size_t n,
+                         double wr, double wi)
+{
+    size_t k = 0;
+    __m512d vwr = _mm512_set1_pd(wr);
+    __m512d vwi = _mm512_set1_pd(wi);
+    for (; k + 8 <= n; k += 8) {
+        _mm512_storeu_pd(out_re + k, vwr);
+        _mm512_storeu_pd(out_im + k, vwi);
+    }
+    for (; k < n; k++) {
+        out_re[k] = wr;
+        out_im[k] = wi;
+    }
+}
+
+#endif /* AVX-512 */
+
+/* ── Public dispatch macros — pick widest SIMD available ──────── */
+#if defined(__AVX512F__)
+  #define _stride_cmul_scalar_inplace _stride_cmul_scalar_avx512
+  #define _stride_cmul_vec_inplace    _stride_cmul_vec_avx512
+  #define _stride_broadcast_2         _stride_broadcast_avx512
+#elif defined(__AVX2__) && defined(__FMA__)
+  #define _stride_cmul_scalar_inplace _stride_cmul_scalar_avx2
+  #define _stride_cmul_vec_inplace    _stride_cmul_vec_avx2
+  #define _stride_broadcast_2         _stride_broadcast_avx2
+#else
+  /* Pure-scalar fallback for non-SIMD builds. */
+  static VFFT_FORCEINLINE void
+  _stride_cmul_scalar_inplace(double *re, double *im, size_t n,
+                              double cfr, double cfi)
+  {
+      for (size_t k = 0; k < n; k++) {
+          double tr = re[k];
+          re[k] = tr * cfr - im[k] * cfi;
+          im[k] = tr * cfi + im[k] * cfr;
+      }
+  }
+  static VFFT_FORCEINLINE void
+  _stride_cmul_vec_inplace(double *re, double *im, size_t n,
+                           const double *wr_arr, const double *wi_arr)
+  {
+      for (size_t k = 0; k < n; k++) {
+          double tr = re[k];
+          re[k] = tr * wr_arr[k] - im[k] * wi_arr[k];
+          im[k] = tr * wi_arr[k] + im[k] * wr_arr[k];
+      }
+  }
+  static VFFT_FORCEINLINE void
+  _stride_broadcast_2(double *out_re, double *out_im, size_t n,
+                      double wr, double wi)
+  {
+      for (size_t k = 0; k < n; k++) {
+          out_re[k] = wr;
+          out_im[k] = wi;
+      }
+  }
+#endif
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -211,12 +412,7 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                     double *li = base_im + (size_t)j * st->stride;
                     const double *wr = cfr + (size_t)j * full_K;
                     const double *wi = cfi + (size_t)j * full_K;
-                    for (size_t kk = 0; kk < slice_K; kk++)
-                    {
-                        double tr = lr[kk];
-                        lr[kk] = tr * wr[kk] - li[kk] * wi[kk];
-                        li[kk] = tr * wi[kk] + li[kk] * wr[kk];
-                    }
+                    _stride_cmul_vec_inplace(lr, li, slice_K, wr, wi);
                 }
                 st->n1_fwd(base_re, base_im, base_re, base_im,
                            st->stride, st->stride, slice_K);
@@ -232,12 +428,7 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                     {
                         double *lr = base_re + (size_t)j * st->stride;
                         double *li = base_im + (size_t)j * st->stride;
-                        for (size_t kk = 0; kk < slice_K; kk++)
-                        {
-                            double tr = lr[kk];
-                            lr[kk] = tr * cfr - li[kk] * cfi;
-                            li[kk] = tr * cfi + li[kk] * cfr;
-                        }
+                        _stride_cmul_scalar_inplace(lr, li, slice_K, cfr, cfi);
                     }
                 }
                 st->t1_fwd(base_re, base_im,
@@ -254,12 +445,8 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                 double cfi = st->cf0_im[g];
                 if (cfr != 1.0 || cfi != 0.0)
                 {
-                    for (size_t kk = 0; kk < slice_K; kk++)
-                    {
-                        double tr = base_re[kk];
-                        base_re[kk] = tr * cfr - base_im[kk] * cfi;
-                        base_im[kk] = tr * cfi + base_im[kk] * cfr;
-                    }
+                    _stride_cmul_scalar_inplace(base_re, base_im, slice_K,
+                                                cfr, cfi);
                 }
                 st->t1s_fwd(base_re, base_im,
                             st->tw_scalar_re[g], st->tw_scalar_im[g],
@@ -271,12 +458,8 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
                 double cfi = st->cf0_im[g];
                 if (cfr != 1.0 || cfi != 0.0)
                 {
-                    for (size_t kk = 0; kk < slice_K; kk++)
-                    {
-                        double tr = base_re[kk];
-                        base_re[kk] = tr * cfr - base_im[kk] * cfi;
-                        base_im[kk] = tr * cfi + base_im[kk] * cfr;
-                    }
+                    _stride_cmul_scalar_inplace(base_re, base_im, slice_K,
+                                                cfr, cfi);
                 }
 
 #ifndef STRIDE_TW_BLOCK_K
@@ -297,14 +480,9 @@ static inline void _stride_execute_fwd_slice_from(const stride_plan_t *plan,
 
                     for (int j = 0; j < Rm1; j++)
                     {
-                        double wr = stw_r[j];
-                        double wi = stw_i[j];
                         size_t base = (size_t)j * this_K;
-                        for (size_t kk = 0; kk < this_K; kk++)
-                        {
-                            tw_buf_re[base + kk] = wr;
-                            tw_buf_im[base + kk] = wi;
-                        }
+                        _stride_broadcast_2(tw_buf_re + base, tw_buf_im + base,
+                                            this_K, stw_r[j], stw_i[j]);
                     }
 
                     st->t1_fwd(base_re + kb, base_im + kb,
