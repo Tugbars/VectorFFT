@@ -57,3 +57,4 @@ Thumbs.db
 /build_msvc
 /build_check
 /build_msvc_ex
+/build_tuned/dev/bench_vtune/vt_hotspots
