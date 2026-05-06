@@ -71,6 +71,19 @@ static const cell_t CELLS[] = {
     {    60,  32, "DECISIVE", "5.15x — composite 12x5",             5.15},
     {   128, 256, "DECISIVE", "2.93x — radix-4x4x8",                2.93},
     {   243, 256, "DECISIVE", "2.69x — same N=243 as CLOSE, K=256", 2.69},
+
+    /* BLUESTEIN — prime-N cells routing through Bluestein/Rader.
+     * Targets: cells where MKL/FFTW3 are unusually competitive against
+     * us. Goal is to identify whether non-codelet stages (chirp modulate,
+     * pointwise multiply, demodulate at 16-23% of total per existing
+     * src/core/bluestein.h:23-33 perf comment) are hot enough to justify
+     * AVX-512 ports of _blue_cmul_sv/_blue_cmul_vv. */
+    {    47, 256, "BLUESTEIN", "1.41x MKL / 0.99x FFTW3 — tied",         1.41},
+    {    59, 256, "BLUESTEIN", "1.62x MKL / 0.93x FFTW3 — losing FFTW3", 1.62},
+    {    83, 256, "BLUESTEIN", "2.83x MKL / 1.01x FFTW3 — barely beats", 2.83},
+    {   107, 256, "BLUESTEIN", "1.06x MKL / 1.41x FFTW3 — close to MKL", 1.06},
+    {   179, 256, "BLUESTEIN", "1.01x MKL / 0.92x FFTW3 — worst loss",   1.01},
+    {   311, 256, "BLUESTEIN", "1.36x MKL / 1.61x FFTW3 — control",      1.36},
 };
 static const int N_CELLS = (int)(sizeof(CELLS) / sizeof(CELLS[0]));
 
