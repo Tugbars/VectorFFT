@@ -1,10 +1,19 @@
 # Executor overhead reduction — design plan
 
-**Status:** v1.1 candidate work, not started.
+**Status:** v1.1+ work, not started.
 **Target cell:** N=131072 K=4 (the v1.0 closest-margin cell, 1.17× MKL).
-**Goal:** push 1.17× → ~1.30-1.45× MKL by reducing per-stage executor
-overhead.
+**Goal:** push 1.17× → ~1.30-1.45× MKL (v1.1) and toward ~1.40× MKL
+(v2.0) by reducing per-stage executor overhead, layered.
 **Reference:** [vtune_n131072_k4_vfft_vs_mkl.md](vtune_n131072_k4_vfft_vs_mkl.md)
+
+**Approach:** ship in two layers atop a shared intermediate
+representation:
+- **Layer 1 (v1.1):** flat descriptor IR + interpreter (B1)
+- **Layer 2 (v2.0+):** code generation atop the same IR (AOT for hot
+  cells, optional JIT-LLVM for cold cells)
+
+The IR is the load-bearing artifact. Build it once in v1.1; both layers
+consume it.
 
 ---
 
@@ -42,9 +51,85 @@ executor overhead is the path to closing it.
 
 ---
 
-## Two design candidates
+## Architecture — B1 and JIT as layers, not alternatives
 
-### B1 — Pre-flattened iteration descriptors
+Earlier framings of this work treated **B1 (descriptor flatten)** and
+**A1 (JIT compile)** as two competing solutions. They're actually
+**composable layers** with a shared intermediate representation:
+
+```
+  Plan (factorization + per-stage variant codes)
+                 │
+                 ▼
+  Walk all (stage, group) pairs ─→ stride_flat_desc_t[]
+                 │                       (the IR)
+        ┌────────┴────────┐
+        ▼                 ▼
+   Interpreter         Code generator
+   (B1)                (JIT or AOT)
+        │                 │
+        ▼                 ▼
+   exec_fwd_flat     exec_fwd_jitted
+   (always available) (opt-in fast path)
+```
+
+The **flat descriptor array is the load-bearing artifact.** Both
+consumers — the B1 interpreter and any future code generator — work
+from the same array. This is a classic compiler-IR design: the
+plan-time analysis (descriptor build) is separate from the
+code-generation strategy (interpret vs JIT vs AOT).
+
+**Implications:**
+
+- **B1 ships first as the foundation.** Every subsequent codegen
+  path consumes its IR. No work is wasted.
+- **JIT and AOT are the same codegen pipeline at different
+  invocation points.** JIT runs at plan time on the user's machine;
+  AOT runs at library-build time on the developer's machine. Same
+  generator, different timing.
+- **The B1 interpreter is the reference implementation.** Any
+  codegen path must produce results equivalent to the interpreter.
+  This catches bugs and provides a fallback when JIT toolchain is
+  unavailable.
+- **The descriptor format is a stable internal interface.** Fields
+  can be added; existing fields cannot be removed without breaking
+  both the interpreter and the codegen. Worth treating as such from
+  day one.
+
+### Per-cell tiering decision
+
+Once both layers exist, the planner picks per cell based on size and
+expected use frequency:
+
+| Cell shape | Path | Why |
+|---|---|---|
+| Tiny (N ≤ 256) | JIT/AOT | Unrolled code fits I-cache, runs many times in any workload |
+| Mid (N = 512..8192) | JIT if plan persists, else B1 | Compile cost amortizes across many calls |
+| Large (N ≥ 16384) | B1 (interpreter) | JIT'd unrolled code too big for I-cache; descriptor walk wins |
+| Bluestein inner FFTs | B1 | Built per-Bluestein-execute; JIT compile cost can't amortize |
+
+### Cache amortization math
+
+JIT compile costs T_compile (~5 ms with asmjit, ~50 ms with LLVM ORC).
+Per-execution speedup over B1 ≈ 5-10% (on top of B1's gain over baseline).
+JIT pays off when:
+
+```
+N_executions × (T_b1 - T_jit) > T_compile
+```
+
+For a plan executing in T_baseline ≈ 2 ms (N=131072 K=4):
+- 5% per-call gain × N executions > T_compile
+- N > T_compile / (0.05 × T_baseline) = 50 ms / 0.1 ms = **500 calls**
+
+Real-time DSP workloads ship millions of calls. Plan-once-execute-many
+benchmarks ship thousands. The compile cost is paid in <1 second of
+wall time. **JIT is profitable for almost any non-trivial use case
+once the IR is in place.**
+
+---
+
+## Layer 1 — B1 — Pre-flattened iteration descriptors
 
 **Idea:** at plan time, walk every `(stage, group)` pair and pack into
 a single contiguous array of structs. Hot path becomes one indirect-call
@@ -128,11 +213,12 @@ savings. **Mitigate via 1-day spike that benches before committing.**
 
 ---
 
-### A1 — Plan-time JIT compilation
+## Layer 2 — Code generation atop B1's IR (JIT or AOT)
 
-**Idea:** at plan time, emit a fully-unrolled function for the cell with
-all base pointers, twiddle pointers, and stage parameters baked as
-immediates. No descriptor array — the function IS the table, in I-cache.
+**Idea:** consume the flat descriptor array from B1 and emit a
+fully-unrolled function with each descriptor's values baked as
+immediates. The interpreter loop is unrolled away; the descriptor
+array's data becomes the function's instruction stream.
 
 ```c
 /* JIT generates this at plan time for cell (N=131072, K=4): */
@@ -149,63 +235,87 @@ void plan_4x4x4x4x8x4x4x4_K4_fwd(double *re, double *im) {
 }
 ```
 
-**Implementation paths:**
+**Implementation paths** (all four consume B1's IR; differ only in
+when/how codegen runs):
 
-| Path | Plan-time cost | Lib dependency | Maintenance | Notes |
+| Path | When codegen runs | Lib dependency | Maintenance | Notes |
 |---|---|---|---|---|
-| **A-system**: `system("cl ...") + LoadLibrary` | ~seconds/cell | needs `cl`/`icx` at runtime | high | text-based codegen |
-| **A-LLVM**: LLVM ORC | ~50 ms/cell | LLVM (~30 MB) | medium | IR generation |
-| **A-asmjit**: header-only x86 emitter | ~5 ms/cell | header-only | high — write x86 yourself | wild-card option |
-| **A-AOT**: pre-generate `.c` per cell, compile at lib build time | 0 at runtime | none | low — codegen is build-time | FFTW's actual approach |
+| **JIT-system**: `system("cl ...") + LoadLibrary` | plan time, ~seconds/cell | needs `cl`/`icx` at runtime | high — text-based codegen | impractical |
+| **JIT-LLVM**: LLVM ORC | plan time, ~50 ms/cell | LLVM (~30 MB) | medium — IR generation | strong toolchain |
+| **JIT-asmjit**: header-only x86 emitter | plan time, ~5 ms/cell | header-only | high — write x86 yourself | wild-card |
+| **AOT**: pre-generate `.c` per cell, compile at lib build time | build time, 0 at runtime | none | low — codegen is build-time | **FFTW's actual approach** |
 
-**Expected gain:**
+**Key insight:** since all four consume the same IR, the codegen logic
+itself is shared. JIT and AOT differ in *when* the generator runs, not
+*how*. We can pick a path per deployment:
 
-Same wins as B1 PLUS:
+- **Library author / contributor host:** AOT for hot cells, IR + B1 for
+  cold cells.
+- **End-user runtime with toolchain:** JIT-LLVM for cells not in the
+  AOT-shipped set.
+- **End-user runtime without toolchain:** B1 interpreter for everything.
+
+**Expected gain over B1:**
+
 - No descriptor-array memory cost (function in I-cache instead)
-- No descriptor-walk overhead at all (inlined instructions)
-- Compiler can optimize the whole function as a unit (cross-stage
-  scheduling, peephole opts, register allocation)
+- No descriptor-walk overhead (inlined instructions)
+- Compiler optimizes the whole function as a unit (cross-stage
+  scheduling, peephole, register allocation)
 
 Realistic estimate: B1's ~10-13% PLUS another 5-10% from compiler-level
-optimization → **~15-25% wall-time win.** Pushes toward 1.40× MKL.
+optimization → **~15-25% total wall-time win** vs current executor.
+Pushes toward 1.40× MKL.
 
-**Trade-off vs B1:**
+**Trade-off vs B1 alone:**
 
-| Aspect | B1 (descriptor flatten) | A1 (JIT) |
+| Aspect | B1 alone | B1 + JIT layer |
 |---|---|---|
-| Plan-time cost | ~µs | 5 ms (asmjit) to seconds (cl) |
-| Runtime deps | none | varies by path |
-| Memory | +~4 MB plan size | +~50 KB I-cache per plan |
-| Engineering | 2-3 days | 1-3 weeks depending on path |
-| Risk | medium (signature shim) | high (toolchain, codegen complexity) |
-| Reversibility | easy (skip plan->use_flat) | hard (codegen embedded) |
-| White paper claim | "data layout optimization" | "runtime code generation" |
+| Plan-time cost | ~µs | ~ms (codegen) — amortized across executions |
+| Runtime deps | none | varies by path; AOT keeps zero runtime deps |
+| Memory | +~4 MB plan size | +~50 KB I-cache per plan; ~0 plan-side |
+| Engineering | 2-3 days | +1-3 weeks (path-dependent) |
+| Reversibility | easy (skip `plan->use_flat`) | easy (per-cell tier-down to B1) |
+| White paper claim | "data-layout optimization" | "runtime code generation atop common IR" |
 
 ---
 
 ## Recommendation
 
-**v1.1: ship B1.** Predictable ~10-13% gain, no new toolchain, fits the
-v1.0 architecture cleanly. Implementation is data-structure work +
-uniform-signature shim, both well-understood.
+**Ship in layers:**
 
-**v2.0+: consider A-AOT (FFTW-style pre-gen).** Bigger gain (~20%),
-no runtime deps, but fundamentally different distribution shape — one
-library + thousands of pre-compiled cell-specific functions. Repo and
-build time balloon. Adopt only if the v1.1 gain isn't enough.
+| Version | Layer added | Why this slot |
+|---|---|---|
+| **v1.1** | B1 (IR + interpreter) | Stable ~10-13% gain. No toolchain. Sets up everything that follows. |
+| **v2.0** | AOT codegen for hot cells | +5-10% on those cells. Same IR, run codegen at build time. Library still has zero runtime deps. |
+| **v2.x** | JIT-LLVM for arbitrary cells | +5-10% on cold cells the AOT set doesn't cover. Opt-in via build flag (LLVM dependency). |
 
-**Don't do A-LLVM or A-asmjit** unless someone strongly wants runtime
-JIT specifically. They introduce hard dependencies (LLVM) or hard
-maintenance (hand-emitted x86) for marginal gain over A-AOT.
+**Why B1 first, even though JIT alone could work without B1's
+interpreter:** the descriptor IR is the foundation. Building it forces
+the right data discipline (uniform signatures, cf0-folded twiddles,
+stable field layout). Once it exists, codegen is "compile this IR";
+without it, codegen is "rewrite the executor from scratch every time
+we add a new variant." The interpreter is a side benefit.
+
+**Why AOT before JIT-LLVM:** AOT keeps the runtime dependency-free
+property of the library. JIT-LLVM is for users who want zero-friction
+calibration on novel hardware (recalibrate → JIT → cache to disk
+→ done). Most users don't need that.
+
+**Skip JIT-asmjit unless someone strongly wants it.** Hand-emitted x86
+is a maintenance burden the wins don't justify when LLVM-ORC is
+available.
 
 ---
 
-## v1.1 implementation plan (B1)
+## v1.1 implementation plan (Layer 1 / B1)
 
 ### Phase 0 — spike (1 day)
 
 Goal: verify the 10-13% projected gain actually lands. Build the
 minimum to bench, before committing to the full implementation.
+Also: establish the descriptor format that Layer 2 will consume —
+we want to get this right the first time since it'll be a stable
+internal interface.
 
 1. **Read the current executor inner loop** (`src/core/executor.h`'s
    `_stride_execute_fwd_slice_from`) to confirm the per-stage cost
@@ -246,16 +356,23 @@ within 1% of current. No regressions.
 
 ---
 
-## What we're NOT doing
+## What we're NOT doing in v1.1
 
-- **Full codelet fusion (C1 from the brainstorm).** The 3× MKL ceiling
-  needs this, but it requires fundamental codegen work. Defer to v2.0.
-- **Register-tiled data-flow fusion** — works only on AVX-512 hosts, where
-  the register file fits. Not applicable to Raptor Lake AVX2.
-- **Any of the wild ideas** (bytecode VM, helper threads, GPU-assisted
-  executor) — interesting on paper, no clear engineering ROI for v1.x.
-- **Touching the blocked executor.** That codepath has its own structure;
-  optimizing it is a separate project.
+- **Layer 2 (codegen).** B1 alone is the v1.1 deliverable. Codegen
+  layered on top is v2.0+. The IR is built so the layering can land
+  later without re-doing v1.1's work.
+- **Full codelet fusion** (the v2.0+ "3× MKL ceiling" idea). Even
+  Layer 2 codegen above B1's IR doesn't close the 3× gap by itself —
+  closing it needs the codelets themselves to fuse stage transitions
+  internally, which is a separate codelet-generator workstream.
+- **Register-tiled data-flow fusion** — works only on AVX-512 hosts
+  where the register file fits 17+ ymm/zmm of intermediate state.
+  Not applicable to Raptor Lake AVX2.
+- **Any of the wild brainstorm ideas** (bytecode VM, helper threads,
+  GPU-assisted executor, self-modifying code) — interesting on paper,
+  no clear engineering ROI for v1.x.
+- **Touching the blocked executor.** That codepath has its own
+  structure; layering descriptor IR onto it is a separate project.
 
 ---
 
