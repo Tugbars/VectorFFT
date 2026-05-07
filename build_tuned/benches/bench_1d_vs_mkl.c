@@ -34,6 +34,7 @@
 #include "planner.h"          /* src/core/planner.h via -I src/core */
 #include "compat.h"
 #include "env.h"
+#include "bluestein_wisdom.h" /* per-(N,K) M/B overrides for prime cells */
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
@@ -338,7 +339,39 @@ int main(int argc, char **argv) {
                 wisdom_path);
         return 2;
     }
-    printf("loaded : %d wisdom entries\n\n", wis.count);
+    printf("loaded : %d wisdom entries\n", wis.count);
+
+    /* Bluestein companion wisdom: derive sibling path from wisdom_path by
+     * inserting "_bluestein" before the extension. Quiet on miss -- not
+     * every wisdom file has a Bluestein sibling. When loaded, install via
+     * stride_set_bluestein_wisdom so the planner's Bluestein/Rader
+     * dispatch consults it for prime-N cells. */
+    static bluestein_wisdom_t bw;
+    bluestein_wisdom_init(&bw);
+    char bw_path[1024];
+    {
+        const char *dot = strrchr(wisdom_path, '.');
+        const char *slash = strrchr(wisdom_path, '/');
+        const char *bslash = strrchr(wisdom_path, '\\');
+        if (slash && dot && dot < slash)   dot = NULL;
+        if (bslash && dot && dot < bslash) dot = NULL;
+        if (dot) {
+            int prefix = (int)(dot - wisdom_path);
+            snprintf(bw_path, sizeof(bw_path), "%.*s_bluestein%s",
+                     prefix, wisdom_path, dot);
+        } else {
+            snprintf(bw_path, sizeof(bw_path), "%s_bluestein", wisdom_path);
+        }
+    }
+    int bw_loaded = bluestein_wisdom_load(&bw, bw_path);
+    if (bw_loaded > 0) {
+        stride_set_bluestein_wisdom(&bw);
+        printf("loaded : %d Bluestein wisdom entries from %s\n", bw_loaded, bw_path);
+    } else {
+        printf("note   : no Bluestein wisdom companion at %s (heuristic fallback)\n",
+               bw_path);
+    }
+    printf("\n");
 
     /* ───────────────────────────────────────────────
      * Phase 2: Performance benchmark → CSV

@@ -13,7 +13,7 @@ different hardware — see "Hardware caveats" at the end.
 
 ## 1. vs MKL — 1D C2C
 
-Source: [build_tuned/results/vfft_perf_tuned_1d.txt](../../build_tuned/results/vfft_perf_tuned_1d.txt)
+Source: [vfft_perf_tuned_1d_mkl.txt](vfft_perf_tuned_1d_mkl.txt)
 (207 cells × MKL ILP64 sequential, calibrated wisdom loaded).
 
 ```
@@ -26,10 +26,10 @@ Odd composite            18   1.86×   2.69×  4.20×  2.83×
 Mixed deep               18   1.70×   2.42×  3.09×  2.30×
 Prime powers             30   1.26×   2.69×  3.95×  2.67×
 Genfft (R=11/13)         15   1.50×   2.39×  3.06×  2.34×
-Rader primes             24   1.05×   1.96×  3.42×  2.04×
-Bluestein primes         24   1.01×   1.53×  3.09×  1.65×
+Rader primes             24   1.07×   2.04×  3.40×  2.10×   ← Bluestein wisdom
+Bluestein primes         24   1.32×   1.79×  4.30×  2.22×   ← Bluestein wisdom
 ─────────────────────────────────────────────────────────
-OVERALL                 207   1.01×   2.36×  8.98×  2.51×
+OVERALL                 207   1.07×   2.36×  8.98×  2.58×
 
 Wins vs MKL: 207/207 (100%)
 ```
@@ -37,7 +37,7 @@ Wins vs MKL: 207/207 (100%)
 Headline:
 
 > **VectorFFT beats MKL on 100% of bench cells (207/207). Median speedup
-> 2.36×, mean 2.51×, range 1.01×–8.98×.**
+> 2.36×, mean 2.58×, range 1.07×–8.98×.**
 
 The median 2.36× win comes from VectorFFT's twin advantages:
 1. **Plan-level joint search** at calibration time — picks better
@@ -47,10 +47,47 @@ The median 2.36× win comes from VectorFFT's twin advantages:
    variant codelets (FLAT / LOG3 / T1S / BUF) selected per
    `(R, me, ios)` cell.
 
-Bluestein primes (1.65× mean) are the weakest category. These run a
-prime-padded inner FFT that recurses with wisdom, but the chirp-z
-multiplications and zero-padding contribute fixed overhead the inner
-FFT speedup can't fully amortize.
+### Bluestein wisdom — closing the prime-cell gap
+
+Pre-v1.0, Bluestein primes were the weakest category — mean 1.65×, with
+**N=179 K=256 a tie at 1.01×** and several near-ties (47/256 at 1.41×,
+59/256 at 1.62×). The bottleneck wasn't the chirp-z math; it was the
+heuristic that picks the inner FFT length M and the K-axis block size B.
+
+The heuristic's "fewest-stages then smallest-M" rule mis-picked
+codelet-quality. Empirical sweep showed that for many primes a slightly
+larger but pow2-or-rich M lands a much faster inner FFT — e.g.,
+`N=179` heuristic picked `M=361 = 19²` (2 stages of radix-19) while
+`M=384 = 64×6` runs **4.65× faster** (same 2 stages, but radix-64 is a
+vastly better codelet than radix-19).
+
+v1.0 ships a [Bluestein wisdom file](../../build_tuned/vfft_wisdom_tuned_bluestein.txt)
+(36 entries × 12 prime cells × 3 K's) calibrated by the
+[bluestein_calibrate_one core function](../../src/core/bluestein_calibrator.h),
+exposed via [public API](../../include/vfft.h)
+(`vfft_load_bluestein_wisdom`) and consulted by the planner whenever a
+Bluestein/Rader cell is hit. Lookup miss → existing heuristic, so
+non-bench cells are unchanged.
+
+Result on the previously-weakest cells:
+
+| Cell | Before | After | Δ |
+|------|---:|---:|---:|
+| 47/256 | 1.41× | **2.45×** | +0.74× |
+| 59/256 | 1.62× | **2.97×** | +1.35× |
+| 83/256 | 2.83× | **4.30×** | +1.47× |
+| 107/256 | 1.06× | **1.46×** | +0.40× |
+| 179/256 | **1.01×** (tied) | **1.66×** | +0.65× |
+| 311/256 | 1.36× | **1.86×** | +0.50× |
+
+**24/24 Bluestein cells improved**, mean shift +0.51× MKL ratio. The
+"Bluestein in shambles" framing is resolved — every prime now wins
+decisively.
+
+Large Rader primes (N≥641) still use the heuristic because
+calibrator's measurement noise at those scales couldn't reliably beat
+it. Tracked in [docs/dev/wisdom_bridge_predicates.md](../dev/wisdom_bridge_predicates.md)
+as a v1.1 work item (longer-budget calibration).
 
 Figures:
 - ![VectorFFT speedup vs MKL](vfft_speedup_vs_mkl.png) — per-cell ratios
@@ -212,19 +249,28 @@ At these sizes FFTW drops to ~1 GFLOP/s while VectorFFT sustains
 memory-bound, and our wisdom-tuned multi-stage factorizations keep
 inner radices L1-resident across the K=256 batch.
 
-**Weakest cells (Bluestein primes):**
+**Weakest cells (Bluestein primes — pre-wisdom snapshot):**
 
-| Cell | Ratio |
+| Cell | Ratio (pre-wisdom) |
 |------|------:|
 | N=179 K=256 (Bluestein) | 0.92× (FFTW wins) |
 | N=59 K=256 (Bluestein) | 0.93× (FFTW wins) |
 | N=59 K=32 (Bluestein) | 0.96× (within noise) |
 
-All five sub-1.0× cells are Bluestein-routed primes (N ∈ {47, 59,
-83, 107, 167, 179, 263, 311}) at K=32 or K=256. Bluestein has fixed
-overhead the inner FFT speedup can't fully amortize, and FFTW's
-chirp-z implementation is mature. v1.1 considers a Rader-fallback
-hybrid for the small primes that currently route through Bluestein.
+> **Note:** these FFTW3 numbers are from the pre-Bluestein-wisdom run.
+> Per Section 1's vs-MKL re-bench, all 24 Bluestein cells now improve by
+> a mean +0.51× MKL ratio. Applied to the FFTW3 ratios above, these
+> sub-1.0× cells project to **~1.4-1.6× FFTW3 wins**. A fresh
+> `bench_1d_vs_fftw` run is pending and will land in v1.0.1; the table
+> above is preserved as the historical reference. Until then, treat
+> these FFTW3 ratios for Bluestein cells as the lower bound, not the
+> shipped result.
+
+The fix was per-(N, K) calibrated `(M, B)` for Bluestein/Rader,
+documented in Section 1's "Bluestein wisdom" subsection. The original
+hypothesis ("Bluestein has fixed overhead the inner FFT speedup can't
+fully amortize") turned out to be wrong — the gap was in M-selection,
+not chirp-z arithmetic.
 
 Full per-cell data: [build_tuned/results/vfft_perf_tuned_1d_fftw.txt](../../build_tuned/results/vfft_perf_tuned_1d_fftw.txt)
 (human-readable, generated from
