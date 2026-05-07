@@ -17,6 +17,7 @@
 
 #include "core/env.h"
 #include "core/planner.h"
+#include "core/bluestein_calibrator.h"   /* prime-N (M, B) calibration */
 
 #include "../include/vfft.h"
 
@@ -157,10 +158,49 @@ static int _flags_want_wisdom(unsigned flags) {
     return (flags & (VFFT_MEASURE | VFFT_EXHAUSTIVE | VFFT_WISDOM_ONLY)) != 0;
 }
 
-/* Calibrate one cell into g_wisdom. Used by MEASURE/EXHAUSTIVE on miss.
- * Returns 0 on success. EXHAUSTIVE bumps the exhaustive_threshold so more
- * sizes get the wider search (instead of DP-pruned). */
+/* Calibrate one cell into wisdom. Used by MEASURE/EXHAUSTIVE on miss.
+ * Returns 0 on success.
+ *
+ * Dispatches based on N:
+ *   - Prime N: route to bluestein_calibrate_one, which sweeps (M, B)
+ *     for the Bluestein/Rader path. Populates g_bluestein_wisdom_db.
+ *     stride_wisdom_calibrate_full would fall through to NULL here
+ *     because prime N has no smooth radix factorization.
+ *   - Composite N: route to stride_wisdom_calibrate_full as before.
+ *     Populates g_wisdom.
+ *
+ * EXHAUSTIVE bumps the stride exhaustive_threshold so more sizes get
+ * the wider search (instead of DP-pruned). For Bluestein, the search
+ * is already exhaustive over [2N-1, 4N] x B candidates. */
 static int _calibrate_one(int N, size_t K, unsigned flags) {
+    if (_bcal_is_prime(N)) {
+        /* Prime cell: Bluestein/Rader (M, B) calibration. */
+        size_t total = (size_t)N * K;
+        double *re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        double *im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
+        if (!re || !im) {
+            if (re) STRIDE_ALIGNED_FREE(re);
+            if (im) STRIDE_ALIGNED_FREE(im);
+            return -1;
+        }
+        srand(42);
+        for (size_t i = 0; i < total; i++) {
+            re[i] = (double)rand() / RAND_MAX - 0.5;
+            im[i] = (double)rand() / RAND_MAX - 0.5;
+        }
+        int rc = bluestein_calibrate_one(
+            &g_bluestein_wisdom_db,
+            N, K, &g_registry, &g_wisdom,
+            re, im,
+            /*per_trial_budget=*/0.15,
+            /*n_trials=*/3,
+            /*result_out=*/NULL);
+        STRIDE_ALIGNED_FREE(re);
+        STRIDE_ALIGNED_FREE(im);
+        return rc;
+    }
+
+    /* Composite cell: existing stride calibrator. */
     int exhaustive_threshold = (flags & VFFT_EXHAUSTIVE) ? 1 << 20 /* effectively unbounded */
                                                          : STRIDE_EXHAUSTIVE_THRESHOLD;
     double ns = stride_wisdom_calibrate_full(&g_wisdom, N, K, &g_registry,

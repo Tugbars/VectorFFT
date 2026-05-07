@@ -59,11 +59,15 @@ if errorlevel 1 (echo build failed & goto :restore_power)
 
 echo.
 echo === Running calibrator ===
+rem Pin process affinity to P-core 2 (0x4 = bit 2). Combined with
+rem stride_pin_thread inside the binary for belt-and-suspenders. /B
+rem runs without a new window; /WAIT blocks until exit so we can
+rem capture exit code and restore the power plan.
 rem Default output path: alongside production wisdom file.
 if "%~1"=="" (
-    "%OUTDIR%\calibrate.exe" --output "%ROOT%\build_tuned\vfft_wisdom_tuned_bluestein.txt"
+    start /B /WAIT /AFFINITY 0x4 "" "%OUTDIR%\calibrate.exe" --output "%ROOT%\build_tuned\vfft_wisdom_tuned_bluestein.txt"
 ) else (
-    "%OUTDIR%\calibrate.exe" %*
+    start /B /WAIT /AFFINITY 0x4 "" "%OUTDIR%\calibrate.exe" %*
 )
 
 :restore_power
