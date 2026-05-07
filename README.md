@@ -30,8 +30,8 @@ Three panels showing GFLOP/s at each batch size. Blue = VectorFFT, Red = MKL. Di
 | **Composite** (60-100K) | 33 | **2.69x** | **5.15x** (N=60, K=32) | 1.69x (N=50000, K=256) |
 | **Prime powers** (3,5,7) | 30 | **2.68x** | **3.95x** (N=390625, K=4) | 1.26x (N=243, K=4) |
 | **Prime powers** (R=11,13) | 15 | **2.39x** | **3.06x** (N=14641, K=32) | 1.50x (N=2197, K=256) |
-| **Rader primes** | 24 | **1.96x** | **3.42x** (N=641, K=32) | 1.05x (N=127, K=4) |
-| **Bluestein primes** | 24 | **1.47x** | **3.09x** (N=83, K=4) | 1.01x (N=179, K=256) |
+| **Rader primes** | 24 | **2.04x** | **3.40x** (N=641, K=32) | 1.07x (N=127, K=4) |
+| **Bluestein primes** | 24 | **1.79x** | **4.30x** (N=83, K=256) | 1.32x (N=107, K=32) |
 | **Odd composites** | 18 | **2.67x** | **4.20x** (N=175, K=256) | 1.86x (N=6615, K=4) |
 | **Mixed deep** | 18 | **2.32x** | **3.09x** (N=4620, K=32) | 1.70x (N=6930, K=4) |
 
@@ -55,10 +55,11 @@ All 207 data points overlaid. Blue cloud (VectorFFT) consistently above red clou
 | 8 | 4 | small | 8 | 49.1 GF/s | 5.5 GF/s | **8.98x** |
 | 60 | 32 | composite | 12x5 | 82.0 GF/s | 15.5 GF/s | **5.30x** |
 | 390625 | 4 | prime_pow (5^8) | 25x25x25x25 | 39.3 GF/s | 11.0 GF/s | **3.95x** |
-| 641 | 32 | rader | (override) | 15.1 GF/s | 4.4 GF/s | **3.42x** |
+| 641 | 32 | rader | (override) | 14.9 GF/s | 4.4 GF/s | **3.40x** |
 | 175 | 256 | odd_comp | 5x5x7 | 56.6 GF/s | 15.3 GF/s | **4.20x** |
 | 4620 | 32 | mixed_deep | 7x6x10x11 | 47.2 GF/s | 14.6 GF/s | **3.09x** |
-| 83 | 4 | bluestein | (override) | 6.2 GF/s | 2.0 GF/s | **3.09x** |
+| 83 | 256 | bluestein | (override) | 8.1 GF/s | 1.9 GF/s | **4.30x** |
+| 179 | 256 | bluestein | (override) | 7.5 GF/s | 4.5 GF/s | **1.66x** *(was tied 1.01x pre-wisdom)* |
 | 131072 | 32 | pow2 | 16x4x4x4x4x4x8 | 18.4 GF/s | 11.3 GF/s | **1.49x** |
 | 131072 | 4 | pow2 | 4x4x4x4x8x4x4x4 | 22.8 GF/s | 21.0 GF/s | 1.18x |
 
