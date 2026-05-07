@@ -60,3 +60,7 @@ Thumbs.db
 /build_tuned/dev/bench_vtune/vt_hotspots
 build_tuned/vfft_wisdom_tuned_bluestein.6cells.txt.bak
 build_tuned/vfft_wisdom_tuned_bluestein.calib1.bak
+/build_tuned/dev/bench_vtune/vt_uarch-exploration
+build_tuned/dev/bench_vtune/bench_output_hotspots.txt
+build_tuned/dev/bench_vtune/bench_output_uarch-exploration.txt
+build_tuned/dev/bench_vtune/bench_output_hotspots.txt
