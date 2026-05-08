@@ -1,0 +1,625 @@
+(* schedule.ml — port of Frigo's recursive bisection scheduler.
+ *
+ * Algorithm (from genfft/schedule.ml lines 85-191):
+ *   1. Build DAG with explicit predecessor and successor lists.
+ *   2. Bisect: alternating waves color nodes RED (input-side) and
+ *      BLUE (output-side) until both stabilize. The cut between them
+ *      defines the partition.
+ *   3. Recursively schedule each half.
+ *   4. Concatenate: red_schedule ++ blue_schedule.
+ *
+ * Frigo's claim: this is cache-oblivious. At each recursion level, the
+ * working set is divided. As we recurse deeper, cut sizes shrink and
+ * fit smaller cache levels — without ever knowing the cache hierarchy.
+ *
+ * Special inputs: single-load nodes (Loads of constants or twiddles in
+ * our representation) are colored YELLOW initially. They float to
+ * whichever side claims them first — closer to use, reducing live range.
+ *
+ * Implementation note: Frigo's representation has explicit DAG nodes
+ * with mutable color/predecessor/successor fields. We mirror that
+ * structure in `node` below. Our hash-consed Algsimp.t is the input;
+ * we build a parallel DAG for scheduling. *)
+
+open Algsimp
+
+type color = BLACK | RED | YELLOW | BLUE
+
+type node = {
+  id: int;                           (* unique id for this DAG (not Algsimp tag) *)
+  alg_node: Algsimp.t;               (* the underlying hash-consed expression *)
+  output_for: Expr.elem_ref option;  (* if this is an assignment root *)
+  mutable preds: node list;
+  mutable succs: node list;
+  mutable color: color;
+}
+
+(* === DAG CONSTRUCTION === *)
+
+(* Get the immediate Algsimp.t predecessors of a node, in their natural order. *)
+let predecessor_exprs (e : Algsimp.t) : Algsimp.t list =
+  match e.node with
+  | NK_Const _ | NK_Load _ -> []
+  | NK_Neg a -> [a]
+  | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
+  | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+
+(* Build a scheduling DAG from a list of (output_ref, expr) assignments.
+ *
+ * The DAG includes:
+ *   - one node per reachable Algsimp.t (Loads, Consts, Adds, etc.)
+ *   - one synthetic "output" node per assignment, with the assignment's
+ *     RHS as its sole predecessor and no successors
+ *
+ * Output nodes give us no-successors leaves for the bisection to start
+ * the BLUE wave from. Loads/Consts give us no-predecessors leaves for
+ * the RED wave. *)
+let build_dag (assigns : (Expr.elem_ref * Algsimp.t) list) : node list =
+  let next_id = ref 0 in
+  let fresh () = let i = !next_id in incr next_id; i in
+  let by_tag : (int, node) Hashtbl.t = Hashtbl.create 256 in
+
+  let rec node_of (e : Algsimp.t) : node =
+    match Hashtbl.find_opt by_tag e.tag with
+    | Some n -> n
+    | None ->
+      let preds = predecessor_exprs e in
+      let pred_nodes = List.map node_of preds in
+      let n = {
+        id = fresh ();
+        alg_node = e;
+        output_for = None;
+        preds = pred_nodes;
+        succs = [];
+        color = BLACK;
+      } in
+      Hashtbl.add by_tag e.tag n;
+      List.iter (fun p -> p.succs <- n :: p.succs) pred_nodes;
+      n
+  in
+  let expr_nodes = List.map (fun (_, e) -> node_of e) assigns in
+  let output_nodes = List.map2 (fun (oref, _) e_node ->
+    let n = {
+      id = fresh ();
+      alg_node = e_node.alg_node;
+      output_for = Some oref;
+      preds = [e_node];
+      succs = [];
+      color = BLACK;
+    } in
+    e_node.succs <- n :: e_node.succs;
+    n
+  ) assigns expr_nodes in
+  let all = Hashtbl.fold (fun _ n acc -> n :: acc) by_tag [] in
+  all @ output_nodes
+
+(* === BISECTION === *)
+
+let is_input n = n.preds = []
+let is_output n = n.succs = []
+
+(* "Special inputs": leaves loading a single value (constant or twiddle).
+ * They float between partitions based on neighbor colors. *)
+let is_special_input n =
+  match n.alg_node.node with
+  | NK_Const _ -> true
+  | NK_Load (Expr.Twiddle _) -> true
+  | NK_Load (Expr.Input _) -> false
+  | _ -> false
+
+let has_color c n = n.color = c
+let has_either_color c1 c2 n = n.color = c1 || n.color = c2
+
+(* Bisect a list of nodes into (red, blue) partitions.
+ *
+ * The algorithm works as a fixed-point of two alternating waves:
+ *   - Forward wave: BLACK nodes whose preds are RED-or-YELLOW become RED
+ *   - Backward wave: BLACK/YELLOW nodes whose succs are all BLUE become BLUE
+ *
+ * Termination: when neither wave colors any new nodes, both have
+ * stabilized. The remaining BLACK nodes (if any — usually none) are
+ * the cut frontier; they end up uncolored.
+ *
+ * Edge case: if the BLUE wave wins the entire DAG (all nodes blue, no red),
+ * we manually re-color inputs to RED to avoid an empty partition. *)
+let bisect (nodes : node list) : node list * node list =
+  List.iter (fun n -> n.color <- BLACK) nodes;
+  let inputs = List.filter is_input nodes in
+  let outputs = List.filter is_output nodes in
+  let special = List.filter is_special_input nodes in
+
+  List.iter (fun n -> n.color <- RED) inputs;
+  List.iter (fun n -> n.color <- YELLOW) special;
+  List.iter (fun n -> n.color <- BLUE) outputs;
+
+  let rec loopi donep =
+    let frontier = List.filter (fun n ->
+      has_color BLACK n &&
+      List.for_all (has_either_color RED YELLOW) n.preds
+    ) nodes in
+    match frontier with
+    | [] -> if donep then () else loopo true
+    | _ ->
+      List.iter (fun n ->
+        n.color <- RED;
+        List.iter (fun p -> p.color <- RED) n.preds
+      ) frontier;
+      loopo false
+  and loopo donep =
+    let frontier = List.filter (fun n ->
+      has_either_color BLACK YELLOW n &&
+      List.for_all (has_color BLUE) n.succs
+    ) nodes in
+    match frontier with
+    | [] -> if donep then () else loopi true
+    | _ ->
+      List.iter (fun n -> n.color <- BLUE) frontier;
+      loopi false
+  in
+  loopi false;
+
+  if not (List.exists (has_color RED) nodes) then
+    List.iter (fun n -> n.color <- RED) inputs;
+
+  let red = List.filter (has_color RED) nodes in
+  let blue = List.filter (has_color BLUE) nodes in
+  (red, blue)
+
+(* === RECURSIVE SCHEDULING ===
+ *
+ *   schedule [] = Done
+ *   schedule [a] = Instr a
+ *   schedule alist = let (red, blue) = bisect alist in
+ *                    Seq (schedule red, schedule blue)
+ *
+ * Frigo's Seq/Instr/Done tree flattens to an in-order traversal,
+ * which is what we return directly. *)
+
+let rec schedule_nodes (nodes : node list) : node list =
+  match nodes with
+  | [] -> []
+  | [n] -> [n]
+  | _ ->
+    let (red, blue) = bisect nodes in
+    if red = [] || blue = [] then
+      topological_order nodes
+    else if List.length red = List.length nodes ||
+            List.length blue = List.length nodes then
+      (* Bisection didn't actually split — fall back. *)
+      topological_order nodes
+    else
+      schedule_nodes red @ schedule_nodes blue
+
+and topological_order (nodes : node list) : node list =
+  let emitted = Hashtbl.create 64 in
+  let result = ref [] in
+  let in_set n = List.exists (fun x -> x.id = n.id) nodes in
+  let ready_in_set n =
+    not (Hashtbl.mem emitted n.id) &&
+    in_set n &&
+    List.for_all (fun p ->
+      Hashtbl.mem emitted p.id || not (in_set p)
+    ) n.preds
+  in
+  let rec loop () =
+    let ready = List.filter ready_in_set nodes in
+    match ready with
+    | [] -> ()
+    | rs ->
+      List.iter (fun n ->
+        Hashtbl.add emitted n.id ();
+        result := n :: !result
+      ) rs;
+      loop ()
+  in
+  loop ();
+  List.rev !result
+
+(* === PUBLIC API === *)
+
+(* Schedule the assignments using Frigo's bisection algorithm.
+ * Returns ordered list of (optional output assignment, expression). *)
+let bisection_schedule (assigns : (Expr.elem_ref * Algsimp.t) list)
+    : (Expr.elem_ref option * Algsimp.t) list =
+  let dag = build_dag assigns in
+  let scheduled = schedule_nodes dag in
+  List.map (fun n -> (n.output_for, n.alg_node)) scheduled
+
+(* For introspection. *)
+let top_level_bisection (assigns : (Expr.elem_ref * Algsimp.t) list)
+    : node list * node list =
+  let dag = build_dag assigns in
+  bisect dag
+
+(* ═══════════════════════════════════════════════════════════════
+ *  SU (Sethi-Ullman) LIST SCHEDULER
+ * ═══════════════════════════════════════════════════════════════
+ *
+ * List scheduling with priority = (critical-path-distance, su-number).
+ * Operates directly on Algsimp.t nodes rather than the bisection DAG.
+ *
+ * Critical-path distance: longest path (in cycles, weighted by Uarch
+ * latencies) from a node to a sink. High cp_dist → schedule early.
+ *
+ * SU number: rough estimate of registers needed to evaluate this
+ * subtree. Low su_number → schedule first (less pressure).
+ *
+ * The classical SU algorithm is for trees; we have a DAG with shared
+ * subexpressions. Our "su number" is therefore approximate — it
+ * over-counts pressure for shared values that are only computed once.
+ * Empirically it's still useful as a tie-breaker.
+ *
+ * Load source-order preservation: loads have the property that they
+ * have no predecessors and are always "ready". We add an extra
+ * constraint that load N can only be scheduled after load N-1 (where
+ * N is the load's index in tag-ascending order, which matches DFT
+ * construction order). This keeps the prefetcher-friendly leg-by-leg
+ * structure intact while letting arithmetic flow whenever its
+ * dependencies are satisfied.
+ *)
+
+let preds_of (e : Algsimp.t) : Algsimp.t list =
+  match e.node with
+  | NK_Const _ | NK_Load _ -> []
+  | NK_Neg a -> [a]
+  | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
+  | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+
+(* Latency of producing this node, given a Uarch profile. Used by
+ * critical-path computation. *)
+let node_latency (uarch : Uarch.t) (e : Algsimp.t) : int =
+  match e.node with
+  | NK_Const _ -> 0                         (* set1 broadcast: free / inlined *)
+  | NK_Load _ -> uarch.load_l1_latency
+  | NK_Neg _ -> uarch.add_latency           (* xor with sign mask, ~ add latency *)
+  | NK_Add _ | NK_Sub _ -> uarch.add_latency
+  | NK_Mul _ -> uarch.mul_latency
+  | NK_CmulRe _ | NK_CmulIm _ -> uarch.fma_latency
+                                            (* Cmul emits as 1 mul + 1 fma;
+                                             * latency dominated by fma_latency *)
+
+(* Compute critical-path distance from each node to a sink, in cycles.
+ * cp_dist[n] = node_latency(n) + max(cp_dist[user] for user in users(n))
+ * Sinks have cp_dist = node_latency(n). *)
+let compute_cp_dist (uarch : Uarch.t)
+                    (sinks : Algsimp.t list)
+                    (all_nodes : Algsimp.t list)
+    : (int, int) Hashtbl.t =
+  (* Build successor (user) map. *)
+  let users : (int, Algsimp.t list) Hashtbl.t = Hashtbl.create 256 in
+  let add_user prod use =
+    let cur = try Hashtbl.find users prod.tag with Not_found -> [] in
+    Hashtbl.replace users prod.tag (use :: cur)
+  in
+  List.iter (fun n ->
+    List.iter (fun p -> add_user p n) (preds_of n)
+  ) all_nodes;
+
+  let cp_dist : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  let sink_tags = List.fold_left (fun acc s ->
+    Hashtbl.replace acc s.tag (); acc
+  ) (Hashtbl.create 16) sinks in
+
+  (* Process in tag-descending order. Tag-ascending = topological (children
+   * before parents in our hash-cons), so tag-descending = reverse-topological,
+   * which is what we want for backward DP. *)
+  let sorted_desc = List.sort (fun a b -> compare b.tag a.tag) all_nodes in
+  List.iter (fun n ->
+    let lat = node_latency uarch n in
+    let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
+    let max_user_cp = List.fold_left (fun acc u ->
+      let u_cp = try Hashtbl.find cp_dist u.tag with Not_found -> 0 in
+      max acc u_cp
+    ) 0 user_list in
+    let cp =
+      if Hashtbl.mem sink_tags n.tag then lat
+      else lat + max_user_cp
+    in
+    Hashtbl.replace cp_dist n.tag cp
+  ) sorted_desc;
+  cp_dist
+
+(* Compute SU number — register-pressure approximation.
+ * For trees, classical SU labels are exact. On DAGs (shared subexprs),
+ * this over-estimates pressure for shared values, which is a
+ * conservative bias toward scheduling them earlier. *)
+let compute_su_number (all_nodes : Algsimp.t list) : (int, int) Hashtbl.t =
+  let su : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  let get_su (e : Algsimp.t) : int =
+    try Hashtbl.find su e.tag with Not_found -> 1
+  in
+  let sorted_asc = List.sort (fun a b -> compare a.tag b.tag) all_nodes in
+  List.iter (fun n ->
+    let s = match n.node with
+      | NK_Const _ | NK_Load _ -> 1
+      | NK_Neg a -> get_su a
+      | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
+        let sa = get_su a and sb = get_su b in
+        if sa = sb then sa + 1
+        else max sa sb
+      | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
+        (* k-ary SU label: sort children by su descending, label = max_i (su_i + i). *)
+        let sus = List.sort (fun x y -> compare y x)
+                    [get_su a; get_su b; get_su c; get_su d] in
+        let rec compute idx = function
+          | [] -> 0
+          | s :: rest -> max (s + idx) (compute (idx + 1) rest)
+        in
+        compute 0 sus
+    in
+    Hashtbl.add su n.tag s
+  ) sorted_asc;
+  su
+
+(* The list scheduler proper. *)
+let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
+    : (Expr.elem_ref option * Algsimp.t) list =
+  (* Collect all reachable nodes. *)
+  let seen : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 256 in
+  let rec visit (e : Algsimp.t) =
+    if not (Hashtbl.mem seen e.tag) then begin
+      Hashtbl.add seen e.tag e;
+      List.iter visit (preds_of e)
+    end
+  in
+  List.iter (fun (_, e) -> visit e) assigns;
+  let all_nodes = Hashtbl.fold (fun _ n acc -> n :: acc) seen [] in
+  let sinks = List.map snd assigns in
+
+  let cp_dist = compute_cp_dist uarch sinks all_nodes in
+  let su_num = compute_su_number all_nodes in
+
+  (* Successor map for forward propagation when a node becomes scheduled. *)
+  let users : (int, Algsimp.t list) Hashtbl.t = Hashtbl.create 256 in
+  List.iter (fun n ->
+    List.iter (fun p ->
+      let cur = try Hashtbl.find users p.tag with Not_found -> [] in
+      Hashtbl.replace users p.tag (n :: cur)
+    ) (preds_of n)
+  ) all_nodes;
+
+  (* Unscheduled-pred counter per node. *)
+  let unsched_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  List.iter (fun n ->
+    Hashtbl.add unsched_count n.tag (List.length (preds_of n))
+  ) all_nodes;
+
+  (* Ready set: nodes whose predecessors have all been scheduled. *)
+  let scheduled : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+  let in_ready : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+  let ready : Algsimp.t list ref = ref [] in
+  List.iter (fun n ->
+    if preds_of n = [] then begin
+      ready := n :: !ready;
+      Hashtbl.add in_ready n.tag ()
+    end
+  ) all_nodes;
+
+  (* Load source-order tracking: only allow the next-required load to fire. *)
+  let load_tags = List.filter_map (fun n ->
+    match n.node with NK_Load _ -> Some n.tag | _ -> None
+  ) all_nodes |> List.sort compare in
+  let load_array = Array.of_list load_tags in
+  let load_idx = ref 0 in
+  let next_required_load () : int option =
+    if !load_idx < Array.length load_array
+    then Some load_array.(!load_idx)
+    else None
+  in
+
+  (* Pick next node from ready set.
+   *
+   * Policy:
+   *   1. If ANY non-load instruction is ready, pick from those (with
+   *      cp_dist DESC, su_num ASC, tag ASC priority). Loads stay queued.
+   *   2. Only when no arithmetic is ready, fire the next required load.
+   *
+   * Why this matters: without rule (1), critical-path priority causes
+   * loads to fire first (they have long dependent chains). All loads
+   * bunch at the top of the schedule, breaking the prefetcher's
+   * sequential pattern. By preferring arithmetic, loads naturally
+   * interleave with computation — they fire only when the next chunk
+   * of work needs them. This matches Topo's natural interleaving while
+   * letting SU optimize the arithmetic order between loads. *)
+  let is_load n = match n.node with NK_Load _ -> true | _ -> false in
+  let pick_next () : Algsimp.t option =
+    if !ready = [] then None
+    else
+      let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
+      let cmp a b =
+        let cpa = try Hashtbl.find cp_dist a.tag with Not_found -> 0 in
+        let cpb = try Hashtbl.find cp_dist b.tag with Not_found -> 0 in
+        if cpa <> cpb then compare cpb cpa  (* higher cp_dist first *)
+        else
+          let sua = try Hashtbl.find su_num a.tag with Not_found -> 0 in
+          let sub = try Hashtbl.find su_num b.tag with Not_found -> 0 in
+          if sua <> sub then compare sua sub  (* lower su_num breaks ties *)
+          else compare a.tag b.tag             (* stable: tag-ascending *)
+      in
+      match arith_ready with
+      | _ :: _ ->
+        (* At least one arithmetic op ready — pick the best one, defer loads. *)
+        Some (List.hd (List.sort cmp arith_ready))
+      | [] ->
+        (* No arithmetic ready — must fire a load to unblock more work.
+         * Fire the next required load (preserves source order). *)
+        let req_load = next_required_load () in
+        let load_candidates = List.filter (fun n ->
+          is_load n && Some n.tag = req_load
+        ) !ready in
+        (match load_candidates with
+         | [] -> None  (* shouldn't happen if scheduling is making progress *)
+         | _ -> Some (List.hd load_candidates))
+  in
+
+  let result : (Expr.elem_ref option * Algsimp.t) list ref = ref [] in
+  let rec loop () =
+    match pick_next () with
+    | None -> ()
+    | Some n ->
+      Hashtbl.add scheduled n.tag ();
+      ready := List.filter (fun x -> x.tag <> n.tag) !ready;
+      Hashtbl.remove in_ready n.tag;
+      (match n.node with NK_Load _ -> incr load_idx | _ -> ());
+      result := (None, n) :: !result;
+      let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
+      List.iter (fun u ->
+        let cur = try Hashtbl.find unsched_count u.tag with Not_found -> 0 in
+        let new_count = cur - 1 in
+        Hashtbl.replace unsched_count u.tag new_count;
+        if new_count = 0
+           && not (Hashtbl.mem in_ready u.tag)
+           && not (Hashtbl.mem scheduled u.tag) then begin
+          ready := u :: !ready;
+          Hashtbl.add in_ready u.tag ()
+        end
+      ) user_list;
+      loop ()
+  in
+  loop ();
+
+  let intermediates = List.rev !result in
+  let stores = List.map (fun (oref, e) -> (Some oref, e)) assigns in
+  intermediates @ stores
+
+(* === SU SCHEDULING ON A FIXED SUBSET ===
+ *
+ * Like su_schedule but operates on a pre-selected subset of nodes
+ * (e.g. PASS 1 or PASS 2 alone). Predecessors not in the subset are
+ * treated as "already available" (e.g. inputs to PASS 1, reloaded
+ * spill values to PASS 2, hoisted constants).
+ *
+ * Inputs:
+ *   - uarch: latency profile
+ *   - subset: nodes to schedule
+ *   - sinks: nodes whose cp_dist contributes to scheduling priority
+ *            (typically PASS 1 spill targets, or PASS 2 output sinks)
+ *
+ * Returns: subset nodes in scheduled order.
+ *
+ * Note: load source-order tracking is intentionally simplified here —
+ * within a pass, loads are typically twiddle/data loads that the
+ * scheduler should issue early. For PASS 1 we still want loads to be
+ * deferred behind ready arithmetic; for PASS 2 there are no loads
+ * (reloads happen before the pass). *)
+let su_schedule_subset (uarch : Uarch.t)
+    ~(subset : Algsimp.t list)
+    ~(sinks : Algsimp.t list)
+    : Algsimp.t list =
+  (* Subset membership lookup. *)
+  let in_subset : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+  List.iter (fun n -> Hashtbl.add in_subset n.Algsimp.tag ()) subset;
+
+  (* cp_dist over the full reachable graph from sinks. This includes
+   * predecessors outside the subset (they contribute to depth).
+   * We use compute_cp_dist's existing logic which walks transitively. *)
+  let all_reachable : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 512 in
+  let rec visit (e : Algsimp.t) =
+    if not (Hashtbl.mem all_reachable e.tag) then begin
+      Hashtbl.add all_reachable e.tag e;
+      List.iter visit (preds_of e)
+    end
+  in
+  List.iter visit sinks;
+  let all_nodes = Hashtbl.fold (fun _ n acc -> n :: acc) all_reachable [] in
+  let cp_dist = compute_cp_dist uarch sinks all_nodes in
+  let su_num = compute_su_number all_nodes in
+
+  (* Successor map RESTRICTED to subset edges. *)
+  let users : (int, Algsimp.t list) Hashtbl.t = Hashtbl.create 256 in
+  List.iter (fun n ->
+    List.iter (fun p ->
+      if Hashtbl.mem in_subset p.Algsimp.tag then begin
+        let cur = try Hashtbl.find users p.tag with Not_found -> [] in
+        Hashtbl.replace users p.tag (n :: cur)
+      end
+    ) (preds_of n)
+  ) subset;
+
+  (* Unscheduled-pred counter — only count predecessors IN the subset.
+   * Out-of-subset preds are treated as already satisfied. *)
+  let unsched_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  List.iter (fun n ->
+    let in_subset_preds = List.filter (fun p ->
+      Hashtbl.mem in_subset p.Algsimp.tag
+    ) (preds_of n) in
+    Hashtbl.add unsched_count n.tag (List.length in_subset_preds)
+  ) subset;
+
+  (* Ready set: nodes with no unscheduled subset preds. *)
+  let scheduled : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+  let in_ready : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+  let ready : Algsimp.t list ref = ref [] in
+  List.iter (fun n ->
+    if Hashtbl.find unsched_count n.tag = 0 then begin
+      ready := n :: !ready;
+      Hashtbl.add in_ready n.tag ()
+    end
+  ) subset;
+
+  let is_load n = match n.Algsimp.node with NK_Load _ -> true | _ -> false in
+
+  (* Load source order — only relevant if subset contains loads. *)
+  let load_tags = List.filter_map (fun n ->
+    if is_load n then Some n.Algsimp.tag else None
+  ) subset |> List.sort compare in
+  let load_array = Array.of_list load_tags in
+  let load_idx = ref 0 in
+  let next_required_load () =
+    if !load_idx < Array.length load_array
+    then Some load_array.(!load_idx)
+    else None
+  in
+
+  let pick_next () : Algsimp.t option =
+    if !ready = [] then None
+    else
+      let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
+      let cmp a b =
+        let cpa = try Hashtbl.find cp_dist a.Algsimp.tag with Not_found -> 0 in
+        let cpb = try Hashtbl.find cp_dist b.Algsimp.tag with Not_found -> 0 in
+        if cpa <> cpb then compare cpb cpa
+        else
+          let sua = try Hashtbl.find su_num a.tag with Not_found -> 0 in
+          let sub = try Hashtbl.find su_num b.tag with Not_found -> 0 in
+          if sua <> sub then compare sua sub
+          else compare a.tag b.tag
+      in
+      match arith_ready with
+      | _ :: _ -> Some (List.hd (List.sort cmp arith_ready))
+      | [] ->
+        let req_load = next_required_load () in
+        let load_candidates = List.filter (fun n ->
+          is_load n && Some n.Algsimp.tag = req_load
+        ) !ready in
+        (match load_candidates with
+         | [] -> None
+         | _ -> Some (List.hd load_candidates))
+  in
+
+  let result : Algsimp.t list ref = ref [] in
+  let rec loop () =
+    match pick_next () with
+    | None -> ()
+    | Some n ->
+      Hashtbl.add scheduled n.Algsimp.tag ();
+      ready := List.filter (fun x -> x.Algsimp.tag <> n.tag) !ready;
+      Hashtbl.remove in_ready n.tag;
+      (if is_load n then incr load_idx);
+      result := n :: !result;
+      let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
+      List.iter (fun u ->
+        let cur = try Hashtbl.find unsched_count u.Algsimp.tag with Not_found -> 0 in
+        let new_count = cur - 1 in
+        Hashtbl.replace unsched_count u.tag new_count;
+        if new_count = 0
+           && not (Hashtbl.mem in_ready u.tag)
+           && not (Hashtbl.mem scheduled u.tag) then begin
+          ready := u :: !ready;
+          Hashtbl.add in_ready u.tag ()
+        end
+      ) user_list;
+      loop ()
+  in
+  loop ();
+  List.rev !result

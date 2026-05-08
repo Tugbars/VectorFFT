@@ -1,0 +1,15 @@
+; The codelet-generator library. Each .ml below becomes a module
+; accessible as Vfft_v2.<Name> from outside this library.
+;
+; Pipeline order (top of pipe to bottom):
+;   Expr      — symbolic math IR
+;   Algsimp   — algebraic simplification + CSE
+;   Simd_ir   — lowering scalar IR to SIMD-typed IR
+;   Uarch     — microarchitecture tables (RPL, SPR, ZEN5, ...)
+;   Schedule  — list scheduler (uses Uarch table)
+;   Regalloc  — linear-scan register allocator
+;   Emit_c    — emit C with AVX-512/AVX2 intrinsics
+
+(library
+ (name vfft_v2)
+ (modules expr algsimp dft simd_ir uarch isa schedule annotate regalloc emit_c))
