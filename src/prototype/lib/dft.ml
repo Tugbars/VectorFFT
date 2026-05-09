@@ -139,25 +139,35 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
  * called inside — it runs once at the top level, on the fully-expanded
  * tree. This way hash-consing catches sharing across CT recursion levels.
  *)
-let rec dft (n : int) (input_re : int -> expr) (input_im : int -> expr)
+(* The recursive DFT computation.
+ *
+ * Inputs:
+ *   n          — transform size
+ *   input_re k — Expr tree for the k-th input's real component
+ *   input_im k — Expr tree for the k-th input's imag component
+ *   ?sign      — Fwd uses θ = -2πk/N (DFT); Bwd uses θ = +2πk/N (IDFT, no /N).
+ *)
+let rec dft ?(sign = `Fwd) (n : int) (input_re : int -> expr) (input_im : int -> expr)
     : expr array * expr array =
   match pick_algorithm n with
-  | Direct -> dft_direct n input_re input_im
-  | Cooley_Tukey (n1, n2) -> dft_ct n1 n2 input_re input_im
+  | Direct -> dft_direct ~sign n input_re input_im
+  | Cooley_Tukey (n1, n2) -> dft_ct ~sign n1 n2 input_re input_im
 
 (* Direct DFT: matrix-vector form.
- *   X[k].re = Σ_n  a[n] * cos(-2πnk/n) - b[n] * sin(-2πnk/n)
- *   X[k].im = Σ_n  a[n] * sin(-2πnk/n) + b[n] * cos(-2πnk/n) *)
-and dft_direct (n : int) (input_re : int -> expr) (input_im : int -> expr)
+ *   X[k].re = Σ_n  a[n] * cos(±2πnk/n) - b[n] * sin(±2πnk/n)
+ *   X[k].im = Σ_n  a[n] * sin(±2πnk/n) + b[n] * cos(±2πnk/n)
+ * The sign of θ is - for Fwd, + for Bwd. *)
+and dft_direct ?(sign = `Fwd) (n : int) (input_re : int -> expr) (input_im : int -> expr)
     : expr array * expr array =
   let pi = 4.0 *. atan 1.0 in
+  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> +1.0 in
   let out_re = Array.make n (Const 0.0) in
   let out_im = Array.make n (Const 0.0) in
   for k = 0 to n - 1 do
     let re_sum = ref (Const 0.0) in
     let im_sum = ref (Const 0.0) in
     for nn = 0 to n - 1 do
-      let theta = -2.0 *. pi *. float_of_int (nn * k) /. float_of_int n in
+      let theta = sgn *. 2.0 *. pi *. float_of_int (nn * k) /. float_of_int n in
       let c = cos theta in
       let s = sin theta in
       let a_nn = input_re nn in
@@ -194,11 +204,12 @@ and dft_direct (n : int) (input_re : int -> expr) (input_im : int -> expr)
  *   R=8 = CT(2, 4): PASS 1 splits by parity, two DFT-4s (even/odd indices).
  *   R=16 = CT(4, 4): PASS 1 splits by mod-4 residue, four DFT-4s.
  *)
-and dft_ct (n1 : int) (n2 : int)
+and dft_ct ?(sign = `Fwd) (n1 : int) (n2 : int)
            (input_re : int -> expr) (input_im : int -> expr)
     : expr array * expr array =
   let n = n1 * n2 in
   let pi = 4.0 *. atan 1.0 in
+  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> +1.0 in
 
   (* PASS 1: N1 sub-FFTs of size N2.
    * For each n1_idx in [0, N1), compute DFT-N2 on inputs at
@@ -209,7 +220,7 @@ and dft_ct (n1 : int) (n2 : int)
   for n1_idx = 0 to n1 - 1 do
     let inner_input_re k2 = input_re (n1_idx + k2 * n1) in
     let inner_input_im k2 = input_im (n1_idx + k2 * n1) in
-    let r, i = dft n2 inner_input_re inner_input_im in
+    let r, i = dft ~sign n2 inner_input_re inner_input_im in
     for k2 = 0 to n2 - 1 do
       pass1_re.(n1_idx).(k2) <- r.(k2);
       pass1_im.(n1_idx).(k2) <- i.(k2)
@@ -223,7 +234,7 @@ and dft_ct (n1 : int) (n2 : int)
   let twiddled_im = Array.make_matrix n1 n2 (Const 0.0) in
   for n1_idx = 0 to n1 - 1 do
     for k2 = 0 to n2 - 1 do
-      let theta = -2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n in
+      let theta = sgn *. 2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n in
       let cr = cos theta in
       let ci = sin theta in
       let (tr, ti) = const_cmul pass1_re.(n1_idx).(k2) pass1_im.(n1_idx).(k2) cr ci in
@@ -241,7 +252,7 @@ and dft_ct (n1 : int) (n2 : int)
   for k2 = 0 to n2 - 1 do
     let outer_input_re n1_idx = twiddled_re.(n1_idx).(k2) in
     let outer_input_im n1_idx = twiddled_im.(n1_idx).(k2) in
-    let r, i = dft n1 outer_input_re outer_input_im in
+    let r, i = dft ~sign n1 outer_input_re outer_input_im in
     for k1 = 0 to n1 - 1 do
       out_re.(k1 * n2 + k2) <- r.(k1);
       out_im.(k1 * n2 + k2) <- i.(k1)
@@ -281,14 +292,28 @@ type direction =
   | DIT
   | DIF
 
-(* Build a complex multiplication (a + ib)·(c + id) as (out_re, out_im)
- * using the cmul pattern that Algsimp.of_expr will lift to Cmul nodes.
- * The pattern is Sub(Mul, Mul) for re, Add(Mul, Mul) for im. *)
-let cmul_pattern (ar : expr) (ai : expr) (br : expr) (bi : expr)
+(* Build a complex multiplication as (out_re, out_im) using the cmul pattern
+ * that Algsimp.of_expr will lift to Cmul nodes.
+ *
+ *   ~conj:false (default)  →  (a + ib) · (c + id)        (Fwd external twiddle)
+ *   ~conj:true             →  (a + ib) · conj(c + id)   (Bwd external twiddle)
+ *
+ * Bwd codelets receive the SAME W array as fwd (caller stores forward
+ * twiddles); the codelet conjugates internally via this flag.
+ * Internal log3 derivations multiply two stored W values that share the
+ * same convention (whatever it is) — those calls use ~conj:false.
+ *)
+let cmul_pattern ?(conj = false) (ar : expr) (ai : expr) (br : expr) (bi : expr)
     : expr * expr =
-  let out_re = Sub (Mul (ar, br), Mul (ai, bi)) in
-  let out_im = Add (Mul (ar, bi), Mul (ai, br)) in
-  (out_re, out_im)
+  if conj then
+    (* (a + ib) · (c - id) = (ac + bd) + i(bc - ad) *)
+    let out_re = Add (Mul (ar, br), Mul (ai, bi)) in
+    let out_im = Sub (Mul (ai, br), Mul (ar, bi)) in
+    (out_re, out_im)
+  else
+    let out_re = Sub (Mul (ar, br), Mul (ai, bi)) in
+    let out_im = Add (Mul (ar, bi), Mul (ai, br)) in
+    (out_re, out_im)
 
 (* Compute the (re, im) Expr trees for the j-th twiddle (1-indexed)
  * under the given policy and radix. Memoization is critical: derived
@@ -388,16 +413,20 @@ let dft_expand (n : int) : Expr.assignment list =
  * opaque atoms. The CT decomposition then sees the cmul outputs as
  * leaf-like values in its own Add/Sub structure — algsimp won't
  * shred them because they're inside Cmul nodes after lifting. *)
-let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT)
+let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
     (n : int) : Expr.assignment list =
   (* DIT: pre-multiply inputs by twiddles, then run DFT.
    * DIF: run DFT, then post-multiply outputs by twiddles.
    *
    * Leg 0 has trivial twiddle W^0 = 1 in both cases.
    *
+   * For sign=Bwd, internal CT twiddles use +θ (handled by `dft ~sign`),
+   * and external twiddles use conjugate cmul (handled by ~conj here).
+   *
    * Twiddle Exprs may be cmul derivation patterns (TP_Log3) or simple
    * Loads (TP_Flat). The per-leg Sub(Mul,Mul)/Add(Mul,Mul) cmul pattern
    * is preserved so Algsimp.of_expr can lift it to Cmul opaque atoms. *)
+  let conj = (sign = `Bwd) in
   match direction with
   | DIT ->
     let twiddled_re = Array.make n (Const 0.0) in
@@ -408,13 +437,13 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT)
       let xr = Load (Input (k, true)) in
       let xi = Load (Input (k, false)) in
       let (wr, wi) = twiddle_expr policy n k in
-      let (out_re, out_im) = cmul_pattern xr xi wr wi in
+      let (out_re, out_im) = cmul_pattern ~conj xr xi wr wi in
       twiddled_re.(k) <- out_re;
       twiddled_im.(k) <- out_im
     done;
     let input_re k = twiddled_re.(k) in
     let input_im k = twiddled_im.(k) in
-    let out_re, out_im = dft n input_re input_im in
+    let out_re, out_im = dft ~sign n input_re input_im in
     let acc = ref [] in
     for k = n - 1 downto 0 do
       acc := (Output (k, true),  out_re.(k))  :: !acc;
@@ -426,14 +455,14 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT)
     (* Run DFT on raw inputs, then twiddle the outputs. *)
     let input_re k = Load (Input (k, true)) in
     let input_im k = Load (Input (k, false)) in
-    let raw_re, raw_im = dft n input_re input_im in
+    let raw_re, raw_im = dft ~sign n input_re input_im in
     let acc = ref [] in
     (* Output 0: trivial twiddle, store as-is. *)
     acc := (Output (0, true),  raw_re.(0)) :: !acc;
     acc := (Output (0, false), raw_im.(0)) :: !acc;
     for k = 1 to n - 1 do
       let (wr, wi) = twiddle_expr policy n k in
-      let (out_re, out_im) = cmul_pattern raw_re.(k) raw_im.(k) wr wi in
+      let (out_re, out_im) = cmul_pattern ~conj raw_re.(k) raw_im.(k) wr wi in
       acc := (Output (k, true),  out_re) :: !acc;
       acc := (Output (k, false), out_im) :: !acc
     done;
@@ -481,12 +510,14 @@ type spill_marker = {
  *   - markers:     spill markers for PASS 1 outputs, empty if n has
  *                  no CT decomposition (Direct DFT case)
  *)
-let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) (n : int)
+let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd) (n : int)
     : Expr.assignment list * spill_marker list * (int * int) option =
+  let conj = (sign = `Bwd) in
+  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> +1.0 in
   match pick_algorithm n with
   | Direct ->
     (* No CT structure → no spill boundary. Fall back to plain expansion. *)
-    (dft_expand_twiddled ~policy ~direction n, [], None)
+    (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
   | Cooley_Tukey (n1, n2) ->
     (* DIT pre-multiplies inputs by twiddles; DIF leaves inputs raw and
      * post-multiplies outputs at the end. The internal CT decomposition
@@ -501,7 +532,7 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) (n : int)
           let xr = Load (Input (k, true)) in
           let xi = Load (Input (k, false)) in
           let (wr, wi) = twiddle_expr policy n k in
-          let (out_re, out_im) = cmul_pattern xr xi wr wi in
+          let (out_re, out_im) = cmul_pattern ~conj xr xi wr wi in
           twiddled_re.(k) <- out_re;
           twiddled_im.(k) <- out_im
         done;
@@ -522,7 +553,7 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) (n : int)
     for n1_idx = 0 to n1 - 1 do
       let inner_input_re k2 = input_re (n1_idx + k2 * n1) in
       let inner_input_im k2 = input_im (n1_idx + k2 * n1) in
-      let r, i = dft n2 inner_input_re inner_input_im in
+      let r, i = dft ~sign n2 inner_input_re inner_input_im in
       for k2 = 0 to n2 - 1 do
         pass1_re.(n1_idx).(k2) <- r.(k2);
         pass1_im.(n1_idx).(k2) <- i.(k2)
@@ -541,12 +572,12 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) (n : int)
       done
     done;
 
-    (* INTERNAL TWIDDLES — same as dft_ct *)
+    (* INTERNAL TWIDDLES — same as dft_ct, sign-flipped for Bwd *)
     let twiddled_re_inner = Array.make_matrix n1 n2 (Const 0.0) in
     let twiddled_im_inner = Array.make_matrix n1 n2 (Const 0.0) in
     for n1_idx = 0 to n1 - 1 do
       for k2 = 0 to n2 - 1 do
-        let theta = -2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n in
+        let theta = sgn *. 2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n in
         let cr = cos theta in
         let ci = sin theta in
         let (tr, ti) = const_cmul pass1_re.(n1_idx).(k2) pass1_im.(n1_idx).(k2) cr ci in
@@ -561,7 +592,7 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) (n : int)
     for k2 = 0 to n2 - 1 do
       let outer_input_re n1_idx = twiddled_re_inner.(n1_idx).(k2) in
       let outer_input_im n1_idx = twiddled_im_inner.(n1_idx).(k2) in
-      let r, i = dft n1 outer_input_re outer_input_im in
+      let r, i = dft ~sign n1 outer_input_re outer_input_im in
       for k1 = 0 to n1 - 1 do
         raw_re.(k1 * n2 + k2) <- r.(k1);
         raw_im.(k1 * n2 + k2) <- i.(k1)
@@ -580,7 +611,7 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) (n : int)
        out_im.(0) <- raw_im.(0);
        for k = 1 to n - 1 do
          let (wr, wi) = twiddle_expr policy n k in
-         let (or_, oi) = cmul_pattern raw_re.(k) raw_im.(k) wr wi in
+         let (or_, oi) = cmul_pattern ~conj raw_re.(k) raw_im.(k) wr wi in
          out_re.(k) <- or_;
          out_im.(k) <- oi
        done);

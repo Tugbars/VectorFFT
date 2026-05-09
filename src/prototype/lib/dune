@@ -12,4 +12,5 @@
 
 (library
  (name vfft_v2)
- (modules expr algsimp dft simd_ir uarch isa schedule annotate regalloc emit_c))
+ (libraries unix)
+ (modules expr algsimp dft simd_ir uarch isa schedule annotate regalloc emit_c bb))
