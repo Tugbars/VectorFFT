@@ -1,4 +1,6 @@
-(* bb_diagnostic.ml — count cluster peak-live before/after B&B for a given codelet config. *)
+(* bb_diagnostic.ml — count cluster peak-live and cp_progress before/after B&B
+ * for a given codelet config. Useful for understanding cluster shape and
+ * checking whether B&B finds non-trivial schedule alternatives. *)
 
 open Vfft_v2
 
@@ -79,20 +81,24 @@ let () =
 
       let baseline = Schedule.su_schedule_subset uarch ~gh:true ~subset ~sinks:sinks_k in
       let baseline_peak = Vfft_v2.Bb.compute_peak_live ~subset ~sinks:sinks_k baseline in
-      let (_, bb_peak) =
-        Vfft_v2.Bb.bb_search ~subset ~sinks:sinks_k
+      let (_, bb_peak, bb_progress) =
+        Vfft_v2.Bb.bb_search ~uarch ~subset ~sinks:sinks_k
           ~initial_schedule:baseline
           ~initial_peak:baseline_peak
           ~time_budget_sec:time_budget
       in
+      let baseline_progress = Vfft_v2.Bb.compute_progress baseline
+        (Vfft_v2.Schedule.compute_cp_dist uarch sinks_k subset) in
       total_subset := !total_subset + List.length subset;
       total_baseline_peak := !total_baseline_peak + baseline_peak;
       total_bb_peak := !total_bb_peak + bb_peak;
       if bb_peak < baseline_peak then incr num_improvements;
-      Printf.printf "  Cluster %d: subset=%3d  sinks=%2d  peak: SU+GH=%2d -> B&B=%2d  %s\n%!"
+      Printf.printf "  Cluster %d: subset=%3d  sinks=%2d  peak: SU+GH=%2d -> B&B=%2d  progress: %d -> %d  %s\n%!"
         k2 (List.length subset) (List.length sinks_k)
-        baseline_peak bb_peak
-        (if bb_peak < baseline_peak then "IMPROVED" else "tied")
+        baseline_peak bb_peak baseline_progress bb_progress
+        (if bb_peak < baseline_peak then "PEAK_IMPROVED"
+         else if bb_progress > baseline_progress then "PROG_IMPROVED"
+         else "tied")
     end
   done;
 

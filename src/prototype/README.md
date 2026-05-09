@@ -79,8 +79,9 @@ The findings under `docs/` are chronological session writeups. They tell the sto
 19. **avx2_t1s_bwd** — AVX2 sweep + t1s + bwd validation; AVX2 R=32 DIF beats DIT 28% at K≥1024
 20. **isub2_already_beaten** — pair-scheduled hand variant already beaten by recipe-log3; no need to implement
 21. **goodman_hsu** — Goodman-Hsu mode switch added to SU; 5-7% over recipe on AVX2 R=32, 4-8% on R=64; auto-on at AVX2 R≥32; AVX-512 byte-identical (threshold not crossed)
+22. **bb_kept** — B&B cluster scheduler with lexicographic (saturated_peak, -cp_progress) cost; tied with SU+GH on Raptor Lake but structurally different schedules. Kept as opt-in `--bb` flag for µarch-portfolio coverage; real K-regime crossover at R=64 AVX2 (BB wins K=512-1024)
 
-Read in order, the docs trace from "Topo is 13-69% slower than hand at R=32" to "we beat hand on every radix and ISA combination where the rule says to use the recipe, and pressure-aware scheduling adds another 5-7% on AVX2."
+Read in order, the docs trace from "Topo is 13-69% slower than hand at R=32" to "we beat hand on every radix and ISA combination where the rule says to use the recipe, pressure-aware scheduling adds another 5-7% on AVX2, and a B&B alternative scheduler is available as opt-in for µarch-portfolio coverage."
 
 ## How to build and run
 
@@ -124,12 +125,12 @@ which expands to: AVX-512 always wins with the recipe at R≥4 (gh is a no-op th
 - **Bisection scheduler (Frigo's).** Implemented but performed similarly or slightly worse than Topo on AVX-512. The cp_dist + su_num approach (SU) ended up dominant.
 - **Annotate (Frigo-style nested-block scoping).** Built and benchmarked — produced byte-identical assembly to Topo at -O3. Modern GCC's SSA + liveness analysis already extracts everything annotate would communicate.
 - **Distributing constants** (`Add(Mul(a,k), Mul(b,k)) → Mul(Add(a,b), k)`). Looks like an arith-saving rewrite; in practice it broke shared muls in cmul patterns and increased op counts.
-- **B&B with peak-live-only objective** (experimental, in `lib/bb.ml`). Found substantially lower peak-live (R=32: 12→9 across all clusters; R=64 AVX-512: 25→17), but ran slower than SU+GH at R=32 AVX2 (BB/GH ≈ 1.03 across K). Pure peak-live minimization extends dependency chains and reduces ILP. SU+GH already balances pressure vs latency; pure peak-live optimization breaks that balance. The `--bb` flag is preserved for further experimentation with multi-objective cost functions; default off.
+- **B&B cluster-local optimal scheduler** (kept as `--bb`, default off). Two iterations: peak-live-only cost (failed: lower peak but worse runtime, ~3% slower than SU+GH on R=32 AVX2 — pure peak minimization extended dependency chains); then lexicographic `(saturated_peak ASC, -cp_progress ASC)` cost (essentially tied with SU+GH on average on Raptor Lake). The lex cost says SU+GH is at the practical optimum at our cluster sizes — B&B exploration converges to the same (peak, progress) value SU+GH already achieves. **Kept as opt-in** because the schedules are structurally different (~50% line diff at R=32 AVX2), other µarchs may favor BB-lex, and there's a real K-regime crossover at R=64 AVX2 (BB wins +5.8% at K=512, +3.8% at K=1024). See doc 22.
 - **Hand isub2 pair-scheduling.** Existed for R=16/32/64 in gen_radix*.py with 2-3× more cmuls than ours due to lack of global hash-consing. Recipe-log3 already beats hand isub2 at R=32/64; hand wins narrowly only at R=16 K≥1024 (3-4%). Pair-scheduling helps only when both paired sub-DFTs fit in registers — R=16 only.
 
 ## What's left in the queue
 
-- **Multi-objective B&B**: lexicographic `(peak ASC, total_cp_progress DESC)` cost function. Goal: let B&B find lower-peak schedules ONLY when they don't extend the critical path. If still negative on AVX2 R=32, revert `lib/bb.ml`.
+- **Per-(R,K,ISA,µarch) autotuning**: generate both `--gh` and `--bb` variants, micro-bench at install time, cache the winner per cell. FFTW-wisdom pattern. Would convert the either-or knob into "pick the best for this configuration" — useful given the K-regime crossover at R=64 AVX2 and unknown µarch behavior.
 - **Per-uarch coefficient tuning**: Sapphire Rapids vs Ice Lake vs Skylake currently use the same `pressure_threshold` (24 for AVX-512, 12 for AVX2). Per-uarch tuning could give a few percent. Quality-of-life for future targets.
 - **K-threshold for spill at R=16 K=64 on AVX-512** (close the small remaining regression at small K).
 
