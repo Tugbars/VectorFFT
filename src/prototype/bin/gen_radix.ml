@@ -149,10 +149,29 @@ let () =
   let aggressive = match Vfft_v2.Dft.pick_algorithm n with
     | Vfft_v2.Dft.Direct -> true
     | Vfft_v2.Dft.Cooley_Tukey _ -> false in
+  (* For direct primes (n odd prime ≥ 3), the conjugate-pair construction
+   * in dft_direct_conjugate_pair already produces optimal hash-cons-shared
+   * intermediates (pair sums/diffs, p_re/p_im/q_re/q_im chains). The
+   * share_subsums pass — which factors common addition subsums across
+   * outputs — actively HURTS this layout: it materializes partial sums
+   * that prevent fma_lift from recognizing the unified mixed-sign FMA
+   * chain (e.g. it splits `x[0] + c1·s1 + c2·s2 - c3·s3 - c4·s4 - c5·s5`
+   * into separate positive and negative sub-chains, costing 4 extra ops
+   * per pair output block).
+   *
+   * Empirically: for R=11, full pipeline gives 172 ops; skipping share
+   * gives 150 (matching hand). For R=13, 256 → 204 ops. For composite
+   * Cooley-Tukey, share_subsums DOES help (pow2 butterflies have many
+   * cross-output partial-sum overlaps), so it's only disabled here for
+   * direct-prime mode. *)
+  let is_direct = aggressive in  (* aggressive ↔ Direct algorithm in current setup *)
   let factored = Vfft_v2.Algsimp.factor_common_muls ~aggressive deduped_pre in
   let factored = Vfft_v2.Algsimp.factor_by_atom ~aggressive factored in
   let factored = Vfft_v2.Algsimp.dedup_sub_pairs factored in
-  let shared = Vfft_v2.Algsimp.share_subsums ~aggressive factored in
+  let shared =
+    if is_direct then factored
+    else Vfft_v2.Algsimp.share_subsums ~aggressive factored
+  in
   (* Transposition is correct only when the DAG is purely linear (no Cmul
    * nodes — those wrap symbolic twiddle loads, making the network
    * nonlinear in our representation). For twiddled prime forms (t1_dit,
@@ -168,21 +187,11 @@ let () =
     + (2 * st.cmuls) + st.fmas
   in
   let post_trans =
-    if aggressive && not has_cmul then begin
-      (* FFTW Frigo-style fixed-point: iterate transpose-roundtrip with
-       * factor+factor_by_atom+dedup+share between transpositions, until
-       * op count stops decreasing or we hit the iteration cap.
-       *
-       * Each "round trip" applies transpose twice (back to original
-       * orientation) so the final assignments still produce X[k] (not
-       * the transposed problem). Between transpositions, the algebraic
-       * simplifications get to attack a different structural view of
-       * the network, often finding savings that survive when transposed
-       * back.
-       *
-       * Iteration cap = 6: empirically converges within 2-4 rounds for
-       * primes; pow2 is no-op (transpose returns identical structure on
-       * symmetric butterflies). Mirror prime_opcount.ml's policy. *)
+    if aggressive && not has_cmul && not is_direct then begin
+      (* FP transpose loop. For direct primes, this is also disabled since
+       * share_subsums (which the loop relies on between transpositions)
+       * hurts here, and transpose without share doesn't help either —
+       * empirically the construction is already optimal post-fma_lift. *)
       let rec fp prev_assigns prev_count iter =
         if iter >= 6 then prev_assigns
         else begin
