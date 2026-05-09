@@ -30,6 +30,10 @@ let () =
   let no_recipe = ref false in
   let t1s = ref false in
   let dif = ref false in
+  let bwd = ref false in
+  let gh = ref false in
+  let bb = ref false in
+  let bb_budget = ref 1.0 in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list Sys.argv in
@@ -49,6 +53,13 @@ let () =
      else if arg = "--no-recipe" then no_recipe := true
      else if arg = "--t1s"       then t1s := true
      else if arg = "--dif"       then dif := true
+     else if arg = "--bwd"       then bwd := true
+     else if arg = "--gh"        then gh := true
+     else if arg = "--bb"        then bb := true
+     else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
+       bb_budget := float_of_string arr.(!i + 1);
+       incr i
+     end
      else if arg = "--fuse" && !i + 1 < Array.length arr then begin
        fuse := int_of_string arr.(!i + 1);
        incr i
@@ -74,6 +85,7 @@ let () =
   let direction : Vfft_v2.Dft.direction =
     if !dif then DIF else DIT
   in
+  let sign = if !bwd then `Bwd else `Fwd in
 
   (* Cost-model auto-defaults.
    *
@@ -94,15 +106,27 @@ let () =
     if not !su then su := true
   end;
 
+  (* Auto-enable Goodman-Hsu mode switch when:
+   *   - the recipe is engaged (--su is on), AND
+   *   - vec_regs <= 16 (AVX2 or narrower), AND
+   *   - n >= 32 (peak live likely to exceed threshold inside clusters)
+   *
+   * Empirically this delivers 4-8% over the base recipe on AVX2 R={32,64}
+   * and is a no-op on AVX-512 (threshold=24 not reached with cluster-sequential).
+   * The flag toggle is free at runtime — pressure mode only fires when needed. *)
+  if !su && isa.vec_regs <= 16 && n >= 32 && not !no_recipe then begin
+    if not !gh then gh := true
+  end;
+
   (* Drive math layer with or without spill marker capture.
    * Spill is meaningful only for twiddled CT-decomposed codelets. *)
   let raw, spill_markers, spill_ct =
     if !spill && !twiddled then
       let assignments, markers, ct =
-        Vfft_v2.Dft.dft_expand_twiddled_spill ~policy ~direction n in
+        Vfft_v2.Dft.dft_expand_twiddled_spill ~policy ~direction ~sign n in
       (assignments, markers, ct)
     else if !twiddled then
-      (Vfft_v2.Dft.dft_expand_twiddled ~policy ~direction n, [], None)
+      (Vfft_v2.Dft.dft_expand_twiddled ~policy ~direction ~sign n, [], None)
     else
       (Vfft_v2.Dft.dft_expand n, [], None)
   in
@@ -128,6 +152,7 @@ let () =
     let variant = if !log3 then "_log3" else "" in
     let t1s_infix = if !t1s then "s" else "" in
     let dir_suffix = if !dif then "dif" else "dit" in
+    let sgn_suffix = if !bwd then "bwd" else "fwd" in
     let sched_suffix = match !bisect, !su, !annotate with
       | false, false, false -> ""
       | true,  false, false -> "_bisect"
@@ -145,11 +170,11 @@ let () =
     in
     let name =
       if !twiddled then
-        Printf.sprintf "radix%d_t1%s_%s%s_fwd_%s_gen%s%s%s"
-          n t1s_infix dir_suffix variant isa.name suffix sched_suffix spill_suffix
+        Printf.sprintf "radix%d_t1%s_%s%s_%s_%s_gen%s%s%s"
+          n t1s_infix dir_suffix variant sgn_suffix isa.name suffix sched_suffix spill_suffix
       else
-        Printf.sprintf "radix%d_n1_fwd_%s_gen%s%s%s"
-          n isa.name suffix sched_suffix spill_suffix
+        Printf.sprintf "radix%d_n1_%s_%s_gen%s%s%s"
+          n sgn_suffix isa.name suffix sched_suffix spill_suffix
     in
     let scheduler : Vfft_v2.Emit_c.scheduler = match !bisect, !su, !annotate with
       | false, false, false -> Topological
@@ -160,8 +185,10 @@ let () =
       | false, true,  true  -> Annotated_SU uarch
       | _ -> Topological
     in
+    let bb_budget_arg = if !bb then Some !bb_budget else None in
     print_string (Vfft_v2.Emit_c.emit_codelet
-                    ~in_place:!in_place ~t1s:!t1s ~scheduler ~isa ~spill:spill_info
+                    ~in_place:!in_place ~t1s:!t1s ~scheduler ~isa ~gh:!gh
+                    ~bb_budget:bb_budget_arg ~spill:spill_info
                     deduped ~name)
   end else begin
     let variant = if !log3 then ", log3" else "" in

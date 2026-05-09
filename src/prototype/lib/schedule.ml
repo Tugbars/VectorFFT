@@ -502,13 +502,38 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
  * scheduler should issue early. For PASS 1 we still want loads to be
  * deferred behind ready arithmetic; for PASS 2 there are no loads
  * (reloads happen before the pass). *)
+(* === GOODMAN-HSU MODE SWITCH ===
+ *
+ * Optional pressure-aware extension. When ~gh:true is passed, the picker
+ * tracks the live-count of scheduled-but-not-yet-killed nodes and switches
+ * priority functions when live-count exceeds a threshold:
+ *
+ *   - LATENCY MODE (live_count <= threshold): pick by (cp_dist DESC, su_num ASC)
+ *     — same as base SU.
+ *   - PRESSURE MODE (live_count > threshold): pick by (delta ASC, cp_dist DESC),
+ *     where delta = births - kills for the candidate node:
+ *       kills(n) = #(preds in subset whose remaining_users == 1 and n is one of them)
+ *       births(n) = 1 if n has remaining users in subset OR n is a sink, else 0
+ *     Pick the most-negative delta — i.e., the choice that frees the most live
+ *     values relative to what it consumes.
+ *
+ * Threshold is `uarch.vec_regs - 4` (the 4-slot slack reserves room for cmul
+ * scratch + FMA scratch). The live count is tracked over the SUBSET only;
+ * out-of-subset predecessors are treated as "external slots" not counted here.
+ *
+ * Loads stay deferred behind arithmetic regardless of mode (the load-deferral
+ * rule is orthogonal to pressure tracking). *)
 let su_schedule_subset (uarch : Uarch.t)
+    ~(gh : bool)
     ~(subset : Algsimp.t list)
     ~(sinks : Algsimp.t list)
     : Algsimp.t list =
   (* Subset membership lookup. *)
   let in_subset : (int, unit) Hashtbl.t = Hashtbl.create 256 in
   List.iter (fun n -> Hashtbl.add in_subset n.Algsimp.tag ()) subset;
+  (* Sinks lookup for births() — sinks stay live even when remaining_users hits 0. *)
+  let sink_set : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+  List.iter (fun s -> Hashtbl.replace sink_set s.Algsimp.tag ()) sinks;
 
   (* cp_dist over the full reachable graph from sinks. This includes
    * predecessors outside the subset (they contribute to depth).
@@ -546,6 +571,34 @@ let su_schedule_subset (uarch : Uarch.t)
     Hashtbl.add unsched_count n.tag (List.length in_subset_preds)
   ) subset;
 
+  (* Remaining-user counter (for Goodman-Hsu): how many in-subset successors
+   * of node X are still unscheduled. Initially = total in-subset users.
+   * Decremented when a user is scheduled. When hits 0, X is no longer live
+   * (unless it's a sink). *)
+  let remaining_users : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  if gh then begin
+    (* Pre-build successor map restricted to subset edges.
+     * Same logic as the `users` table built below; we count entries here. *)
+    let user_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
+    List.iter (fun n -> Hashtbl.add user_count n.Algsimp.tag 0) subset;
+    List.iter (fun n ->
+      List.iter (fun p ->
+        if Hashtbl.mem in_subset p.Algsimp.tag then begin
+          let cur = try Hashtbl.find user_count p.tag with Not_found -> 0 in
+          Hashtbl.replace user_count p.tag (cur + 1)
+        end
+      ) (preds_of n)
+    ) subset;
+    Hashtbl.iter (fun tag c -> Hashtbl.add remaining_users tag c) user_count
+  end;
+
+  (* Live set tracker (for Goodman-Hsu only). Threshold uses the
+   * uarch-specific pressure_threshold (24 for AVX-512, 12 for AVX2),
+   * which already accounts for cmul/FMA scratch slack. *)
+  let live : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+  let live_count () = Hashtbl.length live in
+  let threshold = uarch.Uarch.pressure_threshold in
+
   (* Ready set: nodes with no unscheduled subset preds. *)
   let scheduled : (int, unit) Hashtbl.t = Hashtbl.create 256 in
   let in_ready : (int, unit) Hashtbl.t = Hashtbl.create 64 in
@@ -575,7 +628,8 @@ let su_schedule_subset (uarch : Uarch.t)
     if !ready = [] then None
     else
       let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
-      let cmp a b =
+      (* Latency-mode comparator: cp_dist DESC, su_num ASC, tag ASC. *)
+      let cmp_latency a b =
         let cpa = try Hashtbl.find cp_dist a.Algsimp.tag with Not_found -> 0 in
         let cpb = try Hashtbl.find cp_dist b.Algsimp.tag with Not_found -> 0 in
         if cpa <> cpb then compare cpb cpa
@@ -584,6 +638,40 @@ let su_schedule_subset (uarch : Uarch.t)
           let sub = try Hashtbl.find su_num b.tag with Not_found -> 0 in
           if sua <> sub then compare sua sub
           else compare a.tag b.tag
+      in
+      (* Goodman-Hsu pressure-mode comparator: minimize live-delta.
+       *   delta(n) = births(n) - kills(n)
+       *   kills(n) = preds in subset with remaining_users == 1 (n kills them)
+       *   births(n) = 1 if n has remaining users in subset OR is a sink
+       * Pick the most-negative delta (frees most relative to creates).
+       * Tiebreak with cp_dist DESC (some latency awareness within pressure mode)
+       * then tag ASC for stability. *)
+      let pressure_delta n =
+        let preds_in_sub = List.filter (fun p ->
+          Hashtbl.mem in_subset p.Algsimp.tag
+        ) (preds_of n) in
+        let kills = List.fold_left (fun acc p ->
+          let ru = try Hashtbl.find remaining_users p.Algsimp.tag with Not_found -> 0 in
+          if ru = 1 then acc + 1 else acc
+        ) 0 preds_in_sub in
+        let n_users = try Hashtbl.find remaining_users n.Algsimp.tag with Not_found -> 0 in
+        let is_sink = Hashtbl.mem sink_set n.tag in
+        let births = if n_users > 0 || is_sink then 1 else 0 in
+        births - kills
+      in
+      let cmp_pressure a b =
+        let da = pressure_delta a in
+        let db = pressure_delta b in
+        if da <> db then compare da db  (* most-negative first *)
+        else
+          let cpa = try Hashtbl.find cp_dist a.Algsimp.tag with Not_found -> 0 in
+          let cpb = try Hashtbl.find cp_dist b.Algsimp.tag with Not_found -> 0 in
+          if cpa <> cpb then compare cpb cpa
+          else compare a.tag b.tag
+      in
+      let cmp =
+        if gh && live_count () > threshold then cmp_pressure
+        else cmp_latency
       in
       match arith_ready with
       | _ :: _ -> Some (List.hd (List.sort cmp arith_ready))
@@ -607,6 +695,28 @@ let su_schedule_subset (uarch : Uarch.t)
       Hashtbl.remove in_ready n.tag;
       (if is_load n then incr load_idx);
       result := n :: !result;
+
+      (* Goodman-Hsu live-set update.
+       * 1. For each pred P in subset, decrement P's remaining_users.
+       *    If P hits 0 and isn't a sink, P dies (remove from live).
+       * 2. n itself becomes live if it has remaining users OR is a sink. *)
+      if gh then begin
+        let preds_in_sub = List.filter (fun p ->
+          Hashtbl.mem in_subset p.Algsimp.tag
+        ) (preds_of n) in
+        List.iter (fun p ->
+          let cur = try Hashtbl.find remaining_users p.Algsimp.tag with Not_found -> 0 in
+          let new_count = cur - 1 in
+          Hashtbl.replace remaining_users p.tag new_count;
+          if new_count = 0 && not (Hashtbl.mem sink_set p.tag) then
+            Hashtbl.remove live p.tag
+        ) preds_in_sub;
+        let n_users = try Hashtbl.find remaining_users n.tag with Not_found -> 0 in
+        let is_sink = Hashtbl.mem sink_set n.tag in
+        if n_users > 0 || is_sink then
+          Hashtbl.replace live n.tag ()
+      end;
+
       let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
       List.iter (fun u ->
         let cur = try Hashtbl.find unsched_count u.Algsimp.tag with Not_found -> 0 in

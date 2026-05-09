@@ -338,6 +338,8 @@ let emit_codelet
     ?(t1s = false)
     ?(scheduler = Topological)
     ?(isa = Isa.avx512)
+    ?(gh = false)
+    ?(bb_budget : float option = None)
     ?(spill : spill_info option = None)
     (assigns : (Expr.elem_ref * t) list)
     ~(name : string) : string =
@@ -673,8 +675,11 @@ let emit_codelet
            ) group_nodes in
            if cluster_sinks = [] then group_nodes  (* no sinks → keep as-is *)
            else
-             Schedule.su_schedule_subset uarch
-               ~subset:group_nodes ~sinks:cluster_sinks
+             (match bb_budget with
+              | None -> Schedule.su_schedule_subset uarch ~gh
+                          ~subset:group_nodes ~sinks:cluster_sinks
+              | Some t -> Bb.bb_schedule_subset uarch ~time_budget_sec:t
+                            ~subset:group_nodes ~sinks:cluster_sinks)
          ) groups
        | _ -> pass1_blocked_topo
      in
@@ -814,8 +819,11 @@ let emit_codelet
              if group_nodes = [] then []
              else if group_sinks = [] then group_nodes
              else
-               Schedule.su_schedule_subset uarch
-                 ~subset:group_nodes ~sinks:group_sinks
+               (match bb_budget with
+                | None -> Schedule.su_schedule_subset uarch ~gh
+                            ~subset:group_nodes ~sinks:group_sinks
+                | Some t -> Bb.bb_schedule_subset uarch ~time_budget_sec:t
+                              ~subset:group_nodes ~sinks:group_sinks)
            in
            result := scheduled :: !result
          done;
@@ -829,8 +837,11 @@ let emit_codelet
          ) pass2_nodes in
          if pass2_sinks = [] then pass2_nodes
          else
-           Schedule.su_schedule_subset uarch
-             ~subset:pass2_nodes ~sinks:pass2_sinks
+           (match bb_budget with
+            | None -> Schedule.su_schedule_subset uarch ~gh
+                        ~subset:pass2_nodes ~sinks:pass2_sinks
+            | Some t -> Bb.bb_schedule_subset uarch ~time_budget_sec:t
+                          ~subset:pass2_nodes ~sinks:pass2_sinks)
        | _ -> pass2_nodes
      in
 
