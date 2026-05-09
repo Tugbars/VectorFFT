@@ -53,6 +53,24 @@ type node_kind =
   | NK_CmulRe of t * t * t * t
   | NK_CmulIm of t * t * t * t
 
+  (* Fused-multiply-add atom — represents one of the four FMA variants:
+   *
+   *   neg_mul=false, neg_add=false:  (a * b) + c    — fmadd
+   *   neg_mul=false, neg_add=true :  (a * b) - c    — fmsub
+   *   neg_mul=true,  neg_add=false: -(a * b) + c    — fnmadd
+   *   neg_mul=true,  neg_add=true : -(a * b) - c    — fnmsub
+   *
+   * Lifted by the `fma_lift` pass from Add/Sub-of-Mul patterns where the
+   * inner Mul has use_count = 1 (single consumer). After lifting, the
+   * Mul is "claimed" by the Fma and other passes treat the Fma as opaque
+   * — never recursing into it for factoring or subsum sharing.
+   *
+   * Codegen renders Fma as a single AVX-512 FMA intrinsic, which is one
+   * machine instruction per FMA (vs 2 for separate mul + add). This is
+   * the difference between our DAG-level "op count" metric and actual
+   * post-fusion hardware instruction count. *)
+  | NK_Fma   of t * t * t * bool * bool
+
 and t = {
   tag : int;
   node : node_kind;
@@ -513,7 +531,11 @@ let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) l
           * matching. *)
          bump_usage a.tag; bump_usage b.tag;
          bump_usage c.tag; bump_usage d.tag;
-         visit a; visit b; visit c; visit d)
+         visit a; visit b; visit c; visit d
+       | NK_Fma (a, b, c, _, _) ->
+         (* Fma is opaque to dedup — same treatment as Cmul. *)
+         bump_usage a.tag; bump_usage b.tag; bump_usage c.tag;
+         visit a; visit b; visit c)
     end
   in
   List.iter (fun (_, e) -> visit e) assigns;
@@ -568,7 +590,11 @@ let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) l
              re
            | NK_CmulIm (a, b, c, d) ->
              let (_re, im) = mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d) in
-             im)
+             im
+           | NK_Fma (a, b, c, neg_mul, neg_add) ->
+             (* Fma is opaque — rebuild its operands but preserve the
+              * fused structure. *)
+             hashcons (NK_Fma (rebuild a, rebuild b, rebuild c, neg_mul, neg_add)))
       in
       Hashtbl.add rebuild_cache e.tag result;
       result
@@ -776,6 +802,14 @@ let factor_common_muls ?(aggressive = false)
               let c' = rewrite c in let d' = rewrite d in
               if a' == a && b' == b && c' == c && d' == d then n
               else hashcons (NK_CmulIm (a', b', c', d'))
+            | NK_Fma (a, b, c, neg_mul, neg_add) ->
+              (* Fma is opaque to factoring — the muls inside are already
+               * claimed by the FMA fusion. Recurse into operands but
+               * never restructure. *)
+              let a' = rewrite a in let b' = rewrite b in
+              let c' = rewrite c in
+              if a' == a && b' == b && c' == c then n
+              else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
           in
           Hashtbl.add cache n.tag r;
           r
@@ -812,6 +846,182 @@ let factor_common_muls ?(aggressive = false)
  * hash-cons'd with use_count > 0. Replace the pair with the existing node.
  * Repeat until no more shareable pairs. *)
 
+
+(* === FACTOR BY ATOM ===
+ *
+ * Complementary to factor_common_muls. Where that pass buckets by the
+ * CONSTANT operand of Mul (factoring `c*a + c*b → c*(a+b)`), this one
+ * buckets by the NON-CONSTANT operand (factoring `c1*a + c2*a → (c1+c2)*a`).
+ *
+ * The killer case: when c1 + c2 + ... + cN is a compile-time-foldable sum
+ * of distinct constants. Each ci is a Const, so (c1 + c2 + ... + cN) folds
+ * to ONE constant at DAG construction time. N muls collapse to 1 mul.
+ *
+ * This is FFTW's `collectM` with the second-operand-as-coeff path. The
+ * pattern arises in DFT computations where multiple twiddle factors
+ * multiply the same input element across outputs.
+ *
+ * IR-level extraction:
+ *   Mul(Const c, x)        — atom = x, coeff = c
+ *   Mul(x, Const c)        — atom = x, coeff = c   (canonical-tagged form)
+ *   Neg(Mul(Const c, x))   — atom = x, coeff = -c
+ *
+ * For each atom seen, sum the coefficients (compile-time fold). Emit
+ * `Mul(folded_const, atom)` if folded_const ≠ 0, else drop the term.
+ *
+ * FMA awareness: collapsing N muls to 1 saves at least (N-1) instructions
+ * regardless of FMA fusion downstream. A standalone mul that loses
+ * siblings can still fuse with at most one consumer, so the merge can
+ * never lose.
+ *
+ * Fires only in aggressive mode (primes). Safe-mode CT codelets don't
+ * have this pattern. *)
+
+let factor_by_atom ?(aggressive = false)
+    (assigns : (Expr.elem_ref * t) list)
+    : (Expr.elem_ref * t) list =
+  if not aggressive then assigns
+  else
+  let const_of (e : t) : float option =
+    match e.node with NK_Const c -> Some c | _ -> None
+  in
+  let rec atom_view (sign : int) (e : t) : (float * t) option =
+    match e.node with
+    | NK_Mul (a, b) ->
+      (match const_of a, const_of b with
+       | Some c, None -> Some (float_of_int sign *. c, b)
+       | None, Some c -> Some (float_of_int sign *. c, a)
+       | _ -> None)
+    | NK_Neg inner -> atom_view (-sign) inner
+    | _ -> None
+  in
+  let rec flatten (sign : int) (e : t) : (int * t) list =
+    match e.node with
+    | NK_Add (a, b) -> flatten sign a @ flatten sign b
+    | NK_Sub (a, b) -> flatten sign a @ flatten (-sign) b
+    | NK_Neg inner -> flatten (-sign) inner
+    | _ -> [(sign, e)]
+  in
+  let rebuild_sum (terms : (int * t) list) : t =
+    let pos = List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms in
+    let neg = List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms in
+    let build lst = match lst with
+      | [] -> mk_const 0.0
+      | [x] -> x
+      | x :: rest -> List.fold_left mk_add x rest
+    in
+    match pos, neg with
+    | [], [] -> mk_const 0.0
+    | _, [] -> build pos
+    | [], _ -> mk_neg (build neg)
+    | _, _ -> mk_sub (build pos) (build neg)
+  in
+
+  let max_iter = 8 in
+  let rec loop assigns iter =
+    if iter >= max_iter then assigns
+    else begin
+      let changed = ref false in
+      let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
+
+      (* Bucket flat terms by atom-tag, sum coefficients (compile-time fold).
+       * `fired` = at least one bucket had multiple entries OR a coefficient
+       * summed to zero. *)
+      let factor_terms (terms : (int * t) list) : (int * t) list * bool =
+        let by_atom : (int, t * float ref * int ref) Hashtbl.t = Hashtbl.create 8 in
+        let leftover : (int * t) list ref = ref [] in
+        List.iter (fun (sign, term) ->
+          match atom_view sign term with
+          | Some (c, atom) ->
+            (match Hashtbl.find_opt by_atom atom.tag with
+             | Some (_, acc, count) ->
+               acc := !acc +. c;
+               incr count
+             | None ->
+               Hashtbl.add by_atom atom.tag (atom, ref c, ref 1))
+          | None ->
+            leftover := (sign, term) :: !leftover
+        ) terms;
+
+        let new_factored : (int * t) list ref = ref [] in
+        let any_collapse_or_zero = ref false in
+        Hashtbl.iter (fun _ (atom, c_ref, count_ref) ->
+          let c = !c_ref in
+          let count = !count_ref in
+          if c = 0.0 then begin
+            any_collapse_or_zero := true
+          end else if count >= 2 then begin
+            (* Multiple originals collapsed into one. *)
+            let new_term = mk_mul (mk_const c) atom in
+            new_factored := (1, new_term) :: !new_factored;
+            any_collapse_or_zero := true
+          end else begin
+            (* Single occurrence — preserve as Mul(c, atom). *)
+            let new_term = mk_mul (mk_const c) atom in
+            new_factored := (1, new_term) :: !new_factored
+          end
+        ) by_atom;
+        let final_terms = !new_factored @ !leftover in
+        (final_terms, !any_collapse_or_zero)
+      in
+
+      let rec rewrite (n : t) : t =
+        match Hashtbl.find_opt cache n.tag with
+        | Some r -> r
+        | None ->
+          let r = match n.node with
+            | NK_Const _ | NK_Load _ -> n
+            | NK_Neg a ->
+              let a' = rewrite a in
+              if a' == a then n else mk_neg a'
+            | NK_Add (a, b) ->
+              let raw_terms = flatten 1 n in
+              let rewritten_terms = List.map (fun (s, t) -> (s, rewrite t)) raw_terms in
+              let (new_terms, fired) = factor_terms rewritten_terms in
+              if fired then begin changed := true; rebuild_sum new_terms end
+              else
+                let a' = rewrite a in
+                let b' = rewrite b in
+                if a' == a && b' == b then n else mk_add_binary a' b'
+            | NK_Sub (a, b) ->
+              let raw_terms = flatten 1 n in
+              let rewritten_terms = List.map (fun (s, t) -> (s, rewrite t)) raw_terms in
+              let (new_terms, fired) = factor_terms rewritten_terms in
+              if fired then begin changed := true; rebuild_sum new_terms end
+              else
+                let a' = rewrite a in
+                let b' = rewrite b in
+                if a' == a && b' == b then n else mk_sub_binary a' b'
+            | NK_Mul (a, b) ->
+              let a' = rewrite a in
+              let b' = rewrite b in
+              if a' == a && b' == b then n else mk_mul a' b'
+            | NK_CmulRe (a, b, c, d) ->
+              let a' = rewrite a in let b' = rewrite b in
+              let c' = rewrite c in let d' = rewrite d in
+              if a' == a && b' == b && c' == c && d' == d then n
+              else hashcons (NK_CmulRe (a', b', c', d'))
+            | NK_CmulIm (a, b, c, d) ->
+              let a' = rewrite a in let b' = rewrite b in
+              let c' = rewrite c in let d' = rewrite d in
+              if a' == a && b' == b && c' == c && d' == d then n
+              else hashcons (NK_CmulIm (a', b', c', d'))
+            | NK_Fma (a, b, c, neg_mul, neg_add) ->
+              let a' = rewrite a in let b' = rewrite b in let c' = rewrite c in
+              if a' == a && b' == b && c' == c then n
+              else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
+          in
+          Hashtbl.add cache n.tag r;
+          r
+      in
+      let new_assigns = List.map (fun (oref, e) -> (oref, rewrite e)) assigns in
+      if !changed then loop new_assigns (iter + 1)
+      else new_assigns
+    end
+  in
+  loop assigns 0
+
+
 let share_subsums ?(aggressive = false)
     (assigns : (Expr.elem_ref * t) list)
     : (Expr.elem_ref * t) list =
@@ -835,6 +1045,9 @@ let share_subsums ?(aggressive = false)
       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
         bump a.tag; bump b.tag; bump c.tag; bump d.tag;
         walk a; walk b; walk c; walk d
+      | NK_Fma (a, b, c, _, _) ->
+        bump a.tag; bump b.tag; bump c.tag;
+        walk a; walk b; walk c
     end
   in
   List.iter (fun (_, e) -> bump e.tag; walk e) assigns;
@@ -963,9 +1176,366 @@ let share_subsums ?(aggressive = false)
           let c' = rewrite c in let d' = rewrite d in
           if a' == a && b' == b && c' == c && d' == d then n
           else hashcons (NK_CmulIm (a', b', c', d'))
+        | NK_Fma (a, b, c, neg_mul, neg_add) ->
+          let a' = rewrite a in let b' = rewrite b in let c' = rewrite c in
+          if a' == a && b' == b && c' == c then n
+          else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
       in
       Hashtbl.add cache n.tag r;
       r
+  in
+  List.map (fun (oref, e) -> (oref, rewrite e)) assigns
+
+
+(* === DAG TRANSPOSITION ===
+ *
+ * Linear-network transposition: for each node N in the DAG, compute T[N]
+ * representing N's contribution if the network were run "in reverse" —
+ * roots become inputs, leaves become outputs.
+ *
+ * Rule: T[N] = Σ over parents P (consumers of N): w · T[P]
+ *   where w is N's coefficient in P's definition:
+ *     Add(N, _) or Add(_, N): w = +1
+ *     Sub(N, _):              w = +1   (left operand)
+ *     Sub(_, N):              w = -1   (right operand)
+ *     Mul(N, Const c) or Mul(Const c, N): w = c
+ *     Mul(N, _) where _ not const: NOT linear — skip (primes don't have this)
+ *     Neg(N):                 w = -1
+ *
+ * For roots (output assignments), T[root] = synthetic Load with the
+ * original output's elem_ref. For leaves (Load nodes with input/twiddle
+ * elem_refs), T[leaf] is the new "transposed output" expression.
+ *
+ * The output is a new assigns list: each original input load's elem_ref
+ * is the output reference, with T[load] as the value. The simplifier
+ * can then run on this transposed view, finding CSEs that aren't visible
+ * in the forward direction. Transposing twice (with simplification in
+ * between) gives back the original direction with new optimizations.
+ *
+ * Per Frigo PLDI'99 Table 7, transposition saves muls specifically on
+ * sizes 5, 10, 13, 15.
+ *
+ * LIMITATION: Cmul nodes are not handled (they're nonlinear in some
+ * uses). For monolithic primes (R=3,5,7,11) all twiddles are constants
+ * so the DAG is pure linear, no Cmul nodes — this is fine. *)
+
+let transpose (assigns : (Expr.elem_ref * t) list)
+    : (Expr.elem_ref * t) list =
+  (* Step 1: Collect all reachable nodes from roots in topo order
+   * (children before parents). *)
+  let visited : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+  let topo_rev : t list ref = ref [] in
+  let rec dfs n =
+    if not (Hashtbl.mem visited n.tag) then begin
+      Hashtbl.add visited n.tag ();
+      (match n.node with
+       | NK_Const _ | NK_Load _ -> ()
+       | NK_Neg a -> dfs a
+       | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> dfs a; dfs b
+       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
+         dfs a; dfs b; dfs c; dfs d
+       | NK_Fma (a, b, c, _, _) ->
+         dfs a; dfs b; dfs c);
+      topo_rev := n :: !topo_rev
+    end
+  in
+  List.iter (fun (_, e) -> dfs e) assigns;
+
+  (* Step 2: Build parent map. For each node, record list of contributions
+   * from each parent: (sign, scale_const_option, parent_node). *)
+  let contribs : (int, (int * t option * t) list) Hashtbl.t = Hashtbl.create 256 in
+  let add_contrib (child : t) (parent : t) (sign : int) (scale : t option) =
+    let cur = try Hashtbl.find contribs child.tag with Not_found -> [] in
+    Hashtbl.replace contribs child.tag ((sign, scale, parent) :: cur)
+  in
+  (* Process each node's structure to register contributions to its children. *)
+  Hashtbl.iter (fun _ () -> ()) visited;
+  List.iter (fun n ->
+    match n.node with
+    | NK_Const _ | NK_Load _ -> ()
+    | NK_Neg a ->
+      add_contrib a n (-1) None
+    | NK_Add (a, b) ->
+      add_contrib a n 1 None;
+      add_contrib b n 1 None
+    | NK_Sub (a, b) ->
+      add_contrib a n 1 None;
+      add_contrib b n (-1) None
+    | NK_Mul (a, b) ->
+      (* Const · X form — the X operand has weight = const.
+       * Const itself never has a useful T value (it's a leaf with no
+       * input semantics in transposition), so skip its contrib. *)
+      (match a.node, b.node with
+       | NK_Const _, _ -> add_contrib b n 1 (Some a)
+       | _, NK_Const _ -> add_contrib a n 1 (Some b)
+       | _ ->
+         (* Non-linear Mul — can't transpose cleanly. Skip both
+          * operands. The transposed DAG won't include this node's
+          * contributions. *)
+         ())
+    | NK_CmulRe _ | NK_CmulIm _ ->
+      (* Skip — primes don't produce these. *)
+      ()
+    | NK_Fma _ ->
+      (* Fma is opaque to transposition. The transpose pass shouldn't
+       * normally encounter Fma anyway since fma_lift runs LAST. *)
+      ()
+  ) (List.rev !topo_rev);
+  (* topo_rev is built by PREPENDING after DFS post-order recursion;
+   * the root (added last) ends up at the front, leaves at the back.
+   * So topo_rev itself iterates roots-first; List.rev topo_rev iterates
+   * leaves-first. Contribs population (just above) iterates leaves-first
+   * — order doesn't matter, every node visited once. *)
+
+  (* Step 3: Compute T[N] for each node, in order parents-first
+   * (so parents have T set before children look them up). topo_rev is
+   * roots-first, which is parents-first. *)
+  let t_value : (int, t) Hashtbl.t = Hashtbl.create 256 in
+
+  (* Roots: T[root] = Load with the original output's elem_ref. *)
+  List.iter (fun (oref, root) ->
+    if not (Hashtbl.mem t_value root.tag) then
+      Hashtbl.add t_value root.tag (mk_load oref)
+  ) assigns;
+
+  (* For nodes that have contribs (= internal nodes used by parents),
+   * compute their T from their parents' T values. Process roots-first. *)
+  List.iter (fun n ->
+    match n.node with
+    | NK_Const _ -> ()  (* constants have no transposed value *)
+    | _ ->
+      (* If this node already has a T (it's a root), skip. Otherwise
+       * compute T from contribs. *)
+      if not (Hashtbl.mem t_value n.tag) then begin
+        let parent_contribs =
+          try Hashtbl.find contribs n.tag with Not_found -> []
+        in
+        let terms = List.filter_map (fun (sign, scale, parent) ->
+          match Hashtbl.find_opt t_value parent.tag with
+          | None -> None  (* parent's T not computed; skip *)
+          | Some t_parent ->
+            let scaled = match scale with
+              | None -> t_parent
+              | Some c -> mk_mul c t_parent
+            in
+            Some (sign, scaled)
+        ) parent_contribs in
+        let pos = List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms in
+        let neg = List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms in
+        let build lst = match lst with
+          | [] -> mk_const 0.0
+          | [x] -> x
+          | x :: rest -> List.fold_left mk_add x rest
+        in
+        let t_n = match pos, neg with
+          | [], [] -> mk_const 0.0
+          | _, [] -> build pos
+          | [], _ -> mk_neg (build neg)
+          | _, _ -> mk_sub (build pos) (build neg)
+        in
+        Hashtbl.add t_value n.tag t_n
+      end
+  ) !topo_rev;
+  (* topo_rev is roots-first (DFS prepends after recursion → root at front). *)
+
+  (* Step 4: Build new assigns. For each input Load (leaf with elem_ref),
+   * the new assignment is (input_elem_ref, T[load]). *)
+  let new_assigns = List.filter_map (fun n ->
+    match n.node with
+    | NK_Load r ->
+      (match Hashtbl.find_opt t_value n.tag with
+       | None -> None  (* No T computed (e.g., load not in any sum) *)
+       | Some t_n -> Some (r, t_n))
+    | _ -> None
+  ) !topo_rev in
+  new_assigns
+
+
+(* === FMA LIFT PASS ===
+ *
+ * Recognize Add/Sub-of-Mul patterns where the inner Mul has use_count = 1
+ * and rewrite them as NK_Fma atoms. After this pass, the codegen emits
+ * each Fma as a single AVX-512 FMA intrinsic (vfmadd / vfmsub /
+ * vfnmadd / vfnmsub) — one machine instruction instead of two.
+ *
+ * Patterns lifted (where M = Mul(a, b) and use_count(M) = 1):
+ *
+ *   Add(M, c)              →  Fma(a, b, c, neg_mul=F, neg_add=F)   a*b + c
+ *   Add(c, M)              →  Fma(a, b, c, F, F)                   a*b + c
+ *   Sub(M, c)              →  Fma(a, b, c, F, T)                   a*b - c
+ *   Sub(c, M)              →  Fma(a, b, c, T, F)                  -a*b + c
+ *
+ * And also the negated-mul forms, where N = Neg(Mul(a, b)) with use_count(N)=1
+ * and use_count(Mul(a,b))=1:
+ *
+ *   Add(N, c)              →  Fma(a, b, c, T, F)                  -a*b + c
+ *   Add(c, N)              →  Fma(a, b, c, T, F)                  -a*b + c
+ *   Sub(N, c)              →  Fma(a, b, c, T, T)                  -a*b - c
+ *   Sub(c, N)              →  Fma(a, b, c, F, F)                   a*b + c
+ *
+ * Constraints:
+ * - The lifted Mul (or Neg(Mul)) must have use_count = 1 — it has only
+ *   ONE consumer (the Add/Sub being rewritten). Otherwise lifting would
+ *   either DUPLICATE the mul (worse) or break sharing.
+ * - This pass should run LAST (after factor/share/transpose). All
+ *   downstream passes treat Fma as opaque.
+ * - The pass is "conservative" in that it never lifts when use_count > 1.
+ *   It does NOT try to push factoring back to enable more fusion. *)
+
+let fma_lift (assigns : (Expr.elem_ref * t) list)
+    : (Expr.elem_ref * t) list =
+  (* Step 1: Compute global use_count over the assigns DAG. *)
+  let use_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  let visited : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+  let bump tag =
+    let c = try Hashtbl.find use_count tag with Not_found -> 0 in
+    Hashtbl.replace use_count tag (c + 1)
+  in
+  let rec walk e =
+    if not (Hashtbl.mem visited e.tag) then begin
+      Hashtbl.add visited e.tag ();
+      match e.node with
+      | NK_Const _ | NK_Load _ -> ()
+      | NK_Neg a -> bump a.tag; walk a
+      | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
+        bump a.tag; bump b.tag; walk a; walk b
+      | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
+        bump a.tag; bump b.tag; bump c.tag; bump d.tag;
+        walk a; walk b; walk c; walk d
+      | NK_Fma (a, b, c, _, _) ->
+        bump a.tag; bump b.tag; bump c.tag;
+        walk a; walk b; walk c
+    end
+  in
+  List.iter (fun (_, e) -> bump e.tag; walk e) assigns;
+
+  let single_use n = (try Hashtbl.find use_count n.tag with Not_found -> 0) = 1 in
+  let _ = single_use in  (* now using the more permissive `liftable` below *)
+
+  (* A Mul with use_count > 1 can still be lifted into FMAs IF all its
+   * consumers will absorb it via FMA fusion. The cost analysis:
+   *
+   *   Shared (current behavior, single_use only): 1 mul + N adds = N+1 ops
+   *   Duplicated into N fmas:                     N fmas             = N ops
+   *
+   * Duplication wins by 1 op per shared mul. The "duplication" is
+   * implicit at the asm level: each Fma(a, b, c) computes a*b internally.
+   * The original Mul node becomes unreachable from outputs IF all its
+   * consumers are FMA-lifting Adds/Subs. emit_c won't emit it.
+   *
+   * If the Mul has consumers that AREN'T Add/Sub (e.g., another Mul, a
+   * Cmul operand, or a direct output store), the standalone Mul stays
+   * alive. In that case, lifting an Add consumer still works at the
+   * source level, and at the asm level the Mul is computed once and the
+   * FMA computes its own a*b in parallel — slight redundancy, but
+   * harmless because mul throughput is high (2/cycle on modern x86).
+   *
+   * Net: we always lift Mul into Fma when the consumer is an Add/Sub,
+   * regardless of use_count. *)
+  let liftable_mul (_n : t) : bool = true in
+
+  (* Step 2: Walk the DAG, lifting patterns greedily. Each Add/Sub examines
+   * its operands; if one is a single-use Mul (or single-use Neg(Mul)),
+   * lift to Fma. *)
+  let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
+  let rec rewrite (n : t) : t =
+    match Hashtbl.find_opt cache n.tag with
+    | Some r -> r
+    | None ->
+      let r = match n.node with
+        | NK_Const _ | NK_Load _ -> n
+        | NK_Neg inner ->
+          let inner' = rewrite inner in
+          if inner' == inner then n else mk_neg inner'
+        | NK_Mul (a, b) ->
+          let a' = rewrite a in let b' = rewrite b in
+          if a' == a && b' == b then n else mk_mul a' b'
+        | NK_CmulRe (a, b, c, d) ->
+          let a' = rewrite a in let b' = rewrite b in
+          let c' = rewrite c in let d' = rewrite d in
+          if a' == a && b' == b && c' == c && d' == d then n
+          else hashcons (NK_CmulRe (a', b', c', d'))
+        | NK_CmulIm (a, b, c, d) ->
+          let a' = rewrite a in let b' = rewrite b in
+          let c' = rewrite c in let d' = rewrite d in
+          if a' == a && b' == b && c' == c && d' == d then n
+          else hashcons (NK_CmulIm (a', b', c', d'))
+        | NK_Fma (a, b, c, neg_mul, neg_add) ->
+          let a' = rewrite a in let b' = rewrite b in let c' = rewrite c in
+          if a' == a && b' == b && c' == c then n
+          else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
+        | NK_Add (a, b) ->
+          let a' = rewrite a in let b' = rewrite b in
+          (* Try to lift one operand into an FMA. Try LEFT first; if it
+           * doesn't fuse, try RIGHT. Only one Mul can fuse per Add. *)
+          (match try_lift_add_operand a' b' with
+           | Some fma -> fma
+           | None ->
+             match try_lift_add_operand b' a' with
+             | Some fma -> fma
+             | None ->
+               if a' == a && b' == b then n else mk_add_binary a' b')
+        | NK_Sub (a, b) ->
+          let a' = rewrite a in let b' = rewrite b in
+          (* For Sub(a, b) we have two patterns:
+           *   Sub(M, c)  → Fma(a_m, b_m, c, F, T)   (a_m*b_m - c)   — fmsub
+           *   Sub(c, M)  → Fma(a_m, b_m, c, T, F)   (-a_m*b_m + c)  — fnmadd
+           *   Sub(N, c)  → Fma(a_m, b_m, c, T, T)   (-a_m*b_m - c)  — fnmsub  (N = Neg(M))
+           *   Sub(c, N)  → Fma(a_m, b_m, c, F, F)   (a_m*b_m + c)   — fmadd   (N = Neg(M))
+           *)
+          (match try_lift_sub_left a' b' with
+           | Some fma -> fma
+           | None ->
+             match try_lift_sub_right a' b' with
+             | Some fma -> fma
+             | None ->
+               if a' == a && b' == b then n else mk_sub_binary a' b')
+      in
+      Hashtbl.add cache n.tag r;
+      r
+
+  (* Try to fuse `m_node + other` as an FMA — m_node is the candidate
+   * Mul/Neg(Mul) operand of an Add, other is the addend. *)
+  and try_lift_add_operand (m_node : t) (other : t) : t option =
+    match m_node.node with
+    | NK_Mul (a, b) when liftable_mul m_node ->
+      (* Fma(a, b, other, F, F) = a*b + other *)
+      Some (hashcons (NK_Fma (a, b, other, false, false)))
+    | NK_Neg inner when liftable_mul m_node ->
+      (match inner.node with
+       | NK_Mul (a, b) when liftable_mul inner ->
+         (* Fma(a, b, other, T, F) = -a*b + other *)
+         Some (hashcons (NK_Fma (a, b, other, true, false)))
+       | _ -> None)
+    | _ -> None
+
+  (* Sub(left, right) where left is Mul/Neg(Mul). *)
+  and try_lift_sub_left (left : t) (right : t) : t option =
+    match left.node with
+    | NK_Mul (a, b) when liftable_mul left ->
+      (* Fma(a, b, right, F, T) = a*b - right *)
+      Some (hashcons (NK_Fma (a, b, right, false, true)))
+    | NK_Neg inner when liftable_mul left ->
+      (match inner.node with
+       | NK_Mul (a, b) when liftable_mul inner ->
+         (* Fma(a, b, right, T, T) = -a*b - right *)
+         Some (hashcons (NK_Fma (a, b, right, true, true)))
+       | _ -> None)
+    | _ -> None
+
+  (* Sub(left, right) where right is Mul/Neg(Mul). *)
+  and try_lift_sub_right (left : t) (right : t) : t option =
+    match right.node with
+    | NK_Mul (a, b) when liftable_mul right ->
+      (* Fma(a, b, left, T, F) = -a*b + left *)
+      Some (hashcons (NK_Fma (a, b, left, true, false)))
+    | NK_Neg inner when liftable_mul right ->
+      (match inner.node with
+       | NK_Mul (a, b) when liftable_mul inner ->
+         (* Fma(a, b, left, F, F) = a*b + left *)
+         Some (hashcons (NK_Fma (a, b, left, false, false)))
+       | _ -> None)
+    | _ -> None
   in
   List.map (fun (oref, e) -> (oref, rewrite e)) assigns
 
@@ -982,6 +1552,7 @@ type dag_stats = {
   subs : int;
   muls : int;
   cmuls : int;            (* number of distinct Cmul nodes (Re or Im) *)
+  fmas : int;             (* number of NK_Fma nodes (each = 1 instruction) *)
   arithmetic_ops : int;   (* counts each Cmul-node as 2 muls + 1 add/sub *)
 }
 
@@ -997,6 +1568,7 @@ let stats_reachable (roots : t list) : dag_stats =
   let subs = ref 0 in
   let muls = ref 0 in
   let cmuls = ref 0 in
+  let fmas = ref 0 in
   let rec visit (e : t) =
     if not (Hashtbl.mem seen e.tag) then begin
       Hashtbl.add seen e.tag ();
@@ -1013,7 +1585,8 @@ let stats_reachable (roots : t list) : dag_stats =
        | NK_Add _ -> incr adds
        | NK_Sub _ -> incr subs
        | NK_Mul _ -> incr muls
-       | NK_CmulRe _ | NK_CmulIm _ -> incr cmuls);
+       | NK_CmulRe _ | NK_CmulIm _ -> incr cmuls
+       | NK_Fma _ -> incr fmas);
       match e.node with
       | NK_Const _ | NK_Load _ -> ()
       | NK_Neg e1 -> visit e1
@@ -1021,6 +1594,8 @@ let stats_reachable (roots : t list) : dag_stats =
         visit a; visit b
       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
         visit a; visit b; visit c; visit d
+      | NK_Fma (a, b, c, _, _) ->
+        visit a; visit b; visit c
     end
   in
   List.iter visit roots;
@@ -1036,9 +1611,11 @@ let stats_reachable (roots : t list) : dag_stats =
     subs = !subs;
     muls = !muls;
     cmuls = !cmuls;
+    fmas = !fmas;
     (* Each Cmul node (Re or Im) represents (a*c ± b*d) = 2 muls + 1 add/sub
-     * = 3 arithmetic ops. So contribution is 3 * cmuls. *)
-    arithmetic_ops = !adds + !subs + !muls + !negs + (3 * !cmuls);
+     * = 3 arithmetic ops. Each Fma is 1 mul + 1 add fused = 2 arithmetic ops
+     * but 1 instruction. So contribution to arith ops: 3*cmuls + 2*fmas. *)
+    arithmetic_ops = !adds + !subs + !muls + !negs + (3 * !cmuls) + (2 * !fmas);
   }
 
 let string_of_stats (s : dag_stats) : string =
@@ -1052,8 +1629,8 @@ let string_of_stats (s : dag_stats) : string =
    *    3 scalar ops (2 muls + 1 add/sub) per output. Multiply by SIMD lane
    *    width (8 for AVX-512, 4 for AVX-2) for actual scalar work per
    *    inner-loop iteration. *)
-  let vec_arith = s.adds + s.subs + s.muls + s.negs + (2 * s.cmuls) in
-  let scalar_ops = s.adds + s.subs + s.muls + s.negs + (3 * s.cmuls) in
+  let vec_arith = s.adds + s.subs + s.muls + s.negs + (2 * s.cmuls) + s.fmas in
+  let scalar_ops = s.adds + s.subs + s.muls + s.negs + (3 * s.cmuls) + (2 * s.fmas) in
   let buf = Buffer.create 512 in
   Buffer.add_string buf (Printf.sprintf "DAG nodes: %d total\n" s.total_nodes);
   Buffer.add_string buf (Printf.sprintf "  Loads:  %d\n" s.loads);
@@ -1062,13 +1639,14 @@ let string_of_stats (s : dag_stats) : string =
   Buffer.add_string buf (Printf.sprintf "  Adds:   %d\n" s.adds);
   Buffer.add_string buf (Printf.sprintf "  Subs:   %d\n" s.subs);
   Buffer.add_string buf (Printf.sprintf "  Muls:   %d\n" s.muls);
-  Buffer.add_string buf (Printf.sprintf "  Cmuls:  %d   (FMA-emitted: 2 instructions each — 1 mul + 1 fmadd/fnmadd)\n" s.cmuls);
+  Buffer.add_string buf (Printf.sprintf "  Cmuls:  %d   (each = 1 mul + 1 fmadd/fnmadd = 2 instructions)\n" s.cmuls);
+  Buffer.add_string buf (Printf.sprintf "  Fmas:   %d   (each = 1 fmadd/fmsub/fnmadd/fnmsub = 1 instruction)\n" s.fmas);
   Buffer.add_string buf "\n";
   Buffer.add_string buf (Printf.sprintf "Vector instructions (FMA-fused, ISA-independent): %d\n" vec_arith);
-  Buffer.add_string buf (Printf.sprintf "  Breakdown: %d add/sub/mul/neg + %d cmul-pair instructions\n"
-    (s.adds + s.subs + s.muls + s.negs) (2 * s.cmuls));
+  Buffer.add_string buf (Printf.sprintf "  Breakdown: %d add/sub/mul/neg + %d cmul-pair instructions + %d fma\n"
+    (s.adds + s.subs + s.muls + s.negs) (2 * s.cmuls) s.fmas);
   Buffer.add_string buf "\n";
-  Buffer.add_string buf (Printf.sprintf "Scalar-equivalent ops (each Cmul = 3 ops):       %d\n" scalar_ops);
+  Buffer.add_string buf (Printf.sprintf "Scalar-equivalent ops (each Cmul = 3 ops, each Fma = 2 ops): %d\n" scalar_ops);
   Buffer.add_string buf (Printf.sprintf "  AVX-512 work (×8 lanes): %d ops/iter\n" (scalar_ops * 8));
   Buffer.add_string buf (Printf.sprintf "  AVX-2   work (×4 lanes): %d ops/iter\n" (scalar_ops * 4));
   Buffer.contents buf
@@ -1090,6 +1668,10 @@ let string_of_node_kind (nk : node_kind) : string =
     Printf.sprintf "cmul.re(t%d, t%d, t%d, t%d)" a.tag b.tag c.tag d.tag
   | NK_CmulIm (a, b, c, d) ->
     Printf.sprintf "cmul.im(t%d, t%d, t%d, t%d)" a.tag b.tag c.tag d.tag
+  | NK_Fma (a, b, c, neg_mul, neg_add) ->
+    let sign_mul = if neg_mul then "-" else "+" in
+    let sign_add = if neg_add then "-" else "+" in
+    Printf.sprintf "fma(%st%d*t%d, %st%d)" sign_mul a.tag b.tag sign_add c.tag
 
 let print_dag (assigns : (Expr.elem_ref * t) list) : string =
   let roots = List.map snd assigns in
@@ -1104,6 +1686,8 @@ let print_dag (assigns : (Expr.elem_ref * t) list) : string =
         visit a; visit b
       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
         visit a; visit b; visit c; visit d
+      | NK_Fma (a, b, c, _, _) ->
+        visit a; visit b; visit c
     end
   in
   List.iter visit roots;

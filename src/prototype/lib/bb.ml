@@ -41,6 +41,7 @@ let preds_of (e : Algsimp.t) : Algsimp.t list =
   | NK_Neg a -> [a]
   | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
   | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+  | NK_Fma (a, b, c, _, _) -> [a; b; c]
 
 (* Compute peak-live for an existing schedule. *)
 let compute_peak_live

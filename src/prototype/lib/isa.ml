@@ -101,6 +101,10 @@ let fnmadd_pd (isa : t) (a : string) (b : string) (c : string) : string =
 let fmsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
   Printf.sprintf "%s(%s, %s, %s)" (intr isa "fmsub_pd") a b c
 
+(* fnmsub_pd(a, b, c) = -a*b - c   -- negated multiplicand, subtract *)
+let fnmsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
+  Printf.sprintf "%s(%s, %s, %s)" (intr isa "fnmsub_pd") a b c
+
 let set1_pd_str (isa : t) (literal : string) : string =
   Printf.sprintf "%s(%s)" isa.set1_pd literal
 

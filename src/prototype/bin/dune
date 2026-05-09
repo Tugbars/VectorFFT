@@ -1,5 +1,5 @@
 ; CLI entry point.
 ; Usage: dune exec bin/gen_radix.exe -- 4 avx512 raptor_lake
 (executables
- (names gen_radix bb_diagnostic)
+ (names gen_radix bb_diagnostic prime_opcount dump_r11)
  (libraries vfft_v2))

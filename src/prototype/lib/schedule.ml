@@ -43,6 +43,7 @@ let predecessor_exprs (e : Algsimp.t) : Algsimp.t list =
   | NK_Neg a -> [a]
   | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
   | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+  | NK_Fma (a, b, c, _, _) -> [a; b; c]
 
 (* Build a scheduling DAG from a list of (output_ref, expr) assignments.
  *
@@ -264,6 +265,7 @@ let preds_of (e : Algsimp.t) : Algsimp.t list =
   | NK_Neg a -> [a]
   | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
   | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+  | NK_Fma (a, b, c, _, _) -> [a; b; c]
 
 (* Latency of producing this node, given a Uarch profile. Used by
  * critical-path computation. *)
@@ -277,6 +279,7 @@ let node_latency (uarch : Uarch.t) (e : Algsimp.t) : int =
   | NK_CmulRe _ | NK_CmulIm _ -> uarch.fma_latency
                                             (* Cmul emits as 1 mul + 1 fma;
                                              * latency dominated by fma_latency *)
+  | NK_Fma _ -> uarch.fma_latency           (* single FMA instruction *)
 
 (* Compute critical-path distance from each node to a sink, in cycles.
  * cp_dist[n] = node_latency(n) + max(cp_dist[user] for user in users(n))
@@ -341,6 +344,15 @@ let compute_su_number (all_nodes : Algsimp.t list) : (int, int) Hashtbl.t =
         (* k-ary SU label: sort children by su descending, label = max_i (su_i + i). *)
         let sus = List.sort (fun x y -> compare y x)
                     [get_su a; get_su b; get_su c; get_su d] in
+        let rec compute idx = function
+          | [] -> 0
+          | s :: rest -> max (s + idx) (compute (idx + 1) rest)
+        in
+        compute 0 sus
+      | NK_Fma (a, b, c, _, _) ->
+        (* 3-ary SU label, same scheme as Cmul. *)
+        let sus = List.sort (fun x y -> compare y x)
+                    [get_su a; get_su b; get_su c] in
         let rec compute idx = function
           | [] -> 0
           | s :: rest -> max (s + idx) (compute (idx + 1) rest)
