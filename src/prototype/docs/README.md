@@ -28,6 +28,14 @@ These are session writeups from building the vfft_v2 generator. Each one capture
 
 12. **[12_avx2_finding.md](12_avx2_finding.md)** — AVX2 validation. R=8 mildly regresses (peak live fits in 16 YMM, spill is overhead); R=16 wins 12-20%; R=32 wins **19-44%** — the biggest recipe wins we've measured. Cost-model rule becomes ISA-aware.
 
+13. **[13_cost_model_encoded.md](13_cost_model_encoded.md)** — Cost-model rule encoded in `Dft.should_spill` and the CLI now auto-applies `--spill --su` per the rule. R=64 AVX2 validated: **18-47% faster than Topo**, the biggest single win we've measured. Generator is now self-tuning across (R, ISA).
+
+14. **[14_log3_generalized.md](14_log3_generalized.md)** — `TP_Log3` generalized from R=4/R=8 hardcoded cases to all radices via 10 lines of binary-decomposition recursion. Recipe-log3 beats hand at R=32 (5-45%) and R=64 (6-32%) by trading arith for **73-90% reduction in twiddle bandwidth**. Composes orthogonally with the spill+SU recipe.
+
+15. **[15_dif_t1s.md](15_dif_t1s.md)** — Three variant additions: in-place R=64 hand reference (corrects an OOP-only earlier comparison), `--t1s` for scalar-broadcast twiddles in inner codelets, `--dif` for output post-multiply (output side twiddles). All four (`t1`/`t1s` × `dit`/`dif`) generate correctly. Recipe applies through all of them. Two classifier bugs surfaced and fixed by DIF testing.
+
+16. **[16_dif_radix_coverage.md](16_dif_radix_coverage.md)** — DIF validated across all radices with hand references (R=4, R=8, R=64). R=8 hand DIF uses a nonstandard convention that drops `W^4 = -1`; our DIF is mathematically correct (verified via direct-DFT reference) but doesn't byte-match hand R=8. R=64 DIF + log3 wins 21-28% over hand DIF. Classifier extended to a fixpoint backward pass to handle log3 cmul derivations whose consumers are exclusively Pass2.
+
 ## The three levers, ranked by contribution
 
 | Lever | Mechanism | R=32 contribution |
@@ -55,3 +63,5 @@ else:
 ```
 
 Two lines. No quantitative cost model needed.
+
+17. **[17_dit_vs_dif_crosscheck.md](17_dit_vs_dif_crosscheck.md)** — R=16 and R=32 have no hand DIF reference, so DIT vs DIF compared directly via direct-DFT validation. Both correct to FP precision. R=16: DIF 3-10% faster than DIT at most K. R=32: DIF wins K=64 (10%), DIT wins K=128-1024 (4-15%), tied at 2048+. Pattern explanation: DIF's `butterfly→cmul→store` has shorter critical path at small K; R=32's 31 post-multiply cmuls saturate store buffer at mid-K.

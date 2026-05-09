@@ -270,6 +270,17 @@ type twiddle_policy =
   | TP_Flat
   | TP_Log3
 
+(* DIT vs DIF — duals of each other:
+ *   DIT (Decimation-In-Time):   y = DFT(W ⋅ x)   — twiddle on INPUT, pre-butterfly
+ *   DIF (Decimation-In-Frequency): y = W ⋅ DFT(x) — twiddle on OUTPUT, post-butterfly
+ *
+ * In a CT recursion, you typically pair DIT codelets at one level with
+ * DIF codelets at the next so that the twiddle layer flips. FFTW emits
+ * both styles for this reason. *)
+type direction =
+  | DIT
+  | DIF
+
 (* Build a complex multiplication (a + ib)·(c + id) as (out_re, out_im)
  * using the cmul pattern that Algsimp.of_expr will lift to Cmul nodes.
  * The pattern is Sub(Mul, Mul) for re, Add(Mul, Mul) for im. *)
@@ -301,43 +312,48 @@ let twiddle_expr (policy : twiddle_policy) (n : int) (j : int)
       (Load (Twiddle (j - 1, true)), Load (Twiddle (j - 1, false)))
 
     | TP_Log3 ->
-      (match n, j with
-       (* R=4 log3 chain: load W^1; derive W^2 = W^1², W^3 = W^2·W^1. *)
-       | 4, 1 -> (Load (Twiddle (0, true)), Load (Twiddle (0, false)))
-       | 4, 2 ->
-         let (w1r, w1i) = lookup 1 in
-         cmul_pattern w1r w1i w1r w1i
-       | 4, 3 ->
-         let (w1r, w1i) = lookup 1 in
-         let (w2r, w2i) = lookup 2 in
-         cmul_pattern w2r w2i w1r w1i
-
-       (* R=8 log3 tree: load W^1, W^2, W^4 from slots 0, 1, 3.
-        * Derive W^3 = W^1·W^2, W^5 = W^1·W^4, W^6 = W^2·W^4,
-        * W^7 = W^3·W^4. *)
-       | 8, 1 -> (Load (Twiddle (0, true)), Load (Twiddle (0, false)))
-       | 8, 2 -> (Load (Twiddle (1, true)), Load (Twiddle (1, false)))
-       | 8, 4 -> (Load (Twiddle (3, true)), Load (Twiddle (3, false)))
-       | 8, 3 ->
-         let (w1r, w1i) = lookup 1 in
-         let (w2r, w2i) = lookup 2 in
-         cmul_pattern w1r w1i w2r w2i
-       | 8, 5 ->
-         let (w1r, w1i) = lookup 1 in
-         let (w4r, w4i) = lookup 4 in
-         cmul_pattern w1r w1i w4r w4i
-       | 8, 6 ->
-         let (w2r, w2i) = lookup 2 in
-         let (w4r, w4i) = lookup 4 in
-         cmul_pattern w2r w2i w4r w4i
-       | 8, 7 ->
-         let (w3r, w3i) = lookup 3 in
-         let (w4r, w4i) = lookup 4 in
-         cmul_pattern w3r w3i w4r w4i
-
-       | _ ->
-         failwith (Printf.sprintf
-           "TP_Log3 not implemented for n=%d j=%d" n j))
+      (* Generalized log3: load only the power-of-2 twiddles W^(2^k),
+       * derive everything else by binary decomposition.
+       *
+       * Slot indexing matches TP_Flat (slot = j - 1) so the bench
+       * harness fills the same twiddle array regardless of policy —
+       * TP_Log3 simply consults a sparse subset of slots:
+       *   W^1 → slot 0, W^2 → slot 1, W^4 → slot 3,
+       *   W^8 → slot 7, W^16 → slot 15, W^32 → slot 31.
+       *
+       * Total slot reads per kstep:
+       *   R=16: 4 (vs 15 flat)
+       *   R=32: 5 (vs 31 flat)
+       *   R=64: 6 (vs 63 flat)
+       *
+       * Decomposition: split j = p + q where p is the highest power
+       * of 2 ≤ j. With memoization, each W^k computed once; hash-cons
+       * dedupes across legs.
+       *
+       * Cmul cost per derivation: 4 muls + 2 adds (6 flops). Total:
+       *   R=16: 4 loads + 11 cmuls
+       *   R=32: 5 loads + 26 cmuls
+       *   R=64: 6 loads + 57 cmuls
+       *
+       * Tradeoff: log3 saves twiddle bandwidth at the cost of arith.
+       * Whether it wins depends on which is the bottleneck. *)
+      let is_pow2 x = x > 0 && (x land (x - 1)) = 0 in
+      let highest_pow2_le j =
+        let rec loop p = if p * 2 > j then p else loop (p * 2) in
+        loop 1
+      in
+      if j < 1 || j >= n then
+        failwith (Printf.sprintf "TP_Log3: j=%d out of range for n=%d" j n)
+      else if is_pow2 j then
+        (* Direct load — slot = j - 1, matching TP_Flat layout. *)
+        (Load (Twiddle (j - 1, true)), Load (Twiddle (j - 1, false)))
+      else
+        (* Split j = p + q, derive W^j = W^p · W^q. *)
+        let p = highest_pow2_le j in
+        let q = j - p in
+        let (wpr, wpi) = lookup p in
+        let (wqr, wqi) = lookup q in
+        cmul_pattern wpr wpi wqr wqi
   in
   lookup j
 
@@ -372,35 +388,64 @@ let dft_expand (n : int) : Expr.assignment list =
  * opaque atoms. The CT decomposition then sees the cmul outputs as
  * leaf-like values in its own Add/Sub structure — algsimp won't
  * shred them because they're inside Cmul nodes after lifting. *)
-let dft_expand_twiddled ?(policy = TP_Flat) (n : int) : Expr.assignment list =
-  (* For each leg k in 1..n-1, pre-multiply input x[k] by twiddle W^k
-   * (sourced via the policy). Leg 0 has no twiddle (W^0 = 1).
+let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT)
+    (n : int) : Expr.assignment list =
+  (* DIT: pre-multiply inputs by twiddles, then run DFT.
+   * DIF: run DFT, then post-multiply outputs by twiddles.
    *
-   * The twiddle Expr trees may themselves be cmul derivation patterns
-   * (TP_Log3) or simple Loads (TP_Flat). Either way, the per-leg
-   * Sub(Mul,Mul)/Add(Mul,Mul) cmul pattern is preserved so that
-   * Algsimp.of_expr can lift it to Cmul opaque atoms. *)
-  let twiddled_re = Array.make n (Const 0.0) in
-  let twiddled_im = Array.make n (Const 0.0) in
-  twiddled_re.(0) <- Load (Input (0, true));
-  twiddled_im.(0) <- Load (Input (0, false));
-  for k = 1 to n - 1 do
-    let xr = Load (Input (k, true)) in
-    let xi = Load (Input (k, false)) in
-    let (wr, wi) = twiddle_expr policy n k in
-    let (out_re, out_im) = cmul_pattern xr xi wr wi in
-    twiddled_re.(k) <- out_re;
-    twiddled_im.(k) <- out_im
-  done;
-  let input_re k = twiddled_re.(k) in
-  let input_im k = twiddled_im.(k) in
-  let out_re, out_im = dft n input_re input_im in
-  let acc = ref [] in
-  for k = n - 1 downto 0 do
-    acc := (Output (k, true),  out_re.(k))  :: !acc;
-    acc := (Output (k, false), out_im.(k)) :: !acc
-  done;
-  List.rev !acc
+   * Leg 0 has trivial twiddle W^0 = 1 in both cases.
+   *
+   * Twiddle Exprs may be cmul derivation patterns (TP_Log3) or simple
+   * Loads (TP_Flat). The per-leg Sub(Mul,Mul)/Add(Mul,Mul) cmul pattern
+   * is preserved so Algsimp.of_expr can lift it to Cmul opaque atoms. *)
+  match direction with
+  | DIT ->
+    let twiddled_re = Array.make n (Const 0.0) in
+    let twiddled_im = Array.make n (Const 0.0) in
+    twiddled_re.(0) <- Load (Input (0, true));
+    twiddled_im.(0) <- Load (Input (0, false));
+    for k = 1 to n - 1 do
+      let xr = Load (Input (k, true)) in
+      let xi = Load (Input (k, false)) in
+      let (wr, wi) = twiddle_expr policy n k in
+      let (out_re, out_im) = cmul_pattern xr xi wr wi in
+      twiddled_re.(k) <- out_re;
+      twiddled_im.(k) <- out_im
+    done;
+    let input_re k = twiddled_re.(k) in
+    let input_im k = twiddled_im.(k) in
+    let out_re, out_im = dft n input_re input_im in
+    let acc = ref [] in
+    for k = n - 1 downto 0 do
+      acc := (Output (k, true),  out_re.(k))  :: !acc;
+      acc := (Output (k, false), out_im.(k)) :: !acc
+    done;
+    List.rev !acc
+
+  | DIF ->
+    (* Run DFT on raw inputs, then twiddle the outputs. *)
+    let input_re k = Load (Input (k, true)) in
+    let input_im k = Load (Input (k, false)) in
+    let raw_re, raw_im = dft n input_re input_im in
+    let acc = ref [] in
+    (* Output 0: trivial twiddle, store as-is. *)
+    acc := (Output (0, true),  raw_re.(0)) :: !acc;
+    acc := (Output (0, false), raw_im.(0)) :: !acc;
+    for k = 1 to n - 1 do
+      let (wr, wi) = twiddle_expr policy n k in
+      let (out_re, out_im) = cmul_pattern raw_re.(k) raw_im.(k) wr wi in
+      acc := (Output (k, true),  out_re) :: !acc;
+      acc := (Output (k, false), out_im) :: !acc
+    done;
+    (* Reverse so order matches DIT: ascending k, re before im for each k. *)
+    let sorted = List.sort (fun (a, _) (b, _) ->
+      match a, b with
+      | Output (ka, ra), Output (kb, rb) ->
+        if ka <> kb then compare ka kb
+        else compare (not ra) (not rb)
+      | _ -> 0
+    ) !acc in
+    sorted
 
 (* === SPILL-AWARE EXPANSION ===
  *
@@ -436,28 +481,35 @@ type spill_marker = {
  *   - markers:     spill markers for PASS 1 outputs, empty if n has
  *                  no CT decomposition (Direct DFT case)
  *)
-let dft_expand_twiddled_spill ?(policy = TP_Flat) (n : int)
+let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) (n : int)
     : Expr.assignment list * spill_marker list * (int * int) option =
   match pick_algorithm n with
   | Direct ->
     (* No CT structure → no spill boundary. Fall back to plain expansion. *)
-    (dft_expand_twiddled ~policy n, [], None)
+    (dft_expand_twiddled ~policy ~direction n, [], None)
   | Cooley_Tukey (n1, n2) ->
-    (* Same external twiddle pre-multiply as dft_expand_twiddled. *)
-    let twiddled_re = Array.make n (Const 0.0) in
-    let twiddled_im = Array.make n (Const 0.0) in
-    twiddled_re.(0) <- Load (Input (0, true));
-    twiddled_im.(0) <- Load (Input (0, false));
-    for k = 1 to n - 1 do
-      let xr = Load (Input (k, true)) in
-      let xi = Load (Input (k, false)) in
-      let (wr, wi) = twiddle_expr policy n k in
-      let (out_re, out_im) = cmul_pattern xr xi wr wi in
-      twiddled_re.(k) <- out_re;
-      twiddled_im.(k) <- out_im
-    done;
-    let input_re k = twiddled_re.(k) in
-    let input_im k = twiddled_im.(k) in
+    (* DIT pre-multiplies inputs by twiddles; DIF leaves inputs raw and
+     * post-multiplies outputs at the end. The internal CT decomposition
+     * (with spill markers between PASS 1 and PASS 2) is identical. *)
+    let input_re, input_im = match direction with
+      | DIT ->
+        let twiddled_re = Array.make n (Const 0.0) in
+        let twiddled_im = Array.make n (Const 0.0) in
+        twiddled_re.(0) <- Load (Input (0, true));
+        twiddled_im.(0) <- Load (Input (0, false));
+        for k = 1 to n - 1 do
+          let xr = Load (Input (k, true)) in
+          let xi = Load (Input (k, false)) in
+          let (wr, wi) = twiddle_expr policy n k in
+          let (out_re, out_im) = cmul_pattern xr xi wr wi in
+          twiddled_re.(k) <- out_re;
+          twiddled_im.(k) <- out_im
+        done;
+        ((fun k -> twiddled_re.(k)), (fun k -> twiddled_im.(k)))
+      | DIF ->
+        ((fun k -> Load (Input (k, true))),
+         (fun k -> Load (Input (k, false))))
+    in
 
     (* MANUALLY drive the outermost CT step (instead of `dft n input_re input_im`)
      * so we can capture pass1_re/pass1_im as spill markers. The implementation
@@ -504,17 +556,34 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) (n : int)
     done;
 
     (* PASS 2 — same as dft_ct *)
-    let out_re = Array.make n (Const 0.0) in
-    let out_im = Array.make n (Const 0.0) in
+    let raw_re = Array.make n (Const 0.0) in
+    let raw_im = Array.make n (Const 0.0) in
     for k2 = 0 to n2 - 1 do
       let outer_input_re n1_idx = twiddled_re_inner.(n1_idx).(k2) in
       let outer_input_im n1_idx = twiddled_im_inner.(n1_idx).(k2) in
       let r, i = dft n1 outer_input_re outer_input_im in
       for k1 = 0 to n1 - 1 do
-        out_re.(k1 * n2 + k2) <- r.(k1);
-        out_im.(k1 * n2 + k2) <- i.(k1)
+        raw_re.(k1 * n2 + k2) <- r.(k1);
+        raw_im.(k1 * n2 + k2) <- i.(k1)
       done
     done;
+
+    (* For DIF, post-multiply outputs by external twiddles. *)
+    let out_re = Array.make n (Const 0.0) in
+    let out_im = Array.make n (Const 0.0) in
+    (match direction with
+     | DIT ->
+       Array.blit raw_re 0 out_re 0 n;
+       Array.blit raw_im 0 out_im 0 n
+     | DIF ->
+       out_re.(0) <- raw_re.(0);
+       out_im.(0) <- raw_im.(0);
+       for k = 1 to n - 1 do
+         let (wr, wi) = twiddle_expr policy n k in
+         let (or_, oi) = cmul_pattern raw_re.(k) raw_im.(k) wr wi in
+         out_re.(k) <- or_;
+         out_im.(k) <- oi
+       done);
 
     let acc = ref [] in
     for k = n - 1 downto 0 do
@@ -523,20 +592,41 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) (n : int)
     done;
     (List.rev !acc, List.rev !markers, Some (n1, n2))
 
-(* Heuristic: should this radix size benefit from explicit spill emission?
- * Returns true when peak live-set is expected to exceed register budget.
+(* Cost-model rule: should this codelet use the full spill+SU recipe?
  *
- * Estimate: peak live ≈ n (all PASS 1 outputs alive across boundary)
- * Plus some headroom for inputs and twiddles being consumed: ~6
- * If n + 6 > vec_regs, GCC will spill anyway; we should do it ourselves.
+ * The rule is empirically derived from benchmarks across (R, ISA, K)
+ * combinations. See docs/12_avx2_finding.md for the supporting data.
  *
- * At this estimation level, the math is:
- *   n=8:  14 < 32 ZMM  → no spill needed (and 14 < 16 YMM marginal)
- *   n=16: 22 < 32 ZMM  → no spill needed (22 > 16 YMM, marginal for AVX-2)
- *   n=32: 38 > 32 ZMM  → spill needed for both
- *   n=64: 70 > 32 ZMM  → spill very needed
+ * Two clauses:
+ *   1. n + 6 > vec_regs:
+ *      Peak live exceeds register budget. GCC will re-spill aggressively
+ *      without our help. Spill+SU is necessary.
  *
- * This is a conservative estimate; the actual peak depends on scheduler
- * decisions and is bounded above by n (PASS 1 width). *)
+ *   2. vec_regs >= 32 (AVX-512):
+ *      Even when peak live fits, AVX-512's wider vectors mean spill
+ *      overhead is amortized over more useful work, AND GCC's scheduling
+ *      on our DAG produces sub-optimal code that explicit spill+SU fixes.
+ *      The recipe wins or ties at every R≥4 we've measured on AVX-512.
+ *
+ * Empirical bench summary (median SU+Spill / Topo, lower = better):
+ *
+ *   AVX-512 (vec_regs=32)
+ *     R=4:  ~tied (noise)
+ *     R=8:  0.90-0.98  ← clause (2) catches this
+ *     R=16: substantial wins
+ *     R=32: 0.61-0.83
+ *     R=64: 0.60-0.92
+ *
+ *   AVX2 (vec_regs=16)
+ *     R=8:  1.00-1.08  ← regression — clause (1) excludes this
+ *     R=16: 0.80-0.88  ← clause (1) catches this (22 > 16)
+ *     R=32: 0.56-0.81  ← clause (1) catches this (38 > 16)
+ *
+ * The unified rule: use the recipe iff CT-decomposed AND either clause holds. *)
 let should_spill (n : int) (vec_regs : int) : bool =
+  (n + 6 > vec_regs) || vec_regs >= 32
+
+(* Compatibility: callers may want just clause (1) for register-pressure
+ * predictions independent of ISA-specific GCC behavior. *)
+let exceeds_register_budget (n : int) (vec_regs : int) : bool =
   n + 6 > vec_regs

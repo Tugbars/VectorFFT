@@ -51,8 +51,15 @@ let topo_sort_reachable (roots : t list) : t list =
  *
  * The `in_place` flag changes the input buffer name from `in_re/in_im`
  * to `rio_re/rio_im` (matches user's t1_dit signature) and the stride
- * variable name from `K` to `ios` (matches user's signature). *)
-let render_load ~(isa : Isa.t) ~(in_place : bool) (r : Expr.elem_ref) : string =
+ * variable name from `K` to `ios` (matches user's signature).
+ *
+ * The `t1s` flag (scalar-broadcast twiddles) changes Twiddle loads from
+ * vector strided loads (`_mm512_loadu_pd(&tw_re[j*me + k])`) to scalar
+ * broadcasts (`_mm512_set1_pd(tw_re[j])`). t1s is for inner CT codelets
+ * where all k iterations share the same twiddle set; the bench harness
+ * passes a smaller twiddle array (n-1 scalars instead of (n-1)*me). *)
+let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
+    (r : Expr.elem_ref) : string =
   let in_buf is_re = match in_place, is_re with
     | true,  true  -> "rio_re"
     | true,  false -> "rio_im"
@@ -64,8 +71,12 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) (r : Expr.elem_ref) : string =
   match r with
   | Expr.Input (j, true)   -> Isa.loadu_pd isa (Printf.sprintf "%s[%d*%s + k]" (in_buf true) j stride)
   | Expr.Input (j, false)  -> Isa.loadu_pd isa (Printf.sprintf "%s[%d*%s + k]" (in_buf false) j stride)
-  | Expr.Twiddle (j, true) -> Isa.loadu_pd isa (Printf.sprintf "tw_re[%d*%s + k]" j tw_stride)
-  | Expr.Twiddle (j, false)-> Isa.loadu_pd isa (Printf.sprintf "tw_im[%d*%s + k]" j tw_stride)
+  | Expr.Twiddle (j, true) ->
+    if t1s then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
+    else Isa.loadu_pd isa (Printf.sprintf "tw_re[%d*%s + k]" j tw_stride)
+  | Expr.Twiddle (j, false)->
+    if t1s then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
+    else Isa.loadu_pd isa (Printf.sprintf "tw_im[%d*%s + k]" j tw_stride)
   | Expr.Output _ ->
     failwith "render_load: Output ref shouldn't appear as a Load source"
 
@@ -88,7 +99,7 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) (r : Expr.elem_ref) : string =
 let render_node_def
     ?(fused = false)
     ?(fused_muls : (int, unit) Hashtbl.t option = None)
-    ~(isa : Isa.t) ~(in_place : bool) (e : t) : string =
+    ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool) (e : t) : string =
   let v t = Printf.sprintf "t%d" t.tag in
   (* Helper: try to extract operands of a fused-Mul predecessor.
    * Returns Some (x, y) if `n` is a Mul tagged for FMA fusion;
@@ -106,7 +117,7 @@ let render_node_def
   let body = match e.node with
     | NK_Const c ->
       Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
-    | NK_Load r -> render_load ~isa ~in_place r
+    | NK_Load r -> render_load ~isa ~in_place ~t1s r
     | NK_Neg inner ->
       (* Neg(Const c) is a compile-time constant — emit as a single
        * broadcast of -c rather than a runtime XOR. *)
@@ -283,10 +294,48 @@ let classify_passes (sp : spill_info) (nodes : t list)
       else
         Hashtbl.add cls e.tag `Pass1
   ) nodes;
+
+  (* DIF post-multiply: Twiddle Loads (and log3 cmul derivations of them) have
+   * no spill-slot ancestors, so the forward pass classifies them as Pass1.
+   * But their CONSUMERS may be in Pass2 (cmul on PASS 2 outputs). C block
+   * scoping means Pass1-emitted variables go out of scope before Pass2;
+   * references would fail to compile.
+   *
+   * Backward pass: reclassify any Pass1 node whose consumers are exclusively
+   * in Pass2 → push to Pass2. This handles DIF cleanly (Twiddle Loads, log3
+   * cmul derivations) without changing DIT behavior (where consumers of
+   * Loads/cmul derivations are pre-multiply ops in Pass1). *)
+  let consumers : (int, t list) Hashtbl.t = Hashtbl.create 256 in
+  List.iter (fun e ->
+    List.iter (fun p ->
+      let prev = try Hashtbl.find consumers p.tag with Not_found -> [] in
+      Hashtbl.replace consumers p.tag (e :: prev)
+    ) (preds_of e)
+  ) nodes;
+  (* Iterate to fixpoint: a node X may need reclassification once a node it
+   * feeds (Y) gets reclassified, in case Y was the reason X stayed Pass1. *)
+  let changed = ref true in
+  while !changed do
+    changed := false;
+    List.iter (fun e ->
+      match Hashtbl.find_opt cls e.tag with
+      | Some `Pass1 when not (is_spilled sp e.tag) ->
+        let cs = try Hashtbl.find consumers e.tag with Not_found -> [] in
+        if cs <> [] && List.for_all (fun c ->
+          Hashtbl.find_opt cls c.tag = Some `Pass2
+        ) cs then begin
+          Hashtbl.replace cls e.tag `Pass2;
+          changed := true
+        end
+      | _ -> ()
+    ) nodes
+  done;
+
   cls
 
 let emit_codelet
     ?(in_place = false)
+    ?(t1s = false)
     ?(scheduler = Topological)
     ?(isa = Isa.avx512)
     ?(spill : spill_info option = None)
@@ -474,7 +523,7 @@ let emit_codelet
 
      (* Hoisted constants — emitted at for-loop body top, in scope everywhere. *)
      List.iter (fun e ->
-       Buffer.add_string buf (render_node_def ~isa ~in_place e);
+       Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
        Buffer.add_char buf '\n'
      ) const_nodes;
      Buffer.add_char buf '\n';
@@ -640,7 +689,7 @@ let emit_codelet
        else begin
          let fused = is_fused_tag e.tag in
          Buffer.add_string buf
-           (render_node_def ~fused ~fused_muls:fused_muls_opt
+           (render_node_def ~fused ~fused_muls:fused_muls_opt ~t1s
               ~isa ~in_place e);
          Buffer.add_char buf '\n';
          if not fused then begin
@@ -716,6 +765,29 @@ let emit_codelet
          match Hashtbl.find_opt min_input_slot e.tag with
          | Some s -> Hashtbl.add cluster_of_pass2_node e.tag (s mod sp.ct_n2)
          | None -> ()
+       ) pass2_nodes;
+       (* DIF post-multiply Twiddle Loads have no spill-slot ancestors —
+        * they're consumed by Cmuls on PASS 2 outputs. Assign each
+        * unclustered Pass2 Load to the cluster of its (first) consumer. *)
+       let consumers_p2 : (int, t list) Hashtbl.t = Hashtbl.create 256 in
+       List.iter (fun e ->
+         List.iter (fun p ->
+           let prev = try Hashtbl.find consumers_p2 p.tag with Not_found -> [] in
+           Hashtbl.replace consumers_p2 p.tag (e :: prev)
+         ) (preds_of_general e)
+       ) pass2_nodes;
+       List.iter (fun e ->
+         if not (Hashtbl.mem cluster_of_pass2_node e.tag) then begin
+           let cs = try Hashtbl.find consumers_p2 e.tag with Not_found -> [] in
+           let consumer_cluster = List.fold_left (fun acc c ->
+             match acc, Hashtbl.find_opt cluster_of_pass2_node c.tag with
+             | None, Some k -> Some k
+             | _ -> acc
+           ) None cs in
+           match consumer_cluster with
+           | Some k -> Hashtbl.add cluster_of_pass2_node e.tag k
+           | None -> ()
+         end
        ) pass2_nodes
      end;
      let pass2_ordered = match scheduler with
@@ -839,7 +911,7 @@ let emit_codelet
           * reload predecessors of THE consuming Add/Sub. *)
          List.iter emit_reload_if_needed (preds_of e);
          Buffer.add_string buf
-           (render_node_def ~fused_muls:fused_muls_opt ~isa ~in_place e);
+           (render_node_def ~fused_muls:fused_muls_opt ~isa ~in_place ~t1s e);
          Buffer.add_char buf '\n'
        end;
        (* Cluster-boundary detection: when this node finishes a cluster
@@ -877,7 +949,7 @@ let emit_codelet
      let roots = List.map snd assigns in
      let nodes = topo_sort_reachable roots in
      List.iter (fun e ->
-       Buffer.add_string buf (render_node_def ~isa ~in_place e);
+       Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
        Buffer.add_char buf '\n'
      ) nodes;
      Buffer.add_char buf '\n';
@@ -904,14 +976,14 @@ let emit_codelet
          (* Intermediate computation: emit definition if not already. *)
          if not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place e);
+           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
            Buffer.add_char buf '\n'
          end
        | Some oref ->
          (* Output: ensure the value is defined, then emit a store. *)
          if not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place e);
+           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
            Buffer.add_char buf '\n'
          end;
          emit_store buf oref e
@@ -928,7 +1000,7 @@ let emit_codelet
        List.map (fun e -> (None, e)) nodes
        @ List.map (fun (lhs, e) -> (Some lhs, e)) assigns
      in
-     let render_intermediate e = render_node_def ~isa ~in_place e in
+     let render_intermediate e = render_node_def ~isa ~in_place ~t1s e in
      let render_store oref e =
        let buf2 = Buffer.create 128 in
        emit_store buf2 oref e;
@@ -962,7 +1034,7 @@ let emit_codelet
          end else
            Some (Some oref, e)
      ) scheduled in
-     let render_intermediate e = render_node_def ~isa ~in_place e in
+     let render_intermediate e = render_node_def ~isa ~in_place ~t1s e in
      let render_store oref e =
        let buf2 = Buffer.create 128 in
        emit_store buf2 oref e;
@@ -982,13 +1054,13 @@ let emit_codelet
        | None ->
          if not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place e);
+           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
            Buffer.add_char buf '\n'
          end
        | Some oref ->
          if not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place e);
+           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
            Buffer.add_char buf '\n'
          end;
          emit_store buf oref e
@@ -1007,7 +1079,7 @@ let emit_codelet
          end
        | Some oref -> Some (Some oref, e)
      ) scheduled in
-     let render_intermediate e = render_node_def ~isa ~in_place e in
+     let render_intermediate e = render_node_def ~isa ~in_place ~t1s e in
      let render_store oref e =
        let buf2 = Buffer.create 128 in
        emit_store buf2 oref e;

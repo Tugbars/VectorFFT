@@ -4,8 +4,16 @@
  *   gen_radix N                          show DAG and stats (no twiddle)
  *   gen_radix N --twiddled               t1_dit (TP_Flat: load all twiddles)
  *   gen_radix N --twiddled --log3        t1_dit_log3 (load base twiddles, derive rest)
- *   gen_radix N --twiddled --emit-c      emit AVX-512 C code (topological order)
+ *   gen_radix N --twiddled --emit-c      emit C code with cost-model defaults
  *   gen_radix N --twiddled --emit-c --bisect   emit with Frigo's bisection scheduler
+ *
+ * Cost-model defaults (auto-applied unless --no-recipe is passed):
+ *   Spill + SU (the "full recipe") auto-enables when the cost model says yes.
+ *   Currently that's: CT-decomposed AND (n + 6 > vec_regs OR vec_regs >= 32).
+ *
+ * Override flags:
+ *   --no-recipe        force Topo (disable auto spill+SU)
+ *   --spill / --su     explicit on (overrides --no-recipe locally per flag)
  *)
 
 let () =
@@ -19,6 +27,9 @@ let () =
   let su = ref false in
   let spill = ref false in
   let fuse = ref 0 in
+  let no_recipe = ref false in
+  let t1s = ref false in
+  let dif = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list Sys.argv in
@@ -35,6 +46,9 @@ let () =
      else if arg = "--annotate" then annotate := true
      else if arg = "--su"       then su := true
      else if arg = "--spill"    then spill := true
+     else if arg = "--no-recipe" then no_recipe := true
+     else if arg = "--t1s"       then t1s := true
+     else if arg = "--dif"       then dif := true
      else if arg = "--fuse" && !i + 1 < Array.length arr then begin
        fuse := int_of_string arr.(!i + 1);
        incr i
@@ -57,15 +71,38 @@ let () =
   let policy : Vfft_v2.Dft.twiddle_policy =
     if !log3 then TP_Log3 else TP_Flat
   in
+  let direction : Vfft_v2.Dft.direction =
+    if !dif then DIF else DIT
+  in
+
+  (* Cost-model auto-defaults.
+   *
+   * If --no-recipe is set: don't auto-enable anything.
+   * Otherwise: when the rule says yes AND user didn't override with bisect
+   * or annotate, turn on --spill --su automatically.
+   *
+   * Explicit --spill / --su flags always take effect regardless of the rule. *)
+  let recipe_applicable =
+    !twiddled
+    && not !bisect
+    && not !annotate
+    && not !no_recipe
+    && Vfft_v2.Dft.should_spill n isa.vec_regs
+  in
+  if recipe_applicable then begin
+    if not !spill then spill := true;
+    if not !su then su := true
+  end;
 
   (* Drive math layer with or without spill marker capture.
    * Spill is meaningful only for twiddled CT-decomposed codelets. *)
   let raw, spill_markers, spill_ct =
     if !spill && !twiddled then
-      let assignments, markers, ct = Vfft_v2.Dft.dft_expand_twiddled_spill ~policy n in
+      let assignments, markers, ct =
+        Vfft_v2.Dft.dft_expand_twiddled_spill ~policy ~direction n in
       (assignments, markers, ct)
     else if !twiddled then
-      (Vfft_v2.Dft.dft_expand_twiddled ~policy n, [], None)
+      (Vfft_v2.Dft.dft_expand_twiddled ~policy ~direction n, [], None)
     else
       (Vfft_v2.Dft.dft_expand n, [], None)
   in
@@ -89,6 +126,8 @@ let () =
   if !emit_c then begin
     let suffix = if !in_place then "_inplace" else "" in
     let variant = if !log3 then "_log3" else "" in
+    let t1s_infix = if !t1s then "s" else "" in
+    let dir_suffix = if !dif then "dif" else "dit" in
     let sched_suffix = match !bisect, !su, !annotate with
       | false, false, false -> ""
       | true,  false, false -> "_bisect"
@@ -106,8 +145,8 @@ let () =
     in
     let name =
       if !twiddled then
-        Printf.sprintf "radix%d_t1_dit%s_fwd_%s_gen%s%s%s"
-          n variant isa.name suffix sched_suffix spill_suffix
+        Printf.sprintf "radix%d_t1%s_%s%s_fwd_%s_gen%s%s%s"
+          n t1s_infix dir_suffix variant isa.name suffix sched_suffix spill_suffix
       else
         Printf.sprintf "radix%d_n1_fwd_%s_gen%s%s%s"
           n isa.name suffix sched_suffix spill_suffix
@@ -122,7 +161,7 @@ let () =
       | _ -> Topological
     in
     print_string (Vfft_v2.Emit_c.emit_codelet
-                    ~in_place:!in_place ~scheduler ~isa ~spill:spill_info
+                    ~in_place:!in_place ~t1s:!t1s ~scheduler ~isa ~spill:spill_info
                     deduped ~name)
   end else begin
     let variant = if !log3 then ", log3" else "" in
