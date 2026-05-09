@@ -16,21 +16,19 @@ vfft_v2/
 
 ## Headline result
 
-For R=32 AVX-512:
+For R=32 AVX-512 (in-place vs in-place):
 
-| K     | Hand | Topo  | SU+Spill | SU/Hand |
-|-------|------|-------|----------|---------|
-| 64    | 1600 | 2442  | 1572     | **0.98** |
-| 128   | 3560 | 6588  | 3481     | **0.99** |
-| 256   | 9173 | 14228 | 9066     | **0.99** |
-| 512   | 23097 | 32001 | 22565   | **0.97** |
-| 1024  | 58729 | 75853 | 56359   | **0.93** |
-| 2048  | 166167 | 199958 | 150476 | **0.91** |
-| 4096  | 338886 | 398469 | 311878 | **0.91** |
+| K     | Hand | Topo  | SU+Spill | Recipe-log3 | SU/H | LR/H |
+|-------|------|-------|----------|-------------|------|------|
+| 64    | 1080 | 1714  | 1572     | 1029        | 0.99 | **0.95** |
+| 1024  | 36193 | 46569 | 33125  | 32593       | 0.93 | **0.90** |
+| 4096  | 267864 | 291257 | 311878 | 147061    | 0.91 | **0.55** |
 
-(times in ns; SU/H < 1 means we beat hand-coded)
+(times in ns; SU/H or LR/H < 1 means we beat hand-coded)
 
-For R=64 AVX-512: 1-7% faster than hand. For R=16 AVX-512: beats hand at K ≥ 128. R=32 AVX2: up to **44% faster than Topo** (no hand-coded reference).
+For R=16 AVX-512 (in-place vs in-place): beats hand at K ≥ 128. R=32 AVX2: up to **44% faster than Topo** flat (no hand-coded reference). R=64 in-place vs our own Topo: **17-47% faster** (recipe), **37-61% faster** (recipe-log3) — `gen_radix64.py` only emits OOP, so there's no in-place hand R=64 to compare against directly.
+
+**Mode note:** all R=4/8/16/32 hand-coded references are in-place; benches at those radices are in-place vs in-place. For R=64, hand-coded only exists as OOP, so the R=64-vs-hand comparisons below are OOP-vs-OOP. Hand R=64's OOP path may not be its primary tuning target (gen_radix*.py family is designed around in-place; OOP is for 2D use cases). The robust R=64 win is "ours in-place vs ours Topo": 1.5-2.5× faster.
 
 ## The recipe
 
@@ -77,18 +75,26 @@ Read in order, the docs trace from "Topo is 13-69% slower than hand at R=32" to 
 cd /path/to/vfft_v2
 dune build
 
-# Generate a codelet
-dune exec bin/gen_radix.exe -- --twiddled --emit-c --in-place --spill --su 32
+# Generate a codelet — the recipe auto-applies when the cost model says yes
+dune exec bin/gen_radix.exe -- --twiddled --emit-c --in-place 32
+# (this auto-applies --spill --su; the function name reflects this)
 
 # CLI flags
 #   --twiddled         use twiddle pre-multiply (t1_dit shape)
 #   --emit-c           emit C code instead of stats
 #   --in-place         in-place signature (rio_re/rio_im) vs out-of-place
-#   --spill            enable explicit boundary spilling
-#   --su               enable SU scheduler within passes
-#   --fuse N           keep N PASS 2 sub-DFTs' inputs alive across boundary
 #   --isa avx512|avx2  target ISA (default: avx512)
+#   --no-recipe        force Topo (disable auto spill+SU)
+#   --spill            force on (also auto-on per cost model)
+#   --su               force on (also auto-on per cost model)
+#   --fuse N           keep N PASS 2 sub-DFTs' inputs alive across boundary
 ```
+
+The cost-model rule is encoded in `Dft.should_spill`:
+```
+recipe applies iff CT-decomposed AND (n + 6 > vec_regs OR vec_regs >= 32)
+```
+which expands to: AVX-512 always wins with the recipe at R≥4; AVX2 wants the recipe at R≥16, prefers Topo at R≤8.
 
 ## What didn't work (briefly)
 

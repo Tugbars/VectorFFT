@@ -8,6 +8,8 @@ The recipe scales to R=64 without any radix-specific tuning.
 
 ## Bench results (R=64 AVX-512, 3 runs per K, median)
 
+**Mode caveat:** Hand-coded R=64 (`gen_radix64.py`) only emits OOP. The numbers below are OOP-vs-OOP-vs-OOP. The hand-coded `gen_radix*.py` family is designed around in-place; OOP is provided for 2D use cases and may not be the path the hand-coded was primarily tuned for. The in-place version of the recipe (no hand to compare with) is significantly faster than our own OOP — at R=64 K=1024, our in-place takes ~88k ns vs ~121k ns OOP for the same algorithm.
+
 | K | Hand | Topo | **SU+Spill** | T/H | **SU/H** | SU/T |
 |---|------|------|--------------|-----|----------|------|
 | 64 | 5602 | 8924 | 5546 | 1.58 | **0.99** | 0.63 |
