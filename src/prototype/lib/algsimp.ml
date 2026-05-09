@@ -73,6 +73,12 @@ let hashcons (nk : node_kind) : t =
     Hashtbl.add hcons_table nk entry;
     entry
 
+(* Lookup-only — returns Some node if it exists in the hash-cons table,
+ * None if not. Used by share_subsums to detect pre-existing shareable
+ * subexpressions without creating them. *)
+let lookup_node (nk : node_kind) : t option =
+  Hashtbl.find_opt hcons_table nk
+
 let reset () =
   Hashtbl.clear hcons_table;
   next_tag := 0
@@ -568,6 +574,401 @@ let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) l
       result
   in
   List.map (fun (lhs, e) -> (lhs, rebuild e)) assigns
+
+(* === DISTRIBUTIVE FACTORING ===
+ *
+ *   Σ ± c · x_i  →  c · (Σ ± x_i)   when c is a constant and all input
+ *                                    Muls have use_count = 1
+ *
+ * This is the key simplification for monolithic prime butterflies (R=3,
+ * 5, 7, 11, ...) where dft_direct emits Σ x_j · cos(2πjk/N) ± x_j · sin(...)
+ * and the Winograd structure (s = x_1+x_{N-1}, d = x_1-x_{N-1}, ...) emerges
+ * from grouping like-coefficient terms.
+ *
+ * Operates on FLAT sums (not binary Add/Sub pairs) — the binary form
+ * orders by tag, so same-constant Muls aren't adjacent siblings and a
+ * peephole on Add(Mul(_,c), Mul(_,c)) never fires for primes ≥ 5.
+ *
+ * SAFETY: in CT-decomposed codelets the same Mul(xr, k) is shared
+ * between Cmul Re and Im outputs (use_count ≥ 2). Factoring naively
+ * would destroy that sharing — Re uses Mul(Sub(xr,xi), k) but Im still
+ * needs Mul(xr, k) standalone, net +1 mul. We only factor groups of
+ * Muls that ALL have use_count = 1 in the original DAG. Validated on
+ * R=32: with use_count > 1 inside Cmul, no factoring fires. *)
+
+(* === DISTRIBUTIVE FACTORING (monolithic-prime-only) ===
+ *
+ *   Σ ± c · x_i  →  c · (Σ ± x_i)   when c is constant and the source
+ *                                    Muls have use_count = 1
+ *
+ * STRUCTURAL DISCRIMINATOR — why this is monolithic-prime-only:
+ *
+ *   CT-decomposed codelets are ALREADY in FMA-friendly form. A twiddle
+ *   multiplication (xr,xi)·(cos,sin) produces 4 muls with DISTINCT
+ *   constants — no factoring opportunity. Special twiddles where
+ *   |cos|=|sin| (e.g. ω₈ = 1/√2·(1,-1) appearing in R=8/16/32/64) DO
+ *   give same-const muls, but those muls are shared between Re and Im
+ *   (use_count > 1) — the safety check rejects them, AND that sharing
+ *   IS the FMA-friendly structure we want to preserve.
+ *
+ *   Stray same-const fires that DO pass safety (use_count = 1) in CT
+ *   codelets produce factored terms that don't share globally; the
+ *   factored mul is just dead weight. Empirically R=16 with full safety
+ *   still regressed +94 ops because of these fires. Conclusion: the
+ *   use_count=1 condition is necessary but not sufficient for CT.
+ *
+ *   Monolithic primes are the inverse case. The DFT matrix cyclic
+ *   symmetry means c·x_j appears in MANY outputs (use_count >> 1), and
+ *   the factored c·(x_j+x_{N-j}) IS the shared Winograd structure that
+ *   emerges. The "shared mul" the safety check would protect doesn't
+ *   actually exist — it's an illusion of pre-factoring; both outputs
+ *   would migrate to the factored form. So we disable safety entirely
+ *   in aggressive mode.
+ *
+ * INTERFACE:
+ *   ~aggressive:false (default) — pass-through. Use for CT-decomposed N.
+ *   ~aggressive:true            — full flat-sum factoring. Use for
+ *                                 monolithic primes (R=3,5,7,11). *)
+
+let factor_common_muls ?(aggressive = false)
+    (assigns : (Expr.elem_ref * t) list)
+    : (Expr.elem_ref * t) list =
+  if not aggressive then assigns
+  else
+  (* If n is Mul(x, Const c) or Mul(Const c, x), return Some (x, c). *)
+  let const_mul_of (n : t) : (t * float) option =
+    match n.node with
+    | NK_Mul (a, b) ->
+      (match a.node, b.node with
+       | NK_Const c, _ -> Some (b, c)
+       | _, NK_Const c -> Some (a, c)
+       | _ -> None)
+    | _ -> None
+  in
+  (* Flatten an Add/Sub/Neg chain into [(sign, term)] terms.
+   * Same logic as flatten_sum (which is private to construction). *)
+  let rec flatten (sign : int) (e : t) : (int * t) list =
+    match e.node with
+    | NK_Add (a, b) -> flatten sign a @ flatten sign b
+    | NK_Sub (a, b) -> flatten sign a @ flatten (-sign) b
+    | NK_Neg inner -> flatten (-sign) inner
+    | _ -> [(sign, e)]
+  in
+  (* Reconstruct a sum from a (sign, term) list. Separates positive and
+   * negative terms, builds each via mk_add (which flattens + sorts +
+   * pair-folds deterministically), then combines via mk_sub or mk_neg.
+   * This ensures hash-cons hits when the same semantic sum is constructed
+   * elsewhere — e.g., Neg(Add(a, b)) is canonical, never Sub(Neg(a), b). *)
+  let rebuild_sum (terms : (int * t) list) : t =
+    let pos = List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms in
+    let neg = List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms in
+    let build_sum lst = match lst with
+      | [] -> mk_const 0.0
+      | [x] -> x
+      | x :: rest -> List.fold_left mk_add x rest
+    in
+    match pos, neg with
+    | [], [] -> mk_const 0.0
+    | _, [] -> build_sum pos
+    | [], _ -> mk_neg (build_sum neg)
+    | _, _ -> mk_sub (build_sum pos) (build_sum neg)
+  in
+  let max_iter = 20 in
+  let rec loop assigns iter =
+    if iter >= max_iter then assigns
+    else begin
+      let changed = ref false in
+      let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
+
+      (* Try to factor a flat term list. Returns new term list and whether
+       * any factoring fired. Groups of same-constant Muls become a single
+       * new term: (+1, Mul(inner_sum, Const c)). No use-count safety —
+       * aggressive mode treats all cross-output mul-sharing as factor-eligible
+       * because primes' Winograd structure emerges from precisely this. *)
+      let factor_terms (terms : (int * t) list) : (int * t) list * bool =
+        if Sys.getenv_opt "FACTOR_TRACE" <> None && List.length terms >= 3 then begin
+          Printf.eprintf "  factor_terms input (%d): " (List.length terms);
+          List.iter (fun (s, t) ->
+            match const_mul_of t with
+            | Some (_, c) -> Printf.eprintf "%sc=%g " (if s>0 then "+" else "-") c
+            | None -> Printf.eprintf "%sleaf(t%d) " (if s>0 then "+" else "-") t.tag
+          ) terms;
+          Printf.eprintf "\n"
+        end;
+        (* Bucket by constant value of Mul-coefficient.
+         * Use float-bit-equality on the constant. *)
+        let by_const : (int64, (int * t * t) list) Hashtbl.t = Hashtbl.create 8 in
+        (* int64 = float bits; payload is (sign, x, original_mul) *)
+        let leftover : (int * t) list ref = ref [] in
+        List.iter (fun (sign, term) ->
+          match const_mul_of term with
+          | Some (x, c) ->
+            let key = Int64.bits_of_float c in
+            let cur = try Hashtbl.find by_const key with Not_found -> [] in
+            Hashtbl.replace by_const key ((sign, x, term) :: cur)
+          | _ ->
+            leftover := (sign, term) :: !leftover
+        ) terms;
+        let factored = ref [] in
+        let any_fired = ref false in
+        Hashtbl.iter (fun key entries ->
+          match entries with
+          | [] -> ()
+          | [(s, _, orig)] ->
+            (* Single mul with this constant; not a factoring opportunity. *)
+            leftover := (s, orig) :: !leftover
+          | _ ->
+            (* ≥2 muls share the same constant. Factor them. *)
+            any_fired := true;
+            changed := true;
+            let inner_terms = List.map (fun (s, x, _) -> (s, x)) entries in
+            let inner_sum = rebuild_sum inner_terms in
+            let c = Int64.float_of_bits key in
+            let factored_term = mk_mul inner_sum (mk_const c) in
+            factored := (1, factored_term) :: !factored
+        ) by_const;
+        (!leftover @ !factored, !any_fired)
+      in
+
+      let rec rewrite (n : t) : t =
+        match Hashtbl.find_opt cache n.tag with
+        | Some r -> r
+        | None ->
+          let r = match n.node with
+            | NK_Const _ | NK_Load _ -> n
+            | NK_Neg a ->
+              let a' = rewrite a in
+              if a' == a then n else mk_neg a'
+            | NK_Add (a, b) ->
+              (* Look for factoring across the full flat sum (recurses
+               * through nested Add/Sub/Neg). If found, restructure via
+               * rebuild_sum. If not, preserve binary structure with
+               * substituted children — re-flattening would destroy
+               * sharing of inner Adds with the rest of the DAG. *)
+              let raw_terms = flatten 1 n in
+              let rewritten_terms = List.map (fun (s, t) -> (s, rewrite t)) raw_terms in
+              let (new_terms, fired) = factor_terms rewritten_terms in
+              if fired then rebuild_sum new_terms
+              else
+                let a' = rewrite a in
+                let b' = rewrite b in
+                if a' == a && b' == b then n else mk_add_binary a' b'
+            | NK_Sub (a, b) ->
+              let raw_terms = flatten 1 n in
+              let rewritten_terms = List.map (fun (s, t) -> (s, rewrite t)) raw_terms in
+              let (new_terms, fired) = factor_terms rewritten_terms in
+              if fired then rebuild_sum new_terms
+              else
+                let a' = rewrite a in
+                let b' = rewrite b in
+                if a' == a && b' == b then n else mk_sub_binary a' b'
+            | NK_Mul (a, b) ->
+              let a' = rewrite a in
+              let b' = rewrite b in
+              if a' == a && b' == b then n else mk_mul a' b'
+            | NK_CmulRe (a, b, c, d) ->
+              let a' = rewrite a in let b' = rewrite b in
+              let c' = rewrite c in let d' = rewrite d in
+              if a' == a && b' == b && c' == c && d' == d then n
+              else hashcons (NK_CmulRe (a', b', c', d'))
+            | NK_CmulIm (a, b, c, d) ->
+              let a' = rewrite a in let b' = rewrite b in
+              let c' = rewrite c in let d' = rewrite d in
+              if a' == a && b' == b && c' == c && d' == d then n
+              else hashcons (NK_CmulIm (a', b', c', d'))
+          in
+          Hashtbl.add cache n.tag r;
+          r
+      in
+      let new_assigns = List.map (fun (oref, e) -> (oref, rewrite e)) assigns in
+      if !changed then loop new_assigns (iter + 1)
+      else new_assigns
+    end
+  in
+  loop assigns 0
+
+
+(* === SUBSUM SHARING ===
+ *
+ * Recognize pre-existing 2-term sub-expressions inside larger flat sums
+ * and reuse them. The motivating case is the X[0] output in monolithic
+ * primes:
+ *
+ *   X[0].re = x[0] + x[1] + x[2] + x[3] + x[4]      (5 terms, 4 binary adds)
+ *
+ * After factoring fires, the DAG already contains pair sums:
+ *   s14 = x[1] + x[4]    (built for 0.309·s14 inner sum)
+ *   s23 = x[2] + x[3]    (built for 0.809·s23 inner sum)
+ *
+ * X[0].re could be expressed as `x[0] + s14 + s23` (3 terms, 2 binary adds),
+ * saving 2 ops per X[0] output. Across the 2 X[0] outputs (.re/.im) and
+ * scaling with N, this is meaningful.
+ *
+ * The savings:    pre-existing pair (use_count >= 1 from the factored mul)
+ *                 → substitute Add(a, b) into the chain.
+ *
+ * Algorithm: for each Add chain, partition terms by sign, then within each
+ * sign group greedily pick a pair (a, b) such that NK_Add(a, b) is already
+ * hash-cons'd with use_count > 0. Replace the pair with the existing node.
+ * Repeat until no more shareable pairs. *)
+
+let share_subsums ?(aggressive = false)
+    (assigns : (Expr.elem_ref * t) list)
+    : (Expr.elem_ref * t) list =
+  if not aggressive then assigns
+  else
+  (* Use-count over the whole DAG (excluding our reconstruction). *)
+  let use_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  let visited : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+  let bump tag =
+    let c = try Hashtbl.find use_count tag with Not_found -> 0 in
+    Hashtbl.replace use_count tag (c + 1)
+  in
+  let rec walk e =
+    if not (Hashtbl.mem visited e.tag) then begin
+      Hashtbl.add visited e.tag ();
+      match e.node with
+      | NK_Const _ | NK_Load _ -> ()
+      | NK_Neg a -> bump a.tag; walk a
+      | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
+        bump a.tag; bump b.tag; walk a; walk b
+      | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
+        bump a.tag; bump b.tag; bump c.tag; bump d.tag;
+        walk a; walk b; walk c; walk d
+    end
+  in
+  List.iter (fun (_, e) -> bump e.tag; walk e) assigns;
+
+  let used_elsewhere n =
+    (try Hashtbl.find use_count n.tag with Not_found -> 0) >= 1
+  in
+
+  let rec flatten (sign : int) (e : t) : (int * t) list =
+    match e.node with
+    | NK_Add (a, b) -> flatten sign a @ flatten sign b
+    | NK_Sub (a, b) -> flatten sign a @ flatten (-sign) b
+    | NK_Neg inner -> flatten (-sign) inner
+    | _ -> [(sign, e)]
+  in
+
+  (* Try to find a pair (i, j) in `terms` with the same sign such that
+   * NK_Add(a, b) (sorted by tag) already exists in the hash-cons table
+   * with at least one external user. Returns (i, j, existing_node) or None. *)
+  let find_shareable_pair (terms : (int * t) array) : (int * int * t) option =
+    let n = Array.length terms in
+    let result = ref None in
+    let i = ref 0 in
+    while !result = None && !i < n do
+      let j = ref (!i + 1) in
+      while !result = None && !j < n do
+        let (s1, t1) = terms.(!i) in
+        let (s2, t2) = terms.(!j) in
+        if s1 = s2 && t1.tag <> t2.tag then begin
+          let (a, b) = if t1.tag <= t2.tag then (t1, t2) else (t2, t1) in
+          match lookup_node (NK_Add (a, b)) with
+          | Some existing when used_elsewhere existing ->
+            result := Some (!i, !j, existing)
+          | _ -> ()
+        end;
+        incr j
+      done;
+      incr i
+    done;
+    !result
+  in
+
+  let rebuild_sum_binary (terms : (int * t) list) : t =
+    let pos = List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms in
+    let neg = List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms in
+    let build_chain lst = match lst with
+      | [] -> mk_const 0.0
+      | [x] -> x
+      | x :: rest -> List.fold_left mk_add_binary x rest
+    in
+    match pos, neg with
+    | [], [] -> mk_const 0.0
+    | _, [] -> build_chain pos
+    | [], _ -> mk_neg (build_chain neg)
+    | _, _ -> mk_sub_binary (build_chain pos) (build_chain neg)
+  in
+
+  let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
+  let rec rewrite (n : t) : t =
+    match Hashtbl.find_opt cache n.tag with
+    | Some r -> r
+    | None ->
+      let r = match n.node with
+        | NK_Const _ | NK_Load _ -> n
+        | NK_Neg a ->
+          let a' = rewrite a in
+          if a' == a then n else mk_neg a'
+        | NK_Add _ | NK_Sub _ ->
+          (* Flatten this Add/Sub chain and try to share 2-term subsums. *)
+          let raw_terms = flatten 1 n in
+          let rewritten_terms = List.map (fun (s, t) -> (s, rewrite t)) raw_terms in
+          if List.length rewritten_terms < 3 then begin
+            (* Nothing to share at this level; preserve binary structure. *)
+            match n.node with
+            | NK_Add (a, b) ->
+              let a' = rewrite a in let b' = rewrite b in
+              if a' == a && b' == b then n else mk_add_binary a' b'
+            | NK_Sub (a, b) ->
+              let a' = rewrite a in let b' = rewrite b in
+              if a' == a && b' == b then n else mk_sub_binary a' b'
+            | _ -> n
+          end else begin
+            (* Greedy substitution of shareable pairs. *)
+            let arr = ref (Array.of_list rewritten_terms) in
+            let any_shared = ref false in
+            let continue_loop = ref true in
+            while !continue_loop do
+              match find_shareable_pair !arr with
+              | None -> continue_loop := false
+              | Some (i, j, existing) ->
+                any_shared := true;
+                let (sign, _) = (!arr).(i) in
+                (* Replace position i with (sign, existing); remove position j. *)
+                let n_arr = Array.length !arr in
+                let new_arr = Array.make (n_arr - 1) (1, n) in
+                Array.blit !arr 0 new_arr 0 i;
+                new_arr.(i) <- (sign, existing);
+                Array.blit !arr (i + 1) new_arr (i + 1) (j - i - 1);
+                if j < n_arr - 1 then
+                  Array.blit !arr (j + 1) new_arr j (n_arr - 1 - j);
+                arr := new_arr
+            done;
+            if !any_shared then rebuild_sum_binary (Array.to_list !arr)
+            else
+              (* No pairs shareable; preserve original binary structure. *)
+              match n.node with
+              | NK_Add (a, b) ->
+                let a' = rewrite a in let b' = rewrite b in
+                if a' == a && b' == b then n else mk_add_binary a' b'
+              | NK_Sub (a, b) ->
+                let a' = rewrite a in let b' = rewrite b in
+                if a' == a && b' == b then n else mk_sub_binary a' b'
+              | _ -> n
+          end
+        | NK_Mul (a, b) ->
+          let a' = rewrite a in
+          let b' = rewrite b in
+          if a' == a && b' == b then n else mk_mul a' b'
+        | NK_CmulRe (a, b, c, d) ->
+          let a' = rewrite a in let b' = rewrite b in
+          let c' = rewrite c in let d' = rewrite d in
+          if a' == a && b' == b && c' == c && d' == d then n
+          else hashcons (NK_CmulRe (a', b', c', d'))
+        | NK_CmulIm (a, b, c, d) ->
+          let a' = rewrite a in let b' = rewrite b in
+          let c' = rewrite c in let d' = rewrite d in
+          if a' == a && b' == b && c' == c && d' == d then n
+          else hashcons (NK_CmulIm (a', b', c', d'))
+      in
+      Hashtbl.add cache n.tag r;
+      r
+  in
+  List.map (fun (oref, e) -> (oref, rewrite e)) assigns
+
 
 (* === DAG STATISTICS === *)
 
