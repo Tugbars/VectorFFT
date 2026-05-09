@@ -151,7 +151,13 @@ let pipeline ~aggressive ~reassoc raw =
   let factored = Algsimp.factor_common_muls ~aggressive deduped in
   let factored = Algsimp.factor_by_atom ~aggressive factored in
   let factored = Algsimp.dedup_sub_pairs factored in
-  let shared = Algsimp.share_subsums ~aggressive factored in
+  (* For direct primes, skip share_subsums + transpose FP loop —
+   * see gen_radix.ml comment for rationale. *)
+  let is_direct = aggressive in
+  let shared =
+    if is_direct then factored
+    else Algsimp.share_subsums ~aggressive factored
+  in
   let has_cmul =
     let st = Algsimp.stats_reachable (List.map snd shared) in
     st.Algsimp.cmuls > 0
@@ -161,9 +167,7 @@ let pipeline ~aggressive ~reassoc raw =
     st.Algsimp.adds + st.subs + st.muls + st.negs + (2 * st.cmuls) + st.fmas
   in
   let post_trans =
-    if aggressive && not has_cmul then begin
-      (* FFTW-style fixed-point loop: factor + factor_atom + share + 
-       * transpose, repeat until op count stops decreasing. *)
+    if aggressive && not has_cmul && not is_direct then begin
       let rec fp prev_assigns prev_count iter =
         if iter >= 6 then prev_assigns
         else begin
@@ -185,7 +189,6 @@ let pipeline ~aggressive ~reassoc raw =
       fp shared (count_ops shared) 0
     end else shared
   in
-  (* FMA lift runs LAST — after all simplifications are settled. *)
   Algsimp.fma_lift post_trans
 
 let count assigns =
@@ -196,7 +199,7 @@ let fma_count assigns =
   let st = Algsimp.stats_reachable (List.map snd assigns) in
   st.Algsimp.fmas
 
-let mul_count assigns =
+let _mul_count assigns =
   let st = Algsimp.stats_reachable (List.map snd assigns) in
   st.Algsimp.muls
 
@@ -226,18 +229,30 @@ let measure n =
   let final_dif = pipeline ~aggressive ~reassoc raw_dif in
   check_correctness_twiddled "t1_dif" ~direction:`DIF final_dif n;
 
-  Printf.printf "R=%2d (%s): n1=%-3d (m=%d,fma=%d)  t1_dit=%-3d (m=%d,fma=%d)  t1_dit_log3=%-3d (m=%d,fma=%d)  t1_dif=%-3d (m=%d,fma=%d)\n"
+  (* t1_dif_log3 — DIF + log3 twiddle policy. Necessary for planner
+   * paths that pick DIF for the whole transform AND want log3 layout
+   * (saves twiddle bandwidth). DIT and DIF must offer matching coverage
+   * because the planner picks one direction for the entire transform —
+   * mixing DIT and DIF in a single recursion needs reformulation. *)
+  let raw_dif_log3 = Dft.dft_expand_twiddled ~policy:Dft.TP_Log3 ~direction:Dft.DIF n in
+  let final_dif_log3 = pipeline ~aggressive ~reassoc raw_dif_log3 in
+  check_correctness_twiddled "t1_dif_log3" ~direction:`DIF final_dif_log3 n;
+
+  Printf.printf "R=%2d (%s): n1=%-3d  t1_dit=%-3d  t1_dit_log3=%-3d  t1_dif=%-3d  t1_dif_log3=%-3d  (fma: %d/%d/%d/%d/%d)\n"
     n
     (if aggressive then "aggr" else "safe")
-    (count final_n1)        (mul_count final_n1)        (fma_count final_n1)
-    (count final_dit)       (mul_count final_dit)       (fma_count final_dit)
-    (count final_dit_log3)  (mul_count final_dit_log3)  (fma_count final_dit_log3)
-    (count final_dif)       (mul_count final_dif)       (fma_count final_dif)
+    (count final_n1)
+    (count final_dit)
+    (count final_dit_log3)
+    (count final_dif)
+    (count final_dif_log3)
+    (fma_count final_n1) (fma_count final_dit) (fma_count final_dit_log3)
+    (fma_count final_dif) (fma_count final_dif_log3)
 
 let () =
   Printf.printf "=== Op count + correctness: dft + factor + share + transpose ===\n";
-  Printf.printf "Variants: n1 / t1_dit / t1_dit_log3 / t1_dif (all flat-twiddle)\n\n";
+  Printf.printf "Variants: n1 / t1_dit / t1_dit_log3 / t1_dif / t1_dif_log3\n\n";
   Printf.printf "PRIMES (aggressive: factor + share + transpose for n1; factor + share for twiddled)\n";
-  List.iter measure [3; 5; 7; 11];
+  List.iter measure [2; 3; 5; 7; 11];
   Printf.printf "\nCT-DECOMPOSED (safe: passes default to no-op)\n";
   List.iter measure [4; 8; 16; 32; 64]

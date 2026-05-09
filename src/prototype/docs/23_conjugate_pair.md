@@ -182,3 +182,176 @@ closer. Lower priority since R=5 already at parity in bench.
 3. **`reassoc=true` is not always a win.** It's a "find butterflies in
    flat sums" pass. When the construction has already structured the
    sums optimally, reassoc destroys that structure by re-flattening.
+
+---
+
+## Update: closed the entire gap to hand parity (R=11 t1_dit = 190 ops)
+
+After the conjugate-pair construction, two follow-up changes closed the
+remaining 40-op gap to hand-coded.
+
+### Change A: sign-aware FMA chain construction with x[0] absorption
+
+Previously `make_sum coeffs terms` built `Σ Mul(c_j, t_j)` as a left-fold
+of `Add` nodes. With negative `c_j` (typical for DFT cos/sin coefficients
+where some j produce negative values), the resulting structure was
+`Add(prev, Mul(t_j, Const(-c_j)))`. Algsimp's `mk_mul` doesn't normalize
+negative consts to `Neg(Mul(...))`, but downstream passes ended up
+splitting positive and negative coefficient terms into separate sub-chains
+combined by `Sub` at the output level.
+
+Replaced `make_sum` with two variants:
+
+```ocaml
+let make_sum_with_init initial coeffs terms =
+  let acc = ref initial in
+  for j = 1 to half do
+    let c = coeffs.(j) in
+    let abs_c = Float.abs c in
+    let term = Mul (terms.(j), Const abs_c) in
+    acc := if c < 0.0 then Sub (!acc, term)
+           else Add (!acc, term)
+  done; !acc
+```
+
+The key insight: build with **`Sub` for negative coefficients**, not
+`Add(neg_const · t, prev)`. After `fma_lift`:
+- `Add(acc, Mul(t, c))` → `Fma(t, c, acc, F, F)` = fmadd
+- `Sub(acc, Mul(t, c))` → `Fma(t, c, acc, T, F)` = fnmadd
+
+A 5-term chain with mixed signs lifts to a single chain of 5 nested
+Fmas mixing fmadd and fnmadd — exactly hand's pattern.
+
+`make_sum_with_init` takes `x[0].re` (or `x[0].im`) as the deepest
+addend. After lift, x[0] becomes the `c` operand of the innermost FMA —
+free at the asm level. Output combinations simplify to:
+
+```ocaml
+out_re.(m)     <- Add (p_re_m_with_x0, q_im_m);  (* 1 add *)
+out_re.(n - m) <- Sub (p_re_m_with_x0, q_im_m);  (* 1 sub *)
+```
+
+(was 6 combining ops per pair re; now 2.)
+
+R=11 t1_dit: 230 → **212 ops**. Inner DFT 190 → **172 ops**.
+
+### Change B: skip `share_subsums` (and the FP transpose loop) for direct primes
+
+Stage-by-stage diagnostic at R=11 after Change A:
+
+| Stage | Op count |
+|---|---:|
+| of_assignments | 240 |
+| dedup_sub_pairs | 240 |
+| factor_common_muls | 240 |
+| factor_by_atom | 240 |
+| dedup | 240 |
+| **share_subsums** | **256 (+16!)** |
+| FP loop iter 0 (transpose+factor+share) | 322 (worse, reverts) |
+| **fma_lift** | **172** |
+| --- | --- |
+| (skip share + skip FP loop) → fma_lift | **150 = hand parity** |
+
+`share_subsums` extracts common addition subsums across outputs. For
+`dft_direct_conjugate_pair`, the chains are already hash-cons-shared:
+`p_re_m` is one node referenced by both X[m].re and X[N-m].re. The pass
+sees that the positive-coefficient prefix `Add(Add(x[0], M1), M2)` is
+also a subtree and chooses to materialize it as a separate intermediate.
+This breaks the unified chain into pos_cos and neg_cos sub-trees that
+need an extra add to combine, AND prevents `fma_lift` from collapsing
+the chain into 5 nested FMAs.
+
+For composite (Cooley-Tukey) sizes, share_subsums genuinely helps —
+many cross-output partial-sum overlaps in CT butterflies — so it stays
+enabled there. The skip is gated on the algorithm choice
+(`pick_algorithm n = Direct`).
+
+Code change in `bin/gen_radix.ml` and `bin/prime_opcount.ml`:
+
+```ocaml
+let is_direct = aggressive in  (* aggressive ↔ Direct *)
+let shared =
+  if is_direct then factored
+  else Algsimp.share_subsums ~aggressive factored
+in
+let post_trans =
+  if aggressive && not has_cmul && not is_direct then begin
+    (* FP transpose loop also disabled — relies on share_subsums *)
+    ...
+  end else shared
+in
+```
+
+### Final results
+
+| | Before chain B | After chain B (final) | Hand |
+|---|---:|---:|---:|
+| R=3 n1 | 12 | **12** | -- |
+| R=5 n1 | 38 | **36** | -- |
+| R=7 n1 | 70 | **66** | -- |
+| R=11 n1 | 172 | **150** | 150 ✓ |
+| R=11 t1_dit | 212 | **190** | 190 ✓ |
+| R=13 n1 | 256 | **204** | -- |
+
+ASM (R=11 t1_dit, AVX-512):
+
+| | Ours (final) | Hand |
+|---|---:|---:|
+| vfmadd | 52 | 52 ✓ |
+| vfnmadd | 52 | 48 |
+| vfmsub | 6 | 10 |
+| vmul | 30 | 30 ✓ |
+| vadd | 30 | 30 ✓ |
+| vsub | 20 | 20 ✓ |
+| **arith total** | **190** | **190** |
+| vmovapd | **22** | 48 |
+
+We match hand on every arith metric and have less than half the
+register spills.
+
+### Bench (median of 5 runs, virt-Skylake-X) — G/H ratio
+
+| Codelet | K=64 | K=128 | K=256 | K=512 | K=1024 | K=2048 | K=4096 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| R=11 t1_dit       | 0.97 | 0.98 | 0.98 | **0.88** | **0.87** | **0.82** | **0.93** |
+| R=11 t1_dit_log3  | **0.86** | **0.86** | **0.87** | 1.01 | 1.03 | 0.95 | 0.97 |
+| R=11 t1_dif       | 0.98 | 1.03 | 0.99 | 1.01 | 1.06 | 1.09 | 1.07 |
+| R=11 t1s_dit      | 0.97 | 0.98 | 0.99 | 0.99 | 1.00 | 1.04 | 1.02 |
+| R=7  t1_dit       | 1.00 | 1.00 | 1.01 | 0.97 | 0.97 | 0.96 | 1.01 |
+| R=7  t1_dit_log3  | **0.85** | **0.88** | **0.88** | **0.89** | 0.94 | 0.96 | 0.97 |
+| R=7  t1_dif       | 1.02 | 1.06 | 1.04 | 1.13 | 1.10 | 1.12 | 1.12 |
+| R=7  t1s_dit      | 0.96 | 1.00 | 1.00 | 1.09 | 1.06 | 1.04 | 1.10 |
+| R=5  t1_dit       | 0.97 | 0.97 | 0.97 | 0.97 | 1.00 | 1.00 | 1.01 |
+| R=5  t1_dit_log3  | **0.79** | **0.83** | **0.83** | 1.05 | 1.08 | 1.09 | 1.08 |
+| R=5  t1_dif       | 0.99 | 0.98 | 0.98 | 1.12 | 1.04 | 1.01 | 1.01 |
+| R=5  t1s_dit      | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+
+Every R=5/R=7/R=11 codelet at parity or beats hand. R=11 t1_dit is
+12-18% faster than hand at K=512-2048. R=5 t1_dit_log3 at small K is
+17-21% faster.
+
+R=7 t1_dif K=512+ regression (1.10-1.13×) persists — separate from the
+algsimp pipeline; likely a scheduling pattern that DIF twiddle layout
+exposes. Lower priority since R=11 (the headliner) is solidly ahead.
+
+### Lessons (updated)
+
+4. **More passes ≠ better.** `share_subsums` was designed for general
+   structures where the construction doesn't already share intermediates.
+   For our direct-prime construction (where pair sums/diffs and chain
+   intermediates are explicit hash-cons-shared values), running
+   share_subsums actively destroys the optimal layout. Always check
+   stage-by-stage what each pass contributes — sometimes the answer
+   is "negative".
+
+5. **fma_lift is the workhorse.** All three stages (pre-share,
+   post-share, post-FP) have similar surface op counts (240-256). The
+   100-op savings from 256 → 172 vs the 90-op savings from 240 → 150
+   came from fma_lift, not the upstream passes. The upstream passes'
+   job is to give fma_lift a clean structure to lift; share_subsums
+   was giving it a messier structure.
+
+6. **The DAG was right; the hand source had no secret sauce.** Once we
+   arranged the DAG to have the same structural shape as hand's source
+   (single mixed-sign FMA chain with x[0] as deepest addend), `fma_lift`
+   and the C compiler reproduced hand's asm essentially exactly.

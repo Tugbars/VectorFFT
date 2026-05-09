@@ -255,21 +255,52 @@ and dft_direct_conjugate_pair ?(sign = `Fwd)
     if j = 0 then Const 0.0 else Sub (input_im j, input_im (n - j))) in
 
   (* === STAGE 2: linear-chain weighted sums ===
-   * `make_sum coeff_arr term_arr` builds:
-   *   coeff_arr.(1) * term_arr.(1) + coeff_arr.(2) * term_arr.(2) + ...
-   * as a LEFT-FOLDED chain. Algsimp's mk_add (with reassoc=false) hash-conses
-   * each Add node, so two calls with identical (coeff_arr, term_arr) produce
-   * the same hash-cons subtree.
+   * Two variants:
    *
-   * The chain shape `((m1+m2)+m3)+m4)` is exactly the FMA chain pattern: each
-   * Add(prev_acc, Mul(c, x)) lifts to Fma(c, x, prev_acc). *)
+   * `make_sum_with_init initial coeffs terms`:
+   *   Builds initial + sign(c1)|c1|·t1 + sign(c2)|c2|·t2 + ... as a left-fold
+   *   chain. For positive c, emits `Add(acc, Mul(t, |c|))`; for negative c,
+   *   emits `Sub(acc, Mul(t, |c|))`. After fma_lift:
+   *     - Add(acc, Mul) lifts to fmadd  →  a*b + acc
+   *     - Sub(acc, Mul) lifts to fnmadd →  -a*b + acc
+   *   This produces a single FMA chain with mixed +/- coefficients encoded
+   *   in the FMA opcode (matching FFTW codelet style). The deepest addend
+   *   is `initial`, free at the asm level (it's the FMA's `c` operand).
+   *
+   * `make_sum coeffs terms`:
+   *   Same but no initial accumulator — first term starts as a Mul.
+   *   Used for q chains (sine sums) which don't have x[0] to absorb.
+   *
+   * Why sign-aware: when coeffs have mixed signs (typical for prime DFTs
+   * where cos(2πjm/N) > 0 for some j and < 0 for others), our pipeline's
+   * factor pass otherwise splits the sum into "positive coefficient" and
+   * "negative coefficient" sub-chains, costing ~4 extra ops per pair output
+   * block (start-mul on each sub-chain + extra structural sub for combining). *)
+  let make_sum_with_init initial coeffs terms =
+    let acc = ref initial in
+    for j = 1 to half do
+      let c = coeffs.(j) in
+      let abs_c = Float.abs c in
+      let term = Mul (terms.(j), Const abs_c) in
+      acc := if c < 0.0 then Sub (!acc, term)
+             else Add (!acc, term)
+    done;
+    !acc
+  in
   let make_sum coeffs terms =
     let acc = ref None in
     for j = 1 to half do
-      let term = Mul (terms.(j), Const coeffs.(j)) in
+      let c = coeffs.(j) in
+      let abs_c = Float.abs c in
+      let term = Mul (terms.(j), Const abs_c) in
       acc := match !acc with
-        | None -> Some term
-        | Some a -> Some (Add (a, term))
+        | None ->
+          (* First term: if positive, start with the Mul as-is.
+           * If negative, start with Neg(Mul). fma_lift catches the Neg(Mul)
+           * pattern when it's then Add'd to something later, producing fnmadd. *)
+          Some (if c < 0.0 then Neg term else term)
+        | Some a ->
+          Some (if c < 0.0 then Sub (a, term) else Add (a, term))
     done;
     match !acc with Some a -> a | None -> Const 0.0
   in
@@ -306,20 +337,28 @@ and dft_direct_conjugate_pair ?(sign = `Fwd)
     let sin_arr = Array.init (half + 1) (fun j ->
       (-. sgn) *. sin (2.0 *. pi *. float_of_int (j * m) /. float_of_int n)) in
 
-    let p_re_m = make_sum cos_arr s_re in
-    let p_im_m = make_sum cos_arr s_im in
+    (* p_re_m / p_im_m: cosine sums WITH x[0] absorbed as the deepest addend.
+     * The chain shape is:
+     *   ((((x[0] +/- |c1|·s1) +/- |c2|·s2) +/- |c3|·s3) +/- |c4|·s4) +/- |c5|·s5
+     * After fma_lift, this becomes 5 nested FMAs (mix of fmadd/fnmadd based on
+     * coefficient signs). The deepest fma uses x[0] as its `c` addend (free).
+     *
+     * q_re_m / q_im_m: sine sums WITHOUT x[0] (first term starts as Mul or
+     * Neg(Mul) depending on sign). After fma_lift: 1 mul + 4 fmas chain.
+     * Output combines absorb sin chain via Add/Sub at top level. *)
+    let p_re_m = make_sum_with_init (input_re 0) cos_arr s_re in
+    let p_im_m = make_sum_with_init (input_im 0) cos_arr s_im in
     let q_re_m = make_sum sin_arr d_re in
     let q_im_m = make_sum sin_arr d_im in
 
-    (* Reuse (input_re 0) / (input_im 0) as `expr` values. The OCaml
-     * Expr builder doesn't share Load nodes by reference (calling input_re 0
-     * each time produces a fresh `Load (Input (0, true))`), but their
-     * STRUCTURE is identical so algsimp's mk_load hash-cons matches them.
-     * Thus all four outputs reference the same x[0] hash-cons tag. *)
-    out_re.(m)         <- Add (input_re 0, Add (p_re_m, q_im_m));
-    out_re.(n - m)     <- Add (input_re 0, Sub (p_re_m, q_im_m));
-    out_im.(m)         <- Add (input_im 0, Sub (p_im_m, q_re_m));
-    out_im.(n - m)     <- Add (input_im 0, Add (p_im_m, q_re_m))
+    (* Output combinations. p_re_m / p_im_m already include x[0]; we just
+     * add or subtract the q chain. Each output requires exactly 1 op
+     * (1 add or 1 sub) at this combining level — matching hand-coded
+     * FFTW-style codelet structure. *)
+    out_re.(m)         <- Add (p_re_m, q_im_m);
+    out_re.(n - m)     <- Sub (p_re_m, q_im_m);
+    out_im.(m)         <- Sub (p_im_m, q_re_m);
+    out_im.(n - m)     <- Add (p_im_m, q_re_m)
   done;
   (out_re, out_im)
 
