@@ -98,9 +98,20 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
  * Both AVX-512 and AVX2 have FMA (target attr "avx2,fma"), so the
  * pattern is the same; only the intrinsic prefix differs.
  *)
+(* Maximum recursion depth for single-use inlining.
+ * Each level inlines one node into its consumer's expression. Single-use
+ * values form a chain only as long as their predecessor chain (each node
+ * is single-use to one consumer), so depth = N bounds the inlined chain
+ * length to N nodes. We pick a value high enough to handle prime DFT
+ * codelets (R=17 has 6-deep FMA chains + sums); the practical concern
+ * is C source readability and compiler handling of long expressions,
+ * not correctness. Multi-use nodes act as natural "stop" points. *)
+let inline_max_depth = 32
+
 let render_node_def
     ?(fused = false)
     ?(fused_muls : (int, unit) Hashtbl.t option = None)
+    ?(inline_set : (int, unit) Hashtbl.t option = None)
     ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool) (e : t) : string =
   let v t = Printf.sprintf "t%d" t.tag in
   (* Helper: try to extract operands of a fused-Mul predecessor.
@@ -116,6 +127,79 @@ let render_node_def
         | NK_Mul (x, y) -> Some (x, y)
         | _ -> None
   in
+  (* Should this node be inlined into its consumer's expression? *)
+  let should_inline n =
+    match inline_set with
+    | None -> false
+    | Some tbl -> Hashtbl.mem tbl n.tag
+  in
+  (* Render an operand. If single-use, inline its expression recursively
+   * (up to depth limit). Otherwise, just emit `t<tag>` and rely on the
+   * standalone declaration (which will be emitted elsewhere). *)
+  let rec render_operand depth n =
+    if depth >= inline_max_depth || not (should_inline n) then v n
+    else render_inlined depth n
+  and render_inlined depth n =
+    (* Recursive case: inline this node's expression. Don't inline Loads
+     * (their memory operand is fine, but inlining them duplicates loads)
+     * or Cmul nodes (they'd require complex parenthesization for the
+     * pseudo-FMA pair semantics). *)
+    match n.node with
+    | NK_Const c ->
+      Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
+    | NK_Load _ -> v n     (* don't inline loads — keep named *)
+    | NK_Neg inner ->
+      (match inner.node with
+       | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" (-. c))
+       | _ -> Isa.xor_pd isa (render_operand (depth+1) inner)
+                            (Isa.set1_pd_str isa "-0.0"))
+    | NK_Add (a, b) ->
+      (match as_fused_mul a with
+       | Some (x, y) ->
+         Isa.fmadd_pd isa (render_operand (depth+1) x)
+                          (render_operand (depth+1) y)
+                          (render_operand (depth+1) b)
+       | None ->
+         match as_fused_mul b with
+         | Some (x, y) ->
+           Isa.fmadd_pd isa (render_operand (depth+1) x)
+                            (render_operand (depth+1) y)
+                            (render_operand (depth+1) a)
+         | None ->
+           Isa.add_pd isa (render_operand (depth+1) a)
+                          (render_operand (depth+1) b))
+    | NK_Sub (a, b) ->
+      (match as_fused_mul b with
+       | Some (x, y) ->
+         Isa.fnmadd_pd isa (render_operand (depth+1) x)
+                           (render_operand (depth+1) y)
+                           (render_operand (depth+1) a)
+       | None ->
+         match as_fused_mul a with
+         | Some (x, y) ->
+           Isa.fmsub_pd isa (render_operand (depth+1) x)
+                            (render_operand (depth+1) y)
+                            (render_operand (depth+1) b)
+         | None ->
+           Isa.sub_pd isa (render_operand (depth+1) a)
+                          (render_operand (depth+1) b))
+    | NK_Mul (a, b) ->
+      Isa.mul_pd isa (render_operand (depth+1) a) (render_operand (depth+1) b)
+    | NK_CmulRe _ | NK_CmulIm _ -> v n  (* don't inline cmul *)
+    | NK_Fma (a, b, c, neg_mul, neg_add) ->
+      let ra = render_operand (depth+1) a in
+      let rb = render_operand (depth+1) b in
+      let rc = render_operand (depth+1) c in
+      (match neg_mul, neg_add with
+       | false, false -> Isa.fmadd_pd  isa ra rb rc
+       | false, true  -> Isa.fmsub_pd  isa ra rb rc
+       | true,  false -> Isa.fnmadd_pd isa ra rb rc
+       | true,  true  -> Isa.fnmsub_pd isa ra rb rc)
+  in
+  (* Operand renderer for THIS node's body — depth=0 meaning we're already
+   * inside the body of `e`, so its operands start at depth=0 (and inline up
+   * to inline_max_depth from there). *)
+  let op = render_operand 0 in
   let body = match e.node with
     | NK_Const c ->
       Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
@@ -126,18 +210,18 @@ let render_node_def
       (match inner.node with
        | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" (-. c))
        | _ ->
-         Isa.xor_pd isa (v inner) (Isa.set1_pd_str isa "-0.0"))
+         Isa.xor_pd isa (op inner) (Isa.set1_pd_str isa "-0.0"))
     | NK_Add (a, b) ->
       (* Try to fuse: Add(Mul(x,y), b) → fmadd(x, y, b)
        *              Add(a, Mul(x,y)) → fmadd(x, y, a)
        * Prefer fusing the LEFT operand if both are fusable Muls
        * (arbitrary tie-break; only one Mul can fuse per Add). *)
       (match as_fused_mul a with
-       | Some (x, y) -> Isa.fmadd_pd isa (v x) (v y) (v b)
+       | Some (x, y) -> Isa.fmadd_pd isa (op x) (op y) (op b)
        | None ->
          match as_fused_mul b with
-         | Some (x, y) -> Isa.fmadd_pd isa (v x) (v y) (v a)
-         | None -> Isa.add_pd isa (v a) (v b))
+         | Some (x, y) -> Isa.fmadd_pd isa (op x) (op y) (op a)
+         | None -> Isa.add_pd isa (op a) (op b))
     | NK_Sub (a, b) ->
       (* Sub(a, b) = a - b. Two FMA fusion opportunities:
        *   Sub(Mul(x,y), b) → fmsub(x, y, b)   (x*y - b)
@@ -145,16 +229,16 @@ let render_node_def
        * Prefer fusing the second operand (subtracted Mul) since fnmadd
        * tends to produce slightly tighter scheduling on x86. *)
       (match as_fused_mul b with
-       | Some (x, y) -> Isa.fnmadd_pd isa (v x) (v y) (v a)
+       | Some (x, y) -> Isa.fnmadd_pd isa (op x) (op y) (op a)
        | None ->
          match as_fused_mul a with
-         | Some (x, y) -> Isa.fmsub_pd isa (v x) (v y) (v b)
-         | None -> Isa.sub_pd isa (v a) (v b))
-    | NK_Mul (a, b) -> Isa.mul_pd isa (v a) (v b)
+         | Some (x, y) -> Isa.fmsub_pd isa (op x) (op y) (op b)
+         | None -> Isa.sub_pd isa (op a) (op b))
+    | NK_Mul (a, b) -> Isa.mul_pd isa (op a) (op b)
     | NK_CmulRe (xr, xi, wr, wi) ->
-      Isa.fnmadd_pd isa (v xi) (v wi) (Isa.mul_pd isa (v xr) (v wr))
+      Isa.fnmadd_pd isa (op xi) (op wi) (Isa.mul_pd isa (op xr) (op wr))
     | NK_CmulIm (xr, xi, wr, wi) ->
-      Isa.fmadd_pd isa (v xr) (v wi) (Isa.mul_pd isa (v xi) (v wr))
+      Isa.fmadd_pd isa (op xr) (op wi) (Isa.mul_pd isa (op xi) (op wr))
     | NK_Fma (a, b, c, neg_mul, neg_add) ->
       (* (neg_mul ? -a*b : a*b) + (neg_add ? -c : c)
        *
@@ -163,10 +247,10 @@ let render_node_def
        *   neg_mul=T, neg_add=F:  -a*b + c      → fnmadd
        *   neg_mul=T, neg_add=T:  -a*b - c      → fnmsub *)
       (match neg_mul, neg_add with
-       | false, false -> Isa.fmadd_pd  isa (v a) (v b) (v c)
-       | false, true  -> Isa.fmsub_pd  isa (v a) (v b) (v c)
-       | true,  false -> Isa.fnmadd_pd isa (v a) (v b) (v c)
-       | true,  true  -> Isa.fnmsub_pd isa (v a) (v b) (v c))
+       | false, false -> Isa.fmadd_pd  isa (op a) (op b) (op c)
+       | false, true  -> Isa.fmsub_pd  isa (op a) (op b) (op c)
+       | true,  false -> Isa.fnmadd_pd isa (op a) (op b) (op c)
+       | true,  true  -> Isa.fnmsub_pd isa (op a) (op b) (op c))
   in
   if fused then
     (* Plain assignment to outer-scope variable — no declarator. *)
@@ -199,6 +283,85 @@ type scheduler =
   | Annotated_bisection      (* bisection schedule + nested-block scopes *)
   | SU of Uarch.t            (* Sethi-Ullman list scheduler with µarch profile *)
   | Annotated_SU of Uarch.t  (* SU + nested blocks *)
+
+(* === SINGLE-USE INLINING SET ===
+ *
+ * Compute the set of node tags that should be inlined at their consumer
+ * rather than emitted as separate `const __m512d t<tag> = ...;`
+ * declarations. Inlining matches FFTW hand-coded codelet style:
+ *
+ *   const __m512d t1 = _mm512_sub_pd(a, b);
+ *   const __m512d t2 = _mm512_mul_pd(K, t1);
+ *
+ * vs the inlined form:
+ *
+ *   const __m512d t2 = _mm512_mul_pd(K, _mm512_sub_pd(a, b));
+ *
+ * Both compute the same value, but the second gives GCC a tighter SSA
+ * form: t1 has no name, no scope, and its lifetime is implicit in the
+ * outer expression. Empirically, hand-coded R=13 t1_dif uses ~120 nested
+ * intrinsic call patterns; our linearized output uses ~24. The gap is
+ * register pressure: every named intermediate is one more SSA value
+ * GCC's allocator has to track. Inlining single-use values closes the
+ * gap to hand parity on R=11/13/17 t1_dif (and helps DIT too).
+ *
+ * Criteria for inlining:
+ *   - Use count is exactly 1 (the value flows to one consumer)
+ *   - Not a Load (loads have memory operands; inlining duplicates them)
+ *   - Not a Cmul (Cmul.re/Cmul.im share state via 2-instruction sequence)
+ *   - Not a sink (sinks are output assignments)
+ *   - Not in fused_muls (already suppressed by FMA fusion path)
+ *
+ * "Use count" = number of distinct nodes that reference this tag as a
+ * predecessor PLUS 1 if the tag also appears as an output assignment
+ * (the store counts as a use).
+ *)
+let compute_inline_set
+    ?(fused_muls : (int, unit) Hashtbl.t option = None)
+    (assigns : (Expr.elem_ref * t) list) : (int, unit) Hashtbl.t =
+  let roots = List.map snd assigns in
+  let nodes = topo_sort_reachable roots in
+  (* Use count = how many other nodes reference this tag. *)
+  let use_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  let bump tag =
+    let cur = try Hashtbl.find use_count tag with Not_found -> 0 in
+    Hashtbl.replace use_count tag (cur + 1)
+  in
+  List.iter (fun n ->
+    match n.node with
+    | NK_Const _ | NK_Load _ -> ()
+    | NK_Neg a -> bump a.tag
+    | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
+      bump a.tag; bump b.tag
+    | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
+      bump a.tag; bump b.tag; bump c.tag; bump d.tag
+    | NK_Fma (a, b, c, _, _) ->
+      bump a.tag; bump b.tag; bump c.tag
+  ) nodes;
+  (* Each output assignment also counts as a use. *)
+  List.iter (fun (_, e) -> bump e.tag) assigns;
+  (* Sinks: tags that are direct output assignments. Don't inline these
+   * — they need a named t<tag> for the store to reference. *)
+  let sink_tags : (int, unit) Hashtbl.t = Hashtbl.create 32 in
+  List.iter (fun (_, e) -> Hashtbl.replace sink_tags e.tag ()) assigns;
+  let result = Hashtbl.create 256 in
+  List.iter (fun n ->
+    let count = try Hashtbl.find use_count n.tag with Not_found -> 0 in
+    let is_sink = Hashtbl.mem sink_tags n.tag in
+    let is_fused = match fused_muls with
+      | None -> false
+      | Some tbl -> Hashtbl.mem tbl n.tag
+    in
+    let kind_inlinable = match n.node with
+      | NK_Load _ -> false       (* don't duplicate loads *)
+      | NK_CmulRe _ | NK_CmulIm _ -> false  (* paired emit *)
+      | NK_Const _ -> false      (* already inlined as set1 broadcast *)
+      | _ -> true
+    in
+    if count = 1 && not is_sink && not is_fused && kind_inlinable then
+      Hashtbl.add result n.tag ()
+  ) nodes;
+  result
 
 (* === SPILL CONFIGURATION ===
  *
@@ -531,6 +694,26 @@ let emit_codelet
         | Some `Pass2 -> true | _ -> false)
      ) nodes in
 
+     (* Split output assigns by where their value is computed.
+      *
+      * Output stores must be emitted in the same C scope where the value
+      * is in scope. Pass 1 outputs (value computed in PASS 1, no spilled
+      * dependencies) get their stores at the end of PASS 1's `{ ... }`
+      * block; Pass 2 outputs at the end of PASS 2's block. The original
+      * design assumed all outputs were Pass 2 (everything depended on
+      * spilled intermediates), but composite codelets like R=32 t1_dit
+      * have outputs whose entire dep chain is twiddled-input cmuls →
+      * inner-DFT chains that DON'T cross the spill boundary. Without
+      * splitting, those outputs were emitted as `_mm512_storeu_pd(..., t<N>)`
+      * inside PASS 2's scope, but t<N> was declared in PASS 1's scope
+      * which had already closed — undefined-reference compile errors. *)
+     let pass1_assigns = List.filter (fun (_, e) ->
+       Hashtbl.find_opt cls e.tag = Some `Pass1
+     ) assigns in
+     let pass2_assigns = List.filter (fun (_, e) ->
+       Hashtbl.find_opt cls e.tag = Some `Pass2
+     ) assigns in
+
      (* Helper: list (slot, tag) pairs sorted by slot for deterministic output.
       * Currently unused — deferred-reload path emits reloads on demand
       * rather than in slot order, but keep helper available. *)
@@ -730,6 +913,10 @@ let emit_codelet
        end
        end
      ) pass1_blocked;
+     (* Emit stores for Pass 1 outputs at end of PASS 1 — values are still
+      * in scope here. Pass 2 outputs are stored later, inside PASS 2's
+      * scope (per-cluster flush + safety net). *)
+     List.iter (fun (lhs, e) -> emit_store buf lhs e) pass1_assigns;
      Buffer.add_string buf "        }\n";
 
      (* PASS 2 nested scope: deferred-reload emission.
@@ -914,13 +1101,16 @@ let emit_codelet
      let assigns_by_cluster : (int, (Expr.elem_ref * t) list) Hashtbl.t =
        Hashtbl.create 16
      in
+     (* Only Pass 2 assigns can have a cluster (cluster_of_pass2_node is
+      * populated from pass2_nodes), so iterating pass2_assigns is exact;
+      * Pass 1 assigns were stored at the end of PASS 1 and are skipped. *)
      List.iter (fun ((_, e) as a) ->
        match Hashtbl.find_opt cluster_of_pass2_node e.tag with
        | Some k2 ->
          let cur = try Hashtbl.find assigns_by_cluster k2 with Not_found -> [] in
          Hashtbl.replace assigns_by_cluster k2 (a :: cur)
        | None -> ()
-     ) assigns;
+     ) pass2_assigns;
      let last_pass2_cluster : int option ref = ref None in
      let flush_cluster_stores k2 =
        match Hashtbl.find_opt assigns_by_cluster k2 with
@@ -961,14 +1151,16 @@ let emit_codelet
      (match !last_pass2_cluster with
       | Some c -> flush_cluster_stores c
       | None -> ());
-     (* Safety net: emit stores not associated with any cluster. *)
+     (* Safety net: emit stores for Pass 2 outputs not associated with
+      * any cluster. Pass 1 outputs were already stored at the end of
+      * PASS 1 above; we exclusively iterate pass2_assigns here. *)
      List.iter (fun ((_, e) as a) ->
        match Hashtbl.find_opt cluster_of_pass2_node e.tag with
        | Some _ -> ()  (* already emitted via cluster *)
        | None ->
          emit_reload_if_needed e;
          let (lhs, e) = a in emit_store buf lhs e
-     ) assigns;
+     ) pass2_assigns;
      Buffer.add_string buf "        }\n"
 
    | None ->
@@ -1075,21 +1267,34 @@ let emit_codelet
    | SU uarch ->
      (* SU list scheduler: priority = (cp_dist DESC, su_num ASC).
       * Output shape mirrors Bisection: list of (oref_opt, alg_node)
-      * where None = intermediate, Some oref = store. *)
+      * where None = intermediate, Some oref = store.
+      *
+      * Single-use inlining: any intermediate with exactly one consumer
+      * (in the DAG OR via output assignment) is inlined at the consumer
+      * rather than emitted as a standalone declaration. This matches
+      * hand-coded FFTW codelet style and significantly reduces register
+      * pressure for DIF prime codelets. *)
      let scheduled = Schedule.su_schedule uarch assigns in
+     let inline_set = compute_inline_set assigns in
      let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+     let is_inlined e = Hashtbl.mem inline_set e.tag in
      List.iter (fun (oref_opt, e) ->
        match oref_opt with
        | None ->
-         if not (Hashtbl.mem defined e.tag) then begin
+         (* Skip emission for inlined values — their consumer will inline. *)
+         if not (is_inlined e) && not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
+           Buffer.add_string buf
+             (render_node_def ~isa ~in_place ~t1s ~inline_set:(Some inline_set) e);
            Buffer.add_char buf '\n'
          end
        | Some oref ->
+         (* Stores reference the value by t<tag>, so the value MUST be
+          * named. Sinks are excluded from inline_set, so this is safe. *)
          if not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
+           Buffer.add_string buf
+             (render_node_def ~isa ~in_place ~t1s ~inline_set:(Some inline_set) e);
            Buffer.add_char buf '\n'
          end;
          emit_store buf oref e

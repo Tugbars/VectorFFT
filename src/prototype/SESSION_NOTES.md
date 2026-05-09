@@ -371,3 +371,279 @@ For the planner's existing single-codelet-per-transform model, R=2
 isn't called directly (the outer R=N codelet does it all). But the
 codegen path is now verified end-to-end so adding standalone R=2 to
 a future multi-stage planner is a no-op on the lib side.
+
+---
+
+## Single-use inlining + Pass 1/2 store split (this session)
+
+### TL;DR
+
+Two changes landed:
+
+1. **Single-use inlining** in `lib/emit_c.ml`'s SU-emit path — values
+   with exactly one consumer get inlined into the consumer's C
+   expression instead of being emitted as `const __m512d t<N> = ...;`.
+   Closes the structural gap to hand-coded FFTW codelets:
+   - R=13 t1_dif nested intrinsic patterns: **24 → 102** (hand: 120)
+   - R=13 t1_dit movapd: **75 → 55** (-20)
+   - R=17 t1_dit movapd: **157 → 138** (-19)
+   - R=11/13/17 t1_dit bench beats hand at K≥1024 (R=13 K=1024: 0.83 G/H)
+
+2. **Pass 1 / Pass 2 output store split** in the spill-emit path —
+   pre-existing bug surfaced while testing: composite codelets
+   (R=32/64 t1_dit/t1_dif) had been failing to compile with
+   `t<N> undeclared`. Output values whose dep chain didn't cross the
+   spill boundary were Pass 1, but the safety net emitted their stores
+   inside Pass 2's nested scope where the value was out of scope. Fixed
+   by splitting `assigns` by classification and emitting each set in
+   the matching scope. R=32/64 t1_dit/t1_dif now compile and pass
+   machine-precision correctness.
+
+### The DIF-prime spill investigation
+
+The motivation: R=13/17 t1_dif codelets were 5–20% slower than hand.
+R=13 t1_dif had 81 movapd vs hand's 31; R=17 had 176 vs 115.
+
+I tested several hypotheses:
+
+| Approach | Result |
+|---|---|
+| Sink-preference in scheduler | Reorders C; GCC re-allocates anyway. No asm change. |
+| `--annotate` (Annotated_SU/topological) | **Worse**: R=11 t1_dif 50 → 93 movapd. Forward-decl of mutable `__m512d` defeats SSA without giving slot-reuse. |
+| FMA-fusion priority tweaks | No-op. |
+| Single-use inlining | **Win** for DIT, structural improvement for DIF. |
+
+Why annotate was a dead end: `annotate.ml` declares all cross-scope
+values at the outer level (`__m512d t1, t2, ..., t64;`) and assigns
+them later. Each is still a single-assignment SSA value, but the
+forward-declaration confuses GCC's lifetime analysis. Hand only uses
+forward-declared mutables for the **slot variables** (`x0_re ... x12_im`)
+that get *reassigned* through `input → intermediate → output → cmul-output`.
+That's the real FFTW idiom; annotate doesn't capture it.
+
+What actually closed the gap: hand uses ~120 nested intrinsic patterns
+in R=13 t1_dif (`_mm512_fmadd_pd(K1, T1, _mm512_fmadd_pd(K2, T2, ...))`).
+Our generator linearized everything into separate SSA temporaries —
+~250 unique `const __m512d t<N>` declarations vs hand's ~130 named
+values. GCC's allocator handles fewer SSA names better.
+
+### Single-use inlining design
+
+`compute_inline_set` walks the DAG once, counting users per tag:
+
+```ocaml
+let compute_inline_set ?fused_muls assigns =
+  let nodes = topo_sort_reachable (List.map snd assigns) in
+  (* count users: DAG predecessors + output-assignment refs *)
+  let use_count = Hashtbl.create 256 in
+  List.iter (fun n -> List.iter (bump n.tag) (preds_of n)) nodes;
+  List.iter (fun (_, e) -> bump e.tag) assigns;
+  (* a tag is inlinable iff:
+   *   count = 1   AND   not a sink (output)   AND
+   *   not in fused_muls   AND   kind allows inlining
+   *   (Const inlined as broadcast; Load not inlined to avoid duplicate
+   *   memory ops; Cmul not inlined — paired emit semantics) *)
+  ... build set
+```
+
+`render_node_def` extended with optional `?inline_set`. The body
+renderer uses `render_operand` for predecessors:
+
+```ocaml
+let rec render_operand depth n =
+  if depth >= inline_max_depth || not (should_inline n) then v n
+  else render_inlined depth n
+and render_inlined depth n = match n.node with
+  | NK_Add (a, b) -> Isa.add_pd isa (render_operand (depth+1) a) (render_operand (depth+1) b)
+  | NK_Sub ... (* same for all op kinds *)
+  | NK_CmulRe _ | NK_CmulIm _ | NK_Load _ -> v n  (* never inline *)
+```
+
+`inline_max_depth = 32` — single-use chain length is bounded by the
+predecessor chain length, so the constant matters only as a sanity
+limit. Multi-use nodes act as natural stop points.
+
+The SU emission path is wired up at `lib/emit_c.ml` line ~1185:
+
+```ocaml
+| SU uarch ->
+  let scheduled = Schedule.su_schedule uarch assigns in
+  let inline_set = compute_inline_set assigns in
+  let is_inlined e = Hashtbl.mem inline_set e.tag in
+  List.iter (fun (oref_opt, e) ->
+    match oref_opt with
+    | None ->
+      (* skip emission for inlined values — consumer will inline them *)
+      if not (is_inlined e) && not (Hashtbl.mem defined e.tag) then begin
+        ... render_node_def ~inline_set:(Some inline_set) e
+      end
+    | Some oref ->
+      (* sinks always emit standalone; they're excluded from inline_set *)
+      ... emit_store buf oref e
+  ) scheduled
+```
+
+Other emit paths (Topological, Bisection, Annotated_*, spill PASS 1/PASS 2)
+don't pass `inline_set`, so they fall back to the old behavior. This
+keeps the change contained to the prime-codelet path that benefits.
+
+### IR-level results (movapd, AVX-512 GCC 13.3 -O3)
+
+| Codelet | Before | After | Hand |
+|---|---:|---:|---:|
+| R=11 t1_dit | 22 | **21** | n/a (we already beat hand) |
+| R=11 t1_dif | 50 | **49** | 50 |
+| R=13 t1_dit | 75 | **55** | n/a |
+| R=13 t1_dif | 81 | 83 | 31 |
+| R=17 t1_dit | 157 | **138** | n/a |
+| R=17 t1_dif | 176 | 180 | 115 |
+| R=11 t1_dit_log3 | (n/a) | 20 | n/a |
+| R=17 t1_dit_log3 | 156 | 150 | n/a |
+
+DIT improvements are large and clean (-19, -20). DIF is roughly neutral
+because the structural change does help (raw nested-intrinsic counts go
+up significantly), but DIF's specific bottleneck is the cmul layer where
+each raw output has 2 uses (CmulRe + CmulIm) — single-use inlining
+explicitly excludes those.
+
+### Bench (5-run median, virt-Skylake-X)
+
+DIT primes (the wins):
+
+| Codelet | K=512 | K=1024 | K=2048 | K=4096 |
+|---|---:|---:|---:|---:|
+| R=11 t1_dit | 0.93 | 0.88 | 0.91 | 0.86 |
+| R=13 t1_dit | 0.97 | **0.83** | 0.96 | 1.05 |
+| R=17 t1_dit | **0.86** | 0.95 | 0.96 | 1.17 |
+| R=11 t1_dit_log3 | 0.92 | 0.93 | 0.87 | 0.92 |
+| R=17 t1_dit_log3 | 0.96 | 0.89 | 0.97 | 1.03 |
+
+R=13 K=1024 at 0.83 G/H means we're 17% faster than hand. R=17 K=512
+at 0.86 means 14% faster.
+
+DIF primes (still trailing hand, structural improvement didn't translate
+to bench wins because the cmul layer is the bottleneck):
+
+| Codelet | K=512 | K=1024 | K=2048 |
+|---|---:|---:|---:|
+| R=11 t1_dif | 1.06 | 1.10 | 1.12 |
+| R=13 t1_dif | 1.03 | 1.16 | 1.19 |
+| R=17 t1_dif | 1.11 | 1.17 | 1.16 |
+
+Closing this gap requires destructive-update emission (FFTW slot-reuse
+style: `tr = x_re; x_re = fmsub(x_re, wr, mul(x_im, wi))` reusing the
+register slot). That's a substantial emit_c.ml rewrite — left for a
+future session.
+
+### The composite codelet bug
+
+Side discovery: R=32/64 t1_dit/t1_dif had been failing to compile with
+errors like `'t918' undeclared (first use in this function)`. I'd
+initially assumed the inlining work caused this, but a clean test
+(setting `inline_set = None`) showed the bug existed independently.
+
+Diagnosis:
+
+```c
+{                                        /* PASS 1 scope opens */
+    const __m512d t918 = _mm512_sub_pd(t902, t917);  /* defined PASS 1 */
+    /* ... PASS 1 stores spilled values ... */
+}                                        /* PASS 1 closes — t918 dies */
+{                                        /* PASS 2 scope opens */
+    /* ... PASS 2 reloads spills, computes ... */
+    _mm512_storeu_pd(&rio_re[31*ios + k], t918);  /* ERROR: undeclared */
+}
+```
+
+t918 was an output value with no internal consumers (only the eventual
+store). The forward pass classified it Pass 1 (no spilled ancestors).
+The backward pass requires non-empty internal consumers to reclassify,
+so it stayed Pass 1. But the output-store emit ran inside PASS 2's
+scope — `safety net` at the end iterated over all `assigns` regardless
+of classification.
+
+Wrong fix attempt: I added an `output_tags` hint to `classify_passes`
+to count output stores as PASS 2 consumers, pushing output-only nodes
+to Pass 2. This worked for t918 but broke other codelets — promoting
+an output to Pass 2 doesn't bring its preds along, so Pass 2 then
+references Pass 1 values that aren't spilled (`'t13' undeclared`).
+Reverted.
+
+Correct fix: emit each store in the scope where its value lives.
+
+```ocaml
+let pass1_assigns = List.filter (fun (_, e) ->
+  Hashtbl.find_opt cls e.tag = Some `Pass1
+) assigns in
+let pass2_assigns = List.filter (fun (_, e) ->
+  Hashtbl.find_opt cls e.tag = Some `Pass2
+) assigns in
+```
+
+At end of PASS 1's `{ ... }`, before the closing brace, emit
+`pass1_assigns` stores. The PASS 2 store machinery (`assigns_by_cluster`,
+the cluster flush loop, the safety net) already worked — just had to
+restrict its iteration target from `assigns` to `pass2_assigns` so it
+doesn't try to re-store Pass 1 outputs in the wrong scope.
+
+Verification (machine-precision DFT-vs-brute-force):
+
+| Codelet | Error | Result |
+|---|---|---|
+| R=32 t1_dit | 1.58e-14 | PASS |
+| R=32 t1_dif | 1.58e-14 | PASS |
+| R=64 t1_dit | 3.79e-14 | PASS |
+| R=64 t1_dif | 3.79e-14 | PASS |
+
+R=32 t1_dit bench: median T/H=1.04 at K=1024, parity at K=2048+, 1.027
+at K=4096. Slightly behind hand at small K (K=128 worst at 1.39); at the
+sizes anyone cares about (K≥1024) it's within 5% of hand. Acceptable.
+
+### Files changed
+
+- `lib/emit_c.ml`:
+  - **Added** `inline_max_depth = 32` constant.
+  - **Added** `compute_inline_set` helper (walks DAG, counts uses,
+    returns `(int, unit) Hashtbl.t` of inlinable tags).
+  - **Extended** `render_node_def` with `?inline_set` parameter +
+    mutually-recursive `render_operand` / `render_inlined` for
+    expression-tree inlining.
+  - **Wired** `inline_set` through the SU emission path.
+  - **Split** `assigns` into `pass1_assigns` / `pass2_assigns` in the
+    spill-emit path.
+  - **Emit** Pass 1 stores at end of PASS 1 scope (new line).
+  - **Restricted** safety net + `assigns_by_cluster` to iterate
+    `pass2_assigns`.
+
+`classify_passes` itself is unchanged from prior session. The
+`output_tags` hint experiment was reverted.
+
+### Coverage check
+
+Comprehensive compile sweep: R={5, 7, 11, 13, 16, 17, 32, 64} × {t1_dit,
+t1_dif, t1_dit_log3, n1} all compile cleanly. 32/32 prime correctness
+PASS at machine precision. Composite codelets pass machine-precision
+DFT-vs-brute-force.
+
+### What's next
+
+Worth noting for future work:
+
+- **Destructive-update emission for DIF cmul layer** would close the
+  remaining DIF gap (5–20%). Requires emit_c.ml to recognize "raw
+  output → cmul output" patterns and emit FFTW-style mutable slot
+  reassignment (`tr = x_re; x_re = fmsub(...); x_im = fmadd(tr, ...)`).
+  Substantial rewrite; not done.
+
+- **Spill-path inlining**: current `compute_inline_set` is computed
+  globally and only used by the SU non-spill path. The spill path
+  (PASS 1 / PASS 2 emission, where composite codelets live) doesn't
+  benefit. Plumbing `inline_set` through PASS 1 and PASS 2 emission
+  loops would extend the gain to composite codelets, but the cluster
+  boundary makes it tricky — a node inlined in one pass but referenced
+  in another would break. Worth attempting once the DIF bottleneck is
+  closed.
+
+- **Restoring inlining for `t1s` codelets**: t1s twiddles are scalar
+  broadcasts (`set1_pd`), already implicitly inlined by the constant
+  path. No change needed.
