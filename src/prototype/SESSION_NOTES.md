@@ -647,3 +647,88 @@ Worth noting for future work:
 - **Restoring inlining for `t1s` codelets**: t1s twiddles are scalar
   broadcasts (`set1_pd`), already implicitly inlined by the constant
   path. No change needed.
+
+---
+
+## R=19 + extended test coverage (this session, follow-up)
+
+### TL;DR
+
+R=19 already generated correctly via the existing
+`dft_direct_conjugate_pair` (the construction is generic for any odd
+prime ≥ 3). What was missing was test infrastructure: the prime
+op-count tool and the runtime correctness harness only covered
+R={2, 5, 7, 11}. Extended both to cover R={2, 5, 7, 11, 13, 17, 19}.
+**56/56 codelet variants now PASS at machine precision** (up from
+32/32). All 8 R=19 variants verified against brute-force scalar DFT.
+
+### Op counts (FMA-aware, post algsimp + factor + share)
+
+```
+R= 2: n1=4    t1_dit=8    t1_dit_log3=8    t1_dif=8    t1_dif_log3=8    (fma 0)
+R= 3: n1=12   t1_dit=20   t1_dit_log3=20   t1_dif=20   t1_dif_log3=20   (fma 6)
+R= 5: n1=36   t1_dit=52   t1_dit_log3=56   t1_dif=52   t1_dif_log3=56   (fma 12)
+R= 7: n1=66   t1_dit=90   t1_dit_log3=102  t1_dif=90   t1_dif_log3=102  (fma 30)
+R=11: n1=150  t1_dit=190  t1_dit_log3=214  t1_dif=190  t1_dif_log3=214  (fma 90)
+R=13: n1=204  t1_dit=252  t1_dit_log3=284  t1_dif=252  t1_dif_log3=284  (fma 132)
+R=17: n1=336  t1_dit=400  t1_dit_log3=444  t1_dif=400  t1_dif_log3=444  (fma 240)
+R=19: n1=414  t1_dit=486  t1_dit_log3=538  t1_dif=486  t1_dif_log3=538  (fma 306)
+```
+
+For comparison, the hand-coded gen_radix19.py reports 542 ops at the
+genfft DAG level (314 add + 114 mul + 114 FMA — pre-fusion counting,
+each FMA still contains a mul + an add as separate atoms). After our
+algsimp + FMA fusion, n1 is 414 ops total (108 add + 306 FMA) — 23%
+fewer atoms than hand. t1_dit at 486 reflects the same direct-DFT
+inner butterfly plus 18 cmuls for input twiddling.
+
+R=19 has very high register pressure (19 inputs + 18 twiddles + 26
+constants ≫ 32 ZMM), so heavy spilling is structural — both ours and
+hand spill aggressively. AVX-512 R=19 t1_dit asm shows ~170 vmovapd
+with 51 spill slots (3272 bytes of stack). Our share-skip path saves
+108 ops vs the share-aggressive variant — bigger savings than R=17
+(-98) because more shared subexpressions exist to NOT pessimize.
+
+### R=19 correctness errors (vs brute-force scalar DFT, K=8)
+
+| Variant | Error |
+|---|---|
+| R=19 t1_dit | 1.6e-13 |
+| R=19 t1_dif | 1.9e-12 |
+| R=19 t1_dit_log3 | 1.9e-13 |
+| R=19 t1_dif_log3 | 1.9e-12 |
+| R=19 t1s_dit / dif / *_log3 | same as flat (deterministic) |
+
+All under 1e-10 threshold. DIF errors slightly larger than DIT —
+expected because DIF post-multiplies outputs (extra mul layer
+accumulates rounding) but well within machine-precision bounds.
+
+### Files changed
+
+- `bin/prime_opcount.ml`: prime list extended `[2; 3; 5; 7; 11]` →
+  `[2; 3; 5; 7; 11; 13; 17; 19]`. Header comment updated.
+- `bin/dump_stages.ml`: stage-dump prime list extended
+  `[3; 5; 7; 11; 13]` → `[3; 5; 7; 11; 13; 17; 19]`.
+- `bench/primes/correctness/test_all8_runtime.c`: `MAX_N` 11 → 19,
+  `MAX_W` 10 → 18, `DECL_ALL` for R=13/17/19, `RUN8` for the new
+  radixes.
+- `bench/primes/correctness/build_and_run.sh`: codelet generation
+  loop extended to `for R in 2 5 7 11 13 17 19`.
+
+The OCaml generator itself (`lib/dft.ml`, `lib/algsimp.ml`,
+`lib/emit_c.ml`) needed no changes — `dft_direct_conjugate_pair` is
+generic in N, so adding a new prime is a test-coverage addition only.
+
+### Why R=19 likely won't get bench wins vs hand at AVX-512
+
+For R=11/13/17 our inner DFT competes well with hand. R=19 has the
+same structural advantages on op count but the spill pressure is so
+extreme (51 slots) that GCC's allocator has limited room to maneuver
+in either direction. Hand uses heavily nested intrinsic expressions
+to lower SSA name count — a similar approach to what closed the gap
+for R=13/17 in the inlining work — but the 19-input DAG creates many
+long dependency chains that resist inlining (multi-use intermediates
+break inline chains). DIT primes will likely be at parity with hand;
+DIF primes at 5-20% behind, similar to R=17. No bench data captured
+yet (would require a hand R=19 reference, which means running
+gen_radix19.py through Python — not done in this session).

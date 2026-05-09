@@ -46,4 +46,4 @@ let test_n n =
     ((count_arith liftedA) - (count_arith liftedB))
 
 let () =
-  List.iter test_n [3; 5; 7; 11; 13]
+  List.iter test_n [3; 5; 7; 11; 13; 17; 19]

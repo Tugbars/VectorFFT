@@ -5,8 +5,8 @@
 #include <immintrin.h>
 
 #define K 8
-#define MAX_N 11
-#define MAX_W 10
+#define MAX_N 19
+#define MAX_W 18
 
 #define DECL_ALL(R) \
 extern void radix##R##_t1_dit_fwd_avx512_gen_inplace_su(double*,double*,const double*,const double*,size_t,size_t); \
@@ -18,7 +18,7 @@ extern void radix##R##_t1s_dif_fwd_avx512_gen_inplace_su(double*,double*,const d
 extern void radix##R##_t1s_dit_log3_fwd_avx512_gen_inplace_su(double*,double*,const double*,const double*,size_t,size_t); \
 extern void radix##R##_t1s_dif_log3_fwd_avx512_gen_inplace_su(double*,double*,const double*,const double*,size_t,size_t);
 
-DECL_ALL(2) DECL_ALL(5) DECL_ALL(7) DECL_ALL(11)
+DECL_ALL(2) DECL_ALL(5) DECL_ALL(7) DECL_ALL(11) DECL_ALL(13) DECL_ALL(17) DECL_ALL(19)
 
 typedef void (*fn_t)(double*,double*,const double*,const double*,size_t,size_t);
 
@@ -111,9 +111,9 @@ static int test_one(int R, const char *label, int dif, int strided, fn_t fn) {
 
 int main(void) {
     int fails=0;
-    printf("=== Runtime correctness: 8 variants × 4 radixes ===\n");
-    RUN8(2); RUN8(5); RUN8(7); RUN8(11);
+    printf("=== Runtime correctness: 8 variants × 7 radixes ===\n");
+    RUN8(2); RUN8(5); RUN8(7); RUN8(11); RUN8(13); RUN8(17); RUN8(19);
     if (fails) { printf("\n%d FAILS\n", fails); return 1; }
-    printf("\n%d/32 PASS — all 8 variants × R={2,5,7,11} verified.\n", 32);
+    printf("\n%d/56 PASS — all 8 variants × R={2,5,7,11,13,17,19} verified.\n", 56);
     return 0;
 }

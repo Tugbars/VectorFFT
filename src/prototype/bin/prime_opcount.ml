@@ -1,4 +1,4 @@
-(* prime_opcount.ml — measure op count after dft_direct + algsimp for primes 3,5,7,11. *)
+(* prime_opcount.ml — measure op count after dft_direct + algsimp for primes 2,3,5,7,11,13,17,19. *)
 
 open Vfft_v2
 
@@ -253,6 +253,6 @@ let () =
   Printf.printf "=== Op count + correctness: dft + factor + share + transpose ===\n";
   Printf.printf "Variants: n1 / t1_dit / t1_dit_log3 / t1_dif / t1_dif_log3\n\n";
   Printf.printf "PRIMES (aggressive: factor + share + transpose for n1; factor + share for twiddled)\n";
-  List.iter measure [2; 3; 5; 7; 11];
+  List.iter measure [2; 3; 5; 7; 11; 13; 17; 19];
   Printf.printf "\nCT-DECOMPOSED (safe: passes default to no-op)\n";
   List.iter measure [4; 8; 16; 32; 64]
