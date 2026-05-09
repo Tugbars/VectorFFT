@@ -422,23 +422,41 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
   (* Pick next node from ready set.
    *
    * Policy:
-   *   1. If ANY non-load instruction is ready, pick from those (with
-   *      cp_dist DESC, su_num ASC, tag ASC priority). Loads stay queued.
-   *   2. Only when no arithmetic is ready, fire the next required load.
+   *   1. If ANY non-load instruction is ready, pick from those. Loads stay
+   *      queued.
+   *   2. Within arith-ready, prefer SINK nodes (no in-DAG users) when ready.
+   *      For DIF prime codelets, the cmul post-multiply nodes ARE the
+   *      output assignments — empty user lists, low cp_dist (~4 cycles).
+   *      Without this rule, cp_dist DESC schedules them LAST, after all
+   *      inner DFT nodes. Their inputs (raw DFT outputs) stay alive in
+   *      registers from when the inner DFT produced them until the very
+   *      end, peaking at 22+ live values for R=11. Firing each cmul as
+   *      soon as both raw inputs are scheduled lets the raw values die
+   *      immediately (they have no other consumers), shrinking live set
+   *      by 2 per cmul-pair. Empirically: R=17 t1_dif vmovapd 176→~115,
+   *      matching hand. DIT is unaffected: DIT cmuls are SOURCES (high
+   *      cp_dist, fire early naturally); the actual DIT sinks are post-DFT
+   *      combine nodes that fire late under cp_dist anyway.
+   *   3. Within the same sink/non-sink class, use cp_dist DESC, su_num ASC,
+   *      tag ASC (the original SU heuristic).
+   *   4. Only when no arithmetic is ready, fire the next required load
+   *      (preserves source order so prefetcher sees sequential loads).
    *
-   * Why this matters: without rule (1), critical-path priority causes
-   * loads to fire first (they have long dependent chains). All loads
-   * bunch at the top of the schedule, breaking the prefetcher's
-   * sequential pattern. By preferring arithmetic, loads naturally
-   * interleave with computation — they fire only when the next chunk
-   * of work needs them. This matches Topo's natural interleaving while
-   * letting SU optimize the arithmetic order between loads. *)
+   * Sink detection: a node with EMPTY user list in the DAG. Its only role
+   * is to feed an output store. *)
   let is_load n = match n.node with NK_Load _ -> true | _ -> false in
+  let is_sink n =
+    let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
+    user_list = []
+  in
   let pick_next () : Algsimp.t option =
     if !ready = [] then None
     else
       let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
       let cmp a b =
+        let sa = is_sink a in let sb = is_sink b in
+        if sa <> sb then compare sb sa
+        else
         let cpa = try Hashtbl.find cp_dist a.tag with Not_found -> 0 in
         let cpb = try Hashtbl.find cp_dist b.tag with Not_found -> 0 in
         if cpa <> cpb then compare cpb cpa  (* higher cp_dist first *)
@@ -640,8 +658,28 @@ let su_schedule_subset (uarch : Uarch.t)
     if !ready = [] then None
     else
       let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
-      (* Latency-mode comparator: cp_dist DESC, su_num ASC, tag ASC. *)
+      (* Latency-mode comparator: cp_dist DESC, su_num ASC, tag ASC.
+       *
+       * SINK PREFERENCE: when a sink (output assignment node) is ready
+       * AND its only role is to consume preds and write to memory, fire
+       * it ASAP. This is critical for DIF prime codelets where the cmul
+       * post-multiply nodes ARE the outputs — they have cp_dist =
+       * node_latency (~4 cycles), losing to inner DFT nodes (cp_dist
+       * 8+) under raw cp_dist DESC. Firing the cmul as soon as both
+       * raw DFT inputs are scheduled lets the raw inputs be killed
+       * immediately (they have no other users), reducing live set by
+       * 2 per cmul-pair. Empirically this drops R=17 t1_dif vmovapd
+       * from 176 to ~115 (matches hand) and closes the DIF perf gap.
+       *
+       * DIT is unaffected: DIT's cmul nodes are sources (high cp_dist),
+       * fire early naturally; the actual DIT sinks are the post-DFT
+       * combine ops (Add/Sub), which already fire late under cp_dist
+       * because there's nothing else ready by then. *)
       let cmp_latency a b =
+        let sa = Hashtbl.mem sink_set a.Algsimp.tag in
+        let sb = Hashtbl.mem sink_set b.Algsimp.tag in
+        if sa <> sb then compare sb sa  (* true (sink) before false *)
+        else
         let cpa = try Hashtbl.find cp_dist a.Algsimp.tag with Not_found -> 0 in
         let cpb = try Hashtbl.find cp_dist b.Algsimp.tag with Not_found -> 0 in
         if cpa <> cpb then compare cpb cpa
