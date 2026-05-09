@@ -77,18 +77,24 @@ let pick_algorithm (n : int) : algorithm =
 
 (* Whether algsimp's reassoc pass is appropriate for the given n.
  *
- * Reassoc helps when the input is a flat sum-of-products from direct
- * DFT expansion — it discovers butterfly subsums by reassociating
- * binary Add chains. But when CT decomposition has structured the
- * input correctly, reassoc actively destroys that structure by
- * flattening across CT boundaries. So:
+ * Reassoc helps when the input is a flat sum-of-products from naive
+ * direct DFT expansion — it discovers butterfly subsums by reassociating
+ * binary Add chains. But:
+ *   - When CT decomposition has structured the input correctly, reassoc
+ *     actively destroys that structure by flattening across CT boundaries.
+ *   - When dft_direct_conjugate_pair has constructed explicit shared
+ *     sub-sums (p_re_m, q_im_m, etc.), reassoc would FLATTEN them into
+ *     each output's overall sum and the sharing would be lost. The
+ *     conjugate-pair construction is already optimal w.r.t. CSE.
  *
- *   - Direct DFT: reassoc HELPS (finds butterflies)
- *   - CT-decomposed: reassoc HURTS (shreds the CT structure)
+ * So:
+ *   - Naive Direct DFT (n=2 only):     reassoc HELPS
+ *   - Conjugate-pair Direct (odd n≥3): reassoc HURTS
+ *   - CT-decomposed:                   reassoc HURTS
  *)
 let needs_reassoc (n : int) : bool =
   match pick_algorithm n with
-  | Direct -> true
+  | Direct -> n < 3 || n mod 2 = 0  (* only n=2 hits this in practice *)
   | Cooley_Tukey _ -> false
 
 (* === COOLEY-TUKEY DIT DECOMPOSITION ===
@@ -150,7 +156,17 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
 let rec dft ?(sign = `Fwd) (n : int) (input_re : int -> expr) (input_im : int -> expr)
     : expr array * expr array =
   match pick_algorithm n with
-  | Direct -> dft_direct ~sign n input_re input_im
+  | Direct ->
+    (* For odd N >= 3, the conjugate-pair construction produces a much
+     * better-structured DAG than naive direct DFT: pair sums/diffs are
+     * shared, per-pair-output intermediates (p_re_m, q_im_m, etc.) are
+     * shared between X[m] and X[N-m], and inner sums use linear FMA
+     * chains. For N=2 there's nothing to factor; for even N we never
+     * reach Direct anyway (CT-decomposed). *)
+    if n >= 3 && n mod 2 = 1 then
+      dft_direct_conjugate_pair ~sign n input_re input_im
+    else
+      dft_direct ~sign n input_re input_im
   | Cooley_Tukey (n1, n2) -> dft_ct ~sign n1 n2 input_re input_im
 
 (* Direct DFT: matrix-vector form.
@@ -177,6 +193,133 @@ and dft_direct ?(sign = `Fwd) (n : int) (input_re : int -> expr) (input_im : int
     done;
     out_re.(k) <- !re_sum;
     out_im.(k) <- !im_sum
+  done;
+  (out_re, out_im)
+
+(* === DIRECT DFT WITH EXPLICIT CONJUGATE-PAIR FACTORING ===
+ *
+ * For a real input pair (x[j], x[N-j]) with j in 1..(N-1)/2, the
+ * twiddle factors satisfy:
+ *
+ *   cos(2π·j·m/N)     =  cos(2π·(N-j)·m/N)     [cos is even]
+ *   sin(2π·j·m/N)     = -sin(2π·(N-j)·m/N)     [sin is odd]
+ *
+ * So for forward DFT (using exp(-2πi·j·m/N) = cos(2πjm/N) - i·sin(2πjm/N)):
+ *
+ *   X[m].re = x[0].re + Σ_{j=1..H} (cos(jm)·s_re_j + sin(jm)·d_im_j)
+ *   X[N-m].re = x[0].re + Σ_{j=1..H} (cos(jm)·s_re_j - sin(jm)·d_im_j)
+ *
+ *   X[m].im = x[0].im + Σ_{j=1..H} (cos(jm)·s_im_j - sin(jm)·d_re_j)
+ *   X[N-m].im = x[0].im + Σ_{j=1..H} (cos(jm)·s_im_j + sin(jm)·d_re_j)
+ *
+ * where H = (N-1)/2 and:
+ *   s_re_j = x[j].re + x[N-j].re      d_re_j = x[j].re - x[N-j].re
+ *   s_im_j = x[j].im + x[N-j].im      d_im_j = x[j].im - x[N-j].im
+ *
+ * Per pair (m, N-m) we compute four shared intermediates ONCE:
+ *   p_re_m = Σ cos(jm)·s_re_j      (shared between X[m].re and X[N-m].re)
+ *   p_im_m = Σ cos(jm)·s_im_j      (shared between X[m].im and X[N-m].im)
+ *   q_re_m = Σ sin(jm)·d_re_j      (shared between im outputs, opposite signs)
+ *   q_im_m = Σ sin(jm)·d_im_j      (shared between re outputs, opposite signs)
+ *
+ * The OCaml `expr` is value-shared for the four intermediates; Algsimp's
+ * hash-cons preserves the sharing through `of_expr`. The outer outputs
+ * use BINARY structure (no flattening) so the shared sub-trees remain
+ * intact — caller must use `reassoc:false`.
+ *
+ * For backward DFT (sign=`Bwd), exp(+2πi·j·m/N), so sin signs flip:
+ *
+ *   X[m].re   = x[0].re + Σ (cos(jm)·s_re_j - sin(jm)·d_im_j)
+ *   X[N-m].re = x[0].re + Σ (cos(jm)·s_re_j + sin(jm)·d_im_j)
+ *   X[m].im   = x[0].im + Σ (cos(jm)·s_im_j + sin(jm)·d_re_j)
+ *   X[N-m].im = x[0].im + Σ (cos(jm)·s_im_j - sin(jm)·d_re_j)
+ *)
+and dft_direct_conjugate_pair ?(sign = `Fwd)
+    (n : int) (input_re : int -> expr) (input_im : int -> expr)
+    : expr array * expr array =
+  let pi = 4.0 *. atan 1.0 in
+  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> +1.0 in
+  let half = (n - 1) / 2 in
+  let out_re = Array.make n (Const 0.0) in
+  let out_im = Array.make n (Const 0.0) in
+
+  (* === STAGE 1: pair sums and diffs (the s_jk and d_jk subterms) ===
+   * Computed once each, shared everywhere via OCaml value reuse → hash-cons. *)
+  let s_re = Array.init (half + 1) (fun j ->
+    if j = 0 then input_re 0 else Add (input_re j, input_re (n - j))) in
+  let s_im = Array.init (half + 1) (fun j ->
+    if j = 0 then input_im 0 else Add (input_im j, input_im (n - j))) in
+  let d_re = Array.init (half + 1) (fun j ->
+    if j = 0 then Const 0.0 else Sub (input_re j, input_re (n - j))) in
+  let d_im = Array.init (half + 1) (fun j ->
+    if j = 0 then Const 0.0 else Sub (input_im j, input_im (n - j))) in
+
+  (* === STAGE 2: linear-chain weighted sums ===
+   * `make_sum coeff_arr term_arr` builds:
+   *   coeff_arr.(1) * term_arr.(1) + coeff_arr.(2) * term_arr.(2) + ...
+   * as a LEFT-FOLDED chain. Algsimp's mk_add (with reassoc=false) hash-conses
+   * each Add node, so two calls with identical (coeff_arr, term_arr) produce
+   * the same hash-cons subtree.
+   *
+   * The chain shape `((m1+m2)+m3)+m4)` is exactly the FMA chain pattern: each
+   * Add(prev_acc, Mul(c, x)) lifts to Fma(c, x, prev_acc). *)
+  let make_sum coeffs terms =
+    let acc = ref None in
+    for j = 1 to half do
+      let term = Mul (terms.(j), Const coeffs.(j)) in
+      acc := match !acc with
+        | None -> Some term
+        | Some a -> Some (Add (a, term))
+    done;
+    match !acc with Some a -> a | None -> Const 0.0
+  in
+
+  (* === STAGE 3: X[0] — sum of all real/imag inputs ===
+   * Using the s_re/s_im pair sums, X[0].re = x[0].re + Σ s_re_j
+   * (each pair sum is reused from STAGE 1, no duplicate adds.) *)
+  let x0_re = ref (input_re 0) in
+  let x0_im = ref (input_im 0) in
+  for j = 1 to half do
+    x0_re := Add (!x0_re, s_re.(j));
+    x0_im := Add (!x0_im, s_im.(j))
+  done;
+  out_re.(0) <- !x0_re;
+  out_im.(0) <- !x0_im;
+
+  (* === STAGE 4: pair outputs X[m] and X[N-m] for m = 1..half ===
+   * Compute four intermediates once per pair, then combine. *)
+  for m = 1 to half do
+    let cos_arr = Array.init (half + 1) (fun j ->
+      cos (2.0 *. pi *. float_of_int (j * m) /. float_of_int n)) in
+    (* Sin coefficient for the q_im_m = Σ sin(jm)·d_im_j intermediate.
+     * The output combinations below use:
+     *   out_re.(m)     = x[0].re + p_re + q_im   ← needs +sin for forward
+     *   out_re.(n-m)   = x[0].re + p_re - q_im
+     *
+     * For forward (exp(-iθ) = cos-i·sin), X[m].re = Σcos·s_re + Σsin·d_im,
+     * so coefficient inside q_im needs to be +sin → factor = +1 → -sgn.
+     *
+     * For backward (exp(+iθ) = cos+i·sin), X[m].re = Σcos·s_re - Σsin·d_im,
+     * so coefficient inside q_im is -sin → factor = -1 → -sgn.
+     *
+     * Both cases: sin_arr coefficient = -sgn · sin(2πjm/N). *)
+    let sin_arr = Array.init (half + 1) (fun j ->
+      (-. sgn) *. sin (2.0 *. pi *. float_of_int (j * m) /. float_of_int n)) in
+
+    let p_re_m = make_sum cos_arr s_re in
+    let p_im_m = make_sum cos_arr s_im in
+    let q_re_m = make_sum sin_arr d_re in
+    let q_im_m = make_sum sin_arr d_im in
+
+    (* Reuse (input_re 0) / (input_im 0) as `expr` values. The OCaml
+     * Expr builder doesn't share Load nodes by reference (calling input_re 0
+     * each time produces a fresh `Load (Input (0, true))`), but their
+     * STRUCTURE is identical so algsimp's mk_load hash-cons matches them.
+     * Thus all four outputs reference the same x[0] hash-cons tag. *)
+    out_re.(m)         <- Add (input_re 0, Add (p_re_m, q_im_m));
+    out_re.(n - m)     <- Add (input_re 0, Sub (p_re_m, q_im_m));
+    out_im.(m)         <- Add (input_im 0, Sub (p_im_m, q_re_m));
+    out_im.(n - m)     <- Add (input_im 0, Add (p_im_m, q_re_m))
   done;
   (out_re, out_im)
 

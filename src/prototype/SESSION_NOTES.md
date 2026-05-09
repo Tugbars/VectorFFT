@@ -1,105 +1,170 @@
-# Session: Distributive factoring + subsum sharing for monolithic primes
+# Session: FFTW-style algsimp ported, FMA-aware throughout
 
-## What shipped
+## What we built this session
 
-Two new passes in `lib/algsimp.ml`, both with explicit `~aggressive` flag,
-both no-ops by default (safe for CT-decomposed codelets):
+1. **`NK_Fma` IR node + `fma_lift` pass** — first-class FMA atoms in the
+   algsimp IR. Codegen renders as `_mm512_fmadd_pd` / `fmsub_pd` /
+   `fnmadd_pd` / `fnmsub_pd`. `dag_stats` reports `fmas` separately
+   so vector-instruction count matches asm.
 
-### `factor_common_muls ?aggressive`
+2. **`factor_by_atom` pass** — complement to `factor_common_muls`.
+   Where `factor_common_muls` buckets by Mul's *constant* operand
+   (FFTW's `collectM` first-direction), `factor_by_atom` buckets by
+   the *non-constant* operand (FFTW's `collectM` second-direction).
+   When `c1·a + c2·a + ... + cN·a` appears, the constants compile-time-fold
+   and N muls collapse to 1.
 
-Distributive factoring on flat sums:
+3. **Fixed-point pipeline** in prime_opcount — FFTW-style loop that runs
+   factor + factor_atom + share + transpose to convergence. Stops when
+   op count stops decreasing.
 
-    Σ ± c · x_i  →  c · (Σ ± x_i)   when c is constant
+4. **Treat `Fma` as opaque** in `factor_common_muls`, `factor_by_atom`,
+   `share_subsums`, `transpose` — once a Mul is fused into an FMA, it's
+   claimed and can't be unbundled by other passes. This prevents passes
+   from un-fusing FMAs to factor or share their components.
 
-Operates on flat sums (not binary Add/Sub pairs) — pair-fold orders by
-tag, so same-constant Muls aren't adjacent siblings; a binary peephole
-on `Add(Mul(_,c), Mul(_,c))` never fires for primes ≥ 5.
+## What we measured
 
-The `aggressive=true` mode disables the use-count safety check. In
-primes, source muls are shared across outputs (use_count > 1) precisely
-because they aren't factored yet; both outputs migrate to the same
-factored form after rewriting, so the "sharing" the safety check would
-protect is illusory. Enabling factoring creates the Winograd s/d
-structure (s = x_j + x_{N-j}, d = x_j - x_{N-j}).
+### FMA lift is asm-equivalent to GCC auto-fusion
 
-### `share_subsums ?aggressive`
+Direct asm comparison on R=11 t1_dit, with vs without `fma_lift`:
 
-Recognize pre-existing 2-term sub-expressions inside larger flat sums
-and reuse them. The motivating case is the X[0] output:
+|              | with lift | without lift |
+|--------------|---:|---:|
+| vfmadd       | 167 | 168 |
+| vmul         | 55  | 55  |
+| vadd         | 69  | 68  |
+| **Total**    | 335 | 335 |
 
-    X[0].re = x[0] + x[1] + x[2] + x[3] + x[4]   (5 terms, 4 binary adds)
+GCC -O3 -mfma already fuses Mul+Add → FMA reliably. Our explicit lift
+emits the same asm. We keep `fma_lift` for IR cleanliness and metric
+accuracy, not for codegen perf.
 
-After factoring fires, the DAG already contains pair sums:
-    s14 = x[1] + x[4]    (built for 0.309·s14 inner sum)
-    s23 = x[2] + x[3]    (built for 0.809·s23 inner sum)
+### Aggressive passes save real asm instructions
 
-X[0].re could be expressed as `x[0] + s14 + s23` (3 terms, 2 binary
-adds) by greedily replacing pairs with pre-existing Add nodes that
-have other users. This pass does that lookup-based rewriting.
+A/B test, R=11 t1_dit asm instruction count:
 
-## Op-count results
+|                | aggressive ON | aggressive OFF |
+|----------------|---:|---:|
+| R=5 t1_dit     | 68  | 81  |
+| R=7 t1_dit     | 130 | 192 |
+| R=11 t1_dit    | 335 | 543 |
 
-After `dft_direct + algsimp + factor_common_muls + dedup_sub_pairs +
-share_subsums` (aggressive=true for primes only):
+Aggressive saves 16-38% asm instructions. The factor+share+transpose
+pipeline does real work; it isn't net-zero against GCC's fusion.
 
-| R  | Before | After | Δ      | gen_radix*.py target |
-|----|--------|-------|--------|----------------------|
-| 3  | 26     | 18    | −8     | ~16                  |
-| 5  | 85     | 66    | −19    | ~24-46               |
-| 7  | 220    | 140   | −80    | ~50                  |
-| 11 | 644    | 404   | −240   | ~110                 |
+### `factor_by_atom` doesn't fire on prime DFTs (verified)
 
-| R  | Before | After | Δ      |
-|----|--------|-------|--------|
-| 4  | 16     | 16    | +0 ✓   |
-| 8  | 57     | 57    | +0 ✓   |
-| 16 | 171    | 171   | +0 ✓   |
-| 32 | 476    | 476   | +0 ✓   |
-| 64 | 1210   | 1210  | +0 ✓   |
+Tested on synthetic input `0.3·x + 0.5·x + 0.7·x → 1.5·x` — pass fires
+correctly, collapses 3 muls to 1.
 
-R=3 is within 2 ops of hand-coded (likely just FMA-vs-separate
-accounting). R=5/7/11 still have substantial gaps — the remaining
-target is DAG transposition, which Frigo specifically identifies
-as saving muls on sizes 5/13/15.
+Tested on R=5/7/11 prime DFTs — pass NEVER fires. The pattern
+"same atom × different constants in same flat sum" simply does not
+arise in direct DFT for primes. Each (input, output) pair has exactly
+one coefficient by construction.
 
-## Structural separation: primes vs CT
+This is a definitive structural finding: **no amount of algebraic
+simplification can reach Rader's mul count starting from direct DFT**.
+Rader uses primitive-root reordering of Z/N*Z — a number-theoretic
+substitution, not an algebraic identity.
 
-Both new passes default to no-op (`aggressive=false`). The dispatcher
-selects based on `pick_algorithm`:
+## Current op counts (FMA-aware)
 
-    let aggressive = match Dft.pick_algorithm n with
-      | Dft.Direct -> true
-      | Dft.Cooley_Tukey _ -> false in
+| R    | n1 (m, fma) | t1_dit (m, fma) | t1_dif (m, fma) |
+|------|---|---|---|
+| R=3  | 18 (4, 0)   | 26 (4, 0)   | 26 (4, 0) |
+| R=5  | 64 (16, 0)  | 82 (16, 0)  | 82 (16, 0) |
+| R=7  | 126 (30, 14)| 150 (30, 14)| 150 (30, 14) |
+| R=11 | 342 (82, 60)| 389 (87, 55)| 382 (82, 60) |
 
-CT-decomposed codelets are already in FMA-friendly form: each twiddle
-multiplication produces 4 muls with distinct constants — no factoring
-opportunity. Monolithic primes are the inverse: cyclic DFT symmetry
-means many same-constant multiplications across outputs that must
-unify via factoring to expose the Winograd structure.
+CT-decomposed (passes default to no-op):
 
-The use_count <= 1 safety check (initial design) was insufficient for
-CT codelets — even fires that "look safe" can hurt because the
-resulting factored term doesn't share globally. The clean answer is
-the explicit flag.
+| R    | n1 (m, fma) | t1_dit (m, fma) |
+|------|---|---|
+| R=4  | 16 (0, 0)    | 28 (0, 0) |
+| R=8  | 57 (4, 0)    | 85 (4, 0) |
+| R=16 | 162 (16, 8)  | 222 (16, 8) |
+| R=32 | 438 (56, 32) | 562 (56, 32) |
+| R=64 | 1106 (160, 88) | 1358 (160, 88) |
 
-## Files touched
+## Asm-level perf gap to hand-coded (R=11 t1_dit)
 
-- `lib/algsimp.ml`:
-  - Added `lookup_node` (hash-cons table peek without create).
-  - Added `factor_common_muls ?aggressive` (~150 lines).
-  - Added `share_subsums ?aggressive` (~110 lines).
-- `bin/prime_opcount.ml`: measurement harness, runs primes (R=3,5,7,11)
-  through aggressive path and CT (R=4,8,16,32,64) through safe path.
-- `bin/dune`: registered prime_opcount.
+| | Hand | OCaml (aggressive) | Gap |
+|---|---:|---:|---:|
+| vfmadd      | 52  | 167 | +115 |
+| vfnmadd     | 48  | 14  |  -34 |
+| vfmsub      | 10  | 0   |  -10 |
+| vmul        | 30  | 55  |  +25 |
+| vadd        | 30  | 69  |  +39 |
+| vsub        | 20  | 30  |  +10 |
+| **Total**   | **190** | **335** | **+145 (76%)** |
 
-## Next session: DAG transposition
+The hand-coded uses fnmadd/fmsub aggressively for sign tricks; OCaml
+uses mostly fmadd. Plus more standalone muls and adds. All of this is
+algorithmic — Rader-Winograd produces fewer arith ops at the math
+layer; algsimp can't recover this from direct DFT.
 
-Frigo's third simplifier pass — reverse all edges, simplify, reverse
-back. Per his Table 7, saves muls on sizes 5, 10, 13, 15 specifically.
-Estimated 100-200 lines.
+## Next concrete steps (when you pursue this)
 
-The intuition: a linear network computing `y = Mx` can be transposed
-to compute `x = M^T y`, which simplifies differently. The catch is
-that our DAG isn't a pure linear network — it has Mul(_, _) nodes,
-not just edge weights. Need to convert to/from linear-network form
-or implement a more direct transposition on our DAG representation.
+The path to closing the algorithmic gap is clear and has two options:
+
+### Option A: FFTW codelet ingest
+
+Parse FFTW's emitted .c codelets (small fixed dialect: `LD`, `ST`,
+`ADD`, `SUB`, `MUL`, `FMA`, `FNMA`, `FMS`, `FNMS`, `K(literal)`) into
+our Algsimp.t IR. Then run our existing pipeline (factor, share,
+transpose, fma_lift, scheduler, spill controller, register allocator,
+emit_c) on top.
+
+This is what your Python pipeline does. ~300 lines of OCaml for the
+parser, then leverage everything we've built. The pitch:
+"FFTW's algorithmic core is excellent, but its emit phase leaves cycles
+on modern hardware. I built a re-optimization layer that ingests FFTW's
+output, applies microarchitecture-aware scheduling and spill control,
+and produces faster codelets."
+
+This is the lowest-effort path to better-than-FFTW perf on every prime.
+
+### Option B: Rader at the math layer
+
+Write `dft_rader_winograd N` in `lib/dft.ml` for each prime that
+matters. ~300 lines per radix. More elegant (self-contained) but much
+slower to ship, and you have to derive each one. Not obviously better
+than Option A unless the pitch specifically requires "no FFTW
+dependency."
+
+### Recommendation
+
+**Option A**. You've already validated the architecture in Python.
+Reimplementing it in OCaml gives you a single binary, better
+maintainability, and access to all the downstream work that's already
+in place (the SU scheduler, the BB spill controller, the register
+allocator, the emit_c with K-strided layout). You also retain the
+FMA-aware metric so you can measure improvements rigorously.
+
+The interview pitch is sharp: a code re-optimizer for FFT codelets
+that beats FFTW's own codegen on modern hardware.
+
+---
+
+## Update: conjugate-pair construction (this session)
+
+The "algorithmic gap" framing in the section above was wrong. R=11 hand
+is just direct DFT with conjugate-pair sum/diff factoring — no Rader,
+no Winograd. The gap was structural CSE that our binary IR + pair-fold
+couldn't find.
+
+**Fix**: `dft_direct_conjugate_pair` in `lib/dft.ml` constructs the
+shared subexpressions (s_jk, d_jk, p_re_m, p_im_m, q_re_m, q_im_m)
+explicitly. Hash-cons preserves them. Used for odd primes (n≥3, odd).
+
+**Results**:
+- R=11 n1 dropped 300 → 190 ops (matches hand)
+- R=11 t1_dit dropped 336 → 230 ops
+- vmovapd in asm dropped 252 → 69 (register pressure resolved)
+- Bench R=11 t1_dit @ K=4096: G/H = **1.00-1.07** (parity)
+- No regression on pow2
+
+See `docs/23_conjugate_pair.md` for the full diagnosis, the
+forward/backward sign convention, and the supporting changes
+(`needs_reassoc`, `gen_radix` FP loop alignment).

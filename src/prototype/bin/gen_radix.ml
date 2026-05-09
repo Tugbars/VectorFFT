@@ -134,7 +134,88 @@ let () =
   Vfft_v2.Algsimp.reset ();
   let reassoc = Vfft_v2.Dft.needs_reassoc n in
   let simplified = Vfft_v2.Algsimp.of_assignments ~reassoc raw in
-  let deduped = Vfft_v2.Algsimp.dedup_sub_pairs simplified in
+  let deduped_pre = Vfft_v2.Algsimp.dedup_sub_pairs simplified in
+
+  (* Aggressive prime-only passes: distributive factoring of same-const
+   * muls, subsum sharing for X[0] outputs, and Frigo network transposition.
+   * For monolithic prime DFTs (R=3/5/7/11) these expose Winograd-style
+   * structure invisible to the pair-fold simplifier. CT-decomposed
+   * codelets are already in FMA-friendly form — these passes default to
+   * no-op for them.
+   *
+   * For twiddled forms (t1_dit / t1_dif), the inner DFT is wrapped by
+   * Cmul nodes; the factor/share passes still help the inner DFT
+   * structure. Transposition skips Cmul nodes (they're nonlinear). *)
+  let aggressive = match Vfft_v2.Dft.pick_algorithm n with
+    | Vfft_v2.Dft.Direct -> true
+    | Vfft_v2.Dft.Cooley_Tukey _ -> false in
+  let factored = Vfft_v2.Algsimp.factor_common_muls ~aggressive deduped_pre in
+  let factored = Vfft_v2.Algsimp.factor_by_atom ~aggressive factored in
+  let factored = Vfft_v2.Algsimp.dedup_sub_pairs factored in
+  let shared = Vfft_v2.Algsimp.share_subsums ~aggressive factored in
+  (* Transposition is correct only when the DAG is purely linear (no Cmul
+   * nodes — those wrap symbolic twiddle loads, making the network
+   * nonlinear in our representation). For twiddled prime forms (t1_dit,
+   * t1_dif), we skip transposition; factor+share still apply to the
+   * inner DFT structure. *)
+  let has_cmul =
+    let st = Vfft_v2.Algsimp.stats_reachable (List.map snd shared) in
+    st.Vfft_v2.Algsimp.cmuls > 0
+  in
+  let count_ops a =
+    let st = Vfft_v2.Algsimp.stats_reachable (List.map snd a) in
+    st.Vfft_v2.Algsimp.adds + st.subs + st.muls + st.negs
+    + (2 * st.cmuls) + st.fmas
+  in
+  let post_trans =
+    if aggressive && not has_cmul then begin
+      (* FFTW Frigo-style fixed-point: iterate transpose-roundtrip with
+       * factor+factor_by_atom+dedup+share between transpositions, until
+       * op count stops decreasing or we hit the iteration cap.
+       *
+       * Each "round trip" applies transpose twice (back to original
+       * orientation) so the final assignments still produce X[k] (not
+       * the transposed problem). Between transpositions, the algebraic
+       * simplifications get to attack a different structural view of
+       * the network, often finding savings that survive when transposed
+       * back.
+       *
+       * Iteration cap = 6: empirically converges within 2-4 rounds for
+       * primes; pow2 is no-op (transpose returns identical structure on
+       * symmetric butterflies). Mirror prime_opcount.ml's policy. *)
+      let rec fp prev_assigns prev_count iter =
+        if iter >= 6 then prev_assigns
+        else begin
+          let t1 = Vfft_v2.Algsimp.transpose prev_assigns in
+          let t1f = Vfft_v2.Algsimp.factor_common_muls ~aggressive t1 in
+          let t1f = Vfft_v2.Algsimp.factor_by_atom ~aggressive t1f in
+          let t1f = Vfft_v2.Algsimp.dedup_sub_pairs t1f in
+          let t1s_pass = Vfft_v2.Algsimp.share_subsums ~aggressive t1f in
+          let t2 = Vfft_v2.Algsimp.transpose t1s_pass in
+          let t2f = Vfft_v2.Algsimp.factor_common_muls ~aggressive t2 in
+          let t2f = Vfft_v2.Algsimp.factor_by_atom ~aggressive t2f in
+          let t2f = Vfft_v2.Algsimp.dedup_sub_pairs t2f in
+          let t2s = Vfft_v2.Algsimp.share_subsums ~aggressive t2f in
+          let new_count = count_ops t2s in
+          if new_count >= prev_count then prev_assigns
+          else fp t2s new_count (iter + 1)
+        end
+      in
+      fp shared (count_ops shared) 0
+    end else shared
+  in
+  (* FMA lift runs LAST — after all simplifications are settled.
+   * Recognizes single-use Add(Mul, c) etc. and rewrites as NK_Fma atoms,
+   * which the codegen renders as one AVX-512 FMA instruction. This
+   * applies to BOTH primes and pow2: the lift pass is independent of
+   * aggressive mode. *)
+  (* FMA lift runs LAST. At the asm level, GCC -O3 -mfma auto-fuses
+   * un-lifted Mul+Add patterns reliably, so fma_lift is essentially a
+   * no-op for codegen perf — verified by asm diff. The reason to keep
+   * it: it makes our DAG metric track actual instruction count (1 fma
+   * vs 2 separate ops), and it stabilizes against compiler-version
+   * variations in auto-fusion. *)
+  let deduped = Vfft_v2.Algsimp.fma_lift post_trans in
 
   (* Lift spill markers to algsimp tags, then build spill_info.
    * Must happen AFTER of_assignments so hash-consing has run on the

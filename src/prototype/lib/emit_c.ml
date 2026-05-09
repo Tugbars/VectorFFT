@@ -37,6 +37,8 @@ let topo_sort_reachable (roots : t list) : t list =
         visit a; visit b
       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
         visit a; visit b; visit c; visit d
+      | NK_Fma (a, b, c, _, _) ->
+        visit a; visit b; visit c
     end
   in
   List.iter visit roots;
@@ -153,6 +155,18 @@ let render_node_def
       Isa.fnmadd_pd isa (v xi) (v wi) (Isa.mul_pd isa (v xr) (v wr))
     | NK_CmulIm (xr, xi, wr, wi) ->
       Isa.fmadd_pd isa (v xr) (v wi) (Isa.mul_pd isa (v xi) (v wr))
+    | NK_Fma (a, b, c, neg_mul, neg_add) ->
+      (* (neg_mul ? -a*b : a*b) + (neg_add ? -c : c)
+       *
+       *   neg_mul=F, neg_add=F:  a*b + c       → fmadd
+       *   neg_mul=F, neg_add=T:  a*b - c       → fmsub
+       *   neg_mul=T, neg_add=F:  -a*b + c      → fnmadd
+       *   neg_mul=T, neg_add=T:  -a*b - c      → fnmsub *)
+      (match neg_mul, neg_add with
+       | false, false -> Isa.fmadd_pd  isa (v a) (v b) (v c)
+       | false, true  -> Isa.fmsub_pd  isa (v a) (v b) (v c)
+       | true,  false -> Isa.fnmadd_pd isa (v a) (v b) (v c)
+       | true,  true  -> Isa.fnmsub_pd isa (v a) (v b) (v c))
   in
   if fused then
     (* Plain assignment to outer-scope variable — no declarator. *)
@@ -276,6 +290,7 @@ let classify_passes (sp : spill_info) (nodes : t list)
     | NK_Neg a -> [a]
     | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
     | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+    | NK_Fma (a, b, c, _, _) -> [a; b; c]
   in
   List.iter (fun e ->
     if is_spilled sp e.tag then
@@ -442,6 +457,7 @@ let emit_codelet
        | NK_Neg a -> [a]
        | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
        | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+       | NK_Fma (a, b, c, _, _) -> [a; b; c]
      in
      let use_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
      let bump_use tag =
@@ -590,6 +606,7 @@ let emit_codelet
        | NK_Neg a -> [a]
        | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
        | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+       | NK_Fma (a, b, c, _, _) -> [a; b; c]
      in
      (* Build forward succs map for PASS 1 nodes only. *)
      let pass1_set = Hashtbl.create 256 in
@@ -862,6 +879,7 @@ let emit_codelet
          through_fused_mul a @ through_fused_mul b
        | NK_Mul (a, b) -> [a; b]
        | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+       | NK_Fma (a, b, c, _, _) -> [a; b; c]
      and through_fused_mul (n : t) : t list =
        if Hashtbl.mem fused_muls n.tag then
          match n.node with
