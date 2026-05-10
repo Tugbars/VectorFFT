@@ -206,7 +206,8 @@ let _mul_count assigns =
 let measure n =
   let aggressive = match Dft.pick_algorithm n with
     | Dft.Direct -> true
-    | Dft.Cooley_Tukey _ -> false in
+    | Dft.Cooley_Tukey _ -> false
+    | Dft.Split_radix -> false in
   let reassoc = Dft.needs_reassoc n in
 
   (* n1 (no twiddle, plain DFT) *)

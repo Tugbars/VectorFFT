@@ -240,3 +240,35 @@ The pass continues to fire only where the pattern arises. R=10 produces
 became visible as a perf regression because the fix was already in
 place when they were wired — empirical confirmation that unconditional
 application is the right design.
+
+## Amendment: peephole, not post-pass
+
+The original implementation ran `lift_sub_neg_mul` as a standalone
+post-pass after `dedup_sub_pairs`. This worked correctly for R=25 and
+the prime family but silently broke R=32 and R=64 CT codelets when
+their codelets were re-tested during the split-radix research arc
+(see [31_split_radix_research_arc.md](31_split_radix_research_arc.md)).
+
+Root cause: the post-pass rebuilt the DAG, creating new Fma nodes
+with new tags. Spill markers captured before the rewrite still
+referenced the old tags via hashcons. emit_c then emitted spill_loads
+for tags that no consumer in the rebuilt DAG actually drove.
+
+Fix: the rewrite now lives as a smart-constructor peephole inside
+`mk_sub_binary` (algsimp.ml ~line 287). When `dedup_sub_pairs`
+rebuilds the DAG via the smart constructors, the peephole fires at
+construction time. Spill markers, captured later, naturally find the
+post-peephole nodes via hashcons.
+
+The behavioral guarantees are preserved:
+- R=25 vxorpd count remains 0
+- R=25 IR stats unchanged: 6 Fmas, 666 vector instructions
+- R=32, R=64 CT codelets now compile clean
+- Prime correctness: 56/56 PASS
+
+General lesson: IR transformations whose results must remain consistent
+with downstream tag references (spill markers, schedule annotations,
+serialized snapshots) should be peepholes during hashcons construction,
+not post-passes that walk and rebuild after construction is "complete."
+A post-pass produces a new DAG; any tag-holding consumer of the old
+DAG is now stale.

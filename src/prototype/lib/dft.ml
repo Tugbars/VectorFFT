@@ -31,6 +31,26 @@ open Expr
 type algorithm =
   | Direct                        (* prime n, or n=2: use dft_kernel *)
   | Cooley_Tukey of int * int     (* (n1, n2): split DFT-n into n1 columns of n2 *)
+  | Split_radix                   (* pow2 n ≥ 8: SR decomposition (N/2 + N/4 + N/4) *)
+
+(* Opt-in routing of pow2 sizes through split-radix instead of CT.
+ *
+ * Controlled by the VFFT_SPLIT_RADIX environment variable: when set to
+ * "1" (or any non-empty value), pick_algorithm routes N ∈ {8, 16, 32, 64}
+ * through Split_radix. Otherwise these N continue to use their existing
+ * CT factorizations.
+ *
+ * Rationale for the env var approach (rather than a CLI flag or a default
+ * change): the existing recipe machinery in dft_expand_twiddled_spill is
+ * calibrated against the CT decomposition's PASS 1 / PASS 2 boundary. SR
+ * doesn't have that same boundary structure, so the recipe needs separate
+ * adaptation work (next PR). Until that's done, leaving SR opt-in lets us
+ * validate correctness without disturbing the existing R=16/32/64 path.
+ *)
+let split_radix_enabled () : bool =
+  match Sys.getenv_opt "VFFT_SPLIT_RADIX" with
+  | None | Some "" -> false
+  | Some _ -> true
 
 (* Pick algorithm based on n's number-theoretic properties.
  *
@@ -48,6 +68,12 @@ type algorithm =
  * produce, and matches the user's existing benchmark layout. *)
 let pick_algorithm (n : int) : algorithm =
   if n <= 2 then Direct
+  else if split_radix_enabled () && n >= 8 && n land (n - 1) = 0 then
+    (* Route pow2 sizes ≥ 8 through Split_radix when VFFT_SPLIT_RADIX is set.
+     * N=4 stays as CT(2,2) regardless — SR's recursion bottoms there.
+     * N=2 stays as Direct (also an SR base case).
+     * Non-pow2 sizes are unaffected: SR requires power-of-two N. *)
+    Split_radix
   else match n with
     | 4 -> Cooley_Tukey (2, 2)
     | 8 -> Cooley_Tukey (2, 4)
@@ -57,6 +83,20 @@ let pick_algorithm (n : int) : algorithm =
         (* Hand-coded R=64 uses CT(8, 8) — symmetric factorization that
          * splits the 64-point DFT into 8 sub-FFT-8s in PASS 1 and 8
          * sub-FFT-8s in PASS 2. Same convention as gen_radix64.py. *)
+    | 128 -> Cooley_Tukey (8, 16)
+        (* R=128 EXPERIMENTAL stress test for spill controller and IR
+         * construction at sizes beyond R=64. CT(8, 16) splits N=128 into
+         * 16 sub-DFT-8s in PASS 1 and 8 sub-DFT-16s in PASS 2. Inner
+         * DFT-16 = CT(4, 4) which is well-tested. The outer DFT-8 is
+         * CT(2, 4). All sub-codelets exist and work cleanly.
+         *
+         * Default fallback CT(2, 64) doesn't terminate in 60s — the
+         * recursion through 64 = CT(8, 8) builds an enormous nested IR.
+         * CT(8, 16) directly avoids this depth.
+         *
+         * Peak live count exceeds 32 ZMM significantly; recipe path is
+         * mandatory. Probably exposes spill controller weaknesses we
+         * want to characterize. See docs/31_R128_spill_stress.md. *)
         (* User's gen_radix32.py uses CT(8, 4) in their (N1, N2) convention.
          * Their convention has input mapping n = N2*n1 + n2 (high digit n1),
          * ours has n = n1 + n2*N1 (low digit n1). The labels swap.
@@ -133,6 +173,8 @@ let needs_reassoc (n : int) : bool =
   match pick_algorithm n with
   | Direct -> n < 3 || n mod 2 = 0  (* only n=2 hits this in practice *)
   | Cooley_Tukey _ -> false
+  | Split_radix -> false  (* SR construction is structured like CT — already
+                           * has butterfly form; reassoc would flatten it. *)
 
 (* === COOLEY-TUKEY DIT DECOMPOSITION ===
  *
@@ -205,6 +247,14 @@ let rec dft ?(sign = `Fwd) (n : int) (input_re : int -> expr) (input_im : int ->
     else
       dft_direct ~sign n input_re input_im
   | Cooley_Tukey (n1, n2) -> dft_ct ~sign n1 n2 input_re input_im
+  | Split_radix ->
+    (* Split-radix lives in its own module (lib/split_radix.ml). Cross-
+     * module mutual recursion uses the callback pattern: we pass `dft`
+     * itself in as `dft_rec` so SR can recurse on its sub-DFT inputs
+     * (size N/2 and N/4) which dispatch back through the picker. *)
+    Split_radix.dft_split_radix
+      ~dft_rec:(fun ~sign:s n' f g -> dft ~sign:s n' f g)
+      ~sign n input_re input_im
 
 (* Direct DFT: matrix-vector form.
  *   X[k].re = Σ_n  a[n] * cos(±2πnk/n) - b[n] * sin(±2πnk/n)
@@ -736,6 +786,20 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `F
   match pick_algorithm n with
   | Direct ->
     (* No CT structure → no spill boundary. Fall back to plain expansion. *)
+    (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
+  | Split_radix ->
+    (* Split-radix doesn't have the same PASS 1 / PASS 2 cluster boundary
+     * that the recipe machinery is calibrated against. SR's structure is
+     * three recursive sub-DFTs (E of size N/2, O1 and O3 of size N/4) whose
+     * outputs combine in a different topology than CT's symmetric two-pass.
+     *
+     * For this first PR we fall back to plain (non-recipe) expansion: the
+     * codelet still generates correctly, just without spill markers. A
+     * follow-up PR will design a recipe topology for SR that gives R=32/64
+     * comparable spill management to what they get under CT today.
+     *
+     * This is the same fallback path Direct takes — both algorithms simply
+     * lack a clean cluster boundary for the current recipe shape. *)
     (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
   | Cooley_Tukey (n1, n2) ->
     (* DIT pre-multiplies inputs by twiddles; DIF leaves inputs raw and
