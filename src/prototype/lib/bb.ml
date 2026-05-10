@@ -35,13 +35,9 @@
  * the time budget will typically expire before exhaustive search completes;
  * best-found-so-far is returned. *)
 
-let preds_of (e : Algsimp.t) : Algsimp.t list =
-  match e.node with
-  | NK_Const _ | NK_Load _ -> []
-  | NK_Neg a -> [a]
-  | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
-  | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
-  | NK_Fma (a, b, c, _, _) -> [a; b; c]
+(* Re-export of Algsimp.preds — kept under the historical name for the
+ * bb_diagnostic CLI. New call sites should use Algsimp.preds directly. *)
+let preds_of = Algsimp.preds
 
 (* Compute peak-live for an existing schedule. *)
 let compute_peak_live

@@ -36,15 +36,6 @@ type node = {
 
 (* === DAG CONSTRUCTION === *)
 
-(* Get the immediate Algsimp.t predecessors of a node, in their natural order. *)
-let predecessor_exprs (e : Algsimp.t) : Algsimp.t list =
-  match e.node with
-  | NK_Const _ | NK_Load _ -> []
-  | NK_Neg a -> [a]
-  | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
-  | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
-  | NK_Fma (a, b, c, _, _) -> [a; b; c]
-
 (* Build a scheduling DAG from a list of (output_ref, expr) assignments.
  *
  * The DAG includes:
@@ -64,8 +55,8 @@ let build_dag (assigns : (Expr.elem_ref * Algsimp.t) list) : node list =
     match Hashtbl.find_opt by_tag e.tag with
     | Some n -> n
     | None ->
-      let preds = predecessor_exprs e in
-      let pred_nodes = List.map node_of preds in
+      let pred_exprs = Algsimp.preds e in
+      let pred_nodes = List.map node_of pred_exprs in
       let n = {
         id = fresh ();
         alg_node = e;
@@ -259,14 +250,6 @@ let top_level_bisection (assigns : (Expr.elem_ref * Algsimp.t) list)
  * dependencies are satisfied.
  *)
 
-let preds_of (e : Algsimp.t) : Algsimp.t list =
-  match e.node with
-  | NK_Const _ | NK_Load _ -> []
-  | NK_Neg a -> [a]
-  | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
-  | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
-  | NK_Fma (a, b, c, _, _) -> [a; b; c]
-
 (* Latency of producing this node, given a Uarch profile. Used by
  * critical-path computation. *)
 let node_latency (uarch : Uarch.t) (e : Algsimp.t) : int =
@@ -295,7 +278,7 @@ let compute_cp_dist (uarch : Uarch.t)
     Hashtbl.replace users prod.tag (use :: cur)
   in
   List.iter (fun n ->
-    List.iter (fun p -> add_user p n) (preds_of n)
+    List.iter (fun p -> add_user p n) (preds n)
   ) all_nodes;
 
   let cp_dist : (int, int) Hashtbl.t = Hashtbl.create 256 in
@@ -371,7 +354,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
   let rec visit (e : Algsimp.t) =
     if not (Hashtbl.mem seen e.tag) then begin
       Hashtbl.add seen e.tag e;
-      List.iter visit (preds_of e)
+      List.iter visit (preds e)
     end
   in
   List.iter (fun (_, e) -> visit e) assigns;
@@ -387,13 +370,13 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
     List.iter (fun p ->
       let cur = try Hashtbl.find users p.tag with Not_found -> [] in
       Hashtbl.replace users p.tag (n :: cur)
-    ) (preds_of n)
+    ) (preds n)
   ) all_nodes;
 
   (* Unscheduled-pred counter per node. *)
   let unsched_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
   List.iter (fun n ->
-    Hashtbl.add unsched_count n.tag (List.length (preds_of n))
+    Hashtbl.add unsched_count n.tag (List.length (preds n))
   ) all_nodes;
 
   (* Ready set: nodes whose predecessors have all been scheduled. *)
@@ -401,7 +384,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
   let in_ready : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   let ready : Algsimp.t list ref = ref [] in
   List.iter (fun n ->
-    if preds_of n = [] then begin
+    if preds n = [] then begin
       ready := n :: !ready;
       Hashtbl.add in_ready n.tag ()
     end
@@ -572,7 +555,7 @@ let su_schedule_subset (uarch : Uarch.t)
   let rec visit (e : Algsimp.t) =
     if not (Hashtbl.mem all_reachable e.tag) then begin
       Hashtbl.add all_reachable e.tag e;
-      List.iter visit (preds_of e)
+      List.iter visit (preds e)
     end
   in
   List.iter visit sinks;
@@ -588,7 +571,7 @@ let su_schedule_subset (uarch : Uarch.t)
         let cur = try Hashtbl.find users p.tag with Not_found -> [] in
         Hashtbl.replace users p.tag (n :: cur)
       end
-    ) (preds_of n)
+    ) (preds n)
   ) subset;
 
   (* Unscheduled-pred counter — only count predecessors IN the subset.
@@ -597,7 +580,7 @@ let su_schedule_subset (uarch : Uarch.t)
   List.iter (fun n ->
     let in_subset_preds = List.filter (fun p ->
       Hashtbl.mem in_subset p.Algsimp.tag
-    ) (preds_of n) in
+    ) (preds n) in
     Hashtbl.add unsched_count n.tag (List.length in_subset_preds)
   ) subset;
 
@@ -617,7 +600,7 @@ let su_schedule_subset (uarch : Uarch.t)
           let cur = try Hashtbl.find user_count p.tag with Not_found -> 0 in
           Hashtbl.replace user_count p.tag (cur + 1)
         end
-      ) (preds_of n)
+      ) (preds n)
     ) subset;
     Hashtbl.iter (fun tag c -> Hashtbl.add remaining_users tag c) user_count
   end;
@@ -699,7 +682,7 @@ let su_schedule_subset (uarch : Uarch.t)
       let pressure_delta n =
         let preds_in_sub = List.filter (fun p ->
           Hashtbl.mem in_subset p.Algsimp.tag
-        ) (preds_of n) in
+        ) (preds n) in
         let kills = List.fold_left (fun acc p ->
           let ru = try Hashtbl.find remaining_users p.Algsimp.tag with Not_found -> 0 in
           if ru = 1 then acc + 1 else acc
@@ -753,7 +736,7 @@ let su_schedule_subset (uarch : Uarch.t)
       if gh then begin
         let preds_in_sub = List.filter (fun p ->
           Hashtbl.mem in_subset p.Algsimp.tag
-        ) (preds_of n) in
+        ) (preds n) in
         List.iter (fun p ->
           let cur = try Hashtbl.find remaining_users p.Algsimp.tag with Not_found -> 0 in
           let new_count = cur - 1 in

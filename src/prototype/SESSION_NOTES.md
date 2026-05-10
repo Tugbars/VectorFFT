@@ -732,3 +732,148 @@ break inline chains). DIT primes will likely be at parity with hand;
 DIF primes at 5-20% behind, similar to R=17. No bench data captured
 yet (would require a hand R=19 reference, which means running
 gen_radix19.py through Python — not done in this session).
+
+---
+
+## emit_c.ml refactor — three reviewer-suggested cleanups
+
+A separate review of `lib/emit_c.ml` flagged dead machinery and
+duplication. Three changes landed; all three preserve byte-identical
+asm output (verified for R=17 t1_dit and R=32 t1_dit), with the only
+asm difference being the `.file` directive (source filename header).
+
+### #1 — Delete dead FMA fusion machinery
+
+The file carried a full source-level FMA fusion pipeline (`fused_muls`
+hashtbl, `_is_fusable_mul`, `as_fused_mul` in `render_node_def`,
+`through_fused_mul` in PASS 2 reload tracking, the `~fused`
+declarator-skip branch in node emission). The fusion table was
+created empty and never populated — a comment block at the spill-path
+entry explained the table was disabled because GCC's `-mfma` at `-O3`
+fuses contracted patterns automatically and explicit fmadd emission
+slightly hurt by constraining GCC's variant selection.
+
+Net effect: every `as_fused_mul` returned `None`, every
+`through_fused_mul` returned `[n]`, every `~fused` rendering branch
+was unreachable. ~140 lines of code that looked active but did
+nothing — exactly the kind of trap that lulls a future contributor
+into incorrect reasoning about emission.
+
+Removed:
+- `?fused_muls` parameter from `render_node_def` and
+  `compute_inline_set`
+- `as_fused_mul` helper (and its NK_Add/NK_Sub fusion arms in both
+  the body and `render_inlined`)
+- `through_fused_mul` walker in PASS 2 reload tracking
+- `fused_muls` hashtbl creation, `_is_fusable_mul`, the `ignore`
+  line, `fused_muls_opt`
+- `is_spill_target` and `is_fused_pass1_tag` (only fed
+  `_is_fusable_mul`)
+- `use_count` and `bump_use` in the spill path (also only fed
+  `_is_fusable_mul`)
+- The `Hashtbl.mem fused_muls e.tag` skip in PASS 1 and PASS 2
+  emission
+
+Renamed: the surviving `~fused` parameter became `~no_declarator`.
+The original name was overloaded for two unrelated concepts — FMA
+fusion (now gone) and the spill-fused-slot forward-declaration mode
+(real, kept). Disambiguating made the surviving path readable.
+
+### #2 — Consolidate `preds_of` definitions
+
+The IR-predecessor walk was redefined locally in seven places:
+
+- `lib/emit_c.ml` × 4 (classify_passes, block-sequential reorder,
+  cluster propagation as `preds_of_general`, PASS 2 reload tracking)
+- `lib/schedule.ml` × 2 (`predecessor_exprs`, `preds_of`)
+- `lib/bb.ml` × 1 (`preds_of`, exposed via `Bb.preds_of` for the
+  bb_diagnostic CLI)
+
+Plus an eighth in `lib/annotate.ml` that the review didn't catch.
+
+All eight bodies were pixel-identical (modulo whitespace and the
+parameter type annotation). Consolidated into one canonical
+`Algsimp.preds : t -> t list` defined immediately after the `t`
+record type. All seven other locations now call `Algsimp.preds` (or
+unqualified `preds` where Algsimp is opened); `Bb.preds_of` is kept
+as `let preds_of = Algsimp.preds` to preserve the exported symbol
+for the diagnostic CLI without forcing that file to change.
+
+The `through_fused_mul` walker that was the only meaningful variation
+between the seven definitions disappeared with #1, so consolidation
+became fully mechanical.
+
+### #4 — Tighten the PASS 2 cluster-flush state machine
+
+The cluster-boundary detection in PASS 2 emission was a three-arm
+match:
+
+```ocaml
+(match cur_cluster, !last_pass2_cluster with
+ | Some c, Some prev when c <> prev ->
+   flush_cluster_stores prev;
+   last_pass2_cluster := Some c
+ | Some c, None ->
+   last_pass2_cluster := Some c
+ | _ -> ())
+```
+
+Two arms had the same `last_pass2_cluster := Some c` update and the
+remaining `_ -> ()` case made it visually ambiguous which scenarios
+were no-ops. Easy to break on a future refactor (e.g., adding a
+fourth arm for some new cluster category).
+
+Collapsed to a two-arm match (only the prev≠cur transition does
+work) plus a single unconditional update:
+
+```ocaml
+let cur_cluster = Hashtbl.find_opt cluster_of_pass2_node e.tag in
+(match !last_pass2_cluster, cur_cluster with
+ | Some prev, Some now when prev <> now -> flush_cluster_stores prev
+ | _ -> ());
+(match cur_cluster with
+ | Some _ -> last_pass2_cluster := cur_cluster
+ | None -> ())
+```
+
+Same logic, smaller surface area. Verified asm-equivalent.
+
+### Verification
+
+- 56/56 prime correctness PASS at machine precision (R={2,5,7,11,13,17,19} × 8 variants)
+- 42/42 prime spot-check compile sweep
+- R=32/64 n1/t1_dit/t1_dif composite codelets compile
+- R=17 t1_dit and R=32 t1_dit asm byte-identical to baseline (only
+  difference: `.file` directive with source filename)
+
+### Line count delta
+
+| File | Before | After | Δ |
+|---|---|---|---|
+| lib/emit_c.ml | 1327 | 1166 | **−161** |
+| lib/schedule.ml | 785 | 768 | −17 |
+| lib/algsimp.ml | 1707 | 1720 | +13 (canonical preds) |
+| lib/annotate.ml | 313 | 305 | −8 |
+| lib/bb.ml | 310 | 305 | −5 |
+| **Total** | **4442** | **4264** | **−178** |
+
+### What the review missed (logged for later)
+
+- The `lib/annotate.ml` `preds` definition was an eighth duplicate;
+  the review listed five.
+- `lib/bb.ml` exports `preds_of` for `bin/bb_diagnostic.ml`; the
+  cleanest path was to keep the symbol as a re-export of
+  `Algsimp.preds` rather than rename the public API.
+- The empirical concern in the review's #3 (constants inside the
+  for-loop not being hoisted by GCC's LICM) was empirically wrong at
+  GCC 13.3 / `-O3 -mavx512f -mfma`: `vbroadcastsd` instructions for
+  literal constants land at lines 361–381 of the R=32 t1_dit asm,
+  before the loop label `.L7` at line 385. The structural critique
+  (cleaner to emit constants outside the loop) stands but not on
+  perf grounds.
+- The Annotate emission path in `lib/emit_c.ml` (~300 lines, the
+  `--annotate` flag) is also dead — prior session established it
+  makes spills 86% worse because forward-declaring mutables defeats
+  SSA. Same kind of "scaffolded experiment with no current value"
+  that #1 addressed, but at a larger blast radius. Left for a future
+  cleanup.

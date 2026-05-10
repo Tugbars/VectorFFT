@@ -213,18 +213,29 @@ let () =
       fp shared (count_ops shared) 0
     end else shared
   in
-  (* FMA lift runs LAST — after all simplifications are settled.
-   * Recognizes single-use Add(Mul, c) etc. and rewrites as NK_Fma atoms,
-   * which the codegen renders as one AVX-512 FMA instruction. This
-   * applies to BOTH primes and pow2: the lift pass is independent of
-   * aggressive mode. *)
-  (* FMA lift runs LAST. At the asm level, GCC -O3 -mfma auto-fuses
-   * un-lifted Mul+Add patterns reliably, so fma_lift is essentially a
-   * no-op for codegen perf — verified by asm diff. The reason to keep
-   * it: it makes our DAG metric track actual instruction count (1 fma
-   * vs 2 separate ops), and it stabilizes against compiler-version
-   * variations in auto-fusion. *)
-  let deduped = Vfft_v2.Algsimp.fma_lift post_trans in
+  (* FMA lift was historically applied unconditionally with the comment
+   * "GCC -O3 -mfma auto-fuses un-lifted Mul+Add patterns reliably, so
+   * fma_lift is essentially a no-op for codegen perf." That claim turns
+   * out to be false for composite (Cooley-Tukey) DAGs: explicit NK_Fma
+   * nodes constrain GCC's register allocation more than auto-fused
+   * mul+add chains, producing significantly more vmovapd reg-reg moves
+   * (R=32 SU+Spill: loop-body 251 vmovapd with fma_lift vs ~100 without
+   * — and total FP instructions 910 vs 717, where hand has 709).
+   *
+   * Empirical llvm-mca SKX cycles (R=32 t1_dit loop body):
+   *   With fma_lift:    312 cycles
+   *   Without fma_lift: 226 cycles  (beating hand 338 by 33%)
+   *
+   * For primes (Direct construction with conjugate pairs), fma_lift IS a
+   * marginal win (~1-2% on R=13/R=17 cycles) — the prime DAG shape
+   * exposes specific Add(Mul, c) patterns that benefit from explicit FMA
+   * encoding. So gate fma_lift to aggressive (= Direct primes) only.
+   *
+   * See docs/28_composite_regression_fma_lift.md for full investigation. *)
+  let deduped =
+    if aggressive then Vfft_v2.Algsimp.fma_lift post_trans
+    else post_trans
+  in
 
   (* Lift spill markers to algsimp tags, then build spill_info.
    * Must happen AFTER of_assignments so hash-consing has run on the

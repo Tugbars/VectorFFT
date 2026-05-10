@@ -109,24 +109,10 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
 let inline_max_depth = 32
 
 let render_node_def
-    ?(fused = false)
-    ?(fused_muls : (int, unit) Hashtbl.t option = None)
+    ?(no_declarator = false)
     ?(inline_set : (int, unit) Hashtbl.t option = None)
     ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool) (e : t) : string =
   let v t = Printf.sprintf "t%d" t.tag in
-  (* Helper: try to extract operands of a fused-Mul predecessor.
-   * Returns Some (x, y) if `n` is a Mul tagged for FMA fusion;
-   * the standalone definition of `n` will have been suppressed elsewhere. *)
-  let as_fused_mul n =
-    match fused_muls with
-    | None -> None
-    | Some tbl ->
-      if not (Hashtbl.mem tbl n.tag) then None
-      else
-        match n.node with
-        | NK_Mul (x, y) -> Some (x, y)
-        | _ -> None
-  in
   (* Should this node be inlined into its consumer's expression? *)
   let should_inline n =
     match inline_set with
@@ -143,7 +129,15 @@ let render_node_def
     (* Recursive case: inline this node's expression. Don't inline Loads
      * (their memory operand is fine, but inlining them duplicates loads)
      * or Cmul nodes (they'd require complex parenthesization for the
-     * pseudo-FMA pair semantics). *)
+     * pseudo-FMA pair semantics).
+     *
+     * Note: source-level FMA fusion of Add(Mul(x,y), b) → fmadd(x,y,b)
+     * is NOT done here. GCC -O3 -mfma fuses these patterns automatically
+     * via instruction contraction. Source-level fusion was tried and
+     * found to be a wash (sometimes slightly hurt by constraining GCC's
+     * variant selection — see the nearby commit history). The IR-level
+     * NK_Fma node (created by `fma_lift`) IS rendered as fmadd directly;
+     * that path is the only one that explicitly emits FMA intrinsics. *)
     match n.node with
     | NK_Const c ->
       Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
@@ -154,35 +148,11 @@ let render_node_def
        | _ -> Isa.xor_pd isa (render_operand (depth+1) inner)
                             (Isa.set1_pd_str isa "-0.0"))
     | NK_Add (a, b) ->
-      (match as_fused_mul a with
-       | Some (x, y) ->
-         Isa.fmadd_pd isa (render_operand (depth+1) x)
-                          (render_operand (depth+1) y)
-                          (render_operand (depth+1) b)
-       | None ->
-         match as_fused_mul b with
-         | Some (x, y) ->
-           Isa.fmadd_pd isa (render_operand (depth+1) x)
-                            (render_operand (depth+1) y)
-                            (render_operand (depth+1) a)
-         | None ->
-           Isa.add_pd isa (render_operand (depth+1) a)
-                          (render_operand (depth+1) b))
+      Isa.add_pd isa (render_operand (depth+1) a)
+                     (render_operand (depth+1) b)
     | NK_Sub (a, b) ->
-      (match as_fused_mul b with
-       | Some (x, y) ->
-         Isa.fnmadd_pd isa (render_operand (depth+1) x)
-                           (render_operand (depth+1) y)
-                           (render_operand (depth+1) a)
-       | None ->
-         match as_fused_mul a with
-         | Some (x, y) ->
-           Isa.fmsub_pd isa (render_operand (depth+1) x)
-                            (render_operand (depth+1) y)
-                            (render_operand (depth+1) b)
-         | None ->
-           Isa.sub_pd isa (render_operand (depth+1) a)
-                          (render_operand (depth+1) b))
+      Isa.sub_pd isa (render_operand (depth+1) a)
+                     (render_operand (depth+1) b)
     | NK_Mul (a, b) ->
       Isa.mul_pd isa (render_operand (depth+1) a) (render_operand (depth+1) b)
     | NK_CmulRe _ | NK_CmulIm _ -> v n  (* don't inline cmul *)
@@ -211,29 +181,8 @@ let render_node_def
        | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" (-. c))
        | _ ->
          Isa.xor_pd isa (op inner) (Isa.set1_pd_str isa "-0.0"))
-    | NK_Add (a, b) ->
-      (* Try to fuse: Add(Mul(x,y), b) → fmadd(x, y, b)
-       *              Add(a, Mul(x,y)) → fmadd(x, y, a)
-       * Prefer fusing the LEFT operand if both are fusable Muls
-       * (arbitrary tie-break; only one Mul can fuse per Add). *)
-      (match as_fused_mul a with
-       | Some (x, y) -> Isa.fmadd_pd isa (op x) (op y) (op b)
-       | None ->
-         match as_fused_mul b with
-         | Some (x, y) -> Isa.fmadd_pd isa (op x) (op y) (op a)
-         | None -> Isa.add_pd isa (op a) (op b))
-    | NK_Sub (a, b) ->
-      (* Sub(a, b) = a - b. Two FMA fusion opportunities:
-       *   Sub(Mul(x,y), b) → fmsub(x, y, b)   (x*y - b)
-       *   Sub(a, Mul(x,y)) → fnmadd(x, y, a)  (a - x*y = -x*y + a)
-       * Prefer fusing the second operand (subtracted Mul) since fnmadd
-       * tends to produce slightly tighter scheduling on x86. *)
-      (match as_fused_mul b with
-       | Some (x, y) -> Isa.fnmadd_pd isa (op x) (op y) (op a)
-       | None ->
-         match as_fused_mul a with
-         | Some (x, y) -> Isa.fmsub_pd isa (op x) (op y) (op b)
-         | None -> Isa.sub_pd isa (op a) (op b))
+    | NK_Add (a, b) -> Isa.add_pd isa (op a) (op b)
+    | NK_Sub (a, b) -> Isa.sub_pd isa (op a) (op b)
     | NK_Mul (a, b) -> Isa.mul_pd isa (op a) (op b)
     | NK_CmulRe (xr, xi, wr, wi) ->
       Isa.fnmadd_pd isa (op xi) (op wi) (Isa.mul_pd isa (op xr) (op wr))
@@ -252,8 +201,11 @@ let render_node_def
        | true,  false -> Isa.fnmadd_pd isa (op a) (op b) (op c)
        | true,  true  -> Isa.fnmsub_pd isa (op a) (op b) (op c))
   in
-  if fused then
-    (* Plain assignment to outer-scope variable — no declarator. *)
+  if no_declarator then
+    (* Plain assignment to a variable forward-declared at outer scope.
+     * Used for spill "fused slots" — values whose lifetime crosses the
+     * PASS 1 / PASS 2 boundary as register-resident SSA, so they're
+     * declared once before either pass opens and assigned in PASS 1. *)
     Printf.sprintf "        %s = %s;" (v e) body
   else
     Printf.sprintf "        %s" (Isa.const_decl isa (v e) body)
@@ -310,14 +262,12 @@ type scheduler =
  *   - Not a Load (loads have memory operands; inlining duplicates them)
  *   - Not a Cmul (Cmul.re/Cmul.im share state via 2-instruction sequence)
  *   - Not a sink (sinks are output assignments)
- *   - Not in fused_muls (already suppressed by FMA fusion path)
  *
  * "Use count" = number of distinct nodes that reference this tag as a
  * predecessor PLUS 1 if the tag also appears as an output assignment
  * (the store counts as a use).
  *)
 let compute_inline_set
-    ?(fused_muls : (int, unit) Hashtbl.t option = None)
     (assigns : (Expr.elem_ref * t) list) : (int, unit) Hashtbl.t =
   let roots = List.map snd assigns in
   let nodes = topo_sort_reachable roots in
@@ -348,17 +298,13 @@ let compute_inline_set
   List.iter (fun n ->
     let count = try Hashtbl.find use_count n.tag with Not_found -> 0 in
     let is_sink = Hashtbl.mem sink_tags n.tag in
-    let is_fused = match fused_muls with
-      | None -> false
-      | Some tbl -> Hashtbl.mem tbl n.tag
-    in
     let kind_inlinable = match n.node with
       | NK_Load _ -> false       (* don't duplicate loads *)
       | NK_CmulRe _ | NK_CmulIm _ -> false  (* paired emit *)
       | NK_Const _ -> false      (* already inlined as set1 broadcast *)
       | _ -> true
     in
-    if count = 1 && not is_sink && not is_fused && kind_inlinable then
+    if count = 1 && not is_sink && kind_inlinable then
       Hashtbl.add result n.tag ()
   ) nodes;
   result
@@ -448,13 +394,6 @@ let is_fused_tag (sp : spill_info) (tag : int) : bool =
 let classify_passes (sp : spill_info) (nodes : t list)
     : (int, [`Pass1 | `Pass2]) Hashtbl.t =
   let cls = Hashtbl.create 256 in
-  let preds_of e = match e.node with
-    | NK_Const _ | NK_Load _ -> []
-    | NK_Neg a -> [a]
-    | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
-    | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
-    | NK_Fma (a, b, c, _, _) -> [a; b; c]
-  in
   List.iter (fun e ->
     if is_spilled sp e.tag then
       Hashtbl.add cls e.tag `Pass1
@@ -463,10 +402,10 @@ let classify_passes (sp : spill_info) (nodes : t list)
         match Hashtbl.find_opt cls p.tag with
         | Some `Pass2 -> true
         | _ -> false
-      ) (preds_of e) in
+      ) (preds e) in
       let pred_is_spilled = List.exists (fun p ->
         is_spilled sp p.tag
-      ) (preds_of e) in
+      ) (preds e) in
       if pred_in_pass2 || pred_is_spilled then
         Hashtbl.add cls e.tag `Pass2
       else
@@ -488,7 +427,7 @@ let classify_passes (sp : spill_info) (nodes : t list)
     List.iter (fun p ->
       let prev = try Hashtbl.find consumers p.tag with Not_found -> [] in
       Hashtbl.replace consumers p.tag (e :: prev)
-    ) (preds_of e)
+    ) (preds e)
   ) nodes;
   (* Iterate to fixpoint: a node X may need reclassification once a node it
    * feeds (Y) gets reclassified, in case Y was the reason X stayed Pass1. *)
@@ -606,71 +545,48 @@ let emit_codelet
      let nodes = topo_sort_reachable roots in
      let cls = classify_passes sp nodes in
 
-     (* === FMA FUSION ANALYSIS ===
+     (* Single-use inlining for the spill path.
       *
-      * A NK_Mul node with exactly one consumer (an Add or Sub) can be
-      * fused into that consumer as an FMA. This eliminates one mul
-      * instruction and replaces an add/sub with an fmadd/fmsub/fnmadd.
+      * A tag is inlinable iff it has exactly one consumer in the IR DAG,
+      * is not a Load/Const/Cmul (handled by compute_inline_set), and
+      * additionally:
+      *  - is NOT spilled (spilled values must be named to be stored/reloaded)
+      *  - has all consumers in the SAME pass as the producer (cross-pass
+      *    inlining would emit the producer's expression in PASS 2 scope
+      *    where its operands are out of scope; cross-pass values must
+      *    round-trip through the spill array)
       *
-      * Hand-coded R=32 has 64 fmadd / 49 fmsub / 15 fnmadd vs our
-      * 47 / 26 / 45 — Hand has ~10 more FMAs and ~10 fewer add/subs.
-      * That's the gap we're closing here. *)
-     let preds_of_general (e : t) : t list = match e.node with
-       | NK_Const _ | NK_Load _ -> []
-       | NK_Neg a -> [a]
-       | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
-       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
-       | NK_Fma (a, b, c, _, _) -> [a; b; c]
+      * This brings the same nested-intrinsic style that the SU path uses
+      * for primes to composite codelets emitted via the spill path.
+      * Values flowing within a single sub-FFT (most of PASS 1 / PASS 2
+      * intermediate computation) become eligible. *)
+     let inline_set =
+       let all = compute_inline_set assigns in
+       let consumers : (int, t list) Hashtbl.t = Hashtbl.create 256 in
+       List.iter (fun e ->
+         List.iter (fun p ->
+           let prev = try Hashtbl.find consumers p.tag with Not_found -> [] in
+           Hashtbl.replace consumers p.tag (e :: prev)
+         ) (preds e)
+       ) nodes;
+       let filtered = Hashtbl.create 64 in
+       Hashtbl.iter (fun tag () ->
+         if not (is_spilled sp tag) then begin
+           let producer_class = Hashtbl.find_opt cls tag in
+           let consumer_classes = match Hashtbl.find_opt consumers tag with
+             | None -> []
+             | Some cs -> List.map (fun c -> Hashtbl.find_opt cls c.tag) cs
+           in
+           if consumer_classes <> [] &&
+              List.for_all (fun cc -> cc = producer_class) consumer_classes
+           then
+             Hashtbl.add filtered tag ()
+         end
+       ) all;
+       filtered
      in
-     let use_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
-     let bump_use tag =
-       let cur = try Hashtbl.find use_count tag with Not_found -> 0 in
-       Hashtbl.replace use_count tag (cur + 1)
-     in
-     List.iter (fun e ->
-       List.iter (fun p -> bump_use p.tag) (preds_of_general e)
-     ) nodes;
-     (* Output stores also consume their root expressions. *)
-     List.iter (fun (_, e) -> bump_use e.tag) assigns;
+     let is_inlined e = Hashtbl.mem inline_set e.tag in
 
-     (* A Mul is fusable if:
-      *  - use_count = 1 (exactly one consumer)
-      *  - that consumer is an Add or Sub (where FMA fits)
-      *  - it is NOT a spill target (must be materializable as a value)
-      *  - it is NOT a fused tag (cross-boundary survivor; needs a real def)
-      *)
-     let is_spill_target tag =
-       Hashtbl.mem sp.re_slot tag || Hashtbl.mem sp.im_slot tag
-     in
-     let is_fused_pass1_tag tag =
-       match Hashtbl.find_opt sp.re_slot tag, Hashtbl.find_opt sp.im_slot tag with
-       | Some s, _ | _, Some s -> is_fused_slot sp s
-       | None, None -> false
-     in
-     let fused_muls : (int, unit) Hashtbl.t = Hashtbl.create 64 in
-     let _is_fusable_mul n =
-       match n.node with
-       | NK_Mul _ ->
-         let count = try Hashtbl.find use_count n.tag with Not_found -> 0 in
-         count = 1
-         && not (is_spill_target n.tag)
-         && not (is_fused_pass1_tag n.tag)
-       | _ -> false
-     in
-     (* DISABLED: source-level FMA fusion was a wash — GCC already fuses
-      * mul+add into FMA via -mfma at -O3 on contracted intrinsic patterns,
-      * and our explicit fmadd emission turned out to slightly hurt in some
-      * regimes by constraining GCC's instruction selection. Keeping the
-      * machinery (used_count, is_fusable_mul) for future experiments,
-      * but no Muls go into fused_muls — emission falls back to standalone
-      * mul + add/sub everywhere, and GCC fuses these on its own.
-      *
-      * TODO: revisit at the assembly level — if we want to force specific
-      * FMA variants (213 vs 231), we'd need to do that via inline asm or
-      * by understanding GCC's variant-selection heuristic. *)
-     ignore _is_fusable_mul;
-
-     let fused_muls_opt = Some fused_muls in
      (* Constants are leaves (no predecessors) shared across passes via
       * hash-consing — a single NK_Const node may be referenced by both
       * PASS 1 and PASS 2 nodes (e.g. 1/√2 used in radix-8 internal
@@ -784,13 +700,6 @@ let emit_codelet
       * respected. Across sub-FFTs, there are no dependencies (CT
       * independence) — except for shared constants, which we already
       * hoisted outside both pass scopes. *)
-     let preds_of e = match e.node with
-       | NK_Const _ | NK_Load _ -> []
-       | NK_Neg a -> [a]
-       | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
-       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
-       | NK_Fma (a, b, c, _, _) -> [a; b; c]
-     in
      (* Build forward succs map for PASS 1 nodes only. *)
      let pass1_set = Hashtbl.create 256 in
      List.iter (fun e -> Hashtbl.add pass1_set e.tag ()) pass1_nodes;
@@ -801,7 +710,7 @@ let emit_codelet
            let cur = try Hashtbl.find succs p.tag with Not_found -> [] in
            Hashtbl.replace succs p.tag (e.tag :: cur)
          end
-       ) (preds_of e)
+       ) (preds e)
      ) pass1_nodes;
      (* Compute min_slot bottom-up by walking high-tag-first
       * (reverse topological — successors before predecessors). *)
@@ -886,31 +795,32 @@ let emit_codelet
 
      (* PASS 1 nested scope: emit block-sequentially with immediate spill.
       * For fused tags: emit as assignment (no declarator) to outer-scope
-      * variable, and skip the spill store. *)
+      * variable, and skip the spill store.
+      * For inlined tags: skip standalone declaration; the consumer's
+      * render will inline the expression directly. *)
      Buffer.add_string buf "        {\n";
      List.iter (fun e ->
-       (* Skip standalone emission of FMA-fused Mul nodes. *)
-       if Hashtbl.mem fused_muls e.tag then ()
+       if is_inlined e then ()
        else begin
-         let fused = is_fused_tag e.tag in
+         let no_declarator = is_fused_tag e.tag in
          Buffer.add_string buf
-           (render_node_def ~fused ~fused_muls:fused_muls_opt ~t1s
-              ~isa ~in_place e);
+           (render_node_def ~no_declarator ~t1s ~isa ~in_place
+              ~inline_set:(Some inline_set) e);
          Buffer.add_char buf '\n';
-         if not fused then begin
+         if not no_declarator then begin
            (match lookup_re_slot e.tag with
             | Some slot ->
               Buffer.add_string buf (Printf.sprintf
                 "            %s(&spill_re[%d], t%d);\n"
-              isa.storeu_pd slot e.tag)
-          | None -> ());
-         (match lookup_im_slot e.tag with
-          | Some slot ->
-            Buffer.add_string buf (Printf.sprintf
-              "            %s(&spill_im[%d], t%d);\n"
-              isa.storeu_pd slot e.tag)
-          | None -> ())
-       end
+                isa.storeu_pd slot e.tag)
+            | None -> ());
+           (match lookup_im_slot e.tag with
+            | Some slot ->
+              Buffer.add_string buf (Printf.sprintf
+                "            %s(&spill_im[%d], t%d);\n"
+                isa.storeu_pd slot e.tag)
+            | None -> ())
+         end
        end
      ) pass1_blocked;
      (* Emit stores for Pass 1 outputs at end of PASS 1 — values are still
@@ -959,7 +869,7 @@ let emit_codelet
              match Hashtbl.find_opt min_input_slot p.tag with
              | Some s -> (match acc with None -> Some s | Some a -> Some (min a s))
              | None -> acc
-           ) None (preds_of_general e)
+           ) None (preds e)
          in
          let my_min = match direct_slot, pred_min with
            | Some a, Some b -> Some (min a b)
@@ -983,7 +893,7 @@ let emit_codelet
          List.iter (fun p ->
            let prev = try Hashtbl.find consumers_p2 p.tag with Not_found -> [] in
            Hashtbl.replace consumers_p2 p.tag (e :: prev)
-         ) (preds_of_general e)
+         ) (preds e)
        ) pass2_nodes;
        List.iter (fun e ->
          if not (Hashtbl.mem cluster_of_pass2_node e.tag) then begin
@@ -1053,27 +963,6 @@ let emit_codelet
       * and for each node, emit any pending reloads of its predecessors
       * before emitting the node. *)
      let reloaded : (int, unit) Hashtbl.t = Hashtbl.create 32 in
-     (* Look through fused Muls when computing predecessors for reload
-      * tracking. When Add(Mul(x,y), c) gets emitted as fmadd(x,y,c),
-      * the rendered code references x, y, c directly — so x/y must be
-      * reloaded if they're spilled, even though the Mul node itself
-      * isn't directly referenced. *)
-     let rec preds_of (e : t) : t list =
-       match e.node with
-       | NK_Const _ | NK_Load _ -> []
-       | NK_Neg a -> through_fused_mul a
-       | NK_Add (a, b) | NK_Sub (a, b) ->
-         through_fused_mul a @ through_fused_mul b
-       | NK_Mul (a, b) -> [a; b]
-       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
-       | NK_Fma (a, b, c, _, _) -> [a; b; c]
-     and through_fused_mul (n : t) : t list =
-       if Hashtbl.mem fused_muls n.tag then
-         match n.node with
-         | NK_Mul (x, y) -> [x; y]
-         | _ -> [n]  (* shouldn't happen — only Muls get fused *)
-       else [n]
-     in
      let emit_reload_if_needed (p : t) =
        if Hashtbl.mem reloaded p.tag then ()
        else begin
@@ -1092,6 +981,19 @@ let emit_codelet
              do_reload "spill_im" slot
            | _ -> ()
        end
+     in
+
+     (* Transitive reload walk: when emitting a node Z, ensure reloads
+      * are emitted for every spilled tag reachable through Z's
+      * predecessor chain WHILE THE CHAIN IS INLINED. If X is inlined
+      * into Z and X references a spilled Y, then Z's rendered body
+      * (with X inlined) references t<Y> directly, so Y must be
+      * reloaded before Z emits. emit_reload_if_needed is idempotent
+      * (memoized via the reloaded table), so re-visits are safe. *)
+     let rec reload_through_inlines (e : t) =
+       emit_reload_if_needed e;
+       if Hashtbl.mem inline_set e.tag then
+         List.iter reload_through_inlines (preds e)
      in
 
      (* Group assigns by their PASS 2 cluster so each sub-DFT's outputs
@@ -1122,30 +1024,33 @@ let emit_codelet
        | None -> ()
      in
      List.iter (fun e ->
-       (* Skip standalone emission of FMA-fused Mul nodes. *)
-       if Hashtbl.mem fused_muls e.tag then ()
+       if is_inlined e then ()
        else begin
          (* Emit reloads of any spilled predecessors not yet reloaded.
-          * For fused-Muls we'd never reach here, but we still need to
-          * reload predecessors of THE consuming Add/Sub. *)
-         List.iter emit_reload_if_needed (preds_of e);
+          * Walk transitively through inlined preds since their bodies
+          * inline into e's expression and may reference spilled tags. *)
+         List.iter reload_through_inlines (preds e);
          Buffer.add_string buf
-           (render_node_def ~fused_muls:fused_muls_opt ~isa ~in_place ~t1s e);
+           (render_node_def ~isa ~in_place ~t1s
+              ~inline_set:(Some inline_set) e);
          Buffer.add_char buf '\n'
        end;
        (* Cluster-boundary detection: when this node finishes a cluster
         * (all of its cluster's nodes have been emitted), flush that
-        * cluster's stores immediately. We check by tracking the cluster
-        * of the LAST emitted node and detecting the transition. *)
-       (match Hashtbl.find_opt cluster_of_pass2_node e.tag,
-              !last_pass2_cluster with
-        | Some c, Some prev when c <> prev ->
-          (* Emit prev cluster's stores, since we just transitioned away. *)
-          flush_cluster_stores prev;
-          last_pass2_cluster := Some c
-        | Some c, None ->
-          last_pass2_cluster := Some c
-        | _ -> ())
+        * cluster's stores immediately. We track the LAST emitted node's
+        * cluster and detect the transition.
+        *
+        * Two-arm match: only the prev≠cur transition does work (flushing
+        * the previous cluster). The "first cluster" case (prev = None)
+        * and the "same cluster" case (prev = cur) both fall into the
+        * unconditional update below. *)
+       let cur_cluster = Hashtbl.find_opt cluster_of_pass2_node e.tag in
+       (match !last_pass2_cluster, cur_cluster with
+        | Some prev, Some now when prev <> now -> flush_cluster_stores prev
+        | _ -> ());
+       (match cur_cluster with
+        | Some _ -> last_pass2_cluster := cur_cluster
+        | None -> ())
      ) pass2_ordered;
      (* Flush the final cluster's stores. *)
      (match !last_pass2_cluster with
