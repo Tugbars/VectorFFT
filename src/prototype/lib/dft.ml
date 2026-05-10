@@ -835,9 +835,18 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `F
  *     R=16: 0.80-0.88  ← clause (1) catches this (22 > 16)
  *     R=32: 0.56-0.81  ← clause (1) catches this (38 > 16)
  *
- * The unified rule: use the recipe iff CT-decomposed AND either clause holds. *)
+ *   AVX2 R=5/R=7 update (post-doc-28 fma_lift fix):
+ *     The R=8 1.00-1.08 regression noted above was measured WITH fma_lift
+ *     unconditional — that's the same regression class doc 28 traced for
+ *     composites (extra register pressure from explicit NK_Fma). With
+ *     fma_lift gated to primes only, the recipe path is healthy on AVX2 for
+ *     small primes too. R=5 and R=7 with the recipe win 5-18% on every
+ *     variant; without it they lose 4-37%. So the threshold extends to n≥5
+ *     unconditionally. (Clause (3) below.)
+ *
+ * The unified rule: use the recipe iff CT-decomposed AND any clause holds. *)
 let should_spill (n : int) (vec_regs : int) : bool =
-  (n + 6 > vec_regs) || vec_regs >= 32
+  (n + 6 > vec_regs) || vec_regs >= 32 || n >= 5
 
 (* Compatibility: callers may want just clause (1) for register-pressure
  * predictions independent of ISA-specific GCC behavior. *)
