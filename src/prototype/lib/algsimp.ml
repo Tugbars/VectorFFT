@@ -111,8 +111,44 @@ let hashcons (nk : node_kind) : t =
 let lookup_node (nk : node_kind) : t option =
   Hashtbl.find_opt hcons_table nk
 
+(* === OF_EXPR MEMOIZATION ===
+ *
+ * The math layer (Dft.dft_ct etc.) produces Expr trees with high textual
+ * redundancy: a single OCaml-allocated Expr value gets referenced many
+ * times across PASS 1 / PASS 2 outputs. At R=64 the textual node count
+ * is ~95M while the unique post-hashcons count is ~7K — a 13,000×
+ * redundancy ratio that grows ~6.5× per doubling of N.
+ *
+ * Without memoization, of_expr does work proportional to textual count:
+ * each textual occurrence triggers a full recursive walk down to atomic
+ * Const/Load nodes. This is the O(N⁴) scaling wall observed at R=128
+ * (see docs/31_split_radix_research_arc.md and the profile_pipeline
+ * diagnostic).
+ *
+ * The fix: memoize of_expr on physical Expr identity. Multiple references
+ * to the same OCaml allocation get processed once. Physical equality
+ * (==) catches the dft.ml pattern of `pass1_re.(n1_idx).(k2)` being
+ * stored once and read many times — these reads return the same
+ * allocation. Structurally-equal-but-different-allocation cases would
+ * miss the memo (correct, just no speedup); since they don't happen in
+ * dft.ml's construction style, the memo catches essentially all the
+ * sharing.
+ *
+ * Worst case: memo misses → fall back to full re-walk for that subtree.
+ * No correctness risk; the smart constructors and hashcons still produce
+ * the same final t whether memoized or not. *)
+module ExprPhysHash = struct
+  type t = Expr.expr
+  let equal = (==)              (* physical equality on the immutable Expr value *)
+  let hash = Hashtbl.hash       (* bounded-depth structural hash; fast *)
+end
+module ExprMemo = Hashtbl.Make(ExprPhysHash)
+
+let of_expr_memo : t ExprMemo.t = ExprMemo.create 1024
+
 let reset () =
   Hashtbl.clear hcons_table;
+  ExprMemo.clear of_expr_memo;
   next_tag := 0
 
 (* === CANONICALIZATION HELPERS === *)
@@ -295,7 +331,31 @@ and mk_sub_binary (a : t) (b : t) : t =
        * a Neg in a twiddle output that then gets subtracted. *)
       mk_add_binary a b'
     | _ ->
-      hashcons (NK_Sub (a, b))
+      match a.node with
+      | NK_Neg inner ->
+        (match inner.node with
+         | NK_Mul (x, y) ->
+           (* Sub(Neg(Mul(x, y)), b) = -(x*y) - b
+            *                        = NK_Fma(x, y, b, neg_mul=true, neg_add=true)
+            *                        = vfnmsub at emission.
+            *
+            * dedup_sub_pairs introduces Neg(winner) substitutions; when the
+            * substitution lands as the LHS of another Sub and the original
+            * was Mul, we get Sub(Neg(Mul), c) — which without this peephole
+            * emits as 3-4 instructions including a vxorpd with a -0.0 mask
+            * (see docs/30_sub_neg_mul_fnmsub.md). The peephole fires at
+            * construction time (during dedup_sub_pairs' rebuild) so the
+            * Fma replaces the bad pattern before spill markers, scheduling,
+            * or register allocation see it.
+            *
+            * Implemented as a peephole here (rather than a standalone pass)
+            * because a standalone pass would orphan nodes that downstream
+            * code — including spill markers captured before the rewrite —
+            * still references. Constructing the Fma during dedup means the
+            * resulting DAG has consistent tags throughout. *)
+           hashcons (NK_Fma (x, y, b, true, true))
+         | _ -> hashcons (NK_Sub (a, b)))
+      | _ -> hashcons (NK_Sub (a, b))
 
 (* Tried: Common-multiplicand factoring peephole
  *   Add(Mul(a, k), Mul(b, k)) → Mul(Add(a, b), k)
@@ -406,48 +466,57 @@ and emit_pair_fold (terms : (int * t) list) : t =
  *)
 
 let rec of_expr ?(reassoc = true) (e : Expr.expr) : t =
-  let add_op = if reassoc then mk_add else mk_add_binary in
-  let sub_op = if reassoc then mk_sub else mk_sub_binary in
-  match e with
-  | Expr.Const c -> mk_const c
-  | Expr.Load r -> mk_load r
-  | Expr.Neg e1 -> mk_neg (of_expr ~reassoc e1)
+  (* Physical-identity memo: subtrees referenced multiple times via the
+   * same OCaml allocation get processed once. See ExprMemo block above
+   * for rationale and correctness argument. *)
+  match ExprMemo.find_opt of_expr_memo e with
+  | Some t -> t
+  | None ->
+    let add_op = if reassoc then mk_add else mk_add_binary in
+    let sub_op = if reassoc then mk_sub else mk_sub_binary in
+    let result = match e with
+    | Expr.Const c -> mk_const c
+    | Expr.Load r -> mk_load r
+    | Expr.Neg e1 -> mk_neg (of_expr ~reassoc e1)
 
-  (* CMUL.RE PATTERN: Sub(Mul(xr, wr), Mul(xi, wi)) → cmul real output. *)
-  | Expr.Sub (Expr.Mul (xr_e, wr_e), Expr.Mul (xi_e, wi_e)) ->
-    let xr = of_expr ~reassoc xr_e in
-    let wr = of_expr ~reassoc wr_e in
-    let xi = of_expr ~reassoc xi_e in
-    let wi = of_expr ~reassoc wi_e in
-    let is_const e = match e.node with
-      | NK_Const _ -> true
-      | NK_Neg n -> (match n.node with NK_Const _ -> true | _ -> false)
-      | _ -> false in
-    if is_const xr || is_const xi || is_const wr || is_const wi then
-      sub_op (mk_mul xr wr) (mk_mul xi wi)
-    else
-      let (re, _im) = mk_cmul xr xi wr wi in
-      re
+    (* CMUL.RE PATTERN: Sub(Mul(xr, wr), Mul(xi, wi)) → cmul real output. *)
+    | Expr.Sub (Expr.Mul (xr_e, wr_e), Expr.Mul (xi_e, wi_e)) ->
+      let xr = of_expr ~reassoc xr_e in
+      let wr = of_expr ~reassoc wr_e in
+      let xi = of_expr ~reassoc xi_e in
+      let wi = of_expr ~reassoc wi_e in
+      let is_const e = match e.node with
+        | NK_Const _ -> true
+        | NK_Neg n -> (match n.node with NK_Const _ -> true | _ -> false)
+        | _ -> false in
+      if is_const xr || is_const xi || is_const wr || is_const wi then
+        sub_op (mk_mul xr wr) (mk_mul xi wi)
+      else
+        let (re, _im) = mk_cmul xr xi wr wi in
+        re
 
-  (* CMUL.IM PATTERN — needs reassoc flag threaded too. *)
-  | Expr.Add (Expr.Mul (xr_e, wi_e), Expr.Mul (xi_e, wr_e)) ->
-    let xr = of_expr ~reassoc xr_e in
-    let wi = of_expr ~reassoc wi_e in
-    let xi = of_expr ~reassoc xi_e in
-    let wr = of_expr ~reassoc wr_e in
-    let is_const e = match e.node with
-      | NK_Const _ -> true
-      | NK_Neg n -> (match n.node with NK_Const _ -> true | _ -> false)
-      | _ -> false in
-    if is_const xr || is_const xi || is_const wr || is_const wi then
-      add_op (mk_mul xr wi) (mk_mul xi wr)
-    else
-      let (_re, im) = mk_cmul xr xi wr wi in
-      im
+    (* CMUL.IM PATTERN — needs reassoc flag threaded too. *)
+    | Expr.Add (Expr.Mul (xr_e, wi_e), Expr.Mul (xi_e, wr_e)) ->
+      let xr = of_expr ~reassoc xr_e in
+      let wi = of_expr ~reassoc wi_e in
+      let xi = of_expr ~reassoc xi_e in
+      let wr = of_expr ~reassoc wr_e in
+      let is_const e = match e.node with
+        | NK_Const _ -> true
+        | NK_Neg n -> (match n.node with NK_Const _ -> true | _ -> false)
+        | _ -> false in
+      if is_const xr || is_const xi || is_const wr || is_const wi then
+        add_op (mk_mul xr wi) (mk_mul xi wr)
+      else
+        let (_re, im) = mk_cmul xr xi wr wi in
+        im
 
-  | Expr.Add (a, b) -> add_op (of_expr ~reassoc a) (of_expr ~reassoc b)
-  | Expr.Sub (a, b) -> sub_op (of_expr ~reassoc a) (of_expr ~reassoc b)
-  | Expr.Mul (a, b) -> mk_mul (of_expr ~reassoc a) (of_expr ~reassoc b)
+    | Expr.Add (a, b) -> add_op (of_expr ~reassoc a) (of_expr ~reassoc b)
+    | Expr.Sub (a, b) -> sub_op (of_expr ~reassoc a) (of_expr ~reassoc b)
+    | Expr.Mul (a, b) -> mk_mul (of_expr ~reassoc a) (of_expr ~reassoc b)
+    in
+    ExprMemo.add of_expr_memo e result;
+    result
 
 let of_assignments ?(reassoc = true) (al : Expr.assignment list)
     : (Expr.elem_ref * t) list =

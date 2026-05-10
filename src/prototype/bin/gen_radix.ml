@@ -148,7 +148,8 @@ let () =
    * structure. Transposition skips Cmul nodes (they're nonlinear). *)
   let aggressive = match Vfft_v2.Dft.pick_algorithm n with
     | Vfft_v2.Dft.Direct -> true
-    | Vfft_v2.Dft.Cooley_Tukey _ -> false in
+    | Vfft_v2.Dft.Cooley_Tukey _ -> false
+    | Vfft_v2.Dft.Split_radix -> false in
   (* For direct primes (n odd prime ≥ 3), the conjugate-pair construction
    * in dft_direct_conjugate_pair already produces optimal hash-cons-shared
    * intermediates (pair sums/diffs, p_re/p_im/q_re/q_im chains). The
@@ -168,15 +169,15 @@ let () =
   let factored = Vfft_v2.Algsimp.factor_common_muls ~aggressive deduped_pre in
   let factored = Vfft_v2.Algsimp.factor_by_atom ~aggressive factored in
   let factored = Vfft_v2.Algsimp.dedup_sub_pairs factored in
-  (* Lift Sub(Neg(Mul(a,b)), c) → NK_Fma(a, b, c, neg_mul=true, neg_add=true)
-   * (= fnmsub). dedup_sub_pairs may introduce Neg nodes whose Sub-LHS
-   * consumption pattern doesn't simplify naturally; this pass converts the
-   * resulting `Sub(Neg(Mul), c)` (which would otherwise emit as 3-4
-   * instructions including vxorpd with a -0.0 mask) into a single fnmsub.
-   * Unconditional: strictly improves both instruction count and register
-   * pressure (no mask broadcast needed). See docs/30_sub_neg_mul_fnmsub.md
-   * for the cross-radix diagnostic that motivated this. *)
-  let factored = Vfft_v2.Algsimp.lift_sub_neg_mul factored in
+  (* Sub(Neg(Mul(a,b)), c) → NK_Fma(a, b, c, true, true) (= fnmsub).
+   *
+   * Now handled as a peephole inside `mk_sub_binary` so the rewrite fires
+   * at construction time (during dedup_sub_pairs' rebuild), not as a
+   * standalone post-pass. Standalone post-pass approach orphaned spill
+   * marker tags at R=32/R=64; peephole keeps the DAG self-consistent
+   * because the rewrite happens before markers get captured.
+   * See docs/30_sub_neg_mul_fnmsub.md for the diagnostic that motivated
+   * this and docs/31_peephole_vs_post_pass.md for the bug analysis. *)
   let shared =
     if is_direct then factored
     else Vfft_v2.Algsimp.share_subsums ~aggressive factored
