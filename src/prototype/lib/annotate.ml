@@ -65,15 +65,6 @@ type scope =
 
 (* === LIFETIME ANALYSIS === *)
 
-(* Get the immediate Algsimp predecessors of a node. *)
-let preds (e : Algsimp.t) : Algsimp.t list =
-  match e.node with
-  | NK_Const _ | NK_Load _ -> []
-  | NK_Neg a -> [a]
-  | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
-  | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
-  | NK_Fma (a, b, c, _, _) -> [a; b; c]
-
 (* Compute (first_def, last_use) for each tag in the schedule.
  *
  * first_def[tag] = index of the entry that first DEFINES tag (output_for=None).

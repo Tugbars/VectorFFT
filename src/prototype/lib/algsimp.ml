@@ -76,6 +76,20 @@ and t = {
   node : node_kind;
 }
 
+(* Immediate predecessors of a node — the IR sub-expressions referenced
+ * by its constructor. Walking these reaches the full DAG.
+ *
+ * Centralized here because every layer (schedule, classify_passes,
+ * cluster propagation, PASS 2 reload tracking, topological sort) needs
+ * the same walk. Keep it in sync with `node_kind` above whenever a
+ * constructor is added. *)
+let preds (e : t) : t list = match e.node with
+  | NK_Const _ | NK_Load _ -> []
+  | NK_Neg a -> [a]
+  | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) -> [a; b]
+  | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [a; b; c; d]
+  | NK_Fma (a, b, c, _, _) -> [a; b; c]
+
 (* === HASH-CONSING INFRASTRUCTURE === *)
 
 let hcons_table : (node_kind, t) Hashtbl.t = Hashtbl.create 1024
