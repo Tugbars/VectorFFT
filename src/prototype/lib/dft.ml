@@ -72,6 +72,43 @@ let pick_algorithm (n : int) : algorithm =
          * 32 ZMM with room for twiddles); going wider (e.g. 2×16) would
          * blow the register budget. Going narrower (e.g. 8×4) is also valid
          * but produces deeper inner DFTs in PASS 2. *)
+    (* Mixed-radix composites — first batch (R=6 only for wiring validation;
+     * R=10/12/20/25 follow once R=6 path proves clean). *)
+    | 6 -> Cooley_Tukey (3, 2)
+        (* R=6 = CT(N1=3, N2=2). PASS 1: 2 sub-DFT-3s (prime, conjugate-pair
+         * construction). PASS 2: 3 sub-DFT-2s (trivial add/sub). Internal
+         * twiddles W6: 2 unique exponents (W6^1, W6^2) require cmul; W6^3=−1
+         * is free. Matches gen_radix6.py's (N1=3, N2=2) factorization in our
+         * convention. Peak live ~12 ZMM AVX-512 (fits), ~12 YMM AVX2 (also
+         * fits but tight). *)
+    | 25 -> Cooley_Tukey (5, 5)
+        (* R=25 = CT(N1=5, N2=5). Symmetric prime-prime split. PASS 1: 5
+         * sub-DFT-5s. PASS 2: 5 sub-DFT-5s. All 9 unique internal W25
+         * exponents require cmul (no free rotations like W^N/2 = -1 or
+         * W^N/4 = ±j; none of those exponents arise in W25's grid).
+         * Matches gen_radix25.py's (N1=5, N2=5). Peak live ~50 (raw) so
+         * spill is mandatory on both ISAs. Highest retiring rate codelet
+         * per profiling — recipe path is essential here. *)
+    | 10 -> Cooley_Tukey (5, 2)
+        (* R=10 = CT(N1=5, N2=2). PASS 1: 2 sub-DFT-5s. PASS 2: 5 sub-DFT-2s
+         * (trivial add/sub). Same shape as R=6 (CT with prime N1, trivial
+         * N2) but with DFT-5 inner. Internal twiddles W10: only 2 unique
+         * non-trivial exponents (W10^1, W10^2 — others are 1, -1, ±j and
+         * fold via const_cmul). Matches gen_radix10.py's (N1=5, N2=2). *)
+    | 12 -> Cooley_Tukey (4, 3)
+        (* R=12 = CT(N1=4, N2=3). First non-prime, non-pow2 split — both
+         * factors > 2. PASS 1: 3 sub-DFT-4s (radix-4 butterflies, FMA-poor
+         * but very compact). PASS 2: 4 sub-DFT-3s (prime conjugate-pair).
+         * Free internal twiddles: W12^3 = -j, W12^6 = -1, W12^9 = j; only
+         * 4 unique non-trivial cmul exponents (W12^1, W12^2, W12^4, W12^5
+         * ... folded by symmetry). Matches gen_radix12.py's (N1=4, N2=3). *)
+    | 20 -> Cooley_Tukey (5, 4)
+        (* R=20 = CT(N1=5, N2=4). PASS 1: 4 sub-DFT-5s. PASS 2: 5 sub-DFT-4s.
+         * Mix of prime DFT-5 (8 ops/output via conjugate-pair) and pow2
+         * DFT-4 (very compact). 12 unique non-trivial W20 exponents; some
+         * fold (W20^5 = -j, W20^10 = -1, W20^15 = j). Matches
+         * gen_radix20.py's (N1=5, N2=4). Peak live ~40 — spill threshold,
+         * recipe path likely essential at AVX-512 (32 ZMM). *)
     | _ when n mod 2 = 0 -> Cooley_Tukey (2, n / 2)
     | _ -> Direct
 

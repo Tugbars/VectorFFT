@@ -615,6 +615,71 @@ let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) l
   in
   List.map (fun (lhs, e) -> (lhs, rebuild e)) assigns
 
+(* === SUB-NEG-MUL → FNMSUB LIFTING ===
+ *
+ *   Sub(Neg(Mul(a, b)), c)  →  NK_Fma(a, b, c, neg_mul=true, neg_add=true)
+ *
+ * Why this exists. dedup_sub_pairs introduces Neg nodes when the loser of
+ * a Sub-pair conflict gets substituted as Neg(winner). When that Neg is
+ * consumed as the LHS of another Sub, mk_sub_binary doesn't simplify (its
+ * peephole only matches NK_Neg on the RHS, not LHS), so the pattern
+ * survives to emission as `Sub(Neg(Mul), Mul)` → emit_c renders it as
+ * `vsubpd(vxorpd(neg_zero, Mul), Mul)`, costing 4 instructions and
+ * pinning a -0.0 mask in .rodata.
+ *
+ * The mathematical equivalence Sub(Neg(Mul(a,b)), c) = -(a*b) - c =
+ * NK_Fma(a, b, c, true, true) maps directly to vfnmsub231pd at codegen.
+ * One instruction instead of three, no -0.0 mask, no extra register
+ * pressure for the mask broadcast.
+ *
+ * UNCONDITIONAL: unlike fma_lift (which we gate to primes because
+ * explicit FMA atoms constrain GCC's RA on composite DAGs), this rewrite
+ * is strictly better in all cases:
+ *   - The Sub(Neg(Mul), c) pattern ALREADY emits as 3-4 instructions
+ *     including an XOR-with-mask. Replacing with 1 fnmsub reduces both
+ *     instruction count and register pressure (no mask register needed).
+ *   - The variant choice (fnmsub231) is unambiguous — there's no doc-28
+ *     "GCC could pick a better variant" concern because the alternative
+ *     emission was already worse than a forced fnmsub.
+ *
+ * Pattern is uncommon (R=25 t1_dit AVX-512: 6 occurrences out of 678
+ * total IR ops) but each occurrence is a 3:1 to 4:1 instruction reduction
+ * in the hot loop body. *)
+
+let lift_sub_neg_mul (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
+  let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
+  let rec rebuild (e : t) : t =
+    match Hashtbl.find_opt cache e.tag with
+    | Some r -> r
+    | None ->
+      let result = match e.node with
+        | NK_Sub (a, b) ->
+          let a' = rebuild a in
+          let b' = rebuild b in
+          (* Pattern match: Sub(Neg(Mul(x, y)), z) → NK_Fma(x, y, z, true, true) *)
+          (match a'.node with
+           | NK_Neg inner ->
+             (match inner.node with
+              | NK_Mul (x, y) ->
+                hashcons (NK_Fma (x, y, b', true, true))
+              | _ -> mk_sub_binary a' b')
+           | _ -> mk_sub_binary a' b')
+        | NK_Add (a, b) -> mk_add_binary (rebuild a) (rebuild b)
+        | NK_Mul (a, b) -> mk_mul (rebuild a) (rebuild b)
+        | NK_Neg inner -> mk_neg (rebuild inner)
+        | NK_Const _ | NK_Load _ -> e
+        | NK_CmulRe (a, b, c, d) ->
+          hashcons (NK_CmulRe (rebuild a, rebuild b, rebuild c, rebuild d))
+        | NK_CmulIm (a, b, c, d) ->
+          hashcons (NK_CmulIm (rebuild a, rebuild b, rebuild c, rebuild d))
+        | NK_Fma (a, b, c, nm, na) ->
+          hashcons (NK_Fma (rebuild a, rebuild b, rebuild c, nm, na))
+      in
+      Hashtbl.add cache e.tag result;
+      result
+  in
+  List.map (fun (lhs, e) -> (lhs, rebuild e)) assigns
+
 (* === DISTRIBUTIVE FACTORING ===
  *
  *   Σ ± c · x_i  →  c · (Σ ± x_i)   when c is a constant and all input

@@ -168,6 +168,15 @@ let () =
   let factored = Vfft_v2.Algsimp.factor_common_muls ~aggressive deduped_pre in
   let factored = Vfft_v2.Algsimp.factor_by_atom ~aggressive factored in
   let factored = Vfft_v2.Algsimp.dedup_sub_pairs factored in
+  (* Lift Sub(Neg(Mul(a,b)), c) → NK_Fma(a, b, c, neg_mul=true, neg_add=true)
+   * (= fnmsub). dedup_sub_pairs may introduce Neg nodes whose Sub-LHS
+   * consumption pattern doesn't simplify naturally; this pass converts the
+   * resulting `Sub(Neg(Mul), c)` (which would otherwise emit as 3-4
+   * instructions including vxorpd with a -0.0 mask) into a single fnmsub.
+   * Unconditional: strictly improves both instruction count and register
+   * pressure (no mask broadcast needed). See docs/30_sub_neg_mul_fnmsub.md
+   * for the cross-radix diagnostic that motivated this. *)
+  let factored = Vfft_v2.Algsimp.lift_sub_neg_mul factored in
   let shared =
     if is_direct then factored
     else Vfft_v2.Algsimp.share_subsums ~aggressive factored
