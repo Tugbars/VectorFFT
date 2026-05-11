@@ -25,11 +25,27 @@
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 GEN_OCAML=${GEN_OCAML:-$ROOT/_build/default/bin/gen_radix.exe}
-PYGEN=${PYGEN:-/mnt/user-data/uploads}
-CC=${CC:-gcc-11}
-EXTRA_CFLAGS=${EXTRA_CFLAGS:--flive-range-shrinkage}
+# PYGEN: flat dir containing gen_radix{16,25,32,64}.py (legacy).
+# PYGEN_BASE: dir containing per-radix subdirs r{16,25,32,64}/gen_radix{R}.py
+# (matches highSpeedFFT repo layout). One of the two must be set.
+PYGEN=${PYGEN:-}
+PYGEN_BASE=${PYGEN_BASE:-$ROOT/../vectorfft_tune/radixes}
+CC=${CC:-gcc}
+EXTRA_CFLAGS=${EXTRA_CFLAGS:--flive-range-shrinkage -Wno-incompatible-pointer-types}
 MARCH=${MARCH:-icelake-server}
 ISA=${ISA:-both}
+
+# Resolve the Python generator file path for a given R.
+pygen_path() {
+  local R=$1 file="gen_radix${R}.py"
+  if [ -n "$PYGEN" ] && [ -f "$PYGEN/$file" ]; then
+    echo "$PYGEN/$file"
+  elif [ -f "$PYGEN_BASE/r${R}/$file" ]; then
+    echo "$PYGEN_BASE/r${R}/$file"
+  else
+    return 1
+  fi
+}
 WORK=$(mktemp -d)
 trap "rm -rf $WORK" EXIT
 
@@ -47,19 +63,13 @@ echo ""
 # Generate hand AVX2 reference for a given R via the matching Python gen
 gen_hand_avx2() {
   local R=$1
-  local pyfile=""
-  case $R in
-    16) pyfile="gen_radix16.py" ;;
-    25) pyfile="gen_radix25.py" ;;
-    32) pyfile="gen_radix32.py" ;;
-    64) pyfile="gen_radix64.py" ;;
-  esac
-  if [ ! -f "$PYGEN/$pyfile" ]; then
-    echo "ERROR: Python generator not found: $PYGEN/$pyfile"
-    echo "Set PYGEN to the directory containing gen_radix*.py"
+  local pypath
+  pypath=$(pygen_path "$R") || {
+    echo "ERROR: Python generator for R=$R not found."
+    echo "Set PYGEN to a flat dir, or PYGEN_BASE to dir with r{R}/gen_radix{R}.py."
     return 1
-  fi
-  python3 "$PYGEN/$pyfile" --isa avx2 --variant ct_t1_dit 2>/dev/null \
+  }
+  python3 "$pypath" --isa avx2 --variant ct_t1_dit 2>/dev/null \
     | sed '/^=== /d' > "$WORK/r${R}_hand_avx2.h"
 }
 
@@ -78,7 +88,8 @@ run_avx512() {
   done
 
   echo "Generating hand R=25 AVX-512 from Python..."
-  python3 "$PYGEN/gen_radix25.py" --isa avx512 --variant ct_t1_dit 2>/dev/null \
+  R25_PY=$(pygen_path 25) || { echo "ERROR: gen_radix25.py not found"; exit 1; }
+  python3 "$R25_PY" --isa avx512 --variant ct_t1_dit 2>/dev/null \
     | sed '/^=== /d' > "$WORK/r25_hand.h"
 
   cp "$ROOT/bench/references/radix16_handcoded.h"            "$WORK/r16_hand.h"
