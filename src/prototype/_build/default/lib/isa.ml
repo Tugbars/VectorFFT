@@ -1,0 +1,126 @@
+(* isa.ml — minimal ISA abstraction for AVX-512 / AVX2.
+ *
+ * Both targets are modern x86 with FMA. The differences captured here:
+ *   - Vector width (lanes per register for double): AVX-512 = 8, AVX2 = 4
+ *   - Architectural register count: AVX-512 = 32 ZMM, AVX2 = 16 YMM
+ *   - Intrinsic naming prefix
+ *   - C attribute target string
+ *
+ * What's NOT here:
+ *   - FMA pattern preferences (both ISAs are FMA-capable; identical decision)
+ *   - Algorithm choices (math is ISA-agnostic; lives in dft.ml)
+ *   - Algebraic rewrites (lives in algsimp.ml, deliberately ISA-agnostic)
+ *
+ * Design constraint: this module's only consumers are the EMIT layer
+ * (emit_c.ml, annotate.ml, future stats reporting) and any heuristic
+ * that needs register-pressure info (future SU scheduler). The DAG
+ * itself never sees an Isa.t.
+ *)
+
+type t = {
+  name: string;              (* short identifier, "avx512" | "avx2" *)
+  vec_type: string;          (* C type for one vector, "__m512d" | "__m256d" *)
+  vec_width: int;            (* doubles per vector: 8 | 4 *)
+  vec_regs: int;             (* architectural vector register count *)
+  intrinsic_prefix: string;  (* "_mm512" | "_mm256" *)
+  target_attr: string;       (* GCC __attribute__((target(...))) string *)
+  loadu_pd: string;          (* full intrinsic name for unaligned load *)
+  storeu_pd: string;
+  set1_pd: string;
+}
+
+(* === PROFILES ===
+ *
+ * We avoid per-µarch sub-profiles for now (Sapphire Rapids vs Ice Lake
+ * AVX-512, etc.) because the differences are scheduler-relevant, not
+ * emission-relevant. A future uarch.ml will add timing parameters on
+ * top of the ISA record. *)
+
+let avx512 = {
+  name = "avx512";
+  vec_type = "__m512d";
+  vec_width = 8;
+  vec_regs = 32;
+  intrinsic_prefix = "_mm512";
+  target_attr = "avx512f";
+  loadu_pd = "_mm512_loadu_pd";
+  storeu_pd = "_mm512_storeu_pd";
+  set1_pd = "_mm512_set1_pd";
+}
+
+let avx2 = {
+  name = "avx2";
+  vec_type = "__m256d";
+  vec_width = 4;
+  vec_regs = 16;
+  intrinsic_prefix = "_mm256";
+  target_attr = "avx2,fma";
+  loadu_pd = "_mm256_loadu_pd";
+  storeu_pd = "_mm256_storeu_pd";
+  set1_pd = "_mm256_set1_pd";
+}
+
+(* Look up by name, for CLI. *)
+let of_name (s : string) : t =
+  match s with
+  | "avx512" | "AVX512" | "avx-512" -> avx512
+  | "avx2"   | "AVX2"               -> avx2
+  | other -> failwith (Printf.sprintf "unknown ISA: %s (expected avx512 or avx2)" other)
+
+(* === INTRINSIC HELPERS ===
+ *
+ * Construct an intrinsic call string. The pattern is uniform: prefix +
+ * underscore + op_pd. We split this into a single helper plus named
+ * wrappers for the common cases that have specific call shapes.
+ *)
+
+let intr (isa : t) (op : string) : string =
+  Printf.sprintf "%s_%s" isa.intrinsic_prefix op
+
+let mul_pd (isa : t) (a : string) (b : string) : string =
+  Printf.sprintf "%s(%s, %s)" (intr isa "mul_pd") a b
+
+let add_pd (isa : t) (a : string) (b : string) : string =
+  Printf.sprintf "%s(%s, %s)" (intr isa "add_pd") a b
+
+let sub_pd (isa : t) (a : string) (b : string) : string =
+  Printf.sprintf "%s(%s, %s)" (intr isa "sub_pd") a b
+
+let xor_pd (isa : t) (a : string) (b : string) : string =
+  Printf.sprintf "%s(%s, %s)" (intr isa "xor_pd") a b
+
+(* fmadd_pd(a, b, c) = a*b + c    -- standard FMA *)
+let fmadd_pd (isa : t) (a : string) (b : string) (c : string) : string =
+  Printf.sprintf "%s(%s, %s, %s)" (intr isa "fmadd_pd") a b c
+
+(* fnmadd_pd(a, b, c) = -a*b + c  -- negated multiplicand, useful for cmul.re *)
+let fnmadd_pd (isa : t) (a : string) (b : string) (c : string) : string =
+  Printf.sprintf "%s(%s, %s, %s)" (intr isa "fnmadd_pd") a b c
+
+(* fmsub_pd(a, b, c) = a*b - c    -- positive multiplicand, subtract *)
+let fmsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
+  Printf.sprintf "%s(%s, %s, %s)" (intr isa "fmsub_pd") a b c
+
+(* fnmsub_pd(a, b, c) = -a*b - c   -- negated multiplicand, subtract *)
+let fnmsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
+  Printf.sprintf "%s(%s, %s, %s)" (intr isa "fnmsub_pd") a b c
+
+let set1_pd_str (isa : t) (literal : string) : string =
+  Printf.sprintf "%s(%s)" isa.set1_pd literal
+
+let loadu_pd (isa : t) (addr : string) : string =
+  Printf.sprintf "%s(&%s)" isa.loadu_pd addr
+
+let storeu_pd (isa : t) (addr : string) (value : string) : string =
+  Printf.sprintf "%s(&%s, %s)" isa.storeu_pd addr value
+
+(* Render `const __m512d t<tag> = expr;` or its AVX2 equivalent.
+ * Used by emit_c's render_node_def. *)
+let const_decl (isa : t) (name : string) (expr : string) : string =
+  Printf.sprintf "const %s %s = %s;" isa.vec_type name expr
+
+(* Render `__m512d t1, t2, t3;` for forward declarations from annotate. *)
+let forward_decl (isa : t) (names : string list) : string =
+  match names with
+  | [] -> ""
+  | _ -> Printf.sprintf "%s %s;" isa.vec_type (String.concat ", " names)

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Generate all production codelets using the best-known configurations
     from docs 09-42.
@@ -271,7 +271,7 @@ foreach ($isaName in $Isas) {
                 }
             }
 
-            { $_ -in "small_pow2","mid_pow2","large_pow2" } {
+            { $_ -eq "small_pow2" -or $_ -eq "mid_pow2" -or $_ -eq "large_pow2" } {
                 Write-Host "  └─ family: $family ($radixStr)"
                 foreach ($r in $radixes) {
                     $TotalOK += (Invoke-Variants -R $r -IsaName $isaName -Family $family -WithLog3 $true)
