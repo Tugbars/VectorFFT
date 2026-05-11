@@ -61,6 +61,8 @@ let topo_sort_reachable (roots : t list) : t list =
  * where all k iterations share the same twiddle set; the bench harness
  * passes a smaller twiddle array (n-1 scalars instead of (n-1)*me). *)
 let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
+    ?(twidsq = false)
+    ?(twidsq_n = 0)
     (r : Expr.elem_ref) : string =
   let in_buf is_re = match in_place, is_re with
     | true,  true  -> "rio_re"
@@ -68,16 +70,50 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
     | false, true  -> "in_re"
     | false, false -> "in_im"
   in
-  let stride = if in_place then "ios" else "K" in
+  (* For twidsq codelets the OOP path uses a separate input stride `is`
+   * (vs. `K` for the standard OOP path). Twiddles in twidsq codelets are
+   * always broadcast across V lanes — they depend only on the inter-stage
+   * (i, k) decomposition, not on the batch dim — so we treat them like
+   * t1s regardless of the t1s flag's value.
+   *
+   * Twidsq address arithmetic decomposes the linear slot index s into
+   * (row, col) = (s/n, s%n). The natural OOP row-major layout addresses
+   * element (row, col) of block-batch b as:
+   *
+   *   in_re[row * is + col * V + b]
+   *
+   * where `is` is the input row stride (=n in the simplest case),
+   * `V` is the vector-batch dim, and `b` is the loop variable.
+   *
+   * For the existing standard OOP path (no twidsq), the math layer's
+   * Input(j, _) has j ∈ [0, n) and the address is `j*K + k` (slot-major
+   * K-interleaved). The twidsq path preserves this convention for the
+   * inner-slot dim and adds the row dim multiplied by the row stride. *)
+  let stride =
+    if in_place then "ios"
+    else if twidsq then "is"
+    else "K"
+  in
+  let loop_var = if twidsq then "v" else "k" in
   let tw_stride = if in_place then "me" else "K" in
+  let tw_broadcast = t1s || twidsq in
+  let render_input_addr j is_re =
+    let buf = in_buf is_re in
+    if twidsq && twidsq_n > 0 then
+      let row = j / twidsq_n in
+      let col = j mod twidsq_n in
+      Printf.sprintf "%s[%d*%s + %d*V + %s]" buf row stride col loop_var
+    else
+      Printf.sprintf "%s[%d*%s + %s]" buf j stride loop_var
+  in
   match r with
-  | Expr.Input (j, true)   -> Isa.loadu_pd isa (Printf.sprintf "%s[%d*%s + k]" (in_buf true) j stride)
-  | Expr.Input (j, false)  -> Isa.loadu_pd isa (Printf.sprintf "%s[%d*%s + k]" (in_buf false) j stride)
+  | Expr.Input (j, true)   -> Isa.loadu_pd isa (render_input_addr j true)
+  | Expr.Input (j, false)  -> Isa.loadu_pd isa (render_input_addr j false)
   | Expr.Twiddle (j, true) ->
-    if t1s then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
+    if tw_broadcast then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
     else Isa.loadu_pd isa (Printf.sprintf "tw_re[%d*%s + k]" j tw_stride)
   | Expr.Twiddle (j, false)->
-    if t1s then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
+    if tw_broadcast then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
     else Isa.loadu_pd isa (Printf.sprintf "tw_im[%d*%s + k]" j tw_stride)
   | Expr.Output _ ->
     failwith "render_load: Output ref shouldn't appear as a Load source"
@@ -111,6 +147,8 @@ let inline_max_depth = 32
 let render_node_def
     ?(no_declarator = false)
     ?(inline_set : (int, unit) Hashtbl.t option = None)
+    ?(twidsq = false)
+    ?(twidsq_n = 0)
     ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool) (e : t) : string =
   let v t = Printf.sprintf "t%d" t.tag in
   (* Should this node be inlined into its consumer's expression? *)
@@ -173,7 +211,7 @@ let render_node_def
   let body = match e.node with
     | NK_Const c ->
       Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
-    | NK_Load r -> render_load ~isa ~in_place ~t1s r
+    | NK_Load r -> render_load ~isa ~in_place ~t1s ~twidsq ~twidsq_n r
     | NK_Neg inner ->
       (* Neg(Const c) is a compile-time constant — emit as a single
        * broadcast of -c rather than a runtime XOR. *)
@@ -453,6 +491,8 @@ let classify_passes (sp : spill_info) (nodes : t list)
 let emit_codelet
     ?(in_place = false)
     ?(t1s = false)
+    ?(twidsq = false)
+    ?(twidsq_n = 0)
     ?(scheduler = Topological)
     ?(isa = Isa.avx512)
     ?(gh = false)
@@ -460,6 +500,18 @@ let emit_codelet
     ?(spill : spill_info option = None)
     (assigns : (Expr.elem_ref * t) list)
     ~(name : string) : string =
+  (* The twidsq flag selects the OOP-with-separate-strides signature.
+   * Doc 43 introduced the twidsq math layer; this branch emits the
+   * matching codelet calling convention with `is`, `os`, and `V` so the
+   * codelet can be called with arbitrary input/output row strides — the
+   * common case in multi-stage cascades where stage N's output stride
+   * differs from stage N+1's input stride.
+   *
+   * Twidsq implies in_place=false (can't both transpose AND be in-place
+   * with our current layout). We assert this rather than silently
+   * recovering: a caller that sets both has a bug. *)
+  if twidsq && in_place then
+    failwith "emit_codelet: twidsq and in_place are mutually exclusive";
   let buf = Buffer.create 4096 in
   Buffer.add_string buf "/* Auto-generated by vfft_v2 codelet generator. */\n";
   Buffer.add_string buf "#include <immintrin.h>\n";
@@ -484,6 +536,32 @@ let emit_codelet
        Buffer.add_string buf (Printf.sprintf
          "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
     Buffer.add_string buf (Printf.sprintf "    for (size_t k = 0; k < me; k += %d) {\n" isa.vec_width)
+  end else if twidsq then begin
+    (* Twidsq OOP signature with separate input/output strides.
+     *   in_re[slot * is + v] for input element at slot i*n+k
+     *   out_re[slot * os + v] for output element at slot j*n+i (TRANSPOSED
+     *     — the math layer already encodes the transpose via Output indices)
+     *   Twiddles broadcast across V lanes (uniform across batches).
+     *   V is the loop bound; vec_width lanes processed per iteration.
+     *)
+    Buffer.add_string buf "    const double * __restrict__ in_re,\n";
+    Buffer.add_string buf "    const double * __restrict__ in_im,\n";
+    Buffer.add_string buf "    double       * __restrict__ out_re,\n";
+    Buffer.add_string buf "    double       * __restrict__ out_im,\n";
+    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
+    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
+    Buffer.add_string buf "    size_t is,\n";
+    Buffer.add_string buf "    size_t os,\n";
+    Buffer.add_string buf "    size_t V)\n";
+    Buffer.add_string buf "{\n";
+    (match spill with
+     | None -> ()
+     | Some sp ->
+       Buffer.add_string buf (Printf.sprintf
+         "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
+       Buffer.add_string buf (Printf.sprintf
+         "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
+    Buffer.add_string buf (Printf.sprintf "    for (size_t v = 0; v < V; v += %d) {\n" isa.vec_width)
   end else begin
     Buffer.add_string buf "    const double * __restrict__ in_re,\n";
     Buffer.add_string buf "    const double * __restrict__ in_im,\n";
@@ -509,7 +587,32 @@ let emit_codelet
     | false, true  -> "out_re"
     | false, false -> "out_im"
   in
-  let stride = if in_place then "ios" else "K" in
+  (* Output stride and loop variable depend on the codelet kind:
+   *   in_place : stride=ios, loop=k
+   *   twidsq   : stride=os,  loop=v, AND decompose slot to (row, col)
+   *   OOP      : stride=K,   loop=k
+   *
+   * For twidsq, the math layer's Output(j*n + i, _) encodes the transpose
+   * via index choice (row j, col i of the OUTPUT block). The emitter
+   * decomposes the linear slot s = j*n + i back into (s/n, s%n) so the
+   * address is `(s/n)*os + (s%n)*V + v` — naturally row-major in the
+   * output buffer with caller-supplied row stride `os`. *)
+  let out_stride =
+    if in_place then "ios"
+    else if twidsq then "os"
+    else "K"
+  in
+  let loop_var = if twidsq then "v" else "k" in
+
+  let render_output_addr k is_re =
+    let buf = out_buf is_re in
+    if twidsq && twidsq_n > 0 then
+      let row = k / twidsq_n in
+      let col = k mod twidsq_n in
+      Printf.sprintf "%s[%d*%s + %d*V + %s]" buf row out_stride col loop_var
+    else
+      Printf.sprintf "%s[%d*%s + %s]" buf k out_stride loop_var
+  in
 
   let emit_store buf oref e =
     match oref with
@@ -517,14 +620,14 @@ let emit_codelet
       Buffer.add_string buf "        ";
       Buffer.add_string buf
         (Isa.storeu_pd isa
-           (Printf.sprintf "%s[%d*%s + k]" (out_buf true) k stride)
+           (render_output_addr k true)
            (Printf.sprintf "t%d" e.tag));
       Buffer.add_string buf ";\n"
     | Expr.Output (k, false) ->
       Buffer.add_string buf "        ";
       Buffer.add_string buf
         (Isa.storeu_pd isa
-           (Printf.sprintf "%s[%d*%s + k]" (out_buf false) k stride)
+           (render_output_addr k false)
            (Printf.sprintf "t%d" e.tag));
       Buffer.add_string buf ";\n"
     | _ -> failwith "emit_codelet: assignment LHS must be an Output"
@@ -640,7 +743,7 @@ let emit_codelet
 
      (* Hoisted constants — emitted at for-loop body top, in scope everywhere. *)
      List.iter (fun e ->
-       Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
+       Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n e);
        Buffer.add_char buf '\n'
      ) const_nodes;
      Buffer.add_char buf '\n';
@@ -804,7 +907,7 @@ let emit_codelet
        else begin
          let no_declarator = is_fused_tag e.tag in
          Buffer.add_string buf
-           (render_node_def ~no_declarator ~t1s ~isa ~in_place
+           (render_node_def ~no_declarator ~t1s ~isa ~in_place ~twidsq ~twidsq_n
               ~inline_set:(Some inline_set) e);
          Buffer.add_char buf '\n';
          if not no_declarator then begin
@@ -1031,7 +1134,7 @@ let emit_codelet
           * inline into e's expression and may reference spilled tags. *)
          List.iter reload_through_inlines (preds e);
          Buffer.add_string buf
-           (render_node_def ~isa ~in_place ~t1s
+           (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n
               ~inline_set:(Some inline_set) e);
          Buffer.add_char buf '\n'
        end;
@@ -1075,7 +1178,7 @@ let emit_codelet
      let roots = List.map snd assigns in
      let nodes = topo_sort_reachable roots in
      List.iter (fun e ->
-       Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
+       Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n e);
        Buffer.add_char buf '\n'
      ) nodes;
      Buffer.add_char buf '\n';
@@ -1102,14 +1205,14 @@ let emit_codelet
          (* Intermediate computation: emit definition if not already. *)
          if not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
+           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n e);
            Buffer.add_char buf '\n'
          end
        | Some oref ->
          (* Output: ensure the value is defined, then emit a store. *)
          if not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s e);
+           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n e);
            Buffer.add_char buf '\n'
          end;
          emit_store buf oref e
@@ -1126,7 +1229,7 @@ let emit_codelet
        List.map (fun e -> (None, e)) nodes
        @ List.map (fun (lhs, e) -> (Some lhs, e)) assigns
      in
-     let render_intermediate e = render_node_def ~isa ~in_place ~t1s e in
+     let render_intermediate e = render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n e in
      let render_store oref e =
        let buf2 = Buffer.create 128 in
        emit_store buf2 oref e;
@@ -1160,7 +1263,7 @@ let emit_codelet
          end else
            Some (Some oref, e)
      ) scheduled in
-     let render_intermediate e = render_node_def ~isa ~in_place ~t1s e in
+     let render_intermediate e = render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n e in
      let render_store oref e =
        let buf2 = Buffer.create 128 in
        emit_store buf2 oref e;
@@ -1190,7 +1293,7 @@ let emit_codelet
          if not (is_inlined e) && not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
            Buffer.add_string buf
-             (render_node_def ~isa ~in_place ~t1s ~inline_set:(Some inline_set) e);
+             (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~inline_set:(Some inline_set) e);
            Buffer.add_char buf '\n'
          end
        | Some oref ->
@@ -1199,7 +1302,7 @@ let emit_codelet
          if not (Hashtbl.mem defined e.tag) then begin
            Hashtbl.add defined e.tag ();
            Buffer.add_string buf
-             (render_node_def ~isa ~in_place ~t1s ~inline_set:(Some inline_set) e);
+             (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~inline_set:(Some inline_set) e);
            Buffer.add_char buf '\n'
          end;
          emit_store buf oref e
@@ -1218,7 +1321,7 @@ let emit_codelet
          end
        | Some oref -> Some (Some oref, e)
      ) scheduled in
-     let render_intermediate e = render_node_def ~isa ~in_place ~t1s e in
+     let render_intermediate e = render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n e in
      let render_store oref e =
        let buf2 = Buffer.create 128 in
        emit_store buf2 oref e;

@@ -1,3 +1,3 @@
 (executables
- (names prime_opcount gen_radix dump_r11 dump_stages dump_dit_dif sr_diag sr_structural_diff sr_union_probe profile_pipeline)
+ (names prime_opcount gen_radix dump_r11 dump_stages dump_dit_dif)
  (libraries vfft_v2 unix))

@@ -34,6 +34,7 @@ let () =
   let gh = ref false in
   let bb = ref false in
   let bb_budget = ref 1.0 in
+  let twidsq = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list Sys.argv in
@@ -56,6 +57,7 @@ let () =
      else if arg = "--bwd"       then bwd := true
      else if arg = "--gh"        then gh := true
      else if arg = "--bb"        then bb := true
+     else if arg = "--twidsq"    then twidsq := true
      else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
        bb_budget := float_of_string arr.(!i + 1);
        incr i
@@ -119,9 +121,16 @@ let () =
   end;
 
   (* Drive math layer with or without spill marker capture.
-   * Spill is meaningful only for twiddled CT-decomposed codelets. *)
+   * Spill is meaningful only for twiddled CT-decomposed codelets.
+   *
+   * --twidsq selects the n×n twidsq DAG (FFTW-style OOP codelet,
+   * doc 43): apply inter-stage twiddle, run n parallel DFT-n's,
+   * store transposed. Bypasses the regular twiddled / spill paths
+   * (those are for in-place codelets). *)
   let raw, spill_markers, spill_ct =
-    if !spill && !twiddled then
+    if !twidsq then
+      (Vfft_v2.Dft.dft_expand_twidsq ~direction ~sign n, [], None)
+    else if !spill && !twiddled then
       let assignments, markers, ct =
         Vfft_v2.Dft.dft_expand_twiddled_spill ~policy ~direction ~sign n in
       (assignments, markers, ct)
@@ -280,7 +289,12 @@ let () =
       else ""
     in
     let name =
-      if !twiddled then
+      if !twidsq then
+        (* Twidsq codelets use their own name pattern reflecting the
+         * inter-stage role: radix{N}_twidsq_{dir}_{sgn}_{isa}_gen. *)
+        Printf.sprintf "radix%d_twidsq_%s_%s_%s_gen%s%s%s"
+          n dir_suffix sgn_suffix isa.name suffix sched_suffix spill_suffix
+      else if !twiddled then
         Printf.sprintf "radix%d_t1%s_%s%s_%s_%s_gen%s%s%s"
           n t1s_infix dir_suffix variant sgn_suffix isa.name suffix sched_suffix spill_suffix
       else
@@ -298,7 +312,9 @@ let () =
     in
     let bb_budget_arg = if !bb then Some !bb_budget else None in
     print_string (Vfft_v2.Emit_c.emit_codelet
-                    ~in_place:!in_place ~t1s:!t1s ~scheduler ~isa ~gh:!gh
+                    ~in_place:!in_place ~t1s:!t1s ~twidsq:!twidsq
+                    ~twidsq_n:(if !twidsq then n else 0)
+                    ~scheduler ~isa ~gh:!gh
                     ~bb_budget:bb_budget_arg ~spill:spill_info
                     deduped ~name)
   end else begin

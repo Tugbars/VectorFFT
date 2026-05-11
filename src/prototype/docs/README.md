@@ -89,3 +89,193 @@ Two lines. No quantitative cost model needed.
 28. **[28_composite_regression_fma_lift.md](28_composite_regression_fma_lift.md)** — Tugbars hypothesized: "something we did for primes/odd codelets leaked into pow2 CSE and codegen." **Confirmed and FIXED.** v0 of this doc claimed share_subsums was the culprit but that was wrong — forcing share_subsums on actually makes performance much WORSE (910 → 1300 total FP ops). The real culprit is `Vfft_v2.Algsimp.fma_lift` — added unconditionally to the pipeline at some point post-doc-11, it explicitly emits `_mm512_fmadd_pd(a, b, c)` which constrains GCC's RA more than letting GCC auto-fuse mul+add. With the fix (gating fma_lift behind aggressive flag — primes only): R=32 total FP 910 → **717** (essentially matching hand's 709), vmovapd 288 → 101. llvm-mca cycles R=32 SKX 312 → **226** (vs hand 338). R=64 SKX 784 → **459** (vs hand 821). Runtime EMR container R=32 K=4096 SU/Hand recovered from 0.98 to 1.01 (≈doc 09's 0.91 range), R=64 K=4096 from 1.36 to **0.77** (significantly EXCEEDING doc 11's 0.93). Prime correctness 56/56 PASS, primes still get the small ~1-2% fma_lift benefit. Fix is one conditional in `bin/gen_radix.ml`. Separate `--no-recipe --spill` compile regression remains; unrelated to fma_lift.
 
 29. **[29_avx2_prime_threshold.md](29_avx2_prime_threshold.md)** — Follow-up after doc 28: tested AVX2 primes vs hand to verify the fma_lift fix didn't have an AVX2 analog. **Found one.** R=5 and R=7 AVX2 ran pure Topo (recipe didn't activate due to threshold `n+6 > 16` requiring R≥11), and were losing 4-37% to hand — t1_dif catastrophic at 1.23-1.37× at K=512+. The threshold was set when fma_lift was unconditional and the recipe regressed on small AVX2 codelets; with fma_lift gated to primes only (doc 28), the recipe path is healthy on AVX2 too. Fix: add `|| n >= 5` clause to `should_spill`. R=7 recovered fully (every variant flips from losing to winning by 2-18%, t1_dif K=1024: 1.37 → 0.97). R=5 verified separately — recipe wins by 13-19pp on t1_dif (1.30 → 1.16) and is net positive overall. Other primes unaffected. Prime correctness 56/56 PASS. Open: residual DIF-on-AVX2 weakness across R=13/17 (R=13 t1_dif K≥512 still 1.06-1.10×) — separate codegen issue, not blocking. Open: R=8 AVX2 spill path has `__m256d *` vs `double *` type warning when forced into spill (now active since R=8 ≥ 5).
+
+30. **[30_sub_neg_mul_fnmsub.md](30_sub_neg_mul_fnmsub.md)** — Peephole rewrite `Sub(Neg(Mul(a,b)), c) → fnmsub(a, b, c)` to expose the negated-FMA pattern. Moved to construction-time in `mk_sub_binary` because the standalone post-pass orphaned spill markers at R=32/R=64.
+
+31. **[31_split_radix_research_arc.md](31_split_radix_research_arc.md)** — Multi-week SR investigation arc: implementation, integration with the t1/log3 axes, runtime characterization. Conclusion: SR doesn't beat the recipe-tuned CT path in our setup. Recipe machinery would have to be ported to SR's irregular structure; deferred until there's a clear motivation.
+
+32. **[32_of_expr_memo.md](32_of_expr_memo.md)** — `of_expr` memoization fix removing O(N⁴) wall in the IR pipeline. Enables larger codelets (R=128 → R=512) to generate in reasonable time.
+
+33. **[33_R128_R512_sweep.md](33_R128_R512_sweep.md)** — Monolithic codelet sweep at R=128, 256, 512. Wired picker entries for these sizes; simple harness shows monolithic wins B≥16 by 14-74%/12-64% at R=128/256, with R=512 showing a crossover at B=128 (later refined in doc 34). Asm-level analysis: OoO resource exhaustion mechanism (front-end + store buffer fill before scheduler exhausts).
+
+34. **[34_real_shuffle_and_isa_split.md](34_real_shuffle_and_isa_split.md)** — Real-shuffle CT(N1, N2) harness with proper transpose pass. **R=512 "crossover" was largely shuffle-cost artifact** — with real shuffle, AVX-512 R=512 stays at parity (not loss) at high B. AVX2 R=512 has REAL crossover: multi-stage CT(16,32) wins by 33% at B=512. AVX2 codelets have 2.4-2.8× more stack ops than AVX-512 (16 YMM vs 32 ZMM). Conclusion: (N, B, ISA)-aware planner is needed; install-time wisdom is the right design.
+
+35. **[35_spill_phase1_diagnostic.md](35_spill_phase1_diagnostic.md)** — Spill controller diagnostic. Categorized R=512 AVX-512's 5216 stack ops: 2048 recipe-mandated + 3168 GCC-added. 99.6%+ are paired (not dead). Pass 1 / Pass 2 split balanced at R=512, lopsided toward Pass 2 at R=256 (85%). R=64 is the recipe's calibration sweet spot (gcc-extra ≈ 0). AVX2 always has positive gcc-extras (16 YMM is structural bottleneck).
+
+36. **[36_spill_phase2_design_b_already_done.md](36_spill_phase2_design_b_already_done.md)** — Design B (cluster-aware scheduling) was ALREADY IMPLEMENTED in emit_c.ml via min_slot sorting. Default and `--su` produce identical 5216 ops at R=512 AVX-512. The `--fuse` parameter has zero effect at R=512. **5216 is the floor of cluster-aware scheduling.** Per-cluster lexical scoping (Design A first attempt) also had zero effect — GCC at -O3 ignores C-level scope.
+
+37. *(skipped — number never used)*
+
+38. **[38_compiler_study.md](38_compiler_study.md)** — Compiler comparison breakthrough. **gcc-11 + `-flive-range-shrinkage` saves 29% stack ops at R=512 AVX-512** (5216 → 3699) with zero source code changes. gcc-12 introduced a register allocator regression vs gcc-11 (9-14% worse on AVX-512). gcc-12 == gcc-13 exactly. **Clang-18 is dramatically worse**: 3× more spills at R=512, 60% less FMA fusion. The flag's asymmetric behavior on AVX2 (helps small R, mildly hurts large R) confirms the mechanism. Runtime validation: 5-8% real improvement at moderate B (container, directional); production likely 3-10%.
+
+39. **[39_phase_a_diff_analysis.md](39_phase_a_diff_analysis.md)** — Phase A diff analysis on gcc-11+shrink vs gcc-13. **74-79% reduction in Pass 2 GCC-scratch usage** — that's where the win concentrates. Pass 1 reduction is much smaller (-21% at R=512). Mechanism: allocator-internal live-range shrinkage; the recipe operates at IR level which the optimizer sees through. Three candidate encodings sketched (Δ1 micro-clustering, Δ2 rematerialization, Δ3 expression rewriting).
+
+40. **[40_delta2_experiment_negative.md](40_delta2_experiment_negative.md)** — Δ2 negative result. Replaced single named reload + multiple references with inline `_mm512_loadu_pd(...)` at every use site. **GCC's CSE collapses duplicate inline loads — byte-for-byte identical asm output across all 6 (R, compiler) combinations.** Confirms gcc-11+shrink's win is purely allocator-internal; source-level encoding can't replicate it. Recommendation: ship the compiler dependency.
+
+41. **[41_r1024_threshold.md](41_r1024_threshold.md)** — R=1024 = CT(32, 32) monolithic vs multi-stage cascades. **Monolithic R=1024 runs ~50% slower than 64×16 multi-stage at B≥32**. Stack ops scale 3.82× from R=512 to R=1024 while compute only scales 2.2× — register pressure grows super-linearly. gcc-11+shrink's leverage collapses from 29% at R=512 → 10% at R=1024. **The monolithic codelet's sweet spot is R ≤ 512**; multi-stage wins above. Memory traffic explanation: mono at B=64 spills 1.15 MB (out of L1), multi-stage 258 KB (fits L1).
+
+42. **[42_log3_vs_flat_R512.md](42_log3_vs_flat_R512.md)** — R=512 t1 flat vs t1_log3 codelet. **Clear B-crossover at B≈64-128.** Below: flat wins 7-13% (extra compute of log3 dominates). Above: log3 wins 23-25% (twiddle data exits L2 cache, log3's smaller twiddle footprint fits L1). Static analysis predicted flat wins (more total instructions and stack ops for log3) — runtime says otherwise. Clean validation that codelet measurement can't be predicted analytically.
+
+---
+
+## Generator Levers — Reference
+
+This section catalogs all knobs the code generator exposes, organized by what each affects. Useful for codelet wisdom calibration (sweep generator parameters to find best intrinsic codelet quality per hardware target) and as a quick-lookup reference.
+
+### Category A: Variant flags (planner's catalog dimensions — NOT wisdom)
+
+These produce structurally different codelets. The planner builds all variants and picks per plan based on runtime measurement in plan context. **Don't conflate these with wisdom dimensions** — a codelet's standalone runtime at (R, B, ISA) is not a reliable predictor of its performance in a multi-stage plan, so these are planner concerns.
+
+```
+--log3              Log3 twiddle policy (vs flat default)
+--t1s               Alternative scalar-broadcast twiddle layout for inner codelets
+--dif               Decimation-in-Frequency (vs DIT default)
+--bwd               Backward transform (sign flip on twiddle θ)
+--in-place          In-place vs out-of-place calling convention
+```
+
+### Category B: Generator-internal tuning (wisdom dimensions)
+
+Same semantic codelet, different intrinsic quality. These are what the codelet wisdom harness should calibrate per (R, ISA) target.
+
+**Factorization** — currently hardcoded in `pick_algorithm` in `lib/dft.ml`. For each R, the CT(N1, N2) choice:
+
+```
+R=128 → CT(8, 16)     | R=256 → CT(16, 16)
+R=512 → CT(16, 32)    | R=1024 → CT(32, 32)
+```
+
+Alternatives exist (e.g., R=512: CT(8, 64), CT(32, 16), CT(64, 8)) and produce different stack op profiles and runtimes. Container-CPU measurements may not match production rankings — calibrate per target.
+
+**Scheduler** — six options:
+
+| Flag | Scheduler | Notes |
+|---|---|---|
+| (default for non-twiddled) | Topological | Simple topo order, no block scoping |
+| `--annotate` | Annotated topological | FFTW-style nested-block scoping via `lib/annotate.ml` |
+| `--bisect` | Frigo's bisection | Recursive cache-oblivious partitioning |
+| `--su` | Sethi-Ullman list | Default with spill recipe — `(cp_dist DESC, su_num ASC)` priority |
+| `--su --gh` | SU + Goodman-Hsu | Pressure-aware mode switching at live-count threshold |
+| `--bb [--bb-budget T]` | Branch-and-bound | Lexicographic (peak ASC, -progress ASC), optional time budget |
+
+**`--fuse N`** — keep last N outputs of each sub-DFT-N2 register-resident across Pass 1/Pass 2 boundary. Doc 36 found zero static effect at R=512 gcc-13 — runtime effect untested.
+
+**`--spill` / `--no-recipe`** — force spill recipe on/off (usually auto-controlled by cost model; see below).
+
+### Category C: Build/target (set once per deployment)
+
+```
+--isa avx512 | avx2          ISA target (must match production)
+--uarch sapphire_rapids|...  µarch tuning hint (affects cost model)
+
+External (compiler, not gen_radix flag):
+gcc-11 / gcc-12 / gcc-13     Compiler choice — gcc-11 wins on AVX-512 (doc 38)
+-flive-range-shrinkage       gcc flag — helps AVX-512 + AVX2 small R, hurts AVX2 large R
+```
+
+### Category D: Informational
+
+```
+--emit-c                     Output C source (vs default DAG dump)
+```
+
+---
+
+## Default Scheduler Chain — When Each Fires
+
+The cost-model auto-activation in `bin/gen_radix.ml` (lines 90-119) sets defaults based on flags and the `should_spill` rule:
+
+```
+Without --twiddled:
+  → Topological (the base default)
+
+With --twiddled (no override):
+  → Auto-promoted to SU + Spill recipe
+    (only when `should_spill(n, vec_regs)` returns true — see rule below)
+
+With --twiddled on AVX2 AND R ≥ 32 (no override):
+  → Auto-promoted to SU + GH + Spill recipe
+    (GH adds Goodman-Hsu pressure-aware mode switching)
+
+Override flags (mutually exclusive with auto-rule):
+  --bisect      → Bisection         (excluded from auto-rule; opt-in only)
+  --annotate    → Annotated topo    (excluded from auto-rule; opt-in only)
+  --no-recipe   → Forces Topo, disables both auto-rules
+```
+
+Key things to note:
+
+- **SU is default** for any twiddled CT codelet where the recipe auto-fires (essentially all R ≥ 5 — see spill rule below)
+- **SU+GH is default only on AVX2 with R ≥ 32**. On AVX-512 GH is NOT default — its `vec_regs ≤ 16` condition fails, and empirically GH is a no-op on AVX-512 because cluster-sequential keeps per-cluster live below the GH threshold (24).
+- **Bisect is NOT default** — opt-in alternative explicitly excluded from the auto-rule.
+- **Annotate is NOT default** — opt-in alternative explicitly excluded.
+
+## `should_spill` Rule — Three Clauses
+
+The recipe auto-activation rule lives in `lib/dft.ml`:
+
+```ocaml
+let should_spill (n : int) (vec_regs : int) : bool =
+  (n + 6 > vec_regs) || vec_regs >= 32 || n >= 5
+```
+
+Three clauses, any one fires the recipe:
+
+| Clause | Meaning | When it fires |
+|---|---|---|
+| `n + 6 > vec_regs` | Register file budget exceeded | AVX2: n ≥ 11; AVX-512: n ≥ 27 |
+| `vec_regs >= 32` | Always for AVX-512 | All AVX-512 codelets |
+| `n >= 5` | Catch-all for non-trivial radixes | n=5 and up |
+
+**The recipe is on by default for every radix worth talking about.** It's off only for n ∈ {2, 3, 4} — tiny direct codelets with no CT structure to spill anyway.
+
+## Where `--no-recipe` is "Open" (Worth Testing)
+
+These are radixes where the recipe auto-fires but **might be unnecessary** — peak live actually fits the register file:
+
+**AVX-512** (vec_regs=32) — 9 radixes:
+```
+R = 5, 7, 8, 11, 13, 16, 17, 19, 32
+```
+At these sizes, clause `n + 6 > 32` is FALSE — peak live likely fits in 32 ZMM. The recipe fires only because of clause `vec_regs >= 32` (the "always-spill-on-AVX-512" rule that may over-spill at small R). Doc 35 already showed R=16 AVX-512 has -52 gcc-extras (recipe declares 64 spill ops, GCC trims to 12) and R=32 has -44 — strong signal that the recipe is over-eager at these sizes.
+
+**AVX2** (vec_regs=16) — 3 radixes:
+```
+R = 5, 7, 8
+```
+At these sizes, `n + 6 ≤ 14 ≤ 16` — register file isn't exceeded. Recipe fires only via the catch-all `n >= 5` clause. AVX2 at R ≥ 11 obviously needs the recipe (register pressure exceeds 16 YMM).
+
+**R ≥ 64 on both ISAs** — recipe is clearly necessary, don't test:
+- Without recipe at R=512 AVX-512: 14639 ops vs 5216 with recipe (doc 38)
+- Recipe-off would just confirm the known catastrophic result
+
+**Possible future simplification:** if hand-tuning at the 12 open cells confirms `--no-recipe` wins, the `should_spill` rule could be reduced to:
+
+```ocaml
+let should_spill (n : int) (vec_regs : int) : bool =
+  n + 6 > vec_regs
+```
+
+— a clean register-budget rule, dropping the `vec_regs >= 32` and `n >= 5` clauses entirely. More honest about when spilling is actually needed.
+
+## Codelet Wisdom — Scope Boundary
+
+Codelet wisdom = generator-side tuning of intrinsic codelet quality. Operates at code-generation time. Output: better codelet catalog for the planner to consume.
+
+**In scope for wisdom calibration** (intrinsic to the codelet, doesn't depend on plan context):
+- CT factorization per (R, ISA)
+- Scheduler choice + GH/BB modifiers
+- `fuse` value
+- Compiler + flags
+- `--no-recipe` for the 12 open cells above
+
+**NOT in scope for wisdom** (depends on plan context — planner's job):
+- Whether log3 or flat wins at given B (doc 42 — varies with cache state from neighboring stages)
+- Whether to use a monolithic R=N or multi-stage decomposition (doc 41 — depends on planner's strategy choice)
+- t1 vs t1s variant
+- DIT vs DIF at each stage
+- Whether this R should exist as a codelet at all
+
+The wisdom harness builds all variants (Category A) using the best generator parameters (Category B). The planner consumes the resulting catalog as it does today.
+
+Per-machine calibration is essential — container-CPU measurements don't extrapolate to production (i9-14900K, SPR, Zen4 each shift thresholds). See doc 34's "(N, B, ISA)-aware planner" motivation and doc 42's "static analysis can't predict the winner" finding.

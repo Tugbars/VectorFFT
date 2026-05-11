@@ -97,6 +97,38 @@ let pick_algorithm (n : int) : algorithm =
          * Peak live count exceeds 32 ZMM significantly; recipe path is
          * mandatory. Probably exposes spill controller weaknesses we
          * want to characterize. See docs/31_R128_spill_stress.md. *)
+    | 256 -> Cooley_Tukey (16, 16)
+        (* R=256 — balanced factorization. 16 sub-DFT-16s in each pass.
+         * Following the precedent set by R=128 (8×16) and R=64 (8×8),
+         * this is the natural "balanced" choice for monolithic generation.
+         * Generates a ~7800-vec-instr codelet (vs R=128's 3318). *)
+    | 512 -> Cooley_Tukey (16, 32)
+        (* R=512 — 16×32 chosen empirically. Multi-stage bench at R=512
+         * showed 16×32 / 32×16 multi-stage dominated 8×64 / 64×8 across
+         * all batch sizes (typically 10-20% faster). The same factorization
+         * principle should apply to the monolithic codelet's INTERNAL
+         * structure: 16×32 splits the work more evenly across moderate-
+         * sized sub-FFTs than 8×64's heavy R=64 + light R=8.
+         *
+         * Picker entry was initially CT(8, 64) on AVX-512-lane-alignment
+         * reasoning, but the data didn't support that intuition — see
+         * docs/34_real_shuffle_and_isa_split.md for the empirical comparison.
+         *
+         * CT(32, 16) was tested in doc 36's Phase 2 prototype and gave
+         * WORSE stack op counts (8752 AVX-512, 14846 AVX2) than CT(16, 32)
+         * — the smaller Pass 1 clusters helped but the larger Pass 2
+         * clusters (sub-DFT-32) hurt more. *)
+    | 1024 -> Cooley_Tukey (32, 32)
+        (* R=1024 EXPERIMENTAL (doc 41) — symmetric factorization. Both
+         * passes have 32 sub-DFT-32 clusters. Inner DFT-32 = CT(4, 8)
+         * is well-tested. Asymmetric alternatives (CT(16,64), CT(64,16))
+         * would put one pass's clusters at sub-DFT-64 size which is
+         * beyond what fits comfortably in 32 ZMM registers. CT(32,32)
+         * is the natural extension of the R=512=CT(16,32) line.
+         *
+         * Test goal: compare monolithic R=1024 stack ops and runtime
+         * against multi-stage cascades (R=64×R=16, etc.) under
+         * gcc-11 + -flive-range-shrinkage. *)
         (* User's gen_radix32.py uses CT(8, 4) in their (N1, N2) convention.
          * Their convention has input mapping n = N2*n1 + n2 (high digit n1),
          * ours has n = n1 + n2*N1 (low digit n1). The labels swap.
@@ -744,6 +776,77 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
       | _ -> 0
     ) !acc in
     sorted
+
+(* === OUT-OF-PLACE TWIDSQ EXPANSION (FFTW-style intermediate codelet) ===
+ *
+ * Builds the assignment DAG for an n×n "twiddle square" codelet:
+ *   - Input:  row-major n×n block of complex values (n² elements)
+ *   - Operation: apply inter-stage twiddle W^{i*k} to each (i, k), then
+ *                run an n-point DFT along the k dimension of each row,
+ *                producing row-result Y[i, j] for i, j ∈ [0, n).
+ *   - Output: transposed layout — physical slot j*n + i gets Y[i, j].
+ *
+ * This corresponds to FFTW's gen_twidsq.ml codelet. Used at intermediate
+ * stages of a multi-stage cascade where the layout transformation between
+ * stages would otherwise require a separate transpose pass.
+ *
+ * Indexing conventions:
+ *   - Input(i*n + k, _)            ← element at row i, position k
+ *   - Twiddle((i-1)*(n-1) + (k-1), _) ← W^{i*k} for i ∈ [1, n), k ∈ [1, n)
+ *     (Row 0 and column 0 have trivial W^0 = 1; no twiddle slots needed.)
+ *   - Output(j*n + i, _)           ← row i's j-th DFT output, transposed store
+ *
+ * Number of twiddle slots: (n-1)² distinct values.
+ *
+ * NOTE: For the initial prototype we support DIT, TP_Flat only. DIF and
+ * TP_Log3 can be added by parallel construction once the DAG semantics
+ * are validated. Spill markers are not yet generated — large twidsq sizes
+ * will need a parallel _spill variant similar to dft_expand_twiddled_spill.
+ *)
+let dft_expand_twidsq ?(direction = DIT) ?(sign = `Fwd)
+    (n : int) : Expr.assignment list =
+  let conj = (sign = `Bwd) in
+  match direction with
+  | DIT ->
+    let acc = ref [] in
+    for i = 0 to n - 1 do
+      (* Step 1: Apply inter-stage twiddle to row i.
+       * For position k > 0 of row i > 0: multiply by W^{i*k}.
+       * For row 0 or position 0: pass-through (W^0 = 1). *)
+      let twiddled_re = Array.make n (Const 0.0) in
+      let twiddled_im = Array.make n (Const 0.0) in
+      for k = 0 to n - 1 do
+        let xr = Load (Input (i * n + k, true)) in
+        let xi = Load (Input (i * n + k, false)) in
+        if i = 0 || k = 0 then begin
+          twiddled_re.(k) <- xr;
+          twiddled_im.(k) <- xi
+        end else begin
+          let twiddle_slot = (i - 1) * (n - 1) + (k - 1) in
+          let wr = Load (Twiddle (twiddle_slot, true)) in
+          let wi = Load (Twiddle (twiddle_slot, false)) in
+          let (out_re, out_im) = cmul_pattern ~conj xr xi wr wi in
+          twiddled_re.(k) <- out_re;
+          twiddled_im.(k) <- out_im
+        end
+      done;
+      (* Step 2: Compute DFT-n on the twiddled row.
+       * Reuses the existing dft machinery — math layer is buffer-agnostic. *)
+      let input_re k = twiddled_re.(k) in
+      let input_im k = twiddled_im.(k) in
+      let out_re, out_im = dft ~sign n input_re input_im in
+      (* Step 3: Store row i's outputs TRANSPOSED.
+       * Y[i, j] goes to physical slot j*n + i (transposed layout). *)
+      for j = n - 1 downto 0 do
+        acc := (Output (j * n + i, true),  out_re.(j))  :: !acc;
+        acc := (Output (j * n + i, false), out_im.(j)) :: !acc
+      done
+    done;
+    List.rev !acc
+
+  | DIF ->
+    failwith "dft_expand_twidsq: DIF direction not yet implemented"
+
 
 (* === SPILL-AWARE EXPANSION ===
  *
