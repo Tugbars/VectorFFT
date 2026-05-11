@@ -7,10 +7,16 @@
 #
 # Coverage spans 7 prime radixes × 8 variants = 56 codelets.
 #
+# Compiler choice (doc 38): gcc-11 + -flive-range-shrinkage cuts stack ops
+# by 12-36% on AVX-512 vs gcc-13 default, and preserves correctness. Set
+# CC env var to override, e.g. CC=gcc-13 ./build_and_run.sh.
+#
 # Usage: ./build_and_run.sh
 
 set -e
 GEN=${GEN:-../../../_build/default/bin/gen_radix.exe}
+CC=${CC:-gcc-11}
+EXTRA_CFLAGS=${EXTRA_CFLAGS:--flive-range-shrinkage}
 WORK=$(mktemp -d)
 trap "rm -rf $WORK" EXIT
 
@@ -26,7 +32,7 @@ for R in 2 5 7 11 13 17 19; do
   $GEN $R --twiddled --in-place --t1s --dif  --log3    --emit-c > "$WORK/gen_r${R}_t1s_dif_log3.c"
 done
 
-gcc -O3 -mavx512f -mavx512dq -mfma -march=native test_all8_runtime.c \
+$CC -O3 $EXTRA_CFLAGS -mavx512f -mavx512dq -mfma -march=native test_all8_runtime.c \
     "$WORK"/gen_r*.c -o "$WORK/test_all8" -lm
 
 "$WORK/test_all8"
