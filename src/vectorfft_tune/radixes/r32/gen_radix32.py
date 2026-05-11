@@ -3157,7 +3157,7 @@ def main():
     parser.add_argument('--enumerate-buf-candidates', action='store_true',
                         help='Emit all (tile, drain, prefetch) combinations for the AVX2 buffered '
                              'variant as separately-named candidates. Rationale: R=32 AVX2 '
-                             'ct_t1_dit is DTLB-store-bound (66.1% of clockticks per VTune) '
+                             'ct_t1_dit is DTLB-store-bound (66.1%% of clockticks per VTune) '
                              'and buffering is expected to attack this. AVX-512 baseline '
                              'is not equivalently bottlenecked, so buffering is AVX2-only.')
     args = parser.parse_args()
