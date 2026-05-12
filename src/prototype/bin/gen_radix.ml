@@ -40,6 +40,9 @@ let () =
   let rdft = ref false in
   let hc2hc = ref false in
   let hc2c = ref false in
+  let dct2 = ref false in
+  let dct2_trigII = ref false in
+  let dct3 = ref false in
   let c2r = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -69,6 +72,9 @@ let () =
      else if arg = "--rdft"      then rdft := true
      else if arg = "--hc2hc"     then hc2hc := true
      else if arg = "--hc2c"      then hc2c := true
+     else if arg = "--dct2"      then dct2 := true
+     else if arg = "--dct2-trigII" then dct2_trigII := true
+     else if arg = "--dct3"      then dct3 := true
      else if arg = "--c2r"       then c2r := true
      else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
        bb_budget := float_of_string arr.(!i + 1);
@@ -152,6 +158,10 @@ let () =
     else if !hc2c then
       let direction = if !dif then `Dif else `Dit in
       (Vfft_v2.Dft_r2c.dft_expand_hc2c ~sign ~direction n, [], None)
+    else if !dct2 then
+      (Vfft_v2.Dft_r2c.dft_expand_dct2 n, [], None)
+    else if !dct2_trigII then
+      (Vfft_v2.Dft_r2c.dft_expand_dct2_trigII n, [], None)
     else if !c2r then
       (Vfft_v2.Dft_r2c.dft_expand_c2r n, [], None)
     else if !twidsq then
@@ -338,6 +348,14 @@ let () =
          * radix{R}_hc2c_{dir}_{sgn}_{isa}_gen *)
         Printf.sprintf "radix%d_hc2c_%s_%s_%s_gen%s%s%s"
           n dir_suffix sgn_suffix isa.name suffix sched_suffix spill_suffix
+      else if !dct2 then
+        (* DCT-II via Makhoul's reduction: radix{N}_dct2_{isa}_gen *)
+        Printf.sprintf "radix%d_dct2_%s_gen%s%s%s"
+          n isa.name suffix sched_suffix spill_suffix
+      else if !dct2_trigII then
+        (* DCT-II via FFTW trigII embedding: radix{N}_dct2_trigII_{isa}_gen *)
+        Printf.sprintf "radix%d_dct2_trigII_%s_gen%s%s%s"
+          n isa.name suffix sched_suffix spill_suffix
       else if !c2r then
         (* C2R backward codelet: radix{N}_c2r_{isa}_gen
          * c2r is always backward, so no separate sgn_suffix is needed. *)

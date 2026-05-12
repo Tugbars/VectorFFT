@@ -373,6 +373,214 @@ let dft_expand_rdft ?(sign = `Fwd) (n : int) : Expr.assignment list =
   done;
   List.rev !acc
 
+(* === DCT-II via Makhoul's reduction ===
+ *
+ * Port of the production algorithm from src/core/dct.h. Convention is
+ * FFTW's REDFT10:
+ *   Y[k] = 2 · Σ_{n=0..N-1} x[n] · cos(π·k·(2n+1)/(2N))
+ *
+ * Makhoul's pipeline (fused into one DAG so algsimp can collapse it):
+ *   1. Permute reals into buf such that
+ *        buf[0]      = x[0]
+ *        buf[i]      = x[2i]      for i = 1..N/2-1
+ *        buf[N-i]    = x[2i-1]
+ *        buf[N/2]    = x[N-1]     (only when N even)
+ *   2. N-point R2C of buf → Z[0..N/2] complex
+ *   3. Post-process butterfly:
+ *        Y[0]    = 2·Re(Z[0])
+ *        Y[N/2]  = 2·cos(π/4)·Re(Z[N/2])           (N even)
+ *        For i = 1..N/2-1, with a = 2·Re(Z[i]), b = 2·Im(Z[i]):
+ *          wa = cos(π·i/(2N)),  wb = sin(π·i/(2N))
+ *          Y[i]    = wa·a + wb·b
+ *          Y[N-i]  = wb·a - wa·b
+ *
+ * In this DAG-fused form, the permutation is just index manipulation
+ * (zero cost), rdft gets its inputs through the permuted indices, and
+ * the post-process butterfly is regular arithmetic. algsimp folds and
+ * schedules the whole thing as one straight-line codelet.
+ *
+ * Reference: J. Makhoul, IEEE Trans. ASSP-28 (1), 27–34 (1980).
+ *)
+let dft_dct2 (n : int) (input_re : int -> expr) : expr array =
+  assert (n >= 2 && n mod 2 = 0);
+  let half = n / 2 in
+  let pi = 4.0 *. atan 1.0 in
+  (* Step 1: build the permuted input as a virtual index function.
+   * No actual memory permutation — algsimp sees through it. *)
+  let buf k =
+    if k = 0 then input_re 0
+    else if k = half && n mod 2 = 0 then input_re (n - 1)
+    else if k < half then input_re (2 * k)
+    else (* k > half, in range [half+1, n-1] *)
+      input_re (2 * (n - k) - 1)
+  in
+  (* Step 2: N-point real DFT of the permuted buffer. *)
+  let z_re, z_im = dft_rdft ~sign:`Fwd n buf in
+  (* Step 3: post-process butterfly. Output is N reals (indices 0..N-1). *)
+  let out = Array.make n (Const 0.0) in
+  (* DC bin Y[0] = 2·Re(Z[0]). *)
+  out.(0) <- Mul (Const 2.0, z_re.(0));
+  (* Nyquist bin Y[N/2] = 2·cos(π/4)·Re(Z[N/2]).
+   * cos(π/4) = √2/2 ≈ 0.7071. *)
+  let nyq_scale = 2.0 *. cos (pi /. 4.0) in
+  out.(half) <- Mul (Const nyq_scale, z_re.(half));
+  (* Pair butterflies for i = 1..N/2-1. *)
+  for i = 1 to half - 1 do
+    let theta = pi *. float_of_int i /. (2.0 *. float_of_int n) in
+    let wa = Const (cos theta) in
+    let wb = Const (sin theta) in
+    let a = Mul (Const 2.0, z_re.(i)) in
+    let b = Mul (Const 2.0, z_im.(i)) in
+    (*  Y[i]   = wa·a + wb·b  *)
+    out.(i)     <- Add (Mul (wa, a), Mul (wb, b));
+    (*  Y[N-i] = wb·a - wa·b  *)
+    out.(n - i) <- Sub (Mul (wb, a), Mul (wa, b))
+  done;
+  out
+
+(* Assignment-list wrapper for dct2.
+ * Inputs at Input(k, true) for k = 0..n-1.
+ * Outputs at Output(k, true) for k = 0..n-1. Output is purely real —
+ * we skip Output(k, false) entirely to avoid emitting n×K useless
+ * stores per call. Caller treats out_im as undefined / scratch. *)
+let dft_expand_dct2 (n : int) : Expr.assignment list =
+  let input_re k = Load (Input (k, true)) in
+  let out = dft_dct2 n input_re in
+  let acc = ref [] in
+  for k = n - 1 downto 0 do
+    acc := (Output (k, true),  out.(k)) :: !acc
+  done;
+  List.rev !acc
+
+(* === DCT-II via FFTW's trigII embedding ===
+ *
+ * Alternative to Makhoul. Port of FFTW's approach from genfft/trig.ml:
+ *     trigII n input = Fft.dft 1 (4n) (Complex.hermitian (4n) (interleave_zero input))
+ *     dctII = make_dct Complex.one 0 trigII
+ *
+ * Construct a 4N-point real signal g such that
+ *   g[2k+1] = x[k]   for k = 0..N-1     (odd positions in [0..2N))
+ *   g[2k]   = 0      for k = 0..2N-1    (all even positions)
+ *   g[4N-i] = g[i]   for i = 1..2N-1    (Hermitian mirror; real => no conj)
+ *
+ * Then DFT(g)[k] = sum_{m=0..4N-1} g[m] · exp(-2πi · m · k / (4N))
+ *                = 2 · sum_{j=0..N-1} x[j] · cos(π · k · (2j+1) / (2N))
+ *                = Y_DCT-II[k]
+ *
+ * The 32-point (for N=8) c2c DFT is run on a signal where most inputs
+ * are zero (16 of 32 inputs are zero by construction; another 8 are
+ * conjugate-symmetric mirrors). algsimp should fold the zeros and
+ * exploit the symmetry, producing fewer ops than Makhoul's explicit
+ * permute-then-rdft-then-butterfly DAG.
+ *
+ * Reference: FFTW genfft/trig.ml lines 60-64.
+ *)
+let dft_dct2_trigII (n : int) (input_re : int -> expr) : expr array =
+  assert (n >= 1);
+  let fourn = 4 * n in
+  let zero = Const 0.0 in
+  (* Build the 4N-point real signal g via interleave-zero + Hermitian. *)
+  let in_re i =
+    if i mod 2 = 0 then zero
+    else if i < 2 * n then input_re ((i - 1) / 2)
+    else input_re ((fourn - 1 - i) / 2)   (* Hermitian mirror: g[4N-i] = g[i] *)
+  in
+  let in_im _ = zero in
+  let full_re, _ = Dft.dft ~sign:`Fwd fourn in_re in_im in
+  (* DCT-II outputs are the first N real parts of the 4N-point DFT. *)
+  let out = Array.make n zero in
+  for k = 0 to n - 1 do
+    out.(k) <- full_re.(k)
+  done;
+  out
+
+let dft_expand_dct2_trigII (n : int) : Expr.assignment list =
+  let input_re k = Load (Input (k, true)) in
+  let out = dft_dct2_trigII n input_re in
+  let acc = ref [] in
+  for k = n - 1 downto 0 do
+    acc := (Output (k, true), out.(k)) :: !acc
+  done;
+  List.rev !acc
+
+(* === DCT-III via inverse-Makhoul (FFTW REDFT01 convention) ===
+ *
+ * Fills the production gap: production has only a specialized N=8
+ * codelet (`dct3_n8_avx2.h`); the general-N dispatcher is deferred per
+ * the v1.0 limitation note in `src/core/dct.h`.
+ *
+ *   Y[k] = X[0] + 2 · Σ_{n=1..N-1} X[n] · cos(π · n · (2k+1) / (2N))
+ *
+ * DCT-III is the inverse of DCT-II up to scale 2N. We invert Makhoul:
+ *   1. Inverse butterfly: build complex Z[0..N/2] from input X
+ *      Re(Z[0])    = X[0] / 2,                       Im(Z[0])    = 0
+ *      Re(Z[i])    = (wa · X[i] + wb · X[N-i]) / 2,  Im(Z[i])    = (wb · X[i] - wa · X[N-i]) / 2
+ *        where wa = cos(π·i/(2N)), wb = sin(π·i/(2N))
+ *      Re(Z[N/2])  = X[N/2] · √2/2,                  Im(Z[N/2])  = 0   (N even)
+ *   2. N-point inverse R2C (C2R) of Z → buf[0..N-1] real
+ *   3. Un-permute (inverse of DCT-II's pre-permute):
+ *        Y[0]   = buf[0]
+ *        Y[2i]  = buf[i]      for i = 1..N/2-1
+ *        Y[2i-1]= buf[N-i]    for i = 1..N/2-1
+ *        Y[N-1] = buf[N/2]    (N even)
+ *)
+let dft_dct3 (n : int) (input_re : int -> expr) : expr array =
+  assert (n >= 2 && n mod 2 = 0);
+  let half = n / 2 in
+  let pi = 4.0 *. atan 1.0 in
+  (* Step 1: inverse butterfly to construct complex Z[0..N/2]. *)
+  let z_re = Array.make (half + 1) (Const 0.0) in
+  let z_im = Array.make (half + 1) (Const 0.0) in
+  z_re.(0) <- Mul (Const 0.5, input_re 0);
+  (* Z[N/2]: forward had Y[N/2] = 2·cos(π/4)·Re(Z[N/2]).
+   * Inverse: Re(Z[N/2]) = Y[N/2] / (2·cos(π/4)) = Y[N/2] · √2/2. *)
+  let nyq_scale = 1.0 /. (2.0 *. cos (pi /. 4.0)) in
+  z_re.(half) <- Mul (Const nyq_scale, input_re half);
+  for i = 1 to half - 1 do
+    let theta = pi *. float_of_int i /. (2.0 *. float_of_int n) in
+    let wa = cos theta in
+    let wb = sin theta in
+    let y_i   = input_re i in
+    let y_nmi = input_re (n - i) in
+    (*  a = wa·Y[i] + wb·Y[N-i]
+     *  b = wb·Y[i] - wa·Y[N-i]
+     *  Re(Z[i]) = a/2;  Im(Z[i]) = b/2 *)
+    let a = Add (Mul (Const wa, y_i), Mul (Const wb, y_nmi)) in
+    let b = Sub (Mul (Const wb, y_i), Mul (Const wa, y_nmi)) in
+    z_re.(i) <- Mul (Const 0.5, a);
+    z_im.(i) <- Mul (Const 0.5, b)
+  done;
+  (* Step 2: N-point inverse R2C of Z → buf.
+   * We reuse Dft.dft with sign=Bwd on the Hermitian-extended Z.
+   * For positions i > N/2, Z is the conjugate of Z[N-i]. *)
+  let z_in_re k =
+    if k <= half then z_re.(k)
+    else z_re.(n - k)
+  in
+  let z_in_im k =
+    if k <= half then z_im.(k)
+    else Neg (z_im.(n - k))
+  in
+  let buf_re, _buf_im = Dft.dft ~sign:`Bwd n z_in_re z_in_im in
+  (* Step 3: inverse permutation to produce Y. *)
+  let out = Array.make n (Const 0.0) in
+  out.(0) <- buf_re.(0);
+  out.(n - 1) <- buf_re.(half);
+  for i = 1 to half - 1 do
+    out.(2 * i)     <- buf_re.(i);       (* Y[2i]   = buf[i]   *)
+    out.(2 * i - 1) <- buf_re.(n - i)    (* Y[2i-1] = buf[N-i] *)
+  done;
+  out
+
+let dft_expand_dct3 (n : int) : Expr.assignment list =
+  let input_re k = Load (Input (k, true)) in
+  let out = dft_dct3 n input_re in
+  let acc = ref [] in
+  for k = n - 1 downto 0 do
+    acc := (Output (k, true), out.(k)) :: !acc
+  done;
+  List.rev !acc
+
 (* === HC2HC: middle-stage Hermitian-packed cascade codelet ===
  *
  * Port of FFTW's gen_hc2hc.ml (lines 67-104). Operates in-place on
