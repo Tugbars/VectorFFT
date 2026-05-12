@@ -297,8 +297,15 @@ Our equivalents:
 - [x] Phase 2: CLI wiring (`--hc2hc`, `radix{R}_hc2hc_{dir}_{sgn}_{isa}_gen`)
 - [x] Phase 3: `dft_hc2c` with DIT/DIF dispatch + sym helper
 - [x] Phase 3: CLI wiring (`--hc2c`, `radix{R}_hc2c_{dir}_{sgn}_{isa}_gen`)
-- [ ] Phase 4: cascade harness + N=128 end-to-end validation (vs brute-force DFT)
-- [ ] Phase 4: bench vs Path A (monolithic r2c) and Path B (3-pass)
+- [x] Phase 4a: scalar reference cascade at N=8 — max_err 3.3e-16 PASS
+      (test/r2c/cascade_scalar_ref.c)
+- [x] Phase 4b: codelet-based cascade at N=8 (rdft_4 × 2 + hand combine) —
+      max_err 6.1e-16 PASS. Validates rdft_R + Hermitian-symmetry combine
+      against brute-force DFT-8. (test/r2c/cascade_codelet_n8.c)
+- [ ] Phase 4c: swap hand combine → hc2c_M codelet (validate split-pointer
+      convention)
+- [ ] Phase 4d: scale to N=128 = 16×8 (or per-wisdom factorization)
+- [ ] Phase 4e: bench vs Path A (monolithic r2c) and Path B (3-pass)
 - [ ] Phase 5: production wire-up
 
 ### Op-count snapshot (vector instructions, fwd direction, AVX2)
