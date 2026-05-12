@@ -69,3 +69,4 @@ build_tuned/dev/bench_vtune/bench_output_hotspots.txt
 /src/prototype/_build
 /src/prototype/_build
 /src/prototype/_build/default
+/build_tuned/dev/bench_vtune/vt_cascade_uarch-exploration

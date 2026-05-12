@@ -302,11 +302,148 @@ Our equivalents:
 - [x] Phase 4b: codelet-based cascade at N=8 (rdft_4 × 2 + hand combine) —
       max_err 6.1e-16 PASS. Validates rdft_R + Hermitian-symmetry combine
       against brute-force DFT-8. (test/r2c/cascade_codelet_n8.c)
-- [ ] Phase 4c: swap hand combine → hc2c_M codelet (validate split-pointer
-      convention)
-- [ ] Phase 4d: scale to N=128 = 16×8 (or per-wisdom factorization)
-- [ ] Phase 4e: bench vs Path A (monolithic r2c) and Path B (3-pass)
-- [ ] Phase 5: production wire-up
+- [x] Phase 4c: full Sorensen cascade at N=8 (rdft_4 × 2 + hc2c_2) —
+      max_err 6.4e-16 PASS. Validates hc2c_M split-pointer convention.
+      (test/r2c/cascade_codelet_n8_hc2c.c)
+- [x] Phase 4d: scale to N=128 = 16×8 (rdft_16 × 8 + hc2c_8) — max_err 9.5e-14
+      PASS across all K=8..1024. (test/r2c/cascade_codelet_n128.c)
+- [x] Phase 4e: bench vs Path A (monolithic r2c) and Path B (3-pass).
+      Cascade loses to both by 2.6-4× across K. Cascade math correct but
+      architectural memory traffic dominates. See findings below.
+- [ ] Phase 5: production wire-up (BLOCKED on codelet-level layout work)
+
+### Phase 4e bench results (AVX2, gcc-15, i9-14900KF)
+
+```
+K       A_mono(ns)  B_3pass(ns)  C_casc(ns)  B/A    C/A
+8       281         841          1110        2.99   3.96
+16      573         1674         2261        2.92   3.95
+32      1661        2887         5533        1.74   3.33
+64      4101        6189         10882       1.51   2.65
+128     9532        14980        27132       1.57   2.85
+256     22079       30977        60496       1.40   2.74
+512     49025       72428        150553      1.48   3.07
+1024    113947      185434       325695      1.63   2.86
+```
+
+Cascade is **slower than both monolithic and 3-pass** at every K tested.
+All correctness checks PASS.
+
+### Why cascade loses on this prototype
+
+Path C has more memory traversals than Path B:
+- **Pre-pack pass** — explicit memcpy of N reals into M strided streams.
+- **Hermitian-pack pass** — copies rdft output into hc2c-shaped buffer
+  with conjugation for k_inner > R/2.
+- **rdft_R × M codelet calls** — 8 calls at N=128.
+- **hc2c_M codelet call** — 1 call with K_lanes = R · K batch.
+- Output is in-place; no separate extract pass.
+
+Path B has 3 passes (pack, c2c, butterfly). Path A has 1 (monolithic).
+
+The cascade's algorithmic savings (rdft op count at Sorensen bound,
+fewer total FLOPs) are dominated by the explicit layout shuffles
+between stages.
+
+### Why FFTW's cascade works and ours doesn't (yet)
+
+FFTW's `gen_r2cf` reads inputs via two pointers `(R0, R1)` at stride
+`rs` — the strided pair-pack is **structural**, encoded in the codelet's
+address generation. No pre-pack memory pass.
+
+`gen_hc2c` writes outputs via four pointers `(Rp, Ip, Rm, Im)` at split
+addresses — the natural-order output storage IS the layout, no extract
+or Hermitian-pack pass.
+
+Our prototype's codelets all use the same `in_re[i*K+k]` consecutive
+layout (inherited from c2c). That's elegant uniformity for c2c, but
+forces explicit memory passes between cascade stages.
+
+### To make cascade competitive — Phase 5 prerequisites
+
+1. **Strided rdft variant** taking `(R0, R1)` pointers (matches FFTW's
+   `gen_r2cf`). Eliminates pre-pack pass.
+2. **hc2c output convention adapter** writing to `(Rp, Ip, Rm, Im)` split
+   pointers (matches FFTW's `gen_hc2c`). Eliminates Hermitian-pack pass
+   between stages.
+
+Both are codegen-layer changes (~50-100 lines each). The validated math
+in `lib/dft_r2c.ml` doesn't change — only the I/O conventions encoded
+in the C emitter.
+
+### Verdict
+
+- For N ≤ 512 (monolithic R-codelets exist on our prototype):
+  **monolithic wins**; cascade isn't needed.
+- For N > 512 (monolithic doesn't fit): cascade is the only option;
+  performance comparison is moot.
+- Cascade competitive at N where alternatives exist requires
+  split-pointer I/O — not Phase 4 scope.
+
+## Phase 5 attribution + VTune findings (2026-05-12) — PARKED
+
+VTune uarch-exploration profiling of Path C cascade at N=128, K∈{32,128,512}
+on i9-14900KF AVX2 (`build_tuned/dev/bench_vtune/bench_vtune_cascade.c`):
+
+| Task | Retiring | Memory Bound | Store Bound | Store Latency | DTLB load | DTLB store |
+|------|---------:|-------------:|------------:|--------------:|----------:|-----------:|
+| Hc2c_K512 | 11.7% | 61% | **67%** | **86%** | 21% | **57%** |
+| Hc2c_K128 | 22.1% | 71% | 70% | 75% | **47%** ⚠ | 27% |
+| Hc2c_K32 | 20.5% | 70% | 64% | 78% | 1% | 22% |
+| Mono_K128 | **35.5%** | **85%** | 44% | 58% | 0.6% | 39% |
+| Mono_K32 | 29.0% | 70% | 48% | 28% | 0% | 0% |
+
+Plus **Vector Capacity Usage (FPU): 50%** everywhere — half the SIMD
+register width is going unused (AVX2 limit; AVX-512 would 2×).
+
+**Key findings:**
+
+1. **Hc2c_K128 hits 47% DTLB load overhead** — the 256KB intermediate
+   buffer at K_lanes=R·K=2048 exceeds the L1 DTLB's 384KB coverage.
+   Phase 5 split-pointer I/O would reduce unique pages touched (direct
+   DTLB win), but only saves the I/O passes' contribution to total time.
+
+2. **Mono_K128 retires at 35.5% but is still 85% memory bound** on L2
+   cache. This is the ceiling — even at the smallest possible working
+   set (single buffer), AVX2 is memory-saturated at N=128. NO
+   algorithmic trick beats monolithic at this size.
+
+3. **Store Latency is 75-100% of clockticks in every memory-pass task.**
+   CPU is genuinely waiting on stores. Phase 5 eliminates ~33% of total
+   store volume (no PrePack, no HermPack) — best case ~20% cascade
+   speedup. Still 2.1× slower than monolithic.
+
+### Phase 5 ROI ceiling at K=128
+
+- Current cascade: 26153 ns
+- Ideal Phase 5 (PrePack + HermPack passes eliminated): ~20270 ns
+- Monolithic baseline: 9602 ns
+- Phase 5 cascade is still **2.1× slower than monolithic**
+
+### Final verdict
+
+**Parked as experimental, not competitive at N ≤ 512.**
+
+Real perf levers identified:
+1. **AVX-512 deployment** (Vector Capacity Usage 50% → ~100%): the
+   biggest architectural win, applicable to all paths, not just cascade.
+   Requires AVX-512-capable target hardware (SPR, Zen 4, etc.).
+2. **N > 512 cascade vs production 3-pass r2c.h** at large N where
+   monolithic codelets don't fit. Only regime where Phase 5 might earn
+   its keep. Separate bench required to confirm.
+
+### Status (final for this exploration)
+
+- [x] Math primitives (rdft, hc2hc, hc2c) — implemented, correct, kept
+- [x] Cascade correctness at N=8 and N=128 — PASS to FP-noise precision
+- [x] Path C bench vs Path A monolithic, Path B 3-pass — cascade loses
+      2.6–4× across K
+- [x] VTune attribution — cascade is store-bound, DTLB-bound at K=128
+- [x] Phase 5 ROI quantified: ~25-33% saving, still loses to monolithic
+- **PARKED**: Phase 5 codegen (split-pointer I/O in `emit_c.ml`)
+- **NEXT** (if revisited): bench at N ≥ 2048 vs production 3-pass r2c.h
+  — the regime where monolithic doesn't fit and cascade is the only
+  competitor.
 
 ### Op-count snapshot (vector instructions, fwd direction, AVX2)
 
