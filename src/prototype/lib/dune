@@ -9,8 +9,13 @@
 ;   Schedule  — list scheduler (uses Uarch table)
 ;   Regalloc  — linear-scan register allocator
 ;   Emit_c    — emit C with AVX-512/AVX2 intrinsics
+;
+; Math-layer modules (one per transform type):
+;   Dft       — complex-to-complex DFT
+;   Dft_r2c   — real-to-complex / complex-to-real DFT (Hermitian-symmetric)
+;   (future:  Dft_dct, Dft_mdct if/when those land)
 
 (library
  (name vfft_v2)
  (libraries unix)
- (modules expr algsimp split_radix dft simd_ir uarch isa schedule annotate regalloc emit_c bb))
+ (modules expr algsimp split_radix dft dft_r2c simd_ir uarch isa schedule annotate regalloc emit_c bb oracle))

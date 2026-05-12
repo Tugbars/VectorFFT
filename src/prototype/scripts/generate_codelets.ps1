@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Generate all production codelets using the best-known configurations
     from docs 09-42.
