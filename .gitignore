@@ -64,3 +64,4 @@ build_tuned/vfft_wisdom_tuned_bluestein.calib1.bak
 build_tuned/dev/bench_vtune/bench_output_hotspots.txt
 build_tuned/dev/bench_vtune/bench_output_uarch-exploration.txt
 build_tuned/dev/bench_vtune/bench_output_hotspots.txt
+/src/prototype/vfft_v2_pack
