@@ -42,6 +42,10 @@ let () =
   let hc2c = ref false in
   let dct2 = ref false in
   let dct2_trigII = ref false in
+  let dct3 = ref false in
+  let dht = ref false in
+  let dst2 = ref false in
+  let dst3 = ref false in
   let c2r = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -73,6 +77,10 @@ let () =
      else if arg = "--hc2c"      then hc2c := true
      else if arg = "--dct2"      then dct2 := true
      else if arg = "--dct2-trigII" then dct2_trigII := true
+     else if arg = "--dct3"      then dct3 := true
+     else if arg = "--dht"       then dht := true
+     else if arg = "--dst2"      then dst2 := true
+     else if arg = "--dst3"      then dst3 := true
      else if arg = "--c2r"       then c2r := true
      else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
        bb_budget := float_of_string arr.(!i + 1);
@@ -160,6 +168,14 @@ let () =
       (Vfft_v2.Dft_r2c.dft_expand_dct2 n, [], None)
     else if !dct2_trigII then
       (Vfft_v2.Dft_r2c.dft_expand_dct2_trigII n, [], None)
+    else if !dct3 then
+      (Vfft_v2.Dft_r2c.dft_expand_dct3 n, [], None)
+    else if !dht then
+      (Vfft_v2.Dft_r2c.dft_expand_dht n, [], None)
+    else if !dst2 then
+      (Vfft_v2.Dft_r2c.dft_expand_dst2 n, [], None)
+    else if !dst3 then
+      (Vfft_v2.Dft_r2c.dft_expand_dst3 n, [], None)
     else if !c2r then
       (Vfft_v2.Dft_r2c.dft_expand_c2r n, [], None)
     else if !twidsq then
@@ -353,6 +369,22 @@ let () =
       else if !dct2_trigII then
         (* DCT-II via FFTW trigII embedding: radix{N}_dct2_trigII_{isa}_gen *)
         Printf.sprintf "radix%d_dct2_trigII_%s_gen%s%s%s"
+          n isa.name suffix sched_suffix spill_suffix
+      else if !dct3 then
+        (* DCT-III via inverse-Makhoul: radix{N}_dct3_{isa}_gen *)
+        Printf.sprintf "radix%d_dct3_%s_gen%s%s%s"
+          n isa.name suffix sched_suffix spill_suffix
+      else if !dht then
+        (* DHT (Discrete Hartley Transform): radix{N}_dht_{isa}_gen *)
+        Printf.sprintf "radix%d_dht_%s_gen%s%s%s"
+          n isa.name suffix sched_suffix spill_suffix
+      else if !dst2 then
+        (* DST-II via DCT-II wrapper: radix{N}_dst2_{isa}_gen *)
+        Printf.sprintf "radix%d_dst2_%s_gen%s%s%s"
+          n isa.name suffix sched_suffix spill_suffix
+      else if !dst3 then
+        (* DST-III via DCT-III wrapper: radix{N}_dst3_{isa}_gen *)
+        Printf.sprintf "radix%d_dst3_%s_gen%s%s%s"
           n isa.name suffix sched_suffix spill_suffix
       else if !c2r then
         (* C2R backward codelet: radix{N}_c2r_{isa}_gen

@@ -528,13 +528,17 @@ let dft_dct3 (n : int) (input_re : int -> expr) : expr array =
   assert (n >= 2 && n mod 2 = 0);
   let half = n / 2 in
   let pi = 4.0 *. atan 1.0 in
-  (* Step 1: inverse butterfly to construct complex Z[0..N/2]. *)
+  (* Step 1: inverse butterfly. We intentionally produce 2·Z (twice the
+   * actual Re(Z), Im(Z)) — the doubling propagates through the
+   * unnormalized IFFT (which gives N · buf) to yield 2N · x at the end,
+   * matching production's REDFT01 convention DCT-III(DCT-II(x)) = 2N·x. *)
   let z_re = Array.make (half + 1) (Const 0.0) in
   let z_im = Array.make (half + 1) (Const 0.0) in
-  z_re.(0) <- Mul (Const 0.5, input_re 0);
-  (* Z[N/2]: forward had Y[N/2] = 2·cos(π/4)·Re(Z[N/2]).
-   * Inverse: Re(Z[N/2]) = Y[N/2] / (2·cos(π/4)) = Y[N/2] · √2/2. *)
-  let nyq_scale = 1.0 /. (2.0 *. cos (pi /. 4.0)) in
+  (* Forward: Y[0] = 2·Re(Z[0]). For 2·Re(Z[0]) = Y[0], use z_re[0] = Y[0]. *)
+  z_re.(0) <- input_re 0;
+  (* Forward: Y[N/2] = 2·cos(π/4)·Re(Z[N/2]).
+   * For 2·Re(Z[N/2]) = Y[N/2]/cos(π/4), use z_re[N/2] = Y[N/2]/cos(π/4). *)
+  let nyq_scale = 1.0 /. cos (pi /. 4.0) in
   z_re.(half) <- Mul (Const nyq_scale, input_re half);
   for i = 1 to half - 1 do
     let theta = pi *. float_of_int i /. (2.0 *. float_of_int n) in
@@ -542,13 +546,10 @@ let dft_dct3 (n : int) (input_re : int -> expr) : expr array =
     let wb = sin theta in
     let y_i   = input_re i in
     let y_nmi = input_re (n - i) in
-    (*  a = wa·Y[i] + wb·Y[N-i]
-     *  b = wb·Y[i] - wa·Y[N-i]
-     *  Re(Z[i]) = a/2;  Im(Z[i]) = b/2 *)
-    let a = Add (Mul (Const wa, y_i), Mul (Const wb, y_nmi)) in
-    let b = Sub (Mul (Const wb, y_i), Mul (Const wa, y_nmi)) in
-    z_re.(i) <- Mul (Const 0.5, a);
-    z_im.(i) <- Mul (Const 0.5, b)
+    (*  a = wa·Y[i] + wb·Y[N-i] = 2·Re(Z[i])  (no /2 — keep 2·Re)
+     *  b = wb·Y[i] - wa·Y[N-i] = 2·Im(Z[i])                       *)
+    z_re.(i) <- Add (Mul (Const wa, y_i), Mul (Const wb, y_nmi));
+    z_im.(i) <- Sub (Mul (Const wb, y_i), Mul (Const wa, y_nmi))
   done;
   (* Step 2: N-point inverse R2C of Z → buf.
    * We reuse Dft.dft with sign=Bwd on the Hermitian-extended Z.
@@ -575,6 +576,107 @@ let dft_dct3 (n : int) (input_re : int -> expr) : expr array =
 let dft_expand_dct3 (n : int) : Expr.assignment list =
   let input_re k = Load (Input (k, true)) in
   let out = dft_dct3 n input_re in
+  let acc = ref [] in
+  for k = n - 1 downto 0 do
+    acc := (Output (k, true), out.(k)) :: !acc
+  done;
+  List.rev !acc
+
+(* === DHT — Discrete Hartley Transform (FFTW convention) ===
+ *
+ * Port of production's `src/core/dht.h` algorithm — no specialized
+ * codelet exists at any N in production, so we fuse the whole pipeline
+ * into one DAG.
+ *
+ *   H[k] = sum_{n=0..N-1} x[n] · (cos(2π·k·n/N) + sin(2π·k·n/N))
+ *
+ * Self-inverse up to 1/N: DHT(DHT(x)) = N · x.
+ *
+ * Algorithm: given X = R2C(x) with X[N-k] = conj(X[k]):
+ *   H[0]   = Re(X[0])
+ *   H[k]   = Re(X[k]) - Im(X[k])   for k = 1..N/2-1
+ *   H[N-k] = Re(X[k]) + Im(X[k])   for k = 1..N/2-1
+ *   H[N/2] = Re(X[N/2])            (N even)
+ *
+ * One N-point rdft + an O(N) butterfly. algsimp folds the whole thing
+ * into a single straight-line codelet. Constraint: N must be even.
+ *)
+let dft_dht (n : int) (input_re : int -> expr) : expr array =
+  assert (n >= 2 && n mod 2 = 0);
+  let half = n / 2 in
+  let x_re, x_im = dft_rdft ~sign:`Fwd n input_re in
+  let out = Array.make n (Const 0.0) in
+  out.(0)    <- x_re.(0);                          (* H[0]   = Re(X[0])  *)
+  out.(half) <- x_re.(half);                       (* H[N/2] = Re(X[N/2]) *)
+  for k = 1 to half - 1 do
+    out.(k)     <- Sub (x_re.(k), x_im.(k));       (* H[k]   = Re - Im *)
+    out.(n - k) <- Add (x_re.(k), x_im.(k))        (* H[N-k] = Re + Im *)
+  done;
+  out
+
+let dft_expand_dht (n : int) : Expr.assignment list =
+  let input_re k = Load (Input (k, true)) in
+  let out = dft_dht n input_re in
+  let acc = ref [] in
+  for k = n - 1 downto 0 do
+    acc := (Output (k, true), out.(k)) :: !acc
+  done;
+  List.rev !acc
+
+(* === DST-II (FFTW RODFT10) via DCT-II wrapper ===
+ *
+ *   Y[k] = 2 · sum_{n=0..N-1} x[n] · sin(π · (k+1) · (2n+1) / (2N))
+ *
+ * Port of production's `src/core/dst.h` identity:
+ *   DST-II[k] = DCT-II[(-1)^n · x[n]][N-1-k]
+ *
+ * Pre: sign-flip every other element of x.
+ * Core: DCT-II of the sign-flipped input.
+ * Post: reverse the output indices.
+ * All three steps fold into one DAG. *)
+let dft_dst2 (n : int) (input_re : int -> expr) : expr array =
+  let signed_input k =
+    if k mod 2 = 0 then input_re k
+    else Neg (input_re k)
+  in
+  let dct2_out = dft_dct2 n signed_input in
+  let out = Array.make n (Const 0.0) in
+  for k = 0 to n - 1 do
+    out.(k) <- dct2_out.(n - 1 - k)
+  done;
+  out
+
+let dft_expand_dst2 (n : int) : Expr.assignment list =
+  let input_re k = Load (Input (k, true)) in
+  let out = dft_dst2 n input_re in
+  let acc = ref [] in
+  for k = n - 1 downto 0 do
+    acc := (Output (k, true), out.(k)) :: !acc
+  done;
+  List.rev !acc
+
+(* === DST-III (FFTW RODFT01) via DCT-III wrapper ===
+ *
+ *   Y[k] = (-1)^k · X[N-1] + 2 · sum_{n=0..N-2} X[n] · sin(π · (n+1) · (2k+1) / (2N))
+ *
+ * Identity: DST-III[k] = (-1)^k · DCT-III[reversed_input][k]
+ *
+ * Pre: reverse the input.
+ * Core: DCT-III of the reversed input.
+ * Post: sign-flip every other output element. *)
+let dft_dst3 (n : int) (input_re : int -> expr) : expr array =
+  let reversed k = input_re (n - 1 - k) in
+  let dct3_out = dft_dct3 n reversed in
+  let out = Array.make n (Const 0.0) in
+  for k = 0 to n - 1 do
+    if k mod 2 = 0 then out.(k) <- dct3_out.(k)
+    else out.(k) <- Neg (dct3_out.(k))
+  done;
+  out
+
+let dft_expand_dst3 (n : int) : Expr.assignment list =
+  let input_re k = Load (Input (k, true)) in
+  let out = dft_dst3 n input_re in
   let acc = ref [] in
   for k = n - 1 downto 0 do
     acc := (Output (k, true), out.(k)) :: !acc
