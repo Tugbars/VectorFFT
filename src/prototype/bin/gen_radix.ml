@@ -35,6 +35,9 @@ let () =
   let bb = ref false in
   let bb_budget = ref 1.0 in
   let twidsq = ref false in
+  let r2c = ref false in
+  let oracle_diag = ref false in
+  let factor_terms = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list Sys.argv in
@@ -58,6 +61,9 @@ let () =
      else if arg = "--gh"        then gh := true
      else if arg = "--bb"        then bb := true
      else if arg = "--twidsq"    then twidsq := true
+     else if arg = "--r2c"       then r2c := true
+     else if arg = "--oracle-diag" then oracle_diag := true
+     else if arg = "--factor-terms" then factor_terms := true
      else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
        bb_budget := float_of_string arr.(!i + 1);
        incr i
@@ -128,7 +134,9 @@ let () =
    * store transposed. Bypasses the regular twiddled / spill paths
    * (those are for in-place codelets). *)
   let raw, spill_markers, spill_ct =
-    if !twidsq then
+    if !r2c then
+      (Vfft_v2.Dft_r2c.dft_expand_r2c ~sign n, [], None)
+    else if !twidsq then
       (Vfft_v2.Dft.dft_expand_twidsq ~direction ~sign n, [], None)
     else if !spill && !twiddled then
       let assignments, markers, ct =
@@ -255,6 +263,54 @@ let () =
     if aggressive then Vfft_v2.Algsimp.fma_lift post_trans
     else post_trans
   in
+
+  (* Experimental: factor_common_terms (doc 48). Generalizes
+   * factor_common_muls to non-constant shared factors. Reports the
+   * before/after node count delta. Gated by --factor-terms. *)
+  let deduped =
+    if !factor_terms then begin
+      let count_nodes assigns =
+        let roots = List.map snd assigns in
+        let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+        let rec walk (e : Vfft_v2.Algsimp.t) =
+          if not (Hashtbl.mem seen e.tag) then begin
+            Hashtbl.add seen e.tag ();
+            match e.node with
+            | Vfft_v2.Algsimp.NK_Const _ | Vfft_v2.Algsimp.NK_Load _ -> ()
+            | Vfft_v2.Algsimp.NK_Neg a -> walk a
+            | Vfft_v2.Algsimp.NK_Add (a, b)
+            | Vfft_v2.Algsimp.NK_Sub (a, b)
+            | Vfft_v2.Algsimp.NK_Mul (a, b) -> walk a; walk b
+            | Vfft_v2.Algsimp.NK_CmulRe (a, b, c, d)
+            | Vfft_v2.Algsimp.NK_CmulIm (a, b, c, d) ->
+              walk a; walk b; walk c; walk d
+            | Vfft_v2.Algsimp.NK_Fma (a, b, c, _, _) -> walk a; walk b; walk c
+          end
+        in
+        List.iter walk roots;
+        Hashtbl.length seen
+      in
+      let before = count_nodes deduped in
+      let opportunities = Vfft_v2.Algsimp.count_factor_opportunities deduped in
+      let result = Vfft_v2.Algsimp.factor_common_terms deduped in
+      let after = count_nodes result in
+      Printf.eprintf "factor_common_terms: opportunities=%d  nodes %d -> %d (delta %+d, %.1f%%)\n"
+        opportunities before after (after - before)
+        (float_of_int (after - before) /. float_of_int before *. 100.0);
+      result
+    end else deduped
+  in
+
+  (* Oracle diagnostic: detect algebraic equivalences our structural CSE
+   * missed. Runs AFTER the full algsimp pipeline (fma_lift, factor,
+   * transpose, share_subsums, dedup) so it measures the genuine
+   * residual opportunities. *)
+  if !oracle_diag then begin
+    let roots = List.map snd deduped in
+    let diag = Vfft_v2.Oracle.diagnose roots in
+    Vfft_v2.Oracle.print_diag diag;
+    exit 0
+  end;
 
   (* Lift spill markers to algsimp tags, then build spill_info.
    * Must happen AFTER of_assignments so hash-consing has run on the

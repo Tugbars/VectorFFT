@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Compile all generated codelets using the production compiler config
     from doc 38 (gcc-11 + -flive-range-shrinkage).

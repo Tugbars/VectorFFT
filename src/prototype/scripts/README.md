@@ -152,9 +152,11 @@ $env:CODELETS_DIR = "D:\codelets"
 ```
 
 Notes:
-- **PowerShell 7+ is recommended** for parallel compilation
-  (`ForEach-Object -Parallel`). PowerShell 5.1 (default on Windows 10/11)
-  works but compiles sequentially. Install PS7 from https://aka.ms/powershell.
+- **PowerShell 5.1 vs 7+**: both scripts work on PowerShell 5.1 (the
+  default on Windows 10/11). On PS5.1, `compile_codelets.ps1` falls
+  back to sequential compilation; on PS7+, it uses `ForEach-Object
+  -Parallel` (throttled to `$env:NUMBER_OF_PROCESSORS`). Install PS7
+  from https://aka.ms/powershell for the parallel speedup.
 - The PowerShell scripts fall back to plain `gcc` if `gcc-11` isn't on
   PATH, with a clear warning. For best results match the bash setup
   (production config = `gcc-11 + -flive-range-shrinkage` from doc 38).
