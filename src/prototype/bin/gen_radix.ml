@@ -46,6 +46,7 @@ let () =
   let dht = ref false in
   let dst2 = ref false in
   let dst3 = ref false in
+  let dct4 = ref false in
   let c2r = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -81,6 +82,7 @@ let () =
      else if arg = "--dht"       then dht := true
      else if arg = "--dst2"      then dst2 := true
      else if arg = "--dst3"      then dst3 := true
+     else if arg = "--dct4"      then dct4 := true
      else if arg = "--c2r"       then c2r := true
      else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
        bb_budget := float_of_string arr.(!i + 1);
@@ -176,6 +178,8 @@ let () =
       (Vfft_v2.Dft_r2c.dft_expand_dst2 n, [], None)
     else if !dst3 then
       (Vfft_v2.Dft_r2c.dft_expand_dst3 n, [], None)
+    else if !dct4 then
+      (Vfft_v2.Dft_r2c.dft_expand_dct4 n, [], None)
     else if !c2r then
       (Vfft_v2.Dft_r2c.dft_expand_c2r n, [], None)
     else if !twidsq then
@@ -385,6 +389,10 @@ let () =
       else if !dst3 then
         (* DST-III via DCT-III wrapper: radix{N}_dst3_{isa}_gen *)
         Printf.sprintf "radix%d_dst3_%s_gen%s%s%s"
+          n isa.name suffix sched_suffix spill_suffix
+      else if !dct4 then
+        (* DCT-IV via Lee 1984: radix{N}_dct4_{isa}_gen *)
+        Printf.sprintf "radix%d_dct4_%s_gen%s%s%s"
           n isa.name suffix sched_suffix spill_suffix
       else if !c2r then
         (* C2R backward codelet: radix{N}_c2r_{isa}_gen
