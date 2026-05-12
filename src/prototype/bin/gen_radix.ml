@@ -36,8 +36,8 @@ let () =
   let bb_budget = ref 1.0 in
   let twidsq = ref false in
   let r2c = ref false in
-  let oracle_diag = ref false in
-  let factor_terms = ref false in
+  let r2c_first = ref false in
+  let c2r = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list Sys.argv in
@@ -62,8 +62,8 @@ let () =
      else if arg = "--bb"        then bb := true
      else if arg = "--twidsq"    then twidsq := true
      else if arg = "--r2c"       then r2c := true
-     else if arg = "--oracle-diag" then oracle_diag := true
-     else if arg = "--factor-terms" then factor_terms := true
+     else if arg = "--r2c-first" then r2c_first := true
+     else if arg = "--c2r"       then c2r := true
      else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
        bb_budget := float_of_string arr.(!i + 1);
        incr i
@@ -136,6 +136,10 @@ let () =
   let raw, spill_markers, spill_ct =
     if !r2c then
       (Vfft_v2.Dft_r2c.dft_expand_r2c ~sign n, [], None)
+    else if !r2c_first then
+      (Vfft_v2.Dft_r2c.dft_expand_r2c_first ~sign n, [], None)
+    else if !c2r then
+      (Vfft_v2.Dft_r2c.dft_expand_c2r n, [], None)
     else if !twidsq then
       (Vfft_v2.Dft.dft_expand_twidsq ~direction ~sign n, [], None)
     else if !spill && !twiddled then
@@ -264,54 +268,6 @@ let () =
     else post_trans
   in
 
-  (* Experimental: factor_common_terms (doc 48). Generalizes
-   * factor_common_muls to non-constant shared factors. Reports the
-   * before/after node count delta. Gated by --factor-terms. *)
-  let deduped =
-    if !factor_terms then begin
-      let count_nodes assigns =
-        let roots = List.map snd assigns in
-        let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-        let rec walk (e : Vfft_v2.Algsimp.t) =
-          if not (Hashtbl.mem seen e.tag) then begin
-            Hashtbl.add seen e.tag ();
-            match e.node with
-            | Vfft_v2.Algsimp.NK_Const _ | Vfft_v2.Algsimp.NK_Load _ -> ()
-            | Vfft_v2.Algsimp.NK_Neg a -> walk a
-            | Vfft_v2.Algsimp.NK_Add (a, b)
-            | Vfft_v2.Algsimp.NK_Sub (a, b)
-            | Vfft_v2.Algsimp.NK_Mul (a, b) -> walk a; walk b
-            | Vfft_v2.Algsimp.NK_CmulRe (a, b, c, d)
-            | Vfft_v2.Algsimp.NK_CmulIm (a, b, c, d) ->
-              walk a; walk b; walk c; walk d
-            | Vfft_v2.Algsimp.NK_Fma (a, b, c, _, _) -> walk a; walk b; walk c
-          end
-        in
-        List.iter walk roots;
-        Hashtbl.length seen
-      in
-      let before = count_nodes deduped in
-      let opportunities = Vfft_v2.Algsimp.count_factor_opportunities deduped in
-      let result = Vfft_v2.Algsimp.factor_common_terms deduped in
-      let after = count_nodes result in
-      Printf.eprintf "factor_common_terms: opportunities=%d  nodes %d -> %d (delta %+d, %.1f%%)\n"
-        opportunities before after (after - before)
-        (float_of_int (after - before) /. float_of_int before *. 100.0);
-      result
-    end else deduped
-  in
-
-  (* Oracle diagnostic: detect algebraic equivalences our structural CSE
-   * missed. Runs AFTER the full algsimp pipeline (fma_lift, factor,
-   * transpose, share_subsums, dedup) so it measures the genuine
-   * residual opportunities. *)
-  if !oracle_diag then begin
-    let roots = List.map snd deduped in
-    let diag = Vfft_v2.Oracle.diagnose roots in
-    Vfft_v2.Oracle.print_diag diag;
-    exit 0
-  end;
-
   (* Lift spill markers to algsimp tags, then build spill_info.
    * Must happen AFTER of_assignments so hash-consing has run on the
    * marker subtrees. *)
@@ -345,7 +301,21 @@ let () =
       else ""
     in
     let name =
-      if !twidsq then
+      if !r2c then
+        (* R2C forward codelet: radix{N}_r2c_{sgn}_{isa}_gen *)
+        Printf.sprintf "radix%d_r2c_%s_%s_gen%s%s%s"
+          n sgn_suffix isa.name suffix sched_suffix spill_suffix
+      else if !r2c_first then
+        (* R2C first-stage cascade codelet: radix{R}_r2c_first_{sgn}_{isa}_gen
+         * The {R} here is the SUB-DFT radix, not the total transform size. *)
+        Printf.sprintf "radix%d_r2c_first_%s_%s_gen%s%s%s"
+          n sgn_suffix isa.name suffix sched_suffix spill_suffix
+      else if !c2r then
+        (* C2R backward codelet: radix{N}_c2r_{isa}_gen
+         * c2r is always backward, so no separate sgn_suffix is needed. *)
+        Printf.sprintf "radix%d_c2r_%s_gen%s%s%s"
+          n isa.name suffix sched_suffix spill_suffix
+      else if !twidsq then
         (* Twidsq codelets use their own name pattern reflecting the
          * inter-stage role: radix{N}_twidsq_{dir}_{sgn}_{isa}_gen. *)
         Printf.sprintf "radix%d_twidsq_%s_%s_%s_gen%s%s%s"

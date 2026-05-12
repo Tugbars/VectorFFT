@@ -1,97 +1,147 @@
-# Session notes — 2026-05 (FFTW comparison + r2c foundation)
+# Session notes — 2026-05 (FFTW comparison, r2c family, cascade Stage A, bounds analysis)
 
-This session built on the doc 44 state and added the following.
+This session built progressively on the doc 44 baseline. Final state
+adds c2r backward, head-to-head bench vs 3-pass, the first cascade
+boundary codelet, an op-count diagnosis against published bounds, and
+a final cleanup pass that removed dead experimental code.
 
-## New library modules
+## Library modules
 
-- **`lib/oracle.ml`** (new, ~150 lines)
-  Randomized-CSE diagnostic. Detects algebraically-equivalent-but-
-  structurally-distinct nodes in the post-algsimp DAG by evaluating
-  with random FP values and bucketing by relative-precision hash.
-  Exposed via `gen_radix.exe N --twiddled --in-place --oracle-diag`.
-  Diagnostic only, not in production paths.
-  See doc 47.
+- **`lib/dft_r2c.ml`** (~285 lines) — math layer for real-valued
+  transforms. Contains:
+  - `dft_r2c_direct` / `dft_expand_r2c`: monolithic r2c forward
+    (doc 49)
+  - `dft_c2r_direct` / `dft_expand_c2r`: monolithic c2r backward
+    (doc 50)
+  - `dft_r2c_first` / `dft_expand_r2c_first`: first-stage cascade
+    codelet, pack-fused into first DIT pass (doc 52, Stage A)
+  All three delegate to `Dft.dft` for the c2c sub-DFT.
 
-- **`lib/dft_r2c.ml`** (new, ~130 lines)
-  Math layer for real-to-complex DFT. Separate module from `dft.ml`
-  per FFTW convention (one module per transform type). Currently
-  has `dft_r2c_direct` (forward via pair-pack + Hermitian-extraction
-  butterfly, all fused into one DAG) and `dft_expand_r2c`.
-  Exposed via `gen_radix.exe N --r2c`. See doc 49.
+## Library extensions and cleanup (existing files)
 
-## Library extensions (existing files)
-
-- **`lib/algsimp.ml`** — added `factor_common_terms` and
-  `count_factor_opportunities`. Research artifacts (never called by
-  production paths) for measuring non-constant factoring
-  opportunities. Result: zero opportunities found at any radix; see
-  doc 48.
+- **`lib/algsimp.ml`** — now 1855 lines (was 2126). The experimental
+  `factor_common_terms` rewriter and `count_factor_opportunities`
+  diagnostic (~270 lines) were removed after doc 48's negative
+  result. The remaining `factor_terms` references in the file are
+  local inner functions inside the legitimate `factor_common_muls`
+  pass — name collision, unrelated.
+- **`lib/dune`** — `oracle` removed from the modules list.
+- **Deleted: `lib/oracle.ml`** (was 207 lines). The randomized-CSE
+  diagnostic from doc 47 found zero missed CSE at every radix and
+  was never wired into production. Doc 47 retained as the
+  permanent finding record.
 
 ## Bench infrastructure
 
-- **`bench/regression/regression_bench_avx2.c`** (new) — AVX2 sibling
-  of the existing AVX-512 regression bench. Same R={16, 25, 32, 64}
-  hand-vs-OCaml comparison structure.
-- **`bench/regression/build_and_run.sh`** — now drives both ISAs by
-  default. `ISA=avx512`, `ISA=avx2`, or `ISA=both` (default). Default
-  `-march` updated from `skylake-avx512` to `icelake-server` for
-  production ICX target.
+- **`bench/r2c_mono/bench_r128.c`** (new) — head-to-head bench at
+  N=128 r2c forward comparing the monolithic R=128 codelet to a
+  faithful synthetic mirror of `r2c.h`'s three-pass structure
+  (pack + R=64 c2c codelet + vectorized Hermitian-extraction
+  butterfly). Reports ns/call across K = {8..1024}. Result:
+  monolithic wins 1.3-3.3× at every K (doc 51).
 
 ## New tests
 
-- **`test/r2c/{verify.c, sweep.c, README.md}`** — R=16 r2c forward
-  correctness and K-sweep harnesses. Verifies against direct-DFT
-  reference, reports ns/call across K = 8..1024.
+- **`test/r2c/round_trip.c`** — `c2r(r2c(x)) == N*x` property test.
+  Verifies normalization across R = {16, 32, 64}.
+- **`test/r2c/verify_r2c.c`** — parametric forward verify with
+  K-sweep + timing for any R.
+- **`test/r2c/verify_r2c_first.c`** — isolation correctness test for
+  the cascade first-stage codelet (any R).
+- **`test/r2c/cascade_r16_test.c`** — trivial-cascade end-to-end test.
+  At N=16 where N/2=8 fits one sub-DFT, validates
+  `(r2c_first_8 → manual butterfly)` matches the monolithic R=16
+  r2c codelet to FP precision (5e-15).
 
 ## New docs
 
-- **doc 46** — what FFTW's algsimp does that ours doesn't
-  (comparison study; identifies Oracle, generalized collect, and
-  deepCollect as the FFTW features we lacked)
-- **doc 47** — Oracle experiment results (negative: zero missed CSE)
-- **doc 48** — Non-constant factoring experiment (negative: zero
-  opportunities)
+- **doc 46** — what FFTW's algsimp does that ours doesn't (motivation
+  for the experiments that follow)
+- **doc 47** — Oracle experiment, negative result, implementation
+  removed in cleanup
+- **doc 48** — Non-constant factoring experiment, negative result,
+  implementation removed in cleanup
 - **doc 49** — R=16 r2c first working codelet, end-to-end verified
+- **doc 50** — R2C/C2R family complete at R={16, 32, 64, 128, 256,
+  512}, round-trip verified, FMA gap explained as compile-time
+  fusion artifact
+- **doc 51** — N=128 monolithic codelet beats 3-pass mirror 1.3-3.3×
+  across K = {8..1024}; architectural premise of fused codelets
+  confirmed
+- **doc 52** — Stage A: r2c first-stage cascade codelet, isolation
+  and trivial-cascade correctness verified at R = {8, 16, 32, 64}
+- **doc 53** — Op-count comparison vs Yavne, Johnson-Frigo/LVB, and
+  Sorensen split-radix r2c bounds. C2C is at the Yavne bound
+  (within 1-3%). R2C is 25-91% over the Sorensen bound, gap
+  shrinks with N; identified as the structural cost of monolithic
+  post-process vs Hermitian-preserving cascade.
 
 ## Key findings
 
-1. **Our structural CSE is algebraically complete.** Oracle finds
-   zero missed CSE across R=5 through R=256 and all variants tested.
-   Different mechanism than FFTW (structural normalization vs
-   randomized hashing) but same end state.
+1. **CSE work is complete.** Oracle experiment (doc 47) found zero
+   missed CSE across all radixes. Non-constant factoring (doc 48)
+   found zero opportunities. Our structural CSE is algebraically
+   complete.
 
-2. **Non-constant factoring has zero opportunities** in our DAGs.
-   Our math-layer construction never creates the redundant-multiply
-   patterns FFTW's generalized collect targets.
+2. **C2C is at the published lower bound.** Doc 53 measures our
+   c2c codelets at 1-3% over Yavne (1968) split-radix, 3-4% over
+   the modern Johnson-Frigo/Lundy-Van Buskirk bound. No abstract-op
+   wins remain; future c2c gains must come from FMA-fusion-shape and
+   scheduling (both already at parity with hand per doc 38).
 
-3. **R=16 r2c works on first compile**, ~half the ops of R=16 c2c as
-   predicted by Hermitian symmetry. FMA gap visible (0 FMAs vs c2c's
-   33) — deferred fix in either math layer or emit_c.
+3. **R2C cascade architecture validated.** Monolithic R=128 codelet
+   beats faithful 3-pass mirror by 1.3-3.3× at every K tested.
+   Architectural premise of fused codelets confirmed; cascade
+   boundary work is justified.
 
-4. **AVX2 regression bench** confirms OCaml at parity or better than
-   hand across R={16, 25, 32, 64}. R=25 algsimp gap from AVX-512 does
-   NOT reproduce on AVX2.
+4. **R2C has one known-better algorithm.** 25-32% op-count reduction
+   available at production sizes via FFTW-style hc2c
+   (Hermitian-preserving cascade, Sorensen 1987). Doc 53 quantifies
+   the prize.
 
-## Decisions taken
+5. **r2c_first cascade boundary codelet works.** Math layer is
+   trivial (4 lines: `Dft.dft` with pair-packed indexing).
+   Verified in isolation across R = {8, 16, 32, 64} and in
+   trivial-cascade end-to-end at N=16.
 
-- **Drop Oracle implementation.** Zero opportunities found across
-  R=5..256. Diagnostic stays in tree as research artifact.
-- **Drop generalized collect.** Same reason.
-- **Drop deepCollectM by inference.** Two consecutive negative
-  results from doc 46's top candidates argue strongly that the third
-  would also be zero.
-- **CSE chapter closed.** Real perf gaps live below the algsimp
-  layer (scheduler choice on R=25, executor overhead, FMA gap in
-  r2c). No further investment in algsimp passes.
-- **r2c built in OCaml.** Decision per session discussion: unified
-  generator long-term, OCaml's symbolic math layer handles the
-  Hermitian-symmetry reasoning naturally.
+## Open work (in priority order)
 
-## Open work going forward
+1. **Stage B** — Build a 2-stage cascade harness at N=128 using the
+   pieces we have (`radix8_r2c_first` × 8 + inter-stage twiddles +
+   existing `radix8_t1_dit` × 8 + Hermitian-extraction butterfly).
+   Bench against monolithic R=128 and 3-pass mirror. Isolates how
+   much of the mono-vs-3pass win comes from pack-fusion alone.
 
-- R=32, R=64 r2c forward (mechanical extension of doc 49)
-- R2C backward (c2r) — symmetric to forward, doc 49 outlines path
-- FMA gap in r2c — 20-30% throughput improvement available
-- Cascade boundary codelets (`t1_r2c_first_R` / `t1_r2c_last_R`
-  family) per v1.1 roadmap
-- Bench r2c against the existing pack→c2c→butterfly executor in r2c.h
+2. **Stage C** — FFTW-style hc2hc + hc2c codelets, Hermitian-preserving
+   cascade. Captures the 25-32% op-count reduction quantified in
+   doc 53. Math layer needs new functions for Hermitian-packed
+   intermediate data (separate from `Dft.dft`).
+
+3. **Planner integration** — Replace `r2c.h`'s 3-pass approach with
+   cascade composition using the new codelets. Picker entries for
+   N ∈ {128, 256, 512, 1024, 2048, 4096}.
+
+4. **Real-hardware bench on ICX** — Container numbers from this
+   session need confirmation on real ICX. Expected similar or
+   better ratios.
+
+## Deferred
+
+- **JF/LVB conjugate-pair twiddle reorganization** for the final ~1%
+  c2c op-count savings to JF/LVB. Math-layer change in `dft.ml`
+  (not algsimp). Decided not worth the ~week of work given the
+  small realized win at our production sizes. Path is clear if
+  revisited later (v1.2+).
+
+- **`lib/split_radix.ml`** kept in tree (not wired in) as future
+  hedge against CPU architecture changes that might favor
+  multiplication-light algorithms.
+
+## Verified state at end of session
+
+- `dune build` clean
+- Prime correctness: 56/56 PASS
+- All production codelet types generate: c2c plain, c2c twiddled,
+  r2c, c2r, r2c_first
+- Algorithmic op count: at Yavne bound for c2c, 25-91% over
+  Sorensen for r2c (known-better algorithm identified)
