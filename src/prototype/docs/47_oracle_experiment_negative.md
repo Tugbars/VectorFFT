@@ -173,3 +173,18 @@ probably also wouldn't move the needle, but haven't been measured.
 No production code paths affected. The Oracle only runs when
 `--oracle-diag` is explicitly requested. Default codelet generation is
 unchanged.
+
+---
+
+## Cleanup (later session)
+
+The Oracle implementation in `lib/oracle.ml` was removed after this
+experiment. The findings recorded above stand — zero missed CSE
+across all tested radixes — but the unused diagnostic was dead code
+that added maintenance burden during refactors. The `--oracle-diag`
+flag was removed from `bin/gen_radix.ml` and `oracle` was removed
+from the `lib/dune` modules list.
+
+Git history preserves the implementation if it's ever needed to
+re-verify after generator changes. This doc remains as the
+permanent record of the negative result.

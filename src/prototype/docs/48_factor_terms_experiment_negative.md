@@ -150,3 +150,17 @@ algsimp targets — at least for the radix range we generate.
 
 No production code paths affected. Default codelet generation
 unchanged.
+
+---
+
+## Cleanup (later session)
+
+The `factor_common_terms` rewrite pass and `count_factor_opportunities`
+diagnostic were removed from `lib/algsimp.ml`. The findings recorded
+above stand — zero opportunities at every radix tested — but the
+unused implementations (the rewriter had a known bug inflating node
+counts when fired) were dead code. The `--factor-terms` flag was
+removed from `bin/gen_radix.ml`.
+
+Git history preserves the implementation. This doc remains as the
+permanent record.
