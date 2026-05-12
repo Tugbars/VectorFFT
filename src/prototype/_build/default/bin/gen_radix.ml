@@ -191,7 +191,7 @@ let () =
     else if !twiddled then
       (Vfft_v2.Dft.dft_expand_twiddled ~policy ~direction ~sign n, [], None)
     else
-      (Vfft_v2.Dft.dft_expand n, [], None)
+      (Vfft_v2.Dft.dft_expand ~sign n, [], None)
   in
 
   Vfft_v2.Algsimp.reset ();
