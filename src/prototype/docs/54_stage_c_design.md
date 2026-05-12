@@ -290,10 +290,28 @@ Our equivalents:
 ## Status
 
 - [x] Design doc (this file)
-- [ ] Phase 1: `dft_rdft` math primitive
-- [ ] Phase 1: CLI wiring + emission
-- [ ] Phase 1: monolithic rdft validation
-- [ ] Phase 2: `dft_hc2hc`
-- [ ] Phase 3: `dft_hc2c`
-- [ ] Phase 4: cascade harness + N=128 validation
+- [x] Phase 1: `dft_rdft` math primitive (lib/dft_r2c.ml)
+- [x] Phase 1: CLI wiring + emission (`--rdft`, `radix{N}_rdft_{sgn}_{isa}_gen`)
+- [x] Phase 1: op-count validation — R=8: 23 ops (Sorensen bound = 22, **+4.5%** vs prior **+91%**)
+- [x] Phase 2: `dft_hc2hc` with DIT/DIF dispatch + sym1/sym2/sym2i helpers
+- [x] Phase 2: CLI wiring (`--hc2hc`, `radix{R}_hc2hc_{dir}_{sgn}_{isa}_gen`)
+- [x] Phase 3: `dft_hc2c` with DIT/DIF dispatch + sym helper
+- [x] Phase 3: CLI wiring (`--hc2c`, `radix{R}_hc2c_{dir}_{sgn}_{isa}_gen`)
+- [ ] Phase 4: cascade harness + N=128 end-to-end validation (vs brute-force DFT)
+- [ ] Phase 4: bench vs Path A (monolithic r2c) and Path B (3-pass)
 - [ ] Phase 5: production wire-up
+
+### Op-count snapshot (vector instructions, fwd direction, AVX2)
+
+| R | rdft | hc2hc | hc2c | t1_dit (c2c baseline) | Sorensen bound for rdft |
+|---|---|---|---|---|---|
+| 8  | 23  | 88   | 88   | 84   | 22 |
+| 16 | 78  | 235  | 235  | 227  | 70 |
+| 32 | 249 | 598  | 598  | 582  | 198 |
+| 64 | 747 | 1444 | 1444 | 1412 | 518 |
+
+**rdft is at the bound for small R.** hc2hc/hc2c add ~3-5% over plain
+t1_dit per call (the symmetry transform cost). The cascade-level win
+comes from hc2hc/hc2c operating on Hermitian-packed data — only n/2+1
+unique values per stage — which roughly halves total work across a
+multi-stage chain. Concrete cascade op counts pending Phase 4.
