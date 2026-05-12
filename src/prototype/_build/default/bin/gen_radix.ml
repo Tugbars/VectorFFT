@@ -37,6 +37,8 @@ let () =
   let twidsq = ref false in
   let r2c = ref false in
   let r2c_first = ref false in
+  let rdft = ref false in
+  let hc2hc = ref false in
   let c2r = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -63,6 +65,8 @@ let () =
      else if arg = "--twidsq"    then twidsq := true
      else if arg = "--r2c"       then r2c := true
      else if arg = "--r2c-first" then r2c_first := true
+     else if arg = "--rdft"      then rdft := true
+     else if arg = "--hc2hc"     then hc2hc := true
      else if arg = "--c2r"       then c2r := true
      else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
        bb_budget := float_of_string arr.(!i + 1);
@@ -138,6 +142,11 @@ let () =
       (Vfft_v2.Dft_r2c.dft_expand_r2c ~sign n, [], None)
     else if !r2c_first then
       (Vfft_v2.Dft_r2c.dft_expand_r2c_first ~sign n, [], None)
+    else if !rdft then
+      (Vfft_v2.Dft_r2c.dft_expand_rdft ~sign n, [], None)
+    else if !hc2hc then
+      let direction = if !dif then `Dif else `Dit in
+      (Vfft_v2.Dft_r2c.dft_expand_hc2hc ~sign ~direction n, [], None)
     else if !c2r then
       (Vfft_v2.Dft_r2c.dft_expand_c2r n, [], None)
     else if !twidsq then
@@ -310,6 +319,15 @@ let () =
          * The {R} here is the SUB-DFT radix, not the total transform size. *)
         Printf.sprintf "radix%d_r2c_first_%s_%s_gen%s%s%s"
           n sgn_suffix isa.name suffix sched_suffix spill_suffix
+      else if !rdft then
+        (* FFTW-style real-input DFT: radix{N}_rdft_{sgn}_{isa}_gen *)
+        Printf.sprintf "radix%d_rdft_%s_%s_gen%s%s%s"
+          n sgn_suffix isa.name suffix sched_suffix spill_suffix
+      else if !hc2hc then
+        (* Middle-stage Hermitian-packed cascade codelet:
+         * radix{R}_hc2hc_{dir}_{sgn}_{isa}_gen *)
+        Printf.sprintf "radix%d_hc2hc_%s_%s_%s_gen%s%s%s"
+          n dir_suffix sgn_suffix isa.name suffix sched_suffix spill_suffix
       else if !c2r then
         (* C2R backward codelet: radix{N}_c2r_{isa}_gen
          * c2r is always backward, so no separate sgn_suffix is needed. *)
