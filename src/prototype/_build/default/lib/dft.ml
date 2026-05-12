@@ -689,10 +689,10 @@ let twiddle_expr (policy : twiddle_policy) (n : int) (j : int)
  * call into this module's recursive dft. The output is the same
  * Expr.assignment list shape as before. *)
 
-let dft_expand (n : int) : Expr.assignment list =
+let dft_expand ?(sign = `Fwd) (n : int) : Expr.assignment list =
   let input_re k = Load (Input (k, true)) in
   let input_im k = Load (Input (k, false)) in
-  let out_re, out_im = dft n input_re input_im in
+  let out_re, out_im = dft ~sign n input_re input_im in
   let acc = ref [] in
   for k = n - 1 downto 0 do
     acc := (Output (k, true),  out_re.(k))  :: !acc;

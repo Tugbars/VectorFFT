@@ -3,25 +3,26 @@
 #include <stddef.h>
 
 __attribute__((target("avx2,fma")))
-void radix16_n1_fwd_avx2_gen_inplace(
-    double       * __restrict__ rio_re,
-    double       * __restrict__ rio_im,
+void radix16_n1_fwd_avx2_gen(
+    const double * __restrict__ in_re,
+    const double * __restrict__ in_im,
+    double       * __restrict__ out_re,
+    double       * __restrict__ out_im,
     const double * __restrict__ tw_re,
     const double * __restrict__ tw_im,
-    size_t ios,
-    size_t me)
+    size_t K)
 {
-    for (size_t k = 0; k < me; k += 4) {
-        const __m256d t0 = _mm256_loadu_pd(&rio_re[15*ios + k]);
-        const __m256d t2 = _mm256_loadu_pd(&rio_im[15*ios + k]);
-        const __m256d t5 = _mm256_loadu_pd(&rio_re[7*ios + k]);
-        const __m256d t7 = _mm256_loadu_pd(&rio_im[7*ios + k]);
+    for (size_t k = 0; k < K; k += 4) {
+        const __m256d t0 = _mm256_loadu_pd(&in_re[15*K + k]);
+        const __m256d t2 = _mm256_loadu_pd(&in_im[15*K + k]);
+        const __m256d t5 = _mm256_loadu_pd(&in_re[7*K + k]);
+        const __m256d t7 = _mm256_loadu_pd(&in_im[7*K + k]);
         const __m256d t8 = _mm256_sub_pd(t5, t0);
         const __m256d t10 = _mm256_sub_pd(t7, t2);
-        const __m256d t13 = _mm256_loadu_pd(&rio_re[11*ios + k]);
-        const __m256d t14 = _mm256_loadu_pd(&rio_im[11*ios + k]);
-        const __m256d t16 = _mm256_loadu_pd(&rio_re[3*ios + k]);
-        const __m256d t17 = _mm256_loadu_pd(&rio_im[3*ios + k]);
+        const __m256d t13 = _mm256_loadu_pd(&in_re[11*K + k]);
+        const __m256d t14 = _mm256_loadu_pd(&in_im[11*K + k]);
+        const __m256d t16 = _mm256_loadu_pd(&in_re[3*K + k]);
+        const __m256d t17 = _mm256_loadu_pd(&in_im[3*K + k]);
         const __m256d t18 = _mm256_sub_pd(t16, t13);
         const __m256d t20 = _mm256_sub_pd(t17, t14);
         const __m256d t21 = _mm256_sub_pd(t18, t10);
@@ -33,16 +34,16 @@ void radix16_n1_fwd_avx2_gen_inplace(
         const __m256d t30 = _mm256_mul_pd(t22, t24);
         const __m256d t32 = _mm256_mul_pd(t21, t25);
         const __m256d t33 = _mm256_sub_pd(t32, t30);
-        const __m256d t35 = _mm256_loadu_pd(&rio_re[13*ios + k]);
-        const __m256d t36 = _mm256_loadu_pd(&rio_im[13*ios + k]);
-        const __m256d t38 = _mm256_loadu_pd(&rio_re[5*ios + k]);
-        const __m256d t39 = _mm256_loadu_pd(&rio_im[5*ios + k]);
+        const __m256d t35 = _mm256_loadu_pd(&in_re[13*K + k]);
+        const __m256d t36 = _mm256_loadu_pd(&in_im[13*K + k]);
+        const __m256d t38 = _mm256_loadu_pd(&in_re[5*K + k]);
+        const __m256d t39 = _mm256_loadu_pd(&in_im[5*K + k]);
         const __m256d t40 = _mm256_sub_pd(t38, t35);
         const __m256d t42 = _mm256_sub_pd(t39, t36);
-        const __m256d t45 = _mm256_loadu_pd(&rio_re[9*ios + k]);
-        const __m256d t46 = _mm256_loadu_pd(&rio_im[9*ios + k]);
-        const __m256d t48 = _mm256_loadu_pd(&rio_re[1*ios + k]);
-        const __m256d t49 = _mm256_loadu_pd(&rio_im[1*ios + k]);
+        const __m256d t45 = _mm256_loadu_pd(&in_re[9*K + k]);
+        const __m256d t46 = _mm256_loadu_pd(&in_im[9*K + k]);
+        const __m256d t48 = _mm256_loadu_pd(&in_re[1*K + k]);
+        const __m256d t49 = _mm256_loadu_pd(&in_im[1*K + k]);
         const __m256d t50 = _mm256_sub_pd(t48, t45);
         const __m256d t52 = _mm256_sub_pd(t49, t46);
         const __m256d t53 = _mm256_sub_pd(t50, t42);
@@ -55,16 +56,16 @@ void radix16_n1_fwd_avx2_gen_inplace(
         const __m256d t62 = _mm256_sub_pd(t59, t60);
         const __m256d t63 = _mm256_sub_pd(t58, t29);
         const __m256d t65 = _mm256_sub_pd(t62, t33);
-        const __m256d t68 = _mm256_loadu_pd(&rio_re[14*ios + k]);
-        const __m256d t69 = _mm256_loadu_pd(&rio_im[14*ios + k]);
-        const __m256d t71 = _mm256_loadu_pd(&rio_re[6*ios + k]);
-        const __m256d t72 = _mm256_loadu_pd(&rio_im[6*ios + k]);
+        const __m256d t68 = _mm256_loadu_pd(&in_re[14*K + k]);
+        const __m256d t69 = _mm256_loadu_pd(&in_im[14*K + k]);
+        const __m256d t71 = _mm256_loadu_pd(&in_re[6*K + k]);
+        const __m256d t72 = _mm256_loadu_pd(&in_im[6*K + k]);
         const __m256d t73 = _mm256_sub_pd(t71, t68);
         const __m256d t75 = _mm256_sub_pd(t72, t69);
-        const __m256d t78 = _mm256_loadu_pd(&rio_re[10*ios + k]);
-        const __m256d t79 = _mm256_loadu_pd(&rio_im[10*ios + k]);
-        const __m256d t81 = _mm256_loadu_pd(&rio_re[2*ios + k]);
-        const __m256d t82 = _mm256_loadu_pd(&rio_im[2*ios + k]);
+        const __m256d t78 = _mm256_loadu_pd(&in_re[10*K + k]);
+        const __m256d t79 = _mm256_loadu_pd(&in_im[10*K + k]);
+        const __m256d t81 = _mm256_loadu_pd(&in_re[2*K + k]);
+        const __m256d t82 = _mm256_loadu_pd(&in_im[2*K + k]);
         const __m256d t83 = _mm256_sub_pd(t81, t78);
         const __m256d t85 = _mm256_sub_pd(t82, t79);
         const __m256d t86 = _mm256_sub_pd(t83, t75);
@@ -74,16 +75,16 @@ void radix16_n1_fwd_avx2_gen_inplace(
         const __m256d t92 = _mm256_mul_pd(t86, t87);
         const __m256d t94 = _mm256_sub_pd(t90, t92);
         const __m256d t95 = _mm256_fnmsub_pd(t86, t87, t90);
-        const __m256d t97 = _mm256_loadu_pd(&rio_re[12*ios + k]);
-        const __m256d t98 = _mm256_loadu_pd(&rio_im[12*ios + k]);
-        const __m256d t100 = _mm256_loadu_pd(&rio_re[4*ios + k]);
-        const __m256d t101 = _mm256_loadu_pd(&rio_im[4*ios + k]);
+        const __m256d t97 = _mm256_loadu_pd(&in_re[12*K + k]);
+        const __m256d t98 = _mm256_loadu_pd(&in_im[12*K + k]);
+        const __m256d t100 = _mm256_loadu_pd(&in_re[4*K + k]);
+        const __m256d t101 = _mm256_loadu_pd(&in_im[4*K + k]);
         const __m256d t102 = _mm256_sub_pd(t100, t97);
         const __m256d t104 = _mm256_sub_pd(t101, t98);
-        const __m256d t107 = _mm256_loadu_pd(&rio_re[8*ios + k]);
-        const __m256d t108 = _mm256_loadu_pd(&rio_im[8*ios + k]);
-        const __m256d t110 = _mm256_loadu_pd(&rio_re[0*ios + k]);
-        const __m256d t111 = _mm256_loadu_pd(&rio_im[0*ios + k]);
+        const __m256d t107 = _mm256_loadu_pd(&in_re[8*K + k]);
+        const __m256d t108 = _mm256_loadu_pd(&in_im[8*K + k]);
+        const __m256d t110 = _mm256_loadu_pd(&in_re[0*K + k]);
+        const __m256d t111 = _mm256_loadu_pd(&in_im[0*K + k]);
         const __m256d t112 = _mm256_sub_pd(t110, t107);
         const __m256d t114 = _mm256_sub_pd(t111, t108);
         const __m256d t115 = _mm256_sub_pd(t112, t104);
@@ -215,37 +216,37 @@ void radix16_n1_fwd_avx2_gen_inplace(
         const __m256d t287 = _mm256_add_pd(t265, t268);
         const __m256d t288 = _mm256_add_pd(t266, t269);
 
-        _mm256_storeu_pd(&rio_re[15*ios + k], t120);
-        _mm256_storeu_pd(&rio_im[15*ios + k], t121);
-        _mm256_storeu_pd(&rio_re[14*ios + k], t176);
-        _mm256_storeu_pd(&rio_im[14*ios + k], t177);
-        _mm256_storeu_pd(&rio_re[13*ios + k], t219);
-        _mm256_storeu_pd(&rio_im[13*ios + k], t220);
-        _mm256_storeu_pd(&rio_re[12*ios + k], t239);
-        _mm256_storeu_pd(&rio_im[12*ios + k], t240);
-        _mm256_storeu_pd(&rio_re[11*ios + k], t246);
-        _mm256_storeu_pd(&rio_im[11*ios + k], t248);
-        _mm256_storeu_pd(&rio_re[10*ios + k], t254);
-        _mm256_storeu_pd(&rio_im[10*ios + k], t256);
-        _mm256_storeu_pd(&rio_re[9*ios + k], t262);
-        _mm256_storeu_pd(&rio_im[9*ios + k], t264);
-        _mm256_storeu_pd(&rio_re[8*ios + k], t270);
-        _mm256_storeu_pd(&rio_im[8*ios + k], t272);
-        _mm256_storeu_pd(&rio_re[7*ios + k], t273);
-        _mm256_storeu_pd(&rio_im[7*ios + k], t274);
-        _mm256_storeu_pd(&rio_re[6*ios + k], t275);
-        _mm256_storeu_pd(&rio_im[6*ios + k], t276);
-        _mm256_storeu_pd(&rio_re[5*ios + k], t277);
-        _mm256_storeu_pd(&rio_im[5*ios + k], t278);
-        _mm256_storeu_pd(&rio_re[4*ios + k], t279);
-        _mm256_storeu_pd(&rio_im[4*ios + k], t280);
-        _mm256_storeu_pd(&rio_re[3*ios + k], t281);
-        _mm256_storeu_pd(&rio_im[3*ios + k], t282);
-        _mm256_storeu_pd(&rio_re[2*ios + k], t283);
-        _mm256_storeu_pd(&rio_im[2*ios + k], t284);
-        _mm256_storeu_pd(&rio_re[1*ios + k], t285);
-        _mm256_storeu_pd(&rio_im[1*ios + k], t286);
-        _mm256_storeu_pd(&rio_re[0*ios + k], t287);
-        _mm256_storeu_pd(&rio_im[0*ios + k], t288);
+        _mm256_storeu_pd(&out_re[15*K + k], t120);
+        _mm256_storeu_pd(&out_im[15*K + k], t121);
+        _mm256_storeu_pd(&out_re[14*K + k], t176);
+        _mm256_storeu_pd(&out_im[14*K + k], t177);
+        _mm256_storeu_pd(&out_re[13*K + k], t219);
+        _mm256_storeu_pd(&out_im[13*K + k], t220);
+        _mm256_storeu_pd(&out_re[12*K + k], t239);
+        _mm256_storeu_pd(&out_im[12*K + k], t240);
+        _mm256_storeu_pd(&out_re[11*K + k], t246);
+        _mm256_storeu_pd(&out_im[11*K + k], t248);
+        _mm256_storeu_pd(&out_re[10*K + k], t254);
+        _mm256_storeu_pd(&out_im[10*K + k], t256);
+        _mm256_storeu_pd(&out_re[9*K + k], t262);
+        _mm256_storeu_pd(&out_im[9*K + k], t264);
+        _mm256_storeu_pd(&out_re[8*K + k], t270);
+        _mm256_storeu_pd(&out_im[8*K + k], t272);
+        _mm256_storeu_pd(&out_re[7*K + k], t273);
+        _mm256_storeu_pd(&out_im[7*K + k], t274);
+        _mm256_storeu_pd(&out_re[6*K + k], t275);
+        _mm256_storeu_pd(&out_im[6*K + k], t276);
+        _mm256_storeu_pd(&out_re[5*K + k], t277);
+        _mm256_storeu_pd(&out_im[5*K + k], t278);
+        _mm256_storeu_pd(&out_re[4*K + k], t279);
+        _mm256_storeu_pd(&out_im[4*K + k], t280);
+        _mm256_storeu_pd(&out_re[3*K + k], t281);
+        _mm256_storeu_pd(&out_im[3*K + k], t282);
+        _mm256_storeu_pd(&out_re[2*K + k], t283);
+        _mm256_storeu_pd(&out_im[2*K + k], t284);
+        _mm256_storeu_pd(&out_re[1*K + k], t285);
+        _mm256_storeu_pd(&out_im[1*K + k], t286);
+        _mm256_storeu_pd(&out_re[0*K + k], t287);
+        _mm256_storeu_pd(&out_im[0*K + k], t288);
     }
 }
