@@ -12,6 +12,9 @@ module Bb = Vfft_v2__Bb
 (** @canonical Vfft_v2.Dft *)
 module Dft = Vfft_v2__Dft
 
+(** @canonical Vfft_v2.Dft_r2c *)
+module Dft_r2c = Vfft_v2__Dft_r2c
+
 (** @canonical Vfft_v2.Emit_c *)
 module Emit_c = Vfft_v2__Emit_c
 

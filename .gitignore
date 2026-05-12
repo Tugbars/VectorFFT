@@ -65,3 +65,7 @@ build_tuned/dev/bench_vtune/bench_output_hotspots.txt
 build_tuned/dev/bench_vtune/bench_output_uarch-exploration.txt
 build_tuned/dev/bench_vtune/bench_output_hotspots.txt
 /src/prototype/vfft_v2_pack
+/src/prototype/_build
+/src/prototype/_build
+/src/prototype/_build
+/src/prototype/_build/default

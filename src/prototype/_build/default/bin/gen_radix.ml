@@ -35,6 +35,9 @@ let () =
   let bb = ref false in
   let bb_budget = ref 1.0 in
   let twidsq = ref false in
+  let r2c = ref false in
+  let r2c_first = ref false in
+  let c2r = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list Sys.argv in
@@ -58,6 +61,9 @@ let () =
      else if arg = "--gh"        then gh := true
      else if arg = "--bb"        then bb := true
      else if arg = "--twidsq"    then twidsq := true
+     else if arg = "--r2c"       then r2c := true
+     else if arg = "--r2c-first" then r2c_first := true
+     else if arg = "--c2r"       then c2r := true
      else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
        bb_budget := float_of_string arr.(!i + 1);
        incr i
@@ -128,7 +134,13 @@ let () =
    * store transposed. Bypasses the regular twiddled / spill paths
    * (those are for in-place codelets). *)
   let raw, spill_markers, spill_ct =
-    if !twidsq then
+    if !r2c then
+      (Vfft_v2.Dft_r2c.dft_expand_r2c ~sign n, [], None)
+    else if !r2c_first then
+      (Vfft_v2.Dft_r2c.dft_expand_r2c_first ~sign n, [], None)
+    else if !c2r then
+      (Vfft_v2.Dft_r2c.dft_expand_c2r n, [], None)
+    else if !twidsq then
       (Vfft_v2.Dft.dft_expand_twidsq ~direction ~sign n, [], None)
     else if !spill && !twiddled then
       let assignments, markers, ct =
@@ -289,7 +301,21 @@ let () =
       else ""
     in
     let name =
-      if !twidsq then
+      if !r2c then
+        (* R2C forward codelet: radix{N}_r2c_{sgn}_{isa}_gen *)
+        Printf.sprintf "radix%d_r2c_%s_%s_gen%s%s%s"
+          n sgn_suffix isa.name suffix sched_suffix spill_suffix
+      else if !r2c_first then
+        (* R2C first-stage cascade codelet: radix{R}_r2c_first_{sgn}_{isa}_gen
+         * The {R} here is the SUB-DFT radix, not the total transform size. *)
+        Printf.sprintf "radix%d_r2c_first_%s_%s_gen%s%s%s"
+          n sgn_suffix isa.name suffix sched_suffix spill_suffix
+      else if !c2r then
+        (* C2R backward codelet: radix{N}_c2r_{isa}_gen
+         * c2r is always backward, so no separate sgn_suffix is needed. *)
+        Printf.sprintf "radix%d_c2r_%s_gen%s%s%s"
+          n isa.name suffix sched_suffix spill_suffix
+      else if !twidsq then
         (* Twidsq codelets use their own name pattern reflecting the
          * inter-stage role: radix{N}_twidsq_{dir}_{sgn}_{isa}_gen. *)
         Printf.sprintf "radix%d_twidsq_%s_%s_%s_gen%s%s%s"
