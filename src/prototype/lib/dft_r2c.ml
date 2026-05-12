@@ -683,6 +683,74 @@ let dft_expand_dst3 (n : int) : Expr.assignment list =
   done;
   List.rev !acc
 
+(* === DCT-IV via Lee 1984 (FFTW REDFT11 convention) ===
+ *
+ *   Y[k] = 2 · sum_{n=0..N-1} x[n] · cos(π · (2k+1) · (2n+1) / (4N))
+ *
+ * Port of production's `src/core/dct4.h` Lee 1984 algorithm:
+ *   1. z[m]   = x[2m] - i · x[N-1-2m]                     for m = 0..N/2-1
+ *   2. psi[m] = z[m] · exp(i·π·m/N)                       (pre-twiddle)
+ *   3. IFFT_{N/2}(psi)[k'] = Σ_m psi[m] · exp(+2πi·m·k'/(N/2))   (unnormalized)
+ *   4. Z[k']  = 2 · exp(i·π·(4k'+1)/(4N)) · IFFT(psi)[k']  (post-twiddle)
+ *   5. Y[2k']     = Re(Z[k'])
+ *      Y[N-1-2k'] = Im(Z[k'])
+ *
+ * The c2c IFFT_{N/2} is the inner transform; everything else is index
+ * manipulation + complex multiplies that algsimp folds.
+ *
+ * Constraint: N must be even (matches production).
+ * Involutory: DCT-IV(DCT-IV(x)) = 2N · x.
+ *)
+let dft_dct4 (n : int) (input_re : int -> expr) : expr array =
+  assert (n >= 2 && n mod 2 = 0);
+  let half = n / 2 in
+  let pi = 4.0 *. atan 1.0 in
+  (* Step 2: pre-twiddle psi[m] = z[m] · exp(iπm/N) where z[m] = x[2m] - i·x[N-1-2m].
+   * Compute z_re = x[2m], z_im = -x[N-1-2m] inline. *)
+  let psi_re = Array.make half (Const 0.0) in
+  let psi_im = Array.make half (Const 0.0) in
+  for m = 0 to half - 1 do
+    let z_re = input_re (2 * m) in
+    let z_im = Neg (input_re (n - 1 - 2 * m)) in
+    let phi = pi *. float_of_int m /. float_of_int n in
+    let c = Const (cos phi) in
+    let s = Const (sin phi) in
+    (* psi = (z_re + i·z_im) · (c + i·s)
+     *     = (z_re·c - z_im·s) + i(z_re·s + z_im·c) *)
+    psi_re.(m) <- Sub (Mul (z_re, c), Mul (z_im, s));
+    psi_im.(m) <- Add (Mul (z_re, s), Mul (z_im, c))
+  done;
+  (* Step 3: IFFT_{N/2} unnormalized backward c2c on psi. *)
+  let ifft_re, ifft_im =
+    Dft.dft ~sign:`Bwd half
+      (fun k -> psi_re.(k))
+      (fun k -> psi_im.(k))
+  in
+  (* Step 4 + 5: post-twiddle and extract.
+   * Z[k'] = (2cos + 2i·sin) · (ifft_re + i·ifft_im)
+   *       = (2cos·ifft_re - 2sin·ifft_im) + i(2cos·ifft_im + 2sin·ifft_re)
+   * with cos/sin = cos/sin(π(4k'+1)/(4N)). *)
+  let out = Array.make n (Const 0.0) in
+  for kp = 0 to half - 1 do
+    let phi = pi *. float_of_int (4 * kp + 1) /. (4.0 *. float_of_int n) in
+    let c = Const (2.0 *. cos phi) in
+    let s = Const (2.0 *. sin phi) in
+    let z_re = Sub (Mul (c, ifft_re.(kp)), Mul (s, ifft_im.(kp))) in
+    let z_im = Add (Mul (c, ifft_im.(kp)), Mul (s, ifft_re.(kp))) in
+    out.(2 * kp)         <- z_re;
+    out.(n - 1 - 2 * kp) <- z_im
+  done;
+  out
+
+let dft_expand_dct4 (n : int) : Expr.assignment list =
+  let input_re k = Load (Input (k, true)) in
+  let out = dft_dct4 n input_re in
+  let acc = ref [] in
+  for k = n - 1 downto 0 do
+    acc := (Output (k, true), out.(k)) :: !acc
+  done;
+  List.rev !acc
+
 (* === HC2HC: middle-stage Hermitian-packed cascade codelet ===
  *
  * Port of FFTW's gen_hc2hc.ml (lines 67-104). Operates in-place on
