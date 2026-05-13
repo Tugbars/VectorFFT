@@ -35,6 +35,7 @@
 
 #include "executor.h"
 #include "transpose.h"
+#include "strided/strided.h"
 
 /* Minimum tile height for SIMD efficiency. */
 #define FFT2D_MIN_TILE 4
@@ -71,6 +72,14 @@ typedef struct {
     size_t tile_sz;            /* N2 * B (tiled) or N1 * N2 (Bailey) */
     double *scratch_re;
     double *scratch_im;
+
+    /* Design C strided-batch fast path. When non-NULL the tile loop skips
+     * gather/scatter and calls the strided codelet directly on the matrix.
+     * Set during plan creation if N2 ∈ {16, 32, 64} and (N1 mod B == 0)
+     * and (B mod 4 == 0). v1: forward only; backward falls back to the
+     * gather/scatter path when strided_bwd is NULL. */
+    strided_codelet_t strided_fwd;
+    strided_codelet_t strided_bwd;
 } stride_fft2d_data_t;
 
 /* Get scratch pointer for thread t */
@@ -90,6 +99,36 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
                                 int is_bwd) {
     const int N2 = d->N2;
     const size_t B = d->B;
+
+    /* Design C fast path: strided codelet reads/writes matrix directly,
+     * no gather/scatter pass. Requires this_B % 4 == 0, which is enforced
+     * at plan time by gating on (N1 % B == 0) — making every tile full. */
+    strided_codelet_t strided = is_bwd ? d->strided_bwd : d->strided_fwd;
+    if (strided) {
+        for (size_t i = row_start; i < row_end; i += B) {
+            size_t this_B = B;
+            if (i + B > row_end) this_B = row_end - i;
+            /* Strided only handles full B-tiles (this_B % 4 == 0). If the
+             * last partial tile would violate that, fall back to the
+             * gather/scatter path for it. */
+            if (this_B % 4 == 0) {
+                strided(re + i * N2, im + i * N2, NULL, NULL,
+                        (size_t)N2, this_B);
+                continue;
+            }
+            stride_transpose_pair(
+                re + i * N2, im + i * N2, sr, si,
+                (size_t)N2, B, this_B, (size_t)N2);
+            if (is_bwd)
+                _stride_execute_bwd_slice(d->plan_row, sr, si, this_B, B);
+            else
+                _stride_execute_fwd_slice(d->plan_row, sr, si, this_B, B);
+            stride_transpose_pair(
+                sr, si, re + i * N2, im + i * N2,
+                B, (size_t)N2, (size_t)N2, this_B);
+        }
+        return;
+    }
 
     for (size_t i = row_start; i < row_end; i += B) {
         size_t this_B = B;
@@ -338,6 +377,18 @@ static stride_plan_t *stride_plan_2d(
     if (!d->plan_row) d->plan_row = stride_auto_plan(N2, d->B, reg);
     if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
 
+    /* Design C strided fast path. Gate on:
+     *   - N2 has a single-stage strided codelet (16/32/64)
+     *   - B is a multiple of 4 (AVX2 SIMD width)
+     *   - N1 is a multiple of B (every tile is full — strided only handles
+     *     full B-tiles in v1; partial tiles fall back to gather/scatter
+     *     inside _fft2d_tiled_range) */
+    if ((d->B % 4 == 0) && ((size_t)N1 % d->B == 0)) {
+        d->strided_fwd = strided_codelet_for(N2);
+        /* v1: forward-only. Backward falls back to gather/scatter. */
+        d->strided_bwd = NULL;
+    }
+
     /* Per-thread scratch: T copies of N2*B */
     if (!_fft2d_alloc_scratch(d, (size_t)N2 * d->B)) {
         _fft2d_destroy(d);
@@ -429,6 +480,12 @@ static stride_plan_t *stride_plan_2d_wise(
     if (!d->plan_row) d->plan_row = stride_auto_plan(N2, d->B, reg);
     if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
     (void)wis;  /* unused in v1.0; will be re-enabled once K-split bug is fixed */
+
+    /* Design C strided fast path (forward only in v1). */
+    if ((d->B % 4 == 0) && ((size_t)N1 % d->B == 0)) {
+        d->strided_fwd = strided_codelet_for(N2);
+        d->strided_bwd = NULL;
+    }
 
     if (!_fft2d_alloc_scratch(d, (size_t)N2 * d->B)) {
         _fft2d_destroy(d);

@@ -48,6 +48,7 @@ let () =
   let dst3 = ref false in
   let dct4 = ref false in
   let c2r = ref false in
+  let strided = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list Sys.argv in
@@ -84,6 +85,7 @@ let () =
      else if arg = "--dst3"      then dst3 := true
      else if arg = "--dct4"      then dct4 := true
      else if arg = "--c2r"       then c2r := true
+     else if arg = "--strided"   then strided := true
      else if arg = "--bb-budget" && !i + 1 < Array.length arr then begin
        bb_budget := float_of_string arr.(!i + 1);
        incr i
@@ -408,8 +410,9 @@ let () =
         Printf.sprintf "radix%d_t1%s_%s%s_%s_%s_gen%s%s%s"
           n t1s_infix dir_suffix variant sgn_suffix isa.name suffix sched_suffix spill_suffix
       else
-        Printf.sprintf "radix%d_n1_%s_%s_gen%s%s%s"
+        Printf.sprintf "radix%d_n1_%s_%s_gen%s%s%s%s"
           n sgn_suffix isa.name suffix sched_suffix spill_suffix
+          (if !strided then "_strided" else "")
     in
     let scheduler : Vfft_v2.Emit_c.scheduler = match !bisect, !su, !annotate with
       | false, false, false -> Topological
@@ -424,6 +427,7 @@ let () =
     print_string (Vfft_v2.Emit_c.emit_codelet
                     ~in_place:!in_place ~t1s:!t1s ~twidsq:!twidsq
                     ~twidsq_n:(if !twidsq then n else 0)
+                    ~strided:!strided ~radix:n
                     ~scheduler ~isa ~gh:!gh
                     ~bb_budget:bb_budget_arg ~spill:spill_info
                     deduped ~name)
