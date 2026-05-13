@@ -564,6 +564,15 @@ let emit_codelet
     Buffer.add_string buf "    size_t me)\n";
     Buffer.add_string buf "{\n";
     Buffer.add_string buf "    (void)tw_re; (void)tw_im;\n";
+    (* AVX-512 only: pre-declare the two __m512i index vectors used by the
+     * 8×8 transpose preamble AND postamble. Function-scope (outside the
+     * b loop) so gcc treats them as loop-invariant constants. The
+     * indices match transpose.h Kernel C — idx_lo gathers even-column
+     * cross-lane elements, idx_hi gathers odd-column. *)
+    if isa.vec_width = 8 then begin
+      Buffer.add_string buf "    const __m512i _tp_idx_lo = _mm512_set_epi64(13, 12, 5, 4, 9, 8, 1, 0);\n";
+      Buffer.add_string buf "    const __m512i _tp_idx_hi = _mm512_set_epi64(15, 14, 7, 6, 11, 10, 3, 2);\n"
+    end;
     Buffer.add_string buf (Printf.sprintf "    for (size_t b = 0; b < me; b += %d) {\n" isa.vec_width);
     (* Per-iteration locals: lane_re_0..radix-1 (inputs after transpose),
        out_lane_re_0..radix-1 (outputs before inverse transpose). Plus
@@ -616,9 +625,90 @@ let emit_codelet
           Buffer.add_string buf "        }\n"
         done
       done
+    end else if isa.vec_width = 8 then begin
+      (* AVX-512 8×8 transpose preamble. For each group of 8 consecutive
+       * fft indices (j0..j0+7), load 8 rows of 8 cols starting at
+       * fft_idx=j0, then 3-stage in-register transpose to produce 8
+       * lane vectors each holding (row b..row b+7) at one fft_idx.
+       *
+       * Reference: transpose.h Kernel C. The 3-stage pipeline is:
+       *   Stage 1: 8 unpacklo/unpackhi_pd pairs over row pairs (0,1) (2,3) (4,5) (6,7)
+       *   Stage 2: 8 permutex2var_pd with _tp_idx_lo / _tp_idx_hi (declared at function scope)
+       *   Stage 3: 8 shuffle_f64x2 with imm 0x44 (lo halves) / 0xEE (hi halves)
+       *           assigned directly to lane_re_{j0..j0+7} / lane_im_{j0..j0+7}
+       * Stages 1 and 2 use block-local `const __m512d _tk_re` / `_xk_re`
+       * names so the same identifiers are reused across groups without
+       * collision — the `{ ... }` block scope makes that safe. *)
+      let groups = radix / 8 in
+      for which_side = 0 to 1 do
+        let suf  = if which_side = 0 then "re" else "im" in
+        for g = 0 to groups - 1 do
+          let j0 = g * 8 in
+          Buffer.add_string buf (Printf.sprintf
+            "        {  /* 8x8 transpose group: fft_idx %d..%d, %s */\n" j0 (j0+7) suf);
+          (* 8 row loads *)
+          for r = 0 to 7 do
+            Buffer.add_string buf (Printf.sprintf
+              "            const __m512d _row_%s_%d = _mm512_loadu_pd(&rio_%s[(b+%d)*row_stride + %d]);\n"
+              suf r suf r j0)
+          done;
+          (* Stage 1: 8 unpacklo/unpackhi_pd. *)
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _t0_%s = _mm512_unpacklo_pd(_row_%s_0, _row_%s_1);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _t1_%s = _mm512_unpackhi_pd(_row_%s_0, _row_%s_1);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _t2_%s = _mm512_unpacklo_pd(_row_%s_2, _row_%s_3);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _t3_%s = _mm512_unpackhi_pd(_row_%s_2, _row_%s_3);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _t4_%s = _mm512_unpacklo_pd(_row_%s_4, _row_%s_5);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _t5_%s = _mm512_unpackhi_pd(_row_%s_4, _row_%s_5);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _t6_%s = _mm512_unpacklo_pd(_row_%s_6, _row_%s_7);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _t7_%s = _mm512_unpackhi_pd(_row_%s_6, _row_%s_7);\n" suf suf suf);
+          (* Stage 2: 8 permutex2var_pd. *)
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _x0_%s = _mm512_permutex2var_pd(_t0_%s, _tp_idx_lo, _t2_%s);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _x1_%s = _mm512_permutex2var_pd(_t1_%s, _tp_idx_lo, _t3_%s);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _x2_%s = _mm512_permutex2var_pd(_t0_%s, _tp_idx_hi, _t2_%s);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _x3_%s = _mm512_permutex2var_pd(_t1_%s, _tp_idx_hi, _t3_%s);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _x4_%s = _mm512_permutex2var_pd(_t4_%s, _tp_idx_lo, _t6_%s);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _x5_%s = _mm512_permutex2var_pd(_t5_%s, _tp_idx_lo, _t7_%s);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _x6_%s = _mm512_permutex2var_pd(_t4_%s, _tp_idx_hi, _t6_%s);\n" suf suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            const __m512d _x7_%s = _mm512_permutex2var_pd(_t5_%s, _tp_idx_hi, _t7_%s);\n" suf suf suf);
+          (* Stage 3: 8 shuffle_f64x2, assign directly to lane_re_{j0..j0+7}. *)
+          Buffer.add_string buf (Printf.sprintf
+            "            lane_%s_%d = _mm512_shuffle_f64x2(_x0_%s, _x4_%s, 0x44);\n" suf j0     suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            lane_%s_%d = _mm512_shuffle_f64x2(_x1_%s, _x5_%s, 0x44);\n" suf (j0+1) suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            lane_%s_%d = _mm512_shuffle_f64x2(_x2_%s, _x6_%s, 0x44);\n" suf (j0+2) suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            lane_%s_%d = _mm512_shuffle_f64x2(_x3_%s, _x7_%s, 0x44);\n" suf (j0+3) suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            lane_%s_%d = _mm512_shuffle_f64x2(_x0_%s, _x4_%s, 0xEE);\n" suf (j0+4) suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            lane_%s_%d = _mm512_shuffle_f64x2(_x1_%s, _x5_%s, 0xEE);\n" suf (j0+5) suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            lane_%s_%d = _mm512_shuffle_f64x2(_x2_%s, _x6_%s, 0xEE);\n" suf (j0+6) suf suf);
+          Buffer.add_string buf (Printf.sprintf
+            "            lane_%s_%d = _mm512_shuffle_f64x2(_x3_%s, _x7_%s, 0xEE);\n" suf (j0+7) suf suf);
+          Buffer.add_string buf "        }\n"
+        done
+      done
     end else begin
       failwith (Printf.sprintf
-        "emit_codelet: strided not yet supported for vec_width=%d (AVX-512 8x8 transpose TBD)"
+        "emit_codelet: strided not supported for vec_width=%d"
         isa.vec_width)
     end;
     Buffer.add_string buf "\n"
@@ -1475,6 +1565,97 @@ let emit_codelet
           suf j0 suf suf);
         Buffer.add_string buf (Printf.sprintf
           "            _mm256_storeu_pd(&rio_%s[(b+3)*row_stride + %d], _mm256_permute2f128_pd(_u1_%s, _u3_%s, 0x31));\n"
+          suf j0 suf suf);
+        Buffer.add_string buf "        }\n"
+      done
+    done
+  end;
+
+  (* Strided postamble: inverse 8×8 transpose + scatter back to matrix
+   * (AVX-512 path).
+   *
+   * The 8×8 transpose is its own inverse, so the postamble uses the
+   * same intrinsic sequence as the preamble — Kernel C's 3 stages.
+   * Inputs are out_lane_re_{j0..j0+7} / out_lane_im_{j0..j0+7} (set
+   * by the body), outputs are stored at (b+i)*row_stride + j0 for
+   * i=0..7. We name stage-1 unpacks (_u0_re.._u7_re) and stage-2
+   * permutex2var (_v0_re.._v7_re), then fuse stage-3 shuffle_f64x2
+   * inline with the 8 storeu_pd calls. *)
+  if strided && isa.vec_width = 8 then begin
+    Buffer.add_string buf "\n";
+    let groups = radix / 8 in
+    for which_side = 0 to 1 do
+      let suf  = if which_side = 0 then "re" else "im" in
+      for g = 0 to groups - 1 do
+        let j0 = g * 8 in
+        Buffer.add_string buf (Printf.sprintf
+          "        {  /* inverse 8x8 transpose group: fft_idx %d..%d, %s */\n" j0 (j0+7) suf);
+        (* Stage 1: 8 unpacklo/unpackhi_pd on out_lane pairs. *)
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _u0_%s = _mm512_unpacklo_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+          suf suf j0 suf (j0+1));
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _u1_%s = _mm512_unpackhi_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+          suf suf j0 suf (j0+1));
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _u2_%s = _mm512_unpacklo_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+          suf suf (j0+2) suf (j0+3));
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _u3_%s = _mm512_unpackhi_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+          suf suf (j0+2) suf (j0+3));
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _u4_%s = _mm512_unpacklo_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+          suf suf (j0+4) suf (j0+5));
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _u5_%s = _mm512_unpackhi_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+          suf suf (j0+4) suf (j0+5));
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _u6_%s = _mm512_unpacklo_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+          suf suf (j0+6) suf (j0+7));
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _u7_%s = _mm512_unpackhi_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+          suf suf (j0+6) suf (j0+7));
+        (* Stage 2: 8 permutex2var_pd. *)
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _v0_%s = _mm512_permutex2var_pd(_u0_%s, _tp_idx_lo, _u2_%s);\n" suf suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _v1_%s = _mm512_permutex2var_pd(_u1_%s, _tp_idx_lo, _u3_%s);\n" suf suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _v2_%s = _mm512_permutex2var_pd(_u0_%s, _tp_idx_hi, _u2_%s);\n" suf suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _v3_%s = _mm512_permutex2var_pd(_u1_%s, _tp_idx_hi, _u3_%s);\n" suf suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _v4_%s = _mm512_permutex2var_pd(_u4_%s, _tp_idx_lo, _u6_%s);\n" suf suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _v5_%s = _mm512_permutex2var_pd(_u5_%s, _tp_idx_lo, _u7_%s);\n" suf suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _v6_%s = _mm512_permutex2var_pd(_u4_%s, _tp_idx_hi, _u6_%s);\n" suf suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            const __m512d _v7_%s = _mm512_permutex2var_pd(_u5_%s, _tp_idx_hi, _u7_%s);\n" suf suf suf);
+        (* Stage 3 + store: 8 storeu_pd, each fused with a shuffle_f64x2. *)
+        Buffer.add_string buf (Printf.sprintf
+          "            _mm512_storeu_pd(&rio_%s[(b+0)*row_stride + %d], _mm512_shuffle_f64x2(_v0_%s, _v4_%s, 0x44));\n"
+          suf j0 suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            _mm512_storeu_pd(&rio_%s[(b+1)*row_stride + %d], _mm512_shuffle_f64x2(_v1_%s, _v5_%s, 0x44));\n"
+          suf j0 suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            _mm512_storeu_pd(&rio_%s[(b+2)*row_stride + %d], _mm512_shuffle_f64x2(_v2_%s, _v6_%s, 0x44));\n"
+          suf j0 suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            _mm512_storeu_pd(&rio_%s[(b+3)*row_stride + %d], _mm512_shuffle_f64x2(_v3_%s, _v7_%s, 0x44));\n"
+          suf j0 suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            _mm512_storeu_pd(&rio_%s[(b+4)*row_stride + %d], _mm512_shuffle_f64x2(_v0_%s, _v4_%s, 0xEE));\n"
+          suf j0 suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            _mm512_storeu_pd(&rio_%s[(b+5)*row_stride + %d], _mm512_shuffle_f64x2(_v1_%s, _v5_%s, 0xEE));\n"
+          suf j0 suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            _mm512_storeu_pd(&rio_%s[(b+6)*row_stride + %d], _mm512_shuffle_f64x2(_v2_%s, _v6_%s, 0xEE));\n"
+          suf j0 suf suf);
+        Buffer.add_string buf (Printf.sprintf
+          "            _mm512_storeu_pd(&rio_%s[(b+7)*row_stride + %d], _mm512_shuffle_f64x2(_v3_%s, _v7_%s, 0xEE));\n"
           suf j0 suf suf);
         Buffer.add_string buf "        }\n"
       done

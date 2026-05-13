@@ -421,17 +421,14 @@ for isa in $ISAS; do
         # codelet + scatter) reference. Speedups 1.15×–3.67×, growing with B.
         # Roundtrip identity 20/20 PASS at FP noise.
         #
-        # AVX-512 strided is not yet supported — emitter falls back via
-        # failwith. Skip if isa=avx512.
-        if [ "$isa" = "avx512" ]; then
-          echo "  └─ family: strided  [skip — AVX-512 8×8 transpose preamble TBD]"
-        else
-          echo "  └─ family: strided ($STRIDED_SIZES — fwd+bwd, AVX2 only in v1)"
-          for R in $STRIDED_SIZES; do
-            emit_strided $R $isa $family ""        "n1_fwd_strided" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
-            emit_strided $R $isa $family "--bwd"   "n1_bwd_strided" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
-          done
-        fi
+        # AVX-512 strided supported via 8×8 in-register transpose preamble
+        # and postamble in emit_c.ml (validated 2026-05-13 on real
+        # AVX-512 hardware — 60/60 PASS, see doc 56).
+        echo "  └─ family: strided ($STRIDED_SIZES — fwd+bwd, isa=$isa)"
+        for R in $STRIDED_SIZES; do
+          emit_strided $R $isa $family ""        "n1_fwd_strided" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_strided $R $isa $family "--bwd"   "n1_bwd_strided" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+        done
         ;;
 
       *)
