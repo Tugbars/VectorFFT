@@ -156,6 +156,30 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
  * not correctness. Multi-use nodes act as natural "stop" points. *)
 let inline_max_depth = 32
 
+(* === M3a regalloc consumption point ===
+ *
+ * Top-level mutable ref that carries the active register allocation
+ * from emit_codelet (which computes it per scheduling site) to
+ * render_node_def (which consumes it when emitting declarations).
+ *
+ * Why a top-level ref instead of a parameter: render_node_def has
+ * ~10 call sites scattered through emit_codelet (different scheduler
+ * paths, spill structure variants). Threading a parameter through all
+ * of them would touch a lot of code for an opt-in feature. The ref is
+ * set by emit_codelet at each scheduling site and reset to None at
+ * exit, so other code paths see None.
+ *
+ * Threading note: ocaml refs are not thread-safe. Codelet generation
+ * is single-threaded (gen_radix emits one codelet at a time), so this
+ * is fine in practice. Documented limitation. *)
+let current_regalloc : Regalloc.allocation option ref = ref None
+
+(* M5: schedule position of the node currently being emitted by
+ * render_node_def. Set by the pass walkers in emit_c just before each
+ * render_node_def call. Used by `v` (operand name renderer) to look
+ * up name_overrides for reloaded values. *)
+let current_emit_position : int ref = ref 0
+
 let render_node_def
     ?(no_declarator = false)
     ?(inline_set : (int, unit) Hashtbl.t option = None)
@@ -163,7 +187,22 @@ let render_node_def
     ?(twidsq_n = 0)
     ?(strided = false)
     ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool) (e : t) : string =
-  let v t = Printf.sprintf "t%d" t.tag in
+  (* Name renderer: usually returns "t<tag>", but if M5 has installed a
+   * name override for (current_emit_position, t.tag) and t is not the
+   * tag being defined (i.e., t is an operand reference, not the LHS),
+   * return the override name instead — used to point at reload
+   * variables. *)
+  let v t =
+    let default_name () = Printf.sprintf "t%d" t.tag in
+    if t.tag = e.tag then default_name ()  (* LHS: never override *)
+    else match !current_regalloc with
+      | None -> default_name ()
+      | Some alloc ->
+        (match Hashtbl.find_opt alloc.name_overrides
+                 (!current_emit_position, t.tag) with
+         | Some n -> n
+         | None -> default_name ())
+  in
   (* Should this node be inlined into its consumer's expression? *)
   let should_inline n =
     match inline_set with
@@ -256,10 +295,39 @@ let render_node_def
     (* Plain assignment to a variable forward-declared at outer scope.
      * Used for spill "fused slots" — values whose lifetime crosses the
      * PASS 1 / PASS 2 boundary as register-resident SSA, so they're
-     * declared once before either pass opens and assigned in PASS 1. *)
+     * declared once before either pass opens and assigned in PASS 1.
+     * Not eligible for M3a register pinning: the variable was already
+     * declared without a pin, so we just assign. *)
     Printf.sprintf "        %s = %s;" (v e) body
   else
-    Printf.sprintf "        %s" (Isa.const_decl isa (v e) body)
+    (* === M3a regalloc switch ===
+     *
+     * If the active allocation (current_regalloc) has a Reg binding
+     * for this tag, emit the barrier-pinned variant:
+     *   register __m512d t<tag> asm("zmmK") = <body>;
+     *   asm volatile ("" : "+v"(t<tag>));
+     * Otherwise (no allocation, tag not in table, or Default), fall
+     * through to the existing const-decl behavior. The Reg path gives
+     * us deterministic register choice; the Default path is
+     * byte-identical to pre-M3a output, which is what we want when
+     * VFFT_USE_REGALLOC is unset. *)
+    match !current_regalloc with
+    | Some alloc ->
+      (match Regalloc.lookup alloc e.tag with
+       | Regalloc.Reg reg_name ->
+         Printf.sprintf "        %s"
+           (Isa.pinned_reg_decl isa (v e) reg_name body)
+       | Regalloc.Spilled _ ->
+         (* M5: the Spilled variant is reserved but no longer used by
+          * the spilling allocator (it tracks spills via spill_sites
+          * separately, keeping the tag's assignment as Reg). If we
+          * see Spilled here it's a future extension; fall back to
+          * Default emission. *)
+         Printf.sprintf "        %s" (Isa.const_decl isa (v e) body)
+       | Regalloc.Default ->
+         Printf.sprintf "        %s" (Isa.const_decl isa (v e) body))
+    | None ->
+      Printf.sprintf "        %s" (Isa.const_decl isa (v e) body)
 
 (* === Emit a complete codelet ===
  *
@@ -515,6 +583,81 @@ let emit_codelet
     ?(spill : spill_info option = None)
     (assigns : (Expr.elem_ref * t) list)
     ~(name : string) : string =
+  (* === M2 peak-live diagnostic ===
+   *
+   * If VFFT_PEAK_LIVE=1, stderr-print peak_live measurements at each
+   * scheduling site within this codelet. No effect on emitted C — the
+   * output is purely diagnostic. Designed to be a no-op when the env
+   * var is unset, so default builds are byte-identical to pre-M2.
+   *
+   * Gating choice: env var rather than a build flag so we can A/B
+   * codelet generation runs from the same binary without rebuilding.
+   * The labels include the codelet `name` and the scheduling site
+   * identifier so we can correlate output across many codelets. *)
+  let peak_live_enabled =
+    try Sys.getenv "VFFT_PEAK_LIVE" = "1" with Not_found -> false
+  in
+  let record_peak_live (label : string) (scheduled : t list) =
+    if peak_live_enabled then begin
+      let info = Regalloc.peak_live_analysis ~isa ~scheduled in
+      Printf.eprintf "[%s:%s] %s\n" name label
+        (Regalloc.format_live_info info)
+    end
+  in
+  (* Reference both bindings to avoid "unused variable" warnings when
+   * VFFT_PEAK_LIVE is not set at compile time (it's a runtime check,
+   * so the compiler can't know — but ocaml may still warn). *)
+  let _ = record_peak_live in
+
+  (* === M3a register allocation ===
+   *
+   * If VFFT_USE_REGALLOC=1, run SSA-based linear-scan allocation on
+   * each scheduled list and pass the result to render_node_def via
+   * a top-level mutable ref. When allocation fits in budget,
+   * render_node_def emits
+   *   register __m512d tN asm("zmmK") = ...;
+   *   asm volatile ("" : "+v"(tN));
+   * instead of
+   *   const __m512d tN = ...;
+   * When allocation overflows, we fall back to default behavior for
+   * this pass (stderr warn so the user knows which codelets exceeded
+   * the M3a budget).
+   *
+   * Budget: isa.vec_regs - 4 (28 for AVX-512, 12 for AVX2). The
+   * margin leaves room for gcc's ABI / temporary needs.
+   *
+   * The current_regalloc ref carries the active allocation across the
+   * boundary between emit_codelet (which computes it) and
+   * render_node_def (which consumes it). It's set per scheduling
+   * site — each pass gets its own allocation. The ref is reset to
+   * None at exit so leftover allocations don't leak into other call
+   * sites.
+   *
+   * Threading: this is a top-level ref, so concurrent emit_codelet
+   * calls in the same process would race. Our codelet generator is
+   * single-threaded; documenting the limitation here. *)
+  let regalloc_enabled =
+    try Sys.getenv "VFFT_USE_REGALLOC" = "1" with Not_found -> false
+  in
+  let install_alloc (label : string) (scheduled : t list)
+                    (inline_set : (int, unit) Hashtbl.t option)
+                    (force_last_use : (int, int) Hashtbl.t option) =
+    if regalloc_enabled then begin
+      match Regalloc.allocate ~isa ~scheduled ~inline_set ~force_last_use () with
+      | Regalloc.Allocated alloc ->
+        current_regalloc := Some alloc;
+        let (regs, _) = Regalloc.count_bindings alloc in
+        Printf.eprintf "[%s:%s] regalloc: %d tags bound\n" name label regs
+      | Regalloc.Overflow budget ->
+        current_regalloc := None;
+        Printf.eprintf "[%s:%s] regalloc: OVERFLOW budget=%d, falling back to default\n"
+          name label budget
+    end
+  in
+  let clear_alloc () = current_regalloc := None in
+  let _ = install_alloc in
+  let _ = clear_alloc in
+
   (* The twidsq flag selects the OOP-with-separate-strides signature.
    * Doc 43 introduced the twidsq math layer; this branch emits the
    * matching codelet calling convention with `is`, `os`, and `V` so the
@@ -808,26 +951,52 @@ let emit_codelet
   in
 
   let emit_store buf oref e =
+    (* M5: three cases for the store value source:
+     *   1. name_override exists at current_emit_position: use the
+     *      reload variable (e.g. tT_r0). Register-pinned, fastest.
+     *   2. Tag is in spilled_of_tag but no override: emit inline
+     *      load-from-memory. Used when no register was available for
+     *      a reload at the flush position (peak register pressure).
+     *      gcc handles the temp register.
+     *   3. Otherwise: bare tT — the value is in its register.
+     *
+     * Returns (value_expr, is_inline_load). When is_inline_load is
+     * true, the value_expr is a load intrinsic; we wrap it in the
+     * store accordingly. *)
+    let value_expr =
+      match !current_regalloc with
+      | None -> Printf.sprintf "t%d" e.tag
+      | Some alloc ->
+        (match Hashtbl.find_opt alloc.name_overrides
+                 (!current_emit_position, e.tag) with
+         | Some n -> n
+         | None ->
+           (match Hashtbl.find_opt alloc.spilled_of_tag e.tag with
+            | Some slot ->
+              (* Inline load from regalloc_spill. gcc picks a temp. *)
+              Printf.sprintf "%s(&regalloc_spill[%d])" isa.loadu_pd slot
+            | None -> Printf.sprintf "t%d" e.tag))
+    in
     match oref with
     | Expr.Output (k, true) when strided ->
       Buffer.add_string buf
-        (Printf.sprintf "        out_lane_re_%d = t%d;\n" k e.tag)
+        (Printf.sprintf "        out_lane_re_%d = %s;\n" k value_expr)
     | Expr.Output (k, false) when strided ->
       Buffer.add_string buf
-        (Printf.sprintf "        out_lane_im_%d = t%d;\n" k e.tag)
+        (Printf.sprintf "        out_lane_im_%d = %s;\n" k value_expr)
     | Expr.Output (k, true) ->
       Buffer.add_string buf "        ";
       Buffer.add_string buf
         (Isa.storeu_pd isa
            (render_output_addr k true)
-           (Printf.sprintf "t%d" e.tag));
+           value_expr);
       Buffer.add_string buf ";\n"
     | Expr.Output (k, false) ->
       Buffer.add_string buf "        ";
       Buffer.add_string buf
         (Isa.storeu_pd isa
            (render_output_addr k false)
-           (Printf.sprintf "t%d" e.tag));
+           value_expr);
       Buffer.add_string buf ";\n"
     | _ -> failwith "emit_codelet: assignment LHS must be an Output"
   in
@@ -1094,6 +1263,17 @@ let emit_codelet
          ) groups
        | _ -> pass1_blocked_topo
      in
+     record_peak_live "spill_pass1" pass1_blocked;
+     (* Build pass1 force_last_use: tags in pass1_assigns are stored at
+      * end of pass 1 via a final List.iter. Force their last_use to
+      * the end of the schedule. *)
+     let pass1_force_last_use : (int, int) Hashtbl.t = Hashtbl.create 16 in
+     let pass1_n = List.length pass1_blocked in
+     List.iter (fun (_, e) ->
+       Hashtbl.replace pass1_force_last_use e.tag pass1_n
+     ) pass1_assigns;
+     install_alloc "spill_pass1" pass1_blocked
+       (Some inline_set) (Some pass1_force_last_use);
 
      (* PASS 1 nested scope: emit block-sequentially with immediate spill.
       * For fused tags: emit as assignment (no declarator) to outer-scope
@@ -1101,7 +1281,53 @@ let emit_codelet
       * For inlined tags: skip standalone declaration; the consumer's
       * render will inline the expression directly. *)
      Buffer.add_string buf "        {\n";
-     List.iter (fun e ->
+     (* M5: declare the regalloc_spill[] scratch array if M5 spilling
+      * is active for this pass. The array is pass-local — its slots
+      * are only referenced between defs and uses within this pass. *)
+     (match !current_regalloc with
+      | Some alloc when alloc.num_spill_slots > 0 ->
+        Buffer.add_string buf (Printf.sprintf
+          "            %s regalloc_spill[%d];\n"
+          isa.vec_type alloc.num_spill_slots)
+      | _ -> ());
+     List.iteri (fun pos e ->
+       current_emit_position := pos;
+       (* M5: emit spill stores for any tags evicted at this position.
+        * The eviction was decided by the allocator (pool empty); the
+        * store happens BEFORE the new def overwrites the register.
+        *
+        * ORDER: spill stores must precede reload loads. If a tag T is
+        * spilled AND reloaded at the same position (because T was
+        * evicted at p AND T has force_last_use[T] = p), the spill
+        * writes T's value to slot S; the reload then reads S. If we
+        * reloaded first, the slot would be uninitialized. *)
+       (match !current_regalloc with
+        | Some alloc ->
+          (match Hashtbl.find_opt alloc.spill_sites pos with
+           | Some spills ->
+             List.iter (fun (tag, slot) ->
+               Buffer.add_string buf (Printf.sprintf
+                 "            %s(&regalloc_spill[%d], t%d);\n"
+                 isa.storeu_pd slot tag)
+             ) spills
+           | None -> ())
+        | None -> ());
+       (* M5: emit any reload declarations for this position before the
+        * node's own def. Each reload is a fresh register-pinned load
+        * from regalloc_spill[slot] into a shadow variable tT_rK. *)
+       (match !current_regalloc with
+        | Some alloc ->
+          (match Hashtbl.find_opt alloc.reload_sites pos with
+           | Some reloads ->
+             List.iter (fun (r : Regalloc.reload_decl) ->
+               Buffer.add_string buf (Printf.sprintf
+                 "        %s\n"
+                 (Isa.pinned_reg_decl isa r.reload_name r.reload_reg
+                    (Printf.sprintf "%s(&regalloc_spill[%d])"
+                       isa.loadu_pd r.reload_slot)))
+             ) reloads
+           | None -> ())
+        | None -> ());
        if is_inlined e then ()
        else begin
          let no_declarator = is_fused_tag e.tag in
@@ -1127,7 +1353,38 @@ let emit_codelet
      ) pass1_blocked;
      (* Emit stores for Pass 1 outputs at end of PASS 1 — values are still
       * in scope here. Pass 2 outputs are stored later, inside PASS 2's
-      * scope (per-cluster flush + safety net). *)
+      * scope (per-cluster flush + safety net).
+      *
+      * M5: pass 1's force_last_use put pass1_assigns tags at position
+      * pass1_n (one past last). Reloads registered there. Set
+      * current_emit_position so emit_store sees the right overrides. *)
+     let pass1_n = List.length pass1_blocked in
+     current_emit_position := pass1_n;
+     (* M5: spill stores BEFORE reload loads at end-of-pass. *)
+     (match !current_regalloc with
+      | Some alloc ->
+        (match Hashtbl.find_opt alloc.spill_sites pass1_n with
+         | Some spills ->
+           List.iter (fun (tag, slot) ->
+             Buffer.add_string buf (Printf.sprintf
+               "            %s(&regalloc_spill[%d], t%d);\n"
+               isa.storeu_pd slot tag)
+           ) spills
+         | None -> ())
+      | None -> ());
+     (match !current_regalloc with
+      | Some alloc ->
+        (match Hashtbl.find_opt alloc.reload_sites pass1_n with
+         | Some reloads ->
+           List.iter (fun (r : Regalloc.reload_decl) ->
+             Buffer.add_string buf (Printf.sprintf
+               "        %s\n"
+               (Isa.pinned_reg_decl isa r.reload_name r.reload_reg
+                  (Printf.sprintf "%s(&regalloc_spill[%d])"
+                     isa.loadu_pd r.reload_slot)))
+           ) reloads
+         | None -> ())
+      | None -> ());
      List.iter (fun (lhs, e) -> emit_store buf lhs e) pass1_assigns;
      Buffer.add_string buf "        }\n";
 
@@ -1260,6 +1517,67 @@ let emit_codelet
                           ~subset:pass2_nodes ~sinks:pass2_sinks)
        | _ -> pass2_nodes
      in
+     record_peak_live "spill_pass2" pass2_ordered;
+     (* Build pass2 force_last_use: for each pass2_assigns tag, find when
+      * its cluster flushes — that's its real last reference.
+      *
+      * Cluster flushing: emit_c walks pass2_ordered; when it crosses a
+      * cluster boundary (from cluster prev to cluster cur != prev), it
+      * calls flush_cluster_stores prev DURING the iter of cur's first
+      * node. At that moment, current_emit_position == first-pos-of-cur.
+      *
+      * So for output tag T in cluster c, the flush of c happens at
+      * position p_flush = first-pos-of-next-cluster.
+      *
+      * For the LAST cluster (or unclustered outputs), the flush happens
+      * at end-of-pass-iter, after current_emit_position has cycled
+      * through all pass2_ordered positions. We use pass2_n (one past
+      * last) as the conceptual position for these. emit_c sets
+      * current_emit_position to pass2_n just before the final flush. *)
+     let pass2_force_last_use : (int, int) Hashtbl.t = Hashtbl.create 16 in
+     let pass2_n = List.length pass2_ordered in
+     (* Walk pass2_ordered tracking cluster transitions to find each
+      * cluster's flush position (= first position of next cluster). *)
+     let flush_pos_for_cluster : (int, int) Hashtbl.t = Hashtbl.create 16 in
+     let prev_c = ref None in
+     List.iteri (fun i (e : t) ->
+       let cur_c = Hashtbl.find_opt cluster_of_pass2_node e.tag in
+       (match !prev_c, cur_c with
+        | Some pc, Some cc when pc <> cc ->
+          (* Transition: previous cluster pc flushes at position i. *)
+          Hashtbl.replace flush_pos_for_cluster pc i
+        | _ -> ());
+       (match cur_c with
+        | Some _ -> prev_c := cur_c
+        | None -> ())
+     ) pass2_ordered;
+     (* The LAST seen cluster (if any) flushes at pass2_n (after iter ends). *)
+     (match !prev_c with
+      | Some c when not (Hashtbl.mem flush_pos_for_cluster c) ->
+        Hashtbl.replace flush_pos_for_cluster c pass2_n
+      | _ -> ());
+     List.iter (fun (_, e) ->
+       match Hashtbl.find_opt cluster_of_pass2_node e.tag with
+       | Some c ->
+         (match Hashtbl.find_opt flush_pos_for_cluster c with
+          | Some pos -> Hashtbl.replace pass2_force_last_use e.tag pos
+          | None -> Hashtbl.replace pass2_force_last_use e.tag pass2_n)
+       | None ->
+         (* Unclustered: stored in the safety-net loop at end-of-pass *)
+         Hashtbl.replace pass2_force_last_use e.tag pass2_n
+     ) pass2_assigns;
+     install_alloc "spill_pass2" pass2_ordered
+       (Some inline_set) (Some pass2_force_last_use);
+     (* M5: NOW that pass 2's allocator has run, emit the regalloc_spill
+      * array decl with the correct size. (Earlier I tried emitting this
+      * at the top of the pass 2 block, but at that point current_regalloc
+      * still held pass 1's allocation, leading to a too-small array.) *)
+     (match !current_regalloc with
+      | Some alloc when alloc.num_spill_slots > 0 ->
+        Buffer.add_string buf (Printf.sprintf
+          "            %s regalloc_spill[%d];\n"
+          isa.vec_type alloc.num_spill_slots)
+      | _ -> ());
 
      (* Track which spilled tags have been reloaded. Walk pass2_ordered
       * and for each node, emit any pending reloads of its predecessors
@@ -1325,7 +1643,35 @@ let emit_codelet
          ) (List.rev clist)
        | None -> ()
      in
-     List.iter (fun e ->
+     List.iteri (fun pos e ->
+       current_emit_position := pos;
+       (* M5: emit spill stores BEFORE reload loads. See pass 1 for
+        * the reasoning (same-position spill+reload sequencing). *)
+       (match !current_regalloc with
+        | Some alloc ->
+          (match Hashtbl.find_opt alloc.spill_sites pos with
+           | Some spills ->
+             List.iter (fun (tag, slot) ->
+               Buffer.add_string buf (Printf.sprintf
+                 "            %s(&regalloc_spill[%d], t%d);\n"
+                 isa.storeu_pd slot tag)
+             ) spills
+           | None -> ())
+        | None -> ());
+       (* M5: emit reload declarations for this position. *)
+       (match !current_regalloc with
+        | Some alloc ->
+          (match Hashtbl.find_opt alloc.reload_sites pos with
+           | Some reloads ->
+             List.iter (fun (r : Regalloc.reload_decl) ->
+               Buffer.add_string buf (Printf.sprintf
+                 "        %s\n"
+                 (Isa.pinned_reg_decl isa r.reload_name r.reload_reg
+                    (Printf.sprintf "%s(&regalloc_spill[%d])"
+                       isa.loadu_pd r.reload_slot)))
+             ) reloads
+           | None -> ())
+        | None -> ());
        if is_inlined e then ()
        else begin
          (* Emit reloads of any spilled predecessors not yet reloaded.
@@ -1354,6 +1700,41 @@ let emit_codelet
         | Some _ -> last_pass2_cluster := cur_cluster
         | None -> ())
      ) pass2_ordered;
+     (* M5: before the final flush, set current_emit_position to pass2_n
+      * (one past last). This is the "virtual position" where end-of-pass
+      * reloads and stores happen. Also emit any reload decls registered
+      * at this virtual position (for spilled output tags in the last
+      * cluster or unclustered). *)
+     let final_pos = List.length pass2_ordered in
+     current_emit_position := final_pos;
+     (* M5: emit spill stores for any tags evicted AT the final
+      * position (i.e., during Step 3's fixed-point or post-iter
+      * cascade). These must precede the reload loads so the slot
+      * is initialized first. *)
+     (match !current_regalloc with
+      | Some alloc ->
+        (match Hashtbl.find_opt alloc.spill_sites final_pos with
+         | Some spills ->
+           List.iter (fun (tag, slot) ->
+             Buffer.add_string buf (Printf.sprintf
+               "            %s(&regalloc_spill[%d], t%d);\n"
+               isa.storeu_pd slot tag)
+           ) spills
+         | None -> ())
+      | None -> ());
+     (match !current_regalloc with
+      | Some alloc ->
+        (match Hashtbl.find_opt alloc.reload_sites final_pos with
+         | Some reloads ->
+           List.iter (fun (r : Regalloc.reload_decl) ->
+             Buffer.add_string buf (Printf.sprintf
+               "        %s\n"
+               (Isa.pinned_reg_decl isa r.reload_name r.reload_reg
+                  (Printf.sprintf "%s(&regalloc_spill[%d])"
+                     isa.loadu_pd r.reload_slot)))
+           ) reloads
+         | None -> ())
+      | None -> ());
      (* Flush the final cluster's stores. *)
      (match !last_pass2_cluster with
       | Some c -> flush_cluster_stores c
@@ -1368,7 +1749,8 @@ let emit_codelet
          emit_reload_if_needed e;
          let (lhs, e) = a in emit_store buf lhs e
      ) pass2_assigns;
-     Buffer.add_string buf "        }\n"
+     Buffer.add_string buf "        }\n";
+     clear_alloc ()    (* M3a: reset allocation at end of spill flow *)
 
    | None ->
   (match scheduler with
@@ -1376,6 +1758,7 @@ let emit_codelet
      (* Existing path: emit all definitions in topo order, then stores. *)
      let roots = List.map snd assigns in
      let nodes = topo_sort_reachable roots in
+     record_peak_live "topological_s1" (nodes);
      List.iter (fun e ->
        Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
        Buffer.add_char buf '\n'
@@ -1397,6 +1780,7 @@ let emit_codelet
       * existing t<tag>. We track which tags have been defined to avoid
       * duplicate definitions. *)
      let scheduled = Schedule.bisection_schedule assigns in
+     record_peak_live "bisection_s1" (List.map snd scheduled);
      let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
      List.iter (fun (oref_opt, e) ->
        match oref_opt with
@@ -1423,6 +1807,7 @@ let emit_codelet
       * variable lifetimes to GCC. *)
      let roots = List.map snd assigns in
      let nodes = topo_sort_reachable roots in
+     record_peak_live "topological_s2" (nodes);
      (* Build the entry list: intermediates first (in topo order), then stores. *)
      let entries =
        List.map (fun e -> (None, e)) nodes
@@ -1442,6 +1827,7 @@ let emit_codelet
    | Annotated_bisection ->
      (* Bisection schedule, emitted with nested-block scopes via annotate.ml. *)
      let scheduled = Schedule.bisection_schedule assigns in
+     record_peak_live "bisection_s2" (List.map snd scheduled);
      (* Bisection's output may have an alg_node appearing twice (once as
       * intermediate, once for store). Dedupe so annotate sees a clean list. *)
      let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
@@ -1482,6 +1868,7 @@ let emit_codelet
       * hand-coded FFTW codelet style and significantly reduces register
       * pressure for DIF prime codelets. *)
      let scheduled = Schedule.su_schedule uarch assigns in
+     record_peak_live "su_s1" (List.map snd scheduled);
      let inline_set = compute_inline_set assigns in
      let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
      let is_inlined e = Hashtbl.mem inline_set e.tag in
@@ -1509,6 +1896,7 @@ let emit_codelet
 
    | Annotated_SU uarch ->
      let scheduled = Schedule.su_schedule uarch assigns in
+     record_peak_live "su_s2" (List.map snd scheduled);
      let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
      let entries = List.filter_map (fun (oref_opt, e) ->
        match oref_opt with
