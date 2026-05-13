@@ -132,7 +132,7 @@ $Gen  = if ($env:GEN) { $env:GEN } else { Join-Path $Root "_build\default\bin\ge
 $OutDir = if ($env:OUTDIR) { $env:OUTDIR } else { Join-Path $Root "codelets" }
 $Isa = if ($env:ISA) { $env:ISA } else { "avx512" }
 
-$FamiliesAll = @("primes", "small_pow2", "mid_pow2", "large_pow2", "xl_pow2", "composites")
+$FamiliesAll = @("primes", "small_pow2", "mid_pow2", "large_pow2", "xl_pow2", "composites", "trig", "strided")
 if (-not $Families -or $Families.Count -eq 0) {
     $Families = $FamiliesAll
 }
@@ -145,6 +145,11 @@ $RadixSets = @{
     "large_pow2"   = @(128, 256, 512)
     "xl_pow2"      = @(1024)
     "composites"   = @(6, 10, 12, 20, 25)
+    # trig: validated cells from docs 55 + 56. See bash version for context.
+    "trig"         = @(8, 16, 32, 64)
+    # strided: Design C 2D row FFT codelets, AVX2 only. R=512/1024 out of
+    # scope per feedback-strided-r512-overkill.
+    "strided"      = @(16, 32, 64, 128, 256)
 }
 
 # ──────────────────────────────────────────────────────────────────────
@@ -226,6 +231,60 @@ function Invoke-Variants {
     return $ok
 }
 
+# Trig-transform codelet emitter. Each trig transform has its own algorithm
+# (DCT-II/III/IV via Makhoul/inverse-Makhoul/Lee, DST-II/III via DCT
+# wrappers, DHT via N-rdft+butterfly). No t1/t1s/dit/dif variants.
+function Invoke-Trig {
+    param(
+        [int]$R, [string]$IsaName, [string]$Family,
+        [string]$Flag, [string]$Suffix
+    )
+
+    $dir = Join-Path $OutDir (Join-Path $IsaName $Family)
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $out = Join-Path $dir "r${R}_${Suffix}.c"
+
+    $args = @("$R", $Flag, "--isa", $IsaName, "--emit-c")
+    try {
+        $output = & $Gen @args 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  FAIL: R=$R isa=$IsaName trig=$Flag" -ForegroundColor Red
+            return $false
+        }
+        Set-Content -Path $out -Value $output -Encoding utf8
+        return $true
+    } catch {
+        Write-Host "  FAIL: R=$R isa=$IsaName trig=$Flag (exception: $_)" -ForegroundColor Red
+        return $false
+    }
+}
+
+# Strided codelet emitter (Design C 2D row FFT). Composes with --bwd.
+function Invoke-Strided {
+    param(
+        [int]$R, [string]$IsaName, [string]$Family,
+        [string[]]$ExtraFlags, [string]$Suffix
+    )
+
+    $dir = Join-Path $OutDir (Join-Path $IsaName $Family)
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $out = Join-Path $dir "r${R}_${Suffix}.c"
+
+    $args = @("$R", "--strided", "--isa", $IsaName, "--emit-c") + $ExtraFlags
+    try {
+        $output = & $Gen @args 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  FAIL: R=$R isa=$IsaName strided flags='$($ExtraFlags -join ' ')'" -ForegroundColor Red
+            return $false
+        }
+        Set-Content -Path $out -Value $output -Encoding utf8
+        return $true
+    } catch {
+        Write-Host "  FAIL: R=$R isa=$IsaName strided (exception: $_)" -ForegroundColor Red
+        return $false
+    }
+}
+
 # ──────────────────────────────────────────────────────────────────────
 # Main generation loop
 # ──────────────────────────────────────────────────────────────────────
@@ -294,6 +353,47 @@ foreach ($isaName in $Isas) {
                 Write-Host "  └─ family: composites ($radixStr)"
                 foreach ($r in $radixes) {
                     $TotalOK += (Invoke-Variants -R $r -IsaName $isaName -Family $family -WithLog3 $false)
+                }
+            }
+
+            "trig" {
+                # DCT-II/III/IV, DST-II/III, DHT. Validated cells from
+                # docs 55 + 56. Forward-direction only (DCT-II/III are an
+                # inverse pair; DST-II/III likewise; DCT-IV and DHT are
+                # self-inverse up to scaling).
+                Write-Host "  └─ family: trig ($radixStr — DCT-II/III/IV, DST-II/III, DHT)"
+                $transforms = @(
+                    @{ Flag = "--dct2"; Suffix = "dct2_fwd" },
+                    @{ Flag = "--dct3"; Suffix = "dct3_fwd" },
+                    @{ Flag = "--dct4"; Suffix = "dct4_fwd" },
+                    @{ Flag = "--dst2"; Suffix = "dst2_fwd" },
+                    @{ Flag = "--dst3"; Suffix = "dst3_fwd" },
+                    @{ Flag = "--dht";  Suffix = "dht_fwd"  }
+                )
+                foreach ($r in $radixes) {
+                    foreach ($t in $transforms) {
+                        if (Invoke-Trig -R $r -IsaName $isaName -Family $family -Flag $t.Flag -Suffix $t.Suffix) {
+                            $TotalOK++
+                        } else { $TotalFail++ }
+                    }
+                }
+            }
+
+            "strided" {
+                # Design C 2D row FFT codelets. AVX2 only — AVX-512 8×8
+                # transpose preamble is not yet implemented. See doc 56.
+                if ($isaName -eq "avx512") {
+                    Write-Host "  └─ family: strided  [skip — AVX-512 8×8 transpose preamble TBD]"
+                } else {
+                    Write-Host "  └─ family: strided ($radixStr — fwd+bwd, AVX2 only in v1)"
+                    foreach ($r in $radixes) {
+                        if (Invoke-Strided -R $r -IsaName $isaName -Family $family -ExtraFlags @() -Suffix "n1_fwd_strided") {
+                            $TotalOK++
+                        } else { $TotalFail++ }
+                        if (Invoke-Strided -R $r -IsaName $isaName -Family $family -ExtraFlags @("--bwd") -Suffix "n1_bwd_strided") {
+                            $TotalOK++
+                        } else { $TotalFail++ }
+                    }
                 }
             }
         }

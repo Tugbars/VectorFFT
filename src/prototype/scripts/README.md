@@ -183,8 +183,11 @@ codelets/
 │   ├── mid_pow2/        ← R = 16, 32, 64
 │   ├── large_pow2/      ← R = 128, 256, 512
 │   ├── xl_pow2/         ← R = 1024 (research-only; planner prefers cascade)
-│   └── composites/      ← R = 6, 10, 12, 20, 25
-└── avx2/                ← same structure
+│   ├── composites/      ← R = 6, 10, 12, 20, 25
+│   └── trig/            ← DCT-II/III/IV, DST-II/III, DHT at N=8/16/32/64
+│                          (strided family is AVX2-only)
+└── avx2/                ← same structure plus:
+    └── strided/         ← Design C 2D row FFT codelets at R=16..256 fwd+bwd
 ```
 
 Per radix, the variant matrix is `{t1, t1s} × {dit, dif} × {fwd, bwd}`
@@ -209,7 +212,7 @@ Positional args (optional) select families:
 ```
 
 Available families: `primes`, `small_pow2`, `mid_pow2`, `large_pow2`,
-`xl_pow2`, `composites`.
+`xl_pow2`, `composites`, `trig`, `strided`.
 
 ### Per-family wisdom
 
@@ -246,6 +249,35 @@ the planner should never select this in production. Just 2 variants
 **composites** (R ∈ {6,10,12,20,25})
 Mixed-radix composites for non-power-of-two transforms. Recipe applies.
 8 variants per radix (log3 only applies to pow2).
+
+**trig** (N ∈ {8,16,32,64})
+Discrete trig transforms: DCT-II, DCT-III, DCT-IV, DST-II, DST-III, DHT.
+Validated 2026-05-12 → 2026-05-13 (see [doc 55](../docs/55_trig_transforms_vs_production.md)).
+6 transforms × 4 sizes = 24 codelets per ISA, forward-direction only
+(DCT-II/III are an inverse pair, DST-II/III likewise; DCT-IV and DHT are
+self-inverse up to scaling). No t1/t1s/dit/dif variants — each trig
+transform has its own algorithm (Makhoul reduction for DCT-II, Lee 1984
+for DCT-IV, etc.). Output naming: `r{N}_{dct2,dct3,dct4,dst2,dst3,dht}_fwd.c`.
+
+At N=8 our DCT-II ties production's hand-tuned `dct2_n8_avx2`; DCT-IV /
+DST / DHT WIN 16-79% over production's runtime 3-pass. At N=16/32/64
+production has no dedicated codelet and our fused DAG fills the gap.
+
+**strided** (R ∈ {16,32,64,128,256}, AVX2 only)
+Design C 2D row FFT codelets — matrix → 4×4 register transpose → butterfly
+DAG → inverse 4×4 transpose → matrix, with no scratch buffer ever
+touched. Validated 2026-05-13 (see [doc 56](../docs/56_strided_batch_2d_design_c.md)).
+2 directions (fwd + bwd) × 5 sizes = 10 codelets, AVX2 only. The AVX-512
+8×8 transpose preamble is deferred; the strided family is skipped for
+AVX-512 builds. R=512/1024 are explicitly out of scope on AVX2 —
+register spill on the 16-ymm file dominates past R=256
+(see [feedback-strided-r512-overkill memory](../../../../.claude/projects/c--Users-Tugbars-Desktop-highSpeedFFT/memory/feedback_strided_r512_overkill.md)).
+
+Microbench (40/40 directional cells, vs gather + standard OOP codelet +
+scatter reference): speedups 1.15× to 3.67×, growing with batch B
+because larger B = more gather/scatter overhead Design C eliminates.
+Roundtrip identity `bwd_strided(fwd_strided(x)) / N == x` PASS at FP
+noise. Output naming: `r{N}_n1_{fwd,bwd}_strided.c`.
 
 ## compile_codelets.sh
 
