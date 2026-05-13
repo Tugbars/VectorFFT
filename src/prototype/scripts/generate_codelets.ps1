@@ -380,20 +380,17 @@ foreach ($isaName in $Isas) {
             }
 
             "strided" {
-                # Design C 2D row FFT codelets. AVX2 only — AVX-512 8×8
-                # transpose preamble is not yet implemented. See doc 56.
-                if ($isaName -eq "avx512") {
-                    Write-Host "  └─ family: strided  [skip — AVX-512 8×8 transpose preamble TBD]"
-                } else {
-                    Write-Host "  └─ family: strided ($radixStr — fwd+bwd, AVX2 only in v1)"
-                    foreach ($r in $radixes) {
-                        if (Invoke-Strided -R $r -IsaName $isaName -Family $family -ExtraFlags @() -Suffix "n1_fwd_strided") {
-                            $TotalOK++
-                        } else { $TotalFail++ }
-                        if (Invoke-Strided -R $r -IsaName $isaName -Family $family -ExtraFlags @("--bwd") -Suffix "n1_bwd_strided") {
-                            $TotalOK++
-                        } else { $TotalFail++ }
-                    }
+                # Design C 2D row FFT codelets. AVX2 and AVX-512 both supported
+                # (AVX-512 via 8×8 in-register transpose preamble/postamble,
+                # validated 2026-05-13 on real AVX-512 hardware). See doc 56.
+                Write-Host "  └─ family: strided ($radixStr — fwd+bwd, isa=$isaName)"
+                foreach ($r in $radixes) {
+                    if (Invoke-Strided -R $r -IsaName $isaName -Family $family -ExtraFlags @() -Suffix "n1_fwd_strided") {
+                        $TotalOK++
+                    } else { $TotalFail++ }
+                    if (Invoke-Strided -R $r -IsaName $isaName -Family $family -ExtraFlags @("--bwd") -Suffix "n1_bwd_strided") {
+                        $TotalOK++
+                    } else { $TotalFail++ }
                 }
             }
         }

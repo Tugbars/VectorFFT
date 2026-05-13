@@ -1,9 +1,10 @@
-# Strided-Batch 2D Codelets — Design C v1+v2
+# Strided-Batch 2D Codelets — Design C v1+v2+AVX-512
 
 Status: **emitter + codelets validated in prototype** for both forward
-AND backward directions at radix 16/32/64/128/256. Roundtrip identity
-verified at FP noise. Production wire-up (into `src/core/`'s 2D path
-via the tune harness) is a separate downstream workstream.
+AND backward directions at radix 16/32/64/128/256, **on both AVX2 and
+AVX-512**. Roundtrip identity verified at FP noise on both ISAs.
+Production wire-up (into `src/core/`'s 2D path via the tune harness) is
+a separate downstream workstream.
 
 ## Scope discipline
 
@@ -130,6 +131,55 @@ roughly N × ε_double, exactly what's expected for a properly-scaled
 DFT pair. This confirms fwd + bwd are mathematically consistent and
 production can use the pair without normalization quirks.
 
+### AVX-512 port (2026-05-13)
+
+The 8×8 in-register transpose preamble/postamble was added to
+`lib/emit_c.ml`'s `vec_width = 8` branch by claude.ai (separate
+session, real AVX-512 hardware, Sapphire Rapids-class). The 3-stage
+shuffle pipeline matches `src/core/transpose.h` Kernel C:
+
+- **Stage 1** — 8 × `_mm512_unpacklo_pd` / `_mm512_unpackhi_pd` over
+  row pairs (0,1) (2,3) (4,5) (6,7), producing intermediates
+  `_t0_re.._t7_re` (block-scoped per transpose group).
+- **Stage 2** — 8 × `_mm512_permutex2var_pd` with two function-scope
+  index vectors (`_tp_idx_lo`, `_tp_idx_hi`) declared outside the
+  `for b` loop so gcc treats them as loop-invariant constants.
+- **Stage 3** — 8 × `_mm512_shuffle_f64x2` with imm `0x44` (low halves)
+  / `0xEE` (high halves), assigned directly into `lane_re_{j0..j0+7}`
+  / `lane_im_{j0..j0+7}` without an intermediate named variable. In
+  the postamble, this stage fuses into each `_mm512_storeu_pd` call.
+
+The 8×8 transpose is its own inverse, so the postamble uses the same
+intrinsic sequence as the preamble — just with `out_lane_re_*` as
+"input rows" and matrix stores as "output rows."
+
+#### AVX-512 microbench results
+
+Same shape as the AVX2 microbench. 60/60 PASS on real AVX-512 hardware:
+
+| Radix | B=8 (fwd) | B=32 (fwd) | B=128 (fwd) | B=256 (fwd) |
+|---|---|---|---|---|
+| R16  | 1.24× | 1.14× | 1.80× | 2.59× |
+| R32  | 1.20× | 1.20× | 2.35× | 2.49× |
+| R64  | 1.17× | **2.11×** | 2.26× | 2.84× |
+| R128 | 1.42× | 1.46× | 1.45× | 1.78× |
+| R256 | 1.26× | 1.25× | 1.32× | 1.85× |
+
+Bwd within ~5% of fwd at every cell. All 40 directional cells WIN
+bit-identical to reference (err = 0.0e+00). 20 roundtrip cells PASS
+at FP noise (3.6e-15 to 1.2e-14).
+
+Speedup ratios are slightly compressed vs AVX2 (which ranged 1.15×–
+3.67×) because the reference path's gather/scatter also benefits
+from 2× SIMD width. But the *absolute* time savings are larger — the
+strided codelet itself runs ~40-50% faster on AVX-512 than on AVX2
+because the FFT body scales linearly with SIMD width.
+
+**Objdump verification** at R=16 fwd: 64 unpack + 64 permutex2var + 64
+shuffle_f64x2 + 32 loadu + 32 storeu — matches the expected 8×8
+transpose math (8 ops per group × 2 groups/side × 2 sides × 2
+directions = 64 per stage-1/2/3 intrinsic family). No scalar fallback.
+
 ## Production wire-up (NOT done here)
 
 Wiring the strided codelet into the 2D path lives in `src/core/` and
@@ -165,15 +215,13 @@ contract; the prototype doesn't.
 
 ## Deferred
 
-1. **AVX-512 8×8 transpose preamble.** Codegen path is currently 4×4
-   AVX2 only. AVX-512 codegen requires `_mm512_unpacklo/hi_pd` +
-   `_mm512_permutex2var_pd` + `_mm512_shuffle_f64x2` for the 8×8
-   in-register transpose. Integration point is the `vec_width = 8`
-   branch in the strided preamble emitter.
-2. **R=512 / R=1024 strided.** Explicitly out of scope for AVX2 — at
+1. **R=512 / R=1024 strided.** Explicitly out of scope for AVX2 — at
    that radix the full-DAG approach has 1000+ lane locals which spill
-   heavily on a 16-ymm register file. See [feedback-strided-r512-overkill](../../../../../.claude/projects/c--Users-Tugbars-Desktop-highSpeedFFT/memory/feedback_strided_r512_overkill.md).
-3. **Production wire-up.** Tune-harness ingestion and dispatcher
+   heavily on a 16-ymm register file. AVX-512's 32 zmm registers ease
+   the pressure somewhat but the working set still scales with R; per
+   claude.ai's port report, skip unless a specific motivating case
+   appears. See [feedback-strided-r512-overkill](../../../../../.claude/projects/c--Users-Tugbars-Desktop-highSpeedFFT/memory/feedback_strided_r512_overkill.md).
+2. **Production wire-up.** Tune-harness ingestion and dispatcher
    integration. Output-ordering convention must match plan-level
    contract.
-4. **Profile 1024² regression vs MKL.** Separate issue from strided.
+3. **Profile 1024² regression vs MKL.** Separate issue from strided.
