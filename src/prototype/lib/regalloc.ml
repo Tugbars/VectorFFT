@@ -118,6 +118,14 @@ type allocation = {
    * This is how a previously-allocated Reg tag transitions to "has
    * been spilled, must be reloaded for future uses." *)
   spill_sites     : (int, (int * int) list) Hashtbl.t;
+  (* M5: tag -> spill slot for tags that were ever spilled. emit_c
+   * uses this to (a) detect that a tag is spilled even without a
+   * name_override entry, and (b) emit an inline-from-memory store
+   * pattern as a fallback when no reload register was registered.
+   *
+   * `spilled_of_tag[t] = slot` iff tag t is spilled (at some point).
+   * Inverse: spill_sites maps positions; this maps tags directly. *)
+  spilled_of_tag  : (int, int) Hashtbl.t;
   (* name_overrides[(pos, tag)] = name to use for `tag` in the node
    * emitted at scheduled position `pos`. If absent, use the default
    * "t<tag>" name. Updated after each reload — the reload at position
@@ -146,6 +154,7 @@ let allocate_stub
     num_spill_slots = 0;
     reload_sites = Hashtbl.create 0;
     spill_sites = Hashtbl.create 0;
+    spilled_of_tag = Hashtbl.create 0;
     name_overrides = Hashtbl.create 0;
   }
 
@@ -459,6 +468,7 @@ let allocate_linear_scan
                 num_spill_slots = 0;
                 reload_sites = Hashtbl.create 0;
                 spill_sites = Hashtbl.create 0;
+                spilled_of_tag = Hashtbl.create 0;
                 name_overrides = Hashtbl.create 0;
               }
 
@@ -696,48 +706,52 @@ let allocate_with_spilling
    * position would all pull color 0 (or whatever was freed), all
    * mapping to the same register and clobbering each other. *)
   let next_reload_sentinel = ref (-1) in
-  let do_reload (tag : int) (pos : int) : string =
+  (* Try to register a reload for tag at position pos. Returns Some name
+   * if successful (a register was available, or a non-sentinel victim
+   * could be spilled). Returns None if no victim was available —
+   * caller must handle the fallback (e.g., emit_store can emit an
+   * inline load-from-memory).
+   *
+   * This is the "may-fail" variant used by Step 3 and the post-iter
+   * forced-reload handler, where failure is recoverable. *)
+  let try_reload (tag : int) (pos : int) : string option =
     let slot = Hashtbl.find spilled tag in
-    let counter = try Hashtbl.find reload_counter tag with Not_found -> 0 in
-    Hashtbl.replace reload_counter tag (counter + 1);
-    let name = Printf.sprintf "t%d_r%d" tag counter in
-    let color = match alloc_color () with
-      | Some c -> c
+    let color_opt = match alloc_color () with
+      | Some c -> Some c
       | None ->
-        (* Need a register but pool empty — pick a Belady victim to
-         * spill. This is the same eviction logic as in the main loop.
-         *
-         * Edge case: the victim could be ANOTHER reload variable
-         * (sentinel). Belady's "farthest next use" lookup returns
-         * None (max_int) for sentinels, so they're prioritized as
-         * victims. That's the right behavior — sentinels die at p+1
-         * anyway, so evicting them costs nothing if there are real
-         * candidates. But if only reload sentinels remain in
-         * `allocated`, that means we have >budget reload variables
-         * needed at one position — which is impossible per Belady's
-         * invariant. Fall back to failure. *)
         (match pick_belady_victim pos with
-         | None -> failwith (Printf.sprintf
-             "regalloc: reload at pos %d needs reg but no victim" pos)
+         | None -> None
          | Some (victim_tag, _) ->
-           if victim_tag < 0 then
-             failwith "regalloc: cascade reload-spill, M5a doesn't handle"
-           else
-             do_spill victim_tag pos)
+           if victim_tag < 0 then None    (* only sentinels available *)
+           else Some (do_spill victim_tag pos))
     in
-    let reg = reg_name_of_isa isa color in
-    let decl = { reload_tag = tag; reload_name = name;
-                 reload_reg = reg; reload_slot = slot } in
-    let prev = try Hashtbl.find reload_sites pos with Not_found -> [] in
-    Hashtbl.replace reload_sites pos (decl :: prev);
-    Hashtbl.replace name_overrides (pos, tag) name;
-    (* Hold the color alive through position p via sentinel tag.
-     * release_dead at position p+1 will find no future uses for the
-     * sentinel and free the color back to the pool. *)
-    let sentinel = !next_reload_sentinel in
-    decr next_reload_sentinel;
-    Hashtbl.replace allocated sentinel color;
-    name
+    match color_opt with
+    | None -> None
+    | Some color ->
+      let counter = try Hashtbl.find reload_counter tag with Not_found -> 0 in
+      Hashtbl.replace reload_counter tag (counter + 1);
+      let name = Printf.sprintf "t%d_r%d" tag counter in
+      let reg = reg_name_of_isa isa color in
+      let decl = { reload_tag = tag; reload_name = name;
+                   reload_reg = reg; reload_slot = slot } in
+      let prev = try Hashtbl.find reload_sites pos with Not_found -> [] in
+      Hashtbl.replace reload_sites pos (decl :: prev);
+      Hashtbl.replace name_overrides (pos, tag) name;
+      let sentinel = !next_reload_sentinel in
+      decr next_reload_sentinel;
+      Hashtbl.replace allocated sentinel color;
+      Some name
+  in
+  (* The "must-succeed" variant — used by Step 1 (reloads for IR-level
+   * preds, which MUST have a register since the node's RHS references
+   * the reload variable name). If this fails, it's a bug or a
+   * fundamental register-pressure issue we can't recover from. *)
+  let do_reload (tag : int) (pos : int) : string =
+    match try_reload tag pos with
+    | Some name -> name
+    | None ->
+      failwith (Printf.sprintf
+        "regalloc: reload at pos %d needs reg but no victim" pos)
   in
 
   let do_alloc tag color =
@@ -762,28 +776,46 @@ let allocate_with_spilling
   (* Walk the schedule. *)
   List.iteri (fun i (e : Algsimp.t) ->
     release_dead i;
-    (* Step 1: for each pred that's a spilled tag and used at position
-     * i (the current node uses it), emit a reload at position i. *)
-    let reload_for_use (p : Algsimp.t) =
-      if Hashtbl.mem spilled p.tag then begin
-        let _ = do_reload p.tag i in ()
-      end
-    in
-    let rec walk_uses_of p =
-      reload_for_use p;
+    (* Step 1: emit reloads for all spilled preds used at position i.
+     *
+     * This is a fixed-point loop: do_reload may cascade-spill another
+     * pred (Belady picks a victim from `allocated`, which may include
+     * a pred we haven't visited yet). After such a cascade, the
+     * newly-spilled pred ALSO needs a reload — but our list iteration
+     * may have passed it already. Loop until no further changes.
+     *
+     * Collect the full set of pred tags (transitively through inlined
+     * preds) up front, then loop checking each. The transitive walk
+     * is itself deterministic (same on every iteration). *)
+    let pred_tags = ref [] in
+    let rec collect_preds_of (p : Algsimp.t) =
+      pred_tags := p.tag :: !pred_tags;
       if is_inlined p.tag then
-        List.iter walk_uses_of (Algsimp.preds p)
+        List.iter collect_preds_of (Algsimp.preds p)
     in
-    List.iter walk_uses_of (Algsimp.preds e);
+    List.iter collect_preds_of (Algsimp.preds e);
+    let pred_tags_list = !pred_tags in
+    let changed = ref true in
+    while !changed do
+      changed := false;
+      List.iter (fun tag ->
+        if Hashtbl.mem spilled tag
+           && not (Hashtbl.mem name_overrides (i, tag)) then begin
+          let _ = do_reload tag i in ();
+          changed := true
+        end
+      ) pred_tags_list
+    done;
     (* Step 1b: also emit reloads for any spilled tags whose
      * force_last_use position is i. These are output tags whose
      * cluster-flush position is i — the output store at i needs
-     * a reload variable. *)
+     * a reload variable. Uses try_reload because failure here is
+     * recoverable: emit_store falls back to inline load-from-memory. *)
     (match Hashtbl.find_opt forced_at i with
      | Some tags ->
        List.iter (fun t ->
          if Hashtbl.mem spilled t then
-           let _ = do_reload t i in ()
+           let _ = try_reload t i in ()
        ) tags
      | None -> ());
     (* Step 2: allocate a register for the current node's def
@@ -803,19 +835,47 @@ let allocate_with_spilling
         | Some (victim_tag, _) ->
           let freed_color = do_spill victim_tag i in
           do_alloc e.tag freed_color
-    end
+    end;
+    (* Step 3: re-check forced_at[i] until no new reloads. Uses
+     * try_reload — if registration fails (no register and no
+     * non-sentinel victim available), emit_store will fall back to
+     * inline load-from-memory for that tag. The fixed-point loop
+     * still terminates because we only count a "change" when a
+     * reload was actually registered (name_overrides got an entry). *)
+    (match Hashtbl.find_opt forced_at i with
+     | Some tags ->
+       let changed = ref true in
+       while !changed do
+         changed := false;
+         List.iter (fun t ->
+           if Hashtbl.mem spilled t
+              && not (Hashtbl.mem name_overrides (i, t)) then
+             match try_reload t i with
+             | Some _ -> changed := true
+             | None -> ()    (* fallback: emit_store does inline load *)
+         ) tags
+       done
+     | None -> ())
   ) scheduled;
 
   (* Post-iter: handle force_last_use positions BEYOND the schedule
    * (i.e., position == n). These are tags whose output stores happen
    * at end-of-pass via the safety-net loop or final cluster flush.
-   * emit_c sets current_emit_position = n before emitting these. *)
+   * emit_c sets current_emit_position = n before emitting these.
+   * Fixed-point loop for the same reason as Step 3 in the iter. *)
   (match Hashtbl.find_opt forced_at n with
    | Some tags ->
-     List.iter (fun t ->
-       if Hashtbl.mem spilled t then
-         let _ = do_reload t n in ()
-     ) tags
+     let changed = ref true in
+     while !changed do
+       changed := false;
+       List.iter (fun t ->
+         if Hashtbl.mem spilled t
+            && not (Hashtbl.mem name_overrides (n, t)) then
+           match try_reload t n with
+           | Some _ -> changed := true
+           | None -> ()
+       ) tags
+     done
    | None -> ());
 
   Allocated { isa;
@@ -823,6 +883,7 @@ let allocate_with_spilling
               num_spill_slots = !next_spill_slot;
               reload_sites;
               spill_sites;
+              spilled_of_tag = spilled;
               name_overrides;
             }
 

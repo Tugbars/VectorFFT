@@ -119,6 +119,20 @@ let storeu_pd (isa : t) (addr : string) (value : string) : string =
 let const_decl (isa : t) (name : string) (expr : string) : string =
   Printf.sprintf "const %s %s = %s;" isa.vec_type name expr
 
+(* Render the register-pinned variant for use by the SSA RA pass:
+ *   register __m512d t<tag> asm("zmm5") = expr;
+ *   asm volatile ("" : "+v"(t<tag>));
+ *
+ * The `asm volatile ("" : "+v"(t))` barrier is mandatory — without it
+ * gcc-11 treats the `asm("zmmN")` clause as a hint and runs its own
+ * RA, ignoring the pin (confirmed via probe). With the barrier, gcc
+ * is forced to materialize the variable in the pinned register at
+ * that exact point, giving us deterministic register choice. *)
+let pinned_reg_decl (isa : t) (name : string) (reg : string)
+                    (expr : string) : string =
+  Printf.sprintf "register %s %s asm(\"%s\") = %s; asm volatile (\"\" : \"+v\"(%s));"
+    isa.vec_type name reg expr name
+
 (* Render `__m512d t1, t2, t3;` for forward declarations from annotate. *)
 let forward_decl (isa : t) (names : string list) : string =
   match names with
