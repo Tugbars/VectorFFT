@@ -65,20 +65,65 @@ type assignment =
      *   register %s tN asm("%s") = ...;
      * instead of
      *   const %s tN = ...;  *)
+  | Spilled of int
+    (* M5: this tag's value is computed once at its definition site
+     * (into a register), then immediately stored to regalloc_spill[N]
+     * where N is the slot index. The original tT identifier is NOT
+     * used after the def — emit_c instead emits reload variables
+     * tT_rK at each use site (a fresh K per reload). The reload
+     * variables are register-pinned and short-lived.
+     *
+     * The slot is a single-vector scratch slot in a regalloc_spill[]
+     * array independent from the structural spill_re/spill_im
+     * (which serve cross-pass values; M5 spills are intra-pass). *)
   | Default
     (* No specific binding -- fall through to emit_c's existing
      * declaration (const + gcc-allocated). This is the M1 stub state
      * for every tag. *)
 
-(* Allocation map: tag -> assignment.
+(* Allocation map: tag -> assignment, plus M5 spill/reload metadata.
  *
- * We carry the Isa.t alongside so emit_c doesn't need to thread it
- * through separately when consuming the allocation. (Emit_c already
- * has its own isa; this is for the regalloc's own internal use when
- * future passes need to know the vec_type / register count.) *)
+ * M3a fields:
+ *   isa, assign
+ *
+ * M5 fields:
+ *   spilled_tags     : map from tag -> slot. Duplicates info in `assign`
+ *                       but separated for easy iteration ("emit a
+ *                       declaration of regalloc_spill[N]").
+ *   num_spill_slots  : count of distinct slots used. emit_c declares
+ *                       regalloc_spill[num_spill_slots] at function
+ *                       scope. Zero means no scratchpad needed.
+ *   reload_sites     : map from schedule position -> list of (tag, name,
+ *                       reg). Just before emitting node at position p,
+ *                       emit_c emits a reload-declaration for each
+ *                       entry. The `name` is the fresh shadow name
+ *                       (e.g. "t42_r0", "t42_r1") to use INSTEAD of
+ *                       "t42" in the next node's RHS. *)
+type reload_decl = {
+  reload_tag  : int;       (* tag being reloaded *)
+  reload_name : string;    (* fresh shadow name, e.g. "t42_r0" *)
+  reload_reg  : string;    (* destination register, e.g. "zmm5" *)
+  reload_slot : int;       (* source slot in regalloc_spill[] *)
+}
+
 type allocation = {
   isa : Isa.t;
   assign : (int, assignment) Hashtbl.t;
+  (* M5 spilling state. Empty for M3a-style allocations. *)
+  num_spill_slots : int;
+  reload_sites    : (int, reload_decl list) Hashtbl.t;
+  (* M5: which positions trigger a spill store, and for which tag.
+   * spill_sites[pos] = list of (tag, slot) — AFTER emitting node at
+   * pos, emit a storeu_pd(&regalloc_spill[slot], tT) for each entry.
+   * This is how a previously-allocated Reg tag transitions to "has
+   * been spilled, must be reloaded for future uses." *)
+  spill_sites     : (int, (int * int) list) Hashtbl.t;
+  (* name_overrides[(pos, tag)] = name to use for `tag` in the node
+   * emitted at scheduled position `pos`. If absent, use the default
+   * "t<tag>" name. Updated after each reload — the reload at position
+   * p installs an override that's used by all positions p, p+1, ...
+   * until the next reload of the same tag. *)
+  name_overrides  : (int * int, string) Hashtbl.t;
 }
 
 (* === M1 stub allocator ===
@@ -96,7 +141,13 @@ let allocate_stub
     ~(scheduled : Algsimp.t list)
     : allocation =
   let _ = scheduled in
-  { isa; assign = Hashtbl.create 16 }
+  { isa;
+    assign = Hashtbl.create 16;
+    num_spill_slots = 0;
+    reload_sites = Hashtbl.create 0;
+    spill_sites = Hashtbl.create 0;
+    name_overrides = Hashtbl.create 0;
+  }
 
 (* === Lookup ===
  *
@@ -119,9 +170,20 @@ let count_bindings (alloc : allocation) : int * int =
   Hashtbl.iter (fun _ a ->
     match a with
     | Reg _ -> incr regs
+    | Spilled _ -> incr regs  (* spilled tags still occupy a register at def *)
     | Default -> incr defaults
   ) alloc.assign;
   (!regs, !defaults)
+
+(* M5: count distinct spilled tags. Useful for diagnostics. *)
+let count_spilled (alloc : allocation) : int =
+  let n = ref 0 in
+  Hashtbl.iter (fun _ a ->
+    match a with
+    | Spilled _ -> incr n
+    | _ -> ()
+  ) alloc.assign;
+  !n
 
 (* === M2: Live-range / peak-live analysis ===
  *
@@ -393,13 +455,383 @@ let allocate_linear_scan
   if !overflow_at >= 0 then
     Overflow budget
   else
-    Allocated { isa; assign = result }
+    Allocated { isa; assign = result;
+                num_spill_slots = 0;
+                reload_sites = Hashtbl.create 0;
+                spill_sites = Hashtbl.create 0;
+                name_overrides = Hashtbl.create 0;
+              }
 
 (* === Convenience wrapper ===
  *
- * Pulls budget from a caller-specified value (defaults to
- * isa.vec_regs - 4 to leave headroom for gcc's ABI / temporary
- * needs, as discussed for M3a). *)
+ * Tries M3a's linear scan first. If it overflows, falls back to M5's
+ * spilling allocator (which never overflows — Belady ensures we
+ * always make progress).
+ *
+ * Gated by env var VFFT_USE_REGALLOC_M5=1. When unset, overflow
+ * causes a fallback to the Default (gcc-allocated) path.
+ *
+ * Defined after allocate_with_spilling below. *)
+
+(* ============================================================ *)
+(* M5: SPILLING ALLOCATOR                                       *)
+(* ============================================================ *)
+(*
+ * When the linear scan would overflow the color budget, the M5
+ * allocator picks a currently-live tag to evict (Belady-style: the
+ * tag whose NEXT USE is furthest in the future), assigns it a spill
+ * slot in a separate regalloc_spill[] scratchpad, and continues.
+ *
+ * At each subsequent use of a spilled tag, the allocator records a
+ * reload at that position: emit_c must emit a reload declaration
+ * (loading from regalloc_spill[slot] into a fresh register-pinned
+ * variable tT_rK) just before emitting that position's node, and use
+ * the fresh variable name in the node's RHS instead of the original
+ * tT.
+ *
+ * Key data structures:
+ *   uses[tag]       : sorted list of positions where tag is used.
+ *                     (Computed via the same transitive walk as last_use,
+ *                     but kept as a list to find next_use after any pos.)
+ *   active_use_idx[tag]  : index into uses[tag] of the next-future use.
+ *                          Advanced as we walk the schedule.
+ *
+ * The Belady choice: when free_pool is empty at position p, pick the
+ * tag t in `allocated` that maximizes uses[t].(active_use_idx[t]) —
+ * the tag used furthest in the future. Spill that tag. Its register
+ * goes back to the free pool.
+ *
+ * Reload sites: walking forward, the FIRST use of a spilled tag at
+ * a position p AFTER the spill is the reload site. We record
+ * (position, tag, fresh_name, reg, slot) in reload_sites.
+ *
+ * Subsequent uses of the same spilled tag — if the reload variable
+ * is still alive in its register at that point — can keep using the
+ * same reload name. But if THAT reload variable's register also gets
+ * clobbered (by further allocations), we need ANOTHER reload site.
+ *
+ * For M5a we take a simpler model: SPILL ONCE, RELOAD EACH USE.
+ * Every use of a spilled tag emits a fresh reload. Suboptimal
+ * (extra loads when uses are clustered) but always correct and
+ * vastly simpler than tracking reload-variable lifetimes recursively.
+ * Optimization deferred to M6+. *)
+
+let allocate_with_spilling
+    ~(isa : Isa.t)
+    ~(scheduled : Algsimp.t list)
+    ~(budget : int)
+    ?(skip_tags : (int, unit) Hashtbl.t option = None)
+    ?(inline_set : (int, unit) Hashtbl.t option = None)
+    ?(force_last_use : (int, int) Hashtbl.t option = None)
+    ()
+    : alloc_result =
+  let n = List.length scheduled in
+  let is_inlined tag =
+    match inline_set with
+    | None -> false
+    | Some tbl -> Hashtbl.mem tbl tag
+  in
+  let is_skipped tag =
+    match skip_tags with
+    | None -> false
+    | Some tbl -> Hashtbl.mem tbl tag
+  in
+
+  (* === Pass 1: compute uses[tag] = list of positions referencing tag ===
+   *
+   * Same transitive walk through inlined preds as the linear scan,
+   * but instead of just tracking last_use (max position), we collect
+   * ALL positions where the tag is used. This lets us answer
+   * "what's the NEXT use of tag t after position p" — needed for
+   * Belady eviction. *)
+  let uses : (int, int list ref) Hashtbl.t = Hashtbl.create n in
+  let record_use tag pos =
+    let lst = try Hashtbl.find uses tag
+              with Not_found ->
+                let r = ref [] in
+                Hashtbl.add uses tag r;
+                r in
+    (* Avoid duplicates from same-position uses (e.g. same pred listed twice) *)
+    match !lst with
+    | p :: _ when p = pos -> ()
+    | _ -> lst := pos :: !lst
+  in
+  let rec walk_pred (e : Algsimp.t) (pos : int) =
+    record_use e.tag pos;
+    if is_inlined e.tag then
+      List.iter (fun p -> walk_pred p pos) (Algsimp.preds e)
+  in
+  List.iteri (fun i (e : Algsimp.t) ->
+    record_use e.tag i;
+    List.iter (fun (p : Algsimp.t) -> walk_pred p i) (Algsimp.preds e)
+  ) scheduled;
+  (* Apply force_last_use: add the forced position to uses[tag]. *)
+  (match force_last_use with
+   | None -> ()
+   | Some tbl ->
+     Hashtbl.iter (fun tag forced_pos ->
+       record_use tag forced_pos
+     ) tbl);
+  (* Reverse lists so they're in ascending position order. *)
+  let uses_sorted : (int, int array) Hashtbl.t = Hashtbl.create n in
+  Hashtbl.iter (fun tag lst ->
+    let arr = Array.of_list (List.rev !lst) in
+    Hashtbl.replace uses_sorted tag arr
+  ) uses;
+
+  (* === Helper: next_use_after tag pos ===
+   *
+   * Returns Some p where p > pos is the next use of tag, or None if
+   * no more uses. Linear scan over uses[tag] — could binary-search
+   * if we cared. *)
+  let next_use_after tag pos =
+    match Hashtbl.find_opt uses_sorted tag with
+    | None -> None
+    | Some arr ->
+      let len = Array.length arr in
+      let rec find i =
+        if i >= len then None
+        else if arr.(i) > pos then Some arr.(i)
+        else find (i + 1)
+      in find 0
+  in
+
+  (* === Pass 2: linear scan with Belady eviction ===
+   *
+   * free_pool : sorted list of free color indices
+   * allocated : tag -> color currently held (for non-spilled tags)
+   * spilled   : tag -> slot (committed spill assignments)
+   *
+   * When we hit overflow, we pick the live tag with the largest
+   * next_use as the eviction victim. Its slot is a fresh
+   * regalloc_spill[N] entry. *)
+  let free_pool = ref (List.init budget (fun c -> c)) in
+  let allocated : (int, int) Hashtbl.t = Hashtbl.create budget in
+  let result : (int, assignment) Hashtbl.t = Hashtbl.create n in
+  let spilled : (int, int) Hashtbl.t = Hashtbl.create 16 in
+  let reload_sites : (int, reload_decl list) Hashtbl.t = Hashtbl.create 16 in
+  let spill_sites : (int, (int * int) list) Hashtbl.t = Hashtbl.create 16 in
+  let name_overrides : (int * int, string) Hashtbl.t = Hashtbl.create 16 in
+  let next_spill_slot = ref 0 in
+  let reload_counter : (int, int) Hashtbl.t = Hashtbl.create 16 in
+
+  (* For Belady: at the current position p, return the live tag (one
+   * in `allocated`) with the LARGEST next_use_after p.
+   *
+   * Excludes sentinels (negative tags). Sentinels represent reload
+   * scratch registers needed at the current instruction; they can't
+   * be spilled (no value to save). Real tags with future uses are
+   * the only legitimate eviction candidates. *)
+  let pick_belady_victim p =
+    let best = ref None in
+    Hashtbl.iter (fun tag _color ->
+      if tag >= 0 then begin
+        let nu = match next_use_after tag p with
+          | Some k -> k
+          | None -> max_int    (* no more uses → ideal victim *)
+        in
+        match !best with
+        | None -> best := Some (tag, nu)
+        | Some (_, bnu) when nu > bnu -> best := Some (tag, nu)
+        | _ -> ()
+      end
+    ) allocated;
+    !best
+  in
+
+  (* Release tags whose last (i.e., largest) use was < current pos. *)
+  let release_dead i =
+    let to_free = Hashtbl.fold (fun tag color acc ->
+      match next_use_after tag (i - 1) with
+      | None -> (tag, color) :: acc   (* no use at i or later → dead *)
+      | _ -> acc
+    ) allocated [] in
+    List.iter (fun (tag, color) ->
+      Hashtbl.remove allocated tag;
+      free_pool := List.sort compare (color :: !free_pool)
+    ) to_free
+  in
+
+  let alloc_color () : int option =
+    match !free_pool with
+    | [] -> None
+    | c :: rest -> free_pool := rest; Some c
+  in
+
+  (* Spill a tag at the CURRENT POSITION. Picks a fresh slot, removes
+   * the tag from `allocated`, records a spill_site at position `pos`
+   * (which tells emit_c to emit `storeu_pd(&regalloc_spill[slot], tT)`
+   * AFTER emitting the node at pos). Returns the freed color.
+   *
+   * CRITICAL: result[victim_tag] is NOT changed to Spilled. The tag's
+   * assignment remains Reg (the register it was allocated to at its
+   * def). emit_c uses that Reg name in the def and in the spill store.
+   * The spill is a separate post-node emission step.
+   *
+   * Subsequent uses of victim_tag are handled by reload sites — at
+   * each later use position, a reload decl loads from regalloc_spill
+   * into a fresh tT_rK variable, and name_overrides substitutes the
+   * reload name in the RHS. *)
+  let do_spill (victim_tag : int) (pos : int) : int =
+    let color = Hashtbl.find allocated victim_tag in
+    Hashtbl.remove allocated victim_tag;
+    let slot = !next_spill_slot in
+    incr next_spill_slot;
+    Hashtbl.add spilled victim_tag slot;
+    (* DON'T touch result[victim_tag] — it stays as the original Reg. *)
+    let prev = try Hashtbl.find spill_sites pos with Not_found -> [] in
+    Hashtbl.replace spill_sites pos ((victim_tag, slot) :: prev);
+    color
+  in
+
+  (* Record a reload for a spilled tag at position p.
+   *
+   * The reload variable's lifetime is the SAME POSITION p (alive
+   * during the instruction at p, dead after). We model this by
+   * inserting a sentinel "tag" (negative integer) into `allocated`
+   * with no entry in uses_sorted. release_dead at position p+1 will
+   * find next_use_after returns None for the sentinel and free it.
+   *
+   * Without this lifetime tracking, multiple reloads at the same
+   * position would all pull color 0 (or whatever was freed), all
+   * mapping to the same register and clobbering each other. *)
+  let next_reload_sentinel = ref (-1) in
+  let do_reload (tag : int) (pos : int) : string =
+    let slot = Hashtbl.find spilled tag in
+    let counter = try Hashtbl.find reload_counter tag with Not_found -> 0 in
+    Hashtbl.replace reload_counter tag (counter + 1);
+    let name = Printf.sprintf "t%d_r%d" tag counter in
+    let color = match alloc_color () with
+      | Some c -> c
+      | None ->
+        (* Need a register but pool empty — pick a Belady victim to
+         * spill. This is the same eviction logic as in the main loop.
+         *
+         * Edge case: the victim could be ANOTHER reload variable
+         * (sentinel). Belady's "farthest next use" lookup returns
+         * None (max_int) for sentinels, so they're prioritized as
+         * victims. That's the right behavior — sentinels die at p+1
+         * anyway, so evicting them costs nothing if there are real
+         * candidates. But if only reload sentinels remain in
+         * `allocated`, that means we have >budget reload variables
+         * needed at one position — which is impossible per Belady's
+         * invariant. Fall back to failure. *)
+        (match pick_belady_victim pos with
+         | None -> failwith (Printf.sprintf
+             "regalloc: reload at pos %d needs reg but no victim" pos)
+         | Some (victim_tag, _) ->
+           if victim_tag < 0 then
+             failwith "regalloc: cascade reload-spill, M5a doesn't handle"
+           else
+             do_spill victim_tag pos)
+    in
+    let reg = reg_name_of_isa isa color in
+    let decl = { reload_tag = tag; reload_name = name;
+                 reload_reg = reg; reload_slot = slot } in
+    let prev = try Hashtbl.find reload_sites pos with Not_found -> [] in
+    Hashtbl.replace reload_sites pos (decl :: prev);
+    Hashtbl.replace name_overrides (pos, tag) name;
+    (* Hold the color alive through position p via sentinel tag.
+     * release_dead at position p+1 will find no future uses for the
+     * sentinel and free the color back to the pool. *)
+    let sentinel = !next_reload_sentinel in
+    decr next_reload_sentinel;
+    Hashtbl.replace allocated sentinel color;
+    name
+  in
+
+  let do_alloc tag color =
+    Hashtbl.replace allocated tag color;
+    Hashtbl.replace result tag (Reg (reg_name_of_isa isa color))
+  in
+
+  (* Build a reverse index: forced_at[p] = list of tags whose
+   * force_last_use position is p. Used in the main iter to emit
+   * reloads at the position where an output store will reference
+   * the tag (output stores aren't IR-level uses, so they're not
+   * captured by the regular walk_uses_of mechanism). *)
+  let forced_at : (int, int list) Hashtbl.t = Hashtbl.create 16 in
+  (match force_last_use with
+   | None -> ()
+   | Some tbl ->
+     Hashtbl.iter (fun tag pos ->
+       let prev = try Hashtbl.find forced_at pos with Not_found -> [] in
+       Hashtbl.replace forced_at pos (tag :: prev)
+     ) tbl);
+
+  (* Walk the schedule. *)
+  List.iteri (fun i (e : Algsimp.t) ->
+    release_dead i;
+    (* Step 1: for each pred that's a spilled tag and used at position
+     * i (the current node uses it), emit a reload at position i. *)
+    let reload_for_use (p : Algsimp.t) =
+      if Hashtbl.mem spilled p.tag then begin
+        let _ = do_reload p.tag i in ()
+      end
+    in
+    let rec walk_uses_of p =
+      reload_for_use p;
+      if is_inlined p.tag then
+        List.iter walk_uses_of (Algsimp.preds p)
+    in
+    List.iter walk_uses_of (Algsimp.preds e);
+    (* Step 1b: also emit reloads for any spilled tags whose
+     * force_last_use position is i. These are output tags whose
+     * cluster-flush position is i — the output store at i needs
+     * a reload variable. *)
+    (match Hashtbl.find_opt forced_at i with
+     | Some tags ->
+       List.iter (fun t ->
+         if Hashtbl.mem spilled t then
+           let _ = do_reload t i in ()
+       ) tags
+     | None -> ());
+    (* Step 2: allocate a register for the current node's def
+     * (unless inlined/skipped). *)
+    if not (is_skipped e.tag) && not (is_inlined e.tag) then begin
+      match alloc_color () with
+      | Some c -> do_alloc e.tag c
+      | None ->
+        (* Belady eviction: spill the tag with farthest next_use, then
+         * reuse its color for the current node. *)
+        match pick_belady_victim i with
+        | None ->
+          (* No live tags to evict — pathological, shouldn't happen if
+           * peak_live >= 1. Bail. *)
+          failwith (Printf.sprintf
+            "regalloc: no eviction candidate at position %d, tag %d" i e.tag)
+        | Some (victim_tag, _) ->
+          let freed_color = do_spill victim_tag i in
+          do_alloc e.tag freed_color
+    end
+  ) scheduled;
+
+  (* Post-iter: handle force_last_use positions BEYOND the schedule
+   * (i.e., position == n). These are tags whose output stores happen
+   * at end-of-pass via the safety-net loop or final cluster flush.
+   * emit_c sets current_emit_position = n before emitting these. *)
+  (match Hashtbl.find_opt forced_at n with
+   | Some tags ->
+     List.iter (fun t ->
+       if Hashtbl.mem spilled t then
+         let _ = do_reload t n in ()
+     ) tags
+   | None -> ());
+
+  Allocated { isa;
+              assign = result;
+              num_spill_slots = !next_spill_slot;
+              reload_sites;
+              spill_sites;
+              name_overrides;
+            }
+
+(* === Top-level allocate wrapper (M3a + M5 fallback) ===
+ *
+ * Tries M3a's linear scan first. If it overflows AND
+ * VFFT_USE_REGALLOC_M5=1, falls back to M5's spilling allocator.
+ * Otherwise propagates the overflow upward so emit_c can fall back
+ * to default (gcc-allocated) behavior. *)
 let allocate
     ~(isa : Isa.t)
     ~(scheduled : Algsimp.t list)
@@ -411,7 +843,15 @@ let allocate
     : alloc_result =
   let b = match budget with
     | Some b -> b
-    | None   -> isa.vec_regs - 4    (* AVX-512: 32-4=28; AVX2: 16-4=12 *)
+    | None   -> isa.vec_regs - 4
   in
-  allocate_linear_scan ~isa ~scheduled ~budget:b
-    ~skip_tags ~inline_set ~force_last_use ()
+  let m5_enabled =
+    try Sys.getenv "VFFT_USE_REGALLOC_M5" = "1" with Not_found -> false
+  in
+  match allocate_linear_scan ~isa ~scheduled ~budget:b
+          ~skip_tags ~inline_set ~force_last_use () with
+  | Allocated _ as a -> a
+  | Overflow _ when m5_enabled ->
+    allocate_with_spilling ~isa ~scheduled ~budget:b
+      ~skip_tags ~inline_set ~force_last_use ()
+  | Overflow _ as o -> o
