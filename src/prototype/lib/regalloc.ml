@@ -1060,3 +1060,4 @@ let allocate
     allocate_with_spilling ~isa ~scheduled ~budget:b
       ~skip_tags ~inline_set ~force_last_use ()
   | Overflow _ as o -> o
+  
