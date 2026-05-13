@@ -594,7 +594,27 @@ let allocate_with_spilling
    * Returns Some p where p > pos is the next use of tag, or None if
    * no more uses. Linear scan over uses[tag] — could binary-search
    * if we cared. *)
+  (* === Helper: next_use_after tag pos ===
+   *
+   * Returns Some p where p > pos is the next use of tag, or None if
+   * no more uses. For regular tags (>= 0), consults uses_sorted.
+   * For sentinels (< 0), M6 consults covered_of_sentinel which is
+   * populated below at sentinel creation. *)
+  let covered_of_sentinel_for_lookup = ref None in
   let next_use_after tag pos =
+    if tag < 0 then begin
+      match !covered_of_sentinel_for_lookup with
+      | None -> None
+      | Some tbl ->
+        match Hashtbl.find_opt tbl tag with
+        | None -> None
+        | Some covered ->
+          (* covered is sorted ascending *)
+          let rec find = function
+            | [] -> None
+            | p :: rest -> if p > pos then Some p else find rest
+          in find covered
+    end else
     match Hashtbl.find_opt uses_sorted tag with
     | None -> None
     | Some arr ->
@@ -623,19 +643,53 @@ let allocate_with_spilling
   let spill_sites : (int, (int * int) list) Hashtbl.t = Hashtbl.create 16 in
   let name_overrides : (int * int, string) Hashtbl.t = Hashtbl.create 16 in
   let next_spill_slot = ref 0 in
+  (* === M6: reload-variable lifetime tracking ===
+   *
+   * In M5, each use of a spilled tag emits a fresh reload load. M6
+   * extends a reload's lifetime to cover multiple subsequent uses,
+   * so one load can service N uses (when register pressure permits).
+   *
+   * Data structures:
+   *   live_reload_of[t] = sentinel currently representing spilled tag t
+   *                      (only set while the sentinel is alive)
+   *   tag_of_sentinel[s]      = the underlying spilled tag a sentinel represents
+   *   name_of_sentinel[s]     = the C variable name (e.g. "t101_r0")
+   *   covered_of_sentinel[s]  = sorted list of positions the sentinel covers
+   *                            (also the sentinel's entry in uses_sorted)
+   *   creation_of_sentinel[s] = the position at which the sentinel was created
+   *                            (used to prevent self-eviction)
+   *
+   * When the sentinel gets Belady-evicted mid-lifetime:
+   *   - No spill store needed (value still in regalloc_spill[slot])
+   *   - name_overrides for positions > eviction_pos must be removed
+   *     (so Step 1 will emit a fresh reload at the next use)
+   *   - All four aux tables get the sentinel cleared *)
+  let live_reload_of : (int, int) Hashtbl.t = Hashtbl.create 16 in
+  let tag_of_sentinel : (int, int) Hashtbl.t = Hashtbl.create 16 in
+  let name_of_sentinel : (int, string) Hashtbl.t = Hashtbl.create 16 in
+  let covered_of_sentinel : (int, int list) Hashtbl.t = Hashtbl.create 16 in
+  let creation_of_sentinel : (int, int) Hashtbl.t = Hashtbl.create 16 in
+  covered_of_sentinel_for_lookup := Some covered_of_sentinel;
   let reload_counter : (int, int) Hashtbl.t = Hashtbl.create 16 in
 
   (* For Belady: at the current position p, return the live tag (one
    * in `allocated`) with the LARGEST next_use_after p.
    *
-   * Excludes sentinels (negative tags). Sentinels represent reload
-   * scratch registers needed at the current instruction; they can't
-   * be spilled (no value to save). Real tags with future uses are
-   * the only legitimate eviction candidates. *)
+   * M6: sentinels can now be eviction candidates when their next use
+   * is in the future. A sentinel just created at position p (with
+   * creation_of_sentinel[s] = p) MUST NOT be evicted at p — its
+   * underlying tag is the one being used by the current instruction,
+   * and evicting would orphan the reference. *)
   let pick_belady_victim p =
     let best = ref None in
     Hashtbl.iter (fun tag _color ->
-      if tag >= 0 then begin
+      let self_protect =
+        if tag < 0 then
+          try Hashtbl.find creation_of_sentinel tag = p
+          with Not_found -> false
+        else false
+      in
+      if not self_protect then begin
         let nu = match next_use_after tag p with
           | Some k -> k
           | None -> max_int    (* no more uses → ideal victim *)
@@ -649,7 +703,31 @@ let allocate_with_spilling
     !best
   in
 
-  (* Release tags whose last (i.e., largest) use was < current pos. *)
+  (* M6: when a sentinel dies (naturally or via eviction), clean up
+   * the four auxiliary tables. Returns the underlying tag (or None if
+   * not a sentinel). *)
+  let cleanup_sentinel sentinel =
+    if sentinel >= 0 then None
+    else begin
+      match Hashtbl.find_opt tag_of_sentinel sentinel with
+      | None -> None
+      | Some underlying ->
+        (* Only remove from live_reload_of if it still points to this
+         * sentinel (defensive — a different sentinel may have replaced
+         * it after eviction-then-fresh-reload). *)
+        (match Hashtbl.find_opt live_reload_of underlying with
+         | Some s when s = sentinel -> Hashtbl.remove live_reload_of underlying
+         | _ -> ());
+        Hashtbl.remove tag_of_sentinel sentinel;
+        Hashtbl.remove name_of_sentinel sentinel;
+        Hashtbl.remove covered_of_sentinel sentinel;
+        Hashtbl.remove creation_of_sentinel sentinel;
+        Some underlying
+    end
+  in
+
+  (* Release tags whose last (i.e., largest) use was < current pos.
+   * M6: when freeing a sentinel, also clean up aux tables. *)
   let release_dead i =
     let to_free = Hashtbl.fold (fun tag color acc ->
       match next_use_after tag (i - 1) with
@@ -658,6 +736,7 @@ let allocate_with_spilling
     ) allocated [] in
     List.iter (fun (tag, color) ->
       Hashtbl.remove allocated tag;
+      let _ = cleanup_sentinel tag in ();
       free_pool := List.sort compare (color :: !free_pool)
     ) to_free
   in
@@ -685,62 +764,119 @@ let allocate_with_spilling
   let do_spill (victim_tag : int) (pos : int) : int =
     let color = Hashtbl.find allocated victim_tag in
     Hashtbl.remove allocated victim_tag;
-    let slot = !next_spill_slot in
-    incr next_spill_slot;
-    Hashtbl.add spilled victim_tag slot;
-    (* DON'T touch result[victim_tag] — it stays as the original Reg. *)
-    let prev = try Hashtbl.find spill_sites pos with Not_found -> [] in
-    Hashtbl.replace spill_sites pos ((victim_tag, slot) :: prev);
+    if victim_tag < 0 then begin
+      (* M6: sentinel eviction. No spill store — the underlying tag's
+       * value is already in regalloc_spill from its original spill.
+       * But we MUST invalidate name_overrides for the underlying tag
+       * at positions > pos that this sentinel was covering, so that
+       * subsequent uses re-trigger Step 1's reload check. *)
+      let covered = try Hashtbl.find covered_of_sentinel victim_tag
+                    with Not_found -> [] in
+      let underlying_opt = Hashtbl.find_opt tag_of_sentinel victim_tag in
+      (match underlying_opt with
+       | Some underlying ->
+         List.iter (fun p ->
+           if p > pos then Hashtbl.remove name_overrides (p, underlying)
+         ) covered
+       | None -> ());
+      let _ = cleanup_sentinel victim_tag in ()
+    end else begin
+      (* Regular tag spill: allocate slot, emit spill store. *)
+      let slot = !next_spill_slot in
+      incr next_spill_slot;
+      Hashtbl.add spilled victim_tag slot;
+      let prev = try Hashtbl.find spill_sites pos with Not_found -> [] in
+      Hashtbl.replace spill_sites pos ((victim_tag, slot) :: prev)
+    end;
     color
   in
 
-  (* Record a reload for a spilled tag at position p.
+  (* M6: Record a reload for a spilled tag at position p with
+   * extended lifetime.
    *
-   * The reload variable's lifetime is the SAME POSITION p (alive
-   * during the instruction at p, dead after). We model this by
-   * inserting a sentinel "tag" (negative integer) into `allocated`
-   * with no entry in uses_sorted. release_dead at position p+1 will
-   * find next_use_after returns None for the sentinel and free it.
+   * If a live reload for `tag` already exists (live_reload_of[tag])
+   * AND it covers pos, just return its name — name_overrides was
+   * pre-populated at the original reload site, so emit_c will use
+   * the existing reload variable.
    *
-   * Without this lifetime tracking, multiple reloads at the same
-   * position would all pull color 0 (or whatever was freed), all
-   * mapping to the same register and clobbering each other. *)
+   * Otherwise create a fresh reload whose lifetime covers ALL
+   * remaining uses of `tag` at positions >= pos. The sentinel
+   * participates in normal liveness analysis (via covered_of_sentinel
+   * which next_use_after consults). If pressure forces eviction
+   * later, do_spill cleans up name_overrides for positions > eviction
+   * and the next use will trigger a fresh reload via Step 1.
+   *
+   * Aggressive lifetime extension is sound by induction: worst case
+   * (eviction at every step), we degrade to M5's per-use reload;
+   * best case (no eviction), one load services N uses. *)
   let next_reload_sentinel = ref (-1) in
-  (* Try to register a reload for tag at position pos. Returns Some name
-   * if successful (a register was available, or a non-sentinel victim
-   * could be spilled). Returns None if no victim was available —
-   * caller must handle the fallback (e.g., emit_store can emit an
-   * inline load-from-memory).
-   *
-   * This is the "may-fail" variant used by Step 3 and the post-iter
-   * forced-reload handler, where failure is recoverable. *)
   let try_reload (tag : int) (pos : int) : string option =
-    let slot = Hashtbl.find spilled tag in
-    let color_opt = match alloc_color () with
-      | Some c -> Some c
-      | None ->
-        (match pick_belady_victim pos with
-         | None -> None
-         | Some (victim_tag, _) ->
-           if victim_tag < 0 then None    (* only sentinels available *)
-           else Some (do_spill victim_tag pos))
-    in
-    match color_opt with
-    | None -> None
-    | Some color ->
-      let counter = try Hashtbl.find reload_counter tag with Not_found -> 0 in
-      Hashtbl.replace reload_counter tag (counter + 1);
-      let name = Printf.sprintf "t%d_r%d" tag counter in
-      let reg = reg_name_of_isa isa color in
-      let decl = { reload_tag = tag; reload_name = name;
-                   reload_reg = reg; reload_slot = slot } in
-      let prev = try Hashtbl.find reload_sites pos with Not_found -> [] in
-      Hashtbl.replace reload_sites pos (decl :: prev);
-      Hashtbl.replace name_overrides (pos, tag) name;
-      let sentinel = !next_reload_sentinel in
-      decr next_reload_sentinel;
-      Hashtbl.replace allocated sentinel color;
-      Some name
+    (* Fast path: existing live reload already covering pos *)
+    (match Hashtbl.find_opt live_reload_of tag with
+     | Some s when Hashtbl.mem allocated s ->
+       (* Sentinel still alive. If pos is in its covered set, we're
+        * done — name_overrides was pre-populated at creation. *)
+       let covered = Hashtbl.find covered_of_sentinel s in
+       if List.mem pos covered then
+         Some (Hashtbl.find name_of_sentinel s)
+       else
+         (* Live reload exists but doesn't cover this pos. Treat as
+          * no-live-reload: fall through to fresh allocation below. *)
+         None
+     | _ ->
+       Hashtbl.remove live_reload_of tag;
+       None)
+    |> function
+    | Some name -> Some name
+    | None ->
+      (* Fresh reload path: compute future uses, allocate, register
+       * sentinel with extended lifetime. *)
+      let slot = Hashtbl.find spilled tag in
+      let color_opt = match alloc_color () with
+        | Some c -> Some c
+        | None ->
+          (match pick_belady_victim pos with
+           | None -> None
+           | Some (victim_tag, _) ->
+             (* M6: sentinel victims are now valid; do_spill handles
+              * the no-store case. *)
+             Some (do_spill victim_tag pos))
+      in
+      match color_opt with
+      | None -> None
+      | Some color ->
+        let counter = try Hashtbl.find reload_counter tag with Not_found -> 0 in
+        Hashtbl.replace reload_counter tag (counter + 1);
+        let name = Printf.sprintf "t%d_r%d" tag counter in
+        let reg = reg_name_of_isa isa color in
+        let decl = { reload_tag = tag; reload_name = name;
+                     reload_reg = reg; reload_slot = slot } in
+        let prev = try Hashtbl.find reload_sites pos with Not_found -> [] in
+        Hashtbl.replace reload_sites pos (decl :: prev);
+        let sentinel = !next_reload_sentinel in
+        decr next_reload_sentinel;
+        Hashtbl.replace allocated sentinel color;
+        (* M6: compute covered positions = pos itself + all future uses
+         * of the underlying tag at positions > pos. Pre-populate
+         * name_overrides for each. *)
+        let future_uses =
+          match Hashtbl.find_opt uses_sorted tag with
+          | None -> []
+          | Some arr ->
+            let acc = ref [] in
+            Array.iter (fun p -> if p > pos then acc := p :: !acc) arr;
+            List.rev !acc
+        in
+        let covered = pos :: future_uses in
+        Hashtbl.replace live_reload_of tag sentinel;
+        Hashtbl.replace tag_of_sentinel sentinel tag;
+        Hashtbl.replace name_of_sentinel sentinel name;
+        Hashtbl.replace covered_of_sentinel sentinel covered;
+        Hashtbl.replace creation_of_sentinel sentinel pos;
+        List.iter (fun p ->
+          Hashtbl.replace name_overrides (p, tag) name
+        ) covered;
+        Some name
   in
   (* The "must-succeed" variant — used by Step 1 (reloads for IR-level
    * preds, which MUST have a register since the node's RHS references
@@ -904,7 +1040,15 @@ let allocate
     : alloc_result =
   let b = match budget with
     | Some b -> b
-    | None   -> isa.vec_regs - 4
+    | None ->
+      (* Headroom for gcc's ABI / temporary needs. AVX-512 has 32
+       * registers, AVX2 has 16. Reserve 4 on AVX-512 (zmm28..31)
+       * which is comfortable, but reserve only 2 on AVX2 (ymm14..15)
+       * since 16 is already tight and 12 is too restrictive for
+       * spill-heavy codelets. Empirically R=64 AVX2 is a wash at
+       * budget=12 but a win at budget=14 (per perf tests). *)
+      if isa.vec_regs >= 32 then isa.vec_regs - 4
+      else isa.vec_regs - 2
   in
   let m5_enabled =
     try Sys.getenv "VFFT_USE_REGALLOC_M5" = "1" with Not_found -> false
