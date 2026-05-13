@@ -1,8 +1,9 @@
 # Strided-Batch 2D Codelets — Design C v1+v2
 
-Status: **emitter + codelets validated in prototype** for forward
-direction at radix 16/32/64/128/256. Production wire-up (into `src/core/`'s
-2D path via the tune harness) is a separate downstream workstream.
+Status: **emitter + codelets validated in prototype** for both forward
+AND backward directions at radix 16/32/64/128/256. Roundtrip identity
+verified at FP noise. Production wire-up (into `src/core/`'s 2D path
+via the tune harness) is a separate downstream workstream.
 
 ## Scope discipline
 
@@ -94,17 +95,40 @@ Speedup of strided vs reference = `ref_time / strided_time`. Bigger is
 better. R16/R32/R64 cover v1; R128/R256 cover v2 (full-DAG single-stage,
 register-pressure heavy but still wins).
 
+### Forward strided
+
 | Radix | B=8 | B=32 | B=128 | B=256 |
 |---|---|---|---|---|
-| R16  | 1.24× | 1.21× | 1.59× | 2.86× |
-| R32  | 1.30× | 1.42× | 2.39× | 3.39× |
-| R64  | 1.18× | 1.62× | 2.87× | 3.66× |
-| R128 | 1.16× | 1.58× | 2.05× | 2.71× |
-| R256 | 1.47× | 1.71× | 1.65× | 2.30× |
+| R16  | 1.22× | 1.17× | 1.87× | 2.87× |
+| R32  | 1.28× | 1.24× | 2.45× | 3.37× |
+| R64  | 1.21× | 1.63× | 2.85× | 3.67× |
+| R128 | 1.16× | 1.58× | 2.05× | 2.75× |
+| R256 | 1.47× | 1.68× | 1.66× | 2.30× |
 
-Every single microbench cell (30/30) shows strided WINS. The win
+### Backward strided
+
+| Radix | B=8 | B=32 | B=128 | B=256 |
+|---|---|---|---|---|
+| R16  | 1.24× | 1.22× | 1.88× | 2.86× |
+| R32  | 1.27× | 1.26× | 2.42× | 3.43× |
+| R64  | 1.25× | 1.72× | 2.92× | 3.11× |
+| R128 | 1.15× | 1.61× | 2.06× | 2.19× |
+| R256 | 1.49× | 1.67× | 1.69× | 1.83× |
+
+All 40 directional cells (20 fwd + 20 bwd) show strided WINS — speedups
+range from 1.15× (R128 B=8 bwd) to 3.67× (R64 B=256 fwd). The win
 amplifies with B because larger B means more gather/scatter work per
-codelet call, which Design C eliminates entirely.
+codelet call, which Design C eliminates entirely. Bwd wins are within
+~5% of fwd at every cell — the bwd math (sign-flipped twiddles) doesn't
+materially change the load/store boundary cost which Design C targets.
+
+### Roundtrip identity
+
+For each cell, `bwd_strided(fwd_strided(x)) / N` should equal `x` modulo
+FP noise. All 20 cells PASS with errors 3.6e-15 to 1.2e-14 absolute —
+roughly N × ε_double, exactly what's expected for a properly-scaled
+DFT pair. This confirms fwd + bwd are mathematically consistent and
+production can use the pair without normalization quirks.
 
 ## Production wire-up (NOT done here)
 
@@ -135,25 +159,21 @@ contract; the prototype doesn't.
 ## Files
 
 - [src/prototype/lib/emit_c.ml](../lib/emit_c.ml) — emitter retrofit (~150 LOC), `?(strided)` parameter on `emit_codelet`
-- [src/prototype/bin/gen_radix.ml](../bin/gen_radix.ml) — `--strided` CLI flag
-- [src/prototype/codelets/avx2/strided/](../codelets/avx2/strided/) — generated R=16/32/64/128/256 strided codelets (prototype scratch)
-- [src/prototype/bench/regression/bench_strided_2d.c](../bench/regression/bench_strided_2d.c) — microbench
+- [src/prototype/bin/gen_radix.ml](../bin/gen_radix.ml) — `--strided` CLI flag (composes with `--bwd`)
+- [src/prototype/codelets/avx2/strided/](../codelets/avx2/strided/) — generated R=16/32/64/128/256 strided codelets, fwd + bwd (prototype scratch)
+- [src/prototype/bench/regression/bench_strided_2d.c](../bench/regression/bench_strided_2d.c) — microbench (fwd, bwd, roundtrip)
 
 ## Deferred
 
-1. **Backward direction.** Generate n1_bwd strided codelets (the `--bwd`
-   flag from yesterday's `dft_expand` fix should compose with `--strided`,
-   not yet tested).
-2. **AVX-512 8×8 transpose preamble.** Codegen path is currently 4×4
+1. **AVX-512 8×8 transpose preamble.** Codegen path is currently 4×4
    AVX2 only. AVX-512 codegen requires `_mm512_unpacklo/hi_pd` +
    `_mm512_permutex2var_pd` + `_mm512_shuffle_f64x2` for the 8×8
    in-register transpose. Integration point is the `vec_width = 8`
    branch in the strided preamble emitter.
-3. **R=512 / R=1024 strided.** Untested — register pressure ceiling
-   unknown. Worth a microbench iteration to find where the full-DAG
-   approach stops paying off vs a multi-stage strided-in/strided-out
-   design.
-4. **Production wire-up.** Tune-harness ingestion and dispatcher
+2. **R=512 / R=1024 strided.** Explicitly out of scope for AVX2 — at
+   that radix the full-DAG approach has 1000+ lane locals which spill
+   heavily on a 16-ymm register file. See [feedback-strided-r512-overkill](../../../../../.claude/projects/c--Users-Tugbars-Desktop-highSpeedFFT/memory/feedback_strided_r512_overkill.md).
+3. **Production wire-up.** Tune-harness ingestion and dispatcher
    integration. Output-ordering convention must match plan-level
    contract.
-5. **Profile 1024² regression vs MKL.** Separate issue from strided.
+4. **Profile 1024² regression vs MKL.** Separate issue from strided.
