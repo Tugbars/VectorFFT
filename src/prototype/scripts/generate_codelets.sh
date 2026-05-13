@@ -137,8 +137,9 @@ OUTDIR="${OUTDIR:-$ROOT/codelets}"
 ISA="${ISA:-avx512}"           # avx512 | avx2 | both
 
 # Family selection: if any args provided, generate only those families.
-# Available: primes, small_pow2, mid_pow2, large_pow2, xl_pow2, composites
-FAMILIES_ALL="primes small_pow2 mid_pow2 large_pow2 xl_pow2 composites"
+# Available: primes, small_pow2, mid_pow2, large_pow2, xl_pow2, composites,
+#            trig, strided
+FAMILIES_ALL="primes small_pow2 mid_pow2 large_pow2 xl_pow2 composites trig strided"
 if [ $# -eq 0 ]; then
   FAMILIES="$FAMILIES_ALL"
 else
@@ -152,6 +153,19 @@ MID_POW2="16 32 64"
 LARGE_POW2="128 256 512"
 XL_POW2="1024"
 COMPOSITES="6 10 12 20 25"
+
+# trig: discrete trig transforms (DCT-II/III/IV, DST-II/III, DHT).
+# Validated cells from docs 55 + 56. N=8 ties or beats production at the
+# specialized hand-codelet cells; N=16/32/64 fills general-N gap where
+# production has no dedicated codelet.
+TRIG_SIZES="8 16 32 64"
+
+# strided: Design C 2D row FFT codelets (matrix→registers→matrix, no
+# scratch). Validated 40/40 directional microbench cells beat the
+# gather+codelet+scatter reference. AVX2 only — AVX-512 8×8 transpose
+# preamble is deferred (see doc 56). R=512/1024 out of scope on AVX2
+# (register-spill heavy, see feedback-strided-r512-overkill).
+STRIDED_SIZES="16 32 64 128 256"
 
 # ──────────────────────────────────────────────────────────────────────
 # Sanity checks
@@ -226,6 +240,56 @@ emit_variants() {
     emit_codelet $R $isa $family "--log3 --t1s --bwd"          "t1s_dit_bwd_log3"
     emit_codelet $R $isa $family "--log3 --t1s --dif"          "t1s_dif_fwd_log3"
     emit_codelet $R $isa $family "--log3 --t1s --dif --bwd"    "t1s_dif_bwd_log3"
+  fi
+}
+
+# Emit a single trig-transform codelet. The trig codelets have their own
+# emit_codelet name convention: radix{N}_{transform}_{isa}_gen. No t1/t1s
+# /dit/dif variants — each trig transform has its own algorithm. Forward
+# direction only (inverse transforms have their own dedicated entry, e.g.
+# DCT-II inverse is DCT-III, DST-II inverse is DST-III).
+# Args: R isa family transform_flag suffix
+emit_trig() {
+  local R=$1
+  local isa=$2
+  local family=$3
+  local flag=$4
+  local suffix=$5
+
+  local dir="$OUTDIR/$isa/$family"
+  mkdir -p "$dir"
+  local out="$dir/r${R}_${suffix}.c"
+
+  if $GEN $R $flag --isa $isa --emit-c > "$out" 2>/dev/null; then
+    return 0
+  else
+    echo "  FAIL: R=$R isa=$isa flag='$flag'"
+    rm -f "$out"
+    return 1
+  fi
+}
+
+# Emit a strided-batch codelet (Design C for 2D row FFT). Out-of-place
+# at the function level (reads from matrix, writes to matrix), n1 (no
+# inter-stage twiddles) since v1 only supports single-stage strided.
+# Args: R isa family extra_flags suffix
+emit_strided() {
+  local R=$1
+  local isa=$2
+  local family=$3
+  local flags=$4
+  local suffix=$5
+
+  local dir="$OUTDIR/$isa/$family"
+  mkdir -p "$dir"
+  local out="$dir/r${R}_${suffix}.c"
+
+  if $GEN $R --strided --isa $isa $flags --emit-c > "$out" 2>/dev/null; then
+    return 0
+  else
+    echo "  FAIL: R=$R isa=$isa strided flags='$flags'"
+    rm -f "$out"
+    return 1
   fi
 }
 
@@ -320,6 +384,54 @@ for isa in $ISAS; do
           emit_variants $R $isa $family no  # log3 supported only for pow2
           TOTAL_OK=$((TOTAL_OK + 8))
         done
+        ;;
+
+      trig)
+        # Discrete trig transforms (DCT-II/III/IV, DST-II/III, DHT).
+        # Validated 2026-05-12 → 2026-05-13. See doc 55.
+        #
+        # Coverage:
+        #   - N=8:  DCT-II ties production; DCT-III loses at K≤256, ties at
+        #           K≥512; DCT-IV/DST-II/DST-III/DHT all WIN vs production
+        #           runtime 3-pass.
+        #   - N=16/32/64: production has no dedicated codelet at these sizes,
+        #           our fused DAG fills the gap. DCT-IV verified at 24/24
+        #           cells vs production runtime 3-pass.
+        #
+        # Forward-direction only — DCT-II/DCT-III are an inverse pair, same
+        # for DST-II/DST-III. DCT-IV and DHT are self-inverse up to scaling.
+        # Per-transform `--emit-c` invocation produces a single codelet per
+        # (transform, N) pair, no t1/t1s/dit/dif variants.
+        echo "  └─ family: trig ($TRIG_SIZES — DCT-II/III/IV, DST-II/III, DHT)"
+        for R in $TRIG_SIZES; do
+          emit_trig $R $isa $family "--dct2" "dct2_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_trig $R $isa $family "--dct3" "dct3_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_trig $R $isa $family "--dct4" "dct4_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_trig $R $isa $family "--dst2" "dst2_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_trig $R $isa $family "--dst3" "dst3_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_trig $R $isa $family "--dht"  "dht_fwd"  && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+        done
+        ;;
+
+      strided)
+        # Design C strided-batch 2D row FFT codelets. Validated 2026-05-13.
+        # See doc 56. AVX2 only — AVX-512 8×8 transpose preamble deferred.
+        #
+        # Microbench: 40/40 directional cells WIN vs (gather + standard OOP
+        # codelet + scatter) reference. Speedups 1.15×–3.67×, growing with B.
+        # Roundtrip identity 20/20 PASS at FP noise.
+        #
+        # AVX-512 strided is not yet supported — emitter falls back via
+        # failwith. Skip if isa=avx512.
+        if [ "$isa" = "avx512" ]; then
+          echo "  └─ family: strided  [skip — AVX-512 8×8 transpose preamble TBD]"
+        else
+          echo "  └─ family: strided ($STRIDED_SIZES — fwd+bwd, AVX2 only in v1)"
+          for R in $STRIDED_SIZES; do
+            emit_strided $R $isa $family ""        "n1_fwd_strided" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+            emit_strided $R $isa $family "--bwd"   "n1_bwd_strided" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          done
+        fi
         ;;
 
       *)
