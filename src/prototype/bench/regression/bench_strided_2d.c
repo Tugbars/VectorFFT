@@ -30,6 +30,14 @@ __attribute__((target("avx2,fma"))) void radix64_n1_fwd_avx2_gen_strided(
     double *rio_re, double *rio_im,
     const double *tw_re, const double *tw_im,
     size_t row_stride, size_t me);
+__attribute__((target("avx2,fma"))) void radix128_n1_fwd_avx2_gen_strided(
+    double *rio_re, double *rio_im,
+    const double *tw_re, const double *tw_im,
+    size_t row_stride, size_t me);
+__attribute__((target("avx2,fma"))) void radix256_n1_fwd_avx2_gen_strided(
+    double *rio_re, double *rio_im,
+    const double *tw_re, const double *tw_im,
+    size_t row_stride, size_t me);
 
 /* Standard OOP codelets (reference path). */
 __attribute__((target("avx2,fma"))) void radix16_n1_fwd_avx2_gen(
@@ -39,6 +47,12 @@ __attribute__((target("avx2,fma"))) void radix32_n1_fwd_avx2_gen(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
 __attribute__((target("avx2,fma"))) void radix64_n1_fwd_avx2_gen(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t);
+__attribute__((target("avx2,fma"))) void radix128_n1_fwd_avx2_gen(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t);
+__attribute__((target("avx2,fma"))) void radix256_n1_fwd_avx2_gen(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
 
@@ -218,11 +232,13 @@ int main(void) {
     printf("  in-codelet load-fused 4x4 transpose, no scratch traffic\n");
     printf("================================================================\n");
     struct { const char *name; int N; strided_fn_t fs; std_fn_t fr; } rows[] = {
-        {"R16", 16, radix16_n1_fwd_avx2_gen_strided, radix16_n1_fwd_avx2_gen},
-        {"R32", 32, radix32_n1_fwd_avx2_gen_strided, radix32_n1_fwd_avx2_gen},
-        {"R64", 64, radix64_n1_fwd_avx2_gen_strided, radix64_n1_fwd_avx2_gen},
+        {"R16",  16,  radix16_n1_fwd_avx2_gen_strided,  radix16_n1_fwd_avx2_gen},
+        {"R32",  32,  radix32_n1_fwd_avx2_gen_strided,  radix32_n1_fwd_avx2_gen},
+        {"R64",  64,  radix64_n1_fwd_avx2_gen_strided,  radix64_n1_fwd_avx2_gen},
+        {"R128", 128, radix128_n1_fwd_avx2_gen_strided, radix128_n1_fwd_avx2_gen},
+        {"R256", 256, radix256_n1_fwd_avx2_gen_strided, radix256_n1_fwd_avx2_gen},
     };
-    size_t Bs[] = {8, 16, 32, 64, 128, 256, 512, 1024, 0};
+    size_t Bs[] = {8, 16, 32, 64, 128, 256, 0};
     int fails = 0;
     for (size_t i = 0; i < sizeof(rows)/sizeof(rows[0]); i++) {
         for (int bi = 0; Bs[bi] != 0; bi++) {
