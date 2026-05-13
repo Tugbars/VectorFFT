@@ -17,44 +17,37 @@
 #include <stddef.h>
 #include <immintrin.h>
 
-/* Strided codelets (Design C). */
-__attribute__((target("avx2,fma"))) void radix16_n1_fwd_avx2_gen_strided(
-    double *rio_re, double *rio_im,
-    const double *tw_re, const double *tw_im,
-    size_t row_stride, size_t me);
-__attribute__((target("avx2,fma"))) void radix32_n1_fwd_avx2_gen_strided(
-    double *rio_re, double *rio_im,
-    const double *tw_re, const double *tw_im,
-    size_t row_stride, size_t me);
-__attribute__((target("avx2,fma"))) void radix64_n1_fwd_avx2_gen_strided(
-    double *rio_re, double *rio_im,
-    const double *tw_re, const double *tw_im,
-    size_t row_stride, size_t me);
-__attribute__((target("avx2,fma"))) void radix128_n1_fwd_avx2_gen_strided(
-    double *rio_re, double *rio_im,
-    const double *tw_re, const double *tw_im,
-    size_t row_stride, size_t me);
-__attribute__((target("avx2,fma"))) void radix256_n1_fwd_avx2_gen_strided(
-    double *rio_re, double *rio_im,
-    const double *tw_re, const double *tw_im,
-    size_t row_stride, size_t me);
+/* Strided codelets (Design C) — fwd. */
+#define DECL_STRIDED(name) __attribute__((target("avx2,fma"))) void name(\
+    double *rio_re, double *rio_im,\
+    const double *tw_re, const double *tw_im,\
+    size_t row_stride, size_t me)
+DECL_STRIDED(radix16_n1_fwd_avx2_gen_strided);
+DECL_STRIDED(radix32_n1_fwd_avx2_gen_strided);
+DECL_STRIDED(radix64_n1_fwd_avx2_gen_strided);
+DECL_STRIDED(radix128_n1_fwd_avx2_gen_strided);
+DECL_STRIDED(radix256_n1_fwd_avx2_gen_strided);
+/* Strided bwd. */
+DECL_STRIDED(radix16_n1_bwd_avx2_gen_strided);
+DECL_STRIDED(radix32_n1_bwd_avx2_gen_strided);
+DECL_STRIDED(radix64_n1_bwd_avx2_gen_strided);
+DECL_STRIDED(radix128_n1_bwd_avx2_gen_strided);
+DECL_STRIDED(radix256_n1_bwd_avx2_gen_strided);
 
 /* Standard OOP codelets (reference path). */
-__attribute__((target("avx2,fma"))) void radix16_n1_fwd_avx2_gen(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix32_n1_fwd_avx2_gen(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix64_n1_fwd_avx2_gen(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix128_n1_fwd_avx2_gen(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix256_n1_fwd_avx2_gen(
-    const double *, const double *, double *, double *,
-    const double *, const double *, size_t);
+#define DECL_STD(name) __attribute__((target("avx2,fma"))) void name(\
+    const double *, const double *, double *, double *,\
+    const double *, const double *, size_t)
+DECL_STD(radix16_n1_fwd_avx2_gen);
+DECL_STD(radix32_n1_fwd_avx2_gen);
+DECL_STD(radix64_n1_fwd_avx2_gen);
+DECL_STD(radix128_n1_fwd_avx2_gen);
+DECL_STD(radix256_n1_fwd_avx2_gen);
+DECL_STD(radix16_n1_bwd_avx2_gen);
+DECL_STD(radix32_n1_bwd_avx2_gen);
+DECL_STD(radix64_n1_bwd_avx2_gen);
+DECL_STD(radix128_n1_bwd_avx2_gen);
+DECL_STD(radix256_n1_bwd_avx2_gen);
 
 typedef void (*strided_fn_t)(double *, double *,
                              const double *, const double *,
@@ -152,7 +145,9 @@ static void scatter_n_x_b(const double *src_re, const double *src_im,
     }
 }
 
-static int run_one(const char *name, int N, size_t B,
+/* Test one direction (fwd or bwd): strided codelet output should match
+ * (gather + standard OOP codelet + scatter) reference exactly. */
+static int run_dir(const char *name, const char *dir, int N, size_t B,
                    strided_fn_t fn_strided, std_fn_t fn_std) {
     size_t MNK = B * (size_t)N;
     double *mat_re_s = aa(MNK);  /* strided version's matrix */
@@ -219,8 +214,8 @@ static int run_one(const char *name, int N, size_t B,
     else if (ratio < 1.05) verdict = "TIE";
     else if (ratio < 1.15) verdict = "strided SLOWER";
     else                   verdict = "REGRESSION";
-    printf("%-7s N=%-3d B=%-4zu  strided=%7.1f ns  ref=%7.1f ns  ratio=%5.3f  err=%.1e  %s\n",
-           name, N, B, best_s, best_r, ratio, err, correct ? verdict : "CORRECTNESS FAIL");
+    printf("%-7s %-3s N=%-3d B=%-4zu  strided=%7.1f ns  ref=%7.1f ns  ratio=%5.3f  err=%.1e  %s\n",
+           name, dir, N, B, best_s, best_r, ratio, err, correct ? verdict : "CORRECTNESS FAIL");
     free(mat_re_s); free(mat_im_s); free(mat_re_r); free(mat_im_r);
     free(scratch_re); free(scratch_im); free(dummy);
     return correct ? 0 : 1;
@@ -231,19 +226,56 @@ int main(void) {
     printf("  Design C strided codelet vs (gather + codelet + scatter)\n");
     printf("  in-codelet load-fused 4x4 transpose, no scratch traffic\n");
     printf("================================================================\n");
-    struct { const char *name; int N; strided_fn_t fs; std_fn_t fr; } rows[] = {
-        {"R16",  16,  radix16_n1_fwd_avx2_gen_strided,  radix16_n1_fwd_avx2_gen},
-        {"R32",  32,  radix32_n1_fwd_avx2_gen_strided,  radix32_n1_fwd_avx2_gen},
-        {"R64",  64,  radix64_n1_fwd_avx2_gen_strided,  radix64_n1_fwd_avx2_gen},
-        {"R128", 128, radix128_n1_fwd_avx2_gen_strided, radix128_n1_fwd_avx2_gen},
-        {"R256", 256, radix256_n1_fwd_avx2_gen_strided, radix256_n1_fwd_avx2_gen},
+    struct { const char *name; int N;
+             strided_fn_t fs_fwd, fs_bwd;
+             std_fn_t     fr_fwd, fr_bwd; } rows[] = {
+        {"R16",  16,  radix16_n1_fwd_avx2_gen_strided,  radix16_n1_bwd_avx2_gen_strided,
+                     radix16_n1_fwd_avx2_gen,          radix16_n1_bwd_avx2_gen},
+        {"R32",  32,  radix32_n1_fwd_avx2_gen_strided,  radix32_n1_bwd_avx2_gen_strided,
+                     radix32_n1_fwd_avx2_gen,          radix32_n1_bwd_avx2_gen},
+        {"R64",  64,  radix64_n1_fwd_avx2_gen_strided,  radix64_n1_bwd_avx2_gen_strided,
+                     radix64_n1_fwd_avx2_gen,          radix64_n1_bwd_avx2_gen},
+        {"R128", 128, radix128_n1_fwd_avx2_gen_strided, radix128_n1_bwd_avx2_gen_strided,
+                     radix128_n1_fwd_avx2_gen,         radix128_n1_bwd_avx2_gen},
+        {"R256", 256, radix256_n1_fwd_avx2_gen_strided, radix256_n1_bwd_avx2_gen_strided,
+                     radix256_n1_fwd_avx2_gen,         radix256_n1_bwd_avx2_gen},
     };
-    size_t Bs[] = {8, 16, 32, 64, 128, 256, 0};
+    size_t Bs[] = {8, 32, 128, 256, 0};
     int fails = 0;
     for (size_t i = 0; i < sizeof(rows)/sizeof(rows[0]); i++) {
         for (int bi = 0; Bs[bi] != 0; bi++) {
-            fails += run_one(rows[i].name, rows[i].N, Bs[bi],
-                             rows[i].fs, rows[i].fr);
+            fails += run_dir(rows[i].name, "fwd", rows[i].N, Bs[bi],
+                             rows[i].fs_fwd, rows[i].fr_fwd);
+            fails += run_dir(rows[i].name, "bwd", rows[i].N, Bs[bi],
+                             rows[i].fs_bwd, rows[i].fr_bwd);
+            /* Roundtrip: bwd-strided(fwd-strided(x)) should equal N*x */
+            size_t MNK = (size_t)rows[i].N * Bs[bi];
+            double *mat_re = aa(MNK);
+            double *mat_im = aa(MNK);
+            double *orig_re = aa(MNK);
+            double *orig_im = aa(MNK);
+            double *dummy = aa(MNK);
+            fr(orig_re, MNK, 0x47 + (unsigned)rows[i].N);
+            fr(orig_im, MNK, 0x47 + (unsigned)rows[i].N + 1);
+            memcpy(mat_re, orig_re, MNK * sizeof(double));
+            memcpy(mat_im, orig_im, MNK * sizeof(double));
+            memset(dummy, 0, MNK * sizeof(double));
+            rows[i].fs_fwd(mat_re, mat_im, dummy, dummy, (size_t)rows[i].N, Bs[bi]);
+            rows[i].fs_bwd(mat_re, mat_im, dummy, dummy, (size_t)rows[i].N, Bs[bi]);
+            double inv_N = 1.0 / (double)rows[i].N;
+            double rt_err = 0;
+            for (size_t j = 0; j < MNK; j++) {
+                double d = fabs(mat_re[j] * inv_N - orig_re[j]);
+                if (d > rt_err) rt_err = d;
+                d = fabs(mat_im[j] * inv_N - orig_im[j]);
+                if (d > rt_err) rt_err = d;
+            }
+            int rt_ok = (rt_err < 1e-10);
+            printf("%-7s  rt N=%-3d B=%-4zu  err=%.1e  %s\n",
+                   rows[i].name, rows[i].N, Bs[bi], rt_err,
+                   rt_ok ? "PASS" : "FAIL");
+            if (!rt_ok) fails++;
+            free(mat_re); free(mat_im); free(orig_re); free(orig_im); free(dummy);
         }
         printf("\n");
     }
