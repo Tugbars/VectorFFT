@@ -932,10 +932,20 @@ let allocate_with_spilling
          * reuse its color for the current node. *)
         match pick_belady_victim i with
         | None ->
-          (* No live tags to evict — pathological, shouldn't happen if
-           * peak_live >= 1. Bail. *)
-          failwith (Printf.sprintf
-            "regalloc: no eviction candidate at position %d, tag %d" i e.tag)
+          (* No evictable victim: every allocated tag is self-protecting
+           * (e.g. all sentinels were created at this same position for
+           * a multi-operand instruction whose ALL operands needed reload
+           * simultaneously). Empirically seen on R=19 t1 — long prime DAG
+           * with bottleneck instructions of 14+ live operands on AVX-2.
+           *
+           * Defensive fall-through: leave THIS tag unallocated. render_
+           * node_def will see no allocation for this tag and emit the
+           * default `const __m256d t<tag> = body;` form, falling back to
+           * gcc-RA for just this value. Surrounding tags keep their M
+           * pinning. Strictly better than aborting the whole codelet. *)
+          Printf.eprintf
+            "regalloc: warning: no eviction candidate at pos %d tag %d \
+             — falling back to gcc-RA for this tag\n" i e.tag
         | Some (victim_tag, _) ->
           let freed_color = do_spill victim_tag i in
           do_alloc e.tag freed_color

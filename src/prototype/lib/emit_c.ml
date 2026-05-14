@@ -1882,10 +1882,32 @@ let emit_codelet
       * (in the DAG OR via output assignment) is inlined at the consumer
       * rather than emitted as a standalone declaration. This matches
       * hand-coded FFTW codelet style and significantly reduces register
-      * pressure for DIF prime codelets. *)
+      * pressure for DIF prime codelets.
+      *
+      * M3a/M5 regalloc on this path: codelets that don't enter the spill
+      * recipe (primes, n1, anything without CT-decomposed spill markers)
+      * also get install_alloc here. Wrapped in try-with because M5's
+      * Belady eviction can throw "no eviction candidate" on some prime
+      * DAGs at peak pressure — when it throws, current_regalloc stays
+      * None and emission falls back to default const_decl style (same
+      * as gcc-RA-only, no regression). M3a fit / clean M5 spill → we
+      * get register asm pinning. Mirrors the spill-path install_alloc
+      * sites at lines 1291 / 1585. *)
      let scheduled = Schedule.su_schedule uarch assigns in
      record_peak_live "su_s1" (List.map snd scheduled);
      let inline_set = compute_inline_set assigns in
+     (try install_alloc "su_s1" (List.map snd scheduled) (Some inline_set) None
+      with _ ->
+        current_regalloc := None;
+        Printf.eprintf "[%s:su_s1] regalloc: M5 threw, falling back to default\n" name);
+     (* If M5 allocated spill slots, declare the scratch array at the
+      * top of the for-loop body (mirrors the spill recipe site). *)
+     (match !current_regalloc with
+      | Some alloc when alloc.num_spill_slots > 0 ->
+        Buffer.add_string buf (Printf.sprintf
+          "        %s regalloc_spill[%d];\n"
+          isa.vec_type alloc.num_spill_slots)
+      | _ -> ());
      let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
      let is_inlined e = Hashtbl.mem inline_set e.tag in
      List.iter (fun (oref_opt, e) ->
@@ -1908,7 +1930,8 @@ let emit_codelet
            Buffer.add_char buf '\n'
          end;
          emit_store buf oref e
-     ) scheduled
+     ) scheduled;
+     clear_alloc ()
 
    | Annotated_SU uarch ->
      let scheduled = Schedule.su_schedule uarch assigns in
