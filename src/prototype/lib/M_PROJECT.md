@@ -80,17 +80,32 @@ register pressure. The schedule order becomes essentially the
 emission order — which is the order our scheduler (algsimp +
 topological/SU sort) picked, not gcc's.
 
-<!--
-YOUR EMPIRICAL OBSERVATIONS HERE (1.1.1):
-- specific gcc-RA misbehaviors you tracked through objdump (e.g. "at
-  R=128 log3 I saw value tX spilled at position p but reloaded 4
-  instructions later — gcc preferred to spill it rather than evict
-  the dead-far-out tY")
-- specific scheduling failures you noticed (e.g. memory stores not
-  hoisted out of dependency chains)
-- compiler-flag combinations you tried (-fira-algorithm=priority vs
-  -fira-algorithm=CB, etc.) and what they did or didn't change
--->
+On R=64 t1_dit AVX-512, the default gcc emit contained 493 stack-spill
+stores (`vmovapd %zmmN, off(%rsp)`); the M3a-precolored emit reduced
+this to 247 — a 50% reduction with no algorithmic change to the FFT
+itself, just a different register assignment. The 246 saved spills
+represent locally-suboptimal choices the IRA made on a codelet that
+fits in 28 registers if you pick the right ones.
+
+The cross-compiler measurement on R=256 codelets makes the same point
+more sharply. gcc-11 -O3 emits noticeably fewer stack spills than
+gcc-15 -O3 on the same input C; we did not bisect which heuristic
+change between gcc-11 and gcc-15 is responsible, but the regression
+is reproducible on our entire test suite. Specifically, on the R=256
+codelet body the gcc-11 default path runs at ~565 ns/FFT while gcc-15
+default is meaningfully worse — the M-project ended up tracking
+gcc-11 as its baseline for that reason.
+
+What we did NOT do: systematic exploration of
+`-fira-algorithm=priority` vs `-fira-algorithm=CB`,
+`-fsched-stalled-insns`, `-flive-range-shrinkage` (we use the last one
+as a compile flag but did not study whether its absence changes the
+picture), or `-fno-schedule-insns2`. The intervention we built
+(precoloring + barrier) bypasses these knobs entirely, so we didn't
+need to characterize them. A reader who wants to understand the
+gcc-side failure modes specifically would want to run that flag matrix
+on a fixed codelet and read the resulting objdump. Worth doing if the
+goal is to file a gcc bug rather than to ship a workaround.
 
 ### 1.1.2 How the two limits compound
 
@@ -114,14 +129,43 @@ in under default gcc handling. It's also why the size where M-project
 wins flip from "small" to "huge" is so sharp: it's the size at which
 gcc's two limits both saturate.
 
-<!--
-YOUR EMPIRICAL OBSERVATIONS HERE (1.1.2):
-- specific evidence you found of the compounding effect, e.g.
-  "removing one extra spill on R=128 reduced total spill count by 8
-  because the cascade unwound through 7 dependent values"
-- did you ever see code where the schedule-order-vs-RA-order conflict
-  produced a particularly bad outcome you could point at?
--->
+We have indirect evidence of the cascade through M5 vs M6 measurements.
+On R=128 t1_log3 AVX-512, M5 emitted 946 references to
+`regalloc_spill[]`; M6 reduced this to 446 — a 53% reduction at the
+source level. The runtime change between M5 (+15%) and M6 (+14%) is
+within noise: the half-of-loads reduction barely shows up in the wall
+clock. This is consistent with the cascade story: at moderate pressure
+each load is independent and gcc's scheduler can hide latency by
+reordering surrounding FMAs; removing 500 loads doesn't help much
+because each was already partially hidden.
+
+R=256 t1_dit makes the cascade visible. M5 emitted 3239 references;
+M6 reduced to 2811 — only a 13% source-level reduction. But the
+runtime swing was +19 percentage points (M5 -14% → M6 +5%). The
+runtime gain is dramatically larger than the load-count reduction
+would predict. The explanation we landed on: at R=256 pressure, M5's
+loads were no longer independent — they had filled gcc's scheduler
+window and were stalling on each other. Removing 428 loads from a
+saturated window opens up scheduling slack that benefits the
+remaining ~2800 loads too. The 19% swing is the cascade unwinding,
+not just the 13% direct effect.
+
+R=256 t1_log3 is the case where the cascade unwinding hit a different
+ceiling. M6 reduced reload refs by 30% (4551 → 3195) — a larger
+fractional reduction than R=256 t1_dit. But the runtime improvement
+was only +3% (-29% → -26%). The cascade IS unwinding at the load
+level, but the dependency-chain depth of the split-radix structure
+imposes a separate ceiling that loads have nothing to do with. This
+is §4.4's diagnosis: when the scheduler limit is exhausted by chain
+depth rather than by spill traffic, removing spill traffic recovers
+nothing.
+
+What we did NOT do: trace a specific gcc-side cascade through objdump
+diffs ("removed 1 spill, then N other spills disappeared"). The
+evidence we have is at the aggregate level — load counts and wall
+times — not at the instruction level. A reader skeptical of the
+cascade story could reasonably ask for a single-spill manipulation
+experiment; we haven't run one.
 
 ### 1.1.3 Why our approach can do better
 
@@ -174,15 +218,54 @@ tells gcc *that* the value must be there *now*. The combination
 converts the suggestion into a mandate without preventing gcc from
 making other optimization decisions on either side of the barrier.
 
-<!--
-YOUR EMPIRICAL OBSERVATIONS HERE (1.1.4):
-- the discovery story: how did you find that the barrier was required?
-  what failure mode pointed you at it?
-- if you have a minimal repro of the "pin without barrier gets dropped"
-  behavior, this would be the place to link it or paste it
-- did you test other constraint letters ("v" vs "x" vs "Yz" etc.) and
-  find specific differences?
--->
+The discovery happened during M3a, in the "first non-trivial codelet
+breaks correctness" stage. With `register T x asm("zmmN")` declarations
+in place but no barrier, the emitted assembly showed individual
+variables getting moved out of their pinned registers during gcc's
+optimization passes — the C-level `register asm()` decoration was
+being respected at declaration time but not maintained through the
+rest of the function. The resulting wrong-output bugs were the kind
+that look mysterious until you read the `.s` output: the algorithm is
+right, the register choice is right at the moment of definition, and
+then 30 instructions later the value gets clobbered because gcc
+decided zmm5 was free.
+
+The fix we landed on — `asm volatile ("" : "+v"(x))` immediately after
+each pinned declaration — converts the suggestion into a constraint
+at that program point. The empty asm body emits no instructions; the
+`"+v"(x)` constraint says "x is both read and written here, in a
+vector register, specifically the one I named on the LHS." gcc
+respects this in the same way it respects any other volatile asm
+constraint: it materializes the value in the requested register at
+exactly that program point, and any subsequent rewrite has to
+re-materialize it.
+
+We did NOT explore alternative constraint letters systematically. The
+ones we know exist:
+
+- `"v"` — any vector register
+- `"x"` — XMM (legacy SSE class, also accepted for AVX/AVX-512)
+- `"Yz"` — restricts to xmm0 specifically (for legacy ABI cases)
+
+Of these, `"v"` was the obvious choice for `__m512d` and it worked,
+so we stopped there. Whether `"x"` would also work and whether
+there's any codegen difference between the two — we don't know. We
+also did not verify whether the barrier-after-each-decl is the
+minimum necessary discipline: a single barrier at end-of-block, or
+barriers only at points where the optimizer would otherwise move
+values, might suffice. What we know is that barrier-after-each-decl
+works reliably across the combinations we've tested (gcc-11, gcc-15,
+ICX). A more permissive discipline might also work and could in
+principle produce smaller code or marginally better schedules; we
+haven't tested.
+
+The minimal failing repro we'd want for documentation purposes (a
+tiny codelet that produces wrong output without the barrier and
+correct output with it) we don't have saved. It's recoverable —
+generate any M3a codelet, strip the barriers, recompile, observe
+the `.s` diff — but it's a few hours of work to make a clean
+reproduction. Filed under "would be nice to have for a paper, not
+blocking anything."
 
 ### 1.1.5 The elevator pitch
 
