@@ -1,21 +1,15 @@
-(* isa.ml — minimal ISA abstraction for AVX-512 / AVX2.
+(* isa.ml — ISA abstraction over AVX-512 and AVX2.
  *
- * Both targets are modern x86 with FMA. The differences captured here:
- *   - Vector width (lanes per register for double): AVX-512 = 8, AVX2 = 4
- *   - Architectural register count: AVX-512 = 32 ZMM, AVX2 = 16 YMM
- *   - Intrinsic naming prefix
- *   - C attribute target string
+ * Captures: vector width (8 doubles vs 4), architectural register count
+ * (32 zmm vs 16 ymm), intrinsic name prefix, GCC target attribute.
  *
- * What's NOT here:
- *   - FMA pattern preferences (both ISAs are FMA-capable; identical decision)
- *   - Algorithm choices (math is ISA-agnostic; lives in dft.ml)
- *   - Algebraic rewrites (lives in algsimp.ml, deliberately ISA-agnostic)
- *
- * Design constraint: this module's only consumers are the EMIT layer
- * (emit_c.ml, annotate.ml, future stats reporting) and any heuristic
- * that needs register-pressure info (future SU scheduler). The DAG
- * itself never sees an Isa.t.
- *)
+ * Helper functions emit C source strings for the common intrinsics
+ * (loadu_pd, storeu_pd, mul_pd, fmadd_pd, ...) and the two declaration
+ * shapes consumed by emit_c.ml:
+ *   - const_decl       `const __m512d tN = expr;`
+ *   - pinned_reg_decl  `register __m512d tN asm("zmm5") = expr;
+ *                       asm volatile ("" : "+v"(tN));`
+ *     (the barrier is mandatory — see M_PROJECT.md §1.1.4) *)
 
 type t = {
   name: string;              (* short identifier, "avx512" | "avx2" *)

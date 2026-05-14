@@ -1,68 +1,31 @@
-(* expr.ml — the symbolic math IR.
+(* expr.ml — math IR: arithmetic expressions over input/output/twiddle refs.
  *
- * This is the "math layer" output: a tree-structured representation of
- * the arithmetic that computes a DFT. No SIMD, no microarchitecture, no
- * register allocation — just expressions with concrete numeric constants.
+ * Tree-structured: Const | Load | Neg | Add | Sub | Mul. Leaves are either
+ * concrete floats or elem_ref loads (input element, output sink, twiddle
+ * coefficient). No SIMD, no register allocation, no scheduling.
  *
- * --- OCaml lesson #1: variant types ---
- *
- * `type expr = ...` below defines an algebraic data type. Each `|` clause
- * is one possible shape an `expr` value can have. This is the natural way
- * to represent tree-structured data in OCaml: each node is a variant,
- * and pattern matching on the variant is exhaustive (the compiler warns
- * if you forget a case).
- *
- * Compare to Python: you'd use a class hierarchy (BaseExpr, Add(BaseExpr),
- * Mul(BaseExpr), ...) and `isinstance` checks, with no compiler-enforced
- * exhaustiveness. The OCaml version catches "I added a Sub case but
- * forgot to handle it in simplify()" at compile time.
- *)
+ * The hash-consed form (used by every downstream pass) lives in
+ * algsimp.ml; this module defines the tree-form and elem_ref types. *)
 
 (* A reference to an input or output element of the transform.
  * `Input(0, true)` means input element 0's real component;
- * `Output(2, false)` means output element 2's imaginary component.
- *
- * `type t = ... [@@deriving ...]` would give us automatic equality, hash,
- * etc. — but we'll write them explicitly for clarity in the prototype. *)
+ * `Output(2, false)` means output element 2's imaginary component. *)
 type elem_ref =
   | Input  of int * bool   (* (index, is_real) *)
   | Output of int * bool
-  | Twiddle of int * bool  (* (twiddle index, is_real) — for t1_dit codelet *)
+  | Twiddle of int * bool  (* (twiddle index, is_real) — for t1 codelets *)
 
-(* The math IR. An `expr` is a tree of arithmetic operations whose leaves
- * are constants or input element references.
- *
- * Note: `Const` carries a float because at the math layer, twiddles are
- * concrete numbers. For radix-4, all twiddles fold to ±1 or 0; for
- * radix-8 they're ±1, 0, ±sqrt(2)/2 etc. Carrying actual floats lets
- * us do constant folding in algsimp.ml.
- *)
 type expr =
   | Const of float
-  | Load  of elem_ref       (* read an input/twiddle element *)
+  | Load  of elem_ref
   | Neg   of expr
   | Add   of expr * expr
   | Sub   of expr * expr
   | Mul   of expr * expr
 
-(* A complete codelet's math layer output: a list of (output_ref, expr)
- * pairs, one per output element computed.
- *
- * For DFT-4 t1_dit (with twiddles, complex inputs/outputs) this list has
- * 8 entries: 4 complex outputs × 2 (real, imag) components. *)
+(* One output element computed: pair of (output_ref, expr).
+ * A complete codelet emits a list of these (one per real/imag output). *)
 type assignment = elem_ref * expr
-
-(* --- OCaml lesson #2: structural equality and pretty-printing ---
- *
- * Polymorphic equality `(=)` works on these types out of the box because
- * variant types support structural comparison. We add a dedicated
- * `equal` function anyway because relying on `(=)` for cyclic or
- * float-containing data is brittle (NaN != NaN under `(=)`, for one).
- *
- * `string_of_*` functions are written manually here. In production
- * OCaml you'd use [@@deriving show] from the ppx_show package, but
- * for a sketch we keep dependencies minimal.
- *)
 
 let string_of_elem_ref (e : elem_ref) : string =
   match e with

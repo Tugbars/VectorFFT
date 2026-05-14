@@ -1,28 +1,20 @@
-(* Dft.ml — algorithm selection + Cooley-Tukey decomposition.
+(* dft.ml — c2c DFT algorithm selection + recursive Cooley-Tukey decomposition.
  *
- * This module sits between the user's request "compute DFT-N symbolically"
- * and the lower-level `Expr.dft_kernel` (which does direct sum-of-products
- * expansion). For composite N, it decomposes the DFT recursively via
- * Cooley-Tukey before falling through to direct expansion.
+ * Public entry: `dft ~sign n input_re input_im` returns (out_re, out_im)
+ * expr arrays. `dft_expand n` and `dft_expand_twiddled ~policy ~direction
+ * ~sign n` produce assignment lists for codelet emission.
  *
- * Why this layer exists: direct expansion of DFT-N produces O(N²)
- * arithmetic per output equation. Algsimp's reassociation finds *some*
- * butterfly structure within each equation, but doesn't discover the
- * Cooley-Tukey decomposition that shares subexpressions ACROSS
- * equations. For R=8 specifically, direct expansion + algsimp produces
- * 134 ops; CT decomposition + algsimp should produce ~52-56 ops.
+ * pick_algorithm dispatches by N's number-theoretic properties:
+ *   - Direct          n = 2, or odd primes (uses conjugate-pair construction)
+ *   - Cooley_Tukey    composites with hardcoded (n1, n2) factorizations
+ *                     matching production codelet shapes (R=16 → 4×4,
+ *                     R=32 → 4×8, R=64 → 8×8, R=128 → 8×16, etc.)
+ *   - Split_radix     pow2 ≥ 8, opt-in via VFFT_SPLIT_RADIX env var
+ *                     (delegated to split_radix.ml)
  *
- * Architecture matches FFTW genfft's fft.ml: hardcoded algorithm
- * selection based on number-theoretic properties of N. For the
- * prototype we implement only:
- *   - Direct DFT (prime n, falls through to dft_kernel)
- *   - Cooley-Tukey radix-2 DIT decomposition for even n
- *
- * Future variants to add (matching what genfft does):
- *   - Split-radix for power-of-2 ≥ 8 (slightly fewer ops than radix-2)
- *   - Prime-Factor (Good-Thomas) for coprime composite n
- *   - Rader for primes ≥ 13
- *)
+ * dft_expand_twiddled covers t1_dit / t1_dif / t1s variants with the
+ * cmul-pattern detector preserved (Algsimp.of_expr lifts Sub(Mul,Mul) /
+ * Add(Mul,Mul) pairs to Cmul opaque atoms before reassoc shreds them). *)
 
 open Expr
 

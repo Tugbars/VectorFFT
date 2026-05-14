@@ -1,21 +1,37 @@
-(* emit_c.ml — naive AVX-512 C emitter for radix-N t1_dit codelets.
+(* emit_c.ml — C source emitter for SIMD FFT codelets.
  *
- * Walks the hash-consed DAG in topological order, emits one __m512d
- * variable per node. No scheduling, no register allocation — GCC handles
- * those when compiling the resulting C.
+ * Input: a list of (Expr.elem_ref * Algsimp.t) assignments, scheduled by
+ * schedule.ml. Output: a complete C function string with intrinsics,
+ * compilable by gcc-11+ or ICX with `-mavx512f` / `-mavx2 -mfma`.
  *
- * The output signature matches user's gen_radix4.py t1_dit form:
+ * Two declaration forms per node:
+ *   - default:  `const __m512d tN = <expr>;`  — gcc picks the register
+ *   - pinned:   `register __m512d tN asm("zmmK") = <expr>;
+ *                asm volatile ("" : "+v"(tN));`
+ *     The volatile barrier is load-bearing: without it gcc treats the
+ *     `register asm()` clause as advisory and may reallocate. With it,
+ *     the variable IS in zmmK at that program point. Choice between
+ *     forms is per-tag, driven by the current_regalloc ref populated
+ *     by regalloc.ml (M_PROJECT.md).
  *
- *   void radix<N>_t1_dit_fwd_avx512(
- *       const double *in_re,  const double *in_im,
- *       double       *out_re, double       *out_im,
- *       const double *tw_re,  const double *tw_im,
- *       size_t K)
+ * Codelet shapes (selected via CLI flags in gen_radix.ml, threaded as
+ * params here):
+ *   --in-place           rio_re/rio_im reads and writes the same buffer
+ *                        (default: separate in_re/out_re); ios+me param shape
+ *   --twiddled           t1 codelet: pre-multiply inputs by runtime twiddles
+ *                        (Cmul atoms); else n1 no-twiddle
+ *   --t1s                scalar-broadcast twiddles (one set across all
+ *                        K batches) — for inner CT codelets
+ *   --dif --bwd          DIF orientation, backward sign — see doc 18
+ *   --log3               TP_Log3 twiddle derivation (binary decomposition)
+ *   --twidsq             square-block OOP with separate is/os strides
+ *                        (doc 43 cascade boundaries)
+ *   --strided            Design C 2D row FFT: load-fused 4×4 (AVX2) or
+ *                        8×8 (AVX-512) in-register transpose at codelet
+ *                        boundary, no scratch buffer (doc 56)
  *
- * Inputs/outputs are split-complex with K-stride layout: element j's real
- * component is in_re[j*K + k], imag in_im[j*K + k]. Twiddles same layout.
- * Loop iterates k by 8 (AVX-512 vector width for double).
- *)
+ * Scheduler selection (Topological / Bisection / SU / Annotated variants)
+ * is threaded via the `scheduler` parameter to emit_codelet. *)
 
 open Algsimp
 

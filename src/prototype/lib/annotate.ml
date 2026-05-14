@@ -1,36 +1,13 @@
-(* annotate.ml — block-level lifetime annotation for scheduled DAGs.
+(* annotate.ml — nested-scope structure for scheduled DAGs.
  *
- * Port of FFTW's genfft/annotate.ml, adapted to operate on a flat
- * scheduled list rather than a Seq tree.
+ * Takes a flat scheduled list and produces a tree of nested `{...}` C
+ * scopes. Short-lived variables get declared in inner scopes; long-lived
+ * in outer scopes. Gives gcc's RA a lifetime hint without us computing
+ * liveness explicitly.
  *
- * What this layer does:
- *   Takes a scheduled list of instructions (e.g. output of bisection
- *   or topological emission) and produces a NESTED-BLOCK structure.
- *   Variables with short live ranges get declared in inner blocks;
- *   variables with long live ranges get declared in outer blocks.
- *
- * Why it matters:
- *   When emitted as C, this becomes:
- *     {
- *       __m512d t1 = ...;  // long-lived: outer scope
- *       {
- *         __m512d t2 = ...;  // short-lived: inner block
- *         __m512d t3 = ... t1 ... t2 ...;
- *         /* t2 dies at this `}` — register reusable */
- *       }
- *       /* t3 also dead now */
- *     }
- *   GCC's register allocator sees these scope boundaries and reuses
- *   registers more aggressively. Without annotate, all SSA bindings
- *   appear to live until function end (from a syntactic perspective)
- *   and GCC must do its own liveness analysis, which is harder.
- *
- * Frigo's approach uses Seq trees from the bisection scheduler. We
- * recover scope structure post-hoc by recursively bisecting the
- * already-scheduled list at midpoints. This way annotate works on
- * the output of any scheduler — topological order, bisection,
- * future SU, etc.
- *)
+ * Port of FFTW genfft/annotate.ml, adapted to consume any scheduler's
+ * output (topological / bisection / SU) by recovering scope structure
+ * via recursive midpoint bisection. *)
 
 open Algsimp
 
