@@ -47,6 +47,162 @@ optimizer and assembler driver rather than a register allocator.
 
 ---
 
+## 1.1 Why gcc degrades at scale
+
+"gcc makes poor choices" is the empirical observation that drove the
+M-project. The deeper question is *why* — and the answer ties together
+two compiler-internal limits with one structural property of our IR
+that we can exploit.
+
+### 1.1.1 The two heuristic limits gcc hits
+
+**Register allocation is NP-hard, and gcc uses heuristic approximations.**
+Optimal register allocation is equivalent to graph coloring with spill
+costs, which is NP-hard for general interference graphs. gcc's RA
+(integrated register allocator, IRA) walks the basic block in priority
+order and makes locally-optimal spill decisions using cost estimates.
+At small scale (few dozen live values, sparse interference graph) the
+heuristic is near-optimal — the search space is small enough that
+locally-reasonable choices don't accumulate into globally-bad outcomes.
+At our codelet sizes the search space explodes: R=256 t1_log3 has 6594
+SSA values and an interference graph with thousands of edges. The
+heuristic's locally-reasonable spill decisions compound into
+globally-suboptimal choices. The result is more spill stores than
+necessary, redundant reload loads, and registers held by values that
+should have been evicted earlier.
+
+**Instruction scheduling has a finite lookahead window.** gcc's
+scheduler considers a sliding window of instructions when deciding
+issue order. At codelet sizes beyond a few hundred instructions, the
+scheduler's view of the program is effectively local: it can't reorder
+operations across the whole codelet to expose ILP or to relieve
+register pressure. The schedule order becomes essentially the
+emission order — which is the order our scheduler (algsimp +
+topological/SU sort) picked, not gcc's.
+
+<!--
+YOUR EMPIRICAL OBSERVATIONS HERE (1.1.1):
+- specific gcc-RA misbehaviors you tracked through objdump (e.g. "at
+  R=128 log3 I saw value tX spilled at position p but reloaded 4
+  instructions later — gcc preferred to spill it rather than evict
+  the dead-far-out tY")
+- specific scheduling failures you noticed (e.g. memory stores not
+  hoisted out of dependency chains)
+- compiler-flag combinations you tried (-fira-algorithm=priority vs
+  -fira-algorithm=CB, etc.) and what they did or didn't change
+-->
+
+### 1.1.2 How the two limits compound
+
+Either problem alone would be survivable — gcc could compensate for
+one through the other. The damage comes from the interaction:
+
+1. Heuristic RA emits a suboptimal spill → an extra `vmovapd` to
+   stack at position p.
+2. The spill store creates a dependency edge the scheduler can't
+   reorder around (it's a memory write; subsequent reads must wait).
+3. The scheduler's window is now filled with memory-dependent
+   instructions; it can't find independent arithmetic to hide the
+   spill latency.
+4. While the spill is round-tripping through L1, *other* live values
+   stay live longer than necessary — extending their live ranges and
+   forcing more spills later.
+
+Once both limits are saturated, every additional instruction makes
+things worse, not better. This is the regime our R=256 codelets live
+in under default gcc handling. It's also why the size where M-project
+wins flip from "small" to "huge" is so sharp: it's the size at which
+gcc's two limits both saturate.
+
+<!--
+YOUR EMPIRICAL OBSERVATIONS HERE (1.1.2):
+- specific evidence you found of the compounding effect, e.g.
+  "removing one extra spill on R=128 reduced total spill count by 8
+  because the cascade unwound through 7 dependent values"
+- did you ever see code where the schedule-order-vs-RA-order conflict
+  produced a particularly bad outcome you could point at?
+-->
+
+### 1.1.3 Why our approach can do better
+
+Two properties of our pipeline make the optimization tractable where
+gcc's is heuristic:
+
+**SSA programs have chordal interference graphs (Hack & Goos 2006).**
+Because our IR is hash-consed, every value has exactly one definition
+site — it's structurally SSA. The live-range interference graph of an
+SSA program is *chordal*: every cycle of length ≥ 4 has a chord. This
+isn't an empirical observation, it's a theorem about SSA programs.
+Chordal graphs admit *optimal* greedy coloring in linear time via a
+perfect elimination ordering. Our schedule order IS a perfect
+elimination ordering (this falls out of how we hash-cons + topo-sort).
+**So we compute the provable optimum in linear time where gcc's
+heuristic guesses with a polynomial-time approximation.**
+
+**Codegen time is unconstrained.** gcc's RA must finish in a small
+fraction of total compile time. The whole compiler budget is on the
+order of seconds. Our codelet generator can take *minutes* per codelet
+if it needs to — there's no production hot path being blocked. We can
+afford algorithms that are correct and slow rather than fast and
+approximate.
+
+The combination is what makes the M-project work: we solve the
+problem optimally (per chordal coloring) and slowly (because we can),
+where gcc was solving it approximately and quickly (because it had to).
+
+### 1.1.4 How we transfer the solution through gcc
+
+Computing the optimal coloring is half the work. The other half is
+making gcc honor it. Two GNU C constructs do this:
+
+- **`register T x asm("zmm5")`** pins a C variable to a specific
+  physical register. Without further coercion, gcc treats this as a
+  *hint* — strongly preferred but not binding. During subsequent
+  optimization passes (instruction scheduling, peephole, dead-store
+  elimination), gcc may rewrite the variable into a different register
+  if the constraint becomes inconvenient. This is by design — gcc was
+  built assuming the user wants suggestions, not mandates.
+- **`asm volatile ("" : "+v"(x))`** is an empty inline-asm block that
+  declares `x` as both an input and an output via the `+v` constraint
+  (read-write, vector register class). This is the load-bearing piece:
+  it forces gcc to *materialize* `x` in a vector register at exactly
+  that program point. The empty body emits no instructions, but the
+  constraint discipline is real — gcc must comply.
+
+Used together, the pin tells gcc *which* register, and the barrier
+tells gcc *that* the value must be there *now*. The combination
+converts the suggestion into a mandate without preventing gcc from
+making other optimization decisions on either side of the barrier.
+
+<!--
+YOUR EMPIRICAL OBSERVATIONS HERE (1.1.4):
+- the discovery story: how did you find that the barrier was required?
+  what failure mode pointed you at it?
+- if you have a minimal repro of the "pin without barrier gets dropped"
+  behavior, this would be the place to link it or paste it
+- did you test other constraint letters ("v" vs "x" vs "Yz" etc.) and
+  find specific differences?
+-->
+
+### 1.1.5 The elevator pitch
+
+We don't compete with gcc on its home turf — locally-optimal RA
+decisions at small scale, fast compile times, general-purpose code.
+We move the global RA decision out of gcc's hot path entirely, solve
+it optimally at codegen time using the SSA chordal-coloring guarantee
+plus all the time we want, and use the `register asm()` + barrier
+pattern to transfer the solution intact through gcc's optimization
+pipeline. gcc retains everything it's good at (instruction selection,
+peephole optimization, scheduling within our constraints, the emit
+itself); it just doesn't make the global coloring decisions on our
+huge codelets anymore.
+
+The +10% to +23% wins, the elimination of M5's R=256 regressions via
+M6, the cleanliness of the ICX compat — all of these follow from this
+single architectural choice.
+
+---
+
 ## 2. High-Level Architecture
 
 ### 2.1 Codelet structure
