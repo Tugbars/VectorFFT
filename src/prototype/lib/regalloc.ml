@@ -1,61 +1,29 @@
-(* regalloc.ml — SSA-based register allocator (M1: types + stub).
+(* regalloc.ml — SSA-based register allocator with Belady spilling.
  *
- * === ROLE IN THE PIPELINE ===
+ * Sits between schedule.ml (scheduled Algsimp.t list) and emit_c.ml
+ * (declaration emission). Returns an `allocation` record mapping each
+ * tag to a `Reg "zmmK"` / `Reg "ymmK"` binding or `Default` (fall
+ * through to gcc's RA for that tag).
  *
- * Sits between Schedule (which produces an ordered list of Algsimp.t)
- * and Emit_c's declaration emission. Maps each tag to either a
- * concrete physical register name OR Default (fall through to the
- * existing emit_c behavior, where gcc picks the register).
+ * Algorithm: linear-scan along the schedule order. Because SSA
+ * interference graphs are chordal (Hack & Goos 2006) and the schedule
+ * order is a perfect elimination ordering, greedy coloring is
+ * provably optimal in linear time. When the budget (vec_regs - 4 on
+ * AVX-512, vec_regs - 2 on AVX2) is exhausted, Belady eviction
+ * (latest-next-use victim) spills to a `regalloc_spill[]` arena;
+ * spilled tags are reloaded into fresh register-pinned variables
+ * (`tN_rK`) whose lifetimes are tracked across multiple uses (M6) to
+ * avoid redundant loads.
  *
- * The eventual goal: emit `register __m512d tN asm("zmm5") = ...;`
- * for every tag, bypassing gcc's register allocator entirely. That
- * gives compiler-agnostic output — gcc-11, gcc-13, and clang all see
- * the same register assignment instead of each running their own RA
- * pass and producing different code.
+ * The output is consumed by emit_c.ml's `current_regalloc` ref, which
+ * switches per-tag between the `const __m512d` and `register asm()`+
+ * barrier declaration forms.
  *
- * === STAGING ===
+ * Gated by env vars `VFFT_USE_REGALLOC=1` (M3a only, overflow falls
+ * back to gcc) and `VFFT_USE_REGALLOC=1 VFFT_USE_REGALLOC_M5=1`
+ * (M3a+M5+M6). With env vars unset, emit_c produces gcc-RA output.
  *
- * M1 (this file): just the types + a stub `allocate_stub` that
- *   returns an empty allocation. Every tag falls through to Default,
- *   so output is byte-identical to a build without regalloc.
- *
- * M2: live-range analysis. Compute peak_live per codelet; report it
- *   for sanity-checking against the existing pass-1/pass-2 split.
- *
- * M3: real chordal greedy coloring for within-budget codelets (R<=32
- *   on AVX-512). Emit_c starts consuming the allocation.
- *
- * M4: validation cells. R=4 through R=32 across AVX-512 and AVX2 with
- *   gcc-11.
- *
- * M5: pre-spilling for codelets that exceed per-pass register budget
- *   (R=64 on AVX2, R=128/256 anywhere).
- *
- * M6: extend to R=128, R=256.
- *
- * === DESIGN NOTES ===
- *
- * 1. SSA -> chordal interference graph (Hack & Goos 2006). Since our
- *    IR is SSA-equivalent via hashconsing (each tag is single
- *    assignment), the live-range interference graph is chordal.
- *    Chordal graphs are optimally colorable in polynomial time via
- *    greedy coloring along a perfect elimination ordering. M3
- *    implements this; for now we only need the type machinery.
- *
- * 2. We do NOT decide spilling here. The pass-1/pass-2 spill markers
- *    from Algsimp.lift_spill_markers (consumed by Emit_c.make_spill_info)
- *    pre-decide which values cross the pass boundary. Within each
- *    pass, chordal coloring tells us what fits. If a pass exceeds
- *    register budget after that, M5's pre-spilling adds finer-grained
- *    scratchpad evictions.
- *
- * 3. The `Default` assignment is the escape hatch: any tag we don't
- *    explicitly bind gets emit_c's existing `const __m512d tN = ...;`
- *    treatment, which leaves register choice to gcc. Useful for:
- *      - tags that get inlined by `should_inline` and never named
- *      - the "fused slot" forward-declared values (see emit_c.ml ~256)
- *      - any case we haven't yet handled
- *    This is what makes M1 a no-op: every tag is Default. *)
+ * Full design + measurement record: src/prototype/lib/M_PROJECT.md. *)
 
 (* What an allocator decides per tag. *)
 type assignment =

@@ -1,27 +1,27 @@
-(* algsimp.ml — algebraic simplification and common subexpression elimination.
+(* algsimp.ml — hash-consed IR with algebraic simplification + CSE.
  *
- * This is the meat of the math layer. Two responsibilities:
+ * Smart constructors (mk_add, mk_mul, ...) intern every node so
+ * structurally-equal subtrees become physically the same value. Equality
+ * reduces to tag comparison; CSE is automatic.
  *
- *   1. ALGEBRAIC SIMPLIFICATION: fold trivial operations like x*0 = 0,
- *      x*1 = x, x+0 = x, x-x = 0, etc. Also canonicalize floating-point
- *      noise like cos(pi/2) = 6e-17 (mathematically zero, computationally
- *      tiny) into exact zero.
+ * Simplifications applied at construction time:
+ *   - identity / annihilator folds (x*0=0, x*1=x, x+0=x, x-x=0)
+ *   - FP-noise canonicalization (cos(π/2) ≈ 6e-17 → 0)
+ *   - Sub(Neg(Mul(a,b)),c) → fnmsub peephole (doc 30)
+ *   - Cmul opaque atoms for complex multiplies (re=xr·wr - xi·wi,
+ *     im=xr·wi + xi·wr) preserved through reassoc
+ *   - fma_lift: Add(Mul(a,b),c) → NK_Fma node (gated to primes only,
+ *     doc 28 — regresses composites)
  *
- *   2. COMMON SUBEXPRESSION ELIMINATION (CSE): identify subtrees that
- *      appear multiple times and share them. For DFT-N this finds the
- *      Cooley-Tukey butterfly structure mechanically, without it being
- *      programmed in.
+ * Per-DAG passes (run after of_assignments):
+ *   - dedup_sub_pairs           canonicalize Sub orderings + merge
+ *   - share_subsums             cross-output partial-sum factoring
+ *                               (composite/pow2 only, doc 23)
+ *   - transposition fixed-point Frigo network transposition, iterated
+ *                               with share_subsums between passes
  *
- * The CSE trick is hash-consing: smart constructors (mk_add, mk_mul, ...)
- * intern every newly-built expression, so structurally-equal subtrees
- * become physically the same value. Equality reduces to pointer/tag
- * comparison; CSE is automatic.
- *
- * Frigo's genfft does this. We do the same with one extension: stronger
- * canonicalization of floating-point constants, so the generator is
- * robust to numerical noise from cos/sin computations at radices that
- * aren't pure power-of-two.
- *)
+ * Algorithm-class gating (Direct primes vs CT composites) is in
+ * gen_radix.ml via the `aggressive` flag. *)
 
 open Expr
 

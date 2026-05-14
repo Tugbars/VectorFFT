@@ -1,25 +1,19 @@
-(* schedule.ml — port of Frigo's recursive bisection scheduler.
+(* schedule.ml — DAG schedulers: topological / bisection / Sethi-Ullman.
  *
- * Algorithm (from genfft/schedule.ml lines 85-191):
- *   1. Build DAG with explicit predecessor and successor lists.
- *   2. Bisect: alternating waves color nodes RED (input-side) and
- *      BLUE (output-side) until both stabilize. The cut between them
- *      defines the partition.
- *   3. Recursively schedule each half.
- *   4. Concatenate: red_schedule ++ blue_schedule.
+ * Each scheduler produces a flat list of Algsimp.t nodes in execution
+ * order; emit_c.ml walks the list to produce the C body. Scheduler
+ * choice is per-codelet via the `scheduler` variant in emit_codelet.
  *
- * Frigo's claim: this is cache-oblivious. At each recursion level, the
- * working set is divided. As we recurse deeper, cut sizes shrink and
- * fit smaller cache levels — without ever knowing the cache hierarchy.
- *
- * Special inputs: single-load nodes (Loads of constants or twiddles in
- * our representation) are colored YELLOW initially. They float to
- * whichever side claims them first — closer to use, reducing live range.
- *
- * Implementation note: Frigo's representation has explicit DAG nodes
- * with mutable color/predecessor/successor fields. We mirror that
- * structure in `node` below. Our hash-consed Algsimp.t is the input;
- * we build a parallel DAG for scheduling. *)
+ *   Topological     by hash-cons tag order. Default, cheap, valid.
+ *   Bisection       Frigo's recursive 4-color cut (RED/BLUE/YELLOW/BLACK).
+ *                   Cache-oblivious: each level halves the working set.
+ *   SU              Sethi-Ullman list scheduling with µarch profile
+ *                   (uarch.ml). Tracks live-count and switches between
+ *                   LATENCY MODE (cp_dist priority) and PRESSURE MODE
+ *                   (delta priority) at a threshold to manage spills.
+ *   Annotated_*     wrap any of the above with annotate.ml nested-scope
+ *                   structure, giving emit_c an inner-block boundary
+ *                   to declare short-lived variables in. *)
 
 open Algsimp
 

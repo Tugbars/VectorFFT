@@ -1,24 +1,12 @@
-(* lib/split_radix.ml
+(* split_radix.ml — split-radix decomposition for pow2 N ≥ 8.
  *
- * SPLIT-RADIX DECOMPOSITION FOR POWER-OF-TWO N
- * ============================================
+ * Asymmetric N → DFT(N/2) over x[2n] + 2 × DFT(N/4) over x[4n+1] / x[4n+3],
+ * with ~33% fewer multiplications than radix-2 CT. Refs: Yavne 1968,
+ * Sorensen-Heideman-Burrus 1986. Conjugate-pair refinement (Johnson-Frigo
+ * 2007) is future work.
  *
- * Classical references:
- *   - Yavne 1968 (first publication)
- *   - Sorensen, Heideman, Burrus 1986 (canonical exposition)
- *   - Johnson, Frigo 2007 (conjugate-pair refinement — future work)
- *
- * Split-radix uses an asymmetric decomposition that reduces multiplication
- * count by ~33% compared to vanilla radix-2 Cooley-Tukey. An N-point DFT
- * becomes one (N/2)-point DFT plus two (N/4)-point DFTs:
- *
- *     N → DFT(N/2) over even-indexed inputs x[2n]      (call it E)
- *       + DFT(N/4) over stride-4 inputs x[4n+1]        (call it O1)
- *       + DFT(N/4) over stride-4 inputs x[4n+3]        (call it O3)
- *
- * The 33% multiplication savings come from sharing intermediate values
- * across 4 output groups simultaneously, rather than computing
- * W^k · O[k] separately for each.
+ * Routed via VFFT_SPLIT_RADIX=1 env var; otherwise pow2 sizes use the CT
+ * factorizations in dft.ml.
  *
  *
  * ALGEBRA

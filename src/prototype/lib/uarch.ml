@@ -1,25 +1,13 @@
-(* uarch.ml — micro-architecture profiles for SU scheduling.
+(* uarch.ml — per-microarchitecture latency + register-count profiles for SU.
  *
- * Each profile pairs an Isa.t with timing and capacity parameters that
- * the scheduler consumes:
- *   - Latencies (cycles): used in critical-path distance computation.
- *     Longer latencies → reorder to start chains earlier.
- *   - Vector register count: used in register-pressure heuristics.
- *     Lower register budget → prefer schedules with shorter live ranges.
+ * Each profile pairs an Isa.t with FMA/add/mul/load/store latencies (used
+ * in critical-path distance) and vec_regs count (used in pressure
+ * heuristics). Sourced from Agner Fog instruction tables, Intel
+ * Optimization Reference Manual, AMD Software Optimization Guide.
  *
- * Sources:
- *   - Agner Fog's instruction tables (https://www.agner.org/optimize/)
- *   - Intel Optimization Reference Manual
- *   - AMD Software Optimization Guide for Zen 4/5
- *
- * Caveats:
- *   - These numbers are approximate and assume L1-resident data.
- *   - Real-world latencies vary with µop fusion, port pressure, and
- *     forwarding paths. We're not modeling those second-order effects.
- *   - We don't model port assignments or functional-unit counts. The
- *     scheduler uses simple critical-path priority rather than a full
- *     resource model.
- *)
+ * Approximate, L1-resident assumption. Doesn't model port pressure, µop
+ * fusion, or forwarding paths — the scheduler uses simple cp-priority,
+ * not a full resource model. *)
 
 type t = {
   name: string;

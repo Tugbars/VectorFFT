@@ -1,38 +1,16 @@
-(* Bb.ml — Branch-and-bound cluster-local scheduler with lexicographic cost.
+(* bb.ml — branch-and-bound scheduler with lexicographic (peak_live, progress) cost.
  *
- * Cost function: lexicographic (saturated_peak ASC, -progress ASC) where:
+ * Alternative to SU/bisection. DFS-enumerates cluster-local schedules
+ * with pruning: saturated_peak = max(peak_live, uarch.vec_regs) primary
+ * key (peaks below register count tied), critical-path-weighted progress
+ * tiebreaker.
  *
- *   saturated_peak = max(peak_live, uarch.vec_regs)
+ * Empirically tied with SU+GH on Raptor Lake; R=64 AVX2 shows a K-regime
+ * crossover where BB wins at K=512-1024 (+5.8%). Opt-in via --bb /
+ * --bb-budget. See doc 22.
  *
- *     Treats peak counts that already fit in the architectural register file
- *     as equivalent. Below the register count, peak is irrelevant — GCC has
- *     enough registers to allocate without spilling. Above the register count,
- *     each unit of peak corresponds to a real spill, so we want to minimize.
- *
- *   progress = sum over schedule of cp_dist[n_i] × (N - 1 - i)
- *
- *     Higher when high-cp_dist nodes are scheduled early. This is the
- *     latency-aware tiebreaker: among schedules with the same saturated
- *     peak, prefer the one that schedules critical-path-heavy nodes first.
- *     Maximizing progress matches what SU's primary key (cp_dist DESC) does
- *     at each step.
- *
- * Status: opt-in alternative to SU+GH. Empirically the schedules differ
- * structurally (~50% of lines reordered) from SU+GH but the cost-tied result
- * means runtime is roughly equivalent on Raptor Lake. R=64 AVX2 shows a real
- * K-regime crossover: GH wins at small K, BB wins at K=512-1024 (+5.8%).
- * Other uarchs may favor BB-lex for reasons we haven't measured. See doc 22.
- *
- * Strategy:
- *   - SU+GH baseline → initial (peak, progress)
- *   - DFS: enumerate ready nodes in pressure order (lowest delta first) so
- *     the first leaf is good; backtrack for alternatives.
- *   - Prune: saturated_peak strictly worse, or saturated_peak tied and
- *     remaining-progress upper bound can't beat best.
- *   - Time check on each branch.
- *
- * Limitation: the search space is N! pre-pruning. For clusters > ~50 ops
- * the time budget will typically expire before exhaustive search completes;
+ * Search-space note: N! pre-pruning. For clusters > ~50 ops the time
+ * budget typically expires before exhaustive search completes;
  * best-found-so-far is returned. *)
 
 (* Re-export of Algsimp.preds — kept under the historical name for the

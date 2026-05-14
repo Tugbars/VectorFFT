@@ -1,23 +1,10 @@
-(* Oracle: detect algebraically-equivalent-but-structurally-distinct nodes
- * in the post-algsimp DAG.
+(* oracle.ml — numerical CSE-miss detector via Schwartz-Zippel hashing.
  *
- * Algorithm (Schwartz-Zippel applied numerically):
- *   1. Assign deterministic random doubles to each Load leaf
- *   2. Evaluate every reachable DAG node bottom-up
- *   3. Bucket nodes by their numerical hash (rounded to 12 decimal digits
- *      to absorb FP non-associativity noise)
- *   4. A bucket with >1 distinct tag = missed CSE opportunity:
- *      multiple structurally-different nodes compute the same value.
- *
- * Limitations:
- *   - FP non-associativity can give false negatives: a*(b+c) and a*b+a*c
- *     might differ by 1-2 ULP, missing the bucket. Rounding to 12 digits
- *     catches most but not all. (FFTW uses exact rational arithmetic to
- *     avoid this; we accept some false negatives in exchange for ~50 LOC.)
- *   - False positives possible (two unrelated expressions happening to
- *     evaluate to nearly the same value), but extremely rare with random
- *     inputs across the full IEEE 754 double range.
- *)
+ * Evaluates every post-algsimp DAG node with deterministic random doubles
+ * at the Load leaves, buckets by numerical hash (rounded to 12 digits to
+ * absorb FP non-associativity). Buckets with >1 distinct tag flag
+ * algebraically-equivalent nodes algsimp didn't dedup. Diagnostic only;
+ * not in the codegen path. *)
 
 open Algsimp
 

@@ -1,22 +1,19 @@
-(* dft_r2c.ml — math layer for real-to-complex and complex-to-real DFTs.
+(* dft_r2c.ml — math layer for real-valued transforms.
  *
- * Separate from dft.ml (complex-to-complex) because r2c/c2r are
- * fundamentally different transform types with their own decomposition
- * strategies. Mirrors FFTW's separation between gen_dft.ml (c2c) and
- * gen_r2cf.ml / gen_r2cb.ml / gen_hc2c.ml / gen_hc2hc.ml.
+ * Each transform has its own algorithm; the inner complex sub-DFT is
+ * delegated to Dft.dft so all c2c machinery (CT decomposition,
+ * conjugate-pair, recursion) is reused unchanged.
  *
- * As this module grows it will host:
- *   - dft_r2c_direct  (this file, forward r2c via pair-pack + post-process)
- *   - dft_c2r_direct  (TODO: backward c2r via pre-process + unpack)
- *   - dft_r2c_first   (TODO: first-stage cascade codelet, v1.1 t1_r2c_first_R)
- *   - dft_r2c_last    (TODO: last-stage cascade codelet, v1.1 t1_r2c_last_R)
- *   - dft_hc2hc       (TODO: middle stages, Hermitian-packed in & out)
+ *   r2c / c2r     pair-pack + Hermitian-extraction butterfly
+ *   rdft          Hermitian-compact c2c via N-point r2c
+ *   hc2hc / hc2c  middle-stage codelets, Hermitian-packed in & out
+ *   dct2 / dct3   Makhoul reduction (N-point rdft + butterfly)
+ *   dct4          Lee 1984 (N/2-point c2c IFFT + pre/post twiddle)
+ *   dst2 / dst3   DCT-II/III wrappers with sign-flip + reversal
+ *   dht           N-point rdft + butterfly H[k] = Re(X[k]) ± Im(X[k])
  *
- * The inner complex sub-DFT is delegated to Dft.dft, so all the c2c
- * machinery (CT decomposition, conjugate-pair, recursive dispatch) is
- * reused unchanged. This module only handles the r2c-specific structure:
- * pair-packing at input, Hermitian-extraction butterfly at output.
- *)
+ * CLI flags: --r2c / --c2r / --rdft / --hc2hc / --hc2c / --dct{2,3,4} /
+ * --dst{2,3} / --dht. See doc 55 for the trig family bench results. *)
 
 open Expr
 
