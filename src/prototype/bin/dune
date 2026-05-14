@@ -1,3 +1,3 @@
 (executables
- (names prime_opcount gen_radix dump_r11 dump_stages dump_dit_dif dump_profile)
+ (names prime_opcount gen_radix dump_r11 dump_stages dump_dit_dif dump_profile emit_profile_h)
  (libraries vfft_v2 unix))

@@ -243,6 +243,38 @@ emit_variants() {
   fi
 }
 
+# Emit a no-twiddle (n1) codelet — used as the FFT's first stage on the DIT
+# forward path (stride S=1, no twiddle table read) and the last stage on the
+# DIF backward path. Because there's no twiddle table, there's no t1s
+# rendering choice, no DIT-vs-DIF order to flip, and no log3 derivation:
+# the variant matrix is just (fwd, bwd). Function name is
+# `radix{N}_n1_{fwd|bwd}_{isa}_gen_inplace_su_spill`.
+# Args: R isa family extra_flags suffix
+emit_n1_codelet() {
+  local R=$1
+  local isa=$2
+  local family=$3
+  local flags=$4
+  local suffix=$5
+
+  local dir="$OUTDIR/$isa/$family"
+  mkdir -p "$dir"
+  local out="$dir/r${R}_${suffix}.c"
+
+  # Note: NO --twiddled flag — gen_radix's default is the n1 form.
+  # --su explicitly engages the Sethi-Ullman scheduler (auto-rule is
+  # twiddled-gated, so we have to ask for it by name on the n1 path).
+  # --spill is twiddled-only at the math layer; passing it here is a no-op
+  # and the resulting symbol name is `..._gen_inplace_su` (no _spill).
+  if $GEN $R --in-place --isa $isa --su $flags --emit-c > "$out" 2>/dev/null; then
+    return 0
+  else
+    echo "  FAIL: R=$R isa=$isa n1 flags='$flags'"
+    rm -f "$out"
+    return 1
+  fi
+}
+
 # Emit a single trig-transform codelet. The trig codelets have their own
 # emit_codelet name convention: radix{N}_{transform}_{isa}_gen. No t1/t1s
 # /dit/dif variants — each trig transform has its own algorithm. Forward
@@ -315,10 +347,14 @@ for isa in $ISAS; do
   for family in $FAMILIES; do
     case $family in
       primes)
-        # Primes: 8 variants per R, no log3 (twiddle reduction doesn't apply
-        # to monolithic prime DFTs in our generator).
+        # Primes: 8 t1/t1s variants + 2 n1 variants per R. No log3 (twiddle
+        # reduction doesn't apply to monolithic prime DFTs in our generator).
         echo "  └─ family: primes ($PRIMES)"
         for R in $PRIMES; do
+          # n1 first-stage codelets (DIT fwd / DIF bwd entry points).
+          emit_n1_codelet $R $isa $family ""      "n1_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_n1_codelet $R $isa $family "--bwd" "n1_bwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+
           for v in t1_dit_fwd t1_dit_bwd t1_dif_fwd t1_dif_bwd \
                    t1s_dit_fwd t1s_dit_bwd t1s_dif_fwd t1s_dif_bwd; do
             # Build the flag string from variant name
@@ -339,6 +375,8 @@ for isa in $ISAS; do
         # R=4, R=8: log3 supported but marginal at these sizes
         echo "  └─ family: small_pow2 ($SMALL_POW2)"
         for R in $SMALL_POW2; do
+          emit_n1_codelet $R $isa $family ""      "n1_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_n1_codelet $R $isa $family "--bwd" "n1_bwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
           emit_variants $R $isa $family yes
           TOTAL_OK=$((TOTAL_OK + 16))
         done
@@ -349,6 +387,8 @@ for isa in $ISAS; do
         # On AVX2 with R ≥ 32, GH auto-fires (doc 21) — no flag needed.
         echo "  └─ family: mid_pow2 ($MID_POW2)"
         for R in $MID_POW2; do
+          emit_n1_codelet $R $isa $family ""      "n1_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_n1_codelet $R $isa $family "--bwd" "n1_bwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
           emit_variants $R $isa $family yes
           TOTAL_OK=$((TOTAL_OK + 16))
         done
@@ -359,6 +399,8 @@ for isa in $ISAS; do
         # log3 crossover at R=512 B≈128 — generate both (doc 42).
         echo "  └─ family: large_pow2 ($LARGE_POW2)"
         for R in $LARGE_POW2; do
+          emit_n1_codelet $R $isa $family ""      "n1_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_n1_codelet $R $isa $family "--bwd" "n1_bwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
           emit_variants $R $isa $family yes
           TOTAL_OK=$((TOTAL_OK + 16))
         done
@@ -367,9 +409,12 @@ for isa in $ISAS; do
       xl_pow2)
         # R=1024: monolithic loses to multi-stage cascade (doc 41).
         # Generate anyway for research, but only 2 essential variants —
-        # the planner should never pick this in practice.
+        # the planner should never pick this in practice. n1 still emitted
+        # so the cost model has a measurable first-stage entry.
         echo "  └─ family: xl_pow2 ($XL_POW2) [research-only; planner prefers cascade]"
         for R in $XL_POW2; do
+          emit_n1_codelet $R $isa $family ""      "n1_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_n1_codelet $R $isa $family "--bwd" "n1_bwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
           # Only fwd dit; this isn't a production path
           emit_codelet $R $isa $family ""                "t1_dit_fwd"
           emit_codelet $R $isa $family "--log3"          "t1_dit_fwd_log3"
@@ -381,6 +426,8 @@ for isa in $ISAS; do
         # Small non-prime composites used by mixed-radix planners.
         echo "  └─ family: composites ($COMPOSITES)"
         for R in $COMPOSITES; do
+          emit_n1_codelet $R $isa $family ""      "n1_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
+          emit_n1_codelet $R $isa $family "--bwd" "n1_bwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
           emit_variants $R $isa $family no  # log3 supported only for pow2
           TOTAL_OK=$((TOTAL_OK + 8))
         done
