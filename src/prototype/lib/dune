@@ -18,4 +18,4 @@
 (library
  (name vfft_v2)
  (libraries unix)
- (modules expr algsimp split_radix dft dft_r2c simd_ir uarch isa schedule annotate regalloc emit_c bb))
+ (modules expr algsimp split_radix dft dft_r2c simd_ir uarch isa schedule annotate regalloc emit_c bb profile))
