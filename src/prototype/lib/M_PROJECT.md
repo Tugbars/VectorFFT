@@ -585,7 +585,7 @@ Largest case: R=256 t1_log3 AVX-512, 3836 + 2758 = 6594 allocated tags,
 
 ## 9. Methodology Lessons
 
-Three things to remember next time:
+Four things to remember next time:
 
 1. **Single-trial timing is noise.** Early M5a/M5b/M5c numbers (+10.2%,
    +27.7%, +2.5%) were inflated by warm/cold cache and thermal state.
@@ -607,46 +607,74 @@ Three things to remember next time:
    thing. Each stage compiled, each stage tested, each stage's
    correctness was a precondition for the next.
 
+4. **Worst-case bounds enable aggressive defaults.** M6's aggressive
+   lifetime extension (cover all remaining uses) sounds risky at face
+   value — what if pressure forces eviction at every use? But the
+   answer is that Belady eviction handles it: the worst case degrades
+   exactly to M5's per-use reload behavior. **M6 is provably ≥ M5 in
+   performance.** That structural guarantee removed any need for
+   heuristic gating or per-case tuning. The lesson generalizes:
+   designing the worst-case bound first lets the common-case
+   optimization be as aggressive as it needs to be.
+
 ---
 
 ## 10. What's Left
 
-### M6: Reload-variable lifetime tracking
+### Alternative compilers (highest priority)
 
-Current M5: each use of a spilled tag emits a fresh reload load. For a
-tag with N uses across positions p1..pN, M5 emits N loads — one per use
-site, each into a new variable (`tN_r0`, `tN_r1`, ...).
+ICX and clang have different register allocators with different spill
+schedulers. With M5 the question was "does smarter compiler RA dedup
+the redundant reloads at the asm level?" — making M6 a candidate for
+deferral or replacement. **With M6 the question changes** to "can ICX
+or clang find anything M6 missed at the C level?" — a much harder bar
+because M6 has already deduplicated reloads at the source level.
 
-Target M6: track reload-variable lifetimes the same way M3a tracks
-normal tags. A reload at position p1 produces a fresh register binding
-that stays alive until its last use within p2..pN, with `name_overrides`
-pointing all intermediate uses at the same variable. Subsequent uses
-after the reload-variable dies need a new reload.
+If ICX/clang produce essentially identical asm to gcc on M6 output,
+that's strong evidence M6 is near the ceiling of what a source-level
+allocator can do. If they extract additional speedup, the gap points
+at specific opportunities (scheduling, instruction selection, peephole
+reordering) that M6 didn't address.
 
-This is mechanically straightforward: extend `uses_sorted` to include
-synthetic reload tags, run the same Belady-aware liveness analysis on
-them, decide which reloads should be promoted to "kept alive across N
-uses" vs "single-shot reload" based on local register pressure.
+The R=256 t1_log3 case is the most interesting test: if ICX recovers
+that one, M6's residual regression is purely a gcc-specific scheduler
+limitation; if it doesn't, the dependency-chain-depth diagnosis
+(§4.4) is confirmed and the next lever is upstream scheduling, not RA.
 
-Expected impact: R=256 t1_dit should flip from -14% to a moderate win.
-R=256 t1_log3 should improve from -29% to at least neutral. Cases that
-are already wins should not regress (the optimization only removes
-redundant loads).
+### Upstream scheduler work (only for R=256 t1_log3)
+
+The 1750-slot residual case isn't allocator-bound; it's chain-depth
+bound. Possible levers:
+
+- **Schedule reordering** to break long FMA chains into shorter
+  parallel sub-chains where possible.
+- **Codelet decomposition** — split R=256 t1_log3 into two smaller
+  inner codelets composed via the strided pattern.
+- **Different radix choice** at planner level — if R=256 t1_log3 is
+  worse than R=128 × R=2 combination at the relevant K, the planner
+  should pick the combination.
+
+These are weeks of work and only matter if R=256 t1_log3 actually
+gets selected by the planner. If R=128 + something beats it at every
+K of interest, this is unnecessary.
 
 ### AVX2 t1_log3 variants
 
-Informal: not in original plan. R=64 log3 AVX2, R=128 log3 AVX2 etc.
+Informal: not in original plan. R=64 log3 AVX2, R=128 log3 AVX2.
 Given log3 has heavier register pressure and AVX2 has fewer registers,
-some of these may not even fit M5 cleanly. Worth probing to find the
-practical R-limit on AVX2.
+some of these may stress M6's eviction logic in ways the AVX-512
+suite doesn't. Worth probing to find the practical R-limit on AVX2.
 
-### Alternative compilers
+### Heuristic: dynamic lifetime sizing
 
-ICX and clang have different register allocators with different spill
-schedulers. In particular, ICX is known for aggressive coalescing of
-redundant memory ops. There's a reasonable chance ICX naturally
-collapses the redundant reloads at the assembly level, making R=256
-viable without M6. Worth measuring before investing M6 time.
+M6's aggressive policy (cover all remaining uses) is optimal when
+pressure is moderate. Under extreme pressure it relies entirely on
+Belady eviction to handle the consequences, which costs a re-reload
+per evicted sentinel. A potential M7 would size the initial lifetime
+based on local pressure — cover only N uses ahead instead of all
+remaining ones — to reduce eviction churn. Unclear whether the gain
+would be measurable; the worst-case bound (degrades to M5) is already
+tight enough that there isn't much room above it.
 
 ---
 
@@ -672,3 +700,7 @@ gcc-11 -O3 -mavx512f -mfma -c r128_log3_def.c -o r128_log3_def.o
 gcc-11 -O3 -mavx512f -mfma -c r128_log3_m5.c  -o r128_log3_m5.o
 # (link with probe_r128_log3.c, compare outputs)
 ```
+
+Full regression script at `/mnt/user-data/outputs/regression.sh` — runs
+all 9 cases, reports PASS/FAIL with diff counts, bug counts, and code
+size deltas.
