@@ -231,6 +231,41 @@ function Invoke-Variants {
     return $ok
 }
 
+# Emit a no-twiddle (n1) codelet — used as the FFT's first stage on the DIT
+# forward path and the last stage on the DIF backward path. Because there's
+# no twiddle table, there's no t1s rendering choice, no dit/dif order to
+# flip, and no log3 derivation: the variant matrix is just (fwd, bwd).
+# Function name is radix{R}_n1_{fwd|bwd}_{isa}_gen_inplace_su_spill.
+function Invoke-N1 {
+    param(
+        [int]$R, [string]$IsaName, [string]$Family,
+        [string[]]$ExtraFlags, [string]$Suffix
+    )
+
+    $dir = Join-Path $OutDir (Join-Path $IsaName $Family)
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $out = Join-Path $dir "r${R}_${Suffix}.c"
+
+    # No --twiddled flag — gen_radix's default is the n1 form.
+    # --su explicitly engages the Sethi-Ullman scheduler (auto-rule is
+    # twiddled-gated, so we ask for it by name on the n1 path).
+    # --spill is twiddled-only at the math layer; passing it would be a no-op,
+    # and the resulting symbol name is `..._gen_inplace_su` (no _spill).
+    $args = @("$R", "--in-place", "--isa", $IsaName, "--su", "--emit-c") + $ExtraFlags
+    try {
+        $output = & $Gen @args 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  FAIL: R=$R isa=$IsaName n1 flags='$($ExtraFlags -join ' ')'" -ForegroundColor Red
+            return $false
+        }
+        Set-Content -Path $out -Value $output -Encoding utf8
+        return $true
+    } catch {
+        Write-Host "  FAIL: R=$R isa=$IsaName n1 (exception: $_)" -ForegroundColor Red
+        return $false
+    }
+}
+
 # Trig-transform codelet emitter. Each trig transform has its own algorithm
 # (DCT-II/III/IV via Makhoul/inverse-Makhoul/Lee, DST-II/III via DCT
 # wrappers, DHT via N-rdft+butterfly). No t1/t1s/dit/dif variants.
@@ -317,6 +352,8 @@ foreach ($isaName in $Isas) {
             "primes" {
                 Write-Host "  └─ family: primes ($radixStr)"
                 foreach ($r in $radixes) {
+                    if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @()        -Suffix "n1_fwd") { $TotalOK++ } else { $TotalFail++ }
+                    if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @("--bwd") -Suffix "n1_bwd") { $TotalOK++ } else { $TotalFail++ }
                     foreach ($v in @("t1_dit_fwd","t1_dit_bwd","t1_dif_fwd","t1_dif_bwd",
                                       "t1s_dit_fwd","t1s_dit_bwd","t1s_dif_fwd","t1s_dif_bwd")) {
                         $flags = @()
@@ -333,6 +370,8 @@ foreach ($isaName in $Isas) {
             { $_ -eq "small_pow2" -or $_ -eq "mid_pow2" -or $_ -eq "large_pow2" } {
                 Write-Host "  └─ family: $family ($radixStr)"
                 foreach ($r in $radixes) {
+                    if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @()        -Suffix "n1_fwd") { $TotalOK++ } else { $TotalFail++ }
+                    if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @("--bwd") -Suffix "n1_bwd") { $TotalOK++ } else { $TotalFail++ }
                     $TotalOK += (Invoke-Variants -R $r -IsaName $isaName -Family $family -WithLog3 $true)
                 }
             }
@@ -340,6 +379,8 @@ foreach ($isaName in $Isas) {
             "xl_pow2" {
                 Write-Host "  └─ family: xl_pow2 ($radixStr) [research-only; planner prefers cascade]"
                 foreach ($r in $radixes) {
+                    if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @()        -Suffix "n1_fwd") { $TotalOK++ } else { $TotalFail++ }
+                    if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @("--bwd") -Suffix "n1_bwd") { $TotalOK++ } else { $TotalFail++ }
                     if (Invoke-Codelet -R $r -IsaName $isaName -Family $family -Flags @() -Suffix "t1_dit_fwd") {
                         $TotalOK++
                     } else { $TotalFail++ }
@@ -352,6 +393,8 @@ foreach ($isaName in $Isas) {
             "composites" {
                 Write-Host "  └─ family: composites ($radixStr)"
                 foreach ($r in $radixes) {
+                    if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @()        -Suffix "n1_fwd") { $TotalOK++ } else { $TotalFail++ }
+                    if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @("--bwd") -Suffix "n1_bwd") { $TotalOK++ } else { $TotalFail++ }
                     $TotalOK += (Invoke-Variants -R $r -IsaName $isaName -Family $family -WithLog3 $false)
                 }
             }

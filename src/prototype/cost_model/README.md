@@ -68,14 +68,102 @@ operator last ran. The fix is two parallel tables.
   emits today.
 - DIT-fwd direction (DIF, bwd are symmetric in cycles).
 
-**Out of scope for v1 (future v2+):**
+**Added beyond v1 baseline:**
 
-- Strided codelets (Design C 2D row FFT) — separate code path, separate
-  CPE concerns
+- **Trig family** (DCT-II/III/IV, DST-II/III, DHT) at N ∈ {8, 16, 32, 64}.
+  Real, distinct DAGs per (transform, N) — `count_ops` produces honest
+  per-transform op profiles. Scored via `stride_score_trig_codelet()`
+  in `factorizer.h`. Six tables × two ISAs in `radix_profile.h`.
+- **Strided (Design C 2D row-phase) codelets** at R ∈ {16, 32, 64, 128, 256}.
+  No separate profile table — at the DAG layer strided is structurally
+  identical to n1 for the same R, because the 4×4 (AVX-2) / 8×8 (AVX-512)
+  in-register transpose preamble lives in `emit_c.ml`, not in the DAG.
+  The `_strided_transpose_overhead(R, isa)` helper in `factorizer.h`
+  adds an additive shuffle-count term on top of the n1 op count;
+  `stride_score_strided_codelet()` combines them.
+
+**Out of scope (future):**
+
 - Twidsq codelets — separate code path
-- Trig family (DCT-II/III/IV, DST-II/III, DHT) — separate code path,
-  would need its own table
 - R2C / C2R / RDFT / HC2HC / HC2C — separate code path
+
+## Known limitations
+
+### DAG-counted FMAs undercount what the compiler emits — by a size-dependent factor
+
+The `n_fma` column in `radix_profile.h` reflects only **explicit `NK_Fma`
+nodes** produced by the OCaml-side `fma_lift` pass. The C compiler then
+fuses additional `mul + add` pairs into FMA at codegen (`-mfma`,
+`-ffp-contract=fast` is on at `-O2+`). Measured ratio of assembled
+`vfmadd*pd` count to DAG `n_fma`, AVX-2 t1 codelets via `gcc-15 -O3
+-mavx2 -mfma`, M-active emission:
+
+| R    | DAG n_fma | asm vfmadd*pd | ratio |
+|------|-----------|---------------|-------|
+| 4    | 6         | 6             | 1.00× |
+| 8    | 15        | 16            | 1.06× |
+| 16   | 33        | 42            | 1.27× |
+| 32   | 74        | 106           | 1.43× |
+| 64   | 160       | 250           | 1.56× |
+| 128  | 334       | 586           | 1.75× |
+| 256  | 691       | 1338          | 1.93× |
+| 512  | 1486      | 3034          | 2.04× |
+| 1024 | 3173      | 6778          | 2.13× |
+
+(Sweep reproducible via the script described in §"Reproducing the
+sweep" below.)
+
+Two things to note:
+
+1. **The .c source matches `n_fma` exactly.** Every row of the table
+   has `src intrinsic FMA == DAG n_fma`. `Profile.count_ops` is a
+   faithful accounting of what `emit_c.ml` will render — the gap is
+   purely the compiler's downstream fusion of `mul + add` patterns
+   the OCaml side didn't lift.
+2. **The ratio grows monotonically with codelet size.** Small codelets
+   (R=4/8) hit 1.0×: the OCaml emitter has already paired every
+   fusible mul+add and the compiler finds no more. Large codelets
+   (R=512/1024) hit ~2×: there's enough room in the longer arithmetic
+   chains for gcc to find additional fusions even with the `register
+   asm() + asm volatile barrier` pattern in place.
+
+What this means for the cost model:
+
+- **Total op count is roughly preserved.** Each compiler-emitted FMA
+  replaces one explicit mul + one explicit add, so `n_add + n_mul +
+  n_fma` summed across the DAG stays close to the assembled total.
+- **Cycle estimate `total_ops / SIMD_width` is conservatively high
+  but not absurdly so.** For R≤32 the inflation is <5%; at R=1024 the
+  DAG undercounts FMA by ~3500 instructions, but the corresponding
+  mul/add overcounts roughly cancel out, so the *total cycle* estimate
+  stays within ~20% of the measured truth (still useful as a relative
+  ordering signal).
+- **Per-column breakdown is not faithful for big codelets.** Don't
+  read `n_fma` from `radix_profile.h` at R≥128 as the actual FMA
+  throughput pressure; it's a lower bound. The corresponding `n_mul`
+  / `n_add` are upper bounds.
+
+The cost model is most accurate for **relative** comparisons between
+factorizations / codelets because the inflation is roughly proportional
+across rows of similar size. The CPE table (when populated via
+`measure_cpe`) corrects for this empirically — that's why CPE wins
+over the static profile when available, and why the profile fallback
+is a fallback.
+
+To get faithful per-instruction counts we'd need to parse the assembled
+output (objdump / readelf → count `vfmadd*pd` etc.) and bake those
+into a new column. That's an inversion of the current pipeline and
+orthogonal to v1.
+
+### Reproducing the sweep
+
+```bash
+# Compile each codelet to assembly and count vfmadd*pd
+gcc-15 -O3 -mavx2 -mfma -Wno-incompatible-pointer-types -masm=intel -S \
+  -o /tmp/r${R}.s src/prototype/codelets/avx2/.../r${R}_t1_dit_fwd.c
+grep -cE 'vf(n)?m(add|sub)[0-9]+pd' /tmp/r${R}.s
+# Compare against radix_profile.h column n_fma for the same R / variant.
+```
 
 ## Fingerprint extension
 
