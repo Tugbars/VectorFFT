@@ -542,14 +542,14 @@ split_radix, dft_r2c) was untouched.
 
 | File | Pre-M | Post-M6 | Notes |
 |---|---|---|---|
-| `lib/regalloc.ml` | — | 1062 lines | NEW; M1 stub, grew through M5 (918) then M6 (+144) |
-| `lib/emit_c.ml` | 1667 lines | 2055 lines | +388 (M3a +174, M5 +214); unchanged in M6 |
-| `lib/isa.ml` | 140 lines | 140 lines | +`pinned_reg_decl` helper (M3a) |
+| `lib/regalloc.ml` | — | 1019 lines | NEW; M1 stub, grew through M5 (~875) then M6 (+~144) |
+| `lib/emit_c.ml` | 1621 lines | 2005 lines | +384 (M3a +174, M5 +210); unchanged in M6 |
+| `lib/isa.ml` | 106 lines | 119 lines | +`pinned_reg_decl` helper + barrier (M3a, +13 lines) |
 | `bin_test/m1_test.ml` | — | — | NEW (M1) |
 | `bin_test/m2_test.ml` | — | — | NEW (M2) |
 
-Diffs against M3a baseline preserved in
-`/mnt/user-data/outputs/{regalloc,emit_c}.ml.diff`.
+Diffs against M3a baseline preserved in `src/prototype/diffs/`
+(`emit_c.ml.diff`, `dft.ml.diff`, `generate_codelets.sh.diff`).
 
 ---
 
@@ -559,13 +559,15 @@ Diffs against M3a baseline preserved in
   measurement, no behavior change).
 - `VFFT_USE_REGALLOC=1` — enable M3a path. If a pass overflows the
   budget, fall back to gcc's default RA for that pass.
-- `VFFT_USE_REGALLOC=1 VFFT_USE_REGALLOC_M5=1` — enable M3a with M5
+- `VFFT_USE_REGALLOC=1 VFFT_USE_REGALLOC_M5=1` — enable M3a with M5/M6
   fallback. Overflow → spill via Belady eviction instead of
-  fall-through.
+  fall-through. M6's reload-variable lifetime tracking is part of this
+  path (no separate env var; it's the default behavior when M5 is on).
 
-Naming: codelets generated with M3a/M5 have the suffix `_su_spill`
+Naming: codelets generated with M3a/M5/M6 have the suffix `_su_spill`
 ("spill" is from the cluster-output `spill_re/spill_im` infrastructure,
-which predates the M-project and is unrelated to M5's `regalloc_spill[]`).
+which predates the M-project and is unrelated to M5/M6's
+`regalloc_spill[]`).
 
 ---
 
@@ -573,13 +575,41 @@ which predates the M-project and is unrelated to M5's `regalloc_spill[]`).
 
 **9/9 regression cases pass.** All output diffs are at FP-epsilon
 (0-6 LSB diffs out of thousands of doubles), all due to gcc's permitted
-reordering of associative-but-not-commutative FMA chains around M5's
+reordering of associative-but-not-commutative FMA chains around M5/M6's
 spill stores. **Zero use-after-clobber bugs across all runs**, validated
 by `find_bad_reuse_v3.py` which traces register-pinning conflicts
 through the C output.
 
 Largest case: R=256 t1_log3 AVX-512, 3836 + 2758 = 6594 allocated tags,
 527 + 1306 = 1833 spill slots. 6 LSB diffs, 0 bugs.
+
+**Additional validation (2026-05-14):** Full codelet tree regenerated
+with M3a + M5 + M6 active. 536 codelets total across both ISAs and
+8 families (primes/small_pow2/mid_pow2/large_pow2/xl_pow2/composites/
+trig/strided); 240 of them go through the spill-recipe path and
+therefore exercise M5/M6 (the remaining 296 are primes/trig/strided
+which don't use the `_su_spill` recipe). All 536 compile cleanly under
+gcc-15 -O3 with `-flive-range-shrinkage -Wno-incompatible-pointer-types`.
+
+- **Structural M6 verification:** R=256 t1_log3 AVX-512 codelet shows
+  4.02 references per reload variable (1395 unique reload vars across
+  5615 references). M5 would give exactly 2.0; the observed 4× reuse
+  confirms M6's reload-variable lifetime tracking is functionally
+  active.
+- **AVX2 regression bench:** `bench/regression/regression_bench_avx2.c`
+  (M6 OCaml output vs hand-coded Python reference) at R=16/25/32/64
+  fwd_t1_dit. **17/20 cells OCaml WINS, 3 TIE, 0 regressions.** All
+  correctness checks PASSED. Best wins: R=16 K=64 ratio 0.789, R=25
+  K=64 ratio 0.794, R=64 K=1024 ratio 0.831.
+- **ICX compile compatibility:** ICX accepts the `register asm()` +
+  `asm volatile ("" : "+v"(x))` pattern cleanly. R=64 t1_dit_fwd
+  AVX-512: ICX 22838 B vs gcc-15 22792 B (0.2% diff). R=256
+  t1_dit_fwd_log3 AVX-512: ICX 127563 B vs gcc-15 134632 B
+  (**ICX 5.2% smaller**). Both compilers use all 32 zmm registers at
+  R=64; load/store instruction counts at R=256 log3 are essentially
+  equivalent (5582 ICX vs 5535 gcc). M6 already removed the
+  redundant-load explosion at the source level, so ICX can't make
+  much additional progress by collapsing memory ops.
 
 ---
 
@@ -621,25 +651,39 @@ Four things to remember next time:
 
 ## 10. What's Left
 
-### Alternative compilers (highest priority)
+### Alternative compilers — partial result available
 
-ICX and clang have different register allocators with different spill
-schedulers. With M5 the question was "does smarter compiler RA dedup
-the redundant reloads at the asm level?" — making M6 a candidate for
-deferral or replacement. **With M6 the question changes** to "can ICX
-or clang find anything M6 missed at the C level?" — a much harder bar
-because M6 has already deduplicated reloads at the source level.
+**Initial measurement (2026-05-14):** ICX (Intel oneAPI clang-LLVM-based,
+2025.3) accepts M6-emitted codelets without modification. Compile-only
+comparison:
 
-If ICX/clang produce essentially identical asm to gcc on M6 output,
-that's strong evidence M6 is near the ceiling of what a source-level
-allocator can do. If they extract additional speedup, the gap points
-at specific opportunities (scheduling, instruction selection, peephole
-reordering) that M6 didn't address.
+- R=64 t1_dit_fwd AVX-512: ICX .o = 22838 B, gcc-15 .o = 22792 B (0.2%
+  larger; essentially tied)
+- R=256 t1_dit_fwd_log3 AVX-512: ICX .o = 127563 B, gcc-15 .o = 134632 B
+  (**ICX 5.2% smaller**)
+- Load/store instruction count at R=256 log3: ICX 5582, gcc 5535
+  (essentially equivalent — within 1%)
+- zmm register usage at R=64: 32 distinct registers in both compilers
+  (the M3a coloring is honored by both)
 
-The R=256 t1_log3 case is the most interesting test: if ICX recovers
-that one, M6's residual regression is purely a gcc-specific scheduler
-limitation; if it doesn't, the dependency-chain-depth diagnosis
-(§4.4) is confirmed and the next lever is upstream scheduling, not RA.
+The R=256 log3 size difference is real but doesn't come from collapsing
+memory ops — load/store counts are essentially identical. ICX is making
+different instruction-selection / scheduling choices on the surrounding
+code. This validates the M_PROJECT thesis: M6 already removed the
+redundant-load explosion at the source level, so compiler-level
+optimization can't collapse loads further. **What's preserved is the
+M3a coloring (both compilers honor the pinning) and the M5/M6
+spill/reload structure.** What differs is the surrounding optimization,
+and the differences are modest (single-digit percent).
+
+**Still pending:** runtime perf measurement of M6 codelets under ICX
+vs gcc. The compile-time check rules out the original "ICX collapses
+M5's reload explosion" hypothesis (moot after M6) but doesn't tell us
+whether ICX's instruction scheduling extracts additional speedup at
+runtime. The R=256 t1_log3 residual regression is the most informative
+test case: if ICX recovers it, that's evidence the dependency-chain-depth
+diagnosis (§4.4) is gcc-specific; if it doesn't, the diagnosis is
+confirmed and the next lever is upstream scheduling, not RA.
 
 ### Upstream scheduler work (only for R=256 t1_log3)
 
@@ -686,20 +730,45 @@ From the work tree (`lib/regalloc.ml`, `lib/emit_c.ml`,
 ```bash
 dune build
 
-# baseline
+# baseline (no regalloc, gcc handles allocation)
 ./_build/default/bin/gen_radix.exe 128 --twiddled --in-place \
     --log3 --isa avx512 --emit-c > r128_log3_def.c
 
-# M5
+# M3a + M5 + M6 (current default when the env vars are set)
 VFFT_USE_REGALLOC=1 VFFT_USE_REGALLOC_M5=1 \
   ./_build/default/bin/gen_radix.exe 128 --twiddled --in-place \
-    --log3 --isa avx512 --emit-c > r128_log3_m5.c
+    --log3 --isa avx512 --emit-c > r128_log3_m6.c
 
 # correctness
 gcc-11 -O3 -mavx512f -mfma -c r128_log3_def.c -o r128_log3_def.o
-gcc-11 -O3 -mavx512f -mfma -c r128_log3_m5.c  -o r128_log3_m5.o
+gcc-11 -O3 -mavx512f -mfma -c r128_log3_m6.c  -o r128_log3_m6.o
 # (link with probe_r128_log3.c, compare outputs)
 ```
+
+For a full-tree regeneration (all radixes, both ISAs, every family),
+the canonical workflow is:
+
+```bash
+dune build
+VFFT_USE_REGALLOC=1 VFFT_USE_REGALLOC_M5=1 \
+  ISA=both ./scripts/generate_codelets.sh
+CC=gcc-11 EXTRA_CFLAGS='-flive-range-shrinkage -Wno-incompatible-pointer-types' \
+  ./scripts/compile_codelets.sh
+```
+
+This produces 536 `.c` files across `codelets/{avx2,avx512}/{primes,
+small_pow2,mid_pow2,large_pow2,xl_pow2,composites,trig,strided}/` and
+their `.o` counterparts. The `-Wno-incompatible-pointer-types` flag
+is needed for gcc-12+ which treats `_mm256_loadu_pd(&regalloc_spill[N])`
+(where `regalloc_spill` is declared `__m256d[]`) as an error rather
+than a warning. gcc-11 accepts it as a warning, hence the flag wasn't
+needed during the original M-project development.
+
+For AVX2 correctness regression: `bench/regression/regression_bench_avx2.c`
+compares M6 OCaml output against hand-coded Python references for
+R=16/25/32/64 at K ∈ {64,128,256,512,1024}. Build via
+`build_and_run.sh` (sets PYGEN to the Python generators in
+`src/vectorfft_tune/radixes/r{R}/`).
 
 Full regression script at `/mnt/user-data/outputs/regression.sh` — runs
 all 9 cases, reports PASS/FAIL with diff counts, bug counts, and code
