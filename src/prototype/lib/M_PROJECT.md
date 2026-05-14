@@ -1009,6 +1009,3 @@ R=16/25/32/64 at K ∈ {64,128,256,512,1024}. Build via
 `build_and_run.sh` (sets PYGEN to the Python generators in
 `src/vectorfft_tune/radixes/r{R}/`).
 
-Full regression script at `/mnt/user-data/outputs/regression.sh` — runs
-all 9 cases, reports PASS/FAIL with diff counts, bug counts, and code
-size deltas.
