@@ -12,26 +12,27 @@ void radix3_n1_bwd_avx512_gen_inplace_su(
     size_t me)
 {
     for (size_t k = 0; k < me; k += 8) {
-        const __m512d t6 = _mm512_set1_pd(0.5);
-        const __m512d t0 = _mm512_set1_pd(0.86602540378444004);
-        const __m512d t1 = _mm512_loadu_pd(&rio_im[2*ios + k]);
-        const __m512d t2 = _mm512_loadu_pd(&rio_im[1*ios + k]);
-        const __m512d t17 = _mm512_add_pd(t1, t2);
-        const __m512d t3 = _mm512_sub_pd(t2, t1);
-        const __m512d t7 = _mm512_loadu_pd(&rio_re[2*ios + k]);
-        const __m512d t8 = _mm512_loadu_pd(&rio_re[1*ios + k]);
-        const __m512d t9 = _mm512_add_pd(t7, t8);
-        const __m512d t14 = _mm512_sub_pd(t8, t7);
-        const __m512d t11 = _mm512_loadu_pd(&rio_re[0*ios + k]);
-        const __m512d t24 = _mm512_add_pd(t9, t11);
-        const __m512d t30 = _mm512_fnmadd_pd(t6, t9, t11);
-        const __m512d t31 = _mm512_fmadd_pd(t0, t3, t30);
-        const __m512d t34 = _mm512_fnmadd_pd(t0, t3, t30);
-        const __m512d t19 = _mm512_loadu_pd(&rio_im[0*ios + k]);
-        const __m512d t25 = _mm512_add_pd(t17, t19);
-        const __m512d t32 = _mm512_fnmadd_pd(t6, t17, t19);
-        const __m512d t33 = _mm512_fnmadd_pd(t0, t14, t32);
-        const __m512d t35 = _mm512_fmadd_pd(t0, t14, t32);
+        register __m512d t0 asm("zmm0") = _mm512_set1_pd(0.86602540378444004); asm volatile ("" : "+v"(t0));
+        register __m512d t6 asm("zmm1") = _mm512_set1_pd(0.5); asm volatile ("" : "+v"(t6));
+        register __m512d t1 asm("zmm2") = _mm512_loadu_pd(&rio_im[2*ios + k]); asm volatile ("" : "+v"(t1));
+        register __m512d t2 asm("zmm3") = _mm512_loadu_pd(&rio_im[1*ios + k]); asm volatile ("" : "+v"(t2));
+        register __m512d t17 asm("zmm4") = _mm512_add_pd(t1, t2); asm volatile ("" : "+v"(t17));
+        const __m512d t4 = _mm512_mul_pd(t0, _mm512_sub_pd(t2, t1));
+        register __m512d t7 asm("zmm2") = _mm512_loadu_pd(&rio_re[2*ios + k]); asm volatile ("" : "+v"(t7));
+        register __m512d t8 asm("zmm3") = _mm512_loadu_pd(&rio_re[1*ios + k]); asm volatile ("" : "+v"(t8));
+        register __m512d t9 asm("zmm6") = _mm512_add_pd(t7, t8); asm volatile ("" : "+v"(t9));
+        const __m512d t15 = _mm512_mul_pd(t0, _mm512_sub_pd(t8, t7));
+        register __m512d t11 asm("zmm0") = _mm512_loadu_pd(&rio_re[0*ios + k]); asm volatile ("" : "+v"(t11));
+        register __m512d t24 asm("zmm2") = _mm512_add_pd(t9, t11); asm volatile ("" : "+v"(t24));
+        register __m512d t30 asm("zmm3") = _mm512_fnmadd_pd(t6, t9, t11); asm volatile ("" : "+v"(t30));
+        register __m512d t31 asm("zmm0") = _mm512_add_pd(t4, t30); asm volatile ("" : "+v"(t31));
+        register __m512d t34 asm("zmm6") = _mm512_sub_pd(t30, t4); asm volatile ("" : "+v"(t34));
+        register __m512d t19 asm("zmm3") = _mm512_loadu_pd(&rio_im[0*ios + k]); asm volatile ("" : "+v"(t19));
+        register __m512d t25 asm("zmm5") = _mm512_add_pd(t17, t19); asm volatile ("" : "+v"(t25));
+        register __m512d t32 asm("zmm8") = _mm512_fnmadd_pd(t6, t17, t19); asm volatile ("" : "+v"(t32));
+        register __m512d t33 asm("zmm1") = _mm512_sub_pd(t32, t15); asm volatile ("" : "+v"(t33));
+        register __m512d t35 asm("zmm3") = _mm512_add_pd(t15, t32); asm volatile ("" : "+v"(t35));
+
         _mm512_storeu_pd(&rio_re[2*ios + k], t31);
         _mm512_storeu_pd(&rio_im[2*ios + k], t33);
         _mm512_storeu_pd(&rio_re[1*ios + k], t34);

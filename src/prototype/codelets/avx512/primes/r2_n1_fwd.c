@@ -12,14 +12,15 @@ void radix2_n1_fwd_avx512_gen_inplace_su(
     size_t me)
 {
     for (size_t k = 0; k < me; k += 8) {
-        const __m512d t0 = _mm512_loadu_pd(&rio_re[1*ios + k]);
-        const __m512d t2 = _mm512_loadu_pd(&rio_im[1*ios + k]);
-        const __m512d t5 = _mm512_loadu_pd(&rio_re[0*ios + k]);
-        const __m512d t8 = _mm512_sub_pd(t5, t0);
-        const __m512d t11 = _mm512_add_pd(t0, t5);
-        const __m512d t7 = _mm512_loadu_pd(&rio_im[0*ios + k]);
-        const __m512d t10 = _mm512_sub_pd(t7, t2);
-        const __m512d t12 = _mm512_add_pd(t2, t7);
+        register __m512d t0 asm("zmm0") = _mm512_loadu_pd(&rio_re[1*ios + k]); asm volatile ("" : "+v"(t0));
+        register __m512d t2 asm("zmm1") = _mm512_loadu_pd(&rio_im[1*ios + k]); asm volatile ("" : "+v"(t2));
+        register __m512d t5 asm("zmm2") = _mm512_loadu_pd(&rio_re[0*ios + k]); asm volatile ("" : "+v"(t5));
+        register __m512d t8 asm("zmm3") = _mm512_sub_pd(t5, t0); asm volatile ("" : "+v"(t8));
+        register __m512d t11 asm("zmm4") = _mm512_add_pd(t0, t5); asm volatile ("" : "+v"(t11));
+        register __m512d t7 asm("zmm0") = _mm512_loadu_pd(&rio_im[0*ios + k]); asm volatile ("" : "+v"(t7));
+        register __m512d t10 asm("zmm2") = _mm512_sub_pd(t7, t2); asm volatile ("" : "+v"(t10));
+        register __m512d t12 asm("zmm5") = _mm512_add_pd(t2, t7); asm volatile ("" : "+v"(t12));
+
         _mm512_storeu_pd(&rio_re[1*ios + k], t8);
         _mm512_storeu_pd(&rio_im[1*ios + k], t10);
         _mm512_storeu_pd(&rio_re[0*ios + k], t11);

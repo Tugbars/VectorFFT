@@ -161,6 +161,7 @@ void radix17_n1_fwd_avx2_gen_inplace_su(
         const __m256d t1085 = _mm256_fmadd_pd(t67, t120, _mm256_fnmadd_pd(t62, t122, _mm256_fmadd_pd(t72, t124, _mm256_fnmadd_pd(t57, t126, _mm256_fmadd_pd(t77, t128, _mm256_fnmadd_pd(t52, t130, _mm256_fmadd_pd(t82, t132, _mm256_fnmadd_pd(t47, t134, t136))))))));
         const __m256d t1086 = _mm256_add_pd(t1077, t1085);
         const __m256d t1088 = _mm256_sub_pd(t1085, t1077);
+
         _mm256_storeu_pd(&rio_re[16*ios + k], t846);
         _mm256_storeu_pd(&rio_im[16*ios + k], t862);
         _mm256_storeu_pd(&rio_re[15*ios + k], t878);
