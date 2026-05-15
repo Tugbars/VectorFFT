@@ -120,13 +120,13 @@ void radix8_t1s_dit_fwd_avx2_gen_inplace_su_spill(
         register __m256d t131 asm("ymm2") = _mm256_add_pd(t117, t120); asm volatile ("" : "+v"(t131));
         register __m256d t132 asm("ymm3") = _mm256_add_pd(t118, t121); asm volatile ("" : "+v"(t132));
             const __m256d t104 = _mm256_loadu_pd(&spill_im[5]);
-        register __m256d t105 asm("ymm4") = _mm256_mul_pd(t38, t104); asm volatile ("" : "+v"(t105));
+        const __m256d t105 = _mm256_mul_pd(t38, t104);
         _mm256_storeu_pd(&rio_re[4*ios + k], t122);
         _mm256_storeu_pd(&rio_im[4*ios + k], t124);
         _mm256_storeu_pd(&rio_re[0*ios + k], t131);
         _mm256_storeu_pd(&rio_im[0*ios + k], t132);
             const __m256d t103 = _mm256_loadu_pd(&spill_re[5]);
-        register __m256d t107 asm("ymm0") = _mm256_mul_pd(t38, t103); asm volatile ("" : "+v"(t107));
+        const __m256d t107 = _mm256_mul_pd(t38, t103);
         register __m256d t108 asm("ymm1") = _mm256_add_pd(t105, t107); asm volatile ("" : "+v"(t108));
             const __m256d t112 = _mm256_loadu_pd(&spill_re[1]);
         register __m256d t114 asm("ymm2") = _mm256_sub_pd(t112, t108); asm volatile ("" : "+v"(t114));
@@ -154,17 +154,17 @@ void radix8_t1s_dit_fwd_avx2_gen_inplace_su_spill(
         _mm256_storeu_pd(&rio_re[2*ios + k], t127);
         _mm256_storeu_pd(&rio_im[2*ios + k], t128);
             const __m256d t37 = _mm256_loadu_pd(&spill_re[7]);
-        register __m256d t45 asm("ymm0") = _mm256_sub_pd(t41, _mm256_mul_pd(t37, t38)); asm volatile ("" : "+v"(t45));
-            const __m256d t78 = _mm256_loadu_pd(&spill_re[3]);
-        register __m256d t80 asm("ymm1") = _mm256_sub_pd(t78, t45); asm volatile ("" : "+v"(t80));
-        register __m256d t125 asm("ymm2") = _mm256_add_pd(t45, t78); asm volatile ("" : "+v"(t125));
         register __m256d t46 asm("ymm0") = _mm256_fnmsub_pd(t37, t38, t41); asm volatile ("" : "+v"(t46));
             const __m256d t79 = _mm256_loadu_pd(&spill_im[3]);
-        register __m256d t82 asm("ymm3") = _mm256_sub_pd(t79, t46); asm volatile ("" : "+v"(t82));
-        register __m256d t126 asm("ymm4") = _mm256_add_pd(t46, t79); asm volatile ("" : "+v"(t126));
-        _mm256_storeu_pd(&rio_re[7*ios + k], t80);
+        register __m256d t82 asm("ymm1") = _mm256_sub_pd(t79, t46); asm volatile ("" : "+v"(t82));
+        register __m256d t126 asm("ymm2") = _mm256_add_pd(t46, t79); asm volatile ("" : "+v"(t126));
+        register __m256d t133 asm("ymm0") = _mm256_fnmadd_pd(t37, t38, t41); asm volatile ("" : "+v"(t133));
+            const __m256d t78 = _mm256_loadu_pd(&spill_re[3]);
+        register __m256d t134 asm("ymm3") = _mm256_sub_pd(t78, t133); asm volatile ("" : "+v"(t134));
+        register __m256d t135 asm("ymm4") = _mm256_add_pd(t78, t133); asm volatile ("" : "+v"(t135));
+        _mm256_storeu_pd(&rio_re[7*ios + k], t134);
         _mm256_storeu_pd(&rio_im[7*ios + k], t82);
-        _mm256_storeu_pd(&rio_re[3*ios + k], t125);
+        _mm256_storeu_pd(&rio_re[3*ios + k], t135);
         _mm256_storeu_pd(&rio_im[3*ios + k], t126);
         }
     }

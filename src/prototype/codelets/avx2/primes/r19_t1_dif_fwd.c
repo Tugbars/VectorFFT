@@ -253,6 +253,7 @@ void radix19_t1_dif_fwd_avx2_gen_inplace_su(
         const __m256d t848 = _mm256_loadu_pd(&tw_im[17*me + k]);
         const __m256d t1496 = _mm256_fnmadd_pd(t1495, t848, _mm256_mul_pd(t1494, t846));
         const __m256d t1497 = _mm256_fmadd_pd(t1494, t848, _mm256_mul_pd(t1495, t846));
+
         _mm256_storeu_pd(&rio_re[0*ios + k], t36);
         _mm256_storeu_pd(&rio_im[0*ios + k], t73);
         _mm256_storeu_pd(&rio_re[1*ios + k], t1156);
