@@ -116,9 +116,14 @@ static inline int _n_has_trig_codelet(int N) {
  * ═══════════════════════════════════════════════════════════════ */
 
 typedef struct {
-    size_t l1d_bytes;    /* L1 data cache size */
-    size_t l2_bytes;     /* L2 cache size */
-    size_t cache_line;   /* cache line size (bytes) */
+    size_t l1d_bytes;       /* L1 data cache size */
+    size_t l2_bytes;        /* L2 cache size */
+    size_t l3_bytes;        /* L3 cache size (added 2026-05-15 for recalibrated tiers) */
+    size_t cache_line;      /* cache line size (bytes) */
+    /* V2 cost-model additions — populated with Raptor Lake defaults when
+     * stride_detect_cpu() doesn't have hardcoded values for the host. */
+    int dtlb_entries;       /* L1 dTLB entries (Raptor Lake: 96 for 4KB pages) */
+    int dtlb_miss_cycles;   /* per-miss penalty (Raptor Lake L2 dTLB hit ≈ 7) */
 } stride_cpu_info_t;
 
 #ifdef _WIN32
@@ -126,7 +131,13 @@ typedef struct {
 #endif
 
 static stride_cpu_info_t stride_detect_cpu(void) {
-    stride_cpu_info_t info = {48 * 1024, 2 * 1024 * 1024, 64}; /* defaults */
+    stride_cpu_info_t info = {
+        48 * 1024,            /* L1d ≈ 48 KB Raptor Lake */
+        2 * 1024 * 1024,      /* L2  ≈ 2 MB Raptor Lake P-core */
+        36 * 1024 * 1024,     /* L3  ≈ 36 MB i9-14900K (shared) */
+        64,                   /* cache line */
+        96, 7,                /* dtlb_entries, dtlb_miss_cycles */
+    };
 
 #if defined(_WIN32) && (defined(_MSC_VER) || defined(__INTEL_COMPILER) || defined(__INTEL_LLVM_COMPILER))
     /* CPUID leaf 4: deterministic cache parameters */
@@ -315,21 +326,68 @@ static int stride_factorize_greedy(int N, size_t K,
 /* Per-butterfly cycle cost lookup. Reads the auto-generated radix_cpe.h
  * (produced by cost_model/measure_cpe.c against prototype codelets).
  *
- * The prototype CPE table is two columns wide:
- *   cyc_n1     — first-stage (no-twiddle) codelet at K=256
- *   cyc_inner  — inner-stage codelet at K=256
+ * The CPE table is now ME-SWEPT: each variant column has CPE_N_ME_SAMPLES
+ * doubles, one per inner-loop length in CPE_ME_VALUES. This captures the
+ * amortization curve + cache transitions that a single me=K=256 sample
+ * couldn't see. Notably, t1 codelets degrade 3-4× at large me (twiddle
+ * table exceeds L3) while t1s stays flat — that variant-selection signal
+ * only shows up in the me-swept data.
  *
- * No per-variant breakdown (t1 / t1s / log3) because the planner doesn't
- * pick variants per-stage anymore. The codelet generator emits one
- * inner-stage variant per radix; cyc_inner reflects that one. See
- * factorizer.h header comment for the wisdom_bridge retirement
- * rationale. Returns 0.0 when the slot isn't populated — caller falls
- * back to the ops/SIMD estimate. */
-static inline double _radix_cpe_lookup(int R, int is_first_stage, int isa_avx512) {
+ * For inner stages we return MIN over the available t-variants at the
+ * given me — the optimistic assumption that the planner picks whichever
+ * variant runs fastest at this me. */
+
+/* Linear interpolation in log-me space between two CPE samples. */
+static inline double _cpe_interpolate(const double *samples, size_t me) {
+    /* Find bracket [lo, hi] in CPE_ME_VALUES; clamp at endpoints. */
+    int n = CPE_N_ME_SAMPLES;
+    if (me <= CPE_ME_VALUES[0])      return samples[0];
+    if (me >= CPE_ME_VALUES[n - 1])  return samples[n - 1];
+    int hi = 1;
+    while (hi < n && me > CPE_ME_VALUES[hi]) hi++;
+    int lo = hi - 1;
+    double lme = log((double)me);
+    double llo = log((double)CPE_ME_VALUES[lo]);
+    double lhi = log((double)CPE_ME_VALUES[hi]);
+    double t = (lme - llo) / (lhi - llo);
+    /* If either endpoint is 0 (unmeasured), use the non-zero one alone. */
+    if (samples[lo] == 0.0) return samples[hi];
+    if (samples[hi] == 0.0) return samples[lo];
+    return samples[lo] * (1.0 - t) + samples[hi] * t;
+}
+
+static inline double _radix_cpe_lookup_at_me(int R, int is_first_stage,
+                                             size_t me, int isa_avx512) {
     if (R <= 0 || R >= STRIDE_RADIX_PROFILE_MAX_R) return 0.0;
     const stride_radix_cpe_t *t = isa_avx512 ? &stride_radix_cpe_avx512[R]
                                               : &stride_radix_cpe_avx2[R];
-    return is_first_stage ? t->cyc_n1 : t->cyc_inner;
+    if (is_first_stage) {
+        double v = _cpe_interpolate(t->cyc_n1, me);
+        return v;
+    }
+    /* Inner stage: interpolate each available t-variant, take min. */
+    double best = 1e30;
+    double v;
+    v = _cpe_interpolate(t->cyc_t1, me);
+    if (v > 0.0 && v < best) best = v;
+    /* For t1s/log3, only consider if the first sample is non-zero
+     * (indicates the variant exists for this radix). */
+    if (t->cyc_t1s[0] > 0.0) {
+        v = _cpe_interpolate(t->cyc_t1s, me);
+        if (v > 0.0 && v < best) best = v;
+    }
+    if (t->cyc_log3[0] > 0.0) {
+        v = _cpe_interpolate(t->cyc_log3, me);
+        if (v > 0.0 && v < best) best = v;
+    }
+    return (best < 1e29) ? best : 0.0;
+}
+
+/* Back-compat shim — keeps the old signature working for callers that
+ * haven't been updated to pass me through. Defaults me to the canonical
+ * K=256 sample point. New code should use _radix_cpe_lookup_at_me. */
+static inline double _radix_cpe_lookup(int R, int is_first_stage, int isa_avx512) {
+    return _radix_cpe_lookup_at_me(R, is_first_stage, 256, isa_avx512);
 }
 
 /* Per-butterfly cost for radix R. Stage 0 uses the n1 codelet (no
@@ -349,7 +407,7 @@ static inline double _radix_cpe_lookup(int R, int is_first_stage, int isa_avx512
  * table corrects for this when populated. See cost_model/README.md
  * §"Known limitations" for the full per-radix sweep. */
 static inline double _radix_butterfly_cost(int R, int stage_idx,
-                                           int isa_avx512)
+                                           size_t me, int isa_avx512)
 {
     if (R <= 0 || R >= STRIDE_RADIX_PROFILE_MAX_R) {
         /* Unknown radix — assume linear in R as a fallback. */
@@ -357,7 +415,11 @@ static inline double _radix_butterfly_cost(int R, int stage_idx,
     }
 
     int is_first_stage = (stage_idx == 0);
-    double cpe = _radix_cpe_lookup(R, is_first_stage, isa_avx512);
+    /* Use the me-swept CPE — the lookup interpolates between sample
+     * points based on the actual inner-loop length the executor will
+     * use at this stage. Crucial for the t1 codelets that degrade
+     * 3-4× at large me (twiddle-bandwidth blowup). */
+    double cpe = _radix_cpe_lookup_at_me(R, is_first_stage, me, isa_avx512);
     if (cpe > 0.0) return cpe;
 
     /* CPE slot empty — fall back to ops/SIMD from the static profile. */
@@ -453,6 +515,7 @@ static double stride_score_factorization(const int *factors, int nf, size_t K,
                                          int N, const stride_cpu_info_t *cpu) {
     const size_t l1 = cpu->l1d_bytes;
     const size_t l2 = cpu->l2_bytes;
+    const size_t l3 = cpu->l3_bytes;
     /* ISA detection from compile-time defines — matches build.py's flags. */
 #if defined(__AVX512F__)
     const int isa_avx512 = 1;
@@ -460,6 +523,24 @@ static double stride_score_factorization(const int *factors, int nf, size_t K,
     const int isa_avx512 = 0;
 #endif
     double score = 0.0;
+
+    /* Buffer-streaming floor — applies ONLY when buffer exceeds L3.
+     *
+     * Inside L3, the HW prefetcher fills L1 from L3 cheaply, so inner
+     * stages with per-group ws fitting L1 run at near-L1 speed even
+     * when the whole buffer doesn't fit L1. The per-group ws check
+     * captures that. Empirically (Raptor Lake): {16,16,16} N=4096 K=256
+     * (16MB buffer, fits L3) measured at 1.10× of cf=1.0-1.4 prediction.
+     *
+     * When buffer > L3, HW prefetcher can't hide the DRAM bandwidth,
+     * and EVERY stage actually pays DRAM cost regardless of per-group
+     * locality. Empirically: N=16384 K=512 (128MB) cells all show ~4×
+     * the cf=1.0 prediction. So we force cf >= 4.0 there.
+     *
+     * Set to 0.0 in the L3-fits regime so max(cf_stage, cf_buffer) is
+     * just cf_stage. */
+    const size_t total_buffer = (size_t)N * K * 16;
+    const double cf_buffer = (total_buffer > l3) ? 4.0 : 0.0;
 
     size_t accumulated_K = K;
 
@@ -475,19 +556,30 @@ static double stride_score_factorization(const int *factors, int nf, size_t K,
         for (int d = s + 1; d < nf; d++) stride *= factors[d];
 
         /* Per-butterfly cycle cost. Stage 0 uses n1, else inner. */
-        double bf_cost = _radix_butterfly_cost(R, s, isa_avx512);
+        /* me at this stage = (N/R) butterflies per FFT × K columns. The
+         * me-swept CPE interpolation uses this to pick the right point
+         * on the amortization-cum-twiddle-bandwidth curve. */
+        size_t me_s = (size_t)(N / R) * K;
+        double bf_cost = _radix_butterfly_cost(R, s, me_s, isa_avx512);
 
         /* Working set per group */
         size_t ws = (size_t)R * stride * 16;
 
-        /* Cache-fit penalty multiplier. Same thresholds as before. */
-        double cache_factor;
-        if (ws <= l1)
-            cache_factor = 1.0;
-        else if (ws <= l2)
-            cache_factor = 3.0;
-        else
-            cache_factor = 10.0;
+        /* Cache-fit penalty — recalibrated 2026-05-15 from measured plan
+         * timings on Raptor Lake AVX-2. Previous tiers (1.0, 3.0, 10.0)
+         * were 3-5× too aggressive — HW prefetcher + L3 absorb most of
+         * the DRAM penalty. New tiers derived from {32,32}, {16,16,16},
+         * {64,64}, {4,4,4,4,4} effective-cf measurements. */
+        double cf_stage;
+        if      (ws <= l1) cf_stage = 1.0;
+        else if (ws <= l2) cf_stage = 1.4;
+        else if (ws <= l3) cf_stage = 2.3;
+        else               cf_stage = 4.0;
+        /* Effective cf = max(per-stage, buffer-floor). Inner stages
+         * with small per-group ws inherit the buffer's DRAM cost when
+         * total_buffer > L3 (otherwise they'd be optimistically rated
+         * cache-friendly while actually streaming DRAM). */
+        double cache_factor = (cf_stage > cf_buffer) ? cf_stage : cf_buffer;
 
         /* Data access cost weighted by per-radix butterfly cost.
          * groups * K butterflies happen in this stage; each costs bf_cost. */
@@ -507,6 +599,125 @@ static double stride_score_factorization(const int *factors, int nf, size_t K,
         }
 
         score += data_cost + tw_cost;
+        accumulated_K *= R;
+    }
+
+    return score;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * V2 SCORING — adds hot-set carry across stages + DTLB pressure.
+ *
+ * V1 (above) treats each stage as independent: cache_factor is decided
+ * only by the stage's own working set, and there's no DTLB modeling.
+ * V2 attempts to capture two cross-stage effects:
+ *
+ *   1. HOT-SET CARRY. Stage s-1 wrote the rio buffer (N×K × 16 bytes
+ *      split-complex). Stage s reads from that same buffer. The fraction
+ *      of stage s-1's output still resident in L1 is approximated as
+ *      min(1, L1 / total_bytes). Stage s's reads are then blended:
+ *        fraction_hot × cache_factor=1.0 + (1-fraction_hot) × cache_factor_cold
+ *      Stage 0 has no predecessor — uses V1's cold cache_factor.
+ *
+ *   2. DTLB PRESSURE. Each stage's stride determines how many distinct
+ *      pages its butterfly group spans. If pages_per_group > dtlb_entries,
+ *      every group eats (excess × miss_cycles) extra cycles. Stage 0's
+ *      stride is K (small) so DTLB usually isn't pressured; later stages
+ *      with multiplicative strides can blow it.
+ *
+ * Both effects are FIRST-ORDER approximations. See [doc56_selective_pin_tradeoff]
+ * memory note for the full list of un-modeled effects (HW prefetcher state,
+ * set-associativity collisions, etc.) that V2 still won't capture.
+ *
+ * This function lives alongside the V1 version above (not replacing it) so
+ * empirical tests (cost_model/score_and_time_plans.c) can call both and
+ * compare predictions to measured plan-level cycles in one pass.
+ * ═══════════════════════════════════════════════════════════════ */
+static double stride_score_factorization_v2(const int *factors, int nf, size_t K,
+                                            int N, const stride_cpu_info_t *cpu) {
+    const size_t l1 = cpu->l1d_bytes;
+    const size_t l2 = cpu->l2_bytes;
+    const size_t l3 = cpu->l3_bytes;
+    const int dtlb_entries     = (cpu->dtlb_entries    > 0) ? cpu->dtlb_entries    : 96;
+    const int dtlb_miss_cycles = (cpu->dtlb_miss_cycles > 0) ? cpu->dtlb_miss_cycles : 7;
+#if defined(__AVX512F__)
+    const int isa_avx512 = 1;
+#else
+    const int isa_avx512 = 0;
+#endif
+    double score = 0.0;
+
+    /* Total rio buffer in bytes (split-complex × 2 channels = ×16 total). */
+    const size_t total_bytes = (size_t)N * K * 16;
+    /* Carry: how much of the previous stage's output survives in L1. */
+    const double fraction_hot = (total_bytes > 0 && l1 < total_bytes)
+                              ? (double)l1 / (double)total_bytes
+                              : 1.0;
+    /* Buffer-streaming floor: only kicks in when buffer > L3 (DRAM regime).
+     * Inside L3, HW prefetcher absorbs inter-stage cost, so per-stage ws
+     * is the right metric. See V1's comment block for the empirical
+     * derivation. */
+    const double cf_buffer = (total_bytes > l3) ? 4.0 : 0.0;
+
+    size_t accumulated_K = K;
+
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        int groups = N / R;
+
+        /* Stride between butterfly legs at this stage. */
+        size_t stride = K;
+        for (int d = s + 1; d < nf; d++) stride *= factors[d];
+
+        /* me at this stage = (N/R) butterflies per FFT × K columns. The
+         * me-swept CPE interpolation uses this to pick the right point
+         * on the amortization-cum-twiddle-bandwidth curve. */
+        size_t me_s = (size_t)(N / R) * K;
+        double bf_cost = _radix_butterfly_cost(R, s, me_s, isa_avx512);
+
+        /* Cold cache factor — matches V1's recalibrated (1.0, 1.4, 2.3, 4.0)
+         * tiers with L3 awareness, AND inherits the same buffer-streaming
+         * floor (max with cf_buffer below). */
+        size_t ws = (size_t)R * stride * 16;
+        double cf_stage;
+        if      (ws <= l1) cf_stage = 1.0;
+        else if (ws <= l2) cf_stage = 1.4;
+        else if (ws <= l3) cf_stage = 2.3;
+        else               cf_stage = 4.0;
+        double cf_cold = (cf_stage > cf_buffer) ? cf_stage : cf_buffer;
+
+        /* V2 blend: stage 0 starts cold; subsequent stages get hot-set carry.
+         * Note: when buffer > L3, fraction_hot is tiny (L1 / total_buffer),
+         * so the carry helps almost not at all in the DRAM regime — which
+         * is correct, no data IS hot once we've spilled past L3. */
+        double cf_eff = (s == 0)
+                      ? cf_cold
+                      : fraction_hot * 1.0 + (1.0 - fraction_hot) * cf_cold;
+
+        double data_cost = (double)groups * (double)K * bf_cost * cf_eff;
+
+        /* V2 DTLB penalty. pages_per_group = ⌈R × stride × 8 bytes / 4 KB⌉
+         * (each leg starts a new page when stride × 8 ≥ 4096 doubles).
+         * If R × stride × 8 / 4096 > dtlb_entries, each group eats misses. */
+        double dtlb_cost = 0.0;
+        if (s > 0) {  /* stage 0's stride = K (small), DTLB rarely a factor */
+            size_t bytes_spanned = (size_t)R * stride * 8;
+            int pages_per_group  = (int)((bytes_spanned + 4095) / 4096);
+            if (pages_per_group > dtlb_entries) {
+                int excess = pages_per_group - dtlb_entries;
+                dtlb_cost = (double)groups * (double)excess * (double)dtlb_miss_cycles;
+            }
+        }
+
+        /* Twiddle memory traffic (stages 1+) — same shape as V1. */
+        double tw_cost = 0.0;
+        if (s > 0) {
+            size_t tw_bytes = (size_t)(R - 1) * accumulated_K * 16;
+            if (tw_bytes > l1) tw_cost = (double)(R - 1) * accumulated_K * 4.0;
+            else               tw_cost = (double)(R - 1) * accumulated_K;
+        }
+
+        score += data_cost + tw_cost + dtlb_cost;
         accumulated_K *= R;
     }
 
